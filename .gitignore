@@ -1,0 +1,9 @@
+node_modules/
+out/
+release/
+dist/
+build/.electron-brand-stamp
+*.tsbuildinfo
+.DS_Store
+*.log
+.env

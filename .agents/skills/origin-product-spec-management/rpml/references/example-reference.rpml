@@ -1,0 +1,286 @@
+<page
+    title="工单服务台"
+    route="/desk/tickets"
+    description="企业 IT 服务台的工单管理主页。高复杂度黄金范例：把带权限分层、SLA 计时、批量流转、多状态机的复杂页面，拆解到可直接驱动研发与 QA 的实施级原型。主快照取「主管视角 + 已选中 3 行 + 列表常态」这一信息密度最高的静息态；所有浮层（抽屉、弹窗、下拉、Toast）都不画在主快照里，而是在对应触发元素的注释中说明触发条件并渲染。">
+
+    <view device="desktop" scale="0.62">
+      <viewport device="desktop">
+        <navigator height="60" data-pin="1">
+          <logo label="HelpDesk"></logo>
+          <breadcrumb items="服务台,工单管理,全部工单"></breadcrumb>
+          <search state="filled" value="登录失败" has-clear-button placeholder="搜索工单号、标题、客户"></search>
+          <button label="新建工单" variant="primary" icon="plus"></button>
+          <badge count="23" max="99"></badge>
+          <avatar size="30" initials="SH"></avatar>
+        </navigator>
+
+        <layout columns="220px minmax(0,1fr)">
+          <sidebar width="220" data-pin="2">
+            <list>
+              <list-item label="我的待办" icon="inbox" badge="7"></list-item>
+              <list-item label="全部工单" icon="layout-dashboard" badge="156" state="selected"></list-item>
+              <list-item label="待我审批" icon="shield" badge="4"></list-item>
+              <list-item label="已超时" icon="circle-alert" badge="12"></list-item>
+              <list-item label="已归档" icon="archive"></list-item>
+              <list-item label="服务目录" icon="settings"></list-item>
+            </list>
+          </sidebar>
+
+          <panel padding="18" elevation="1">
+            <layout rows="auto auto auto auto" gap="14">
+
+              <layout columns="1fr max-content" gap="12" data-pin="3">
+                <tabs active="全部">
+                  <tab label="全部" badge="156"></tab>
+                  <tab label="待处理" badge="48"></tab>
+                  <tab label="处理中" badge="61"></tab>
+                  <tab label="待客户确认" badge="15"></tab>
+                  <tab label="已解决" badge="32"></tab>
+                </tabs>
+                <button-group>
+                  <button label="看板视图" variant="ghost" icon="layout-dashboard"></button>
+                  <button label="导出" variant="secondary" icon="file"></button>
+                </button-group>
+              </layout>
+
+              <layout columns="repeat(4, 1fr)" gap="12" data-pin="4">
+                <stat-card label="今日新增" value="48" trend="up" change="+8 vs 昨日"></stat-card>
+                <stat-card label="SLA 达标率" value="92%" trend="down" change="-3% 本周"></stat-card>
+                <stat-card label="即将超时" value="12" trend="flat" change="2 小时内"></stat-card>
+                <stat-card label="平均响应" value="1.8h" trend="up" change="优于目标"></stat-card>
+              </layout>
+
+              <panel padding="12" elevation="0" data-pin="5">
+                <layout rows="auto auto" gap="12">
+                  <layout columns="repeat(4, max-content) 1fr" gap="10">
+                    <select state="collapsed" value="优先级：全部" options="全部,P1 紧急,P2 高,P3 中,P4 低"></select>
+                    <select state="collapsed" value="处理人：全部" options="全部,我,张工,李工,未分配"></select>
+                    <date-picker state="filled" value="2026-06-01 ~ 06-07"></date-picker>
+                    <toggle state="on" label="仅看我负责"></toggle>
+                    <button label="高级筛选" variant="link" icon="settings"></button>
+                  </layout>
+                  <bulk-action-bar count="3" actions="批量分配,变更优先级,合并工单,批量关闭"></bulk-action-bar>
+                </layout>
+              </panel>
+
+              <layout rows="auto auto" gap="12" data-pin="6">
+                <table rows="8" columns="工单号,标题,客户,优先级,处理人,SLA,状态" has-checkbox has-action></table>
+                <pagination total="156" current="1" page-size="20"></pagination>
+              </layout>
+
+            </layout>
+          </panel>
+        </layout>
+      </viewport>
+    </view>
+
+    <annotation id="1" label="全局导航栏">
+      固定吸顶。包含品牌、面包屑、全局搜索、新建入口、通知、当前用户。搜索作用域为「工单号 / 标题 / 客户名」三字段联合模糊匹配，回车触发。
+      <annotation label="搜索行为">
+        触发条件：输入 ≥ 2 字符且回车，或点击搜索图标，防抖 300ms。结果以下拉浮层呈现（点击搜索框触发），不替换主列表，选中项跳转详情。
+        <enum>
+          <enum-item label="默认" description="未输入，placeholder 提示可搜字段。"><search placeholder="搜索工单号、标题、客户"></search></enum-item>
+          <enum-item label="有输入" description="filled 态，出现清除按钮。"><search state="filled" value="登录失败" has-clear-button></search></enum-item>
+          <enum-item label="结果下拉（聚焦时弹出）" description="前 5 条匹配 + 查看全部，浮层不常驻。"><dropdown><list><list-item label="#TK-20593 VPN 登录失败" icon="file"></list-item><list-item label="#TK-20471 邮箱登录失败" icon="file"></list-item></list></dropdown></enum-item>
+          <enum-item label="无结果" description="提示更换关键词，不清空输入。"><dropdown><empty label="无匹配工单" description="试试工单号或客户名"></empty></dropdown></enum-item>
+        </enum>
+      </annotation>
+      <annotation label="新建入口与通知">
+        「新建工单」点击打开新建工单浮层（坐席/主管可见，只读审计隐藏）。通知角标汇总「分配给我 + @我 + SLA 升级」未读数，>99 显示 99+，点击打开通知抽屉。
+        <enum>
+          <enum-item label="新建按钮（坐席/主管）"><button label="新建工单" variant="primary" icon="plus"></button></enum-item>
+          <enum-item label="点击后：新建浮层" description="触发：点击「新建工单」。"><modal title="新建工单" has-footer><form><form-item label="标题" required><input placeholder="一句话描述问题"></input></form-item><form-item label="优先级"><select state="collapsed" value="P3 中" options="P1 紧急,P2 高,P3 中,P4 低"></select></form-item></form></modal></enum-item>
+          <enum-item label="只读审计" description="新建按钮不渲染。"><badge count="23"></badge></enum-item>
+        </enum>
+      </annotation>
+    </annotation>
+
+    <annotation id="2" label="左侧工单分类导航">
+      固定 220px。分类项角标为该视图下「未读/待处理」实时计数，非总数。当前选中「全部工单」。
+      <annotation label="角标计数口径">
+        <enum>
+          <enum-item label="我的待办" description="= 分配给当前用户且状态≠已解决。"><list-item label="我的待办" icon="inbox" badge="7"></list-item></enum-item>
+          <enum-item label="已超时" description="= SLA 截止已过且未解决，红色语义。"><list-item label="已超时" icon="circle-alert" badge="12"></list-item></enum-item>
+          <enum-item label="无计数" description="角标为 0 时不渲染。"><list-item label="已归档" icon="archive"></list-item></enum-item>
+        </enum>
+      </annotation>
+      <annotation label="权限可见性">
+        「待我审批」仅审批人可见；「服务目录」仅管理员可见。普通坐席看不到这两项。
+      </annotation>
+    </annotation>
+
+    <annotation id="3" label="状态 Tab 与视图切换">
+      Tab 按工单状态机切分，角标为各状态实时数量，切换仅过滤当前列表不跳路由。右侧为看板/导出入口。
+      <annotation label="状态机定义">
+        流转：待处理 → 处理中 → 待客户确认 →（确认）已解决 /（驳回）回到处理中。「全部」聚合所有未归档状态。
+        <enum>
+          <enum-item label="待处理" description="新建/重开，未分配或未开始。"><tag label="待处理" color="orange"></tag></enum-item>
+          <enum-item label="处理中" description="已分配并开始，SLA 计时中。"><tag label="处理中" color="green"></tag></enum-item>
+          <enum-item label="待客户确认" description="坐席标记解决，等待验收，48h 无响应自动关闭。"><tag label="待确认"></tag></enum-item>
+          <enum-item label="已解决" description="确认或自动关闭，进入归档倒计时。"><tag label="已解决" color="green"></tag></enum-item>
+        </enum>
+      </annotation>
+      <annotation label="导出">
+        触发：点击「导出」，导出当前筛选结果 CSV，单次上限 5000 行，超限提示分批。只读审计可导出不可批量操作。
+      </annotation>
+    </annotation>
+
+    <annotation id="4" label="SLA 指标看板">
+      四个关键运营指标，实时聚合（30s 刷新）。趋势箭头对比上一周期，颜色语义独立于箭头方向——「即将超时」高值是负面信号。
+      <annotation label="指标口径与告警阈值">
+        <enum>
+          <enum-item label="今日新增" description="当日 00:00 起创建数，含已关闭。"><stat-card label="今日新增" value="48" trend="up" change="+8 vs 昨日"></stat-card></enum-item>
+          <enum-item label="SLA 达标率" description="(按时响应 / 总数)，<90% 标红预警。"><stat-card label="SLA 达标率" value="92%" trend="down" change="-3% 本周"></stat-card></enum-item>
+          <enum-item label="即将超时" description="2h 内到期未解决，点击下钻到过滤列表。"><stat-card label="即将超时" value="12" trend="flat" change="2 小时内"></stat-card></enum-item>
+        </enum>
+      </annotation>
+      <annotation label="加载与异常">
+        <enum>
+          <enum-item label="加载中" description="首次进入显示骨架，不阻塞列表。"><loading rows="2"></loading></enum-item>
+          <enum-item label="聚合失败" description="接口超时显示占位与重试。"><alert type="error" title="指标加载失败" message="点击重试"></alert></enum-item>
+        </enum>
+      </annotation>
+    </annotation>
+
+    <annotation id="5" label="筛选与批量操作区">
+      多维筛选 + 批量操作栏。筛选项 AND 关系，变更即时生效。批量栏仅在勾选 ≥1 行时出现。
+      <annotation label="筛选维度">
+        优先级、处理人为下拉单选；时间为范围选择；「仅看我负责」为快捷开关。主快照中下拉保持收起，展开态在此枚举（下拉浮层非常驻）。
+        <enum>
+          <enum-item label="收起态"><select state="collapsed" value="优先级：全部" options="全部,P1 紧急,P2 高,P3 中,P4 低"></select></enum-item>
+          <enum-item label="展开浮层（点击触发）" description="单选，选中即过滤。"><select state="expanded" value="P1 紧急" options="全部,P1 紧急,P2 高,P3 中,P4 低"></select></enum-item>
+        </enum>
+      </annotation>
+      <annotation label="高级筛选">
+        触发：点击「高级筛选」，打开浮层补充条件（来源渠道、标签、自定义字段）。
+        <enum>
+          <enum-item label="点击后：高级筛选浮层"><popover title="高级筛选"><form layout="vertical"><form-item label="来源渠道"><select state="collapsed" value="全部" options="全部,邮件,电话,门户,IM"></select></form-item><form-item label="标签"><input placeholder="输入标签回车"></input></form-item></form></popover></enum-item>
+        </enum>
+      </annotation>
+      <annotation label="批量操作栏">
+        触发：勾选 ≥1 行后出现，显示已选数与可执行动作。动作受权限与状态约束：跨状态工单不可「合并」。各动作再点击会触发对应确认浮层与结果反馈，见下方子注释。
+        <enum>
+          <enum-item label="未选择" description="批量栏隐藏。"><table rows="2" columns="工单号,状态" has-checkbox></table></enum-item>
+          <enum-item label="已选同状态" description="全部动作可用。"><bulk-action-bar count="3" actions="批量分配,变更优先级,合并工单,批量关闭"></bulk-action-bar></enum-item>
+          <enum-item label="已选跨状态" description="「合并」置灰，hover 提示原因。"><bulk-action-bar count="5" actions="批量分配,变更优先级,批量关闭"></bulk-action-bar></enum-item>
+          <enum-item label="无批量权限" description="只读角色勾选也不出现操作栏。"><empty label="无批量操作权限"></empty></enum-item>
+        </enum>
+        <annotation label="危险操作二次确认">
+          触发：点击批量栏中对应动作。确认框列出影响范围与可逆性。浮层不画进主快照，在此按触发展开。
+          <enum>
+            <enum-item label="批量关闭" description="可逆，说明 7 天可重开。"><modal title="批量关闭确认" has-footer><alert type="warning" title="将关闭 3 条工单" message="客户 7 天内可重新打开。"></alert></modal></enum-item>
+            <enum-item label="合并工单" description="不可逆，需选主工单。"><modal title="合并工单" has-footer><alert type="error" title="合并不可撤销" message="3 条将并入主工单 #TK-20593，历史保留。"></alert></modal></enum-item>
+          </enum>
+        </annotation>
+        <annotation label="操作结果 Toast">
+          触发：确认后执行完成，顶部 Toast 反馈，3s 自动消失。
+          <enum>
+            <enum-item label="成功" description="列表刷新。"><toast type="success" title="已分配 3 条工单给张工"></toast></enum-item>
+            <enum-item label="部分失败" description="说明成功/失败数，提供查看明细。"><toast type="warning" title="2 条成功，1 条因状态冲突跳过"></toast></enum-item>
+            <enum-item label="失败" description="保留选中态便于重试。"><toast type="error" title="合并失败：工单状态冲突"></toast></enum-item>
+          </enum>
+        </annotation>
+        <annotation label="列表级异步态">
+          触发：切换 Tab/筛选或加载失败时替换表格区。
+          <enum>
+            <enum-item label="加载中" description="表格区骨架，工具栏与分页保持。"><loading rows="6"></loading></enum-item>
+            <enum-item label="空结果" description="提供「清除筛选」主操作。"><empty label="没有符合条件的工单" description="调整筛选或清除条件" has-action></empty></enum-item>
+            <enum-item label="加载失败" description="整表替换为错误态 + 重试。"><alert type="error" title="工单加载失败" message="请检查网络后重试"></alert></enum-item>
+          </enum>
+        </annotation>
+      </annotation>
+    </annotation>
+
+    <annotation id="6" label="工单列表与详情抽屉">
+      表格为页面主体。SLA 列按剩余时间染色。行尾操作列、行点击均为浮层触发点——详情抽屉不画在主快照里。
+      <annotation label="表格行状态">
+        行的视觉状态由「读取状态 + SLA + 选中」三维叠加决定。
+        <annotation label="单维状态">
+          <enum>
+            <enum-item label="已读默认"><table-list-row content="张三,需求评审纪要,09:12,已读" state="default"></table-list-row></enum-item>
+            <enum-item label="未读加粗" description="新分配或有新回复，蓝底加粗。"><table-list-row content="李四,本周周报已发送,昨天,未读" state="unread"></table-list-row></enum-item>
+            <enum-item label="选中" description="勾选行，蓝色描边，进入批量集合。"><table-list-row content="王五,账号存在新登录,周二,未读" state="selected"></table-list-row></enum-item>
+            <enum-item label="超时高亮" description="SLA 已过期，整行黄底。"><table-list-row content="赵六,安全策略变更提醒,5月30日,未读" state="highlighted"></table-list-row></enum-item>
+            <enum-item label="已关闭置灰" description="不可再批量操作，半透明。"><table-list-row content="陈七,活动报名已通过审核,5月28日,已读" state="disabled"></table-list-row></enum-item>
+          </enum>
+        </annotation>
+        <annotation label="SLA 倒计时列">
+          剩余 >2h 正常色；≤2h 橙色；已超时红色并显示「超 Xh」。
+        </annotation>
+      </annotation>
+      <annotation label="详情抽屉（行点击触发）">
+        触发：点击任意行或行尾「查看」，从右滑入 400px 抽屉，不遮挡选中行。抽屉切片上的 SLA 字段与底部操作组带 pin，分别对应下方两条子注释。
+        <enum>
+          <enum-item label="点击后：详情抽屉">
+            <drawer title="工单 #TK-20593 详情" width="400">
+              <layout rows="auto auto auto auto auto" gap="12">
+                <steps steps="已提交,处理中,待确认,已解决" active="1"></steps>
+                <form>
+                  <form-item label="优先级" required><select state="collapsed" value="P1 紧急" options="P1 紧急,P2 高,P3 中,P4 低"></select></form-item>
+                  <form-item label="处理人" required><select state="collapsed" value="张工" options="未分配,我,张工,李工"></select></form-item>
+                  <form-item label="SLA 截止" data-pin="1"><input state="filled" value="今天 16:00（剩 1h42m）" error-message="即将超时"></input></form-item>
+                </form>
+                <alert type="warning" title="SLA 风险" message="P1 工单 1h 内未响应将升级。"></alert>
+                <list>
+                  <list-item label="张工 · 已分配给我 · 14:08" icon="user"></list-item>
+                  <list-item label="系统 · SLA 计时开始 · 14:05" icon="bell"></list-item>
+                </list>
+                <button-group data-pin="2">
+                  <button label="转交"></button>
+                  <button label="升级" variant="danger"></button>
+                  <button label="标记解决" variant="primary"></button>
+                </button-group>
+              </layout>
+            </drawer>
+          </enum-item>
+        </enum>
+        <annotation label="SLA 截止字段">
+          对应抽屉切片上的 pin 1。剩余 ≤2h 显示橙色并标注「即将超时」，已过期红色。修改截止时间需审批人权限。
+        </annotation>
+        <annotation label="操作按钮组（状态门槛）">
+          对应抽屉切片上的 pin 2。按钮可用性随工单状态变化。
+          <enum>
+            <enum-item label="处理中" description="可转交/升级/标记解决。"><button-group><button label="转交"></button><button label="升级" variant="danger"></button><button label="标记解决" variant="primary"></button></button-group></enum-item>
+            <enum-item label="待客户确认" description="只能催办或撤回，不能再次解决。"><button-group><button label="撤回解决"></button><button label="催办客户" variant="primary"></button></button-group></enum-item>
+            <enum-item label="已解决只读" description="仅可重开。"><button label="重新打开" variant="secondary"></button></enum-item>
+          </enum>
+          <annotation label="标记解决校验">
+            点击「标记解决」需填写解决方案，未填报错。
+            <enum>
+              <enum-item label="未填方案" description="必填校验，红框 + 错误文案。"><form-item label="解决方案" required error="请填写解决方案后再提交"><textarea state="error" placeholder="描述根因与处理步骤"></textarea></form-item></enum-item>
+              <enum-item label="已填合规"><form-item label="解决方案" required><textarea state="filled" value="重新签发 VPN 证书并指导客户重连，已验证可登录。"></textarea></form-item></enum-item>
+            </enum>
+          </annotation>
+        </annotation>
+
+      </annotation>
+    </annotation>
+
+    <annotation-global label="权限角色矩阵">
+      本页跨 4 类角色，能力差异需显式说明，供研发实现 RBAC、QA 设计权限用例。这是跨区域的横切关注点，不绑定单一 pin，因此用 annotation-global 承载。
+      <enum>
+        <enum-item label="坐席" description="处理分配给自己的工单，可新建/转交/解决；不可批量关闭他人工单。"><card title="坐席 Agent" subtitle="一线处理"><tag label="读写本人" color="green"></tag></card></enum-item>
+        <enum-item label="主管" description="本范例主视角。可批量操作、跨人分配、变更优先级、查看全量 SLA。"><card title="主管 Supervisor" subtitle="团队管理"><tag label="全量读写" color="orange"></tag></card></enum-item>
+        <enum-item label="审批人" description="额外可见「待我审批」，审批升级/高额变更。"><card title="审批人 Approver" subtitle="流程审批"><tag label="审批权" color="orange"></tag></card></enum-item>
+        <enum-item label="只读审计" description="可看可导出，所有写操作与批量栏隐藏。"><card title="审计 Auditor" subtitle="合规查阅"><tag label="只读" color="red"></tag></card></enum-item>
+      </enum>
+    </annotation-global>
+
+    <annotation-global label="边界与数据规模">
+      完备原型必须覆盖极值与边界。横切关注点，不绑定单一 pin。
+      <annotation label="数据规模">
+        <enum>
+          <enum-item label="超长标题" description="单行截断 + 省略号，hover 显示全文。"><table-list-row content="前端架构升级与渲染性能优化方案讨论纪要,张三,进行中" state="default"></table-list-row></enum-item>
+          <enum-item label="海量结果" description=">5000 条提示精化筛选。"><pagination total="5280" current="1" page-size="20"></pagination></enum-item>
+          <enum-item label="角标溢出" description="未读 >99 显示 99+。"><badge count="128" max="99"></badge></enum-item>
+        </enum>
+      </annotation>
+      <annotation label="SLA 边界时刻">
+        <enum>
+          <enum-item label="临界 0 分钟" description="倒计时为 0 归入「已超时」，染红。"><tag label="超 0m" color="red"></tag></enum-item>
+          <enum-item label="暂停态" description="转待客户确认时 SLA 暂停，显示「已暂停」。"><tag label="SLA 暂停"></tag></enum-item>
+        </enum>
+      </annotation>
+    </annotation-global>
+
+  </page>

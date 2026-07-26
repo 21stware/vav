@@ -1,0 +1,96 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to build and publish, e.g. v1.0.0'
+        required: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.event.inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    # node-pty is a native module, so each artifact has to be built on the
+    # platform it ships to; there is nothing to cross-compile from.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            name: macOS (Apple silicon)
+            builder: --mac
+            artifacts: release/*.dmg
+          - os: windows-latest
+            name: Windows (x64)
+            builder: --win
+            artifacts: release/*.exe
+
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - run: npm run build
+
+      # `--publish never` keeps uploading in one place: the job below, which
+      # sees both platforms' artifacts at once and so can create the release
+      # complete rather than amending it twice.
+      - run: npx electron-builder ${{ matrix.builder }} --publish never
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.os }}
+          path: ${{ matrix.artifacts }}
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Write release notes
+        run: |
+          cat > notes.md <<'EOF'
+          Neither build is code-signed, so both shells will object the first time.
+
+          - **macOS (Apple silicon)** — drag vav to Applications, then run
+            `xattr -dr com.apple.quarantine /Applications/vav.app` once.
+            Without it Gatekeeper reports the app as damaged.
+          - **Windows (x64)** — SmartScreen warns on first run: choose
+            *More info* → *Run anyway*.
+          EOF
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.event.inputs.tag || github.ref_name }}
+        run: |
+          ls -la artifacts
+          gh release create "$TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "$TAG" \
+            --notes-file notes.md \
+            artifacts/*

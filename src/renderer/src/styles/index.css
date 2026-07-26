@@ -1,0 +1,2413 @@
+/* ==========================================================================
+   vav — design tokens
+
+   Light is the wordmark's world: ink for text, the logo's periwinkle for
+   anything interactive, on a cool paper white. Dark is a neutral grey ramp
+   with no hue of its own, so the accent and the tool tones are the only
+   colour on screen.
+
+   Regions are told apart by surface value and by colour, not by rules: only
+   the terminal and the popover keep a drawn edge.
+   ========================================================================== */
+
+:root {
+  --font-ui: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'PingFang SC', system-ui, sans-serif;
+  --font-code: 'SF Mono', Menlo, monospace;
+  --code-size: 12px;
+
+  --accent: #6b5bc0;
+  --accent-hover: #5c4cb1;
+  --accent-soft: rgba(107, 91, 192, 0.11);
+  --accent-veil: rgba(107, 91, 192, 0.055);
+  --accent-text: #5a4bab;
+  --danger: #bf3b3b;
+  --warning: #8f6a15;
+  --success: #2f7a52;
+
+  /* Categorical, not decorative: one hue per kind of thing the agent touched,
+     so a glance down the transcript reads as shell / read / write / list. */
+  --tone-shell: #1f7a86;
+  --tone-read: #35619f;
+  --tone-write: #a1621b;
+  --tone-list: #6b5bc0;
+
+  --bg-window: #eceaf1;
+  --bg-content: #fcfcfd;
+  --bg-raised: #ffffff;
+  --bg-sunken: #f3f2f7;
+  --bg-hover: rgba(19, 27, 53, 0.05);
+  --bg-selected: #e5e2f3;
+  /* Kept in sync with THEME_DARK.background in terminalRegistry.ts. */
+  --bg-terminal: #101012;
+
+  --text: #131b35;
+  --text-secondary: #5b6178;
+  --text-tertiary: #8b90a5;
+  --text-inverse: #fbfbfe;
+
+  --border: rgba(19, 27, 53, 0.09);
+  --border-strong: rgba(19, 27, 53, 0.16);
+
+  --radius-sm: 6px;
+  --radius: 10px;
+  --radius-lg: 14px;
+  --radius-xl: 18px;
+
+  --shadow-sheet: 0 24px 64px rgba(19, 27, 53, 0.26), 0 2px 8px rgba(19, 27, 53, 0.12);
+  --shadow-card: 0 1px 2px rgba(19, 27, 53, 0.07);
+  --shadow-raised: 0 1px 3px rgba(19, 27, 53, 0.09), 0 4px 14px rgba(19, 27, 53, 0.06);
+  --ring-accent: 0 0 0 3px var(--accent-soft);
+
+  --toolbar-height: 52px;
+  --row-height: 34px;
+
+  /* Room for the system's own window buttons, which are drawn over our
+     frameless title bar. macOS puts the traffic lights at the leading edge;
+     Windows draws minimise/maximise/close at the trailing one. */
+  --chrome-lead: 88px;
+  --chrome-trail: 12px;
+  /* Vertical clearance for windows whose leading edge is a sidebar rather than
+     a title bar, so the buttons never land on a row. */
+  --chrome-gutter: 44px;
+
+  /* Motion. The built-in CSS easings are too weak to read as deliberate, so
+     everything here uses these three curves and nothing hand-rolled. */
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
+  --ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);
+
+  --dur-press: 120ms;
+  --dur-hover: 140ms;
+  --dur-pop: 180ms;
+  --dur-sheet: 220ms;
+}
+
+:root[data-platform='win32'],
+:root[data-platform='linux'] {
+  --chrome-lead: 12px;
+  --chrome-trail: 146px;
+  --chrome-gutter: 14px;
+}
+
+/* A true neutral ramp — no blue cast. Every step is a grey; the only chroma in
+   the dark theme comes from the accent and the four tool tones. */
+:root[data-theme='dark'] {
+  --accent: #8d7ce6;
+  --accent-hover: #9e8ff1;
+  --accent-soft: rgba(141, 124, 230, 0.18);
+  --accent-veil: rgba(141, 124, 230, 0.08);
+  --accent-text: #b7aaf3;
+  --danger: #e8817c;
+  --warning: #d8ac62;
+  --success: #6ec596;
+
+  --tone-shell: #6fc3ce;
+  --tone-read: #93b4ea;
+  --tone-write: #ddaf74;
+  --tone-list: #b0a2ec;
+
+  --bg-window: #121213;
+  --bg-content: #1b1b1d;
+  --bg-raised: #242427;
+  --bg-sunken: #161617;
+  --bg-hover: rgba(255, 255, 255, 0.055);
+  --bg-selected: #2d2d31;
+  --bg-terminal: #101012;
+
+  --text: #efeff1;
+  --text-secondary: #a2a2a9;
+  --text-tertiary: #73737b;
+  --text-inverse: #17171a;
+
+  --border: rgba(255, 255, 255, 0.07);
+  --border-strong: rgba(255, 255, 255, 0.14);
+
+  --shadow-sheet: 0 24px 64px rgba(0, 0, 0, 0.62), 0 2px 8px rgba(0, 0, 0, 0.45);
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.32);
+  --shadow-raised: 0 1px 3px rgba(0, 0, 0, 0.38), 0 6px 18px rgba(0, 0, 0, 0.26);
+}
+
+:root[data-reduce-motion='true'] * {
+  animation-duration: 0.01ms !important;
+  transition-duration: 0.01ms !important;
+  scroll-behavior: auto !important;
+}
+
+/* The OS setting is a gentler instruction than our own toggle: drop the
+   movement, keep the opacity and colour changes that explain what happened. */
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 200ms !important;
+    animation-delay: 0ms !important;
+    scroll-behavior: auto !important;
+  }
+  .empty-state > *,
+  .modal,
+  .tool-detail {
+    transform: none !important;
+  }
+  .btn:active:not(:disabled),
+  .chip:active:not(:disabled),
+  .send-button:active:not(:disabled),
+  .variant-step:active:not(:disabled) {
+    transform: none;
+  }
+}
+
+/* No focus rings anywhere: the caret and selection carry focus on their own. */
+*:focus,
+*:focus-visible,
+*:focus-within {
+  outline: none !important;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+}
+
+body {
+  font-family: var(--font-ui);
+  font-size: 13.5px;
+  color: var(--text);
+  background: transparent;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  cursor: default;
+  user-select: none;
+  /* Range, checkbox and radio pick this up instead of the system blue. */
+  accent-color: var(--accent);
+}
+
+select {
+  height: 28px;
+  padding: 0 8px;
+  border-radius: var(--radius-sm);
+  border: 0;
+  background: var(--bg-sunken);
+  box-shadow: inset 0 0 0 1px var(--border);
+  outline: none;
+}
+
+input[type='range'] {
+  height: 20px;
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+  color: inherit;
+}
+
+::-webkit-scrollbar {
+  width: 11px;
+  height: 11px;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 6px;
+  border: 3px solid transparent;
+  background-clip: content-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--text-tertiary);
+  background-clip: content-box;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* ==========================================================================
+   App shell
+   ========================================================================== */
+
+/* The wash is the only thing painting the window itself, and it is what keeps
+   a flat, border-free layout from reading as one undifferentiated slab. */
+.app-shell {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background:
+    radial-gradient(120% 80% at 8% -10%, var(--accent-veil), transparent 62%),
+    var(--bg-window);
+}
+
+.titlebar {
+  height: var(--toolbar-height);
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 var(--chrome-trail) 0 var(--chrome-lead);
+  -webkit-app-region: drag;
+  background: transparent;
+}
+
+/* Detached windows carry the session name in the native title bar, so their
+   header is only a drag strip clearing the traffic lights. */
+.titlebar.bare {
+  height: 38px;
+  padding: 0;
+}
+
+.titlebar .spacer {
+  flex: 1;
+}
+
+.titlebar button {
+  -webkit-app-region: no-drag;
+}
+
+.body-split {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+  padding: 0 8px 8px;
+  gap: 2px;
+}
+
+/* ==========================================================================
+   Buttons and controls
+   ========================================================================== */
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 11px;
+  border-radius: var(--radius-sm);
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text);
+  cursor: default;
+  white-space: nowrap;
+  transition:
+    background var(--dur-hover) ease,
+    border-color var(--dur-hover) ease,
+    color var(--dur-hover) ease,
+    transform var(--dur-press) var(--ease-out);
+}
+
+.btn:hover:not(:disabled) {
+  background: var(--bg-hover);
+}
+
+/* Every pressable thing answers the press before it answers the click. */
+.btn:active:not(:disabled) {
+  transform: scale(0.97);
+}
+
+.btn:disabled {
+  opacity: 0.38;
+}
+
+.btn.icon-only {
+  width: 28px;
+  padding: 0;
+}
+
+.btn.secondary {
+  background: var(--bg-raised);
+  box-shadow: var(--shadow-card);
+}
+
+.btn.secondary:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent) 9%, var(--bg-raised));
+  color: var(--accent-text);
+}
+
+.btn.primary {
+  background: var(--accent);
+  border-color: transparent;
+  color: #fff;
+  font-weight: 500;
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--accent) 40%, transparent);
+}
+
+.btn.primary:hover:not(:disabled) {
+  background: var(--accent-hover);
+}
+
+.btn.danger {
+  background: var(--danger);
+  color: #fff;
+  font-weight: 500;
+}
+
+.btn.danger:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
+
+.btn.sm {
+  height: 24px;
+  font-size: 12px;
+  padding: 0 9px;
+}
+
+.btn.sm.icon-only {
+  width: 24px;
+  padding: 0;
+}
+
+/* Icons must never be the flex item that gives way when a button is tight. */
+.btn svg,
+.chip svg {
+  flex: 0 0 auto;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 24px;
+  max-width: 190px;
+  padding: 0 10px;
+  border-radius: 12px;
+  border: 0;
+  background: var(--bg-hover);
+  color: var(--text-secondary);
+  font-size: 12px;
+  cursor: default;
+  transition:
+    background var(--dur-hover) ease,
+    color var(--dur-hover) ease,
+    transform var(--dur-press) var(--ease-out);
+}
+
+.chip:hover {
+  background: color-mix(in srgb, var(--accent) 10%, var(--bg-hover));
+  color: var(--text);
+}
+
+.chip:active {
+  transform: scale(0.97);
+}
+
+.chip.active {
+  background: var(--accent-soft);
+  color: var(--accent-text);
+  font-weight: 500;
+}
+
+.chip svg {
+  opacity: 0.75;
+}
+
+.chip.active svg {
+  opacity: 1;
+}
+
+.chip .chip-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Filled rather than outlined: the fill says "editable" as clearly as a rule
+   would, and it is one less line on a screen that already has few. */
+.text-field {
+  width: 100%;
+  height: 28px;
+  padding: 0 10px;
+  border-radius: var(--radius-sm);
+  border: 0;
+  background: var(--bg-sunken);
+  box-shadow: inset 0 0 0 1px var(--border);
+  outline: none;
+  user-select: text;
+  transition:
+    background var(--dur-hover) ease,
+    box-shadow var(--dur-hover) ease;
+}
+
+.text-field:focus {
+  background: var(--bg-raised);
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--accent) 55%, transparent),
+    var(--ring-accent);
+}
+
+.segmented {
+  display: inline-flex;
+  padding: 2px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-sunken);
+}
+
+.segmented button {
+  height: 22px;
+  padding: 0 12px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  cursor: default;
+  font-size: 12px;
+  color: var(--text-secondary);
+  transition:
+    background var(--dur-hover) ease,
+    color var(--dur-hover) ease;
+}
+
+.segmented button.active {
+  background: var(--bg-raised);
+  box-shadow: var(--shadow-card);
+  color: var(--text);
+  font-weight: 500;
+}
+
+.toggle {
+  position: relative;
+  width: 40px;
+  height: 23px;
+  border-radius: 12px;
+  border: none;
+  background: var(--border-strong);
+  cursor: default;
+  transition: background var(--dur-pop) ease;
+}
+
+.toggle.on {
+  background: var(--accent);
+}
+
+.toggle::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 19px;
+  height: 19px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.18);
+  transition: transform var(--dur-pop) var(--ease-out);
+}
+
+.toggle.on::after {
+  transform: translateX(17px);
+}
+
+.muted {
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.tiny {
+  font-size: 11px;
+}
+
+kbd {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--bg-hover);
+  font-family: var(--font-ui);
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+/* ==========================================================================
+   Sidebar
+   ========================================================================== */
+
+.sidebar {
+  width: 232px;
+  min-width: 190px;
+  max-width: 320px;
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  background: transparent;
+}
+
+.sidebar-search {
+  padding: 4px 10px 10px;
+}
+
+.sidebar-search .text-field {
+  background: var(--bg-hover);
+  box-shadow: none;
+}
+
+.sidebar-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0 8px 10px;
+}
+
+/* The header is the divider. A dated caption above a gap says "new group"
+   at least as well as a rule through the list, and costs no ink. */
+.conv-group-header {
+  padding: 14px 9px 4px;
+  color: var(--text-tertiary);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.conv-group-divider {
+  height: 4px;
+}
+
+.conv-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: var(--row-height);
+  padding: 0 9px;
+  border-radius: 8px;
+  cursor: default;
+  transition:
+    background var(--dur-hover) ease,
+    color var(--dur-hover) ease;
+}
+
+.conv-row:hover {
+  background: var(--bg-hover);
+}
+
+.conv-row.selected {
+  background: var(--bg-selected);
+  color: var(--text);
+  font-weight: 500;
+}
+
+/* A rail, not a fill: the selected row is marked at the edge the eye scans
+   down, so the row itself can stay quiet. */
+.conv-row.selected::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 7px;
+  bottom: 7px;
+  width: 3px;
+  border-radius: 0 2px 2px 0;
+  background: var(--accent);
+}
+
+.conv-row.multi {
+  background: var(--accent-soft);
+  color: var(--text);
+}
+
+.conv-icon {
+  flex: 0 0 auto;
+  display: flex;
+  color: var(--text-tertiary);
+}
+
+.conv-row.selected .conv-icon {
+  color: var(--accent-text);
+}
+
+.conv-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  line-height: 1.3;
+}
+
+.conv-title {
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.conv-subtitle {
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--text-tertiary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.conv-badge {
+  flex: 0 0 auto;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+}
+
+.conv-badge.running {
+  background: var(--success);
+  animation: pulse 1.4s ease-in-out infinite;
+}
+
+.conv-badge.awaiting {
+  background: var(--warning);
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.25;
+  }
+}
+
+.spin {
+  animation: spin 0.7s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.rename-field {
+  flex: 1;
+  height: 24px;
+  min-width: 0;
+}
+
+/* ==========================================================================
+   Detail column
+   ========================================================================== */
+
+/* The card floats on the window wash; elevation is what separates it, so it
+   draws no edge of its own. */
+.detail {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--bg-content);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-raised);
+}
+
+.banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 16px;
+  font-size: 12px;
+}
+
+.banner.error {
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+  color: var(--danger);
+}
+
+.banner .spacer {
+  flex: 1;
+}
+
+.search-strip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 40px;
+  padding: 0 14px;
+  background: var(--bg-sunken);
+}
+
+.transcript {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 22px 0 28px;
+  scroll-behavior: smooth;
+}
+
+.transcript-inner {
+  max-width: 740px;
+  /* Full height so an empty transcript can centre itself; messages still
+     stack from the top, since that is where a conversation starts. */
+  min-height: 100%;
+  margin: 0 auto;
+  padding: 0 28px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+/* ==========================================================================
+   Messages
+   ========================================================================== */
+
+/* The prompt is the head of a log entry, not a chat bubble: same column and
+   same left edge as everything else, with the rule hanging in the gutter so
+   the text itself stays flush with the reply below it. */
+.message.user {
+  align-self: stretch;
+  max-width: 100%;
+  margin-left: -14px;
+  padding-left: 12px;
+  border-left: 2px solid var(--accent);
+  color: var(--text);
+  font-weight: 500;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+.message.assistant {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  user-select: text;
+}
+
+.message.system {
+  align-self: flex-start;
+  color: var(--text-tertiary);
+  font-size: 12px;
+}
+
+.message.search-hit {
+  scroll-margin: 60px;
+}
+
+.message.search-current .markdown,
+.message.search-current.user {
+  border-radius: 6px;
+  background: var(--accent-soft);
+  box-shadow: 0 0 0 4px var(--accent-soft);
+}
+
+mark {
+  background: color-mix(in srgb, var(--warning) 38%, transparent);
+  color: inherit;
+  border-radius: 3px;
+  padding: 0 1px;
+}
+
+.markdown {
+  line-height: 1.72;
+  overflow-wrap: anywhere;
+}
+
+.markdown > *:first-child {
+  margin-top: 0;
+}
+.markdown > *:last-child {
+  margin-bottom: 0;
+}
+
+.markdown p {
+  margin: 0.65em 0;
+}
+
+/* Code is never rewrapped to fit: a line that does not fit scrolls sideways,
+   because a broken line reads as a different program. */
+.markdown pre {
+  margin: 0.85em 0;
+  padding: 12px 14px;
+  border-radius: var(--radius);
+  background: var(--bg-sunken);
+  line-height: 1.55;
+  overflow-x: auto;
+}
+
+.markdown pre code {
+  white-space: pre;
+}
+
+.markdown code {
+  font-family: var(--font-code);
+  font-size: var(--code-size);
+}
+
+.markdown :not(pre) > code {
+  padding: 1.5px 5px;
+  border-radius: 4px;
+  background: var(--accent-soft);
+  color: var(--accent-text);
+}
+
+.markdown blockquote {
+  margin: 0.7em 0;
+  padding: 2px 0 2px 14px;
+  border-left: 2px solid var(--accent-soft);
+  color: var(--text-secondary);
+}
+
+.markdown ul,
+.markdown ol {
+  margin: 0.6em 0;
+  padding-left: 1.5em;
+}
+
+.markdown li {
+  margin: 0.2em 0;
+}
+
+.markdown li::marker {
+  color: var(--text-tertiary);
+}
+
+/* Three levels that actually read as three levels: an answer with sections in
+   it is a document, and the reader should be able to skim its structure. */
+.markdown h1,
+.markdown h2,
+.markdown h3 {
+  margin: 1.15em 0 0.45em;
+  font-weight: 600;
+  letter-spacing: -0.2px;
+}
+
+.markdown h1 {
+  font-size: 1.2em;
+}
+
+.markdown h2 {
+  font-size: 1.09em;
+}
+
+.markdown h3 {
+  font-size: 1em;
+  color: var(--text-secondary);
+}
+
+.markdown a {
+  color: var(--accent-text);
+  text-underline-offset: 2px;
+}
+
+.markdown hr {
+  margin: 1.5em 0;
+  border: none;
+  border-top: 1px solid var(--border);
+}
+
+/* A table keeps its columns. When the window is too narrow the table scrolls
+   sideways inside this wrapper rather than crushing every column into a stack
+   of wrapped words, which is the one thing that makes tabular data unreadable.
+   The wrapper is emitted by the renderer (lib/markdown.ts). */
+.table-scroll {
+  margin: 0.9em 0;
+  max-width: 100%;
+  overflow-x: auto;
+  border-radius: var(--radius-sm);
+  overscroll-behavior-x: contain;
+  /* Scroll shadows: the two `local` layers are painted on the content and
+     slide away at each end, uncovering the `scroll` layers pinned to the
+     edges. The result is an edge that only shades while there is more table
+     in that direction — an affordance the overlay scrollbar does not give. */
+  background:
+    linear-gradient(to right, var(--bg-content) 30%, transparent) left / 28px 100% no-repeat local,
+    linear-gradient(to left, var(--bg-content) 30%, transparent) right / 28px 100% no-repeat local,
+    linear-gradient(to right, rgba(0, 0, 0, 0.16), transparent) left / 14px 100% no-repeat scroll,
+    linear-gradient(to left, rgba(0, 0, 0, 0.16), transparent) right / 14px 100% no-repeat scroll;
+}
+
+.table-scroll::-webkit-scrollbar {
+  height: 8px;
+}
+
+/* `max-content` is the whole fix: the table takes the width its columns
+   actually need and the wrapper scrolls, instead of the columns being
+   squeezed until every row is three lines tall. */
+.markdown table {
+  border-collapse: collapse;
+  width: max-content;
+  min-width: 100%;
+  margin: 0;
+  font-size: 12.5px;
+}
+
+.markdown th,
+.markdown td {
+  padding: 6px 12px;
+  text-align: left;
+  /* The ceiling keeps one essay-length cell from dragging the whole table off
+     screen; only that column wraps. */
+  max-width: 26rem;
+  overflow-wrap: break-word;
+}
+
+/* Banding carries the rows, a tint carries the header: no grid lines at all. */
+.markdown th {
+  background: var(--accent-soft);
+  color: var(--accent-text);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.markdown tbody tr:nth-child(even) {
+  background: var(--bg-hover);
+}
+
+.plain-tail {
+  margin: 0;
+  font-family: var(--font-code);
+  font-size: var(--code-size);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.reasoning {
+  padding: 2px 12px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-hover);
+  color: var(--text-secondary);
+  font-size: 12.5px;
+}
+
+.reasoning summary {
+  cursor: default;
+  color: var(--text-tertiary);
+  margin-bottom: 5px;
+  font-style: italic;
+}
+
+.reasoning-body {
+  white-space: pre-wrap;
+  line-height: 1.6;
+  max-height: 240px;
+  overflow-y: auto;
+}
+
+.message-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-top: -2px;
+  opacity: 0;
+  transition: opacity var(--dur-hover) ease;
+}
+
+.message-actions .btn {
+  color: var(--text-tertiary);
+}
+
+.message-actions .btn:hover {
+  color: var(--text);
+}
+
+.message.assistant:hover .message-actions,
+.message-group:hover .message-actions,
+.message-group:focus-within .message-actions {
+  opacity: 1;
+}
+
+/* Controls sit beside the prompt, not under it: stacked, their reserved row
+   is 24px of air between a question and its answer even while invisible, and
+   a log cannot afford that between every pair. */
+.message-group.user {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  max-width: 100%;
+}
+
+.message-group.user .message.user {
+  flex: 1;
+  min-width: 0;
+}
+
+.message-group.user .message-actions {
+  flex: 0 0 auto;
+  margin-top: -3px;
+}
+
+.message.user.editing {
+  display: flex;
+  width: calc(100% + 14px);
+  max-width: none;
+}
+
+.message-editor {
+  width: 100%;
+  border: 0;
+  padding: 0;
+  margin: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  line-height: 1.55;
+  resize: none;
+  overflow: hidden;
+}
+
+/* Root-level branches have no message to sit under. */
+.branch-pager-row {
+  display: flex;
+  justify-content: flex-start;
+  padding-bottom: 4px;
+}
+
+.branch-pager-row .variant-pager {
+  margin-right: 0;
+  opacity: 1;
+}
+
+.variant-pager {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  margin-right: 4px;
+  color: var(--text-tertiary);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.variant-step {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  transition:
+    background var(--dur-hover) ease,
+    color var(--dur-hover) ease,
+    transform var(--dur-press) var(--ease-out);
+}
+
+.variant-step:active:not(:disabled) {
+  transform: scale(0.94);
+}
+
+.variant-step:hover:not(:disabled) {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.variant-step:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
+.typing-dot {
+  display: inline-block;
+  width: 8px;
+  height: 15px;
+  margin-left: 2px;
+  border-radius: 2px;
+  background: var(--accent);
+  vertical-align: text-bottom;
+  animation: blink 1.1s steps(2, start) infinite;
+}
+
+@keyframes blink {
+  50% {
+    opacity: 0;
+  }
+}
+
+/* ==========================================================================
+   Syntax highlighting — tuned to the warm palette rather than a stock theme
+   ========================================================================== */
+
+.hljs-comment,
+.hljs-quote {
+  color: var(--text-tertiary);
+  font-style: italic;
+}
+
+.hljs-keyword,
+.hljs-selector-tag,
+.hljs-literal,
+.hljs-doctag {
+  color: #7c4fbd;
+}
+
+.hljs-string,
+.hljs-regexp,
+.hljs-addition {
+  color: #2e7d5b;
+}
+
+.hljs-number,
+.hljs-symbol,
+.hljs-bullet {
+  color: #b06030;
+}
+
+.hljs-title,
+.hljs-section,
+.hljs-name,
+.hljs-selector-id {
+  color: #2f5fa8;
+}
+
+.hljs-attr,
+.hljs-attribute,
+.hljs-variable,
+.hljs-template-variable {
+  color: #7a6420;
+}
+
+.hljs-built_in,
+.hljs-type,
+.hljs-class .hljs-title {
+  color: #1f7a86;
+}
+
+.hljs-deletion {
+  color: var(--danger);
+}
+
+.hljs-emphasis {
+  font-style: italic;
+}
+
+.hljs-strong {
+  font-weight: 600;
+}
+
+:root[data-theme='dark'] .hljs-keyword,
+:root[data-theme='dark'] .hljs-selector-tag,
+:root[data-theme='dark'] .hljs-literal,
+:root[data-theme='dark'] .hljs-doctag {
+  color: #c2aae8;
+}
+
+:root[data-theme='dark'] .hljs-string,
+:root[data-theme='dark'] .hljs-regexp,
+:root[data-theme='dark'] .hljs-addition {
+  color: #8fcaa8;
+}
+
+:root[data-theme='dark'] .hljs-number,
+:root[data-theme='dark'] .hljs-symbol,
+:root[data-theme='dark'] .hljs-bullet {
+  color: #e0a179;
+}
+
+:root[data-theme='dark'] .hljs-title,
+:root[data-theme='dark'] .hljs-section,
+:root[data-theme='dark'] .hljs-name,
+:root[data-theme='dark'] .hljs-selector-id {
+  color: #8fb6ec;
+}
+
+:root[data-theme='dark'] .hljs-attr,
+:root[data-theme='dark'] .hljs-attribute,
+:root[data-theme='dark'] .hljs-variable,
+:root[data-theme='dark'] .hljs-template-variable {
+  color: #d9c084;
+}
+
+:root[data-theme='dark'] .hljs-built_in,
+:root[data-theme='dark'] .hljs-type,
+:root[data-theme='dark'] .hljs-class .hljs-title {
+  color: #7ec8d4;
+}
+
+/* ==========================================================================
+   Tool cards
+   ========================================================================== */
+
+/* A tool call is a line of the turn, not a document attached to it: no border,
+   no fill, no shadow. The chrome shows up under the pointer and goes away. */
+.tool-call {
+  /* Pulled out by the row's own padding, so the chevron lines up with the
+     paragraph text above it and the hover fill still has room to breathe. */
+  margin: -1px -8px;
+}
+
+.tool-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  padding: 4px 8px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  text-align: left;
+  cursor: default;
+  transition: background var(--dur-hover) ease;
+}
+
+.tool-row:hover {
+  background: var(--bg-hover);
+}
+
+.tool-chevron {
+  flex: 0 0 auto;
+  color: var(--text-tertiary);
+  transition: transform var(--dur-pop) var(--ease-out);
+}
+
+.tool-call.expanded .tool-chevron {
+  transform: rotate(90deg);
+}
+
+/* The glyph is the only colour on a collapsed row, and it is categorical: the
+   hue tells you what kind of thing happened before you read the name. */
+.tool-glyph {
+  flex: 0 0 auto;
+  color: var(--text-tertiary);
+}
+
+.tool-call[data-tool='terminal'] .tool-glyph {
+  color: var(--tone-shell);
+}
+.tool-call[data-tool='fs_read'] .tool-glyph {
+  color: var(--tone-read);
+}
+.tool-call[data-tool='fs_write'] .tool-glyph {
+  color: var(--tone-write);
+}
+.tool-call[data-tool='fs_list'] .tool-glyph {
+  color: var(--tone-list);
+}
+.tool-call[data-tool='request'] .tool-glyph {
+  color: var(--warning);
+}
+.tool-call[data-tool='ask_user_question'] .tool-glyph {
+  color: var(--accent-text);
+}
+
+.tool-call[data-status='error'] .tool-glyph {
+  color: var(--danger);
+}
+
+/* Expanded, the row is a heading for the panel below it and says so. */
+.tool-call.expanded .tool-row {
+  background: var(--bg-hover);
+}
+
+.tool-call.expanded .tool-name {
+  color: var(--text);
+}
+
+.tool-name {
+  flex: 0 0 auto;
+  font-size: 11.5px;
+  font-weight: 400;
+  color: var(--text-secondary);
+}
+
+.tool-summary {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--font-code);
+  font-size: 10.5px;
+  color: var(--text-tertiary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Success is the expected outcome, so it gets a mark rather than a word. */
+.tool-mark {
+  flex: 0 0 auto;
+  color: var(--text-tertiary);
+  transition: color var(--dur-hover) ease;
+}
+
+.tool-mark.done {
+  color: var(--success);
+  opacity: 0.6;
+}
+
+.tool-mark.failed {
+  color: var(--danger);
+}
+
+.tool-state {
+  flex: 0 0 auto;
+  font-size: 10.5px;
+  color: var(--text-tertiary);
+}
+
+.tool-state.executing {
+  color: var(--accent-text);
+}
+.tool-state.error {
+  color: var(--danger);
+}
+.tool-state.expired,
+.tool-state.skipped {
+  color: var(--warning);
+}
+
+/* Grid rows animate the open/close and retarget mid-flight; height would not. */
+.tool-detail {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows var(--dur-pop) var(--ease-out);
+}
+
+.tool-call.expanded .tool-detail {
+  grid-template-rows: 1fr;
+}
+
+.tool-detail-inner {
+  overflow: hidden;
+  min-height: 0;
+}
+
+/* The detail spans the full text column rather than indenting under the row:
+   a diff or a log needs the width more than it needs to look nested. */
+.tool-call.expanded .tool-detail-inner > * {
+  margin: 5px 8px 3px;
+}
+
+/* --------------------------------------------------------------------------
+   Tool detail views
+   -------------------------------------------------------------------------- */
+
+.detail-terminal,
+.detail-diff,
+.detail-file,
+.detail-listing,
+.detail-qa,
+.detail-raw {
+  font-family: var(--font-code);
+  font-size: var(--code-size);
+  line-height: 1.6;
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  user-select: text;
+}
+
+/* The shell result keeps the shell's own colours — it is a terminal, and
+   reading it next to the real one below should not feel like a translation.
+   Its fill is darker than any app surface, so it needs no edge drawn. */
+.detail-terminal {
+  background: var(--bg-terminal);
+  color: #d7d7da;
+  padding: 8px 11px;
+}
+
+.term-command {
+  display: flex;
+  gap: 8px;
+  color: #f2f2f4;
+  overflow-wrap: anywhere;
+}
+
+.term-prompt {
+  flex: 0 0 auto;
+  color: #a294e6;
+}
+
+/* Command output is fixed-width by nature: scroll it, never rewrap it. */
+.term-output {
+  margin: 4px 0 0;
+  max-height: 320px;
+  overflow: auto;
+  white-space: pre;
+  color: #b4b4bb;
+}
+
+.term-exit {
+  margin-top: 6px;
+  font-size: 11px;
+  color: #6ec596;
+}
+
+.term-exit.failed {
+  color: #e8817c;
+}
+
+.detail-diff,
+.detail-file,
+.detail-listing {
+  max-height: 340px;
+  overflow: auto;
+  background: var(--bg-sunken);
+  padding: 6px 0;
+}
+
+.diff-line,
+.file-line {
+  display: flex;
+  width: max-content;
+  min-width: 100%;
+  padding: 0 10px;
+  white-space: pre;
+}
+
+.diff-mark {
+  flex: 0 0 auto;
+  width: 12px;
+  color: var(--text-tertiary);
+}
+
+/* The gutter bar carries the change at a glance; the wash behind it is kept
+   light enough that the code on top is still the thing you read. */
+.diff-line.add {
+  background: color-mix(in srgb, var(--success) 12%, transparent);
+  box-shadow: inset 2px 0 0 var(--success);
+}
+.diff-line.add .diff-mark {
+  color: var(--success);
+}
+.diff-line.remove {
+  background: color-mix(in srgb, var(--danger) 11%, transparent);
+  box-shadow: inset 2px 0 0 var(--danger);
+}
+.diff-line.remove .diff-mark {
+  color: var(--danger);
+}
+.diff-line.hunk {
+  margin: 4px 0 2px;
+  color: var(--accent-text);
+  background: var(--accent-soft);
+}
+.diff-line.more {
+  color: var(--text-tertiary);
+  font-style: italic;
+}
+
+.file-ln {
+  flex: 0 0 auto;
+  width: 34px;
+  padding-right: 12px;
+  text-align: right;
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+  user-select: none;
+}
+
+.file-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.detail-listing {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 0 12px;
+  padding: 7px 10px;
+}
+
+.listing-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  color: var(--text-secondary);
+}
+
+.listing-row svg {
+  flex: 0 0 auto;
+  color: var(--text-tertiary);
+}
+
+.listing-row.dir {
+  color: var(--text);
+}
+
+.listing-row.dir svg {
+  color: var(--accent-text);
+}
+
+.listing-row span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.detail-qa {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  font-family: var(--font-ui);
+  font-size: 12.5px;
+}
+
+.detail-question {
+  color: var(--text-secondary);
+}
+
+.detail-answer {
+  padding: 5px 10px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-sunken);
+  border-left: 2px solid var(--accent);
+}
+
+.detail-label {
+  margin-bottom: 4px;
+  font-family: var(--font-ui);
+  font-size: 11px;
+  color: var(--text-tertiary);
+}
+
+.detail-raw pre {
+  margin: 0 0 8px;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-sunken);
+  font-size: var(--code-size);
+  line-height: 1.55;
+  white-space: pre;
+  max-height: 300px;
+  overflow: auto;
+}
+
+.detail-raw pre:last-child {
+  margin-bottom: 0;
+}
+
+/* The one card in the transcript that is allowed to look like a card: the
+   turn is parked until it is answered, so it should stop the eye. */
+.ask-card {
+  position: relative;
+  border-radius: var(--radius);
+  background: var(--accent-soft);
+  box-shadow: inset 3px 0 0 var(--accent);
+  padding: 14px 14px 14px 17px;
+  display: flex;
+  flex-direction: column;
+  gap: 11px;
+}
+
+.ask-card .ask-title {
+  font-weight: 600;
+}
+
+.ask-card .ask-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.ask-card.request {
+  background: color-mix(in srgb, var(--warning) 11%, transparent);
+  box-shadow: inset 3px 0 0 var(--warning);
+}
+
+/* ==========================================================================
+   Empty states
+   ========================================================================== */
+
+.empty-state {
+  margin: auto;
+  padding: 40px 24px;
+  max-width: 480px;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+
+/* A blank transcript is seen rarely and deliberately, so it can afford the
+   delight budget the rest of the app spends nothing on. */
+.empty-state > * {
+  animation: empty-in 320ms var(--ease-out) backwards;
+}
+
+.empty-state > *:nth-child(2) {
+  animation-delay: 50ms;
+}
+.empty-state > *:nth-child(3) {
+  animation-delay: 100ms;
+}
+.empty-state > *:nth-child(4) {
+  animation-delay: 150ms;
+}
+
+@keyframes empty-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+
+.empty-logo {
+  display: inline-flex;
+  margin-bottom: 2px;
+  opacity: 0.9;
+}
+
+.empty-logo img {
+  display: block;
+  height: 30px;
+  width: auto;
+}
+
+.empty-logo .logo-dark {
+  display: none;
+}
+
+:root[data-theme='dark'] .empty-logo .logo-light {
+  display: none;
+}
+
+:root[data-theme='dark'] .empty-logo .logo-dark {
+  display: block;
+}
+
+.empty-state .empty-title {
+  font-size: 21px;
+  font-weight: 600;
+  /* Tracking is size-specific: large text reads too loose at zero. */
+  letter-spacing: -0.3px;
+}
+
+.empty-state .empty-desc {
+  color: var(--text-secondary);
+  line-height: 1.7;
+}
+
+.suggestions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: center;
+  margin-top: 6px;
+}
+
+/* Severity is a colour and a bar, not an outline. */
+.inline-alert {
+  display: flex;
+  gap: 9px;
+  align-items: flex-start;
+  text-align: left;
+  padding: 11px 14px 11px 17px;
+  border-radius: var(--radius);
+  background: var(--bg-sunken);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.inline-alert .alert-title {
+  font-weight: 600;
+}
+
+.inline-alert.warning {
+  background: color-mix(in srgb, var(--warning) 11%, transparent);
+  box-shadow: inset 3px 0 0 var(--warning);
+}
+.inline-alert.warning .alert-title {
+  color: var(--warning);
+}
+.inline-alert.error {
+  background: color-mix(in srgb, var(--danger) 11%, transparent);
+  box-shadow: inset 3px 0 0 var(--danger);
+}
+.inline-alert.error .alert-title {
+  color: var(--danger);
+}
+.inline-alert.success {
+  background: color-mix(in srgb, var(--success) 11%, transparent);
+  box-shadow: inset 3px 0 0 var(--success);
+}
+.inline-alert.success .alert-title {
+  color: var(--success);
+}
+.inline-alert.info {
+  background: var(--bg-sunken);
+  box-shadow: inset 3px 0 0 var(--border-strong);
+}
+
+/* ==========================================================================
+   Tools panel
+   ========================================================================== */
+
+/* The dock owns the background; the tools strip and the composer inside it
+   draw none of their own, so they read as one region. It is a step down in
+   value from the transcript, which is the whole separation — no rule. */
+.dock {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-sunken);
+}
+
+.tools-panel {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  background: transparent;
+}
+
+.tools-header {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  height: 34px;
+  padding: 0 10px;
+  flex: 0 0 auto;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.tools-header::-webkit-scrollbar {
+  display: none;
+}
+
+.tools-header .spacer {
+  flex: 1;
+}
+
+/* The close control is chrome, so it is only there while the pointer is. */
+.tab-chip {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+}
+
+.tab-chip > .btn {
+  width: 0;
+  padding: 0;
+  opacity: 0;
+  overflow: hidden;
+  color: var(--text-tertiary);
+  transition:
+    width var(--dur-hover) var(--ease-out),
+    opacity var(--dur-hover) ease;
+}
+
+.tab-chip:hover > .btn {
+  width: 18px;
+  opacity: 1;
+}
+
+/* The agent's own session is marked in the accent: it is not a shell the user
+   opened, it is the one the agent is driving. */
+.tab-chip[data-agent='true'] .chip svg {
+  color: var(--accent-text);
+  opacity: 1;
+}
+
+.panel-resizer {
+  position: relative;
+  height: 8px;
+  margin-top: -4px;
+  cursor: ns-resize;
+  flex: 0 0 auto;
+}
+
+/* The grip only draws itself under the pointer; at rest the dock has no
+   top edge at all. */
+.panel-resizer::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 3px;
+  width: 34px;
+  height: 3px;
+  transform: translateX(-50%);
+  border-radius: 2px;
+  background: var(--accent);
+  opacity: 0;
+  transition: opacity var(--dur-hover) ease;
+}
+
+.panel-resizer:hover::after {
+  opacity: 0.55;
+}
+
+/* Height is driven by the inline panelHeight, so this must not flex-grow.
+   Inset and rounded like the composer below it: the dock is one tray, and
+   the files tree and the prompt are two objects sitting in it. */
+.tools-body {
+  position: relative;
+  flex: 0 0 auto;
+  min-height: 0;
+  overflow: hidden;
+  margin: 0 10px 8px;
+  border-radius: var(--radius);
+  background: var(--bg-content);
+  box-shadow: var(--shadow-card);
+}
+
+.tools-body[data-collapsed='true'] {
+  margin: 0;
+  box-shadow: none;
+}
+
+/* Both panes stay mounted; only visibility toggles, so PTYs survive. */
+.tools-pane {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.tools-pane[data-hidden='true'] {
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* ==========================================================================
+   Files panel
+   ========================================================================== */
+
+.files-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px 6px;
+  flex: 0 0 auto;
+}
+
+/* Everything the agent touched this session, in the write tone used for the
+   same idea in the transcript. */
+.changed-strip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  padding: 0 12px 8px;
+  flex: 0 0 auto;
+  color: var(--tone-write);
+}
+
+.changed-strip .chip {
+  background: color-mix(in srgb, var(--tone-write) 14%, transparent);
+  color: var(--tone-write);
+}
+
+.changed-strip .chip:hover {
+  background: color-mix(in srgb, var(--tone-write) 22%, transparent);
+  color: var(--tone-write);
+}
+
+.file-tree {
+  flex: 1;
+  overflow: auto;
+  padding: 0 8px 10px;
+}
+
+.tree-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding-right: 8px;
+  border-radius: 6px;
+  cursor: default;
+  white-space: nowrap;
+  transition: background var(--dur-hover) ease;
+}
+
+.tree-row:hover {
+  background: var(--bg-hover);
+}
+
+.tree-row.selected {
+  background: var(--accent-soft);
+  color: var(--accent-text);
+  font-weight: 500;
+}
+
+/* Folders are the structure and files are the contents; colour says which is
+   which faster than the glyph shape does. */
+.tree-row > svg {
+  flex: 0 0 auto;
+  color: var(--text-tertiary);
+}
+
+.tree-row.dir > svg {
+  color: var(--tone-list);
+}
+
+.tree-row.selected > svg {
+  color: var(--accent-text);
+}
+
+.tree-row .disclosure {
+  width: 15px;
+  display: flex;
+  justify-content: center;
+  color: var(--text-tertiary);
+}
+
+.tree-row .tree-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tree-row .tree-size {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
+.skeleton-row {
+  height: 12px;
+  margin: 7px 10px;
+  border-radius: 4px;
+  background: linear-gradient(90deg, var(--bg-sunken), var(--bg-hover), var(--bg-sunken));
+  background-size: 200% 100%;
+  animation: shimmer 1.2s linear infinite;
+}
+
+@keyframes shimmer {
+  to {
+    background-position: -200% 0;
+  }
+}
+
+/* ==========================================================================
+   Terminal panel
+   ========================================================================== */
+
+.terminal-tabs {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  flex: 0 0 auto;
+}
+
+.terminal-stack {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  background: var(--bg-terminal);
+}
+
+/* With no session open there is no terminal to be dark: the pane goes back to
+   being an empty part of the tools tray. */
+.terminal-stack[data-empty='true'] {
+  background: transparent;
+}
+
+.terminal-host {
+  position: absolute;
+  inset: 0;
+  padding: 8px 4px 6px 10px;
+}
+
+.terminal-host[data-hidden='true'] {
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* xterm.css is imported after ours and hard-codes a black viewport, which
+   otherwise shows as a seam against the warm terminal background. */
+.terminal-stack .xterm-viewport {
+  background-color: transparent;
+}
+
+.terminal-hint {
+  position: absolute;
+  right: 12px;
+  bottom: 10px;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 9px;
+  border-radius: 10px;
+  background: rgba(141, 124, 230, 0.18);
+  color: #bcaff2;
+  font-size: 11px;
+  pointer-events: none;
+}
+
+.terminal-hint::before {
+  content: '';
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+
+/* ==========================================================================
+   Composer
+   ========================================================================== */
+
+.composer {
+  flex: 0 0 auto;
+  padding: 0 10px 10px;
+}
+
+.composer-box {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 8px 7px 12px;
+  border-radius: var(--radius-lg);
+  background: var(--bg-raised);
+  box-shadow: var(--shadow-card);
+  transition: box-shadow var(--dur-pop) ease;
+}
+
+/* A lift, not a ring: the composer holds focus most of the time a window is
+   open, and a permanent glow around it would be noise rather than signal. */
+.composer-box:focus-within {
+  box-shadow: var(--shadow-raised);
+}
+
+.composer-box textarea {
+  border: none;
+  outline: none;
+  resize: none;
+  background: transparent;
+  max-height: 180px;
+  line-height: 1.55;
+  padding: 2px 0;
+  user-select: text;
+}
+
+/* Model, budget and send sit on the prompt's own baseline: they all act on
+   the text above them, so proximity is the whole explanation. */
+.composer-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--text-tertiary);
+}
+
+.composer-bar .spacer {
+  flex: 1;
+}
+
+.model-picker {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  max-width: 220px;
+  height: 22px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 11.5px;
+  cursor: default;
+  transition:
+    background var(--dur-hover) ease,
+    color var(--dur-hover) ease,
+    transform var(--dur-press) var(--ease-out);
+}
+
+.model-picker:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.model-picker:active {
+  transform: scale(0.97);
+}
+
+.model-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.composer-box textarea::placeholder {
+  color: var(--text-tertiary);
+}
+
+.composer-box textarea:disabled {
+  color: var(--text-tertiary);
+}
+
+.send-button {
+  width: 26px;
+  height: 26px;
+  border-radius: 8px;
+  border: none;
+  background: var(--accent);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: default;
+  flex: 0 0 auto;
+  transition:
+    background var(--dur-hover) ease,
+    transform var(--dur-press) var(--ease-out);
+}
+
+.send-button:hover:not(:disabled) {
+  background: var(--accent-hover);
+}
+
+.send-button:active:not(:disabled) {
+  transform: scale(0.94);
+}
+
+.send-button:disabled {
+  background: var(--bg-hover);
+  color: var(--text-tertiary);
+}
+
+.attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.token-ring {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-variant-numeric: tabular-nums;
+}
+
+.token-ring .track {
+  width: 48px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--bg-hover);
+  overflow: hidden;
+}
+
+/* The bar changes colour as the budget runs out; the number alone is easy to
+   read past when it matters most. */
+.token-ring .fill {
+  height: 100%;
+  border-radius: 2px;
+  background: var(--accent);
+  transition:
+    width var(--dur-sheet) var(--ease-out),
+    background var(--dur-sheet) ease;
+}
+
+.token-ring[data-level='warn'] .fill {
+  background: var(--warning);
+}
+
+.token-ring[data-level='full'] .fill {
+  background: var(--danger);
+}
+
+/* ==========================================================================
+   Sheets, modals
+   ========================================================================== */
+
+.scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 8vh;
+  background: rgba(16, 16, 18, 0.36);
+  backdrop-filter: blur(3px);
+  -webkit-app-region: no-drag;
+  animation: fade-in var(--dur-hover) ease;
+}
+
+.scrim.center {
+  align-items: center;
+  padding-top: 0;
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+}
+
+/* Modals are centred, not anchored, so they scale from their own middle. */
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.97);
+  }
+}
+
+/* --------------------------------------------------------------------------
+   Settings window
+   -------------------------------------------------------------------------- */
+
+.settings-window {
+  display: flex;
+  height: 100%;
+  background: var(--bg-content);
+}
+
+.settings-nav {
+  width: 186px;
+  flex: 0 0 auto;
+  /* Clears the traffic lights, which sit over the frameless title bar. Windows
+     draws its close button on the other side, over `.settings-head`, which has
+     nothing at that end anyway. */
+  padding: var(--chrome-gutter) 9px 14px;
+  background: var(--bg-window);
+  -webkit-app-region: drag;
+}
+
+.settings-nav .conv-row {
+  -webkit-app-region: no-drag;
+}
+
+.settings-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.settings-head {
+  padding: 0 22px;
+  height: var(--toolbar-height);
+  display: flex;
+  align-items: center;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.1px;
+  -webkit-app-region: drag;
+}
+
+.settings-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 22px;
+}
+
+.settings-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 13px 18px;
+  background: var(--bg-sunken);
+}
+
+.settings-foot .spacer {
+  flex: 1;
+}
+
+.modal {
+  width: 430px;
+  max-width: 88vw;
+  padding: 22px;
+  border-radius: var(--radius-lg);
+  background: var(--bg-content);
+  box-shadow: var(--shadow-sheet);
+  display: flex;
+  flex-direction: column;
+  gap: 13px;
+  animation: rise var(--dur-pop) var(--ease-out);
+}
+
+.modal .modal-title {
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.1px;
+}
+
+.modal .modal-body {
+  color: var(--text-secondary);
+  line-height: 1.65;
+  user-select: text;
+}
+
+.modal .modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+/* ==========================================================================
+   Forms
+   ========================================================================== */
+
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  max-width: 470px;
+}
+
+.form-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.form-row > label {
+  width: 120px;
+  flex: 0 0 auto;
+  color: var(--text-secondary);
+}
+
+.form-row .control {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.form-hint {
+  margin-left: 132px;
+  margin-top: -10px;
+  font-size: 11px;
+  color: var(--text-tertiary);
+  line-height: 1.6;
+}
+
+.about-card {
+  padding: 18px;
+  border-radius: var(--radius);
+  background: var(--bg-sunken);
+  display: flex;
+  flex-direction: column;
+  gap: 13px;
+  max-width: 470px;
+}
+
+.about-logo {
+  display: inline-flex;
+  align-items: center;
+  margin-bottom: 4px;
+}
+
+.about-logo img {
+  display: block;
+  height: 24px;
+  width: auto;
+}
+
+.about-logo .logo-dark {
+  display: none;
+}
+
+:root[data-theme='dark'] .about-logo .logo-light {
+  display: none;
+}
+
+:root[data-theme='dark'] .about-logo .logo-dark {
+  display: block;
+}
+
+.kv-row {
+  display: flex;
+  gap: 12px;
+  font-size: 12px;
+}
+
+.kv-row .kv-label {
+  width: 62px;
+  flex: 0 0 auto;
+  color: var(--text-secondary);
+}
+
+.kv-row .kv-value {
+  flex: 1;
+  user-select: text;
+  overflow-wrap: anywhere;
+}
+
+/* Popup menus are drawn by AppKit (lib/nativeMenu.ts), not styled here. */
