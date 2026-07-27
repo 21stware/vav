@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react'
 import { Check, Download, FileCode2, Loader2, Terminal, XCircle } from 'lucide-react'
-import type { CliInstallLocation, CliStatus } from '@shared/ipc'
+import type { CliStatus } from '@shared/ipc'
 import { useSessionStore } from '../../state/sessionStore'
 import { useT } from '../../i18n/useT'
-import { Button, InlineAlert, Segmented } from '../ui'
+import { Button, InlineAlert } from '../ui'
 
 function relativeInstalledAt(at: number | null, t: ReturnType<typeof useT>): string {
   if (!at) return ''
@@ -13,13 +13,9 @@ function relativeInstalledAt(at: number | null, t: ReturnType<typeof useT>): str
   return t('time.monthsAgo', { n: Math.round(days / 30) })
 }
 
-function dirFor(location: CliInstallLocation): string {
-  if (location === '~/.local/bin') return '.local/bin/'
-  return '/usr/local/bin/'
-}
-
 /**
  * Install / uninstall the `vav` shell command (settings-cli.rpml).
+ * Location picker and inline behavior docs were removed — point users to `vav -h`.
  */
 export function CliSettings(): React.JSX.Element {
   const t = useT()
@@ -35,14 +31,6 @@ export function CliSettings(): React.JSX.Element {
 
   const location = status.preferredLocation
   const targetLabel = `${location}/vav`
-  const shouldMove =
-    status.installed &&
-    !!status.path &&
-    !status.path.includes(dirFor(location))
-
-  const setLocation = async (next: CliInstallLocation): Promise<void> => {
-    setStatus(await window.vav.settings.cliSetLocation(next))
-  }
 
   const install = async (): Promise<void> => {
     setBusy(true)
@@ -72,13 +60,11 @@ export function CliSettings(): React.JSX.Element {
     })
   }
 
-  const installLabel = shouldMove
-    ? t('cli.moveTo', { location })
-    : busy
-      ? t('common.installing')
-      : status.error
-        ? t('cli.retry')
-        : t('common.install')
+  const installLabel = busy
+    ? t('common.installing')
+    : status.error
+      ? t('cli.retry')
+      : t('common.install')
 
   const versionSuffix = status.version
     ? `（v${status.version}${
@@ -122,7 +108,7 @@ export function CliSettings(): React.JSX.Element {
             <span className="muted">{t('cli.notInstalled', { path: targetLabel })}</span>
           )}
         </div>
-        {status.installed && !shouldMove && !status.error ? (
+        {status.installed && !status.error ? (
           <Button
             label={t('common.uninstall')}
             variant="danger"
@@ -148,25 +134,7 @@ export function CliSettings(): React.JSX.Element {
         <InlineAlert kind="warning" message={t('cli.pathWarning', { location })} />
       )}
 
-      <div className="settings-section-title">{t('cli.installLocation')}</div>
-      <Segmented
-        value={location}
-        onChange={(value) => void setLocation(value as CliInstallLocation)}
-        options={[
-          { value: '~/.local/bin', label: '~/.local/bin' },
-          { value: '/usr/local/bin', label: '/usr/local/bin' }
-        ]}
-      />
-      <p className="muted tiny">{t('cli.installLocationHint')}</p>
-
-      <div className="settings-section-title">{t('cli.behaviorTitle')}</div>
-      <ul className="cli-help">
-        <li>{t('cli.help.dot')}</li>
-        <li>{t('cli.help.path')}</li>
-        <li>{t('cli.help.bare')}</li>
-        <li>{t('cli.help.running')}</li>
-        <li>{t('cli.nonBlocking')}</li>
-      </ul>
+      <p className="muted tiny">{t('cli.afterInstallHint')}</p>
     </div>
   )
 }

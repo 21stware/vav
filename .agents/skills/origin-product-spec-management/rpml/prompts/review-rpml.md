@@ -12,6 +12,22 @@ You are an RPML reviewer. Given an RPML document, check it against the following
 - [ ] Main snapshot is built with RPML primitives only — no `div`, `button`, `input`, `table`, `script`, `style`, or external resources.
 - [ ] No `style="..."` attribute on any element — it is illegal in RPML (styling is semantic). The validator flags it; remove it and use the correct RPML element/variant instead.
 
+### Information architecture
+
+- [ ] Page **purpose** (primary user job) is clear from `description` + snapshot; not a grab-bag of unrelated widgets.
+- [ ] A **priority stack** is visible: one dominant P0 surface; secondary/tertiary regions support it rather than compete at equal weight.
+- [ ] **Region map** is coherent: chrome / primary / secondary / tertiary / transient (overlays) are distinguishable; L1 pin labels match region roles.
+- [ ] Pin order roughly follows **scan/importance order**, not arbitrary paint order.
+- [ ] Shared chrome (nav/sidebar/tabbar) matches product IA and sibling screens; `active` state is correct for this route.
+- [ ] Overlays are not permanent peer regions of the primary job.
+- [ ] If this file was clearly **updated by accretion**, flag dual primaries, dump/misc regions, or new equal-weight cards that should have been re-homed — recommend a hierarchy restructure, not more append-only content.
+
+### Cross-page navigation
+
+- [ ] Every described transition to another screen uses `<anchor to="…">` and/or `link="….rpml"` on the real control — not prose-only.
+- [ ] Outbound targets exist as sibling `.rpml` files (or are clearly planned in README).
+- [ ] Drill-downs / CTAs / back destinations in annotations are wired, not just narrated.
+
 ### Pin/annotation parity
 
 - [ ] Every `data-pin="N"` in the main view has a matching top-level `<annotation id="N">`.
@@ -35,7 +51,7 @@ You are an RPML reviewer. Given an RPML document, check it against the following
 
 ### Annotation body quality
 
-- [ ] Each L1/L2 annotation body covers the relevant subset of: trigger/entry condition, data source & refresh, state enumeration, permission gate, validation rule, error/async handling, boundary values.
+- [ ] Each L1/L2 annotation body covers the relevant subset of: **IA role** (why this region exists for the page job), trigger/entry condition, data source & refresh, state enumeration, permission gate, validation rule, error/async handling, boundary values.
 - [ ] Bodies read as implementation spec, not captions. Engineering can derive conditional-rendering logic; QA can derive test cases.
 - [ ] Assumptions (inferred states not present in inputs) are explicitly flagged.
 

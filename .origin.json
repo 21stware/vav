@@ -1,5 +1,6 @@
 {
   "api_url": "https://vehcxhxmmfasujqtwdat.supabase.co/functions/v1/origin-api",
   "project_id": "feea5b82-31bd-4418-a57f-23bc4042e8ff",
-  "release_hash": "6376db48959e20eaefc7546df47db19d1c1b4d92e9a25a887c4c92456f88f6f4"
+  "release_hash": "949953f85263bfa978f973ea3eea3d0445d0ae2046a427119ff126c6bd4ff373",
+  "sync_readme_badge": true
 }

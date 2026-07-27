@@ -89,13 +89,37 @@ function isAccessError(error: unknown): boolean {
   return code === 'EACCES' || code === 'EPERM'
 }
 
+/** Printed for `vav -h` / `vav --help` (settings-cli.rpml points users here). */
+const CLI_HELP = [
+  'Usage: vav [path]',
+  '',
+  '  vav                 Open a new session in the default workspace',
+  '  vav .               Open a new session in the current directory',
+  '  vav /path/to/dir    Open a new session for that workspace',
+  '',
+  'If vav is already running, the session is added and focused.',
+  'The command returns immediately — vav opens in the background.',
+  ''
+].join('\n')
+
 function launcherScript(): string {
+  const helpBlock = [
+    'case "$1" in',
+    '  -h|--help)',
+    '    cat <<\'EOF\'',
+    CLI_HELP + 'EOF',
+    '    exit 0',
+    '    ;;',
+    'esac'
+  ]
+
   if (app.isPackaged) {
     const bin = process.execPath
     return [
       '#!/bin/sh',
       'set -e',
       `BIN=${JSON.stringify(bin)}`,
+      ...helpBlock,
       'if [ "$#" -eq 0 ]; then',
       '  nohup "$BIN" >/dev/null 2>&1 &',
       '  exit 0',
@@ -118,6 +142,7 @@ function launcherScript(): string {
     'set -e',
     `ELECTRON=${JSON.stringify(electron)}`,
     `APP=${JSON.stringify(appPath)}`,
+    ...helpBlock,
     'if [ "$#" -eq 0 ]; then',
     '  nohup "$ELECTRON" "$APP" >/dev/null 2>&1 &',
     '  exit 0',

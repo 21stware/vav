@@ -3,6 +3,10 @@
   <img src="docs/wordmark.png" alt="vav" height="54">
 </picture>
 
+<!-- originai-release-badge:start -->
+[![originai](https://spec.getoriginai.com/feea5b82-31bd-4418-a57f-23bc4042e8ff/949953f85263bfa978f973ea3eea3d0445d0ae2046a427119ff126c6bd4ff373/badge-dark.svg)](https://spec.getoriginai.com/feea5b82-31bd-4418-a57f-23bc4042e8ff/949953f85263bfa978f973ea3eea3d0445d0ae2046a427119ff126c6bd4ff373)
+<!-- originai-release-badge:end -->
+
 Local AI coding agent workstation. One window, three surfaces: chat, the file tree for the workspace this session is actually using, and a real terminal.
 
 The agent isn’t narrating what it did — you watch it `cd`, run tests, and write files on the right. Everything stays on your machine except requests to the model endpoint you configure.
@@ -46,7 +50,7 @@ Grab a build from [Releases](https://github.com/21stware/vav/releases). Neither 
   `xattr -dr com.apple.quarantine /Applications/vav.app`, or Gatekeeper will claim the app is damaged.
 - **Windows (x64)** — SmartScreen warns; choose “More info” → “Run anyway”.
 
-Then in Settings → “vav command”, install `vav` to `~/.local/bin` (recommended) or `/usr/local/bin` so `vav .` opens a new session in the current directory.
+Then in Settings → “vav command”, install the `vav` CLI (defaults to `~/.local/bin`). Run `vav -h` for usage; `vav .` opens a new session in the current directory.
 
 ## Develop
 
