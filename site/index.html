@@ -1,17 +1,17 @@
 <!doctype html>
-<html lang="zh-CN">
+<html lang="en">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>vav — 本机 AI 编程代理工作台</title>
+    <title>vav — local AI coding agent workstation</title>
     <meta
       name="description"
-      content="对话、文件树、真实终端，一个窗口。Agent 在你的项目里动手，数据留在本机。"
+      content="Chat, file tree, and a real terminal in one window. Watch the agent work in your project — data stays on your machine."
     />
     <meta property="og:title" content="vav" />
     <meta
       property="og:description"
-      content="本机 AI 编程代理工作台。看着 Agent 在你的项目里动手。"
+      content="Local AI coding agent workstation. Watch the agent work in your project."
     />
     <meta property="og:image" content="assets/screenshot.png" />
     <meta property="og:type" content="website" />
@@ -27,8 +27,12 @@
   <body>
     <header class="top">
       <nav class="nav">
-        <a href="#download">下载</a>
+        <a href="#download" data-i18n="nav.download">Download</a>
         <a href="https://github.com/21stware/vav">GitHub</a>
+        <div class="lang" role="group" aria-label="Language">
+          <button type="button" class="lang-btn" data-lang="en" aria-pressed="true">EN</button>
+          <button type="button" class="lang-btn" data-lang="zh" aria-pressed="false">中文</button>
+        </div>
       </nav>
     </header>
 
@@ -50,51 +54,71 @@
             <img class="brand-glyph" src="assets/wordmark-dark.png" alt="" width="48" height="48" />
             <span class="brand-name">vav</span>
           </p>
-          <h1 class="hero-title reveal delay-1">看着 Agent 在你的项目里动手</h1>
-          <p class="hero-lead reveal delay-2">
-            对话、文件树、真实终端，一个窗口。数据留在本机——除了发往你自己配置的模型接口。
+          <h1 class="hero-title reveal delay-1" data-i18n="hero.title">
+            Watch the agent work in your project
+          </h1>
+          <p class="hero-lead reveal delay-2" data-i18n="hero.lead">
+            Chat, file tree, and a real terminal — one window. Data stays on your machine, except
+            calls to the model endpoint you configure.
           </p>
           <div class="hero-cta reveal delay-3">
-            <a class="btn primary" href="#download">下载</a>
-            <a class="btn ghost" href="https://github.com/21stware/vav">源码</a>
+            <a class="btn primary" href="#download" data-i18n="hero.ctaDownload">Download</a>
+            <a class="btn ghost" href="https://github.com/21stware/vav" data-i18n="hero.ctaSource"
+              >Source</a
+            >
           </div>
         </div>
       </section>
 
       <section class="band" id="product">
-        <h2 class="band-title reveal">一个窗口，三件事</h2>
-        <p class="band-lead reveal delay-1">
-          Agent 不是在描述它做了什么——你在右边直接看着它 <code>cd</code>、跑测试、写文件。
+        <h2 class="band-title reveal" data-i18n="product.title">One window, three surfaces</h2>
+        <p class="band-lead reveal delay-1" data-i18n-html="product.lead">
+          The agent isn’t narrating what it did — you watch it <code>cd</code>, run tests, and write
+          files on the right.
         </p>
         <ul class="pillars">
           <li class="pillar reveal">
-            <span class="pillar-label">对话</span>
-            <p>流式回合、工具卡片、分支重试，上下文用量一目了然。</p>
+            <span class="pillar-label" data-i18n="product.chatLabel">Chat</span>
+            <p data-i18n="product.chatBody">
+              Streaming turns, tool cards, branch retries, and clear context usage.
+            </p>
           </li>
           <li class="pillar reveal delay-1">
-            <span class="pillar-label">文件</span>
-            <p>按需展开的工作区树，agent 改动高亮，空格 Quick Look。</p>
+            <span class="pillar-label" data-i18n="product.filesLabel">Files</span>
+            <p data-i18n="product.filesBody">
+              On-demand workspace tree, agent edits highlighted, spacebar Quick Look.
+            </p>
           </li>
           <li class="pillar reveal delay-2">
-            <span class="pillar-label">终端</span>
-            <p>真实 PTY。粘性 shell 里，<code>cd</code> 与环境变量会留下来。</p>
+            <span class="pillar-label" data-i18n="product.termLabel">Terminal</span>
+            <p data-i18n-html="product.termBody">
+              Real PTY. In the sticky shell, <code>cd</code> and env vars stick around.
+            </p>
           </li>
         </ul>
       </section>
 
       <section class="band download" id="download">
-        <h2 class="band-title reveal">下载</h2>
-        <p class="band-lead reveal delay-1">
-          从 GitHub Releases 获取构建。未代码签名，首次打开需按说明放行。
+        <h2 class="band-title reveal" data-i18n="download.title">Download</h2>
+        <p class="band-lead reveal delay-1" data-i18n="download.lead">
+          Get builds from GitHub Releases. Unsigned — follow the first-run notes to open them.
         </p>
         <div class="download-row reveal delay-2">
           <a class="btn primary" href="https://github.com/21stware/vav/releases/latest"
             >Releases · macOS / Windows</a
           >
-          <a class="btn ghost" href="https://github.com/21stware/vav#安装">安装说明</a>
+          <a
+            class="btn ghost"
+            href="https://github.com/21stware/vav#安装"
+            data-i18n="download.install"
+            data-i18n-href-en="https://github.com/21stware/vav#install"
+            data-i18n-href-zh="https://github.com/21stware/vav#安装"
+            >Install notes</a
+          >
         </div>
-        <p class="tiny reveal delay-3">
-          终端里可用 <code>vav .</code> 打开当前目录会话（设置 → vav 命令）。
+        <p class="tiny reveal delay-3" data-i18n-html="download.cli">
+          From a terminal, <code>vav .</code> opens a new session in the current directory (Settings
+          → vav command).
         </p>
       </section>
     </main>
@@ -104,10 +128,10 @@
         <span class="brand-name sm">vav</span>
         <span>21stware</span>
       </div>
-      <p class="foot-note">
-        非商用许可见
+      <p class="foot-note" data-i18n-html="footer.note">
+        Noncommercial license:
         <a href="https://github.com/21stware/vav/blob/main/LICENSE">LICENSE</a>
-        · 商用授权
+        · Commercial licensing
         <a href="mailto:licensing@21stware.com">licensing@21stware.com</a>
       </p>
     </footer>

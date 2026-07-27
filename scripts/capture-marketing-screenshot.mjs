@@ -46,14 +46,14 @@ const snapshotJs = `
 (async () => {
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
   const hit = [...document.querySelectorAll('.conv-row')]
-    .find((el) => (el.textContent || '').includes('支付回调幂等修复'))
+    .find((el) => (el.textContent || '').includes('Payment webhook idempotency'))
   if (!hit) return 'missing-row'
   hit.click()
   for (let i = 0; i < 50; i++) {
     const ready =
       document.querySelector('.stream-status[data-state="done"]') ||
       [...document.querySelectorAll('.message-turn.assistant .message.assistant')].some(
-        (el) => (el.textContent || '').includes('根因')
+        (el) => (el.textContent || '').includes('Root cause')
       )
     if (ready) {
       const scroller = document.querySelector('.transcript')

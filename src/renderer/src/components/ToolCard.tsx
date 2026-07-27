@@ -1,9 +1,24 @@
 import { memo, useMemo, useState } from 'react'
 import { Check, ChevronRight, CircleAlert, Loader2 } from 'lucide-react'
 import { normalizeAskQuestions, parseToolInput } from '@shared/askPlan'
-import { TOOL_LABELS, type AskQuestion, type ToolCallBlock } from '@shared/types'
+import type { MessageKey } from '@shared/i18n'
+import { TOOL_LABELS, type AskQuestion, type ToolCallBlock, type ToolName } from '@shared/types'
 import { useSessionStore } from '../state/sessionStore'
 import { useT, tt } from '../i18n/useT'
+
+const TOOL_NAME_KEYS: Partial<Record<ToolName, MessageKey>> = {
+  terminal: 'tool.shell',
+  fs_read: 'tool.read',
+  fs_write: 'tool.write',
+  fs_list: 'tool.list',
+  ask_user_question: 'tool.ask',
+  request: 'tool.ask'
+}
+
+function localizedToolName(tool: ToolName, t: ReturnType<typeof useT>): string {
+  const key = TOOL_NAME_KEYS[tool]
+  return key ? t(key) : (TOOL_LABELS[tool] ?? tool)
+}
 import { ToolDetail } from './ToolDetail'
 import { Button, InlineAlert } from './ui'
 
@@ -44,6 +59,7 @@ export const ToolCard = memo(function ToolCard({
 }: {
   block: ToolCallBlock
 }): React.JSX.Element {
+  const t = useT()
   const fireAndForget = isFireAndForget(block)
   const [expanded, setExpanded] = useState(() => defaultExpanded(block))
   const isInteractive = block.tool === 'request' || block.tool === 'ask_user_question'
@@ -51,6 +67,7 @@ export const ToolCard = memo(function ToolCard({
     block.status === 'pending' && !!block.choices?.length && !isInteractive
 
   const headline = useMemo(() => summaryFor(block), [block])
+  const toolName = localizedToolName(block.tool, t)
 
   // Plan lives as a tools-panel banner, not in the transcript stream.
   if (block.tool === 'plan') {
@@ -89,7 +106,7 @@ export const ToolCard = memo(function ToolCard({
         }}
       >
         {canToggle ? <ChevronRight className="tool-chevron" size={11} /> : <span className="tool-chevron-spacer" />}
-        <span className="tool-name">{TOOL_LABELS[block.tool] ?? block.tool}</span>
+        <span className="tool-name">{toolName}</span>
         <span className="tool-summary" title={headline}>
           {truncate(headline, SUMMARY_MAX)}
         </span>
@@ -174,7 +191,7 @@ function ApprovalCard({ block }: { block: ToolCallBlock }): React.JSX.Element {
   const answerTool = useSessionStore((s) => s.answerTool)
   const [approve = t('common.approve'), deny = t('common.deny')] = block.choices ?? []
   const lines = (block.summary || '').split('\n')
-  const toolLabel = TOOL_LABELS[block.tool] ?? block.tool
+  const toolLabel = localizedToolName(block.tool, t)
   const headline = lines[0] || t('approval.title', { name: toolLabel })
   const editLabel = t('tool.detail.approvalEdit')
   const editable = Boolean(block.askTitle?.length || headline.includes(editLabel))

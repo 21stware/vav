@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
- * Seeds Application Support with a polished demo conversation for marketing
- * screenshots, then prints the conversations.json path.
+ * Seeds Application Support with a polished English demo conversation
+ * for marketing screenshots.
  */
 import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
@@ -97,9 +97,9 @@ const tokenHistory = [
 
 const demo = {
   id: id(),
-  title: '支付回调幂等修复',
+  title: 'Payment webhook idempotency',
   createdAt: now - 40 * 60_000,
-  updatedAt: now,
+  updatedAt: now + 60_000,
   workingDirectory: workdir,
   model: 'deepseek-v4-flash',
   tokensUsed: 48_620,
@@ -120,7 +120,8 @@ const demo = {
       id: u1,
       parentId: null,
       role: 'user',
-      content: '支付 webhook 重试时会重复扣款，帮我定位一下根因并给出最小修复。',
+      content:
+        'Payment webhooks charge twice on retry. Find the root cause and ship a minimal fix.',
       blocks: [],
       createdAt: now - 6 * 60_000
     },
@@ -129,18 +130,18 @@ const demo = {
       parentId: u1,
       role: 'assistant',
       content:
-        '根因在 webhook handler 没有用 provider event id 做幂等。已补上唯一约束与 early return。',
+        'Root cause: the webhook handler never dedupes on provider event id. Added a unique constraint and early return.',
       createdAt: now - 90_000,
       blocks: [
         {
           kind: 'reasoning',
-          text: '先看回调入口与持久化层是否用外部事件 ID 去重；再对照重试日志确认重复写入路径。'
+          text: 'Check the webhook entrypoint and persistence layer for external event-id dedupe, then confirm against retry logs.'
         },
         {
           kind: 'toolCall',
           id: tRead,
           tool: 'fs_read',
-          summary: '读取 src/billing/webhook.ts',
+          summary: 'Read src/billing/webhook.ts',
           input: JSON.stringify({ path: 'src/billing/webhook.ts' }),
           output:
             'export async function handleStripeWebhook(event) {\n  await db.charges.insert({ ...event.data.object })\n  return { ok: true }\n}\n',
@@ -165,7 +166,7 @@ const demo = {
           kind: 'toolCall',
           id: tWrite,
           tool: 'fs_write',
-          summary: '写入 src/billing/webhook.ts',
+          summary: 'Write src/billing/webhook.ts',
           input: JSON.stringify({ path: 'src/billing/webhook.ts', content: '…' }),
           output: 'Wrote 38 lines to src/billing/webhook.ts',
           status: 'completed'
@@ -173,8 +174,8 @@ const demo = {
         {
           kind: 'text',
           text:
-            '**根因：** webhook 未按 `event.id` 去重，重试会重复 `insert`。\n\n' +
-            '**修复：** 先查再写，并与扣款放进同一事务。\n\n' +
+            '**Root cause:** the webhook never dedupes on `event.id`, so retries insert again.\n\n' +
+            '**Fix:** lookup-before-write, and keep charge + event insert in one transaction.\n\n' +
             '```ts\n' +
             'const existing = await db.webhookEvents.findById(event.id)\n' +
             'if (existing) return { ok: true, deduped: true }\n' +
@@ -191,14 +192,11 @@ const demo = {
 
 const conversations = [
   demo,
-  emptySession('拆分渲染层组件', 2 * 60 * 60_000, { tokensUsed: 36_200 }),
-  emptySession('修 CI flaky e2e', 5 * 60 * 60_000, { tokensUsed: 22_800 }),
-  emptySession('深色主题 token 对齐', 26 * 60 * 60_000, { tokensUsed: 41_100 }),
-  emptySession('终端粘性 shell 回归', 30 * 60 * 60_000, { tokensUsed: 18_400 })
+  emptySession('Split renderer components', 2 * 60 * 60_000, { tokensUsed: 36_200 }),
+  emptySession('Fix flaky CI e2e', 5 * 60 * 60_000, { tokensUsed: 22_800 }),
+  emptySession('Align dark theme tokens', 26 * 60 * 60_000, { tokensUsed: 41_100 }),
+  emptySession('Sticky shell regression', 30 * 60 * 60_000, { tokensUsed: 18_400 })
 ]
-
-// Ensure the demo sorts first even if something else is minted on boot.
-demo.updatedAt = Date.now() + 60_000
 
 mkdirSync(dataDir, { recursive: true })
 if (existsSync(convPath)) {
@@ -210,7 +208,7 @@ writeFileSync(convPath, JSON.stringify({ version: 1, conversations }, null, 2))
 if (existsSync(settingsPath)) {
   const settings = JSON.parse(readFileSync(settingsPath, 'utf8'))
   settings.theme = 'dark'
-  settings.locale = 'zh-CN'
+  settings.locale = 'en'
   settings.fileViewMode = 'tree'
   settings.sidebarGroupingMode = 'workspace'
   settings.defaultModel = 'deepseek-v4-flash'

@@ -26,6 +26,12 @@ Agent 不是在描述它做了什么 —— 你在右边直接看着它 `cd`、�
 静态站在仓库 [`site/`](site/)，由 GitHub Actions 发布到 GitHub Pages：
 https://21stware.github.io/vav/
 
+中英双语（右上角切换；默认跟随浏览器语言）。营销截图用英文界面生成：
+
+```bash
+node scripts/capture-marketing-screenshot.mjs
+```
+
 自定义域名：在仓库 Settings → Pages → Custom domain 填入域名，并按提示配置 DNS
 （通常是 `CNAME` 指向 `21stware.github.io`，或 Apex 的 A/ALIAS 记录）。
 确认后把域名写入 `site/CNAME`（单行，无协议）再推送，以免部署冲掉设置。
