@@ -1,6 +1,6 @@
 (() => {
   const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches
-  const nodes = document.querySelectorAll('.reveal, .hero-visual')
+  const nodes = document.querySelectorAll('.reveal')
 
   if (reduce || !('IntersectionObserver' in window)) {
     nodes.forEach((el) => el.classList.add('is-in'))

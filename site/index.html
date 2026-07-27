@@ -19,35 +19,37 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
-      href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;600&family=Noto+Serif+SC:wght@500;600&family=Sora:wght@500;600;700&display=swap"
+      href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Noto+Sans+SC:wght@400;500;600&family=Outfit:wght@400;500;600;700&display=swap"
       rel="stylesheet"
     />
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
-    <div class="atmosphere" aria-hidden="true"></div>
-
     <header class="top">
-      <a class="brand" href="./" aria-label="vav home">
-        <img class="brand-mark" src="assets/wordmark-dark.png" alt="vav" width="88" height="28" />
-      </a>
       <nav class="nav">
         <a href="#download">下载</a>
         <a href="https://github.com/21stware/vav">GitHub</a>
-        <a href="mailto:licensing@21stware.com">商务授权</a>
       </nav>
     </header>
 
     <main>
       <section class="hero">
-        <div class="hero-copy">
+        <div class="hero-stage" aria-hidden="true">
           <img
-            class="hero-wordmark reveal"
-            src="assets/wordmark-dark.png"
-            alt="vav"
-            width="220"
-            height="70"
+            class="hero-shot"
+            src="assets/screenshot.png"
+            alt=""
+            width="1600"
+            height="1000"
           />
+          <div class="hero-veil"></div>
+        </div>
+
+        <div class="hero-copy">
+          <p class="brand-lockup reveal">
+            <img class="brand-glyph" src="assets/wordmark-dark.png" alt="" width="48" height="48" />
+            <span class="brand-name">vav</span>
+          </p>
           <h1 class="hero-title reveal delay-1">看着 Agent 在你的项目里动手</h1>
           <p class="hero-lead reveal delay-2">
             对话、文件树、真实终端，一个窗口。数据留在本机——除了发往你自己配置的模型接口。
@@ -56,15 +58,6 @@
             <a class="btn primary" href="#download">下载</a>
             <a class="btn ghost" href="https://github.com/21stware/vav">源码</a>
           </div>
-        </div>
-        <div class="hero-visual reveal delay-2" aria-hidden="false">
-          <img
-            class="hero-shot"
-            src="assets/screenshot.png"
-            alt="vav 主界面：对话、文件树与终端"
-            width="1600"
-            height="1000"
-          />
         </div>
       </section>
 
@@ -95,9 +88,7 @@
           从 GitHub Releases 获取构建。未代码签名，首次打开需按说明放行。
         </p>
         <div class="download-row reveal delay-2">
-          <a
-            class="btn primary"
-            href="https://github.com/21stware/vav/releases/latest"
+          <a class="btn primary" href="https://github.com/21stware/vav/releases/latest"
             >Releases · macOS / Windows</a
           >
           <a class="btn ghost" href="https://github.com/21stware/vav#安装">安装说明</a>
@@ -110,7 +101,7 @@
 
     <footer class="foot">
       <div class="foot-brand">
-        <img src="assets/wordmark-dark.png" alt="" width="64" height="20" />
+        <span class="brand-name sm">vav</span>
         <span>21stware</span>
       </div>
       <p class="foot-note">
