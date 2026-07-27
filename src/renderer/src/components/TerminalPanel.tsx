@@ -2,45 +2,40 @@ import { useEffect, useRef } from 'react'
 import { useSessionStore } from '../state/sessionStore'
 import { useWorkspaceStore } from '../state/workspaceStore'
 import { acquireTerminal } from '../lib/terminalRegistry'
+import { useT } from '../i18n/useT'
 import { EmptyState } from './ui'
 
 /**
  * Terminal segment of the tools panel.
  *
  * Every tab is rendered at all times and hidden with opacity, so no PTY is torn
- * down by a tab switch. The tab strip itself lives in the shared tools header
- * (terminal-panel.rpml annotation 1).
- *
- * There are no tabs until something asks for one: the agent opens its own bash
- * on its first command, and the user opens theirs with New bash.
+ * down by a tab switch. The PTY surface is always visible
+ * (terminal-panel.rpml annotation 3).
  */
 export function TerminalPanel({ visible }: { visible: boolean }): React.JSX.Element {
+  const t = useT()
   const activeId = useSessionStore((s) => s.activeId)
   const workspace = useWorkspaceStore((s) => s.workspaces[activeId])
   const tabs = workspace?.tabs ?? []
   const activeTabId = workspace?.activeTabId ?? ''
-
-  const showingAgent = tabs.some((tab) => tab.isAgent && tab.id === activeTabId)
+  const empty = tabs.length === 0
 
   return (
-    <div className="terminal-stack" data-empty={tabs.length === 0}>
-      {tabs.map((tab) => (
-        <TerminalHost
-          key={`${activeId}:${tab.id}`}
-          conversationId={activeId}
-          tabId={tab.id}
-          isAgent={tab.isAgent}
-          hidden={!visible || tab.id !== activeTabId}
-        />
-      ))}
+    <div className="terminal-stack" data-empty={empty}>
+      <div className="terminal-surface">
+        {tabs.map((tab) => (
+          <TerminalHost
+            key={`${activeId}:${tab.id}`}
+            conversationId={activeId}
+            tabId={tab.id}
+            isAgent={tab.isAgent}
+            hidden={!visible || tab.id !== activeTabId}
+          />
+        ))}
+      </div>
 
-      {showingAgent && <span className="terminal-hint">Agent bash · 只读镜像</span>}
-
-      {tabs.length === 0 && (
-        <EmptyState
-          title="还没有终端"
-          description="Agent 执行命令时会自动开一个它自己的 bash；你也可以点 New bash 开一个属于自己的。"
-        />
+      {empty && (
+        <EmptyState title={t('tools.noTerminalTitle')} description={t('tools.bashHint')} />
       )}
     </div>
   )
@@ -73,19 +68,33 @@ function TerminalHost({
     })
     host.appendChild(entry.container)
 
-    const observer = new ResizeObserver(() => {
+    let raf = 0
+    const fit = (): void => {
       if (host.clientWidth === 0 || host.clientHeight === 0) return
       try {
         entry.fit.fit()
       } catch {
         // Fitting a zero-sized container throws; the next resize retries.
       }
+    }
+    // Live window resize: skip xterm measure + PTY IPC until the drag settles
+    // so chrome paint stays on the pointer. One fit on resize-end is enough.
+    const observer = new ResizeObserver(() => {
+      if (document.documentElement.dataset.resizing === 'true') return
+      if (raf) cancelAnimationFrame(raf)
+      raf = requestAnimationFrame(() => {
+        raf = 0
+        fit()
+      })
     })
     observer.observe(host)
+    const onResizeEnd = (): void => fit()
+    window.addEventListener('vav:resize-end', onResizeEnd)
 
     return () => {
       observer.disconnect()
-      // Detach only. The terminal and its PTY stay alive for the next mount.
+      window.removeEventListener('vav:resize-end', onResizeEnd)
+      if (raf) cancelAnimationFrame(raf)
       if (entry.container.parentElement === host) host.removeChild(entry.container)
     }
   }, [conversationId, tabId, isAgent, codeFont, fontSize])
@@ -94,7 +103,6 @@ function TerminalHost({
     if (hidden) return
     const host = hostRef.current
     if (!host) return
-    // Refit when the tab becomes visible: it was sized to zero while hidden.
     const timer = setTimeout(() => {
       const entry = acquireTerminal({
         conversationId,
@@ -106,9 +114,9 @@ function TerminalHost({
       try {
         entry.fit.fit()
       } catch {
-        // Ignored: container still collapsed.
+        // Ignored: container still zero-sized.
       }
-      if (!isAgent) entry.term.focus()
+      entry.term.focus()
     }, 20)
     return () => clearTimeout(timer)
   }, [hidden, conversationId, tabId, isAgent, codeFont, fontSize])
@@ -119,12 +127,9 @@ function TerminalHost({
       data-hidden={hidden}
       ref={hostRef}
       onDragOver={(event) => {
-        if (!isAgent) event.preventDefault()
+        event.preventDefault()
       }}
       onDrop={(event) => {
-        // Dropping files types their paths at the prompt rather than running
-        // anything (terminal-panel.rpml annotation 2).
-        if (isAgent) return
         event.preventDefault()
         const paths = [...event.dataTransfer.files]
           .map((file) => window.vav.files.pathForFile(file))

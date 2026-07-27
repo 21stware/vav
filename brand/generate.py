@@ -1,4 +1,4 @@
-"""Derive the shipped brand assets from brand/logo.png.
+"""Derive the shipped brand assets from brand/logo-2.png.
 
 Run by hand after the logo changes — this is a design-time tool, not part of
 the build:
@@ -21,14 +21,14 @@ import os
 from PIL import Image, ImageDraw
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-SRC = os.path.join(ROOT, 'brand', 'logo.png')
+SRC = os.path.join(ROOT, 'brand', 'logo-2.png')
 ASSETS = os.path.join(ROOT, 'src', 'renderer', 'src', 'assets')
 BUILD = os.path.join(ROOT, 'build')
 DOCS = os.path.join(ROOT, 'docs')
 
 INK = (0x13, 0x1B, 0x35)
 LAVENDER = (0xB2, 0xA5, 0xDC)
-# The dark theme is a neutral grey ramp, so the wordmark's own ink has to lose
+# The dark theme is a neutral grey ramp, so the mark's own ink has to lose
 # its blue cast too — anything cooler reads as a stain against the surface it
 # sits on. The accent keeps its chroma; on dark it is the only colour on screen.
 INK_ON_DARK = (0xEF, 0xEF, 0xF1)
@@ -42,8 +42,10 @@ HUE_SPLIT = 242.0
 # The accent is light by nature, so hue alone would misread dark antialiasing.
 ACCENT_MIN_LUM = 120.0
 
-TITLEBAR_HEIGHT = 66          # 3x the on-screen size
-README_HEIGHT = 108           # the banner at the top of README.md, 2x
+# Square mark — export larger so empty-state / About can show a hero size
+# without upscaling a soft JPEG-derived PNG.
+MARK_HEIGHT = 192
+README_HEIGHT = 160
 ICON_SIZE = 1024
 ICON_INSET = 100              # macOS reserves ~10% around the 824pt plate
 # Windows draws the icon straight onto the taskbar with no plate of its own, so
@@ -54,7 +56,11 @@ ICON_WIN_SIZES = (16, 24, 32, 48, 64, 128, 256)
 # tangent seam that gives `rounded_rectangle` its dated look.
 ICON_SQUIRCLE_N = 5.0
 ICON_SUPERSAMPLE = 4
-ICON_MARK_WIDTH = 0.72        # of the plate's side
+# Square mark reads small on the plate — fill most of the safe area.
+ICON_MARK_WIDTH = 0.88
+# Menu-bar height is ~22pt; fill nearly the full tile so the mark reads.
+TRAY_SIZE = 22
+TRAY_SIZE_2X = 44
 
 
 def luminance(pixel):
@@ -126,6 +132,36 @@ def plated(mark, inset):
     return plate
 
 
+def tray_template(mark, size):
+    """Black + alpha menu-bar glyph. Thickened so thin whiskers survive @1x."""
+    from PIL import ImageFilter
+
+    # Alpha from any opaque brand ink (navy + lavender → one silhouette).
+    alpha = mark.split()[3]
+    work = alpha.resize((alpha.width * 2, alpha.height * 2), Image.NEAREST)
+    for _ in range(2 if size <= 22 else 1):
+        work = work.filter(ImageFilter.MaxFilter(3))
+    work = work.filter(ImageFilter.GaussianBlur(0.45))
+    work = work.point(lambda v: 255 if v > 32 else 0)
+
+    # Almost no padding — status items read tiny if the glyph floats in empty space.
+    gw, gh = work.size
+    side = int(max(gw, gh) * 1.04)
+    canvas = Image.new('L', (side, side), 0)
+    canvas.paste(work, ((side - gw) // 2, (side - gh) // 2))
+    gray = canvas.resize((size, size), Image.LANCZOS)
+    gray = gray.point(lambda v: 0 if v < 36 else min(255, int(v * 1.2)))
+
+    out = Image.new('RGBA', (size, size), (0, 0, 0, 0))
+    px, g = out.load(), gray.load()
+    for y in range(size):
+        for x in range(size):
+            a = g[x, y]
+            if a:
+                px[x, y] = (0, 0, 0, a)
+    return out
+
+
 def main():
     os.makedirs(ASSETS, exist_ok=True)
     os.makedirs(BUILD, exist_ok=True)
@@ -140,7 +176,7 @@ def main():
         ('wordmark-dark', INK_ON_DARK, LAVENDER_ON_DARK),
     ):
         art = redraw(source, ink, accent).crop(padded)
-        in_app = scaled(art, TITLEBAR_HEIGHT)
+        in_app = scaled(art, MARK_HEIGHT)
         in_app.save(os.path.join(ASSETS, f'{name}.png'))
         print(f'{name}.png {in_app.size[0]}x{in_app.size[1]}')
 
@@ -162,6 +198,14 @@ def main():
         sizes=[(size, size) for size in ICON_WIN_SIZES],
     )
     print(f'icon.ico {"/".join(str(size) for size in ICON_WIN_SIZES)}')
+
+    tray_1x = tray_template(mark, TRAY_SIZE)
+    tray_2x = tray_template(mark, TRAY_SIZE_2X)
+    tray_1x.save(os.path.join(BUILD, 'trayTemplate.png'))
+    tray_2x_name = 'trayTemplate' + '@2x.png'
+    tray_2x.save(os.path.join(BUILD, tray_2x_name))
+    print(f'trayTemplate.png {tray_1x.size[0]}x{tray_1x.size[1]}')
+    print(f'{tray_2x_name} {tray_2x.size[0]}x{tray_2x.size[1]}')
 
 
 if __name__ == '__main__':

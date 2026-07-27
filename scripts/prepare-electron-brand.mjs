@@ -30,7 +30,8 @@ const stampFile = join(root, 'build/.electron-brand-stamp')
 function currentStamp() {
   const version = readFileSync(join(distDir, 'version'), 'utf8').trim()
   const iconMtime = existsSync(iconSrc) ? execSync(`stat -f %m "${iconSrc}"`).toString().trim() : '0'
-  return `${version}:${iconMtime}:${BUNDLE_ID}`
+  // Bump the trailing token when Info.plist shape changes (e.g. document types).
+  return `${version}:${iconMtime}:${BUNDLE_ID}:dock-drop-v1`
 }
 
 function isBranded() {
@@ -67,6 +68,10 @@ function buildIcns(target) {
   execSync(`rm -rf "${iconset}"`, { stdio: 'ignore' })
 }
 
+function plistBuddy(plistPath, command) {
+  execFileSync('/usr/libexec/PlistBuddy', ['-c', command, plistPath], { stdio: 'ignore' })
+}
+
 function patchInfoPlist(plistPath) {
   const keys = {
     CFBundleName: APP_NAME,
@@ -78,15 +83,27 @@ function patchInfoPlist(plistPath) {
   for (const [key, value] of Object.entries(keys)) {
     // Set fails on absent keys, so fall back to Add.
     try {
-      execFileSync('/usr/libexec/PlistBuddy', ['-c', `Set :${key} ${value}`, plistPath], {
-        stdio: 'ignore'
-      })
+      plistBuddy(plistPath, `Set :${key} ${value}`)
     } catch {
-      execFileSync('/usr/libexec/PlistBuddy', ['-c', `Add :${key} string ${value}`, plistPath], {
-        stdio: 'ignore'
-      })
+      plistBuddy(plistPath, `Add :${key} string ${value}`)
     }
   }
+
+  // Accept file/folder drops on the Dock icon (README §2.5 / §5.17).
+  try {
+    plistBuddy(plistPath, 'Delete :CFBundleDocumentTypes')
+  } catch {
+    // Absent — fine.
+  }
+  plistBuddy(plistPath, 'Add :CFBundleDocumentTypes array')
+  plistBuddy(plistPath, 'Add :CFBundleDocumentTypes:0 dict')
+  plistBuddy(plistPath, 'Add :CFBundleDocumentTypes:0:CFBundleTypeName string Item')
+  plistBuddy(plistPath, 'Add :CFBundleDocumentTypes:0:CFBundleTypeRole string Viewer')
+  plistBuddy(plistPath, 'Add :CFBundleDocumentTypes:0:LSHandlerRank string Alternate')
+  plistBuddy(plistPath, 'Add :CFBundleDocumentTypes:0:LSItemContentTypes array')
+  plistBuddy(plistPath, 'Add :CFBundleDocumentTypes:0:LSItemContentTypes:0 string public.item')
+  plistBuddy(plistPath, 'Add :CFBundleDocumentTypes:0:LSItemContentTypes:1 string public.folder')
+  plistBuddy(plistPath, 'Add :CFBundleDocumentTypes:0:LSItemContentTypes:2 string public.data')
 }
 
 /** Editing a signed bundle invalidates its signature; re-sign ad-hoc so it launches. */
@@ -131,7 +148,15 @@ export function prepareBrandedElectron() {
     renameSync(join(macos, 'Electron'), join(macos, APP_NAME))
   }
 
-  buildIcns(join(brandedApp, 'Contents/Resources', `${APP_NAME}.icns`))
+  const resources = join(brandedApp, 'Contents/Resources')
+  buildIcns(join(resources, `${APP_NAME}.icns`))
+  // Keep a PNG beside the icns: dock.setIcon + loadAppIcon read this when the
+  // repo cwd is wrong (common with `open -a … --args`).
+  execFileSync('cp', ['-f', iconSrc, join(resources, 'icon.png')], { stdio: 'ignore' })
+  // Stock Electron still ships electron.icns — overwrite so nothing falls back.
+  execFileSync('cp', ['-f', join(resources, `${APP_NAME}.icns`), join(resources, 'electron.icns')], {
+    stdio: 'ignore'
+  })
   patchInfoPlist(join(brandedApp, 'Contents/Info.plist'))
   writeFileSync(pathFile, relativeExec)
   resign(brandedApp)

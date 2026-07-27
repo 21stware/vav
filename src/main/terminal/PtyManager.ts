@@ -1,4 +1,5 @@
 import * as pty from 'node-pty'
+import { execFileSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import type { ShellKind } from '@shared/types'
 import { shellPath } from './StickyShell'
@@ -9,6 +10,33 @@ interface PtySession {
   id: string
   conversationId: string
   proc: pty.IPty
+}
+
+/** True when the shell has a foreground child — a heuristic for "command running". */
+function hasChildProcesses(pid: number): boolean {
+  if (!pid || pid <= 0) return false
+  if (IS_WINDOWS) {
+    try {
+      const out = execFileSync(
+        'powershell.exe',
+        [
+          '-NoProfile',
+          '-Command',
+          `(Get-CimInstance Win32_Process -Filter "ParentProcessId=${pid}").ProcessId`
+        ],
+        { encoding: 'utf8', windowsHide: true }
+      )
+      return out.trim().length > 0
+    } catch {
+      return false
+    }
+  }
+  try {
+    execFileSync('pgrep', ['-P', String(pid)], { stdio: 'ignore' })
+    return true
+  } catch {
+    return false
+  }
 }
 
 /**
@@ -28,8 +56,16 @@ export class PtyManager {
     private onExit: (tabId: string) => void
   ) {}
 
-  create(conversationId: string, shell: ShellKind, cwd: string, cols = 80, rows = 24): string {
-    const id = randomUUID()
+  create(
+    conversationId: string,
+    shell: ShellKind,
+    cwd: string,
+    cols = 80,
+    rows = 24,
+    preferredId?: string
+  ): string {
+    if (preferredId && this.sessions.has(preferredId)) return preferredId
+    const id = preferredId ?? randomUUID()
     const proc = pty.spawn(shellPath(shell), IS_WINDOWS ? ['-NoLogo'] : [], {
       name: 'xterm-256color',
       cols,
@@ -74,6 +110,13 @@ export class PtyManager {
     } catch {
       // Already gone.
     }
+  }
+
+  /** Idle shells have no children; a running command usually does. */
+  isBusy(tabId: string): boolean {
+    const session = this.sessions.get(tabId)
+    if (!session) return false
+    return hasChildProcesses(session.proc.pid)
   }
 
   killForConversation(conversationId: string): void {

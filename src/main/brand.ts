@@ -6,21 +6,42 @@ export const APP_NAME = 'vav'
 
 /** Resolve the app icon PNG regardless of dev vs packaged layout. */
 export function resolveAppIconPath(): string | null {
-  const candidates = app.isPackaged
-    ? [join(process.resourcesPath, 'icon.png')]
-    : [
-        join(process.cwd(), 'build/icon.png'),
-        join(__dirname, '../../build/icon.png'),
-        join(__dirname, '../../../build/icon.png')
-      ]
+  const file = 'icon.png'
+  // `open -a … --args <project>` often leaves cwd outside the repo — never
+  // rely on process.cwd() alone. Prefer paths anchored to the running code /
+  // bundle resources (prepare-electron-brand copies icon.png there in dev).
+  const candidates = [
+    join(process.resourcesPath, file),
+    join(app.getAppPath(), 'build', file),
+    join(app.getAppPath(), '../build', file),
+    join(__dirname, '../../build', file),
+    join(__dirname, '../../../build', file),
+    join(process.cwd(), 'build', file)
+  ]
   return candidates.find((path) => existsSync(path)) ?? null
 }
 
 export function loadAppIcon(): NativeImage | undefined {
   const path = resolveAppIconPath()
-  if (!path) return undefined
+  if (!path) {
+    console.warn('[brand] icon.png not found')
+    return undefined
+  }
   const image = nativeImage.createFromPath(path)
-  return image.isEmpty() ? undefined : image
+  if (image.isEmpty()) {
+    console.warn(`[brand] icon.png empty at ${path}`)
+    return undefined
+  }
+  return image
+}
+
+/** Push the brand tile onto the Dock (safe to call after hide/show). */
+export function applyDockIcon(): void {
+  if (process.platform !== 'darwin' || !app.dock) return
+  const icon = loadAppIcon()
+  if (!icon) return
+  app.dock.setIcon(icon)
+  console.log(`[brand] dock icon ← ${resolveAppIconPath()}`)
 }
 
 /** Menu bar name, dock icon, and About panel — dev Electron still ships as Electron.app. */
@@ -37,9 +58,7 @@ export function applyBranding(): void {
   if (process.platform !== 'darwin') return
 
   process.title = APP_NAME
-
-  const icon = loadAppIcon()
-  if (icon && app.dock) app.dock.setIcon(icon)
+  applyDockIcon()
 
   app.setAboutPanelOptions({
     applicationName: APP_NAME,

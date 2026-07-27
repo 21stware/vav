@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
 import type { ThemeMode } from '@shared/types'
+import type { LocalePreference } from '@shared/types'
 import { useSessionStore } from '../../state/sessionStore'
+import { useT } from '../../i18n/useT'
 import { Button, InlineAlert, Segmented, Toggle } from '../ui'
 import { IS_MAC } from '../../lib/platform'
 
@@ -18,14 +20,15 @@ const MODIFIER_HINT = IS_MAC ? '⌘⌃⌥⇧' : 'Ctrl / Alt / Shift'
  * Renders an Electron accelerator the way the platform writes it: "⌃⌘Space" on
  * macOS, "Ctrl+Alt+Space" on Windows.
  */
-function prettyAccelerator(accelerator: string): string {
-  if (!accelerator) return '未设置'
+function prettyAccelerator(accelerator: string, notSet: string): string {
+  if (!accelerator) return notSet
   const parts = accelerator.split('+')
   if (!IS_MAC) return parts.join('+')
   return parts.map((part) => MODIFIER_SYMBOL[part] ?? part).join('')
 }
 
 export function AppearanceSettings(): React.JSX.Element {
+  const t = useT()
   const settings = useSessionStore((s) => s.settings)
   const updateSettings = useSessionStore((s) => s.updateSettings)
 
@@ -67,7 +70,7 @@ export function AppearanceSettings(): React.JSX.Element {
       const key = normalizeKey(event)
       if (!key) return
       if (modifiers.length === 0) {
-        setHotkeyError(`至少需要一个修饰键（${MODIFIER_HINT}）`)
+        setHotkeyError(t('appearance.hotkeyNeedModifier', { modifiers: MODIFIER_HINT }))
         return
       }
 
@@ -78,23 +81,23 @@ export function AppearanceSettings(): React.JSX.Element {
         setHotkeyError(null)
         useSessionStore.setState({ settings: response.settings })
       } else {
-        setHotkeyError('快捷键不可用，请换一组修饰键组合')
+        setHotkeyError(t('appearance.hotkeyTaken'))
       }
     }
     window.addEventListener('keydown', onKey, true)
     return () => window.removeEventListener('keydown', onKey, true)
-  }, [recording])
+  }, [recording, t])
 
   return (
     <div className="form">
       <div className="form-row">
-        <label>主题</label>
+        <label>{t('appearance.theme')}</label>
         <div className="control">
           <Segmented<ThemeMode>
             options={[
-              { value: 'light', label: '浅色' },
-              { value: 'dark', label: '暗色' },
-              { value: 'system', label: '系统' }
+              { value: 'light', label: t('appearance.theme.light') },
+              { value: 'dark', label: t('appearance.theme.dark') },
+              { value: 'system', label: t('appearance.theme.system') }
             ]}
             value={settings.theme}
             onChange={(theme) => void updateSettings({ theme })}
@@ -103,7 +106,22 @@ export function AppearanceSettings(): React.JSX.Element {
       </div>
 
       <div className="form-row">
-        <label>代码 / 终端字体</label>
+        <label>{t('appearance.language')}</label>
+        <div className="control">
+          <Segmented<LocalePreference>
+            options={[
+              { value: 'system', label: t('appearance.language.system') },
+              { value: 'zh-CN', label: t('appearance.language.zh') },
+              { value: 'en', label: t('appearance.language.en') }
+            ]}
+            value={settings.locale}
+            onChange={(locale) => void updateSettings({ locale })}
+          />
+        </div>
+      </div>
+
+      <div className="form-row">
+        <label>{t('appearance.codeFont')}</label>
         <div className="control">
           <select
             className="text-field"
@@ -119,11 +137,11 @@ export function AppearanceSettings(): React.JSX.Element {
         </div>
       </div>
       <div className="form-hint" style={{ fontFamily: `"${settings.codeFont}", monospace` }}>
-        Aa 0123 · 仅列出本机已安装字体
+        {t('appearance.codeFontHint')}
       </div>
 
       <div className="form-row">
-        <label>字号</label>
+        <label>{t('appearance.fontSize')}</label>
         <div className="control">
           <input
             type="range"
@@ -141,7 +159,7 @@ export function AppearanceSettings(): React.JSX.Element {
       </div>
 
       <div className="form-row">
-        <label>减少动画</label>
+        <label>{t('appearance.reduceMotion')}</label>
         <div className="control">
           <Toggle
             checked={settings.reduceMotion}
@@ -151,11 +169,15 @@ export function AppearanceSettings(): React.JSX.Element {
       </div>
 
       <div className="form-row">
-        <label>全局呼出快捷键</label>
+        <label>{t('appearance.hotkey')}</label>
         <div className="control">
-          <kbd>{recording ? '按下组合键…' : prettyAccelerator(settings.globalHotkey)}</kbd>
+          <kbd>
+            {recording
+              ? t('appearance.hotkeyRecording')
+              : prettyAccelerator(settings.globalHotkey, t('common.notSet'))}
+          </kbd>
           <Button
-            label={recording ? '取消' : '录制'}
+            label={recording ? t('common.cancel') : t('common.record')}
             variant="secondary"
             size="sm"
             onClick={() => {
@@ -165,20 +187,24 @@ export function AppearanceSettings(): React.JSX.Element {
           />
           {settings.globalHotkey && (
             <Button
-              label="清除"
+              label={t('appearance.hotkeyClear')}
               size="sm"
-              onClick={() => void window.vav.settings.setHotkey('').then((r) =>
-                useSessionStore.setState({ settings: r.settings })
-              )}
+              onClick={() =>
+                void window.vav.settings.setHotkey('').then((r) =>
+                  useSessionStore.setState({ settings: r.settings })
+                )
+              }
             />
           )}
         </div>
       </div>
       <div className="form-hint">
-        在任意应用中按下即可呼出 / 隐藏 vav。需至少一个修饰键（{MODIFIER_HINT}）。
+        {t('appearance.hotkeyHint', { modifiers: MODIFIER_HINT })}
       </div>
 
-      {hotkeyError && <InlineAlert kind="warning" title="快捷键不可用" message={hotkeyError} />}
+      {/* `hotkeyError` already opens with what went wrong, so a heading here
+          repeated its first four characters back at the reader. */}
+      {hotkeyError && <InlineAlert kind="warning" message={hotkeyError} />}
     </div>
   )
 }

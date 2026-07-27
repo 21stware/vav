@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react'
 import { PRESET_MODELS } from '@shared/types'
 import { useSessionStore } from '../../state/sessionStore'
-import { Button, InlineAlert } from '../ui'
+import { useT } from '../../i18n/useT'
+import { Button } from '../ui'
 
 /**
  * API & model settings.
@@ -16,6 +17,7 @@ export function ApiSettings({
   onFooterMessage: (message: string) => void
   registerCommit: (commit: (() => Promise<void>) | null) => void
 }): React.JSX.Element {
+  const t = useT()
   const settings = useSessionStore((s) => s.settings)
   const apiKeyHint = useSessionStore((s) => s.apiKeyHint)
   const updateSettings = useSessionStore((s) => s.updateSettings)
@@ -24,7 +26,6 @@ export function ApiSettings({
   const [draftKey, setDraftKey] = useState('')
   const [revealed, setRevealed] = useState(false)
   const [validating, setValidating] = useState(false)
-  const [result, setResult] = useState<{ ok: boolean; message: string } | null>(null)
   const [customModel, setCustomModel] = useState('')
 
   useEffect(() => {
@@ -39,12 +40,10 @@ export function ApiSettings({
 
   const validate = async (): Promise<void> => {
     setValidating(true)
-    onFooterMessage('验证中…')
+    onFooterMessage(t('api.validating'))
     const response = await window.vav.settings.validateKey(draftKey.trim())
-    setResult(response)
     onFooterMessage(response.message)
     if (response.ok && draftKey.trim()) {
-      // A key that just proved itself is worth persisting immediately.
       await window.vav.settings.setApiKey(draftKey.trim())
       await refreshApiKeyHint()
       setDraftKey('')
@@ -69,7 +68,7 @@ export function ApiSettings({
   return (
     <div className="form">
       <div className="form-row">
-        <label>API Key</label>
+        <label>{t('api.key')}</label>
         <div className="control">
           <input
             className="text-field"
@@ -78,9 +77,13 @@ export function ApiSettings({
             value={draftKey}
             onChange={(event) => setDraftKey(event.target.value)}
           />
-          <Button label={revealed ? '隐藏' : '显示'} size="sm" onClick={() => void reveal()} />
           <Button
-            label={validating ? '验证中…' : '验证'}
+            label={revealed ? t('api.hide') : t('api.show')}
+            size="sm"
+            onClick={() => void reveal()}
+          />
+          <Button
+            label={validating ? t('api.validating') : t('api.validate')}
             variant="secondary"
             size="sm"
             disabled={validating}
@@ -90,12 +93,12 @@ export function ApiSettings({
       </div>
       <div className="form-hint">
         {settings.apiKeyPresent
-          ? `已配置：${apiKeyHint ?? '••••'} · 输入新密钥以替换。密钥仅存本机 Keychain。`
-          : '尚未配置。密钥仅存本机 Keychain，不写入会话记录。'}
+          ? t('api.keyConfigured', { hint: apiKeyHint ?? '••••' })
+          : t('api.keyEmpty')}
       </div>
 
       <div className="form-row">
-        <label>API 端点</label>
+        <label>{t('api.endpoint')}</label>
         <div className="control">
           <input
             className="text-field"
@@ -106,7 +109,7 @@ export function ApiSettings({
       </div>
 
       <div className="form-row">
-        <label>默认模型</label>
+        <label>{t('api.model')}</label>
         <div className="control">
           <select
             className="text-field"
@@ -123,7 +126,7 @@ export function ApiSettings({
       </div>
 
       <div className="form-row">
-        <label>自定义模型 ID</label>
+        <label>{t('api.customModelId')}</label>
         <div className="control">
           <input
             className="text-field"
@@ -132,7 +135,7 @@ export function ApiSettings({
             onChange={(event) => setCustomModel(event.target.value)}
           />
           <Button
-            label="添加并使用"
+            label={t('api.addAndUse')}
             variant="secondary"
             size="sm"
             disabled={!customModel.trim()}
@@ -149,7 +152,7 @@ export function ApiSettings({
       </div>
 
       <div className="form-row">
-        <label>最大 Token</label>
+        <label>{t('api.maxTokens')}</label>
         <div className="control">
           <input
             className="text-field"
@@ -164,7 +167,7 @@ export function ApiSettings({
       </div>
 
       <div className="form-row">
-        <label>温度</label>
+        <label>{t('api.temperature')}</label>
         <div className="control">
           <input
             type="range"
@@ -180,20 +183,6 @@ export function ApiSettings({
           </span>
         </div>
       </div>
-
-      {result && (
-        <InlineAlert
-          kind={result.ok ? 'success' : 'error'}
-          title={result.ok ? '验证成功' : '验证失败'}
-          message={result.message}
-        />
-      )}
-
-      <InlineAlert
-        kind="info"
-        title="提示"
-        message="401 通常是密钥错误、未保存，或端点与提供商不匹配。验证通过后再开始会话。"
-      />
     </div>
   )
 }

@@ -11,6 +11,7 @@
  * the reader, not the model.
  */
 import type { Api, AssistantMessage, Message, Model, ToolCall } from '@earendil-works/pi-ai'
+import { composeQuotedUserText } from '@shared/quote'
 import { threadPath } from '@shared/thread'
 import type { ChatMessage, MessageBlock, ToolCallBlock } from '@shared/types'
 
@@ -25,9 +26,19 @@ export function buildHistory(
   for (const message of threadPath(messages, leafId)) {
     if (message.role === 'system') continue
     if (message.role === 'user') {
+      const quote =
+        message.quoteMessageId && message.quoteSummary && message.quoteRole
+          ? {
+              messageId: message.quoteMessageId,
+              summary: message.quoteSummary,
+              role: message.quoteRole
+            }
+          : null
+      // Stored content is the bubble body; quote marker is reconstituted for the model.
+      const text = composeQuotedUserText(message.content, quote)
       history.push({
         role: 'user',
-        content: [{ type: 'text', text: message.content }],
+        content: [{ type: 'text', text }],
         timestamp: message.createdAt
       })
       continue
@@ -68,7 +79,7 @@ function replayAssistant(message: ChatMessage, model: Model<Api>): Message[] {
   }
 
   for (const block of message.blocks) {
-    if (block.kind === 'reasoning') continue
+    if (block.kind === 'reasoning' || block.kind === 'plan') continue
     if (block.kind === 'text') {
       if (results.length) flush()
       if (block.text.trim()) content.push({ type: 'text', text: block.text })
@@ -106,7 +117,14 @@ function toolCallOf(block: ToolCallBlock): ToolCall {
  */
 export function blockFromContent(
   item: AssistantMessage['content'][number],
-  toolStatus: (id: string) => Pick<ToolCallBlock, 'status' | 'output' | 'choices'> | undefined,
+  toolStatus: (
+    id: string
+  ) =>
+    | Pick<
+        ToolCallBlock,
+        'status' | 'output' | 'choices' | 'multiSelect' | 'questions' | 'askTitle'
+      >
+    | undefined,
   summarize: (name: string, args: Record<string, unknown>) => string
 ): MessageBlock | null {
   if (item.type === 'text') return { kind: 'text', text: item.text }
@@ -122,7 +140,10 @@ export function blockFromContent(
     input: JSON.stringify(item.arguments ?? {}, null, 2),
     output: state?.output ?? '',
     status: state?.status ?? 'pending',
-    ...(state?.choices ? { choices: state.choices } : {})
+    ...(state?.choices ? { choices: state.choices } : {}),
+    ...(state?.multiSelect != null ? { multiSelect: state.multiSelect } : {}),
+    ...(state?.questions ? { questions: state.questions } : {}),
+    ...(state?.askTitle ? { askTitle: state.askTitle } : {})
   }
 }
 

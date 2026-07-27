@@ -72,7 +72,11 @@ export function describeError(message: string): string {
   const text = message.trim()
   if (!text) return '请求失败'
   if (/\b401\b|invalid[_ ]?api[_ ]?key|unauthorized/i.test(text)) {
-    return `401 Invalid API key — ${text}`
+    // The only failure whose cause is usually on the settings screen rather
+    // than at the provider, so it is worth naming what to check. Settings used
+    // to say this in a standing "提示" box that was there before anything had
+    // gone wrong; it belongs here, where it is a diagnosis instead of trivia.
+    return `401 密钥被拒绝：检查密钥有没有填错、有没有保存，以及端点是否匹配该提供商 — ${text}`
   }
   if (/\b429\b|rate[_ ]?limit/i.test(text)) return `429 速率限制 — ${text}`
   return `请求失败：${text}`

@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { FileEntry, FileSortKey, TerminalTab } from '@shared/types'
+import { normalizeFileSortKey, type FileEntry, type FileSortKey, type TerminalTab } from '@shared/types'
 
 export const AGENT_TAB_ID = 'agent'
 
@@ -18,6 +18,9 @@ export interface WorkspaceSlice {
   changedFiles: string[]
   tabs: TerminalTab[]
   activeTabId: string
+  /** PTY body under the tab strip; default collapsed (terminal-panel.rpml). */
+  terminalOutputExpanded: boolean
+  terminalHasUnseenOutput: boolean
 }
 
 function emptySlice(root: string | null): WorkspaceSlice {
@@ -36,7 +39,9 @@ function emptySlice(root: string | null): WorkspaceSlice {
     // opens when it needs one, and a conversation that never runs a command
     // should not be carrying a shell tab around (terminal-panel.rpml).
     tabs: [],
-    activeTabId: ''
+    activeTabId: '',
+    terminalOutputExpanded: false,
+    terminalHasUnseenOutput: false
   }
 }
 
@@ -99,8 +104,12 @@ interface WorkspaceState {
   agentDidWriteFile(id: string, parentPath: string, filePath: string): void
   mirrorAgentTranscript(id: string, text: string): void
   ensureAgentTab(id: string): void
+  ensureAgentPty(id: string): Promise<void>
+  setTerminalOutputExpanded(id: string, expanded: boolean): void
 
   newUserTerminal(id: string, cols: number, rows: number): Promise<void>
+  /** New bash: first tab is agent bash; later tabs are user shells. */
+  newBash(id: string, cols?: number, rows?: number): Promise<void>
   selectTab(id: string, tabId: string): void
   requestCloseTab(id: string, tabId: string): void
   closeTab(id: string, tabId: string): void
@@ -190,7 +199,8 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   },
 
   async setSort(id, sort, ascending) {
-    patch(set, id, () => ({ sort, ascending, dirs: {} }))
+    const next = normalizeFileSortKey(sort)
+    patch(set, id, () => ({ sort: next, ascending, dirs: {} }))
     const slice = get().workspaces[id]
     if (!slice?.root) return
     for (const dir of [slice.root, ...slice.expanded]) {
@@ -222,16 +232,24 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
    * Opens the agent's bash tab the first time the agent actually runs
    * something. Output that arrives before the view mounts is held in
    * `pendingMirrors` and replayed, so nothing is lost by creating it late.
+   * The tab is interactive (real PTY) — mirrors feed the same surface.
    */
   ensureAgentTab(id) {
-    patch(set, id, (s) => {
-      if (s.tabs.some((tab) => tab.isAgent)) return {}
-      return {
-        tabs: [{ id: AGENT_TAB_ID, title: 'Agent bash', isAgent: true }, ...s.tabs],
-        // Never steal a tab the user chose; only fill an empty selection.
-        activeTabId: s.activeTabId || AGENT_TAB_ID
-      }
-    })
+    const existing = get().workspaces[id]
+    const had = !!existing?.tabs.some((tab) => tab.isAgent)
+    if (!had) {
+      patch(set, id, (s) => ({
+        tabs: [{ id: AGENT_TAB_ID, title: 'bash', isAgent: true }, ...s.tabs],
+        activeTabId: AGENT_TAB_ID
+      }))
+    }
+    void get().ensureAgentPty(id)
+  },
+
+  async ensureAgentPty(id) {
+    const slice = get().workspaces[id]
+    const cwd = slice?.root ?? '~'
+    await window.vav.pty.create(id, cwd, 80, 24, AGENT_TAB_ID)
   },
 
   async newUserTerminal(id, cols, rows) {
@@ -247,6 +265,15 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     })
   },
 
+  async newBash(id, cols = 80, rows = 24) {
+    const tabs = get().workspaces[id]?.tabs ?? []
+    if (tabs.length === 0) {
+      get().ensureAgentTab(id)
+      return
+    }
+    await get().newUserTerminal(id, cols, rows)
+  },
+
   selectTab(id, tabId) {
     patch(set, id, () => ({ activeTabId: tabId }))
   },
@@ -255,9 +282,15 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     get().closeTab(id, tabId)
   },
 
+  setTerminalOutputExpanded(id, expanded) {
+    patch(set, id, () => ({
+      terminalOutputExpanded: expanded,
+      terminalHasUnseenOutput: expanded ? false : get().workspaces[id]?.terminalHasUnseenOutput
+    }))
+  },
+
   closeTab(id, tabId) {
-    // The agent tab is a mirror, not a PTY of its own: there is nothing to kill.
-    if (tabId !== AGENT_TAB_ID) void window.vav.pty.kill(tabId)
+    void window.vav.pty.kill(tabId)
     terminalSinks.delete(sinkKey(id, tabId))
     pendingMirrors.delete(sinkKey(id, tabId))
     patch(set, id, (s) => {
@@ -276,7 +309,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   disposeConversation(id) {
     const slice = get().workspaces[id]
     for (const tab of slice?.tabs ?? []) {
-      if (!tab.isAgent) void window.vav.pty.kill(tab.id)
+      void window.vav.pty.kill(tab.id)
       terminalSinks.delete(sinkKey(id, tab.id))
       pendingMirrors.delete(sinkKey(id, tab.id))
     }

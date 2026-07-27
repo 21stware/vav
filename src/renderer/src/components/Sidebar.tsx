@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { HelpCircle, Loader2, MessageSquare, Pin, Search, X } from 'lucide-react'
-import { PRESET_MODELS, type ConversationMeta } from '@shared/types'
+import { Archive, ArrowLeft, ChevronDown, ChevronRight, Search, X } from 'lucide-react'
+import { PRESET_MODELS, type ConversationMeta, type SidebarGroupingMode } from '@shared/types'
 import { useSessionStore, type TurnRuntime } from '../state/sessionStore'
 import { isTemporaryWorkspace, middleTruncate, relativeTime, workdirShortLabel } from '../lib/format'
 import { flatten, groupConversations } from '../lib/grouping'
 import { showMenu, type MenuItem } from '../lib/nativeMenu'
-import { FILE_MANAGER } from '../lib/platform'
+import { fileManagerLabel } from '../lib/platform'
+import { useT } from '../i18n/useT'
 import { EmptyState } from './ui'
 
 export function modelLabel(id: string): string {
@@ -20,11 +21,14 @@ function subtitleFor(
   conversation: ConversationMeta,
   turn: TurnRuntime | undefined,
   isActive: boolean,
-  tmp: string
+  tmp: string,
+  t: ReturnType<typeof useT>
 ): string {
-  if (turn?.awaitingToolCallId) return '等待回答'
-  if (turn?.isRunning && isActive) return `流式中 · ${modelLabel(conversation.model)}`
-  if (turn?.isRunning) return `后台运行 · ${turn.toolCount} 工具已执行`
+  if (turn?.awaitingToolCallId) return t('sidebar.awaitingAnswer')
+  if (turn?.isRunning && isActive)
+    return t('sidebar.streaming', { model: modelLabel(conversation.model) })
+  if (turn?.isRunning)
+    return t('sidebar.backgroundRunning', { count: turn.toolCount })
   if (!isTemporaryWorkspace(conversation.workingDirectory, tmp)) {
     return workdirShortLabel(conversation.workingDirectory, tmp)
   }
@@ -33,7 +37,16 @@ function subtitleFor(
   return relativeTime(conversation.updatedAt)
 }
 
+function groupingOptions(t: ReturnType<typeof useT>): { value: SidebarGroupingMode; label: string }[] {
+  return [
+    { value: 'none', label: t('sidebar.group.none') },
+    { value: 'workspace', label: t('sidebar.group.workspace') },
+    { value: 'source', label: t('sidebar.group.source') }
+  ]
+}
+
 export function Sidebar(): React.JSX.Element {
+  const t = useT()
   const conversations = useSessionStore((s) => s.conversations)
   const activeId = useSessionStore((s) => s.activeId)
   const selectedIds = useSessionStore((s) => s.selectedIds)
@@ -41,36 +54,60 @@ export function Sidebar(): React.JSX.Element {
   const turns = useSessionStore((s) => s.turns)
   const tmp = useSessionStore((s) => s.tmp)
   const renamingId = useSessionStore((s) => s.renamingId)
+  const groupingMode = useSessionStore((s) => s.settings.sidebarGroupingMode)
 
   const setSidebarQuery = useSessionStore((s) => s.setSidebarQuery)
   const selectConversation = useSessionStore((s) => s.selectConversation)
   const createConversation = useSessionStore((s) => s.createConversation)
+  const duplicateConversation = useSessionStore((s) => s.duplicateConversation)
   const requestDelete = useSessionStore((s) => s.requestDelete)
   const beginRename = useSessionStore((s) => s.beginRename)
   const renameConversation = useSessionStore((s) => s.renameConversation)
   const setPinned = useSessionStore((s) => s.setPinned)
+  const setArchived = useSessionStore((s) => s.setArchived)
   const openDetached = useSessionStore((s) => s.openDetached)
+  const updateSettings = useSessionStore((s) => s.updateSettings)
 
   const listRef = useRef<HTMLDivElement>(null)
+  const [collapsedKeys, setCollapsedKeys] = useState<Set<string>>(() => new Set())
+  const [archiveView, setArchiveView] = useState(false)
 
   const searching = query.trim().length > 0
+  const archivedCount = useMemo(
+    () => conversations.filter((c) => c.archived).length,
+    [conversations]
+  )
 
-  // A conversation open in its own window keeps its row here, selection and
-  // all — detaching shows it somewhere else, it does not move it.
+  // Collapse state is ephemeral: mode switch or search resets to all expanded.
+  useEffect(() => {
+    setCollapsedKeys(new Set())
+  }, [groupingMode, searching, archiveView])
+
   const groups = useMemo(() => {
     const needle = query.trim().toLowerCase()
-    const rows = conversations.filter((c) => !needle || c.title.toLowerCase().includes(needle))
-    return groupConversations(rows, searching)
-  }, [conversations, query, searching])
+    if (archiveView) {
+      const rows = conversations
+        .filter((c) => c.archived)
+        .filter((c) => !needle || c.title.toLowerCase().includes(needle))
+        .sort((a, b) => (b.archivedAt ?? b.updatedAt) - (a.archivedAt ?? a.updatedAt))
+      return [{ key: 'archive', label: '', conversations: rows }]
+    }
+    const rows = conversations
+      .filter((c) => !c.archived)
+      .filter((c) => !needle || c.title.toLowerCase().includes(needle))
+    return groupConversations(rows, searching, groupingMode, tmp)
+  }, [conversations, query, searching, groupingMode, tmp, archiveView])
 
-  const visible = useMemo(() => flatten(groups), [groups])
+  const visible = useMemo(() => flatten(groups, collapsedKeys), [groups, collapsedKeys])
 
-  // Sidebar-scoped keys. Ignored while focus sits in a text field.
   useEffect(() => {
     const onKey = (event: KeyboardEvent): void => {
       const target = event.target as HTMLElement | null
       const editing =
-        target?.tagName === 'INPUT' || target?.tagName === 'TEXTAREA' || target?.isContentEditable
+        target?.tagName === 'INPUT' ||
+        target?.tagName === 'TEXTAREA' ||
+        target?.tagName === 'SELECT' ||
+        target?.isContentEditable
       if (editing) return
       if (!listRef.current?.contains(document.activeElement) && document.activeElement !== document.body)
         return
@@ -83,31 +120,49 @@ export function Sidebar(): React.JSX.Element {
       } else if (event.key === 'Backspace' || event.key === 'Delete') {
         event.preventDefault()
         requestDelete(selectedIds.length ? selectedIds : [activeId])
-      } else if (event.key === 'a' && event.metaKey) {
+      } else       if (event.key === 'a' && event.metaKey) {
         event.preventDefault()
         useSessionStore.setState({ selectedIds: visible.map((c) => c.id) })
+      } else if (event.key === 'Escape' && archiveView) {
+        event.preventDefault()
+        setArchiveView(false)
       }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [visible, activeId, selectedIds, selectConversation, requestDelete])
+  }, [visible, activeId, selectedIds, selectConversation, requestDelete, archiveView])
 
   const menuItems = (id: string): MenuItem[] => {
     const conversation = conversations.find((c) => c.id === id)
     const hasRealWorkdir = !isTemporaryWorkspace(conversation?.workingDirectory ?? null, tmp)
+    if (archiveView || conversation?.archived) {
+      return [
+        {
+          label: t('sidebar.menu.unarchive'),
+          onSelect: () => void setArchived(id, false)
+        },
+        { label: '', divider: true },
+        { label: t('sidebar.menu.delete'), destructive: true, onSelect: () => requestDelete([id]) }
+      ]
+    }
     return [
-      { label: '在单独窗口中打开', onSelect: () => void openDetached(id) },
+      { label: t('sidebar.menu.openDetached'), onSelect: () => void openDetached(id) },
       {
-        label: conversation?.pinned ? '取消置顶' : '置顶',
+        label: conversation?.pinned ? t('sidebar.menu.unpin') : t('sidebar.menu.pin'),
         onSelect: () => void setPinned(id, !conversation?.pinned)
       },
-      { label: '重命名', onSelect: () => beginRename(id) },
       {
-        label: '复制标题',
+        label: t('sidebar.menu.archive'),
+        onSelect: () => void setArchived(id, true)
+      },
+      { label: t('sidebar.menu.rename'), onSelect: () => beginRename(id) },
+      { label: t('sidebar.menu.duplicate'), onSelect: () => void duplicateConversation(id) },
+      {
+        label: t('sidebar.menu.copyTitle'),
         onSelect: () => void window.vav.conversations.copyToClipboard(conversation?.title ?? '')
       },
       {
-        label: `在 ${FILE_MANAGER} 中显示工作目录`,
+        label: t('sidebar.menu.revealWorkdir', { fileManager: fileManagerLabel() }),
         disabled: !hasRealWorkdir,
         onSelect: () => {
           if (conversation?.workingDirectory) {
@@ -116,8 +171,17 @@ export function Sidebar(): React.JSX.Element {
         }
       },
       { label: '', divider: true },
-      { label: '删除', destructive: true, onSelect: () => requestDelete([id]) }
+      { label: t('sidebar.menu.delete'), destructive: true, onSelect: () => requestDelete([id]) }
     ]
+  }
+
+  const toggleGroup = (key: string): void => {
+    setCollapsedKeys((prev) => {
+      const next = new Set(prev)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      return next
+    })
   }
 
   return (
@@ -137,7 +201,7 @@ export function Sidebar(): React.JSX.Element {
           <input
             className="text-field"
             style={{ paddingLeft: 24, paddingRight: query ? 24 : 8 }}
-            placeholder="搜索会话…"
+            placeholder={t('sidebar.searchPlaceholder')}
             value={query}
             onChange={(event) => setSidebarQuery(event.target.value)}
             onKeyDown={(event) => {
@@ -154,90 +218,184 @@ export function Sidebar(): React.JSX.Element {
             </button>
           )}
         </div>
+        {!archiveView && (
+          <label className="sidebar-grouping">
+            <span className="sidebar-grouping-label">{t('sidebar.grouping')}</span>
+            <span className="sidebar-grouping-control">
+              <select
+                className="text-field sidebar-grouping-select"
+                value={groupingMode}
+                onChange={(event) =>
+                  void updateSettings({
+                    sidebarGroupingMode: event.target.value as SidebarGroupingMode
+                  })
+                }
+              >
+                {groupingOptions(t).map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+              <ChevronDown className="sidebar-grouping-chevron" size={12} aria-hidden />
+            </span>
+          </label>
+        )}
+        {archiveView && (
+          <div className="sidebar-archive-head">
+            <button
+              type="button"
+              className="btn icon-only sm"
+              title={t('sidebar.back')}
+              onClick={() => setArchiveView(false)}
+            >
+              <ArrowLeft size={13} />
+            </button>
+            <span className="sidebar-archive-title">
+              {t('sidebar.archivedCount', { count: archivedCount })}
+            </span>
+          </div>
+        )}
       </div>
 
       <div className="sidebar-list" ref={listRef} tabIndex={-1}>
-        {visible.length === 0 && conversations.length === 0 && (
-          <EmptyState title="暂无会话记录" description="开始一个新会话吧">
+        {visible.length === 0 && !archiveView && conversations.filter((c) => !c.archived).length === 0 && (
+          <EmptyState title={t('sidebar.emptyTitle')} description={t('sidebar.emptyDesc')}>
             <button className="btn secondary" onClick={() => void createConversation()}>
-              新会话
+              {t('common.newSession')}
             </button>
           </EmptyState>
         )}
-        {visible.length === 0 && conversations.length > 0 && (
-          <EmptyState title="未找到匹配的会话" description="试试其他关键词">
+        {visible.length === 0 && archiveView && !searching && (
+          <EmptyState
+            title={t('sidebar.archiveEmptyTitle')}
+            description={t('sidebar.archiveEmptyDesc')}
+          />
+        )}
+        {visible.length === 0 && searching && (
+          <EmptyState title={t('sidebar.noMatchTitle')} description={t('sidebar.noMatchDesc')}>
             <button className="btn secondary" onClick={() => setSidebarQuery('')}>
-              清除过滤
+              {t('sidebar.clearFilter')}
             </button>
           </EmptyState>
         )}
 
-        {groups.map((group, groupIndex) => (
-          <div className="conv-group" key={group.label || `pinned-${groupIndex}`}>
-            {groupIndex > 0 && <div className="conv-group-divider" />}
-            {group.label && <div className="conv-group-header">{group.label}</div>}
-
-            {group.conversations.map((conversation) => {
-              const turn = turns[conversation.id]
-              const isActive = conversation.id === activeId
-              const isMultiSelected =
-                selectedIds.length > 1 && selectedIds.includes(conversation.id)
-              const awaiting = !!turn?.awaitingToolCallId
-              const running = !!turn?.isRunning && !awaiting
-
-              return (
-                <div
-                  key={conversation.id}
-                  className={`conv-row${isActive ? ' selected' : ''}${isMultiSelected && !isActive ? ' multi' : ''}`}
-                  onClick={(event) =>
-                    void selectConversation(conversation.id, {
-                      additive: event.metaKey,
-                      range: event.shiftKey
-                    })
-                  }
-                  onDoubleClick={() => void openDetached(conversation.id)}
-                  onContextMenu={(event) => {
-                    event.preventDefault()
-                    void showMenu(menuItems(conversation.id))
-                  }}
-                >
-                  {/* Pin wins over the activity icons: being pinned is why the
-                      row is up here, and that is what needs explaining. */}
-                  <span className="conv-icon">
-                    {conversation.pinned ? (
-                      <Pin size={13} />
-                    ) : awaiting ? (
-                      <HelpCircle size={14} />
-                    ) : running ? (
-                      <Loader2 size={14} className="spin" />
+        {groups.map((group, groupIndex) => {
+          const collapsible = group.kind === 'workspace' || group.kind === 'source'
+          const collapsed = collapsible && collapsedKeys.has(group.key)
+          return (
+            <div className="conv-group" key={group.key || `group-${groupIndex}`}>
+              {groupIndex > 0 && <div className="conv-group-divider" />}
+              {group.label &&
+                (collapsible ? (
+                  <button
+                    type="button"
+                    className="conv-group-header interactive"
+                    onClick={() => toggleGroup(group.key)}
+                    onContextMenu={(event) => {
+                      if (group.kind !== 'workspace') return
+                      const workdir = group.conversations[0]?.workingDirectory ?? null
+                      if (!workdir || isTemporaryWorkspace(workdir, tmp)) return
+                      event.preventDefault()
+                      void showMenu([
+                        {
+                          label: t('sidebar.menu.newSessionInDir'),
+                          onSelect: () =>
+                            void createConversation({
+                              workingDirectory: workdir,
+                              model: useSessionStore.getState().settings.defaultModel
+                            })
+                        }
+                      ])
+                    }}
+                  >
+                    {collapsed ? (
+                      <ChevronRight className="conv-group-chevron" size={12} aria-hidden />
                     ) : (
-                      <MessageSquare size={14} />
+                      <ChevronDown className="conv-group-chevron" size={12} aria-hidden />
                     )}
-                  </span>
+                    <span className="conv-group-title">{group.label}</span>
+                    <span className="conv-group-count">{group.conversations.length}</span>
+                  </button>
+                ) : (
+                  <div className="conv-group-header">
+                    <span className="conv-group-title">{group.label}</span>
+                  </div>
+                ))}
 
-                  {renamingId === conversation.id ? (
-                    <RenameField
-                      initial={conversation.title}
-                      onCommit={(title) => void renameConversation(conversation.id, title)}
-                      onCancel={() => beginRename(null)}
-                    />
-                  ) : (
-                    <span className="conv-text">
-                      <span className="conv-title">{middleTruncate(conversation.title)}</span>
-                      <span className="conv-subtitle">
-                        {subtitleFor(conversation, turn, isActive, tmp)}
-                      </span>
-                    </span>
-                  )}
+              {!collapsed &&
+                group.conversations.map((conversation) => {
+                  const turn = turns[conversation.id]
+                  const isActive = conversation.id === activeId
+                  const isMultiSelected =
+                    selectedIds.length > 1 && selectedIds.includes(conversation.id)
+                  const awaiting = !!turn?.awaitingToolCallId
+                  const running = !!turn?.isRunning && !awaiting
 
-                  {awaiting && <span className="conv-badge awaiting" title="等待回答" />}
-                  {running && !isActive && <span className="conv-badge running" title="后台运行" />}
-                </div>
-              )
-            })}
-          </div>
-        ))}
+                  return (
+                    <div
+                      key={conversation.id}
+                      className={`conv-row${isActive ? ' selected' : ''}${isMultiSelected && !isActive ? ' multi' : ''}`}
+                      onClick={(event) =>
+                        void selectConversation(conversation.id, {
+                          additive: event.metaKey,
+                          range: event.shiftKey
+                        })
+                      }
+                      onDoubleClick={() => void openDetached(conversation.id)}
+                      onContextMenu={(event) => {
+                        event.preventDefault()
+                        void showMenu(menuItems(conversation.id))
+                      }}
+                    >
+                      {renamingId === conversation.id ? (
+                        <RenameField
+                          initial={conversation.title}
+                          onCommit={(title) => void renameConversation(conversation.id, title)}
+                          onCancel={() => beginRename(null)}
+                        />
+                      ) : (
+                        <span className="conv-text">
+                          <span className="conv-title">{middleTruncate(conversation.title)}</span>
+                          <span className="conv-subtitle">
+                            {subtitleFor(conversation, turn, isActive, tmp, t)}
+                          </span>
+                        </span>
+                      )}
+
+                      {awaiting && (
+                        <span className="conv-badge awaiting" title={t('sidebar.awaitingAnswer')} />
+                      )}
+                      {running && !isActive && (
+                        <span
+                          className="conv-badge running"
+                          title={t('sidebar.badge.backgroundRunning')}
+                        />
+                      )}
+                    </div>
+                  )
+                })}
+            </div>
+          )
+        })}
       </div>
+
+      {!archiveView && (
+        <div className="sidebar-archive-foot">
+          <button
+            type="button"
+            className="btn ghost sm sidebar-archive-btn"
+            onClick={() => {
+              setSidebarQuery('')
+              setArchiveView(true)
+            }}
+          >
+            <Archive size={13} />
+            <span>{t('sidebar.archived')}</span>
+            {archivedCount > 0 && <span className="sidebar-archive-count">{archivedCount}</span>}
+          </button>
+        </div>
+      )}
     </aside>
   )
 }

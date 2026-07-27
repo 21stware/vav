@@ -78,10 +78,10 @@ export function acquireTerminal(options: {
   const term = new Terminal({
     fontFamily: options.fontFamily,
     fontSize: options.fontSize,
-    // The agent's tab is a read-only mirror; hide the cursor to say so.
-    cursorBlink: !options.isAgent,
-    cursorStyle: options.isAgent ? 'underline' : 'block',
-    disableStdin: options.isAgent,
+    // bash (agent) tab is interactive; tool output is also mirrored into it.
+    cursorBlink: true,
+    cursorStyle: 'block',
+    disableStdin: false,
     scrollback: 10_000,
     theme: THEME_DARK
   })
@@ -92,11 +92,10 @@ export function acquireTerminal(options: {
   term.open(container)
 
   if (options.isAgent) {
-    term.write('\x1b[2m# agent 自己的 bash session。它执行的命令与结果镜像到这里，只读。\x1b[0m\r\n')
-  } else {
-    term.onData((data) => void window.vav.pty.write(options.tabId, data))
-    term.onResize(({ cols, rows }) => void window.vav.pty.resize(options.tabId, cols, rows))
+    term.write('\x1b[2m# bash · agent 工具输出镜像到这里，也可直接输入命令\x1b[0m\r\n')
   }
+  term.onData((data) => void window.vav.pty.write(options.tabId, data))
+  term.onResize(({ cols, rows }) => void window.vav.pty.resize(options.tabId, cols, rows))
 
   const unregister = registerTerminalSink(options.conversationId, options.tabId, (data) =>
     term.write(data)

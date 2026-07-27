@@ -30,4 +30,10 @@ export function useAppearance(): void {
     root.style.setProperty('--code-size', `${Math.max(10, fontSize)}px`)
     root.dataset.reduceMotion = String(reduceMotion)
   }, [codeFont, fontSize, reduceMotion])
+
+  useEffect(() => {
+    return window.vav.onFullscreen((fullscreen) => {
+      document.documentElement.dataset.fullscreen = fullscreen ? 'true' : 'false'
+    })
+  }, [])
 }

@@ -57,6 +57,14 @@
       {
         "from": "build/icon.png",
         "to": "icon.png"
+      },
+      {
+        "from": "build/trayTemplate.png",
+        "to": "trayTemplate.png"
+      },
+      {
+        "from": "build/nina.v@example.com",
+        "to": "nina.v@example.com"
       }
     ],
     "asarUnpack": [

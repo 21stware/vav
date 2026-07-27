@@ -1,19 +1,21 @@
 import { basename } from './path'
+import { tt } from '../i18n/useT'
+import { getResolvedLocale } from '../i18n/useT'
 
-/** Relative time in the sidebar's vocabulary (sidebar-conversation-list.rpml). */
+/** Relative time in the sidebar's vocabulary. */
 export function relativeTime(timestamp: number): string {
   const delta = Date.now() - timestamp
   const minute = 60_000
   const hour = 60 * minute
   const day = 24 * hour
 
-  if (delta < minute) return '刚刚'
-  if (delta < hour) return `${Math.floor(delta / minute)} 分钟前`
-  if (delta < day) return `${Math.floor(delta / hour)} 小时前`
-  if (delta < 2 * day) return '昨天'
-  if (delta < 7 * day) return `${Math.floor(delta / day)} 天前`
-  if (delta < 14 * day) return '上周'
-  return new Date(timestamp).toLocaleDateString('zh-CN')
+  if (delta < minute) return tt('sidebar.time.justNow')
+  if (delta < hour) return tt('sidebar.time.minutesAgo', { n: Math.floor(delta / minute) })
+  if (delta < day) return tt('sidebar.time.hoursAgo', { n: Math.floor(delta / hour) })
+  if (delta < 2 * day) return tt('sidebar.time.yesterday')
+  if (delta < 7 * day) return tt('sidebar.time.daysAgo', { n: Math.floor(delta / day) })
+  if (delta < 14 * day) return tt('sidebar.time.lastWeek')
+  return new Date(timestamp).toLocaleDateString(getResolvedLocale())
 }
 
 /** A Temporary Workspace shows as "Workspace", never as a raw /var/folders path. */
@@ -23,13 +25,13 @@ export function isTemporaryWorkspace(path: string | null, tmp: string): boolean 
 }
 
 export function workdirLabel(path: string | null, tmp: string, home: string): string {
-  if (isTemporaryWorkspace(path, tmp)) return 'Workspace'
-  if (!path) return 'Workspace'
+  if (isTemporaryWorkspace(path, tmp)) return tt('sidebar.workspace')
+  if (!path) return tt('sidebar.workspace')
   return path.startsWith(home) ? `~${path.slice(home.length)}` : path
 }
 
 export function workdirShortLabel(path: string | null, tmp: string): string {
-  if (isTemporaryWorkspace(path, tmp) || !path) return 'Workspace'
+  if (isTemporaryWorkspace(path, tmp) || !path) return tt('sidebar.workspace')
   return basename(path)
 }
 

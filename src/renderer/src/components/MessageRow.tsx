@@ -3,6 +3,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Copy,
+  CornerUpLeft,
   GitBranch,
   Pencil,
   Quote,
@@ -10,7 +11,11 @@ import {
 } from 'lucide-react'
 import type { ChatMessage } from '@shared/types'
 import { showMenu, type MenuItem } from '../lib/nativeMenu'
+import { useSessionStore } from '../state/sessionStore'
+import { useT } from '../i18n/useT'
 import { MarkdownView } from './MarkdownView'
+import { ReasoningBlock } from './ReasoningBlock'
+import { StreamStatus } from './StreamStatus'
 import { ToolCard } from './ToolCard'
 import { Button } from './ui'
 
@@ -18,6 +23,8 @@ interface MessageRowProps {
   message: ChatMessage
   highlight?: string
   isCurrentMatch?: boolean
+  /** Bumped when this row should flash after a quote jump. */
+  flash?: number
   /** Branches hanging off this message: which one is showing, and how many. */
   branchIndex?: number
   branchCount?: number
@@ -31,6 +38,10 @@ interface MessageRowProps {
   onContinueInNewSession?: (messageId: string) => void
 }
 
+/** Long enough that a collapsed preview + expand control is worth the chrome. */
+const USER_COLLAPSE_CHARS = 280
+const USER_COLLAPSE_LINES = 5
+
 /**
  * A finished message: a value row that never mutates again.
  *
@@ -41,6 +52,7 @@ export const MessageRow = memo(function MessageRow({
   message,
   highlight,
   isCurrentMatch,
+  flash = 0,
   branchIndex = 0,
   branchCount = 1,
   busy,
@@ -51,13 +63,43 @@ export const MessageRow = memo(function MessageRow({
   onFork,
   onContinueInNewSession
 }: MessageRowProps): React.JSX.Element {
+  const t = useT()
   const [editing, setEditing] = useState(false)
+  const [expanded, setExpanded] = useState(false)
+  const [flashing, setFlashing] = useState(false)
+  const [branchPulse, setBranchPulse] = useState(0)
+  const [branchSwitching, setBranchSwitching] = useState(false)
+  const prevBranchIndex = useRef(branchIndex)
+  const scrollToMessage = useSessionStore((s) => s.scrollToMessage)
+
+  useEffect(() => {
+    if (!flash) return
+    setFlashing(true)
+    const timer = window.setTimeout(() => setFlashing(false), 1500)
+    return () => window.clearTimeout(timer)
+  }, [flash])
+
+  // Branch switch: brief content pulse so 1/2 → 2/2 is obvious.
+  useEffect(() => {
+    if (prevBranchIndex.current === branchIndex) return
+    prevBranchIndex.current = branchIndex
+    setBranchPulse((n) => n + 1)
+    setBranchSwitching(false)
+    const frame = window.requestAnimationFrame(() => setBranchSwitching(true))
+    const timer = window.setTimeout(() => setBranchSwitching(false), 280)
+    return () => {
+      window.cancelAnimationFrame(frame)
+      window.clearTimeout(timer)
+    }
+  }, [branchIndex])
 
   const classes = [
     'message',
     message.role,
     highlight ? 'search-hit' : '',
-    isCurrentMatch ? 'search-current' : ''
+    isCurrentMatch ? 'search-current' : '',
+    flashing ? 'quote-flash' : '',
+    branchSwitching ? 'branch-switch' : ''
   ]
     .filter(Boolean)
     .join(' ')
@@ -66,6 +108,7 @@ export const MessageRow = memo(function MessageRow({
     <BranchPager
       index={branchIndex}
       count={branchCount}
+      pulseKey={branchPulse}
       onStep={(step) => onStepBranch(message.id, step)}
     />
   )
@@ -74,28 +117,36 @@ export const MessageRow = memo(function MessageRow({
     event.preventDefault()
     const items: MenuItem[] = [
       {
-        label: '复制',
+        label: t('message.copy'),
         onSelect: () => void window.vav.conversations.copyToClipboard(message.content)
       }
     ]
     if (message.role === 'user' && onEdit) {
-      items.push({ label: '编辑并重新提问', disabled: busy, onSelect: () => setEditing(true) })
+      items.push({
+        label: t('message.editResend'),
+        disabled: busy,
+        onSelect: () => setEditing(true)
+      })
     }
     if (onRegenerate) {
       items.push({
-        label: message.role === 'user' ? '重新回答' : '重新生成',
+        label: message.role === 'user' ? t('message.retry') : t('message.regenerate'),
         disabled: busy,
         onSelect: () => onRegenerate(message.id)
       })
     }
-    if (onQuote) items.push({ label: '引用到输入框', onSelect: () => onQuote(message) })
+    if (onQuote) items.push({ label: t('message.quote'), onSelect: () => onQuote(message) })
     items.push({ label: '', divider: true })
     if (onFork) {
-      items.push({ label: '从此处开新分支', disabled: busy, onSelect: () => onFork(message.id) })
+      items.push({
+        label: t('message.branchHere'),
+        disabled: busy,
+        onSelect: () => onFork(message.id)
+      })
     }
     if (onContinueInNewSession) {
       items.push({
-        label: '在新会话中继续',
+        label: t('message.continueInNew'),
         onSelect: () => onContinueInNewSession(message.id)
       })
     }
@@ -123,93 +174,140 @@ export const MessageRow = memo(function MessageRow({
         />
       )
     }
+
+    const lineCount = message.content.split('\n').length
+    const collapsible =
+      message.content.length > USER_COLLAPSE_CHARS || lineCount > USER_COLLAPSE_LINES
+    const collapsed = collapsible && !expanded
+
     return (
-      <div className="message-group user" onContextMenu={onContextMenu}>
-        <div className={classes} id={`msg-${message.id}`}>
-          {message.content}
-        </div>
-        <div className="message-actions">
+      <div className="message-turn user" onContextMenu={onContextMenu}>
+        <div className="message-role">You</div>
+        <div className="message-group user">
+          {message.quoteSummary && message.quoteMessageId && (
+            <button
+              type="button"
+              className="message-quote-ref"
+              title={t('composer.quoteJump')}
+              onClick={() => scrollToMessage(message.quoteMessageId!)}
+            >
+              <CornerUpLeft size={12} />
+              <span>{message.quoteSummary}</span>
+            </button>
+          )}
+          <div
+            className={`${classes}${collapsed ? ' is-collapsed' : ''}`}
+            id={`msg-${message.id}`}
+          >
+            {message.content}
+          </div>
+          <div className="message-actions">
+            {onEdit && (
+              <Button
+                icon={<Pencil size={12} />}
+                size="sm"
+                title={t('message.editResend')}
+                disabled={busy}
+                onClick={() => setEditing(true)}
+              />
+            )}
+            {onRegenerate && (
+              <Button
+                icon={<RotateCcw size={12} />}
+                size="sm"
+                title={t('message.retry')}
+                disabled={busy}
+                onClick={() => onRegenerate(message.id)}
+              />
+            )}
+            {onQuote && (
+              <Button
+                icon={<Quote size={12} />}
+                size="sm"
+                title={t('message.quote')}
+                onClick={() => onQuote(message)}
+              />
+            )}
+            {onFork && (
+              <Button
+                icon={<GitBranch size={12} />}
+                size="sm"
+                title={t('message.branchHere')}
+                disabled={busy}
+                onClick={() => onFork(message.id)}
+              />
+            )}
+          </div>
           {pager}
-          {onEdit && (
-            <Button
-              icon={<Pencil size={12} />}
-              size="sm"
-              title="编辑并重新提问"
-              disabled={busy}
-              onClick={() => setEditing(true)}
-            />
-          )}
-          {onRegenerate && (
-            <Button
-              icon={<RotateCcw size={12} />}
-              size="sm"
-              title="重新回答"
-              disabled={busy}
-              onClick={() => onRegenerate(message.id)}
-            />
-          )}
-          {onFork && (
-            <Button
-              icon={<GitBranch size={12} />}
-              size="sm"
-              title="从此处开新分支"
-              disabled={busy}
-              onClick={() => onFork(message.id)}
-            />
-          )}
         </div>
+        {collapsible && (
+          <button
+            type="button"
+            className="message-collapse-toggle"
+            onClick={() => setExpanded((value) => !value)}
+          >
+            {expanded ? t('common.collapse') : t('common.expand')}
+          </button>
+        )}
       </div>
     )
   }
 
   return (
-    <div className={classes} id={`msg-${message.id}`} onContextMenu={onContextMenu}>
-      {message.blocks.map((block, index) => {
-        if (block.kind === 'reasoning') {
-          return (
-            <details className="reasoning" key={`r${index}`}>
-              <summary>思考过程</summary>
-              <div className="reasoning-body">{block.text}</div>
-            </details>
-          )
-        }
-        if (block.kind === 'toolCall') {
-          return <ToolCard key={block.id} block={block} />
-        }
-        return <MarkdownView key={`t${index}`} source={block.text} highlight={highlight} />
-      })}
+    <div className="message-turn assistant" onContextMenu={onContextMenu}>
+      <div className="message-role">Agent</div>
+      <div className={classes} id={`msg-${message.id}`}>
+        {message.blocks.map((block, index) => {
+          if (block.kind === 'reasoning') {
+            return <ReasoningBlock key={`r${index}`} text={block.text} />
+          }
+          if (block.kind === 'plan') {
+            // Legacy PlanBlock rows, if any, are ignored in favour of plan tools.
+            return null
+          }
+          if (block.kind === 'toolCall') {
+            if (block.tool === 'plan') return null
+            return <ToolCard key={block.id} block={block} />
+          }
+          return <MarkdownView key={`t${index}`} source={block.text} highlight={highlight} />
+        })}
 
-      {message.cancelled && <div className="message system">已取消本轮</div>}
+        {message.cancelled && <div className="message system">{t('message.cancelled')}</div>}
 
-      <div className="message-actions">
-        {pager}
-        <Button
-          icon={<Copy size={12} />}
-          size="sm"
-          title="复制"
-          onClick={() => void window.vav.conversations.copyToClipboard(message.content)}
-        />
-        {onRegenerate && (
+        <div className="message-actions">
           <Button
-            icon={<RotateCcw size={12} />}
+            icon={<Copy size={12} />}
             size="sm"
-            title="重新生成"
-            disabled={busy}
-            onClick={() => onRegenerate(message.id)}
+            title={t('message.copy')}
+            onClick={() => void window.vav.conversations.copyToClipboard(message.content)}
           />
-        )}
-        {onQuote && (
-          <Button icon={<Quote size={12} />} size="sm" title="引用" onClick={() => onQuote(message)} />
-        )}
-        {onFork && (
-          <Button
-            icon={<GitBranch size={12} />}
-            size="sm"
-            title="从此处开新分支"
-            disabled={busy}
-            onClick={() => onFork(message.id)}
-          />
-        )}
+          {onRegenerate && (
+            <Button
+              icon={<RotateCcw size={12} />}
+              size="sm"
+              title={t('message.regenerate')}
+              disabled={busy}
+              onClick={() => onRegenerate(message.id)}
+            />
+          )}
+          {onQuote && (
+            <Button icon={<Quote size={12} />} size="sm" title={t('message.quote')} onClick={() => onQuote(message)} />
+          )}
+          {onFork && (
+            <Button
+              icon={<GitBranch size={12} />}
+              size="sm"
+              title={t('message.branchHere')}
+              disabled={busy}
+              onClick={() => onFork(message.id)}
+            />
+          )}
+        </div>
+
+        <div className="message-footer">
+          {pager}
+          {!message.cancelled && !message.errorText && <StreamStatus state="done" />}
+        </div>
       </div>
     </div>
   )
@@ -219,32 +317,37 @@ export const MessageRow = memo(function MessageRow({
 export function BranchPager({
   index,
   count,
+  pulseKey = 0,
   onStep
 }: {
   index: number
   count: number
+  /** Bumps when the active branch changes — drives the count pop. */
+  pulseKey?: number
   onStep: (step: number) => void
 }): React.JSX.Element {
+  const t = useT()
+
   return (
-    <div className="variant-pager">
+    <div className="variant-pager" data-pulse={pulseKey > 0 ? pulseKey : undefined}>
       <button
         className="variant-step"
-        title="上一个分支"
+        title={t('message.prevBranch')}
         disabled={index <= 0}
         onClick={() => onStep(-1)}
       >
-        <ChevronLeft size={12} />
+        <ChevronLeft size={13} />
       </button>
-      <span className="variant-count">
+      <span key={pulseKey} className="variant-count">
         {index + 1}/{count}
       </span>
       <button
         className="variant-step"
-        title="下一个分支"
+        title={t('message.nextBranch')}
         disabled={index >= count - 1}
         onClick={() => onStep(1)}
       >
-        <ChevronRight size={12} />
+        <ChevronRight size={13} />
       </button>
     </div>
   )
@@ -259,6 +362,7 @@ function UserEditor({
   onSubmit: (text: string) => void
   onCancel: () => void
 }): React.JSX.Element {
+  const t = useT()
   const [text, setText] = useState(initial)
   const ref = useRef<HTMLTextAreaElement>(null)
 
@@ -284,23 +388,26 @@ function UserEditor({
   }
 
   return (
-    <div className="message-group user">
-      <div className="message user editing">
-        <textarea
-          ref={ref}
-          className="message-editor"
-          value={text}
-          rows={1}
-          onChange={(event) => setText(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === 'Escape') onCancel()
-            if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) submit()
-          }}
-        />
-      </div>
-      <div className="message-actions">
-        <Button label="取消" size="sm" onClick={onCancel} />
-        <Button label="发送" size="sm" variant="primary" onClick={submit} />
+    <div className="message-turn user">
+      <div className="message-role">You</div>
+      <div className="message-group user">
+        <div className="message user editing">
+          <textarea
+            ref={ref}
+            className="message-editor"
+            value={text}
+            rows={1}
+            onChange={(event) => setText(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Escape') onCancel()
+              if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) submit()
+            }}
+          />
+        </div>
+        <div className="message-actions">
+          <Button label={t('common.cancel')} size="sm" onClick={onCancel} />
+          <Button label={t('composer.send')} size="sm" variant="primary" onClick={submit} />
+        </div>
       </div>
     </div>
   )

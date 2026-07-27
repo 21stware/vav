@@ -16,10 +16,19 @@
 import { dirname, isAbsolute, resolve as resolvePath } from 'node:path'
 import { Type, type TSchema } from '@earendil-works/pi-ai'
 import type { AgentTool } from '@earendil-works/pi-agent-core'
-import { TOOL_LABELS, TOOL_OUTPUT_CAP, type AppSettings, type ToolName } from '@shared/types'
+import { normalizeAskQuestions, normalizePlanSteps } from '@shared/askPlan'
+import {
+  TOOL_LABELS,
+  TOOL_OUTPUT_CAP,
+  type AppSettings,
+  type AskQuestion,
+  type ToolName
+} from '@shared/types'
 import type { FileService } from '../fs/FileService'
-import type { StickyShell } from '../terminal/StickyShell'
+import { BASH_SESSION_ID, type StickyShell } from '../terminal/StickyShell'
 import { unifiedDiff } from './diff'
+
+export { normalizeAskQuestions, normalizePlanSteps } from '@shared/askPlan'
 
 export interface ToolDetails {
   /** Full human-facing text for the tool card. */
@@ -40,12 +49,25 @@ export interface ToolHost {
   ask: (
     toolCallId: string,
     summary: string,
-    choices?: string[]
+    options?: {
+      choices?: string[]
+      multiSelect?: boolean
+      questions?: AskQuestion[]
+      askTitle?: string
+    }
   ) => Promise<{ text: string; cancelled: boolean }>
 }
 
 export const INTERACTIVE_TOOLS: ReadonlySet<ToolName> = new Set(['request', 'ask_user_question'])
 export const READONLY_TOOLS: ReadonlySet<ToolName> = new Set(['fs_read', 'fs_list'])
+/** Auto-mode tools that pause for Approve / Deny. */
+export const HIGH_RISK_TOOLS: ReadonlySet<ToolName> = new Set(['fs_write', 'terminal'])
+/** Terminal commands treated as read-only under Auto approval. */
+const READONLY_TERMINAL = /^(?:cat|ls|grep|rg|head|tail|wc|pwd|echo|which|type|file|stat|find|tree)\b/
+
+export function isReadonlyTerminalCommand(command: string): boolean {
+  return READONLY_TERMINAL.test(command.trim())
+}
 
 /** Keeps the parameter schema bound to `execute`, which `AgentTool[]` erases. */
 function defineTool<S extends TSchema>(tool: AgentTool<S, ToolDetails>): AgentTool<S, ToolDetails> {
@@ -60,20 +82,30 @@ export function createTools(host: ToolHost): AgentTool[] {
     name: 'terminal',
     label: TOOL_LABELS.terminal,
     description:
-      'Run a shell command in the conversation sticky shell. The working directory, exported variables and shell history persist between calls. Returns merged stdout/stderr and the exit code.',
+      'Run a shell command. Wait mode (default) blocks until exit. Fire-and-forget (background=true) starts services/daemons and returns immediately with {status,pid,sessionId}; then use wait or read_bash_session.',
     parameters: Type.Object({
-      command: Type.String({ description: 'The shell command to run.' })
+      command: Type.String({ description: 'The shell command to run.' }),
+      background: Type.Optional(
+        Type.Boolean({
+          description:
+            'Fire-and-forget: for servers/daemons that do not exit (npm run dev, uvicorn, …). Returns immediately; follow with wait / read_bash_session.'
+        })
+      )
     }),
     async execute(_id, params) {
       const command = params.command.trim()
       if (!command) return failure('缺少 command 参数')
 
       const timeout = host.settings().commandTimeout
-      const result = await host.shell().run(command, timeout)
-      const transcript = `$ ${command}\n${result.output}${result.output.endsWith('\n') ? '' : '\n'}exit ${result.exitCode}\n`
-      host.mirror(transcript)
+      const background = params.background === true || looksLikeServerCommand(command)
+      const shell = host.shell()
+      host.mirror(`$ ${command}${background ? '  # background' : ''}\n`)
+      const result = background
+        ? await shell.runBackground(command, (chunk) => host.mirror(chunk))
+        : await shell.run(command, timeout, (chunk) => host.mirror(chunk))
 
       if (result.timedOut) {
+        host.mirror(`exit ${result.exitCode}\n`)
         return {
           content: [
             { type: 'text', text: cap(`Command timed out after ${timeout}s.\n${result.output}`) }
@@ -84,9 +116,123 @@ export function createTools(host: ToolHost): AgentTool[] {
           }
         }
       }
+      if (result.backgroundPid != null) {
+        const payload = {
+          status: 'running' as const,
+          pid: result.backgroundPid,
+          sessionId: shell.sessionId
+        }
+        host.mirror(`background pid ${result.backgroundPid}\n`)
+        return {
+          // Spec: empty body to the model for fire-and-forget — status JSON only.
+          content: [{ type: 'text', text: JSON.stringify(payload) }],
+          details: {
+            display: `后台运行 · pid ${result.backgroundPid}`,
+            failed: false
+          }
+        }
+      }
+      const body = result.output
+      const transcript = `$ ${command}\n${body}${body && !body.endsWith('\n') ? '\n' : ''}exit ${result.exitCode}\n`
+      host.mirror(`exit ${result.exitCode}\n`)
       return {
         content: [{ type: 'text', text: cap(`${result.output}\n[exit ${result.exitCode}]`) }],
         details: { display: transcript, failed: result.exitCode !== 0 }
+      }
+    }
+  })
+
+  const wait = defineTool({
+    name: 'wait',
+    label: TOOL_LABELS.wait,
+    description:
+      'Wait for a previously fire-and-forget terminal session to print a pattern (e.g. "listening on"). Blocks until match or timeout.',
+    parameters: Type.Object({
+      sessionId: Type.Optional(
+        Type.String({ description: `Bash session id (default "${BASH_SESSION_ID}").` })
+      ),
+      expect: Type.String({
+        description: 'Regex or literal substring to watch for in stdout/stderr.'
+      }),
+      timeoutMs: Type.Optional(
+        Type.Number({ description: 'Milliseconds to wait (default 60000).' })
+      )
+    }),
+    async execute(_id, params) {
+      const sessionId = String(params.sessionId ?? BASH_SESSION_ID)
+      const shell = host.shell()
+      if (sessionId !== shell.sessionId) {
+        return failure(`未知 sessionId「${sessionId}」（当前仅支持 ${shell.sessionId}）`)
+      }
+      const expect = String(params.expect ?? '').trim()
+      if (!expect) return failure('缺少 expect 参数')
+      const timeoutMs = Number(params.timeoutMs ?? 60_000)
+      const result = await shell.waitFor(expect, timeoutMs)
+      const seconds = (result.elapsedMs / 1000).toFixed(1)
+      if (result.matched) {
+        return {
+          content: [
+            {
+              type: 'text',
+              text: cap(
+                JSON.stringify({
+                  matched: true,
+                  output_since_start: result.output,
+                  elapsedMs: result.elapsedMs
+                })
+              )
+            }
+          ],
+          details: {
+            display: `matched: ${expect} (${seconds}s)\n${result.output}`,
+            failed: false
+          }
+        }
+      }
+      return {
+        content: [
+          {
+            type: 'text',
+            text: cap(
+              JSON.stringify({
+                matched: false,
+                output_since_start: result.output,
+                elapsedMs: result.elapsedMs
+              })
+            )
+          }
+        ],
+        details: {
+          display: `timeout ${seconds}s · expect: ${expect}\n${result.output || '（无新输出）'}`,
+          failed: true
+        }
+      }
+    }
+  })
+
+  const readBashSession = defineTool({
+    name: 'read_bash_session',
+    label: TOOL_LABELS.read_bash_session,
+    description:
+      'Read the current scrollback of the bash session without waiting. Use to poll a fire-and-forget service.',
+    parameters: Type.Object({
+      sessionId: Type.Optional(
+        Type.String({ description: `Bash session id (default "${BASH_SESSION_ID}").` })
+      ),
+      tailLines: Type.Optional(
+        Type.Number({ description: 'How many trailing lines to return (default 200).' })
+      )
+    }),
+    async execute(_id, params) {
+      const sessionId = String(params.sessionId ?? BASH_SESSION_ID)
+      const shell = host.shell()
+      if (sessionId !== shell.sessionId) {
+        return failure(`未知 sessionId「${sessionId}」（当前仅支持 ${shell.sessionId}）`)
+      }
+      const tail = shell.readTail(Number(params.tailLines ?? 200))
+      return {
+        content: [{ type: 'text', text: cap(tail || '(empty)') }],
+        details: { display: tail || '（空）' }
       }
     }
   })
@@ -171,23 +317,95 @@ export function createTools(host: ToolHost): AgentTool[] {
     executionMode: 'sequential'
   })
 
+  const askQuestionItem = Type.Object({
+    question: Type.String({ description: 'The question text.' }),
+    choices: Type.Optional(Type.Array(Type.String())),
+    multiSelect: Type.Optional(
+      Type.Boolean({ description: 'When true with choices, allow selecting multiple.' })
+    )
+  })
+
   const askUserQuestion = defineTool({
     name: 'ask_user_question',
     label: TOOL_LABELS.ask_user_question,
-    description: 'Pause the turn and ask the user a question, optionally offering preset choices.',
+    description:
+      'Pause the turn and ask the user one or more questions. Supports single-choice, multi-choice, and free-text. Prefer `questions` for several prompts in one card.',
     parameters: Type.Object({
-      question: Type.String({ description: 'The question to ask.' }),
+      title: Type.Optional(Type.String({ description: 'Card title when asking several questions.' })),
+      question: Type.Optional(Type.String({ description: 'Single-question form.' })),
       choices: Type.Optional(
         Type.Array(Type.String(), {
-          description: 'Optional preset answers rendered as buttons.'
+          description: 'Optional preset answers for the single-question form.'
+        })
+      ),
+      multiSelect: Type.Optional(Type.Boolean()),
+      questions: Type.Optional(Type.Array(askQuestionItem))
+    }),
+    execute: async (id, params) => {
+      const questions = normalizeAskQuestions(params as Record<string, unknown>)
+      if (questions.length === 0) return failure('缺少 question / questions 参数')
+      const summary =
+        questions.length === 1
+          ? questions[0].question
+          : String((params as { title?: string }).title ?? `${questions.length} 个问题`)
+      return park(
+        host.ask(id, summary, {
+          questions,
+          askTitle: (params as { title?: string }).title,
+          choices: questions.length === 1 ? questions[0].choices : undefined,
+          multiSelect: questions.length === 1 ? questions[0].multiSelect : undefined
         })
       )
-    }),
-    execute: (id, params) => park(host.ask(id, params.question, params.choices)),
+    },
     executionMode: 'sequential'
   })
 
-  return [terminal, fsRead, fsWrite, fsList, request, askUserQuestion] as AgentTool[]
+  const plan = defineTool({
+    name: 'plan',
+    label: TOOL_LABELS.plan,
+    description:
+      'Create or update a visible plan checklist for the current turn. Call once to introduce steps (all pending), then again whenever a step changes status. Exactly one step may be executing at a time.',
+    parameters: Type.Object({
+      title: Type.String({ description: 'Short plan title shown in the card header.' }),
+      steps: Type.Array(
+        Type.Object({
+          id: Type.String(),
+          title: Type.String(),
+          status: Type.Union([
+            Type.Literal('pending'),
+            Type.Literal('executing'),
+            Type.Literal('done'),
+            Type.Literal('error'),
+            Type.Literal('skipped')
+          ]),
+          subtitle: Type.Optional(Type.String())
+        }),
+        { minItems: 1 }
+      )
+    }),
+    async execute(_id, params) {
+      const title = String(params.title ?? 'Plan').trim() || 'Plan'
+      const steps = normalizePlanSteps(params.steps)
+      const done = steps.filter((step) => step.status === 'done').length
+      const summary = `Plan · ${title} (${done}/${steps.length})`
+      return {
+        content: [{ type: 'text', text: summary }],
+        details: { display: summary }
+      }
+    }
+  })
+
+  return [
+    terminal,
+    wait,
+    readBashSession,
+    fsRead,
+    fsWrite,
+    fsList,
+    request,
+    askUserQuestion,
+    plan
+  ] as AgentTool[]
 }
 
 async function park(
@@ -238,23 +456,49 @@ export function buildSystemPrompt(workingDirectory: string, shell: string): stri
     `The user's shell is ${shell}; every \`terminal\` command must be valid ${shell} syntax.`,
     '',
     'You have real tools. Prefer acting over speculating:',
-    '- `terminal` runs commands in a sticky shell (cwd and exports persist between calls).',
+    '- `terminal` — wait mode (default) for commands that exit; fire-and-forget with `background: true` for servers/daemons (returns `{status,pid,sessionId}` immediately).',
+    '- `wait` — block until a bash session prints `expect` (regex/literal), or timeout.',
+    '- `read_bash_session` — poll the last N lines of bash scrollback without waiting.',
     '- `fs_read` / `fs_write` / `fs_list` operate on the local filesystem.',
     '- `request` and `ask_user_question` pause the turn to involve the user.',
+    '- `plan` maintains a visible checklist for multi-step work; update it as steps progress.',
     '',
     'Guidelines:',
     '- Inspect before you edit: read the file, then write the complete new contents.',
     '- Ask via `request` before destructive or irreversible operations.',
+    '- For several related questions, prefer one `ask_user_question` with a `questions` array.',
     '- Keep replies concise and in the language the user writes in.',
-    '- Format code and command output as fenced markdown blocks.'
+    '- Format code and command output as fenced markdown blocks.',
+    '- There is no hard tool-iteration cap; stop when the task is done or ask the user.'
   ].join('\n')
+}
+
+/** Heuristic: commands that typically never exit on their own. */
+function looksLikeServerCommand(command: string): boolean {
+  const c = command.trim()
+  return (
+    /\b(npm|pnpm|yarn|bunx?)\s+(run\s+)?(dev|start|serve)\b/i.test(c) ||
+    /\b(npx|bunx)\s+(vite|next|react-scripts|webpack-dev-server)\b/i.test(c) ||
+    /\b(vite|next\s+dev|webpack-dev-server|nodemon|uvicorn|gunicorn|fastapi)\b/i.test(c) ||
+    /\b(flask|django-admin|manage\.py)\s+run(server)?\b/i.test(c) ||
+    /\brails\s+s(erver)?\b/i.test(c) ||
+    /\bpython\d*\s+-m\s+http\.server\b/i.test(c) ||
+    /\b(php|ruby)\s+-S\b/i.test(c) ||
+    /\b(--watch|-w)\b/.test(c)
+  )
 }
 
 /** One-line label shown on the collapsed tool card. */
 export function summarizeToolInput(tool: ToolName, input: Record<string, unknown>): string {
   switch (tool) {
-    case 'terminal':
-      return truncate(String(input.command ?? ''), 120)
+    case 'terminal': {
+      const cmd = truncate(String(input.command ?? ''), 100)
+      return input.background ? `${cmd} (background)` : cmd
+    }
+    case 'wait':
+      return truncate(`expect: ${String(input.expect ?? '')}`, 120)
+    case 'read_bash_session':
+      return `tailLines: ${String(input.tailLines ?? 200)}, sessionId: ${String(input.sessionId ?? BASH_SESSION_ID)}`
     case 'fs_read':
     case 'fs_write':
       return truncate(String(input.path ?? ''), 120)
@@ -262,8 +506,18 @@ export function summarizeToolInput(tool: ToolName, input: Record<string, unknown
       return truncate(String(input.path ?? '.'), 120)
     case 'request':
       return truncate(String(input.instruction ?? ''), 120)
-    case 'ask_user_question':
-      return truncate(String(input.question ?? ''), 120)
+    case 'ask_user_question': {
+      const questions = normalizeAskQuestions(input)
+      if (questions.length > 1) {
+        return truncate(String(input.title ?? `${questions.length} 个问题`), 120)
+      }
+      return truncate(questions[0]?.question ?? String(input.question ?? ''), 120)
+    }
+    case 'plan': {
+      const steps = normalizePlanSteps(input.steps)
+      const done = steps.filter((step) => step.status === 'done').length
+      return truncate(`Plan · ${String(input.title ?? 'Plan')} (${done}/${steps.length || 0})`, 120)
+    }
     default:
       return ''
   }

@@ -1,26 +1,32 @@
 import { useEffect, useState } from 'react'
-import { Folder, Info, KeyRound, Palette } from 'lucide-react'
+import { Bell, Folder, Info, KeyRound, Palette, Terminal } from 'lucide-react'
 import type { SettingsView } from '@shared/ipc'
+import type { MessageKey } from '@shared/i18n'
 import { installSettingsBridge, useSessionStore } from './state/sessionStore'
+import { useT } from './i18n/useT'
 import { useAppearance } from './lib/appearance'
 import { installDefaultContextMenu } from './lib/nativeMenu'
 import { Button, Modal } from './components/ui'
 import { ApiSettings } from './components/settings/ApiSettings'
 import { WorkspaceSettings } from './components/settings/WorkspaceSettings'
 import { AppearanceSettings } from './components/settings/AppearanceSettings'
+import { NotificationsSettings } from './components/settings/NotificationsSettings'
+import { CliSettings } from './components/settings/CliSettings'
 import { AboutSettings } from './components/settings/AboutSettings'
-import { SHORTCUTS } from './shortcuts'
+import { getShortcuts } from './shortcuts'
 
-const CATEGORIES: { id: SettingsView; label: string; icon: React.JSX.Element }[] = [
-  { id: 'api', label: 'API 与模型', icon: <KeyRound size={13} /> },
-  { id: 'workspace', label: '工作区', icon: <Folder size={13} /> },
-  { id: 'appearance', label: '外观', icon: <Palette size={13} /> },
-  { id: 'about', label: '关于', icon: <Info size={13} /> }
+const CATEGORY_KEYS: { id: SettingsView; labelKey: MessageKey; icon: React.JSX.Element }[] = [
+  { id: 'api', labelKey: 'settings.nav.api', icon: <KeyRound size={13} /> },
+  { id: 'workspace', labelKey: 'settings.nav.workspace', icon: <Folder size={13} /> },
+  { id: 'appearance', labelKey: 'settings.nav.appearance', icon: <Palette size={13} /> },
+  { id: 'notifications', labelKey: 'settings.nav.notifications', icon: <Bell size={13} /> },
+  { id: 'cli', labelKey: 'settings.nav.cli', icon: <Terminal size={13} /> },
+  { id: 'about', labelKey: 'settings.nav.about', icon: <Info size={13} /> }
 ]
 
 function initialCategory(): SettingsView {
   const requested = new URLSearchParams(window.location.search).get('category')
-  return CATEGORIES.some((c) => c.id === requested) ? (requested as SettingsView) : 'api'
+  return CATEGORY_KEYS.some((c) => c.id === requested) ? (requested as SettingsView) : 'api'
 }
 
 /**
@@ -32,6 +38,7 @@ function initialCategory(): SettingsView {
  * one field that waits for 完成.
  */
 export default function SettingsWindow(): React.JSX.Element {
+  const t = useT()
   const ready = useSessionStore((s) => s.ready)
   const bootstrap = useSessionStore((s) => s.bootstrap)
   const category = useSessionStore((s) => s.settingsCategory)
@@ -71,19 +78,19 @@ export default function SettingsWindow(): React.JSX.Element {
 
   if (!ready) return <div className="settings-window" />
 
-  const title = CATEGORIES.find((c) => c.id === category)?.label ?? ''
+  const title = t(CATEGORY_KEYS.find((c) => c.id === category)?.labelKey ?? 'settings.nav.api')
 
   return (
     <div className="settings-window">
       <nav className="settings-nav">
-        {CATEGORIES.map((item) => (
+        {CATEGORY_KEYS.map((item) => (
           <div
             key={item.id}
             className={`conv-row${item.id === category ? ' selected' : ''}`}
             onClick={() => useSessionStore.setState({ settingsCategory: item.id })}
           >
             <span className="conv-icon">{item.icon}</span>
-            <span className="conv-title">{item.label}</span>
+            <span className="conv-title">{t(item.labelKey)}</span>
           </div>
         ))}
       </nav>
@@ -96,13 +103,15 @@ export default function SettingsWindow(): React.JSX.Element {
           )}
           {category === 'workspace' && <WorkspaceSettings />}
           {category === 'appearance' && <AppearanceSettings />}
+          {category === 'notifications' && <NotificationsSettings />}
+          {category === 'cli' && <CliSettings />}
           {category === 'about' && <AboutSettings />}
         </div>
         <footer className="settings-foot">
           <span className="muted">{footer}</span>
           <span className="spacer" />
           <Button
-            label="完成"
+            label={t('common.done')}
             variant="primary"
             onClick={async () => {
               await commit?.()
@@ -117,53 +126,32 @@ export default function SettingsWindow(): React.JSX.Element {
   )
 }
 
-/** About can raise a confirm and the shortcut list, so both live here too. */
-function SettingsOverlays(): React.JSX.Element {
-  const dialog = useSessionStore((s) => s.dialog)
-  const closeDialog = useSessionStore((s) => s.closeDialog)
+/** Shortcut list still uses an in-window Modal; confirms go through native dialogs. */
+function SettingsOverlays(): React.JSX.Element | null {
+  const t = useT()
   const shortcutsOpen = useSessionStore((s) => s.shortcutsOpen)
   const setShortcutsOpen = useSessionStore((s) => s.setShortcutsOpen)
 
-  return (
-    <>
-      {dialog && (
-        <Modal
-          title={dialog.title}
-          onDismiss={closeDialog}
-          actions={
-            <>
-              {dialog.onConfirm && <Button label="取消" onClick={closeDialog} />}
-              <Button
-                label={dialog.confirmLabel}
-                variant={dialog.destructive ? 'danger' : 'primary'}
-                onClick={() => {
-                  closeDialog()
-                  dialog.onConfirm?.()
-                }}
-              />
-            </>
-          }
-        >
-          {dialog.body}
-        </Modal>
-      )}
+  if (!shortcutsOpen) return null
 
-      {shortcutsOpen && (
-        <Modal
-          title="快捷键"
-          onDismiss={() => setShortcutsOpen(false)}
-          actions={<Button label="好" variant="primary" onClick={() => setShortcutsOpen(false)} />}
-        >
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-            {SHORTCUTS.map(([keys, description]) => (
-              <div key={keys} style={{ display: 'flex', gap: 12 }}>
-                <kbd style={{ minWidth: 130 }}>{keys}</kbd>
-                <span>{description}</span>
-              </div>
-            ))}
+  const shortcuts = getShortcuts(t)
+
+  return (
+    <Modal
+      title={t('about.shortcuts')}
+      onDismiss={() => setShortcutsOpen(false)}
+      actions={
+        <Button label={t('common.ok')} variant="primary" onClick={() => setShortcutsOpen(false)} />
+      }
+    >
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+        {shortcuts.map(([shortcutKeys, description]) => (
+          <div key={shortcutKeys} style={{ display: 'flex', gap: 12 }}>
+            <kbd style={{ minWidth: 130 }}>{shortcutKeys}</kbd>
+            <span>{description}</span>
           </div>
-        </Modal>
-      )}
-    </>
+        ))}
+      </div>
+    </Modal>
   )
 }

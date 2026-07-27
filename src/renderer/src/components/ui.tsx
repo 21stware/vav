@@ -1,4 +1,6 @@
 import { useEffect, type ReactNode } from 'react'
+import { X } from 'lucide-react'
+import { tt } from '../i18n/useT'
 import wordmark from '../assets/wordmark.png'
 import wordmarkDark from '../assets/wordmark-dark.png'
 
@@ -36,27 +38,93 @@ export function Chip({
   label,
   icon,
   active,
+  emphasis,
   title,
   onClick,
-  onContextMenu
+  onContextMenu,
+  onClose,
+  closeTitle,
+  onAction,
+  actionIcon,
+  actionTitle
 }: {
   label: string
   icon?: ReactNode
   active?: boolean
+  /** Tints the glyph (e.g. agent shell tab). */
+  emphasis?: boolean
   title?: string
   onClick?: () => void
   onContextMenu?: (event: React.MouseEvent) => void
+  /** When set, a permanent close control sits inside the capsule. */
+  onClose?: () => void
+  closeTitle?: string
+  /**
+   * Optional trailing action inside the capsule (e.g. change workspace).
+   * Kept separate from `onClick` so accordion / select do not fight it.
+   */
+  onAction?: () => void
+  actionIcon?: ReactNode
+  actionTitle?: string
 }): React.JSX.Element {
+  const resolvedCloseTitle = closeTitle ?? tt('common.close')
+  const trailing = Boolean(onClose || onAction)
+  const classes = [
+    'chip',
+    active ? 'active' : '',
+    emphasis ? 'emphasis' : '',
+    trailing ? 'has-trailing' : ''
+  ]
+    .filter(Boolean)
+    .join(' ')
+
+  if (!trailing) {
+    return (
+      <button
+        className={classes}
+        title={title ?? label}
+        onClick={onClick}
+        onContextMenu={onContextMenu}
+      >
+        {icon}
+        <span className="chip-label">{label}</span>
+      </button>
+    )
+  }
+
   return (
-    <button
-      className={`chip${active ? ' active' : ''}`}
-      title={title ?? label}
-      onClick={onClick}
-      onContextMenu={onContextMenu}
-    >
-      {icon}
-      <span className="chip-label">{label}</span>
-    </button>
+    <div className={classes} title={title ?? label} onContextMenu={onContextMenu}>
+      <button type="button" className="chip-main" onClick={onClick}>
+        {icon}
+        <span className="chip-label">{label}</span>
+      </button>
+      {onAction && (
+        <button
+          type="button"
+          className="chip-action"
+          title={actionTitle}
+          onClick={(event) => {
+            event.stopPropagation()
+            onAction()
+          }}
+        >
+          {actionIcon}
+        </button>
+      )}
+      {onClose && (
+        <button
+          type="button"
+          className="chip-close"
+          title={resolvedCloseTitle}
+          onClick={(event) => {
+            event.stopPropagation()
+            onClose()
+          }}
+        >
+          <X size={10} />
+        </button>
+      )}
+    </div>
   )
 }
 
@@ -129,12 +197,21 @@ export function EmptyState({
   )
 }
 
+/**
+ * One fact, once.
+ *
+ * `title` is only for the case where the body is text we did not write — an
+ * errno, a provider's rejection — and needs a line naming what failed. Anything
+ * we phrased ourselves is already a sentence and gets no heading: a bold line
+ * above a sentence that restates it is two thirds of a screen saying nothing,
+ * and `kind` has already carried the severity.
+ */
 export function InlineAlert({
   kind,
   title,
   message
 }: {
-  kind: 'info' | 'warning' | 'error' | 'success'
+  kind: 'warning' | 'error' | 'success'
   title?: string
   message: string
 }): React.JSX.Element {

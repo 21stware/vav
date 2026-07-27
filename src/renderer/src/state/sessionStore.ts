@@ -1,17 +1,28 @@
 import { create } from 'zustand'
 import type {
   AboutInfo,
+  AppLocale,
   AppSettings,
   ChatMessage,
   ConversationMeta,
+  QuoteDraft,
+  TokenSnapshot,
   TurnPhase
 } from '@shared/types'
 import { DEFAULT_SETTINGS } from '@shared/types'
+import { resolveLocale } from '@shared/i18n'
+import { tt } from '../i18n/useT'
 import { threadPath } from '@shared/thread'
 import { getProjection, disposeProjection } from './StreamProjection'
-import { useWorkspaceStore } from './workspaceStore'
+import { AGENT_TAB_ID, useWorkspaceStore } from './workspaceStore'
 
-export type SettingsCategory = 'api' | 'workspace' | 'appearance' | 'about'
+export type SettingsCategory =
+  | 'api'
+  | 'workspace'
+  | 'appearance'
+  | 'notifications'
+  | 'cli'
+  | 'about'
 
 export interface TurnRuntime {
   isRunning: boolean
@@ -31,6 +42,8 @@ export interface DialogState {
   title: string
   body: string
   confirmLabel: string
+  /** Shown when `onConfirm` is set; defaults to 取消. */
+  cancelLabel?: string
   destructive?: boolean
   /** Omit for a message-only alert with a single dismiss button. */
   onConfirm?: () => void
@@ -49,6 +62,8 @@ interface LayoutPrefs {
   sidebarVisible: boolean
   toolsCollapsed: boolean
   panelSegment: 'files' | 'terminal'
+  /** Segment to restore when expanding via chevron (main-chat.rpml §5). */
+  lastActiveSegment: 'files' | 'terminal'
   panelHeight: number
 }
 
@@ -61,6 +76,7 @@ function loadLayout(): LayoutPrefs {
     sidebarVisible: true,
     toolsCollapsed: false,
     panelSegment: 'files',
+    lastActiveSegment: 'files',
     panelHeight: 240
   }
   try {
@@ -86,6 +102,8 @@ interface SessionState extends LayoutPrefs {
   about: AboutInfo | null
 
   settings: AppSettings
+  /** Resolved from settings.locale + OS; drives `useT()`. */
+  resolvedLocale: AppLocale
   apiKeyHint: string | null
 
   conversations: ConversationMeta[]
@@ -104,6 +122,15 @@ interface SessionState extends LayoutPrefs {
   /** Composer state is per conversation, like the rest of its ChatStore. */
   drafts: Record<string, string>
   attachments: Record<string, string[]>
+  /** Pending quote strip above the composer (main-chat.rpml §引用). */
+  quotes: Record<string, QuoteDraft | null>
+  /** Message id briefly highlighted after quote-strip / bubble jump. */
+  flashMessageId: string | null
+  flashTick: number
+  /** Per-conversation token samples for the context-window popover. */
+  tokenHistories: Record<string, TokenSnapshot[]>
+  cacheCreatedAt: Record<string, number | null>
+  cacheExpiresAt: Record<string, number | null>
 
   search: SearchState
   errorBanner: string | null
@@ -111,23 +138,47 @@ interface SessionState extends LayoutPrefs {
   settingsCategory: SettingsCategory
   shortcutsOpen: boolean
   composerFocusTick: number
+  /**
+   * Bumped by ⌘⇧O / menu command so ToolsPanel can open the native workspace
+   * menu without holding open/closed boolean state in the store.
+   */
+  workspaceMenuNonce: number
 
   /** A detached window passes the one conversation it exists to show. */
   bootstrap(pinnedConversationId?: string): Promise<void>
   selectConversation(id: string, options?: { additive?: boolean; range?: boolean }): Promise<void>
   loadMessages(id: string): Promise<void>
-  createConversation(): Promise<void>
+  createConversation(options?: {
+    workingDirectory?: string | null
+    model?: string
+  }): Promise<void>
+  /** New blank session reusing the active conversation's workdir + model. */
+  createConversationInCurrentWorkspace(): Promise<void>
+  duplicateConversation(id: string): Promise<void>
   renameConversation(id: string, title: string): Promise<void>
   beginRename(id: string | null): void
   requestDelete(ids: string[]): void
+  /** ⌘1 = Workspace; ⌘2+ = bash tabs in creation order (Agent first). */
+  focusToolsSlot(slot: number): void
   setModel(id: string, model: string): Promise<void>
   pickWorkingDirectory(id: string): Promise<void>
+  setWorkingDirectory(id: string, path: string): Promise<void>
+  /** Move a Temporary workspace into a real directory (name + copy). */
+  locateWorkspace(id: string): Promise<void>
   setSidebarQuery(query: string): void
   setPinned(id: string, pinned: boolean): Promise<void>
+  setArchived(id: string, archived: boolean): Promise<void>
+  setApprovalMode(id: string, mode: import('@shared/types').ApprovalMode): Promise<void>
   openDetached(id: string): Promise<void>
 
   setDraft(id: string, text: string): void
   setAttachments(id: string, paths: string[]): void
+  setQuote(id: string, quote: QuoteDraft | null): void
+  clearQuote(id?: string): void
+  /** Scroll transcript to a message and flash its background briefly. */
+  scrollToMessage(messageId: string): void
+  /** Reload token history / cache clocks from disk (popover open / 2s refresh). */
+  refreshTokenUsage(id?: string): Promise<void>
   send(text: string, attachments: string[]): Promise<void>
   cancel(id: string): Promise<void>
   answerTool(toolCallId: string, answer: string): Promise<void>
@@ -156,10 +207,12 @@ interface SessionState extends LayoutPrefs {
 
   toggleSidebar(): void
   toggleToolsPanel(): void
+  setToolsCollapsed(collapsed: boolean): void
   setPanelSegment(segment: 'files' | 'terminal'): void
   togglePanelSegment(): void
   setPanelHeight(height: number): void
   focusComposer(): void
+  openWorkspaceSwitcher(): void
 
   applyTurnEvent(event: import('@shared/types').TurnEvent): void
 }
@@ -174,6 +227,10 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   about: null,
 
   settings: DEFAULT_SETTINGS,
+  resolvedLocale: resolveLocale(
+    DEFAULT_SETTINGS.locale,
+    typeof navigator !== 'undefined' ? navigator.language : 'en'
+  ),
   apiKeyHint: null,
 
   conversations: [],
@@ -188,6 +245,12 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   turns: {},
   drafts: {},
   attachments: {},
+  quotes: {},
+  flashMessageId: null,
+  flashTick: 0,
+  tokenHistories: {},
+  cacheCreatedAt: {},
+  cacheExpiresAt: {},
 
   search: { open: false, query: '', matchIds: [], index: 0, tick: 0 },
   errorBanner: null,
@@ -195,6 +258,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   settingsCategory: 'api',
   shortcutsOpen: false,
   composerFocusTick: 0,
+  workspaceMenuNonce: 0,
 
   async bootstrap(pinnedConversationId) {
     const data = await window.vav.bootstrap()
@@ -203,6 +267,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     set({
       ready: true,
       settings: data.settings,
+      resolvedLocale: data.resolvedLocale,
       apiKeyHint: data.apiKeyHint,
       conversations: data.conversations,
       activeId,
@@ -217,6 +282,12 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
   async selectConversation(id, options) {
     const { selectedIds, activeId, conversations } = get()
+    const target = conversations.find((c) => c.id === id)
+    // Archived sessions cannot be the active conversation (sidebar archive view).
+    if (target?.archived) {
+      set({ selectedIds: [id] })
+      return
+    }
     let nextSelection = [id]
     if (options?.additive) {
       nextSelection = selectedIds.includes(id)
@@ -224,7 +295,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         : [...selectedIds, id]
       if (nextSelection.length === 0) nextSelection = [id]
     } else if (options?.range && activeId) {
-      const ids = conversations.map((c) => c.id)
+      const ids = conversations.filter((c) => !c.archived).map((c) => c.id)
       const from = ids.indexOf(activeId)
       const to = ids.indexOf(id)
       if (from >= 0 && to >= 0) {
@@ -241,36 +312,137 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     await useWorkspaceStore.getState().bindConversation(id, conversation?.workingDirectory ?? null)
 
     const status = await window.vav.agent.status(id)
-    set((state) => ({
-      turns: {
-        ...state.turns,
-        [id]: {
-          isRunning: status.isRunning,
-          phase: status.phase,
-          toolCount: status.toolCount,
-          awaitingToolCallId: status.awaitingToolCallId
+    set((state) => {
+      let messages = state.messages
+      // The in-flight assistant message is owned by StreamProjection; showing
+      // the disk partial beside it would duplicate every tool card.
+      if (status.isRunning && status.messageId && messages[id]?.some((m) => m.id === status.messageId)) {
+        messages = {
+          ...messages,
+          [id]: messages[id]!.filter((m) => m.id !== status.messageId)
         }
+      }
+      return {
+        messages,
+        turns: {
+          ...state.turns,
+          [id]: {
+            isRunning: status.isRunning,
+            phase: status.phase,
+            toolCount: status.toolCount,
+            awaitingToolCallId: status.awaitingToolCallId
+          }
+        }
+      }
+    })
+    if (status.isRunning) {
+      const projection = getProjection(id)
+      // Events may have already primed this window while status was in flight;
+      // only hydrate when we still have no live view.
+      if (!projection.getSnapshot().active) {
+        projection.hydrate(status.phase, status.blocks)
+      }
+    }
+  },
+
+  async loadMessages(id) {
+    const conversation = await window.vav.conversations.get(id)
+    if (!conversation) return
+    const already = !!get().messages[id]
+    set((state) => ({
+      ...(already
+        ? {}
+        : {
+            messages: { ...state.messages, [id]: conversation.messages },
+            activeLeaf: { ...state.activeLeaf, [id]: conversation.activeLeafId }
+          }),
+      tokenHistories: {
+        ...state.tokenHistories,
+        [id]: conversation.tokenHistory ?? []
+      },
+      cacheCreatedAt: {
+        ...state.cacheCreatedAt,
+        [id]: conversation.cacheCreatedAt ?? null
+      },
+      cacheExpiresAt: {
+        ...state.cacheExpiresAt,
+        [id]: conversation.cacheExpiresAt ?? null
       }
     }))
   },
 
-  async loadMessages(id) {
-    if (get().messages[id]) return
-    const conversation = await window.vav.conversations.get(id)
+  async refreshTokenUsage(id) {
+    const target = id ?? get().activeId
+    if (!target) return
+    const conversation = await window.vav.conversations.get(target)
     if (!conversation) return
     set((state) => ({
-      messages: { ...state.messages, [id]: conversation.messages },
-      activeLeaf: { ...state.activeLeaf, [id]: conversation.activeLeafId }
+      tokenHistories: {
+        ...state.tokenHistories,
+        [target]: conversation.tokenHistory ?? []
+      },
+      cacheCreatedAt: {
+        ...state.cacheCreatedAt,
+        [target]: conversation.cacheCreatedAt ?? null
+      },
+      cacheExpiresAt: {
+        ...state.cacheExpiresAt,
+        [target]: conversation.cacheExpiresAt ?? null
+      },
+      conversations: state.conversations.map((c) =>
+        c.id === target ? { ...c, tokensUsed: conversation.tokensUsed } : c
+      )
     }))
   },
 
-  async createConversation() {
-    const meta = await window.vav.conversations.create()
+  async createConversation(options) {
+    const meta = await window.vav.conversations.create(options)
+    // Main publishes the full list on create; `onChanged` may already have
+    // applied it by the time we get here. Prepending unconditionally would
+    // put the same id in the sidebar twice (⌘N made that obvious).
     set((state) => ({
-      conversations: [meta, ...state.conversations],
+      conversations: state.conversations.some((c) => c.id === meta.id)
+        ? state.conversations
+        : [meta, ...state.conversations],
       messages: { ...state.messages, [meta.id]: [] },
       activeLeaf: { ...state.activeLeaf, [meta.id]: null }
     }))
+    await get().selectConversation(meta.id)
+    get().focusComposer()
+  },
+
+  async createConversationInCurrentWorkspace() {
+    const { activeId, conversations } = get()
+    const current = conversations.find((c) => c.id === activeId)
+    await get().createConversation({
+      workingDirectory: current?.workingDirectory ?? null,
+      model: current?.model
+    })
+  },
+
+  async duplicateConversation(id) {
+    const meta = await window.vav.conversations.duplicate(id)
+    if (!meta) {
+      get().showDialog({
+        title: tt('error.duplicateFailed'),
+        body: tt('dialog.duplicateFailedBody'),
+        confirmLabel: tt('common.ok')
+      })
+      return
+    }
+    set((state) => ({
+      conversations: state.conversations.some((c) => c.id === meta.id)
+        ? state.conversations
+        : [meta, ...state.conversations]
+    }))
+    // Drop any stale cache so selectConversation reloads the deep-copied tree.
+    set((state) => {
+      const messages = { ...state.messages }
+      const activeLeaf = { ...state.activeLeaf }
+      delete messages[meta.id]
+      delete activeLeaf[meta.id]
+      return { messages, activeLeaf }
+    })
     await get().selectConversation(meta.id)
     get().focusComposer()
   },
@@ -285,36 +457,29 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   },
 
   requestDelete(ids) {
-    const { conversations } = get()
-    const targets = ids.filter((id) => conversations.some((c) => c.id === id))
-    if (targets.length === 0) return
+    void (async () => {
+      const { conversations } = get()
+      const targets = ids.filter((id) => conversations.some((c) => c.id === id))
+      if (targets.length === 0) return
 
-    // Guard first: the product always keeps at least one conversation.
-    if (targets.length >= conversations.length) {
-      get().showDialog({
-        title: '至少保留一个会话',
-        body: 'vav 始终保留至少一个会话。请先创建新会话再删除当前。',
-        confirmLabel: '好'
-      })
-      return
-    }
+      // Guard first: the product always keeps at least one conversation.
+      if (targets.length >= conversations.length) {
+        get().showDialog({
+          title: tt('dialog.keepOneSessionTitle'),
+          body: tt('error.keepOneSession'),
+          confirmLabel: tt('common.ok')
+        })
+        return
+      }
 
-    const single = targets.length === 1
-    const title = single
-      ? '删除会话'
-      : `删除 ${targets.length} 个会话`
-    const name = conversations.find((c) => c.id === targets[0])?.title ?? ''
-    const body = single
-      ? `确定删除「${name}」？此操作不可撤销。进行中的 agent 回合将被终止。`
-      : `确定删除选中的 ${targets.length} 个会话？此操作不可撤销。进行中的 agent 回合将被终止。`
+      // Need message counts for every target; empty chats skip the confirm.
+      await Promise.all(targets.map((id) => get().loadMessages(id)))
+      const empty = targets.filter((id) => (get().messages[id]?.length ?? 0) === 0)
+      const nonempty = targets.filter((id) => (get().messages[id]?.length ?? 0) > 0)
 
-    get().showDialog({
-      title,
-      body,
-      confirmLabel: '删除',
-      destructive: true,
-      onConfirm: async () => {
-        const { removed, conversations: next } = await window.vav.conversations.remove(targets)
+      const applyRemove = async (toRemove: string[]): Promise<void> => {
+        if (toRemove.length === 0) return
+        const { removed, conversations: next } = await window.vav.conversations.remove(toRemove)
         for (const id of removed) {
           disposeProjection(id)
           useWorkspaceStore.getState().disposeConversation(id)
@@ -335,7 +500,41 @@ export const useSessionStore = create<SessionState>((set, get) => ({
           if (fallback) await get().selectConversation(fallback)
         }
       }
-    })
+
+      // Empty sessions (no messages) delete silently — nothing worth warning about.
+      if (empty.length) await applyRemove(empty)
+      if (nonempty.length === 0) return
+
+      const single = nonempty.length === 1
+      const title = single
+        ? tt('dialog.deleteSession')
+        : tt('dialog.deleteSessions', { count: nonempty.length })
+      const name = conversations.find((c) => c.id === nonempty[0])?.title ?? ''
+      const body = single
+        ? tt('dialog.deleteConfirmSingle', { name })
+        : tt('dialog.deleteConfirmMultiple', { count: nonempty.length })
+
+      get().showDialog({
+        title,
+        body,
+        confirmLabel: tt('common.delete'),
+        destructive: true,
+        onConfirm: () => void applyRemove(nonempty)
+      })
+    })()
+  },
+
+  focusToolsSlot(slot) {
+    if (slot < 1 || slot > 9) return
+    if (slot === 1) {
+      get().setPanelSegment('files')
+      return
+    }
+    const tabs = useWorkspaceStore.getState().workspaces[get().activeId]?.tabs ?? []
+    const tab = tabs[slot - 2]
+    if (!tab) return
+    useWorkspaceStore.getState().selectTab(get().activeId, tab.id)
+    get().setPanelSegment('terminal')
   },
 
   async setModel(id, model) {
@@ -351,12 +550,62 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     await useWorkspaceStore.getState().setWorkingDirectory(id, next)
   },
 
+  async setWorkingDirectory(id, path) {
+    const conversations = await window.vav.conversations.setWorkingDirectory(id, path)
+    set({ conversations })
+    await useWorkspaceStore.getState().setWorkingDirectory(id, path)
+  },
+
+  async locateWorkspace(id) {
+    const conversation = get().conversations.find((c) => c.id === id)
+    const destination = await window.vav.settings.pickDirectory()
+    if (!destination) return
+    const defaultName = (conversation?.title || 'workspace')
+      .replace(/[\\/]/g, '-')
+      .slice(0, 64)
+    const name = window.prompt(tt('dialog.locateWorkspaceName'), defaultName)
+    if (name == null) return
+    const result = await window.vav.conversations.locateWorkspace(id, destination, name.trim())
+    if (!result.ok) {
+      get().showDialog({
+        title: tt('error.locateFailed'),
+        body: result.error,
+        confirmLabel: tt('common.ok')
+      })
+      return
+    }
+    set({ conversations: result.conversations })
+    const next =
+      result.conversations.find((c) => c.id === id)?.workingDirectory ?? null
+    await useWorkspaceStore.getState().setWorkingDirectory(id, next)
+  },
+
   setSidebarQuery(query) {
     set({ sidebarQuery: query })
   },
 
   async setPinned(id, pinned) {
     const conversations = await window.vav.conversations.setPinned(id, pinned)
+    set({ conversations })
+  },
+
+  async setArchived(id, archived) {
+    const conversations = await window.vav.conversations.setArchived(id, archived)
+    const { activeId } = get()
+    const stillActive = conversations.some((c) => c.id === activeId && !c.archived)
+    if (archived && !stillActive) {
+      const next = conversations.find((c) => !c.archived)
+      if (next) {
+        set({ conversations })
+        await get().selectConversation(next.id)
+        return
+      }
+    }
+    set({ conversations })
+  },
+
+  async setApprovalMode(id, mode) {
+    const conversations = await window.vav.conversations.setApprovalMode(id, mode)
     set({ conversations })
   },
 
@@ -372,31 +621,51 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     set((state) => ({ attachments: { ...state.attachments, [id]: paths } }))
   },
 
+  setQuote(id, quote) {
+    set((state) => ({ quotes: { ...state.quotes, [id]: quote } }))
+  },
+
+  clearQuote(id) {
+    const target = id ?? get().activeId
+    if (!target) return
+    set((state) => ({ quotes: { ...state.quotes, [target]: null } }))
+  },
+
+  scrollToMessage(messageId) {
+    set((state) => ({
+      flashMessageId: messageId,
+      flashTick: state.flashTick + 1
+    }))
+  },
+
   async send(text, attachments) {
-    const { activeId, settings, turns } = get()
+    const { activeId, settings, turns, quotes } = get()
     if (!activeId) return
     if (turns[activeId]?.isRunning) return
     if (!text.trim() && attachments.length === 0) return
 
     if (!settings.apiKeyPresent) {
       get().showDialog({
-        title: '提示',
-        body: '请先配置 API Key。',
-        confirmLabel: '打开 Settings',
+        title: tt('common.hint'),
+        body: tt('dialog.configureApiKeyBody'),
+        confirmLabel: tt('error.openSettings'),
         onConfirm: () => get().openSettings('api')
       })
       return
     }
+
+    const quote = quotes[activeId] ?? null
 
     // No optimistic echo: the stored message comes back as a `user` turn event
     // a moment later, already carrying the id and parent the tree needs.
     set((state) => ({
       drafts: { ...state.drafts, [activeId]: '' },
       attachments: { ...state.attachments, [activeId]: [] },
+      quotes: { ...state.quotes, [activeId]: null },
       errorBanner: null
     }))
 
-    await window.vav.agent.send(activeId, text, attachments)
+    await window.vav.agent.send(activeId, text, attachments, quote)
   },
 
   async regenerate(messageId) {
@@ -460,7 +729,11 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     if (!activeId) return
     const meta = await window.vav.conversations.continueInNewSession(activeId, messageId)
     if (!meta) return
-    set((state) => ({ conversations: [meta, ...state.conversations] }))
+    set((state) => ({
+      conversations: state.conversations.some((c) => c.id === meta.id)
+        ? state.conversations
+        : [meta, ...state.conversations]
+    }))
     await get().selectConversation(meta.id)
     get().focusComposer()
   },
@@ -477,7 +750,10 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
   async updateSettings(patch) {
     const settings = await window.vav.settings.update(patch)
-    set({ settings })
+    set({
+      settings,
+      resolvedLocale: resolveLocale(settings.locale, navigator.language)
+    })
     if (patch.shell) useWorkspaceStore.getState().notifyShellChanged()
   },
 
@@ -491,7 +767,11 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
   async resetSettings() {
     const settings = await window.vav.settings.reset()
-    set({ settings, apiKeyHint: null })
+    set({
+      settings,
+      apiKeyHint: null,
+      resolvedLocale: resolveLocale(settings.locale, navigator.language)
+    })
   },
 
   openSettings(category) {
@@ -543,7 +823,25 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   },
 
   showDialog(dialog) {
-    set({ dialog })
+    // System sheet / message box — not an in-window Modal (macOS native).
+    void (async () => {
+      if (dialog.onConfirm) {
+        const ok = await window.vav.dialog.confirm({
+          title: dialog.title,
+          message: dialog.body,
+          confirmLabel: dialog.confirmLabel,
+          cancelLabel: dialog.cancelLabel,
+          destructive: dialog.destructive
+        })
+        if (ok) dialog.onConfirm()
+        return
+      }
+      await window.vav.dialog.alert({
+        title: dialog.title,
+        message: dialog.body,
+        confirmLabel: dialog.confirmLabel
+      })
+    })()
   },
 
   closeDialog() {
@@ -560,7 +858,39 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
   toggleToolsPanel() {
     set((state) => {
-      const next = { ...currentLayout(state), toolsCollapsed: !state.toolsCollapsed }
+      if (!state.toolsCollapsed) {
+        const next = {
+          ...currentLayout(state),
+          toolsCollapsed: true,
+          lastActiveSegment: state.panelSegment
+        }
+        saveLayout(next)
+        return next
+      }
+
+      let segment = state.lastActiveSegment ?? state.panelSegment
+      const tabs = useWorkspaceStore.getState().workspaces[state.activeId]?.tabs ?? []
+      if (segment === 'terminal' && tabs.length === 0) segment = 'files'
+      const next = {
+        ...currentLayout(state),
+        toolsCollapsed: false,
+        panelSegment: segment,
+        lastActiveSegment: segment
+      }
+      saveLayout(next)
+      return next
+    })
+  },
+
+  setToolsCollapsed(collapsed) {
+    set((state) => {
+      const next = collapsed
+        ? {
+            ...currentLayout(state),
+            toolsCollapsed: true,
+            lastActiveSegment: state.panelSegment
+          }
+        : { ...currentLayout(state), toolsCollapsed: false }
       saveLayout(next)
       return next
     })
@@ -568,7 +898,12 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
   setPanelSegment(segment) {
     set((state) => {
-      const next = { ...currentLayout(state), panelSegment: segment, toolsCollapsed: false }
+      const next = {
+        ...currentLayout(state),
+        panelSegment: segment,
+        lastActiveSegment: segment,
+        toolsCollapsed: false
+      }
       saveLayout(next)
       return next
     })
@@ -591,6 +926,10 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     set((state) => ({ composerFocusTick: state.composerFocusTick + 1 }))
   },
 
+  openWorkspaceSwitcher() {
+    set((state) => ({ workspaceMenuNonce: state.workspaceMenuNonce + 1 }))
+  },
+
   applyTurnEvent(event) {
     const id = event.conversationId
     const projection = getProjection(id)
@@ -609,6 +948,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         break
 
       case 'phase':
+        projection.ensureLive(event.phase)
         projection.setPhase(event.phase)
         patchTurn(set, id, { phase: event.phase })
         break
@@ -638,12 +978,32 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         patchTurn(set, id, { awaitingToolCallId: event.toolCallId, phase: 'awaiting-user' })
         break
 
-      case 'mirror':
-        useWorkspaceStore.getState().mirrorAgentTranscript(id, event.text)
+      case 'mirror': {
+        const workspace = useWorkspaceStore.getState()
+        const hadAgent = !!workspace.workspaces[id]?.tabs.some((tab) => tab.isAgent)
+        workspace.mirrorAgentTranscript(id, event.text)
+        // First terminal output for this conversation: reveal the Agent tab so
+        // a long command is not invisible behind a collapsed Files pane.
+        if (!hadAgent) {
+          workspace.selectTab(id, AGENT_TAB_ID)
+          get().setPanelSegment('terminal')
+        }
         break
+      }
 
       case 'fs-changed':
         useWorkspaceStore.getState().agentDidWriteFile(id, event.parentPath, event.filePath)
+        break
+
+      case 'usage':
+        set((state) => ({
+          tokenHistories: { ...state.tokenHistories, [id]: event.history },
+          cacheCreatedAt: { ...state.cacheCreatedAt, [id]: event.cacheCreatedAt },
+          cacheExpiresAt: { ...state.cacheExpiresAt, [id]: event.cacheExpiresAt },
+          conversations: state.conversations.map((c) =>
+            c.id === id ? { ...c, tokensUsed: event.tokensUsed, updatedAt: Date.now() } : c
+          )
+        }))
         break
 
       case 'end': {
@@ -713,6 +1073,7 @@ function currentLayout(state: LayoutPrefs): LayoutPrefs {
     sidebarVisible: state.sidebarVisible,
     toolsCollapsed: state.toolsCollapsed,
     panelSegment: state.panelSegment,
+    lastActiveSegment: state.lastActiveSegment ?? state.panelSegment,
     panelHeight: state.panelHeight
   }
 }
@@ -747,7 +1108,12 @@ export function installTurnEventBridge(): () => void {
 
 /** Keeps every window's copy of the settings in step. Called once per window. */
 export function installSettingsBridge(): () => void {
-  return window.vav.onSettingsChanged((settings) => useSessionStore.setState({ settings }))
+  return window.vav.onSettingsChanged((settings) =>
+    useSessionStore.setState({
+      settings,
+      resolvedLocale: resolveLocale(settings.locale, navigator.language)
+    })
+  )
 }
 
 /**

@@ -87,6 +87,51 @@ export class SettingsStore {
     s.fontSize = Math.min(24, Math.max(10, s.fontSize))
     s.temperature = Math.min(2, Math.max(0, s.temperature))
     s.maxTokens = Math.min(200_000, Math.max(256, Math.round(s.maxTokens)))
+    if (!Array.isArray(s.recentWorkspaceDirectories)) s.recentWorkspaceDirectories = []
+    s.recentWorkspaceDirectories = s.recentWorkspaceDirectories
+      .filter((path): path is string => typeof path === 'string' && path.length > 0)
+      .slice(0, 10)
+    if (
+      s.sidebarGroupingMode !== 'none' &&
+      s.sidebarGroupingMode !== 'workspace' &&
+      s.sidebarGroupingMode !== 'source'
+    ) {
+      s.sidebarGroupingMode = 'none'
+    }
+    if (s.fileViewMode !== 'tree' && s.fileViewMode !== 'column') {
+      s.fileViewMode = 'tree'
+    }
+    if (s.fileSortKey === 'date') s.fileSortKey = 'dateModified'
+    const sortKeys = new Set([
+      'none',
+      'name',
+      'kind',
+      'application',
+      'dateAdded',
+      'dateModified',
+      'dateCreated',
+      'size',
+      'tags'
+    ])
+    if (!sortKeys.has(s.fileSortKey)) s.fileSortKey = 'name'
+    if (typeof s.fileSortAscending !== 'boolean') s.fileSortAscending = true
+  }
+
+  /**
+   * Records a non-Temporary workdir at the front of the recent list.
+   * Temporary paths are never remembered (workspace switcher popover).
+   */
+  rememberWorkspaceDirectory(path: string, tmpRoot: string): AppSettings {
+    const normalized = path.trim()
+    if (!normalized) return this.settings
+    if (normalized.startsWith(tmpRoot) || normalized.startsWith('/private' + tmpRoot)) {
+      return this.settings
+    }
+    const next = [
+      normalized,
+      ...this.settings.recentWorkspaceDirectories.filter((entry) => entry !== normalized)
+    ].slice(0, 10)
+    return this.update({ recentWorkspaceDirectories: next })
   }
 
   private persist(): void {

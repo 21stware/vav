@@ -36,7 +36,7 @@
   --bg-raised: #ffffff;
   --bg-sunken: #f3f2f7;
   --bg-hover: rgba(19, 27, 53, 0.05);
-  --bg-selected: #e5e2f3;
+  --bg-selected: #ddd7f0;
   /* Kept in sync with THEME_DARK.background in terminalRegistry.ts. */
   --bg-terminal: #101012;
 
@@ -86,6 +86,12 @@
 :root[data-platform='linux'] {
   --chrome-lead: 12px;
   --chrome-trail: 146px;
+  --chrome-gutter: 14px;
+}
+
+/* Fullscreen hides the traffic lights; the reserved lead inset is just empty. */
+:root[data-fullscreen='true'] {
+  --chrome-lead: 12px;
   --chrome-gutter: 14px;
 }
 
@@ -143,8 +149,18 @@
   }
   .empty-state > *,
   .modal,
-  .tool-detail {
+  .tool-detail,
+  .plan-overlay,
+  .ask-card,
+  .file-viewer,
+  .banner.error,
+  .changed-strip {
     transform: none !important;
+  }
+  .tools-body,
+  .reasoning-detail,
+  .files-browser {
+    transition: none !important;
   }
   .btn:active:not(:disabled),
   .chip:active:not(:disabled),
@@ -168,16 +184,19 @@
 html,
 body,
 #root {
+  width: 100%;
   height: 100%;
   margin: 0;
   overflow: hidden;
+  /* Opaque fill under the shell so a resize frame where the compositor lags
+     still shows `--bg-window`, not a transparent hole into the native layer. */
+  background: var(--bg-window);
 }
 
 body {
   font-family: var(--font-ui);
   font-size: 13.5px;
   color: var(--text);
-  background: transparent;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
   cursor: default;
@@ -239,9 +258,33 @@ select {
   display: flex;
   flex-direction: column;
   height: 100%;
+  contain: layout style;
   background:
     radial-gradient(120% 80% at 8% -10%, var(--accent-veil), transparent 62%),
     var(--bg-window);
+}
+
+/* Live window drag-resize: drop per-frame paint cost so the web contents can
+   track the native frame. Restored on `vav:resize-end` (~100ms idle). */
+html[data-resizing='true'] .app-shell {
+  background: var(--bg-window);
+}
+
+html[data-resizing='true'] .detail {
+  border-radius: 0;
+}
+
+html[data-resizing='true'] .plan-overlay {
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+html[data-resizing='true'] .tools-body,
+html[data-resizing='true'] .reasoning-detail,
+html[data-resizing='true'] .files-browser,
+html[data-resizing='true'] .plan-overlay,
+html[data-resizing='true'] .banner.error {
+  transition: none !important;
 }
 
 .titlebar {
@@ -382,6 +425,7 @@ select {
   color: var(--text-secondary);
   font-size: 12px;
   cursor: default;
+  flex: 0 0 auto;
   transition:
     background var(--dur-hover) ease,
     color var(--dur-hover) ease,
@@ -393,7 +437,7 @@ select {
   color: var(--text);
 }
 
-.chip:active {
+button.chip:active {
   transform: scale(0.97);
 }
 
@@ -407,14 +451,76 @@ select {
   opacity: 0.75;
 }
 
-.chip.active svg {
+.chip.active svg,
+.chip.emphasis > svg,
+.chip.emphasis .chip-main > svg {
   opacity: 1;
+  color: var(--accent-text);
 }
 
 .chip .chip-label {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  min-width: 0;
+}
+
+.chip.has-trailing {
+  padding: 0 4px 0 10px;
+  gap: 2px;
+}
+
+.chip-main {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  max-width: 150px;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-weight: inherit;
+  cursor: default;
+}
+
+.chip-close,
+.chip-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 18px;
+  flex: 0 0 auto;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  opacity: 0.55;
+  cursor: default;
+}
+
+.chip-close {
+  width: 16px;
+}
+
+.chip-action {
+  width: auto;
+  min-width: 22px;
+  padding: 0 7px;
+}
+
+.chip-close:hover,
+.chip-action:hover {
+  opacity: 1;
+  background: color-mix(in srgb, var(--text) 12%, transparent);
+}
+
+.chip-close svg,
+.chip-action svg {
+  opacity: 1;
+  color: inherit;
 }
 
 /* Filled rather than outlined: the fill says "editable" as clearly as a rule
@@ -536,6 +642,9 @@ kbd {
 
 .sidebar-search {
   padding: 4px 10px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 
 .sidebar-search .text-field {
@@ -543,24 +652,130 @@ kbd {
   box-shadow: none;
 }
 
+.sidebar-grouping {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.sidebar-grouping-label {
+  flex: 0 0 auto;
+  font-size: 11px;
+  color: var(--text-tertiary);
+}
+
+.sidebar-grouping-control {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.sidebar-grouping-select,
+.text-field.sidebar-grouping-select,
+.text-field.sidebar-grouping-select:focus {
+  flex: 0 0 auto;
+  width: auto;
+  min-width: 0;
+  max-width: 100%;
+  height: 26px;
+  appearance: none;
+  -webkit-appearance: none;
+  padding: 0 26px 0 8px;
+  font-size: 12px;
+  field-sizing: content;
+  text-align: left;
+  background: transparent;
+  background-image: none;
+  box-shadow: none;
+}
+
+.text-field.sidebar-grouping-select:focus {
+  background: transparent;
+  box-shadow: none;
+}
+
+.sidebar-grouping-chevron {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  pointer-events: none;
+  color: var(--text-tertiary);
+}
+
 .sidebar-list {
   flex: 1;
   overflow-y: auto;
-  padding: 0 8px 10px;
+  padding: 2px 6px 10px;
 }
 
-/* The header is the divider. A dated caption above a gap says "new group"
-   at least as well as a rule through the list, and costs no ink. */
+/* The header is the divider. Time buckets stay quiet captions; workspace /
+   source headers are compact rows with a chevron. */
 .conv-group-header {
-  padding: 14px 9px 4px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 10px 8px 4px;
+  border: 0;
+  background: transparent;
   color: var(--text-tertiary);
   font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.02em;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  text-align: left;
+  user-select: none;
+}
+
+.conv-group-header:not(.interactive) {
+  pointer-events: none;
+}
+
+.conv-group-header.interactive {
+  height: 22px;
+  margin: 6px 0 1px;
+  padding: 0 8px;
+  cursor: default;
+  border-radius: 6px;
+}
+
+.conv-group:first-child .conv-group-header.interactive {
+  margin-top: 2px;
+}
+
+.conv-group-chevron {
+  flex: 0 0 auto;
+  width: 12px;
+  opacity: 0.7;
+}
+
+.conv-group-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.conv-group-count {
+  flex: 0 0 auto;
+  min-width: 0;
+  padding: 0;
+  border-radius: 0;
+  background: transparent;
+  font-size: 11px;
+  font-weight: 400;
+  line-height: 1;
+  text-align: right;
+  color: var(--text-tertiary);
+  opacity: 0.75;
+  font-variant-numeric: tabular-nums;
 }
 
 .conv-group-divider {
-  height: 4px;
+  height: 6px;
 }
 
 .conv-row {
@@ -569,35 +784,24 @@ kbd {
   align-items: center;
   gap: 8px;
   height: var(--row-height);
-  padding: 0 9px;
-  border-radius: 8px;
+  padding: 0 8px;
+  border-radius: 7px;
   cursor: default;
   transition:
     background var(--dur-hover) ease,
     color var(--dur-hover) ease;
 }
 
-.conv-row:hover {
-  background: var(--bg-hover);
+/* Two-line session rows need a taller cell than settings' single-line nav. */
+.sidebar-list .conv-row {
+  height: 38px;
+  gap: 7px;
+  padding: 0 8px;
 }
 
 .conv-row.selected {
   background: var(--bg-selected);
   color: var(--text);
-  font-weight: 500;
-}
-
-/* A rail, not a fill: the selected row is marked at the edge the eye scans
-   down, so the row itself can stay quiet. */
-.conv-row.selected::before {
-  content: '';
-  position: absolute;
-  left: 0;
-  top: 7px;
-  bottom: 7px;
-  width: 3px;
-  border-radius: 0 2px 2px 0;
-  background: var(--accent);
 }
 
 .conv-row.multi {
@@ -621,23 +825,35 @@ kbd {
   display: flex;
   flex-direction: column;
   justify-content: center;
-  line-height: 1.3;
+  gap: 1px;
+  line-height: 1.2;
 }
 
 .conv-title {
-  font-size: 13px;
+  font-size: 12.5px;
+  font-weight: 450;
+  letter-spacing: -0.005em;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
+.conv-row.selected .conv-title {
+  font-weight: 500;
+}
+
 .conv-subtitle {
-  font-size: 11px;
+  font-size: 10.5px;
   font-weight: 400;
+  letter-spacing: 0.01em;
   color: var(--text-tertiary);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.conv-row.selected .conv-subtitle {
+  color: color-mix(in srgb, var(--text-tertiary) 55%, var(--accent-text));
 }
 
 .conv-badge {
@@ -686,17 +902,28 @@ kbd {
    Detail column
    ========================================================================== */
 
-/* The card floats on the window wash; elevation is what separates it, so it
-   draws no edge of its own. */
+/* Conversation column sits on the window wash with a light edge, not elevation. */
 .detail {
+  position: relative;
   flex: 1;
   min-width: 0;
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  contain: layout style;
   background: var(--bg-content);
   border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-raised);
+  border: 1px solid var(--border);
+  box-shadow: none;
+}
+
+/* Transcript column; Plan overlays this area without taking layout height. */
+.detail-stream {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
 }
 
 .banner {
@@ -710,6 +937,22 @@ kbd {
 .banner.error {
   background: color-mix(in srgb, var(--danger) 12%, transparent);
   color: var(--danger);
+  transition:
+    opacity var(--dur-pop) var(--ease-out),
+    transform var(--dur-pop) var(--ease-out);
+}
+
+@starting-style {
+  .banner.error {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+}
+
+.banner.error[data-leaving] {
+  opacity: 0;
+  transform: translateY(-4px);
+  pointer-events: none;
 }
 
 .banner .spacer {
@@ -749,21 +992,60 @@ kbd {
    Messages
    ========================================================================== */
 
+/* Role labels separate You / Agent turns in one continuous column. */
+.message-turn {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  align-self: stretch;
+  max-width: 100%;
+}
+
+.message-role {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--text-tertiary);
+  user-select: none;
+}
+
+.message-turn.assistant .message-role {
+  color: var(--accent-text);
+}
+
+.message-collapse-toggle {
+  align-self: flex-start;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-tertiary);
+  font-size: 12px;
+  cursor: default;
+}
+
+.message-collapse-toggle:hover {
+  color: var(--text);
+}
+
 /* The prompt is the head of a log entry, not a chat bubble: same column and
-   same left edge as everything else, with the rule hanging in the gutter so
-   the text itself stays flush with the reply below it. */
+   same left edge as everything else. */
 .message.user {
   align-self: stretch;
   max-width: 100%;
-  margin-left: -14px;
-  padding-left: 12px;
-  border-left: 2px solid var(--accent);
   color: var(--text);
   font-weight: 500;
   line-height: 1.6;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   user-select: text;
+}
+
+.message.user.is-collapsed {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
+  overflow: hidden;
 }
 
 .message.assistant {
@@ -787,7 +1069,46 @@ kbd {
 .message.search-current.user {
   border-radius: 6px;
   background: var(--accent-soft);
-  box-shadow: 0 0 0 4px var(--accent-soft);
+}
+
+.message.quote-flash {
+  border-radius: 6px;
+  animation: quote-flash 1.5s ease-out forwards;
+}
+
+@keyframes quote-flash {
+  0% {
+    background: color-mix(in srgb, var(--warning) 42%, transparent);
+  }
+  100% {
+    background: transparent;
+  }
+}
+
+.message-quote-ref {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  margin-bottom: 4px;
+  padding: 4px 8px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: var(--bg-hover);
+  color: var(--text-secondary);
+  font-size: 11px;
+  text-align: left;
+  cursor: default;
+}
+
+.message-quote-ref span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.message-quote-ref:hover {
+  color: var(--text);
 }
 
 mark {
@@ -813,6 +1134,70 @@ mark {
   margin: 0.65em 0;
 }
 
+.md-block {
+  margin: 0.85em 0;
+  border-radius: var(--radius);
+  background: var(--bg-sunken);
+  overflow: hidden;
+}
+
+.md-block-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.md-block-name {
+  flex: 1;
+  min-width: 0;
+  font-size: 11px;
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.md-block-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  flex: 0 0 auto;
+}
+
+.md-block-btn {
+  height: 22px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 11px;
+  cursor: default;
+}
+
+.md-block-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.md-block-btn[data-copied='true'] {
+  color: var(--success);
+}
+
+.md-block > pre {
+  margin: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.md-block > .table-scroll {
+  margin: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
 /* Code is never rewrapped to fit: a line that does not fit scrolls sideways,
    because a broken line reads as a different program. */
 .markdown pre {
@@ -836,14 +1221,13 @@ mark {
 .markdown :not(pre) > code {
   padding: 1.5px 5px;
   border-radius: 4px;
-  background: var(--accent-soft);
-  color: var(--accent-text);
+  background: var(--bg-sunken);
+  color: var(--text);
 }
 
 .markdown blockquote {
   margin: 0.7em 0;
-  padding: 2px 0 2px 14px;
-  border-left: 2px solid var(--accent-soft);
+  padding: 2px 0;
   color: var(--text-secondary);
 }
 
@@ -962,18 +1346,49 @@ mark {
 }
 
 .reasoning {
-  padding: 2px 12px;
+  padding: 0 12px;
   border-radius: var(--radius-sm);
   background: var(--bg-hover);
   color: var(--text-secondary);
   font-size: 12.5px;
 }
 
-.reasoning summary {
-  cursor: default;
+.reasoning-summary {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  background: transparent;
   color: var(--text-tertiary);
-  margin-bottom: 5px;
+  font: inherit;
   font-style: italic;
+  text-align: left;
+  cursor: default;
+  user-select: none;
+}
+
+.reasoning[data-open] .reasoning-summary {
+  margin-bottom: 5px;
+  height: auto;
+  min-height: 24px;
+  padding: 4px 0 0;
+}
+
+.reasoning-detail {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows var(--dur-pop) var(--ease-out);
+}
+
+.reasoning[data-open] .reasoning-detail {
+  grid-template-rows: 1fr;
+}
+
+.reasoning-detail-inner {
+  overflow: hidden;
+  min-height: 0;
 }
 
 .reasoning-body {
@@ -981,6 +1396,7 @@ mark {
   line-height: 1.6;
   max-height: 240px;
   overflow-y: auto;
+  padding-bottom: 6px;
 }
 
 .message-actions {
@@ -1026,6 +1442,31 @@ mark {
   margin-top: -3px;
 }
 
+.message-group.user .variant-pager {
+  flex: 0 0 auto;
+  margin-right: 0;
+  margin-top: -2px;
+  opacity: 1;
+}
+
+/* Last line under an agent turn: branch pager (if any) + Done. */
+.message-footer {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 8px;
+  min-height: 18px;
+}
+
+.message-footer .variant-pager {
+  margin-right: 0;
+  opacity: 1;
+}
+
+.message-footer .stream-status {
+  margin-top: 0;
+}
+
 .message.user.editing {
   display: flex;
   width: calc(100% + 14px);
@@ -1060,10 +1501,14 @@ mark {
 .variant-pager {
   display: flex;
   align-items: center;
-  gap: 1px;
+  gap: 2px;
   margin-right: 4px;
-  color: var(--text-tertiary);
+  padding: 1px;
+  border-radius: 6px;
+  background: var(--bg-hover);
+  color: var(--text-secondary);
   font-size: 11px;
+  font-weight: 500;
   font-variant-numeric: tabular-nums;
 }
 
@@ -1071,13 +1516,13 @@ mark {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 18px;
-  height: 18px;
+  width: 20px;
+  height: 20px;
   border: 0;
-  border-radius: 4px;
+  border-radius: 5px;
   background: transparent;
-  color: inherit;
-  cursor: pointer;
+  color: var(--text-secondary);
+  cursor: default;
   transition:
     background var(--dur-hover) ease,
     color var(--dur-hover) ease,
@@ -1085,17 +1530,78 @@ mark {
 }
 
 .variant-step:active:not(:disabled) {
-  transform: scale(0.94);
+  transform: scale(0.92);
+  background: color-mix(in srgb, var(--text) 14%, transparent);
+  color: var(--text);
 }
 
 .variant-step:hover:not(:disabled) {
-  background: var(--bg-hover);
+  background: color-mix(in srgb, var(--text) 10%, transparent);
   color: var(--text);
 }
 
 .variant-step:disabled {
-  opacity: 0.3;
+  opacity: 0.28;
+  color: var(--text-tertiary);
   cursor: default;
+}
+
+.variant-count {
+  min-width: 2.4em;
+  padding: 0 2px;
+  text-align: center;
+  color: var(--text);
+}
+
+.variant-pager[data-pulse] .variant-count {
+  animation: variant-count-pop var(--dur-pop) var(--ease-out);
+}
+
+@keyframes variant-count-pop {
+  0% {
+    transform: scale(0.88);
+    opacity: 0.45;
+  }
+  55% {
+    transform: scale(1.08);
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+.message.branch-switch {
+  animation: branch-switch 280ms var(--ease-out);
+}
+
+.transcript-inner.is-branch-swap > .message-turn.assistant {
+  animation: branch-switch 280ms var(--ease-out);
+}
+
+@keyframes branch-switch {
+  from {
+    opacity: 0.4;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+:root[data-reduce-motion='true'] .variant-pager[data-pulse] .variant-count,
+:root[data-reduce-motion='true'] .message.branch-switch,
+:root[data-reduce-motion='true'] .transcript-inner.is-branch-swap > .message-turn.assistant {
+  animation: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .variant-pager[data-pulse] .variant-count,
+  .message.branch-switch,
+  .transcript-inner.is-branch-swap > .message-turn.assistant {
+    animation: none;
+  }
 }
 
 .typing-dot {
@@ -1112,6 +1618,107 @@ mark {
 @keyframes blink {
   50% {
     opacity: 0;
+  }
+}
+
+/* Footer under agent output: flip-book mark + shimmer while live; settled mark + Done. */
+.stream-status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 10px;
+  font-size: 11px;
+  letter-spacing: 0.02em;
+  line-height: 1.2;
+  user-select: none;
+}
+
+.stream-status[data-state='done'] {
+  color: var(--text-tertiary);
+}
+
+/* Flip-book / settled mark — black ink on transparent; dim + invert on dark. */
+.stream-status-mark {
+  flex-shrink: 0;
+  display: block;
+  width: 16px;
+  height: 16px;
+  overflow: hidden;
+  opacity: 0.55;
+}
+
+.stream-status-mark img {
+  display: block;
+  width: 16px;
+  height: 16px;
+  object-fit: contain;
+  pointer-events: none;
+}
+
+/* 6-frame strip: steps(N) + translateX(-100%) jumps exactly one cell per tick.
+   Ending at (-100% + cell) made each step ~13px and looked like a horizontal pan. */
+.stream-status-mark-sprite {
+  --frames: 6;
+  width: calc(16px * var(--frames)) !important;
+  max-width: none !important;
+  height: 16px !important;
+  object-fit: fill;
+  will-change: transform;
+  animation: stream-status-mark 0.9s steps(var(--frames)) infinite;
+}
+
+@keyframes stream-status-mark {
+  to {
+    transform: translateX(-100%);
+  }
+}
+
+:root[data-theme='dark'] .stream-status-mark img {
+  filter: invert(1);
+}
+
+.stream-status-shimmer {
+  display: inline-block;
+  background: linear-gradient(
+    90deg,
+    var(--text-tertiary) 0%,
+    var(--text-secondary) 40%,
+    var(--text) 50%,
+    var(--text-secondary) 60%,
+    var(--text-tertiary) 100%
+  );
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: shimmer 1.4s linear infinite;
+}
+
+:root[data-reduce-motion='true'] .stream-status-shimmer {
+  animation: none;
+  color: var(--text-secondary);
+  background: none;
+  -webkit-background-clip: unset;
+  background-clip: unset;
+}
+
+:root[data-reduce-motion='true'] .stream-status-mark-sprite {
+  animation: none;
+  transform: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .stream-status-shimmer {
+    animation: none;
+    color: var(--text-secondary);
+    background: none;
+    -webkit-background-clip: unset;
+    background-clip: unset;
+  }
+
+  .stream-status-mark-sprite {
+    animation: none;
+    transform: none;
   }
 }
 
@@ -1241,14 +1848,39 @@ mark {
   transition: background var(--dur-hover) ease;
 }
 
-.tool-row:hover {
+.tool-row:hover:not(:disabled) {
   background: var(--bg-hover);
+}
+
+.tool-row:disabled {
+  cursor: default;
 }
 
 .tool-chevron {
   flex: 0 0 auto;
   color: var(--text-tertiary);
   transition: transform var(--dur-pop) var(--ease-out);
+}
+
+.tool-chevron-spacer {
+  flex: 0 0 11px;
+  width: 11px;
+}
+
+.tool-bg-tag {
+  flex: 0 0 auto;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 10.5px;
+  line-height: 1.4;
+  color: #3b6ea5;
+  background: color-mix(in srgb, #3b6ea5 14%, var(--bg-raised));
+  white-space: nowrap;
+}
+
+:root[data-theme='dark'] .tool-bg-tag {
+  color: #7eb0e0;
+  background: color-mix(in srgb, #7eb0e0 16%, var(--bg-raised));
 }
 
 .tool-call.expanded .tool-chevron {
@@ -1449,18 +2081,15 @@ mark {
   color: var(--text-tertiary);
 }
 
-/* The gutter bar carries the change at a glance; the wash behind it is kept
-   light enough that the code on top is still the thing you read. */
+/* Background wash + mark colour carry the change; no edge rail. */
 .diff-line.add {
   background: color-mix(in srgb, var(--success) 12%, transparent);
-  box-shadow: inset 2px 0 0 var(--success);
 }
 .diff-line.add .diff-mark {
   color: var(--success);
 }
 .diff-line.remove {
   background: color-mix(in srgb, var(--danger) 11%, transparent);
-  box-shadow: inset 2px 0 0 var(--danger);
 }
 .diff-line.remove .diff-mark {
   color: var(--danger);
@@ -1540,7 +2169,6 @@ mark {
   padding: 5px 10px;
   border-radius: var(--radius-sm);
   background: var(--bg-sunken);
-  border-left: 2px solid var(--accent);
 }
 
 .detail-label {
@@ -1566,17 +2194,25 @@ mark {
   margin-bottom: 0;
 }
 
-/* The one card in the transcript that is allowed to look like a card: the
-   turn is parked until it is answered, so it should stop the eye. */
+/* Parked turn: soft fill only — no edge rail. */
 .ask-card {
   position: relative;
   border-radius: var(--radius);
   background: var(--accent-soft);
-  box-shadow: inset 3px 0 0 var(--accent);
-  padding: 14px 14px 14px 17px;
+  padding: 14px;
   display: flex;
   flex-direction: column;
   gap: 11px;
+  transition:
+    opacity var(--dur-pop) var(--ease-out),
+    transform var(--dur-pop) var(--ease-out);
+}
+
+@starting-style {
+  .ask-card {
+    opacity: 0;
+    transform: translateY(4px) scale(0.98);
+  }
 }
 
 .ask-card .ask-title {
@@ -1590,8 +2226,462 @@ mark {
 }
 
 .ask-card.request {
-  background: color-mix(in srgb, var(--warning) 11%, transparent);
-  box-shadow: inset 3px 0 0 var(--warning);
+  background: var(--bg-sunken);
+  box-shadow: inset 0 0 0 1px var(--border);
+}
+
+/* Tool approval: one quiet surface — no nested warning slabs. */
+.approval-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 12px 10px;
+  border-radius: var(--radius);
+  background: var(--bg-sunken);
+  box-shadow: inset 0 0 0 1px var(--border);
+  transition:
+    opacity var(--dur-pop) var(--ease-out),
+    transform var(--dur-pop) var(--ease-out);
+}
+
+@starting-style {
+  .approval-card {
+    opacity: 0;
+    transform: translateY(4px) scale(0.98);
+  }
+}
+
+.approval-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.approval-tool {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+  letter-spacing: -0.1px;
+}
+
+.approval-badge {
+  flex: 0 0 auto;
+  height: 18px;
+  padding: 0 7px;
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--warning) 16%, var(--bg-raised));
+  color: var(--warning);
+  font-size: 10.5px;
+  font-weight: 600;
+  line-height: 18px;
+}
+
+.approval-args {
+  margin: 0;
+  padding: 9px 10px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-terminal);
+  color: var(--text-inverse);
+  font-family: var(--font-code);
+  font-size: var(--code-size);
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  overflow-x: hidden;
+  overflow-y: auto;
+  max-height: 180px;
+  user-select: text;
+}
+
+.approval-edit {
+  font-family: var(--font-code);
+  font-size: var(--code-size);
+  line-height: 1.45;
+  resize: vertical;
+  min-height: 72px;
+  margin: 0;
+}
+
+.approval-actions {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 6px;
+  padding-top: 2px;
+}
+
+.model-picker.warning {
+  color: var(--warning);
+}
+
+.model-picker.warning:hover {
+  color: var(--warning);
+}
+
+.sidebar-archive-foot {
+  flex: 0 0 auto;
+  padding: 6px 10px 10px;
+}
+
+.sidebar-archive-btn {
+  width: 100%;
+  justify-content: flex-start;
+  gap: 6px;
+}
+
+.sidebar-archive-count {
+  margin-left: auto;
+  min-width: 16px;
+  padding: 0 5px;
+  border-radius: 8px;
+  background: var(--bg-hover);
+  font-size: 10px;
+  color: var(--text-secondary);
+  text-align: center;
+}
+
+.sidebar-archive-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 0;
+}
+
+.sidebar-archive-title {
+  font-size: 12px;
+  font-weight: 550;
+}
+
+.ask-card.submitting {
+  opacity: 0.72;
+  pointer-events: none;
+}
+
+.ask-card.sealed {
+  background: var(--bg-hover);
+}
+
+.ask-card.sealed.cancelled {
+  background: var(--bg-sunken);
+}
+
+.ask-question {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ask-q {
+  font-weight: 500;
+  font-size: 13px;
+}
+
+.ask-divider {
+  height: 1px;
+  background: var(--border);
+  margin: 2px 0 4px;
+}
+
+.ask-choice-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.ask-choice {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 7px 9px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-content);
+  cursor: default;
+}
+
+.ask-choice.selected {
+  background: color-mix(in srgb, var(--accent) 14%, var(--bg-content));
+}
+
+.ask-choice input {
+  margin-top: 2px;
+}
+
+.ask-sealed-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.ask-sealed-check {
+  color: var(--success);
+  flex: 0 0 auto;
+}
+
+.text-area {
+  width: 100%;
+  min-height: 72px;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  border: 0;
+  resize: vertical;
+  background: var(--bg-sunken);
+  box-shadow: inset 0 0 0 1px var(--border);
+  color: var(--text);
+  font: inherit;
+  line-height: 1.45;
+}
+
+/* Plan is a mask over the transcript — it must not push the stream down. */
+.plan-overlay {
+  position: absolute;
+  top: 8px;
+  left: 12px;
+  right: 12px;
+  z-index: 6;
+  max-width: 740px;
+  margin: 0 auto;
+  padding: 8px 10px;
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--bg-raised) 92%, transparent);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  box-shadow: inset 0 0 0 1px var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: min(42vh, 280px);
+  min-height: 0;
+  overflow: hidden;
+  pointer-events: auto;
+  transition:
+    opacity var(--dur-pop) var(--ease-out),
+    transform var(--dur-pop) var(--ease-out);
+}
+
+.detail-stream[data-search='true'] .plan-overlay {
+  top: 48px;
+}
+
+.plan-overlay[data-expanded='false'] {
+  max-height: none;
+}
+
+.plan-overlay[data-leaving='true'] {
+  opacity: 0;
+  transform: translateY(-6px);
+  pointer-events: none;
+  transition:
+    opacity 200ms var(--ease-out),
+    transform 200ms var(--ease-out);
+}
+
+@starting-style {
+  .plan-overlay {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+}
+
+.plan-overlay[data-kind='warning'] {
+  background: color-mix(in srgb, #e08a3c 18%, var(--bg-raised));
+}
+
+.plan-overlay[data-kind='success'] {
+  background: color-mix(in srgb, #3fa66e 16%, var(--bg-raised));
+}
+
+.plan-overlay-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex: 0 0 auto;
+}
+
+.plan-overlay-icon {
+  display: flex;
+  flex: 0 0 auto;
+  color: var(--text-secondary);
+}
+
+.plan-overlay[data-kind='success'] .plan-overlay-icon {
+  color: var(--success);
+}
+
+.plan-overlay[data-kind='warning'] .plan-overlay-icon {
+  color: var(--danger);
+}
+
+.plan-overlay-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 500;
+  /* Step advance: brief blur-masked crossfade (emil: blur bridges two states). */
+  animation: plan-line-in var(--dur-pop) var(--ease-out);
+}
+
+@keyframes plan-line-in {
+  from {
+    opacity: 0;
+    filter: blur(2px);
+    transform: translateY(3px);
+  }
+  to {
+    opacity: 1;
+    filter: blur(0);
+    transform: translateY(0);
+  }
+}
+
+.plan-overlay-count {
+  flex: 0 0 auto;
+  color: var(--text-tertiary);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.plan-overlay-toggle {
+  display: flex;
+  flex: 0 0 auto;
+  border: 0;
+  background: transparent;
+  color: var(--text-tertiary);
+  padding: 2px;
+  border-radius: 4px;
+  cursor: default;
+}
+
+.plan-overlay-toggle:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.plan-overlay .plan-card {
+  margin: 0;
+  min-height: 0;
+  flex: 1 1 auto;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  background: color-mix(in srgb, var(--bg-sunken) 70%, transparent);
+  scrollbar-width: thin;
+}
+
+.plan-overlay .plan-card::-webkit-scrollbar {
+  width: 4px;
+}
+
+.plan-overlay .plan-card::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 2px;
+}
+
+.plan-card {
+  border-radius: var(--radius);
+  background: var(--bg-hover);
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.plan-header {
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.plan-count {
+  color: var(--text-tertiary);
+  font-weight: 500;
+}
+
+.plan-steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.plan-step {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 -6px;
+  padding: 4px 6px;
+  border-radius: var(--radius-sm);
+  transition:
+    background var(--dur-pop) var(--ease-out),
+    color var(--dur-pop) ease,
+    opacity var(--dur-pop) ease;
+}
+
+.plan-step[data-status='executing'] {
+  background: var(--accent-soft);
+}
+
+.plan-step[data-status='done'] .plan-step-title {
+  color: var(--text-secondary);
+}
+
+.plan-step-icon {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  animation: plan-icon-in var(--dur-pop) var(--ease-out);
+}
+
+@keyframes plan-icon-in {
+  from {
+    opacity: 0;
+    transform: scale(0.72);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.plan-step svg {
+  flex: 0 0 auto;
+  opacity: 0.85;
+}
+
+.plan-step[data-status='done'] svg {
+  color: var(--success);
+}
+
+.plan-step[data-status='error'] svg {
+  color: var(--danger);
+}
+
+.plan-step[data-status='executing'] svg {
+  color: var(--accent-text);
+}
+
+.plan-step[data-status='skipped'] svg,
+.plan-step[data-status='pending'] svg {
+  color: var(--text-tertiary);
+}
+
+.plan-step-title {
+  font-size: 13px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  transition: color var(--dur-pop) ease;
 }
 
 /* ==========================================================================
@@ -1634,13 +2724,14 @@ mark {
 
 .empty-logo {
   display: inline-flex;
-  margin-bottom: 2px;
-  opacity: 0.9;
+  margin-bottom: 10px;
+  opacity: 0.95;
 }
 
 .empty-logo img {
   display: block;
-  height: 30px;
+  /* Square mark — sized as the empty-state hero, not a titlebar wordmark. */
+  height: 72px;
   width: auto;
 }
 
@@ -1676,13 +2767,13 @@ mark {
   margin-top: 6px;
 }
 
-/* Severity is a colour and a bar, not an outline. */
+/* Severity is colour wash + title tint — no edge rail. */
 .inline-alert {
   display: flex;
   gap: 9px;
   align-items: flex-start;
   text-align: left;
-  padding: 11px 14px 11px 17px;
+  padding: 11px 14px;
   border-radius: var(--radius);
   background: var(--bg-sunken);
   font-size: 12px;
@@ -1695,30 +2786,22 @@ mark {
 
 .inline-alert.warning {
   background: color-mix(in srgb, var(--warning) 11%, transparent);
-  box-shadow: inset 3px 0 0 var(--warning);
 }
 .inline-alert.warning .alert-title {
   color: var(--warning);
 }
 .inline-alert.error {
   background: color-mix(in srgb, var(--danger) 11%, transparent);
-  box-shadow: inset 3px 0 0 var(--danger);
 }
 .inline-alert.error .alert-title {
   color: var(--danger);
 }
 .inline-alert.success {
   background: color-mix(in srgb, var(--success) 11%, transparent);
-  box-shadow: inset 3px 0 0 var(--success);
 }
 .inline-alert.success .alert-title {
   color: var(--success);
 }
-.inline-alert.info {
-  background: var(--bg-sunken);
-  box-shadow: inset 3px 0 0 var(--border-strong);
-}
-
 /* ==========================================================================
    Tools panel
    ========================================================================== */
@@ -1731,6 +2814,7 @@ mark {
   display: flex;
   flex-direction: column;
   background: var(--bg-sunken);
+  overflow: visible;
 }
 
 .tools-panel {
@@ -1741,52 +2825,79 @@ mark {
 }
 
 .tools-header {
+  position: relative;
+  z-index: 3;
   display: flex;
   align-items: center;
-  gap: 5px;
+  gap: 6px;
   height: 34px;
   padding: 0 10px;
   flex: 0 0 auto;
-  overflow-x: auto;
-  scrollbar-width: none;
+  min-width: 0;
+  /* Keep overflow visible so the workspace switcher popover is not clipped. */
+  overflow: visible;
 }
 
-.tools-header::-webkit-scrollbar {
-  display: none;
-}
-
-.tools-header .spacer {
-  flex: 1;
-}
-
-/* The close control is chrome, so it is only there while the pointer is. */
-.tab-chip {
-  display: inline-flex;
-  align-items: center;
+.tools-header-lead {
   flex: 0 0 auto;
+  min-width: 0;
+  max-width: 48%;
+  display: flex;
+  align-items: center;
+  gap: 5px;
 }
 
-.tab-chip > .btn {
-  width: 0;
-  padding: 0;
-  opacity: 0;
-  overflow: hidden;
-  color: var(--text-tertiary);
-  transition:
-    width var(--dur-hover) var(--ease-out),
-    opacity var(--dur-hover) ease;
+.tools-header-lead .btn.sm.icon-only:has(svg + svg) {
+  width: auto;
+  padding: 0 7px;
+  gap: 3px;
 }
 
-.tab-chip:hover > .btn {
-  width: 18px;
-  opacity: 1;
+.workdir-chip {
+  min-width: 0;
+  max-width: 100%;
 }
 
-/* The agent's own session is marked in the accent: it is not a shell the user
-   opened, it is the one the agent is driving. */
-.tab-chip[data-agent='true'] .chip svg {
-  color: var(--accent-text);
-  opacity: 1;
+.tools-header-divider {
+  flex: 0 0 auto;
+  width: 1px;
+  height: 14px;
+  margin: 0 2px;
+  background: var(--border-strong, var(--border));
+}
+
+.tools-header-tabs {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  overflow-x: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+
+.tools-header-tabs::-webkit-scrollbar {
+  height: 4px;
+}
+
+.tools-header-tabs::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 2px;
+}
+
+.tools-header-trail {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.tools-header-trail .btn.sm.icon-only:has(svg + svg) {
+  width: auto;
+  padding: 0 9px;
+  gap: 3px;
+  border-radius: 999px;
 }
 
 .panel-resizer {
@@ -1822,6 +2933,7 @@ mark {
    the files tree and the prompt are two objects sitting in it. */
 .tools-body {
   position: relative;
+  z-index: 1;
   flex: 0 0 auto;
   min-height: 0;
   overflow: hidden;
@@ -1829,11 +2941,20 @@ mark {
   border-radius: var(--radius);
   background: var(--bg-content);
   box-shadow: var(--shadow-card);
+  transition:
+    height var(--dur-sheet) var(--ease-drawer),
+    margin var(--dur-sheet) var(--ease-drawer),
+    box-shadow var(--dur-sheet) ease;
 }
 
 .tools-body[data-collapsed='true'] {
   margin: 0;
   box-shadow: none;
+}
+
+/* Drag-resize must track the pointer 1:1 — no lag from the collapse transition. */
+.tools-body[data-resizing='true'] {
+  transition: none;
 }
 
 /* Both panes stay mounted; only visibility toggles, so PTYs survive. */
@@ -1842,6 +2963,7 @@ mark {
   inset: 0;
   display: flex;
   flex-direction: column;
+  transition: opacity var(--dur-hover) var(--ease-out);
 }
 
 .tools-pane[data-hidden='true'] {
@@ -1856,13 +2978,27 @@ mark {
 .files-toolbar {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   padding: 8px 12px 6px;
   flex: 0 0 auto;
 }
 
 /* Everything the agent touched this session, in the write tone used for the
    same idea in the transcript. */
+.files-browser {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  opacity: 1;
+  transition: opacity var(--dur-hover) var(--ease-out);
+}
+
+.files-browser:not([data-opaque]) {
+  opacity: 0;
+  pointer-events: none;
+}
+
 .changed-strip {
   display: flex;
   align-items: center;
@@ -1871,6 +3007,16 @@ mark {
   padding: 0 12px 8px;
   flex: 0 0 auto;
   color: var(--tone-write);
+  transition:
+    opacity var(--dur-pop) var(--ease-out),
+    transform var(--dur-pop) var(--ease-out);
+}
+
+@starting-style {
+  .changed-strip {
+    opacity: 0;
+    transform: translateY(-2px);
+  }
 }
 
 .changed-strip .chip {
@@ -1883,10 +3029,144 @@ mark {
   color: var(--tone-write);
 }
 
+.files-browser .file-tree,
+.files-browser .file-columns {
+  flex: 1;
+  min-height: 0;
+}
+
 .file-tree {
   flex: 1;
   overflow: auto;
   padding: 0 8px 10px;
+}
+
+.files-toolbar .segmented {
+  flex: 0 0 auto;
+}
+
+.file-columns {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  overflow-x: auto;
+  overflow-y: hidden;
+  border-top: 1px solid var(--border);
+}
+
+.file-column {
+  flex: 0 0 220px;
+  width: 220px;
+  overflow-y: auto;
+  border-right: 1px solid var(--border);
+  padding: 4px 4px 4px 2px;
+}
+
+.file-column .tree-row {
+  /* Room before the glyph — column view has no disclosure chevron gutter. */
+  padding-left: 10px;
+}
+
+.file-column .column-chevron {
+  margin-left: auto;
+  color: var(--text-tertiary);
+  opacity: 0.7;
+}
+
+/* Standalone file preview window (not an in-app modal). */
+.file-viewer-window {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: var(--bg-content);
+  overflow: hidden;
+}
+
+.file-viewer-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  /* Match chrome(52) traffic-light centering used by the preview window. */
+  min-height: 52px;
+  padding: 8px var(--chrome-trail) 8px var(--chrome-lead);
+  border-bottom: 1px solid var(--border);
+  flex: 0 0 auto;
+}
+
+.titlebar-drag {
+  -webkit-app-region: drag;
+}
+
+.titlebar-no-drag {
+  -webkit-app-region: no-drag;
+}
+
+.file-viewer-titles {
+  flex: 1;
+  min-width: 0;
+}
+
+.file-viewer-name {
+  font-size: 14px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-viewer-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 0 auto;
+}
+
+.file-viewer-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 12px 14px;
+}
+
+.file-viewer-body:has(.file-viewer-pdf) {
+  padding: 0;
+  overflow: hidden;
+}
+
+.file-viewer-pdf {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: var(--bg-sunken);
+}
+
+.file-viewer-code {
+  margin: 0;
+  font-family: var(--font-code);
+  font-size: var(--code-size);
+  line-height: 1.55;
+  white-space: pre;
+  overflow: auto;
+  user-select: text;
+}
+
+.file-viewer-code .hljs {
+  display: block;
+  padding: 0;
+  background: transparent;
+  color: inherit;
+}
+
+.file-viewer-media {
+  display: block;
+  max-width: 100%;
+  max-height: 56vh;
+  margin: 0 auto;
+}
+
+.file-viewer-table {
+  margin: 0;
 }
 
 .tree-row {
@@ -1909,6 +3189,11 @@ mark {
   background: var(--accent-soft);
   color: var(--accent-text);
   font-weight: 500;
+}
+
+/* Column-view path into the next pane — quieter than an explicit selection. */
+.tree-row.open:not(.selected) {
+  background: var(--bg-hover);
 }
 
 /* Folders are the structure and files are the contents; colour says which is
@@ -1976,6 +3261,8 @@ mark {
   position: relative;
   flex: 1;
   min-height: 0;
+  display: flex;
+  flex-direction: column;
   background: var(--bg-terminal);
 }
 
@@ -1983,6 +3270,12 @@ mark {
    being an empty part of the tools tray. */
 .terminal-stack[data-empty='true'] {
   background: transparent;
+}
+
+.terminal-surface {
+  position: relative;
+  flex: 1;
+  min-height: 0;
 }
 
 .terminal-host {
@@ -2034,9 +3327,62 @@ mark {
 .composer {
   flex: 0 0 auto;
   padding: 0 10px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.quote-strip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: var(--radius);
+  background: var(--bg-raised);
+  box-shadow: inset 0 0 0 1px var(--border);
+}
+
+.quote-strip-body {
+  flex: 1;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  cursor: default;
+}
+
+.quote-strip-body:hover {
+  color: var(--accent);
+}
+
+.quote-strip-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.quote-strip-summary {
+  font-size: 12.5px;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.quote-strip-source {
+  font-size: 11px;
+  color: var(--text-secondary);
 }
 
 .composer-box {
+  position: relative;
+  z-index: 5;
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -2045,6 +3391,7 @@ mark {
   background: var(--bg-raised);
   box-shadow: var(--shadow-card);
   transition: box-shadow var(--dur-pop) ease;
+  overflow: visible;
 }
 
 /* A lift, not a ring: the composer holds focus most of the time a window is
@@ -2058,10 +3405,10 @@ mark {
   outline: none;
   resize: none;
   background: transparent;
-  max-height: 180px;
   line-height: 1.55;
   padding: 2px 0;
   user-select: text;
+  overflow-y: hidden;
 }
 
 /* Model, budget and send sit on the prompt's own baseline: they all act on
@@ -2157,37 +3504,194 @@ mark {
 }
 
 .token-ring {
-  display: flex;
+  display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 5px;
+  margin: 0;
+  padding: 2px 4px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-tertiary);
+  font: inherit;
   font-variant-numeric: tabular-nums;
+  cursor: default;
+}
+
+.token-ring:hover {
+  background: var(--bg-hover);
+  color: var(--text-secondary);
+}
+
+.token-ring svg {
+  display: block;
+  flex: 0 0 auto;
 }
 
 .token-ring .track {
-  width: 48px;
-  height: 4px;
-  border-radius: 2px;
+  stroke: var(--bg-hover);
+}
+
+/* Arc colour tracks how close the session is to the context ceiling. */
+.token-ring .fill {
+  stroke: var(--accent);
+  transition:
+    stroke-dashoffset var(--dur-sheet) var(--ease-out),
+    stroke var(--dur-sheet) ease;
+}
+
+.token-ring[data-level='warn'] .fill {
+  stroke: var(--warning);
+}
+
+.token-ring[data-level='full'] .fill {
+  stroke: var(--danger);
+}
+
+.token-ring[data-level='warn'] .token-pct {
+  color: var(--warning);
+}
+
+.token-ring[data-level='full'] .token-pct {
+  color: var(--danger);
+}
+
+.token-pct {
+  font-size: 11px;
+  line-height: 1;
+  color: inherit;
+}
+
+/* Frameless native panel popup (main process BrowserWindow, not in-app overlay). */
+.token-usage-popup {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: var(--bg-raised);
+  color: var(--text);
+  overflow: hidden;
+}
+
+.token-usage-popup-title {
+  flex: 0 0 auto;
+  padding: 12px 14px 0;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.token-usage-popup-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 10px 14px 14px;
+}
+
+.token-usage-popup-body.muted {
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.token-usage-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.token-usage-section {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.token-usage-heading {
+  font-size: 12.5px;
+  font-weight: 500;
+}
+
+.token-usage-muted {
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.token-usage-bar {
+  height: 6px;
+  border-radius: 999px;
   background: var(--bg-hover);
   overflow: hidden;
 }
 
-/* The bar changes colour as the budget runs out; the number alone is easy to
-   read past when it matters most. */
-.token-ring .fill {
+.token-usage-bar-fill {
   height: 100%;
-  border-radius: 2px;
+  border-radius: inherit;
   background: var(--accent);
-  transition:
-    width var(--dur-sheet) var(--ease-out),
-    background var(--dur-sheet) ease;
 }
 
-.token-ring[data-level='warn'] .fill {
-  background: var(--warning);
+.token-usage-empty {
+  padding: 14px 10px;
+  border-radius: var(--radius);
+  background: var(--bg-hover);
+  text-align: center;
 }
 
-.token-ring[data-level='full'] .fill {
-  background: var(--danger);
+.token-usage-empty-title {
+  font-size: 12.5px;
+  font-weight: 500;
+  margin-bottom: 2px;
+}
+
+.token-usage-kv {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+}
+
+.token-usage-kv > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 12px;
+}
+
+.token-usage-kv dt {
+  color: var(--text-secondary);
+}
+
+.token-usage-kv dd {
+  margin: 0;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.token-usage-chart {
+  display: block;
+}
+
+.token-usage-grid {
+  stroke: var(--border);
+  stroke-width: 1;
+}
+
+.token-usage-axis {
+  fill: var(--text-tertiary);
+  font-size: 9px;
+}
+
+.token-usage-line {
+  stroke: var(--accent);
+  stroke-width: 1.75;
+}
+
+.token-usage-dot {
+  fill: var(--accent);
+}
+
+.token-usage-area-good {
+  fill: color-mix(in srgb, #3d9a6a 22%, transparent);
+}
+
+.token-usage-area-low {
+  fill: color-mix(in srgb, var(--text-tertiary) 14%, transparent);
 }
 
 /* ==========================================================================
@@ -2274,6 +3778,61 @@ mark {
   flex: 1;
   overflow-y: auto;
   padding: 22px;
+}
+
+.settings-form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.settings-section-title {
+  margin-top: 4px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.cli-intro {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.cli-intro-title {
+  font-weight: 600;
+  margin-bottom: 2px;
+}
+
+.cli-status-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: var(--radius);
+  background: var(--bg-sunken);
+}
+
+.cli-status-text {
+  flex: 1;
+  min-width: 0;
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+
+.cli-help {
+  margin: 0;
+  padding-left: 18px;
+  color: var(--text-secondary);
+  font-size: 12.5px;
+  line-height: 1.65;
+}
+
+.cli-help code,
+.cli-status-text code,
+.settings-form code {
+  font-family: var(--font-code);
+  font-size: 0.92em;
 }
 
 .settings-foot {
@@ -2376,7 +3935,7 @@ mark {
 
 .about-logo img {
   display: block;
-  height: 24px;
+  height: 64px;
   width: auto;
 }
 

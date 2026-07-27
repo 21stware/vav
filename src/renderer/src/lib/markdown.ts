@@ -15,6 +15,56 @@ function escapeHtml(value: string): string {
     .replace(/"/g, '&quot;')
 }
 
+const LANG_EXT: Record<string, string> = {
+  javascript: 'js',
+  typescript: 'ts',
+  python: 'py',
+  bash: 'sh',
+  shell: 'sh',
+  zsh: 'sh',
+  sh: 'sh',
+  ruby: 'rb',
+  rust: 'rs',
+  golang: 'go',
+  go: 'go',
+  csharp: 'cs',
+  c: 'c',
+  cpp: 'cpp',
+  java: 'java',
+  kotlin: 'kt',
+  swift: 'swift',
+  json: 'json',
+  yaml: 'yml',
+  yml: 'yml',
+  toml: 'toml',
+  markdown: 'md',
+  md: 'md',
+  html: 'html',
+  css: 'css',
+  sql: 'sql',
+  xml: 'xml',
+  plaintext: 'txt',
+  text: 'txt'
+}
+
+export function suggestedFilenameForLang(language: string): string {
+  const key = language.trim().toLowerCase()
+  const ext = LANG_EXT[key] ?? (key && /^[a-z0-9]+$/i.test(key) ? key : 'txt')
+  return `snippet.${ext}`
+}
+
+function blockChrome(filename: string, kind: 'code' | 'table'): string {
+  return (
+    `<div class="md-block" data-kind="${kind}" data-filename="${escapeHtml(filename)}">` +
+    `<div class="md-block-bar">` +
+    `<span class="md-block-name">${escapeHtml(filename)}</span>` +
+    `<span class="md-block-actions">` +
+    `<button type="button" class="md-block-btn" data-md-action="copy" title="Copy">Copy</button>` +
+    `<button type="button" class="md-block-btn" data-md-action="save" title="Save as file">Save as file</button>` +
+    `</span></div>`
+  )
+}
+
 const md: MarkdownIt = new MarkdownIt({
   html: false,
   linkify: true,
@@ -31,16 +81,25 @@ const md: MarkdownIt = new MarkdownIt({
   }
 })
 
+const defaultFence =
+  md.renderer.rules.fence ??
+  ((tokens, idx, options, _env, self) => self.renderToken(tokens, idx, options))
+
+md.renderer.rules.fence = (tokens, idx, options, env, self): string => {
+  const token = tokens[idx]
+  const info = (token.info || '').trim()
+  const language = info.split(/\s+/g)[0] ?? ''
+  const filename = suggestedFilenameForLang(language)
+  const inner = defaultFence(tokens, idx, options, env, self)
+  return `${blockChrome(filename, 'code')}${inner}</div>`
+}
+
 /**
- * Tables get their own scroll container.
- *
- * A table narrower than its columns has to give somewhere, and the default —
- * wrapping every cell until the rows are five lines tall — destroys the one
- * thing a table is for. The wrapper lets it keep its column widths and scroll
- * sideways instead.
+ * Tables get their own scroll container plus the shared Copy / Save chrome.
  */
-md.renderer.rules.table_open = (): string => '<div class="table-scroll"><table>'
-md.renderer.rules.table_close = (): string => '</table></div>'
+md.renderer.rules.table_open = (): string =>
+  `${blockChrome('table.csv', 'table')}<div class="table-scroll"><table>`
+md.renderer.rules.table_close = (): string => '</table></div></div>'
 
 const cache = new Map<string, string>()
 const CACHE_LIMIT = 2000
@@ -96,4 +155,27 @@ export function highlightMatches(container: HTMLElement, query: string): void {
     if (cursor < value.length) fragment.appendChild(document.createTextNode(value.slice(cursor)))
     text.parentNode?.replaceChild(fragment, text)
   }
+}
+
+/** Plain text for Copy / Save — code fence body or table→CSV. */
+export function extractBlockPlainText(block: HTMLElement): string {
+  const kind = block.dataset.kind
+  if (kind === 'table') {
+    const table = block.querySelector('table')
+    if (!table) return ''
+    return [...table.querySelectorAll('tr')]
+      .map((row) =>
+        [...row.querySelectorAll('th,td')]
+          .map((cell) => csvEscape(cell.textContent ?? ''))
+          .join(',')
+      )
+      .join('\n')
+  }
+  const code = block.querySelector('pre code') ?? block.querySelector('pre')
+  return code?.textContent ?? ''
+}
+
+function csvEscape(value: string): string {
+  if (/[",\n]/.test(value)) return `"${value.replace(/"/g, '""')}"`
+  return value
 }

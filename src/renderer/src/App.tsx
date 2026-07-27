@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { PanelLeft, Plus, Search, Settings, X } from 'lucide-react'
+import { PanelLeft, Plus, Search, Settings } from 'lucide-react'
 import { useSessionStore } from './state/sessionStore'
 import {
   installSettingsBridge,
@@ -12,12 +12,15 @@ import { Transcript } from './components/Transcript'
 import { Composer } from './components/Composer'
 import { ToolsPanel } from './components/ToolsPanel'
 import { SearchStrip } from './components/SearchStrip'
+import { PlanOverlay } from './components/PlanOverlay'
+import { ErrorBanner } from './components/ErrorBanner'
 import { Button, Modal } from './components/ui'
 import { useAppearance } from './lib/appearance'
 import { installDefaultContextMenu } from './lib/nativeMenu'
 import { applyTerminalAppearance } from './lib/terminalRegistry'
 import { keys } from './lib/platform'
-import { SHORTCUTS } from './shortcuts'
+import { getShortcuts } from './shortcuts'
+import { useT } from './i18n/useT'
 
 export default function App(): React.JSX.Element {
   const ready = useSessionStore((s) => s.ready)
@@ -34,6 +37,16 @@ export default function App(): React.JSX.Element {
     const offSettings = installSettingsBridge()
     const offWindow = installWindowBridge()
     const offMenu = installDefaultContextMenu()
+    const offCli = window.vav.onCliOpen((event) => {
+      const store = useSessionStore.getState()
+      void store.selectConversation(event.conversationId).then(() => {
+        if (event.attachments?.length) {
+          store.setAttachments(event.conversationId, event.attachments)
+        }
+        store.focusComposer()
+      })
+      if (event.toast) store.setErrorBanner(event.toast)
+    })
     return () => {
       offTurn()
       offFs()
@@ -41,6 +54,7 @@ export default function App(): React.JSX.Element {
       offSettings()
       offWindow()
       offMenu()
+      offCli()
     }
   }, [])
 
@@ -64,6 +78,7 @@ export default function App(): React.JSX.Element {
 }
 
 function Titlebar(): React.JSX.Element {
+  const t = useT()
   const createConversation = useSessionStore((s) => s.createConversation)
   const openSearch = useSessionStore((s) => s.openSearch)
   const openSettings = useSessionStore((s) => s.openSettings)
@@ -73,20 +88,29 @@ function Titlebar(): React.JSX.Element {
     <header className="titlebar">
       {/* Starting a session belongs with the list it lands in, not with the
           window-level controls at the far end. */}
-      <Button icon={<PanelLeft size={14} />} title={`显示/隐藏侧栏 ${keys('⌘⇧H')}`} onClick={toggleSidebar} />
+      <Button
+        icon={<PanelLeft size={14} />}
+        title={`${t('shortcut.toggleSidebar')} ${keys('⌘⇧H')}`}
+        onClick={toggleSidebar}
+      />
       <Button
         icon={<Plus size={14} />}
-        label="新会话"
+        label={t('app.newSession')}
         size="sm"
-        title={`新会话 ${keys('⌘N')}`}
+        title={t('app.newSessionTitle', { shortcut: keys('⌘N') })}
         onClick={() => void createConversation()}
       />
       <span className="spacer" />
-      <Button icon={<Search size={14} />} size="sm" title={`搜索 ${keys('⌘F')}`} onClick={openSearch} />
+      <Button
+        icon={<Search size={14} />}
+        size="sm"
+        title={`${t('common.search')} ${keys('⌘F')}`}
+        onClick={openSearch}
+      />
       <Button
         icon={<Settings size={14} />}
         size="sm"
-        title={`设置 ${keys('⌘,')}`}
+        title={t('app.settingsTitle', { shortcut: keys('⌘,') })}
         onClick={() => openSettings()}
       />
     </header>
@@ -99,6 +123,7 @@ function SidebarSlot(): React.JSX.Element | null {
 }
 
 function Detail(): React.JSX.Element {
+  const t = useT()
   const searchOpen = useSessionStore((s) => s.search.open)
   const errorBanner = useSessionStore((s) => s.errorBanner)
   const setErrorBanner = useSessionStore((s) => s.setErrorBanner)
@@ -109,17 +134,18 @@ function Detail(): React.JSX.Element {
   return (
     <main className="detail">
       {errorBanner && (
-        <div className="banner error">
-          <span>{errorBanner}</span>
-          <span className="spacer" />
-          {isKeyProblem && (
-            <Button label="打开 Settings" size="sm" onClick={() => openSettings('api')} />
-          )}
-          <Button icon={<X size={12} />} size="sm" onClick={() => setErrorBanner(null)} />
-        </div>
+        <ErrorBanner
+          message={errorBanner}
+          actionLabel={isKeyProblem ? t('error.openSettings') : undefined}
+          onAction={isKeyProblem ? () => openSettings('api') : undefined}
+          onDismiss={() => setErrorBanner(null)}
+        />
       )}
-      {searchOpen && <SearchStrip />}
-      <Transcript />
+      <div className="detail-stream" data-search={searchOpen}>
+        {searchOpen && <SearchStrip />}
+        <PlanOverlay />
+        <Transcript />
+      </div>
       {/* Tools and prompt share one surface: what the agent can touch and what
           you tell it to do are one control area, not two. */}
       <div className="dock">
@@ -131,52 +157,31 @@ function Detail(): React.JSX.Element {
 }
 
 function Overlays(): React.JSX.Element {
-  const dialog = useSessionStore((s) => s.dialog)
-  const closeDialog = useSessionStore((s) => s.closeDialog)
+  const t = useT()
   const shortcutsOpen = useSessionStore((s) => s.shortcutsOpen)
   const setShortcutsOpen = useSessionStore((s) => s.setShortcutsOpen)
 
-  return (
-    <>
-      {dialog && (
-        <Modal
-          title={dialog.title}
-          onDismiss={closeDialog}
-          actions={
-            <>
-              {dialog.onConfirm && <Button label="取消" onClick={closeDialog} />}
-              <Button
-                label={dialog.confirmLabel}
-                variant={dialog.destructive ? 'danger' : 'primary'}
-                onClick={() => {
-                  closeDialog()
-                  dialog.onConfirm?.()
-                }}
-              />
-            </>
-          }
-        >
-          {dialog.body}
-        </Modal>
-      )}
+  if (!shortcutsOpen) return <></>
 
-      {shortcutsOpen && (
-        <Modal
-          title="快捷键"
-          onDismiss={() => setShortcutsOpen(false)}
-          actions={<Button label="好" variant="primary" onClick={() => setShortcutsOpen(false)} />}
-        >
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-            {SHORTCUTS.map(([keys, description]) => (
-              <div key={keys} style={{ display: 'flex', gap: 12 }}>
-                <kbd style={{ minWidth: 130 }}>{keys}</kbd>
-                <span>{description}</span>
-              </div>
-            ))}
+  const shortcuts = getShortcuts(t)
+
+  return (
+    <Modal
+      title={t('about.shortcuts')}
+      onDismiss={() => setShortcutsOpen(false)}
+      actions={
+        <Button label={t('common.ok')} variant="primary" onClick={() => setShortcutsOpen(false)} />
+      }
+    >
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+        {shortcuts.map(([shortcutKeys, description]) => (
+          <div key={shortcutKeys} style={{ display: 'flex', gap: 12 }}>
+            <kbd style={{ minWidth: 130 }}>{shortcutKeys}</kbd>
+            <span>{description}</span>
           </div>
-        </Modal>
-      )}
-    </>
+        ))}
+      </div>
+    </Modal>
   )
 }
 
@@ -230,10 +235,10 @@ function useMenuCommands(): void {
           break
         case 'new-terminal':
           store.setPanelSegment('terminal')
-          void useWorkspaceStore.getState().newUserTerminal(store.activeId, 80, 24)
+          void useWorkspaceStore.getState().newBash(store.activeId, 80, 24)
           break
         case 'switch-workdir':
-          void store.pickWorkingDirectory(store.activeId)
+          store.openWorkspaceSwitcher()
           break
         case 'send': {
           const draft = store.drafts[store.activeId] ?? ''
@@ -241,6 +246,17 @@ function useMenuCommands(): void {
           void store.send(draft.trim(), attachments)
           break
         }
+        case 'focus-tools-1':
+        case 'focus-tools-2':
+        case 'focus-tools-3':
+        case 'focus-tools-4':
+        case 'focus-tools-5':
+        case 'focus-tools-6':
+        case 'focus-tools-7':
+        case 'focus-tools-8':
+        case 'focus-tools-9':
+          store.focusToolsSlot(Number(command.slice('focus-tools-'.length)))
+          break
       }
     })
   }, [])
@@ -251,7 +267,8 @@ function useResponsiveSidebar(): void {
   const [autoCollapsed, setAutoCollapsed] = useState(false)
 
   useEffect(() => {
-    const onResize = (): void => {
+    let timer: ReturnType<typeof setTimeout> | null = null
+    const apply = (): void => {
       const narrow = window.innerWidth <= 520
       const store = useSessionStore.getState()
       if (narrow && store.sidebarVisible && !autoCollapsed) {
@@ -262,7 +279,16 @@ function useResponsiveSidebar(): void {
         if (!store.sidebarVisible) store.toggleSidebar()
       }
     }
-    window.addEventListener('resize', onResize)
-    return () => window.removeEventListener('resize', onResize)
+    // Debounce past the live-resize storm — toggling the sidebar mid-drag
+    // forces a full layout on every crossing of the 520px threshold.
+    const onResize = (): void => {
+      if (timer) clearTimeout(timer)
+      timer = setTimeout(apply, 120)
+    }
+    window.addEventListener('resize', onResize, { passive: true })
+    return () => {
+      window.removeEventListener('resize', onResize)
+      if (timer) clearTimeout(timer)
+    }
   }, [autoCollapsed])
 }

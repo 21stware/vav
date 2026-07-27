@@ -3,6 +3,7 @@ import {
   IPC,
   type MenuCommand,
   type NativeMenuItem,
+  type CliInstallLocation,
   type SettingsView,
   type VavApi
 } from '@shared/ipc'
@@ -31,18 +32,26 @@ const api: VavApi = {
     validateKey: (key: string) => ipcRenderer.invoke(IPC.settingsValidateKey, key),
     availableFonts: () => ipcRenderer.invoke(IPC.settingsFonts),
     pickDirectory: () => ipcRenderer.invoke(IPC.settingsPickDirectory),
-    setHotkey: (accelerator: string) => ipcRenderer.invoke(IPC.settingsSetHotkey, accelerator)
+    setHotkey: (accelerator: string) => ipcRenderer.invoke(IPC.settingsSetHotkey, accelerator),
+    cliStatus: () => ipcRenderer.invoke(IPC.settingsCliStatus),
+    cliSetLocation: (location: CliInstallLocation) =>
+      ipcRenderer.invoke(IPC.settingsCliSetLocation, location),
+    cliInstall: () => ipcRenderer.invoke(IPC.settingsCliInstall),
+    cliUninstall: () => ipcRenderer.invoke(IPC.settingsCliUninstall)
   },
 
   conversations: {
     list: () => ipcRenderer.invoke(IPC.convList),
     get: (id: string) => ipcRenderer.invoke(IPC.convGet, id),
-    create: () => ipcRenderer.invoke(IPC.convCreate),
+    create: (options?: import('@shared/ipc').CreateConversationOptions) =>
+      ipcRenderer.invoke(IPC.convCreate, options),
     rename: (id: string, title: string) => ipcRenderer.invoke(IPC.convRename, id, title),
     setModel: (id: string, model: string) => ipcRenderer.invoke(IPC.convSetModel, id, model),
     setWorkingDirectory: (id: string, path: string) =>
       ipcRenderer.invoke(IPC.convSetWorkdir, id, path),
     pickWorkingDirectory: (id: string) => ipcRenderer.invoke(IPC.convPickWorkdir, id),
+    locateWorkspace: (id: string, destinationDir: string, name: string) =>
+      ipcRenderer.invoke(IPC.convLocateWorkspace, id, destinationDir, name),
     remove: (ids: string[]) => ipcRenderer.invoke(IPC.convRemove, ids),
     revealInFinder: (path: string) => ipcRenderer.invoke(IPC.convReveal, path),
     copyToClipboard: (text: string) => ipcRenderer.invoke(IPC.convCopy, text),
@@ -51,14 +60,19 @@ const api: VavApi = {
     setLeaf: (id: string, leafId: string) => ipcRenderer.invoke(IPC.convSetLeaf, id, leafId),
     setPinned: (id: string, pinned: boolean) =>
       ipcRenderer.invoke(IPC.convSetPinned, id, pinned),
+    setArchived: (id: string, archived: boolean) =>
+      ipcRenderer.invoke(IPC.convSetArchived, id, archived),
+    setApprovalMode: (id: string, mode) =>
+      ipcRenderer.invoke(IPC.convSetApprovalMode, id, mode),
     continueInNewSession: (id: string, messageId: string) =>
       ipcRenderer.invoke(IPC.convContinueNew, id, messageId),
+    duplicate: (id: string) => ipcRenderer.invoke(IPC.convDuplicate, id),
     onChanged: (handler) => subscribe(IPC.convChanged, handler)
   },
 
   agent: {
-    send: (id: string, text: string, attachments: string[]) =>
-      ipcRenderer.invoke(IPC.agentSend, id, text, attachments),
+    send: (id: string, text: string, attachments: string[], quote?: import('@shared/types').QuoteDraft | null) =>
+      ipcRenderer.invoke(IPC.agentSend, id, text, attachments, quote ?? null),
     cancel: (id: string) => ipcRenderer.invoke(IPC.agentCancel, id),
     answer: (id: string, toolCallId: string, answer: string) =>
       ipcRenderer.invoke(IPC.agentAnswer, id, toolCallId, answer),
@@ -79,16 +93,27 @@ const api: VavApi = {
     watch: (conversationId: string, root: string | null) =>
       ipcRenderer.invoke(IPC.filesWatch, conversationId, root),
     onDirty: (handler) => subscribe(IPC.filesDirty, handler),
-    pathForFile: (file: File) => webUtils.getPathForFile(file)
+    pathForFile: (file: File) => webUtils.getPathForFile(file),
+    saveAs: (defaultName: string, content: string) =>
+      ipcRenderer.invoke(IPC.filesSaveAs, defaultName, content),
+    rename: (path: string, newName: string) => ipcRenderer.invoke(IPC.filesRename, path, newName),
+    trash: (paths: string[]) => ipcRenderer.invoke(IPC.filesTrash, paths),
+    inspect: (path: string) => ipcRenderer.invoke(IPC.filesInspect, path)
   },
 
   pty: {
-    create: (conversationId: string, cwd: string, cols: number, rows: number) =>
-      ipcRenderer.invoke(IPC.ptyCreate, conversationId, cwd, cols, rows),
+    create: (
+      conversationId: string,
+      cwd: string,
+      cols: number,
+      rows: number,
+      preferredId?: string
+    ) => ipcRenderer.invoke(IPC.ptyCreate, conversationId, cwd, cols, rows, preferredId),
     write: (tabId: string, data: string) => ipcRenderer.invoke(IPC.ptyWrite, tabId, data),
     resize: (tabId: string, cols: number, rows: number) =>
       ipcRenderer.invoke(IPC.ptyResize, tabId, cols, rows),
     kill: (tabId: string) => ipcRenderer.invoke(IPC.ptyKill, tabId),
+    isBusy: (tabId: string) => ipcRenderer.invoke(IPC.ptyIsBusy, tabId),
     onData: (handler) => subscribe(IPC.ptyData, handler),
     onExit: (handler) => subscribe<string>(IPC.ptyExit, handler)
   },
@@ -102,12 +127,28 @@ const api: VavApi = {
       ipcRenderer.invoke(IPC.windowPopupMenu, items, position),
     openSession: (conversationId: string) =>
       ipcRenderer.invoke(IPC.windowOpenSession, conversationId),
-    newDetachedSession: () => ipcRenderer.invoke(IPC.windowNewDetached)
+    newDetachedSession: () => ipcRenderer.invoke(IPC.windowNewDetached),
+    openFilePreview: (path: string) => ipcRenderer.invoke(IPC.windowOpenFilePreview, path),
+    openTokenUsage: (conversationId, anchor) =>
+      ipcRenderer.invoke(IPC.windowOpenTokenUsage, conversationId, anchor),
+    onTokenUsageView: (handler) => subscribe<string>(IPC.tokenUsageView, handler),
+    relaunch: () => ipcRenderer.invoke(IPC.windowRelaunch)
+  },
+
+  notifications: {
+    permission: () => ipcRenderer.invoke(IPC.notificationsPermission)
+  },
+
+  dialog: {
+    alert: (options) => ipcRenderer.invoke(IPC.dialogAlert, options),
+    confirm: (options) => ipcRenderer.invoke(IPC.dialogConfirm, options)
   },
 
   onMenuCommand: (handler) => subscribe<MenuCommand>(IPC.menuCommand, handler),
   onSettingsChanged: (handler) => subscribe<AppSettings>(IPC.settingsChanged, handler),
-  onSettingsView: (handler) => subscribe<SettingsView>(IPC.settingsView, handler)
+  onSettingsView: (handler) => subscribe<SettingsView>(IPC.settingsView, handler),
+  onCliOpen: (handler) => subscribe(IPC.cliOpen, handler),
+  onFullscreen: (handler) => subscribe<boolean>(IPC.windowFullscreen, handler)
 }
 
 contextBridge.exposeInMainWorld('vav', api)

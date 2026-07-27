@@ -1,4 +1,4 @@
-import type { ToolCallBlock, TurnPhase } from '@shared/types'
+import type { MessageBlock, ToolCallBlock, TurnPhase } from '@shared/types'
 import { MarkdownSegmenter } from '../lib/segmenter'
 
 /** UI refresh cadence during a turn. Deltas arriving between ticks accumulate. */
@@ -55,6 +55,47 @@ export class StreamProjection {
     this.ensureTicking()
   }
 
+  /**
+   * Adopt an in-flight turn that started in another window.
+   *
+   * Detached windows open mid-turn and never saw `start`; without this the
+   * live view stays inactive and StreamingMessage renders nothing.
+   */
+  hydrate(phase: TurnPhase, blocks: MessageBlock[]): void {
+    this.stopTicking()
+    this.slots = []
+    this.phase = phase
+    this.active = true
+    this.dirty = false
+    for (let index = 0; index < blocks.length; index++) {
+      const block = blocks[index]
+      if (block.kind === 'toolCall') {
+        this.slots[index] = { kind: 'tool', key: `c${block.id}`, block }
+      } else if (block.kind === 'text') {
+        const segmenter = new MarkdownSegmenter()
+        if (block.text) segmenter.push(block.text)
+        this.slots[index] = { kind: 'text', key: `t${index}`, segmenter }
+      } else if (block.kind === 'reasoning') {
+        this.slots[index] = { kind: 'reasoning', key: `r${index}`, text: block.text }
+      }
+      // `plan` message blocks are unused in the live path — plan UI is a toolCall.
+    }
+    this.publish()
+    this.ensureTicking()
+  }
+
+  /** Make a late-joining projection accept deltas without wiping slots. */
+  ensureLive(phase?: TurnPhase): void {
+    if (this.active) {
+      if (phase) this.setPhase(phase)
+      return
+    }
+    this.active = true
+    if (phase) this.phase = phase
+    this.publish()
+    this.ensureTicking()
+  }
+
   setPhase(phase: TurnPhase): void {
     if (this.phase === phase) return
     this.phase = phase
@@ -64,6 +105,7 @@ export class StreamProjection {
   }
 
   appendText(index: number, text: string): void {
+    this.ensureLive()
     const slot = this.slots[index]
     if (slot?.kind === 'text') slot.segmenter.push(text)
     else {
@@ -76,6 +118,7 @@ export class StreamProjection {
   }
 
   appendReasoning(index: number, text: string): void {
+    this.ensureLive()
     const slot = this.slots[index]
     if (slot?.kind === 'reasoning') slot.text += text
     else this.slots[index] = { kind: 'reasoning', key: `r${index}`, text }
@@ -84,6 +127,7 @@ export class StreamProjection {
   }
 
   upsertTool(index: number, block: ToolCallBlock): void {
+    this.ensureLive()
     this.slots[index] = { kind: 'tool', key: `c${block.id}`, block }
     // Tool state transitions are structural; show them without tick latency.
     this.publish()

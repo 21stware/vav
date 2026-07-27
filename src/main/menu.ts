@@ -1,6 +1,7 @@
 import { Menu, type MenuItemConstructorOptions } from 'electron'
 import type { MenuCommand } from '@shared/ipc'
 import { APP_NAME } from './brand'
+import { t } from './i18n'
 
 const IS_MAC = process.platform === 'darwin'
 
@@ -11,9 +12,8 @@ const IS_MAC = process.platform === 'darwin'
  * actual behaviour; the menu exists so the accelerators work even when focus
  * sits inside the terminal (where xterm would otherwise swallow keys).
  *
- * macOS puts the app's own submenu first and expects 设置 / 退出 to live there.
- * Windows has no such menu, so those two move into 文件 and the whole
- * macOS-only block (services, hide others, 前置全部窗口) drops out.
+ * macOS puts the app's own submenu first and expects Settings / Quit to live
+ * there. Windows has no such menu, so those two move into File.
  */
 export function buildAppMenu(
   dispatch: (command: MenuCommand) => void,
@@ -22,9 +22,7 @@ export function buildAppMenu(
 ): Menu {
   const send = (command: MenuCommand) => () => dispatch(command)
   const settingsItem: MenuItemConstructorOptions = {
-    // Settings own a window, so this bypasses the renderer round trip and
-    // works no matter which window has focus.
-    label: '设置…',
+    label: t('common.settingsEllipsis'),
     accelerator: 'CmdOrCtrl+,',
     click: openSettings
   }
@@ -34,17 +32,17 @@ export function buildAppMenu(
         {
           label: APP_NAME,
           submenu: [
-            { role: 'about', label: `关于 ${APP_NAME}` },
+            { role: 'about', label: t('menu.aboutApp', { app: APP_NAME }) },
             { type: 'separator' },
             settingsItem,
             { type: 'separator' },
             { role: 'services' },
             { type: 'separator' },
-            { role: 'hide', label: `隐藏 ${APP_NAME}` },
-            { role: 'hideOthers', label: '隐藏其他' },
-            { role: 'unhide', label: '全部显示' },
+            { role: 'hide', label: t('menu.hideApp', { app: APP_NAME }) },
+            { role: 'hideOthers', label: t('menu.hideOthers') },
+            { role: 'unhide', label: t('menu.showAll') },
             { type: 'separator' },
-            { role: 'quit', label: `退出 ${APP_NAME}` }
+            { role: 'quit', label: t('menu.quitApp', { app: APP_NAME }) }
           ]
         }
       ]
@@ -53,84 +51,110 @@ export function buildAppMenu(
   const template: MenuItemConstructorOptions[] = [
     ...appMenu,
     {
-      label: '文件',
+      label: t('menu.file'),
       submenu: [
-        { label: '新会话', accelerator: 'CmdOrCtrl+N', click: send('new-conversation') },
-        // Handled in main, not the renderer: the point of ⌘⇧↵ is that it works
-        // from any window, including one that has no sidebar to create from.
+        { label: t('menu.newSession'), accelerator: 'CmdOrCtrl+N', click: send('new-conversation') },
         {
-          label: '在新窗口中新建会话',
+          label: t('menu.newSessionWindow'),
           accelerator: 'CmdOrCtrl+Shift+Return',
           click: newDetachedSession
         },
-        { label: '新终端标签', accelerator: 'CmdOrCtrl+T', click: send('new-terminal') },
+        { label: t('menu.newTerminal'), accelerator: 'CmdOrCtrl+T', click: send('new-terminal') },
         {
-          label: '切换工作目录…',
+          label: t('menu.switchWorkdir'),
           accelerator: 'CmdOrCtrl+Shift+O',
           click: send('switch-workdir')
         },
         { type: 'separator' },
         ...(IS_MAC ? [] : [settingsItem, { type: 'separator' } as MenuItemConstructorOptions]),
-        // On macOS this hides the window; the process stays alive for
-        // background turns. Elsewhere it closes for real.
-        { role: 'close', label: '关闭窗口' },
+        { role: 'close', label: t('menu.closeWindow') },
         ...(IS_MAC
           ? []
-          : [{ role: 'quit', label: `退出 ${APP_NAME}` } as MenuItemConstructorOptions])
+          : [{ role: 'quit', label: t('menu.quitApp', { app: APP_NAME }) } as MenuItemConstructorOptions])
       ]
     },
     {
-      label: '编辑',
+      label: t('menu.edit'),
       submenu: [
-        { role: 'undo', label: '撤销' },
-        { role: 'redo', label: '重做' },
+        { role: 'undo', label: t('menu.undo') },
+        { role: 'redo', label: t('menu.redo') },
         { type: 'separator' },
-        { role: 'cut', label: '剪切' },
-        { role: 'copy', label: '拷贝' },
-        { role: 'paste', label: '粘贴' },
-        { role: 'selectAll', label: '全选' },
+        { role: 'cut', label: t('menu.cut') },
+        { role: 'copy', label: t('menu.copy') },
+        { role: 'paste', label: t('menu.paste') },
+        { role: 'selectAll', label: t('menu.selectAll') },
         { type: 'separator' },
-        { label: '查找…', accelerator: 'CmdOrCtrl+F', click: send('find') },
-        { label: '查找下一个', accelerator: 'CmdOrCtrl+G', click: send('find-next') },
-        { label: '查找上一个', accelerator: 'CmdOrCtrl+Shift+G', click: send('find-previous') }
-      ]
-    },
-    {
-      label: '视图',
-      submenu: [
-        { label: '显示/隐藏侧栏', accelerator: 'CmdOrCtrl+Shift+H', click: send('toggle-sidebar') },
+        { label: t('menu.find'), accelerator: 'CmdOrCtrl+F', click: send('find') },
+        { label: t('menu.findNext'), accelerator: 'CmdOrCtrl+G', click: send('find-next') },
         {
-          label: '显示/隐藏工具台',
+          label: t('menu.findPrevious'),
+          accelerator: 'CmdOrCtrl+Shift+G',
+          click: send('find-previous')
+        }
+      ]
+    },
+    {
+      label: t('menu.view'),
+      submenu: [
+        {
+          label: t('menu.toggleSidebar'),
+          accelerator: 'CmdOrCtrl+Shift+H',
+          click: send('toggle-sidebar')
+        },
+        {
+          label: t('menu.toggleTools'),
           accelerator: 'CmdOrCtrl+Shift+E',
           click: send('toggle-tools-panel')
         },
         {
-          label: '切换 Files / Terminal',
+          label: t('menu.togglePanelSegment'),
           accelerator: 'CmdOrCtrl+Shift+T',
           click: send('toggle-panel-segment')
         },
         { type: 'separator' },
-        { label: '聚焦输入框', accelerator: 'CmdOrCtrl+K', click: send('focus-composer') },
-        { label: '发送', accelerator: 'CmdOrCtrl+Return', click: send('send') },
+        {
+          label: t('menu.focusWorkspace'),
+          accelerator: 'CmdOrCtrl+1',
+          click: send('focus-tools-1')
+        },
+        ...([2, 3, 4, 5, 6, 7, 8, 9] as const).map(
+          (n): MenuItemConstructorOptions => ({
+            label: t('menu.focusTerminal', { n: n - 1 }),
+            accelerator: `CmdOrCtrl+${n}`,
+            click: send(`focus-tools-${n}` as MenuCommand)
+          })
+        ),
         { type: 'separator' },
-        { role: 'reload', label: '重新载入' },
-        { role: 'toggleDevTools', label: '开发者工具' },
+        {
+          label: t('menu.focusComposer'),
+          accelerator: 'CmdOrCtrl+K',
+          click: send('focus-composer')
+        },
+        {
+          label: t('menu.focusComposer'),
+          accelerator: 'CmdOrCtrl+I',
+          click: send('focus-composer')
+        },
+        { label: t('menu.send'), accelerator: 'CmdOrCtrl+Return', click: send('send') },
         { type: 'separator' },
-        { role: 'resetZoom', label: '实际大小' },
-        { role: 'zoomIn', label: '放大' },
-        { role: 'zoomOut', label: '缩小' },
-        { role: 'togglefullscreen', label: '全屏' }
+        { role: 'reload', label: t('menu.reload') },
+        { role: 'toggleDevTools', label: t('menu.devTools') },
+        { type: 'separator' },
+        { role: 'resetZoom', label: t('menu.actualSize') },
+        { role: 'zoomIn', label: t('menu.zoomIn') },
+        { role: 'zoomOut', label: t('menu.zoomOut') },
+        { role: 'togglefullscreen', label: t('menu.fullscreen') }
       ]
     },
     {
-      label: '窗口',
+      label: t('menu.window'),
       submenu: [
-        { role: 'minimize', label: '最小化' },
-        { role: 'zoom', label: '缩放' },
+        { role: 'minimize', label: t('menu.minimize') },
+        { role: 'zoom', label: t('menu.zoom') },
         ...(IS_MAC
           ? ([
               { type: 'separator' },
-              { role: 'front', label: '前置全部窗口' }
+              { role: 'front', label: t('menu.front') }
             ] as MenuItemConstructorOptions[])
           : [])
       ]

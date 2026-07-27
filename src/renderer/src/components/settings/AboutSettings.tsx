@@ -1,9 +1,11 @@
 import { useSessionStore } from '../../state/sessionStore'
+import { useT } from '../../i18n/useT'
 import { Button } from '../ui'
 import wordmark from '../../assets/wordmark.png'
 import wordmarkDark from '../../assets/wordmark-dark.png'
 
 export function AboutSettings(): React.JSX.Element {
+  const t = useT()
   const about = useSessionStore((s) => s.about)
   const resetSettings = useSessionStore((s) => s.resetSettings)
   const showDialog = useSessionStore((s) => s.showDialog)
@@ -16,38 +18,42 @@ export function AboutSettings(): React.JSX.Element {
           <img className="logo-light" src={wordmark} alt="" />
           <img className="logo-dark" src={wordmarkDark} alt="" />
         </span>
-        <div className="muted">{about?.version ?? '1.0.0'} · MIT</div>
+        <div className="muted">{about?.version ?? '1.0.0'}</div>
       </div>
 
       <div>
         <div className="kv-row">
-          <span className="kv-label">数据</span>
-          <span className="kv-value">仅本机（Keychain + Application Support）</span>
+          <span className="kv-label">{t('about.dataLabel')}</span>
+          <span className="kv-value">{t('about.dataValue')}</span>
         </div>
         <div className="kv-row">
-          <span className="kv-label">终端</span>
-          <span className="kv-value">xterm.js + node-pty（本地 PTY）</span>
+          <span className="kv-label">{t('about.terminalLabel')}</span>
+          <span className="kv-value">{t('about.terminalValue')}</span>
         </div>
         <div className="kv-row">
-          <span className="kv-label">网络</span>
-          <span className="kv-value">仅调用你配置的 LLM API 端点</span>
+          <span className="kv-label">{t('about.networkLabel')}</span>
+          <span className="kv-value">{t('about.networkValue')}</span>
         </div>
         <div className="kv-row">
-          <span className="kv-label">记录</span>
+          <span className="kv-label">{t('about.recordsLabel')}</span>
           <span className="kv-value">{about?.conversationsPath ?? ''}</span>
         </div>
       </div>
 
       <div style={{ display: 'flex', gap: 8 }}>
-        <Button label="查看快捷键" variant="secondary" onClick={() => setShortcutsOpen(true)} />
         <Button
-          label="重置所有设置"
+          label={t('about.viewShortcuts')}
+          variant="secondary"
+          onClick={() => setShortcutsOpen(true)}
+        />
+        <Button
+          label={t('about.reset')}
           variant="danger"
           onClick={() =>
             showDialog({
-              title: '重置所有设置',
-              body: '所有配置将恢复默认，API Key 将从 Keychain 删除。此操作不可撤销。',
-              confirmLabel: '重置',
+              title: t('about.resetTitle'),
+              body: t('about.resetBody'),
+              confirmLabel: t('dialog.resetConfirm'),
               destructive: true,
               onConfirm: () => void resetSettings()
             })

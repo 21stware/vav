@@ -1,6 +1,7 @@
 import { memo, useMemo } from 'react'
 import { Folder, FileText } from 'lucide-react'
 import type { ToolCallBlock } from '@shared/types'
+import { tt } from '../i18n/useT'
 
 /** Rendering every line of a large result costs more than it explains. */
 const MAX_LINES = 400
@@ -24,6 +25,20 @@ export const ToolDetail = memo(function ToolDetail({
   if (block.tool === 'terminal' && output.startsWith('$ ')) {
     return <TerminalLog transcript={output} />
   }
+  if (block.tool === 'terminal' && !output) {
+    return (
+      <div className="detail-terminal">
+        <pre className="term-output">{tt('common.noOutput')}</pre>
+      </div>
+    )
+  }
+  if (block.tool === 'wait' || block.tool === 'read_bash_session') {
+    return (
+      <div className="detail-terminal">
+        <pre className="term-output">{output || tt('common.noOutput')}</pre>
+      </div>
+    )
+  }
   if (block.tool === 'fs_write' && looksLikeDiff(output)) {
     return <DiffView diff={output} />
   }
@@ -37,17 +52,17 @@ export const ToolDetail = memo(function ToolDetail({
     return (
       <div className="detail-qa">
         <div className="detail-question">{block.summary}</div>
-        <div className="detail-answer">{output || '（未回答）'}</div>
+        <div className="detail-answer">{output || tt('tool.detail.notAnswered')}</div>
       </div>
     )
   }
 
   return (
     <div className="detail-raw">
-      <div className="detail-label">输入</div>
+      <div className="detail-label">{tt('tool.detail.input')}</div>
       <pre>{block.input}</pre>
-      <div className="detail-label">输出</div>
-      <pre>{output || '（无输出）'}</pre>
+      <div className="detail-label">{tt('tool.detail.output')}</div>
+      <pre>{output || tt('common.noOutput')}</pre>
     </div>
   )
 })
@@ -98,8 +113,6 @@ function DiffView({ diff }: { diff: string }): React.JSX.Element {
     <div className="detail-diff">
       {lines.map((line, index) => {
         const kind = diffKind(line)
-        // Hunk headers and the truncation notice are annotations, not content:
-        // they have no gutter mark and no leading character to strip.
         if (kind === 'hunk' || kind === 'more') {
           return (
             <div key={index} className={`diff-line ${kind}`}>
@@ -167,5 +180,8 @@ function ListingView({ listing }: { listing: string }): React.JSX.Element {
 
 function clampLines(lines: string[]): string[] {
   if (lines.length <= MAX_LINES) return lines
-  return [...lines.slice(0, MAX_LINES), `… 其余 ${lines.length - MAX_LINES} 行未显示`]
+  return [
+    ...lines.slice(0, MAX_LINES),
+    tt('tool.moreLines', { n: lines.length - MAX_LINES })
+  ]
 }

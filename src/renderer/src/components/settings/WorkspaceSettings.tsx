@@ -1,30 +1,32 @@
 import type { ShellKind } from '@shared/types'
 import { shellsFor } from '@shared/platform'
 import { useSessionStore } from '../../state/sessionStore'
-import { Button, InlineAlert, Segmented, Toggle } from '../ui'
+import { useT } from '../../i18n/useT'
+import { Button, Segmented, Toggle } from '../ui'
 import { PLATFORM } from '../../lib/platform'
 
 const SHELLS = shellsFor(PLATFORM)
 
 export function WorkspaceSettings(): React.JSX.Element {
+  const t = useT()
   const settings = useSessionStore((s) => s.settings)
   const updateSettings = useSessionStore((s) => s.updateSettings)
 
   return (
     <div className="form">
       <div className="form-row">
-        <label>默认工作目录</label>
+        <label>{t('workspace.defaultDir')}</label>
         <div className="control">
           <input
             className="text-field"
-            placeholder="留空 = 临时 Workspace"
+            placeholder={t('workspace.defaultDirPlaceholder')}
             value={settings.defaultWorkingDirectory}
             onChange={(event) =>
               void updateSettings({ defaultWorkingDirectory: event.target.value })
             }
           />
           <Button
-            label="选择…"
+            label={t('workspace.pick')}
             variant="secondary"
             size="sm"
             onClick={async () => {
@@ -34,19 +36,17 @@ export function WorkspaceSettings(): React.JSX.Element {
           />
           {settings.defaultWorkingDirectory && (
             <Button
-              label="恢复临时"
+              label={t('ui.restoreTemp')}
               size="sm"
               onClick={() => void updateSettings({ defaultWorkingDirectory: '' })}
             />
           )}
         </div>
       </div>
-      <div className="form-hint">
-        留空时新建会话使用系统 Temporary 下的 Workspace；主界面 chip 仍可单独切换当前会话目录。
-      </div>
+      <div className="form-hint">{t('workspace.defaultDirHint')}</div>
 
       <div className="form-row">
-        <label>Shell</label>
+        <label>{t('workspace.shell')}</label>
         <div className="control">
           <Segmented<ShellKind>
             options={SHELLS}
@@ -57,11 +57,11 @@ export function WorkspaceSettings(): React.JSX.Element {
       </div>
       <div className="form-hint">
         {SHELLS.map((option) => `${option.label} = ${option.hint}`).join(' · ')}
-        {SHELLS.length > 1 && '（未安装时启动会失败）'}
+        {SHELLS.length > 1 && t('workspace.shellHintSuffix')}
       </div>
 
       <div className="form-row">
-        <label>命令超时</label>
+        <label>{t('workspace.timeout')}</label>
         <div className="control">
           <input
             type="range"
@@ -75,13 +75,13 @@ export function WorkspaceSettings(): React.JSX.Element {
             }
           />
           <span className="muted" style={{ width: 52 }}>
-            {settings.commandTimeout} 秒
+            {t('workspace.timeoutSeconds', { n: settings.commandTimeout })}
           </span>
         </div>
       </div>
 
       <div className="form-row">
-        <label>自动批准只读操作</label>
+        <label>{t('workspace.autoApprove')}</label>
         <div className="control">
           <Toggle
             checked={settings.autoApproveReadonly}
@@ -89,13 +89,9 @@ export function WorkspaceSettings(): React.JSX.Element {
           />
         </div>
       </div>
-      <div className="form-hint">fs_read / fs_list 无需确认；写入与 terminal 仍需人工留意。</div>
+      <div className="form-hint">{t('workspace.autoApproveHint')}</div>
 
-      <InlineAlert
-        kind="warning"
-        title="权限提示"
-        message="Terminal 与 Agent 可在所选目录执行任意 shell。请勿对不信任提示词打开整个 Home 等高权限目录。"
-      />
+      <div className="form-hint">{t('workspace.securityHint')}</div>
     </div>
   )
 }

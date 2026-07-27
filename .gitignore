@@ -7,3 +7,4 @@ build/.electron-brand-stamp
 .DS_Store
 *.log
 .env
+**/__pycache__/

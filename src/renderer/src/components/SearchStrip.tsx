@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react'
 import { ChevronDown, ChevronUp, Search, X } from 'lucide-react'
 import { useSessionStore } from '../state/sessionStore'
 import { keys } from '../lib/platform'
+import { useT } from '../i18n/useT'
 import { Button } from './ui'
 
 /**
@@ -9,6 +10,7 @@ import { Button } from './ui'
  * conversation titles only (main-chat-search.rpml annotation 2).
  */
 export function SearchStrip(): React.JSX.Element {
+  const t = useT()
   const search = useSessionStore((s) => s.search)
   const setSearchQuery = useSessionStore((s) => s.setSearchQuery)
   const stepSearch = useSessionStore((s) => s.stepSearch)
@@ -30,7 +32,7 @@ export function SearchStrip(): React.JSX.Element {
         ref={inputRef}
         className="text-field"
         style={{ flex: 1 }}
-        placeholder="在当前会话中搜索…"
+        placeholder={t('search.placeholder')}
         value={search.query}
         onChange={(event) => setSearchQuery(event.target.value)}
         onKeyDown={(event) => {
@@ -44,24 +46,24 @@ export function SearchStrip(): React.JSX.Element {
       />
       {hasQuery && (
         <span className="muted" style={{ minWidth: 42, textAlign: 'right' }}>
-          {total === 0 ? '无匹配' : `${search.index + 1} / ${total}`}
+          {total === 0 ? t('search.noMatch') : `${search.index + 1} / ${total}`}
         </span>
       )}
       <Button
         icon={<ChevronUp size={13} />}
         size="sm"
-        title={`上一个 ${keys('⌘⇧G')}`}
+        title={t('search.previous', { shortcut: keys('⌘⇧G') })}
         disabled={total === 0}
         onClick={() => stepSearch(-1)}
       />
       <Button
         icon={<ChevronDown size={13} />}
         size="sm"
-        title={`下一个 ${keys('⌘G')}`}
+        title={t('search.next', { shortcut: keys('⌘G') })}
         disabled={total === 0}
         onClick={() => stepSearch(1)}
       />
-      <Button icon={<X size={13} />} size="sm" title="关闭" onClick={closeSearch} />
+      <Button icon={<X size={13} />} size="sm" title={t('common.close')} onClick={closeSearch} />
     </div>
   )
 }

@@ -1,4 +1,5 @@
 import { isMac, type Platform } from '@shared/platform'
+import { tt } from '../i18n/useT'
 
 /**
  * `window.vav` is installed by the preload script before any renderer module
@@ -9,7 +10,11 @@ export const PLATFORM: Platform = window.vav?.platform ?? 'darwin'
 export const IS_MAC = isMac(PLATFORM)
 
 /** What "reveal in the file manager" is called where the user is standing. */
-export const FILE_MANAGER = IS_MAC ? 'Finder' : PLATFORM === 'win32' ? '文件资源管理器' : '文件管理器'
+export function fileManagerLabel(): string {
+  if (IS_MAC) return tt('platform.finder')
+  if (PLATFORM === 'win32') return tt('platform.explorer')
+  return tt('platform.fileManager')
+}
 
 const WINDOWS_NAMES: Record<string, string> = {
   '⌘': 'Ctrl',

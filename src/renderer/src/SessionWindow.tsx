@@ -1,5 +1,4 @@
 import { useEffect } from 'react'
-import { X } from 'lucide-react'
 import { useSessionStore } from './state/sessionStore'
 import {
   installSettingsBridge,
@@ -11,10 +10,12 @@ import { Transcript } from './components/Transcript'
 import { Composer } from './components/Composer'
 import { ToolsPanel } from './components/ToolsPanel'
 import { SearchStrip } from './components/SearchStrip'
-import { Button, Modal } from './components/ui'
+import { PlanOverlay } from './components/PlanOverlay'
+import { ErrorBanner } from './components/ErrorBanner'
 import { useAppearance } from './lib/appearance'
 import { installDefaultContextMenu } from './lib/nativeMenu'
 import { applyTerminalAppearance } from './lib/terminalRegistry'
+import { useT } from './i18n/useT'
 
 /**
  * One conversation, in its own window.
@@ -32,8 +33,25 @@ export default function SessionWindow({
   const bootstrap = useSessionStore((s) => s.bootstrap)
 
   useEffect(() => {
-    void bootstrap(conversationId)
+    void bootstrap(conversationId).then(() => {
+      // ⌘⇧↵ / collapseTools=1: start with the tools panel folded.
+      if (new URLSearchParams(window.location.search).get('collapseTools') === '1') {
+        useSessionStore.getState().setToolsCollapsed(true)
+      }
+      // Detached windows exist to type into — land in the composer immediately.
+      useSessionStore.getState().focusComposer()
+    })
   }, [bootstrap, conversationId])
+
+  // Bootstrap bumps the focus tick before <Composer> mounts; re-fire once ready
+  // so the textarea actually receives focus after the first paint.
+  useEffect(() => {
+    if (!ready) return
+    const frame = requestAnimationFrame(() => {
+      useSessionStore.getState().focusComposer()
+    })
+    return () => cancelAnimationFrame(frame)
+  }, [ready])
 
   useEffect(() => {
     const offTurn = installTurnEventBridge()
@@ -64,12 +82,12 @@ export default function SessionWindow({
           the conversation name, so repeating it here would be a second header. */}
       <header className="titlebar bare" />
       <Detail />
-      <Overlays />
     </div>
   )
 }
 
 function Detail(): React.JSX.Element {
+  const t = useT()
   const searchOpen = useSessionStore((s) => s.search.open)
   const errorBanner = useSessionStore((s) => s.errorBanner)
   const setErrorBanner = useSessionStore((s) => s.setErrorBanner)
@@ -80,17 +98,18 @@ function Detail(): React.JSX.Element {
   return (
     <main className="detail">
       {errorBanner && (
-        <div className="banner error">
-          <span>{errorBanner}</span>
-          <span className="spacer" />
-          {isKeyProblem && (
-            <Button label="打开 Settings" size="sm" onClick={() => openSettings('api')} />
-          )}
-          <Button icon={<X size={12} />} size="sm" onClick={() => setErrorBanner(null)} />
-        </div>
+        <ErrorBanner
+          message={errorBanner}
+          actionLabel={isKeyProblem ? t('error.openSettings') : undefined}
+          onAction={isKeyProblem ? () => openSettings('api') : undefined}
+          onDismiss={() => setErrorBanner(null)}
+        />
       )}
-      {searchOpen && <SearchStrip />}
-      <Transcript />
+      <div className="detail-stream" data-search={searchOpen}>
+        {searchOpen && <SearchStrip />}
+        <PlanOverlay />
+        <Transcript />
+      </div>
       {/* Tools and prompt share one surface: what the agent can touch and what
           you tell it to do are one control area, not two. */}
       <div className="dock">
@@ -98,34 +117,6 @@ function Detail(): React.JSX.Element {
         <Composer />
       </div>
     </main>
-  )
-}
-
-function Overlays(): React.JSX.Element | null {
-  const dialog = useSessionStore((s) => s.dialog)
-  const closeDialog = useSessionStore((s) => s.closeDialog)
-  if (!dialog) return null
-
-  return (
-    <Modal
-      title={dialog.title}
-      onDismiss={closeDialog}
-      actions={
-        <>
-          {dialog.onConfirm && <Button label="取消" onClick={closeDialog} />}
-          <Button
-            label={dialog.confirmLabel}
-            variant={dialog.destructive ? 'danger' : 'primary'}
-            onClick={() => {
-              closeDialog()
-              dialog.onConfirm?.()
-            }}
-          />
-        </>
-      }
-    >
-      {dialog.body}
-    </Modal>
   )
 }
 
@@ -167,10 +158,10 @@ function useMenuCommands(): void {
           break
         case 'new-terminal':
           store.setPanelSegment('terminal')
-          void useWorkspaceStore.getState().newUserTerminal(store.activeId, 80, 24)
+          void useWorkspaceStore.getState().newBash(store.activeId, 80, 24)
           break
         case 'switch-workdir':
-          void store.pickWorkingDirectory(store.activeId)
+          store.openWorkspaceSwitcher()
           break
         case 'send': {
           const draft = store.drafts[store.activeId] ?? ''
@@ -178,6 +169,17 @@ function useMenuCommands(): void {
           void store.send(draft.trim(), attachments)
           break
         }
+        case 'focus-tools-1':
+        case 'focus-tools-2':
+        case 'focus-tools-3':
+        case 'focus-tools-4':
+        case 'focus-tools-5':
+        case 'focus-tools-6':
+        case 'focus-tools-7':
+        case 'focus-tools-8':
+        case 'focus-tools-9':
+          store.focusToolsSlot(Number(command.slice('focus-tools-'.length)))
+          break
       }
     })
   }, [])

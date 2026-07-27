@@ -1,4 +1,5 @@
 import type { NativeMenuItem } from '@shared/ipc'
+import { tt } from '../i18n/useT'
 
 export interface MenuItem {
   label: string
@@ -60,16 +61,16 @@ export function installDefaultContextMenu(): () => void {
     const items: NativeMenuItem[] = []
     if (editable) {
       items.push(
-        { role: 'undo', label: '撤销' },
-        { role: 'redo', label: '重做' },
+        { role: 'undo', label: tt('menu.undo') },
+        { role: 'redo', label: tt('menu.redo') },
         { separator: true },
-        { role: 'cut', label: '剪切' }
+        { role: 'cut', label: tt('menu.cut') }
       )
     }
-    if (editable || hasSelection) items.push({ role: 'copy', label: '拷贝' })
-    if (editable) items.push({ role: 'paste', label: '粘贴' })
+    if (editable || hasSelection) items.push({ role: 'copy', label: tt('menu.copy') })
+    if (editable) items.push({ role: 'paste', label: tt('menu.paste') })
     if (editable || hasSelection) {
-      items.push({ separator: true }, { role: 'selectAll', label: '全选' })
+      items.push({ separator: true }, { role: 'selectAll', label: tt('menu.selectAll') })
     }
     if (items.length === 0) return
 

@@ -3,10 +3,10 @@ import type { AgentEvent, AgentTool } from '@earendil-works/pi-agent-core'
 import { runAgentLoopContinue } from '@earendil-works/pi-agent-core'
 import type { AssistantMessage, Message } from '@earendil-works/pi-ai'
 import {
-  MAX_ITERATIONS,
   type ChatMessage,
   type Conversation,
   type MessageBlock,
+  type QuoteDraft,
   type ToolCallBlock,
   type ToolCallStatus,
   type ToolName,
@@ -15,13 +15,17 @@ import {
   type TurnStatus
 } from '@shared/types'
 import { ROOT_LEAF } from '@shared/thread'
+import { buildSnapshot } from '@shared/tokenUsage'
 import { buildModel, describeError, streamWith } from './provider'
-import { blockFromContent, buildHistory } from './history'
+import { normalizePlanSteps } from '@shared/askPlan'
+import { blockFromContent, buildHistory, safeParseJson } from './history'
 import {
+  HIGH_RISK_TOOLS,
   INTERACTIVE_TOOLS,
   READONLY_TOOLS,
   buildSystemPrompt,
   createTools,
+  isReadonlyTerminalCommand,
   summarizeToolInput,
   type ToolDetails
 } from './tools'
@@ -30,6 +34,8 @@ import type { SettingsStore } from '../store/SettingsStore'
 import type { SecretStore } from '../store/SecretStore'
 import type { FileService } from '../fs/FileService'
 import { StickyShell } from '../terminal/StickyShell'
+import { isApprovalApproveText, isApprovalDenyText } from '@shared/i18n'
+import { t } from '../i18n'
 
 /** Token deltas are batched this often before crossing the IPC boundary. */
 const COALESCE_MS = 32
@@ -43,6 +49,9 @@ interface ToolRuntimeState {
   status: ToolCallStatus
   output: string
   choices?: string[]
+  multiSelect?: boolean
+  questions?: import('@shared/types').AskQuestion[]
+  askTitle?: string
 }
 
 interface TurnState {
@@ -58,7 +67,7 @@ interface TurnState {
    * `${llmTurn}:${contentIndex}` → index into {@link blocks}.
    *
    * pi restarts `contentIndex` at 0 for every LLM turn, but one vav turn can
-   * span up to `MAX_ITERATIONS` of them, so the pair is what is actually unique.
+   * span many of them, so the pair is what is actually unique.
    */
   slots: Map<string, number>
   llmTurn: number
@@ -69,6 +78,8 @@ interface TurnState {
   buffers: Map<number, string>
   flushTimer: NodeJS.Timeout | null
   pending: PendingUserTool | null
+  /** Edit-mode approvals may rewrite tool args before execute. */
+  argOverrides: Map<string, Record<string, unknown>>
   error?: string
   cancelled?: boolean
 }
@@ -111,7 +122,11 @@ export class AgentRuntime {
       isRunning: !!turn,
       phase: turn?.phase ?? 'idle',
       toolCount: turn?.toolCount ?? 0,
-      awaitingToolCallId: turn?.pending?.toolCallId ?? null
+      awaitingToolCallId: turn?.pending?.toolCallId ?? null,
+      messageId: turn?.messageId ?? null,
+      // Preserve slot indices — StreamProjection is sparse on contentIndex, and
+      // filtering empties here would mis-align later delta/tool patches.
+      blocks: turn ? turn.blocks.map((block) => ({ ...block })) : []
     }
   }
 
@@ -119,14 +134,24 @@ export class AgentRuntime {
   // Turn lifecycle
   // -------------------------------------------------------------------------
 
-  async run(conversationId: string, userText: string, attachments: string[]): Promise<void> {
+  async run(
+    conversationId: string,
+    userText: string,
+    attachments: string[],
+    quote?: QuoteDraft | null
+  ): Promise<void> {
     if (this.turns.has(conversationId)) return
+    // Bubble body: typed text (+ attachment paths). Quote marker is only for the model
+    // (rebuilt in buildHistory from quote* fields).
     const composed = attachments.length
-      ? `${userText}\n\n附件路径：\n${attachments.map((p) => `- ${p}`).join('\n')}`
+      ? `${userText}\n\n${t('ui.attachments')}\n${attachments.map((p) => `- ${p}`).join('\n')}`
       : userText
     const leaf = this.deps.conversations.activeLeaf(conversationId)
     const parentId = leaf === ROOT_LEAF ? null : leaf
-    await this.startTurn(conversationId, this.addUserMessage(conversationId, composed, parentId))
+    await this.startTurn(
+      conversationId,
+      this.addUserMessage(conversationId, composed, parentId, quote)
+    )
   }
 
   /**
@@ -185,14 +210,26 @@ export class AgentRuntime {
     return leaf
   }
 
-  private addUserMessage(conversationId: string, text: string, parentId: string | null): string {
+  private addUserMessage(
+    conversationId: string,
+    text: string,
+    parentId: string | null,
+    quote?: QuoteDraft | null
+  ): string {
     const message: ChatMessage = {
       id: randomUUID(),
       parentId,
       role: 'user',
       content: text,
       blocks: [{ kind: 'text', text }],
-      createdAt: Date.now()
+      createdAt: Date.now(),
+      ...(quote
+        ? {
+            quoteMessageId: quote.messageId,
+            quoteSummary: quote.summary,
+            quoteRole: quote.role
+          }
+        : {})
     }
     // Storing first is what lets auto-title fire before the turn starts.
     this.deps.conversations.appendMessage(conversationId, message)
@@ -207,7 +244,7 @@ export class AgentRuntime {
 
     const apiKey = this.deps.secrets.get()
     if (!apiKey) {
-      this.emitFatal(conversationId, parentId, '尚未配置 API Key，请在 Settings 中配置后再发送。')
+      this.emitFatal(conversationId, parentId, t('error.noApiKey'))
       return
     }
 
@@ -219,7 +256,7 @@ export class AgentRuntime {
     )
     const history = buildHistory(conversation.messages, parentId, model)
     if (history.length === 0) {
-      this.emitFatal(conversationId, parentId, '这条分支上没有可以重新回答的提问。')
+      this.emitFatal(conversationId, parentId, t('error.noRetryParent'))
       return
     }
 
@@ -236,7 +273,8 @@ export class AgentRuntime {
       sentCards: new Map(),
       buffers: new Map(),
       flushTimer: null,
-      pending: null
+      pending: null,
+      argOverrides: new Map()
     }
     this.turns.set(conversationId, turn)
     this.deps.emit({ type: 'start', conversationId })
@@ -259,11 +297,12 @@ export class AgentRuntime {
           // lie in both cases.
           toolExecution: 'sequential',
           convertToLlm: (messages) => messages as Message[],
-          beforeToolCall: async ({ toolCall }) => this.gateToolCall(conversationId, turn, toolCall),
+          beforeToolCall: async ({ toolCall, args }) =>
+            this.gateToolCall(conversationId, turn, toolCall, args),
           afterToolCall: async ({ result }) => ({
             isError: !!(result.details as ToolDetails | undefined)?.failed
           }),
-          shouldStopAfterTurn: () => this.reachedIterationCap(conversationId, turn)
+          shouldStopAfterTurn: () => false
         },
         (event) => this.onAgentEvent(conversationId, turn, event),
         turn.abort.signal,
@@ -340,7 +379,7 @@ export class AgentRuntime {
         if (isAssistant(event.message)) {
           if (event.message.stopReason === 'aborted') turn.cancelled = true
           else if (event.message.stopReason === 'error') {
-            turn.error = describeError(event.message.errorMessage ?? '模型返回错误')
+            turn.error = describeError(event.message.errorMessage ?? t('error.model'))
           }
         }
         break
@@ -368,8 +407,31 @@ export class AgentRuntime {
 
       case 'turn_end':
         if (isAssistant(event.message)) {
-          const used = event.message.usage.input + event.message.usage.output
+          const usage = event.message.usage
+          const used = usage.input + usage.output
           if (used > 0) this.deps.conversations.addTokens(conversationId, used)
+          const conversation = this.deps.conversations.get(conversationId)
+          if (conversation) {
+            const turnIndex = (conversation.tokenHistory?.at(-1)?.turnIndex ?? 0) + 1
+            const snapshot = buildSnapshot({
+              turnIndex,
+              usage,
+              modelId: conversation.model || event.message.model,
+              timestamp: Date.now()
+            })
+            this.deps.conversations.recordTokenSnapshot(conversationId, snapshot)
+            const next = this.deps.conversations.get(conversationId)
+            if (next) {
+              this.deps.emit({
+                type: 'usage',
+                conversationId,
+                tokensUsed: next.tokensUsed,
+                history: next.tokenHistory,
+                cacheCreatedAt: next.cacheCreatedAt,
+                cacheExpiresAt: next.cacheExpiresAt
+              })
+            }
+          }
         }
         break
     }
@@ -401,22 +463,49 @@ export class AgentRuntime {
       }
 
       case 'toolcall_start':
+      case 'toolcall_delta':
       case 'toolcall_end': {
-        // Reserve the card's position as soon as the call opens, so a reply
-        // that resumes talking afterwards lands below it rather than above.
-        const call = event.partial.content[event.contentIndex]
+        // pi already optimistic-parses partial JSON into `arguments` on every
+        // delta (parseStreamingJson). Surface path/command meta as soon as it
+        // appears — waiting for toolcall_end is what made fs_write cards blank.
+        const call =
+          event.type === 'toolcall_end'
+            ? event.toolCall
+            : event.partial.content[event.contentIndex]
         if (!call || call.type !== 'toolCall') break
+
+        const args = (call.arguments ?? {}) as Record<string, unknown>
+        const summary = summarizeToolInput(call.name as ToolName, args)
+        const existingSlot = turn.slots.get(`${turn.llmTurn}:${event.contentIndex}`)
+        const prev =
+          existingSlot !== undefined && turn.blocks[existingSlot]?.kind === 'toolCall'
+            ? (turn.blocks[existingSlot] as ToolCallBlock)
+            : null
+
+        // Deltas that only grow `contents` must not rewrite the card — summary
+        // is stable once path/command is known, and re-stringifying megabyte
+        // bodies would flood IPC.
+        if (event.type === 'toolcall_delta' && prev && prev.summary === summary) break
+
         const block = blockFromContent(
           call,
           (id) => turn.toolState.get(id),
-          (name, args) => summarizeToolInput(name as ToolName, args)
+          (name, parsed) => summarizeToolInput(name as ToolName, parsed)
         )
-        if (!block) break
+        if (!block || block.kind !== 'toolCall') break
+
+        // While args are still streaming, keep `input` lean (meta only) so the
+        // card can show the path without shipping the unfinished file body.
+        if (event.type !== 'toolcall_end') {
+          block.input = JSON.stringify(leanToolArgs(call.name as ToolName, args), null, 2)
+          block.summary = summary
+        }
+
         const slot = this.slotFor(turn, event.contentIndex, block)
         // Flush first: the card must not jump ahead of text already buffered.
         this.flushBuffers(conversationId, turn)
         turn.blocks[slot] = block
-        this.sendCard(conversationId, turn, slot, block as ToolCallBlock)
+        this.sendCard(conversationId, turn, slot, block)
         break
       }
     }
@@ -512,7 +601,7 @@ export class AgentRuntime {
 
   private toolsFor(conversation: Conversation, turn: TurnState): AgentTool[] {
     const conversationId = conversation.id
-    return createTools({
+    const tools = createTools({
       workdir: this.workdirOf(conversation),
       settings: () => this.deps.settings.get(),
       files: this.deps.files,
@@ -520,32 +609,100 @@ export class AgentRuntime {
       mirror: (text) => this.deps.emit({ type: 'mirror', conversationId, text }),
       fsChanged: (parentPath, filePath) =>
         this.deps.emit({ type: 'fs-changed', conversationId, parentPath, filePath }),
-      ask: (toolCallId, summary, choices) =>
-        this.askUser(conversationId, turn, toolCallId, summary, choices)
+      ask: (toolCallId, summary, options) =>
+        this.askUser(conversationId, turn, toolCallId, summary, options)
     })
+    // Edit-mode approvals may rewrite args after the user edits the card.
+    return tools.map((tool) => ({
+      ...tool,
+      execute: (toolCallId, params, signal, onUpdate) => {
+        const override = turn.argOverrides.get(toolCallId)
+        return tool.execute(toolCallId, (override ?? params) as typeof params, signal, onUpdate)
+      }
+    }))
   }
 
-  /** Read-only tools are gated by the autoApproveReadonly capability switch. */
+  /**
+   * Tool approval (main-chat.rpml): Auto / Bypass / Edit per conversation.
+   * Interactive tools (`request`, `ask_user_question`) park themselves.
+   */
   private async gateToolCall(
     conversationId: string,
     turn: TurnState,
-    toolCall: { id: string; name: string }
+    toolCall: { id: string; name: string },
+    args: unknown
   ): Promise<{ block: boolean; reason?: string } | undefined> {
     const name = toolCall.name as ToolName
-    if (!READONLY_TOOLS.has(name) || this.deps.settings.get().autoApproveReadonly) return undefined
+    if (INTERACTIVE_TOOLS.has(name) || name === 'plan' || name === 'wait' || name === 'read_bash_session') {
+      return undefined
+    }
+
+    const conversation = this.deps.conversations.get(conversationId)
+    const mode = conversation?.approvalMode ?? 'auto'
+    if (mode === 'bypass') return undefined
+
+    const command =
+      name === 'terminal' && args && typeof args === 'object' && 'command' in args
+        ? String((args as { command: unknown }).command ?? '')
+        : ''
+
+    if (mode === 'auto') {
+      const highRisk =
+        HIGH_RISK_TOOLS.has(name) && !(name === 'terminal' && isReadonlyTerminalCommand(command))
+      const readonlyNeedsApproval =
+        READONLY_TOOLS.has(name) && !this.deps.settings.get().autoApproveReadonly
+      if (!highRisk && !readonlyNeedsApproval) return undefined
+    }
+    // Edit: every non-interactive tool pauses.
 
     const block = turn.blocks.find(
       (b): b is ToolCallBlock => b.kind === 'toolCall' && b.id === toolCall.id
     )
-    const approval = await this.askUser(
-      conversationId,
-      turn,
-      toolCall.id,
-      `允许执行 ${name}？${block?.summary ?? ''}`,
-      ['允许', '拒绝']
-    )
-    if (approval.cancelled) return { block: true, reason: '用户取消了本轮' }
-    if (approval.text === '拒绝') return { block: true, reason: '用户拒绝了该操作' }
+    const summary =
+      block?.summary ||
+      (command
+        ? command
+        : summarizeToolInput(
+            name,
+            args && typeof args === 'object' ? (args as Record<string, unknown>) : {}
+          ))
+    const approveLabel = mode === 'edit' ? t('approval.approveRun') : t('approval.approve')
+    const denyLabel = mode === 'edit' ? t('approval.skip') : t('approval.deny')
+    const title =
+      mode === 'edit'
+        ? t('approval.titleEdit', { name })
+        : t('approval.title', { name })
+    const editable = mode === 'edit' ? summary : ''
+
+    const approval = await this.askUser(conversationId, turn, toolCall.id, `${title}\n${summary}`, {
+      choices: [approveLabel, denyLabel],
+      // Stash the editable payload in askTitle so the card can prefill a textarea.
+      askTitle: mode === 'edit' ? editable : undefined
+    })
+    if (approval.cancelled) return { block: true, reason: t('approval.userCancelled') }
+    if (approval.text === denyLabel || isApprovalDenyText(approval.text)) {
+      return { block: true, reason: t('approval.userDenied') }
+    }
+
+    // Edit mode: approve-run + edited payload may rewrite terminal command / paths.
+    if (mode === 'edit') {
+      const edited = approval.text.startsWith(`${approveLabel}\n`)
+        ? approval.text.slice(approveLabel.length + 1)
+        : isApprovalApproveText(approval.text, true) || approval.text === approveLabel
+          ? ''
+          : approval.text
+      if (edited.trim()) {
+        const next = applyEditedArgs(name, args, edited.trim())
+        if (next) {
+          turn.argOverrides.set(toolCall.id, next)
+          if (block) {
+            block.summary = summarizeToolInput(name, next)
+            block.input = JSON.stringify(next)
+            this.sendCard(conversationId, turn, turn.blocks.indexOf(block), block)
+          }
+        }
+      }
+    }
     return undefined
   }
 
@@ -555,11 +712,22 @@ export class AgentRuntime {
     turn: TurnState,
     toolCallId: string,
     summary: string,
-    choices?: string[]
+    options: {
+      choices?: string[]
+      multiSelect?: boolean
+      questions?: import('@shared/types').AskQuestion[]
+      askTitle?: string
+    } = {}
   ): Promise<{ text: string; cancelled: boolean }> {
     if (turn.abort.signal.aborted) return Promise.resolve({ text: '', cancelled: true })
 
-    this.patchTool(conversationId, turn, toolCallId, { status: 'pending', choices })
+    this.patchTool(conversationId, turn, toolCallId, {
+      status: 'pending',
+      choices: options.choices,
+      multiSelect: options.multiSelect,
+      questions: options.questions,
+      askTitle: options.askTitle
+    })
     const slot = turn.blocks.findIndex((b) => b.kind === 'toolCall' && b.id === toolCallId)
     this.setPhase(conversationId, turn, 'awaiting-user')
     if (slot >= 0) {
@@ -569,7 +737,14 @@ export class AgentRuntime {
         conversationId,
         toolCallId,
         index: slot,
-        block: { ...block, summary: summary || block.summary, choices }
+        block: {
+          ...block,
+          summary: summary || block.summary,
+          choices: options.choices,
+          multiSelect: options.multiSelect,
+          questions: options.questions,
+          askTitle: options.askTitle
+        }
       })
     }
 
@@ -583,23 +758,6 @@ export class AgentRuntime {
         }
       }
     })
-  }
-
-  private reachedIterationCap(conversationId: string, turn: TurnState): boolean {
-    if (turn.llmTurn < MAX_ITERATIONS - 1) return false
-    const slot = turn.blocks.length
-    turn.blocks.push({
-      kind: 'text',
-      text: '\n\n> 本轮工具迭代已达上限（12 次）。请发送新消息继续。'
-    })
-    this.deps.emit({
-      type: 'delta',
-      conversationId,
-      index: slot,
-      kind: 'text',
-      text: '\n\n> 本轮工具迭代已达上限（12 次）。请发送新消息继续。'
-    })
-    return true
   }
 
   private setPhase(conversationId: string, turn: TurnState, phase: TurnPhase): void {
@@ -620,7 +778,11 @@ export class AgentRuntime {
     // A slot is claimed when its content block opens, which can be a moment
     // before any token lands in it; those empties are not worth persisting.
     const blocks = turn.blocks.filter(
-      (b) => b.kind === 'toolCall' || b.text.length > 0
+      (b) =>
+        b.kind === 'toolCall' ||
+        b.kind === 'plan' ||
+        (b.kind === 'text' && b.text.length > 0) ||
+        (b.kind === 'reasoning' && b.text.length > 0)
     )
     return {
       id: turn.messageId,
@@ -643,7 +805,36 @@ export class AgentRuntime {
     if (turn.cancelled) {
       // Seal whatever arrived rather than discarding it.
       for (const block of turn.blocks) {
-        if (block.kind === 'toolCall' && (block.status === 'pending' || block.status === 'executing')) {
+        if (block.kind !== 'toolCall') continue
+        if (block.tool === 'plan') {
+          const input = safeParseJson(block.input)
+          const steps = normalizePlanSteps(input.steps).map((step) => {
+            if (step.status === 'executing') {
+              return { ...step, status: 'error' as const, subtitle: t('common.cancelled') }
+            }
+            if (step.status === 'pending') {
+              return { ...step, status: 'skipped' as const, subtitle: t('common.cancelled') }
+            }
+            return step
+          })
+          const title = String(input.title ?? 'Plan')
+          const done = steps.filter((step) => step.status === 'done').length
+          block.input = JSON.stringify({ ...input, title, steps }, null, 2)
+          block.summary = `Plan · ${title} (${done}/${steps.length})`
+          if (block.status === 'pending' || block.status === 'executing') {
+            block.status = 'completed'
+          }
+          continue
+        }
+        if (
+          (block.tool === 'ask_user_question' || block.tool === 'request') &&
+          block.status === 'pending'
+        ) {
+          block.status = 'skipped'
+          block.output = t('common.cancelled')
+          continue
+        }
+        if (block.status === 'pending' || block.status === 'executing') {
           block.status = 'expired'
         }
       }
@@ -730,4 +921,71 @@ function textOf(content: unknown): string | undefined {
     .filter((part): part is { type: 'text'; text: string } => part?.type === 'text')
     .map((part) => part.text)
     .join('\n')
+}
+
+/**
+ * Streaming tool args for the card: keep identity fields, drop bulky bodies.
+ * Full arguments land on toolcall_end via {@link blockFromContent}.
+ */
+function leanToolArgs(tool: ToolName, args: Record<string, unknown>): Record<string, unknown> {
+  switch (tool) {
+    case 'fs_write': {
+      const lean: Record<string, unknown> = {}
+      if (typeof args.path === 'string') lean.path = args.path
+      if (args.contents !== undefined) lean.contents = '…'
+      return lean
+    }
+    case 'fs_read':
+    case 'fs_list': {
+      const lean: Record<string, unknown> = {}
+      if (typeof args.path === 'string') lean.path = args.path
+      return lean
+    }
+    case 'terminal': {
+      const lean: Record<string, unknown> = {}
+      if (typeof args.command === 'string') lean.command = args.command
+      if (args.background !== undefined) lean.background = args.background
+      return lean
+    }
+    case 'request':
+      return typeof args.instruction === 'string' ? { instruction: args.instruction } : {}
+    case 'ask_user_question': {
+      const lean: Record<string, unknown> = {}
+      if (args.question !== undefined) lean.question = args.question
+      if (args.questions !== undefined) lean.questions = args.questions
+      if (args.title !== undefined) lean.title = args.title
+      return lean
+    }
+    case 'plan': {
+      const lean: Record<string, unknown> = {}
+      if (args.title !== undefined) lean.title = args.title
+      if (args.steps !== undefined) lean.steps = args.steps
+      return lean
+    }
+    default:
+      return args
+  }
+}
+
+/** Merge a user's edited approval payload back into tool args. */
+function applyEditedArgs(
+  name: ToolName,
+  original: unknown,
+  edited: string
+): Record<string, unknown> | null {
+  const base =
+    original && typeof original === 'object' ? { ...(original as Record<string, unknown>) } : {}
+  if (name === 'terminal') {
+    return { ...base, command: edited }
+  }
+  if (name === 'fs_read' || name === 'fs_write' || name === 'fs_list') {
+    return { ...base, path: edited }
+  }
+  try {
+    const parsed = JSON.parse(edited) as unknown
+    if (parsed && typeof parsed === 'object') return parsed as Record<string, unknown>
+  } catch {
+    // not JSON
+  }
+  return null
 }

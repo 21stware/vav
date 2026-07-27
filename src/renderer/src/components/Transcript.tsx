@@ -1,22 +1,24 @@
-import { useCallback, useEffect, useMemo, useRef } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ChatMessage } from '@shared/types'
+import { quoteSummaryFromContent } from '@shared/quote'
 import { ROOT_LEAF, branchPoints } from '@shared/thread'
 import { useSessionStore, visibleMessages } from '../state/sessionStore'
 import { BranchPager, MessageRow } from './MessageRow'
 import { StreamingMessage } from './StreamingMessage'
-import { Button, EmptyState, InlineAlert } from './ui'
-import { keys } from '../lib/platform'
-
-const SUGGESTIONS = ['解释当前目录结构', '运行单元测试', '总结 git diff']
+import { Button, EmptyState } from './ui'
+import { useT } from '../i18n/useT'
 
 export function Transcript(): React.JSX.Element {
+  const t = useT()
   const activeId = useSessionStore((s) => s.activeId)
   const nodes = useSessionStore((s) => s.messages[s.activeId])
   const messages = useSessionStore((s) => visibleMessages(s, s.activeId))
   const turn = useSessionStore((s) => s.turns[s.activeId])
   const search = useSessionStore((s) => s.search)
+  const flashMessageId = useSessionStore((s) => s.flashMessageId)
+  const flashTick = useSessionStore((s) => s.flashTick)
   const apiKeyPresent = useSessionStore((s) => s.settings.apiKeyPresent)
-  const setDraft = useSessionStore((s) => s.setDraft)
+  const setQuote = useSessionStore((s) => s.setQuote)
   const focusComposer = useSessionStore((s) => s.focusComposer)
   const openSettings = useSessionStore((s) => s.openSettings)
   const regenerate = useSessionStore((s) => s.regenerate)
@@ -29,6 +31,25 @@ export function Transcript(): React.JSX.Element {
 
   const scrollRef = useRef<HTMLDivElement>(null)
   const pinnedToBottom = useRef(true)
+  const prevLeaf = useRef(activeLeaf)
+  const [branchSwap, setBranchSwap] = useState(0)
+  const [branchSwapActive, setBranchSwapActive] = useState(false)
+
+  // Whole-path feedback when the active branch changes (pager click / regenerate).
+  useEffect(() => {
+    if (prevLeaf.current === activeLeaf) return
+    const hadLeaf = prevLeaf.current != null
+    prevLeaf.current = activeLeaf
+    if (!hadLeaf || !activeLeaf) return
+    setBranchSwap((n) => n + 1)
+    setBranchSwapActive(false)
+    const frame = window.requestAnimationFrame(() => setBranchSwapActive(true))
+    const timer = window.setTimeout(() => setBranchSwapActive(false), 280)
+    return () => {
+      window.cancelAnimationFrame(frame)
+      window.clearTimeout(timer)
+    }
+  }, [activeLeaf])
 
   const onScroll = useCallback(() => {
     const element = scrollRef.current
@@ -52,6 +73,14 @@ export function Transcript(): React.JSX.Element {
     if (!id) return
     document.getElementById(`msg-${id}`)?.scrollIntoView({ block: 'center', behavior: 'smooth' })
   }, [search.open, search.index, search.tick, search.matchIds])
+
+  // Quote strip / bubble citation: jump + 1.5s yellow flash.
+  useEffect(() => {
+    if (!flashMessageId || flashTick === 0) return
+    document
+      .getElementById(`msg-${flashMessageId}`)
+      ?.scrollIntoView({ block: 'center', behavior: 'smooth' })
+  }, [flashMessageId, flashTick])
 
   const currentMatchId = search.open ? search.matchIds[search.index] : undefined
   const highlight = search.open && search.query.trim() ? search.query : undefined
@@ -77,14 +106,23 @@ export function Transcript(): React.JSX.Element {
 
   const onQuote = useCallback(
     (message: ChatMessage) => {
-      const quoted = message.content
-        .split('\n')
-        .map((line) => `> ${line}`)
-        .join('\n')
-      setDraft(activeId, `${quoted}\n\n`)
+      if (!activeId || message.role === 'system') return
+      const body =
+        message.content.trim() ||
+        message.blocks
+          .filter((b): b is Extract<ChatMessage['blocks'][number], { kind: 'text' }> => b.kind === 'text')
+          .map((b) => b.text)
+          .join('\n')
+      const summary = quoteSummaryFromContent(body)
+      if (!summary) return
+      setQuote(activeId, {
+        messageId: message.id,
+        summary,
+        role: message.role === 'user' ? 'user' : 'assistant'
+      })
       focusComposer()
     },
-    [activeId, setDraft, focusComposer]
+    [activeId, setQuote, focusComposer]
   )
 
   const isEmpty = messages.length === 0 && !turn?.isRunning
@@ -92,43 +130,28 @@ export function Transcript(): React.JSX.Element {
 
   return (
     <div className="transcript" ref={scrollRef} onScroll={onScroll}>
-      <div className="transcript-inner">
+      <div className={`transcript-inner${branchSwapActive ? ' is-branch-swap' : ''}`}>
         {isEmpty && !apiKeyPresent && (
+          /* Four elements used to say "there is no key yet": this description,
+             a warning card's heading, its body, and the button. The logo says
+             the app's name, the heading says what is missing, the description
+             says what still works meanwhile, and the button does the one thing
+             worth doing. Nothing is amber — on a first run nothing is wrong. */
           <EmptyState
             logo
-            title="欢迎使用 vav"
-            description="本机 AI 编程代理：会话 + 文件树 + 真实终端。先配置 API Key，再让 agent 读写目录与执行命令。"
+            title={t('transcript.configureKey')}
+            description={t('transcript.configureKeyDesc')}
           >
-            <InlineAlert
-              kind="warning"
-              title="尚未配置 API Key"
-              message="可先浏览文件与打开终端；发送 Agent 回合需要密钥。"
+            <Button
+              label={t('transcript.openSettings')}
+              variant="primary"
+              onClick={() => openSettings('api')}
             />
-            <Button label="打开 Settings" variant="primary" onClick={() => openSettings('api')} />
           </EmptyState>
         )}
 
         {isEmpty && apiKeyPresent && (
-          <EmptyState
-            logo
-            title="开始新会话"
-            description={`描述任务、粘贴报错，或指定工作目录后让 agent 改代码 / 跑命令。${keys('⌘↵')} 发送。`}
-          >
-            <div className="suggestions">
-              {SUGGESTIONS.map((suggestion) => (
-                <button
-                  key={suggestion}
-                  className="chip"
-                  onClick={() => {
-                    setDraft(activeId, suggestion)
-                    focusComposer()
-                  }}
-                >
-                  <span className="chip-label">{suggestion}</span>
-                </button>
-              ))}
-            </div>
-          </EmptyState>
+          <EmptyState logo title={t('transcript.startSession')} />
         )}
 
         {/* Branches that start before the first prompt have no message to
@@ -138,6 +161,7 @@ export function Transcript(): React.JSX.Element {
             <BranchPager
               index={rootBranch.index}
               count={rootBranch.targets.length}
+              pulseKey={branchSwap}
               onStep={(step) => onStepBranch(ROOT_LEAF, step)}
             />
           </div>
@@ -151,6 +175,7 @@ export function Transcript(): React.JSX.Element {
               message={message}
               highlight={highlight && search.matchIds.includes(message.id) ? highlight : undefined}
               isCurrentMatch={message.id === currentMatchId}
+              flash={flashMessageId === message.id ? flashTick : 0}
               branchIndex={branch?.index ?? 0}
               branchCount={branch?.targets.length ?? 1}
               busy={!!turn?.isRunning}

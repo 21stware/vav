@@ -2,8 +2,17 @@ import { app } from 'electron'
 import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { randomUUID } from 'node:crypto'
-import type { ChatMessage, Conversation, ConversationMeta } from '@shared/types'
+import type {
+  ApprovalMode,
+  ChatMessage,
+  Conversation,
+  ConversationMeta,
+  TokenSnapshot
+} from '@shared/types'
+import { CACHE_TTL_MS, TOKEN_HISTORY_LIMIT } from '@shared/tokenUsage'
 import { deepestLeaf, newestLeafId, threadPath } from '@shared/thread'
+import { defaultSessionTitle, isDefaultSessionTitle, t } from '@shared/i18n'
+import { currentLocale } from '../i18n'
 
 const AUTO_TITLE_LIMIT = 40
 
@@ -21,6 +30,12 @@ export class ConversationStore {
   private readonly file = join(app.getPath('userData'), 'conversations.json')
   private conversations: Conversation[] = []
   private flushTimer: NodeJS.Timeout | null = null
+  /**
+   * Whether {@link load} has run. An empty in-memory list means two entirely
+   * different things before and after that call — "not read yet" and "the user
+   * has none" — and only the second one is safe to write to disk.
+   */
+  private loaded = false
 
   get path(): string {
     return this.file
@@ -45,11 +60,22 @@ export class ConversationStore {
       if (!conversation.workingDirectory) conversation.workingDirectory = defaults.mintWorkdir()
       if (typeof conversation.pinned !== 'boolean') conversation.pinned = false
       if (conversation.pinTime === undefined) conversation.pinTime = null
-      // "新对话" was the placeholder title before the 会话 rename; it is ours,
-      // not something the user typed, so carrying it forward is safe.
-      if (conversation.title === '新对话') conversation.title = '新会话'
+      if (conversation.duplicateSourceId === undefined) conversation.duplicateSourceId = null
+      if (conversation.duplicateSourceTitle === undefined) conversation.duplicateSourceTitle = null
+      if (typeof conversation.archived !== 'boolean') conversation.archived = false
+      if (conversation.archivedAt === undefined) conversation.archivedAt = null
+      if (!conversation.approvalMode) conversation.approvalMode = 'auto'
+      if (!Array.isArray(conversation.tokenHistory)) conversation.tokenHistory = []
+      if (conversation.cacheCreatedAt === undefined) conversation.cacheCreatedAt = null
+      if (conversation.cacheExpiresAt === undefined) conversation.cacheExpiresAt = null
+      // Legacy untitled titles from earlier builds; normalize to the current locale.
+      if (isDefaultSessionTitle(conversation.title)) {
+        conversation.title = defaultSessionTitle(currentLocale())
+      }
       this.adoptTreeShape(conversation)
     }
+
+    this.loaded = true
 
     // Launch invariant: the product always has at least one conversation.
     if (this.conversations.length === 0) this.create(defaults.mintWorkdir(), defaults.model)
@@ -62,10 +88,21 @@ export class ConversationStore {
 
   listMeta(): ConversationMeta[] {
     return this.conversations
-      .map(({ messages: _messages, ...meta }) => {
-        void _messages
-        return meta
-      })
+      .map(
+        ({
+          messages: _messages,
+          tokenHistory: _history,
+          cacheCreatedAt: _created,
+          cacheExpiresAt: _expires,
+          ...meta
+        }) => {
+          void _messages
+          void _history
+          void _created
+          void _expires
+          return meta
+        }
+      )
       .sort((a, b) => b.updatedAt - a.updatedAt)
   }
 
@@ -77,7 +114,7 @@ export class ConversationStore {
     const now = Date.now()
     const conversation: Conversation = {
       id: randomUUID(),
-      title: '新会话',
+      title: defaultSessionTitle(currentLocale()),
       createdAt: now,
       updatedAt: now,
       workingDirectory,
@@ -86,12 +123,65 @@ export class ConversationStore {
       tokenLimit: 200_000,
       messages: [],
       activeLeafId: null,
+      tokenHistory: [],
+      cacheCreatedAt: null,
+      cacheExpiresAt: null,
       pinned: false,
-      pinTime: null
+      pinTime: null,
+      duplicateSourceId: null,
+      duplicateSourceTitle: null,
+      archived: false,
+      archivedAt: null,
+      approvalMode: 'auto'
     }
     this.conversations.unshift(conversation)
     this.scheduleFlush()
     return conversation
+  }
+
+  /**
+   * Deep-copies every message (branch tree intact) into a new conversation.
+   *
+   * Inherits workdir and model; resets tokens and streaming-related state.
+   * The copy is selected by the caller — this only mints and returns it.
+   */
+  duplicate(id: string): Conversation | undefined {
+    const source = this.get(id)
+    if (!source) return undefined
+
+    const idMap = new Map<string, string>()
+    for (const message of source.messages) idMap.set(message.id, randomUUID())
+
+    const now = Date.now()
+    const copy: Conversation = {
+      id: randomUUID(),
+      title: t(currentLocale(), 'sidebar.copySuffix', { title: source.title }),
+      createdAt: now,
+      updatedAt: now,
+      workingDirectory: source.workingDirectory,
+      model: source.model,
+      tokensUsed: 0,
+      tokenLimit: source.tokenLimit,
+      pinned: false,
+      pinTime: null,
+      duplicateSourceId: source.id,
+      duplicateSourceTitle: source.title,
+      archived: false,
+      archivedAt: null,
+      approvalMode: source.approvalMode ?? 'auto',
+      activeLeafId: source.activeLeafId ? (idMap.get(source.activeLeafId) ?? null) : null,
+      tokenHistory: [],
+      cacheCreatedAt: null,
+      cacheExpiresAt: null,
+      messages: source.messages.map((message) => ({
+        ...structuredClone(message),
+        id: idMap.get(message.id)!,
+        parentId: message.parentId ? (idMap.get(message.parentId) ?? null) : null
+      }))
+    }
+    this.conversations.unshift(copy)
+    this.scheduleFlush()
+    return copy
   }
 
   updateMeta(id: string, patch: Partial<ConversationMeta>): Conversation | undefined {
@@ -162,6 +252,20 @@ export class ConversationStore {
     this.scheduleFlush()
   }
 
+  /** Append a usage sample and refresh cache TTL when a write was observed. */
+  recordTokenSnapshot(id: string, snapshot: TokenSnapshot): Conversation | undefined {
+    const conversation = this.get(id)
+    if (!conversation) return undefined
+    if (!Array.isArray(conversation.tokenHistory)) conversation.tokenHistory = []
+    conversation.tokenHistory = [...conversation.tokenHistory, snapshot].slice(-TOKEN_HISTORY_LIMIT)
+    if (snapshot.cacheWriteTokens > 0) {
+      conversation.cacheCreatedAt = snapshot.timestamp
+      conversation.cacheExpiresAt = snapshot.timestamp + CACHE_TTL_MS
+    }
+    this.scheduleFlush()
+    return conversation
+  }
+
   /**
    * Removes conversations, refusing to empty the list.
    * Returns the ids actually removed; empty means the guard fired.
@@ -182,6 +286,37 @@ export class ConversationStore {
     if (!conversation) return undefined
     conversation.pinned = pinned
     conversation.pinTime = pinned ? Date.now() : null
+    this.scheduleFlush()
+    return conversation
+  }
+
+  /**
+   * Archives or restores a conversation.
+   * Refuses to archive the last non-archived conversation.
+   */
+  setArchived(id: string, archived: boolean): Conversation | undefined {
+    const conversation = this.get(id)
+    if (!conversation) return undefined
+    if (archived) {
+      const activeCount = this.conversations.filter((c) => !c.archived).length
+      if (!conversation.archived && activeCount <= 1) return undefined
+      conversation.archived = true
+      conversation.archivedAt = Date.now()
+      conversation.pinned = false
+      conversation.pinTime = null
+    } else {
+      conversation.archived = false
+      conversation.archivedAt = null
+    }
+    conversation.updatedAt = Date.now()
+    this.scheduleFlush()
+    return conversation
+  }
+
+  setApprovalMode(id: string, mode: ApprovalMode): Conversation | undefined {
+    const conversation = this.get(id)
+    if (!conversation) return undefined
+    conversation.approvalMode = mode
     this.scheduleFlush()
     return conversation
   }
@@ -240,7 +375,7 @@ export class ConversationStore {
    * renamed, or that already auto-titled, are left alone.
    */
   private applyAutoTitle(conversation: Conversation): void {
-    if (conversation.title !== '新会话') return
+    if (!isDefaultSessionTitle(conversation.title)) return
     const firstUser = threadPath(conversation.messages, conversation.activeLeafId).find(
       (m) => m.role === 'user'
     )
@@ -265,6 +400,9 @@ export class ConversationStore {
       clearTimeout(this.flushTimer)
       this.flushTimer = null
     }
+    // Writing before a read would replace the file with this process's blank
+    // slate. Quit paths run whether or not startup got far enough to load.
+    if (!this.loaded) return
     try {
       mkdirSync(dirname(this.file), { recursive: true })
       const tmp = `${this.file}.tmp`
