@@ -3,7 +3,7 @@
     en: {
       'meta.title': 'vav — local AI coding agent workstation',
       'meta.description':
-        'Chat, file tree, and a real terminal in one window. Watch the agent work in your project — data stays on your machine.',
+        'Local AI coding agent workstation: chat, file tree, and a real terminal in one window. Watch the agent work in your project — data stays on your machine.',
       'nav.download': 'Download',
       'hero.title': 'Watch the agent work in your project',
       'hero.lead':
@@ -114,12 +114,22 @@
     })
 
     const title = catalog['meta.title']
-    if (title) document.title = title
+    if (title) {
+      document.title = title
+      document
+        .querySelectorAll('meta[property="og:title"], meta[name="twitter:title"]')
+        .forEach((el) => el.setAttribute('content', title))
+    }
     const description = catalog['meta.description']
-    const meta = document.querySelector('meta[name="description"]')
-    if (meta && description) meta.setAttribute('content', description)
-    const og = document.querySelector('meta[property="og:description"]')
-    if (og && description) og.setAttribute('content', description)
+    if (description) {
+      document
+        .querySelectorAll(
+          'meta[name="description"], meta[property="og:description"], meta[name="twitter:description"]'
+        )
+        .forEach((el) => el.setAttribute('content', description))
+    }
+    const ogLocale = document.querySelector('meta[property="og:locale"]')
+    if (ogLocale) ogLocale.setAttribute('content', lang === 'zh' ? 'zh_CN' : 'en_US')
 
     document.querySelectorAll('.lang-btn').forEach((btn) => {
       const active = btn.getAttribute('data-lang') === lang
