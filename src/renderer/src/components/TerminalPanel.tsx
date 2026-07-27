@@ -28,7 +28,6 @@ export function TerminalPanel({ visible }: { visible: boolean }): React.JSX.Elem
             key={`${activeId}:${tab.id}`}
             conversationId={activeId}
             tabId={tab.id}
-            isAgent={tab.isAgent}
             hidden={!visible || tab.id !== activeTabId}
           />
         ))}
@@ -44,12 +43,10 @@ export function TerminalPanel({ visible }: { visible: boolean }): React.JSX.Elem
 function TerminalHost({
   conversationId,
   tabId,
-  isAgent,
   hidden
 }: {
   conversationId: string
   tabId: string
-  isAgent: boolean
   hidden: boolean
 }): React.JSX.Element {
   const codeFont = useSessionStore((s) => s.settings.codeFont)
@@ -62,7 +59,6 @@ function TerminalHost({
     const entry = acquireTerminal({
       conversationId,
       tabId,
-      isAgent,
       fontFamily: `"${codeFont}", Menlo, monospace`,
       fontSize: Math.max(9, fontSize - 3)
     })
@@ -97,7 +93,7 @@ function TerminalHost({
       if (raf) cancelAnimationFrame(raf)
       if (entry.container.parentElement === host) host.removeChild(entry.container)
     }
-  }, [conversationId, tabId, isAgent, codeFont, fontSize])
+  }, [conversationId, tabId, codeFont, fontSize])
 
   useEffect(() => {
     if (hidden) return
@@ -107,7 +103,6 @@ function TerminalHost({
       const entry = acquireTerminal({
         conversationId,
         tabId,
-        isAgent,
         fontFamily: `"${codeFont}", Menlo, monospace`,
         fontSize: Math.max(9, fontSize - 3)
       })
@@ -119,7 +114,7 @@ function TerminalHost({
       entry.term.focus()
     }, 20)
     return () => clearTimeout(timer)
-  }, [hidden, conversationId, tabId, isAgent, codeFont, fontSize])
+  }, [hidden, conversationId, tabId, codeFont, fontSize])
 
   return (
     <div

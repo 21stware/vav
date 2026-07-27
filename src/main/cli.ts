@@ -1,4 +1,5 @@
 import { app } from 'electron'
+import { execFileSync } from 'node:child_process'
 import {
   chmodSync,
   existsSync,
@@ -23,11 +24,18 @@ export interface CliStatus {
   version: string | null
   installedAt: number | null
   error?: string
+  /** Soft note after e.g. falling back from /usr/local/bin → ~/.local/bin. */
+  notice?: string
 }
 
 const LOCATION_KEY = 'cliInstallLocation'
 const PATH_KEY = 'cliInstallPath'
 const INSTALLED_AT_KEY = 'cliInstalledAt'
+
+/** User-writable default — /usr/local/bin usually needs admin on modern macOS. */
+const DEFAULT_LOCATION: CliInstallLocation = '~/.local/bin'
+
+let cachedLoginPathDirs: string[] | null = null
 
 function expandLocation(location: CliInstallLocation): string {
   if (location === '~/.local/bin') return join(homedir(), '.local', 'bin')
@@ -38,9 +46,47 @@ function binaryPath(location: CliInstallLocation): string {
   return join(expandLocation(location), APP_NAME)
 }
 
+/**
+ * GUI apps inherit a stripped PATH from launchd, so `process.env.PATH` often
+ * omits `/usr/local/bin` even when every terminal has it. Ask the login shell.
+ */
+function loginPathDirs(): string[] {
+  if (cachedLoginPathDirs) return cachedLoginPathDirs
+  const shell = process.env.SHELL || (process.platform === 'darwin' ? '/bin/zsh' : '/bin/bash')
+  try {
+    const out = execFileSync(shell, ['-ilc', 'printenv PATH'], {
+      encoding: 'utf8',
+      timeout: 5000,
+      env: {
+        HOME: homedir(),
+        USER: process.env.USER,
+        LOGNAME: process.env.LOGNAME,
+        SHELL: shell,
+        TERM: 'dumb',
+        PATH: '/usr/bin:/bin:/usr/sbin:/sbin'
+      }
+    })
+      .trim()
+      .split('\n')
+      .at(-1)
+    cachedLoginPathDirs = (out ?? '')
+      .split(':')
+      .map((part) => part.trim())
+      .filter(Boolean)
+  } catch {
+    cachedLoginPathDirs = (process.env.PATH ?? '').split(':').filter(Boolean)
+  }
+  return cachedLoginPathDirs
+}
+
 function pathEnvHas(dir: string): boolean {
-  const path = process.env.PATH ?? ''
-  return path.split(':').includes(dir)
+  return loginPathDirs().includes(dir)
+}
+
+function isAccessError(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false
+  const code = (error as NodeJS.ErrnoException).code
+  return code === 'EACCES' || code === 'EPERM'
 }
 
 function launcherScript(): string {
@@ -95,18 +141,18 @@ function readMeta(): {
   try {
     const file = join(app.getPath('userData'), 'cli.json')
     if (!existsSync(file)) {
-      return { preferredLocation: '/usr/local/bin', path: null, installedAt: null }
+      return { preferredLocation: DEFAULT_LOCATION, path: null, installedAt: null }
     }
     const raw = JSON.parse(readFileSync(file, 'utf8')) as Record<string, unknown>
-    const preferred =
-      raw[LOCATION_KEY] === '~/.local/bin' ? '~/.local/bin' : '/usr/local/bin'
+    const preferred: CliInstallLocation =
+      raw[LOCATION_KEY] === '/usr/local/bin' ? '/usr/local/bin' : '~/.local/bin'
     return {
       preferredLocation: preferred,
       path: typeof raw[PATH_KEY] === 'string' ? raw[PATH_KEY] : null,
       installedAt: typeof raw[INSTALLED_AT_KEY] === 'number' ? raw[INSTALLED_AT_KEY] : null
     }
   } catch {
-    return { preferredLocation: '/usr/local/bin', path: null, installedAt: null }
+    return { preferredLocation: DEFAULT_LOCATION, path: null, installedAt: null }
   }
 }
 
@@ -136,7 +182,7 @@ export function getCliStatus(): CliStatus {
     return {
       installed: false,
       path: null,
-      preferredLocation: '/usr/local/bin',
+      preferredLocation: DEFAULT_LOCATION,
       pathInPath: false,
       version: null,
       installedAt: null,
@@ -156,11 +202,15 @@ export function getCliStatus(): CliStatus {
     }
   }
 
+  const locationDir = installed && candidate
+    ? dirname(candidate)
+    : expandLocation(meta.preferredLocation)
+
   return {
     installed,
     path: installed ? candidate : null,
     preferredLocation: meta.preferredLocation,
-    pathInPath: pathEnvHas(expandLocation(meta.preferredLocation)),
+    pathInPath: pathEnvHas(locationDir),
     version: installed ? app.getVersion() : null,
     installedAt
   }
@@ -172,38 +222,64 @@ export function setCliPreferredLocation(location: CliInstallLocation): CliStatus
   return getCliStatus()
 }
 
+function writeLauncher(location: CliInstallLocation, previousPath: string | null): string {
+  const dir = expandLocation(location)
+  const target = binaryPath(location)
+  mkdirSync(dir, { recursive: true })
+  if (previousPath && previousPath !== target && existsSync(previousPath)) {
+    try {
+      unlinkSync(previousPath)
+    } catch {
+      // Best-effort; the new install still proceeds.
+    }
+  }
+  writeFileSync(target, launcherScript(), { encoding: 'utf8', mode: 0o755 })
+  chmodSync(target, 0o755)
+  writeMeta({
+    preferredLocation: location,
+    path: target,
+    installedAt: Date.now()
+  })
+  return target
+}
+
 export function installCli(): CliStatus {
   if (process.platform === 'win32') {
     return { ...getCliStatus(), error: t('cli.winUnsupported') }
   }
 
   const meta = readMeta()
-  const dir = expandLocation(meta.preferredLocation)
-  const target = binaryPath(meta.preferredLocation)
+  const preferred = meta.preferredLocation
 
   try {
-    mkdirSync(dir, { recursive: true })
-    // Moving install location: remove the previous binary first.
-    if (meta.path && meta.path !== target && existsSync(meta.path)) {
-      try {
-        unlinkSync(meta.path)
-      } catch {
-        // Best-effort; the new install still proceeds.
-      }
-    }
-    writeFileSync(target, launcherScript(), { encoding: 'utf8', mode: 0o755 })
-    chmodSync(target, 0o755)
-    writeMeta({
-      preferredLocation: meta.preferredLocation,
-      path: target,
-      installedAt: Date.now()
-    })
+    writeLauncher(preferred, meta.path)
     return getCliStatus()
   } catch (error) {
+    // /usr/local/bin is often root-owned — fall back to the user bin automatically.
+    if (preferred === '/usr/local/bin' && isAccessError(error)) {
+      try {
+        writeLauncher('~/.local/bin', meta.path)
+        return {
+          ...getCliStatus(),
+          notice: t('cli.fellBackToLocal')
+        }
+      } catch (fallbackError) {
+        const message =
+          fallbackError instanceof Error ? fallbackError.message : String(fallbackError)
+        return {
+          ...getCliStatus(),
+          error: t('cli.installFailed', {
+            dir: expandLocation('~/.local/bin'),
+            message
+          })
+        }
+      }
+    }
+
     const message = error instanceof Error ? error.message : String(error)
     return {
       ...getCliStatus(),
-      error: t('cli.installFailed', { dir, message })
+      error: t('cli.installFailed', { dir: expandLocation(preferred), message })
     }
   }
 }

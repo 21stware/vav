@@ -66,6 +66,8 @@ export interface CliStatus {
   version: string | null
   installedAt: number | null
   error?: string
+  /** Soft note (e.g. auto-fallback to ~/.local/bin). */
+  notice?: string
 }
 
 export interface CreateConversationOptions {

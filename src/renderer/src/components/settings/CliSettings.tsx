@@ -14,7 +14,7 @@ function relativeInstalledAt(at: number | null, t: ReturnType<typeof useT>): str
 }
 
 function dirFor(location: CliInstallLocation): string {
-  if (location === '~/.local/bin') return '/.local/bin/'
+  if (location === '~/.local/bin') return '.local/bin/'
   return '/usr/local/bin/'
 }
 
@@ -142,6 +142,8 @@ export function CliSettings(): React.JSX.Element {
         )}
       </div>
 
+      {status.notice && <InlineAlert kind="success" message={status.notice} />}
+
       {!status.pathInPath && (
         <InlineAlert kind="warning" message={t('cli.pathWarning', { location })} />
       )}
@@ -151,8 +153,8 @@ export function CliSettings(): React.JSX.Element {
         value={location}
         onChange={(value) => void setLocation(value as CliInstallLocation)}
         options={[
-          { value: '/usr/local/bin', label: '/usr/local/bin' },
-          { value: '~/.local/bin', label: '~/.local/bin' }
+          { value: '~/.local/bin', label: '~/.local/bin' },
+          { value: '/usr/local/bin', label: '/usr/local/bin' }
         ]}
       />
       <p className="muted tiny">{t('cli.installLocationHint')}</p>

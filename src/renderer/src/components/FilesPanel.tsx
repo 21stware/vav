@@ -42,6 +42,7 @@ export function FilesPanel({ visible }: { visible: boolean }): React.JSX.Element
   const createConversationInCurrentWorkspace = useSessionStore(
     (s) => s.createConversationInCurrentWorkspace
   )
+  const showDialog = useSessionStore((s) => s.showDialog)
   const conversation = useSessionStore((s) => s.conversations.find((c) => c.id === s.activeId))
   const tmp = useSessionStore((s) => s.tmp)
   const locateWorkspace = useSessionStore((s) => s.locateWorkspace)
@@ -181,9 +182,16 @@ export function FilesPanel({ visible }: { visible: boolean }): React.JSX.Element
         <Button
           icon={<Info size={13} />}
           size="sm"
-          title={t('ui.ignoredPaths', {
-            list: [...IGNORED_NAMES, ...IGNORED_SUFFIXES].join('\n')
-          })}
+          title={t('files.ignoredTitle')}
+          onClick={() =>
+            showDialog({
+              title: t('files.ignoredTitle'),
+              body: t('files.ignoredBody', {
+                list: [...IGNORED_NAMES, ...IGNORED_SUFFIXES].join('\n')
+              }),
+              confirmLabel: t('common.ok')
+            })
+          }
         />
       </div>
 

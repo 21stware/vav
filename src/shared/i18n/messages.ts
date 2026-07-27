@@ -355,7 +355,9 @@ export const zhCN = {
   'cli.uninstallBody':
     '将从 {path} 中移除 CLI 命令。vav 主程序和数据不受影响。可随时重新安装。',
   'cli.pathWarning':
-    '{location} 可能不在 PATH 中。安装仍可继续，但终端里需要手动配置 PATH 才能直接运行 vav。',
+    '{location} 可能不在 PATH 中。若终端找不到 vav，在 shell 配置中加入 export PATH="$HOME/.local/bin:$PATH"（或对应目录）后重开终端。',
+  'cli.fellBackToLocal':
+    '/usr/local/bin 无写权限，已改装到 ~/.local/bin。若终端找不到命令，请把该目录加入 PATH。',
   'cli.winUnsupported': 'Windows 暂不支持 CLI 安装',
   'cli.installFailed': '{dir} 无写权限或安装失败：{message}',
   'cli.uninstallFailed': '卸载失败：{message}',
@@ -507,7 +509,7 @@ export const zhCN = {
   'cli.retry': '重试',
   'cli.installLocation': '安装位置',
   'cli.installLocationHint':
-    '安装为目标位置下的 vav 可执行文件。需要该目录在你的 PATH 中（/usr/local/bin 默认在 PATH 中）。',
+    '默认安装到 ~/.local/bin（无需管理员权限）。若该目录不在 PATH，安装后按上方提示配置即可。',
   'cli.behaviorTitle': '行为说明',
   'cli.nonBlocking': '命令不阻塞终端 — 立即返回，vav 在后台打开。',
 
@@ -523,6 +525,8 @@ export const zhCN = {
 
   // —— files extras ——
   'files.emptyFolder': '空文件夹',
+  'files.ignoredTitle': '已忽略的路径',
+  'files.ignoredBody': '文件面板不会列出以下名称或后缀：\n\n{list}',
   'files.changedThisSession': '本次改动',
   'files.moveTo': '移动目录到…',
   'files.viewList': 'List',
@@ -907,7 +911,9 @@ export const en: Record<MessageKey, string> = {
   'cli.uninstallBody':
     'Removes the CLI command from {path}. The vav app and your data are untouched. You can reinstall anytime.',
   'cli.pathWarning':
-    '{location} may not be on PATH. Install can continue, but you may need to configure PATH to run vav from a terminal.',
+    '{location} may not be on your PATH. If the shell cannot find vav, add export PATH="$HOME/.local/bin:$PATH" (or the matching directory) to your shell config and open a new terminal.',
+  'cli.fellBackToLocal':
+    '/usr/local/bin was not writable, so vav was installed to ~/.local/bin instead. Add that directory to PATH if the command is not found.',
   'cli.winUnsupported': 'CLI install is not supported on Windows yet',
   'cli.installFailed': '{dir} is not writable or install failed: {message}',
   'cli.uninstallFailed': 'Uninstall failed: {message}',
@@ -1048,7 +1054,7 @@ export const en: Record<MessageKey, string> = {
   'cli.retry': 'Retry',
   'cli.installLocation': 'Install location',
   'cli.installLocationHint':
-    'Installs the vav executable under the chosen path. That directory must be on your PATH (/usr/local/bin usually is).',
+    'Defaults to ~/.local/bin (no admin rights). If that directory is not on PATH, follow the hint above after installing.',
   'cli.behaviorTitle': 'Behavior',
   'cli.nonBlocking': 'The command returns immediately — vav opens in the background.',
 
@@ -1062,6 +1068,8 @@ export const en: Record<MessageKey, string> = {
   'about.recordsLabel': 'Records',
 
   'files.emptyFolder': 'Empty folder',
+  'files.ignoredTitle': 'Ignored paths',
+  'files.ignoredBody': 'The Files panel hides these names and suffixes:\n\n{list}',
   'files.changedThisSession': 'Changed this session',
   'files.moveTo': 'Move folder to…',
   'files.viewList': 'List',

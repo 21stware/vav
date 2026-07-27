@@ -59,7 +59,6 @@ const THEME_DARK = {
 export function acquireTerminal(options: {
   conversationId: string
   tabId: string
-  isAgent: boolean
   fontFamily: string
   fontSize: number
 }): TerminalEntry {
@@ -78,7 +77,6 @@ export function acquireTerminal(options: {
   const term = new Terminal({
     fontFamily: options.fontFamily,
     fontSize: options.fontSize,
-    // bash (agent) tab is interactive; tool output is also mirrored into it.
     cursorBlink: true,
     cursorStyle: 'block',
     disableStdin: false,
@@ -91,9 +89,6 @@ export function acquireTerminal(options: {
   term.loadAddon(new WebLinksAddon())
   term.open(container)
 
-  if (options.isAgent) {
-    term.write('\x1b[2m# bash · agent 工具输出镜像到这里，也可直接输入命令\x1b[0m\r\n')
-  }
   term.onData((data) => void window.vav.pty.write(options.tabId, data))
   term.onResize(({ cols, rows }) => void window.vav.pty.resize(options.tabId, cols, rows))
 

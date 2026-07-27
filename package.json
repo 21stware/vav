@@ -3,8 +3,8 @@
   "productName": "vav",
   "version": "1.1.0",
   "description": "Local-first AI coding agent workstation: chat, filesystem and a real PTY terminal in one window.",
-  "license": "MIT",
-  "author": "vav",
+  "license": "PolyForm-Noncommercial-1.0.0",
+  "author": "Oboo Cheng",
   "main": "./out/main/index.js",
   "scripts": {
     "postinstall": "node scripts/fix-pty-permissions.mjs",
