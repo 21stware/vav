@@ -10,6 +10,7 @@ import {
   net,
   protocol,
   screen,
+  session,
   shell
 } from 'electron'
 import { basename, dirname, join } from 'node:path'
@@ -403,9 +404,10 @@ function wireFullscreenState(window: BrowserWindow): void {
 
 function createWindow(): BrowserWindow {
   const icon = loadAppIcon()
+  const snapshotting = Boolean(process.env.VAV_SNAPSHOT)
   const window = new BrowserWindow({
-    width: 720,
-    height: 820,
+    width: snapshotting ? 1440 : 720,
+    height: snapshotting ? 900 : 820,
     minWidth: 380,
     minHeight: 560,
     show: false,
@@ -422,7 +424,7 @@ function createWindow(): BrowserWindow {
   //
   // Windows has no dock to bring a hidden window back from, so there the close
   // button means what it says and the teardown in `before-quit` runs instead.
-  if (IS_MAC) {
+  if (IS_MAC && !snapshotting) {
     window.on('close', (event) => {
       if (quitting) return
       event.preventDefault()
@@ -443,9 +445,9 @@ function createWindow(): BrowserWindow {
     window.webContents.on('did-fail-load', (_event, code, description, url) => {
       console.error('[did-fail-load]', code, description, url)
     })
-    installSnapshotHook(window)
   }
 
+  installSnapshotHook(window)
   loadRenderer(window)
 
   return window
@@ -844,23 +846,31 @@ function popupNativeMenu(
 function installSnapshotHook(window: BrowserWindow): void {
   const target = process.env.VAV_SNAPSHOT
   if (!target) return
-  window.webContents.once('did-finish-load', async () => {
-    await new Promise((resolve) => setTimeout(resolve, 1200))
-    const script = process.env.VAV_SNAPSHOT_JS
-    if (script) {
+
+  const capture = async (): Promise<void> => {
+    // Bootstrap + directory listing need a beat after first paint.
+    await new Promise((resolve) => setTimeout(resolve, 3200))
+    if (process.env.VAV_SNAPSHOT_JS) {
       try {
-        const result = await window.webContents.executeJavaScript(script, true)
-        if (result !== undefined) console.log('[snapshot] script result:', result)
+        const result = await window.webContents.executeJavaScript(process.env.VAV_SNAPSHOT_JS, true)
+        console.log('[snapshot] script result:', result)
+        await new Promise((resolve) => setTimeout(resolve, 600))
       } catch (err) {
         console.error('[snapshot] script failed', err)
       }
-      await new Promise((resolve) => setTimeout(resolve, 600))
     }
+    if (window.isMinimized()) window.restore()
+    window.setSize(1440, 900)
+    await new Promise((resolve) => setTimeout(resolve, 500))
     const image = await window.webContents.capturePage()
     writeFileSync(target, image.toPNG())
     console.log(`[snapshot] wrote ${target}`)
     quitting = true
-    app.quit()
+    app.exit(0)
+  }
+
+  window.webContents.once('did-finish-load', () => {
+    void capture()
   })
 }
 
@@ -1512,7 +1522,7 @@ if (!singleInstance) {
 
   app.on('will-quit', () => globalShortcut.unregisterAll())
 
-  app.whenReady().then(() => {
+  app.whenReady().then(async () => {
     applyBranding()
     protocol.handle('vav-local', (request) => {
       try {
@@ -1535,6 +1545,11 @@ if (!singleInstance) {
     notifications.applySettings()
     rebuildAppChrome()
 
+    if (process.env.VAV_SNAPSHOT) {
+      // Marketing captures should use default layout (tools open, files segment).
+      await session.defaultSession.clearStorageData({ storages: ['localstorage'] })
+    }
+
     mainWindow = createWindow()
     // Belt-and-suspenders: ready-to-show can race with Dock hide / focus steals
     // from the IDE. Force the main window up once the renderer finishes loading.
@@ -1544,7 +1559,10 @@ if (!singleInstance) {
     applyDockIcon()
 
     const launchWorkdir = parseCliWorkdir(process.argv)
-    if (launchWorkdir !== null || process.argv.includes('--cli-workdir')) {
+    if (process.env.VAV_SNAPSHOT) {
+      // Marketing captures seed their own conversations; ignore argv path opens.
+      appReadyForOpens = true
+    } else if (launchWorkdir !== null || process.argv.includes('--cli-workdir')) {
       // Bare `vav` with the flag but empty value still goes through openFromCli.
       appReadyForOpens = true
       openFromCli(launchWorkdir)
