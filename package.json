@@ -1,7 +1,7 @@
 {
   "name": "vav",
   "productName": "vav",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Local-first AI coding agent workstation: chat, filesystem and a real PTY terminal in one window.",
   "license": "MIT",
   "author": "vav",
