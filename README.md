@@ -33,7 +33,9 @@ The agent isn’t narrating what it did — you watch it `cd`, run tests, and wr
 ## Website
 
 The static site lives in [`site/`](site/) and is published to GitHub Pages by Actions:
-https://21stware.github.io/vav/
+
+https://vavapp.com  
+(also https://21stware.github.io/vav/)
 
 Bilingual (toggle in the top-right; default follows the browser language). Marketing screenshots are captured with the English UI (chat / files / terminal / context):
 
@@ -43,9 +45,7 @@ node scripts/capture-marketing-screenshot.mjs
 
 Writes `docs/screenshot.png` (README hero) and `site/assets/screenshot-*.png` (site gallery).
 
-Custom domain: Settings → Pages → Custom domain, then configure DNS
-(usually a `CNAME` to `21stware.github.io`, or A/ALIAS for apex).
-After that, put the hostname in `site/CNAME` (one line, no scheme) and push so deploys don’t wipe the setting.
+Custom domain: `vavapp.com` (see `site/CNAME`). Apex uses GitHub Pages `A`/`AAAA` records; `www` is a `CNAME` to `21stware.github.io`. Keep Cloudflare proxy **DNS only** (grey cloud) so GitHub can issue HTTPS.
 
 ## Install
 
