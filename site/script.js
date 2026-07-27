@@ -150,7 +150,7 @@
     }
   }
 
-  let latestTag = 'v1.2.0'
+  let latestTag = 'v1.2.1'
 
   function renderDownloadVersion(lang) {
     const el = document.getElementById('download-version')

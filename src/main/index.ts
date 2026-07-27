@@ -48,8 +48,10 @@ import { codeFonts, type Platform } from '@shared/platform'
 import {
   getCliStatus,
   installCli,
+  argvRequestsCliOpen,
   parseCliWorkdir,
   parseOpenPathsFromArgv,
+  resolveExistingDirectory,
   resolveOpenPaths,
   setCliPreferredLocation,
   uninstallCli,
@@ -963,10 +965,10 @@ function openWorkspaceSession(options: {
 }): void {
   showMainWindow()
   let toast: string | null = null
-  let workdir = options.workdirArg
-  if (workdir && !existsSync(workdir)) {
+  const requested = options.workdirArg
+  const workdir = resolveExistingDirectory(requested)
+  if (requested && !workdir) {
     toast = t('toast.pathMissing')
-    workdir = null
   }
   const resolved = workdir ?? resolveNewWorkdir()
   if (workdir) {
@@ -1546,9 +1548,8 @@ if (!singleInstance) {
   app.quit()
 } else {
   app.on('second-instance', (_event, argv) => {
-    const workdir = parseCliWorkdir(argv)
-    if (workdir !== null || argv.includes('--cli-workdir')) {
-      openFromCli(workdir)
+    if (argvRequestsCliOpen(argv)) {
+      openFromCli(parseCliWorkdir(argv))
       return
     }
     const dropped = parseOpenPathsFromArgv(argv)
@@ -1560,9 +1561,12 @@ if (!singleInstance) {
   })
 
   // Must register before ready — macOS delivers Dock / Finder opens here.
-  app.on('open-file', (event, filePath) => {
-    event.preventDefault()
-    enqueueOpenPath(filePath)
+  // will-finish-launching is the earliest reliable hook for cold-start drops.
+  app.on('will-finish-launching', () => {
+    app.on('open-file', (event, filePath) => {
+      event.preventDefault()
+      enqueueOpenPath(filePath)
+    })
   })
 
   // On macOS closing the last window must not quit: background turns and PTYs
@@ -1617,14 +1621,13 @@ if (!singleInstance) {
     // re-assert the PNG after the first window exists so the tile updates.
     applyDockIcon()
 
-    const launchWorkdir = parseCliWorkdir(process.argv)
     if (process.env.VAV_SNAPSHOT) {
       // Marketing captures seed their own conversations; ignore argv path opens.
       appReadyForOpens = true
-    } else if (launchWorkdir !== null || process.argv.includes('--cli-workdir')) {
+    } else if (argvRequestsCliOpen(process.argv)) {
       // Bare `vav` with the flag but empty value still goes through openFromCli.
       appReadyForOpens = true
-      openFromCli(launchWorkdir)
+      openFromCli(parseCliWorkdir(process.argv))
     } else {
       // Dock cold-start / Finder "Open With": queued open-file + argv paths.
       flushPendingOpens(parseOpenPathsFromArgv(process.argv))

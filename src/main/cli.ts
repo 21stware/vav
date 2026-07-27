@@ -5,12 +5,13 @@ import {
   existsSync,
   mkdirSync,
   readFileSync,
+  realpathSync,
   unlinkSync,
   writeFileSync,
   statSync
 } from 'node:fs'
 import { homedir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { dirname, isAbsolute, join, resolve as resolvePath } from 'node:path'
 import { APP_NAME } from './brand'
 import { t } from './i18n'
 
@@ -102,6 +103,31 @@ const CLI_HELP = [
   ''
 ].join('\n')
 
+/** Packaged macOS: …/vav.app/Contents/MacOS/vav → …/vav.app */
+function packagedAppBundlePath(): string {
+  return resolvePath(dirname(process.execPath), '..', '..')
+}
+
+/**
+ * Resolve a user path to an absolute, existing directory (or null).
+ * Used by CLI / Dock open so we don’t toast “missing” on symlink or relative forms.
+ */
+export function resolveExistingDirectory(input: string | null | undefined): string | null {
+  if (!input || !input.trim()) return null
+  const raw = input.trim()
+  const candidates = [raw]
+  if (!isAbsolute(raw)) candidates.push(resolvePath(process.cwd(), raw))
+  for (const candidate of candidates) {
+    try {
+      const full = existsSync(candidate) ? realpathSync(candidate) : candidate
+      if (existsSync(full) && statSync(full).isDirectory()) return full
+    } catch {
+      // try next
+    }
+  }
+  return null
+}
+
 function launcherScript(): string {
   const helpBlock = [
     'case "$1" in',
@@ -112,6 +138,37 @@ function launcherScript(): string {
     '    ;;',
     'esac'
   ]
+
+  // Resolve "." / relative paths in the *shell* cwd before handing off to the GUI app.
+  // Use a single argv token (`--vav-workdir=…`) so Chromium cannot swallow the path
+  // as a separate flag value.
+  const resolveTarget = [
+    'TARGET="$1"',
+    'case "$TARGET" in',
+    '  .) TARGET="$(pwd -P)" ;;',
+    '  /*) TARGET="$(cd "$TARGET" 2>/dev/null && pwd -P || echo "$TARGET")" ;;',
+    '  *) TARGET="$(cd "$TARGET" 2>/dev/null && pwd -P || echo "$TARGET")" ;;',
+    'esac'
+  ]
+
+  if (app.isPackaged && process.platform === 'darwin') {
+    // `open -n` always starts a process so requestSingleInstanceLock can forward argv
+    // to the running instance (plain `open` often just activates and drops --args).
+    const bundle = packagedAppBundlePath()
+    return [
+      '#!/bin/sh',
+      'set -e',
+      `APP=${JSON.stringify(bundle)}`,
+      ...helpBlock,
+      'if [ "$#" -eq 0 ]; then',
+      '  open -n "$APP"',
+      '  exit 0',
+      'fi',
+      ...resolveTarget,
+      'open -n "$APP" --args --vav-workdir="$TARGET"',
+      ''
+    ].join('\n')
+  }
 
   if (app.isPackaged) {
     const bin = process.execPath
@@ -124,13 +181,8 @@ function launcherScript(): string {
       '  nohup "$BIN" >/dev/null 2>&1 &',
       '  exit 0',
       'fi',
-      'TARGET="$1"',
-      'case "$TARGET" in',
-      '  .) TARGET="$(pwd)" ;;',
-      '  /*) ;;',
-      '  *) TARGET="$(cd "$TARGET" 2>/dev/null && pwd || echo "$TARGET")" ;;',
-      'esac',
-      'nohup "$BIN" --cli-workdir "$TARGET" >/dev/null 2>&1 &',
+      ...resolveTarget,
+      'nohup "$BIN" --vav-workdir="$TARGET" >/dev/null 2>&1 &',
       ''
     ].join('\n')
   }
@@ -147,13 +199,9 @@ function launcherScript(): string {
     '  nohup "$ELECTRON" "$APP" >/dev/null 2>&1 &',
     '  exit 0',
     'fi',
-    'TARGET="$1"',
-    'case "$TARGET" in',
-    '  .) TARGET="$(pwd)" ;;',
-    '  /*) ;;',
-    '  *) TARGET="$(cd "$TARGET" 2>/dev/null && pwd || echo "$TARGET")" ;;',
-    'esac',
-    'nohup "$ELECTRON" "$APP" --cli-workdir "$TARGET" >/dev/null 2>&1 &',
+    ...resolveTarget,
+    // `--` keeps Electron/Chromium from treating our flag as a Chromium switch.
+    'nohup "$ELECTRON" "$APP" -- --vav-workdir="$TARGET" >/dev/null 2>&1 &',
     ''
   ].join('\n')
 }
@@ -326,11 +374,32 @@ export function uninstallCli(): CliStatus {
   }
 }
 
-/** Pull `--cli-workdir <path>` out of Electron argv. */
+/**
+ * Pull the CLI workdir out of argv.
+ * Prefer `--vav-workdir=/abs/path` (one token). Keep legacy `--cli-workdir <path>`.
+ */
 export function parseCliWorkdir(argv: string[]): string | null {
-  const index = argv.indexOf('--cli-workdir')
-  if (index >= 0 && argv[index + 1]) return argv[index + 1]
+  for (const arg of argv) {
+    if (arg.startsWith('--vav-workdir=')) {
+      return arg.slice('--vav-workdir='.length) || null
+    }
+  }
+  const vavIdx = argv.indexOf('--vav-workdir')
+  if (vavIdx >= 0 && argv[vavIdx + 1] && !argv[vavIdx + 1].startsWith('-')) {
+    return argv[vavIdx + 1]
+  }
+  const legacy = argv.indexOf('--cli-workdir')
+  if (legacy >= 0 && argv[legacy + 1] && !argv[legacy + 1].startsWith('-')) {
+    return argv[legacy + 1]
+  }
   return null
+}
+
+export function argvRequestsCliOpen(argv: string[]): boolean {
+  return (
+    argv.some((arg) => arg === '--vav-workdir' || arg.startsWith('--vav-workdir=')) ||
+    argv.includes('--cli-workdir')
+  )
 }
 
 export interface OpenTarget {
@@ -346,19 +415,20 @@ export interface OpenTarget {
  * - File(s) → workdir = parent of the first file, those files as attachments
  */
 export function resolveOpenPaths(paths: string[]): OpenTarget {
-  const existing = paths.filter((path) => path && existsSync(path))
-  if (existing.length === 0) return { workdir: null, attachments: [] }
-
   const dirs: string[] = []
   const files: string[] = []
-  for (const path of existing) {
+  for (const path of paths) {
+    if (!path) continue
     try {
-      if (statSync(path).isDirectory()) dirs.push(path)
-      else files.push(path)
+      if (!existsSync(path)) continue
+      const full = realpathSync(path)
+      if (statSync(full).isDirectory()) dirs.push(full)
+      else files.push(full)
     } catch {
       // Skip unreadable paths.
     }
   }
+  if (files.length === 0 && dirs.length === 0) return { workdir: null, attachments: [] }
 
   if (files.length > 0) {
     return { workdir: dirname(files[0]), attachments: files }

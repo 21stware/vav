@@ -1,7 +1,7 @@
 {
   "name": "vav",
   "productName": "vav",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "Local-first AI coding agent workstation: chat, filesystem and a real PTY terminal in one window.",
   "license": "PolyForm-Noncommercial-1.0.0",
   "author": "Oboo Cheng",
@@ -91,7 +91,29 @@
       ],
       "darkModeSupport": true,
       "identity": null,
-      "notarize": false
+      "notarize": false,
+      "extendInfo": {
+        "CFBundleDocumentTypes": [
+          {
+            "CFBundleTypeName": "Folders",
+            "CFBundleTypeRole": "Viewer",
+            "LSHandlerRank": "Alternate",
+            "LSItemContentTypes": [
+              "public.folder"
+            ]
+          },
+          {
+            "CFBundleTypeName": "Files",
+            "CFBundleTypeRole": "Viewer",
+            "LSHandlerRank": "Alternate",
+            "LSItemContentTypes": [
+              "public.data",
+              "public.item",
+              "public.content"
+            ]
+          }
+        ]
+      }
     },
     "dmg": {
       "artifactName": "${productName}-${version}-macos-${arch}.${ext}"
