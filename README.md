@@ -69,8 +69,8 @@ npm run dev
 Package (native modules mean you only build for the platform you’re on):
 
 ```bash
-npm run dist        # macOS → release/vav-1.1.0-macos-arm64.dmg
-npm run dist:win    # Windows → release/vav-1.1.0-windows-x64-setup.exe
+npm run dist        # macOS → release/vav-1.2.0-macos-arm64.dmg
+npm run dist:win    # Windows → release/vav-1.2.0-windows-x64-setup.exe
 ```
 
 First launch asks for an API key (⌘, / Ctrl+,). File tree and terminal work before that; only agent turns need a key.
