@@ -1,7 +1,7 @@
 {
   "name": "vav",
   "productName": "vav",
-  "version": "1.2.1",
+  "version": "1.2.2",
   "description": "Local-first AI coding agent workstation: chat, filesystem and a real PTY terminal in one window.",
   "license": "PolyForm-Noncommercial-1.0.0",
   "author": "Oboo Cheng",

@@ -1422,30 +1422,30 @@ mark {
   opacity: 1;
 }
 
-/* Controls sit beside the prompt, not under it: stacked, their reserved row
-   is 24px of air between a question and its answer even while invisible, and
-   a log cannot afford that between every pair. */
+/* Prompt → actions → branch pager, stacked like an agent turn. */
 .message-group.user {
   display: flex;
-  align-items: flex-start;
+  flex-direction: column;
+  align-items: stretch;
   gap: 6px;
   max-width: 100%;
 }
 
 .message-group.user .message.user {
-  flex: 1;
   min-width: 0;
 }
 
 .message-group.user .message-actions {
   flex: 0 0 auto;
-  margin-top: -3px;
+  margin-top: 0;
+  align-self: flex-start;
 }
 
 .message-group.user .variant-pager {
   flex: 0 0 auto;
   margin-right: 0;
-  margin-top: -2px;
+  margin-top: 0;
+  align-self: flex-start;
   opacity: 1;
 }
 
