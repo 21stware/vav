@@ -187,11 +187,23 @@
       <section class="band download" id="download">
         <h2 class="band-title reveal" data-i18n="download.title">Download</h2>
         <p class="band-lead reveal delay-1" data-i18n="download.lead">
-          Get builds from GitHub Releases. Unsigned — follow the first-run notes to open them.
+          Direct downloads from the latest GitHub Release. Unsigned — follow the first-run notes to
+          open them.
         </p>
         <div class="download-row reveal delay-2">
-          <a class="btn primary" href="https://github.com/21stware/vav/releases/latest"
-            >Releases · macOS / Windows</a
+          <a
+            class="btn primary"
+            id="download-mac"
+            href="https://github.com/21stware/vav/releases/download/v1.2.0/vav-1.2.0-macos-arm64.dmg"
+            data-i18n="download.mac"
+            >macOS · Apple Silicon</a
+          >
+          <a
+            class="btn primary"
+            id="download-win"
+            href="https://github.com/21stware/vav/releases/download/v1.2.0/vav-1.2.0-windows-x64-setup.exe"
+            data-i18n="download.win"
+            >Windows · x64</a
           >
           <a
             class="btn ghost"
@@ -202,9 +214,12 @@
             >Install notes</a
           >
         </div>
-        <p class="tiny reveal delay-3" data-i18n-html="download.cli">
-          From a terminal, <code>vav .</code> opens a new session in the current directory (Settings
-          → vav command).
+        <p class="tiny reveal delay-3">
+          <span data-i18n-html="download.cli"
+            >From a terminal, <code>vav .</code> opens a new session in the current directory
+            (Settings → vav command).</span
+          >
+          <span class="download-version" id="download-version" hidden></span>
         </p>
       </section>
     </main>

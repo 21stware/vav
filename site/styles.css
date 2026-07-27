@@ -356,6 +356,10 @@ code {
   margin-bottom: 16px;
 }
 
+.download-version {
+  color: var(--ink-faint);
+}
+
 .tiny {
   margin: 0;
   color: var(--ink-faint);

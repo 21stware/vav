@@ -33,8 +33,11 @@
         'Token history for the session — how much cache vs new input you used.',
       'download.title': 'Download',
       'download.lead':
-        'Get builds from GitHub Releases. Unsigned — follow the first-run notes to open them.',
+        'Direct downloads from the latest GitHub Release. Unsigned — follow the first-run notes to open them.',
+      'download.mac': 'macOS · Apple Silicon',
+      'download.win': 'Windows · x64',
       'download.install': 'Install notes',
+      'download.version': 'Latest: {tag}',
       'download.cli':
         'From a terminal, <code>vav .</code> opens a new session in the current directory (Settings → vav command).',
       'footer.note':
@@ -70,8 +73,11 @@
       'gallery.contextLabel': '上下文',
       'gallery.contextCaption': '会话的 token 历史：缓存命中与新输入各占多少。',
       'download.title': '下载',
-      'download.lead': '从 GitHub Releases 获取构建。未代码签名，首次打开需按说明放行。',
+      'download.lead': '直接下载最新 GitHub Release 构建。未代码签名，首次打开需按说明放行。',
+      'download.mac': 'macOS · Apple 芯片',
+      'download.win': 'Windows · x64',
       'download.install': '安装说明',
+      'download.version': '最新：{tag}',
       'download.cli':
         '终端里可用 <code>vav .</code> 打开当前目录会话（设置 → vav 命令）。',
       'footer.note':
@@ -144,13 +150,53 @@
     }
   }
 
+  let latestTag = 'v1.2.0'
+
+  function renderDownloadVersion(lang) {
+    const el = document.getElementById('download-version')
+    if (!el) return
+    const catalog = catalogs[lang] || catalogs.en
+    const template = catalog['download.version'] || 'Latest: {tag}'
+    el.hidden = false
+    el.textContent = ` · ${template.replace('{tag}', latestTag)}`
+  }
+
+  function applyDownloadLinks(assets) {
+    const mac = assets.find((a) => /macos-arm64\.dmg$/i.test(a.name))
+    const win = assets.find((a) => /windows-x64-setup\.exe$/i.test(a.name))
+    const macBtn = document.getElementById('download-mac')
+    const winBtn = document.getElementById('download-win')
+    if (mac && macBtn) macBtn.href = mac.browser_download_url
+    if (win && winBtn) winBtn.href = win.browser_download_url
+  }
+
+  async function loadLatestDownloads() {
+    try {
+      const res = await fetch('https://api.github.com/repos/21stware/vav/releases/latest', {
+        headers: { Accept: 'application/vnd.github+json' }
+      })
+      if (!res.ok) return
+      const data = await res.json()
+      if (data.tag_name) latestTag = data.tag_name
+      if (Array.isArray(data.assets)) applyDownloadLinks(data.assets)
+      renderDownloadVersion(document.documentElement.lang.startsWith('zh') ? 'zh' : 'en')
+    } catch {
+      // Keep the hardcoded release hrefs in the HTML.
+    }
+  }
+
   const lang = detectLang()
   applyLang(lang)
+  renderDownloadVersion(lang)
+  void loadLatestDownloads()
 
   document.querySelectorAll('.lang-btn').forEach((btn) => {
     btn.addEventListener('click', () => {
       const next = btn.getAttribute('data-lang')
-      if (next === 'en' || next === 'zh') applyLang(next)
+      if (next === 'en' || next === 'zh') {
+        applyLang(next)
+        renderDownloadVersion(next)
+      }
     })
   })
 
@@ -159,19 +205,17 @@
 
   if (reduce || !('IntersectionObserver' in window)) {
     nodes.forEach((el) => el.classList.add('is-in'))
-    return
+  } else {
+    const io = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          if (!entry.isIntersecting) continue
+          entry.target.classList.add('is-in')
+          io.unobserve(entry.target)
+        }
+      },
+      { rootMargin: '0px 0px -8% 0px', threshold: 0.12 }
+    )
+    nodes.forEach((el) => io.observe(el))
   }
-
-  const io = new IntersectionObserver(
-    (entries) => {
-      for (const entry of entries) {
-        if (!entry.isIntersecting) continue
-        entry.target.classList.add('is-in')
-        io.unobserve(entry.target)
-      }
-    },
-    { rootMargin: '0px 0px -8% 0px', threshold: 0.12 }
-  )
-
-  nodes.forEach((el) => io.observe(el))
 })()
