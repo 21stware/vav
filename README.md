@@ -26,11 +26,13 @@ Agent 不是在描述它做了什么 —— 你在右边直接看着它 `cd`、�
 静态站在仓库 [`site/`](site/)，由 GitHub Actions 发布到 GitHub Pages：
 https://21stware.github.io/vav/
 
-中英双语（右上角切换；默认跟随浏览器语言）。营销截图用英文界面生成：
+中英双语（右上角切换；默认跟随浏览器语言）。营销截图用英文界面生成（对话 / 文件 / 终端 / 上下文）：
 
 ```bash
 node scripts/capture-marketing-screenshot.mjs
 ```
+
+会写入 `docs/screenshot.png`（README 主图）以及 `site/assets/screenshot-*.png`（官网画廊）。
 
 自定义域名：在仓库 Settings → Pages → Custom domain 填入域名，并按提示配置 DNS
 （通常是 `CNAME` 指向 `21stware.github.io`，或 Apex 的 A/ALIAS 记录）。

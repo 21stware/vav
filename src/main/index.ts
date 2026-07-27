@@ -15,7 +15,7 @@ import {
 } from 'electron'
 import { basename, dirname, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { existsSync, mkdirSync, renameSync, rmdirSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, renameSync, rmdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { randomUUID } from 'node:crypto'
 import { APP_NAME, applyBranding, applyDockIcon, loadAppIcon } from './brand'
@@ -680,6 +680,8 @@ function cancelTokenUsageDismiss(): void {
 }
 
 function dismissTokenUsageSoon(): void {
+  // Keep the popup open while marketing screenshots capture it.
+  if (process.env.VAV_SNAPSHOT || process.env.VAV_SNAPSHOT_PLAN) return
   if (tokenUsageCloseTimer) return
   tokenUsageCloseTimer = setTimeout(() => {
     tokenUsageCloseTimer = null
@@ -836,35 +838,92 @@ function popupNativeMenu(
   })
 }
 
+type SnapshotPlanStep = {
+  file: string
+  js?: string
+  delayMs?: number
+  /** Capture the newest non-main BrowserWindow instead of the main window. */
+  child?: boolean
+}
+
+type SnapshotPlan = {
+  dir: string
+  settleMs?: number
+  steps: SnapshotPlanStep[]
+}
+
 /**
  * Development-only screenshot hook.
  *
- * `VAV_SNAPSHOT=<file> [VAV_SNAPSHOT_JS=<expr>] npm start` renders the window
- * off-screen, optionally drives the UI into a given state, writes a PNG and
- * exits — a way to review a screen without a display server or focus stealing.
+ * Single shot:
+ *   `VAV_SNAPSHOT=<file> [VAV_SNAPSHOT_JS=<expr>]`
+ *
+ * Multi shot (marketing gallery):
+ *   `VAV_SNAPSHOT_PLAN=<plan.json>` where plan is
+ *   `{ "dir": "...", "steps": [{ "file": "a.png", "js": "..." }, ...] }`
  */
 function installSnapshotHook(window: BrowserWindow): void {
+  const planPath = process.env.VAV_SNAPSHOT_PLAN
   const target = process.env.VAV_SNAPSHOT
-  if (!target) return
+  if (!planPath && !target) return
+
+  const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
+
+  const runJs = async (source: string | undefined): Promise<void> => {
+    if (!source) return
+    try {
+      const result = await window.webContents.executeJavaScript(source, true)
+      console.log('[snapshot] script result:', result)
+    } catch (err) {
+      console.error('[snapshot] script failed', err)
+    }
+  }
+
+  const captureWindow = async (win: BrowserWindow, outPath: string): Promise<void> => {
+    if (win.isMinimized()) win.restore()
+    if (win === window) {
+      win.setSize(1440, 900)
+      await sleep(400)
+    } else {
+      await sleep(200)
+    }
+    const image = await win.webContents.capturePage()
+    mkdirSync(dirname(outPath), { recursive: true })
+    writeFileSync(outPath, image.toPNG())
+    console.log(`[snapshot] wrote ${outPath}`)
+  }
 
   const capture = async (): Promise<void> => {
     // Bootstrap + directory listing need a beat after first paint.
-    await new Promise((resolve) => setTimeout(resolve, 3200))
-    if (process.env.VAV_SNAPSHOT_JS) {
-      try {
-        const result = await window.webContents.executeJavaScript(process.env.VAV_SNAPSHOT_JS, true)
-        console.log('[snapshot] script result:', result)
-        await new Promise((resolve) => setTimeout(resolve, 600))
-      } catch (err) {
-        console.error('[snapshot] script failed', err)
+    await sleep(3200)
+
+    if (planPath) {
+      const plan = JSON.parse(readFileSync(planPath, 'utf8')) as SnapshotPlan
+      await sleep(plan.settleMs ?? 0)
+      for (const step of plan.steps) {
+        await runJs(step.js)
+        await sleep(step.delayMs ?? 700)
+        const outPath = join(plan.dir, step.file)
+        if (step.child) {
+          const child = BrowserWindow.getAllWindows().find((w) => w !== window && !w.isDestroyed())
+          if (!child) {
+            console.error(`[snapshot] missing child window for ${step.file}`)
+            continue
+          }
+          await captureWindow(child, outPath)
+          child.destroy()
+        } else {
+          await captureWindow(window, outPath)
+        }
       }
+      quitting = true
+      app.exit(0)
+      return
     }
-    if (window.isMinimized()) window.restore()
-    window.setSize(1440, 900)
-    await new Promise((resolve) => setTimeout(resolve, 500))
-    const image = await window.webContents.capturePage()
-    writeFileSync(target, image.toPNG())
-    console.log(`[snapshot] wrote ${target}`)
+
+    await runJs(process.env.VAV_SNAPSHOT_JS)
+    await sleep(600)
+    await captureWindow(window, target!)
     quitting = true
     app.exit(0)
   }
