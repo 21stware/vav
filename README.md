@@ -21,6 +21,15 @@ Agent 不是在描述它做了什么 —— 你在右边直接看着它 `cd`、�
 - **Anthropic 与 OpenAI 兼容接口**都支持，endpoint 可自定义
 - API Key 经 `safeStorage`（Keychain）加密存储，不落明文
 
+## 官网
+
+静态站在仓库 [`site/`](site/)，由 GitHub Actions 发布到 GitHub Pages：
+https://21stware.github.io/vav/
+
+自定义域名：在仓库 Settings → Pages → Custom domain 填入域名，并按提示配置 DNS
+（通常是 `CNAME` 指向 `21stware.github.io`，或 Apex 的 A/ALIAS 记录）。
+确认后把域名写入 `site/CNAME`（单行，无协议）再推送，以免部署冲掉设置。
+
 ## 安装
 
 到 [Releases](https://github.com/21stware/vav/releases) 取对应平台的包。两个构建都没有代码签名，第一次打开都会被系统拦一下：

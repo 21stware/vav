@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>vav — 本机 AI 编程代理工作台</title>
+    <meta
+      name="description"
+      content="对话、文件树、真实终端，一个窗口。Agent 在你的项目里动手，数据留在本机。"
+    />
+    <meta property="og:title" content="vav" />
+    <meta
+      property="og:description"
+      content="本机 AI 编程代理工作台。看着 Agent 在你的项目里动手。"
+    />
+    <meta property="og:image" content="assets/screenshot.png" />
+    <meta property="og:type" content="website" />
+    <link rel="icon" type="image/png" href="assets/favicon.png" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;600&family=Noto+Serif+SC:wght@500;600&family=Sora:wght@500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="atmosphere" aria-hidden="true"></div>
+
+    <header class="top">
+      <a class="brand" href="./" aria-label="vav home">
+        <img class="brand-mark" src="assets/wordmark-dark.png" alt="vav" width="88" height="28" />
+      </a>
+      <nav class="nav">
+        <a href="#download">下载</a>
+        <a href="https://github.com/21stware/vav">GitHub</a>
+        <a href="mailto:licensing@21stware.com">商务授权</a>
+      </nav>
+    </header>
+
+    <main>
+      <section class="hero">
+        <div class="hero-copy">
+          <img
+            class="hero-wordmark reveal"
+            src="assets/wordmark-dark.png"
+            alt="vav"
+            width="220"
+            height="70"
+          />
+          <h1 class="hero-title reveal delay-1">看着 Agent 在你的项目里动手</h1>
+          <p class="hero-lead reveal delay-2">
+            对话、文件树、真实终端，一个窗口。数据留在本机——除了发往你自己配置的模型接口。
+          </p>
+          <div class="hero-cta reveal delay-3">
+            <a class="btn primary" href="#download">下载</a>
+            <a class="btn ghost" href="https://github.com/21stware/vav">源码</a>
+          </div>
+        </div>
+        <div class="hero-visual reveal delay-2" aria-hidden="false">
+          <img
+            class="hero-shot"
+            src="assets/screenshot.png"
+            alt="vav 主界面：对话、文件树与终端"
+            width="1600"
+            height="1000"
+          />
+        </div>
+      </section>
+
+      <section class="band" id="product">
+        <h2 class="band-title reveal">一个窗口，三件事</h2>
+        <p class="band-lead reveal delay-1">
+          Agent 不是在描述它做了什么——你在右边直接看着它 <code>cd</code>、跑测试、写文件。
+        </p>
+        <ul class="pillars">
+          <li class="pillar reveal">
+            <span class="pillar-label">对话</span>
+            <p>流式回合、工具卡片、分支重试，上下文用量一目了然。</p>
+          </li>
+          <li class="pillar reveal delay-1">
+            <span class="pillar-label">文件</span>
+            <p>按需展开的工作区树，agent 改动高亮，空格 Quick Look。</p>
+          </li>
+          <li class="pillar reveal delay-2">
+            <span class="pillar-label">终端</span>
+            <p>真实 PTY。粘性 shell 里，<code>cd</code> 与环境变量会留下来。</p>
+          </li>
+        </ul>
+      </section>
+
+      <section class="band download" id="download">
+        <h2 class="band-title reveal">下载</h2>
+        <p class="band-lead reveal delay-1">
+          从 GitHub Releases 获取构建。未代码签名，首次打开需按说明放行。
+        </p>
+        <div class="download-row reveal delay-2">
+          <a
+            class="btn primary"
+            href="https://github.com/21stware/vav/releases/latest"
+            >Releases · macOS / Windows</a
+          >
+          <a class="btn ghost" href="https://github.com/21stware/vav#安装">安装说明</a>
+        </div>
+        <p class="tiny reveal delay-3">
+          终端里可用 <code>vav .</code> 打开当前目录会话（设置 → vav 命令）。
+        </p>
+      </section>
+    </main>
+
+    <footer class="foot">
+      <div class="foot-brand">
+        <img src="assets/wordmark-dark.png" alt="" width="64" height="20" />
+        <span>21stware</span>
+      </div>
+      <p class="foot-note">
+        非商用许可见
+        <a href="https://github.com/21stware/vav/blob/main/LICENSE">LICENSE</a>
+        · 商用授权
+        <a href="mailto:licensing@21stware.com">licensing@21stware.com</a>
+      </p>
+    </footer>
+
+    <script src="script.js" defer></script>
+  </body>
+</html>
