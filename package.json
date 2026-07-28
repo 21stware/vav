@@ -1,7 +1,7 @@
 {
   "name": "vav",
   "productName": "vav",
-  "version": "1.2.2",
+  "version": "1.3.0",
   "description": "Local-first AI coding agent workstation: chat, filesystem and a real PTY terminal in one window.",
   "license": "PolyForm-Noncommercial-1.0.0",
   "author": "Oboo Cheng",
@@ -110,15 +110,27 @@
             "CFBundleTypeName": "Markdown",
             "CFBundleTypeRole": "Viewer",
             "LSHandlerRank": "Alternate",
-            "CFBundleTypeExtensions": ["md", "markdown", "mdx"],
-            "LSItemContentTypes": ["net.daringfireball.markdown", "public.plain-text"]
+            "CFBundleTypeExtensions": [
+              "md",
+              "markdown",
+              "mdx"
+            ],
+            "LSItemContentTypes": [
+              "net.daringfireball.markdown",
+              "public.plain-text"
+            ]
           },
           {
             "CFBundleTypeName": "CSV",
             "CFBundleTypeRole": "Viewer",
             "LSHandlerRank": "Alternate",
-            "CFBundleTypeExtensions": ["csv", "tsv"],
-            "LSItemContentTypes": ["public.comma-separated-values-text"]
+            "CFBundleTypeExtensions": [
+              "csv",
+              "tsv"
+            ],
+            "LSItemContentTypes": [
+              "public.comma-separated-values-text"
+            ]
           },
           {
             "CFBundleTypeName": "Source Code",
@@ -137,7 +149,11 @@
               "js",
               "jsx"
             ],
-            "LSItemContentTypes": ["public.source-code", "public.json", "public.plain-text"]
+            "LSItemContentTypes": [
+              "public.source-code",
+              "public.json",
+              "public.plain-text"
+            ]
           },
           {
             "CFBundleTypeName": "Files",
@@ -153,19 +169,38 @@
       },
       "fileAssociations": [
         {
-          "ext": ["md", "markdown", "mdx"],
+          "ext": [
+            "md",
+            "markdown",
+            "mdx"
+          ],
           "name": "Markdown",
           "role": "Viewer",
           "rank": "Alternate"
         },
         {
-          "ext": ["csv", "tsv"],
+          "ext": [
+            "csv",
+            "tsv"
+          ],
           "name": "CSV",
           "role": "Viewer",
           "rank": "Alternate"
         },
         {
-          "ext": ["txt", "json", "yaml", "yml", "ipynb", "swift", "py", "ts", "tsx", "js", "jsx"],
+          "ext": [
+            "txt",
+            "json",
+            "yaml",
+            "yml",
+            "ipynb",
+            "swift",
+            "py",
+            "ts",
+            "tsx",
+            "js",
+            "jsx"
+          ],
           "name": "Source",
           "role": "Viewer",
           "rank": "Alternate"
