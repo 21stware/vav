@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { ArrowUp, ChevronDown, CornerUpLeft, Paperclip, Square, X } from 'lucide-react'
+import { ArrowUp, ChevronDown, CornerUpLeft, Paperclip, Quote, Square, X } from 'lucide-react'
 import type { ApprovalMode } from '@shared/types'
 import { PRESET_MODELS } from '@shared/types'
 import type { MessageKey, TParams } from '@shared/i18n'
@@ -34,6 +34,8 @@ function approvalModeOptions(
  */
 /** Stable identity: a fresh [] from a selector would re-render forever. */
 const NO_ATTACHMENTS: string[] = []
+const NO_REFS: import('@shared/types').PreviewRef[] = []
+const NO_CARDS: { ref: import('@shared/types').PreviewRef; comment: string }[] = []
 
 export function Composer(): React.JSX.Element {
   const t = useT()
@@ -41,6 +43,8 @@ export function Composer(): React.JSX.Element {
   const conversation = useSessionStore((s) => s.conversations.find((c) => c.id === s.activeId))
   const draft = useSessionStore((s) => s.drafts[s.activeId] ?? '')
   const attachments = useSessionStore((s) => s.attachments[s.activeId] ?? NO_ATTACHMENTS)
+  const previewRefs = useSessionStore((s) => s.previewRefs[s.activeId] ?? NO_REFS)
+  const commentCards = useSessionStore((s) => s.commentCards[s.activeId] ?? NO_CARDS)
   const quote = useSessionStore((s) => s.quotes[s.activeId] ?? null)
   const turn = useSessionStore((s) => s.turns[s.activeId])
   const settings = useSessionStore((s) => s.settings)
@@ -48,6 +52,7 @@ export function Composer(): React.JSX.Element {
 
   const setDraft = useSessionStore((s) => s.setDraft)
   const setAttachments = useSessionStore((s) => s.setAttachments)
+  const setPreviewRefs = useSessionStore((s) => s.setPreviewRefs)
   const clearQuote = useSessionStore((s) => s.clearQuote)
   const scrollToMessage = useSessionStore((s) => s.scrollToMessage)
   const send = useSessionStore((s) => s.send)
@@ -61,7 +66,12 @@ export function Composer(): React.JSX.Element {
 
   const isRunning = !!turn?.isRunning
   const awaiting = !!turn?.awaitingToolCallId
-  const canSend = !isRunning && (draft.trim().length > 0 || attachments.length > 0)
+  const canSend =
+    !isRunning &&
+    (draft.trim().length > 0 ||
+      attachments.length > 0 ||
+      previewRefs.length > 0 ||
+      commentCards.length > 0)
 
   /** Focused floor / empty-blur floor / hard ceiling (main-chat-search.rpml). */
   const COMPOSER_MIN_FOCUSED_ROWS = 3
@@ -184,6 +194,33 @@ export function Composer(): React.JSX.Element {
         </div>
       )}
       <div className="composer-box">
+        {previewRefs.length > 0 && (
+          <div className="context-refs">
+            {previewRefs.map((ref) => (
+              <span
+                className="chip context-ref-chip"
+                key={ref.id}
+                title={`${ref.filePath} · L${ref.startLine}–${ref.endLine}`}
+              >
+                <Quote size={11} />
+                <span className="chip-label">{ref.label}</span>
+                <span className="context-ref-lines">
+                  L{ref.startLine}–{ref.endLine}
+                </span>
+                <button
+                  className="btn icon-only sm"
+                  style={{ width: 16, height: 16 }}
+                  title={t('composer.removeContext')}
+                  onClick={() =>
+                    setPreviewRefs(activeId, previewRefs.filter((r) => r.id !== ref.id))
+                  }
+                >
+                  <X size={10} />
+                </button>
+              </span>
+            ))}
+          </div>
+        )}
         {attachments.length > 0 && (
           <div className="attachments">
             {attachments.map((path) => (

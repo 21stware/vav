@@ -1,23 +1,20 @@
 import { useEffect, useState } from 'react'
-import { PanelLeft, Plus, Search, Settings } from 'lucide-react'
+import { Download, PanelLeft, Plus, RotateCw, Search, Settings } from 'lucide-react'
 import { useSessionStore } from './state/sessionStore'
 import {
   installSettingsBridge,
   installTurnEventBridge,
+  installUpdateBridge,
   installWindowBridge
 } from './state/sessionStore'
 import { installFsWatchBridge, installPtyBridge, useWorkspaceStore } from './state/workspaceStore'
 import { Sidebar } from './components/Sidebar'
-import { Transcript } from './components/Transcript'
-import { Composer } from './components/Composer'
-import { ToolsPanel } from './components/ToolsPanel'
-import { SearchStrip } from './components/SearchStrip'
-import { PlanOverlay } from './components/PlanOverlay'
-import { ErrorBanner } from './components/ErrorBanner'
+import { ChangeReviewPanel } from './components/ChangeReviewPanel'
+import { SessionDetail, useTerminalAppearance } from './components/SessionDetail'
+import { WorkspaceView } from './components/WorkspaceView'
 import { Button, Modal } from './components/ui'
 import { useAppearance } from './lib/appearance'
 import { installDefaultContextMenu } from './lib/nativeMenu'
-import { applyTerminalAppearance } from './lib/terminalRegistry'
 import { keys } from './lib/platform'
 import { getShortcuts } from './shortcuts'
 import { useT } from './i18n/useT'
@@ -36,6 +33,7 @@ export default function App(): React.JSX.Element {
     const offPty = installPtyBridge()
     const offSettings = installSettingsBridge()
     const offWindow = installWindowBridge()
+    const offUpdates = installUpdateBridge()
     const offMenu = installDefaultContextMenu()
     const offCli = window.vav.onCliOpen((event) => {
       const store = useSessionStore.getState()
@@ -53,6 +51,7 @@ export default function App(): React.JSX.Element {
       offPty()
       offSettings()
       offWindow()
+      offUpdates()
       offMenu()
       offCli()
     }
@@ -63,18 +62,36 @@ export default function App(): React.JSX.Element {
   useMenuCommands()
   useResponsiveSidebar()
 
+  const changeReviewId = useSessionStore((s) => s.changeReviewId)
+
   if (!ready) return <div className="app-shell" />
+
+  if (changeReviewId) {
+    return (
+      <div className="app-shell">
+        <ChangeReviewPanel />
+        <ToastHost />
+      </div>
+    )
+  }
 
   return (
     <div className="app-shell">
       <Titlebar />
       <div className="body-split">
         <SidebarSlot />
-        <Detail />
+        <DetailSlot />
       </div>
       <Overlays />
+      <ToastHost />
     </div>
   )
+}
+
+function DetailSlot(): React.JSX.Element {
+  const activeGroupId = useSessionStore((s) => s.activeGroupId)
+  if (activeGroupId) return <WorkspaceView workdir={activeGroupId} />
+  return <SessionDetail />
 }
 
 function Titlebar(): React.JSX.Element {
@@ -83,6 +100,36 @@ function Titlebar(): React.JSX.Element {
   const openSearch = useSessionStore((s) => s.openSearch)
   const openSettings = useSessionStore((s) => s.openSettings)
   const toggleSidebar = useSessionStore((s) => s.toggleSidebar)
+  const updateState = useSessionStore((s) => s.updateState)
+  const downloadUpdate = useSessionStore((s) => s.downloadUpdate)
+  const installUpdate = useSessionStore((s) => s.installUpdate)
+
+  const updateButton =
+    updateState.phase === 'available' ? (
+      <Button
+        icon={<Download size={14} />}
+        label={t('update.availableButton', { version: updateState.latestVersion ?? '' })}
+        variant="primary"
+        size="sm"
+        onClick={() => void downloadUpdate()}
+      />
+    ) : updateState.phase === 'downloading' ? (
+      <Button
+        icon={<Download size={14} />}
+        label={t('update.downloading', { progress: updateState.progress })}
+        variant="primary"
+        size="sm"
+        disabled
+      />
+    ) : updateState.phase === 'ready' ? (
+      <Button
+        icon={<RotateCw size={14} />}
+        label={t('update.restartInstall')}
+        variant="primary"
+        size="sm"
+        onClick={() => void installUpdate()}
+      />
+    ) : null
 
   return (
     <header className="titlebar">
@@ -100,6 +147,7 @@ function Titlebar(): React.JSX.Element {
         title={t('app.newSessionTitle', { shortcut: keys('⌘N') })}
         onClick={() => void createConversation()}
       />
+      {updateButton}
       <span className="spacer" />
       <Button
         icon={<Search size={14} />}
@@ -122,37 +170,18 @@ function SidebarSlot(): React.JSX.Element | null {
   return visible ? <Sidebar /> : null
 }
 
-function Detail(): React.JSX.Element {
-  const t = useT()
-  const searchOpen = useSessionStore((s) => s.search.open)
-  const errorBanner = useSessionStore((s) => s.errorBanner)
-  const setErrorBanner = useSessionStore((s) => s.setErrorBanner)
-  const openSettings = useSessionStore((s) => s.openSettings)
-
-  const isKeyProblem = !!errorBanner && /401|API Key/i.test(errorBanner)
-
+function ToastHost(): React.JSX.Element | null {
+  const toast = useSessionStore((s) => s.toast)
+  const showToast = useSessionStore((s) => s.showToast)
+  if (!toast) return null
   return (
-    <main className="detail">
-      {errorBanner && (
-        <ErrorBanner
-          message={errorBanner}
-          actionLabel={isKeyProblem ? t('error.openSettings') : undefined}
-          onAction={isKeyProblem ? () => openSettings('api') : undefined}
-          onDismiss={() => setErrorBanner(null)}
-        />
-      )}
-      <div className="detail-stream" data-search={searchOpen}>
-        {searchOpen && <SearchStrip />}
-        <PlanOverlay />
-        <Transcript />
-      </div>
-      {/* Tools and prompt share one surface: what the agent can touch and what
-          you tell it to do are one control area, not two. */}
-      <div className="dock">
-        <ToolsPanel />
-        <Composer />
-      </div>
-    </main>
+    <div className={`app-toast kind-${toast.kind}`} role="status">
+      <div className="app-toast-title">{toast.title}</div>
+      {toast.description && <div className="app-toast-body">{toast.description}</div>}
+      <button type="button" className="app-toast-dismiss" onClick={() => showToast(null)}>
+        ×
+      </button>
+    </div>
   )
 }
 
@@ -183,21 +212,6 @@ function Overlays(): React.JSX.Element {
       </div>
     </Modal>
   )
-}
-
-/**
- * xterm sits outside React, so it needs the font pushed to it.
- *
- * This lives here rather than in the appearance form: the terminals belong to
- * this window, and the change may well have come from the settings window.
- */
-function useTerminalAppearance(): void {
-  const codeFont = useSessionStore((s) => s.settings.codeFont)
-  const fontSize = useSessionStore((s) => s.settings.fontSize)
-
-  useEffect(() => {
-    applyTerminalAppearance(codeFont, Math.max(9, fontSize - 3))
-  }, [codeFont, fontSize])
 }
 
 /** Native menu accelerators arrive here, even when xterm has focus. */

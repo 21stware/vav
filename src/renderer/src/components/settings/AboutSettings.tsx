@@ -1,3 +1,4 @@
+import { RefreshCw } from 'lucide-react'
 import { useSessionStore } from '../../state/sessionStore'
 import { useT } from '../../i18n/useT'
 import { Button } from '../ui'
@@ -7,40 +8,65 @@ import wordmarkDark from '../../assets/wordmark-dark.png'
 export function AboutSettings(): React.JSX.Element {
   const t = useT()
   const about = useSessionStore((s) => s.about)
+  const updateState = useSessionStore((s) => s.updateState)
   const resetSettings = useSessionStore((s) => s.resetSettings)
   const showDialog = useSessionStore((s) => s.showDialog)
   const setShortcutsOpen = useSessionStore((s) => s.setShortcutsOpen)
+  const checkForUpdates = useSessionStore((s) => s.checkForUpdates)
+  const checking = updateState.phase === 'checking'
 
   return (
-    <div className="about-card">
-      <div>
-        <span className="about-logo" role="img" aria-label="vav">
-          <img className="logo-light" src={wordmark} alt="" />
-          <img className="logo-dark" src={wordmarkDark} alt="" />
-        </span>
-        <div className="muted">{about?.version ?? '1.0.0'}</div>
-      </div>
-
-      <div>
-        <div className="kv-row">
-          <span className="kv-label">{t('about.dataLabel')}</span>
-          <span className="kv-value">{t('about.dataValue')}</span>
+    <div className="about-stack">
+      <div className="about-card">
+        <div>
+          <span className="about-logo" role="img" aria-label="vav">
+            <img className="logo-light" src={wordmark} alt="" />
+            <img className="logo-dark" src={wordmarkDark} alt="" />
+          </span>
+          <div className="muted">{t('about.subtitle')}</div>
         </div>
-        <div className="kv-row">
-          <span className="kv-label">{t('about.terminalLabel')}</span>
-          <span className="kv-value">{t('about.terminalValue')}</span>
-        </div>
-        <div className="kv-row">
-          <span className="kv-label">{t('about.networkLabel')}</span>
-          <span className="kv-value">{t('about.networkValue')}</span>
-        </div>
-        <div className="kv-row">
-          <span className="kv-label">{t('about.recordsLabel')}</span>
-          <span className="kv-value">{about?.conversationsPath ?? ''}</span>
+        <div>
+          <div className="kv-row">
+            <span className="kv-label">{t('about.currentVersion')}</span>
+            <span className="kv-value">{about?.version ?? '—'}</span>
+          </div>
+          <div className="kv-row">
+            <span className="kv-label">{t('about.buildNumber')}</span>
+            <span className="kv-value">{about?.buildNumber ?? '—'}</span>
+          </div>
+          <div className="kv-row">
+            <span className="kv-label">{t('about.license')}</span>
+            <span className="kv-value">{t('about.licenseValue')}</span>
+          </div>
         </div>
       </div>
 
-      <div style={{ display: 'flex', gap: 8 }}>
+      <div className="about-card">
+        <div className="about-card-title">{t('about.dataSecurity')}</div>
+        <div>
+          <div className="kv-row">
+            <span className="kv-label">{t('about.dataLabel')}</span>
+            <span className="kv-value">{t('about.dataValue')}</span>
+          </div>
+          <div className="kv-row">
+            <span className="kv-label">{t('about.terminalLabel')}</span>
+            <span className="kv-value">{t('about.terminalValue')}</span>
+          </div>
+          <div className="kv-row">
+            <span className="kv-label">{t('about.networkLabel')}</span>
+            <span className="kv-value">{t('about.networkValue')}</span>
+          </div>
+        </div>
+      </div>
+
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+        <Button
+          icon={<RefreshCw size={14} />}
+          label={checking ? t('about.checkingUpdates') : t('about.checkUpdates')}
+          variant="secondary"
+          disabled={checking}
+          onClick={() => void checkForUpdates()}
+        />
         <Button
           label={t('about.viewShortcuts')}
           variant="secondary"

@@ -8,8 +8,8 @@ import {
   type NativeImage
 } from 'electron'
 import type { AppSettings } from '@shared/types'
-import { existsSync } from 'node:fs'
-import { join } from 'node:path'
+import { existsSync, readFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
 import { APP_NAME, applyDockIcon } from './brand'
 import { t } from './i18n'
 
@@ -117,8 +117,14 @@ export class NotificationCenter {
     this.refreshTrayMenu()
     this.refreshTrayTitle()
     const size = icon.getSize()
+    const scales =
+      typeof (icon as NativeImage & { getScaleFactors?: () => number[] }).getScaleFactors ===
+      'function'
+        ? (icon as NativeImage & { getScaleFactors: () => number[] }).getScaleFactors()
+        : []
     console.log(
-      `[tray] status item ready path=${resolveTrayTemplatePath() ?? 'fallback'} ${size.width}x${size.height} template=${icon.isTemplateImage()}`
+      `[tray] status item ready path=${resolveTrayTemplatePath() ?? 'fallback'} ` +
+        `${size.width}x${size.height} scales=[${scales.join(',')}] template=${icon.isTemplateImage()}`
     )
     return true
   }
@@ -207,32 +213,40 @@ function readNotificationPermission(): NotificationPermission {
 }
 
 /**
- * Brand tray mark: dedicated 16/@2x template PNGs (black + alpha).
+ * Brand tray mark: `trayTemplate.png` + `nina.v@example.com` (+ optional @3x).
  *
  * Never reuse the Dock app icon — scaling a 1024px colour asset into the menu
- * bar is what made the status item look huge and muddy. On Retina, Electron
- * picks `nina.v@example.com` beside the 1x path automatically.
+ * bar is what made the status item look huge and muddy. Prefer path-based
+ * load so Electron/macOS pick the Retina neighbor by filename; then attach any
+ * extra scale factors that `createFromPath` missed.
  */
 function trayIcon(): NativeImage {
-  const path = resolveTrayTemplatePath()
-  if (path) {
-    const image = nativeImage.createFromPath(path)
+  const base = resolveTrayTemplatePath()
+  if (base) {
+    const image = nativeImage.createFromPath(base)
     if (!image.isEmpty()) {
-      // Filename contains "Template"; still set explicitly for non-mac loaders.
+      const dir = dirname(base)
+      const have = new Set(
+        typeof (image as NativeImage & { getScaleFactors?: () => number[] }).getScaleFactors ===
+        'function'
+          ? (image as NativeImage & { getScaleFactors: () => number[] }).getScaleFactors()
+          : [1]
+      )
+      for (const scale of [2, 3] as const) {
+        if (have.has(scale)) continue
+        const path = join(dir, `trayTemplate@${scale}x.png`)
+        if (!existsSync(path)) continue
+        try {
+          image.addRepresentation({
+            scaleFactor: scale,
+            dataURL: `data:image/png;base64,${readFileSync(path).toString('base64')}`
+          })
+        } catch (err) {
+          console.warn(`[tray] failed to add @${scale}x representation`, err)
+        }
+      }
       if (process.platform === 'darwin') image.setTemplateImage(true)
       return image
-    }
-  }
-
-  if (process.platform === 'darwin') {
-    try {
-      const named = nativeImage.createFromNamedImage('NSActionTemplate')
-      if (named && !named.isEmpty()) {
-        named.setTemplateImage(true)
-        return named
-      }
-    } catch {
-      // fall through
     }
   }
 
@@ -243,15 +257,16 @@ function trayIcon(): NativeImage {
 
 function resolveTrayTemplatePath(): string | null {
   const file = 'trayTemplate.png'
-  // Check every layout — branded / preview Electron sometimes reports
-  // `isPackaged` in ways that skip the repo `build/` folder.
+  // Branded dev Electron reports `isPackaged` even when loading the repo, so
+  // never trust that flag alone. Prefer repo `build/`, then bundled resources
+  // (release installs put trays in extraResources).
   const candidates = [
-    join(process.resourcesPath, file),
     join(process.cwd(), 'build', file),
     join(__dirname, '../../build', file),
     join(__dirname, '../../../build', file),
     join(app.getAppPath(), 'build', file),
-    join(app.getAppPath(), '../build', file)
+    join(app.getAppPath(), '../build', file),
+    join(process.resourcesPath, file)
   ]
   const hit = candidates.find((path) => existsSync(path))
   if (!hit) {

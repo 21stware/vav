@@ -13,6 +13,7 @@ export function Button({
   size,
   disabled,
   title,
+  className,
   onClick
 }: {
   label?: string
@@ -21,9 +22,10 @@ export function Button({
   size?: 'sm'
   disabled?: boolean
   title?: string
+  className?: string
   onClick?: (event: React.MouseEvent) => void
 }): React.JSX.Element {
-  const classes = ['btn', variant, size, !label && icon ? 'icon-only' : '']
+  const classes = ['btn', variant, size, !label && icon ? 'icon-only' : '', className]
     .filter(Boolean)
     .join(' ')
   return (

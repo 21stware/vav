@@ -21,7 +21,7 @@ import os
 from PIL import Image, ImageDraw
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-SRC = os.path.join(ROOT, 'brand', 'logo-2.png')
+SRC = os.path.join(ROOT, 'brand', 'logo.png')
 ASSETS = os.path.join(ROOT, 'src', 'renderer', 'src', 'assets')
 BUILD = os.path.join(ROOT, 'build')
 DOCS = os.path.join(ROOT, 'docs')
@@ -58,9 +58,10 @@ ICON_SQUIRCLE_N = 5.0
 ICON_SUPERSAMPLE = 4
 # Square mark reads small on the plate — fill most of the safe area.
 ICON_MARK_WIDTH = 0.88
-# Menu-bar height is ~22pt; fill nearly the full tile so the mark reads.
-TRAY_SIZE = 22
-TRAY_SIZE_2X = 44
+# Menu-bar glyph is ~22pt tall and keeps the wordmark aspect (not crushed into
+# a square — that is what made Retina look low-res). 1x/2x/3x at DPI 72/144/216.
+TRAY_HEIGHT = 22
+TRAY_SCALES = (1, 2, 3)
 
 
 def luminance(pixel):
@@ -132,34 +133,64 @@ def plated(mark, inset):
     return plate
 
 
-def tray_template(mark, size):
-    """Black + alpha menu-bar glyph. Thickened so thin whiskers survive @1x."""
+def tray_size_for_mark(mark):
+    """1x pixel size: height fixed, width follows the wordmark aspect."""
+    aspect = mark.size[0] / max(1, mark.size[1])
+    height = TRAY_HEIGHT
+    width = max(height, round(height * aspect))
+    return width, height
+
+
+def tray_template(mark, width, height):
+    """Render one tray scale straight from the source mark (not upscaled 1x).
+
+    Each of 1x/2x/3x is drawn into an 8× supersampled canvas then LANCZOS
+    down — Retina gets real pixels, not a NEAREST blow-up of the 22pt tile.
+    """
     from PIL import ImageFilter
 
-    # Alpha from any opaque brand ink (navy + lavender → one silhouette).
+    hi_w = width * 8
+    hi_h = height * 8
     alpha = mark.split()[3]
-    work = alpha.resize((alpha.width * 2, alpha.height * 2), Image.NEAREST)
-    for _ in range(2 if size <= 22 else 1):
-        work = work.filter(ImageFilter.MaxFilter(3))
-    work = work.filter(ImageFilter.GaussianBlur(0.45))
-    work = work.point(lambda v: 255 if v > 32 else 0)
+    fit_h = int(hi_h * 0.9)
+    scale = fit_h / alpha.size[1]
+    art_w = max(1, round(alpha.size[0] * scale))
+    art_h = max(1, round(alpha.size[1] * scale))
+    work = alpha.resize((art_w, art_h), Image.LANCZOS)
 
-    # Almost no padding — status items read tiny if the glyph floats in empty space.
-    gw, gh = work.size
-    side = int(max(gw, gh) * 1.04)
-    canvas = Image.new('L', (side, side), 0)
-    canvas.paste(work, ((side - gw) // 2, (side - gh) // 2))
-    gray = canvas.resize((size, size), Image.LANCZOS)
-    gray = gray.point(lambda v: 0 if v < 36 else min(255, int(v * 1.2)))
+    # Thicken ~0.6–0.8px of the destination size, in supersample space.
+    dilate = 5 if height <= TRAY_HEIGHT else (7 if height <= TRAY_HEIGHT * 2 else 9)
+    work = work.filter(ImageFilter.MaxFilter(dilate))
+    work = work.filter(ImageFilter.GaussianBlur(0.35))
 
-    out = Image.new('RGBA', (size, size), (0, 0, 0, 0))
+    canvas = Image.new('L', (hi_w, hi_h), 0)
+    canvas.paste(work, ((hi_w - art_w) // 2, (hi_h - art_h) // 2))
+    gray = canvas.resize((width, height), Image.LANCZOS)
+
+    out = Image.new('RGBA', (width, height), (0, 0, 0, 0))
     px, g = out.load(), gray.load()
-    for y in range(size):
-        for x in range(size):
-            a = g[x, y]
-            if a:
-                px[x, y] = (0, 0, 0, a)
+    for y in range(height):
+        for x in range(width):
+            value = g[x, y]
+            # Keep a short AA ramp; crush the muddy mid-greys that read as blur.
+            if value < 28:
+                continue
+            if value > 200:
+                alpha_v = 255
+            else:
+                alpha_v = min(255, int(40 + (value - 28) * (215 / 172)))
+            px[x, y] = (0, 0, 0, alpha_v)
     return out
+
+
+def tray_filename(scale):
+    return 'trayTemplate.png' if scale == 1 else f'trayTemplate@{scale}x.png'
+
+
+def save_tray_png(image, path, dpi):
+    """Write PNG with DPI; open-by-handle so `@2x` filenames do not confuse Pillow."""
+    with open(path, 'wb') as handle:
+        image.save(handle, format='PNG', dpi=(dpi, dpi))
 
 
 def main():
@@ -199,13 +230,34 @@ def main():
     )
     print(f'icon.ico {"/".join(str(size) for size in ICON_WIN_SIZES)}')
 
-    tray_1x = tray_template(mark, TRAY_SIZE)
-    tray_2x = tray_template(mark, TRAY_SIZE_2X)
-    tray_1x.save(os.path.join(BUILD, 'trayTemplate.png'))
-    tray_2x_name = 'trayTemplate' + '@2x.png'
-    tray_2x.save(os.path.join(BUILD, tray_2x_name))
-    print(f'trayTemplate.png {tray_1x.size[0]}x{tray_1x.size[1]}')
-    print(f'{tray_2x_name} {tray_2x.size[0]}x{tray_2x.size[1]}')
+    width_1x, height_1x = tray_size_for_mark(mark)
+    for scale in TRAY_SCALES:
+        width, height = width_1x * scale, height_1x * scale
+        tray = tray_template(mark, width, height)
+        name = tray_filename(scale)
+        path = os.path.join(BUILD, name)
+        save_tray_png(tray, path, dpi=72 * scale)
+        # Belt-and-braces: sips DPI metadata is what AppKit/Electron docs ask for.
+        try:
+            import subprocess
+
+            subprocess.run(
+                [
+                    'sips',
+                    '-s',
+                    'dpiWidth',
+                    str(72 * scale),
+                    '-s',
+                    'dpiHeight',
+                    str(72 * scale),
+                    path,
+                ],
+                check=False,
+                capture_output=True,
+            )
+        except OSError:
+            pass
+        print(f'{name} {width}x{height} @ {72 * scale}dpi')
 
 
 if __name__ == '__main__':

@@ -5,16 +5,34 @@ import type {
   AppSettings,
   ChatMessage,
   ConversationMeta,
+  PreviewRef,
   QuoteDraft,
   TokenSnapshot,
   TurnPhase
 } from '@shared/types'
 import { DEFAULT_SETTINGS } from '@shared/types'
+import type { ChangeSet, UpdateState } from '@shared/changeSet'
 import { resolveLocale } from '@shared/i18n'
 import { tt } from '../i18n/useT'
 import { threadPath } from '@shared/thread'
 import { getProjection, disposeProjection } from './StreamProjection'
 import { AGENT_TAB_ID, useWorkspaceStore } from './workspaceStore'
+
+const IDLE_UPDATE: UpdateState = {
+  phase: 'idle',
+  currentVersion: '',
+  latestVersion: null,
+  releaseUrl: null,
+  downloadUrl: null,
+  progress: 0,
+  message: null
+}
+
+export interface ToastState {
+  kind: 'info' | 'success' | 'error'
+  title: string
+  description?: string
+}
 
 export type SettingsCategory =
   | 'api'
@@ -22,6 +40,7 @@ export type SettingsCategory =
   | 'appearance'
   | 'notifications'
   | 'cli'
+  | 'file-associations'
   | 'about'
 
 export interface TurnRuntime {
@@ -124,6 +143,12 @@ interface SessionState extends LayoutPrefs {
   attachments: Record<string, string[]>
   /** Pending quote strip above the composer (main-chat.rpml §引用). */
   quotes: Record<string, QuoteDraft | null>
+  /** Preview selection chips pinned above the composer (file-preview edit). */
+  previewRefs: Record<string, PreviewRef[]>
+  /** Pick mode active (comment picker) — crosshair toggle from file preview. */
+  pickMode: Record<string, boolean>
+  /** Comment cards from Pick mode — block ref + per-block comment text. */
+  commentCards: Record<string, { ref: PreviewRef; comment: string }[]>
   /** Message id briefly highlighted after quote-strip / bubble jump. */
   flashMessageId: string | null
   flashTick: number
@@ -135,18 +160,42 @@ interface SessionState extends LayoutPrefs {
   search: SearchState
   errorBanner: string | null
   dialog: DialogState | null
+  toast: ToastState | null
   settingsCategory: SettingsCategory
   shortcutsOpen: boolean
   composerFocusTick: number
+  /** Bumped when a comment card is created so its textarea can auto-focus. */
+  commentFocusId: string | null
   /**
    * Bumped by ⌘⇧O / menu command so ToolsPanel can open the native workspace
    * menu without holding open/closed boolean state in the store.
    */
   workspaceMenuNonce: number
 
+  /**
+   * When set, the main detail column shows Workspace View for this workdir
+   * (sidebar-conversation-list / workspace-view.rpml).
+   */
+  activeGroupId: string | null
+  /** Workspace-level agent conversation ids keyed by workdir path. */
+  workspaceAgentByPath: Record<string, string>
+  /** File path → conversationId for standalone file preview windows. */
+  previewAgentByPath: Record<string, string>
+
+  /** Open Change Review overlay (null = closed). */
+  changeReviewId: string | null
+  changeSet: ChangeSet | null
+  /** Pending review counts keyed by conversation (banner when overlay closed). */
+  pendingReviewByConversation: Record<string, { changeSetId: string; count: number }>
+  updateState: UpdateState
+
   /** A detached window passes the one conversation it exists to show. */
   bootstrap(pinnedConversationId?: string): Promise<void>
   selectConversation(id: string, options?: { additive?: boolean; range?: boolean }): Promise<void>
+  /** Toggle workspace group selection → Workspace View. */
+  selectWorkspaceGroup(workdir: string | null): Promise<void>
+  /** Ensure a durable agent conversation exists for this workspace path. */
+  ensureWorkspaceAgent(workdir: string): Promise<string>
   loadMessages(id: string): Promise<void>
   createConversation(options?: {
     workingDirectory?: string | null
@@ -175,6 +224,13 @@ interface SessionState extends LayoutPrefs {
   setAttachments(id: string, paths: string[]): void
   setQuote(id: string, quote: QuoteDraft | null): void
   clearQuote(id?: string): void
+  setPreviewRefs(id: string, refs: PreviewRef[]): void
+  clearPreviewRefs(id?: string): void
+  setPickMode(id: string, on: boolean): void
+  setCommentCards(id: string, cards: { ref: PreviewRef; comment: string }[]): void
+  updateCommentCard(id: string, refId: string, comment: string): void
+  removeCommentCard(id: string, refId: string): void
+  clearCommentCards(id?: string): void
   /** Scroll transcript to a message and flash its background briefly. */
   scrollToMessage(messageId: string): void
   /** Reload token history / cache clocks from disk (popover open / 2s refresh). */
@@ -204,6 +260,21 @@ interface SessionState extends LayoutPrefs {
   setErrorBanner(message: string | null): void
   showDialog(dialog: DialogState): void
   closeDialog(): void
+  showToast(toast: ToastState | null): void
+
+  openChangeReview(changeSetId: string): Promise<void>
+  closeChangeReview(): void
+  refreshChangeSet(): Promise<void>
+  acceptChangeFiles(filePaths: string[]): Promise<void>
+  rejectChangeFiles(filePaths: string[]): Promise<void>
+  acceptAllChanges(): Promise<void>
+  rejectAllChanges(): Promise<void>
+  undoChangeFile(filePath: string): Promise<void>
+  applyChangeEdit(filePath: string, content: string): Promise<void>
+
+  checkForUpdates(): Promise<void>
+  downloadUpdate(): Promise<void>
+  installUpdate(): Promise<void>
 
   toggleSidebar(): void
   toggleToolsPanel(): void
@@ -212,6 +283,8 @@ interface SessionState extends LayoutPrefs {
   togglePanelSegment(): void
   setPanelHeight(height: number): void
   focusComposer(): void
+  focusCommentCard(refId: string): void
+  setPreviewAgentForPath(path: string, conversationId: string): void
   openWorkspaceSwitcher(): void
 
   applyTurnEvent(event: import('@shared/types').TurnEvent): void
@@ -246,6 +319,9 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   drafts: {},
   attachments: {},
   quotes: {},
+  previewRefs: {},
+  pickMode: {},
+  commentCards: {},
   flashMessageId: null,
   flashTick: 0,
   tokenHistories: {},
@@ -255,14 +331,24 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   search: { open: false, query: '', matchIds: [], index: 0, tick: 0 },
   errorBanner: null,
   dialog: null,
+  toast: null,
   settingsCategory: 'api',
   shortcutsOpen: false,
   composerFocusTick: 0,
+  commentFocusId: null,
   workspaceMenuNonce: 0,
+  activeGroupId: null,
+  workspaceAgentByPath: loadWorkspaceAgents(),
+  previewAgentByPath: loadPreviewAgents(),
+  changeReviewId: null,
+  changeSet: null,
+  pendingReviewByConversation: {},
+  updateState: IDLE_UPDATE,
 
   async bootstrap(pinnedConversationId) {
     const data = await window.vav.bootstrap()
     const activeId = pinnedConversationId ?? data.activeConversationId
+    const updateState = await window.vav.updates.getState().catch(() => IDLE_UPDATE)
 
     set({
       ready: true,
@@ -275,9 +361,54 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       pinnedConversationId: pinnedConversationId ?? null,
       home: data.home,
       tmp: data.tmp,
-      about: data.about
+      about: data.about,
+      updateState: {
+        ...updateState,
+        currentVersion: updateState.currentVersion || data.about.version
+      }
     })
     if (activeId) await get().selectConversation(activeId)
+  },
+
+  async selectWorkspaceGroup(workdir) {
+    if (!workdir) {
+      set({ activeGroupId: null })
+      return
+    }
+    if (get().activeGroupId === workdir) {
+      set({ activeGroupId: null })
+      return
+    }
+    // Enter Workspace View immediately so createConversation's selectConversation
+    // can restore the same group instead of flashing the session detail pane.
+    set({ activeGroupId: workdir })
+    const agentId = await get().ensureWorkspaceAgent(workdir)
+    set({ activeGroupId: workdir, activeId: agentId, selectedIds: [agentId] })
+    await get().loadMessages(agentId)
+    await useWorkspaceStore.getState().bindConversation(agentId, workdir)
+  },
+
+  async ensureWorkspaceAgent(workdir) {
+    const existing = get().workspaceAgentByPath[workdir]
+    if (existing && get().conversations.some((c) => c.id === existing)) return existing
+
+    // Prefer an existing conversation already rooted here (reuse quietly).
+    const rooted = get().conversations.find(
+      (c) => !c.archived && c.workingDirectory === workdir
+    )
+    if (rooted) {
+      const map = { ...get().workspaceAgentByPath, [workdir]: rooted.id }
+      set({ workspaceAgentByPath: map })
+      saveWorkspaceAgents(map)
+      return rooted.id
+    }
+
+    await get().createConversation({ workingDirectory: workdir })
+    const id = get().activeId
+    const map = { ...get().workspaceAgentByPath, [workdir]: id }
+    set({ workspaceAgentByPath: map, activeGroupId: workdir })
+    saveWorkspaceAgents(map)
+    return id
   },
 
   async selectConversation(id, options) {
@@ -305,7 +436,8 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     }
 
     // Switching never cancels an in-flight turn; it only rebinds the detail column.
-    set({ activeId: id, selectedIds: nextSelection })
+    // Selecting a session exits Workspace View.
+    set({ activeId: id, selectedIds: nextSelection, activeGroupId: null })
     await get().loadMessages(id)
 
     const conversation = get().conversations.find((c) => c.id === id)
@@ -396,6 +528,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   },
 
   async createConversation(options) {
+    const keepGroupId = get().activeGroupId
     const meta = await window.vav.conversations.create(options)
     // Main publishes the full list on create; `onChanged` may already have
     // applied it by the time we get here. Prepending unconditionally would
@@ -408,6 +541,10 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       activeLeaf: { ...state.activeLeaf, [meta.id]: null }
     }))
     await get().selectConversation(meta.id)
+    // Creating a session inside the open Workspace View must not kick the user out.
+    if (keepGroupId && meta.workingDirectory === keepGroupId) {
+      set({ activeGroupId: keepGroupId })
+    }
     get().focusComposer()
   },
 
@@ -631,6 +768,50 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     set((state) => ({ quotes: { ...state.quotes, [target]: null } }))
   },
 
+  setPreviewRefs(id, refs) {
+    set((state) => ({ previewRefs: { ...state.previewRefs, [id]: refs } }))
+  },
+
+  clearPreviewRefs(id) {
+    const target = id ?? get().activeId
+    if (!target) return
+    set((state) => ({ previewRefs: { ...state.previewRefs, [target]: [] } }))
+  },
+
+  setPickMode(id, on) {
+    set((state) => ({ pickMode: { ...state.pickMode, [id]: on } }))
+  },
+
+  setCommentCards(id, cards) {
+    set((state) => ({ commentCards: { ...state.commentCards, [id]: cards } }))
+  },
+
+  updateCommentCard(id, refId, comment) {
+    set((state) => ({
+      commentCards: {
+        ...state.commentCards,
+        [id]: (state.commentCards[id] ?? []).map((c) =>
+          c.ref.id === refId ? { ...c, comment } : c
+        )
+      }
+    }))
+  },
+
+  removeCommentCard(id, refId) {
+    set((state) => ({
+      commentCards: {
+        ...state.commentCards,
+        [id]: (state.commentCards[id] ?? []).filter((c) => c.ref.id !== refId)
+      }
+    }))
+  },
+
+  clearCommentCards(id) {
+    const target = id ?? get().activeId
+    if (!target) return
+    set((state) => ({ commentCards: { ...state.commentCards, [target]: [] } }))
+  },
+
   scrollToMessage(messageId) {
     set((state) => ({
       flashMessageId: messageId,
@@ -639,10 +820,12 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   },
 
   async send(text, attachments) {
-    const { activeId, settings, turns, quotes } = get()
+    const { activeId, settings, turns, quotes, previewRefs, commentCards } = get()
     if (!activeId) return
     if (turns[activeId]?.isRunning) return
-    if (!text.trim() && attachments.length === 0) return
+    const refs = previewRefs[activeId] ?? []
+    const cards = commentCards[activeId] ?? []
+    if (!text.trim() && attachments.length === 0 && refs.length === 0 && cards.length === 0) return
 
     if (!settings.apiKeyPresent) {
       get().showDialog({
@@ -656,16 +839,34 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
     const quote = quotes[activeId] ?? null
 
+    // Comment cards: inject block content + user comments into the message text,
+    // and also add their refs to the focused selection context.
+    const cardContext = cards.length
+      ? '\n\n' +
+        cards
+          .map(
+            (c) =>
+              `## Comment on ${c.ref.label}\n\`\`\`\n${c.ref.text}\n\`\`\`\n${c.comment || '(no comment)'}`
+          )
+          .join('\n\n')
+      : ''
+    const composedText = text + cardContext
+    const allRefs = cards.length
+      ? [...refs, ...cards.map((c) => c.ref)]
+      : refs
+
     // No optimistic echo: the stored message comes back as a `user` turn event
     // a moment later, already carrying the id and parent the tree needs.
     set((state) => ({
       drafts: { ...state.drafts, [activeId]: '' },
       attachments: { ...state.attachments, [activeId]: [] },
       quotes: { ...state.quotes, [activeId]: null },
+      previewRefs: { ...state.previewRefs, [activeId]: [] },
+      commentCards: { ...state.commentCards, [activeId]: [] },
       errorBanner: null
     }))
 
-    await window.vav.agent.send(activeId, text, attachments, quote)
+    await window.vav.agent.send(activeId, composedText, attachments, quote, allRefs)
   },
 
   async regenerate(messageId) {
@@ -848,6 +1049,134 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     set({ dialog: null })
   },
 
+  showToast(toast) {
+    set({ toast })
+    if (toast) {
+      window.setTimeout(() => {
+        if (get().toast === toast) set({ toast: null })
+      }, 4200)
+    }
+  },
+
+  async openChangeReview(changeSetId) {
+    const changeSet = await window.vav.changeSets.get(changeSetId)
+    if (!changeSet) return
+    set({ changeReviewId: changeSetId, changeSet })
+  },
+
+  closeChangeReview() {
+    set({ changeReviewId: null })
+  },
+
+  async refreshChangeSet() {
+    const id = get().changeReviewId
+    if (!id) return
+    const changeSet = await window.vav.changeSets.get(id)
+    if (!changeSet) {
+      set({ changeReviewId: null, changeSet: null })
+      return
+    }
+    set({ changeSet })
+    syncPendingBanner(set, changeSet)
+  },
+
+  async acceptChangeFiles(filePaths) {
+    const id = get().changeReviewId
+    if (!id || filePaths.length === 0) return
+    const changeSet = await window.vav.changeSets.accept(id, filePaths)
+    if (changeSet) {
+      set({ changeSet })
+      syncPendingBanner(set, changeSet)
+      maybeCloseReview(set, changeSet)
+    }
+  },
+
+  async rejectChangeFiles(filePaths) {
+    const id = get().changeReviewId
+    if (!id || filePaths.length === 0) return
+    const changeSet = await window.vav.changeSets.reject(id, filePaths)
+    if (changeSet) {
+      set({ changeSet })
+      syncPendingBanner(set, changeSet)
+      maybeCloseReview(set, changeSet)
+    }
+  },
+
+  async acceptAllChanges() {
+    const id = get().changeReviewId
+    if (!id) return
+    const changeSet = await window.vav.changeSets.acceptAll(id)
+    if (changeSet) {
+      set({ changeSet, changeReviewId: null })
+      syncPendingBanner(set, changeSet)
+    }
+  },
+
+  async rejectAllChanges() {
+    const id = get().changeReviewId
+    if (!id) return
+    const changeSet = await window.vav.changeSets.rejectAll(id)
+    if (changeSet) {
+      set({ changeSet, changeReviewId: null })
+      syncPendingBanner(set, changeSet)
+    }
+  },
+
+  async undoChangeFile(filePath) {
+    const id = get().changeReviewId
+    if (!id) return
+    const changeSet = await window.vav.changeSets.undo(id, filePath)
+    if (changeSet) {
+      set({ changeSet })
+      syncPendingBanner(set, changeSet)
+    }
+  },
+
+  async applyChangeEdit(filePath, content) {
+    const id = get().changeReviewId
+    if (!id) return
+    const changeSet = await window.vav.changeSets.applyEdit(id, filePath, content)
+    if (changeSet) {
+      set({ changeSet })
+      syncPendingBanner(set, changeSet)
+      maybeCloseReview(set, changeSet)
+    }
+  },
+
+  async checkForUpdates() {
+    const state = await window.vav.updates.check()
+    set({ updateState: state })
+    const version = state.latestVersion ?? state.currentVersion
+    if (state.phase === 'latest') {
+      get().showToast({
+        kind: 'info',
+        title: tt('update.toastLatestTitle'),
+        description: tt('update.toastLatestBody', { version: state.currentVersion })
+      })
+    } else if (state.phase === 'available') {
+      get().showToast({
+        kind: 'success',
+        title: tt('update.toastAvailableTitle', { version }),
+        description: tt('update.toastAvailableBody')
+      })
+    } else if (state.phase === 'error') {
+      get().showToast({
+        kind: 'error',
+        title: tt('update.toastErrorTitle'),
+        description: tt('update.toastErrorBody')
+      })
+    }
+  },
+
+  async downloadUpdate() {
+    const state = await window.vav.updates.openDownload()
+    set({ updateState: state })
+  },
+
+  async installUpdate() {
+    await window.vav.window.relaunch()
+  },
+
   toggleSidebar() {
     set((state) => {
       const next = { ...currentLayout(state), sidebarVisible: !state.sidebarVisible }
@@ -924,6 +1253,16 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
   focusComposer() {
     set((state) => ({ composerFocusTick: state.composerFocusTick + 1 }))
+  },
+
+  focusCommentCard(refId: string) {
+    set({ commentFocusId: refId })
+  },
+
+  setPreviewAgentForPath(path: string, conversationId: string) {
+    const map = { ...get().previewAgentByPath, [path]: conversationId }
+    set({ previewAgentByPath: map })
+    savePreviewAgents(map)
   },
 
   openWorkspaceSwitcher() {
@@ -1027,9 +1366,43 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         if (event.error) set({ errorBanner: event.error })
         break
       }
+
+      case 'change-review': {
+        set((state) => ({
+          pendingReviewByConversation: {
+            ...state.pendingReviewByConversation,
+            [id]: { changeSetId: event.changeSetId, count: event.pendingCount }
+          }
+        }))
+        if (get().activeId === id) {
+          void get().openChangeReview(event.changeSetId)
+        }
+        break
+      }
     }
   }
 }))
+
+function syncPendingBanner(
+  set: (partial: Partial<SessionState> | ((s: SessionState) => Partial<SessionState>)) => void,
+  changeSet: ChangeSet
+): void {
+  const pending = changeSet.files.filter((f) => f.status === 'pending').length
+  set((state) => {
+    const next = { ...state.pendingReviewByConversation }
+    if (pending === 0) delete next[changeSet.conversationId]
+    else next[changeSet.conversationId] = { changeSetId: changeSet.id, count: pending }
+    return { pendingReviewByConversation: next }
+  })
+}
+
+function maybeCloseReview(
+  set: (partial: Partial<SessionState>) => void,
+  changeSet: ChangeSet
+): void {
+  const pending = changeSet.files.some((f) => f.status === 'pending')
+  if (!pending) set({ changeReviewId: null })
+}
 
 /**
  * The thread on screen: root → active leaf, with other branches left out.
@@ -1090,6 +1463,47 @@ function patchTurn(
 
 const seenTools = new Map<string, Set<string>>()
 
+const WORKSPACE_AGENT_KEY = 'vav.workspaceAgentByPath'
+const PREVIEW_AGENT_KEY = 'vav.previewAgentByPath'
+
+function loadWorkspaceAgents(): Record<string, string> {
+  try {
+    const raw = localStorage.getItem(WORKSPACE_AGENT_KEY)
+    if (!raw) return {}
+    const parsed = JSON.parse(raw) as Record<string, string>
+    return parsed && typeof parsed === 'object' ? parsed : {}
+  } catch {
+    return {}
+  }
+}
+
+function saveWorkspaceAgents(map: Record<string, string>): void {
+  try {
+    localStorage.setItem(WORKSPACE_AGENT_KEY, JSON.stringify(map))
+  } catch {
+    // ignore
+  }
+}
+
+function loadPreviewAgents(): Record<string, string> {
+  try {
+    const raw = localStorage.getItem(PREVIEW_AGENT_KEY)
+    if (!raw) return {}
+    const parsed = JSON.parse(raw) as Record<string, string>
+    return parsed && typeof parsed === 'object' ? parsed : {}
+  } catch {
+    return {}
+  }
+}
+
+function savePreviewAgents(map: Record<string, string>): void {
+  try {
+    localStorage.setItem(PREVIEW_AGENT_KEY, JSON.stringify(map))
+  } catch {
+    // ignore
+  }
+}
+
 function countTools(get: () => SessionState, conversationId: string, toolId: string): number {
   let set = seenTools.get(conversationId)
   if (!set) {
@@ -1125,5 +1539,12 @@ export function installSettingsBridge(): () => void {
 export function installWindowBridge(): () => void {
   return window.vav.conversations.onChanged((conversations) => {
     useSessionStore.setState({ conversations })
+  })
+}
+
+/** Keeps toolbar / About update UI in step with the main-process checker. */
+export function installUpdateBridge(): () => void {
+  return window.vav.updates.onChanged((updateState) => {
+    useSessionStore.setState({ updateState })
   })
 }

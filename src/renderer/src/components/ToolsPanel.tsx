@@ -3,6 +3,7 @@ import {
   ArrowLeftRight,
   ChevronDown,
   ChevronUp,
+  Crosshair,
   Folder,
   Terminal as TerminalIcon
 } from 'lucide-react'
@@ -29,7 +30,11 @@ import { Button, Chip } from './ui'
  * Workspace change lives on a trailing control inside the path capsule so it
  * does not fight the accordion click. Recent directories open as a native menu.
  */
-export function ToolsPanel(): React.JSX.Element {
+export function ToolsPanel({
+  variant = 'main'
+}: {
+  variant?: 'main' | 'preview-edit'
+}): React.JSX.Element {
   const t = useT()
   const activeId = useSessionStore((s) => s.activeId)
   const conversation = useSessionStore((s) => s.conversations.find((c) => c.id === s.activeId))
@@ -49,6 +54,9 @@ export function ToolsPanel(): React.JSX.Element {
   const setWorkingDirectory = useSessionStore((s) => s.setWorkingDirectory)
   const showDialog = useSessionStore((s) => s.showDialog)
 
+  const setPickMode = useSessionStore((s) => s.setPickMode)
+  const pickModeOn = useSessionStore((s) => !!s.pickMode[s.activeId])
+
   const workspace = useWorkspaceStore((s) => s.workspaces[activeId])
   const newBash = useWorkspaceStore((s) => s.newBash)
   const selectTab = useWorkspaceStore((s) => s.selectTab)
@@ -65,6 +73,7 @@ export function ToolsPanel(): React.JSX.Element {
   const tabs = workspace?.tabs ?? []
   const activeTabId = workspace?.activeTabId ?? ''
   const filesOn = !collapsed && segment === 'files'
+  const previewEdit = variant === 'preview-edit'
 
   const locateWorkspace = useSessionStore((s) => s.locateWorkspace)
 
@@ -189,31 +198,47 @@ export function ToolsPanel(): React.JSX.Element {
     void newBash(activeId, 80, 24)
   }
 
+  // In preview-edit mode there's no File System tab — force terminal segment.
+  useEffect(() => {
+    if (previewEdit && segment === 'files') setPanelSegment('terminal')
+  }, [previewEdit, segment, setPanelSegment])
+
   return (
     <div className="tools-panel">
       {!collapsed && <div className="panel-resizer" onMouseDown={onResizeStart} />}
 
       <div className="tools-header">
         <div className="tools-header-lead">
-          <div className="workdir-chip" ref={pathChipRef}>
-            <Chip
-              label={label}
-              icon={<Folder size={12} />}
-              title={workdir ?? t('sidebar.temporaryWorkspace')}
-              active={filesOn}
-              onClick={() => {
-                if (filesOn) setToolsCollapsed(true)
-                else setPanelSegment('files')
-              }}
-              onContextMenu={(event) => {
-                event.preventDefault()
-                void showMenu(pathContextItems(), { x: event.clientX, y: event.clientY })
-              }}
-              onAction={() => openWorkspaceMenu(pathChipRef.current)}
-              actionIcon={<ArrowLeftRight size={11} />}
-              actionTitle={t('tools.switchWorkdirTitle', { shortcut: keys('⌘⇧O') })}
-            />
-          </div>
+          {previewEdit ? (
+            <button
+              type="button"
+              className={`pick-mode-btn${pickModeOn ? ' active' : ''}`}
+              title={t('composer.pickMode')}
+              onClick={() => setPickMode(activeId, !pickModeOn)}
+            >
+              <Crosshair size={12} />
+            </button>
+          ) : (
+            <div className="workdir-chip" ref={pathChipRef}>
+              <Chip
+                label={label}
+                icon={<Folder size={12} />}
+                title={workdir ?? t('sidebar.temporaryWorkspace')}
+                active={filesOn}
+                onClick={() => {
+                  if (filesOn) setToolsCollapsed(true)
+                  else setPanelSegment('files')
+                }}
+                onContextMenu={(event) => {
+                  event.preventDefault()
+                  void showMenu(pathContextItems(), { x: event.clientX, y: event.clientY })
+                }}
+                onAction={() => openWorkspaceMenu(pathChipRef.current)}
+                actionIcon={<ArrowLeftRight size={11} />}
+                actionTitle={t('tools.switchWorkdirTitle', { shortcut: keys('⌘⇧O') })}
+              />
+            </div>
+          )}
           <span className="tools-header-divider" aria-hidden="true" />
         </div>
 
@@ -265,9 +290,11 @@ export function ToolsPanel(): React.JSX.Element {
         data-resizing={dragHeight !== null}
         style={{ height: bodyHeight }}
       >
-        <div className="tools-pane" data-hidden={collapsed || segment !== 'files'}>
-          <FilesPanel visible={!collapsed && segment === 'files'} />
-        </div>
+        {!previewEdit && (
+          <div className="tools-pane" data-hidden={collapsed || segment !== 'files'}>
+            <FilesPanel visible={!collapsed && segment === 'files'} />
+          </div>
+        )}
         <div className="tools-pane" data-hidden={collapsed || segment !== 'terminal'}>
           <TerminalPanel visible={!collapsed && segment === 'terminal'} />
         </div>

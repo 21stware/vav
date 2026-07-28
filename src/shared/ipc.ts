@@ -6,12 +6,14 @@ import type {
   ConversationMeta,
   DirectoryListing,
   FileSortKey,
+  PreviewRef,
   QuoteDraft,
   ShellKind,
   TurnEvent,
   TurnStatus,
   ValidateKeyResult
 } from './types'
+import type { ChangeSet, UpdateState } from './changeSet'
 import type { Platform } from './platform'
 
 export interface Bootstrap {
@@ -54,7 +56,19 @@ export type SettingsView =
   | 'appearance'
   | 'notifications'
   | 'cli'
+  | 'file-associations'
   | 'about'
+
+export interface FileAssociationStatus {
+  id: string
+  label: string
+  extensions: string[]
+  uti: string
+  tier: 'p0' | 'p1'
+  defaultApp: string | null
+  defaultBundleId: string | null
+  isVav: boolean
+}
 
 export type CliInstallLocation = '/usr/local/bin' | '~/.local/bin'
 
@@ -127,6 +141,15 @@ export interface VavApi {
     cliSetLocation(location: CliInstallLocation): Promise<CliStatus>
     cliInstall(): Promise<CliStatus>
     cliUninstall(): Promise<CliStatus>
+    /** macOS Launch Services: list / set / unset default opener per format. */
+    fileAssociations(): Promise<FileAssociationStatus[]>
+    fileAssociationForPath(path: string): Promise<FileAssociationStatus | null>
+    setFileAssociation(formatId: string): Promise<FileAssociationStatus>
+    unsetFileAssociation(formatId: string): Promise<FileAssociationStatus>
+    registerAllFileAssociations(): Promise<{
+      updated: string[]
+      failed: { id: string; error: string }[]
+    }>
   }
 
   conversations: {
@@ -172,7 +195,8 @@ export interface VavApi {
       conversationId: string,
       text: string,
       attachments: string[],
-      quote?: QuoteDraft | null
+      quote?: QuoteDraft | null,
+      contextBlocks?: PreviewRef[] | null
     ): Promise<void>
     cancel(conversationId: string): Promise<void>
     answer(conversationId: string, toolCallId: string, answer: string): Promise<void>
@@ -194,6 +218,11 @@ export interface VavApi {
     onDirty(handler: (event: FsDirtyEvent) => void): () => void
     /** Resolves a dropped File to its absolute path. */
     pathForFile(file: File): string
+    /** Overwrite an existing text file (file-preview Save). */
+    write(
+      path: string,
+      content: string
+    ): Promise<{ ok: true } | { ok: false; error?: string }>
     /** Save dialog + write text contents (markdown Copy/Save, file viewer). */
     saveAs(
       defaultName: string,
@@ -206,6 +235,14 @@ export interface VavApi {
     trash(paths: string[]): Promise<{ ok: true } | { ok: false; error: string }>
     /** Metadata + optional data URL for in-app preview. */
     inspect(path: string): Promise<FileInspectResult>
+    /**
+     * AST / structured selectable blocks for a file's text (TS/JS via
+     * TypeScript compiler; null = use renderer heuristic).
+     */
+    parseBlocks(
+      path: string,
+      text: string
+    ): Promise<import('./previewBlock').PreviewBlock[] | null>
   }
 
   pty: {
@@ -237,7 +274,15 @@ export interface VavApi {
     /** Fresh conversation in its own window — the ⌘⇧↵ path. */
     newDetachedSession(): Promise<void>
     /** Opens (or raises) a standalone file preview window for `path`. */
-    openFilePreview(path: string): Promise<void>
+    openFilePreview(
+      path: string,
+      options?: { origin?: 'dock' | 'session'; conversationId?: string }
+    ): Promise<void>
+    /** When true, the next native close is deferred to `onPreviewCloseAttempt`. */
+    setPreviewCloseGuard(enabled: boolean): Promise<void>
+    /** Close the preview window after the renderer cleared the unsaved guard. */
+    forcePreviewClose(): Promise<void>
+    onPreviewCloseAttempt(handler: () => void): () => void
     /**
      * Native context-window popup (panel shell, not a full document window).
      * `anchor` is the ring’s rect in the sender window’s content coordinates.
@@ -259,6 +304,24 @@ export interface VavApi {
   notifications: {
     /** System notification authorization for the settings hint. */
     permission(): Promise<'granted' | 'denied' | 'unknown'>
+  }
+
+  changeSets: {
+    get(id: string): Promise<ChangeSet | null>
+    active(conversationId: string): Promise<ChangeSet | null>
+    accept(setId: string, filePaths: string[]): Promise<ChangeSet | null>
+    reject(setId: string, filePaths: string[]): Promise<ChangeSet | null>
+    acceptAll(setId: string): Promise<ChangeSet | null>
+    rejectAll(setId: string): Promise<ChangeSet | null>
+    undo(setId: string, filePath: string): Promise<ChangeSet | null>
+    applyEdit(setId: string, filePath: string, content: string): Promise<ChangeSet | null>
+  }
+
+  updates: {
+    getState(): Promise<UpdateState>
+    check(): Promise<UpdateState>
+    openDownload(): Promise<UpdateState>
+    onChanged(handler: (state: UpdateState) => void): () => void
   }
 
   dialog: {
@@ -331,6 +394,11 @@ export const IPC = {
   settingsCliSetLocation: 'vav:settings:cli-set-location',
   settingsCliInstall: 'vav:settings:cli-install',
   settingsCliUninstall: 'vav:settings:cli-uninstall',
+  settingsFileAssociations: 'vav:settings:file-associations',
+  settingsFileAssociationForPath: 'vav:settings:file-association-for-path',
+  settingsSetFileAssociation: 'vav:settings:set-file-association',
+  settingsUnsetFileAssociation: 'vav:settings:unset-file-association',
+  settingsRegisterAllFileAssociations: 'vav:settings:register-all-file-associations',
 
   convList: 'vav:conv:list',
   convGet: 'vav:conv:get',
@@ -363,6 +431,7 @@ export const IPC = {
 
   filesList: 'vav:files:list',
   filesRead: 'vav:files:read',
+  filesWrite: 'vav:files:write',
   filesQuickLook: 'vav:files:quick-look',
   filesWatch: 'vav:files:watch',
   filesDirty: 'vav:files:dirty',
@@ -370,6 +439,10 @@ export const IPC = {
   filesRename: 'vav:files:rename',
   filesTrash: 'vav:files:trash',
   filesInspect: 'vav:files:inspect',
+  filesParseBlocks: 'vav:files:parse-blocks',
+  previewCloseAttempt: 'vav:preview:close-attempt',
+  previewSetCloseGuard: 'vav:preview:set-close-guard',
+  previewForceClose: 'vav:preview:force-close',
 
   ptyCreate: 'vav:pty:create',
   ptyWrite: 'vav:pty:write',
@@ -398,5 +471,19 @@ export const IPC = {
   menuCommand: 'vav:menu:command',
   settingsChanged: 'vav:settings:changed',
   settingsView: 'vav:settings:view',
-  cliOpen: 'vav:cli:open'
+  cliOpen: 'vav:cli:open',
+
+  changeSetGet: 'vav:changeset:get',
+  changeSetActive: 'vav:changeset:active',
+  changeSetAccept: 'vav:changeset:accept',
+  changeSetReject: 'vav:changeset:reject',
+  changeSetAcceptAll: 'vav:changeset:accept-all',
+  changeSetRejectAll: 'vav:changeset:reject-all',
+  changeSetUndo: 'vav:changeset:undo',
+  changeSetApplyEdit: 'vav:changeset:apply-edit',
+
+  updatesGet: 'vav:updates:get',
+  updatesCheck: 'vav:updates:check',
+  updatesOpenDownload: 'vav:updates:open-download',
+  updatesChanged: 'vav:updates:changed'
 } as const

@@ -52,7 +52,6 @@ export function FilesPanel({ visible }: { visible: boolean }): React.JSX.Element
   const ensureFilesLoaded = useWorkspaceStore((s) => s.ensureFilesLoaded)
   const setSort = useWorkspaceStore((s) => s.setSort)
   const selectPath = useWorkspaceStore((s) => s.selectPath)
-  const quickLook = useWorkspaceStore((s) => s.quickLook)
   const loadDirectory = useWorkspaceStore((s) => s.loadDirectory)
   const temporary = isTemporaryWorkspace(conversation?.workingDirectory ?? null, tmp)
   const viewMode: FileViewMode = settings.fileViewMode ?? 'tree'
@@ -106,11 +105,15 @@ export function FilesPanel({ visible }: { visible: boolean }): React.JSX.Element
       const selected = useWorkspaceStore.getState().workspaces[activeId]?.selectedPath
       if (!selected) return
       event.preventDefault()
-      quickLook(activeId)
+      // file-preview.rpml: Space opens the dedicated preview window (Quick Look stays in the menu).
+      void window.vav.window.openFilePreview(selected, {
+        origin: 'session',
+        conversationId: activeId
+      })
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [visible, activeId, quickLook])
+  }, [visible, activeId])
 
   if (!workspace?.root) {
     return (
@@ -136,7 +139,10 @@ export function FilesPanel({ visible }: { visible: boolean }): React.JSX.Element
   }))
 
   const openViewer = (path: string): void => {
-    void window.vav.window.openFilePreview(path)
+    void window.vav.window.openFilePreview(path, {
+      origin: 'session',
+      conversationId: activeId
+    })
   }
 
   const refreshParent = (path: string): void => {

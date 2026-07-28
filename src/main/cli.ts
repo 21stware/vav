@@ -407,14 +407,27 @@ export interface OpenTarget {
   attachments: string[]
 }
 
+export type ResolvedOpen =
+  | { kind: 'preview'; file: string }
+  | { kind: 'session'; workdir: string | null; attachments: string[] }
+
 /**
- * Map dropped / opened filesystem paths to a session workdir + optional file
- * attachments — same rules as Dock drop and `vav <path>` (README §2.5 / §5.17).
+ * Map dropped / opened filesystem paths (README §2.5 / file-preview.rpml):
  *
- * - Folder(s) only → workdir = first folder, no attachments
- * - File(s) → workdir = parent of the first file, those files as attachments
+ * - Single file → File Preview window
+ * - Folder(s) only → new session with that folder as workdir
+ * - Multiple files → new session (parent of first file) + composer attachments
  */
 export function resolveOpenPaths(paths: string[]): OpenTarget {
+  const resolved = classifyOpenPaths(paths)
+  if (resolved.kind === 'preview') {
+    return { workdir: dirname(resolved.file), attachments: [resolved.file] }
+  }
+  return { workdir: resolved.workdir, attachments: resolved.attachments }
+}
+
+/** Same classification, but preserves the single-file → preview intent. */
+export function classifyOpenPaths(paths: string[]): ResolvedOpen {
   const dirs: string[] = []
   const files: string[] = []
   for (const path of paths) {
@@ -428,12 +441,16 @@ export function resolveOpenPaths(paths: string[]): OpenTarget {
       // Skip unreadable paths.
     }
   }
-  if (files.length === 0 && dirs.length === 0) return { workdir: null, attachments: [] }
-
-  if (files.length > 0) {
-    return { workdir: dirname(files[0]), attachments: files }
+  if (files.length === 0 && dirs.length === 0) {
+    return { kind: 'session', workdir: null, attachments: [] }
   }
-  return { workdir: dirs[0] ?? null, attachments: [] }
+  if (files.length === 1 && dirs.length === 0) {
+    return { kind: 'preview', file: files[0]! }
+  }
+  if (files.length > 0) {
+    return { kind: 'session', workdir: dirname(files[0]!), attachments: files }
+  }
+  return { kind: 'session', workdir: dirs[0] ?? null, attachments: [] }
 }
 
 /** Absolute paths in argv that look like user-opened files (Dock cold-start). */
@@ -441,8 +458,14 @@ export function parseOpenPathsFromArgv(argv: string[]): string[] {
   const out: string[] = []
   for (const arg of argv) {
     if (!arg || arg.startsWith('-')) continue
-    // Electron/Chromium internals and the app path itself are never drop targets.
-    if (arg.includes('Electron') || arg.endsWith('.app') || arg.includes('node_modules/electron')) {
+    // Electron/Chromium internals and the app executable itself are never drop targets.
+    if (
+      arg.includes('Electron') ||
+      arg.endsWith('.app') ||
+      arg.includes('node_modules/electron') ||
+      arg.includes('/Contents/MacOS/') ||
+      arg.includes('/MacOS/Electron')
+    ) {
       continue
     }
     if (arg.startsWith('/') && existsSync(arg)) out.push(arg)

@@ -92,10 +92,9 @@ export class SettingsStore {
       .filter((path): path is string => typeof path === 'string' && path.length > 0)
       .slice(0, 10)
     if (
-      s.sidebarGroupingMode !== 'none' &&
-      s.sidebarGroupingMode !== 'workspace' &&
-      s.sidebarGroupingMode !== 'source'
+      s.sidebarGroupingMode !== 'none' && s.sidebarGroupingMode !== 'workspace'
     ) {
+      // Drop legacy `source` grouping (sidebar-conversation-list.rpml).
       s.sidebarGroupingMode = 'none'
     }
     if (s.fileViewMode !== 'tree' && s.fileViewMode !== 'column') {

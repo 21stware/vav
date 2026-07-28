@@ -38,6 +38,9 @@ import { SettingsStore } from './store/SettingsStore'
 import { SecretStore } from './store/SecretStore'
 import { ConversationStore } from './store/ConversationStore'
 import { FileService } from './fs/FileService'
+import { FileAssociationService, formatIdForPath } from './fs/FileAssociationService'
+import { ChangeSetStore } from './agent/ChangeSetStore'
+import { UpdateService } from './updates'
 import { PtyManager } from './terminal/PtyManager'
 import { AgentRuntime } from './agent/AgentRuntime'
 import { validateApiKey } from './agent/provider'
@@ -45,6 +48,8 @@ import { shellPath } from './terminal/StickyShell'
 import { buildAppMenu } from './menu'
 import { currentLocale, setLocalePreference, t } from './i18n'
 import { codeFonts, type Platform } from '@shared/platform'
+import { isTsJsPath } from '@shared/previewBlock'
+import { parseTsCodeBlocks } from './preview/parseTsCodeBlocks'
 import {
   getCliStatus,
   installCli,
@@ -52,7 +57,7 @@ import {
   parseCliWorkdir,
   parseOpenPathsFromArgv,
   resolveExistingDirectory,
-  resolveOpenPaths,
+  classifyOpenPaths,
   setCliPreferredLocation,
   uninstallCli,
   type CliInstallLocation
@@ -99,6 +104,7 @@ const settingsStore = new SettingsStore()
 const secretStore = new SecretStore()
 const conversationStore = new ConversationStore()
 
+const fileAssociationService = new FileAssociationService()
 const fileService = new FileService((conversationId, dirs) => {
   send(IPC.filesDirty, { conversationId, dirs })
 })
@@ -202,11 +208,15 @@ function handleAgentEvent(event: TurnEvent): void {
   }
 }
 
+const changeSetStore = new ChangeSetStore()
+const updateService = new UpdateService()
+
 const agent = new AgentRuntime({
   conversations: conversationStore,
   settings: settingsStore,
   secrets: secretStore,
   files: fileService,
+  changeSets: changeSetStore,
   emit: handleAgentEvent
 })
 
@@ -354,6 +364,9 @@ function rendererPrefs(extra: Electron.WebPreferences = {}): Electron.WebPrefere
 const PREVIEW_IDLE_MS = 5 * 60 * 1000
 const PREVIEW_MAX_OPEN = 6
 
+/** Preview windows that must confirm before close (unsaved edit). */
+const previewCloseGuards = new WeakSet<BrowserWindow>()
+
 /** Close an unfocused preview after idle; cap how many stay around. */
 function wirePreviewLifecycle(window: BrowserWindow, path: string): void {
   let idleTimer: NodeJS.Timeout | null = null
@@ -368,8 +381,15 @@ function wirePreviewLifecycle(window: BrowserWindow, path: string): void {
     if (idleTimer) clearTimeout(idleTimer)
     idleTimer = null
   })
+  window.on('close', (event) => {
+    if (quitting) return
+    if (!previewCloseGuards.has(window)) return
+    event.preventDefault()
+    window.webContents.send(IPC.previewCloseAttempt)
+  })
   window.on('closed', () => {
     if (idleTimer) clearTimeout(idleTimer)
+    previewCloseGuards.delete(window)
   })
 
   // Cap open previews: close the oldest unfocused ones first.
@@ -437,17 +457,20 @@ function createWindow(): BrowserWindow {
   wireExternalLinks(window.webContents)
   wireFullscreenState(window)
 
-  if (!app.isPackaged) {
-    window.webContents.on('console-message', (event) => {
-      console.log(`[renderer:${event.level}] ${event.message} (${event.sourceId}:${event.lineNumber})`)
-    })
-    window.webContents.on('preload-error', (_event, path, error) => {
-      console.error('[preload error]', path, error)
-    })
-    window.webContents.on('did-fail-load', (_event, code, description, url) => {
-      console.error('[did-fail-load]', code, description, url)
-    })
-  }
+  // Log even when the branded Electron binary reports isPackaged=true (common in
+  // local `vav.app … /path/to/repo` launches).
+  window.webContents.on('console-message', (event) => {
+    console.log(`[renderer:${event.level}] ${event.message} (${event.sourceId}:${event.lineNumber})`)
+  })
+  window.webContents.on('preload-error', (_event, path, error) => {
+    console.error('[preload error]', path, error)
+  })
+  window.webContents.on('did-fail-load', (_event, code, description, url) => {
+    console.error('[did-fail-load]', code, description, url)
+  })
+  window.webContents.on('render-process-gone', (_event, details) => {
+    console.error('[render-process-gone]', details.reason, details.exitCode)
+  })
 
   installSnapshotHook(window)
   loadRenderer(window)
@@ -615,10 +638,13 @@ function openDetachedWindow(
 }
 
 /**
- * File preview in its own window (files-panel.rpml pin 5).
+ * File preview in its own window (file-preview.rpml).
  * Reopening the same path raises the existing window.
  */
-function openFilePreviewWindow(filePath: string): void {
+function openFilePreviewWindow(
+  filePath: string,
+  options?: { origin?: 'dock' | 'session'; conversationId?: string }
+): void {
   const path = filePath.trim()
   if (!path) return
 
@@ -634,19 +660,19 @@ function openFilePreviewWindow(filePath: string): void {
   const area = (
     anchor && !anchor.isDestroyed() ? screen.getDisplayMatching(anchor.getBounds()) : screen.getPrimaryDisplay()
   ).workArea
-  const width = Math.min(720, area.width - 80)
-  const height = Math.min(640, area.height - 80)
+  const width = Math.min(800, area.width - 80)
+  const height = Math.min(700, area.height - 80)
 
   const window = new BrowserWindow({
     width,
     height,
-    minWidth: 420,
-    minHeight: 320,
+    minWidth: 520,
+    minHeight: 400,
     show: false,
     title: basename(path),
     icon: loadAppIcon(),
     // Match `.file-viewer-header` height so traffic lights sit on the drag bar.
-    ...chrome(52),
+    ...chrome(42),
     webPreferences: rendererPrefs({
       // Chromium's built-in PDF viewer.
       plugins: true
@@ -668,7 +694,13 @@ function openFilePreviewWindow(filePath: string): void {
     })
   }
 
-  loadRenderer(window, { view: 'file-preview', path })
+  const query: Record<string, string> = {
+    view: 'file-preview',
+    path,
+    origin: options?.origin ?? 'session'
+  }
+  if (options?.conversationId) query.conversationId = options.conversationId
+  loadRenderer(window, query)
 }
 
 type TokenUsageAnchor = { x: number; y: number; width: number; height: number }
@@ -998,10 +1030,20 @@ function openFromCli(workdirArg: string | null): void {
   openWorkspaceSession({ workdirArg })
 }
 
-/** Dock / Finder "Open With" — files attach; folders become the workdir. */
+/**
+ * Dock / Finder "Open With" (file-preview.rpml):
+ * single file → File Preview; folder → session; multiple files → session + attachments.
+ */
 function openFromDroppedPaths(paths: string[]): void {
-  const { workdir, attachments } = resolveOpenPaths(paths)
-  openWorkspaceSession({ workdirArg: workdir, attachments })
+  const resolved = classifyOpenPaths(paths)
+  if (resolved.kind === 'preview') {
+    openFilePreviewWindow(resolved.file, { origin: 'dock' })
+    return
+  }
+  openWorkspaceSession({
+    workdirArg: resolved.workdir,
+    attachments: resolved.attachments
+  })
 }
 
 /** Coalesce bursty macOS `open-file` events from a single Dock drop. */
@@ -1078,6 +1120,16 @@ function currentSettings(): AppSettings {
   return { ...settingsStore.get(), apiKeyPresent: secretStore.has() }
 }
 
+/** CFBundleVersion stand-in: YYYY.MMDD.patch from package version + calendar day. */
+function appBuildNumber(): string {
+  const version = app.getVersion()
+  const now = new Date()
+  const y = now.getFullYear()
+  const md = `${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}`
+  const patch = version.split('.').pop() ?? '0'
+  return `${y}.${md}.${patch}`
+}
+
 function registerIpc(): void {
   ipcMain.handle(IPC.bootstrap, (): Bootstrap => {
     const settings = currentSettings()
@@ -1096,6 +1148,7 @@ function registerIpc(): void {
       tmp: tmpdir(),
       about: {
         version: app.getVersion(),
+        buildNumber: appBuildNumber(),
         electron: process.versions.electron,
         userDataPath: app.getPath('userData'),
         conversationsPath: conversationStore.path
@@ -1183,6 +1236,23 @@ function registerIpc(): void {
   )
   ipcMain.handle(IPC.settingsCliInstall, () => installCli())
   ipcMain.handle(IPC.settingsCliUninstall, () => uninstallCli())
+  ipcMain.handle(IPC.settingsFileAssociations, () => fileAssociationService.listStatus())
+  ipcMain.handle(IPC.settingsFileAssociationForPath, async (_event, path: string) => {
+    const id = formatIdForPath(path)
+    if (!id) return null
+    return fileAssociationService.statusFor(
+      fileAssociationService.formats().find((f) => f.id === id)!
+    )
+  })
+  ipcMain.handle(IPC.settingsSetFileAssociation, (_event, formatId: string) =>
+    fileAssociationService.setDefault(formatId)
+  )
+  ipcMain.handle(IPC.settingsUnsetFileAssociation, (_event, formatId: string) =>
+    fileAssociationService.unsetDefault(formatId)
+  )
+  ipcMain.handle(IPC.settingsRegisterAllFileAssociations, () =>
+    fileAssociationService.registerAll()
+  )
 
   // --- conversations ---
   ipcMain.handle(IPC.convList, () => conversationStore.listMeta())
@@ -1357,11 +1427,12 @@ function registerIpc(): void {
       id: string,
       text: string,
       attachments: string[],
-      quote?: import('@shared/types').QuoteDraft | null
+      quote?: import('@shared/types').QuoteDraft | null,
+      contextBlocks?: import('@shared/types').PreviewRef[] | null
     ) => {
       // Not awaited: the turn streams for as long as it needs, and the renderer
       // is driven entirely by turn events.
-      void agent.run(id, text, attachments ?? [], quote ?? null)
+      void agent.run(id, text, attachments ?? [], quote ?? null, contextBlocks ?? null)
     }
   )
   ipcMain.handle(IPC.agentCancel, (_event, id: string) => agent.cancel(id))
@@ -1386,10 +1457,25 @@ function registerIpc(): void {
       fileService.listDirectory(path, sort, ascending)
   )
   ipcMain.handle(IPC.filesRead, (_event, path: string) => fileService.readTextFile(path))
+  ipcMain.handle(IPC.filesWrite, (_event, path: string, content: string) =>
+    fileService.writeTextFile(path, content)
+  )
   ipcMain.handle(IPC.filesQuickLook, (_event, path: string) => fileService.preview(path))
   ipcMain.handle(IPC.filesWatch, (_event, id: string, root: string | null) =>
     fileService.watchRoot(id, root)
   )
+  ipcMain.handle(IPC.previewSetCloseGuard, (event, enabled: boolean) => {
+    const win = BrowserWindow.fromWebContents(event.sender)
+    if (!win || win.isDestroyed()) return
+    if (enabled) previewCloseGuards.add(win)
+    else previewCloseGuards.delete(win)
+  })
+  ipcMain.handle(IPC.previewForceClose, (event) => {
+    const win = BrowserWindow.fromWebContents(event.sender)
+    if (!win || win.isDestroyed()) return
+    previewCloseGuards.delete(win)
+    win.close()
+  })
   ipcMain.handle(
     IPC.filesSaveAs,
     async (
@@ -1416,6 +1502,14 @@ function registerIpc(): void {
   )
   ipcMain.handle(IPC.filesTrash, (_event, paths: string[]) => fileService.trash(paths))
   ipcMain.handle(IPC.filesInspect, (_event, path: string) => fileService.inspect(path))
+  ipcMain.handle(IPC.filesParseBlocks, (_event, path: string, text: string) => {
+    if (!isTsJsPath(path)) return null
+    try {
+      return parseTsCodeBlocks(path, text)
+    } catch {
+      return null
+    }
+  })
 
   // --- pty ---
   ipcMain.handle(
@@ -1457,7 +1551,14 @@ function registerIpc(): void {
 
   ipcMain.handle(IPC.windowOpenSession, (_event, id: string) => openDetachedWindow(id))
   ipcMain.handle(IPC.windowNewDetached, () => newDetachedSession())
-  ipcMain.handle(IPC.windowOpenFilePreview, (_event, path: string) => openFilePreviewWindow(path))
+  ipcMain.handle(
+    IPC.windowOpenFilePreview,
+    (
+      _event,
+      path: string,
+      options?: { origin?: 'dock' | 'session'; conversationId?: string }
+    ) => openFilePreviewWindow(path, options)
+  )
   ipcMain.handle(
     IPC.windowOpenTokenUsage,
     (
@@ -1533,6 +1634,80 @@ function registerIpc(): void {
       return window ? popupNativeMenu(window, items, position) : null
     }
   )
+
+  ipcMain.handle(IPC.changeSetGet, (_e, id: string) => changeSetStore.get(id))
+  ipcMain.handle(IPC.changeSetActive, (_e, conversationId: string) =>
+    changeSetStore.activeFor(conversationId)
+  )
+  ipcMain.handle(IPC.changeSetAccept, (_e, setId: string, filePaths: string[]) =>
+    changeSetStore.accept(setId, filePaths)
+  )
+  ipcMain.handle(IPC.changeSetReject, (_e, setId: string, filePaths: string[]) =>
+    changeSetStore.reject(setId, filePaths)
+  )
+  ipcMain.handle(IPC.changeSetAcceptAll, (_e, setId: string) => changeSetStore.acceptAll(setId))
+  ipcMain.handle(IPC.changeSetRejectAll, (_e, setId: string) => changeSetStore.rejectAll(setId))
+  ipcMain.handle(IPC.changeSetUndo, (_e, setId: string, filePath: string) =>
+    changeSetStore.undo(setId, filePath)
+  )
+  ipcMain.handle(IPC.changeSetApplyEdit, (_e, setId: string, filePath: string, content: string) =>
+    changeSetStore.applyEdit(setId, filePath, content)
+  )
+
+  ipcMain.handle(IPC.updatesGet, () => updateService.getState())
+  ipcMain.handle(IPC.updatesCheck, () => updateService.check())
+  ipcMain.handle(IPC.updatesOpenDownload, () => updateService.openDownload())
+  updateService.onChange((state) => broadcast(IPC.updatesChanged, state))
+
+}
+
+/** Dev/smoke: create a 2-file ChangeSet and open Change Review in the UI. */
+async function seedSmokeChangeReview(): Promise<void> {
+  // Wait for renderer bootstrap / conversation list.
+  await new Promise((r) => setTimeout(r, 2200))
+  let meta = conversationStore.listMeta().find((c) => !c.archived)
+  if (!meta) {
+    console.log('[smoke] minting conversation for seed')
+    const created = conversationStore.create(resolveNewWorkdir(), settingsStore.get().defaultModel)
+    meta = conversationStore.listMeta().find((c) => c.id === created.id)
+    broadcast(IPC.convChanged, conversationStore.listMeta())
+    await new Promise((r) => setTimeout(r, 400))
+  }
+  if (!meta) {
+    console.error('[smoke] still no conversation')
+    return
+  }
+  const workdir = meta.workingDirectory || app.getPath('temp')
+  const dir = join(workdir, '.vav-smoke')
+  mkdirSync(dir, { recursive: true })
+  const modified = join(dir, 'existing.ts')
+  const added = join(dir, 'added.ts')
+  writeFileSync(modified, 'const a = 1\n', 'utf8')
+  changeSetStore.beginTurn(meta.id)
+  changeSetStore.recordWrite(meta.id, workdir, modified, 'const a = 1\n', 'const a = 2\n')
+  changeSetStore.recordWrite(meta.id, workdir, added, null, 'export const x = 1\n')
+  writeFileSync(modified, 'const a = 2\n', 'utf8')
+  writeFileSync(added, 'export const x = 1\n', 'utf8')
+  const set = changeSetStore.finalizeTurn(meta.id, 'smoke change review', meta.model || 'test')
+  if (!set) {
+    console.error('[smoke] finalize failed')
+    return
+  }
+  // Emit twice spaced so a late-joining renderer still opens the panel.
+  handleAgentEvent({
+    type: 'change-review',
+    conversationId: meta.id,
+    changeSetId: set.id,
+    pendingCount: set.files.length
+  })
+  await new Promise((r) => setTimeout(r, 300))
+  handleAgentEvent({
+    type: 'change-review',
+    conversationId: meta.id,
+    changeSetId: set.id,
+    pendingCount: set.files.length
+  })
+  console.log('[smoke] seeded change review', set.id, 'conv', meta.id)
 }
 
 // ---------------------------------------------------------------------------
@@ -1616,10 +1791,17 @@ if (!singleInstance) {
     mainWindow = createWindow()
     // Belt-and-suspenders: ready-to-show can race with Dock hide / focus steals
     // from the IDE. Force the main window up once the renderer finishes loading.
-    mainWindow.webContents.once('did-finish-load', () => showMainWindow())
+    mainWindow.webContents.once('did-finish-load', () => {
+      showMainWindow()
+      if (process.env.VAV_SMOKE_SEED === '1') {
+        void seedSmokeChangeReview()
+      }
+    })
     // Dock tiles cache aggressively for the rebranded Electron.dev bundle —
     // re-assert the PNG after the first window exists so the tile updates.
     applyDockIcon()
+    // Silent check so the toolbar update button can appear when a newer release exists.
+    void updateService.check()
 
     if (process.env.VAV_SNAPSHOT) {
       // Marketing captures seed their own conversations; ignore argv path opens.

@@ -5,6 +5,7 @@ import {
   renderMarkdown,
   renderMarkdownUncached
 } from '../lib/markdown'
+import { renderPreviewMarkdown } from '../lib/previewMarkdown'
 import { TAIL_PLAIN_TEXT_THRESHOLD } from '../lib/segmenter'
 import { tt } from '../i18n/useT'
 
@@ -16,20 +17,32 @@ import { tt } from '../i18n/useT'
  * `cached={false}` and degrades to plain text past 8 KB, which bounds the
  * per-tick parse cost no matter how long the message grows.
  *
+ * Pass `filePath` for trusted local file preview — enables HTML + resolves
+ * relative images against that file’s directory.
+ *
  * Code blocks and tables carry Copy / Save as file chrome (main-chat-search).
  */
 export const MarkdownView = memo(function MarkdownView({
   source,
   highlight,
-  cached = true
+  cached = true,
+  filePath
 }: {
   source: string
   highlight?: string
   cached?: boolean
+  /** Absolute path of the previewed file — switches to preview markdown. */
+  filePath?: string
 }): React.JSX.Element {
   const ref = useRef<HTMLDivElement>(null)
-  const plain = !cached && source.length > TAIL_PLAIN_TEXT_THRESHOLD
-  const html = plain ? '' : cached ? renderMarkdown(source) : renderMarkdownUncached(source)
+  const plain = !cached && !filePath && source.length > TAIL_PLAIN_TEXT_THRESHOLD
+  const html = plain
+    ? ''
+    : filePath
+      ? renderPreviewMarkdown(source, filePath)
+      : cached
+        ? renderMarkdown(source)
+        : renderMarkdownUncached(source)
 
   useLayoutEffect(() => {
     const element = ref.current
@@ -41,7 +54,7 @@ export const MarkdownView = memo(function MarkdownView({
   if (plain) return <pre className="plain-tail">{source}</pre>
   return (
     <div
-      className="markdown"
+      className={`markdown${filePath ? ' preview-markdown' : ''}`}
       ref={ref}
       onClick={(event) => {
         const target = event.target as HTMLElement | null

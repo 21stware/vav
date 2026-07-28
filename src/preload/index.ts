@@ -37,7 +37,16 @@ const api: VavApi = {
     cliSetLocation: (location: CliInstallLocation) =>
       ipcRenderer.invoke(IPC.settingsCliSetLocation, location),
     cliInstall: () => ipcRenderer.invoke(IPC.settingsCliInstall),
-    cliUninstall: () => ipcRenderer.invoke(IPC.settingsCliUninstall)
+    cliUninstall: () => ipcRenderer.invoke(IPC.settingsCliUninstall),
+    fileAssociations: () => ipcRenderer.invoke(IPC.settingsFileAssociations),
+    fileAssociationForPath: (path: string) =>
+      ipcRenderer.invoke(IPC.settingsFileAssociationForPath, path),
+    setFileAssociation: (formatId: string) =>
+      ipcRenderer.invoke(IPC.settingsSetFileAssociation, formatId),
+    unsetFileAssociation: (formatId: string) =>
+      ipcRenderer.invoke(IPC.settingsUnsetFileAssociation, formatId),
+    registerAllFileAssociations: () =>
+      ipcRenderer.invoke(IPC.settingsRegisterAllFileAssociations)
   },
 
   conversations: {
@@ -71,8 +80,14 @@ const api: VavApi = {
   },
 
   agent: {
-    send: (id: string, text: string, attachments: string[], quote?: import('@shared/types').QuoteDraft | null) =>
-      ipcRenderer.invoke(IPC.agentSend, id, text, attachments, quote ?? null),
+    send: (
+      id: string,
+      text: string,
+      attachments: string[],
+      quote?: import('@shared/types').QuoteDraft | null,
+      contextBlocks?: import('@shared/types').PreviewRef[] | null
+    ) =>
+      ipcRenderer.invoke(IPC.agentSend, id, text, attachments, quote ?? null, contextBlocks ?? null),
     cancel: (id: string) => ipcRenderer.invoke(IPC.agentCancel, id),
     answer: (id: string, toolCallId: string, answer: string) =>
       ipcRenderer.invoke(IPC.agentAnswer, id, toolCallId, answer),
@@ -89,6 +104,7 @@ const api: VavApi = {
     list: (path: string, sort: FileSortKey, ascending: boolean) =>
       ipcRenderer.invoke(IPC.filesList, path, sort, ascending),
     read: (path: string) => ipcRenderer.invoke(IPC.filesRead, path),
+    write: (path: string, content: string) => ipcRenderer.invoke(IPC.filesWrite, path, content),
     quickLook: (path: string) => ipcRenderer.invoke(IPC.filesQuickLook, path),
     watch: (conversationId: string, root: string | null) =>
       ipcRenderer.invoke(IPC.filesWatch, conversationId, root),
@@ -98,7 +114,9 @@ const api: VavApi = {
       ipcRenderer.invoke(IPC.filesSaveAs, defaultName, content),
     rename: (path: string, newName: string) => ipcRenderer.invoke(IPC.filesRename, path, newName),
     trash: (paths: string[]) => ipcRenderer.invoke(IPC.filesTrash, paths),
-    inspect: (path: string) => ipcRenderer.invoke(IPC.filesInspect, path)
+    inspect: (path: string) => ipcRenderer.invoke(IPC.filesInspect, path),
+    parseBlocks: (path: string, text: string) =>
+      ipcRenderer.invoke(IPC.filesParseBlocks, path, text)
   },
 
   pty: {
@@ -128,7 +146,13 @@ const api: VavApi = {
     openSession: (conversationId: string) =>
       ipcRenderer.invoke(IPC.windowOpenSession, conversationId),
     newDetachedSession: () => ipcRenderer.invoke(IPC.windowNewDetached),
-    openFilePreview: (path: string) => ipcRenderer.invoke(IPC.windowOpenFilePreview, path),
+    openFilePreview: (path, options) =>
+      ipcRenderer.invoke(IPC.windowOpenFilePreview, path, options),
+    setPreviewCloseGuard: (enabled: boolean) =>
+      ipcRenderer.invoke(IPC.previewSetCloseGuard, enabled),
+    forcePreviewClose: () => ipcRenderer.invoke(IPC.previewForceClose),
+    onPreviewCloseAttempt: (handler) =>
+      subscribe(IPC.previewCloseAttempt, () => handler()),
     openTokenUsage: (conversationId, anchor) =>
       ipcRenderer.invoke(IPC.windowOpenTokenUsage, conversationId, anchor),
     onTokenUsageView: (handler) => subscribe<string>(IPC.tokenUsageView, handler),
@@ -137,6 +161,25 @@ const api: VavApi = {
 
   notifications: {
     permission: () => ipcRenderer.invoke(IPC.notificationsPermission)
+  },
+
+  changeSets: {
+    get: (id) => ipcRenderer.invoke(IPC.changeSetGet, id),
+    active: (conversationId) => ipcRenderer.invoke(IPC.changeSetActive, conversationId),
+    accept: (setId, filePaths) => ipcRenderer.invoke(IPC.changeSetAccept, setId, filePaths),
+    reject: (setId, filePaths) => ipcRenderer.invoke(IPC.changeSetReject, setId, filePaths),
+    acceptAll: (setId) => ipcRenderer.invoke(IPC.changeSetAcceptAll, setId),
+    rejectAll: (setId) => ipcRenderer.invoke(IPC.changeSetRejectAll, setId),
+    undo: (setId, filePath) => ipcRenderer.invoke(IPC.changeSetUndo, setId, filePath),
+    applyEdit: (setId, filePath, content) =>
+      ipcRenderer.invoke(IPC.changeSetApplyEdit, setId, filePath, content)
+  },
+
+  updates: {
+    getState: () => ipcRenderer.invoke(IPC.updatesGet),
+    check: () => ipcRenderer.invoke(IPC.updatesCheck),
+    openDownload: () => ipcRenderer.invoke(IPC.updatesOpenDownload),
+    onChanged: (handler) => subscribe(IPC.updatesChanged, handler)
   },
 
   dialog: {

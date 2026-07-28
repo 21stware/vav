@@ -8,11 +8,13 @@ export interface ConversationGroup {
   key: string
   /**
    * Empty for the pinned section and for search results — neither gets a header.
-   * Workspace/source modes put a label on every non-pinned bucket.
+   * Workspace mode puts a label on every non-pinned bucket.
    */
   label: string
   /** Visual cue on the group header; omitted for time buckets. */
-  kind?: 'workspace' | 'source' | 'time'
+  kind?: 'workspace' | 'time'
+  /** Absolute workdir when kind is workspace (null for Temporary). */
+  workdir?: string | null
   conversations: ConversationMeta[]
 }
 
@@ -61,17 +63,6 @@ function workspaceLabel(conversation: ConversationMeta, tmp: string): string {
   return basename(conversation.workingDirectory)
 }
 
-function sourceKey(conversation: ConversationMeta): string {
-  return conversation.duplicateSourceId ?? conversation.id
-}
-
-function sourceLabel(conversation: ConversationMeta): string {
-  if (conversation.duplicateSourceId && conversation.duplicateSourceTitle) {
-    return tt('sidebar.sourceFrom', { title: conversation.duplicateSourceTitle })
-  }
-  return conversation.title
-}
-
 /**
  * Orders the sidebar: pinned rows first by pinTime, then by the active grouping
  * mode. Searching collapses every header — they would only add noise.
@@ -97,12 +88,7 @@ export function groupConversations(
   }
 
   if (mode === 'workspace') {
-    groups.push(...bucketByKey(rest, (c) => workspaceKey(c, tmp), (c) => workspaceLabel(c, tmp), 'workspace'))
-    return groups
-  }
-
-  if (mode === 'source') {
-    groups.push(...bucketByKey(rest, sourceKey, sourceLabel, 'source'))
+    groups.push(...bucketByWorkspace(rest, tmp))
     return groups
   }
 
@@ -121,16 +107,11 @@ export function groupConversations(
   return groups
 }
 
-/** Groups keyed by `keyOf`, ordered by the newest row inside each bucket. */
-function bucketByKey(
-  rows: ConversationMeta[],
-  keyOf: (c: ConversationMeta) => string,
-  labelOf: (c: ConversationMeta) => string,
-  kind: 'workspace' | 'source'
-): ConversationGroup[] {
+/** Groups by workingDirectory, ordered by the newest row inside each bucket. */
+function bucketByWorkspace(rows: ConversationMeta[], tmp: string): ConversationGroup[] {
   const map = new Map<string, ConversationMeta[]>()
   for (const row of rows) {
-    const key = keyOf(row)
+    const key = workspaceKey(row, tmp)
     const list = map.get(key)
     if (list) list.push(row)
     else map.set(key, [row])
@@ -139,14 +120,20 @@ function bucketByKey(
   return [...map.entries()]
     .map(([key, conversations]) => {
       const sorted = [...conversations].sort(byUpdatedDesc)
+      const first = sorted[0]!
+      const workdir =
+        key === '__temporary__'
+          ? (first.workingDirectory ?? null)
+          : (first.workingDirectory ?? key)
       return {
-        key: `${kind}:${key}`,
-        label: labelOf(sorted[0]),
-        kind,
+        key: `workspace:${key}`,
+        label: workspaceLabel(first, tmp),
+        kind: 'workspace' as const,
+        workdir,
         conversations: sorted
       }
     })
-    .sort((a, b) => b.conversations[0].updatedAt - a.conversations[0].updatedAt)
+    .sort((a, b) => b.conversations[0]!.updatedAt - a.conversations[0]!.updatedAt)
 }
 
 /** Flat visible order, for arrow-key movement and ⌘A. */

@@ -56,6 +56,8 @@ export interface ToolHost {
       askTitle?: string
     }
   ) => Promise<{ text: string; cancelled: boolean }>
+  /** Record an fs_write for Change Review (before/after already captured). */
+  recordWrite?: (filePath: string, originalContent: string | null, newContent: string) => void
 }
 
 export const INTERACTIVE_TOOLS: ReadonlySet<ToolName> = new Set(['request', 'ask_user_question'])
@@ -274,6 +276,9 @@ export function createTools(host: ToolHost): AgentTool[] {
       if (!result.ok) return failure(result.error ?? '写入失败')
       // Only the parent directory is refreshed; never the whole tree.
       host.fsChanged(dirname(path), path)
+      if (!previous.truncated) {
+        host.recordWrite?.(path, before, params.content)
+      }
 
       const written = `已写入 ${path}（${params.content.length} 字符）`
       const diff = previous.truncated ? null : unifiedDiff(before, params.content)

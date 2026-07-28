@@ -6,6 +6,7 @@ import {
   type ChatMessage,
   type Conversation,
   type MessageBlock,
+  type PreviewRef,
   type QuoteDraft,
   type ToolCallBlock,
   type ToolCallStatus,
@@ -90,6 +91,7 @@ export interface AgentRuntimeDeps {
   secrets: SecretStore
   files: FileService
   emit: (event: TurnEvent) => void
+  changeSets?: import('./ChangeSetStore').ChangeSetStore
 }
 
 /**
@@ -138,11 +140,12 @@ export class AgentRuntime {
     conversationId: string,
     userText: string,
     attachments: string[],
-    quote?: QuoteDraft | null
+    quote?: QuoteDraft | null,
+    contextBlocks?: PreviewRef[] | null
   ): Promise<void> {
     if (this.turns.has(conversationId)) return
-    // Bubble body: typed text (+ attachment paths). Quote marker is only for the model
-    // (rebuilt in buildHistory from quote* fields).
+    // Bubble body: typed text (+ attachment paths). Quote marker and preview
+    // context are only for the model (rebuilt in buildHistory from stored fields).
     const composed = attachments.length
       ? `${userText}\n\n${t('ui.attachments')}\n${attachments.map((p) => `- ${p}`).join('\n')}`
       : userText
@@ -150,7 +153,7 @@ export class AgentRuntime {
     const parentId = leaf === ROOT_LEAF ? null : leaf
     await this.startTurn(
       conversationId,
-      this.addUserMessage(conversationId, composed, parentId, quote)
+      this.addUserMessage(conversationId, composed, parentId, quote, contextBlocks)
     )
   }
 
@@ -214,7 +217,8 @@ export class AgentRuntime {
     conversationId: string,
     text: string,
     parentId: string | null,
-    quote?: QuoteDraft | null
+    quote?: QuoteDraft | null,
+    contextBlocks?: PreviewRef[] | null
   ): string {
     const message: ChatMessage = {
       id: randomUUID(),
@@ -229,7 +233,8 @@ export class AgentRuntime {
             quoteSummary: quote.summary,
             quoteRole: quote.role
           }
-        : {})
+        : {}),
+      ...(contextBlocks && contextBlocks.length ? { contextBlocks } : {})
     }
     // Storing first is what lets auto-title fire before the turn starts.
     this.deps.conversations.appendMessage(conversationId, message)
@@ -277,6 +282,7 @@ export class AgentRuntime {
       argOverrides: new Map()
     }
     this.turns.set(conversationId, turn)
+    this.deps.changeSets?.beginTurn(conversationId)
     this.deps.emit({ type: 'start', conversationId })
     this.setPhase(conversationId, turn, 'thinking')
 
@@ -601,8 +607,9 @@ export class AgentRuntime {
 
   private toolsFor(conversation: Conversation, turn: TurnState): AgentTool[] {
     const conversationId = conversation.id
+    const workdir = this.workdirOf(conversation)
     const tools = createTools({
-      workdir: this.workdirOf(conversation),
+      workdir,
       settings: () => this.deps.settings.get(),
       files: this.deps.files,
       shell: () => this.shellFor(conversation),
@@ -610,7 +617,15 @@ export class AgentRuntime {
       fsChanged: (parentPath, filePath) =>
         this.deps.emit({ type: 'fs-changed', conversationId, parentPath, filePath }),
       ask: (toolCallId, summary, options) =>
-        this.askUser(conversationId, turn, toolCallId, summary, options)
+        this.askUser(conversationId, turn, toolCallId, summary, options),
+      recordWrite: (filePath, originalContent, newContent) =>
+        this.deps.changeSets?.recordWrite(
+          conversationId,
+          workdir,
+          filePath,
+          originalContent,
+          newContent
+        )
     })
     // Edit-mode approvals may rewrite args after the user edits the card.
     return tools.map((tool) => ({
@@ -866,6 +881,23 @@ export class AgentRuntime {
       error: turn.error,
       cancelled: turn.cancelled
     })
+
+    const parent = conversation?.messages.find((m) => m.id === turn.parentId)
+    const turnTitle = parent?.content?.trim() || conversation?.title || 'Agent turn'
+    const changeSet = this.deps.changeSets?.finalizeTurn(
+      conversationId,
+      turnTitle,
+      conversation?.model || '',
+      { cancelled: turn.cancelled, error: !!turn.error }
+    )
+    if (changeSet) {
+      this.deps.emit({
+        type: 'change-review',
+        conversationId,
+        changeSetId: changeSet.id,
+        pendingCount: changeSet.files.length
+      })
+    }
   }
 
   /** Emits a terminal failure for a turn that never started (e.g. missing key). */

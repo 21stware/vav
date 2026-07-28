@@ -5,8 +5,8 @@
 
 <br/>
 <!-- originai-release-badge:start -->
-<a href="https://spec.getoriginai.com/feea5b82-31bd-4418-a57f-23bc4042e8ff/949953f85263bfa978f973ea3eea3d0445d0ae2046a427119ff126c6bd4ff373" target="_blank" rel="noopener noreferrer">
-  <img src="https://spec.getoriginai.com/feea5b82-31bd-4418-a57f-23bc4042e8ff/949953f85263bfa978f973ea3eea3d0445d0ae2046a427119ff126c6bd4ff373/badge-dark.svg" alt="originai">
+<a href="https://spec.getoriginai.com/feea5b82-31bd-4418-a57f-23bc4042e8ff/74abae6dba601065d872f9617f0f03b5b91a6b50e62115fcd446c36bcf64a468" target="_blank" rel="noopener noreferrer">
+  <img src="https://spec.getoriginai.com/feea5b82-31bd-4418-a57f-23bc4042e8ff/74abae6dba601065d872f9617f0f03b5b91a6b50e62115fcd446c36bcf64a468/badge-dark.svg" alt="originai">
 </a>
 <!-- originai-release-badge:end -->
 

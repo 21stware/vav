@@ -708,7 +708,7 @@ kbd {
 .sidebar-list {
   flex: 1;
   overflow-y: auto;
-  padding: 2px 6px 10px;
+  padding: 2px 4px 10px;
 }
 
 /* The header is the divider. Time buckets stay quiet captions; workspace /
@@ -736,7 +736,8 @@ kbd {
 .conv-group-header.interactive {
   height: 22px;
   margin: 6px 0 1px;
-  padding: 0 8px;
+  padding: 0 4px 0 2px;
+  gap: 2px;
   cursor: default;
   border-radius: 6px;
 }
@@ -805,8 +806,45 @@ kbd {
 }
 
 .conv-row.multi {
-  background: var(--accent-soft);
+  background: var(--bg-selected);
   color: var(--text);
+}
+
+/*
+ * Contiguous multi-select: merge adjacent .multi rows into one block.
+ * Prefer DOM adjacency (:has / +) so it still works if run-* classes lag;
+ * run-* classes remain as an explicit fallback from Sidebar.tsx.
+ */
+.sidebar-list .conv-row.multi {
+  border-radius: 7px;
+}
+
+.sidebar-list .conv-row.multi:has(+ .conv-row.multi) {
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+.sidebar-list .conv-row.multi + .conv-row.multi {
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
+  /* Cover the 1px seam between cells */
+  box-shadow: 0 -1px 0 var(--bg-selected);
+}
+
+.sidebar-list .conv-row.multi.run-only {
+  border-radius: 7px;
+}
+
+.sidebar-list .conv-row.multi.run-start {
+  border-radius: 7px 7px 0 0;
+}
+
+.sidebar-list .conv-row.multi.run-middle {
+  border-radius: 0;
+}
+
+.sidebar-list .conv-row.multi.run-end {
+  border-radius: 0 0 7px 7px;
 }
 
 .conv-icon {
@@ -838,7 +876,8 @@ kbd {
   white-space: nowrap;
 }
 
-.conv-row.selected .conv-title {
+.conv-row.selected .conv-title,
+.conv-row.multi .conv-title {
   font-weight: 500;
 }
 
@@ -852,7 +891,8 @@ kbd {
   white-space: nowrap;
 }
 
-.conv-row.selected .conv-subtitle {
+.conv-row.selected .conv-subtitle,
+.conv-row.multi .conv-subtitle {
   color: color-mix(in srgb, var(--text-tertiary) 55%, var(--accent-text));
 }
 
@@ -2847,6 +2887,32 @@ mark {
   gap: 5px;
 }
 
+.tools-header-lead .pick-mode-btn {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background var(--dur-hover) ease, color var(--dur-hover) ease, border-color var(--dur-hover) ease;
+}
+
+.tools-header-lead .pick-mode-btn:hover {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--border));
+}
+
+.tools-header-lead .pick-mode-btn.active {
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-color: color-mix(in srgb, var(--accent) 40%, transparent);
+}
+
 .tools-header-lead .btn.sm.icon-only:has(svg + svg) {
   width: auto;
   padding: 0 7px;
@@ -3073,24 +3139,440 @@ mark {
   opacity: 0.7;
 }
 
-/* Standalone file preview window (not an in-app modal). */
-.file-viewer-window {
+/* Standalone file preview window (file-preview.rpml). */
+.file-viewer-window,
+.file-preview-shell {
   display: flex;
   flex-direction: column;
   height: 100%;
+  min-height: 100vh;
   background: var(--bg-content);
   overflow: hidden;
+}
+
+.file-preview-shell {
+  min-height: 100vh;
+}
+
+.file-preview-main {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.file-preview-shell .file-viewer-body {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+
+.file-preview-zoom {
+  min-height: 100%;
 }
 
 .file-viewer-header {
   display: flex;
   align-items: center;
-  gap: 12px;
-  /* Match chrome(52) traffic-light centering used by the preview window. */
-  min-height: 52px;
-  padding: 8px var(--chrome-trail) 8px var(--chrome-lead);
+  gap: 10px;
+  /* Match chrome(42) traffic-light centering used by the preview window. */
+  height: 42px;
+  min-height: 42px;
+  padding: 0 var(--chrome-trail) 0 var(--chrome-lead);
   border-bottom: 1px solid var(--border);
   flex: 0 0 auto;
+  box-sizing: border-box;
+}
+
+/* Embedded (workspace view): no traffic-light padding. */
+.file-preview-shell.embedded .file-viewer-header {
+  padding: 0 10px;
+}
+
+.file-viewer-lead {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex: 0 1 auto;
+}
+
+.file-viewer-chrome {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+}
+
+.preview-badge {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  color: var(--accent-text);
+  flex: 0 0 auto;
+}
+
+.preview-badge.sm {
+  font-size: 10px;
+  padding: 1px 6px;
+}
+
+/* Inspect-style block selection (Chrome DevTools Elements): same document,
+   overlay outline on hover/selected — never a source-editor layout swap. */
+.file-viewer-body.selecting {
+  cursor: default;
+}
+
+.preview-document.selecting .preview-select-region,
+.preview-notebook-cell.preview-select-region,
+.preview-media-frame.preview-select-region {
+  position: relative;
+  border-radius: 2px;
+  outline: 1px solid transparent;
+  outline-offset: 1px;
+  transition:
+    background var(--dur-hover) ease,
+    outline-color var(--dur-hover) ease;
+}
+
+.preview-document.selecting .preview-select-region:hover,
+.preview-notebook-cell.preview-select-region:hover,
+.preview-media-frame.preview-select-region:hover {
+  outline-color: color-mix(in srgb, #3b82f6 55%, transparent);
+  background: color-mix(in srgb, #3b82f6 6%, transparent);
+}
+
+.preview-document.selecting .preview-select-region.selected,
+.preview-notebook-cell.preview-select-region.selected,
+.preview-media-frame.preview-select-region.selected {
+  outline-color: #3b82f6;
+  outline-width: 2px;
+  background: color-mix(in srgb, #3b82f6 12%, transparent);
+}
+
+.preview-media-frame {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 0;
+  height: 100%;
+  padding: 8px;
+  box-sizing: border-box;
+}
+
+.preview-source-editor {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: stretch;
+  min-height: 100%;
+  font-family: var(--font-code);
+  font-size: var(--code-size);
+  line-height: 1.55;
+}
+
+.preview-source-gutter {
+  display: flex;
+  flex-direction: column;
+  padding: 12px 0 12px 10px;
+  user-select: none;
+  color: var(--text-tertiary);
+  border-right: 1px solid var(--border);
+  background: color-mix(in srgb, var(--bg-elevated) 65%, transparent);
+}
+
+.preview-source-gutter-line {
+  display: block;
+  width: 100%;
+  min-width: 2.5em;
+  padding: 0 10px 0 4px;
+  border: 0;
+  border-left: 3px solid transparent;
+  margin: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  line-height: 1.55;
+  text-align: right;
+  cursor: default;
+}
+
+.preview-source-editor.selecting .preview-source-gutter-line:hover {
+  border-left-color: color-mix(in srgb, var(--text-tertiary) 55%, transparent);
+  background: color-mix(in srgb, var(--text-tertiary) 6%, transparent);
+}
+
+.preview-source-gutter-line.selected {
+  border-left-color: #3b82f6;
+  background: color-mix(in srgb, #3b82f6 10%, transparent);
+  color: var(--text);
+}
+
+.preview-source-textarea {
+  resize: none;
+  border: 0;
+  outline: none;
+  padding: 12px 14px;
+  margin: 0;
+  min-height: 100%;
+  width: 100%;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  line-height: 1.55;
+  white-space: pre;
+  overflow: auto;
+  tab-size: 2;
+}
+
+.preview-notebook-editor,
+.preview-csv-input {
+  width: 100%;
+  box-sizing: border-box;
+  margin: 0;
+  padding: 6px 8px;
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-code);
+  font-size: var(--code-size);
+  line-height: 1.45;
+}
+
+.preview-notebook-editor {
+  min-height: 120px;
+  resize: vertical;
+}
+
+.file-viewer-code.continuous {
+  display: block;
+  white-space: pre;
+}
+
+.file-viewer-code.continuous .preview-code-line {
+  display: block;
+  min-height: 1.55em;
+}
+
+.file-viewer-code.continuous.selecting .preview-code-line {
+  cursor: default;
+}
+
+/* Code canvas: position relative so overlays can be absolutely positioned. */
+.file-viewer-code.continuous {
+  display: block;
+  white-space: pre;
+  position: relative;
+}
+
+.file-viewer-code.continuous .preview-code-line {
+  display: block;
+  min-height: 1.55em;
+}
+
+.file-viewer-code.continuous.selecting .preview-code-line {
+  cursor: default;
+}
+
+/* Selection/hover overlays — absolutely positioned on top of rendered lines.
+   Width follows content so the outline stays complete under horizontal scroll. */
+.preview-code-overlay {
+  position: absolute;
+  left: 0;
+  right: 0;
+  width: max-content;
+  min-width: 100%;
+  border-radius: 2px;
+  outline: 1px solid transparent;
+  outline-offset: 0;
+  pointer-events: none;
+  z-index: 1;
+  transition:
+    background var(--dur-hover) ease,
+    outline-color var(--dur-hover) ease;
+}
+
+.preview-code-overlay.hovered {
+  outline-color: color-mix(in srgb, #3b82f6 55%, transparent);
+  background: color-mix(in srgb, #3b82f6 6%, transparent);
+}
+
+.preview-code-overlay.selected {
+  outline: 2px solid #3b82f6;
+  outline-offset: -1px;
+  background: color-mix(in srgb, #3b82f6 12%, transparent);
+}
+
+.preview-drill-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-sunken);
+  flex: 0 0 auto;
+}
+
+.preview-drill-crumb {
+  border: 0;
+  padding: 2px 8px;
+  border-radius: 4px;
+  background: var(--bg-hover);
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 11px;
+  cursor: default;
+}
+
+.preview-drill-crumb:hover {
+  color: var(--text);
+  background: color-mix(in srgb, #3b82f6 14%, var(--bg-hover));
+}
+
+.preview-plain {
+  margin: 0;
+  font-family: var(--font-code);
+  font-size: var(--code-size);
+  white-space: pre-wrap;
+}
+
+.file-preview-statusbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  height: 28px;
+  padding: 0 14px;
+  border-top: 1px solid var(--border);
+  font-size: 11px;
+  color: var(--text-tertiary);
+  flex: 0 0 auto;
+  overflow: hidden;
+}
+
+.file-preview-statusbar > span:first-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.preview-agent-panel {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-width: 320px;
+  max-width: 720px;
+  border-left: 1px solid var(--border);
+  background: var(--bg-content);
+  flex: 0 0 auto;
+  min-height: 0;
+  animation: preview-agent-in 250ms ease-out;
+}
+
+/* Agent drawer: transcript + composer only (no Workspace / tools). */
+.preview-edit-session {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--bg-content);
+}
+
+.preview-edit-stream {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.preview-edit-dock {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  max-height: 50%;
+}
+
+.preview-edit-dock .tools-panel {
+  flex: 0 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.preview-edit-dock .composer {
+  flex: 0 0 auto;
+}
+
+@keyframes preview-agent-in {
+  from {
+    transform: translateX(12px);
+    opacity: 0.4;
+  }
+  to {
+    transform: none;
+    opacity: 1;
+  }
+}
+
+.preview-agent-resizer {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 4px;
+  cursor: col-resize;
+  z-index: 2;
+}
+
+.preview-agent-meta {
+  padding: 8px 12px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 0 0 auto;
+}
+
+.preview-temp-note {
+  font-size: 11px;
+  color: var(--accent-text);
+  background: var(--accent-soft);
+  border-radius: 6px;
+  padding: 4px 8px;
+}
+
+.csv-selectable th.selected,
+.csv-selectable tr.selected td {
+  background: color-mix(in srgb, #3b82f6 12%, transparent);
+}
+
+.csv-row-gutter {
+  width: 36px;
+  text-align: right;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  user-select: none;
+}
+
+.preview-document {
+  max-width: 720px;
+  margin: 0 auto;
+  user-select: text;
+}
+
+.preview-document.notebook {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.preview-notebook-cell {
+  margin: 0;
 }
 
 .titlebar-drag {
@@ -3117,8 +3599,286 @@ mark {
 .file-viewer-actions {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 6px;
   flex: 0 0 auto;
+}
+
+.assoc-settings {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.assoc-register-all {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-raised);
+}
+
+.assoc-register-all-title {
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.assoc-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.assoc-row {
+  display: grid;
+  grid-template-columns: auto 1fr auto auto;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 4px;
+  border-bottom: 1px solid var(--border);
+}
+
+.assoc-row:last-child {
+  border-bottom: none;
+}
+
+.assoc-row-icon {
+  color: var(--text-tertiary);
+}
+
+.assoc-row-meta {
+  min-width: 0;
+}
+
+.assoc-row-label {
+  font-weight: 500;
+  font-size: 13px;
+}
+
+.assoc-tag {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--bg-sunken);
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.assoc-tag.is-vav {
+  background: color-mix(in srgb, var(--success) 22%, transparent);
+  color: var(--success);
+}
+
+.assoc-section-title {
+  font-weight: 600;
+  font-size: 13px;
+  margin-top: 8px;
+}
+
+.preview-star-btn.is-default {
+  color: #e3b341;
+}
+
+.preview-star-btn.is-default svg {
+  fill: currentColor;
+}
+
+.workspace-view {
+  display: grid;
+  grid-template-columns: 200px 1fr minmax(260px, 360px);
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--bg-content);
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border);
+}
+
+.workspace-view-tree {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  border-right: 1px solid var(--border);
+  background: var(--bg-sidebar, var(--bg-content));
+}
+
+.workspace-view-tree-head {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 8px 8px;
+  border-bottom: 1px solid var(--border);
+  flex: 0 0 auto;
+}
+
+.workspace-view-tree-head .text-field {
+  height: 26px;
+  padding: 0 8px;
+  font-size: 12px;
+}
+
+.workspace-view-title {
+  min-width: 0;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.3;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-view-tree-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 4px 0;
+}
+
+.workspace-view-tree-empty {
+  padding: 12px 10px;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.workspace-view-preview {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.workspace-view-preview .file-preview-shell {
+  min-height: 0;
+  height: 100%;
+}
+
+.workspace-view-agent {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  border-left: 1px solid var(--border);
+}
+
+.workspace-view-agent-head {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 12px 10px;
+  border-bottom: 1px solid var(--border);
+  flex: 0 0 auto;
+}
+
+.workspace-view-agent-head-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.workspace-view-agent-icon {
+  flex: 0 0 auto;
+  color: var(--text-secondary);
+}
+
+.workspace-view-agent-head-row .spacer {
+  flex: 1;
+}
+
+.workspace-view-agent-session-label {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.workspace-tree-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  padding: 3px 8px;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: default;
+}
+
+.workspace-tree-row:hover {
+  background: var(--bg-hover);
+}
+
+.workspace-tree-row.selected {
+  background: var(--accent-soft);
+  color: var(--accent-text);
+}
+
+.workspace-tree-row .label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.conv-group-header.selected {
+  background: var(--accent-soft);
+  color: var(--accent-text);
+}
+
+.conv-group-header .conv-group-chevron-hit {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  flex: 0 0 auto;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  padding: 0;
+  cursor: default;
+}
+
+.conv-group-header .conv-group-title-hit {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  padding: 0;
+  cursor: pointer;
+}
+
+.conv-group-header .conv-group-title-hit:hover .conv-group-title {
+  color: var(--text-primary);
+}
+
+.file-viewer-header > .spacer {
+  flex: 1 1 auto;
+  min-width: 12px;
+  height: 100%;
+  -webkit-app-region: drag;
+}
+
+.preview-markdown img,
+.preview-markdown picture {
+  max-width: 100%;
+  height: auto;
+}
+
+.preview-markdown picture {
+  display: inline-block;
 }
 
 .file-viewer-body {
@@ -3332,6 +4092,12 @@ mark {
   gap: 6px;
 }
 
+/* No tools strip above (e.g. preview-edit Agent drawer): keep the same inset
+   the composer already has on the other three sides. */
+.dock > .composer:first-child {
+  padding-top: 10px;
+}
+
 .quote-strip {
   display: flex;
   align-items: center;
@@ -3501,6 +4267,124 @@ mark {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
+}
+
+/* Preview selection comment-blocks pinned above the input. */
+.context-refs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.context-ref-chip {
+  max-width: 100%;
+  background: var(--accent-soft);
+  color: var(--accent-text);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 25%, transparent);
+}
+
+.context-ref-chip:hover {
+  background: color-mix(in srgb, var(--accent) 18%, var(--accent-soft));
+  color: var(--accent-text);
+}
+
+.context-ref-chip svg {
+  opacity: 1;
+  color: var(--accent-text);
+}
+
+.context-ref-lines {
+  flex: 0 0 auto;
+  font-size: 11px;
+  opacity: 0.7;
+  font-variant-numeric: tabular-nums;
+}
+
+/* —— Pick mode comment cards —— */
+.comment-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 0 0 auto;
+  max-height: 160px;
+  overflow-y: auto;
+  padding: 4px 0;
+}
+
+.comment-card {
+  border-radius: 6px;
+  background: var(--bg-sunken);
+  box-shadow: inset 0 0 0 1px var(--border);
+  padding: 6px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.comment-card-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.comment-card-header .tag-sm {
+  font-size: 11px;
+  font-weight: 500;
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--accent-text);
+  padding: 1px 6px;
+  border-radius: 3px;
+  flex: 0 0 auto;
+}
+
+.comment-card-lines {
+  font-size: 11px;
+  opacity: 0.6;
+  font-variant-numeric: tabular-nums;
+  flex: 1;
+}
+
+.comment-card-input {
+  font-family: var(--font-ui);
+  font-size: 12px;
+  line-height: 1.4;
+  resize: none;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 3px 6px;
+  width: 100%;
+}
+
+.comment-card-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+/* —— Pick mode canvas overlay —— */
+.file-viewer-body.pick-mode {
+  position: relative;
+}
+
+.file-viewer-body.pick-mode::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: color-mix(in srgb, var(--accent) 5%, transparent);
+  pointer-events: none;
+  z-index: 1;
+}
+
+.file-viewer-body.pick-mode .file-viewer-code.continuous {
+  cursor: crosshair;
+}
+
+.file-viewer-body.pick-mode .preview-code-overlay.hovered {
+  outline: 1px dashed var(--accent);
+  outline-offset: -1px;
+  background: transparent;
 }
 
 .token-ring {
@@ -3967,6 +4851,371 @@ mark {
   flex: 1;
   user-select: text;
   overflow-wrap: anywhere;
+}
+
+.about-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  max-width: 520px;
+}
+
+.about-stack .about-card {
+  max-width: none;
+}
+
+.about-card-title {
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 2px;
+}
+
+.banner.review-pending {
+  background: color-mix(in srgb, var(--accent) 14%, var(--bg-elevated));
+  border-bottom: 1px solid var(--border);
+  color: var(--text);
+}
+
+.app-toast {
+  position: fixed;
+  top: 52px;
+  right: 18px;
+  z-index: 80;
+  min-width: 240px;
+  max-width: 360px;
+  padding: 12px 28px 12px 14px;
+  border-radius: var(--radius);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.18);
+  animation: toast-in 180ms ease-out;
+}
+
+.app-toast.kind-success {
+  border-color: color-mix(in srgb, #34c759 45%, var(--border));
+}
+
+.app-toast.kind-error {
+  border-color: color-mix(in srgb, #ff3b30 45%, var(--border));
+}
+
+.app-toast-title {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.app-toast-body {
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.app-toast-dismiss {
+  position: absolute;
+  top: 6px;
+  right: 8px;
+  border: 0;
+  background: transparent;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+}
+
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.change-review {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  background: var(--bg);
+}
+
+.review-nav .review-logo img {
+  height: 22px;
+}
+
+.review-nav-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  margin-left: 4px;
+}
+
+.review-summary {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px 20px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-elevated);
+}
+
+.review-summary h2 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.review-summary-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.review-summary .muted {
+  margin: 4px 0 0;
+  font-size: 12px;
+}
+
+.review-tag {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--bg-sunken);
+}
+
+.review-tag.risk-low {
+  color: #248a3d;
+  background: color-mix(in srgb, #34c759 18%, transparent);
+}
+
+.review-tag.risk-medium {
+  color: #9a5b00;
+  background: color-mix(in srgb, #ff9f0a 22%, transparent);
+}
+
+.review-tag.risk-high {
+  color: #c41e1e;
+  background: color-mix(in srgb, #ff3b30 18%, transparent);
+}
+
+.review-high-alert {
+  margin-top: 8px;
+  font-size: 12px;
+  color: #c41e1e;
+}
+
+.review-bulk {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  flex-shrink: 0;
+}
+
+.review-body {
+  display: grid;
+  grid-template-columns: 1fr 380px;
+  min-height: 0;
+  flex: 1;
+}
+
+.review-table-pane {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  border-right: 1px solid var(--border);
+}
+
+.review-table-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.review-section-label {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.review-table {
+  flex: 1;
+  overflow: auto;
+}
+
+.review-row {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr) auto auto auto;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 16px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.review-row:hover {
+  background: var(--bg-hover);
+}
+
+.review-row.selected {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.review-row.status-accepted {
+  box-shadow: inset 3px 0 0 #34c759;
+}
+
+.review-row.status-rejected {
+  box-shadow: inset 3px 0 0 #ff3b30;
+  opacity: 0.72;
+}
+
+.review-row.status-edited {
+  box-shadow: inset 3px 0 0 #0a84ff;
+}
+
+.review-row-path {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.review-change-badge {
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--bg-sunken);
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.review-change-badge.type-added {
+  color: #248a3d;
+}
+
+.review-change-badge.type-deleted {
+  color: #c41e1e;
+}
+
+.review-change-badge.type-modified {
+  color: #9a5b00;
+}
+
+.review-row-status {
+  color: var(--text-secondary);
+  min-width: 64px;
+}
+
+.review-row-actions {
+  display: flex;
+  gap: 2px;
+  opacity: 0;
+}
+
+.review-row:hover .review-row-actions,
+.review-row.selected .review-row-actions {
+  opacity: 1;
+}
+
+.review-selection-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  border-top: 1px solid var(--border);
+  background: var(--bg-elevated);
+}
+
+.review-inspector {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--bg-elevated);
+}
+
+.review-inspector-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+.review-file-name {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.review-diff {
+  flex: 1;
+  margin: 0;
+  padding: 10px 12px;
+  overflow: auto;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.45;
+  white-space: pre;
+}
+
+.diff-line.add {
+  background: color-mix(in srgb, #34c759 14%, transparent);
+  color: #1f7a36;
+}
+
+.diff-line.del {
+  background: color-mix(in srgb, #ff3b30 14%, transparent);
+  color: #b42318;
+}
+
+.diff-line.hunk {
+  color: var(--text-tertiary);
+}
+
+.diff-more {
+  display: block;
+  margin-top: 8px;
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  cursor: pointer;
+  font-size: 11px;
+}
+
+.review-edit-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  min-height: 320px;
+}
+
+.review-edit-area {
+  width: 100%;
+  min-height: 280px;
+  resize: vertical;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  padding: 10px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+}
+
+@media (max-width: 900px) {
+  .review-body {
+    grid-template-columns: 1fr;
+  }
+
+  .review-inspector {
+    border-top: 1px solid var(--border);
+    max-height: 40vh;
+  }
 }
 
 /* Popup menus are drawn by AppKit (lib/nativeMenu.ts), not styled here. */

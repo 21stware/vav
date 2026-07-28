@@ -12,6 +12,7 @@
  */
 import type { Api, AssistantMessage, Message, Model, ToolCall } from '@earendil-works/pi-ai'
 import { composeQuotedUserText } from '@shared/quote'
+import { composeContextUserText } from '@shared/previewContext'
 import { threadPath } from '@shared/thread'
 import type { ChatMessage, MessageBlock, ToolCallBlock } from '@shared/types'
 
@@ -34,8 +35,12 @@ export function buildHistory(
               role: message.quoteRole
             }
           : null
-      // Stored content is the bubble body; quote marker is reconstituted for the model.
-      const text = composeQuotedUserText(message.content, quote)
+      // Stored content is the bubble body; quote marker and preview context are
+      // reconstituted for the model only.
+      const text = composeContextUserText(
+        composeQuotedUserText(message.content, quote),
+        message.contextBlocks
+      )
       history.push({
         role: 'user',
         content: [{ type: 'text', text }],

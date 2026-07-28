@@ -125,6 +125,12 @@ export interface ChatMessage {
   quoteMessageId?: string
   quoteSummary?: string
   quoteRole?: 'user' | 'assistant'
+  /**
+   * Preview block references attached in the composer (file-preview edit).
+   * Reconstituted into the model text as hidden context; the bubble body
+   * stays user-typed only, exactly like {@link quoteSummary}.
+   */
+  contextBlocks?: PreviewRef[]
 }
 
 /** Pending quote attached to the composer before send (main-chat.rpml §引用). */
@@ -132,6 +138,24 @@ export interface QuoteDraft {
   messageId: string
   summary: string
   role: 'user' | 'assistant'
+}
+
+/**
+ * A block selected in the file-preview edit canvas, pinned above the composer
+ * as a compact comment/reference chip. Sent to the model as hidden context.
+ */
+export interface PreviewRef {
+  /** Stable identity for the chip (block id, scoped by file path). */
+  id: string
+  filePath: string
+  /** Human label shown on the chip (block label or a lines range). */
+  label: string
+  startLine: number
+  endLine: number
+  /** Raw block content, streamed to the model but never into the bubble. */
+  text: string
+  /** File kind badge (e.g. TS, MD), shown for context. */
+  badge?: string
 }
 
 /** One agent-loop usage sample for the context-window popover chart. */
@@ -188,7 +212,7 @@ export interface Conversation extends ConversationMeta {
 export type ShellKind = 'zsh' | 'bash' | 'fish' | 'powershell'
 export type ThemeMode = 'light' | 'dark' | 'system'
 /** Sidebar list grouping; default is time buckets ("无分组" in the UI). */
-export type SidebarGroupingMode = 'none' | 'workspace' | 'source'
+export type SidebarGroupingMode = 'none' | 'workspace'
 /** Per-conversation tool approval policy (main-chat.rpml). */
 export type ApprovalMode = 'auto' | 'bypass' | 'edit'
 
@@ -448,6 +472,13 @@ export type TurnEvent =
       error?: string
       cancelled?: boolean
     }
+  /** Agent turn wrote files — open Change Review for Accept / Reject. */
+  | {
+      type: 'change-review'
+      conversationId: string
+      changeSetId: string
+      pendingCount: number
+    }
 
 export interface TurnStatus {
   conversationId: string
@@ -472,6 +503,8 @@ export interface ValidateKeyResult {
 
 export interface AboutInfo {
   version: string
+  /** CFBundleVersion when available; falls back to the short version. */
+  buildNumber: string
   electron: string
   userDataPath: string
   conversationsPath: string

@@ -130,7 +130,10 @@ export class FileService {
       if (info.isDirectory()) {
         return { path, name, size: 0, kind: 'binary', mime: '', error: t('files.error.directory') }
       }
-      const kind = previewKind(name)
+      let kind = previewKind(name)
+      if (kind === 'binary' && (await looksLikeTextFile(path, info.size))) {
+        kind = 'text'
+      }
       const mime = mimeFor(name, kind)
       const base = { path, name, size: info.size, kind, mime }
       if (kind === 'text' || kind === 'csv') {
@@ -244,60 +247,204 @@ export class FileService {
   }
 }
 
+/** Known text / source extensions for in-app preview (plus extensionless names). */
+const TEXT_EXTENSIONS = new Set([
+  // JS / TS
+  '.js',
+  '.jsx',
+  '.mjs',
+  '.cjs',
+  '.ts',
+  '.tsx',
+  '.mts',
+  '.cts',
+  // Python / scripting
+  '.py',
+  '.pyi',
+  '.pyw',
+  '.rb',
+  '.php',
+  '.pl',
+  '.pm',
+  '.lua',
+  '.r',
+  '.jl',
+  // Systems
+  '.c',
+  '.h',
+  '.cc',
+  '.cpp',
+  '.cxx',
+  '.hpp',
+  '.hh',
+  '.m',
+  '.mm',
+  '.swift',
+  '.go',
+  '.rs',
+  '.zig',
+  '.nim',
+  '.cs',
+  '.fs',
+  '.fsx',
+  '.java',
+  '.kt',
+  '.kts',
+  '.scala',
+  '.groovy',
+  '.dart',
+  '.ex',
+  '.exs',
+  '.erl',
+  '.hrl',
+  '.hs',
+  '.lhs',
+  '.clj',
+  '.cljs',
+  '.edn',
+  // Web / markup
+  '.html',
+  '.htm',
+  '.xhtml',
+  '.css',
+  '.scss',
+  '.sass',
+  '.less',
+  '.vue',
+  '.svelte',
+  '.astro',
+  '.xml',
+  '.xsl',
+  '.xslt',
+  '.svg',
+  // Data / config
+  '.json',
+  '.jsonc',
+  '.json5',
+  '.yml',
+  '.yaml',
+  '.toml',
+  '.ini',
+  '.cfg',
+  '.conf',
+  '.config',
+  '.properties',
+  '.env',
+  '.envrc',
+  '.plist',
+  '.tf',
+  '.hcl',
+  '.tfvars',
+  '.proto',
+  '.graphql',
+  '.gql',
+  '.sql',
+  '.prisma',
+  // Docs
+  '.md',
+  '.markdown',
+  '.mdx',
+  '.rst',
+  '.adoc',
+  '.tex',
+  '.txt',
+  '.text',
+  '.log',
+  '.csv',
+  '.tsv',
+  '.ipynb',
+  '.rpml',
+  // Shell / build
+  '.sh',
+  '.bash',
+  '.zsh',
+  '.fish',
+  '.ps1',
+  '.psm1',
+  '.bat',
+  '.cmd',
+  '.cmake',
+  '.make',
+  '.mk',
+  '.gradle',
+  '.dockerignore',
+  '.gitignore',
+  '.gitattributes',
+  '.editorconfig',
+  '.npmrc',
+  '.nvmrc',
+  '.prettierrc',
+  '.eslintrc',
+  '.babelrc',
+  '.lock'
+])
+
+const TEXT_BASENAMES = new Set([
+  'dockerfile',
+  'makefile',
+  'gnumakefile',
+  'cmakelists.txt',
+  'readme',
+  'license',
+  'licence',
+  'changelog',
+  'authors',
+  'gemfile',
+  'rakefile',
+  'procfile',
+  'vagrantfile',
+  'brewfile',
+  'justfile'
+])
+
 function previewKind(name: string): FilePreviewKind {
+  const base = name.toLowerCase()
   const ext = extname(name).toLowerCase()
-  if (ext === '.csv') return 'csv'
-  if (['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.svg'].includes(ext)) return 'image'
+  if (ext === '.csv' || ext === '.tsv') return 'csv'
+  if (['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.svg', '.ico', '.avif'].includes(ext)) {
+    return 'image'
+  }
   if (ext === '.pdf') return 'pdf'
-  if (['.mp3', '.wav', '.m4a', '.aac', '.ogg', '.flac'].includes(ext)) return 'audio'
-  if (['.mp4', '.mov', '.webm', '.mkv', '.m4v'].includes(ext)) return 'video'
+  if (['.mp3', '.wav', '.m4a', '.aac', '.ogg', '.flac', '.opus'].includes(ext)) return 'audio'
+  if (['.mp4', '.mov', '.webm', '.mkv', '.m4v', '.avi'].includes(ext)) return 'video'
+  if (TEXT_EXTENSIONS.has(ext) || TEXT_BASENAMES.has(base) || !ext) {
+    return 'text'
+  }
+  // Dotfiles without a second extension (e.g. `.env.local` handled via .local? —
+  // `.env*` often ends with a non-empty ext; also accept `.*rc` / `.*ignore`).
   if (
-    [
-      '.swift',
-      '.ts',
-      '.tsx',
-      '.js',
-      '.jsx',
-      '.py',
-      '.rb',
-      '.go',
-      '.rs',
-      '.java',
-      '.kt',
-      '.c',
-      '.h',
-      '.cpp',
-      '.cc',
-      '.hpp',
-      '.cs',
-      '.md',
-      '.txt',
-      '.json',
-      '.yml',
-      '.yaml',
-      '.toml',
-      '.xml',
-      '.html',
-      '.css',
-      '.scss',
-      '.less',
-      '.sh',
-      '.zsh',
-      '.bash',
-      '.sql',
-      '.graphql',
-      '.env',
-      '.gitignore',
-      '.dockerignore',
-      '.editorconfig',
-      '.rpml',
-      '.log'
-    ].includes(ext) ||
-    !ext
+    base.startsWith('.') &&
+    (base.endsWith('rc') ||
+      base.endsWith('ignore') ||
+      base.startsWith('.env') ||
+      base.includes('eslint') ||
+      base.includes('prettier') ||
+      base.includes('babel'))
   ) {
     return 'text'
   }
   return 'binary'
+}
+
+/** Treat unknown extensions as text when the buffer looks like UTF-8 source. */
+async function looksLikeTextFile(path: string, size: number): Promise<boolean> {
+  if (size <= 0 || size > TEXT_PREVIEW_CAP) return false
+  try {
+    const sampleSize = Math.min(size, 8192)
+    const buf = (await readFile(path)).subarray(0, sampleSize)
+    if (buf.includes(0)) return false
+    const text = buf.toString('utf8')
+    // Reject if replacement chars dominate (invalid UTF-8) or control chars abound.
+    let bad = 0
+    for (let i = 0; i < text.length; i += 1) {
+      const code = text.charCodeAt(i)
+      if (code === 0xfffd) bad += 1
+      else if (code < 9 || (code > 13 && code < 32)) bad += 1
+    }
+    return bad / Math.max(text.length, 1) < 0.02
+  } catch {
+    return false
+  }
 }
 
 function mimeFor(name: string, kind: FilePreviewKind): string {

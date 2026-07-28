@@ -40,8 +40,7 @@ function subtitleFor(
 function groupingOptions(t: ReturnType<typeof useT>): { value: SidebarGroupingMode; label: string }[] {
   return [
     { value: 'none', label: t('sidebar.group.none') },
-    { value: 'workspace', label: t('sidebar.group.workspace') },
-    { value: 'source', label: t('sidebar.group.source') }
+    { value: 'workspace', label: t('sidebar.group.workspace') }
   ]
 }
 
@@ -55,6 +54,8 @@ export function Sidebar(): React.JSX.Element {
   const tmp = useSessionStore((s) => s.tmp)
   const renamingId = useSessionStore((s) => s.renamingId)
   const groupingMode = useSessionStore((s) => s.settings.sidebarGroupingMode)
+  const activeGroupId = useSessionStore((s) => s.activeGroupId)
+  const selectWorkspaceGroup = useSessionStore((s) => s.selectWorkspaceGroup)
 
   const setSidebarQuery = useSessionStore((s) => s.setSidebarQuery)
   const selectConversation = useSessionStore((s) => s.selectConversation)
@@ -132,10 +133,66 @@ export function Sidebar(): React.JSX.Element {
     return () => window.removeEventListener('keydown', onKey)
   }, [visible, activeId, selectedIds, selectConversation, requestDelete, archiveView])
 
-  const menuItems = (id: string): MenuItem[] => {
-    const conversation = conversations.find((c) => c.id === id)
-    const hasRealWorkdir = !isTemporaryWorkspace(conversation?.workingDirectory ?? null, tmp)
-    if (archiveView || conversation?.archived) {
+  const menuItems = (ids: string[]): MenuItem[] => {
+    const targets = ids
+      .map((id) => conversations.find((c) => c.id === id))
+      .filter((c): c is ConversationMeta => !!c)
+    if (targets.length === 0) return []
+
+    // Multi-select: every action applies to the whole selection.
+    if (targets.length > 1) {
+      const allPinned = targets.every((c) => c.pinned)
+      const allArchived = targets.every((c) => c.archived)
+      if (archiveView || allArchived) {
+        return [
+          {
+            label: t('sidebar.menu.unarchiveCount', { count: targets.length }),
+            onSelect: () => {
+              void (async () => {
+                for (const c of targets) await setArchived(c.id, false)
+              })()
+            }
+          },
+          { label: '', divider: true },
+          {
+            label: t('sidebar.menu.deleteCount', { count: targets.length }),
+            destructive: true,
+            onSelect: () => requestDelete(targets.map((c) => c.id))
+          }
+        ]
+      }
+      return [
+        {
+          label: allPinned
+            ? t('sidebar.menu.unpinCount', { count: targets.length })
+            : t('sidebar.menu.pinCount', { count: targets.length }),
+          onSelect: () => {
+            void (async () => {
+              for (const c of targets) await setPinned(c.id, !allPinned)
+            })()
+          }
+        },
+        {
+          label: t('sidebar.menu.archiveCount', { count: targets.length }),
+          onSelect: () => {
+            void (async () => {
+              for (const c of targets) await setArchived(c.id, true)
+            })()
+          }
+        },
+        { label: '', divider: true },
+        {
+          label: t('sidebar.menu.deleteCount', { count: targets.length }),
+          destructive: true,
+          onSelect: () => requestDelete(targets.map((c) => c.id))
+        }
+      ]
+    }
+
+    const conversation = targets[0]
+    const id = conversation.id
+    const hasRealWorkdir = !isTemporaryWorkspace(conversation.workingDirectory ?? null, tmp)
+    if (archiveView || conversation.archived) {
       return [
         {
           label: t('sidebar.menu.unarchive'),
@@ -148,8 +205,8 @@ export function Sidebar(): React.JSX.Element {
     return [
       { label: t('sidebar.menu.openDetached'), onSelect: () => void openDetached(id) },
       {
-        label: conversation?.pinned ? t('sidebar.menu.unpin') : t('sidebar.menu.pin'),
-        onSelect: () => void setPinned(id, !conversation?.pinned)
+        label: conversation.pinned ? t('sidebar.menu.unpin') : t('sidebar.menu.pin'),
+        onSelect: () => void setPinned(id, !conversation.pinned)
       },
       {
         label: t('sidebar.menu.archive'),
@@ -159,13 +216,13 @@ export function Sidebar(): React.JSX.Element {
       { label: t('sidebar.menu.duplicate'), onSelect: () => void duplicateConversation(id) },
       {
         label: t('sidebar.menu.copyTitle'),
-        onSelect: () => void window.vav.conversations.copyToClipboard(conversation?.title ?? '')
+        onSelect: () => void window.vav.conversations.copyToClipboard(conversation.title ?? '')
       },
       {
         label: t('sidebar.menu.revealWorkdir', { fileManager: fileManagerLabel() }),
         disabled: !hasRealWorkdir,
         onSelect: () => {
-          if (conversation?.workingDirectory) {
+          if (conversation.workingDirectory) {
             void window.vav.conversations.revealInFinder(conversation.workingDirectory)
           }
         }
@@ -173,6 +230,19 @@ export function Sidebar(): React.JSX.Element {
       { label: '', divider: true },
       { label: t('sidebar.menu.delete'), destructive: true, onSelect: () => requestDelete([id]) }
     ]
+  }
+
+  const selectionRunClass = (id: string): string => {
+    if (selectedIds.length <= 1 || !selectedIds.includes(id)) return ''
+    const selected = new Set(selectedIds)
+    const index = visible.findIndex((c) => c.id === id)
+    if (index < 0) return 'run-only'
+    const prev = index > 0 && selected.has(visible[index - 1]!.id)
+    const next = index < visible.length - 1 && selected.has(visible[index + 1]!.id)
+    if (!prev && !next) return 'run-only'
+    if (!prev && next) return 'run-start'
+    if (prev && next) return 'run-middle'
+    return 'run-end'
   }
 
   const toggleGroup = (key: string): void => {
@@ -281,42 +351,65 @@ export function Sidebar(): React.JSX.Element {
         )}
 
         {groups.map((group, groupIndex) => {
-          const collapsible = group.kind === 'workspace' || group.kind === 'source'
+          const collapsible = group.kind === 'workspace'
           const collapsed = collapsible && collapsedKeys.has(group.key)
+          const groupWorkdir = group.workdir ?? group.conversations[0]?.workingDirectory ?? null
+          const isWorkspaceSelected =
+            group.kind === 'workspace' && !!groupWorkdir && activeGroupId === groupWorkdir
           return (
             <div className="conv-group" key={group.key || `group-${groupIndex}`}>
               {groupIndex > 0 && <div className="conv-group-divider" />}
               {group.label &&
                 (collapsible ? (
-                  <button
-                    type="button"
-                    className="conv-group-header interactive"
-                    onClick={() => toggleGroup(group.key)}
+                  <div
+                    className={`conv-group-header interactive${isWorkspaceSelected ? ' selected' : ''}`}
                     onContextMenu={(event) => {
-                      if (group.kind !== 'workspace') return
-                      const workdir = group.conversations[0]?.workingDirectory ?? null
-                      if (!workdir || isTemporaryWorkspace(workdir, tmp)) return
+                      if (group.kind !== 'workspace' || !groupWorkdir) return
+                      if (isTemporaryWorkspace(groupWorkdir, tmp)) return
                       event.preventDefault()
                       void showMenu([
                         {
                           label: t('sidebar.menu.newSessionInDir'),
                           onSelect: () =>
                             void createConversation({
-                              workingDirectory: workdir,
+                              workingDirectory: groupWorkdir,
                               model: useSessionStore.getState().settings.defaultModel
                             })
                         }
                       ])
                     }}
                   >
-                    {collapsed ? (
-                      <ChevronRight className="conv-group-chevron" size={12} aria-hidden />
-                    ) : (
-                      <ChevronDown className="conv-group-chevron" size={12} aria-hidden />
-                    )}
-                    <span className="conv-group-title">{group.label}</span>
-                    <span className="conv-group-count">{group.conversations.length}</span>
-                  </button>
+                    <button
+                      type="button"
+                      className="conv-group-chevron-hit"
+                      title={collapsed ? t('common.expand') : t('common.collapse')}
+                      onClick={(event) => {
+                        event.stopPropagation()
+                        toggleGroup(group.key)
+                      }}
+                    >
+                      {collapsed ? (
+                        <ChevronRight className="conv-group-chevron" size={12} aria-hidden />
+                      ) : (
+                        <ChevronDown className="conv-group-chevron" size={12} aria-hidden />
+                      )}
+                    </button>
+                    <button
+                      type="button"
+                      className="conv-group-title-hit"
+                      title={t('sidebar.openWorkspaceView')}
+                      onClick={() => {
+                        if (group.kind !== 'workspace' || !groupWorkdir) {
+                          toggleGroup(group.key)
+                          return
+                        }
+                        void selectWorkspaceGroup(groupWorkdir)
+                      }}
+                    >
+                      <span className="conv-group-title">{group.label}</span>
+                      <span className="conv-group-count">{group.conversations.length}</span>
+                    </button>
+                  </div>
                 ) : (
                   <div className="conv-group-header">
                     <span className="conv-group-title">{group.label}</span>
@@ -329,13 +422,14 @@ export function Sidebar(): React.JSX.Element {
                   const isActive = conversation.id === activeId
                   const isMultiSelected =
                     selectedIds.length > 1 && selectedIds.includes(conversation.id)
+                  const runClass = selectionRunClass(conversation.id)
                   const awaiting = !!turn?.awaitingToolCallId
                   const running = !!turn?.isRunning && !awaiting
 
                   return (
                     <div
                       key={conversation.id}
-                      className={`conv-row${isActive ? ' selected' : ''}${isMultiSelected && !isActive ? ' multi' : ''}`}
+                      className={`conv-row${isActive ? ' selected' : ''}${isMultiSelected ? ` multi ${runClass}` : ''}`}
                       onClick={(event) =>
                         void selectConversation(conversation.id, {
                           additive: event.metaKey,
@@ -345,7 +439,16 @@ export function Sidebar(): React.JSX.Element {
                       onDoubleClick={() => void openDetached(conversation.id)}
                       onContextMenu={(event) => {
                         event.preventDefault()
-                        void showMenu(menuItems(conversation.id))
+                        // Finder-style: right-click inside a multi-selection keeps
+                        // the set and operates on all of it; outside collapses to one.
+                        const targets =
+                          selectedIds.length > 1 && selectedIds.includes(conversation.id)
+                            ? selectedIds
+                            : [conversation.id]
+                        if (targets.length === 1 && selectedIds.length > 1) {
+                          void selectConversation(conversation.id)
+                        }
+                        void showMenu(menuItems(targets))
                       }}
                     >
                       {renamingId === conversation.id ? (
