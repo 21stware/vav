@@ -1,14 +1,22 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { FilePlus, PanelRight, Save, Star } from 'lucide-react'
-import type { FileAssociationStatus, FileInspectResult } from '@shared/ipc'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import {
+  ChevronDown,
+  Clock,
+  PanelRight,
+  Plus,
+  Save
+} from 'lucide-react'
+import type { FileAssociationStatus, FileInspectResult, FileSessionMeta } from '@shared/ipc'
 import type { PreviewRef } from '@shared/types'
-import { formatBytes } from '../lib/format'
+import { formatBytes, relativeTime } from '../lib/format'
 import { highlightCode, languageFromPath } from '../lib/highlightCode'
 import { MarkdownView } from './MarkdownView'
 import {
   formatBadge,
   parseBlocksForPath,
   csvColId,
+  csvCellBlock,
+  csvRowBlock,
   parseCsvModel,
   parseNotebookBlocks,
   blockAtLine,
@@ -19,10 +27,20 @@ import {
 import { basename, dirname } from '../lib/path'
 import { useT } from '../i18n/useT'
 import { useSessionStore } from '../state/sessionStore'
+import { useWorkspaceStore } from '../state/workspaceStore'
 import { SessionDetail } from './SessionDetail'
-import { Button, EmptyState, InlineAlert, Modal } from './ui'
+import { menuAnchor, showMenu } from '../lib/nativeMenu'
+import { Button, EmptyState, InlineAlert } from './ui'
+import { OfficeNativeView } from './office/OfficeNativeView'
+import { SqliteView } from './SqliteView'
+import { ZipArchiveView } from './ZipArchiveView'
+import { BinaryFileView } from './BinaryFileView'
+import { SessionHistoryPopover } from './SessionHistoryPopover'
+import wordmark from '../assets/wordmark.png'
+import wordmarkDark from '../assets/wordmark-dark.png'
 
 const PANEL_WIDTH_KEY = 'vav.filePreviewAgentPanelWidth'
+const EMPTY_COMMENT_CARDS: { ref: PreviewRef; comment: string }[] = []
 
 function loadPanelWidth(): number {
   try {
@@ -34,7 +52,7 @@ function loadPanelWidth(): number {
   return 360
 }
 
-type ConfirmIntent = 'done' | 'close'
+type UnsavedIntent = 'done' | 'close'
 
 /**
  * File preview (file-preview.rpml).
@@ -44,13 +62,21 @@ type ConfirmIntent = 'done' | 'close'
 export function FileViewer({
   path: initialPath,
   parentConversationId,
-  embedded = false
+  embedded = false,
+  agentPanelOpen: embeddedAgentOpen,
+  onToggleAgentPanel,
+  onPickBlock
 }: {
   path: string
   origin?: 'dock' | 'session'
   parentConversationId?: string | null
   /** Workspace view: no titlebar drag chrome / no nested agent drawer. */
   embedded?: boolean
+  /** Workspace split-pane: agent column open (for toolbar toggle). */
+  agentPanelOpen?: boolean
+  onToggleAgentPanel?: () => void
+  /** Workspace Peek: block pick should auto-expand a collapsed Agent panel. */
+  onPickBlock?: () => void
 }): React.JSX.Element {
   const t = useT()
   const [filePath, setFilePath] = useState(initialPath)
@@ -58,30 +84,48 @@ export function FileViewer({
   const [agentPanelOpen, setAgentPanelOpen] = useState(false)
   const [panelWidth, setPanelWidth] = useState(loadPanelWidth)
   const [selectedIds, setSelectedIds] = useState<string[]>([])
-  const [lastSelected, setLastSelected] = useState<string | null>(null)
-  const [drillStack, setDrillStack] = useState<PreviewBlock[]>([])
+  /** Spec: Read-only toggle — when on, blocks are not selectable. */
+  const [readOnly, setReadOnly] = useState(false)
+  /**
+   * Standalone preview: FileSessionStore (path/inode keyed, multi-session).
+   * Embedded workspace: share the workspace/agent conversation from parent.
+   */
   const [agentConversationId, setAgentConversationId] = useState<string | null>(
     embedded ? (parentConversationId ?? null) : null
   )
-  const previewAgentByPath = useSessionStore((s) => s.previewAgentByPath)
+  const [fileId, setFileId] = useState<string | null>(null)
+  const [fileSessions, setFileSessions] = useState<FileSessionMeta[]>([])
+  const [sessionTitle, setSessionTitle] = useState('New session')
+  const [historyOpen, setHistoryOpen] = useState(false)
+  const historyAnchorRef = useRef<HTMLButtonElement | null>(null)
   const [baselineContent, setBaselineContent] = useState<string | null>(null)
+  /** Binary office baseline (base64) for Discard — never treat plainText as the file body. */
+  const [baselineBinary, setBaselineBinary] = useState<string | null>(null)
   const [workingContent, setWorkingContent] = useState<string | null>(null)
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false)
-  const [confirm, setConfirm] = useState<ConfirmIntent | null>(null)
+  /** Forces OfficeNativeView to re-read disk after an external/agent rewrite. */
+  const [previewRevision, setPreviewRevision] = useState(0)
   const [assoc, setAssoc] = useState<FileAssociationStatus | null>(null)
-  const createConversation = useSessionStore((s) => s.createConversation)
+  /** Prevent stacking native sheets if close is re-triggered while one is open. */
+  const unsavedPromptOpen = useRef(false)
+  /** Blocks picked from mature office/PDF renderers (DOM / sheet). */
+  const officeBlocksRef = useRef<Map<string, PreviewBlock>>(new Map())
   const selectConversation = useSessionStore((s) => s.selectConversation)
-  const setPreviewRefs = useSessionStore((s) => s.setPreviewRefs)
-  const activeRefs = useSessionStore((s) =>
-    agentConversationId ? s.previewRefs[agentConversationId] : undefined
-  )
-  const storePickMode = useSessionStore((s) =>
-    agentConversationId ? !!s.pickMode[agentConversationId] : false
-  )
+  const createConversation = useSessionStore((s) => s.createConversation)
+  const agentCommentCards = useSessionStore((s) => {
+    const id = agentConversationId ?? parentConversationId ?? null
+    return id ? (s.commentCards[id] ?? EMPTY_COMMENT_CARDS) : EMPTY_COMMENT_CARDS
+  })
+  const conversations = useSessionStore((s) => s.conversations)
   const showDialog = useSessionStore((s) => s.showDialog)
   const showToast = useSessionStore((s) => s.showToast)
   const filePathRef = useRef(filePath)
   filePathRef.current = filePath
+  const hasUnsavedRef = useRef(hasUnsavedChanges)
+  hasUnsavedRef.current = hasUnsavedChanges
+  const applyingOwnWrite = useRef(false)
+  /** Last known size+mtime from inspect — ignore sibling-file dirty events. */
+  const knownIdentityRef = useRef<{ size: number; mtimeMs: number } | null>(null)
 
   // Workspace view (and any parent) may change `path` without remounting.
   // Do not key this off local `filePath` — Save As updates that independently.
@@ -90,12 +134,13 @@ export function FileViewer({
     setInfo(null)
     setAgentPanelOpen(false)
     setSelectedIds([])
-    setLastSelected(null)
-    setDrillStack([])
     setWorkingContent(null)
     setBaselineContent(null)
+    setBaselineBinary(null)
     setHasUnsavedChanges(false)
-    setConfirm(null)
+    setPreviewRevision(0)
+    unsavedPromptOpen.current = false
+    officeBlocksRef.current.clear()
   }, [initialPath])
 
   const refreshAssoc = useCallback(async (): Promise<void> => {
@@ -110,26 +155,127 @@ export function FileViewer({
   const reloadInfo = useCallback(async (path: string): Promise<FileInspectResult> => {
     const result = await window.vav.files.inspect(path)
     setInfo(result)
+    knownIdentityRef.current = {
+      size: result.size,
+      mtimeMs: result.mtimeMs ?? 0
+    }
     if (result.name && !embedded) document.title = result.name
     return result
   }, [embedded])
 
+  const isBinaryOfficeKind = useCallback((kind: FileInspectResult['kind'] | undefined): boolean => {
+    return kind === 'docx' || kind === 'xlsx' || kind === 'pptx' || kind === 'pdf'
+  }, [])
+
+  const captureBaseline = useCallback(
+    async (path: string, kind: FileInspectResult['kind'] | undefined, text: string | null | undefined) => {
+      if (isBinaryOfficeKind(kind)) {
+        const bin = await window.vav.files.readBinary(path)
+        if (bin.ok) {
+          setBaselineBinary(bin.base64)
+          setBaselineContent(null)
+        }
+        return
+      }
+      setBaselineBinary(null)
+      if (text != null) setBaselineContent(text)
+    },
+    [isBinaryOfficeKind]
+  )
+
+  /** Agent/shell rewrote the open file on disk — refresh canvas + mark dirty. */
+  const handleExternalFileChange = useCallback(
+    async (sourcePath?: string): Promise<void> => {
+      if (applyingOwnWrite.current) return
+      const current = filePathRef.current
+      if (sourcePath && !pathsEqual(sourcePath, current)) return
+      const prev = knownIdentityRef.current
+      const result = await reloadInfo(current)
+      const sameIdentity =
+        prev != null &&
+        prev.size === result.size &&
+        prev.mtimeMs === (result.mtimeMs ?? 0)
+      // Text body for text/csv; office uses structured plainText only for blocks.
+      if (result.kind === 'text' || result.kind === 'csv') {
+        if (result.text != null) setWorkingContent(result.text)
+      }
+      setHasUnsavedChanges(true)
+      // Always bump office canvas when identity moved; also bump when fs-changed
+      // named this exact path even if mtime resolution is coarse.
+      if (isBinaryOfficeKind(result.kind) && (!sameIdentity || !!sourcePath)) {
+        setPreviewRevision((n) => n + 1)
+      }
+    },
+    [reloadInfo, isBinaryOfficeKind]
+  )
+
   useEffect(() => {
     let cancelled = false
-    void reloadInfo(filePath).then((result) => {
+    // Mount kind-known canvases immediately while inspect IPC returns.
+    // PDF: native stream. ZIP: archive tree (structure filled by inspect).
+    // Binary-ish unknown extensions: metadata panel (meta filled by inspect).
+    if (/\.pdf$/i.test(filePath)) {
+      setInfo((prev) =>
+        prev?.path === filePath && prev.kind === 'pdf'
+          ? prev
+          : {
+              path: filePath,
+              name: basename(filePath),
+              size: prev?.path === filePath ? prev.size : 0,
+              kind: 'pdf',
+              mime: 'application/pdf'
+            }
+      )
+    } else if (/\.zip$/i.test(filePath)) {
+      setInfo((prev) =>
+        prev?.path === filePath && prev.kind === 'zip'
+          ? prev
+          : {
+              path: filePath,
+              name: basename(filePath),
+              size: prev?.path === filePath ? prev.size : 0,
+              kind: 'zip',
+              mime: 'application/zip',
+              zip: {
+                entries: [],
+                entryCount: 0,
+                compressedSize: prev?.path === filePath ? prev.size : 0,
+                uncompressedSize: 0,
+                ratio: 0
+              }
+            }
+      )
+    }
+    void reloadInfo(filePath).then(async (result) => {
       if (cancelled) return
-      if (result.text == null) return
-      setWorkingContent(result.text)
-      if (agentPanelOpen) {
+      if (result.kind === 'text' || result.kind === 'csv') {
+        if (result.text != null) {
+          setWorkingContent(result.text)
+          setBaselineContent(result.text)
+        }
+        setBaselineBinary(null)
+      } else if (isBinaryOfficeKind(result.kind)) {
+        // plainText is an index, not the file body — never use it for Save/Discard.
+        setWorkingContent(null)
+        setBaselineContent(null)
+        // PDF streams via vav-local; don't block open on a full-file baseline read.
+        if (result.kind === 'pdf') {
+          setBaselineBinary(null)
+        } else {
+          await captureBaseline(filePath, result.kind, null)
+        }
+      } else if (result.text != null) {
+        setWorkingContent(result.text)
         setBaselineContent(result.text)
-        setHasUnsavedChanges(false)
       }
+      setHasUnsavedChanges(false)
+      // Keep revision if we already painted under the provisional pdf info.
+      if (result.kind !== 'pdf') setPreviewRevision(0)
     })
     return () => {
       cancelled = true
     }
-    // agentPanelOpen intentionally omitted — opening panel snapshots in toggleAgentPanel.
-  }, [filePath, reloadInfo])
+  }, [filePath, reloadInfo, isBinaryOfficeKind, captureBaseline])
 
   useEffect(() => {
     try {
@@ -143,48 +289,104 @@ export function FileViewer({
     void window.vav.window.setPreviewCloseGuard(hasUnsavedChanges)
   }, [hasUnsavedChanges])
 
+  /**
+   * Agent fs_write / Change Review — and any tool that emits fs-changed.
+   * Always listen while this file is open (embedded workspace never flips local
+   * agentPanelOpen, so gating on that left DOCX edits invisible).
+   */
   useEffect(() => {
-    return window.vav.window.onPreviewCloseAttempt(() => {
-      setConfirm('close')
-    })
-  }, [])
-
-  /** Agent fs_write / Change Review write landed on this file. */
-  useEffect(() => {
-    if (!agentPanelOpen) return
     return window.vav.agent.onEvent((event) => {
       if (event.type !== 'fs-changed') return
-      if (event.filePath !== filePathRef.current) return
+      void handleExternalFileChange(event.filePath)
+    })
+  }, [handleExternalFileChange])
+
+  /**
+   * Shell/python-docx edits don't emit fs-changed. Workspace dir watchers still
+   * fire filesDirty — only react when THIS file's mtime/size actually changed.
+   */
+  useEffect(() => {
+    return window.vav.files.onDirty((event) => {
+      const parent = dirname(filePathRef.current)
+      if (!event.dirs.some((d) => pathsEqual(d, parent))) return
       void (async () => {
-        const result = await reloadInfo(filePathRef.current)
-        if (result.text == null) return
-        setWorkingContent(result.text)
-        setHasUnsavedChanges(true)
+        if (applyingOwnWrite.current) return
+        const prev = knownIdentityRef.current
+        const probe = await window.vav.files.inspect(filePathRef.current)
+        if (
+          prev != null &&
+          prev.size === probe.size &&
+          prev.mtimeMs === (probe.mtimeMs ?? 0)
+        ) {
+          // Sibling churn only — our open file is unchanged.
+          return
+        }
+        await handleExternalFileChange(filePathRef.current)
       })()
     })
-  }, [agentPanelOpen, reloadInfo])
+  }, [handleExternalFileChange])
 
   const displayText = workingContent ?? info?.text ?? ''
   const isMarkdown =
     /\.(md|markdown|mdx)$/i.test(filePath) || (info?.mime ?? '').includes('markdown')
   const isNotebook = /\.ipynb$/i.test(filePath)
   const isCsv = info?.kind === 'csv' || /\.(csv|tsv)$/i.test(filePath)
+  const isSqlite = info?.kind === 'sqlite'
   const badge = formatBadge(filePath, info?.kind ?? 'text')
 
+  const isOfficeKind =
+    info?.kind === 'pdf' ||
+    info?.kind === 'docx' ||
+    info?.kind === 'xlsx' ||
+    info?.kind === 'pptx'
+  const isZip = info?.kind === 'zip'
+  const isBinaryUnsupported = info?.kind === 'binary'
+  /** ZIP / binary: force read-only chrome (no Save, no block edit). */
+  const forcedReadOnly = isZip || isBinaryUnsupported
+  const effectiveReadOnly = readOnly || forcedReadOnly
+
+  // Spec: zip/binary force read-only on open.
+  useEffect(() => {
+    if (forcedReadOnly && !readOnly) setReadOnly(true)
+  }, [forcedReadOnly, readOnly])
+
   const syncBlocks = useMemo((): PreviewBlock[] => {
+    if (info?.structured?.blocks?.length) return info.structured.blocks
+    if (isSqlite && info?.sqlite?.tables?.length) {
+      return info.sqlite.tables.map((tb) => ({
+        id: `db-table-${tb.name}`,
+        kind: 'table' as const,
+        text: [
+          `TABLE ${tb.name}`,
+          `columns: ${tb.columns.join(', ')}`,
+          `rows: ${tb.rowCount}`
+        ].join('\n'),
+        label: `table ${tb.name}`,
+        startLine: 1,
+        endLine: 1
+      }))
+    }
+    if (isZip && info?.zip?.entries?.length) {
+      return info.zip.entries.map((e) => ({
+        id: `zip:${e.path}`,
+        kind: (e.isDirectory ? 'section' : 'code') as PreviewBlock['kind'],
+        text: `${e.isDirectory ? 'DIR' : 'FILE'} ${e.path}`,
+        label: `ZIP · ${e.path}`,
+        startLine: 1,
+        endLine: 1
+      }))
+    }
     if (info?.text == null && workingContent == null) return []
     if (isCsv) return parseCsvModel(displayText).blocks.filter((b) => b.kind !== 'table')
     return parseBlocksForPath(filePath, displayText)
-  }, [displayText, info, filePath, isCsv, workingContent])
+  }, [displayText, info, filePath, isCsv, isSqlite, isZip, workingContent])
 
   const rootBlocks = syncBlocks
 
   const allBlocks = useMemo(() => collectBlocks(rootBlocks), [rootBlocks])
-  /** Shift-range order: all blocks in document order (DevTools-style, any depth). */
-  const flatOrder = useMemo(() => allBlocks.map((b) => b.id), [allBlocks])
 
   const mediaBlock = useMemo((): PreviewBlock | null => {
-    if (!info || (!info.dataUrl && info.kind !== 'pdf')) return null
+    if (!info || !info.dataUrl) return null
     return {
       id: 'media',
       kind: 'paragraph',
@@ -197,275 +399,685 @@ export function FileViewer({
 
   const selectedBlocks = useMemo(() => {
     if (mediaBlock && selectedIds.includes(mediaBlock.id)) return [mediaBlock]
-    return allBlocks.filter((b) => selectedIds.includes(b.id))
+    // Deduplicate by id: heading trees keep the same inner blocks under both
+    // the heading and the heading-section node.
+    const wanted = new Set(selectedIds)
+    const seen = new Set<string>()
+    const out: PreviewBlock[] = []
+    for (const b of allBlocks) {
+      if (!wanted.has(b.id) || seen.has(b.id)) continue
+      seen.add(b.id)
+      out.push(b)
+    }
+    return out
   }, [allBlocks, selectedIds, mediaBlock])
 
-  /** Block selection only active when Pick mode is toggled on. */
-  const hasConversationContext = embedded
-    ? !!parentConversationId
-    : agentPanelOpen
+  /**
+   * Edit-mode block pick is independent of Agent panel visibility.
+   * Conversation may be minted lazily on first pick (structured docs especially).
+   */
+  const pickConversationId = agentConversationId ?? parentConversationId ?? null
   const selectable =
-    storePickMode &&
-    hasConversationContext &&
+    !effectiveReadOnly &&
     !!info &&
     !info.error &&
     (info.kind === 'text' ||
       info.kind === 'csv' ||
+      info.kind === 'sqlite' ||
       info.kind === 'pdf' ||
+      info.kind === 'docx' ||
+      info.kind === 'xlsx' ||
+      info.kind === 'pptx' ||
+      info.kind === 'zip' ||
       !!info.dataUrl)
 
-  /** Pick mode: clicking a block creates a comment card. Normal mode: selects. */
-  const applySelection = (id: string, event: React.MouseEvent): void => {
-    if (!selectable || !agentConversationId) return
+  /**
+   * Pointer-down creates/toggles a comment card (same for MD / TS / office).
+   * mousedown (not click) so blur-cleanup on the previous card cannot steal the gesture.
+   */
+  const applySelection = (
+    id: string,
+    event: React.MouseEvent | MouseEvent,
+    hint?: PreviewBlock
+  ): void => {
+    if (!selectable) return
+    if ('button' in event && event.button !== 0) return
+    event.preventDefault()
     event.stopPropagation()
-    if (storePickMode) {
-      const block = findBlockById(rootBlocks, id)
-      if (!block) return
+
+    if (hint) officeBlocksRef.current.set(hint.id, hint)
+
+    const block =
+      hint ??
+      officeBlocksRef.current.get(id) ??
+      (mediaBlock && id === mediaBlock.id ? mediaBlock : findBlockById(rootBlocks, id))
+    if (!block) return
+
+    const run = async (): Promise<void> => {
+      let conversationId = pickConversationId
+      if (!conversationId) {
+        conversationId = await ensureFileSession()
+        if (!conversationId) return
+        setAgentConversationId(conversationId)
+      }
+
       const refId = `${filePath}::${id}`
-      const existing = useSessionStore.getState().commentCards[agentConversationId] ?? []
-      // Remove cards with empty comment that are NOT the one being picked now.
-      const cleaned = existing.filter(
-        (c) => c.comment.trim() || c.ref.id === refId
-      )
-      if (cleaned.some((c) => c.ref.id === refId)) {
-        // Already picked — just focus its comment input.
-        useSessionStore.getState().focusCommentCard(refId)
+      const existing = useSessionStore.getState().commentCards[conversationId] ?? []
+      // Re-click same block → cancel (spec: 再次单击取消).
+      if (existing.some((c) => c.ref.id === refId)) {
+        const nextCards = existing.filter((c) => c.ref.id !== refId)
+        useSessionStore.getState().setCommentCards(conversationId, nextCards)
+        const prefix = `${filePath}::`
+        setSelectedIds(
+          nextCards
+            .filter((c) => c.ref.id.startsWith(prefix))
+            .map((c) => c.ref.id.slice(prefix.length))
+        )
         return
       }
-      useSessionStore.getState().setCommentCards(agentConversationId, [
-        ...cleaned,
-        { ref: blockToRef(filePath, badge, block), comment: '' }
-      ])
+      // Drop empty-comment cards for other blocks; add the new pick.
+      const cleaned = existing.filter((c) => c.comment.trim())
+      const ref = blockToRef(filePath, badge, block)
+      const nextCards = [...cleaned, { ref, comment: '' }]
+      useSessionStore.getState().setCommentCards(conversationId, nextCards)
       useSessionStore.getState().focusCommentCard(refId)
-      return
-    }
-    if (event.shiftKey && lastSelected) {
-      const a = flatOrder.indexOf(lastSelected)
-      const b = flatOrder.indexOf(id)
-      if (a >= 0 && b >= 0) {
-        const [start, end] = a < b ? [a, b] : [b, a]
-        setSelectedIds(flatOrder.slice(start, end + 1))
-        setLastSelected(id)
-        return
-      }
-    }
-    if (event.metaKey || event.ctrlKey) {
-      setSelectedIds((prev) =>
-        prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
+      const prefix = `${filePath}::`
+      setSelectedIds(
+        nextCards
+          .filter((c) => c.ref.id.startsWith(prefix))
+          .map((c) => c.ref.id.slice(prefix.length))
       )
-      setLastSelected(id)
-      return
+      // CLI agents (Claude Code / Codex / …): paste selection into the live PTY.
+      const meta = useSessionStore
+        .getState()
+        .conversations.find((c) => c.id === conversationId)
+      const agentId = meta?.agentBinaryName
+      if (agentId && agentId !== 'vav') {
+        void import('@shared/agentContextInject').then(({ formatBlockContext }) => {
+          useWorkspaceStore
+            .getState()
+            .injectContextToActivePane(conversationId, formatBlockContext(ref), {
+              submit: true,
+              delayMs: 80
+            })
+        })
+      }
+      onPickBlock?.()
     }
-    setSelectedIds((prev) => (prev.length === 1 && prev[0] === id ? [] : [id]))
-    setLastSelected(id)
+    void run()
   }
 
+  const onOfficePick = useCallback(
+    (block: PreviewBlock, event: MouseEvent): void => {
+      applySelection(block.id, event, block)
+    },
+    // applySelection closes over latest path/state each render
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [selectable, pickConversationId, filePath, badge, rootBlocks, mediaBlock]
+  )
+
+  // Removing a comment card (✕) should drop the canvas selection too.
+  useEffect(() => {
+    if (!selectable && !agentCommentCards.length) return
+    const prefix = `${filePath}::`
+    const ids = agentCommentCards
+      .filter((c) => c.ref.id.startsWith(prefix))
+      .map((c) => c.ref.id.slice(prefix.length))
+    setSelectedIds((prev) => {
+      if (prev.length === ids.length && prev.every((id, i) => id === ids[i])) return prev
+      return ids
+    })
+  }, [agentCommentCards, filePath, selectable])
+
   const selectByLine = (line: number, event: React.MouseEvent): void => {
-    const hit = blockAtLine(rootBlocks, line, drillStack)
+    const hit = blockAtLine(rootBlocks, line)
     if (hit) applySelection(hit.id, event)
   }
 
-  const drillInto = (block?: PreviewBlock | null): void => {
-    const target =
-      block ??
-      (selectedIds.length === 1 ? findBlockById(rootBlocks, selectedIds[0]!) : null)
-    if (!target?.children?.length) return
-    setDrillStack((prev) => [...prev, target])
-    setSelectedIds([])
-    setLastSelected(null)
-  }
+  // Comment cards own selection in file preview — no separate preview-ref chips.
 
-  const popDrill = (): boolean => {
-    if (drillStack.length === 0) return false
-    const top = drillStack[drillStack.length - 1]!
-    setDrillStack((prev) => prev.slice(0, -1))
-    setSelectedIds([top.id])
-    setLastSelected(top.id)
-    return true
-  }
-
-  /** Mirror the canvas selection into composer chips (comment blocks). */
-  const pushSelectionRefs = useCallback(
-    (conversationId: string, focused: PreviewBlock[]): void => {
-      setPreviewRefs(conversationId, focused.map((b) => blockToRef(filePath, badge, b)))
-    },
-    [setPreviewRefs, filePath, badge]
-  )
-
-  const selectionKey = selectedIds.join('|')
-  useEffect(() => {
-    if (!agentPanelOpen || !agentConversationId) return
-    pushSelectionRefs(agentConversationId, selectedBlocks)
-  }, [agentPanelOpen, agentConversationId, selectionKey, pushSelectionRefs])
-
-  // Removing a chip in the composer deselects the block on the canvas too.
-  useEffect(() => {
-    if (!agentPanelOpen || !agentConversationId || !activeRefs) return
-    const keep = new Set(activeRefs.map((r) => r.id))
-    setSelectedIds((prev) => {
-      const next = prev.filter((id) => keep.has(`${filePath}::${id}`))
-      return next.length === prev.length ? prev : next
-    })
-  }, [activeRefs, agentPanelOpen, agentConversationId, filePath])
-
+  /** Hide Agent only — keep Edit picks / comment cards for when it reopens. */
   const closeAgentPanel = (): void => {
-    if (agentConversationId) {
-      useSessionStore.getState().clearPreviewRefs(agentConversationId)
-      useSessionStore.getState().clearCommentCards(agentConversationId)
-      useSessionStore.getState().setPickMode(agentConversationId, false)
-    }
     setAgentPanelOpen(false)
-    setSelectedIds([])
-    setLastSelected(null)
-    setDrillStack([])
-    setConfirm(null)
   }
+
+  /**
+   * Open/restore a chat for this file. Prefer FileSessionStore; fall back to
+   * parent conversation or a normal create so the agent panel never goes blank
+   * (missing IPC after HMR would otherwise leave only the empty state).
+   */
+  const ensureFileSession = async (): Promise<string | null> => {
+    // 1) FileSessionStore (preferred — multi-session, hidden from sidebar)
+    try {
+      if (typeof window.vav.fileSessions?.open === 'function') {
+        const state = await window.vav.fileSessions.open(filePath)
+        setFileId(state.fileId)
+        setFileSessions(state.sessions)
+        setAgentConversationId(state.activeSessionId)
+        const active = state.sessions.find((s) => s.id === state.activeSessionId)
+        setSessionTitle(active?.title || 'New session')
+        await selectConversation(state.activeSessionId)
+        const meta = useSessionStore
+          .getState()
+          .conversations.find((c) => c.id === state.activeSessionId)
+        if (meta?.title) setSessionTitle(meta.title)
+        try {
+          await window.vav.fileSessions.setReadOnly(state.activeSessionId, readOnly)
+        } catch {
+          // optional on older main
+        }
+        return state.activeSessionId
+      }
+    } catch (err) {
+      console.error('[file-sessions] open failed, falling back', err)
+    }
+
+    // 2) Session-originated preview: use the parent conversation
+    if (parentConversationId) {
+      setAgentConversationId(parentConversationId)
+      setSessionTitle(t('preview.fromSession'))
+      await selectConversation(parentConversationId)
+      return parentConversationId
+    }
+
+    // 3) Last resort: mint a normal conversation in this file's directory
+    await createConversation({ workingDirectory: dirname(filePath) })
+    const id = useSessionStore.getState().activeId
+    if (!id) return null
+    setAgentConversationId(id)
+    setSessionTitle('New session')
+    return id
+  }
+
+  // Embedded: track parent workspace conversation for pick/comment cards.
+  useEffect(() => {
+    if (!embedded) return
+    setAgentConversationId(parentConversationId ?? null)
+  }, [embedded, parentConversationId])
+
+  // Standalone: restore file session as soon as the window is ready.
+  useEffect(() => {
+    if (embedded) return
+    void ensureFileSession()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [embedded, filePath])
+
+  // Keep session title in sync with store renames / auto-title.
+  useEffect(() => {
+    if (!agentConversationId) return
+    const meta = conversations.find((c) => c.id === agentConversationId)
+    if (meta?.title) setSessionTitle(meta.title)
+  }, [conversations, agentConversationId])
+
+  // File Attachment Chip: auto-attach on open / path change / re-open preview.
+  // Dismiss (✕) only clears context — this effect re-runs when filePath or
+  // session id changes, restoring the chip per file-preview.rpml.
+  useEffect(() => {
+    if (!agentConversationId || !filePath) return
+    void useSessionStore.getState().attachContextFile(agentConversationId, filePath)
+  }, [agentConversationId, filePath])
 
   const toggleAgentPanel = async (): Promise<void> => {
     if (agentPanelOpen) {
-      // Closing panel — check unsaved changes first.
       if (hasUnsavedChanges) {
-        setConfirm('done')
+        await promptUnsaved('done')
         return
       }
       closeAgentPanel()
       return
     }
 
-    // Opening panel — snapshot baseline for dirty tracking.
-    const text = info?.text ?? ''
-    setBaselineContent(text)
-    setWorkingContent(text)
+    // Snapshot the pre-agent body so Discard can restore (binary or text).
+    if (isBinaryOfficeKind(info?.kind)) {
+      await captureBaseline(filePath, info?.kind, null)
+      setWorkingContent(null)
+    } else {
+      const text = info?.text ?? workingContent ?? ''
+      setBaselineContent(text)
+      setWorkingContent(text)
+      setBaselineBinary(null)
+    }
     setHasUnsavedChanges(false)
     setAgentPanelOpen(true)
 
-    let id = agentConversationId
-    if (!id && parentConversationId) {
-      id = parentConversationId
+    const id = (await ensureFileSession()) ?? agentConversationId
+    if (id) {
       setAgentConversationId(id)
-      if (!embedded) await selectConversation(id)
-    } else if (id) {
-      if (!embedded) await selectConversation(id)
-    } else if (!embedded) {
-      // Standalone file preview: restore file-bound conversation if it exists.
-      const existing = previewAgentByPath[filePath]
-      if (existing && useSessionStore.getState().conversations.some((c) => c.id === existing)) {
-        id = existing
-        setAgentConversationId(id)
-        await selectConversation(id)
-      } else {
-        await createConversation({ workingDirectory: dirname(filePath) })
-        id = useSessionStore.getState().activeId
-        setAgentConversationId(id)
-        useSessionStore.getState().setPreviewAgentForPath(filePath, id)
-      }
+      // Comment cards already hold picks — clear legacy composer Reference chips.
+      useSessionStore.getState().clearPreviewRefs(id)
     }
-
-    if (id) pushSelectionRefs(id, selectedBlocks)
     useSessionStore.getState().focusComposer()
   }
 
-  const save = async (): Promise<boolean> => {
-    const content = workingContent ?? info?.text ?? ''
-    const result = await window.vav.files.write(filePath, content)
-    if (!result.ok) {
-      showToast({
-        kind: 'error',
-        title: t('preview.saveFailed'),
-        description: result.error
-      })
-      return false
+  const newFileSession = async (): Promise<void> => {
+    try {
+      if (typeof window.vav.fileSessions?.create === 'function') {
+        const state = await window.vav.fileSessions.create(filePath)
+        setFileId(state.fileId)
+        setFileSessions(state.sessions)
+        setAgentConversationId(state.activeSessionId)
+        setSessionTitle('New session')
+        await selectConversation(state.activeSessionId)
+        try {
+          await window.vav.fileSessions.setReadOnly(state.activeSessionId, readOnly)
+        } catch {
+          // ignore
+        }
+        useSessionStore.getState().focusComposer()
+        return
+      }
+      // Fallback without FileSessionStore
+      await createConversation({ workingDirectory: dirname(filePath) })
+      const id = useSessionStore.getState().activeId
+      if (id) {
+        setAgentConversationId(id)
+        setSessionTitle('New session')
+        useSessionStore.getState().focusComposer()
+      }
+    } catch (err) {
+      showToast({ kind: 'error', title: t('preview.sessionFailed'), description: String(err) })
     }
-    setBaselineContent(content)
-    setHasUnsavedChanges(false)
-    await reloadInfo(filePath)
-    showToast({ kind: 'success', title: t('preview.saved') })
-    return true
   }
 
-  const saveAs = async (): Promise<boolean> => {
-    const content = workingContent ?? info?.text ?? ''
-    const originalPath = filePath
-    const result = await window.vav.files.saveAs(originalPath, content)
-    if (!result.ok) {
-      if (!result.cancelled) {
+  const switchFileSession = async (sessionId: string): Promise<void> => {
+    if (!fileId || !sessionId || sessionId === agentConversationId) return
+    try {
+      const state = await window.vav.fileSessions.setActive(fileId, sessionId)
+      if (!state) return
+      setFileSessions(state.sessions)
+      setAgentConversationId(state.activeSessionId)
+      const active = state.sessions.find((s) => s.id === state.activeSessionId)
+      setSessionTitle(active?.title || 'New session')
+      await selectConversation(state.activeSessionId)
+      try {
+        await window.vav.fileSessions.setReadOnly(state.activeSessionId, effectiveReadOnly)
+      } catch {
+        // ignore
+      }
+    } catch (err) {
+      showToast({
+        kind: 'error',
+        title: t('preview.sessionFailed'),
+        description: (err as Error).message
+      })
+    }
+  }
+
+  const renameFileSession = async (sessionId: string, title: string): Promise<void> => {
+    if (!fileId) return
+    try {
+      const state = await window.vav.fileSessions.rename(fileId, sessionId, title)
+      if (!state) return
+      setFileSessions(state.sessions)
+      if (sessionId === agentConversationId) {
+        setSessionTitle(title.trim().slice(0, 100) || 'New session')
+      }
+    } catch (err) {
+      showToast({
+        kind: 'error',
+        title: t('preview.sessionFailed'),
+        description: (err as Error).message
+      })
+    }
+  }
+
+  const deleteFileSessions = (sessionIds: string[]): void => {
+    if (!fileId || sessionIds.length === 0) return
+    const targets = fileSessions.filter((s) => sessionIds.includes(s.id))
+    if (targets.length === 0) return
+    const single = targets.length === 1
+    const totalMessages = targets.reduce((n, s) => n + (s.messageCount ?? 0), 0)
+    const title = single
+      ? t('dialog.deleteSession')
+      : t('dialog.deleteSessions', { count: targets.length })
+    const detail = single
+      ? [
+          t('preview.sessionDeleteWarn'),
+          '',
+          `${t('preview.sessionLabel')}: ${targets[0]!.title}`,
+          `${t('preview.sessionMessages', { n: targets[0]!.messageCount ?? 0 })}`,
+          `${t('preview.sessionCreated')}: ${relativeTime(targets[0]!.createdAt)}`
+        ].join('\n')
+      : [
+          t('preview.sessionDeleteBulkWarn', {
+            count: targets.length,
+            messages: totalMessages
+          }),
+          '',
+          ...targets.map((s) => `• ${s.title} (${s.messageCount ?? 0})`)
+        ].join('\n')
+
+    showDialog({
+      title,
+      body: detail,
+      confirmLabel: t('common.delete'),
+      destructive: true,
+      onConfirm: () => {
+        void (async () => {
+          try {
+            const result = await window.vav.fileSessions.delete(fileId, sessionIds)
+            if (!result) {
+              showToast({ kind: 'error', title: t('preview.sessionDeleteFailed') })
+              return
+            }
+            if (!result.ok) {
+              const msg =
+                result.error === 'active_protected'
+                  ? t('preview.sessionCannotDeleteActive')
+                  : result.error === 'last_protected'
+                    ? t('preview.sessionCannotDeleteLast')
+                    : t('preview.sessionDeleteFailed')
+              showToast({ kind: 'error', title: msg })
+              return
+            }
+            setFileSessions(result.sessions)
+            if (result.activeSessionId !== agentConversationId) {
+              setAgentConversationId(result.activeSessionId)
+              const active = result.sessions.find((s) => s.id === result.activeSessionId)
+              setSessionTitle(active?.title || 'New session')
+              await selectConversation(result.activeSessionId)
+            }
+            const n = result.removed.length
+            showToast({
+              kind: 'success',
+              title:
+                n === 1
+                  ? t('preview.sessionDeletedOne', { name: targets[0]?.title ?? '' })
+                  : t('preview.sessionDeletedMany', { n, messages: totalMessages })
+            })
+          } catch (err) {
+            showToast({
+              kind: 'error',
+              title: t('preview.sessionDeleteFailed'),
+              description: (err as Error).message
+            })
+          }
+        })()
+      }
+    })
+  }
+
+  const applyReadOnly = (on: boolean): void => {
+    if (forcedReadOnly && !on) return
+    setReadOnly(on)
+    if (on) {
+      setSelectedIds([])
+      if (agentConversationId) {
+        useSessionStore.getState().setPickMode(agentConversationId, false)
+        useSessionStore.getState().clearCommentCards(agentConversationId)
+      }
+    }
+    if (agentConversationId && typeof window.vav.fileSessions?.setReadOnly === 'function') {
+      void window.vav.fileSessions.setReadOnly(agentConversationId, on)
+    }
+  }
+
+  /** Offer “Always open .{ext} with vav” only when not already the default. */
+  const onSetAsDefault = (): void => {
+    if (!assoc || assoc.isVav) return
+    showDialog({
+      title: t('assoc.setTitle', { label: assoc.label }),
+      body: t('assoc.setBody', {
+        label: assoc.label,
+        ext: assoc.extensions.join(', '),
+        current: assoc.defaultApp || t('assoc.unset')
+      }),
+      confirmLabel: t('assoc.setAsDefault'),
+      onConfirm: () => {
+        void (async () => {
+          try {
+            await window.vav.settings.setFileAssociation(assoc.id)
+            await refreshAssoc()
+            showToast({
+              kind: 'success',
+              title: t('assoc.setSuccess', { label: assoc.label })
+            })
+          } catch (err) {
+            showToast({
+              kind: 'error',
+              title: t('assoc.setFailed'),
+              description: (err as Error).message
+            })
+          }
+        })()
+      }
+    })
+  }
+
+  const save = async (): Promise<boolean> => {
+    applyingOwnWrite.current = true
+    try {
+      if (isBinaryOfficeKind(info?.kind)) {
+        // Agent/shell already wrote the binary on disk — Save means accept.
+        await captureBaseline(filePath, info?.kind, null)
+        setHasUnsavedChanges(false)
+        await reloadInfo(filePath)
+        showToast({ kind: 'success', title: t('preview.saved') })
+        return true
+      }
+      const content = workingContent ?? info?.text ?? ''
+      const result = await window.vav.files.write(filePath, content)
+      if (!result.ok) {
         showToast({
           kind: 'error',
           title: t('preview.saveFailed'),
           description: result.error
         })
+        return false
       }
-      return false
+      setBaselineContent(content)
+      setHasUnsavedChanges(false)
+      await reloadInfo(filePath)
+      showToast({ kind: 'success', title: t('preview.saved') })
+      return true
+    } finally {
+      // Defer so filesystem watchers from our own write don't re-dirty.
+      window.setTimeout(() => {
+        applyingOwnWrite.current = false
+      }, 400)
     }
-    // Spec: original file stays at the edit-entry snapshot.
-    if (baselineContent != null && result.path !== originalPath) {
-      await window.vav.files.write(originalPath, baselineContent)
+  }
+
+  const saveAs = async (): Promise<boolean> => {
+    if (isBinaryOfficeKind(info?.kind)) {
+      // Copy current on-disk bytes to a new path (Save As for office).
+      applyingOwnWrite.current = true
+      try {
+        const bin = await window.vav.files.readBinary(filePath)
+        if (!bin.ok) {
+          showToast({
+            kind: 'error',
+            title: t('preview.saveFailed'),
+            description: bin.error
+          })
+          return false
+        }
+        const originalPath = filePath
+        // Reuse text saveAs dialog, then overwrite with binary bytes.
+        const result = await window.vav.files.saveAs(originalPath, '')
+        if (!result.ok) {
+          if (!result.cancelled) {
+            showToast({
+              kind: 'error',
+              title: t('preview.saveFailed'),
+              description: result.error
+            })
+          }
+          return false
+        }
+        const written = await window.vav.files.writeBinary(result.path, bin.base64)
+        if (!written.ok) {
+          showToast({
+            kind: 'error',
+            title: t('preview.saveFailed'),
+            description: written.error
+          })
+          return false
+        }
+        // Spec: original stays at the pre-edit snapshot when possible.
+        if (baselineBinary != null && result.path !== originalPath) {
+          await window.vav.files.writeBinary(originalPath, baselineBinary)
+        }
+        setFilePath(result.path)
+        setBaselineBinary(bin.base64)
+        setHasUnsavedChanges(false)
+        await reloadInfo(result.path)
+        setPreviewRevision((n) => n + 1)
+        showToast({ kind: 'success', title: t('preview.saved') })
+        return true
+      } finally {
+        window.setTimeout(() => {
+          applyingOwnWrite.current = false
+        }, 400)
+      }
     }
-    setFilePath(result.path)
-    setBaselineContent(content)
-    setWorkingContent(content)
-    setHasUnsavedChanges(false)
-    await reloadInfo(result.path)
-    showToast({ kind: 'success', title: t('preview.saved') })
-    return true
+
+    const content = workingContent ?? info?.text ?? ''
+    const originalPath = filePath
+    applyingOwnWrite.current = true
+    try {
+      const result = await window.vav.files.saveAs(originalPath, content)
+      if (!result.ok) {
+        if (!result.cancelled) {
+          showToast({
+            kind: 'error',
+            title: t('preview.saveFailed'),
+            description: result.error
+          })
+        }
+        return false
+      }
+      // Spec: original file stays at the edit-entry snapshot.
+      if (baselineContent != null && result.path !== originalPath) {
+        await window.vav.files.write(originalPath, baselineContent)
+      }
+      setFilePath(result.path)
+      setBaselineContent(content)
+      setWorkingContent(content)
+      setHasUnsavedChanges(false)
+      await reloadInfo(result.path)
+      showToast({ kind: 'success', title: t('preview.saved') })
+      return true
+    } finally {
+      window.setTimeout(() => {
+        applyingOwnWrite.current = false
+      }, 400)
+    }
   }
 
   const discard = async (): Promise<void> => {
-    if (baselineContent != null) {
-      await window.vav.files.write(filePath, baselineContent)
-      setWorkingContent(baselineContent)
-      await reloadInfo(filePath)
+    applyingOwnWrite.current = true
+    try {
+      if (isBinaryOfficeKind(info?.kind)) {
+        if (baselineBinary != null) {
+          const result = await window.vav.files.writeBinary(filePath, baselineBinary)
+          if (!result.ok) {
+            showToast({
+              kind: 'error',
+              title: t('preview.saveFailed'),
+              description: result.error
+            })
+            return
+          }
+          await reloadInfo(filePath)
+          setPreviewRevision((n) => n + 1)
+        }
+        setHasUnsavedChanges(false)
+        return
+      }
+      if (baselineContent != null) {
+        await window.vav.files.write(filePath, baselineContent)
+        setWorkingContent(baselineContent)
+        await reloadInfo(filePath)
+      }
+      setHasUnsavedChanges(false)
+    } finally {
+      window.setTimeout(() => {
+        applyingOwnWrite.current = false
+      }, 400)
     }
-    setHasUnsavedChanges(false)
   }
+
+  /**
+   * Native Save / Cancel / Discard sheet (macOS: buttons[0] is rightmost primary).
+   * Used for window close and for folding the agent panel with dirty buffer.
+   */
+  const promptUnsaved = useCallback(
+    async (intent: UnsavedIntent): Promise<void> => {
+      if (unsavedPromptOpen.current) return
+      unsavedPromptOpen.current = true
+      try {
+        const name = info?.name ?? basename(filePath)
+        const detail = [t('preview.unsavedBody', { name }), t('preview.unsavedHint')]
+          .filter(Boolean)
+          .join('\n\n')
+        // Order: Save (primary) · Cancel · Discard
+        const response = await window.vav.dialog.messageBox({
+          type: 'warning',
+          title: t('preview.unsavedTitle'),
+          message: t('preview.unsavedTitle'),
+          detail,
+          buttons: [t('preview.save'), t('common.cancel'), t('preview.discard')],
+          defaultId: 0,
+          cancelId: 1
+        })
+        if (response === 0) {
+          const ok = await save()
+          if (!ok) return
+          if (intent === 'close') {
+            void window.vav.window.forcePreviewClose()
+            return
+          }
+          closeAgentPanel()
+          return
+        }
+        if (response === 2) {
+          await discard()
+          if (intent === 'close') {
+            void window.vav.window.setPreviewCloseGuard(false)
+            void window.vav.window.forcePreviewClose()
+            return
+          }
+          closeAgentPanel()
+        }
+        // Cancel (1) or dismiss — stay put.
+      } finally {
+        unsavedPromptOpen.current = false
+      }
+    },
+    // save/discard close over latest filePath/content via state in the same render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [filePath, info?.name, t, hasUnsavedChanges, baselineContent, workingContent]
+  )
+
+  useEffect(() => {
+    return window.vav.window.onPreviewCloseAttempt(() => {
+      void promptUnsaved('close')
+    })
+  }, [promptUnsaved])
 
   const requestClose = (): void => {
     if (hasUnsavedChanges) {
-      setConfirm('close')
+      void promptUnsaved('close')
       return
     }
     window.close()
   }
 
-  const confirmSave = async (): Promise<void> => {
-    const intent = confirm
-    const ok = await save()
-    if (!ok) return
-    setConfirm(null)
-    if (intent === 'close') {
-      void window.vav.window.forcePreviewClose()
-      return
-    }
-    closeAgentPanel()
-  }
-
-  const confirmDiscard = async (): Promise<void> => {
-    const intent = confirm
-    await discard()
-    setConfirm(null)
-    if (intent === 'close') {
-      void window.vav.window.setPreviewCloseGuard(false)
-      void window.vav.window.forcePreviewClose()
-      return
-    }
-    closeAgentPanel()
-  }
-
   useEffect(() => {
     const onKey = (event: KeyboardEvent): void => {
-      if (confirm) {
-        if (event.key === 'Escape') {
-          event.preventDefault()
-          setConfirm(null)
-        }
-        return
-      }
       if ((event.metaKey || event.ctrlKey) && event.key === 'w') {
         event.preventDefault()
         requestClose()
         return
       }
-      if (agentPanelOpen && (event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 's') {
+      // Save shortcuts apply in Editing mode (buttons hidden in Read / ZIP / binary).
+      // Embedded workspace keeps agent docked without local agentPanelOpen.
+      if (
+        !effectiveReadOnly &&
+        (event.metaKey || event.ctrlKey) &&
+        event.key.toLowerCase() === 's'
+      ) {
         event.preventDefault()
         if (event.shiftKey) void saveAs()
         else if (hasUnsavedChanges) void save()
@@ -473,22 +1085,64 @@ export function FileViewer({
       }
       if (event.key === 'Escape') {
         event.preventDefault()
-        if (storePickMode && agentConversationId) {
-          useSessionStore.getState().setPickMode(agentConversationId, false)
+        const conversationId = agentConversationId ?? parentConversationId ?? null
+        if (selectedIds.length > 0 || agentCommentCards.length > 0) {
+          setSelectedIds([])
+          if (conversationId) {
+            useSessionStore.getState().clearCommentCards(conversationId)
+          }
           return
         }
-        if (agentPanelOpen && popDrill()) return
         if (agentPanelOpen) void toggleAgentPanel()
         else if (!embedded) window.close()
       }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [agentPanelOpen, hasUnsavedChanges, confirm, drillStack, storePickMode, agentConversationId, embedded])
+  }, [
+    agentPanelOpen,
+    hasUnsavedChanges,
+    effectiveReadOnly,
+    agentConversationId,
+    parentConversationId,
+    embedded,
+    selectedIds.length,
+    agentCommentCards.length
+  ])
 
   const statusLeft = useMemo(() => {
     if (!info) return t('common.loading')
     const parts: string[] = []
+    if (info.kind === 'zip' && info.zip) {
+      parts.push(
+        `${formatBytes(info.zip.compressedSize)} (${formatBytes(info.zip.uncompressedSize)} uncompressed)`
+      )
+      parts.push(t('preview.zipEntries', { n: info.zip.entryCount }))
+      parts.push(t('preview.zipRatio', { n: info.zip.ratio }))
+      parts.push(badge)
+      parts.push(filePath)
+      if (info.mtimeMs) {
+        parts.push(
+          t('preview.modifiedAt', {
+            when: new Date(info.mtimeMs).toLocaleDateString()
+          })
+        )
+      }
+      return parts.join(' · ')
+    }
+    if (info.kind === 'binary') {
+      if (info.size) parts.push(formatBytes(info.size))
+      parts.push(badge)
+      parts.push(filePath)
+      if (info.mtimeMs) {
+        parts.push(
+          t('preview.modifiedAt', {
+            when: new Date(info.mtimeMs).toLocaleDateString()
+          })
+        )
+      }
+      return parts.join(' · ')
+    }
     if (info.size) parts.push(formatBytes(info.size))
     if (info.lineCount != null) parts.push(t('files.lines', { n: info.lineCount }))
     parts.push(badge)
@@ -499,7 +1153,11 @@ export function FileViewer({
   }, [info, badge, filePath, t, hasUnsavedChanges])
 
   const statusRight = useMemo(() => {
-    if (!agentPanelOpen || selectedBlocks.length === 0) return ''
+    if (isBinaryUnsupported) return ''
+    if (selectedBlocks.length === 0) return ''
+    if (isZip) {
+      return t('preview.entriesSelected', { n: selectedBlocks.length })
+    }
     const first = selectedBlocks[0]
     if (selectedBlocks.length === 1 && first?.label) return first.label
     if (selectedBlocks.length === 1 && first) {
@@ -510,120 +1168,142 @@ export function FileViewer({
       })
     }
     return t('preview.blocksSelected', { n: selectedBlocks.length })
-  }, [agentPanelOpen, selectedBlocks, t])
+  }, [selectedBlocks, t, isBinaryUnsupported, isZip])
 
   return (
     <div
       className={`file-preview-shell${agentPanelOpen && !embedded ? ' agent-open' : ''}${embedded ? ' embedded' : ''}`}
     >
       <header className={`file-viewer-header${embedded ? '' : ' titlebar-drag'}`}>
-        <div className={`file-viewer-lead${embedded ? '' : ' titlebar-no-drag'}`}>
-          <span className="file-viewer-name">{info?.name ?? basename(filePath)}</span>
-          <span className={`preview-badge kind-${badge.toLowerCase()}`}>{badge}</span>
-          {assoc && (
-            <Button
-              icon={<Star size={13} />}
-              size="sm"
-              className={`preview-star-btn${assoc.isVav ? ' is-default' : ''}`}
-              title={
-                assoc.isVav
-                  ? t('assoc.starTooltipOn')
-                  : t('assoc.starTooltip', { ext: assoc.extensions[0]?.replace(/^\./, '') ?? '' })
-              }
-              onClick={() => {
-                if (assoc.isVav) {
-                  showDialog({
-                    title: t('assoc.unsetTitle', { label: assoc.label }),
-                    body: t('assoc.unsetBody', { label: assoc.label }),
-                    confirmLabel: t('assoc.unsetAction'),
-                    destructive: true,
-                    onConfirm: () => {
-                      void (async () => {
-                        try {
-                          await window.vav.settings.unsetFileAssociation(assoc.id)
-                          await refreshAssoc()
-                          showToast({
-                            kind: 'success',
-                            title: t('assoc.unsetSuccess', { label: assoc.label })
-                          })
-                        } catch (err) {
-                          showToast({
-                            kind: 'error',
-                            title: t('assoc.setFailed'),
-                            description: (err as Error).message
-                          })
-                        }
-                      })()
-                    }
-                  })
-                  return
-                }
-                showDialog({
-                  title: t('assoc.setTitle', { label: assoc.label }),
-                  body: t('assoc.setBody', {
-                    label: assoc.label,
-                    ext: assoc.extensions.join(', '),
-                    current: assoc.defaultApp || t('assoc.unset')
-                  }),
-                  confirmLabel: t('assoc.setAsDefault'),
-                  onConfirm: () => {
-                    void (async () => {
-                      try {
-                        await window.vav.settings.setFileAssociation(assoc.id)
-                        await refreshAssoc()
-                        showToast({
-                          kind: 'success',
-                          title: t('assoc.setSuccess', { label: assoc.label })
-                        })
-                      } catch (err) {
-                        showToast({
-                          kind: 'error',
-                          title: t('assoc.setFailed'),
-                          description: (err as Error).message
-                        })
-                      }
-                    })()
-                  }
-                })
-              }}
-            />
+        {/*
+          Standalone preview: header is a window drag region. Only interactive
+          controls opt out (titlebar-no-drag) — the file name stays draggable.
+        */}
+        <div className="file-viewer-lead">
+          <span className="file-viewer-name" title={info?.name ?? basename(filePath)}>
+            {info?.name ?? basename(filePath)}
+          </span>
+          <label
+            className={`preview-mode${embedded ? '' : ' titlebar-no-drag'}${forcedReadOnly ? ' is-forced' : ''}`}
+            title={
+              isZip
+                ? t('preview.zipReadOnlyHint')
+                : isBinaryUnsupported
+                  ? t('preview.binaryReadOnlyHint')
+                  : undefined
+            }
+          >
+            <span className="preview-mode-control">
+              <select
+                className="text-field preview-mode-select"
+                value={effectiveReadOnly ? 'readonly' : 'editing'}
+                disabled={forcedReadOnly}
+                aria-label={t('preview.modeLabel')}
+                onChange={(e) => applyReadOnly(e.target.value === 'readonly')}
+              >
+                <option value="editing">{t('preview.modeEditing')}</option>
+                <option value="readonly">{t('preview.modeReadOnly')}</option>
+              </select>
+              <ChevronDown className="preview-mode-chevron" size={12} aria-hidden />
+            </span>
+          </label>
+          {/* Read: offer only when not already default. Editing: under Save ▾. */}
+          {assoc && !assoc.isVav && readOnly && (
+            <button
+              type="button"
+              className={`preview-default-text-btn${embedded ? '' : ' titlebar-no-drag'}`}
+              title={t('assoc.alwaysOpenWith', {
+                ext: assoc.extensions[0]?.replace(/^\./, '') ?? assoc.label
+              })}
+              onClick={onSetAsDefault}
+            >
+              {t('assoc.alwaysOpenWith', {
+                ext: assoc.extensions[0]?.replace(/^\./, '') ?? assoc.label
+              })}
+            </button>
           )}
         </div>
         <span className="spacer" />
         <div className={`file-viewer-actions${embedded ? '' : ' titlebar-no-drag'}`}>
-          <Button
-            icon={<Save size={13} />}
-            label={t('preview.save')}
-            variant="primary"
-            size="sm"
-            disabled={!hasUnsavedChanges}
-            title={`${t('preview.save')} (⌘S)`}
-            onClick={() => void save()}
-          />
-          <Button
-            icon={<FilePlus size={13} />}
-            label={t('preview.saveAs')}
-            variant="secondary"
-            size="sm"
-            title={`${t('preview.saveAs')} (⌘⇧S)`}
-            onClick={() => void saveAs()}
-          />
-          {!embedded && (
+          {/* Save / Save As only in Editing; hidden for ZIP/binary (forced read-only). */}
+          {!effectiveReadOnly && (
+            <div className={`preview-save-group${hasUnsavedChanges ? ' is-dirty' : ''}`}>
+              <Button
+                icon={<Save size={13} />}
+                label={t('preview.save')}
+                variant={hasUnsavedChanges ? 'primary' : 'secondary'}
+                size="sm"
+                className="preview-save-main"
+                disabled={!hasUnsavedChanges}
+                title={`${t('preview.save')} (⌘S)`}
+                onClick={() => void save()}
+              />
+              <Button
+                icon={<ChevronDown size={14} />}
+                variant={hasUnsavedChanges ? 'primary' : 'secondary'}
+                size="sm"
+                className="preview-save-more"
+                title={t('preview.moreActions')}
+                onClick={(event) => {
+                  event.preventDefault()
+                  event.stopPropagation()
+                  const anchor = menuAnchor(event.currentTarget as HTMLElement)
+                  const items: {
+                    label: string
+                    divider?: boolean
+                    onSelect?: () => void
+                  }[] = [
+                    {
+                      label: `${t('preview.saveAs')} (⌘⇧S)`,
+                      onSelect: () => void saveAs()
+                    }
+                  ]
+                  if (assoc && !assoc.isVav) {
+                    const ext =
+                      assoc.extensions[0]?.replace(/^\./, '') ?? assoc.label
+                    items.push({ label: '', divider: true })
+                    items.push({
+                      label: t('assoc.alwaysOpenWith', { ext }),
+                      onSelect: () => onSetAsDefault()
+                    })
+                  }
+                  void showMenu(items, anchor)
+                }}
+              />
+            </div>
+          )}
+          {embedded && onToggleAgentPanel ? (
             <Button
               icon={<PanelRight size={13} />}
               variant="ghost"
               size="sm"
-              title={t('preview.agentPanel')}
-              onClick={() => void toggleAgentPanel()}
+              className={embeddedAgentOpen === false ? '' : 'is-active-toggle'}
+              title={t('workspace.toggleAgentPanel')}
+              onClick={onToggleAgentPanel}
             />
+          ) : (
+            !embedded && (
+              <button
+                type="button"
+                className={`btn ghost sm icon-only preview-agent-logo-btn${agentPanelOpen ? ' is-active-toggle' : ''}`}
+                title={t('preview.agentPanel')}
+                onClick={() => void toggleAgentPanel()}
+              >
+                <span className="preview-agent-logo" aria-hidden>
+                  <img className="logo-light" src={wordmark} alt="" />
+                  <img className="logo-dark" src={wordmarkDark} alt="" />
+                </span>
+              </button>
+            )
           )}
         </div>
       </header>
 
       <div className="file-preview-main">
-        <div className={`file-viewer-body${selectable ? ' selecting' : ''}${storePickMode ? ' pick-mode' : ''}`}>
+        <div className={`file-viewer-body${selectable ? ' selecting pick-mode' : ''}`}>
           {!info && <div className="muted">{t('common.loading')}</div>}
-          {info?.error && info.kind !== 'pdf' && (
+          {/* Real load failures only — zip/binary use dedicated canvases, never this alert. */}
+          {info?.error && info.kind !== 'zip' && info.kind !== 'binary' && (
             <InlineAlert kind="error" title={t('preview.loadFailed')} message={info.error} />
           )}
           {info && !info.error && info.kind === 'csv' && (
@@ -631,7 +1311,16 @@ export function FileViewer({
               text={displayText}
               selecting={selectable}
               selectedIds={selectedIds}
-              onSelect={applySelection}
+              onSelect={(id, event, hint) => applySelection(id, event, hint)}
+            />
+          )}
+          {info && !info.error && info.kind === 'sqlite' && info.sqlite && (
+            <SqliteView
+              path={filePath}
+              info={info.sqlite}
+              selecting={selectable}
+              selectedIds={selectedIds}
+              onSelect={(id, event, hint) => applySelection(id, event, hint)}
             />
           )}
           {info && info.dataUrl && info.kind === 'image' && (
@@ -661,78 +1350,125 @@ export function FileViewer({
               <video className="file-viewer-media" controls src={info.dataUrl} />
             </MediaSelectFrame>
           )}
-          {info && info.kind === 'pdf' && (
-            <MediaSelectFrame
+          {info && !info.error && isOfficeKind && (
+            <OfficeNativeView
+              path={filePath}
+              kind={info.kind}
+              revision={previewRevision}
               selecting={selectable}
-              selected={selectedIds.includes('media')}
-              onSelect={(event) => applySelection('media', event)}
-            >
-              <iframe
-                className="file-viewer-pdf"
-                title={info.name}
-                src={`vav-local://preview/?path=${encodeURIComponent(filePath)}`}
-              />
-            </MediaSelectFrame>
+              selectedIds={selectedIds}
+              onPick={onOfficePick}
+            />
           )}
           {info && !info.error && info.kind === 'text' && (
-            <>
-              {selectable && drillStack.length > 0 && (
-                <div className="preview-drill-bar">
-                  {drillStack.map((block, index) => (
-                    <button
-                      key={`${block.id}-${index}`}
-                      type="button"
-                      className="preview-drill-crumb"
-                      onClick={() => {
-                        setDrillStack((prev) => prev.slice(0, index + 1))
-                        setSelectedIds([])
-                        setLastSelected(null)
-                      }}
-                    >
-                      {block.label ?? block.id}
-                    </button>
-                  ))}
-                  <span className="muted tiny">{t('preview.drillHint')}</span>
-                </div>
-              )}
-              <DocumentView
-                path={filePath}
-                text={displayText}
-                markdown={isMarkdown}
-                notebook={isNotebook}
-                selecting={selectable}
-                blocks={rootBlocks}
-                drillStack={drillStack}
-                selectedIds={selectedIds}
-                selectedBlocks={selectedBlocks}
-                onSelectBlock={applySelection}
-                onSelectLine={selectByLine}
-                onDrillIn={drillInto}
-                onAskAgent={(prompt, target) => {
-                  setSelectedIds([target.id])
-                  setLastSelected(target.id)
-                  const id =
-                    agentConversationId ??
-                    parentConversationId ??
-                    useSessionStore.getState().activeId
-                  useSessionStore.getState().setDraft(id, prompt)
-                  useSessionStore.getState().setPreviewRefs(id, [blockToRef(filePath, badge, target)])
-                  useSessionStore.getState().focusComposer()
-                }}
-              />
-            </>
+            <DocumentView
+              path={filePath}
+              text={displayText}
+              markdown={isMarkdown}
+              notebook={isNotebook}
+              selecting={selectable}
+              blocks={rootBlocks}
+              selectedIds={selectedIds}
+              selectedBlocks={selectedBlocks}
+              onSelectBlock={applySelection}
+              onSelectLine={selectByLine}
+              onAskAgent={(prompt, target) => {
+                setSelectedIds([target.id])
+                const id =
+                  agentConversationId ??
+                  parentConversationId ??
+                  useSessionStore.getState().activeId
+                if (!id) return
+                const store = useSessionStore.getState()
+                store.setDraft(id, prompt)
+                // Comment card (not legacy previewRefs Reference chips).
+                const ref = blockToRef(filePath, badge, target)
+                const existing = store.commentCards[id] ?? []
+                const without = existing.filter((c) => c.ref.id !== ref.id)
+                store.setCommentCards(id, [...without, { ref, comment: '' }])
+                store.clearPreviewRefs(id)
+                store.focusCommentCard(ref.id)
+                store.focusComposer()
+              }}
+            />
           )}
-          {info && !info.error && info.kind === 'binary' && (
-            <EmptyState
-              title={t('preview.unsupported')}
-              description={t('preview.unsupportedDesc')}
-            >
-              <Button
-                label={t('files.quickLook')}
-                size="sm"
-                onClick={() => void window.vav.files.quickLook(filePath)}
-              />
-            </EmptyState>
+          {info && info.kind === 'zip' && (
+            <ZipArchiveView
+              name={info.name}
+              zip={
+                info.zip ?? {
+                  entries: [],
+                  entryCount: 0,
+                  compressedSize: info.size,
+                  uncompressedSize: 0,
+                  ratio: 0
+                }
+              }
+              truncated={!!info.truncated}
+              selecting={selectable && !info.error}
+              selectedIds={selectedIds}
+              onSelect={(block, event) => applySelection(block.id, event, block)}
+            />
+          )}
+          {info && info.kind === 'binary' && (
+            <BinaryFileView
+              info={info}
+              meta={{
+                ...(info.binaryMeta ?? {
+                  uti: 'public.data',
+                  permissions: '—',
+                  owner: '—',
+                  createdAt: null,
+                  modifiedAt: info.mtimeMs ?? null,
+                  inode: '—',
+                  defaultApp: null
+                }),
+                defaultApp:
+                  info.binaryMeta?.defaultApp ?? assoc?.defaultApp ?? null
+              }}
+              onOpenWithDefault={async () => {
+                try {
+                  if (typeof window.vav.files.openWithDefault !== 'function') {
+                    showToast({
+                      kind: 'error',
+                      title: t('preview.openFailed'),
+                      description: t('preview.openFailedNoApi')
+                    })
+                    return
+                  }
+                  const result = await window.vav.files.openWithDefault(filePath)
+                  if (!result?.ok) {
+                    showToast({
+                      kind: 'error',
+                      title: t('preview.openFailed'),
+                      description: result && 'error' in result ? result.error : undefined
+                    })
+                    return
+                  }
+                  showToast({
+                    kind: 'success',
+                    title: t('preview.openLaunched')
+                  })
+                } catch (err) {
+                  showToast({
+                    kind: 'error',
+                    title: t('preview.openFailed'),
+                    description: (err as Error).message
+                  })
+                }
+              }}
+              onReveal={async () => {
+                try {
+                  await window.vav.conversations.revealInFinder(filePath)
+                } catch (err) {
+                  showToast({
+                    kind: 'error',
+                    title: t('preview.revealFailed'),
+                    description: (err as Error).message
+                  })
+                }
+              }}
+            />
           )}
         </div>
 
@@ -761,13 +1497,67 @@ export function FileViewer({
                 <div className="muted tiny">{t('preview.fromSession')}</div>
               </div>
             )}
+            {/* Always mount SessionDetail once we have (or can get) a conversation.
+                EmptyState without composer/tools looked like "the sidebar vanished". */}
+            {!embedded && (
+              <div className="preview-file-session-bar">
+                <span className="preview-file-session-title" title={sessionTitle}>
+                  {sessionTitle || t('common.session')}
+                </span>
+                <span className="spacer" />
+                <div className="preview-file-session-actions">
+                  <button
+                    type="button"
+                    ref={historyAnchorRef}
+                    className={`btn ghost sm icon-only${historyOpen ? ' is-active-toggle' : ''}`}
+                    title={t('preview.sessionHistory')}
+                    onClick={() => setHistoryOpen((v) => !v)}
+                  >
+                    <Clock size={12} />
+                  </button>
+                  <Button
+                    icon={<Plus size={12} />}
+                    size="sm"
+                    variant="ghost"
+                    title={t('preview.newSession')}
+                    onClick={() => void newFileSession()}
+                  />
+                </div>
+                {/* Anchored to the full bar so width matches the agent panel
+                    (not the clock/+ cluster, which was 380px and got clipped). */}
+                <SessionHistoryPopover
+                  open={historyOpen}
+                  onClose={() => setHistoryOpen(false)}
+                  sessions={fileSessions}
+                  activeSessionId={agentConversationId}
+                  onSwitch={(id) => {
+                    void switchFileSession(id)
+                    setHistoryOpen(false)
+                  }}
+                  onRename={renameFileSession}
+                  onDelete={deleteFileSessions}
+                  anchorRef={historyAnchorRef}
+                />
+              </div>
+            )}
             {agentConversationId ? (
               <SessionDetail variant="preview-edit" />
             ) : (
               <EmptyState
                 title={t('preview.startChat')}
                 description={t('preview.startChatDesc')}
-              />
+              >
+                <Button
+                  label={t('preview.startChat')}
+                  size="sm"
+                  variant="primary"
+                  onClick={() => {
+                    void ensureFileSession().then((id) => {
+                      if (id) useSessionStore.getState().focusComposer()
+                    })
+                  }}
+                />
+              </EmptyState>
             )}
           </aside>
         )}
@@ -778,31 +1568,6 @@ export function FileViewer({
         <span className="spacer" />
         {statusRight && <span>{statusRight}</span>}
       </footer>
-
-      {confirm && (
-        <Modal
-          title={t('preview.unsavedTitle')}
-          onDismiss={() => setConfirm(null)}
-          actions={
-            <>
-              <Button label={t('common.cancel')} onClick={() => setConfirm(null)} />
-              <Button
-                label={t('preview.discard')}
-                variant="danger"
-                onClick={() => void confirmDiscard()}
-              />
-              <Button
-                label={t('preview.save')}
-                variant="primary"
-                onClick={() => void confirmSave()}
-              />
-            </>
-          }
-        >
-          <p>{t('preview.unsavedBody', { name: info?.name ?? basename(filePath) })}</p>
-          <p className="muted tiny">{t('preview.unsavedHint')}</p>
-        </Modal>
-      )}
     </div>
   )
 }
@@ -819,17 +1584,34 @@ function collectBlocks(blocks: PreviewBlock[]): PreviewBlock[] {
   return out
 }
 
+/** Path compare for fs-changed / dirty events (macOS is usually case-insensitive). */
+function pathsEqual(a: string, b: string): boolean {
+  if (a === b) return true
+  const na = a.replace(/\/+$/, '')
+  const nb = b.replace(/\/+$/, '')
+  if (na === nb) return true
+  return na.toLowerCase() === nb.toLowerCase()
+}
+
 /** One selected preview block → a composer comment-block reference. */
 function blockToRef(path: string, badge: string, block: PreviewBlock): PreviewRef {
   return {
     id: `${path}::${block.id}`,
     filePath: path,
-    label: block.label ?? `L${block.startLine}–${block.endLine}`,
+    // Chip title: "list-item · line 45" (matches comment-card mock).
+    label: formatCommentCardLabel(block),
     startLine: block.startLine,
     endLine: block.endLine,
     text: block.text,
     badge
   }
+}
+
+/** Human title for the comment card header (kind · line N). */
+function formatCommentCardLabel(block: PreviewBlock): string {
+  const kind = (block.kind || 'block').replace(/_/g, '-')
+  if (block.startLine === block.endLine) return `${kind} · line ${block.startLine}`
+  return `${kind} · lines ${block.startLine}–${block.endLine}`
 }
 
 function MediaSelectFrame({
@@ -847,7 +1629,7 @@ function MediaSelectFrame({
   return (
     <div
       className={`preview-media-frame preview-select-region${selected ? ' selected' : ''}`}
-      onClick={onSelect}
+      onMouseDown={onSelect}
     >
       {children}
     </div>
@@ -865,12 +1647,10 @@ function DocumentView({
   notebook,
   selecting,
   blocks,
-  drillStack,
   selectedIds,
   selectedBlocks,
   onSelectBlock,
   onSelectLine,
-  onDrillIn,
   onAskAgent
 }: {
   path: string
@@ -879,12 +1659,10 @@ function DocumentView({
   notebook: boolean
   selecting: boolean
   blocks: PreviewBlock[]
-  drillStack: PreviewBlock[]
   selectedIds: string[]
   selectedBlocks: PreviewBlock[]
   onSelectBlock: (id: string, event: React.MouseEvent) => void
   onSelectLine: (line: number, event: React.MouseEvent) => void
-  onDrillIn: (block?: PreviewBlock | null) => void
   onAskAgent: (prompt: string, target: PreviewBlock) => void
 }): React.JSX.Element {
   const t = useT()
@@ -953,7 +1731,7 @@ function DocumentView({
             <div
               key={cell.id}
               className={`preview-notebook-cell preview-select-region${selected ? ' selected' : ''}`}
-              onClick={(event) => onSelectBlock(cell.id, event)}
+              onMouseDown={(event) => onSelectBlock(cell.id, event)}
               onContextMenu={(event) => {
                 event.preventDefault()
                 void window.vav.window
@@ -986,12 +1764,10 @@ function DocumentView({
       text={text}
       selecting={selecting}
       blocks={blocks}
-      drillStack={drillStack}
       selectedIds={selectedIds}
       selectedBlocks={selectedBlocks}
       onSelectBlock={onSelectBlock}
       onSelectLine={onSelectLine}
-      onDrillIn={onDrillIn}
       onAskAgent={onAskAgent}
     />
   )
@@ -999,53 +1775,113 @@ function DocumentView({
 
 /**
  * Continuous highlighted source with whole-block outlines (not per-line paint).
- * Rendering and selection are separated: lines are memoized once, selection
- * overlays are absolutely positioned divs on top. A single delegated handler
- * on the container does hit-testing via blockAtLine.
+ *
+ * Viewport virtualization: only the visible window (+ overscan) is highlighted
+ * and mounted as DOM. Full-file highlight of large XML/JSON was freezing open.
+ * Selection overlays still use absolute line ranges against the virtual height.
  */
+const CODE_OVERSCAN_LINES = 48
+/** Below this line count, render everything (small files stay simple). */
+const CODE_VIRTUALIZE_MIN_LINES = 200
+
 function CodeBlockCanvas({
   path,
   text,
   selecting,
   blocks,
-  drillStack,
   selectedIds,
   selectedBlocks,
   onSelectBlock,
   onSelectLine,
-  onDrillIn,
   onAskAgent
 }: {
   path: string
   text: string
   selecting: boolean
   blocks: PreviewBlock[]
-  drillStack: PreviewBlock[]
   selectedIds: string[]
   selectedBlocks: PreviewBlock[]
   onSelectBlock: (id: string, event: React.MouseEvent) => void
   onSelectLine: (line: number, event: React.MouseEvent) => void
-  onDrillIn: (block?: PreviewBlock | null) => void
   onAskAgent: (prompt: string, target: PreviewBlock) => void
 }): React.JSX.Element {
   const t = useT()
   const language = languageFromPath(path)
   const lines = useMemo(() => text.split(/\r?\n/), [text])
+  const virtualize = lines.length >= CODE_VIRTUALIZE_MIN_LINES
   const [hoveredId, setHoveredId] = useState<string | null>(null)
   const containerRef = useRef<HTMLPreElement>(null)
+  const canvasRef = useRef<HTMLDivElement>(null)
+  const [linePx, setLinePx] = useState(0)
+  const [viewport, setViewport] = useState({ scrollTop: 0, height: 600 })
+  const [contentMinWidth, setContentMinWidth] = useState(0)
+  /** Overlay width in px = max content width of lines in the block range. */
+  const [overlayWidths, setOverlayWidths] = useState<Record<string, number>>({})
+  const scrollRaf = useRef(0)
 
-  // Highlight every line once — never recompute on hover/selection changes.
-  const highlightedLines = useMemo(() => {
-    return lines.map((line) => highlightCode(line, language) || ' ')
-  }, [lines, language])
+  // Measure line-height from a real line box (must match CSS --code-line-height).
+  useLayoutEffect(() => {
+    const el = containerRef.current
+    if (!el) return
+    const probe = el.querySelector<HTMLElement>('.preview-code-line')
+    if (probe) {
+      const h = probe.getBoundingClientRect().height
+      if (h > 0) {
+        setLinePx(h)
+        return
+      }
+    }
+    const cs = getComputedStyle(el)
+    const fontSize = parseFloat(cs.fontSize) || 12
+    const lh = parseFloat(cs.lineHeight)
+    setLinePx(Number.isFinite(lh) && lh > 0 ? lh : fontSize * 1.55)
+  }, [text, language, virtualize])
+
+  useEffect(() => {
+    const el = containerRef.current
+    if (!el) return
+    const sync = (): void => {
+      if (scrollRaf.current) return
+      scrollRaf.current = requestAnimationFrame(() => {
+        scrollRaf.current = 0
+        // Read from the scrolling element only — body must not scroll instead.
+        setViewport({ scrollTop: el.scrollTop, height: el.clientHeight || 600 })
+      })
+    }
+    sync()
+    el.addEventListener('scroll', sync, { passive: true })
+    const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(sync) : null
+    ro?.observe(el)
+    return () => {
+      el.removeEventListener('scroll', sync)
+      ro?.disconnect()
+      if (scrollRaf.current) cancelAnimationFrame(scrollRaf.current)
+    }
+  }, [lines.length, virtualize])
+
+  const lh = linePx > 0 ? linePx : 19
+  const range = useMemo(() => {
+    if (!virtualize) return { start: 0, end: lines.length }
+    const start = Math.max(0, Math.floor(viewport.scrollTop / lh) - CODE_OVERSCAN_LINES)
+    const visible = Math.ceil(Math.max(viewport.height, 1) / lh) + CODE_OVERSCAN_LINES * 2
+    const end = Math.min(lines.length, start + Math.max(visible, 60))
+    return { start, end }
+  }, [virtualize, viewport.scrollTop, viewport.height, lh, lines.length])
+
+  // Highlight only the visible window — never the whole file.
+  const visibleHtml = useMemo(() => {
+    const out: string[] = []
+    for (let i = range.start; i < range.end; i++) {
+      out.push(highlightCode(lines[i] ?? '', language) || ' ')
+    }
+    return out
+  }, [lines, range.start, range.end, language])
 
   const hoverBlock =
     selecting && hoveredId && !selectedIds.includes(hoveredId)
       ? findBlockById(blocks, hoveredId)
       : null
 
-  // Overlays: one div per selected/hovered block, absolutely positioned by
-  // line range × lineHeight. Only a handful of divs — cheap to update.
   const overlays = useMemo(() => {
     if (!selecting) return []
     const result: {
@@ -1076,39 +1912,72 @@ function CodeBlockCanvas({
     return result
   }, [selecting, selectedBlocks, hoverBlock])
 
-  // Single delegated handler — hit-test via blockAtLine, no per-line listeners.
+  // Measure visible line widths for horizontal scroll + tight selection boxes.
+  useLayoutEffect(() => {
+    const canvas = canvasRef.current
+    if (!canvas) return
+    const lineEls = canvas.querySelectorAll<HTMLElement>('.preview-code-line')
+    let maxW = 0
+    lineEls.forEach((lineEl) => {
+      const content = (lineEl.firstElementChild as HTMLElement | null) ?? lineEl
+      maxW = Math.max(maxW, content.offsetWidth, content.scrollWidth)
+    })
+    if (maxW > 0) {
+      setContentMinWidth((prev) => (maxW > prev ? maxW : prev))
+    }
+
+    if (!selecting || overlays.length === 0) {
+      setOverlayWidths((prev) => (Object.keys(prev).length === 0 ? prev : {}))
+      return
+    }
+    const next: Record<string, number> = {}
+    for (const ov of overlays) {
+      // Only measure intersection with the mounted window.
+      const from = Math.max(ov.startLine - 1, range.start)
+      const to = Math.min(ov.endLine, range.end)
+      let max = 0
+      for (let i = from; i < to; i++) {
+        const lineEl = lineEls[i - range.start]
+        if (!lineEl) continue
+        const content = (lineEl.firstElementChild as HTMLElement | null) ?? lineEl
+        max = Math.max(max, content.offsetWidth, content.scrollWidth)
+      }
+      next[ov.id] = Math.max(max, overlayWidths[ov.id] ?? 0, 8)
+    }
+    setOverlayWidths((prev) => {
+      const keys = Object.keys(next)
+      if (
+        keys.length === Object.keys(prev).length &&
+        keys.every((k) => prev[k] === next[k])
+      ) {
+        return prev
+      }
+      return { ...prev, ...next }
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- overlayWidths read is a floor, not a dep
+  }, [selecting, overlays, visibleHtml, range.start, range.end])
+
   const handleMouseMove = (event: React.MouseEvent): void => {
     if (!selecting) return
-    const lineNo = lineFromEvent(event, containerRef.current)
+    const lineNo = lineFromEvent(event, containerRef.current, lh)
     if (lineNo == null) return
-    const hit = blockAtLine(blocks, lineNo, drillStack)
+    const hit = blockAtLine(blocks, lineNo)
     setHoveredId(hit?.id ?? null)
   }
 
-  const handleClick = (event: React.MouseEvent): void => {
+  const handlePointerPick = (event: React.MouseEvent): void => {
     if (!selecting) return
-    const lineNo = lineFromEvent(event, containerRef.current)
+    const lineNo = lineFromEvent(event, containerRef.current, lh)
     if (lineNo == null) return
     onSelectLine(lineNo, event)
-  }
-
-  const handleDoubleClick = (event: React.MouseEvent): void => {
-    if (!selecting) return
-    event.preventDefault()
-    const lineNo = lineFromEvent(event, containerRef.current)
-    if (lineNo == null) return
-    const hit = blockAtLine(blocks, lineNo, drillStack)
-    if (!hit) return
-    onSelectBlock(hit.id, event)
-    onDrillIn(hit)
   }
 
   const handleContextMenu = (event: React.MouseEvent): void => {
     if (!selecting) return
     event.preventDefault()
-    const lineNo = lineFromEvent(event, containerRef.current)
+    const lineNo = lineFromEvent(event, containerRef.current, lh)
     if (lineNo == null) return
-    const hit = blockAtLine(blocks, lineNo, drillStack)
+    const hit = blockAtLine(blocks, lineNo)
     if (!hit) return
     const parent = parentBlockOf(blocks, hit.id)
     void window.vav.window
@@ -1117,7 +1986,6 @@ function CodeBlockCanvas({
           { id: 'copy', label: t('preview.copyBlock') },
           { id: 'analyze', label: t('preview.analyzeBlock') },
           { id: 'refactor', label: t('preview.refactorBlock') },
-          ...(hit.children?.length ? [{ id: 'drill', label: t('preview.drillIn') }] : []),
           ...(parent ? [{ id: 'parent', label: t('preview.selectParent') }] : [])
         ],
         { x: event.clientX, y: event.clientY }
@@ -1126,39 +1994,74 @@ function CodeBlockCanvas({
         if (id === 'copy') void window.vav.conversations.copyToClipboard(hit.text)
         if (id === 'analyze') onAskAgent(t('preview.analyzePrompt'), hit)
         if (id === 'refactor') onAskAgent(t('preview.refactorPrompt'), hit)
-        if (id === 'drill') {
-          onSelectBlock(hit.id, event)
-          onDrillIn(hit)
-        }
         if (id === 'parent' && parent) onSelectBlock(parent.id, event)
       })
   }
 
+  const totalHeight = Math.max(lh, lines.length * lh)
+  const padTop = range.start * lh
+  const padBottom = Math.max(0, (lines.length - range.end) * lh)
+
   return (
     <pre
       ref={containerRef}
-      className={`file-viewer-code continuous${selecting ? ' selecting' : ''}`}
+      className={`file-viewer-code continuous${selecting ? ' selecting' : ''}${
+        virtualize ? ' is-virtualized' : ''
+      }`}
       onMouseMove={selecting ? handleMouseMove : undefined}
       onMouseLeave={() => setHoveredId(null)}
-      onClick={selecting ? handleClick : undefined}
-      onDoubleClick={selecting ? handleDoubleClick : undefined}
+      onMouseDown={selecting ? handlePointerPick : undefined}
       onContextMenu={selecting ? handleContextMenu : undefined}
     >
-      {highlightedLines.map((html, i) => (
-        <div className="preview-code-line" key={i + 1}>
-          <code className="hljs" dangerouslySetInnerHTML={{ __html: html }} />
-        </div>
-      ))}
-      {overlays.map((ov) => (
+      <div
+        className="preview-code-canvas"
+        ref={canvasRef}
+        style={{
+          // Prefer padding spacers over a single absolute window + fixed height
+          // so scrollHeight always matches line count × line height.
+          minHeight: virtualize ? totalHeight : undefined,
+          height: virtualize ? totalHeight : undefined,
+          minWidth: contentMinWidth > 0 ? contentMinWidth : undefined,
+          position: 'relative'
+        }}
+      >
         <div
-          key={`ov-${ov.id}`}
-          className={`preview-code-overlay${ov.selected ? ' selected' : ''}${ov.hovered ? ' hovered' : ''}`}
-          style={{
-            top: `calc((var(--code-line-height, 1.55em)) * ${ov.startLine - 1})`,
-            height: `calc((var(--code-line-height, 1.55em)) * ${ov.endLine - ov.startLine + 1})`
-          }}
-        />
-      ))}
+          className="preview-code-window"
+          style={
+            virtualize
+              ? {
+                  position: 'absolute',
+                  top: padTop,
+                  left: 0,
+                  minWidth: '100%',
+                  // Bottom spacer via canvas height; window only hosts visible lines.
+                  paddingBottom: 0
+                }
+              : { minWidth: '100%' }
+          }
+        >
+          {visibleHtml.map((html, i) => (
+            <div className="preview-code-line" key={range.start + i + 1}>
+              <code className="hljs" dangerouslySetInnerHTML={{ __html: html }} />
+            </div>
+          ))}
+        </div>
+        {/* Invisible bottom sentinel keeps total scroll extent stable if height math drifts. */}
+        {virtualize && padBottom > 0 ? (
+          <div aria-hidden style={{ position: 'absolute', top: totalHeight - 1, height: 1, width: 1 }} />
+        ) : null}
+        {overlays.map((ov) => (
+          <div
+            key={`ov-${ov.id}`}
+            className={`preview-code-overlay${ov.selected ? ' selected' : ''}${ov.hovered ? ' hovered' : ''}`}
+            style={{
+              top: (ov.startLine - 1) * lh,
+              height: Math.max(lh, (ov.endLine - ov.startLine + 1) * lh),
+              width: overlayWidths[ov.id] != null ? `${overlayWidths[ov.id]}px` : undefined
+            }}
+          />
+        ))}
+      </div>
     </pre>
   )
 }
@@ -1166,18 +2069,23 @@ function CodeBlockCanvas({
 /** Hit-test: which line number is under the mouse? */
 function lineFromEvent(
   event: React.MouseEvent,
-  container: HTMLElement | null
+  container: HTMLElement | null,
+  lineHeightPx?: number
 ): number | null {
   if (!container) return null
   const rect = container.getBoundingClientRect()
   const y = event.clientY - rect.top + container.scrollTop
-  const lineHeight = parseFloat(getComputedStyle(container).lineHeight) || 20
+  const lineHeight =
+    lineHeightPx && lineHeightPx > 0
+      ? lineHeightPx
+      : parseFloat(getComputedStyle(container).lineHeight) || 20
   return Math.floor(y / lineHeight) + 1
 }
 
 /**
- * Same Markdown rendering with or without selection. When `selecting`, adds
- * DevTools-style hit targets — never a different document structure.
+ * Markdown pick targets — same semantics as CodeBlockCanvas:
+ * click deepest region, selection outline stays while the block is picked,
+ * nested children are independently selectable (no double-click drill).
  */
 function MarkdownSelectRegion({
   filePath,
@@ -1199,24 +2107,61 @@ function MarkdownSelectRegion({
   const t = useT()
   const children = block.children ?? []
   const section = children.find((c) => c.kind === 'heading-section')
-  const inner = children.filter((c) => c.kind !== 'heading-section')
+  const nested = children.filter((c) => c.kind !== 'heading-section')
   const sectionSelected = selecting && !!section && selectedIds.includes(section.id)
   const selected =
     selecting && (forceSelected || selectedIds.includes(block.id) || sectionSelected)
+  const childForce = forceSelected || sectionSelected
+
+  const renderNested = (): React.ReactNode =>
+    nested.map((child) => (
+      <MarkdownSelectRegion
+        key={child.id}
+        filePath={filePath}
+        block={child}
+        selecting={selecting}
+        selectedIds={selectedIds}
+        onSelect={onSelect}
+        onAskAgent={onAskAgent}
+        forceSelected={childForce}
+      />
+    ))
+
+  // Prefer nested hit targets when children cover content (lists, etc.) so
+  // granularity matches code's deepest-block pick. Headings still show the
+  // heading line plus nested body blocks.
+  let body: React.ReactNode
+  if (block.kind === 'code') {
+    body = (
+      <pre className="file-viewer-code">
+        <code
+          className="hljs"
+          dangerouslySetInnerHTML={{
+            __html: highlightCode(
+              block.text.replace(/^```[^\n]*\n?/, '').replace(/\n?```$/, ''),
+              block.language
+            )
+          }}
+        />
+      </pre>
+    )
+  } else if (block.kind === 'heading') {
+    body = (
+      <>
+        <MarkdownView source={block.text} filePath={filePath} />
+        {renderNested()}
+      </>
+    )
+  } else if (nested.length > 0) {
+    body = renderNested()
+  } else {
+    body = <MarkdownView source={block.text} filePath={filePath} />
+  }
 
   return (
     <div
       className={`preview-select-region kind-${block.kind}${selected ? ' selected' : ''}`}
-      onClick={selecting ? (event) => onSelect(block.id, event) : undefined}
-      onDoubleClick={
-        selecting && section
-          ? (event) => {
-              event.preventDefault()
-              event.stopPropagation()
-              onSelect(section.id, event)
-            }
-          : undefined
-      }
+      onMouseDown={selecting ? (event) => onSelect(block.id, event) : undefined}
       onContextMenu={
         selecting
           ? (event) => {
@@ -1241,39 +2186,18 @@ function MarkdownSelectRegion({
           : undefined
       }
     >
-      {block.kind === 'code' ? (
-        <pre className="file-viewer-code">
-          <code
-            className="hljs"
-            dangerouslySetInnerHTML={{
-              __html: highlightCode(
-                block.text.replace(/^```[^\n]*\n?/, '').replace(/\n?```$/, ''),
-                block.language
-              )
-            }}
-          />
-        </pre>
-      ) : (
-        <MarkdownView source={block.text} filePath={filePath} />
-      )}
-      {block.kind === 'heading' &&
-        inner.map((child) => (
-          <MarkdownSelectRegion
-            key={child.id}
-            filePath={filePath}
-            block={child}
-            selecting={selecting}
-            selectedIds={selectedIds}
-            onSelect={onSelect}
-            onAskAgent={onAskAgent}
-            forceSelected={sectionSelected}
-          />
-        ))}
+      {body}
     </div>
   )
 }
 
-/** Table render shared by preview/edit; edit enables row/column block select. */
+/** Rows rendered at once — full DOM for huge CSVs freezes/crashes Electron. */
+const CSV_WINDOW = 120
+
+/**
+ * Sheet-style CSV: sticky header/gutter, windowed rows, cell/row/col pick
+ * using the same preview-select-region chrome as code/MD.
+ */
 function CsvView({
   text,
   selecting,
@@ -1283,56 +2207,164 @@ function CsvView({
   text: string
   selecting: boolean
   selectedIds: string[]
-  onSelect: (id: string, event: React.MouseEvent) => void
+  onSelect: (id: string, event: React.MouseEvent, hint?: PreviewBlock) => void
 }): React.JSX.Element {
   const t = useT()
-  const model = parseCsvModel(text)
+  // Parse once per text; blocks are capped — rows keep full data for the windowed UI.
+  const model = useMemo(() => parseCsvModel(text), [text])
+  const [rowStart, setRowStart] = useState(0)
+  const selected = useMemo(() => new Set(selectedIds), [selectedIds])
+
+  useEffect(() => {
+    setRowStart(0)
+  }, [text])
+
+  // Keep the selected row visible when selection changes from outside.
+  useEffect(() => {
+    for (const id of selectedIds) {
+      const m = /^row-(\d+)$/.exec(id) || /^cell-r(\d+)-c\d+$/.exec(id)
+      if (!m) continue
+      const ri = Number(m[1]) - 1
+      if (ri < 0 || ri >= model.rows.length) continue
+      if (ri < rowStart || ri >= rowStart + CSV_WINDOW) {
+        setRowStart(Math.max(0, Math.min(model.rows.length - CSV_WINDOW, ri - 10)))
+      }
+      break
+    }
+    // Only react to selection identity, not rowStart itself.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedIds, model.rows.length])
 
   if (model.headers.length === 0) return <div className="muted">{t('common.empty')}</div>
 
+  const colCount = Math.max(
+    model.headers.length,
+    1,
+    model.rows.length ? Math.max(...model.rows.slice(0, 50).map((r) => r.length)) : 1
+  )
+  const headers = Array.from({ length: colCount }, (_, i) => model.headers[i] ?? `col${i + 1}`)
+  const end = Math.min(model.rows.length, rowStart + CSV_WINDOW)
+  const slice = model.rows.slice(rowStart, end)
+  const total = model.rows.length
+
+  const pick = (id: string, event: React.MouseEvent, hint?: PreviewBlock): void => {
+    event.preventDefault()
+    event.stopPropagation()
+    onSelect(id, event, hint)
+  }
+
   return (
-    <div className={`table-scroll file-viewer-table${selecting ? ' csv-selectable' : ''}`}>
-      <table>
-        <thead>
-          <tr>
-            <th className="csv-row-gutter" />
-            {model.headers.map((cell, index) => {
-              const id = csvColId(cell, index)
+    <div className={`csv-sheet-root${selecting ? ' selecting' : ''}`}>
+      <div className="csv-sheet-toolbar muted tiny">
+        <span>
+          {total === 0
+            ? t('common.empty')
+            : `Rows ${rowStart + 1}–${end} / ${total} · ${colCount} cols`}
+        </span>
+        <span className="spacer" />
+        <button
+          type="button"
+          className="btn ghost sm"
+          disabled={rowStart <= 0}
+          onClick={() => setRowStart((s) => Math.max(0, s - CSV_WINDOW))}
+        >
+          ↑
+        </button>
+        <button
+          type="button"
+          className="btn ghost sm"
+          disabled={end >= total}
+          onClick={() =>
+            setRowStart((s) => Math.min(Math.max(0, total - CSV_WINDOW), s + CSV_WINDOW))
+          }
+        >
+          ↓
+        </button>
+      </div>
+      <div className="csv-sheet-wrap file-viewer-table">
+        <table className="csv-sheet">
+          <thead>
+            <tr>
+              <th className="csv-sheet-gutter csv-sheet-corner" />
+              {headers.map((name, index) => {
+                const id = csvColId(name, index)
+                const on = selecting && selected.has(id)
+                return (
+                  <th
+                    key={id}
+                    className={`csv-sheet-colhead preview-select-region${on ? ' selected' : ''}`}
+                    data-block-id={id}
+                    title={name}
+                    onMouseDown={
+                      selecting
+                        ? (e) => {
+                            const hint: PreviewBlock = {
+                              id,
+                              kind: 'col',
+                              text: name,
+                              label: `col ${name}`,
+                              startLine: 1,
+                              endLine: total + 1
+                            }
+                            pick(id, e, hint)
+                          }
+                        : undefined
+                    }
+                  >
+                    <span className="csv-sheet-col-label">{name || `col ${index + 1}`}</span>
+                  </th>
+                )
+              })}
+            </tr>
+          </thead>
+          <tbody>
+            {slice.map((row, offset) => {
+              const rowIndex = rowStart + offset
+              const rowId = `row-${rowIndex + 1}`
+              const rowOn = selecting && selected.has(rowId)
+              const rowHint = csvRowBlock(headers, row, rowIndex)
               return (
-                <th
-                  key={index}
-                  className={selecting && selectedIds.includes(id) ? 'selected' : undefined}
-                  onClick={selecting ? (event) => onSelect(id, event) : undefined}
-                >
-                  {cell}
-                </th>
+                <tr key={rowId} className={rowOn ? 'row-selected' : undefined}>
+                  <th
+                    className={`csv-sheet-gutter preview-select-region${rowOn ? ' selected' : ''}`}
+                    data-block-id={rowId}
+                    title={selecting ? t('preview.selectRow') : undefined}
+                    onMouseDown={selecting ? (e) => pick(rowId, e, rowHint) : undefined}
+                  >
+                    {rowIndex + 1}
+                  </th>
+                  {Array.from({ length: colCount }, (_, cellIndex) => {
+                    const cell = row[cellIndex] ?? ''
+                    const cellId = `cell-r${rowIndex + 1}-c${cellIndex}`
+                    const on = selecting && selected.has(cellId)
+                    return (
+                      <td
+                        key={cellId}
+                        className={`preview-select-region${on ? ' selected' : ''}${cell ? '' : ' is-empty'}`}
+                        data-block-id={cellId}
+                        title={cell}
+                        onMouseDown={
+                          selecting
+                            ? (e) => {
+                                if (!cell.trim()) {
+                                  pick(rowId, e, rowHint)
+                                  return
+                                }
+                                pick(cellId, e, csvCellBlock(headers, row, rowIndex, cellIndex))
+                              }
+                            : undefined
+                        }
+                      >
+                        {cell}
+                      </td>
+                    )
+                  })}
+                </tr>
               )
             })}
-          </tr>
-        </thead>
-        <tbody>
-          {model.rows.map((row, rowIndex) => {
-            const rowId = `row-${rowIndex + 1}`
-            return (
-              <tr
-                key={rowIndex}
-                className={selecting && selectedIds.includes(rowId) ? 'selected' : undefined}
-              >
-                <td
-                  className="csv-row-gutter"
-                  onClick={selecting ? (event) => onSelect(rowId, event) : undefined}
-                  title={selecting ? t('preview.selectRow') : undefined}
-                >
-                  {rowIndex + 1}
-                </td>
-                {row.map((cell, cellIndex) => (
-                  <td key={cellIndex}>{cell}</td>
-                ))}
-              </tr>
-            )
-          })}
-        </tbody>
-      </table>
+          </tbody>
+        </table>
+      </div>
     </div>
   )
 }

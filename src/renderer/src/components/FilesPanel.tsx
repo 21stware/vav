@@ -51,7 +51,18 @@ export function FilesPanel({ visible }: { visible: boolean }): React.JSX.Element
   const workspace = useWorkspaceStore((s) => s.workspaces[activeId])
   const ensureFilesLoaded = useWorkspaceStore((s) => s.ensureFilesLoaded)
   const setSort = useWorkspaceStore((s) => s.setSort)
-  const selectPath = useWorkspaceStore((s) => s.selectPath)
+  const selectPathRaw = useWorkspaceStore((s) => s.selectPath)
+  const attachContextFile = useSessionStore((s) => s.attachContextFile)
+  /** Select tree path and drive the File Attachment Chip (files only). */
+  const selectPath = (
+    id: string,
+    path: string | null,
+    kind: 'file' | 'dir' | 'clear' = path ? 'file' : 'clear'
+  ): void => {
+    selectPathRaw(id, path)
+    if (kind === 'file' && path) void attachContextFile(id, path)
+    else if (kind === 'clear' || kind === 'dir') void attachContextFile(id, null)
+  }
   const loadDirectory = useWorkspaceStore((s) => s.loadDirectory)
   const temporary = isTemporaryWorkspace(conversation?.workingDirectory ?? null, tmp)
   const viewMode: FileViewMode = settings.fileViewMode ?? 'tree'
@@ -210,7 +221,7 @@ export function FilesPanel({ visible }: { visible: boolean }): React.JSX.Element
               key={path}
               className="chip"
               title={path}
-              onClick={() => selectPath(activeId, path)}
+              onClick={() => selectPath(activeId, path, 'file')}
             >
               <span className="chip-label">{basename(path)}</span>
             </button>
@@ -220,7 +231,7 @@ export function FilesPanel({ visible }: { visible: boolean }): React.JSX.Element
 
       <div className="files-browser" data-opaque={browserOpaque || undefined}>
         {displayMode === 'tree' ? (
-          <div className="file-tree" onClick={() => selectPath(activeId, null)}>
+          <div className="file-tree" onClick={() => selectPath(activeId, null, 'clear')}>
             {rootError ? (
               <InlineAlert kind="error" title={t('files.error.readDir')} message={rootError} />
             ) : (
@@ -263,7 +274,17 @@ function ColumnBrowser({
   const activeId = useSessionStore((s) => s.activeId)
   const workspace = useWorkspaceStore((s) => s.workspaces[activeId])
   const loadDirectory = useWorkspaceStore((s) => s.loadDirectory)
-  const selectPath = useWorkspaceStore((s) => s.selectPath)
+  const selectPathRaw = useWorkspaceStore((s) => s.selectPath)
+  const attachContextFile = useSessionStore((s) => s.attachContextFile)
+  const selectPath = (
+    id: string,
+    path: string | null,
+    kind: 'file' | 'dir' | 'clear' = path ? 'file' : 'clear'
+  ): void => {
+    selectPathRaw(id, path)
+    if (kind === 'file' && path) void attachContextFile(id, path)
+    else void attachContextFile(id, null)
+  }
   const columns = [root, ...columnPath]
 
   useEffect(() => {
@@ -283,20 +304,32 @@ function ColumnBrowser({
     el.scrollLeft = el.scrollWidth
   }, [columnPath.length])
 
-  /** Clear selection and collapse drilled-in columns back to the root pane. */
-  const clearSelection = (): void => {
-    selectPath(activeId, null)
-    setColumnPath([])
+  /**
+   * Blank click in column `index`: keep navigation context on this column's
+   * directory (never null — null would empty-collapse the tools panel), and
+   * only drop columns deeper than this one.
+   */
+  const clearAtColumn = (index: number): void => {
+    const dir = columns[index] ?? root
+    selectPath(activeId, dir, 'dir')
+    setColumnPath(columnPath.slice(0, index))
   }
 
   return (
-    <div className="file-columns" ref={columnsRef} onClick={clearSelection}>
+    <div className="file-columns" ref={columnsRef}>
       {columns.map((dir, index) => {
         const entries = workspace?.dirs[dir] ?? []
         const error = workspace?.dirErrors[dir]
         const loading = workspace?.loadingDirs.includes(dir)
         return (
-          <div className="file-column" key={`${dir}-${index}`} onClick={clearSelection}>
+          <div
+            className="file-column"
+            key={`${dir}-${index}`}
+            onClick={(event) => {
+              event.stopPropagation()
+              clearAtColumn(index)
+            }}
+          >
             {error && <InlineAlert kind="error" title={t('files.readError')} message={error} />}
             {loading && !workspace?.dirs[dir] && (
               <div className="muted tiny" style={{ padding: 8 }}>
@@ -314,7 +347,24 @@ function ColumnBrowser({
                     title={entry.path}
                     onClick={(event) => {
                       event.stopPropagation()
-                      selectPath(activeId, entry.path)
+                      // Re-click an open folder → collapse only its deeper columns
+                      // (Finder-style), keep this folder selected.
+                      if (entry.isDirectory && open) {
+                        selectPath(activeId, entry.path, 'dir')
+                        setColumnPath(columnPath.slice(0, index))
+                        return
+                      }
+                      // Re-click the selected file → fall back to this column's dir.
+                      if (!entry.isDirectory && selected) {
+                        selectPath(activeId, dir, 'dir')
+                        setColumnPath(columnPath.slice(0, index))
+                        return
+                      }
+                      selectPath(
+                        activeId,
+                        entry.path,
+                        entry.isDirectory ? 'dir' : 'file'
+                      )
                       if (entry.isDirectory) {
                         setColumnPath([...columnPath.slice(0, index), entry.path])
                       } else {
@@ -327,7 +377,11 @@ function ColumnBrowser({
                     onContextMenu={(event) => {
                       event.preventDefault()
                       event.stopPropagation()
-                      selectPath(activeId, entry.path)
+                      selectPath(
+                        activeId,
+                        entry.path,
+                        entry.isDirectory ? 'dir' : 'file'
+                      )
                       void showEntryMenu(entry, {
                         onOpen,
                         onMutated,
@@ -347,9 +401,15 @@ function ColumnBrowser({
                       })
                     }}
                   >
-                    {entry.isDirectory ? <Folder size={13} /> : <FileIcon size={13} />}
+                    {entry.isDirectory ? (
+                      <Folder size={14} strokeWidth={1.75} aria-hidden />
+                    ) : (
+                      <FileIcon size={14} strokeWidth={1.75} aria-hidden />
+                    )}
                     <span className="tree-name">{entry.name}</span>
-                    {entry.isDirectory && <ChevronRight size={11} className="column-chevron" />}
+                    {entry.isDirectory && (
+                      <ChevronRight size={12} strokeWidth={1.75} className="column-chevron" aria-hidden />
+                    )}
                   </div>
                 )
               })}
@@ -453,7 +513,13 @@ function TreeRow({
   const expanded = useWorkspaceStore((s) => s.workspaces[activeId]?.expanded.includes(entry.path))
   const selected = useWorkspaceStore((s) => s.workspaces[activeId]?.selectedPath === entry.path)
   const toggleExpand = useWorkspaceStore((s) => s.toggleExpand)
-  const selectPath = useWorkspaceStore((s) => s.selectPath)
+  const selectPathRaw = useWorkspaceStore((s) => s.selectPath)
+  const attachContextFile = useSessionStore((s) => s.attachContextFile)
+  const selectEntry = (path: string, isDirectory: boolean): void => {
+    selectPathRaw(activeId, path)
+    if (isDirectory) void attachContextFile(activeId, null)
+    else void attachContextFile(activeId, path)
+  }
   const [renaming, setRenaming] = useState(false)
   const [draft, setDraft] = useState(entry.name)
 
@@ -465,7 +531,7 @@ function TreeRow({
         title={entry.path}
         onClick={(event) => {
           event.stopPropagation()
-          selectPath(activeId, entry.path)
+          selectEntry(entry.path, entry.isDirectory)
           if (entry.isDirectory) void toggleExpand(activeId, entry.path)
         }}
         onDoubleClick={() => {
@@ -474,7 +540,7 @@ function TreeRow({
         onContextMenu={(event) => {
           event.preventDefault()
           event.stopPropagation()
-          selectPath(activeId, entry.path)
+          selectEntry(entry.path, entry.isDirectory)
           void showEntryMenu(entry, {
             onOpen,
             onMutated,
@@ -491,16 +557,20 @@ function TreeRow({
           })
         }}
       >
-        <span className="disclosure">
+        <span className="disclosure" aria-hidden>
           {entry.isDirectory ? (
             expanded ? (
-              <ChevronDown size={12} />
+              <ChevronDown size={12} strokeWidth={1.75} />
             ) : (
-              <ChevronRight size={12} />
+              <ChevronRight size={12} strokeWidth={1.75} />
             )
           ) : null}
         </span>
-        {entry.isDirectory ? <Folder size={13} /> : <FileIcon size={13} />}
+        {entry.isDirectory ? (
+          <Folder size={14} strokeWidth={1.75} aria-hidden />
+        ) : (
+          <FileIcon size={14} strokeWidth={1.75} aria-hidden />
+        )}
         {renaming ? (
           <input
             className="text-field rename-field"

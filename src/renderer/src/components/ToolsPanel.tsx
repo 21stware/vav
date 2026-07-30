@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   ArrowLeftRight,
+  Bot,
   ChevronDown,
   ChevronUp,
-  Crosshair,
   Folder,
   Terminal as TerminalIcon
 } from 'lucide-react'
@@ -20,7 +20,7 @@ import { useT } from '../i18n/useT'
 import { Button, Chip } from './ui'
 
 /**
- * The tools台 between the transcript and the composer.
+ * The tools tray in the bottom dock (below the composer).
  *
  * Files and Terminal are both mounted; only visibility switches, and collapsing
  * takes the body to zero height without destroying either pane
@@ -54,9 +54,6 @@ export function ToolsPanel({
   const setWorkingDirectory = useSessionStore((s) => s.setWorkingDirectory)
   const showDialog = useSessionStore((s) => s.showDialog)
 
-  const setPickMode = useSessionStore((s) => s.setPickMode)
-  const pickModeOn = useSessionStore((s) => !!s.pickMode[s.activeId])
-
   const workspace = useWorkspaceStore((s) => s.workspaces[activeId])
   const newBash = useWorkspaceStore((s) => s.newBash)
   const selectTab = useWorkspaceStore((s) => s.selectTab)
@@ -70,10 +67,14 @@ export function ToolsPanel({
   const workdir = conversation?.workingDirectory ?? null
   const temporary = isTemporaryWorkspace(workdir, tmp)
   const label = truncatePathLabel(workdirLabel(workdir, tmp, home))
-  const tabs = workspace?.tabs ?? []
+  // Tools tray shows user bash only — never main-surface CLI agent hosts.
+  const tabs = (workspace?.tabs ?? []).filter(
+    (t) => !t.agentId || t.agentId === 'vav' || t.isAgent
+  )
   const activeTabId = workspace?.activeTabId ?? ''
   const filesOn = !collapsed && segment === 'files'
   const previewEdit = variant === 'preview-edit'
+  const agentRunning = useSessionStore((s) => !!s.turns[activeId]?.isRunning)
 
   const locateWorkspace = useSessionStore((s) => s.locateWorkspace)
 
@@ -198,10 +199,32 @@ export function ToolsPanel({
     void newBash(activeId, 80, 24)
   }
 
-  // In preview-edit mode there's no File System tab — force terminal segment.
+  const setPanelSegmentQuiet = useSessionStore((s) => s.setPanelSegmentQuiet)
+
+  // Preview-edit has no Files pane — keep segment on terminal for when the
+  // tray is open. Quiet: does not expand this session's tools tray.
   useEffect(() => {
-    if (previewEdit && segment === 'files') setPanelSegment('terminal')
-  }, [previewEdit, segment, setPanelSegment])
+    if (!previewEdit || segment === 'terminal') return
+    setPanelSegmentQuiet('terminal')
+  }, [previewEdit, segment, setPanelSegmentQuiet])
+
+  /**
+   * Auto-fold only when the *last bash tab just closed* (had tabs → none).
+   *
+   * Do NOT collapse on first paint / remount when tabs are already empty —
+   * that fought ⌘⇧E / ⌘⇧T / restored session layout: expand ran, then this
+   * effect treated `wasToolsEmpty === null` as "became empty" and folded again.
+   * Files-only tray (no shells) must stay open until the user collapses it.
+   */
+  const hadBashTabs = useRef<boolean | null>(null)
+  useEffect(() => {
+    const empty = tabs.length === 0
+    const prev = hadBashTabs.current
+    hadBashTabs.current = !empty
+    if (empty && prev === true) {
+      setToolsCollapsed(true)
+    }
+  }, [tabs.length, setToolsCollapsed])
 
   return (
     <div className="tools-panel">
@@ -209,48 +232,57 @@ export function ToolsPanel({
 
       <div className="tools-header">
         <div className="tools-header-lead">
-          {previewEdit ? (
-            <button
-              type="button"
-              className={`pick-mode-btn${pickModeOn ? ' active' : ''}`}
-              title={t('composer.pickMode')}
-              onClick={() => setPickMode(activeId, !pickModeOn)}
-            >
-              <Crosshair size={12} />
-            </button>
-          ) : (
-            <div className="workdir-chip" ref={pathChipRef}>
-              <Chip
-                label={label}
-                icon={<Folder size={12} />}
-                title={workdir ?? t('sidebar.temporaryWorkspace')}
-                active={filesOn}
-                onClick={() => {
-                  if (filesOn) setToolsCollapsed(true)
-                  else setPanelSegment('files')
-                }}
-                onContextMenu={(event) => {
-                  event.preventDefault()
-                  void showMenu(pathContextItems(), { x: event.clientX, y: event.clientY })
-                }}
-                onAction={() => openWorkspaceMenu(pathChipRef.current)}
-                actionIcon={<ArrowLeftRight size={11} />}
-                actionTitle={t('tools.switchWorkdirTitle', { shortcut: keys('⌘⇧O') })}
-              />
-            </div>
+          {/* Preview-edit (Agent in file preview): no Files path chip, no Pick —
+              block pick is always-on when Editing; crosshair toggle removed. */}
+          {!previewEdit && (
+            <>
+              <div className="workdir-chip" ref={pathChipRef}>
+                <Chip
+                  label={label}
+                  icon={<Folder size={12} />}
+                  title={workdir ?? t('sidebar.temporaryWorkspace')}
+                  active={filesOn}
+                  onClick={() => {
+                    if (filesOn) setToolsCollapsed(true)
+                    else setPanelSegment('files')
+                  }}
+                  onContextMenu={(event) => {
+                    event.preventDefault()
+                    void showMenu(pathContextItems(), { x: event.clientX, y: event.clientY })
+                  }}
+                  onAction={() => openWorkspaceMenu(pathChipRef.current)}
+                  actionIcon={<ArrowLeftRight size={11} />}
+                  actionTitle={t('tools.switchWorkdirTitle', { shortcut: keys('⌘⇧O') })}
+                />
+              </div>
+              <span className="tools-header-divider" aria-hidden="true" />
+            </>
           )}
-          <span className="tools-header-divider" aria-hidden="true" />
         </div>
 
         <div className="tools-header-tabs">
           {tabs.map((tab) => {
             const on = !collapsed && segment === 'terminal' && tab.id === activeTabId
+            // Agent-controlled tabs: bot icon (green when agent is executing).
+            // Plain Shell tabs: terminal icon, no agent prefix.
+            const isAgentTab = tab.isAgent || !!tab.agentId
+            const agentActive = isAgentTab && agentRunning && tab.id === activeTabId
             return (
               <Chip
                 key={tab.id}
                 label={tab.title}
-                icon={<TerminalIcon size={12} />}
+                icon={
+                  isAgentTab ? (
+                    <Bot
+                      size={12}
+                      className={agentActive ? 'agent-bot-icon is-running' : 'agent-bot-icon'}
+                    />
+                  ) : (
+                    <TerminalIcon size={12} />
+                  )
+                }
                 active={on}
+                emphasis={isAgentTab}
                 title={tab.title}
                 onClick={() => {
                   if (on) {
@@ -288,7 +320,16 @@ export function ToolsPanel({
         className="tools-body"
         data-collapsed={collapsed}
         data-resizing={dragHeight !== null}
-        style={{ height: bodyHeight }}
+        style={
+          collapsed
+            ? { height: 0 }
+            : previewEdit
+              ? // Prefer panelHeight when the dock has room; shrink when the
+                // agent drawer caps the dock at 50% so empty-state can center
+                // in the visible box instead of a clipped midpoint.
+                { height: bodyHeight, flex: '1 1 auto', minHeight: 0 }
+              : { height: bodyHeight }
+        }
       >
         {!previewEdit && (
           <div className="tools-pane" data-hidden={collapsed || segment !== 'files'}>

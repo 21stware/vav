@@ -90,7 +90,10 @@ export function highlightCode(source: string, language?: string): string {
       // fall through
     }
   }
-  if (source.length > 0 && source.length < 80_000) {
+  // Auto-detect only for multi-line buffers. Virtualized code highlights
+  // one line at a time — highlightAuto on a single license/prose line picks
+  // a random language and rainbow-colors the text.
+  if (source.length > 0 && source.length < 80_000 && source.includes('\n')) {
     try {
       return hljs.highlightAuto(source).value
     } catch {

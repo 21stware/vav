@@ -111,6 +111,12 @@ export function buildAppMenu(
           accelerator: 'CmdOrCtrl+Shift+T',
           click: send('toggle-panel-segment')
         },
+        {
+          label: t('menu.focusBash'),
+          // Control+` (tilde/backtick) — main-chat / tools tray bash focus.
+          accelerator: 'Control+`',
+          click: send('focus-bash')
+        },
         { type: 'separator' },
         {
           label: t('menu.focusWorkspace'),

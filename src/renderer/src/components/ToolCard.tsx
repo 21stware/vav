@@ -197,6 +197,47 @@ function ApprovalCard({ block }: { block: ToolCallBlock }): React.JSX.Element {
   const editable = Boolean(block.askTitle?.length || headline.includes(editLabel))
   const detail = lines.slice(1).join('\n').trim()
   const [draft, setDraft] = useState(() => block.askTitle || detail)
+  // Optimistic: dismiss Approve/Deny immediately so a slow IPC / second-tool
+  // race never looks like a dead click.
+  const [submitting, setSubmitting] = useState<'approve' | 'deny' | null>(null)
+
+  const submit = (kind: 'approve' | 'deny', text: string): void => {
+    if (submitting) return
+    setSubmitting(kind)
+    void (async () => {
+      try {
+        const ok = await answerTool(block.id, text)
+        if (!ok) {
+          setSubmitting(null)
+          return
+        }
+        // Main drops the card via tool events; if nothing moved after a beat,
+        // re-enable so the user can retry instead of staring at a spinner.
+        window.setTimeout(() => {
+          setSubmitting((current) => (current === kind ? null : current))
+        }, 2500)
+      } catch {
+        setSubmitting(null)
+      }
+    })()
+  }
+
+  if (submitting) {
+    return (
+      <div className="approval-card is-submitting" data-status={submitting}>
+        <div className="approval-head">
+          <span className="approval-tool">{toolLabel}</span>
+          <span className="approval-badge">
+            {submitting === 'deny' ? t('common.deny') : t('common.running')}
+          </span>
+        </div>
+        {detail && <pre className="approval-args">{detail}</pre>}
+        <div className="approval-actions">
+          <Loader2 className="spin" size={14} />
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="approval-card">
@@ -218,13 +259,13 @@ function ApprovalCard({ block }: { block: ToolCallBlock }): React.JSX.Element {
         detail && <pre className="approval-args">{detail}</pre>
       )}
       <div className="approval-actions">
-        <Button label={deny} onClick={() => void answerTool(block.id, deny)} />
+        <Button label={deny} onClick={() => submit('deny', deny)} />
         <Button
           label={approve}
           variant="primary"
           onClick={() =>
-            void answerTool(
-              block.id,
+            submit(
+              'approve',
               editable && draft.trim() && draft.trim() !== detail ? `${approve}\n${draft}` : approve
             )
           }
@@ -335,6 +376,9 @@ function AskSealed({ block }: { block: ToolCallBlock }): React.JSX.Element {
 
 type AnswerValue = string | string[]
 
+/** Sentinel for the per-question free-form “Other” choice. */
+const ASK_OTHER = '__vav_other__'
+
 function MultiAskForm({
   title,
   questions,
@@ -349,16 +393,28 @@ function MultiAskForm({
   onSubmit: (payload: string) => void | Promise<void>
 }): React.JSX.Element {
   const t = useT()
+  /** Single-select: chosen preset, or ASK_OTHER. */
   const [single, setSingle] = useState<Record<number, string>>({})
+  /** Multi-select: list of presets; may include ASK_OTHER. */
   const [multi, setMulti] = useState<Record<number, string[]>>({})
+  /** Free-text for pure free questions, or custom text when Other is selected. */
   const [free, setFree] = useState<Record<number, string>>({})
   const [note, setNote] = useState('')
 
   const ready = questions.every((question, index) => {
     const choices = question.choices ?? []
+    // Pure free-text question.
     if (choices.length === 0) return (free[index] ?? '').trim().length > 0
-    if (question.multiSelect) return true
-    return !!single[index]
+    if (question.multiSelect) {
+      const picked = multi[index] ?? []
+      // Empty multi-select is allowed; if Other is on, custom text is required.
+      if (picked.includes(ASK_OTHER)) return (free[index] ?? '').trim().length > 0
+      return true
+    }
+    const picked = single[index]
+    if (!picked) return false
+    if (picked === ASK_OTHER) return (free[index] ?? '').trim().length > 0
+    return true
   })
 
   const submitTitle = ready ? undefined : t('tool.askCompleteRequired')
@@ -368,17 +424,24 @@ function MultiAskForm({
     const answers = questions.map((question, index) => {
       const choices = question.choices ?? []
       let value: AnswerValue
-      if (choices.length === 0) value = (free[index] ?? '').trim()
-      else if (question.multiSelect) value = multi[index] ?? []
-      else value = single[index] ?? ''
+      if (choices.length === 0) {
+        value = (free[index] ?? '').trim()
+      } else if (question.multiSelect) {
+        const picked = multi[index] ?? []
+        const presets = picked.filter((c) => c !== ASK_OTHER)
+        const custom = (free[index] ?? '').trim()
+        if (picked.includes(ASK_OTHER) && custom) value = [...presets, custom]
+        else value = presets
+      } else {
+        const picked = single[index] ?? ''
+        value = picked === ASK_OTHER ? (free[index] ?? '').trim() : picked
+      }
       return { questionIndex: index, value }
     })
     const payload: { answers: typeof answers; note?: string } = { answers }
     if (note.trim()) payload.note = note.trim()
     void onSubmit(JSON.stringify(payload))
   }
-
-  const hasChoices = questions.some((q) => (q.choices?.length ?? 0) > 0)
 
   return (
     <div className={`ask-card${submitting ? ' submitting' : ''}`}>
@@ -387,6 +450,9 @@ function MultiAskForm({
 
       {questions.map((question, index) => {
         const choices = question.choices ?? []
+        const otherOn = question.multiSelect
+          ? (multi[index] ?? []).includes(ASK_OTHER)
+          : single[index] === ASK_OTHER
         return (
           <div className="ask-question" key={index}>
             {questions.length > 1 && index > 0 && <div className="ask-divider" />}
@@ -402,63 +468,113 @@ function MultiAskForm({
                   setFree((prev) => ({ ...prev, [index]: event.target.value }))
                 }
               />
-            ) : question.multiSelect ? (
-              <div className="ask-choice-list">
-                {choices.map((choice) => {
-                  const selected = (multi[index] ?? []).includes(choice)
-                  return (
-                    <label key={choice} className={`ask-choice${selected ? ' selected' : ''}`}>
+            ) : (
+              <>
+                <div className="ask-choice-list">
+                  {choices.map((choice) => {
+                    if (question.multiSelect) {
+                      const selected = (multi[index] ?? []).includes(choice)
+                      return (
+                        <label
+                          key={choice}
+                          className={`ask-choice${selected ? ' selected' : ''}`}
+                        >
+                          <input
+                            type="checkbox"
+                            disabled={submitting}
+                            checked={selected}
+                            onChange={() =>
+                              setMulti((prev) => {
+                                const current = prev[index] ?? []
+                                const next = selected
+                                  ? current.filter((item) => item !== choice)
+                                  : [...current, choice]
+                                return { ...prev, [index]: next }
+                              })
+                            }
+                          />
+                          <span>{choice}</span>
+                        </label>
+                      )
+                    }
+                    const selected = single[index] === choice
+                    return (
+                      <label
+                        key={choice}
+                        className={`ask-choice${selected ? ' selected' : ''}`}
+                      >
+                        <input
+                          type="radio"
+                          name={`ask-${index}`}
+                          disabled={submitting}
+                          checked={selected}
+                          onChange={() =>
+                            setSingle((prev) => ({ ...prev, [index]: choice }))
+                          }
+                        />
+                        <span>{choice}</span>
+                      </label>
+                    )
+                  })}
+                  {/* Every choice question also allows a free-form custom answer. */}
+                  {question.multiSelect ? (
+                    <label className={`ask-choice${otherOn ? ' selected' : ''}`}>
                       <input
                         type="checkbox"
                         disabled={submitting}
-                        checked={selected}
+                        checked={otherOn}
                         onChange={() =>
                           setMulti((prev) => {
                             const current = prev[index] ?? []
-                            const next = selected
-                              ? current.filter((item) => item !== choice)
-                              : [...current, choice]
+                            const next = otherOn
+                              ? current.filter((item) => item !== ASK_OTHER)
+                              : [...current, ASK_OTHER]
                             return { ...prev, [index]: next }
                           })
                         }
                       />
-                      <span>{choice}</span>
+                      <span>{t('tool.askOther')}</span>
                     </label>
-                  )
-                })}
-              </div>
-            ) : (
-              <div className="ask-choice-list">
-                {choices.map((choice) => {
-                  const selected = single[index] === choice
-                  return (
-                    <label key={choice} className={`ask-choice${selected ? ' selected' : ''}`}>
+                  ) : (
+                    <label className={`ask-choice${otherOn ? ' selected' : ''}`}>
                       <input
                         type="radio"
                         name={`ask-${index}`}
                         disabled={submitting}
-                        checked={selected}
-                        onChange={() => setSingle((prev) => ({ ...prev, [index]: choice }))}
+                        checked={otherOn}
+                        onChange={() =>
+                          setSingle((prev) => ({ ...prev, [index]: ASK_OTHER }))
+                        }
                       />
-                      <span>{choice}</span>
+                      <span>{t('tool.askOther')}</span>
                     </label>
-                  )
-                })}
-              </div>
+                  )}
+                </div>
+                {otherOn && (
+                  <input
+                    className="text-field ask-other-field"
+                    disabled={submitting}
+                    placeholder={t('tool.askOtherPlaceholder')}
+                    value={free[index] ?? ''}
+                    onChange={(event) =>
+                      setFree((prev) => ({ ...prev, [index]: event.target.value }))
+                    }
+                    autoFocus
+                  />
+                )}
+              </>
             )}
           </div>
         )
       })}
 
-      {hasChoices && (
-        <input
-          className="text-field"
-          disabled={submitting}
-          placeholder={t('tool.askOptionalNote')}
-          value={note}
-          onChange={(event) => setNote(event.target.value)}
-        />
-      )}
+      <input
+        className="text-field"
+        disabled={submitting}
+        placeholder={t('tool.askOptionalNote')}
+        value={note}
+        onChange={(event) => setNote(event.target.value)}
+      />
 
       <div className="ask-actions">
         <Button

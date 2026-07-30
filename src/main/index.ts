@@ -13,7 +13,7 @@ import {
   session,
   shell
 } from 'electron'
-import { basename, dirname, join } from 'node:path'
+import { basename, dirname, extname, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { existsSync, mkdirSync, readFileSync, renameSync, rmdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -24,7 +24,8 @@ import {
   type Bootstrap,
   type MenuCommand,
   type NativeMenuItem,
-  type SettingsView
+  type SettingsView,
+  type TokenUsageViewPayload
 } from '@shared/ipc'
 import {
   DEFAULT_SETTINGS,
@@ -37,11 +38,14 @@ import {
 import { SettingsStore } from './store/SettingsStore'
 import { SecretStore } from './store/SecretStore'
 import { ConversationStore } from './store/ConversationStore'
+import { FileSessionStore } from './store/FileSessionStore'
 import { FileService } from './fs/FileService'
 import { FileAssociationService, formatIdForPath } from './fs/FileAssociationService'
+import { DocumentRetrievalService } from './retrieval/DocumentRetrievalService'
 import { ChangeSetStore } from './agent/ChangeSetStore'
 import { UpdateService } from './updates'
 import { PtyManager } from './terminal/PtyManager'
+import { resolveAgentExecutable } from './terminal/loginPath'
 import { AgentRuntime } from './agent/AgentRuntime'
 import { validateApiKey } from './agent/provider'
 import { shellPath } from './terminal/StickyShell'
@@ -89,6 +93,17 @@ protocol.registerSchemesAsPrivileged([
 let mainWindow: BrowserWindow | null = null
 let settingsWindow: BrowserWindow | null = null
 let tokenUsageWindow: BrowserWindow | null = null
+/** Conversation currently shown in the token-usage panel (for live hydrate). */
+let tokenUsageConversationId: string | null = null
+/** Parent window id the panel was last attached to (recreate if parent changes). */
+let tokenUsageParentId: number | null = null
+/** True once the token-usage renderer has finished its first load. */
+let tokenUsageReady = false
+/** Open requested while the panel shell was still loading — show on did-finish-load. */
+let tokenUsagePendingShow: {
+  parent: BrowserWindow
+  anchor?: { x: number; y: number; width: number; height: number }
+} | null = null
 /** At most one standalone window per conversation (sidebar spec, 双击). */
 const detachedWindows = new Map<string, BrowserWindow>()
 /** At most one preview window per absolute file path. */
@@ -103,11 +118,13 @@ let quitting = false
 const settingsStore = new SettingsStore()
 const secretStore = new SecretStore()
 const conversationStore = new ConversationStore()
+const fileSessionStore = new FileSessionStore()
 
 const fileAssociationService = new FileAssociationService()
 const fileService = new FileService((conversationId, dirs) => {
   send(IPC.filesDirty, { conversationId, dirs })
 })
+// Wired after construction — retrieval is defined below; assigned once created.
 
 const ptyManager = new PtyManager(
   (tabId, data) => send(IPC.ptyData, { tabId, data }),
@@ -118,9 +135,40 @@ const ptyManager = new PtyManager(
 const activeTurns = new Map<string, 'running' | 'paused'>()
 
 function focusConversation(conversationId: string): void {
+  const wasMissing = !mainWindow || mainWindow.isDestroyed()
   showMainWindow()
-  if (mainWindow && !mainWindow.isDestroyed()) {
+  const send = (): void => {
+    if (!mainWindow || mainWindow.isDestroyed()) return
     mainWindow.webContents.send(IPC.cliOpen, { conversationId, toast: null })
+  }
+  // Main may still be loading after create/show — wait so the renderer
+  // has onCliOpen wired before we ask it to select the session.
+  if (
+    wasMissing ||
+    (mainWindow && !mainWindow.isDestroyed() && mainWindow.webContents.isLoading())
+  ) {
+    mainWindow?.webContents.once('did-finish-load', () => setTimeout(send, 50))
+  } else {
+    setTimeout(send, 50)
+  }
+}
+
+/**
+ * Detached session → main window: select the row, focus main, close companion.
+ * (Reveal in List — user leaves the floating window for the sidebar list.)
+ */
+function revealConversationInList(conversationId: string): void {
+  if (!conversationId || !conversationStore.get(conversationId)) return
+  // ⌘⇧↵ sessions are ephemeral until they get a message; revealing into the
+  // list is an explicit keep — don't auto-delete when the companion closes.
+  ephemeralConversations.delete(conversationId)
+  focusConversation(conversationId)
+  const detached = detachedWindows.get(conversationId)
+  if (detached && !detached.isDestroyed()) {
+    // Defer close so main can take focus first (macOS Space / z-order).
+    setTimeout(() => {
+      if (!detached.isDestroyed()) detached.close()
+    }, 80)
   }
 }
 
@@ -157,15 +205,18 @@ function handleAgentEvent(event: TurnEvent): void {
   if (event.type === 'start') {
     activeTurns.set(event.conversationId, 'running')
     refreshTraySessions()
+    pushTokenUsageIfOpen(event.conversationId)
     return
   }
   if (event.type === 'phase') {
     if (event.phase === 'awaiting-user') {
       activeTurns.set(event.conversationId, 'paused')
       refreshTraySessions()
+      pushTokenUsageIfOpen(event.conversationId)
     } else if (event.phase === 'working' || event.phase === 'thinking' || event.phase === 'outputting') {
       activeTurns.set(event.conversationId, 'running')
       refreshTraySessions()
+      pushTokenUsageIfOpen(event.conversationId)
     }
     return
   }
@@ -198,9 +249,14 @@ function handleAgentEvent(event: TurnEvent): void {
     }
     return
   }
+  if (event.type === 'usage') {
+    pushTokenUsageIfOpen(event.conversationId)
+    return
+  }
   if (event.type === 'end') {
     activeTurns.delete(event.conversationId)
     refreshTraySessions()
+    pushTokenUsageIfOpen(event.conversationId)
     if (!event.cancelled && !event.error) {
       const body = event.message.content || t('notify.turnComplete')
       notifications.notify('turn-complete', event.conversationId, title, body)
@@ -210,6 +266,8 @@ function handleAgentEvent(event: TurnEvent): void {
 
 const changeSetStore = new ChangeSetStore()
 const updateService = new UpdateService()
+const documentRetrieval = new DocumentRetrievalService()
+fileService.retrieval = documentRetrieval
 
 const agent = new AgentRuntime({
   conversations: conversationStore,
@@ -217,6 +275,8 @@ const agent = new AgentRuntime({
   secrets: secretStore,
   files: fileService,
   changeSets: changeSetStore,
+  retrieval: documentRetrieval,
+  fileSessions: fileSessionStore,
   emit: handleAgentEvent
 })
 
@@ -528,13 +588,11 @@ function openSettingsWindow(view: SettingsView = 'api'): void {
 }
 
 /**
- * A narrow column parked against the right edge of the screen.
+ * A narrow column parked against the right edge of the desktop work area.
  *
- * A detached session is something you keep half an eye on beside whatever you
- * are actually working in, so it is sized as a companion rather than a second
- * main window, and it opens where it will not land on top of the thing that
- * spawned it. `cascade` steps each additional window so several stay tellable
- * apart instead of stacking into one.
+ * Place on a normal desktop display (cursor / primary) — not the display of a
+ * fullscreen main window — so ⌘⇧↵ lands on the desktop Space, not inside
+ * another app’s fullscreen Space.
  */
 function detachedBounds(cascade: number): {
   width: number
@@ -542,8 +600,15 @@ function detachedBounds(cascade: number): {
   x: number
   y: number
 } {
-  const anchor = mainWindow && !mainWindow.isDestroyed() ? mainWindow.getBounds() : null
-  const area = (anchor ? screen.getDisplayMatching(anchor) : screen.getPrimaryDisplay()).workArea
+  // Prefer the display under the cursor; fall back to primary desktop work area.
+  // Avoid anchoring to a fullscreen main window’s display — workArea there is
+  // the fullscreen Space, which is exactly where we do not want to open.
+  let area = screen.getPrimaryDisplay().workArea
+  try {
+    area = screen.getDisplayNearestPoint(screen.getCursorScreenPoint()).workArea
+  } catch {
+    // keep primary
+  }
 
   // Narrowest useful companion column (matches main-window minWidth).
   const width = Math.min(380, area.width - 40)
@@ -559,6 +624,55 @@ function detachedBounds(cascade: number): {
 }
 
 /**
+ * Bring a detached companion forward with a single show/focus pass.
+ *
+ * Avoid stacking raise calls and avoid toggling `setVisibleOnAllWorkspaces`
+ * when vav is already the active app — each of those re-composites the window
+ * shadow (the flicker users saw on ⌘⇧↵). Only hop Spaces when we are not the
+ * frontmost app (e.g. global hotkey from another fullscreen app).
+ */
+function raiseDetachedWindow(win: BrowserWindow): void {
+  if (win.isDestroyed()) return
+  if (win.isMinimized()) win.restore()
+
+  // Only hop Spaces when another app is frontmost (global ⌘⇧↵). When vav is
+  // already active, a plain show+focus avoids shadow re-composite flicker.
+  const needSpaceHop = IS_MAC && !app.isActive()
+  if (needSpaceHop) {
+    try {
+      win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: false })
+    } catch {
+      // older Electron / non-mac
+    }
+  }
+
+  win.show()
+  try {
+    win.moveTop()
+  } catch {
+    // ignore
+  }
+
+  if (needSpaceHop) {
+    app.focus({ steal: true })
+  }
+  if (!win.isDestroyed()) {
+    win.focus()
+  }
+
+  if (needSpaceHop) {
+    setTimeout(() => {
+      if (win.isDestroyed()) return
+      try {
+        win.setVisibleOnAllWorkspaces(false)
+      } catch {
+        // ignore
+      }
+    }, 300)
+  }
+}
+
+/**
  * Opens one conversation in its own window: transcript, tools and composer,
  * no sidebar.
  *
@@ -568,18 +682,16 @@ function detachedBounds(cascade: number): {
 function openDetachedWindow(
   conversationId: string,
   options: { collapseTools?: boolean } = {}
-): void {
+): BrowserWindow | null {
   const existing = detachedWindows.get(conversationId)
   if (existing && !existing.isDestroyed()) {
-    if (existing.isMinimized()) existing.restore()
-    existing.show()
-    existing.focus()
+    raiseDetachedWindow(existing)
     existing.webContents.send(IPC.menuCommand, 'focus-composer')
-    return
+    return existing
   }
 
   const conversation = conversationStore.get(conversationId)
-  if (!conversation) return
+  if (!conversation) return null
 
   const bounds = detachedBounds(detachedWindows.size)
 
@@ -591,18 +703,22 @@ function openDetachedWindow(
     title: conversation.title,
     icon: loadAppIcon(),
     ...chrome(38),
+    // Companion column — never enter macOS fullscreen itself.
+    fullscreenable: false,
     webPreferences: rendererPrefs()
   })
 
+  // Space membership is handled in raiseDetachedWindow (brief join-desktops,
+  // then pin). Do not set visibleOnFullScreen here — that causes the flash
+  // when switching into other apps’ fullscreen Spaces.
+
   detachedWindows.set(conversationId, window)
 
+  // Raise exactly once when the window is ready — a second raise on
+  // did-finish-load re-focused the frame and made the shadow flicker.
+  // Composer focus is owned by SessionWindow after React mounts.
   window.once('ready-to-show', () => {
-    window.show()
-    window.focus()
-  })
-  // After the renderer boots, ask it to focus the prompt (⌘⇧↵).
-  window.webContents.once('did-finish-load', () => {
-    window.webContents.send(IPC.menuCommand, 'focus-composer')
+    raiseDetachedWindow(window)
   })
 
   // Unlike the main window, closing here really does close: the conversation
@@ -635,6 +751,7 @@ function openDetachedWindow(
   const query: Record<string, string> = { view: 'session', conversationId }
   if (options.collapseTools) query.collapseTools = '1'
   loadRenderer(window, query)
+  return window
 }
 
 /**
@@ -685,6 +802,9 @@ function openFilePreviewWindow(
     previewWindows.delete(path)
   })
   wirePreviewLifecycle(window, path)
+  // Same as main window: drop traffic-light lead inset when fullscreen so the
+  // title is not left with a blank gutter (file-viewer-header uses --chrome-lead).
+  wireFullscreenState(window)
 
   wireExternalLinks(window.webContents)
 
@@ -713,16 +833,57 @@ function cancelTokenUsageDismiss(): void {
   tokenUsageCloseTimer = null
 }
 
+/** Hide (not destroy) so the next open is instant. */
+function hideTokenUsageWindow(): void {
+  cancelTokenUsageDismiss()
+  if (!tokenUsageWindow || tokenUsageWindow.isDestroyed()) return
+  if (tokenUsageWindow.isVisible()) tokenUsageWindow.hide()
+}
+
 function dismissTokenUsageSoon(): void {
   // Keep the popup open while marketing screenshots capture it.
   if (process.env.VAV_SNAPSHOT || process.env.VAV_SNAPSHOT_PLAN) return
   if (tokenUsageCloseTimer) return
   tokenUsageCloseTimer = setTimeout(() => {
     tokenUsageCloseTimer = null
-    if (tokenUsageWindow && !tokenUsageWindow.isDestroyed()) {
-      tokenUsageWindow.close()
-    }
+    hideTokenUsageWindow()
   }, 120)
+}
+
+/** Lean snapshot for the panel — never ships message bodies. */
+function buildTokenUsagePayload(conversationId: string): TokenUsageViewPayload | null {
+  const conversation = conversationStore.get(conversationId)
+  if (!conversation) return null
+  const settings = settingsStore.get()
+  const phase = activeTurns.get(conversationId)
+  return {
+    conversationId: conversation.id,
+    model: conversation.model,
+    tokensUsed: conversation.tokensUsed,
+    tokenLimit: conversation.tokenLimit,
+    history: conversation.tokenHistory ?? [],
+    cacheCreatedAt: conversation.cacheCreatedAt ?? null,
+    cacheExpiresAt: conversation.cacheExpiresAt ?? null,
+    isRunning: phase === 'running' || phase === 'paused',
+    apiEndpoint: settings.apiEndpoint,
+    theme: settings.theme,
+    locale: currentLocale(),
+    now: Date.now()
+  }
+}
+
+function sendTokenUsagePayload(conversationId: string): void {
+  if (!tokenUsageWindow || tokenUsageWindow.isDestroyed()) return
+  const payload = buildTokenUsagePayload(conversationId)
+  if (!payload) return
+  tokenUsageWindow.webContents.send(IPC.tokenUsageView, payload)
+}
+
+function pushTokenUsageIfOpen(conversationId: string): void {
+  if (!tokenUsageWindow || tokenUsageWindow.isDestroyed()) return
+  if (!tokenUsageWindow.isVisible()) return
+  if (tokenUsageConversationId !== conversationId) return
+  sendTokenUsagePayload(conversationId)
 }
 
 /** Place the popup above the ring (or below if there isn’t room). */
@@ -755,7 +916,10 @@ function placeTokenUsagePopup(
 
 /**
  * Context-window details as a native panel popup — frameless child shell,
- * anchored to the ring, dismisses on blur. Not a full document window.
+ * anchored to the ring, dismisses on blur (hide, not destroy).
+ *
+ * The BrowserWindow is reused across opens: first open pays one load cost;
+ * later opens only re-position + hydrate. No full app bootstrap in the panel.
  */
 function openTokenUsageWindow(
   sender: Electron.WebContents,
@@ -770,14 +934,56 @@ function openTokenUsageWindow(
   const parent = BrowserWindow.fromWebContents(sender) ?? mainWindow
   if (!parent || parent.isDestroyed()) return
 
-  // Clicking the ring while open toggles the popup closed.
-  if (tokenUsageWindow && !tokenUsageWindow.isDestroyed() && tokenUsageWindow.isVisible()) {
-    tokenUsageWindow.close()
+  // Toggle closed when already visible for the same conversation.
+  if (
+    tokenUsageWindow &&
+    !tokenUsageWindow.isDestroyed() &&
+    tokenUsageWindow.isVisible() &&
+    tokenUsageConversationId === id &&
+    tokenUsageParentId === parent.id
+  ) {
+    hideTokenUsageWindow()
+    return
+  }
+
+  // Parent changed (e.g. main → detached): recreate so z-order stays correct.
+  if (
+    tokenUsageWindow &&
+    !tokenUsageWindow.isDestroyed() &&
+    tokenUsageParentId !== null &&
+    tokenUsageParentId !== parent.id
+  ) {
+    tokenUsageWindow.destroy()
+    tokenUsageWindow = null
+    tokenUsageReady = false
+  }
+
+  tokenUsageConversationId = id
+
+  if (tokenUsageWindow && !tokenUsageWindow.isDestroyed() && tokenUsageReady) {
+    try {
+      tokenUsageWindow.setBackgroundColor(windowBackground())
+    } catch {
+      // ignore
+    }
+    placeTokenUsagePopup(tokenUsageWindow, parent, anchor)
+    sendTokenUsagePayload(id)
+    tokenUsagePendingShow = null
+    if (!tokenUsageWindow.isVisible()) tokenUsageWindow.show()
+    tokenUsageWindow.focus()
+    return
+  }
+
+  if (tokenUsageWindow && !tokenUsageWindow.isDestroyed()) {
+    // Shell still loading (warm or first open) — show as soon as ready.
+    tokenUsagePendingShow = { parent, anchor }
+    placeTokenUsagePopup(tokenUsageWindow, parent, anchor)
     return
   }
 
   const width = 360
   const height = 520
+  const bg = windowBackground()
 
   tokenUsageWindow = new BrowserWindow({
     width,
@@ -795,21 +1001,40 @@ function openTokenUsageWindow(
     skipTaskbar: true,
     hasShadow: true,
     title: t('token.contextWindow'),
-    backgroundColor: windowBackground(),
+    // Solid wash matching the renderer shell — never flash system white.
+    backgroundColor: bg,
     ...(IS_MAC ? { type: 'panel' as const, roundedCorners: true } : {}),
     webPreferences: rendererPrefs()
   })
+  tokenUsageParentId = parent.id
+  tokenUsageReady = false
 
-  tokenUsageWindow.once('ready-to-show', () => {
-    if (!tokenUsageWindow || tokenUsageWindow.isDestroyed()) return
-    placeTokenUsagePopup(tokenUsageWindow, parent, anchor)
-    tokenUsageWindow.show()
-    tokenUsageWindow.focus()
-  })
+  try {
+    tokenUsageWindow.setBackgroundColor(bg)
+  } catch {
+    // ignore
+  }
+
+  // Inject shell paint before any renderer CSS so the first frame is never #fff.
+  void tokenUsageWindow.webContents.insertCSS(
+    `html,body,#root{background:${bg}!important;margin:0;height:100%;color-scheme:${
+      nativeTheme.shouldUseDarkColors ? 'dark' : 'light'
+    }}`
+  ).catch(() => undefined)
+
   tokenUsageWindow.on('blur', () => dismissTokenUsageSoon())
+  // Hide instead of destroy so reopen is free.
+  tokenUsageWindow.on('close', (event) => {
+    if (quitting) return
+    event.preventDefault()
+    hideTokenUsageWindow()
+  })
   tokenUsageWindow.on('closed', () => {
     cancelTokenUsageDismiss()
     tokenUsageWindow = null
+    tokenUsageConversationId = null
+    tokenUsageParentId = null
+    tokenUsageReady = false
   })
 
   wireExternalLinks(tokenUsageWindow.webContents)
@@ -820,11 +1045,108 @@ function openTokenUsageWindow(
     })
   }
 
+  // Show only after the renderer has loaded + received the hydrate payload.
+  // ready-to-show alone can paint an empty white surface.
+  tokenUsagePendingShow = { parent, anchor }
+  tokenUsageWindow.webContents.once('did-finish-load', () => {
+    onTokenUsageShellReady()
+  })
+
   loadRenderer(tokenUsageWindow, { view: 'token-usage', conversationId: id })
 }
 
+function onTokenUsageShellReady(): void {
+  if (!tokenUsageWindow || tokenUsageWindow.isDestroyed()) return
+  tokenUsageReady = true
+  const pending = tokenUsagePendingShow
+  tokenUsagePendingShow = null
+  if (!pending) return
+  const target = tokenUsageConversationId
+  if (target && target !== '_') sendTokenUsagePayload(target)
+  if (pending.parent && !pending.parent.isDestroyed()) {
+    placeTokenUsagePopup(tokenUsageWindow, pending.parent, pending.anchor)
+  }
+  try {
+    tokenUsageWindow.setBackgroundColor(windowBackground())
+  } catch {
+    // ignore
+  }
+  tokenUsageWindow.show()
+  tokenUsageWindow.focus()
+}
+
+/**
+ * Preload the token panel shell after the app is idle so the first ring click
+ * doesn't pay the full renderer cold-start. Stays hidden until open.
+ */
+function warmTokenUsageWindow(): void {
+  if (tokenUsageWindow && !tokenUsageWindow.isDestroyed()) return
+  if (!mainWindow || mainWindow.isDestroyed()) return
+  const width = 360
+  const height = 520
+  const bg = windowBackground()
+  tokenUsageWindow = new BrowserWindow({
+    width,
+    height,
+    useContentSize: true,
+    show: false,
+    frame: false,
+    parent: mainWindow,
+    modal: false,
+    resizable: false,
+    movable: false,
+    minimizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    skipTaskbar: true,
+    hasShadow: true,
+    title: t('token.contextWindow'),
+    backgroundColor: bg,
+    ...(IS_MAC ? { type: 'panel' as const, roundedCorners: true } : {}),
+    webPreferences: rendererPrefs()
+  })
+  tokenUsageParentId = mainWindow.id
+  tokenUsageReady = false
+  try {
+    tokenUsageWindow.setBackgroundColor(bg)
+  } catch {
+    // ignore
+  }
+  void tokenUsageWindow.webContents.insertCSS(
+    `html,body,#root{background:${bg}!important;margin:0;height:100%;color-scheme:${
+      nativeTheme.shouldUseDarkColors ? 'dark' : 'light'
+    }}`
+  ).catch(() => undefined)
+  tokenUsageWindow.on('blur', () => dismissTokenUsageSoon())
+  tokenUsageWindow.on('close', (event) => {
+    if (quitting) return
+    event.preventDefault()
+    hideTokenUsageWindow()
+  })
+  tokenUsageWindow.on('closed', () => {
+    cancelTokenUsageDismiss()
+    tokenUsageWindow = null
+    tokenUsageConversationId = null
+    tokenUsageParentId = null
+    tokenUsageReady = false
+  })
+  wireExternalLinks(tokenUsageWindow.webContents)
+  tokenUsageWindow.webContents.once('did-finish-load', () => {
+    tokenUsageReady = true
+    // User may have clicked the ring while we were warming.
+    if (tokenUsagePendingShow) onTokenUsageShellReady()
+  })
+  loadRenderer(tokenUsageWindow, { view: 'token-usage', conversationId: '_' })
+}
+
+/** Debounce: menu accelerator + globalShortcut can both fire when vav is focused. */
+let lastDetachedSessionAt = 0
+
 /** ⌘⇧↵ from anywhere: a brand new conversation, straight into its own window. */
 function newDetachedSession(): void {
+  const now = Date.now()
+  if (now - lastDetachedSessionAt < 450) return
+  lastDetachedSessionAt = now
   const conversation = conversationStore.create(
     resolveNewWorkdir(),
     settingsStore.get().defaultModel
@@ -832,6 +1154,7 @@ function newDetachedSession(): void {
   ephemeralConversations.add(conversation.id)
   publishConversations()
   // ⌘⇧↵: tools panel starts collapsed (main-chat.rpml).
+  // raiseDetachedWindow handles focus — do not app.focus alone (fullscreen steal).
   openDetachedWindow(conversation.id, { collapseTools: true })
 }
 
@@ -848,27 +1171,60 @@ function popupNativeMenu(
 ): Promise<string | null> {
   return new Promise((resolve) => {
     let chosen: string | null = null
+    let settled = false
+    const finish = (): void => {
+      if (settled) return
+      settled = true
+      // setImmediate so click handlers that themselves open menus still run first.
+      setImmediate(() => resolve(chosen))
+    }
 
+    // Use `radio` (not `checkbox`) for exclusive picks like model / approval mode.
+    // Checkbox groups on AppKit often fail to fire click for non-checked rows.
     const template: Electron.MenuItemConstructorOptions[] = items.map((item) => {
       if (item.separator) return { type: 'separator' }
       if (item.role) return { role: item.role, label: item.label }
+      const hasCheck = item.checked !== undefined
       return {
         label: item.label ?? '',
         enabled: item.enabled !== false,
-        type: item.checked === undefined ? 'normal' : 'checkbox',
-        checked: item.checked,
+        type: hasCheck ? 'radio' : 'normal',
+        checked: hasCheck ? !!item.checked : undefined,
         click: () => {
           chosen = item.id ?? null
         }
       }
     })
 
-    Menu.buildFromTemplate(template).popup({
+    const opts: Electron.PopupOptions = {
       window,
-      x: position?.x,
-      y: position?.y,
-      callback: () => setImmediate(() => resolve(chosen))
-    })
+      callback: finish
+    }
+    // Only pass coordinates when valid — undefined x/y crashes Menu.popup on some Electron builds.
+    // Renderer sends content-view (client) coords; with `window` set, Electron treats x/y as
+    // relative to that window's content area.
+    if (
+      position &&
+      Number.isFinite(position.x) &&
+      Number.isFinite(position.y)
+    ) {
+      opts.x = Math.round(position.x)
+      opts.y = Math.round(position.y)
+    }
+
+    // Defer past the originating mouseup. Opening a native menu synchronously inside a
+    // button click often dismisses it immediately (menu never appears).
+    setTimeout(() => {
+      if (window.isDestroyed()) {
+        finish()
+        return
+      }
+      try {
+        Menu.buildFromTemplate(template).popup(opts)
+      } catch {
+        finish()
+      }
+    }, 0)
   })
 }
 
@@ -1081,14 +1437,52 @@ function toggleMainWindow(): void {
   showMainWindow()
 }
 
+/**
+ * Always-on global shortcuts (work even when another app has focus).
+ * Menu accelerators alone only fire while vav is the active app — that is why
+ * ⌘⇧↵ felt "broken" for summoning a new chat from anywhere.
+ */
+const GLOBAL_NEW_SESSION_WINDOW = 'CommandOrControl+Shift+Return'
+
 function registerGlobalHotkey(accelerator: string): boolean {
   globalShortcut.unregisterAll()
-  if (!accelerator) return true
-  try {
-    return globalShortcut.register(accelerator, toggleMainWindow)
-  } catch {
-    return false
+  let toggleOk = true
+  // 1) Configurable show/hide main window
+  if (accelerator) {
+    try {
+      toggleOk = globalShortcut.register(accelerator, () => {
+        console.log(`[hotkey] toggle fired: ${accelerator}`)
+        toggleMainWindow()
+      })
+      if (!toggleOk) {
+        console.warn(`[hotkey] failed to register toggle hotkey: ${accelerator}`)
+      } else {
+        console.log(`[hotkey] registered toggle: ${accelerator}`)
+      }
+    } catch (err) {
+      console.warn('[hotkey] toggle register threw', err)
+      toggleOk = false
+    }
+  } else {
+    console.log('[hotkey] toggle hotkey cleared (empty)')
   }
+  // 2) Fixed: new detached session from any app (⌘⇧↵ / Ctrl+Shift+Enter)
+  try {
+    const ok = globalShortcut.register(GLOBAL_NEW_SESSION_WINDOW, () => {
+      console.log(`[hotkey] new-session fired: ${GLOBAL_NEW_SESSION_WINDOW}`)
+      newDetachedSession()
+    })
+    if (!ok) {
+      console.warn(
+        `[hotkey] failed to register global new-session: ${GLOBAL_NEW_SESSION_WINDOW} (taken by another app?)`
+      )
+    } else {
+      console.log(`[hotkey] registered global new-session: ${GLOBAL_NEW_SESSION_WINDOW}`)
+    }
+  } catch (err) {
+    console.warn('[hotkey] new-session register threw', err)
+  }
+  return toggleOk
 }
 
 function applyTheme(theme: AppSettings['theme']): void {
@@ -1341,6 +1735,30 @@ function registerIpc(): void {
     return conversationStore.listMeta()
   })
 
+  ipcMain.handle(
+    IPC.convSetAgentBinary,
+    (_event, id: string, agentBinaryName: string | null) => {
+      conversationStore.updateMeta(id, { agentBinaryName })
+      publishConversations()
+      return conversationStore.listMeta()
+    }
+  )
+
+  ipcMain.handle(
+    IPC.convSetFocusedFile,
+    (_event, id: string, path: string | null) => {
+      const existing = conversationStore.get(id)
+      // View-state only: must not reorder the sidebar. Do not publish a full
+      // list refresh — callers patch focusedFilePath locally.
+      if (existing && (existing.focusedFilePath ?? null) === path) {
+        return conversationStore.listMeta()
+      }
+      conversationStore.updateMeta(id, { focusedFilePath: path })
+      // No publishConversations() — selecting / previewing a file is not activity.
+      return conversationStore.listMeta()
+    }
+  )
+
   const applyWorkingDirectory = (id: string, path: string): ConversationMeta[] => {
     conversationStore.updateMeta(id, { workingDirectory: path })
     agent.setWorkingDirectory(id, path)
@@ -1457,10 +1875,15 @@ function registerIpc(): void {
       fileService.listDirectory(path, sort, ascending)
   )
   ipcMain.handle(IPC.filesRead, (_event, path: string) => fileService.readTextFile(path))
+  ipcMain.handle(IPC.filesReadBinary, (_event, path: string) => fileService.readBinary(path))
+  ipcMain.handle(IPC.filesWriteBinary, (_event, path: string, base64: string) =>
+    fileService.writeBinary(path, base64)
+  )
   ipcMain.handle(IPC.filesWrite, (_event, path: string, content: string) =>
     fileService.writeTextFile(path, content)
   )
   ipcMain.handle(IPC.filesQuickLook, (_event, path: string) => fileService.preview(path))
+  ipcMain.handle(IPC.filesOpenWithDefault, (_event, path: string) => fileService.openWithDefault(path))
   ipcMain.handle(IPC.filesWatch, (_event, id: string, root: string | null) =>
     fileService.watchRoot(id, root)
   )
@@ -1502,6 +1925,11 @@ function registerIpc(): void {
   )
   ipcMain.handle(IPC.filesTrash, (_event, paths: string[]) => fileService.trash(paths))
   ipcMain.handle(IPC.filesInspect, (_event, path: string) => fileService.inspect(path))
+  ipcMain.handle(
+    IPC.filesDbQuery,
+    (_event, path: string, table: string, offset?: number, limit?: number) =>
+      fileService.dbQuery(path, table, offset, limit)
+  )
   ipcMain.handle(IPC.filesParseBlocks, (_event, path: string, text: string) => {
     if (!isTsJsPath(path)) return null
     try {
@@ -1510,6 +1938,89 @@ function registerIpc(): void {
       return null
     }
   })
+
+  // --- FileSessionStore (File Preview multi-session, hidden from sidebar) ---
+  const toFileSessionsState = (
+    fileId: string,
+    activeSessionId: string,
+    sessions: { id: string; title: string; createdAt: number; updatedAt: number }[]
+  ) => ({ fileId, activeSessionId, sessions })
+
+  ipcMain.handle(IPC.fileSessionsOpen, async (_event, path: string) => {
+    const model = settingsStore.get().defaultModel
+    const opened = await fileSessionStore.open(path, model)
+    // Don't broadcast file sessions into the main sidebar list (already filtered).
+    return toFileSessionsState(opened.fileId, opened.activeSessionId, opened.sessions)
+  })
+
+  ipcMain.handle(IPC.fileSessionsCreate, async (_event, path: string) => {
+    const model = settingsStore.get().defaultModel
+    const created = await fileSessionStore.createSession(path, model)
+    return toFileSessionsState(created.fileId, created.activeSessionId, created.sessions)
+  })
+
+  ipcMain.handle(
+    IPC.fileSessionsSetActive,
+    (_event, fileId: string, sessionId: string) => {
+      const sessions = fileSessionStore.setActive(fileId, sessionId)
+      if (!sessions) return null
+      return toFileSessionsState(fileId, sessionId, sessions)
+    }
+  )
+
+  ipcMain.handle(IPC.fileSessionsList, (_event, fileId: string) => {
+    const listed = fileSessionStore.list(fileId)
+    if (!listed) return null
+    return toFileSessionsState(fileId, listed.activeSessionId, listed.sessions)
+  })
+
+  ipcMain.handle(IPC.fileSessionsSetReadOnly, (_event, sessionId: string, readOnly: boolean) => {
+    conversationStore.updateMeta(sessionId, { fileReadOnly: readOnly })
+  })
+
+  ipcMain.handle(
+    IPC.fileSessionsRename,
+    (_event, fileId: string, sessionId: string, title: string) => {
+      const sessions = fileSessionStore.rename(fileId, sessionId, title)
+      if (!sessions) return null
+      const listed = fileSessionStore.list(fileId)
+      if (!listed) return null
+      return toFileSessionsState(fileId, listed.activeSessionId, sessions)
+    }
+  )
+
+  ipcMain.handle(
+    IPC.fileSessionsDelete,
+    (_event, fileId: string, sessionIds: string[]) => {
+      const result = fileSessionStore.deleteSessions(fileId, sessionIds)
+      if (!result) return null
+      for (const id of result.removed) {
+        agent.disposeConversation(id)
+        ptyManager.killForConversation(id)
+        fileService.unwatch(id)
+      }
+      return {
+        ok: result.ok,
+        error: result.error,
+        removed: result.removed,
+        fileId,
+        activeSessionId: result.activeSessionId,
+        sessions: result.sessions
+      }
+    }
+  )
+
+  // --- agents (CLI binary probe) ---
+  ipcMain.handle(
+    IPC.agentsResolveBinary,
+    (_event, candidates: string[], force?: boolean) => {
+      const list = Array.isArray(candidates)
+        ? candidates.filter((c): c is string => typeof c === 'string' && c.trim().length > 0)
+        : []
+      // Cached by default so agent switches are instant; force only on explicit recheck.
+      return resolveAgentExecutable(list, { force: force === true })
+    }
+  )
 
   // --- pty ---
   ipcMain.handle(
@@ -1520,7 +2031,7 @@ function registerIpc(): void {
       cwd: string,
       cols: number,
       rows: number,
-      preferredId?: string
+      options?: import('@shared/ipc').PtyCreateOptions | string
     ) =>
       ptyManager.create(
         conversationId,
@@ -1528,7 +2039,7 @@ function registerIpc(): void {
         cwd,
         cols,
         rows,
-        preferredId
+        options
       )
   )
   ipcMain.handle(IPC.ptyWrite, (_event, tabId: string, data: string) =>
@@ -1550,6 +2061,9 @@ function registerIpc(): void {
   })
 
   ipcMain.handle(IPC.windowOpenSession, (_event, id: string) => openDetachedWindow(id))
+  ipcMain.handle(IPC.windowRevealInList, (_event, id: string) => {
+    revealConversationInList(String(id || ''))
+  })
   ipcMain.handle(IPC.windowNewDetached, () => newDetachedSession())
   ipcMain.handle(
     IPC.windowOpenFilePreview,
@@ -1624,6 +2138,40 @@ function registerIpc(): void {
           ? await dialog.showMessageBox(window, opts)
           : await dialog.showMessageBox(opts)
       return result.response === 0
+    }
+  )
+
+  ipcMain.handle(
+    IPC.dialogMessageBox,
+    async (
+      event,
+      options: {
+        type?: 'none' | 'info' | 'error' | 'question' | 'warning'
+        title: string
+        message: string
+        detail?: string
+        buttons: string[]
+        defaultId?: number
+        cancelId?: number
+      }
+    ): Promise<number> => {
+      const window = BrowserWindow.fromWebContents(event.sender)
+      const buttons =
+        options.buttons?.length > 0 ? options.buttons : [t('common.ok')]
+      const opts: Electron.MessageBoxOptions = {
+        type: options.type ?? 'question',
+        title: options.title,
+        message: options.message || options.title,
+        detail: options.detail,
+        buttons,
+        defaultId: options.defaultId ?? 0,
+        cancelId: options.cancelId ?? buttons.length - 1
+      }
+      const result =
+        window && !window.isDestroyed()
+          ? await dialog.showMessageBox(window, opts)
+          : await dialog.showMessageBox(opts)
+      return result.response
     }
   )
 
@@ -1762,13 +2310,32 @@ if (!singleInstance) {
 
   app.whenReady().then(async () => {
     applyBranding()
-    protocol.handle('vav-local', (request) => {
+    protocol.handle('vav-local', async (request) => {
       try {
         const filePath = decodeURIComponent(new URL(request.url).searchParams.get('path') ?? '')
         if (!filePath || !existsSync(filePath)) {
           return new Response('Not found', { status: 404 })
         }
-        return net.fetch(pathToFileURL(filePath).href)
+        // Forward Range headers so pdf.js can stream large files efficiently.
+        const headers: Record<string, string> = {}
+        const range = request.headers.get('Range')
+        if (range) headers.Range = range
+        const response = await net.fetch(pathToFileURL(filePath).href, {
+          headers,
+          method: request.method
+        })
+        const ext = extname(filePath).toLowerCase()
+        if (ext === '.pdf') {
+          const out = new Headers(response.headers)
+          out.set('Content-Type', 'application/pdf')
+          out.set('Accept-Ranges', 'bytes')
+          return new Response(response.body, {
+            status: response.status,
+            statusText: response.statusText,
+            headers: out
+          })
+        }
+        return response
       } catch {
         return new Response('Bad request', { status: 400 })
       }
@@ -1776,6 +2343,7 @@ if (!singleInstance) {
     const settings = settingsStore.load()
     setLocalePreference(settings.locale ?? DEFAULT_SETTINGS.locale)
     conversationStore.load({ model: settings.defaultModel, mintWorkdir: resolveNewWorkdir })
+    fileSessionStore.bind(conversationStore)
     applyTheme(settings.theme ?? DEFAULT_SETTINGS.theme)
     nativeTheme.on('updated', repaintChrome)
     registerGlobalHotkey(settings.globalHotkey)
@@ -1796,6 +2364,15 @@ if (!singleInstance) {
       if (process.env.VAV_SMOKE_SEED === '1') {
         void seedSmokeChangeReview()
       }
+      // After the main shell is up, preload the token panel so the ring opens
+      // without a cold BrowserWindow + full renderer load.
+      setTimeout(() => {
+        try {
+          warmTokenUsageWindow()
+        } catch {
+          // non-fatal
+        }
+      }, 1800)
     })
     // Dock tiles cache aggressively for the rebranded Electron.dev bundle —
     // re-assert the PNG after the first window exists so the tile updates.

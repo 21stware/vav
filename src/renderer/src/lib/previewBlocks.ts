@@ -1,8 +1,9 @@
 /**
  * Hierarchical selectable blocks for file-preview.rpml (release c945830a…).
  *
- * Default click = primary granularity (e.g. L2 function / L2 paragraph).
- * Double-click a selected block drills into children (L3+); Esc pops out.
+ * Click always hits the deepest block containing the line / region (DevTools-
+ * style element pick). Nested children are independently selectable without
+ * a drill-in mode.
  *
  * TS/JS AST parsing runs in the main process (see files.parseBlocks); this
  * module keeps sync parsers + hit-test helpers for the renderer canvas.
@@ -23,18 +24,25 @@ function sliceLines(lines: string[], start: number, end: number): string {
   return lines.slice(start, end).join('\n')
 }
 
-/** Markdown → L2 defaults; heading sections available as children of headings. */
-export function parseMarkdownBlocks(source: string): PreviewBlock[] {
+/**
+ * Markdown → hierarchical selectable blocks.
+ *
+ * `lineOffset` is the number of lines before this slice in the full document
+ * (0 for the root call). Every id / startLine / endLine is absolute so nested
+ * heading recursion never reuses `para-L1` / `list-0` across sections.
+ */
+export function parseMarkdownBlocks(source: string, lineOffset = 0): PreviewBlock[] {
   const lines = source.split(/\r?\n/)
   const blocks: PreviewBlock[] = []
   let i = 0
 
-  if (lines[0]?.trim() === '---') {
+  // Frontmatter only at the document root.
+  if (lineOffset === 0 && lines[0]?.trim() === '---') {
     let end = 1
     while (end < lines.length && lines[end]?.trim() !== '---') end++
     if (end < lines.length) {
       blocks.push({
-        id: `frontmatter-0`,
+        id: `frontmatter-L1`,
         kind: 'frontmatter',
         text: sliceLines(lines, 0, end + 1),
         label: `YAML frontmatter · lines 1–${end + 1}`,
@@ -50,6 +58,7 @@ export function parseMarkdownBlocks(source: string): PreviewBlock[] {
     if (i >= lines.length) break
 
     const start = i
+    const absStart = start + 1 + lineOffset
     const line = lines[i]!
 
     const fence = line.match(/^(`{3,}|~{3,})(.*)$/)
@@ -59,14 +68,17 @@ export function parseMarkdownBlocks(source: string): PreviewBlock[] {
       i++
       while (i < lines.length && !lines[i]!.startsWith(marker)) i++
       if (i < lines.length) i++
+      const absEnd = i + lineOffset
       blocks.push({
-        id: `codeblock-L${start + 1}`,
+        id: `codeblock-L${absStart}`,
         kind: 'code',
         text: sliceLines(lines, start, i),
         language,
-        label: language ? `${language} · lines ${start + 1}–${i}` : `code · lines ${start + 1}–${i}`,
-        startLine: start + 1,
-        endLine: i
+        label: language
+          ? `${language} · lines ${absStart}–${absEnd}`
+          : `code · lines ${absStart}–${absEnd}`,
+        startLine: absStart,
+        endLine: absEnd
       })
       continue
     }
@@ -75,7 +87,8 @@ export function parseMarkdownBlocks(source: string): PreviewBlock[] {
     if (heading) {
       const level = heading[1]!.length
       const title = heading[2]!.trim()
-      const headingId = `h${level}-${slug(title)}`
+      // Line-anchored ids: same title in two places must not share an id.
+      const headingId = `h${level}-L${absStart}-${slug(title)}`
       i++
       const sectionStart = start
       while (i < lines.length) {
@@ -83,35 +96,31 @@ export function parseMarkdownBlocks(source: string): PreviewBlock[] {
         if (next && next[1]!.length <= level) break
         i++
       }
+      const absEnd = i + lineOffset
       const sectionText = sliceLines(lines, sectionStart, i)
-      const headingOnly: PreviewBlock = {
+      // Recurse with absolute offset so child ids/lines stay unique.
+      const inner = parseMarkdownBlocks(
+        sliceLines(lines, start + 1, i),
+        lineOffset + start + 1
+      )
+      const section: PreviewBlock = {
+        id: `h${level}-section-L${absStart}-${slug(title)}`,
+        kind: 'heading-section',
+        text: sectionText,
+        level,
+        label: `H${level} section · ${title}`,
+        startLine: absStart,
+        endLine: absEnd,
+        children: inner.length ? inner : undefined
+      }
+      blocks.push({
         id: headingId,
         kind: 'heading',
         text: line,
         level,
         label: `H${level} ${title}`,
-        startLine: start + 1,
-        endLine: start + 1
-      }
-      // Default selectable unit for a heading click = heading line.
-      // Children: full section (via double-click drill) + inner L2/L3 blocks.
-      const inner = parseMarkdownBlocks(sliceLines(lines, start + 1, i)).map((b) => ({
-        ...b,
-        startLine: b.startLine + start + 1,
-        endLine: b.endLine + start + 1
-      }))
-      const section: PreviewBlock = {
-        id: `h${level}-section-${slug(title)}`,
-        kind: 'heading-section',
-        text: sectionText,
-        level,
-        label: `H${level} section · ${title}`,
-        startLine: start + 1,
-        endLine: i,
-        children: inner.length ? inner : undefined
-      }
-      blocks.push({
-        ...headingOnly,
+        startLine: absStart,
+        endLine: absStart,
         children: [section, ...(inner.length ? inner : [])]
       })
       continue
@@ -157,22 +166,27 @@ export function parseMarkdownBlocks(source: string): PreviewBlock[] {
           j++
         }
       }
-      const listIdx = blocks.filter((b) => b.kind === 'list').length
+      const absListStart = listStart + 1 + lineOffset
+      const absListEnd = i + lineOffset
       blocks.push({
-        id: `list-${listIdx}`,
+        id: `list-L${absListStart}`,
         kind: 'list',
         text: sliceLines(lines, listStart, i),
         label: `list · ${itemLines.length} items`,
-        startLine: listStart + 1,
-        endLine: i,
-        children: itemLines.map((item, sub) => ({
-          id: `li-${listIdx}-${sub}`,
-          kind: 'list-item' as const,
-          text: item.text,
-          startLine: item.start + 1,
-          endLine: item.end,
-          label: `li ${sub + 1}`
-        }))
+        startLine: absListStart,
+        endLine: absListEnd,
+        children: itemLines.map((item, sub) => {
+          const absItemStart = item.start + 1 + lineOffset
+          const absItemEnd = item.end + lineOffset
+          return {
+            id: `li-L${absItemStart}`,
+            kind: 'list-item' as const,
+            text: item.text,
+            startLine: absItemStart,
+            endLine: absItemEnd,
+            label: `li ${sub + 1}`
+          }
+        })
       })
       continue
     }
@@ -183,20 +197,25 @@ export function parseMarkdownBlocks(source: string): PreviewBlock[] {
       if (/^\s*([-*+]|\d+\.)\s+/.test(lines[i]!)) break
       i++
     }
+    const absEnd = i + lineOffset
     blocks.push({
-      id: `para-L${start + 1}`,
+      id: `para-L${absStart}`,
       kind: 'paragraph',
       text: sliceLines(lines, start, i),
-      startLine: start + 1,
-      endLine: i,
-      label: `paragraph · lines ${start + 1}–${i}`
+      startLine: absStart,
+      endLine: absEnd,
+      label: `paragraph · lines ${absStart}–${absEnd}`
     })
   }
 
   return blocks
 }
 
-/** Plain text → L2 paragraphs; drill-in exposes L3 lines. */
+/**
+ * Plain text → blank-line-separated paragraphs only.
+ * No per-line children: drill-in is gone, and deepest-hit would otherwise make
+ * every line in a LICENSE/README paragraph independently selectable.
+ */
 export function parseTextBlocks(source: string): PreviewBlock[] {
   const lines = source.split(/\r?\n/)
   const blocks: PreviewBlock[] = []
@@ -208,31 +227,19 @@ export function parseTextBlocks(source: string): PreviewBlock[] {
     const start = i
     while (i < lines.length && lines[i]!.trim() !== '') i++
     const text = sliceLines(lines, start, i)
-    const lineChildren: PreviewBlock[] = []
-    for (let row = start; row < i; row++) {
-      lineChildren.push({
-        id: `stmt-L${row + 1}`,
-        kind: 'stmt',
-        text: lines[row]!,
-        startLine: row + 1,
-        endLine: row + 1,
-        label: `line ${row + 1}`
-      })
-    }
     blocks.push({
       id: `para-${index++}`,
       kind: 'paragraph',
       text,
       startLine: start + 1,
       endLine: i,
-      label: `paragraph · lines ${start + 1}–${i}`,
-      children: lineChildren.length > 1 ? lineChildren : undefined
+      label: `paragraph · lines ${start + 1}–${i}`
     })
   }
   return blocks
 }
 
-/** Notebook → L1 cells; drill-in → input / output. */
+/** Notebook → cells with optional input / output children. */
 export function parseNotebookBlocks(source: string): PreviewBlock[] {
   try {
     const nb = JSON.parse(source) as {
@@ -354,8 +361,8 @@ function parseControlBlocks(lines: string[], from: number, to: number): PreviewB
 }
 
 /**
- * Source code → L2 functions (default). Types are L1 siblings.
- * Drill-in on a function exposes L3 control-flow (then L4 stmts).
+ * Source code → functions (default). Types are L1 siblings.
+ * Nested control-flow / stmts are available as children for deepest-hit pick.
  */
 export function parseCodeBlocks(source: string, language?: string): PreviewBlock[] {
   const lines = source.split(/\r?\n/)
@@ -379,7 +386,7 @@ export function parseCodeBlocks(source: string, language?: string): PreviewBlock
         endLine: b.endLine + i + 1
       }))
       blocks.push({
-        id: `type-${name}`,
+        id: `type-L${i + 1}-${name}`,
         kind: 'type',
         text: sliceLines(lines, i, end + 1),
         language,
@@ -419,7 +426,7 @@ export function parseCodeBlocks(source: string, language?: string): PreviewBlock
       }
       const controls = parseControlBlocks(lines, i + 1, endLine)
       blocks.push({
-        id: `func-${name}`,
+        id: `func-L${i + 1}-${name}`,
         kind: 'func',
         text: sliceLines(lines, i, endLine + 1),
         language,
@@ -577,8 +584,9 @@ export interface CsvSelectionModel {
   blocks: PreviewBlock[]
 }
 
+/** Always include column index — two headers can slug to the same token. */
 export function csvColId(name: string, col: number): string {
-  return `col-${slug(name) || String(col)}`
+  return `col-${col}-${slug(name) || 'c'}`
 }
 
 /** Serialize a CSV model back to text (quotes fields that need it). */
@@ -616,6 +624,49 @@ export function updateNotebookCellSource(
   }
 }
 
+/**
+ * Max rows for which we eagerly build PreviewBlock trees.
+ * Huge CSVs still parse into `rows` for the sheet UI (windowed), but
+ * materializing every cell as a block OOMs the renderer.
+ */
+export const CSV_BLOCK_ROW_CAP = 2000
+
+/** Build a single CSV cell block on demand (pick path). */
+export function csvCellBlock(
+  headers: string[],
+  row: string[],
+  rowIndex0: number,
+  col: number
+): PreviewBlock {
+  const cell = row[col] ?? ''
+  const h = headers[col] ?? String(col)
+  return {
+    id: `cell-r${rowIndex0 + 1}-c${col}`,
+    kind: 'cell-table',
+    text: cell,
+    label: `${h}${rowIndex0 + 1}`,
+    startLine: rowIndex0 + 2,
+    endLine: rowIndex0 + 2
+  }
+}
+
+/** Build a single CSV row block on demand (pick path). */
+export function csvRowBlock(headers: string[], row: string[], rowIndex0: number): PreviewBlock {
+  const colCount = Math.max(headers.length, row.length)
+  const pairs = Array.from({ length: colCount }, (_, c) => {
+    const name = headers[c] || `col${c + 1}`
+    return `${name}=${row[c] ?? ''}`
+  })
+  return {
+    id: `row-${rowIndex0 + 1}`,
+    kind: 'row',
+    text: pairs.join(' | '),
+    label: `row ${rowIndex0 + 1}`,
+    startLine: rowIndex0 + 2,
+    endLine: rowIndex0 + 2
+  }
+}
+
 export function parseCsvModel(text: string): CsvSelectionModel {
   const rows = text
     .split(/\r?\n/)
@@ -623,37 +674,30 @@ export function parseCsvModel(text: string): CsvSelectionModel {
     .map(parseCsvLine)
   if (rows.length === 0) return { headers: [], rows: [], blocks: [] }
   const [header, ...body] = rows
-  const headers = header
-  const tableText = text
-  const colBlocks: PreviewBlock[] = headers.map((name, col) => ({
-    id: csvColId(name, col),
-    kind: 'col' as const,
-    text: [name, ...body.map((r) => r[col] ?? '')].join('\n'),
-    label: `col ${name}`,
-    startLine: 1,
-    endLine: rows.length
-  }))
-  const rowBlocks: PreviewBlock[] = body.map((row, idx) => ({
-    id: `row-${idx + 1}`,
-    kind: 'row' as const,
-    text: row.join(','),
-    label: `row ${idx + 1}`,
-    startLine: idx + 2,
-    endLine: idx + 2,
-    children: row.map((cell, col) => ({
-      id: `cell-${headers[col] || col}${idx + 1}`,
-      kind: 'cell-table' as const,
-      text: cell,
-      label: `${headers[col] || col}${idx + 1}`,
-      startLine: idx + 2,
-      endLine: idx + 2
-    }))
-  }))
+  const headers = header ?? []
+  // Column blocks only sample values — never join 100k cells into one string.
+  const colBlocks: PreviewBlock[] = headers.map((name, col) => {
+    const sample = body.slice(0, 200).map((r) => r[col] ?? '')
+    return {
+      id: csvColId(name, col),
+      kind: 'col' as const,
+      text: [name, ...sample].join('\n'),
+      label: `col ${name}`,
+      startLine: 1,
+      endLine: rows.length
+    }
+  })
+  // Row blocks without per-cell children (cells are built on pick).
+  const rowCap = Math.min(body.length, CSV_BLOCK_ROW_CAP)
+  const rowBlocks: PreviewBlock[] = []
+  for (let idx = 0; idx < rowCap; idx++) {
+    rowBlocks.push(csvRowBlock(headers, body[idx] ?? [], idx))
+  }
   const blocks: PreviewBlock[] = [
     {
       id: 'table',
       kind: 'table',
-      text: tableText,
+      text: `${body.length} rows × ${headers.length} cols`,
       label: `table · ${body.length}×${headers.length}`,
       startLine: 1,
       endLine: rows.length,
@@ -728,19 +772,49 @@ const STRUCTURED_EXTS = new Set(['json', 'jsonc', 'json5'])
 const INDENT_STRUCTURED_EXTS = new Set(['yml', 'yaml', 'xml'])
 
 /** Pick the right block parser for a path. */
+/** Soft cap for structure indexing — large XML/JSON still scroll via virtualization. */
+const STRUCTURE_LINE_CAP = 5000
+
 export function parseBlocksForPath(path: string, text: string): PreviewBlock[] {
   const base = path.split(/[/\\]/).pop() ?? path
   const ext = base.includes('.') ? base.split('.').pop()!.toLowerCase() : ''
   if (ext === 'md' || ext === 'markdown' || ext === 'mdx') return parseMarkdownBlocks(text)
   if (ext === 'ipynb') return parseNotebookBlocks(text)
+
+  // Avoid freezing open on huge structured files: only index the head for
+  // DevTools-style block selection; the rest is still viewable as text.
+  let source = text
+  if (countNewlines(text) + 1 > STRUCTURE_LINE_CAP) {
+    source = takeFirstLines(text, STRUCTURE_LINE_CAP)
+  }
+
   // JSON / YAML / XML: indent reflects nesting — use indent blocks for accurate
   // per-level selection (the old JSON walker had broken line numbers).
-  if (STRUCTURED_EXTS.has(ext)) return parseIndentBlocks(text, 'json')
-  if (INDENT_STRUCTURED_EXTS.has(ext)) return parseIndentBlocks(text, ext)
+  if (STRUCTURED_EXTS.has(ext)) return parseIndentBlocks(source, 'json')
+  if (INDENT_STRUCTURED_EXTS.has(ext)) return parseIndentBlocks(source, ext)
   // Code files: indent-based blocks (DevTools-style element selection).
-  if (CODE_EXTS.has(ext)) return parseIndentBlocks(text, languageHint(ext))
+  if (CODE_EXTS.has(ext)) return parseIndentBlocks(source, languageHint(ext))
   // TOML / plist / unknown: text paragraphs (not indent-driven structures).
-  return parseTextBlocks(text)
+  return parseTextBlocks(source)
+}
+
+function countNewlines(text: string): number {
+  let n = 0
+  for (let i = 0; i < text.length; i++) {
+    if (text.charCodeAt(i) === 10) n++
+  }
+  return n
+}
+
+function takeFirstLines(text: string, maxLines: number): string {
+  let lines = 0
+  for (let i = 0; i < text.length; i++) {
+    if (text.charCodeAt(i) === 10) {
+      lines++
+      if (lines >= maxLines) return text.slice(0, i)
+    }
+  }
+  return text
 }
 
 function languageHint(ext: string): string | undefined {
@@ -769,6 +843,9 @@ function languageHint(ext: string): string | undefined {
 
 export function formatBadge(path: string, kind: string): string {
   const ext = path.split('.').pop()?.toLowerCase() ?? ''
+  if (kind === 'sqlite' || ext === 'db' || ext === 'sqlite' || ext === 'sqlite3' || ext === 'db3') {
+    return 'SQLite'
+  }
   if (ext === 'md' || ext === 'markdown' || ext === 'mdx') return 'Markdown'
   if (ext === 'csv' || ext === 'tsv') return 'CSV'
   if (ext === 'pdf') return 'PDF'
@@ -780,18 +857,9 @@ export function formatBadge(path: string, kind: string): string {
   if (kind === 'audio') return 'Audio'
   if (kind === 'video') return 'Video'
   if (kind === 'binary') return 'Binary'
+  if (kind === 'zip' || ext === 'zip') return 'ZIP'
   if (ext === 'txt' || !ext) return 'TXT'
   return ext.toUpperCase()
-}
-
-/** Flatten visible blocks for the current drill stack. */
-export function visibleBlocks(
-  roots: PreviewBlock[],
-  drillStack: PreviewBlock[]
-): PreviewBlock[] {
-  if (drillStack.length === 0) return roots
-  const top = drillStack[drillStack.length - 1]!
-  return top.children ?? []
 }
 
 function coversLine(block: PreviewBlock, line: number): boolean {
@@ -801,19 +869,10 @@ function coversLine(block: PreviewBlock, line: number): boolean {
 /**
  * Resolve the selectable block for a 1-based line — DevTools-style: always
  * returns the deepest block containing the line, walking down through children.
- * The drill stack, when set, restricts the search to the drilled block's subtree.
  */
-export function blockAtLine(
-  roots: PreviewBlock[],
-  line: number,
-  drillStack: readonly PreviewBlock[] = []
-): PreviewBlock | null {
-  const layer =
-    drillStack.length > 0 ? (drillStack[drillStack.length - 1]!.children ?? []) : roots
-
-  for (const block of layer) {
+export function blockAtLine(roots: PreviewBlock[], line: number): PreviewBlock | null {
+  for (const block of roots) {
     if (!coversLine(block, line)) continue
-    // Walk down to the deepest child containing this line.
     let current = block
     while (current.children) {
       const child = current.children.find((c) => coversLine(c, line))

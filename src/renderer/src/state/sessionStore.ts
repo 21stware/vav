@@ -10,7 +10,7 @@ import type {
   TokenSnapshot,
   TurnPhase
 } from '@shared/types'
-import { DEFAULT_SETTINGS } from '@shared/types'
+import { DEFAULT_CLI_AGENTS, DEFAULT_SETTINGS } from '@shared/types'
 import type { ChangeSet, UpdateState } from '@shared/changeSet'
 import { resolveLocale } from '@shared/i18n'
 import { tt } from '../i18n/useT'
@@ -28,6 +28,78 @@ const IDLE_UPDATE: UpdateState = {
   message: null
 }
 
+/**
+ * Merge a listMeta broadcast into the local sidebar without reordering on
+ * view-only / metadata-only updates. Recency sort applies only when some
+ * conversation's `updatedAt` (or pin/archive membership) actually changed.
+ *
+ * Selecting a session or focusing a file must not reshuffle the list —
+ * only real conversation activity (messages) bumps `updatedAt` on main.
+ */
+function mergeConversationList(
+  prev: ConversationMeta[],
+  next: ConversationMeta[]
+): ConversationMeta[] {
+  const prevIndex = new Map(prev.map((c, i) => [c.id, i]))
+  const prevById = new Map(prev.map((c) => [c.id, c]))
+  const nextById = new Map(next.map((c) => [c.id, c]))
+
+  let orderRelevantChange = false
+  for (const n of next) {
+    const p = prevById.get(n.id)
+    if (!p) {
+      orderRelevantChange = true
+      break
+    }
+    if (
+      p.updatedAt !== n.updatedAt ||
+      p.pinned !== n.pinned ||
+      p.pinTime !== n.pinTime ||
+      p.archived !== n.archived ||
+      p.archivedAt !== n.archivedAt
+    ) {
+      orderRelevantChange = true
+      break
+    }
+  }
+  if (!orderRelevantChange) {
+    for (const p of prev) {
+      if (!p.fileId && !nextById.has(p.id)) {
+        orderRelevantChange = true
+        break
+      }
+    }
+  }
+
+  if (!orderRelevantChange) {
+    // Keep previous order; patch fields from next; keep hydrated file sessions.
+    const result: ConversationMeta[] = []
+    const seen = new Set<string>()
+    for (const p of prev) {
+      const n = nextById.get(p.id)
+      if (n) {
+        result.push(n)
+        seen.add(n.id)
+      } else if (p.fileId) {
+        result.push(p)
+        seen.add(p.id)
+      }
+    }
+    for (const n of next) {
+      if (!seen.has(n.id)) result.push(n)
+    }
+    return result
+  }
+
+  const fileSessions = prev.filter((c) => !!c.fileId && !nextById.has(c.id))
+  const sorted = [...next].sort((a, b) => {
+    const d = b.updatedAt - a.updatedAt
+    if (d !== 0) return d
+    return (prevIndex.get(a.id) ?? 1e9) - (prevIndex.get(b.id) ?? 1e9)
+  })
+  return [...sorted, ...fileSessions]
+}
+
 export interface ToastState {
   kind: 'info' | 'success' | 'error'
   title: string
@@ -40,6 +112,7 @@ export type SettingsCategory =
   | 'appearance'
   | 'notifications'
   | 'cli'
+  | 'agents'
   | 'file-associations'
   | 'about'
 
@@ -77,8 +150,16 @@ export interface SearchState {
   tick: number
 }
 
-interface LayoutPrefs {
+/** Window chrome only — not tied to a conversation. */
+interface GlobalLayoutPrefs {
   sidebarVisible: boolean
+}
+
+/**
+ * Tools tray layout is per conversation: collapsed/open, Files vs Terminal,
+ * height. New sessions start collapsed with no shell (terminal-panel.rpml).
+ */
+export interface SessionToolsLayout {
   toolsCollapsed: boolean
   panelSegment: 'files' | 'terminal'
   /** Segment to restore when expanding via chevron (main-chat.rpml §5). */
@@ -88,33 +169,106 @@ interface LayoutPrefs {
 
 export const PANEL_MIN_HEIGHT = 160
 export const PANEL_MAX_HEIGHT = 480
-const LAYOUT_KEY = 'vav.layout'
+const GLOBAL_LAYOUT_KEY = 'vav.layout'
+const SESSION_TOOLS_KEY = 'vav.session-tools-layout'
 
-function loadLayout(): LayoutPrefs {
-  const fallback: LayoutPrefs = {
-    sidebarVisible: true,
-    toolsCollapsed: false,
-    panelSegment: 'files',
-    lastActiveSegment: 'files',
-    panelHeight: 240
-  }
+export const DEFAULT_SESSION_TOOLS: SessionToolsLayout = {
+  toolsCollapsed: true,
+  panelSegment: 'files',
+  lastActiveSegment: 'files',
+  panelHeight: 240
+}
+
+function loadGlobalLayout(): GlobalLayoutPrefs {
+  const fallback: GlobalLayoutPrefs = { sidebarVisible: true }
   try {
-    const raw = localStorage.getItem(LAYOUT_KEY)
-    return raw ? { ...fallback, ...JSON.parse(raw) } : fallback
+    const raw = localStorage.getItem(GLOBAL_LAYOUT_KEY)
+    if (!raw) return fallback
+    const parsed = JSON.parse(raw) as Partial<GlobalLayoutPrefs>
+    return { sidebarVisible: parsed.sidebarVisible ?? true }
   } catch {
     return fallback
   }
 }
 
-function saveLayout(prefs: LayoutPrefs): void {
+function saveGlobalLayout(prefs: GlobalLayoutPrefs): void {
   try {
-    localStorage.setItem(LAYOUT_KEY, JSON.stringify(prefs))
+    localStorage.setItem(GLOBAL_LAYOUT_KEY, JSON.stringify(prefs))
   } catch {
     // Private mode or a full quota: layout simply falls back to defaults.
   }
 }
 
-interface SessionState extends LayoutPrefs {
+function loadSessionToolsMap(): Record<string, SessionToolsLayout> {
+  try {
+    const raw = localStorage.getItem(SESSION_TOOLS_KEY)
+    if (!raw) return {}
+    const parsed = JSON.parse(raw) as Record<string, Partial<SessionToolsLayout>>
+    const out: Record<string, SessionToolsLayout> = {}
+    for (const [id, value] of Object.entries(parsed)) {
+      if (!value || typeof value !== 'object') continue
+      out[id] = { ...DEFAULT_SESSION_TOOLS, ...value }
+    }
+    return out
+  } catch {
+    return {}
+  }
+}
+
+function saveSessionToolsMap(map: Record<string, SessionToolsLayout>): void {
+  try {
+    localStorage.setItem(SESSION_TOOLS_KEY, JSON.stringify(map))
+  } catch {
+    // ignore
+  }
+}
+
+function toolsFor(state: { toolsLayouts: Record<string, SessionToolsLayout> }, id: string): SessionToolsLayout {
+  return state.toolsLayouts[id] ?? DEFAULT_SESSION_TOOLS
+}
+
+/** Patch active conversation's tools layout + mirror fields for selectors. */
+function patchActiveTools(
+  state: SessionState,
+  patch: Partial<SessionToolsLayout>
+): Partial<SessionState> {
+  const id = state.activeId
+  if (!id) return {}
+  const next = { ...toolsFor(state, id), ...patch }
+  const toolsLayouts = { ...state.toolsLayouts, [id]: next }
+  saveSessionToolsMap(toolsLayouts)
+  return {
+    toolsLayouts,
+    toolsCollapsed: next.toolsCollapsed,
+    panelSegment: next.panelSegment,
+    lastActiveSegment: next.lastActiveSegment,
+    panelHeight: next.panelHeight
+  }
+}
+
+/** Mirror a conversation's tools layout into the top-level active fields. */
+function activeToolsFields(layout: SessionToolsLayout): Pick<
+  SessionState,
+  'toolsCollapsed' | 'panelSegment' | 'lastActiveSegment' | 'panelHeight'
+> {
+  return {
+    toolsCollapsed: layout.toolsCollapsed,
+    panelSegment: layout.panelSegment,
+    lastActiveSegment: layout.lastActiveSegment,
+    panelHeight: layout.panelHeight
+  }
+}
+
+interface SessionState {
+  sidebarVisible: boolean
+  /** Active conversation's tools tray (mirrored from toolsLayouts[activeId]). */
+  toolsCollapsed: boolean
+  panelSegment: 'files' | 'terminal'
+  lastActiveSegment: 'files' | 'terminal'
+  panelHeight: number
+  /** Per-conversation tools tray state. */
+  toolsLayouts: Record<string, SessionToolsLayout>
+
   ready: boolean
   home: string
   tmp: string
@@ -145,10 +299,17 @@ interface SessionState extends LayoutPrefs {
   quotes: Record<string, QuoteDraft | null>
   /** Preview selection chips pinned above the composer (file-preview edit). */
   previewRefs: Record<string, PreviewRef[]>
-  /** Pick mode active (comment picker) — crosshair toggle from file preview. */
+  /** Pick mode active (comment picker) — from file preview Tools header. */
   pickMode: Record<string, boolean>
   /** Comment cards from Pick mode — block ref + per-block comment text. */
   commentCards: Record<string, { ref: PreviewRef; comment: string }[]>
+  /**
+   * File Attachment Chip path (main-chat / file-preview / workspace-view).
+   * When set, the composer shows the chip and the agent system prompt treats
+   * this file as open context. Null = dismissed or none — preview/selection
+   * may still show the file; only context attachment is cleared.
+   */
+  contextFiles: Record<string, string | null>
   /** Message id briefly highlighted after quote-strip / bubble jump. */
   flashMessageId: string | null
   flashTick: number
@@ -164,8 +325,10 @@ interface SessionState extends LayoutPrefs {
   settingsCategory: SettingsCategory
   shortcutsOpen: boolean
   composerFocusTick: number
-  /** Bumped when a comment card is created so its textarea can auto-focus. */
+  /** Which comment card should take focus (set on pick). */
   commentFocusId: string | null
+  /** Bumped on every pick so re-selecting the same block re-focuses the field. */
+  commentFocusTick: number
   /**
    * Bumped by ⌘⇧O / menu command so ToolsPanel can open the native workspace
    * menu without holding open/closed boolean state in the store.
@@ -191,7 +354,23 @@ interface SessionState extends LayoutPrefs {
 
   /** A detached window passes the one conversation it exists to show. */
   bootstrap(pinnedConversationId?: string): Promise<void>
-  selectConversation(id: string, options?: { additive?: boolean; range?: boolean }): Promise<void>
+  selectConversation(
+    id: string,
+    options?: {
+      additive?: boolean
+      range?: boolean
+      /**
+       * Stay in Workspace View (History / New within workspace-view.rpml).
+       * Default false: sidebar clicks leave workspace view.
+       */
+      stayInWorkspace?: boolean
+    }
+  ): Promise<void>
+  /**
+   * Open current workspace agent chat as a main-panel session
+   * (duplicate if history exists, else mint empty) and exit Workspace View.
+   */
+  openWorkspaceInMainPanel(workdir: string): Promise<void>
   /** Toggle workspace group selection → Workspace View. */
   selectWorkspaceGroup(workdir: string | null): Promise<void>
   /** Ensure a durable agent conversation exists for this workspace path. */
@@ -218,6 +397,16 @@ interface SessionState extends LayoutPrefs {
   setPinned(id: string, pinned: boolean): Promise<void>
   setArchived(id: string, archived: boolean): Promise<void>
   setApprovalMode(id: string, mode: import('@shared/types').ApprovalMode): Promise<void>
+  /** Workspace preview focus — system prompt + CLI inject. */
+  setFocusedFile(id: string, path: string | null): Promise<void>
+  /**
+   * Attach (or replace) the File Attachment Chip for a conversation.
+   * Syncs focusedFilePath for the agent. Pass null to clear without touching
+   * tree selection / preview window.
+   */
+  attachContextFile(id: string, path: string | null): Promise<void>
+  /** Dismiss the chip only — does not close the file preview or deselect. */
+  dismissContextFile(id: string): Promise<void>
   openDetached(id: string): Promise<void>
 
   setDraft(id: string, text: string): void
@@ -237,7 +426,7 @@ interface SessionState extends LayoutPrefs {
   refreshTokenUsage(id?: string): Promise<void>
   send(text: string, attachments: string[]): Promise<void>
   cancel(id: string): Promise<void>
-  answerTool(toolCallId: string, answer: string): Promise<void>
+  answerTool(toolCallId: string, answer: string): Promise<boolean>
   regenerate(messageId: string): Promise<void>
   editUserMessage(messageId: string, text: string): Promise<void>
   selectBranch(messageId: string): Promise<void>
@@ -280,9 +469,19 @@ interface SessionState extends LayoutPrefs {
   toggleToolsPanel(): void
   setToolsCollapsed(collapsed: boolean): void
   setPanelSegment(segment: 'files' | 'terminal'): void
+  /**
+   * Switch Files/Terminal for the active session without expanding the tray
+   * (preview-edit has no Files pane but should stay collapsed until needed).
+   */
+  setPanelSegmentQuiet(segment: 'files' | 'terminal'): void
   togglePanelSegment(): void
   setPanelHeight(height: number): void
   focusComposer(): void
+  /**
+   * Ctrl+`: expand Tools → Terminal, ensure a plain bash exists, focus it.
+   * Toggle-close when already focused on an open terminal tray.
+   */
+  focusBashTerminal(): void
   focusCommentCard(refId: string): void
   setPreviewAgentForPath(path: string, conversationId: string): void
   openWorkspaceSwitcher(): void
@@ -290,10 +489,14 @@ interface SessionState extends LayoutPrefs {
   applyTurnEvent(event: import('@shared/types').TurnEvent): void
 }
 
-const layout = loadLayout()
+const globalLayout = loadGlobalLayout()
+const sessionToolsLayouts = loadSessionToolsMap()
 
 export const useSessionStore = create<SessionState>((set, get) => ({
-  ...layout,
+  sidebarVisible: globalLayout.sidebarVisible,
+  toolsLayouts: sessionToolsLayouts,
+  // Until a conversation is selected, show the default (collapsed) tray.
+  ...activeToolsFields(DEFAULT_SESSION_TOOLS),
   ready: false,
   home: '',
   tmp: '',
@@ -322,6 +525,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   previewRefs: {},
   pickMode: {},
   commentCards: {},
+  contextFiles: {},
   flashMessageId: null,
   flashTick: 0,
   tokenHistories: {},
@@ -336,6 +540,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   shortcutsOpen: false,
   composerFocusTick: 0,
   commentFocusId: null,
+  commentFocusTick: 0,
   workspaceMenuNonce: 0,
   activeGroupId: null,
   workspaceAgentByPath: loadWorkspaceAgents(),
@@ -350,9 +555,21 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     const activeId = pinnedConversationId ?? data.activeConversationId
     const updateState = await window.vav.updates.getState().catch(() => IDLE_UPDATE)
 
+    // Legacy settings.json often had cliAgents: [] — never surface an empty catalogue.
+    const settings = data.settings
+    if (!Array.isArray(settings.cliAgents) || settings.cliAgents.length === 0) {
+      settings.cliAgents = DEFAULT_CLI_AGENTS.map((a) => ({
+        ...a,
+        envVars: { ...a.envVars },
+        defaultArgs: [...a.defaultArgs],
+        binaryCandidates: a.binaryCandidates ? [...a.binaryCandidates] : undefined
+      }))
+      void window.vav.settings.update({ cliAgents: settings.cliAgents }).catch(() => undefined)
+    }
+
     set({
       ready: true,
-      settings: data.settings,
+      settings,
       resolvedLocale: data.resolvedLocale,
       apiKeyHint: data.apiKeyHint,
       conversations: data.conversations,
@@ -383,7 +600,12 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     // can restore the same group instead of flashing the session detail pane.
     set({ activeGroupId: workdir })
     const agentId = await get().ensureWorkspaceAgent(workdir)
-    set({ activeGroupId: workdir, activeId: agentId, selectedIds: [agentId] })
+    set({
+      activeGroupId: workdir,
+      activeId: agentId,
+      selectedIds: [agentId],
+      ...activeToolsFields(toolsFor(get(), agentId))
+    })
     await get().loadMessages(agentId)
     await useWorkspaceStore.getState().bindConversation(agentId, workdir)
   },
@@ -405,6 +627,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
     await get().createConversation({ workingDirectory: workdir })
     const id = get().activeId
+    if (!id) throw new Error('failed to create workspace agent')
     const map = { ...get().workspaceAgentByPath, [workdir]: id }
     set({ workspaceAgentByPath: map, activeGroupId: workdir })
     saveWorkspaceAgents(map)
@@ -413,7 +636,31 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
   async selectConversation(id, options) {
     const { selectedIds, activeId, conversations } = get()
-    const target = conversations.find((c) => c.id === id)
+    let target = conversations.find((c) => c.id === id)
+    // File-preview sessions are hidden from listMeta — hydrate on demand.
+    if (!target) {
+      const full = await window.vav.conversations.get(id)
+      if (!full) return
+      const {
+        messages,
+        tokenHistory,
+        cacheCreatedAt,
+        cacheExpiresAt,
+        activeLeafId,
+        ...meta
+      } = full
+      set((state) => ({
+        conversations: state.conversations.some((c) => c.id === id)
+          ? state.conversations
+          : [meta, ...state.conversations],
+        messages: { ...state.messages, [id]: messages },
+        activeLeaf: { ...state.activeLeaf, [id]: activeLeafId },
+        tokenHistories: { ...state.tokenHistories, [id]: tokenHistory ?? [] },
+        cacheExpiresAt: { ...state.cacheExpiresAt, [id]: cacheExpiresAt ?? null }
+      }))
+      void cacheCreatedAt
+      target = meta
+    }
     // Archived sessions cannot be the active conversation (sidebar archive view).
     if (target?.archived) {
       set({ selectedIds: [id] })
@@ -426,7 +673,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         : [...selectedIds, id]
       if (nextSelection.length === 0) nextSelection = [id]
     } else if (options?.range && activeId) {
-      const ids = conversations.filter((c) => !c.archived).map((c) => c.id)
+      const ids = conversations.filter((c) => !c.archived && !c.fileId).map((c) => c.id)
       const from = ids.indexOf(activeId)
       const to = ids.indexOf(id)
       if (from >= 0 && to >= 0) {
@@ -436,8 +683,18 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     }
 
     // Switching never cancels an in-flight turn; it only rebinds the detail column.
-    // Selecting a session exits Workspace View.
-    set({ activeId: id, selectedIds: nextSelection, activeGroupId: null })
+    // Sidebar clicks leave Workspace View; History/New inside workspace stay put.
+    const keepGroup =
+      options?.stayInWorkspace ||
+      (!!target?.fileId && !!get().activeGroupId)
+    // Tools tray state is per-session — restore this conversation's layout.
+    const sessionTools = toolsFor(get(), id)
+    set({
+      activeId: id,
+      selectedIds: nextSelection,
+      activeGroupId: keepGroup ? get().activeGroupId : null,
+      ...activeToolsFields(sessionTools)
+    })
     await get().loadMessages(id)
 
     const conversation = get().conversations.find((c) => c.id === id)
@@ -541,6 +798,9 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       activeLeaf: { ...state.activeLeaf, [meta.id]: null }
     }))
     await get().selectConversation(meta.id)
+    // New session → default tools layout (collapsed, files segment). Explicit so
+    // we never inherit another session's open Terminal tray.
+    get().setToolsCollapsed(true)
     // Creating a session inside the open Workspace View must not kick the user out.
     if (keepGroupId && meta.workingDirectory === keepGroupId) {
       set({ activeGroupId: keepGroupId })
@@ -584,9 +844,30 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     get().focusComposer()
   },
 
+  async openWorkspaceInMainPanel(workdir) {
+    const path = workdir.trim()
+    if (!path) return
+    const activeId = get().activeId
+    const msgs = activeId ? (get().messages[activeId] ?? []) : []
+    // Exit workspace view first so selectConversation doesn't get re-entered.
+    set({ activeGroupId: null })
+    if (activeId && msgs.length > 0) {
+      // Clone transcript into a fresh main-panel session (workspace store kept).
+      await get().duplicateConversation(activeId)
+    } else {
+      await get().createConversation({ workingDirectory: path })
+    }
+    // Ensure we left workspace view even if create/duplicate restored it.
+    if (get().activeGroupId) set({ activeGroupId: null })
+    get().focusComposer()
+  },
+
   async renameConversation(id, title) {
     const conversations = await window.vav.conversations.rename(id, title)
-    set({ conversations, renamingId: null })
+    set((state) => ({
+      conversations: mergeConversationList(state.conversations, conversations),
+      renamingId: null
+    }))
   },
 
   beginRename(id) {
@@ -625,12 +906,15 @@ export const useSessionStore = create<SessionState>((set, get) => ({
           const messages = { ...state.messages }
           const activeLeaf = { ...state.activeLeaf }
           const turns = { ...state.turns }
+          const toolsLayouts = { ...state.toolsLayouts }
           for (const id of removed) {
             delete messages[id]
             delete activeLeaf[id]
             delete turns[id]
+            delete toolsLayouts[id]
           }
-          return { conversations: next, messages, activeLeaf, turns }
+          saveSessionToolsMap(toolsLayouts)
+          return { conversations: next, messages, activeLeaf, turns, toolsLayouts }
         })
         if (removed.includes(get().activeId)) {
           const fallback = next[0]?.id
@@ -675,21 +959,36 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   },
 
   async setModel(id, model) {
-    const conversations = await window.vav.conversations.setModel(id, model)
-    set({ conversations })
+    // Optimistic update so the picker reflects the choice immediately (and so
+    // file-preview sessions, which are omitted from listMeta, stay in the store).
+    set((state) => ({
+      conversations: state.conversations.map((c) => (c.id === id ? { ...c, model } : c))
+    }))
+    try {
+      const list = await window.vav.conversations.setModel(id, model)
+      set((state) => ({
+        conversations: mergeConversationList(state.conversations, list)
+      }))
+    } catch (err) {
+      console.error('[setModel] failed', err)
+    }
   },
 
   async pickWorkingDirectory(id) {
     const conversations = await window.vav.conversations.pickWorkingDirectory(id)
     if (!conversations) return
-    set({ conversations })
+    set((state) => ({
+      conversations: mergeConversationList(state.conversations, conversations)
+    }))
     const next = conversations.find((c) => c.id === id)?.workingDirectory ?? null
     await useWorkspaceStore.getState().setWorkingDirectory(id, next)
   },
 
   async setWorkingDirectory(id, path) {
     const conversations = await window.vav.conversations.setWorkingDirectory(id, path)
-    set({ conversations })
+    set((state) => ({
+      conversations: mergeConversationList(state.conversations, conversations)
+    }))
     await useWorkspaceStore.getState().setWorkingDirectory(id, path)
   },
 
@@ -711,7 +1010,9 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       })
       return
     }
-    set({ conversations: result.conversations })
+    set((state) => ({
+      conversations: mergeConversationList(state.conversations, result.conversations)
+    }))
     const next =
       result.conversations.find((c) => c.id === id)?.workingDirectory ?? null
     await useWorkspaceStore.getState().setWorkingDirectory(id, next)
@@ -723,7 +1024,9 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
   async setPinned(id, pinned) {
     const conversations = await window.vav.conversations.setPinned(id, pinned)
-    set({ conversations })
+    set((state) => ({
+      conversations: mergeConversationList(state.conversations, conversations)
+    }))
   },
 
   async setArchived(id, archived) {
@@ -733,17 +1036,67 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     if (archived && !stillActive) {
       const next = conversations.find((c) => !c.archived)
       if (next) {
-        set({ conversations })
+        set((state) => ({
+          conversations: mergeConversationList(state.conversations, conversations)
+        }))
         await get().selectConversation(next.id)
         return
       }
     }
-    set({ conversations })
+    set((state) => ({
+      conversations: mergeConversationList(state.conversations, conversations)
+    }))
   },
 
   async setApprovalMode(id, mode) {
-    const conversations = await window.vav.conversations.setApprovalMode(id, mode)
-    set({ conversations })
+    set((state) => ({
+      conversations: state.conversations.map((c) =>
+        c.id === id ? { ...c, approvalMode: mode } : c
+      )
+    }))
+    try {
+      const list = await window.vav.conversations.setApprovalMode(id, mode)
+      set((state) => ({
+        conversations: mergeConversationList(state.conversations, list)
+      }))
+    } catch (err) {
+      console.error('[setApprovalMode] failed', err)
+    }
+  },
+
+  async setFocusedFile(id, path) {
+    // Viewing / focusing a file must not reorder the sidebar — patch one row only.
+    const current = get().conversations.find((c) => c.id === id)
+    if (current && (current.focusedFilePath ?? null) === path) return
+    // Optimistic local patch (no list reshuffle).
+    set((state) => ({
+      conversations: state.conversations.map((c) =>
+        c.id === id ? { ...c, focusedFilePath: path } : c
+      )
+    }))
+    try {
+      await window.vav.conversations.setFocusedFile(id, path)
+    } catch {
+      // keep local patch; main may be unavailable
+    }
+  },
+
+  async attachContextFile(id, path) {
+    const prev = get().contextFiles[id] ?? null
+    if (prev !== path) {
+      set((state) => ({
+        contextFiles: { ...state.contextFiles, [id]: path }
+      }))
+    }
+    // Always push to main so agent open-file context stays in sync.
+    await get().setFocusedFile(id, path)
+  },
+
+  async dismissContextFile(id) {
+    set((state) => ({
+      contextFiles: { ...state.contextFiles, [id]: null }
+    }))
+    await get().setFocusedFile(id, null)
   },
 
   async openDetached(id) {
@@ -945,8 +1298,26 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
   async answerTool(toolCallId, answer) {
     const { activeId } = get()
-    if (!activeId) return
-    await window.vav.agent.answer(activeId, toolCallId, answer)
+    // Main resolves by toolCallId when activeId is desynced (file preview).
+    // Prefer the conversation that is actually awaiting this card.
+    let conversationId = activeId || ''
+    if (toolCallId) {
+      for (const [id, turn] of Object.entries(get().turns)) {
+        if (turn.awaitingToolCallId === toolCallId || turn.phase === 'awaiting-user') {
+          conversationId = id
+          if (turn.awaitingToolCallId === toolCallId) break
+        }
+      }
+    }
+    const ok = await window.vav.agent.answer(conversationId, toolCallId, answer)
+    if (ok === false) {
+      console.warn('[session] answerTool: main had no pending waiter', {
+        conversationId,
+        toolCallId,
+        activeId
+      })
+    }
+    return ok !== false
   },
 
   async updateSettings(patch) {
@@ -1179,62 +1550,63 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
   toggleSidebar() {
     set((state) => {
-      const next = { ...currentLayout(state), sidebarVisible: !state.sidebarVisible }
-      saveLayout(next)
-      return next
+      const sidebarVisible = !state.sidebarVisible
+      saveGlobalLayout({ sidebarVisible })
+      return { sidebarVisible }
     })
   },
 
   toggleToolsPanel() {
     set((state) => {
+      if (!state.activeId) return {}
       if (!state.toolsCollapsed) {
-        const next = {
-          ...currentLayout(state),
+        return patchActiveTools(state, {
           toolsCollapsed: true,
           lastActiveSegment: state.panelSegment
-        }
-        saveLayout(next)
-        return next
+        })
       }
 
       let segment = state.lastActiveSegment ?? state.panelSegment
       const tabs = useWorkspaceStore.getState().workspaces[state.activeId]?.tabs ?? []
       if (segment === 'terminal' && tabs.length === 0) segment = 'files'
-      const next = {
-        ...currentLayout(state),
+      return patchActiveTools(state, {
         toolsCollapsed: false,
         panelSegment: segment,
         lastActiveSegment: segment
-      }
-      saveLayout(next)
-      return next
+      })
     })
   },
 
   setToolsCollapsed(collapsed) {
     set((state) => {
-      const next = collapsed
-        ? {
-            ...currentLayout(state),
+      if (!state.activeId) return {}
+      return collapsed
+        ? patchActiveTools(state, {
             toolsCollapsed: true,
             lastActiveSegment: state.panelSegment
-          }
-        : { ...currentLayout(state), toolsCollapsed: false }
-      saveLayout(next)
-      return next
+          })
+        : patchActiveTools(state, { toolsCollapsed: false })
     })
   },
 
   setPanelSegment(segment) {
     set((state) => {
-      const next = {
-        ...currentLayout(state),
+      if (!state.activeId) return {}
+      return patchActiveTools(state, {
         panelSegment: segment,
         lastActiveSegment: segment,
         toolsCollapsed: false
-      }
-      saveLayout(next)
-      return next
+      })
+    })
+  },
+
+  setPanelSegmentQuiet(segment) {
+    set((state) => {
+      if (!state.activeId) return {}
+      return patchActiveTools(state, {
+        panelSegment: segment,
+        lastActiveSegment: segment
+      })
     })
   },
 
@@ -1242,12 +1614,46 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     get().setPanelSegment(get().panelSegment === 'files' ? 'terminal' : 'files')
   },
 
+  focusBashTerminal() {
+    const { activeId, toolsCollapsed, panelSegment } = get()
+    if (!activeId) return
+    const ws = useWorkspaceStore.getState()
+    const tabs = (ws.workspaces[activeId]?.tabs ?? []).filter(
+      (t) => !t.agentId || t.agentId === 'vav' || t.isAgent
+    )
+    const terminalOpen = !toolsCollapsed && panelSegment === 'terminal'
+
+    // Toggle close when tray is already open on terminal with a bash session.
+    if (terminalOpen && tabs.length > 0) {
+      const host = document.querySelector(
+        '.tools-body .xterm-helper-textarea'
+      ) as HTMLTextAreaElement | null
+      if (host && document.activeElement === host) {
+        get().setToolsCollapsed(true)
+        return
+      }
+    }
+
+    get().setPanelSegment('terminal')
+    if (tabs.length === 0) {
+      void ws.newBash(activeId, 80, 24)
+    }
+    // Focus after layout paints.
+    window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => {
+        const ta = document.querySelector(
+          '.tools-body .xterm-helper-textarea'
+        ) as HTMLTextAreaElement | null
+        ta?.focus()
+      })
+    })
+  },
+
   setPanelHeight(height) {
     const clamped = Math.min(PANEL_MAX_HEIGHT, Math.max(PANEL_MIN_HEIGHT, Math.round(height)))
     set((state) => {
-      const next = { ...currentLayout(state), panelHeight: clamped }
-      saveLayout(next)
-      return next
+      if (!state.activeId) return {}
+      return patchActiveTools(state, { panelHeight: clamped })
     })
   },
 
@@ -1256,7 +1662,10 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   },
 
   focusCommentCard(refId: string) {
-    set({ commentFocusId: refId })
+    set((state) => ({
+      commentFocusId: refId,
+      commentFocusTick: state.commentFocusTick + 1
+    }))
   },
 
   setPreviewAgentForPath(path: string, conversationId: string) {
@@ -1313,19 +1722,22 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         break
 
       case 'awaiting':
+        // Keep StreamProjection phase in sync — StreamingMessage reads phase from
+        // the projection, not the session store. Without this, a second approval
+        // still shows "Outputting" and the live/awaiting chrome desyncs.
+        projection.setPhase('awaiting-user')
         projection.upsertTool(event.index, event.block)
         patchTurn(set, id, { awaitingToolCallId: event.toolCallId, phase: 'awaiting-user' })
         break
 
       case 'mirror': {
         const workspace = useWorkspaceStore.getState()
-        const hadAgent = !!workspace.workspaces[id]?.tabs.some((tab) => tab.isAgent)
         workspace.mirrorAgentTranscript(id, event.text)
-        // First terminal output for this conversation: reveal the Agent tab so
-        // a long command is not invisible behind a collapsed Files pane.
-        if (!hadAgent) {
+        // Spec 9ed447d6…: tools panel does NOT auto-expand when the agent runs a
+        // command. Output still lands in the PTY buffer; user opens tools manually.
+        // Only select the agent tab so if the panel is already open it shows the right one.
+        if (workspace.workspaces[id]?.tabs.some((tab) => tab.isAgent)) {
           workspace.selectTab(id, AGENT_TAB_ID)
-          get().setPanelSegment('terminal')
         }
         break
       }
@@ -1335,12 +1747,13 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         break
 
       case 'usage':
+        // Mid-turn usage must not reshuffle the sidebar — only tokens / cache.
         set((state) => ({
           tokenHistories: { ...state.tokenHistories, [id]: event.history },
           cacheCreatedAt: { ...state.cacheCreatedAt, [id]: event.cacheCreatedAt },
           cacheExpiresAt: { ...state.cacheExpiresAt, [id]: event.cacheExpiresAt },
           conversations: state.conversations.map((c) =>
-            c.id === id ? { ...c, tokensUsed: event.tokensUsed, updatedAt: Date.now() } : c
+            c.id === id ? { ...c, tokensUsed: event.tokensUsed } : c
           )
         }))
         break
@@ -1350,7 +1763,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         patchTurn(set, id, IDLE_TURN)
         set((state) => {
           const conversations = state.conversations.map((c) =>
-            c.id === id ? { ...c, tokensUsed: event.tokensUsed, updatedAt: Date.now() } : c
+            c.id === id ? { ...c, tokensUsed: event.tokensUsed } : c
           )
           // A turn that produced nothing is not stored on disk either; adopting
           // it as the leaf would point the tree at a node main has never seen.
@@ -1361,8 +1774,12 @@ export const useSessionStore = create<SessionState>((set, get) => ({
             conversations
           }
         })
-        // Reconcile titles and any auto-title the main process applied.
-        void window.vav.conversations.list().then((conversations) => set({ conversations }))
+        // Main bumped updatedAt on append/replace — merge so order follows real activity.
+        void window.vav.conversations.list().then((list) =>
+          useSessionStore.setState((state) => ({
+            conversations: mergeConversationList(state.conversations, list)
+          }))
+        )
         if (event.error) set({ errorBanner: event.error })
         break
       }
@@ -1439,16 +1856,6 @@ function upsert(nodes: ChatMessage[] | undefined, message: ChatMessage): ChatMes
   const index = existing.findIndex((m) => m.id === message.id)
   if (index < 0) return [...existing, message]
   return existing.map((m) => (m.id === message.id ? message : m))
-}
-
-function currentLayout(state: LayoutPrefs): LayoutPrefs {
-  return {
-    sidebarVisible: state.sidebarVisible,
-    toolsCollapsed: state.toolsCollapsed,
-    panelSegment: state.panelSegment,
-    lastActiveSegment: state.lastActiveSegment ?? state.panelSegment,
-    panelHeight: state.panelHeight
-  }
 }
 
 function patchTurn(
@@ -1537,8 +1944,11 @@ export function installSettingsBridge(): () => void {
  * so no window may treat its own copy of the list as authoritative.
  */
 export function installWindowBridge(): () => void {
-  return window.vav.conversations.onChanged((conversations) => {
-    useSessionStore.setState({ conversations })
+  return window.vav.conversations.onChanged((list) => {
+    // Preserve hydrated file-preview sessions; only reshuffle when recency changed.
+    useSessionStore.setState((state) => ({
+      conversations: mergeConversationList(state.conversations, list)
+    }))
   })
 }
 

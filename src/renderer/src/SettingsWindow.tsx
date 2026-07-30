@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Bell, FileCheck2, Folder, Info, KeyRound, Palette, Terminal } from 'lucide-react'
+import { Bell, Bot, FileCheck2, Folder, Info, KeyRound, Palette, Terminal } from 'lucide-react'
 import type { SettingsView } from '@shared/ipc'
 import type { MessageKey } from '@shared/i18n'
 import { installSettingsBridge, useSessionStore } from './state/sessionStore'
@@ -12,6 +12,7 @@ import { WorkspaceSettings } from './components/settings/WorkspaceSettings'
 import { AppearanceSettings } from './components/settings/AppearanceSettings'
 import { NotificationsSettings } from './components/settings/NotificationsSettings'
 import { CliSettings } from './components/settings/CliSettings'
+import { AgentsSettings } from './components/settings/AgentsSettings'
 import { FileAssociationsSettings } from './components/settings/FileAssociationsSettings'
 import { AboutSettings } from './components/settings/AboutSettings'
 import { getShortcuts } from './shortcuts'
@@ -21,6 +22,7 @@ const CATEGORY_KEYS: { id: SettingsView; labelKey: MessageKey; icon: React.JSX.E
   { id: 'workspace', labelKey: 'settings.nav.workspace', icon: <Folder size={13} /> },
   { id: 'appearance', labelKey: 'settings.nav.appearance', icon: <Palette size={13} /> },
   { id: 'notifications', labelKey: 'settings.nav.notifications', icon: <Bell size={13} /> },
+  { id: 'agents', labelKey: 'settings.nav.agents', icon: <Bot size={13} /> },
   { id: 'cli', labelKey: 'settings.nav.cli', icon: <Terminal size={13} /> },
   {
     id: 'file-associations',
@@ -110,6 +112,7 @@ export default function SettingsWindow(): React.JSX.Element {
           {category === 'workspace' && <WorkspaceSettings />}
           {category === 'appearance' && <AppearanceSettings />}
           {category === 'notifications' && <NotificationsSettings />}
+          {category === 'agents' && <AgentsSettings />}
           {category === 'cli' && <CliSettings />}
           {category === 'file-associations' && <FileAssociationsSettings />}
           {category === 'about' && <AboutSettings />}

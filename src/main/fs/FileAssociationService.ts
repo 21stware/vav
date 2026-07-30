@@ -47,7 +47,35 @@ export const FILE_ASSOCIATION_FORMATS: FileAssociationFormat[] = [
     uti: 'com.netscape.javascript-source',
     tier: 'p0'
   },
-  { id: 'pdf', label: 'PDF', extensions: ['.pdf'], uti: 'com.adobe.pdf', tier: 'p1' }
+  { id: 'pdf', label: 'PDF', extensions: ['.pdf'], uti: 'com.adobe.pdf', tier: 'p1' },
+  {
+    id: 'docx',
+    label: 'Word Document',
+    extensions: ['.docx'],
+    uti: 'org.openxmlformats.wordprocessingml.document',
+    tier: 'p1'
+  },
+  {
+    id: 'xlsx',
+    label: 'Excel Spreadsheet',
+    extensions: ['.xlsx'],
+    uti: 'org.openxmlformats.spreadsheetml.sheet',
+    tier: 'p1'
+  },
+  {
+    id: 'pptx',
+    label: 'PowerPoint Presentation',
+    extensions: ['.pptx'],
+    uti: 'org.openxmlformats.presentationml.presentation',
+    tier: 'p1'
+  },
+  {
+    id: 'zip',
+    label: 'ZIP Archive',
+    extensions: ['.zip'],
+    uti: 'com.pkware.zip-archive',
+    tier: 'p1'
+  }
 ]
 
 const VAV_BUNDLE_ID = 'com.vav.app'

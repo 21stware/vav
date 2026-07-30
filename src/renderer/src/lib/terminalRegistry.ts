@@ -19,34 +19,35 @@ function key(conversationId: string, tabId: string): string {
 
 /**
  * Neutral-grey shell so the terminal reads as part of the app, not a pasted-in
- * box: the surface carries no hue and the ANSI colours do all the work.
+ * box. ANSI / 256 / truecolor from CLI agents (Claude Code, etc.) paint on top
+ * of this base — keep the 16-color palette saturated enough for TUI apps.
  *
- * The background is opaque and must stay in sync with `--bg-terminal`: xterm
- * paints its viewport with this colour, so any mismatch shows up as a seam
- * around the padding of the host element.
+ * Background must stay in sync with `--bg-terminal`.
  */
 const THEME_DARK = {
   background: '#101012',
-  foreground: '#dededf',
-  cursor: '#b7aaf3',
+  foreground: '#e6e6e7',
+  cursor: '#e6e6e7',
   cursorAccent: '#101012',
-  selectionBackground: 'rgba(141, 124, 230, 0.32)',
-  black: '#2c2c30',
-  red: '#e8817c',
-  green: '#8fcaa8',
-  yellow: '#d8ac62',
-  blue: '#93b4ea',
-  magenta: '#b0a2ec',
-  cyan: '#6fc3ce',
-  white: '#dededf',
-  brightBlack: '#73737b',
-  brightRed: '#f0a09b',
-  brightGreen: '#aadcc0',
-  brightYellow: '#e8cb96',
-  brightBlue: '#b3caf2',
-  brightMagenta: '#c8bdf4',
-  brightCyan: '#96d6df',
-  brightWhite: '#f4f4f5'
+  selectionBackground: 'rgba(141, 124, 230, 0.35)',
+  selectionForeground: undefined,
+  // Standard-ish ANSI so agent TUIs don't look washed out.
+  black: '#1c1c1f',
+  red: '#ff6b6b',
+  green: '#51cf66',
+  yellow: '#fcc419',
+  blue: '#4dabf7',
+  magenta: '#da77f2',
+  cyan: '#22b8cf',
+  white: '#e6e6e7',
+  brightBlack: '#868e96',
+  brightRed: '#ff8787',
+  brightGreen: '#69db7c',
+  brightYellow: '#ffe066',
+  brightBlue: '#74c0fc',
+  brightMagenta: '#e599f7',
+  brightCyan: '#66d9e8',
+  brightWhite: '#f8f9fa'
 }
 
 /**
@@ -71,17 +72,29 @@ export function acquireTerminal(options: {
   }
 
   const container = document.createElement('div')
+  container.className = 'xterm-host'
   container.style.width = '100%'
   container.style.height = '100%'
 
   const term = new Terminal({
     fontFamily: options.fontFamily,
     fontSize: options.fontSize,
+    fontWeight: '400',
+    fontWeightBold: '700',
     cursorBlink: true,
     cursorStyle: 'block',
     disableStdin: false,
     scrollback: 10_000,
-    theme: THEME_DARK
+    convertEol: false,
+    // Full color for modern CLI agent TUIs (Claude Code, etc.).
+    allowProposedApi: true,
+    drawBoldTextInBrightColors: true,
+    // Don't dim / recolor agent truecolor output.
+    minimumContrastRatio: 1,
+    theme: THEME_DARK,
+    // Mac: option as meta for readline-style shortcuts in agents.
+    macOptionIsMeta: true,
+    macOptionClickForcesSelection: true
   })
 
   const fit = new FitAddon()

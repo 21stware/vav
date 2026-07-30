@@ -213,46 +213,65 @@ function readNotificationPermission(): NotificationPermission {
 }
 
 /**
- * Brand tray mark: `trayTemplate.png` + `nina.v@example.com` (+ optional @3x).
+ * Brand tray mark: `trayTemplate.png` + `@2x` / `@3x` (22pt logical).
  *
  * Never reuse the Dock app icon — scaling a 1024px colour asset into the menu
- * bar is what made the status item look huge and muddy. Prefer path-based
- * load so Electron/macOS pick the Retina neighbor by filename; then attach any
- * extra scale factors that `createFromPath` missed.
+ * bar is what made the status item look huge and muddy.
+ *
+ * Prefer building multi-scale from explicit files (not only createFromPath on
+ * the 1x tile) so Retina always gets the high-res representation. Template
+ * mode lets macOS tint with the menu-bar colour.
  */
 function trayIcon(): NativeImage {
   const base = resolveTrayTemplatePath()
-  if (base) {
-    const image = nativeImage.createFromPath(base)
-    if (!image.isEmpty()) {
-      const dir = dirname(base)
-      const have = new Set(
-        typeof (image as NativeImage & { getScaleFactors?: () => number[] }).getScaleFactors ===
-        'function'
-          ? (image as NativeImage & { getScaleFactors: () => number[] }).getScaleFactors()
-          : [1]
-      )
-      for (const scale of [2, 3] as const) {
-        if (have.has(scale)) continue
-        const path = join(dir, `trayTemplate@${scale}x.png`)
-        if (!existsSync(path)) continue
-        try {
-          image.addRepresentation({
-            scaleFactor: scale,
-            dataURL: `data:image/png;base64,${readFileSync(path).toString('base64')}`
-          })
-        } catch (err) {
-          console.warn(`[tray] failed to add @${scale}x representation`, err)
-        }
-      }
-      if (process.platform === 'darwin') image.setTemplateImage(true)
-      return image
+  if (!base) {
+    console.warn('[tray] missing build/trayTemplate.png — status item may be blank')
+    return nativeImage.createEmpty()
+  }
+
+  const dir = dirname(base)
+  // Prefer the densest available file as the primary buffer so a lone 1x load
+  // never becomes the only representation on a 2x/3x display.
+  const layers: { scale: number; path: string }[] = []
+  for (const scale of [1, 2, 3] as const) {
+    const file = scale === 1 ? 'trayTemplate.png' : `trayTemplate@${scale}x.png`
+    const path = join(dir, file)
+    if (existsSync(path)) layers.push({ scale, path })
+  }
+  if (layers.length === 0) {
+    console.warn('[tray] no trayTemplate assets next to', base)
+    return nativeImage.createEmpty()
+  }
+
+  // Start from 1x (or the smallest present), then attach denser scales.
+  layers.sort((a, b) => a.scale - b.scale)
+  const image = nativeImage.createFromPath(layers[0]!.path)
+  if (image.isEmpty()) {
+    console.warn('[tray] createFromPath empty', layers[0]!.path)
+    return nativeImage.createEmpty()
+  }
+
+  const have = new Set(
+    typeof (image as NativeImage & { getScaleFactors?: () => number[] }).getScaleFactors ===
+    'function'
+      ? (image as NativeImage & { getScaleFactors: () => number[] }).getScaleFactors()
+      : [layers[0]!.scale]
+  )
+  for (const layer of layers.slice(1)) {
+    if (have.has(layer.scale)) continue
+    try {
+      image.addRepresentation({
+        scaleFactor: layer.scale,
+        dataURL: `data:image/png;base64,${readFileSync(layer.path).toString('base64')}`
+      })
+      have.add(layer.scale)
+    } catch (err) {
+      console.warn(`[tray] failed to add @${layer.scale}x representation`, err)
     }
   }
 
-  const empty = nativeImage.createEmpty()
-  console.warn('[tray] missing build/trayTemplate.png — status item may be blank')
-  return empty
+  if (process.platform === 'darwin') image.setTemplateImage(true)
+  return image
 }
 
 function resolveTrayTemplatePath(): string | null {

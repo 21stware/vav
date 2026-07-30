@@ -4,25 +4,24 @@
 </picture>
 
 <br/>
+
 <!-- originai-release-badge:start -->
-<a href="https://spec.getoriginai.com/feea5b82-31bd-4418-a57f-23bc4042e8ff/74abae6dba601065d872f9617f0f03b5b91a6b50e62115fcd446c36bcf64a468" target="_blank" rel="noopener noreferrer">
-  <img src="https://spec.getoriginai.com/feea5b82-31bd-4418-a57f-23bc4042e8ff/74abae6dba601065d872f9617f0f03b5b91a6b50e62115fcd446c36bcf64a468/badge-dark.svg" alt="originai">
-</a>
+<a href="https://spec.getoriginai.com/feea5b82-31bd-4418-a57f-23bc4042e8ff/366418fecb53b0fbbe61eedc74a0ca761fa74e368cf3123d96c676995170edad" target="_blank" rel="noopener noreferrer"><img src="https://spec.getoriginai.com/feea5b82-31bd-4418-a57f-23bc4042e8ff/366418fecb53b0fbbe61eedc74a0ca761fa74e368cf3123d96c676995170edad/badge-dark.svg" alt="originai" /></a>
 <!-- originai-release-badge:end -->
 
 
 
-Local AI coding agent workstation. One window, three surfaces: chat, the file tree for the workspace this session is actually using, and a real terminal.
+Local-first **CLI agent terminal workspace**. Host Claude Code, Codex, Cursor, Grok, and other agent CLIs in multi-split PTYs with an integrated file tree — vav does **not** run its own agent loop.
 
-The agent isn’t narrating what it did — you watch it `cd`, run tests, and write files on the right. Everything stays on your machine except requests to the model endpoint you configure.
+Pick an agent binary, spawn it in a terminal pane, and work in raw shell I/O. Everything stays on your machine; each CLI agent manages its own auth.
 
 ![vav](docs/screenshot.png)
 
 ## Features
 
-- **Streaming chat** with collapsible reasoning, tool-call cards, expandable command output, and a context-usage panel
-- **Five tools**: `terminal`, `fs_read`, `fs_write`, `fs_list`, plus `ask_user_question` / `request` that actually pause for your answer
-- **Sticky shell**: every agent command runs in one long-lived shell, so `cd` and `export` persist
+- **Multi-split PTY terminal** (⌘D / ⌘T / ⌘W) — each pane is an independent bash session
+- **CLI agent host** — Claude Code, Codex, Cursor, Pi, Grok, Devin pre-configs + custom binaries (Settings → CLI Agents)
+- **Integrated file tree** with Quick Look and format-aware previews
 - **Real PTY tabs**: node-pty + xterm.js — `top` and `vim` work; the agent opens its own bash session on first command
 - **File tree**: on-demand expand, agent edits highlighted, spacebar Quick Look; tree or column view
 - **Per-session working directory**, defaulting to a temporary workspace you can point at a real project; `vav .` / `vav /path` CLI open
@@ -49,11 +48,10 @@ Custom domain: `vavapp.com` (see `site/CNAME`). Apex uses GitHub Pages `A`/`AAAA
 
 ## Install
 
-Grab a build from [Releases](https://github.com/21stware/vav/releases). Neither build is code-signed, so the OS will block the first open:
+Grab a build from [Releases](https://github.com/21stware/vav/releases).
 
-- **macOS (Apple silicon)** — after dragging into Applications, run
-  `xattr -dr com.apple.quarantine /Applications/vav.app`, or Gatekeeper will claim the app is damaged.
-- **Windows (x64)** — SmartScreen warns; choose “More info” → “Run anyway”.
+- **macOS** — Developer ID signed and notarized; open the DMG and drag to Applications.
+- **Windows** — not code-signed; SmartScreen may warn on first open (More info → Run anyway).
 
 Then in Settings → “vav command”, install the `vav` CLI (defaults to `~/.local/bin`). Run `vav -h` for usage; `vav .` opens a new session in the current directory.
 
@@ -69,8 +67,8 @@ npm run dev
 Package (native modules mean you only build for the platform you’re on):
 
 ```bash
-npm run dist        # macOS → release/vav-1.2.2-macos-arm64.dmg
-npm run dist:win    # Windows → release/vav-1.2.2-windows-x64-setup.exe
+npm run dist        # macOS → release/vav-*-macos-arm64.dmg (signed + notarized when credentials are set)
+npm run dist:win    # Windows → release/vav-*-windows-x64-setup.exe
 ```
 
 First launch asks for an API key (⌘, / Ctrl+,). File tree and terminal work before that; only agent turns need a key.

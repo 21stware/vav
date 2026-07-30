@@ -12,6 +12,8 @@ export type ToolName =
   | 'fs_read'
   | 'fs_write'
   | 'fs_list'
+  | 'doc_search'
+  | 'doc_fetch'
   | 'request'
   | 'ask_user_question'
   | 'plan'
@@ -27,6 +29,8 @@ export const TOOL_LABELS: Record<ToolName, string> = {
   fs_read: '读取文件',
   fs_write: '写入文件',
   fs_list: '列出目录',
+  doc_search: '文档检索',
+  doc_fetch: '取回文档块',
   request: '请求确认',
   ask_user_question: '提问',
   plan: '计划'
@@ -194,6 +198,216 @@ export interface ConversationMeta {
   archivedAt: number | null
   /** Tool approval policy for this conversation. */
   approvalMode: ApprovalMode
+  /**
+   * File-preview session key (inode:device or path-hash). When set, the
+   * conversation is owned by FileSessionStore and hidden from the main sidebar.
+   */
+  fileId?: string | null
+  /**
+   * When true, the agent system prompt forbids file modifications (read-only
+   * toggle on the File Preview chrome).
+   */
+  fileReadOnly?: boolean
+  /**
+   * CLI agent binary id for this session (matches {@link AgentConfig.id}).
+   * Null = plain shell for new terminal splits (release 599702fe… terminal host).
+   */
+  agentBinaryName?: string | null
+  /**
+   * File currently focused in the workspace preview for this conversation.
+   * Fed into the built-in agent system prompt and injected into CLI agent PTYs.
+   */
+  focusedFilePath?: string | null
+}
+
+/**
+ * Configured CLI agent host entry (origin release 599702fe… §2.3 / §6).
+ * vav spawns `binaryPath` as the PTY process (direct, not typed into a shell).
+ */
+export interface AgentConfig {
+  /** Stable id (e.g. "claude", "codex", "custom-1"). */
+  id: string
+  /** Display name in the agent selector. */
+  name: string
+  /** Primary executable on PATH or absolute path. */
+  binaryPath: string
+  /**
+   * Alternate command names tried when `binaryPath` is missing
+   * (e.g. cursor-agent | agent, pi | pi-agent).
+   */
+  binaryCandidates?: string[]
+  defaultArgs: string[]
+  envVars: Record<string, string>
+  enabled: boolean
+  /** Optional Keychain provider key namespace (anthropic, openai, xai, …). */
+  providerName?: string | null
+  /** Built-in catalogue entry — not removable; path/args still editable. */
+  builtin?: boolean
+  /** Shell one-liner to install the CLI when missing from PATH. */
+  installCommand?: string | null
+  /** Docs / download page. */
+  installDocsUrl?: string | null
+}
+
+/**
+ * Well-known coding-agent CLIs — always present, no manual "add agent" needed.
+ * User only needs the matching binary installed on PATH (or override the path).
+ */
+/**
+ * Built-in catalogue — defaultArgs skip interactive security / approval prompts
+ * so agents can run inside vav without stopping for tool confirmations.
+ * Flags are CLI-specific (verified against each binary’s --help / docs).
+ */
+export const DEFAULT_CLI_AGENTS: AgentConfig[] = [
+  {
+    id: 'claude',
+    name: 'Claude Code',
+    binaryPath: 'claude',
+    binaryCandidates: ['claude'],
+    // Tool approvals off; workspace trust is pre-seeded in ~/.claude.json
+    // (see claudeTrust.ts) because this flag does not skip Trust Folder.
+    defaultArgs: ['--dangerously-skip-permissions'],
+    envVars: {},
+    enabled: true,
+    providerName: 'anthropic',
+    builtin: true,
+    // Official native installer (Claude Code docs)
+    installCommand: 'curl -fsSL https://claude.ai/install.sh | bash',
+    installDocsUrl: 'https://docs.anthropic.com/en/docs/claude-code/overview'
+  },
+  {
+    id: 'codex',
+    name: 'Codex',
+    binaryPath: 'codex',
+    binaryCandidates: ['codex'],
+    // skip approvals + sandbox (alias: --yolo)
+    defaultArgs: ['--dangerously-bypass-approvals-and-sandbox'],
+    envVars: {},
+    enabled: true,
+    providerName: 'openai',
+    builtin: true,
+    // OpenAI Codex official install script
+    installCommand: 'curl -fsSL https://chatgpt.com/codex/install.sh | sh',
+    installDocsUrl: 'https://github.com/openai/codex'
+  },
+  {
+    id: 'cursor',
+    name: 'Cursor',
+    binaryPath: 'cursor-agent',
+    binaryCandidates: ['cursor-agent', 'agent', 'cursor'],
+    // --force: auto-allow tool/shell commands; --trust: skip workspace trust prompt
+    defaultArgs: ['--force', '--trust'],
+    envVars: {},
+    enabled: true,
+    providerName: null,
+    builtin: true,
+    // Cursor CLI official installer
+    installCommand: 'curl -fsSL https://cursor.com/install | bash',
+    installDocsUrl: 'https://cursor.com/docs/cli/overview'
+  },
+  {
+    id: 'grok',
+    name: 'Grok',
+    binaryPath: 'grok',
+    binaryCandidates: ['grok'],
+    // auto-approve tools; bypassPermissions for the full permission cycle
+    defaultArgs: ['--always-approve', '--permission-mode', 'bypassPermissions'],
+    envVars: {},
+    enabled: true,
+    providerName: 'xai',
+    builtin: true,
+    // xAI Grok Build official installer
+    installCommand: 'curl -fsSL https://x.ai/cli/install.sh | bash',
+    installDocsUrl: 'https://docs.x.ai/build/overview'
+  },
+  {
+    id: 'devin',
+    name: 'Devin',
+    binaryPath: 'devin',
+    binaryCandidates: ['devin'],
+    // bypass ≈ /yolo — auto-approve all tools
+    defaultArgs: ['--permission-mode', 'bypass'],
+    envVars: {},
+    enabled: true,
+    providerName: null,
+    builtin: true,
+    // Cognition Devin CLI official installer
+    installCommand: 'curl -fsSL https://cli.devin.ai/install.sh | bash',
+    installDocsUrl: 'https://docs.devin.ai/cli'
+  },
+  {
+    id: 'pi',
+    name: 'Pi',
+    binaryPath: 'pi',
+    binaryCandidates: ['pi', 'pi-agent'],
+    // trust project-local settings without the interactive approve prompt
+    defaultArgs: ['--approve'],
+    envVars: {},
+    enabled: true,
+    providerName: null,
+    builtin: true,
+    // pi.dev official installer
+    installCommand: 'curl -fsSL https://pi.dev/install.sh | sh',
+    installDocsUrl: 'https://pi.dev/'
+  }
+]
+
+/**
+ * Ensure builtin safety/skip flags are present in a user-edited args list.
+ * Does not reorder user args; only appends missing builtin tokens (and their
+ * following values when the builtin flag takes a value, e.g. `--permission-mode X`).
+ */
+export function mergeBuiltinDefaultArgs(
+  userArgs: string[] | null | undefined,
+  builtinArgs: string[]
+): string[] {
+  const user = Array.isArray(userArgs)
+    ? userArgs.filter((a): a is string => typeof a === 'string' && a.length > 0)
+    : []
+  if (user.length === 0) return [...builtinArgs]
+  if (builtinArgs.length === 0) return user
+
+  const out = [...user]
+  for (let i = 0; i < builtinArgs.length; i++) {
+    const flag = builtinArgs[i]!
+    // Value for flags like `--permission-mode bypass` (next token without leading -)
+    const next = builtinArgs[i + 1]
+    const takesValue = !!next && !next.startsWith('-')
+    if (takesValue) {
+      const idx = out.indexOf(flag)
+      if (idx < 0) {
+        out.push(flag, next)
+      } else if (out[idx + 1] !== next) {
+        // Flag present with a different/missing value — force the bypass value
+        if (out[idx + 1] && !out[idx + 1]!.startsWith('-')) out[idx + 1] = next
+        else out.splice(idx + 1, 0, next)
+      }
+      i++ // consumed value
+      continue
+    }
+    if (!out.includes(flag)) out.push(flag)
+  }
+  return out
+}
+
+/** Stable ids of the built-in catalogue (used when merging settings). */
+export const BUILTIN_AGENT_IDS = DEFAULT_CLI_AGENTS.map((a) => a.id)
+
+/**
+ * Agents shown in the session switcher.
+ * Falls back to the built-in catalogue when settings were saved with `cliAgents: []`.
+ */
+export function enabledCliAgents(cliAgents: AgentConfig[] | null | undefined): AgentConfig[] {
+  const list =
+    Array.isArray(cliAgents) && cliAgents.length > 0
+      ? cliAgents
+      : DEFAULT_CLI_AGENTS.map((a) => ({
+          ...a,
+          envVars: { ...a.envVars },
+          defaultArgs: [...a.defaultArgs],
+          binaryCandidates: a.binaryCandidates ? [...a.binaryCandidates] : undefined
+        }))
+  return list.filter((a) => a.enabled !== false)
 }
 
 export interface Conversation extends ConversationMeta {
@@ -268,6 +482,13 @@ export interface AppSettings {
   trayEnabled: boolean
   /** macOS: hide Dock icon (accessory). Requires restart. */
   hideDockIcon: boolean
+  /**
+   * Configured CLI agents for the terminal host (release 599702fe…).
+   * Defaults cover Claude Code, Codex, Cursor, Pi, Grok, Devin.
+   */
+  cliAgents: AgentConfig[]
+  /** Default agent id for new terminal splits (null = plain shell). */
+  defaultAgentId: string | null
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -299,7 +520,10 @@ export const DEFAULT_SETTINGS: AppSettings = {
   notifyOnToolApproval: true,
   notifyOnRequest: true,
   trayEnabled: true,
-  hideDockIcon: false
+  hideDockIcon: false,
+  cliAgents: DEFAULT_CLI_AGENTS.map((a) => ({ ...a, envVars: { ...a.envVars } })),
+  /** null = plain vav shell (default host mode). */
+  defaultAgentId: null
 }
 
 export const FILE_SORT_OPTIONS: { key: FileSortKey; label: string }[] = [
@@ -402,6 +626,10 @@ export interface TerminalTab {
   title: string
   /** The Agent tab is a read-only mirror; it never hosts an interactive shell. */
   isAgent: boolean
+  /** CLI agent config id spawned in this pane (null = plain shell). */
+  agentId?: string | null
+  /** Flex weight for multi-split layout (default 1). */
+  splitWeight?: number
 }
 
 // ---------------------------------------------------------------------------

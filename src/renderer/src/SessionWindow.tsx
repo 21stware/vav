@@ -15,19 +15,22 @@ import {
 import { ChangeReviewPanel } from './components/ChangeReviewPanel'
 import { useAppearance } from './lib/appearance'
 import { installDefaultContextMenu } from './lib/nativeMenu'
+import { useT } from './i18n/useT'
 
 /**
  * One conversation, in its own window.
  *
  * Same transcript, tools and composer as the main window with the sidebar and
  * its chrome taken away — this window exists to hold a single session, so it
- * has nothing to navigate between.
+ * has nothing to navigate between. Top-right Reveal in List jumps back to the
+ * main window sidebar row for this conversation.
  */
 export default function SessionWindow({
   conversationId
 }: {
   conversationId: string
 }): React.JSX.Element {
+  const t = useT()
   const ready = useSessionStore((s) => s.ready)
   const bootstrap = useSessionStore((s) => s.bootstrap)
 
@@ -37,19 +40,27 @@ export default function SessionWindow({
       if (new URLSearchParams(window.location.search).get('collapseTools') === '1') {
         useSessionStore.getState().setToolsCollapsed(true)
       }
-      // Detached windows exist to type into — land in the composer immediately.
-      useSessionStore.getState().focusComposer()
+      // Do not focus here — Composer may not be mounted yet, and a second
+      // focus after paint (below) was causing window activation flicker.
     })
   }, [bootstrap, conversationId])
 
-  // Bootstrap bumps the focus tick before <Composer> mounts; re-fire once ready
-  // so the textarea actually receives focus after the first paint.
+  // Single deferred focus once the session UI is ready (composer mounted).
   useEffect(() => {
     if (!ready) return
-    const frame = requestAnimationFrame(() => {
-      useSessionStore.getState().focusComposer()
+    let cancelled = false
+    // Wait two frames so the textarea exists; avoid extra main-process focus.
+    const outer = requestAnimationFrame(() => {
+      const inner = requestAnimationFrame(() => {
+        if (!cancelled) useSessionStore.getState().focusComposer()
+      })
+      // stash for cleanup via cancelled flag only
+      void inner
     })
-    return () => cancelAnimationFrame(frame)
+    return () => {
+      cancelled = true
+      cancelAnimationFrame(outer)
+    }
   }, [ready])
 
   useEffect(() => {
@@ -89,9 +100,25 @@ export default function SessionWindow({
 
   return (
     <div className="app-shell session-window">
-      {/* Nothing but drag region and traffic lights; the window title carries
-          the conversation name, so repeating it here would be a second header. */}
-      <header className="titlebar bare" />
+      {/* Drag region + traffic lights; native title holds the session name.
+          Reveal in List: close this companion and select the row in main. */}
+      <header className="titlebar bare session-window-titlebar">
+        <span className="spacer" />
+        <button
+          type="button"
+          className="session-reveal-in-list"
+          onClick={() => {
+            const api = window.vav?.window?.revealInList
+            if (typeof api !== 'function') {
+              console.error('[session] revealInList unavailable — rebuild preload')
+              return
+            }
+            void api(conversationId)
+          }}
+        >
+          {t('session.revealInList')}
+        </button>
+      </header>
       <SessionDetail />
     </div>
   )

@@ -5,6 +5,7 @@ import {
   type NativeMenuItem,
   type CliInstallLocation,
   type SettingsView,
+  type TokenUsageViewPayload,
   type VavApi
 } from '@shared/ipc'
 import type { AppSettings, FileSortKey, ShellKind } from '@shared/types'
@@ -56,6 +57,10 @@ const api: VavApi = {
       ipcRenderer.invoke(IPC.convCreate, options),
     rename: (id: string, title: string) => ipcRenderer.invoke(IPC.convRename, id, title),
     setModel: (id: string, model: string) => ipcRenderer.invoke(IPC.convSetModel, id, model),
+    setAgentBinaryName: (id: string, agentBinaryName: string | null) =>
+      ipcRenderer.invoke(IPC.convSetAgentBinary, id, agentBinaryName),
+    setFocusedFile: (id: string, path: string | null) =>
+      ipcRenderer.invoke(IPC.convSetFocusedFile, id, path),
     setWorkingDirectory: (id: string, path: string) =>
       ipcRenderer.invoke(IPC.convSetWorkdir, id, path),
     pickWorkingDirectory: (id: string) => ipcRenderer.invoke(IPC.convPickWorkdir, id),
@@ -89,7 +94,7 @@ const api: VavApi = {
     ) =>
       ipcRenderer.invoke(IPC.agentSend, id, text, attachments, quote ?? null, contextBlocks ?? null),
     cancel: (id: string) => ipcRenderer.invoke(IPC.agentCancel, id),
-    answer: (id: string, toolCallId: string, answer: string) =>
+    answer: (id: string, toolCallId: string, answer: string): Promise<boolean> =>
       ipcRenderer.invoke(IPC.agentAnswer, id, toolCallId, answer),
     status: (id: string) => ipcRenderer.invoke(IPC.agentStatus, id),
     regenerate: (id: string, messageId: string) =>
@@ -104,8 +109,12 @@ const api: VavApi = {
     list: (path: string, sort: FileSortKey, ascending: boolean) =>
       ipcRenderer.invoke(IPC.filesList, path, sort, ascending),
     read: (path: string) => ipcRenderer.invoke(IPC.filesRead, path),
+    readBinary: (path: string) => ipcRenderer.invoke(IPC.filesReadBinary, path),
+    writeBinary: (path: string, base64: string) =>
+      ipcRenderer.invoke(IPC.filesWriteBinary, path, base64),
     write: (path: string, content: string) => ipcRenderer.invoke(IPC.filesWrite, path, content),
     quickLook: (path: string) => ipcRenderer.invoke(IPC.filesQuickLook, path),
+    openWithDefault: (path: string) => ipcRenderer.invoke(IPC.filesOpenWithDefault, path),
     watch: (conversationId: string, root: string | null) =>
       ipcRenderer.invoke(IPC.filesWatch, conversationId, root),
     onDirty: (handler) => subscribe(IPC.filesDirty, handler),
@@ -115,8 +124,29 @@ const api: VavApi = {
     rename: (path: string, newName: string) => ipcRenderer.invoke(IPC.filesRename, path, newName),
     trash: (paths: string[]) => ipcRenderer.invoke(IPC.filesTrash, paths),
     inspect: (path: string) => ipcRenderer.invoke(IPC.filesInspect, path),
+    dbQuery: (path: string, table: string, offset?: number, limit?: number) =>
+      ipcRenderer.invoke(IPC.filesDbQuery, path, table, offset ?? 0, limit ?? 100),
     parseBlocks: (path: string, text: string) =>
       ipcRenderer.invoke(IPC.filesParseBlocks, path, text)
+  },
+
+  fileSessions: {
+    open: (path: string) => ipcRenderer.invoke(IPC.fileSessionsOpen, path),
+    create: (path: string) => ipcRenderer.invoke(IPC.fileSessionsCreate, path),
+    setActive: (fileId: string, sessionId: string) =>
+      ipcRenderer.invoke(IPC.fileSessionsSetActive, fileId, sessionId),
+    list: (fileId: string) => ipcRenderer.invoke(IPC.fileSessionsList, fileId),
+    setReadOnly: (sessionId: string, readOnly: boolean) =>
+      ipcRenderer.invoke(IPC.fileSessionsSetReadOnly, sessionId, readOnly),
+    rename: (fileId: string, sessionId: string, title: string) =>
+      ipcRenderer.invoke(IPC.fileSessionsRename, fileId, sessionId, title),
+    delete: (fileId: string, sessionIds: string[]) =>
+      ipcRenderer.invoke(IPC.fileSessionsDelete, fileId, sessionIds)
+  },
+
+  agents: {
+    resolveBinary: (candidates: string[], force?: boolean) =>
+      ipcRenderer.invoke(IPC.agentsResolveBinary, candidates, force === true)
   },
 
   pty: {
@@ -125,8 +155,8 @@ const api: VavApi = {
       cwd: string,
       cols: number,
       rows: number,
-      preferredId?: string
-    ) => ipcRenderer.invoke(IPC.ptyCreate, conversationId, cwd, cols, rows, preferredId),
+      options?: import('@shared/ipc').PtyCreateOptions | string
+    ) => ipcRenderer.invoke(IPC.ptyCreate, conversationId, cwd, cols, rows, options),
     write: (tabId: string, data: string) => ipcRenderer.invoke(IPC.ptyWrite, tabId, data),
     resize: (tabId: string, cols: number, rows: number) =>
       ipcRenderer.invoke(IPC.ptyResize, tabId, cols, rows),
@@ -145,6 +175,8 @@ const api: VavApi = {
       ipcRenderer.invoke(IPC.windowPopupMenu, items, position),
     openSession: (conversationId: string) =>
       ipcRenderer.invoke(IPC.windowOpenSession, conversationId),
+    revealInList: (conversationId: string) =>
+      ipcRenderer.invoke(IPC.windowRevealInList, conversationId),
     newDetachedSession: () => ipcRenderer.invoke(IPC.windowNewDetached),
     openFilePreview: (path, options) =>
       ipcRenderer.invoke(IPC.windowOpenFilePreview, path, options),
@@ -155,7 +187,7 @@ const api: VavApi = {
       subscribe(IPC.previewCloseAttempt, () => handler()),
     openTokenUsage: (conversationId, anchor) =>
       ipcRenderer.invoke(IPC.windowOpenTokenUsage, conversationId, anchor),
-    onTokenUsageView: (handler) => subscribe<string>(IPC.tokenUsageView, handler),
+    onTokenUsageView: (handler) => subscribe<TokenUsageViewPayload>(IPC.tokenUsageView, handler),
     relaunch: () => ipcRenderer.invoke(IPC.windowRelaunch)
   },
 
@@ -184,7 +216,8 @@ const api: VavApi = {
 
   dialog: {
     alert: (options) => ipcRenderer.invoke(IPC.dialogAlert, options),
-    confirm: (options) => ipcRenderer.invoke(IPC.dialogConfirm, options)
+    confirm: (options) => ipcRenderer.invoke(IPC.dialogConfirm, options),
+    messageBox: (options) => ipcRenderer.invoke(IPC.dialogMessageBox, options)
   },
 
   onMenuCommand: (handler) => subscribe<MenuCommand>(IPC.menuCommand, handler),

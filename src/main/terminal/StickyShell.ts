@@ -427,7 +427,21 @@ export class StickyShell {
 
       child.stdout.on('data', onData)
       child.once('exit', onExit)
-      child.stdin.write(this.frame(command, marker))
+      try {
+        const ok = child.stdin.write(this.frame(command, marker))
+        if (!ok) {
+          // Backpressure: still wait for drain or exit/timeout.
+          child.stdin.once('drain', () => {})
+        }
+      } catch (err) {
+        this.child = null
+        finish({
+          output: `无法向 shell 写入命令：${(err as Error).message}`,
+          exitCode: 127,
+          timedOut: false,
+          usedFallback: false
+        })
+      }
     })
   }
 
@@ -456,7 +470,9 @@ export class StickyShell {
           ''
         ].join('\n')
       default:
-        return `{\n${command}\n} </dev/null 2>&1\nprintf '\\n${marker}:%d>>>\\n' "$?\"\n`
+        // bash/zsh: run command, then print end marker with exit status.
+        // Must emit exactly: printf '...\n' "$?"  — never "$?\" (unclosed quote hang).
+        return `{\n${command}\n} </dev/null 2>&1\nprintf '\\n${marker}:%d>>>\\n' ` + '"$?"\n'
     }
   }
 

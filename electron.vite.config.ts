@@ -1,4 +1,5 @@
-import { resolve } from 'node:path'
+import { cpSync, existsSync, mkdirSync } from 'node:fs'
+import { join, resolve } from 'node:path'
 import { defineConfig, externalizeDepsPlugin } from 'electron-vite'
 import react from '@vitejs/plugin-react'
 
@@ -8,6 +9,31 @@ import react from '@vitejs/plugin-react'
  * `require()` Node refuses to resolve, so they are bundled in instead.
  */
 const PI_PACKAGES = ['@earendil-works/pi-ai', '@earendil-works/pi-agent-core']
+
+/**
+ * PDF.js needs cMaps + standard fonts for CJK/forms, and the worker as a
+ * same-origin static file. Vite’s `?url` import of the worker under
+ * `/@fs/.../node_modules` fails in Electron (“Failed to fetch dynamically
+ * imported module”), so we copy the worker next to the public pdfjs assets.
+ */
+function ensurePdfJsPublicAssets(): void {
+  const root = resolve('node_modules/pdfjs-dist')
+  const destRoot = resolve('src/renderer/public/pdfjs')
+  mkdirSync(destRoot, { recursive: true })
+  for (const dir of ['cmaps', 'standard_fonts'] as const) {
+    const from = join(root, dir)
+    const to = join(destRoot, dir)
+    if (!existsSync(from)) continue
+    cpSync(from, to, { recursive: true })
+  }
+  for (const worker of ['pdf.worker.min.mjs', 'pdf.worker.mjs'] as const) {
+    const from = join(root, 'build', worker)
+    if (!existsSync(from)) continue
+    cpSync(from, join(destRoot, worker))
+  }
+}
+
+ensurePdfJsPublicAssets()
 
 export default defineConfig({
   main: {

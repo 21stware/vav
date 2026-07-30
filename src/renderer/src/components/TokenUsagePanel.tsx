@@ -1,5 +1,7 @@
-import { useEffect, useMemo } from 'react'
-import type { TokenSnapshot } from '@shared/types'
+import { useMemo } from 'react'
+import type { AppLocale, TokenSnapshot } from '@shared/types'
+import type { TokenUsageViewPayload } from '@shared/ipc'
+import type { MessageKey, TParams } from '@shared/i18n'
 import { PRESET_MODELS } from '@shared/types'
 import {
   TOKEN_CHART_POINTS,
@@ -11,48 +13,34 @@ import {
   providerLabel,
   sessionCostOf
 } from '@shared/tokenUsage'
-import { useSessionStore } from '../state/sessionStore'
-import { useLocale, useT } from '../i18n/useT'
-
-/** Stable empty — `?? []` in a zustand selector re-renders forever. */
-const NO_HISTORY: TokenSnapshot[] = []
 
 function formatCount(value: number): string {
   return value.toLocaleString('en-US')
 }
 
+type TFn = (key: MessageKey, params?: TParams) => string
+
 /**
- * Context-window details body — used by the native token-usage window.
+ * Context-window details body — pure props, no sessionStore.
+ * Used by the native token-usage panel (hydrated from main).
  */
-export function TokenUsagePanel({ conversationId }: { conversationId: string }): React.JSX.Element {
-  const t = useT()
-  const locale = useLocale()
-  const conversation = useSessionStore((s) => s.conversations.find((c) => c.id === conversationId))
-  const history = useSessionStore((s) => s.tokenHistories[conversationId] ?? NO_HISTORY)
-  const cacheCreatedAt = useSessionStore((s) => s.cacheCreatedAt[conversationId] ?? null)
-  const cacheExpiresAt = useSessionStore((s) => s.cacheExpiresAt[conversationId] ?? null)
-  const isRunning = useSessionStore((s) => !!s.turns[conversationId]?.isRunning)
-  const endpoint = useSessionStore((s) => s.settings.apiEndpoint)
-  const refreshTokenUsage = useSessionStore((s) => s.refreshTokenUsage)
-
-  useEffect(() => {
-    void refreshTokenUsage(conversationId)
-  }, [conversationId, refreshTokenUsage])
-
-  useEffect(() => {
-    if (!isRunning) return
-    const timer = window.setInterval(() => void refreshTokenUsage(conversationId), 2000)
-    return () => window.clearInterval(timer)
-  }, [isRunning, conversationId, refreshTokenUsage])
-
-  const latest = history.at(-1)
+export function TokenUsagePanel({
+  payload,
+  t,
+  locale
+}: {
+  payload: TokenUsageViewPayload
+  t: TFn
+  locale: AppLocale
+}): React.JSX.Element {
+  const { history, isRunning, model, tokensUsed, tokenLimit, apiEndpoint } = payload
   const chartRows = useMemo(() => history.slice(-TOKEN_CHART_POINTS), [history])
-  const used = conversation?.tokensUsed ?? 0
-  const limit = conversation?.tokenLimit ?? 200_000
+  const latest = history.at(-1)
+  const used = tokensUsed ?? 0
+  const limit = tokenLimit ?? 200_000
   const pct = limit > 0 ? (used / limit) * 100 : 0
-  const modelId = conversation?.model ?? ''
   const modelLabel =
-    PRESET_MODELS.find((m) => m.id === modelId)?.label ?? modelDisplayName(modelId)
+    PRESET_MODELS.find((m) => m.id === model)?.label ?? modelDisplayName(model)
   const sessionCost = sessionCostOf(history)
   const turnCost = latest?.estimatedCost ?? 0
 
@@ -84,7 +72,7 @@ export function TokenUsagePanel({ conversationId }: { conversationId: string }):
           </div>
         ) : (
           <>
-            <CacheHitChart rows={chartRows} />
+            <CacheHitChart rows={chartRows} t={t} />
             <div className="token-usage-muted">{t('token.chartAxisHint')}</div>
           </>
         )}
@@ -97,11 +85,11 @@ export function TokenUsagePanel({ conversationId }: { conversationId: string }):
         </div>
         <div>
           <dt>{t('token.cacheWriteTime')}</dt>
-          <dd>{formatClock(cacheCreatedAt, locale)}</dd>
+          <dd>{formatClock(payload.cacheCreatedAt, locale)}</dd>
         </div>
         <div>
           <dt>{t('token.cacheExpireTime')}</dt>
-          <dd>{formatExpiry(cacheExpiresAt, Date.now(), locale)}</dd>
+          <dd>{formatExpiry(payload.cacheExpiresAt, payload.now, locale)}</dd>
         </div>
         <div>
           <dt>{t('token.cacheReadTokens')}</dt>
@@ -131,15 +119,14 @@ export function TokenUsagePanel({ conversationId }: { conversationId: string }):
         </div>
         <div>
           <dt>{t('token.provider')}</dt>
-          <dd>{providerLabel(modelId, endpoint)}</dd>
+          <dd>{providerLabel(model, apiEndpoint)}</dd>
         </div>
       </dl>
     </div>
   )
 }
 
-function CacheHitChart({ rows }: { rows: TokenSnapshot[] }): React.JSX.Element {
-  const t = useT()
+function CacheHitChart({ rows, t }: { rows: TokenSnapshot[]; t: TFn }): React.JSX.Element {
   const width = 300
   const height = 140
   const pad = { top: 12, right: 8, bottom: 22, left: 28 }

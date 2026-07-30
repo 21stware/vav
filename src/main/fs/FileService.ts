@@ -3,7 +3,17 @@ import { watch, type FSWatcher } from 'node:fs'
 import { readdir, rename, stat, readFile, writeFile, mkdir } from 'node:fs/promises'
 import { join, dirname, basename, extname } from 'node:path'
 import { spawn } from 'node:child_process'
-import type { FileInspectResult, FilePreviewKind } from '@shared/ipc'
+import { userInfo } from 'node:os'
+import JSZip from 'jszip'
+import type {
+  BinaryFileMeta,
+  FileInspectResult,
+  FilePreviewKind,
+  SqliteQueryResult,
+  ZipArchiveInfo,
+  ZipEntryInfo
+} from '@shared/ipc'
+import { inspectSqlite, isSqlitePath, querySqliteTable } from './SqliteService'
 import {
   DIRECTORY_ENTRY_CAP,
   isIgnoredName,
@@ -12,6 +22,12 @@ import {
   type FileSortKey
 } from '@shared/types'
 import { t } from '../i18n'
+import { isOfficeLockFile, parseStructuredDocument } from './office'
+import { OFFICE_LOCK_FILE_MESSAGE } from '@shared/officeLock'
+import type { DocumentRetrievalService } from '../retrieval/DocumentRetrievalService'
+
+/** Soft budget for base64 office loads (docx/xlsx/pptx). PDF streams instead. */
+const BINARY_PREVIEW_CAP = 200 * 1024 * 1024
 
 const WATCH_DEBOUNCE_MS = 300
 const TEXT_PREVIEW_CAP = 512 * 1024
@@ -28,6 +44,8 @@ export class FileService {
   private watchers = new Map<string, FSWatcher>()
   private pendingDirs = new Map<string, Set<string>>()
   private debounceTimers = new Map<string, NodeJS.Timeout>()
+  /** Optional: warm document RAG index after office inspect. */
+  retrieval: DocumentRetrievalService | null = null
 
   constructor(private onDirtyDirectories: (conversationId: string, dirs: string[]) => void) {}
 
@@ -87,9 +105,66 @@ export class FileService {
 
   async writeTextFile(path: string, content: string): Promise<{ ok: boolean; error?: string }> {
     try {
+      // Refuse to clobber OOXML/PDF with UTF-8 text — agents must use binary-aware
+      // tools (or a shell) for those formats.
+      const ext = extname(path).toLowerCase()
+      if (['.docx', '.xlsx', '.pptx', '.pdf'].includes(ext)) {
+        return {
+          ok: false,
+          error: `Cannot write ${ext} as UTF-8 text (would corrupt the file). Use a format-aware tool or shell for binary office documents.`
+        }
+      }
       await mkdir(dirname(path), { recursive: true })
       await writeFile(path, content, 'utf8')
       return { ok: true }
+    } catch (err) {
+      return { ok: false, error: (err as Error).message }
+    }
+  }
+
+  /** Restore or write raw file bytes (base64), used for office discard/accept. */
+  async writeBinary(path: string, base64: string): Promise<{ ok: boolean; error?: string }> {
+    try {
+      if (isOfficeLockFile(path)) {
+        return { ok: false, error: OFFICE_LOCK_FILE_MESSAGE }
+      }
+      await mkdir(dirname(path), { recursive: true })
+      await writeFile(path, Buffer.from(base64, 'base64'))
+      return { ok: true }
+    } catch (err) {
+      return { ok: false, error: (err as Error).message }
+    }
+  }
+
+  /**
+   * Raw bytes for client-side mature renderers (docx-preview / pdf.js / SheetJS).
+   */
+  async readBinary(
+    path: string
+  ): Promise<
+    { ok: true; base64: string; size: number; mime: string } | { ok: false; error: string }
+  > {
+    try {
+      if (isOfficeLockFile(path)) {
+        return { ok: false, error: OFFICE_LOCK_FILE_MESSAGE }
+      }
+      const info = await stat(path)
+      if (info.isDirectory()) return { ok: false, error: t('files.error.directory') }
+      if (info.size <= 0) return { ok: false, error: 'File is empty.' }
+      if (info.size > BINARY_PREVIEW_CAP) {
+        return {
+          ok: false,
+          error: `File too large for in-app preview (${Math.round(info.size / 1024 / 1024)} MB)`
+        }
+      }
+      const kind = previewKind(basename(path))
+      const buffer = await readFile(path)
+      return {
+        ok: true,
+        base64: buffer.toString('base64'),
+        size: buffer.length,
+        mime: mimeFor(basename(path), kind)
+      }
     } catch (err) {
       return { ok: false, error: (err as Error).message }
     }
@@ -135,11 +210,17 @@ export class FileService {
         kind = 'text'
       }
       const mime = mimeFor(name, kind)
-      const base = { path, name, size: info.size, kind, mime }
+      const base = { path, name, size: info.size, mtimeMs: info.mtimeMs, kind, mime }
       if (kind === 'text' || kind === 'csv') {
         const text = await this.readTextFile(path)
         if (text.error) return { ...base, error: text.error }
         const content = text.content
+        // CSV structured index for doc_search — defer so inspect stays snappy.
+        if (kind === 'csv') {
+          setTimeout(() => {
+            void this.retrieval?.ensureIndex(path).catch(() => {})
+          }, 0)
+        }
         return {
           ...base,
           text: content,
@@ -154,11 +235,133 @@ export class FileService {
         const buffer = await readFile(path)
         return { ...base, dataUrl: `data:${mime};base64,${buffer.toString('base64')}` }
       }
-      if (kind === 'pdf') {
-        // Renderer opens via Quick Look / system handler; metadata only here.
+      if (kind === 'sqlite') {
+        try {
+          const sqlite = inspectSqlite(path)
+          const summary = sqlite.tables
+            .map((t) => `${t.name} (${t.rowCount} rows · ${t.columns.length} cols)`)
+            .join('\n')
+          return {
+            ...base,
+            sqlite,
+            text: summary || '(no tables)',
+            lineCount: sqlite.tables.length
+          }
+        } catch (err) {
+          return { ...base, error: (err as Error).message || t('files.error.unsupported') }
+        }
+      }
+      if (kind === 'zip') {
+        // Structure-only tree. Never hard-fail to the old "unsupported" alert —
+        // on parse/size issues still open the ZIP canvas (empty/truncated).
+        try {
+          if (info.size > BINARY_PREVIEW_CAP) {
+            return {
+              ...base,
+              zip: {
+                entries: [],
+                entryCount: 0,
+                compressedSize: info.size,
+                uncompressedSize: 0,
+                ratio: 0
+              },
+              truncated: true,
+              text: '',
+              lineCount: 0
+            }
+          }
+          const zip = await inspectZipArchive(path, info.size)
+          const treeText = zip.entries
+            .map((e) => `${e.isDirectory ? 'D' : 'F'} ${e.path}`)
+            .join('\n')
+          return {
+            ...base,
+            zip,
+            text: treeText,
+            lineCount: zip.entries.length
+          }
+        } catch (err) {
+          console.error('[files] zip inspect failed', path, err)
+          // Keep kind=zip so the archive UI mounts; empty tree + truncated flag.
+          return {
+            ...base,
+            zip: {
+              entries: [],
+              entryCount: 0,
+              compressedSize: info.size,
+              uncompressedSize: 0,
+              ratio: 0
+            },
+            truncated: true,
+            text: '',
+            lineCount: 0
+          }
+        }
+      }
+      if (kind === 'pdf' || kind === 'docx' || kind === 'xlsx' || kind === 'pptx') {
+        if (isOfficeLockFile(path)) {
+          return { ...base, error: OFFICE_LOCK_FILE_MESSAGE }
+        }
+        if (info.size <= 0) return { ...base, error: 'File is empty.' }
+        // PDF opens via vav-local:// streaming in the renderer — no whole-file
+        // base64 round-trip, so size is not a hard fail. OOXML still needs
+        // readBinary (base64), so keep the cap for those.
+        if (kind !== 'pdf' && info.size > BINARY_PREVIEW_CAP) {
+          return {
+            ...base,
+            error: t('files.error.tooLarge')
+          }
+        }
+        // PDF: never block open on a full-document text index (can take seconds
+        // on 100+ page files). Preview mounts immediately; RAG indexes later.
+        if (kind === 'pdf') {
+          setTimeout(() => {
+            void this.retrieval?.ensureIndex(path).catch(() => {})
+          }, 0)
+          return base
+        }
+        // OOXML: light structured index for selection/search (best-effort).
+        if (info.size <= BINARY_PREVIEW_CAP) {
+          try {
+            const structured = await parseStructuredDocument(path, info.size)
+            setTimeout(() => {
+              void this.retrieval?.ensureIndex(path).catch(() => {})
+            }, 0)
+            return {
+              ...base,
+              structured,
+              text: structured.plainText,
+              lineCount: structured.plainText
+                ? structured.plainText.split(/\r?\n/).length
+                : 0,
+              truncated: !!structured.warnings?.length
+            }
+          } catch {
+            // Still openable by client renderer even if text index fails.
+          }
+        }
         return base
       }
-      return { ...base, error: t('files.error.unsupported') }
+      // Unsupported / binary: metadata panel (no content preview). Never use
+      // files.error.unsupported — that red alert is reserved for real I/O failures.
+      try {
+        const binaryMeta = await buildBinaryMeta(path, info)
+        return { ...base, binaryMeta }
+      } catch (metaErr) {
+        console.error('[files] binary meta failed', path, metaErr)
+        return {
+          ...base,
+          binaryMeta: {
+            uti: 'public.data',
+            permissions: '—',
+            owner: '—',
+            createdAt: null,
+            modifiedAt: Number.isFinite(info.mtimeMs) ? info.mtimeMs : null,
+            inode: '—',
+            defaultApp: null
+          }
+        }
+      }
     } catch (err) {
       return {
         path,
@@ -169,6 +372,21 @@ export class FileService {
         error: (err as Error).message
       }
     }
+  }
+
+  /** Page through a SQLite table for the DB preview canvas. */
+  dbQuery(path: string, table: string, offset?: number, limit?: number): SqliteQueryResult {
+    if (!isSqlitePath(path)) {
+      return {
+        columns: [],
+        rows: [],
+        total: 0,
+        offset: offset ?? 0,
+        limit: limit ?? 100,
+        error: 'Not a SQLite database path'
+      }
+    }
+    return querySqliteTable(path, table, offset, limit)
   }
 
   /**
@@ -184,6 +402,36 @@ export class FileService {
       return
     }
     void shell.openPath(path)
+  }
+
+  /**
+   * Open with the OS default application (not Quick Look).
+   * Returns `{ ok }` so the UI can toast — silent failures looked like a dead button.
+   */
+  async openWithDefault(path: string): Promise<{ ok: true } | { ok: false; error: string }> {
+    try {
+      if (process.platform === 'darwin') {
+        // `open` routes through Launch Services (DMG → DiskImageMounter, etc.).
+        await new Promise<void>((resolve, reject) => {
+          const child = spawn('open', [path], { stdio: ['ignore', 'ignore', 'pipe'] })
+          let stderr = ''
+          child.stderr?.on('data', (chunk: Buffer) => {
+            stderr += chunk.toString('utf8')
+          })
+          child.on('error', reject)
+          child.on('close', (code) => {
+            if (code === 0) resolve()
+            else reject(new Error(stderr.trim() || `open exited with code ${code}`))
+          })
+        })
+        return { ok: true }
+      }
+      const err = await shell.openPath(path)
+      if (err) return { ok: false, error: err }
+      return { ok: true }
+    } catch (err) {
+      return { ok: false, error: (err as Error).message || 'Could not open file' }
+    }
   }
 
   /**
@@ -405,6 +653,11 @@ function previewKind(name: string): FilePreviewKind {
     return 'image'
   }
   if (ext === '.pdf') return 'pdf'
+  if (ext === '.zip') return 'zip'
+  if (ext === '.docx') return 'docx'
+  if (ext === '.xlsx' || ext === '.xls') return 'xlsx'
+  if (ext === '.pptx') return 'pptx'
+  if (ext === '.db' || ext === '.sqlite' || ext === '.sqlite3' || ext === '.db3') return 'sqlite'
   if (['.mp3', '.wav', '.m4a', '.aac', '.ogg', '.flac', '.opus'].includes(ext)) return 'audio'
   if (['.mp4', '.mov', '.webm', '.mkv', '.m4v', '.avi'].includes(ext)) return 'video'
   if (TEXT_EXTENSIONS.has(ext) || TEXT_BASENAMES.has(base) || !ext) {
@@ -466,10 +719,226 @@ function mimeFor(name: string, kind: FilePreviewKind): string {
       return 'video/mp4'
     case 'pdf':
       return 'application/pdf'
+    case 'docx':
+      return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+    case 'xlsx':
+      return 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    case 'pptx':
+      return 'application/vnd.openxmlformats-officedocument.presentationml.presentation'
     case 'csv':
       return 'text/csv'
+    case 'sqlite':
+      return 'application/vnd.sqlite3'
+    case 'zip':
+      return 'application/zip'
+    case 'binary': {
+      if (ext === '.dmg') return 'application/x-apple-diskimage'
+      if (ext === '.apk') return 'application/vnd.android.package-archive'
+      if (ext === '.pkg') return 'application/x-newton-compatible-pkg'
+      return 'application/octet-stream'
+    }
     default:
       return 'text/plain'
+  }
+}
+
+function modeToPermissions(mode: number): string {
+  const perms = mode & 0o777
+  const rwx = (n: number): string =>
+    `${n & 4 ? 'r' : '-'}${n & 2 ? 'w' : '-'}${n & 1 ? 'x' : '-'}`
+  const owner = rwx((perms >> 6) & 7)
+  const group = rwx((perms >> 3) & 7)
+  const other = rwx(perms & 7)
+  const octal = perms.toString(8).padStart(3, '0')
+  return `-${owner}${group}${other} (${octal})`
+}
+
+async function buildBinaryMeta(
+  path: string,
+  info: {
+    mode?: number
+    uid?: number
+    gid?: number
+    ino?: number | bigint
+    birthtimeMs?: number
+    mtimeMs?: number
+    birthtime?: Date
+    mtime?: Date
+  }
+): Promise<BinaryFileMeta> {
+  const mode = typeof info.mode === 'number' ? info.mode : 0
+  const uid = typeof info.uid === 'number' ? info.uid : -1
+  let owner = uid >= 0 ? String(uid) : '—'
+  try {
+    const me = userInfo()
+    if (uid >= 0 && me.uid === uid) owner = me.username
+  } catch {
+    // keep numeric uid
+  }
+  const createdMs =
+    typeof info.birthtimeMs === 'number' && Number.isFinite(info.birthtimeMs)
+      ? info.birthtimeMs
+      : info.birthtime instanceof Date
+        ? info.birthtime.getTime()
+        : null
+  const modifiedMs =
+    typeof info.mtimeMs === 'number' && Number.isFinite(info.mtimeMs)
+      ? info.mtimeMs
+      : info.mtime instanceof Date
+        ? info.mtime.getTime()
+        : null
+  const inode =
+    info.ino === undefined || info.ino === null ? '—' : String(info.ino)
+
+  let uti = mimeHintToUti(extname(path).toLowerCase())
+  let defaultApp: string | null = null
+  if (process.platform === 'darwin') {
+    try {
+      const mdlsUti = await mdlsRaw(path, 'kMDItemContentType')
+      if (mdlsUti && mdlsUti !== '(null)') uti = mdlsUti
+    } catch {
+      // keep heuristic uti
+    }
+    try {
+      // Display name of the default handler, e.g. "DiskImageMounter".
+      defaultApp = await defaultAppDisplayName(path)
+    } catch {
+      defaultApp = null
+    }
+  }
+
+  return {
+    uti,
+    permissions: mode ? modeToPermissions(mode) : '—',
+    owner,
+    createdAt: createdMs,
+    modifiedAt: modifiedMs,
+    inode,
+    defaultApp
+  }
+}
+
+function mimeHintToUti(ext: string): string {
+  switch (ext) {
+    case '.dmg':
+      return 'com.apple.disk-image-udif'
+    case '.pkg':
+      return 'com.apple.installer-package-archive'
+    case '.app':
+      return 'com.apple.application-bundle'
+    case '.zip':
+      return 'com.pkware.zip-archive'
+    case '.apk':
+      return 'com.android.package-archive'
+    default:
+      return 'public.data'
+  }
+}
+
+function mdlsRaw(path: string, key: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const child = spawn('mdls', ['-raw', '-name', key, path], { stdio: ['ignore', 'pipe', 'ignore'] })
+    let out = ''
+    child.stdout?.on('data', (chunk: Buffer) => {
+      out += chunk.toString('utf8')
+    })
+    child.on('error', reject)
+    child.on('close', (code) => {
+      if (code === 0) resolve(out.trim())
+      else reject(new Error(`mdls exit ${code}`))
+    })
+  })
+}
+
+/**
+ * macOS: display name of the default app that would open this path
+ * (e.g. "DiskImageMounter"). Uses JXA + AppKit, capped at 1s.
+ */
+function defaultAppDisplayName(filePath: string): Promise<string | null> {
+  return new Promise((resolve) => {
+    const escaped = filePath.replace(/\\/g, '\\\\').replace(/'/g, "\\'")
+    const script = `
+      ObjC.import('AppKit');
+      var url = $.NSURL.fileURLWithPath('${escaped}');
+      var appURL = $.NSWorkspace.sharedWorkspace.URLForApplicationToOpenURL(url);
+      if (!appURL) { ''; }
+      else {
+        var p = ObjC.unwrap(appURL.path);
+        var parts = p.split('/');
+        var name = parts[parts.length - 1] || '';
+        name.replace(/\\.app$/i, '');
+      }
+    `
+    const child = spawn('osascript', ['-l', 'JavaScript', '-e', script], {
+      stdio: ['ignore', 'pipe', 'ignore']
+    })
+    let out = ''
+    let settled = false
+    const finish = (value: string | null): void => {
+      if (settled) return
+      settled = true
+      resolve(value)
+    }
+    child.stdout?.on('data', (chunk: Buffer) => {
+      out += chunk.toString('utf8')
+    })
+    child.on('error', () => finish(null))
+    child.on('close', () => finish(out.trim() || null))
+    setTimeout(() => {
+      try {
+        child.kill()
+      } catch {
+        // ignore
+      }
+      finish(out.trim() || null)
+    }, 1000)
+  })
+}
+
+/** Structure-only ZIP index for the archive tree preview (no entry contents). */
+async function inspectZipArchive(path: string, fileSize: number): Promise<ZipArchiveInfo> {
+  const buffer = await readFile(path)
+  const zip = await JSZip.loadAsync(buffer, { createFolders: true })
+  const entries: ZipEntryInfo[] = []
+  let uncompressedSize = 0
+  let compressedSize = 0
+
+  zip.forEach((relativePath, file) => {
+    if (!relativePath) return
+    // Prefer trailing-slash dirs from the archive itself.
+    const isDirectory = file.dir || relativePath.endsWith('/')
+    const name = basename(relativePath.replace(/\/+$/, '')) || relativePath
+    // JSZip exposes sizes on the internal dir entry when present.
+    const data = (file as unknown as { _data?: { uncompressedSize?: number; compressedSize?: number } })
+      ._data
+    const uncomp = isDirectory ? 0 : Number(data?.uncompressedSize ?? 0)
+    const comp = isDirectory ? 0 : Number(data?.compressedSize ?? 0)
+    uncompressedSize += uncomp
+    compressedSize += comp
+    entries.push({
+      path: isDirectory && !relativePath.endsWith('/') ? `${relativePath}/` : relativePath,
+      name: isDirectory && !name.endsWith('/') ? `${name}/` : name,
+      isDirectory,
+      compressedSize: comp,
+      uncompressedSize: uncomp,
+      modifiedAt: file.date ? file.date.getTime() : undefined
+    })
+  })
+
+  // Sort paths so tree rendering is stable (dirs + files by path).
+  entries.sort((a, b) => a.path.localeCompare(b.path))
+  // Prefer archive file size when compressed totals are incomplete.
+  if (compressedSize <= 0) compressedSize = fileSize
+  const ratio =
+    uncompressedSize > 0
+      ? Math.max(0, Math.min(100, Math.round((1 - compressedSize / uncompressedSize) * 100)))
+      : 0
+  return {
+    entries,
+    entryCount: entries.filter((e) => !e.isDirectory).length || entries.length,
+    compressedSize,
+    uncompressedSize,
+    ratio
   }
 }
 

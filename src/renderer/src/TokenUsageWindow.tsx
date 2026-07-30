@@ -1,63 +1,95 @@
-import { useEffect, useState } from 'react'
-import { useAppearance } from './lib/appearance'
-import { installDefaultContextMenu } from './lib/nativeMenu'
-import { installSettingsBridge, useSessionStore } from './state/sessionStore'
-import { useT } from './i18n/useT'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import type { AppLocale, ThemeMode } from '@shared/types'
+import type { TokenUsageViewPayload } from '@shared/ipc'
+import { t as translate, type MessageKey, type TParams } from '@shared/i18n'
 import { TokenUsagePanel } from './components/TokenUsagePanel'
+
+const BG = { dark: '#121213', light: '#eceaf1' } as const
+
+function resolveTheme(theme: ThemeMode): 'light' | 'dark' {
+  if (theme === 'light' || theme === 'dark') return theme
+  return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
+}
+
+/** Paint solid window fill before React content — matches BrowserWindow.backgroundColor. */
+function paintShell(theme: ThemeMode | 'light' | 'dark' = 'dark'): void {
+  const resolved = theme === 'light' || theme === 'dark' ? theme : resolveTheme(theme)
+  const bg = BG[resolved]
+  document.documentElement.dataset.theme = resolved
+  document.documentElement.style.background = bg
+  document.body.style.background = bg
+  const root = document.getElementById('root')
+  if (root) root.style.background = bg
+}
 
 /**
  * Native panel popup for context-window / token usage details.
- * Shell chrome lives in the main process (frameless BrowserWindow); this is
- * just the content surface.
+ *
+ * Intentionally lean: no sessionStore bootstrap, no settings bridge, no
+ * conversation list. Main hydrates via `onTokenUsageView` and reuses the
+ * BrowserWindow (hide, don't destroy) so reopening is instant.
  */
 export default function TokenUsageWindow({
-  conversationId: initialId
+  conversationId: _initialId
 }: {
   conversationId: string
 }): React.JSX.Element {
-  const t = useT()
-  const ready = useSessionStore((s) => s.ready)
-  const bootstrap = useSessionStore((s) => s.bootstrap)
-  const [conversationId, setConversationId] = useState(initialId)
+  const [payload, setPayload] = useState<TokenUsageViewPayload | null>(null)
+
+  // First paint: match native chrome so we never flash system white.
+  useEffect(() => {
+    paintShell('system')
+  }, [])
 
   useEffect(() => {
-    document.title = t('token.contextWindow')
-    void bootstrap()
-  }, [bootstrap, t])
-
-  useEffect(() => {
-    const offSettings = installSettingsBridge()
-    const offMenu = installDefaultContextMenu()
-    const offView = window.vav.window.onTokenUsageView((id) => setConversationId(id))
+    const apply = (next: TokenUsageViewPayload): void => {
+      setPayload(next)
+      paintShell(next.theme)
+      document.title = translate(next.locale, 'token.contextWindow')
+    }
+    const off = window.vav.window.onTokenUsageView(apply)
     const onKeyDown = (event: KeyboardEvent): void => {
       if (event.key === 'Escape') window.close()
     }
     window.addEventListener('keydown', onKeyDown)
     return () => {
-      offSettings()
-      offMenu()
-      offView()
+      off()
       window.removeEventListener('keydown', onKeyDown)
     }
   }, [])
 
-  useAppearance()
+  // Follow system theme flips while open when preference is `system`.
+  useEffect(() => {
+    if (!payload || payload.theme !== 'system') return
+    const media = window.matchMedia('(prefers-color-scheme: dark)')
+    const onChange = (): void => paintShell('system')
+    media.addEventListener('change', onChange)
+    return () => media.removeEventListener('change', onChange)
+  }, [payload?.theme])
 
-  if (!ready) {
+  const t = useCallback(
+    (key: MessageKey, params?: TParams) =>
+      translate((payload?.locale ?? 'zh-CN') as AppLocale, key, params),
+    [payload?.locale]
+  )
+
+  const locale = (payload?.locale ?? 'zh-CN') as AppLocale
+
+  const body = useMemo(() => {
+    if (!payload) {
+      return <div className="token-usage-popup-body muted">{t('common.loading')}</div>
+    }
     return (
-      <div className="token-usage-popup">
-        <div className="token-usage-popup-title">{t('token.contextWindow')}</div>
-        <div className="token-usage-popup-body muted">{t('common.loading')}</div>
+      <div className="token-usage-popup-body">
+        <TokenUsagePanel payload={payload} t={t} locale={locale} />
       </div>
     )
-  }
+  }, [payload, t, locale])
 
   return (
     <div className="token-usage-popup">
       <div className="token-usage-popup-title">{t('token.contextWindow')}</div>
-      <div className="token-usage-popup-body">
-        <TokenUsagePanel conversationId={conversationId} />
-      </div>
+      {body}
     </div>
   )
 }

@@ -1,7 +1,14 @@
 import { app } from 'electron'
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs'
 import { join, dirname } from 'node:path'
-import { DEFAULT_SETTINGS, type AppSettings } from '@shared/types'
+import {
+  BUILTIN_AGENT_IDS,
+  DEFAULT_CLI_AGENTS,
+  DEFAULT_SETTINGS,
+  mergeBuiltinDefaultArgs,
+  type AgentConfig,
+  type AppSettings
+} from '@shared/types'
 import { coerceShell, platformDefaults, type Platform } from '@shared/platform'
 
 const PLATFORM = process.platform as Platform
@@ -52,19 +59,36 @@ export class SettingsStore {
 
   /** One-time renames for preset ids that changed between releases. */
   private migrateLegacy(): void {
+    let dirty = false
     if (this.settings.defaultModel === 'deepseek-chat') {
       this.settings.defaultModel = 'deepseek-v4-pro'
-      this.persist()
+      dirty = true
     }
     if (this.settings.customModels.includes('deepseek-chat')) {
       this.settings.customModels = this.settings.customModels.map((id) =>
         id === 'deepseek-chat' ? 'deepseek-v4-pro' : id
       )
-      this.persist()
+      dirty = true
     }
+    // CLI agent host: always merge built-in catalogue (Claude/Codex/Cursor/Grok/Devin/Pi).
+    const beforeAgents = JSON.stringify(this.settings.cliAgents ?? [])
+    this.settings.cliAgents = mergeBuiltinAgents(
+      Array.isArray(this.settings.cliAgents) ? this.settings.cliAgents : []
+    )
+    if (JSON.stringify(this.settings.cliAgents) !== beforeAgents) dirty = true
+    if (this.settings.defaultAgentId === undefined) {
+      // null = plain vav shell (product default); CLI agents are opt-in per session.
+      this.settings.defaultAgentId = null
+      dirty = true
+    }
+    if (dirty) this.persist()
   }
 
   get(): AppSettings {
+    // Never hand the renderer an empty catalogue (legacy settings.json had []).
+    this.settings.cliAgents = mergeBuiltinAgents(
+      Array.isArray(this.settings.cliAgents) ? this.settings.cliAgents : []
+    )
     return this.settings
   }
 
@@ -87,6 +111,11 @@ export class SettingsStore {
     s.fontSize = Math.min(24, Math.max(10, s.fontSize))
     s.temperature = Math.min(2, Math.max(0, s.temperature))
     s.maxTokens = Math.min(200_000, Math.max(256, Math.round(s.maxTokens)))
+    s.cliAgents = mergeBuiltinAgents(Array.isArray(s.cliAgents) ? s.cliAgents : [])
+    if (s.defaultAgentId !== null && s.defaultAgentId !== undefined) {
+      const ids = new Set(s.cliAgents.map((a) => a.id))
+      if (!ids.has(s.defaultAgentId)) s.defaultAgentId = s.cliAgents[0]?.id ?? null
+    }
     if (!Array.isArray(s.recentWorkspaceDirectories)) s.recentWorkspaceDirectories = []
     s.recentWorkspaceDirectories = s.recentWorkspaceDirectories
       .filter((path): path is string => typeof path === 'string' && path.length > 0)
@@ -144,4 +173,111 @@ export class SettingsStore {
       console.error('[settings] persist failed', err)
     }
   }
+}
+
+function normalizeAgentConfig(raw: Partial<AgentConfig> & { id?: string }): AgentConfig {
+  const id =
+    typeof raw.id === 'string' && raw.id ? raw.id : `agent-${Math.random().toString(36).slice(2, 8)}`
+  const builtinDef = DEFAULT_CLI_AGENTS.find((a) => a.id === id)
+  const isBuiltin = BUILTIN_AGENT_IDS.includes(id) || raw.builtin === true || !!builtinDef
+  return {
+    id,
+    name: typeof raw.name === 'string' && raw.name ? raw.name : (builtinDef?.name ?? id),
+    binaryPath:
+      typeof raw.binaryPath === 'string' && raw.binaryPath
+        ? raw.binaryPath
+        : (builtinDef?.binaryPath ?? id),
+    binaryCandidates:
+      Array.isArray(raw.binaryCandidates) && raw.binaryCandidates.length > 0
+        ? raw.binaryCandidates.filter((a): a is string => typeof a === 'string')
+        : builtinDef?.binaryCandidates
+          ? [...builtinDef.binaryCandidates]
+          : undefined,
+    defaultArgs: Array.isArray(raw.defaultArgs)
+      ? mergeBuiltinDefaultArgs(
+          raw.defaultArgs.filter((a): a is string => typeof a === 'string'),
+          builtinDef?.defaultArgs ?? []
+        )
+      : builtinDef
+        ? [...builtinDef.defaultArgs]
+        : [],
+    envVars:
+      raw.envVars && typeof raw.envVars === 'object' && !Array.isArray(raw.envVars)
+        ? Object.fromEntries(
+            Object.entries(raw.envVars).filter(
+              (e): e is [string, string] => typeof e[0] === 'string' && typeof e[1] === 'string'
+            )
+          )
+        : {},
+    enabled: raw.enabled !== false,
+    providerName: raw.providerName ?? builtinDef?.providerName ?? null,
+    builtin: isBuiltin,
+    installCommand:
+      typeof raw.installCommand === 'string'
+        ? raw.installCommand
+        : (builtinDef?.installCommand ?? null),
+    installDocsUrl:
+      typeof raw.installDocsUrl === 'string'
+        ? raw.installDocsUrl
+        : (builtinDef?.installDocsUrl ?? null)
+  }
+}
+
+/**
+ * Built-ins always present (order fixed). User path/args/enabled kept.
+ * Legacy id `cursor-agent` → `cursor`. Custom agents append after.
+ */
+function mergeBuiltinAgents(existing: AgentConfig[]): AgentConfig[] {
+  const normalized = existing.map((raw) => normalizeAgentConfig(raw))
+  const byId = new Map(normalized.map((a) => [a.id, a]))
+
+  if (byId.has('cursor-agent') && !byId.has('cursor')) {
+    const old = byId.get('cursor-agent')!
+    byId.set('cursor', normalizeAgentConfig({ ...old, id: 'cursor', builtin: true }))
+    byId.delete('cursor-agent')
+  } else if (byId.has('cursor-agent')) {
+    byId.delete('cursor-agent')
+  }
+
+  const result: AgentConfig[] = []
+  for (const builtin of DEFAULT_CLI_AGENTS) {
+    const prev = byId.get(builtin.id)
+    if (prev) {
+      result.push(
+        normalizeAgentConfig({
+          ...builtin,
+          ...prev,
+          id: builtin.id,
+          binaryPath: prev.binaryPath || builtin.binaryPath,
+          binaryCandidates:
+            prev.binaryCandidates && prev.binaryCandidates.length > 0
+              ? prev.binaryCandidates
+              : builtin.binaryCandidates,
+          defaultArgs: mergeBuiltinDefaultArgs(prev.defaultArgs, builtin.defaultArgs),
+          // Always refresh catalogue install scripts / docs for builtins
+          // (e.g. npm → official curl installers).
+          installCommand: builtin.installCommand ?? prev.installCommand ?? null,
+          installDocsUrl: builtin.installDocsUrl ?? prev.installDocsUrl ?? null,
+          enabled: prev.enabled !== false,
+          name: prev.name || builtin.name,
+          builtin: true
+        })
+      )
+      byId.delete(builtin.id)
+    } else {
+      result.push(
+        normalizeAgentConfig({
+          ...builtin,
+          envVars: { ...builtin.envVars },
+          defaultArgs: [...builtin.defaultArgs],
+          binaryCandidates: builtin.binaryCandidates ? [...builtin.binaryCandidates] : undefined
+        })
+      )
+    }
+  }
+  for (const custom of byId.values()) {
+    if (BUILTIN_AGENT_IDS.includes(custom.id)) continue
+    result.push(normalizeAgentConfig({ ...custom, builtin: false }))
+  }
+  return result
 }

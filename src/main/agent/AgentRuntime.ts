@@ -34,6 +34,8 @@ import type { ConversationStore } from '../store/ConversationStore'
 import type { SettingsStore } from '../store/SettingsStore'
 import type { SecretStore } from '../store/SecretStore'
 import type { FileService } from '../fs/FileService'
+import type { DocumentRetrievalService } from '../retrieval/DocumentRetrievalService'
+import type { FileSessionStore } from '../store/FileSessionStore'
 import { StickyShell } from '../terminal/StickyShell'
 import { isApprovalApproveText, isApprovalDenyText } from '@shared/i18n'
 import { t } from '../i18n'
@@ -78,9 +80,17 @@ interface TurnState {
   /** Coalesced deltas, keyed by block index. */
   buffers: Map<number, string>
   flushTimer: NodeJS.Timeout | null
-  pending: PendingUserTool | null
+  /**
+   * Parked interactive/approval waiters, keyed by toolCallId.
+   * A single slot used to drop the second gate when two cards overlapped
+   * (or when answer arrived with a desynced id); the map keeps every
+   * sequential Approve/Deny resolvable.
+   */
+  pending: Map<string, PendingUserTool>
   /** Edit-mode approvals may rewrite tool args before execute. */
   argOverrides: Map<string, Record<string, unknown>>
+  /** User selection for this turn (doc_search related_to_selection). */
+  selectionRefs: PreviewRef[]
   error?: string
   cancelled?: boolean
 }
@@ -92,6 +102,8 @@ export interface AgentRuntimeDeps {
   files: FileService
   emit: (event: TurnEvent) => void
   changeSets?: import('./ChangeSetStore').ChangeSetStore
+  retrieval?: DocumentRetrievalService
+  fileSessions?: FileSessionStore
 }
 
 /**
@@ -124,7 +136,7 @@ export class AgentRuntime {
       isRunning: !!turn,
       phase: turn?.phase ?? 'idle',
       toolCount: turn?.toolCount ?? 0,
-      awaitingToolCallId: turn?.pending?.toolCallId ?? null,
+      awaitingToolCallId: turn ? (turn.pending.keys().next().value ?? null) : null,
       messageId: turn?.messageId ?? null,
       // Preserve slot indices — StreamProjection is sparse on contentIndex, and
       // filtering empties here would mis-align later delta/tool patches.
@@ -265,6 +277,7 @@ export class AgentRuntime {
       return
     }
 
+    const parentMessage = conversation.messages.find((m) => m.id === parentId)
     const turn: TurnState = {
       abort: new AbortController(),
       phase: 'thinking',
@@ -278,8 +291,9 @@ export class AgentRuntime {
       sentCards: new Map(),
       buffers: new Map(),
       flushTimer: null,
-      pending: null,
-      argOverrides: new Map()
+      pending: new Map(),
+      argOverrides: new Map(),
+      selectionRefs: parentMessage?.contextBlocks ?? []
     }
     this.turns.set(conversationId, turn)
     this.deps.changeSets?.beginTurn(conversationId)
@@ -289,7 +303,19 @@ export class AgentRuntime {
     try {
       await runAgentLoopContinue(
         {
-          systemPrompt: buildSystemPrompt(this.workdirOf(conversation), settings.shell),
+          systemPrompt: buildSystemPrompt(this.workdirOf(conversation), settings.shell, {
+            fileReadOnly: !!conversation.fileReadOnly,
+            // Only when the File Attachment Chip is attached (focusedFilePath).
+            // Dismissing the chip clears this — do not fall back to fileId path,
+            // or "remove context" would still inject the open file into the prompt.
+            openFilePath: conversation.focusedFilePath || null,
+            openFileKind:
+              conversation.focusedFilePath &&
+              conversation.fileId &&
+              this.deps.fileSessions
+                ? this.deps.fileSessions.kindForFileId(conversation.fileId)
+                : null
+          }),
           messages: history,
           tools: this.toolsFor(conversation, turn)
         },
@@ -323,12 +349,22 @@ export class AgentRuntime {
 
   cancel(conversationId: string): void {
     const turn = this.turns.get(conversationId)
-    if (!turn) return
-    turn.cancelled = true
-    // An interactive tool waiting on the user must be released, or the loop
-    // would stay parked on its promise forever.
-    turn.pending?.resolve({ text: '', cancelled: true })
-    turn.abort.abort()
+    if (turn) {
+      turn.cancelled = true
+      // An interactive tool waiting on the user must be released, or the loop
+      // would stay parked on its promise forever.
+      this.releaseAllPending(turn, { text: '', cancelled: true })
+      turn.abort.abort()
+      return
+    }
+    // Focus desync (file-preview agent session ≠ sidebar activeId): stop every
+    // parked/awaiting turn so Stop still works.
+    for (const t of this.turns.values()) {
+      if (t.pending.size === 0 && t.phase !== 'awaiting-user' && t.phase !== 'working') continue
+      t.cancelled = true
+      this.releaseAllPending(t, { text: '', cancelled: true })
+      t.abort.abort()
+    }
   }
 
   cancelAll(): void {
@@ -336,10 +372,52 @@ export class AgentRuntime {
   }
 
   /** Routes a card answer back into the paused turn. */
-  answer(conversationId: string, toolCallId: string, text: string): void {
-    const turn = this.turns.get(conversationId)
-    if (!turn?.pending || turn.pending.toolCallId !== toolCallId) return
-    turn.pending.resolve({ text, cancelled: false })
+  answer(conversationId: string, toolCallId: string, text: string): boolean {
+    const payload = { text, cancelled: false as const }
+    const preferred = this.turns.get(conversationId)
+    if (preferred && this.resolvePending(preferred, toolCallId, payload)) return true
+
+    // File Preview / multi-window: active conversation may differ from the
+    // session that owns the pending tool card — resolve by toolCallId.
+    for (const turn of this.turns.values()) {
+      if (this.resolvePending(turn, toolCallId, payload)) return true
+    }
+
+    // Last resort: sole parked waiter (desynced ids after focus hop / HMR).
+    const sole: PendingUserTool[] = []
+    for (const turn of this.turns.values()) {
+      for (const waiter of turn.pending.values()) sole.push(waiter)
+    }
+    if (sole.length === 1) {
+      sole[0]!.resolve(payload)
+      return true
+    }
+    console.warn(
+      '[agent] answer ignored — no pending waiter',
+      { conversationId, toolCallId, pendingTurns: this.turns.size, sole: sole.length }
+    )
+    return false
+  }
+
+  private resolvePending(
+    turn: TurnState,
+    toolCallId: string,
+    answer: { text: string; cancelled: boolean }
+  ): boolean {
+    const waiter = turn.pending.get(toolCallId)
+    if (!waiter) return false
+    waiter.resolve(answer)
+    return true
+  }
+
+  private releaseAllPending(
+    turn: TurnState,
+    answer: { text: string; cancelled: boolean }
+  ): void {
+    const waiters = [...turn.pending.values()]
+    // Clear first so a resolve that re-enters cannot re-list the same waiters.
+    turn.pending.clear()
+    for (const waiter of waiters) waiter.resolve(answer)
   }
 
   disposeConversation(conversationId: string): void {
@@ -391,11 +469,16 @@ export class AgentRuntime {
         break
 
       case 'tool_execution_start': {
-        const interactive = INTERACTIVE_TOOLS.has(event.toolName as ToolName)
+        // pi emits this *before* beforeToolCall. Do not mark non-interactive tools
+        // as executing yet — gateToolCall may park for Approve/Deny, and flipping
+        // to "executing" would tear down the approval card (or leave it stuck).
+        // Also: never clear an already-open approval (choices) if a late start
+        // event races after askUser painted the card.
+        const existing = turn.toolState.get(event.toolCallId)
+        if (existing?.choices?.length) break
         this.patchTool(conversationId, turn, event.toolCallId, {
-          status: interactive ? 'pending' : 'executing'
+          status: 'pending'
         })
-        if (!interactive) this.setPhase(conversationId, turn, 'working')
         break
       }
 
@@ -575,11 +658,37 @@ export class AgentRuntime {
   ): void {
     const state = turn.toolState.get(toolCallId) ?? { status: 'pending' as ToolCallStatus, output: '' }
     Object.assign(state, patch)
+    // Explicit undefined clears approval fields so the card leaves Approve/Deny UI.
+    if ('choices' in patch && patch.choices === undefined) delete state.choices
+    if ('multiSelect' in patch && patch.multiSelect === undefined) delete state.multiSelect
+    if ('questions' in patch && patch.questions === undefined) delete state.questions
+    if ('askTitle' in patch && patch.askTitle === undefined) delete state.askTitle
     turn.toolState.set(toolCallId, state)
 
-    const slot = turn.blocks.findIndex((b) => b.kind === 'toolCall' && b.id === toolCallId)
-    if (slot < 0) return
-    const block = { ...(turn.blocks[slot] as ToolCallBlock), ...state }
+    let slot = turn.blocks.findIndex((b) => b.kind === 'toolCall' && b.id === toolCallId)
+    if (slot < 0) {
+      // Mid-gate patches must still paint; synthesize a card rather than drop UI.
+      this.ensureToolBlock(turn, toolCallId, '')
+      slot = turn.blocks.findIndex((b) => b.kind === 'toolCall' && b.id === toolCallId)
+      if (slot < 0) return
+    }
+    const prev = turn.blocks[slot] as ToolCallBlock
+    const block: ToolCallBlock = {
+      ...prev,
+      status: state.status,
+      output: state.output ?? prev.output
+    }
+    if (!state.choices) {
+      delete block.choices
+      delete block.multiSelect
+      delete block.questions
+      delete block.askTitle
+    } else {
+      block.choices = state.choices
+      if (state.multiSelect != null) block.multiSelect = state.multiSelect
+      if (state.questions) block.questions = state.questions
+      if (state.askTitle) block.askTitle = state.askTitle
+    }
     turn.blocks[slot] = block
     this.sendCard(conversationId, turn, slot, block)
   }
@@ -608,7 +717,7 @@ export class AgentRuntime {
   private toolsFor(conversation: Conversation, turn: TurnState): AgentTool[] {
     const conversationId = conversation.id
     const workdir = this.workdirOf(conversation)
-    const tools = createTools({
+    let tools = createTools({
       workdir,
       settings: () => this.deps.settings.get(),
       files: this.deps.files,
@@ -625,8 +734,18 @@ export class AgentRuntime {
           filePath,
           originalContent,
           newContent
-        )
+        ),
+      retrieval: this.deps.retrieval,
+      selectionAnchor: () => turn.selectionRefs,
+      defaultDocPath: () => {
+        if (!conversation.fileId || !this.deps.fileSessions) return null
+        return this.deps.fileSessions.pathForFileId?.(conversation.fileId) ?? null
+      }
     })
+    // File Preview read-only: strip write tool entirely.
+    if (conversation.fileReadOnly) {
+      tools = tools.filter((tool) => tool.name !== 'fs_write')
+    }
     // Edit-mode approvals may rewrite args after the user edits the card.
     return tools.map((tool) => ({
       ...tool,
@@ -736,6 +855,11 @@ export class AgentRuntime {
   ): Promise<{ text: string; cancelled: boolean }> {
     if (turn.abort.signal.aborted) return Promise.resolve({ text: '', cancelled: true })
 
+    // Ensure a tool card exists even if streaming never claimed a slot for this
+    // id (provider id remap / race). Without a slot, patchTool used to no-op
+    // and the second Approve/Deny looked dead while the turn stayed parked.
+    this.ensureToolBlock(turn, toolCallId, summary)
+
     this.patchTool(conversationId, turn, toolCallId, {
       status: 'pending',
       choices: options.choices,
@@ -743,8 +867,17 @@ export class AgentRuntime {
       questions: options.questions,
       askTitle: options.askTitle
     })
-    const slot = turn.blocks.findIndex((b) => b.kind === 'toolCall' && b.id === toolCallId)
+    // Refresh summary on the card (title + command body for approvals).
+    let slot = turn.blocks.findIndex((b) => b.kind === 'toolCall' && b.id === toolCallId)
+    if (slot >= 0 && summary) {
+      const block = turn.blocks[slot] as ToolCallBlock
+      if (summary !== block.summary) {
+        block.summary = summary
+        this.sendCard(conversationId, turn, slot, block)
+      }
+    }
     this.setPhase(conversationId, turn, 'awaiting-user')
+    slot = turn.blocks.findIndex((b) => b.kind === 'toolCall' && b.id === toolCallId)
     if (slot >= 0) {
       const block = turn.blocks[slot] as ToolCallBlock
       this.deps.emit({
@@ -764,15 +897,68 @@ export class AgentRuntime {
     }
 
     return new Promise((resolve) => {
-      turn.pending = {
-        toolCallId,
-        resolve: (answer) => {
-          turn.pending = null
-          this.setPhase(conversationId, turn, 'working')
-          resolve(answer)
+      // Replace any prior waiter for this id (should not happen under sequential
+      // tools, but a leaked waiter would permanently stick the card).
+      const prior = turn.pending.get(toolCallId)
+      if (prior) {
+        try {
+          prior.resolve({ text: '', cancelled: true })
+        } catch {
+          // ignore
         }
       }
+      let settled = false
+      turn.pending.set(toolCallId, {
+        toolCallId,
+        resolve: (answer) => {
+          if (settled) return
+          settled = true
+          turn.pending.delete(toolCallId)
+          // Leave the approval UI immediately. Previously status stayed `pending`
+          // with choices, so Approve looked like a no-op and further clicks
+          // hit a cleared pending.
+          if (answer.cancelled) {
+            this.patchTool(conversationId, turn, toolCallId, {
+              status: 'error',
+              output: t('approval.userCancelled'),
+              choices: undefined,
+              multiSelect: undefined,
+              questions: undefined,
+              askTitle: undefined
+            })
+          } else {
+            this.patchTool(conversationId, turn, toolCallId, {
+              status: 'executing',
+              choices: undefined,
+              multiSelect: undefined,
+              questions: undefined,
+              askTitle: undefined
+            })
+          }
+          // Only leave awaiting-user when no other card is still parked.
+          if (turn.pending.size === 0) {
+            this.setPhase(conversationId, turn, 'working')
+          }
+          resolve(answer)
+        }
+      })
     })
+  }
+
+  /** Guarantee a toolCall block so approval patches always reach the renderer. */
+  private ensureToolBlock(turn: TurnState, toolCallId: string, summary: string): void {
+    const existing = turn.blocks.findIndex((b) => b.kind === 'toolCall' && b.id === toolCallId)
+    if (existing >= 0) return
+    const block: ToolCallBlock = {
+      kind: 'toolCall',
+      id: toolCallId,
+      tool: 'terminal',
+      summary: summary || toolCallId,
+      input: '{}',
+      output: '',
+      status: 'pending'
+    }
+    turn.blocks.push(block)
   }
 
   private setPhase(conversationId: string, turn: TurnState, phase: TurnPhase): void {
@@ -973,6 +1159,24 @@ function leanToolArgs(tool: ToolName, args: Record<string, unknown>): Record<str
       if (typeof args.path === 'string') lean.path = args.path
       return lean
     }
+    case 'doc_search': {
+      const lean: Record<string, unknown> = {}
+      if (typeof args.path === 'string') lean.path = args.path
+      if (typeof args.query === 'string') lean.query = args.query
+      if (args.related_to_selection !== undefined) {
+        lean.related_to_selection = args.related_to_selection
+      }
+      if (args.top_k !== undefined) lean.top_k = args.top_k
+      return lean
+    }
+    case 'doc_fetch': {
+      const lean: Record<string, unknown> = {}
+      if (typeof args.path === 'string') lean.path = args.path
+      if (args.ids !== undefined) lean.ids = args.ids
+      if (args.page !== undefined) lean.page = args.page
+      if (args.section_id !== undefined) lean.section_id = args.section_id
+      return lean
+    }
     case 'terminal': {
       const lean: Record<string, unknown> = {}
       if (typeof args.command === 'string') lean.command = args.command
@@ -982,8 +1186,12 @@ function leanToolArgs(tool: ToolName, args: Record<string, unknown>): Record<str
     case 'request':
       return typeof args.instruction === 'string' ? { instruction: args.instruction } : {}
     case 'ask_user_question': {
+      // Keep choices / multiSelect so the renderer can rebuild single- and
+      // multi-select cards from persisted input (not free-text-only).
       const lean: Record<string, unknown> = {}
       if (args.question !== undefined) lean.question = args.question
+      if (args.choices !== undefined) lean.choices = args.choices
+      if (args.multiSelect !== undefined) lean.multiSelect = args.multiSelect
       if (args.questions !== undefined) lean.questions = args.questions
       if (args.title !== undefined) lean.title = args.title
       return lean

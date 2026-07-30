@@ -299,10 +299,69 @@ html[data-resizing='true'] .banner.error {
 }
 
 /* Detached windows carry the session name in the native title bar, so their
-   header is only a drag strip clearing the traffic lights. */
+   header is only a drag strip clearing the traffic lights (+ trailing actions). */
 .titlebar.bare {
   height: 38px;
   padding: 0;
+}
+
+/* Companion session window: one continuous surface under traffic lights —
+   no floating .detail card (radius left a wedge of window wash under the bar).
+   Specificity must beat `.titlebar.bare { padding: 0 }` or the label sits flush. */
+.session-window .titlebar.bare.session-window-titlebar {
+  display: flex;
+  align-items: center;
+  height: 38px;
+  box-sizing: border-box;
+  background: var(--bg-content);
+  /* Lead clears traffic lights; modest trail so the label isn’t flush or sparse. */
+  padding: 0 16px 0 var(--chrome-lead);
+}
+
+.session-reveal-in-list {
+  -webkit-app-region: no-drag;
+  flex: 0 0 auto;
+  margin: 0;
+  padding: 0 4px;
+  border: 0;
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 38px;
+  height: 38px;
+  cursor: default;
+  white-space: nowrap;
+}
+
+.session-reveal-in-list:hover {
+  color: var(--text);
+}
+
+.session-reveal-in-list:focus {
+  outline: none;
+}
+
+.session-reveal-in-list:focus-visible {
+  color: var(--text);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+/* Drop the main-window “card” chrome so content is flush with the title bar. */
+.session-window > .detail,
+.session-window > .terminal-host-session,
+.session-window .detail,
+.session-window .terminal-host-session {
+  border-radius: 0;
+  border: 0;
+  box-shadow: none;
+}
+
+.session-window .terminal-host-chrome,
+.session-window .agent-mode-chrome {
+  border-bottom-color: var(--border);
 }
 
 .titlebar .spacer {
@@ -314,6 +373,7 @@ html[data-resizing='true'] .banner.error {
 }
 
 .body-split {
+  position: relative;
   flex: 1;
   display: flex;
   min-height: 0;
@@ -638,6 +698,71 @@ kbd {
   display: flex;
   flex-direction: column;
   background: transparent;
+}
+
+/* Narrow window: sidebar leaves the flex split and floats over the detail
+   column (see App SidebarSlot). Host is absolute over .body-split so the
+   title bar stay put for toggle / new-session. */
+.sidebar-float-host {
+  position: absolute;
+  inset: 0;
+  z-index: 30;
+  pointer-events: none;
+}
+
+.sidebar-float-scrim {
+  position: absolute;
+  inset: 0;
+  pointer-events: auto;
+  background: rgba(19, 27, 53, 0.22);
+  backdrop-filter: blur(2px);
+  -webkit-app-region: no-drag;
+  animation: fade-in var(--dur-hover) ease;
+}
+
+:root[data-theme='dark'] .sidebar-float-scrim {
+  background: rgba(0, 0, 0, 0.42);
+}
+
+.sidebar-float-panel {
+  position: absolute;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  width: min(280px, calc(100% - 40px));
+  pointer-events: auto;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--bg-content);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sheet);
+  -webkit-app-region: no-drag;
+  animation: sidebar-float-in var(--dur-sheet) var(--ease-drawer);
+  transform-origin: left center;
+}
+
+@keyframes sidebar-float-in {
+  from {
+    opacity: 0;
+    transform: translateX(-10px) scale(0.98);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sidebar-float-panel {
+    animation: fade-in var(--dur-hover) ease;
+  }
+}
+
+.sidebar.floating {
+  width: 100%;
+  min-width: 0;
+  max-width: none;
+  flex: 1 1 auto;
+  height: 100%;
+  min-height: 0;
 }
 
 .sidebar-search {
@@ -2279,6 +2404,8 @@ mark {
   border-radius: var(--radius);
   background: var(--bg-sunken);
   box-shadow: inset 0 0 0 1px var(--border);
+  /* Chrome is not selectable so OS selection highlight cannot paint the whole card. */
+  user-select: none;
   transition:
     opacity var(--dur-pop) var(--ease-out),
     transform var(--dur-pop) var(--ease-out);
@@ -2317,31 +2444,47 @@ mark {
   line-height: 18px;
 }
 
+/*
+ * Command body sits on the always-dark terminal surface (same as .detail-terminal).
+ * Do not use --text-inverse here: in dark theme that token is near-black and
+ * collapses contrast against --bg-terminal.
+ */
 .approval-args {
   margin: 0;
-  padding: 9px 10px;
+  padding: 10px 12px;
   border-radius: var(--radius-sm);
   background: var(--bg-terminal);
-  color: var(--text-inverse);
+  color: #e8e8ec;
   font-family: var(--font-code);
-  font-size: var(--code-size);
-  line-height: 1.5;
+  font-size: 12.5px;
+  line-height: 1.55;
+  letter-spacing: 0.01em;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   word-break: break-word;
   overflow-x: hidden;
   overflow-y: auto;
-  max-height: 180px;
+  max-height: 220px;
   user-select: text;
+  -webkit-user-select: text;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.06);
+}
+
+.approval-args::selection {
+  background: color-mix(in srgb, var(--accent) 50%, transparent);
+  color: #fff;
 }
 
 .approval-edit {
   font-family: var(--font-code);
-  font-size: var(--code-size);
-  line-height: 1.45;
+  font-size: 12.5px;
+  line-height: 1.5;
   resize: vertical;
   min-height: 72px;
   margin: 0;
+  user-select: text;
+  color: var(--text);
+  background: var(--bg-content);
 }
 
 .approval-actions {
@@ -2350,6 +2493,14 @@ mark {
   align-items: center;
   gap: 6px;
   padding-top: 2px;
+  /* Keep buttons clickable above any selection chrome. */
+  position: relative;
+  z-index: 1;
+}
+
+.approval-card.is-submitting {
+  opacity: 0.85;
+  pointer-events: none;
 }
 
 .model-picker.warning {
@@ -2442,6 +2593,11 @@ mark {
 
 .ask-choice.selected {
   background: color-mix(in srgb, var(--accent) 14%, var(--bg-content));
+}
+
+.ask-other-field {
+  margin-top: 6px;
+  width: 100%;
 }
 
 .ask-choice input {
@@ -2740,7 +2896,10 @@ mark {
 }
 
 /* A blank transcript is seen rarely and deliberately, so it can afford the
-   delight budget the rest of the app spends nothing on. */
+   delight budget the rest of the app spends nothing on.
+   fill-mode is backwards only: with reduce-motion the global rule collapses
+   duration to ~0ms, and `both`/`forwards` can pin the from { opacity: 0 }
+   keyframe forever — which is how the empty-conversation logo disappeared. */
 .empty-state > * {
   animation: empty-in 320ms var(--ease-out) backwards;
 }
@@ -2760,12 +2919,26 @@ mark {
     opacity: 0;
     transform: translateY(6px);
   }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* In-app reduce-motion: skip the entrance entirely so nothing stays at
+   opacity 0 after a near-zero-duration animation. */
+:root[data-reduce-motion='true'] .empty-state > * {
+  animation: none !important;
+  opacity: 1;
+  transform: none;
 }
 
 .empty-logo {
   display: inline-flex;
   margin-bottom: 10px;
   opacity: 0.95;
+  /* Never collapse if one theme image is still loading. */
+  min-height: 72px;
 }
 
 .empty-logo img {
@@ -2775,8 +2948,13 @@ mark {
   width: auto;
 }
 
+/* Light wordmark by default; dark wordmark when theme is dark. */
 .empty-logo .logo-dark {
   display: none;
+}
+
+.empty-logo .logo-light {
+  display: block;
 }
 
 :root[data-theme='dark'] .empty-logo .logo-light {
@@ -2785,6 +2963,17 @@ mark {
 
 :root[data-theme='dark'] .empty-logo .logo-dark {
   display: block;
+}
+
+/* Before useAppearance sets data-theme, honor OS dark so the logo is never
+   invisible dark-ink on a dark first paint. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) .empty-logo .logo-light {
+    display: none;
+  }
+  :root:not([data-theme='light']) .empty-logo .logo-dark {
+    display: block;
+  }
 }
 
 .empty-state .empty-title {
@@ -2846,15 +3035,27 @@ mark {
    Tools panel
    ========================================================================== */
 
-/* The dock owns the background; the tools strip and the composer inside it
+/* The dock owns the background; the composer and tools strip inside it
    draw none of their own, so they read as one region. It is a step down in
-   value from the transcript, which is the whole separation — no rule. */
+   value from the transcript, which is the whole separation — no rule.
+   Order: Composer (prompt) above Tools (Files/Terminal). */
 .dock {
   flex: 0 0 auto;
   display: flex;
   flex-direction: column;
   background: var(--bg-sunken);
   overflow: visible;
+  /* Floor inset so the tools strip isn’t flush to the window edge. */
+  padding-bottom: 8px;
+}
+
+/**
+ * CLI agent host / install gate: dock is tools only (no composer above).
+ * Mirror the vertical air a prompt card would have given — otherwise the
+ * path/New strip sits flush under the terminal and reads too tight.
+ */
+.dock.dock-tools-only {
+  padding-top: 12px;
 }
 
 .tools-panel {
@@ -2870,8 +3071,9 @@ mark {
   display: flex;
   align-items: center;
   gap: 6px;
-  height: 34px;
-  padding: 0 10px;
+  height: 32px;
+  /* Match composer horizontal inset (composer padding 10 + box pad ~0 visual). */
+  padding: 0 12px;
   flex: 0 0 auto;
   min-width: 0;
   /* Keep overflow visible so the workspace switcher popover is not clipped. */
@@ -2885,32 +3087,6 @@ mark {
   display: flex;
   align-items: center;
   gap: 5px;
-}
-
-.tools-header-lead .pick-mode-btn {
-  flex: 0 0 auto;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 26px;
-  height: 26px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--text-secondary);
-  cursor: pointer;
-  transition: background var(--dur-hover) ease, color var(--dur-hover) ease, border-color var(--dur-hover) ease;
-}
-
-.tools-header-lead .pick-mode-btn:hover {
-  color: var(--accent);
-  border-color: color-mix(in srgb, var(--accent) 40%, var(--border));
-}
-
-.tools-header-lead .pick-mode-btn.active {
-  color: var(--accent);
-  background: var(--accent-soft);
-  border-color: color-mix(in srgb, var(--accent) 40%, transparent);
 }
 
 .tools-header-lead .btn.sm.icon-only:has(svg + svg) {
@@ -2966,21 +3142,21 @@ mark {
   border-radius: 999px;
 }
 
+/* Sits between composer and tools body (when expanded). Slim hit target. */
 .panel-resizer {
   position: relative;
-  height: 8px;
-  margin-top: -4px;
+  height: 6px;
+  margin: 0;
   cursor: ns-resize;
   flex: 0 0 auto;
 }
 
-/* The grip only draws itself under the pointer; at rest the dock has no
-   top edge at all. */
+/* The grip only draws itself under the pointer. */
 .panel-resizer::after {
   content: '';
   position: absolute;
   left: 50%;
-  top: 3px;
+  top: 1px;
   width: 34px;
   height: 3px;
   transform: translateX(-50%);
@@ -2995,15 +3171,14 @@ mark {
 }
 
 /* Height is driven by the inline panelHeight, so this must not flex-grow.
-   Inset and rounded like the composer below it: the dock is one tray, and
-   the files tree and the prompt are two objects sitting in it. */
+   Horizontal inset matches the composer box above. */
 .tools-body {
   position: relative;
   z-index: 1;
   flex: 0 0 auto;
   min-height: 0;
   overflow: hidden;
-  margin: 0 10px 8px;
+  margin: 0 12px;
   border-radius: var(--radius);
   background: var(--bg-content);
   box-shadow: var(--shadow-card);
@@ -3105,6 +3280,8 @@ mark {
   flex: 1;
   overflow: auto;
   padding: 0 8px 10px;
+  /* Contain paint so long names / sizes don't shift sibling columns. */
+  min-width: 0;
 }
 
 .files-toolbar .segmented {
@@ -3128,16 +3305,7 @@ mark {
   padding: 4px 4px 4px 2px;
 }
 
-.file-column .tree-row {
-  /* Room before the glyph — column view has no disclosure chevron gutter. */
-  padding-left: 10px;
-}
 
-.file-column .column-chevron {
-  margin-left: auto;
-  color: var(--text-tertiary);
-  opacity: 0.7;
-}
 
 /* Standalone file preview window (file-preview.rpml). */
 .file-viewer-window,
@@ -3165,6 +3333,26 @@ mark {
   flex: 1;
   min-width: 0;
   min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.file-preview-shell .file-viewer-body > .file-viewer-code.continuous {
+  flex: 1 1 auto;
+  min-height: 0;
+  width: 100%;
+}
+
+/*
+ * Virtualized source: the <pre> is the only scroll container.
+ * If .file-viewer-body also scrolls, pre.scrollTop stays 0 and only the
+ * first window of lines is ever painted (content looks "cut off" with a
+ * short scrollbar over empty canvas).
+ */
+.file-viewer-body:has(> .file-viewer-code.continuous.is-virtualized) {
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
 }
 
 .file-preview-zoom {
@@ -3221,36 +3409,79 @@ mark {
 }
 
 /* Inspect-style block selection (Chrome DevTools Elements): same document,
-   overlay outline on hover/selected — never a source-editor layout swap. */
+   overlay outline on hover/selected — never a source-editor layout swap.
+   Shared tokens across MD / code / notebook / media / CSV / DOCX / PDF / PPTX / XLSX.
+   Hover + selected update instantly (no transition). Parent rings are suppressed
+   while a nested pick target is hovered (:has). */
 .file-viewer-body.selecting {
   cursor: default;
 }
 
 .preview-document.selecting .preview-select-region,
 .preview-notebook-cell.preview-select-region,
-.preview-media-frame.preview-select-region {
-  position: relative;
+.preview-media-frame.preview-select-region,
+.office-native-root.selecting .preview-select-region,
+.office-native-root.selecting .office-pick-target,
+.office-native-root.selecting .pdf-page.pdf-pick-page,
+.office-native-root.selecting .pdf-page .textLayer span {
   border-radius: 2px;
   outline: 1px solid transparent;
-  outline-offset: 1px;
-  transition:
-    background var(--dur-hover) ease,
-    outline-color var(--dur-hover) ease;
+  outline-offset: -1px;
+  transition: none;
 }
 
-.preview-document.selecting .preview-select-region:hover,
-.preview-notebook-cell.preview-select-region:hover,
-.preview-media-frame.preview-select-region:hover {
-  outline-color: color-mix(in srgb, #3b82f6 55%, transparent);
-  background: color-mix(in srgb, #3b82f6 6%, transparent);
+/* Flow targets get relative for outline; PDF textLayer spans stay absolute. */
+.preview-document.selecting .preview-select-region,
+.preview-notebook-cell.preview-select-region,
+.preview-media-frame.preview-select-region,
+.office-native-root.selecting .preview-select-region,
+.office-native-root.selecting .office-pick-target,
+.office-native-root.selecting .pdf-page.pdf-pick-page {
+  position: relative;
+}
+
+/* MD/notebook/media shrink-wrap content; office/PDF keep their natural boxes. */
+.preview-document.selecting .preview-select-region,
+.preview-notebook-cell.preview-select-region,
+.preview-media-frame.preview-select-region {
+  width: fit-content;
+  max-width: 100%;
+}
+
+/* Hover only when not selected — solid selected outline must not flip to dashed.
+   Deepest target only: parents with a hovered descendant stay quiet. */
+.preview-document.selecting
+  .preview-select-region:hover:not(.selected):not(:has(.preview-select-region:hover)),
+.preview-notebook-cell.preview-select-region:hover:not(.selected),
+.preview-media-frame.preview-select-region:hover:not(.selected),
+.office-native-root.selecting
+  .preview-select-region:hover:not(.selected):not(:has(.preview-select-region:hover)):not(
+    :has(.office-pick-target:hover)
+  ),
+.office-native-root.selecting
+  .office-pick-target:hover:not(.selected):not(:has(.office-pick-target:hover)),
+.office-native-root.selecting
+  .pdf-page.pdf-pick-page:hover:not(.selected):not(:has(.textLayer span:hover)):not(
+    :has(.textLayer span.hovered)
+  ),
+.office-native-root.selecting .pdf-page.pdf-pick-page.hovered:not(.selected),
+.office-native-root.selecting .pdf-page .textLayer span.hovered:not(.selected),
+.office-native-root.selecting .pdf-page .textLayer span:hover:not(.selected) {
+  outline: 1px dashed var(--accent);
+  outline-offset: -1px;
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
 }
 
 .preview-document.selecting .preview-select-region.selected,
 .preview-notebook-cell.preview-select-region.selected,
-.preview-media-frame.preview-select-region.selected {
-  outline-color: #3b82f6;
-  outline-width: 2px;
-  background: color-mix(in srgb, #3b82f6 12%, transparent);
+.preview-media-frame.preview-select-region.selected,
+.office-native-root.selecting .preview-select-region.selected,
+.office-native-root.selecting .office-pick-target.selected,
+.office-native-root.selecting .pdf-page.pdf-pick-page.selected,
+.office-native-root.selecting .pdf-page .textLayer span.selected {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
 }
 
 .preview-media-frame {
@@ -3347,90 +3578,84 @@ mark {
   resize: vertical;
 }
 
-.file-viewer-code.continuous {
-  display: block;
-  white-space: pre;
-}
-
-.file-viewer-code.continuous .preview-code-line {
-  display: block;
-  min-height: 1.55em;
-}
-
-.file-viewer-code.continuous.selecting .preview-code-line {
-  cursor: default;
-}
-
-/* Code canvas: position relative so overlays can be absolutely positioned. */
+/* Scroll stays on <pre>; the inner canvas is as wide as the longest line so
+   absolute overlays can extend past the viewport under horizontal scroll. */
 .file-viewer-code.continuous {
   display: block;
   white-space: pre;
   position: relative;
+  overflow: auto;
+  /* Fixed line box for virtual scroll math (must match JS linePx). */
+  --code-line-height: 1.55em;
+  line-height: var(--code-line-height);
 }
 
+.file-viewer-code.continuous.is-virtualized {
+  /* Flex child fills the body; this element alone owns vertical scroll. */
+  flex: 1 1 auto;
+  min-height: 0;
+  height: auto;
+  max-height: none;
+  overflow: auto;
+  /* paint-only: size containment breaks scrollHeight / dual-scroll layouts. */
+  contain: paint;
+}
+
+.preview-code-canvas {
+  position: relative;
+  display: block;
+  width: max-content;
+  min-width: 100%;
+}
+
+/* Shrink-wrap each line to its text so overlay width can track content,
+   not the file-wide max line. */
 .file-viewer-code.continuous .preview-code-line {
   display: block;
-  min-height: 1.55em;
+  width: max-content;
+  min-height: var(--code-line-height, 1.55em);
+  height: var(--code-line-height, 1.55em);
+  line-height: var(--code-line-height, 1.55em);
+  box-sizing: border-box;
+}
+
+.preview-code-window {
+  will-change: contents;
+}
+
+.file-viewer-code.continuous .preview-code-line > .hljs {
+  display: block;
+  width: max-content;
 }
 
 .file-viewer-code.continuous.selecting .preview-code-line {
   cursor: default;
 }
 
-/* Selection/hover overlays — absolutely positioned on top of rendered lines.
-   Width follows content so the outline stays complete under horizontal scroll. */
+/* Selection/hover overlays — width set inline from measured line content.
+   Same visual tokens as .preview-select-region (MD / notebook / media). */
 .preview-code-overlay {
   position: absolute;
   left: 0;
-  right: 0;
-  width: max-content;
-  min-width: 100%;
+  box-sizing: border-box;
   border-radius: 2px;
   outline: 1px solid transparent;
-  outline-offset: 0;
+  outline-offset: -1px;
   pointer-events: none;
   z-index: 1;
-  transition:
-    background var(--dur-hover) ease,
-    outline-color var(--dur-hover) ease;
+  transition: none;
 }
 
-.preview-code-overlay.hovered {
-  outline-color: color-mix(in srgb, #3b82f6 55%, transparent);
-  background: color-mix(in srgb, #3b82f6 6%, transparent);
+.preview-code-overlay.hovered:not(.selected) {
+  outline: 1px dashed var(--accent);
+  outline-offset: -1px;
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
 }
 
 .preview-code-overlay.selected {
-  outline: 2px solid #3b82f6;
+  outline: 2px solid var(--accent);
   outline-offset: -1px;
-  background: color-mix(in srgb, #3b82f6 12%, transparent);
-}
-
-.preview-drill-bar {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px 10px;
-  padding: 6px 12px;
-  border-bottom: 1px solid var(--border);
-  background: var(--bg-sunken);
-  flex: 0 0 auto;
-}
-
-.preview-drill-crumb {
-  border: 0;
-  padding: 2px 8px;
-  border-radius: 4px;
-  background: var(--bg-hover);
-  color: var(--text-secondary);
-  font: inherit;
-  font-size: 11px;
-  cursor: default;
-}
-
-.preview-drill-crumb:hover {
-  color: var(--text);
-  background: color-mix(in srgb, #3b82f6 14%, var(--bg-hover));
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
 }
 
 .preview-plain {
@@ -3438,6 +3663,671 @@ mark {
   font-family: var(--font-code);
   font-size: var(--code-size);
   white-space: pre-wrap;
+}
+
+/* Mature office / PDF viewers (docx-preview, pdf.js, SheetJS). */
+.file-viewer-body:has(.office-native-root) {
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+  overflow: hidden;
+}
+
+.office-native-root {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  /* Document viewers share one stage colour (paper sits on sunken desk). */
+  background: var(--bg-sunken);
+}
+
+.office-native-status {
+  flex: 0 0 auto;
+  margin: 12px 14px;
+  padding: 10px 12px;
+  border-radius: var(--radius);
+  background: var(--bg-content);
+  border: 1px solid var(--border);
+}
+
+.office-native-status.error {
+  border-color: color-mix(in srgb, var(--danger) 40%, var(--border));
+  color: var(--danger);
+}
+
+/*
+ * Shared document stage (PDF / DOCX / PPTX): same sunken desk, same paper
+ * chrome, same gutter — so switching formats does not re-teach the eye.
+ */
+.office-doc-stage {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  overflow-x: hidden;
+  padding: 20px 16px 48px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 20px;
+  background: var(--bg-sunken);
+  overscroll-behavior: contain;
+}
+
+/* Paper surface: always print-white, independent of app theme. */
+.office-doc-page {
+  background: #ffffff;
+  color: #1a1a1a;
+  border: 1px solid var(--border-strong);
+  border-radius: 2px;
+  box-shadow: none;
+  flex-shrink: 0;
+}
+
+/* —— DOCX (docx-preview) —— */
+.docx-root {
+  background: var(--bg-sunken);
+}
+
+.docx-body-host {
+  /* Same stage metrics as .pdf-pages-host */
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  overflow-x: hidden;
+  padding: 20px 16px 48px;
+  background: var(--bg-sunken);
+  overscroll-behavior: contain;
+}
+
+/* Layout box sized to the *visual* (post-scale) document height. */
+.docx-fit-frame {
+  width: 100%;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  overflow: hidden;
+  pointer-events: auto;
+  background: transparent;
+}
+
+/*
+ * docx-preview with className: 'docx-native' emits `.docx-native-wrapper`
+ * (default CSS: background gray + 30px padding). Override that stage so it
+ * matches PDF — sunken desk only, no gray strip behind the page.
+ */
+.docx-body-host .docx-native-wrapper,
+.docx-body-host .docx-wrapper {
+  background: transparent !important;
+  background-color: transparent !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  display: flex !important;
+  flex-direction: column;
+  align-items: center;
+  gap: 20px;
+  /* Scale set by fitDocxToHost; origin top-center keeps pages centered. */
+  transform-origin: top center;
+  will-change: transform;
+}
+
+.docx-body-host section.docx-native,
+.docx-body-host section.docx,
+.docx-body-host .docx {
+  /* Match .office-doc-page / PDF paper */
+  background: #ffffff !important;
+  background-color: #ffffff !important;
+  color: #1a1a1a !important;
+  box-shadow: none !important;
+  border: 1px solid var(--border-strong) !important;
+  border-radius: 2px;
+  margin: 0 auto !important;
+  max-width: none !important;
+  flex-shrink: 0;
+}
+
+/* Header/footer bands inside a page must not paint a full-width gray stage. */
+.docx-body-host section.docx-native > header,
+.docx-body-host section.docx-native > footer,
+.docx-body-host section.docx > header,
+.docx-body-host section.docx > footer {
+  background: transparent !important;
+}
+
+/* DOCX pick chrome uses shared .office-native-root.selecting tokens above. */
+.docx-root.selecting {
+  cursor: default;
+}
+
+/* —— PDF.js —— same stage + paper as DOCX —— */
+.pdf-root {
+  background: var(--bg-sunken);
+}
+
+.pdf-pages-host {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  overflow-x: hidden;
+  padding: 20px 16px 48px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 20px;
+  background: var(--bg-sunken);
+  overscroll-behavior: contain;
+}
+
+/* Layout box = visual size after CSS fit scale (transform on .pdf-page). */
+.pdf-page-frame {
+  position: relative;
+  flex: 0 0 auto;
+  overflow: hidden;
+  background: #ffffff;
+  border: 1px solid var(--border-strong);
+  border-radius: 2px;
+  box-shadow: none;
+  margin: 0 auto;
+  line-height: 0;
+}
+
+.pdf-page {
+  position: relative;
+  /* Painted size (pdf.js). Fit-to-pane uses transform, not re-render. */
+  flex: 0 0 auto;
+  width: auto;
+  max-width: none;
+  background: #ffffff;
+  margin: 0;
+  line-height: 0;
+  overflow: hidden;
+  transform-origin: top left;
+  will-change: transform;
+  /* pdf.js TextLayer scales glyph boxes with these (see pdf_viewer.css). */
+  --scale-factor: 1;
+  --user-unit: 1;
+  --total-scale-factor: calc(var(--scale-factor) * var(--user-unit));
+  --scale-round-x: 1px;
+  --scale-round-y: 1px;
+}
+
+/* Page-level pick chrome uses shared .pdf-pick-page tokens (see above). */
+
+/* Canvas defines page size — do NOT position:absolute or pages collapse. */
+.pdf-page-canvas {
+  display: block;
+  position: relative;
+  z-index: 1;
+  margin: 0;
+  padding: 0;
+  vertical-align: top;
+  /* Prevent any parent rule from scaling the painted page down. */
+  max-width: none;
+  max-height: none;
+  flex-shrink: 0;
+}
+
+/*
+ * TextLayer hit-boxes (aligned with pdfjs-dist web/pdf_viewer.css).
+ * Spans store unscaled --font-height; CSS multiplies by --total-scale-factor.
+ * Without this, pick highlights shrink toward the page origin.
+ */
+.pdf-page .textLayer {
+  color-scheme: only light;
+  position: absolute;
+  text-align: initial;
+  inset: 0;
+  z-index: 2;
+  overflow: clip;
+  opacity: 1;
+  line-height: 1;
+  letter-spacing: normal;
+  word-spacing: normal;
+  text-size-adjust: none;
+  forced-color-adjust: none;
+  transform-origin: 0 0;
+  caret-color: CanvasText;
+  pointer-events: auto;
+  --min-font-size: 1;
+  --text-scale-factor: calc(var(--total-scale-factor) * var(--min-font-size));
+  --min-font-size-inv: calc(1 / var(--min-font-size));
+}
+
+.pdf-page .textLayer > :not(.markedContent),
+.pdf-page .textLayer .markedContent span:not(.markedContent) {
+  z-index: 1;
+  --font-height: 0;
+  font-size: calc(var(--text-scale-factor) * var(--font-height));
+  --scale-x: 1;
+  --rotate: 0deg;
+  transform: rotate(var(--rotate)) scaleX(var(--scale-x)) scale(var(--min-font-size-inv));
+}
+
+.pdf-page .textLayer .markedContent {
+  display: contents;
+}
+
+.pdf-page .textLayer span,
+.pdf-page .textLayer br {
+  color: transparent;
+  position: absolute;
+  white-space: pre;
+  cursor: text;
+  transform-origin: 0% 0%;
+  user-select: text;
+}
+
+/* PDF text pick chrome uses shared .office-native-root.selecting tokens above. */
+.pdf-root.selecting .pdf-page .textLayer span {
+  cursor: default;
+  user-select: none;
+}
+
+.pdf-page .textLayer .endOfContent {
+  display: block;
+  position: absolute;
+  inset: 100% 0 0;
+  z-index: -1;
+  cursor: default;
+  user-select: none;
+}
+
+/* —— PPTX slides —— same stage language as PDF/DOCX —— */
+.pptx-stage {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 20px 16px 48px;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  background: var(--bg-sunken);
+  overscroll-behavior: contain;
+}
+
+.pptx-slide {
+  width: min(100%, 960px);
+  aspect-ratio: 16 / 9;
+  background: #ffffff;
+  color: #1a1a1a;
+  border-radius: 2px;
+  border: 1px solid var(--border-strong);
+  box-shadow: none;
+  padding: 8% 10%;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow: auto;
+}
+
+.pptx-para {
+  margin: 0;
+  font-size: 18px;
+  line-height: 1.45;
+}
+
+.pptx-para.is-title {
+  font-size: 28px;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+}
+
+/* PPTX / XLSX pick chrome uses shared .office-native-root.selecting tokens above. */
+.xlsx-root {
+  background: var(--bg-sunken);
+}
+
+/* Legacy structured-doc styles (text index fallback) kept below. */
+.file-viewer-body:has(.structured-doc) {
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+  overflow: hidden;
+}
+
+.structured-doc {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-sunken);
+}
+
+.structured-doc-warning {
+  flex: 0 0 auto;
+  margin: 8px 12px 0;
+  padding: 6px 10px;
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--warning) 12%, transparent);
+  color: var(--warning);
+}
+
+.structured-doc-empty {
+  margin: auto;
+  padding: 24px;
+}
+
+/* Horizontal section switcher (pages / slides / sheets). */
+.structured-doc-nav {
+  flex: 0 0 auto;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-content);
+}
+
+.structured-doc-nav-scroll {
+  display: flex;
+  gap: 4px;
+  padding: 8px 10px;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+
+.structured-doc-nav-item {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  padding: 5px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 11px;
+  cursor: default;
+  max-width: 180px;
+}
+
+.structured-doc-nav-item:hover {
+  color: var(--text);
+  background: var(--bg-hover);
+}
+
+.structured-doc-nav-item.active {
+  color: var(--accent-text);
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+  background: var(--accent-soft);
+  font-weight: 600;
+}
+
+.structured-doc-nav-item.has-selection:not(.active) {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 50%, transparent);
+}
+
+.structured-doc-nav-index {
+  opacity: 0.65;
+  font-variant-numeric: tabular-nums;
+}
+
+.structured-doc-nav-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.structured-doc-canvas {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 16px 18px 32px;
+}
+
+.structured-section {
+  margin: 0 auto;
+  max-width: 820px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-raised);
+  overflow: hidden;
+  box-shadow: var(--shadow-card);
+}
+
+.structured-section.is-paper {
+  max-width: 720px;
+  min-height: 280px;
+}
+
+.structured-section.kind-sheet {
+  max-width: none;
+  width: 100%;
+}
+
+.structured-section-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--bg-sunken) 70%, transparent);
+  cursor: default;
+}
+
+.structured-section-title {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+}
+
+.structured-section-meta {
+  margin-left: auto;
+}
+
+.structured-section-body {
+  padding: 18px 22px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.structured-block {
+  margin: 0;
+  padding: 5px 8px;
+  border-radius: 4px;
+  font-size: 14px;
+  line-height: 1.65;
+  color: var(--text);
+  cursor: default;
+  width: fit-content;
+  max-width: 100%;
+}
+
+.structured-block.kind-heading {
+  font-weight: 650;
+  letter-spacing: -0.02em;
+  line-height: 1.3;
+}
+
+.structured-block.kind-heading.level-1 {
+  font-size: 22px;
+  margin-top: 6px;
+}
+.structured-block.kind-heading.level-2 {
+  font-size: 18px;
+}
+.structured-block.kind-heading.level-3 {
+  font-size: 15px;
+}
+
+.structured-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 4px;
+  border-radius: 4px;
+  font-size: 12px;
+}
+
+.structured-row-cell {
+  display: inline-block;
+  padding: 3px 8px;
+  border-radius: 3px;
+  background: var(--bg-sunken);
+  font-family: var(--font-code);
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.structured-table {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+  max-width: 100%;
+}
+
+.structured-table-label {
+  margin-bottom: 2px;
+}
+
+.structured-table-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+/* DOCX tables — real grid, not chips (thesis forms / 开题报告). */
+.structured-docx-table-wrap {
+  width: 100%;
+  max-width: 100%;
+  overflow: auto;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  margin: 4px 0 8px;
+}
+
+.structured-docx-table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.structured-docx-table td {
+  border: 1px solid var(--border);
+  padding: 10px 12px;
+  vertical-align: top;
+  word-break: break-word;
+  white-space: pre-wrap;
+  min-width: 4em;
+}
+
+.structured-docx-table tr.selected td {
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+
+/* Cover-page style paragraphs: full width so underlines read as form fields. */
+.structured-section.kind-body .structured-block.kind-paragraph {
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+.structured-sheet-panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.structured-sheet-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.structured-sheet-wrap {
+  overflow: auto;
+  max-height: min(68vh, 640px);
+  background: var(--bg-content);
+}
+
+.structured-sheet {
+  border-collapse: collapse;
+  width: max-content;
+  min-width: 100%;
+  font-size: 12px;
+  font-family: var(--font-code);
+}
+
+.structured-sheet th,
+.structured-sheet td {
+  border: 1px solid var(--border);
+  padding: 5px 9px;
+  text-align: left;
+  vertical-align: top;
+  min-width: 72px;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.structured-sheet-colhead {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--bg-sunken);
+  color: var(--text-tertiary);
+  font-weight: 600;
+  text-align: center;
+}
+
+.structured-sheet-gutter {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  background: var(--bg-sunken);
+  color: var(--text-tertiary);
+  font-weight: 500;
+  text-align: right;
+  min-width: 2.6em;
+}
+
+.structured-sheet thead .structured-sheet-gutter {
+  z-index: 3;
+}
+
+.structured-sheet tr.selected td,
+.structured-sheet tr.selected th {
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+
+.structured-sheet td.is-empty {
+  color: var(--text-tertiary);
+}
+
+/* Pick chrome — same tokens as MD / code (was missing for structured-doc). */
+.structured-doc.selecting .preview-select-region {
+  position: relative;
+  border-radius: 2px;
+  outline: 1px solid transparent;
+  outline-offset: -1px;
+  transition: none;
+  cursor: default;
+}
+
+.structured-doc.selecting
+  .preview-select-region:hover:not(.selected):not(:has(.preview-select-region:hover)) {
+  outline: 1px dashed var(--accent);
+  outline-offset: -1px;
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+}
+
+.structured-doc.selecting .preview-select-region.selected {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
 }
 
 .file-preview-statusbar {
@@ -3463,13 +4353,27 @@ mark {
   position: relative;
   display: flex;
   flex-direction: column;
-  min-width: 320px;
+  min-width: 280px;
   max-width: 720px;
   border-left: 1px solid var(--border);
   background: var(--bg-content);
   flex: 0 0 auto;
   min-height: 0;
+  /* Keep overflow visible so the session-history popover under the bar
+     is not clipped. Scroll containment lives on the transcript children. */
+  overflow: visible;
   animation: preview-agent-in 250ms ease-out;
+}
+
+.preview-agent-panel > .preview-edit-session,
+.preview-agent-panel > .empty-state {
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+  /* Stay under the session-history popover (sibling bar above). */
+  position: relative;
+  z-index: 0;
 }
 
 /* Agent drawer: transcript + composer only (no Workspace / tools). */
@@ -3492,17 +4396,35 @@ mark {
   overflow: hidden;
 }
 
+/* Bottom dock (composer + tools) caps at half the agent drawer. Tools must
+   shrink inside that budget so empty-state centers in the *visible* body —
+   a fixed-height body taller than the dock was clipping its midpoint. */
 .preview-edit-dock {
-  flex: 0 0 auto;
+  flex: 0 1 auto;
   display: flex;
   flex-direction: column;
   max-height: 50%;
+  min-height: 0;
+  overflow: hidden;
+  /* Inherit .dock floor inset; keep it when the drawer is short. */
+  padding-bottom: 8px;
 }
 
 .preview-edit-dock .tools-panel {
-  flex: 0 1 auto;
+  flex: 1 1 auto;
   min-height: 0;
   overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.preview-edit-dock .tools-body {
+  /* Allow flex-shrink below the preferred panelHeight (min-height:auto would block it). */
+  min-height: 0;
+}
+
+.preview-edit-dock .tools-body[data-collapsed='true'] {
+  flex: 0 0 auto;
 }
 
 .preview-edit-dock .composer {
@@ -3546,17 +4468,189 @@ mark {
   padding: 4px 8px;
 }
 
-.csv-selectable th.selected,
-.csv-selectable tr.selected td {
-  background: color-mix(in srgb, #3b82f6 12%, transparent);
+/* —— CSV sheet (aligned with structured-sheet + shared pick tokens) —— */
+.csv-sheet-root {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  background: var(--bg-content);
 }
 
-.csv-row-gutter {
-  width: 36px;
+.csv-sheet-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-content);
+}
+
+.csv-sheet-wrap {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  background: var(--bg-content);
+}
+
+.csv-sheet {
+  border-collapse: collapse;
+  width: max-content;
+  min-width: 100%;
+  font-size: var(--code-size);
+  font-family: var(--font-code);
+  line-height: 1.4;
+}
+
+.csv-sheet th,
+.csv-sheet td {
+  border: 1px solid var(--border);
+  padding: 5px 10px;
+  text-align: left;
+  vertical-align: top;
+  min-width: 72px;
+  max-width: 280px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  transition: none;
+}
+
+.csv-sheet-colhead {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--bg-sunken);
+  color: var(--text-secondary);
+  font-weight: 600;
+  text-align: left;
+  cursor: default;
+}
+
+.csv-sheet-col-label {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.csv-sheet-gutter {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  width: 2.8em;
+  min-width: 2.8em;
+  max-width: 3.5em;
   text-align: right;
   color: var(--text-tertiary);
-  cursor: pointer;
+  font-weight: 500;
+  background: var(--bg-sunken);
+  cursor: default;
   user-select: none;
+}
+
+.csv-sheet-corner {
+  z-index: 3;
+  top: 0;
+  left: 0;
+}
+
+.csv-sheet thead .csv-sheet-gutter {
+  z-index: 3;
+}
+
+.csv-sheet td.is-empty {
+  color: var(--text-tertiary);
+}
+
+/* Soft row tint when row is selected (cells keep their own outline). */
+.csv-sheet tr.row-selected td:not(.selected) {
+  background: color-mix(in srgb, var(--accent) 5%, transparent);
+}
+
+/* Pick chrome — same tokens as code/MD (hover dashed / selected solid). */
+.file-viewer-body.selecting .csv-sheet .preview-select-region {
+  border-radius: 2px;
+  outline: 1px solid transparent;
+  outline-offset: -1px;
+  transition: none;
+  cursor: default;
+}
+
+.file-viewer-body.selecting
+  .csv-sheet
+  .preview-select-region:hover:not(.selected):not(:has(.preview-select-region:hover)) {
+  outline: 1px dashed var(--accent);
+  outline-offset: -1px;
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+}
+
+.file-viewer-body.selecting .csv-sheet .preview-select-region.selected {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+/* File body with CSV should not double-scroll awkwardly. */
+.file-viewer-body:has(.csv-sheet-root) {
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+  overflow: hidden;
+}
+
+/* —— SQLite browser —— */
+.file-viewer-body:has(.sqlite-root) {
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+  overflow: hidden;
+}
+
+.sqlite-root {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-content);
+}
+
+.sqlite-panel {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.sqlite-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.sqlite-table-chip {
+  border: 0;
+  background: var(--bg-sunken);
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 4px;
+  cursor: default;
+}
+
+.sqlite-sheet-wrap {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+.sqlite-root.selecting .structured-doc-nav-item {
+  cursor: default;
 }
 
 .preview-document {
@@ -3589,6 +4683,7 @@ mark {
 }
 
 .file-viewer-name {
+  min-width: 0;
   font-size: 14px;
   font-weight: 600;
   overflow: hidden;
@@ -3596,11 +4691,61 @@ mark {
   white-space: nowrap;
 }
 
+/* Standalone preview: filename is part of the window drag strip. */
+.file-preview-shell:not(.embedded) .file-viewer-name {
+  -webkit-app-region: drag;
+  user-select: none;
+  cursor: default;
+}
+
 .file-viewer-actions {
   display: flex;
   align-items: center;
   gap: 6px;
   flex: 0 0 auto;
+}
+
+/* Save + … as a joined secondary control (not primary emphasis).
+   Save can be disabled while … stays fully interactive for Save As. */
+.preview-save-group {
+  display: inline-flex;
+  align-items: stretch;
+  flex: 0 0 auto;
+  border-radius: var(--radius-sm, 6px);
+  overflow: hidden;
+  box-shadow: inset 0 0 0 1px var(--border);
+}
+
+.preview-save-group .btn {
+  border-radius: 0;
+  box-shadow: none;
+  border: 0;
+}
+
+.preview-save-group .preview-save-main {
+  padding-inline: 10px;
+}
+
+.preview-save-group .preview-save-more {
+  width: 28px;
+  padding-inline: 0;
+  border-left: 1px solid var(--border);
+  /* Never inherit a "group looks disabled" wash from the Save half. */
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.preview-save-group .preview-save-main:disabled {
+  opacity: 0.45;
+}
+
+/* Dirty Save group uses primary; keep the join seam readable. */
+.preview-save-group.is-dirty {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 45%, var(--border));
+}
+
+.preview-save-group.is-dirty .preview-save-more {
+  border-left-color: color-mix(in srgb, var(--accent) 35%, var(--border));
 }
 
 .assoc-settings {
@@ -3685,9 +4830,28 @@ mark {
   fill: currentColor;
 }
 
+/* Read mode: plain text — no filled chrome (file-preview.rpml). */
+.preview-default-text-btn {
+  flex: 0 0 auto;
+  margin: 0;
+  padding: 0 4px;
+  border: 0;
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.2;
+  cursor: default;
+  white-space: nowrap;
+}
+
+.preview-default-text-btn:hover {
+  color: var(--text);
+}
+
 .workspace-view {
-  display: grid;
-  grid-template-columns: 200px 1fr minmax(260px, 360px);
+  display: flex;
+  flex-direction: row;
   flex: 1;
   min-width: 0;
   min-height: 0;
@@ -3697,13 +4861,39 @@ mark {
   border: 1px solid var(--border);
 }
 
+/* Column drag: kill width transitions (they fight the pointer) and drop
+   heavy preview paints so the splitter stays 1:1 with the mouse. */
+.workspace-view.is-col-resizing .workspace-view-tree,
+.workspace-view.is-col-resizing .workspace-view-agent {
+  transition: none !important;
+}
+
+.workspace-view.is-col-resizing .workspace-view-preview {
+  /* Still reflows via flex; block input so drag doesn't steal focus into PDF. */
+  pointer-events: none;
+}
+
+.workspace-view.is-col-resizing .office-native-root {
+  /* Skip hover/select paint storms; quality fit resumes on mouseup. */
+  contain: layout style;
+}
+
 .workspace-view-tree {
+  position: relative;
   display: flex;
   flex-direction: column;
+  flex: 0 0 auto;
   min-width: 0;
   min-height: 0;
   border-right: 1px solid var(--border);
   background: var(--bg-sidebar, var(--bg-content));
+  overflow: hidden;
+  /* Only animate open/close collapse — live drag sets is-col-resizing. */
+  transition: width var(--dur-sheet) var(--ease-drawer);
+}
+
+.workspace-view-tree.is-collapsed {
+  border-right: 0;
 }
 
 .workspace-view-tree-head {
@@ -3746,31 +4936,655 @@ mark {
 }
 
 .workspace-view-preview {
+  position: relative;
   display: flex;
   flex-direction: column;
-  min-width: 0;
+  flex: 1 1 auto;
+  min-width: 320px;
   min-height: 0;
   overflow: hidden;
 }
 
 .workspace-view-preview .file-preview-shell {
+  flex: 1 1 auto;
   min-height: 0;
-  height: 100%;
+  height: auto;
+}
+
+/* Pin 4 — file-context composer above the title bar (workspace-view.rpml). */
+.workspace-preview-composer {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 14px 6px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-content);
+}
+
+.workspace-preview-composer-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+}
+
+.workspace-preview-composer-input {
+  flex: 1;
+  min-width: 0;
+  min-height: 32px;
+  max-height: 96px;
+  resize: none;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-raised, var(--bg-content));
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.4;
+  padding: 6px 10px;
+}
+
+.workspace-preview-composer-input:focus {
+  outline: none;
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
+}
+
+.workspace-preview-composer-input:disabled {
+  opacity: 0.65;
+}
+
+.workspace-preview-composer-hint {
+  font-size: 11px;
+  line-height: 1.3;
 }
 
 .workspace-view-agent {
+  position: relative;
   display: flex;
   flex-direction: column;
+  flex: 0 0 auto;
   min-width: 0;
   min-height: 0;
   border-left: 1px solid var(--border);
+  overflow: hidden;
+  transition: width var(--dur-sheet) var(--ease-drawer);
+}
+
+.workspace-view-agent.is-collapsed {
+  border-left: 0;
+}
+
+/* Edit / Read — same pattern as sidebar “group by workspace” select. */
+.preview-mode {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  min-width: 0;
+}
+
+.preview-mode-control {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.preview-mode-select,
+.text-field.preview-mode-select,
+.text-field.preview-mode-select:focus {
+  flex: 0 0 auto;
+  width: auto;
+  min-width: 0;
+  max-width: 100%;
+  height: 26px;
+  appearance: none;
+  -webkit-appearance: none;
+  padding: 0 26px 0 8px;
+  font-size: 12px;
+  field-sizing: content;
+  text-align: left;
+  background: transparent;
+  background-image: none;
+  box-shadow: none;
+  border: 0;
+  color: var(--text-secondary);
+  cursor: default;
+}
+
+.text-field.preview-mode-select:focus {
+  background: transparent;
+  box-shadow: none;
+  color: var(--text);
+}
+
+.preview-mode-select:hover {
+  color: var(--text);
+}
+
+.preview-mode-chevron {
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  pointer-events: none;
+  color: var(--text-tertiary);
+}
+
+.file-viewer-actions .is-active-toggle {
+  color: var(--accent);
+}
+
+/* Standalone file-preview: Agent toggle is the product mark (not panel-right). */
+.preview-agent-logo-btn {
+  width: 28px;
+  height: 26px;
+  padding: 0;
+}
+
+.preview-agent-logo {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  line-height: 0;
+}
+
+.preview-agent-logo img {
+  display: block;
+  width: 16px;
+  height: 16px;
+  object-fit: contain;
+}
+
+.preview-agent-logo .logo-dark {
+  display: none;
+}
+
+.preview-agent-logo .logo-light {
+  display: block;
+}
+
+:root[data-theme='dark'] .preview-agent-logo .logo-light {
+  display: none;
+}
+
+:root[data-theme='dark'] .preview-agent-logo .logo-dark {
+  display: block;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) .preview-agent-logo .logo-light {
+    display: none;
+  }
+  :root:not([data-theme='light']) .preview-agent-logo .logo-dark {
+    display: block;
+  }
+}
+
+.preview-file-session-bar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+  flex: 0 0 auto;
+  min-width: 0;
+  position: relative;
+  /* History popover hangs below this bar and must paint above SessionDetail. */
+  z-index: 30;
+  isolation: isolate;
+}
+
+.preview-file-session-title {
+  min-width: 0;
+  flex: 1;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.preview-file-session-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: 0 0 auto;
+}
+
+/* Session history popover (file-preview.rpml History).
+   Sized to the agent panel (session bar), not a fixed 380px that clips. */
+.session-history-popover {
+  position: absolute;
+  top: calc(100% + 2px);
+  left: 8px;
+  right: 8px;
+  width: auto;
+  max-width: none;
+  max-height: min(420px, 60vh);
+  display: flex;
+  flex-direction: column;
+  /* Opaque elevated surface — avoid bleed-through from transcript below. */
+  background: var(--bg-raised, var(--bg-elevated, var(--bg-content)));
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 12px 40px color-mix(in srgb, #000 35%, transparent);
+  z-index: 50;
+  overflow: hidden;
+  box-sizing: border-box;
+}
+
+.session-history-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  flex: 0 0 auto;
+  min-width: 0;
+}
+
+.session-history-head > .muted {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-history-list {
+  list-style: none;
+  margin: 0;
+  padding: 4px 0;
+  overflow: auto;
+  flex: 1 1 auto;
+}
+
+.session-history-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  cursor: pointer;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+.session-history-row:hover {
+  background: color-mix(in srgb, var(--text) 6%, transparent);
+}
+
+.session-history-row.is-active {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.session-history-row.is-picked {
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+}
+
+.session-history-row.is-disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.session-history-icon {
+  flex: 0 0 auto;
+  color: var(--text-secondary);
+  opacity: 0.85;
+}
+
+.session-history-body {
+  min-width: 0;
+  flex: 1;
+}
+
+.session-history-title {
+  font-size: 13px;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-history-sub {
+  margin-top: 1px;
+}
+
+.session-history-rename {
+  width: 100%;
+  font-size: 13px;
+  padding: 2px 6px;
+  height: 24px;
+}
+
+.session-history-trash {
+  flex: 0 0 auto;
+  opacity: 0;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  padding: 4px;
+  border-radius: 6px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  /* Always reserve space so the row doesn't jump on hover. */
+  visibility: hidden;
+}
+
+.session-history-row:hover .session-history-trash:not(:disabled),
+.session-history-trash:focus-visible:not(:disabled) {
+  opacity: 1;
+  visibility: visible;
+}
+
+.session-history-trash:hover:not(:disabled) {
+  color: var(--danger, #e5484d);
+  background: color-mix(in srgb, var(--danger, #e5484d) 12%, transparent);
+}
+
+/* Active / last session: never show a half-visible disabled trash. */
+.session-history-trash:disabled {
+  opacity: 0;
+  visibility: hidden;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+.session-history-check {
+  width: 16px;
+  height: 16px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  color: var(--accent);
+}
+
+.session-history-check.on {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  border-color: var(--accent);
+}
+
+.session-history-check.disabled {
+  opacity: 0.35;
+}
+
+.session-history-bulk {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  border-top: 1px solid var(--border);
+  flex: 0 0 auto;
+}
+
+.session-history-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 28px 16px;
+  text-align: center;
+}
+
+.session-history-empty-title {
+  font-size: 13px;
+  font-weight: 560;
+}
+
+/* ZIP archive tree */
+.zip-archive-view {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+  width: 100%;
+  max-width: 720px;
+  margin: 0 auto;
+}
+
+.zip-archive-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--border);
+  flex: 0 0 auto;
+}
+
+.zip-archive-head-icon {
+  color: var(--teal, #0d9488);
+  flex: 0 0 auto;
+}
+
+.zip-archive-title {
+  font-weight: 600;
+  font-size: 13px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.zip-archive-tree {
+  overflow: auto;
+  flex: 1 1 auto;
+  padding: 6px 0 16px;
+}
+
+.zip-archive-empty {
+  padding: 28px 16px;
+  text-align: center;
+  font-size: 13px;
+}
+
+.zip-tree-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 26px;
+  padding-right: 12px;
+  font-size: 12.5px;
+  border-radius: 4px;
+  margin: 0 6px;
+}
+
+.zip-tree-row.selectable {
+  cursor: pointer;
+}
+
+.zip-tree-row.selectable:hover {
+  background: color-mix(in srgb, var(--text) 6%, transparent);
+}
+
+.zip-tree-row.selected {
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 45%, transparent);
+}
+
+.zip-tree-chevron,
+.zip-tree-chevron-spacer {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  padding: 0;
+  cursor: pointer;
+}
+
+.zip-tree-icon {
+  flex: 0 0 auto;
+  color: var(--text-secondary);
+  display: inline-flex;
+}
+
+.zip-tree-name {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.zip-tree-meta {
+  flex: 0 0 auto;
+  margin-left: 8px;
+}
+
+/* Binary / unsupported file panel */
+.binary-file-view {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  max-width: 480px;
+  margin: 40px auto;
+  padding: 24px 28px;
+  text-align: center;
+}
+
+.binary-file-icons {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-secondary);
+}
+
+.binary-file-icon-main {
+  opacity: 0.75;
+}
+
+.binary-file-title-block {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+
+.binary-file-name {
+  font-size: 16px;
+  font-weight: 600;
+  word-break: break-all;
+}
+
+.binary-file-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 560;
+  color: var(--text-secondary);
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+  border: 1px solid var(--border);
+}
+
+.binary-file-desc {
+  font-size: 13px;
+  margin: 0;
+}
+
+.binary-file-divider {
+  width: 100%;
+  height: 1px;
+  background: var(--border);
+}
+
+.binary-file-kv {
+  width: 100%;
+  margin: 0;
+  text-align: left;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.binary-file-kv-row {
+  display: grid;
+  grid-template-columns: 110px 1fr;
+  gap: 10px;
+  font-size: 12px;
+  align-items: baseline;
+}
+
+.binary-file-kv-row dt {
+  color: var(--text-secondary);
+  margin: 0;
+}
+
+.binary-file-kv-row dd {
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.binary-file-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+
+.preview-mode.is-forced {
+  opacity: 0.72;
+}
+
+/* Drag handles on File / Agent borders (File View is the flex middle). */
+.workspace-col-resizer {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 5px;
+  z-index: 3;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.workspace-col-resizer-end {
+  right: -2px;
+}
+
+.workspace-col-resizer-start {
+  left: -2px;
+}
+
+.workspace-col-resizer::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 1px;
+  transform: translateX(-50%);
+  background: transparent;
+  transition: background var(--dur-hover) ease, box-shadow var(--dur-hover) ease;
+}
+
+.workspace-col-resizer:hover::after,
+.workspace-col-resizer:active::after {
+  background: var(--accent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 35%, transparent);
 }
 
 .workspace-view-agent-head {
+  position: relative;
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  padding: 12px 12px 10px;
+  gap: 6px;
+  padding: 8px 10px;
   border-bottom: 1px solid var(--border);
   flex: 0 0 auto;
 }
@@ -3782,18 +5596,282 @@ mark {
   min-width: 0;
 }
 
-.workspace-view-agent-icon {
+.workspace-view-agent-session {
+  width: 100%;
+}
+
+.workspace-view-agent-folder {
   flex: 0 0 auto;
   color: var(--text-secondary);
 }
 
-.workspace-view-agent-head-row .spacer {
+.workspace-view-agent-path {
+  min-width: 0;
+  font-size: 12px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-view-agent-label {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.workspace-view-agent-focused {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
   flex: 1;
 }
 
-.workspace-view-agent-session-label {
+.workspace-view-agent-focused-title {
+  min-width: 0;
   font-size: 12px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-history-anchor {
+  display: inline-flex;
+}
+
+.workspace-history-popover {
+  position: absolute;
+  top: calc(100% - 4px);
+  right: 8px;
+  z-index: 40;
+  width: 320px;
+  max-height: min(420px, 70vh);
+  display: flex;
+  flex-direction: column;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border);
+  background: var(--bg-raised, var(--bg-content));
+  box-shadow: var(--shadow-sheet);
+  overflow: hidden;
+}
+
+.workspace-history-head {
+  padding: 10px 12px 6px;
+}
+
+.workspace-history-title {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.workspace-history-filter {
+  margin: 0 10px 8px;
+  height: 28px;
+  padding: 0 8px;
+  font-size: 12px;
+}
+
+.workspace-history-list {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 0 6px 8px;
+}
+
+.workspace-history-empty {
+  padding: 16px 10px;
+  font-size: 12px;
+  line-height: 1.45;
+  text-align: center;
+}
+
+.workspace-history-row {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: var(--radius);
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.workspace-history-row:hover {
+  background: var(--bg-hover);
+}
+
+.workspace-history-row.is-active {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+
+.workspace-history-row-title {
+  font-size: 12.5px;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+
+.workspace-history-row-sub {
+  font-size: 11px;
+}
+
+/* Single-file mode: Agent floats over the preview (workspace-view.rpml). */
+.workspace-floating-agent {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  min-width: 240px;
+  max-width: min(520px, calc(100% - 24px));
+  max-height: calc(100% - 24px);
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border);
+  background: var(--bg-content);
+  box-shadow: var(--shadow-sheet);
+  overflow: hidden;
+}
+
+.workspace-floating-agent-head {
+  padding: 6px 8px;
+  gap: 4px;
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--bg-raised) 80%, var(--bg-content));
+}
+
+.workspace-floating-agent-title {
+  min-width: 0;
+  flex: 1;
+  font-size: 11px;
+  font-weight: 600;
   color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-floating-agent-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.workspace-floating-agent-body > .session-detail,
+.workspace-floating-agent-body > .preview-edit-session {
+  flex: 1;
+  min-height: 0;
+}
+
+.workspace-floating-agent-resize-w {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 5px;
+  cursor: ew-resize;
+  z-index: 2;
+}
+
+.workspace-floating-agent-resize-h {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 5px;
+  cursor: ns-resize;
+  z-index: 2;
+}
+
+.workspace-floating-agent-min-row {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  z-index: 30;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.workspace-floating-agent-min {
+  position: relative;
+  right: auto;
+  bottom: auto;
+  z-index: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: min(360px, calc(100% - 24px));
+  margin: 0;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg-content);
+  box-shadow: var(--shadow-raised);
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 11px;
+  cursor: default;
+}
+
+.workspace-floating-agent-min:hover {
+  color: var(--text);
+  background: var(--bg-raised);
+}
+
+.workspace-floating-agent-min-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Session switcher (native select) in the Agent head — grows, truncates cleanly. */
+.workspace-session-select {
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.workspace-session-select .preview-mode-control {
+  width: 100%;
+}
+
+.workspace-session-select-field,
+.text-field.workspace-session-select-field {
+  width: 100%;
+  max-width: 100%;
+  field-sizing: fixed;
+}
+
+.preview-file-session-select {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.preview-file-session-select .preview-mode-control {
+  width: 100%;
+}
+
+.preview-file-session-select .preview-mode-select {
+  width: 100%;
+  max-width: 100%;
+  field-sizing: fixed;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .workspace-tree-row {
@@ -3801,6 +5879,7 @@ mark {
   align-items: center;
   gap: 4px;
   width: 100%;
+  max-width: 100%;
   padding: 3px 8px;
   border: 0;
   background: transparent;
@@ -3809,6 +5888,9 @@ mark {
   font-size: 12px;
   text-align: left;
   cursor: default;
+  box-sizing: border-box;
+  /* Long names shrink the label only — never the chevron/icon gutters. */
+  min-width: 0;
 }
 
 .workspace-tree-row:hover {
@@ -3820,7 +5902,39 @@ mark {
   color: var(--accent-text);
 }
 
+/* Fixed gutters so every sibling row starts name text at the same x. */
+.workspace-tree-chevron,
+.workspace-tree-icon {
+  flex: 0 0 12px;
+  width: 12px;
+  min-width: 12px;
+  max-width: 12px;
+  height: 12px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  color: var(--text-tertiary);
+}
+
+.workspace-tree-chevron > svg,
+.workspace-tree-icon > svg {
+  width: 12px;
+  height: 12px;
+  min-width: 12px;
+  min-height: 12px;
+  display: block;
+  flex: none;
+}
+
+.workspace-tree-row.selected .workspace-tree-chevron,
+.workspace-tree-row.selected .workspace-tree-icon {
+  color: var(--accent-text);
+}
+
 .workspace-tree-row .label {
+  flex: 1 1 auto;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -3877,6 +5991,16 @@ mark {
   height: auto;
 }
 
+/* originai release badge (and similar linked SVG badges) */
+.preview-markdown a > img[alt='originai'],
+.preview-markdown a > img[src*='spec.getoriginai.com'] {
+  display: inline-block;
+  height: 28px;
+  width: auto;
+  max-width: none;
+  vertical-align: middle;
+}
+
 .preview-markdown picture {
   display: inline-block;
 }
@@ -3929,16 +6053,27 @@ mark {
   margin: 0;
 }
 
+/* File tree rows — fixed metrics so Retina zoom / long CJK names stay aligned. */
 .tree-row {
+  --tree-icon: 14px;
+  --tree-chevron: 12px;
   display: flex;
   align-items: center;
   gap: 6px;
-  height: 26px;
+  height: 28px;
+  min-height: 28px;
+  max-height: 28px;
+  max-width: 100%;
   padding-right: 8px;
   border-radius: 6px;
   cursor: default;
   white-space: nowrap;
+  font-size: 13px;
+  line-height: 1.2;
   transition: background var(--dur-hover) ease;
+  /* Prevent flex children from stretching SVG/text to weird aspect ratios. */
+  box-sizing: border-box;
+  min-width: 0;
 }
 
 .tree-row:hover {
@@ -3948,7 +6083,8 @@ mark {
 .tree-row.selected {
   background: var(--accent-soft);
   color: var(--accent-text);
-  font-weight: 500;
+  /* Selection is colour only — keep the same weight as siblings. */
+  font-weight: inherit;
 }
 
 /* Column-view path into the next pane — quieter than an explicit selection. */
@@ -3958,36 +6094,82 @@ mark {
 
 /* Folders are the structure and files are the contents; colour says which is
    which faster than the glyph shape does. */
-.tree-row > svg {
+.tree-row > svg,
+.tree-row .disclosure > svg {
   flex: 0 0 auto;
+  width: var(--tree-icon);
+  height: var(--tree-icon);
+  min-width: var(--tree-icon);
+  min-height: var(--tree-icon);
+  display: block;
+  /* Override lucide width/height attrs when CSS zoom changes. */
+  overflow: visible;
   color: var(--text-tertiary);
+}
+
+.tree-row .disclosure > svg {
+  width: var(--tree-chevron);
+  height: var(--tree-chevron);
+  min-width: var(--tree-chevron);
+  min-height: var(--tree-chevron);
 }
 
 .tree-row.dir > svg {
   color: var(--tone-list);
 }
 
-.tree-row.selected > svg {
+.tree-row.selected > svg,
+.tree-row.selected .disclosure > svg {
   color: var(--accent-text);
 }
 
 .tree-row .disclosure {
-  width: 15px;
-  display: flex;
+  width: 16px;
+  min-width: 16px;
+  max-width: 16px;
+  height: 16px;
+  flex: 0 0 16px;
+  display: inline-flex;
+  align-items: center;
   justify-content: center;
   color: var(--text-tertiary);
+  /* Empty disclosure for files must still occupy the gutter. */
+  overflow: hidden;
 }
 
 .tree-row .tree-name {
+  flex: 1 1 auto;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
+  /* Avoid bold synthetic bold on CJK when selected. */
+  font-weight: 400;
 }
 
 .tree-row .tree-size {
-  margin-left: auto;
+  flex: 0 0 auto;
+  margin-left: 8px;
   font-size: 11px;
+  line-height: 1;
   color: var(--text-tertiary);
   font-variant-numeric: tabular-nums;
+}
+
+.file-column .tree-row {
+  /* Column view has no disclosure gutter — keep left inset consistent. */
+  padding-left: 10px;
+}
+
+.file-column .column-chevron {
+  flex: 0 0 auto;
+  width: var(--tree-chevron);
+  height: var(--tree-chevron);
+  min-width: var(--tree-chevron);
+  min-height: var(--tree-chevron);
+  margin-left: auto;
+  color: var(--text-tertiary);
+  opacity: 0.7;
 }
 
 .skeleton-row {
@@ -4027,9 +6209,41 @@ mark {
 }
 
 /* With no session open there is no terminal to be dark: the pane goes back to
-   being an empty part of the tools tray. */
+   being an empty part of the tools tray. Pin empty-state to the stack box so
+   it stays centered even when the body is short (file-preview dock). */
 .terminal-stack[data-empty='true'] {
   background: transparent;
+}
+
+.terminal-stack[data-empty='true'] .empty-state {
+  position: absolute;
+  inset: 0;
+  margin: 0;
+  max-width: none;
+  width: 100%;
+  height: 100%;
+  box-sizing: border-box;
+  padding: 12px 16px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.terminal-stack[data-empty='true'] .empty-title {
+  font-size: 16px;
+}
+
+.terminal-stack[data-empty='true'] .empty-desc {
+  font-size: 12px;
+  line-height: 1.5;
+  max-width: 280px;
+}
+
+/* Entrance animation shifts content down — skip it in the tight tools tray. */
+.terminal-stack[data-empty='true'] .empty-state > * {
+  animation: none;
 }
 
 .terminal-surface {
@@ -4081,21 +6295,583 @@ mark {
 
 
 /* ==========================================================================
+   Terminal-host session (CLI agent pivot — release 599702fe…)
+   ========================================================================== */
+
+.terminal-host-session {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+  flex: 1;
+}
+
+.terminal-host-chrome {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+  flex: 0 0 auto;
+  background: var(--bg-content);
+}
+
+/* Agent switcher — brand mark + name are one hit target. */
+.agent-mode-chrome {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.agent-mode-select {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  max-width: min(260px, 100%);
+  flex: 0 1 auto;
+  border-radius: 8px;
+  cursor: default;
+}
+
+.agent-mode-select:hover {
+  background: var(--bg-hover);
+}
+
+.agent-mode-select:focus-within {
+  background: var(--bg-hover);
+}
+
+.agent-mode-select-face {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  height: 28px;
+  padding: 0 8px 0 6px;
+  pointer-events: none;
+}
+
+.agent-mode-select-face .agent-brand-mark {
+  border-radius: 6px;
+  flex: 0 0 auto;
+}
+
+.agent-mode-select-name {
+  flex: 0 1 auto;
+  min-width: 0;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.agent-mode-select-chevron {
+  flex: 0 0 auto;
+  color: var(--text-tertiary);
+  opacity: 0.85;
+}
+
+/* Transparent select over the whole face so icon + name open the menu. */
+.agent-mode-select-native {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  opacity: 0;
+  cursor: default;
+  appearance: none;
+  -webkit-appearance: none;
+  border: 0;
+  background: transparent;
+  font-size: 12px;
+}
+
+/* CLI agent replaces transcript only; bottom ToolsPanel stays as dock. */
+.terminal-host-session .terminal-host-stream {
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.terminal-host-body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+}
+
+.terminal-host-main {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.terminal-host-files {
+  flex: 0 0 240px;
+  min-width: 160px;
+  max-width: 420px;
+  border-left: 1px solid var(--border);
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.terminal-stack.multi-split {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-terminal);
+}
+
+.terminal-split-root {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Binary tree branch: flexDirection set inline (column=top/bottom, row=left/right). */
+.terminal-split-branch {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+  position: relative;
+}
+
+.terminal-split-pane {
+  display: flex;
+  flex-direction: column;
+  min-height: 48px;
+  min-width: 48px;
+  position: relative;
+  /* No chrome labels over the PTY — agent TUIs own the full surface. */
+}
+
+.terminal-split-pane.is-active {
+  z-index: 1;
+  outline: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
+  outline-offset: -1px;
+}
+
+/* Flex sibling divider — not absolute, so nested splits keep independent axes. */
+.terminal-split-resizer {
+  flex: 0 0 4px;
+  z-index: 3;
+  background: transparent;
+  align-self: stretch;
+}
+
+.terminal-split-resizer.axis-column {
+  cursor: row-resize;
+  min-height: 4px;
+}
+
+.terminal-split-resizer.axis-row {
+  cursor: col-resize;
+  min-width: 4px;
+}
+
+.terminal-split-resizer:hover {
+  background: color-mix(in srgb, var(--accent) 35%, transparent);
+}
+
+/* Session fills workspace agent column (chat or terminal host).
+   Flatten nested chrome — parent column already frames the panel; an inner
+   .detail radius + border was double-rounding the Claude/agent surface. */
+.workspace-view-agent > .detail,
+.workspace-view-agent > .session-detail-workspace,
+.workspace-view-agent > .terminal-host-session,
+.workspace-floating-agent-body > .detail,
+.workspace-floating-agent-body > .session-detail-workspace,
+.workspace-floating-agent-body > .terminal-host-session {
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+  border-radius: 0;
+  border: 0;
+  box-shadow: none;
+  background: transparent;
+}
+
+.workspace-view-agent .terminal-host-chrome,
+.workspace-floating-agent-body .terminal-host-chrome {
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--border);
+  background: transparent;
+}
+
+.workspace-view-agent .terminal-stack.multi-split,
+.workspace-floating-agent-body .terminal-stack.multi-split {
+  border-radius: 0;
+  background: var(--bg-terminal);
+}
+
+.session-detail-workspace.terminal-host-session .terminal-host-files {
+  display: none;
+}
+
+/* Missing CLI agent — install gate before opening a host session. */
+.agent-install-panel {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px 16px;
+  background: var(--bg-content);
+}
+
+.agent-install-card {
+  position: relative;
+  width: min(420px, 100%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  text-align: center;
+}
+
+.agent-install-card.is-installing {
+  width: min(640px, 100%);
+  align-items: stretch;
+  text-align: left;
+}
+
+/* Cancel during install — corner chrome, not a second action next to recheck. */
+.agent-install-cancel-corner {
+  position: absolute;
+  top: 0;
+  right: 0;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-tertiary);
+  cursor: default;
+}
+
+.agent-install-cancel-corner:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.agent-install-auto-hint {
+  flex: 0 1 auto;
+  min-width: 0;
+  text-align: right;
+  opacity: 0.85;
+}
+
+.agent-install-card.is-installing .agent-install-title,
+.agent-install-card.is-installing .agent-brand-mark,
+.agent-install-card.is-installing .agent-install-desc {
+  align-self: center;
+  text-align: center;
+}
+
+.agent-brand-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 14px;
+  flex: 0 0 auto;
+  background: var(--bg-raised, var(--bg-content));
+  box-shadow: inset 0 0 0 1px var(--border);
+  user-select: none;
+  overflow: hidden;
+}
+
+.agent-brand-mark img {
+  display: block;
+  object-fit: contain;
+  pointer-events: none;
+}
+
+/*
+ * Monochrome theme adaptation so marks stay visible on chip surfaces:
+ * - is-mono: dark ink (cursor, grok) → invert under dark theme
+ * - is-mono-on-dark: light ink (pi is #fff) → invert under light theme
+ * - vav-mark: dark navy + lavender → silhouette to near-white under dark
+ */
+:root[data-theme='dark'] .agent-brand-mark.is-mono img {
+  filter: invert(1);
+}
+
+:root:not([data-theme='dark']) .agent-brand-mark.is-mono-on-dark img {
+  filter: invert(1);
+}
+
+.agent-brand-mark-fallback {
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1;
+  background: var(--accent);
+  color: #fff;
+  box-shadow: none;
+}
+
+/* Built-in vav product mark — keep plate so it matches other agent chips. */
+.agent-brand-mark-vav {
+  overflow: hidden;
+}
+
+.agent-brand-mark-vav img {
+  border-radius: 4px;
+}
+
+/* Dark UI: navy ink would sink into the chip — lift to a light glyph. */
+:root[data-theme='dark'] .agent-brand-mark-vav img {
+  filter: brightness(0) invert(1);
+  opacity: 0.92;
+}
+
+.agent-install-title {
+  margin: 4px 0 0;
+  font-size: 15px;
+  font-weight: 620;
+  color: var(--text);
+}
+
+.agent-install-desc {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--text-secondary);
+}
+
+.agent-install-cmd {
+  width: 100%;
+  margin: 4px 0 0;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--bg-raised);
+  color: var(--text);
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 11.5px;
+  text-align: left;
+  white-space: pre-wrap;
+  word-break: break-all;
+  cursor: copy;
+}
+
+.agent-install-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: center;
+  margin-top: 6px;
+}
+
+.agent-install-copied {
+  margin: 0;
+  font-size: 11px;
+  color: var(--text-tertiary);
+}
+
+.agent-install-hint {
+  margin: 4px 0 0;
+  font-size: 11px;
+  line-height: 1.4;
+  text-align: center;
+}
+
+/* Inline interactive install terminal (inside the install card). */
+.agent-install-inline-term {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  min-height: 260px;
+  height: min(42vh, 360px);
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  overflow: hidden;
+  background: var(--bg-terminal, #101012);
+}
+
+.agent-install-inline-term-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--bg-raised) 88%, transparent);
+}
+
+.agent-install-inline-term-body {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+}
+
+.inline-terminal-host {
+  position: absolute;
+  inset: 0;
+  min-height: 0;
+  min-width: 0;
+}
+
+.inline-terminal-host .xterm-host,
+.inline-terminal-host .xterm {
+  width: 100%;
+  height: 100%;
+}
+
+/* Agent tab bot icon — gray idle / green when executing (terminal-panel.rpml). */
+.agent-bot-icon {
+  color: var(--text-tertiary);
+  flex-shrink: 0;
+}
+
+.agent-bot-icon.is-running {
+  color: #34c759;
+  animation: agent-bot-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes agent-bot-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
+}
+
+.agent-mode-picker {
+  font-weight: 560;
+}
+
+.terminal-host {
+  min-height: 0;
+  min-width: 0;
+  width: 100%;
+  height: 100%;
+  background: var(--bg-terminal);
+}
+
+.terminal-host .xterm-host,
+.terminal-host .xterm {
+  width: 100% !important;
+  height: 100% !important;
+}
+
+/* Ensure xterm doesn’t force pure black that fights truecolor agents. */
+.terminal-stack .xterm-viewport {
+  background-color: var(--bg-terminal) !important;
+}
+
+.terminal-stack .xterm-screen {
+  background-color: transparent;
+}
+
+.agents-settings .agents-layout {
+  display: grid;
+  grid-template-columns: 200px 1fr;
+  gap: 16px;
+  min-height: 280px;
+}
+
+.agents-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.agents-list-row {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.agents-list-row:hover {
+  background: var(--bg-hover);
+}
+
+.agents-list-row.selected {
+  background: var(--accent-soft);
+  color: var(--accent-text);
+}
+
+.agents-list-row.disabled {
+  opacity: 0.55;
+}
+
+.agents-list-name {
+  font-weight: 560;
+  font-size: 12.5px;
+}
+
+.agents-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.agents-editor .settings-field.row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.agents-editor-actions {
+  margin-top: 8px;
+}
+
+/* ==========================================================================
    Composer
    ========================================================================== */
 
 .composer {
   flex: 0 0 auto;
-  padding: 0 10px 10px;
+  padding: 0 12px 8px;
   display: flex;
   flex-direction: column;
   gap: 6px;
 }
 
-/* No tools strip above (e.g. preview-edit Agent drawer): keep the same inset
-   the composer already has on the other three sides. */
+/* Composer is first in the dock (above tools): top inset vs transcript;
+   tight bottom so the tools header sits close under the prompt card. */
 .dock > .composer:first-child {
   padding-top: 10px;
+  padding-bottom: 4px;
+}
+
+/* When tools follows the composer, give the header a little air under the box. */
+.dock > .composer + .tools-panel .tools-header {
+  padding-top: 2px;
+  height: 34px; /* 32 content + 2pt top air */
 }
 
 .quote-strip {
@@ -4146,6 +6922,38 @@ mark {
   color: var(--text-secondary);
 }
 
+/* File Attachment Chip — above comment cards / composer (file-preview.rpml). */
+.file-context-chip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-radius: var(--radius);
+  background: var(--bg-raised);
+  box-shadow: inset 0 0 0 1px var(--border);
+  color: var(--text-secondary);
+  font-size: 12.5px;
+  min-width: 0;
+}
+
+.file-context-chip > svg {
+  flex: 0 0 auto;
+  opacity: 0.75;
+}
+
+.file-context-chip-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-context-chip-suffix {
+  color: var(--text-tertiary, var(--text-secondary));
+  opacity: 0.85;
+}
+
 .composer-box {
   position: relative;
   z-index: 5;
@@ -4182,20 +6990,27 @@ mark {
 .composer-bar {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   font-size: 11px;
   color: var(--text-tertiary);
+  min-width: 0;
+  /* Never clip the model / approval pickers in a narrow agent column. */
+  overflow: visible;
 }
 
 .composer-bar .spacer {
-  flex: 1;
+  flex: 1 1 8px;
+  min-width: 4px;
 }
 
 .model-picker {
   display: inline-flex;
   align-items: center;
   gap: 3px;
-  max-width: 220px;
+  /* Share width so approval mode is not crushed to zero in narrow docks. */
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 132px;
   height: 22px;
   padding: 0 6px;
   border: 0;
@@ -4223,6 +7038,12 @@ mark {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  min-width: 0;
+}
+
+.model-picker:disabled {
+  opacity: 0.45;
+  pointer-events: none;
 }
 
 .composer-box textarea::placeholder {
@@ -4301,61 +7122,149 @@ mark {
   font-variant-numeric: tabular-nums;
 }
 
-/* —— Pick mode comment cards —— */
+/*
+ * Pick-mode comment strip — sits just above the composer box (slightly narrower).
+ * Bottom of the strip is square; the message input keeps its own full corner radius.
+ * Cards inside stack flush (no per-card radius).
+ */
+.composer.has-comment-cards {
+  /* Small gap so the input’s top corners stay visible / intact. */
+  gap: 4px;
+}
+
+.composer.has-comment-cards .quote-strip {
+  margin-bottom: 2px;
+}
+
 .comment-cards {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 0;
   flex: 0 0 auto;
-  max-height: 160px;
+  max-height: 148px;
   overflow-y: auto;
-  padding: 4px 0;
+  /* Inset vs full-width composer-box. */
+  margin: 0 10px;
+  padding: 0;
+  background: var(--bg-sunken);
+  border: 1px solid var(--border);
+  /* Top only rounded; bottom flat so it reads as attached above the input. */
+  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+  position: relative;
+  z-index: 4;
 }
 
+/* Do NOT flatten .composer-box corners — the input keeps its normal radius. */
+
 .comment-card {
-  border-radius: 6px;
-  background: var(--bg-sunken);
-  box-shadow: inset 0 0 0 1px var(--border);
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  border-bottom: 1px solid var(--border);
   padding: 6px 8px;
   display: flex;
   flex-direction: column;
   gap: 4px;
 }
 
+.comment-card:last-child {
+  border-bottom: 0;
+}
+
+.comment-card.is-editing {
+  background: var(--accent-soft);
+}
+
 .comment-card-header {
   display: flex;
   align-items: center;
   gap: 6px;
+  min-width: 0;
 }
 
-.comment-card-header .tag-sm {
+.comment-card-icon {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--accent-text);
+  line-height: 0;
+  opacity: 0.9;
+}
+
+.comment-card-title {
+  flex: 1;
+  min-width: 0;
   font-size: 11px;
   font-weight: 500;
-  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  font-variant-numeric: tabular-nums;
   color: var(--accent-text);
-  padding: 1px 6px;
-  border-radius: 3px;
-  flex: 0 0 auto;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
-.comment-card-lines {
-  font-size: 11px;
-  opacity: 0.6;
-  font-variant-numeric: tabular-nums;
-  flex: 1;
+.comment-card.is-committed .comment-card-title {
+  color: var(--text-secondary);
+}
+
+.comment-card-close,
+.comment-card-trash {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  cursor: pointer;
+  color: var(--text-tertiary);
+}
+
+.comment-card-close:hover {
+  color: var(--text);
+  background: var(--bg-hover);
+}
+
+/* Committed: trash appears on row hover only */
+.comment-card-trash {
+  opacity: 0;
+  pointer-events: none;
+  color: var(--danger);
+}
+
+.comment-card.is-committed:hover .comment-card-trash,
+.comment-card-trash:focus-visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.comment-card-trash:hover {
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
 }
 
 .comment-card-input {
   font-family: var(--font-ui);
   font-size: 12px;
   line-height: 1.4;
-  resize: none;
-  background: var(--bg);
+  /* Always reserve a real field height — empty/unfocused must not collapse. */
+  min-height: 28px;
+  height: 28px;
+  background: var(--bg-content);
   color: var(--text);
   border: 1px solid var(--border);
   border-radius: 4px;
-  padding: 3px 6px;
+  padding: 4px 8px;
   width: 100%;
+  box-sizing: border-box;
+}
+
+.comment-card-input::placeholder {
+  color: var(--text-tertiary);
 }
 
 .comment-card-input:focus {
@@ -4363,28 +7272,38 @@ mark {
   border-color: var(--accent);
 }
 
-/* —— Pick mode canvas overlay —— */
-.file-viewer-body.pick-mode {
-  position: relative;
-}
-
-.file-viewer-body.pick-mode::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  background: color-mix(in srgb, var(--accent) 5%, transparent);
-  pointer-events: none;
-  z-index: 1;
-}
-
-.file-viewer-body.pick-mode .file-viewer-code.continuous {
-  cursor: crosshair;
-}
-
-.file-viewer-body.pick-mode .preview-code-overlay.hovered {
-  outline: 1px dashed var(--accent);
-  outline-offset: -1px;
+.comment-card-body {
+  display: block;
+  width: 100%;
+  margin: 0;
+  padding: 2px 1px;
+  border: 0;
+  border-radius: 3px;
   background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.45;
+  text-align: left;
+  white-space: pre-wrap;
+  word-break: break-word;
+  cursor: text;
+}
+
+.comment-card-body:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+/* Pick mode: no full-canvas wash and no crosshair — same default pointer on
+   code and markdown; only the block outline signals pickability. */
+.file-viewer-body.pick-mode,
+.file-viewer-body.pick-mode .file-viewer-code.continuous,
+.file-viewer-body.pick-mode .preview-document,
+.file-viewer-body.pick-mode .preview-media-frame,
+.file-viewer-body.pick-mode .file-viewer-table,
+.file-viewer-body.pick-mode .preview-code-line {
+  cursor: default;
 }
 
 .token-ring {
@@ -4446,14 +7365,37 @@ mark {
   color: inherit;
 }
 
-/* Frameless native panel popup (main process BrowserWindow, not in-app overlay). */
+/* Frameless native panel popup (main process BrowserWindow, not in-app overlay).
+   Background MUST match BrowserWindow.backgroundColor (#121213 / #eceaf1) so
+   show() never reveals a different wash under the content. */
+html:has(.token-usage-popup),
+html:has(.token-usage-popup) body,
+html:has(.token-usage-popup) #root {
+  background: #121213;
+  margin: 0;
+  height: 100%;
+}
+
 .token-usage-popup {
   display: flex;
   flex-direction: column;
   height: 100%;
-  background: var(--bg-raised);
-  color: var(--text);
+  min-height: 100%;
+  /* Same as window chrome — not --bg-raised (that was a tone jump on open). */
+  background: #121213;
+  color: var(--text, #efeff1);
   overflow: hidden;
+}
+
+:root[data-theme='light'] .token-usage-popup {
+  background: #eceaf1;
+  color: var(--text, #131b35);
+}
+
+:root[data-theme='light'] html:has(.token-usage-popup),
+:root[data-theme='light'] html:has(.token-usage-popup) body,
+:root[data-theme='light'] html:has(.token-usage-popup) #root {
+  background: #eceaf1;
 }
 
 .token-usage-popup-title {

@@ -55,7 +55,7 @@ export default function FilePreviewWindow({ path }: { path: string }): React.JSX
     return (
       <div className="file-preview-shell">
         <div className="file-viewer-header titlebar-drag">
-          <div className="file-viewer-lead titlebar-no-drag">
+          <div className="file-viewer-lead">
             <span className="file-viewer-name">{basename(path) || tt('common.preview')}</span>
           </div>
           <span className="spacer" />

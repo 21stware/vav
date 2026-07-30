@@ -1,11 +1,25 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { ArrowUp, ChevronDown, CornerUpLeft, Paperclip, Quote, Square, X } from 'lucide-react'
+import {
+  ArrowUp,
+  ChevronDown,
+  CornerUpLeft,
+  FileText,
+  MapPin,
+  MessageSquare,
+  Paperclip,
+  Quote,
+  Square,
+  Trash2,
+  X
+} from 'lucide-react'
 import type { ApprovalMode } from '@shared/types'
 import { PRESET_MODELS } from '@shared/types'
 import type { MessageKey, TParams } from '@shared/i18n'
 import { useSessionStore } from '../state/sessionStore'
-import { formatTokens } from '../lib/format'
+import { useWorkspaceStore } from '../state/workspaceStore'
+import { formatBytes, formatTokens } from '../lib/format'
 import { basename } from '../lib/path'
+import { formatBadge } from '../lib/previewBlocks'
 import { menuAnchor, showMenu, type MenuItem } from '../lib/nativeMenu'
 import { keys } from '../lib/platform'
 import { useT } from '../i18n/useT'
@@ -45,6 +59,7 @@ export function Composer(): React.JSX.Element {
   const attachments = useSessionStore((s) => s.attachments[s.activeId] ?? NO_ATTACHMENTS)
   const previewRefs = useSessionStore((s) => s.previewRefs[s.activeId] ?? NO_REFS)
   const commentCards = useSessionStore((s) => s.commentCards[s.activeId] ?? NO_CARDS)
+  const contextFile = useSessionStore((s) => s.contextFiles[s.activeId] ?? null)
   const quote = useSessionStore((s) => s.quotes[s.activeId] ?? null)
   const turn = useSessionStore((s) => s.turns[s.activeId])
   const settings = useSessionStore((s) => s.settings)
@@ -53,6 +68,7 @@ export function Composer(): React.JSX.Element {
   const setDraft = useSessionStore((s) => s.setDraft)
   const setAttachments = useSessionStore((s) => s.setAttachments)
   const setPreviewRefs = useSessionStore((s) => s.setPreviewRefs)
+  const dismissContextFile = useSessionStore((s) => s.dismissContextFile)
   const clearQuote = useSessionStore((s) => s.clearQuote)
   const scrollToMessage = useSessionStore((s) => s.scrollToMessage)
   const send = useSessionStore((s) => s.send)
@@ -78,11 +94,21 @@ export function Composer(): React.JSX.Element {
   const COMPOSER_MAX_ROWS = 8
 
   const modes = useMemo(() => approvalModeOptions(t), [t])
+  // file-preview.rpml: when the file chip is dismissed, fall back to a generic
+  // "Ask the agent…" prompt; when attached on a file session, prefer the
+  // file-oriented phrasing.
+  const idlePlaceholder = conversation?.fileId
+    ? contextFile
+      ? t('composer.placeholderFile')
+      : t('composer.placeholder')
+    : contextFile
+      ? t('composer.placeholderFile')
+      : t('composer.placeholderCommand')
   const placeholder = awaiting
     ? t('composer.placeholderAwaiting')
     : isRunning
       ? t('composer.thinking')
-      : `${t('composer.placeholderCommand')}  ${keys('⌘↵')} ${t('composer.send')} · ${t('composer.dragHint', { shortcut: keys('⌘I') })}`
+      : `${idlePlaceholder}  ${keys('⌘↵')} ${t('composer.send')} · ${t('composer.dragHint', { shortcut: keys('⌘I') })}`
 
   useEffect(() => {
     if (!quote) return
@@ -157,9 +183,11 @@ export function Composer(): React.JSX.Element {
   const quoteSource =
     quote?.role === 'user' ? t('composer.quoteFromUser') : t('composer.quoteFromAgent')
 
+  const hasCommentCards = commentCards.length > 0
+
   return (
     <div
-      className="composer"
+      className={`composer${hasCommentCards ? ' has-comment-cards' : ''}`}
       onDragOver={(event) => event.preventDefault()}
       onDrop={(event) => {
         event.preventDefault()
@@ -193,6 +221,16 @@ export function Composer(): React.JSX.Element {
           </button>
         </div>
       )}
+      {/* File Attachment Chip — above comment cards (file-preview.rpml). */}
+      {contextFile && (
+        <FileContextChip
+          path={contextFile}
+          conversationId={activeId}
+          onDismiss={() => void dismissContextFile(activeId)}
+        />
+      )}
+      {/* Attached stack: comment strip sits on top of the input box. */}
+      <CommentCardsBar />
       <div className="composer-box">
         {previewRefs.length > 0 && (
           <div className="context-refs">
@@ -258,11 +296,16 @@ export function Composer(): React.JSX.Element {
 
         <div className="composer-bar">
           <button
+            type="button"
             className="model-picker"
             title={t('composer.model')}
-            onClick={(event) =>
+            disabled={!conversation}
+            onClick={(event) => {
+              event.preventDefault()
+              event.stopPropagation()
+              if (!conversation) return
               void showMenu(modelItems, menuAnchor(event.currentTarget as HTMLElement))
-            }
+            }}
           >
             <span className="model-name">
               {PRESET_MODELS.find((m) => m.id === activeModel)?.label ?? activeModel}
@@ -271,13 +314,17 @@ export function Composer(): React.JSX.Element {
           </button>
 
           <button
+            type="button"
             className={`model-picker${approvalMode === 'bypass' ? ' warning' : ''}`}
             aria-label={t('composer.approvalMode')}
             title={approvalTitle}
             disabled={!conversation}
-            onClick={(event) =>
+            onClick={(event) => {
+              event.preventDefault()
+              event.stopPropagation()
+              if (!conversation) return
               void showMenu(approvalItems, menuAnchor(event.currentTarget as HTMLElement))
-            }
+            }}
           >
             <span className="model-name">{approvalLabel}</span>
             <ChevronDown size={11} />
@@ -317,6 +364,223 @@ export function Composer(): React.JSX.Element {
           )}
         </div>
       </div>
+    </div>
+  )
+}
+
+/**
+ * Pick-mode comment strip — attached above the composer box (not above tools).
+ * Multiple cards stack flush; bottom edge is square so it reads as part of the input.
+ */
+function CommentCardsBar(): React.JSX.Element | null {
+  const t = useT()
+  const activeId = useSessionStore((s) => s.activeId)
+  const cards = useSessionStore((s) => s.commentCards[s.activeId] ?? NO_CARDS)
+  const commentFocusId = useSessionStore((s) => s.commentFocusId)
+  const commentFocusTick = useSessionStore((s) => s.commentFocusTick)
+  const updateCommentCard = useSessionStore((s) => s.updateCommentCard)
+  const removeCommentCard = useSessionStore((s) => s.removeCommentCard)
+  const inputRefs = useRef<Map<string, HTMLInputElement>>(new Map())
+  const [editingId, setEditingId] = useState<string | null>(null)
+
+  // Every pick (including re-pick of the same block) opens edit + focuses.
+  useEffect(() => {
+    if (!commentFocusId || commentFocusTick === 0) return
+    setEditingId(commentFocusId)
+  }, [commentFocusId, commentFocusTick])
+
+  useEffect(() => {
+    if (!editingId) return
+    // Wait a frame so the input is mounted after switching into edit mode.
+    const id = window.requestAnimationFrame(() => {
+      const el = inputRefs.current.get(editingId)
+      if (!el) return
+      el.focus()
+      try {
+        el.setSelectionRange(el.value.length, el.value.length)
+      } catch {
+        // ignore
+      }
+    })
+    return () => window.cancelAnimationFrame(id)
+  }, [editingId, commentFocusTick])
+
+  const commitCard = (refId: string): void => {
+    const latest = (useSessionStore.getState().commentCards[activeId] ?? []).find(
+      (c) => c.ref.id === refId
+    )
+    if (!latest || !latest.comment.trim()) {
+      removeCommentCard(activeId, refId)
+    }
+    setEditingId((cur) => (cur === refId ? null : cur))
+  }
+
+  if (cards.length === 0) return null
+
+  return (
+    <div className="comment-cards" role="list">
+      {cards.map((card) => {
+        const editing = editingId === card.ref.id
+        const hasComment = card.comment.trim().length > 0
+        const title =
+          card.ref.label ||
+          (card.ref.startLine === card.ref.endLine
+            ? `line ${card.ref.startLine}`
+            : `lines ${card.ref.startLine}–${card.ref.endLine}`)
+        return (
+          <div
+            className={`comment-card${editing ? ' is-editing' : ''}${hasComment && !editing ? ' is-committed' : ''}`}
+            key={card.ref.id}
+            role="listitem"
+          >
+            <div className="comment-card-header">
+              <span className="comment-card-icon" aria-hidden>
+                {editing || !hasComment ? (
+                  <MapPin size={12} strokeWidth={2} />
+                ) : (
+                  <MessageSquare size={12} strokeWidth={2} />
+                )}
+              </span>
+              <span
+                className="comment-card-title"
+                title={`${card.ref.filePath} · L${card.ref.startLine}–${card.ref.endLine}`}
+              >
+                {title}
+              </span>
+              {editing ? (
+                <button
+                  type="button"
+                  className="comment-card-close"
+                  title={t('common.close')}
+                  aria-label={t('common.close')}
+                  onClick={() => removeCommentCard(activeId, card.ref.id)}
+                >
+                  <X size={12} strokeWidth={2.25} />
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  className="comment-card-trash"
+                  title={t('common.delete')}
+                  aria-label={t('common.delete')}
+                  onClick={() => removeCommentCard(activeId, card.ref.id)}
+                >
+                  <Trash2 size={12} strokeWidth={2} />
+                </button>
+              )}
+            </div>
+            {editing ? (
+              <input
+                ref={(el) => {
+                  if (el) {
+                    inputRefs.current.set(card.ref.id, el)
+                    // Focus on mount when this is the active edit target.
+                    if (editingId === card.ref.id && document.activeElement !== el) {
+                      requestAnimationFrame(() => {
+                        el.focus()
+                        try {
+                          el.setSelectionRange(el.value.length, el.value.length)
+                        } catch {
+                          // ignore
+                        }
+                      })
+                    }
+                  } else {
+                    inputRefs.current.delete(card.ref.id)
+                  }
+                }}
+                type="text"
+                className="comment-card-input"
+                placeholder={t('composer.commentPlaceholder')}
+                value={card.comment}
+                onChange={(e) => updateCommentCard(activeId, card.ref.id, e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault()
+                    commitCard(card.ref.id)
+                  } else if (e.key === 'Escape') {
+                    e.preventDefault()
+                    commitCard(card.ref.id)
+                  }
+                }}
+                onBlur={() => {
+                  // Defer past canvas mousedown so a new pick can win focus first.
+                  window.setTimeout(() => {
+                    const el = inputRefs.current.get(card.ref.id)
+                    if (el && document.activeElement === el) return
+                    // Another comment field took focus — leave this card committed if it has text.
+                    if (
+                      document.activeElement instanceof HTMLInputElement &&
+                      document.activeElement.classList.contains('comment-card-input')
+                    ) {
+                      setEditingId((cur) => (cur === card.ref.id ? null : cur))
+                      return
+                    }
+                    commitCard(card.ref.id)
+                  }, 0)
+                }}
+              />
+            ) : (
+              <button
+                type="button"
+                className="comment-card-body"
+                title={t('composer.commentEditHint')}
+                onClick={() => setEditingId(card.ref.id)}
+              >
+                {card.comment}
+              </button>
+            )}
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+/**
+ * File Attachment Chip (main-chat / file-preview / workspace-view).
+ * Shows name · size · format; ✕ dismisses context only (not the preview).
+ */
+function FileContextChip({
+  path,
+  conversationId,
+  onDismiss
+}: {
+  path: string
+  conversationId: string
+  onDismiss: () => void
+}): React.JSX.Element {
+  const t = useT()
+  const size = useWorkspaceStore((s) => {
+    const dirs = s.workspaces[conversationId]?.dirs
+    if (!dirs) return null
+    for (const entries of Object.values(dirs)) {
+      const hit = entries.find((e) => e.path === path)
+      if (hit && !hit.isDirectory) return hit.size
+    }
+    return null
+  })
+  const name = basename(path)
+  const badge = formatBadge(path, 'text')
+  const sizeLabel = size != null ? formatBytes(size) : null
+  const label = [name, sizeLabel, badge].filter(Boolean).join(' · ')
+
+  return (
+    <div className="file-context-chip" title={path}>
+      <FileText size={14} aria-hidden />
+      <span className="file-context-chip-label">
+        {label}
+        <span className="file-context-chip-suffix"> — {t('composer.fileContextAttached')}</span>
+      </span>
+      <button
+        type="button"
+        className="btn icon-only sm"
+        title={t('composer.dismissFileContext')}
+        aria-label={t('composer.dismissFileContext')}
+        onClick={onDismiss}
+      >
+        <X size={12} />
+      </button>
     </div>
   )
 }

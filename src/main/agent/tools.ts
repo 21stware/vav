@@ -13,7 +13,7 @@
  * `details.failed`, which the runtime lifts into pi's `isError` from
  * `afterToolCall`. Only genuinely unexpected faults throw.
  */
-import { dirname, isAbsolute, resolve as resolvePath } from 'node:path'
+import { basename, dirname, isAbsolute, resolve as resolvePath } from 'node:path'
 import { Type, type TSchema } from '@earendil-works/pi-ai'
 import type { AgentTool } from '@earendil-works/pi-agent-core'
 import { normalizeAskQuestions, normalizePlanSteps } from '@shared/askPlan'
@@ -22,9 +22,11 @@ import {
   TOOL_OUTPUT_CAP,
   type AppSettings,
   type AskQuestion,
+  type PreviewRef,
   type ToolName
 } from '@shared/types'
 import type { FileService } from '../fs/FileService'
+import type { DocumentRetrievalService } from '../retrieval/DocumentRetrievalService'
 import { BASH_SESSION_ID, type StickyShell } from '../terminal/StickyShell'
 import { unifiedDiff } from './diff'
 
@@ -58,10 +60,21 @@ export interface ToolHost {
   ) => Promise<{ text: string; cancelled: boolean }>
   /** Record an fs_write for Change Review (before/after already captured). */
   recordWrite?: (filePath: string, originalContent: string | null, newContent: string) => void
+  /** Local document RAG (PDF / office / text). */
+  retrieval?: DocumentRetrievalService
+  /** Selection from the user message that started this turn (for related search). */
+  selectionAnchor?: () => PreviewRef[]
+  /** File-session path when this conversation is bound to one document. */
+  defaultDocPath?: () => string | null
 }
 
 export const INTERACTIVE_TOOLS: ReadonlySet<ToolName> = new Set(['request', 'ask_user_question'])
-export const READONLY_TOOLS: ReadonlySet<ToolName> = new Set(['fs_read', 'fs_list'])
+export const READONLY_TOOLS: ReadonlySet<ToolName> = new Set([
+  'fs_read',
+  'fs_list',
+  'doc_search',
+  'doc_fetch'
+])
 /** Auto-mode tools that pause for Approve / Deny. */
 export const HIGH_RISK_TOOLS: ReadonlySet<ToolName> = new Set(['fs_write', 'terminal'])
 /** Terminal commands treated as read-only under Auto approval. */
@@ -243,13 +256,20 @@ export function createTools(host: ToolHost): AgentTool[] {
     name: 'fs_read',
     label: TOOL_LABELS.fs_read,
     description:
-      'Read a UTF-8 text file. Relative paths resolve against the conversation working directory.',
+      'Read a UTF-8 text file. Relative paths resolve against the conversation working directory. For PDF/DOCX/XLSX/PPTX use doc_search / doc_fetch instead.',
     parameters: Type.Object({
       path: Type.String({ description: 'File path, absolute or relative to the workdir.' })
     }),
     async execute(_id, params) {
       const result = await host.files.readTextFile(inWorkdir(params.path))
-      if (result.error) return failure(result.error)
+      if (result.error) {
+        const hint =
+          /\.(pdf|docx|xlsx|xls|pptx)$/i.test(String(params.path ?? '')) ||
+          /binary/i.test(result.error)
+            ? ' For office/PDF documents, use doc_search / doc_fetch.'
+            : ''
+        return failure(`${result.error}${hint}`)
+      }
       return {
         content: [{ type: 'text', text: cap(result.content) }],
         details: { display: result.content }
@@ -308,6 +328,161 @@ export function createTools(host: ToolHost): AgentTool[] {
     }
   })
 
+  const docSearch = defineTool({
+    name: 'doc_search',
+    label: TOOL_LABELS.doc_search,
+    description:
+      'Search inside a PDF, Word, Excel, PowerPoint, or text document using local retrieval (BM25 + structure). Prefer this over fs_read for binary office/PDF files. Use related_to_selection=true to expand around the user\'s selected preview blocks.',
+    parameters: Type.Object({
+      query: Type.Optional(
+        Type.String({
+          description: 'Keywords or natural-language query. Optional when related_to_selection is true.'
+        })
+      ),
+      path: Type.Optional(
+        Type.String({
+          description:
+            'Document path (absolute or workdir-relative). Defaults to the file-session document or the first selection path.'
+        })
+      ),
+      top_k: Type.Optional(
+        Type.Number({ description: 'How many chunks to return (default 8, max 20).' })
+      ),
+      related_to_selection: Type.Optional(
+        Type.Boolean({
+          description:
+            'When true, rank by proximity/overlap with the user\'s selected context from this turn.'
+        })
+      )
+    }),
+    async execute(_id, params) {
+      if (!host.retrieval) return failure('Document retrieval is unavailable')
+      const path = resolveDocPath(host, params.path)
+      if (!path) {
+        return failure(
+          'No document path. Pass path=… or open a file session / select content in the preview.'
+        )
+      }
+      const query = String(params.query ?? '').trim()
+      const related = params.related_to_selection === true
+      if (!query && !related) {
+        return failure('Provide query and/or related_to_selection=true')
+      }
+      const anchor = related ? buildSelectionAnchor(host) : undefined
+      if (related && !anchor?.text && !(anchor?.blockIds?.length)) {
+        // Still allow neighbor-less BM25 if query present
+        if (!query) {
+          return failure('related_to_selection=true but no selected context on this turn')
+        }
+      }
+      const result = await host.retrieval.search({
+        path,
+        query: query || (anchor?.text ?? ''),
+        topK: params.top_k != null ? Number(params.top_k) : undefined,
+        anchor,
+        mode: related ? 'related' : 'search'
+      })
+      if (result.error) return failure(result.error)
+      if (result.hits.length === 0) {
+        const warn = result.meta?.warnings?.join('; ')
+        return {
+          content: [
+            {
+              type: 'text',
+              text: `No matching chunks in ${basename(path)}.${warn ? ` (${warn})` : ''}`
+            }
+          ],
+          details: { display: `无匹配 · ${path}` }
+        }
+      }
+      const modelLines = [
+        `Found ${result.hits.length} chunk(s) in ${basename(path)}` +
+          (result.meta ? ` · ${result.meta.chunkCount} indexed` : '') +
+          (result.meta?.warnings?.length ? ` · ${result.meta.warnings.join('; ')}` : ''),
+        ''
+      ]
+      const displayLines = [...modelLines]
+      result.hits.forEach((hit, i) => {
+        const loc =
+          hit.chunk.page != null
+            ? `Page ${hit.chunk.page}`
+            : hit.chunk.sectionId ?? hit.chunk.kind
+        const head = `${i + 1}. [doc:${hit.chunk.id} | ${basename(path)} | ${loc}] score=${hit.score} (${hit.reasons.join('+')})`
+        modelLines.push(head)
+        modelLines.push(`   ${hit.snippet}`)
+        modelLines.push('')
+        displayLines.push(head)
+        displayLines.push(hit.chunk.text)
+        displayLines.push('')
+      })
+      return {
+        content: [{ type: 'text', text: cap(modelLines.join('\n')) }],
+        details: { display: displayLines.join('\n') }
+      }
+    }
+  })
+
+  const docFetch = defineTool({
+    name: 'doc_fetch',
+    label: TOOL_LABELS.doc_fetch,
+    description:
+      'Fetch full text for document chunks by id (from doc_search), or all chunks on a page / section. Use after doc_search when you need the complete passage.',
+    parameters: Type.Object({
+      path: Type.Optional(
+        Type.String({
+          description: 'Document path; defaults like doc_search.'
+        })
+      ),
+      ids: Type.Optional(
+        Type.Array(Type.String(), {
+          description: 'Chunk or block ids returned by doc_search (max 20).'
+        })
+      ),
+      page: Type.Optional(Type.Number({ description: '1-based PDF page to fetch.' })),
+      section_id: Type.Optional(
+        Type.String({ description: 'Structured section id (e.g. page-3, sheet name).' })
+      )
+    }),
+    async execute(_id, params) {
+      if (!host.retrieval) return failure('Document retrieval is unavailable')
+      const path = resolveDocPath(host, params.path)
+      if (!path) {
+        return failure(
+          'No document path. Pass path=… or open a file session / select content in the preview.'
+        )
+      }
+      const ids = Array.isArray(params.ids) ? params.ids.map(String).slice(0, 20) : undefined
+      const result = await host.retrieval.fetch({
+        path,
+        ids,
+        page: params.page != null ? Number(params.page) : undefined,
+        sectionId: params.section_id != null ? String(params.section_id) : undefined
+      })
+      if (result.error) return failure(result.error)
+      if (result.chunks.length === 0) {
+        return {
+          content: [{ type: 'text', text: `No chunks matched in ${basename(path)}.` }],
+          details: { display: `无块 · ${path}` }
+        }
+      }
+      const lines: string[] = [
+        `Fetched ${result.chunks.length} chunk(s) from ${basename(path)}`,
+        ''
+      ]
+      for (const c of result.chunks) {
+        const loc = c.page != null ? `Page ${c.page}` : c.sectionId ?? c.kind
+        lines.push(`[doc:${c.id} | ${basename(path)} | ${loc}]`)
+        lines.push(c.text)
+        lines.push('')
+      }
+      const text = lines.join('\n')
+      return {
+        content: [{ type: 'text', text: cap(text) }],
+        details: { display: text }
+      }
+    }
+  })
+
   const request = defineTool({
     name: 'request',
     label: TOOL_LABELS.request,
@@ -324,9 +499,16 @@ export function createTools(host: ToolHost): AgentTool[] {
 
   const askQuestionItem = Type.Object({
     question: Type.String({ description: 'The question text.' }),
-    choices: Type.Optional(Type.Array(Type.String())),
+    choices: Type.Optional(
+      Type.Array(Type.String(), {
+        description:
+          'Preset answers shown as radio (single) or checkbox (multiSelect). Always prefer providing choices when the answer is one of a small set; the UI also offers a free-form Other field.'
+      })
+    ),
     multiSelect: Type.Optional(
-      Type.Boolean({ description: 'When true with choices, allow selecting multiple.' })
+      Type.Boolean({
+        description: 'When true with choices, the user may select multiple options (checkboxes).'
+      })
     )
   })
 
@@ -334,16 +516,19 @@ export function createTools(host: ToolHost): AgentTool[] {
     name: 'ask_user_question',
     label: TOOL_LABELS.ask_user_question,
     description:
-      'Pause the turn and ask the user one or more questions. Supports single-choice, multi-choice, and free-text. Prefer `questions` for several prompts in one card.',
+      'Pause the turn and ask the user one or more questions. Prefer structured choices: single-select (radios) or multi-select (checkboxes) via `choices` / `multiSelect`. Omit choices only for open free-text. Prefer `questions` for several prompts in one card. The UI always lets the user type a custom Other answer alongside any choices.',
     parameters: Type.Object({
       title: Type.Optional(Type.String({ description: 'Card title when asking several questions.' })),
       question: Type.Optional(Type.String({ description: 'Single-question form.' })),
       choices: Type.Optional(
         Type.Array(Type.String(), {
-          description: 'Optional preset answers for the single-question form.'
+          description:
+            'Preset answers for the single-question form (radio or checkbox). Prefer this over free-text when options are known.'
         })
       ),
-      multiSelect: Type.Optional(Type.Boolean()),
+      multiSelect: Type.Optional(
+        Type.Boolean({ description: 'When true with choices, allow selecting multiple options.' })
+      ),
       questions: Type.Optional(Type.Array(askQuestionItem))
     }),
     execute: async (id, params) => {
@@ -407,10 +592,45 @@ export function createTools(host: ToolHost): AgentTool[] {
     fsRead,
     fsWrite,
     fsList,
+    docSearch,
+    docFetch,
     request,
     askUserQuestion,
     plan
   ] as AgentTool[]
+}
+
+function resolveDocPath(host: ToolHost, raw: unknown): string | null {
+  const explicit = typeof raw === 'string' ? raw.trim() : ''
+  if (explicit) {
+    return isAbsolute(explicit) ? explicit : resolvePath(host.workdir, explicit)
+  }
+  const fromDefault = host.defaultDocPath?.()?.trim()
+  if (fromDefault) return fromDefault
+  const refs = host.selectionAnchor?.() ?? []
+  const fromSel = refs.find((r) => r.filePath)?.filePath
+  return fromSel?.trim() || null
+}
+
+function buildSelectionAnchor(
+  host: ToolHost
+): { text?: string; blockIds?: string[]; chunkIds?: string[] } | undefined {
+  const refs = host.selectionAnchor?.() ?? []
+  if (refs.length === 0) return undefined
+  const texts: string[] = []
+  const blockIds: string[] = []
+  for (const ref of refs) {
+    if (ref.text?.trim()) texts.push(ref.text.trim())
+    // PreviewRef.id is typically `${path}::${blockId}`
+    const sep = ref.id.lastIndexOf('::')
+    if (sep >= 0) blockIds.push(ref.id.slice(sep + 2))
+    else if (ref.id) blockIds.push(ref.id)
+  }
+  return {
+    text: texts.join('\n\n').slice(0, 4000),
+    blockIds: blockIds.length ? blockIds : undefined,
+    chunkIds: blockIds.length ? blockIds : undefined
+  }
 }
 
 async function park(
@@ -453,29 +673,69 @@ const OS_NAMES: Record<string, string> = {
   linux: 'Linux'
 }
 
-export function buildSystemPrompt(workingDirectory: string, shell: string): string {
-  return [
+export function buildSystemPrompt(
+  workingDirectory: string,
+  shell: string,
+  options?: {
+    fileReadOnly?: boolean
+    openFilePath?: string | null
+    openFileKind?: string | null
+  }
+): string {
+  const openFile = options?.openFilePath?.trim() || null
+  const openKind = options?.openFileKind?.trim() || null
+  const lines = [
     `You are vav, a local coding agent running on the user's ${OS_NAMES[process.platform] ?? process.platform} machine.`,
     `The working directory for this conversation is: ${workingDirectory}`,
     // Without this the model reaches for POSIX idioms in a PowerShell session.
     `The user's shell is ${shell}; every \`terminal\` command must be valid ${shell} syntax.`,
-    '',
+    ''
+  ]
+  if (openFile) {
+    lines.push(
+      `The user is viewing this file in the preview: ${openFile}`,
+      'That file is the primary document for this session. Prefer it for doc_search / doc_fetch / analysis.',
+      'Do not open or search other documents in the folder unless the user explicitly asks for them.',
+      'When calling doc_search or doc_fetch, pass path to that file (or omit path so the default open file is used).',
+      ''
+    )
+    if (openKind === 'zip') {
+      lines.push(
+        'This is a ZIP archive. The file tree is available — you may reference entries by path. Individual file contents are not extracted for preview.',
+        ''
+      )
+    } else if (openKind === 'binary') {
+      lines.push(
+        'This file type (application/octet-stream) cannot be parsed for content. Only file metadata is available.',
+        ''
+      )
+    }
+  }
+  lines.push(
     'You have real tools. Prefer acting over speculating:',
     '- `terminal` — wait mode (default) for commands that exit; fire-and-forget with `background: true` for servers/daemons (returns `{status,pid,sessionId}` immediately).',
     '- `wait` — block until a bash session prints `expect` (regex/literal), or timeout.',
     '- `read_bash_session` — poll the last N lines of bash scrollback without waiting.',
-    '- `fs_read` / `fs_write` / `fs_list` operate on the local filesystem.',
+    options?.fileReadOnly
+      ? '- `fs_read` / `fs_list` operate on the local filesystem. `fs_write` is unavailable.'
+      : '- `fs_read` / `fs_write` / `fs_list` operate on the local filesystem.',
+    '- `doc_search` / `doc_fetch` — local retrieval over PDF, Word, Excel, PowerPoint, CSV/TSV, and text. Prefer these over terminal/python for office/PDF content. Do not install python-docx/pdf tools when doc_search can read the file.',
     '- `request` and `ask_user_question` pause the turn to involve the user.',
     '- `plan` maintains a visible checklist for multi-step work; update it as steps progress.',
     '',
     'Guidelines:',
-    '- Inspect before you edit: read the file, then write the complete new contents.',
+    options?.fileReadOnly
+      ? '- This file is read-only. You may read and analyze it but must not propose file modifications.'
+      : '- Inspect before you edit: read the file, then write the complete new contents.',
+    '- Selected context in the user message is only an anchor; call `doc_search` when you need more evidence from the same document.',
+    '- Cite retrieved passages with their `[doc:…]` ids.',
     '- Ask via `request` before destructive or irreversible operations.',
     '- For several related questions, prefer one `ask_user_question` with a `questions` array.',
     '- Keep replies concise and in the language the user writes in.',
     '- Format code and command output as fenced markdown blocks.',
     '- There is no hard tool-iteration cap; stop when the task is done or ask the user.'
-  ].join('\n')
+  )
+  return lines.join('\n')
 }
 
 /** Heuristic: commands that typically never exit on their own. */
@@ -509,6 +769,16 @@ export function summarizeToolInput(tool: ToolName, input: Record<string, unknown
       return truncate(String(input.path ?? ''), 120)
     case 'fs_list':
       return truncate(String(input.path ?? '.'), 120)
+    case 'doc_search': {
+      const q = String(input.query ?? '')
+      const related = input.related_to_selection ? ' · related' : ''
+      return truncate(`${String(input.path ?? '')} ${q}${related}`.trim(), 120)
+    }
+    case 'doc_fetch':
+      return truncate(
+        `${String(input.path ?? '')} ids=${JSON.stringify(input.ids ?? [])} page=${String(input.page ?? '')}`,
+        120
+      )
     case 'request':
       return truncate(String(input.instruction ?? ''), 120)
     case 'ask_user_question': {

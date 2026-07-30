@@ -24,6 +24,19 @@ export type PreviewBlockKind =
   | 'col'
   | 'table'
   | 'cell-table'
+  /** Structured office / PDF containers. */
+  | 'page'
+  | 'slide'
+  | 'sheet'
+  | 'section'
+
+export type PreviewBlockAlign = 'left' | 'center' | 'right' | 'justify'
+
+/**
+ * Presentation hint for structured docs (DOCX cover pages, form rows, …).
+ * Parsers set this; canvas may also re-derive from text + align.
+ */
+export type PreviewBlockDisplay = 'title' | 'subtitle' | 'form' | 'body'
 
 export interface PreviewBlock {
   id: string
@@ -35,6 +48,14 @@ export interface PreviewBlock {
   endLine: number
   label?: string
   children?: PreviewBlock[]
+  /** Paragraph alignment from OOXML w:jc (DOCX) or equivalent. */
+  align?: PreviewBlockAlign
+  /** How the structured canvas should lay this block out. */
+  display?: PreviewBlockDisplay
+  /** Form rows: label cell (e.g. "专  业") when split from underlines / tabs. */
+  formLabel?: string
+  /** Form rows: value / blank underlines. */
+  formValue?: string
 }
 
 const TS_JS_EXTS = new Set(['ts', 'tsx', 'js', 'jsx', 'mts', 'cts', 'mjs', 'cjs'])

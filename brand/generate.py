@@ -1,82 +1,80 @@
-"""Derive the shipped brand assets from brand/logo-2.png.
+"""Derive shipped brand assets from brand/logo.png.
 
-Run by hand after the logo changes — this is a design-time tool, not part of
-the build:
+Run after the logo changes (design-time tool, not part of the app build):
 
     python3 -m pip install Pillow
     python3 brand/generate.py
 
-The source art is dark ink on white paper. Naively keying out the white would
-also eat the periwinkle accent strokes, which are light enough that their
-luminance reads as "mostly paper". So each pixel is instead classified by hue
-into one of the two brand colours, redrawn in that pure colour, and given an
-alpha recovered from how far it sits between the paper and that colour. Edges
-then composite cleanly onto any background, which is what lets the same
-artwork be recoloured for the dark theme without a halo.
+Source art is the cat-mark app icon: dark navy + lavender strokes on a light
+plate. We:
+
+1. Key out the light plate and repaint strokes in pure brand colours with alpha
+2. Build macOS/Windows app icons (superellipse plate + mark)
+3. Build monochrome multi-resolution menu-bar tray templates (@1x/@2x/@3x)
+4. Emit in-app / docs wordmarks and site favicon
 """
+
+from __future__ import annotations
 
 import colorsys
 import math
 import os
-from PIL import Image, ImageDraw
+import subprocess
+from PIL import Image, ImageDraw, ImageFilter
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SRC = os.path.join(ROOT, 'brand', 'logo.png')
 ASSETS = os.path.join(ROOT, 'src', 'renderer', 'src', 'assets')
 BUILD = os.path.join(ROOT, 'build')
 DOCS = os.path.join(ROOT, 'docs')
+SITE = os.path.join(ROOT, 'site', 'assets')
 
+# Brand colours (tech design: ink + periwinkle from the mark).
 INK = (0x13, 0x1B, 0x35)
 LAVENDER = (0xB2, 0xA5, 0xDC)
-# The dark theme is a neutral grey ramp, so the mark's own ink has to lose
-# its blue cast too — anything cooler reads as a stain against the surface it
-# sits on. The accent keeps its chroma; on dark it is the only colour on screen.
 INK_ON_DARK = (0xEF, 0xEF, 0xF1)
 LAVENDER_ON_DARK = (0xB7, 0xAA, 0xF3)
 
-PAPER_LUM = 255.0
-# Above this luminance a pixel is paper; below it, ink of some opacity.
-PAPER_CUTOFF = 252.0
-# Hue (degrees) separating the ink strokes from the accent strokes.
+# Plate / paper key — logo plate is ~248; anything brighter is background.
+PAPER_CUTOFF = 232.0
+# Hue (degrees) separating navy strokes from lavender whiskers.
 HUE_SPLIT = 242.0
-# The accent is light by nature, so hue alone would misread dark antialiasing.
-ACCENT_MIN_LUM = 120.0
+ACCENT_MIN_LUM = 100.0
 
-# Square mark — export larger so empty-state / About can show a hero size
-# without upscaling a soft JPEG-derived PNG.
 MARK_HEIGHT = 192
 README_HEIGHT = 160
 ICON_SIZE = 1024
-ICON_INSET = 100              # macOS reserves ~10% around the 824pt plate
-# Windows draws the icon straight onto the taskbar with no plate of its own, so
-# it gets the full square and only the corner rounding the shell expects.
+ICON_INSET = 100  # macOS ~10% margin around the 824pt plate
 ICON_WIN_SIZES = (16, 24, 32, 48, 64, 128, 256)
-# macOS plates are superellipses, not circular-arc rounded rects: the curvature
-# is continuous, so the corner starts bending much earlier and never shows the
-# tangent seam that gives `rounded_rectangle` its dated look.
 ICON_SQUIRCLE_N = 5.0
 ICON_SUPERSAMPLE = 4
-# Square mark reads small on the plate — fill most of the safe area.
-ICON_MARK_WIDTH = 0.88
-# Menu-bar glyph is ~22pt tall and keeps the wordmark aspect (not crushed into
-# a square — that is what made Retina look low-res). 1x/2x/3x at DPI 72/144/216.
+# Square cat mark — fill most of the safe plate.
+ICON_MARK_FILL = 0.78
+
+# Menu-bar template: square glyph, black + alpha (AppKit template image).
+# macOS status items are ~16–22pt logical; 22pt + real @2x/@3x keeps a detailed
+# mark sharp. True vector needs an SVG/PDF source — logo.png is raster, so we
+# supersample down from the extracted mark instead of upscaling a tiny tile.
 TRAY_HEIGHT = 22
 TRAY_SCALES = (1, 2, 3)
+# Extra supersample for the tray pipeline (on top of the 8× canvas).
+TRAY_SS = 8
+FAVICON_SIZES = (16, 32, 48, 64, 128, 256)
 
 
-def luminance(pixel):
+def luminance(pixel: tuple[int, int, int]) -> float:
     return 0.2126 * pixel[0] + 0.7152 * pixel[1] + 0.0722 * pixel[2]
 
 
-def hue_degrees(pixel):
-    r, g, b = (c / 255 for c in pixel)
+def hue_degrees(pixel: tuple[int, int, int]) -> float:
+    r, g, b = (c / 255 for c in pixel[:3])
     return colorsys.rgb_to_hsv(r, g, b)[0] * 360
 
 
-def redraw(source, ink, accent):
-    """Repaint the artwork in two pure colours with a recovered alpha channel."""
+def redraw(source: Image.Image, ink: tuple[int, int, int], accent: tuple[int, int, int]) -> Image.Image:
+    """Repaint strokes in two pure colours with recovered alpha; plate → transparent."""
     width, height = source.size
-    src = source.load()
+    src = source.convert('RGBA').load()
     out = Image.new('RGBA', (width, height), (0, 0, 0, 0))
     dst = out.load()
     ink_lum = luminance(INK)
@@ -84,24 +82,31 @@ def redraw(source, ink, accent):
 
     for y in range(height):
         for x in range(width):
-            pixel = src[x, y]
+            r, g, b, a = src[x, y]
+            if a < 8:
+                continue
+            pixel = (r, g, b)
             lum = luminance(pixel)
             if lum > PAPER_CUTOFF:
+                continue
+            # Near-white with low chroma is still plate AA.
+            h, s, _v = colorsys.rgb_to_hsv(r / 255, g / 255, b / 255)
+            if lum > 210 and s < 0.08:
                 continue
             is_accent = hue_degrees(pixel) > HUE_SPLIT and lum > ACCENT_MIN_LUM
             colour = accent if is_accent else ink
             pure_lum = accent_lum if is_accent else ink_lum
-            alpha = (PAPER_LUM - lum) / max(1.0, PAPER_LUM - pure_lum)
+            alpha = (255.0 - lum) / max(1.0, 255.0 - pure_lum)
+            alpha = min(1.0, max(0.0, alpha)) * (a / 255.0)
             dst[x, y] = colour + (min(255, int(round(alpha * 255))),)
     return out
 
 
-def squircle_mask(side, exponent=ICON_SQUIRCLE_N, supersample=ICON_SUPERSAMPLE):
-    """An alpha mask for |x|^n + |y|^n = 1, drawn oversized then downsampled."""
+def squircle_mask(side: int, exponent: float = ICON_SQUIRCLE_N, supersample: int = ICON_SUPERSAMPLE) -> Image.Image:
     hi = side * supersample
     radius = hi / 2
     steps = 2048
-    outline = []
+    outline: list[tuple[float, float]] = []
     for index in range(steps):
         angle = 2 * math.pi * index / steps
         cos_t, sin_t = math.cos(angle), math.sin(angle)
@@ -114,94 +119,134 @@ def squircle_mask(side, exponent=ICON_SQUIRCLE_N, supersample=ICON_SUPERSAMPLE):
     return mask.resize((side, side), Image.LANCZOS)
 
 
-def scaled(art, height):
+def scaled(art: Image.Image, height: int) -> Image.Image:
     scale = height / art.size[1]
     return art.resize((max(1, round(art.size[0] * scale)), height), Image.LANCZOS)
 
 
-def plated(mark, inset):
-    """The mark centred on a paper-white squircle, the way both shells want it."""
+def fit_contain(art: Image.Image, box: int) -> Image.Image:
+    """Scale art to fit inside a square box, preserving aspect."""
+    w, h = art.size
+    scale = min(box / w, box / h)
+    nw, nh = max(1, round(w * scale)), max(1, round(h * scale))
+    return art.resize((nw, nh), Image.LANCZOS)
+
+
+def plated(mark: Image.Image, inset: int) -> Image.Image:
+    """Mark centred on a paper-white superellipse (macOS / Dock plate)."""
     plate = Image.new('RGBA', (ICON_SIZE, ICON_SIZE), (0, 0, 0, 0))
     side = ICON_SIZE - 2 * inset
     face = Image.new('RGBA', (side, side), (0xFA, 0xFA, 0xFE, 255))
     face.putalpha(squircle_mask(side))
     plate.alpha_composite(face, (inset, inset))
 
-    target = int(side * ICON_MARK_WIDTH)
-    art = mark.resize((target, max(1, round(mark.size[1] * target / mark.size[0]))), Image.LANCZOS)
-    plate.alpha_composite(art, ((ICON_SIZE - art.size[0]) // 2, (ICON_SIZE - art.size[1]) // 2))
+    art = fit_contain(mark, int(side * ICON_MARK_FILL))
+    plate.alpha_composite(
+        art,
+        ((ICON_SIZE - art.size[0]) // 2, (ICON_SIZE - art.size[1]) // 2),
+    )
     return plate
 
 
-def tray_size_for_mark(mark):
-    """1x pixel size: height fixed, width follows the wordmark aspect."""
-    aspect = mark.size[0] / max(1, mark.size[1])
-    height = TRAY_HEIGHT
-    width = max(height, round(height * aspect))
-    return width, height
+def tray_template(mark: Image.Image, size: int) -> Image.Image:
+    """Monochrome template (black + alpha) for one tray scale, square canvas.
 
-
-def tray_template(mark, width, height):
-    """Render one tray scale straight from the source mark (not upscaled 1x).
-
-    Each of 1x/2x/3x is drawn into an 8× supersampled canvas then LANCZOS
-    down — Retina gets real pixels, not a NEAREST blow-up of the 22pt tile.
+    Each scale is rendered independently from the full-res mark (never by
+    NEAREST-upscaling the 1x tile), then downsampled — that is what Retina needs
+    when the source is a PNG mark rather than a PDF/SVG.
     """
-    from PIL import ImageFilter
-
-    hi_w = width * 8
-    hi_h = height * 8
+    hi = size * TRAY_SS
     alpha = mark.split()[3]
-    fit_h = int(hi_h * 0.9)
-    scale = fit_h / alpha.size[1]
+    # Fit mark inside ~86% of the tile (status item clips aggressive padding).
+    fit = int(hi * 0.86)
+    scale = min(fit / alpha.size[0], fit / alpha.size[1])
     art_w = max(1, round(alpha.size[0] * scale))
     art_h = max(1, round(alpha.size[1] * scale))
     work = alpha.resize((art_w, art_h), Image.LANCZOS)
 
-    # Thicken ~0.6–0.8px of the destination size, in supersample space.
-    dilate = 5 if height <= TRAY_HEIGHT else (7 if height <= TRAY_HEIGHT * 2 else 9)
+    # Light thicken so 1x stays legible; less blur on @2x/@3x so edges stay crisp.
+    if size <= TRAY_HEIGHT:
+        dilate, blur = 5, 0.28
+    elif size <= TRAY_HEIGHT * 2:
+        dilate, blur = 7, 0.22
+    else:
+        dilate, blur = 9, 0.18
     work = work.filter(ImageFilter.MaxFilter(dilate))
-    work = work.filter(ImageFilter.GaussianBlur(0.35))
+    if blur > 0:
+        work = work.filter(ImageFilter.GaussianBlur(blur))
 
-    canvas = Image.new('L', (hi_w, hi_h), 0)
-    canvas.paste(work, ((hi_w - art_w) // 2, (hi_h - art_h) // 2))
-    gray = canvas.resize((width, height), Image.LANCZOS)
+    canvas = Image.new('L', (hi, hi), 0)
+    canvas.paste(work, ((hi - art_w) // 2, (hi - art_h) // 2))
+    gray = canvas.resize((size, size), Image.LANCZOS)
 
-    out = Image.new('RGBA', (width, height), (0, 0, 0, 0))
+    out = Image.new('RGBA', (size, size), (0, 0, 0, 0))
     px, g = out.load(), gray.load()
-    for y in range(height):
-        for x in range(width):
+    for y in range(size):
+        for x in range(size):
             value = g[x, y]
-            # Keep a short AA ramp; crush the muddy mid-greys that read as blur.
-            if value < 28:
+            if value < 20:
                 continue
-            if value > 200:
+            if value > 210:
                 alpha_v = 255
             else:
-                alpha_v = min(255, int(40 + (value - 28) * (215 / 172)))
+                # Steeper ramp → less muddy mid-grey on Retina.
+                alpha_v = min(255, int(32 + (value - 20) * (223 / 190)))
+            # Template images must be black with alpha — AppKit tints them.
             px[x, y] = (0, 0, 0, alpha_v)
     return out
 
 
-def tray_filename(scale):
+def tray_filename(scale: int) -> str:
     return 'trayTemplate.png' if scale == 1 else f'trayTemplate@{scale}x.png'
 
 
-def save_tray_png(image, path, dpi):
-    """Write PNG with DPI; open-by-handle so `@2x` filenames do not confuse Pillow."""
+def save_tray_png(image: Image.Image, path: str, dpi: int) -> None:
     with open(path, 'wb') as handle:
         image.save(handle, format='PNG', dpi=(dpi, dpi))
+    try:
+        subprocess.run(
+            [
+                'sips',
+                '-s',
+                'dpiWidth',
+                str(dpi),
+                '-s',
+                'dpiHeight',
+                str(dpi),
+                path,
+            ],
+            check=False,
+            capture_output=True,
+        )
+    except OSError:
+        pass
 
 
-def main():
-    os.makedirs(ASSETS, exist_ok=True)
-    os.makedirs(BUILD, exist_ok=True)
-    os.makedirs(DOCS, exist_ok=True)
+def save_ico(image: Image.Image, path: str, sizes: tuple[int, ...]) -> None:
+    image.save(path, format='ICO', sizes=[(s, s) for s in sizes])
 
-    source = Image.open(SRC).convert('RGB')
-    bbox = redraw(source, INK, LAVENDER).getbbox()
-    padded = (bbox[0] - 6, bbox[1] - 6, bbox[2] + 6, bbox[3] + 6)
 
+def main() -> None:
+    for d in (ASSETS, BUILD, DOCS, SITE):
+        os.makedirs(d, exist_ok=True)
+
+    source = Image.open(SRC).convert('RGBA')
+    # Extract mark on transparent plate.
+    mark_full = redraw(source, INK, LAVENDER)
+    bbox = mark_full.getbbox()
+    if not bbox:
+        raise SystemExit('No non-paper content found in brand/logo.png — check PAPER_CUTOFF')
+    pad = 8
+    padded = (
+        max(0, bbox[0] - pad),
+        max(0, bbox[1] - pad),
+        min(source.size[0], bbox[2] + pad),
+        min(source.size[1], bbox[3] + pad),
+    )
+    mark = mark_full.crop(padded)
+    print(f'mark extracted {mark.size[0]}x{mark.size[1]} from {source.size[0]}x{source.size[1]}')
+
+    # In-app + docs wordmarks (light / dark).
     for name, ink, accent in (
         ('wordmark', INK, LAVENDER),
         ('wordmark-dark', INK_ON_DARK, LAVENDER_ON_DARK),
@@ -209,55 +254,65 @@ def main():
         art = redraw(source, ink, accent).crop(padded)
         in_app = scaled(art, MARK_HEIGHT)
         in_app.save(os.path.join(ASSETS, f'{name}.png'))
-        print(f'{name}.png {in_app.size[0]}x{in_app.size[1]}')
-
-        # GitHub has no CSS of ours to switch on, so the README picks between
-        # these two with a <picture> media query instead.
+        print(f'assets/{name}.png {in_app.size[0]}x{in_app.size[1]}')
         banner = scaled(art, README_HEIGHT)
         banner.save(os.path.join(DOCS, f'{name}.png'))
         print(f'docs/{name}.png {banner.size[0]}x{banner.size[1]}')
+        # Site mirrors the light wordmark.
+        if name == 'wordmark':
+            banner.save(os.path.join(SITE, 'wordmark.png'))
+        else:
+            banner.save(os.path.join(SITE, 'wordmark-dark.png'))
 
-    mark = redraw(source, INK, LAVENDER).crop(bbox)
+    # App icon (macOS plate).
+    icon = plated(mark, ICON_INSET)
+    icon_path = os.path.join(BUILD, 'icon.png')
+    icon.save(icon_path)
+    print(f'build/icon.png {ICON_SIZE}x{ICON_SIZE}')
 
-    plated(mark, ICON_INSET).save(os.path.join(BUILD, 'icon.png'))
-    print(f'icon.png {ICON_SIZE}x{ICON_SIZE}')
+    # Also drop a clean mark-only PNG for tooling.
+    mark.save(os.path.join(BUILD, 'icon-mark.png'))
+    print(f'build/icon-mark.png {mark.size[0]}x{mark.size[1]}')
 
-    # Windows scales the icon down to 16px for the taskbar, where macOS's plate
-    # margin would leave the mark a few pixels wide. It gets the tighter plate.
-    plated(mark, ICON_SIZE // 32).save(
-        os.path.join(BUILD, 'icon.ico'),
-        sizes=[(size, size) for size in ICON_WIN_SIZES],
-    )
-    print(f'icon.ico {"/".join(str(size) for size in ICON_WIN_SIZES)}')
+    # Windows .ico — tighter inset so 16px taskbar stays readable.
+    win_plate = plated(mark, ICON_SIZE // 32)
+    ico_path = os.path.join(BUILD, 'icon.ico')
+    save_ico(win_plate, ico_path, ICON_WIN_SIZES)
+    print(f'build/icon.ico {"/".join(str(s) for s in ICON_WIN_SIZES)}')
 
-    width_1x, height_1x = tray_size_for_mark(mark)
+    # Site favicon (multi-size ico-like PNG set as single 32/256 PNG + ico optional).
+    fav = fit_contain(mark, 256)
+    canvas = Image.new('RGBA', (256, 256), (0, 0, 0, 0))
+    canvas.alpha_composite(fav, ((256 - fav.size[0]) // 2, (256 - fav.size[1]) // 2))
+    # Prefer full app icon for favicon so it matches Dock.
+    favicon = icon.resize((256, 256), Image.LANCZOS)
+    favicon.save(os.path.join(SITE, 'favicon.png'))
+    print('site/assets/favicon.png 256x256')
+    # Always keep renderer public + agent mark in sync (public/icon.png was a
+    # stale initial-commit asset and kept resurfacing the old "vav" wordmark).
+    public_dir = os.path.join(ROOT, 'src', 'renderer', 'public')
+    if os.path.isdir(public_dir):
+        icon.save(os.path.join(public_dir, 'icon.png'))
+        print('src/renderer/public/icon.png 1024x1024')
+    agents_dir = os.path.join(ROOT, 'src', 'renderer', 'src', 'assets', 'agents')
+    if os.path.isdir(agents_dir):
+        mark.save(os.path.join(agents_dir, 'vav-mark.png'))
+        print('src/renderer/src/assets/agents/vav-mark.png')
+    # Mirror into renderer build output if present.
+    out_renderer = os.path.join(ROOT, 'out', 'renderer')
+    if os.path.isdir(out_renderer):
+        icon.save(os.path.join(out_renderer, 'icon.png'))
+
+    # Tray templates — monochrome, multi-resolution.
     for scale in TRAY_SCALES:
-        width, height = width_1x * scale, height_1x * scale
-        tray = tray_template(mark, width, height)
+        size = TRAY_HEIGHT * scale
+        tray = tray_template(mark, size)
         name = tray_filename(scale)
         path = os.path.join(BUILD, name)
         save_tray_png(tray, path, dpi=72 * scale)
-        # Belt-and-braces: sips DPI metadata is what AppKit/Electron docs ask for.
-        try:
-            import subprocess
+        print(f'build/{name} {size}x{size} @ {72 * scale}dpi')
 
-            subprocess.run(
-                [
-                    'sips',
-                    '-s',
-                    'dpiWidth',
-                    str(72 * scale),
-                    '-s',
-                    'dpiHeight',
-                    str(72 * scale),
-                    path,
-                ],
-                check=False,
-                capture_output=True,
-            )
-        except OSError:
-            pass
-        print(f'{name} {width}x{height} @ {72 * scale}dpi')
+    print('done.')
 
 
 if __name__ == '__main__':

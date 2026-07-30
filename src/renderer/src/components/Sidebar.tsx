@@ -44,7 +44,15 @@ function groupingOptions(t: ReturnType<typeof useT>): { value: SidebarGroupingMo
   ]
 }
 
-export function Sidebar(): React.JSX.Element {
+export function Sidebar({
+  floating = false,
+  onNavigate
+}: {
+  /** Rendered as a left overlay on a narrow window (not in the flex split). */
+  floating?: boolean
+  /** Close the float after a plain navigation pick (not multi-select). */
+  onNavigate?: () => void
+} = {}): React.JSX.Element {
   const t = useT()
   const conversations = useSessionStore((s) => s.conversations)
   const activeId = useSessionStore((s) => s.activeId)
@@ -126,6 +134,8 @@ export function Sidebar(): React.JSX.Element {
         useSessionStore.setState({ selectedIds: visible.map((c) => c.id) })
       } else if (event.key === 'Escape' && archiveView) {
         event.preventDefault()
+        // Keep the float open: Escape steps out of archive first.
+        event.stopImmediatePropagation()
         setArchiveView(false)
       }
     }
@@ -255,7 +265,7 @@ export function Sidebar(): React.JSX.Element {
   }
 
   return (
-    <aside className="sidebar">
+    <aside className={`sidebar${floating ? ' floating' : ''}`}>
       <div className="sidebar-search">
         <div style={{ position: 'relative' }}>
           <Search
@@ -331,7 +341,13 @@ export function Sidebar(): React.JSX.Element {
       <div className="sidebar-list" ref={listRef} tabIndex={-1}>
         {visible.length === 0 && !archiveView && conversations.filter((c) => !c.archived).length === 0 && (
           <EmptyState title={t('sidebar.emptyTitle')} description={t('sidebar.emptyDesc')}>
-            <button className="btn secondary" onClick={() => void createConversation()}>
+            <button
+              className="btn secondary"
+              onClick={() => {
+                void createConversation()
+                onNavigate?.()
+              }}
+            >
               {t('common.newSession')}
             </button>
           </EmptyState>
@@ -404,6 +420,7 @@ export function Sidebar(): React.JSX.Element {
                           return
                         }
                         void selectWorkspaceGroup(groupWorkdir)
+                        onNavigate?.()
                       }}
                     >
                       <span className="conv-group-title">{group.label}</span>
@@ -430,13 +447,19 @@ export function Sidebar(): React.JSX.Element {
                     <div
                       key={conversation.id}
                       className={`conv-row${isActive ? ' selected' : ''}${isMultiSelected ? ` multi ${runClass}` : ''}`}
-                      onClick={(event) =>
+                      onClick={(event) => {
                         void selectConversation(conversation.id, {
                           additive: event.metaKey,
                           range: event.shiftKey
                         })
-                      }
-                      onDoubleClick={() => void openDetached(conversation.id)}
+                        // Multi-select keeps the float open so the user can
+                        // keep picking; a plain click is a navigation.
+                        if (!event.metaKey && !event.shiftKey) onNavigate?.()
+                      }}
+                      onDoubleClick={() => {
+                        void openDetached(conversation.id)
+                        onNavigate?.()
+                      }}
                       onContextMenu={(event) => {
                         event.preventDefault()
                         // Finder-style: right-click inside a multi-selection keeps

@@ -8,3 +8,5 @@ build/.electron-brand-stamp
 *.log
 .env
 **/__pycache__/
+# Copied from pdfjs-dist by electron.vite.config.ts
+src/renderer/public/pdfjs/

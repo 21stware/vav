@@ -1,242 +1,316 @@
-import { useEffect, useState } from 'react'
-import { ChevronDown, ChevronRight, File as FileIcon, Folder, Plus } from 'lucide-react'
-import type { FileEntry } from '@shared/types'
-import { useSessionStore } from '../state/sessionStore'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { ChevronDown, Folder, Plus } from 'lucide-react'
+import type { ConversationMeta } from '@shared/types'
+import { useSessionStore, type TurnRuntime } from '../state/sessionStore'
 import { useWorkspaceStore } from '../state/workspaceStore'
 import { useT } from '../i18n/useT'
-import { basename } from '../lib/path'
+import { relativeTime, truncatePathLabel } from '../lib/format'
 import { Button, EmptyState } from './ui'
 import { FileViewer } from './FileViewer'
 import { SessionDetail } from './SessionDetail'
 
 /**
- * Workspace View (workspace-view.rpml): tree + embedded preview + workspace Agent.
+ * Agent column (workspace-view): Preview + Agent split.
+ * Default 340 / min 240 / max 480; path-scoped persistence.
+ */
+const AGENT_MIN = 240
+const AGENT_MAX = 480
+const AGENT_DEFAULT = 340
+const PREVIEW_MIN = 320
+
+function pathHash(workdir: string): string {
+  let hash = 0
+  for (let i = 0; i < workdir.length; i++) hash = (hash * 31 + workdir.charCodeAt(i)) | 0
+  return (hash >>> 0).toString(16)
+}
+
+function widthKey(workdir: string): string {
+  return `vav.workspace-agent-panel-width-${pathHash(workdir)}`
+}
+
+function loadStoredWidth(key: string, fallback: number, min: number, max: number): number {
+  try {
+    const n = Number(localStorage.getItem(key))
+    if (Number.isFinite(n) && n >= min && n <= max) return Math.round(n)
+  } catch {
+    // ignore
+  }
+  return fallback
+}
+
+function clamp(n: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, Math.round(n)))
+}
+
+/**
+ * Workspace View: two-pane Preview + Agent.
+ * No left file tree — open a file from the main Files panel (or keep none selected).
+ * Agent panel: session dropdown + New.
  */
 export function WorkspaceView({ workdir }: { workdir: string }): React.JSX.Element {
   const t = useT()
   const activeId = useSessionStore((s) => s.activeId)
   const createConversation = useSessionStore((s) => s.createConversation)
+  const attachContextFile = useSessionStore((s) => s.attachContextFile)
   const workspace = useWorkspaceStore((s) => s.workspaces[activeId])
   const ensureFilesLoaded = useWorkspaceStore((s) => s.ensureFilesLoaded)
-  const loadDirectory = useWorkspaceStore((s) => s.loadDirectory)
-  const toggleExpand = useWorkspaceStore((s) => s.toggleExpand)
-  const selectPath = useWorkspaceStore((s) => s.selectPath)
-  const [filter, setFilter] = useState('')
+
+  const [agentWidth, setAgentWidth] = useState(() =>
+    loadStoredWidth(widthKey(workdir), AGENT_DEFAULT, AGENT_MIN, AGENT_MAX)
+  )
+  const [agentPanelOpen, setAgentPanelOpen] = useState(true)
+
+  const rootRef = useRef<HTMLDivElement>(null)
+  const agentRef = useRef<HTMLElement>(null)
+  const previewRef = useRef<HTMLElement>(null)
+  const agentWidthRef = useRef(agentWidth)
+  agentWidthRef.current = agentWidth
+  const colDraggingRef = useRef(false)
+
+  const revealAgent = useCallback((): void => {
+    setAgentPanelOpen(true)
+  }, [])
 
   useEffect(() => {
     if (activeId) void ensureFilesLoaded(activeId)
   }, [activeId, ensureFilesLoaded, workdir])
 
+  useEffect(() => {
+    setAgentWidth(loadStoredWidth(widthKey(workdir), AGENT_DEFAULT, AGENT_MIN, AGENT_MAX))
+    setAgentPanelOpen(true)
+  }, [workdir])
+
+  const persistWidth = useCallback(
+    (value: number): void => {
+      try {
+        localStorage.setItem(widthKey(workdir), String(value))
+      } catch {
+        // ignore
+      }
+    },
+    [workdir]
+  )
+
+  const fitToShell = useCallback((): void => {
+    if (colDraggingRef.current) return
+    const total = rootRef.current?.clientWidth ?? 0
+    if (total <= 0 || !agentPanelOpen) return
+    let agent = agentWidthRef.current
+    const budget = total - PREVIEW_MIN
+    if (agent <= budget) return
+    agent = Math.max(AGENT_MIN, budget)
+    if (agent === agentWidthRef.current) return
+    setAgentWidth(agent)
+    persistWidth(agent)
+  }, [agentPanelOpen, persistWidth])
+
+  useEffect(() => {
+    fitToShell()
+    const el = rootRef.current
+    if (!el || typeof ResizeObserver === 'undefined') return
+    const ro = new ResizeObserver(() => fitToShell())
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [fitToShell])
+
+  const startResize = (event: React.MouseEvent): void => {
+    event.preventDefault()
+    const startX = event.clientX
+    const startAgent = agentWidth
+    const shellW = rootRef.current?.clientWidth ?? 0
+    let latestAgent = startAgent
+    let raf = 0
+    let pendingX = startX
+
+    colDraggingRef.current = true
+    document.documentElement.dataset.resizing = 'true'
+    rootRef.current?.classList.add('is-col-resizing')
+    document.body.style.cursor = 'col-resize'
+    document.body.style.userSelect = 'none'
+
+    const applyDom = (agent: number): void => {
+      if (agentRef.current && agentPanelOpen) {
+        agentRef.current.style.width = `${agent}px`
+      }
+    }
+
+    const onMove = (e: MouseEvent): void => {
+      pendingX = e.clientX
+      if (raf) return
+      raf = requestAnimationFrame(() => {
+        raf = 0
+        const total = rootRef.current?.clientWidth || shellW
+        const raw = startAgent + (startX - pendingX)
+        const maxForAgent = Math.min(AGENT_MAX, Math.max(AGENT_MIN, total - PREVIEW_MIN))
+        latestAgent = clamp(raw, AGENT_MIN, maxForAgent)
+        applyDom(latestAgent)
+      })
+    }
+
+    const onUp = (): void => {
+      if (raf) cancelAnimationFrame(raf)
+      window.removeEventListener('mousemove', onMove)
+      window.removeEventListener('mouseup', onUp)
+      document.body.style.cursor = ''
+      document.body.style.userSelect = ''
+      rootRef.current?.classList.remove('is-col-resizing')
+      colDraggingRef.current = false
+      delete document.documentElement.dataset.resizing
+      setAgentWidth(latestAgent)
+      persistWidth(latestAgent)
+      window.dispatchEvent(new Event('vav:resize-end'))
+    }
+
+    window.addEventListener('mousemove', onMove)
+    window.addEventListener('mouseup', onUp)
+  }
+
   const selectedPath = workspace?.selectedPath ?? null
-  const root = workspace?.root ?? workdir
-  const folderName = basename(workdir) || workdir
+
+  // Auto-attach (replace) File Attachment Chip when the preview file changes.
+  // Dismiss stays until selectedPath changes again — we do not re-attach on every
+  // render while the same path is still selected.
+  // CLI agents receive focus only at process spawn (argv / system-prompt file),
+  // not via mid-session PTY paste (which would print into the TUI).
+  useEffect(() => {
+    if (!activeId) return
+    if (selectedPath) void attachContextFile(activeId, selectedPath)
+  }, [activeId, selectedPath, attachContextFile])
 
   const newSession = async (): Promise<void> => {
     await createConversation({ workingDirectory: workdir })
   }
 
   return (
-    <div className="workspace-view">
-      <aside className="workspace-view-tree">
-        <div className="workspace-view-tree-head">
-          <div className="workspace-view-title" title={workdir}>
-            {folderName}
-          </div>
-          <input
-            className="text-field"
-            value={filter}
-            placeholder={t('common.search')}
-            onChange={(event) => setFilter(event.target.value)}
-          />
-        </div>
-        <div className="workspace-view-tree-body">
-          {!workspace && <div className="workspace-view-tree-empty muted">{t('common.loading')}</div>}
-          {workspace && (
-            <WorkspaceTree
-              root={root}
-              filter={filter.trim().toLowerCase()}
-              selectedPath={selectedPath}
-              onSelect={(path, isDir) => {
-                if (isDir) {
-                  void toggleExpand(activeId, path)
-                  return
-                }
-                selectPath(activeId, path)
-              }}
-              onOpenPreview={(path) => {
-                void window.vav.window.openFilePreview(path, {
-                  origin: 'session',
-                  conversationId: activeId
-                })
-              }}
-              onExpand={(path) => void loadDirectory(activeId, path)}
-            />
-          )}
-        </div>
-      </aside>
-
-      <section className="workspace-view-preview">
+    <div className="workspace-view" ref={rootRef}>
+      <section className="workspace-view-preview" ref={previewRef}>
         {selectedPath ? (
           <FileViewer
             path={selectedPath}
             origin="session"
             parentConversationId={activeId}
             embedded
+            agentPanelOpen={agentPanelOpen}
+            onToggleAgentPanel={() => setAgentPanelOpen((v) => !v)}
+            onPickBlock={revealAgent}
           />
         ) : (
-          <EmptyState title={t('workspace.selectFile')} description={t('workspace.selectFileDesc')} />
+          <EmptyState
+            title={t('workspace.selectFile')}
+            description={t('workspace.selectFileDesc')}
+          />
         )}
       </section>
 
-      <aside className="workspace-view-agent">
-        <div className="workspace-view-agent-head">
-          <div className="workspace-view-agent-head-row">
-            <Folder size={14} className="workspace-view-agent-icon" aria-hidden />
-            <span className="workspace-view-title" title={workdir}>
-              {folderName}
-            </span>
-          </div>
-          <div className="workspace-view-agent-head-row workspace-view-agent-session">
-            <span className="workspace-view-agent-session-label">{t('common.session')}</span>
-            <span className="spacer" />
-            <Button
-              label={t('workspace.newSession')}
-              variant="secondary"
-              size="sm"
-              icon={<Plus size={12} />}
-              onClick={() => void newSession()}
+      <aside
+        ref={agentRef}
+        className={`workspace-view-agent${agentPanelOpen ? '' : ' is-collapsed'}`}
+        style={{ width: agentPanelOpen ? agentWidth : 0 }}
+        aria-hidden={!agentPanelOpen}
+      >
+        {agentPanelOpen && (
+          <>
+            <div
+              className="workspace-col-resizer workspace-col-resizer-start"
+              role="separator"
+              aria-orientation="vertical"
+              aria-label={t('workspace.resizeAgentPanel')}
+              onMouseDown={startResize}
+              onDoubleClick={() => {
+                setAgentWidth(AGENT_DEFAULT)
+                persistWidth(AGENT_DEFAULT)
+              }}
             />
-          </div>
-        </div>
-        <SessionDetail variant="preview-edit" />
+            <div className="workspace-view-agent-head">
+              <div className="workspace-view-agent-head-row">
+                <Folder size={14} aria-hidden className="workspace-view-agent-folder" />
+                <span className="workspace-view-agent-path" title={workdir}>
+                  {truncatePathLabel(workdir, 36)}
+                </span>
+              </div>
+              <div className="workspace-view-agent-head-row workspace-view-agent-session">
+                <WorkspaceSessionSelect workdir={workdir} />
+                <Button
+                  icon={<Plus size={12} />}
+                  size="sm"
+                  variant="secondary"
+                  title={t('workspace.newSession')}
+                  onClick={() => void newSession()}
+                />
+              </div>
+            </div>
+            <SessionDetail variant="workspace" />
+          </>
+        )}
       </aside>
     </div>
   )
 }
 
-function WorkspaceTree({
-  root,
-  filter,
-  selectedPath,
-  onSelect,
-  onOpenPreview,
-  onExpand
-}: {
-  root: string
-  filter: string
-  selectedPath: string | null
-  onSelect: (path: string, isDir: boolean) => void
-  onOpenPreview: (path: string) => void
-  onExpand: (path: string) => void
-}): React.JSX.Element {
+/**
+ * Session dropdown for this workspace — switch conversation without leaving
+ * workspace view (stayInWorkspace).
+ */
+function WorkspaceSessionSelect({ workdir }: { workdir: string }): React.JSX.Element {
   const t = useT()
+  const conversations = useSessionStore((s) => s.conversations)
+  const turns = useSessionStore((s) => s.turns)
   const activeId = useSessionStore((s) => s.activeId)
-  const workspace = useWorkspaceStore((s) => s.workspaces[activeId])
-  const dirs = workspace?.dirs ?? {}
-  const expanded = new Set(workspace?.expanded ?? [])
-  const rootError = workspace?.dirErrors[root]
+  const selectConversation = useSessionStore((s) => s.selectConversation)
 
-  if (rootError) {
-    return <div className="workspace-view-tree-empty muted">{rootError}</div>
+  const rows = useMemo(() => {
+    return conversations
+      .filter((c) => !c.archived && !c.fileId)
+      .filter((c) => c.workingDirectory === workdir)
+      .sort((a, b) => {
+        if (a.pinned !== b.pinned) return a.pinned ? -1 : 1
+        if (a.pinned && b.pinned) return (b.pinTime ?? 0) - (a.pinTime ?? 0)
+        return b.updatedAt - a.updatedAt
+      })
+  }, [conversations, workdir])
+
+  const optionLabel = (c: ConversationMeta): string => {
+    const turn = turns[c.id] as TurnRuntime | undefined
+    const title = (c.title || t('common.session')).trim()
+    if (turn?.awaitingToolCallId) {
+      return t('workspace.sessionOptionAwaiting', { title })
+    }
+    if (turn?.isRunning) {
+      return t('workspace.sessionOptionRunning', { title })
+    }
+    const when = relativeTime(c.updatedAt)
+    if (c.pinned) return t('workspace.sessionOptionPinned', { title, when })
+    return t('workspace.sessionOption', { title, when })
   }
 
-  const entries = dirs[root] ?? []
-  const loading = workspace?.loadingDirs.includes(root)
-  if (!loading && entries.length === 0) {
-    return <div className="workspace-view-tree-empty muted">{t('workspace.emptyDir')}</div>
-  }
+  const value = rows.some((c) => c.id === activeId) ? activeId : (rows[0]?.id ?? '')
 
   return (
-    <div>
-      {entries.map((entry) => (
-        <TreeNode
-          key={entry.path}
-          entry={entry}
-          depth={0}
-          filter={filter}
-          selectedPath={selectedPath}
-          expanded={expanded}
-          dirs={dirs}
-          onSelect={onSelect}
-          onOpenPreview={onOpenPreview}
-          onExpand={onExpand}
-        />
-      ))}
-    </div>
-  )
-}
-
-function TreeNode({
-  entry,
-  depth,
-  filter,
-  selectedPath,
-  expanded,
-  dirs,
-  onSelect,
-  onOpenPreview,
-  onExpand
-}: {
-  entry: FileEntry
-  depth: number
-  filter: string
-  selectedPath: string | null
-  expanded: Set<string>
-  dirs: Record<string, FileEntry[]>
-  onSelect: (path: string, isDir: boolean) => void
-  onOpenPreview: (path: string) => void
-  onExpand: (path: string) => void
-}): React.JSX.Element | null {
-  const isDir = entry.isDirectory
-  const open = expanded.has(entry.path)
-  const name = basename(entry.path)
-  const matches = !filter || name.toLowerCase().includes(filter)
-  const children = isDir ? (dirs[entry.path] ?? []) : []
-
-  if (!matches && !isDir) return null
-  if (!matches && isDir && filter) {
-    const anyChild = children.some((c) => basename(c.path).toLowerCase().includes(filter))
-    if (!anyChild && !open) return null
-  }
-
-  return (
-    <>
-      <button
-        type="button"
-        className={`workspace-tree-row${selectedPath === entry.path ? ' selected' : ''}`}
-        style={{ paddingLeft: 8 + depth * 12 }}
-        onClick={() => {
-          if (isDir && !open) onExpand(entry.path)
-          onSelect(entry.path, isDir)
-        }}
-        onDoubleClick={() => {
-          if (!isDir) onOpenPreview(entry.path)
-        }}
-      >
-        {isDir ? (
-          open ? <ChevronDown size={12} /> : <ChevronRight size={12} />
-        ) : (
-          <span style={{ width: 12 }} />
-        )}
-        {isDir ? <Folder size={12} /> : <FileIcon size={12} />}
-        <span className="label">{name}</span>
-      </button>
-      {isDir &&
-        open &&
-        children.map((child) => (
-          <TreeNode
-            key={child.path}
-            entry={child}
-            depth={depth + 1}
-            filter={filter}
-            selectedPath={selectedPath}
-            expanded={expanded}
-            dirs={dirs}
-            onSelect={onSelect}
-            onOpenPreview={onOpenPreview}
-            onExpand={onExpand}
-          />
-        ))}
-    </>
+    <label className="workspace-session-select preview-mode">
+      <span className="preview-mode-control">
+        <select
+          className="text-field preview-mode-select workspace-session-select-field"
+          value={value}
+          disabled={rows.length === 0}
+          aria-label={t('workspace.sessionSelect')}
+          title={t('workspace.historyTitle')}
+          onChange={(e) => {
+            const id = e.target.value
+            if (id) void selectConversation(id, { stayInWorkspace: true })
+          }}
+        >
+          {rows.length === 0 ? (
+            <option value="">{t('workspace.historyEmpty').split('\n')[0]}</option>
+          ) : (
+            rows.map((c) => (
+              <option key={c.id} value={c.id}>
+                {optionLabel(c)}
+              </option>
+            ))
+          )}
+        </select>
+        <ChevronDown className="preview-mode-chevron" size={12} aria-hidden />
+      </span>
+    </label>
   )
 }

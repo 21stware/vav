@@ -68,8 +68,12 @@ export class ConversationStore {
       if (!Array.isArray(conversation.tokenHistory)) conversation.tokenHistory = []
       if (conversation.cacheCreatedAt === undefined) conversation.cacheCreatedAt = null
       if (conversation.cacheExpiresAt === undefined) conversation.cacheExpiresAt = null
+      if (conversation.fileId === undefined) conversation.fileId = null
+      if (conversation.fileReadOnly === undefined) conversation.fileReadOnly = false
+      if (conversation.agentBinaryName === undefined) conversation.agentBinaryName = null
+      if (conversation.focusedFilePath === undefined) conversation.focusedFilePath = null
       // Legacy untitled titles from earlier builds; normalize to the current locale.
-      if (isDefaultSessionTitle(conversation.title)) {
+      if (isDefaultSessionTitle(conversation.title) && !conversation.fileId) {
         conversation.title = defaultSessionTitle(currentLocale())
       }
       this.adoptTreeShape(conversation)
@@ -77,8 +81,10 @@ export class ConversationStore {
 
     this.loaded = true
 
-    // Launch invariant: the product always has at least one conversation.
-    if (this.conversations.length === 0) this.create(defaults.mintWorkdir(), defaults.model)
+    // Launch invariant: the product always has at least one visible conversation.
+    if (this.conversations.filter((c) => !c.fileId).length === 0) {
+      this.create(defaults.mintWorkdir(), defaults.model)
+    }
     return this.conversations
   }
 
@@ -88,6 +94,7 @@ export class ConversationStore {
 
   listMeta(): ConversationMeta[] {
     return this.conversations
+      .filter((c) => !c.fileId)
       .map(
         ({
           messages: _messages,
@@ -110,11 +117,15 @@ export class ConversationStore {
     return this.conversations.find((c) => c.id === id)
   }
 
-  create(workingDirectory: string | null, model: string): Conversation {
+  create(
+    workingDirectory: string | null,
+    model: string,
+    options?: { fileId?: string | null; title?: string; fileReadOnly?: boolean }
+  ): Conversation {
     const now = Date.now()
     const conversation: Conversation = {
       id: randomUUID(),
-      title: defaultSessionTitle(currentLocale()),
+      title: options?.title ?? defaultSessionTitle(currentLocale()),
       createdAt: now,
       updatedAt: now,
       workingDirectory,
@@ -132,7 +143,11 @@ export class ConversationStore {
       duplicateSourceTitle: null,
       archived: false,
       archivedAt: null,
-      approvalMode: 'auto'
+      approvalMode: 'auto',
+      fileId: options?.fileId ?? null,
+      fileReadOnly: options?.fileReadOnly ?? false,
+      agentBinaryName: null,
+      focusedFilePath: null
     }
     this.conversations.unshift(conversation)
     this.scheduleFlush()
@@ -184,10 +199,21 @@ export class ConversationStore {
     return copy
   }
 
+  /**
+   * Patch conversation fields without changing recency.
+   *
+   * `updatedAt` is last *conversation* activity (messages), not last open/view
+   * or metadata edit. Selecting a session, focusing a file, renaming, changing
+   * model, etc. must not reorder the sidebar — only append/replace message
+   * (and create/archive flows) touch `updatedAt`.
+   */
   updateMeta(id: string, patch: Partial<ConversationMeta>): Conversation | undefined {
     const conversation = this.get(id)
     if (!conversation) return undefined
-    Object.assign(conversation, patch, { updatedAt: Date.now() })
+    // Strip updatedAt so callers cannot rewrite recency through this path.
+    const { updatedAt: _ignore, ...safe } = patch
+    void _ignore
+    Object.assign(conversation, safe)
     this.scheduleFlush()
     return conversation
   }
@@ -267,13 +293,20 @@ export class ConversationStore {
   }
 
   /**
-   * Removes conversations, refusing to empty the list.
+   * Removes conversations, refusing to empty the sidebar list.
+   * File-preview sessions (`fileId` set) can always be deleted in isolation —
+   * they do not count toward the "at least one sidebar conversation" guard.
    * Returns the ids actually removed; empty means the guard fired.
    */
   remove(ids: string[]): string[] {
     const target = new Set(ids)
     const remaining = this.conversations.filter((c) => !target.has(c.id))
-    if (remaining.length === 0) return []
+    // Never empty the *sidebar* set — file-preview sessions don't count.
+    if (remaining.filter((c) => !c.fileId).length === 0) {
+      // Still allow pure file-session deletes when the only victims have fileId.
+      const deletingSidebar = this.conversations.some((c) => target.has(c.id) && !c.fileId)
+      if (deletingSidebar) return []
+    }
     const removed = this.conversations.filter((c) => target.has(c.id)).map((c) => c.id)
     this.conversations = remaining
     this.scheduleFlush()

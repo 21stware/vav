@@ -4,10 +4,34 @@
     <meta charset="UTF-8" />
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: vav-local:; media-src 'self' data: blob: vav-local:; font-src 'self' data:; connect-src 'self'; frame-src 'self' vav-local: blob:; object-src 'self' vav-local: blob:"
+      content="default-src 'self'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'; worker-src 'self' blob:; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: vav-local: https:; media-src 'self' data: blob: vav-local:; font-src 'self' data:; connect-src 'self' vav-local: https://spec.getoriginai.com; frame-src 'self' vav-local: blob:; object-src 'self' vav-local: blob:"
     />
     <link rel="icon" type="image/png" href="/icon.png" />
     <title>vav</title>
+    <!--
+      Synchronous shell paint before the module graph loads.
+      Token-usage / settings popups were flashing system white between
+      BrowserWindow show and React first paint; this matches the native
+      backgroundColor so that frame is never visible.
+    -->
+    <script>
+      ;(function () {
+        try {
+          var q = new URLSearchParams(location.search)
+          var view = q.get('view')
+          if (view !== 'token-usage' && view !== 'settings') return
+          var dark = window.matchMedia('(prefers-color-scheme: dark)').matches
+          var bg = dark ? '#121213' : '#eceaf1'
+          document.documentElement.style.background = bg
+          document.documentElement.dataset.theme = dark ? 'dark' : 'light'
+          document.documentElement.style.colorScheme = dark ? 'dark' : 'light'
+          var style = document.createElement('style')
+          style.textContent =
+            'html,body,#root{background:' + bg + '!important;margin:0;height:100%}'
+          document.head.appendChild(style)
+        } catch (_) {}
+      })()
+    </script>
   </head>
   <body>
     <div id="root"></div>

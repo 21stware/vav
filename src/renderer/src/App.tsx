@@ -37,6 +37,9 @@ export default function App(): React.JSX.Element {
     const offMenu = installDefaultContextMenu()
     const offCli = window.vav.onCliOpen((event) => {
       const store = useSessionStore.getState()
+      // Reveal in List / CLI open: leave workspace view so the sidebar row is visible.
+      if (store.activeGroupId) store.selectWorkspaceGroup(null)
+      if (!store.sidebarVisible) store.toggleSidebar()
       void store.selectConversation(event.conversationId).then(() => {
         if (event.attachments?.length) {
           store.setAttachments(event.conversationId, event.attachments)
@@ -165,9 +168,84 @@ function Titlebar(): React.JSX.Element {
   )
 }
 
+/** Below this width the sidebar docks off and opens as a floating overlay. */
+const SIDEBAR_FLOAT_MAX = 720
+
+function useSidebarFloatMode(): boolean {
+  const [floating, setFloating] = useState(() => window.innerWidth <= SIDEBAR_FLOAT_MAX)
+
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | null = null
+    const apply = (): void => {
+      setFloating(window.innerWidth <= SIDEBAR_FLOAT_MAX)
+    }
+    const onResize = (): void => {
+      if (timer) clearTimeout(timer)
+      timer = setTimeout(apply, 80)
+    }
+    window.addEventListener('resize', onResize, { passive: true })
+    return () => {
+      window.removeEventListener('resize', onResize)
+      if (timer) clearTimeout(timer)
+    }
+  }, [])
+
+  return floating
+}
+
 function SidebarSlot(): React.JSX.Element | null {
+  const t = useT()
   const visible = useSessionStore((s) => s.sidebarVisible)
-  return visible ? <Sidebar /> : null
+  const toggleSidebar = useSessionStore((s) => s.toggleSidebar)
+  const floating = useSidebarFloatMode()
+
+  useEffect(() => {
+    if (!visible || !floating) return
+    const onKey = (event: KeyboardEvent): void => {
+      if (event.key !== 'Escape') return
+      const target = event.target as HTMLElement | null
+      // Let text fields consume Escape first (clear search / cancel rename).
+      if (
+        target?.tagName === 'INPUT' ||
+        target?.tagName === 'TEXTAREA' ||
+        target?.tagName === 'SELECT' ||
+        target?.isContentEditable
+      ) {
+        return
+      }
+      event.preventDefault()
+      toggleSidebar()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [visible, floating, toggleSidebar])
+
+  if (!visible) return null
+
+  if (!floating) return <Sidebar />
+
+  const close = (): void => {
+    if (useSessionStore.getState().sidebarVisible) toggleSidebar()
+  }
+
+  return (
+    <div className="sidebar-float-host" role="presentation">
+      <div
+        className="sidebar-float-scrim"
+        onMouseDown={(event) => {
+          if (event.button === 0) close()
+        }}
+      />
+      <div
+        className="sidebar-float-panel"
+        role="dialog"
+        aria-modal="true"
+        aria-label={t('shortcut.toggleSidebar')}
+      >
+        <Sidebar floating onNavigate={close} />
+      </div>
+    </div>
+  )
 }
 
 function ToastHost(): React.JSX.Element | null {
@@ -251,6 +329,9 @@ function useMenuCommands(): void {
           store.setPanelSegment('terminal')
           void useWorkspaceStore.getState().newBash(store.activeId, 80, 24)
           break
+        case 'focus-bash':
+          store.focusBashTerminal()
+          break
         case 'switch-workdir':
           store.openWorkspaceSwitcher()
           break
@@ -276,14 +357,19 @@ function useMenuCommands(): void {
   }, [])
 }
 
-/** Auto-collapses the sidebar on a narrow window; the user can always re-show it. */
+/**
+ * On a narrow window the sidebar becomes a floating overlay (see SidebarSlot).
+ * Auto-hide when entering that band so the detail column keeps full width;
+ * restore when the window is wide enough again. The user can always re-open
+ * it (as a float while narrow, docked while wide).
+ */
 function useResponsiveSidebar(): void {
   const [autoCollapsed, setAutoCollapsed] = useState(false)
 
   useEffect(() => {
     let timer: ReturnType<typeof setTimeout> | null = null
     const apply = (): void => {
-      const narrow = window.innerWidth <= 520
+      const narrow = window.innerWidth <= SIDEBAR_FLOAT_MAX
       const store = useSessionStore.getState()
       if (narrow && store.sidebarVisible && !autoCollapsed) {
         setAutoCollapsed(true)
@@ -294,11 +380,12 @@ function useResponsiveSidebar(): void {
       }
     }
     // Debounce past the live-resize storm — toggling the sidebar mid-drag
-    // forces a full layout on every crossing of the 520px threshold.
+    // forces a full layout on every crossing of the float threshold.
     const onResize = (): void => {
       if (timer) clearTimeout(timer)
       timer = setTimeout(apply, 120)
     }
+    apply()
     window.addEventListener('resize', onResize, { passive: true })
     return () => {
       window.removeEventListener('resize', onResize)

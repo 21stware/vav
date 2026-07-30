@@ -9,6 +9,8 @@ import type {
   PreviewRef,
   QuoteDraft,
   ShellKind,
+  ThemeMode,
+  TokenSnapshot,
   TurnEvent,
   TurnStatus,
   ValidateKeyResult
@@ -34,6 +36,29 @@ export interface PtyDataEvent {
   data: string
 }
 
+/** Options for `pty.create` — spawn a CLI agent directly into the PTY. */
+export interface PtyCreateOptions {
+  preferredId?: string
+  /** Executable name or absolute path (Claude Code, Codex, …). */
+  command?: string
+  args?: string[]
+  /** Alternate command names if `command` is not on PATH. */
+  commandCandidates?: string[]
+  env?: Record<string, string>
+  /**
+   * Ambient session context for the agent (focused file, block notes).
+   * Injected at spawn via CLI flags when {@link contextLaunchStrategy} supports it —
+   * never by typing into the PTY.
+   */
+  launchContext?: string | null
+  /**
+   * Which argv strategy to use for {@link launchContext}.
+   * e.g. `claude-append-system-prompt-file` → writes a temp file and passes
+   * `--append-system-prompt-file <path>`.
+   */
+  contextLaunchStrategy?: import('./agentContextInject').AgentContextLaunchStrategy
+}
+
 export interface FsDirtyEvent {
   conversationId: string
   dirs: string[]
@@ -56,6 +81,7 @@ export type SettingsView =
   | 'appearance'
   | 'notifications'
   | 'cli'
+  | 'agents'
   | 'file-associations'
   | 'about'
 
@@ -91,6 +117,48 @@ export interface CreateConversationOptions {
   model?: string
 }
 
+/** One session in a file's FileSessionStore history list. */
+export interface FileSessionMeta {
+  id: string
+  title: string
+  createdAt: number
+  updatedAt: number
+  messageCount: number
+  tokensUsed: number
+}
+
+export interface FileSessionsState {
+  fileId: string
+  activeSessionId: string
+  sessions: FileSessionMeta[]
+}
+
+export interface FileSessionsDeleteResult extends FileSessionsState {
+  ok: boolean
+  error?: string
+  removed: string[]
+}
+
+/**
+ * Lean hydrate payload for the native token-usage panel.
+ * Main builds this from ConversationStore so the popup never bootstraps the app.
+ */
+export interface TokenUsageViewPayload {
+  conversationId: string
+  model: string
+  tokensUsed: number
+  tokenLimit: number
+  history: TokenSnapshot[]
+  cacheCreatedAt: number | null
+  cacheExpiresAt: number | null
+  isRunning: boolean
+  apiEndpoint: string
+  theme: ThemeMode
+  locale: AppLocale
+  /** Wall clock at emit time — used for cache-expiry relative labels. */
+  now: number
+}
+
 export interface CliOpenEvent {
   conversationId: string
   toast: string | null
@@ -98,21 +166,97 @@ export interface CliOpenEvent {
   attachments?: string[]
 }
 
-export type FilePreviewKind = 'text' | 'csv' | 'image' | 'pdf' | 'audio' | 'video' | 'binary'
+export type FilePreviewKind =
+  | 'text'
+  | 'csv'
+  | 'image'
+  | 'pdf'
+  | 'audio'
+  | 'video'
+  | 'binary'
+  | 'zip'
+  | 'docx'
+  | 'xlsx'
+  | 'pptx'
+  | 'sqlite'
+
+/** One entry in a ZIP archive structure preview (no content extraction). */
+export interface ZipEntryInfo {
+  /** Relative path inside the archive (dirs end with `/`). */
+  path: string
+  name: string
+  isDirectory: boolean
+  compressedSize: number
+  uncompressedSize: number
+  modifiedAt?: number
+}
+
+export interface ZipArchiveInfo {
+  entries: ZipEntryInfo[]
+  entryCount: number
+  compressedSize: number
+  uncompressedSize: number
+  /** 0–100 integer compression ratio (saved %). */
+  ratio: number
+}
+
+/** Extra metadata for binary / unsupported file preview canvas. */
+export interface BinaryFileMeta {
+  uti: string
+  permissions: string
+  owner: string
+  createdAt: number | null
+  modifiedAt: number | null
+  inode: string
+  defaultApp: string | null
+}
+
+export interface SqliteTableInfo {
+  name: string
+  columns: string[]
+  rowCount: number
+}
+
+/** Lightweight schema index for SQLite previews (rows load on demand). */
+export interface SqliteDatabaseInfo {
+  tables: SqliteTableInfo[]
+}
+
+export interface SqliteQueryResult {
+  columns: string[]
+  rows: string[][]
+  total: number
+  offset: number
+  limit: number
+  error?: string
+}
 
 export interface FileInspectResult {
   path: string
   name: string
   size: number
+  /** File mtime (ms) — preview uses this to detect agent/shell rewrites. */
+  mtimeMs?: number
   kind: FilePreviewKind
   mime: string
   error?: string
-  /** UTF-8 text when kind is text/csv. */
+  /** UTF-8 text when kind is text/csv (or plainText for structured docs). */
   text?: string
   truncated?: boolean
   /** data: URL for image/audio/video under the size cap. */
   dataUrl?: string
   lineCount?: number
+  /**
+   * Structured office/PDF document (block-selectable). Present for
+   * kind pdf | docx | xlsx | pptx when parse succeeds.
+   */
+  structured?: import('./structuredDoc').StructuredDocument
+  /** SQLite schema index when kind is sqlite. */
+  sqlite?: SqliteDatabaseInfo
+  /** ZIP archive tree (structure only — no entry contents). */
+  zip?: ZipArchiveInfo
+  /** Binary / unsupported type metadata panel. */
+  binaryMeta?: BinaryFileMeta
 }
 
 /** The full renderer-facing API, exposed on `window.vav` by the preload script. */
@@ -158,6 +302,10 @@ export interface VavApi {
     create(options?: CreateConversationOptions): Promise<ConversationMeta>
     rename(id: string, title: string): Promise<ConversationMeta[]>
     setModel(id: string, model: string): Promise<ConversationMeta[]>
+    /** CLI agent id for new terminal splits (null = plain shell). */
+    setAgentBinaryName(id: string, agentBinaryName: string | null): Promise<ConversationMeta[]>
+    /** Workspace preview focus — carried into agent context. */
+    setFocusedFile(id: string, path: string | null): Promise<ConversationMeta[]>
     setWorkingDirectory(id: string, path: string): Promise<ConversationMeta[]>
     pickWorkingDirectory(id: string): Promise<ConversationMeta[] | null>
     /** Move a Temporary Workspace folder to a permanent path. */
@@ -199,7 +347,7 @@ export interface VavApi {
       contextBlocks?: PreviewRef[] | null
     ): Promise<void>
     cancel(conversationId: string): Promise<void>
-    answer(conversationId: string, toolCallId: string, answer: string): Promise<void>
+    answer(conversationId: string, toolCallId: string, answer: string): Promise<boolean>
     status(conversationId: string): Promise<TurnStatus>
     /** Another version of this reply, as a sibling rather than an appended one. */
     regenerate(conversationId: string, messageId: string): Promise<void>
@@ -213,7 +361,21 @@ export interface VavApi {
   files: {
     list(path: string, sort: FileSortKey, ascending: boolean): Promise<DirectoryListing>
     read(path: string): Promise<{ content: string; truncated: boolean; error?: string }>
+    /**
+     * Binary file bytes as base64 for mature client renderers
+     * (docx-preview, pdf.js, SheetJS). Cap enforced in main.
+     */
+    readBinary(
+      path: string
+    ): Promise<{ ok: true; base64: string; size: number; mime: string } | { ok: false; error: string }>
+    /** Write raw bytes (base64) — office discard / binary restore. */
+    writeBinary(
+      path: string,
+      base64: string
+    ): Promise<{ ok: true } | { ok: false; error?: string }>
     quickLook(path: string): Promise<void>
+    /** Open path with the OS default application (binary "Open with …"). */
+    openWithDefault(path: string): Promise<{ ok: true } | { ok: false; error: string }>
     watch(conversationId: string, root: string | null): Promise<void>
     onDirty(handler: (event: FsDirtyEvent) => void): () => void
     /** Resolves a dropped File to its absolute path. */
@@ -236,6 +398,15 @@ export interface VavApi {
     /** Metadata + optional data URL for in-app preview. */
     inspect(path: string): Promise<FileInspectResult>
     /**
+     * Page through a SQLite table (read-only). Used by the DB preview canvas.
+     */
+    dbQuery(
+      path: string,
+      table: string,
+      offset?: number,
+      limit?: number
+    ): Promise<SqliteQueryResult>
+    /**
      * AST / structured selectable blocks for a file's text (TS/JS via
      * TypeScript compiler; null = use renderer heuristic).
      */
@@ -245,13 +416,32 @@ export interface VavApi {
     ): Promise<import('./previewBlock').PreviewBlock[] | null>
   }
 
+  /** File Preview multi-session store (independent of sidebar conversations). */
+  fileSessions: {
+    open(path: string): Promise<FileSessionsState>
+    create(path: string): Promise<FileSessionsState>
+    setActive(fileId: string, sessionId: string): Promise<FileSessionsState | null>
+    list(fileId: string): Promise<FileSessionsState | null>
+    setReadOnly(sessionId: string, readOnly: boolean): Promise<void>
+    rename(fileId: string, sessionId: string, title: string): Promise<FileSessionsState | null>
+    delete(
+      fileId: string,
+      sessionIds: string[]
+    ): Promise<FileSessionsDeleteResult | null>
+  }
+
+  /** Resolve a CLI agent binary on the login PATH (cached; pass force after install). */
+  agents: {
+    resolveBinary(candidates: string[], force?: boolean): Promise<string | null>
+  }
+
   pty: {
     create(
       conversationId: string,
       cwd: string,
       cols: number,
       rows: number,
-      preferredId?: string
+      options?: PtyCreateOptions | string
     ): Promise<string>
     write(tabId: string, data: string): Promise<void>
     resize(tabId: string, cols: number, rows: number): Promise<void>
@@ -271,6 +461,11 @@ export interface VavApi {
     closeSettings(): Promise<void>
     /** Opens (or raises) the standalone window for one conversation. */
     openSession(conversationId: string): Promise<void>
+    /**
+     * From a detached session window: show the main window and select this
+     * conversation in the sidebar list (Reveal in List).
+     */
+    revealInList(conversationId: string): Promise<void>
     /** Fresh conversation in its own window — the ⌘⇧↵ path. */
     newDetachedSession(): Promise<void>
     /** Opens (or raises) a standalone file preview window for `path`. */
@@ -291,7 +486,11 @@ export interface VavApi {
       conversationId: string,
       anchor?: { x: number; y: number; width: number; height: number }
     ): Promise<void>
-    onTokenUsageView(handler: (conversationId: string) => void): () => void
+    /**
+     * Token-usage panel hydrate payload (window is reused; no full bootstrap).
+     * Prefer this over loading the whole app shell into the popup.
+     */
+    onTokenUsageView(handler: (payload: TokenUsageViewPayload) => void): () => void
     /** Relaunch the app (e.g. after Dock-hide preference). */
     relaunch(): Promise<void>
     /** Resolves to the chosen row's id, or null if the menu was dismissed. */
@@ -339,6 +538,19 @@ export interface VavApi {
       cancelLabel?: string
       destructive?: boolean
     }): Promise<boolean>
+    /**
+     * Native multi-button sheet (e.g. Save / Cancel / Discard).
+     * Resolves to the chosen button index (0-based). Closing via Esc uses cancelId.
+     */
+    messageBox(options: {
+      type?: 'none' | 'info' | 'error' | 'question' | 'warning'
+      title: string
+      message: string
+      detail?: string
+      buttons: string[]
+      defaultId?: number
+      cancelId?: number
+    }): Promise<number>
   }
 
   /** Menu-driven commands (⌘N, ⌘F, ⌘, …) forwarded from the application menu. */
@@ -364,6 +576,8 @@ export type MenuCommand =
   | 'toggle-tools-panel'
   | 'toggle-panel-segment'
   | 'new-terminal'
+  /** Ctrl+` — expand tools tray Terminal and focus bash. */
+  | 'focus-bash'
   | 'switch-workdir'
   | 'send'
   /** ⌘1…⌘9 — slot 1 = Workspace; 2+ = bash tabs in order (Agent first). */
@@ -405,6 +619,8 @@ export const IPC = {
   convCreate: 'vav:conv:create',
   convRename: 'vav:conv:rename',
   convSetModel: 'vav:conv:set-model',
+  convSetAgentBinary: 'vav:conv:set-agent-binary',
+  convSetFocusedFile: 'vav:conv:set-focused-file',
   convSetWorkdir: 'vav:conv:set-workdir',
   convPickWorkdir: 'vav:conv:pick-workdir',
   convLocateWorkspace: 'vav:conv:locate-workspace',
@@ -431,6 +647,9 @@ export const IPC = {
 
   filesList: 'vav:files:list',
   filesRead: 'vav:files:read',
+  filesReadBinary: 'vav:files:read-binary',
+  filesWriteBinary: 'vav:files:write-binary',
+  filesDbQuery: 'vav:files:db-query',
   filesWrite: 'vav:files:write',
   filesQuickLook: 'vav:files:quick-look',
   filesWatch: 'vav:files:watch',
@@ -444,6 +663,16 @@ export const IPC = {
   previewSetCloseGuard: 'vav:preview:set-close-guard',
   previewForceClose: 'vav:preview:force-close',
 
+  fileSessionsOpen: 'vav:file-sessions:open',
+  fileSessionsCreate: 'vav:file-sessions:create',
+  fileSessionsSetActive: 'vav:file-sessions:set-active',
+  fileSessionsList: 'vav:file-sessions:list',
+  fileSessionsSetReadOnly: 'vav:file-sessions:set-read-only',
+  fileSessionsRename: 'vav:file-sessions:rename',
+  fileSessionsDelete: 'vav:file-sessions:delete',
+  filesOpenWithDefault: 'vav:files:open-with-default',
+
+  agentsResolveBinary: 'vav:agents:resolve-binary',
   ptyCreate: 'vav:pty:create',
   ptyWrite: 'vav:pty:write',
   ptyResize: 'vav:pty:resize',
@@ -458,6 +687,7 @@ export const IPC = {
   windowCloseSettings: 'vav:window:close-settings',
   windowPopupMenu: 'vav:window:popup-menu',
   windowOpenSession: 'vav:window:open-session',
+  windowRevealInList: 'vav:window:reveal-in-list',
   windowNewDetached: 'vav:window:new-detached',
   windowOpenFilePreview: 'vav:window:open-file-preview',
   windowOpenTokenUsage: 'vav:window:open-token-usage',
@@ -467,6 +697,7 @@ export const IPC = {
   notificationsPermission: 'vav:notifications:permission',
   dialogAlert: 'vav:dialog:alert',
   dialogConfirm: 'vav:dialog:confirm',
+  dialogMessageBox: 'vav:dialog:message-box',
 
   menuCommand: 'vav:menu:command',
   settingsChanged: 'vav:settings:changed',
