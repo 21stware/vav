@@ -103,6 +103,7 @@ export function ZipArchiveView({
   name,
   zip,
   truncated = false,
+  passwordProtected = false,
   selecting,
   selectedIds,
   onSelect
@@ -110,6 +111,8 @@ export function ZipArchiveView({
   name: string
   zip: ZipArchiveInfo
   truncated?: boolean
+  /** Structure listed without password; encrypted entry bodies not extracted. */
+  passwordProtected?: boolean
   selecting: boolean
   selectedIds: string[]
   onSelect: (block: PreviewBlock, event: React.MouseEvent) => void
@@ -204,14 +207,23 @@ export function ZipArchiveView({
         <Folder size={16} className="zip-archive-head-icon" aria-hidden />
         <span className="zip-archive-title">{name}</span>
         <span className="muted tiny">
-          {truncated
-            ? t('preview.zipTruncated')
-            : t('preview.zipEntries', { n: zip.entryCount })}
+          {passwordProtected
+            ? t('preview.zipPassword')
+            : truncated
+              ? t('preview.zipTruncated')
+              : t('preview.zipEntries', { n: zip.entryCount })}
         </span>
       </div>
+      {passwordProtected && (
+        <p className="zip-archive-note muted tiny">{t('preview.zipPasswordHint')}</p>
+      )}
       {tree.length === 0 ? (
         <div className="zip-archive-empty muted">
-          {truncated ? t('preview.zipTooLarge') : t('preview.zipEmpty')}
+          {passwordProtected
+            ? t('preview.zipPasswordEmpty')
+            : truncated
+              ? t('preview.zipIndexFailed')
+              : t('preview.zipEmpty')}
         </div>
       ) : (
         <div className="zip-archive-tree">{tree.map((n) => renderNode(n, 0))}</div>

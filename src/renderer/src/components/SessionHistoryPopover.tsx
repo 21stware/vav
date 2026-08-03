@@ -6,6 +6,8 @@ import { useT } from '../i18n/useT'
 import { menuAnchor, showMenu } from '../lib/nativeMenu'
 import { Button } from './ui'
 
+const LEAVE_MS = 180 // --dur-pop
+
 export function SessionHistoryPopover({
   open,
   onClose,
@@ -31,17 +33,29 @@ export function SessionHistoryPopover({
   const [picked, setPicked] = useState<Set<string>>(() => new Set())
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editValue, setEditValue] = useState('')
+  const [mounted, setMounted] = useState(open)
+  const [leaving, setLeaving] = useState(false)
 
   useEffect(() => {
-    if (!open) {
-      setSelectMode(false)
-      setPicked(new Set())
-      setEditingId(null)
+    if (open) {
+      setMounted(true)
+      setLeaving(false)
+      return
     }
-  }, [open])
+    if (!mounted) return
+    setSelectMode(false)
+    setPicked(new Set())
+    setEditingId(null)
+    setLeaving(true)
+    const id = window.setTimeout(() => {
+      setMounted(false)
+      setLeaving(false)
+    }, LEAVE_MS)
+    return () => window.clearTimeout(id)
+  }, [open, mounted])
 
   useEffect(() => {
-    if (!open) return
+    if (!open || leaving) return
     const onDoc = (event: MouseEvent): void => {
       const target = event.target as Node
       if (panelRef.current?.contains(target)) return
@@ -77,7 +91,7 @@ export function SessionHistoryPopover({
       document.removeEventListener('mousedown', onDoc)
       window.removeEventListener('keydown', onKey)
     }
-  }, [open, onClose, anchorRef, selectMode, editingId, sessions, activeSessionId])
+  }, [open, leaving, onClose, anchorRef, selectMode, editingId, sessions, activeSessionId])
 
   const canSelect = sessions.length > 1
   const deletableCount = useMemo(
@@ -85,7 +99,7 @@ export function SessionHistoryPopover({
     [sessions, activeSessionId]
   )
 
-  if (!open) return null
+  if (!mounted) return null
 
   const commitRename = async (sessionId: string): Promise<void> => {
     const next = editValue.trim().slice(0, 100)
@@ -106,7 +120,13 @@ export function SessionHistoryPopover({
   }
 
   return (
-    <div className="session-history-popover" ref={panelRef} role="dialog" aria-label={t('preview.sessionHistory')}>
+    <div
+      className="session-history-popover"
+      ref={panelRef}
+      role="dialog"
+      aria-label={t('preview.sessionHistory')}
+      data-leaving={leaving || undefined}
+    >
       <div className="session-history-head">
         {selectMode ? (
           <>

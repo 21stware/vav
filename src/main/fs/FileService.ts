@@ -1,6 +1,6 @@
 import { shell } from 'electron'
 import { watch, type FSWatcher } from 'node:fs'
-import { readdir, rename, stat, readFile, writeFile, mkdir } from 'node:fs/promises'
+import { readdir, rename, stat, readFile, writeFile, mkdir, open } from 'node:fs/promises'
 import { join, dirname, basename, extname } from 'node:path'
 import { spawn } from 'node:child_process'
 import { userInfo } from 'node:os'
@@ -10,9 +10,11 @@ import type {
   FileInspectResult,
   FilePreviewKind,
   SqliteQueryResult,
+  TextWindowResult,
   ZipArchiveInfo,
   ZipEntryInfo
 } from '@shared/ipc'
+import { localFileStreamUrl } from '@shared/localFileUrl'
 import { inspectSqlite, isSqlitePath, querySqliteTable } from './SqliteService'
 import {
   DIRECTORY_ENTRY_CAP,
@@ -25,13 +27,22 @@ import { t } from '../i18n'
 import { isOfficeLockFile, parseStructuredDocument } from './office'
 import { OFFICE_LOCK_FILE_MESSAGE } from '@shared/officeLock'
 import type { DocumentRetrievalService } from '../retrieval/DocumentRetrievalService'
+import { isHeicPath, prepareHeicPreview } from './heicPreview'
+import { convertLegacyOffice, legacyOfficeKind } from './legacyOfficeConvert'
 
-/** Soft budget for base64 office loads (docx/xlsx/pptx). PDF streams instead. */
-const BINARY_PREVIEW_CAP = 200 * 1024 * 1024
+/**
+ * Technical windows — memory budgets for a single IPC/payload, NOT product
+ * "file too large" limits. Larger files are opened via further windows or
+ * `vav-local://` streaming.
+ */
+/** First paint / default agent fs_read window for UTF-8 text. */
+const TEXT_WINDOW_BYTES = 2 * 1024 * 1024
+/** Soft ceiling for base64 IPC convenience (renderer should prefer stream). */
+const BINARY_BASE64_SOFT = 80 * 1024 * 1024
+/** Soft budget for full OOXML structured parse in main (best-effort index). */
+const STRUCTURED_PARSE_SOFT = 80 * 1024 * 1024
 
 const WATCH_DEBOUNCE_MS = 300
-const TEXT_PREVIEW_CAP = 512 * 1024
-const MEDIA_PREVIEW_CAP = 12 * 1024 * 1024
 
 /**
  * Filesystem access for both the Files panel and the agent's fs_* tools.
@@ -91,15 +102,80 @@ export class FileService {
   }
 
   async readTextFile(path: string): Promise<{ content: string; truncated: boolean; error?: string }> {
+    const win = await this.readTextWindow(path, { startByte: 0, maxBytes: TEXT_WINDOW_BYTES })
+    if (win.error) return { content: '', truncated: false, error: win.error }
+    return { content: win.content, truncated: win.truncated }
+  }
+
+  /**
+   * Byte-window UTF-8 read. Does not load the whole file into memory.
+   * `maxBytes` is a technical payload size, not a product refusal.
+   */
+  async readTextWindow(
+    path: string,
+    opts?: { startByte?: number; maxBytes?: number }
+  ): Promise<TextWindowResult> {
+    const startByte = Math.max(0, Math.floor(opts?.startByte ?? 0))
+    const maxBytes = Math.max(1024, Math.min(16 * 1024 * 1024, Math.floor(opts?.maxBytes ?? TEXT_WINDOW_BYTES)))
     try {
       const info = await stat(path)
-      if (info.isDirectory()) return { content: '', truncated: false, error: t('files.error.directory') }
-      const buffer = await readFile(path)
-      const slice = buffer.subarray(0, TEXT_PREVIEW_CAP)
-      if (slice.includes(0)) return { content: '', truncated: false, error: t('files.error.binary') }
-      return { content: slice.toString('utf8'), truncated: buffer.length > TEXT_PREVIEW_CAP }
+      if (info.isDirectory()) {
+        return {
+          content: '',
+          startByte: 0,
+          endByte: 0,
+          totalBytes: 0,
+          truncated: false,
+          error: t('files.error.directory')
+        }
+      }
+      const totalBytes = info.size
+      if (startByte >= totalBytes) {
+        return {
+          content: '',
+          startByte,
+          endByte: startByte,
+          totalBytes,
+          truncated: false
+        }
+      }
+      const length = Math.min(maxBytes, totalBytes - startByte)
+      const fh = await open(path, 'r')
+      try {
+        const buf = Buffer.alloc(length)
+        const { bytesRead } = await fh.read(buf, 0, length, startByte)
+        const slice = buf.subarray(0, bytesRead)
+        // Null byte in the first window → treat as binary (unless mid-file continuation).
+        if (startByte === 0 && slice.includes(0)) {
+          return {
+            content: '',
+            startByte,
+            endByte: startByte,
+            totalBytes,
+            truncated: false,
+            error: t('files.error.binary')
+          }
+        }
+        const endByte = startByte + bytesRead
+        return {
+          content: slice.toString('utf8'),
+          startByte,
+          endByte,
+          totalBytes,
+          truncated: endByte < totalBytes
+        }
+      } finally {
+        await fh.close()
+      }
     } catch (err) {
-      return { content: '', truncated: false, error: (err as Error).message }
+      return {
+        content: '',
+        startByte,
+        endByte: startByte,
+        totalBytes: 0,
+        truncated: false,
+        error: (err as Error).message
+      }
     }
   }
 
@@ -137,7 +213,9 @@ export class FileService {
   }
 
   /**
-   * Raw bytes for client-side mature renderers (docx-preview / pdf.js / SheetJS).
+   * Raw bytes as base64 for client-side mature renderers (docx-preview / SheetJS).
+   * Prefer `vav-local://` streaming when possible — this path is a convenience.
+   * Soft memory budget may refuse base64 for huge files (use stream URL instead).
    */
   async readBinary(
     path: string
@@ -151,10 +229,10 @@ export class FileService {
       const info = await stat(path)
       if (info.isDirectory()) return { ok: false, error: t('files.error.directory') }
       if (info.size <= 0) return { ok: false, error: 'File is empty.' }
-      if (info.size > BINARY_PREVIEW_CAP) {
+      if (info.size > BINARY_BASE64_SOFT) {
         return {
           ok: false,
-          error: `File too large for in-app preview (${Math.round(info.size / 1024 / 1024)} MB)`
+          error: `Use stream URL for large binary (${Math.round(info.size / 1024 / 1024)} MB) — base64 IPC is limited for memory, not a product open limit.`
         }
       }
       const kind = previewKind(basename(path))
@@ -203,43 +281,156 @@ export class FileService {
     try {
       const info = await stat(path)
       if (info.isDirectory()) {
-        return { path, name, size: 0, kind: 'binary', mime: '', error: t('files.error.directory') }
+        // Not a file preview — callers (Workspace) should not open FileViewer on dirs.
+        // Never label folders as binary (that surfaces "Open with default app" for workdirs).
+        return {
+          path,
+          name,
+          size: 0,
+          mtimeMs: info.mtimeMs,
+          kind: 'directory',
+          mime: 'inode/directory'
+        }
       }
+
+      // Legacy Office: convert on open (temp sidecar), then re-inspect modern path.
+      const legacy = legacyOfficeKind(path)
+      if (legacy === 'doc') {
+        const converted = await convertLegacyOffice(path)
+        if (converted.ok) {
+          const inner = await this.inspect(converted.path)
+          return {
+            ...inner,
+            // Keep the user-facing identity as the original path.
+            path,
+            name,
+            size: info.size,
+            mtimeMs: info.mtimeMs,
+            contentPath: converted.path,
+            streamUrl: localFileStreamUrl(converted.path),
+            warnings: [
+              ...(inner.warnings ?? []),
+              ...(converted.warning ? [converted.warning] : [])
+            ]
+          }
+        }
+        // Conversion failed — fall through to binary meta with the error as warning.
+        try {
+          const binaryMeta = await buildBinaryMeta(path, info)
+          return {
+            path,
+            name,
+            size: info.size,
+            mtimeMs: info.mtimeMs,
+            kind: 'binary',
+            mime: 'application/msword',
+            binaryMeta,
+            warnings: [converted.error]
+          }
+        } catch {
+          return {
+            path,
+            name,
+            size: info.size,
+            mtimeMs: info.mtimeMs,
+            kind: 'binary',
+            mime: 'application/msword',
+            warnings: [converted.error]
+          }
+        }
+      }
+      if (legacy === 'ppt') {
+        try {
+          const binaryMeta = await buildBinaryMeta(path, info)
+          return {
+            path,
+            name,
+            size: info.size,
+            mtimeMs: info.mtimeMs,
+            kind: 'binary',
+            mime: 'application/vnd.ms-powerpoint',
+            binaryMeta,
+            warnings: [
+              'Legacy PowerPoint (.ppt): export to .pptx for in-app preview, or open with the system default app.'
+            ]
+          }
+        } catch (err) {
+          return {
+            path,
+            name,
+            size: info.size,
+            kind: 'binary',
+            mime: 'application/vnd.ms-powerpoint',
+            error: (err as Error).message
+          }
+        }
+      }
+
       let kind = previewKind(name)
       if (kind === 'binary' && (await looksLikeTextFile(path, info.size))) {
         kind = 'text'
       }
       const mime = mimeFor(name, kind)
-      const base = { path, name, size: info.size, mtimeMs: info.mtimeMs, kind, mime }
-      if (kind === 'text' || kind === 'csv') {
-        const text = await this.readTextFile(path)
-        if (text.error) return { ...base, error: text.error }
-        const content = text.content
-        // CSV structured index for doc_search — defer so inspect stays snappy.
+      const base: FileInspectResult = {
+        path,
+        name,
+        size: info.size,
+        mtimeMs: info.mtimeMs,
+        kind,
+        mime,
+        streamUrl: localFileStreamUrl(path)
+      }
+
+      if (kind === 'text' || kind === 'csv' || kind === 'html') {
+        const win = await this.readTextWindow(path, { startByte: 0, maxBytes: TEXT_WINDOW_BYTES })
+        if (win.error) return { ...base, error: win.error }
         if (kind === 'csv') {
           setTimeout(() => {
             void this.retrieval?.ensureIndex(path).catch(() => {})
           }, 0)
         }
+        // truncated/textWindow are for silent progressive fill in the renderer —
+        // never surface a product "file too large" or "load more" affordance.
         return {
           ...base,
-          text: content,
-          truncated: text.truncated,
-          lineCount: content ? content.split(/\r?\n/).length : 0
+          text: win.content,
+          truncated: win.truncated,
+          textWindow: {
+            startByte: win.startByte,
+            endByte: win.endByte,
+            totalBytes: win.totalBytes
+          },
+          lineCount: win.content ? countNewlines(win.content) : 0
         }
       }
+
       if (kind === 'image' || kind === 'audio' || kind === 'video') {
-        if (info.size > MEDIA_PREVIEW_CAP) {
-          return { ...base, error: t('files.error.tooLarge') }
+        // Stream via vav-local — never base64 the whole media file.
+        if (isHeicPath(path)) {
+          const heic = await prepareHeicPreview(path)
+          return {
+            ...base,
+            kind: 'image',
+            mime: heic.converted ? 'image/jpeg' : 'image/heic',
+            contentPath: heic.converted ? heic.previewPath : undefined,
+            streamUrl: localFileStreamUrl(heic.previewPath),
+            imageMeta: heic.meta,
+            warnings: heic.converted
+              ? ['HEIC decoded to a temporary JPEG for preview (original unchanged).']
+              : undefined
+          }
         }
-        const buffer = await readFile(path)
-        return { ...base, dataUrl: `data:${mime};base64,${buffer.toString('base64')}` }
+        return {
+          ...base,
+          streamUrl: localFileStreamUrl(path)
+        }
       }
+
       if (kind === 'sqlite') {
         try {
           const sqlite = inspectSqlite(path)
           const summary = sqlite.tables
-            .map((t) => `${t.name} (${t.rowCount} rows · ${t.columns.length} cols)`)
+            .map((tb) => `${tb.name} (${tb.rowCount} rows · ${tb.columns.length} cols)`)
             .join('\n')
           return {
             ...base,
@@ -251,38 +442,38 @@ export class FileService {
           return { ...base, error: (err as Error).message || t('files.error.unsupported') }
         }
       }
+
       if (kind === 'zip') {
-        // Structure-only tree. Never hard-fail to the old "unsupported" alert —
-        // on parse/size issues still open the ZIP canvas (empty/truncated).
+        // Structure-only tree. Attempt parse regardless of size; on failure open empty canvas.
         try {
-          if (info.size > BINARY_PREVIEW_CAP) {
-            return {
-              ...base,
-              zip: {
-                entries: [],
-                entryCount: 0,
-                compressedSize: info.size,
-                uncompressedSize: 0,
-                ratio: 0
-              },
-              truncated: true,
-              text: '',
-              lineCount: 0
-            }
-          }
           const zip = await inspectZipArchive(path, info.size)
           const treeText = zip.entries
             .map((e) => `${e.isDirectory ? 'D' : 'F'} ${e.path}`)
             .join('\n')
+          const warnings: string[] = []
+          if (zip.encrypted) {
+            warnings.push(
+              'This archive appears password-protected. vav lists what it can without a password and does not extract encrypted entries.'
+            )
+          }
           return {
             ...base,
-            zip,
+            zip: {
+              entries: zip.entries,
+              entryCount: zip.entryCount,
+              compressedSize: zip.compressedSize,
+              uncompressedSize: zip.uncompressedSize,
+              ratio: zip.ratio
+            },
+            zipEncrypted: zip.encrypted,
             text: treeText,
-            lineCount: zip.entries.length
+            lineCount: zip.entries.length,
+            warnings: warnings.length ? warnings : undefined
           }
         } catch (err) {
           console.error('[files] zip inspect failed', path, err)
-          // Keep kind=zip so the archive UI mounts; empty tree + truncated flag.
+          const msg = (err as Error).message || ''
+          const encrypted = /password|encrypt|encrypted/i.test(msg)
           return {
             ...base,
             zip: {
@@ -292,36 +483,34 @@ export class FileService {
               uncompressedSize: 0,
               ratio: 0
             },
+            zipEncrypted: encrypted,
             truncated: true,
             text: '',
-            lineCount: 0
+            lineCount: 0,
+            warnings: [
+              encrypted
+                ? 'Password-protected ZIP — structure unavailable without a password (not prompted in-app).'
+                : `Could not index ZIP structure: ${msg || 'unknown error'}`
+            ]
           }
         }
       }
+
       if (kind === 'pdf' || kind === 'docx' || kind === 'xlsx' || kind === 'pptx') {
         if (isOfficeLockFile(path)) {
           return { ...base, error: OFFICE_LOCK_FILE_MESSAGE }
         }
         if (info.size <= 0) return { ...base, error: 'File is empty.' }
-        // PDF opens via vav-local:// streaming in the renderer — no whole-file
-        // base64 round-trip, so size is not a hard fail. OOXML still needs
-        // readBinary (base64), so keep the cap for those.
-        if (kind !== 'pdf' && info.size > BINARY_PREVIEW_CAP) {
-          return {
-            ...base,
-            error: t('files.error.tooLarge')
-          }
-        }
-        // PDF: never block open on a full-document text index (can take seconds
-        // on 100+ page files). Preview mounts immediately; RAG indexes later.
+        // Always streamable; never refuse open on size.
+        base.streamUrl = localFileStreamUrl(path)
         if (kind === 'pdf') {
           setTimeout(() => {
             void this.retrieval?.ensureIndex(path).catch(() => {})
           }, 0)
           return base
         }
-        // OOXML: light structured index for selection/search (best-effort).
-        if (info.size <= BINARY_PREVIEW_CAP) {
+        // OOXML: structured index best-effort within soft memory budget.
+        if (info.size <= STRUCTURED_PARSE_SOFT) {
           try {
             const structured = await parseStructuredDocument(path, info.size)
             setTimeout(() => {
@@ -334,14 +523,26 @@ export class FileService {
               lineCount: structured.plainText
                 ? structured.plainText.split(/\r?\n/).length
                 : 0,
-              truncated: !!structured.warnings?.length
+              truncated: !!structured.warnings?.length,
+              warnings: structured.warnings
             }
           } catch {
-            // Still openable by client renderer even if text index fails.
+            // Client renderer can still open via stream/buffer.
+          }
+        } else {
+          setTimeout(() => {
+            void this.retrieval?.ensureIndex(path).catch(() => {})
+          }, 0)
+          return {
+            ...base,
+            warnings: [
+              'Large Office document — preview opens via streaming; full text index runs in the background.'
+            ]
           }
         }
         return base
       }
+
       // Unsupported / binary: metadata panel (no content preview). Never use
       // files.error.unsupported — that red alert is reserved for real I/O failures.
       try {
@@ -649,7 +850,24 @@ function previewKind(name: string): FilePreviewKind {
   const base = name.toLowerCase()
   const ext = extname(name).toLowerCase()
   if (ext === '.csv' || ext === '.tsv') return 'csv'
-  if (['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.svg', '.ico', '.avif'].includes(ext)) {
+  if (
+    [
+      '.png',
+      '.jpg',
+      '.jpeg',
+      '.gif',
+      '.webp',
+      '.bmp',
+      '.svg',
+      '.ico',
+      '.avif',
+      '.heic',
+      '.heif',
+      '.hif',
+      '.tif',
+      '.tiff'
+    ].includes(ext)
+  ) {
     return 'image'
   }
   if (ext === '.pdf') return 'pdf'
@@ -657,6 +875,7 @@ function previewKind(name: string): FilePreviewKind {
   if (ext === '.docx') return 'docx'
   if (ext === '.xlsx' || ext === '.xls') return 'xlsx'
   if (ext === '.pptx') return 'pptx'
+  if (ext === '.html' || ext === '.htm' || ext === '.xhtml') return 'html'
   if (ext === '.db' || ext === '.sqlite' || ext === '.sqlite3' || ext === '.db3') return 'sqlite'
   if (['.mp3', '.wav', '.m4a', '.aac', '.ogg', '.flac', '.opus'].includes(ext)) return 'audio'
   if (['.mp4', '.mov', '.webm', '.mkv', '.m4v', '.avi'].includes(ext)) return 'video'
@@ -679,26 +898,45 @@ function previewKind(name: string): FilePreviewKind {
   return 'binary'
 }
 
+/** Count lines without allocating a split array (large CSV/text inspect path). */
+function countNewlines(text: string): number {
+  if (!text) return 0
+  let n = 1
+  for (let i = 0; i < text.length; i++) {
+    if (text.charCodeAt(i) === 10 /* \n */) n++
+  }
+  // Trailing newline does not add an extra blank line for display purposes.
+  if (text.charCodeAt(text.length - 1) === 10) n--
+  return Math.max(n, 1)
+}
+
 /** Treat unknown extensions as text when the buffer looks like UTF-8 source. */
 async function looksLikeTextFile(path: string, size: number): Promise<boolean> {
-  if (size <= 0 || size > TEXT_PREVIEW_CAP) return false
+  if (size <= 0) return false
   try {
     const sampleSize = Math.min(size, 8192)
-    const buf = (await readFile(path)).subarray(0, sampleSize)
-    if (buf.includes(0)) return false
-    const text = buf.toString('utf8')
-    // Reject if replacement chars dominate (invalid UTF-8) or control chars abound.
-    let bad = 0
-    for (let i = 0; i < text.length; i += 1) {
-      const code = text.charCodeAt(i)
-      if (code === 0xfffd) bad += 1
-      else if (code < 9 || (code > 13 && code < 32)) bad += 1
+    const fh = await open(path, 'r')
+    try {
+      const buf = Buffer.alloc(sampleSize)
+      const { bytesRead } = await fh.read(buf, 0, sampleSize, 0)
+      const slice = buf.subarray(0, bytesRead)
+      if (slice.includes(0)) return false
+      const text = slice.toString('utf8')
+      let bad = 0
+      for (let i = 0; i < text.length; i += 1) {
+        const code = text.charCodeAt(i)
+        if (code === 0xfffd) bad += 1
+        else if (code < 9 || (code > 13 && code < 32)) bad += 1
+      }
+      return bad / Math.max(text.length, 1) < 0.02
+    } finally {
+      await fh.close()
     }
-    return bad / Math.max(text.length, 1) < 0.02
   } catch {
     return false
   }
 }
+
 
 function mimeFor(name: string, kind: FilePreviewKind): string {
   const ext = extname(name).toLowerCase()
@@ -708,6 +946,11 @@ function mimeFor(name: string, kind: FilePreviewKind): string {
       if (ext === '.gif') return 'image/gif'
       if (ext === '.webp') return 'image/webp'
       if (ext === '.svg') return 'image/svg+xml'
+      if (ext === '.heic' || ext === '.heif' || ext === '.hif') return 'image/heic'
+      if (ext === '.tif' || ext === '.tiff') return 'image/tiff'
+      if (ext === '.avif') return 'image/avif'
+      if (ext === '.bmp') return 'image/bmp'
+      if (ext === '.ico') return 'image/x-icon'
       return 'image/jpeg'
     case 'audio':
       if (ext === '.wav') return 'audio/wav'
@@ -725,12 +968,16 @@ function mimeFor(name: string, kind: FilePreviewKind): string {
       return 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
     case 'pptx':
       return 'application/vnd.openxmlformats-officedocument.presentationml.presentation'
+    case 'html':
+      return ext === '.xhtml' ? 'application/xhtml+xml' : 'text/html'
     case 'csv':
       return 'text/csv'
     case 'sqlite':
       return 'application/vnd.sqlite3'
     case 'zip':
       return 'application/zip'
+    case 'directory':
+      return 'inode/directory'
     case 'binary': {
       if (ext === '.dmg') return 'application/x-apple-diskimage'
       if (ext === '.apk') return 'application/vnd.android.package-archive'
@@ -896,8 +1143,30 @@ function defaultAppDisplayName(filePath: string): Promise<string | null> {
 }
 
 /** Structure-only ZIP index for the archive tree preview (no entry contents). */
-async function inspectZipArchive(path: string, fileSize: number): Promise<ZipArchiveInfo> {
+async function inspectZipArchive(
+  path: string,
+  fileSize: number
+): Promise<ZipArchiveInfo & { encrypted: boolean }> {
   const buffer = await readFile(path)
+  // Quick magic / encryption probe (general-purpose bit 0 of local file headers).
+  let encrypted = false
+  if (buffer.length >= 30) {
+    // Scan a few local headers; encrypted archives set bit 0 of the GP flag.
+    let offset = 0
+    for (let i = 0; i < 8 && offset + 30 <= buffer.length; i++) {
+      if (buffer.readUInt32LE(offset) !== 0x04034b50) break
+      const flags = buffer.readUInt16LE(offset + 6)
+      if (flags & 0x1) {
+        encrypted = true
+        break
+      }
+      const nameLen = buffer.readUInt16LE(offset + 26)
+      const extraLen = buffer.readUInt16LE(offset + 28)
+      const compSize = buffer.readUInt32LE(offset + 18)
+      offset += 30 + nameLen + extraLen + compSize
+    }
+  }
+
   const zip = await JSZip.loadAsync(buffer, { createFolders: true })
   const entries: ZipEntryInfo[] = []
   let uncompressedSize = 0
@@ -915,6 +1184,9 @@ async function inspectZipArchive(path: string, fileSize: number): Promise<ZipArc
     const comp = isDirectory ? 0 : Number(data?.compressedSize ?? 0)
     uncompressedSize += uncomp
     compressedSize += comp
+    // JSZip options may flag encryption on the entry options object.
+    const opts = (file as unknown as { options?: { encrypted?: boolean } }).options
+    if (opts?.encrypted) encrypted = true
     entries.push({
       path: isDirectory && !relativePath.endsWith('/') ? `${relativePath}/` : relativePath,
       name: isDirectory && !name.endsWith('/') ? `${name}/` : name,
@@ -938,7 +1210,8 @@ async function inspectZipArchive(path: string, fileSize: number): Promise<ZipArc
     entryCount: entries.filter((e) => !e.isDirectory).length || entries.length,
     compressedSize,
     uncompressedSize,
-    ratio
+    ratio,
+    encrypted
   }
 }
 

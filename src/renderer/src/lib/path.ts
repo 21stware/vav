@@ -1,5 +1,14 @@
 /** Minimal path helpers; the renderer has no access to node:path. */
 
+/** Compare paths for chip / context equality (tolerant of trailing slash + case). */
+export function pathsEqual(a: string, b: string): boolean {
+  if (a === b) return true
+  const na = a.replace(/\/+$/, '')
+  const nb = b.replace(/\/+$/, '')
+  if (na === nb) return true
+  return na.toLowerCase() === nb.toLowerCase()
+}
+
 export function basename(path: string): string {
   const trimmed = path.replace(/[\\/]+$/, '')
   const index = Math.max(trimmed.lastIndexOf('/'), trimmed.lastIndexOf('\\'))

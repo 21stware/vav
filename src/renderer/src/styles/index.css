@@ -30,6 +30,7 @@
   --tone-read: #35619f;
   --tone-write: #a1621b;
   --tone-list: #6b5bc0;
+  --tone-web: #0f766e;
 
   --bg-window: #eceaf1;
   --bg-content: #fcfcfd;
@@ -111,6 +112,7 @@
   --tone-read: #93b4ea;
   --tone-write: #ddaf74;
   --tone-list: #b0a2ec;
+  --tone-web: #5eead4;
 
   --bg-window: #121213;
   --bg-content: #1b1b1d;
@@ -154,12 +156,17 @@
   .ask-card,
   .file-viewer,
   .banner.error,
-  .changed-strip {
+  .banner.review-pending,
+  .app-toast,
+  .session-history-popover,
+  .sidebar-float-panel,
+  .change-review {
     transform: none !important;
   }
   .tools-body,
   .reasoning-detail,
-  .files-browser {
+  .files-browser,
+  .plan-overlay-body {
     transition: none !important;
   }
   .btn:active:not(:disabled),
@@ -227,14 +234,20 @@ select {
   color: inherit;
 }
 
+/* Slim overlay-style bars — track stays transparent so content feels full-bleed. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+
 ::-webkit-scrollbar {
-  width: 11px;
-  height: 11px;
+  width: 6px;
+  height: 6px;
 }
 ::-webkit-scrollbar-thumb {
   background: var(--border-strong);
-  border-radius: 6px;
-  border: 3px solid transparent;
+  border-radius: 3px;
+  border: 1px solid transparent;
   background-clip: content-box;
 }
 ::-webkit-scrollbar-thumb:hover {
@@ -246,6 +259,17 @@ select {
 }
 ::-webkit-scrollbar-corner {
   background: transparent;
+}
+
+/* xterm uses its own DOM scrollbar (default ~10px) — match the slim web bars. */
+.xterm .xterm-scrollable-element > .scrollbar.vertical {
+  width: 6px !important;
+}
+.xterm .xterm-scrollable-element > .scrollbar.horizontal {
+  height: 6px !important;
+}
+.xterm .xterm-scrollable-element > .scrollbar > .slider {
+  border-radius: 3px;
 }
 
 /* ==========================================================================
@@ -311,11 +335,46 @@ html[data-resizing='true'] .banner.error {
 .session-window .titlebar.bare.session-window-titlebar {
   display: flex;
   align-items: center;
-  height: 38px;
+  justify-content: flex-start;
+  gap: 8px;
+  height: 40px;
   box-sizing: border-box;
   background: var(--bg-content);
   /* Lead clears traffic lights; modest trail so the label isn’t flush or sparse. */
-  padding: 0 16px 0 var(--chrome-lead);
+  padding: 0 12px 0 var(--chrome-lead);
+  border-bottom: 1px solid var(--border);
+}
+
+/*
+ * Agent switcher + search/splits as a left-aligned cluster after the traffic
+ * lights — do not grow full-width (that made the control look floating/centered
+ * when an internal .spacer pushed siblings apart).
+ */
+.session-window-titlebar-chrome {
+  flex: 0 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  -webkit-app-region: no-drag;
+}
+
+.session-window-titlebar-chrome .terminal-host-chrome.agent-mode-chrome {
+  width: auto;
+  max-width: 100%;
+  min-width: 0;
+  /* Title bar already has the bottom rule — don’t double-draw. */
+  border-bottom: 0;
+  padding: 0;
+  background: transparent;
+  flex: 0 1 auto;
+  justify-content: flex-start;
+  gap: 4px;
+}
+
+/* Keep search / splits next to the agent select (not pinned to the far edge). */
+.session-window-titlebar-chrome .agent-mode-chrome > .spacer {
+  display: none;
 }
 
 .session-reveal-in-list {
@@ -329,8 +388,8 @@ html[data-resizing='true'] .banner.error {
   font: inherit;
   font-size: 12px;
   font-weight: 500;
-  line-height: 38px;
-  height: 38px;
+  line-height: 40px;
+  height: 40px;
   cursor: default;
   white-space: nowrap;
 }
@@ -357,11 +416,6 @@ html[data-resizing='true'] .banner.error {
   border-radius: 0;
   border: 0;
   box-shadow: none;
-}
-
-.session-window .terminal-host-chrome,
-.session-window .agent-mode-chrome {
-  border-bottom-color: var(--border);
 }
 
 .titlebar .spacer {
@@ -717,11 +771,17 @@ kbd {
   background: rgba(19, 27, 53, 0.22);
   backdrop-filter: blur(2px);
   -webkit-app-region: no-drag;
-  animation: fade-in var(--dur-hover) ease;
+  opacity: 1;
+  transition: opacity var(--dur-sheet) ease;
 }
 
 :root[data-theme='dark'] .sidebar-float-scrim {
   background: rgba(0, 0, 0, 0.42);
+}
+
+.sidebar-float-host[data-leaving] .sidebar-float-scrim {
+  opacity: 0;
+  pointer-events: none;
 }
 
 .sidebar-float-panel {
@@ -739,21 +799,28 @@ kbd {
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-sheet);
   -webkit-app-region: no-drag;
-  animation: sidebar-float-in var(--dur-sheet) var(--ease-drawer);
   transform-origin: left center;
+  opacity: 1;
+  transform: translateX(0) scale(1);
+  transition:
+    opacity var(--dur-sheet) var(--ease-drawer),
+    transform var(--dur-sheet) var(--ease-drawer);
 }
 
-@keyframes sidebar-float-in {
-  from {
+@starting-style {
+  .sidebar-float-panel {
     opacity: 0;
     transform: translateX(-10px) scale(0.98);
   }
+  .sidebar-float-scrim {
+    opacity: 0;
+  }
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .sidebar-float-panel {
-    animation: fade-in var(--dur-hover) ease;
-  }
+.sidebar-float-host[data-leaving] .sidebar-float-panel {
+  opacity: 0;
+  transform: translateX(-10px) scale(0.98);
+  pointer-events: none;
 }
 
 .sidebar.floating {
@@ -913,9 +980,8 @@ kbd {
   padding: 0 8px;
   border-radius: 7px;
   cursor: default;
-  transition:
-    background var(--dur-hover) ease,
-    color var(--dur-hover) ease;
+  /* Instant select/deselect — no background fade. */
+  transition: none;
 }
 
 /* Two-line session rows need a taller cell than settings' single-line nav. */
@@ -970,16 +1036,6 @@ kbd {
 
 .sidebar-list .conv-row.multi.run-end {
   border-radius: 0 0 7px 7px;
-}
-
-.conv-icon {
-  flex: 0 0 auto;
-  display: flex;
-  color: var(--text-tertiary);
-}
-
-.conv-row.selected .conv-icon {
-  color: var(--accent-text);
 }
 
 .conv-text {
@@ -1133,24 +1189,55 @@ kbd {
   background: var(--bg-sunken);
 }
 
+/* Desktop find field: caret is enough — no web-style accent focus ring. */
+.search-strip .text-field:focus {
+  background: var(--bg-sunken);
+  box-shadow: inset 0 0 0 1px var(--border);
+}
+
 .transcript {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
   padding: 22px 0 28px;
-  scroll-behavior: smooth;
+  /*
+   * Do not use scroll-behavior: smooth here — stream auto-follow assigns
+   * scrollTop every frame; smooth would lag behind the stream and fight
+   * user scroll-up. Search / flash jumps pass behavior: 'smooth' explicitly.
+   */
+  scroll-behavior: auto;
 }
 
+/*
+ * Reading column metrics.
+ * - Agent log (transcript-inner): content sits inside side gutters.
+ * - Composer: same outer column, but a slightly wider prompt card so the
+ *   input face is a hair wider than log text (not squeezed by the gutters).
+ */
+:root {
+  --reading-max: 740px;
+  --reading-gutter: 28px;
+  /*
+   * Prompt / tools chrome side pad. Smaller than the log gutter so the
+   * input face reads nearly full-width in a narrow agent column (file
+   * preview drawer, split workspace). Log text keeps --reading-gutter.
+   */
+  --composer-gutter: 12px;
+}
+
+/* Shared reading column — transcript (Agent Log). */
 .transcript-inner {
-  max-width: 740px;
+  max-width: var(--reading-max);
   /* Full height so an empty transcript can centre itself; messages still
      stack from the top, since that is where a conversation starts. */
   min-height: 100%;
   margin: 0 auto;
-  padding: 0 28px;
+  padding: 0 var(--reading-gutter);
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  /* Tighter turn rhythm — action chrome no longer reserves a permanent strip. */
+  gap: 12px;
+  box-sizing: border-box;
 }
 
 /* ==========================================================================
@@ -1200,6 +1287,7 @@ kbd {
   max-width: 100%;
   color: var(--text);
   font-weight: 500;
+  font-size: 14px;
   line-height: 1.6;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
@@ -1214,9 +1302,12 @@ kbd {
 }
 
 .message.assistant {
+  position: relative;
   display: flex;
   flex-direction: column;
   gap: 10px;
+  /* Room for floated hover actions without a permanent empty band. */
+  padding-bottom: 2px;
   user-select: text;
 }
 
@@ -1276,6 +1367,119 @@ kbd {
   color: var(--text);
 }
 
+/* User message context stack — mirrors composer chips/cards after send. */
+.message-user-context {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 6px;
+  min-width: 0;
+  max-width: min(100%, 560px);
+}
+
+.message-user-context .file-context-chip.is-readonly {
+  /* No dismiss control; chip is a snapshot of send-time context. */
+  padding-right: 12px;
+}
+
+/* Sent comments — single-line chip rows (not stacked composer cards). */
+.message-comment-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.message-comment-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  max-width: 100%;
+  padding: 5px 8px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-sunken);
+  box-shadow: inset 0 0 0 1px var(--border);
+  font-size: 12px;
+  line-height: 1.3;
+  color: var(--text-secondary);
+}
+
+.message-comment-row-icon {
+  flex: 0 0 auto;
+  color: var(--accent-text);
+  opacity: 0.9;
+}
+
+.message-comment-row-title {
+  flex: 0 1 auto;
+  min-width: 0;
+  font-weight: 550;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.message-comment-row-sep {
+  flex: 0 0 auto;
+  color: var(--text-tertiary);
+}
+
+.message-comment-row-note {
+  flex: 1 1 auto;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-secondary);
+}
+
+/* Mermaid diagrams in markdown (chat + file preview). */
+.md-mermaid-wrap > .md-mermaid {
+  padding: 12px 14px;
+  overflow-x: auto;
+  background: var(--bg-content);
+}
+
+.md-mermaid svg {
+  max-width: 100%;
+  height: auto;
+  display: block;
+  margin: 0 auto;
+}
+
+.md-mermaid-fallback {
+  margin: 0;
+  font-family: var(--font-code);
+  font-size: var(--code-size);
+  white-space: pre-wrap;
+  color: var(--text-secondary);
+}
+
+.md-mermaid-error {
+  padding: 10px 12px;
+  color: var(--danger);
+  font-size: 12px;
+  white-space: pre-wrap;
+}
+
+.md-mermaid-ready .md-mermaid-fallback {
+  display: none;
+}
+
+.message-user-context .context-refs,
+.message-user-context .attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+}
+
+.message.user.is-context-only {
+  display: none;
+}
+
 mark {
   background: color-mix(in srgb, var(--warning) 38%, transparent);
   color: inherit;
@@ -1283,27 +1487,57 @@ mark {
   padding: 0 1px;
 }
 
+/*
+ * Chat / agent markdown — spacing follows document structure, not a global
+ * “open” line-height. Within a block, leading stays moderate; air comes from
+ * margins between block types (p / h / list / code / table / hr).
+ */
 .markdown {
-  line-height: 1.72;
+  /* In-paragraph leading only — do not use this as inter-block spacing. */
+  --md-lh: 1.65;
+  /* Default gap after a body block (paragraph, list, …). */
+  --md-block: 0.8em;
+  /* Gap before a section heading (larger than body gap). */
+  --md-section: 1.35em;
+  display: block;
+  line-height: var(--md-lh);
+  letter-spacing: normal;
   overflow-wrap: anywhere;
+  font-family: var(--font-ui);
+  font-size: 14px;
+  font-weight: 400;
+  color: var(--text);
+  user-select: text;
+  -webkit-user-select: text;
+  cursor: text;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
 }
 
+/* Collapse outer edges so a single short reply is not padded by margins. */
 .markdown > *:first-child {
-  margin-top: 0;
+  margin-top: 0 !important;
 }
 .markdown > *:last-child {
+  margin-bottom: 0 !important;
+}
+
+/* --- Body blocks: margin-bottom only (stacking, not double vertical pad) --- */
+.markdown p {
+  margin: 0 0 var(--md-block);
+  line-height: var(--md-lh);
+}
+
+.markdown p:last-child {
   margin-bottom: 0;
 }
 
-.markdown p {
-  margin: 0.65em 0;
-}
-
 .md-block {
-  margin: 0.85em 0;
+  margin: 0 0 var(--md-block);
   border-radius: var(--radius);
   background: var(--bg-sunken);
   overflow: hidden;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--border) 70%, transparent);
 }
 
 .md-block-bar {
@@ -1312,6 +1546,7 @@ mark {
   gap: 8px;
   padding: 6px 10px;
   border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--bg-raised) 50%, var(--bg-sunken));
 }
 
 .md-block-name {
@@ -1363,19 +1598,21 @@ mark {
   background: transparent;
 }
 
-/* Code is never rewrapped to fit: a line that does not fit scrolls sideways,
-   because a broken line reads as a different program. */
+/* Code is never rewrapped to fit: a line that does not fit scrolls sideways. */
 .markdown pre {
-  margin: 0.85em 0;
+  margin: 0 0 var(--md-block);
   padding: 12px 14px;
   border-radius: var(--radius);
   background: var(--bg-sunken);
   line-height: 1.55;
   overflow-x: auto;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--border) 65%, transparent);
 }
 
 .markdown pre code {
   white-space: pre;
+  font-size: 0.9em;
+  line-height: inherit;
 }
 
 .markdown code {
@@ -1384,113 +1621,206 @@ mark {
 }
 
 .markdown :not(pre) > code {
-  padding: 1.5px 5px;
-  border-radius: 4px;
-  background: var(--bg-sunken);
+  padding: 0.1em 0.35em;
+  border-radius: 5px;
+  font-size: 0.9em;
+  background: color-mix(in srgb, var(--bg-raised) 80%, var(--border));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--border) 65%, transparent);
   color: var(--text);
 }
 
 .markdown blockquote {
-  margin: 0.7em 0;
-  padding: 2px 0;
+  margin: 0 0 var(--md-block);
+  padding: 0.15em 0 0.15em 0.9em;
+  border-left: 3px solid color-mix(in srgb, var(--accent) 45%, var(--border));
   color: var(--text-secondary);
+}
+
+.markdown blockquote p {
+  margin: 0 0 0.5em;
+}
+
+.markdown blockquote p:last-child {
+  margin-bottom: 0;
 }
 
 .markdown ul,
 .markdown ol {
-  margin: 0.6em 0;
-  padding-left: 1.5em;
+  margin: 0 0 var(--md-block);
+  padding-left: 1.45em;
 }
 
 .markdown li {
-  margin: 0.2em 0;
+  margin: 0;
+  padding: 0.15em 0 0.15em 0.1em;
+  line-height: var(--md-lh);
+}
+
+/* Multi-paragraph list items keep internal rhythm tight. */
+.markdown li > p {
+  margin: 0 0 0.4em;
+}
+
+.markdown li > p:last-child {
+  margin-bottom: 0;
+}
+
+.markdown li > ul,
+.markdown li > ol {
+  margin: 0.25em 0 0.35em;
 }
 
 .markdown li::marker {
-  color: var(--text-tertiary);
+  color: var(--text-secondary);
 }
 
-/* Three levels that actually read as three levels: an answer with sections in
-   it is a document, and the reader should be able to skim its structure. */
+/* Headings: space *before* = section break; space *after* = glue to content. */
 .markdown h1,
 .markdown h2,
-.markdown h3 {
-  margin: 1.15em 0 0.45em;
-  font-weight: 600;
-  letter-spacing: -0.2px;
+.markdown h3,
+.markdown h4,
+.markdown h5,
+.markdown h6 {
+  margin: var(--md-section) 0 0.4em;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  line-height: 1.3;
+  color: var(--text);
+  text-wrap: balance;
 }
 
 .markdown h1 {
-  font-size: 1.2em;
+  font-size: 1.35em;
+  font-weight: 700;
+  margin-top: 0.75em;
+  margin-bottom: 0.45em;
 }
 
 .markdown h2 {
-  font-size: 1.09em;
+  font-size: 1.18em;
+  margin-top: 1.4em;
+  margin-bottom: 0.4em;
 }
 
 .markdown h3 {
+  font-size: 1.08em;
+  margin-top: 1.2em;
+  margin-bottom: 0.35em;
+}
+
+.markdown h4 {
+  font-size: 1.02em;
+  font-weight: 600;
+  margin-top: 1.05em;
+  margin-bottom: 0.3em;
+}
+
+.markdown h5,
+.markdown h6 {
   font-size: 1em;
+  font-weight: 600;
   color: var(--text-secondary);
+  margin-top: 1em;
+  margin-bottom: 0.3em;
+}
+
+/* Heading → first body: no extra gap beyond heading margin-bottom. */
+.markdown h1 + p,
+.markdown h2 + p,
+.markdown h3 + p,
+.markdown h4 + p,
+.markdown h5 + p,
+.markdown h6 + p {
+  margin-top: 0;
+}
+
+/* Body → heading already uses heading margin-top; kill double body margin. */
+.markdown p + h1,
+.markdown p + h2,
+.markdown p + h3,
+.markdown p + h4,
+.markdown p + h5,
+.markdown p + h6,
+.markdown ul + h1,
+.markdown ul + h2,
+.markdown ul + h3,
+.markdown ol + h1,
+.markdown ol + h2,
+.markdown ol + h3,
+.markdown .md-block + h1,
+.markdown .md-block + h2,
+.markdown .md-block + h3,
+.markdown pre + h1,
+.markdown pre + h2,
+.markdown pre + h3,
+.markdown .table-scroll + h1,
+.markdown .table-scroll + h2,
+.markdown .table-scroll + h3 {
+  margin-top: var(--md-section);
 }
 
 .markdown a {
   color: var(--accent-text);
   text-underline-offset: 2px;
+  text-decoration-thickness: from-font;
 }
 
+.markdown a:hover {
+  text-decoration-thickness: 1.5px;
+}
+
+/* Thematic break: section separator, not a padded line. */
 .markdown hr {
-  margin: 1.5em 0;
+  margin: 1.25em 0;
   border: none;
-  border-top: 1px solid var(--border);
+  border-top: 1px solid color-mix(in srgb, var(--border) 90%, transparent);
 }
 
-/* A table keeps its columns. When the window is too narrow the table scrolls
-   sideways inside this wrapper rather than crushing every column into a stack
-   of wrapped words, which is the one thing that makes tabular data unreadable.
-   The wrapper is emitted by the renderer (lib/markdown.ts). */
+.markdown strong {
+  font-weight: 650;
+}
+
+.markdown em {
+  font-style: italic;
+}
+
+/* Tables: block margin on wrapper; cells stay compact. */
 .table-scroll {
-  margin: 0.9em 0;
+  margin: 0 0 var(--md-block);
   max-width: 100%;
   overflow-x: auto;
   border-radius: var(--radius-sm);
   overscroll-behavior-x: contain;
-  /* Scroll shadows: the two `local` layers are painted on the content and
-     slide away at each end, uncovering the `scroll` layers pinned to the
-     edges. The result is an edge that only shades while there is more table
-     in that direction — an affordance the overlay scrollbar does not give. */
   background:
     linear-gradient(to right, var(--bg-content) 30%, transparent) left / 28px 100% no-repeat local,
     linear-gradient(to left, var(--bg-content) 30%, transparent) right / 28px 100% no-repeat local,
     linear-gradient(to right, rgba(0, 0, 0, 0.16), transparent) left / 14px 100% no-repeat scroll,
     linear-gradient(to left, rgba(0, 0, 0, 0.16), transparent) right / 14px 100% no-repeat scroll;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--border) 75%, transparent);
 }
 
 .table-scroll::-webkit-scrollbar {
   height: 8px;
 }
 
-/* `max-content` is the whole fix: the table takes the width its columns
-   actually need and the wrapper scrolls, instead of the columns being
-   squeezed until every row is three lines tall. */
 .markdown table {
   border-collapse: collapse;
   width: max-content;
   min-width: 100%;
   margin: 0;
-  font-size: 12.5px;
+  font-size: 0.92em;
+  line-height: 1.5;
 }
 
 .markdown th,
 .markdown td {
-  padding: 6px 12px;
+  padding: 7px 12px;
   text-align: left;
-  /* The ceiling keeps one essay-length cell from dragging the whole table off
-     screen; only that column wraps. */
+  vertical-align: top;
   max-width: 26rem;
   overflow-wrap: break-word;
 }
 
-/* Banding carries the rows, a tint carries the header: no grid lines at all. */
 .markdown th {
   background: var(--accent-soft);
   color: var(--accent-text);
@@ -1499,7 +1829,11 @@ mark {
 }
 
 .markdown tbody tr:nth-child(even) {
-  background: var(--bg-hover);
+  background: color-mix(in srgb, var(--bg-hover) 70%, transparent);
+}
+
+.markdown tbody tr:hover {
+  background: color-mix(in srgb, var(--bg-hover) 100%, transparent);
 }
 
 .plain-tail {
@@ -1564,17 +1898,29 @@ mark {
   padding-bottom: 6px;
 }
 
+/* Hover icon chrome under a finished message (edit / copy / …).
+   Out of flow so hidden (opacity:0) rows do not leave a tall empty gap
+   between You and Agent. */
 .message-actions {
   display: flex;
   align-items: center;
-  gap: 2px;
-  margin-top: -2px;
+  gap: 1px;
+  position: absolute;
+  left: 0;
+  top: 100%;
+  margin-top: 2px;
+  z-index: 2;
   opacity: 0;
+  pointer-events: none;
   transition: opacity var(--dur-hover) ease;
 }
 
 .message-actions .btn {
   color: var(--text-tertiary);
+  /* Slightly denser hit target than default sm so the strip stays short. */
+  height: 24px;
+  min-width: 24px;
+  padding: 0 4px;
 }
 
 .message-actions .btn:hover {
@@ -1585,15 +1931,19 @@ mark {
 .message-group:hover .message-actions,
 .message-group:focus-within .message-actions {
   opacity: 1;
+  pointer-events: auto;
 }
 
-/* Prompt → actions → branch pager, stacked like an agent turn. */
+/* Prompt → actions → branch pager. Actions float; pager stays in flow. */
 .message-group.user {
+  position: relative;
   display: flex;
   flex-direction: column;
   align-items: stretch;
-  gap: 6px;
+  gap: 4px;
   max-width: 100%;
+  /* Small anchor pad so the floated action strip has a hover runway. */
+  padding-bottom: 2px;
 }
 
 .message-group.user .message.user {
@@ -1602,16 +1952,60 @@ mark {
 
 .message-group.user .message-actions {
   flex: 0 0 auto;
-  margin-top: 0;
   align-self: flex-start;
 }
 
 .message-group.user .variant-pager {
   flex: 0 0 auto;
   margin-right: 0;
-  margin-top: 0;
+  margin-top: 2px;
   align-self: flex-start;
   opacity: 1;
+}
+
+/*
+ * Edit resend footer only. Must not share .message-actions (that class hides
+ * itself until hover and forces tertiary colour onto every .btn, including
+ * primary Send).
+ */
+.message-edit-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
+  margin-top: 2px;
+  opacity: 1;
+}
+
+.message-edit-actions .btn {
+  height: 28px;
+  padding: 0 12px;
+  font-size: 12.5px;
+  font-weight: 500;
+}
+
+.message-edit-actions .btn.primary {
+  color: #fff;
+  background: var(--accent);
+  border-color: transparent;
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--accent) 40%, transparent);
+}
+
+.message-edit-actions .btn.primary:hover:not(:disabled) {
+  background: var(--accent-hover);
+  color: #fff;
+}
+
+.message-edit-actions .btn:not(.primary) {
+  color: var(--text-secondary);
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
+}
+
+.message-edit-actions .btn:not(.primary):hover:not(:disabled) {
+  color: var(--text);
+  background: var(--bg-hover);
 }
 
 /* Last line under an agent turn: branch pager (if any) + Done. */
@@ -2071,6 +2465,14 @@ mark {
 .tool-call[data-tool='fs_list'] .tool-glyph {
   color: var(--tone-list);
 }
+.tool-call[data-tool='web_search'] .tool-glyph,
+.tool-call[data-tool='web_fetch'] .tool-glyph {
+  color: var(--tone-web);
+}
+.tool-call[data-tool='web_search'] .tool-name,
+.tool-call[data-tool='web_fetch'] .tool-name {
+  color: var(--tone-web);
+}
 .tool-call[data-tool='request'] .tool-glyph {
   color: var(--warning);
 }
@@ -2173,7 +2575,8 @@ mark {
 .detail-file,
 .detail-listing,
 .detail-qa,
-.detail-raw {
+.detail-raw,
+.detail-web {
   font-family: var(--font-code);
   font-size: var(--code-size);
   line-height: 1.6;
@@ -2181,6 +2584,94 @@ mark {
   overflow: hidden;
   user-select: text;
 }
+.detail-web {
+  font-family: var(--font-code);
+  font-size: var(--code-size);
+  line-height: 1.6;
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  user-select: text;
+}
+
+.detail-web {
+  background: var(--bg-raised);
+  padding: 8px 11px;
+  color: var(--text-primary);
+}
+
+.detail-web .web-header {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  margin-bottom: 8px;
+}
+
+.detail-web .web-hits {
+  margin: 0;
+  padding: 0 0 0 1.15rem;
+  list-style: decimal;
+}
+
+.detail-web .web-hit {
+  margin: 0 0 10px;
+}
+
+.detail-web .web-hit:last-child {
+  margin-bottom: 0;
+}
+
+.detail-web .web-title {
+  color: var(--tone-web);
+  text-decoration: none;
+  font-weight: 550;
+  overflow-wrap: anywhere;
+}
+
+.detail-web .web-title:hover {
+  text-decoration: underline;
+}
+
+.detail-web .web-url {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  overflow-wrap: anywhere;
+  margin-top: 2px;
+}
+
+.detail-web .web-snippet {
+  margin-top: 3px;
+  color: var(--text-secondary);
+  white-space: pre-wrap;
+}
+
+.detail-web .web-meta {
+  margin-bottom: 8px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+  font-size: 11px;
+  color: var(--text-tertiary);
+}
+
+.detail-web .web-meta-line {
+  overflow-wrap: anywhere;
+}
+
+.detail-web .web-meta a {
+  color: var(--tone-web);
+  text-decoration: none;
+}
+
+.detail-web .web-meta a:hover {
+  text-decoration: underline;
+}
+
+.detail-web .web-body {
+  margin: 0;
+  max-height: 360px;
+  overflow: auto;
+  white-space: pre-wrap;
+  color: var(--text-secondary);
+}
+
 
 /* The shell result keeps the shell's own colours — it is a terminal, and
    reading it next to the real one below should not feel like a translation.
@@ -2359,15 +2850,22 @@ mark {
   margin-bottom: 0;
 }
 
-/* Parked turn: soft fill only — no edge rail. */
+/*
+ * Parked ask / request card.
+ * Same quiet language as approval-card — sunken surface + hairline, never the
+ * old accent-soft purple slab (single- and multi-question share this).
+ */
 .ask-card {
   position: relative;
   border-radius: var(--radius);
-  background: var(--accent-soft);
-  padding: 14px;
+  background: var(--bg-sunken);
+  box-shadow: inset 0 0 0 1px var(--border);
+  padding: 14px 14px 12px;
   display: flex;
   flex-direction: column;
-  gap: 11px;
+  gap: 12px;
+  /* Avoid OS selection painting the whole card when dragging over options. */
+  user-select: none;
   transition:
     opacity var(--dur-pop) var(--ease-out),
     transform var(--dur-pop) var(--ease-out);
@@ -2380,14 +2878,74 @@ mark {
   }
 }
 
+.ask-head {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
 .ask-card .ask-title {
   font-weight: 600;
+  font-size: 13px;
+  letter-spacing: -0.1px;
+  color: var(--text);
+}
+
+.ask-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.ask-tab {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-width: 28px;
+  height: 26px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--bg-content) 70%, var(--border));
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  cursor: default;
+}
+
+.ask-tab:hover:not(:disabled) {
+  color: var(--text);
+}
+
+.ask-tab.is-active {
+  background: var(--accent-soft);
+  color: var(--accent-text);
+}
+
+.ask-tab.is-done:not(.is-active) {
+  color: var(--success);
+}
+
+.ask-tab-check {
+  flex: 0 0 auto;
 }
 
 .ask-card .ask-actions {
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
   gap: 8px;
+  padding-top: 2px;
+  position: relative;
+  z-index: 1;
+}
+
+.ask-card .ask-actions .spacer {
+  flex: 1;
+  min-width: 8px;
 }
 
 .ask-card.request {
@@ -2552,63 +3110,179 @@ mark {
 
 .ask-card.sealed {
   background: var(--bg-hover);
+  box-shadow: inset 0 0 0 1px var(--border);
+  user-select: text;
 }
 
 .ask-card.sealed.cancelled {
-  background: var(--bg-sunken);
+  opacity: 0.75;
 }
 
 .ask-question {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 10px;
+  min-width: 0;
+}
+
+.ask-q-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
 }
 
 .ask-q {
+  font-weight: 550;
+  font-size: 13.5px;
+  line-height: 1.45;
+  color: var(--text);
+  letter-spacing: -0.1px;
+  user-select: text;
+}
+
+.ask-mode-hint {
+  font-size: 11px;
   font-weight: 500;
-  font-size: 13px;
+  color: var(--text-tertiary);
+  letter-spacing: 0.01em;
 }
 
-.ask-divider {
-  height: 1px;
-  background: var(--border);
-  margin: 2px 0 4px;
-}
-
+/*
+ * Choice list — quiet rows on the sunken card (not nested purple pills).
+ * Single- and multi-select share the same mark system; only mark shape differs.
+ */
 .ask-choice-list {
   display: flex;
   flex-direction: column;
   gap: 4px;
+  margin: 0;
+  padding: 0;
 }
 
 .ask-choice {
+  position: relative;
   display: flex;
   align-items: flex-start;
-  gap: 8px;
-  padding: 7px 9px;
+  gap: 10px;
+  margin: 0;
+  padding: 8px 10px;
+  border: 0;
   border-radius: var(--radius-sm);
-  background: var(--bg-content);
+  background: transparent;
+  box-shadow: none;
+  color: var(--text);
   cursor: default;
+  transition:
+    background var(--dur-hover) var(--ease-out),
+    box-shadow var(--dur-hover) var(--ease-out);
+}
+
+.ask-choice:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.ask-choice:hover .ask-choice-label {
+  color: var(--text);
 }
 
 .ask-choice.selected {
-  background: color-mix(in srgb, var(--accent) 14%, var(--bg-content));
+  background: color-mix(in srgb, var(--accent) 10%, var(--bg-content));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 28%, transparent);
 }
 
-.ask-other-field {
-  margin-top: 6px;
-  width: 100%;
+.ask-choice.selected .ask-choice-label {
+  color: var(--text);
+  font-weight: 500;
 }
 
+/* Hide native control; desktop mark drawn via .ask-choice-mark. */
 .ask-choice input {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+  pointer-events: none;
+}
+
+.ask-choice-mark {
+  flex: 0 0 auto;
+  width: 15px;
+  height: 15px;
+  margin-top: 1px;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 1.5px var(--border-strong);
+  background: transparent;
+  position: relative;
+  transition:
+    background var(--dur-hover) var(--ease-out),
+    box-shadow var(--dur-hover) var(--ease-out);
+}
+
+.ask-choice-list.is-multi .ask-choice-mark {
+  border-radius: 3.5px;
+}
+
+.ask-choice.selected .ask-choice-mark {
+  box-shadow: inset 0 0 0 1.5px var(--accent);
+  background: var(--accent);
+}
+
+.ask-choice-list.is-single .ask-choice.selected .ask-choice-mark::after {
+  content: '';
+  position: absolute;
+  inset: 3.5px;
+  border-radius: 50%;
+  background: var(--text-inverse);
+}
+
+.ask-choice-list.is-multi .ask-choice.selected .ask-choice-mark::after {
+  content: '';
+  position: absolute;
+  left: 3.5px;
+  top: 4.5px;
+  width: 6px;
+  height: 3px;
+  border-left: 1.5px solid var(--text-inverse);
+  border-bottom: 1.5px solid var(--text-inverse);
+  transform: rotate(-45deg);
+}
+
+.ask-choice-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 13.5px;
+  line-height: 1.45;
+  font-weight: 400;
+  color: var(--text-secondary);
+  user-select: text;
+}
+
+.ask-choice.selected .ask-choice-label {
+  color: var(--text);
+}
+
+.ask-other-field,
+.ask-note {
+  width: 100%;
   margin-top: 2px;
+  user-select: text;
+}
+
+/* Free-text / note fields must remain selectable and themed like composer. */
+.ask-card .text-area,
+.ask-card .text-field {
+  user-select: text;
+  background: var(--bg-content);
+  box-shadow: inset 0 0 0 1px var(--border);
 }
 
 .ask-sealed-line {
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 12px;
+  font-size: 12.5px;
   color: var(--text-secondary);
 }
 
@@ -2648,7 +3322,7 @@ mark {
   box-shadow: inset 0 0 0 1px var(--border);
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 0;
   max-height: min(42vh, 280px);
   min-height: 0;
   overflow: hidden;
@@ -2656,6 +3330,10 @@ mark {
   transition:
     opacity var(--dur-pop) var(--ease-out),
     transform var(--dur-pop) var(--ease-out);
+}
+
+.plan-overlay[data-expanded='true'] {
+  gap: 8px;
 }
 
 .detail-stream[data-search='true'] .plan-overlay {
@@ -2760,10 +3438,27 @@ mark {
   color: var(--text);
 }
 
+/* Expand bridge: grid rows retarget mid-flight like tool/reasoning details. */
+.plan-overlay-body {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows var(--dur-pop) var(--ease-out);
+  min-height: 0;
+}
+
+.plan-overlay[data-expanded='true'] .plan-overlay-body {
+  grid-template-rows: 1fr;
+}
+
+.plan-overlay-body-inner {
+  overflow: hidden;
+  min-height: 0;
+}
+
 .plan-overlay .plan-card {
   margin: 0;
   min-height: 0;
-  flex: 1 1 auto;
+  max-height: min(36vh, 220px);
   overflow-y: auto;
   overscroll-behavior: contain;
   background: color-mix(in srgb, var(--bg-sunken) 70%, transparent);
@@ -3035,18 +3730,23 @@ mark {
    Tools panel
    ========================================================================== */
 
-/* The dock owns the background; the composer and tools strip inside it
-   draw none of their own, so they read as one region. It is a step down in
-   value from the transcript, which is the whole separation — no rule.
-   Order: Composer (prompt) above Tools (Files/Terminal). */
+/* Composer sits on the same surface as the transcript; only the tools tray
+   is sunken. Order: Composer (prompt) above Tools (Files/Terminal). */
 .dock {
   flex: 0 0 auto;
   display: flex;
   flex-direction: column;
-  background: var(--bg-sunken);
+  /* Stretch tools full-bleed; composer overrides with align-self + max-width. */
+  align-items: stretch;
+  background: transparent;
   overflow: visible;
-  /* Floor inset so the tools strip isn’t flush to the window edge. */
-  padding-bottom: 8px;
+  min-width: 0;
+  max-width: 100%;
+  width: 100%;
+  box-sizing: border-box;
+  /* Narrow docks shrink composer side pad (see @container below). */
+  container-type: inline-size;
+  container-name: dock;
 }
 
 /**
@@ -3062,7 +3762,13 @@ mark {
   flex: 0 0 auto;
   display: flex;
   flex-direction: column;
+  align-items: stretch; /* body full width; header self-centers */
+  width: 100%;
+  /* No full-bleed sunken slab — that left a gray band under the header when
+     the body was collapsed / empty. Sunken only wraps the open tools body. */
   background: transparent;
+  padding-bottom: 0;
+  box-sizing: border-box;
 }
 
 .tools-header {
@@ -3072,9 +3778,18 @@ mark {
   align-items: center;
   gap: 6px;
   height: 32px;
-  /* Match composer horizontal inset (composer padding 10 + box pad ~0 visual). */
-  padding: 0 12px;
+  /*
+   * Same reading column as Agent log + composer (Workspace / New / chips).
+   * tools-body below stays full-bleed — only this control row is centered.
+   */
+  width: min(100%, var(--reading-max));
+  max-width: var(--reading-max);
+  margin-left: auto;
+  margin-right: auto;
+  padding: 0 var(--reading-gutter);
+  box-sizing: border-box;
   flex: 0 0 auto;
+  align-self: center;
   min-width: 0;
   /* Keep overflow visible so the workspace switcher popover is not clipped. */
   overflow: visible;
@@ -3171,17 +3886,19 @@ mark {
 }
 
 /* Height is driven by the inline panelHeight, so this must not flex-grow.
-   Horizontal inset matches the composer box above. */
+   Sunken well only when open — floor inset via bottom margin (not a panel pad
+   that peeks as a gray strip under a collapsed header). */
 .tools-body {
   position: relative;
   z-index: 1;
   flex: 0 0 auto;
   min-height: 0;
   overflow: hidden;
-  margin: 0 12px;
+  /* Side inset + a bit more bottom so the well sits above the window edge. */
+  margin: 0 12px 10px;
   border-radius: var(--radius);
   background: var(--bg-content);
-  box-shadow: var(--shadow-card);
+  box-shadow: inset 0 0 0 1px var(--border);
   transition:
     height var(--dur-sheet) var(--ease-drawer),
     margin var(--dur-sheet) var(--ease-drawer),
@@ -3191,6 +3908,7 @@ mark {
 .tools-body[data-collapsed='true'] {
   margin: 0;
   box-shadow: none;
+  background: transparent;
 }
 
 /* Drag-resize must track the pointer 1:1 — no lag from the collapse transition. */
@@ -3224,8 +3942,6 @@ mark {
   flex: 0 0 auto;
 }
 
-/* Everything the agent touched this session, in the write tone used for the
-   same idea in the transcript. */
 .files-browser {
   flex: 1;
   min-height: 0;
@@ -3238,36 +3954,6 @@ mark {
 .files-browser:not([data-opaque]) {
   opacity: 0;
   pointer-events: none;
-}
-
-.changed-strip {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  flex-wrap: wrap;
-  padding: 0 12px 8px;
-  flex: 0 0 auto;
-  color: var(--tone-write);
-  transition:
-    opacity var(--dur-pop) var(--ease-out),
-    transform var(--dur-pop) var(--ease-out);
-}
-
-@starting-style {
-  .changed-strip {
-    opacity: 0;
-    transform: translateY(-2px);
-  }
-}
-
-.changed-strip .chip {
-  background: color-mix(in srgb, var(--tone-write) 14%, transparent);
-  color: var(--tone-write);
-}
-
-.changed-strip .chip:hover {
-  background: color-mix(in srgb, var(--tone-write) 22%, transparent);
-  color: var(--tone-write);
 }
 
 .files-browser .file-tree,
@@ -3335,6 +4021,7 @@ mark {
   min-height: 0;
   display: flex;
   flex-direction: column;
+  /* Default paper padding for text/md; office/html zero-pad via :has(). */
 }
 
 .file-preview-shell .file-viewer-body > .file-viewer-code.continuous {
@@ -3419,7 +4106,8 @@ mark {
 
 .preview-document.selecting .preview-select-region,
 .preview-notebook-cell.preview-select-region,
-.preview-media-frame.preview-select-region,
+.preview-media-stage > .preview-select-region,
+.file-viewer-media.preview-select-region,
 .office-native-root.selecting .preview-select-region,
 .office-native-root.selecting .office-pick-target,
 .office-native-root.selecting .pdf-page.pdf-pick-page,
@@ -3433,18 +4121,17 @@ mark {
 /* Flow targets get relative for outline; PDF textLayer spans stay absolute. */
 .preview-document.selecting .preview-select-region,
 .preview-notebook-cell.preview-select-region,
-.preview-media-frame.preview-select-region,
 .office-native-root.selecting .preview-select-region,
 .office-native-root.selecting .office-pick-target,
 .office-native-root.selecting .pdf-page.pdf-pick-page {
   position: relative;
 }
 
-/* MD/notebook/media shrink-wrap content; office/PDF keep their natural boxes. */
+/* MD/notebook shrink-wrap content; office/PDF keep their natural boxes. */
 .preview-document.selecting .preview-select-region,
-.preview-notebook-cell.preview-select-region,
-.preview-media-frame.preview-select-region {
+.preview-notebook-cell.preview-select-region {
   width: fit-content;
+  height: fit-content;
   max-width: 100%;
 }
 
@@ -3453,7 +4140,8 @@ mark {
 .preview-document.selecting
   .preview-select-region:hover:not(.selected):not(:has(.preview-select-region:hover)),
 .preview-notebook-cell.preview-select-region:hover:not(.selected),
-.preview-media-frame.preview-select-region:hover:not(.selected),
+.preview-media-stage > .preview-select-region:hover:not(.selected),
+.file-viewer-media.preview-select-region:hover:not(.selected),
 .office-native-root.selecting
   .preview-select-region:hover:not(.selected):not(:has(.preview-select-region:hover)):not(
     :has(.office-pick-target:hover)
@@ -3474,7 +4162,8 @@ mark {
 
 .preview-document.selecting .preview-select-region.selected,
 .preview-notebook-cell.preview-select-region.selected,
-.preview-media-frame.preview-select-region.selected,
+.preview-media-stage > .preview-select-region.selected,
+.file-viewer-media.preview-select-region.selected,
 .office-native-root.selecting .preview-select-region.selected,
 .office-native-root.selecting .office-pick-target.selected,
 .office-native-root.selecting .pdf-page.pdf-pick-page.selected,
@@ -3484,14 +4173,52 @@ mark {
   background: color-mix(in srgb, var(--accent) 12%, transparent);
 }
 
-.preview-media-frame {
-  display: flex;
-  align-items: center;
-  justify-content: center;
+/* Image/video pick: outline only, no accent wash over the pixels. */
+.preview-media-stage > .preview-select-region.selected,
+.preview-media-stage > .preview-select-region:hover:not(.selected),
+.file-viewer-media.preview-select-region.selected,
+.file-viewer-media.preview-select-region:hover:not(.selected) {
+  background: transparent;
+  outline-offset: 2px; /* sit just outside the painted media edge */
+}
+
+/*
+ * Media stage: definite box so max-height:100% on the media works.
+ * Grid + place-items centers; img/video scale with object-fit: contain.
+ * Pick outline is on the media element itself (not a full-stage frame).
+ */
+.preview-media-stage {
+  flex: 1 1 auto;
   min-height: 0;
+  width: 100%;
   height: 100%;
-  padding: 8px;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  padding: 24px;
   box-sizing: border-box;
+}
+
+.preview-media-stage > .file-viewer-media,
+.preview-media-stage > img,
+.preview-media-stage > video,
+.preview-media-stage > audio {
+  max-width: 100%;
+  max-height: 100%;
+  width: auto;
+  height: auto;
+  min-width: 0;
+  min-height: 0;
+  object-fit: contain;
+}
+
+/* Outline on the media box (rendered size after contain), not the stage. */
+.preview-media-stage > .preview-select-region {
+  width: auto !important;
+  height: auto !important;
+  max-width: 100%;
+  max-height: 100%;
+  position: relative;
 }
 
 .preview-source-editor {
@@ -3632,6 +4359,25 @@ mark {
   cursor: default;
 }
 
+/*
+ * Log / line-oriented pick: paint on the row itself so the outline hugs the
+ * text metrics. Absolute overlays were drifting into empty flex space and
+ * collapsing to 8px-wide ghost brackets on empty rows.
+ */
+.file-viewer-code.continuous .preview-code-line.is-hovered:not(.is-selected) {
+  outline: 1px dashed var(--accent);
+  outline-offset: -1px;
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+  border-radius: 2px;
+}
+
+.file-viewer-code.continuous .preview-code-line.is-selected {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  border-radius: 2px;
+}
+
 /* Selection/hover overlays — width set inline from measured line content.
    Same visual tokens as .preview-select-region (MD / notebook / media). */
 .preview-code-overlay {
@@ -3723,6 +4469,40 @@ mark {
   border-radius: 2px;
   box-shadow: none;
   flex-shrink: 0;
+}
+
+/* —— HTML (sandbox iframe render + element pick) ——
+   Isolation: author CSS lives only inside the iframe document. Host shell
+   styles (body font, user-select, accent-color, dark theme tokens) must not
+   restyle the page — only the iframe element chrome below. */
+.html-root {
+  background: var(--bg-sunken);
+  /* Contain host color-scheme so dark app theme does not force dark form
+     controls into light HTML that never opted in. */
+  color-scheme: light;
+}
+
+.html-native-frame {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  border: 0;
+  /* Neutral stage; document paints its own background. */
+  background: #ffffff;
+  color-scheme: light dark;
+  display: block;
+  /* Avoid host filter/text inheritance quirks on the frame itself. */
+  color: initial;
+  font: initial;
+}
+
+.html-root.selecting {
+  cursor: default;
+}
+
+.html-root.selecting .html-native-frame {
+  /* Pick chrome lives inside the iframe document. */
+  pointer-events: auto;
 }
 
 /* —— DOCX (docx-preview) —— */
@@ -4335,18 +5115,35 @@ mark {
   align-items: center;
   gap: 12px;
   height: 28px;
+  min-height: 28px;
+  max-height: 28px;
   padding: 0 14px;
   border-top: 1px solid var(--border);
   font-size: 11px;
   color: var(--text-tertiary);
   flex: 0 0 auto;
   overflow: hidden;
+  white-space: nowrap;
+  min-width: 0;
 }
 
-.file-preview-statusbar > span:first-child {
+.file-preview-status-left {
+  flex: 1 1 auto;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.file-preview-status-right {
+  flex: 0 1 auto;
+  max-width: 42%;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: right;
+  color: var(--text-secondary);
 }
 
 .preview-agent-panel {
@@ -4376,7 +5173,7 @@ mark {
   z-index: 0;
 }
 
-/* Agent drawer: transcript + composer only (no Workspace / tools). */
+/* Agent drawer in file preview (vav chat or CLI host). */
 .preview-edit-session {
   flex: 1;
   min-height: 0;
@@ -4385,6 +5182,16 @@ mark {
   flex-direction: column;
   overflow: hidden;
   background: var(--bg-content);
+}
+
+.preview-edit-session .agent-mode-chrome,
+.preview-edit-session .terminal-host-chrome {
+  flex: 0 0 auto;
+}
+
+.preview-edit-session.terminal-host-session .terminal-host-main {
+  flex: 1;
+  min-height: 0;
 }
 
 .preview-edit-stream {
@@ -4406,8 +5213,7 @@ mark {
   max-height: 50%;
   min-height: 0;
   overflow: hidden;
-  /* Inherit .dock floor inset; keep it when the drawer is short. */
-  padding-bottom: 8px;
+  padding-bottom: 0;
 }
 
 .preview-edit-dock .tools-panel {
@@ -4450,14 +5256,6 @@ mark {
   width: 4px;
   cursor: col-resize;
   z-index: 2;
-}
-
-.preview-agent-meta {
-  padding: 8px 12px 0;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  flex: 0 0 auto;
 }
 
 .preview-temp-note {
@@ -4653,10 +5451,90 @@ mark {
   cursor: default;
 }
 
+/*
+ * Block-based MD preview: each region is its own .markdown root
+ * (first/last-child margins go to 0). Vertical rhythm is owned here.
+ */
 .preview-document {
-  max-width: 720px;
+  --md-lh: 1.9;
+  --md-track: 0.02em;
+  max-width: 38rem;
   margin: 0 auto;
   user-select: text;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  font-size: 16.5px;
+  line-height: var(--md-lh);
+  letter-spacing: var(--md-track);
+  color: color-mix(in srgb, var(--text) 92%, var(--text-secondary));
+}
+
+.preview-document > .preview-select-region {
+  min-width: 0;
+}
+
+.preview-document > .preview-select-region.kind-heading {
+  margin-top: 1.85em;
+}
+
+.preview-document > .preview-select-region.kind-heading:first-child {
+  margin-top: 0;
+}
+
+/* Paragraph air — ~ one blank line of optical space between regions. */
+.preview-document > .preview-select-region.kind-paragraph {
+  margin-top: 0;
+  margin-bottom: 0;
+}
+
+.preview-document > .preview-select-region.kind-paragraph + .preview-select-region.kind-paragraph {
+  margin-top: 1.15em;
+}
+
+.preview-document > .preview-select-region.kind-paragraph + .preview-select-region.kind-list,
+.preview-document > .preview-select-region.kind-paragraph + .preview-select-region.kind-code {
+  margin-top: 1em;
+}
+
+.preview-document > .preview-select-region.kind-heading + .preview-select-region.kind-paragraph {
+  margin-top: 0.55em;
+}
+
+.preview-document > .preview-select-region.kind-code,
+.preview-document > .preview-select-region.kind-list {
+  margin-top: 0.85em;
+  margin-bottom: 0.55em;
+}
+
+/* Code blocks: tighter mono leading than body prose. */
+.preview-document .file-viewer-code {
+  margin: 0.25em 0 0.5em;
+  padding: 14px 16px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--bg-sunken) 88%, var(--bg-raised));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--border) 80%, transparent);
+  font-size: 0.86em;
+  line-height: 1.62;
+  letter-spacing: 0;
+  overflow-x: auto;
+}
+
+.preview-document .markdown.preview-markdown {
+  max-width: none;
+  margin: 0;
+  padding: 0;
+  font-size: inherit;
+  line-height: inherit;
+  letter-spacing: inherit;
+}
+
+/* In block mode, kill double vertical margin on the sole child. */
+.preview-document .preview-markdown > *:first-child {
+  margin-top: 0;
+}
+.preview-document .preview-markdown > *:last-child {
+  margin-bottom: 0;
 }
 
 .preview-document.notebook {
@@ -5174,6 +6052,25 @@ mark {
   z-index: 50;
   overflow: hidden;
   box-sizing: border-box;
+  transform-origin: top center;
+  opacity: 1;
+  transform: translateY(0) scale(1);
+  transition:
+    opacity var(--dur-pop) var(--ease-out),
+    transform var(--dur-pop) var(--ease-out);
+}
+
+@starting-style {
+  .session-history-popover {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.97);
+  }
+}
+
+.session-history-popover[data-leaving] {
+  opacity: 0;
+  transform: translateY(-4px) scale(0.97);
+  pointer-events: none;
 }
 
 .session-history-head {
@@ -5579,12 +6476,13 @@ mark {
   box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 35%, transparent);
 }
 
+/* Session switcher only — workdir path lives in the preview / files surface. */
 .workspace-view-agent-head {
   position: relative;
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  padding: 8px 10px;
+  gap: 0;
+  padding: 6px 10px;
   border-bottom: 1px solid var(--border);
   flex: 0 0 auto;
 }
@@ -5598,20 +6496,6 @@ mark {
 
 .workspace-view-agent-session {
   width: 100%;
-}
-
-.workspace-view-agent-folder {
-  flex: 0 0 auto;
-  color: var(--text-secondary);
-}
-
-.workspace-view-agent-path {
-  min-width: 0;
-  font-size: 12px;
-  font-weight: 600;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .workspace-view-agent-label {
@@ -5889,12 +6773,10 @@ mark {
   text-align: left;
   cursor: default;
   box-sizing: border-box;
+  user-select: none;
+  -webkit-user-select: none;
   /* Long names shrink the label only — never the chevron/icon gutters. */
   min-width: 0;
-}
-
-.workspace-tree-row:hover {
-  background: var(--bg-hover);
 }
 
 .workspace-tree-row.selected {
@@ -5985,10 +6867,186 @@ mark {
   -webkit-app-region: drag;
 }
 
+/*
+ * File-preview markdown — reading metrics first (字距 / 行高 / 段距).
+ * Negative tracking hurts CJK; open leading + light positive tracking.
+ * Chat `.markdown` stays compact for agent bubbles.
+ */
+.preview-markdown {
+  --md-lh: 1.9;
+  --md-track: 0.02em;
+  font-size: 16.5px;
+  line-height: var(--md-lh);
+  letter-spacing: var(--md-track);
+  max-width: 38rem;
+  margin-inline: auto;
+  padding: 8px 4px 48px;
+  color: color-mix(in srgb, var(--text) 92%, var(--text-secondary));
+  font-weight: 400;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+.preview-markdown h1,
+.preview-markdown h2,
+.preview-markdown h3,
+.preview-markdown h4 {
+  font-weight: 700;
+  /* Slight positive track for mixed CJK/Latin titles — not Latin-only tightening. */
+  letter-spacing: 0.01em;
+  line-height: 1.35;
+  color: var(--text);
+}
+
+.preview-markdown h1 {
+  font-size: 1.9em;
+  font-weight: 700;
+  letter-spacing: 0.015em;
+  line-height: 1.3;
+  margin: 0.05em 0 0.85em;
+  padding-bottom: 0;
+  border-bottom: none;
+}
+
+.preview-markdown h2 {
+  font-size: 1.32em;
+  letter-spacing: 0.012em;
+  line-height: 1.35;
+  margin: 2em 0 0.7em;
+}
+
+.preview-markdown h3 {
+  font-size: 1.14em;
+  margin: 1.65em 0 0.55em;
+  font-weight: 650;
+  line-height: 1.4;
+}
+
+.preview-markdown h4 {
+  font-size: 1.04em;
+  margin: 1.4em 0 0.5em;
+  font-weight: 650;
+  line-height: 1.4;
+}
+
+.preview-markdown p {
+  margin: 0 0 1.25em;
+  line-height: var(--md-lh);
+  letter-spacing: var(--md-track);
+}
+
+.preview-markdown ul,
+.preview-markdown ol {
+  margin: 0 0 1.25em;
+  padding-left: 1.5em;
+}
+
+.preview-markdown li {
+  margin: 0.4em 0;
+  line-height: var(--md-lh);
+  letter-spacing: var(--md-track);
+  padding-left: 0.2em;
+}
+
+.preview-markdown li::marker {
+  color: color-mix(in srgb, var(--text-tertiary) 70%, var(--accent-text));
+}
+
+.preview-markdown li > ul,
+.preview-markdown li > ol {
+  margin: 0.28em 0 0.4em;
+}
+
+/* Inline code: reset tracking so mono glyphs don’t stretch with body track. */
+.preview-markdown :not(pre) > code {
+  padding: 0.12em 0.42em;
+  border-radius: 5px;
+  font-size: 0.88em;
+  font-weight: 500;
+  letter-spacing: 0;
+  line-height: 1.45;
+  background: color-mix(in srgb, var(--accent) 14%, var(--bg-sunken));
+  color: color-mix(in srgb, var(--accent-text) 50%, var(--text));
+  box-shadow: none;
+}
+
+.preview-markdown a {
+  color: #4aa3ff;
+  text-decoration: none;
+  text-underline-offset: 3px;
+  font-weight: 500;
+}
+
+.preview-markdown a:hover {
+  text-decoration: underline;
+  color: #6bb6ff;
+}
+
+:root:not([data-theme='dark']) .preview-markdown a {
+  color: #1a7ae4;
+}
+
+:root:not([data-theme='dark']) .preview-markdown a:hover {
+  color: #0d5fbf;
+}
+
+.preview-markdown strong {
+  font-weight: 700;
+  color: var(--text);
+}
+
+.preview-markdown em {
+  font-style: italic;
+}
+
+.preview-markdown blockquote {
+  margin: 1.15em 0;
+  padding: 0.15em 0 0.15em 1em;
+  border-left: 3px solid color-mix(in srgb, var(--accent) 40%, var(--border));
+  color: var(--text-secondary);
+}
+
+.preview-markdown hr {
+  margin: 2em 0;
+  border: none;
+  border-top: 1px solid color-mix(in srgb, var(--border) 90%, transparent);
+}
+
+/* Fenced code in document preview — quieter bar, softer well. */
+.preview-markdown .md-block {
+  margin: 1.15em 0 1.35em;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--bg-sunken) 88%, var(--bg-raised));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--border) 80%, transparent);
+}
+
+.preview-markdown .md-block-bar {
+  padding: 7px 12px;
+  background: color-mix(in srgb, var(--bg-raised) 35%, transparent);
+}
+
+.preview-markdown pre {
+  margin: 1.2em 0 1.4em;
+  padding: 14px 16px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--bg-sunken) 88%, var(--bg-raised));
+  line-height: 1.62;
+  letter-spacing: 0;
+  font-size: 0.86em;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--border) 80%, transparent);
+}
+
+.preview-markdown .md-block > pre {
+  margin: 0;
+  box-shadow: none;
+  border-radius: 0;
+}
+
 .preview-markdown img,
 .preview-markdown picture {
   max-width: 100%;
   height: auto;
+  border-radius: 8px;
 }
 
 /* originai release badge (and similar linked SVG badges) */
@@ -5999,6 +7057,7 @@ mark {
   width: auto;
   max-width: none;
   vertical-align: middle;
+  border-radius: 0;
 }
 
 .preview-markdown picture {
@@ -6009,7 +7068,14 @@ mark {
   flex: 1;
   min-height: 0;
   overflow: auto;
-  padding: 12px 14px;
+  padding: 18px 24px 28px;
+}
+
+/* Markdown paper margins — more room to breathe (Lettera-like). */
+.file-viewer-body:has(> .markdown.preview-markdown),
+.file-viewer-body:has(.preview-markdown),
+.file-viewer-body:has(> .preview-document) {
+  padding: 28px 36px 48px;
 }
 
 .file-viewer-body:has(.file-viewer-pdf) {
@@ -6045,15 +7111,107 @@ mark {
 .file-viewer-media {
   display: block;
   max-width: 100%;
-  max-height: 56vh;
-  margin: 0 auto;
+  max-height: 100%;
+  width: auto;
+  height: auto;
+  object-fit: contain;
+  margin: 0;
+}
+
+.file-viewer-media-stack {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  max-width: 100%;
+  min-width: 0;
+}
+
+.file-viewer-image-meta {
+  width: min(100%, 420px);
+  font-size: 11px;
+  color: var(--text-secondary);
+  background: var(--bg-raised);
+  border-radius: var(--radius-sm);
+  padding: 6px 10px;
+  box-shadow: inset 0 0 0 1px var(--border);
+}
+
+.file-viewer-image-meta summary {
+  cursor: default;
+  font-weight: 560;
+  color: var(--text-tertiary);
+}
+
+.file-viewer-image-meta dl {
+  margin: 8px 0 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.file-viewer-image-meta-row {
+  display: grid;
+  grid-template-columns: minmax(88px, 34%) 1fr;
+  gap: 8px;
+}
+
+.file-viewer-image-meta-row dt {
+  color: var(--text-tertiary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-viewer-image-meta-row dd {
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-secondary);
+}
+
+.file-viewer-warnings {
+  padding: 8px 14px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 11.5px;
+}
+
+.file-viewer-load-more {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px 16px;
+  flex: 0 0 auto;
+}
+
+.file-viewer-load-more-hint {
+  font-size: 11px;
+}
+
+.zip-archive-note {
+  margin: 0;
+  padding: 6px 14px 0;
+  line-height: 1.4;
+}
+
+/* Image/audio/video body: flex column so the stage gets a real height. */
+.file-viewer-body:has(> .preview-media-stage) {
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+  overflow: hidden;
+  min-height: 0;
 }
 
 .file-viewer-table {
   margin: 0;
 }
 
-/* File tree rows — fixed metrics so Retina zoom / long CJK names stay aligned. */
+/* File tree rows — fixed metrics so Retina zoom / long CJK names stay aligned.
+   No hover wash, no bg/color transitions, no OS text-select flash on dblclick. */
 .tree-row {
   --tree-icon: 14px;
   --tree-chevron: 12px;
@@ -6070,14 +7228,11 @@ mark {
   white-space: nowrap;
   font-size: 13px;
   line-height: 1.2;
-  transition: background var(--dur-hover) ease;
+  user-select: none;
+  -webkit-user-select: none;
   /* Prevent flex children from stretching SVG/text to weird aspect ratios. */
   box-sizing: border-box;
   min-width: 0;
-}
-
-.tree-row:hover {
-  background: var(--bg-hover);
 }
 
 .tree-row.selected {
@@ -6255,7 +7410,8 @@ mark {
 .terminal-host {
   position: absolute;
   inset: 0;
-  padding: 8px 4px 6px 10px;
+  /* Tight inset — avoid a heavy black bezel around CLI agent / bash PTYs. */
+  padding: 2px 2px 2px 4px;
 }
 
 .terminal-host[data-hidden='true'] {
@@ -6322,6 +7478,43 @@ mark {
   align-items: center;
   gap: 6px;
   min-width: 0;
+  position: relative;
+}
+
+/* Single-file vav: agent · session name · history · new · search on one row. */
+.agent-mode-chrome.has-file-session {
+  gap: 8px;
+  /* History popover anchors under this chrome. */
+  z-index: 30;
+  isolation: isolate;
+}
+
+.agent-mode-session-title {
+  min-width: 0;
+  flex: 1 1 auto;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-mode-file-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: 0 0 auto;
+  /* Do not position:relative — SessionHistoryPopover is a sibling under
+     .agent-mode-chrome so it can span the full agent panel width. */
+}
+
+/* History under the unified file-session chrome (full row width). */
+.agent-mode-chrome.has-file-session > .session-history-popover {
+  left: 8px;
+  right: 8px;
+  width: auto;
+  max-width: none;
 }
 
 .agent-mode-select {
@@ -6335,12 +7528,10 @@ mark {
   cursor: default;
 }
 
-.agent-mode-select:hover {
-  background: var(--bg-hover);
-}
-
+/* No grey hover wash — the control should stay calm while switching agents. */
+.agent-mode-select:hover,
 .agent-mode-select:focus-within {
-  background: var(--bg-hover);
+  background: transparent;
 }
 
 .agent-mode-select-face {
@@ -6414,6 +7605,26 @@ mark {
   min-height: 0;
   display: flex;
   flex-direction: column;
+}
+
+/* Main shell parks the agent surface while a companion window owns the PTY. */
+.detached-session-park {
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.detached-session-park .empty-state {
+  max-width: 360px;
+}
+
+.detached-session-park-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 4px;
 }
 
 .terminal-host-files {
@@ -6854,24 +8065,101 @@ mark {
    ========================================================================== */
 
 .composer {
-  flex: 0 0 auto;
-  padding: 0 12px 8px;
+  /*
+   * Same outer reading column as Agent log (.transcript-inner), but with a
+   * tighter --composer-gutter so the prompt card fills the dock in narrow
+   * agent columns (the log keeps the larger --reading-gutter).
+   */
+  flex: 0 1 auto;
+  align-self: center;
+  width: min(100%, var(--reading-max));
+  max-width: var(--reading-max);
+  margin-left: auto;
+  margin-right: auto;
+  padding: 0 var(--composer-gutter) 8px;
   display: flex;
   flex-direction: column;
   gap: 6px;
+  /* Voice IME / long unwrapped lines must not grow the whole window sideways. */
+  min-width: 0;
+  box-sizing: border-box;
 }
 
-/* Composer is first in the dock (above tools): top inset vs transcript;
-   tight bottom so the tools header sits close under the prompt card. */
+/* Composer is first in the dock (above tools): modest top inset vs transcript;
+   tight gap into the tools header (was top-heavy under the prompt). */
 .dock > .composer:first-child {
-  padding-top: 10px;
-  padding-bottom: 4px;
+  flex: 0 1 auto;
+  align-self: center;
+  width: min(100%, var(--reading-max));
+  max-width: var(--reading-max);
+  padding-top: 8px;
+  padding-bottom: 2px;
 }
 
-/* When tools follows the composer, give the header a little air under the box. */
+/* Tools strip sits close under the prompt — no extra top air. */
 .dock > .composer + .tools-panel .tools-header {
-  padding-top: 2px;
-  height: 34px; /* 32 content + 2pt top air */
+  padding-top: 0;
+  height: 32px;
+  /* Match composer side pad so Workspace / New line up under the prompt. */
+  width: min(100%, var(--reading-max));
+  max-width: var(--reading-max);
+  margin-left: auto;
+  margin-right: auto;
+  padding-left: var(--composer-gutter);
+  padding-right: var(--composer-gutter);
+}
+
+/*
+ * Below ~reading-max the column is already “full width” of the panel —
+ * don’t keep a wide reading gutter that reads as wasted margin.
+ */
+@container dock (max-width: 640px) {
+  .composer,
+  .dock > .composer:first-child {
+    width: 100%;
+    max-width: none;
+    padding-left: 8px;
+    padding-right: 8px;
+  }
+
+  .dock > .composer + .tools-panel .tools-header,
+  .tools-header {
+    width: 100%;
+    max-width: none;
+    padding-left: 8px;
+    padding-right: 8px;
+  }
+
+  /* Keep the ring; drop the “27%” label so the bar doesn’t crowd. */
+  .token-pct {
+    display: none;
+  }
+
+  .token-ring {
+    gap: 0;
+    padding: 2px;
+  }
+}
+
+@container dock (max-width: 420px) {
+  .composer,
+  .dock > .composer:first-child {
+    padding-left: 6px;
+    padding-right: 6px;
+  }
+
+  .dock > .composer + .tools-panel .tools-header,
+  .tools-header {
+    padding-left: 6px;
+    padding-right: 6px;
+  }
+}
+
+/* Floor air under the tools tray (was smaller than the gap above). */
+.dock > .tools-panel {
+  padding-bottom: 6px;
+  width: 100%;
+  align-self: stretch;
 }
 
 .quote-strip {
@@ -6962,16 +8250,19 @@ mark {
   gap: 6px;
   padding: 8px 8px 7px 12px;
   border-radius: var(--radius-lg);
-  background: var(--bg-raised);
-  box-shadow: var(--shadow-card);
-  transition: box-shadow var(--dur-pop) ease;
+  /* Same surface as Agent Message / transcript — not a raised card. */
+  background: var(--bg-content);
+  box-shadow: inset 0 0 0 1px var(--border);
   overflow: visible;
+  min-width: 0;
+  max-width: 100%;
+  width: 100%;
+  box-sizing: border-box;
 }
 
-/* A lift, not a ring: the composer holds focus most of the time a window is
-   open, and a permanent glow around it would be noise rather than signal. */
 .composer-box:focus-within {
-  box-shadow: var(--shadow-raised);
+  background: var(--bg-content);
+  box-shadow: inset 0 0 0 1px var(--border);
 }
 
 .composer-box textarea {
@@ -6983,6 +8274,16 @@ mark {
   padding: 2px 0;
   user-select: text;
   overflow-y: hidden;
+  /* Critical for voice IME: one long unwrapped run must soft-wrap inside the
+     card instead of expanding the flex row and shifting the whole UI left. */
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 /* Model, budget and send sit on the prompt's own baseline: they all act on
@@ -7295,12 +8596,18 @@ mark {
   color: var(--text);
 }
 
+.comment-card-body.is-placeholder {
+  color: var(--text-tertiary);
+  font-style: normal;
+}
+
 /* Pick mode: no full-canvas wash and no crosshair — same default pointer on
    code and markdown; only the block outline signals pickability. */
 .file-viewer-body.pick-mode,
 .file-viewer-body.pick-mode .file-viewer-code.continuous,
 .file-viewer-body.pick-mode .preview-document,
-.file-viewer-body.pick-mode .preview-media-frame,
+.file-viewer-body.pick-mode .preview-media-stage,
+.file-viewer-body.pick-mode .file-viewer-media,
 .file-viewer-body.pick-mode .file-viewer-table,
 .file-viewer-body.pick-mode .preview-code-line {
   cursor: default;
@@ -7813,66 +9120,389 @@ html:has(.token-usage-popup) #root {
 }
 
 .banner.review-pending {
-  background: color-mix(in srgb, var(--accent) 14%, var(--bg-elevated));
+  background: color-mix(in srgb, var(--accent) 14%, var(--bg-content));
   border-bottom: 1px solid var(--border);
   color: var(--text);
+  transition:
+    opacity var(--dur-pop) var(--ease-out),
+    transform var(--dur-pop) var(--ease-out);
 }
 
+@starting-style {
+  .banner.review-pending {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+}
+
+/* Quiet floating notice: kind is the glyph + soft tint, not a neon border. */
 .app-toast {
   position: fixed;
-  top: 52px;
-  right: 18px;
+  top: calc(var(--toolbar-height) + 10px);
+  right: 16px;
   z-index: 80;
-  min-width: 240px;
-  max-width: 360px;
-  padding: 12px 28px 12px 14px;
-  border-radius: var(--radius);
-  background: var(--bg-elevated);
-  border: 1px solid var(--border);
-  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.18);
-  animation: toast-in 180ms ease-out;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  min-width: 220px;
+  max-width: min(360px, calc(100vw - 32px));
+  padding: 11px 10px 11px 12px;
+  border-radius: var(--radius-lg);
+  background: color-mix(in srgb, var(--bg-raised) 92%, transparent);
+  backdrop-filter: blur(14px) saturate(1.2);
+  -webkit-backdrop-filter: blur(14px) saturate(1.2);
+  box-shadow:
+    var(--shadow-raised),
+    inset 0 0 0 1px var(--border);
+  color: var(--text);
+  opacity: 1;
+  transform: translateY(0) scale(1);
+  transition:
+    opacity var(--dur-pop) var(--ease-out),
+    transform var(--dur-pop) var(--ease-out);
+  -webkit-app-region: no-drag;
+}
+
+@starting-style {
+  .app-toast {
+    opacity: 0;
+    transform: translateY(-8px) scale(0.98);
+  }
+}
+
+.app-toast[data-leaving] {
+  opacity: 0;
+  transform: translateY(-8px) scale(0.98);
+  pointer-events: none;
 }
 
 .app-toast.kind-success {
-  border-color: color-mix(in srgb, #34c759 45%, var(--border));
+  background: color-mix(in srgb, var(--success) 10%, var(--bg-raised));
+  box-shadow:
+    var(--shadow-raised),
+    inset 0 0 0 1px color-mix(in srgb, var(--success) 28%, var(--border));
 }
 
 .app-toast.kind-error {
-  border-color: color-mix(in srgb, #ff3b30 45%, var(--border));
+  background: color-mix(in srgb, var(--danger) 10%, var(--bg-raised));
+  box-shadow:
+    var(--shadow-raised),
+    inset 0 0 0 1px color-mix(in srgb, var(--danger) 28%, var(--border));
+}
+
+.app-toast.kind-info {
+  background: color-mix(in srgb, var(--accent) 8%, var(--bg-raised));
+  box-shadow:
+    var(--shadow-raised),
+    inset 0 0 0 1px color-mix(in srgb, var(--accent) 22%, var(--border));
+}
+
+.app-toast-icon {
+  flex: 0 0 auto;
+  display: flex;
+  margin-top: 1px;
+  color: var(--text-secondary);
+}
+
+.app-toast.kind-success .app-toast-icon {
+  color: var(--success);
+}
+
+.app-toast.kind-error .app-toast-icon {
+  color: var(--danger);
+}
+
+.app-toast.kind-info .app-toast-icon {
+  color: var(--accent-text);
+}
+
+.app-toast-copy {
+  flex: 1;
+  min-width: 0;
+  padding-top: 0.5px;
 }
 
 .app-toast-title {
   font-size: 13px;
   font-weight: 600;
+  letter-spacing: -0.1px;
+  line-height: 1.35;
 }
 
 .app-toast-body {
-  margin-top: 4px;
+  margin-top: 3px;
   font-size: 12px;
+  line-height: 1.45;
   color: var(--text-secondary);
 }
 
 .app-toast-dismiss {
-  position: absolute;
-  top: 6px;
-  right: 8px;
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  margin: -2px -2px 0 0;
   border: 0;
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--text-tertiary);
-  cursor: pointer;
-  font-size: 16px;
-  line-height: 1;
+  cursor: default;
+  transition:
+    background var(--dur-hover) ease,
+    color var(--dur-hover) ease,
+    transform var(--dur-press) var(--ease-out);
 }
 
-@keyframes toast-in {
-  from {
-    opacity: 0;
-    transform: translateY(-6px);
-  }
-  to {
-    opacity: 1;
-    transform: none;
-  }
+.app-toast-dismiss:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.app-toast-dismiss:active {
+  transform: scale(0.94);
+}
+
+/* Inline change review — compact stream card under the agent turn. */
+.inline-review {
+  margin: 10px 0 4px;
+  border-radius: var(--radius);
+  background: var(--bg-sunken);
+  box-shadow: inset 0 0 0 1px var(--border);
+  overflow: hidden;
+  max-width: min(100%, 520px);
+  min-width: 0;
+}
+
+.inline-review.is-loading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.inline-review.is-resolved {
+  opacity: 0.88;
+}
+
+.inline-review-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 8px 7px 10px;
+  border-bottom: 1px solid var(--border);
+  min-width: 0;
+}
+
+.inline-review-icon {
+  flex: 0 0 auto;
+  color: var(--tone-write);
+  opacity: 0.9;
+}
+
+.inline-review-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  line-height: 1.3;
+}
+
+.inline-review-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: 0 0 auto;
+}
+
+/* Icon-only accept / reject — green vs red, no label chrome. */
+.inline-review-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: default;
+  flex: 0 0 auto;
+}
+
+.inline-review-icon-btn:hover {
+  background: var(--bg-hover);
+}
+
+.inline-review-icon-btn.kind-accept {
+  color: var(--success);
+}
+
+.inline-review-icon-btn.kind-accept:hover {
+  background: color-mix(in srgb, var(--success) 14%, transparent);
+  color: var(--success);
+}
+
+.inline-review-icon-btn.kind-reject {
+  color: var(--danger);
+}
+
+.inline-review-icon-btn.kind-reject:hover {
+  background: color-mix(in srgb, var(--danger) 14%, transparent);
+  color: var(--danger);
+}
+
+.inline-review-icon-btn.kind-neutral {
+  color: var(--text-secondary);
+}
+
+.inline-review-files {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.inline-review-file {
+  border-top: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
+  min-width: 0;
+}
+
+.inline-review-file:first-child {
+  border-top: 0;
+}
+
+.inline-review-file-main {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 6px 2px 2px;
+  min-width: 0;
+}
+
+.inline-review-file-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1 1 auto;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  padding: 5px 4px;
+  border-radius: 6px;
+  cursor: default;
+}
+
+.inline-review-file-row:hover {
+  background: var(--bg-hover);
+}
+
+.inline-review-chevron {
+  flex: 0 0 auto;
+  display: inline-flex;
+  color: var(--text-tertiary);
+  line-height: 0;
+}
+
+.inline-review-file-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 12.5px;
+  font-weight: 550;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.inline-review-file-meta {
+  flex: 0 1 auto;
+  max-width: 42%;
+  min-width: 0;
+  font-size: 11px;
+  color: var(--text-tertiary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Status as a tiny dot — no “PENDING” text that clips mid-word. */
+.inline-review-dot {
+  flex: 0 0 auto;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--text-tertiary);
+  opacity: 0.75;
+}
+
+.inline-review-dot.status-pending {
+  background: var(--tone-write);
+  opacity: 1;
+}
+
+.inline-review-dot.status-accepted,
+.inline-review-dot.status-edited {
+  background: var(--success);
+  opacity: 1;
+}
+
+.inline-review-dot.status-rejected {
+  background: var(--danger);
+  opacity: 1;
+}
+
+.inline-review-file-actions {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  flex: 0 0 auto;
+}
+
+.inline-review-file-body {
+  margin: 0 8px 8px;
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  box-shadow: inset 0 0 0 1px var(--border);
+  background: var(--bg-content);
+  max-height: 280px;
+  overflow-y: auto;
+}
+
+.inline-review-diff {
+  margin: 0;
+  padding: 8px 10px;
+  font-family: var(--font-code);
+  font-size: 11.5px;
+  line-height: 1.45;
+  white-space: pre;
+  overflow-x: auto;
+}
+
+.inline-review-diff .diff-line.add {
+  background: color-mix(in srgb, var(--success) 14%, transparent);
+  color: color-mix(in srgb, var(--success) 40%, var(--text));
+}
+
+.inline-review-diff .diff-line.del {
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+  color: color-mix(in srgb, var(--danger) 45%, var(--text));
+}
+
+.inline-review-diff .diff-line.hunk {
+  color: var(--accent-text);
+  font-weight: 600;
 }
 
 .change-review {
@@ -7880,7 +9510,19 @@ html:has(.token-usage-popup) #root {
   flex-direction: column;
   height: 100%;
   min-height: 0;
-  background: var(--bg);
+  background: var(--bg-content);
+  opacity: 1;
+  transform: translateY(0) scale(1);
+  transition:
+    opacity var(--dur-sheet) var(--ease-out),
+    transform var(--dur-sheet) var(--ease-out);
+}
+
+@starting-style {
+  .change-review {
+    opacity: 0;
+    transform: translateY(6px) scale(0.98);
+  }
 }
 
 .review-nav .review-logo img {
@@ -8147,6 +9789,46 @@ html:has(.token-usage-popup) #root {
   border: 1px solid var(--border);
   background: var(--bg);
   color: var(--text);
+}
+
+/* Non-text change sets: meta + hint (change-review.rpml binary enums). */
+.review-binary {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px 16px;
+  min-height: 0;
+  overflow: auto;
+}
+
+.review-binary-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.review-binary-meta .kv-row {
+  display: flex;
+  gap: 12px;
+  font-size: 12.5px;
+}
+
+.review-binary-meta .kv-label {
+  width: 56px;
+  flex: 0 0 auto;
+  color: var(--text-secondary);
+}
+
+.review-binary-meta .kv-value {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+.review-binary-hint {
+  margin: 0;
+  line-height: 1.5;
 }
 
 @media (max-width: 900px) {

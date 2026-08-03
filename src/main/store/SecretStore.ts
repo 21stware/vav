@@ -3,65 +3,74 @@ import { readFileSync, writeFileSync, existsSync, rmSync, mkdirSync } from 'node
 import { join, dirname } from 'node:path'
 
 /**
- * The API key, and nothing else.
+ * Encrypted secrets via `safeStorage` (macOS Keychain-backed).
  *
- * `safeStorage` encrypts with a key held in the macOS Keychain, which keeps the
- * product invariant from README §6: the key never lands in conversations.json
- * and never syncs. If OS encryption is unavailable the key is held in memory
- * only for the session rather than written as plaintext.
+ * The primary LLM API key stays at `apikey.bin` for back-compat. Additional
+ * named secrets (e.g. Brave Search) live at `secret-<name>.bin`. Nothing is
+ * written to conversations.json or settings.json. If OS encryption is
+ * unavailable the value is held in memory only for the session.
  */
-export class SecretStore {
-  private readonly file = join(app.getPath('userData'), 'apikey.bin')
-  private memoryOnly: string | null = null
+export type SecretName = 'api' | 'braveSearch'
 
-  get(): string | null {
-    if (this.memoryOnly !== null) return this.memoryOnly
+export class SecretStore {
+  private readonly memory = new Map<SecretName, string>()
+
+  private pathFor(name: SecretName): string {
+    if (name === 'api') return join(app.getPath('userData'), 'apikey.bin')
+    return join(app.getPath('userData'), `secret-${name}.bin`)
+  }
+
+  get(name: SecretName = 'api'): string | null {
+    if (this.memory.has(name)) return this.memory.get(name) ?? null
     try {
-      if (!existsSync(this.file)) return null
+      const file = this.pathFor(name)
+      if (!existsSync(file)) return null
       if (!safeStorage.isEncryptionAvailable()) return null
-      return safeStorage.decryptString(readFileSync(this.file))
+      return safeStorage.decryptString(readFileSync(file))
     } catch {
       return null
     }
   }
 
-  has(): boolean {
-    const key = this.get()
+  has(name: SecretName = 'api'): boolean {
+    const key = this.get(name)
     return !!key && key.length > 0
   }
 
-  set(key: string): void {
+  set(key: string, name: SecretName = 'api'): void {
     const trimmed = key.trim()
     if (!trimmed) {
-      this.clear()
+      this.clear(name)
       return
     }
     if (!safeStorage.isEncryptionAvailable()) {
-      this.memoryOnly = trimmed
+      this.memory.set(name, trimmed)
       return
     }
     try {
-      mkdirSync(dirname(this.file), { recursive: true })
-      writeFileSync(this.file, safeStorage.encryptString(trimmed))
-      this.memoryOnly = null
+      const file = this.pathFor(name)
+      mkdirSync(dirname(file), { recursive: true })
+      writeFileSync(file, safeStorage.encryptString(trimmed))
+      this.memory.delete(name)
     } catch (err) {
-      console.error('[secret] persist failed', err)
-      this.memoryOnly = trimmed
+      console.error(`[secret] persist failed (${name})`, err)
+      this.memory.set(name, trimmed)
     }
   }
 
-  clear(): void {
-    this.memoryOnly = null
+  clear(name: SecretName = 'api'): void {
+    this.memory.delete(name)
     try {
-      if (existsSync(this.file)) rmSync(this.file)
+      const file = this.pathFor(name)
+      if (existsSync(file)) rmSync(file)
     } catch (err) {
-      console.error('[secret] clear failed', err)
+      console.error(`[secret] clear failed (${name})`, err)
     }
   }
 
   /** Masked form for the settings hint line, e.g. "sk-ant-…7f2a". */
-  maskedHint(): string | null {
-    const key = this.get()
+  maskedHint(name: SecretName = 'api'): string | null {
+    const key = this.get(name)
     if (!key) return null
     if (key.length <= 10) return '••••'
     return `${key.slice(0, 7)}…${key.slice(-4)}`

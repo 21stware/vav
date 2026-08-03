@@ -1,18 +1,58 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type WheelEvent as ReactWheelEvent
+} from 'react'
 import type { ChatMessage } from '@shared/types'
 import { quoteSummaryFromContent } from '@shared/quote'
 import { ROOT_LEAF, branchPoints } from '@shared/thread'
+import { getProjection } from '../state/StreamProjection'
 import { useSessionStore, visibleMessages } from '../state/sessionStore'
 import { BranchPager, MessageRow } from './MessageRow'
 import { StreamingMessage } from './StreamingMessage'
 import { Button, EmptyState } from './ui'
 import { useT } from '../i18n/useT'
 
+/**
+ * Stick-to-bottom with hysteresis so scroll-up is not trapped:
+ *
+ * - While following: leave only after rising more than UNPIN_PX from the end
+ *   (and stream lag is suppressed separately — see PROGRAMMATIC_SUPPRESS_MS).
+ * - While reading history: re-enter follow only when truly at the end (≤ REPIN_PX).
+ *
+ * A single large band (e.g. 240px both ways) made mild upward scrolls re-pin
+ * and yank the viewport back down mid-gesture.
+ */
+const UNPIN_PX = 96
+const REPIN_PX = 28
+
+/** While following, ignore scroll pin updates after a programmatic jump. */
+const PROGRAMMATIC_SUPPRESS_MS = 150
+
+function distanceFromBottom(el: HTMLElement): number {
+  return el.scrollHeight - el.scrollTop - el.clientHeight
+}
+
+/** Instant jump — never smooth, or the stream outruns the animation. */
+function scrollToBottomNow(el: HTMLElement): void {
+  // Direct assignment is more reliable than scrollTo during rapid growth.
+  el.scrollTop = el.scrollHeight
+}
+
 export function Transcript(): React.JSX.Element {
   const t = useT()
   const activeId = useSessionStore((s) => s.activeId)
   const nodes = useSessionStore((s) => s.messages[s.activeId])
-  const messages = useSessionStore((s) => visibleMessages(s, s.activeId))
+  const activeLeaf = useSessionStore((s) => s.activeLeaf[s.activeId] ?? null)
+  // Never select visibleMessages() directly — even with pathCache, interleaving
+  // calls can still hand React a new array identity mid-getSnapshot.
+  const messages = useMemo(
+    () => visibleMessages(useSessionStore.getState(), activeId),
+    [activeId, nodes, activeLeaf]
+  )
   const turn = useSessionStore((s) => s.turns[s.activeId])
   const search = useSessionStore((s) => s.search)
   const flashMessageId = useSessionStore((s) => s.flashMessageId)
@@ -27,13 +67,48 @@ export function Transcript(): React.JSX.Element {
   const selectPendingBranch = useSessionStore((s) => s.selectPendingBranch)
   const fork = useSessionStore((s) => s.fork)
   const continueInNewSession = useSessionStore((s) => s.continueInNewSession)
-  const activeLeaf = useSessionStore((s) => s.activeLeaf[s.activeId] ?? null)
 
   const scrollRef = useRef<HTMLDivElement>(null)
+  const contentRef = useRef<HTMLDivElement>(null)
+  /** Sticky follow flag — only flipped by clear user intent or return-to-bottom. */
   const pinnedToBottom = useRef(true)
+  /**
+   * After programmatic follow: ignore onScroll so layout lag cannot unpin.
+   * After user scroll-up: briefly ignore re-pin so a same-frame onScroll at
+   * distance≈0 cannot immediately re-stick and yank the viewport down.
+   */
+  const suppressUnpinUntil = useRef(0)
+  const suppressRepinUntil = useRef(0)
   const prevLeaf = useRef(activeLeaf)
   const [branchSwap, setBranchSwap] = useState(0)
   const [branchSwapActive, setBranchSwapActive] = useState(false)
+
+  const followToBottom = useCallback((): void => {
+    const el = scrollRef.current
+    if (!el || !pinnedToBottom.current) return
+    // Hold unpin long enough that lag from large layout jumps cannot kill follow.
+    suppressUnpinUntil.current = performance.now() + PROGRAMMATIC_SUPPRESS_MS
+    scrollToBottomNow(el)
+    // Double rAF: first paint may still have a stale scrollHeight (tool card
+    // open, markdown reflow). Snap again after layout settles.
+    window.requestAnimationFrame(() => {
+      const a = scrollRef.current
+      if (!a || !pinnedToBottom.current) return
+      scrollToBottomNow(a)
+      window.requestAnimationFrame(() => {
+        const b = scrollRef.current
+        if (!b || !pinnedToBottom.current) return
+        scrollToBottomNow(b)
+        suppressUnpinUntil.current = performance.now() + PROGRAMMATIC_SUPPRESS_MS
+      })
+    })
+  }, [])
+
+  const pinAndScrollToBottom = useCallback((): void => {
+    pinnedToBottom.current = true
+    suppressRepinUntil.current = 0
+    followToBottom()
+  }, [followToBottom])
 
   // Whole-path feedback when the active branch changes (pager click / regenerate).
   useEffect(() => {
@@ -45,38 +120,120 @@ export function Transcript(): React.JSX.Element {
     setBranchSwapActive(false)
     const frame = window.requestAnimationFrame(() => setBranchSwapActive(true))
     const timer = window.setTimeout(() => setBranchSwapActive(false), 280)
+    pinAndScrollToBottom()
     return () => {
       window.cancelAnimationFrame(frame)
       window.clearTimeout(timer)
     }
-  }, [activeLeaf])
+  }, [activeLeaf, pinAndScrollToBottom])
 
+  /**
+   * Hysteresis on pin:
+   * - following  → unpin only if distance > UNPIN_PX (clear leave)
+   * - not following → pin only if distance ≤ REPIN_PX (really at bottom)
+   *
+   * Never re-pin from a half-scroll inside a large single band.
+   */
   const onScroll = useCallback(() => {
+    const now = performance.now()
     const element = scrollRef.current
     if (!element) return
-    const distance = element.scrollHeight - element.scrollTop - element.clientHeight
-    pinnedToBottom.current = distance < 80
+    const distance = distanceFromBottom(element)
+    if (pinnedToBottom.current) {
+      if (now < suppressUnpinUntil.current) return
+      if (distance > UNPIN_PX) pinnedToBottom.current = false
+    } else {
+      if (now < suppressRepinUntil.current) return
+      if (distance <= REPIN_PX) pinnedToBottom.current = true
+    }
   }, [])
 
-  // Follow the stream, but yield to a user who has scrolled up to read.
+  /**
+   * Wheel/trackpad up: release follow on a clear upward gesture so stream
+   * growth cannot re-trap the viewport. Micro-jitter is ignored.
+   * Block re-pin for a short window so the matching onScroll (still near 0)
+   * cannot stick us again before the scroll position moves.
+   */
+  const onWheel = useCallback((event: ReactWheelEvent<HTMLDivElement>) => {
+    if (event.deltaY >= 0) return
+    // Ignore trackpad noise at rest.
+    if (event.deltaY > -6) return
+    pinnedToBottom.current = false
+    suppressUnpinUntil.current = 0
+    // Keep unpinned until gesture + layout settle; then REPIN_PX applies.
+    suppressRepinUntil.current = performance.now() + 280
+  }, [])
+
+  // Switching conversations always lands at the bottom and re-enables follow.
+  useEffect(() => {
+    pinAndScrollToBottom()
+  }, [activeId, pinAndScrollToBottom])
+
+  /**
+   * Content height changes (stream tokens, tool cards, images, new messages).
+   * ResizeObserver alone is not enough if a tick grows content after we scroll
+   * to a stale height — combine with stream projection ticks.
+   */
+  useEffect(() => {
+    const content = contentRef.current
+    if (!content) return
+
+    let raf = 0
+    const scheduleFollow = (): void => {
+      if (!pinnedToBottom.current) return
+      if (raf) return
+      raf = window.requestAnimationFrame(() => {
+        raf = 0
+        followToBottom()
+      })
+    }
+
+    const ro = new ResizeObserver(scheduleFollow)
+    ro.observe(content)
+    scheduleFollow()
+
+    return () => {
+      ro.disconnect()
+      if (raf) window.cancelAnimationFrame(raf)
+    }
+  }, [activeId, followToBottom])
+
+  /**
+   * StreamProjection ticks every ~80ms while a turn is live — follow on each
+   * publish when pinned. This is the reliable path for token deltas (content
+   * often grows without a separate “message count” change).
+   */
+  useEffect(() => {
+    const projection = getProjection(activeId)
+    return projection.subscribe(() => {
+      if (!pinnedToBottom.current) return
+      followToBottom()
+    })
+  }, [activeId, followToBottom])
+
+  // New sealed messages / phase changes — snap once so send feels instant.
   useEffect(() => {
     if (!pinnedToBottom.current) return
-    const element = scrollRef.current
-    if (!element) return
-    element.scrollTop = element.scrollHeight
-  }, [messages.length, activeId, turn?.phase])
+    followToBottom()
+  }, [messages.length, turn?.phase, followToBottom])
 
-  // Scroll to the active search hit; `tick` makes repeat navigation re-fire.
+  // Search hit: leave the bottom band so the stream does not yank the match.
   useEffect(() => {
     if (!search.open) return
     const id = search.matchIds[search.index]
     if (!id) return
+    pinnedToBottom.current = false
+    suppressUnpinUntil.current = 0
+    suppressRepinUntil.current = performance.now() + 400
     document.getElementById(`msg-${id}`)?.scrollIntoView({ block: 'center', behavior: 'smooth' })
   }, [search.open, search.index, search.tick, search.matchIds])
 
   // Quote strip / bubble citation: jump + 1.5s yellow flash.
   useEffect(() => {
     if (!flashMessageId || flashTick === 0) return
+    pinnedToBottom.current = false
+    suppressUnpinUntil.current = 0
+    suppressRepinUntil.current = performance.now() + 400
     document
       .getElementById(`msg-${flashMessageId}`)
       ?.scrollIntoView({ block: 'center', behavior: 'smooth' })
@@ -129,8 +286,11 @@ export function Transcript(): React.JSX.Element {
   const rootBranch = branches.get(ROOT_LEAF)
 
   return (
-    <div className="transcript" ref={scrollRef} onScroll={onScroll}>
-      <div className={`transcript-inner${branchSwapActive ? ' is-branch-swap' : ''}`}>
+    <div className="transcript" ref={scrollRef} onScroll={onScroll} onWheel={onWheel}>
+      <div
+        ref={contentRef}
+        className={`transcript-inner${branchSwapActive ? ' is-branch-swap' : ''}`}
+      >
         {isEmpty && !apiKeyPresent && (
           /* Four elements used to say "there is no key yet": this description,
              a warning card's heading, its body, and the button. The logo says

@@ -1,21 +1,26 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { ChevronDown, Folder, Plus } from 'lucide-react'
+import { ChevronDown, Plus } from 'lucide-react'
 import type { ConversationMeta } from '@shared/types'
 import { useSessionStore, type TurnRuntime } from '../state/sessionStore'
 import { useWorkspaceStore } from '../state/workspaceStore'
 import { useT } from '../i18n/useT'
-import { relativeTime, truncatePathLabel } from '../lib/format'
+import { relativeTime } from '../lib/format'
 import { Button, EmptyState } from './ui'
 import { FileViewer } from './FileViewer'
 import { SessionDetail } from './SessionDetail'
 
 /**
  * Agent column (workspace-view): Preview + Agent split.
- * Default 340 / min 240 / max 480; path-scoped persistence.
+ * Default 60% / min 240 / max 70% of shell (and still leave PREVIEW_MIN);
+ * path-scoped persistence.
  */
 const AGENT_MIN = 240
-const AGENT_MAX = 480
-const AGENT_DEFAULT = 340
+/** First-open / double-click reset width as a fraction of the shell. */
+const AGENT_DEFAULT_RATIO = 0.6
+/** Hard ceiling as a fraction of the workspace split width. */
+const AGENT_MAX_RATIO = 0.7
+/** Fallback before the shell is measured (tight windows only). */
+const AGENT_FALLBACK_PX = 340
 const PREVIEW_MIN = 320
 
 function pathHash(workdir: string): string {
@@ -28,24 +33,39 @@ function widthKey(workdir: string): string {
   return `vav.workspace-agent-panel-width-${pathHash(workdir)}`
 }
 
-function loadStoredWidth(key: string, fallback: number, min: number, max: number): number {
+function loadStoredWidth(key: string, min: number): number | null {
   try {
     const n = Number(localStorage.getItem(key))
-    if (Number.isFinite(n) && n >= min && n <= max) return Math.round(n)
+    if (Number.isFinite(n) && n >= min) return Math.round(n)
   } catch {
     // ignore
   }
-  return fallback
+  return null
 }
 
 function clamp(n: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, Math.round(n)))
 }
 
+/** Max agent width for the current shell — 70%, but never starve the preview. */
+function maxAgentForShell(total: number): number {
+  if (total <= 0) return AGENT_FALLBACK_PX
+  const byRatio = Math.floor(total * AGENT_MAX_RATIO)
+  const byPreview = total - PREVIEW_MIN
+  return Math.max(AGENT_MIN, Math.min(byRatio, byPreview))
+}
+
+/** Default agent width — 60% of shell, within min/max. */
+function defaultAgentForShell(total: number): number {
+  if (total <= 0) return AGENT_FALLBACK_PX
+  return clamp(Math.floor(total * AGENT_DEFAULT_RATIO), AGENT_MIN, maxAgentForShell(total))
+}
+
 /**
  * Workspace View: two-pane Preview + Agent.
  * No left file tree — open a file from the main Files panel (or keep none selected).
- * Agent panel: session dropdown + New.
+ * Agent panel: session dropdown + New (workdir is already visible in the
+ * preview / files surface — no duplicate path row here).
  */
 export function WorkspaceView({ workdir }: { workdir: string }): React.JSX.Element {
   const t = useT()
@@ -55,10 +75,12 @@ export function WorkspaceView({ workdir }: { workdir: string }): React.JSX.Eleme
   const workspace = useWorkspaceStore((s) => s.workspaces[activeId])
   const ensureFilesLoaded = useWorkspaceStore((s) => s.ensureFilesLoaded)
 
-  const [agentWidth, setAgentWidth] = useState(() =>
-    loadStoredWidth(widthKey(workdir), AGENT_DEFAULT, AGENT_MIN, AGENT_MAX)
+  const [agentWidth, setAgentWidth] = useState(
+    () => loadStoredWidth(widthKey(workdir), AGENT_MIN) ?? AGENT_FALLBACK_PX
   )
   const [agentPanelOpen, setAgentPanelOpen] = useState(true)
+  /** When no path-scoped width is stored, apply 60% once the shell is measured. */
+  const needsDefaultRatio = useRef(loadStoredWidth(widthKey(workdir), AGENT_MIN) == null)
 
   const rootRef = useRef<HTMLDivElement>(null)
   const agentRef = useRef<HTMLElement>(null)
@@ -76,7 +98,9 @@ export function WorkspaceView({ workdir }: { workdir: string }): React.JSX.Eleme
   }, [activeId, ensureFilesLoaded, workdir])
 
   useEffect(() => {
-    setAgentWidth(loadStoredWidth(widthKey(workdir), AGENT_DEFAULT, AGENT_MIN, AGENT_MAX))
+    const stored = loadStoredWidth(widthKey(workdir), AGENT_MIN)
+    needsDefaultRatio.current = stored == null
+    setAgentWidth(stored ?? AGENT_FALLBACK_PX)
     setAgentPanelOpen(true)
   }, [workdir])
 
@@ -95,10 +119,18 @@ export function WorkspaceView({ workdir }: { workdir: string }): React.JSX.Eleme
     if (colDraggingRef.current) return
     const total = rootRef.current?.clientWidth ?? 0
     if (total <= 0 || !agentPanelOpen) return
+    // First open for this workdir: land at 60% of the split.
+    if (needsDefaultRatio.current) {
+      needsDefaultRatio.current = false
+      const next = defaultAgentForShell(total)
+      setAgentWidth(next)
+      persistWidth(next)
+      return
+    }
+    const maxAgent = maxAgentForShell(total)
     let agent = agentWidthRef.current
-    const budget = total - PREVIEW_MIN
-    if (agent <= budget) return
-    agent = Math.max(AGENT_MIN, budget)
+    if (agent <= maxAgent && agent >= AGENT_MIN) return
+    agent = clamp(agent, AGENT_MIN, maxAgent)
     if (agent === agentWidthRef.current) return
     setAgentWidth(agent)
     persistWidth(agent)
@@ -141,8 +173,7 @@ export function WorkspaceView({ workdir }: { workdir: string }): React.JSX.Eleme
         raf = 0
         const total = rootRef.current?.clientWidth || shellW
         const raw = startAgent + (startX - pendingX)
-        const maxForAgent = Math.min(AGENT_MAX, Math.max(AGENT_MIN, total - PREVIEW_MIN))
-        latestAgent = clamp(raw, AGENT_MIN, maxForAgent)
+        latestAgent = clamp(raw, AGENT_MIN, maxAgentForShell(total))
         applyDom(latestAgent)
       })
     }
@@ -167,15 +198,31 @@ export function WorkspaceView({ workdir }: { workdir: string }): React.JSX.Eleme
 
   const selectedPath = workspace?.selectedPath ?? null
 
-  // Auto-attach (replace) File Attachment Chip when the preview file changes.
-  // Dismiss stays until selectedPath changes again — we do not re-attach on every
-  // render while the same path is still selected.
+  /**
+   * Preview only real files. Directory selection (column chrome / folder click)
+   * still drives tree highlight via selectedPath, but must not open FileViewer —
+   * inspect used to mislabel folders as binary ("Binary Workspace" + Open with…).
+   */
+  const previewFilePath = useMemo((): string | null => {
+    if (!selectedPath || !workspace) return null
+    if (selectedPath === workspace.root || selectedPath === workdir) return null
+    for (const entries of Object.values(workspace.dirs ?? {})) {
+      const hit = entries.find((e) => e.path === selectedPath)
+      if (hit) return hit.isDirectory ? null : selectedPath
+    }
+    // Path not in loaded tree (e.g. agent-created file): allow preview attempt.
+    return selectedPath
+  }, [selectedPath, workspace, workdir])
+
+  // Auto-attach (replace) File Attachment Chip when the preview *file* changes.
+  // Never attach a directory as context. Dismiss stays until path changes again.
   // CLI agents receive focus only at process spawn (argv / system-prompt file),
   // not via mid-session PTY paste (which would print into the TUI).
   useEffect(() => {
     if (!activeId) return
-    if (selectedPath) void attachContextFile(activeId, selectedPath)
-  }, [activeId, selectedPath, attachContextFile])
+    if (previewFilePath) void attachContextFile(activeId, previewFilePath)
+    else void attachContextFile(activeId, null)
+  }, [activeId, previewFilePath, attachContextFile])
 
   const newSession = async (): Promise<void> => {
     await createConversation({ workingDirectory: workdir })
@@ -184,9 +231,9 @@ export function WorkspaceView({ workdir }: { workdir: string }): React.JSX.Eleme
   return (
     <div className="workspace-view" ref={rootRef}>
       <section className="workspace-view-preview" ref={previewRef}>
-        {selectedPath ? (
+        {previewFilePath ? (
           <FileViewer
-            path={selectedPath}
+            path={previewFilePath}
             origin="session"
             parentConversationId={activeId}
             embedded
@@ -217,17 +264,13 @@ export function WorkspaceView({ workdir }: { workdir: string }): React.JSX.Eleme
               aria-label={t('workspace.resizeAgentPanel')}
               onMouseDown={startResize}
               onDoubleClick={() => {
-                setAgentWidth(AGENT_DEFAULT)
-                persistWidth(AGENT_DEFAULT)
+                const total = rootRef.current?.clientWidth ?? 0
+                const next = defaultAgentForShell(total)
+                setAgentWidth(next)
+                persistWidth(next)
               }}
             />
             <div className="workspace-view-agent-head">
-              <div className="workspace-view-agent-head-row">
-                <Folder size={14} aria-hidden className="workspace-view-agent-folder" />
-                <span className="workspace-view-agent-path" title={workdir}>
-                  {truncatePathLabel(workdir, 36)}
-                </span>
-              </div>
               <div className="workspace-view-agent-head-row workspace-view-agent-session">
                 <WorkspaceSessionSelect workdir={workdir} />
                 <Button

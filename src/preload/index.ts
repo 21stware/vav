@@ -30,6 +30,8 @@ const api: VavApi = {
     setApiKey: (key: string) => ipcRenderer.invoke(IPC.settingsSetKey, key),
     revealApiKey: () => ipcRenderer.invoke(IPC.settingsRevealKey),
     apiKeyHint: () => ipcRenderer.invoke(IPC.settingsKeyHint),
+    setBraveSearchKey: (key: string) => ipcRenderer.invoke(IPC.settingsSetBraveSearchKey, key),
+    braveSearchKeyHint: () => ipcRenderer.invoke(IPC.settingsBraveSearchKeyHint),
     validateKey: (key: string) => ipcRenderer.invoke(IPC.settingsValidateKey, key),
     availableFonts: () => ipcRenderer.invoke(IPC.settingsFonts),
     pickDirectory: () => ipcRenderer.invoke(IPC.settingsPickDirectory),
@@ -90,9 +92,18 @@ const api: VavApi = {
       text: string,
       attachments: string[],
       quote?: import('@shared/types').QuoteDraft | null,
-      contextBlocks?: import('@shared/types').PreviewRef[] | null
+      contextBlocks?: import('@shared/types').PreviewRef[] | null,
+      contextFile?: string | null
     ) =>
-      ipcRenderer.invoke(IPC.agentSend, id, text, attachments, quote ?? null, contextBlocks ?? null),
+      ipcRenderer.invoke(
+        IPC.agentSend,
+        id,
+        text,
+        attachments,
+        quote ?? null,
+        contextBlocks ?? null,
+        contextFile ?? null
+      ),
     cancel: (id: string) => ipcRenderer.invoke(IPC.agentCancel, id),
     answer: (id: string, toolCallId: string, answer: string): Promise<boolean> =>
       ipcRenderer.invoke(IPC.agentAnswer, id, toolCallId, answer),
@@ -109,6 +120,8 @@ const api: VavApi = {
     list: (path: string, sort: FileSortKey, ascending: boolean) =>
       ipcRenderer.invoke(IPC.filesList, path, sort, ascending),
     read: (path: string) => ipcRenderer.invoke(IPC.filesRead, path),
+    readTextWindow: (path: string, opts?: { startByte?: number; maxBytes?: number }) =>
+      ipcRenderer.invoke(IPC.filesReadTextWindow, path, opts),
     readBinary: (path: string) => ipcRenderer.invoke(IPC.filesReadBinary, path),
     writeBinary: (path: string, base64: string) =>
       ipcRenderer.invoke(IPC.filesWriteBinary, path, base64),
@@ -157,13 +170,20 @@ const api: VavApi = {
       rows: number,
       options?: import('@shared/ipc').PtyCreateOptions | string
     ) => ipcRenderer.invoke(IPC.ptyCreate, conversationId, cwd, cols, rows, options),
-    write: (tabId: string, data: string) => ipcRenderer.invoke(IPC.ptyWrite, tabId, data),
-    resize: (tabId: string, cols: number, rows: number) =>
-      ipcRenderer.invoke(IPC.ptyResize, tabId, cols, rows),
+    // One-way: keyboard / wheel / paste must not wait for main ACK.
+    write: (tabId: string, data: string) => {
+      ipcRenderer.send(IPC.ptyWrite, tabId, data)
+    },
+    resize: (tabId: string, cols: number, rows: number, force?: boolean) => {
+      ipcRenderer.send(IPC.ptyResize, tabId, cols, rows, force === true)
+    },
     kill: (tabId: string) => ipcRenderer.invoke(IPC.ptyKill, tabId),
     isBusy: (tabId: string) => ipcRenderer.invoke(IPC.ptyIsBusy, tabId),
+    list: (conversationId: string) => ipcRenderer.invoke(IPC.ptyList, conversationId),
+    replay: (tabId: string) => ipcRenderer.invoke(IPC.ptyReplay, tabId),
     onData: (handler) => subscribe(IPC.ptyData, handler),
-    onExit: (handler) => subscribe<string>(IPC.ptyExit, handler)
+    onExit: (handler) => subscribe<string>(IPC.ptyExit, handler),
+    onChanged: (handler) => subscribe(IPC.ptyChanged, handler)
   },
 
   window: {
@@ -177,7 +197,12 @@ const api: VavApi = {
       ipcRenderer.invoke(IPC.windowOpenSession, conversationId),
     revealInList: (conversationId: string) =>
       ipcRenderer.invoke(IPC.windowRevealInList, conversationId),
+    closeDetachedSession: (conversationId: string) =>
+      ipcRenderer.invoke(IPC.windowCloseDetached, conversationId),
     newDetachedSession: () => ipcRenderer.invoke(IPC.windowNewDetached),
+    listDetachedSessions: () => ipcRenderer.invoke(IPC.windowListDetached),
+    onDetachedChanged: (handler) =>
+      subscribe<string[]>(IPC.windowDetachedChanged, handler),
     openFilePreview: (path, options) =>
       ipcRenderer.invoke(IPC.windowOpenFilePreview, path, options),
     setPreviewCloseGuard: (enabled: boolean) =>

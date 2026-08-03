@@ -250,6 +250,8 @@ export function SqliteView({
             type="button"
             className="btn ghost sm"
             disabled={offset <= 0 || loading}
+            title={t('common.pageUp')}
+            aria-label={t('common.pageUp')}
             onClick={() => setOffset((o) => Math.max(0, o - PAGE))}
           >
             ↑
@@ -258,6 +260,8 @@ export function SqliteView({
             type="button"
             className="btn ghost sm"
             disabled={offset + PAGE >= total || loading}
+            title={t('common.pageDown')}
+            aria-label={t('common.pageDown')}
             onClick={() => setOffset((o) => o + PAGE)}
           >
             ↓

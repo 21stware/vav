@@ -9,9 +9,13 @@ type TFn = (key: MessageKey, params?: TParams) => string
  * Written in macOS glyphs and respelled per platform by `keys`; the two entries
  * that describe platform behaviour rather than a key differ outright.
  */
-export function getShortcuts(t: TFn): [string, string][] {
+export function getShortcuts(
+  t: TFn,
+  options?: { sendKey?: 'enter' | 'mod-enter' }
+): [string, string][] {
+  const sendLabel = options?.sendKey === 'mod-enter' ? keys('⌘↵') : keys('↵')
   return [
-    [keys('⌘↵'), t('shortcut.send')],
+    [sendLabel, t('shortcut.send')],
     [keys('⌘K'), t('shortcut.focusComposer')],
     [keys('⌘I'), t('shortcut.focusComposerAlt')],
     [keys('⌘N'), t('shortcut.newSession')],

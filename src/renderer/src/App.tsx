@@ -1,19 +1,21 @@
 import { useEffect, useState } from 'react'
-import { Download, PanelLeft, Plus, RotateCw, Search, Settings } from 'lucide-react'
+import { Download, PanelLeft, Plus, RotateCw, Settings } from 'lucide-react'
 import { useSessionStore } from './state/sessionStore'
 import {
+  installDetachedBridge,
   installSettingsBridge,
   installTurnEventBridge,
   installUpdateBridge,
   installWindowBridge
 } from './state/sessionStore'
-import { installFsWatchBridge, installPtyBridge, useWorkspaceStore } from './state/workspaceStore'
+import { installFsWatchBridge, installPtyBridge } from './state/workspaceStore'
 import { Sidebar } from './components/Sidebar'
-import { ChangeReviewPanel } from './components/ChangeReviewPanel'
 import { SessionDetail, useTerminalAppearance } from './components/SessionDetail'
 import { WorkspaceView } from './components/WorkspaceView'
+import { AppToast } from './components/AppToast'
 import { Button, Modal } from './components/ui'
 import { useAppearance } from './lib/appearance'
+import { useMenuCommands } from './lib/menuCommands'
 import { installDefaultContextMenu } from './lib/nativeMenu'
 import { keys } from './lib/platform'
 import { getShortcuts } from './shortcuts'
@@ -33,6 +35,7 @@ export default function App(): React.JSX.Element {
     const offPty = installPtyBridge()
     const offSettings = installSettingsBridge()
     const offWindow = installWindowBridge()
+    const offDetached = installDetachedBridge()
     const offUpdates = installUpdateBridge()
     const offMenu = installDefaultContextMenu()
     const offCli = window.vav.onCliOpen((event) => {
@@ -54,6 +57,7 @@ export default function App(): React.JSX.Element {
       offPty()
       offSettings()
       offWindow()
+      offDetached()
       offUpdates()
       offMenu()
       offCli()
@@ -65,19 +69,9 @@ export default function App(): React.JSX.Element {
   useMenuCommands()
   useResponsiveSidebar()
 
-  const changeReviewId = useSessionStore((s) => s.changeReviewId)
-
   if (!ready) return <div className="app-shell" />
 
-  if (changeReviewId) {
-    return (
-      <div className="app-shell">
-        <ChangeReviewPanel />
-        <ToastHost />
-      </div>
-    )
-  }
-
+  // Change review is inline in the transcript (not a full-screen takeover).
   return (
     <div className="app-shell">
       <Titlebar />
@@ -86,7 +80,7 @@ export default function App(): React.JSX.Element {
         <DetailSlot />
       </div>
       <Overlays />
-      <ToastHost />
+      <AppToast />
     </div>
   )
 }
@@ -100,7 +94,6 @@ function DetailSlot(): React.JSX.Element {
 function Titlebar(): React.JSX.Element {
   const t = useT()
   const createConversation = useSessionStore((s) => s.createConversation)
-  const openSearch = useSessionStore((s) => s.openSearch)
   const openSettings = useSessionStore((s) => s.openSettings)
   const toggleSidebar = useSessionStore((s) => s.toggleSidebar)
   const updateState = useSessionStore((s) => s.updateState)
@@ -137,7 +130,9 @@ function Titlebar(): React.JSX.Element {
   return (
     <header className="titlebar">
       {/* Starting a session belongs with the list it lands in, not with the
-          window-level controls at the far end. */}
+          window-level controls at the far end.
+          Find (⌘F) lives on the session agent chrome — titlebar search was
+          unreachable for CLI agents and missing entirely in detached windows. */}
       <Button
         icon={<PanelLeft size={14} />}
         title={`${t('shortcut.toggleSidebar')} ${keys('⌘⇧H')}`}
@@ -153,12 +148,6 @@ function Titlebar(): React.JSX.Element {
       {updateButton}
       <span className="spacer" />
       <Button
-        icon={<Search size={14} />}
-        size="sm"
-        title={`${t('common.search')} ${keys('⌘F')}`}
-        onClick={openSearch}
-      />
-      <Button
         icon={<Settings size={14} />}
         size="sm"
         title={t('app.settingsTitle', { shortcut: keys('⌘,') })}
@@ -168,8 +157,12 @@ function Titlebar(): React.JSX.Element {
   )
 }
 
-/** Below this width the sidebar docks off and opens as a floating overlay. */
-const SIDEBAR_FLOAT_MAX = 720
+/**
+ * Below this width the sidebar leaves the flex split and opens as a floating
+ * overlay. Keep this well under the default window width (720) so normal
+ * sessions stay docked; only genuinely narrow frames float.
+ */
+const SIDEBAR_FLOAT_MAX = 560
 
 function useSidebarFloatMode(): boolean {
   const [floating, setFloating] = useState(() => window.innerWidth <= SIDEBAR_FLOAT_MAX)
@@ -193,14 +186,39 @@ function useSidebarFloatMode(): boolean {
   return floating
 }
 
+const SIDEBAR_FLOAT_LEAVE_MS = 220 // --dur-sheet
+
 function SidebarSlot(): React.JSX.Element | null {
   const t = useT()
   const visible = useSessionStore((s) => s.sidebarVisible)
   const toggleSidebar = useSessionStore((s) => s.toggleSidebar)
   const floating = useSidebarFloatMode()
+  const [floatMounted, setFloatMounted] = useState(false)
+  const [floatLeaving, setFloatLeaving] = useState(false)
 
   useEffect(() => {
-    if (!visible || !floating) return
+    if (visible && floating) {
+      setFloatMounted(true)
+      setFloatLeaving(false)
+      return
+    }
+    if (!floatMounted) return
+    // Docked mode: drop float host immediately (no exit of a panel that is not floating).
+    if (!floating) {
+      setFloatMounted(false)
+      setFloatLeaving(false)
+      return
+    }
+    setFloatLeaving(true)
+    const id = window.setTimeout(() => {
+      setFloatMounted(false)
+      setFloatLeaving(false)
+    }, SIDEBAR_FLOAT_LEAVE_MS)
+    return () => window.clearTimeout(id)
+  }, [visible, floating, floatMounted])
+
+  useEffect(() => {
+    if (!visible || !floating || floatLeaving) return
     const onKey = (event: KeyboardEvent): void => {
       if (event.key !== 'Escape') return
       const target = event.target as HTMLElement | null
@@ -218,22 +236,29 @@ function SidebarSlot(): React.JSX.Element | null {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [visible, floating, toggleSidebar])
+  }, [visible, floating, floatLeaving, toggleSidebar])
 
-  if (!visible) return null
+  if (!floating) {
+    if (!visible) return null
+    return <Sidebar />
+  }
 
-  if (!floating) return <Sidebar />
+  if (!floatMounted) return null
 
   const close = (): void => {
     if (useSessionStore.getState().sidebarVisible) toggleSidebar()
   }
 
   return (
-    <div className="sidebar-float-host" role="presentation">
+    <div
+      className="sidebar-float-host"
+      role="presentation"
+      data-leaving={floatLeaving || undefined}
+    >
       <div
         className="sidebar-float-scrim"
         onMouseDown={(event) => {
-          if (event.button === 0) close()
+          if (event.button === 0 && !floatLeaving) close()
         }}
       />
       <div
@@ -248,29 +273,15 @@ function SidebarSlot(): React.JSX.Element | null {
   )
 }
 
-function ToastHost(): React.JSX.Element | null {
-  const toast = useSessionStore((s) => s.toast)
-  const showToast = useSessionStore((s) => s.showToast)
-  if (!toast) return null
-  return (
-    <div className={`app-toast kind-${toast.kind}`} role="status">
-      <div className="app-toast-title">{toast.title}</div>
-      {toast.description && <div className="app-toast-body">{toast.description}</div>}
-      <button type="button" className="app-toast-dismiss" onClick={() => showToast(null)}>
-        ×
-      </button>
-    </div>
-  )
-}
-
 function Overlays(): React.JSX.Element {
   const t = useT()
   const shortcutsOpen = useSessionStore((s) => s.shortcutsOpen)
   const setShortcutsOpen = useSessionStore((s) => s.setShortcutsOpen)
+  const sendKey = useSessionStore((s) => s.settings.sendKey)
 
   if (!shortcutsOpen) return <></>
 
-  const shortcuts = getShortcuts(t)
+  const shortcuts = getShortcuts(t, { sendKey })
 
   return (
     <Modal
@@ -290,71 +301,6 @@ function Overlays(): React.JSX.Element {
       </div>
     </Modal>
   )
-}
-
-/** Native menu accelerators arrive here, even when xterm has focus. */
-function useMenuCommands(): void {
-  useEffect(() => {
-    return window.vav.onMenuCommand((command) => {
-      const store = useSessionStore.getState()
-      switch (command) {
-        case 'new-conversation':
-          void store.createConversation()
-          break
-        case 'focus-composer':
-          store.focusComposer()
-          break
-        case 'find':
-          store.openSearch()
-          break
-        case 'find-next':
-          store.stepSearch(1)
-          break
-        case 'find-previous':
-          store.stepSearch(-1)
-          break
-        case 'open-settings':
-          store.openSettings()
-          break
-        case 'toggle-sidebar':
-          store.toggleSidebar()
-          break
-        case 'toggle-tools-panel':
-          store.toggleToolsPanel()
-          break
-        case 'toggle-panel-segment':
-          store.togglePanelSegment()
-          break
-        case 'new-terminal':
-          store.setPanelSegment('terminal')
-          void useWorkspaceStore.getState().newBash(store.activeId, 80, 24)
-          break
-        case 'focus-bash':
-          store.focusBashTerminal()
-          break
-        case 'switch-workdir':
-          store.openWorkspaceSwitcher()
-          break
-        case 'send': {
-          const draft = store.drafts[store.activeId] ?? ''
-          const attachments = store.attachments[store.activeId] ?? []
-          void store.send(draft.trim(), attachments)
-          break
-        }
-        case 'focus-tools-1':
-        case 'focus-tools-2':
-        case 'focus-tools-3':
-        case 'focus-tools-4':
-        case 'focus-tools-5':
-        case 'focus-tools-6':
-        case 'focus-tools-7':
-        case 'focus-tools-8':
-        case 'focus-tools-9':
-          store.focusToolsSlot(Number(command.slice('focus-tools-'.length)))
-          break
-      }
-    })
-  }, [])
 }
 
 /**

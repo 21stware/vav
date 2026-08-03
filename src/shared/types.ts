@@ -14,6 +14,8 @@ export type ToolName =
   | 'fs_list'
   | 'doc_search'
   | 'doc_fetch'
+  | 'web_search'
+  | 'web_fetch'
   | 'request'
   | 'ask_user_question'
   | 'plan'
@@ -31,6 +33,8 @@ export const TOOL_LABELS: Record<ToolName, string> = {
   fs_list: '列出目录',
   doc_search: '文档检索',
   doc_fetch: '取回文档块',
+  web_search: '网页搜索',
+  web_fetch: '抓取网页',
   request: '请求确认',
   ask_user_question: '提问',
   plan: '计划'
@@ -135,6 +139,22 @@ export interface ChatMessage {
    * stays user-typed only, exactly like {@link quoteSummary}.
    */
   contextBlocks?: PreviewRef[]
+  /**
+   * File Attachment Chip path at send time (snapshot). Shown on the message
+   * like the composer chip; the model still sees the open file via system
+   * prompt / focusedFilePath while the chip remains attached.
+   */
+  contextFile?: string
+  /**
+   * Paperclip paths attached at send time. Shown as chips; reconstituted for
+   * the model in history (not baked into {@link content}).
+   */
+  attachments?: string[]
+  /**
+   * ChangeSet produced by this assistant turn (fs_write). Inline review card
+   * in the transcript — not a full-screen takeover.
+   */
+  changeSetId?: string
 }
 
 /** Pending quote attached to the composer before send (main-chat.rpml §引用). */
@@ -160,6 +180,12 @@ export interface PreviewRef {
   text: string
   /** File kind badge (e.g. TS, MD), shown for context. */
   badge?: string
+  /**
+   * Optional pick-mode note from the composer comment card. Stored with the
+   * ref so the transcript can re-render the card UI; included in model text
+   * via {@link formatPreviewContext}.
+   */
+  comment?: string
 }
 
 /** One agent-loop usage sample for the context-window popover chart. */
@@ -396,18 +422,32 @@ export const BUILTIN_AGENT_IDS = DEFAULT_CLI_AGENTS.map((a) => a.id)
 /**
  * Agents shown in the session switcher.
  * Falls back to the built-in catalogue when settings were saved with `cliAgents: []`.
+ *
+ * Results are cached by input-array identity so React/zustand getSnapshot can
+ * call this repeatedly without seeing a new array every time (which used to
+ * trip "Maximum update depth exceeded" in Sidebar / SessionDetail).
  */
+let enabledCliAgentsCacheIn: AgentConfig[] | null | undefined = undefined
+let enabledCliAgentsCacheOut: AgentConfig[] | null = null
+let enabledCliAgentsFallback: AgentConfig[] | null = null
+
 export function enabledCliAgents(cliAgents: AgentConfig[] | null | undefined): AgentConfig[] {
+  if (cliAgents === enabledCliAgentsCacheIn && enabledCliAgentsCacheOut) {
+    return enabledCliAgentsCacheOut
+  }
   const list =
     Array.isArray(cliAgents) && cliAgents.length > 0
       ? cliAgents
-      : DEFAULT_CLI_AGENTS.map((a) => ({
+      : (enabledCliAgentsFallback ??= DEFAULT_CLI_AGENTS.map((a) => ({
           ...a,
           envVars: { ...a.envVars },
           defaultArgs: [...a.defaultArgs],
           binaryCandidates: a.binaryCandidates ? [...a.binaryCandidates] : undefined
-        }))
-  return list.filter((a) => a.enabled !== false)
+        })))
+  const out = list.filter((a) => a.enabled !== false)
+  enabledCliAgentsCacheIn = cliAgents
+  enabledCliAgentsCacheOut = out
+  return out
 }
 
 export interface Conversation extends ConversationMeta {
@@ -442,6 +482,11 @@ export interface AppSettings {
   apiEndpoint: string
   apiKeyPresent: boolean
   defaultModel: string
+  /**
+   * Last-used tool approval mode for new conversations (auto / bypass / edit).
+   * Updated whenever the user changes the composer approval picker.
+   */
+  defaultApprovalMode: ApprovalMode
   customModels: string[]
   maxTokens: number
   temperature: number
@@ -450,12 +495,54 @@ export interface AppSettings {
   /** Seconds. 10…600 step 10. Applies to one agent `terminal` tool call. */
   commandTimeout: number
   autoApproveReadonly: boolean
+  /**
+   * Master flag kept in sync with search/fetch (true if either is on).
+   * Prefer {@link webSearchEnabled} / {@link webFetchEnabled} for per-tool control.
+   */
+  webToolsEnabled: boolean
+  /**
+   * When false, `web_search` is not offered to the model.
+   * Network stays local-first: requests leave the machine only when enabled.
+   */
+  webSearchEnabled: boolean
+  /**
+   * When false, `web_fetch` is not offered to the model.
+   */
+  webFetchEnabled: boolean
+  /**
+   * Milliseconds for one web_search / web_fetch HTTP attempt (including redirects).
+   * Clamped 5_000…60_000.
+   */
+  webTimeoutMs: number
+  /**
+   * Search backend preference. `auto` = Brave (if key) → SearXNG (if URL) → DuckDuckGo.
+   */
+  webSearchProvider: 'auto' | 'duckduckgo' | 'searxng' | 'brave'
+  /**
+   * Optional SearXNG (or compatible) base URL, e.g. http://127.0.0.1:8080.
+   */
+  webSearxngBaseUrl: string
+  /**
+   * When true, web_fetch may open a hidden Chromium view for thin SPA shells.
+   * Off by default (faster, lower resource use).
+   */
+  webFetchAllowRender: boolean
+  /**
+   * Renderer-only: whether a Brave Search API key is stored (never the key itself).
+   */
+  braveSearchKeyPresent?: boolean
   theme: ThemeMode
   /** UI language; default follows the OS. */
   locale: LocalePreference
   codeFont: string
   fontSize: number
   reduceMotion: boolean
+  /**
+   * How the main composer submits a message.
+   * - `enter` (default): Enter sends; Shift+Enter inserts a newline.
+   * - `mod-enter`: ⌘↵ / Ctrl+Enter sends; Enter inserts a newline.
+   */
+  sendKey: 'enter' | 'mod-enter'
   /** Electron accelerator, e.g. "Control+Command+Space". Empty disables. */
   globalHotkey: string
   /** Sidebar grouping segmented control; persisted. */
@@ -495,6 +582,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   apiEndpoint: 'https://api.anthropic.com',
   apiKeyPresent: false,
   defaultModel: 'deepseek-v4-pro',
+  defaultApprovalMode: 'auto',
   customModels: [],
   maxTokens: 8192,
   temperature: 0.7,
@@ -502,11 +590,19 @@ export const DEFAULT_SETTINGS: AppSettings = {
   shell: 'zsh',
   commandTimeout: 120,
   autoApproveReadonly: true,
+  webToolsEnabled: true,
+  webSearchEnabled: true,
+  webFetchEnabled: true,
+  webTimeoutMs: 15_000,
+  webSearchProvider: 'auto',
+  webSearxngBaseUrl: '',
+  webFetchAllowRender: false,
   theme: 'system',
   locale: 'system',
   codeFont: 'SF Mono',
   fontSize: 12,
   reduceMotion: false,
+  sendKey: 'enter',
   globalHotkey: 'Control+Command+Space',
   sidebarGroupingMode: 'none',
   fileViewMode: 'tree',
@@ -700,12 +796,16 @@ export type TurnEvent =
       error?: string
       cancelled?: boolean
     }
-  /** Agent turn wrote files — open Change Review for Accept / Reject. */
+  /**
+   * Agent turn wrote files. Review is inline in the transcript (not full-screen).
+   * `messageId` is the assistant turn that produced the writes.
+   */
   | {
       type: 'change-review'
       conversationId: string
       changeSetId: string
       pendingCount: number
+      messageId?: string
     }
 
 export interface TurnStatus {

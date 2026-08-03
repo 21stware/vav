@@ -102,29 +102,284 @@ export function acquireTerminal(options: {
   term.loadAddon(new WebLinksAddon())
   term.open(container)
 
-  term.onData((data) => void window.vav.pty.write(options.tabId, data))
-  term.onResize(({ cols, rows }) => void window.vav.pty.resize(options.tabId, cols, rows))
+  term.onData((data) => {
+    window.vav.pty.write(options.tabId, data)
+  })
+  // Only the focused window drives PTY geometry. Background windows still
+  // receive the stream, but must not stomp cols/rows (causes TUI ghost frames).
+  //
+  // Alt-screen TUIs (Claude Code): xterm does not reflow the alt buffer, so a
+  // sudden geometry jump (title-bar maximize/restore) leaves truncated cells.
+  // Async CSI clears race the write queue and look like "content scrolled up".
+  // Fix: discard the pending write queue, synchronously clear the active buffer
+  // cells (same clean slate as reset, without RIS / mode loss), hold paint two
+  // frames, then force SIGWINCH. Normal-buffer bash keeps scrollback untouched.
+  let resizeTimer: ReturnType<typeof setTimeout> | null = null
+  let pendingSize: { cols: number; rows: number } | null = null
+  let lastApplied = { cols: 0, rows: 0 }
+  /** Drop PTY→xterm bytes while the alt buffer is rebuilt (sync, short). */
+  let suppressPtyPaint = false
 
-  const unregister = registerTerminalSink(options.conversationId, options.tabId, (data) =>
+  /**
+   * xterm internals used for a true alt-buffer rebuild. Public `write` is async
+   * and shares a queue with PTY output — ED2 alone cannot outrun half-frames.
+   */
+  type XtermCore = {
+    writeSync?: (data: string) => void
+    _writeBuffer?: {
+      _writeBuffer: unknown[]
+      _callbacks: unknown[]
+      _pendingData: number
+      _bufferOffset: number
+    }
+    _bufferService?: {
+      buffer: {
+        clear: () => void
+        fillViewportRows: () => void
+        scrollTop: number
+        scrollBottom: number
+        ybase: number
+        ydisp: number
+        x: number
+        y: number
+      }
+      rows: number
+    }
+  }
+
+  const discardWriteQueue = (core: XtermCore): void => {
+    const wb = core._writeBuffer
+    if (!wb) return
+    // Drop every chunk already queued (old-geometry redraw) and cancel a
+    // scheduled _innerWrite by matching writeSync's post-drain markers.
+    wb._writeBuffer.length = 0
+    wb._callbacks.length = 0
+    wb._pendingData = 0
+    wb._bufferOffset = 0x7fffffff
+  }
+
+  /**
+   * Synchronously blank the active (alt) buffer without RIS / leave-alt.
+   * Keeps DEC modes the TUI already negotiated; only cells + cursor + scroll
+   * region are reset. Dropping the write queue first is essential — otherwise
+   * pending half-frames repaint after this clear.
+   */
+  const hardRebuildAlt = (): void => {
+    const core = (term as unknown as { _core?: XtermCore })._core
+    if (core) {
+      discardWriteQueue(core)
+      const buf = core._bufferService?.buffer
+      if (buf && typeof buf.clear === 'function') {
+        buf.clear()
+        buf.fillViewportRows()
+        buf.scrollTop = 0
+        buf.scrollBottom = Math.max(0, (core._bufferService?.rows ?? term.rows) - 1)
+        buf.x = 0
+        buf.y = 0
+        buf.ybase = 0
+        buf.ydisp = 0
+        try {
+          term.refresh(0, Math.max(0, term.rows - 1))
+          term.clearTextureAtlas?.()
+        } catch {
+          // ignore
+        }
+        return
+      }
+      // Fallback: leave+re-enter alt in one sync turn (blank alt, no flash).
+      if (typeof core.writeSync === 'function') {
+        core.writeSync('\x1b[?1049l\x1b[?1049h\x1b[r\x1b[0m\x1b[H\x1b[2J\x1b[3J')
+        try {
+          term.refresh(0, Math.max(0, term.rows - 1))
+        } catch {
+          // ignore
+        }
+        return
+      }
+    }
+    term.write('\x1b[H\x1b[2J\x1b[3J')
+    try {
+      term.refresh(0, Math.max(0, term.rows - 1))
+    } catch {
+      // ignore
+    }
+  }
+
+  const applyResize = (): void => {
+    resizeTimer = null
+    if (!pendingSize) return
+    // Keep pending if unfocused — focus handler will flush. Do not drop size.
+    if (!document.hasFocus()) return
+    const { cols, rows } = pendingSize
+    pendingSize = null
+    if (cols === lastApplied.cols && rows === lastApplied.rows) return
+    lastApplied = { cols, rows }
+
+    try {
+      if (term.buffer.active.type === 'alternate') {
+        // 1) Sync blank the alt buffer + drop queued half-frames.
+        // 2) Hold the paint gate two frames so in-flight IPC from the old
+        //    geometry cannot land on the fresh cells (title-bar maximize
+        //    especially races main→renderer with the winsize change).
+        // 3) SIGWINCH, then open the gate for the app's full redraw.
+        suppressPtyPaint = true
+        hardRebuildAlt()
+        const signalCols = cols
+        const signalRows = rows
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => {
+            if (lastApplied.cols !== signalCols || lastApplied.rows !== signalRows) {
+              // Superseded by a newer settle.
+              suppressPtyPaint = false
+              return
+            }
+            try {
+              window.vav.pty.resize(options.tabId, signalCols, signalRows, true)
+            } finally {
+              suppressPtyPaint = false
+            }
+          })
+        })
+        return
+      }
+    } catch {
+      suppressPtyPaint = false
+    }
+    window.vav.pty.resize(options.tabId, cols, rows)
+  }
+
+  term.onResize(({ cols, rows }) => {
+    pendingSize = { cols, rows }
+    if (!document.hasFocus()) return
+    if (resizeTimer) clearTimeout(resizeTimer)
+    // Title-bar maximize/restore settles over multiple layout passes; short
+    // debounces SIGWINCH'd intermediate sizes that Claude half-drew.
+    resizeTimer = setTimeout(applyResize, 150)
+  })
+
+  // Unfocused windows can fit (and stash pendingSize) without applying; flush
+  // when this window becomes frontmost so PTY geometry matches xterm.
+  const onWindowFocus = (): void => {
+    if (!pendingSize) return
+    if (resizeTimer) clearTimeout(resizeTimer)
+    resizeTimer = setTimeout(applyResize, 0)
+  }
+  window.addEventListener('focus', onWindowFocus)
+
+  // Let product accelerators leave the terminal (⌘⇧E, Ctrl+`, …). Main also
+  // re-dispatches via before-input-event; this stops xterm from consuming them
+  // as shell input when the native path still delivers the key to the page.
+  term.attachCustomKeyEventHandler((ev) => {
+    if (ev.type !== 'keydown') return true
+    const meta = ev.metaKey || ev.ctrlKey
+    if (!meta && !(ev.ctrlKey && !ev.metaKey)) return true
+    // Control+` (tools bash) — never send backtick to the shell with Ctrl held.
+    if (ev.ctrlKey && !ev.metaKey && !ev.altKey && !ev.shiftKey && (ev.key === '`' || ev.code === 'Backquote')) {
+      return false
+    }
+    if (!meta || ev.altKey) return true
+    const key = ev.key.toLowerCase()
+    // Cmd/Ctrl + Shift + letter product shortcuts
+    if (ev.shiftKey && (key === 'e' || key === 'h' || key === 't' || key === 'o' || key === 'g')) {
+      return false
+    }
+    // Cmd/Ctrl + letter / digit product shortcuts (incl. ⌘W context-close)
+    if (
+      !ev.shiftKey &&
+      (key === 'n' ||
+        key === 'k' ||
+        key === 'i' ||
+        key === 'f' ||
+        key === 'g' ||
+        key === 't' ||
+        key === 'w' ||
+        key === ',' ||
+        /^[1-9]$/.test(key) ||
+        key === 'enter')
+    ) {
+      return false
+    }
+    return true
+  })
+
+  // Gate live writes until scrollback replay finishes so a second window does not
+  // paint "new chunks first, then full history" (which looks like a corrupt TUI).
+  let replaying = typeof window.vav.pty.replay === 'function'
+  const liveQueue: string[] = []
+  const unregister = registerTerminalSink(options.conversationId, options.tabId, (data) => {
+    // Stale bytes from the previous geometry while we wipe + SIGWINCH — drop.
+    // Replaying them after the wipe reintroduces the "scrolled-up" ghosts.
+    if (suppressPtyPaint) return
+    if (replaying) {
+      liveQueue.push(data)
+      return
+    }
     term.write(data)
-  )
+  })
 
   const entry: TerminalEntry = {
     term,
     fit,
     container,
     dispose: () => {
+      if (resizeTimer) {
+        clearTimeout(resizeTimer)
+        resizeTimer = null
+      }
+      suppressPtyPaint = false
+      window.removeEventListener('focus', onWindowFocus)
+      // Flush last size if we dispose mid-debounce (window close / tab kill).
+      if (pendingSize && document.hasFocus()) {
+        const { cols, rows } = pendingSize
+        pendingSize = null
+        try {
+          window.vav.pty.resize(options.tabId, cols, rows)
+        } catch {
+          // ignore
+        }
+      }
       unregister()
       term.dispose()
       entries.delete(id)
     }
   }
   entries.set(id, entry)
+
+  // Multi-window attach: main keeps a ring buffer so a detached window is not blank.
+  if (replaying) {
+    void window.vav.pty
+      .replay(options.tabId)
+      .then((buf) => {
+        if (entries.get(id)?.term !== term) return
+        if (buf) term.write(buf)
+        replaying = false
+        for (const chunk of liveQueue) term.write(chunk)
+        liveQueue.length = 0
+      })
+      .catch(() => {
+        replaying = false
+        for (const chunk of liveQueue) term.write(chunk)
+        liveQueue.length = 0
+      })
+  }
+
   return entry
 }
 
 export function disposeTerminal(conversationId: string, tabId: string): void {
   entries.get(key(conversationId, tabId))?.dispose()
+}
+
+/** Re-fit every live xterm in this renderer (call on window focus). */
+export function fitAllTerminals(): void {
+  if (!document.hasFocus()) return
+  for (const entry of entries.values()) {
+    try {
+      entry.fit.fit()
+    } catch {
+      // host may be detached
+    }
+  }
 }
 
 export function applyTerminalAppearance(fontFamily: string, fontSize: number): void {

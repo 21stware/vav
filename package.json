@@ -1,7 +1,7 @@
 {
   "name": "vav",
   "productName": "vav",
-  "version": "1.3.1",
+  "version": "1.3.2",
   "description": "Local-first CLI agent terminal workspace: host Claude Code, Codex, and other agent CLIs with multi-split PTYs and a file tree.",
   "license": "PolyForm-Noncommercial-1.0.0",
   "author": "Oboo Cheng",
@@ -19,6 +19,7 @@
   "dependencies": {
     "@earendil-works/pi-agent-core": "^0.82.1",
     "@earendil-works/pi-ai": "^0.82.1",
+    "@mozilla/readability": "^0.6.0",
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/addon-web-links": "^0.12.0",
     "@xterm/xterm": "^6.0.0",
@@ -26,9 +27,11 @@
     "fast-xml-parser": "^5.10.1",
     "highlight.js": "^11.11.1",
     "jszip": "^3.10.1",
+    "linkedom": "^0.18.13",
     "lucide-react": "^0.545.0",
     "mammoth": "^1.12.0",
     "markdown-it": "^14.3.0",
+    "mermaid": "^11.16.0",
     "node-pty": "^1.1.0",
     "pdfjs-dist": "^6.1.200",
     "react": "^19.2.0",
@@ -40,6 +43,7 @@
   "devDependencies": {
     "@types/jszip": "^3.4.0",
     "@types/markdown-it": "^14.1.2",
+    "@types/mozilla-readability": "^0.2.1",
     "@types/node": "^22.15.0",
     "@types/react": "^19.2.0",
     "@types/react-dom": "^19.2.0",
@@ -219,6 +223,31 @@
         {
           "ext": "pdf",
           "name": "PDF",
+          "role": "Viewer",
+          "rank": "Alternate"
+        },
+        {
+          "ext": [
+            "docx",
+            "xlsx",
+            "pptx"
+          ],
+          "name": "Office Open XML",
+          "role": "Viewer",
+          "rank": "Alternate"
+        },
+        {
+          "ext": [
+            "heic",
+            "heif"
+          ],
+          "name": "HEIC Image",
+          "role": "Viewer",
+          "rank": "Alternate"
+        },
+        {
+          "ext": "zip",
+          "name": "ZIP Archive",
           "role": "Viewer",
           "rank": "Alternate"
         }

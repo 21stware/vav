@@ -35,6 +35,8 @@ import type { SettingsStore } from '../store/SettingsStore'
 import type { SecretStore } from '../store/SecretStore'
 import type { FileService } from '../fs/FileService'
 import type { DocumentRetrievalService } from '../retrieval/DocumentRetrievalService'
+import type { WebSearchService } from '../web/WebSearchService'
+import type { WebFetchService } from '../web/WebFetchService'
 import type { FileSessionStore } from '../store/FileSessionStore'
 import { StickyShell } from '../terminal/StickyShell'
 import { isApprovalApproveText, isApprovalDenyText } from '@shared/i18n'
@@ -103,6 +105,8 @@ export interface AgentRuntimeDeps {
   emit: (event: TurnEvent) => void
   changeSets?: import('./ChangeSetStore').ChangeSetStore
   retrieval?: DocumentRetrievalService
+  webSearch?: WebSearchService
+  webFetch?: WebFetchService
   fileSessions?: FileSessionStore
 }
 
@@ -153,19 +157,26 @@ export class AgentRuntime {
     userText: string,
     attachments: string[],
     quote?: QuoteDraft | null,
-    contextBlocks?: PreviewRef[] | null
+    contextBlocks?: PreviewRef[] | null,
+    contextFile?: string | null
   ): Promise<void> {
     if (this.turns.has(conversationId)) return
-    // Bubble body: typed text (+ attachment paths). Quote marker and preview
-    // context are only for the model (rebuilt in buildHistory from stored fields).
-    const composed = attachments.length
-      ? `${userText}\n\n${t('ui.attachments')}\n${attachments.map((p) => `- ${p}`).join('\n')}`
-      : userText
+    // Bubble body stays user-typed only. Quote, preview context, attachments and
+    // the file chip are stored as fields and reconstituted in buildHistory /
+    // rendered as chips in the transcript (same shapes as the composer).
     const leaf = this.deps.conversations.activeLeaf(conversationId)
     const parentId = leaf === ROOT_LEAF ? null : leaf
     await this.startTurn(
       conversationId,
-      this.addUserMessage(conversationId, composed, parentId, quote, contextBlocks)
+      this.addUserMessage(
+        conversationId,
+        userText,
+        parentId,
+        quote,
+        contextBlocks,
+        attachments,
+        contextFile
+      )
     )
   }
 
@@ -230,7 +241,9 @@ export class AgentRuntime {
     text: string,
     parentId: string | null,
     quote?: QuoteDraft | null,
-    contextBlocks?: PreviewRef[] | null
+    contextBlocks?: PreviewRef[] | null,
+    attachments?: string[] | null,
+    contextFile?: string | null
   ): string {
     const message: ChatMessage = {
       id: randomUUID(),
@@ -246,7 +259,9 @@ export class AgentRuntime {
             quoteRole: quote.role
           }
         : {}),
-      ...(contextBlocks && contextBlocks.length ? { contextBlocks } : {})
+      ...(contextBlocks && contextBlocks.length ? { contextBlocks } : {}),
+      ...(attachments && attachments.length ? { attachments: [...attachments] } : {}),
+      ...(contextFile ? { contextFile } : {})
     }
     // Storing first is what lets auto-title fire before the turn starts.
     this.deps.conversations.appendMessage(conversationId, message)
@@ -736,6 +751,9 @@ export class AgentRuntime {
           newContent
         ),
       retrieval: this.deps.retrieval,
+      webSearch: this.deps.webSearch,
+      webFetch: this.deps.webFetch,
+      braveSearchKey: () => this.deps.secrets.get('braveSearch'),
       selectionAnchor: () => turn.selectionRefs,
       defaultDocPath: () => {
         if (!conversation.fileId || !this.deps.fileSessions) return null
@@ -746,6 +764,7 @@ export class AgentRuntime {
     if (conversation.fileReadOnly) {
       tools = tools.filter((tool) => tool.name !== 'fs_write')
     }
+    // web_search / web_fetch always offered (no product kill-switch).
     // Edit-mode approvals may rewrite args after the user edits the card.
     return tools.map((tool) => ({
       ...tool,
@@ -1000,33 +1019,26 @@ export class AgentRuntime {
   }
 
   private finish(conversationId: string, turn: TurnState): void {
+    void this.finishAsync(conversationId, turn)
+  }
+
+  private async finishAsync(conversationId: string, turn: TurnState): Promise<void> {
     this.flushBuffers(conversationId, turn)
     if (turn.flushTimer) clearTimeout(turn.flushTimer)
 
+    // Seal plan checklist to match turn outcome. Models often finish the work
+    // then reply without a last `plan` call — without this the UI stays "paused".
+    const planMode: 'cancel' | 'error' | 'success' = turn.cancelled
+      ? 'cancel'
+      : turn.error
+        ? 'error'
+        : 'success'
+    sealPlanBlocks(turn.blocks, planMode)
+
     if (turn.cancelled) {
-      // Seal whatever arrived rather than discarding it.
       for (const block of turn.blocks) {
         if (block.kind !== 'toolCall') continue
-        if (block.tool === 'plan') {
-          const input = safeParseJson(block.input)
-          const steps = normalizePlanSteps(input.steps).map((step) => {
-            if (step.status === 'executing') {
-              return { ...step, status: 'error' as const, subtitle: t('common.cancelled') }
-            }
-            if (step.status === 'pending') {
-              return { ...step, status: 'skipped' as const, subtitle: t('common.cancelled') }
-            }
-            return step
-          })
-          const title = String(input.title ?? 'Plan')
-          const done = steps.filter((step) => step.status === 'done').length
-          block.input = JSON.stringify({ ...input, title, steps }, null, 2)
-          block.summary = `Plan · ${title} (${done}/${steps.length})`
-          if (block.status === 'pending' || block.status === 'executing') {
-            block.status = 'completed'
-          }
-          continue
-        }
+        if (block.tool === 'plan') continue // already sealed
         if (
           (block.tool === 'ask_user_question' || block.tool === 'request') &&
           block.status === 'pending'
@@ -1053,12 +1065,30 @@ export class AgentRuntime {
     })
     this.turns.delete(conversationId)
 
-    if (message.blocks.length > 0) {
+    const conversation = this.deps.conversations.get(conversationId)
+    const parent = conversation?.messages.find((m) => m.id === turn.parentId)
+    const turnTitle = parent?.content?.trim() || conversation?.title || 'Agent turn'
+    let changeSet = this.deps.changeSets?.finalizeTurn(
+      conversationId,
+      turnTitle,
+      conversation?.model || '',
+      { cancelled: turn.cancelled, error: !!turn.error }
+    )
+    if (changeSet) {
+      // Bypass: writes already on disk — auto-accept; no review gate.
+      const mode = conversation?.approvalMode ?? 'auto'
+      if (mode === 'bypass' && this.deps.changeSets) {
+        const accepted = await this.deps.changeSets.acceptAll(changeSet.id)
+        if (accepted) changeSet = accepted
+      }
+      message.changeSetId = changeSet.id
+    }
+
+    if (message.blocks.length > 0 || message.changeSetId) {
       this.deps.conversations.replaceMessage(conversationId, message)
     }
     this.deps.conversations.flush()
 
-    const conversation = this.deps.conversations.get(conversationId)
     this.deps.emit({
       type: 'end',
       conversationId,
@@ -1068,20 +1098,13 @@ export class AgentRuntime {
       cancelled: turn.cancelled
     })
 
-    const parent = conversation?.messages.find((m) => m.id === turn.parentId)
-    const turnTitle = parent?.content?.trim() || conversation?.title || 'Agent turn'
-    const changeSet = this.deps.changeSets?.finalizeTurn(
-      conversationId,
-      turnTitle,
-      conversation?.model || '',
-      { cancelled: turn.cancelled, error: !!turn.error }
-    )
     if (changeSet) {
       this.deps.emit({
         type: 'change-review',
         conversationId,
         changeSetId: changeSet.id,
-        pendingCount: changeSet.files.length
+        pendingCount: changeSet.files.filter((f) => f.status === 'pending').length,
+        messageId: message.id
       })
     }
   }
@@ -1177,6 +1200,21 @@ function leanToolArgs(tool: ToolName, args: Record<string, unknown>): Record<str
       if (args.section_id !== undefined) lean.section_id = args.section_id
       return lean
     }
+    case 'web_search': {
+      const lean: Record<string, unknown> = {}
+      if (typeof args.query === 'string') lean.query = args.query
+      if (args.num_results !== undefined) lean.num_results = args.num_results
+      if (typeof args.site === 'string') lean.site = args.site
+      return lean
+    }
+    case 'web_fetch': {
+      const lean: Record<string, unknown> = {}
+      if (typeof args.url === 'string') lean.url = args.url
+      if (args.extract !== undefined) lean.extract = args.extract
+      if (args.max_chars !== undefined) lean.max_chars = args.max_chars
+      if (args.start_line !== undefined) lean.start_line = args.start_line
+      return lean
+    }
     case 'terminal': {
       const lean: Record<string, unknown> = {}
       if (typeof args.command === 'string') lean.command = args.command
@@ -1221,6 +1259,12 @@ function applyEditedArgs(
   if (name === 'fs_read' || name === 'fs_write' || name === 'fs_list') {
     return { ...base, path: edited }
   }
+  if (name === 'web_fetch') {
+    return { ...base, url: edited }
+  }
+  if (name === 'web_search') {
+    return { ...base, query: edited }
+  }
   try {
     const parsed = JSON.parse(edited) as unknown
     if (parsed && typeof parsed === 'object') return parsed as Record<string, unknown>
@@ -1228,4 +1272,53 @@ function applyEditedArgs(
     // not JSON
   }
   return null
+}
+
+/**
+ * Reconcile plan checklist state when a turn ends.
+ *
+ * Models often complete the work then write a final answer without a last
+ * `plan` tool call, leaving steps pending and the UI stuck on "paused".
+ * - cancel: executing→error, pending→skipped
+ * - error:  executing→error (pending left so the user sees what was not started)
+ * - success: any still-open step is treated as finished work the agent forgot
+ *   to tick off → done (abandoned work should have been marked skipped mid-turn)
+ */
+function sealPlanBlocks(
+  blocks: MessageBlock[],
+  mode: 'cancel' | 'error' | 'success'
+): void {
+  for (const block of blocks) {
+    if (block.kind !== 'toolCall' || block.tool !== 'plan') continue
+    const input = safeParseJson(block.input)
+    const steps = normalizePlanSteps(input.steps).map((step) => {
+      if (mode === 'cancel') {
+        if (step.status === 'executing') {
+          return { ...step, status: 'error' as const, subtitle: step.subtitle ?? t('common.cancelled') }
+        }
+        if (step.status === 'pending') {
+          return { ...step, status: 'skipped' as const, subtitle: step.subtitle ?? t('common.cancelled') }
+        }
+        return step
+      }
+      if (mode === 'error') {
+        if (step.status === 'executing') {
+          return { ...step, status: 'error' as const, subtitle: step.subtitle ?? t('common.failed') }
+        }
+        return step
+      }
+      // success — promote open steps so a completed turn does not show half-checked todos
+      if (step.status === 'executing' || step.status === 'pending') {
+        return { ...step, status: 'done' as const }
+      }
+      return step
+    })
+    const title = String(input.title ?? 'Plan')
+    const done = steps.filter((step) => step.status === 'done').length
+    block.input = JSON.stringify({ ...input, title, steps }, null, 2)
+    block.summary = `Plan · ${title} (${done}/${steps.length})`
+    if (block.status === 'pending' || block.status === 'executing') {
+      block.status = 'completed'
+    }
+  }
 }

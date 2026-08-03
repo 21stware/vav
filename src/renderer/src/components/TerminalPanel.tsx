@@ -47,7 +47,11 @@ export function TerminalPanel({
   const empty = !displayLayout
 
   return (
-    <div className="terminal-stack multi-split" data-empty={empty}>
+    <div
+      className="terminal-stack multi-split"
+      data-empty={empty}
+      data-terminal-surface={surface}
+    >
       {empty ? (
         <EmptyState
           title={
@@ -76,18 +80,34 @@ function leafIds(node: TerminalLayoutNode): string {
   return `${leafIds(node.children[0])}/${leafIds(node.children[1])}`
 }
 
-function adjustBranchWeights(
+/**
+ * Map pointer delta (px) → flex weight delta using the branch's real size so the
+ * divider tracks the mouse 1:1. The old fixed `/240` scale overshot (~2×) on
+ * typical agent panels whose flex track is ~480–960px.
+ *
+ * Resizer is a fixed 4px flex sibling; weights only share the remaining track.
+ */
+const SPLIT_RESIZER_PX = 4
+const SPLIT_MIN_WEIGHT = 0.35
+
+function adjustBranchWeightsByPixels(
   root: TerminalLayoutNode,
   branchKey: string,
-  delta: number
+  deltaPx: number,
+  branchSizePx: number
 ): TerminalLayoutNode {
+  const flexSpace = Math.max(1, branchSizePx - SPLIT_RESIZER_PX)
   const walk = (node: TerminalLayoutNode): TerminalLayoutNode => {
     if (node.type === 'leaf') return node
     const key = leafIds(node)
     if (key === branchKey) {
       const [a, b] = node.children
       const total = a.weight + b.weight
-      const na = Math.max(0.35, Math.min(total - 0.35, a.weight + delta))
+      const weightDelta = (deltaPx / flexSpace) * total
+      const na = Math.max(
+        SPLIT_MIN_WEIGHT,
+        Math.min(total - SPLIT_MIN_WEIGHT, a.weight + weightDelta)
+      )
       return {
         ...node,
         children: [
@@ -127,7 +147,7 @@ function LayoutNodeView({
     return (
       <div
         className={`terminal-split-pane${node.tabId === activeTabId ? ' is-active' : ''}`}
-        style={{ flex: Math.max(0.35, node.weight) }}
+        style={{ flex: Math.max(SPLIT_MIN_WEIGHT, node.weight) }}
         onMouseDown={() =>
           surface === 'agent'
             ? selectAgentTab(conversationId, node.tabId)
@@ -146,7 +166,7 @@ function LayoutNodeView({
   return (
     <div
       className="terminal-split-branch"
-      style={{ flexDirection: direction, flex: Math.max(0.35, node.weight) }}
+      style={{ flexDirection: direction, flex: Math.max(SPLIT_MIN_WEIGHT, node.weight) }}
     >
       <LayoutNodeView
         conversationId={conversationId}
@@ -161,6 +181,10 @@ function LayoutNodeView({
           event.preventDefault()
           event.stopPropagation()
           const start = direction === 'column' ? event.clientY : event.clientX
+          const branchEl = (event.currentTarget as HTMLElement).parentElement
+          const branchSizePx =
+            (direction === 'column' ? branchEl?.clientHeight : branchEl?.clientWidth) ?? 0
+          if (branchSizePx <= 0) return
           const slice = useWorkspaceStore.getState().workspaces[conversationId]
           if (!slice) return
           const baseLayout =
@@ -171,9 +195,18 @@ function LayoutNodeView({
               : slice.layout
           if (!baseLayout) return
           const startLayout = structuredClone(baseLayout) as TerminalLayoutNode
+          // One PTY geometry update after the split settles — not every move.
+          document.documentElement.dataset.resizing = 'true'
+          document.body.style.cursor = direction === 'column' ? 'row-resize' : 'col-resize'
+          document.body.style.userSelect = 'none'
           const onMove = (e: PointerEvent): void => {
             const deltaPx = (direction === 'column' ? e.clientY : e.clientX) - start
-            const next = adjustBranchWeights(startLayout, branchKey, deltaPx / 240)
+            const next = adjustBranchWeightsByPixels(
+              startLayout,
+              branchKey,
+              deltaPx,
+              branchSizePx
+            )
             useWorkspaceStore.setState((state) => {
               const cur = state.workspaces[conversationId]
               if (!cur) return state
@@ -204,6 +237,10 @@ function LayoutNodeView({
           const onUp = (): void => {
             window.removeEventListener('pointermove', onMove)
             window.removeEventListener('pointerup', onUp)
+            document.body.style.cursor = ''
+            document.body.style.userSelect = ''
+            delete document.documentElement.dataset.resizing
+            window.dispatchEvent(new Event('vav:resize-end'))
           }
           window.addEventListener('pointermove', onMove)
           window.addEventListener('pointerup', onUp)
@@ -244,7 +281,10 @@ function TerminalHost({
     host.appendChild(entry.container)
 
     let raf = 0
-    const fit = (): void => {
+    let debounce: ReturnType<typeof setTimeout> | null = null
+    /** Only the focused window should fit→resize the shared PTY. */
+    const fit = (force = false): void => {
+      if (!force && !document.hasFocus()) return
       if (host.clientWidth === 0 || host.clientHeight === 0) return
       try {
         entry.fit.fit()
@@ -252,22 +292,50 @@ function TerminalHost({
         // ignore
       }
     }
-    const observer = new ResizeObserver(() => {
+    // During live window / panel drag, skip; settle on vav:resize-end.
+    // Debounce internal layout so TUIs get one fit→SIGWINCH, not a storm of
+    // half-frames (Claude Code stacked borders above Welcome back).
+    const scheduleFit = (): void => {
       if (document.documentElement.dataset.resizing === 'true') return
       if (raf) cancelAnimationFrame(raf)
       raf = requestAnimationFrame(() => {
         raf = 0
-        fit()
+        if (debounce) clearTimeout(debounce)
+        debounce = setTimeout(() => {
+          debounce = null
+          fit()
+        }, 180)
       })
-    })
+    }
+    const onResizeEnd = (): void => {
+      if (debounce) {
+        clearTimeout(debounce)
+        debounce = null
+      }
+      // Triple-rAF after maximize/restore: native frame → flex → final host box.
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => fit(true))
+        })
+      })
+    }
+    const onFocus = (): void => {
+      // Reclaim PTY geometry when this window becomes frontmost.
+      requestAnimationFrame(() => fit(true))
+    }
+    const observer = new ResizeObserver(scheduleFit)
     observer.observe(host)
-    window.addEventListener('vav:resize-end', fit)
-    fit()
+    window.addEventListener('vav:resize-end', onResizeEnd)
+    window.addEventListener('focus', onFocus)
+    // Initial mount: fit even if focus is racing ready-to-show.
+    fit(true)
 
     return () => {
       observer.disconnect()
-      window.removeEventListener('vav:resize-end', fit)
+      window.removeEventListener('vav:resize-end', onResizeEnd)
+      window.removeEventListener('focus', onFocus)
       if (raf) cancelAnimationFrame(raf)
+      if (debounce) clearTimeout(debounce)
       if (entry.container.parentElement === host) host.removeChild(entry.container)
     }
   }, [conversationId, tabId, codeFont, fontSize])

@@ -67,7 +67,13 @@ export function buildAppMenu(
         },
         { type: 'separator' },
         ...(IS_MAC ? [] : [settingsItem, { type: 'separator' } as MenuItemConstructorOptions]),
-        { role: 'close', label: t('menu.closeWindow') },
+        // Custom click (not role:close): renderer routes ⌘W by UI focus scope
+        // (close bash / collapse Files tray / else close window).
+        {
+          label: t('menu.closeWindow'),
+          accelerator: 'CmdOrCtrl+W',
+          click: send('close-context')
+        },
         ...(IS_MAC
           ? []
           : [{ role: 'quit', label: t('menu.quitApp', { app: APP_NAME }) } as MenuItemConstructorOptions])

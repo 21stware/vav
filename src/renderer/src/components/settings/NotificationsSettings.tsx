@@ -50,6 +50,7 @@ export function NotificationsSettings(): React.JSX.Element {
         <div className="control">
           <Toggle
             checked={settings.notificationsEnabled}
+            title={t('notifications.enabled')}
             onChange={(notificationsEnabled) => void updateSettings({ notificationsEnabled })}
           />
         </div>
@@ -61,6 +62,7 @@ export function NotificationsSettings(): React.JSX.Element {
         <div className="control">
           <Toggle
             checked={settings.notificationSound}
+            title={t('notifications.sound')}
             onChange={(notificationSound) => void updateSettings({ notificationSound })}
           />
         </div>
@@ -74,6 +76,7 @@ export function NotificationsSettings(): React.JSX.Element {
         <div className="control">
           <Toggle
             checked={settings.notifyOnTurnComplete}
+            title={t('notifications.turnCompleteLabel')}
             onChange={(notifyOnTurnComplete) => void updateSettings({ notifyOnTurnComplete })}
           />
         </div>
@@ -85,6 +88,7 @@ export function NotificationsSettings(): React.JSX.Element {
         <div className="control">
           <Toggle
             checked={settings.notifyOnAskUserQuestion}
+            title={t('notifications.askLabel')}
             onChange={(notifyOnAskUserQuestion) => void updateSettings({ notifyOnAskUserQuestion })}
           />
         </div>
@@ -96,6 +100,7 @@ export function NotificationsSettings(): React.JSX.Element {
         <div className="control">
           <Toggle
             checked={settings.notifyOnToolApproval}
+            title={t('notifications.approvalLabel')}
             onChange={(notifyOnToolApproval) => void updateSettings({ notifyOnToolApproval })}
           />
         </div>
@@ -107,6 +112,7 @@ export function NotificationsSettings(): React.JSX.Element {
         <div className="control">
           <Toggle
             checked={settings.notifyOnRequest}
+            title={t('notifications.requestLabel')}
             onChange={(notifyOnRequest) => void updateSettings({ notifyOnRequest })}
           />
         </div>
@@ -120,6 +126,7 @@ export function NotificationsSettings(): React.JSX.Element {
         <div className="control">
           <Toggle
             checked={settings.trayEnabled}
+            title={t('notifications.trayLabel')}
             onChange={(trayEnabled) => void updateSettings({ trayEnabled })}
           />
         </div>
@@ -131,7 +138,11 @@ export function NotificationsSettings(): React.JSX.Element {
           <div className="form-row">
             <label>{t('appearance.hideDock')}</label>
             <div className="control">
-              <Toggle checked={settings.hideDockIcon} onChange={setHideDock} />
+              <Toggle
+                checked={settings.hideDockIcon}
+                title={t('appearance.hideDock')}
+                onChange={setHideDock}
+              />
             </div>
           </div>
           <div className="form-hint">{t('notifications.hideDockHint')}</div>

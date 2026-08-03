@@ -179,6 +179,27 @@ export const DEFAULT_SESSION_TOOLS: SessionToolsLayout = {
   panelHeight: 240
 }
 
+/**
+ * Companion session windows must not share tools-tray layout with the main
+ * window via localStorage (same conversationId would collapse both). Use
+ * sessionStorage in detached views — per BrowserWindow, dies with the window.
+ */
+function isDetachedSessionWindow(): boolean {
+  try {
+    return new URLSearchParams(window.location.search).get('view') === 'session'
+  } catch {
+    return false
+  }
+}
+
+function toolsLayoutStorage(): Storage {
+  try {
+    return isDetachedSessionWindow() ? sessionStorage : localStorage
+  } catch {
+    return localStorage
+  }
+}
+
 function loadGlobalLayout(): GlobalLayoutPrefs {
   const fallback: GlobalLayoutPrefs = { sidebarVisible: true }
   try {
@@ -201,7 +222,7 @@ function saveGlobalLayout(prefs: GlobalLayoutPrefs): void {
 
 function loadSessionToolsMap(): Record<string, SessionToolsLayout> {
   try {
-    const raw = localStorage.getItem(SESSION_TOOLS_KEY)
+    const raw = toolsLayoutStorage().getItem(SESSION_TOOLS_KEY)
     if (!raw) return {}
     const parsed = JSON.parse(raw) as Record<string, Partial<SessionToolsLayout>>
     const out: Record<string, SessionToolsLayout> = {}
@@ -217,7 +238,7 @@ function loadSessionToolsMap(): Record<string, SessionToolsLayout> {
 
 function saveSessionToolsMap(map: Record<string, SessionToolsLayout>): void {
   try {
-    localStorage.setItem(SESSION_TOOLS_KEY, JSON.stringify(map))
+    toolsLayoutStorage().setItem(SESSION_TOOLS_KEY, JSON.stringify(map))
   } catch {
     // ignore
   }
@@ -282,6 +303,11 @@ interface SessionState {
   conversations: ConversationMeta[]
   activeId: string
   selectedIds: string[]
+  /**
+   * Conversation ids that currently have a companion window open.
+   * Main shell uses this to park its live agent xterm (exclusive PTY view).
+   */
+  detachedConversationIds: string[]
   sidebarQuery: string
   renamingId: string | null
   /** Set in a detached window, which follows exactly one conversation. */
@@ -310,6 +336,16 @@ interface SessionState {
    * may still show the file; only context attachment is cleared.
    */
   contextFiles: Record<string, string | null>
+  /**
+   * File-session path chip: until the user switches workdir, show "Enclosed dir"
+   * instead of the parent folder path (like Temporary → "Workspace").
+   * True = always show the real path for this conversation.
+   */
+  workdirPathRevealed: Record<string, boolean>
+  /** Mark a file session as using the Enclosed dir chip (initial open). */
+  markEnclosedDirChip(id: string): void
+  /** After user picks/switches workdir, show the real path thereafter. */
+  revealWorkdirPath(id: string): void
   /** Message id briefly highlighted after quote-strip / bubble jump. */
   flashMessageId: string | null
   flashTick: number
@@ -345,10 +381,14 @@ interface SessionState {
   /** File path → conversationId for standalone file preview windows. */
   previewAgentByPath: Record<string, string>
 
-  /** Open Change Review overlay (null = closed). */
+  /**
+   * @deprecated Full-screen review is retired; kept null. Prefer inline cards.
+   */
   changeReviewId: string | null
   changeSet: ChangeSet | null
-  /** Pending review counts keyed by conversation (banner when overlay closed). */
+  /** Cached ChangeSets for inline transcript cards. */
+  changeSetsById: Record<string, ChangeSet>
+  /** Pending review counts keyed by conversation (banner when not yet resolved). */
   pendingReviewByConversation: Record<string, { changeSetId: string; count: number }>
   updateState: UpdateState
 
@@ -389,6 +429,11 @@ interface SessionState {
   /** ⌘1 = Workspace; ⌘2+ = bash tabs in creation order (Agent first). */
   focusToolsSlot(slot: number): void
   setModel(id: string, model: string): Promise<void>
+  /**
+   * Switch built-in vav ↔ CLI agent host for a conversation.
+   * File-preview sessions are omitted from listMeta — must merge like setModel.
+   */
+  setAgentBinaryName(id: string, agentBinaryName: string | null): Promise<void>
   pickWorkingDirectory(id: string): Promise<void>
   setWorkingDirectory(id: string, path: string): Promise<void>
   /** Move a Temporary workspace into a real directory (name + copy). */
@@ -424,7 +469,12 @@ interface SessionState {
   scrollToMessage(messageId: string): void
   /** Reload token history / cache clocks from disk (popover open / 2s refresh). */
   refreshTokenUsage(id?: string): Promise<void>
-  send(text: string, attachments: string[]): Promise<void>
+  /**
+   * Send on the given conversation (defaults to {@link activeId}).
+   * File-preview / workspace must pass their session id when it may differ
+   * from the global selection for a tick.
+   */
+  send(text: string, attachments: string[], conversationId?: string | null): Promise<void>
   cancel(id: string): Promise<void>
   answerTool(toolCallId: string, answer: string): Promise<boolean>
   regenerate(messageId: string): Promise<void>
@@ -451,7 +501,14 @@ interface SessionState {
   closeDialog(): void
   showToast(toast: ToastState | null): void
 
+  /** Load a ChangeSet into the cache (inline review). Does not full-screen. */
   openChangeReview(changeSetId: string): Promise<void>
+  /** Accept/reject helpers keyed by changeSetId (inline cards). */
+  acceptChangeFilesFor(changeSetId: string, filePaths: string[]): Promise<void>
+  rejectChangeFilesFor(changeSetId: string, filePaths: string[]): Promise<void>
+  acceptAllChangesFor(changeSetId: string): Promise<void>
+  rejectAllChangesFor(changeSetId: string): Promise<void>
+  undoChangeFileFor(changeSetId: string, filePath: string): Promise<void>
   closeChangeReview(): void
   refreshChangeSet(): Promise<void>
   acceptChangeFiles(filePaths: string[]): Promise<void>
@@ -512,6 +569,8 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   conversations: [],
   activeId: '',
   selectedIds: [],
+  /** Conversation ids with an open companion window (PTY exclusive there). */
+  detachedConversationIds: [] as string[],
   sidebarQuery: '',
   renamingId: null,
   pinnedConversationId: null,
@@ -526,6 +585,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   pickMode: {},
   commentCards: {},
   contextFiles: {},
+  workdirPathRevealed: {},
   flashMessageId: null,
   flashTick: 0,
   tokenHistories: {},
@@ -547,6 +607,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   previewAgentByPath: loadPreviewAgents(),
   changeReviewId: null,
   changeSet: null,
+  changeSetsById: {},
   pendingReviewByConversation: {},
   updateState: IDLE_UPDATE,
 
@@ -969,14 +1030,51 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       set((state) => ({
         conversations: mergeConversationList(state.conversations, list)
       }))
+      // Remember as default for subsequent new conversations.
+      if (model && model !== get().settings.defaultModel) {
+        void get().updateSettings({ defaultModel: model })
+      }
     } catch (err) {
       console.error('[setModel] failed', err)
     }
   },
 
+  async setAgentBinaryName(id, agentBinaryName) {
+    // Optimistic first — file-preview sessions never appear in listMeta, so a
+    // raw `set({ conversations: list })` would drop them and snap the switcher
+    // back to vav (single-file window agent switch looked broken).
+    set((state) => ({
+      conversations: state.conversations.map((c) =>
+        c.id === id ? { ...c, agentBinaryName } : c
+      )
+    }))
+    try {
+      const list = await window.vav.conversations.setAgentBinaryName(id, agentBinaryName)
+      set((state) => ({
+        conversations: mergeConversationList(state.conversations, list)
+      }))
+    } catch (err) {
+      console.error('[setAgentBinaryName] failed', err)
+    }
+  },
+
+  markEnclosedDirChip(id) {
+    set((state) => ({
+      workdirPathRevealed: { ...state.workdirPathRevealed, [id]: false }
+    }))
+  },
+
+  revealWorkdirPath(id) {
+    set((state) => ({
+      workdirPathRevealed: { ...state.workdirPathRevealed, [id]: true }
+    }))
+  },
+
   async pickWorkingDirectory(id) {
     const conversations = await window.vav.conversations.pickWorkingDirectory(id)
     if (!conversations) return
+    // Any explicit switch reveals the real path (even if same directory).
+    get().revealWorkdirPath(id)
     set((state) => ({
       conversations: mergeConversationList(state.conversations, conversations)
     }))
@@ -985,6 +1083,8 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   },
 
   async setWorkingDirectory(id, path) {
+    // User-driven switch (menu / recent) — always reveal real path thereafter.
+    get().revealWorkdirPath(id)
     const conversations = await window.vav.conversations.setWorkingDirectory(id, path)
     set((state) => ({
       conversations: mergeConversationList(state.conversations, conversations)
@@ -1059,6 +1159,10 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       set((state) => ({
         conversations: mergeConversationList(state.conversations, list)
       }))
+      // Remember bypass/auto/edit as the default for new chats.
+      if (mode && mode !== get().settings.defaultApprovalMode) {
+        void get().updateSettings({ defaultApprovalMode: mode })
+      }
     } catch (err) {
       console.error('[setApprovalMode] failed', err)
     }
@@ -1090,6 +1194,15 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     }
     // Always push to main so agent open-file context stays in sync.
     await get().setFocusedFile(id, path)
+
+    // CLI agent already live: brief focus + composer draft into the TUI prompt.
+    if (!path) return
+    try {
+      const { handoffFileFocusToCli } = await import('../lib/cliFocusHandoff')
+      handoffFileFocusToCli(id, path)
+    } catch {
+      // best-effort
+    }
   },
 
   async dismissContextFile(id) {
@@ -1172,8 +1285,18 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     }))
   },
 
-  async send(text, attachments) {
-    const { activeId, settings, turns, quotes, previewRefs, commentCards } = get()
+  async send(text, attachments, conversationId) {
+    const {
+      activeId: storeActiveId,
+      settings,
+      turns,
+      quotes,
+      previewRefs,
+      commentCards,
+      contextFiles,
+      conversations
+    } = get()
+    const activeId = conversationId?.trim() || storeActiveId
     if (!activeId) return
     if (turns[activeId]?.isRunning) return
     const refs = previewRefs[activeId] ?? []
@@ -1190,23 +1313,31 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       return
     }
 
+    // Keep global selection aligned so Transcript / tools / IPC stay on the
+    // same conversation as this send (file drawer / workspace column).
+    if (storeActiveId !== activeId) {
+      await get().selectConversation(activeId)
+    }
+
     const quote = quotes[activeId] ?? null
 
-    // Comment cards: inject block content + user comments into the message text,
-    // and also add their refs to the focused selection context.
-    const cardContext = cards.length
-      ? '\n\n' +
-        cards
-          .map(
-            (c) =>
-              `## Comment on ${c.ref.label}\n\`\`\`\n${c.ref.text}\n\`\`\`\n${c.comment || '(no comment)'}`
-          )
-          .join('\n\n')
-      : ''
-    const composedText = text + cardContext
-    const allRefs = cards.length
-      ? [...refs, ...cards.map((c) => c.ref)]
-      : refs
+    // Comment cards → structured PreviewRef.comment (bubble shows cards; model
+    // gets block + note via composeContextUserText). Do not bake into content.
+    const cardRefs = cards.map((c) => {
+      const note = c.comment.trim()
+      return note ? { ...c.ref, comment: note } : { ...c.ref }
+    })
+    // Dedupe by id: a ref both pinned as chip and as comment card keeps the
+    // commented version.
+    const byId = new Map<string, (typeof refs)[number]>()
+    for (const ref of refs) byId.set(ref.id, ref)
+    for (const ref of cardRefs) byId.set(ref.id, ref)
+    const allRefs = [...byId.values()]
+
+    const contextFile =
+      (contextFiles[activeId] ?? null) ||
+      conversations.find((c) => c.id === activeId)?.focusedFilePath ||
+      null
 
     // No optimistic echo: the stored message comes back as a `user` turn event
     // a moment later, already carrying the id and parent the tree needs.
@@ -1219,7 +1350,14 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       errorBanner: null
     }))
 
-    await window.vav.agent.send(activeId, composedText, attachments, quote, allRefs)
+    await window.vav.agent.send(
+      activeId,
+      text,
+      attachments,
+      quote,
+      allRefs.length ? allRefs : null,
+      contextFile
+    )
   },
 
   async regenerate(messageId) {
@@ -1371,13 +1509,26 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     const state = get()
     const trimmed = query.trim()
     // Search follows what is on screen; hidden branches are not results.
-    const matchIds = trimmed
-      ? visibleMessages(state, state.activeId)
-          .filter((m) => m.content.toLowerCase().includes(trimmed.toLowerCase()))
-          .map((m) => m.id)
-      : []
-    set((state) => ({
-      search: { ...state.search, query, matchIds, index: 0, tick: state.search.tick + 1 }
+    let matchIds = EMPTY_SEARCH_MATCH_IDS
+    if (trimmed) {
+      const next = visibleMessages(state, state.activeId)
+        .filter((m) => m.content.toLowerCase().includes(trimmed.toLowerCase()))
+        .map((m) => m.id)
+      // Reuse previous array when hits are unchanged so selectors/effects stay quiet.
+      const prev = state.search.matchIds
+      matchIds =
+        prev.length === next.length && prev.every((id, i) => id === next[i]) ? prev : next
+    }
+    set((s) => ({
+      search: {
+        ...s.search,
+        query,
+        matchIds,
+        index: 0,
+        // Only bump tick when the hit list changes so Enter/navigation still
+        // re-scrolls; pure keystrokes with the same hits do not thrash layout.
+        tick: matchIds === s.search.matchIds ? s.search.tick : s.search.tick + 1
+      }
     }))
   },
 
@@ -1386,6 +1537,10 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       const count = state.search.matchIds.length
       if (count === 0) return state
       const index = (state.search.index + direction + count) % count
+      if (index === state.search.index) {
+        // Same hit (single match): still bump tick so scroll re-fires.
+        return { search: { ...state.search, tick: state.search.tick + 1 } }
+      }
       return { search: { ...state.search, index, tick: state.search.tick + 1 } }
     })
   },
@@ -1430,9 +1585,13 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   },
 
   async openChangeReview(changeSetId) {
+    // Cache only — full-screen takeover removed; inline cards use changeSetsById.
     const changeSet = await window.vav.changeSets.get(changeSetId)
     if (!changeSet) return
-    set({ changeReviewId: changeSetId, changeSet })
+    set((state) => ({
+      changeSetsById: { ...state.changeSetsById, [changeSet.id]: changeSet },
+      changeSet
+    }))
   },
 
   closeChangeReview() {
@@ -1440,77 +1599,122 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   },
 
   async refreshChangeSet() {
-    const id = get().changeReviewId
+    const id = get().changeReviewId ?? get().changeSet?.id
     if (!id) return
     const changeSet = await window.vav.changeSets.get(id)
     if (!changeSet) {
       set({ changeReviewId: null, changeSet: null })
       return
     }
-    set({ changeSet })
+    set((state) => ({
+      changeSet,
+      changeSetsById: { ...state.changeSetsById, [changeSet.id]: changeSet }
+    }))
     syncPendingBanner(set, changeSet)
   },
 
   async acceptChangeFiles(filePaths) {
-    const id = get().changeReviewId
-    if (!id || filePaths.length === 0) return
-    const changeSet = await window.vav.changeSets.accept(id, filePaths)
-    if (changeSet) {
-      set({ changeSet })
-      syncPendingBanner(set, changeSet)
-      maybeCloseReview(set, changeSet)
-    }
+    const id = get().changeReviewId ?? get().changeSet?.id
+    if (!id) return
+    await get().acceptChangeFilesFor(id, filePaths)
   },
 
   async rejectChangeFiles(filePaths) {
-    const id = get().changeReviewId
-    if (!id || filePaths.length === 0) return
-    const changeSet = await window.vav.changeSets.reject(id, filePaths)
-    if (changeSet) {
-      set({ changeSet })
-      syncPendingBanner(set, changeSet)
-      maybeCloseReview(set, changeSet)
-    }
+    const id = get().changeReviewId ?? get().changeSet?.id
+    if (!id) return
+    await get().rejectChangeFilesFor(id, filePaths)
   },
 
   async acceptAllChanges() {
-    const id = get().changeReviewId
+    const id = get().changeReviewId ?? get().changeSet?.id
     if (!id) return
-    const changeSet = await window.vav.changeSets.acceptAll(id)
-    if (changeSet) {
-      set({ changeSet, changeReviewId: null })
-      syncPendingBanner(set, changeSet)
-    }
+    await get().acceptAllChangesFor(id)
   },
 
   async rejectAllChanges() {
-    const id = get().changeReviewId
+    const id = get().changeReviewId ?? get().changeSet?.id
     if (!id) return
-    const changeSet = await window.vav.changeSets.rejectAll(id)
-    if (changeSet) {
-      set({ changeSet, changeReviewId: null })
-      syncPendingBanner(set, changeSet)
-    }
+    await get().rejectAllChangesFor(id)
   },
 
   async undoChangeFile(filePath) {
-    const id = get().changeReviewId
+    const id = get().changeReviewId ?? get().changeSet?.id
     if (!id) return
-    const changeSet = await window.vav.changeSets.undo(id, filePath)
+    await get().undoChangeFileFor(id, filePath)
+  },
+
+  async applyChangeEdit(filePath, content) {
+    const id = get().changeReviewId ?? get().changeSet?.id
+    if (!id) return
+    const changeSet = await window.vav.changeSets.applyEdit(id, filePath, content)
     if (changeSet) {
-      set({ changeSet })
+      set((state) => ({
+        changeSet,
+        changeSetsById: { ...state.changeSetsById, [changeSet.id]: changeSet }
+      }))
       syncPendingBanner(set, changeSet)
     }
   },
 
-  async applyChangeEdit(filePath, content) {
-    const id = get().changeReviewId
-    if (!id) return
-    const changeSet = await window.vav.changeSets.applyEdit(id, filePath, content)
+  async acceptChangeFilesFor(changeSetId, filePaths) {
+    if (!changeSetId || filePaths.length === 0) return
+    const changeSet = await window.vav.changeSets.accept(changeSetId, filePaths)
     if (changeSet) {
-      set({ changeSet })
+      set((state) => ({
+        changeSet: state.changeSet?.id === changeSet.id ? changeSet : state.changeSet,
+        changeSetsById: { ...state.changeSetsById, [changeSet.id]: changeSet }
+      }))
       syncPendingBanner(set, changeSet)
-      maybeCloseReview(set, changeSet)
+    }
+  },
+
+  async rejectChangeFilesFor(changeSetId, filePaths) {
+    if (!changeSetId || filePaths.length === 0) return
+    const changeSet = await window.vav.changeSets.reject(changeSetId, filePaths)
+    if (changeSet) {
+      set((state) => ({
+        changeSet: state.changeSet?.id === changeSet.id ? changeSet : state.changeSet,
+        changeSetsById: { ...state.changeSetsById, [changeSet.id]: changeSet }
+      }))
+      syncPendingBanner(set, changeSet)
+    }
+  },
+
+  async acceptAllChangesFor(changeSetId) {
+    if (!changeSetId) return
+    const changeSet = await window.vav.changeSets.acceptAll(changeSetId)
+    if (changeSet) {
+      set((state) => ({
+        changeSet: state.changeSet?.id === changeSet.id ? changeSet : state.changeSet,
+        changeSetsById: { ...state.changeSetsById, [changeSet.id]: changeSet },
+        changeReviewId: null
+      }))
+      syncPendingBanner(set, changeSet)
+    }
+  },
+
+  async rejectAllChangesFor(changeSetId) {
+    if (!changeSetId) return
+    const changeSet = await window.vav.changeSets.rejectAll(changeSetId)
+    if (changeSet) {
+      set((state) => ({
+        changeSet: state.changeSet?.id === changeSet.id ? changeSet : state.changeSet,
+        changeSetsById: { ...state.changeSetsById, [changeSet.id]: changeSet },
+        changeReviewId: null
+      }))
+      syncPendingBanner(set, changeSet)
+    }
+  },
+
+  async undoChangeFileFor(changeSetId, filePath) {
+    if (!changeSetId) return
+    const changeSet = await window.vav.changeSets.undo(changeSetId, filePath)
+    if (changeSet) {
+      set((state) => ({
+        changeSet: state.changeSet?.id === changeSet.id ? changeSet : state.changeSet,
+        changeSetsById: { ...state.changeSetsById, [changeSet.id]: changeSet }
+      }))
+      syncPendingBanner(set, changeSet)
     }
   },
 
@@ -1785,15 +1989,42 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       }
 
       case 'change-review': {
-        set((state) => ({
-          pendingReviewByConversation: {
-            ...state.pendingReviewByConversation,
-            [id]: { changeSetId: event.changeSetId, count: event.pendingCount }
+        // Inline review only — never full-screen (bypass already auto-accepted).
+        set((state) => {
+          const list = state.messages[id] ?? []
+          const msgId = event.messageId
+          let messages = state.messages
+          if (msgId && list.some((m) => m.id === msgId)) {
+            messages = {
+              ...state.messages,
+              [id]: list.map((m) =>
+                m.id === msgId ? { ...m, changeSetId: event.changeSetId } : m
+              )
+            }
+          } else if (!msgId) {
+            // Fallback: attach to latest assistant message on the active leaf path.
+            const leaf = state.activeLeaf[id] ?? null
+            const path = list.filter((m) => m.role === 'assistant')
+            const last = path[path.length - 1]
+            if (last) {
+              messages = {
+                ...state.messages,
+                [id]: list.map((m) =>
+                  m.id === last.id ? { ...m, changeSetId: event.changeSetId } : m
+                )
+              }
+            }
+            void leaf
           }
-        }))
-        if (get().activeId === id) {
-          void get().openChangeReview(event.changeSetId)
-        }
+          const pendingNext = { ...state.pendingReviewByConversation }
+          if (event.pendingCount > 0) {
+            pendingNext[id] = { changeSetId: event.changeSetId, count: event.pendingCount }
+          } else {
+            delete pendingNext[id]
+          }
+          return { messages, pendingReviewByConversation: pendingNext }
+        })
+        void get().openChangeReview(event.changeSetId)
         break
       }
     }
@@ -1811,14 +2042,6 @@ function syncPendingBanner(
     else next[changeSet.conversationId] = { changeSetId: changeSet.id, count: pending }
     return { pendingReviewByConversation: next }
   })
-}
-
-function maybeCloseReview(
-  set: (partial: Partial<SessionState>) => void,
-  changeSet: ChangeSet
-): void {
-  const pending = changeSet.files.some((f) => f.status === 'pending')
-  if (!pending) set({ changeReviewId: null })
 }
 
 /**
@@ -1841,6 +2064,8 @@ let pathCache: { nodes: ChatMessage[]; leafId: string | null; path: ChatMessage[
 
 /** Stable identity for the empty case: a fresh [] would re-render forever. */
 const NO_MESSAGES: ChatMessage[] = []
+/** Shared empty search hits — never allocate a fresh [] on every keystroke. */
+const EMPTY_SEARCH_MATCH_IDS: string[] = []
 
 function setLeaf(
   set: (partial: Partial<SessionState>) => void,
@@ -1950,6 +2175,24 @@ export function installWindowBridge(): () => void {
       conversations: mergeConversationList(state.conversations, list)
     }))
   })
+}
+
+/**
+ * Tracks which conversations have a companion window so the main shell can
+ * release its live agent terminal (one PTY → one geometry).
+ */
+export function installDetachedBridge(): () => void {
+  const apply = (ids: string[]): void => {
+    useSessionStore.setState({ detachedConversationIds: ids })
+  }
+  // Initial hydrate (main may boot after companions already exist).
+  if (typeof window.vav.window.listDetachedSessions === 'function') {
+    void window.vav.window.listDetachedSessions().then(apply).catch(() => apply([]))
+  }
+  if (typeof window.vav.window.onDetachedChanged !== 'function') {
+    return () => undefined
+  }
+  return window.vav.window.onDetachedChanged(apply)
 }
 
 /** Keeps toolbar / About update UI in step with the main-process checker. */

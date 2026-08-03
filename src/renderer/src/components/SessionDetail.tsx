@@ -1,8 +1,12 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
-import { ChevronDown, Columns2, Rows2 } from 'lucide-react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react'
+import { ChevronDown, Clock, Columns2, Plus, Rows2, Search } from 'lucide-react'
+import { buildWorkspaceFocusContext } from '@shared/agentContextInject'
 import { DEFAULT_CLI_AGENTS, enabledCliAgents, type AgentConfig } from '@shared/types'
+import type { FileSessionMeta } from '@shared/ipc'
+import { handoffFocusToCli } from '../lib/cliFocusHandoff'
 import { useSessionStore } from '../state/sessionStore'
 import { useWorkspaceStore } from '../state/workspaceStore'
+import { SessionHistoryPopover } from './SessionHistoryPopover'
 import { TerminalPanel } from './TerminalPanel'
 import { ToolsPanel } from './ToolsPanel'
 import { Composer } from './Composer'
@@ -13,23 +17,46 @@ import { ErrorBanner } from './ErrorBanner'
 import { AgentInstallPanel } from './AgentInstallPanel'
 import { AgentBrandMark } from './AgentBrandMark'
 import { teardownInlineTerminal } from './InlineTerminal'
-import { Button } from './ui'
+import { Button, EmptyState } from './ui'
 import {
   clearAgentBinaryCache,
   getAgentBinaryCache,
   markAgentBinaryMissing,
   markAgentBinaryReady
 } from '../lib/agentBinaryCache'
-import { applyTerminalAppearance } from '../lib/terminalRegistry'
+import { applyTerminalAppearance, disposeTerminal } from '../lib/terminalRegistry'
 import { useT } from '../i18n/useT'
 import { keys } from '../lib/platform'
+
+function isCompanionSessionShell(): boolean {
+  try {
+    return new URLSearchParams(window.location.search).get('view') === 'session'
+  } catch {
+    return false
+  }
+}
 
 /**
  * - `main`: full session surface (sidebar → open conversation)
  * - `workspace`: agent column inside WorkspaceView (same dual-mode switcher)
- * - `preview-edit`: file-preview agent drawer — always built-in vav chat
+ * - `preview-edit`: file-preview agent drawer — same agent switcher as main
  */
 type SessionDetailVariant = 'main' | 'workspace' | 'preview-edit'
+
+/** Single-file drawer chrome folded into the agent row (vav mode only). */
+export type FileSessionChromeProps = {
+  title: string
+  sessions: FileSessionMeta[]
+  activeSessionId: string | null
+  historyOpen: boolean
+  historyAnchorRef: RefObject<HTMLButtonElement | null>
+  onToggleHistory: () => void
+  onCloseHistory: () => void
+  onSwitchSession: (id: string) => void
+  onRenameSession: (id: string, title: string) => Promise<void>
+  onDeleteSessions: (ids: string[]) => void
+  onNewSession: () => void
+}
 
 /** CLI host gate: no dedicated "checking" UI — resolve silently or restore. */
 type AgentProbe = 'idle' | 'missing' | 'installing' | 'ready' | 'rechecking'
@@ -39,13 +66,19 @@ type AgentProbe = 'idle' | 'missing' | 'installing' | 'ready' | 'rechecking'
  *
  * - **vav** (default): built-in agent — transcript + tools + composer
  * - **Claude Code / Codex / Grok / …**: CLI terminal host — multi-split PTY
- *   Sessions are parked per agent (not destroyed on switch). Missing CLIs
- *   show an install panel first.
+ *   Sessions are parked per agent (not destroyed on switch). CLI mode always
+ *   paints the terminal optimistically; install panel only after spawn fails.
  */
 export function SessionDetail({
-  variant = 'main'
+  variant = 'main',
+  fileSessionChrome,
+  /** Companion session window: chrome lives in the title bar, not under it. */
+  hideChrome = false
 }: {
   variant?: SessionDetailVariant
+  /** File-preview: session name / history / new in the same row as agent + search. */
+  fileSessionChrome?: FileSessionChromeProps | null
+  hideChrome?: boolean
 }): React.JSX.Element {
   const t = useT()
   const searchOpen = useSessionStore((s) => s.search.open)
@@ -57,6 +90,11 @@ export function SessionDetail({
   const settings = useSessionStore((s) => s.settings)
   const pending = useSessionStore((s) => s.pendingReviewByConversation[s.activeId])
   const openChangeReview = useSessionStore((s) => s.openChangeReview)
+  const detachedElsewhere = useSessionStore(
+    (s) =>
+      !isCompanionSessionShell() &&
+      s.detachedConversationIds.includes(s.activeId)
+  )
 
   const previewEdit = variant === 'preview-edit'
   const isKeyProblem = !!errorBanner && /401|API Key/i.test(errorBanner)
@@ -64,9 +102,10 @@ export function SessionDetail({
   // null / "vav" → built-in chat; any other id → CLI host
   // Product: switching agent only replaces the transcript surface; the bottom
   // ToolsPanel (Files + Terminal) stays the same dock as vav mode.
+  // File-preview drawer uses the same switcher (standalone file Agent sessions).
   const agentKey = conversation?.agentBinaryName ?? null
-  const isVavMode = previewEdit || !agentKey || agentKey === 'vav'
-  const showAgentSwitcher = !previewEdit
+  const isVavMode = !agentKey || agentKey === 'vav'
+  const showAgentSwitcher = true
 
   const agents = enabledCliAgents(settings.cliAgents)
   const activeAgent: AgentConfig | null =
@@ -86,35 +125,40 @@ export function SessionDetail({
   const [installTabId, setInstallTabId] = useState<string | null>(null)
   const installTabRef = useRef<string | null>(null)
 
-  const buildInitialContext = useCallback(async (): Promise<string | null> => {
-    const { formatFocusedFileContext, formatBlocksContext } = await import(
-      '@shared/agentContextInject'
-    )
-    // Only the File Attachment Chip path (contextFiles / focusedFilePath) —
-    // not bare tree selection, so dismissing the chip drops context.
+  /**
+   * Ambient launch context (long form) for agents that accept system-prompt
+   * files. Prompt paste uses a brief form + composer draft via handoffFocusToCli.
+   */
+  const buildLaunchContext = useCallback((): string | null => {
     const store = useSessionStore.getState()
     const focused =
       (store.contextFiles[activeId] ?? null) ||
       store.conversations.find((c) => c.id === activeId)?.focusedFilePath ||
       null
     const cards = store.commentCards[activeId] ?? []
-    const parts: string[] = []
-    if (focused) parts.push(formatFocusedFileContext(focused))
-    if (cards.length) parts.push(formatBlocksContext(cards))
-    return parts.join('\n\n') || null
+    return buildWorkspaceFocusContext({
+      focusedPath: focused,
+      cards,
+      style: 'ambient'
+    })
   }, [activeId])
 
   const activateHost = useCallback(
     async (
       agentId: string,
-      withContext: boolean
+      withLaunchContext: boolean
     ): Promise<'restored' | 'created' | 'missing'> => {
-      const initial = withContext ? await buildInitialContext() : null
-      return useWorkspaceStore
+      const launch = withLaunchContext ? buildLaunchContext() : null
+      const result = await useWorkspaceStore
         .getState()
-        .activateAgentHost(activeId, agentId, 80, 24, initial)
+        .activateAgentHost(activeId, agentId, 80, 24, launch)
+      if (result === 'created' || result === 'restored') {
+        // Brief focus + vav composer draft → TUI input (no auto-submit).
+        handoffFocusToCli(activeId, agentId, result)
+      }
+      return result
     },
-    [activeId, buildInitialContext]
+    [activeId, buildLaunchContext]
   )
 
   const agentCandidates = useCallback((agent: AgentConfig): string[] => {
@@ -143,57 +187,76 @@ export function SessionDetail({
   )
 
   /**
-   * Probe PATH only when needed. Fast paths:
-   * 1) parked live PTY → restore immediately
-   * 2) resolve (cached in main) → ready or install panel
-   * Never shows a dedicated "checking…" screen.
+   * Optimistic activate: paint the terminal host immediately, spawn/restore,
+   * and only fall back to the install panel if the binary is truly missing.
+   * PATH resolve is not a gate — it was causing install-flash + slow load.
    */
   const checkAndActivate = useCallback(
     async (agent: AgentConfig, options?: { force?: boolean }): Promise<void> => {
       const gen = ++probeGen.current
       const force = options?.force === true
       const candidates = agentCandidates(agent)
+      const ws = useWorkspaceStore.getState()
 
-      // 1) Already have a parked/live host for this agent — never re-probe.
+      // 1) Parked / live PTY — surface host synchronously, then attach (no PATH probe).
       if (!force && hasLiveAgentSession(agent.id)) {
         setProbe('ready')
+        ws.focusAgentHost(activeId, agent.id)
         const result = await activateHost(agent.id, false)
         if (gen !== probeGen.current) return
         if (result === 'missing') {
           markAgentBinaryMissing(agent.id)
           setProbe('missing')
+        } else {
+          const cached = getAgentBinaryCache(agent.id)
+          markAgentBinaryReady(
+            agent.id,
+            cached?.status === 'ready'
+              ? cached.path
+              : agent.binaryPath || candidates[0] || agent.id
+          )
         }
         return
       }
 
       if (force) {
         clearAgentBinaryCache(agent.id)
-        setProbe('rechecking')
       }
 
-      let path: string | null = null
-      try {
-        path = window.vav.agents?.resolveBinary
-          ? await window.vav.agents.resolveBinary(candidates, force)
-          : null
-      } catch {
-        path = null
-      }
-      if (gen !== probeGen.current) return
-
-      if (!path) {
-        markAgentBinaryMissing(agent.id)
-        setProbe('missing')
-        useWorkspaceStore.getState().parkAgentHost(activeId)
-        return
-      }
-
-      markAgentBinaryReady(agent.id, path)
+      // 2) Optimistic UI: terminal surface first (spawn is the source of truth).
+      // Never gate on resolveBinary — install only after AGENT_NOT_FOUND.
       setProbe('ready')
       const result = await activateHost(agent.id, true)
       if (gen !== probeGen.current) return
+
+      if (result === 'created' || result === 'restored') {
+        const cached = getAgentBinaryCache(agent.id)
+        const path =
+          cached?.status === 'ready'
+            ? cached.path
+            : agent.binaryPath || candidates[0] || agent.id
+        markAgentBinaryReady(agent.id, path)
+        setProbe('ready')
+        return
+      }
+
       if (result === 'missing') {
-        clearAgentBinaryCache(agent.id)
+        // Optional resolve for install panel hints (which binary name failed).
+        if (force && window.vav.agents?.resolveBinary) {
+          try {
+            const path = await window.vav.agents.resolveBinary(candidates, true)
+            if (gen !== probeGen.current) return
+            if (path) {
+              markAgentBinaryReady(agent.id, path)
+              setProbe('ready')
+              const retry = await activateHost(agent.id, true)
+              if (gen !== probeGen.current) return
+              if (retry === 'created' || retry === 'restored') return
+            }
+          } catch {
+            // fall through to install
+          }
+        }
         markAgentBinaryMissing(agent.id)
         setProbe('missing')
         useWorkspaceStore.getState().parkAgentHost(activeId)
@@ -202,10 +265,10 @@ export function SessionDetail({
     [activeId, activateHost, agentCandidates, hasLiveAgentSession]
   )
 
-  // Park CLI host when returning to vav; restore / probe when selecting a CLI agent.
-  // Depend on agentKey (string), not activeAgent object identity.
-  useEffect(() => {
-    if (previewEdit) return
+  // Park CLI host when returning to vav; restore / optimistically spawn when
+  // selecting a CLI agent. useLayoutEffect so probe=ready + focusAgentHost run
+  // before paint — avoids a one-frame install flash when probe was still idle.
+  useLayoutEffect(() => {
     if (isVavMode || !agentKey || agentKey === 'vav') {
       useWorkspaceStore.getState().parkAgentHost(activeId)
       setProbe('idle')
@@ -222,25 +285,19 @@ export function SessionDetail({
         enabled: true
       }
 
-    // Optimistic first paint: known-good → terminal; known-missing / unknown → install.
-    // Resolve runs in the background without a "checking…" intermediate screen.
-    if (hasLiveAgentSession(agent.id) || getAgentBinaryCache(agent.id)?.status === 'ready') {
-      setProbe('ready')
-    } else if (getAgentBinaryCache(agent.id)?.status === 'missing') {
-      setProbe('missing')
-    } else {
-      // Unknown: show install gate immediately (cheap) while resolve runs;
-      // if the binary is present, we flip to ready without a spinner page.
-      setProbe('missing')
+    // Terminal first. Install panel only after spawn fails with AGENT_NOT_FOUND.
+    setProbe('ready')
+    if (hasLiveAgentSession(agent.id)) {
+      useWorkspaceStore.getState().focusAgentHost(activeId, agent.id)
     }
-
     void checkAndActivate(agent)
     // eslint-disable-next-line react-hooks/exhaustive-deps -- only re-run when agent id changes
-  }, [activeId, previewEdit, isVavMode, agentKey])
+  }, [activeId, isVavMode, agentKey])
 
   // Agent-host split shortcuts only when CLI host is ready (not tools-tray bash).
+  // ⌘W is owned by uiFocus / close-context (close pane when multi-split agent).
   useEffect(() => {
-    if (previewEdit || isVavMode || probe !== 'ready') return
+    if (isVavMode || probe !== 'ready') return
     const onKey = (event: KeyboardEvent): void => {
       const meta = event.metaKey || event.ctrlKey
       if (!meta || event.altKey) return
@@ -260,17 +317,6 @@ export function SessionDetail({
         event.preventDefault()
         void store.splitAgentHost(activeId, 80, 24)
         return
-      }
-      if (key === 'w' && !event.shiftKey) {
-        const ws = store.workspaces[activeId]
-        const agentId = ws?.activeHostAgentId
-        const host = agentId ? ws?.agentHostSessions[agentId] : null
-        const tabs = host?.tabs ?? []
-        const activeTab = host?.activeTabId ?? ''
-        if (tabs.length > 1 && activeTab) {
-          event.preventDefault()
-          store.closeAgentTab(activeId, activeTab)
-        }
       }
     }
     window.addEventListener('keydown', onKey)
@@ -324,7 +370,7 @@ export function SessionDetail({
     setProbe('installing')
 
     window.setTimeout(() => {
-      void window.vav.pty.write(tabId, `${cmd}\r`)
+      window.vav.pty.write(tabId, `${cmd}\r`)
     }, 280)
   }, [activeAgent, activeId, teardownInstallPty])
 
@@ -387,40 +433,63 @@ export function SessionDetail({
     }
   }, [probe, activeAgent, installTabId, agentCandidates, finishInstallAndRecheck])
 
-  // —— File-preview agent drawer (always vav chat) ——
-  if (previewEdit) {
-    return (
-      <main className="preview-edit-session">
-        {errorBanner && (
-          <ErrorBanner
-            message={errorBanner}
-            actionLabel={isKeyProblem ? t('error.openSettings') : undefined}
-            onAction={isKeyProblem ? () => openSettings('api') : undefined}
-            onDismiss={() => setErrorBanner(null)}
-          />
-        )}
-        <div className="preview-edit-stream" data-search={searchOpen}>
-          {searchOpen && <SearchStrip />}
-          <Transcript />
-        </div>
-        <div className="preview-edit-dock dock">
-          <Composer />
-          <ToolsPanel variant="preview-edit" />
-        </div>
-      </main>
-    )
-  }
+  // Companion window owns the live agent PTY. Main shell must not keep a second
+  // xterm attached (shared PTY has one geometry). Hook must stay above returns.
+  useEffect(() => {
+    if (!detachedElsewhere || !activeId) return
+    const ws = useWorkspaceStore.getState().workspaces[activeId]
+    const agentId = ws?.activeHostAgentId
+    const host = agentId ? ws?.agentHostSessions[agentId] : null
+    for (const tab of host?.tabs ?? []) {
+      disposeTerminal(activeId, tab.id)
+    }
+  }, [detachedElsewhere, activeId])
 
-  const chrome = showAgentSwitcher ? (
-    <AgentModeChrome
-      conversationId={activeId}
-      agentBinaryName={agentKey}
-      showSplits={!isVavMode && probe === 'ready'}
-    />
-  ) : null
+  // Find only covers the built-in chat transcript — not xterm / CLI agents.
+  // Drop a leftover strip when switching to a Coding/Bash agent host.
+  useEffect(() => {
+    if (!isVavMode && useSessionStore.getState().search.open) {
+      useSessionStore.getState().closeSearch()
+    }
+  }, [isVavMode])
+
+  const chrome =
+    showAgentSwitcher && !hideChrome ? (
+      <AgentModeChrome
+        conversationId={activeId}
+        agentBinaryName={agentKey}
+        showSplits={!isVavMode && probe === 'ready'}
+        showSearch={isVavMode}
+        fileSessionChrome={previewEdit && isVavMode ? fileSessionChrome ?? null : null}
+      />
+    ) : null
 
   // —— Built-in vav agent (chat workstation) ——
   if (isVavMode) {
+    // File-preview drawer: tighter chrome, no Plan overlay, preview tools tray.
+    if (previewEdit) {
+      return (
+        <main className="preview-edit-session">
+          {chrome}
+          {errorBanner && (
+            <ErrorBanner
+              message={errorBanner}
+              actionLabel={isKeyProblem ? t('error.openSettings') : undefined}
+              onAction={isKeyProblem ? () => openSettings('api') : undefined}
+              onDismiss={() => setErrorBanner(null)}
+            />
+          )}
+          <div className="preview-edit-stream" data-search={searchOpen}>
+            {searchOpen && <SearchStrip />}
+            <Transcript />
+          </div>
+          <div className="preview-edit-dock dock">
+            <Composer conversationId={activeId} />
+            <ToolsPanel variant="preview-edit" />
+          </div>
+        </main>
+      )
+    }
     const shellClass =
       variant === 'workspace' ? 'detail session-detail-workspace' : 'detail'
     return (
@@ -442,7 +511,12 @@ export function SessionDetail({
               label={t('review.openReview')}
               size="sm"
               variant="primary"
-              onClick={() => void openChangeReview(pending.changeSetId)}
+              onClick={() => {
+                document
+                  .getElementById(`inline-review-${pending.changeSetId}`)
+                  ?.scrollIntoView({ block: 'center', behavior: 'smooth' })
+                void openChangeReview(pending.changeSetId)
+              }}
             />
           </div>
         )}
@@ -454,50 +528,74 @@ export function SessionDetail({
         {/* Composer sits above the tools tray so the prompt stays next to the
             transcript; Files/Terminal expand downward from the dock. */}
         <div className="dock">
-          <Composer />
+          <Composer conversationId={activeId} />
           <ToolsPanel variant="main" />
         </div>
       </main>
     )
   }
 
-  // —— CLI agent: install gate or terminal host ——
+  // —— CLI agent: terminal host first; install only after confirmed missing ——
   const hostClass = [
-    'detail',
+    previewEdit ? 'preview-edit-session' : 'detail',
     'terminal-host-session',
     variant === 'workspace' ? 'session-detail-workspace' : ''
   ]
     .filter(Boolean)
     .join(' ')
 
+  // Install only on hard failure / explicit install flow — never for idle/ready.
+  // Previously idle (default) rendered the install card for one frame on switch.
+  const showInstallGate =
+    !!activeAgent &&
+    (probe === 'missing' || probe === 'installing' || probe === 'rechecking')
+
   // Main surface (install gate or agent host) — Tools dock always stays.
-  const mainSurface =
-    probe === 'ready' ? (
-      <div className="terminal-host-main terminal-host-stream">
-        <TerminalPanel visible surface="agent" />
-      </div>
-    ) : activeAgent ? (
-      <div className="terminal-host-main terminal-host-stream">
-        <AgentInstallPanel
-          agent={activeAgent}
-          conversationId={activeId}
-          rechecking={probe === 'rechecking'}
-          installing={probe === 'installing'}
-          installTabId={installTabId}
-          onRecheck={() => {
-            teardownInstallPty()
-            void checkAndActivate(activeAgent, { force: true })
-          }}
-          onInstallInShell={() => void runInstallInShell()}
-          onCancelInstall={cancelInstall}
-          onOpenDocs={() => {
-            if (activeAgent.installDocsUrl) {
-              window.open(activeAgent.installDocsUrl, '_blank', 'noopener,noreferrer')
-            }
-          }}
-        />
-      </div>
-    ) : null
+  const mainSurface = detachedElsewhere ? (
+    <div className="terminal-host-main terminal-host-stream detached-session-park">
+      <EmptyState title={t('session.detachedTitle')} description={t('session.detachedDesc')}>
+        <div className="detached-session-park-actions">
+          <Button
+            label={t('session.detachedTakeBack')}
+            variant="secondary"
+            size="sm"
+            onClick={() => void window.vav.window.closeDetachedSession(activeId)}
+          />
+          <Button
+            label={t('session.detachedFocus')}
+            variant="primary"
+            size="sm"
+            onClick={() => void window.vav.window.openSession(activeId)}
+          />
+        </div>
+      </EmptyState>
+    </div>
+  ) : showInstallGate && activeAgent ? (
+    <div className="terminal-host-main terminal-host-stream">
+      <AgentInstallPanel
+        agent={activeAgent}
+        conversationId={activeId}
+        rechecking={probe === 'rechecking'}
+        installing={probe === 'installing'}
+        installTabId={installTabId}
+        onRecheck={() => {
+          teardownInstallPty()
+          void checkAndActivate(activeAgent, { force: true })
+        }}
+        onInstallInShell={() => void runInstallInShell()}
+        onCancelInstall={cancelInstall}
+        onOpenDocs={() => {
+          if (activeAgent.installDocsUrl) {
+            window.open(activeAgent.installDocsUrl, '_blank', 'noopener,noreferrer')
+          }
+        }}
+      />
+    </div>
+  ) : (
+    <div className="terminal-host-main terminal-host-stream">
+      <TerminalPanel visible surface="agent" />
+    </div>
+  )
 
   return (
     <main className={hostClass}>
@@ -512,9 +610,10 @@ export function SessionDetail({
       )}
       {mainSurface}
       {/* Files + user bash tray — always present in CLI mode, even before install.
-          No Composer above: `.dock-tools-only` adds top air so the strip isn’t tight. */}
-      <div className="dock dock-tools-only">
-        <ToolsPanel variant="main" />
+          No Composer above: `.dock-tools-only` adds top air so the strip isn’t tight.
+          File-preview drawer keeps the slim preview tools tray (terminal-first). */}
+      <div className={`dock dock-tools-only${previewEdit ? ' preview-edit-dock' : ''}`}>
+        <ToolsPanel variant={previewEdit ? 'preview-edit' : 'main'} />
       </div>
     </main>
   )
@@ -527,11 +626,17 @@ export function SessionDetail({
 export function AgentModeChrome({
   conversationId,
   agentBinaryName,
-  showSplits = false
+  showSplits = false,
+  /** Transcript find only — hide for CLI / terminal hosts (no chat stream). */
+  showSearch = true,
+  /** Single-file vav: session name + history + new in this same chrome row. */
+  fileSessionChrome = null
 }: {
   conversationId: string
   agentBinaryName: string | null
   showSplits?: boolean
+  showSearch?: boolean
+  fileSessionChrome?: FileSessionChromeProps | null
 }): React.JSX.Element {
   const t = useT()
   const settings = useSessionStore((s) => s.settings)
@@ -548,24 +653,26 @@ export function AgentModeChrome({
 
   const setMode = async (id: string): Promise<void> => {
     const nextId = id === 'vav' ? null : id
-    try {
-      const next = await window.vav.conversations.setAgentBinaryName(conversationId, nextId)
-      useSessionStore.setState({ conversations: next })
-    } catch {
-      useSessionStore.setState((state) => ({
-        conversations: state.conversations.map((c) =>
-          c.id === conversationId ? { ...c, agentBinaryName: nextId } : c
-        )
-      }))
+    // Leaving chat → terminal: close find so the strip does not linger.
+    if (nextId && useSessionStore.getState().search.open) {
+      useSessionStore.getState().closeSearch()
     }
+    // Via store so file-preview sessions (hidden from listMeta) keep their
+    // agentBinaryName instead of being wiped by a raw list replace.
+    await useSessionStore.getState().setAgentBinaryName(conversationId, nextId)
   }
 
   const displayName = active.name
+  const searchOpen = useSessionStore((s) => s.search.open)
+  const openSearch = useSessionStore((s) => s.openSearch)
+  const closeSearch = useSessionStore((s) => s.closeSearch)
+  const fs = fileSessionChrome
 
   return (
-    <div className="terminal-host-chrome agent-mode-chrome">
-      {/* Icon + name are one control; native <select> covers the whole face.
-          Menu options are text-only (no brand icons). */}
+    <div
+      className={`terminal-host-chrome agent-mode-chrome${fs ? ' has-file-session' : ''}`}
+    >
+      {/* Icon + name are one control; native <select> covers the whole face. */}
       <label className="agent-mode-select" title={t('agents.switchHint')}>
         <span className="agent-mode-select-face" aria-hidden>
           <AgentBrandMark agent={active} size={20} />
@@ -586,9 +693,17 @@ export function AgentModeChrome({
           ))}
         </select>
       </label>
+
+      {fs ? (
+        <span className="agent-mode-session-title" title={fs.title}>
+          {fs.title || t('common.session')}
+        </span>
+      ) : null}
+
+      <span className="spacer" />
+
       {showSplits ? (
         <>
-          <span className="spacer" />
           <Button
             icon={<Columns2 size={13} />}
             size="sm"
@@ -610,9 +725,57 @@ export function AgentModeChrome({
             }
           />
         </>
-      ) : (
-        <span className="spacer" />
-      )}
+      ) : null}
+
+      {fs ? (
+        <div className="agent-mode-file-actions">
+          <button
+            type="button"
+            ref={fs.historyAnchorRef}
+            className={`btn ghost sm icon-only${fs.historyOpen ? ' is-active-toggle' : ''}`}
+            title={t('preview.sessionHistory')}
+            onClick={fs.onToggleHistory}
+          >
+            <Clock size={12} />
+          </button>
+          <Button
+            icon={<Plus size={12} />}
+            size="sm"
+            variant="ghost"
+            title={t('preview.newSession')}
+            onClick={fs.onNewSession}
+          />
+        </div>
+      ) : null}
+
+      {/* Find only works on the built-in chat transcript — not CLI / bash PTYs. */}
+      {showSearch ? (
+        <Button
+          icon={<Search size={13} />}
+          size="sm"
+          variant="ghost"
+          title={`${t('common.search')} ${keys('⌘F')}`}
+          onClick={() => (searchOpen ? closeSearch() : openSearch())}
+        />
+      ) : null}
+
+      {/* History panel is a child of the full chrome row so left/right:8px spans
+          the agent panel — not the narrow clock/+ cluster (that became a stick). */}
+      {fs ? (
+        <SessionHistoryPopover
+          open={fs.historyOpen}
+          onClose={fs.onCloseHistory}
+          sessions={fs.sessions}
+          activeSessionId={fs.activeSessionId}
+          onSwitch={(id) => {
+            fs.onSwitchSession(id)
+            fs.onCloseHistory()
+          }}
+          onRename={fs.onRenameSession}
+          onDelete={fs.onDeleteSessions}
+          anchorRef={fs.historyAnchorRef}
+        />
+      ) : null}
     </div>
   )
 }
@@ -626,17 +789,5 @@ export function useTerminalAppearance(): void {
   }, [codeFont, fontSize])
 }
 
-export function useSessionMenuCommands(): void {
-  useEffect(() => {
-    return window.vav.onMenuCommand((command) => {
-      const store = useSessionStore.getState()
-      switch (command) {
-        case 'focus-composer':
-          store.focusComposer()
-          break
-        default:
-          break
-      }
-    })
-  }, [])
-}
+/** @deprecated Prefer `useMenuCommands` from `lib/menuCommands` (full surface). */
+export { useMenuCommands as useSessionMenuCommands } from '../lib/menuCommands'

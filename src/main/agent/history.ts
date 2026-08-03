@@ -35,11 +35,12 @@ export function buildHistory(
               role: message.quoteRole
             }
           : null
-      // Stored content is the bubble body; quote marker and preview context are
-      // reconstituted for the model only.
+      // Stored content is the bubble body; quote marker, preview context and
+      // attachments are reconstituted for the model only.
       const text = composeContextUserText(
         composeQuotedUserText(message.content, quote),
-        message.contextBlocks
+        message.contextBlocks,
+        message.attachments
       )
       history.push({
         role: 'user',

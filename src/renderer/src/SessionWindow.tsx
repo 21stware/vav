@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, useMemo } from 'react'
 import { useSessionStore } from './state/sessionStore'
 import {
   installSettingsBridge,
@@ -6,14 +6,14 @@ import {
   installUpdateBridge,
   installWindowBridge
 } from './state/sessionStore'
-import { installFsWatchBridge, installPtyBridge } from './state/workspaceStore'
+import { installFsWatchBridge, installPtyBridge, useWorkspaceStore } from './state/workspaceStore'
 import {
+  AgentModeChrome,
   SessionDetail,
-  useSessionMenuCommands,
   useTerminalAppearance
 } from './components/SessionDetail'
-import { ChangeReviewPanel } from './components/ChangeReviewPanel'
 import { useAppearance } from './lib/appearance'
+import { useMenuCommands } from './lib/menuCommands'
 import { installDefaultContextMenu } from './lib/nativeMenu'
 import { useT } from './i18n/useT'
 
@@ -22,8 +22,8 @@ import { useT } from './i18n/useT'
  *
  * Same transcript, tools and composer as the main window with the sidebar and
  * its chrome taken away — this window exists to hold a single session, so it
- * has nothing to navigate between. Top-right Reveal in List jumps back to the
- * main window sidebar row for this conversation.
+ * has nothing to navigate between. Agent switcher / search / splits sit in the
+ * title bar; top-right Reveal in List jumps back to the main window row.
  */
 export default function SessionWindow({
   conversationId
@@ -33,6 +33,20 @@ export default function SessionWindow({
   const t = useT()
   const ready = useSessionStore((s) => s.ready)
   const bootstrap = useSessionStore((s) => s.bootstrap)
+  const conversation = useSessionStore((s) =>
+    s.conversations.find((c) => c.id === conversationId)
+  )
+  const agentBinaryName = conversation?.agentBinaryName ?? null
+  const isVavMode = !agentBinaryName || agentBinaryName === 'vav'
+
+  // CLI splits only when this window already has a live host session.
+  const showSplits = useWorkspaceStore((s) => {
+    if (isVavMode) return false
+    const agentId = agentBinaryName
+    if (!agentId) return false
+    const host = s.workspaces[conversationId]?.agentHostSessions[agentId]
+    return Boolean(host?.layout && host.tabs.length > 0)
+  })
 
   useEffect(() => {
     void bootstrap(conversationId).then(() => {
@@ -84,29 +98,43 @@ export default function SessionWindow({
 
   useAppearance()
   useTerminalAppearance()
-  useSessionMenuCommands()
+  // Full shortcut surface — not just focus-composer (detached windows used to
+  // drop ⌘⇧E / Ctrl+` once a CLI agent host stole keyboard focus).
+  useMenuCommands()
 
-  const changeReviewId = useSessionStore((s) => s.changeReviewId)
+  const title = useMemo(() => {
+    const name = (conversation?.title || '').trim()
+    return name || t('common.session')
+  }, [conversation?.title, t])
+
+  useEffect(() => {
+    document.title = title
+  }, [title])
 
   if (!ready) return <div className="app-shell" />
 
-  if (changeReviewId) {
-    return (
-      <div className="app-shell session-window">
-        <ChangeReviewPanel />
-      </div>
-    )
-  }
-
+  // Change review is inline in the transcript (not a full-screen takeover).
   return (
     <div className="app-shell session-window">
-      {/* Drag region + traffic lights; native title holds the session name.
-          Reveal in List: close this companion and select the row in main. */}
+      {/*
+        Title bar: traffic lights + agent switcher / search / splits, then
+        Reveal in List. Agent chrome used to sit under this bar and felt like
+        a second toolbar.
+      */}
       <header className="titlebar bare session-window-titlebar">
+        <div className="session-window-titlebar-chrome">
+          <AgentModeChrome
+            conversationId={conversationId}
+            agentBinaryName={agentBinaryName}
+            showSplits={showSplits}
+            showSearch={isVavMode}
+          />
+        </div>
         <span className="spacer" />
         <button
           type="button"
           className="session-reveal-in-list"
+          title={t('session.revealInList')}
           onClick={() => {
             const api = window.vav?.window?.revealInList
             if (typeof api !== 'function') {
@@ -119,7 +147,7 @@ export default function SessionWindow({
           {t('session.revealInList')}
         </button>
       </header>
-      <SessionDetail />
+      <SessionDetail hideChrome />
     </div>
   )
 }

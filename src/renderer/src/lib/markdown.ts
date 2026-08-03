@@ -86,12 +86,36 @@ const defaultFence =
   ((tokens, idx, options, _env, self) => self.renderToken(tokens, idx, options))
 
 md.renderer.rules.fence = (tokens, idx, options, env, self): string => {
-  const token = tokens[idx]
+  const token = tokens[idx]!
   const info = (token.info || '').trim()
-  const language = info.split(/\s+/g)[0] ?? ''
+  const language = (info.split(/\s+/g)[0] ?? '').toLowerCase()
+  if (language === 'mermaid') {
+    return renderMermaidFence(token.content)
+  }
   const filename = suggestedFilenameForLang(language)
   const inner = defaultFence(tokens, idx, options, env, self)
   return `${blockChrome(filename, 'code')}${inner}</div>`
+}
+
+/** Mermaid diagram placeholder — painted by {@link renderMermaidBlocks} after mount. */
+export function renderMermaidFence(source: string): string {
+  const raw = source.replace(/\r\n/g, '\n').replace(/\r/g, '\n')
+  // Base64 keeps multi-line source safe inside HTML attributes.
+  const b64 =
+    typeof btoa === 'function'
+      ? btoa(unescape(encodeURIComponent(raw)))
+      : Buffer.from(raw, 'utf8').toString('base64')
+  return (
+    `<div class="md-block md-mermaid-wrap" data-kind="mermaid" data-filename="diagram.mmd" data-mermaid-b64="${b64}">` +
+    `<div class="md-block-bar">` +
+    `<span class="md-block-name">mermaid</span>` +
+    `<span class="md-block-actions">` +
+    `<button type="button" class="md-block-btn" data-md-action="copy" title="Copy">Copy</button>` +
+    `</span></div>` +
+    `<div class="md-mermaid" data-b64="${b64}">` +
+    `<pre class="md-mermaid-fallback">${escapeHtml(raw)}</pre>` +
+    `</div></div>`
+  )
 }
 
 /**
@@ -157,9 +181,23 @@ export function highlightMatches(container: HTMLElement, query: string): void {
   }
 }
 
-/** Plain text for Copy / Save — code fence body or table→CSV. */
+/** Plain text for Copy / Save — mermaid source, code fence body, or table→CSV. */
 export function extractBlockPlainText(block: HTMLElement): string {
   const kind = block.dataset.kind
+  if (kind === 'mermaid') {
+    const b64 =
+      block.dataset.mermaidB64 ||
+      block.querySelector('.md-mermaid')?.getAttribute('data-b64') ||
+      ''
+    if (b64) {
+      try {
+        return decodeURIComponent(escape(atob(b64)))
+      } catch {
+        // fall through
+      }
+    }
+    return block.querySelector('.md-mermaid-fallback')?.textContent || ''
+  }
   if (kind === 'table') {
     const table = block.querySelector('table')
     if (!table) return ''

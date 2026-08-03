@@ -165,7 +165,11 @@ export class FileSessionStore {
   /**
    * Open / restore the active session for a path. Creates a blank session if none.
    */
-  async open(path: string, model: string): Promise<{
+  async open(
+    path: string,
+    model: string,
+    approvalMode: import('@shared/types').ApprovalMode = 'auto'
+  ): Promise<{
     fileId: string
     activeSessionId: string
     sessions: FileSessionMeta[]
@@ -178,7 +182,8 @@ export class FileSessionStore {
     if (!bundle) {
       const conversation = this.conversations.create(path ? dirnameSafe(path) : null, model, {
         fileId: identity.fileId,
-        title: defaultSessionTitle(currentLocale())
+        title: defaultSessionTitle(currentLocale()),
+        approvalMode
       })
       // Title for empty file sessions
       this.conversations.updateMeta(conversation.id, {
@@ -220,7 +225,8 @@ export class FileSessionStore {
     if (bundle.sessionIds.length === 0) {
       const conversation = this.conversations.create(dirnameSafe(path), model, {
         fileId: identity.fileId,
-        title: 'New session'
+        title: 'New session',
+        approvalMode
       })
       this.conversations.updateMeta(conversation.id, {
         title: 'New session',
@@ -244,17 +250,22 @@ export class FileSessionStore {
     }
   }
 
-  async createSession(path: string, model: string): Promise<{
+  async createSession(
+    path: string,
+    model: string,
+    approvalMode: import('@shared/types').ApprovalMode = 'auto'
+  ): Promise<{
     fileId: string
     activeSessionId: string
     sessions: FileSessionMeta[]
     conversation: Conversation
   }> {
     if (!this.conversations) throw new Error('FileSessionStore not bound')
-    const opened = await this.open(path, model)
+    const opened = await this.open(path, model, approvalMode)
     const conversation = this.conversations.create(dirnameSafe(path), model, {
       fileId: opened.fileId,
-      title: 'New session'
+      title: 'New session',
+      approvalMode
     })
     this.conversations.updateMeta(conversation.id, {
       title: 'New session',

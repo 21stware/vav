@@ -28,8 +28,16 @@ export function Button({
   const classes = ['btn', variant, size, !label && icon ? 'icon-only' : '', className]
     .filter(Boolean)
     .join(' ')
+  const tip = title ?? label
   return (
-    <button className={classes} disabled={disabled} title={title ?? label} onClick={onClick}>
+    <button
+      type="button"
+      className={classes}
+      disabled={disabled}
+      title={tip}
+      aria-label={tip}
+      onClick={onClick}
+    >
       {icon}
       {label}
     </button>
@@ -132,16 +140,20 @@ export function Chip({
 
 export function Toggle({
   checked,
-  onChange
+  onChange,
+  title
 }: {
   checked: boolean
   onChange: (value: boolean) => void
+  title?: string
 }): React.JSX.Element {
   return (
     <button
       className={`toggle${checked ? ' on' : ''}`}
       role="switch"
       aria-checked={checked}
+      title={title}
+      aria-label={title}
       onClick={() => onChange(!checked)}
     />
   )
@@ -152,7 +164,7 @@ export function Segmented<T extends string>({
   value,
   onChange
 }: {
-  options: { value: T; label: string }[]
+  options: { value: T; label: string; title?: string }[]
   value: T
   onChange: (value: T) => void
 }): React.JSX.Element {
@@ -161,7 +173,10 @@ export function Segmented<T extends string>({
       {options.map((option) => (
         <button
           key={option.value}
+          type="button"
           className={option.value === value ? 'active' : ''}
+          title={option.title ?? option.label}
+          aria-label={option.title ?? option.label}
           onClick={() => onChange(option.value)}
         >
           {option.label}

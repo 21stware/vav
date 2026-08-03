@@ -81,6 +81,14 @@ export class SettingsStore {
       this.settings.defaultAgentId = null
       dirty = true
     }
+    if (
+      this.settings.defaultApprovalMode !== 'auto' &&
+      this.settings.defaultApprovalMode !== 'bypass' &&
+      this.settings.defaultApprovalMode !== 'edit'
+    ) {
+      this.settings.defaultApprovalMode = 'auto'
+      dirty = true
+    }
     if (dirty) this.persist()
   }
 
@@ -108,7 +116,21 @@ export class SettingsStore {
   private clampToAllowedRanges(): void {
     const s = this.settings
     s.commandTimeout = Math.min(600, Math.max(10, Math.round(s.commandTimeout / 10) * 10))
+    s.webTimeoutMs = Math.min(
+      60_000,
+      Math.max(5_000, Math.round((Number(s.webTimeoutMs) || 15_000) / 1000) * 1000)
+    )
+    // Web search / fetch always available (no product toggles).
+    s.webToolsEnabled = true
+    s.webSearchEnabled = true
+    s.webFetchEnabled = true
+    if (typeof s.webFetchAllowRender !== 'boolean') s.webFetchAllowRender = false
+    if (typeof s.webSearxngBaseUrl !== 'string') s.webSearxngBaseUrl = ''
+    s.webSearxngBaseUrl = s.webSearxngBaseUrl.trim()
+    const providers = new Set(['auto', 'duckduckgo', 'searxng', 'brave'])
+    if (!providers.has(s.webSearchProvider)) s.webSearchProvider = 'auto'
     s.fontSize = Math.min(24, Math.max(10, s.fontSize))
+    if (s.sendKey !== 'enter' && s.sendKey !== 'mod-enter') s.sendKey = 'enter'
     s.temperature = Math.min(2, Math.max(0, s.temperature))
     s.maxTokens = Math.min(200_000, Math.max(256, Math.round(s.maxTokens)))
     s.cliAgents = mergeBuiltinAgents(Array.isArray(s.cliAgents) ? s.cliAgents : [])
@@ -165,9 +187,14 @@ export class SettingsStore {
   private persist(): void {
     try {
       mkdirSync(dirname(this.file), { recursive: true })
-      // apiKeyPresent is derived from the secret store, never persisted here.
-      const { apiKeyPresent: _omit, ...rest } = this.settings
-      void _omit
+      // Presence flags are derived from SecretStore, never persisted here.
+      const {
+        apiKeyPresent: _omitApi,
+        braveSearchKeyPresent: _omitBrave,
+        ...rest
+      } = this.settings
+      void _omitApi
+      void _omitBrave
       writeFileSync(this.file, JSON.stringify(rest, null, 2), 'utf8')
     } catch (err) {
       console.error('[settings] persist failed', err)

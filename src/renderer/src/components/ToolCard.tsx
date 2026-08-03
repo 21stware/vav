@@ -11,6 +11,8 @@ const TOOL_NAME_KEYS: Partial<Record<ToolName, MessageKey>> = {
   fs_read: 'tool.read',
   fs_write: 'tool.write',
   fs_list: 'tool.list',
+  web_search: 'tool.webSearch',
+  web_fetch: 'tool.webFetch',
   ask_user_question: 'tool.ask',
   request: 'tool.ask'
 }
@@ -99,8 +101,11 @@ export const ToolCard = memo(function ToolCard({
       data-expandable={canToggle}
     >
       <button
+        type="button"
         className="tool-row"
         disabled={!canToggle}
+        title={canToggle ? t('tool.toggleDetail') : undefined}
+        aria-expanded={canToggle ? showDetail : undefined}
         onClick={() => {
           if (canToggle) setExpanded((value) => !value)
         }}
@@ -317,6 +322,40 @@ function AskCard({ block }: { block: ToolCallBlock }): React.JSX.Element {
       ? block.askTitle?.trim() || parseToolInput(block.input).title?.toString() || t('ask.questions', { n: questions.length })
       : null
 
+  // No parseable questions (stale/corrupt tool input) — free-text fallback.
+  if (questions.length === 0) {
+    return (
+      <div className={`ask-card${submitting ? ' submitting' : ''}`}>
+        <div className="ask-q">{block.summary || t('tool.ask')}</div>
+        {error && <InlineAlert kind="error" message={error} />}
+        <textarea
+          className="text-area"
+          rows={3}
+          disabled={submitting}
+          placeholder={t('composer.placeholderYourAnswer')}
+          value={draft}
+          onChange={(event) => setDraft(event.target.value)}
+        />
+        <div className="ask-actions">
+          <span className="spacer" />
+          <Button
+            label={submitting ? t('common.submitting') : t('common.submit')}
+            variant="primary"
+            disabled={submitting || !draft.trim()}
+            onClick={() => {
+              if (!draft.trim() || submitting) return
+              setSubmitting(true)
+              setError(null)
+              void answerTool(block.id, draft.trim())
+                .catch(() => setError(t('common.submitFailed')))
+                .finally(() => setSubmitting(false))
+            }}
+          />
+        </div>
+      </div>
+    )
+  }
+
   return (
     <MultiAskForm
       title={title}
@@ -379,6 +418,27 @@ type AnswerValue = string | string[]
 /** Sentinel for the per-question free-form “Other” choice. */
 const ASK_OTHER = '__vav_other__'
 
+function isQuestionAnswered(
+  question: AskQuestion,
+  index: number,
+  single: Record<number, string>,
+  multi: Record<number, string[]>,
+  free: Record<number, string>
+): boolean {
+  const choices = question.choices ?? []
+  if (choices.length === 0) return (free[index] ?? '').trim().length > 0
+  if (question.multiSelect) {
+    const picked = multi[index] ?? []
+    if (picked.length === 0) return false
+    if (picked.includes(ASK_OTHER)) return (free[index] ?? '').trim().length > 0
+    return true
+  }
+  const picked = single[index]
+  if (!picked) return false
+  if (picked === ASK_OTHER) return (free[index] ?? '').trim().length > 0
+  return true
+}
+
 function MultiAskForm({
   title,
   questions,
@@ -393,6 +453,9 @@ function MultiAskForm({
   onSubmit: (payload: string) => void | Promise<void>
 }): React.JSX.Element {
   const t = useT()
+  const total = questions.length
+  const multiStep = total > 1
+  const [step, setStep] = useState(0)
   /** Single-select: chosen preset, or ASK_OTHER. */
   const [single, setSingle] = useState<Record<number, string>>({})
   /** Multi-select: list of presets; may include ASK_OTHER. */
@@ -401,32 +464,29 @@ function MultiAskForm({
   const [free, setFree] = useState<Record<number, string>>({})
   const [note, setNote] = useState('')
 
-  const ready = questions.every((question, index) => {
-    const choices = question.choices ?? []
-    // Pure free-text question.
-    if (choices.length === 0) return (free[index] ?? '').trim().length > 0
-    if (question.multiSelect) {
-      const picked = multi[index] ?? []
-      // Empty multi-select is allowed; if Other is on, custom text is required.
-      if (picked.includes(ASK_OTHER)) return (free[index] ?? '').trim().length > 0
-      return true
-    }
-    const picked = single[index]
-    if (!picked) return false
-    if (picked === ASK_OTHER) return (free[index] ?? '').trim().length > 0
-    return true
-  })
+  // Guard empty list (caller should also filter); never index past end.
+  const safeStep = total === 0 ? 0 : Math.min(Math.max(0, step), total - 1)
+  const question = questions[safeStep]
+  const choices = question?.choices ?? []
+  const otherOn = question?.multiSelect
+    ? (multi[safeStep] ?? []).includes(ASK_OTHER)
+    : single[safeStep] === ASK_OTHER
 
-  const submitTitle = ready ? undefined : t('tool.askCompleteRequired')
+  const answeredFlags = questions.map((q, i) =>
+    isQuestionAnswered(q, i, single, multi, free)
+  )
+  const currentReady = total > 0 && answeredFlags[safeStep] === true
+  const allReady = total > 0 && answeredFlags.every(Boolean)
+  const isLast = total === 0 || safeStep >= total - 1
 
   const submit = (): void => {
-    if (!ready || submitting) return
-    const answers = questions.map((question, index) => {
-      const choices = question.choices ?? []
+    if (!allReady || submitting) return
+    const answers = questions.map((q, index) => {
+      const opts = q.choices ?? []
       let value: AnswerValue
-      if (choices.length === 0) {
+      if (opts.length === 0) {
         value = (free[index] ?? '').trim()
-      } else if (question.multiSelect) {
+      } else if (q.multiSelect) {
         const picked = multi[index] ?? []
         const presets = picked.filter((c) => c !== ASK_OTHER)
         const custom = (free[index] ?? '').trim()
@@ -443,147 +503,216 @@ function MultiAskForm({
     void onSubmit(JSON.stringify(payload))
   }
 
+  const goNext = (): void => {
+    if (!currentReady || isLast || total === 0) return
+    setStep((s) => Math.min(s + 1, total - 1))
+  }
+
+  const goBack = (): void => {
+    setStep((s) => Math.max(0, s - 1))
+  }
+
+  if (!question) {
+    return (
+      <div className="ask-card">
+        <InlineAlert kind="error" message={t('tool.askCompleteRequired')} />
+      </div>
+    )
+  }
+
   return (
-    <div className={`ask-card${submitting ? ' submitting' : ''}`}>
-      {title && <div className="ask-title">{title}</div>}
+    <div className={`ask-card${submitting ? ' submitting' : ''}${multiStep ? ' multi-step' : ''}`}>
+      {(title || multiStep) && (
+        <div className="ask-head">
+          {title && <div className="ask-title">{title}</div>}
+          {multiStep && (
+            <div className="ask-tabs" role="tablist" aria-label={t('ask.questions', { n: total })}>
+              {questions.map((_, index) => {
+                const done = answeredFlags[index]
+                const active = index === safeStep
+                return (
+                  <button
+                    key={index}
+                    type="button"
+                    role="tab"
+                    aria-selected={active}
+                    className={`ask-tab${active ? ' is-active' : ''}${done ? ' is-done' : ''}`}
+                    disabled={submitting}
+                    title={t('tool.askStep', { n: index + 1 })}
+                    onClick={() => setStep(index)}
+                  >
+                    <span className="ask-tab-index">{index + 1}</span>
+                    {done && !active ? <Check size={10} className="ask-tab-check" /> : null}
+                  </button>
+                )
+              })}
+            </div>
+          )}
+        </div>
+      )}
       {error && <InlineAlert kind="error" message={error} />}
 
-      {questions.map((question, index) => {
-        const choices = question.choices ?? []
-        const otherOn = question.multiSelect
-          ? (multi[index] ?? []).includes(ASK_OTHER)
-          : single[index] === ASK_OTHER
-        return (
-          <div className="ask-question" key={index}>
-            {questions.length > 1 && index > 0 && <div className="ask-divider" />}
-            <div className="ask-q">{question.question}</div>
-            {choices.length === 0 ? (
-              <textarea
-                className="text-area"
-                rows={3}
-                disabled={submitting}
-                placeholder={t('composer.placeholderYourAnswer')}
-                value={free[index] ?? ''}
-                onChange={(event) =>
-                  setFree((prev) => ({ ...prev, [index]: event.target.value }))
-                }
-              />
-            ) : (
-              <>
-                <div className="ask-choice-list">
-                  {choices.map((choice) => {
-                    if (question.multiSelect) {
-                      const selected = (multi[index] ?? []).includes(choice)
-                      return (
-                        <label
-                          key={choice}
-                          className={`ask-choice${selected ? ' selected' : ''}`}
-                        >
-                          <input
-                            type="checkbox"
-                            disabled={submitting}
-                            checked={selected}
-                            onChange={() =>
-                              setMulti((prev) => {
-                                const current = prev[index] ?? []
-                                const next = selected
-                                  ? current.filter((item) => item !== choice)
-                                  : [...current, choice]
-                                return { ...prev, [index]: next }
-                              })
-                            }
-                          />
-                          <span>{choice}</span>
-                        </label>
-                      )
-                    }
-                    const selected = single[index] === choice
-                    return (
-                      <label
-                        key={choice}
-                        className={`ask-choice${selected ? ' selected' : ''}`}
-                      >
-                        <input
-                          type="radio"
-                          name={`ask-${index}`}
-                          disabled={submitting}
-                          checked={selected}
-                          onChange={() =>
-                            setSingle((prev) => ({ ...prev, [index]: choice }))
-                          }
-                        />
-                        <span>{choice}</span>
-                      </label>
-                    )
-                  })}
-                  {/* Every choice question also allows a free-form custom answer. */}
-                  {question.multiSelect ? (
-                    <label className={`ask-choice${otherOn ? ' selected' : ''}`}>
+      <div className="ask-question" key={safeStep}>
+        <div className="ask-q-row">
+          <div className="ask-q">{question.question}</div>
+          {choices.length > 0 && (
+            <span className="ask-mode-hint">
+              {question.multiSelect ? t('tool.askMultiHint') : t('tool.askSingleHint')}
+            </span>
+          )}
+        </div>
+        {choices.length === 0 ? (
+          <textarea
+            className="text-area"
+            rows={3}
+            disabled={submitting}
+            placeholder={t('composer.placeholderYourAnswer')}
+            value={free[safeStep] ?? ''}
+            onChange={(event) =>
+              setFree((prev) => ({ ...prev, [safeStep]: event.target.value }))
+            }
+          />
+        ) : (
+          <>
+            <div
+              className={`ask-choice-list${question.multiSelect ? ' is-multi' : ' is-single'}`}
+              role={question.multiSelect ? 'group' : 'radiogroup'}
+              aria-label={question.question}
+            >
+              {choices.map((choice) => {
+                if (question.multiSelect) {
+                  const selected = (multi[safeStep] ?? []).includes(choice)
+                  return (
+                    <label
+                      key={choice}
+                      className={`ask-choice${selected ? ' selected' : ''}`}
+                    >
                       <input
                         type="checkbox"
                         disabled={submitting}
-                        checked={otherOn}
+                        checked={selected}
                         onChange={() =>
                           setMulti((prev) => {
-                            const current = prev[index] ?? []
-                            const next = otherOn
-                              ? current.filter((item) => item !== ASK_OTHER)
-                              : [...current, ASK_OTHER]
-                            return { ...prev, [index]: next }
+                            const current = prev[safeStep] ?? []
+                            const next = selected
+                              ? current.filter((item) => item !== choice)
+                              : [...current, choice]
+                            return { ...prev, [safeStep]: next }
                           })
                         }
                       />
-                      <span>{t('tool.askOther')}</span>
+                      <span className="ask-choice-mark" aria-hidden />
+                      <span className="ask-choice-label">{choice}</span>
                     </label>
-                  ) : (
-                    <label className={`ask-choice${otherOn ? ' selected' : ''}`}>
-                      <input
-                        type="radio"
-                        name={`ask-${index}`}
-                        disabled={submitting}
-                        checked={otherOn}
-                        onChange={() =>
-                          setSingle((prev) => ({ ...prev, [index]: ASK_OTHER }))
-                        }
-                      />
-                      <span>{t('tool.askOther')}</span>
-                    </label>
-                  )}
-                </div>
-                {otherOn && (
+                  )
+                }
+                const selected = single[safeStep] === choice
+                return (
+                  <label
+                    key={choice}
+                    className={`ask-choice${selected ? ' selected' : ''}`}
+                  >
+                    <input
+                      type="radio"
+                      name={`ask-${safeStep}`}
+                      disabled={submitting}
+                      checked={selected}
+                      onChange={() =>
+                        setSingle((prev) => ({ ...prev, [safeStep]: choice }))
+                      }
+                    />
+                    <span className="ask-choice-mark" aria-hidden />
+                    <span className="ask-choice-label">{choice}</span>
+                  </label>
+                )
+              })}
+              {question.multiSelect ? (
+                <label className={`ask-choice${otherOn ? ' selected' : ''}`}>
                   <input
-                    className="text-field ask-other-field"
+                    type="checkbox"
                     disabled={submitting}
-                    placeholder={t('tool.askOtherPlaceholder')}
-                    value={free[index] ?? ''}
-                    onChange={(event) =>
-                      setFree((prev) => ({ ...prev, [index]: event.target.value }))
+                    checked={otherOn}
+                    onChange={() =>
+                      setMulti((prev) => {
+                        const current = prev[safeStep] ?? []
+                        const next = otherOn
+                          ? current.filter((item) => item !== ASK_OTHER)
+                          : [...current, ASK_OTHER]
+                        return { ...prev, [safeStep]: next }
+                      })
                     }
-                    autoFocus
                   />
-                )}
-              </>
+                  <span className="ask-choice-mark" aria-hidden />
+                  <span className="ask-choice-label">{t('tool.askOther')}</span>
+                </label>
+              ) : (
+                <label className={`ask-choice${otherOn ? ' selected' : ''}`}>
+                  <input
+                    type="radio"
+                    name={`ask-${safeStep}`}
+                    disabled={submitting}
+                    checked={otherOn}
+                    onChange={() =>
+                      setSingle((prev) => ({ ...prev, [safeStep]: ASK_OTHER }))
+                    }
+                  />
+                  <span className="ask-choice-mark" aria-hidden />
+                  <span className="ask-choice-label">{t('tool.askOther')}</span>
+                </label>
+              )}
+            </div>
+            {otherOn && (
+              <input
+                className="text-field ask-other-field"
+                disabled={submitting}
+                placeholder={t('tool.askOtherPlaceholder')}
+                value={free[safeStep] ?? ''}
+                onChange={(event) =>
+                  setFree((prev) => ({ ...prev, [safeStep]: event.target.value }))
+                }
+                autoFocus
+              />
             )}
-          </div>
-        )
-      })}
+          </>
+        )}
+      </div>
 
-      <input
-        className="text-field"
-        disabled={submitting}
-        placeholder={t('tool.askOptionalNote')}
-        value={note}
-        onChange={(event) => setNote(event.target.value)}
-      />
+      {isLast && (
+        <input
+          className="text-field ask-note"
+          disabled={submitting}
+          placeholder={t('tool.askOptionalNote')}
+          value={note}
+          onChange={(event) => setNote(event.target.value)}
+        />
+      )}
 
       <div className="ask-actions">
-        <Button
-          label={submitting ? t('common.submitting') : t('common.submit')}
-          variant="primary"
-          disabled={!ready || submitting}
-          title={submitTitle}
-          onClick={submit}
-        />
+        {multiStep && safeStep > 0 && (
+          <Button
+            label={t('tool.askBack')}
+            disabled={submitting}
+            onClick={goBack}
+          />
+        )}
+        <span className="spacer" />
+        {multiStep && !isLast ? (
+          <Button
+            label={t('tool.askNext')}
+            variant="primary"
+            disabled={!currentReady || submitting}
+            title={currentReady ? undefined : t('tool.askAnswerCurrent')}
+            onClick={goNext}
+          />
+        ) : (
+          <Button
+            label={submitting ? t('common.submitting') : t('common.submit')}
+            variant="primary"
+            disabled={!allReady || submitting}
+            title={allReady ? undefined : t('tool.askCompleteRequired')}
+            onClick={submit}
+          />
+        )}
       </div>
     </div>
   )

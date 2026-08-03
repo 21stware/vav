@@ -5,6 +5,7 @@ import {
   renderMarkdown,
   renderMarkdownUncached
 } from '../lib/markdown'
+import { renderMermaidBlocks } from '../lib/mermaidRender'
 import { renderPreviewMarkdown } from '../lib/previewMarkdown'
 import { TAIL_PLAIN_TEXT_THRESHOLD } from '../lib/segmenter'
 import { tt } from '../i18n/useT'
@@ -49,6 +50,10 @@ export const MarkdownView = memo(function MarkdownView({
     if (!element || plain) return
     element.innerHTML = html
     if (highlight) highlightMatches(element, highlight)
+    // Mermaid fences: paint SVG after HTML is in the DOM (async, non-blocking).
+    if (html.includes('md-mermaid')) {
+      void renderMermaidBlocks(element)
+    }
   }, [html, highlight, plain])
 
   if (plain) return <pre className="plain-tail">{source}</pre>

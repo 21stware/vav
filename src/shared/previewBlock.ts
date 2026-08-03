@@ -6,6 +6,8 @@ export type PreviewBlockKind =
   | 'heading'
   | 'heading-section'
   | 'paragraph'
+  /** Single log/source line (line-oriented canvas pick). */
+  | 'line'
   | 'code'
   | 'list'
   | 'list-item'

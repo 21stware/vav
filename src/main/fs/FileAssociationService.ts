@@ -33,6 +33,7 @@ export interface FileAssociationStatus {
 /** Formats from settings-file-associations.rpml. */
 export const FILE_ASSOCIATION_FORMATS: FileAssociationFormat[] = [
   { id: 'markdown', label: 'Markdown', extensions: ['.md', '.markdown', '.mdx'], uti: 'net.daringfireball.markdown', tier: 'p0' },
+  { id: 'html', label: 'HTML', extensions: ['.html', '.htm', '.xhtml'], uti: 'public.html', tier: 'p0' },
   { id: 'plaintext', label: 'Plain Text', extensions: ['.txt', '.text'], uti: 'public.plain-text', tier: 'p0' },
   { id: 'json', label: 'JSON', extensions: ['.json'], uti: 'public.json', tier: 'p0' },
   { id: 'yaml', label: 'YAML', extensions: ['.yaml', '.yml'], uti: 'public.yaml', tier: 'p0' },
@@ -70,10 +71,21 @@ export const FILE_ASSOCIATION_FORMATS: FileAssociationFormat[] = [
     tier: 'p1'
   },
   {
+    id: 'heic',
+    label: 'HEIC Image',
+    extensions: ['.heic', '.heif'],
+    uti: 'public.heic',
+    tier: 'p1'
+  },
+  {
     id: 'zip',
     label: 'ZIP Archive',
     extensions: ['.zip'],
     uti: 'com.pkware.zip-archive',
+    /**
+     * Viewer for structure preview (not a full Archive Utility replacement).
+     * Password / extract-to-disk remain out of scope until explicit product work.
+     */
     tier: 'p1'
   }
 ]

@@ -207,6 +207,7 @@ function SheetGrid({
   selected: Set<string>
   onSelect: (id: string, event: React.MouseEvent) => void
 }): React.JSX.Element {
+  const t = useT()
   const grid = section.grid ?? []
   const colCount = Math.max(1, ...grid.map((r) => r.length), 1)
   const [windowStart, setWindowStart] = useState(0)
@@ -242,6 +243,8 @@ function SheetGrid({
           type="button"
           className="btn ghost sm"
           disabled={!canUp}
+          title={t('common.pageUp')}
+          aria-label={t('common.pageUp')}
           onClick={() => setWindowStart((s) => Math.max(0, s - SHEET_ROW_WINDOW))}
         >
           ↑
@@ -250,6 +253,8 @@ function SheetGrid({
           type="button"
           className="btn ghost sm"
           disabled={!canDown}
+          title={t('common.pageDown')}
+          aria-label={t('common.pageDown')}
           onClick={() =>
             setWindowStart((s) => Math.min(Math.max(0, grid.length - SHEET_ROW_WINDOW), s + SHEET_ROW_WINDOW))
           }

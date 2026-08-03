@@ -8,9 +8,6 @@ import { parsePdf } from './parsePdf'
 
 export { isOfficeLockFile }
 
-/** Soft technical budget for full OOXML parse in main (not a product page cap). */
-const OFFICE_CAP = 200 * 1024 * 1024
-
 export function structuredKindForPath(path: string): StructuredDocKind | null {
   const ext = extname(path).toLowerCase()
   if (ext === '.pdf') return 'pdf'
@@ -20,17 +17,18 @@ export function structuredKindForPath(path: string): StructuredDocKind | null {
   return null
 }
 
+/**
+ * Full structured parse for selection / RAG. Callers decide whether size
+ * warrants deferring this (soft memory budget) — we never refuse open here.
+ */
 export async function parseStructuredDocument(
   path: string,
-  size: number
+  _size: number
 ): Promise<StructuredDocument> {
   if (isOfficeLockFile(path)) {
     throw new Error(OFFICE_LOCK_FILE_MESSAGE)
   }
-  if (size > OFFICE_CAP) {
-    throw new Error(`File too large for structured preview (${Math.round(size / 1024 / 1024)} MB)`)
-  }
-  if (size === 0) {
+  if (_size === 0) {
     throw new Error('File is empty.')
   }
   const kind = structuredKindForPath(path)

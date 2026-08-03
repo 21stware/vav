@@ -42,10 +42,13 @@ import { FileSessionStore } from './store/FileSessionStore'
 import { FileService } from './fs/FileService'
 import { FileAssociationService, formatIdForPath } from './fs/FileAssociationService'
 import { DocumentRetrievalService } from './retrieval/DocumentRetrievalService'
+import { WebSearchService } from './web/WebSearchService'
+import { WebFetchService } from './web/WebFetchService'
 import { ChangeSetStore } from './agent/ChangeSetStore'
 import { UpdateService } from './updates'
 import { PtyManager } from './terminal/PtyManager'
 import { resolveAgentExecutable } from './terminal/loginPath'
+import { menuCommandFromInput } from './menuShortcuts'
 import { AgentRuntime } from './agent/AgentRuntime'
 import { validateApiKey } from './agent/provider'
 import { shellPath } from './terminal/StickyShell'
@@ -70,6 +73,35 @@ import { NotificationCenter } from './notifications'
 
 const PLATFORM = process.platform as Platform
 const IS_MAC = PLATFORM === 'darwin'
+
+/**
+ * Dev runners / IDE task hosts often close the stdio pipe while Electron is
+ * still alive. Unhandled `write EPIPE` from console.log/error then surfaces as
+ * a fatal "Uncaught Exception" dialog. Swallow only EPIPE on the process
+ * streams and on late IPC to a dead frame.
+ */
+function ignoreEpipe(stream: NodeJS.WriteStream | null | undefined): void {
+  stream?.on?.('error', (err: NodeJS.ErrnoException) => {
+    if (err?.code === 'EPIPE' || err?.code === 'ERR_STREAM_DESTROYED') return
+    // Re-emit anything else so real stream failures still surface.
+    if (stream.listenerCount('error') <= 1) {
+      // no other handlers — avoid throwing from the error event itself
+    }
+  })
+}
+ignoreEpipe(process.stdout)
+ignoreEpipe(process.stderr)
+process.on('uncaughtException', (err: NodeJS.ErrnoException) => {
+  // Broken stdio / dead IPC frame — never fatal.
+  if (err?.code === 'EPIPE' || err?.code === 'ERR_STREAM_DESTROYED') return
+  const msg = String(err?.message ?? err ?? '')
+  if (/EPIPE|ERR_STREAM_DESTROYED/i.test(msg)) return
+  try {
+    console.error('[uncaughtException]', err)
+  } catch {
+    // stdout may already be dead
+  }
+})
 
 // Branding before ready so the menu bar reads "vav" instead of "Electron".
 applyBranding()
@@ -128,7 +160,9 @@ const fileService = new FileService((conversationId, dirs) => {
 
 const ptyManager = new PtyManager(
   (tabId, data) => send(IPC.ptyData, { tabId, data }),
-  (tabId) => send(IPC.ptyExit, tabId)
+  (tabId) => send(IPC.ptyExit, tabId),
+  // Every window re-hydrates tab maps from main — no per-renderer PTY ownership.
+  (conversationId) => send(IPC.ptyChanged, { conversationId })
 )
 
 /** Conversation ids with a live or paused turn — drives the tray badge/menu. */
@@ -139,7 +173,7 @@ function focusConversation(conversationId: string): void {
   showMainWindow()
   const send = (): void => {
     if (!mainWindow || mainWindow.isDestroyed()) return
-    mainWindow.webContents.send(IPC.cliOpen, { conversationId, toast: null })
+    safeSend(mainWindow.webContents, IPC.cliOpen, { conversationId, toast: null })
   }
   // Main may still be loading after create/show — wait so the renderer
   // has onCliOpen wired before we ask it to select the session.
@@ -268,6 +302,8 @@ const changeSetStore = new ChangeSetStore()
 const updateService = new UpdateService()
 const documentRetrieval = new DocumentRetrievalService()
 fileService.retrieval = documentRetrieval
+const webSearch = new WebSearchService()
+const webFetch = new WebFetchService()
 
 const agent = new AgentRuntime({
   conversations: conversationStore,
@@ -276,6 +312,8 @@ const agent = new AgentRuntime({
   files: fileService,
   changeSets: changeSetStore,
   retrieval: documentRetrieval,
+  webSearch,
+  webFetch,
   fileSessions: fileSessionStore,
   emit: handleAgentEvent
 })
@@ -291,22 +329,90 @@ function send(channel: string, payload: unknown): void {
   broadcast(channel, payload)
 }
 
-function broadcast(channel: string, payload: unknown): void {
-  for (const window of BrowserWindow.getAllWindows()) {
-    if (!window.isDestroyed()) window.webContents.send(channel, payload)
+/** IPC to a renderer that may already be tearing down (close / HMR / pkill). */
+function safeSend(contents: Electron.WebContents | null | undefined, channel: string, payload?: unknown): void {
+  if (!contents || contents.isDestroyed()) return
+  try {
+    if (payload === undefined) contents.send(channel)
+    else contents.send(channel, payload)
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException)?.code
+    if (code === 'EPIPE' || code === 'ERR_STREAM_DESTROYED') return
+    // Frame can vanish between isDestroyed check and send under load.
   }
 }
 
+function broadcast(channel: string, payload: unknown): void {
+  for (const window of BrowserWindow.getAllWindows()) {
+    if (window.isDestroyed()) continue
+    safeSend(window.webContents, channel, payload)
+  }
+}
+
+/** Debounce twin fires (menu accelerator + before-input, or key repeat). */
+let lastMenuCommandAt = 0
+let lastMenuCommand: MenuCommand | null = null
+
 /** Accelerators act on the window the user is actually looking at. */
 function sendMenuCommand(command: MenuCommand): void {
+  const now = Date.now()
+  if (command === lastMenuCommand && now - lastMenuCommandAt < 80) return
+  lastMenuCommand = command
+  lastMenuCommandAt = now
   const target = BrowserWindow.getFocusedWindow() ?? mainWindow
   if (target && !target.isDestroyed() && target !== settingsWindow) {
-    target.webContents.send(IPC.menuCommand, command)
+    safeSend(target.webContents, IPC.menuCommand, command)
   }
+}
+
+/**
+ * Re-dispatch product shortcuts when focus is inside xterm (or any input).
+ * Menu accelerators alone often never fire once the terminal helper textarea
+ * owns keyboard focus — `before-input-event` runs first and is reliable.
+ */
+function wireMenuAccelerators(contents: Electron.WebContents): void {
+  contents.on('before-input-event', (event, input) => {
+    const command = menuCommandFromInput(input)
+    if (!command) return
+    event.preventDefault()
+    // open-settings is owned by main (native window), not the renderer list.
+    if (command === 'open-settings') {
+      openSettingsWindow()
+      return
+    }
+    sendMenuCommand(command)
+  })
+}
+
+/** When a window dies, drop its PTY size votes so max-across-viewers updates. */
+function wirePtyViewerLifecycle(contents: Electron.WebContents): void {
+  const viewerId = contents.id
+  contents.once('destroyed', () => {
+    ptyManager.releaseViewer(viewerId)
+  })
+}
+
+/** ⌘⇧↵ empty shells stay ephemeral until the user does something durable. */
+function promoteEphemeralConversation(conversationId: string): void {
+  if (!conversationId) return
+  ephemeralConversations.delete(conversationId)
 }
 
 function publishConversations(): void {
   broadcast(IPC.convChanged, conversationStore.listMeta())
+}
+
+/** Conversation ids with a live companion window — main UI must not dual-attach PTYs. */
+function listDetachedConversationIds(): string[] {
+  const ids: string[] = []
+  for (const [id, win] of detachedWindows) {
+    if (win && !win.isDestroyed()) ids.push(id)
+  }
+  return ids
+}
+
+function publishDetachedSessions(): void {
+  broadcast(IPC.windowDetachedChanged, listDetachedConversationIds())
 }
 
 // ---------------------------------------------------------------------------
@@ -445,7 +551,7 @@ function wirePreviewLifecycle(window: BrowserWindow, path: string): void {
     if (quitting) return
     if (!previewCloseGuards.has(window)) return
     event.preventDefault()
-    window.webContents.send(IPC.previewCloseAttempt)
+    safeSend(window.webContents, IPC.previewCloseAttempt)
   })
   window.on('closed', () => {
     if (idleTimer) clearTimeout(idleTimer)
@@ -477,7 +583,7 @@ function wirePreviewLifecycle(window: BrowserWindow, path: string): void {
 function wireFullscreenState(window: BrowserWindow): void {
   const publish = (): void => {
     if (window.isDestroyed()) return
-    window.webContents.send(IPC.windowFullscreen, window.isFullScreen())
+    safeSend(window.webContents, IPC.windowFullscreen, window.isFullScreen())
   }
   window.on('enter-full-screen', publish)
   window.on('leave-full-screen', publish)
@@ -515,6 +621,8 @@ function createWindow(): BrowserWindow {
   }
 
   wireExternalLinks(window.webContents)
+  wireMenuAccelerators(window.webContents)
+  wirePtyViewerLifecycle(window.webContents)
   wireFullscreenState(window)
 
   // Log even when the branded Electron binary reports isPackaged=true (common in
@@ -550,7 +658,7 @@ function loadRenderer(window: BrowserWindow, query: Record<string, string> = {})
 
 function openSettingsWindow(view: SettingsView = 'api'): void {
   if (settingsWindow && !settingsWindow.isDestroyed()) {
-    settingsWindow.webContents.send(IPC.settingsView, view)
+    safeSend(settingsWindow.webContents, IPC.settingsView, view)
     settingsWindow.show()
     settingsWindow.focus()
     return
@@ -676,8 +784,9 @@ function raiseDetachedWindow(win: BrowserWindow): void {
  * Opens one conversation in its own window: transcript, tools and composer,
  * no sidebar.
  *
- * The main window is deliberately left alone — its selection and transcript do
- * not move. Detaching is "also show it over here", not "hand it over".
+ * The main window is deliberately left alone — its selection, transcript,
+ * bounds, and PTY size votes are independent. Detaching is "also show it over
+ * here", not "hand it over" or "resize the main window to companion size".
  */
 function openDetachedWindow(
   conversationId: string,
@@ -686,12 +795,16 @@ function openDetachedWindow(
   const existing = detachedWindows.get(conversationId)
   if (existing && !existing.isDestroyed()) {
     raiseDetachedWindow(existing)
-    existing.webContents.send(IPC.menuCommand, 'focus-composer')
+    safeSend(existing.webContents, IPC.menuCommand, 'focus-composer')
     return existing
   }
 
   const conversation = conversationStore.get(conversationId)
   if (!conversation) return null
+
+  // Snapshot main bounds so we can assert we never mutated them (debug aid).
+  const mainBoundsBefore =
+    mainWindow && !mainWindow.isDestroyed() ? mainWindow.getBounds() : null
 
   const bounds = detachedBounds(detachedWindows.size)
 
@@ -705,6 +818,8 @@ function openDetachedWindow(
     ...chrome(38),
     // Companion column — never enter macOS fullscreen itself.
     fullscreenable: false,
+    // Not a child of main — child windows can inherit geometry quirks on macOS.
+    parent: undefined,
     webPreferences: rendererPrefs()
   })
 
@@ -713,6 +828,8 @@ function openDetachedWindow(
   // when switching into other apps’ fullscreen Spaces.
 
   detachedWindows.set(conversationId, window)
+  // Main window must drop its live agent xterm for this id (exclusive PTY view).
+  publishDetachedSessions()
 
   // Raise exactly once when the window is ready — a second raise on
   // did-finish-load re-focused the frame and made the shadow flicker.
@@ -725,9 +842,15 @@ function openDetachedWindow(
   // is not going away, it just goes back to being a row in the sidebar.
   window.on('closed', () => {
     detachedWindows.delete(conversationId)
+    publishDetachedSessions()
     if (ephemeralConversations.delete(conversationId)) {
       const stale = conversationStore.get(conversationId)
-      if (stale && stale.messages.length === 0) {
+      // Empty *chat* is not empty work: a CLI agent host (Grok / Cursor / …)
+      // or any PTY means the user already invested in this session.
+      const agentActive =
+        !!stale?.agentBinaryName && stale.agentBinaryName !== 'vav'
+      const hasPty = ptyManager.hasConversation(conversationId)
+      if (stale && stale.messages.length === 0 && !agentActive && !hasPty) {
         const removed = conversationStore.remove([conversationId])
         for (const id of removed) {
           agent.disposeConversation(id)
@@ -741,6 +864,8 @@ function openDetachedWindow(
   })
 
   wireExternalLinks(window.webContents)
+  wireMenuAccelerators(window.webContents)
+  wirePtyViewerLifecycle(window.webContents)
 
   if (!app.isPackaged) {
     window.webContents.on('console-message', (event) => {
@@ -751,12 +876,52 @@ function openDetachedWindow(
   const query: Record<string, string> = { view: 'session', conversationId }
   if (options.collapseTools) query.collapseTools = '1'
   loadRenderer(window, query)
+
+  // Hard invariant: opening a companion must never resize the main window.
+  if (mainBoundsBefore && mainWindow && !mainWindow.isDestroyed()) {
+    const after = mainWindow.getBounds()
+    if (
+      after.width !== mainBoundsBefore.width ||
+      after.height !== mainBoundsBefore.height ||
+      after.x !== mainBoundsBefore.x ||
+      after.y !== mainBoundsBefore.y
+    ) {
+      console.warn('[window] main bounds changed during openDetached — restoring', {
+        before: mainBoundsBefore,
+        after
+      })
+      mainWindow.setBounds(mainBoundsBefore)
+    }
+  }
+
   return window
+}
+
+function previewQuery(
+  path: string,
+  options?: { origin?: 'dock' | 'session'; conversationId?: string }
+): Record<string, string> {
+  const query: Record<string, string> = {
+    view: 'file-preview',
+    path,
+    origin: options?.origin ?? 'session'
+  }
+  if (options?.conversationId) query.conversationId = options.conversationId
+  return query
+}
+
+/** Remove a preview window entry by window identity (path may have been remapped). */
+function forgetPreviewWindow(window: BrowserWindow): void {
+  for (const [key, win] of previewWindows) {
+    if (win === window) previewWindows.delete(key)
+  }
 }
 
 /**
  * File preview in its own window (file-preview.rpml).
  * Reopening the same path raises the existing window.
+ * From an already-open preview (e.g. Enclosed dir → sibling file), navigate
+ * that window in place instead of stacking another BrowserWindow.
  */
 function openFilePreviewWindow(
   filePath: string,
@@ -771,6 +936,32 @@ function openFilePreviewWindow(
     existing.show()
     existing.focus()
     return
+  }
+
+  // Enclosed dir / Files tray inside a preview: open the new path here.
+  const focused = BrowserWindow.getFocusedWindow()
+  if (focused && !focused.isDestroyed()) {
+    let focusedKey: string | null = null
+    for (const [key, win] of previewWindows) {
+      if (win === focused) {
+        focusedKey = key
+        break
+      }
+    }
+    if (focusedKey != null) {
+      previewWindows.delete(focusedKey)
+      previewWindows.set(path, focused)
+      try {
+        focused.setTitle(basename(path))
+      } catch {
+        // ignore
+      }
+      loadRenderer(focused, previewQuery(path, options))
+      if (focused.isMinimized()) focused.restore()
+      focused.show()
+      focused.focus()
+      return
+    }
   }
 
   const anchor = BrowserWindow.getFocusedWindow() ?? mainWindow
@@ -799,7 +990,7 @@ function openFilePreviewWindow(
   previewWindows.set(path, window)
   window.once('ready-to-show', () => window.show())
   window.on('closed', () => {
-    previewWindows.delete(path)
+    forgetPreviewWindow(window)
   })
   wirePreviewLifecycle(window, path)
   // Same as main window: drop traffic-light lead inset when fullscreen so the
@@ -807,6 +998,8 @@ function openFilePreviewWindow(
   wireFullscreenState(window)
 
   wireExternalLinks(window.webContents)
+  wireMenuAccelerators(window.webContents)
+  wirePtyViewerLifecycle(window.webContents)
 
   if (!app.isPackaged) {
     window.webContents.on('console-message', (event) => {
@@ -814,13 +1007,7 @@ function openFilePreviewWindow(
     })
   }
 
-  const query: Record<string, string> = {
-    view: 'file-preview',
-    path,
-    origin: options?.origin ?? 'session'
-  }
-  if (options?.conversationId) query.conversationId = options.conversationId
-  loadRenderer(window, query)
+  loadRenderer(window, previewQuery(path, options))
 }
 
 type TokenUsageAnchor = { x: number; y: number; width: number; height: number }
@@ -876,7 +1063,7 @@ function sendTokenUsagePayload(conversationId: string): void {
   if (!tokenUsageWindow || tokenUsageWindow.isDestroyed()) return
   const payload = buildTokenUsagePayload(conversationId)
   if (!payload) return
-  tokenUsageWindow.webContents.send(IPC.tokenUsageView, payload)
+  safeSend(tokenUsageWindow.webContents, IPC.tokenUsageView, payload)
 }
 
 function pushTokenUsageIfOpen(conversationId: string): void {
@@ -1147,10 +1334,10 @@ function newDetachedSession(): void {
   const now = Date.now()
   if (now - lastDetachedSessionAt < 450) return
   lastDetachedSessionAt = now
-  const conversation = conversationStore.create(
-    resolveNewWorkdir(),
-    settingsStore.get().defaultModel
-  )
+  const settings = settingsStore.get()
+  const conversation = conversationStore.create(resolveNewWorkdir(), settings.defaultModel, {
+    approvalMode: settings.defaultApprovalMode ?? 'auto'
+  })
   ephemeralConversations.add(conversation.id)
   publishConversations()
   // ⌘⇧↵: tools panel starts collapsed (main-chat.rpml).
@@ -1360,10 +1547,13 @@ function openWorkspaceSession(options: {
   }
   const resolved = workdir ?? resolveNewWorkdir()
   if (workdir) {
-    const settings = settingsStore.rememberWorkspaceDirectory(workdir, tmpdir())
-    broadcast(IPC.settingsChanged, { ...settings, apiKeyPresent: secretStore.has() })
+    settingsStore.rememberWorkspaceDirectory(workdir, tmpdir())
+    broadcast(IPC.settingsChanged, currentSettings())
   }
-  const conversation = conversationStore.create(resolved, settingsStore.get().defaultModel)
+  const sessionSettings = settingsStore.get()
+  const conversation = conversationStore.create(resolved, sessionSettings.defaultModel, {
+    approvalMode: sessionSettings.defaultApprovalMode ?? 'auto'
+  })
   publishConversations()
   const payload = {
     conversationId: conversation.id,
@@ -1372,7 +1562,7 @@ function openWorkspaceSession(options: {
   }
   const send = (): void => {
     if (!mainWindow || mainWindow.isDestroyed()) return
-    mainWindow.webContents.send(IPC.cliOpen, payload)
+    safeSend(mainWindow.webContents, IPC.cliOpen, payload)
   }
   if (mainWindow && !mainWindow.isDestroyed() && mainWindow.webContents.isLoading()) {
     mainWindow.webContents.once('did-finish-load', () => setTimeout(send, 50))
@@ -1511,7 +1701,11 @@ function resolveNewWorkdir(): string {
 // ---------------------------------------------------------------------------
 
 function currentSettings(): AppSettings {
-  return { ...settingsStore.get(), apiKeyPresent: secretStore.has() }
+  return {
+    ...settingsStore.get(),
+    apiKeyPresent: secretStore.has('api'),
+    braveSearchKeyPresent: secretStore.has('braveSearch')
+  }
 }
 
 /** CFBundleVersion stand-in: YYYY.MMDD.patch from package version + calendar day. */
@@ -1578,7 +1772,8 @@ function registerIpc(): void {
   })
 
   ipcMain.handle(IPC.settingsReset, () => {
-    secretStore.clear()
+    secretStore.clear('api')
+    secretStore.clear('braveSearch')
     const next = settingsStore.reset()
     setLocalePreference(next.locale)
     applyTheme(next.theme)
@@ -1590,17 +1785,24 @@ function registerIpc(): void {
   })
 
   ipcMain.handle(IPC.settingsSetKey, (_event, key: string) => {
-    secretStore.set(key)
+    secretStore.set(key, 'api')
     broadcast(IPC.settingsChanged, currentSettings())
-    return { hint: secretStore.maskedHint() }
+    return { hint: secretStore.maskedHint('api') }
   })
 
-  ipcMain.handle(IPC.settingsRevealKey, () => secretStore.get())
-  ipcMain.handle(IPC.settingsKeyHint, () => secretStore.maskedHint())
+  ipcMain.handle(IPC.settingsRevealKey, () => secretStore.get('api'))
+  ipcMain.handle(IPC.settingsKeyHint, () => secretStore.maskedHint('api'))
+
+  ipcMain.handle(IPC.settingsSetBraveSearchKey, (_event, key: string) => {
+    secretStore.set(key, 'braveSearch')
+    broadcast(IPC.settingsChanged, currentSettings())
+    return { hint: secretStore.maskedHint('braveSearch') }
+  })
+  ipcMain.handle(IPC.settingsBraveSearchKeyHint, () => secretStore.maskedHint('braveSearch'))
 
   ipcMain.handle(IPC.settingsValidateKey, async (_event, key: string) => {
     const settings = settingsStore.get()
-    const effective = key?.trim() || secretStore.get()
+    const effective = key?.trim() || secretStore.get('api')
     if (!effective) return { ok: false, message: t('error.noApiKeyShort') }
     return validateApiKey(settings.apiEndpoint, effective, settings.defaultModel)
   })
@@ -1662,12 +1864,15 @@ function registerIpc(): void {
         options && 'workingDirectory' in options
           ? (options.workingDirectory ?? null)
           : resolveNewWorkdir()
-      const model = options?.model?.trim() || settingsStore.get().defaultModel
+      const settings = settingsStore.get()
+      const model = options?.model?.trim() || settings.defaultModel
       if (workdir) {
-        const settings = settingsStore.rememberWorkspaceDirectory(workdir, tmpdir())
-        broadcast(IPC.settingsChanged, { ...settings, apiKeyPresent: secretStore.has() })
+        settingsStore.rememberWorkspaceDirectory(workdir, tmpdir())
+        broadcast(IPC.settingsChanged, currentSettings())
       }
-      const conversation = conversationStore.create(workdir, model)
+      const conversation = conversationStore.create(workdir, model, {
+        approvalMode: settings.defaultApprovalMode ?? 'auto'
+      })
       const { messages: _messages, ...meta } = conversation
       void _messages
       publishConversations()
@@ -1739,6 +1944,9 @@ function registerIpc(): void {
     IPC.convSetAgentBinary,
     (_event, id: string, agentBinaryName: string | null) => {
       conversationStore.updateMeta(id, { agentBinaryName })
+      // Selecting a CLI agent (or returning to vav after one) is durable intent —
+      // never auto-delete this ⌘⇧↵ session when the companion window closes.
+      if (agentBinaryName) promoteEphemeralConversation(id)
       publishConversations()
       return conversationStore.listMeta()
     }
@@ -1763,8 +1971,8 @@ function registerIpc(): void {
     conversationStore.updateMeta(id, { workingDirectory: path })
     agent.setWorkingDirectory(id, path)
     fileService.watchRoot(id, path)
-    const settings = settingsStore.rememberWorkspaceDirectory(path, tmpdir())
-    broadcast(IPC.settingsChanged, { ...settings, apiKeyPresent: secretStore.has() })
+    settingsStore.rememberWorkspaceDirectory(path, tmpdir())
+    broadcast(IPC.settingsChanged, currentSettings())
     publishConversations()
     return conversationStore.listMeta()
   }
@@ -1846,11 +2054,19 @@ function registerIpc(): void {
       text: string,
       attachments: string[],
       quote?: import('@shared/types').QuoteDraft | null,
-      contextBlocks?: import('@shared/types').PreviewRef[] | null
+      contextBlocks?: import('@shared/types').PreviewRef[] | null,
+      contextFile?: string | null
     ) => {
       // Not awaited: the turn streams for as long as it needs, and the renderer
       // is driven entirely by turn events.
-      void agent.run(id, text, attachments ?? [], quote ?? null, contextBlocks ?? null)
+      void agent.run(
+        id,
+        text,
+        attachments ?? [],
+        quote ?? null,
+        contextBlocks ?? null,
+        contextFile ?? null
+      )
     }
   )
   ipcMain.handle(IPC.agentCancel, (_event, id: string) => agent.cancel(id))
@@ -1875,6 +2091,11 @@ function registerIpc(): void {
       fileService.listDirectory(path, sort, ascending)
   )
   ipcMain.handle(IPC.filesRead, (_event, path: string) => fileService.readTextFile(path))
+  ipcMain.handle(
+    IPC.filesReadTextWindow,
+    (_event, path: string, opts?: { startByte?: number; maxBytes?: number }) =>
+      fileService.readTextWindow(path, opts)
+  )
   ipcMain.handle(IPC.filesReadBinary, (_event, path: string) => fileService.readBinary(path))
   ipcMain.handle(IPC.filesWriteBinary, (_event, path: string, base64: string) =>
     fileService.writeBinary(path, base64)
@@ -1947,15 +2168,23 @@ function registerIpc(): void {
   ) => ({ fileId, activeSessionId, sessions })
 
   ipcMain.handle(IPC.fileSessionsOpen, async (_event, path: string) => {
-    const model = settingsStore.get().defaultModel
-    const opened = await fileSessionStore.open(path, model)
+    const settings = settingsStore.get()
+    const opened = await fileSessionStore.open(
+      path,
+      settings.defaultModel,
+      settings.defaultApprovalMode ?? 'auto'
+    )
     // Don't broadcast file sessions into the main sidebar list (already filtered).
     return toFileSessionsState(opened.fileId, opened.activeSessionId, opened.sessions)
   })
 
   ipcMain.handle(IPC.fileSessionsCreate, async (_event, path: string) => {
-    const model = settingsStore.get().defaultModel
-    const created = await fileSessionStore.createSession(path, model)
+    const settings = settingsStore.get()
+    const created = await fileSessionStore.createSession(
+      path,
+      settings.defaultModel,
+      settings.defaultApprovalMode ?? 'auto'
+    )
     return toFileSessionsState(created.fileId, created.activeSessionId, created.sessions)
   })
 
@@ -2032,8 +2261,10 @@ function registerIpc(): void {
       cols: number,
       rows: number,
       options?: import('@shared/ipc').PtyCreateOptions | string
-    ) =>
-      ptyManager.create(
+    ) => {
+      // Spawning a shell or CLI agent host is enough to keep a ⌘⇧↵ session.
+      promoteEphemeralConversation(conversationId)
+      return ptyManager.create(
         conversationId,
         settingsStore.get().shell,
         cwd,
@@ -2041,15 +2272,31 @@ function registerIpc(): void {
         rows,
         options
       )
+    }
   )
-  ipcMain.handle(IPC.ptyWrite, (_event, tabId: string, data: string) =>
+  // Fire-and-forget: high-frequency input (keys, mouse wheel in TUI mouse mode)
+  // and resize storms must not pay an invoke round-trip per event.
+  ipcMain.on(IPC.ptyWrite, (_event, tabId: unknown, data: unknown) => {
+    if (typeof tabId !== 'string' || typeof data !== 'string') return
     ptyManager.write(tabId, data)
-  )
-  ipcMain.handle(IPC.ptyResize, (_event, tabId: string, cols: number, rows: number) =>
-    ptyManager.resize(tabId, cols, rows)
+  })
+  ipcMain.on(
+    IPC.ptyResize,
+    (event, tabId: unknown, cols: unknown, rows: unknown, force?: unknown) => {
+      if (typeof tabId !== 'string' || typeof cols !== 'number' || typeof rows !== 'number') return
+      if (!Number.isFinite(cols) || !Number.isFinite(rows)) return
+      // Focused viewer drives size; force=true re-delivers SIGWINCH after alt rebuild.
+      ptyManager.resize(tabId, cols, rows, event.sender.id, force === true)
+    }
   )
   ipcMain.handle(IPC.ptyKill, (_event, tabId: string) => ptyManager.kill(tabId))
   ipcMain.handle(IPC.ptyIsBusy, (_event, tabId: string) => ptyManager.isBusy(tabId))
+  ipcMain.handle(IPC.ptyList, (_event, conversationId: string) =>
+    ptyManager.listForConversation(String(conversationId || ''))
+  )
+  ipcMain.handle(IPC.ptyReplay, (_event, tabId: string) =>
+    ptyManager.replay(String(tabId || ''))
+  )
 
   // --- window ---
   ipcMain.handle(IPC.windowSetTheme, (_event, theme: AppSettings['theme']) => applyTheme(theme))
@@ -2064,7 +2311,17 @@ function registerIpc(): void {
   ipcMain.handle(IPC.windowRevealInList, (_event, id: string) => {
     revealConversationInList(String(id || ''))
   })
+  ipcMain.handle(IPC.windowCloseDetached, (_event, id: string) => {
+    const conversationId = String(id || '')
+    if (!conversationId) return
+    const win = detachedWindows.get(conversationId)
+    if (win && !win.isDestroyed()) {
+      // closed handler publishes detached list + lets main remount the PTY host.
+      win.close()
+    }
+  })
   ipcMain.handle(IPC.windowNewDetached, () => newDetachedSession())
+  ipcMain.handle(IPC.windowListDetached, () => listDetachedConversationIds())
   ipcMain.handle(
     IPC.windowOpenFilePreview,
     (
@@ -2216,7 +2473,10 @@ async function seedSmokeChangeReview(): Promise<void> {
   let meta = conversationStore.listMeta().find((c) => !c.archived)
   if (!meta) {
     console.log('[smoke] minting conversation for seed')
-    const created = conversationStore.create(resolveNewWorkdir(), settingsStore.get().defaultModel)
+    const s = settingsStore.get()
+    const created = conversationStore.create(resolveNewWorkdir(), s.defaultModel, {
+      approvalMode: s.defaultApprovalMode ?? 'auto'
+    })
     meta = conversationStore.listMeta().find((c) => c.id === created.id)
     broadcast(IPC.convChanged, conversationStore.listMeta())
     await new Promise((r) => setTimeout(r, 400))
@@ -2325,9 +2585,56 @@ if (!singleInstance) {
           method: request.method
         })
         const ext = extname(filePath).toLowerCase()
-        if (ext === '.pdf') {
+        // Ensure MIME for PDF streaming and HTML sibling assets (css/img/fonts).
+        const mimeByExt: Record<string, string> = {
+          '.pdf': 'application/pdf',
+          '.css': 'text/css; charset=utf-8',
+          '.js': 'text/javascript; charset=utf-8',
+          '.mjs': 'text/javascript; charset=utf-8',
+          '.html': 'text/html; charset=utf-8',
+          '.htm': 'text/html; charset=utf-8',
+          '.svg': 'image/svg+xml',
+          '.png': 'image/png',
+          '.jpg': 'image/jpeg',
+          '.jpeg': 'image/jpeg',
+          '.gif': 'image/gif',
+          '.webp': 'image/webp',
+          '.avif': 'image/avif',
+          '.bmp': 'image/bmp',
+          '.ico': 'image/x-icon',
+          '.heic': 'image/heic',
+          '.heif': 'image/heif',
+          '.tif': 'image/tiff',
+          '.tiff': 'image/tiff',
+          '.mp3': 'audio/mpeg',
+          '.wav': 'audio/wav',
+          '.m4a': 'audio/mp4',
+          '.aac': 'audio/aac',
+          '.ogg': 'audio/ogg',
+          '.flac': 'audio/flac',
+          '.mp4': 'video/mp4',
+          '.mov': 'video/quicktime',
+          '.webm': 'video/webm',
+          '.mkv': 'video/x-matroska',
+          '.m4v': 'video/x-m4v',
+          '.docx':
+            'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+          '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+          '.pptx':
+            'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+          '.zip': 'application/zip',
+          '.woff': 'font/woff',
+          '.woff2': 'font/woff2',
+          '.ttf': 'font/ttf',
+          '.otf': 'font/otf',
+          '.json': 'application/json',
+          '.map': 'application/json'
+        }
+        const forcedMime = mimeByExt[ext]
+        if (forcedMime) {
           const out = new Headers(response.headers)
-          out.set('Content-Type', 'application/pdf')
+          out.set('Content-Type', forcedMime)
+          // Range enables seeking for PDF/media/large office.
           out.set('Accept-Ranges', 'bytes')
           return new Response(response.body, {
             status: response.status,

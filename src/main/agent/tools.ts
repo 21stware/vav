@@ -27,6 +27,8 @@ import {
 } from '@shared/types'
 import type { FileService } from '../fs/FileService'
 import type { DocumentRetrievalService } from '../retrieval/DocumentRetrievalService'
+import type { WebSearchService } from '../web/WebSearchService'
+import type { WebFetchService } from '../web/WebFetchService'
 import { BASH_SESSION_ID, type StickyShell } from '../terminal/StickyShell'
 import { unifiedDiff } from './diff'
 
@@ -62,6 +64,12 @@ export interface ToolHost {
   recordWrite?: (filePath: string, originalContent: string | null, newContent: string) => void
   /** Local document RAG (PDF / office / text). */
   retrieval?: DocumentRetrievalService
+  /** Public web search (local HTTP to search backends). */
+  webSearch?: WebSearchService
+  /** Public web fetch + readability extract. */
+  webFetch?: WebFetchService
+  /** Optional Brave Search API key (from SecretStore; never logged). */
+  braveSearchKey?: () => string | null
   /** Selection from the user message that started this turn (for related search). */
   selectionAnchor?: () => PreviewRef[]
   /** File-session path when this conversation is bound to one document. */
@@ -73,7 +81,9 @@ export const READONLY_TOOLS: ReadonlySet<ToolName> = new Set([
   'fs_read',
   'fs_list',
   'doc_search',
-  'doc_fetch'
+  'doc_fetch',
+  'web_search',
+  'web_fetch'
 ])
 /** Auto-mode tools that pause for Approve / Deny. */
 export const HIGH_RISK_TOOLS: ReadonlySet<ToolName> = new Set(['fs_write', 'terminal'])
@@ -256,12 +266,25 @@ export function createTools(host: ToolHost): AgentTool[] {
     name: 'fs_read',
     label: TOOL_LABELS.fs_read,
     description:
-      'Read a UTF-8 text file. Relative paths resolve against the conversation working directory. For PDF/DOCX/XLSX/PPTX use doc_search / doc_fetch instead.',
+      'Read a UTF-8 text file by byte window (default first ~2MB). Pass start_byte / max_bytes to page further — large files are never refused. Relative paths resolve against the workdir. For PDF/DOCX/XLSX/PPTX use doc_search / doc_fetch instead.',
     parameters: Type.Object({
-      path: Type.String({ description: 'File path, absolute or relative to the workdir.' })
+      path: Type.String({ description: 'File path, absolute or relative to the workdir.' }),
+      start_byte: Type.Optional(
+        Type.Number({ description: 'Byte offset to start reading (default 0).' })
+      ),
+      max_bytes: Type.Optional(
+        Type.Number({
+          description: 'Max bytes to return in this window (default ~2MB, hard max 16MB).'
+        })
+      )
     }),
     async execute(_id, params) {
-      const result = await host.files.readTextFile(inWorkdir(params.path))
+      const path = inWorkdir(params.path)
+      const startByte =
+        params.start_byte != null ? Math.max(0, Math.floor(Number(params.start_byte))) : 0
+      const maxBytes =
+        params.max_bytes != null ? Math.floor(Number(params.max_bytes)) : undefined
+      const result = await host.files.readTextWindow(path, { startByte, maxBytes })
       if (result.error) {
         const hint =
           /\.(pdf|docx|xlsx|xls|pptx)$/i.test(String(params.path ?? '')) ||
@@ -270,9 +293,15 @@ export function createTools(host: ToolHost): AgentTool[] {
             : ''
         return failure(`${result.error}${hint}`)
       }
+      const header = result.truncated
+        ? `[bytes ${result.startByte}–${result.endByte} of ${result.totalBytes}; truncated — call again with start_byte=${result.endByte}]\n\n`
+        : result.startByte > 0
+          ? `[bytes ${result.startByte}–${result.endByte} of ${result.totalBytes}]\n\n`
+          : ''
+      const body = header + result.content
       return {
-        content: [{ type: 'text', text: cap(result.content) }],
-        details: { display: result.content }
+        content: [{ type: 'text', text: cap(body) }],
+        details: { display: body }
       }
     }
   })
@@ -483,6 +512,103 @@ export function createTools(host: ToolHost): AgentTool[] {
     }
   })
 
+  const webSearch = defineTool({
+    name: 'web_search',
+    label: TOOL_LABELS.web_search,
+    description:
+      'Search the public web from this machine (no vav cloud proxy). Returns ranked hits with title, url, and snippet. Prefer this over guessing URLs; then use web_fetch on the best results. Localhost / private IPs are blocked for general browsing — optional SearXNG base URL in settings is the exception for search only.',
+    parameters: Type.Object({
+      query: Type.String({ description: 'Search query (keywords or natural language).' }),
+      num_results: Type.Optional(
+        Type.Number({ description: 'How many results to return (default 8, max 12).' })
+      ),
+      site: Type.Optional(
+        Type.String({
+          description: 'Optional host to restrict results (site: filter), e.g. "developer.mozilla.org".'
+        })
+      )
+    }),
+    async execute(_id, params, signal) {
+      if (!host.webSearch) return failure('Web search is unavailable')
+      const query = String(params.query ?? '').trim()
+      if (!query) return failure('Missing query')
+      const settings = host.settings()
+      const result = await host.webSearch.search({
+        query,
+        numResults: params.num_results != null ? Number(params.num_results) : undefined,
+        site: params.site != null ? String(params.site) : undefined,
+        timeoutMs: settings.webTimeoutMs,
+        searxngBaseUrl: settings.webSearxngBaseUrl || undefined,
+        braveApiKey: host.braveSearchKey?.() || undefined,
+        provider: settings.webSearchProvider,
+        signal
+      })
+      if (!result.ok) {
+        return failure(host.webSearch.formatForModel(result))
+      }
+      const text = host.webSearch.formatForModel(result)
+      return {
+        content: [{ type: 'text', text: cap(text) }],
+        details: { display: host.webSearch.formatForDisplay(result) }
+      }
+    }
+  })
+
+  const webFetch = defineTool({
+    name: 'web_fetch',
+    label: TOOL_LABELS.web_fetch,
+    description:
+      'Fetch a public http(s) URL and return readable text (HTML → main article markdown when possible). Use after web_search or when the user gives a URL. Blocks private/localhost addresses. Prefer this over terminal curl for reading pages.',
+    parameters: Type.Object({
+      url: Type.String({ description: 'Absolute http(s) URL to fetch.' }),
+      extract: Type.Optional(
+        Type.String({
+          description:
+            'auto (default: HTML→markdown via Readability), markdown, text, or raw (no extract).'
+        })
+      ),
+      max_chars: Type.Optional(
+        Type.Number({
+          description: 'Max characters of body returned (default 12000, hard max 40000).'
+        })
+      ),
+      start_line: Type.Optional(
+        Type.Number({ description: '1-based line offset into the extracted body for long pages.' })
+      )
+    }),
+    async execute(_id, params, signal) {
+      if (!host.webFetch) return failure('Web fetch is unavailable')
+      const url = String(params.url ?? '').trim()
+      if (!url) return failure('Missing url')
+      const extractRaw = params.extract != null ? String(params.extract) : 'auto'
+      const extract =
+        extractRaw === 'markdown' ||
+        extractRaw === 'text' ||
+        extractRaw === 'raw' ||
+        extractRaw === 'auto'
+          ? extractRaw
+          : 'auto'
+      const settings = host.settings()
+      const result = await host.webFetch.fetch({
+        url,
+        extract,
+        maxChars: params.max_chars != null ? Number(params.max_chars) : undefined,
+        startLine: params.start_line != null ? Number(params.start_line) : undefined,
+        timeoutMs: settings.webTimeoutMs,
+        allowRender: settings.webFetchAllowRender,
+        signal
+      })
+      const text = host.webFetch.formatForModel(result)
+      if (!result.ok) {
+        return failure(text)
+      }
+      return {
+        content: [{ type: 'text', text: cap(text) }],
+        details: { display: text }
+      }
+    }
+  })
+
   const request = defineTool({
     name: 'request',
     label: TOOL_LABELS.request,
@@ -497,14 +623,18 @@ export function createTools(host: ToolHost): AgentTool[] {
     executionMode: 'sequential'
   })
 
+  // Hard cap: long choice lists feel like a survey. Other is always available in UI.
+  const ASK_CHOICES_MAX = 4
+  const askChoices = Type.Optional(
+    Type.Array(Type.String(), {
+      maxItems: ASK_CHOICES_MAX,
+      description: `2–${ASK_CHOICES_MAX} short preset answers only. The UI always adds Other — do not invent filler options.`
+    })
+  )
+
   const askQuestionItem = Type.Object({
     question: Type.String({ description: 'The question text.' }),
-    choices: Type.Optional(
-      Type.Array(Type.String(), {
-        description:
-          'Preset answers shown as radio (single) or checkbox (multiSelect). Always prefer providing choices when the answer is one of a small set; the UI also offers a free-form Other field.'
-      })
-    ),
+    choices: askChoices,
     multiSelect: Type.Optional(
       Type.Boolean({
         description: 'When true with choices, the user may select multiple options (checkboxes).'
@@ -516,20 +646,20 @@ export function createTools(host: ToolHost): AgentTool[] {
     name: 'ask_user_question',
     label: TOOL_LABELS.ask_user_question,
     description:
-      'Pause the turn and ask the user one or more questions. Prefer structured choices: single-select (radios) or multi-select (checkboxes) via `choices` / `multiSelect`. Omit choices only for open free-text. Prefer `questions` for several prompts in one card. The UI always lets the user type a custom Other answer alongside any choices.',
+      'Pause the turn and ask the user one or more questions (vav tool, not a pi built-in). Prefer 1–3 questions. For each question give 2–4 short choices max (single- or multi-select); the UI always offers Other — never pad with joke/filler options. Free-text only when choices do not apply. Prefer one `questions` array for related prompts.',
     parameters: Type.Object({
       title: Type.Optional(Type.String({ description: 'Card title when asking several questions.' })),
       question: Type.Optional(Type.String({ description: 'Single-question form.' })),
-      choices: Type.Optional(
-        Type.Array(Type.String(), {
-          description:
-            'Preset answers for the single-question form (radio or checkbox). Prefer this over free-text when options are known.'
-        })
-      ),
+      choices: askChoices,
       multiSelect: Type.Optional(
         Type.Boolean({ description: 'When true with choices, allow selecting multiple options.' })
       ),
-      questions: Type.Optional(Type.Array(askQuestionItem))
+      questions: Type.Optional(
+        Type.Array(askQuestionItem, {
+          maxItems: 5,
+          description: 'Related questions (max 5). One question per step in the UI.'
+        })
+      )
     }),
     execute: async (id, params) => {
       const questions = normalizeAskQuestions(params as Record<string, unknown>)
@@ -553,8 +683,15 @@ export function createTools(host: ToolHost): AgentTool[] {
   const plan = defineTool({
     name: 'plan',
     label: TOOL_LABELS.plan,
-    description:
-      'Create or update a visible plan checklist for the current turn. Call once to introduce steps (all pending), then again whenever a step changes status. Exactly one step may be executing at a time.',
+    description: [
+      'Create or update the visible multi-step checklist for this turn.',
+      'Call once at the start with all steps pending (or one executing).',
+      'Call again whenever a step changes: mark finished work done, set exactly one step executing while you work on it.',
+      'Before your final user-facing answer — when the overall task is complete — call plan one last time with every completed step status "done".',
+      'Do not stop the turn while steps you finished are still pending; the UI only updates when you call this tool.',
+      'If you abandon remaining work, mark those steps "skipped" (or "error") instead of leaving them pending.',
+      'Exactly one step may be "executing" at a time.'
+    ].join(' '),
     parameters: Type.Object({
       title: Type.String({ description: 'Short plan title shown in the card header.' }),
       steps: Type.Array(
@@ -577,9 +714,18 @@ export function createTools(host: ToolHost): AgentTool[] {
       const title = String(params.title ?? 'Plan').trim() || 'Plan'
       const steps = normalizePlanSteps(params.steps)
       const done = steps.filter((step) => step.status === 'done').length
+      const open = steps.filter(
+        (step) => step.status === 'pending' || step.status === 'executing'
+      ).length
       const summary = `Plan · ${title} (${done}/${steps.length})`
+      // Reminder stays in model-facing content so the next step of the loop
+      // still sees incomplete checklist items after a partial update.
+      const reminder =
+        open > 0
+          ? `\n${open} step(s) still open. Before your final answer, call plan again so finished work is "done" (or "skipped" if abandoned).`
+          : '\nAll steps closed.'
       return {
-        content: [{ type: 'text', text: summary }],
+        content: [{ type: 'text', text: summary + reminder }],
         details: { display: summary }
       }
     }
@@ -594,6 +740,8 @@ export function createTools(host: ToolHost): AgentTool[] {
     fsList,
     docSearch,
     docFetch,
+    webSearch,
+    webFetch,
     request,
     askUserQuestion,
     plan
@@ -720,17 +868,28 @@ export function buildSystemPrompt(
       ? '- `fs_read` / `fs_list` operate on the local filesystem. `fs_write` is unavailable.'
       : '- `fs_read` / `fs_write` / `fs_list` operate on the local filesystem.',
     '- `doc_search` / `doc_fetch` — local retrieval over PDF, Word, Excel, PowerPoint, CSV/TSV, and text. Prefer these over terminal/python for office/PDF content. Do not install python-docx/pdf tools when doc_search can read the file.',
-    '- `request` and `ask_user_question` pause the turn to involve the user.',
-    '- `plan` maintains a visible checklist for multi-step work; update it as steps progress.',
+    '- `web_search` / `web_fetch` — public web from this machine (Brave if key configured, else optional SearXNG, else DuckDuckGo HTML). Search first, then fetch promising URLs. HTML/PDF/text/JSON supported; private/localhost URLs are blocked. Prefer these over `terminal` curl/wget for reading pages.',
+    '- `request` and `ask_user_question` pause the turn to involve the user (vav tools).',
+    '- `plan` — visible checklist for multi-step work. The UI only updates when you call it; finishing tools alone does not check steps off.',
     '',
-    'Guidelines:',
+    'File-preview edit loop (product model):',
+    '1) View — user sees a format-correct canvas (windowed/streamed; never refuse on size).',
+    '2) Block select — user picks structural blocks, not a free-form code editor.',
+    '3) Dialogue — selected blocks + notes are anchors; gather evidence with tools.',
+    '4) Agent edit — you propose/apply changes; the user does not hand-edit bytes as the primary path.',
+    '5) Save — user reviews (Change Review) then accepts or discards.',
     options?.fileReadOnly
-      ? '- This file is read-only. You may read and analyze it but must not propose file modifications.'
-      : '- Inspect before you edit: read the file, then write the complete new contents.',
+      ? '- This session is read-only: analyze only; do not write the file.'
+      : '- For text files: inspect with windowed `fs_read`, then `fs_write` the complete new contents when editing.',
+    '- For PDF/Office binary: prefer `doc_search` / `doc_fetch`; do not UTF-8-overwrite OOXML/PDF.',
     '- Selected context in the user message is only an anchor; call `doc_search` when you need more evidence from the same document.',
-    '- Cite retrieved passages with their `[doc:…]` ids.',
+    '- Cite retrieved passages with their `[doc:…]` ids; cite web sources by url or `[web:N]`.',
     '- Ask via `request` before destructive or irreversible operations.',
+    '- `ask_user_question`: keep it short — few questions, 2–4 real choices each (UI adds Other). No long option menus or joke fillers.',
     '- For several related questions, prefer one `ask_user_question` with a `questions` array.',
+    // Plan lifecycle — models often finish the work then reply without a last plan call.
+    '- When you open a `plan`, keep it truthful: after each meaningful step call `plan` again (done / executing).',
+    '- Before your final reply on a planned task, call `plan` once more so every completed step is `done`. Mark leftover work `skipped` or `error` — do not leave finished work as `pending`.',
     '- Keep replies concise and in the language the user writes in.',
     '- Format code and command output as fenced markdown blocks.',
     '- There is no hard tool-iteration cap; stop when the task is done or ask the user.'
@@ -779,6 +938,12 @@ export function summarizeToolInput(tool: ToolName, input: Record<string, unknown
         `${String(input.path ?? '')} ids=${JSON.stringify(input.ids ?? [])} page=${String(input.page ?? '')}`,
         120
       )
+    case 'web_search': {
+      const site = input.site ? ` site:${String(input.site)}` : ''
+      return truncate(`${String(input.query ?? '')}${site}`.trim(), 120)
+    }
+    case 'web_fetch':
+      return truncate(String(input.url ?? ''), 120)
     case 'request':
       return truncate(String(input.instruction ?? ''), 120)
     case 'ask_user_question': {

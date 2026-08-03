@@ -4,20 +4,44 @@ import {
   ChevronRight,
   Copy,
   CornerUpLeft,
+  FileDiff,
+  FileText,
   GitBranch,
+  MessageSquare,
+  Paperclip,
   Pencil,
   Quote,
-  RotateCcw
+  RotateCcw,
+  Undo2
 } from 'lucide-react'
-import type { ChatMessage } from '@shared/types'
+import type { ChatMessage, PreviewRef } from '@shared/types'
 import { showMenu, type MenuItem } from '../lib/nativeMenu'
+import { basename } from '../lib/path'
+import { formatBadge } from '../lib/previewBlocks'
 import { useSessionStore } from '../state/sessionStore'
 import { useT } from '../i18n/useT'
+import { InlineChangeReview } from './InlineChangeReview'
 import { MarkdownView } from './MarkdownView'
 import { ReasoningBlock } from './ReasoningBlock'
 import { StreamStatus } from './StreamStatus'
 import { ToolCard } from './ToolCard'
 import { Button } from './ui'
+
+/** Paths touched by write/delete tools on this assistant message. */
+function writePathsOf(message: ChatMessage): string[] {
+  const paths: string[] = []
+  for (const block of message.blocks) {
+    if (block.kind !== 'toolCall') continue
+    if (block.tool !== 'fs_write') continue
+    try {
+      const input = JSON.parse(block.input) as { path?: string }
+      if (input.path) paths.push(input.path)
+    } catch {
+      // ignore
+    }
+  }
+  return [...new Set(paths)]
+}
 
 interface MessageRowProps {
   message: ChatMessage
@@ -175,10 +199,11 @@ export const MessageRow = memo(function MessageRow({
       )
     }
 
-    const lineCount = message.content.split('\n').length
-    const collapsible =
-      message.content.length > USER_COLLAPSE_CHARS || lineCount > USER_COLLAPSE_LINES
+    const body = message.content
+    const lineCount = body.split('\n').length
+    const collapsible = body.length > USER_COLLAPSE_CHARS || lineCount > USER_COLLAPSE_LINES
     const collapsed = collapsible && !expanded
+    const hasBody = body.trim().length > 0
 
     return (
       <div className="message-turn user" onContextMenu={onContextMenu}>
@@ -195,18 +220,28 @@ export const MessageRow = memo(function MessageRow({
               <span>{message.quoteSummary}</span>
             </button>
           )}
-          <div
-            className={`${classes}${collapsed ? ' is-collapsed' : ''}`}
-            id={`msg-${message.id}`}
-          >
-            {message.content}
-          </div>
+          <UserMessageContext
+            contextFile={message.contextFile}
+            contextBlocks={message.contextBlocks}
+            attachments={message.attachments}
+          />
+          {hasBody && (
+            <div
+              className={`${classes}${collapsed ? ' is-collapsed' : ''}`}
+              id={`msg-${message.id}`}
+            >
+              {body}
+            </div>
+          )}
+          {!hasBody && (
+            <div className={`${classes} is-context-only`} id={`msg-${message.id}`} />
+          )}
           <div className="message-actions">
             {onEdit && (
               <Button
                 icon={<Pencil size={12} />}
                 size="sm"
-                title={t('message.editResend')}
+                title={busy ? t('message.editWhileRunning') : t('message.editResend')}
                 disabled={busy}
                 onClick={() => setEditing(true)}
               />
@@ -244,6 +279,7 @@ export const MessageRow = memo(function MessageRow({
           <button
             type="button"
             className="message-collapse-toggle"
+            title={expanded ? t('common.collapse') : t('common.expand')}
             onClick={() => setExpanded((value) => !value)}
           >
             {expanded ? t('common.collapse') : t('common.expand')}
@@ -274,6 +310,12 @@ export const MessageRow = memo(function MessageRow({
 
         {message.cancelled && <div className="message system">{t('message.cancelled')}</div>}
 
+        {message.changeSetId && (
+          <div id={`inline-review-${message.changeSetId}`}>
+            <InlineChangeReview changeSetId={message.changeSetId} />
+          </div>
+        )}
+
         <div className="message-actions">
           <Button
             icon={<Copy size={12} />}
@@ -302,6 +344,97 @@ export const MessageRow = memo(function MessageRow({
               onClick={() => onFork(message.id)}
             />
           )}
+          {message.changeSetId && (
+            <Button
+              icon={<FileDiff size={12} />}
+              size="sm"
+              title={t('message.reviewChanges')}
+              onClick={() => {
+                document
+                  .getElementById(`inline-review-${message.changeSetId}`)
+                  ?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+              }}
+            />
+          )}
+          {writePathsOf(message).length > 0 && (
+            <>
+              <Button
+                icon={<Undo2 size={12} />}
+                size="sm"
+                title={t('message.revertWorkspace')}
+                disabled={busy}
+                onClick={() => {
+                  const paths = writePathsOf(message)
+                  const store = useSessionStore.getState()
+                  void (async () => {
+                    const active = message.changeSetId
+                      ? await window.vav.changeSets.get(message.changeSetId)
+                      : store.pendingReviewByConversation[store.activeId]
+                        ? await window.vav.changeSets.get(
+                            store.pendingReviewByConversation[store.activeId]!.changeSetId
+                          )
+                        : await window.vav.changeSets.active(store.activeId)
+                    if (!active) {
+                      store.showToast({
+                        kind: 'info',
+                        title: t('message.revertWorkspace'),
+                        description: t('review.noPending')
+                      })
+                      return
+                    }
+                    const targets = active.files
+                      .filter(
+                        (f) =>
+                          f.status === 'pending' || f.status === 'accepted' || f.status === 'edited'
+                      )
+                      .map((f) => f.filePath)
+                      .filter((p) => paths.some((w) => p === w || p.endsWith(w) || w.endsWith(p)))
+                    if (targets.length === 0) {
+                      store.showToast({
+                        kind: 'info',
+                        title: t('message.revertWorkspace'),
+                        description: t('review.noPending')
+                      })
+                      return
+                    }
+                    store.showDialog({
+                      title: t('message.revertWorkspace'),
+                      body: t('message.revertConfirm', { n: targets.length }),
+                      confirmLabel: t('message.revertWorkspace'),
+                      destructive: true,
+                      onConfirm: () => {
+                        void (async () => {
+                          // Prefer reject (restores original) for pending; undo for already accepted.
+                          const pendingPaths = active.files
+                            .filter((f) => targets.includes(f.filePath) && f.status === 'pending')
+                            .map((f) => f.filePath)
+                          const acceptedPaths = active.files
+                            .filter(
+                              (f) =>
+                                targets.includes(f.filePath) &&
+                                (f.status === 'accepted' || f.status === 'edited')
+                            )
+                            .map((f) => f.filePath)
+                          if (pendingPaths.length) {
+                            await window.vav.changeSets.reject(active.id, pendingPaths)
+                          }
+                          for (const p of acceptedPaths) {
+                            await window.vav.changeSets.undo(active.id, p)
+                          }
+                          await store.refreshChangeSet()
+                          store.showToast({
+                            kind: 'success',
+                            title: t('message.revertDone'),
+                            description: t('message.revertDoneDesc', { n: targets.length })
+                          })
+                        })()
+                      }
+                    })
+                  })()
+                }}
+              />
+            </>
+          )}
         </div>
 
         <div className="message-footer">
@@ -312,6 +445,109 @@ export const MessageRow = memo(function MessageRow({
     </div>
   )
 })
+
+/**
+ * Read-only replay of composer context: file chip, comment cards, selection
+ * chips, attachment chips — same shapes the user saw when sending.
+ */
+function UserMessageContext({
+  contextFile,
+  contextBlocks,
+  attachments
+}: {
+  contextFile?: string
+  contextBlocks?: PreviewRef[]
+  attachments?: string[]
+}): React.JSX.Element | null {
+  const t = useT()
+  const blocks = contextBlocks ?? []
+  const files = attachments ?? []
+  const commented = blocks.filter((r) => (r.comment ?? '').trim().length > 0)
+  // When comment cards are present, the composer hides the plain selection chips
+  // that duplicate those refs; mirror that: only show chip for uncommented refs.
+  const commentedIds = new Set(commented.map((r) => r.id))
+  const plainRefs = blocks.filter((r) => !commentedIds.has(r.id))
+  // Composer also hides the file chip when comment cards are showing.
+  const showFile = Boolean(contextFile && commented.length === 0)
+
+  if (!showFile && commented.length === 0 && plainRefs.length === 0 && files.length === 0) {
+    return null
+  }
+
+  return (
+    <div className="message-user-context">
+      {showFile && contextFile && (
+        <div className="file-context-chip is-readonly" title={contextFile}>
+          <FileText size={14} aria-hidden />
+          <span className="file-context-chip-label">
+            {[basename(contextFile), formatBadge(contextFile, 'text')].filter(Boolean).join(' · ')}
+            <span className="file-context-chip-suffix"> — {t('composer.fileContextAttached')}</span>
+          </span>
+        </div>
+      )}
+      {commented.length > 0 && (
+        <div className="message-comment-rows" role="list">
+          {commented.map((ref) => {
+            const title =
+              ref.label ||
+              (ref.startLine === ref.endLine
+                ? `L${ref.startLine}`
+                : `L${ref.startLine}–${ref.endLine}`)
+            const note = (ref.comment ?? '').trim()
+            const tip = [
+              ref.filePath,
+              `L${ref.startLine}–${ref.endLine}`,
+              note || null
+            ]
+              .filter(Boolean)
+              .join(' · ')
+            return (
+              <div className="message-comment-row" key={ref.id} role="listitem" title={tip}>
+                <MessageSquare size={12} strokeWidth={2} className="message-comment-row-icon" />
+                <span className="message-comment-row-title">{title}</span>
+                {note ? (
+                  <>
+                    <span className="message-comment-row-sep" aria-hidden>
+                      ·
+                    </span>
+                    <span className="message-comment-row-note">{note}</span>
+                  </>
+                ) : null}
+              </div>
+            )
+          })}
+        </div>
+      )}
+      {plainRefs.length > 0 && (
+        <div className="context-refs">
+          {plainRefs.map((ref) => (
+            <span
+              className="chip context-ref-chip"
+              key={ref.id}
+              title={`${ref.filePath} · L${ref.startLine}–${ref.endLine}`}
+            >
+              <Quote size={11} />
+              <span className="chip-label">{ref.label}</span>
+              <span className="context-ref-lines">
+                L{ref.startLine}–{ref.endLine}
+              </span>
+            </span>
+          ))}
+        </div>
+      )}
+      {files.length > 0 && (
+        <div className="attachments">
+          {files.map((path) => (
+            <span className="chip" key={path} title={path}>
+              <Paperclip size={11} />
+              <span className="chip-label">{basename(path)}</span>
+            </span>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
 
 /** `‹ 2/3 ›` — steps between the branches hanging off one point of the thread. */
 export function BranchPager({
@@ -404,7 +640,11 @@ function UserEditor({
             }}
           />
         </div>
-        <div className="message-actions">
+        {/*
+          Dedicated row — do NOT use .message-actions here.
+          That class is hover icon chrome and forces tertiary text onto primary.
+        */}
+        <div className="message-edit-actions">
           <Button label={t('common.cancel')} size="sm" onClick={onCancel} />
           <Button label={t('composer.send')} size="sm" variant="primary" onClick={submit} />
         </div>

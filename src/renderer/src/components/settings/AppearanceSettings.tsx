@@ -4,7 +4,7 @@ import type { LocalePreference } from '@shared/types'
 import { useSessionStore } from '../../state/sessionStore'
 import { useT } from '../../i18n/useT'
 import { Button, InlineAlert, Segmented, Toggle } from '../ui'
-import { IS_MAC } from '../../lib/platform'
+import { IS_MAC, keys } from '../../lib/platform'
 
 const MODIFIER_SYMBOL: Record<string, string> = {
   Command: '⌘',
@@ -163,9 +163,27 @@ export function AppearanceSettings(): React.JSX.Element {
         <div className="control">
           <Toggle
             checked={settings.reduceMotion}
+            title={t('appearance.reduceMotion')}
             onChange={(reduceMotion) => void updateSettings({ reduceMotion })}
           />
         </div>
+      </div>
+
+      <div className="form-row">
+        <label>{t('appearance.sendKey')}</label>
+        <div className="control">
+          <Segmented<'enter' | 'mod-enter'>
+            options={[
+              { value: 'enter', label: t('appearance.sendKey.enter') },
+              { value: 'mod-enter', label: keys('⌘↵') }
+            ]}
+            value={settings.sendKey === 'mod-enter' ? 'mod-enter' : 'enter'}
+            onChange={(sendKey) => void updateSettings({ sendKey })}
+          />
+        </div>
+      </div>
+      <div className="form-hint">
+        {t('appearance.sendKeyHint', { mod: keys('⌘↵'), enter: keys('↵') })}
       </div>
 
       <div className="form-row">

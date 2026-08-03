@@ -6,10 +6,9 @@ import {
   Columns3,
   File as FileIcon,
   Folder,
-  FolderSync,
   Info,
   List,
-  Pencil,
+  MapPin,
   Plus
 } from 'lucide-react'
 import { IGNORED_NAMES, IGNORED_SUFFIXES } from '@shared/types'
@@ -26,7 +25,7 @@ import { useWorkspaceStore } from '../state/workspaceStore'
 import { useT } from '../i18n/useT'
 import { tt } from '../i18n/useT'
 import { formatBytes, isTemporaryWorkspace } from '../lib/format'
-import { basename, dirname } from '../lib/path'
+import { basename, dirname, joinPath } from '../lib/path'
 import { menuAnchor, showMenu, type MenuItem } from '../lib/nativeMenu'
 import { fileManagerLabel } from '../lib/platform'
 import { Button, EmptyState, InlineAlert } from './ui'
@@ -39,9 +38,6 @@ function sortButtonLabel(key: FileSortKey, t: ReturnType<typeof useT>): string {
 export function FilesPanel({ visible }: { visible: boolean }): React.JSX.Element {
   const t = useT()
   const activeId = useSessionStore((s) => s.activeId)
-  const createConversationInCurrentWorkspace = useSessionStore(
-    (s) => s.createConversationInCurrentWorkspace
-  )
   const showDialog = useSessionStore((s) => s.showDialog)
   const conversation = useSessionStore((s) => s.conversations.find((c) => c.id === s.activeId))
   const tmp = useSessionStore((s) => s.tmp)
@@ -69,6 +65,8 @@ export function FilesPanel({ visible }: { visible: boolean }): React.JSX.Element
   const [columnPath, setColumnPath] = useState<string[]>([])
   const [displayMode, setDisplayMode] = useState<FileViewMode>(viewMode)
   const [browserOpaque, setBrowserOpaque] = useState(true)
+  /** Inline “new file” row: parent dir + draft name. */
+  const [creating, setCreating] = useState<{ dir: string; name: string } | null>(null)
 
   useEffect(() => {
     if (visible && activeId) void ensureFilesLoaded(activeId)
@@ -133,7 +131,6 @@ export function FilesPanel({ visible }: { visible: boolean }): React.JSX.Element
   }
 
   const rootError = workspace.dirErrors[workspace.root]
-  const changed = workspace.changedFiles
 
   const applySort = (key: FileSortKey): void => {
     const next = normalizeFileSortKey(key)
@@ -165,6 +162,74 @@ export function FilesPanel({ visible }: { visible: boolean }): React.JSX.Element
     void updateSettings({ fileViewMode: next })
   }
 
+  /** Directory that owns the next “new file” (focused folder, else parent of file, else root). */
+  const resolveCreateDir = (): string | null => {
+    const root = workspace.root
+    if (!root) return null
+    const sel = workspace.selectedPath
+    if (!sel || sel === root) return root
+    for (const entries of Object.values(workspace.dirs)) {
+      const hit = entries.find((e) => e.path === sel)
+      if (hit) return hit.isDirectory ? hit.path : dirname(hit.path)
+    }
+    // Column navigation may select a folder path not yet listed as an entry.
+    if (columnPath.includes(sel)) return sel
+    return dirname(sel) || root
+  }
+
+  const startCreateFile = (): void => {
+    const dir = resolveCreateDir()
+    if (!dir || !workspace.root) return
+    // Ensure the target folder is expanded in tree view so the inline row is visible.
+    const expanded = workspace.expanded ?? []
+    if (dir !== workspace.root && !expanded.includes(dir)) {
+      void useWorkspaceStore.getState().toggleExpand(activeId, dir)
+    }
+    // Column browser: open the parent column if needed.
+    if (displayMode === 'column' && dir !== workspace.root) {
+      const parent = dirname(dir)
+      const base = parent === workspace.root ? [] : columnPath
+      if (!columnPath.includes(dir) && dir !== workspace.root) {
+        // Keep ancestors; append dir as last open folder.
+        const idx = columnPath.indexOf(parent)
+        if (idx >= 0) setColumnPath([...columnPath.slice(0, idx + 1), dir])
+        else if (parent === workspace.root) setColumnPath([dir])
+        else setColumnPath([...base, dir].filter((p, i, a) => a.indexOf(p) === i))
+      }
+    }
+    selectPath(activeId, dir, 'dir')
+    setCreating({ dir, name: '' })
+  }
+
+  const cancelCreateFile = (): void => setCreating(null)
+
+  const commitCreateFile = async (name: string): Promise<void> => {
+    if (!creating) return
+    const trimmed = name.trim()
+    if (!trimmed || /[/\\]/.test(trimmed) || trimmed === '.' || trimmed === '..') {
+      showDialog({
+        title: t('files.error.badName'),
+        body: t('files.error.badName'),
+        confirmLabel: t('common.ok')
+      })
+      return
+    }
+    const full = joinPath(creating.dir, trimmed)
+    const result = await window.vav.files.write(full, '')
+    if (!result.ok) {
+      showDialog({
+        title: t('files.createFailed'),
+        body: result.error ?? t('files.createFailed'),
+        confirmLabel: t('common.ok')
+      })
+      return
+    }
+    setCreating(null)
+    void loadDirectory(activeId, creating.dir)
+    selectPath(activeId, full, 'file')
+    openViewer(full)
+  }
+
   return (
     <>
       <div className="files-toolbar">
@@ -179,8 +244,8 @@ export function FilesPanel({ visible }: { visible: boolean }): React.JSX.Element
         <Button
           icon={<Plus size={13} />}
           size="sm"
-          title={t('files.newSessionHere')}
-          onClick={() => void createConversationInCurrentWorkspace()}
+          title={t('files.newFile')}
+          onClick={startCreateFile}
         />
         <Button
           icon={viewMode === 'tree' ? <List size={13} /> : <Columns3 size={13} />}
@@ -190,9 +255,9 @@ export function FilesPanel({ visible }: { visible: boolean }): React.JSX.Element
         />
         {temporary && (
           <Button
-            icon={<FolderSync size={13} />}
+            icon={<MapPin size={13} />}
             size="sm"
-            title={t('files.moveTo')}
+            title={t('files.locateWorkspace')}
             onClick={() => void locateWorkspace(activeId)}
           />
         )}
@@ -212,23 +277,6 @@ export function FilesPanel({ visible }: { visible: boolean }): React.JSX.Element
         />
       </div>
 
-      {changed.length > 0 && (
-        <div className="changed-strip">
-          <Pencil size={11} />
-          <span className="tiny">{t('files.changedThisSession')}</span>
-          {changed.map((path) => (
-            <button
-              key={path}
-              className="chip"
-              title={path}
-              onClick={() => selectPath(activeId, path, 'file')}
-            >
-              <span className="chip-label">{basename(path)}</span>
-            </button>
-          ))}
-        </div>
-      )}
-
       <div className="files-browser" data-opaque={browserOpaque || undefined}>
         {displayMode === 'tree' ? (
           <div className="file-tree" onClick={() => selectPath(activeId, null, 'clear')}>
@@ -240,6 +288,12 @@ export function FilesPanel({ visible }: { visible: boolean }): React.JSX.Element
                 level={0}
                 onOpen={openViewer}
                 onMutated={refreshParent}
+                creating={creating}
+                onCreatingChange={(name) =>
+                  setCreating((c) => (c ? { ...c, name } : c))
+                }
+                onCreateCommit={() => void commitCreateFile(creating?.name ?? '')}
+                onCreateCancel={cancelCreateFile}
               />
             )}
           </div>
@@ -250,6 +304,10 @@ export function FilesPanel({ visible }: { visible: boolean }): React.JSX.Element
             setColumnPath={setColumnPath}
             onOpen={openViewer}
             onMutated={refreshParent}
+            creating={creating}
+            onCreatingChange={(name) => setCreating((c) => (c ? { ...c, name } : c))}
+            onCreateCommit={() => void commitCreateFile(creating?.name ?? '')}
+            onCreateCancel={cancelCreateFile}
           />
         )}
       </div>
@@ -262,13 +320,21 @@ function ColumnBrowser({
   columnPath,
   setColumnPath,
   onOpen,
-  onMutated
+  onMutated,
+  creating,
+  onCreatingChange,
+  onCreateCommit,
+  onCreateCancel
 }: {
   root: string
   columnPath: string[]
   setColumnPath: (paths: string[]) => void
   onOpen: (path: string) => void
   onMutated: (path: string) => void
+  creating: { dir: string; name: string } | null
+  onCreatingChange: (name: string) => void
+  onCreateCommit: () => void
+  onCreateCancel: () => void
 }): React.JSX.Element {
   const t = useT()
   const activeId = useSessionStore((s) => s.activeId)
@@ -335,6 +401,15 @@ function ColumnBrowser({
               <div className="muted tiny" style={{ padding: 8 }}>
                 {tt('common.loading')}
               </div>
+            )}
+            {!error && creating?.dir === dir && (
+              <NewFileRow
+                level={0}
+                name={creating.name}
+                onChange={onCreatingChange}
+                onCommit={onCreateCommit}
+                onCancel={onCreateCancel}
+              />
             )}
             {!error &&
               entries.map((entry) => {
@@ -429,12 +504,20 @@ function TreeLevel({
   path,
   level,
   onOpen,
-  onMutated
+  onMutated,
+  creating,
+  onCreatingChange,
+  onCreateCommit,
+  onCreateCancel
 }: {
   path: string
   level: number
   onOpen: (path: string) => void
   onMutated: (path: string) => void
+  creating: { dir: string; name: string } | null
+  onCreatingChange: (name: string) => void
+  onCreateCommit: () => void
+  onCreateCancel: () => void
 }): React.JSX.Element {
   const t = useT()
   const activeId = useSessionStore((s) => s.activeId)
@@ -443,6 +526,7 @@ function TreeLevel({
   const loading = workspace?.loadingDirs.includes(path)
   const error = workspace?.dirErrors[path]
   const truncated = workspace?.dirTruncated[path] ?? 0
+  const showCreate = creating?.dir === path
 
   if (error) {
     return (
@@ -462,28 +546,40 @@ function TreeLevel({
     )
   }
 
-  if (!entries) return <></>
+  if (!entries && !showCreate) return <></>
 
-  if (entries.length === 0) {
-    return (
-      <div
-        className="muted tiny"
-        style={{ paddingLeft: level * 14 + 22, height: 24, lineHeight: '24px' }}
-      >
-        {tt('files.emptyFolder')}
-      </div>
-    )
-  }
+  const list = entries ?? []
 
   return (
     <>
-      {entries.map((entry) => (
+      {showCreate && creating && (
+        <NewFileRow
+          level={level}
+          name={creating.name}
+          onChange={onCreatingChange}
+          onCommit={onCreateCommit}
+          onCancel={onCreateCancel}
+        />
+      )}
+      {list.length === 0 && !showCreate && (
+        <div
+          className="muted tiny"
+          style={{ paddingLeft: level * 14 + 22, height: 24, lineHeight: '24px' }}
+        >
+          {tt('files.emptyFolder')}
+        </div>
+      )}
+      {list.map((entry) => (
         <TreeRow
           key={entry.path}
           entry={entry}
           level={level}
           onOpen={onOpen}
           onMutated={onMutated}
+          creating={creating}
+          onCreatingChange={onCreatingChange}
+          onCreateCommit={onCreateCommit}
+          onCreateCancel={onCreateCancel}
         />
       ))}
       {truncated > 0 && (
@@ -498,16 +594,76 @@ function TreeLevel({
   )
 }
 
+function NewFileRow({
+  level,
+  name,
+  onChange,
+  onCommit,
+  onCancel
+}: {
+  level: number
+  name: string
+  onChange: (name: string) => void
+  onCommit: () => void
+  onCancel: () => void
+}): React.JSX.Element {
+  const t = useT()
+  const settled = useRef(false)
+  return (
+    <div
+      className="tree-row file is-creating"
+      style={{ paddingLeft: level * 14 + 10 }}
+      onClick={(event) => event.stopPropagation()}
+    >
+      <span className="disclosure" aria-hidden />
+      <FileIcon size={14} strokeWidth={1.75} aria-hidden />
+      <input
+        className="text-field rename-field"
+        autoFocus
+        value={name}
+        placeholder={t('files.newFilePlaceholder')}
+        onChange={(event) => onChange(event.target.value)}
+        onBlur={() => {
+          if (settled.current) return
+          settled.current = true
+          onCancel()
+        }}
+        onKeyDown={(event) => {
+          if (event.key === 'Escape') {
+            event.preventDefault()
+            settled.current = true
+            onCancel()
+            return
+          }
+          if (event.key === 'Enter') {
+            event.preventDefault()
+            settled.current = true
+            onCommit()
+          }
+        }}
+      />
+    </div>
+  )
+}
+
 function TreeRow({
   entry,
   level,
   onOpen,
-  onMutated
+  onMutated,
+  creating,
+  onCreatingChange,
+  onCreateCommit,
+  onCreateCancel
 }: {
   entry: FileEntry
   level: number
   onOpen: (path: string) => void
   onMutated: (path: string) => void
+  creating: { dir: string; name: string } | null
+  onCreatingChange: (name: string) => void
+  onCreateCommit: () => void
+  onCreateCancel: () => void
 }): React.JSX.Element {
   const activeId = useSessionStore((s) => s.activeId)
   const expanded = useWorkspaceStore((s) => s.workspaces[activeId]?.expanded.includes(entry.path))
@@ -600,7 +756,16 @@ function TreeRow({
         {!entry.isDirectory && <span className="tree-size">{formatBytes(entry.size)}</span>}
       </div>
       {entry.isDirectory && expanded && (
-        <TreeLevel path={entry.path} level={level + 1} onOpen={onOpen} onMutated={onMutated} />
+        <TreeLevel
+          path={entry.path}
+          level={level + 1}
+          onOpen={onOpen}
+          onMutated={onMutated}
+          creating={creating}
+          onCreatingChange={onCreatingChange}
+          onCreateCommit={onCreateCommit}
+          onCreateCancel={onCreateCancel}
+        />
       )}
     </>
   )

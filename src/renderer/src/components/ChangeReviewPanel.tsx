@@ -32,7 +32,72 @@ function diffStats(diffText: string): { plus: number; minus: number } {
   return { plus, minus }
 }
 
+function isLikelyBinaryPath(path: string): boolean {
+  return /\.(pdf|docx?|xlsx?|pptx?|png|jpe?g|gif|webp|svg|ico|zip|dylib|so|dll|exe|bin|wasm|mp4|mov|wav|mp3)$/i.test(
+    path
+  )
+}
+
+function binaryKind(path: string): 'pdf' | 'office' | 'image' | 'other' {
+  if (/\.pdf$/i.test(path)) return 'pdf'
+  if (/\.(docx?|xlsx?|pptx?)$/i.test(path)) return 'office'
+  if (/\.(png|jpe?g|gif|webp|svg|ico)$/i.test(path)) return 'image'
+  return 'other'
+}
+
+function formatBytes(n: number): string {
+  if (n < 1024) return `${n} B`
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`
+}
+
+function BinaryCompare({ file }: { file: ChangeEntry }): React.JSX.Element {
+  const t = useT()
+  const kind = binaryKind(file.filePath)
+  const beforeLen = file.originalContent?.length ?? 0
+  const afterLen = file.newContent?.length ?? 0
+  const kindLabel =
+    kind === 'pdf' ? 'PDF' : kind === 'office' ? 'Office' : kind === 'image' ? 'Image' : 'Binary'
+
+  return (
+    <div className="review-binary">
+      <div className="review-binary-meta">
+        <div className="kv-row">
+          <span className="kv-label">File</span>
+          <span className="kv-value">{file.relativePath}</span>
+        </div>
+        <div className="kv-row">
+          <span className="kv-label">Change</span>
+          <span className="kv-value">
+            {changeTypeLabel(file.changeType, t)} ({kindLabel})
+          </span>
+        </div>
+        <div className="kv-row">
+          <span className="kv-label">Before</span>
+          <span className="kv-value">
+            {file.originalContent == null ? '—' : formatBytes(beforeLen)}
+          </span>
+        </div>
+        <div className="kv-row">
+          <span className="kv-label">After</span>
+          <span className="kv-value">{formatBytes(afterLen)}</span>
+        </div>
+      </div>
+      <p className="muted tiny review-binary-hint">
+        {kind === 'pdf'
+          ? t('review.binaryPdfHint')
+          : kind === 'office'
+            ? t('review.binaryOfficeHint')
+            : kind === 'image'
+              ? t('review.binaryImageHint')
+              : t('review.binaryOtherHint')}
+      </p>
+    </div>
+  )
+}
+
 function DiffView({ text }: { text: string }): React.JSX.Element {
+  const t = useT()
   const lines = text.split('\n')
   const truncated = lines.length > 200
   const shown = truncated ? lines.slice(0, 200) : lines
@@ -52,12 +117,25 @@ function DiffView({ text }: { text: string }): React.JSX.Element {
         )
       })}
       {truncated && !expanded && (
-        <button type="button" className="diff-more" onClick={() => setExpanded(true)}>
+        <button
+          type="button"
+          className="diff-more"
+          title={t('tool.moreLines', { n: lines.length - 200 })}
+          onClick={() => setExpanded(true)}
+        >
           … {lines.length - 200} more lines
         </button>
       )}
     </pre>
   )
+}
+
+function FileInspector({ file }: { file: ChangeEntry }): React.JSX.Element {
+  const looksBinary =
+    isLikelyBinaryPath(file.filePath) ||
+    (!file.diffText.startsWith('@@') && !file.diffText.startsWith('+') && file.diffText.length < 80)
+  if (looksBinary) return <BinaryCompare file={file} />
+  return <DiffView text={file.diffText} />
 }
 
 export function ChangeReviewPanel(): React.JSX.Element | null {
@@ -303,7 +381,7 @@ export function ChangeReviewPanel(): React.JSX.Element | null {
                   />
                 )}
               </div>
-              <DiffView text={selected.diffText} />
+              <FileInspector file={selected} />
             </>
           ) : (
             <EmptyState

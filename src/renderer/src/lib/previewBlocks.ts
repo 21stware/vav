@@ -25,6 +25,45 @@ function sliceLines(lines: string[], start: number, end: number): string {
 }
 
 /**
+ * CommonMark-ish fenced code open line: 0–3 spaces, then 3+ backticks or tildes.
+ * Returns marker char, fence length, and info string (language).
+ */
+function matchFenceOpen(
+  line: string
+): { char: '`' | '~'; len: number; info: string } | null {
+  const m = /^( {0,3})(`{3,}|~{3,})(.*)$/.exec(line)
+  if (!m) return null
+  const fence = m[2]!
+  const char = fence[0] as '`' | '~'
+  // Info string must not contain the fence char (CM: backticks can't be in info for ` fences).
+  const info = (m[3] || '').replace(/\s+$/, '')
+  if (char === '`' && info.includes('`')) return null
+  return { char, len: fence.length, info: info.trim() }
+}
+
+/** Closing fence: same char, length ≥ open, optional trailing spaces only. */
+function isFenceClose(line: string, char: '`' | '~', openLen: number): boolean {
+  const m = /^( {0,3})(`{3,}|~{3,})[ \t]*$/.exec(line)
+  if (!m) return false
+  const fence = m[2]!
+  if (fence[0] !== char) return false
+  return fence.length >= openLen
+}
+
+/**
+ * If `lines[i]` opens a fence, return exclusive end index after the closing line
+ * (or EOF). Used so heading/paragraph scanners never treat `#` inside fences as ATX.
+ */
+function skipFencedRegion(lines: string[], i: number): number | null {
+  const open = matchFenceOpen(lines[i]!)
+  if (!open) return null
+  let j = i + 1
+  while (j < lines.length && !isFenceClose(lines[j]!, open.char, open.len)) j++
+  if (j < lines.length) j++ // consume closing fence
+  return j
+}
+
+/**
  * Markdown → hierarchical selectable blocks.
  *
  * `lineOffset` is the number of lines before this slice in the full document
@@ -61,12 +100,13 @@ export function parseMarkdownBlocks(source: string, lineOffset = 0): PreviewBloc
     const absStart = start + 1 + lineOffset
     const line = lines[i]!
 
-    const fence = line.match(/^(`{3,}|~{3,})(.*)$/)
-    if (fence) {
-      const marker = fence[1]!
-      const language = (fence[2] || '').trim() || undefined
+    const fenceOpen = matchFenceOpen(line)
+    if (fenceOpen) {
+      const language = fenceOpen.info.split(/\s+/g)[0] || undefined
       i++
-      while (i < lines.length && !lines[i]!.startsWith(marker)) i++
+      while (i < lines.length && !isFenceClose(lines[i]!, fenceOpen.char, fenceOpen.len)) {
+        i++
+      }
       if (i < lines.length) i++
       const absEnd = i + lineOffset
       blocks.push({
@@ -83,17 +123,25 @@ export function parseMarkdownBlocks(source: string, lineOffset = 0): PreviewBloc
       continue
     }
 
-    const heading = line.match(/^(#{1,6})\s+(.+)$/)
+    // ATX headings must not match when indented as code (0–3 spaces only, CM).
+    const heading = line.match(/^( {0,3})(#{1,6})\s+(.+?)(?:\s+#*\s*)?$/)
     if (heading) {
-      const level = heading[1]!.length
-      const title = heading[2]!.trim()
+      const level = heading[2]!.length
+      const title = heading[3]!.trim()
       // Line-anchored ids: same title in two places must not share an id.
       const headingId = `h${level}-L${absStart}-${slug(title)}`
       i++
       const sectionStart = start
+      // Scan section body; skip fenced regions so `# comment` inside ```bash
+      // is never treated as a section boundary (was breaking install fences).
       while (i < lines.length) {
-        const next = lines[i]!.match(/^(#{1,6})\s+/)
-        if (next && next[1]!.length <= level) break
+        const fenceEnd = skipFencedRegion(lines, i)
+        if (fenceEnd != null) {
+          i = fenceEnd
+          continue
+        }
+        const next = lines[i]!.match(/^( {0,3})(#{1,6})\s+/)
+        if (next && next[2]!.length <= level) break
         i++
       }
       const absEnd = i + lineOffset
@@ -193,7 +241,9 @@ export function parseMarkdownBlocks(source: string, lineOffset = 0): PreviewBloc
 
     i++
     while (i < lines.length && lines[i]!.trim() !== '') {
-      if (/^#{1,6}\s+/.test(lines[i]!) || /^(`{3,}|~{3,})/.test(lines[i]!)) break
+      // Don't start a new block mid-paragraph on fence/heading.
+      if (matchFenceOpen(lines[i]!)) break
+      if (/^( {0,3})(#{1,6})\s+/.test(lines[i]!)) break
       if (/^\s*([-*+]|\d+\.)\s+/.test(lines[i]!)) break
       i++
     }
@@ -580,7 +630,7 @@ function parseIndentRange(
 export interface CsvSelectionModel {
   headers: string[]
   rows: string[][]
-  /** Default L2 blocks: columns + rows (table is parent). */
+  /** Lightweight: table + column stubs only. Rows/cells are built on pick. */
   blocks: PreviewBlock[]
 }
 
@@ -625,11 +675,22 @@ export function updateNotebookCellSource(
 }
 
 /**
- * Max rows for which we eagerly build PreviewBlock trees.
- * Huge CSVs still parse into `rows` for the sheet UI (windowed), but
- * materializing every cell as a block OOMs the renderer.
+ * Max rows kept in the in-memory sheet model. Inspect already caps file bytes;
+ * this is a second guard so a dense 512KB CSV cannot allocate millions of cells.
  */
-export const CSV_BLOCK_ROW_CAP = 2000
+export const CSV_ROW_PARSE_CAP = 20_000
+
+/**
+ * Max columns materialised for block pick / col headers. Extremely wide CSVs
+ * still open; only the first N columns are selectable as whole-col blocks.
+ */
+export const CSV_COL_BLOCK_CAP = 64
+
+/**
+ * Legacy name: we no longer eagerly build per-row PreviewBlocks (that OOMed
+ * large sheets). Rows/cells are built on pick via {@link csvRowBlock}.
+ */
+export const CSV_BLOCK_ROW_CAP = 0
 
 /** Build a single CSV cell block on demand (pick path). */
 export function csvCellBlock(
@@ -652,47 +713,73 @@ export function csvCellBlock(
 
 /** Build a single CSV row block on demand (pick path). */
 export function csvRowBlock(headers: string[], row: string[], rowIndex0: number): PreviewBlock {
-  const colCount = Math.max(headers.length, row.length)
+  // Cap pair text so a 200-col row cannot allocate a multi-MB selection string.
+  const colCount = Math.min(Math.max(headers.length, row.length), 32)
   const pairs = Array.from({ length: colCount }, (_, c) => {
     const name = headers[c] || `col${c + 1}`
-    return `${name}=${row[c] ?? ''}`
+    const val = row[c] ?? ''
+    return `${name}=${val.length > 80 ? `${val.slice(0, 80)}…` : val}`
   })
+  const extra = Math.max(headers.length, row.length) - colCount
   return {
     id: `row-${rowIndex0 + 1}`,
     kind: 'row',
-    text: pairs.join(' | '),
+    text: extra > 0 ? `${pairs.join(' | ')} · +${extra} cols` : pairs.join(' | '),
     label: `row ${rowIndex0 + 1}`,
     startLine: rowIndex0 + 2,
     endLine: rowIndex0 + 2
   }
 }
 
+/** Cheap line split that keeps empty trailing lines out without filter(). */
+function splitCsvLines(text: string): string[] {
+  if (!text) return []
+  // Normalise once; avoid double-scan filter.
+  const normalised = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n')
+  const lines = normalised.split('\n')
+  // Drop a single trailing empty line from final newline.
+  if (lines.length > 0 && lines[lines.length - 1] === '') lines.pop()
+  return lines
+}
+
+/**
+ * Parse CSV into a sheet model. Row/cell PreviewBlocks are **not** prebuilt —
+ * only column + table stubs — so opening a multi-MB sheet stays O(rows) not
+ * O(rows × cols) of React-bound objects.
+ */
 export function parseCsvModel(text: string): CsvSelectionModel {
-  const rows = text
-    .split(/\r?\n/)
-    .filter((line) => line.length > 0)
-    .map(parseCsvLine)
-  if (rows.length === 0) return { headers: [], rows: [], blocks: [] }
-  const [header, ...body] = rows
-  const headers = header ?? []
-  // Column blocks only sample values — never join 100k cells into one string.
-  const colBlocks: PreviewBlock[] = headers.map((name, col) => {
-    const sample = body.slice(0, 200).map((r) => r[col] ?? '')
-    return {
+  const lines = splitCsvLines(text)
+  if (lines.length === 0) return { headers: [], rows: [], blocks: [] }
+
+  const headerLine = lines[0] ?? ''
+  const headers = parseCsvLine(headerLine)
+  const bodyLimit = Math.min(lines.length - 1, CSV_ROW_PARSE_CAP)
+  const body: string[][] = new Array(bodyLimit)
+  for (let i = 0; i < bodyLimit; i++) {
+    body[i] = parseCsvLine(lines[i + 1] ?? '')
+  }
+
+  const colCap = Math.min(headers.length, CSV_COL_BLOCK_CAP)
+  // Column blocks only sample a few values — never join tens of thousands of cells.
+  const colBlocks: PreviewBlock[] = []
+  for (let col = 0; col < colCap; col++) {
+    const name = headers[col] ?? `col${col + 1}`
+    const sample: string[] = []
+    const sampleN = Math.min(body.length, 40)
+    for (let r = 0; r < sampleN; r++) {
+      const v = body[r]?.[col] ?? ''
+      sample.push(v.length > 60 ? `${v.slice(0, 60)}…` : v)
+    }
+    colBlocks.push({
       id: csvColId(name, col),
-      kind: 'col' as const,
+      kind: 'col',
       text: [name, ...sample].join('\n'),
       label: `col ${name}`,
       startLine: 1,
-      endLine: rows.length
-    }
-  })
-  // Row blocks without per-cell children (cells are built on pick).
-  const rowCap = Math.min(body.length, CSV_BLOCK_ROW_CAP)
-  const rowBlocks: PreviewBlock[] = []
-  for (let idx = 0; idx < rowCap; idx++) {
-    rowBlocks.push(csvRowBlock(headers, body[idx] ?? [], idx))
+      endLine: body.length + 1
+    })
   }
+
   const blocks: PreviewBlock[] = [
     {
       id: 'table',
@@ -700,11 +787,11 @@ export function parseCsvModel(text: string): CsvSelectionModel {
       text: `${body.length} rows × ${headers.length} cols`,
       label: `table · ${body.length}×${headers.length}`,
       startLine: 1,
-      endLine: rows.length,
-      children: [...colBlocks, ...rowBlocks]
+      endLine: body.length + 1,
+      // Cols only — row children used to explode memory on wide/tall sheets.
+      children: colBlocks
     },
-    ...colBlocks,
-    ...rowBlocks
+    ...colBlocks
   ]
   return { headers, rows: body, blocks }
 }
@@ -775,11 +862,80 @@ const INDENT_STRUCTURED_EXTS = new Set(['yml', 'yaml', 'xml'])
 /** Soft cap for structure indexing — large XML/JSON still scroll via virtualization. */
 const STRUCTURE_LINE_CAP = 5000
 
+const LINE_ORIENTED_EXTS = new Set([
+  'log',
+  'out',
+  'err',
+  'trace',
+  'syslog',
+  'logcat',
+  'nfo'
+])
+
+/**
+ * Line-oriented files (.log, dense logs): selection is per-line via the canvas
+ * hit-test, not a prebuilt block tree (which would be O(n) memory and group
+ * continuous logs into one giant paragraph).
+ */
+export function isLineOrientedPath(path: string, sampleText?: string): boolean {
+  const base = path.split(/[/\\]/).pop() ?? path
+  const ext = base.includes('.') ? base.split('.').pop()!.toLowerCase() : ''
+  if (LINE_ORIENTED_EXTS.has(ext)) return true
+  if (sampleText == null || sampleText.length < 200) return false
+  // Dense logs: many short lines, almost no blank separators.
+  let lines = 0
+  let blank = 0
+  for (let i = 0; i < sampleText.length && lines < 400; i++) {
+    if (sampleText.charCodeAt(i) === 10) {
+      lines++
+      // crude blank-line count: previous char was also newline or start
+    }
+  }
+  // Count blanks in first ~400 lines cheaply
+  const head = sampleText.split(/\r?\n/, 400)
+  if (head.length < 80) return false
+  blank = head.filter((l) => !l.trim()).length
+  return blank / head.length < 0.06
+}
+
+export function lineBlockAt(line: number, text: string): PreviewBlock | null {
+  if (line < 1) return null
+  // Avoid full split when possible: walk to line.
+  let current = 1
+  let start = 0
+  for (let i = 0; i <= text.length; i++) {
+    const atEnd = i === text.length
+    const isNl = !atEnd && text.charCodeAt(i) === 10
+    if (isNl || atEnd) {
+      if (current === line) {
+        const raw = text.slice(start, i)
+        // strip trailing \r from CRLF
+        const lineText = raw.endsWith('\r') ? raw.slice(0, -1) : raw
+        return {
+          id: `line-L${line}`,
+          kind: 'line',
+          text: lineText,
+          startLine: line,
+          endLine: line,
+          label: `L${line}`
+        }
+      }
+      if (atEnd) break
+      current++
+      start = i + 1
+    }
+  }
+  return null
+}
+
 export function parseBlocksForPath(path: string, text: string): PreviewBlock[] {
   const base = path.split(/[/\\]/).pop() ?? path
   const ext = base.includes('.') ? base.split('.').pop()!.toLowerCase() : ''
   if (ext === 'md' || ext === 'markdown' || ext === 'mdx') return parseMarkdownBlocks(text)
   if (ext === 'ipynb') return parseNotebookBlocks(text)
+
+  // Log-like: no paragraph tree — canvas does per-line pick.
+  if (isLineOrientedPath(path, text)) return []
 
   // Avoid freezing open on huge structured files: only index the head for
   // DevTools-style block selection; the rest is still viewable as text.
@@ -853,6 +1009,7 @@ export function formatBadge(path: string, kind: string): string {
   if (ext === 'docx') return 'DOCX'
   if (ext === 'xlsx' || ext === 'xls') return 'XLSX'
   if (ext === 'pptx') return 'PPTX'
+  if (kind === 'html' || ext === 'html' || ext === 'htm' || ext === 'xhtml') return 'HTML'
   if (kind === 'image') return 'Image'
   if (kind === 'audio') return 'Audio'
   if (kind === 'video') return 'Video'

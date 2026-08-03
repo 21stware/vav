@@ -6,6 +6,7 @@ import { installSettingsBridge, useSessionStore } from './state/sessionStore'
 import { useT } from './i18n/useT'
 import { useAppearance } from './lib/appearance'
 import { installDefaultContextMenu } from './lib/nativeMenu'
+import { AppToast } from './components/AppToast'
 import { Button, Modal } from './components/ui'
 import { ApiSettings } from './components/settings/ApiSettings'
 import { WorkspaceSettings } from './components/settings/WorkspaceSettings'
@@ -132,22 +133,7 @@ export default function SettingsWindow(): React.JSX.Element {
       </div>
 
       <SettingsOverlays />
-      <SettingsToast />
-    </div>
-  )
-}
-
-function SettingsToast(): React.JSX.Element | null {
-  const toast = useSessionStore((s) => s.toast)
-  const showToast = useSessionStore((s) => s.showToast)
-  if (!toast) return null
-  return (
-    <div className={`app-toast kind-${toast.kind}`} role="status">
-      <div className="app-toast-title">{toast.title}</div>
-      {toast.description && <div className="app-toast-body">{toast.description}</div>}
-      <button type="button" className="app-toast-dismiss" onClick={() => showToast(null)}>
-        ×
-      </button>
+      <AppToast />
     </div>
   )
 }
@@ -157,10 +143,11 @@ function SettingsOverlays(): React.JSX.Element | null {
   const t = useT()
   const shortcutsOpen = useSessionStore((s) => s.shortcutsOpen)
   const setShortcutsOpen = useSessionStore((s) => s.setShortcutsOpen)
+  const sendKey = useSessionStore((s) => s.settings.sendKey)
 
   if (!shortcutsOpen) return null
 
-  const shortcuts = getShortcuts(t)
+  const shortcuts = getShortcuts(t, { sendKey })
 
   return (
     <Modal

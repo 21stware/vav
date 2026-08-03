@@ -59,7 +59,12 @@ function isPlanStreaming(phase: TurnPhase | undefined, isRunning: boolean): bool
 export function PlanOverlay(): React.JSX.Element | null {
   const t = useT()
   const activeId = useSessionStore((s) => s.activeId)
-  const messages = useSessionStore((s) => visibleMessages(s, s.activeId))
+  const nodes = useSessionStore((s) => s.messages[s.activeId])
+  const activeLeaf = useSessionStore((s) => s.activeLeaf[s.activeId] ?? null)
+  const messages = useMemo(
+    () => visibleMessages(useSessionStore.getState(), activeId),
+    [activeId, nodes, activeLeaf]
+  )
   const turn = useSessionStore((s) => s.turns[s.activeId])
   const turnRunning = !!turn?.isRunning
   const streaming = isPlanStreaming(turn?.phase, turnRunning)
@@ -210,7 +215,11 @@ export function PlanOverlay(): React.JSX.Element | null {
           </button>
         )}
       </div>
-      {expanded && !leaving && <PlanCard block={block} animate={streaming} />}
+      <div className="plan-overlay-body">
+        <div className="plan-overlay-body-inner">
+          <PlanCard block={block} animate={streaming} />
+        </div>
+      </div>
     </div>
   )
 }

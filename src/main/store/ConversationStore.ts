@@ -120,7 +120,12 @@ export class ConversationStore {
   create(
     workingDirectory: string | null,
     model: string,
-    options?: { fileId?: string | null; title?: string; fileReadOnly?: boolean }
+    options?: {
+      fileId?: string | null
+      title?: string
+      fileReadOnly?: boolean
+      approvalMode?: import('@shared/types').ApprovalMode
+    }
   ): Conversation {
     const now = Date.now()
     const conversation: Conversation = {
@@ -143,7 +148,7 @@ export class ConversationStore {
       duplicateSourceTitle: null,
       archived: false,
       archivedAt: null,
-      approvalMode: 'auto',
+      approvalMode: options?.approvalMode ?? 'auto',
       fileId: options?.fileId ?? null,
       fileReadOnly: options?.fileReadOnly ?? false,
       agentBinaryName: null,

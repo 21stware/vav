@@ -1,5 +1,6 @@
 import MarkdownIt from 'markdown-it'
 import hljs from 'highlight.js/lib/common'
+import { renderMermaidFence } from './markdown'
 import { dirname, joinPath } from './path'
 
 /**
@@ -32,6 +33,18 @@ const previewMd: MarkdownIt = new MarkdownIt({
     return escapeHtml(code)
   }
 })
+
+const previewDefaultFence =
+  previewMd.renderer.rules.fence ??
+  ((tokens, idx, options, _env, self) => self.renderToken(tokens, idx, options))
+
+previewMd.renderer.rules.fence = (tokens, idx, options, env, self): string => {
+  const token = tokens[idx]!
+  const info = (token.info || '').trim()
+  const language = (info.split(/\s+/g)[0] ?? '').toLowerCase()
+  if (language === 'mermaid') return renderMermaidFence(token.content)
+  return previewDefaultFence(tokens, idx, options, env, self)
+}
 
 const cache = new Map<string, string>()
 const CACHE_LIMIT = 500

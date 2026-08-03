@@ -4,7 +4,8 @@
  * cheaper paints are what keeps that lag from feeling sticky.
  */
 
-const IDLE_MS = 100
+/** Wait past title-bar maximize/restore layout (often >1 frame of size hops). */
+const IDLE_MS = 180
 let installed = false
 let idleTimer: ReturnType<typeof setTimeout> | null = null
 

@@ -36,6 +36,24 @@ export interface PtyDataEvent {
   data: string
 }
 
+/** Fired when a conversation's live PTY set changes (create/kill/exit). */
+export interface PtyChangedEvent {
+  conversationId: string
+}
+
+/**
+ * Snapshot of a live PTY — main is authoritative so detached + main windows
+ * share the same tab ids / agent hosts instead of each spawning their own.
+ */
+export interface PtySessionMeta {
+  id: string
+  conversationId: string
+  /** `null` bash · `vav` mirror · CLI agent id for host panes. */
+  agentId: string | null
+  title: string
+  createdAt: number
+}
+
 /** Options for `pty.create` — spawn a CLI agent directly into the PTY. */
 export interface PtyCreateOptions {
   preferredId?: string
@@ -47,16 +65,23 @@ export interface PtyCreateOptions {
   env?: Record<string, string>
   /**
    * Ambient session context for the agent (focused file, block notes).
-   * Injected at spawn via CLI flags when {@link contextLaunchStrategy} supports it —
-   * never by typing into the PTY.
+   * Injected at spawn via CLI flags when {@link contextLaunchStrategy} is a
+   * launch-argv strategy (e.g. Claude). For `prompt-paste` agents the renderer
+   * fills the TUI prompt after spawn instead.
    */
   launchContext?: string | null
   /**
    * Which argv strategy to use for {@link launchContext}.
    * e.g. `claude-append-system-prompt-file` → writes a temp file and passes
-   * `--append-system-prompt-file <path>`.
+   * `--append-system-prompt-file <path>`. `prompt-paste` → no argv change.
    */
   contextLaunchStrategy?: import('./agentContextInject').AgentContextLaunchStrategy
+  /**
+   * Logical owner for multi-window restore.
+   * omit/`null` = tools bash; CLI agent id for agent hosts; `vav` for mirror.
+   */
+  agentId?: string | null
+  title?: string
 }
 
 export interface FsDirtyEvent {
@@ -174,11 +199,14 @@ export type FilePreviewKind =
   | 'audio'
   | 'video'
   | 'binary'
+  | 'directory'
   | 'zip'
   | 'docx'
   | 'xlsx'
   | 'pptx'
   | 'sqlite'
+  /** Rendered HTML canvas (sandbox); source remains editable via Agent + Save. */
+  | 'html'
 
 /** One entry in a ZIP archive structure preview (no content extraction). */
 export interface ZipEntryInfo {
@@ -211,6 +239,25 @@ export interface BinaryFileMeta {
   defaultApp: string | null
 }
 
+/** Camera / format tags for image previews (esp. HEIC). */
+export interface ImageMetaField {
+  key: string
+  value: string
+}
+
+/** One window of a large UTF-8 file (byte-oriented; not a product size cap). */
+export interface TextWindowResult {
+  content: string
+  /** Absolute byte offset of the first returned byte. */
+  startByte: number
+  /** Exclusive end offset in the file. */
+  endByte: number
+  totalBytes: number
+  /** True when endByte < totalBytes (more content remains). */
+  truncated: boolean
+  error?: string
+}
+
 export interface SqliteTableInfo {
   name: string
   columns: string[]
@@ -240,11 +287,34 @@ export interface FileInspectResult {
   kind: FilePreviewKind
   mime: string
   error?: string
+  /**
+   * When preview bytes live elsewhere (legacy convert / HEIC JPEG sidecar),
+   * renderers load this path while UI identity stays {@link path}.
+   */
+  contentPath?: string
+  /**
+   * Soft notices (legacy conversion, HEIC sidecar, password-zip, windowed text).
+   * Never a hard product "file too large" wall.
+   */
+  warnings?: string[]
   /** UTF-8 text when kind is text/csv (or plainText for structured docs). */
   text?: string
+  /**
+   * True when `text` is an initial window of a larger file (more bytes remain).
+   * Not a refusal — call {@link VavApi.files.readTextWindow} for further ranges.
+   */
   truncated?: boolean
-  /** data: URL for image/audio/video under the size cap. */
+  /** Byte window covered by `text` when truncated. */
+  textWindow?: { startByte: number; endByte: number; totalBytes: number }
+  /**
+   * Streamable local URL (`vav-local://…`) for media / PDF / large binaries.
+   * Prefer over embedding bytes in the inspect payload.
+   */
+  streamUrl?: string
+  /** @deprecated Prefer streamUrl — kept for tiny inline fallbacks. */
   dataUrl?: string
+  /** Image EXIF / sips tags (HEIC, JPEG, …). */
+  imageMeta?: ImageMetaField[]
   lineCount?: number
   /**
    * Structured office/PDF document (block-selectable). Present for
@@ -255,6 +325,11 @@ export interface FileInspectResult {
   sqlite?: SqliteDatabaseInfo
   /** ZIP archive tree (structure only — no entry contents). */
   zip?: ZipArchiveInfo
+  /**
+   * ZIP encryption / password hint. Structure may still be partial.
+   * We do not prompt for passwords in-app (product boundary).
+   */
+  zipEncrypted?: boolean
   /** Binary / unsupported type metadata panel. */
   binaryMeta?: BinaryFileMeta
 }
@@ -276,6 +351,9 @@ export interface VavApi {
     setApiKey(key: string): Promise<{ hint: string | null }>
     revealApiKey(): Promise<string | null>
     apiKeyHint(): Promise<string | null>
+    /** Brave Search API subscription token (encrypted, not the LLM key). */
+    setBraveSearchKey(key: string): Promise<{ hint: string | null }>
+    braveSearchKeyHint(): Promise<string | null>
     validateKey(key: string): Promise<ValidateKeyResult>
     availableFonts(): Promise<string[]>
     pickDirectory(): Promise<string | null>
@@ -344,7 +422,8 @@ export interface VavApi {
       text: string,
       attachments: string[],
       quote?: QuoteDraft | null,
-      contextBlocks?: PreviewRef[] | null
+      contextBlocks?: PreviewRef[] | null,
+      contextFile?: string | null
     ): Promise<void>
     cancel(conversationId: string): Promise<void>
     answer(conversationId: string, toolCallId: string, answer: string): Promise<boolean>
@@ -362,8 +441,17 @@ export interface VavApi {
     list(path: string, sort: FileSortKey, ascending: boolean): Promise<DirectoryListing>
     read(path: string): Promise<{ content: string; truncated: boolean; error?: string }>
     /**
+     * Byte-window read for large UTF-8 files. Prefer this over loading the
+     * whole file into the agent/renderer when size is unknown or large.
+     */
+    readTextWindow(
+      path: string,
+      opts?: { startByte?: number; maxBytes?: number }
+    ): Promise<TextWindowResult>
+    /**
      * Binary file bytes as base64 for mature client renderers
-     * (docx-preview, pdf.js, SheetJS). Cap enforced in main.
+     * (docx-preview / SheetJS). Prefer {@link streamUrl} / fetch(vav-local)
+     * for large files — base64 is a convenience, not a product size gate.
      */
     readBinary(
       path: string
@@ -443,13 +531,27 @@ export interface VavApi {
       rows: number,
       options?: PtyCreateOptions | string
     ): Promise<string>
-    write(tabId: string, data: string): Promise<void>
-    resize(tabId: string, cols: number, rows: number): Promise<void>
+    /**
+     * Fire-and-forget PTY input (keys, paste, mouse reports).
+     * Uses one-way IPC — must not await a round-trip on every keystroke/wheel.
+     */
+    write(tabId: string, data: string): void
+    /**
+     * Fire-and-forget; resize storms during drag must not queue on invoke.
+     * Pass force=true to re-deliver SIGWINCH even when cols/rows are unchanged
+     * (used after a local alt-buffer rebuild so TUIs full-repaint).
+     */
+    resize(tabId: string, cols: number, rows: number, force?: boolean): void
     kill(tabId: string): Promise<void>
     /** Whether the tab's shell currently has a running (child) command. */
     isBusy(tabId: string): Promise<boolean>
+    /** Live PTYs for a conversation — hydrate tabs/agent hosts after attach. */
+    list(conversationId: string): Promise<PtySessionMeta[]>
+    /** Recent scrollback for a tab (empty if unknown). */
+    replay(tabId: string): Promise<string>
     onData(handler: (event: PtyDataEvent) => void): () => void
     onExit(handler: (tabId: string) => void): () => void
+    onChanged(handler: (event: PtyChangedEvent) => void): () => void
   }
 
   window: {
@@ -466,8 +568,21 @@ export interface VavApi {
      * conversation in the sidebar list (Reveal in List).
      */
     revealInList(conversationId: string): Promise<void>
+    /**
+     * Close the companion window for this conversation so the main shell can
+     * host the live terminal again (“Take it back”).
+     */
+    closeDetachedSession(conversationId: string): Promise<void>
     /** Fresh conversation in its own window — the ⌘⇧↵ path. */
     newDetachedSession(): Promise<void>
+    /**
+     * Conversation ids that currently have a companion (detached) window.
+     * Main window uses this so it does not mount a second live agent xterm
+     * against the same PTY (one size only → half-screen black).
+     */
+    listDetachedSessions(): Promise<string[]>
+    /** Fired whenever the set of open companion windows changes. */
+    onDetachedChanged(handler: (conversationIds: string[]) => void): () => void
     /** Opens (or raises) a standalone file preview window for `path`. */
     openFilePreview(
       path: string,
@@ -580,6 +695,11 @@ export type MenuCommand =
   | 'focus-bash'
   | 'switch-workdir'
   | 'send'
+  /**
+   * ⌘W — context close via uiFocus (bash tab / collapse Files tray / agent pane),
+   * else close the window. Replaces bare role:close so the renderer can decide.
+   */
+  | 'close-context'
   /** ⌘1…⌘9 — slot 1 = Workspace; 2+ = bash tabs in order (Agent first). */
   | 'focus-tools-1'
   | 'focus-tools-2'
@@ -600,6 +720,8 @@ export const IPC = {
   settingsSetKey: 'vav:settings:set-key',
   settingsRevealKey: 'vav:settings:reveal-key',
   settingsKeyHint: 'vav:settings:key-hint',
+  settingsSetBraveSearchKey: 'vav:settings:set-brave-search-key',
+  settingsBraveSearchKeyHint: 'vav:settings:brave-search-key-hint',
   settingsValidateKey: 'vav:settings:validate-key',
   settingsFonts: 'vav:settings:fonts',
   settingsPickDirectory: 'vav:settings:pick-directory',
@@ -647,6 +769,7 @@ export const IPC = {
 
   filesList: 'vav:files:list',
   filesRead: 'vav:files:read',
+  filesReadTextWindow: 'vav:files:read-text-window',
   filesReadBinary: 'vav:files:read-binary',
   filesWriteBinary: 'vav:files:write-binary',
   filesDbQuery: 'vav:files:db-query',
@@ -678,8 +801,11 @@ export const IPC = {
   ptyResize: 'vav:pty:resize',
   ptyKill: 'vav:pty:kill',
   ptyIsBusy: 'vav:pty:is-busy',
+  ptyList: 'vav:pty:list',
+  ptyReplay: 'vav:pty:replay',
   ptyData: 'vav:pty:data',
   ptyExit: 'vav:pty:exit',
+  ptyChanged: 'vav:pty:changed',
 
   windowSetTheme: 'vav:window:set-theme',
   windowShellPath: 'vav:window:shell-path',
@@ -688,7 +814,10 @@ export const IPC = {
   windowPopupMenu: 'vav:window:popup-menu',
   windowOpenSession: 'vav:window:open-session',
   windowRevealInList: 'vav:window:reveal-in-list',
+  windowCloseDetached: 'vav:window:close-detached',
   windowNewDetached: 'vav:window:new-detached',
+  windowListDetached: 'vav:window:list-detached',
+  windowDetachedChanged: 'vav:window:detached-changed',
   windowOpenFilePreview: 'vav:window:open-file-preview',
   windowOpenTokenUsage: 'vav:window:open-token-usage',
   tokenUsageView: 'vav:token-usage:view',

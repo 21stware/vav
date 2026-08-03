@@ -66,7 +66,16 @@ export function ToolsPanel({
 
   const workdir = conversation?.workingDirectory ?? null
   const temporary = isTemporaryWorkspace(workdir, tmp)
-  const label = truncatePathLabel(workdirLabel(workdir, tmp, home))
+  const pathRevealed = useSessionStore((s) => s.workdirPathRevealed[s.activeId] === true)
+  // File session: show "Enclosed dir" until user switches workdir (like Temporary → Workspace).
+  const useEnclosedLabel =
+    Boolean(conversation?.fileId) && !pathRevealed && !temporary
+  const label = useEnclosedLabel
+    ? t('tools.enclosedDir')
+    : truncatePathLabel(workdirLabel(workdir, tmp, home))
+  const pathTitle = useEnclosedLabel
+    ? t('tools.enclosedDirHint')
+    : (workdir ?? t('sidebar.temporaryWorkspace'))
   // Tools tray shows user bash only — never main-surface CLI agent hosts.
   const tabs = (workspace?.tabs ?? []).filter(
     (t) => !t.agentId || t.agentId === 'vav' || t.isAgent
@@ -82,6 +91,9 @@ export function ToolsPanel({
     (event: React.MouseEvent) => {
       event.preventDefault()
       dragState.current = { startY: event.clientY, startHeight: panelHeight }
+      // Gate terminal fit→PTY resize while the tools tray is dragged so the
+      // agent host above is not hit with a SIGWINCH storm (ghost TUI frames).
+      document.documentElement.dataset.resizing = 'true'
       setDragHeight(panelHeight)
     },
     [panelHeight]
@@ -101,12 +113,17 @@ export function ToolsPanel({
         return null
       })
       dragState.current = null
+      delete document.documentElement.dataset.resizing
+      // One settled fit after the tray height is committed.
+      window.dispatchEvent(new Event('vav:resize-end'))
     }
     window.addEventListener('mousemove', onMove)
     window.addEventListener('mouseup', onUp)
     return () => {
       window.removeEventListener('mousemove', onMove)
       window.removeEventListener('mouseup', onUp)
+      // Unmount mid-drag must not leave the global resize gate stuck.
+      delete document.documentElement.dataset.resizing
     }
   }, [dragHeight, setPanelHeight])
 
@@ -147,9 +164,17 @@ export function ToolsPanel({
     openWorkspaceMenu(pathChipRef.current)
   }, [workspaceMenuNonce, openWorkspaceMenu])
 
+  const createConversationInCurrentWorkspace = useSessionStore(
+    (s) => s.createConversationInCurrentWorkspace
+  )
+
   const pathContextItems = (): MenuItem[] => [
     ...workspaceSwitchItems(),
     { label: '', divider: true },
+    {
+      label: t('files.newSessionHere'),
+      onSelect: () => void createConversationInCurrentWorkspace()
+    },
     ...(temporary
       ? [
           {
@@ -199,15 +224,6 @@ export function ToolsPanel({
     void newBash(activeId, 80, 24)
   }
 
-  const setPanelSegmentQuiet = useSessionStore((s) => s.setPanelSegmentQuiet)
-
-  // Preview-edit has no Files pane — keep segment on terminal for when the
-  // tray is open. Quiet: does not expand this session's tools tray.
-  useEffect(() => {
-    if (!previewEdit || segment === 'terminal') return
-    setPanelSegmentQuiet('terminal')
-  }, [previewEdit, segment, setPanelSegmentQuiet])
-
   /**
    * Auto-fold only when the *last bash tab just closed* (had tabs → none).
    *
@@ -232,32 +248,28 @@ export function ToolsPanel({
 
       <div className="tools-header">
         <div className="tools-header-lead">
-          {/* Preview-edit (Agent in file preview): no Files path chip, no Pick —
-              block pick is always-on when Editing; crosshair toggle removed. */}
-          {!previewEdit && (
-            <>
-              <div className="workdir-chip" ref={pathChipRef}>
-                <Chip
-                  label={label}
-                  icon={<Folder size={12} />}
-                  title={workdir ?? t('sidebar.temporaryWorkspace')}
-                  active={filesOn}
-                  onClick={() => {
-                    if (filesOn) setToolsCollapsed(true)
-                    else setPanelSegment('files')
-                  }}
-                  onContextMenu={(event) => {
-                    event.preventDefault()
-                    void showMenu(pathContextItems(), { x: event.clientX, y: event.clientY })
-                  }}
-                  onAction={() => openWorkspaceMenu(pathChipRef.current)}
-                  actionIcon={<ArrowLeftRight size={11} />}
-                  actionTitle={t('tools.switchWorkdirTitle', { shortcut: keys('⌘⇧O') })}
-                />
-              </div>
-              <span className="tools-header-divider" aria-hidden="true" />
-            </>
-          )}
+          {/* Path chip opens Files (main + single-file preview). Workspace root
+              for file sessions is the enclosed directory of the open file. */}
+          <div className="workdir-chip" ref={pathChipRef}>
+            <Chip
+              label={label}
+              icon={<Folder size={12} />}
+              title={pathTitle}
+              active={filesOn}
+              onClick={() => {
+                if (filesOn) setToolsCollapsed(true)
+                else setPanelSegment('files')
+              }}
+              onContextMenu={(event) => {
+                event.preventDefault()
+                void showMenu(pathContextItems(), { x: event.clientX, y: event.clientY })
+              }}
+              onAction={() => openWorkspaceMenu(pathChipRef.current)}
+              actionIcon={<ArrowLeftRight size={11} />}
+              actionTitle={t('tools.switchWorkdirTitle', { shortcut: keys('⌘⇧O') })}
+            />
+          </div>
+          <span className="tools-header-divider" aria-hidden="true" />
         </div>
 
         <div className="tools-header-tabs">
@@ -331,11 +343,9 @@ export function ToolsPanel({
               : { height: bodyHeight }
         }
       >
-        {!previewEdit && (
-          <div className="tools-pane" data-hidden={collapsed || segment !== 'files'}>
-            <FilesPanel visible={!collapsed && segment === 'files'} />
-          </div>
-        )}
+        <div className="tools-pane" data-hidden={collapsed || segment !== 'files'}>
+          <FilesPanel visible={!collapsed && segment === 'files'} />
+        </div>
         <div className="tools-pane" data-hidden={collapsed || segment !== 'terminal'}>
           <TerminalPanel visible={!collapsed && segment === 'terminal'} />
         </div>

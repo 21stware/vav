@@ -1,6 +1,18 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Archive, ArrowLeft, ChevronDown, ChevronRight, Search, X } from 'lucide-react'
-import { PRESET_MODELS, type ConversationMeta, type SidebarGroupingMode } from '@shared/types'
+import {
+  Archive,
+  ArrowLeft,
+  ChevronDown,
+  ChevronRight,
+  Search,
+  X
+} from 'lucide-react'
+import {
+  PRESET_MODELS,
+  enabledCliAgents,
+  type ConversationMeta,
+  type SidebarGroupingMode
+} from '@shared/types'
 import { useSessionStore, type TurnRuntime } from '../state/sessionStore'
 import { isTemporaryWorkspace, middleTruncate, relativeTime, workdirShortLabel } from '../lib/format'
 import { flatten, groupConversations } from '../lib/grouping'
@@ -13,22 +25,38 @@ export function modelLabel(id: string): string {
   return PRESET_MODELS.find((model) => model.id === id)?.label ?? id
 }
 
+/** Running CLI agent display name (sidebar-conversation-list.rpml · Agent 类型). */
+function agentTypeLabel(
+  conversation: ConversationMeta,
+  cliAgents: ReturnType<typeof enabledCliAgents>
+): string | null {
+  const id = conversation.agentBinaryName
+  if (!id || id === 'vav') return null
+  return cliAgents.find((a) => a.id === id)?.name ?? id
+}
+
 /**
  * Subtitle slot, resolved by the priority ladder in
  * sidebar-conversation-list.rpml (annotation 2 → 副标题).
+ * Running: `{AgentType} · 流式中 · {Model}` / `{AgentType} · 后台运行 · N 工具`.
  */
 function subtitleFor(
   conversation: ConversationMeta,
   turn: TurnRuntime | undefined,
   isActive: boolean,
   tmp: string,
-  t: ReturnType<typeof useT>
+  t: ReturnType<typeof useT>,
+  agentLabel: string | null
 ): string {
   if (turn?.awaitingToolCallId) return t('sidebar.awaitingAnswer')
-  if (turn?.isRunning && isActive)
-    return t('sidebar.streaming', { model: modelLabel(conversation.model) })
-  if (turn?.isRunning)
-    return t('sidebar.backgroundRunning', { count: turn.toolCount })
+  if (turn?.isRunning && isActive) {
+    const core = t('sidebar.streaming', { model: modelLabel(conversation.model) })
+    return agentLabel ? `${agentLabel} · ${core}` : core
+  }
+  if (turn?.isRunning) {
+    const core = t('sidebar.backgroundRunning', { count: turn.toolCount })
+    return agentLabel ? `${agentLabel} · ${core}` : core
+  }
   if (!isTemporaryWorkspace(conversation.workingDirectory, tmp)) {
     return workdirShortLabel(conversation.workingDirectory, tmp)
   }
@@ -62,6 +90,10 @@ export function Sidebar({
   const tmp = useSessionStore((s) => s.tmp)
   const renamingId = useSessionStore((s) => s.renamingId)
   const groupingMode = useSessionStore((s) => s.settings.sidebarGroupingMode)
+  // Select the raw list — never call enabledCliAgents inside the selector
+  // (it returns a new array each time → getSnapshot infinite loop).
+  const rawCliAgents = useSessionStore((s) => s.settings.cliAgents)
+  const cliAgents = useMemo(() => enabledCliAgents(rawCliAgents), [rawCliAgents])
   const activeGroupId = useSessionStore((s) => s.activeGroupId)
   const selectWorkspaceGroup = useSessionStore((s) => s.selectWorkspaceGroup)
 
@@ -78,8 +110,16 @@ export function Sidebar({
   const updateSettings = useSessionStore((s) => s.updateSettings)
 
   const listRef = useRef<HTMLDivElement>(null)
+  /** Defers float close on single-click so double-click can open a companion. */
+  const clickTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [collapsedKeys, setCollapsedKeys] = useState<Set<string>>(() => new Set())
   const [archiveView, setArchiveView] = useState(false)
+
+  useEffect(() => {
+    return () => {
+      if (clickTimerRef.current) clearTimeout(clickTimerRef.current)
+    }
+  }, [])
 
   const searching = query.trim().length > 0
   const archivedCount = useMemo(
@@ -213,7 +253,14 @@ export function Sidebar({
       ]
     }
     return [
-      { label: t('sidebar.menu.openDetached'), onSelect: () => void openDetached(id) },
+      {
+        label: t('sidebar.menu.openDetached'),
+        onSelect: () => {
+          void openDetached(id)
+          // Close the floating overlay after launching the companion.
+          onNavigate?.()
+        }
+      },
       {
         label: conversation.pinned ? t('sidebar.menu.unpin') : t('sidebar.menu.pin'),
         onSelect: () => void setPinned(id, !conversation.pinned)
@@ -290,8 +337,11 @@ export function Sidebar({
           />
           {query && (
             <button
+              type="button"
               className="btn icon-only sm"
               style={{ position: 'absolute', right: 2, top: 2 }}
+              title={t('common.clear')}
+              aria-label={t('common.clear')}
               onClick={() => setSidebarQuery('')}
             >
               <X size={12} />
@@ -442,26 +492,48 @@ export function Sidebar({
                   const runClass = selectionRunClass(conversation.id)
                   const awaiting = !!turn?.awaitingToolCallId
                   const running = !!turn?.isRunning && !awaiting
+                  const agentLabel = agentTypeLabel(conversation, cliAgents)
 
                   return (
                     <div
                       key={conversation.id}
                       className={`conv-row${isActive ? ' selected' : ''}${isMultiSelected ? ` multi ${runClass}` : ''}`}
                       onClick={(event) => {
-                        void selectConversation(conversation.id, {
-                          additive: event.metaKey,
-                          range: event.shiftKey
-                        })
-                        // Multi-select keeps the float open so the user can
-                        // keep picking; a plain click is a navigation.
-                        if (!event.metaKey && !event.shiftKey) onNavigate?.()
+                        // detail: ignore the second half of a double-click pair
+                        if (event.detail > 1) return
+                        const additive = event.metaKey
+                        const range = event.shiftKey
+                        void selectConversation(conversation.id, { additive, range })
+                        // Multi-select keeps the float open so the user can keep picking.
+                        if (additive || range) return
+                        // Floating: delay close so a double-click can still open
+                        // a companion window (immediate unmount ate dblclick before).
+                        if (floating && onNavigate) {
+                          if (clickTimerRef.current) clearTimeout(clickTimerRef.current)
+                          clickTimerRef.current = setTimeout(() => {
+                            clickTimerRef.current = null
+                            onNavigate()
+                          }, 280)
+                          return
+                        }
+                        onNavigate?.()
                       }}
-                      onDoubleClick={() => {
+                      onDoubleClick={(event) => {
+                        event.preventDefault()
+                        if (clickTimerRef.current) {
+                          clearTimeout(clickTimerRef.current)
+                          clickTimerRef.current = null
+                        }
                         void openDetached(conversation.id)
                         onNavigate?.()
                       }}
                       onContextMenu={(event) => {
                         event.preventDefault()
+                        event.stopPropagation()
+                        if (clickTimerRef.current) {
+                          clearTimeout(clickTimerRef.current)
+                          clickTimerRef.current = null
+                        }
                         // Finder-style: right-click inside a multi-selection keeps
                         // the set and operates on all of it; outside collapses to one.
                         const targets =
@@ -484,7 +556,7 @@ export function Sidebar({
                         <span className="conv-text">
                           <span className="conv-title">{middleTruncate(conversation.title)}</span>
                           <span className="conv-subtitle">
-                            {subtitleFor(conversation, turn, isActive, tmp, t)}
+                            {subtitleFor(conversation, turn, isActive, tmp, t, agentLabel)}
                           </span>
                         </span>
                       )}
@@ -511,6 +583,7 @@ export function Sidebar({
           <button
             type="button"
             className="btn ghost sm sidebar-archive-btn"
+            title={t('sidebar.archived')}
             onClick={() => {
               setSidebarQuery('')
               setArchiveView(true)

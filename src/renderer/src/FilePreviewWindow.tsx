@@ -10,9 +10,10 @@ import {
 } from './state/sessionStore'
 import { installFsWatchBridge, installPtyBridge } from './state/workspaceStore'
 import { tt } from './i18n/useT'
+import { AppToast } from './components/AppToast'
 import { FileViewer } from './components/FileViewer'
-import { useSessionMenuCommands, useTerminalAppearance } from './components/SessionDetail'
-import { X } from 'lucide-react'
+import { useTerminalAppearance } from './components/SessionDetail'
+import { useMenuCommands } from './lib/menuCommands'
 
 /**
  * Standalone file preview window — one path per window; reopen focuses it.
@@ -49,7 +50,7 @@ export default function FilePreviewWindow({ path }: { path: string }): React.JSX
 
   useAppearance()
   useTerminalAppearance()
-  useSessionMenuCommands()
+  useMenuCommands()
 
   if (!ready) {
     return (
@@ -72,22 +73,7 @@ export default function FilePreviewWindow({ path }: { path: string }): React.JSX
         origin={origin}
         parentConversationId={parentConversationId}
       />
-      <PreviewToastHost />
+      <AppToast />
     </>
-  )
-}
-
-function PreviewToastHost(): React.JSX.Element | null {
-  const toast = useSessionStore((s) => s.toast)
-  const showToast = useSessionStore((s) => s.showToast)
-  if (!toast) return null
-  return (
-    <div className={`app-toast kind-${toast.kind}`} role="status">
-      <div className="app-toast-title">{toast.title}</div>
-      {toast.description && <div className="app-toast-body">{toast.description}</div>}
-      <button type="button" className="app-toast-dismiss" onClick={() => showToast(null)}>
-        <X size={12} />
-      </button>
-    </div>
   )
 }

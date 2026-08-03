@@ -15,6 +15,7 @@ export function ReasoningBlock({ text }: { text: string }): React.JSX.Element {
         type="button"
         className="reasoning-summary"
         aria-expanded={open}
+        title={open ? t('common.collapse') : t('common.expand')}
         onClick={() => setOpen((value) => !value)}
       >
         {t('composer.thinking')}

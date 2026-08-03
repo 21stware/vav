@@ -160,6 +160,8 @@ export function XlsxNativeView({
                 type="button"
                 className="btn ghost sm"
                 disabled={rowStart <= 0}
+                title={t('common.pageUp')}
+                aria-label={t('common.pageUp')}
                 onClick={() => setRowStart((s) => Math.max(0, s - WINDOW))}
               >
                 ↑
@@ -168,6 +170,8 @@ export function XlsxNativeView({
                 type="button"
                 className="btn ghost sm"
                 disabled={end >= grid.length}
+                title={t('common.pageDown')}
+                aria-label={t('common.pageDown')}
                 onClick={() =>
                   setRowStart((s) =>
                     Math.min(Math.max(0, grid.length - WINDOW), s + WINDOW)

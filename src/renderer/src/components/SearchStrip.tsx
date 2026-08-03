@@ -36,10 +36,15 @@ export function SearchStrip(): React.JSX.Element {
         value={search.query}
         onChange={(event) => setSearchQuery(event.target.value)}
         onKeyDown={(event) => {
+          // IME confirm Enter must not advance search mid-composition.
+          if (event.nativeEvent.isComposing || event.key === 'Process') return
           if (event.key === 'Enter') {
             event.preventDefault()
+            event.stopPropagation()
             stepSearch(event.shiftKey ? -1 : 1)
           } else if (event.key === 'Escape') {
+            event.preventDefault()
+            event.stopPropagation()
             closeSearch()
           }
         }}

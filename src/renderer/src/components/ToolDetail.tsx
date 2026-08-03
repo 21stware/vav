@@ -48,6 +48,12 @@ export const ToolDetail = memo(function ToolDetail({
   if (block.tool === 'fs_list' && output) {
     return <ListingView listing={output} />
   }
+  if (block.tool === 'web_search' && output) {
+    return <WebSearchView text={output} />
+  }
+  if (block.tool === 'web_fetch' && output) {
+    return <WebFetchView text={output} />
+  }
   if (block.tool === 'request' || block.tool === 'ask_user_question') {
     return (
       <div className="detail-qa">
@@ -176,6 +182,122 @@ function ListingView({ listing }: { listing: string }): React.JSX.Element {
       ))}
     </div>
   )
+}
+
+/** Ranked hits from web_search — titles open in the system browser. */
+function WebSearchView({ text }: { text: string }): React.JSX.Element {
+  const { header, hits } = useMemo(() => parseWebSearch(text), [text])
+
+  if (hits.length === 0) {
+    return (
+      <div className="detail-web">
+        <pre className="web-body">{clampLines(text.split('\n')).join('\n')}</pre>
+      </div>
+    )
+  }
+
+  return (
+    <div className="detail-web">
+      {header && <div className="web-header">{header}</div>}
+      <ol className="web-hits">
+        {hits.map((hit) => (
+          <li key={hit.rank} className="web-hit">
+            <a className="web-title" href={hit.url} target="_blank" rel="noreferrer">
+              {hit.title}
+            </a>
+            <div className="web-url">{hit.url}</div>
+            {hit.snippet && <div className="web-snippet">{hit.snippet}</div>}
+          </li>
+        ))}
+      </ol>
+    </div>
+  )
+}
+
+/** Fetched page body with a compact metadata strip. */
+function WebFetchView({ text }: { text: string }): React.JSX.Element {
+  const { meta, body } = useMemo(() => parseWebFetch(text), [text])
+  return (
+    <div className="detail-web">
+      {meta.length > 0 && (
+        <div className="web-meta">
+          {meta.map((line, i) => (
+            <div key={i} className="web-meta-line">
+              {looksLikeUrl(line) ? (
+                <a href={extractUrl(line)} target="_blank" rel="noreferrer">
+                  {line}
+                </a>
+              ) : (
+                line
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+      <pre className="web-body">{clampLines(body.split('\n')).join('\n')}</pre>
+    </div>
+  )
+}
+
+function parseWebSearch(text: string): {
+  header: string
+  hits: Array<{ rank: number; title: string; url: string; snippet: string }>
+} {
+  const lines = text.replace(/\n+$/, '').split('\n')
+  const header = lines[0]?.startsWith('Found ') || lines[0]?.startsWith('web_search')
+    ? lines[0]!
+    : ''
+  const hits: Array<{ rank: number; title: string; url: string; snippet: string }> = []
+  let current: { rank: number; title: string; url: string; snippet: string } | null = null
+
+  for (const line of lines) {
+    const head = /^(\d+)\.\s+\[web:\d+\]\s+(.+)$/.exec(line)
+    if (head) {
+      if (current) hits.push(current)
+      current = { rank: Number(head[1]), title: head[2]!.trim(), url: '', snippet: '' }
+      continue
+    }
+    if (!current) continue
+    const url = /^\s*url:\s+(\S+)\s*$/.exec(line)
+    if (url) {
+      current.url = url[1]!
+      continue
+    }
+    const snip = /^\s*snippet:\s+(.*)$/.exec(line)
+    if (snip) {
+      current.snippet = snip[1]!.trim()
+    }
+  }
+  if (current) hits.push(current)
+  return { header, hits }
+}
+
+function parseWebFetch(text: string): { meta: string[]; body: string } {
+  const sep = text.indexOf('\n---\n')
+  if (sep < 0) {
+    // Title-only or error path
+    const lines = text.split('\n')
+    if (lines.length <= 6 && lines.some((l) => l.startsWith('final_url:') || l.startsWith('web_fetch'))) {
+      return { meta: lines, body: '' }
+    }
+    return { meta: [], body: text }
+  }
+  const meta = text
+    .slice(0, sep)
+    .split('\n')
+    .map((l) => l.trim())
+    .filter(Boolean)
+  const body = text.slice(sep + 5).replace(/^\n/, '')
+  return { meta, body }
+}
+
+function looksLikeUrl(line: string): boolean {
+  return /https?:\/\//.test(line)
+}
+
+function extractUrl(line: string): string {
+  const m = line.match(/https?:\/\/\S+/)
+  return m?.[0] ?? line
 }
 
 function clampLines(lines: string[]): string[] {

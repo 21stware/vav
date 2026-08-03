@@ -22,6 +22,7 @@ import { basename } from '../lib/path'
 import { formatBadge } from '../lib/previewBlocks'
 import { menuAnchor, showMenu, type MenuItem } from '../lib/nativeMenu'
 import { keys } from '../lib/platform'
+import { resolveSendKeyMode, shouldSendOnKeyDown } from '../lib/composerSendKey'
 import { useT } from '../i18n/useT'
 import { Button } from './ui'
 
@@ -51,17 +52,29 @@ const NO_ATTACHMENTS: string[] = []
 const NO_REFS: import('@shared/types').PreviewRef[] = []
 const NO_CARDS: { ref: import('@shared/types').PreviewRef; comment: string }[] = []
 
-export function Composer(): React.JSX.Element {
+/**
+ * Single shared composer for main session, workspace agent column, and
+ * file-preview drawer. Pass {@link conversationId} when the surface owns a
+ * session that may lag behind (or differ from) store.activeId for a frame.
+ */
+export function Composer({
+  conversationId: pinnedConversationId
+}: {
+  conversationId?: string | null
+} = {}): React.JSX.Element {
   const t = useT()
-  const activeId = useSessionStore((s) => s.activeId)
-  const conversation = useSessionStore((s) => s.conversations.find((c) => c.id === s.activeId))
-  const draft = useSessionStore((s) => s.drafts[s.activeId] ?? '')
-  const attachments = useSessionStore((s) => s.attachments[s.activeId] ?? NO_ATTACHMENTS)
-  const previewRefs = useSessionStore((s) => s.previewRefs[s.activeId] ?? NO_REFS)
-  const commentCards = useSessionStore((s) => s.commentCards[s.activeId] ?? NO_CARDS)
-  const contextFile = useSessionStore((s) => s.contextFiles[s.activeId] ?? null)
-  const quote = useSessionStore((s) => s.quotes[s.activeId] ?? null)
-  const turn = useSessionStore((s) => s.turns[s.activeId])
+  const storeActiveId = useSessionStore((s) => s.activeId)
+  const conversationId = (pinnedConversationId?.trim() || storeActiveId) || ''
+  const conversation = useSessionStore((s) =>
+    s.conversations.find((c) => c.id === conversationId)
+  )
+  const draft = useSessionStore((s) => s.drafts[conversationId] ?? '')
+  const attachments = useSessionStore((s) => s.attachments[conversationId] ?? NO_ATTACHMENTS)
+  const previewRefs = useSessionStore((s) => s.previewRefs[conversationId] ?? NO_REFS)
+  const commentCards = useSessionStore((s) => s.commentCards[conversationId] ?? NO_CARDS)
+  const contextFile = useSessionStore((s) => s.contextFiles[conversationId] ?? null)
+  const quote = useSessionStore((s) => s.quotes[conversationId] ?? null)
+  const turn = useSessionStore((s) => s.turns[conversationId])
   const settings = useSessionStore((s) => s.settings)
   const focusTick = useSessionStore((s) => s.composerFocusTick)
 
@@ -77,12 +90,15 @@ export function Composer(): React.JSX.Element {
   const setApprovalMode = useSessionStore((s) => s.setApprovalMode)
 
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  /** True while IME / dictation composition is active (Enter must not submit). */
+  const composingRef = useRef(false)
   const approvalMode: ApprovalMode = conversation?.approvalMode ?? 'auto'
   const [focused, setFocused] = useState(false)
 
   const isRunning = !!turn?.isRunning
   const awaiting = !!turn?.awaitingToolCallId
   const canSend =
+    !!conversationId &&
     !isRunning &&
     (draft.trim().length > 0 ||
       attachments.length > 0 ||
@@ -104,23 +120,30 @@ export function Composer(): React.JSX.Element {
     : contextFile
       ? t('composer.placeholderFile')
       : t('composer.placeholderCommand')
+  const sendKey = resolveSendKeyMode(settings.sendKey)
+  const sendShortcut = sendKey === 'enter' ? keys('↵') : keys('⌘↵')
+  // Keep idle hint short: e.g. "↵ Send · ⌘I Focus" (no drag-files copy).
+  const shortcutHints = t('composer.placeholderHints', {
+    send: sendShortcut,
+    focus: keys('⌘I')
+  })
   const placeholder = awaiting
     ? t('composer.placeholderAwaiting')
     : isRunning
       ? t('composer.thinking')
-      : `${idlePlaceholder}  ${keys('⌘↵')} ${t('composer.send')} · ${t('composer.dragHint', { shortcut: keys('⌘I') })}`
+      : `${idlePlaceholder}  ${shortcutHints}`
 
   useEffect(() => {
-    if (!quote) return
+    if (!quote || !conversationId) return
     const onKeyDown = (event: KeyboardEvent): void => {
       if (event.key === 'Escape') {
         event.preventDefault()
-        clearQuote(activeId)
+        clearQuote(conversationId)
       }
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [quote, activeId, clearQuote])
+  }, [quote, conversationId, clearQuote])
 
   useEffect(() => {
     if (focusTick === 0) return
@@ -130,6 +153,8 @@ export function Composer(): React.JSX.Element {
   useEffect(() => {
     const element = textareaRef.current
     if (!element) return
+    // Avoid reflowing height mid-composition — can cancel IME on macOS.
+    if (composingRef.current) return
     const lineHeight = parseFloat(getComputedStyle(element).lineHeight) || 20
     const minRows = focused && !isRunning ? COMPOSER_MIN_FOCUSED_ROWS : 1
     const minHeight = minRows * lineHeight
@@ -143,18 +168,19 @@ export function Composer(): React.JSX.Element {
   const activeModel = conversation?.model ?? settings.defaultModel
 
   const modelItems = useMemo((): MenuItem[] => {
+    if (!conversationId) return []
     const custom = settings.customModels.map((id) => ({
       label: id,
       checked: id === activeModel,
-      onSelect: () => void setModel(activeId, id)
+      onSelect: () => void setModel(conversationId, id)
     }))
     const presets = PRESET_MODELS.map((model) => ({
       label: model.label,
       checked: model.id === activeModel,
-      onSelect: () => void setModel(activeId, model.id)
+      onSelect: () => void setModel(conversationId, model.id)
     }))
     return custom.length ? [...presets, { label: '', divider: true }, ...custom] : presets
-  }, [settings.customModels, activeId, activeModel, setModel])
+  }, [settings.customModels, conversationId, activeModel, setModel])
 
   const approvalItems = useMemo((): MenuItem[] => {
     if (!conversation) return []
@@ -170,9 +196,9 @@ export function Composer(): React.JSX.Element {
   const approvalTitle = activeMode.title
 
   const submit = (): void => {
-    if (!canSend) return
+    if (!canSend || !conversationId) return
     textareaRef.current?.blur()
-    void send(draft.trim(), attachments)
+    void send(draft.trim(), attachments, conversationId)
   }
 
   const tokenRatio = conversation
@@ -184,6 +210,11 @@ export function Composer(): React.JSX.Element {
     quote?.role === 'user' ? t('composer.quoteFromUser') : t('composer.quoteFromAgent')
 
   const hasCommentCards = commentCards.length > 0
+  /**
+   * file-preview.rpml: whole-file chip only when there are no comment cards.
+   * Selected blocks already carry path + line context; the chip is redundant.
+   */
+  const showFileContextChip = Boolean(contextFile && !hasCommentCards)
 
   return (
     <div
@@ -194,7 +225,9 @@ export function Composer(): React.JSX.Element {
         const paths = [...event.dataTransfer.files]
           .map((file) => window.vav.files.pathForFile(file))
           .filter(Boolean)
-        if (paths.length) setAttachments(activeId, [...new Set([...attachments, ...paths])])
+        if (conversationId && paths.length) {
+          setAttachments(conversationId, [...new Set([...attachments, ...paths])])
+        }
       }}
     >
       {quote && (
@@ -215,24 +248,24 @@ export function Composer(): React.JSX.Element {
             type="button"
             className="btn icon-only sm"
             title={t('composer.clearQuote')}
-            onClick={() => clearQuote(activeId)}
+            onClick={() => conversationId && clearQuote(conversationId)}
           >
             <X size={12} />
           </button>
         </div>
       )}
       {/* File Attachment Chip — above comment cards (file-preview.rpml). */}
-      {contextFile && (
+      {showFileContextChip && contextFile && conversationId && (
         <FileContextChip
           path={contextFile}
-          conversationId={activeId}
-          onDismiss={() => void dismissContextFile(activeId)}
+          conversationId={conversationId}
+          onDismiss={() => void dismissContextFile(conversationId)}
         />
       )}
       {/* Attached stack: comment strip sits on top of the input box. */}
-      <CommentCardsBar />
+      <CommentCardsBar conversationId={conversationId} />
       <div className="composer-box">
-        {previewRefs.length > 0 && (
+        {previewRefs.length > 0 && conversationId && (
           <div className="context-refs">
             {previewRefs.map((ref) => (
               <span
@@ -250,7 +283,10 @@ export function Composer(): React.JSX.Element {
                   style={{ width: 16, height: 16 }}
                   title={t('composer.removeContext')}
                   onClick={() =>
-                    setPreviewRefs(activeId, previewRefs.filter((r) => r.id !== ref.id))
+                    setPreviewRefs(
+                      conversationId,
+                      previewRefs.filter((r) => r.id !== ref.id)
+                    )
                   }
                 >
                   <X size={10} />
@@ -259,16 +295,24 @@ export function Composer(): React.JSX.Element {
             ))}
           </div>
         )}
-        {attachments.length > 0 && (
+        {attachments.length > 0 && conversationId && (
           <div className="attachments">
             {attachments.map((path) => (
               <span className="chip" key={path} title={path}>
                 <Paperclip size={11} />
                 <span className="chip-label">{basename(path)}</span>
                 <button
+                  type="button"
                   className="btn icon-only sm"
                   style={{ width: 16, height: 16 }}
-                  onClick={() => setAttachments(activeId, attachments.filter((p) => p !== path))}
+                  title={t('composer.removeAttachment')}
+                  aria-label={t('composer.removeAttachment')}
+                  onClick={() =>
+                    setAttachments(
+                      conversationId,
+                      attachments.filter((p) => p !== path)
+                    )
+                  }
                 >
                   <X size={10} />
                 </button>
@@ -282,15 +326,31 @@ export function Composer(): React.JSX.Element {
           rows={1}
           placeholder={placeholder}
           value={draft}
-          disabled={isRunning}
+          disabled={isRunning || !conversationId}
           onFocus={() => setFocused(true)}
-          onBlur={() => setFocused(false)}
-          onChange={(event) => setDraft(activeId, event.target.value)}
+          onBlur={() => {
+            setFocused(false)
+            // Composition can be aborted without compositionend (focus loss).
+            composingRef.current = false
+          }}
+          onCompositionStart={() => {
+            composingRef.current = true
+          }}
+          onCompositionEnd={() => {
+            composingRef.current = false
+          }}
+          onChange={(event) => {
+            // Always sync: blocking composition updates (or preventDefault on
+            // insertCompositionText) breaks CJK IME / dictation and can leave
+            // the controlled value stuck so nothing types.
+            if (conversationId) setDraft(conversationId, event.target.value)
+          }}
           onKeyDown={(event) => {
-            if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
-              event.preventDefault()
-              submit()
-            }
+            // Don’t treat IME “confirm” Enter as send.
+            if (composingRef.current || event.nativeEvent.isComposing) return
+            if (!shouldSendOnKeyDown(event, sendKey)) return
+            event.preventDefault()
+            submit()
           }}
         />
 
@@ -350,14 +410,15 @@ export function Composer(): React.JSX.Element {
               icon={<Square size={11} />}
               variant="danger"
               size="sm"
-              onClick={() => void cancel(activeId)}
+              title={t('composer.stop')}
+              onClick={() => conversationId && void cancel(conversationId)}
             />
           ) : (
             <button
               className="send-button"
               disabled={!canSend}
               onClick={submit}
-              title={`${t('composer.send')} ${keys('⌘↵')}`}
+              title={`${t('composer.send')} ${sendShortcut}`}
             >
               <ArrowUp size={14} />
             </button>
@@ -372,10 +433,13 @@ export function Composer(): React.JSX.Element {
  * Pick-mode comment strip — attached above the composer box (not above tools).
  * Multiple cards stack flush; bottom edge is square so it reads as part of the input.
  */
-function CommentCardsBar(): React.JSX.Element | null {
+function CommentCardsBar({
+  conversationId
+}: {
+  conversationId: string
+}): React.JSX.Element | null {
   const t = useT()
-  const activeId = useSessionStore((s) => s.activeId)
-  const cards = useSessionStore((s) => s.commentCards[s.activeId] ?? NO_CARDS)
+  const cards = useSessionStore((s) => s.commentCards[conversationId] ?? NO_CARDS)
   const commentFocusId = useSessionStore((s) => s.commentFocusId)
   const commentFocusTick = useSessionStore((s) => s.commentFocusTick)
   const updateCommentCard = useSessionStore((s) => s.updateCommentCard)
@@ -405,13 +469,13 @@ function CommentCardsBar(): React.JSX.Element | null {
     return () => window.cancelAnimationFrame(id)
   }, [editingId, commentFocusTick])
 
+  /**
+   * Leave edit mode. Do NOT drop empty cards on blur/Enter — empty cards are
+   * intentional picks (selection highlight + pending note). Opening Agent / focusing
+   * the composer used to blur the field and wipe the selection.
+   * Removal is explicit: trash / ✕ / re-click block on the canvas.
+   */
   const commitCard = (refId: string): void => {
-    const latest = (useSessionStore.getState().commentCards[activeId] ?? []).find(
-      (c) => c.ref.id === refId
-    )
-    if (!latest || !latest.comment.trim()) {
-      removeCommentCard(activeId, refId)
-    }
     setEditingId((cur) => (cur === refId ? null : cur))
   }
 
@@ -453,7 +517,7 @@ function CommentCardsBar(): React.JSX.Element | null {
                   className="comment-card-close"
                   title={t('common.close')}
                   aria-label={t('common.close')}
-                  onClick={() => removeCommentCard(activeId, card.ref.id)}
+                  onClick={() => removeCommentCard(conversationId, card.ref.id)}
                 >
                   <X size={12} strokeWidth={2.25} />
                 </button>
@@ -463,7 +527,7 @@ function CommentCardsBar(): React.JSX.Element | null {
                   className="comment-card-trash"
                   title={t('common.delete')}
                   aria-label={t('common.delete')}
-                  onClick={() => removeCommentCard(activeId, card.ref.id)}
+                  onClick={() => removeCommentCard(conversationId, card.ref.id)}
                 >
                   <Trash2 size={12} strokeWidth={2} />
                 </button>
@@ -493,7 +557,9 @@ function CommentCardsBar(): React.JSX.Element | null {
                 className="comment-card-input"
                 placeholder={t('composer.commentPlaceholder')}
                 value={card.comment}
-                onChange={(e) => updateCommentCard(activeId, card.ref.id, e.target.value)}
+                onChange={(e) =>
+                  updateCommentCard(conversationId, card.ref.id, e.target.value)
+                }
                 onKeyDown={(e) => {
                   if (e.key === 'Enter') {
                     e.preventDefault()
@@ -523,11 +589,11 @@ function CommentCardsBar(): React.JSX.Element | null {
             ) : (
               <button
                 type="button"
-                className="comment-card-body"
+                className={`comment-card-body${hasComment ? '' : ' is-placeholder'}`}
                 title={t('composer.commentEditHint')}
                 onClick={() => setEditingId(card.ref.id)}
               >
-                {card.comment}
+                {hasComment ? card.comment : t('composer.commentPlaceholder')}
               </button>
             )}
           </div>
