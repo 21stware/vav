@@ -1,7 +1,7 @@
 {
   "name": "vav",
   "productName": "VAV",
-  "version": "1.4.0",
+  "version": "1.4.1",
   "description": "Local-first CLI agent terminal workspace: host Claude Code, Codex, and other agent CLIs with multi-split PTYs and a file tree.",
   "license": "PolyForm-Noncommercial-1.0.0",
   "author": "Oboo Cheng",
@@ -13,6 +13,7 @@
     "build": "npm run typecheck && electron-vite build",
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
     "site:images": "node scripts/optimize-site-images.mjs",
+    "brand:icons": "python3 scripts/sync-brand-icons.py",
     "dist": "npm run build && electron-builder --mac",
     "dist:win": "npm run build && electron-builder --win",
     "release": "npm run build && electron-builder --publish always"

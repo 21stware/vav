@@ -48,6 +48,7 @@ If you edit `site/assets/*.png` by hand, regenerate the variants or visitors kee
 
 ```bash
 npm run site:images        # add -- --force to rebuild everything
+npm run brand:icons        # rebuild Windows .ico + site favicon from build/icon.png
 ```
 
 Custom domain: `vavapp.com` (see `site/CNAME`). Apex uses GitHub Pages `A`/`AAAA` records; `www` is a `CNAME` to `21stware.github.io`. Keep Cloudflare proxy **DNS only** (grey cloud) so GitHub can issue HTTPS.
