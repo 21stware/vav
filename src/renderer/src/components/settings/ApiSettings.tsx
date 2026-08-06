@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { PRESET_MODELS } from '@shared/types'
 import { useSessionStore } from '../../state/sessionStore'
 import { useT } from '../../i18n/useT'
@@ -7,16 +7,11 @@ import { Button } from '../ui'
 /**
  * API & model settings.
  *
- * The key is draft state until 完成 or 验证; everything else writes through
- * immediately (settings-api.rpml annotations 4 and 5).
+ * The key is draft until blur / Validate / unmount persists it; everything else
+ * writes through immediately. Connectivity results render inline under the key
+ * row (not a settings footer bar).
  */
-export function ApiSettings({
-  onFooterMessage,
-  registerCommit
-}: {
-  onFooterMessage: (message: string) => void
-  registerCommit: (commit: (() => Promise<void>) | null) => void
-}): React.JSX.Element {
+export function ApiSettings(): React.JSX.Element {
   const t = useT()
   const settings = useSessionStore((s) => s.settings)
   const apiKeyHint = useSessionStore((s) => s.apiKeyHint)
@@ -26,25 +21,35 @@ export function ApiSettings({
   const [draftKey, setDraftKey] = useState('')
   const [revealed, setRevealed] = useState(false)
   const [validating, setValidating] = useState(false)
+  const [status, setStatus] = useState<string | null>(null)
   const [customModel, setCustomModel] = useState('')
+  const draftKeyRef = useRef(draftKey)
+  draftKeyRef.current = draftKey
+  const refreshHintRef = useRef(refreshApiKeyHint)
+  refreshHintRef.current = refreshApiKeyHint
 
+  const persistDraftKey = async (): Promise<void> => {
+    const key = draftKeyRef.current.trim()
+    if (!key) return
+    await window.vav.settings.setApiKey(key)
+    await refreshHintRef.current()
+  }
+
+  // Flush typed key when leaving this pane / closing the window.
   useEffect(() => {
-    const commit = async (): Promise<void> => {
-      if (!draftKey.trim()) return
-      await window.vav.settings.setApiKey(draftKey.trim())
-      await refreshApiKeyHint()
+    return () => {
+      void persistDraftKey()
     }
-    registerCommit(commit)
-    return () => registerCommit(null)
-  }, [draftKey, registerCommit, refreshApiKeyHint])
+  }, [])
 
   const validate = async (): Promise<void> => {
     setValidating(true)
-    onFooterMessage(t('api.validating'))
-    const response = await window.vav.settings.validateKey(draftKey.trim())
-    onFooterMessage(response.message)
-    if (response.ok && draftKey.trim()) {
-      await window.vav.settings.setApiKey(draftKey.trim())
+    setStatus(t('api.validating'))
+    const key = draftKeyRef.current.trim()
+    const response = await window.vav.settings.validateKey(key)
+    setStatus(response.message)
+    if (response.ok && key) {
+      await window.vav.settings.setApiKey(key)
       await refreshApiKeyHint()
       setDraftKey('')
     }
@@ -75,7 +80,11 @@ export function ApiSettings({
             type={revealed ? 'text' : 'password'}
             placeholder={settings.apiKeyPresent ? '••••••••••••••••' : 'sk-ant-…'}
             value={draftKey}
-            onChange={(event) => setDraftKey(event.target.value)}
+            onChange={(event) => {
+              setDraftKey(event.target.value)
+              if (status) setStatus(null)
+            }}
+            onBlur={() => void persistDraftKey()}
           />
           <Button
             label={revealed ? t('api.hide') : t('api.show')}
@@ -96,6 +105,11 @@ export function ApiSettings({
           ? t('api.keyConfigured', { hint: apiKeyHint ?? '••••' })
           : t('api.keyEmpty')}
       </div>
+      {status ? (
+        <div className="form-hint api-validate-status" role="status">
+          {status}
+        </div>
+      ) : null}
 
       <div className="form-row">
         <label>{t('api.endpoint')}</label>

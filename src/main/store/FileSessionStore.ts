@@ -1,6 +1,6 @@
 import { app } from 'electron'
 import { createHash } from 'node:crypto'
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { stat } from 'node:fs/promises'
 import type { Conversation } from '@shared/types'
@@ -88,6 +88,16 @@ export class FileSessionStore {
   pathForFileId(fileId: string): string | null {
     const bundle = this.index.byId[fileId]
     return bundle?.path ?? null
+  }
+
+  /** Path + live existence for the main shell file-session panel. */
+  resolve(fileId: string): {
+    path: string
+    pathStatus: 'ok' | 'file_missing' | 'dir_missing'
+  } | null {
+    const path = this.pathForFileId(fileId)
+    if (!path) return null
+    return { path, pathStatus: pathExistence(path) }
   }
 
   /**
@@ -303,6 +313,102 @@ export class FileSessionStore {
   }
 
   /**
+   * Every file-bound session across all bundles (sidebar “Show file sessions”).
+   * Path status is checked live; missing files/dirs are still listed.
+   */
+  listAll(): {
+    fileId: string
+    path: string
+    pathStatus: 'ok' | 'file_missing' | 'dir_missing'
+    sessionId: string
+    title: string
+    createdAt: number
+    updatedAt: number
+    messageCount: number
+    tokensUsed: number
+    isActive: boolean
+  }[] {
+    if (!this.conversations) return []
+    const out: {
+      fileId: string
+      path: string
+      pathStatus: 'ok' | 'file_missing' | 'dir_missing'
+      sessionId: string
+      title: string
+      createdAt: number
+      updatedAt: number
+      messageCount: number
+      tokensUsed: number
+      isActive: boolean
+    }[] = []
+    for (const bundle of Object.values(this.index.byId)) {
+      const pathStatus = pathExistence(bundle.path)
+      for (const sessionId of bundle.sessionIds) {
+        const c = this.conversations.get(sessionId)
+        if (!c) continue
+        out.push({
+          fileId: bundle.fileId,
+          path: bundle.path,
+          pathStatus,
+          sessionId: c.id,
+          title: c.title || 'New session',
+          createdAt: c.createdAt,
+          updatedAt: c.updatedAt,
+          messageCount: c.messages?.length ?? 0,
+          tokensUsed: c.tokensUsed ?? 0,
+          isActive: bundle.activeSessionId === c.id
+        })
+      }
+    }
+    return out.sort((a, b) => b.updatedAt - a.updatedAt)
+  }
+
+  /**
+   * Sidebar force-delete: no active/last protection. Empty fileId bundles are dropped.
+   */
+  forceDelete(
+    fileId: string,
+    sessionIds: string[]
+  ): {
+    ok: boolean
+    error?: string
+    removed: string[]
+  } {
+    const bundle = this.index.byId[fileId]
+    if (!bundle || !this.conversations) {
+      return { ok: false, error: 'no_match', removed: [] }
+    }
+    const wanted = [...new Set(sessionIds)].filter((id) => bundle.sessionIds.includes(id))
+    if (wanted.length === 0) {
+      return { ok: false, error: 'no_match', removed: [] }
+    }
+    const remainingIds = bundle.sessionIds.filter((id) => !wanted.includes(id))
+    const removed = this.conversations.remove(wanted)
+    const stillPresent = wanted.filter((id) => !!this.conversations!.get(id))
+    if (stillPresent.length > 0) {
+      return { ok: false, error: 'disk_write_failed', removed: [] }
+    }
+    if (remainingIds.length === 0) {
+      delete this.index.byId[fileId]
+      if (bundle.inodeKey) delete this.index.byInode[bundle.inodeKey]
+      delete this.index.byPathHash[bundle.pathHash]
+    } else {
+      bundle.sessionIds = remainingIds
+      if (!bundle.sessionIds.includes(bundle.activeSessionId)) {
+        bundle.activeSessionId = bundle.sessionIds[0]!
+      }
+      this.index.byId[fileId] = bundle
+    }
+    this.flushIndex()
+    try {
+      this.conversations.flush()
+    } catch {
+      // index already updated; conversations may recover on next load
+    }
+    return { ok: true, removed: removed.length ? removed : wanted }
+  }
+
+  /**
    * Rename a file-preview session title (≤100 chars, non-empty).
    * Same name as another session is allowed.
    */
@@ -445,4 +551,22 @@ export class FileSessionStore {
 function dirnameSafe(path: string): string {
   const i = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'))
   return i > 0 ? path.slice(0, i) : path
+}
+
+function pathExistence(path: string): 'ok' | 'file_missing' | 'dir_missing' {
+  if (!path) return 'file_missing'
+  try {
+    const dir = dirnameSafe(path)
+    if (dir && dir !== path && !existsSync(dir)) return 'dir_missing'
+    if (!existsSync(path)) return 'file_missing'
+    // If path exists but is a directory, treat as missing file for preview.
+    try {
+      if (statSync(path).isDirectory()) return 'file_missing'
+    } catch {
+      return 'file_missing'
+    }
+    return 'ok'
+  } catch {
+    return 'file_missing'
+  }
 }

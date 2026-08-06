@@ -218,7 +218,7 @@ function AssociationRow({
         </div>
       </div>
       <span className={`assoc-tag${row.isVav ? ' is-vav' : ''}`}>
-        {row.isVav ? 'vav' : row.defaultApp || unsetLabel}
+        {row.isVav ? 'VAV' : row.defaultApp || unsetLabel}
       </span>
       <Button
         label={setLabel}

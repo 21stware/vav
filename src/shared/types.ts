@@ -5,6 +5,8 @@
  * main process (owner of persistence + agent runtime) and the renderer.
  */
 
+import type { ChangeSet } from './changeSet'
+
 export type ToolName =
   | 'terminal'
   | 'wait'
@@ -19,6 +21,8 @@ export type ToolName =
   | 'request'
   | 'ask_user_question'
   | 'plan'
+  | 'sql_query'
+  | 'load_skill'
 
 /**
  * What the tool card shows. The schema names above are the model's ABI and
@@ -37,7 +41,9 @@ export const TOOL_LABELS: Record<ToolName, string> = {
   web_fetch: '抓取网页',
   request: '请求确认',
   ask_user_question: '提问',
-  plan: '计划'
+  plan: '计划',
+  sql_query: 'SQL 查询',
+  load_skill: '加载技能'
 }
 
 export type PlanStepStatus = 'pending' | 'executing' | 'done' | 'error' | 'skipped'
@@ -450,6 +456,32 @@ export function enabledCliAgents(cliAgents: AgentConfig[] | null | undefined): A
   return out
 }
 
+/**
+ * Manual context compaction for one branch path.
+ *
+ * Full messages stay on disk; only {@link buildHistory} substitutes
+ * {@link summary} for everything on the path before {@link keepAfterMessageId}.
+ * UI can expand the originals anytime. One entry per leaf (re-compact replaces).
+ */
+export interface LeafCompaction {
+  /** Active leaf when the user compacted (branch identity). */
+  leafId: string
+  /**
+   * First message on the path that remains full for the model.
+   * All earlier messages on that path are covered by {@link summary}.
+   */
+  keepAfterMessageId: string
+  summary: string
+  createdAt: number
+  /** How many path messages were folded into the summary (UI). */
+  compactedCount: number
+  /**
+   * Rough next-request input size after compact (summary + kept tail).
+   * Used by the context-window ring / popup so fill shrinks immediately.
+   */
+  estimatedContextTokens: number
+}
+
 export interface Conversation extends ConversationMeta {
   /** Every node ever produced, in creation order — not the visible transcript. */
   messages: ChatMessage[]
@@ -461,10 +493,41 @@ export interface Conversation extends ConversationMeta {
   cacheCreatedAt: number | null
   /** cacheCreatedAt + 5 minutes. */
   cacheExpiresAt: number | null
+  /**
+   * Per-leaf context compressions. Originals remain in {@link messages};
+   * the model sees the summary + tail of the active path.
+   */
+  compactions?: LeafCompaction[]
 }
 
 export type ShellKind = 'zsh' | 'bash' | 'fish' | 'powershell'
 export type ThemeMode = 'light' | 'dark' | 'system'
+/**
+ * Accent / surface tint.
+ * - `system` (default): follow the OS accent colour (macOS / Windows).
+ * - `mono`: black–white chrome.
+ * - Fixed hues recolour interactive accents (and a soft selected wash) without
+ *   changing theme.
+ */
+export type ColorTint =
+  | 'system'
+  | 'mono'
+  | 'lavender'
+  | 'blue'
+  | 'teal'
+  | 'rose'
+  | 'amber'
+  | 'green'
+export const COLOR_TINTS: readonly ColorTint[] = [
+  'system',
+  'mono',
+  'lavender',
+  'blue',
+  'teal',
+  'rose',
+  'amber',
+  'green'
+] as const
 /** Sidebar list grouping; default is time buckets ("无分组" in the UI). */
 export type SidebarGroupingMode = 'none' | 'workspace'
 /** Per-conversation tool approval policy (main-chat.rpml). */
@@ -532,6 +595,11 @@ export interface AppSettings {
    */
   braveSearchKeyPresent?: boolean
   theme: ThemeMode
+  /**
+   * Accent colour tint. Default `system` follows the OS accent; `mono` keeps
+   * chrome black/white; fixed hues colour buttons, selection, links, and focus.
+   */
+  colorTint: ColorTint
   /** UI language; default follows the OS. */
   locale: LocalePreference
   codeFont: string
@@ -598,6 +666,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   webSearxngBaseUrl: '',
   webFetchAllowRender: false,
   theme: 'system',
+  colorTint: 'system',
   locale: 'system',
   codeFont: 'SF Mono',
   fontSize: 12,
@@ -615,7 +684,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   notifyOnAskUserQuestion: true,
   notifyOnToolApproval: true,
   notifyOnRequest: true,
-  trayEnabled: true,
+  /** Product no longer ships a menu-bar tray; kept for settings schema compat. */
+  trayEnabled: false,
   hideDockIcon: false,
   cliAgents: DEFAULT_CLI_AGENTS.map((a) => ({ ...a, envVars: { ...a.envVars } })),
   /** null = plain vav shell (default host mode). */
@@ -799,6 +869,7 @@ export type TurnEvent =
   /**
    * Agent turn wrote files. Review is inline in the transcript (not full-screen).
    * `messageId` is the assistant turn that produced the writes.
+   * Prefer embedding `changeSet` so the renderer can paint without a get() race.
    */
   | {
       type: 'change-review'
@@ -806,6 +877,8 @@ export type TurnEvent =
       changeSetId: string
       pendingCount: number
       messageId?: string
+      /** Full set when available — avoids "Loading changes…" after remount/next turn. */
+      changeSet?: ChangeSet
     }
 
 export interface TurnStatus {

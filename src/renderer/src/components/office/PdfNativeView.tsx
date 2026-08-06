@@ -8,6 +8,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { PreviewBlock } from '@shared/previewBlock'
 import { isOfficeLockFile, OFFICE_LOCK_FILE_MESSAGE } from '@shared/officeLock'
+import { scheduleClickPick } from '../../lib/clickPick'
 import { useT } from '../../i18n/useT'
 
 type PdfJsModule = typeof import('pdfjs-dist')
@@ -15,9 +16,17 @@ type PdfDocument = Awaited<ReturnType<PdfJsModule['getDocument']>['promise']>
 type PdfPage = Awaited<ReturnType<PdfDocument['getPage']>>
 type RenderTask = { promise: Promise<void>; cancel: () => void }
 
-/** Same-origin public/pdfjs/ (cmaps, fonts, worker) — see electron.vite.config. */
+/**
+ * Same-origin public/pdfjs/ (cmaps, fonts, worker) — see electron.vite.config.
+ * Must be resolved from the page URL: a leading `/pdfjs/` becomes `file:///pdfjs/`
+ * under Electron `loadFile`, which 404s the worker.
+ */
 function pdfAssetBase(): string {
-  return '/pdfjs/'
+  try {
+    return new URL('pdfjs/', window.location.href).href
+  } catch {
+    return '/pdfjs/'
+  }
 }
 
 let pdfjsPromise: Promise<PdfJsModule> | null = null
@@ -145,15 +154,17 @@ export function PdfNativeView({
     const applyCssFit = (hostW?: number): void => {
       const usable = Math.max(160, (hostW ?? host.clientWidth) - 28)
       for (const slot of slots) {
-        if (!slot.painted || slot.paintW <= 0) continue
-        // Fit exactly to pane width. Temporary upscale during resize is OK;
-        // quality repaint re-renders at the new host width once settled.
-        // (Old max 1.25 left large windows with a small centered page.)
+        if (!slot.painted || slot.paintW <= 0 || slot.paintH <= 0) continue
+        // Fit to pane width. Page content is position:absolute inside the frame,
+        // so scale() only affects paint — frame width/height own the layout gap.
         const cssScale = Math.min(2.75, Math.max(0.25, usable / slot.paintW))
-        const visW = slot.paintW * cssScale
-        const visH = slot.paintH * cssScale
+        const visW = Math.max(1, slot.paintW * cssScale)
+        const visH = Math.max(1, slot.paintH * cssScale)
         slot.frame.style.width = `${visW}px`
         slot.frame.style.height = `${visH}px`
+        // Keep painted layer at paint metrics; scale into the frame.
+        slot.pageEl.style.width = `${slot.paintW}px`
+        slot.pageEl.style.height = `${slot.paintH}px`
         slot.pageEl.style.transform =
           Math.abs(cssScale - 1) < 0.004 ? 'none' : `scale(${cssScale})`
         slot.pageEl.style.transformOrigin = 'top left'
@@ -206,11 +217,18 @@ export function PdfNativeView({
       // Drop placeholder aspect-ratio once we know real metrics.
       slot.frame.style.aspectRatio = ''
       slot.frame.style.maxWidth = 'none'
+      // Layout size = paint size until applyCssFit (may scale for current host).
       slot.frame.style.width = `${viewport.width}px`
       slot.frame.style.height = `${viewport.height}px`
 
+      // Absolute paint layer — must not participate in frame flow height.
+      slot.pageEl.style.position = 'absolute'
+      slot.pageEl.style.top = '0'
+      slot.pageEl.style.left = '0'
       slot.pageEl.style.width = `${viewport.width}px`
       slot.pageEl.style.height = `${viewport.height}px`
+      slot.pageEl.style.transform = 'none'
+      slot.pageEl.style.transformOrigin = 'top left'
       slot.pageEl.style.setProperty('--scale-factor', String(viewport.scale))
       slot.pageEl.style.setProperty('--user-unit', '1')
 
@@ -269,13 +287,18 @@ export function PdfNativeView({
       const frame = document.createElement('div')
       frame.className = 'pdf-page-frame'
       frame.dataset.pageNumber = String(n)
-      // Lightweight placeholder until paint (matches host width, real aspect).
+      // Lightweight placeholder until paint (host width × real aspect).
+      // Explicit height from aspect so unpainted slots still reserve space and
+      // do not collapse under absolute-positioned siblings once painted.
       frame.style.width = 'min(100%, 960px)'
-      frame.style.aspectRatio = `${1} / ${aspect}`
+      frame.style.aspectRatio = `1 / ${aspect}`
 
       const pageEl = document.createElement('div')
       pageEl.className = 'pdf-page pdf-pick-page'
       pageEl.dataset.pageNumber = String(n)
+      pageEl.style.position = 'absolute'
+      pageEl.style.top = '0'
+      pageEl.style.left = '0'
 
       const canvas = document.createElement('canvas')
       canvas.className = 'pdf-page-canvas'
@@ -334,14 +357,15 @@ export function PdfNativeView({
       await paintSlot(first, false)
       if (cancelled) return
 
-      // Neighbour page(s) right after first frame is on screen.
+      // Neighbour page(s) after page 1 — await so frame heights settle in order
+      // (parallel paint used to leave transform/layout races → overlapping pages).
       const eagerEnd = Math.min(EAGER_PAGES, total)
       for (let n = 2; n <= eagerEnd; n++) {
         if (cancelled) return
         const slot = makeSlot(n, aspect)
         host.appendChild(slot.frame)
         slots.push(slot)
-        void paintSlot(slot, false)
+        await paintSlot(slot, false)
       }
 
       const observeUnpainted = (): void => {
@@ -628,50 +652,59 @@ export function PdfNativeView({
       const pageEl = target.closest('.pdf-page') as HTMLElement | null
       if (!pageEl) return
 
-      event.preventDefault()
+      // Do not preventDefault — PDF text copy must still work.
       event.stopPropagation()
 
-      host.querySelectorAll('.textLayer span.selected, .pdf-page.selected').forEach((n) => {
-        n.classList.remove('selected')
-      })
+      const win = host.ownerDocument?.defaultView ?? window
+      const spanSnapshot = span
+      const pageSnapshot = pageEl
+      scheduleClickPick(
+        { button: event.button, clientX: event.clientX, clientY: event.clientY },
+        () => {
+          host.querySelectorAll('.textLayer span.selected, .pdf-page.selected').forEach((n) => {
+            n.classList.remove('selected')
+          })
 
-      if (span?.textContent?.trim()) {
-        const line = collectLineGroup(span)
-        host
-          .querySelectorAll(`.textLayer span[data-line-id="${CSS.escape(line.id)}"]`)
-          .forEach((n) => n.classList.add('selected'))
-        onPickRef.current(
-          {
-            id: line.id,
-            kind: 'paragraph',
-            text: line.text.slice(0, 8000),
-            label: line.text.slice(0, 64) || line.id,
-            startLine: 1,
-            endLine: 1
-          },
-          event
-        )
-        return
-      }
+          if (spanSnapshot?.textContent?.trim()) {
+            const line = collectLineGroup(spanSnapshot)
+            host
+              .querySelectorAll(`.textLayer span[data-line-id="${CSS.escape(line.id)}"]`)
+              .forEach((n) => n.classList.add('selected'))
+            onPickRef.current(
+              {
+                id: line.id,
+                kind: 'paragraph',
+                text: line.text.slice(0, 8000),
+                label: line.text.slice(0, 64) || line.id,
+                startLine: 1,
+                endLine: 1
+              },
+              event
+            )
+            return
+          }
 
-      const pageNum = pageEl.dataset.pageNumber ?? '?'
-      const id = `pdf-page-${pageNum}`
-      const text = Array.from(pageEl.querySelectorAll('.textLayer span'))
-        .map((s) => s.textContent ?? '')
-        .join(' ')
-        .replace(/\s+/g, ' ')
-        .trim()
-      pageEl.classList.add('selected')
-      onPickRef.current(
-        {
-          id,
-          kind: 'page',
-          text: text.slice(0, 8000),
-          label: `Page ${pageNum}`,
-          startLine: 1,
-          endLine: 1
+          const pageNum = pageSnapshot.dataset.pageNumber ?? '?'
+          const id = `pdf-page-${pageNum}`
+          const text = Array.from(pageSnapshot.querySelectorAll('.textLayer span'))
+            .map((s) => s.textContent ?? '')
+            .join(' ')
+            .replace(/\s+/g, ' ')
+            .trim()
+          pageSnapshot.classList.add('selected')
+          onPickRef.current(
+            {
+              id,
+              kind: 'page',
+              text: text.slice(0, 8000),
+              label: `Page ${pageNum}`,
+              startLine: 1,
+              endLine: 1
+            },
+            event
+          )
         },
-        event
+        { win }
       )
     }
 

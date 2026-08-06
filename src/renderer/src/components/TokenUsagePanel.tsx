@@ -1,8 +1,9 @@
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import type { AppLocale, TokenSnapshot } from '@shared/types'
 import type { TokenUsageViewPayload } from '@shared/ipc'
 import type { MessageKey, TParams } from '@shared/i18n'
 import { PRESET_MODELS } from '@shared/types'
+import { COMPACT_MIN_FOLDED, compactionForLeaf } from '@shared/compaction'
 import {
   TOKEN_CHART_POINTS,
   cacheHitPercent,
@@ -27,16 +28,20 @@ type TFn = (key: MessageKey, params?: TParams) => string
 export function TokenUsagePanel({
   payload,
   t,
-  locale
+  locale,
+  onPayloadPatch
 }: {
   payload: TokenUsageViewPayload
   t: TFn
   locale: AppLocale
+  /** Refresh fields after compact/clear without a full re-open. */
+  onPayloadPatch?: (patch: Partial<TokenUsageViewPayload>) => void
 }): React.JSX.Element {
-  const { history, isRunning, model, tokensUsed, tokenLimit, apiEndpoint } = payload
+  const { history, isRunning, model, tokenLimit, apiEndpoint } = payload
   const chartRows = useMemo(() => history.slice(-TOKEN_CHART_POINTS), [history])
   const latest = history.at(-1)
-  const used = tokensUsed ?? 0
+  // Prefer post-compact estimate / last-turn input over cumulative tokensUsed.
+  const used = payload.contextTokens ?? latest?.totalInputTokens ?? payload.tokensUsed ?? 0
   const limit = tokenLimit ?? 200_000
   const pct = limit > 0 ? (used / limit) * 100 : 0
   const modelLabel =
@@ -51,6 +56,74 @@ export function TokenUsagePanel({
       : `${formatCount(latest.cacheReadTokens)} tokens (${hitPct}%)`
     : '—'
 
+  const pathCount = payload.pathMessageCount ?? 0
+  // defaultKeepAfterIndex needs at least COMPACT_MIN_FOLDED folded + 1 kept.
+  const enoughForCompact = !isRunning && pathCount >= COMPACT_MIN_FOLDED + 1
+  const [compactBusy, setCompactBusy] = useState(false)
+  const [compactNote, setCompactNote] = useState<string | null>(null)
+
+  const runCompact = async (): Promise<void> => {
+    if (!enoughForCompact || compactBusy) return
+    setCompactBusy(true)
+    setCompactNote(null)
+    try {
+      const result = await window.vav.agent.compact(payload.conversationId)
+      if (!result.ok) {
+        setCompactNote(result.error)
+        return
+      }
+      // Quiet status in-panel — no toast. Transcript shows "history compact".
+      setCompactNote(t('compact.logLine', { count: result.compaction.compactedCount }))
+      onPayloadPatch?.({
+        hasCompaction: true,
+        compactedCount: result.compaction.compactedCount,
+        contextTokens: result.compaction.estimatedContextTokens,
+        contextTokensEstimated: true,
+        tokensUsed: result.compaction.estimatedContextTokens
+      })
+    } finally {
+      setCompactBusy(false)
+    }
+  }
+
+  const runClear = async (): Promise<void> => {
+    if (!payload.hasCompaction || compactBusy || isRunning) return
+    setCompactBusy(true)
+    setCompactNote(null)
+    try {
+      const full = await window.vav.conversations.get(payload.conversationId)
+      if (!full) {
+        setCompactNote(t('compact.error.missing'))
+        return
+      }
+      const active = compactionForLeaf(
+        full.compactions,
+        full.messages,
+        full.activeLeafId
+      )
+      if (!active) {
+        setCompactNote(t('compact.error.missing'))
+        return
+      }
+      const result = await window.vav.agent.clearCompaction(payload.conversationId, active.leafId)
+      if (!result.ok) {
+        setCompactNote(result.error)
+        return
+      }
+      setCompactNote(t('compact.cleared'))
+      const latestIn = full.tokenHistory?.at(-1)?.totalInputTokens ?? full.tokensUsed
+      onPayloadPatch?.({
+        hasCompaction: false,
+        compactedCount: 0,
+        contextTokens: latestIn,
+        contextTokensEstimated: false,
+        tokensUsed: latestIn
+      })
+    } finally {
+      setCompactBusy(false)
+    }
+  }
+
   return (
     <div className="token-usage-panel" role="document" aria-label={t('token.contextWindow')}>
       <section className="token-usage-section">
@@ -60,7 +133,39 @@ export function TokenUsagePanel({
         </div>
         <div className="token-usage-muted">
           {formatCount(used)} / {formatCount(limit)} tokens · {pct.toFixed(1)}%
+          {payload.contextTokensEstimated ? ` · ${t('compact.estimateNote')}` : ''}
         </div>
+      </section>
+
+      <section className="token-usage-section token-usage-compact">
+        <div className="token-usage-heading">{t('compact.panelTitle')}</div>
+        <div className="token-usage-muted">{t('compact.panelHint')}</div>
+        <div className="token-usage-compact-actions">
+          <button
+            type="button"
+            className="token-usage-btn"
+            disabled={!enoughForCompact || compactBusy || payload.hasCompaction}
+            onClick={() => void runCompact()}
+          >
+            {compactBusy ? t('common.loading') : t('compact.menuDefault')}
+          </button>
+          {payload.hasCompaction && (
+            <button
+              type="button"
+              className="token-usage-btn secondary"
+              disabled={compactBusy || isRunning}
+              onClick={() => void runClear()}
+            >
+              {t('compact.restore')}
+            </button>
+          )}
+        </div>
+        {payload.hasCompaction && (
+          <div className="token-usage-muted">
+            {t('compact.banner', { count: payload.compactedCount })}
+          </div>
+        )}
+        {compactNote && <div className="token-usage-compact-note">{compactNote}</div>}
       </section>
 
       <section className="token-usage-section">

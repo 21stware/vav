@@ -1,8 +1,11 @@
-import { useEffect, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { X } from 'lucide-react'
 import { tt } from '../i18n/useT'
 import wordmark from '../assets/wordmark.png'
 import wordmarkDark from '../assets/wordmark-dark.png'
+
+/** Match --dur-pop so exit stays on-screen through the transition. */
+const MODAL_LEAVE_MS = 180
 
 type ButtonVariant = 'ghost' | 'secondary' | 'primary' | 'danger'
 
@@ -49,6 +52,8 @@ export function Chip({
   icon,
   active,
   emphasis,
+  danger,
+  disabled,
   title,
   onClick,
   onContextMenu,
@@ -63,6 +68,9 @@ export function Chip({
   active?: boolean
   /** Tints the glyph (e.g. agent shell tab). */
   emphasis?: boolean
+  /** Error / missing path — red capsule (e.g. dir not exist). */
+  danger?: boolean
+  disabled?: boolean
   title?: string
   onClick?: () => void
   onContextMenu?: (event: React.MouseEvent) => void
@@ -83,6 +91,8 @@ export function Chip({
     'chip',
     active ? 'active' : '',
     emphasis ? 'emphasis' : '',
+    danger ? 'danger' : '',
+    disabled ? 'is-disabled' : '',
     trailing ? 'has-trailing' : ''
   ]
     .filter(Boolean)
@@ -91,10 +101,12 @@ export function Chip({
   if (!trailing) {
     return (
       <button
+        type="button"
         className={classes}
         title={title ?? label}
-        onClick={onClick}
-        onContextMenu={onContextMenu}
+        disabled={disabled}
+        onClick={disabled ? undefined : onClick}
+        onContextMenu={disabled ? undefined : onContextMenu}
       >
         {icon}
         <span className="chip-label">{label}</span>
@@ -103,8 +115,17 @@ export function Chip({
   }
 
   return (
-    <div className={classes} title={title ?? label} onContextMenu={onContextMenu}>
-      <button type="button" className="chip-main" onClick={onClick}>
+    <div
+      className={classes}
+      title={title ?? label}
+      onContextMenu={disabled ? undefined : onContextMenu}
+    >
+      <button
+        type="button"
+        className="chip-main"
+        disabled={disabled}
+        onClick={disabled ? undefined : onClick}
+      >
         {icon}
         <span className="chip-label">{label}</span>
       </button>
@@ -113,9 +134,10 @@ export function Chip({
           type="button"
           className="chip-action"
           title={actionTitle}
+          disabled={disabled}
           onClick={(event) => {
             event.stopPropagation()
-            onAction()
+            if (!disabled) onAction()
           }}
         >
           {actionIcon}
@@ -126,9 +148,10 @@ export function Chip({
           type="button"
           className="chip-close"
           title={resolvedCloseTitle}
+          disabled={disabled}
           onClick={(event) => {
             event.stopPropagation()
-            onClose()
+            if (!disabled) onClose()
           }}
         >
           <X size={10} />
@@ -202,7 +225,7 @@ export function EmptyState({
     <div className="empty-state">
       {logo && (
         /* Both variants ship; CSS picks one so no theme state is needed here. */
-        <span className="empty-logo" role="img" aria-label="vav">
+        <span className="empty-logo" role="img" aria-label="VAV">
           <img className="logo-light" src={wordmark} alt="" />
           <img className="logo-dark" src={wordmarkDark} alt="" />
         </span>
@@ -250,23 +273,50 @@ export function Modal({
 }: {
   title: string
   children: ReactNode
-  actions: ReactNode
+  /** Receives animated dismiss so action buttons share the exit path. */
+  actions: (dismiss: () => void) => ReactNode
   onDismiss: () => void
 }): React.JSX.Element {
+  const [leaving, setLeaving] = useState(false)
+  const leavingRef = useRef(false)
+  const leaveTimer = useRef<number | null>(null)
+  const onDismissRef = useRef(onDismiss)
+  onDismissRef.current = onDismiss
+
+  const dismiss = (): void => {
+    if (leavingRef.current) return
+    leavingRef.current = true
+    setLeaving(true)
+    leaveTimer.current = window.setTimeout(() => {
+      leaveTimer.current = null
+      onDismissRef.current()
+    }, MODAL_LEAVE_MS)
+  }
+
+  useEffect(() => {
+    return () => {
+      if (leaveTimer.current !== null) window.clearTimeout(leaveTimer.current)
+    }
+  }, [])
+
   useEffect(() => {
     const onKey = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape') onDismiss()
+      if (event.key === 'Escape') dismiss()
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [onDismiss])
+  }, [])
 
   return (
-    <div className="scrim center" onMouseDown={onDismiss}>
+    <div
+      className="scrim center"
+      data-leaving={leaving || undefined}
+      onMouseDown={dismiss}
+    >
       <div className="modal" onMouseDown={(event) => event.stopPropagation()}>
         <div className="modal-title">{title}</div>
         <div className="modal-body">{children}</div>
-        <div className="modal-actions">{actions}</div>
+        <div className="modal-actions">{actions(dismiss)}</div>
       </div>
     </div>
   )

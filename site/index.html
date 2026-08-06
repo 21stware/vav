@@ -6,22 +6,27 @@
     <title>vav — local AI coding agent workstation</title>
     <meta
       name="description"
-      content="Local AI coding agent workstation: chat, file tree, and a real terminal in one window. Watch the agent work in your project — data stays on your machine."
+      content="Local AI coding agent workstation: watch tools run, edit files on disk, open PDF/PPTX/CSV beside the agent. Data stays on your machine."
     />
     <meta
       name="keywords"
-      content="vav, AI coding agent, local AI, Electron, terminal, LLM, OpenAI, Anthropic, developer tools"
+      content="vav, AI coding agent, local AI, Electron, filesystem, terminal, PDF, PowerPoint, Excel, CSV, Markdown, Mermaid"
     />
     <link rel="canonical" href="https://vavapp.com/" />
+    <link rel="alternate" hreflang="en" href="https://vavapp.com/" />
+    <link rel="alternate" hreflang="zh-Hans" href="https://vavapp.com/?lang=zh" />
+    <link rel="alternate" hreflang="x-default" href="https://vavapp.com/" />
     <meta property="og:site_name" content="vav" />
     <meta property="og:title" content="vav — local AI coding agent workstation" />
     <meta
       property="og:description"
-      content="Chat, file tree, and a real terminal in one window. Watch the agent work in your project."
+      content="Watch the agent work on your machine — files, terminal, and document windows."
     />
     <meta property="og:url" content="https://vavapp.com/" />
-    <meta property="og:image" content="https://vavapp.com/assets/screenshot.png" />
-    <meta property="og:image:alt" content="vav app screenshot — chat, files, and terminal" />
+    <meta property="og:image" content="https://vavapp.com/assets/og.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="vav coding agent workstation" />
     <meta property="og:type" content="website" />
     <meta property="og:locale" content="en_US" />
     <meta property="og:locale:alternate" content="zh_CN" />
@@ -29,21 +34,72 @@
     <meta name="twitter:title" content="vav — local AI coding agent workstation" />
     <meta
       name="twitter:description"
-      content="Chat, file tree, and a real terminal in one window. Watch the agent work in your project."
+      content="Watch the agent work on your machine — files, terminal, and document windows."
     />
-    <meta name="twitter:image" content="https://vavapp.com/assets/screenshot.png" />
+    <meta name="twitter:image" content="https://vavapp.com/assets/og.png" />
+    <meta name="theme-color" content="#eceef2" />
     <link rel="icon" type="image/png" href="assets/favicon.png" />
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link rel="apple-touch-icon" href="assets/favicon.png" />
     <link
-      href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Noto+Sans+SC:wght@400;500;600&family=Outfit:wght@400;500;600;700&display=swap"
-      rel="stylesheet"
+      rel="preload"
+      as="font"
+      type="font/woff2"
+      href="assets/fonts/outfit-latin.woff2"
+      crossorigin
+    />
+    <link
+      rel="preload"
+      as="font"
+      type="font/woff2"
+      href="assets/fonts/instrument-serif-italic-latin.woff2"
+      crossorigin
+    />
+    <link
+      rel="preload"
+      as="image"
+      type="image/avif"
+      href="assets/screenshot.avif"
+      imagesrcset="assets/screenshot-1440w.avif 1440w, assets/screenshot.avif 2880w"
+      imagesizes="100vw"
+      fetchpriority="high"
     />
     <link rel="stylesheet" href="styles.css" />
+    <script>
+      // The header only knows it is over the hero when scroll tracking runs.
+      document.documentElement.classList.add('js')
+    </script>
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "SoftwareApplication",
+        "name": "vav",
+        "applicationCategory": "DeveloperApplication",
+        "operatingSystem": "macOS, Windows",
+        "url": "https://vavapp.com/",
+        "downloadUrl": "https://github.com/21stware/vav/releases",
+        "softwareHelp": "https://github.com/21stware/vav#readme",
+        "screenshot": "https://vavapp.com/assets/og.png",
+        "description": "Local AI coding agent workstation: watch tools run, edit files on disk, open PDF/PPTX/CSV beside the agent. Data stays on your machine.",
+        "inLanguage": ["en", "zh-Hans"],
+        "author": { "@type": "Organization", "name": "21stware", "url": "https://21stware.com" },
+        "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" }
+      }
+    </script>
   </head>
   <body>
-    <header class="top">
-      <nav class="nav">
+    <div class="page-atmosphere" aria-hidden="true"></div>
+
+    <a class="skip-link" href="#main" data-i18n="a11y.skip">Skip to content</a>
+
+    <header class="top" id="top">
+      <nav class="nav" aria-label="Main">
+        <a class="nav-brand" href="#top" aria-label="vav">
+          <img src="assets/favicon.png" alt="" width="26" height="26" />
+          <span class="brand-name">vav</span>
+        </a>
+        <a class="nav-secondary" href="#core" data-i18n="nav.core">Why vav</a>
+        <a class="nav-secondary" href="#files" data-i18n="nav.files">Files</a>
+        <a class="nav-secondary" href="#formats" data-i18n="nav.formats">Formats</a>
         <a href="#download" data-i18n="nav.download">Download</a>
         <a href="https://github.com/21stware/vav">GitHub</a>
         <div class="lang" role="group" aria-label="Language">
@@ -53,32 +109,43 @@
       </nav>
     </header>
 
-    <main>
+    <main id="main" tabindex="-1">
       <section class="hero">
         <div class="hero-stage" aria-hidden="true">
-          <img
-            class="hero-shot"
-            src="assets/screenshot.png"
-            alt=""
-            width="1600"
-            height="1000"
-          />
+          <picture>
+            <source
+              type="image/avif"
+              srcset="assets/screenshot-1440w.avif 1440w, assets/screenshot.avif 2880w"
+              sizes="100vw"
+            />
+            <source
+              type="image/webp"
+              srcset="assets/screenshot-1440w.webp 1440w, assets/screenshot.webp 2880w"
+              sizes="100vw"
+            />
+            <img
+              class="hero-shot"
+              src="assets/screenshot.png"
+              alt=""
+              width="2880"
+              height="1676"
+              fetchpriority="high"
+              decoding="async"
+            />
+          </picture>
           <div class="hero-veil"></div>
         </div>
 
         <div class="hero-copy">
-          <p class="brand-lockup reveal">
-            <img class="brand-glyph" src="assets/wordmark-dark.png" alt="" width="48" height="48" />
+          <p class="brand-lockup">
+            <img class="brand-glyph" src="assets/favicon.png" alt="" width="56" height="56" />
             <span class="brand-name">vav</span>
           </p>
-          <h1 class="hero-title reveal delay-1" data-i18n="hero.title">
-            Watch the agent work in your project
-          </h1>
-          <p class="hero-lead reveal delay-2" data-i18n="hero.lead">
-            Chat, file tree, and a real terminal — one window. Data stays on your machine, except
-            calls to the model endpoint you configure.
+          <h1 class="hero-title" data-i18n="hero.title">Watch the agent work.</h1>
+          <p class="hero-lead" data-i18n="hero.lead">
+            Local coding workstation — tools, files, and terminal on your machine.
           </p>
-          <div class="hero-cta reveal delay-3">
+          <div class="hero-cta">
             <a class="btn primary" href="#download" data-i18n="hero.ctaDownload">Download</a>
             <a class="btn ghost" href="https://github.com/21stware/vav" data-i18n="hero.ctaSource"
               >Source</a
@@ -87,123 +154,655 @@
         </div>
       </section>
 
-      <section class="band" id="product">
-        <h2 class="band-title reveal" data-i18n="product.title">One window, three surfaces</h2>
-        <p class="band-lead reveal delay-1" data-i18n-html="product.lead">
-          The agent isn’t narrating what it did — you watch it <code>cd</code>, run tests, and write
-          files on the right.
+      <section class="band core" id="core">
+        <h2 class="band-title reveal" data-i18n="core.title">Built for how agents work</h2>
+        <p class="band-lead reveal delay-1" data-i18n="core.lead">
+          Not a chat box with a file picker — five habits of a real workstation, each shown as it
+          runs.
         </p>
-        <ul class="pillars">
-          <li class="pillar reveal">
-            <span class="pillar-label" data-i18n="product.chatLabel">Chat</span>
-            <p data-i18n="product.chatBody">
-              Streaming turns, tool cards, branch retries, and clear context usage.
-            </p>
-          </li>
-          <li class="pillar reveal delay-1">
-            <span class="pillar-label" data-i18n="product.filesLabel">Files</span>
-            <p data-i18n="product.filesBody">
-              On-demand workspace tree, agent edits highlighted, spacebar Quick Look.
-            </p>
-          </li>
-          <li class="pillar reveal delay-2">
-            <span class="pillar-label" data-i18n="product.termLabel">Terminal</span>
-            <p data-i18n-html="product.termBody">
-              Real PTY. In the sticky shell, <code>cd</code> and env vars stick around.
-            </p>
-          </li>
-        </ul>
+
+        <div class="feature-stack">
+          <article class="feature reveal">
+            <div class="feature-copy">
+              <span class="feature-index">01</span>
+              <h3 data-i18n="core.viewerLabel">Ask &amp; edit</h3>
+              <p data-i18n="core.viewerBody">
+                Open a file in its own pane — mind map, diagram, sheet, or deck — and ask beside it.
+                Select what matters, get an answer grounded in the file, edit without leaving the
+                window.
+              </p>
+              <p class="feature-note" data-i18n="core.viewerNote">
+                Preview + agent share one surface. The file stays the source of truth.
+              </p>
+            </div>
+            <figure class="feature-media">
+              <picture>
+                <source
+                  type="image/avif"
+                  srcset="
+                    assets/screenshot-mindmap-1440w.avif 1440w,
+                    assets/screenshot-mindmap.avif       2880w
+                  "
+                  sizes="(min-width: 1200px) 1104px, 100vw"
+                />
+                <source
+                  type="image/webp"
+                  srcset="
+                    assets/screenshot-mindmap-1440w.webp 1440w,
+                    assets/screenshot-mindmap.webp       2880w
+                  "
+                  sizes="(min-width: 1200px) 1104px, 100vw"
+                />
+                <img
+                  src="assets/screenshot-mindmap.png"
+                  alt="vav mind map file with agent asking about priorities"
+                  width="2880"
+                  height="1676"
+                  loading="lazy"
+                  decoding="async"
+                />
+              </picture>
+            </figure>
+          </article>
+
+          <article class="feature reveal">
+            <div class="feature-copy">
+              <span class="feature-index">02</span>
+              <h3 data-i18n="core.fsLabel">Agent + filesystem</h3>
+              <p data-i18n="core.fsBody">
+                The agent reads, searches, and writes real paths on disk. Tool cards show every
+                step — Read, search, Write — so you watch the change land in the repo you already
+                have open.
+              </p>
+              <p class="feature-note" data-i18n-html="core.fsNote">
+                Not a hypothetical plan. A write that hits <code>src/…</code> on your machine.
+              </p>
+            </div>
+            <figure class="feature-media">
+              <picture>
+                <source
+                  type="image/avif"
+                  srcset="
+                    assets/screenshot-files-1440w.avif 1440w,
+                    assets/screenshot-files.avif       2880w
+                  "
+                  sizes="(min-width: 1200px) 1104px, 100vw"
+                />
+                <source
+                  type="image/webp"
+                  srcset="
+                    assets/screenshot-files-1440w.webp 1440w,
+                    assets/screenshot-files.webp       2880w
+                  "
+                  sizes="(min-width: 1200px) 1104px, 100vw"
+                />
+                <img
+                  src="assets/screenshot-files.png"
+                  alt="vav agent reading, searching, and writing project files with tool cards"
+                  width="2880"
+                  height="1676"
+                  loading="lazy"
+                  decoding="async"
+                />
+              </picture>
+            </figure>
+          </article>
+
+          <article class="feature feature-portrait reveal">
+            <div class="feature-copy">
+              <span class="feature-index">03</span>
+              <h3 data-i18n-html="core.hotkeyLabel"><kbd>⌘⇧↵</kbd> quick ask</h3>
+              <p data-i18n-html="core.hotkeyBody">
+                From anywhere on your Mac, <kbd>⌘⇧↵</kbd> pops a floating session. Ask one thing —
+                a path join, a regex, a naming call — get the answer, close it. No full workspace
+                ceremony.
+              </p>
+              <p class="feature-note" data-i18n="core.hotkeyNote">
+                Built for the interrupt: short, local, done.
+              </p>
+            </div>
+            <figure class="feature-media feature-media-portrait">
+              <picture>
+                <source type="image/avif" srcset="assets/screenshot-quick-ask.avif" />
+                <source type="image/webp" srcset="assets/screenshot-quick-ask.webp" />
+                <img
+                  src="assets/screenshot-quick-ask.png"
+                  alt="vav floating quick-ask session"
+                  width="760"
+                  height="1520"
+                  loading="lazy"
+                  decoding="async"
+                />
+              </picture>
+            </figure>
+          </article>
+
+          <article class="feature reveal">
+            <div class="feature-copy">
+              <span class="feature-index">04</span>
+              <h3 data-i18n="core.skillLabel">Skills on disk</h3>
+              <p data-i18n="core.skillBody">
+                Load a skill, then write the artifact into the project — a one-page PDF report, a
+                deck tweak, a sheet change. The tool trail stays in the transcript.
+              </p>
+              <p class="feature-note" data-i18n-html="core.skillNote">
+                <code>load_skill</code> → <code>Write file</code> — from chat to a real path.
+              </p>
+            </div>
+            <figure class="feature-media">
+              <picture>
+                <source
+                  type="image/avif"
+                  srcset="
+                    assets/screenshot-skill-1440w.avif 1440w,
+                    assets/screenshot-skill.avif       2880w
+                  "
+                  sizes="(min-width: 1200px) 1104px, 100vw"
+                />
+                <source
+                  type="image/webp"
+                  srcset="
+                    assets/screenshot-skill-1440w.webp 1440w,
+                    assets/screenshot-skill.webp       2880w
+                  "
+                  sizes="(min-width: 1200px) 1104px, 100vw"
+                />
+                <img
+                  src="assets/screenshot-skill.png"
+                  alt="vav agent loading the PDF skill and writing docs/ops-q3.pdf"
+                  width="2880"
+                  height="1676"
+                  loading="lazy"
+                  decoding="async"
+                />
+              </picture>
+            </figure>
+          </article>
+
+          <article class="feature reveal">
+            <div class="feature-copy">
+              <span class="feature-index">05</span>
+              <h3 data-i18n="core.bashLabel">Bash agent</h3>
+              <p data-i18n="core.bashBody">
+                Sticky PTY tabs under the chat — the agent can drive real shell commands while you
+                keep the same terminal. Run, inspect, approve; you stay in control.
+              </p>
+              <p class="feature-note" data-i18n="core.bashNote">
+                Same cwd as the session. Same shell you already trust. Folder dock sits beside the
+                terminal when you need the tree.
+              </p>
+            </div>
+            <figure class="feature-media">
+              <picture>
+                <source
+                  type="image/avif"
+                  srcset="
+                    assets/screenshot-terminal-1440w.avif 1440w,
+                    assets/screenshot-terminal.avif       2880w
+                  "
+                  sizes="(min-width: 1200px) 1104px, 100vw"
+                />
+                <source
+                  type="image/webp"
+                  srcset="
+                    assets/screenshot-terminal-1440w.webp 1440w,
+                    assets/screenshot-terminal.webp       2880w
+                  "
+                  sizes="(min-width: 1200px) 1104px, 100vw"
+                />
+                <img
+                  src="assets/screenshot-terminal.png"
+                  alt="vav chat with sticky bash terminal and folder dock below"
+                  width="2880"
+                  height="1676"
+                  loading="lazy"
+                  decoding="async"
+                />
+              </picture>
+            </figure>
+          </article>
+        </div>
       </section>
 
-      <section class="band gallery" id="gallery">
-        <h2 class="band-title reveal" data-i18n="gallery.title">Inside the window</h2>
-        <p class="band-lead reveal delay-1" data-i18n="gallery.lead">
-          Same English demo session — chat, files, terminal, and context usage.
-        </p>
-        <div class="gallery-stack">
-          <figure class="gallery-shot reveal">
-            <img
-              src="assets/screenshot-chat.png"
-              alt="vav chat with tool cards"
-              width="1440"
-              height="900"
-              loading="lazy"
-            />
+      <section class="band files" id="files">
+        <div class="files-head">
+          <h2 class="band-title reveal" data-i18n="files.title">Open any document window</h2>
+          <p class="band-lead reveal delay-1" data-i18n="files.lead">
+            PDF, decks, sheets, Markdown — preview on one side, agent on the other.
+          </p>
+        </div>
+
+        <div class="files-rail" tabindex="0" aria-label="Document window gallery">
+          <figure class="file-shot reveal">
+            <picture>
+              <source
+                type="image/avif"
+                srcset="assets/screenshot-pdf-1280w.avif 1280w, assets/screenshot-pdf.avif 2560w"
+                sizes="(min-width: 1156px) 1040px, 90vw"
+              />
+              <source
+                type="image/webp"
+                srcset="assets/screenshot-pdf-1280w.webp 1280w, assets/screenshot-pdf.webp 2560w"
+                sizes="(min-width: 1156px) 1040px, 90vw"
+              />
+              <img
+                src="assets/screenshot-pdf.png"
+                alt="vav PDF window with summary and Mermaid"
+                width="2560"
+                height="1640"
+                loading="lazy"
+                decoding="async"
+              />
+            </picture>
             <figcaption>
-              <span class="gallery-label" data-i18n="gallery.chatLabel">Chat</span>
-              <span data-i18n="gallery.chatCaption"
-                >Tool cards, a concrete fix, and the file tree still in view.</span
+              <span class="file-label" data-i18n="files.pdfLabel">PDF</span>
+              <span data-i18n="files.pdfCaption"
+                >Stand-up summary from the brief, then a Mermaid follow-up flow — same window, same
+                turn.</span
               >
             </figcaption>
           </figure>
-          <figure class="gallery-shot reveal delay-1">
-            <img
-              src="assets/screenshot-files.png"
-              alt="vav workspace file tree"
-              width="1440"
-              height="900"
-              loading="lazy"
-            />
+          <figure class="file-shot reveal delay-1">
+            <picture>
+              <source
+                type="image/avif"
+                srcset="assets/screenshot-pptx-1280w.avif 1280w, assets/screenshot-pptx.avif 2560w"
+                sizes="(min-width: 1156px) 1040px, 90vw"
+              />
+              <source
+                type="image/webp"
+                srcset="assets/screenshot-pptx-1280w.webp 1280w, assets/screenshot-pptx.webp 2560w"
+                sizes="(min-width: 1156px) 1040px, 90vw"
+              />
+              <img
+                src="assets/screenshot-pptx.png"
+                alt="vav PowerPoint window with edit tool calls"
+                width="2560"
+                height="1640"
+                loading="lazy"
+                decoding="async"
+              />
+            </picture>
             <figcaption>
-              <span class="gallery-label" data-i18n="gallery.filesLabel">Files</span>
-              <span data-i18n="gallery.filesCaption"
-                >Expand the workspace tree while the agent turn stays on the left.</span
+              <span class="file-label" data-i18n="files.pptxLabel">PPTX</span>
+              <span data-i18n="files.pptxCaption"
+                >Load a deck skill, rename a slide, tighten bullets — tool cards show every
+                write.</span
               >
             </figcaption>
           </figure>
-          <figure class="gallery-shot reveal">
-            <img
-              src="assets/screenshot-terminal.png"
-              alt="vav terminal panel"
-              width="1440"
-              height="900"
-              loading="lazy"
-            />
+          <figure class="file-shot reveal">
+            <picture>
+              <source
+                type="image/avif"
+                srcset="assets/screenshot-csv-1280w.avif 1280w, assets/screenshot-csv.avif 2560w"
+                sizes="(min-width: 1156px) 1040px, 90vw"
+              />
+              <source
+                type="image/webp"
+                srcset="assets/screenshot-csv-1280w.webp 1280w, assets/screenshot-csv.webp 2560w"
+                sizes="(min-width: 1156px) 1040px, 90vw"
+              />
+              <img
+                src="assets/screenshot-csv.png"
+                alt="vav CSV window with Vega-Lite and PDF report"
+                width="2560"
+                height="1640"
+                loading="lazy"
+                decoding="async"
+              />
+            </picture>
             <figcaption>
-              <span class="gallery-label" data-i18n="gallery.termLabel">Terminal</span>
-              <span data-i18n="gallery.termCaption"
-                >A real PTY tab — status, listing, and search in the same shell.</span
+              <span class="file-label" data-i18n="files.csvLabel">CSV / TSV</span>
+              <span data-i18n="files.csvCaption"
+                >Ask over the sheet, get Vega-Lite in chat, write a one-page PDF report to
+                disk.</span
               >
             </figcaption>
           </figure>
-          <figure class="gallery-shot reveal delay-1">
-            <img
-              src="assets/screenshot-context.png"
-              alt="vav context usage popup"
-              width="360"
-              height="520"
-              loading="lazy"
-            />
+          <figure class="file-shot reveal delay-1">
+            <picture>
+              <source
+                type="image/avif"
+                srcset="assets/screenshot-xlsx-1280w.avif 1280w, assets/screenshot-xlsx.avif 2560w"
+                sizes="(min-width: 1156px) 1040px, 90vw"
+              />
+              <source
+                type="image/webp"
+                srcset="assets/screenshot-xlsx-1280w.webp 1280w, assets/screenshot-xlsx.webp 2560w"
+                sizes="(min-width: 1156px) 1040px, 90vw"
+              />
+              <img
+                src="assets/screenshot-xlsx.png"
+                alt="vav Excel window with agent editing"
+                width="2560"
+                height="1640"
+                loading="lazy"
+                decoding="async"
+              />
+            </picture>
             <figcaption>
-              <span class="gallery-label" data-i18n="gallery.contextLabel">Context</span>
-              <span data-i18n="gallery.contextCaption"
-                >Token history for the session — how much cache vs new input you used.</span
+              <span class="file-label" data-i18n="files.xlsxLabel">DOCX / XLSX</span>
+              <span data-i18n="files.xlsxCaption"
+                >Skill-backed edits on workbooks and briefs — add a column, refresh, stay in the
+                window.</span
+              >
+            </figcaption>
+          </figure>
+          <figure class="file-shot reveal">
+            <picture>
+              <source
+                type="image/avif"
+                srcset="assets/screenshot-md-1280w.avif 1280w, assets/screenshot-md.avif 2560w"
+                sizes="(min-width: 1156px) 1040px, 90vw"
+              />
+              <source
+                type="image/webp"
+                srcset="assets/screenshot-md-1280w.webp 1280w, assets/screenshot-md.webp 2560w"
+                sizes="(min-width: 1156px) 1040px, 90vw"
+              />
+              <img
+                src="assets/screenshot-md.png"
+                alt="vav Markdown window with read and write tools"
+                width="2560"
+                height="1640"
+                loading="lazy"
+                decoding="async"
+              />
+            </picture>
+            <figcaption>
+              <span class="file-label" data-i18n="files.mdLabel">Markdown</span>
+              <span data-i18n="files.mdCaption"
+                >Read the notes, rewrite install steps — every fs_read / fs_write stays auditable
+                in the transcript.</span
+              >
+            </figcaption>
+          </figure>
+          <figure class="file-shot reveal delay-1">
+            <picture>
+              <source
+                type="image/avif"
+                srcset="
+                  assets/screenshot-diagrams-1440w.avif 1440w,
+                  assets/screenshot-diagrams.avif       2880w
+                "
+                sizes="(min-width: 1156px) 1040px, 90vw"
+              />
+              <source
+                type="image/webp"
+                srcset="
+                  assets/screenshot-diagrams-1440w.webp 1440w,
+                  assets/screenshot-diagrams.webp       2880w
+                "
+                sizes="(min-width: 1156px) 1040px, 90vw"
+              />
+              <img
+                src="assets/screenshot-diagrams.png"
+                alt="vav chat with Mermaid diagram and Vega-Lite chart"
+                width="2880"
+                height="1676"
+                loading="lazy"
+                decoding="async"
+              />
+            </picture>
+            <figcaption>
+              <span class="file-label" data-i18n="files.chartsLabel">Charts in chat</span>
+              <span data-i18n="files.chartsCaption"
+                >Mermaid flows and Vega-Lite plots render inline — copy, download, keep moving.</span
               >
             </figcaption>
           </figure>
         </div>
       </section>
 
+      <section class="band formats" id="formats">
+        <h2 class="band-title reveal" data-i18n="formats.title">Format knowledge</h2>
+        <p class="band-lead reveal delay-1" data-i18n="formats.lead">
+          What each type can do in a document window — preview, ask beside it, edit in place, or
+          convert first. Capabilities match the app, not a wish list.
+        </p>
+
+        <ul class="format-legend reveal delay-2" aria-label="Capability legend">
+          <li>
+            <span class="cap cap-preview" data-i18n="formats.cap.preview">Preview</span>
+            <span data-i18n="formats.cap.previewHint">Open in a file window</span>
+          </li>
+          <li>
+            <span class="cap cap-ask" data-i18n="formats.cap.ask">Ask</span>
+            <span data-i18n="formats.cap.askHint">Chat grounded in the open file</span>
+          </li>
+          <li>
+            <span class="cap cap-edit" data-i18n="formats.cap.edit">Edit</span>
+            <span data-i18n="formats.cap.editHint">In-place edit / agent write to the same path</span>
+          </li>
+          <li>
+            <span class="cap cap-convert" data-i18n="formats.cap.convert">Convert</span>
+            <span data-i18n="formats.cap.convertHint">Save As a modern format; original untouched</span>
+          </li>
+          <li>
+            <span class="cap cap-readonly" data-i18n="formats.cap.readonly">Read-only</span>
+            <span data-i18n="formats.cap.readonlyHint">Preview + ask; no in-place write</span>
+          </li>
+          <li>
+            <span class="cap cap-skill" data-i18n="formats.cap.skill">Skill</span>
+            <span data-i18n="formats.cap.skillHint">Agent loads a format skill to create or edit</span>
+          </li>
+        </ul>
+
+        <div class="format-table reveal" role="table" aria-label="File format capabilities">
+          <div class="format-head" role="row">
+            <span role="columnheader" data-i18n="formats.col.format">Format</span>
+            <span role="columnheader" data-i18n="formats.col.caps">Capabilities</span>
+            <span role="columnheader" data-i18n="formats.col.note">Notes</span>
+          </div>
+
+          <div class="format-row" role="row">
+            <div class="format-id" role="cell">
+              <code>.docx</code>
+              <span data-i18n="formats.docx.name">Word (OOXML)</span>
+            </div>
+            <div class="format-caps" role="cell">
+              <span class="cap cap-preview" data-i18n="formats.cap.preview">Preview</span>
+              <span class="cap cap-ask" data-i18n="formats.cap.ask">Ask</span>
+              <span class="cap cap-edit" data-i18n="formats.cap.edit">Edit</span>
+              <span class="cap cap-skill" data-i18n="formats.cap.skill">Skill</span>
+            </div>
+            <p class="format-note" role="cell" data-i18n="formats.docx.note">
+              Opens in Read by default; switch to Edit or use the docx skill to write the open path.
+            </p>
+          </div>
+
+          <div class="format-row" role="row">
+            <div class="format-id" role="cell">
+              <code>.doc</code>
+              <span data-i18n="formats.doc.name">Word (legacy)</span>
+            </div>
+            <div class="format-caps" role="cell">
+              <span class="cap cap-preview" data-i18n="formats.cap.preview">Preview</span>
+              <span class="cap cap-ask" data-i18n="formats.cap.ask">Ask</span>
+              <span class="cap cap-convert" data-i18n="formats.cap.convert">Convert</span>
+              <span class="cap cap-readonly" data-i18n="formats.cap.readonly">Read-only</span>
+            </div>
+            <p class="format-note" role="cell" data-i18n="formats.doc.note">
+              Preview via convert to DOCX/HTML (macOS). Edit means Convert → Save As .docx; original
+              stays put.
+            </p>
+          </div>
+
+          <div class="format-row" role="row">
+            <div class="format-id" role="cell">
+              <code>.xlsx</code>
+              <span data-i18n="formats.xlsx.name">Excel (OOXML)</span>
+            </div>
+            <div class="format-caps" role="cell">
+              <span class="cap cap-preview" data-i18n="formats.cap.preview">Preview</span>
+              <span class="cap cap-ask" data-i18n="formats.cap.ask">Ask</span>
+              <span class="cap cap-edit" data-i18n="formats.cap.edit">Edit</span>
+              <span class="cap cap-skill" data-i18n="formats.cap.skill">Skill</span>
+            </div>
+            <p class="format-note" role="cell" data-i18n="formats.xlsx.note">
+              Sheet preview + agent edits through the xlsx skill on the same workbook path.
+            </p>
+          </div>
+
+          <div class="format-row" role="row">
+            <div class="format-id" role="cell">
+              <code>.xls</code>
+              <span data-i18n="formats.xls.name">Excel (legacy)</span>
+            </div>
+            <div class="format-caps" role="cell">
+              <span class="cap cap-preview" data-i18n="formats.cap.preview">Preview</span>
+              <span class="cap cap-ask" data-i18n="formats.cap.ask">Ask</span>
+              <span class="cap cap-convert" data-i18n="formats.cap.convert">Convert</span>
+              <span class="cap cap-readonly" data-i18n="formats.cap.readonly">Read-only</span>
+            </div>
+            <p class="format-note" role="cell" data-i18n="formats.xls.note">
+              Opens in the spreadsheet preview. To edit, Convert → Save As .xlsx; original untouched.
+            </p>
+          </div>
+
+          <div class="format-row" role="row">
+            <div class="format-id" role="cell">
+              <code>.pptx</code>
+              <span data-i18n="formats.pptx.name">PowerPoint (OOXML)</span>
+            </div>
+            <div class="format-caps" role="cell">
+              <span class="cap cap-preview" data-i18n="formats.cap.preview">Preview</span>
+              <span class="cap cap-ask" data-i18n="formats.cap.ask">Ask</span>
+              <span class="cap cap-edit" data-i18n="formats.cap.edit">Edit</span>
+              <span class="cap cap-skill" data-i18n="formats.cap.skill">Skill</span>
+            </div>
+            <p class="format-note" role="cell" data-i18n="formats.pptx.note">
+              Slide canvas + pptx skill for renames, bullets, and deck writes.
+            </p>
+          </div>
+
+          <div class="format-row" role="row">
+            <div class="format-id" role="cell">
+              <code>.ppt</code>
+              <span data-i18n="formats.ppt.name">PowerPoint (legacy)</span>
+            </div>
+            <div class="format-caps" role="cell">
+              <span class="cap cap-readonly" data-i18n="formats.cap.readonly">Read-only</span>
+              <span class="cap cap-convert" data-i18n="formats.cap.convert">Convert</span>
+            </div>
+            <p class="format-note" role="cell" data-i18n="formats.ppt.note">
+              No built-in .ppt converter. Export to .pptx first, or open with the system default app.
+            </p>
+          </div>
+
+          <div class="format-row" role="row">
+            <div class="format-id" role="cell">
+              <code>.pdf</code>
+              <span data-i18n="formats.pdf.name">PDF</span>
+            </div>
+            <div class="format-caps" role="cell">
+              <span class="cap cap-preview" data-i18n="formats.cap.preview">Preview</span>
+              <span class="cap cap-ask" data-i18n="formats.cap.ask">Ask</span>
+              <span class="cap cap-readonly" data-i18n="formats.cap.readonly">Read-only</span>
+              <span class="cap cap-skill" data-i18n="formats.cap.skill">Skill</span>
+            </div>
+            <p class="format-note" role="cell" data-i18n="formats.pdf.note">
+              Preview and ask only in the window. Create, fill, or reformat via the PDF skill to a
+              new path.
+            </p>
+          </div>
+
+          <div class="format-row" role="row">
+            <div class="format-id" role="cell">
+              <code>.csv</code> <code>.tsv</code>
+              <span data-i18n="formats.csv.name">Tables</span>
+            </div>
+            <div class="format-caps" role="cell">
+              <span class="cap cap-preview" data-i18n="formats.cap.preview">Preview</span>
+              <span class="cap cap-ask" data-i18n="formats.cap.ask">Ask</span>
+              <span class="cap cap-edit" data-i18n="formats.cap.edit">Edit</span>
+            </div>
+            <p class="format-note" role="cell" data-i18n="formats.csv.note">
+              Grid preview, charts in chat, direct text writes back to the sheet.
+            </p>
+          </div>
+
+          <div class="format-row" role="row">
+            <div class="format-id" role="cell">
+              <code>.md</code> <code>.txt</code>
+              <span data-i18n="formats.md.name">Markdown &amp; text</span>
+            </div>
+            <div class="format-caps" role="cell">
+              <span class="cap cap-preview" data-i18n="formats.cap.preview">Preview</span>
+              <span class="cap cap-ask" data-i18n="formats.cap.ask">Ask</span>
+              <span class="cap cap-edit" data-i18n="formats.cap.edit">Edit</span>
+            </div>
+            <p class="format-note" role="cell" data-i18n="formats.md.note">
+              Full in-place edit; agent fs_read / fs_write on the open file.
+            </p>
+          </div>
+
+          <div class="format-row" role="row">
+            <div class="format-id" role="cell">
+              <code>.mm</code> <code>.mmd</code>
+              <span data-i18n="formats.diagram.name">Mind maps &amp; diagrams</span>
+            </div>
+            <div class="format-caps" role="cell">
+              <span class="cap cap-preview" data-i18n="formats.cap.preview">Preview</span>
+              <span class="cap cap-ask" data-i18n="formats.cap.ask">Ask</span>
+              <span class="cap cap-edit" data-i18n="formats.cap.edit">Edit</span>
+            </div>
+            <p class="format-note" role="cell" data-i18n="formats.diagram.note">
+              Rendered canvas with pick-to-ask; source stays editable text on disk.
+            </p>
+          </div>
+
+          <div class="format-row" role="row">
+            <div class="format-id" role="cell">
+              <code>.heic</code>
+              <span data-i18n="formats.heic.name">HEIC image</span>
+            </div>
+            <div class="format-caps" role="cell">
+              <span class="cap cap-preview" data-i18n="formats.cap.preview">Preview</span>
+              <span class="cap cap-convert" data-i18n="formats.cap.convert">Convert</span>
+              <span class="cap cap-readonly" data-i18n="formats.cap.readonly">Read-only</span>
+            </div>
+            <p class="format-note" role="cell" data-i18n="formats.heic.note">
+              View in-app; Edit converts to JPEG via Save As. Original HEIC unchanged.
+            </p>
+          </div>
+
+          <div class="format-row" role="row">
+            <div class="format-id" role="cell">
+              <code>.zip</code>
+              <span data-i18n="formats.zip.name">ZIP archive</span>
+            </div>
+            <div class="format-caps" role="cell">
+              <span class="cap cap-preview" data-i18n="formats.cap.preview">Preview</span>
+              <span class="cap cap-readonly" data-i18n="formats.cap.readonly">Read-only</span>
+            </div>
+            <p class="format-note" role="cell" data-i18n="formats.zip.note">
+              Structure preview only — not a full archive utility.
+            </p>
+          </div>
+        </div>
+      </section>
+
       <section class="band download" id="download">
-        <h2 class="band-title reveal" data-i18n="download.title">Download</h2>
+        <h2 class="band-title reveal" data-i18n="download.title">Get vav</h2>
         <p class="band-lead reveal delay-1" data-i18n="download.lead">
-          Direct downloads from the latest GitHub Release. Unsigned — follow the first-run notes to
-          open them.
+          Latest GitHub Release builds. Follow install notes if your OS warns on open.
         </p>
         <div class="download-row reveal delay-2">
           <a
             class="btn primary"
             id="download-mac"
-            href="https://github.com/21stware/vav/releases/download/v1.2.2/vav-1.2.2-macos-arm64.dmg"
-            data-i18n="download.mac"
-            >macOS · Apple Silicon</a
+            href="https://github.com/21stware/vav/releases/download/v1.4.0/VAV-1.4.0-macos-arm64.dmg"
+            ><span data-i18n="download.mac">macOS · Apple Silicon</span
+            ><span class="btn-size" data-size-for="mac"></span></a
           >
           <a
             class="btn primary"
             id="download-win"
-            href="https://github.com/21stware/vav/releases/download/v1.2.2/vav-1.2.2-windows-x64-setup.exe"
-            data-i18n="download.win"
-            >Windows · x64</a
+            href="https://github.com/21stware/vav/releases/download/v1.4.0/VAV-1.4.0-windows-x64-setup.exe"
+            ><span data-i18n="download.win">Windows · x64</span
+            ><span class="btn-size" data-size-for="win"></span></a
           >
           <a
             class="btn ghost"
@@ -214,12 +813,15 @@
             >Install notes</a
           >
         </div>
+        <p class="download-meta reveal delay-3">
+          <span class="download-version" id="download-version" hidden></span>
+          <span id="download-detected" hidden></span>
+        </p>
         <p class="tiny reveal delay-3">
           <span data-i18n-html="download.cli"
-            >From a terminal, <code>vav .</code> opens a new session in the current directory
-            (Settings → vav command).</span
+            >From a terminal, <code>vav .</code> opens a session in the current directory (Settings →
+            vav command).</span
           >
-          <span class="download-version" id="download-version" hidden></span>
         </p>
       </section>
     </main>

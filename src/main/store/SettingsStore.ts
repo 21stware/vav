@@ -3,11 +3,13 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import {
   BUILTIN_AGENT_IDS,
+  COLOR_TINTS,
   DEFAULT_CLI_AGENTS,
   DEFAULT_SETTINGS,
   mergeBuiltinDefaultArgs,
   type AgentConfig,
-  type AppSettings
+  type AppSettings,
+  type ColorTint
 } from '@shared/types'
 import { coerceShell, platformDefaults, type Platform } from '@shared/platform'
 
@@ -87,6 +89,10 @@ export class SettingsStore {
       this.settings.defaultApprovalMode !== 'edit'
     ) {
       this.settings.defaultApprovalMode = 'auto'
+      dirty = true
+    }
+    if (!COLOR_TINTS.includes(this.settings.colorTint as ColorTint)) {
+      this.settings.colorTint = DEFAULT_SETTINGS.colorTint
       dirty = true
     }
     if (dirty) this.persist()

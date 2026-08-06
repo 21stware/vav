@@ -1,10 +1,26 @@
 import { useEffect, useState } from 'react'
-import type { ThemeMode } from '@shared/types'
-import type { LocalePreference } from '@shared/types'
+import { ChevronDown } from 'lucide-react'
+import {
+  COLOR_TINTS,
+  type ColorTint,
+  type LocalePreference,
+  type ThemeMode
+} from '@shared/types'
 import { useSessionStore } from '../../state/sessionStore'
 import { useT } from '../../i18n/useT'
 import { Button, InlineAlert, Segmented, Toggle } from '../ui'
 import { IS_MAC, keys } from '../../lib/platform'
+
+/** Preview chip colour for fixed tints (light-mode accent). System is live. */
+const TINT_SWATCH: Record<Exclude<ColorTint, 'system'>, string> = {
+  mono: 'linear-gradient(135deg, #2a2a30 50%, #e8e8ec 50%)',
+  lavender: '#6b5bc0',
+  blue: '#2563eb',
+  teal: '#0f766e',
+  rose: '#c44b6a',
+  amber: '#b45309',
+  green: '#2f7a52'
+}
 
 const MODIFIER_SYMBOL: Record<string, string> = {
   Command: '⌘',
@@ -31,6 +47,7 @@ export function AppearanceSettings(): React.JSX.Element {
   const t = useT()
   const settings = useSessionStore((s) => s.settings)
   const updateSettings = useSessionStore((s) => s.updateSettings)
+  const systemAccent = useSessionStore((s) => s.systemAccentColor)
 
   const [fonts, setFonts] = useState<string[]>([])
   const [recording, setRecording] = useState(false)
@@ -106,6 +123,35 @@ export function AppearanceSettings(): React.JSX.Element {
       </div>
 
       <div className="form-row">
+        <label>{t('appearance.colorTint')}</label>
+        <div className="control">
+          <div className="tint-swatches" role="radiogroup" aria-label={t('appearance.colorTint')}>
+            {COLOR_TINTS.map((tint) => {
+              const active = (settings.colorTint ?? 'system') === tint
+              const swatch =
+                tint === 'system' ? systemAccent || '#007aff' : TINT_SWATCH[tint]
+              return (
+                <button
+                  key={tint}
+                  type="button"
+                  role="radio"
+                  aria-checked={active}
+                  className={`tint-swatch${active ? ' is-active' : ''}${
+                    tint === 'mono' ? ' is-mono' : ''
+                  }${tint === 'system' ? ' is-system' : ''}`}
+                  title={t(`appearance.colorTint.${tint}`)}
+                  aria-label={t(`appearance.colorTint.${tint}`)}
+                  style={{ ['--tint-swatch' as string]: swatch }}
+                  onClick={() => void updateSettings({ colorTint: tint })}
+                />
+              )
+            })}
+          </div>
+        </div>
+      </div>
+      <div className="form-hint">{t('appearance.colorTintHint')}</div>
+
+      <div className="form-row">
         <label>{t('appearance.language')}</label>
         <div className="control">
           <Segmented<LocalePreference>
@@ -123,21 +169,38 @@ export function AppearanceSettings(): React.JSX.Element {
       <div className="form-row">
         <label>{t('appearance.codeFont')}</label>
         <div className="control">
-          <select
-            className="text-field"
-            value={settings.codeFont}
-            onChange={(event) => void updateSettings({ codeFont: event.target.value })}
-          >
-            {fonts.map((font) => (
-              <option key={font} value={font}>
-                {font}
-              </option>
-            ))}
-          </select>
+          <div className="font-select">
+            <select
+              className="text-field font-select-field"
+              value={settings.codeFont}
+              style={{ fontFamily: `"${settings.codeFont}", ui-monospace, monospace` }}
+              onChange={(event) => void updateSettings({ codeFont: event.target.value })}
+            >
+              {fonts.map((font) => (
+                <option
+                  key={font}
+                  value={font}
+                  style={{ fontFamily: `"${font}", ui-monospace, monospace` }}
+                >
+                  {font}
+                </option>
+              ))}
+            </select>
+            <ChevronDown className="font-select-chevron" size={14} strokeWidth={2} aria-hidden />
+          </div>
         </div>
       </div>
-      <div className="form-hint" style={{ fontFamily: `"${settings.codeFont}", monospace` }}>
-        {t('appearance.codeFontHint')}
+      <div className="form-hint font-preview-hint">
+        <span
+          className="font-preview-sample"
+          style={{ fontFamily: `"${settings.codeFont}", ui-monospace, monospace` }}
+        >
+          {t('appearance.codeFontSample')}
+        </span>
+        <span className="font-preview-sep" aria-hidden>
+          ·
+        </span>
+        <span className="font-preview-meta">{t('appearance.codeFontMeta')}</span>
       </div>
 
       <div className="form-row">

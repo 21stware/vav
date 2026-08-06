@@ -1,9 +1,14 @@
 /**
  * Footer under the agent turn: flip-book mark + shimmer while live;
  * settled mark + Done when sealed.
+ *
+ * Light/dark spirit strips ship as separate assets (no CSS invert) so the
+ * dark sheet can keep its own gray ink.
  */
 import doneMark from '../assets/loading/done.png'
+import doneMarkDark from '../assets/loading/dark-done.png'
 import loadingSprite from '../assets/loading/sprite.png'
+import loadingSpriteDark from '../assets/loading/dark-sprite.png'
 import { useT } from '../i18n/useT'
 
 export function StreamStatus({
@@ -17,7 +22,8 @@ export function StreamStatus({
     return (
       <div className="stream-status" data-state="done">
         <span className="stream-status-mark" data-static aria-hidden>
-          <img src={doneMark} alt="" draggable={false} />
+          <img className="logo-light" src={doneMark} alt="" draggable={false} />
+          <img className="logo-dark" src={doneMarkDark} alt="" draggable={false} />
         </span>
         {t('stream.done')}
       </div>
@@ -27,7 +33,18 @@ export function StreamStatus({
   return (
     <div className="stream-status" data-state="outputting">
       <span className="stream-status-mark" aria-hidden>
-        <img className="stream-status-mark-sprite" src={loadingSprite} alt="" draggable={false} />
+        <img
+          className="stream-status-mark-sprite logo-light"
+          src={loadingSprite}
+          alt=""
+          draggable={false}
+        />
+        <img
+          className="stream-status-mark-sprite logo-dark"
+          src={loadingSpriteDark}
+          alt=""
+          draggable={false}
+        />
       </span>
       <span className="stream-status-shimmer">{t('stream.outputting')}</span>
     </div>

@@ -8,9 +8,11 @@ import {
 } from 'react'
 import type { ChatMessage } from '@shared/types'
 import { quoteSummaryFromContent } from '@shared/quote'
+import { compactionBoundaryIndex, compactionForLeaf } from '@shared/compaction'
 import { ROOT_LEAF, branchPoints } from '@shared/thread'
 import { getProjection } from '../state/StreamProjection'
 import { useSessionStore, visibleMessages } from '../state/sessionStore'
+import { CompactionBanner } from './CompactionBanner'
 import { BranchPager, MessageRow } from './MessageRow'
 import { StreamingMessage } from './StreamingMessage'
 import { Button, EmptyState } from './ui'
@@ -67,6 +69,9 @@ export function Transcript(): React.JSX.Element {
   const selectPendingBranch = useSessionStore((s) => s.selectPendingBranch)
   const fork = useSessionStore((s) => s.fork)
   const continueInNewSession = useSessionStore((s) => s.continueInNewSession)
+  const clearCompaction = useSessionStore((s) => s.clearCompaction)
+  // Do not `?? []` here — a fresh array each snapshot loops zustand/React.
+  const compactions = useSessionStore((s) => s.compactions[s.activeId])
 
   const scrollRef = useRef<HTMLDivElement>(null)
   const contentRef = useRef<HTMLDivElement>(null)
@@ -79,6 +84,12 @@ export function Transcript(): React.JSX.Element {
    */
   const suppressUnpinUntil = useRef(0)
   const suppressRepinUntil = useRef(0)
+  /**
+   * Branch pager (and similar) wants a forced pin+scroll. Stream end also
+   * updates `activeLeaf` (user → assistant) — that must NOT re-pin if the user
+   * scrolled up to read history.
+   */
+  const forcePinOnNextLeaf = useRef(false)
   const prevLeaf = useRef(activeLeaf)
   const [branchSwap, setBranchSwap] = useState(0)
   const [branchSwapActive, setBranchSwapActive] = useState(false)
@@ -110,7 +121,13 @@ export function Transcript(): React.JSX.Element {
     followToBottom()
   }, [followToBottom])
 
-  // Whole-path feedback when the active branch changes (pager click / regenerate).
+  /**
+   * Leaf changes for two reasons:
+   * 1. Intentional (branch pager) → always pin + scroll to the new path end.
+   * 2. Passive (user send seals, stream end moves leaf to assistant, …) →
+   *    only follow if the user was already at the bottom. Re-pinning here was
+   *    yanking readers back down every time a turn finished.
+   */
   useEffect(() => {
     if (prevLeaf.current === activeLeaf) return
     const hadLeaf = prevLeaf.current != null
@@ -120,12 +137,27 @@ export function Transcript(): React.JSX.Element {
     setBranchSwapActive(false)
     const frame = window.requestAnimationFrame(() => setBranchSwapActive(true))
     const timer = window.setTimeout(() => setBranchSwapActive(false), 280)
-    pinAndScrollToBottom()
+
+    const forceNav = forcePinOnNextLeaf.current
+    forcePinOnNextLeaf.current = false
+    // New user turn (send) lands the leaf on the user message — jump down so
+    // the reply is visible. Stream completion lands on the assistant message
+    // and must not re-pin if the user is reading above.
+    const leafRole = (nodes ?? []).find((m) => m.id === activeLeaf)?.role
+    const force = forceNav || leafRole === 'user'
+    if (force) {
+      pinAndScrollToBottom()
+    } else if (pinnedToBottom.current) {
+      // Still following — chase layout after stream seal.
+      followToBottom()
+    }
+    // else: user scrolled away — leave viewport alone.
+
     return () => {
       window.cancelAnimationFrame(frame)
       window.clearTimeout(timer)
     }
-  }, [activeLeaf, pinAndScrollToBottom])
+  }, [activeLeaf, nodes, pinAndScrollToBottom, followToBottom])
 
   /**
    * Hysteresis on pin:
@@ -254,6 +286,8 @@ export function Transcript(): React.JSX.Element {
       if (!point) return
       const next = point.targets[point.index + step]
       if (!next) return
+      // Explicit branch navigation: land at the end of the chosen path.
+      forcePinOnNextLeaf.current = true
       // The branch named after its own starting point is the empty one.
       if (next === key) void selectPendingBranch(key)
       else void selectBranch(next)
@@ -284,6 +318,45 @@ export function Transcript(): React.JSX.Element {
 
   const isEmpty = messages.length === 0 && !turn?.isRunning
   const rootBranch = branches.get(ROOT_LEAF)
+
+  const activeCompaction = useMemo(
+    () => compactionForLeaf(compactions ?? null, nodes ?? [], activeLeaf),
+    [compactions, nodes, activeLeaf]
+  )
+  /**
+   * Index of the first message still sent in full to the model.
+   * The compact log sits *here* (after folded, before kept + any later sends),
+   * not at the end of the list — otherwise a new user bubble jumps above the log.
+   */
+  const boundary = useMemo(
+    () => compactionBoundaryIndex(messages, activeCompaction),
+    [messages, activeCompaction]
+  )
+  const showCompactLog = !!activeCompaction && boundary > 0
+  const beforeCompact = showCompactLog ? messages.slice(0, boundary) : messages
+  const afterCompact = showCompactLog ? messages.slice(boundary) : []
+
+  const renderMessage = (message: ChatMessage): React.JSX.Element => {
+    const branch = branches.get(message.id)
+    return (
+      <MessageRow
+        key={message.id}
+        message={message}
+        highlight={highlight && search.matchIds.includes(message.id) ? highlight : undefined}
+        isCurrentMatch={message.id === currentMatchId}
+        flash={flashMessageId === message.id ? flashTick : 0}
+        branchIndex={branch?.index ?? 0}
+        branchCount={branch?.targets.length ?? 1}
+        busy={!!turn?.isRunning}
+        onStepBranch={onStepBranch}
+        onRegenerate={regenerate}
+        onEdit={editUserMessage}
+        onQuote={onQuote}
+        onFork={fork}
+        onContinueInNewSession={continueInNewSession}
+      />
+    )
+  }
 
   return (
     <div className="transcript" ref={scrollRef} onScroll={onScroll} onWheel={onWheel}>
@@ -327,27 +400,18 @@ export function Transcript(): React.JSX.Element {
           </div>
         )}
 
-        {messages.map((message) => {
-          const branch = branches.get(message.id)
-          return (
-            <MessageRow
-              key={message.id}
-              message={message}
-              highlight={highlight && search.matchIds.includes(message.id) ? highlight : undefined}
-              isCurrentMatch={message.id === currentMatchId}
-              flash={flashMessageId === message.id ? flashTick : 0}
-              branchIndex={branch?.index ?? 0}
-              branchCount={branch?.targets.length ?? 1}
-              busy={!!turn?.isRunning}
-              onStepBranch={onStepBranch}
-              onRegenerate={regenerate}
-              onEdit={editUserMessage}
-              onQuote={onQuote}
-              onFork={fork}
-              onContinueInNewSession={continueInNewSession}
-            />
-          )
-        })}
+        {/* Full path stays visible; log marks the model-history cut. */}
+        {beforeCompact.map(renderMessage)}
+
+        {showCompactLog && activeCompaction && (
+          <CompactionBanner
+            compaction={activeCompaction}
+            busy={!!turn?.isRunning}
+            onClear={() => void clearCompaction()}
+          />
+        )}
+
+        {afterCompact.map(renderMessage)}
 
         <StreamingMessage conversationId={activeId} />
       </div>

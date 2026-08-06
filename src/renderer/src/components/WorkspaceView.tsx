@@ -5,9 +5,11 @@ import { useSessionStore, type TurnRuntime } from '../state/sessionStore'
 import { useWorkspaceStore } from '../state/workspaceStore'
 import { useT } from '../i18n/useT'
 import { relativeTime } from '../lib/format'
+import { useSidebarFloatMode } from '../lib/sidebarLayout'
 import { Button, EmptyState } from './ui'
 import { FileViewer } from './FileViewer'
 import { SessionDetail } from './SessionDetail'
+import { ShellLeadingControls } from './ShellLeadingControls'
 
 /**
  * Agent column (workspace-view): Preview + Agent split.
@@ -72,8 +74,13 @@ export function WorkspaceView({ workdir }: { workdir: string }): React.JSX.Eleme
   const activeId = useSessionStore((s) => s.activeId)
   const createConversation = useSessionStore((s) => s.createConversation)
   const attachContextFile = useSessionStore((s) => s.attachContextFile)
+  const sidebarVisible = useSessionStore((s) => s.sidebarVisible)
+  const sidebarFloating = useSidebarFloatMode()
   const workspace = useWorkspaceStore((s) => s.workspaces[activeId])
   const ensureFilesLoaded = useWorkspaceStore((s) => s.ensureFilesLoaded)
+  // Collapsed / floating: shell controls on preview top so agent stays flush to window top.
+  const showShellLeading = !(sidebarVisible && !sidebarFloating)
+  const shellLeading = showShellLeading ? <ShellLeadingControls /> : null
 
   const [agentWidth, setAgentWidth] = useState(
     () => loadStoredWidth(widthKey(workdir), AGENT_MIN) ?? AGENT_FALLBACK_PX
@@ -240,12 +247,20 @@ export function WorkspaceView({ workdir }: { workdir: string }): React.JSX.Eleme
             agentPanelOpen={agentPanelOpen}
             onToggleAgentPanel={() => setAgentPanelOpen((v) => !v)}
             onPickBlock={revealAgent}
+            shellLeading={shellLeading}
           />
         ) : (
-          <EmptyState
-            title={t('workspace.selectFile')}
-            description={t('workspace.selectFileDesc')}
-          />
+          <div className="workspace-preview-empty">
+            {shellLeading ? (
+              <header className="workspace-preview-chrome has-shell-leading">
+                {shellLeading}
+              </header>
+            ) : null}
+            <EmptyState
+              title={t('workspace.selectFile')}
+              description={t('workspace.selectFileDesc')}
+            />
+          </div>
         )}
       </section>
 
@@ -255,36 +270,39 @@ export function WorkspaceView({ workdir }: { workdir: string }): React.JSX.Eleme
         style={{ width: agentPanelOpen ? agentWidth : 0 }}
         aria-hidden={!agentPanelOpen}
       >
-        {agentPanelOpen && (
-          <>
-            <div
-              className="workspace-col-resizer workspace-col-resizer-start"
-              role="separator"
-              aria-orientation="vertical"
-              aria-label={t('workspace.resizeAgentPanel')}
-              onMouseDown={startResize}
-              onDoubleClick={() => {
-                const total = rootRef.current?.clientWidth ?? 0
-                const next = defaultAgentForShell(total)
-                setAgentWidth(next)
-                persistWidth(next)
-              }}
-            />
-            <div className="workspace-view-agent-head">
-              <div className="workspace-view-agent-head-row workspace-view-agent-session">
-                <WorkspaceSessionSelect workdir={workdir} />
-                <Button
-                  icon={<Plus size={12} />}
-                  size="sm"
-                  variant="secondary"
-                  title={t('workspace.newSession')}
-                  onClick={() => void newSession()}
-                />
-              </div>
+        {/* Keep content mounted while width animates; fixed inner width so
+            overflow on the aside clips without reflowing the agent UI. */}
+        <div
+          className={`workspace-view-agent-inner${agentPanelOpen ? '' : ' is-collapsed'}`}
+          style={{ width: agentWidth }}
+        >
+          <div
+            className="workspace-col-resizer workspace-col-resizer-start"
+            role="separator"
+            aria-orientation="vertical"
+            aria-label={t('workspace.resizeAgentPanel')}
+            onMouseDown={startResize}
+            onDoubleClick={() => {
+              const total = rootRef.current?.clientWidth ?? 0
+              const next = defaultAgentForShell(total)
+              setAgentWidth(next)
+              persistWidth(next)
+            }}
+          />
+          <div className="workspace-view-agent-head">
+            <div className="workspace-view-agent-head-row workspace-view-agent-session">
+              <WorkspaceSessionSelect workdir={workdir} />
+              <Button
+                icon={<Plus size={12} />}
+                size="sm"
+                variant="secondary"
+                title={t('workspace.newSession')}
+                onClick={() => void newSession()}
+              />
             </div>
-            <SessionDetail variant="workspace" />
-          </>
-        )}
+          </div>
+          <SessionDetail variant="workspace" />
+        </div>
       </aside>
     </div>
   )

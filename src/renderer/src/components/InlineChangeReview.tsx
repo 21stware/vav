@@ -97,13 +97,29 @@ export function InlineChangeReview({
   const showDialog = useSessionStore((s) => s.showDialog)
 
   const [openPath, setOpenPath] = useState<string | null>(null)
+  const [loadFailed, setLoadFailed] = useState(false)
 
   useEffect(() => {
-    if (!cached) void openChangeReview(changeSetId)
+    if (cached) {
+      setLoadFailed(false)
+      return
+    }
+    let cancelled = false
+    setLoadFailed(false)
+    void openChangeReview(changeSetId).then(() => {
+      if (cancelled) return
+      const now = useSessionStore.getState().changeSetsById[changeSetId]
+      if (!now) setLoadFailed(true)
+    })
+    return () => {
+      cancelled = true
+    }
   }, [changeSetId, cached, openChangeReview])
 
   const set: ChangeSet | null = cached
   if (!set) {
+    // Failed / missing sets: render nothing (next-turn cleanup also strips these).
+    if (loadFailed) return null
     return (
       <div className="inline-review is-loading">
         <FileDiff size={14} />

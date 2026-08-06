@@ -70,22 +70,39 @@ export function ToolsPanel({
   // File session: show "Enclosed dir" until user switches workdir (like Temporary → Workspace).
   const useEnclosedLabel =
     Boolean(conversation?.fileId) && !pathRevealed && !temporary
-  const label = useEnclosedLabel
-    ? t('tools.enclosedDir')
-    : truncatePathLabel(workdirLabel(workdir, tmp, home))
-  const pathTitle = useEnclosedLabel
-    ? t('tools.enclosedDirHint')
-    : (workdir ?? t('sidebar.temporaryWorkspace'))
+  // Parent folder gone (ENOENT) — chip becomes red "dir not exist"; Files is dead.
+  const rootError = workspace?.root ? workspace.dirErrors[workspace.root] : undefined
+  const rootMissing =
+    Boolean(workspace?.root) &&
+    (rootError === 'ENOENT' || /enoent|no such file|not found/i.test(rootError ?? ''))
+  const label = rootMissing
+    ? t('sidebar.dirNotExist')
+    : useEnclosedLabel
+      ? t('tools.enclosedDir')
+      : truncatePathLabel(workdirLabel(workdir, tmp, home))
+  const pathTitle = rootMissing
+    ? t('sidebar.dirNotExist')
+    : useEnclosedLabel
+      ? t('tools.enclosedDirHint')
+      : (workdir ?? t('sidebar.temporaryWorkspace'))
+  // Enclosed dir / missing root: no switch-workdir control (session list owns path).
+  const allowWorkdirSwitch = !useEnclosedLabel && !rootMissing
   // Tools tray shows user bash only — never main-surface CLI agent hosts.
   const tabs = (workspace?.tabs ?? []).filter(
     (t) => !t.agentId || t.agentId === 'vav' || t.isAgent
   )
   const activeTabId = workspace?.activeTabId ?? ''
-  const filesOn = !collapsed && segment === 'files'
+  const filesOn = !collapsed && segment === 'files' && !rootMissing
   const previewEdit = variant === 'preview-edit'
   const agentRunning = useSessionStore((s) => !!s.turns[activeId]?.isRunning)
 
   const locateWorkspace = useSessionStore((s) => s.locateWorkspace)
+
+  // Missing enclosed dir: fold Files if open — nothing to browse.
+  useEffect(() => {
+    if (!rootMissing) return
+    if (!collapsed && segment === 'files') setToolsCollapsed(true)
+  }, [rootMissing, collapsed, segment, setToolsCollapsed])
 
   const onResizeStart = useCallback(
     (event: React.MouseEvent) => {
@@ -161,39 +178,52 @@ export function ToolsPanel({
   useEffect(() => {
     if (workspaceMenuNonce === 0 || workspaceMenuNonce === seenMenuNonce.current) return
     seenMenuNonce.current = workspaceMenuNonce
+    if (!allowWorkdirSwitch) return
     openWorkspaceMenu(pathChipRef.current)
-  }, [workspaceMenuNonce, openWorkspaceMenu])
+  }, [workspaceMenuNonce, openWorkspaceMenu, allowWorkdirSwitch])
 
   const createConversationInCurrentWorkspace = useSessionStore(
     (s) => s.createConversationInCurrentWorkspace
   )
 
-  const pathContextItems = (): MenuItem[] => [
-    ...workspaceSwitchItems(),
-    { label: '', divider: true },
-    {
-      label: t('files.newSessionHere'),
-      onSelect: () => void createConversationInCurrentWorkspace()
-    },
-    ...(temporary
-      ? [
-          {
-            label: t('tools.locateWorkspace'),
-            onSelect: () => void locateWorkspace(activeId)
-          } satisfies MenuItem
-        ]
-      : []),
-    {
-      label: t('tools.copyPath'),
-      disabled: !workdir,
-      onSelect: () => void window.vav.conversations.copyToClipboard(workdir ?? '')
-    },
-    {
-      label: t('tools.revealInFm', { fileManager: fileManagerLabel() }),
-      disabled: !workdir,
-      onSelect: () => void window.vav.conversations.revealInFinder(workdir ?? '')
+  const pathContextItems = (): MenuItem[] => {
+    if (rootMissing || useEnclosedLabel) {
+      // Enclosed / missing: no switch or locate — path is bound to the open file.
+      return [
+        {
+          label: t('tools.copyPath'),
+          disabled: !workdir,
+          onSelect: () => void window.vav.conversations.copyToClipboard(workdir ?? '')
+        }
+      ]
     }
-  ]
+    return [
+      ...workspaceSwitchItems(),
+      { label: '', divider: true },
+      {
+        label: t('files.newSessionHere'),
+        onSelect: () => void createConversationInCurrentWorkspace()
+      },
+      ...(temporary
+        ? [
+            {
+              label: t('tools.locateWorkspace'),
+              onSelect: () => void locateWorkspace(activeId)
+            } satisfies MenuItem
+          ]
+        : []),
+      {
+        label: t('tools.copyPath'),
+        disabled: !workdir,
+        onSelect: () => void window.vav.conversations.copyToClipboard(workdir ?? '')
+      },
+      {
+        label: t('tools.revealInFm', { fileManager: fileManagerLabel() }),
+        disabled: !workdir || rootMissing,
+        onSelect: () => void window.vav.conversations.revealInFinder(workdir ?? '')
+      }
+    ]
+  }
 
   const closeShellTab = (tabId: string, title: string, _isAgent: boolean): void => {
     const dispose = (): void => {
@@ -248,25 +278,46 @@ export function ToolsPanel({
 
       <div className="tools-header">
         <div className="tools-header-lead">
-          {/* Path chip opens Files (main + single-file preview). Workspace root
-              for file sessions is the enclosed directory of the open file. */}
+          {/* Path chip opens Files. File sessions use Enclosed dir (no switch).
+              Missing root → red "dir not exist", chip dead (no expand / switch). */}
           <div className="workdir-chip" ref={pathChipRef}>
             <Chip
               label={label}
               icon={<Folder size={12} />}
               title={pathTitle}
               active={filesOn}
-              onClick={() => {
-                if (filesOn) setToolsCollapsed(true)
-                else setPanelSegment('files')
-              }}
-              onContextMenu={(event) => {
-                event.preventDefault()
-                void showMenu(pathContextItems(), { x: event.clientX, y: event.clientY })
-              }}
-              onAction={() => openWorkspaceMenu(pathChipRef.current)}
-              actionIcon={<ArrowLeftRight size={11} />}
-              actionTitle={t('tools.switchWorkdirTitle', { shortcut: keys('⌘⇧O') })}
+              danger={rootMissing}
+              disabled={rootMissing}
+              onClick={
+                rootMissing
+                  ? undefined
+                  : () => {
+                      if (filesOn) setToolsCollapsed(true)
+                      else setPanelSegment('files')
+                    }
+              }
+              onContextMenu={
+                rootMissing
+                  ? undefined
+                  : (event) => {
+                      event.preventDefault()
+                      void showMenu(pathContextItems(), {
+                        x: event.clientX,
+                        y: event.clientY
+                      })
+                    }
+              }
+              onAction={
+                allowWorkdirSwitch
+                  ? () => openWorkspaceMenu(pathChipRef.current)
+                  : undefined
+              }
+              actionIcon={allowWorkdirSwitch ? <ArrowLeftRight size={11} /> : undefined}
+              actionTitle={
+                allowWorkdirSwitch
+                  ? t('tools.switchWorkdirTitle', { shortcut: keys('⌘⇧O') })
+                  : undefined
+              }
             />
           </div>
           <span className="tools-header-divider" aria-hidden="true" />

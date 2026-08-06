@@ -98,8 +98,8 @@ const CLI_HELP = [
   '  vav .               Open a new session in the current directory',
   '  vav /path/to/dir    Open a new session for that workspace',
   '',
-  'If vav is already running, the session is added and focused.',
-  'The command returns immediately — vav opens in the background.',
+  'If VAV is already running, the session is added and focused.',
+  'The command returns immediately — VAV opens in the background.',
   ''
 ].join('\n')
 

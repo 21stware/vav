@@ -177,7 +177,7 @@ export function formatFocusedFileContextBrief(
     resolvedKind === 'image'
       ? 'Open this path with vision/read tools for the request below.'
       : 'Read this path for the request below.'
-  return [`[vav] Attached ${tag}: ${base}`, filePath, hint].join('\n')
+  return [`[VAV] Attached ${tag}: ${base}`, filePath, hint].join('\n')
 }
 
 /** Compact block note for TUI input (still includes source text). */
@@ -188,7 +188,7 @@ export function formatBlockContextBrief(ref: PreviewRef, comment?: string): stri
       : `L${ref.startLine}–${ref.endLine}`
   const title = ref.label?.trim() || range
   const lines = [
-    `[vav] Selection · ${title} · ${range}`,
+    `[VAV] Selection · ${title} · ${range}`,
     ref.filePath,
     '```',
     ref.text,

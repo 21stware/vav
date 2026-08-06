@@ -6,19 +6,30 @@ import {
   globalShortcut,
   ipcMain,
   Menu,
+  nativeImage,
   nativeTheme,
   net,
   protocol,
   screen,
   session,
-  shell
+  shell,
+  systemPreferences
 } from 'electron'
 import { basename, dirname, extname, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { existsSync, mkdirSync, readFileSync, renameSync, rmdirSync, writeFileSync } from 'node:fs'
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  realpathSync,
+  renameSync,
+  rmdirSync,
+  statSync,
+  writeFileSync
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { randomUUID } from 'node:crypto'
-import { APP_NAME, applyBranding, applyDockIcon, loadAppIcon } from './brand'
+import { APP_NAME, applyBranding, applyDockIcon, loadAppIcon, pinUserDataPath } from './brand'
 import {
   IPC,
   type Bootstrap,
@@ -35,13 +46,17 @@ import {
   type ShellKind,
   type TurnEvent
 } from '@shared/types'
+import { compactionForLeaf } from '@shared/compaction'
+import { threadPath } from '@shared/thread'
 import { SettingsStore } from './store/SettingsStore'
 import { SecretStore } from './store/SecretStore'
 import { ConversationStore } from './store/ConversationStore'
+import { VavPackService } from './store/VavPackService'
 import { FileSessionStore } from './store/FileSessionStore'
 import { FileService } from './fs/FileService'
 import { FileAssociationService, formatIdForPath } from './fs/FileAssociationService'
 import { DocumentRetrievalService } from './retrieval/DocumentRetrievalService'
+import { DuckDbService } from './fs/DuckDbService'
 import { WebSearchService } from './web/WebSearchService'
 import { WebFetchService } from './web/WebFetchService'
 import { ChangeSetStore } from './agent/ChangeSetStore'
@@ -50,6 +65,7 @@ import { PtyManager } from './terminal/PtyManager'
 import { resolveAgentExecutable } from './terminal/loginPath'
 import { menuCommandFromInput } from './menuShortcuts'
 import { AgentRuntime } from './agent/AgentRuntime'
+import { SkillService } from './agent/SkillService'
 import { validateApiKey } from './agent/provider'
 import { shellPath } from './terminal/StickyShell'
 import { buildAppMenu } from './menu'
@@ -103,7 +119,9 @@ process.on('uncaughtException', (err: NodeJS.ErrnoException) => {
   }
 })
 
-// Branding before ready so the menu bar reads "vav" instead of "Electron".
+// Pin userData + menu name before any store touches disk (and before ready so
+// the menu bar reads "VAV" instead of "Electron").
+pinUserDataPath()
 applyBranding()
 
 // Local-file scheme for in-window PDF (and other) previews. Must be registered
@@ -150,6 +168,8 @@ let quitting = false
 const settingsStore = new SettingsStore()
 const secretStore = new SecretStore()
 const conversationStore = new ConversationStore()
+// resolveNewWorkdir is a function declaration below (hoisted) — mint Temporary Workspaces on import.
+const vavPackService = new VavPackService(conversationStore, () => resolveNewWorkdir())
 const fileSessionStore = new FileSessionStore()
 
 const fileAssociationService = new FileAssociationService()
@@ -302,8 +322,10 @@ const changeSetStore = new ChangeSetStore()
 const updateService = new UpdateService()
 const documentRetrieval = new DocumentRetrievalService()
 fileService.retrieval = documentRetrieval
+const duckdb = new DuckDbService()
 const webSearch = new WebSearchService()
 const webFetch = new WebFetchService()
+const skillService = new SkillService()
 
 const agent = new AgentRuntime({
   conversations: conversationStore,
@@ -312,8 +334,10 @@ const agent = new AgentRuntime({
   files: fileService,
   changeSets: changeSetStore,
   retrieval: documentRetrieval,
+  duckdb,
   webSearch,
   webFetch,
+  skills: skillService,
   fileSessions: fileSessionStore,
   emit: handleAgentEvent
 })
@@ -421,7 +445,8 @@ function publishDetachedSessions(): void {
 
 /** The window's own fill, shown for the frame or two before the renderer paints. */
 function windowBackground(): string {
-  return nativeTheme.shouldUseDarkColors ? '#121213' : '#eceaf1'
+  // Match mono light chrome (`--bg-window`); tinted washes are painted in CSS.
+  return nativeTheme.shouldUseDarkColors ? '#121213' : '#ececee'
 }
 
 /** `barHeight` matches the renderer's own title bar, so the two rows line up. */
@@ -432,8 +457,8 @@ function overlayColors(barHeight = 52): {
 } {
   const dark = nativeTheme.shouldUseDarkColors
   return {
-    color: dark ? '#121213' : '#eceaf1',
-    symbolColor: dark ? '#efeff1' : '#131b35',
+    color: dark ? '#121213' : '#ececee',
+    symbolColor: dark ? '#efeff1' : '#141416',
     height: barHeight
   }
 }
@@ -469,6 +494,8 @@ function chrome(barHeight: number): Electron.BrowserWindowConstructorOptions {
 /** The system chrome does not follow `nativeTheme` on its own once overridden. */
 function repaintChrome(): void {
   const background = windowBackground()
+  // Dock tile follows system/app light·dark (icon.png vs icon-dark.png).
+  applyDockIcon()
   for (const window of BrowserWindow.getAllWindows()) {
     if (window.isDestroyed()) continue
     window.setBackgroundColor(background)
@@ -488,20 +515,27 @@ function repaintChrome(): void {
 // ---------------------------------------------------------------------------
 
 /**
- * Chat / terminal links must leave the app. `setWindowOpenHandler` only covers
- * `window.open` / `target=_blank`; a plain `<a href>` navigates the current
- * BrowserWindow unless `will-navigate` sends it to the system browser instead.
+ * Never let hyperlinks navigate the BrowserWindow away from the app shell.
+ *
+ * - Chat / agent log / tool cards: open http(s) in the system browser.
+ * - File previews (MD/office/HTML): renderer preventDefaults on click, so
+ *   `will-navigate` usually never fires for those surfaces.
  */
 function wireExternalLinks(contents: Electron.WebContents): void {
   contents.setWindowOpenHandler(({ url }) => {
-    void shell.openExternal(url)
+    if (/^https?:\/\//i.test(url)) {
+      void shell.openExternal(url)
+    }
     return { action: 'deny' }
   })
 
   contents.on('will-navigate', (event, url) => {
     if (isRendererUrl(url)) return
     event.preventDefault()
-    void shell.openExternal(url)
+    // Agent responses, logs, tool cards — open outside the app.
+    if (/^https?:\/\//i.test(url)) {
+      void shell.openExternal(url)
+    }
   })
 }
 
@@ -539,7 +573,14 @@ function wirePreviewLifecycle(window: BrowserWindow, path: string): void {
   const armIdle = (): void => {
     if (idleTimer) clearTimeout(idleTimer)
     idleTimer = setTimeout(() => {
-      if (!window.isDestroyed() && !window.isFocused()) window.close()
+      if (!window.isDestroyed() && !window.isFocused()) {
+        afterLeavingFullscreen(window, () => {
+          if (!window.isDestroyed() && !window.isFocused()) {
+            fullscreenCloseAllowed.add(window)
+            window.close()
+          }
+        })
+      }
     }, PREVIEW_IDLE_MS)
   }
   window.on('blur', armIdle)
@@ -547,11 +588,26 @@ function wirePreviewLifecycle(window: BrowserWindow, path: string): void {
     if (idleTimer) clearTimeout(idleTimer)
     idleTimer = null
   })
+  // Unsaved guard first; then leave native fullscreen before destroy.
   window.on('close', (event) => {
     if (quitting) return
-    if (!previewCloseGuards.has(window)) return
+    if (fullscreenCloseAllowed.has(window)) {
+      fullscreenCloseAllowed.delete(window)
+      return
+    }
+    if (previewCloseGuards.has(window)) {
+      event.preventDefault()
+      safeSend(window.webContents, IPC.previewCloseAttempt)
+      return
+    }
+    if (!window.isFullScreen()) return
     event.preventDefault()
-    safeSend(window.webContents, IPC.previewCloseAttempt)
+    window.once('leave-full-screen', () => {
+      if (window.isDestroyed()) return
+      fullscreenCloseAllowed.add(window)
+      window.close()
+    })
+    window.setFullScreen(false)
   })
   window.on('closed', () => {
     if (idleTimer) clearTimeout(idleTimer)
@@ -572,7 +628,12 @@ function wirePreviewLifecycle(window: BrowserWindow, path: string): void {
     }
     if (!victimPath || !victim) break
     previewWindows.delete(victimPath)
-    victim.close()
+    afterLeavingFullscreen(victim, () => {
+      if (!victim.isDestroyed()) {
+        fullscreenCloseAllowed.add(victim)
+        victim.close()
+      }
+    })
   }
 }
 
@@ -588,6 +649,53 @@ function wireFullscreenState(window: BrowserWindow): void {
   window.on('enter-full-screen', publish)
   window.on('leave-full-screen', publish)
   window.webContents.on('did-finish-load', publish)
+}
+
+/**
+ * macOS leaves a blank black Space if a window is hidden/destroyed while still
+ * in native fullscreen. Always exit fullscreen first, then run the action.
+ */
+function afterLeavingFullscreen(win: BrowserWindow, next: () => void): void {
+  if (win.isDestroyed()) return
+  if (!win.isFullScreen()) {
+    next()
+    return
+  }
+  win.once('leave-full-screen', () => {
+    if (!win.isDestroyed()) next()
+  })
+  win.setFullScreen(false)
+}
+
+function hideLeavingFullscreen(win: BrowserWindow): void {
+  afterLeavingFullscreen(win, () => {
+    if (!win.isDestroyed()) win.hide()
+  })
+}
+
+/** Windows that may proceed with close after a deferred leave-full-screen. */
+const fullscreenCloseAllowed = new WeakSet<BrowserWindow>()
+
+/**
+ * On `close`, if still fullscreen, cancel and exit FS first, then re-close.
+ * Pair with real destroy (preview, non-Mac main, etc.) — not hide-on-close.
+ */
+function wireCloseLeavingFullscreen(win: BrowserWindow): void {
+  win.on('close', (event) => {
+    if (quitting || win.isDestroyed()) return
+    if (fullscreenCloseAllowed.has(win)) {
+      fullscreenCloseAllowed.delete(win)
+      return
+    }
+    if (!win.isFullScreen()) return
+    event.preventDefault()
+    win.once('leave-full-screen', () => {
+      if (win.isDestroyed()) return
+      fullscreenCloseAllowed.add(win)
+      win.close()
+    })
+    win.setFullScreen(false)
+  })
 }
 
 function createWindow(): BrowserWindow {
@@ -616,8 +724,12 @@ function createWindow(): BrowserWindow {
     window.on('close', (event) => {
       if (quitting) return
       event.preventDefault()
-      window.hide()
+      // Must leave native fullscreen before hide, or macOS keeps a black Space.
+      hideLeavingFullscreen(window)
     })
+  } else {
+    // Windows / Linux / snapshot: real close — still leave FS first.
+    wireCloseLeavingFullscreen(window)
   }
 
   wireExternalLinks(window.webContents)
@@ -917,17 +1029,29 @@ function forgetPreviewWindow(window: BrowserWindow): void {
   }
 }
 
+/** Stable map key for preview windows (aliases / relative paths collapse). */
+function previewPathKey(filePath: string): string {
+  const raw = filePath.trim()
+  if (!raw) return ''
+  try {
+    if (existsSync(raw)) return realpathSync(raw)
+  } catch {
+    // fall through
+  }
+  return raw
+}
+
 /**
  * File preview in its own window (file-preview.rpml).
- * Reopening the same path raises the existing window.
- * From an already-open preview (e.g. Enclosed dir → sibling file), navigate
- * that window in place instead of stacking another BrowserWindow.
+ * One absolute path → one BrowserWindow: reopen focuses the existing window;
+ * a different path always opens a new window (never navigates an open preview
+ * in place). Capped by PREVIEW_MAX_OPEN.
  */
 function openFilePreviewWindow(
   filePath: string,
   options?: { origin?: 'dock' | 'session'; conversationId?: string }
 ): void {
-  const path = filePath.trim()
+  const path = previewPathKey(filePath)
   if (!path) return
 
   const existing = previewWindows.get(path)
@@ -938,45 +1062,46 @@ function openFilePreviewWindow(
     return
   }
 
-  // Enclosed dir / Files tray inside a preview: open the new path here.
-  const focused = BrowserWindow.getFocusedWindow()
-  if (focused && !focused.isDestroyed()) {
-    let focusedKey: string | null = null
-    for (const [key, win] of previewWindows) {
-      if (win === focused) {
-        focusedKey = key
-        break
-      }
-    }
-    if (focusedKey != null) {
-      previewWindows.delete(focusedKey)
-      previewWindows.set(path, focused)
-      try {
-        focused.setTitle(basename(path))
-      } catch {
-        // ignore
-      }
-      loadRenderer(focused, previewQuery(path, options))
-      if (focused.isMinimized()) focused.restore()
-      focused.show()
-      focused.focus()
-      return
-    }
-  }
-
   const anchor = BrowserWindow.getFocusedWindow() ?? mainWindow
   const area = (
     anchor && !anchor.isDestroyed() ? screen.getDisplayMatching(anchor.getBounds()) : screen.getPrimaryDisplay()
   ).workArea
-  const width = Math.min(800, area.width - 80)
-  const height = Math.min(700, area.height - 80)
+  // Marketing snapshots need a wide preview (canvas + agent) — not the compact default.
+  const snapshotting = Boolean(process.env.VAV_SNAPSHOT || process.env.VAV_SNAPSHOT_PLAN)
+  const width = Math.min(snapshotting ? 1280 : 800, area.width - 40)
+  const height = Math.min(snapshotting ? 820 : 700, area.height - 40)
+
+  // Cascade off the frontmost preview (or focused window) so each open is visible.
+  let x: number | undefined
+  let y: number | undefined
+  let cascadeFrom: BrowserWindow | null = null
+  if (anchor && !anchor.isDestroyed() && [...previewWindows.values()].some((w) => w === anchor)) {
+    cascadeFrom = anchor
+  } else {
+    for (const win of previewWindows.values()) {
+      if (!win.isDestroyed()) {
+        cascadeFrom = win
+        break
+      }
+    }
+  }
+  if (cascadeFrom && !cascadeFrom.isDestroyed()) {
+    const b = cascadeFrom.getBounds()
+    const n = previewWindows.size
+    x = b.x + 28 + (n % 5) * 12
+    y = b.y + 28 + (n % 5) * 12
+    if (x + width > area.x + area.width) x = area.x + Math.max(0, area.width - width)
+    if (y + height > area.y + area.height) y = area.y + Math.max(0, area.height - height)
+  }
 
   const window = new BrowserWindow({
     width,
     height,
+    ...(x != null && y != null ? { x, y } : {}),
     minWidth: 520,
     minHeight: 400,
-    show: false,
+    // Show immediately so Dock / Finder open feels snappy; content paints after load.
+    show: true,
     title: basename(path),
     icon: loadAppIcon(),
     // Match `.file-viewer-header` height so traffic lights sit on the drag bar.
@@ -988,7 +1113,6 @@ function openFilePreviewWindow(
   })
 
   previewWindows.set(path, window)
-  window.once('ready-to-show', () => window.show())
   window.on('closed', () => {
     forgetPreviewWindow(window)
   })
@@ -1008,6 +1132,9 @@ function openFilePreviewWindow(
   }
 
   loadRenderer(window, previewQuery(path, options))
+  // Bring to front after create — Dock open can leave focus on the previous window.
+  if (window.isMinimized()) window.restore()
+  window.focus()
 }
 
 type TokenUsageAnchor = { x: number; y: number; width: number; height: number }
@@ -1043,6 +1170,23 @@ function buildTokenUsagePayload(conversationId: string): TokenUsageViewPayload |
   if (!conversation) return null
   const settings = settingsStore.get()
   const phase = activeTurns.get(conversationId)
+  const leafId = conversation.activeLeafId
+  const pathLen = leafId
+    ? threadPath(conversation.messages, leafId).length
+    : conversation.messages.length
+  const activeCompaction = compactionForLeaf(
+    conversation.compactions,
+    conversation.messages,
+    leafId
+  )
+  const latestInput = conversation.tokenHistory?.at(-1)?.totalInputTokens ?? 0
+  const estimated = activeCompaction?.estimatedContextTokens ?? 0
+  const contextTokens =
+    estimated > 0
+      ? estimated
+      : latestInput > 0
+        ? latestInput
+        : conversation.tokensUsed
   return {
     conversationId: conversation.id,
     model: conversation.model,
@@ -1055,7 +1199,12 @@ function buildTokenUsagePayload(conversationId: string): TokenUsageViewPayload |
     apiEndpoint: settings.apiEndpoint,
     theme: settings.theme,
     locale: currentLocale(),
-    now: Date.now()
+    now: Date.now(),
+    hasCompaction: !!activeCompaction,
+    compactedCount: activeCompaction?.compactedCount ?? 0,
+    pathMessageCount: pathLen,
+    contextTokens,
+    contextTokensEstimated: estimated > 0
   }
 }
 
@@ -1418,6 +1567,8 @@ function popupNativeMenu(
 type SnapshotPlanStep = {
   file: string
   js?: string
+  /** Runs in the child window after open (e.g. expand agent panel). */
+  childJs?: string
   delayMs?: number
   /** Capture the newest non-main BrowserWindow instead of the main window. */
   child?: boolean
@@ -1462,7 +1613,9 @@ function installSnapshotHook(window: BrowserWindow): void {
       win.setSize(1440, 900)
       await sleep(400)
     } else {
-      await sleep(200)
+      // File-preview companions: ensure marketing size even if create used defaults.
+      win.setSize(1280, 820)
+      await sleep(450)
     }
     const image = await win.webContents.capturePage()
     mkdirSync(dirname(outPath), { recursive: true })
@@ -1482,10 +1635,29 @@ function installSnapshotHook(window: BrowserWindow): void {
         await sleep(step.delayMs ?? 700)
         const outPath = join(plan.dir, step.file)
         if (step.child) {
-          const child = BrowserWindow.getAllWindows().find((w) => w !== window && !w.isDestroyed())
+          // Prefer the newest visible companion (detached / token popup). Skip the
+          // warmed-but-hidden token-usage window so ⌘⇧↵ captures stay correct.
+          const child = BrowserWindow.getAllWindows()
+            .filter(
+              (w) =>
+                w !== window &&
+                !w.isDestroyed() &&
+                w.isVisible() &&
+                w !== tokenUsageWindow
+            )
+            .sort((a, b) => b.id - a.id)[0]
           if (!child) {
             console.error(`[snapshot] missing child window for ${step.file}`)
             continue
+          }
+          if (step.childJs) {
+            try {
+              const result = await child.webContents.executeJavaScript(step.childJs, true)
+              console.log('[snapshot] child script result:', result)
+            } catch (err) {
+              console.error('[snapshot] child script failed', err)
+            }
+            await sleep(500)
           }
           await captureWindow(child, outPath)
           child.destroy()
@@ -1578,9 +1750,31 @@ function openFromCli(workdirArg: string | null): void {
 
 /**
  * Dock / Finder "Open With" (file-preview.rpml):
- * single file → File Preview; folder → session; multiple files → session + attachments.
+ * - Each file → its own File Preview window (never replace an open preview)
+ * - Folder(s) only → session with that workdir
+ * - Mix of folders + files → session with attachments (folder wins as workdir)
  */
 function openFromDroppedPaths(paths: string[]): void {
+  const dirs: string[] = []
+  const files: string[] = []
+  for (const p of paths) {
+    if (!p) continue
+    try {
+      if (!existsSync(p)) continue
+      const full = realpathSync(p)
+      if (statSync(full).isDirectory()) dirs.push(full)
+      else files.push(full)
+    } catch {
+      // skip
+    }
+  }
+  // Prefer opening every file as its own preview when the drop is files-only.
+  if (files.length > 0 && dirs.length === 0) {
+    for (const file of files) {
+      openFilePreviewWindow(file, { origin: 'dock' })
+    }
+    return
+  }
   const resolved = classifyOpenPaths(paths)
   if (resolved.kind === 'preview') {
     openFilePreviewWindow(resolved.file, { origin: 'dock' })
@@ -1620,7 +1814,7 @@ function flushPendingOpens(extra: string[] = []): void {
 
 function toggleMainWindow(): void {
   if (mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible() && mainWindow.isFocused()) {
-    mainWindow.hide()
+    hideLeavingFullscreen(mainWindow)
     return
   }
   app.focus({ steal: true })
@@ -1679,6 +1873,73 @@ function applyTheme(theme: AppSettings['theme']): void {
   nativeTheme.themeSource = theme
 }
 
+/** Fallback when the OS cannot report an accent (Linux, old macOS, errors). */
+const FALLBACK_SYSTEM_ACCENT = '#007aff'
+
+/** Last hex we broadcast — avoid spam on focus re-samples. */
+let lastBroadcastAccent: string | null = null
+
+/**
+ * Normalize any Electron accent string to `#rrggbb`.
+ * `systemPreferences.getAccentColor` returns `rrggbbaa` (no hash).
+ * `getColor` / event payloads may be `#rrggbbaa` or `#rrggbb`.
+ */
+function normalizeAccentHex(raw: unknown): string | null {
+  if (typeof raw !== 'string') return null
+  const cleaned = raw.trim().replace(/^#/, '').toLowerCase()
+  if (!/^[0-9a-f]{6}([0-9a-f]{2})?$/.test(cleaned)) return null
+  return `#${cleaned.slice(0, 6)}`
+}
+
+/** Read the current OS accent colour (macOS 10.14+ / Windows). */
+function readSystemAccentColor(): string {
+  try {
+    const fromPrefs = normalizeAccentHex(systemPreferences.getAccentColor())
+    if (fromPrefs) return fromPrefs
+  } catch {
+    // Unavailable on some platforms / older OS builds.
+  }
+  if (process.platform === 'win32') {
+    try {
+      // Highlight is the closest Windows system colour to "accent".
+      const highlight = normalizeAccentHex(systemPreferences.getColor('highlight'))
+      if (highlight) return highlight
+    } catch {
+      // ignore
+    }
+  }
+  return FALLBACK_SYSTEM_ACCENT
+}
+
+/** Push accent to all windows when it actually changed. */
+function publishSystemAccentColor(force = false): string {
+  const hex = readSystemAccentColor()
+  if (!force && hex === lastBroadcastAccent) return hex
+  lastBroadcastAccent = hex
+  broadcast(IPC.accentColorChanged, hex)
+  return hex
+}
+
+/** Wire OS accent listeners (Windows/Linux event + focus re-sample for macOS). */
+function watchSystemAccentColor(): void {
+  lastBroadcastAccent = readSystemAccentColor()
+  try {
+    // Documented for win32/linux; safe no-op if the event never fires elsewhere.
+    systemPreferences.on('accent-color-changed', (_event, newColor) => {
+      const hex = normalizeAccentHex(newColor) ?? readSystemAccentColor()
+      if (hex === lastBroadcastAccent) return
+      lastBroadcastAccent = hex
+      broadcast(IPC.accentColorChanged, hex)
+    })
+  } catch {
+    // ignore
+  }
+  // macOS has no accent-color-changed event — re-sample when a window focuses.
+  app.on('browser-window-focus', () => {
+    publishSystemAccentColor(false)
+  })
+}
+
 // ---------------------------------------------------------------------------
 // Working directories
 // ---------------------------------------------------------------------------
@@ -1719,7 +1980,11 @@ function appBuildNumber(): string {
 }
 
 function registerIpc(): void {
+  ipcMain.handle(IPC.secretsStatus, () => secretStore.status())
+  ipcMain.handle(IPC.secretsUnlock, () => secretStore.unlock())
+
   ipcMain.handle(IPC.bootstrap, (): Bootstrap => {
+    // Bootstrap must not force Keychain before onboarding unlock on macOS.
     const settings = currentSettings()
     setLocalePreference(settings.locale)
     const conversations = conversationStore.listMeta()
@@ -1728,6 +1993,7 @@ function registerIpc(): void {
     return {
       settings,
       resolvedLocale: currentLocale(),
+      systemAccentColor: readSystemAccentColor(),
       conversations,
       activeConversationId,
       apiKeyHint: secretStore.maskedHint(),
@@ -1934,6 +2200,18 @@ function registerIpc(): void {
     return meta
   })
 
+  ipcMain.handle(IPC.convExportPack, async (event, ids: string[]) => {
+    const win = BrowserWindow.fromWebContents(event.sender)
+    return vavPackService.exportConversations(Array.isArray(ids) ? ids : [], win)
+  })
+
+  ipcMain.handle(IPC.convImportPack, async (event) => {
+    const win = BrowserWindow.fromWebContents(event.sender)
+    const result = await vavPackService.importPackage(win)
+    if (result.ok) publishConversations()
+    return result
+  })
+
   ipcMain.handle(IPC.convSetModel, (_event, id: string, model: string) => {
     conversationStore.updateMeta(id, { model })
     publishConversations()
@@ -2041,6 +2319,24 @@ function registerIpc(): void {
     clipboard.writeText(text)
   })
 
+  ipcMain.handle(IPC.convCopyImage, (_event, base64Png: string) => {
+    try {
+      const raw = typeof base64Png === 'string' ? base64Png.trim() : ''
+      if (!raw) return { ok: false as const, error: 'empty image' }
+      // Accept accidental data-URL prefix from callers.
+      const b64 = raw.includes(',') ? raw.slice(raw.indexOf(',') + 1) : raw
+      const image = nativeImage.createFromBuffer(Buffer.from(b64, 'base64'))
+      if (image.isEmpty()) return { ok: false as const, error: 'invalid png' }
+      clipboard.writeImage(image)
+      return { ok: true as const }
+    } catch (err) {
+      return {
+        ok: false as const,
+        error: err instanceof Error ? err.message : String(err)
+      }
+    }
+  })
+
   ipcMain.handle(IPC.convSelectBranch, (_event, id: string, messageId: string) =>
     conversationStore.selectBranch(id, messageId)
   )
@@ -2083,6 +2379,33 @@ function registerIpc(): void {
   ipcMain.handle(IPC.agentFork, (_event, id: string, messageId: string) =>
     agent.fork(id, messageId)
   )
+  ipcMain.handle(
+    IPC.agentCompact,
+    async (_event, id: string, options?: { keepAfterMessageId?: string | null }) => {
+      const result = await agent.compact(id, options)
+      if (result.ok) {
+        const conversation = conversationStore.get(id)
+        broadcast(IPC.compactionsChanged, {
+          conversationId: id,
+          compactions: conversation?.compactions ?? []
+        })
+        pushTokenUsageIfOpen(id)
+      }
+      return result
+    }
+  )
+  ipcMain.handle(IPC.agentClearCompaction, (_event, id: string, leafId: string) => {
+    const result = agent.clearCompaction(id, leafId)
+    if (result.ok) {
+      const conversation = conversationStore.get(id)
+      broadcast(IPC.compactionsChanged, {
+        conversationId: id,
+        compactions: conversation?.compactions ?? []
+      })
+      pushTokenUsageIfOpen(id)
+    }
+    return result
+  })
 
   // --- files ---
   ipcMain.handle(
@@ -2118,7 +2441,11 @@ function registerIpc(): void {
     const win = BrowserWindow.fromWebContents(event.sender)
     if (!win || win.isDestroyed()) return
     previewCloseGuards.delete(win)
-    win.close()
+    afterLeavingFullscreen(win, () => {
+      if (win.isDestroyed()) return
+      fullscreenCloseAllowed.add(win)
+      win.close()
+    })
   })
   ipcMain.handle(
     IPC.filesSaveAs,
@@ -2202,6 +2529,15 @@ function registerIpc(): void {
     if (!listed) return null
     return toFileSessionsState(fileId, listed.activeSessionId, listed.sessions)
   })
+  ipcMain.handle(IPC.fileSessionsListAll, () => fileSessionStore.listAll())
+  ipcMain.handle(IPC.fileSessionsResolve, (_event, fileId: string) =>
+    fileSessionStore.resolve(fileId)
+  )
+  ipcMain.handle(
+    IPC.fileSessionsForceDelete,
+    (_event, fileId: string, sessionIds: string[]) =>
+      fileSessionStore.forceDelete(fileId, sessionIds)
+  )
 
   ipcMain.handle(IPC.fileSessionsSetReadOnly, (_event, sessionId: string, readOnly: boolean) => {
     conversationStore.updateMeta(sessionId, { fileReadOnly: readOnly })
@@ -2300,6 +2636,7 @@ function registerIpc(): void {
 
   // --- window ---
   ipcMain.handle(IPC.windowSetTheme, (_event, theme: AppSettings['theme']) => applyTheme(theme))
+  ipcMain.handle(IPC.windowGetAccentColor, () => readSystemAccentColor())
   ipcMain.handle(IPC.windowShellPath, (_event, kind: ShellKind) => shellPath(kind))
 
   ipcMain.handle(IPC.windowOpenSettings, (_event, view?: SettingsView) => openSettingsWindow(view))
@@ -2307,9 +2644,26 @@ function registerIpc(): void {
     if (settingsWindow && !settingsWindow.isDestroyed()) settingsWindow.close()
   })
 
-  ipcMain.handle(IPC.windowOpenSession, (_event, id: string) => openDetachedWindow(id))
-  ipcMain.handle(IPC.windowRevealInList, (_event, id: string) => {
+  ipcMain.handle(IPC.windowOpenSession, (_event, id: string) => {
+    // Must not return BrowserWindow — structured clone can't send it over IPC.
+    openDetachedWindow(String(id || ''))
+  })
+  ipcMain.handle(IPC.windowRevealInList, (event, id: string) => {
     revealConversationInList(String(id || ''))
+    // Companion (detached session or file-preview): close the window that asked
+    // so focus lands cleanly on main (same as Reveal in List for SessionWindow).
+    const senderWin = BrowserWindow.fromWebContents(event.sender)
+    if (
+      senderWin &&
+      !senderWin.isDestroyed() &&
+      mainWindow &&
+      !mainWindow.isDestroyed() &&
+      senderWin.id !== mainWindow.id
+    ) {
+      setTimeout(() => {
+        if (!senderWin.isDestroyed()) senderWin.close()
+      }, 80)
+    }
   })
   ipcMain.handle(IPC.windowCloseDetached, (_event, id: string) => {
     const conversationId = String(id || '')
@@ -2506,14 +2860,16 @@ async function seedSmokeChangeReview(): Promise<void> {
     type: 'change-review',
     conversationId: meta.id,
     changeSetId: set.id,
-    pendingCount: set.files.length
+    pendingCount: set.files.length,
+    changeSet: set
   })
   await new Promise((r) => setTimeout(r, 300))
   handleAgentEvent({
     type: 'change-review',
     conversationId: meta.id,
     changeSetId: set.id,
-    pendingCount: set.files.length
+    pendingCount: set.files.length,
+    changeSet: set
   })
   console.log('[smoke] seeded change review', set.id, 'conv', meta.id)
 }
@@ -2653,6 +3009,7 @@ if (!singleInstance) {
     fileSessionStore.bind(conversationStore)
     applyTheme(settings.theme ?? DEFAULT_SETTINGS.theme)
     nativeTheme.on('updated', repaintChrome)
+    watchSystemAccentColor()
     registerGlobalHotkey(settings.globalHotkey)
     registerIpc()
     notifications.applySettings()

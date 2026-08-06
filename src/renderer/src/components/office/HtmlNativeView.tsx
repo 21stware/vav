@@ -7,6 +7,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import type { PreviewBlock, PreviewBlockKind } from '@shared/previewBlock'
+import { scheduleClickPick } from '../../lib/clickPick'
 import { dirname, joinPath } from '../../lib/path'
 import { useT } from '../../i18n/useT'
 
@@ -418,25 +419,50 @@ export function HtmlNativeView({
         }
         if (!best?.dataset.blockId) return
 
-        event.preventDefault()
+        // Keep text select/copy; only isolate nested picks.
         event.stopPropagation()
 
-        const block = blockFromElement(best, sourceRef.current, best.dataset.blockId)
-        if (!block) return
-        onPickRef.current(block, event)
+        const id = best.dataset.blockId
+        const win = doc.defaultView ?? window
+        scheduleClickPick(
+          { button: event.button, clientX: event.clientX, clientY: event.clientY },
+          () => {
+            const block = blockFromElement(best!, sourceRef.current, id)
+            if (!block) return
+            onPickRef.current(block, event)
+          },
+          { win }
+        )
       }
 
       const blockNav = (event: Event): void => {
-        if (!selectingRef.current) return
+        // Always block hyperlink navigation in HTML previews (Read and Edit).
+        // Still allow drag-select: only act on real anchor clicks.
+        const target = event.target
+        if (!(target instanceof Element)) return
+        const anchor = target.closest('a[href]')
+        if (!anchor) {
+          // Pick mode: also swallow bare click navigations when selecting.
+          if (!selectingRef.current) return
+          const sel = doc.getSelection()
+          if (sel && !sel.isCollapsed && (sel.toString() || '').trim()) return
+          event.preventDefault()
+          return
+        }
+        // Stylesheet/link[rel] are not anchors.
+        if (anchor.tagName !== 'A') return
         event.preventDefault()
+        event.stopPropagation()
       }
 
       doc.addEventListener('mousedown', onDown, true)
       doc.addEventListener('click', blockNav, true)
+      doc.addEventListener('auxclick', blockNav, true)
       // Keep ref for cleanup of this document only.
       ;(iframe as HTMLIFrameElement & { __htmlPickCleanup?: () => void }).__htmlPickCleanup = () => {
         doc.removeEventListener('mousedown', onDown, true)
         doc.removeEventListener('click', blockNav, true)
+        doc.removeEventListener('auxclick', blockNav, true)
       }
     }
 

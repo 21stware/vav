@@ -10,6 +10,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { PreviewBlock } from '@shared/previewBlock'
 import type { StructuredDocument, StructuredSection } from '@shared/structuredDoc'
+import { handleClickPickMouseDown } from '../lib/clickPick'
 import { useT } from '../i18n/useT'
 
 const SHEET_ROW_WINDOW = 60
@@ -23,7 +24,7 @@ export function StructuredDocView({
   doc: StructuredDocument
   selecting: boolean
   selectedIds: string[]
-  onSelect: (id: string, event: React.MouseEvent) => void
+  onSelect: (id: string, event?: React.MouseEvent | null) => void
 }): React.JSX.Element {
   const t = useT()
   const selected = useMemo(() => new Set(selectedIds), [selectedIds])
@@ -124,7 +125,7 @@ function StructuredSectionView({
   section: StructuredSection
   selecting: boolean
   selected: Set<string>
-  onSelect: (id: string, event: React.MouseEvent) => void
+  onSelect: (id: string, event?: React.MouseEvent | null) => void
   showTitle: boolean
 }): React.JSX.Element {
   const sectionSelected = selected.has(section.id)
@@ -147,11 +148,7 @@ function StructuredSectionView({
           className={`structured-section-head preview-select-region${sectionSelected ? ' selected' : ''}`}
           onMouseDown={
             selecting
-              ? (e) => {
-                  e.preventDefault()
-                  e.stopPropagation()
-                  onSelect(section.id, e)
-                }
+              ? (e) => handleClickPickMouseDown(e, () => onSelect(section.id))
               : undefined
           }
         >
@@ -205,7 +202,7 @@ function SheetGrid({
   section: StructuredSection
   selecting: boolean
   selected: Set<string>
-  onSelect: (id: string, event: React.MouseEvent) => void
+  onSelect: (id: string, event?: React.MouseEvent | null) => void
 }): React.JSX.Element {
   const t = useT()
   const grid = section.grid ?? []
@@ -302,9 +299,7 @@ function SheetGrid({
                       ? (e) => {
                           // Row gutter / empty area selects the row.
                           if ((e.target as HTMLElement).closest('td[data-block-id]')) return
-                          e.preventDefault()
-                          e.stopPropagation()
-                          onSelect(rowId, e)
+                          handleClickPickMouseDown(e, () => onSelect(rowId))
                         }
                       : undefined
                   }
@@ -313,11 +308,7 @@ function SheetGrid({
                     className="structured-sheet-gutter"
                     onMouseDown={
                       selecting && rowId
-                        ? (e) => {
-                            e.preventDefault()
-                            e.stopPropagation()
-                            onSelect(rowId, e)
-                          }
+                        ? (e) => handleClickPickMouseDown(e, () => onSelect(rowId))
                         : undefined
                     }
                   >
@@ -336,17 +327,9 @@ function SheetGrid({
                         title={cellBlock?.label ?? (value ? value.slice(0, 200) : undefined)}
                         onMouseDown={
                           selecting && cellId
-                            ? (e) => {
-                                e.preventDefault()
-                                e.stopPropagation()
-                                onSelect(cellId, e)
-                              }
+                            ? (e) => handleClickPickMouseDown(e, () => onSelect(cellId))
                             : selecting && rowId && !cellId
-                              ? (e) => {
-                                  e.preventDefault()
-                                  e.stopPropagation()
-                                  onSelect(rowId, e)
-                                }
+                              ? (e) => handleClickPickMouseDown(e, () => onSelect(rowId))
                               : undefined
                         }
                       >
@@ -373,16 +356,12 @@ function BlockNode({
   block: PreviewBlock
   selecting: boolean
   selected: Set<string>
-  onSelect: (id: string, event: React.MouseEvent) => void
+  onSelect: (id: string, event?: React.MouseEvent | null) => void
 }): React.JSX.Element {
   const on = selected.has(block.id)
 
   const handle = selecting
-    ? (e: React.MouseEvent) => {
-        e.preventDefault()
-        e.stopPropagation()
-        onSelect(block.id, e)
-      }
+    ? (e: React.MouseEvent) => handleClickPickMouseDown(e, () => onSelect(block.id))
     : undefined
 
   // DOCX / generic tables → real <table>, not chip rows.
@@ -430,9 +409,7 @@ function BlockNode({
                     selecting
                       ? (e) => {
                           if ((e.target as HTMLElement).closest('td[data-block-id]')) return
-                          e.preventDefault()
-                          e.stopPropagation()
-                          onSelect(row.id, e)
+                          handleClickPickMouseDown(e, () => onSelect(row.id))
                         }
                       : undefined
                   }
@@ -446,11 +423,7 @@ function BlockNode({
                         data-block-id={cell.id}
                         onMouseDown={
                           selecting
-                            ? (e) => {
-                                e.preventDefault()
-                                e.stopPropagation()
-                                onSelect(cell.id, e)
-                              }
+                            ? (e) => handleClickPickMouseDown(e, () => onSelect(cell.id))
                             : undefined
                         }
                       >
@@ -493,11 +466,7 @@ function BlockNode({
               data-block-id={cell.id}
               onMouseDown={
                 selecting
-                  ? (e) => {
-                      e.preventDefault()
-                      e.stopPropagation()
-                      onSelect(cell.id, e)
-                    }
+                  ? (e) => handleClickPickMouseDown(e, () => onSelect(cell.id))
                   : undefined
               }
             >

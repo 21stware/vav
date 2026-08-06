@@ -23,6 +23,11 @@ const api: VavApi = {
 
   bootstrap: () => ipcRenderer.invoke(IPC.bootstrap),
 
+  secrets: {
+    status: () => ipcRenderer.invoke(IPC.secretsStatus),
+    unlock: () => ipcRenderer.invoke(IPC.secretsUnlock)
+  },
+
   settings: {
     get: () => ipcRenderer.invoke(IPC.settingsGet),
     update: (patch: Partial<AppSettings>) => ipcRenderer.invoke(IPC.settingsUpdate, patch),
@@ -71,6 +76,10 @@ const api: VavApi = {
     remove: (ids: string[]) => ipcRenderer.invoke(IPC.convRemove, ids),
     revealInFinder: (path: string) => ipcRenderer.invoke(IPC.convReveal, path),
     copyToClipboard: (text: string) => ipcRenderer.invoke(IPC.convCopy, text),
+    copyImageToClipboard: (base64Png: string) =>
+      ipcRenderer.invoke(IPC.convCopyImage, base64Png) as Promise<
+        { ok: true } | { ok: false; error: string }
+      >,
     selectBranch: (id: string, messageId: string) =>
       ipcRenderer.invoke(IPC.convSelectBranch, id, messageId),
     setLeaf: (id: string, leafId: string) => ipcRenderer.invoke(IPC.convSetLeaf, id, leafId),
@@ -83,6 +92,16 @@ const api: VavApi = {
     continueInNewSession: (id: string, messageId: string) =>
       ipcRenderer.invoke(IPC.convContinueNew, id, messageId),
     duplicate: (id: string) => ipcRenderer.invoke(IPC.convDuplicate, id),
+    exportPack: (ids: string[]) =>
+      ipcRenderer.invoke(IPC.convExportPack, ids) as Promise<
+        | { ok: true; path: string; blobCount: number; conversationCount: number }
+        | { ok: false; cancelled?: boolean; error?: string }
+      >,
+    importPack: () =>
+      ipcRenderer.invoke(IPC.convImportPack) as Promise<
+        | { ok: true; importedIds: string[]; path: string; blobCount: number }
+        | { ok: false; cancelled?: boolean; error?: string }
+      >,
     onChanged: (handler) => subscribe(IPC.convChanged, handler)
   },
 
@@ -113,7 +132,14 @@ const api: VavApi = {
     editUserMessage: (id: string, messageId: string, text: string) =>
       ipcRenderer.invoke(IPC.agentEditUser, id, messageId, text),
     fork: (id: string, messageId: string) => ipcRenderer.invoke(IPC.agentFork, id, messageId),
-    onEvent: (handler) => subscribe(IPC.agentEvent, handler)
+    compact: (id, options) => ipcRenderer.invoke(IPC.agentCompact, id, options),
+    clearCompaction: (id, leafId) => ipcRenderer.invoke(IPC.agentClearCompaction, id, leafId),
+    onEvent: (handler) => subscribe(IPC.agentEvent, handler),
+    onCompactionsChanged: (handler) =>
+      subscribe<{ conversationId: string; compactions: import('@shared/types').LeafCompaction[] }>(
+        IPC.compactionsChanged,
+        handler
+      )
   },
 
   files: {
@@ -149,12 +175,16 @@ const api: VavApi = {
     setActive: (fileId: string, sessionId: string) =>
       ipcRenderer.invoke(IPC.fileSessionsSetActive, fileId, sessionId),
     list: (fileId: string) => ipcRenderer.invoke(IPC.fileSessionsList, fileId),
+    listAll: () => ipcRenderer.invoke(IPC.fileSessionsListAll),
+    resolve: (fileId: string) => ipcRenderer.invoke(IPC.fileSessionsResolve, fileId),
     setReadOnly: (sessionId: string, readOnly: boolean) =>
       ipcRenderer.invoke(IPC.fileSessionsSetReadOnly, sessionId, readOnly),
     rename: (fileId: string, sessionId: string, title: string) =>
       ipcRenderer.invoke(IPC.fileSessionsRename, fileId, sessionId, title),
     delete: (fileId: string, sessionIds: string[]) =>
-      ipcRenderer.invoke(IPC.fileSessionsDelete, fileId, sessionIds)
+      ipcRenderer.invoke(IPC.fileSessionsDelete, fileId, sessionIds),
+    forceDelete: (fileId: string, sessionIds: string[]) =>
+      ipcRenderer.invoke(IPC.fileSessionsForceDelete, fileId, sessionIds)
   },
 
   agents: {
@@ -188,6 +218,8 @@ const api: VavApi = {
 
   window: {
     setTheme: (theme: AppSettings['theme']) => ipcRenderer.invoke(IPC.windowSetTheme, theme),
+    getAccentColor: () => ipcRenderer.invoke(IPC.windowGetAccentColor) as Promise<string>,
+    onAccentColorChanged: (handler) => subscribe<string>(IPC.accentColorChanged, handler),
     shellPath: (kind: ShellKind) => ipcRenderer.invoke(IPC.windowShellPath, kind),
     openSettings: (view?: SettingsView) => ipcRenderer.invoke(IPC.windowOpenSettings, view),
     closeSettings: () => ipcRenderer.invoke(IPC.windowCloseSettings),

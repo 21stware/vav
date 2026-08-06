@@ -22,6 +22,11 @@ export interface Bootstrap {
   settings: AppSettings
   /** Resolved from settings.locale + OS; same value main uses for menus. */
   resolvedLocale: AppLocale
+  /**
+   * Current OS accent as `#rrggbb` (macOS / Windows). Used when
+   * `settings.colorTint === 'system'`.
+   */
+  systemAccentColor: string
   conversations: ConversationMeta[]
   activeConversationId: string
   apiKeyHint: string | null
@@ -164,6 +169,20 @@ export interface FileSessionsDeleteResult extends FileSessionsState {
   removed: string[]
 }
 
+/** One row in the sidebar “Show file sessions” list. */
+export interface FileSessionListEntry {
+  fileId: string
+  path: string
+  pathStatus: 'ok' | 'file_missing' | 'dir_missing'
+  sessionId: string
+  title: string
+  createdAt: number
+  updatedAt: number
+  messageCount: number
+  tokensUsed: number
+  isActive: boolean
+}
+
 /**
  * Lean hydrate payload for the native token-usage panel.
  * Main builds this from ConversationStore so the popup never bootstraps the app.
@@ -182,6 +201,19 @@ export interface TokenUsageViewPayload {
   locale: AppLocale
   /** Wall clock at emit time — used for cache-expiry relative labels. */
   now: number
+  /** Active leaf has a manual compaction. */
+  hasCompaction: boolean
+  /** Messages folded into the active-leaf summary (0 if none). */
+  compactedCount: number
+  /** Path length on the active leaf — panel uses this to enable Compact. */
+  pathMessageCount: number
+  /**
+   * Context-window fill for the bar. After compact this is the estimated
+   * next-request size; otherwise last-turn total input (or tokensUsed).
+   */
+  contextTokens: number
+  /** True when contextTokens is a post-compact estimate (not provider-reported). */
+  contextTokensEstimated: boolean
 }
 
 export interface CliOpenEvent {
@@ -344,6 +376,20 @@ export interface VavApi {
 
   bootstrap(): Promise<Bootstrap>
 
+  /**
+   * Keychain / safeStorage gate (macOS). Call unlock from onboarding before
+   * bootstrap so the system prompt is user-initiated.
+   */
+  secrets: {
+    status(): Promise<{
+      unlocked: boolean
+      needsUnlock: boolean
+      encryptionAvailable: boolean
+      hasKeyFile: boolean
+    }>
+    unlock(): Promise<{ ok: true } | { ok: false; error: string }>
+  }
+
   settings: {
     get(): Promise<AppSettings>
     update(patch: Partial<AppSettings>): Promise<AppSettings>
@@ -395,6 +441,8 @@ export interface VavApi {
     remove(ids: string[]): Promise<{ removed: string[]; conversations: ConversationMeta[] }>
     revealInFinder(path: string): Promise<void>
     copyToClipboard(text: string): Promise<void>
+    /** Put a PNG on the system clipboard (base64, no data-URL prefix). */
+    copyImageToClipboard(base64Png: string): Promise<{ ok: true } | { ok: false; error: string }>
     /** Shows the variant `messageId` belongs to; resolves to the new leaf. */
     selectBranch(conversationId: string, messageId: string): Promise<string | null>
     /** Points the thread at an exact node — used for not-yet-written branches. */
@@ -412,6 +460,19 @@ export interface VavApi {
     continueInNewSession(id: string, messageId: string): Promise<ConversationMeta | null>
     /** Deep-copies the whole conversation tree into a new session. */
     duplicate(id: string): Promise<ConversationMeta | null>
+    /**
+     * Export selected sessions as a `.vavpack` ZIP package
+     * (text + manifest + binary blobs; no base64-in-JSON dumps).
+     */
+    exportPack(ids: string[]): Promise<
+      | { ok: true; path: string; blobCount: number; conversationCount: number }
+      | { ok: false; cancelled?: boolean; error?: string }
+    >
+    /** Import sessions from a `.vavpack` / `.zip` package (save dialog). */
+    importPack(): Promise<
+      | { ok: true; importedIds: string[]; path: string; blobCount: number }
+      | { ok: false; cancelled?: boolean; error?: string }
+    >
     /** Any window changing the list must reach the others. */
     onChanged(handler: (conversations: ConversationMeta[]) => void): () => void
   }
@@ -434,7 +495,31 @@ export interface VavApi {
     editUserMessage(conversationId: string, messageId: string, text: string): Promise<void>
     /** Opens a sibling branch at `messageId` without sending anything yet. */
     fork(conversationId: string, messageId: string): Promise<string | null>
+    /**
+     * Manual context compact for the active leaf. Originals stay in the tree;
+     * the model history uses a summary until cleared. Optional keepAfter keeps
+     * that message and everything after it full.
+     */
+    compact(
+      conversationId: string,
+      options?: { keepAfterMessageId?: string | null }
+    ): Promise<
+      | { ok: true; compaction: import('./types').LeafCompaction }
+      | { ok: false; error: string }
+    >
+    /** Remove compaction for one leaf path (restore full model context). */
+    clearCompaction(
+      conversationId: string,
+      leafId: string
+    ): Promise<{ ok: true } | { ok: false; error: string }>
     onEvent(handler: (event: TurnEvent) => void): () => void
+    /** Fired when a leaf compaction is set or cleared. */
+    onCompactionsChanged(
+      handler: (payload: {
+        conversationId: string
+        compactions: import('./types').LeafCompaction[]
+      }) => void
+    ): () => void
   }
 
   files: {
@@ -510,12 +595,23 @@ export interface VavApi {
     create(path: string): Promise<FileSessionsState>
     setActive(fileId: string, sessionId: string): Promise<FileSessionsState | null>
     list(fileId: string): Promise<FileSessionsState | null>
+    /** All file-bound sessions for the sidebar browser. */
+    listAll(): Promise<FileSessionListEntry[]>
+    /** Path + existence for a fileId (main detail panel). */
+    resolve(
+      fileId: string
+    ): Promise<{ path: string; pathStatus: FileSessionListEntry['pathStatus'] } | null>
     setReadOnly(sessionId: string, readOnly: boolean): Promise<void>
     rename(fileId: string, sessionId: string, title: string): Promise<FileSessionsState | null>
     delete(
       fileId: string,
       sessionIds: string[]
     ): Promise<FileSessionsDeleteResult | null>
+    /** Sidebar force-delete (no active/last protection). */
+    forceDelete(
+      fileId: string,
+      sessionIds: string[]
+    ): Promise<{ ok: boolean; error?: string; removed: string[] }>
   }
 
   /** Resolve a CLI agent binary on the login PATH (cached; pass force after install). */
@@ -557,6 +653,13 @@ export interface VavApi {
   window: {
     /** Applies the resolved light/dark appearance to the native window chrome. */
     setTheme(theme: AppSettings['theme']): Promise<void>
+    /**
+     * Current OS accent colour as `#rrggbb` (macOS 10.14+ / Windows).
+     * Falls back to a standard blue when the platform cannot report one.
+     */
+    getAccentColor(): Promise<string>
+    /** Fired when the OS accent colour changes (or is re-sampled on focus). */
+    onAccentColorChanged(handler: (hex: string) => void): () => void
     shellPath(shell: ShellKind): Promise<string>
     /** Settings live in their own window, not a sheet over the transcript. */
     openSettings(view?: SettingsView): Promise<void>
@@ -695,6 +798,19 @@ export type MenuCommand =
   | 'focus-bash'
   | 'switch-workdir'
   | 'send'
+  /** Stop the in-flight agent turn for the active session. */
+  | 'cancel-turn'
+  /** Import / export .vav session packs (same as sidebar ⋮). */
+  | 'import-pack'
+  | 'export-pack'
+  /** Raise the in-app keyboard shortcuts sheet. */
+  | 'open-shortcuts'
+  /** Sidebar list modes: main sessions / archive / file-bound sessions. */
+  | 'show-sessions'
+  | 'show-archive'
+  | 'show-file-sessions'
+  /** Trigger the same update check as Settings → About. */
+  | 'check-updates'
   /**
    * ⌘W — context close via uiFocus (bash tab / collapse Files tray / agent pane),
    * else close the window. Replaces bare role:close so the renderer can decide.
@@ -713,6 +829,8 @@ export type MenuCommand =
 
 export const IPC = {
   bootstrap: 'vav:bootstrap',
+  secretsStatus: 'vav:secrets:status',
+  secretsUnlock: 'vav:secrets:unlock',
 
   settingsGet: 'vav:settings:get',
   settingsUpdate: 'vav:settings:update',
@@ -749,6 +867,8 @@ export const IPC = {
   convRemove: 'vav:conv:remove',
   convReveal: 'vav:conv:reveal',
   convCopy: 'vav:conv:copy',
+  /** PNG bytes as base64 (no data-URL prefix) → system clipboard as image. */
+  convCopyImage: 'vav:conv:copy-image',
   convSelectBranch: 'vav:conv:select-branch',
   convSetLeaf: 'vav:conv:set-leaf',
   convSetPinned: 'vav:conv:set-pinned',
@@ -756,6 +876,10 @@ export const IPC = {
   convSetApprovalMode: 'vav:conv:set-approval-mode',
   convContinueNew: 'vav:conv:continue-new',
   convDuplicate: 'vav:conv:duplicate',
+  /** Export one or more sessions as a .vavpack (zip) package. */
+  convExportPack: 'vav:conv:export-pack',
+  /** Import sessions from a .vavpack / .zip package. */
+  convImportPack: 'vav:conv:import-pack',
   convChanged: 'vav:conv:changed',
 
   agentSend: 'vav:agent:send',
@@ -765,6 +889,10 @@ export const IPC = {
   agentRegenerate: 'vav:agent:regenerate',
   agentEditUser: 'vav:agent:edit-user',
   agentFork: 'vav:agent:fork',
+  agentCompact: 'vav:agent:compact',
+  agentClearCompaction: 'vav:agent:clear-compaction',
+  /** Main → all windows after compact/clear so the transcript can refresh. */
+  compactionsChanged: 'vav:agent:compactions-changed',
   agentEvent: 'vav:agent:event',
 
   filesList: 'vav:files:list',
@@ -790,9 +918,12 @@ export const IPC = {
   fileSessionsCreate: 'vav:file-sessions:create',
   fileSessionsSetActive: 'vav:file-sessions:set-active',
   fileSessionsList: 'vav:file-sessions:list',
+  fileSessionsListAll: 'vav:file-sessions:list-all',
+  fileSessionsResolve: 'vav:file-sessions:resolve',
   fileSessionsSetReadOnly: 'vav:file-sessions:set-read-only',
   fileSessionsRename: 'vav:file-sessions:rename',
   fileSessionsDelete: 'vav:file-sessions:delete',
+  fileSessionsForceDelete: 'vav:file-sessions:force-delete',
   filesOpenWithDefault: 'vav:files:open-with-default',
 
   agentsResolveBinary: 'vav:agents:resolve-binary',
@@ -808,6 +939,8 @@ export const IPC = {
   ptyChanged: 'vav:pty:changed',
 
   windowSetTheme: 'vav:window:set-theme',
+  windowGetAccentColor: 'vav:window:get-accent-color',
+  accentColorChanged: 'vav:window:accent-color-changed',
   windowShellPath: 'vav:window:shell-path',
   windowOpenSettings: 'vav:window:open-settings',
   windowCloseSettings: 'vav:window:close-settings',

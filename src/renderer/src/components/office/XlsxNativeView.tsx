@@ -5,6 +5,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import * as XLSX from 'xlsx'
 import type { PreviewBlock } from '@shared/previewBlock'
+import { handleClickPickMouseDown } from '../../lib/clickPick'
 import { loadFileBuffer } from '../../lib/officeBinary'
 import { useT } from '../../i18n/useT'
 
@@ -107,19 +108,21 @@ export function XlsxNativeView({
     kind: PreviewBlock['kind'],
     event: React.MouseEvent
   ): void => {
-    event.preventDefault()
-    event.stopPropagation()
-    onPick(
-      {
-        id,
-        kind,
-        text: text.slice(0, 8000),
-        label: text.slice(0, 64) || id,
-        startLine: 1,
-        endLine: 1
-      },
-      event.nativeEvent
-    )
+    handleClickPickMouseDown(event, () => {
+      // Synthetic MouseEvent for office pick consumers that only check button.
+      const synthetic = { button: 0 } as MouseEvent
+      onPick(
+        {
+          id,
+          kind,
+          text: text.slice(0, 8000),
+          label: text.slice(0, 64) || id,
+          startLine: 1,
+          endLine: 1
+        },
+        synthetic
+      )
+    })
   }
 
   return (

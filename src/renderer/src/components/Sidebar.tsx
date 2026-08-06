@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Archive,
   ArrowLeft,
   ChevronDown,
   ChevronRight,
+  MoreVertical,
   Search,
   X
 } from 'lucide-react'
@@ -13,11 +14,13 @@ import {
   type ConversationMeta,
   type SidebarGroupingMode
 } from '@shared/types'
+import type { FileSessionListEntry } from '@shared/ipc'
 import { useSessionStore, type TurnRuntime } from '../state/sessionStore'
 import { isTemporaryWorkspace, middleTruncate, relativeTime, workdirShortLabel } from '../lib/format'
 import { flatten, groupConversations } from '../lib/grouping'
 import { showMenu, type MenuItem } from '../lib/nativeMenu'
 import { fileManagerLabel } from '../lib/platform'
+import { basename } from '../lib/path'
 import { useT } from '../i18n/useT'
 import { EmptyState } from './ui'
 
@@ -108,44 +111,88 @@ export function Sidebar({
   const setArchived = useSessionStore((s) => s.setArchived)
   const openDetached = useSessionStore((s) => s.openDetached)
   const updateSettings = useSessionStore((s) => s.updateSettings)
+  const showToast = useSessionStore((s) => s.showToast)
+  const showDialog = useSessionStore((s) => s.showDialog)
+  const listMode = useSessionStore((s) => s.sidebarListMode)
+  const setListMode = useSessionStore((s) => s.setSidebarListMode)
 
   const listRef = useRef<HTMLDivElement>(null)
   /** Defers float close on single-click so double-click can open a companion. */
   const clickTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  /** File-session list: same delay so dblclick can open the standalone window. */
+  const fileClickTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [collapsedKeys, setCollapsedKeys] = useState<Set<string>>(() => new Set())
-  const [archiveView, setArchiveView] = useState(false)
+  const [fileSessionRows, setFileSessionRows] = useState<FileSessionListEntry[]>([])
+  const [fileSessionsLoading, setFileSessionsLoading] = useState(false)
+
+  const archiveView = listMode === 'archive'
+  const fileSessionsView = listMode === 'fileSessions'
+
+  const refreshFileSessions = useCallback(async (): Promise<void> => {
+    setFileSessionsLoading(true)
+    try {
+      const rows = await window.vav.fileSessions.listAll()
+      setFileSessionRows(rows)
+    } catch {
+      setFileSessionRows([])
+    } finally {
+      setFileSessionsLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!fileSessionsView) return
+    void refreshFileSessions()
+  }, [fileSessionsView, refreshFileSessions])
 
   useEffect(() => {
     return () => {
       if (clickTimerRef.current) clearTimeout(clickTimerRef.current)
+      if (fileClickTimerRef.current) clearTimeout(fileClickTimerRef.current)
     }
   }, [])
 
   const searching = query.trim().length > 0
   const archivedCount = useMemo(
-    () => conversations.filter((c) => c.archived).length,
+    () => conversations.filter((c) => c.archived && !c.fileId).length,
     [conversations]
   )
 
   // Collapse state is ephemeral: mode switch or search resets to all expanded.
   useEffect(() => {
     setCollapsedKeys(new Set())
-  }, [groupingMode, searching, archiveView])
+  }, [groupingMode, searching, listMode])
 
   const groups = useMemo(() => {
+    if (fileSessionsView) return []
     const needle = query.trim().toLowerCase()
+    // File-bound sessions live only under “File sessions” — never in workspace
+    // groups. listMeta already omits them; the store still hydrates them for
+    // FileSessionView, so we must filter here or a Downloads/file click looks
+    // like a normal project session that “wrongly” opens the file canvas.
     if (archiveView) {
       const rows = conversations
-        .filter((c) => c.archived)
+        .filter((c) => c.archived && !c.fileId)
         .filter((c) => !needle || c.title.toLowerCase().includes(needle))
         .sort((a, b) => (b.archivedAt ?? b.updatedAt) - (a.archivedAt ?? a.updatedAt))
       return [{ key: 'archive', label: '', conversations: rows }]
     }
     const rows = conversations
-      .filter((c) => !c.archived)
+      .filter((c) => !c.archived && !c.fileId)
       .filter((c) => !needle || c.title.toLowerCase().includes(needle))
     return groupConversations(rows, searching, groupingMode, tmp)
-  }, [conversations, query, searching, groupingMode, tmp, archiveView])
+  }, [conversations, query, searching, groupingMode, tmp, archiveView, fileSessionsView])
+
+  const filteredFileSessions = useMemo(() => {
+    const needle = query.trim().toLowerCase()
+    if (!needle) return fileSessionRows
+    return fileSessionRows.filter(
+      (row) =>
+        row.title.toLowerCase().includes(needle) ||
+        row.path.toLowerCase().includes(needle) ||
+        basename(row.path).toLowerCase().includes(needle)
+    )
+  }, [fileSessionRows, query])
 
   const visible = useMemo(() => flatten(groups, collapsedKeys), [groups, collapsedKeys])
 
@@ -172,16 +219,16 @@ export function Sidebar({
       } else       if (event.key === 'a' && event.metaKey) {
         event.preventDefault()
         useSessionStore.setState({ selectedIds: visible.map((c) => c.id) })
-      } else if (event.key === 'Escape' && archiveView) {
+      } else if (event.key === 'Escape' && listMode !== 'main') {
         event.preventDefault()
-        // Keep the float open: Escape steps out of archive first.
+        // Keep the float open: Escape steps out of archive / file-sessions first.
         event.stopImmediatePropagation()
-        setArchiveView(false)
+        setListMode('main')
       }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [visible, activeId, selectedIds, selectConversation, requestDelete, archiveView])
+  }, [visible, activeId, selectedIds, selectConversation, requestDelete, listMode])
 
   const menuItems = (ids: string[]): MenuItem[] => {
     const targets = ids
@@ -230,6 +277,10 @@ export function Sidebar({
             })()
           }
         },
+        {
+          label: t('sidebar.menu.exportCount', { count: targets.length }),
+          onSelect: () => void exportSessions(targets.map((c) => c.id))
+        },
         { label: '', divider: true },
         {
           label: t('sidebar.menu.deleteCount', { count: targets.length }),
@@ -272,6 +323,10 @@ export function Sidebar({
       { label: t('sidebar.menu.rename'), onSelect: () => beginRename(id) },
       { label: t('sidebar.menu.duplicate'), onSelect: () => void duplicateConversation(id) },
       {
+        label: t('sidebar.menu.export'),
+        onSelect: () => void exportSessions([id])
+      },
+      {
         label: t('sidebar.menu.copyTitle'),
         onSelect: () => void window.vav.conversations.copyToClipboard(conversation.title ?? '')
       },
@@ -287,6 +342,52 @@ export function Sidebar({
       { label: '', divider: true },
       { label: t('sidebar.menu.delete'), destructive: true, onSelect: () => requestDelete([id]) }
     ]
+  }
+
+  const exportSessions = async (ids: string[]): Promise<void> => {
+    const result = await window.vav.conversations.exportPack(ids)
+    if (result.ok === false) {
+      if (result.cancelled) return
+      showToast({
+        kind: 'error',
+        title: t('sidebar.exportFailed'),
+        description: result.error
+      })
+      return
+    }
+    showToast({
+      kind: 'success',
+      title: t('sidebar.exportOk'),
+      description: t('sidebar.exportOkDesc', {
+        path: result.path,
+        count: result.conversationCount,
+        blobs: result.blobCount
+      })
+    })
+  }
+
+  const importSessions = async (): Promise<void> => {
+    const result = await window.vav.conversations.importPack()
+    if (result.ok === false) {
+      if (result.cancelled) return
+      showToast({
+        kind: 'error',
+        title: t('sidebar.importFailed'),
+        description: result.error
+      })
+      return
+    }
+    showToast({
+      kind: 'success',
+      title: t('sidebar.importOk'),
+      description: t('sidebar.importOkDesc', {
+        count: result.importedIds.length,
+        blobs: result.blobCount
+      })
+    })
+    if (result.importedIds[0]) {
+      void selectConversation(result.importedIds[0])
+    }
   }
 
   const selectionRunClass = (id: string): string => {
@@ -348,7 +449,7 @@ export function Sidebar({
             </button>
           )}
         </div>
-        {!archiveView && (
+        {listMode === 'main' && (
           <label className="sidebar-grouping">
             <span className="sidebar-grouping-label">{t('sidebar.grouping')}</span>
             <span className="sidebar-grouping-control">
@@ -371,25 +472,39 @@ export function Sidebar({
             </span>
           </label>
         )}
-        {archiveView && (
+        {listMode !== 'main' && (
           <div className="sidebar-archive-head">
             <button
               type="button"
-              className="btn icon-only sm"
+              className="sidebar-archive-back"
               title={t('sidebar.back')}
-              onClick={() => setArchiveView(false)}
+              onClick={() => {
+                setListMode('main')
+                // Leave file-canvas: main list has no file sessions, so keep
+                // showing FileSessionView only while still on a file-bound id.
+                const store = useSessionStore.getState()
+                const active = store.conversations.find((c) => c.id === store.activeId)
+                if (active?.fileId) {
+                  const next = store.conversations.find((c) => !c.archived && !c.fileId)
+                  if (next) void store.selectConversation(next.id)
+                }
+              }}
             >
-              <ArrowLeft size={13} />
+              <ArrowLeft size={13} aria-hidden />
+              <span className="sidebar-archive-title">
+                {archiveView
+                  ? t('sidebar.archivedCount', { count: archivedCount })
+                  : t('sidebar.fileSessionsTitle', { count: fileSessionRows.length })}
+              </span>
             </button>
-            <span className="sidebar-archive-title">
-              {t('sidebar.archivedCount', { count: archivedCount })}
-            </span>
           </div>
         )}
       </div>
 
       <div className="sidebar-list" ref={listRef} tabIndex={-1}>
-        {visible.length === 0 && !archiveView && conversations.filter((c) => !c.archived).length === 0 && (
+        {listMode === 'main' &&
+          visible.length === 0 &&
+          conversations.filter((c) => !c.archived && !c.fileId).length === 0 && (
           <EmptyState title={t('sidebar.emptyTitle')} description={t('sidebar.emptyDesc')}>
             <button
               className="btn secondary"
@@ -402,13 +517,26 @@ export function Sidebar({
             </button>
           </EmptyState>
         )}
-        {visible.length === 0 && archiveView && !searching && (
+        {archiveView && visible.length === 0 && !searching && (
           <EmptyState
             title={t('sidebar.archiveEmptyTitle')}
             description={t('sidebar.archiveEmptyDesc')}
           />
         )}
-        {visible.length === 0 && searching && (
+        {fileSessionsView && !fileSessionsLoading && filteredFileSessions.length === 0 && !searching && (
+          <EmptyState
+            title={t('sidebar.fileSessionsEmptyTitle')}
+            description={t('sidebar.fileSessionsEmptyDesc')}
+          />
+        )}
+        {fileSessionsView && searching && filteredFileSessions.length === 0 && (
+          <EmptyState title={t('sidebar.noMatchTitle')} description={t('sidebar.noMatchDesc')}>
+            <button className="btn secondary" onClick={() => setSidebarQuery('')}>
+              {t('sidebar.clearFilter')}
+            </button>
+          </EmptyState>
+        )}
+        {listMode === 'main' && searching && visible.length === 0 && (
           <EmptyState title={t('sidebar.noMatchTitle')} description={t('sidebar.noMatchDesc')}>
             <button className="btn secondary" onClick={() => setSidebarQuery('')}>
               {t('sidebar.clearFilter')}
@@ -416,7 +544,139 @@ export function Sidebar({
           </EmptyState>
         )}
 
-        {groups.map((group, groupIndex) => {
+        {fileSessionsView && (
+          <div className="file-session-list" role="list">
+            {filteredFileSessions.map((row) => {
+              const isActive = row.sessionId === activeId
+              const statusLabel =
+                row.pathStatus === 'dir_missing'
+                  ? t('sidebar.dirNotExist')
+                  : row.pathStatus === 'file_missing'
+                    ? t('sidebar.fileNotExist')
+                    : null
+              const pathLabel = basename(row.path) || row.path
+              // Flatten auto-titles: strip markdown hashes / leading whitespace.
+              const title =
+                row.title.replace(/^[#\s\u00a0\u3000]+/, '').trim() || row.title.trim() || 'New session'
+              return (
+                <button
+                  type="button"
+                  role="listitem"
+                  key={`${row.fileId}:${row.sessionId}`}
+                  className={`file-session-item${isActive ? ' is-active' : ''}${statusLabel ? ' is-missing' : ''}`}
+                  onClick={(event) => {
+                    // Ignore the second half of a double-click pair (open window).
+                    if (event.detail > 1) return
+                    void selectConversation(row.sessionId)
+                    // Floating: delay close so dblclick can open the companion.
+                    if (floating && onNavigate) {
+                      if (fileClickTimerRef.current) clearTimeout(fileClickTimerRef.current)
+                      fileClickTimerRef.current = setTimeout(() => {
+                        fileClickTimerRef.current = null
+                        onNavigate()
+                      }, 280)
+                      return
+                    }
+                    onNavigate?.()
+                  }}
+                  onDoubleClick={(event) => {
+                    event.preventDefault()
+                    if (fileClickTimerRef.current) {
+                      clearTimeout(fileClickTimerRef.current)
+                      fileClickTimerRef.current = null
+                    }
+                    // Same as regular sessions: companion window. File sessions
+                    // open the file-preview shell (canvas + agent), not bare chat.
+                    void selectConversation(row.sessionId)
+                    void window.vav.window.openFilePreview(row.path, {
+                      origin: 'session',
+                      conversationId: row.sessionId
+                    })
+                    onNavigate?.()
+                  }}
+                  onContextMenu={(event) => {
+                    event.preventDefault()
+                    event.stopPropagation()
+                    if (fileClickTimerRef.current) {
+                      clearTimeout(fileClickTimerRef.current)
+                      fileClickTimerRef.current = null
+                    }
+                    const items: MenuItem[] = [
+                      {
+                        label: t('sidebar.fileSessionOpenChat'),
+                        onSelect: () => {
+                          void selectConversation(row.sessionId)
+                          onNavigate?.()
+                        }
+                      },
+                      {
+                        label: t('sidebar.fileSessionOpenFile'),
+                        disabled: row.pathStatus !== 'ok',
+                        onSelect: () => {
+                          void selectConversation(row.sessionId)
+                          void window.vav.window.openFilePreview(row.path, {
+                            origin: 'session',
+                            conversationId: row.sessionId
+                          })
+                        }
+                      },
+                      {
+                        label: t('sidebar.menu.openDetached'),
+                        onSelect: () => {
+                          void selectConversation(row.sessionId)
+                          void window.vav.window.openFilePreview(row.path, {
+                            origin: 'session',
+                            conversationId: row.sessionId
+                          })
+                          onNavigate?.()
+                        }
+                      },
+                      { label: '', divider: true },
+                      {
+                        label: t('sidebar.fileSessionDelete'),
+                        destructive: true,
+                        onSelect: () => {
+                          showDialog({
+                            title: t('sidebar.fileSessionDelete'),
+                            body: title,
+                            confirmLabel: t('sidebar.fileSessionDelete'),
+                            onConfirm: () => {
+                              void (async () => {
+                                const result = await window.vav.fileSessions.forceDelete(
+                                  row.fileId,
+                                  [row.sessionId]
+                                )
+                                if (!result.ok) {
+                                  showToast({
+                                    kind: 'error',
+                                    title: t('preview.sessionDeleteFailed')
+                                  })
+                                  return
+                                }
+                                await refreshFileSessions()
+                              })()
+                            }
+                          })
+                        }
+                      }
+                    ]
+                    void showMenu(items)
+                  }}
+                >
+                  <span className="file-session-item-title">{middleTruncate(title)}</span>
+                  <span className="file-session-item-sub">
+                    {statusLabel
+                      ? `${pathLabel} · ${statusLabel}`
+                      : `${pathLabel} · ${relativeTime(row.updatedAt)}`}
+                  </span>
+                </button>
+              )
+            })}
+          </div>
+        )}
+
+        {!fileSessionsView &&
+          groups.map((group, groupIndex) => {
           const collapsible = group.kind === 'workspace'
           const collapsed = collapsible && collapsedKeys.has(group.key)
           const groupWorkdir = group.workdir ?? group.conversations[0]?.workingDirectory ?? null
@@ -578,7 +838,7 @@ export function Sidebar({
         })}
       </div>
 
-      {!archiveView && (
+      {listMode === 'main' && (
         <div className="sidebar-archive-foot">
           <button
             type="button"
@@ -586,12 +846,43 @@ export function Sidebar({
             title={t('sidebar.archived')}
             onClick={() => {
               setSidebarQuery('')
-              setArchiveView(true)
+              setListMode('archive')
             }}
           >
             <Archive size={13} />
             <span>{t('sidebar.archived')}</span>
             {archivedCount > 0 && <span className="sidebar-archive-count">{archivedCount}</span>}
+          </button>
+          <button
+            type="button"
+            className="btn icon-only sm sidebar-foot-more"
+            title={t('sidebar.moreActions')}
+            aria-label={t('sidebar.moreActions')}
+            onClick={(event) => {
+              event.preventDefault()
+              const rect = (event.currentTarget as HTMLElement).getBoundingClientRect()
+              void showMenu(
+                [
+                  {
+                    label: t('sidebar.showFileSessions'),
+                    onSelect: () => {
+                      setSidebarQuery('')
+                      // Leave workspace canvas so File sessions land on FileSessionView.
+                      void selectWorkspaceGroup(null)
+                      setListMode('fileSessions')
+                    }
+                  },
+                  { label: '', divider: true },
+                  {
+                    label: t('sidebar.menu.import'),
+                    onSelect: () => void importSessions()
+                  }
+                ],
+                { x: Math.round(rect.right), y: Math.round(rect.top) }
+              )
+            }}
+          >
+            <MoreVertical size={14} />
           </button>
         </div>
       )}

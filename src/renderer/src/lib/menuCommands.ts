@@ -1,8 +1,15 @@
 import { useEffect } from 'react'
 import type { MenuCommand } from '@shared/ipc'
+import { tt } from '../i18n/useT'
 import { useSessionStore } from '../state/sessionStore'
 import { useWorkspaceStore } from '../state/workspaceStore'
 import { closeCurrentWindow, handleContextClose, installUiFocusTracking } from './uiFocus'
+
+/** Ensure the session list is visible when switching archive / file-session modes. */
+function ensureSidebarVisible(): void {
+  const store = useSessionStore.getState()
+  if (!store.sidebarVisible) store.toggleSidebar()
+}
 
 /**
  * Dispatch a native-menu / before-input MenuCommand against the local store.
@@ -73,6 +80,92 @@ export function handleMenuCommand(command: MenuCommand): void {
       void store.send(draft.trim(), attachments)
       break
     }
+    case 'cancel-turn': {
+      const id = store.activeId
+      if (!id) break
+      if (!store.turns[id]?.isRunning) break
+      void store.cancel(id)
+      break
+    }
+    case 'import-pack': {
+      void (async () => {
+        const result = await window.vav.conversations.importPack()
+        if (result.ok === false) {
+          if (result.cancelled) return
+          useSessionStore.getState().showToast({
+            kind: 'error',
+            title: tt('sidebar.importFailed'),
+            description: result.error
+          })
+          return
+        }
+        useSessionStore.getState().showToast({
+          kind: 'success',
+          title: tt('sidebar.importOk'),
+          description: tt('sidebar.importOkDesc', {
+            count: result.importedIds.length,
+            blobs: result.blobCount
+          })
+        })
+        if (result.importedIds[0]) {
+          void useSessionStore.getState().selectConversation(result.importedIds[0])
+        }
+      })()
+      break
+    }
+    case 'export-pack': {
+      const id = store.activeId
+      if (!id) break
+      // Don't export file-bound sessions as a full pack from the menu.
+      const meta = store.conversations.find((c) => c.id === id)
+      if (meta?.fileId) {
+        store.showToast({
+          kind: 'info',
+          title: tt('menu.exportPackUnavailable')
+        })
+        break
+      }
+      void (async () => {
+        const result = await window.vav.conversations.exportPack([id])
+        if (result.ok === false) {
+          if (result.cancelled) return
+          useSessionStore.getState().showToast({
+            kind: 'error',
+            title: tt('sidebar.exportFailed'),
+            description: result.error
+          })
+          return
+        }
+        useSessionStore.getState().showToast({
+          kind: 'success',
+          title: tt('sidebar.exportOk'),
+          description: tt('sidebar.exportOkDesc', {
+            path: result.path,
+            count: result.conversationCount,
+            blobs: result.blobCount
+          })
+        })
+      })()
+      break
+    }
+    case 'open-shortcuts':
+      store.setShortcutsOpen(true)
+      break
+    case 'show-sessions':
+      ensureSidebarVisible()
+      store.setSidebarListMode('main')
+      break
+    case 'show-archive':
+      ensureSidebarVisible()
+      store.setSidebarListMode('archive')
+      break
+    case 'show-file-sessions':
+      ensureSidebarVisible()
+      store.setSidebarListMode('fileSessions')
+      break
+    case 'check-updates':
+      void store.checkForUpdates()
+      break
     case 'close-context':
       // Bash → close tab; Files → collapse tray; multi-pane agent → close pane;
       // otherwise close/hide this window.

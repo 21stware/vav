@@ -9,22 +9,70 @@
  *
  * Only the active branch is ever sent: alternate versions of a reply are for
  * the reader, not the model.
+ *
+ * Manual compaction: when a {@link LeafCompaction} applies, earlier path
+ * messages are replaced by a short summary pair; originals stay on disk for UI.
  */
 import type { Api, AssistantMessage, Message, Model, ToolCall } from '@earendil-works/pi-ai'
 import { composeQuotedUserText } from '@shared/quote'
 import { composeContextUserText } from '@shared/previewContext'
+import {
+  compactionBoundaryIndex,
+  compactionForLeaf,
+  estimateTextTokens
+} from '@shared/compaction'
 import { threadPath } from '@shared/thread'
-import type { ChatMessage, MessageBlock, ToolCallBlock } from '@shared/types'
+import type { ChatMessage, LeafCompaction, MessageBlock, ToolCallBlock } from '@shared/types'
+
+const SUMMARY_USER_PREFIX =
+  '[Conversation summary — earlier turns compacted; full transcript remains in the app]\n\n'
+const SUMMARY_ASSISTANT_ACK =
+  'Understood. I will continue from this summary and the messages that follow.'
+
+const EMPTY_USAGE = {
+  input: 0,
+  output: 0,
+  cacheRead: 0,
+  cacheWrite: 0,
+  totalTokens: 0,
+  cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 }
+}
 
 export function buildHistory(
   messages: ChatMessage[],
   leafId: string | null,
-  model: Model<Api>
+  model: Model<Api>,
+  compactions?: LeafCompaction[] | null
 ): Message[] {
   if (!leafId) return []
-  const history: Message[] = []
+  const path = threadPath(messages, leafId)
+  const compaction = compactionForLeaf(compactions, messages, leafId)
+  const boundary = compactionBoundaryIndex(path, compaction)
 
-  for (const message of threadPath(messages, leafId)) {
+  const history: Message[] = []
+  let start = 0
+
+  if (compaction && boundary > 0) {
+    history.push({
+      role: 'user',
+      content: [{ type: 'text', text: SUMMARY_USER_PREFIX + compaction.summary.trim() }],
+      timestamp: compaction.createdAt
+    })
+    history.push({
+      role: 'assistant',
+      content: [{ type: 'text', text: SUMMARY_ASSISTANT_ACK }],
+      api: model.api,
+      provider: model.provider,
+      model: model.id,
+      usage: EMPTY_USAGE,
+      stopReason: 'stop',
+      timestamp: compaction.createdAt
+    })
+    start = boundary
+  }
+
+  for (let i = start; i < path.length; i++) {
+    const message = path[i]!
     if (message.role === 'system') continue
     if (message.role === 'user') {
       const quote =
@@ -53,6 +101,51 @@ export function buildHistory(
   }
 
   return history
+}
+
+/**
+ * Flatten a path segment into plain text for the summarizer (not the live model
+ * history). Tool bodies are truncated so compact stays cheap.
+ */
+export function pathToSummarySource(messages: ChatMessage[], maxChars = 48_000): string {
+  const parts: string[] = []
+  for (const message of messages) {
+    if (message.role === 'system') continue
+    if (message.role === 'user') {
+      const body = message.content.trim() || '(empty)'
+      parts.push(`User:\n${truncate(body, 4_000)}`)
+      continue
+    }
+    const chunks: string[] = []
+    for (const block of message.blocks) {
+      if (block.kind === 'text' && block.text.trim()) {
+        chunks.push(truncate(block.text.trim(), 3_000))
+      } else if (block.kind === 'toolCall') {
+        const out = truncate((block.output || '').trim() || '(no output)', 800)
+        chunks.push(`[tool ${block.tool}] ${block.summary}\n${out}`)
+      }
+    }
+    parts.push(`Assistant:\n${chunks.join('\n') || '(no content)'}`)
+  }
+  const joined = parts.join('\n\n')
+  return truncate(joined, maxChars)
+}
+
+/**
+ * Estimate next-request input tokens after a compact: summary pair + kept tail.
+ * Does not include the live system prompt (same for pre/post — relative shrink is what matters).
+ */
+export function estimateCompactedContextTokens(
+  summary: string,
+  keptMessages: ChatMessage[]
+): number {
+  const summaryPart =
+    estimateTextTokens(SUMMARY_USER_PREFIX) +
+    estimateTextTokens(summary) +
+    estimateTextTokens(SUMMARY_ASSISTANT_ACK)
+  const tail = pathToSummarySource(keptMessages, 200_000)
+  // Small overhead for role framing / tool envelopes in the real request.
+  return summaryPart + estimateTextTokens(tail) + 64
 }
 
 /**
@@ -114,6 +207,11 @@ function toolCallOf(block: ToolCallBlock): ToolCall {
   }
 }
 
+function truncate(text: string, max: number): string {
+  if (text.length <= max) return text
+  return `${text.slice(0, max - 1)}…`
+}
+
 /**
  * Projects pi's ordered assistant content into vav blocks.
  *
@@ -160,13 +258,4 @@ export function safeParseJson(value: string): Record<string, unknown> {
   } catch {
     return {}
   }
-}
-
-const EMPTY_USAGE = {
-  input: 0,
-  output: 0,
-  cacheRead: 0,
-  cacheWrite: 0,
-  totalTokens: 0,
-  cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 }
 }

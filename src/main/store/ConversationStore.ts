@@ -7,8 +7,10 @@ import type {
   ChatMessage,
   Conversation,
   ConversationMeta,
+  LeafCompaction,
   TokenSnapshot
 } from '@shared/types'
+import { removeCompaction, upsertCompaction } from '@shared/compaction'
 import { CACHE_TTL_MS, TOKEN_HISTORY_LIMIT } from '@shared/tokenUsage'
 import { deepestLeaf, newestLeafId, threadPath } from '@shared/thread'
 import { defaultSessionTitle, isDefaultSessionTitle, t } from '@shared/i18n'
@@ -72,6 +74,7 @@ export class ConversationStore {
       if (conversation.fileReadOnly === undefined) conversation.fileReadOnly = false
       if (conversation.agentBinaryName === undefined) conversation.agentBinaryName = null
       if (conversation.focusedFilePath === undefined) conversation.focusedFilePath = null
+      if (!Array.isArray(conversation.compactions)) conversation.compactions = []
       // Legacy untitled titles from earlier builds; normalize to the current locale.
       if (isDefaultSessionTitle(conversation.title) && !conversation.fileId) {
         conversation.title = defaultSessionTitle(currentLocale())
@@ -101,12 +104,14 @@ export class ConversationStore {
           tokenHistory: _history,
           cacheCreatedAt: _created,
           cacheExpiresAt: _expires,
+          compactions: _compactions,
           ...meta
         }) => {
           void _messages
           void _history
           void _created
           void _expires
+          void _compactions
           return meta
         }
       )
@@ -152,11 +157,70 @@ export class ConversationStore {
       fileId: options?.fileId ?? null,
       fileReadOnly: options?.fileReadOnly ?? false,
       agentBinaryName: null,
-      focusedFilePath: null
+      focusedFilePath: null,
+      compactions: []
     }
     this.conversations.unshift(conversation)
     this.scheduleFlush()
     return conversation
+  }
+
+  /**
+   * Insert a conversation produced by package import (or other external builders).
+   * Assigns fresh ids for the conversation and every message so imports never
+   * collide with existing sessions; preserves tree shape via parent remapping.
+   */
+  importConversation(source: Conversation): Conversation {
+    const idMap = new Map<string, string>()
+    for (const message of source.messages ?? []) idMap.set(message.id, randomUUID())
+
+    const now = Date.now()
+    const imported: Conversation = {
+      ...structuredClone(source),
+      id: randomUUID(),
+      createdAt: source.createdAt || now,
+      updatedAt: now,
+      pinned: false,
+      pinTime: null,
+      archived: false,
+      archivedAt: null,
+      duplicateSourceId: source.id ?? null,
+      duplicateSourceTitle: source.title ?? null,
+      activeLeafId: source.activeLeafId ? (idMap.get(source.activeLeafId) ?? null) : null,
+      tokenHistory: Array.isArray(source.tokenHistory) ? source.tokenHistory : [],
+      cacheCreatedAt: null,
+      cacheExpiresAt: null,
+      fileId: null,
+      fileReadOnly: false,
+      messages: (source.messages ?? []).map((message) => ({
+        ...structuredClone(message),
+        id: idMap.get(message.id)!,
+        parentId: message.parentId ? (idMap.get(message.parentId) ?? null) : null
+      }))
+    }
+    if (!imported.workingDirectory) {
+      // Caller may still patch workdir; leave null-ish only if absent.
+      imported.workingDirectory = source.workingDirectory ?? null
+    }
+    if (!imported.model) imported.model = 'unknown'
+    if (!imported.title) imported.title = defaultSessionTitle(currentLocale())
+    if (!imported.approvalMode) imported.approvalMode = 'auto'
+    if (typeof imported.tokensUsed !== 'number') imported.tokensUsed = 0
+    if (typeof imported.tokenLimit !== 'number') imported.tokenLimit = 200_000
+    if (imported.agentBinaryName === undefined) imported.agentBinaryName = null
+    if (imported.focusedFilePath === undefined) imported.focusedFilePath = null
+    imported.compactions = (source.compactions ?? [])
+      .map((c) => {
+        const leafId = idMap.get(c.leafId)
+        const keepAfterMessageId = idMap.get(c.keepAfterMessageId)
+        if (!leafId || !keepAfterMessageId) return null
+        return { ...c, leafId, keepAfterMessageId }
+      })
+      .filter((c): c is NonNullable<typeof c> => !!c)
+
+    this.conversations.unshift(imported)
+    this.scheduleFlush()
+    return imported
   }
 
   /**
@@ -276,10 +340,39 @@ export class ConversationStore {
     this.scheduleFlush()
   }
 
+  /** Upsert a per-leaf compaction (originals stay in messages). */
+  setCompaction(id: string, compaction: LeafCompaction): Conversation | undefined {
+    const conversation = this.get(id)
+    if (!conversation) return undefined
+    conversation.compactions = upsertCompaction(conversation.compactions, compaction)
+    this.scheduleFlush()
+    return conversation
+  }
+
+  /** Drop compaction for one leaf path. */
+  clearCompaction(id: string, leafId: string): Conversation | undefined {
+    const conversation = this.get(id)
+    if (!conversation) return undefined
+    conversation.compactions = removeCompaction(conversation.compactions, leafId)
+    this.scheduleFlush()
+    return conversation
+  }
+
   addTokens(id: string, tokens: number): void {
     const conversation = this.get(id)
     if (!conversation) return
     conversation.tokensUsed += tokens
+    this.scheduleFlush()
+  }
+
+  /**
+   * Replace the context-window fill meter (not session cost total).
+   * Used after manual compact so the ring shrinks to the estimated next request.
+   */
+  setContextFill(id: string, tokens: number): void {
+    const conversation = this.get(id)
+    if (!conversation) return
+    conversation.tokensUsed = Math.max(0, Math.round(tokens))
     this.scheduleFlush()
   }
 

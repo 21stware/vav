@@ -28,7 +28,8 @@ export default function FilePreviewWindow({ path }: { path: string }): React.JSX
 
   useEffect(() => {
     document.title = basename(path) || tt('common.preview')
-    void bootstrap(parentConversationId ?? undefined)
+    // Light bootstrap: settings only — skip selectConversation so open is fast.
+    void bootstrap(parentConversationId ?? undefined, { light: true })
   }, [bootstrap, path, parentConversationId])
 
   useEffect(() => {

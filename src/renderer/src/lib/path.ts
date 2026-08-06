@@ -29,6 +29,17 @@ export function extname(path: string): string {
   return index > 0 ? name.slice(index) : ''
 }
 
+/** Replace or append a file extension (keeps directory + stem). */
+export function replaceExt(path: string, newExt: string): string {
+  const dir = dirname(path)
+  const name = basename(path)
+  const stem = name.includes('.') ? name.slice(0, name.lastIndexOf('.')) : name
+  const ext = newExt.startsWith('.') ? newExt : `.${newExt}`
+  const sep = path.includes('\\') ? '\\' : '/'
+  if (!dir || dir === name) return `${stem}${ext}`
+  return `${dir}${sep}${stem}${ext}`
+}
+
 /** Join a directory with a relative (or absolute) path segment. */
 export function joinPath(baseDir: string, relative: string): string {
   if (!relative) return baseDir

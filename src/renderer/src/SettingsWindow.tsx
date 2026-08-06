@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect } from 'react'
 import { Bell, Bot, FileCheck2, Folder, Info, KeyRound, Palette, Terminal } from 'lucide-react'
 import type { SettingsView } from '@shared/ipc'
 import type { MessageKey } from '@shared/i18n'
@@ -43,8 +43,8 @@ function initialCategory(): SettingsView {
  *
  * It runs a second copy of the session store, so it reads and writes through
  * the same IPC surface as the main window and the two stay in step via
- * `installSettingsBridge`. Non-key fields save on change; the API key is the
- * one field that waits for 完成.
+ * `installSettingsBridge`. Fields save on change; close via the window chrome
+ * or Escape (no Done footer).
  */
 export default function SettingsWindow(): React.JSX.Element {
   const t = useT()
@@ -52,12 +52,10 @@ export default function SettingsWindow(): React.JSX.Element {
   const bootstrap = useSessionStore((s) => s.bootstrap)
   const category = useSessionStore((s) => s.settingsCategory)
 
-  const [footer, setFooter] = useState('')
-  const [commit, setCommit] = useState<(() => Promise<void>) | null>(null)
-
   useEffect(() => {
     useSessionStore.setState({ settingsCategory: initialCategory() })
-    void bootstrap()
+    // Light: settings only — never load the active chat transcript into this window.
+    void bootstrap(undefined, { light: true })
   }, [bootstrap])
 
   useEffect(() => {
@@ -75,7 +73,9 @@ export default function SettingsWindow(): React.JSX.Element {
 
   useAppearance()
 
-  const close = (): void => void window.vav.window.closeSettings()
+  const close = useCallback((): void => {
+    void window.vav.window.closeSettings()
+  }, [])
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent): void => {
@@ -83,7 +83,7 @@ export default function SettingsWindow(): React.JSX.Element {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [])
+  }, [close])
 
   if (!ready) return <div className="settings-window" />
 
@@ -107,9 +107,7 @@ export default function SettingsWindow(): React.JSX.Element {
       <div className="settings-main">
         <header className="settings-head">{title}</header>
         <div className="settings-body">
-          {category === 'api' && (
-            <ApiSettings onFooterMessage={setFooter} registerCommit={(fn) => setCommit(() => fn)} />
-          )}
+          {category === 'api' && <ApiSettings />}
           {category === 'workspace' && <WorkspaceSettings />}
           {category === 'appearance' && <AppearanceSettings />}
           {category === 'notifications' && <NotificationsSettings />}
@@ -118,18 +116,6 @@ export default function SettingsWindow(): React.JSX.Element {
           {category === 'file-associations' && <FileAssociationsSettings />}
           {category === 'about' && <AboutSettings />}
         </div>
-        <footer className="settings-foot">
-          <span className="muted">{footer}</span>
-          <span className="spacer" />
-          <Button
-            label={t('common.done')}
-            variant="primary"
-            onClick={async () => {
-              await commit?.()
-              close()
-            }}
-          />
-        </footer>
       </div>
 
       <SettingsOverlays />
@@ -153,9 +139,9 @@ function SettingsOverlays(): React.JSX.Element | null {
     <Modal
       title={t('about.shortcuts')}
       onDismiss={() => setShortcutsOpen(false)}
-      actions={
-        <Button label={t('common.ok')} variant="primary" onClick={() => setShortcutsOpen(false)} />
-      }
+      actions={(dismiss) => (
+        <Button label={t('common.ok')} variant="primary" onClick={dismiss} />
+      )}
     >
       <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
         {shortcuts.map(([shortcutKeys, description]) => (

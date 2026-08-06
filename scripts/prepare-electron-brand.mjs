@@ -30,8 +30,12 @@ const stampFile = join(root, 'build/.electron-brand-stamp')
 function currentStamp() {
   const version = readFileSync(join(distDir, 'version'), 'utf8').trim()
   const iconMtime = existsSync(iconSrc) ? execSync(`stat -f %m "${iconSrc}"`).toString().trim() : '0'
+  const iconDark = join(root, 'build/icon-dark.png')
+  const iconDarkMtime = existsSync(iconDark)
+    ? execSync(`stat -f %m "${iconDark}"`).toString().trim()
+    : '0'
   // Bump the trailing token when Info.plist shape changes (e.g. document types).
-  return `${version}:${iconMtime}:${BUNDLE_ID}:dock-drop-v1`
+  return `${version}:${iconMtime}:${iconDarkMtime}:${BUNDLE_ID}:dock-drop-v1`
 }
 
 function isBranded() {
@@ -150,9 +154,13 @@ export function prepareBrandedElectron() {
 
   const resources = join(brandedApp, 'Contents/Resources')
   buildIcns(join(resources, `${APP_NAME}.icns`))
-  // Keep a PNG beside the icns: dock.setIcon + loadAppIcon read this when the
-  // repo cwd is wrong (common with `open -a … --args`).
+  // Keep PNGs beside the icns: dock.setIcon + loadAppIcon read these when the
+  // repo cwd is wrong (common with `open -a … --args`). Light + dark for theme.
   execFileSync('cp', ['-f', iconSrc, join(resources, 'icon.png')], { stdio: 'ignore' })
+  const iconDarkSrc = join(root, 'build/icon-dark.png')
+  if (existsSync(iconDarkSrc)) {
+    execFileSync('cp', ['-f', iconDarkSrc, join(resources, 'icon-dark.png')], { stdio: 'ignore' })
+  }
   // Stock Electron still ships electron.icns — overwrite so nothing falls back.
   execFileSync('cp', ['-f', join(resources, `${APP_NAME}.icns`), join(resources, 'electron.icns')], {
     stdio: 'ignore'

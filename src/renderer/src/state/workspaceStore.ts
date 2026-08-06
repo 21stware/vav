@@ -290,7 +290,7 @@ function projectPtySessions(sessions: PtySessionMeta[]): {
     const isVavMirror = s.agentId === 'vav' || s.id === AGENT_TAB_ID
     return {
       id: s.id,
-      title: isVavMirror ? 'vav' : s.title || `bash-${index + 1}`,
+      title: isVavMirror ? 'VAV' : s.title || `bash-${index + 1}`,
       isAgent: isVavMirror,
       agentId: isVavMirror ? 'vav' : null,
       splitWeight: 1
@@ -580,13 +580,19 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     patch(set, id, (s) => ({ loadingDirs: [...s.loadingDirs, path] }))
 
     const listing = await window.vav.files.list(path, slice.sort, slice.ascending)
+    // Normalize missing-path errors so the Files panel can show a calm empty state
+    // instead of raw ENOENT stack noise (common for file-sessions whose dir is gone).
+    const error = listing.error
+      ? /enoent|no such file|not found/i.test(listing.error)
+        ? 'ENOENT'
+        : listing.error
+      : undefined
 
     patch(set, id, (s) => ({
       loadingDirs: s.loadingDirs.filter((p) => p !== path),
-      dirs: listing.error ? s.dirs : { ...s.dirs, [path]: listing.entries },
-      dirErrors: listing.error
-        ? { ...s.dirErrors, [path]: listing.error }
-        : omit(s.dirErrors, path),
+      // Empty list on missing root so we don't keep a stale tree.
+      dirs: error ? { ...s.dirs, [path]: [] } : { ...s.dirs, [path]: listing.entries },
+      dirErrors: error ? { ...s.dirErrors, [path]: error } : omit(s.dirErrors, path),
       dirTruncated: { ...s.dirTruncated, [path]: listing.truncated }
     }))
   },
@@ -654,7 +660,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         tabs: [
           {
             id: AGENT_TAB_ID,
-            title: 'vav',
+            title: 'VAV',
             isAgent: true,
             agentId: 'vav',
             splitWeight: 1
@@ -688,7 +694,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     await window.vav.pty.create(id, cwd, 80, 24, {
       preferredId: AGENT_TAB_ID,
       agentId: 'vav',
-      title: 'vav'
+      title: 'VAV'
     })
   },
 
@@ -1149,25 +1155,29 @@ function omit<T extends Record<string, unknown>>(record: T, key: string): T {
 
 /** Routes debounced FSEvents notifications into the right workspace. */
 export function installFsWatchBridge(): () => void {
-  return window.vav.files.onDirty(({ conversationId, dirs }) => {
+  const onDirty = window.vav?.files?.onDirty
+  if (!onDirty) return () => undefined
+  return onDirty(({ conversationId, dirs }) => {
     void useWorkspaceStore.getState().refreshDirectories(conversationId, dirs)
   })
 }
 
 /** Streams PTY output into the mounted xterm for that tab. */
 export function installPtyBridge(): () => void {
-  const offData = window.vav.pty.onData(({ tabId, data }) => {
+  const pty = window.vav?.pty
+  if (!pty?.onData || !pty.onExit) return () => undefined
+  const offData = pty.onData(({ tabId, data }) => {
     for (const [key, sink] of terminalSinks) {
       if (key.endsWith(`::${tabId}`)) sink(data)
     }
   })
-  const offExit = window.vav.pty.onExit((tabId) => {
+  const offExit = pty.onExit((tabId) => {
     for (const [key, sink] of terminalSinks) {
       if (key.endsWith(`::${tabId}`)) sink('\r\n[process exited]\r\n')
     }
   })
-  const offChanged = window.vav.pty.onChanged
-    ? window.vav.pty.onChanged(({ conversationId }) => {
+  const offChanged = pty.onChanged
+    ? pty.onChanged(({ conversationId }) => {
         // Only hydrate conversations this window already cares about.
         if (!useWorkspaceStore.getState().workspaces[conversationId]) return
         void useWorkspaceStore.getState().hydratePtyState(conversationId)

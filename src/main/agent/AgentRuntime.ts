@@ -19,13 +19,26 @@ import { ROOT_LEAF } from '@shared/thread'
 import { buildSnapshot } from '@shared/tokenUsage'
 import { buildModel, describeError, streamWith } from './provider'
 import { normalizePlanSteps } from '@shared/askPlan'
-import { blockFromContent, buildHistory, safeParseJson } from './history'
+import {
+  COMPACT_MIN_FOLDED,
+  defaultKeepAfterIndex
+} from '@shared/compaction'
+import { threadPath } from '@shared/thread'
+import type { LeafCompaction } from '@shared/types'
+import {
+  blockFromContent,
+  buildHistory,
+  estimateCompactedContextTokens,
+  pathToSummarySource,
+  safeParseJson
+} from './history'
 import {
   HIGH_RISK_TOOLS,
   INTERACTIVE_TOOLS,
   READONLY_TOOLS,
   buildSystemPrompt,
   createTools,
+  FILE_READONLY_BLOCKED_TOOLS,
   isReadonlyTerminalCommand,
   summarizeToolInput,
   type ToolDetails
@@ -35,9 +48,11 @@ import type { SettingsStore } from '../store/SettingsStore'
 import type { SecretStore } from '../store/SecretStore'
 import type { FileService } from '../fs/FileService'
 import type { DocumentRetrievalService } from '../retrieval/DocumentRetrievalService'
+import type { DuckDbService } from '../fs/DuckDbService'
 import type { WebSearchService } from '../web/WebSearchService'
 import type { WebFetchService } from '../web/WebFetchService'
 import type { FileSessionStore } from '../store/FileSessionStore'
+import type { SkillService } from './SkillService'
 import { StickyShell } from '../terminal/StickyShell'
 import { isApprovalApproveText, isApprovalDenyText } from '@shared/i18n'
 import { t } from '../i18n'
@@ -105,8 +120,10 @@ export interface AgentRuntimeDeps {
   emit: (event: TurnEvent) => void
   changeSets?: import('./ChangeSetStore').ChangeSetStore
   retrieval?: DocumentRetrievalService
+  duckdb?: DuckDbService
   webSearch?: WebSearchService
   webFetch?: WebFetchService
+  skills?: SkillService
   fileSessions?: FileSessionStore
 }
 
@@ -236,6 +253,140 @@ export class AgentRuntime {
     return leaf
   }
 
+  /**
+   * Manual context compact for the active leaf path.
+   *
+   * Originals stay in the message tree; {@link buildHistory} injects a summary
+   * for everything before `keepAfterMessageId`. Omit keepAfter to fold all but
+   * the last few turns.
+   */
+  async compact(
+    conversationId: string,
+    options?: { keepAfterMessageId?: string | null }
+  ): Promise<
+    | { ok: true; compaction: LeafCompaction }
+    | { ok: false; error: string }
+  > {
+    if (this.turns.has(conversationId)) {
+      return { ok: false, error: t('compact.error.busy') }
+    }
+    const conversation = this.deps.conversations.get(conversationId)
+    if (!conversation) return { ok: false, error: t('compact.error.missing') }
+
+    const leafId = conversation.activeLeafId ?? threadPath(conversation.messages, null).at(-1)?.id
+    if (!leafId) return { ok: false, error: t('compact.error.empty') }
+
+    const path = threadPath(conversation.messages, leafId)
+    let keepIdx: number | null = null
+    if (options?.keepAfterMessageId) {
+      keepIdx = path.findIndex((m) => m.id === options.keepAfterMessageId)
+      if (keepIdx < COMPACT_MIN_FOLDED) {
+        return { ok: false, error: t('compact.error.notEnough') }
+      }
+    } else {
+      keepIdx = defaultKeepAfterIndex(path.length)
+      if (keepIdx == null) return { ok: false, error: t('compact.error.notEnough') }
+    }
+
+    const keepAfterMessageId = path[keepIdx]!.id
+    const toFold = path.slice(0, keepIdx)
+    if (toFold.length < COMPACT_MIN_FOLDED) {
+      return { ok: false, error: t('compact.error.notEnough') }
+    }
+
+    const apiKey = this.deps.secrets.get()
+    if (!apiKey) return { ok: false, error: t('error.noApiKey') }
+
+    const settings = this.deps.settings.get()
+    const model = buildModel(
+      settings,
+      conversation.model || settings.defaultModel,
+      conversation.tokenLimit
+    )
+
+    let summary: string
+    try {
+      summary = await this.summarizeForCompact(toFold, model, apiKey, settings.maxTokens)
+    } catch (err) {
+      return { ok: false, error: describeError((err as Error).message) }
+    }
+    if (!summary.trim()) return { ok: false, error: t('compact.error.failed') }
+
+    const summaryText = summary.trim()
+    const kept = path.slice(keepIdx)
+    const estimatedContextTokens = estimateCompactedContextTokens(summaryText, kept)
+    const compaction: LeafCompaction = {
+      leafId,
+      keepAfterMessageId,
+      summary: summaryText,
+      createdAt: Date.now(),
+      compactedCount: toFold.length,
+      estimatedContextTokens
+    }
+    this.deps.conversations.setCompaction(conversationId, compaction)
+    // Context ring / popup read tokensUsed as "fill" — shrink immediately so
+    // compact is visible without waiting for the next model turn.
+    this.deps.conversations.setContextFill(conversationId, estimatedContextTokens)
+    return { ok: true, compaction }
+  }
+
+  clearCompaction(
+    conversationId: string,
+    leafId: string
+  ): { ok: true } | { ok: false; error: string } {
+    if (this.turns.has(conversationId)) {
+      return { ok: false, error: t('compact.error.busy') }
+    }
+    if (!this.deps.conversations.get(conversationId)) {
+      return { ok: false, error: t('compact.error.missing') }
+    }
+    this.deps.conversations.clearCompaction(conversationId, leafId)
+    return { ok: true }
+  }
+
+  private async summarizeForCompact(
+    messages: ChatMessage[],
+    model: import('@earendil-works/pi-ai').Model<import('@earendil-works/pi-ai').Api>,
+    apiKey: string,
+    maxTokens: number
+  ): Promise<string> {
+    const source = pathToSummarySource(messages)
+    const prompt =
+      'Summarize the following conversation for continuity. Use this structure:\n' +
+      '## Goal\n## Decisions\n## Files / tools touched\n## Open todos / constraints\n## Do not redo\n\n' +
+      'Be concrete (paths, names, outcomes). Max ~400 words. No preamble.\n\n---\n\n' +
+      source
+
+    const result = await streamWith(
+      model,
+      {
+        messages: [
+          {
+            role: 'user',
+            content: [{ type: 'text', text: prompt }],
+            timestamp: Date.now()
+          }
+        ]
+      },
+      {
+        apiKey,
+        maxTokens: Math.min(1200, Math.max(256, maxTokens)),
+        temperature: 0.2,
+        signal: AbortSignal.timeout(90_000)
+      }
+    ).result()
+
+    if (result.stopReason === 'error' || result.stopReason === 'aborted') {
+      throw new Error(result.errorMessage ?? 'summarize failed')
+    }
+    const text = result.content
+      .filter((c): c is { type: 'text'; text: string } => c.type === 'text')
+      .map((c) => c.text)
+      .join('')
+      .trim()
+    return text
+  }
+
   private addUserMessage(
     conversationId: string,
     text: string,
@@ -286,7 +437,12 @@ export class AgentRuntime {
       conversation.model || settings.defaultModel,
       conversation.tokenLimit
     )
-    const history = buildHistory(conversation.messages, parentId, model)
+    const history = buildHistory(
+      conversation.messages,
+      parentId,
+      model,
+      conversation.compactions
+    )
     if (history.length === 0) {
       this.emitFatal(conversationId, parentId, t('error.noRetryParent'))
       return
@@ -312,6 +468,9 @@ export class AgentRuntime {
     }
     this.turns.set(conversationId, turn)
     this.deps.changeSets?.beginTurn(conversationId)
+    // Strip prior turn changeSetId from stored messages so reloads don't show
+    // dead "Could not load changes" cards under Done.
+    this.stripPriorChangeSetIds(conversationId)
     this.deps.emit({ type: 'start', conversationId })
     this.setPhase(conversationId, turn, 'thinking')
 
@@ -329,7 +488,8 @@ export class AgentRuntime {
               conversation.fileId &&
               this.deps.fileSessions
                 ? this.deps.fileSessions.kindForFileId(conversation.fileId)
-                : null
+                : null,
+            skillCatalog: this.deps.skills?.catalogForPrompt() ?? null
           }),
           messages: history,
           tools: this.toolsFor(conversation, turn)
@@ -512,8 +672,6 @@ export class AgentRuntime {
       case 'turn_end':
         if (isAssistant(event.message)) {
           const usage = event.message.usage
-          const used = usage.input + usage.output
-          if (used > 0) this.deps.conversations.addTokens(conversationId, used)
           const conversation = this.deps.conversations.get(conversationId)
           if (conversation) {
             const turnIndex = (conversation.tokenHistory?.at(-1)?.turnIndex ?? 0) + 1
@@ -524,6 +682,11 @@ export class AgentRuntime {
               timestamp: Date.now()
             })
             this.deps.conversations.recordTokenSnapshot(conversationId, snapshot)
+            // Context-window fill = this turn's input size (not cumulative session cost).
+            // Compact also writes this field so the ring shrinks without a new turn.
+            if (snapshot.totalInputTokens > 0) {
+              this.deps.conversations.setContextFill(conversationId, snapshot.totalInputTokens)
+            }
             const next = this.deps.conversations.get(conversationId)
             if (next) {
               this.deps.emit({
@@ -751,8 +914,10 @@ export class AgentRuntime {
           newContent
         ),
       retrieval: this.deps.retrieval,
+      duckdb: this.deps.duckdb,
       webSearch: this.deps.webSearch,
       webFetch: this.deps.webFetch,
+      skills: this.deps.skills,
       braveSearchKey: () => this.deps.secrets.get('braveSearch'),
       selectionAnchor: () => turn.selectionRefs,
       defaultDocPath: () => {
@@ -760,15 +925,53 @@ export class AgentRuntime {
         return this.deps.fileSessions.pathForFileId?.(conversation.fileId) ?? null
       }
     })
-    // File Preview read-only: strip write tool entirely.
+    // File Preview Read mode: do not offer write tools to the model at all.
     if (conversation.fileReadOnly) {
-      tools = tools.filter((tool) => tool.name !== 'fs_write')
+      tools = tools.filter((tool) => !FILE_READONLY_BLOCKED_TOOLS.has(tool.name as ToolName))
     }
     // web_search / web_fetch always offered (no product kill-switch).
     // Edit-mode approvals may rewrite args after the user edits the card.
     return tools.map((tool) => ({
       ...tool,
       execute: (toolCallId, params, signal, onUpdate) => {
+        // Defense in depth: even if a blocked tool is still wired, refuse at execute.
+        if (
+          conversation.fileReadOnly &&
+          FILE_READONLY_BLOCKED_TOOLS.has(tool.name as ToolName)
+        ) {
+          return Promise.resolve({
+            content: [
+              {
+                type: 'text' as const,
+                text: 'Read-only session: this tool is disabled. Switch the preview to Edit (or convert/Save As) before writing files.'
+              }
+            ],
+            details: {
+              display: '已拦截：当前为 Read 模式，写文件工具已禁用。',
+              failed: true
+            }
+          })
+        }
+        if (conversation.fileReadOnly && tool.name === 'terminal') {
+          const command =
+            params && typeof params === 'object' && 'command' in params
+              ? String((params as { command: unknown }).command ?? '')
+              : ''
+          if (command && !isReadonlyTerminalCommand(command)) {
+            return Promise.resolve({
+              content: [
+                {
+                  type: 'text' as const,
+                  text: `Read-only session: refused non-read-only shell command. Use ls/cat/grep/rg/head/tail (no redirects or mutators).\nRefused: ${command}`
+                }
+              ],
+              details: {
+                display: `已拦截（Read 模式仅允许只读 shell）：\n$ ${command}`,
+                failed: true
+              }
+            })
+          }
+        }
         const override = turn.argOverrides.get(toolCallId)
         return tool.execute(toolCallId, (override ?? params) as typeof params, signal, onUpdate)
       }
@@ -792,12 +995,30 @@ export class AgentRuntime {
 
     const conversation = this.deps.conversations.get(conversationId)
     const mode = conversation?.approvalMode ?? 'auto'
-    if (mode === 'bypass') return undefined
 
     const command =
       name === 'terminal' && args && typeof args === 'object' && 'command' in args
         ? String((args as { command: unknown }).command ?? '')
         : ''
+
+    // File Preview Read: hard-block write tools / mutating shell before approval UI.
+    if (conversation?.fileReadOnly) {
+      if (FILE_READONLY_BLOCKED_TOOLS.has(name)) {
+        return {
+          block: true,
+          reason:
+            'Read-only session: write tools are disabled. Switch to Edit (or convert/Save As) first.'
+        }
+      }
+      if (name === 'terminal' && command && !isReadonlyTerminalCommand(command)) {
+        return {
+          block: true,
+          reason: `Read-only session: only read-only shell commands are allowed (refused: ${command.slice(0, 120)})`
+        }
+      }
+    }
+
+    if (mode === 'bypass') return undefined
 
     if (mode === 'auto') {
       const highRisk =
@@ -1104,7 +1325,10 @@ export class AgentRuntime {
         conversationId,
         changeSetId: changeSet.id,
         pendingCount: changeSet.files.filter((f) => f.status === 'pending').length,
-        messageId: message.id
+        messageId: message.id,
+        // Ship the full set so the renderer never depends on a later get() for
+        // the first paint (and survives remounts while the set is still in memory).
+        changeSet
       })
     }
   }
@@ -1134,6 +1358,19 @@ export class AgentRuntime {
   // -------------------------------------------------------------------------
   // Helpers
   // -------------------------------------------------------------------------
+
+  /** Clear changeSetId on older messages when a new turn begins. */
+  private stripPriorChangeSetIds(conversationId: string): void {
+    const conversation = this.deps.conversations.get(conversationId)
+    if (!conversation) return
+    let dirty = false
+    for (const message of conversation.messages) {
+      if (!message.changeSetId) continue
+      delete message.changeSetId
+      dirty = true
+    }
+    if (dirty) this.deps.conversations.flush()
+  }
 
   private workdirOf(conversation: Conversation): string {
     return conversation.workingDirectory ?? process.env.HOME ?? '/'

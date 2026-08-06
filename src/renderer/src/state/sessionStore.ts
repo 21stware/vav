@@ -14,6 +14,7 @@ import { DEFAULT_CLI_AGENTS, DEFAULT_SETTINGS } from '@shared/types'
 import type { ChangeSet, UpdateState } from '@shared/changeSet'
 import { resolveLocale } from '@shared/i18n'
 import { tt } from '../i18n/useT'
+import { compactionForLeaf, upsertCompaction } from '@shared/compaction'
 import { threadPath } from '@shared/thread'
 import { getProjection, disposeProjection } from './StreamProjection'
 import { AGENT_TAB_ID, useWorkspaceStore } from './workspaceStore'
@@ -280,8 +281,16 @@ function activeToolsFields(layout: SessionToolsLayout): Pick<
   }
 }
 
+/** Sidebar list: main sessions, archive, or file-bound sessions. */
+export type SidebarListMode = 'main' | 'archive' | 'fileSessions'
+
 interface SessionState {
   sidebarVisible: boolean
+  /**
+   * Which list the sidebar is showing. Shared so Reveal / open-in-main can
+   * jump to File sessions without local Sidebar state.
+   */
+  sidebarListMode: SidebarListMode
   /** Active conversation's tools tray (mirrored from toolsLayouts[activeId]). */
   toolsCollapsed: boolean
   panelSegment: 'files' | 'terminal'
@@ -298,6 +307,11 @@ interface SessionState {
   settings: AppSettings
   /** Resolved from settings.locale + OS; drives `useT()`. */
   resolvedLocale: AppLocale
+  /**
+   * Live OS accent as `#rrggbb`. Used when `settings.colorTint === 'system'`
+   * and for the Appearance swatch preview.
+   */
+  systemAccentColor: string
   apiKeyHint: string | null
 
   conversations: ConversationMeta[]
@@ -317,6 +331,8 @@ interface SessionState {
   messages: Record<string, ChatMessage[]>
   /** Which leaf each conversation currently follows. */
   activeLeaf: Record<string, string | null>
+  /** Per-conversation leaf compactions (model history only; originals stay). */
+  compactions: Record<string, import('@shared/types').LeafCompaction[]>
   turns: Record<string, TurnRuntime>
   /** Composer state is per conversation, like the rest of its ChatStore. */
   drafts: Record<string, string>
@@ -393,7 +409,11 @@ interface SessionState {
   updateState: UpdateState
 
   /** A detached window passes the one conversation it exists to show. */
-  bootstrap(pinnedConversationId?: string): Promise<void>
+  /**
+   * @param pinnedConversationId force active conversation (detached session)
+   * @param options.light skip selectConversation — file-preview windows only need settings
+   */
+  bootstrap(pinnedConversationId?: string, options?: { light?: boolean }): Promise<void>
   selectConversation(
     id: string,
     options?: {
@@ -483,6 +503,13 @@ interface SessionState {
   selectPendingBranch(parentKey: string): Promise<void>
   fork(messageId: string): Promise<void>
   continueInNewSession(messageId: string): Promise<void>
+  /**
+   * Compact earlier context on the active leaf (manual). Originals remain
+   * expandable in the transcript. Optional keepAfter keeps that message onward.
+   */
+  compactConversation(keepAfterMessageId?: string | null): Promise<boolean>
+  /** Drop compaction for the active leaf path. */
+  clearCompaction(): Promise<boolean>
 
   updateSettings(patch: Partial<AppSettings>): Promise<void>
   refreshApiKeyHint(): Promise<void>
@@ -523,6 +550,7 @@ interface SessionState {
   installUpdate(): Promise<void>
 
   toggleSidebar(): void
+  setSidebarListMode(mode: SidebarListMode): void
   toggleToolsPanel(): void
   setToolsCollapsed(collapsed: boolean): void
   setPanelSegment(segment: 'files' | 'terminal'): void
@@ -551,6 +579,7 @@ const sessionToolsLayouts = loadSessionToolsMap()
 
 export const useSessionStore = create<SessionState>((set, get) => ({
   sidebarVisible: globalLayout.sidebarVisible,
+  sidebarListMode: 'main',
   toolsLayouts: sessionToolsLayouts,
   // Until a conversation is selected, show the default (collapsed) tray.
   ...activeToolsFields(DEFAULT_SESSION_TOOLS),
@@ -564,6 +593,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     DEFAULT_SETTINGS.locale,
     typeof navigator !== 'undefined' ? navigator.language : 'en'
   ),
+  systemAccentColor: '#007aff',
   apiKeyHint: null,
 
   conversations: [],
@@ -577,6 +607,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
   messages: {},
   activeLeaf: {},
+  compactions: {},
   turns: {},
   drafts: {},
   attachments: {},
@@ -611,10 +642,14 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   pendingReviewByConversation: {},
   updateState: IDLE_UPDATE,
 
-  async bootstrap(pinnedConversationId) {
+  async bootstrap(pinnedConversationId, options) {
+    const light = options?.light === true
     const data = await window.vav.bootstrap()
     const activeId = pinnedConversationId ?? data.activeConversationId
-    const updateState = await window.vav.updates.getState().catch(() => IDLE_UPDATE)
+    // File-preview does not need update-state IPC on the critical open path.
+    const updateState = light
+      ? IDLE_UPDATE
+      : await window.vav.updates.getState().catch(() => IDLE_UPDATE)
 
     // Legacy settings.json often had cliAgents: [] — never surface an empty catalogue.
     const settings = data.settings
@@ -632,6 +667,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       ready: true,
       settings,
       resolvedLocale: data.resolvedLocale,
+      systemAccentColor: data.systemAccentColor || '#007aff',
       apiKeyHint: data.apiKeyHint,
       conversations: data.conversations,
       activeId,
@@ -645,7 +681,9 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         currentVersion: updateState.currentVersion || data.about.version
       }
     })
-    if (activeId) await get().selectConversation(activeId)
+    // Detached session windows pin a conversation; file-preview skips the
+    // message load so the window paints as soon as settings are ready.
+    if (activeId && !light) await get().selectConversation(activeId)
   },
 
   async selectWorkspaceGroup(workdir) {
@@ -676,8 +714,9 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     if (existing && get().conversations.some((c) => c.id === existing)) return existing
 
     // Prefer an existing conversation already rooted here (reuse quietly).
+    // Never adopt a file-bound session as the workspace agent.
     const rooted = get().conversations.find(
-      (c) => !c.archived && c.workingDirectory === workdir
+      (c) => !c.archived && !c.fileId && c.workingDirectory === workdir
     )
     if (rooted) {
       const map = { ...get().workspaceAgentByPath, [workdir]: rooted.id }
@@ -708,6 +747,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         cacheCreatedAt,
         cacheExpiresAt,
         activeLeafId,
+        compactions,
         ...meta
       } = full
       set((state) => ({
@@ -716,6 +756,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
           : [meta, ...state.conversations],
         messages: { ...state.messages, [id]: messages },
         activeLeaf: { ...state.activeLeaf, [id]: activeLeafId },
+        compactions: { ...state.compactions, [id]: compactions ?? [] },
         tokenHistories: { ...state.tokenHistories, [id]: tokenHistory ?? [] },
         cacheExpiresAt: { ...state.cacheExpiresAt, [id]: cacheExpiresAt ?? null }
       }))
@@ -745,15 +786,31 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
     // Switching never cancels an in-flight turn; it only rebinds the detail column.
     // Sidebar clicks leave Workspace View; History/New inside workspace stay put.
-    const keepGroup =
-      options?.stayInWorkspace ||
-      (!!target?.fileId && !!get().activeGroupId)
+    // File-bound sessions must NEVER keep workspace view — otherwise DetailSlot
+    // stays on WorkspaceView (“Select a file…”) while the agent shows the file
+    // chat (infinite empty-state flash). File canvas is FileSessionView.
+    const keepGroup = !!options?.stayInWorkspace && !target?.fileId
     // Tools tray state is per-session — restore this conversation's layout.
-    const sessionTools = toolsFor(get(), id)
+    // File sessions always enter with the tray collapsed: Enclosed dir is opt-in
+    // (prepareFileWorkspace / file-session surface). Persist so a later Quiet
+    // segment patch cannot revive a stale expanded layout from localStorage.
+    let sessionTools = toolsFor(get(), id)
+    let toolsLayoutsPatch: Record<string, SessionToolsLayout> | undefined
+    if (target?.fileId) {
+      sessionTools = {
+        ...sessionTools,
+        toolsCollapsed: true,
+        panelSegment: 'files',
+        lastActiveSegment: 'files'
+      }
+      toolsLayoutsPatch = { ...get().toolsLayouts, [id]: sessionTools }
+      saveSessionToolsMap(toolsLayoutsPatch)
+    }
     set({
       activeId: id,
       selectedIds: nextSelection,
       activeGroupId: keepGroup ? get().activeGroupId : null,
+      ...(toolsLayoutsPatch ? { toolsLayouts: toolsLayoutsPatch } : {}),
       ...activeToolsFields(sessionTools)
     })
     await get().loadMessages(id)
@@ -801,10 +858,21 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     const already = !!get().messages[id]
     set((state) => ({
       ...(already
-        ? {}
+        ? {
+            // Always refresh compactions — compact/clear can land while messages
+            // are already hydrated.
+            compactions: {
+              ...state.compactions,
+              [id]: conversation.compactions ?? []
+            }
+          }
         : {
             messages: { ...state.messages, [id]: conversation.messages },
-            activeLeaf: { ...state.activeLeaf, [id]: conversation.activeLeafId }
+            activeLeaf: { ...state.activeLeaf, [id]: conversation.activeLeafId },
+            compactions: {
+              ...state.compactions,
+              [id]: conversation.compactions ?? []
+            }
           }),
       tokenHistories: {
         ...state.tokenHistories,
@@ -1430,6 +1498,58 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     get().focusComposer()
   },
 
+  async compactConversation(keepAfterMessageId) {
+    const { activeId } = get()
+    if (!activeId) return false
+    if (get().turns[activeId]?.isRunning) {
+      set({ errorBanner: tt('compact.error.busy') })
+      return false
+    }
+    const result = await window.vav.agent.compact(
+      activeId,
+      keepAfterMessageId ? { keepAfterMessageId } : undefined
+    )
+    if (!result.ok) {
+      set({ errorBanner: result.error })
+      return false
+    }
+    // No toast — transcript shows a quiet "history compact" log via CompactionBanner.
+    // Shrink context fill on the conversation meta so the composer ring updates.
+    set((state) => ({
+      compactions: {
+        ...state.compactions,
+        [activeId]: upsertCompaction(state.compactions[activeId], result.compaction)
+      },
+      conversations: state.conversations.map((c) =>
+        c.id === activeId
+          ? { ...c, tokensUsed: result.compaction.estimatedContextTokens }
+          : c
+      )
+    }))
+    return true
+  },
+
+  async clearCompaction() {
+    const { activeId } = get()
+    if (!activeId) return false
+    const leafId = get().activeLeaf[activeId]
+    const messages = get().messages[activeId] ?? []
+    const active = compactionForLeaf(get().compactions[activeId], messages, leafId)
+    if (!active) return false
+    const result = await window.vav.agent.clearCompaction(activeId, active.leafId)
+    if (!result.ok) {
+      set({ errorBanner: result.error })
+      return false
+    }
+    set((state) => ({
+      compactions: {
+        ...state.compactions,
+        [activeId]: (state.compactions[activeId] ?? []).filter((c) => c.leafId !== active.leafId)
+      }
+    }))
+    return true
+  },
+
   async cancel(id) {
     await window.vav.agent.cancel(id)
   },
@@ -1585,6 +1705,13 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   },
 
   async openChangeReview(changeSetId) {
+    if (!changeSetId) return
+    // Already cached — do not clear or thrash on remount / next turn.
+    const hit = get().changeSetsById[changeSetId]
+    if (hit) {
+      set({ changeSet: hit })
+      return
+    }
     // Cache only — full-screen takeover removed; inline cards use changeSetsById.
     const changeSet = await window.vav.changeSets.get(changeSetId)
     if (!changeSet) return
@@ -1760,6 +1887,10 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     })
   },
 
+  setSidebarListMode(mode) {
+    set({ sidebarListMode: mode })
+  },
+
   toggleToolsPanel() {
     set((state) => {
       if (!state.activeId) return {}
@@ -1890,13 +2021,24 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       case 'start':
         projection.start()
         patchTurn(set, id, { isRunning: true, phase: 'thinking', toolCount: 0, awaitingToolCallId: null })
+        // New turn supersedes prior file-review cards (avoid stale "Could not load changes").
+        set((state) => clearPriorChangeReviews(state, id))
         break
 
       case 'user':
-        set((state) => ({
-          messages: { ...state.messages, [id]: upsert(state.messages[id], event.message) },
-          activeLeaf: { ...state.activeLeaf, [id]: event.message.id }
-        }))
+        // User message = next turn intent: drop previous review chrome immediately.
+        set((state) => {
+          const cleared = clearPriorChangeReviews(state, id)
+          const baseMessages = cleared.messages ?? state.messages
+          return {
+            ...cleared,
+            messages: {
+              ...baseMessages,
+              [id]: upsert(baseMessages[id], event.message)
+            },
+            activeLeaf: { ...state.activeLeaf, [id]: event.message.id }
+          }
+        })
         break
 
       case 'phase':
@@ -1969,9 +2111,11 @@ export const useSessionStore = create<SessionState>((set, get) => ({
           const conversations = state.conversations.map((c) =>
             c.id === id ? { ...c, tokensUsed: event.tokensUsed } : c
           )
-          // A turn that produced nothing is not stored on disk either; adopting
-          // it as the leaf would point the tree at a node main has never seen.
-          if (event.message.blocks.length === 0) return { conversations }
+          // Store the sealed message when it has content OR a change review card.
+          // (Write-only turns can land with tools + changeSetId and must still upsert.)
+          if (event.message.blocks.length === 0 && !event.message.changeSetId) {
+            return { conversations }
+          }
           return {
             messages: { ...state.messages, [id]: upsert(state.messages[id], event.message) },
             activeLeaf: { ...state.activeLeaf, [id]: event.message.id },
@@ -1990,6 +2134,8 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
       case 'change-review': {
         // Inline review only — never full-screen (bypass already auto-accepted).
+        // Seed changeSetsById synchronously when the event carries the full set so
+        // InlineChangeReview never remounts into a perpetual "Loading changes…".
         set((state) => {
           const list = state.messages[id] ?? []
           const msgId = event.messageId
@@ -2001,9 +2147,10 @@ export const useSessionStore = create<SessionState>((set, get) => ({
                 m.id === msgId ? { ...m, changeSetId: event.changeSetId } : m
               )
             }
+          } else if (msgId && !list.some((m) => m.id === msgId)) {
+            // end may still be in flight relative to another window; nothing to attach.
           } else if (!msgId) {
             // Fallback: attach to latest assistant message on the active leaf path.
-            const leaf = state.activeLeaf[id] ?? null
             const path = list.filter((m) => m.role === 'assistant')
             const last = path[path.length - 1]
             if (last) {
@@ -2014,7 +2161,6 @@ export const useSessionStore = create<SessionState>((set, get) => ({
                 )
               }
             }
-            void leaf
           }
           const pendingNext = { ...state.pendingReviewByConversation }
           if (event.pendingCount > 0) {
@@ -2022,9 +2168,19 @@ export const useSessionStore = create<SessionState>((set, get) => ({
           } else {
             delete pendingNext[id]
           }
-          return { messages, pendingReviewByConversation: pendingNext }
+          const seeded = event.changeSet
+          const changeSetsById = seeded
+            ? { ...state.changeSetsById, [seeded.id]: seeded }
+            : state.changeSetsById
+          return {
+            messages,
+            pendingReviewByConversation: pendingNext,
+            changeSetsById,
+            ...(seeded ? { changeSet: seeded } : {})
+          }
         })
-        void get().openChangeReview(event.changeSetId)
+        // Fallback fetch only when the event did not embed the set.
+        if (!event.changeSet) void get().openChangeReview(event.changeSetId)
         break
       }
     }
@@ -2080,7 +2236,56 @@ function upsert(nodes: ChatMessage[] | undefined, message: ChatMessage): ChatMes
   const existing = nodes ?? []
   const index = existing.findIndex((m) => m.id === message.id)
   if (index < 0) return [...existing, message]
-  return existing.map((m) => (m.id === message.id ? message : m))
+  // Preserve sticky fields if a later partial snapshot omits them (e.g. mid-turn
+  // persist without changeSetId must not wipe a finished review card).
+  return existing.map((m) => {
+    if (m.id !== message.id) return m
+    const merged: ChatMessage = { ...message }
+    if (!merged.changeSetId && m.changeSetId) merged.changeSetId = m.changeSetId
+    return merged
+  })
+}
+
+/**
+ * Drop inline Change Review cards for a conversation when the next turn starts.
+ * Prior changeSetIds often cannot be re-fetched (in-memory store) and surface
+ * as "Could not load changes" under Done — clean them off the transcript.
+ */
+function clearPriorChangeReviews(
+  state: SessionState,
+  conversationId: string
+): Partial<SessionState> {
+  const list = state.messages[conversationId]
+  const dropIds = new Set(
+    (list ?? []).map((m) => m.changeSetId).filter((x): x is string => !!x)
+  )
+  if (dropIds.size === 0 && !state.pendingReviewByConversation[conversationId]) {
+    return {}
+  }
+
+  const messages = list
+    ? {
+        ...state.messages,
+        [conversationId]: list.map((m) =>
+          m.changeSetId ? { ...m, changeSetId: undefined } : m
+        )
+      }
+    : state.messages
+
+  const changeSetsById = { ...state.changeSetsById }
+  for (const cid of dropIds) delete changeSetsById[cid]
+
+  const pendingReviewByConversation = { ...state.pendingReviewByConversation }
+  delete pendingReviewByConversation[conversationId]
+
+  return {
+    messages,
+    changeSetsById,
+    pendingReviewByConversation,
+    changeSet: state.changeSet && dropIds.has(state.changeSet.id) ? null : state.changeSet,
+    changeReviewId:
+      state.changeReviewId && dropIds.has(state.changeReviewId) ? null : state.changeReviewId
+  }
 }
 
 function patchTurn(
@@ -2147,19 +2352,51 @@ function countTools(get: () => SessionState, conversationId: string, toolId: str
   return set.size
 }
 
+const noopOff = (): (() => void) => () => undefined
+
 /** Wires main-process turn events into the store. Called once at startup. */
 export function installTurnEventBridge(): () => void {
-  return window.vav.agent.onEvent((event) => useSessionStore.getState().applyTurnEvent(event))
+  const onEvent = window.vav?.agent?.onEvent
+  if (!onEvent) return noopOff()
+  return onEvent((event) => useSessionStore.getState().applyTurnEvent(event))
 }
 
 /** Keeps every window's copy of the settings in step. Called once per window. */
 export function installSettingsBridge(): () => void {
-  return window.vav.onSettingsChanged((settings) =>
+  const onChanged = window.vav?.onSettingsChanged
+  if (!onChanged) return noopOff()
+  return onChanged((settings) =>
     useSessionStore.setState({
       settings,
       resolvedLocale: resolveLocale(settings.locale, navigator.language)
     })
   )
+}
+
+/** Compact from the token-usage popup (or another window) lands here. */
+export function installCompactionsBridge(): () => void {
+  const onChanged = window.vav?.agent?.onCompactionsChanged
+  if (!onChanged) return noopOff()
+  return onChanged(({ conversationId, compactions }) => {
+    const active = compactionForLeaf(
+      compactions,
+      useSessionStore.getState().messages[conversationId] ?? [],
+      useSessionStore.getState().activeLeaf[conversationId] ?? null
+    )
+    useSessionStore.setState((state) => ({
+      compactions: { ...state.compactions, [conversationId]: compactions },
+      conversations: state.conversations.map((c) => {
+        if (c.id !== conversationId) return c
+        if (active?.estimatedContextTokens) {
+          return { ...c, tokensUsed: active.estimatedContextTokens }
+        }
+        // Cleared: fall back to last provider-reported input size if we have it.
+        const latest = state.tokenHistories[conversationId]?.at(-1)?.totalInputTokens
+        if (latest && latest > 0) return { ...c, tokensUsed: latest }
+        return c
+      })
+    }))
+  })
 }
 
 /**
@@ -2169,7 +2406,9 @@ export function installSettingsBridge(): () => void {
  * so no window may treat its own copy of the list as authoritative.
  */
 export function installWindowBridge(): () => void {
-  return window.vav.conversations.onChanged((list) => {
+  const onChanged = window.vav?.conversations?.onChanged
+  if (!onChanged) return noopOff()
+  return onChanged((list) => {
     // Preserve hydrated file-preview sessions; only reshuffle when recency changed.
     useSessionStore.setState((state) => ({
       conversations: mergeConversationList(state.conversations, list)
@@ -2182,22 +2421,26 @@ export function installWindowBridge(): () => void {
  * release its live agent terminal (one PTY → one geometry).
  */
 export function installDetachedBridge(): () => void {
+  const api = window.vav?.window
+  if (!api) return noopOff()
   const apply = (ids: string[]): void => {
     useSessionStore.setState({ detachedConversationIds: ids })
   }
   // Initial hydrate (main may boot after companions already exist).
-  if (typeof window.vav.window.listDetachedSessions === 'function') {
-    void window.vav.window.listDetachedSessions().then(apply).catch(() => apply([]))
+  if (typeof api.listDetachedSessions === 'function') {
+    void api.listDetachedSessions().then(apply).catch(() => apply([]))
   }
-  if (typeof window.vav.window.onDetachedChanged !== 'function') {
-    return () => undefined
+  if (typeof api.onDetachedChanged !== 'function') {
+    return noopOff()
   }
-  return window.vav.window.onDetachedChanged(apply)
+  return api.onDetachedChanged(apply)
 }
 
 /** Keeps toolbar / About update UI in step with the main-process checker. */
 export function installUpdateBridge(): () => void {
-  return window.vav.updates.onChanged((updateState) => {
+  const onChanged = window.vav?.updates?.onChanged
+  if (!onChanged) return noopOff()
+  return onChanged((updateState) => {
     useSessionStore.setState({ updateState })
   })
 }

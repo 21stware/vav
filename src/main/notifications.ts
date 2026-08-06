@@ -1,38 +1,32 @@
 import {
   Notification,
-  Tray,
-  Menu,
   app,
-  nativeImage,
-  type BrowserWindow,
-  type NativeImage
+  type BrowserWindow
 } from 'electron'
 import type { AppSettings } from '@shared/types'
-import { existsSync, readFileSync } from 'node:fs'
-import { dirname, join } from 'node:path'
-import { APP_NAME, applyDockIcon } from './brand'
-import { t } from './i18n'
+import { applyDockIcon } from './brand'
 
 export type NotifyKind = 'turn-complete' | 'ask' | 'approval' | 'request'
 export type NotificationPermission = 'granted' | 'denied' | 'unknown'
 
 /**
- * Menu-bar tray + OS notifications (settings-notifications.rpml).
+ * OS notifications (settings-notifications.rpml).
+ *
+ * Menu-bar tray was removed from product; Dock stays visible so the app never
+ * vanishes without a back door.
  *
  * Electron's Notification API maps to UserNotifications on macOS; permission
  * is requested the first time a notification would fire.
  */
 export class NotificationCenter {
-  private tray: Tray | null = null
   private permissionAsked = false
-  private runningCount = 0
   private lastPermission: NotificationPermission = 'unknown'
 
   constructor(
     private getSettings: () => AppSettings,
     private onOpenConversation: (conversationId: string) => void,
-    private onOpenSettings: () => void,
-    private getMainWindow: () => BrowserWindow | null
+    _onOpenSettings: () => void,
+    _getMainWindow: () => BrowserWindow | null
   ) {}
 
   permissionStatus(): NotificationPermission {
@@ -41,27 +35,14 @@ export class NotificationCenter {
   }
 
   applySettings(): void {
-    const settings = this.getSettings()
-    let trayOk = false
-    if (settings.trayEnabled) trayOk = this.ensureTray()
-    else this.destroyTray()
-
     if (process.platform === 'darwin' && app.dock) {
-      // Never hide the Dock unless the status item is actually alive — otherwise
-      // the app vanishes with no way back (menu bar + Dock both empty).
-      if (settings.hideDockIcon && settings.trayEnabled && trayOk) {
-        app.dock.hide()
-      } else {
-        app.dock.show()
-        // hide/show drops a runtime setIcon — re-apply after the tile is back.
-        applyDockIcon()
-      }
+      app.dock.show()
+      applyDockIcon()
     }
   }
 
-  setRunningCount(count: number): void {
-    this.runningCount = Math.max(0, count)
-    this.refreshTrayTitle()
+  setRunningCount(_count: number): void {
+    // Tray badge removed with the status item.
   }
 
   notify(kind: NotifyKind, conversationId: string, title: string, body: string): void {
@@ -92,91 +73,9 @@ export class NotificationCenter {
     // First show triggers the system prompt on macOS when still undetermined.
   }
 
-  /** @returns true when a live Tray status item exists. */
-  private ensureTray(): boolean {
-    if (this.tray) {
-      this.refreshTrayMenu()
-      return true
-    }
-    const icon = trayIcon()
-    if (icon.isEmpty()) {
-      console.error('[tray] empty icon — refusing to create blank status item')
-      return false
-    }
-    try {
-      this.tray = new Tray(icon)
-    } catch (err) {
-      console.error('[tray] failed to create status item', err)
-      this.tray = null
-      return false
-    }
-    this.tray.setToolTip(APP_NAME)
-    // macOS: left-click opens the app; menu stays on right-click / click+hold.
-    this.tray.on('click', () => this.showMain())
-    this.tray.on('right-click', () => this.tray?.popUpContextMenu())
-    this.refreshTrayMenu()
-    this.refreshTrayTitle()
-    const size = icon.getSize()
-    const scales =
-      typeof (icon as NativeImage & { getScaleFactors?: () => number[] }).getScaleFactors ===
-      'function'
-        ? (icon as NativeImage & { getScaleFactors: () => number[] }).getScaleFactors()
-        : []
-    console.log(
-      `[tray] status item ready path=${resolveTrayTemplatePath() ?? 'fallback'} ` +
-        `${size.width}x${size.height} scales=[${scales.join(',')}] template=${icon.isTemplateImage()}`
-    )
-    return true
-  }
-
-  private destroyTray(): void {
-    this.tray?.destroy()
-    this.tray = null
-  }
-
-  private refreshTrayTitle(): void {
-    if (!this.tray) return
-    // Icon-only status item; show a count badge only while sessions are running.
-    this.tray.setTitle(this.runningCount > 0 ? String(this.runningCount) : '')
-  }
-
-  private refreshTrayMenu(runningTitles: { id: string; title: string }[] = []): void {
-    if (!this.tray) return
-    const items: Electron.MenuItemConstructorOptions[] = []
-    if (runningTitles.length === 0) {
-      items.push({ label: APP_NAME, enabled: false })
-    } else {
-      items.push({
-        label: t('tray.running', { count: runningTitles.length }),
-        enabled: false
-      })
-      for (const row of runningTitles) {
-        items.push({
-          label: row.title,
-          click: () => this.onOpenConversation(row.id)
-        })
-      }
-    }
-    items.push(
-      { type: 'separator' },
-      { label: t('common.settingsEllipsis'), click: () => this.onOpenSettings() },
-      { label: t('common.quit'), click: () => app.quit() }
-    )
-    this.tray.setContextMenu(Menu.buildFromTemplate(items))
-  }
-
-  /** Call when turn activity changes so the tray menu lists live sessions. */
+  /** Call when turn activity changes (tray menu used to list sessions). */
   updateRunningSessions(sessions: { id: string; title: string }[]): void {
     this.setRunningCount(sessions.length)
-    this.refreshTrayMenu(sessions)
-  }
-
-  private showMain(): void {
-    const window = this.getMainWindow()
-    if (!window || window.isDestroyed()) return
-    if (window.isMinimized()) window.restore()
-    window.show()
-    window.focus()
   }
 }
 
@@ -210,86 +109,4 @@ function readNotificationPermission(): NotificationPermission {
   } catch {
     return 'unknown'
   }
-}
-
-/**
- * Brand tray mark: `trayTemplate.png` + `@2x` / `@3x` (22pt logical).
- *
- * Never reuse the Dock app icon — scaling a 1024px colour asset into the menu
- * bar is what made the status item look huge and muddy.
- *
- * Prefer building multi-scale from explicit files (not only createFromPath on
- * the 1x tile) so Retina always gets the high-res representation. Template
- * mode lets macOS tint with the menu-bar colour.
- */
-function trayIcon(): NativeImage {
-  const base = resolveTrayTemplatePath()
-  if (!base) {
-    console.warn('[tray] missing build/trayTemplate.png — status item may be blank')
-    return nativeImage.createEmpty()
-  }
-
-  const dir = dirname(base)
-  // Prefer the densest available file as the primary buffer so a lone 1x load
-  // never becomes the only representation on a 2x/3x display.
-  const layers: { scale: number; path: string }[] = []
-  for (const scale of [1, 2, 3] as const) {
-    const file = scale === 1 ? 'trayTemplate.png' : `trayTemplate@${scale}x.png`
-    const path = join(dir, file)
-    if (existsSync(path)) layers.push({ scale, path })
-  }
-  if (layers.length === 0) {
-    console.warn('[tray] no trayTemplate assets next to', base)
-    return nativeImage.createEmpty()
-  }
-
-  // Start from 1x (or the smallest present), then attach denser scales.
-  layers.sort((a, b) => a.scale - b.scale)
-  const image = nativeImage.createFromPath(layers[0]!.path)
-  if (image.isEmpty()) {
-    console.warn('[tray] createFromPath empty', layers[0]!.path)
-    return nativeImage.createEmpty()
-  }
-
-  const have = new Set(
-    typeof (image as NativeImage & { getScaleFactors?: () => number[] }).getScaleFactors ===
-    'function'
-      ? (image as NativeImage & { getScaleFactors: () => number[] }).getScaleFactors()
-      : [layers[0]!.scale]
-  )
-  for (const layer of layers.slice(1)) {
-    if (have.has(layer.scale)) continue
-    try {
-      image.addRepresentation({
-        scaleFactor: layer.scale,
-        dataURL: `data:image/png;base64,${readFileSync(layer.path).toString('base64')}`
-      })
-      have.add(layer.scale)
-    } catch (err) {
-      console.warn(`[tray] failed to add @${layer.scale}x representation`, err)
-    }
-  }
-
-  if (process.platform === 'darwin') image.setTemplateImage(true)
-  return image
-}
-
-function resolveTrayTemplatePath(): string | null {
-  const file = 'trayTemplate.png'
-  // Branded dev Electron reports `isPackaged` even when loading the repo, so
-  // never trust that flag alone. Prefer repo `build/`, then bundled resources
-  // (release installs put trays in extraResources).
-  const candidates = [
-    join(process.cwd(), 'build', file),
-    join(__dirname, '../../build', file),
-    join(__dirname, '../../../build', file),
-    join(app.getAppPath(), 'build', file),
-    join(app.getAppPath(), '../build', file),
-    join(process.resourcesPath, file)
-  ]
-  const hit = candidates.find((path) => existsSync(path))
-  if (!hit) {
-    console.warn('[tray] template not found; tried:\n  ' + candidates.join('\n  '))
-  }
-  return hit ?? null
 }

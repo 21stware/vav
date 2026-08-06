@@ -1,11 +1,15 @@
 /**
- * DevTools-style block pick on rendered document DOM (docx-preview, etc.).
+ * DevTools-style block pick on rendered document DOM (docx-preview, pptx, etc.).
  *
  * Single capture-phase listener on the root so only the *deepest* matching
  * element is picked — avoids table/tr/p fighting and double-fires.
+ *
+ * Click (no drag) picks for Agent; drag selects text for copy. Never
+ * preventDefault on mousedown.
  */
 
 import type { PreviewBlock } from '@shared/previewBlock'
+import { scheduleClickPick } from '../../lib/clickPick'
 
 export type DomPickHandler = (block: PreviewBlock, event: MouseEvent) => void
 
@@ -15,19 +19,21 @@ const DEFAULT_LEAF =
 
 /**
  * Assign stable data-block-id from tree path so re-annotate keeps the same ids.
+ * When `force` is true, renumber every match (use after dynamic re-mount).
  */
 export function ensureStableBlockIds(
   root: HTMLElement,
   selector: string,
-  idPrefix: string
+  idPrefix: string,
+  force = false
 ): void {
   const nodes = Array.from(root.querySelectorAll(selector)) as HTMLElement[]
   nodes.forEach((el, index) => {
-    if (!el.dataset.blockId) {
-      // Path-ish stable id from document order (re-render of same doc keeps order).
+    if (force || !el.dataset.blockId) {
       el.dataset.blockId = `${idPrefix}-${index}`
+      el.setAttribute('data-block-id', el.dataset.blockId)
     }
-    el.classList.add('office-pick-target')
+    el.classList.add('office-pick-target', 'preview-select-region')
   })
 }
 
@@ -42,19 +48,56 @@ export function syncSelectedClasses(root: HTMLElement, selectedIds: string[]): v
   })
 }
 
+/** Deepest element matching `selector` that contains (or is) `raw`. */
+export function findDeepestMatch(
+  root: HTMLElement,
+  raw: HTMLElement,
+  selector: string
+): HTMLElement | null {
+  const matches = Array.from(root.querySelectorAll(selector)) as HTMLElement[]
+  let best: HTMLElement | null = null
+  for (const el of matches) {
+    if (el === raw || el.contains(raw)) {
+      if (!best || best.contains(el)) best = el
+    }
+  }
+  return best
+}
+
+function blockKindForElement(el: HTMLElement): PreviewBlock['kind'] {
+  const tag = el.tagName.toLowerCase()
+  if (tag === 'td' || tag === 'th') return 'cell-table'
+  if (tag.startsWith('h') && tag.length === 2) return 'heading'
+  if (tag === 'li') return 'list-item'
+  if (el.dataset.pickKind === 'slide') return 'slide'
+  return 'paragraph'
+}
+
+export type AttachDomPickOptions = {
+  selecting: boolean
+  selectedIds: string[]
+  onPick: DomPickHandler
+  /** Leaf selectors only (default: paragraphs + cells, not table/tr wrappers). */
+  selector?: string
+  idPrefix?: string
+  /**
+   * Run before hit-testing (e.g. re-tag dynamically mounted slides/shapes).
+   * Must be cheap — called on every mousedown.
+   */
+  beforeDown?: (root: HTMLElement) => void
+  /**
+   * When no leaf matches, try this (e.g. whole slide). Return null to miss.
+   * Should not return a leaf that is an ancestor of a matched leaf.
+   */
+  resolveFallback?: (raw: HTMLElement, root: HTMLElement) => HTMLElement | null
+}
+
 /**
  * Attach one capture listener. `selecting` toggled via returned update().
  */
 export function attachDomPick(
   root: HTMLElement,
-  options: {
-    selecting: boolean
-    selectedIds: string[]
-    onPick: DomPickHandler
-    /** Leaf selectors only (default: paragraphs + cells, not table/tr wrappers). */
-    selector?: string
-    idPrefix?: string
-  }
+  options: AttachDomPickOptions
 ): () => void {
   const selector = options.selector ?? DEFAULT_LEAF
   const prefix = options.idPrefix ?? 'dom'
@@ -65,6 +108,8 @@ export function attachDomPick(
   // Keep selecting flag mutable so we don't re-bind every parent render.
   let selecting = options.selecting
   let onPick = options.onPick
+  let beforeDown = options.beforeDown
+  let resolveFallback = options.resolveFallback
 
   const onDown = (event: MouseEvent): void => {
     if (!selecting) return
@@ -72,57 +117,76 @@ export function attachDomPick(
     const raw = event.target as HTMLElement | null
     if (!raw || !root.contains(raw)) return
 
+    beforeDown?.(root)
+    // Ids may have been assigned in beforeDown — keep prefix scheme stable.
+    ensureStableBlockIds(root, selector, prefix)
+
     // Deepest element matching our leaf selector.
-    const matches = Array.from(root.querySelectorAll(selector)) as HTMLElement[]
-    let best: HTMLElement | null = null
-    for (const el of matches) {
-      if (el === raw || el.contains(raw)) {
-        if (!best || best.contains(el)) best = el
-      }
+    let best = findDeepestMatch(root, raw, selector)
+
+    // Optional container fallback (e.g. pptx slide chrome) when not on a leaf.
+    if (!best?.dataset.blockId && resolveFallback) {
+      const fb = resolveFallback(raw, root)
+      if (fb?.dataset.blockId) best = fb
     }
+
     if (!best?.dataset.blockId) return
 
-    event.preventDefault()
+    const rawText = (best.innerText || best.textContent || '').replace(/\s+/g, ' ').trim()
+    const isImage =
+      best.dataset.pickKind === 'image' ||
+      best.tagName === 'IMG' ||
+      !!best.querySelector?.('img')
+    // Pictures have no text — still pickable with a placeholder label.
+    const blockText = rawText || (isImage ? best.dataset.pickLabel || 'Image' : '')
+    if (!blockText) return
+
+    // Allow native text select/copy — only stop bubbling so parents don't also pick.
     event.stopPropagation()
 
     const id = best.dataset.blockId
-    const blockText = (best.innerText || best.textContent || '').trim()
-    if (!blockText) return
-
+    const kind: PreviewBlock['kind'] = isImage && !rawText ? 'image' : blockKindForElement(best)
     const tag = best.tagName.toLowerCase()
-    const kind =
-      tag === 'td' || tag === 'th'
-        ? ('cell-table' as const)
-        : tag.startsWith('h')
-          ? ('heading' as const)
-          : tag === 'li'
-            ? ('list-item' as const)
-            : ('paragraph' as const)
 
-    onPick(
-      {
-        id,
-        kind,
-        text: blockText.slice(0, 8000),
-        label: blockText.slice(0, 64) || id,
-        startLine: 1,
-        endLine: 1,
-        level: kind === 'heading' ? Number(tag.slice(1)) || 1 : undefined
+    const win = root.ownerDocument?.defaultView ?? window
+    scheduleClickPick(
+      { button: event.button, clientX: event.clientX, clientY: event.clientY },
+      () => {
+        onPick(
+          {
+            id,
+            kind,
+            text: blockText.slice(0, 8000),
+            label: blockText.slice(0, 64) || id,
+            startLine: 1,
+            endLine: 1,
+            level: kind === 'heading' ? Number(tag.slice(1)) || 1 : undefined
+          },
+          event
+        )
       },
-      event
+      { win }
     )
   }
 
   root.addEventListener('mousedown', onDown, true)
 
   // Public update for selection chrome without re-querying whole tree setup.
-  ;(root as HTMLElement & { __officePickUpdate?: (o: {
-    selecting: boolean
-    selectedIds: string[]
-    onPick: DomPickHandler
-  }) => void }).__officePickUpdate = (o) => {
+  ;(
+    root as HTMLElement & {
+      __officePickUpdate?: (o: {
+        selecting: boolean
+        selectedIds: string[]
+        onPick: DomPickHandler
+        beforeDown?: AttachDomPickOptions['beforeDown']
+        resolveFallback?: AttachDomPickOptions['resolveFallback']
+      }) => void
+    }
+  ).__officePickUpdate = (o) => {
     selecting = o.selecting
     onPick = o.onPick
+    if (o.beforeDown !== undefined) beforeDown = o.beforeDown
+    if (o.resolveFallback !== undefined) resolveFallback = o.resolveFallback
     syncSelectedClasses(root, o.selectedIds)
   }
 
@@ -138,6 +202,8 @@ export function updateDomPick(
     selecting: boolean
     selectedIds: string[]
     onPick: DomPickHandler
+    beforeDown?: AttachDomPickOptions['beforeDown']
+    resolveFallback?: AttachDomPickOptions['resolveFallback']
   }
 ): void {
   if (!root) return
@@ -147,6 +213,8 @@ export function updateDomPick(
         selecting: boolean
         selectedIds: string[]
         onPick: DomPickHandler
+        beforeDown?: AttachDomPickOptions['beforeDown']
+        resolveFallback?: AttachDomPickOptions['resolveFallback']
       }) => void
     }
   ).__officePickUpdate

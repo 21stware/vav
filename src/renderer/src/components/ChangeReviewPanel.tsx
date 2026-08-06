@@ -201,7 +201,7 @@ export function ChangeReviewPanel(): React.JSX.Element | null {
           title={t('review.back')}
           onClick={closeChangeReview}
         />
-        <span className="about-logo review-logo" role="img" aria-label="vav">
+        <span className="about-logo review-logo" role="img" aria-label="VAV">
           <img className="logo-light" src={wordmark} alt="" />
           <img className="logo-dark" src={wordmarkDark} alt="" />
         </span>
@@ -398,18 +398,18 @@ export function ChangeReviewPanel(): React.JSX.Element | null {
             name: files.find((f) => f.filePath === editPath)?.relativePath ?? ''
           })}
           onDismiss={() => setEditPath(null)}
-          actions={
+          actions={(dismiss) => (
             <>
-              <Button label={t('common.cancel')} onClick={() => setEditPath(null)} />
+              <Button label={t('common.cancel')} onClick={dismiss} />
               <Button
                 label={t('review.applyEdit')}
                 variant="primary"
                 onClick={() => {
-                  void applyChangeEdit(editPath, editDraft).then(() => setEditPath(null))
+                  void applyChangeEdit(editPath, editDraft).then(() => dismiss())
                 }}
               />
             </>
-          }
+          )}
         >
           <div className="review-edit-grid">
             <div>

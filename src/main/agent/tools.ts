@@ -13,7 +13,7 @@
  * `details.failed`, which the runtime lifts into pi's `isError` from
  * `afterToolCall`. Only genuinely unexpected faults throw.
  */
-import { basename, dirname, isAbsolute, resolve as resolvePath } from 'node:path'
+import { basename, dirname, extname, isAbsolute, resolve as resolvePath } from 'node:path'
 import { Type, type TSchema } from '@earendil-works/pi-ai'
 import type { AgentTool } from '@earendil-works/pi-agent-core'
 import { normalizeAskQuestions, normalizePlanSteps } from '@shared/askPlan'
@@ -27,9 +27,11 @@ import {
 } from '@shared/types'
 import type { FileService } from '../fs/FileService'
 import type { DocumentRetrievalService } from '../retrieval/DocumentRetrievalService'
+import { type DuckDbService, duckDbKindForPath } from '../fs/DuckDbService'
 import type { WebSearchService } from '../web/WebSearchService'
 import type { WebFetchService } from '../web/WebFetchService'
 import { BASH_SESSION_ID, type StickyShell } from '../terminal/StickyShell'
+import type { SkillService } from './SkillService'
 import { unifiedDiff } from './diff'
 
 export { normalizeAskQuestions, normalizePlanSteps } from '@shared/askPlan'
@@ -64,10 +66,14 @@ export interface ToolHost {
   recordWrite?: (filePath: string, originalContent: string | null, newContent: string) => void
   /** Local document RAG (PDF / office / text). */
   retrieval?: DocumentRetrievalService
+  /** Analytical SQL over SQLite / CSV / TSV / Parquet via DuckDB. */
+  duckdb?: DuckDbService
   /** Public web search (local HTTP to search backends). */
   webSearch?: WebSearchService
   /** Public web fetch + readability extract. */
   webFetch?: WebFetchService
+  /** Bundled / remote Agent Skills (SKILL.md packages). */
+  skills?: SkillService
   /** Optional Brave Search API key (from SecretStore; never logged). */
   braveSearchKey?: () => string | null
   /** Selection from the user message that started this turn (for related search). */
@@ -83,15 +89,28 @@ export const READONLY_TOOLS: ReadonlySet<ToolName> = new Set([
   'doc_search',
   'doc_fetch',
   'web_search',
-  'web_fetch'
+  'web_fetch',
+  'sql_query',
+  'load_skill'
 ])
 /** Auto-mode tools that pause for Approve / Deny. */
 export const HIGH_RISK_TOOLS: ReadonlySet<ToolName> = new Set(['fs_write', 'terminal'])
-/** Terminal commands treated as read-only under Auto approval. */
-const READONLY_TERMINAL = /^(?:cat|ls|grep|rg|head|tail|wc|pwd|echo|which|type|file|stat|find|tree)\b/
+/**
+ * Tools removed entirely when the conversation is file-preview Read mode.
+ * Agent must not be able to mutate the open file (or siblings via write tools).
+ */
+export const FILE_READONLY_BLOCKED_TOOLS: ReadonlySet<ToolName> = new Set(['fs_write'])
+/** Terminal commands treated as read-only under Auto approval / file Read mode. */
+const READONLY_TERMINAL =
+  /^(?:cat|ls|grep|rg|head|tail|wc|pwd|echo|which|type|file|stat|find|tree|du|df|uname|date|whoami|id|env|printenv|realpath|basename|dirname|md5|shasum|sha256sum|hexdump|xxd|jq|yq|sed\s+-n|awk)\b/
 
 export function isReadonlyTerminalCommand(command: string): boolean {
-  return READONLY_TERMINAL.test(command.trim())
+  const cmd = command.trim()
+  // Reject obvious write redirects / mutators even if the head looks read-only.
+  if (/[>]{1,2}|tee\b|\brm\b|\bmv\b|\bcp\b|\bmkdir\b|\btouch\b|\bchmod\b|\bchown\b|\bsed\s+-i|\btruncate\b|\bdd\b/.test(cmd)) {
+    return false
+  }
+  return READONLY_TERMINAL.test(cmd)
 }
 
 /** Keeps the parameter schema bound to `execute`, which `AgentTool[]` erases. */
@@ -512,11 +531,90 @@ export function createTools(host: ToolHost): AgentTool[] {
     }
   })
 
+  const sqlQuery = defineTool({
+    name: 'sql_query',
+    label: TOOL_LABELS.sql_query,
+    description:
+      'Run read-only analytical SQL (DuckDB dialect) over a SQLite, CSV, TSV, or Parquet file. The file is attached in-memory; tables from a SQLite DB or a single CSV/TSV/Parquet file are queryable by name. Use this for analysis (aggregation, GROUP BY, JOIN, window functions) instead of paging the DB preview. Run `SHOW TABLES` first to list available tables, or `DESCRIBE <table>` for columns.',
+    parameters: Type.Object({
+      sql: Type.String({
+        description:
+          'DuckDB SQL statement. SELECT / SHOW / DESCRIBE / WITH / EXPLAIN are expected. DDL that mutates the source file is not possible (in-memory attach).'
+      }),
+      path: Type.Optional(
+        Type.String({
+          description:
+            'File path (.db/.sqlite/.sqlite3/.db3/.csv/.tsv/.parquet), absolute or workdir-relative. Defaults to the file-session document.'
+        })
+      )
+    }),
+    async execute(_id, params) {
+      if (!host.duckdb) return failure('DuckDB is unavailable')
+      const path = resolveDocPath(host, params.path)
+      if (!path) {
+        return failure(
+          'No file path. Pass path=… or open a file session for a SQLite/CSV/TSV/Parquet file.'
+        )
+      }
+      const sql = String(params.sql ?? '').trim()
+      if (!sql) return failure('Missing sql parameter')
+
+      const kind = duckDbKindForPath(path)
+      if (!kind) {
+        return failure(
+          `Unsupported file type for sql_query: ${extname(path) || basename(path)}. Use .db/.sqlite/.csv/.tsv/.parquet.`
+        )
+      }
+
+      const lower = sql.toLowerCase()
+      const isSchema =
+        lower.startsWith('show ') ||
+        lower.startsWith('describe ') ||
+        lower.startsWith('pragma ') ||
+        lower === 'show tables'
+
+      const result = await host.duckdb.query(path, sql)
+      if (result.error) {
+        return {
+          content: [{ type: 'text', text: `SQL error: ${result.error}` }],
+          details: { display: `✗ ${basename(path)} · ${result.error}` }
+        }
+      }
+
+      const header = result.columns.join(' | ')
+      const sep = result.columns.map(() => '---').join(' | ')
+      const dataRows = result.rows.map((r) => r.join(' | '))
+      const modelLines = [
+        `${basename(path)} (${kind}) · ${result.rowCount} row(s)${
+          result.truncated ? ` (truncated to ${result.rows.length})` : ''
+        }`,
+        header,
+        sep,
+        ...dataRows
+      ]
+      const displayLines = [
+        `${basename(path)} (${kind}) · ${result.rowCount} row(s)${
+          result.truncated ? ` (truncated to ${result.rows.length})` : ''
+        }`,
+        header,
+        ...result.rows.map((r) => r.join(' | '))
+      ]
+      const text = cap(modelLines.join('\n'))
+      const summary = isSchema
+        ? `schema · ${basename(path)}`
+        : `${result.rowCount} row(s) · ${basename(path)}`
+      return {
+        content: [{ type: 'text', text }],
+        details: { display: displayLines.join('\n'), summary }
+      }
+    }
+  })
+
   const webSearch = defineTool({
     name: 'web_search',
     label: TOOL_LABELS.web_search,
     description:
-      'Search the public web from this machine (no vav cloud proxy). Returns ranked hits with title, url, and snippet. Prefer this over guessing URLs; then use web_fetch on the best results. Localhost / private IPs are blocked for general browsing — optional SearXNG base URL in settings is the exception for search only.',
+      'Search the public web from this machine (no VAV cloud proxy). Returns ranked hits with title, url, and snippet. Prefer this over guessing URLs; then use web_fetch on the best results. Localhost / private IPs are blocked for general browsing — optional SearXNG base URL in settings is the exception for search only.',
     parameters: Type.Object({
       query: Type.String({ description: 'Search query (keywords or natural language).' }),
       num_results: Type.Optional(
@@ -646,7 +744,7 @@ export function createTools(host: ToolHost): AgentTool[] {
     name: 'ask_user_question',
     label: TOOL_LABELS.ask_user_question,
     description:
-      'Pause the turn and ask the user one or more questions (vav tool, not a pi built-in). Prefer 1–3 questions. For each question give 2–4 short choices max (single- or multi-select); the UI always offers Other — never pad with joke/filler options. Free-text only when choices do not apply. Prefer one `questions` array for related prompts.',
+      'Pause the turn and ask the user one or more questions (VAV tool, not a pi built-in). Prefer 1–3 questions. For each question give 2–4 short choices max (single- or multi-select); the UI always offers Other — never pad with joke/filler options. Free-text only when choices do not apply. Prefer one `questions` array for related prompts.',
     parameters: Type.Object({
       title: Type.Optional(Type.String({ description: 'Card title when asking several questions.' })),
       question: Type.Optional(Type.String({ description: 'Single-question form.' })),
@@ -678,6 +776,101 @@ export function createTools(host: ToolHost): AgentTool[] {
       )
     },
     executionMode: 'sequential'
+  })
+
+  const loadSkill = defineTool({
+    name: 'load_skill',
+    label: TOOL_LABELS.load_skill,
+    description: [
+      'Load a specialized Agent Skill (instructions, workflows, and optional scripts) to improve quality on a domain task.',
+      'Call this BEFORE generating or heavily editing: Markdown/docs, PPTX, XLSX, DOCX, PDF, web UI, dashboards, charts, image/shader work, or multi-file app structure.',
+      'Omit name (or pass list:true) to list the catalog. Pass name to load SKILL.md. Pass path for a companion file under that skill (e.g. references/editing.md).',
+      'Optional url= fetches a remote SKILL.md from allowlisted hosts (raw.githubusercontent.com / github.com) when the user provides a skill URL — prefer bundled skills.'
+    ].join(' '),
+    parameters: Type.Object({
+      name: Type.Optional(
+        Type.String({
+          description:
+            'Skill id (preferred) or name, e.g. "pptx", "xlsx", "docx", "pdf", "frontend-design", "doc-coauthoring".'
+        })
+      ),
+      path: Type.Optional(
+        Type.String({
+          description:
+            'Optional relative path inside the skill folder after loading the main skill (e.g. "references/design-system.md").'
+        })
+      ),
+      list: Type.Optional(
+        Type.Boolean({
+          description: 'When true (or when name is omitted), return the skill catalog only.'
+        })
+      ),
+      url: Type.Optional(
+        Type.String({
+          description:
+            'Optional remote https URL to a SKILL.md (GitHub raw or blob). Allowlisted hosts only.'
+        })
+      )
+    }),
+    async execute(_id, params) {
+      if (!host.skills) return failure('Skill service is unavailable')
+      const listOnly = params.list === true || (!params.name && !params.url)
+      if (listOnly) {
+        const cat = host.skills.catalog()
+        const lines = [
+          cat.note ? `Note: ${cat.note}` : '',
+          `Available skills (${cat.skills.length}):`,
+          ...cat.skills.map((s) => {
+            const tags = s.tags?.length ? ` [${s.tags.join(', ')}]` : ''
+            return `- ${s.id}${tags} (${s.license}): ${s.description}`
+          }),
+          '',
+          'Load one with load_skill({ name: "<id>" }). Load a companion with path: "references/…".'
+        ].filter(Boolean)
+        const text = lines.join('\n')
+        return {
+          content: [{ type: 'text', text: cap(text) }],
+          details: { display: text, summary: `${cat.skills.length} skills` }
+        }
+      }
+
+      if (params.url) {
+        const remote = await host.skills.loadRemote(String(params.url))
+        if ('error' in remote) return failure(remote.error)
+        const text = remote.content
+        return {
+          content: [{ type: 'text', text: cap(text) }],
+          details: {
+            display: text,
+            summary: `remote · ${remote.id}${remote.truncated ? ' · truncated' : ''}`
+          }
+        }
+      }
+
+      const name = String(params.name ?? '').trim()
+      if (!name) return failure('Missing name (or set list:true)')
+      const loaded = host.skills.loadLocal(
+        name,
+        params.path != null ? String(params.path) : null,
+        host.workdir
+      )
+      if ('error' in loaded) return failure(loaded.error)
+      const footer =
+        loaded.companionFiles.length > 0
+          ? `\n\n## Companion files (load with path=)\n${loaded.companionFiles
+              .slice(0, 60)
+              .map((f) => `- ${f}`)
+              .join('\n')}${loaded.companionFiles.length > 60 ? `\n…+${loaded.companionFiles.length - 60} more` : ''}`
+          : ''
+      const text = loaded.content + footer
+      return {
+        content: [{ type: 'text', text: cap(text) }],
+        details: {
+          display: text,
+          summary: `${loaded.id}/${loaded.path}${loaded.truncated ? ' · truncated' : ''}`
+        }
+      }
+    }
   })
 
   const plan = defineTool({
@@ -740,8 +933,10 @@ export function createTools(host: ToolHost): AgentTool[] {
     fsList,
     docSearch,
     docFetch,
+    sqlQuery,
     webSearch,
     webFetch,
+    loadSkill,
     request,
     askUserQuestion,
     plan
@@ -828,12 +1023,14 @@ export function buildSystemPrompt(
     fileReadOnly?: boolean
     openFilePath?: string | null
     openFileKind?: string | null
+    /** Pre-formatted skill catalog lines for progressive disclosure. */
+    skillCatalog?: string | null
   }
 ): string {
   const openFile = options?.openFilePath?.trim() || null
   const openKind = options?.openFileKind?.trim() || null
   const lines = [
-    `You are vav, a local coding agent running on the user's ${OS_NAMES[process.platform] ?? process.platform} machine.`,
+    `You are VAV, a local coding agent running on the user's ${OS_NAMES[process.platform] ?? process.platform} machine.`,
     `The working directory for this conversation is: ${workingDirectory}`,
     // Without this the model reaches for POSIX idioms in a PowerShell session.
     `The user's shell is ${shell}; every \`terminal\` command must be valid ${shell} syntax.`,
@@ -859,18 +1056,49 @@ export function buildSystemPrompt(
       )
     }
   }
+  if (options?.fileReadOnly) {
+    lines.push(
+      '## READ-ONLY SESSION (enforced)',
+      'The user set this preview session to Read. You MUST NOT modify any files on disk.',
+      '- `fs_write` is not available — do not invent write APIs.',
+      '- `terminal` may only run read-only inspection commands (ls, cat, grep, rg, head, tail, …).',
+      '- Do not use redirects (`>`/`>>`), `tee`, `rm`, `mv`, `cp`, `mkdir`, `touch`, `sed -i`, or install packages.',
+      '- Analyze, explain, and propose edits in chat only. The user must switch to Edit (or convert/Save As) before you can write.',
+      ''
+    )
+  }
   lines.push(
     'You have real tools. Prefer acting over speculating:',
     '- `terminal` — wait mode (default) for commands that exit; fire-and-forget with `background: true` for servers/daemons (returns `{status,pid,sessionId}` immediately).',
     '- `wait` — block until a bash session prints `expect` (regex/literal), or timeout.',
     '- `read_bash_session` — poll the last N lines of bash scrollback without waiting.',
     options?.fileReadOnly
-      ? '- `fs_read` / `fs_list` operate on the local filesystem. `fs_write` is unavailable.'
+      ? '- `fs_read` / `fs_list` only — filesystem reads. Write tools are disabled for this session.'
       : '- `fs_read` / `fs_write` / `fs_list` operate on the local filesystem.',
     '- `doc_search` / `doc_fetch` — local retrieval over PDF, Word, Excel, PowerPoint, CSV/TSV, and text. Prefer these over terminal/python for office/PDF content. Do not install python-docx/pdf tools when doc_search can read the file.',
+    '- `sql_query` — analytical SQL (DuckDB) over a SQLite, CSV, TSV, or Parquet file. The file is attached in-memory; tables are queryable by name. Use this for any analysis on a DB or tabular file: aggregation, GROUP BY, JOIN, window functions, filtering. Run `SHOW TABLES` first to list tables, `DESCRIBE <table>` for columns. Prefer this over paging the DB preview when you need to compute, not just browse.',
     '- `web_search` / `web_fetch` — public web from this machine (Brave if key configured, else optional SearXNG, else DuckDuckGo HTML). Search first, then fetch promising URLs. HTML/PDF/text/JSON supported; private/localhost URLs are blocked. Prefer these over `terminal` curl/wget for reading pages.',
-    '- `request` and `ask_user_question` pause the turn to involve the user (vav tools).',
+    '- `load_skill` — load a domain skill (SKILL.md + optional scripts/references) before specialized work. Catalog metadata is below; full instructions load on demand.',
+    '- `request` and `ask_user_question` pause the turn to involve the user (VAV tools).',
     '- `plan` — visible checklist for multi-step work. The UI only updates when you call it; finishing tools alone does not check steps off.',
+    '',
+    '## Agent Skills (progressive disclosure)',
+    'Call `load_skill` with the matching id **before** substantial work in that domain. Do not invent skill APIs — follow the loaded SKILL.md.',
+    'Skill path rules: `SKILL_DIR` is read-only package content (scripts/references). All intermediate files (slides/*.js, compile.js, tmp unpack dirs, previews) and final outputs must live under the conversation working directory (`WORKDIR` from load_skill / this prompt). Never write into `resources/agent-skills` or SKILL_DIR.',
+    'Load companion files with `path` (e.g. `references/…`).',
+    'When to load (examples):',
+    '- Markdown / long-form docs / specs → `doc-coauthoring`, `internal-comms`, `theme-factory`',
+    '- PowerPoint / slides → `pptx`',
+    '- Excel / spreadsheets / tabular analysis → `xlsx` (and `sql_query` for pure SQL over CSV/Parquet)',
+    '- Word documents → `docx`',
+    '- Polished PDF reports → `pdf`',
+    '- Web UI, landing pages, dashboards → `frontend-design` / `frontend-dev` / `web-artifacts-builder`',
+    '- Charts in chat → still emit `vega-lite` / `mermaid` fences (see Visual diagrams); for file-based viz follow xlsx or frontend skills',
+    '- Generative / static visual art → `algorithmic-art` / `canvas-design` / `shader-dev` / `gif-sticker`',
+    '- Full-stack app structure → `fullstack-dev`',
+    '- MCP servers → `mcp-builder`',
+    'Bundled catalog:',
+    options?.skillCatalog?.trim() || '(skill catalog unavailable)',
     '',
     'File-preview edit loop (product model):',
     '1) View — user sees a format-correct canvas (windowed/streamed; never refuse on size).',
@@ -879,7 +1107,7 @@ export function buildSystemPrompt(
     '4) Agent edit — you propose/apply changes; the user does not hand-edit bytes as the primary path.',
     '5) Save — user reviews (Change Review) then accepts or discards.',
     options?.fileReadOnly
-      ? '- This session is read-only: analyze only; do not write the file.'
+      ? '- This session is READ-ONLY: analyze and propose only; never write files.'
       : '- For text files: inspect with windowed `fs_read`, then `fs_write` the complete new contents when editing.',
     '- For PDF/Office binary: prefer `doc_search` / `doc_fetch`; do not UTF-8-overwrite OOXML/PDF.',
     '- Selected context in the user message is only an anchor; call `doc_search` when you need more evidence from the same document.',
@@ -892,6 +1120,29 @@ export function buildSystemPrompt(
     '- Before your final reply on a planned task, call `plan` once more so every completed step is `done`. Mark leftover work `skipped` or `error` — do not leave finished work as `pending`.',
     '- Keep replies concise and in the language the user writes in.',
     '- Format code and command output as fenced markdown blocks.',
+    // Client only paints diagrams when the fence language tag is exact.
+    '## Visual diagrams (UI renders these fences live — tag must be exact)',
+    'When a chart, flowchart, sequence, architecture, ER diagram, or graph would help, output a fenced code block the client can paint. The language tag is how the UI chooses the renderer — wrong tag = plain code only.',
+    '',
+    'Required fence tags (open with exactly these labels):',
+    '- `mermaid` — flowcharts, sequence, state, class, timeline, mindmap, gantt, …',
+    '- `erd` or `er` — entity-relationship (Mermaid erDiagram syntax)',
+    '- `graphviz` or `dot` — Graphviz / DOT',
+    '- `vega-lite` — statistical charts (bar, line, scatter, …). Body must be a full Vega-Lite JSON spec.',
+    '  Alias also accepted: `vega` or `vl`. Prefer writing `vega-lite`.',
+    '',
+    'Critical for Vega-Lite / charts:',
+    '- ALWAYS open the fence as ```vega-lite (or ```vega / ```vl), NEVER as ```json.',
+    '- A Vega-Lite spec inside ```json will NOT render as a chart in this app — users only see source.',
+    '- Put only the JSON object inside the fence (valid parseable JSON). No prose, no // comments, no markdown around the braces.',
+    '- Include a complete spec: `$schema` (vega-lite), `data`, `mark`, `encoding` (or equivalent unit/layer/facet form).',
+    '- Bar marks are anchored at 0: never set `scale.zero: false` or a `scale.domain` that excludes 0 on their quantitative axis. To zoom in on a narrow value range, use `point`, `tick`, or `rule` instead.',
+    '- `tooltip` must be a list of channel refs that point at data: `{field, [type], [title], [format]}` or `{datum: <expr>}` or `{value: <literal>}`. Never write `[{ "value": "历史高点 $5,015" }]` — a bare string in `value` is dropped by Vega-Lite. For static hover text, set it on `mark.tooltip` (a string) or use a `datum` signal.',
+    '',
+    'General:',
+    '- Do **not** replace these with ASCII art, plain tables, or pseudo-diagrams when a real fence fits.',
+    '- Put only the diagram source inside the fence (no surrounding prose inside the fence).',
+    '- Incomplete diagrams are fine mid-stream; finish the closing fence so it can seal and stay stable.',
     '- There is no hard tool-iteration cap; stop when the task is done or ask the user.'
   )
   return lines.join('\n')
@@ -938,12 +1189,23 @@ export function summarizeToolInput(tool: ToolName, input: Record<string, unknown
         `${String(input.path ?? '')} ids=${JSON.stringify(input.ids ?? [])} page=${String(input.page ?? '')}`,
         120
       )
+    case 'sql_query':
+      return truncate(
+        `${String(input.path ?? '')} ${String(input.sql ?? '').replace(/\s+/g, ' ')}`.trim(),
+        120
+      )
     case 'web_search': {
       const site = input.site ? ` site:${String(input.site)}` : ''
       return truncate(`${String(input.query ?? '')}${site}`.trim(), 120)
     }
     case 'web_fetch':
       return truncate(String(input.url ?? ''), 120)
+    case 'load_skill': {
+      if (input.list || (!input.name && !input.url)) return 'list catalog'
+      if (input.url) return truncate(`url: ${String(input.url)}`, 120)
+      const p = input.path ? ` / ${String(input.path)}` : ''
+      return truncate(`${String(input.name ?? '')}${p}`, 120)
+    }
     case 'request':
       return truncate(String(input.instruction ?? ''), 120)
     case 'ask_user_question': {

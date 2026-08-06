@@ -1,10 +1,9 @@
 /* ==========================================================================
    vav — design tokens
 
-   Light is the wordmark's world: ink for text, the logo's periwinkle for
-   anything interactive, on a cool paper white. Dark is a neutral grey ramp
-   with no hue of its own, so the accent and the tool tones are the only
-   colour on screen.
+   Default chrome is monochrome (black ink on paper / light ink on charcoal).
+   Optional colour tints recolour only the interactive accent family and the
+   selected wash — surfaces stay neutral unless a tint opts into a soft cast.
 
    Regions are told apart by surface value and by colour, not by rules: only
    the terminal and the popover keep a drawn edge.
@@ -15,48 +14,50 @@
   --font-code: 'SF Mono', Menlo, monospace;
   --code-size: 12px;
 
-  --accent: #6b5bc0;
-  --accent-hover: #5c4cb1;
-  --accent-soft: rgba(107, 91, 192, 0.11);
-  --accent-veil: rgba(107, 91, 192, 0.055);
-  --accent-text: #5a4bab;
+  /* Mono accent (default tint). */
+  --accent: #3a3a42;
+  --accent-hover: #2a2a30;
+  --accent-soft: rgba(20, 20, 28, 0.09);
+  --accent-veil: rgba(20, 20, 28, 0.045);
+  --accent-text: #2c2c34;
+  /* Ink on solid accent fills (primary buttons, pills). */
+  --accent-fg: #ffffff;
   --danger: #bf3b3b;
   --warning: #8f6a15;
   --success: #2f7a52;
 
-  /* Categorical, not decorative: one hue per kind of thing the agent touched,
-     so a glance down the transcript reads as shell / read / write / list. */
+  /* Categorical tool tones stay hue-coded so transcript kinds stay glanceable. */
   --tone-shell: #1f7a86;
   --tone-read: #35619f;
   --tone-write: #a1621b;
-  --tone-list: #6b5bc0;
+  --tone-list: #3a3a42;
   --tone-web: #0f766e;
 
-  --bg-window: #eceaf1;
-  --bg-content: #fcfcfd;
+  --bg-window: #ececee;
+  --bg-content: #fcfcfc;
   --bg-raised: #ffffff;
-  --bg-sunken: #f3f2f7;
-  --bg-hover: rgba(19, 27, 53, 0.05);
-  --bg-selected: #ddd7f0;
+  --bg-sunken: #f2f2f4;
+  --bg-hover: rgba(20, 20, 28, 0.05);
+  --bg-selected: #e2e2e6;
   /* Kept in sync with THEME_DARK.background in terminalRegistry.ts. */
   --bg-terminal: #101012;
 
-  --text: #131b35;
-  --text-secondary: #5b6178;
-  --text-tertiary: #8b90a5;
-  --text-inverse: #fbfbfe;
+  --text: #141416;
+  --text-secondary: #5c5c66;
+  --text-tertiary: #8a8a94;
+  --text-inverse: #fbfbfc;
 
-  --border: rgba(19, 27, 53, 0.09);
-  --border-strong: rgba(19, 27, 53, 0.16);
+  --border: rgba(20, 20, 28, 0.09);
+  --border-strong: rgba(20, 20, 28, 0.16);
 
   --radius-sm: 6px;
   --radius: 10px;
   --radius-lg: 14px;
   --radius-xl: 18px;
 
-  --shadow-sheet: 0 24px 64px rgba(19, 27, 53, 0.26), 0 2px 8px rgba(19, 27, 53, 0.12);
-  --shadow-card: 0 1px 2px rgba(19, 27, 53, 0.07);
-  --shadow-raised: 0 1px 3px rgba(19, 27, 53, 0.09), 0 4px 14px rgba(19, 27, 53, 0.06);
+  --shadow-sheet: 0 24px 64px rgba(20, 20, 28, 0.26), 0 2px 8px rgba(20, 20, 28, 0.12);
+  --shadow-card: 0 1px 2px rgba(20, 20, 28, 0.07);
+  --shadow-raised: 0 1px 3px rgba(20, 20, 28, 0.09), 0 4px 14px rgba(20, 20, 28, 0.06);
   --ring-accent: 0 0 0 3px var(--accent-soft);
 
   --toolbar-height: 52px;
@@ -96,14 +97,15 @@
   --chrome-gutter: 14px;
 }
 
-/* A true neutral ramp — no blue cast. Every step is a grey; the only chroma in
-   the dark theme comes from the accent and the four tool tones. */
+/* Dark base — neutral grey ramp; tint only recolors accent + selection. */
 :root[data-theme='dark'] {
-  --accent: #8d7ce6;
-  --accent-hover: #9e8ff1;
-  --accent-soft: rgba(141, 124, 230, 0.18);
-  --accent-veil: rgba(141, 124, 230, 0.08);
-  --accent-text: #b7aaf3;
+  --accent: #c8c8d0;
+  --accent-hover: #d8d8e0;
+  --accent-soft: rgba(255, 255, 255, 0.12);
+  --accent-veil: rgba(255, 255, 255, 0.055);
+  --accent-text: #e4e4ea;
+  /* Light mono accent needs dark label — white-on-#c8c8d0 is illegible. */
+  --accent-fg: #141416;
   --danger: #e8817c;
   --warning: #d8ac62;
   --success: #6ec596;
@@ -111,7 +113,7 @@
   --tone-shell: #6fc3ce;
   --tone-read: #93b4ea;
   --tone-write: #ddaf74;
-  --tone-list: #b0a2ec;
+  --tone-list: #c8c8d0;
   --tone-web: #5eead4;
 
   --bg-window: #121213;
@@ -119,7 +121,7 @@
   --bg-raised: #242427;
   --bg-sunken: #161617;
   --bg-hover: rgba(255, 255, 255, 0.055);
-  --bg-selected: #2d2d31;
+  --bg-selected: #2f2f33;
   --bg-terminal: #101012;
 
   --text: #efeff1;
@@ -135,6 +137,164 @@
   --shadow-raised: 0 1px 3px rgba(0, 0, 0, 0.38), 0 6px 18px rgba(0, 0, 0, 0.26);
 }
 
+/* —— Colour tints (accent + soft selection; optional light surface cast) —— */
+
+:root[data-tint='lavender'] {
+  --accent: #6b5bc0;
+  --accent-hover: #5c4cb1;
+  --accent-soft: rgba(107, 91, 192, 0.11);
+  --accent-veil: rgba(107, 91, 192, 0.055);
+  --accent-text: #5a4bab;
+  --tone-list: #6b5bc0;
+  --tone-web: #5a4bab;
+  --bg-window: #eceaf1;
+  --bg-sunken: #f3f2f7;
+  --bg-selected: #ddd7f0;
+}
+
+:root[data-theme='dark'][data-tint='lavender'] {
+  --accent: #8d7ce6;
+  --accent-hover: #9e8ff1;
+  --accent-soft: rgba(141, 124, 230, 0.18);
+  --accent-veil: rgba(141, 124, 230, 0.08);
+  --accent-text: #b7aaf3;
+  --tone-list: #b0a2ec;
+  --tone-web: #b7aaf3;
+  --bg-window: #121213;
+  --bg-sunken: #161617;
+  --bg-selected: #2d2a38;
+}
+
+:root[data-tint='blue'] {
+  --accent: #2563eb;
+  --accent-hover: #1d4ed8;
+  --accent-soft: rgba(37, 99, 235, 0.11);
+  --accent-veil: rgba(37, 99, 235, 0.05);
+  --accent-text: #1d4ed8;
+  --tone-list: #2563eb;
+  --tone-web: #1d4ed8;
+  --bg-window: #e9eef8;
+  --bg-sunken: #f0f3f9;
+  --bg-selected: #d6e2f8;
+}
+
+:root[data-theme='dark'][data-tint='blue'] {
+  --accent: #7aa2f7;
+  --accent-hover: #93b4ff;
+  --accent-soft: rgba(122, 162, 247, 0.18);
+  --accent-veil: rgba(122, 162, 247, 0.08);
+  --accent-text: #a8c4ff;
+  --tone-list: #93b4ea;
+  --tone-web: #a8c4ff;
+  --bg-window: #121213;
+  --bg-sunken: #161617;
+  --bg-selected: #243044;
+}
+
+:root[data-tint='teal'] {
+  --accent: #0f766e;
+  --accent-hover: #0d6660;
+  --accent-soft: rgba(15, 118, 110, 0.11);
+  --accent-veil: rgba(15, 118, 110, 0.05);
+  --accent-text: #0f766e;
+  --tone-list: #0f766e;
+  --tone-web: #0f766e;
+  --bg-window: #e8f1f0;
+  --bg-sunken: #eef5f4;
+  --bg-selected: #cfe6e3;
+}
+
+:root[data-theme='dark'][data-tint='teal'] {
+  --accent: #5ecfc4;
+  --accent-hover: #7adbd2;
+  --accent-soft: rgba(94, 207, 196, 0.18);
+  --accent-veil: rgba(94, 207, 196, 0.08);
+  --accent-text: #8ee0d8;
+  --tone-list: #5eead4;
+  --tone-web: #8ee0d8;
+  --bg-window: #121213;
+  --bg-sunken: #161617;
+  --bg-selected: #1f3332;
+}
+
+:root[data-tint='rose'] {
+  --accent: #c44b6a;
+  --accent-hover: #ad3f5c;
+  --accent-soft: rgba(196, 75, 106, 0.11);
+  --accent-veil: rgba(196, 75, 106, 0.05);
+  --accent-text: #b03f5c;
+  --tone-list: #c44b6a;
+  --tone-web: #b03f5c;
+  --bg-window: #f3e9ec;
+  --bg-sunken: #f7f0f2;
+  --bg-selected: #f0d4dc;
+}
+
+:root[data-theme='dark'][data-tint='rose'] {
+  --accent: #f0a0b0;
+  --accent-hover: #f5b4c0;
+  --accent-soft: rgba(240, 160, 176, 0.18);
+  --accent-veil: rgba(240, 160, 176, 0.08);
+  --accent-text: #f5b8c4;
+  --tone-list: #f0a0b0;
+  --tone-web: #f5b8c4;
+  --bg-window: #121213;
+  --bg-sunken: #161617;
+  --bg-selected: #3a2830;
+}
+
+:root[data-tint='amber'] {
+  --accent: #b45309;
+  --accent-hover: #9a4508;
+  --accent-soft: rgba(180, 83, 9, 0.11);
+  --accent-veil: rgba(180, 83, 9, 0.05);
+  --accent-text: #9a4508;
+  --tone-list: #b45309;
+  --tone-web: #9a4508;
+  --bg-window: #f3eee6;
+  --bg-sunken: #f7f3ec;
+  --bg-selected: #ead9bf;
+}
+
+:root[data-theme='dark'][data-tint='amber'] {
+  --accent: #e0b060;
+  --accent-hover: #ebc078;
+  --accent-soft: rgba(224, 176, 96, 0.18);
+  --accent-veil: rgba(224, 176, 96, 0.08);
+  --accent-text: #ebc078;
+  --tone-list: #ddaf74;
+  --tone-web: #ebc078;
+  --bg-window: #121213;
+  --bg-sunken: #161617;
+  --bg-selected: #3a3224;
+}
+
+:root[data-tint='green'] {
+  --accent: #2f7a52;
+  --accent-hover: #276644;
+  --accent-soft: rgba(47, 122, 82, 0.11);
+  --accent-veil: rgba(47, 122, 82, 0.05);
+  --accent-text: #276644;
+  --tone-list: #2f7a52;
+  --tone-web: #276644;
+  --bg-window: #e9f0eb;
+  --bg-sunken: #eef5f0;
+  --bg-selected: #cfe3d6;
+}
+
+:root[data-theme='dark'][data-tint='green'] {
+  --accent: #6ec596;
+  --accent-hover: #82d1a6;
+  --accent-soft: rgba(110, 197, 150, 0.18);
+  --accent-veil: rgba(110, 197, 150, 0.08);
+  --accent-text: #8ad4ac;
+  --tone-list: #6ec596;
+  --tone-web: #8ad4ac;
+  --bg-window: #121213;
+  --bg-sunken: #161617;
+  --bg-selected: #24362c;
+}
+
 :root[data-reduce-motion='true'] * {
   animation-duration: 0.01ms !important;
   transition-duration: 0.01ms !important;
@@ -143,6 +303,21 @@
 
 /* The OS setting is a gentler instruction than our own toggle: drop the
    movement, keep the opacity and colour changes that explain what happened. */
+/* Accessibility: solid material when the OS asks to reduce transparency. */
+@media (prefers-reduced-transparency: reduce) {
+  .sidebar-column,
+  .app-shell .body-split > .sidebar:not(.floating),
+  .sidebar-float-panel {
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+    background: var(--bg-window);
+  }
+
+  .sidebar-float-panel {
+    background: var(--bg-content);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   * {
     animation-duration: 200ms !important;
@@ -303,6 +478,15 @@ html[data-resizing='true'] .plan-overlay {
   -webkit-backdrop-filter: none;
 }
 
+/* Blur is expensive while the native frame is being dragged. */
+html[data-resizing='true'] .sidebar-column,
+html[data-resizing='true'] .app-shell .body-split > .sidebar:not(.floating),
+html[data-resizing='true'] .sidebar-float-panel {
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  background: var(--bg-window);
+}
+
 html[data-resizing='true'] .tools-body,
 html[data-resizing='true'] .reasoning-detail,
 html[data-resizing='true'] .files-browser,
@@ -320,6 +504,177 @@ html[data-resizing='true'] .banner.error {
   padding: 0 var(--chrome-trail) 0 var(--chrome-lead);
   -webkit-app-region: drag;
   background: transparent;
+}
+
+/* Docked sidebar chrome: sits in the list column so the detail panel can
+   meet the window top (no full-width titlebar band above the card).
+   Height matches workspace file header + agent head (--toolbar-height). */
+.titlebar.sidebar-chrome {
+  width: 100%;
+  height: var(--toolbar-height);
+  min-height: var(--toolbar-height);
+  box-sizing: border-box;
+  /* Lead clears traffic lights; trail is modest — column is only ~232px. */
+  padding: 0 10px 0 var(--chrome-lead);
+}
+
+.sidebar-column {
+  display: flex;
+  flex-direction: column;
+  flex: 0 0 auto;
+  min-width: 0;
+  min-height: 0;
+  align-self: stretch;
+  /* Frosted material over the window wash (accent veil + bg-window). */
+  background: color-mix(in srgb, var(--bg-window) 62%, transparent);
+  backdrop-filter: blur(22px) saturate(1.35);
+  -webkit-backdrop-filter: blur(22px) saturate(1.35);
+  box-shadow: inset -1px 0 0 var(--border);
+}
+
+:root[data-theme='dark'] .sidebar-column {
+  /* Slightly denser so list text stays readable on charcoal. */
+  background: color-mix(in srgb, var(--bg-window) 72%, transparent);
+}
+
+.sidebar-column > .sidebar {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+/*
+ * Main shell: no floating “card” chrome around the agent surface — continuous
+ * with the window wash. Sidebar docked (panel-flush-top) or collapsed
+ * (panel-shell-chrome) both go edge-to-edge under the traffic lights.
+ */
+.app-shell .body-split {
+  padding: 0;
+  gap: 0;
+}
+
+.app-shell .detail,
+.app-shell .terminal-host-session,
+.app-shell .workspace-view {
+  border-radius: 0;
+  border: 0;
+}
+
+/*
+ * Main session agent row: same height as the docked sidebar chrome
+ * (--toolbar-height). Workspace keeps a compact second row under agent-head.
+ */
+.app-shell .detail > .terminal-host-chrome,
+.app-shell .terminal-host-session > .terminal-host-chrome {
+  height: var(--toolbar-height);
+  min-height: var(--toolbar-height);
+  box-sizing: border-box;
+  padding-top: 0;
+  padding-bottom: 0;
+}
+
+/* Docked sidebar owns traffic-light chrome in the list column. */
+.app-shell.panel-flush-top .terminal-host-chrome {
+  -webkit-app-region: drag;
+}
+
+/* Collapsed session: agent chrome is the window top bar (lead clears lights). */
+.app-shell.panel-shell-chrome .terminal-host-chrome.has-shell-leading {
+  padding-left: var(--chrome-lead);
+  height: var(--toolbar-height);
+  min-height: var(--toolbar-height);
+  box-sizing: border-box;
+  -webkit-app-region: drag;
+}
+
+/*
+ * Workspace + collapsed sidebar: shell + file title on the preview top row.
+ * Agent column is full-height (flush to window top) — no full-width titlebar.
+ */
+.app-shell.panel-shell-chrome .file-viewer-header.has-shell-leading,
+.app-shell.panel-shell-chrome .workspace-preview-chrome.has-shell-leading {
+  padding-left: var(--chrome-lead);
+  min-height: var(--toolbar-height);
+  height: var(--toolbar-height);
+  box-sizing: border-box;
+  -webkit-app-region: drag;
+}
+
+.app-shell.panel-flush-top .terminal-host-chrome button,
+.app-shell.panel-flush-top .terminal-host-chrome label,
+.app-shell.panel-flush-top .terminal-host-chrome select,
+.app-shell.panel-flush-top .terminal-host-chrome input,
+.app-shell.panel-flush-top .terminal-host-chrome a,
+.app-shell.panel-flush-top .terminal-host-chrome .btn,
+.app-shell.panel-shell-chrome .terminal-host-chrome button,
+.app-shell.panel-shell-chrome .terminal-host-chrome label,
+.app-shell.panel-shell-chrome .terminal-host-chrome select,
+.app-shell.panel-shell-chrome .terminal-host-chrome input,
+.app-shell.panel-shell-chrome .terminal-host-chrome a,
+.app-shell.panel-shell-chrome .terminal-host-chrome .btn,
+.app-shell.panel-shell-chrome .file-viewer-header.has-shell-leading button,
+.app-shell.panel-shell-chrome .file-viewer-header.has-shell-leading label,
+.app-shell.panel-shell-chrome .file-viewer-header.has-shell-leading select,
+.app-shell.panel-shell-chrome .file-viewer-header.has-shell-leading .btn,
+.app-shell.panel-shell-chrome .workspace-preview-chrome.has-shell-leading button,
+.app-shell.panel-shell-chrome .workspace-preview-chrome.has-shell-leading .btn {
+  -webkit-app-region: no-drag;
+}
+
+.shell-leading-controls,
+.agent-mode-shell-leading {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 0 auto;
+}
+
+.agent-mode-shell-leading {
+  margin-right: 4px;
+}
+
+.file-viewer-shell-leading {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+}
+
+.workspace-preview-empty {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+}
+
+.workspace-preview-chrome {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+  height: var(--toolbar-height);
+  min-height: var(--toolbar-height);
+  padding: 0 10px;
+  border-bottom: 1px solid var(--border);
+  box-sizing: border-box;
+}
+
+.workspace-view-agent-inner {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  flex: 0 0 auto;
+}
+
+.workspace-view-agent-inner.is-collapsed {
+  pointer-events: none;
+}
+
+/* Toast clears the top chrome row when there is no window titlebar. */
+.app-shell.panel-flush-top .app-toast,
+.app-shell.panel-shell-chrome .app-toast {
+  top: 12px;
 }
 
 /* Detached windows carry the session name in the native title bar, so their
@@ -490,13 +845,19 @@ html[data-resizing='true'] .banner.error {
 .btn.primary {
   background: var(--accent);
   border-color: transparent;
-  color: #fff;
+  color: var(--accent-fg);
   font-weight: 500;
   box-shadow: 0 1px 2px color-mix(in srgb, var(--accent) 40%, transparent);
 }
 
 .btn.primary:hover:not(:disabled) {
   background: var(--accent-hover);
+  color: var(--accent-fg);
+}
+
+.btn.primary svg {
+  color: inherit;
+  stroke: currentColor;
 }
 
 .btn.danger {
@@ -559,6 +920,35 @@ button.chip:active {
   background: var(--accent-soft);
   color: var(--accent-text);
   font-weight: 500;
+}
+
+.chip.danger {
+  background: color-mix(in srgb, var(--danger) 14%, var(--bg-hover));
+  color: var(--danger);
+  font-weight: 550;
+}
+
+.chip.danger:hover:not(:disabled):not(.is-disabled) {
+  background: color-mix(in srgb, var(--danger) 20%, var(--bg-hover));
+  color: var(--danger);
+}
+
+.chip.danger svg,
+.chip.danger .chip-main svg {
+  opacity: 1;
+  color: var(--danger);
+}
+
+.chip.is-disabled,
+.chip:disabled {
+  opacity: 0.85;
+  cursor: default;
+  pointer-events: none;
+}
+
+.chip.danger.is-disabled,
+.chip.danger:disabled {
+  opacity: 1;
 }
 
 .chip svg {
@@ -754,9 +1144,21 @@ kbd {
   background: transparent;
 }
 
+/* Docked without .sidebar-column wrapper (no flush chrome): own the material. */
+.app-shell .body-split > .sidebar:not(.floating) {
+  background: color-mix(in srgb, var(--bg-window) 62%, transparent);
+  backdrop-filter: blur(22px) saturate(1.35);
+  -webkit-backdrop-filter: blur(22px) saturate(1.35);
+  box-shadow: inset -1px 0 0 var(--border);
+}
+
+:root[data-theme='dark'] .app-shell .body-split > .sidebar:not(.floating) {
+  background: color-mix(in srgb, var(--bg-window) 72%, transparent);
+}
+
 /* Narrow window: sidebar leaves the flex split and floats over the detail
-   column (see App SidebarSlot). Host is absolute over .body-split so the
-   title bar stay put for toggle / new-session. */
+   column (see App SidebarSlot). Host is absolute over .body-split; window
+   titlebar stays put for toggle / new-session when not panel-flush-top. */
 .sidebar-float-host {
   position: absolute;
   inset: 0;
@@ -794,7 +1196,10 @@ kbd {
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  background: var(--bg-content);
+  /* Glass over the detail column — stronger blur so content reads as “behind”. */
+  background: color-mix(in srgb, var(--bg-content) 66%, transparent);
+  backdrop-filter: blur(28px) saturate(1.45);
+  -webkit-backdrop-filter: blur(28px) saturate(1.45);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-sheet);
@@ -805,6 +1210,10 @@ kbd {
   transition:
     opacity var(--dur-sheet) var(--ease-drawer),
     transform var(--dur-sheet) var(--ease-drawer);
+}
+
+:root[data-theme='dark'] .sidebar-float-panel {
+  background: color-mix(in srgb, var(--bg-content) 74%, transparent);
 }
 
 @starting-style {
@@ -980,8 +1389,19 @@ kbd {
   padding: 0 8px;
   border-radius: 7px;
   cursor: default;
+  user-select: none;
+  -webkit-user-select: none;
   /* Instant select/deselect — no background fade. */
   transition: none;
+}
+
+.conv-row .conv-text,
+.conv-row .conv-title,
+.conv-row .conv-subtitle {
+  pointer-events: none;
+  user-select: none;
+  -webkit-user-select: none;
+  cursor: default;
 }
 
 /* Two-line session rows need a taller cell than settings' single-line nav. */
@@ -1138,13 +1558,51 @@ kbd {
   box-shadow: none;
 }
 
-/* Transcript column; Plan overlays this area without taking layout height. */
+/* Transcript column; Plan overlays this area without taking layout height.
+   ComposerContext (file/quote/comment bubbles) sits at the bottom of this
+   flex column so chip show/hide only shrinks the log — dock stays fixed. */
 .detail-stream {
   position: relative;
   flex: 1;
   min-height: 0;
   display: flex;
   flex-direction: column;
+}
+
+.detail-stream > .transcript,
+.preview-edit-stream > .transcript {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+/* Bubbles above the dock, still inside the Agent log column. */
+.composer-context {
+  flex: 0 0 auto;
+  align-self: center;
+  width: min(100%, var(--reading-max));
+  max-width: var(--reading-max);
+  margin-left: auto;
+  margin-right: auto;
+  padding: 0 var(--composer-gutter) 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  box-sizing: border-box;
+  /* Above scroll content if it peeks under. */
+  position: relative;
+  z-index: 2;
+}
+
+.composer-context.has-comment-cards {
+  gap: 4px;
+}
+
+.preview-edit-stream .composer-context {
+  width: 100%;
+  max-width: none;
+  padding-left: 8px;
+  padding-right: 8px;
 }
 
 .banner {
@@ -1241,6 +1699,864 @@ kbd {
 }
 
 /* ==========================================================================
+   Keychain gate — full-screen multi-step brand onboarding (macOS)
+   Quiet paper surface, one brand mark, no marketing chrome.
+   ========================================================================== */
+
+.keychain-gate {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--bg-content);
+  color: var(--text);
+  -webkit-app-region: no-drag;
+}
+
+/* Single soft wash — not a multi-orb light show. */
+.keychain-gate-wash {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(
+      120% 70% at 50% -10%,
+      var(--accent-veil) 0%,
+      transparent 55%
+    ),
+    radial-gradient(80% 50% at 50% 100%, var(--bg-sunken) 0%, transparent 60%);
+  opacity: 0.9;
+}
+
+/* Traffic lights / drag strip. */
+.keychain-gate-chrome {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: var(--chrome-gutter);
+  -webkit-app-region: drag;
+  z-index: 2;
+}
+
+/* Full-height frame: content centers, footer docks. */
+.keychain-gate-frame {
+  position: relative;
+  z-index: 1;
+  flex: 1;
+  min-height: 0;
+  width: min(400px, calc(100% - 48px));
+  margin: 0 auto;
+  padding: calc(var(--chrome-gutter) + 8px) 0 28px;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  opacity: 0;
+  transform: translateY(8px);
+  transition:
+    opacity 380ms var(--ease-out),
+    transform 420ms var(--ease-out);
+}
+
+.keychain-gate[data-entered='true'] .keychain-gate-frame {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.keychain-gate-main {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 28px;
+  padding: 12px 0 24px;
+}
+
+.keychain-gate-brand {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  -webkit-app-region: no-drag;
+}
+
+/* iOS Icon Composer app icon. */
+.brand-app-icon {
+  display: block;
+  position: relative;
+  flex-shrink: 0;
+  border-radius: 22.37%;
+  overflow: hidden;
+  /* Multi-layer shadow — closer to a real Dock tile than a card edge. */
+  box-shadow:
+    0 1px 1px rgba(20, 20, 28, 0.06),
+    0 8px 24px rgba(20, 20, 28, 0.1),
+    0 20px 40px rgba(20, 20, 28, 0.08);
+}
+
+:root[data-theme='dark'] .brand-app-icon {
+  box-shadow:
+    0 1px 1px rgba(0, 0, 0, 0.35),
+    0 10px 28px rgba(0, 0, 0, 0.35),
+    0 24px 48px rgba(0, 0, 0, 0.28);
+}
+
+.brand-app-icon img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  pointer-events: none;
+}
+
+.brand-app-icon .logo-dark {
+  display: none;
+}
+
+.brand-app-icon .logo-light {
+  display: block;
+}
+
+:root[data-theme='dark'] .brand-app-icon .logo-light {
+  display: none;
+}
+
+:root[data-theme='dark'] .brand-app-icon .logo-dark {
+  display: block;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) .brand-app-icon .logo-light {
+    display: none;
+  }
+  :root:not([data-theme='light']) .brand-app-icon .logo-dark {
+    display: block;
+  }
+}
+
+/* Waiting chip under the mark — same spirit as stream status. */
+.keychain-gate-busy-mark {
+  position: absolute;
+  right: -6px;
+  bottom: -6px;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  background: var(--bg-raised);
+  box-shadow:
+    0 1px 3px rgba(20, 20, 28, 0.14),
+    inset 0 0 0 1px var(--border);
+}
+
+.keychain-gate-busy-mark .logo-dark {
+  display: none;
+}
+
+.keychain-gate-busy-mark .logo-light {
+  display: block;
+}
+
+:root[data-theme='dark'] .keychain-gate-busy-mark .logo-light {
+  display: none;
+}
+
+:root[data-theme='dark'] .keychain-gate-busy-mark .logo-dark {
+  display: block;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) .keychain-gate-busy-mark .logo-light {
+    display: none;
+  }
+  :root:not([data-theme='light']) .keychain-gate-busy-mark .logo-dark {
+    display: block;
+  }
+}
+
+.keychain-gate-busy-sprite {
+  --frames: 4;
+  display: block;
+  width: calc(16px * var(--frames)) !important;
+  max-width: none !important;
+  height: 16px !important;
+  object-fit: fill;
+  will-change: transform;
+  animation: stream-status-mark 0.8s steps(var(--frames)) infinite;
+}
+
+/* Copy block */
+.keychain-gate-panel {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  -webkit-app-region: no-drag;
+  animation: keychain-panel-in 280ms var(--ease-out) both;
+}
+
+@keyframes keychain-panel-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.keychain-gate-stepmeta {
+  margin: 0 0 14px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  line-height: 1;
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
+.keychain-gate-stepnum {
+  font-weight: 600;
+  color: var(--text-secondary);
+  letter-spacing: -0.02em;
+}
+
+.keychain-gate-stepof {
+  font-weight: 500;
+  color: var(--text-tertiary);
+}
+
+.keychain-gate-steplabel {
+  position: relative;
+  padding-left: 9px;
+}
+
+.keychain-gate-steplabel::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 50%;
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: var(--text-tertiary);
+  transform: translateY(-50%);
+  opacity: 0.7;
+}
+
+.keychain-gate-title {
+  margin: 0 0 10px;
+  max-width: 22em;
+  font-size: clamp(22px, 3.6vw, 26px);
+  font-weight: 600;
+  letter-spacing: -0.028em;
+  line-height: 1.2;
+  color: var(--text);
+  text-wrap: balance;
+}
+
+.keychain-gate-body {
+  margin: 0;
+  max-width: 34em;
+  font-size: 14px;
+  line-height: 1.55;
+  color: var(--text-secondary);
+  text-wrap: pretty;
+}
+
+.keychain-gate-aside {
+  margin: 16px 0 0;
+  max-width: 34em;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--text-tertiary);
+  text-wrap: pretty;
+}
+
+/* Privacy rows — hairlines, no glass cards. */
+.keychain-gate-features {
+  list-style: none;
+  margin: 22px 0 0;
+  padding: 0;
+  width: 100%;
+  text-align: left;
+  border-top: 1px solid var(--border);
+}
+
+.keychain-gate-features li {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 14px 2px;
+  border-bottom: 1px solid var(--border);
+}
+
+.keychain-gate-feature-icon {
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  margin-top: 1px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  background: var(--bg-sunken);
+  color: var(--text-secondary);
+}
+
+.keychain-gate-feature-title {
+  font-size: 13.5px;
+  font-weight: 600;
+  letter-spacing: -0.012em;
+  color: var(--text);
+  margin-bottom: 3px;
+}
+
+.keychain-gate-feature-desc {
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--text-secondary);
+  text-wrap: pretty;
+}
+
+.keychain-gate-error {
+  margin-top: 16px;
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: var(--radius);
+  box-sizing: border-box;
+  font-size: 12.5px;
+  line-height: 1.45;
+  text-align: left;
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 9%, var(--bg-raised));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--danger) 18%, transparent);
+}
+
+/* Footer */
+.keychain-gate-footer {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 16px;
+  padding-top: 8px;
+  -webkit-app-region: no-drag;
+}
+
+/* Thin segmented progress — calmer than pill dots. */
+.keychain-gate-progress {
+  display: flex;
+  gap: 6px;
+  width: 100%;
+  max-width: 120px;
+  margin: 0 auto;
+}
+
+.keychain-gate-progress-seg {
+  flex: 1;
+  height: 3px;
+  border-radius: 99px;
+  background: var(--border-strong);
+  opacity: 0.45;
+  transition:
+    background 180ms ease,
+    opacity 180ms ease;
+}
+
+.keychain-gate-progress-seg[data-active='true'],
+.keychain-gate-progress-seg[data-done='true'] {
+  background: var(--text);
+  opacity: 0.88;
+}
+
+.keychain-gate-progress-seg[data-active='true'] {
+  opacity: 1;
+}
+
+.keychain-gate-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 10px;
+  width: 100%;
+}
+
+/* Full-width primary — the only strong surface on the screen. */
+.keychain-gate-cta.btn.primary {
+  width: 100%;
+  height: 40px;
+  min-width: 0;
+  padding: 0 18px;
+  border-radius: 10px;
+  font-size: 14px;
+  font-weight: 560;
+  letter-spacing: -0.012em;
+  box-shadow:
+    0 1px 2px color-mix(in srgb, var(--accent) 28%, transparent),
+    0 4px 12px color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.keychain-gate-back {
+  appearance: none;
+  border: none;
+  background: transparent;
+  margin: 0 auto;
+  padding: 6px 12px;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  cursor: default;
+  border-radius: var(--radius-sm);
+  transition:
+    color var(--dur-hover) ease,
+    background var(--dur-hover) ease,
+    transform var(--dur-press) var(--ease-out);
+}
+
+.keychain-gate-back:hover:not(:disabled) {
+  color: var(--text);
+  background: var(--bg-hover);
+}
+
+.keychain-gate-back:active:not(:disabled) {
+  transform: scale(0.97);
+}
+
+.keychain-gate-back:disabled {
+  opacity: 0.38;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .keychain-gate-frame,
+  .keychain-gate-panel,
+  .keychain-gate-progress-seg {
+    transition: none !important;
+    animation: none !important;
+  }
+
+  .keychain-gate-frame {
+    opacity: 1;
+    transform: none;
+  }
+
+  .keychain-gate-busy-sprite {
+    animation: none !important;
+  }
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .keychain-gate-wash {
+    opacity: 0.35;
+  }
+}
+
+/* ==========================================================================
+   Mind map / Mermaid / DOT / draw.io — full-bleed canvas, no extra chrome
+   ========================================================================== */
+
+.mindmap-view,
+.diagram-file-view,
+.drawio-view {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  height: 100%;
+  background: var(--bg-content);
+}
+
+.mindmap-canvas-scroll,
+.drawio-scroll,
+.diagram-file-scroll {
+  flex: 1;
+  min-height: 0;
+  /* Infinite canvas: content can pan anywhere; never clipped to viewport. */
+  overflow: hidden;
+  position: relative;
+  background: transparent;
+  touch-action: none;
+}
+
+.mindmap-canvas-scroll[data-panning='true'],
+.drawio-scroll[data-panning='true'],
+.diagram-file-scroll[data-panning='true'] {
+  cursor: grabbing;
+}
+
+.canvas-pan-wrapper {
+  position: absolute;
+  left: 0;
+  top: 0;
+  /* Small inset so the canvas has breathing room from the viewport edge. */
+  padding: 24px;
+  transform-origin: 0 0;
+  will-change: transform;
+}
+
+.mindmap-canvas,
+.drawio-canvas {
+  display: block;
+  max-width: none;
+  flex: 0 0 auto;
+  background: transparent;
+}
+
+.mindmap-edge {
+  stroke: var(--border-strong);
+  stroke-width: 1.5;
+}
+
+.mindmap-node-plate {
+  fill: var(--bg-raised);
+  stroke: var(--border-strong);
+  stroke-width: 1;
+  cursor: default;
+  transition:
+    stroke 100ms ease,
+    stroke-dasharray 100ms ease,
+    fill 100ms ease;
+}
+
+.mindmap-node.is-root .mindmap-node-plate {
+  fill: var(--accent-soft);
+  stroke: color-mix(in srgb, var(--accent) 40%, var(--border-strong));
+}
+
+/* Same interaction language as text/office pick: dashed hover → solid selected */
+.mindmap-view.is-selecting .mindmap-node:hover:not(.selected) .mindmap-node-plate {
+  stroke: var(--accent);
+  stroke-width: 1.5;
+  stroke-dasharray: 4 3;
+}
+
+.mindmap-view.is-selecting .mindmap-node.selected .mindmap-node-plate {
+  stroke: var(--accent);
+  stroke-width: 2;
+  stroke-dasharray: none;
+  fill: color-mix(in srgb, var(--accent) 12%, var(--bg-raised));
+}
+
+.mindmap-node-label {
+  fill: var(--text);
+  font-size: 12px;
+  font-family: var(--font-ui);
+  pointer-events: none;
+  user-select: none;
+}
+
+.mindmap-node-input {
+  width: 100%;
+  height: 100%;
+  border: none;
+  border-radius: 6px;
+  padding: 0 6px;
+  font: inherit;
+  font-size: 12px;
+  background: var(--bg-raised);
+  color: var(--text);
+  box-sizing: border-box;
+}
+
+.diagram-file-host {
+  display: inline-block;
+  flex: 0 0 auto;
+  min-width: min(100%, 240px);
+  min-height: 80px;
+  vertical-align: top;
+  background: transparent;
+}
+
+.diagram-file-host svg {
+  display: block;
+  max-width: none;
+  height: auto;
+  background: transparent !important;
+  overflow: visible;
+}
+
+/* Whole-node hit targets: text glyphs never own the pick. */
+.diagram-file-host .diagram-pick-target {
+  cursor: default;
+}
+
+/* Dedicated selection overlay — isolated rect, never leaks onto edges. */
+.diagram-file-host .diagram-select-overlay {
+  pointer-events: none;
+}
+
+.diagram-file-host .diagram-select-rect {
+  fill: none;
+  stroke: transparent;
+  stroke-width: 0;
+  pointer-events: none;
+}
+
+.diagram-file-view.is-selecting .diagram-select-rect.on {
+  stroke: var(--accent);
+  stroke-width: 2;
+  fill: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.diagram-file-host .diagram-pick-target text,
+.diagram-file-host .diagram-pick-target tspan {
+  pointer-events: none;
+}
+
+/*
+ * Hover / selected on SVG node groups — outline via shape stroke
+ * (SVG <g> does not paint CSS ::after reliably).
+ */
+.diagram-file-view.is-selecting
+  .diagram-pick-target:hover:not(.selected)
+  > :is(ellipse, circle, polygon, rect, path.basic, path[stroke]) {
+  stroke: var(--accent) !important;
+  stroke-width: 2px !important;
+  stroke-dasharray: 5 3 !important;
+}
+
+.diagram-file-view.is-selecting .diagram-pick-target.selected > :is(ellipse, circle, polygon, rect),
+.diagram-file-view.is-selecting
+  .diagram-pick-target.selected
+  > path.basic {
+  stroke: var(--accent) !important;
+  stroke-width: 2.5px !important;
+  stroke-dasharray: none !important;
+}
+
+/* Graphviz sometimes nests shape one level deeper */
+.diagram-file-view.is-selecting
+  .diagram-pick-target:hover:not(.selected)
+  > g
+  > :is(ellipse, circle, polygon, rect),
+.diagram-file-view.is-selecting
+  .diagram-pick-target.selected
+  > g
+  > :is(ellipse, circle, polygon, rect) {
+  stroke: var(--accent) !important;
+  stroke-width: 2.5px !important;
+}
+
+.diagram-file-view.is-selecting
+  .diagram-pick-target:hover:not(.selected)
+  > g
+  > :is(ellipse, circle, polygon, rect) {
+  stroke-dasharray: 5 3 !important;
+  stroke-width: 2px !important;
+}
+
+.diagram-file-error {
+  flex-shrink: 0;
+  padding: 12px 20px;
+  text-align: center;
+  font-size: 13px;
+}
+
+.diagram-file-error-hint {
+  margin-top: 4px;
+  font-size: 12px;
+  opacity: 0.75;
+}
+
+.drawio-empty {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 32px 20px;
+  text-align: center;
+  background: var(--bg-content);
+}
+
+.drawio-cell-plate {
+  fill: var(--bg-raised);
+  stroke: var(--border-strong);
+  stroke-width: 1;
+  cursor: default;
+  transition:
+    stroke 100ms ease,
+    stroke-dasharray 100ms ease,
+    fill 100ms ease;
+}
+
+.drawio-view.is-selecting .drawio-cell:hover:not(.selected) .drawio-cell-plate {
+  stroke: var(--accent);
+  stroke-width: 1.5;
+  stroke-dasharray: 4 3;
+}
+
+.drawio-view.is-selecting .drawio-cell.selected .drawio-cell-plate {
+  stroke: var(--accent);
+  stroke-width: 2;
+  stroke-dasharray: none;
+  fill: color-mix(in srgb, var(--accent) 12%, var(--bg-raised));
+}
+
+.drawio-cell-label {
+  fill: var(--text);
+  font-size: 11px;
+  font-family: var(--font-ui);
+  pointer-events: none;
+  user-select: none;
+}
+
+/* Floating zoom controls — shared by mind map / mermaid / graphviz / draw.io */
+.canvas-zoom-controls {
+  position: absolute;
+  right: 16px;
+  bottom: 16px;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 4px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--bg-raised) 88%, transparent);
+  border: 1px solid var(--border);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.18);
+  backdrop-filter: blur(6px);
+  z-index: 5;
+  user-select: none;
+}
+
+.canvas-zoom-btn,
+.canvas-zoom-readout {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 28px;
+  height: 26px;
+  padding: 0 6px;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  border-radius: 6px;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 100ms ease;
+}
+
+.canvas-zoom-btn:hover,
+.canvas-zoom-readout:hover {
+  background: var(--bg-hover);
+}
+
+.canvas-zoom-readout {
+  min-width: 48px;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+
+/* ==========================================================================
+   Compaction log (manual context compress) — plain text, no card chrome
+   ========================================================================== */
+
+.compaction-log {
+  margin: 8px 0 12px;
+  padding: 0;
+}
+
+.compaction-log-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.compaction-log-toggle {
+  flex: 1;
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-tertiary);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  text-align: left;
+  cursor: default;
+}
+
+.compaction-log-toggle svg {
+  flex: 0 0 auto;
+  opacity: 0.75;
+}
+
+.compaction-log-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-code);
+  font-size: 11.5px;
+}
+
+.compaction-log-summary {
+  margin: 6px 0 0;
+  padding: 0 0 0 18px;
+  border: 0;
+  background: transparent;
+  font-family: var(--font-code);
+  font-size: 12px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  color: var(--text-secondary);
+  max-height: 240px;
+  overflow: auto;
+}
+
+.token-usage-compact-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.token-usage-btn {
+  height: 28px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: var(--accent);
+  color: var(--accent-fg);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 550;
+  cursor: default;
+}
+
+.token-usage-btn:disabled {
+  opacity: 0.45;
+}
+
+.token-usage-btn.secondary {
+  background: var(--bg-sunken);
+  color: var(--text);
+  box-shadow: inset 0 0 0 1px var(--border);
+}
+
+.token-usage-compact-note {
+  margin-top: 8px;
+  font-size: 11.5px;
+  color: var(--text-secondary);
+  font-family: var(--font-code);
+}
+
+/* ==========================================================================
    Messages
    ========================================================================== */
 
@@ -1306,9 +2622,12 @@ kbd {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  /* Room for floated hover actions without a permanent empty band. */
-  padding-bottom: 2px;
   user-select: text;
+}
+
+.message.assistant:hover,
+.message.assistant:focus-within {
+  z-index: 4;
 }
 
 .message.system {
@@ -1435,13 +2754,91 @@ kbd {
   color: var(--text-secondary);
 }
 
-/* Mermaid diagrams in markdown (chat + file preview). */
-.md-mermaid-wrap > .md-mermaid {
+/* Diagram fences: visual-first (no source pre flash while streaming). */
+.md-diagram-wrap > .md-diagram,
+.md-mermaid-wrap > .md-mermaid,
+.md-diagram-wrap > .md-mermaid {
   padding: 12px 14px;
   overflow-x: auto;
-  background: var(--bg-content);
+  overflow-y: visible;
+  background: transparent;
+  min-height: 72px;
 }
 
+/* Vega cards: don't clip axis labels under overflow:hidden on .md-block. */
+.md-block.md-vegalite-wrap {
+  overflow: visible;
+}
+
+.md-diagram.m-d-diagram-live,
+.md-diagram-live {
+  min-height: 72px;
+}
+
+/*
+ * Diagram pending: quiet label + three bouncing dots (not a skeleton bar).
+ * Used for Vega-Lite / Mermaid / Graphviz while the first frame paints.
+ */
+.md-diagram-pending {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  min-height: 88px;
+  padding: 20px 16px;
+  box-sizing: border-box;
+  user-select: none;
+}
+
+.md-diagram-pending-label {
+  font-size: 12px;
+  letter-spacing: 0.01em;
+  color: var(--text-tertiary);
+}
+
+.md-diagram-pending-dots {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 12px;
+}
+
+.md-diagram-pending-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--text-tertiary);
+  opacity: 0.35;
+  animation: md-diagram-dot 1.05s ease-in-out infinite;
+}
+
+.md-diagram-pending-dot:nth-child(2) {
+  animation-delay: 0.16s;
+}
+
+.md-diagram-pending-dot:nth-child(3) {
+  animation-delay: 0.32s;
+}
+
+@keyframes md-diagram-dot {
+  0%,
+  80%,
+  100% {
+    opacity: 0.28;
+    transform: translateY(0);
+  }
+  40% {
+    opacity: 0.95;
+    transform: translateY(-3px);
+  }
+}
+
+:root[data-reduce-motion='true'] .md-diagram-pending-dot {
+  animation: none;
+  opacity: 0.55;
+}
+
+.md-diagram svg,
 .md-mermaid svg {
   max-width: 100%;
   height: auto;
@@ -1449,14 +2846,48 @@ kbd {
   margin: 0 auto;
 }
 
-.md-mermaid-fallback {
-  margin: 0;
-  font-family: var(--font-code);
-  font-size: var(--code-size);
-  white-space: pre-wrap;
-  color: var(--text-secondary);
+/*
+ * Mermaid timeline hardcodes black strokes and bare <text> titles (no fill).
+ * Safety net when post-render adapt misses a node or theme flips mid-paint.
+ */
+:root[data-theme='dark'] .md-mermaid svg text:not([fill]),
+:root[data-theme='dark'] .md-mermaid svg text[fill='black'],
+:root[data-theme='dark'] .md-mermaid svg text[fill='#000'],
+:root[data-theme='dark'] .md-mermaid svg text[fill='#000000'],
+:root[data-theme='dark'] .md-diagram.md-mermaid svg text:not([fill]),
+:root[data-theme='dark'] .md-diagram.md-mermaid svg text[fill='black'] {
+  fill: #efeff1 !important;
 }
 
+:root[data-theme='dark'] .md-mermaid svg line[stroke='black'],
+:root[data-theme='dark'] .md-mermaid svg line[stroke='#000'],
+:root[data-theme='dark'] .md-mermaid svg line[stroke='#000000'],
+:root[data-theme='dark'] .md-mermaid svg path[stroke='black'],
+:root[data-theme='dark'] .md-mermaid svg path[stroke='#000'],
+:root[data-theme='dark'] .md-mermaid svg polyline[stroke='black'],
+:root[data-theme='dark'] .md-diagram.md-mermaid svg line[stroke='black'] {
+  stroke: #a2a2a9 !important;
+}
+
+:root[data-theme='dark'] .md-mermaid svg marker path,
+:root[data-theme='dark'] .md-mermaid svg marker polygon {
+  fill: #a2a2a9 !important;
+}
+
+.md-diagram-img {
+  max-width: 100%;
+  height: auto;
+  display: block;
+  margin: 0 auto;
+}
+
+/* Source pre only as last-resort / legacy — hidden once we are in visual mode. */
+.md-diagram-fallback,
+.md-mermaid-fallback {
+  display: none;
+}
+
+.md-diagram-error,
 .md-mermaid-error {
   padding: 10px 12px;
   color: var(--danger);
@@ -1464,8 +2895,75 @@ kbd {
   white-space: pre-wrap;
 }
 
-.md-mermaid-ready .md-mermaid-fallback {
+.md-diagram-error-msg {
+  padding: 4px 0;
+  color: var(--danger);
+  font-size: 12px;
+}
+
+/* Vega-Lite: fill the card width; keep vertical room for axis labels. */
+.md-vegalite-wrap .md-diagram,
+.md-vegalite {
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+  padding: 12px 14px 18px;
+  overflow-x: auto;
+  overflow-y: visible;
+}
+
+.md-vegalite .vega-embed,
+.md-vegalite details {
+  width: 100% !important;
+  max-width: 100% !important;
+  display: block !important;
+  margin: 0 auto;
+  overflow: visible !important;
+}
+
+.md-vegalite .vega-embed summary {
   display: none;
+}
+
+/* Scale via viewBox when present; never clip labels. */
+.md-vegalite .vega-embed > svg,
+.md-vegalite svg {
+  max-width: 100%;
+  width: 100%;
+  height: auto;
+  display: block;
+  margin: 0 auto;
+  overflow: visible;
+}
+
+/* Clickable file paths in agent log. */
+a.md-file-link {
+  color: var(--accent-text);
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, var(--accent) 45%, transparent);
+  text-underline-offset: 2px;
+  cursor: pointer;
+  word-break: break-all;
+}
+
+a.md-file-link:hover {
+  color: var(--accent-hover, var(--accent));
+  text-decoration-color: var(--accent);
+}
+
+code.md-file-code {
+  padding: 0.1em 0.35em;
+  border-radius: 4px;
+  background: var(--bg-sunken);
+}
+
+code.md-file-code a.md-file-link {
+  text-decoration: none;
+  font-family: inherit;
+}
+
+code.md-file-code a.md-file-link:hover {
+  text-decoration: underline;
 }
 
 .message-user-context .context-refs,
@@ -1532,6 +3030,12 @@ mark {
   margin-bottom: 0;
 }
 
+/*
+ * Code / table / diagram chrome:
+ * - OUTER .md-block keeps the single card (radius + border + fill + Copy bar).
+ * - INNER pre must NOT re-apply radius/border (that was the nested double frame).
+ * Rules that strip the inner chrome MUST come after `.markdown pre` so they win.
+ */
 .md-block {
   margin: 0 0 var(--md-block);
   border-radius: var(--radius);
@@ -1586,19 +3090,8 @@ mark {
   color: var(--success);
 }
 
-.md-block > pre {
-  margin: 0;
-  border-radius: 0;
-  background: transparent;
-}
-
-.md-block > .table-scroll {
-  margin: 0;
-  border-radius: 0;
-  background: transparent;
-}
-
-/* Code is never rewrapped to fit: a line that does not fit scrolls sideways. */
+/* Code is never rewrapped to fit: a line that does not fit scrolls sideways.
+   Bare <pre> (no Copy bar) keeps its own card. Nested under .md-block is reset below. */
 .markdown pre {
   margin: 0 0 var(--md-block);
   padding: 12px 14px;
@@ -1607,6 +3100,29 @@ mark {
   line-height: 1.55;
   overflow-x: auto;
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--border) 65%, transparent);
+}
+
+/* AFTER .markdown pre — strip INNER frame only; keep OUTER .md-block shell. */
+.markdown .md-block > pre,
+.markdown .md-block pre,
+.markdown .md-block > .table-scroll {
+  margin: 0;
+  padding: 12px 14px;
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+.markdown .md-block.md-diagram-wrap > .md-diagram,
+.markdown .md-block.md-mermaid-wrap > .md-mermaid,
+.markdown .md-block.md-diagram-wrap > .md-mermaid {
+  margin: 0;
+  padding: 12px 14px;
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
 }
 
 .markdown pre code {
@@ -1759,6 +3275,14 @@ mark {
   margin-top: var(--md-section);
 }
 
+/* File preview only: hyperlinks are visual (clicks suppressed). Chat/agent
+   markdown keeps normal link cursor via .markdown a without this override. */
+.preview-markdown a:not(.md-file-link),
+.file-viewer-body a[href]:not(.md-file-link),
+.office-native-root a[href] {
+  cursor: text;
+}
+
 .markdown a {
   color: var(--accent-text);
   text-underline-offset: 2px;
@@ -1898,21 +3422,44 @@ mark {
   padding-bottom: 6px;
 }
 
-/* Hover icon chrome under a finished message (edit / copy / …).
-   Out of flow so hidden (opacity:0) rows do not leave a tall empty gap
-   between You and Agent. */
+/*
+ * Assistant tail: hover action strip, then Done at the very bottom.
+ * Actions live in a fixed-height slot above .message-footer so they never
+ * paint under Done (old absolute bottom:0 on the whole message did that).
+ */
+.message-tail {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  margin-top: 2px;
+  width: 100%;
+}
+
+.message-actions-slot {
+  position: relative;
+  height: 24px;
+  width: 100%;
+  flex: 0 0 auto;
+}
+
+/* Hover icon chrome under a finished message (edit / copy / …). */
 .message-actions {
   display: flex;
   align-items: center;
   gap: 1px;
   position: absolute;
   left: 0;
-  top: 100%;
-  margin-top: 2px;
-  z-index: 2;
+  z-index: 5;
   opacity: 0;
   pointer-events: none;
   transition: opacity var(--dur-hover) ease;
+}
+
+/* Assistant: actions sit in .message-actions-slot above Done. */
+.message-tail .message-actions {
+  top: 0;
+  bottom: auto;
 }
 
 .message-actions .btn {
@@ -1929,12 +3476,14 @@ mark {
 
 .message.assistant:hover .message-actions,
 .message-group:hover .message-actions,
-.message-group:focus-within .message-actions {
+.message-group:focus-within .message-actions,
+/* Keep strip live while the pointer is on the buttons themselves. */
+.message-actions:hover {
   opacity: 1;
   pointer-events: auto;
 }
 
-/* Prompt → actions → branch pager. Actions float; pager stays in flow. */
+/* Prompt → actions → branch pager. Actions float inside bottom padding. */
 .message-group.user {
   position: relative;
   display: flex;
@@ -1942,8 +3491,13 @@ mark {
   align-items: stretch;
   gap: 4px;
   max-width: 100%;
-  /* Small anchor pad so the floated action strip has a hover runway. */
-  padding-bottom: 2px;
+  /* Reserved band for the absolute action strip (24px + 2px air). */
+  padding-bottom: 28px;
+}
+
+.message-group.user:hover,
+.message-group.user:focus-within {
+  z-index: 4;
 }
 
 .message-group.user .message.user {
@@ -1951,6 +3505,8 @@ mark {
 }
 
 .message-group.user .message-actions {
+  top: auto;
+  bottom: 0;
   flex: 0 0 auto;
   align-self: flex-start;
 }
@@ -1985,7 +3541,7 @@ mark {
 }
 
 .message-edit-actions .btn.primary {
-  color: #fff;
+  color: var(--accent-fg);
   background: var(--accent);
   border-color: transparent;
   box-shadow: 0 1px 2px color-mix(in srgb, var(--accent) 40%, transparent);
@@ -1993,7 +3549,7 @@ mark {
 
 .message-edit-actions .btn.primary:hover:not(:disabled) {
   background: var(--accent-hover);
-  color: #fff;
+  color: var(--accent-fg);
 }
 
 .message-edit-actions .btn:not(.primary) {
@@ -2008,13 +3564,17 @@ mark {
   background: var(--bg-hover);
 }
 
-/* Last line under an agent turn: branch pager (if any) + Done. */
+/* Last line under an agent turn: branch pager (if any) + Done (below actions). */
 .message-footer {
   display: flex;
   align-items: center;
   gap: 10px;
-  margin-top: 8px;
+  margin-top: 0;
   min-height: 18px;
+}
+
+.message-tail .message-footer {
+  margin-top: 0;
 }
 
 .message-footer .variant-pager {
@@ -2185,25 +3745,32 @@ mark {
   display: flex;
   align-items: center;
   gap: 6px;
-  margin-top: 10px;
+  margin-top: 0;
   font-size: 11px;
   letter-spacing: 0.02em;
   line-height: 1.2;
   user-select: none;
 }
 
+/* Live streaming status (no message-tail yet) still needs a little air. */
+.message.assistant > .stream-status,
+.streaming-message .stream-status {
+  margin-top: 10px;
+}
+
 .stream-status[data-state='done'] {
   color: var(--text-tertiary);
 }
 
-/* Flip-book / settled mark — black ink on transparent; dim + invert on dark. */
+/* Flip-book / settled mark — themed spirit strips (light black / dark soft gray). */
 .stream-status-mark {
   flex-shrink: 0;
   display: block;
+  position: relative;
   width: 16px;
   height: 16px;
   overflow: hidden;
-  opacity: 0.55;
+  opacity: 0.7;
 }
 
 .stream-status-mark img {
@@ -2214,26 +3781,47 @@ mark {
   pointer-events: none;
 }
 
-/* 6-frame strip: steps(N) + translateX(-100%) jumps exactly one cell per tick.
-   Ending at (-100% + cell) made each step ~13px and looked like a horizontal pan. */
+/* Theme swap: same pattern as empty-logo wordmarks. */
+.stream-status-mark .logo-dark {
+  display: none;
+}
+
+.stream-status-mark .logo-light {
+  display: block;
+}
+
+:root[data-theme='dark'] .stream-status-mark .logo-light {
+  display: none;
+}
+
+:root[data-theme='dark'] .stream-status-mark .logo-dark {
+  display: block;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) .stream-status-mark .logo-light {
+    display: none;
+  }
+  :root:not([data-theme='light']) .stream-status-mark .logo-dark {
+    display: block;
+  }
+}
+
+/* 4-frame spirit strip: steps(N) + translateX(-100%) jumps one cell per tick. */
 .stream-status-mark-sprite {
-  --frames: 6;
+  --frames: 4;
   width: calc(16px * var(--frames)) !important;
   max-width: none !important;
   height: 16px !important;
   object-fit: fill;
   will-change: transform;
-  animation: stream-status-mark 0.9s steps(var(--frames)) infinite;
+  animation: stream-status-mark 0.8s steps(var(--frames)) infinite;
 }
 
 @keyframes stream-status-mark {
   to {
     transform: translateX(-100%);
   }
-}
-
-:root[data-theme='dark'] .stream-status-mark img {
-  filter: invert(1);
 }
 
 .stream-status-shimmer {
@@ -3071,13 +4659,179 @@ mark {
 
 .sidebar-archive-foot {
   flex: 0 0 auto;
-  padding: 6px 10px 10px;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 6px 8px 10px;
 }
 
 .sidebar-archive-btn {
-  width: 100%;
+  flex: 1 1 auto;
+  min-width: 0;
   justify-content: flex-start;
   gap: 6px;
+}
+
+.sidebar-foot-more {
+  flex: 0 0 auto;
+  color: var(--text-secondary);
+}
+
+.sidebar-foot-more:hover {
+  color: var(--text);
+}
+
+/*
+ * File sessions: dedicated flat rows (not .conv-row) so multi-select / group
+ * styles never indent “dir not exist” items under a neighbor.
+ */
+.file-session-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  margin: 0;
+  padding: 2px 4px 8px;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.file-session-item {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
+  width: 100%;
+  box-sizing: border-box;
+  margin: 0;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: default;
+  min-height: 38px;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.file-session-item:hover {
+  background: var(--bg-hover);
+}
+
+.file-session-item.is-active {
+  background: var(--bg-selected);
+}
+
+.file-session-item-title,
+.file-session-item-sub {
+  /* Text must not take the first click (I-beam / partial select). */
+  pointer-events: none;
+  user-select: none;
+  -webkit-user-select: none;
+  cursor: default;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-session-item-title {
+  font-size: 12.5px;
+  font-weight: 450;
+  letter-spacing: -0.005em;
+  color: var(--text);
+}
+
+.file-session-item.is-active .file-session-item-title {
+  font-weight: 500;
+}
+
+.file-session-item-sub {
+  font-size: 10.5px;
+  font-weight: 400;
+  letter-spacing: 0.01em;
+  color: var(--text-tertiary);
+}
+
+.file-session-item.is-missing .file-session-item-sub {
+  color: color-mix(in srgb, var(--danger) 55%, var(--text-tertiary));
+}
+
+.file-session-item.is-active .file-session-item-sub {
+  color: color-mix(in srgb, var(--text-tertiary) 55%, var(--accent-text));
+}
+
+.file-session-item.is-active.is-missing .file-session-item-sub {
+  color: color-mix(in srgb, var(--danger) 45%, var(--accent-text));
+}
+
+.files-missing-root {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: center;
+  padding: 12px 10px 20px;
+}
+
+.files-missing-nested {
+  padding-top: 6px;
+  padding-bottom: 6px;
+}
+
+/* File sessions main panel: same split as workspace (file | agent). */
+.file-session-view {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+
+.file-session-preview {
+  min-width: 0;
+  min-height: 0;
+}
+
+/* Missing / loading: same top bar geometry as FileViewer embedded header. */
+.file-session-missing {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.file-session-missing-header.file-viewer-header {
+  padding: 0 10px;
+  height: var(--toolbar-height);
+  min-height: var(--toolbar-height);
+}
+
+.file-session-missing-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: center;
+}
+
+.file-session-missing-body > .empty-state {
+  flex: 1;
+}
+
+/*
+ * File session has no workspace-style session head above the agent — only
+ * AgentModeChrome. Use full toolbar height so it lines up with the file header
+ * (workspace keeps a compact chrome under its own session select row).
+ */
+.file-session-view .workspace-view-agent .terminal-host-chrome,
+.file-session-view .workspace-view-agent .agent-mode-chrome {
+  height: var(--toolbar-height);
+  min-height: var(--toolbar-height);
+  padding: 0 10px;
+  box-sizing: border-box;
 }
 
 .sidebar-archive-count {
@@ -3096,11 +4850,49 @@ mark {
   align-items: center;
   gap: 6px;
   padding: 2px 0;
+  min-width: 0;
+}
+
+/* Arrow + title share one hit target (text click returns too). */
+.sidebar-archive-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  max-width: 100%;
+  margin: 0;
+  padding: 4px 6px 4px 4px;
+  border: 0;
+  border-radius: var(--radius-sm, 6px);
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  cursor: default;
+  text-align: left;
+  /* Never I-beam / select on chrome labels — first click must activate. */
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.sidebar-archive-back:hover {
+  background: var(--bg-hover);
+}
+
+.sidebar-archive-back:active {
+  background: var(--bg-active, var(--bg-hover));
 }
 
 .sidebar-archive-title {
   font-size: 12px;
   font-weight: 550;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  /* Hit target is the button; text nodes must not steal the first click. */
+  pointer-events: none;
+  user-select: none;
+  -webkit-user-select: none;
+  cursor: default;
 }
 
 .ask-card.submitting {
@@ -3942,6 +5734,13 @@ mark {
   flex: 0 0 auto;
 }
 
+/* Finder line mark (macOS) — same stroke/color as Lucide toolbar icons. */
+.file-manager-icon {
+  display: block;
+  flex-shrink: 0;
+  pointer-events: none;
+}
+
 .files-browser {
   flex: 1;
   min-height: 0;
@@ -4008,11 +5807,62 @@ mark {
   min-height: 100vh;
 }
 
+/*
+ * Standalone: file | agent columns both flush to the window top
+ * (same geometry language as FileSessionView in the main shell).
+ */
+.file-preview-columns {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+  width: 100%;
+}
+
+.file-preview-file-col {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
 .file-preview-main {
   display: flex;
   flex: 1;
   min-height: 0;
   overflow: hidden;
+}
+
+/* Agent column is a peer of the file column (full height), not under the file header. */
+.file-preview-shell:not(.embedded) .preview-agent-panel {
+  flex: 0 0 auto;
+  align-self: stretch;
+  height: auto;
+  max-height: none;
+  border-left: 1px solid var(--border);
+}
+
+/* Align agent chrome with the 42px file titlebar row. */
+.file-preview-shell:not(.embedded) .preview-agent-panel .agent-mode-chrome,
+.file-preview-shell:not(.embedded) .preview-agent-panel .terminal-host-chrome,
+.file-preview-shell:not(.embedded) .preview-agent-panel .preview-file-session-bar {
+  height: 42px;
+  min-height: 42px;
+  box-sizing: border-box;
+  -webkit-app-region: drag;
+}
+
+.file-preview-shell:not(.embedded) .preview-agent-panel .agent-mode-chrome button,
+.file-preview-shell:not(.embedded) .preview-agent-panel .agent-mode-chrome label,
+.file-preview-shell:not(.embedded) .preview-agent-panel .agent-mode-chrome select,
+.file-preview-shell:not(.embedded) .preview-agent-panel .agent-mode-chrome input,
+.file-preview-shell:not(.embedded) .preview-agent-panel .agent-mode-chrome .btn,
+.file-preview-shell:not(.embedded) .preview-agent-panel .preview-file-session-bar button,
+.file-preview-shell:not(.embedded) .preview-agent-panel .preview-file-session-bar .btn {
+  -webkit-app-region: no-drag;
 }
 
 .file-preview-shell .file-viewer-body {
@@ -4021,7 +5871,21 @@ mark {
   min-height: 0;
   display: flex;
   flex-direction: column;
+  /* Scroll long markdown / tall images; media + document fill rules refine this. */
+  overflow: auto;
+  overscroll-behavior: contain;
+  /* Body is user-select:none app-wide — reading previews must opt back in. */
+  user-select: text;
+  -webkit-user-select: text;
+  cursor: text;
   /* Default paper padding for text/md; office/html zero-pad via :has(). */
+}
+
+/* Block-pick chrome active — click picks for Agent; drag still selects text for copy. */
+.file-preview-shell .file-viewer-body.selecting.pick-mode {
+  user-select: text;
+  -webkit-user-select: text;
+  cursor: text;
 }
 
 .file-preview-shell .file-viewer-body > .file-viewer-code.continuous {
@@ -4059,9 +5923,11 @@ mark {
   box-sizing: border-box;
 }
 
-/* Embedded (workspace view): no traffic-light padding. */
+/* Embedded (workspace): same row height as sidebar chrome + agent head. */
 .file-preview-shell.embedded .file-viewer-header {
   padding: 0 10px;
+  height: var(--toolbar-height);
+  min-height: var(--toolbar-height);
 }
 
 .file-viewer-lead {
@@ -4099,9 +5965,10 @@ mark {
    overlay outline on hover/selected — never a source-editor layout swap.
    Shared tokens across MD / code / notebook / media / CSV / DOCX / PDF / PPTX / XLSX.
    Hover + selected update instantly (no transition). Parent rings are suppressed
-   while a nested pick target is hovered (:has). */
+   while a nested pick target is hovered (:has).
+   Chrome lives on ::after with pointer-events:none so text select/copy is free. */
 .file-viewer-body.selecting {
-  cursor: default;
+  cursor: text;
 }
 
 .preview-document.selecting .preview-select-region,
@@ -4113,12 +5980,12 @@ mark {
 .office-native-root.selecting .pdf-page.pdf-pick-page,
 .office-native-root.selecting .pdf-page .textLayer span {
   border-radius: 2px;
-  outline: 1px solid transparent;
-  outline-offset: -1px;
   transition: none;
+  user-select: text;
+  -webkit-user-select: text;
 }
 
-/* Flow targets get relative for outline; PDF textLayer spans stay absolute. */
+/* Flow targets get relative for ::after chrome; PDF textLayer spans stay absolute. */
 .preview-document.selecting .preview-select-region,
 .preview-notebook-cell.preview-select-region,
 .office-native-root.selecting .preview-select-region,
@@ -4127,7 +5994,27 @@ mark {
   position: relative;
 }
 
-/* MD/notebook shrink-wrap content; office/PDF keep their natural boxes. */
+/* Pick chrome box — never intercepts pointer (text drag/copy works through it). */
+.preview-document.selecting .preview-select-region::after,
+.preview-notebook-cell.preview-select-region::after,
+.preview-media-stage > .preview-select-region::after,
+.file-viewer-media.preview-select-region::after,
+.office-native-root.selecting .preview-select-region::after,
+.office-native-root.selecting .office-pick-target::after,
+.office-native-root.selecting .pdf-page.pdf-pick-page::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 2px;
+  outline: 1px solid transparent;
+  outline-offset: -1px;
+  pointer-events: none;
+  z-index: 1;
+  transition: none;
+}
+
+/* MD/notebook shrink-wrap content; office/PDF keep their natural boxes.
+   Images need full width of the measure so tall assets aren't squeezed. */
 .preview-document.selecting .preview-select-region,
 .preview-notebook-cell.preview-select-region {
   width: fit-content;
@@ -4135,38 +6022,57 @@ mark {
   max-width: 100%;
 }
 
+.preview-document.selecting .preview-select-region:has(img),
+.preview-document.selecting .preview-select-region:has(picture) {
+  width: 100%;
+  max-width: 100%;
+  height: auto;
+}
+
 /* Hover only when not selected — solid selected outline must not flip to dashed.
    Deepest target only: parents with a hovered descendant stay quiet. */
 .preview-document.selecting
-  .preview-select-region:hover:not(.selected):not(:has(.preview-select-region:hover)),
-.preview-notebook-cell.preview-select-region:hover:not(.selected),
-.preview-media-stage > .preview-select-region:hover:not(.selected),
-.file-viewer-media.preview-select-region:hover:not(.selected),
+  .preview-select-region:hover:not(.selected):not(:has(.preview-select-region:hover))::after,
+.preview-notebook-cell.preview-select-region:hover:not(.selected)::after,
+.preview-media-stage > .preview-select-region:hover:not(.selected)::after,
+.file-viewer-media.preview-select-region:hover:not(.selected)::after,
 .office-native-root.selecting
   .preview-select-region:hover:not(.selected):not(:has(.preview-select-region:hover)):not(
     :has(.office-pick-target:hover)
-  ),
+  )::after,
 .office-native-root.selecting
-  .office-pick-target:hover:not(.selected):not(:has(.office-pick-target:hover)),
+  .office-pick-target:hover:not(.selected):not(:has(.office-pick-target:hover))::after,
 .office-native-root.selecting
   .pdf-page.pdf-pick-page:hover:not(.selected):not(:has(.textLayer span:hover)):not(
     :has(.textLayer span.hovered)
-  ),
+  )::after {
+  outline: 1px dashed var(--accent);
+  outline-offset: -1px;
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+}
+
+/* PDF textLayer spans: keep direct outline (absolute positioning + ::after is noisy). */
 .office-native-root.selecting .pdf-page.pdf-pick-page.hovered:not(.selected),
 .office-native-root.selecting .pdf-page .textLayer span.hovered:not(.selected),
 .office-native-root.selecting .pdf-page .textLayer span:hover:not(.selected) {
   outline: 1px dashed var(--accent);
   outline-offset: -1px;
   background: color-mix(in srgb, var(--accent) 6%, transparent);
+  pointer-events: auto;
 }
 
-.preview-document.selecting .preview-select-region.selected,
-.preview-notebook-cell.preview-select-region.selected,
-.preview-media-stage > .preview-select-region.selected,
-.file-viewer-media.preview-select-region.selected,
-.office-native-root.selecting .preview-select-region.selected,
-.office-native-root.selecting .office-pick-target.selected,
-.office-native-root.selecting .pdf-page.pdf-pick-page.selected,
+.preview-document.selecting .preview-select-region.selected::after,
+.preview-notebook-cell.preview-select-region.selected::after,
+.preview-media-stage > .preview-select-region.selected::after,
+.file-viewer-media.preview-select-region.selected::after,
+.office-native-root.selecting .preview-select-region.selected::after,
+.office-native-root.selecting .office-pick-target.selected::after,
+.office-native-root.selecting .pdf-page.pdf-pick-page.selected::after {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
 .office-native-root.selecting .pdf-page .textLayer span.selected {
   outline: 2px solid var(--accent);
   outline-offset: -1px;
@@ -4174,37 +6080,70 @@ mark {
 }
 
 /* Image/video pick: outline only, no accent wash over the pixels. */
-.preview-media-stage > .preview-select-region.selected,
-.preview-media-stage > .preview-select-region:hover:not(.selected),
-.file-viewer-media.preview-select-region.selected,
-.file-viewer-media.preview-select-region:hover:not(.selected) {
+.preview-media-stage > .preview-select-region.selected::after,
+.preview-media-stage > .preview-select-region:hover:not(.selected)::after,
+.file-viewer-media.preview-select-region.selected::after,
+.file-viewer-media.preview-select-region:hover:not(.selected)::after {
   background: transparent;
   outline-offset: 2px; /* sit just outside the painted media edge */
 }
 
 /*
- * Media stage: definite box so max-height:100% on the media works.
- * Grid + place-items centers; img/video scale with object-fit: contain.
- * Pick outline is on the media element itself (not a full-stage frame).
+ * Media stage: short images center in the viewport; tall images (HEIC etc.)
+ * keep native height so the body/scroll stack can scroll. Never overflow:hidden
+ * here — that clipped long photos and blocked meta text selection.
  */
-.preview-media-stage {
-  flex: 1 1 auto;
+.file-viewer-body:has(> .preview-media-stage),
+.file-viewer-body:has(.preview-media-stage),
+.file-viewer-body:has(> .file-viewer-image-meta-flat),
+.file-viewer-body:has(> .file-viewer-image-scroll) {
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+  /* Sole scrollport for meta + tall image. */
+  overflow: auto;
+  overscroll-behavior: contain;
   min-height: 0;
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+/* Stack meta + image as one scrollable column (HEIC EXIF + tall decode). */
+.file-viewer-image-scroll {
+  flex: 0 0 auto;
   width: 100%;
-  height: 100%;
-  display: grid;
-  place-items: center;
-  overflow: hidden;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.preview-media-stage {
+  /* Grow with content; do not flex-shrink the image into a clipped box. */
+  flex: 0 0 auto;
+  width: 100%;
+  min-height: 0;
+  height: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  overflow: visible;
   padding: 24px;
   box-sizing: border-box;
+  /* Don't steal text selection from meta above / captions. */
+  user-select: text;
+  -webkit-user-select: text;
 }
 
 .preview-media-stage > .file-viewer-media,
 .preview-media-stage > img,
 .preview-media-stage > video,
-.preview-media-stage > audio {
+.preview-media-stage > audio,
+.preview-media-stage .file-viewer-media {
   max-width: 100%;
-  max-height: 100%;
+  /* No max-height:100% — tall images must expand the scroll container. */
+  max-height: none;
   width: auto;
   height: auto;
   min-width: 0;
@@ -4212,13 +6151,62 @@ mark {
   object-fit: contain;
 }
 
-/* Outline on the media box (rendered size after contain), not the stage. */
-.preview-media-stage > .preview-select-region {
+/* Prefer viewport fit for video; still scrollable if taller than the window. */
+.preview-media-stage video.file-viewer-video,
+.preview-media-stage > video.file-viewer-media {
+  max-height: min(80vh, 900px);
+}
+
+/*
+ * Native <audio controls> needs a real width. Never apply flex/pick layout to
+ * the media element itself — only to the outer frame.
+ */
+.preview-media-stage audio.file-viewer-audio,
+.preview-media-stage audio.file-viewer-media {
+  display: block;
+  width: min(100%, 480px);
+  min-width: min(100%, 280px);
+  height: 40px;
+  max-height: none;
+}
+
+.file-viewer-audio-card {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 12px;
+  width: min(100%, 480px);
+  min-width: min(100%, 280px);
+  padding: 16px 18px;
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--bg-raised) 90%, var(--bg-sunken));
+  box-shadow: inset 0 0 0 1px var(--border);
+  box-sizing: border-box;
+}
+
+.file-viewer-audio-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Outline on the media frame (wrapper), not on native <audio>/<video>. */
+.preview-media-stage > .preview-select-region,
+.preview-media-stage > .media-pick-frame {
   width: auto !important;
   height: auto !important;
   max-width: 100%;
-  max-height: 100%;
+  max-height: none;
   position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  /* Room for the pick outline around the player card. */
+  padding: 4px;
+  box-sizing: border-box;
 }
 
 .preview-source-editor {
@@ -4417,6 +6405,8 @@ mark {
   flex-direction: column;
   padding: 0;
   overflow: hidden;
+  /* Host is not the scrollport — inner .docx-body-host / stages scroll. */
+  cursor: default;
 }
 
 .office-native-root {
@@ -4427,6 +6417,15 @@ mark {
   overflow: hidden;
   /* Document viewers share one stage colour (paper sits on sunken desk). */
   background: var(--bg-sunken);
+  /* Read mode: allow selecting text on the page. */
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+/* Block-pick: still allow drag-select text for copy (click = Agent pick). */
+.office-native-root.selecting {
+  user-select: text;
+  -webkit-user-select: text;
 }
 
 .office-native-status {
@@ -4452,6 +6451,7 @@ mark {
   min-height: 0;
   overflow: auto;
   overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
   padding: 20px 16px 48px;
   display: flex;
   flex-direction: column;
@@ -4459,6 +6459,7 @@ mark {
   gap: 20px;
   background: var(--bg-sunken);
   overscroll-behavior: contain;
+  pointer-events: auto;
 }
 
 /* Paper surface: always print-white, independent of app theme. */
@@ -4519,6 +6520,33 @@ mark {
   padding: 20px 16px 48px;
   background: var(--bg-sunken);
   overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  /* Ensure wheel/trackpad reach this scrollport. */
+  pointer-events: auto;
+}
+
+/* docx-preview pages inherit body user-select:none unless we re-enable. */
+.docx-body-host .docx-native,
+.docx-body-host .docx,
+.docx-body-host p,
+.docx-body-host li,
+.docx-body-host td,
+.docx-body-host th,
+.docx-body-host span {
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.docx-root.selecting .docx-body-host .docx-native,
+.docx-root.selecting .docx-body-host .docx,
+.docx-root.selecting .docx-body-host p,
+.docx-root.selecting .docx-body-host li,
+.docx-root.selecting .docx-body-host td,
+.docx-root.selecting .docx-body-host th,
+.docx-root.selecting .docx-body-host span {
+  /* Click picks for Agent; drag still selects text for copy. */
+  user-select: text;
+  -webkit-user-select: text;
 }
 
 /* Layout box sized to the *visual* (post-scale) document height. */
@@ -4590,6 +6618,7 @@ mark {
   min-height: 0;
   overflow: auto;
   overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
   padding: 20px 16px 48px;
   display: flex;
   flex-direction: column;
@@ -4599,7 +6628,11 @@ mark {
   overscroll-behavior: contain;
 }
 
-/* Layout box = visual size after CSS fit scale (transform on .pdf-page). */
+/*
+ * Layout box = visual size after CSS fit. The inner .pdf-page is position:absolute
+ * so transform:scale never affects document flow (in-flow scaled pages used to
+ * keep full paint height and stack/overlap the next page).
+ */
 .pdf-page-frame {
   position: relative;
   flex: 0 0 auto;
@@ -4610,12 +6643,16 @@ mark {
   box-shadow: none;
   margin: 0 auto;
   line-height: 0;
+  /* Isolate paints so a scaled page cannot draw over the next frame. */
+  isolation: isolate;
+  contain: layout style;
 }
 
 .pdf-page {
-  position: relative;
-  /* Painted size (pdf.js). Fit-to-pane uses transform, not re-render. */
-  flex: 0 0 auto;
+  /* Out of flow — only .pdf-page-frame contributes height to the column. */
+  position: absolute;
+  top: 0;
+  left: 0;
   width: auto;
   max-width: none;
   background: #ffffff;
@@ -4634,7 +6671,6 @@ mark {
 
 /* Page-level pick chrome uses shared .pdf-pick-page tokens (see above). */
 
-/* Canvas defines page size — do NOT position:absolute or pages collapse. */
 .pdf-page-canvas {
   display: block;
   position: relative;
@@ -4642,10 +6678,8 @@ mark {
   margin: 0;
   padding: 0;
   vertical-align: top;
-  /* Prevent any parent rule from scaling the painted page down. */
   max-width: none;
   max-height: none;
-  flex-shrink: 0;
 }
 
 /*
@@ -4698,10 +6732,11 @@ mark {
   user-select: text;
 }
 
-/* PDF text pick chrome uses shared .office-native-root.selecting tokens above. */
+/* PDF text pick: allow drag-select/copy; click still schedules Agent pick. */
 .pdf-root.selecting .pdf-page .textLayer span {
-  cursor: default;
-  user-select: none;
+  cursor: text;
+  user-select: text;
+  -webkit-user-select: text;
 }
 
 .pdf-page .textLayer .endOfContent {
@@ -4713,50 +6748,99 @@ mark {
   user-select: none;
 }
 
-/* —— PPTX slides —— same stage language as PDF/DOCX —— */
-.pptx-stage {
-  flex: 1;
-  min-height: 0;
-  overflow: auto;
-  padding: 20px 16px 48px;
-  display: flex;
-  justify-content: center;
-  align-items: flex-start;
+/* —— PPTX (@aiden0z/pptx-renderer HTML/SVG) —— stacked list like PDF —— */
+.pptx-root {
   background: var(--bg-sunken);
-  overscroll-behavior: contain;
+  color-scheme: light;
 }
 
-.pptx-slide {
-  width: min(100%, 960px);
-  aspect-ratio: 16 / 9;
-  background: #ffffff;
-  color: #1a1a1a;
-  border-radius: 2px;
-  border: 1px solid var(--border-strong);
-  box-shadow: none;
-  padding: 8% 10%;
+/* Scroll + gutters live here; must NOT be the fitMode measure node. */
+.pptx-pages-host.office-doc-stage {
+  width: 100%;
+  /* Vertical rhythm only — horizontal padding is on this stage; the inner
+     .pptx-render-host is the contain-fit measure target (no H padding). */
   box-sizing: border-box;
+}
+
+/* Library mounts slides here; clientWidth === usable slide width. */
+.pptx-render-host {
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+  /* Not the scrollport — parent stage scrolls. */
+  overflow: visible;
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  overflow: auto;
-}
-
-.pptx-para {
+  align-items: center;
+  gap: 20px;
+  /* No horizontal padding — measure target for CSS fit. */
+  padding: 0;
   margin: 0;
-  font-size: 18px;
-  line-height: 1.45;
+  /* Same as stage — never flash paper-white between slide paints. */
+  background: var(--bg-sunken);
 }
 
-.pptx-para.is-title {
-  font-size: 28px;
-  font-weight: 650;
-  letter-spacing: -0.02em;
+/* Each slide frame from the renderer */
+.pptx-render-host [data-slide-index],
+.pptx-render-host .pptx-visual-slide {
+  flex: 0 0 auto;
+  position: relative;
+  margin: 0 auto;
+  border: 1px solid var(--border-strong);
+  border-radius: 2px;
+  overflow: hidden;
+  box-shadow: none;
+  color-scheme: only light;
+  /* Do not force max-width:100% after library sizes the frame — that clips
+     the right edge when borders/subpixels fight the scaled canvas. */
+  max-width: none;
+  box-sizing: border-box;
+}
+
+/*
+ * Body is user-select:none app-wide. PPTX must always opt back in — both for
+ * drag-copy and for Agent pick (click-vs-drag). Force on descendants so
+ * library inline styles / SVG text never stay unselectable.
+ */
+.pptx-root,
+.pptx-root .pptx-render-host,
+.pptx-root .pptx-render-host [data-slide-index],
+.pptx-root .pptx-render-host .pptx-visual-slide,
+.pptx-root .pptx-render-host span,
+.pptx-root .pptx-render-host p,
+.pptx-root .pptx-render-host div,
+.pptx-root .pptx-render-host text,
+.pptx-root .pptx-render-host tspan {
+  user-select: text !important;
+  -webkit-user-select: text !important;
+}
+
+.pptx-root.selecting .pptx-visual-slide {
+  cursor: default;
+}
+
+/* Shape pick targets (absolute frames inside a slide). */
+.pptx-root.selecting .pptx-shape-pick.office-pick-target {
+  cursor: default;
+  /* Ensure outline chrome has a stacking context above sibling SVG fills. */
+  z-index: 2;
 }
 
 /* PPTX / XLSX pick chrome uses shared .office-native-root.selecting tokens above. */
 .xlsx-root {
   background: var(--bg-sunken);
+}
+
+.xlsx-root:not(.selecting) {
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.xlsx-root:not(.selecting) td,
+.xlsx-root:not(.selecting) th {
+  user-select: text;
+  -webkit-user-select: text;
+  cursor: text;
 }
 
 /* Legacy structured-doc styles (text index fallback) kept below. */
@@ -5057,25 +7141,38 @@ mark {
   position: sticky;
   top: 0;
   z-index: 2;
-  background: var(--bg-sunken);
+  background-color: var(--bg-sunken);
   color: var(--text-tertiary);
   font-weight: 600;
   text-align: center;
+  box-shadow: 0 1px 0 var(--border);
 }
 
-.structured-sheet-gutter {
+/*
+ * Gutter must beat `th { min-width: 72px }` or the sticky corner becomes a full
+ * data-cell wide and covers the top-left body cell while scrolling.
+ */
+.structured-sheet th.structured-sheet-gutter,
+.structured-sheet td.structured-sheet-gutter {
   position: sticky;
   left: 0;
   z-index: 1;
-  background: var(--bg-sunken);
+  background-color: var(--bg-sunken);
   color: var(--text-tertiary);
   font-weight: 500;
   text-align: right;
+  width: 2.6em;
   min-width: 2.6em;
+  max-width: 3.2em;
+  padding-left: 6px;
+  padding-right: 8px;
+  box-shadow: 1px 0 0 var(--border);
 }
 
-.structured-sheet thead .structured-sheet-gutter {
+.structured-sheet thead th.structured-sheet-gutter {
+  top: 0;
   z-index: 3;
+  box-shadow: 1px 1px 0 var(--border);
 }
 
 .structured-sheet tr.selected td,
@@ -5087,24 +7184,35 @@ mark {
   color: var(--text-tertiary);
 }
 
-/* Pick chrome — same tokens as MD / code (was missing for structured-doc). */
+/* Pick chrome — ::after so the box never steals text select/copy. */
 .structured-doc.selecting .preview-select-region {
   position: relative;
   border-radius: 2px;
+  transition: none;
+  cursor: text;
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.structured-doc.selecting .preview-select-region::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 2px;
   outline: 1px solid transparent;
   outline-offset: -1px;
-  transition: none;
-  cursor: default;
+  pointer-events: none;
+  z-index: 1;
 }
 
 .structured-doc.selecting
-  .preview-select-region:hover:not(.selected):not(:has(.preview-select-region:hover)) {
+  .preview-select-region:hover:not(.selected):not(:has(.preview-select-region:hover))::after {
   outline: 1px dashed var(--accent);
   outline-offset: -1px;
   background: color-mix(in srgb, var(--accent) 6%, transparent);
 }
 
-.structured-doc.selecting .preview-select-region.selected {
+.structured-doc.selecting .preview-select-region.selected::after {
   outline: 2px solid var(--accent);
   outline-offset: -1px;
   background: color-mix(in srgb, var(--accent) 12%, transparent);
@@ -5292,8 +7400,15 @@ mark {
   background: var(--bg-content);
 }
 
+/*
+ * Sticky thead + left gutter require border-collapse: separate.
+ * With collapse, sticky cells fail: body rows paint through the header and the
+ * empty top-left corner, so you see data fragments (e.g. "lifestyle") where
+ * column titles should be.
+ */
 .csv-sheet {
-  border-collapse: collapse;
+  border-collapse: separate;
+  border-spacing: 0;
   width: max-content;
   min-width: 100%;
   font-size: var(--code-size);
@@ -5303,7 +7418,8 @@ mark {
 
 .csv-sheet th,
 .csv-sheet td {
-  border: 1px solid var(--border);
+  border-right: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
   padding: 5px 10px;
   text-align: left;
   vertical-align: top;
@@ -5313,17 +7429,29 @@ mark {
   text-overflow: ellipsis;
   white-space: nowrap;
   transition: none;
+  /* Opaque fill so sticky chrome never shows scrolling body underneath. */
+  background-clip: border-box;
+}
+
+.csv-sheet tr > *:first-child {
+  border-left: 1px solid var(--border);
+}
+
+.csv-sheet thead th {
+  border-top: 1px solid var(--border);
 }
 
 .csv-sheet-colhead {
   position: sticky;
   top: 0;
   z-index: 2;
-  background: var(--bg-sunken);
+  background-color: var(--bg-sunken);
   color: var(--text-secondary);
   font-weight: 600;
   text-align: left;
   cursor: default;
+  /* Shadow edge so rows don’t flash through under the sticky header. */
+  box-shadow: 0 1px 0 var(--border);
 }
 
 .csv-sheet-col-label {
@@ -5332,29 +7460,59 @@ mark {
   text-overflow: ellipsis;
 }
 
-.csv-sheet-gutter {
+/*
+ * Row# gutter — must override `th/td { min-width: 72px }` (higher specificity)
+ * or the sticky corner becomes a full data-cell and blankets the top-left body
+ * cell while the sheet is scrolled.
+ */
+.csv-sheet th.csv-sheet-gutter,
+.csv-sheet td.csv-sheet-gutter {
   position: sticky;
   left: 0;
   z-index: 1;
   width: 2.8em;
   min-width: 2.8em;
   max-width: 3.5em;
+  padding-left: 6px;
+  padding-right: 8px;
   text-align: right;
   color: var(--text-tertiary);
   font-weight: 500;
-  background: var(--bg-sunken);
+  background-color: var(--bg-sunken);
   cursor: default;
   user-select: none;
+  box-shadow: 1px 0 0 var(--border);
 }
 
-.csv-sheet-corner {
-  z-index: 3;
+/* Row# × col-title intersection: pure chrome, not a pick target. */
+.csv-sheet th.csv-sheet-corner,
+.csv-sheet .csv-sheet-corner {
+  position: sticky;
   top: 0;
   left: 0;
+  z-index: 4;
+  width: 2.8em;
+  min-width: 2.8em;
+  max-width: 3.5em;
+  background-color: var(--bg-sunken);
+  box-shadow: 1px 1px 0 var(--border);
+  /* Kill hover/selection affordances if any parent rules leak in. */
+  pointer-events: none;
 }
 
-.csv-sheet thead .csv-sheet-gutter {
-  z-index: 3;
+.csv-sheet thead th.csv-sheet-gutter {
+  z-index: 4;
+  top: 0;
+}
+
+.csv-sheet tbody td {
+  background-color: var(--bg-content);
+  z-index: 0;
+}
+
+.csv-sheet tbody th.csv-sheet-gutter {
+  background-color: var(--bg-sunken);
+  z-index: 1;
 }
 
 .csv-sheet td.is-empty {
@@ -5363,27 +7521,39 @@ mark {
 
 /* Soft row tint when row is selected (cells keep their own outline). */
 .csv-sheet tr.row-selected td:not(.selected) {
-  background: color-mix(in srgb, var(--accent) 5%, transparent);
+  background: color-mix(in srgb, var(--accent) 5%, var(--bg-content));
 }
 
-/* Pick chrome — same tokens as code/MD (hover dashed / selected solid). */
+/* Pick chrome — ::after + pointer-events:none so cell text stays copyable. */
 .file-viewer-body.selecting .csv-sheet .preview-select-region {
+  position: relative;
+  border-radius: 2px;
+  transition: none;
+  cursor: text;
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.file-viewer-body.selecting .csv-sheet .preview-select-region::after {
+  content: '';
+  position: absolute;
+  inset: 0;
   border-radius: 2px;
   outline: 1px solid transparent;
   outline-offset: -1px;
-  transition: none;
-  cursor: default;
+  pointer-events: none;
+  z-index: 1;
 }
 
 .file-viewer-body.selecting
   .csv-sheet
-  .preview-select-region:hover:not(.selected):not(:has(.preview-select-region:hover)) {
+  .preview-select-region:hover:not(.selected):not(:has(.preview-select-region:hover))::after {
   outline: 1px dashed var(--accent);
   outline-offset: -1px;
   background: color-mix(in srgb, var(--accent) 6%, transparent);
 }
 
-.file-viewer-body.selecting .csv-sheet .preview-select-region.selected {
+.file-viewer-body.selecting .csv-sheet .preview-select-region.selected::after {
   outline: 2px solid var(--accent);
   outline-offset: -1px;
   background: color-mix(in srgb, var(--accent) 12%, transparent);
@@ -5456,18 +7626,27 @@ mark {
  * (first/last-child margins go to 0). Vertical rhythm is owned here.
  */
 .preview-document {
-  --md-lh: 1.9;
-  --md-track: 0.02em;
-  max-width: 38rem;
+  --md-lh: 1.78;
+  --md-track: 0.012em;
+  max-width: 42rem;
   margin: 0 auto;
   user-select: text;
+  -webkit-user-select: text;
   display: flex;
   flex-direction: column;
   gap: 0;
-  font-size: 16.5px;
+  font-size: 16px;
   line-height: var(--md-lh);
   letter-spacing: var(--md-track);
-  color: color-mix(in srgb, var(--text) 92%, var(--text-secondary));
+  color: color-mix(in srgb, var(--text) 94%, var(--text-secondary));
+  cursor: text;
+}
+
+/* Text is always selectable — pick mode uses click-vs-drag, not user-select:none. */
+.preview-document .preview-select-region {
+  user-select: text;
+  -webkit-user-select: text;
+  cursor: text;
 }
 
 .preview-document > .preview-select-region {
@@ -5521,8 +7700,9 @@ mark {
 }
 
 .preview-document .markdown.preview-markdown {
-  max-width: none;
-  margin: 0;
+  /* Keep the centered reading column from .preview-markdown (max-width +
+     margin-inline:auto). Only neutralize the inner padding — .file-viewer-body
+     already supplies the outer reading gutters. */
   padding: 0;
   font-size: inherit;
   line-height: inherit;
@@ -5948,15 +8128,35 @@ mark {
   color: var(--text-tertiary);
 }
 
+/* Single-mode files (binary / zip / dir): plain label, no select chrome. */
+.preview-mode-static {
+  display: inline-flex;
+  align-items: center;
+  height: 26px;
+  padding: 0 8px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  user-select: none;
+}
+
+.preview-mode.is-static {
+  pointer-events: none;
+}
+
 .file-viewer-actions .is-active-toggle {
   color: var(--accent);
 }
 
-/* Standalone file-preview: Agent toggle is the product mark (not panel-right). */
+/* Agent panel toggle — product mark (main FileSession + standalone preview). */
 .preview-agent-logo-btn {
   width: 28px;
   height: 26px;
   padding: 0;
+}
+
+.preview-agent-logo-btn.is-active-toggle {
+  color: var(--accent);
+  background: var(--accent-soft);
 }
 
 .preview-agent-logo {
@@ -6476,13 +8676,17 @@ mark {
   box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 35%, transparent);
 }
 
-/* Session switcher only — workdir path lives in the preview / files surface. */
+/* Session switcher only — same height as sidebar chrome + file header. */
 .workspace-view-agent-head {
   position: relative;
   display: flex;
   flex-direction: column;
+  justify-content: center;
   gap: 0;
-  padding: 6px 10px;
+  height: var(--toolbar-height);
+  min-height: var(--toolbar-height);
+  padding: 0 10px;
+  box-sizing: border-box;
   border-bottom: 1px solid var(--border);
   flex: 0 0 auto;
 }
@@ -6868,185 +9072,383 @@ mark {
 }
 
 /*
- * File-preview markdown — reading metrics first (字距 / 行高 / 段距).
- * Negative tracking hurts CJK; open leading + light positive tracking.
- * Chat `.markdown` stays compact for agent bubbles.
+ * File-preview markdown — document reading surface.
+ * Chat `.markdown` stays compact for agent bubbles; this is long-form.
  */
 .preview-markdown {
-  --md-lh: 1.9;
-  --md-track: 0.02em;
-  font-size: 16.5px;
+  --md-lh: 1.8;
+  --md-track: 0.012em;
+  --md-measure: 44rem;
+  --md-block: 1.35em;
+  --md-section: 2.6em;
+  font-size: 16px;
   line-height: var(--md-lh);
   letter-spacing: var(--md-track);
-  max-width: 38rem;
+  max-width: var(--md-measure);
   margin-inline: auto;
-  padding: 8px 4px 48px;
-  color: color-mix(in srgb, var(--text) 92%, var(--text-secondary));
+  padding: 16px 8px 72px;
+  color: color-mix(in srgb, var(--text) 94%, var(--text-secondary));
   font-weight: 400;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
+  font-feature-settings: 'kern' 1, 'liga' 1;
 }
 
+.preview-markdown > *:first-child {
+  margin-top: 0 !important;
+}
+
+.preview-markdown > *:last-child {
+  margin-bottom: 0 !important;
+}
+
+/* --- Headings: clear hierarchy, quiet hairlines on major breaks --- */
 .preview-markdown h1,
 .preview-markdown h2,
 .preview-markdown h3,
-.preview-markdown h4 {
+.preview-markdown h4,
+.preview-markdown h5,
+.preview-markdown h6 {
   font-weight: 700;
-  /* Slight positive track for mixed CJK/Latin titles — not Latin-only tightening. */
-  letter-spacing: 0.01em;
-  line-height: 1.35;
+  letter-spacing: 0.008em;
+  line-height: 1.28;
   color: var(--text);
+  text-wrap: balance;
+  scroll-margin-top: 1rem;
 }
 
 .preview-markdown h1 {
-  font-size: 1.9em;
-  font-weight: 700;
-  letter-spacing: 0.015em;
-  line-height: 1.3;
-  margin: 0.05em 0 0.85em;
-  padding-bottom: 0;
-  border-bottom: none;
+  font-size: 1.85em;
+  font-weight: 720;
+  letter-spacing: -0.01em;
+  line-height: 1.22;
+  margin: 0.4em 0 0.9em;
+  padding-bottom: 0.5em;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 85%, transparent);
 }
 
 .preview-markdown h2 {
-  font-size: 1.32em;
-  letter-spacing: 0.012em;
-  line-height: 1.35;
-  margin: 2em 0 0.7em;
+  font-size: 1.28em;
+  letter-spacing: -0.005em;
+  margin: var(--md-section) 0 0.7em;
+  padding-bottom: 0.32em;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 55%, transparent);
 }
 
 .preview-markdown h3 {
-  font-size: 1.14em;
-  margin: 1.65em 0 0.55em;
+  font-size: 1.12em;
+  margin: 2.1em 0 0.6em;
   font-weight: 650;
-  line-height: 1.4;
+  line-height: 1.35;
+  border-bottom: none;
+  padding-bottom: 0;
 }
 
 .preview-markdown h4 {
   font-size: 1.04em;
-  margin: 1.4em 0 0.5em;
+  margin: 1.85em 0 0.55em;
   font-weight: 650;
   line-height: 1.4;
 }
 
+.preview-markdown h5,
+.preview-markdown h6 {
+  font-size: 0.98em;
+  margin: 1.6em 0 0.5em;
+  font-weight: 600;
+  color: var(--text-secondary);
+  letter-spacing: 0.02em;
+  text-transform: none;
+}
+
+.preview-markdown h1 + p,
+.preview-markdown h2 + p,
+.preview-markdown h3 + p,
+.preview-markdown h4 + p {
+  margin-top: 0;
+}
+
 .preview-markdown p {
-  margin: 0 0 1.25em;
+  margin: 0 0 var(--md-block);
   line-height: var(--md-lh);
   letter-spacing: var(--md-track);
 }
 
+.preview-markdown p:last-child {
+  margin-bottom: 0;
+}
+
+/* --- Lists --- */
 .preview-markdown ul,
 .preview-markdown ol {
-  margin: 0 0 1.25em;
-  padding-left: 1.5em;
+  margin: 0 0 var(--md-block);
+  padding-left: 1.45em;
 }
 
 .preview-markdown li {
-  margin: 0.4em 0;
+  margin: 0.28em 0;
   line-height: var(--md-lh);
   letter-spacing: var(--md-track);
-  padding-left: 0.2em;
+  padding-left: 0.25em;
 }
 
 .preview-markdown li::marker {
-  color: color-mix(in srgb, var(--text-tertiary) 70%, var(--accent-text));
+  color: color-mix(in srgb, var(--text-tertiary) 55%, var(--accent-text));
+  font-weight: 500;
+}
+
+.preview-markdown li > p {
+  margin: 0 0 0.45em;
+}
+
+.preview-markdown li > p:last-child {
+  margin-bottom: 0;
 }
 
 .preview-markdown li > ul,
 .preview-markdown li > ol {
-  margin: 0.28em 0 0.4em;
+  margin: 0.3em 0 0.45em;
 }
 
-/* Inline code: reset tracking so mono glyphs don’t stretch with body track. */
+.preview-markdown ol > li::marker {
+  font-variant-numeric: tabular-nums;
+  font-size: 0.92em;
+}
+
+/* --- Inline --- */
 .preview-markdown :not(pre) > code {
-  padding: 0.12em 0.42em;
-  border-radius: 5px;
-  font-size: 0.88em;
+  padding: 0.14em 0.4em;
+  border-radius: 6px;
+  font-size: 0.86em;
   font-weight: 500;
   letter-spacing: 0;
-  line-height: 1.45;
-  background: color-mix(in srgb, var(--accent) 14%, var(--bg-sunken));
-  color: color-mix(in srgb, var(--accent-text) 50%, var(--text));
-  box-shadow: none;
+  line-height: 1.4;
+  background: color-mix(in srgb, var(--bg-sunken) 70%, var(--bg-hover));
+  color: color-mix(in srgb, var(--accent-text) 35%, var(--text));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--border) 70%, transparent);
 }
 
 .preview-markdown a {
-  color: #4aa3ff;
-  text-decoration: none;
+  color: color-mix(in srgb, var(--accent-text) 88%, #6eb6ff);
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, var(--accent) 35%, transparent);
   text-underline-offset: 3px;
+  text-decoration-thickness: from-font;
   font-weight: 500;
+  transition:
+    color var(--dur-hover) ease,
+    text-decoration-color var(--dur-hover) ease;
 }
 
 .preview-markdown a:hover {
-  text-decoration: underline;
-  color: #6bb6ff;
+  color: color-mix(in srgb, var(--accent-text) 100%, #9ecfff);
+  text-decoration-color: color-mix(in srgb, var(--accent) 70%, transparent);
 }
 
 :root:not([data-theme='dark']) .preview-markdown a {
-  color: #1a7ae4;
+  color: color-mix(in srgb, var(--accent) 75%, #1565c0);
+  text-decoration-color: color-mix(in srgb, var(--accent) 40%, transparent);
 }
 
 :root:not([data-theme='dark']) .preview-markdown a:hover {
-  color: #0d5fbf;
+  color: color-mix(in srgb, var(--accent) 90%, #0d47a1);
 }
 
 .preview-markdown strong {
-  font-weight: 700;
+  font-weight: 680;
   color: var(--text);
 }
 
 .preview-markdown em {
   font-style: italic;
+  color: color-mix(in srgb, var(--text) 92%, var(--text-secondary));
 }
 
+.preview-markdown del {
+  color: var(--text-secondary);
+  text-decoration-thickness: 1px;
+}
+
+/* --- Quote / rule --- */
 .preview-markdown blockquote {
-  margin: 1.15em 0;
-  padding: 0.15em 0 0.15em 1em;
-  border-left: 3px solid color-mix(in srgb, var(--accent) 40%, var(--border));
+  margin: 1.25em 0;
+  padding: 0.65em 0 0.65em 1.05em;
+  border-left: 3px solid color-mix(in srgb, var(--accent) 50%, var(--border));
+  border-radius: 0 8px 8px 0;
+  background: color-mix(in srgb, var(--accent) 5%, transparent);
   color: var(--text-secondary);
 }
 
-.preview-markdown hr {
-  margin: 2em 0;
-  border: none;
-  border-top: 1px solid color-mix(in srgb, var(--border) 90%, transparent);
+.preview-markdown blockquote p {
+  margin: 0 0 0.55em;
 }
 
-/* Fenced code in document preview — quieter bar, softer well. */
-.preview-markdown .md-block {
-  margin: 1.15em 0 1.35em;
-  border-radius: 10px;
-  background: color-mix(in srgb, var(--bg-sunken) 88%, var(--bg-raised));
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--border) 80%, transparent);
+.preview-markdown blockquote p:last-child {
+  margin-bottom: 0;
+}
+
+.preview-markdown blockquote blockquote {
+  margin: 0.65em 0 0.25em;
+  background: color-mix(in srgb, var(--accent) 4%, transparent);
+}
+
+.preview-markdown hr,
+.preview-markdown .md-preview-hr {
+  margin: 2.1em auto;
+  border: none;
+  height: 0;
+  max-width: 100%;
+  border-top: 1px solid color-mix(in srgb, var(--border) 88%, transparent);
+  background: none;
+}
+
+/* --- Fenced code --- */
+.preview-markdown .md-block,
+.preview-markdown .md-preview-fence {
+  margin: 1.2em 0 1.4em;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--bg-sunken) 92%, var(--bg-raised));
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--border) 75%, transparent),
+    0 1px 2px color-mix(in srgb, #000 6%, transparent);
+  overflow: hidden;
 }
 
 .preview-markdown .md-block-bar {
-  padding: 7px 12px;
-  background: color-mix(in srgb, var(--bg-raised) 35%, transparent);
+  padding: 6px 12px;
+  background: color-mix(in srgb, var(--bg-raised) 40%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+}
+
+.preview-markdown .md-block-name {
+  font-family: var(--font-code);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  text-transform: lowercase;
+  color: var(--text-tertiary);
+}
+
+.preview-markdown .md-block-btn {
+  font-size: 11px;
+  height: 22px;
+  border-radius: 6px;
 }
 
 .preview-markdown pre {
   margin: 1.2em 0 1.4em;
   padding: 14px 16px;
-  border-radius: 10px;
-  background: color-mix(in srgb, var(--bg-sunken) 88%, var(--bg-raised));
-  line-height: 1.62;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--bg-sunken) 92%, var(--bg-raised));
+  line-height: 1.6;
   letter-spacing: 0;
-  font-size: 0.86em;
+  font-size: 0.84em;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--border) 75%, transparent);
+  overflow-x: auto;
+}
+
+/* AFTER bare pre — remove INNER card only; outer .md-block keeps radius/border. */
+.preview-markdown .md-block > pre,
+.preview-markdown .md-block pre,
+.preview-markdown .md-preview-fence > pre,
+.preview-markdown .md-preview-fence pre {
+  margin: 0 !important;
+  padding: 14px 16px;
+  border: 0 !important;
+  box-shadow: none !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+}
+
+.preview-markdown .md-block.md-diagram-wrap > .md-diagram,
+.preview-markdown .md-block.md-mermaid-wrap > .md-mermaid {
+  background: transparent !important;
+  box-shadow: none !important;
+  border-radius: 0 !important;
+}
+
+.preview-markdown pre code {
+  font-size: inherit;
+  letter-spacing: 0;
+}
+
+/* --- Tables --- */
+.preview-markdown .table-scroll,
+.preview-markdown .md-preview-table {
+  margin: 1.25em 0 1.45em;
+  border-radius: 12px;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  background: color-mix(in srgb, var(--bg-content) 40%, var(--bg-sunken));
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--border) 80%, transparent);
 }
 
-.preview-markdown .md-block > pre {
+.preview-markdown table {
+  border-collapse: separate;
+  border-spacing: 0;
+  width: max-content;
+  min-width: 100%;
   margin: 0;
-  box-shadow: none;
-  border-radius: 0;
+  font-size: 0.9em;
+  line-height: 1.5;
 }
 
+.preview-markdown th,
+.preview-markdown td {
+  padding: 9px 14px;
+  text-align: left;
+  vertical-align: top;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 75%, transparent);
+  max-width: 22rem;
+  overflow-wrap: break-word;
+}
+
+.preview-markdown th {
+  background: color-mix(in srgb, var(--accent) 10%, var(--bg-raised));
+  color: var(--text);
+  font-weight: 650;
+  font-size: 0.92em;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+  border-bottom-color: color-mix(in srgb, var(--border) 90%, var(--accent));
+}
+
+.preview-markdown tbody tr:nth-child(even) {
+  background: color-mix(in srgb, var(--bg-hover) 45%, transparent);
+}
+
+.preview-markdown tbody tr:hover {
+  background: color-mix(in srgb, var(--accent) 6%, var(--bg-hover));
+}
+
+.preview-markdown tbody tr:last-child td {
+  border-bottom: none;
+}
+
+/* --- Media --- */
 .preview-markdown img,
 .preview-markdown picture {
   max-width: 100%;
+  /* Never cap height — document scroll shows the full image. */
+  max-height: none;
   height: auto;
-  border-radius: 8px;
+  width: auto;
+  border-radius: 10px;
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--border) 60%, transparent);
+}
+
+.preview-markdown p > img:only-child,
+.preview-markdown p > picture:only-child {
+  display: block;
+  margin: 0.55em auto;
+}
+
+/* Markdown images inside pick regions must not shrink-wrap / clip. */
+.preview-document .preview-select-region img,
+.preview-document .preview-select-region picture {
+  max-width: min(100%, 100vw);
+  max-height: none;
+  height: auto;
 }
 
 /* originai release badge (and similar linked SVG badges) */
@@ -7058,10 +9460,33 @@ mark {
   max-width: none;
   vertical-align: middle;
   border-radius: 0;
+  box-shadow: none;
 }
 
 .preview-markdown picture {
   display: inline-block;
+}
+
+/* Mermaid in document preview */
+.preview-markdown .md-mermaid-wrap {
+  margin: 1.25em 0 1.45em;
+}
+
+.preview-markdown .md-mermaid {
+  padding: 12px 8px;
+  display: flex;
+  justify-content: center;
+  overflow-x: auto;
+}
+
+.preview-markdown .md-mermaid svg {
+  max-width: 100%;
+  height: auto;
+}
+
+/* Chat markdown: slightly calmer tables / code for parity */
+.markdown .table-scroll {
+  border-radius: var(--radius);
 }
 
 .file-viewer-body {
@@ -7071,11 +9496,14 @@ mark {
   padding: 18px 24px 28px;
 }
 
-/* Markdown paper margins — more room to breathe (Lettera-like). */
+/* Markdown paper margins — generous reading gutters. */
 .file-viewer-body:has(> .markdown.preview-markdown),
 .file-viewer-body:has(.preview-markdown),
 .file-viewer-body:has(> .preview-document) {
-  padding: 28px 36px 48px;
+  padding: 40px clamp(24px, 6vw, 64px) 64px;
+  background:
+    radial-gradient(120% 60% at 50% -10%, color-mix(in srgb, var(--accent) 4%, transparent), transparent 55%),
+    var(--bg-content);
 }
 
 .file-viewer-body:has(.file-viewer-pdf) {
@@ -7111,7 +9539,7 @@ mark {
 .file-viewer-media {
   display: block;
   max-width: 100%;
-  max-height: 100%;
+  max-height: none;
   width: auto;
   height: auto;
   object-fit: contain;
@@ -7125,50 +9553,74 @@ mark {
   gap: 10px;
   max-width: 100%;
   min-width: 0;
+  /* Grow with image height so the outer body can scroll. */
+  height: auto;
+  flex: 0 0 auto;
 }
 
-.file-viewer-image-meta {
-  width: min(100%, 420px);
-  font-size: 11px;
-  color: var(--text-secondary);
-  background: var(--bg-raised);
+/* Always-visible image metadata above the picture (no accordion). */
+.file-viewer-image-meta-flat {
+  flex: 0 0 auto;
+  align-self: center;
+  width: min(100%, 480px);
+  margin: 16px 16px 0;
+  padding: 8px 10px;
   border-radius: var(--radius-sm);
-  padding: 6px 10px;
+  background: color-mix(in srgb, var(--bg-raised) 88%, var(--bg-sunken));
   box-shadow: inset 0 0 0 1px var(--border);
-}
-
-.file-viewer-image-meta summary {
-  cursor: default;
-  font-weight: 560;
-  color: var(--text-tertiary);
-}
-
-.file-viewer-image-meta dl {
-  margin: 8px 0 0;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.file-viewer-image-meta-row {
-  display: grid;
-  grid-template-columns: minmax(88px, 34%) 1fr;
-  gap: 8px;
-}
-
-.file-viewer-image-meta-row dt {
-  color: var(--text-tertiary);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.file-viewer-image-meta-row dd {
-  margin: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  font-family: var(--font-code);
+  font-size: 11.5px;
+  line-height: 1.55;
   color: var(--text-secondary);
+  /* Above pick chrome; always allow drag-select of EXIF rows (HEIC etc.). */
+  user-select: text !important;
+  -webkit-user-select: text !important;
+  cursor: text;
+  position: relative;
+  z-index: 2;
+  pointer-events: auto;
+}
+
+.file-viewer-image-meta-line {
+  display: grid;
+  grid-template-columns: minmax(100px, 32%) 1fr;
+  gap: 10px 12px;
+  padding: 3px 4px;
+  border-radius: 3px;
+  /* Whole row selectable as one line of text. */
+  user-select: text !important;
+  -webkit-user-select: text !important;
+  cursor: text;
+}
+
+.file-viewer-image-meta-line:hover {
+  background: color-mix(in srgb, var(--bg-hover) 80%, transparent);
+}
+
+.file-viewer-image-meta-line + .file-viewer-image-meta-line {
+  border-top: 1px solid color-mix(in srgb, var(--border) 55%, transparent);
+}
+
+.file-viewer-image-meta-key {
+  color: var(--text-tertiary);
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  user-select: text;
+}
+
+.file-viewer-image-meta-val {
+  color: var(--text-secondary);
+  min-width: 0;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  user-select: text;
+}
+
+/* Legacy accordion class kept inert if any residual markup appears. */
+.file-viewer-image-meta {
+  display: none;
 }
 
 .file-viewer-warnings {
@@ -7197,14 +9649,7 @@ mark {
   line-height: 1.4;
 }
 
-/* Image/audio/video body: flex column so the stage gets a real height. */
-.file-viewer-body:has(> .preview-media-stage) {
-  display: flex;
-  flex-direction: column;
-  padding: 0;
-  overflow: hidden;
-  min-height: 0;
-}
+/* (Media body overflow/flex unified above with image-meta — do not re-hide scroll.) */
 
 .file-viewer-table {
   margin: 0;
@@ -7706,6 +10151,9 @@ mark {
 .workspace-view-agent > .detail,
 .workspace-view-agent > .session-detail-workspace,
 .workspace-view-agent > .terminal-host-session,
+.workspace-view-agent-inner > .detail,
+.workspace-view-agent-inner > .session-detail-workspace,
+.workspace-view-agent-inner > .terminal-host-session,
 .workspace-floating-agent-body > .detail,
 .workspace-floating-agent-body > .session-detail-workspace,
 .workspace-floating-agent-body > .terminal-host-session {
@@ -7719,8 +10167,11 @@ mark {
   background: transparent;
 }
 
+/* Under the session head — compact, not a second toolbar-height row. */
 .workspace-view-agent .terminal-host-chrome,
 .workspace-floating-agent-body .terminal-host-chrome {
+  height: auto;
+  min-height: 0;
   padding: 4px 8px;
   border-bottom: 1px solid var(--border);
   background: transparent;
@@ -7824,7 +10275,7 @@ mark {
  * Monochrome theme adaptation so marks stay visible on chip surfaces:
  * - is-mono: dark ink (cursor, grok) → invert under dark theme
  * - is-mono-on-dark: light ink (pi is #fff) → invert under light theme
- * - vav-mark: dark navy + lavender → silhouette to near-white under dark
+ * - vav: dual light/dark app-icon plates — never invert (would flatten to a blob)
  */
 :root[data-theme='dark'] .agent-brand-mark.is-mono img {
   filter: invert(1);
@@ -7839,23 +10290,49 @@ mark {
   letter-spacing: -0.02em;
   line-height: 1;
   background: var(--accent);
-  color: #fff;
+  color: var(--accent-fg);
   box-shadow: none;
 }
 
-/* Built-in vav product mark — keep plate so it matches other agent chips. */
+/* Built-in VAV product mark — full app icon plate (Icon Composer Any). */
 .agent-brand-mark-vav {
   overflow: hidden;
+  /* Icon already has its own plate; drop the chip fill so edges don't double-frame. */
+  background: transparent;
+  box-shadow: none;
 }
 
 .agent-brand-mark-vav img {
-  border-radius: 4px;
+  width: 100%;
+  height: 100%;
+  border-radius: 0;
+  object-fit: cover;
 }
 
-/* Dark UI: navy ink would sink into the chip — lift to a light glyph. */
-:root[data-theme='dark'] .agent-brand-mark-vav img {
-  filter: brightness(0) invert(1);
-  opacity: 0.92;
+/* Theme swap — same pattern as empty-logo / BrandAppIcon. */
+.agent-brand-mark-vav .logo-dark {
+  display: none;
+}
+
+.agent-brand-mark-vav .logo-light {
+  display: block;
+}
+
+:root[data-theme='dark'] .agent-brand-mark-vav .logo-light {
+  display: none;
+}
+
+:root[data-theme='dark'] .agent-brand-mark-vav .logo-dark {
+  display: block;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) .agent-brand-mark-vav .logo-light {
+    display: none;
+  }
+  :root:not([data-theme='light']) .agent-brand-mark-vav .logo-dark {
+    display: block;
+  }
 }
 
 .agent-install-title {
@@ -8361,7 +10838,7 @@ mark {
   border-radius: 8px;
   border: none;
   background: var(--accent);
-  color: #fff;
+  color: var(--accent-fg);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -8424,17 +10901,12 @@ mark {
 }
 
 /*
- * Pick-mode comment strip — sits just above the composer box (slightly narrower).
- * Bottom of the strip is square; the message input keeps its own full corner radius.
- * Cards inside stack flush (no per-card radius).
+ * Pick-mode comment strip — bottom of Agent log (ComposerContext), slightly
+ * inset. Rounded all around now that it no longer glues to the input card
+ * (dock height is independent of this strip).
  */
 .composer.has-comment-cards {
-  /* Small gap so the input’s top corners stay visible / intact. */
   gap: 4px;
-}
-
-.composer.has-comment-cards .quote-strip {
-  margin-bottom: 2px;
 }
 
 .comment-cards {
@@ -8444,13 +10916,11 @@ mark {
   flex: 0 0 auto;
   max-height: 148px;
   overflow-y: auto;
-  /* Inset vs full-width composer-box. */
   margin: 0 10px;
   padding: 0;
   background: var(--bg-sunken);
   border: 1px solid var(--border);
-  /* Top only rounded; bottom flat so it reads as attached above the input. */
-  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+  border-radius: var(--radius-sm);
   position: relative;
   z-index: 4;
 }
@@ -8601,8 +11071,7 @@ mark {
   font-style: normal;
 }
 
-/* Pick mode: no full-canvas wash and no crosshair — same default pointer on
-   code and markdown; only the block outline signals pickability. */
+/* Pick mode: text cursor so drag-select/copy feels natural; outline signals pick. */
 .file-viewer-body.pick-mode,
 .file-viewer-body.pick-mode .file-viewer-code.continuous,
 .file-viewer-body.pick-mode .preview-document,
@@ -8610,7 +11079,7 @@ mark {
 .file-viewer-body.pick-mode .file-viewer-media,
 .file-viewer-body.pick-mode .file-viewer-table,
 .file-viewer-body.pick-mode .preview-code-line {
-  cursor: default;
+  cursor: text;
 }
 
 .token-ring {
@@ -8842,7 +11311,8 @@ html:has(.token-usage-popup) #root {
   background: rgba(16, 16, 18, 0.36);
   backdrop-filter: blur(3px);
   -webkit-app-region: no-drag;
-  animation: fade-in var(--dur-hover) ease;
+  opacity: 1;
+  transition: opacity var(--dur-hover) ease;
 }
 
 .scrim.center {
@@ -8850,18 +11320,15 @@ html:has(.token-usage-popup) #root {
   padding-top: 0;
 }
 
-@keyframes fade-in {
-  from {
+@starting-style {
+  .scrim {
     opacity: 0;
   }
 }
 
-/* Modals are centred, not anchored, so they scale from their own middle. */
-@keyframes rise {
-  from {
-    opacity: 0;
-    transform: translateY(6px) scale(0.97);
-  }
+.scrim[data-leaving] {
+  opacity: 0;
+  pointer-events: none;
 }
 
 /* --------------------------------------------------------------------------
@@ -8910,7 +11377,12 @@ html:has(.token-usage-popup) #root {
 .settings-body {
   flex: 1;
   overflow-y: auto;
-  padding: 22px;
+  padding: 22px 22px 28px;
+}
+
+.api-validate-status {
+  margin-top: -4px;
+  color: var(--text-secondary);
 }
 
 .settings-form {
@@ -8968,18 +11440,7 @@ html:has(.token-usage-popup) #root {
   font-size: 0.92em;
 }
 
-.settings-foot {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 13px 18px;
-  background: var(--bg-sunken);
-}
-
-.settings-foot .spacer {
-  flex: 1;
-}
-
+/* Centred modal: enter/exit via opacity + slight rise (not origin-aware). */
 .modal {
   width: 430px;
   max-width: 88vw;
@@ -8990,7 +11451,23 @@ html:has(.token-usage-popup) #root {
   display: flex;
   flex-direction: column;
   gap: 13px;
-  animation: rise var(--dur-pop) var(--ease-out);
+  opacity: 1;
+  transform: translateY(0) scale(1);
+  transition:
+    opacity var(--dur-pop) var(--ease-out),
+    transform var(--dur-pop) var(--ease-out);
+}
+
+@starting-style {
+  .modal {
+    opacity: 0;
+    transform: translateY(6px) scale(0.97);
+  }
+}
+
+.scrim[data-leaving] .modal {
+  opacity: 0;
+  transform: translateY(6px) scale(0.97);
 }
 
 .modal .modal-title {
@@ -9042,12 +11519,154 @@ html:has(.token-usage-popup) #root {
   min-width: 0;
 }
 
+/* Appearance → colour tint swatches */
+.tint-swatches {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.tint-swatch {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: var(--tint-swatch, #888);
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.12);
+  cursor: pointer;
+  transition:
+    transform var(--dur-press) var(--ease-out),
+    box-shadow var(--dur-hover) var(--ease-out);
+}
+
+.tint-swatch.is-mono {
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.18);
+}
+
+/* System accent: rainbow rim so it reads as “follow OS”, fill is the live colour. */
+.tint-swatch.is-system {
+  border: 2px solid transparent;
+  background:
+    linear-gradient(var(--tint-swatch, #007aff), var(--tint-swatch, #007aff)) padding-box,
+    conic-gradient(
+        from 120deg,
+        #ff453a,
+        #ff9f0a,
+        #ffd60a,
+        #32d74b,
+        #64d2ff,
+        #0a84ff,
+        #bf5af2,
+        #ff375f,
+        #ff453a
+      )
+      border-box;
+  box-shadow: none;
+}
+
+.tint-swatch.is-system.is-active {
+  box-shadow:
+    0 0 0 2px var(--bg-raised),
+    0 0 0 4px var(--accent);
+}
+
+.tint-swatch:hover {
+  transform: scale(1.08);
+}
+
+.tint-swatch.is-active {
+  box-shadow:
+    0 0 0 2px var(--bg-raised),
+    0 0 0 4px var(--accent);
+}
+
+:root[data-theme='dark'] .tint-swatch {
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.14);
+}
+
+:root[data-theme='dark'] .tint-swatch.is-active {
+  box-shadow:
+    0 0 0 2px var(--bg-raised),
+    0 0 0 4px var(--accent);
+}
+
 .form-hint {
   margin-left: 132px;
   margin-top: -10px;
   font-size: 11px;
   color: var(--text-tertiary);
   line-height: 1.6;
+}
+
+/* Code / terminal font picker — select shows the face; sample below previews it. */
+.font-select {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+}
+
+.font-select-field,
+.text-field.font-select-field {
+  width: 100%;
+  height: 32px;
+  appearance: none;
+  -webkit-appearance: none;
+  padding: 0 32px 0 12px;
+  border-radius: var(--radius);
+  font-size: 13px;
+  font-weight: 450;
+  letter-spacing: 0.01em;
+  color: var(--text);
+  background: var(--bg-sunken);
+  box-shadow: inset 0 0 0 1px var(--border);
+  cursor: default;
+}
+
+.font-select-field:focus,
+.text-field.font-select-field:focus {
+  background: var(--bg-raised);
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--accent) 55%, transparent),
+    var(--ring-accent);
+}
+
+.font-select-chevron {
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  pointer-events: none;
+  color: var(--text-tertiary);
+  opacity: 0.85;
+}
+
+.font-preview-hint {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 0 6px;
+}
+
+.font-preview-sample {
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.font-preview-sep {
+  color: var(--text-tertiary);
+  opacity: 0.55;
+}
+
+.font-preview-meta {
+  font-size: 11px;
+  color: var(--text-tertiary);
 }
 
 .about-card {

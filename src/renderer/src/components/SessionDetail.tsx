@@ -9,7 +9,7 @@ import { useWorkspaceStore } from '../state/workspaceStore'
 import { SessionHistoryPopover } from './SessionHistoryPopover'
 import { TerminalPanel } from './TerminalPanel'
 import { ToolsPanel } from './ToolsPanel'
-import { Composer } from './Composer'
+import { Composer, ComposerContext } from './Composer'
 import { Transcript } from './Transcript'
 import { SearchStrip } from './SearchStrip'
 import { PlanOverlay } from './PlanOverlay'
@@ -18,6 +18,7 @@ import { AgentInstallPanel } from './AgentInstallPanel'
 import { AgentBrandMark } from './AgentBrandMark'
 import { teardownInlineTerminal } from './InlineTerminal'
 import { Button, EmptyState } from './ui'
+import { ShellLeadingControls } from './ShellLeadingControls'
 import {
   clearAgentBinaryCache,
   getAgentBinaryCache,
@@ -27,6 +28,7 @@ import {
 import { applyTerminalAppearance, disposeTerminal } from '../lib/terminalRegistry'
 import { useT } from '../i18n/useT'
 import { keys } from '../lib/platform'
+import { useSidebarFloatMode } from '../lib/sidebarLayout'
 
 function isCompanionSessionShell(): boolean {
   try {
@@ -453,6 +455,13 @@ export function SessionDetail({
     }
   }, [isVavMode])
 
+  // Main shell only: when the list is not a docked left column, park toggle +
+  // new-session ahead of the agent select (no separate window titlebar).
+  const sidebarVisible = useSessionStore((s) => s.sidebarVisible)
+  const sidebarFloating = useSidebarFloatMode()
+  const showShellLeading =
+    variant === 'main' && !(sidebarVisible && !sidebarFloating)
+
   const chrome =
     showAgentSwitcher && !hideChrome ? (
       <AgentModeChrome
@@ -460,6 +469,7 @@ export function SessionDetail({
         agentBinaryName={agentKey}
         showSplits={!isVavMode && probe === 'ready'}
         showSearch={isVavMode}
+        showShellLeading={showShellLeading}
         fileSessionChrome={previewEdit && isVavMode ? fileSessionChrome ?? null : null}
       />
     ) : null
@@ -482,6 +492,8 @@ export function SessionDetail({
           <div className="preview-edit-stream" data-search={searchOpen}>
             {searchOpen && <SearchStrip />}
             <Transcript />
+            {/* Bubbles eat log space only — dock height stays put. */}
+            <ComposerContext conversationId={activeId} />
           </div>
           <div className="preview-edit-dock dock">
             <Composer conversationId={activeId} />
@@ -524,6 +536,9 @@ export function SessionDetail({
           {searchOpen && <SearchStrip />}
           <PlanOverlay />
           <Transcript />
+          {/* File / quote / comment bubbles resize only this column — not the
+              tools tray or composer box (avoids jump while browsing Files). */}
+          <ComposerContext conversationId={activeId} />
         </div>
         {/* Composer sits above the tools tray so the prompt stays next to the
             transcript; Files/Terminal expand downward from the dock. */}
@@ -629,6 +644,8 @@ export function AgentModeChrome({
   showSplits = false,
   /** Transcript find only — hide for CLI / terminal hosts (no chat stream). */
   showSearch = true,
+  /** Sidebar collapsed / floating: toggle + new ahead of the agent select. */
+  showShellLeading = false,
   /** Single-file vav: session name + history + new in this same chrome row. */
   fileSessionChrome = null
 }: {
@@ -636,6 +653,7 @@ export function AgentModeChrome({
   agentBinaryName: string | null
   showSplits?: boolean
   showSearch?: boolean
+  showShellLeading?: boolean
   fileSessionChrome?: FileSessionChromeProps | null
 }): React.JSX.Element {
   const t = useT()
@@ -670,8 +688,14 @@ export function AgentModeChrome({
 
   return (
     <div
-      className={`terminal-host-chrome agent-mode-chrome${fs ? ' has-file-session' : ''}`}
+      className={`terminal-host-chrome agent-mode-chrome${fs ? ' has-file-session' : ''}${showShellLeading ? ' has-shell-leading' : ''}`}
     >
+      {showShellLeading ? (
+        <div className="agent-mode-shell-leading">
+          <ShellLeadingControls />
+        </div>
+      ) : null}
+
       {/* Icon + name are one control; native <select> covers the whole face. */}
       <label className="agent-mode-select" title={t('agents.switchHint')}>
         <span className="agent-mode-select-face" aria-hidden>
@@ -686,11 +710,13 @@ export function AgentModeChrome({
           aria-label={t('agents.selector')}
         >
           <option value="vav">{t('agents.plainShell')}</option>
-          {agents.map((a) => (
-            <option key={a.id} value={a.id}>
-              {a.name}
-            </option>
-          ))}
+          {agents
+            .filter((a) => !!a.id && !!a.name)
+            .map((a) => (
+              <option key={a.id} value={a.id}>
+                {a.name}
+              </option>
+            ))}
         </select>
       </label>
 

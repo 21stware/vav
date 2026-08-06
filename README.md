@@ -1,6 +1,6 @@
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/wordmark-dark.png">
-  <img src="docs/wordmark.png" alt="vav" height="54">
+  <img src="docs/wordmark.png" alt="vav" height="40">
 </picture>
 
 <br/>
@@ -36,13 +36,19 @@ The static site lives in [`site/`](site/) and is published to GitHub Pages by Ac
 https://vavapp.com  
 (also https://21stware.github.io/vav/)
 
-Bilingual (toggle in the top-right; default follows the browser language). Marketing screenshots are captured with the English UI (chat / files / terminal / context):
+Bilingual (toggle in the top-right; default follows the browser language, and `?lang=zh` pins it). Marketing screenshots are captured with the English UI (chat / files / terminal / context):
 
 ```bash
 node scripts/capture-marketing-screenshot.mjs
 ```
 
-Writes `docs/screenshot.png` (README hero) and `site/assets/screenshot-*.png` (site gallery).
+Writes `docs/screenshot.png` (README hero) and `site/assets/screenshot-*.png` (site gallery), then
+derives the AVIF/WebP variants the site actually serves. The PNGs stay as the `<picture>` fallback.
+If you edit `site/assets/*.png` by hand, regenerate the variants or visitors keep the old ones:
+
+```bash
+npm run site:images        # add -- --force to rebuild everything
+```
 
 Custom domain: `vavapp.com` (see `site/CNAME`). Apex uses GitHub Pages `A`/`AAAA` records; `www` is a `CNAME` to `21stware.github.io`. Keep Cloudflare proxy **DNS only** (grey cloud) so GitHub can issue HTTPS.
 

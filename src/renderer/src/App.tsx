@@ -1,7 +1,7 @@
-import { useEffect, useState } from 'react'
-import { Download, PanelLeft, Plus, RotateCw, Settings } from 'lucide-react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { useSessionStore } from './state/sessionStore'
 import {
+  installCompactionsBridge,
   installDetachedBridge,
   installSettingsBridge,
   installTurnEventBridge,
@@ -12,28 +12,78 @@ import { installFsWatchBridge, installPtyBridge } from './state/workspaceStore'
 import { Sidebar } from './components/Sidebar'
 import { SessionDetail, useTerminalAppearance } from './components/SessionDetail'
 import { WorkspaceView } from './components/WorkspaceView'
+import { FileSessionView } from './components/FileSessionView'
 import { AppToast } from './components/AppToast'
-import { Button, Modal } from './components/ui'
+import { ShellLeadingControls } from './components/ShellLeadingControls'
+import { Button, EmptyState, Modal } from './components/ui'
+import { KeychainOnboarding } from './components/KeychainOnboarding'
 import { useAppearance } from './lib/appearance'
 import { useMenuCommands } from './lib/menuCommands'
 import { installDefaultContextMenu } from './lib/nativeMenu'
-import { keys } from './lib/platform'
+import { SIDEBAR_FLOAT_MAX, useSidebarFloatMode } from './lib/sidebarLayout'
 import { getShortcuts } from './shortcuts'
 import { useT } from './i18n/useT'
+
+type LaunchPhase = 'checking' | 'keychain' | 'booting' | 'ready' | 'no-preload'
+
+/** First paint: on macOS show Keychain guide immediately (no blank wait for IPC). */
+function initialLaunchPhase(): LaunchPhase {
+  try {
+    if (!window.vav) return 'no-preload'
+    if (window.vav.platform === 'darwin') return 'keychain'
+  } catch {
+    // preload may be absent in non-electron tests
+  }
+  return 'checking'
+}
 
 export default function App(): React.JSX.Element {
   const ready = useSessionStore((s) => s.ready)
   const bootstrap = useSessionStore((s) => s.bootstrap)
+  const [phase, setPhase] = useState<LaunchPhase>(initialLaunchPhase)
 
   useEffect(() => {
-    void bootstrap()
+    let cancelled = false
+    void (async () => {
+      if (!window.vav) {
+        setPhase('no-preload')
+        return
+      }
+      try {
+        // status() is pure (no safeStorage) — only reports the gate flag.
+        const status = await window.vav.secrets.status()
+        if (cancelled) return
+        if (status.needsUnlock) {
+          setPhase('keychain')
+          return
+        }
+        setPhase('booting')
+        await bootstrap()
+        if (!cancelled) setPhase('ready')
+      } catch {
+        // If status IPC fails, still try to boot (dev / older preload).
+        if (cancelled) return
+        if (!window.vav) {
+          setPhase('no-preload')
+          return
+        }
+        setPhase('booting')
+        await bootstrap()
+        if (!cancelled) setPhase('ready')
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
   }, [bootstrap])
 
   useEffect(() => {
+    if (!window.vav) return
     const offTurn = installTurnEventBridge()
     const offFs = installFsWatchBridge()
     const offPty = installPtyBridge()
     const offSettings = installSettingsBridge()
+    const offCompactions = installCompactionsBridge()
     const offWindow = installWindowBridge()
     const offDetached = installDetachedBridge()
     const offUpdates = installUpdateBridge()
@@ -44,10 +94,20 @@ export default function App(): React.JSX.Element {
       if (store.activeGroupId) store.selectWorkspaceGroup(null)
       if (!store.sidebarVisible) store.toggleSidebar()
       void store.selectConversation(event.conversationId).then(() => {
-        if (event.attachments?.length) {
-          store.setAttachments(event.conversationId, event.attachments)
+        const next = useSessionStore.getState()
+        // File-bound sessions live under File sessions — jump the list there.
+        const meta = next.conversations.find((c) => c.id === event.conversationId)
+        if (meta?.fileId) {
+          next.setSidebarListMode('fileSessions')
+        } else if (meta?.archived) {
+          next.setSidebarListMode('archive')
+        } else {
+          next.setSidebarListMode('main')
         }
-        store.focusComposer()
+        if (event.attachments?.length) {
+          next.setAttachments(event.conversationId, event.attachments)
+        }
+        next.focusComposer()
       })
       if (event.toast) store.setErrorBanner(event.toast)
     })
@@ -56,6 +116,7 @@ export default function App(): React.JSX.Element {
       offFs()
       offPty()
       offSettings()
+      offCompactions()
       offWindow()
       offDetached()
       offUpdates()
@@ -69,14 +130,47 @@ export default function App(): React.JSX.Element {
   useMenuCommands()
   useResponsiveSidebar()
 
-  if (!ready) return <div className="app-shell" />
+  const floating = useSidebarFloatMode()
+  const sidebarVisible = useSessionStore((s) => s.sidebarVisible)
+  // Docked sidebar owns traffic-light chrome. Collapsed: session parks toggle
+  // on the agent row; workspace parks it on the preview file header.
+  const panelFlushTop = sidebarVisible && !floating
+
+  if (phase === 'no-preload') {
+    return (
+      <div className="app-shell" style={{ display: 'grid', placeItems: 'center', padding: 32 }}>
+        <EmptyState
+          title="Open vav in Electron"
+          description="The preload bridge is missing — this usually means a browser tab on :5173, or Electron was killed. Run npm run dev and use the app window."
+        />
+      </div>
+    )
+  }
+
+  if (phase === 'keychain') {
+    return (
+      <KeychainOnboarding
+        onUnlocked={async () => {
+          setPhase('booting')
+          await bootstrap()
+          setPhase('ready')
+        }}
+      />
+    )
+  }
+
+  if (phase === 'checking' || phase === 'booting' || !ready) {
+    return <div className="app-shell" />
+  }
 
   // Change review is inline in the transcript (not a full-screen takeover).
   return (
-    <div className="app-shell">
-      <Titlebar />
+    <div className={`app-shell${panelFlushTop ? ' panel-flush-top' : ' panel-shell-chrome'}`}>
       <div className="body-split">
-        <SidebarSlot />
+        <SidebarSlot
+          floating={floating}
+          chrome={panelFlushTop ? <Titlebar variant="sidebar" /> : null}
+        />
         <DetailSlot />
       </div>
       <Overlays />
@@ -86,113 +180,72 @@ export default function App(): React.JSX.Element {
 }
 
 function DetailSlot(): React.JSX.Element {
+  const t = useT()
   const activeGroupId = useSessionStore((s) => s.activeGroupId)
+  const activeId = useSessionStore((s) => s.activeId)
+  const activeConversation = useSessionStore((s) =>
+    s.conversations.find((c) => c.id === s.activeId)
+  )
+  const createConversation = useSessionStore((s) => s.createConversation)
+
   if (activeGroupId) return <WorkspaceView workdir={activeGroupId} />
+  // File-bound sessions: file canvas + agent (list lives in sidebar File sessions).
+  if (activeConversation?.fileId) {
+    return (
+      <FileSessionView
+        conversationId={activeConversation.id}
+        fileId={activeConversation.fileId}
+      />
+    )
+  }
+  // Orphan activeId (e.g. deleted / not yet hydrated) used to render a bald void.
+  if (!activeId || !activeConversation) {
+    return (
+      <main className="detail detail-empty-orphan">
+        <EmptyState
+          logo
+          title={t('session.noActiveTitle')}
+          description={t('session.noActiveDesc')}
+        >
+          <Button
+            label={t('common.newSession')}
+            variant="primary"
+            onClick={() => void createConversation()}
+          />
+        </EmptyState>
+      </main>
+    )
+  }
   return <SessionDetail />
 }
 
-function Titlebar(): React.JSX.Element {
-  const t = useT()
-  const createConversation = useSessionStore((s) => s.createConversation)
-  const openSettings = useSessionStore((s) => s.openSettings)
-  const toggleSidebar = useSessionStore((s) => s.toggleSidebar)
-  const updateState = useSessionStore((s) => s.updateState)
-  const downloadUpdate = useSessionStore((s) => s.downloadUpdate)
-  const installUpdate = useSessionStore((s) => s.installUpdate)
-
-  const updateButton =
-    updateState.phase === 'available' ? (
-      <Button
-        icon={<Download size={14} />}
-        label={t('update.availableButton', { version: updateState.latestVersion ?? '' })}
-        variant="primary"
-        size="sm"
-        onClick={() => void downloadUpdate()}
-      />
-    ) : updateState.phase === 'downloading' ? (
-      <Button
-        icon={<Download size={14} />}
-        label={t('update.downloading', { progress: updateState.progress })}
-        variant="primary"
-        size="sm"
-        disabled
-      />
-    ) : updateState.phase === 'ready' ? (
-      <Button
-        icon={<RotateCw size={14} />}
-        label={t('update.restartInstall')}
-        variant="primary"
-        size="sm"
-        onClick={() => void installUpdate()}
-      />
-    ) : null
-
+function Titlebar({
+  variant = 'window'
+}: {
+  /** `sidebar` — chrome row inside the docked list column (panel flush to top). */
+  variant?: 'window' | 'sidebar'
+}): React.JSX.Element {
   return (
-    <header className="titlebar">
-      {/* Starting a session belongs with the list it lands in, not with the
-          window-level controls at the far end.
-          Find (⌘F) lives on the session agent chrome — titlebar search was
-          unreachable for CLI agents and missing entirely in detached windows. */}
-      <Button
-        icon={<PanelLeft size={14} />}
-        title={`${t('shortcut.toggleSidebar')} ${keys('⌘⇧H')}`}
-        onClick={toggleSidebar}
-      />
-      <Button
-        icon={<Plus size={14} />}
-        label={t('app.newSession')}
-        size="sm"
-        title={t('app.newSessionTitle', { shortcut: keys('⌘N') })}
-        onClick={() => void createConversation()}
-      />
-      {updateButton}
+    <header className={`titlebar${variant === 'sidebar' ? ' sidebar-chrome' : ''}`}>
+      <ShellLeadingControls />
       <span className="spacer" />
-      <Button
-        icon={<Settings size={14} />}
-        size="sm"
-        title={t('app.settingsTitle', { shortcut: keys('⌘,') })}
-        onClick={() => openSettings()}
-      />
     </header>
   )
 }
 
-/**
- * Below this width the sidebar leaves the flex split and opens as a floating
- * overlay. Keep this well under the default window width (720) so normal
- * sessions stay docked; only genuinely narrow frames float.
- */
-const SIDEBAR_FLOAT_MAX = 560
-
-function useSidebarFloatMode(): boolean {
-  const [floating, setFloating] = useState(() => window.innerWidth <= SIDEBAR_FLOAT_MAX)
-
-  useEffect(() => {
-    let timer: ReturnType<typeof setTimeout> | null = null
-    const apply = (): void => {
-      setFloating(window.innerWidth <= SIDEBAR_FLOAT_MAX)
-    }
-    const onResize = (): void => {
-      if (timer) clearTimeout(timer)
-      timer = setTimeout(apply, 80)
-    }
-    window.addEventListener('resize', onResize, { passive: true })
-    return () => {
-      window.removeEventListener('resize', onResize)
-      if (timer) clearTimeout(timer)
-    }
-  }, [])
-
-  return floating
-}
-
 const SIDEBAR_FLOAT_LEAVE_MS = 220 // --dur-sheet
 
-function SidebarSlot(): React.JSX.Element | null {
+function SidebarSlot({
+  floating,
+  chrome
+}: {
+  floating: boolean
+  /** Docked flush layout: toggle / new-session row above the list. */
+  chrome?: ReactNode
+}): React.JSX.Element | null {
   const t = useT()
   const visible = useSessionStore((s) => s.sidebarVisible)
   const toggleSidebar = useSessionStore((s) => s.toggleSidebar)
-  const floating = useSidebarFloatMode()
   const [floatMounted, setFloatMounted] = useState(false)
   const [floatLeaving, setFloatLeaving] = useState(false)
 
@@ -240,6 +293,14 @@ function SidebarSlot(): React.JSX.Element | null {
 
   if (!floating) {
     if (!visible) return null
+    if (chrome) {
+      return (
+        <div className="sidebar-column">
+          {chrome}
+          <Sidebar />
+        </div>
+      )
+    }
     return <Sidebar />
   }
 
@@ -287,9 +348,9 @@ function Overlays(): React.JSX.Element {
     <Modal
       title={t('about.shortcuts')}
       onDismiss={() => setShortcutsOpen(false)}
-      actions={
-        <Button label={t('common.ok')} variant="primary" onClick={() => setShortcutsOpen(false)} />
-      }
+      actions={(dismiss) => (
+        <Button label={t('common.ok')} variant="primary" onClick={dismiss} />
+      )}
     >
       <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
         {shortcuts.map(([shortcutKeys, description]) => (

@@ -5,8 +5,9 @@ import cursorIcon from '../assets/agents/cursor.svg'
 import devinIcon from '../assets/agents/devin-color.svg'
 import grokIcon from '../assets/agents/grok.svg'
 import piIcon from '../assets/agents/pi-coding-agent.svg'
-// Product mark (Dock / tray family) — not a generic Lucide icon.
+// Product mark — full app-icon plates (Any light / Any dark). Theme via CSS, no invert.
 import vavIcon from '../assets/agents/vav-mark.png'
+import vavIconDark from '../assets/agents/vav-mark-dark.png'
 
 /** Official brand marks from `static/` (copied into renderer assets). */
 const AGENT_ICONS: Record<string, string> = {
@@ -25,7 +26,7 @@ const AGENT_ICONS: Record<string, string> = {
  * Theme adaptation (glyphs must stay readable on light + dark chips):
  * - `is-mono` — dark monochrome (cursor, grok): invert on dark
  * - `is-mono-on-dark` — light monochrome (pi ships white): invert on light
- * - `agent-brand-mark-vav` — product mark (dark ink + lavender): lighten on dark
+ * - vav — dual PNG plates (light / dark Any); never invert (solid app icon)
  */
 export function AgentBrandMark({
   agent,
@@ -64,15 +65,33 @@ export function AgentBrandMark({
     .filter(Boolean)
     .join(' ')
 
+  // Full-bleed app icon fills the chip; other logos keep a small inset.
+  const imgSize = Math.round(size * (isVav ? 1 : 0.72))
+
   return (
     <span className={classes} style={{ width: size, height: size }} title={agent.name}>
-      <img
-        src={src}
-        alt=""
-        width={Math.round(size * (isVav ? 0.78 : 0.72))}
-        height={Math.round(size * (isVav ? 0.78 : 0.72))}
-        draggable={false}
-      />
+      {isVav ? (
+        <>
+          <img
+            className="logo-light"
+            src={vavIcon}
+            alt=""
+            width={imgSize}
+            height={imgSize}
+            draggable={false}
+          />
+          <img
+            className="logo-dark"
+            src={vavIconDark}
+            alt=""
+            width={imgSize}
+            height={imgSize}
+            draggable={false}
+          />
+        </>
+      ) : (
+        <img src={src} alt="" width={imgSize} height={imgSize} draggable={false} />
+      )}
     </span>
   )
 }

@@ -1,4 +1,5 @@
-import { ExternalLink, File, FolderOpen } from 'lucide-react'
+import { ExternalLink, File } from 'lucide-react'
+import { FileManagerIcon } from './FileManagerIcon'
 import type { BinaryFileMeta, FileInspectResult } from '@shared/ipc'
 import { formatBytes } from '../lib/format'
 import { useT } from '../i18n/useT'
@@ -98,7 +99,7 @@ export function BinaryFileView({
           label={t('preview.showInFinder')}
           size="sm"
           variant="secondary"
-          icon={<FolderOpen size={13} />}
+          icon={<FileManagerIcon size={13} />}
           title={t('preview.showInFinder')}
           onClick={(event) => {
             event.preventDefault()

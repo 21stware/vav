@@ -316,130 +316,146 @@ export const MessageRow = memo(function MessageRow({
           </div>
         )}
 
-        <div className="message-actions">
-          <Button
-            icon={<Copy size={12} />}
-            size="sm"
-            title={t('message.copy')}
-            onClick={() => void window.vav.conversations.copyToClipboard(message.content)}
-          />
-          {onRegenerate && (
-            <Button
-              icon={<RotateCcw size={12} />}
-              size="sm"
-              title={t('message.regenerate')}
-              disabled={busy}
-              onClick={() => onRegenerate(message.id)}
-            />
-          )}
-          {onQuote && (
-            <Button icon={<Quote size={12} />} size="sm" title={t('message.quote')} onClick={() => onQuote(message)} />
-          )}
-          {onFork && (
-            <Button
-              icon={<GitBranch size={12} />}
-              size="sm"
-              title={t('message.branchHere')}
-              disabled={busy}
-              onClick={() => onFork(message.id)}
-            />
-          )}
-          {message.changeSetId && (
-            <Button
-              icon={<FileDiff size={12} />}
-              size="sm"
-              title={t('message.reviewChanges')}
-              onClick={() => {
-                document
-                  .getElementById(`inline-review-${message.changeSetId}`)
-                  ?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
-              }}
-            />
-          )}
-          {writePathsOf(message).length > 0 && (
-            <>
+        {/* Actions above Done: hover strip then settled status (never under Done). */}
+        <div className="message-tail">
+          <div className="message-actions-slot">
+            <div className="message-actions">
               <Button
-                icon={<Undo2 size={12} />}
+                icon={<Copy size={12} />}
                 size="sm"
-                title={t('message.revertWorkspace')}
-                disabled={busy}
-                onClick={() => {
-                  const paths = writePathsOf(message)
-                  const store = useSessionStore.getState()
-                  void (async () => {
-                    const active = message.changeSetId
-                      ? await window.vav.changeSets.get(message.changeSetId)
-                      : store.pendingReviewByConversation[store.activeId]
-                        ? await window.vav.changeSets.get(
-                            store.pendingReviewByConversation[store.activeId]!.changeSetId
-                          )
-                        : await window.vav.changeSets.active(store.activeId)
-                    if (!active) {
-                      store.showToast({
-                        kind: 'info',
-                        title: t('message.revertWorkspace'),
-                        description: t('review.noPending')
-                      })
-                      return
-                    }
-                    const targets = active.files
-                      .filter(
-                        (f) =>
-                          f.status === 'pending' || f.status === 'accepted' || f.status === 'edited'
-                      )
-                      .map((f) => f.filePath)
-                      .filter((p) => paths.some((w) => p === w || p.endsWith(w) || w.endsWith(p)))
-                    if (targets.length === 0) {
-                      store.showToast({
-                        kind: 'info',
-                        title: t('message.revertWorkspace'),
-                        description: t('review.noPending')
-                      })
-                      return
-                    }
-                    store.showDialog({
-                      title: t('message.revertWorkspace'),
-                      body: t('message.revertConfirm', { n: targets.length }),
-                      confirmLabel: t('message.revertWorkspace'),
-                      destructive: true,
-                      onConfirm: () => {
-                        void (async () => {
-                          // Prefer reject (restores original) for pending; undo for already accepted.
-                          const pendingPaths = active.files
-                            .filter((f) => targets.includes(f.filePath) && f.status === 'pending')
-                            .map((f) => f.filePath)
-                          const acceptedPaths = active.files
-                            .filter(
-                              (f) =>
-                                targets.includes(f.filePath) &&
-                                (f.status === 'accepted' || f.status === 'edited')
-                            )
-                            .map((f) => f.filePath)
-                          if (pendingPaths.length) {
-                            await window.vav.changeSets.reject(active.id, pendingPaths)
-                          }
-                          for (const p of acceptedPaths) {
-                            await window.vav.changeSets.undo(active.id, p)
-                          }
-                          await store.refreshChangeSet()
-                          store.showToast({
-                            kind: 'success',
-                            title: t('message.revertDone'),
-                            description: t('message.revertDoneDesc', { n: targets.length })
-                          })
-                        })()
-                      }
-                    })
-                  })()
-                }}
+                title={t('message.copy')}
+                onClick={() => void window.vav.conversations.copyToClipboard(message.content)}
               />
-            </>
-          )}
-        </div>
+              {onRegenerate && (
+                <Button
+                  icon={<RotateCcw size={12} />}
+                  size="sm"
+                  title={t('message.regenerate')}
+                  disabled={busy}
+                  onClick={() => onRegenerate(message.id)}
+                />
+              )}
+              {onQuote && (
+                <Button
+                  icon={<Quote size={12} />}
+                  size="sm"
+                  title={t('message.quote')}
+                  onClick={() => onQuote(message)}
+                />
+              )}
+              {onFork && (
+                <Button
+                  icon={<GitBranch size={12} />}
+                  size="sm"
+                  title={t('message.branchHere')}
+                  disabled={busy}
+                  onClick={() => onFork(message.id)}
+                />
+              )}
+              {message.changeSetId && (
+                <Button
+                  icon={<FileDiff size={12} />}
+                  size="sm"
+                  title={t('message.reviewChanges')}
+                  onClick={() => {
+                    document
+                      .getElementById(`inline-review-${message.changeSetId}`)
+                      ?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+                  }}
+                />
+              )}
+              {writePathsOf(message).length > 0 && (
+                <>
+                  <Button
+                    icon={<Undo2 size={12} />}
+                    size="sm"
+                    title={t('message.revertWorkspace')}
+                    disabled={busy}
+                    onClick={() => {
+                      const paths = writePathsOf(message)
+                      const store = useSessionStore.getState()
+                      void (async () => {
+                        const active = message.changeSetId
+                          ? await window.vav.changeSets.get(message.changeSetId)
+                          : store.pendingReviewByConversation[store.activeId]
+                            ? await window.vav.changeSets.get(
+                                store.pendingReviewByConversation[store.activeId]!.changeSetId
+                              )
+                            : await window.vav.changeSets.active(store.activeId)
+                        if (!active) {
+                          store.showToast({
+                            kind: 'info',
+                            title: t('message.revertWorkspace'),
+                            description: t('review.noPending')
+                          })
+                          return
+                        }
+                        const targets = active.files
+                          .filter(
+                            (f) =>
+                              f.status === 'pending' ||
+                              f.status === 'accepted' ||
+                              f.status === 'edited'
+                          )
+                          .map((f) => f.filePath)
+                          .filter((p) =>
+                            paths.some((w) => p === w || p.endsWith(w) || w.endsWith(p))
+                          )
+                        if (targets.length === 0) {
+                          store.showToast({
+                            kind: 'info',
+                            title: t('message.revertWorkspace'),
+                            description: t('review.noPending')
+                          })
+                          return
+                        }
+                        store.showDialog({
+                          title: t('message.revertWorkspace'),
+                          body: t('message.revertConfirm', { n: targets.length }),
+                          confirmLabel: t('message.revertWorkspace'),
+                          destructive: true,
+                          onConfirm: () => {
+                            void (async () => {
+                              // Prefer reject (restores original) for pending; undo for accepted.
+                              const pendingPaths = active.files
+                                .filter(
+                                  (f) => targets.includes(f.filePath) && f.status === 'pending'
+                                )
+                                .map((f) => f.filePath)
+                              const acceptedPaths = active.files
+                                .filter(
+                                  (f) =>
+                                    targets.includes(f.filePath) &&
+                                    (f.status === 'accepted' || f.status === 'edited')
+                                )
+                                .map((f) => f.filePath)
+                              if (pendingPaths.length) {
+                                await window.vav.changeSets.reject(active.id, pendingPaths)
+                              }
+                              for (const p of acceptedPaths) {
+                                await window.vav.changeSets.undo(active.id, p)
+                              }
+                              await store.refreshChangeSet()
+                              store.showToast({
+                                kind: 'success',
+                                title: t('message.revertDone'),
+                                description: t('message.revertDoneDesc', { n: targets.length })
+                              })
+                            })()
+                          }
+                        })
+                      })()
+                    }}
+                  />
+                </>
+              )}
+            </div>
+          </div>
 
-        <div className="message-footer">
-          {pager}
-          {!message.cancelled && !message.errorText && <StreamStatus state="done" />}
+          <div className="message-footer">
+            {pager}
+            {!message.cancelled && !message.errorText && <StreamStatus state="done" />}
+          </div>
         </div>
       </div>
     </div>

@@ -1,0 +1,252 @@
+{
+  "version": 1,
+  "generatedAt": "2026-08-04T14:42:54.983Z",
+  "note": "Bundled Agent Skills for vav. See NOTICE.md for licenses. Anthropic document skills (docx/pdf/pptx/xlsx from anthropics/skills) are NOT included — their LICENSE forbids redistribution outside Anthropic services. Document skills here are MIT from MiniMax-AI/skills.",
+  "skills": [
+    {
+      "id": "algorithmic-art",
+      "name": "algorithmic-art",
+      "description": "Creating algorithmic art using p5.js with seeded randomness and interactive parameter exploration. Use this when users request creating art using code, generative art, algorithmic art, flow fields, or particle systems. Create original algorithmic art rather than copying existing artists' work to avoid copyright violations.",
+      "license": "Apache-2.0",
+      "source": "anthropics/skills",
+      "sourceUrl": "https://github.com/anthropics/skills/tree/main/skills/algorithmic-art",
+      "tags": [
+        "image",
+        "art",
+        "p5",
+        "generative"
+      ],
+      "dir": "algorithmic-art"
+    },
+    {
+      "id": "canvas-design",
+      "name": "canvas-design",
+      "description": "Create beautiful visual art in .png and .pdf documents using design philosophy. You should use this skill when the user asks to create a poster, piece of art, design, or other static piece. Create original visual designs, never copying existing artists' work to avoid copyright violations.",
+      "license": "Apache-2.0",
+      "source": "anthropics/skills",
+      "sourceUrl": "https://github.com/anthropics/skills/tree/main/skills/canvas-design",
+      "tags": [
+        "image",
+        "pdf",
+        "poster",
+        "design"
+      ],
+      "dir": "canvas-design"
+    },
+    {
+      "id": "doc-coauthoring",
+      "name": "doc-coauthoring",
+      "description": "Guide users through a structured workflow for co-authoring documentation. Use when user wants to write documentation, proposals, technical specs, decision docs, or similar structured content. This workflow helps users efficiently transfer context, refine content through iteration, and verify the doc works for readers. Trigger when user mentions writing docs, creating proposals, drafting specs, or similar documentation tasks.",
+      "license": "Apache-2.0",
+      "source": "anthropics/skills",
+      "sourceUrl": "https://github.com/anthropics/skills/tree/main/skills/doc-coauthoring",
+      "tags": [
+        "markdown",
+        "text",
+        "docs"
+      ],
+      "dir": "doc-coauthoring"
+    },
+    {
+      "id": "docx",
+      "name": "minimax-docx",
+      "description": "Professional DOCX document creation, editing, and formatting using OpenXML SDK (.NET). Three pipelines: (A) create new documents from scratch, (B) fill/edit content in existing documents, (C) apply template formatting with XSD validation gate-check. MUST use this skill whenever the user wants to produce, modify, or format a Word document — including when they say \"write a report\", \"draft a proposal\", \"make a contract\", \"fill in this form\", \"reformat to match this template\", or any task whose fin",
+      "license": "MIT",
+      "source": "MiniMax-AI/skills (minimax-docx)",
+      "sourceUrl": "https://github.com/MiniMax-AI/skills/tree/main/skills/minimax-docx",
+      "tags": [
+        "docx",
+        "word",
+        "document"
+      ],
+      "dir": "docx"
+    },
+    {
+      "id": "frontend-design",
+      "name": "frontend-design",
+      "description": "Guidance for distinctive, intentional visual design when building new UI or reshaping an existing one. Helps with aesthetic direction, typography, and making choices that don't read as templated defaults.",
+      "license": "Apache-2.0",
+      "source": "anthropics/skills",
+      "sourceUrl": "https://github.com/anthropics/skills/tree/main/skills/frontend-design",
+      "tags": [
+        "web",
+        "ui",
+        "design",
+        "css"
+      ],
+      "dir": "frontend-design"
+    },
+    {
+      "id": "frontend-dev",
+      "name": "frontend-dev",
+      "description": "Full-stack frontend development combining premium UI design, cinematic animations, AI-generated media assets, persuasive copywriting, and visual art. Builds complete, visually striking web pages with real media, advanced motion, and compelling copy. Use when: building landing pages, marketing sites, product pages, dashboards, generating media assets (image/video/audio/music), writing conversion copy, creating generative art, or implementing cinematic scroll animations.",
+      "license": "MIT",
+      "source": "MiniMax-AI/skills",
+      "sourceUrl": "https://github.com/MiniMax-AI/skills/tree/main/skills/frontend-dev",
+      "tags": [
+        "web",
+        "ui",
+        "dashboard",
+        "animation",
+        "landing"
+      ],
+      "dir": "frontend-dev"
+    },
+    {
+      "id": "fullstack-dev",
+      "name": "fullstack-dev",
+      "description": "Full-stack backend architecture and frontend-backend integration guide. TRIGGER when: building a full-stack app, creating REST API with frontend, scaffolding backend service, building todo app, building CRUD app, building real-time app, building chat app, Express + React, Next.js API, Node.js backend, Python backend, Go backend, designing service layers, implementing error handling, managing config/auth, setting up API clients, implementing auth flows, handling file uploads, adding real-time fea",
+      "license": "MIT",
+      "source": "MiniMax-AI/skills",
+      "sourceUrl": "https://github.com/MiniMax-AI/skills/tree/main/skills/fullstack-dev",
+      "tags": [
+        "code",
+        "web",
+        "backend"
+      ],
+      "dir": "fullstack-dev"
+    },
+    {
+      "id": "gif-sticker",
+      "name": "gif-sticker-maker",
+      "description": "Convert photos (people, pets, objects, logos) into 4 animated GIF stickers with captions. Use when: user wants to create cartoon stickers, GIF expressions, emoji packs, animated avatars, or convert photos to Funko Pop / Pop Mart blind box style animations. Triggers: sticker, GIF, cartoon, emoji, expression pack, avatar animation.",
+      "license": "MIT",
+      "source": "MiniMax-AI/skills (gif-sticker-maker)",
+      "sourceUrl": "https://github.com/MiniMax-AI/skills/tree/main/skills/gif-sticker-maker",
+      "tags": [
+        "image",
+        "gif",
+        "animation"
+      ],
+      "dir": "gif-sticker"
+    },
+    {
+      "id": "internal-comms",
+      "name": "internal-comms",
+      "description": "A set of resources to help me write all kinds of internal communications, using the formats that my company likes to use. Claude should use this skill whenever asked to write some sort of internal communications (status reports, leadership updates, 3P updates, company newsletters, FAQs, incident reports, project updates, etc.).",
+      "license": "Apache-2.0",
+      "source": "anthropics/skills",
+      "sourceUrl": "https://github.com/anthropics/skills/tree/main/skills/internal-comms",
+      "tags": [
+        "markdown",
+        "text",
+        "writing"
+      ],
+      "dir": "internal-comms"
+    },
+    {
+      "id": "mcp-builder",
+      "name": "mcp-builder",
+      "description": "Guide for creating high-quality MCP (Model Context Protocol) servers that enable LLMs to interact with external services through well-designed tools. Use when building MCP servers to integrate external APIs or services, whether in Python (FastMCP) or Node/TypeScript (MCP SDK).",
+      "license": "Apache-2.0",
+      "source": "anthropics/skills",
+      "sourceUrl": "https://github.com/anthropics/skills/tree/main/skills/mcp-builder",
+      "tags": [
+        "code",
+        "mcp"
+      ],
+      "dir": "mcp-builder"
+    },
+    {
+      "id": "pdf",
+      "name": "minimax-pdf",
+      "description": "Use this skill when visual quality and design identity matter for a PDF. CREATE (generate from scratch): \"make a PDF\", \"generate a report\", \"write a proposal\", \"create a resume\", \"beautiful PDF\", \"professional document\", \"cover page\", \"polished PDF\", \"client-ready document\". FILL (complete form fields): \"fill in the form\", \"fill out this PDF\", \"complete the form fields\", \"write values into PDF\", \"what fields does this PDF have\". REFORMAT (apply design to an existing doc): \"reformat this document",
+      "license": "MIT",
+      "source": "MiniMax-AI/skills (minimax-pdf)",
+      "sourceUrl": "https://github.com/MiniMax-AI/skills/tree/main/skills/minimax-pdf",
+      "tags": [
+        "pdf",
+        "document",
+        "report"
+      ],
+      "dir": "pdf"
+    },
+    {
+      "id": "pptx",
+      "name": "pptx-generator",
+      "description": "Generate, edit, and read PowerPoint presentations. Create from scratch with PptxGenJS (cover, TOC, content, section divider, summary slides), edit existing PPTX via XML workflows, or extract text with markitdown. Triggers: PPT, PPTX, PowerPoint, presentation, slide, deck, slides.",
+      "license": "MIT",
+      "source": "MiniMax-AI/skills (pptx-generator)",
+      "sourceUrl": "https://github.com/MiniMax-AI/skills/tree/main/skills/pptx-generator",
+      "tags": [
+        "pptx",
+        "presentation",
+        "slides"
+      ],
+      "dir": "pptx"
+    },
+    {
+      "id": "shader-dev",
+      "name": "shader-dev",
+      "description": "Comprehensive GLSL shader techniques for creating stunning visual effects — ray marching, SDF modeling, fluid simulation, particle systems, procedural generation, lighting, post-processing, and more.",
+      "license": "MIT",
+      "source": "MiniMax-AI/skills",
+      "sourceUrl": "https://github.com/MiniMax-AI/skills/tree/main/skills/shader-dev",
+      "tags": [
+        "image",
+        "shader",
+        "gpu",
+        "visual"
+      ],
+      "dir": "shader-dev"
+    },
+    {
+      "id": "theme-factory",
+      "name": "theme-factory",
+      "description": "Toolkit for styling artifacts with a theme. These artifacts can be slides, docs, reportings, HTML landing pages, etc. There are 10 pre-set themes with colors/fonts that you can apply to any artifact that has been creating, or can generate a new theme on-the-fly.",
+      "license": "Apache-2.0",
+      "source": "anthropics/skills",
+      "sourceUrl": "https://github.com/anthropics/skills/tree/main/skills/theme-factory",
+      "tags": [
+        "design",
+        "theme",
+        "markdown"
+      ],
+      "dir": "theme-factory"
+    },
+    {
+      "id": "web-artifacts-builder",
+      "name": "web-artifacts-builder",
+      "description": "Suite of tools for creating elaborate, multi-component claude.ai HTML artifacts using modern frontend web technologies (React, Tailwind CSS, shadcn/ui). Use for complex artifacts requiring state management, routing, or shadcn/ui components - not for simple single-file HTML/JSX artifacts.",
+      "license": "Apache-2.0",
+      "source": "anthropics/skills",
+      "sourceUrl": "https://github.com/anthropics/skills/tree/main/skills/web-artifacts-builder",
+      "tags": [
+        "web",
+        "react",
+        "dashboard"
+      ],
+      "dir": "web-artifacts-builder"
+    },
+    {
+      "id": "webapp-testing",
+      "name": "webapp-testing",
+      "description": "Toolkit for interacting with and testing local web applications using Playwright. Supports verifying frontend functionality, debugging UI behavior, capturing browser screenshots, and viewing browser logs.",
+      "license": "Apache-2.0",
+      "source": "anthropics/skills",
+      "sourceUrl": "https://github.com/anthropics/skills/tree/main/skills/webapp-testing",
+      "tags": [
+        "web",
+        "test",
+        "playwright"
+      ],
+      "dir": "webapp-testing"
+    },
+    {
+      "id": "xlsx",
+      "name": "minimax-xlsx",
+      "description": "Open, create, read, analyze, edit, or validate Excel/spreadsheet files (.xlsx, .xlsm, .csv, .tsv). Use when the user asks to create, build, modify, analyze, read, validate, or format any Excel spreadsheet, financial model, pivot table, or tabular data file. Covers: creating new xlsx from scratch, reading and analyzing existing files, editing existing xlsx with zero format loss, formula recalculation and validation, and applying professional financial formatting standards. Triggers on 'spreadshee",
+      "license": "MIT",
+      "source": "MiniMax-AI/skills (minimax-xlsx)",
+      "sourceUrl": "https://github.com/MiniMax-AI/skills/tree/main/skills/minimax-xlsx",
+      "tags": [
+        "xlsx",
+        "excel",
+        "data",
+        "analysis",
+        "spreadsheet"
+      ],
+      "dir": "xlsx"
+    }
+  ]
+}

@@ -23,6 +23,7 @@ import { formatBadge } from '../lib/previewBlocks'
 import { menuAnchor, showMenu, type MenuItem } from '../lib/nativeMenu'
 import { keys } from '../lib/platform'
 import { resolveSendKeyMode, shouldSendOnKeyDown } from '../lib/composerSendKey'
+import { isPickGestureActive } from '../lib/clickPick'
 import { useT } from '../i18n/useT'
 import { Button } from './ui'
 
@@ -53,9 +54,95 @@ const NO_REFS: import('@shared/types').PreviewRef[] = []
 const NO_CARDS: { ref: import('@shared/types').PreviewRef; comment: string }[] = []
 
 /**
+ * Quote strip, file-context chip, and comment cards.
+ *
+ * Lives at the bottom of the Agent log column (not inside the dock) so
+ * appear/disappear only resizes the transcript — composer box + tools tray
+ * keep a stable height (no jump when Files selection toggles the chip).
+ */
+export function ComposerContext({
+  conversationId: pinnedConversationId
+}: {
+  conversationId?: string | null
+} = {}): React.JSX.Element | null {
+  const t = useT()
+  const storeActiveId = useSessionStore((s) => s.activeId)
+  const conversationId = (pinnedConversationId?.trim() || storeActiveId) || ''
+  const contextFile = useSessionStore((s) => s.contextFiles[conversationId] ?? null)
+  const commentCards = useSessionStore((s) => s.commentCards[conversationId] ?? NO_CARDS)
+  const quote = useSessionStore((s) => s.quotes[conversationId] ?? null)
+  const dismissContextFile = useSessionStore((s) => s.dismissContextFile)
+  const clearQuote = useSessionStore((s) => s.clearQuote)
+  const scrollToMessage = useSessionStore((s) => s.scrollToMessage)
+
+  const hasCommentCards = commentCards.length > 0
+  const showFileContextChip = Boolean(contextFile && !hasCommentCards)
+  const quoteSource =
+    quote?.role === 'user' ? t('composer.quoteFromUser') : t('composer.quoteFromAgent')
+
+  useEffect(() => {
+    if (!quote || !conversationId) return
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        clearQuote(conversationId)
+      }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [quote, conversationId, clearQuote])
+
+  if (!conversationId) return null
+  if (!quote && !showFileContextChip && !hasCommentCards) return null
+
+  return (
+    <div
+      className={`composer-context${hasCommentCards ? ' has-comment-cards' : ''}`}
+      data-has-context="true"
+    >
+      {quote && (
+        <div className="quote-strip">
+          <button
+            type="button"
+            className="quote-strip-body"
+            title={t('composer.quoteJump')}
+            onClick={() => scrollToMessage(quote.messageId)}
+          >
+            <CornerUpLeft size={14} />
+            <span className="quote-strip-text">
+              <span className="quote-strip-summary">{quote.summary}</span>
+              <span className="quote-strip-source">{quoteSource}</span>
+            </span>
+          </button>
+          <button
+            type="button"
+            className="btn icon-only sm"
+            title={t('composer.clearQuote')}
+            onClick={() => clearQuote(conversationId)}
+          >
+            <X size={12} />
+          </button>
+        </div>
+      )}
+      {showFileContextChip && contextFile && (
+        <FileContextChip
+          path={contextFile}
+          conversationId={conversationId}
+          onDismiss={() => void dismissContextFile(conversationId)}
+        />
+      )}
+      <CommentCardsBar conversationId={conversationId} />
+    </div>
+  )
+}
+
+/**
  * Single shared composer for main session, workspace agent column, and
  * file-preview drawer. Pass {@link conversationId} when the surface owns a
  * session that may lag behind (or differ from) store.activeId for a frame.
+ *
+ * Context chips live in {@link ComposerContext} (Agent log column) so the dock
+ * height stays stable while browsing Files.
  */
 export function Composer({
   conversationId: pinnedConversationId
@@ -73,7 +160,6 @@ export function Composer({
   const previewRefs = useSessionStore((s) => s.previewRefs[conversationId] ?? NO_REFS)
   const commentCards = useSessionStore((s) => s.commentCards[conversationId] ?? NO_CARDS)
   const contextFile = useSessionStore((s) => s.contextFiles[conversationId] ?? null)
-  const quote = useSessionStore((s) => s.quotes[conversationId] ?? null)
   const turn = useSessionStore((s) => s.turns[conversationId])
   const settings = useSessionStore((s) => s.settings)
   const focusTick = useSessionStore((s) => s.composerFocusTick)
@@ -81,9 +167,6 @@ export function Composer({
   const setDraft = useSessionStore((s) => s.setDraft)
   const setAttachments = useSessionStore((s) => s.setAttachments)
   const setPreviewRefs = useSessionStore((s) => s.setPreviewRefs)
-  const dismissContextFile = useSessionStore((s) => s.dismissContextFile)
-  const clearQuote = useSessionStore((s) => s.clearQuote)
-  const scrollToMessage = useSessionStore((s) => s.scrollToMessage)
   const send = useSessionStore((s) => s.send)
   const cancel = useSessionStore((s) => s.cancel)
   const setModel = useSessionStore((s) => s.setModel)
@@ -132,18 +215,6 @@ export function Composer({
     : isRunning
       ? t('composer.thinking')
       : `${idlePlaceholder}  ${shortcutHints}`
-
-  useEffect(() => {
-    if (!quote || !conversationId) return
-    const onKeyDown = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape') {
-        event.preventDefault()
-        clearQuote(conversationId)
-      }
-    }
-    window.addEventListener('keydown', onKeyDown)
-    return () => window.removeEventListener('keydown', onKeyDown)
-  }, [quote, conversationId, clearQuote])
 
   useEffect(() => {
     if (focusTick === 0) return
@@ -206,15 +277,7 @@ export function Composer({
     : 0
   const tokenPct = Math.round(tokenRatio * 100)
 
-  const quoteSource =
-    quote?.role === 'user' ? t('composer.quoteFromUser') : t('composer.quoteFromAgent')
-
   const hasCommentCards = commentCards.length > 0
-  /**
-   * file-preview.rpml: whole-file chip only when there are no comment cards.
-   * Selected blocks already carry path + line context; the chip is redundant.
-   */
-  const showFileContextChip = Boolean(contextFile && !hasCommentCards)
 
   return (
     <div
@@ -230,40 +293,7 @@ export function Composer({
         }
       }}
     >
-      {quote && (
-        <div className="quote-strip">
-          <button
-            type="button"
-            className="quote-strip-body"
-            title={t('composer.quoteJump')}
-            onClick={() => scrollToMessage(quote.messageId)}
-          >
-            <CornerUpLeft size={14} />
-            <span className="quote-strip-text">
-              <span className="quote-strip-summary">{quote.summary}</span>
-              <span className="quote-strip-source">{quoteSource}</span>
-            </span>
-          </button>
-          <button
-            type="button"
-            className="btn icon-only sm"
-            title={t('composer.clearQuote')}
-            onClick={() => conversationId && clearQuote(conversationId)}
-          >
-            <X size={12} />
-          </button>
-        </div>
-      )}
-      {/* File Attachment Chip — above comment cards (file-preview.rpml). */}
-      {showFileContextChip && contextFile && conversationId && (
-        <FileContextChip
-          path={contextFile}
-          conversationId={conversationId}
-          onDismiss={() => void dismissContextFile(conversationId)}
-        />
-      )}
-      {/* Attached stack: comment strip sits on top of the input box. */}
-      <CommentCardsBar conversationId={conversationId} />
+      {/* Context chips / comments live in ComposerContext (Agent log column). */}
       <div className="composer-box">
         {previewRefs.length > 0 && conversationId && (
           <div className="context-refs">
@@ -571,10 +601,10 @@ function CommentCardsBar({
                 }}
                 onBlur={() => {
                   // Defer past canvas mousedown so a new pick can win focus first.
-                  window.setTimeout(() => {
+                  // Wait out an active pick gesture so commit doesn't thrash mid-click.
+                  const finish = (): void => {
                     const el = inputRefs.current.get(card.ref.id)
                     if (el && document.activeElement === el) return
-                    // Another comment field took focus — leave this card committed if it has text.
                     if (
                       document.activeElement instanceof HTMLInputElement &&
                       document.activeElement.classList.contains('comment-card-input')
@@ -583,6 +613,15 @@ function CommentCardsBar({
                       return
                     }
                     commitCard(card.ref.id)
+                  }
+                  window.setTimeout(() => {
+                    if (isPickGestureActive()) {
+                      window.setTimeout(() => {
+                        if (!isPickGestureActive()) finish()
+                      }, 50)
+                      return
+                    }
+                    finish()
                   }, 0)
                 }}
               />

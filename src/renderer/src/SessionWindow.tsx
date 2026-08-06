@@ -1,6 +1,7 @@
 import { useEffect, useMemo } from 'react'
 import { useSessionStore } from './state/sessionStore'
 import {
+  installCompactionsBridge,
   installSettingsBridge,
   installTurnEventBridge,
   installUpdateBridge,
@@ -82,6 +83,7 @@ export default function SessionWindow({
     const offFs = installFsWatchBridge()
     const offPty = installPtyBridge()
     const offSettings = installSettingsBridge()
+    const offCompactions = installCompactionsBridge()
     const offWindow = installWindowBridge()
     const offUpdates = installUpdateBridge()
     const offMenu = installDefaultContextMenu()
@@ -90,6 +92,7 @@ export default function SessionWindow({
       offFs()
       offPty()
       offSettings()
+      offCompactions()
       offWindow()
       offUpdates()
       offMenu()

@@ -35,6 +35,16 @@ export class ChangeSetStore {
 
   beginTurn(conversationId: string): void {
     this.pending.set(conversationId, [])
+    // Prior review sets are superseded by the new turn — drop them so a late
+    // get() cannot revive a dead card as "Could not load changes".
+    const active = this.activeByConversation.get(conversationId)
+    if (active) {
+      this.sets.delete(active)
+      this.activeByConversation.delete(conversationId)
+    }
+    for (const [id, set] of [...this.sets.entries()]) {
+      if (set.conversationId === conversationId) this.sets.delete(id)
+    }
   }
 
   recordWrite(

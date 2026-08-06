@@ -75,7 +75,7 @@ export function installDefaultContextMenu(): () => void {
     if (items.length === 0) return
 
     event.preventDefault()
-    void window.vav.window.popupMenu(items)
+    void window.vav?.window?.popupMenu?.(items)
   }
 
   document.addEventListener('contextmenu', onContextMenu)

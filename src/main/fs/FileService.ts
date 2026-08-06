@@ -803,6 +803,14 @@ const TEXT_EXTENSIONS = new Set([
   '.tsv',
   '.ipynb',
   '.rpml',
+  // Diagrams / mind maps (text-encoded; .mm may also be ObjC++ — sniff on open)
+  '.mmd',
+  '.mermaid',
+  '.dot',
+  '.gv',
+  '.opml',
+  '.drawio',
+  '.dio',
   // Shell / build
   '.sh',
   '.bash',

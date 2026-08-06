@@ -31,6 +31,8 @@ export type PreviewBlockKind =
   | 'slide'
   | 'sheet'
   | 'section'
+  /** Embedded picture / media surface (e.g. PPTX image frame). */
+  | 'image'
 
 export type PreviewBlockAlign = 'left' | 'center' | 'right' | 'justify'
 

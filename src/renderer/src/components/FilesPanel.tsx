@@ -29,6 +29,7 @@ import { basename, dirname, joinPath } from '../lib/path'
 import { menuAnchor, showMenu, type MenuItem } from '../lib/nativeMenu'
 import { fileManagerLabel } from '../lib/platform'
 import { Button, EmptyState, InlineAlert } from './ui'
+import { FileManagerIcon } from './FileManagerIcon'
 
 function sortButtonLabel(key: FileSortKey, t: ReturnType<typeof useT>): string {
   if (key === 'none') return '—'
@@ -131,6 +132,7 @@ export function FilesPanel({ visible }: { visible: boolean }): React.JSX.Element
   }
 
   const rootError = workspace.dirErrors[workspace.root]
+  const rootMissing = rootError === 'ENOENT' || /enoent|no such file|not found/i.test(rootError ?? '')
 
   const applySort = (key: FileSortKey): void => {
     const next = normalizeFileSortKey(key)
@@ -245,13 +247,26 @@ export function FilesPanel({ visible }: { visible: boolean }): React.JSX.Element
           icon={<Plus size={13} />}
           size="sm"
           title={t('files.newFile')}
+          disabled={rootMissing}
           onClick={startCreateFile}
         />
         <Button
           icon={viewMode === 'tree' ? <List size={13} /> : <Columns3 size={13} />}
           size="sm"
           title={viewMode === 'tree' ? t('files.viewList') : t('files.viewColumn')}
+          disabled={rootMissing}
           onClick={toggleViewMode}
+        />
+        <Button
+          icon={<FileManagerIcon size={13} />}
+          size="sm"
+          title={t('tools.revealInFm', { fileManager: fileManagerLabel() })}
+          disabled={rootMissing || !workspace?.root}
+          onClick={() => {
+            const target = workspace?.selectedPath || workspace?.root
+            if (!target) return
+            void window.vav.conversations.revealInFinder(target)
+          }}
         />
         {temporary && (
           <Button
@@ -278,7 +293,14 @@ export function FilesPanel({ visible }: { visible: boolean }): React.JSX.Element
       </div>
 
       <div className="files-browser" data-opaque={browserOpaque || undefined}>
-        {displayMode === 'tree' ? (
+        {rootMissing ? (
+          <div className="files-missing-root">
+            <EmptyState
+              title={t('sidebar.dirNotExist')}
+              description={workspace.root || undefined}
+            />
+          </div>
+        ) : displayMode === 'tree' ? (
           <div className="file-tree" onClick={() => selectPath(activeId, null, 'clear')}>
             {rootError ? (
               <InlineAlert kind="error" title={t('files.error.readDir')} message={rootError} />
@@ -396,7 +418,14 @@ function ColumnBrowser({
               clearAtColumn(index)
             }}
           >
-            {error && <InlineAlert kind="error" title={t('files.readError')} message={error} />}
+            {error &&
+              (error === 'ENOENT' || /enoent|no such file|not found/i.test(error) ? (
+                <div className="muted tiny" style={{ padding: 8 }}>
+                  {t('sidebar.dirNotExist')}
+                </div>
+              ) : (
+                <InlineAlert kind="error" title={t('files.readError')} message={error} />
+              ))}
             {loading && !workspace?.dirs[dir] && (
               <div className="muted tiny" style={{ padding: 8 }}>
                 {tt('common.loading')}
@@ -529,6 +558,14 @@ function TreeLevel({
   const showCreate = creating?.dir === path
 
   if (error) {
+    const missing = error === 'ENOENT' || /enoent|no such file|not found/i.test(error)
+    if (missing) {
+      return (
+        <div className="files-missing-nested" style={{ paddingLeft: level * 14 + 6 }}>
+          <span className="muted tiny">{t('sidebar.dirNotExist')}</span>
+        </div>
+      )
+    }
     return (
       <div style={{ paddingLeft: level * 14 + 6 }}>
         <InlineAlert kind="error" title={t('files.error.readDir')} message={error} />

@@ -13,6 +13,7 @@ const TOOL_NAME_KEYS: Partial<Record<ToolName, MessageKey>> = {
   fs_list: 'tool.list',
   web_search: 'tool.webSearch',
   web_fetch: 'tool.webFetch',
+  load_skill: 'tool.loadSkill',
   ask_user_question: 'tool.ask',
   request: 'tool.ask'
 }

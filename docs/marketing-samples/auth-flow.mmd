@@ -1,0 +1,8 @@
+flowchart TD
+  A[Open vav] --> B{Keychain unlocked?}
+  B -->|No| C[Show onboarding]
+  C --> D[User authorizes]
+  D --> E[Unlock secrets]
+  B -->|Yes| E
+  E --> F[Bootstrap settings]
+  F --> G[Main shell]

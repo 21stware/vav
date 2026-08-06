@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react'
 import { ChevronDown, ChevronRight, File, Folder, FolderOpen } from 'lucide-react'
 import type { ZipArchiveInfo, ZipEntryInfo } from '@shared/ipc'
 import type { PreviewBlock } from '@shared/previewBlock'
+import { handleClickPickMouseDown } from '../lib/clickPick'
 import { formatBytes } from '../lib/format'
 import { useT } from '../i18n/useT'
 
@@ -115,7 +116,7 @@ export function ZipArchiveView({
   passwordProtected?: boolean
   selecting: boolean
   selectedIds: string[]
-  onSelect: (block: PreviewBlock, event: React.MouseEvent) => void
+  onSelect: (block: PreviewBlock, event?: React.MouseEvent | null) => void
 }): React.JSX.Element {
   const t = useT()
   const tree = useMemo(() => buildTree(zip.entries), [zip.entries])
@@ -160,7 +161,9 @@ export function ZipArchiveView({
               compressedSize: 0,
               uncompressedSize: 0
             }
-            onSelect(entryToBlock(entry, childEntries), event)
+            handleClickPickMouseDown(event, () =>
+              onSelect(entryToBlock(entry, childEntries))
+            )
           }}
         >
           {node.isDirectory ? (

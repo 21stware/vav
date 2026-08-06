@@ -19,7 +19,7 @@ export function AboutSettings(): React.JSX.Element {
     <div className="about-stack">
       <div className="about-card">
         <div>
-          <span className="about-logo" role="img" aria-label="vav">
+          <span className="about-logo" role="img" aria-label="VAV">
             <img className="logo-light" src={wordmark} alt="" />
             <img className="logo-dark" src={wordmarkDark} alt="" />
           </span>

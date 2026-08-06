@@ -6,6 +6,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { PreviewBlock } from '@shared/previewBlock'
 import type { SqliteDatabaseInfo, SqliteQueryResult } from '@shared/ipc'
+import { handleClickPickMouseDown, type ClickPickPointer } from '../lib/clickPick'
 import { useT } from '../i18n/useT'
 
 const PAGE = 100
@@ -33,7 +34,11 @@ export function SqliteView({
   info: SqliteDatabaseInfo
   selecting: boolean
   selectedIds: string[]
-  onSelect: (id: string, event: React.MouseEvent, hint?: PreviewBlock) => void
+  onSelect: (
+    id: string,
+    event?: React.MouseEvent | ClickPickPointer | null,
+    hint?: PreviewBlock
+  ) => void
 }): React.JSX.Element {
   const t = useT()
   const tables = info.tables
@@ -114,9 +119,7 @@ export function SqliteView({
   const tableId = `db-table-${active}`
 
   const pick = (id: string, event: React.MouseEvent, hint: PreviewBlock): void => {
-    event.preventDefault()
-    event.stopPropagation()
-    onSelect(id, event, hint)
+    handleClickPickMouseDown(event, () => onSelect(id, null, hint))
   }
 
   const pickTable = (event: React.MouseEvent): void => {
@@ -208,14 +211,16 @@ export function SqliteView({
                         `columns: ${tb.columns.join(', ')}`,
                         `rows: ${tb.rowCount}`
                       ].join('\n')
-                      onSelect(`db-table-${tb.name}`, e, {
-                        id: `db-table-${tb.name}`,
-                        kind: 'table',
-                        text,
-                        label: `table ${tb.name}`,
-                        startLine: 1,
-                        endLine: 1
-                      })
+                      handleClickPickMouseDown(e, () =>
+                        onSelect(`db-table-${tb.name}`, null, {
+                          id: `db-table-${tb.name}`,
+                          kind: 'table',
+                          text,
+                          label: `table ${tb.name}`,
+                          startLine: 1,
+                          endLine: 1
+                        })
+                      )
                     }
                   : undefined
               }

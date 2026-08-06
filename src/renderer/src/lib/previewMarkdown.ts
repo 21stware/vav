@@ -1,6 +1,7 @@
 import MarkdownIt from 'markdown-it'
 import hljs from 'highlight.js/lib/common'
-import { renderMermaidFence } from './markdown'
+import { suggestedFilenameForLang } from './markdown'
+import { diagramKindForLang, renderDiagramFence } from './diagramRender'
 import { dirname, joinPath } from './path'
 
 /**
@@ -22,6 +23,7 @@ const previewMd: MarkdownIt = new MarkdownIt({
   html: true,
   linkify: true,
   breaks: false,
+  typographer: true,
   highlight(code: string, language: string): string {
     if (language && hljs.getLanguage(language)) {
       try {
@@ -38,13 +40,35 @@ const previewDefaultFence =
   previewMd.renderer.rules.fence ??
   ((tokens, idx, options, _env, self) => self.renderToken(tokens, idx, options))
 
+/** Document fences: language label + copy chrome (quieter than chat). */
+function previewFenceChrome(label: string, filename: string): string {
+  return (
+    `<div class="md-block md-preview-fence" data-kind="code" data-filename="${escapeHtml(filename)}">` +
+    `<div class="md-block-bar">` +
+    `<span class="md-block-name">${escapeHtml(label)}</span>` +
+    `<span class="md-block-actions">` +
+    `<button type="button" class="md-block-btn" data-md-action="copy" title="Copy">Copy</button>` +
+    `</span></div>`
+  )
+}
+
 previewMd.renderer.rules.fence = (tokens, idx, options, env, self): string => {
   const token = tokens[idx]!
   const info = (token.info || '').trim()
   const language = (info.split(/\s+/g)[0] ?? '').toLowerCase()
-  if (language === 'mermaid') return renderMermaidFence(token.content)
-  return previewDefaultFence(tokens, idx, options, env, self)
+  const diagram = diagramKindForLang(language)
+  if (diagram) return renderDiagramFence(diagram, token.content)
+  const inner = previewDefaultFence(tokens, idx, options, env, self)
+  const label = language || 'code'
+  const filename = suggestedFilenameForLang(language || 'text')
+  return `${previewFenceChrome(label, filename)}${inner}</div>`
 }
+
+previewMd.renderer.rules.table_open = (): string =>
+  `<div class="table-scroll md-preview-table"><table>`
+previewMd.renderer.rules.table_close = (): string => `</table></div>`
+
+previewMd.renderer.rules.hr = (): string => `<hr class="md-preview-hr" />`
 
 const cache = new Map<string, string>()
 const CACHE_LIMIT = 500

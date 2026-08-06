@@ -4,7 +4,7 @@ import type { TokenUsageViewPayload } from '@shared/ipc'
 import { t as translate, type MessageKey, type TParams } from '@shared/i18n'
 import { TokenUsagePanel } from './components/TokenUsagePanel'
 
-const BG = { dark: '#121213', light: '#eceaf1' } as const
+const BG = { dark: '#121213', light: '#ececee' } as const
 
 function resolveTheme(theme: ThemeMode): 'light' | 'dark' {
   if (theme === 'light' || theme === 'dark') return theme
@@ -81,7 +81,12 @@ export default function TokenUsageWindow({
     }
     return (
       <div className="token-usage-popup-body">
-        <TokenUsagePanel payload={payload} t={t} locale={locale} />
+        <TokenUsagePanel
+          payload={payload}
+          t={t}
+          locale={locale}
+          onPayloadPatch={(patch) => setPayload((prev) => (prev ? { ...prev, ...patch } : prev))}
+        />
       </div>
     )
   }, [payload, t, locale])
