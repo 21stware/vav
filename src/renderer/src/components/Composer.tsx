@@ -194,8 +194,8 @@ export function Composer({
       if (draftFlushTimer.current) clearTimeout(draftFlushTimer.current)
     }
   }, [])
+  // Allow send with no session yet — store.send mints on first submit.
   const canSend =
-    !!conversationId &&
     !isRunning &&
     (draft.trim().length > 0 ||
       attachments.length > 0 ||
@@ -290,10 +290,10 @@ export function Composer({
   }
 
   const submit = (): void => {
-    if (!canSend || !conversationId) return
-    flushDraft(draft)
+    if (!canSend) return
+    if (conversationId) flushDraft(draft)
     textareaRef.current?.blur()
-    void send(draft.trim(), attachments, conversationId)
+    void send(draft.trim(), attachments, conversationId || undefined)
   }
 
   const tokenRatio = conversation
@@ -380,7 +380,7 @@ export function Composer({
           rows={1}
           placeholder={placeholder}
           value={draft}
-          disabled={isRunning || !conversationId}
+          disabled={isRunning}
           onFocus={() => setFocused(true)}
           onCompositionStart={() => {
             composingRef.current = true
@@ -404,7 +404,7 @@ export function Composer({
             setFocused(false)
             // Composition can be aborted without compositionend (focus loss).
             composingRef.current = false
-            flushDraft(textareaRef.current?.value ?? draft)
+            if (conversationId) flushDraft(textareaRef.current?.value ?? draft)
           }}
           onKeyDown={(event) => {
             // Don’t treat IME “confirm” Enter as send.

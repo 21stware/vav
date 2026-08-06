@@ -5,6 +5,7 @@ import {
   ChevronDown,
   ChevronRight,
   MoreVertical,
+  Plus,
   Search,
   X
 } from 'lucide-react'
@@ -17,7 +18,7 @@ import {
 import type { FileSessionListEntry } from '@shared/ipc'
 import { useSessionStore, type TurnRuntime } from '../state/sessionStore'
 import { isTemporaryWorkspace, middleTruncate, relativeTime, workdirShortLabel } from '../lib/format'
-import { flatten, groupConversations } from '../lib/grouping'
+import { DEFAULT_WORKSPACE_KEY, flatten, groupConversations } from '../lib/grouping'
 import { showMenu, type MenuItem } from '../lib/nativeMenu'
 import { fileManagerLabel } from '../lib/platform'
 import { basename } from '../lib/path'
@@ -516,7 +517,8 @@ export function Sidebar({
       <div className="sidebar-list" ref={listRef} tabIndex={-1}>
         {listMode === 'main' &&
           visible.length === 0 &&
-          conversations.filter((c) => !c.archived && !c.fileId).length === 0 && (
+          conversations.filter((c) => !c.archived && !c.fileId).length === 0 &&
+          groupingMode !== 'workspace' && (
           <EmptyState title={t('sidebar.emptyTitle')} description={t('sidebar.emptyDesc')}>
             <button
               className="btn secondary"
@@ -692,8 +694,14 @@ export function Sidebar({
           const collapsible = group.kind === 'workspace'
           const collapsed = collapsible && collapsedKeys.has(group.key)
           const groupWorkdir = group.workdir ?? group.conversations[0]?.workingDirectory ?? null
+          const workspaceSelectId =
+            group.kind === 'workspace'
+              ? (groupWorkdir ?? DEFAULT_WORKSPACE_KEY)
+              : null
           const isWorkspaceSelected =
-            group.kind === 'workspace' && !!groupWorkdir && activeGroupId === groupWorkdir
+            group.kind === 'workspace' &&
+            !!workspaceSelectId &&
+            activeGroupId === workspaceSelectId
           return (
             <div className="conv-group" key={group.key || `group-${groupIndex}`}>
               {groupIndex > 0 && <div className="conv-group-divider" />}
@@ -737,16 +745,37 @@ export function Sidebar({
                       className="conv-group-title-hit"
                       title={t('sidebar.openWorkspaceView')}
                       onClick={() => {
-                        if (group.kind !== 'workspace' || !groupWorkdir) {
+                        if (group.kind !== 'workspace' || !workspaceSelectId) {
                           toggleGroup(group.key)
                           return
                         }
-                        void selectWorkspaceGroup(groupWorkdir)
+                        void selectWorkspaceGroup(workspaceSelectId)
                         onNavigate?.()
                       }}
                     >
                       <span className="conv-group-title">{group.label}</span>
                       <span className="conv-group-count">{group.conversations.length}</span>
+                    </button>
+                    <button
+                      type="button"
+                      className="conv-group-add-hit"
+                      title={t('sidebar.menu.newSessionInDir')}
+                      aria-label={t('sidebar.menu.newSessionInDir')}
+                      onClick={(event) => {
+                        event.stopPropagation()
+                        if (groupWorkdir) {
+                          void createConversation({
+                            workingDirectory: groupWorkdir,
+                            model: useSessionStore.getState().settings.defaultModel
+                          })
+                        } else {
+                          // Empty Temporary Workspace — mint on demand.
+                          void createConversation()
+                        }
+                        onNavigate?.()
+                      }}
+                    >
+                      <Plus size={12} aria-hidden />
                     </button>
                   </div>
                 ) : (

@@ -54,7 +54,17 @@ export function ToolsPanel({
   const setWorkingDirectory = useSessionStore((s) => s.setWorkingDirectory)
   const showDialog = useSessionStore((s) => s.showDialog)
 
-  const workspace = useWorkspaceStore((s) => s.workspaces[activeId])
+  // Narrow selectors — agent FS refresh mutates `dirs` constantly; subscribing
+  // to the whole workspace slice re-rendered Workspace/VAV chips every tick.
+  const workspaceRoot = useWorkspaceStore((s) => s.workspaces[activeId]?.root ?? null)
+  const workspaceTabs = useWorkspaceStore((s) => s.workspaces[activeId]?.tabs)
+  const workspaceActiveTabId = useWorkspaceStore(
+    (s) => s.workspaces[activeId]?.activeTabId ?? ''
+  )
+  const rootError = useWorkspaceStore((s) => {
+    const root = s.workspaces[activeId]?.root
+    return root ? s.workspaces[activeId]?.dirErrors[root] : undefined
+  })
   const newBash = useWorkspaceStore((s) => s.newBash)
   const selectTab = useWorkspaceStore((s) => s.selectTab)
   const closeTab = useWorkspaceStore((s) => s.closeTab)
@@ -71,9 +81,8 @@ export function ToolsPanel({
   const useEnclosedLabel =
     Boolean(conversation?.fileId) && !pathRevealed && !temporary
   // Parent folder gone (ENOENT) — chip becomes red "dir not exist"; Files is dead.
-  const rootError = workspace?.root ? workspace.dirErrors[workspace.root] : undefined
   const rootMissing =
-    Boolean(workspace?.root) &&
+    Boolean(workspaceRoot) &&
     (rootError === 'ENOENT' || /enoent|no such file|not found/i.test(rootError ?? ''))
   const label = rootMissing
     ? t('sidebar.dirNotExist')
@@ -88,10 +97,10 @@ export function ToolsPanel({
   // Enclosed dir / missing root: no switch-workdir control (session list owns path).
   const allowWorkdirSwitch = !useEnclosedLabel && !rootMissing
   // Tools tray shows user bash only — never main-surface CLI agent hosts.
-  const tabs = (workspace?.tabs ?? []).filter(
+  const tabs = (workspaceTabs ?? []).filter(
     (t) => !t.agentId || t.agentId === 'vav' || t.isAgent
   )
-  const activeTabId = workspace?.activeTabId ?? ''
+  const activeTabId = workspaceActiveTabId
   const filesOn = !collapsed && segment === 'files' && !rootMissing
   const previewEdit = variant === 'preview-edit'
   const agentRunning = useSessionStore((s) => !!s.turns[activeId]?.isRunning)
@@ -250,8 +259,16 @@ export function ToolsPanel({
   const bodyHeight = collapsed ? 0 : (dragHeight ?? panelHeight)
 
   const createBash = (): void => {
-    setPanelSegment('terminal')
-    void newBash(activeId, 80, 24)
+    void (async () => {
+      let id = useSessionStore.getState().activeId
+      if (!id) {
+        await useSessionStore.getState().createConversation()
+        id = useSessionStore.getState().activeId
+      }
+      if (!id) return
+      setPanelSegment('terminal')
+      void newBash(id, 80, 24)
+    })()
   }
 
   /**
@@ -292,8 +309,17 @@ export function ToolsPanel({
                 rootMissing
                   ? undefined
                   : () => {
-                      if (filesOn) setToolsCollapsed(true)
-                      else setPanelSegment('files')
+                      if (filesOn) {
+                        setToolsCollapsed(true)
+                        return
+                      }
+                      // Opening Files on an empty shell mints the Workspace.
+                      void (async () => {
+                        if (!useSessionStore.getState().activeId) {
+                          await useSessionStore.getState().createConversation()
+                        }
+                        setPanelSegment('files')
+                      })()
                     }
               }
               onContextMenu={

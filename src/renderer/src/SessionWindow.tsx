@@ -114,7 +114,11 @@ export default function SessionWindow({
     document.title = title
   }, [title])
 
-  if (!ready) return <div className="app-shell" />
+  // Match early HTML/native wash while bootstrap runs — avoids a white flash
+  // on ⌘⇧↵ before appearance CSS applies.
+  if (!ready) {
+    return <div className="app-shell session-window session-window-booting" />
+  }
 
   // Change review is inline in the transcript (not a full-screen takeover).
   return (

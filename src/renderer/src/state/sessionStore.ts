@@ -696,8 +696,32 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       set({ activeGroupId: null })
       return
     }
-    // Enter Workspace View immediately so createConversation's selectConversation
-    // can restore the same group instead of flashing the session detail pane.
+    // Sentinel / empty Temporary Workspace — select the shell only; mint on
+    // first chat or file add (no phantom session in the list).
+    if (workdir.startsWith('__')) {
+      set({
+        activeGroupId: workdir,
+        activeId: '',
+        selectedIds: [],
+        ...activeToolsFields(toolsFor(get(), ''))
+      })
+      return
+    }
+    // Prefer an existing session; only mint when the workspace already has one
+    // path but lost its agent mapping — never auto-create for an empty group.
+    const rooted = get().conversations.find(
+      (c) => !c.archived && !c.fileId && c.workingDirectory === workdir
+    )
+    if (!rooted) {
+      set({
+        activeGroupId: workdir,
+        activeId: '',
+        selectedIds: [],
+        ...activeToolsFields(toolsFor(get(), ''))
+      })
+      return
+    }
+    // Enter Workspace View with the existing agent (no create side-effect).
     set({ activeGroupId: workdir })
     const agentId = await get().ensureWorkspaceAgent(workdir)
     set({
@@ -711,6 +735,9 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   },
 
   async ensureWorkspaceAgent(workdir) {
+    if (!workdir || workdir.startsWith('__')) {
+      throw new Error('cannot ensure agent for empty workspace shell')
+    }
     const existing = get().workspaceAgentByPath[workdir]
     if (existing && get().conversations.some((c) => c.id === existing)) return existing
 
@@ -951,7 +978,16 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
   async createConversation(options) {
     const keepGroupId = get().activeGroupId
-    const meta = await window.vav.conversations.create(options)
+    // Empty Temporary Workspace shell → mint a real temp workdir on first create.
+    // Concrete path selected with no sessions → root the new session there.
+    let createOpts = options
+    if (createOpts?.workingDirectory === undefined) {
+      if (keepGroupId && !keepGroupId.startsWith('__')) {
+        createOpts = { ...createOpts, workingDirectory: keepGroupId }
+      }
+      // keepGroupId === '__temporary__' (or null): omit → main mints Temporary.
+    }
+    const meta = await window.vav.conversations.create(createOpts)
     // Main publishes the full list on create; `onChanged` may already have
     // applied it by the time we get here. Prepending unconditionally would
     // put the same id in the sidebar twice (⌘N made that obvious).
@@ -962,24 +998,37 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       messages: { ...state.messages, [meta.id]: [] },
       activeLeaf: { ...state.activeLeaf, [meta.id]: null }
     }))
-    await get().selectConversation(meta.id)
+    // Stay in chat after minting from an empty shell (not Workspace View).
+    const stayInWorkspace =
+      !!keepGroupId &&
+      !keepGroupId.startsWith('__') &&
+      meta.workingDirectory === keepGroupId
+    await get().selectConversation(meta.id, stayInWorkspace ? { stayInWorkspace: true } : undefined)
     // New session → default tools layout (collapsed, files segment). Explicit so
     // we never inherit another session's open Terminal tray.
     get().setToolsCollapsed(true)
     // Creating a session inside the open Workspace View must not kick the user out.
-    if (keepGroupId && meta.workingDirectory === keepGroupId) {
+    if (stayInWorkspace) {
       set({ activeGroupId: keepGroupId })
     }
     get().focusComposer()
   },
 
   async createConversationInCurrentWorkspace() {
-    const { activeId, conversations } = get()
+    const { activeId, conversations, activeGroupId } = get()
     const current = conversations.find((c) => c.id === activeId)
-    await get().createConversation({
-      workingDirectory: current?.workingDirectory ?? null,
-      model: current?.model
-    })
+    if (current) {
+      await get().createConversation({
+        workingDirectory: current.workingDirectory ?? null,
+        model: current.model
+      })
+      return
+    }
+    if (activeGroupId && !activeGroupId.startsWith('__')) {
+      await get().createConversation({ workingDirectory: activeGroupId })
+      return
+    }
+    await get().createConversation()
   },
 
   async duplicateConversation(id) {
@@ -1045,16 +1094,6 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       const targets = ids.filter((id) => conversations.some((c) => c.id === id))
       if (targets.length === 0) return
 
-      // Guard first: the product always keeps at least one conversation.
-      if (targets.length >= conversations.length) {
-        get().showDialog({
-          title: tt('dialog.keepOneSessionTitle'),
-          body: tt('error.keepOneSession'),
-          confirmLabel: tt('common.ok')
-        })
-        return
-      }
-
       // Need message counts for every target; empty chats skip the confirm.
       await Promise.all(targets.map((id) => get().loadMessages(id)))
       const empty = targets.filter((id) => (get().messages[id]?.length ?? 0) === 0)
@@ -1082,8 +1121,11 @@ export const useSessionStore = create<SessionState>((set, get) => ({
           return { conversations: next, messages, activeLeaf, turns, toolsLayouts }
         })
         if (removed.includes(get().activeId)) {
-          const fallback = next[0]?.id
+          const fallback = next.find((c) => !c.archived && !c.fileId)?.id ?? next[0]?.id
           if (fallback) await get().selectConversation(fallback)
+          else {
+            set({ activeId: '', selectedIds: [], activeGroupId: null })
+          }
         }
       }
 
@@ -1238,14 +1280,16 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     const { activeId } = get()
     const stillActive = conversations.some((c) => c.id === activeId && !c.archived)
     if (archived && !stillActive) {
-      const next = conversations.find((c) => !c.archived)
+      const next = conversations.find((c) => !c.archived && !c.fileId)
+      set((state) => ({
+        conversations: mergeConversationList(state.conversations, conversations)
+      }))
       if (next) {
-        set((state) => ({
-          conversations: mergeConversationList(state.conversations, conversations)
-        }))
         await get().selectConversation(next.id)
         return
       }
+      set({ activeId: '', selectedIds: [], activeGroupId: null })
+      return
     }
     set((state) => ({
       conversations: mergeConversationList(state.conversations, conversations)
@@ -1400,8 +1444,13 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       contextFiles,
       conversations
     } = get()
-    const activeId = conversationId?.trim() || storeActiveId
-    if (!activeId) return
+    let activeId = conversationId?.trim() || storeActiveId
+    // Empty chat shell: mint the session on first send (workspace materializes).
+    if (!activeId || !conversations.some((c) => c.id === activeId)) {
+      await get().createConversation()
+      activeId = get().activeId
+      if (!activeId) return
+    }
     if (turns[activeId]?.isRunning) return
     const refs = previewRefs[activeId] ?? []
     const cards = commentCards[activeId] ?? []
@@ -2117,8 +2166,9 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         workspace.mirrorAgentTranscript(id, event.text)
         // Spec 9ed447d6…: tools panel does NOT auto-expand when the agent runs a
         // command. Output still lands in the PTY buffer; user opens tools manually.
-        // Only select the agent tab so if the panel is already open it shows the right one.
-        if (workspace.workspaces[id]?.tabs.some((tab) => tab.isAgent)) {
+        // Select the agent tab once — not on every mirror chunk (chip-row thrash).
+        const slice = workspace.workspaces[id]
+        if (slice?.tabs.some((tab) => tab.isAgent) && slice.activeTabId !== AGENT_TAB_ID) {
           workspace.selectTab(id, AGENT_TAB_ID)
         }
         break

@@ -280,7 +280,10 @@ export function SqliteView({
         )}
 
         <div className="sqlite-sheet-wrap">
-          <table className="csv-sheet sqlite-sheet">
+          <table
+            className="csv-sheet sqlite-sheet"
+            style={{ ['--gutter-digits' as string]: Math.max(2, String(total).length) }}
+          >
             <thead>
               <tr>
                 <th className="csv-sheet-gutter csv-sheet-corner">#</th>

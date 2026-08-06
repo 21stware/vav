@@ -386,8 +386,24 @@ body,
   margin: 0;
   overflow: hidden;
   /* Opaque fill under the shell so a resize frame where the compositor lags
-     still shows `--bg-window`, not a transparent hole into the native layer. */
-  background: var(--bg-window);
+     still shows `--bg-window`, not a transparent hole into the native layer.
+     Fallback hex covers the gap before :root tokens resolve (dark-mode flash). */
+  background: var(--bg-window, #121213);
+}
+
+html[data-theme='light'],
+html[data-theme='light'] body,
+html[data-theme='light'] #root {
+  background: var(--bg-window, #ececee);
+}
+
+/* Detached ⌘⇧↵ session: keep the shell wash while messages hydrate. */
+.session-window-booting {
+  background: var(--bg-window, #121213);
+}
+
+html[data-theme='light'] .session-window-booting {
+  background: var(--bg-window, #ececee);
 }
 
 body {
@@ -914,6 +930,8 @@ html[data-resizing='true'] .banner.error {
   background: var(--bg-hover);
   color: var(--text-secondary);
   font-size: 12px;
+  /* Stable weight — toggling 400↔500 on .active shifts chip width and jitters the row. */
+  font-weight: 500;
   cursor: default;
   flex: 0 0 auto;
   transition:
@@ -934,7 +952,6 @@ button.chip:active {
 .chip.active {
   background: var(--accent-soft);
   color: var(--accent-text);
-  font-weight: 500;
 }
 
 .chip.danger {
@@ -1350,12 +1367,12 @@ kbd {
 }
 
 .conv-group-header.interactive {
-  height: 22px;
-  margin: 6px 0 1px;
+  height: 30px;
+  margin: 6px 0 2px;
   padding: 0 4px 0 2px;
   gap: 2px;
   cursor: default;
-  border-radius: 6px;
+  border-radius: 7px;
 }
 
 .conv-group:first-child .conv-group-header.interactive {
@@ -5768,6 +5785,8 @@ mark {
   align-items: center;
   gap: 5px;
   overflow-x: auto;
+  /* Reserve gutter so the thin scrollbar never toggles row height. */
+  scrollbar-gutter: stable;
   scrollbar-width: thin;
   scrollbar-color: var(--border-strong) transparent;
 }
@@ -7252,6 +7271,7 @@ mark {
   display: flex;
   align-items: center;
   gap: 6px;
+  flex: 0 0 auto;
   padding: 6px 10px;
   border-bottom: 1px solid var(--border);
 }
@@ -7262,17 +7282,39 @@ mark {
   background: var(--bg-content);
 }
 
+/*
+ * XLSX fills its pane instead of a 68vh box: the frozen header then pins to the
+ * viewport the reader actually looks at, and the rows below the cap stop being
+ * dead space that the spacer-based virtual scroll can never reach.
+ */
+.xlsx-root > .structured-sheet-panel {
+  flex: 1;
+}
+
+.xlsx-root > .structured-sheet-panel > .structured-sheet-wrap {
+  flex: 1;
+  min-height: 0;
+  max-height: none;
+}
+
+/*
+ * Same sticky contract as .csv-sheet: collapse lets body paint through thead
+ * by ~1px (column letters with ghost digits from the row above).
+ */
 .structured-sheet {
-  border-collapse: collapse;
+  border-collapse: separate;
+  border-spacing: 0;
   width: max-content;
   min-width: 100%;
   font-size: 12px;
   font-family: var(--font-code);
+  line-height: 1.4;
 }
 
 .structured-sheet th,
 .structured-sheet td {
-  border: 1px solid var(--border);
+  border-right: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
   padding: 5px 9px;
   text-align: left;
   vertical-align: top;
@@ -7281,6 +7323,15 @@ mark {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  background-clip: border-box;
+}
+
+.structured-sheet tr > *:first-child {
+  border-left: 1px solid var(--border);
+}
+
+.structured-sheet thead th {
+  border-top: 1px solid var(--border);
 }
 
 .structured-sheet-colhead {
@@ -7295,30 +7346,48 @@ mark {
 }
 
 /*
- * Gutter must beat `th { min-width: 72px }` or the sticky corner becomes a full
- * data-cell wide and covers the top-left body cell while scrolling.
+ * Gutter must beat `th { min-width: 72px }`. Width tracks the sheet's largest
+ * row number (`--gutter-digits`, mono ch) so tall sheets keep the frozen column
+ * readable without spilling digits over column A.
  */
 .structured-sheet th.structured-sheet-gutter,
 .structured-sheet td.structured-sheet-gutter {
+  --gutter-w: calc(var(--gutter-digits, 2) * 1ch + 14px);
   position: sticky;
   left: 0;
-  z-index: 1;
+  z-index: 3;
+  box-sizing: border-box;
   background-color: var(--bg-sunken);
+  background-clip: padding-box;
   color: var(--text-tertiary);
   font-weight: 500;
   text-align: right;
-  width: 2.6em;
-  min-width: 2.6em;
-  max-width: 3.2em;
+  width: var(--gutter-w) !important;
+  min-width: var(--gutter-w) !important;
+  max-width: var(--gutter-w) !important;
   padding-left: 6px;
-  padding-right: 8px;
+  padding-right: 6px;
+  overflow: hidden;
+  text-overflow: clip;
   box-shadow: 1px 0 0 var(--border);
 }
 
 .structured-sheet thead th.structured-sheet-gutter {
   top: 0;
-  z-index: 3;
-  box-shadow: 1px 1px 0 var(--border);
+  z-index: 5;
+  box-shadow:
+    1px 0 0 var(--border),
+    0 1px 0 var(--border);
+}
+
+.structured-sheet tbody td {
+  background-color: var(--bg-content);
+  z-index: 0;
+}
+
+.structured-sheet tbody th.structured-sheet-gutter {
+  background-color: var(--bg-sunken);
+  z-index: 1;
 }
 
 .structured-sheet tr.selected td,
@@ -7596,7 +7665,6 @@ mark {
   font-weight: 600;
   text-align: left;
   cursor: default;
-  /* Shadow edge so rows don’t flash through under the sticky header. */
   box-shadow: 0 1px 0 var(--border);
 }
 
@@ -7607,42 +7675,56 @@ mark {
 }
 
 /*
- * Row# gutter — must override `th/td { min-width: 72px }` (higher specificity)
- * or the sticky corner becomes a full data-cell and blankets the top-left body
- * cell while the sheet is scrolled.
+ * Row# gutter — must beat `th/td { min-width: 72px }`.
+ * Width comes from the file's largest row number (`--gutter-digits`, mono ch),
+ * so six-digit rows neither spill over the first data column nor re-flow the
+ * grid sideways as the painted window moves.
  */
+.csv-sheet th.csv-sheet-gutter,
+.csv-sheet td.csv-sheet-gutter,
+.csv-sheet th.csv-sheet-corner,
+.csv-sheet .csv-sheet-corner {
+  --gutter-w: calc(var(--gutter-digits, 2) * 1ch + 14px);
+  box-sizing: border-box;
+  width: var(--gutter-w) !important;
+  min-width: var(--gutter-w) !important;
+  max-width: var(--gutter-w) !important;
+  padding-left: 6px;
+  padding-right: 6px;
+  overflow: hidden;
+  text-overflow: clip;
+}
+
 .csv-sheet th.csv-sheet-gutter,
 .csv-sheet td.csv-sheet-gutter {
   position: sticky;
   left: 0;
-  z-index: 1;
-  width: 2.8em;
-  min-width: 2.8em;
-  max-width: 3.5em;
-  padding-left: 6px;
-  padding-right: 8px;
+  z-index: 3;
   text-align: right;
   color: var(--text-tertiary);
   font-weight: 500;
   background-color: var(--bg-sunken);
+  background-clip: padding-box;
   cursor: default;
   user-select: none;
   box-shadow: 1px 0 0 var(--border);
 }
 
-/* Row# × col-title intersection: pure chrome, not a pick target. */
+/* Row# × col-title intersection — same column as body gutters, not a float. */
 .csv-sheet th.csv-sheet-corner,
 .csv-sheet .csv-sheet-corner {
   position: sticky;
   top: 0;
   left: 0;
-  z-index: 4;
-  width: 2.8em;
-  min-width: 2.8em;
-  max-width: 3.5em;
+  z-index: 5;
   background-color: var(--bg-sunken);
-  box-shadow: 1px 1px 0 var(--border);
-  /* Kill hover/selection affordances if any parent rules leak in. */
+  background-clip: padding-box;
+  color: var(--text-tertiary);
+  font-weight: 600;
+  text-align: center;
+  box-shadow:
+    1px 0 0 var(--border),
+    0 1px 0 var(--border);
   pointer-events: none;
 }
 
@@ -7658,7 +7740,8 @@ mark {
 
 .csv-sheet tbody th.csv-sheet-gutter {
   background-color: var(--bg-sunken);
-  z-index: 1;
+  background-clip: padding-box;
+  z-index: 3;
 }
 
 .csv-sheet td.is-empty {
@@ -7672,12 +7755,21 @@ mark {
 
 /* Pick chrome — ::after + pointer-events:none so cell text stays copyable. */
 .file-viewer-body.selecting .csv-sheet .preview-select-region {
-  position: relative;
   border-radius: 2px;
   transition: none;
   cursor: text;
   user-select: text;
   -webkit-user-select: text;
+}
+
+/*
+ * Only flow cells take a relative box for the ::after chrome. Column titles and
+ * the row gutter are pick targets too, but they are already position:sticky
+ * (itself a containing block for ::after) — and this selector outranks
+ * `.csv-sheet-colhead`, so setting `relative` here thaws the frozen header.
+ */
+.file-viewer-body.selecting .csv-sheet td.preview-select-region {
+  position: relative;
 }
 
 .file-viewer-body.selecting .csv-sheet .preview-select-region::after {
@@ -9203,11 +9295,39 @@ mark {
   font: inherit;
   text-align: left;
   padding: 0;
-  cursor: pointer;
+  cursor: default;
 }
 
 .conv-group-header .conv-group-title-hit:hover .conv-group-title {
   color: var(--text-primary);
+}
+
+.conv-group-header .conv-group-add-hit {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  flex: 0 0 auto;
+  margin-left: 2px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  opacity: 0.55;
+  padding: 0;
+  cursor: default;
+}
+
+.conv-group-header .conv-group-add-hit:hover {
+  opacity: 1;
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.conv-group-header.selected .conv-group-add-hit:hover {
+  background: color-mix(in srgb, var(--accent-text) 12%, transparent);
+  color: var(--accent-text);
 }
 
 .file-viewer-header > .spacer {
@@ -10584,17 +10704,7 @@ mark {
 
 .agent-bot-icon.is-running {
   color: #34c759;
-  animation: agent-bot-pulse 1.2s ease-in-out infinite;
-}
-
-@keyframes agent-bot-pulse {
-  0%,
-  100% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0.45;
-  }
+  /* Color-only — opacity pulses read as chip-row jitter next to Workspace. */
 }
 
 .agent-mode-picker {

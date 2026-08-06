@@ -473,7 +473,7 @@ export class FileSessionStore {
       }
     }
 
-    // Snapshot for rollback if ConversationStore refuses the remove.
+    // Snapshot for rollback if the conversation write fails mid-delete.
     const prevSessionIds = [...bundle.sessionIds]
     const prevActive = bundle.activeSessionId
 

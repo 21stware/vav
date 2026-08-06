@@ -672,21 +672,24 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         activeTabId: AGENT_TAB_ID,
         layout: s.layout ?? { type: 'leaf', tabId: AGENT_TAB_ID, weight: 1 }
       }))
-    } else {
-      // Recover from older sessions that registered the tab without a layout tree
-      // (showed "No terminal yet" while the vav chip was visible).
-      const slice = get().workspaces[id]
-      if (slice && !slice.layout) {
-        const agentTab = slice.tabs.find((tab) => tab.isAgent) ?? slice.tabs[0]
-        if (agentTab) {
-          patch(set, id, () => ({
-            layout: { type: 'leaf', tabId: agentTab.id, weight: 1 },
-            activeTabId: agentTab.id
-          }))
-        }
+      void get().ensureAgentPty(id)
+      return
+    }
+    // Recover from older sessions that registered the tab without a layout tree
+    // (showed "No terminal yet" while the vav chip was visible).
+    const slice = get().workspaces[id]
+    if (slice && !slice.layout) {
+      const agentTab = slice.tabs.find((tab) => tab.isAgent) ?? slice.tabs[0]
+      if (agentTab) {
+        patch(set, id, () => ({
+          layout: { type: 'leaf', tabId: agentTab.id, weight: 1 },
+          activeTabId: agentTab.id
+        }))
+        void get().ensureAgentPty(id)
       }
     }
-    void get().ensureAgentPty(id)
+    // Already have the mirror tab + layout — do not re-enter create/hydrate on
+    // every stream chunk (that re-rendered the Workspace/VAV chip row).
   },
 
   async ensureAgentPty(id) {
@@ -1036,6 +1039,8 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   },
 
   selectTab(id, tabId) {
+    const cur = get().workspaces[id]?.activeTabId
+    if (cur === tabId) return
     patch(set, id, () => ({ activeTabId: tabId }))
   },
 
@@ -1145,7 +1150,18 @@ function patch(
   set((state) => {
     const slice = state.workspaces[id]
     if (!slice) return state
-    return { workspaces: { ...state.workspaces, [id]: { ...slice, ...updater(slice) } } }
+    const next = updater(slice)
+    const keys = Object.keys(next) as Array<keyof WorkspaceSlice>
+    if (keys.length === 0) return state
+    let changed = false
+    for (const key of keys) {
+      if (slice[key] !== next[key]) {
+        changed = true
+        break
+      }
+    }
+    if (!changed) return state
+    return { workspaces: { ...state.workspaces, [id]: { ...slice, ...next } } }
   })
 }
 

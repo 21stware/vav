@@ -1,17 +1,27 @@
 /**
- * XLSX via SheetJS in the renderer — mature data layer + real HTML table.
+ * XLSX via SheetJS in the renderer — full used range in memory, windowed DOM.
+ * Performance via virtualization, not user-facing "truncated to N×M" cuts.
  */
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import * as XLSX from 'xlsx'
 import type { PreviewBlock } from '@shared/previewBlock'
 import { handleClickPickMouseDown } from '../../lib/clickPick'
 import { loadFileBuffer } from '../../lib/officeBinary'
 import { useT } from '../../i18n/useT'
 
-const MAX_ROWS = 500
-const MAX_COLS = 50
-const WINDOW = 80
+/** Rows painted at once. */
+const ROW_WINDOW = 80
+/** Columns painted at once for very wide sheets. */
+const COL_WINDOW = 40
+/**
+ * Soft in-memory budget for pathological workbooks. Silent — never shown as a
+ * preview truncation banner; the used range is preferred when it fits.
+ */
+const MAX_CELLS = 500_000
+const MAX_COLS_HARD = 512
+/** Approximate row height for spacer-based virtual scroll. */
+const ROW_PX = 28
 
 export function XlsxNativeView({
   path,
@@ -29,11 +39,12 @@ export function XlsxNativeView({
   const t = useT()
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
-  const [sheets, setSheets] = useState<
-    { name: string; grid: string[][] }[]
-  >([])
+  const [sheets, setSheets] = useState<{ name: string; grid: string[][] }[]>([])
   const [active, setActive] = useState(0)
   const [rowStart, setRowStart] = useState(0)
+  const [colStart, setColStart] = useState(0)
+  const wrapRef = useRef<HTMLDivElement>(null)
+  const syncingScroll = useRef(false)
   const selected = useMemo(() => new Set(selectedIds), [selectedIds])
 
   useEffect(() => {
@@ -55,8 +66,11 @@ export function XlsxNativeView({
             continue
           }
           const range = XLSX.utils.decode_range(ref)
-          const rows = Math.min(range.e.r - range.s.r + 1, MAX_ROWS)
-          const cols = Math.min(range.e.c - range.s.c + 1, MAX_COLS)
+          const fullRows = Math.max(0, range.e.r - range.s.r + 1)
+          const fullCols = Math.max(0, range.e.c - range.s.c + 1)
+          const cols = Math.min(fullCols, MAX_COLS_HARD)
+          const rowBudget = Math.max(1, Math.floor(MAX_CELLS / Math.max(1, cols)))
+          const rows = Math.min(fullRows, rowBudget)
           const grid: string[][] = []
           for (let r = 0; r < rows; r++) {
             const line: string[] = []
@@ -83,6 +97,7 @@ export function XlsxNativeView({
         setSheets(next)
         setActive(0)
         setRowStart(0)
+        setColStart(0)
         setLoading(false)
       } catch (err) {
         if (!cancelled) {
@@ -98,9 +113,73 @@ export function XlsxNativeView({
 
   const sheet = sheets[active]
   const grid = sheet?.grid ?? []
-  const colCount = Math.max(1, ...grid.map((r) => r.length), 1)
-  const end = Math.min(grid.length, rowStart + WINDOW)
-  const slice = grid.slice(rowStart, end)
+  const colCount = useMemo(() => {
+    let max = 1
+    for (let i = 0; i < grid.length; i++) {
+      const n = grid[i]?.length ?? 0
+      if (n > max) max = n
+    }
+    return max
+  }, [grid])
+
+  const rowEnd = Math.min(grid.length, rowStart + ROW_WINDOW)
+  const colEnd = Math.min(colCount, colStart + COL_WINDOW)
+  const slice = grid.slice(rowStart, rowEnd)
+  const visibleCols = useMemo(
+    () => Array.from({ length: colEnd - colStart }, (_, i) => colStart + i),
+    [colStart, colEnd]
+  )
+
+  // Keep pick targets in the painted window.
+  useEffect(() => {
+    for (const id of selectedIds) {
+      const cell = /^xlsx-\d+-r(\d+)-c(\d+)$/.exec(id)
+      const row = /^xlsx-\d+-row-(\d+)$/.exec(id)
+      if (cell) {
+        const ri = Number(cell[1])
+        const ci = Number(cell[2])
+        if (ri < rowStart || ri >= rowStart + ROW_WINDOW) {
+          setRowStart(Math.max(0, Math.min(grid.length - ROW_WINDOW, ri - 10)))
+        }
+        if (ci < colStart || ci >= colStart + COL_WINDOW) {
+          setColStart(Math.max(0, Math.min(colCount - COL_WINDOW, ci - 4)))
+        }
+        break
+      }
+      if (row) {
+        const ri = Number(row[1])
+        if (ri < rowStart || ri >= rowStart + ROW_WINDOW) {
+          setRowStart(Math.max(0, Math.min(grid.length - ROW_WINDOW, ri - 10)))
+        }
+        break
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedIds, grid.length, colCount])
+
+  // Spacer scroll: keep native scrollbar length = full sheet.
+  useEffect(() => {
+    const el = wrapRef.current
+    if (!el || syncingScroll.current) return
+    const target = rowStart * ROW_PX
+    if (Math.abs(el.scrollTop - target) > ROW_PX / 2) {
+      syncingScroll.current = true
+      el.scrollTop = target
+      requestAnimationFrame(() => {
+        syncingScroll.current = false
+      })
+    }
+  }, [rowStart])
+
+  const onWrapScroll = (): void => {
+    const el = wrapRef.current
+    if (!el || syncingScroll.current) return
+    const next = Math.max(
+      0,
+      Math.min(Math.max(0, grid.length - ROW_WINDOW), Math.floor(el.scrollTop / ROW_PX))
+    )
+    if (next !== rowStart) setRowStart(next)
+  }
 
   const pick = (
     id: string,
@@ -109,7 +188,6 @@ export function XlsxNativeView({
     event: React.MouseEvent
   ): void => {
     handleClickPickMouseDown(event, () => {
-      // Synthetic MouseEvent for office pick consumers that only check button.
       const synthetic = { button: 0 } as MouseEvent
       onPick(
         {
@@ -124,6 +202,10 @@ export function XlsxNativeView({
       )
     })
   }
+
+  const topPad = rowStart * ROW_PX
+  const bottomPad = Math.max(0, grid.length - rowEnd) * ROW_PX
+  const paintedColSpan = visibleCols.length + 1
 
   return (
     <div className={`office-native-root xlsx-root${selecting ? ' selecting' : ''}`}>
@@ -146,6 +228,8 @@ export function XlsxNativeView({
                   onClick={() => {
                     setActive(i)
                     setRowStart(0)
+                    setColStart(0)
+                    wrapRef.current?.scrollTo({ top: 0 })
                   }}
                 >
                   <span className="structured-doc-nav-label">{s.name}</span>
@@ -156,40 +240,69 @@ export function XlsxNativeView({
           <div className="structured-sheet-panel">
             <div className="structured-sheet-toolbar muted tiny">
               <span>
-                Rows {grid.length === 0 ? 0 : rowStart + 1}–{end} / {grid.length}
+                {grid.length === 0
+                  ? t('common.empty')
+                  : `Rows ${rowStart + 1}–${rowEnd} / ${grid.length} · Cols ${colStart + 1}–${colEnd} / ${colCount}`}
               </span>
               <span className="spacer" />
+              <button
+                type="button"
+                className="btn ghost sm"
+                disabled={colStart <= 0}
+                title={t('common.pageLeft')}
+                aria-label={t('common.pageLeft')}
+                onClick={() => setColStart((s) => Math.max(0, s - COL_WINDOW))}
+              >
+                ←
+              </button>
+              <button
+                type="button"
+                className="btn ghost sm"
+                disabled={colEnd >= colCount}
+                title={t('common.pageRight')}
+                aria-label={t('common.pageRight')}
+                onClick={() =>
+                  setColStart((s) =>
+                    Math.min(Math.max(0, colCount - COL_WINDOW), s + COL_WINDOW)
+                  )
+                }
+              >
+                →
+              </button>
               <button
                 type="button"
                 className="btn ghost sm"
                 disabled={rowStart <= 0}
                 title={t('common.pageUp')}
                 aria-label={t('common.pageUp')}
-                onClick={() => setRowStart((s) => Math.max(0, s - WINDOW))}
+                onClick={() => setRowStart((s) => Math.max(0, s - ROW_WINDOW))}
               >
                 ↑
               </button>
               <button
                 type="button"
                 className="btn ghost sm"
-                disabled={end >= grid.length}
+                disabled={rowEnd >= grid.length}
                 title={t('common.pageDown')}
                 aria-label={t('common.pageDown')}
                 onClick={() =>
                   setRowStart((s) =>
-                    Math.min(Math.max(0, grid.length - WINDOW), s + WINDOW)
+                    Math.min(Math.max(0, grid.length - ROW_WINDOW), s + ROW_WINDOW)
                   )
                 }
               >
                 ↓
               </button>
             </div>
-            <div className="structured-sheet-wrap">
-              <table className="structured-sheet">
+            <div className="structured-sheet-wrap" ref={wrapRef} onScroll={onWrapScroll}>
+              <table
+                className="structured-sheet"
+                style={{ ['--gutter-digits' as string]: Math.max(2, String(grid.length).length) }}
+              >
                 <thead>
                   <tr>
-                    <th className="structured-sheet-gutter" />
-                    {Array.from({ length: colCount }, (_, ci) => (
+                    <th className="structured-sheet-gutter">#</th>
+                    {visibleCols.map((ci) => (
                       <th key={ci} className="structured-sheet-colhead">
                         {colLabel(ci)}
                       </th>
@@ -197,6 +310,14 @@ export function XlsxNativeView({
                   </tr>
                 </thead>
                 <tbody>
+                  {topPad > 0 && (
+                    <tr aria-hidden className="structured-sheet-spacer">
+                      <td
+                        colSpan={paintedColSpan}
+                        style={{ height: topPad, padding: 0, border: 'none' }}
+                      />
+                    </tr>
+                  )}
                   {slice.map((row, offset) => {
                     const ri = rowStart + offset
                     const rowId = `xlsx-${active}-row-${ri}`
@@ -214,7 +335,7 @@ export function XlsxNativeView({
                         >
                           {ri + 1}
                         </th>
-                        {Array.from({ length: colCount }, (_, ci) => {
+                        {visibleCols.map((ci) => {
                           const val = row[ci] ?? ''
                           const cellId = `xlsx-${active}-r${ri}-c${ci}`
                           const on = selected.has(cellId)
@@ -243,6 +364,14 @@ export function XlsxNativeView({
                       </tr>
                     )
                   })}
+                  {bottomPad > 0 && (
+                    <tr aria-hidden className="structured-sheet-spacer">
+                      <td
+                        colSpan={paintedColSpan}
+                        style={{ height: bottomPad, padding: 0, border: 'none' }}
+                      />
+                    </tr>
+                  )}
                 </tbody>
               </table>
             </div>

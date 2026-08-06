@@ -47,8 +47,10 @@ export function menuAnchor(element: HTMLElement): { x: number; y: number } {
 /**
  * Default right-click behaviour: the standard Edit menu wherever the click did
  * not land on something with a menu of its own (those call `preventDefault`).
+ * In dev, always open a menu so main can append Inspect Element.
  */
 export function installDefaultContextMenu(): () => void {
+  const isDev = Boolean(import.meta.env?.DEV)
   const onContextMenu = (event: MouseEvent): void => {
     if (event.defaultPrevented) return
     const target = event.target as HTMLElement | null
@@ -72,10 +74,15 @@ export function installDefaultContextMenu(): () => void {
     if (editable || hasSelection) {
       items.push({ separator: true }, { role: 'selectAll', label: tt('menu.selectAll') })
     }
-    if (items.length === 0) return
+    // Packaged: keep the old “no menu when empty” behaviour.
+    // Dev: still popup so Inspect Element is always reachable.
+    if (items.length === 0 && !isDev) return
 
     event.preventDefault()
-    void window.vav?.window?.popupMenu?.(items)
+    void window.vav?.window?.popupMenu?.(items, {
+      x: event.clientX,
+      y: event.clientY
+    })
   }
 
   document.addEventListener('contextmenu', onContextMenu)

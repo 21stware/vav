@@ -202,8 +202,8 @@ export const zhCN = {
   'app.settingsWindowTitle': '设置',
   'window.sessionFallback': '会话',
   'session.revealInList': '在列表中显示',
-  'session.noActiveTitle': '没有选中的会话',
-  'session.noActiveDesc': '从侧栏选择一个会话，或新建一个。',
+  'session.noActiveTitle': '还没有会话',
+  'session.noActiveDesc': '点击下方按钮开始新会话，或使用侧栏新建。',
   'session.detachedTitle': '已在独立窗口中打开',
   'session.detachedDesc':
     '此会话的终端由独立窗口独占显示，避免两个窗口争抢同一 PTY 尺寸。可点「收回」把终端拿回主窗口，或「显示独立窗口」继续在那边操作。',
@@ -1289,8 +1289,8 @@ export const en: Record<MessageKey, string> = {
   'app.settingsWindowTitle': 'Settings',
   'window.sessionFallback': 'Session',
   'session.revealInList': 'Reveal in List',
-  'session.noActiveTitle': 'No session selected',
-  'session.noActiveDesc': 'Pick a session in the sidebar, or create a new one.',
+  'session.noActiveTitle': 'No sessions yet',
+  'session.noActiveDesc': 'Click below to start a new session, or use New in the sidebar.',
   'session.detachedTitle': 'Open in an isolated window',
   'session.detachedDesc':
     'This session’s terminal is shown only in the isolated window so two panes don’t fight over the same PTY size. Take it back here, or show the isolated window to keep working there.',

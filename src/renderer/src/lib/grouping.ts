@@ -3,6 +3,9 @@ import { basename } from './path'
 import { isTemporaryWorkspace } from './format'
 import { tt } from '../i18n/useT'
 
+/** Sidebar key for the default empty Temporary Workspace shell. */
+export const DEFAULT_WORKSPACE_KEY = '__temporary__'
+
 export interface ConversationGroup {
   /** Stable id for collapse state; empty for pinned/search flat buckets. */
   key: string
@@ -13,7 +16,10 @@ export interface ConversationGroup {
   label: string
   /** Visual cue on the group header; omitted for time buckets. */
   kind?: 'workspace' | 'time'
-  /** Absolute workdir when kind is workspace (null for Temporary). */
+  /**
+   * Absolute workdir when kind is workspace.
+   * `null` = default Temporary Workspace shell (not minted until first chat/file).
+   */
   workdir?: string | null
   conversations: ConversationMeta[]
 }
@@ -52,13 +58,13 @@ function byUpdatedDesc(a: ConversationMeta, b: ConversationMeta): number {
 }
 
 function workspaceKey(conversation: ConversationMeta, tmp: string): string {
-  if (isTemporaryWorkspace(conversation.workingDirectory, tmp)) return '__temporary__'
-  return conversation.workingDirectory ?? '__temporary__'
+  if (isTemporaryWorkspace(conversation.workingDirectory, tmp)) return DEFAULT_WORKSPACE_KEY
+  return conversation.workingDirectory ?? DEFAULT_WORKSPACE_KEY
 }
 
 function workspaceLabel(conversation: ConversationMeta, tmp: string): string {
   if (isTemporaryWorkspace(conversation.workingDirectory, tmp) || !conversation.workingDirectory) {
-    return tt('sidebar.temporaryWorkspace')
+    return tt('sidebar.workspace')
   }
   return basename(conversation.workingDirectory)
 }
@@ -117,23 +123,35 @@ function bucketByWorkspace(rows: ConversationMeta[], tmp: string): ConversationG
     else map.set(key, [row])
   }
 
+  // Always surface a default Workspace shell — empty until first chat / file.
+  if (!map.has(DEFAULT_WORKSPACE_KEY)) {
+    map.set(DEFAULT_WORKSPACE_KEY, [])
+  }
+
   return [...map.entries()]
     .map(([key, conversations]) => {
       const sorted = [...conversations].sort(byUpdatedDesc)
-      const first = sorted[0]!
+      const first = sorted[0]
       const workdir =
-        key === '__temporary__'
-          ? (first.workingDirectory ?? null)
-          : (first.workingDirectory ?? key)
+        key === DEFAULT_WORKSPACE_KEY
+          ? (first?.workingDirectory ?? null)
+          : (first?.workingDirectory ?? key)
       return {
         key: `workspace:${key}`,
-        label: workspaceLabel(first, tmp),
+        label: first ? workspaceLabel(first, tmp) : tt('sidebar.workspace'),
         kind: 'workspace' as const,
         workdir,
         conversations: sorted
       }
     })
-    .sort((a, b) => b.conversations[0]!.updatedAt - a.conversations[0]!.updatedAt)
+    .sort((a, b) => {
+      // Keep the default Workspace shell first when it has no sessions yet.
+      if (a.key === `workspace:${DEFAULT_WORKSPACE_KEY}` && a.conversations.length === 0) return -1
+      if (b.key === `workspace:${DEFAULT_WORKSPACE_KEY}` && b.conversations.length === 0) return 1
+      const aAt = a.conversations[0]?.updatedAt ?? 0
+      const bAt = b.conversations[0]?.updatedAt ?? 0
+      return bAt - aAt
+    })
 }
 
 /** Flat visible order, for arrow-key movement and ⌘A. */

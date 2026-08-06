@@ -124,10 +124,7 @@ export class ConversationStore {
 
     this.loaded = true
 
-    // Launch invariant: the product always has at least one visible conversation.
-    if (this.conversations.filter((c) => !c.fileId).length === 0) {
-      this.create(defaults.mintWorkdir(), defaults.model)
-    }
+    // Empty sidebar is allowed — the UI offers "New session" when none remain.
     return this.conversations
   }
 
@@ -431,23 +428,15 @@ export class ConversationStore {
   }
 
   /**
-   * Removes conversations, refusing to empty the sidebar list.
-   * File-preview sessions (`fileId` set) can always be deleted in isolation —
-   * they do not count toward the "at least one sidebar conversation" guard.
-   * Returns the ids actually removed; empty means the guard fired.
+   * Removes conversations. The sidebar may become empty — the renderer shows
+   * an empty state and creates a session on demand.
    */
   remove(ids: string[]): string[] {
     const target = new Set(ids)
-    const remaining = this.conversations.filter((c) => !target.has(c.id))
-    // Never empty the *sidebar* set — file-preview sessions don't count.
-    if (remaining.filter((c) => !c.fileId).length === 0) {
-      // Still allow pure file-session deletes when the only victims have fileId.
-      const deletingSidebar = this.conversations.some((c) => target.has(c.id) && !c.fileId)
-      if (deletingSidebar) return []
-    }
     const removed = this.conversations.filter((c) => target.has(c.id)).map((c) => c.id)
-    this.conversations = remaining
-    if (removed.length) this.markDeleted(removed)
+    if (removed.length === 0) return []
+    this.conversations = this.conversations.filter((c) => !target.has(c.id))
+    this.markDeleted(removed)
     return removed
   }
 
@@ -461,16 +450,11 @@ export class ConversationStore {
     return conversation
   }
 
-  /**
-   * Archives or restores a conversation.
-   * Refuses to archive the last non-archived conversation.
-   */
+  /** Archives or restores a conversation. Archiving the last active one is allowed. */
   setArchived(id: string, archived: boolean): Conversation | undefined {
     const conversation = this.get(id)
     if (!conversation) return undefined
     if (archived) {
-      const activeCount = this.conversations.filter((c) => !c.archived).length
-      if (!conversation.archived && activeCount <= 1) return undefined
       conversation.archived = true
       conversation.archivedAt = Date.now()
       conversation.pinned = false

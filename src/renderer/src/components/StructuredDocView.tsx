@@ -58,11 +58,13 @@ export function StructuredDocView({
       className={`structured-doc kind-${doc.kind}${selecting ? ' selecting' : ''}`}
       data-kind={doc.kind}
     >
-      {doc.warnings?.map((w) => (
-        <div key={w} className="structured-doc-warning muted tiny">
-          {w}
-        </div>
-      ))}
+      {doc.warnings
+        ?.filter((w) => !isSilentPreviewWindowWarning(w))
+        .map((w) => (
+          <div key={w} className="structured-doc-warning muted tiny">
+            {w}
+          </div>
+        ))}
 
       {doc.sections.length === 0 && (
         <div className="structured-doc-empty muted">{t('preview.emptyFile')}</div>
@@ -272,10 +274,13 @@ function SheetGrid({
           )
         }}
       >
-        <table className={`structured-sheet${selecting ? ' selecting' : ''}`}>
+        <table
+          className={`structured-sheet${selecting ? ' selecting' : ''}`}
+          style={{ ['--gutter-digits' as string]: Math.max(2, String(grid.length).length) }}
+        >
           <thead>
             <tr>
-              <th className="structured-sheet-gutter" />
+              <th className="structured-sheet-gutter">#</th>
               {Array.from({ length: colCount }, (_, ci) => (
                 <th key={ci} className="structured-sheet-colhead">
                   {colLabel(ci)}
@@ -500,5 +505,14 @@ function BlockNode({
     >
       {block.text}
     </p>
+  )
+}
+
+/** Soft index/window caps must not appear as “truncated for preview” banners. */
+function isSilentPreviewWindowWarning(warning: string): boolean {
+  return (
+    /truncated to \d+\s*[x×]\s*\d+/i.test(warning) ||
+    (/truncat/i.test(warning) && /for preview/i.test(warning)) ||
+    /Sheet .+ truncated/i.test(warning)
   )
 }

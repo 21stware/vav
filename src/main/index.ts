@@ -493,7 +493,30 @@ function publishDetachedSessions(): void {
 /** The window's own fill, shown for the frame or two before the renderer paints. */
 function windowBackground(): string {
   // Match mono light chrome (`--bg-window`); tinted washes are painted in CSS.
+  // Uses nativeTheme after applyTheme(), so forced dark/light follow app settings.
   return nativeTheme.shouldUseDarkColors ? '#121213' : '#ececee'
+}
+
+/** `dark` | `light` for renderer bootstrap (query + early HTML paint). */
+function windowThemeName(): 'dark' | 'light' {
+  return nativeTheme.shouldUseDarkColors ? 'dark' : 'light'
+}
+
+/**
+ * Paint html/body/#root before React/CSS arrive so dark-mode cold opens
+ * (⌘⇧↵ session, Settings, main) never flash system white.
+ */
+function primeRendererShell(win: BrowserWindow): void {
+  if (win.isDestroyed() || win.webContents.isDestroyed()) return
+  const bg = windowBackground()
+  const scheme = windowThemeName()
+  const css = `html,body,#root{background:${bg}!important;margin:0;height:100%;color-scheme:${scheme}}`
+  const inject = (): void => {
+    if (win.isDestroyed() || win.webContents.isDestroyed()) return
+    void win.webContents.insertCSS(css).catch(() => undefined)
+  }
+  inject()
+  win.webContents.once('dom-ready', inject)
 }
 
 /** `barHeight` matches the renderer's own title bar, so the two rows line up. */
@@ -873,11 +896,19 @@ function createWindow(): BrowserWindow {
 
 /** One renderer bundle serves both windows; `view` picks which one to mount. */
 function loadRenderer(window: BrowserWindow, query: Record<string, string> = {}): void {
-  const search = new URLSearchParams(query).toString()
+  // Always stamp theme so index.html can paint the matching wash before CSS.
+  const withTheme = { theme: windowThemeName(), ...query }
+  const search = new URLSearchParams(withTheme).toString()
+  primeRendererShell(window)
+  try {
+    window.setBackgroundColor(windowBackground())
+  } catch {
+    // ignore
+  }
   if (process.env.ELECTRON_RENDERER_URL) {
     window.loadURL(process.env.ELECTRON_RENDERER_URL + (search ? `?${search}` : ''))
   } else {
-    window.loadFile(join(__dirname, '../renderer/index.html'), search ? { query } : undefined)
+    window.loadFile(join(__dirname, '../renderer/index.html'), { query: withTheme })
   }
 }
 
@@ -1003,6 +1034,11 @@ function raiseDetachedWindow(win: BrowserWindow): void {
 
   const finish = (): void => {
     if (win.isDestroyed()) return
+    try {
+      win.setBackgroundColor(windowBackground())
+    } catch {
+      // ignore
+    }
     if (needSpaceHop) {
       try {
         win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: false })
@@ -1693,6 +1729,21 @@ function popupNativeMenu(
     ) {
       opts.x = Math.round(position.x)
       opts.y = Math.round(position.y)
+    }
+
+    // Dev: every native menu gets Inspect Element (custom menus otherwise block it).
+    if (!app.isPackaged) {
+      const x = opts.x ?? 0
+      const y = opts.y ?? 0
+      if (template.length) template.push({ type: 'separator' })
+      template.push({
+        label: 'Inspect Element',
+        click: () => {
+          const wc = window.webContents
+          wc.inspectElement(x, y)
+          if (!wc.isDevToolsOpened()) wc.openDevTools({ mode: 'detach' })
+        }
+      })
     }
 
     // Defer past the originating mouseup. Opening a native menu synchronously inside a

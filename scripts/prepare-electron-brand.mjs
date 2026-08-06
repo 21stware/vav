@@ -15,7 +15,10 @@ import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { execFileSync, execSync } from 'node:child_process'
 
-const APP_NAME = 'vav'
+/** On-disk bundle / executable (lowercase — stable paths, npm electron layout). */
+const APP_SLUG = 'vav'
+/** Dock tooltip + Finder display name (uppercase brand). */
+const APP_DISPLAY_NAME = 'VAV'
 const BUNDLE_ID = 'dev.vav.app'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
@@ -23,8 +26,8 @@ const iconSrc = join(root, 'build/icon.png')
 const distDir = join(root, 'node_modules/electron/dist')
 const pathFile = join(root, 'node_modules/electron/path.txt')
 const stockApp = join(distDir, 'Electron.app')
-const brandedApp = join(distDir, `${APP_NAME}.app`)
-const relativeExec = `${APP_NAME}.app/Contents/MacOS/${APP_NAME}`
+const brandedApp = join(distDir, `${APP_SLUG}.app`)
+const relativeExec = `${APP_SLUG}.app/Contents/MacOS/${APP_SLUG}`
 const stampFile = join(root, 'build/.electron-brand-stamp')
 
 function currentStamp() {
@@ -35,19 +38,19 @@ function currentStamp() {
     ? execSync(`stat -f %m "${iconDark}"`).toString().trim()
     : '0'
   // Bump the trailing token when Info.plist shape changes (e.g. document types).
-  return `${version}:${iconMtime}:${iconDarkMtime}:${BUNDLE_ID}:dock-drop-v1`
+  return `${version}:${iconMtime}:${iconDarkMtime}:${BUNDLE_ID}:dock-name-VAV`
 }
 
 function isBranded() {
   return (
-    existsSync(join(brandedApp, `Contents/MacOS/${APP_NAME}`)) &&
+    existsSync(join(brandedApp, `Contents/MacOS/${APP_SLUG}`)) &&
     existsSync(pathFile) &&
     readFileSync(pathFile, 'utf8').trim() === relativeExec
   )
 }
 
 function buildIcns(target) {
-  const iconset = join(root, 'build', `${APP_NAME}.iconset`)
+  const iconset = join(root, 'build', `${APP_SLUG}.iconset`)
   execSync(`rm -rf "${iconset}" && mkdir -p "${iconset}"`)
 
   const sizes = [
@@ -78,11 +81,11 @@ function plistBuddy(plistPath, command) {
 
 function patchInfoPlist(plistPath) {
   const keys = {
-    CFBundleName: APP_NAME,
-    CFBundleDisplayName: APP_NAME,
-    CFBundleExecutable: APP_NAME,
+    CFBundleName: APP_DISPLAY_NAME,
+    CFBundleDisplayName: APP_DISPLAY_NAME,
+    CFBundleExecutable: APP_SLUG,
     CFBundleIdentifier: BUNDLE_ID,
-    CFBundleIconFile: `${APP_NAME}.icns`
+    CFBundleIconFile: `${APP_SLUG}.icns`
   }
   for (const [key, value] of Object.entries(keys)) {
     // Set fails on absent keys, so fall back to Add.
@@ -143,17 +146,17 @@ export function prepareBrandedElectron() {
     throw new Error(`Missing ${iconSrc} — run python3 brand/generate.py first`)
   }
 
-  console.log(`[${APP_NAME}] rebranding the dev Electron bundle…`)
+  console.log(`[${APP_DISPLAY_NAME}] rebranding the dev Electron bundle…`)
 
   if (!existsSync(brandedApp)) renameSync(stockApp, brandedApp)
 
   const macos = join(brandedApp, 'Contents/MacOS')
-  if (existsSync(join(macos, 'Electron')) && !existsSync(join(macos, APP_NAME))) {
-    renameSync(join(macos, 'Electron'), join(macos, APP_NAME))
+  if (existsSync(join(macos, 'Electron')) && !existsSync(join(macos, APP_SLUG))) {
+    renameSync(join(macos, 'Electron'), join(macos, APP_SLUG))
   }
 
   const resources = join(brandedApp, 'Contents/Resources')
-  buildIcns(join(resources, `${APP_NAME}.icns`))
+  buildIcns(join(resources, `${APP_SLUG}.icns`))
   // Keep PNGs beside the icns: dock.setIcon + loadAppIcon read these when the
   // repo cwd is wrong (common with `open -a … --args`). Light + dark for theme.
   execFileSync('cp', ['-f', iconSrc, join(resources, 'icon.png')], { stdio: 'ignore' })
@@ -162,7 +165,7 @@ export function prepareBrandedElectron() {
     execFileSync('cp', ['-f', iconDarkSrc, join(resources, 'icon-dark.png')], { stdio: 'ignore' })
   }
   // Stock Electron still ships electron.icns — overwrite so nothing falls back.
-  execFileSync('cp', ['-f', join(resources, `${APP_NAME}.icns`), join(resources, 'electron.icns')], {
+  execFileSync('cp', ['-f', join(resources, `${APP_SLUG}.icns`), join(resources, 'electron.icns')], {
     stdio: 'ignore'
   })
   patchInfoPlist(join(brandedApp, 'Contents/Info.plist'))
@@ -171,7 +174,7 @@ export function prepareBrandedElectron() {
   reregister(brandedApp)
   writeFileSync(stampFile, stamp)
 
-  console.log(`[${APP_NAME}] dev bundle is now ${APP_NAME}.app`)
+  console.log(`[${APP_DISPLAY_NAME}] dev bundle is now ${APP_SLUG}.app (Dock: ${APP_DISPLAY_NAME})`)
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {

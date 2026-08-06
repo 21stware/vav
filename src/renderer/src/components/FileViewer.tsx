@@ -2072,15 +2072,18 @@ export function FileViewer({
                 onReveal={() => void window.vav.conversations.revealInFinder(filePath)}
               />
             )}
-          {info?.warnings && info.warnings.length > 0 && (
-            <div className="file-viewer-warnings" role="status">
-              {info.warnings.map((w) => (
-                <div key={w} className="file-viewer-warning-line muted">
-                  {w}
-                </div>
-              ))}
-            </div>
-          )}
+          {info?.warnings &&
+            info.warnings.some((w) => !isSilentPreviewWindowWarning(w)) && (
+              <div className="file-viewer-warnings" role="status">
+                {info.warnings
+                  .filter((w) => !isSilentPreviewWindowWarning(w))
+                  .map((w) => (
+                    <div key={w} className="file-viewer-warning-line muted">
+                      {w}
+                    </div>
+                  ))}
+              </div>
+            )}
           {info && !info.error && isOfficeKind && (
             <OfficeNativeView
               path={info.contentPath || filePath}
@@ -3206,11 +3209,16 @@ function CsvView({
         </button>
       </div>
       <div className="csv-sheet-wrap file-viewer-table">
-        <table className="csv-sheet">
+        <table
+          className="csv-sheet"
+          style={{ ['--gutter-digits' as string]: Math.max(2, String(total).length) }}
+        >
           <thead>
             <tr>
-              {/* Sticky row×col junction only — not selectable chrome. */}
-              <th className="csv-sheet-gutter csv-sheet-corner" aria-hidden="true" />
+              {/* Sticky row×col junction — keep a glyph so width never collapses to 72px. */}
+              <th className="csv-sheet-gutter csv-sheet-corner" aria-hidden="true">
+                #
+              </th>
               {visibleColIndexes.map((index) => {
                 const name = headers[index] ?? `col${index + 1}`
                 const id = csvColId(name, index)
@@ -3297,5 +3305,14 @@ function CsvView({
         </table>
       </div>
     </div>
+  )
+}
+
+/** Windowing / soft caps belong in render — never show as “truncated for preview”. */
+function isSilentPreviewWindowWarning(warning: string): boolean {
+  return (
+    /truncated to \d+\s*[x×]\s*\d+/i.test(warning) ||
+    (/truncat/i.test(warning) && /for preview/i.test(warning)) ||
+    /Sheet .+ truncated/i.test(warning)
   )
 }

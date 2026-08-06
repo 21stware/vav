@@ -675,9 +675,17 @@ export function AgentModeChrome({
     if (nextId && useSessionStore.getState().search.open) {
       useSessionStore.getState().closeSearch()
     }
+    const store = useSessionStore.getState()
+    let targetId = conversationId
+    if (!targetId) {
+      // Empty chat shell — mint a session before switching agent host.
+      await store.createConversation()
+      targetId = useSessionStore.getState().activeId
+      if (!targetId) return
+    }
     // Via store so file-preview sessions (hidden from listMeta) keep their
     // agentBinaryName instead of being wiped by a raw list replace.
-    await useSessionStore.getState().setAgentBinaryName(conversationId, nextId)
+    await useSessionStore.getState().setAgentBinaryName(targetId, nextId)
   }
 
   const displayName = active.name

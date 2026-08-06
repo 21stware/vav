@@ -10,18 +10,22 @@
     <title>vav</title>
     <!--
       Synchronous shell paint before the module graph loads.
-      Token-usage / settings popups were flashing system white between
-      BrowserWindow show and React first paint; this matches the native
-      backgroundColor so that frame is never visible.
+      Main / session / settings / token windows all flash system white for a
+      frame otherwise — especially ⌘⇧↵ quick sessions in dark mode. Prefer the
+      `theme` query from main (app setting); fall back to OS color scheme.
     -->
     <script>
       ;(function () {
         try {
           var q = new URLSearchParams(location.search)
-          var view = q.get('view')
-          if (view !== 'token-usage' && view !== 'settings') return
-          var dark = window.matchMedia('(prefers-color-scheme: dark)').matches
-          var bg = dark ? '#121213' : '#eceaf1'
+          var theme = q.get('theme')
+          var dark =
+            theme === 'dark'
+              ? true
+              : theme === 'light'
+                ? false
+                : window.matchMedia('(prefers-color-scheme: dark)').matches
+          var bg = dark ? '#121213' : '#ececee'
           document.documentElement.style.background = bg
           document.documentElement.dataset.theme = dark ? 'dark' : 'light'
           document.documentElement.style.colorScheme = dark ? 'dark' : 'light'

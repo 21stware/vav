@@ -1,5 +1,8 @@
 /**
  * XLSX → sheet / row / cell blocks via SheetJS.
+ *
+ * Soft cell budgets protect IPC/memory. Windowing belongs in the renderer —
+ * never surface "truncated to N×M" in the UI.
  */
 
 import { readFile } from 'node:fs/promises'
@@ -7,8 +10,9 @@ import * as XLSX from 'xlsx'
 import type { PreviewBlock } from '@shared/previewBlock'
 import type { StructuredDocument, StructuredSection } from '@shared/structuredDoc'
 
-const MAX_ROWS = 400
-const MAX_COLS = 40
+/** Soft cap for structured index / pick blocks (not a user-facing cut). */
+const MAX_INDEX_CELLS = 80_000
+const MAX_INDEX_COLS = 256
 
 export async function parseXlsx(path: string): Promise<StructuredDocument> {
   const buf = await readFile(path)
@@ -16,7 +20,6 @@ export async function parseXlsx(path: string): Promise<StructuredDocument> {
   const sections: StructuredSection[] = []
   const rootChildren: PreviewBlock[] = []
   const plainParts: string[] = []
-  const warnings: string[] = []
   let line = 1
 
   for (const sheetName of workbook.SheetNames) {
@@ -35,13 +38,11 @@ export async function parseXlsx(path: string): Promise<StructuredDocument> {
     }
 
     const range = XLSX.utils.decode_range(ref)
-    const rowCount = Math.min(range.e.r - range.s.r + 1, MAX_ROWS)
-    const colCount = Math.min(range.e.c - range.s.c + 1, MAX_COLS)
-    if (range.e.r - range.s.r + 1 > MAX_ROWS || range.e.c - range.s.c + 1 > MAX_COLS) {
-      warnings.push(
-        `Sheet "${sheetName}" truncated to ${MAX_ROWS}×${MAX_COLS} for preview`
-      )
-    }
+    const fullRows = Math.max(0, range.e.r - range.s.r + 1)
+    const fullCols = Math.max(0, range.e.c - range.s.c + 1)
+    const colCount = Math.min(fullCols, MAX_INDEX_COLS)
+    const rowBudget = Math.max(1, Math.floor(MAX_INDEX_CELLS / Math.max(1, colCount)))
+    const rowCount = Math.min(fullRows, rowBudget)
 
     const grid: string[][] = []
     const rowBlocks: PreviewBlock[] = []
@@ -129,8 +130,7 @@ export async function parseXlsx(path: string): Promise<StructuredDocument> {
     path,
     blocks: rootChildren,
     sections,
-    plainText: plainParts.join('\n'),
-    warnings: warnings.length ? warnings : undefined
+    plainText: plainParts.join('\n')
   }
 }
 

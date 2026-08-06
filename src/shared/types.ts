@@ -678,7 +678,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   reduceMotion: false,
   sendKey: 'enter',
   globalHotkey: 'Control+Command+Space',
-  sidebarGroupingMode: 'none',
+  sidebarGroupingMode: 'workspace',
   fileViewMode: 'tree',
   fileSortKey: 'name',
   fileSortAscending: true,

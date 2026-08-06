@@ -183,15 +183,15 @@ export default function App(): React.JSX.Element {
 }
 
 function DetailSlot(): React.JSX.Element {
-  const t = useT()
   const activeGroupId = useSessionStore((s) => s.activeGroupId)
-  const activeId = useSessionStore((s) => s.activeId)
   const activeConversation = useSessionStore((s) =>
     s.conversations.find((c) => c.id === s.activeId)
   )
-  const createConversation = useSessionStore((s) => s.createConversation)
 
-  if (activeGroupId) return <WorkspaceView workdir={activeGroupId} />
+  // Real workspace path → Preview + Agent. Sentinel / empty shell stays on chat.
+  if (activeGroupId && !activeGroupId.startsWith('__')) {
+    return <WorkspaceView workdir={activeGroupId} />
+  }
   // File-bound sessions: file canvas + agent (list lives in sidebar File sessions).
   if (activeConversation?.fileId) {
     return (
@@ -201,24 +201,7 @@ function DetailSlot(): React.JSX.Element {
       />
     )
   }
-  // Orphan activeId (e.g. deleted / not yet hydrated) used to render a bald void.
-  if (!activeId || !activeConversation) {
-    return (
-      <main className="detail detail-empty-orphan">
-        <EmptyState
-          logo
-          title={t('session.noActiveTitle')}
-          description={t('session.noActiveDesc')}
-        >
-          <Button
-            label={t('common.newSession')}
-            variant="primary"
-            onClick={() => void createConversation()}
-          />
-        </EmptyState>
-      </main>
-    )
-  }
+  // No session yet — empty chat surface; first send / file add mints the session.
   return <SessionDetail />
 }
 
