@@ -301,6 +301,21 @@
   scroll-behavior: auto !important;
 }
 
+/*
+ * Hotkey / Dock summon (Raycast lesson): the window was already painted while
+ * hidden — kill entrance cinema for a beat so reveal feels instantaneous.
+ */
+html[data-summoning] .empty-state > *,
+html[data-summoning] .transcript-inner.is-branch-swap .message-turn.assistant {
+  animation: none !important;
+}
+html[data-summoning] .sidebar-float-panel,
+html[data-summoning] .workspace-view-agent,
+html[data-summoning] .file-session-view .workspace-view-agent,
+html[data-summoning] .tools-body {
+  transition: none !important;
+}
+
 /* The OS setting is a gentler instruction than our own toggle: drop the
    movement, keep the opacity and colour changes that explain what happened. */
 /* Accessibility: solid material when the OS asks to reduce transparency. */
@@ -2443,7 +2458,8 @@ kbd {
   border-radius: 6px;
   font: inherit;
   font-size: 12px;
-  cursor: pointer;
+  /* Desktop apps don't use the web "hand" on chrome controls (Raycast). */
+  cursor: default;
   transition: background 100ms ease;
 }
 
@@ -2565,6 +2581,16 @@ kbd {
   display: flex;
   flex-direction: column;
   gap: 4px;
+  align-self: stretch;
+  max-width: 100%;
+  /* Skip paint for off-screen sealed turns (complements list windowing). */
+  content-visibility: auto;
+  contain-intrinsic-size: auto 132px;
+}
+
+.transcript-virtual-item {
+  display: flex;
+  flex-direction: column;
   align-self: stretch;
   max-width: 100%;
 }
@@ -3694,7 +3720,7 @@ mark {
   animation: branch-switch 280ms var(--ease-out);
 }
 
-.transcript-inner.is-branch-swap > .message-turn.assistant {
+.transcript-inner.is-branch-swap .message-turn.assistant {
   animation: branch-switch 280ms var(--ease-out);
 }
 
@@ -3711,14 +3737,14 @@ mark {
 
 :root[data-reduce-motion='true'] .variant-pager[data-pulse] .variant-count,
 :root[data-reduce-motion='true'] .message.branch-switch,
-:root[data-reduce-motion='true'] .transcript-inner.is-branch-swap > .message-turn.assistant {
+:root[data-reduce-motion='true'] .transcript-inner.is-branch-swap .message-turn.assistant {
   animation: none;
 }
 
 @media (prefers-reduced-motion: reduce) {
   .variant-pager[data-pulse] .variant-count,
   .message.branch-switch,
-  .transcript-inner.is-branch-swap > .message-turn.assistant {
+  .transcript-inner.is-branch-swap .message-turn.assistant {
     animation: none;
   }
 }
@@ -7267,7 +7293,7 @@ mark {
   /* Keep overflow visible so the session-history popover under the bar
      is not clipped. Scroll containment lives on the transcript children. */
   overflow: visible;
-  animation: preview-agent-in 250ms ease-out;
+  /* No enter animation — panel open/close is high-frequency during work. */
 }
 
 .preview-agent-panel > .preview-edit-session,
@@ -9678,6 +9704,8 @@ mark {
   /* Prevent flex children from stretching SVG/text to weird aspect ratios. */
   box-sizing: border-box;
   min-width: 0;
+  content-visibility: auto;
+  contain-intrinsic-size: auto 28px;
 }
 
 .tree-row.selected {

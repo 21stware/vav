@@ -30,6 +30,7 @@ import { menuAnchor, showMenu, type MenuItem } from '../lib/nativeMenu'
 import { fileManagerLabel } from '../lib/platform'
 import { Button, EmptyState, InlineAlert } from './ui'
 import { FileManagerIcon } from './FileManagerIcon'
+import { prefetchForPath } from '../lib/prefetchHeavy'
 
 function sortButtonLabel(key: FileSortKey, t: ReturnType<typeof useT>): string {
   if (key === 'none') return '—'
@@ -550,11 +551,11 @@ function TreeLevel({
 }): React.JSX.Element {
   const t = useT()
   const activeId = useSessionStore((s) => s.activeId)
-  const workspace = useWorkspaceStore((s) => s.workspaces[activeId])
-  const entries = workspace?.dirs[path]
-  const loading = workspace?.loadingDirs.includes(path)
-  const error = workspace?.dirErrors[path]
-  const truncated = workspace?.dirTruncated[path] ?? 0
+  // Narrow subscriptions: PTY layout / tab churn must not re-render every tree level.
+  const entries = useWorkspaceStore((s) => s.workspaces[activeId]?.dirs[path])
+  const loading = useWorkspaceStore((s) => s.workspaces[activeId]?.loadingDirs.includes(path))
+  const error = useWorkspaceStore((s) => s.workspaces[activeId]?.dirErrors[path])
+  const truncated = useWorkspaceStore((s) => s.workspaces[activeId]?.dirTruncated[path] ?? 0)
   const showCreate = creating?.dir === path
 
   if (error) {
@@ -722,8 +723,12 @@ function TreeRow({
         className={`tree-row ${entry.isDirectory ? 'dir' : 'file'}${selected ? ' selected' : ''}`}
         style={{ paddingLeft: level * 14 + 10 }}
         title={entry.path}
+        onMouseEnter={() => {
+          if (!entry.isDirectory) prefetchForPath(entry.path)
+        }}
         onClick={(event) => {
           event.stopPropagation()
+          if (!entry.isDirectory) prefetchForPath(entry.path)
           selectEntry(entry.path, entry.isDirectory)
           if (entry.isDirectory) void toggleExpand(activeId, entry.path)
         }}
@@ -889,7 +894,16 @@ async function confirmTrash(
   if (result.ok) onMutated(paths[0])
 }
 
-async function expandAll(conversationId: string, path: string): Promise<void> {
+/** Guard deep expand-all walks so a huge tree cannot flood the main process. */
+const EXPAND_ALL_MAX_DIRS = 80
+
+async function expandAll(
+  conversationId: string,
+  path: string,
+  budget = { left: EXPAND_ALL_MAX_DIRS }
+): Promise<void> {
+  if (budget.left <= 0) return
+  budget.left -= 1
   await useWorkspaceStore.getState().loadDirectory(conversationId, path)
   const slice = useWorkspaceStore.getState().workspaces[conversationId]
   if (!slice) return
@@ -903,7 +917,7 @@ async function expandAll(conversationId: string, path: string): Promise<void> {
   }
   const entries = useWorkspaceStore.getState().workspaces[conversationId]?.dirs[path] ?? []
   for (const entry of entries) {
-    if (entry.isDirectory) await expandAll(conversationId, entry.path)
+    if (entry.isDirectory) await expandAll(conversationId, entry.path, budget)
   }
 }
 

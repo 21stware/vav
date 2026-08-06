@@ -1,13 +1,14 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { Suspense, lazy, useCallback, useEffect, useRef, useState } from 'react'
 import type { FileSessionListEntry } from '@shared/ipc'
 import { useSessionStore } from '../state/sessionStore'
 import { useT } from '../i18n/useT'
 import { basename } from '../lib/path'
 import { EmptyState } from './ui'
-import { FileViewer } from './FileViewer'
 import { SessionDetail } from './SessionDetail'
 import { ShellLeadingControls } from './ShellLeadingControls'
 import { useSidebarFloatMode } from '../lib/sidebarLayout'
+
+const FileViewer = lazy(() => import('./FileViewer').then((m) => ({ default: m.FileViewer })))
 
 const AGENT_MIN = 280
 const AGENT_DEFAULT = 380
@@ -122,17 +123,19 @@ export function FileSessionView({
             <div className="file-session-missing-body muted">{t('common.loading')}</div>
           </div>
         ) : pathOk ? (
-          <FileViewer
-            key={`${fileId}:${resolved!.path}`}
-            path={resolved!.path}
-            origin="session"
-            parentConversationId={conversationId}
-            embedded
-            agentPanelOpen={agentOpen}
-            onToggleAgentPanel={() => setAgentOpen((v) => !v)}
-            onPickBlock={() => setAgentOpen(true)}
-            shellLeading={shellLeading}
-          />
+          <Suspense fallback={<div className="file-session-missing-body muted">{t('common.loading')}</div>}>
+            <FileViewer
+              key={`${fileId}:${resolved!.path}`}
+              path={resolved!.path}
+              origin="session"
+              parentConversationId={conversationId}
+              embedded
+              agentPanelOpen={agentOpen}
+              onToggleAgentPanel={() => setAgentOpen((v) => !v)}
+              onPickBlock={() => setAgentOpen(true)}
+              shellLeading={shellLeading}
+            />
+          </Suspense>
         ) : (
           <div className="file-session-missing">
             {missingChrome}

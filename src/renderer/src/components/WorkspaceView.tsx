@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ChevronDown, Plus } from 'lucide-react'
 import type { ConversationMeta } from '@shared/types'
 import { useSessionStore, type TurnRuntime } from '../state/sessionStore'
@@ -7,9 +7,11 @@ import { useT } from '../i18n/useT'
 import { relativeTime } from '../lib/format'
 import { useSidebarFloatMode } from '../lib/sidebarLayout'
 import { Button, EmptyState } from './ui'
-import { FileViewer } from './FileViewer'
 import { SessionDetail } from './SessionDetail'
 import { ShellLeadingControls } from './ShellLeadingControls'
+import { prefetchForPath } from '../lib/prefetchHeavy'
+
+const FileViewer = lazy(() => import('./FileViewer').then((m) => ({ default: m.FileViewer })))
 
 /**
  * Agent column (workspace-view): Preview + Agent split.
@@ -231,6 +233,10 @@ export function WorkspaceView({ workdir }: { workdir: string }): React.JSX.Eleme
     else void attachContextFile(activeId, null)
   }, [activeId, previewFilePath, attachContextFile])
 
+  useEffect(() => {
+    prefetchForPath(previewFilePath)
+  }, [previewFilePath])
+
   const newSession = async (): Promise<void> => {
     await createConversation({ workingDirectory: workdir })
   }
@@ -239,16 +245,18 @@ export function WorkspaceView({ workdir }: { workdir: string }): React.JSX.Eleme
     <div className="workspace-view" ref={rootRef}>
       <section className="workspace-view-preview" ref={previewRef}>
         {previewFilePath ? (
-          <FileViewer
-            path={previewFilePath}
-            origin="session"
-            parentConversationId={activeId}
-            embedded
-            agentPanelOpen={agentPanelOpen}
-            onToggleAgentPanel={() => setAgentPanelOpen((v) => !v)}
-            onPickBlock={revealAgent}
-            shellLeading={shellLeading}
-          />
+          <Suspense fallback={<div className="muted" style={{ padding: 24 }}>{t('common.loading')}</div>}>
+            <FileViewer
+              path={previewFilePath}
+              origin="session"
+              parentConversationId={activeId}
+              embedded
+              agentPanelOpen={agentPanelOpen}
+              onToggleAgentPanel={() => setAgentPanelOpen((v) => !v)}
+              onPickBlock={revealAgent}
+              shellLeading={shellLeading}
+            />
+          </Suspense>
         ) : (
           <div className="workspace-preview-empty">
             {shellLeading ? (

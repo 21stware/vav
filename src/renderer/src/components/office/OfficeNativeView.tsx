@@ -1,14 +1,30 @@
 /**
  * Router for mature office/PDF renderers.
+ *
+ * Each format is a separate async chunk so opening a chat session (or a
+ * markdown preview) never parses SheetJS / docx-preview / pdf.js.
  */
 
-import { useCallback } from 'react'
+import { Suspense, lazy, useCallback } from 'react'
 import type { FilePreviewKind } from '@shared/ipc'
 import type { PreviewBlock } from '@shared/previewBlock'
-import { DocxNativeView } from './DocxNativeView'
-import { PdfNativeView } from './PdfNativeView'
-import { XlsxNativeView } from './XlsxNativeView'
-import { PptxNativeView } from './PptxNativeView'
+
+const DocxNativeView = lazy(() =>
+  import('./DocxNativeView').then((m) => ({ default: m.DocxNativeView }))
+)
+const PdfNativeView = lazy(() =>
+  import('./PdfNativeView').then((m) => ({ default: m.PdfNativeView }))
+)
+const XlsxNativeView = lazy(() =>
+  import('./XlsxNativeView').then((m) => ({ default: m.XlsxNativeView }))
+)
+const PptxNativeView = lazy(() =>
+  import('./PptxNativeView').then((m) => ({ default: m.PptxNativeView }))
+)
+
+function OfficeFallback(): React.JSX.Element {
+  return <div className="muted">…</div>
+}
 
 export function OfficeNativeView({
   path,
@@ -33,8 +49,9 @@ export function OfficeNativeView({
     [onPick]
   )
 
+  let body: React.JSX.Element
   if (kind === 'docx') {
-    return (
+    body = (
       <DocxNativeView
         path={path}
         revision={revision}
@@ -43,9 +60,8 @@ export function OfficeNativeView({
         onPick={handle}
       />
     )
-  }
-  if (kind === 'pdf') {
-    return (
+  } else if (kind === 'pdf') {
+    body = (
       <PdfNativeView
         path={path}
         revision={revision}
@@ -54,9 +70,8 @@ export function OfficeNativeView({
         onPick={handle}
       />
     )
-  }
-  if (kind === 'xlsx') {
-    return (
+  } else if (kind === 'xlsx') {
+    body = (
       <XlsxNativeView
         path={path}
         revision={revision}
@@ -65,9 +80,8 @@ export function OfficeNativeView({
         onPick={handle}
       />
     )
-  }
-  if (kind === 'pptx') {
-    return (
+  } else if (kind === 'pptx') {
+    body = (
       <PptxNativeView
         path={path}
         revision={revision}
@@ -76,6 +90,9 @@ export function OfficeNativeView({
         onPick={handle}
       />
     )
+  } else {
+    return <div className="muted">Unsupported office kind</div>
   }
-  return <div className="muted">Unsupported office kind</div>
+
+  return <Suspense fallback={<OfficeFallback />}>{body}</Suspense>
 }

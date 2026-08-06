@@ -684,7 +684,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   notifyOnAskUserQuestion: true,
   notifyOnToolApproval: true,
   notifyOnRequest: true,
-  /** Product no longer ships a menu-bar tray; kept for settings schema compat. */
+  /** macOS optional menu-bar item; Windows always shows a tray (see NotificationCenter). */
   trayEnabled: false,
   hideDockIcon: false,
   cliAgents: DEFAULT_CLI_AGENTS.map((a) => ({ ...a, envVars: { ...a.envVars } })),

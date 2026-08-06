@@ -20,6 +20,11 @@ const IS_WINDOWS = process.platform === 'win32'
 const OUTPUT_BUFFER_CAP = 256 * 1024
 /** Plain-shell attach: keep a short tail of line scrollback. */
 const BASH_REPLAY_TAIL = 24 * 1024
+/**
+ * Coalesce PTY→IPC bursts (TUI redraw storms) into short batches.
+ * Keeps latency low for typing while cutting structured-clone fan-out.
+ */
+const DATA_COALESCE_MS = 8
 
 /**
  * Public snapshot of a live PTY — main is the source of truth for multi-window
@@ -161,13 +166,47 @@ function hasChildProcesses(pid: number): boolean {
  */
 export class PtyManager {
   private sessions = new Map<string, PtySession>()
+  /** Pending stdout chunks waiting for the coalesce timer. */
+  private pendingData = new Map<string, string>()
+  private dataFlushTimer: ReturnType<typeof setTimeout> | null = null
 
   constructor(
     private onData: (tabId: string, data: string) => void,
-    private onExit: (tabId: string) => void,
+    private onExit: (tabId: string, conversationId: string) => void,
     /** Fired after create / kill so every renderer can re-hydrate tab maps. */
     private onChanged?: (conversationId: string) => void
   ) {}
+
+  /** Conversation that owns a live tab (for targeted IPC). */
+  conversationIdFor(tabId: string): string | null {
+    return this.sessions.get(tabId)?.conversationId ?? null
+  }
+
+  private enqueueData(tabId: string, data: string): void {
+    const prev = this.pendingData.get(tabId)
+    this.pendingData.set(tabId, prev ? prev + data : data)
+    if (this.dataFlushTimer != null) return
+    this.dataFlushTimer = setTimeout(() => {
+      this.dataFlushTimer = null
+      this.flushPendingData()
+    }, DATA_COALESCE_MS)
+  }
+
+  private flushPendingData(onlyTabId?: string): void {
+    if (onlyTabId) {
+      const chunk = this.pendingData.get(onlyTabId)
+      if (chunk == null) return
+      this.pendingData.delete(onlyTabId)
+      if (chunk) this.onData(onlyTabId, chunk)
+      return
+    }
+    if (this.pendingData.size === 0) return
+    const batch = this.pendingData
+    this.pendingData = new Map()
+    for (const [tabId, chunk] of batch) {
+      if (chunk) this.onData(tabId, chunk)
+    }
+  }
 
   create(
     conversationId: string,
@@ -277,7 +316,7 @@ export class PtyManager {
     }
     proc.onData((data) => {
       appendOutputBuffer(session, data)
-      this.onData(id, data)
+      this.enqueueData(id, data)
     })
     proc.onExit(() => {
       const current = this.sessions.get(id)
@@ -288,8 +327,10 @@ export class PtyManager {
           // temp cleanup is best-effort
         }
       }
+      // Deliver any coalesced stdout before the exit marker.
+      this.flushPendingData(id)
       this.sessions.delete(id)
-      this.onExit(id)
+      this.onExit(id, conversationId)
       this.onChanged?.(conversationId)
     })
     this.sessions.set(id, session)
@@ -371,6 +412,7 @@ export class PtyManager {
     const session = this.sessions.get(tabId)
     if (!session) return
     const conversationId = session.conversationId
+    this.flushPendingData(tabId)
     if (session.contextFile) {
       try {
         unlinkSync(session.contextFile)

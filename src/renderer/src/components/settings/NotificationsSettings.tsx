@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useSessionStore } from '../../state/sessionStore'
 import { useT } from '../../i18n/useT'
+import { PLATFORM } from '../../lib/platform'
 import { InlineAlert, Toggle } from '../ui'
 
 /**
@@ -18,6 +19,12 @@ export function NotificationsSettings(): React.JSX.Element {
 
   return (
     <div className="settings-form">
+      {PLATFORM === 'win32' && (
+        <>
+          <div className="settings-section-title">{t('notifications.sectionTray')}</div>
+          <div className="form-hint">{t('notifications.trayHintWin')}</div>
+        </>
+      )}
       {permission === 'denied' && settings.notificationsEnabled && (
         <InlineAlert
           kind="warning"

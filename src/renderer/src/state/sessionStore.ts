@@ -806,6 +806,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       toolsLayoutsPatch = { ...get().toolsLayouts, [id]: sessionTools }
       saveSessionToolsMap(toolsLayoutsPatch)
     }
+    // Paint the new session immediately — hydrate in parallel below.
     set({
       activeId: id,
       selectedIds: nextSelection,
@@ -813,67 +814,101 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       ...(toolsLayoutsPatch ? { toolsLayouts: toolsLayoutsPatch } : {}),
       ...activeToolsFields(sessionTools)
     })
-    await get().loadMessages(id)
 
     const conversation = get().conversations.find((c) => c.id === id)
-    await useWorkspaceStore.getState().bindConversation(id, conversation?.workingDirectory ?? null)
-
-    const status = await window.vav.agent.status(id)
-    set((state) => {
-      let messages = state.messages
-      // The in-flight assistant message is owned by StreamProjection; showing
-      // the disk partial beside it would duplicate every tool card.
-      if (status.isRunning && status.messageId && messages[id]?.some((m) => m.id === status.messageId)) {
-        messages = {
-          ...messages,
-          [id]: messages[id]!.filter((m) => m.id !== status.messageId)
-        }
-      }
-      return {
-        messages,
-        turns: {
-          ...state.turns,
-          [id]: {
-            isRunning: status.isRunning,
-            phase: status.phase,
-            toolCount: status.toolCount,
-            awaitingToolCallId: status.awaitingToolCallId
+    const cached = !!get().messages[id]
+    const applyStatus = (status: Awaited<ReturnType<typeof window.vav.agent.status>>): void => {
+      if (get().activeId !== id) return
+      set((state) => {
+        let messages = state.messages
+        // The in-flight assistant message is owned by StreamProjection; showing
+        // the disk partial beside it would duplicate every tool card.
+        if (
+          status.isRunning &&
+          status.messageId &&
+          messages[id]?.some((m) => m.id === status.messageId)
+        ) {
+          messages = {
+            ...messages,
+            [id]: messages[id]!.filter((m) => m.id !== status.messageId)
           }
         }
-      }
-    })
-    if (status.isRunning) {
-      const projection = getProjection(id)
-      // Events may have already primed this window while status was in flight;
-      // only hydrate when we still have no live view.
-      if (!projection.getSnapshot().active) {
-        projection.hydrate(status.phase, status.blocks)
+        return {
+          messages,
+          turns: {
+            ...state.turns,
+            [id]: {
+              isRunning: status.isRunning,
+              phase: status.phase,
+              toolCount: status.toolCount,
+              awaitingToolCallId: status.awaitingToolCallId
+            }
+          }
+        }
+      })
+      if (status.isRunning) {
+        const projection = getProjection(id)
+        // Events may have already primed this window while status was in flight;
+        // only hydrate when we still have no live view.
+        if (!projection.getSnapshot().active) {
+          projection.hydrate(status.phase, status.blocks)
+        }
       }
     }
+
+    const loadP = get().loadMessages(id)
+    const bindP = useWorkspaceStore
+      .getState()
+      .bindConversation(id, conversation?.workingDirectory ?? null)
+    const statusP = window.vav.agent.status(id)
+
+    if (cached) {
+      // Returning to a warm session: never block the click on disk/IPC.
+      void Promise.all([loadP, bindP, statusP]).then(([, , status]) => applyStatus(status))
+      return
+    }
+
+    const [, , status] = await Promise.all([loadP, bindP, statusP])
+    applyStatus(status)
   },
 
   async loadMessages(id) {
+    const already = !!get().messages[id]
+    if (already) {
+      // Soft refresh metadata without blocking the switch paint.
+      void window.vav.conversations.get(id).then((conversation) => {
+        if (!conversation || get().activeId !== id) return
+        set((state) => ({
+          compactions: {
+            ...state.compactions,
+            [id]: conversation.compactions ?? []
+          },
+          tokenHistories: {
+            ...state.tokenHistories,
+            [id]: conversation.tokenHistory ?? []
+          },
+          cacheCreatedAt: {
+            ...state.cacheCreatedAt,
+            [id]: conversation.cacheCreatedAt ?? null
+          },
+          cacheExpiresAt: {
+            ...state.cacheExpiresAt,
+            [id]: conversation.cacheExpiresAt ?? null
+          }
+        }))
+      })
+      return
+    }
+
     const conversation = await window.vav.conversations.get(id)
     if (!conversation) return
-    const already = !!get().messages[id]
     set((state) => ({
-      ...(already
-        ? {
-            // Always refresh compactions — compact/clear can land while messages
-            // are already hydrated.
-            compactions: {
-              ...state.compactions,
-              [id]: conversation.compactions ?? []
-            }
-          }
-        : {
-            messages: { ...state.messages, [id]: conversation.messages },
-            activeLeaf: { ...state.activeLeaf, [id]: conversation.activeLeafId },
-            compactions: {
-              ...state.compactions,
-              [id]: conversation.compactions ?? []
-            }
-          }),
+      messages: { ...state.messages, [id]: conversation.messages },
+      activeLeaf: { ...state.activeLeaf, [id]: conversation.activeLeafId },
+      compactions: {
+        ...state.compactions,
+        [id]: conversation.compactions ?? []
+      },
       tokenHistories: {
         ...state.tokenHistories,
         [id]: conversation.tokenHistory ?? []

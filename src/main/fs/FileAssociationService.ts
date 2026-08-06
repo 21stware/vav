@@ -1,17 +1,19 @@
-import { app } from 'electron'
+import { app, shell } from 'electron'
 import { execFile } from 'node:child_process'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { promisify } from 'node:util'
+
 const execFileAsync = promisify(execFile)
 const IS_MAC = process.platform === 'darwin'
+const IS_WIN = process.platform === 'win32'
 
 export interface FileAssociationFormat {
   id: string
   /** Display name */
   label: string
   extensions: string[]
-  /** Primary UTI used for Launch Services */
+  /** Primary UTI used for Launch Services (macOS) */
   uti: string
   /** P0 = fully supported; P1 = listed but secondary */
   tier: 'p0' | 'p1'
@@ -25,7 +27,7 @@ export interface FileAssociationStatus {
   tier: 'p0' | 'p1'
   /** Current default app display name, or null when unset. */
   defaultApp: string | null
-  /** Bundle id of current default, when known. */
+  /** Bundle id / ProgId of current default, when known. */
   defaultBundleId: string | null
   isVav: boolean
 }
@@ -91,6 +93,8 @@ export const FILE_ASSOCIATION_FORMATS: FileAssociationFormat[] = [
 ]
 
 const VAV_BUNDLE_ID = 'com.vav.app'
+/** Registered display name / productName used by electron-builder + LaunchAdvancedAssociationUI. */
+const VAV_WIN_APP_NAME = 'VAV'
 
 const HELPER_SWIFT = `import Foundation
 import CoreServices
@@ -132,6 +136,29 @@ interface PreviousHandlers {
   [uti: string]: string
 }
 
+function emptyStatus(format: FileAssociationFormat): FileAssociationStatus {
+  return {
+    id: format.id,
+    label: format.label,
+    extensions: format.extensions,
+    uti: format.uti,
+    tier: format.tier,
+    defaultApp: null,
+    defaultBundleId: null,
+    isVav: false
+  }
+}
+
+function isVavWindowsProgId(progId: string): boolean {
+  const p = progId.toLowerCase()
+  return (
+    p.includes('vav') ||
+    p.includes('com.vav.app') ||
+    p.includes('\\vav.exe') ||
+    p.startsWith('applications\\vav')
+  )
+}
+
 export class FileAssociationService {
   private helperPath: string | null = null
   private previousPath: string
@@ -153,43 +180,9 @@ export class FileAssociationService {
   }
 
   async statusFor(format: FileAssociationFormat): Promise<FileAssociationStatus> {
-    if (!IS_MAC) {
-      return {
-        id: format.id,
-        label: format.label,
-        extensions: format.extensions,
-        uti: format.uti,
-        tier: format.tier,
-        defaultApp: null,
-        defaultBundleId: null,
-        isVav: false
-      }
-    }
-    try {
-      const { bundleId, name } = await this.getDefault(format.uti)
-      const isVav = !!bundleId && (bundleId === VAV_BUNDLE_ID || bundleId.endsWith('.vav') || name === 'vav')
-      return {
-        id: format.id,
-        label: format.label,
-        extensions: format.extensions,
-        uti: format.uti,
-        tier: format.tier,
-        defaultApp: name || null,
-        defaultBundleId: bundleId || null,
-        isVav
-      }
-    } catch {
-      return {
-        id: format.id,
-        label: format.label,
-        extensions: format.extensions,
-        uti: format.uti,
-        tier: format.tier,
-        defaultApp: null,
-        defaultBundleId: null,
-        isVav: false
-      }
-    }
+    if (IS_MAC) return this.statusForMac(format)
+    if (IS_WIN) return this.statusForWin(format)
+    return emptyStatus(format)
   }
 
   async statusForExtension(ext: string): Promise<FileAssociationStatus | null> {
@@ -202,29 +195,60 @@ export class FileAssociationService {
   async setDefault(formatId: string): Promise<FileAssociationStatus> {
     const format = FILE_ASSOCIATION_FORMATS.find((f) => f.id === formatId)
     if (!format) throw new Error(`Unknown format: ${formatId}`)
-    if (!IS_MAC) throw new Error('File associations are only supported on macOS')
 
-    const current = await this.getDefault(format.uti)
-    if (current.bundleId && current.bundleId !== VAV_BUNDLE_ID) {
-      this.rememberPrevious(format.uti, current.bundleId)
+    if (IS_MAC) {
+      const current = await this.getDefaultMac(format.uti)
+      if (current.bundleId && current.bundleId !== VAV_BUNDLE_ID) {
+        this.rememberPrevious(format.uti, current.bundleId)
+      }
+      await this.runHelper(format.uti, 'set', VAV_BUNDLE_ID)
+      return this.statusFor(format)
     }
-    await this.runHelper(format.uti, 'set', VAV_BUNDLE_ID)
-    return this.statusFor(format)
+
+    if (IS_WIN) {
+      // Windows 10/11 UserChoice is hash-protected — open the system UI for VAV
+      // so the user can confirm defaults (installer already registered ProgIds).
+      await this.launchWindowsAssociationUI()
+      return this.statusFor(format)
+    }
+
+    throw new Error('File associations are only supported on macOS and Windows')
   }
 
   async unsetDefault(formatId: string): Promise<FileAssociationStatus> {
     const format = FILE_ASSOCIATION_FORMATS.find((f) => f.id === formatId)
     if (!format) throw new Error(`Unknown format: ${formatId}`)
-    if (!IS_MAC) throw new Error('File associations are only supported on macOS')
 
-    const previous = this.loadPrevious()[format.uti]
-    if (previous) {
-      await this.runHelper(format.uti, 'set', previous)
+    if (IS_MAC) {
+      const previous = this.loadPrevious()[format.uti]
+      if (previous) {
+        await this.runHelper(format.uti, 'set', previous)
+      }
+      return this.statusFor(format)
     }
-    return this.statusFor(format)
+
+    if (IS_WIN) {
+      // Cannot silently clear UserChoice; open the same system UI.
+      await this.launchWindowsAssociationUI()
+      return this.statusFor(format)
+    }
+
+    throw new Error('File associations are only supported on macOS and Windows')
   }
 
   async registerAll(): Promise<{ updated: string[]; failed: { id: string; error: string }[] }> {
+    if (IS_WIN) {
+      try {
+        await this.launchWindowsAssociationUI()
+        return { updated: FILE_ASSOCIATION_FORMATS.filter((f) => f.tier === 'p0').map((f) => f.id), failed: [] }
+      } catch (err) {
+        return {
+          updated: [],
+          failed: [{ id: '*', error: (err as Error).message }]
+        }
+      }
+    }
+
     const updated: string[] = []
     const failed: { id: string; error: string }[] = []
     for (const format of FILE_ASSOCIATION_FORMATS.filter((f) => f.tier === 'p0')) {
@@ -240,13 +264,133 @@ export class FileAssociationService {
     return { updated, failed }
   }
 
-  private async getDefault(uti: string): Promise<{ bundleId: string; name: string }> {
+  private async statusForMac(format: FileAssociationFormat): Promise<FileAssociationStatus> {
+    try {
+      const { bundleId, name } = await this.getDefaultMac(format.uti)
+      const isVav = !!bundleId && (bundleId === VAV_BUNDLE_ID || bundleId.endsWith('.vav') || name === 'vav' || name === 'VAV')
+      return {
+        id: format.id,
+        label: format.label,
+        extensions: format.extensions,
+        uti: format.uti,
+        tier: format.tier,
+        defaultApp: name || null,
+        defaultBundleId: bundleId || null,
+        isVav
+      }
+    } catch {
+      return emptyStatus(format)
+    }
+  }
+
+  private async statusForWin(format: FileAssociationFormat): Promise<FileAssociationStatus> {
+    try {
+      // Prefer the primary extension for status (UserChoice is per-extension).
+      const ext = format.extensions[0]
+      if (!ext) return emptyStatus(format)
+      const { progId, name } = await this.getWindowsDefault(ext)
+      const isVav = !!progId && isVavWindowsProgId(progId)
+      return {
+        id: format.id,
+        label: format.label,
+        extensions: format.extensions,
+        uti: format.uti,
+        tier: format.tier,
+        defaultApp: name || (progId ? progId : null),
+        defaultBundleId: progId || null,
+        isVav
+      }
+    } catch {
+      return emptyStatus(format)
+    }
+  }
+
+  private async getDefaultMac(uti: string): Promise<{ bundleId: string; name: string }> {
     const stdout = await this.runHelper(uti, 'get')
     const line = stdout.trim()
     if (!line || line === '\t') return { bundleId: '', name: '' }
     const tab = line.indexOf('\t')
     if (tab < 0) return { bundleId: line, name: line }
     return { bundleId: line.slice(0, tab), name: line.slice(tab + 1) }
+  }
+
+  private async getWindowsDefault(ext: string): Promise<{ progId: string; name: string }> {
+    const e = ext.startsWith('.') ? ext.toLowerCase() : `.${ext.toLowerCase()}`
+    const userChoice = await this.regQuery(
+      `HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\FileExts\\${e}\\UserChoice`,
+      'ProgId'
+    )
+    if (userChoice) {
+      return { progId: userChoice, name: await this.windowsProgIdName(userChoice) }
+    }
+    // Fallback: class default (installer / OpenWithProgids path).
+    const classDefault = await this.regQuery(`HKCU\\Software\\Classes\\${e}`, '')
+    if (classDefault) {
+      return { progId: classDefault, name: await this.windowsProgIdName(classDefault) }
+    }
+    const hklm = await this.regQuery(`HKLM\\Software\\Classes\\${e}`, '')
+    if (hklm) {
+      return { progId: hklm, name: await this.windowsProgIdName(hklm) }
+    }
+    return { progId: '', name: '' }
+  }
+
+  private async windowsProgIdName(progId: string): Promise<string> {
+    if (isVavWindowsProgId(progId)) return VAV_WIN_APP_NAME
+    const friendly =
+      (await this.regQuery(`HKCU\\Software\\Classes\\${progId}`, '')) ||
+      (await this.regQuery(`HKLM\\Software\\Classes\\${progId}`, ''))
+    return friendly || progId
+  }
+
+  /**
+   * Read a REG_SZ (or default) value. Empty `valueName` queries the key's (Default).
+   */
+  private async regQuery(key: string, valueName: string): Promise<string | null> {
+    try {
+      const args = valueName ? ['query', key, '/v', valueName] : ['query', key, '/ve']
+      const { stdout } = await execFileAsync('reg', args, {
+        timeout: 8_000,
+        windowsHide: true
+      })
+      // REG_SZ lines look like: `    ProgId    REG_SZ    VAV.md`
+      const lines = stdout.split(/\r?\n/)
+      for (const line of lines) {
+        if (!/REG_(SZ|EXPAND_SZ)/i.test(line)) continue
+        if (valueName && !line.toLowerCase().includes(valueName.toLowerCase())) continue
+        const m = line.match(/REG_(?:SZ|EXPAND_SZ)\s+(.+)$/i)
+        const val = m?.[1]?.trim()
+        if (val && val !== '(value not set)') return val
+      }
+      return null
+    } catch {
+      return null
+    }
+  }
+
+  /**
+   * Open Windows' per-app default-programs UI for VAV (hash-safe).
+   * Falls back to the generic Default apps Settings page.
+   */
+  private async launchWindowsAssociationUI(): Promise<void> {
+    const ps = `
+$ErrorActionPreference = 'Stop'
+try {
+  $ui = New-Object -ComObject ApplicationAssociationRegistrationUI
+  $ui.LaunchAdvancedAssociationUI('${VAV_WIN_APP_NAME}')
+} catch {
+  Start-Process 'ms-settings:defaultapps'
+}
+`
+    try {
+      await execFileAsync(
+        'powershell.exe',
+        ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', ps],
+        { timeout: 15_000, windowsHide: true }
+      )
+    } catch {
+      await shell.openExternal('ms-settings:defaultapps')
+    }
   }
 
   private async runHelper(uti: string, cmd: 'get' | 'set', bundleId?: string): Promise<string> {

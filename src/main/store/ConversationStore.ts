@@ -1,6 +1,19 @@
 import { app } from 'electron'
-import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync } from 'node:fs'
-import { join, dirname } from 'node:path'
+import {
+  readFileSync,
+  writeFileSync,
+  existsSync,
+  mkdirSync,
+  renameSync,
+  unlinkSync
+} from 'node:fs'
+import {
+  writeFile as writeFileAsync,
+  rename as renameAsync,
+  unlink as unlinkAsync,
+  mkdir as mkdirAsync
+} from 'node:fs/promises'
+import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import type {
   ApprovalMode,
@@ -17,21 +30,44 @@ import { defaultSessionTitle, isDefaultSessionTitle, t } from '@shared/i18n'
 import { currentLocale } from '../i18n'
 
 const AUTO_TITLE_LIMIT = 40
+const INDEX_VERSION = 2
+
+type ConversationIndex = { version: number; ids: string[] }
 
 /**
- * Conversations live in a single JSON document under Application Support.
+ * Conversations live as one JSON file per id under
+ * `userData/conversations/{id}.json`, plus a small `index.json` listing ids.
+ *
+ * Legacy installs used a single monolithic `userData/conversations.json`;
+ * {@link load} migrates that into shards and renames the old file to
+ * `conversations.json.bak`.
  *
  * The sidebar only ever reads {@link listMeta}, which strips message bodies —
  * that projection is what keeps the source list independent of transcript size
  * (sidebar-conversation-list.rpml, "数据源与刷新").
  *
- * Writes are debounced and atomic (tmp + rename). Callers persist at tool
- * boundaries and turn end, never per token.
+ * Writes are debounced, dirty-tracked (only changed shards + index), and atomic
+ * (tmp + rename). Callers persist at tool boundaries and turn end, never per token.
+ * Quit / turn-end use sync {@link flush}; the debounce path uses async I/O.
  */
 export class ConversationStore {
-  private readonly file = join(app.getPath('userData'), 'conversations.json')
+  /** Directory holding `index.json` and per-conversation shards. */
+  private readonly dir = join(app.getPath('userData'), 'conversations')
+  private readonly indexPath = join(this.dir, 'index.json')
+  /** Pre-shard monolithic file; migrated away on first load if present. */
+  private readonly legacyFile = join(app.getPath('userData'), 'conversations.json')
   private conversations: Conversation[] = []
   private flushTimer: NodeJS.Timeout | null = null
+  /** Conversation ids whose shard needs rewriting. */
+  private dirty = new Set<string>()
+  /** Ids removed from memory whose shard files still need deleting. */
+  private deleted = new Set<string>()
+  /** Generation per dirty id so a later mutation is not cleared by an older write. */
+  private dirtyGen = new Map<string, number>()
+  private flushInFlight: Promise<void> | null = null
+  private flushAgain = false
+  /** Bumped by sync {@link flush} so an in-flight async write abandons mid-flight. */
+  private writeEpoch = 0
   /**
    * Whether {@link load} has run. An empty in-memory list means two entirely
    * different things before and after that call — "not read yet" and "the user
@@ -39,17 +75,21 @@ export class ConversationStore {
    */
   private loaded = false
 
+  /** Path shown in About / diagnostics — the sharded conversations directory. */
   get path(): string {
-    return this.file
+    return this.dir
   }
 
   load(defaults: { model: string; mintWorkdir: () => string }): Conversation[] {
     try {
-      if (existsSync(this.file)) {
-        const raw = JSON.parse(readFileSync(this.file, 'utf8'))
-        if (Array.isArray(raw?.conversations)) {
-          this.conversations = raw.conversations.filter((c: Conversation) => !!c?.id)
-        }
+      mkdirSync(this.dir, { recursive: true })
+      if (existsSync(this.indexPath)) {
+        this.conversations = this.loadFromIndex()
+      } else if (existsSync(this.legacyFile)) {
+        // One-time migrate: monolithic conversations.json → shards + index.json.
+        this.conversations = this.migrateFromLegacy()
+      } else {
+        this.conversations = []
       }
     } catch (err) {
       console.error('[conversations] load failed, starting fresh', err)
@@ -161,7 +201,7 @@ export class ConversationStore {
       compactions: []
     }
     this.conversations.unshift(conversation)
-    this.scheduleFlush()
+    this.markDirty(conversation.id)
     return conversation
   }
 
@@ -219,7 +259,7 @@ export class ConversationStore {
       .filter((c): c is NonNullable<typeof c> => !!c)
 
     this.conversations.unshift(imported)
-    this.scheduleFlush()
+    this.markDirty(imported.id)
     return imported
   }
 
@@ -264,7 +304,7 @@ export class ConversationStore {
       }))
     }
     this.conversations.unshift(copy)
-    this.scheduleFlush()
+    this.markDirty(copy.id)
     return copy
   }
 
@@ -283,7 +323,7 @@ export class ConversationStore {
     const { updatedAt: _ignore, ...safe } = patch
     void _ignore
     Object.assign(conversation, safe)
-    this.scheduleFlush()
+    this.markDirty(id)
     return conversation
   }
 
@@ -302,7 +342,7 @@ export class ConversationStore {
     conversation.activeLeafId = message.id
     conversation.updatedAt = Date.now()
     this.applyAutoTitle(conversation)
-    this.scheduleFlush()
+    this.markDirty(id)
   }
 
   replaceMessage(id: string, message: ChatMessage): void {
@@ -316,7 +356,7 @@ export class ConversationStore {
       conversation.activeLeafId = message.id
     }
     conversation.updatedAt = Date.now()
-    this.scheduleFlush()
+    this.markDirty(id)
   }
 
   /**
@@ -329,7 +369,7 @@ export class ConversationStore {
     const conversation = this.get(id)
     if (!conversation?.messages.some((m) => m.id === messageId)) return null
     conversation.activeLeafId = deepestLeaf(conversation.messages, messageId)
-    this.scheduleFlush()
+    this.markDirty(id)
     return conversation.activeLeafId
   }
 
@@ -337,7 +377,7 @@ export class ConversationStore {
     const conversation = this.get(id)
     if (!conversation) return
     conversation.activeLeafId = leafId
-    this.scheduleFlush()
+    this.markDirty(id)
   }
 
   /** Upsert a per-leaf compaction (originals stay in messages). */
@@ -345,7 +385,7 @@ export class ConversationStore {
     const conversation = this.get(id)
     if (!conversation) return undefined
     conversation.compactions = upsertCompaction(conversation.compactions, compaction)
-    this.scheduleFlush()
+    this.markDirty(id)
     return conversation
   }
 
@@ -354,7 +394,7 @@ export class ConversationStore {
     const conversation = this.get(id)
     if (!conversation) return undefined
     conversation.compactions = removeCompaction(conversation.compactions, leafId)
-    this.scheduleFlush()
+    this.markDirty(id)
     return conversation
   }
 
@@ -362,7 +402,7 @@ export class ConversationStore {
     const conversation = this.get(id)
     if (!conversation) return
     conversation.tokensUsed += tokens
-    this.scheduleFlush()
+    this.markDirty(id)
   }
 
   /**
@@ -373,7 +413,7 @@ export class ConversationStore {
     const conversation = this.get(id)
     if (!conversation) return
     conversation.tokensUsed = Math.max(0, Math.round(tokens))
-    this.scheduleFlush()
+    this.markDirty(id)
   }
 
   /** Append a usage sample and refresh cache TTL when a write was observed. */
@@ -386,7 +426,7 @@ export class ConversationStore {
       conversation.cacheCreatedAt = snapshot.timestamp
       conversation.cacheExpiresAt = snapshot.timestamp + CACHE_TTL_MS
     }
-    this.scheduleFlush()
+    this.markDirty(id)
     return conversation
   }
 
@@ -407,7 +447,7 @@ export class ConversationStore {
     }
     const removed = this.conversations.filter((c) => target.has(c.id)).map((c) => c.id)
     this.conversations = remaining
-    this.scheduleFlush()
+    if (removed.length) this.markDeleted(removed)
     return removed
   }
 
@@ -417,7 +457,7 @@ export class ConversationStore {
     if (!conversation) return undefined
     conversation.pinned = pinned
     conversation.pinTime = pinned ? Date.now() : null
-    this.scheduleFlush()
+    this.markDirty(id)
     return conversation
   }
 
@@ -440,7 +480,7 @@ export class ConversationStore {
       conversation.archivedAt = null
     }
     conversation.updatedAt = Date.now()
-    this.scheduleFlush()
+    this.markDirty(id)
     return conversation
   }
 
@@ -448,7 +488,7 @@ export class ConversationStore {
     const conversation = this.get(id)
     if (!conversation) return undefined
     conversation.approvalMode = mode
-    this.scheduleFlush()
+    this.markDirty(id)
     return conversation
   }
 
@@ -482,7 +522,7 @@ export class ConversationStore {
       parentId = copy.id
     }
     next.activeLeafId = parentId
-    this.scheduleFlush()
+    this.markDirty(next.id)
     return next
   }
 
@@ -518,29 +558,235 @@ export class ConversationStore {
       chars.length > AUTO_TITLE_LIMIT ? `${chars.slice(0, AUTO_TITLE_LIMIT).join('')}…` : source
   }
 
+  private shardPath(id: string): string {
+    return join(this.dir, `${id}.json`)
+  }
+
+  private loadFromIndex(): Conversation[] {
+    const raw = JSON.parse(readFileSync(this.indexPath, 'utf8')) as ConversationIndex
+    const ids = Array.isArray(raw?.ids) ? raw.ids : []
+    const loaded: Conversation[] = []
+    for (const id of ids) {
+      if (typeof id !== 'string' || !id) continue
+      const file = this.shardPath(id)
+      if (!existsSync(file)) continue
+      try {
+        const conversation = JSON.parse(readFileSync(file, 'utf8')) as Conversation
+        if (conversation?.id) loaded.push(conversation)
+      } catch (err) {
+        console.error(`[conversations] skip corrupt shard ${id}`, err)
+      }
+    }
+    return loaded
+  }
+
+  /**
+   * Read legacy monolithic `conversations.json`, write shards + index, then
+   * rename the legacy file to `conversations.json.bak` so a botched migrate
+   * can still be recovered.
+   */
+  private migrateFromLegacy(): Conversation[] {
+    const raw = JSON.parse(readFileSync(this.legacyFile, 'utf8'))
+    const list: Conversation[] = Array.isArray(raw?.conversations)
+      ? raw.conversations.filter((c: Conversation) => !!c?.id)
+      : []
+
+    mkdirSync(this.dir, { recursive: true })
+    for (const conversation of list) {
+      this.writeJsonSync(this.shardPath(conversation.id), conversation)
+    }
+    this.writeJsonSync(this.indexPath, {
+      version: INDEX_VERSION,
+      ids: list.map((c) => c.id)
+    } satisfies ConversationIndex)
+
+    const bak = `${this.legacyFile}.bak`
+    try {
+      if (existsSync(bak)) unlinkSync(bak)
+      renameSync(this.legacyFile, bak)
+    } catch (err) {
+      console.error('[conversations] migrate rename to .bak failed', err)
+    }
+    console.info(`[conversations] migrated ${list.length} conversation(s) to shards`)
+    return list
+  }
+
+  private markDirty(id: string): void {
+    this.deleted.delete(id)
+    this.dirty.add(id)
+    this.dirtyGen.set(id, (this.dirtyGen.get(id) ?? 0) + 1)
+    this.scheduleFlush()
+  }
+
+  private markDeleted(ids: string[]): void {
+    for (const id of ids) {
+      this.dirty.delete(id)
+      this.dirtyGen.delete(id)
+      this.deleted.add(id)
+    }
+    this.scheduleFlush()
+  }
+
   private scheduleFlush(): void {
     if (this.flushTimer) return
     this.flushTimer = setTimeout(() => {
       this.flushTimer = null
-      this.flush()
+      void this.flushAsync()
     }, 400)
   }
 
+  /**
+   * Debounced path: async fs writes for dirty shards + index only.
+   * Queues a follow-up pass if mutations land while a write is in flight.
+   */
+  private async flushAsync(): Promise<void> {
+    if (!this.loaded) return
+    if (this.flushInFlight) {
+      this.flushAgain = true
+      await this.flushInFlight
+      return
+    }
+    this.flushInFlight = this.persistDirtyAsync()
+    try {
+      await this.flushInFlight
+    } finally {
+      this.flushInFlight = null
+    }
+    if (this.flushAgain) {
+      this.flushAgain = false
+      if (this.dirty.size > 0 || this.deleted.size > 0) await this.flushAsync()
+    }
+  }
+
+  /**
+   * Quit / turn-end path: cancel debounce and synchronously persist dirty
+   * shards + index so data is on disk before the process exits.
+   */
   flush(): void {
     if (this.flushTimer) {
       clearTimeout(this.flushTimer)
       this.flushTimer = null
     }
-    // Writing before a read would replace the file with this process's blank
+    // Writing before a read would replace files with this process's blank
     // slate. Quit paths run whether or not startup got far enough to load.
     if (!this.loaded) return
+    // Invalidate any in-flight async persist so it cannot overwrite fresher sync writes.
+    this.writeEpoch++
+    this.persistDirtySync()
+  }
+
+  private snapshotDirty(): {
+    dirtyIds: string[]
+    deletedIds: string[]
+    gens: Map<string, number>
+    payloads: { id: string; body: string }[]
+    indexBody: string
+  } | null {
+    if (this.dirty.size === 0 && this.deleted.size === 0) return null
+    const dirtyIds = [...this.dirty]
+    const deletedIds = [...this.deleted]
+    const gens = new Map<string, number>()
+    for (const id of dirtyIds) gens.set(id, this.dirtyGen.get(id) ?? 0)
+
+    const payloads: { id: string; body: string }[] = []
+    for (const id of dirtyIds) {
+      const conversation = this.get(id)
+      if (!conversation) continue
+      payloads.push({ id, body: JSON.stringify(conversation) })
+    }
+    const indexBody = JSON.stringify({
+      version: INDEX_VERSION,
+      ids: this.conversations.map((c) => c.id)
+    } satisfies ConversationIndex)
+
+    return { dirtyIds, deletedIds, gens, payloads, indexBody }
+  }
+
+  private clearPersisted(
+    dirtyIds: string[],
+    deletedIds: string[],
+    gens: Map<string, number>
+  ): void {
+    for (const id of dirtyIds) {
+      if ((this.dirtyGen.get(id) ?? 0) === gens.get(id)) {
+        this.dirty.delete(id)
+        this.dirtyGen.delete(id)
+      }
+    }
+    for (const id of deletedIds) this.deleted.delete(id)
+  }
+
+  private persistDirtySync(): void {
+    const snap = this.snapshotDirty()
+    if (!snap) return
     try {
-      mkdirSync(dirname(this.file), { recursive: true })
-      const tmp = `${this.file}.tmp`
-      writeFileSync(tmp, JSON.stringify({ version: 1, conversations: this.conversations }), 'utf8')
-      renameSync(tmp, this.file)
+      mkdirSync(this.dir, { recursive: true })
+      for (const { id, body } of snap.payloads) {
+        this.writeJsonRawSync(this.shardPath(id), body)
+      }
+      for (const id of snap.deletedIds) {
+        this.unlinkQuietSync(this.shardPath(id))
+      }
+      this.writeJsonRawSync(this.indexPath, snap.indexBody)
+      this.clearPersisted(snap.dirtyIds, snap.deletedIds, snap.gens)
     } catch (err) {
       console.error('[conversations] flush failed', err)
+    }
+  }
+
+  private async persistDirtyAsync(): Promise<void> {
+    const epoch = this.writeEpoch
+    const snap = this.snapshotDirty()
+    if (!snap) return
+    try {
+      await mkdirAsync(this.dir, { recursive: true })
+      if (epoch !== this.writeEpoch) return
+      for (const { id, body } of snap.payloads) {
+        if (epoch !== this.writeEpoch) return
+        await this.writeJsonRawAsync(this.shardPath(id), body)
+      }
+      for (const id of snap.deletedIds) {
+        if (epoch !== this.writeEpoch) return
+        await this.unlinkQuietAsync(this.shardPath(id))
+      }
+      if (epoch !== this.writeEpoch) return
+      await this.writeJsonRawAsync(this.indexPath, snap.indexBody)
+      if (epoch !== this.writeEpoch) return
+      this.clearPersisted(snap.dirtyIds, snap.deletedIds, snap.gens)
+    } catch (err) {
+      console.error('[conversations] async flush failed', err)
+    }
+  }
+
+  private writeJsonSync(file: string, value: unknown): void {
+    this.writeJsonRawSync(file, JSON.stringify(value))
+  }
+
+  private writeJsonRawSync(file: string, body: string): void {
+    const tmp = `${file}.tmp`
+    writeFileSync(tmp, body, 'utf8')
+    renameSync(tmp, file)
+  }
+
+  private async writeJsonRawAsync(file: string, body: string): Promise<void> {
+    const tmp = `${file}.tmp`
+    await writeFileAsync(tmp, body, 'utf8')
+    await renameAsync(tmp, file)
+  }
+
+  private unlinkQuietSync(file: string): void {
+    try {
+      if (existsSync(file)) unlinkSync(file)
+    } catch {
+      /* ignore missing */
+    }
+  }
+
+  private async unlinkQuietAsync(file: string): Promise<void> {
+    try {
+      await unlinkAsync(file)
+    } catch {
+      /* ignore missing */
     }
   }
 }

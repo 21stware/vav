@@ -494,22 +494,33 @@ export const zhCN = {
 
   'assoc.intro':
     '将 VAV 注册为以下文件格式的默认打开应用。注册后，在 Finder 中双击对应文件类型可直接在 VAV 中打开预览。此操作修改 macOS Launch Services 数据库。',
+  'assoc.introWin':
+    '安装包已向 Windows 注册这些格式的「打开方式」。点下方按钮会打开系统的默认应用设置，勾选需要用 VAV 打开的类型；之后可在资源管理器中双击打开。',
+  'assoc.unsupportedPlatform': '当前系统不支持在应用内管理文件关联。',
   'assoc.macosOnly': '文件关联仅在 macOS 上可用。',
   'assoc.registerAllHeading': '一键注册所有',
   'assoc.registerAllHint': '将下方所有支持的格式全部注册为默认以 VAV 打开。已注册的不会重复操作。',
+  'assoc.registerAllHintWin': '打开 Windows「默认应用」设置（针对 VAV），在列表中勾选需要默认用 VAV 打开的格式。',
   'assoc.registerAll': 'Register All',
   'assoc.registering': '注册中…',
   'assoc.registerAllTitle': '注册全部格式？',
   'assoc.registerAllBody': '将把 P0 支持的文件格式默认打开方式设为 VAV。系统可能会逐项确认。',
+  'assoc.registerAllBodyWin':
+    '将打开 Windows「默认应用」设置页（针对 VAV）。请在列表中勾选需要默认用 VAV 打开的格式。',
   'assoc.registerAllSuccess': '已注册 {n} 种格式',
+  'assoc.registerAllSuccessWin': '已打开系统默认应用设置',
   'assoc.registerAllPartial': '部分格式注册失败',
   'assoc.setAsDefault': 'Set as Default',
+  'assoc.openSystemDefaults': '打开系统设置',
   'assoc.defaultShort': 'Default',
   'assoc.alwaysOpenWith': '始终用 VAV 打开 .{ext}',
   'assoc.setDefaultFor': '将 {label} 设为默认打开',
   'assoc.setTitle': '将 {label} 设为默认？',
   'assoc.setBody': '将 .{ext}（当前：{current}）的默认打开应用设为 VAV。',
+  'assoc.setBodyWin':
+    '将打开 Windows 默认应用设置。请为 {ext}（当前：{current}）选择 VAV。安装包已注册「打开方式」。',
   'assoc.setSuccess': '已将 {label} 设为 VAV 打开',
+  'assoc.setSuccessWin': '已打开系统设置 — 请确认 {label} 使用 VAV',
   'assoc.setFailed': '注册失败',
   'assoc.unset': '未设置',
   'assoc.unsetTitle': '取消 {label} 默认？',
@@ -868,6 +879,7 @@ export const zhCN = {
   'notifications.sectionTray': '系统托盘',
   'notifications.trayLabel': '显示托盘图标',
   'notifications.trayHint': '菜单栏显示 VAV 图标；运行中 turn ≥1 时显示计数。',
+  'notifications.trayHintWin': '关闭窗口后留在系统托盘，点击图标可重新打开。运行中会话会显示在托盘菜单。',
   'notifications.hideDockHint': '仅在托盘运行。需搭配「显示托盘图标」；切换后建议重启应用。',
 
   // —— cli extras ——
@@ -1562,24 +1574,36 @@ export const en: Record<MessageKey, string> = {
 
   'assoc.intro':
     'Register VAV as the default opener for these formats. Afterward, double-clicking matching files in Finder opens them in VAV. This updates the macOS Launch Services database.',
+  'assoc.introWin':
+    'The installer registers these formats under Open with. Use the buttons below to open Windows Default apps settings and check the types that should open with VAV; then double-click in Explorer.',
+  'assoc.unsupportedPlatform': 'In-app file association management is not available on this OS.',
   'assoc.macosOnly': 'File associations are only available on macOS.',
   'assoc.registerAllHeading': 'Register all',
   'assoc.registerAllHint':
     'Set every supported format below to open with VAV by default. Already-registered formats are skipped.',
+  'assoc.registerAllHintWin':
+    'Opens the Windows Default apps page for VAV so you can check each format that should open with VAV.',
   'assoc.registerAll': 'Register All',
   'assoc.registering': 'Registering…',
   'assoc.registerAllTitle': 'Register all formats?',
   'assoc.registerAllBody':
     'This sets VAV as the default opener for all P0 formats. macOS may prompt for confirmation.',
+  'assoc.registerAllBodyWin':
+    'This opens the Windows Default apps page for VAV. Check each format you want VAV to open by default.',
   'assoc.registerAllSuccess': 'Registered {n} formats',
+  'assoc.registerAllSuccessWin': 'Opened Windows Default apps settings',
   'assoc.registerAllPartial': 'Some formats failed to register',
   'assoc.setAsDefault': 'Set as Default',
+  'assoc.openSystemDefaults': 'Open system settings',
   'assoc.defaultShort': 'Default',
   'assoc.alwaysOpenWith': 'Always open .{ext} with VAV',
   'assoc.setDefaultFor': 'Set as Default for {label}',
   'assoc.setTitle': 'Make VAV default for {label}?',
   'assoc.setBody': 'Set the default opener for {ext} (currently {current}) to VAV.',
+  'assoc.setBodyWin':
+    'Opens Windows Default apps settings. Choose VAV for {ext} (currently {current}). The installer already registered Open with.',
   'assoc.setSuccess': '{label} now opens with VAV',
+  'assoc.setSuccessWin': 'Opened system settings — confirm {label} uses VAV',
   'assoc.setFailed': 'Could not register',
   'assoc.unset': 'Not set',
   'assoc.unsetTitle': 'Remove VAV default for {label}?',
@@ -1929,6 +1953,8 @@ export const en: Record<MessageKey, string> = {
   'notifications.sectionTray': 'Menu bar',
   'notifications.trayLabel': 'Show menu bar icon',
   'notifications.trayHint': 'Shows the VAV icon in the menu bar; a count when ≥1 turn is running.',
+  'notifications.trayHintWin':
+    'Stays in the notification area after you close the window — click the icon to reopen. Running sessions appear in the tray menu.',
   'notifications.hideDockHint':
     'Tray-only mode. Requires “Show menu bar icon”; restart recommended after toggling.',
 

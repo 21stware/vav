@@ -1,8 +1,8 @@
 import MarkdownIt from 'markdown-it'
-import hljs from 'highlight.js/lib/common'
 import { suggestedFilenameForLang } from './markdown'
 import { diagramKindForLang, renderDiagramFence } from './diagramRender'
 import { dirname, joinPath } from './path'
+import { highlightFence } from './hljsLazy'
 
 /**
  * Markdown for trusted local file preview.
@@ -25,14 +25,7 @@ const previewMd: MarkdownIt = new MarkdownIt({
   breaks: false,
   typographer: true,
   highlight(code: string, language: string): string {
-    if (language && hljs.getLanguage(language)) {
-      try {
-        return hljs.highlight(code, { language, ignoreIllegals: true }).value
-      } catch {
-        // fall through
-      }
-    }
-    return escapeHtml(code)
+    return highlightFence(code, language)
   }
 })
 

@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { Suspense, lazy, useEffect } from 'react'
 import { basename } from './lib/path'
 import { useAppearance } from './lib/appearance'
 import { installDefaultContextMenu } from './lib/nativeMenu'
@@ -11,9 +11,12 @@ import {
 import { installFsWatchBridge, installPtyBridge } from './state/workspaceStore'
 import { tt } from './i18n/useT'
 import { AppToast } from './components/AppToast'
-import { FileViewer } from './components/FileViewer'
 import { useTerminalAppearance } from './components/SessionDetail'
 import { useMenuCommands } from './lib/menuCommands'
+
+const FileViewer = lazy(() =>
+  import('./components/FileViewer').then((m) => ({ default: m.FileViewer }))
+)
 
 /**
  * Standalone file preview window — one path per window; reopen focuses it.
@@ -69,11 +72,13 @@ export default function FilePreviewWindow({ path }: { path: string }): React.JSX
 
   return (
     <>
-      <FileViewer
-        path={path}
-        origin={origin}
-        parentConversationId={parentConversationId}
-      />
+      <Suspense fallback={<div className="file-viewer-body muted">{tt('common.loading')}</div>}>
+        <FileViewer
+          path={path}
+          origin={origin}
+          parentConversationId={parentConversationId}
+        />
+      </Suspense>
       <AppToast />
     </>
   )

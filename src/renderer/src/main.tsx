@@ -1,14 +1,17 @@
-import { StrictMode } from 'react'
+import { StrictMode, Suspense, lazy } from 'react'
 import { createRoot } from 'react-dom/client'
-import App from './App'
-import SettingsWindow from './SettingsWindow'
-import SessionWindow from './SessionWindow'
-import FilePreviewWindow from './FilePreviewWindow'
-import TokenUsageWindow from './TokenUsageWindow'
 import { PLATFORM } from './lib/platform'
 import { installLiveResizeTracking } from './lib/liveResize'
 import './styles/index.css'
 import '@xterm/xterm/css/xterm.css'
+
+// Window roots are code-split so Settings / Token Usage / Session don't parse
+// the main App + FileViewer + office graph on open.
+const App = lazy(() => import('./App'))
+const SettingsWindow = lazy(() => import('./SettingsWindow'))
+const SessionWindow = lazy(() => import('./SessionWindow'))
+const FilePreviewWindow = lazy(() => import('./FilePreviewWindow'))
+const TokenUsageWindow = lazy(() => import('./TokenUsageWindow'))
 
 // The window controls sit on opposite ends on macOS and Windows, and the
 // stylesheet has to leave room for whichever end that is before first paint.
@@ -33,6 +36,8 @@ function Root(): React.JSX.Element {
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <Root />
+    <Suspense fallback={null}>
+      <Root />
+    </Suspense>
   </StrictMode>
 )

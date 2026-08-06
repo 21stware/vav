@@ -489,7 +489,9 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       patch(set, id, (s) => (s.root === root ? {} : { root }))
     }
     await window.vav.files.watch(id, root)
-    await get().ensureFilesLoaded(id)
+    // Directory listing must not gate session switch paint — FilesPanel also
+    // calls ensureFilesLoaded when it becomes visible.
+    void get().ensureFilesLoaded(id)
     // Always re-project live PTYs — this is what makes detached windows attach
     // to the same Grok/Cursor process instead of spawning a second one.
     await get().hydratePtyState(id)

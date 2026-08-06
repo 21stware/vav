@@ -26,15 +26,17 @@ export function FileAssociationsSettings(): React.JSX.Element {
     void refresh()
   }, [refresh])
 
-  if (PLATFORM !== 'darwin') {
+  if (PLATFORM !== 'darwin' && PLATFORM !== 'win32') {
     return (
       <div className="settings-form">
-        <InlineAlert kind="warning" message={t('assoc.macosOnly')} />
+        <InlineAlert kind="warning" message={t('assoc.unsupportedPlatform')} />
       </div>
     )
   }
 
   if (!rows) return <div className="muted">{t('common.loading')}</div>
+
+  const intro = PLATFORM === 'win32' ? t('assoc.introWin') : t('assoc.intro')
 
   const p0 = rows.filter((r) => r.tier === 'p0')
   const p1 = rows.filter((r) => r.tier === 'p1')
@@ -43,19 +45,32 @@ export function FileAssociationsSettings(): React.JSX.Element {
     if (row.isVav) return
     showDialog({
       title: t('assoc.setTitle', { label: row.label }),
-      body: t('assoc.setBody', {
-        label: row.label,
-        ext: row.extensions.join(', '),
-        current: row.defaultApp || t('assoc.unset')
-      }),
-      confirmLabel: t('assoc.setAsDefault'),
+      body:
+        PLATFORM === 'win32'
+          ? t('assoc.setBodyWin', {
+              label: row.label,
+              ext: row.extensions.join(', '),
+              current: row.defaultApp || t('assoc.unset')
+            })
+          : t('assoc.setBody', {
+              label: row.label,
+              ext: row.extensions.join(', '),
+              current: row.defaultApp || t('assoc.unset')
+            }),
+      confirmLabel: PLATFORM === 'win32' ? t('assoc.openSystemDefaults') : t('assoc.setAsDefault'),
       onConfirm: () => {
         void (async () => {
           setBusyId(row.id)
           try {
             await window.vav.settings.setFileAssociation(row.id)
             await refresh()
-            showToast({ kind: 'success', title: t('assoc.setSuccess', { label: row.label }) })
+            showToast({
+              kind: 'success',
+              title:
+                PLATFORM === 'win32'
+                  ? t('assoc.setSuccessWin', { label: row.label })
+                  : t('assoc.setSuccess', { label: row.label })
+            })
           } catch (err) {
             showToast({
               kind: 'error',
@@ -101,7 +116,7 @@ export function FileAssociationsSettings(): React.JSX.Element {
   const registerAll = (): void => {
     showDialog({
       title: t('assoc.registerAllTitle'),
-      body: t('assoc.registerAllBody'),
+      body: PLATFORM === 'win32' ? t('assoc.registerAllBodyWin') : t('assoc.registerAllBody'),
       confirmLabel: t('assoc.registerAll'),
       onConfirm: () => {
         void (async () => {
@@ -112,7 +127,10 @@ export function FileAssociationsSettings(): React.JSX.Element {
             if (result.failed.length === 0) {
               showToast({
                 kind: 'success',
-                title: t('assoc.registerAllSuccess', { n: result.updated.length })
+                title:
+                  PLATFORM === 'win32'
+                    ? t('assoc.registerAllSuccessWin')
+                    : t('assoc.registerAllSuccess', { n: result.updated.length })
               })
             } else {
               showToast({
@@ -137,12 +155,14 @@ export function FileAssociationsSettings(): React.JSX.Element {
 
   return (
     <div className="settings-form assoc-settings">
-      <p className="muted tiny">{t('assoc.intro')}</p>
+      <p className="muted tiny">{intro}</p>
 
       <div className="assoc-register-all">
         <div>
           <div className="assoc-register-all-title">{t('assoc.registerAllHeading')}</div>
-          <div className="muted tiny">{t('assoc.registerAllHint')}</div>
+          <div className="muted tiny">
+            {PLATFORM === 'win32' ? t('assoc.registerAllHintWin') : t('assoc.registerAllHint')}
+          </div>
         </div>
         <Button
           label={registering ? t('assoc.registering') : t('assoc.registerAll')}

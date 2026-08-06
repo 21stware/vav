@@ -89,7 +89,18 @@ export function Sidebar({
   const activeId = useSessionStore((s) => s.activeId)
   const selectedIds = useSessionStore((s) => s.selectedIds)
   const query = useSessionStore((s) => s.sidebarQuery)
-  const turns = useSessionStore((s) => s.turns)
+  // Subscribe to a compact busy fingerprint — not the whole `turns` object —
+  // so streaming tool ticks on one session don't repaint every sidebar row.
+  const turnBusyKey = useSessionStore((s) => {
+    const parts: string[] = []
+    for (const [id, turn] of Object.entries(s.turns)) {
+      if (!turn?.isRunning && !turn?.awaitingToolCallId) continue
+      parts.push(`${id}:${turn.phase}:${turn.awaitingToolCallId ? 'a' : 'r'}`)
+    }
+    return parts.join('|')
+  })
+  void turnBusyKey
+  const turns = useSessionStore.getState().turns
   const tmp = useSessionStore((s) => s.tmp)
   const renamingId = useSessionStore((s) => s.renamingId)
   const groupingMode = useSessionStore((s) => s.settings.sidebarGroupingMode)

@@ -1,10 +1,6 @@
 import { extname } from 'node:path'
 import type { StructuredDocument, StructuredDocKind } from '@shared/structuredDoc'
 import { isOfficeLockFile, OFFICE_LOCK_FILE_MESSAGE } from '@shared/officeLock'
-import { parseDocx } from './parseDocx'
-import { parseXlsx } from './parseXlsx'
-import { parsePptx } from './parsePptx'
-import { parsePdf } from './parsePdf'
 
 export { isOfficeLockFile }
 
@@ -20,6 +16,9 @@ export function structuredKindForPath(path: string): StructuredDocKind | null {
 /**
  * Full structured parse for selection / RAG. Callers decide whether size
  * warrants deferring this (soft memory budget) — we never refuse open here.
+ *
+ * Parsers (SheetJS / pdf.js / OOXML) load on demand so FileService import
+ * does not pull them into every main-process boot.
  */
 export async function parseStructuredDocument(
   path: string,
@@ -36,12 +35,12 @@ export async function parseStructuredDocument(
 
   switch (kind) {
     case 'docx':
-      return parseDocx(path)
+      return (await import('./parseDocx')).parseDocx(path)
     case 'xlsx':
-      return parseXlsx(path)
+      return (await import('./parseXlsx')).parseXlsx(path)
     case 'pptx':
-      return parsePptx(path)
+      return (await import('./parsePptx')).parsePptx(path)
     case 'pdf':
-      return parsePdf(path)
+      return (await import('./parsePdf')).parsePdf(path)
   }
 }

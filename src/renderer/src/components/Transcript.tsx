@@ -1,12 +1,13 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
   type WheelEvent as ReactWheelEvent
 } from 'react'
-import type { ChatMessage } from '@shared/types'
+import type { ChatMessage, LeafCompaction } from '@shared/types'
 import { quoteSummaryFromContent } from '@shared/quote'
 import { compactionBoundaryIndex, compactionForLeaf } from '@shared/compaction'
 import { ROOT_LEAF, branchPoints } from '@shared/thread'
@@ -34,6 +35,17 @@ const REPIN_PX = 28
 /** While following, ignore scroll pin updates after a programmatic jump. */
 const PROGRAMMATIC_SUPPRESS_MS = 150
 
+/** Window sealed rows when the leaf path is long — keeps DOM / layout bounded. */
+const VIRTUALIZE_AFTER = 48
+/** Rows kept mounted near the bottom while following the stream. */
+const KEEP_TAIL = 40
+const EST_ROW_PX = 132
+const OVERSCAN_ROWS = 8
+
+type TranscriptItem =
+  | { key: string; kind: 'message'; message: ChatMessage }
+  | { key: string; kind: 'compaction'; compaction: LeafCompaction }
+
 function distanceFromBottom(el: HTMLElement): number {
   return el.scrollHeight - el.scrollTop - el.clientHeight
 }
@@ -42,6 +54,18 @@ function distanceFromBottom(el: HTMLElement): number {
 function scrollToBottomNow(el: HTMLElement): void {
   // Direct assignment is more reliable than scrollTo during rapid growth.
   el.scrollTop = el.scrollHeight
+}
+
+function estimateOffset(
+  items: TranscriptItem[],
+  end: number,
+  heights: Map<string, number>
+): number {
+  let total = 0
+  for (let i = 0; i < end; i++) {
+    total += heights.get(items[i]!.key) ?? EST_ROW_PX
+  }
+  return total
 }
 
 export function Transcript(): React.JSX.Element {
@@ -55,7 +79,8 @@ export function Transcript(): React.JSX.Element {
     () => visibleMessages(useSessionStore.getState(), activeId),
     [activeId, nodes, activeLeaf]
   )
-  const turn = useSessionStore((s) => s.turns[s.activeId])
+  const turnRunning = useSessionStore((s) => !!s.turns[s.activeId]?.isRunning)
+  const turnPhase = useSessionStore((s) => s.turns[s.activeId]?.phase)
   const search = useSessionStore((s) => s.search)
   const flashMessageId = useSessionStore((s) => s.flashMessageId)
   const flashTick = useSessionStore((s) => s.flashTick)
@@ -91,8 +116,15 @@ export function Transcript(): React.JSX.Element {
    */
   const forcePinOnNextLeaf = useRef(false)
   const prevLeaf = useRef(activeLeaf)
+  const prevActiveId = useRef(activeId)
   const [branchSwap, setBranchSwap] = useState(0)
   const [branchSwapActive, setBranchSwapActive] = useState(false)
+  /** Scroll metrics for the virtual window (rAF-coalesced). */
+  const [view, setView] = useState({ top: 0, height: 600 })
+  const heightsRef = useRef(new Map<string, number>())
+  const [heightEpoch, setHeightEpoch] = useState(0)
+  /** Keep a search/flash target mounted even when outside the estimated window. */
+  const [anchorMessageId, setAnchorMessageId] = useState<string | null>(null)
 
   const followToBottom = useCallback((): void => {
     const el = scrollRef.current
@@ -124,19 +156,29 @@ export function Transcript(): React.JSX.Element {
   /**
    * Leaf changes for two reasons:
    * 1. Intentional (branch pager) → always pin + scroll to the new path end.
-   * 2. Passive (user send seals, stream end moves leaf to assistant, …) →
+   * 2. Seal (user send seals, stream end moves leaf to assistant, …) →
    *    only follow if the user was already at the bottom. Re-pinning here was
    *    yanking readers back down every time a turn finished.
    */
   useEffect(() => {
+    // Session switch already snaps the transcript — no branch-swap cinema.
+    const switchedSession = prevActiveId.current !== activeId
+    prevActiveId.current = activeId
     if (prevLeaf.current === activeLeaf) return
     const hadLeaf = prevLeaf.current != null
     prevLeaf.current = activeLeaf
     if (!hadLeaf || !activeLeaf) return
-    setBranchSwap((n) => n + 1)
-    setBranchSwapActive(false)
-    const frame = window.requestAnimationFrame(() => setBranchSwapActive(true))
-    const timer = window.setTimeout(() => setBranchSwapActive(false), 280)
+
+    let frame = 0
+    let timer = 0
+    if (!switchedSession) {
+      setBranchSwap((n) => n + 1)
+      setBranchSwapActive(false)
+      frame = window.requestAnimationFrame(() => setBranchSwapActive(true))
+      timer = window.setTimeout(() => setBranchSwapActive(false), 280)
+    } else {
+      setBranchSwapActive(false)
+    }
 
     const forceNav = forcePinOnNextLeaf.current
     forcePinOnNextLeaf.current = false
@@ -154,10 +196,10 @@ export function Transcript(): React.JSX.Element {
     // else: user scrolled away — leave viewport alone.
 
     return () => {
-      window.cancelAnimationFrame(frame)
-      window.clearTimeout(timer)
+      if (frame) window.cancelAnimationFrame(frame)
+      if (timer) window.clearTimeout(timer)
     }
-  }, [activeLeaf, nodes, pinAndScrollToBottom, followToBottom])
+  }, [activeLeaf, activeId, nodes, pinAndScrollToBottom, followToBottom])
 
   /**
    * Hysteresis on pin:
@@ -178,6 +220,7 @@ export function Transcript(): React.JSX.Element {
       if (now < suppressRepinUntil.current) return
       if (distance <= REPIN_PX) pinnedToBottom.current = true
     }
+    setView({ top: element.scrollTop, height: element.clientHeight })
   }, [])
 
   /**
@@ -198,8 +241,16 @@ export function Transcript(): React.JSX.Element {
 
   // Switching conversations always lands at the bottom and re-enables follow.
   useEffect(() => {
+    heightsRef.current.clear()
+    setAnchorMessageId(null)
     pinAndScrollToBottom()
   }, [activeId, pinAndScrollToBottom])
+
+  useLayoutEffect(() => {
+    const el = scrollRef.current
+    if (!el) return
+    setView({ top: el.scrollTop, height: el.clientHeight })
+  }, [activeId, messages.length])
 
   /**
    * Content height changes (stream tokens, tool cards, images, new messages).
@@ -247,7 +298,7 @@ export function Transcript(): React.JSX.Element {
   useEffect(() => {
     if (!pinnedToBottom.current) return
     followToBottom()
-  }, [messages.length, turn?.phase, followToBottom])
+  }, [messages.length, turnPhase, followToBottom])
 
   // Search hit: leave the bottom band so the stream does not yank the match.
   useEffect(() => {
@@ -257,7 +308,11 @@ export function Transcript(): React.JSX.Element {
     pinnedToBottom.current = false
     suppressUnpinUntil.current = 0
     suppressRepinUntil.current = performance.now() + 400
-    document.getElementById(`msg-${id}`)?.scrollIntoView({ block: 'center', behavior: 'smooth' })
+    setAnchorMessageId(id)
+    // Wait a frame so the virtual window mounts the row.
+    window.requestAnimationFrame(() => {
+      document.getElementById(`msg-${id}`)?.scrollIntoView({ block: 'center', behavior: 'smooth' })
+    })
   }, [search.open, search.index, search.tick, search.matchIds])
 
   // Quote strip / bubble citation: jump + 1.5s yellow flash.
@@ -266,9 +321,12 @@ export function Transcript(): React.JSX.Element {
     pinnedToBottom.current = false
     suppressUnpinUntil.current = 0
     suppressRepinUntil.current = performance.now() + 400
-    document
-      .getElementById(`msg-${flashMessageId}`)
-      ?.scrollIntoView({ block: 'center', behavior: 'smooth' })
+    setAnchorMessageId(flashMessageId)
+    window.requestAnimationFrame(() => {
+      document
+        .getElementById(`msg-${flashMessageId}`)
+        ?.scrollIntoView({ block: 'center', behavior: 'smooth' })
+    })
   }, [flashMessageId, flashTick])
 
   const currentMatchId = search.open ? search.matchIds[search.index] : undefined
@@ -316,7 +374,7 @@ export function Transcript(): React.JSX.Element {
     [activeId, setQuote, focusComposer]
   )
 
-  const isEmpty = messages.length === 0 && !turn?.isRunning
+  const isEmpty = messages.length === 0 && !turnRunning
   const rootBranch = branches.get(ROOT_LEAF)
 
   const activeCompaction = useMemo(
@@ -333,30 +391,125 @@ export function Transcript(): React.JSX.Element {
     [messages, activeCompaction]
   )
   const showCompactLog = !!activeCompaction && boundary > 0
-  const beforeCompact = showCompactLog ? messages.slice(0, boundary) : messages
-  const afterCompact = showCompactLog ? messages.slice(boundary) : []
 
-  const renderMessage = (message: ChatMessage): React.JSX.Element => {
+  const items = useMemo((): TranscriptItem[] => {
+    const out: TranscriptItem[] = []
+    const before = showCompactLog ? messages.slice(0, boundary) : messages
+    const after = showCompactLog ? messages.slice(boundary) : []
+    for (const message of before) {
+      out.push({ key: message.id, kind: 'message', message })
+    }
+    if (showCompactLog && activeCompaction) {
+      out.push({
+        key: `compaction:${activeCompaction.leafId}:${activeCompaction.createdAt}`,
+        kind: 'compaction',
+        compaction: activeCompaction
+      })
+    }
+    for (const message of after) {
+      out.push({ key: message.id, kind: 'message', message })
+    }
+    return out
+  }, [messages, boundary, showCompactLog, activeCompaction])
+
+  void heightEpoch
+  const virtualize = items.length > VIRTUALIZE_AFTER
+  const range = useMemo(() => {
+    if (!virtualize) return { start: 0, end: items.length }
+    const n = items.length
+    if (pinnedToBottom.current) {
+      const start = Math.max(0, n - KEEP_TAIL)
+      return { start, end: n }
+    }
+    const heights = heightsRef.current
+    let start = 0
+    let acc = 0
+    while (start < n && acc + (heights.get(items[start]!.key) ?? EST_ROW_PX) < view.top) {
+      acc += heights.get(items[start]!.key) ?? EST_ROW_PX
+      start++
+    }
+    start = Math.max(0, start - OVERSCAN_ROWS)
+    let end = start
+    let covered = 0
+    const budget = view.height + OVERSCAN_ROWS * EST_ROW_PX * 2
+    while (end < n && covered < budget) {
+      covered += heights.get(items[end]!.key) ?? EST_ROW_PX
+      end++
+    }
+    end = Math.min(n, end + OVERSCAN_ROWS)
+
+    if (anchorMessageId) {
+      const idx = items.findIndex(
+        (it) => it.kind === 'message' && it.message.id === anchorMessageId
+      )
+      if (idx >= 0) {
+        start = Math.min(start, Math.max(0, idx - OVERSCAN_ROWS))
+        end = Math.max(end, Math.min(n, idx + OVERSCAN_ROWS + 1))
+      }
+    }
+    return { start, end }
+  }, [virtualize, items, view.top, view.height, anchorMessageId, heightEpoch])
+
+  const padTop = virtualize ? estimateOffset(items, range.start, heightsRef.current) : 0
+  const padBottom = virtualize
+    ? estimateOffset(items, items.length, heightsRef.current) -
+      estimateOffset(items, range.end, heightsRef.current)
+    : 0
+
+  const measureItem = useCallback((key: string, node: HTMLElement | null) => {
+    if (!node) return
+    const height = node.getBoundingClientRect().height
+    if (height <= 0) return
+    const prev = heightsRef.current.get(key)
+    if (prev !== undefined && Math.abs(prev - height) < 2) return
+    heightsRef.current.set(key, height)
+    setHeightEpoch((n) => n + 1)
+  }, [])
+
+  const renderItem = (item: TranscriptItem): React.JSX.Element => {
+    if (item.kind === 'compaction') {
+      return (
+        <div
+          key={item.key}
+          ref={(node) => measureItem(item.key, node)}
+          className="transcript-virtual-item"
+        >
+          <CompactionBanner
+            compaction={item.compaction}
+            busy={turnRunning}
+            onClear={() => void clearCompaction()}
+          />
+        </div>
+      )
+    }
+    const message = item.message
     const branch = branches.get(message.id)
     return (
-      <MessageRow
-        key={message.id}
-        message={message}
-        highlight={highlight && search.matchIds.includes(message.id) ? highlight : undefined}
-        isCurrentMatch={message.id === currentMatchId}
-        flash={flashMessageId === message.id ? flashTick : 0}
-        branchIndex={branch?.index ?? 0}
-        branchCount={branch?.targets.length ?? 1}
-        busy={!!turn?.isRunning}
-        onStepBranch={onStepBranch}
-        onRegenerate={regenerate}
-        onEdit={editUserMessage}
-        onQuote={onQuote}
-        onFork={fork}
-        onContinueInNewSession={continueInNewSession}
-      />
+      <div
+        key={item.key}
+        ref={(node) => measureItem(item.key, node)}
+        className="transcript-virtual-item"
+      >
+        <MessageRow
+          message={message}
+          highlight={highlight && search.matchIds.includes(message.id) ? highlight : undefined}
+          isCurrentMatch={message.id === currentMatchId}
+          flash={flashMessageId === message.id ? flashTick : 0}
+          branchIndex={branch?.index ?? 0}
+          branchCount={branch?.targets.length ?? 1}
+          busy={turnRunning}
+          onStepBranch={onStepBranch}
+          onRegenerate={regenerate}
+          onEdit={editUserMessage}
+          onQuote={onQuote}
+          onFork={fork}
+          onContinueInNewSession={continueInNewSession}
+        />
+      </div>
     )
   }
+
+  const visibleItems = virtualize ? items.slice(range.start, range.end) : items
 
   return (
     <div className="transcript" ref={scrollRef} onScroll={onScroll} onWheel={onWheel}>
@@ -400,18 +553,9 @@ export function Transcript(): React.JSX.Element {
           </div>
         )}
 
-        {/* Full path stays visible; log marks the model-history cut. */}
-        {beforeCompact.map(renderMessage)}
-
-        {showCompactLog && activeCompaction && (
-          <CompactionBanner
-            compaction={activeCompaction}
-            busy={!!turn?.isRunning}
-            onClear={() => void clearCompaction()}
-          />
-        )}
-
-        {afterCompact.map(renderMessage)}
+        {padTop > 0 ? <div style={{ height: padTop }} aria-hidden /> : null}
+        {visibleItems.map(renderItem)}
+        {padBottom > 0 ? <div style={{ height: padBottom }} aria-hidden /> : null}
 
         <StreamingMessage conversationId={activeId} />
       </div>

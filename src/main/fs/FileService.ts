@@ -37,10 +37,12 @@ import { convertLegacyOffice, legacyOfficeKind } from './legacyOfficeConvert'
  */
 /** First paint / default agent fs_read window for UTF-8 text. */
 const TEXT_WINDOW_BYTES = 2 * 1024 * 1024
-/** Soft ceiling for base64 IPC convenience (renderer should prefer stream). */
-const BINARY_BASE64_SOFT = 80 * 1024 * 1024
+/** Soft ceiling for base64 IPC convenience (renderer should prefer vav-local stream). */
+const BINARY_BASE64_SOFT = 16 * 1024 * 1024
 /** Soft budget for full OOXML structured parse in main (best-effort index). */
-const STRUCTURED_PARSE_SOFT = 80 * 1024 * 1024
+const STRUCTURED_PARSE_SOFT = 32 * 1024 * 1024
+/** Above this, skip JSZip.loadAsync of the full buffer (structure index truncated). */
+const ZIP_FULL_LOAD_MAX = 64 * 1024 * 1024
 
 const WATCH_DEBOUNCE_MS = 300
 
@@ -232,7 +234,7 @@ export class FileService {
       if (info.size > BINARY_BASE64_SOFT) {
         return {
           ok: false,
-          error: `Use stream URL for large binary (${Math.round(info.size / 1024 / 1024)} MB) — base64 IPC is limited for memory, not a product open limit.`
+          error: `File is ${Math.round(info.size / 1024 / 1024)} MB — use vav-local:// stream (or inspect.streamUrl) instead of base64 IPC. Base64 is a soft memory budget, not a product open limit.`
         }
       }
       const kind = previewKind(basename(path))
@@ -444,7 +446,7 @@ export class FileService {
       }
 
       if (kind === 'zip') {
-        // Structure-only tree. Attempt parse regardless of size; on failure open empty canvas.
+        // Structure-only tree. Large archives skip full-buffer JSZip; on failure open empty canvas.
         try {
           const zip = await inspectZipArchive(path, info.size)
           const treeText = zip.entries
@@ -454,6 +456,11 @@ export class FileService {
           if (zip.encrypted) {
             warnings.push(
               'This archive appears password-protected. vav lists what it can without a password and does not extract encrypted entries.'
+            )
+          }
+          if (zip.truncated) {
+            warnings.push(
+              `Large ZIP (${Math.round(info.size / 1024 / 1024)} MB) — full structure index skipped to avoid loading the archive into memory.`
             )
           }
           return {
@@ -466,6 +473,7 @@ export class FileService {
               ratio: zip.ratio
             },
             zipEncrypted: zip.encrypted,
+            truncated: zip.truncated || undefined,
             text: treeText,
             lineCount: zip.entries.length,
             warnings: warnings.length ? warnings : undefined
@@ -1150,11 +1158,55 @@ function defaultAppDisplayName(filePath: string): Promise<string | null> {
   })
 }
 
+/** Probe ZIP local-file headers for encryption without loading the whole archive. */
+async function probeZipEncrypted(path: string, fileSize: number): Promise<boolean> {
+  if (fileSize < 30) return false
+  const sampleLen = Math.min(fileSize, 64 * 1024)
+  const fh = await open(path, 'r')
+  try {
+    const buf = Buffer.alloc(sampleLen)
+    const { bytesRead } = await fh.read(buf, 0, sampleLen, 0)
+    const buffer = buf.subarray(0, bytesRead)
+    let offset = 0
+    for (let i = 0; i < 8 && offset + 30 <= buffer.length; i++) {
+      if (buffer.readUInt32LE(offset) !== 0x04034b50) break
+      const flags = buffer.readUInt16LE(offset + 6)
+      if (flags & 0x1) return true
+      const nameLen = buffer.readUInt16LE(offset + 26)
+      const extraLen = buffer.readUInt16LE(offset + 28)
+      const compSize = buffer.readUInt32LE(offset + 18)
+      offset += 30 + nameLen + extraLen + compSize
+    }
+    return false
+  } finally {
+    await fh.close()
+  }
+}
+
 /** Structure-only ZIP index for the archive tree preview (no entry contents). */
 async function inspectZipArchive(
   path: string,
   fileSize: number
-): Promise<ZipArchiveInfo & { encrypted: boolean }> {
+): Promise<ZipArchiveInfo & { encrypted: boolean; truncated: boolean }> {
+  // Avoid reading multi‑hundred‑MB archives into memory just to list structure.
+  if (fileSize > ZIP_FULL_LOAD_MAX) {
+    let encrypted = false
+    try {
+      encrypted = await probeZipEncrypted(path, fileSize)
+    } catch {
+      // Probe is best-effort; still return a truncated empty summary.
+    }
+    return {
+      entries: [],
+      entryCount: 0,
+      compressedSize: fileSize,
+      uncompressedSize: 0,
+      ratio: 0,
+      encrypted,
+      truncated: true
+    }
+  }
+
   const buffer = await readFile(path)
   // Quick magic / encryption probe (general-purpose bit 0 of local file headers).
   let encrypted = false
@@ -1219,7 +1271,8 @@ async function inspectZipArchive(
     compressedSize,
     uncompressedSize,
     ratio,
-    encrypted
+    encrypted,
+    truncated: false
   }
 }
 

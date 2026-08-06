@@ -72,7 +72,6 @@ import { buildAppMenu } from './menu'
 import { currentLocale, setLocalePreference, t } from './i18n'
 import { codeFonts, type Platform } from '@shared/platform'
 import { isTsJsPath } from '@shared/previewBlock'
-import { parseTsCodeBlocks } from './preview/parseTsCodeBlocks'
 import {
   getCliStatus,
   installCli,
@@ -89,6 +88,7 @@ import { NotificationCenter } from './notifications'
 
 const PLATFORM = process.platform as Platform
 const IS_MAC = PLATFORM === 'darwin'
+const IS_WIN = PLATFORM === 'win32'
 
 /**
  * Dev runners / IDE task hosts often close the stdio pipe while Electron is
@@ -174,15 +174,16 @@ const fileSessionStore = new FileSessionStore()
 
 const fileAssociationService = new FileAssociationService()
 const fileService = new FileService((conversationId, dirs) => {
-  send(IPC.filesDirty, { conversationId, dirs })
+  sendToWorkspaceWindows(IPC.filesDirty, { conversationId, dirs }, conversationId)
 })
 // Wired after construction — retrieval is defined below; assigned once created.
 
 const ptyManager = new PtyManager(
-  (tabId, data) => send(IPC.ptyData, { tabId, data }),
-  (tabId) => send(IPC.ptyExit, tabId),
-  // Every window re-hydrates tab maps from main — no per-renderer PTY ownership.
-  (conversationId) => send(IPC.ptyChanged, { conversationId })
+  (tabId, data) =>
+    sendToWorkspaceWindows(IPC.ptyData, { tabId, data }, ptyManager.conversationIdFor(tabId)),
+  (tabId, conversationId) => sendToWorkspaceWindows(IPC.ptyExit, tabId, conversationId),
+  // Workspace windows re-hydrate tab maps from main — no per-renderer PTY ownership.
+  (conversationId) => sendToWorkspaceWindows(IPC.ptyChanged, { conversationId }, conversationId)
 )
 
 /** Conversation ids with a live or paused turn — drives the tray badge/menu. */
@@ -230,6 +231,7 @@ const notifications = new NotificationCenter(
   () => settingsStore.get(),
   focusConversation,
   () => openSettingsWindow(),
+  showMainWindow,
   () => mainWindow
 )
 
@@ -241,10 +243,26 @@ function refreshTraySessions(): void {
   notifications.updateRunningSessions(sessions)
 }
 
+/** Last built app menu — Windows/Linux attach it per-window so the bar stays visible. */
+let appMenu: Menu | null = null
+
+/**
+ * On Windows/Linux the menu is a window chrome strip (not the macOS menu bar).
+ * With `titleBarStyle: 'hidden'` Electron often auto-hides it — force it on.
+ */
+function applyMenuBar(window: BrowserWindow): void {
+  if (IS_MAC || window.isDestroyed()) return
+  if (appMenu) window.setMenu(appMenu)
+  window.setAutoHideMenuBar(false)
+  window.setMenuBarVisibility(true)
+}
+
 function rebuildAppChrome(): void {
-  Menu.setApplicationMenu(
-    buildAppMenu(sendMenuCommand, () => openSettingsWindow(), newDetachedSession)
-  )
+  appMenu = buildAppMenu(sendMenuCommand, () => openSettingsWindow(), newDetachedSession)
+  Menu.setApplicationMenu(appMenu)
+  for (const window of BrowserWindow.getAllWindows()) {
+    applyMenuBar(window)
+  }
   refreshTraySessions()
   if (settingsWindow && !settingsWindow.isDestroyed()) {
     settingsWindow.setTitle(t('app.settingsWindowTitle'))
@@ -252,7 +270,7 @@ function rebuildAppChrome(): void {
 }
 
 function handleAgentEvent(event: TurnEvent): void {
-  send(IPC.agentEvent, event)
+  sendToWorkspaceWindows(IPC.agentEvent, event, event.conversationId)
   const conversation = conversationStore.get(event.conversationId)
   const title = conversation?.title ?? t('window.sessionFallback')
 
@@ -342,17 +360,6 @@ const agent = new AgentRuntime({
   emit: handleAgentEvent
 })
 
-/**
- * Turn, pty and watcher events go to every window.
- *
- * A conversation can be showing in the main window or in its own one, and the
- * renderer keys everything by conversationId anyway — so addressing a single
- * window would just mean guessing which one is currently displaying it.
- */
-function send(channel: string, payload: unknown): void {
-  broadcast(channel, payload)
-}
-
 /** IPC to a renderer that may already be tearing down (close / HMR / pkill). */
 function safeSend(contents: Electron.WebContents | null | undefined, channel: string, payload?: unknown): void {
   if (!contents || contents.isDestroyed()) return
@@ -366,6 +373,46 @@ function safeSend(contents: Electron.WebContents | null | undefined, channel: st
   }
 }
 
+function isAuxiliaryWindow(window: BrowserWindow): boolean {
+  // Settings and the warm token-usage panel never host PTYs / file trees /
+  // streaming transcripts — skip them on the hot path.
+  if (settingsWindow && !settingsWindow.isDestroyed() && window === settingsWindow) return true
+  if (tokenUsageWindow && !tokenUsageWindow.isDestroyed() && window === tokenUsageWindow) return true
+  return false
+}
+
+/**
+ * High-frequency turn / PTY / FS events.
+ *
+ * Deliver to the main shell, the matching detached session (when known), and
+ * all file-preview companions (they may host an agent tray). Never fan out to
+ * settings or the token-usage panel.
+ */
+function sendToWorkspaceWindows(
+  channel: string,
+  payload: unknown,
+  conversationId?: string | null
+): void {
+  const delivered = new Set<number>()
+  const deliver = (window: BrowserWindow | null | undefined): void => {
+    if (!window || window.isDestroyed() || isAuxiliaryWindow(window)) return
+    if (delivered.has(window.id)) return
+    delivered.add(window.id)
+    safeSend(window.webContents, channel, payload)
+  }
+
+  deliver(mainWindow)
+
+  if (conversationId) {
+    deliver(detachedWindows.get(conversationId))
+  } else {
+    for (const window of detachedWindows.values()) deliver(window)
+  }
+
+  for (const window of previewWindows.values()) deliver(window)
+}
+
+/** Settings / conversation-list style events — every live window. */
 function broadcast(channel: string, payload: unknown): void {
   for (const window of BrowserWindow.getAllWindows()) {
     if (window.isDestroyed()) continue
@@ -487,7 +534,9 @@ function chrome(barHeight: number): Electron.BrowserWindowConstructorOptions {
   return {
     titleBarStyle: 'hidden',
     titleBarOverlay: overlayColors(barHeight),
-    backgroundColor: windowBackground()
+    backgroundColor: windowBackground(),
+    // Keep File/Edit/View… visible; default + titleBarOverlay often Alt-hides it.
+    autoHideMenuBar: false
   }
 }
 
@@ -673,6 +722,65 @@ function hideLeavingFullscreen(win: BrowserWindow): void {
   })
 }
 
+/**
+ * Raycast-style reveal: paint a frame *before* the window becomes visible so
+ * hotkey summon never flashes empty chrome (their WebKit `_doAfterNextPresentationUpdate`).
+ *
+ * Electron equivalent: keep `paintWhenInitiallyHidden`, wait two rAFs in the
+ * renderer while still hidden, then `show()`. Caps wait so a stuck renderer
+ * cannot block the hotkey.
+ */
+const REVEAL_PAINT_BUDGET_MS = 64
+
+async function waitForRendererPaint(win: BrowserWindow): Promise<void> {
+  if (win.isDestroyed() || win.webContents.isDestroyed()) return
+  if (win.webContents.isLoadingMainFrame()) return
+  const script = `(function(){
+    try {
+      document.documentElement.dataset.summoning = '1';
+      var prev = window.__vavSummonClear;
+      if (prev) window.clearTimeout(prev);
+      window.__vavSummonClear = window.setTimeout(function(){
+        try { delete document.documentElement.dataset.summoning; } catch (e) {}
+      }, 160);
+    } catch (e) {}
+    return new Promise(function(resolve){
+      requestAnimationFrame(function(){
+        requestAnimationFrame(function(){ resolve(true); });
+      });
+    });
+  })()`
+  try {
+    await Promise.race([
+      win.webContents.executeJavaScript(script, true),
+      new Promise<void>((resolve) => setTimeout(resolve, REVEAL_PAINT_BUDGET_MS))
+    ])
+  } catch {
+    // Mid-reload / torn-down frame — show anyway.
+  }
+}
+
+async function revealBrowserWindow(win: BrowserWindow): Promise<void> {
+  if (win.isDestroyed()) return
+  // Steal focus first so Space switching starts before pixels land.
+  app.focus({ steal: true })
+  try {
+    win.setBackgroundColor(windowBackground())
+  } catch {
+    // ignore
+  }
+  if (win.isMinimized()) win.restore()
+  if (win.isVisible()) {
+    win.moveTop()
+    win.focus()
+    return
+  }
+  await waitForRendererPaint(win)
+  if (win.isDestroyed()) return
+  win.show()
+  win.focus()
+}
+
 /** Windows that may proceed with close after a deferred leave-full-screen. */
 const fullscreenCloseAllowed = new WeakSet<BrowserWindow>()
 
@@ -707,20 +815,25 @@ function createWindow(): BrowserWindow {
     minWidth: 380,
     minHeight: 560,
     show: false,
+    // Paint while hidden so ready-to-show / hotkey reveal has a real frame.
+    paintWhenInitiallyHidden: true,
     title: APP_NAME,
     icon,
     ...chrome(52),
     webPreferences: rendererPrefs()
   })
+  applyMenuBar(window)
 
-  window.once('ready-to-show', () => window.show())
+  window.once('ready-to-show', () => {
+    void revealBrowserWindow(window)
+  })
 
-  // ⌘W and the red traffic light only hide the window: agent turns and PTYs
+  // ⌘W / traffic light / Win close only hide the window: agent turns and PTYs
   // must survive (README §2.9). Only an explicit Quit tears things down.
   //
-  // Windows has no dock to bring a hidden window back from, so there the close
-  // button means what it says and the teardown in `before-quit` runs instead.
-  if (IS_MAC && !snapshotting) {
+  // macOS re-summons via Dock; Windows via the always-on tray icon.
+  const hideOnClose = (IS_MAC || IS_WIN) && !snapshotting
+  if (hideOnClose) {
     window.on('close', (event) => {
       if (quitting) return
       event.preventDefault()
@@ -728,7 +841,7 @@ function createWindow(): BrowserWindow {
       hideLeavingFullscreen(window)
     })
   } else {
-    // Windows / Linux / snapshot: real close — still leave FS first.
+    // Linux / snapshot: real close — still leave FS first.
     wireCloseLeavingFullscreen(window)
   }
 
@@ -771,8 +884,19 @@ function loadRenderer(window: BrowserWindow, query: Record<string, string> = {})
 function openSettingsWindow(view: SettingsView = 'api'): void {
   if (settingsWindow && !settingsWindow.isDestroyed()) {
     safeSend(settingsWindow.webContents, IPC.settingsView, view)
-    settingsWindow.show()
-    settingsWindow.focus()
+    void revealBrowserWindow(settingsWindow)
+    return
+  }
+
+  ensureSettingsWindow(view, true)
+}
+
+/**
+ * Keep Settings warm like the token panel: hide on close, show instantly next time.
+ */
+function ensureSettingsWindow(view: SettingsView = 'api', showNow: boolean): void {
+  if (settingsWindow && !settingsWindow.isDestroyed()) {
+    if (showNow) openSettingsWindow(view)
     return
   }
 
@@ -782,6 +906,7 @@ function openSettingsWindow(view: SettingsView = 'api'): void {
     minWidth: 620,
     minHeight: 440,
     show: false,
+    paintWhenInitiallyHidden: true,
     title: t('app.settingsWindowTitle'),
     icon: loadAppIcon(),
     ...chrome(38),
@@ -790,8 +915,13 @@ function openSettingsWindow(view: SettingsView = 'api'): void {
     fullscreenable: false,
     webPreferences: rendererPrefs()
   })
+  applyMenuBar(settingsWindow)
 
-  settingsWindow.once('ready-to-show', () => settingsWindow?.show())
+  settingsWindow.on('close', (event) => {
+    if (quitting) return
+    event.preventDefault()
+    if (settingsWindow && !settingsWindow.isDestroyed()) settingsWindow.hide()
+  })
   settingsWindow.on('closed', () => {
     settingsWindow = null
   })
@@ -804,7 +934,19 @@ function openSettingsWindow(view: SettingsView = 'api'): void {
     })
   }
 
+  if (showNow) {
+    settingsWindow.once('ready-to-show', () => {
+      if (settingsWindow && !settingsWindow.isDestroyed()) {
+        void revealBrowserWindow(settingsWindow)
+      }
+    })
+  }
   loadRenderer(settingsWindow, { view: 'settings', category: view })
+}
+
+function warmSettingsWindow(): void {
+  if (settingsWindow && !settingsWindow.isDestroyed()) return
+  ensureSettingsWindow('api', false)
 }
 
 /**
@@ -858,38 +1000,42 @@ function raiseDetachedWindow(win: BrowserWindow): void {
   // Only hop Spaces when another app is frontmost (global ⌘⇧↵). When vav is
   // already active, a plain show+focus avoids shadow re-composite flicker.
   const needSpaceHop = IS_MAC && !app.isActive()
-  if (needSpaceHop) {
+
+  const finish = (): void => {
+    if (win.isDestroyed()) return
+    if (needSpaceHop) {
+      try {
+        win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: false })
+      } catch {
+        // older Electron / non-mac
+      }
+    }
+    win.show()
     try {
-      win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: false })
+      win.moveTop()
     } catch {
-      // older Electron / non-mac
+      // ignore
+    }
+    if (needSpaceHop) app.focus({ steal: true })
+    if (!win.isDestroyed()) win.focus()
+    if (needSpaceHop) {
+      setTimeout(() => {
+        if (win.isDestroyed()) return
+        try {
+          win.setVisibleOnAllWorkspaces(false)
+        } catch {
+          // ignore
+        }
+      }, 300)
     }
   }
 
-  win.show()
-  try {
-    win.moveTop()
-  } catch {
-    // ignore
+  if (win.isVisible()) {
+    finish()
+    return
   }
-
-  if (needSpaceHop) {
-    app.focus({ steal: true })
-  }
-  if (!win.isDestroyed()) {
-    win.focus()
-  }
-
-  if (needSpaceHop) {
-    setTimeout(() => {
-      if (win.isDestroyed()) return
-      try {
-        win.setVisibleOnAllWorkspaces(false)
-      } catch {
-        // ignore
-      }
-    }, 300)
-  }
+  // Cold companion: paint a frame while still hidden, then raise.
+  void waitForRendererPaint(win).then(finish)
 }
 
 /**
@@ -925,6 +1071,7 @@ function openDetachedWindow(
     minWidth: 380,
     minHeight: 420,
     show: false,
+    paintWhenInitiallyHidden: true,
     title: conversation.title,
     icon: loadAppIcon(),
     ...chrome(38),
@@ -934,6 +1081,7 @@ function openDetachedWindow(
     parent: undefined,
     webPreferences: rendererPrefs()
   })
+  applyMenuBar(window)
 
   // Space membership is handled in raiseDetachedWindow (brief join-desktops,
   // then pin). Do not set visibleOnFullScreen here — that causes the flash
@@ -1056,9 +1204,7 @@ function openFilePreviewWindow(
 
   const existing = previewWindows.get(path)
   if (existing && !existing.isDestroyed()) {
-    if (existing.isMinimized()) existing.restore()
-    existing.show()
-    existing.focus()
+    void revealBrowserWindow(existing)
     return
   }
 
@@ -1111,6 +1257,7 @@ function openFilePreviewWindow(
       plugins: true
     })
   })
+  applyMenuBar(window)
 
   previewWindows.set(path, window)
   window.on('closed', () => {
@@ -1693,11 +1840,7 @@ function showMainWindow(): void {
     mainWindow = createWindow()
     return
   }
-  if (mainWindow.isMinimized()) mainWindow.restore()
-  if (!mainWindow.isVisible()) mainWindow.show()
-  mainWindow.show()
-  mainWindow.focus()
-  app.focus({ steal: true })
+  void revealBrowserWindow(mainWindow)
 }
 
 /**
@@ -1817,7 +1960,6 @@ function toggleMainWindow(): void {
     hideLeavingFullscreen(mainWindow)
     return
   }
-  app.focus({ steal: true })
   showMainWindow()
 }
 
@@ -2478,9 +2620,11 @@ function registerIpc(): void {
     (_event, path: string, table: string, offset?: number, limit?: number) =>
       fileService.dbQuery(path, table, offset, limit)
   )
-  ipcMain.handle(IPC.filesParseBlocks, (_event, path: string, text: string) => {
+  ipcMain.handle(IPC.filesParseBlocks, async (_event, path: string, text: string) => {
     if (!isTsJsPath(path)) return null
     try {
+      // typescript compiler is heavy — load only when a TS/JS preview needs AST blocks.
+      const { parseTsCodeBlocks } = await import('./preview/parseTsCodeBlocks')
       return parseTsCodeBlocks(path, text)
     } catch {
       return null
@@ -2641,7 +2785,8 @@ function registerIpc(): void {
 
   ipcMain.handle(IPC.windowOpenSettings, (_event, view?: SettingsView) => openSettingsWindow(view))
   ipcMain.handle(IPC.windowCloseSettings, () => {
-    if (settingsWindow && !settingsWindow.isDestroyed()) settingsWindow.close()
+    // Hide (don't destroy) so the next open is instant.
+    if (settingsWindow && !settingsWindow.isDestroyed()) settingsWindow.hide()
   })
 
   ipcMain.handle(IPC.windowOpenSession, (_event, id: string) => {
@@ -2908,10 +3053,11 @@ if (!singleInstance) {
     })
   })
 
-  // On macOS closing the last window must not quit: background turns and PTYs
-  // keep running, and the dock icon brings the window back.
+  // Closing the last window must not quit while Dock (macOS) or tray (Windows)
+  // can bring the app back — background turns and PTYs keep running.
   app.on('window-all-closed', () => {
-    if (!IS_MAC) app.quit()
+    if (IS_MAC || notifications.hasTray()) return
+    app.quit()
   })
 
   app.on('before-quit', () => {
@@ -3028,15 +3174,22 @@ if (!singleInstance) {
       if (process.env.VAV_SMOKE_SEED === '1') {
         void seedSmokeChangeReview()
       }
-      // After the main shell is up, preload the token panel so the ring opens
-      // without a cold BrowserWindow + full renderer load.
+      // After the main shell is up, preload companion windows so Settings /
+      // token ring open without a cold BrowserWindow + renderer load.
       setTimeout(() => {
         try {
           warmTokenUsageWindow()
         } catch {
           // non-fatal
         }
-      }, 1800)
+      }, 1600)
+      setTimeout(() => {
+        try {
+          warmSettingsWindow()
+        } catch {
+          // non-fatal
+        }
+      }, 2400)
     })
     // Dock tiles cache aggressively for the rebranded Electron.dev bundle —
     // re-assert the PNG after the first window exists so the tile updates.

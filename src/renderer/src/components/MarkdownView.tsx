@@ -8,6 +8,7 @@ import {
 import type { DiagramSlotState } from '../lib/diagramCache'
 import { renderDiagramBlocks } from '../lib/diagramRender'
 import { resolveMentionedPath } from '../lib/filePathLinks'
+import { onHljsReady } from '../lib/hljsLazy'
 import { renderPreviewMarkdown } from '../lib/previewMarkdown'
 import { TAIL_PLAIN_TEXT_THRESHOLD } from '../lib/segmenter'
 import { suppressHyperlinkClick } from '../lib/suppressHyperlinks'
@@ -68,8 +69,12 @@ export const MarkdownView = memo(function MarkdownView({
   const lastThemeRef = useRef<'light' | 'dark' | null>(null)
   // Theme drives mermaid/vega palette; include so dark↔light re-paints diagrams.
   const resolvedTheme = useResolvedTheme()
+  // highlight.js loads async — bump so sealed rows re-render with real spans.
+  const [hljsEpoch, setHljsEpoch] = useState(0)
+  useEffect(() => onHljsReady(() => setHljsEpoch((n) => n + 1)), [])
 
   const plain = !cached && !filePath && source.length > TAIL_PLAIN_TEXT_THRESHOLD
+  void hljsEpoch
   const html = plain
     ? ''
     : filePath

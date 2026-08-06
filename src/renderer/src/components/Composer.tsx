@@ -155,13 +155,16 @@ export function Composer({
   const conversation = useSessionStore((s) =>
     s.conversations.find((c) => c.id === conversationId)
   )
-  const draft = useSessionStore((s) => s.drafts[conversationId] ?? '')
+  const storeDraft = useSessionStore((s) => s.drafts[conversationId] ?? '')
   const attachments = useSessionStore((s) => s.attachments[conversationId] ?? NO_ATTACHMENTS)
   const previewRefs = useSessionStore((s) => s.previewRefs[conversationId] ?? NO_REFS)
   const commentCards = useSessionStore((s) => s.commentCards[conversationId] ?? NO_CARDS)
   const contextFile = useSessionStore((s) => s.contextFiles[conversationId] ?? null)
-  const turn = useSessionStore((s) => s.turns[conversationId])
-  const settings = useSessionStore((s) => s.settings)
+  const isRunning = useSessionStore((s) => !!s.turns[conversationId]?.isRunning)
+  const awaiting = useSessionStore((s) => !!s.turns[conversationId]?.awaitingToolCallId)
+  const sendKeySetting = useSessionStore((s) => s.settings.sendKey)
+  const defaultModel = useSessionStore((s) => s.settings.defaultModel)
+  const customModels = useSessionStore((s) => s.settings.customModels)
   const focusTick = useSessionStore((s) => s.composerFocusTick)
 
   const setDraft = useSessionStore((s) => s.setDraft)
@@ -177,9 +180,20 @@ export function Composer({
   const composingRef = useRef(false)
   const approvalMode: ApprovalMode = conversation?.approvalMode ?? 'auto'
   const [focused, setFocused] = useState(false)
+  // Local draft mirrors the store but keeps keystrokes off the React commit path
+  // of every other subscriber for one frame when the store write coalesces.
+  const [draft, setLocalDraft] = useState(storeDraft)
+  const draftFlushTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  const isRunning = !!turn?.isRunning
-  const awaiting = !!turn?.awaitingToolCallId
+  useEffect(() => {
+    setLocalDraft(storeDraft)
+  }, [conversationId, storeDraft])
+
+  useEffect(() => {
+    return () => {
+      if (draftFlushTimer.current) clearTimeout(draftFlushTimer.current)
+    }
+  }, [])
   const canSend =
     !!conversationId &&
     !isRunning &&
@@ -203,7 +217,7 @@ export function Composer({
     : contextFile
       ? t('composer.placeholderFile')
       : t('composer.placeholderCommand')
-  const sendKey = resolveSendKeyMode(settings.sendKey)
+  const sendKey = resolveSendKeyMode(sendKeySetting)
   const sendShortcut = sendKey === 'enter' ? keys('↵') : keys('⌘↵')
   // Keep idle hint short: e.g. "↵ Send · ⌘I Focus" (no drag-files copy).
   const shortcutHints = t('composer.placeholderHints', {
@@ -236,11 +250,11 @@ export function Composer({
     element.style.overflowY = element.scrollHeight > maxHeight + 1 ? 'auto' : 'hidden'
   }, [draft, focused, isRunning])
 
-  const activeModel = conversation?.model ?? settings.defaultModel
+  const activeModel = conversation?.model ?? defaultModel
 
   const modelItems = useMemo((): MenuItem[] => {
     if (!conversationId) return []
-    const custom = settings.customModels.map((id) => ({
+    const custom = customModels.map((id) => ({
       label: id,
       checked: id === activeModel,
       onSelect: () => void setModel(conversationId, id)
@@ -251,7 +265,7 @@ export function Composer({
       onSelect: () => void setModel(conversationId, model.id)
     }))
     return custom.length ? [...presets, { label: '', divider: true }, ...custom] : presets
-  }, [settings.customModels, conversationId, activeModel, setModel])
+  }, [customModels, conversationId, activeModel, setModel])
 
   const approvalItems = useMemo((): MenuItem[] => {
     if (!conversation) return []
@@ -266,8 +280,18 @@ export function Composer({
   const approvalLabel = activeMode.label
   const approvalTitle = activeMode.title
 
+  const flushDraft = (value: string): void => {
+    if (!conversationId) return
+    if (draftFlushTimer.current) {
+      clearTimeout(draftFlushTimer.current)
+      draftFlushTimer.current = null
+    }
+    setDraft(conversationId, value)
+  }
+
   const submit = (): void => {
     if (!canSend || !conversationId) return
+    flushDraft(draft)
     textareaRef.current?.blur()
     void send(draft.trim(), attachments, conversationId)
   }
@@ -358,11 +382,6 @@ export function Composer({
           value={draft}
           disabled={isRunning || !conversationId}
           onFocus={() => setFocused(true)}
-          onBlur={() => {
-            setFocused(false)
-            // Composition can be aborted without compositionend (focus loss).
-            composingRef.current = false
-          }}
           onCompositionStart={() => {
             composingRef.current = true
           }}
@@ -370,10 +389,22 @@ export function Composer({
             composingRef.current = false
           }}
           onChange={(event) => {
-            // Always sync: blocking composition updates (or preventDefault on
-            // insertCompositionText) breaks CJK IME / dictation and can leave
-            // the controlled value stuck so nothing types.
-            if (conversationId) setDraft(conversationId, event.target.value)
+            // Paint locally first; coalesce store writes so typing stays at 60fps
+            // even when other panels subscribe to session churn.
+            const value = event.target.value
+            setLocalDraft(value)
+            if (!conversationId) return
+            if (draftFlushTimer.current) clearTimeout(draftFlushTimer.current)
+            draftFlushTimer.current = setTimeout(() => {
+              draftFlushTimer.current = null
+              setDraft(conversationId, value)
+            }, 32)
+          }}
+          onBlur={() => {
+            setFocused(false)
+            // Composition can be aborted without compositionend (focus loss).
+            composingRef.current = false
+            flushDraft(textareaRef.current?.value ?? draft)
           }}
           onKeyDown={(event) => {
             // Don’t treat IME “confirm” Enter as send.

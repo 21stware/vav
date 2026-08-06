@@ -1,11 +1,11 @@
 import MarkdownIt from 'markdown-it'
-import hljs from 'highlight.js/lib/common'
 import {
   diagramKindForLang,
   renderDiagramFence,
   decodeDiagramSource
 } from './diagramRender'
 import { filePathLinksPlugin } from './filePathLinks'
+import { highlightFence, onHljsReady } from './hljsLazy'
 
 /**
  * Markdown for agent output.
@@ -76,14 +76,7 @@ const md: MarkdownIt = new MarkdownIt({
   linkify: true,
   breaks: false,
   highlight(code: string, language: string): string {
-    if (language && hljs.getLanguage(language)) {
-      try {
-        return hljs.highlight(code, { language, ignoreIllegals: true }).value
-      } catch {
-        // Fall through to the escaped default below.
-      }
-    }
-    return escapeHtml(code)
+    return highlightFence(code, language)
   }
 })
 
@@ -121,6 +114,9 @@ md.renderer.rules.table_close = (): string => '</table></div></div>'
 
 const cache = new Map<string, string>()
 const CACHE_LIMIT = 2000
+
+// When highlight.js arrives, drop sealed HTML so the next paint gets real spans.
+onHljsReady(() => cache.clear())
 
 /** Renders and memoises. Sealed chunks are stable strings, so this always hits. */
 export function renderMarkdown(source: string): string {

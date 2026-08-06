@@ -9,9 +9,12 @@
  * transient in-memory DB — source files are never written to.
  */
 
-import { DuckDBInstance, type DuckDBConnection } from '@duckdb/node-api'
 import { basename, extname } from 'node:path'
 import { stat } from 'node:fs/promises'
+
+/** Loaded on first real query — keep the native addon off the cold-start path. */
+type DuckDBConnection = import('@duckdb/node-api').DuckDBConnection
+type DuckDBInstance = import('@duckdb/node-api').DuckDBInstance
 
 const MAX_ROWS = 500
 const MAX_CELLL_STRING = 2000
@@ -192,7 +195,8 @@ export class DuckDbService {
     const kind = duckDbKindForPath(path)
     if (!kind) throw new Error(`Unsupported file type for DuckDB: ${extname(path) || path}`)
 
-    const inst = await DuckDBInstance.create(':memory:')
+    const { DuckDBInstance } = await import('@duckdb/node-api')
+    const inst: DuckDBInstance = await DuckDBInstance.create(':memory:')
     const conn = await inst.connect()
     const stem = sanitizeIdent(basename(path, extname(path)))
     const tables: string[] = []

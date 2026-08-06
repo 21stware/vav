@@ -46,11 +46,6 @@ async function getPdfJs(): Promise<PdfJsModule> {
   return pdfjsPromise
 }
 
-// Warm worker/module so the first open is not cold.
-if (typeof window !== 'undefined') {
-  void getPdfJs().catch(() => {})
-}
-
 /** CSS fit updates are cheap — rAF-throttle only. */
 const FIT_RAF_MIN_DELTA_PX = 2
 /** Quality re-paint only after resize fully settles. */

@@ -453,22 +453,40 @@ export function classifyOpenPaths(paths: string[]): ResolvedOpen {
   return { kind: 'session', workdir: dirs[0] ?? null, attachments: [] }
 }
 
-/** Absolute paths in argv that look like user-opened files (Dock cold-start). */
+/**
+ * Absolute paths in argv that look like user-opened files.
+ * macOS: Dock / Finder cold-start. Windows: "Open with" / double-click via ProgId.
+ */
 export function parseOpenPathsFromArgv(argv: string[]): string[] {
   const out: string[] = []
+  const exe = process.execPath.replace(/\//g, '\\').toLowerCase()
   for (const arg of argv) {
     if (!arg || arg.startsWith('-')) continue
+    const normalized = arg.replace(/\//g, '\\')
+    const lower = normalized.toLowerCase()
     // Electron/Chromium internals and the app executable itself are never drop targets.
     if (
+      lower === exe ||
       arg.includes('Electron') ||
       arg.endsWith('.app') ||
-      arg.includes('node_modules/electron') ||
+      lower.includes('node_modules\\electron') ||
+      lower.includes('node_modules/electron') ||
       arg.includes('/Contents/MacOS/') ||
-      arg.includes('/MacOS/Electron')
+      arg.includes('/MacOS/Electron') ||
+      (lower.endsWith('.exe') && (lower.includes('\\electron.exe') || lower.endsWith('\\vav.exe')))
     ) {
       continue
     }
-    if (arg.startsWith('/') && existsSync(arg)) out.push(arg)
+    const isAbs =
+      arg.startsWith('/') ||
+      /^[a-zA-Z]:[\\/]/.test(arg) ||
+      arg.startsWith('\\\\')
+    if (!isAbs) continue
+    try {
+      if (existsSync(arg)) out.push(arg)
+    } catch {
+      // skip
+    }
   }
   return out
 }

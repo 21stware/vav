@@ -1,4 +1,6 @@
 import {
+  Suspense,
+  lazy,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -45,15 +47,29 @@ import { useWorkspaceStore } from '../state/workspaceStore'
 import { SessionDetail, type FileSessionChromeProps } from './SessionDetail'
 import { menuAnchor, showMenu } from '../lib/nativeMenu'
 import { Button, EmptyState, InlineAlert } from './ui'
-import { OfficeNativeView } from './office/OfficeNativeView'
-import { HtmlNativeView } from './office/HtmlNativeView'
-import { SqliteView } from './SqliteView'
-import { MindMapView } from './diagram/MindMapView'
-import { DiagramFileView } from './diagram/DiagramFileView'
-import { DrawioView } from './diagram/DrawioView'
 import { looksLikeFreeMind, looksLikeOpml } from '@shared/mindmap'
-import { ZipArchiveView } from './ZipArchiveView'
 import { BinaryFileView } from './BinaryFileView'
+
+// Heavy format canvases — keep out of the chat / settings critical path.
+const OfficeNativeView = lazy(() =>
+  import('./office/OfficeNativeView').then((m) => ({ default: m.OfficeNativeView }))
+)
+const HtmlNativeView = lazy(() =>
+  import('./office/HtmlNativeView').then((m) => ({ default: m.HtmlNativeView }))
+)
+const SqliteView = lazy(() => import('./SqliteView').then((m) => ({ default: m.SqliteView })))
+const MindMapView = lazy(() =>
+  import('./diagram/MindMapView').then((m) => ({ default: m.MindMapView }))
+)
+const DiagramFileView = lazy(() =>
+  import('./diagram/DiagramFileView').then((m) => ({ default: m.DiagramFileView }))
+)
+const DrawioView = lazy(() =>
+  import('./diagram/DrawioView').then((m) => ({ default: m.DrawioView }))
+)
+const ZipArchiveView = lazy(() =>
+  import('./ZipArchiveView').then((m) => ({ default: m.ZipArchiveView }))
+)
 import { SessionHistoryPopover } from './SessionHistoryPopover'
 import wordmark from '../assets/wordmark.png'
 import wordmarkDark from '../assets/wordmark-dark.png'
@@ -1942,6 +1958,7 @@ export function FileViewer({
     ) : null
 
   const fileBody = (
+          <Suspense fallback={<div className="muted">{t('common.loading')}</div>}>
           <>
           {!info && <div className="muted">{t('common.loading')}</div>}
           {/* Real load failures only — zip/binary use dedicated canvases, never this alert. */}
@@ -2255,6 +2272,7 @@ export function FileViewer({
             />
           )}
           </>
+          </Suspense>
   )
 
   const statusFooter = (

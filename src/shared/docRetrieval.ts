@@ -74,10 +74,10 @@ export interface DocFetchOptions {
 
 /** Tunables for the built-in retrieval service. */
 /** Soft technical budgets (not product caps) — prevent OOM, not truncate UX. */
-export const DOC_INDEX_MAX_PDF_PAGES = 10_000
-export const DOC_INDEX_MAX_FILE_BYTES = 512 * 1024 * 1024
-export const DOC_INDEX_MAX_PLAIN_CHARS = 8_000_000
-export const DOC_INDEX_MAX_CHUNKS = 50_000
+export const DOC_INDEX_MAX_PDF_PAGES = 2_000
+export const DOC_INDEX_MAX_FILE_BYTES = 128 * 1024 * 1024
+export const DOC_INDEX_MAX_PLAIN_CHARS = 2_000_000
+export const DOC_INDEX_MAX_CHUNKS = 20_000
 export const DOC_SEARCH_DEFAULT_TOP_K = 8
 export const DOC_SEARCH_MAX_TOP_K = 20
 export const DOC_RELATED_NEIGHBOR_RADIUS = 2

@@ -24,23 +24,29 @@ export function TerminalPanel({
 }): React.JSX.Element {
   const t = useT()
   const activeId = useSessionStore((s) => s.activeId)
-  const ws = useWorkspaceStore((s) => s.workspaces[activeId])
-  const agentId = ws?.activeHostAgentId ?? null
-  const agentHost =
-    surface === 'agent' && agentId ? (ws?.agentHostSessions[agentId] ?? null) : null
+  const agentId = useWorkspaceStore((s) => s.workspaces[activeId]?.activeHostAgentId ?? null)
+  const agentHostLayout = useWorkspaceStore((s) =>
+    surface === 'agent' && agentId
+      ? (s.workspaces[activeId]?.agentHostSessions[agentId]?.layout ?? null)
+      : null
+  )
+  const agentHostActiveTabId = useWorkspaceStore((s) =>
+    surface === 'agent' && agentId
+      ? (s.workspaces[activeId]?.agentHostSessions[agentId]?.activeTabId ?? '')
+      : ''
+  )
+  const agentHostFirstTabId = useWorkspaceStore((s) =>
+    surface === 'agent' && agentId
+      ? (s.workspaces[activeId]?.agentHostSessions[agentId]?.tabs[0]?.id ?? null)
+      : null
+  )
+  const bashLayout = useWorkspaceStore((s) => s.workspaces[activeId]?.layout ?? null)
+  const bashActiveTabId = useWorkspaceStore((s) => s.workspaces[activeId]?.activeTabId ?? '')
+  const bashFirstTabId = useWorkspaceStore((s) => s.workspaces[activeId]?.tabs[0]?.id ?? null)
 
-  const layout =
-    surface === 'agent'
-      ? (agentHost?.layout ?? null)
-      : (ws?.layout ?? null)
-  const activeTabId =
-    surface === 'agent'
-      ? (agentHost?.activeTabId ?? '')
-      : (ws?.activeTabId ?? '')
-  const firstTabId =
-    surface === 'agent'
-      ? (agentHost?.tabs[0]?.id ?? null)
-      : (ws?.tabs[0]?.id ?? null)
+  const layout = surface === 'agent' ? agentHostLayout : bashLayout
+  const activeTabId = surface === 'agent' ? agentHostActiveTabId : bashActiveTabId
+  const firstTabId = surface === 'agent' ? agentHostFirstTabId : bashFirstTabId
   const recoverId = activeTabId || firstTabId
   const displayLayout: TerminalLayoutNode | null =
     layout ?? (recoverId ? { type: 'leaf', tabId: recoverId, weight: 1 } : null)
@@ -78,6 +84,15 @@ export function TerminalPanel({
 function leafIds(node: TerminalLayoutNode): string {
   if (node.type === 'leaf') return node.tabId
   return `${leafIds(node.children[0])}/${leafIds(node.children[1])}`
+}
+
+function findBranch(
+  root: TerminalLayoutNode,
+  branchKey: string
+): TerminalLayoutNode | null {
+  if (root.type === 'leaf') return null
+  if (leafIds(root) === branchKey) return root
+  return findBranch(root.children[0], branchKey) ?? findBranch(root.children[1], branchKey)
 }
 
 /**
@@ -135,13 +150,19 @@ function LayoutNodeView({
   visible: boolean
   surface: 'bash' | 'agent'
 }): React.JSX.Element {
-  const ws = useWorkspaceStore((s) => s.workspaces[conversationId])
-  const agentId = ws?.activeHostAgentId
-  const agentHost = agentId ? ws?.agentHostSessions[agentId] : null
-  const activeTabId =
-    surface === 'agent' ? (agentHost?.activeTabId ?? '') : (ws?.activeTabId ?? '')
+  const agentId = useWorkspaceStore((s) => s.workspaces[conversationId]?.activeHostAgentId)
+  const activeTabId = useWorkspaceStore((s) => {
+    if (surface === 'agent') {
+      const id = s.workspaces[conversationId]?.activeHostAgentId
+      return id
+        ? (s.workspaces[conversationId]?.agentHostSessions[id]?.activeTabId ?? '')
+        : ''
+    }
+    return s.workspaces[conversationId]?.activeTabId ?? ''
+  })
   const selectTab = useWorkspaceStore((s) => s.selectTab)
   const selectAgentTab = useWorkspaceStore((s) => s.selectAgentTab)
+  void agentId
 
   if (node.type === 'leaf') {
     return (
@@ -195,18 +216,40 @@ function LayoutNodeView({
               : slice.layout
           if (!baseLayout) return
           const startLayout = structuredClone(baseLayout) as TerminalLayoutNode
-          // One PTY geometry update after the split settles — not every move.
+          // DOM-only during drag; commit layout once on pointerup (60fps feel).
           document.documentElement.dataset.resizing = 'true'
           document.body.style.cursor = direction === 'column' ? 'row-resize' : 'col-resize'
           document.body.style.userSelect = 'none'
+          const childEls = branchEl
+            ? ([...branchEl.children] as HTMLElement[]).filter(
+                (el) => !el.classList.contains('terminal-split-resizer')
+              )
+            : []
+          let latest = startLayout
+          let raf = 0
+          let pendingDelta = 0
+          const paintWeights = (layout: TerminalLayoutNode): void => {
+            const branch = findBranch(layout, branchKey)
+            if (!branch || branch.type === 'leaf' || childEls.length < 2) return
+            const [wa, wb] = branch.children
+            childEls[0]!.style.flex = String(Math.max(SPLIT_MIN_WEIGHT, wa.weight))
+            childEls[1]!.style.flex = String(Math.max(SPLIT_MIN_WEIGHT, wb.weight))
+          }
           const onMove = (e: PointerEvent): void => {
-            const deltaPx = (direction === 'column' ? e.clientY : e.clientX) - start
-            const next = adjustBranchWeightsByPixels(
-              startLayout,
-              branchKey,
-              deltaPx,
-              branchSizePx
-            )
+            pendingDelta = (direction === 'column' ? e.clientY : e.clientX) - start
+            if (raf) return
+            raf = requestAnimationFrame(() => {
+              raf = 0
+              latest = adjustBranchWeightsByPixels(
+                startLayout,
+                branchKey,
+                pendingDelta,
+                branchSizePx
+              )
+              paintWeights(latest)
+            })
+          }
+          const commitLayout = (next: TerminalLayoutNode): void => {
             useWorkspaceStore.setState((state) => {
               const cur = state.workspaces[conversationId]
               if (!cur) return state
@@ -235,11 +278,13 @@ function LayoutNodeView({
             })
           }
           const onUp = (): void => {
+            if (raf) cancelAnimationFrame(raf)
             window.removeEventListener('pointermove', onMove)
             window.removeEventListener('pointerup', onUp)
             document.body.style.cursor = ''
             document.body.style.userSelect = ''
             delete document.documentElement.dataset.resizing
+            commitLayout(latest)
             window.dispatchEvent(new Event('vav:resize-end'))
           }
           window.addEventListener('pointermove', onMove)

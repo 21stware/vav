@@ -1,12 +1,4 @@
-import hljs from 'highlight.js/lib/common'
-
-function escapeHtml(value: string): string {
-  return value
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-}
+import { highlightWithHljs } from './hljsLazy'
 
 /** Extension → highlight.js language id (common build). */
 const EXT_LANG: Record<string, string> = {
@@ -81,24 +73,8 @@ export function languageFromPath(path: string): string | undefined {
 /**
  * Highlight source to HTML spans. Falls back to escaped plain text.
  * Auto-detect only for modest buffers — full-file highlightAuto is expensive.
+ * highlight.js loads lazily via {@link highlightWithHljs}.
  */
 export function highlightCode(source: string, language?: string): string {
-  if (language && hljs.getLanguage(language)) {
-    try {
-      return hljs.highlight(source, { language, ignoreIllegals: true }).value
-    } catch {
-      // fall through
-    }
-  }
-  // Auto-detect only for multi-line buffers. Virtualized code highlights
-  // one line at a time — highlightAuto on a single license/prose line picks
-  // a random language and rainbow-colors the text.
-  if (source.length > 0 && source.length < 80_000 && source.includes('\n')) {
-    try {
-      return hljs.highlightAuto(source).value
-    } catch {
-      // fall through
-    }
-  }
-  return escapeHtml(source)
+  return highlightWithHljs(source, language)
 }

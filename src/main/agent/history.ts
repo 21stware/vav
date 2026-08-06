@@ -29,6 +29,12 @@ const SUMMARY_USER_PREFIX =
 const SUMMARY_ASSISTANT_ACK =
   'Understood. I will continue from this summary and the messages that follow.'
 
+/**
+ * Cap tool-result bodies sent to the live model. Full output stays on disk for
+ * the UI; unbounded tool dumps were the dominant history payload cost.
+ */
+const LIVE_TOOL_OUTPUT_MAX = 24_000
+
 const EMPTY_USAGE = {
   input: 0,
   output: 0,
@@ -185,11 +191,12 @@ function replayAssistant(message: ChatMessage, model: Model<Api>): Message[] {
       continue
     }
     content.push(toolCallOf(block))
+    const raw = block.output || '(no output)'
     results.push({
       role: 'toolResult',
       toolCallId: block.id,
       toolName: block.tool,
-      content: [{ type: 'text', text: block.output || '(no output)' }],
+      content: [{ type: 'text', text: truncate(raw, LIVE_TOOL_OUTPUT_MAX) }],
       isError: block.status === 'error',
       timestamp: message.createdAt
     })
