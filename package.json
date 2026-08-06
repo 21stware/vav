@@ -283,8 +283,7 @@
             "x64"
           ]
         }
-      ],
-      "shortcutName": "VAV"
+      ]
     },
     "nsis": {
       "artifactName": "${productName}-${version}-windows-${arch}-setup.${ext}",
@@ -292,7 +291,7 @@
       "perMachine": false,
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
-      "shortcutName": "vav"
+      "shortcutName": "VAV"
     }
   },
   "allowScripts": {
