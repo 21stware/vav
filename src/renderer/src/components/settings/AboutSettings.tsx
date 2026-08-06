@@ -1,4 +1,4 @@
-import { RefreshCw } from 'lucide-react'
+import { Download, RefreshCw, RotateCw } from 'lucide-react'
 import { useSessionStore } from '../../state/sessionStore'
 import { useT } from '../../i18n/useT'
 import { Button } from '../ui'
@@ -13,7 +13,10 @@ export function AboutSettings(): React.JSX.Element {
   const showDialog = useSessionStore((s) => s.showDialog)
   const setShortcutsOpen = useSessionStore((s) => s.setShortcutsOpen)
   const checkForUpdates = useSessionStore((s) => s.checkForUpdates)
+  const downloadUpdate = useSessionStore((s) => s.downloadUpdate)
+  const installUpdate = useSessionStore((s) => s.installUpdate)
   const checking = updateState.phase === 'checking'
+  const downloading = updateState.phase === 'downloading'
 
   return (
     <div className="about-stack">
@@ -64,9 +67,33 @@ export function AboutSettings(): React.JSX.Element {
           icon={<RefreshCw size={14} />}
           label={checking ? t('about.checkingUpdates') : t('about.checkUpdates')}
           variant="secondary"
-          disabled={checking}
+          disabled={checking || downloading}
           onClick={() => void checkForUpdates()}
         />
+        {updateState.phase === 'available' ? (
+          <Button
+            icon={<Download size={14} />}
+            label={t('update.availableButton', { version: updateState.latestVersion ?? '' })}
+            variant="primary"
+            onClick={() => void downloadUpdate()}
+          />
+        ) : null}
+        {downloading ? (
+          <Button
+            icon={<Download size={14} />}
+            label={t('update.downloading', { progress: updateState.progress })}
+            variant="primary"
+            disabled
+          />
+        ) : null}
+        {updateState.phase === 'ready' ? (
+          <Button
+            icon={<RotateCw size={14} />}
+            label={t('update.restartInstall')}
+            variant="primary"
+            onClick={() => void installUpdate()}
+          />
+        ) : null}
         <Button
           label={t('about.viewShortcuts')}
           variant="secondary"

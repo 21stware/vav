@@ -1,12 +1,15 @@
 import { app, shell } from 'electron'
+import { autoUpdater } from 'electron-updater'
 import type { UpdateState } from '@shared/changeSet'
 
 const REPO = '21stware/vav'
 
 /**
- * Unsigned GitHub Releases checker — the Electron stand-in for the Sparkle
- * flow in settings-about / main-chat-empty. Downloads are opened via the
- * browser / Finder rather than silently swapped (no code signing yet).
+ * App updates via electron-updater (packaged builds) with a GitHub Releases
+ * fallback for unpackaged / dev runs.
+ *
+ * Packaged: check → download in-app → quitAndInstall (Squirrel.Mac / NSIS).
+ * Dev: same UI phases, but "download" opens the release asset in the browser.
  */
 export class UpdateService {
   private state: UpdateState = {
@@ -19,6 +22,33 @@ export class UpdateService {
     message: null
   }
   private listeners = new Set<(state: UpdateState) => void>()
+  private willInstall: (() => void) | null = null
+  private downloading = false
+
+  constructor() {
+    if (!app.isPackaged) return
+    autoUpdater.autoDownload = false
+    autoUpdater.autoInstallOnAppQuit = true
+    autoUpdater.allowDowngrade = false
+    // Public GitHub Releases — no token required for check/download.
+    autoUpdater.on('download-progress', (p) => {
+      this.patch({
+        phase: 'downloading',
+        progress: Math.max(0, Math.min(100, Math.round(p.percent)))
+      })
+    })
+    autoUpdater.on('error', (err) => {
+      if (this.state.phase === 'checking' || this.state.phase === 'downloading') {
+        this.patch({ phase: 'error', message: err.message, progress: 0 })
+      }
+      console.error('[updates]', err)
+    })
+  }
+
+  /** Called just before quitAndInstall so hide-on-close does not swallow quit. */
+  setWillInstallHandler(handler: () => void): void {
+    this.willInstall = handler
+  }
 
   getState(): UpdateState {
     return { ...this.state }
@@ -30,7 +60,101 @@ export class UpdateService {
   }
 
   async check(): Promise<UpdateState> {
-    this.patch({ phase: 'checking', message: null })
+    this.patch({ phase: 'checking', message: null, progress: 0 })
+    if (!app.isPackaged) {
+      return this.checkViaGithub()
+    }
+    try {
+      const result = await autoUpdater.checkForUpdates()
+      if (!result?.updateInfo) {
+        return this.patch({
+          phase: 'latest',
+          latestVersion: app.getVersion(),
+          message: null
+        })
+      }
+      const latest = result.updateInfo.version
+      const current = app.getVersion()
+      if (compareSemver(latest, current) > 0) {
+        return this.patch({
+          phase: 'available',
+          latestVersion: latest,
+          releaseUrl: `https://github.com/${REPO}/releases/tag/v${latest}`,
+          downloadUrl: null,
+          message: null
+        })
+      }
+      return this.patch({
+        phase: 'latest',
+        latestVersion: latest,
+        releaseUrl: `https://github.com/${REPO}/releases/tag/v${latest}`,
+        downloadUrl: null,
+        message: null
+      })
+    } catch (err) {
+      // Network / feed missing (e.g. release without latest-mac.yml) — try API.
+      console.warn('[updates] electron-updater check failed, falling back to GitHub API', err)
+      return this.checkViaGithub()
+    }
+  }
+
+  /**
+   * Packaged: download the update package in-process.
+   * Dev / fallback: open the asset URL in the browser.
+   */
+  async openDownload(): Promise<UpdateState> {
+    if (this.state.phase === 'ready') return this.getState()
+    if (this.downloading) return this.getState()
+
+    // Unpackaged builds, or packaged builds that fell back to the GitHub API
+    // (no latest*.yml on the release): open the asset in the browser.
+    if (!app.isPackaged || this.state.downloadUrl) {
+      const url = this.state.downloadUrl ?? this.state.releaseUrl
+      if (!url) return this.getState()
+      await shell.openExternal(url)
+      return this.patch({
+        phase: 'available',
+        progress: 0,
+        message: null
+      })
+    }
+
+    this.downloading = true
+    this.patch({ phase: 'downloading', progress: 0, message: null })
+    try {
+      await autoUpdater.downloadUpdate()
+      return this.patch({ phase: 'ready', progress: 100, message: null })
+    } catch (err) {
+      return this.patch({
+        phase: 'error',
+        message: (err as Error).message,
+        progress: 0
+      })
+    } finally {
+      this.downloading = false
+    }
+  }
+
+  /** Apply a downloaded update (restarts the app). */
+  install(): void {
+    if (!app.isPackaged) {
+      // Dev fallback: plain relaunch — nothing was staged by electron-updater.
+      app.relaunch()
+      app.exit(0)
+      return
+    }
+    if (this.state.phase !== 'ready') return
+    try {
+      this.willInstall?.()
+      // isSilent=false shows installer UI when needed; isForceRunAfter=true
+      // relaunches VAV after the swap.
+      autoUpdater.quitAndInstall(false, true)
+    } catch (err) {
+      this.patch({ phase: 'error', message: (err as Error).message })
+    }
+  }
+
+  private async checkViaGithub(): Promise<UpdateState> {
     try {
       const res = await fetch(`https://api.github.com/repos/${REPO}/releases/latest`, {
         headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'vav' }
@@ -70,14 +194,6 @@ export class UpdateService {
         message: (err as Error).message
       })
     }
-  }
-
-  async openDownload(): Promise<UpdateState> {
-    const url = this.state.downloadUrl ?? this.state.releaseUrl
-    if (!url) return this.state
-    this.patch({ phase: 'downloading', progress: 10, message: null })
-    await shell.openExternal(url)
-    return this.patch({ phase: 'ready', progress: 100 })
   }
 
   private patch(partial: Partial<UpdateState>): UpdateState {

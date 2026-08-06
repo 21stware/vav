@@ -57,8 +57,8 @@ Custom domain: `vavapp.com` (see `site/CNAME`). Apex uses GitHub Pages `A`/`AAAA
 
 Grab a build from [Releases](https://github.com/21stware/vav/releases).
 
-- **macOS** — Developer ID signed and notarized; open the DMG and drag to Applications.
-- **Windows** — not code-signed; SmartScreen may warn on first open (More info → Run anyway).
+- **macOS** — Developer ID signed and notarized; open the DMG and drag to Applications. Later versions update in-app (About → Check for Updates).
+- **Windows** — not code-signed; SmartScreen may warn on first open (More info → Run anyway). In-app updates use the NSIS installer feed.
 
 Then in Settings → “vav command”, install the `vav` CLI (defaults to `~/.local/bin`). Run `vav -h` for usage; `vav .` opens a new session in the current directory.
 

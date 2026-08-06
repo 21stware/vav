@@ -268,6 +268,7 @@ const api: VavApi = {
     getState: () => ipcRenderer.invoke(IPC.updatesGet),
     check: () => ipcRenderer.invoke(IPC.updatesCheck),
     openDownload: () => ipcRenderer.invoke(IPC.updatesOpenDownload),
+    install: () => ipcRenderer.invoke(IPC.updatesInstall),
     onChanged: (handler) => subscribe(IPC.updatesChanged, handler)
   },
 

@@ -26,12 +26,18 @@ jobs:
         include:
           - os: macos-14
             name: macOS (Apple silicon)
-            builder: --mac
-            artifacts: release/*.dmg
+            # DMG for manual install; ZIP + yml + blockmap for electron-updater.
+            artifacts: |
+              release/*.dmg
+              release/*.zip
+              release/*.blockmap
+              release/latest-mac.yml
           - os: windows-latest
             name: Windows (x64)
-            builder: --win
-            artifacts: release/*.exe
+            artifacts: |
+              release/*.exe
+              release/*.blockmap
+              release/latest.yml
 
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
@@ -107,10 +113,14 @@ jobs:
         run: |
           cat > notes.md <<'EOF'
           ## macOS (Apple silicon)
-          Developer ID signed and notarized. Open the DMG and drag **vav** to Applications.
+          Developer ID signed and notarized. Open the DMG and drag **VAV** to Applications.
+
+          In-app updates use the ZIP + `latest-mac.yml` feed (electron-updater).
 
           ## Windows (x64)
           Not code-signed. SmartScreen may warn on first run: **More info** → **Run anyway**.
+
+          In-app updates use the NSIS installer + `latest.yml` feed.
           EOF
 
       - name: Publish release

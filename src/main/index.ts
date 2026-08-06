@@ -2961,6 +2961,12 @@ function registerIpc(): void {
   ipcMain.handle(IPC.updatesGet, () => updateService.getState())
   ipcMain.handle(IPC.updatesCheck, () => updateService.check())
   ipcMain.handle(IPC.updatesOpenDownload, () => updateService.openDownload())
+  ipcMain.handle(IPC.updatesInstall, () => {
+    updateService.install()
+  })
+  updateService.setWillInstallHandler(() => {
+    quitting = true
+  })
   updateService.onChange((state) => broadcast(IPC.updatesChanged, state))
 
 }

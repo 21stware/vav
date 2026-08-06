@@ -737,7 +737,10 @@ export interface VavApi {
   updates: {
     getState(): Promise<UpdateState>
     check(): Promise<UpdateState>
+    /** Download update in-app (packaged) or open the release asset (dev). */
     openDownload(): Promise<UpdateState>
+    /** Apply a downloaded update and relaunch. */
+    install(): Promise<void>
     onChanged(handler: (state: UpdateState) => void): () => void
   }
 
@@ -978,5 +981,6 @@ export const IPC = {
   updatesGet: 'vav:updates:get',
   updatesCheck: 'vav:updates:check',
   updatesOpenDownload: 'vav:updates:open-download',
+  updatesInstall: 'vav:updates:install',
   updatesChanged: 'vav:updates:changed'
 } as const

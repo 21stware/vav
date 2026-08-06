@@ -925,7 +925,7 @@ export const zhCN = {
   'update.toastLatestTitle': '已是最新版本',
   'update.toastLatestBody': 'v{version} 为当前最新版本。',
   'update.toastAvailableTitle': '发现新版本 v{version}',
-  'update.toastAvailableBody': '工具栏出现更新按钮，点击即可下载。',
+  'update.toastAvailableBody': '工具栏出现更新按钮，点击即可在应用内下载并安装。',
   'update.toastErrorTitle': '检查更新失败',
   'update.toastErrorBody': '请检查网络连接后重试。',
 
@@ -1999,7 +1999,7 @@ export const en: Record<MessageKey, string> = {
   'update.toastLatestTitle': 'You’re up to date',
   'update.toastLatestBody': 'v{version} is the latest version.',
   'update.toastAvailableTitle': 'Update available: v{version}',
-  'update.toastAvailableBody': 'An update button appears in the toolbar — click to download.',
+  'update.toastAvailableBody': 'An update button appears in the toolbar — click to download and install in-app.',
   'update.toastErrorTitle': 'Update check failed',
   'update.toastErrorBody': 'Check your network connection and try again.',
 

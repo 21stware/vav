@@ -1911,7 +1911,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   },
 
   async installUpdate() {
-    await window.vav.window.relaunch()
+    await window.vav.updates.install()
   },
 
   toggleSidebar() {
