@@ -19,6 +19,7 @@ export class UpdateService {
     releaseUrl: null,
     downloadUrl: null,
     progress: 0,
+    bytesPerSecond: null,
     message: null
   }
   private listeners = new Set<(state: UpdateState) => void>()
@@ -34,12 +35,18 @@ export class UpdateService {
     autoUpdater.on('download-progress', (p) => {
       this.patch({
         phase: 'downloading',
-        progress: Math.max(0, Math.min(100, Math.round(p.percent)))
+        progress: Math.max(0, Math.min(100, Math.round(p.percent))),
+        bytesPerSecond: Number.isFinite(p.bytesPerSecond) ? p.bytesPerSecond : null
       })
     })
     autoUpdater.on('error', (err) => {
       if (this.state.phase === 'checking' || this.state.phase === 'downloading') {
-        this.patch({ phase: 'error', message: err.message, progress: 0 })
+        this.patch({
+          phase: 'error',
+          message: err.message,
+          progress: 0,
+          bytesPerSecond: null
+        })
       }
       console.error('[updates]', err)
     })
@@ -60,7 +67,7 @@ export class UpdateService {
   }
 
   async check(): Promise<UpdateState> {
-    this.patch({ phase: 'checking', message: null, progress: 0 })
+    this.patch({ phase: 'checking', message: null, progress: 0, bytesPerSecond: null })
     if (!app.isPackaged) {
       return this.checkViaGithub()
     }
@@ -70,7 +77,8 @@ export class UpdateService {
         return this.patch({
           phase: 'latest',
           latestVersion: app.getVersion(),
-          message: null
+          message: null,
+          bytesPerSecond: null
         })
       }
       const latest = result.updateInfo.version
@@ -81,7 +89,8 @@ export class UpdateService {
           latestVersion: latest,
           releaseUrl: `https://github.com/${REPO}/releases/tag/v${latest}`,
           downloadUrl: null,
-          message: null
+          message: null,
+          bytesPerSecond: null
         })
       }
       return this.patch({
@@ -89,7 +98,8 @@ export class UpdateService {
         latestVersion: latest,
         releaseUrl: `https://github.com/${REPO}/releases/tag/v${latest}`,
         downloadUrl: null,
-        message: null
+        message: null,
+        bytesPerSecond: null
       })
     } catch (err) {
       // Network / feed missing (e.g. release without latest-mac.yml) — try API.
@@ -115,20 +125,27 @@ export class UpdateService {
       return this.patch({
         phase: 'available',
         progress: 0,
+        bytesPerSecond: null,
         message: null
       })
     }
 
     this.downloading = true
-    this.patch({ phase: 'downloading', progress: 0, message: null })
+    this.patch({ phase: 'downloading', progress: 0, bytesPerSecond: 0, message: null })
     try {
       await autoUpdater.downloadUpdate()
-      return this.patch({ phase: 'ready', progress: 100, message: null })
+      return this.patch({
+        phase: 'ready',
+        progress: 100,
+        bytesPerSecond: null,
+        message: null
+      })
     } catch (err) {
       return this.patch({
         phase: 'error',
         message: (err as Error).message,
-        progress: 0
+        progress: 0,
+        bytesPerSecond: null
       })
     } finally {
       this.downloading = false
@@ -176,7 +193,8 @@ export class UpdateService {
           latestVersion: latest,
           releaseUrl: body.html_url ?? null,
           downloadUrl: null,
-          message: null
+          message: null,
+          bytesPerSecond: null
         })
       }
 
@@ -186,12 +204,14 @@ export class UpdateService {
         latestVersion: latest,
         releaseUrl: body.html_url ?? null,
         downloadUrl,
-        message: null
+        message: null,
+        bytesPerSecond: null
       })
     } catch (err) {
       return this.patch({
         phase: 'error',
-        message: (err as Error).message
+        message: (err as Error).message,
+        bytesPerSecond: null
       })
     }
   }

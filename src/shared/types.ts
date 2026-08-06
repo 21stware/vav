@@ -638,6 +638,11 @@ export interface AppSettings {
   /** macOS: hide Dock icon (accessory). Requires restart. */
   hideDockIcon: boolean
   /**
+   * When true, check GitHub Releases for a newer build shortly after launch.
+   * Manual “Check for Updates” in About always works regardless.
+   */
+  autoCheckUpdates: boolean
+  /**
    * Configured CLI agents for the terminal host (release 599702fe…).
    * Defaults cover Claude Code, Codex, Cursor, Pi, Grok, Devin.
    */
@@ -687,6 +692,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   /** macOS optional menu-bar item; Windows always shows a tray (see NotificationCenter). */
   trayEnabled: false,
   hideDockIcon: false,
+  autoCheckUpdates: true,
   cliAgents: DEFAULT_CLI_AGENTS.map((a) => ({ ...a, envVars: { ...a.envVars } })),
   /** null = plain vav shell (default host mode). */
   defaultAgentId: null

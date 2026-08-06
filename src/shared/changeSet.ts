@@ -43,6 +43,8 @@ export interface UpdateState {
   releaseUrl: string | null
   downloadUrl: string | null
   progress: number
+  /** Bytes/sec while downloading; null when not transferring. */
+  bytesPerSecond: number | null
   message: string | null
 }
 

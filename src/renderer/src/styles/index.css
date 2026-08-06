@@ -4691,6 +4691,126 @@ mark {
   padding: 6px 8px 10px;
 }
 
+.sidebar-update-slot {
+  flex: 0 0 auto;
+  padding: 0 8px;
+}
+
+/* Bottom-left update chip (available / downloading / restart). */
+.update-corner {
+  position: fixed;
+  left: 10px;
+  bottom: 10px;
+  z-index: 45;
+  max-width: min(220px, calc(100vw - 24px));
+  -webkit-app-region: no-drag;
+}
+
+.update-corner.is-inline {
+  position: static;
+  left: auto;
+  bottom: auto;
+  z-index: auto;
+  width: 100%;
+  max-width: none;
+  margin: 4px 0 2px;
+}
+
+.update-corner-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  max-width: 100%;
+  padding: 7px 10px;
+  border: none;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent) 14%, var(--bg-raised));
+  box-shadow:
+    var(--shadow-raised),
+    inset 0 0 0 1px color-mix(in srgb, var(--accent) 28%, var(--border));
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: -0.1px;
+  cursor: default;
+  transition:
+    background 100ms ease,
+    transform 80ms var(--ease-out);
+}
+
+.update-corner-btn:hover {
+  background: color-mix(in srgb, var(--accent) 22%, var(--bg-raised));
+}
+
+.update-corner-btn:active {
+  transform: scale(0.97);
+}
+
+.update-corner-btn.is-ready {
+  background: color-mix(in srgb, var(--success) 14%, var(--bg-raised));
+  box-shadow:
+    var(--shadow-raised),
+    inset 0 0 0 1px color-mix(in srgb, var(--success) 30%, var(--border));
+}
+
+.update-corner-btn.is-ready:hover {
+  background: color-mix(in srgb, var(--success) 22%, var(--bg-raised));
+}
+
+.update-corner-btn span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.update-corner-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 168px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--bg-raised) 92%, transparent);
+  backdrop-filter: blur(14px) saturate(1.2);
+  -webkit-backdrop-filter: blur(14px) saturate(1.2);
+  box-shadow:
+    var(--shadow-raised),
+    inset 0 0 0 1px var(--border);
+  color: var(--text);
+}
+
+.update-corner-progress-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: -0.1px;
+}
+
+.update-corner-speed {
+  margin-left: auto;
+  font-weight: 500;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.update-corner-track {
+  height: 3px;
+  border-radius: 999px;
+  background: var(--bg-sunken);
+  overflow: hidden;
+}
+
+.update-corner-fill {
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+  transition: width 120ms linear;
+}
+
 .sidebar-archive-btn {
   flex: 1 1 auto;
   min-width: 0;

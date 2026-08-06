@@ -1,20 +1,20 @@
-import { Download, RefreshCw, RotateCw } from 'lucide-react'
+import { RefreshCw } from 'lucide-react'
 import { useSessionStore } from '../../state/sessionStore'
 import { useT } from '../../i18n/useT'
-import { Button } from '../ui'
+import { Button, Toggle } from '../ui'
 import wordmark from '../../assets/wordmark.png'
 import wordmarkDark from '../../assets/wordmark-dark.png'
 
 export function AboutSettings(): React.JSX.Element {
   const t = useT()
   const about = useSessionStore((s) => s.about)
+  const settings = useSessionStore((s) => s.settings)
   const updateState = useSessionStore((s) => s.updateState)
+  const updateSettings = useSessionStore((s) => s.updateSettings)
   const resetSettings = useSessionStore((s) => s.resetSettings)
   const showDialog = useSessionStore((s) => s.showDialog)
   const setShortcutsOpen = useSessionStore((s) => s.setShortcutsOpen)
   const checkForUpdates = useSessionStore((s) => s.checkForUpdates)
-  const downloadUpdate = useSessionStore((s) => s.downloadUpdate)
-  const installUpdate = useSessionStore((s) => s.installUpdate)
   const checking = updateState.phase === 'checking'
   const downloading = updateState.phase === 'downloading'
 
@@ -45,6 +45,37 @@ export function AboutSettings(): React.JSX.Element {
       </div>
 
       <div className="about-card">
+        <div className="about-card-title">{t('about.updatesSection')}</div>
+        <div className="form-row">
+          <label>{t('about.autoCheckUpdates')}</label>
+          <div className="control">
+            <Toggle
+              checked={settings.autoCheckUpdates}
+              title={t('about.autoCheckUpdates')}
+              onChange={(autoCheckUpdates) => void updateSettings({ autoCheckUpdates })}
+            />
+          </div>
+        </div>
+        <div className="form-hint">{t('about.autoCheckUpdatesHint')}</div>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 10 }}>
+          <Button
+            icon={<RefreshCw size={14} />}
+            label={checking ? t('about.checkingUpdates') : t('about.checkUpdates')}
+            variant="secondary"
+            disabled={checking || downloading}
+            onClick={() => void checkForUpdates()}
+          />
+        </div>
+        {updateState.phase === 'available' ||
+        updateState.phase === 'downloading' ||
+        updateState.phase === 'ready' ? (
+          <div className="form-hint" style={{ marginTop: 8 }}>
+            {t('about.updateCornerHint')}
+          </div>
+        ) : null}
+      </div>
+
+      <div className="about-card">
         <div className="about-card-title">{t('about.dataSecurity')}</div>
         <div>
           <div className="kv-row">
@@ -63,37 +94,6 @@ export function AboutSettings(): React.JSX.Element {
       </div>
 
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-        <Button
-          icon={<RefreshCw size={14} />}
-          label={checking ? t('about.checkingUpdates') : t('about.checkUpdates')}
-          variant="secondary"
-          disabled={checking || downloading}
-          onClick={() => void checkForUpdates()}
-        />
-        {updateState.phase === 'available' ? (
-          <Button
-            icon={<Download size={14} />}
-            label={t('update.availableButton', { version: updateState.latestVersion ?? '' })}
-            variant="primary"
-            onClick={() => void downloadUpdate()}
-          />
-        ) : null}
-        {downloading ? (
-          <Button
-            icon={<Download size={14} />}
-            label={t('update.downloading', { progress: updateState.progress })}
-            variant="primary"
-            disabled
-          />
-        ) : null}
-        {updateState.phase === 'ready' ? (
-          <Button
-            icon={<RotateCw size={14} />}
-            label={t('update.restartInstall')}
-            variant="primary"
-            onClick={() => void installUpdate()}
-          />
-        ) : null}
         <Button
           label={t('about.viewShortcuts')}
           variant="secondary"

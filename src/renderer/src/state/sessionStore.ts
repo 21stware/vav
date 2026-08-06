@@ -26,6 +26,7 @@ const IDLE_UPDATE: UpdateState = {
   releaseUrl: null,
   downloadUrl: null,
   progress: 0,
+  bytesPerSecond: null,
   message: null
 }
 

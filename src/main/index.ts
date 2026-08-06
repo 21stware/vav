@@ -3200,8 +3200,10 @@ if (!singleInstance) {
     // Dock tiles cache aggressively for the rebranded Electron.dev bundle —
     // re-assert the PNG after the first window exists so the tile updates.
     applyDockIcon()
-    // Silent check so the toolbar update button can appear when a newer release exists.
-    void updateService.check()
+    // Silent check so the bottom-left update chip can appear when a newer release exists.
+    if (currentSettings().autoCheckUpdates) {
+      void updateService.check()
+    }
 
     if (process.env.VAV_SNAPSHOT) {
       // Marketing captures seed their own conversations; ignore argv path opens.

@@ -2,7 +2,11 @@ import { useCallback, useEffect } from 'react'
 import { Bell, Bot, FileCheck2, Folder, Info, KeyRound, Palette, Terminal } from 'lucide-react'
 import type { SettingsView } from '@shared/ipc'
 import type { MessageKey } from '@shared/i18n'
-import { installSettingsBridge, useSessionStore } from './state/sessionStore'
+import {
+  installSettingsBridge,
+  installUpdateBridge,
+  useSessionStore
+} from './state/sessionStore'
 import { useT } from './i18n/useT'
 import { useAppearance } from './lib/appearance'
 import { installDefaultContextMenu } from './lib/nativeMenu'
@@ -60,12 +64,14 @@ export default function SettingsWindow(): React.JSX.Element {
 
   useEffect(() => {
     const offSettings = installSettingsBridge()
+    const offUpdates = installUpdateBridge()
     const offView = window.vav.onSettingsView((view) =>
       useSessionStore.setState({ settingsCategory: view })
     )
     const offMenu = installDefaultContextMenu()
     return () => {
       offSettings()
+      offUpdates()
       offView()
       offMenu()
     }

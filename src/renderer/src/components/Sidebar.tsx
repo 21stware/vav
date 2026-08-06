@@ -23,6 +23,7 @@ import { fileManagerLabel } from '../lib/platform'
 import { basename } from '../lib/path'
 import { useT } from '../i18n/useT'
 import { EmptyState } from './ui'
+import { UpdateCorner } from './UpdateCorner'
 
 export function modelLabel(id: string): string {
   return PRESET_MODELS.find((model) => model.id === id)?.label ?? id
@@ -848,6 +849,8 @@ export function Sidebar({
           )
         })}
       </div>
+
+      <UpdateCorner variant="inline" />
 
       {listMode === 'main' && (
         <div className="sidebar-archive-foot">

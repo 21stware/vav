@@ -14,6 +14,7 @@ import { SessionDetail, useTerminalAppearance } from './components/SessionDetail
 import { WorkspaceView } from './components/WorkspaceView'
 import { FileSessionView } from './components/FileSessionView'
 import { AppToast } from './components/AppToast'
+import { UpdateCorner } from './components/UpdateCorner'
 import { ShellLeadingControls } from './components/ShellLeadingControls'
 import { Button, EmptyState, Modal } from './components/ui'
 import { KeychainOnboarding } from './components/KeychainOnboarding'
@@ -174,6 +175,8 @@ export default function App(): React.JSX.Element {
         <DetailSlot />
       </div>
       <Overlays />
+      {/* When the sidebar is open it hosts the chip; otherwise pin bottom-left. */}
+      {!sidebarVisible ? <UpdateCorner /> : null}
       <AppToast />
     </div>
   )
