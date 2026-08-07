@@ -330,7 +330,7 @@
     win: { id: 'download-win', match: /windows-x64-setup\.exe$/i, os: 'download.osWin' }
   }
 
-  let latestTag = 'v1.4.5'
+  let latestTag = 'v1.4.6'
   const assetSizes = {}
 
   function detectPlatform() {

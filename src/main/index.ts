@@ -1,5 +1,6 @@
 import {
   app,
+  autoUpdater as electronAutoUpdater,
   BrowserWindow,
   clipboard,
   dialog,
@@ -3016,7 +3017,26 @@ function registerIpc(): void {
     updateService.install()
   })
   updateService.setWillInstallHandler(() => {
+    // Hide-on-close + tray/Dock keep-alive otherwise swallow Squirrel.Mac /
+    // NSIS quitAndInstall (windows preventDefault close; app never exits).
     quitting = true
+    app.removeAllListeners('window-all-closed')
+    for (const win of BrowserWindow.getAllWindows()) {
+      if (win.isDestroyed()) continue
+      win.removeAllListeners('close')
+    }
+    if (IS_MAC) {
+      // Squirrel.Mac emits this on electron's autoUpdater (not app). Run the
+      // same teardown as before-quit, then exit so the process cannot linger
+      // with a Tray/Dock-only lifetime after windows close.
+      electronAutoUpdater.once('before-quit-for-update', () => {
+        agent.disposeAll()
+        ptyManager.killAll()
+        fileService.disposeAll()
+        conversationStore.flush()
+        app.exit(0)
+      })
+    }
   })
   updateService.onChange((state) => broadcast(IPC.updatesChanged, state))
 

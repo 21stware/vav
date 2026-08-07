@@ -1,4 +1,4 @@
-import { app, shell } from 'electron'
+import { app, autoUpdater as electronAutoUpdater, shell } from 'electron'
 import { autoUpdater } from 'electron-updater'
 import type { UpdateState } from '@shared/changeSet'
 
@@ -10,6 +10,11 @@ const REPO = '21stware/vav'
  *
  * Packaged: check → download in-app → quitAndInstall (Squirrel.Mac / NSIS).
  * Dev: same UI phases, but "download" opens the release asset in the browser.
+ *
+ * macOS note: electron-updater marks the ZIP downloaded before Squirrel.Mac
+ * finishes staging (verify + ditto unzip). Showing "Restart" too early makes
+ * quitAndInstall appear to no-op. We wait for Electron's native
+ * `update-downloaded` before flipping to `ready`.
  */
 export class UpdateService {
   private state: UpdateState = {
@@ -25,6 +30,9 @@ export class UpdateService {
   private listeners = new Set<(state: UpdateState) => void>()
   private willInstall: (() => void) | null = null
   private downloading = false
+  /** Squirrel.Mac has finished staging (native update-downloaded). */
+  private nativeUpdateReady = false
+  private nativeReadyWaiters: Array<() => void> = []
 
   constructor() {
     if (!app.isPackaged) return
@@ -40,7 +48,12 @@ export class UpdateService {
       })
     })
     autoUpdater.on('error', (err) => {
-      if (this.state.phase === 'checking' || this.state.phase === 'downloading') {
+      if (
+        this.state.phase === 'checking' ||
+        this.state.phase === 'downloading' ||
+        this.state.phase === 'preparing' ||
+        this.state.phase === 'ready'
+      ) {
         this.patch({
           phase: 'error',
           message: err.message,
@@ -50,6 +63,16 @@ export class UpdateService {
       }
       console.error('[updates]', err)
     })
+
+    if (process.platform === 'darwin') {
+      // Fires only after Squirrel.Mac has verified + unzipped — later than
+      // electron-updater's own update-downloaded.
+      electronAutoUpdater.on('update-downloaded', () => {
+        this.nativeUpdateReady = true
+        const waiters = this.nativeReadyWaiters.splice(0)
+        for (const resolve of waiters) resolve()
+      })
+    }
   }
 
   /** Called just before quitAndInstall so hide-on-close does not swallow quit. */
@@ -113,7 +136,7 @@ export class UpdateService {
    * Dev / fallback: open the asset URL in the browser.
    */
   async openDownload(): Promise<UpdateState> {
-    if (this.state.phase === 'ready') return this.getState()
+    if (this.state.phase === 'ready' || this.state.phase === 'preparing') return this.getState()
     if (this.downloading) return this.getState()
 
     // Unpackaged builds, or packaged builds that fell back to the GitHub API
@@ -131,9 +154,21 @@ export class UpdateService {
     }
 
     this.downloading = true
+    this.nativeUpdateReady = false
     this.patch({ phase: 'downloading', progress: 0, bytesPerSecond: 0, message: null })
     try {
       await autoUpdater.downloadUpdate()
+      // macOS: ZIP is local, but Squirrel may still be verifying/unzipping.
+      // Surface an explicit "preparing" phase — Restart must wait for this.
+      if (process.platform === 'darwin' && !this.nativeUpdateReady) {
+        this.patch({
+          phase: 'preparing',
+          progress: 100,
+          bytesPerSecond: null,
+          message: null
+        })
+        await this.waitForNativeUpdateReady()
+      }
       return this.patch({
         phase: 'ready',
         progress: 100,
@@ -162,13 +197,40 @@ export class UpdateService {
     }
     if (this.state.phase !== 'ready') return
     try {
+      // Tear down hide-on-close / tray keep-alive before Squirrel/NSIS quits.
       this.willInstall?.()
-      // isSilent=false shows installer UI when needed; isForceRunAfter=true
-      // relaunches VAV after the swap.
-      autoUpdater.quitAndInstall(false, true)
+      // Defer so IPC / click handlers finish; required on macOS for quitAndInstall.
+      setImmediate(() => {
+        try {
+          // isSilent=false shows installer UI when needed; isForceRunAfter=true
+          // relaunches VAV after the swap (Windows; macOS ignores these flags).
+          autoUpdater.quitAndInstall(false, true)
+        } catch (err) {
+          this.patch({ phase: 'error', message: (err as Error).message })
+        }
+      })
     } catch (err) {
       this.patch({ phase: 'error', message: (err as Error).message })
     }
+  }
+
+  private waitForNativeUpdateReady(timeoutMs = 180_000): Promise<void> {
+    if (this.nativeUpdateReady) return Promise.resolve()
+    return new Promise((resolve) => {
+      const done = (): void => {
+        clearTimeout(timer)
+        resolve()
+      }
+      const timer = setTimeout(() => {
+        const idx = this.nativeReadyWaiters.indexOf(done)
+        if (idx >= 0) this.nativeReadyWaiters.splice(idx, 1)
+        console.warn(
+          '[updates] timed out waiting for Squirrel.Mac update-downloaded; enabling Restart anyway'
+        )
+        resolve()
+      }, timeoutMs)
+      this.nativeReadyWaiters.push(done)
+    })
   }
 
   private async checkViaGithub(): Promise<UpdateState> {

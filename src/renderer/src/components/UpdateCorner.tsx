@@ -1,4 +1,4 @@
-import { Download, RotateCw } from 'lucide-react'
+import { Download, LoaderCircle, RotateCw } from 'lucide-react'
 import { useSessionStore } from '../state/sessionStore'
 import { useT } from '../i18n/useT'
 
@@ -10,7 +10,7 @@ function formatSpeed(bytesPerSecond: number): string {
 }
 
 /**
- * Bottom-left update affordance: available → download → speed → restart.
+ * Bottom-left update affordance: available → download → prepare → restart.
  * `inline` sits in the sidebar foot; `fixed` covers the window when the
  * sidebar is hidden.
  */
@@ -27,7 +27,12 @@ export function UpdateCorner({
   const downloadUpdate = useSessionStore((s) => s.downloadUpdate)
   const installUpdate = useSessionStore((s) => s.installUpdate)
 
-  if (phase !== 'available' && phase !== 'downloading' && phase !== 'ready') {
+  if (
+    phase !== 'available' &&
+    phase !== 'downloading' &&
+    phase !== 'preparing' &&
+    phase !== 'ready'
+  ) {
     return null
   }
 
@@ -57,6 +62,17 @@ export function UpdateCorner({
             className="update-corner-fill"
             style={{ width: `${Math.max(0, Math.min(100, progress))}%` }}
           />
+        </div>
+      </div>
+    ) : phase === 'preparing' ? (
+      <div className="update-corner-progress is-preparing" aria-live="polite">
+        <div className="update-corner-progress-meta">
+          <LoaderCircle size={13} strokeWidth={2} className="update-corner-spin" aria-hidden />
+          <span>{t('update.preparing')}</span>
+        </div>
+        <div className="update-corner-hint">{t('update.preparingHint')}</div>
+        <div className="update-corner-track is-indeterminate" aria-hidden>
+          <div className="update-corner-fill" />
         </div>
       </div>
     ) : (

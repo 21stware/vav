@@ -34,6 +34,8 @@ export type UpdatePhase =
   | 'available'
   | 'error'
   | 'downloading'
+  /** macOS: ZIP downloaded; Squirrel.Mac still verifying / unzipping. */
+  | 'preparing'
   | 'ready'
 
 export interface UpdateState {

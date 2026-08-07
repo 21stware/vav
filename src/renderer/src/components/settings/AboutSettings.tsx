@@ -16,7 +16,8 @@ export function AboutSettings(): React.JSX.Element {
   const setShortcutsOpen = useSessionStore((s) => s.setShortcutsOpen)
   const checkForUpdates = useSessionStore((s) => s.checkForUpdates)
   const checking = updateState.phase === 'checking'
-  const downloading = updateState.phase === 'downloading'
+  const downloading =
+    updateState.phase === 'downloading' || updateState.phase === 'preparing'
 
   return (
     <div className="about-stack">
@@ -68,6 +69,7 @@ export function AboutSettings(): React.JSX.Element {
         </div>
         {updateState.phase === 'available' ||
         updateState.phase === 'downloading' ||
+        updateState.phase === 'preparing' ||
         updateState.phase === 'ready' ? (
           <div className="form-hint" style={{ marginTop: 8 }}>
             {t('about.updateCornerHint')}
