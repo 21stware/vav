@@ -89,6 +89,34 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: npx electron-builder --mac --publish never
 
+      # Fail the release if the DMG is still unsigned / unstapled. That state is
+      # what surfaces to users as “VAV is damaged and can’t be opened” after a
+      # Chrome download (quarantine + Gatekeeper).
+      - name: Verify macOS DMG signature + staple
+        if: runner.os == 'macOS'
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          dmgs=(release/*.dmg)
+          if [ ${#dmgs[@]} -eq 0 ]; then
+            echo "No release/*.dmg produced" >&2
+            exit 1
+          fi
+          for dmg in "${dmgs[@]}"; do
+            echo "=== codesign $dmg ==="
+            codesign -dv --verbose=2 "$dmg"
+            echo "=== stapler validate $dmg ==="
+            xcrun stapler validate "$dmg"
+            echo "=== spctl assess $dmg ==="
+            spctl -a -t open --context context:primary-signature -vv "$dmg"
+          done
+          apps=(release/mac-arm64/*.app)
+          for app in "${apps[@]}"; do
+            echo "=== spctl assess $app ==="
+            spctl -a -t exec -vv "$app"
+            xcrun stapler validate "$app"
+          done
+
       - name: Package (Windows)
         if: runner.os == 'Windows'
         run: npx electron-builder --win --publish never
@@ -113,9 +141,12 @@ jobs:
         run: |
           cat > notes.md <<'EOF'
           ## macOS (Apple silicon)
-          Developer ID signed and notarized. Open the DMG and drag **VAV** to Applications.
+          Developer ID signed and notarized (app + DMG, ticket stapled). Open the DMG and drag **VAV** to Applications.
 
           In-app updates use the ZIP + `latest-mac.yml` feed (electron-updater).
+
+          If macOS says the app is “damaged” after a browser download, run:
+          `sudo xattr -cr /Applications/VAV.app`
 
           ## Windows (x64)
           Not code-signed. SmartScreen may warn on first run: **More info** → **Run anyway**.

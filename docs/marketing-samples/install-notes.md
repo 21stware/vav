@@ -2,9 +2,14 @@
 
 ## macOS
 
-Download the arm64 DMG. Open it, drag **vav** to Applications.
+Download the arm64 DMG. Open it, drag **VAV** to Applications.
 
-If Gatekeeper blocks open: System Settings → Privacy & Security → Open Anyway.
+Releases ship a Developer ID–signed and notarized DMG (ticket stapled). Prefer dragging to Applications rather than launching from the disk image.
+
+If Gatekeeper still blocks open (rare; dialog may say the app is “damaged”):
+
+1. System Settings → Privacy & Security → Open Anyway, or
+2. Terminal: `sudo xattr -cr /Applications/VAV.app`
 
 ## Windows
 
