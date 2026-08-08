@@ -1,5 +1,9 @@
 import { app, autoUpdater as electronAutoUpdater, shell } from 'electron'
 import { autoUpdater } from 'electron-updater'
+import { existsSync, rmSync } from 'node:fs'
+import { homedir } from 'node:os'
+import { join } from 'node:path'
+import { execFileSync } from 'node:child_process'
 import type { UpdateState } from '@shared/changeSet'
 
 const REPO = '21stware/vav'
@@ -15,6 +19,11 @@ const REPO = '21stware/vav'
  * finishes staging (verify + ditto unzip). Showing "Restart" too early makes
  * quitAndInstall appear to no-op. We wait for Electron's native
  * `update-downloaded` before flipping to `ready`.
+ *
+ * Also: a failed Squirrel.Mac install can leave launchd job `com.vav.app.ShipIt`
+ * restarting every ~2s without ShipItState.plist. That loop re-triggers app
+ * opens and surfaces as a repeated Gatekeeper “damaged” dialog until the user
+ * trashes the app. Clear the orphan on startup (see {@link clearOrphanedMacShipIt}).
  */
 export class UpdateService {
   private state: UpdateState = {
@@ -36,6 +45,7 @@ export class UpdateService {
 
   constructor() {
     if (!app.isPackaged) return
+    clearOrphanedMacShipIt()
     autoUpdater.autoDownload = false
     autoUpdater.autoInstallOnAppQuit = true
     autoUpdater.allowDowngrade = false
@@ -196,6 +206,15 @@ export class UpdateService {
       return
     }
     if (this.state.phase !== 'ready') return
+    // macOS: never hand off to ShipIt until native staging finished; otherwise
+    // launchd keeps restarting ShipIt without ShipItState.plist.
+    if (process.platform === 'darwin' && !this.nativeUpdateReady) {
+      this.patch({
+        phase: 'error',
+        message: 'Update is still preparing. Wait for Restart to enable, then try again.'
+      })
+      return
+    }
     try {
       // Tear down hide-on-close / tray keep-alive before Squirrel/NSIS quits.
       this.willInstall?.()
@@ -302,4 +321,30 @@ function compareSemver(a: string, b: string): number {
     if (d !== 0) return d
   }
   return 0
+}
+
+/**
+ * Squirrel.Mac registers a launchd job that restarts every ~2s on failure.
+ * If quitAndInstall was interrupted before writing ShipItState.plist, the job
+ * spins forever and can re-surface Gatekeeper prompts for the install target.
+ */
+export function clearOrphanedMacShipIt(): void {
+  if (process.platform !== 'darwin') return
+  const cacheDir = join(homedir(), 'Library/Caches/com.vav.app.ShipIt')
+  const statePath = join(cacheDir, 'ShipItState.plist')
+  if (existsSync(statePath)) return
+
+  try {
+    execFileSync('launchctl', ['bootout', `gui/${process.getuid?.() ?? 501}/com.vav.app.ShipIt`], {
+      stdio: 'ignore'
+    })
+  } catch {
+    // Job may not be loaded — fine.
+  }
+  try {
+    // Drop empty/broken cache so the next real update starts clean.
+    rmSync(cacheDir, { recursive: true, force: true })
+  } catch {
+    // ignore
+  }
 }
