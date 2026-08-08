@@ -27,6 +27,7 @@ run('change-review store', 'bun', [
   'tsconfig.node.json',
   'scripts/_smoke-release-inner.ts'
 ])
+run('shipit orphan cleanup', 'node', ['scripts/smoke-shipit-orphan.mjs'])
 run('electron updates', 'npx', ['electron', 'scripts/smoke-electron-updates.mjs'])
 run('app boot', 'node', ['scripts/smoke-app-boot.mjs'])
 run('ui e2e', 'node', ['scripts/smoke-ui-verify.mjs'])

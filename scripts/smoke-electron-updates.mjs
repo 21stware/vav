@@ -1,8 +1,12 @@
 /**
- * Electron-context smoke for the GitHub Releases update checker.
+ * Electron-context smoke for the GitHub Releases update checker + ShipIt guards.
  * Run: npx electron scripts/smoke-electron-updates.mjs
  */
 import { app, shell } from 'electron'
+import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { homedir } from 'node:os'
+import { join } from 'node:path'
+import { spawnSync } from 'node:child_process'
 
 const REPO = '21stware/vav'
 
@@ -113,6 +117,44 @@ app.whenReady().then(async () => {
     const checking = svc.patch({ phase: 'checking' })
     if (checking.phase !== 'checking') throw new Error('checking state')
     console.log('ok  about button can enter checking')
+
+    // Install guard: macOS must not quitAndInstall before native staging
+    const installGuard = (phase, nativeUpdateReady) => {
+      if (phase !== 'ready') return 'noop'
+      if (process.platform === 'darwin' && !nativeUpdateReady) return 'blocked'
+      return 'would-install'
+    }
+    if (installGuard('ready', false) !== (process.platform === 'darwin' ? 'blocked' : 'would-install')) {
+      throw new Error('install guard failed for unstaged ready')
+    }
+    if (installGuard('ready', true) !== 'would-install') {
+      throw new Error('install guard should allow staged ready')
+    }
+    console.log('ok  install() blocked until native Squirrel staging')
+
+    // Orphan ShipIt cleanup (same rules as clearOrphanedMacShipIt)
+    if (process.platform === 'darwin') {
+      const cacheDir = join(homedir(), 'Library/Caches/com.vav.app.ShipIt')
+      const statePath = join(cacheDir, 'ShipItState.plist')
+      const uid = process.getuid?.() ?? 501
+      const service = `gui/${uid}/com.vav.app.ShipIt`
+      const clear = () => {
+        if (existsSync(statePath)) return 'kept'
+        spawnSync('launchctl', ['bootout', service], { stdio: 'ignore' })
+        try {
+          rmSync(cacheDir, { recursive: true, force: true })
+        } catch {
+          /* ignore */
+        }
+        return 'cleared'
+      }
+      mkdirSync(cacheDir, { recursive: true })
+      writeFileSync(statePath, '<plist/>\n')
+      if (clear() !== 'kept') throw new Error('must keep valid ShipItState')
+      rmSync(statePath, { force: true })
+      if (clear() !== 'cleared') throw new Error('must clear orphan cache')
+      console.log('ok  ShipIt orphan cleanup rules')
+    }
 
     console.log('all electron update probes passed')
     app.exit(0)

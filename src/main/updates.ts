@@ -177,7 +177,16 @@ export class UpdateService {
           bytesPerSecond: null,
           message: null
         })
-        await this.waitForNativeUpdateReady()
+        const staged = await this.waitForNativeUpdateReady()
+        if (!staged || !this.nativeUpdateReady) {
+          return this.patch({
+            phase: 'error',
+            progress: 0,
+            bytesPerSecond: null,
+            message:
+              'Update download finished but macOS staging timed out. Try again, or install from the GitHub release DMG.'
+          })
+        }
       }
       return this.patch({
         phase: 'ready',
@@ -233,20 +242,21 @@ export class UpdateService {
     }
   }
 
-  private waitForNativeUpdateReady(timeoutMs = 180_000): Promise<void> {
-    if (this.nativeUpdateReady) return Promise.resolve()
+  /** @returns true when Squirrel.Mac emitted native update-downloaded. */
+  private waitForNativeUpdateReady(timeoutMs = 180_000): Promise<boolean> {
+    if (this.nativeUpdateReady) return Promise.resolve(true)
     return new Promise((resolve) => {
       const done = (): void => {
         clearTimeout(timer)
-        resolve()
+        resolve(true)
       }
       const timer = setTimeout(() => {
         const idx = this.nativeReadyWaiters.indexOf(done)
         if (idx >= 0) this.nativeReadyWaiters.splice(idx, 1)
         console.warn(
-          '[updates] timed out waiting for Squirrel.Mac update-downloaded; enabling Restart anyway'
+          '[updates] timed out waiting for Squirrel.Mac update-downloaded; not enabling Restart'
         )
-        resolve()
+        resolve(false)
       }, timeoutMs)
       this.nativeReadyWaiters.push(done)
     })
