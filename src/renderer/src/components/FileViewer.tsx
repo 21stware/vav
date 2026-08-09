@@ -12,7 +12,6 @@ import {
 import {
   ChevronDown,
   Clock,
-  MoreHorizontal,
   Plus,
   Save
 } from 'lucide-react'
@@ -537,6 +536,25 @@ export function FileViewer({
     info?.kind === 'pptx'
   const isHtmlKind = info?.kind === 'html'
   const isZip = info?.kind === 'zip'
+  /**
+   * Reading gutters are per-renderer, not a frame-wide inset.
+   *
+   * Prose/code want paper margins. Canvas renderers (diagram, sheet, media,
+   * office paper, archive tree) own their full box and supply their own insets —
+   * a shared frame padding shrank them and pushed centred content off-axis.
+   */
+  const bodyPad: 'text' | 'none' =
+    isDiagramCanvas ||
+    isCsv ||
+    isSqlite ||
+    isOfficeKind ||
+    isHtmlKind ||
+    isZip ||
+    info?.kind === 'image' ||
+    info?.kind === 'video' ||
+    info?.kind === 'binary'
+      ? 'none'
+      : 'text'
   const isBinaryUnsupported = info?.kind === 'binary'
   const isDirectoryKind = info?.kind === 'directory'
   const isHeic =
@@ -872,6 +890,9 @@ export function FileViewer({
   /**
    * Workspace = enclosed directory of the open file. Point the (collapsed) Files
    * tray at that root and select this file — do not expand the tray by default.
+   *
+   * Workspace View already owns a project root: never shrink it to the file's
+   * parent (that cleared the Files tree and looked like a flicker on every click).
    */
   const prepareFileWorkspace = async (
     conversationId: string,
@@ -879,6 +900,19 @@ export function FileViewer({
   ): Promise<void> => {
     const dir = dirname(path)
     const store = useSessionStore.getState()
+    const groupId = store.activeGroupId
+    const underWorkspaceView =
+      !!groupId &&
+      !groupId.startsWith('__') &&
+      (path === groupId ||
+        path.startsWith(`${groupId}/`) ||
+        path.startsWith(`${groupId}\\`))
+
+    if (underWorkspaceView) {
+      useWorkspaceStore.getState().selectPath(conversationId, path)
+      return
+    }
+
     const meta = store.conversations.find((c) => c.id === conversationId)
     // Always bind workdir for Enclosed dir chip; missing dirs surface a calm
     // empty state in FilesPanel (ENOENT → "dir not exist"), not a raw error.
@@ -1657,41 +1691,6 @@ export function FileViewer({
     />
   )
 
-  const moreActionsBtn = !embedded ? (
-    <Button
-      icon={<MoreHorizontal size={14} />}
-      variant="ghost"
-      size="sm"
-      className="titlebar-no-drag"
-      title={t('preview.moreActions')}
-      onClick={(event) => {
-        event.preventDefault()
-        event.stopPropagation()
-        const anchor = menuAnchor(event.currentTarget as HTMLElement)
-        const items: {
-          label: string
-          divider?: boolean
-          onSelect?: () => void
-        }[] = [
-          {
-            label: t('workspace.openInMainPanel'),
-            onSelect: () => openInMainPanel()
-          }
-        ]
-        if (assoc && !assoc.isVav) {
-          items.push({ label: '', divider: true })
-          items.push({
-            label: t('assoc.alwaysOpenWith', {
-              ext: assoc.extensions[0]?.replace(/^\./, '') ?? assoc.label
-            }),
-            onSelect: () => onSetAsDefault()
-          })
-        }
-        void showMenu(items, anchor)
-      }}
-    />
-  ) : null
-
   const fileHeader = (
       <header
         className={`file-viewer-header${embedded ? '' : ' titlebar-drag'}${shellLeading ? ' has-shell-leading' : ''}`}
@@ -1708,7 +1707,10 @@ export function FileViewer({
               {shellLeading}
             </div>
           ) : null}
-          <span className="file-viewer-name" title={info?.name ?? basename(filePath)}>
+          <span
+            className={`file-viewer-name${embedded ? '' : ' titlebar-no-drag'}`}
+            title={filePath}
+          >
             {info?.name ?? basename(filePath)}
           </span>
           <label
@@ -1815,8 +1817,6 @@ export function FileViewer({
               />
             </div>
           )}
-          {/* Standalone: more menu always exposes open-in-main (Save ▾ also has it). */}
-          {moreActionsBtn}
           <Button
             icon={<FileManagerIcon size={14} />}
             size="sm"
@@ -2003,7 +2003,9 @@ export function FileViewer({
                       // Single line for OS copy: "Key\tValue"
                       data-meta-line={`${row.key}\t${row.value}`}
                     >
-                      <span className="file-viewer-image-meta-key">{row.key}</span>
+                      <span className="file-viewer-image-meta-key" title={row.key}>
+                        {row.key}
+                      </span>
                       <span className="file-viewer-image-meta-val" title={row.value}>
                         {row.value}
                       </span>
@@ -2106,6 +2108,7 @@ export function FileViewer({
           )}
           {info && !info.error && info.kind === 'text' && isMindMap && (
             <MindMapView
+              key={filePath}
               path={filePath}
               text={displayText}
               selecting={selectable}
@@ -2120,6 +2123,7 @@ export function FileViewer({
           )}
           {info && !info.error && info.kind === 'text' && isMermaidFile && (
             <DiagramFileView
+              key={filePath}
               kind="mermaid"
               text={displayText}
               selecting={selectable}
@@ -2134,6 +2138,7 @@ export function FileViewer({
           )}
           {info && !info.error && info.kind === 'text' && isDotFile && (
             <DiagramFileView
+              key={filePath}
               kind="graphviz"
               text={displayText}
               selecting={selectable}
@@ -2148,6 +2153,7 @@ export function FileViewer({
           )}
           {info && !info.error && info.kind === 'text' && isDrawioFile && (
             <DrawioView
+              key={filePath}
               text={displayText}
               selecting={selectable}
               selectedIds={selectedIds}
@@ -2297,6 +2303,7 @@ export function FileViewer({
       <div className="file-preview-main">
         <div
           className={`file-viewer-body${selectable ? ' selecting pick-mode' : ''}`}
+          data-pad={bodyPad}
           onClickCapture={(event) => {
             // Markdown / office / HTML previews: never follow hyperlinks.
             suppressHyperlinkClick(event)

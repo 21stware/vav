@@ -47,6 +47,21 @@ export interface PtyChangedEvent {
 }
 
 /**
+ * What a terminal is doing, as the tab list reports it.
+ *
+ * `running` and `idle` are derived in main from stdout activity plus a
+ * foreground-child check; `exited` is terminal — the PTY is gone and the tab
+ * survives only as a tombstone until the user closes it.
+ */
+export type PtyActivityStatus = 'running' | 'idle' | 'exited'
+
+export interface PtyStatusEvent {
+  tabId: string
+  conversationId: string
+  status: PtyActivityStatus
+}
+
+/**
  * Snapshot of a live PTY — main is authoritative so detached + main windows
  * share the same tab ids / agent hosts instead of each spawning their own.
  */
@@ -57,6 +72,8 @@ export interface PtySessionMeta {
   agentId: string | null
   title: string
   createdAt: number
+  /** Live sessions only, so a freshly attached window paints the right dot. */
+  status: Exclude<PtyActivityStatus, 'exited'>
 }
 
 /** Options for `pty.create` — spawn a CLI agent directly into the PTY. */
@@ -386,6 +403,8 @@ export interface VavApi {
       needsUnlock: boolean
       encryptionAvailable: boolean
       hasKeyFile: boolean
+      /** Returning users skip the welcome/privacy tour. */
+      onboardingComplete: boolean
     }>
     unlock(): Promise<{ ok: true } | { ok: false; error: string }>
   }
@@ -648,6 +667,8 @@ export interface VavApi {
     onData(handler: (event: PtyDataEvent) => void): () => void
     onExit(handler: (tabId: string) => void): () => void
     onChanged(handler: (event: PtyChangedEvent) => void): () => void
+    /** Running / idle transitions, and the final `exited` before teardown. */
+    onStatus(handler: (event: PtyStatusEvent) => void): () => void
   }
 
   window: {
@@ -940,6 +961,7 @@ export const IPC = {
   ptyData: 'vav:pty:data',
   ptyExit: 'vav:pty:exit',
   ptyChanged: 'vav:pty:changed',
+  ptyStatus: 'vav:pty:status',
 
   windowSetTheme: 'vav:window:set-theme',
   windowGetAccentColor: 'vav:window:get-accent-color',

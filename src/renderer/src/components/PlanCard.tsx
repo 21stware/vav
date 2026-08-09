@@ -53,7 +53,9 @@ function PlanStepRow({ step, animate }: { step: PlanStep; animate: boolean }): R
       <span className="plan-step-icon" key={`${step.status}-${animate}`}>
         <StepIcon status={step.status} animate={animate} />
       </span>
-      <span className="plan-step-title">{step.title}</span>
+      <span className="plan-step-title" title={step.title}>
+        {step.title}
+      </span>
     </li>
   )
 }

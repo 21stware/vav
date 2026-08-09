@@ -159,6 +159,9 @@ export const zhCN = {
   'sidebar.menu.openDetached': '在独立窗口中打开',
   'sidebar.menu.pin': '置顶',
   'sidebar.menu.unpin': '取消置顶',
+  'sidebar.menu.pinWorkspace': '置顶工作区',
+  'sidebar.menu.unpinWorkspace': '取消置顶工作区',
+  'sidebar.section.pinned': '置顶',
   'sidebar.menu.archive': '归档',
   'sidebar.menu.unarchive': '取消归档',
   'sidebar.menu.rename': '重命名',
@@ -193,6 +196,7 @@ export const zhCN = {
   'sidebar.sourceFrom': '来自：{title}',
   'sidebar.temporaryWorkspace': 'Temporary Workspace',
   'sidebar.workspace': 'Workspace',
+  'sidebar.defaultWorkspace': '默认工作区',
   'sidebar.copySuffix': '{title} 的副本',
 
   // —— app chrome ——
@@ -351,6 +355,9 @@ export const zhCN = {
   'tools.closeTab': '关闭标签',
   'tools.closeRunning': '关闭将终止正在运行的命令',
   'tools.closeRunningBody': '{title} 中可能仍有命令在执行。关闭该标签会结束它的 shell 进程。',
+  'tools.status.running': '运行中',
+  'tools.status.idle': '空闲',
+  'tools.status.exited': '已退出',
 
   // —— files ——
   'files.noWorkdirTitle': '未设置工作目录',
@@ -360,6 +367,7 @@ export const zhCN = {
   'files.reveal': '在 {fileManager} 中显示',
   'files.copyPath': '复制路径',
   'files.open': '打开',
+  'files.insertToAgent': 'Insert information to agent',
   'files.delete': '删除…',
   'files.newSessionHere': '从此工作区新建会话',
   'files.newFile': '新建文件',
@@ -563,6 +571,9 @@ export const zhCN = {
   'workspace.resizeAgentPanel': '调整 Agent 面板宽度',
   'workspace.toggleFilePanel': '折叠/展开文件面板',
   'workspace.toggleAgentPanel': '折叠/展开 Agent 面板',
+  'workspace.resizePreviewPanel': '调整文件预览宽度',
+  'workspace.showPreview': '展开文件预览',
+  'workspace.hidePreview': '收起文件预览',
   'preview.readOnly': '只读',
   'preview.modeLabel': '预览模式',
   'preview.modeEditing': 'Edit',
@@ -655,6 +666,8 @@ export const zhCN = {
   'appearance.codeFontSample': 'Aa 0123',
   'appearance.codeFontMeta': '仅列出本机已安装字体',
   'appearance.reduceMotion': '减少动画',
+  'appearance.windowVibrancy': '系统毛玻璃',
+  'appearance.windowVibrancyHint': '侧边栏透出 macOS 桌面模糊材质。关闭后使用不透明背景。',
   'appearance.sendKey': '发送快捷键',
   'appearance.sendKey.enter': 'Enter',
   'appearance.sendKey.modEnter': '⌘↵',
@@ -1096,7 +1109,8 @@ export const zhCN = {
   'token.thisTurn': '本轮',
 
   // —— sidebar badge ——
-  'sidebar.badge.backgroundRunning': '后台运行'
+  'sidebar.badge.backgroundRunning': '后台运行',
+  'sidebar.badge.terminalRunning': '终端有命令在运行'
 } as const
 
 export type MessageKey = keyof typeof zhCN
@@ -1249,6 +1263,9 @@ export const en: Record<MessageKey, string> = {
   'sidebar.menu.openDetached': 'Open in Isolated Window',
   'sidebar.menu.pin': 'Pin',
   'sidebar.menu.unpin': 'Unpin',
+  'sidebar.menu.pinWorkspace': 'Pin Workspace',
+  'sidebar.menu.unpinWorkspace': 'Unpin Workspace',
+  'sidebar.section.pinned': 'Pinned',
   'sidebar.menu.archive': 'Archive',
   'sidebar.menu.unarchive': 'Unarchive',
   'sidebar.menu.rename': 'Rename',
@@ -1283,6 +1300,7 @@ export const en: Record<MessageKey, string> = {
   'sidebar.sourceFrom': 'From: {title}',
   'sidebar.temporaryWorkspace': 'Temporary Workspace',
   'sidebar.workspace': 'Workspace',
+  'sidebar.defaultWorkspace': 'Default workspace',
   'sidebar.copySuffix': 'Copy of {title}',
 
   'app.newSession': 'New session',
@@ -1438,6 +1456,9 @@ export const en: Record<MessageKey, string> = {
   'tools.closeRunning': 'Close will stop running commands',
   'tools.closeRunningBody':
     '{title} may still have commands running. Closing this tab ends its shell process.',
+  'tools.status.running': 'Running',
+  'tools.status.idle': 'Idle',
+  'tools.status.exited': 'Exited',
 
   'files.noWorkdirTitle': 'No working directory',
   'files.noWorkdirDesc': 'Click the path chip to choose a folder.',
@@ -1446,6 +1467,7 @@ export const en: Record<MessageKey, string> = {
   'files.reveal': 'Reveal in {fileManager}',
   'files.copyPath': 'Copy Path',
   'files.open': 'Open',
+  'files.insertToAgent': 'Insert information to agent',
   'files.delete': 'Delete…',
   'files.newSessionHere': 'New session in this workspace',
   'files.newFile': 'New file',
@@ -1653,6 +1675,9 @@ export const en: Record<MessageKey, string> = {
   'workspace.resizeAgentPanel': 'Resize agent panel',
   'workspace.toggleFilePanel': 'Toggle file panel',
   'workspace.toggleAgentPanel': 'Toggle agent panel',
+  'workspace.resizePreviewPanel': 'Resize file preview',
+  'workspace.showPreview': 'Show file preview',
+  'workspace.hidePreview': 'Hide file preview',
   'preview.readOnly': 'Read-only',
   'preview.modeLabel': 'Preview mode',
   'preview.modeEditing': 'Edit',
@@ -1749,6 +1774,9 @@ export const en: Record<MessageKey, string> = {
   'appearance.codeFontSample': 'Aa 0123',
   'appearance.codeFontMeta': 'Installed fonts only',
   'appearance.reduceMotion': 'Reduce motion',
+  'appearance.windowVibrancy': 'System vibrancy',
+  'appearance.windowVibrancyHint':
+    'Frosted glass behind the sidebar (macOS desktop blur). Turn off for a solid background.',
   'appearance.sendKey': 'Send shortcut',
   'appearance.sendKey.enter': 'Enter',
   'appearance.sendKey.modEnter': '⌘↵',
@@ -2172,7 +2200,8 @@ export const en: Record<MessageKey, string> = {
   'token.provider': 'Provider',
   'token.thisTurn': 'This turn',
 
-  'sidebar.badge.backgroundRunning': 'Running in background'
+  'sidebar.badge.backgroundRunning': 'Running in background',
+  'sidebar.badge.terminalRunning': 'A terminal command is running'
 }
 
 // Ensure catalogs stay in lockstep — warn only (never throw): a hard throw here

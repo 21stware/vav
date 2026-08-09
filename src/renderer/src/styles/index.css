@@ -72,6 +72,9 @@
      a title bar, so the buttons never land on a row. */
   --chrome-gutter: 44px;
 
+  /* Docked list column width (matches .sidebar). */
+  --sidebar-width: 232px;
+
   /* Motion. The built-in CSS easings are too weak to read as deliberate, so
      everything here uses these three curves and nothing hand-rolled. */
   --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
@@ -318,18 +321,11 @@ html[data-summoning] .tools-body {
 
 /* The OS setting is a gentler instruction than our own toggle: drop the
    movement, keep the opacity and colour changes that explain what happened. */
-/* Accessibility: solid material when the OS asks to reduce transparency. */
+/* Accessibility: solid sidebar when the OS asks to reduce transparency. */
 @media (prefers-reduced-transparency: reduce) {
-  .sidebar-column,
-  .app-shell .body-split > .sidebar:not(.floating),
-  .sidebar-float-panel {
-    backdrop-filter: none;
-    -webkit-backdrop-filter: none;
+  :root[data-platform='darwin'] .sidebar-column,
+  :root[data-platform='darwin'] .app-shell .body-split > .sidebar:not(.floating) {
     background: var(--bg-window);
-  }
-
-  .sidebar-float-panel {
-    background: var(--bg-content);
   }
 }
 
@@ -509,12 +505,9 @@ html[data-resizing='true'] .plan-overlay {
   -webkit-backdrop-filter: none;
 }
 
-/* Blur is expensive while the native frame is being dragged. */
+/* While resizing, main process pauses vibrancy; keep sidebar solid here too. */
 html[data-resizing='true'] .sidebar-column,
-html[data-resizing='true'] .app-shell .body-split > .sidebar:not(.floating),
-html[data-resizing='true'] .sidebar-float-panel {
-  backdrop-filter: none;
-  -webkit-backdrop-filter: none;
+html[data-resizing='true'] .app-shell .body-split > .sidebar:not(.floating) {
   background: var(--bg-window);
 }
 
@@ -553,24 +546,19 @@ html[data-resizing='true'] .banner.error {
   display: flex;
   flex-direction: column;
   flex: 0 0 auto;
+  width: var(--sidebar-width);
   min-width: 0;
   min-height: 0;
   align-self: stretch;
-  /* Frosted material over the window wash (accent veil + bg-window). */
-  background: color-mix(in srgb, var(--bg-window) 62%, transparent);
-  backdrop-filter: blur(22px) saturate(1.35);
-  -webkit-backdrop-filter: blur(22px) saturate(1.35);
+  /* Win/Linux: solid. macOS: clear so BrowserWindow vibrancy shows through. */
+  background: var(--bg-window);
   box-shadow: inset -1px 0 0 var(--border);
-}
-
-:root[data-theme='dark'] .sidebar-column {
-  /* Slightly denser so list text stays readable on charcoal. */
-  background: color-mix(in srgb, var(--bg-window) 72%, transparent);
 }
 
 .sidebar-column > .sidebar {
   flex: 1 1 auto;
   min-height: 0;
+  width: 100%;
 }
 
 /*
@@ -581,6 +569,36 @@ html[data-resizing='true'] .banner.error {
 .app-shell .body-split {
   padding: 0;
   gap: 0;
+}
+
+/*
+ * macOS system vibrancy (BrowserWindow vibrancy: under-window).
+ * Must beat index.html / theme fills — otherwise the glass never shows.
+ * Opaque detail/workspace sit on top of the clear shell.
+ * Settings → Appearance can set data-vibrancy=false for a solid sidebar.
+ */
+:root[data-platform='darwin'][data-vibrancy='true'] html,
+:root[data-platform='darwin'][data-vibrancy='true'] body,
+:root[data-platform='darwin'][data-vibrancy='true'] #root,
+:root[data-platform='darwin'][data-vibrancy='true'] .app-shell {
+  background: transparent !important;
+}
+
+:root[data-platform='darwin'][data-vibrancy='true'] .sidebar-column,
+:root[data-platform='darwin'][data-vibrancy='true'] .app-shell .body-split > .sidebar:not(.floating),
+:root[data-platform='darwin'][data-vibrancy='true'] .titlebar.sidebar-chrome {
+  background: transparent !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+:root[data-platform='darwin'][data-vibrancy='false'] html,
+:root[data-platform='darwin'][data-vibrancy='false'] body,
+:root[data-platform='darwin'][data-vibrancy='false'] #root,
+:root[data-platform='darwin'][data-vibrancy='false'] .app-shell,
+:root[data-platform='darwin'][data-vibrancy='false'] .sidebar-column,
+:root[data-platform='darwin'][data-vibrancy='false'] .app-shell .body-split > .sidebar:not(.floating) {
+  background: var(--bg-window) !important;
 }
 
 .app-shell .detail,
@@ -675,6 +693,12 @@ html[data-resizing='true'] .banner.error {
   flex: 1;
   min-height: 0;
   min-width: 0;
+}
+
+/* Drawer empty-state sits next to a live agent host — entrance animation
+   restarts look like a persistent flash when the column reflows. */
+.workspace-preview-empty .empty-state > * {
+  animation: none;
 }
 
 .workspace-preview-chrome {
@@ -1167,7 +1191,7 @@ kbd {
    ========================================================================== */
 
 .sidebar {
-  width: 232px;
+  width: var(--sidebar-width);
   min-width: 190px;
   max-width: 320px;
   flex: 0 0 auto;
@@ -1178,14 +1202,8 @@ kbd {
 
 /* Docked without .sidebar-column wrapper (no flush chrome): own the material. */
 .app-shell .body-split > .sidebar:not(.floating) {
-  background: color-mix(in srgb, var(--bg-window) 62%, transparent);
-  backdrop-filter: blur(22px) saturate(1.35);
-  -webkit-backdrop-filter: blur(22px) saturate(1.35);
+  background: var(--bg-window);
   box-shadow: inset -1px 0 0 var(--border);
-}
-
-:root[data-theme='dark'] .app-shell .body-split > .sidebar:not(.floating) {
-  background: color-mix(in srgb, var(--bg-window) 72%, transparent);
 }
 
 /* Narrow window: sidebar leaves the flex split and floats over the detail
@@ -1220,18 +1238,17 @@ kbd {
 
 .sidebar-float-panel {
   position: absolute;
-  top: 0;
-  left: 0;
-  bottom: 0;
+  /* Clear traffic lights / Win caption — search must not sit under window buttons. */
+  top: var(--chrome-gutter);
+  left: 8px;
+  bottom: 8px;
   width: min(280px, calc(100% - 40px));
   pointer-events: auto;
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  /* Glass over the detail column — stronger blur so content reads as “behind”. */
-  background: color-mix(in srgb, var(--bg-content) 66%, transparent);
-  backdrop-filter: blur(28px) saturate(1.45);
-  -webkit-backdrop-filter: blur(28px) saturate(1.45);
+  /* Raised sheet over the detail column (docked sidebar uses system vibrancy). */
+  background: color-mix(in srgb, var(--bg-content) 92%, transparent);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-sheet);
@@ -1245,7 +1262,7 @@ kbd {
 }
 
 :root[data-theme='dark'] .sidebar-float-panel {
-  background: color-mix(in srgb, var(--bg-content) 74%, transparent);
+  background: color-mix(in srgb, var(--bg-content) 94%, transparent);
 }
 
 @starting-style {
@@ -1344,8 +1361,8 @@ kbd {
   padding: 2px 4px 10px;
 }
 
-/* The header is the divider. Time buckets stay quiet captions; workspace /
-   source headers are compact rows with a chevron. */
+/* The header is the divider. Time buckets stay quiet captions; workspace
+   headers are compact rows: title · pin · count+chevron · add. */
 .conv-group-header {
   display: flex;
   align-items: center;
@@ -1367,22 +1384,29 @@ kbd {
 }
 
 .conv-group-header.interactive {
-  height: 30px;
-  margin: 6px 0 2px;
-  padding: 0 4px 0 2px;
+  height: 26px;
+  margin: 1px 0;
+  padding: 0 4px 0 6px;
   gap: 2px;
   cursor: default;
   border-radius: 7px;
 }
 
 .conv-group:first-child .conv-group-header.interactive {
-  margin-top: 2px;
+  margin-top: 0;
 }
 
 .conv-group-chevron {
   flex: 0 0 auto;
   width: 12px;
-  opacity: 0.7;
+  height: 12px;
+  opacity: 0.75;
+  display: block;
+}
+
+/* Sessions nest under their workspace label. */
+.conv-group.is-workspace .conv-row {
+  padding-left: 22px;
 }
 
 .conv-group-title {
@@ -1391,6 +1415,7 @@ kbd {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  line-height: 22px;
 }
 
 .conv-group-count {
@@ -1403,13 +1428,79 @@ kbd {
   font-weight: 400;
   line-height: 1;
   text-align: right;
-  color: var(--text-tertiary);
-  opacity: 0.75;
+  color: inherit;
+  opacity: 0.85;
   font-variant-numeric: tabular-nums;
 }
 
 .conv-group-divider {
-  height: 6px;
+  height: 2px;
+}
+
+/*
+ * 置顶 section — everything the user pinned, hoisted above the normal buckets.
+ * A rule (not a filled panel) separates it: the rows inside are ordinary
+ * workspace groups and conv rows, and a tinted background would fight their
+ * own selection states.
+ */
+.conv-pinned-section {
+  padding-bottom: 4px;
+  margin-bottom: 2px;
+  border-bottom: 1px solid var(--border);
+}
+
+.conv-pinned-section .conv-group:first-of-type .conv-group-header.interactive {
+  margin-top: 0;
+}
+
+/* Stacked collapsed workspaces — no extra air between labels. */
+.conv-pinned-section .conv-group-divider {
+  height: 0;
+}
+
+.conv-section-header {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  height: 24px;
+  padding: 0 6px 0 2px;
+  border: 0;
+  background: transparent;
+  color: var(--text-tertiary);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  text-align: left;
+  cursor: default;
+  user-select: none;
+}
+
+.conv-section-header:hover {
+  color: var(--text-secondary);
+}
+
+.conv-section-icon {
+  flex: 0 0 auto;
+  opacity: 0.8;
+}
+
+.conv-section-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.conv-section-count {
+  flex: 0 0 auto;
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 1;
+  opacity: 0.75;
+  font-variant-numeric: tabular-nums;
 }
 
 .conv-row {
@@ -1450,6 +1541,42 @@ kbd {
 
 .conv-row.multi {
   background: var(--bg-selected);
+  color: var(--text);
+}
+
+/*
+ * Vibrancy sidebar: solid --bg-selected reads as a cardboard chip on glass.
+ * Use a light translucent wash (Finder / Mail style) so selection sits in the
+ * material instead of covering it.
+ */
+:root[data-platform='darwin'][data-vibrancy='true'] .conv-row.selected,
+:root[data-platform='darwin'][data-vibrancy='true'] .conv-row.multi {
+  background: color-mix(in srgb, var(--text) 11%, transparent);
+}
+
+:root[data-theme='dark'][data-platform='darwin'][data-vibrancy='true'] .conv-row.selected,
+:root[data-theme='dark'][data-platform='darwin'][data-vibrancy='true'] .conv-row.multi {
+  background: color-mix(in srgb, #fff 12%, transparent);
+}
+
+:root[data-platform='darwin'][data-vibrancy='true'] .sidebar-list .conv-row.multi + .conv-row.multi {
+  box-shadow: 0 -1px 0 color-mix(in srgb, var(--text) 11%, transparent);
+}
+
+:root[data-theme='dark'][data-platform='darwin'][data-vibrancy='true']
+  .sidebar-list
+  .conv-row.multi
+  + .conv-row.multi {
+  box-shadow: 0 -1px 0 color-mix(in srgb, #fff 12%, transparent);
+}
+
+:root[data-platform='darwin'][data-vibrancy='true'] .conv-group-header.selected {
+  background: color-mix(in srgb, var(--text) 10%, transparent);
+  color: var(--text);
+}
+
+:root[data-theme='dark'][data-platform='darwin'][data-vibrancy='true'] .conv-group-header.selected {
+  background: color-mix(in srgb, #fff 11%, transparent);
   color: var(--text);
 }
 
@@ -1543,6 +1670,19 @@ kbd {
 
 .conv-badge.awaiting {
   background: var(--warning);
+}
+
+/* A terminal in this session has a live command (tools tray may be collapsed). */
+.conv-shell-badge {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  color: #34c759;
+}
+
+.conv-row.selected .conv-shell-badge,
+.conv-row.multi .conv-shell-badge {
+  color: currentColor;
 }
 
 @keyframes pulse {
@@ -2227,14 +2367,22 @@ kbd {
   cursor: grabbing;
 }
 
+/*
+ * Pan/zoom transform target. Breathing room comes from the fit-to-view inset
+ * (screen px), not padding here — padding scales with zoom and would make the
+ * centring math drift. `will-change` is toggled from JS during pan only: left
+ * on permanently it froze the raster scale and zooming looked blurry.
+ */
 .canvas-pan-wrapper {
   position: absolute;
   left: 0;
   top: 0;
-  /* Small inset so the canvas has breathing room from the viewport edge. */
-  padding: 24px;
   transform-origin: 0 0;
-  will-change: transform;
+}
+
+/* Hidden for the single frame before the first fit lands (no top-left flash). */
+.canvas-pan-wrapper[data-fitted='false'] {
+  opacity: 0;
 }
 
 .mindmap-canvas,
@@ -2301,19 +2449,18 @@ kbd {
   box-sizing: border-box;
 }
 
+/* Host box is exactly the diagram box — annotate() bakes px width/height from
+   the viewBox, which is what makes fit-to-view and centring exact. */
 .diagram-file-host {
-  display: inline-block;
+  display: block;
   flex: 0 0 auto;
-  min-width: min(100%, 240px);
-  min-height: 80px;
-  vertical-align: top;
+  width: max-content;
   background: transparent;
 }
 
 .diagram-file-host svg {
   display: block;
   max-width: none;
-  height: auto;
   background: transparent !important;
   overflow: visible;
 }
@@ -2323,69 +2470,51 @@ kbd {
   cursor: default;
 }
 
-/* Dedicated selection overlay — isolated rect, never leaks onto edges. */
-.diagram-file-host .diagram-select-overlay {
-  pointer-events: none;
-}
-
-.diagram-file-host .diagram-select-rect {
-  fill: none;
-  stroke: transparent;
-  stroke-width: 0;
-  pointer-events: none;
-}
-
-.diagram-file-view.is-selecting .diagram-select-rect.on {
-  stroke: var(--accent);
-  stroke-width: 2;
-  fill: color-mix(in srgb, var(--accent) 12%, transparent);
-}
-
 .diagram-file-host .diagram-pick-target text,
-.diagram-file-host .diagram-pick-target tspan {
+.diagram-file-host .diagram-pick-target tspan,
+.diagram-file-host .diagram-pick-target foreignObject {
   pointer-events: none;
 }
 
 /*
- * Hover / selected on SVG node groups — outline via shape stroke
- * (SVG <g> does not paint CSS ::after reliably).
+ * Hover / selected chrome lives on a synthetic rect injected *inside* each node
+ * group (see annotateDiagramPickTargets). A `<g>` cannot paint a CSS ::after,
+ * and styling the node's own shapes bled the accent stroke onto the edges
+ * attached to it.
+ *
+ * `!important` is required: Mermaid injects scoped rules like
+ * `.section-root rect, .section-root path { fill: … }` into the SVG. Those beat
+ * a presentation-attribute `fill="none"` and painted our outline on top of the
+ * label — mindmap text looked "missing". Mermaid never uses !important, so we win.
  */
-.diagram-file-view.is-selecting
-  .diagram-pick-target:hover:not(.selected)
-  > :is(ellipse, circle, polygon, rect, path.basic, path[stroke]) {
-  stroke: var(--accent) !important;
-  stroke-width: 2px !important;
-  stroke-dasharray: 5 3 !important;
+.diagram-file-host .diagram-hit-rect {
+  fill: transparent !important;
+  stroke: none !important;
+  pointer-events: all !important;
 }
 
-.diagram-file-view.is-selecting .diagram-pick-target.selected > :is(ellipse, circle, polygon, rect),
+.diagram-file-host .diagram-select-rect {
+  fill: none !important;
+  stroke: transparent !important;
+  stroke-width: 0 !important;
+  pointer-events: none !important;
+  transition: none;
+}
+
 .diagram-file-view.is-selecting
-  .diagram-pick-target.selected
-  > path.basic {
+  .diagram-pick-target:hover:not(.selected)
+  > .diagram-select-rect {
   stroke: var(--accent) !important;
-  stroke-width: 2.5px !important;
+  stroke-width: 1.5 !important;
+  stroke-dasharray: 5 3 !important;
+  fill: color-mix(in srgb, var(--accent) 6%, transparent) !important;
+}
+
+.diagram-file-view.is-selecting .diagram-pick-target.selected > .diagram-select-rect {
+  stroke: var(--accent) !important;
+  stroke-width: 2 !important;
   stroke-dasharray: none !important;
-}
-
-/* Graphviz sometimes nests shape one level deeper */
-.diagram-file-view.is-selecting
-  .diagram-pick-target:hover:not(.selected)
-  > g
-  > :is(ellipse, circle, polygon, rect),
-.diagram-file-view.is-selecting
-  .diagram-pick-target.selected
-  > g
-  > :is(ellipse, circle, polygon, rect) {
-  stroke: var(--accent) !important;
-  stroke-width: 2.5px !important;
-}
-
-.diagram-file-view.is-selecting
-  .diagram-pick-target:hover:not(.selected)
-  > g
-  > :is(ellipse, circle, polygon, rect) {
-  stroke-dasharray: 5 3 !important;
-  stroke-width: 2px !important;
+  fill: color-mix(in srgb, var(--accent) 12%, transparent) !important;
 }
 
 .diagram-file-error {
@@ -3055,12 +3184,28 @@ mark {
   -webkit-font-smoothing: antialiased;
 }
 
-/* Collapse outer edges so a single short reply is not padded by margins. */
-.markdown > *:first-child {
+/*
+ * Collapse only the document's outer edges. Streaming mounts sealed/tail as
+ * `.markdown-chunk` children inside one `.markdown` — zeroing every chunk's
+ * first/last child was what made heading tops and paragraph gaps jump when
+ * the turn finished (single-root MessageRow).
+ */
+.markdown > *:first-child:not(.markdown-chunk) {
   margin-top: 0 !important;
 }
-.markdown > *:last-child {
+.markdown > *:last-child:not(.markdown-chunk) {
   margin-bottom: 0 !important;
+}
+.markdown > .markdown-chunk:first-child > *:first-child {
+  margin-top: 0 !important;
+}
+.markdown > .markdown-chunk:last-child > *:last-child {
+  margin-bottom: 0 !important;
+}
+
+/* Chunk host is layout-transparent; blocks stack as if direct children. */
+.markdown-chunk {
+  display: contents;
 }
 
 /* --- Body blocks: margin-bottom only (stacking, not double vertical pad) --- */
@@ -3069,7 +3214,9 @@ mark {
   line-height: var(--md-lh);
 }
 
-.markdown p:last-child {
+/* Trailing paragraph of the whole document only — not every sealed chunk. */
+.markdown > p:last-child,
+.markdown > .markdown-chunk:last-child > p:last-child {
   margin-bottom: 0;
 }
 
@@ -3147,10 +3294,23 @@ mark {
 
 /* AFTER .markdown pre — strip INNER frame only; keep OUTER .md-block shell. */
 .markdown .md-block > pre,
-.markdown .md-block pre,
-.markdown .md-block > .table-scroll {
+.markdown .md-block pre {
   margin: 0;
   padding: 12px 14px;
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+/*
+ * Tables share the outer .md-block card, but must NOT inherit code padding —
+ * inset + zebra on <tr> reads as floating rounded strips that never reach the
+ * card edges (the bug behind "broken" chat tables).
+ */
+.markdown .md-block > .table-scroll {
+  margin: 0;
+  padding: 0;
   border: 0 !important;
   border-radius: 0 !important;
   background: transparent !important;
@@ -3170,7 +3330,6 @@ mark {
 
 .markdown pre code {
   white-space: pre;
-  font-size: 0.9em;
   line-height: inherit;
 }
 
@@ -3182,7 +3341,6 @@ mark {
 .markdown :not(pre) > code {
   padding: 0.1em 0.35em;
   border-radius: 5px;
-  font-size: 0.9em;
   background: color-mix(in srgb, var(--bg-raised) 80%, var(--border));
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--border) 65%, transparent);
   color: var(--text);
@@ -3395,20 +3553,27 @@ mark {
   white-space: nowrap;
 }
 
-.markdown tbody tr:nth-child(even) {
+/* Paint on cells — <tr> backgrounds are flaky with collapse in Chromium. */
+.markdown tbody tr:nth-child(even) td {
   background: color-mix(in srgb, var(--bg-hover) 70%, transparent);
 }
 
-.markdown tbody tr:hover {
+.markdown tbody tr:hover td {
   background: color-mix(in srgb, var(--bg-hover) 100%, transparent);
 }
 
+/* Long stream tails skip the parser; keep body metrics so leading matches. */
 .plain-tail {
   margin: 0;
-  font-family: var(--font-code);
-  font-size: var(--code-size);
+  padding: 0;
+  font-family: var(--font-ui);
+  font-size: 14px;
+  font-weight: 400;
+  line-height: var(--md-lh, 1.65);
+  color: var(--text);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+  background: transparent;
 }
 
 .reasoning {
@@ -4945,6 +5110,14 @@ mark {
   background: var(--bg-selected);
 }
 
+:root[data-platform='darwin'][data-vibrancy='true'] .file-session-item.is-active {
+  background: color-mix(in srgb, var(--text) 11%, transparent);
+}
+
+:root[data-theme='dark'][data-platform='darwin'][data-vibrancy='true'] .file-session-item.is-active {
+  background: color-mix(in srgb, #fff 12%, transparent);
+}
+
 .file-session-item-title,
 .file-session-item-sub {
   /* Text must not take the first click (I-beam / partial select). */
@@ -5768,7 +5941,7 @@ mark {
  * path/New strip sits flush under the terminal and reads too tight.
  */
 .dock.dock-tools-only {
-  padding-top: 12px;
+  padding-top: 6px;
 }
 
 .tools-panel {
@@ -5900,34 +6073,58 @@ mark {
   opacity: 0.55;
 }
 
-/* Height is driven by the inline panelHeight, so this must not flex-grow.
-   Sunken well only when open — floor inset via bottom margin (not a panel pad
-   that peeks as a gray strip under a collapsed header). */
+/*
+ * Tools tray open/close — animate grid-template-rows (0fr → 1fr), NOT height.
+ *
+ * Transitioning `height` on a flex descendant lets Chromium finish the tween
+ * and only then re-resolve the parent flex (.dock / .detail): the well looks
+ * like it jumps taller after the animation. Interpolating fr tracks layout
+ * every frame, so ancestors grow with the motion instead of snapping after.
+ */
 .tools-body {
   position: relative;
   z-index: 1;
   flex: 0 0 auto;
   min-height: 0;
-  overflow: hidden;
-  /* Side inset + a bit more bottom so the well sits above the window edge. */
-  margin: 0 12px 10px;
-  border-radius: var(--radius);
-  background: var(--bg-content);
-  box-shadow: inset 0 0 0 1px var(--border);
-  transition:
-    height var(--dur-sheet) var(--ease-drawer),
-    margin var(--dur-sheet) var(--ease-drawer),
-    box-shadow var(--dur-sheet) ease;
+  display: grid;
+  grid-template-rows: 1fr;
+  /* Side inset + floor gap — flipped instantly with data-collapsed (not tweened). */
+  margin: 0 12px 4px;
+  background: transparent;
+  transition: grid-template-rows var(--dur-sheet) var(--ease-drawer);
 }
 
 .tools-body[data-collapsed='true'] {
+  grid-template-rows: 0fr;
   margin: 0;
-  box-shadow: none;
-  background: transparent;
 }
 
-/* Drag-resize must track the pointer 1:1 — no lag from the collapse transition. */
-.tools-body[data-resizing='true'] {
+.tools-body-clip {
+  min-height: 0;
+  overflow: hidden;
+}
+
+.tools-body-well {
+  position: relative;
+  width: 100%;
+  border-radius: var(--radius);
+  background: var(--bg-content);
+  box-shadow: inset 0 0 0 1px var(--border);
+  overflow: hidden;
+}
+
+.tools-body[data-collapsed='true'] .tools-body-well {
+  background: transparent;
+  box-shadow: none;
+}
+
+/* Drag-resize / session restore: no row tween. */
+.tools-body[data-resizing='true'],
+.tools-body[data-instant='true'] {
+  transition: none;
+}
+
+.tools-body[data-instant='true'] .tools-pane {
   transition: none;
 }
 
@@ -6322,7 +6519,6 @@ mark {
 .file-viewer-body:has(> .file-viewer-image-scroll) {
   display: flex;
   flex-direction: column;
-  padding: 0;
   /* Sole scrollport for meta + tall image. */
   overflow: auto;
   overscroll-behavior: contain;
@@ -6626,7 +6822,6 @@ mark {
 .file-viewer-body:has(.office-native-root) {
   display: flex;
   flex-direction: column;
-  padding: 0;
   overflow: hidden;
   /* Host is not the scrollport — inner .docx-body-host / stages scroll. */
   cursor: default;
@@ -6798,9 +6993,10 @@ mark {
   flex-direction: column;
   align-items: center;
   gap: 20px;
-  /* Scale set by fitDocxToHost; origin top-center keeps pages centered. */
+  /* Scale set by fitDocxToHost; origin top-center keeps pages centered.
+     No will-change: the scale is static, and the compositor hint pinned the
+     raster to the pre-scale resolution — every glyph came out soft. */
   transform-origin: top center;
-  will-change: transform;
 }
 
 .docx-body-host section.docx-native,
@@ -7070,7 +7266,6 @@ mark {
 .file-viewer-body:has(.structured-doc) {
   display: flex;
   flex-direction: column;
-  padding: 0;
   overflow: hidden;
 }
 
@@ -7859,7 +8054,6 @@ mark {
 .file-viewer-body:has(.csv-sheet-root) {
   display: flex;
   flex-direction: column;
-  padding: 0;
   overflow: hidden;
 }
 
@@ -7867,7 +8061,6 @@ mark {
 .file-viewer-body:has(.sqlite-root) {
   display: flex;
   flex-direction: column;
-  padding: 0;
   overflow: hidden;
 }
 
@@ -8046,8 +8239,10 @@ mark {
 }
 
 /* Standalone preview: filename is part of the window drag strip. */
+/* Keep the name no-drag so the native title tooltip can show the full path.
+   Empty header chrome / spacer remain the window drag region. */
 .file-preview-shell:not(.embedded) .file-viewer-name {
-  -webkit-app-region: drag;
+  -webkit-app-region: no-drag;
   user-select: none;
   cursor: default;
 }
@@ -8366,6 +8561,51 @@ mark {
 
 .workspace-view-agent.is-collapsed {
   border-left: 0;
+}
+
+/*
+ * Workspace view swaps the columns: the agent is the surface you land on and
+ * the file preview is a right drawer, shut until asked for. File-session view
+ * reuses these class names with the original arrangement, so every rule below
+ * is scoped to the modifier.
+ */
+.workspace-view.preview-right > .workspace-view-agent {
+  flex: 1 1 auto;
+  border-left: 0;
+  transition: none;
+}
+
+.workspace-view.preview-right > .workspace-view-preview {
+  flex: 0 0 auto;
+  min-width: 0;
+  border-left: 1px solid var(--border);
+  transition: width var(--dur-sheet) var(--ease-drawer);
+}
+
+.workspace-view.preview-right > .workspace-view-preview.is-collapsed {
+  border-left: 0;
+  /* Explicit width:0 can still lose to flex min-content without these. */
+  overflow: hidden;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.workspace-view.preview-right.is-col-resizing > .workspace-view-preview {
+  transition: none !important;
+}
+
+.workspace-view-preview-inner {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  flex: 0 0 auto;
+}
+
+.workspace-view-preview-inner.is-collapsed {
+  pointer-events: none;
 }
 
 /* Edit / Read — same pattern as sidebar “group by workspace” select. */
@@ -8972,54 +9212,6 @@ mark {
   box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 35%, transparent);
 }
 
-/* Session switcher only — same height as sidebar chrome + file header. */
-.workspace-view-agent-head {
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  gap: 0;
-  height: var(--toolbar-height);
-  min-height: var(--toolbar-height);
-  padding: 0 10px;
-  box-sizing: border-box;
-  border-bottom: 1px solid var(--border);
-  flex: 0 0 auto;
-}
-
-.workspace-view-agent-head-row {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-}
-
-.workspace-view-agent-session {
-  width: 100%;
-}
-
-.workspace-view-agent-label {
-  font-size: 12px;
-  color: var(--text-secondary);
-}
-
-.workspace-view-agent-focused {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  min-width: 0;
-  flex: 1;
-}
-
-.workspace-view-agent-focused-title {
-  min-width: 0;
-  font-size: 12px;
-  font-weight: 600;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .workspace-history-anchor {
   display: inline-flex;
 }
@@ -9219,24 +9411,6 @@ mark {
   white-space: nowrap;
 }
 
-/* Session switcher (native select) in the Agent head — grows, truncates cleanly. */
-.workspace-session-select {
-  flex: 1 1 auto;
-  min-width: 0;
-  max-width: 100%;
-}
-
-.workspace-session-select .preview-mode-control {
-  width: 100%;
-}
-
-.workspace-session-select-field,
-.text-field.workspace-session-select-field {
-  width: 100%;
-  max-width: 100%;
-  field-sizing: fixed;
-}
-
 .preview-file-session-select {
   flex: 1 1 auto;
   min-width: 0;
@@ -9327,26 +9501,12 @@ mark {
   color: var(--accent-text);
 }
 
-.conv-group-header .conv-group-chevron-hit {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 14px;
-  flex: 0 0 auto;
-  border: 0;
-  background: transparent;
-  color: inherit;
-  padding: 0;
-  cursor: default;
-}
-
 .conv-group-header .conv-group-title-hit {
   display: flex;
   align-items: center;
-  gap: 6px;
   flex: 1;
   min-width: 0;
-  height: 100%;
+  height: 22px;
   border: 0;
   background: transparent;
   color: inherit;
@@ -9360,21 +9520,29 @@ mark {
   color: var(--text-primary);
 }
 
+/* Shared 22×22 chrome so title / pin / count+chevron / add share one baseline. */
+.conv-group-header .conv-group-pin-hit,
+.conv-group-header .conv-group-collapse-hit,
 .conv-group-header .conv-group-add-hit {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 22px;
+  box-sizing: border-box;
   height: 22px;
   flex: 0 0 auto;
-  margin-left: 2px;
+  margin: 0;
   border: 0;
   border-radius: 6px;
   background: transparent;
   color: inherit;
-  opacity: 0.55;
   padding: 0;
   cursor: default;
+  line-height: 1;
+}
+
+.conv-group-header .conv-group-add-hit {
+  width: 22px;
+  opacity: 0.55;
 }
 
 .conv-group-header .conv-group-add-hit:hover {
@@ -9386,6 +9554,112 @@ mark {
 .conv-group-header.selected .conv-group-add-hit:hover {
   background: color-mix(in srgb, var(--accent-text) 12%, transparent);
   color: var(--accent-text);
+}
+
+/* Count + chevron — one expand/collapse control. */
+.conv-group-header .conv-group-collapse-hit {
+  gap: 3px;
+  min-width: 22px;
+  padding: 0 5px;
+  opacity: 0.65;
+}
+
+.conv-group-header .conv-group-collapse-hit:hover {
+  opacity: 1;
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.conv-group-header.selected .conv-group-collapse-hit:hover {
+  background: color-mix(in srgb, var(--accent-text) 12%, transparent);
+  color: var(--accent-text);
+}
+
+.conv-group-header .conv-group-collapse-hit .conv-group-count {
+  opacity: 1;
+}
+
+/*
+ * Pin affordances. A conv row only reserves the slot once pinned — every row
+ * paying 20px for a button you see on hover would eat the title. Group headers
+ * keep it in flow like the sibling add button; their labels are short.
+ */
+.conv-group-header .conv-group-pin-hit {
+  width: 22px;
+  opacity: 0;
+}
+
+.conv-pin-hit {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  flex: 0 0 auto;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: inherit;
+  opacity: 0;
+  padding: 0;
+  cursor: default;
+}
+
+.conv-group-header:hover .conv-group-pin-hit,
+.conv-row:hover .conv-pin-hit {
+  opacity: 0.55;
+}
+
+/*
+ * Same glyph for workspace + session:
+ * unpinned = tilted outline, pinned = upright highlighted outline (never filled).
+ */
+.conv-group-pin-hit svg,
+.conv-pin-hit svg {
+  transform: rotate(45deg);
+  fill: none;
+}
+
+.conv-group-header .conv-group-pin-hit.pinned,
+.conv-pin-hit.pinned {
+  opacity: 1;
+  color: var(--accent-text);
+}
+
+.conv-group-header .conv-group-pin-hit.pinned svg,
+.conv-pin-hit.pinned svg {
+  transform: none;
+  fill: none;
+}
+
+.conv-group-header .conv-group-pin-hit:hover,
+.conv-pin-hit:hover {
+  opacity: 1;
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.conv-group-header .conv-group-pin-hit.pinned:hover,
+.conv-pin-hit.pinned:hover {
+  color: var(--accent-text);
+}
+
+.conv-row.selected .conv-pin-hit:hover,
+.conv-row.multi .conv-pin-hit:hover {
+  background: color-mix(in srgb, var(--accent-text) 12%, transparent);
+  color: inherit;
+}
+
+.conv-pin-hit {
+  margin-right: -2px;
+}
+
+.conv-pin-hit:not(.pinned) {
+  display: none;
+}
+
+.conv-row:hover .conv-pin-hit {
+  display: inline-flex;
 }
 
 .file-viewer-header > .spacer {
@@ -9737,11 +10011,11 @@ mark {
   border-bottom-color: color-mix(in srgb, var(--border) 90%, var(--accent));
 }
 
-.preview-markdown tbody tr:nth-child(even) {
+.preview-markdown tbody tr:nth-child(even) td {
   background: color-mix(in srgb, var(--bg-hover) 45%, transparent);
 }
 
-.preview-markdown tbody tr:hover {
+.preview-markdown tbody tr:hover td {
   background: color-mix(in srgb, var(--accent) 6%, var(--bg-hover));
 }
 
@@ -9813,25 +10087,34 @@ mark {
   border-radius: var(--radius);
 }
 
+/*
+ * The preview frame is full-bleed. Reading gutters are the *renderer's* call —
+ * prose and code want paper margins, a diagram/sheet/image canvas must own its
+ * whole box (a shared frame inset shrank every canvas and threw off centring).
+ * FileViewer sets data-pad from the renderer it mounted.
+ */
 .file-viewer-body {
   flex: 1;
   min-height: 0;
   overflow: auto;
+  padding: 0;
+}
+
+.file-viewer-body[data-pad='text'] {
   padding: 18px 24px 28px;
 }
 
-/* Markdown paper margins — generous reading gutters. */
+/* Markdown paper: same padding as every other preview — the generous gutters
+   read as wasted space, and 6vw tracked the window, not a narrow panel. */
 .file-viewer-body:has(> .markdown.preview-markdown),
 .file-viewer-body:has(.preview-markdown),
 .file-viewer-body:has(> .preview-document) {
-  padding: 40px clamp(24px, 6vw, 64px) 64px;
   background:
     radial-gradient(120% 60% at 50% -10%, color-mix(in srgb, var(--accent) 4%, transparent), transparent 55%),
     var(--bg-content);
 }
 
 .file-viewer-body:has(.file-viewer-pdf) {
-  padding: 0;
   overflow: hidden;
 }
 
@@ -10194,6 +10477,10 @@ mark {
    otherwise shows as a seam against the warm terminal background. */
 .terminal-stack .xterm-viewport {
   background-color: transparent;
+  /* Keep the scrollbar gutter reserved so FitAddon doesn't oscillate
+     cols by ±1 as the bar appears/disappears (that SIGWINCH-flashes TUIs
+     and the neighbouring Files / preview empty states). */
+  scrollbar-gutter: stable;
 }
 
 .terminal-hint {
@@ -10278,6 +10565,14 @@ mark {
   flex: 0 0 auto;
   /* Do not position:relative — SessionHistoryPopover is a sibling under
      .agent-mode-chrome so it can span the full agent panel width. */
+}
+
+/* Workspace: preview drawer toggle after search. */
+.agent-mode-chrome-trail {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  flex: 0 0 auto;
 }
 
 /* History under the unified file-session chrome (full row width). */
@@ -10493,12 +10788,16 @@ mark {
   background: transparent;
 }
 
-/* Under the session head — compact, not a second toolbar-height row. */
+/*
+ * Workspace agent chrome is the only top row (session chrome fused in) —
+ * match the main toolbar height, not a compact secondary strip.
+ */
 .workspace-view-agent .terminal-host-chrome,
 .workspace-floating-agent-body .terminal-host-chrome {
-  height: auto;
-  min-height: 0;
-  padding: 4px 8px;
+  height: var(--toolbar-height);
+  min-height: var(--toolbar-height);
+  padding: 0 10px;
+  box-sizing: border-box;
   border-bottom: 1px solid var(--border);
   background: transparent;
 }
@@ -10765,6 +11064,25 @@ mark {
   /* Color-only — opacity pulses read as chip-row jitter next to Workspace. */
 }
 
+/* Plain shell tabs: same idle-gray / running-green vocabulary as the bot icon. */
+.terminal-tab-icon {
+  color: var(--text-tertiary);
+  flex-shrink: 0;
+}
+
+.terminal-tab-icon.is-running {
+  color: #34c759;
+}
+
+.terminal-tab-icon.is-exited {
+  color: var(--text-tertiary);
+}
+
+/* Process gone, pane kept until dismissed — readable, clearly not live. */
+.chip.muted {
+  opacity: 0.55;
+}
+
 .agent-mode-picker {
   font-weight: 560;
 }
@@ -10948,9 +11266,9 @@ mark {
   }
 }
 
-/* Floor air under the tools tray (was smaller than the gap above). */
+/* Floor air under the tools tray. */
 .dock > .tools-panel {
-  padding-bottom: 6px;
+  padding-bottom: 2px;
   width: 100%;
   align-self: stretch;
 }
@@ -11317,20 +11635,16 @@ mark {
   background: var(--bg-hover);
 }
 
-/* Committed: trash appears on row hover only */
+/* Always visible — empty picks blur out of edit mode and still need a clear dismiss. */
 .comment-card-trash {
-  opacity: 0;
-  pointer-events: none;
+  opacity: 0.7;
+  pointer-events: auto;
   color: var(--danger);
 }
 
-.comment-card.is-committed:hover .comment-card-trash,
+.comment-card-trash:hover,
 .comment-card-trash:focus-visible {
   opacity: 1;
-  pointer-events: auto;
-}
-
-.comment-card-trash:hover {
   background: color-mix(in srgb, var(--danger) 12%, transparent);
 }
 

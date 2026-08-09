@@ -11,16 +11,19 @@ type Step = 'welcome' | 'privacy' | 'authorize'
 const STEPS: Step[] = ['welcome', 'privacy', 'authorize']
 
 /**
- * Full-screen Keychain gate (macOS). Flow is fixed; visuals match the rest of
- * the product — quiet paper surface, brand mark, no marketing chrome.
+ * Full-screen Keychain gate (macOS). First launch walks welcome → privacy →
+ * authorize. Returning users who fail a silent unlock only see authorize.
  */
 export function KeychainOnboarding({
-  onUnlocked
+  onUnlocked,
+  authorizeOnly = false
 }: {
   onUnlocked: () => void | Promise<void>
+  /** Skip welcome/privacy — used after the tour has already been completed. */
+  authorizeOnly?: boolean
 }): React.JSX.Element {
   const t = useT()
-  const [step, setStep] = useState<Step>('welcome')
+  const [step, setStep] = useState<Step>(authorizeOnly ? 'authorize' : 'welcome')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [entered, setEntered] = useState(false)
@@ -63,16 +66,17 @@ export function KeychainOnboarding({
         if (step === 'welcome') setStep('privacy')
         else if (step === 'privacy') setStep('authorize')
         else void authorize()
-      } else if (e.key === 'Escape') {
+      } else if (e.key === 'Escape' && !authorizeOnly) {
         if (step === 'privacy') setStep('welcome')
         else if (step === 'authorize') setStep('privacy')
       }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [step, busy, authorize])
+  }, [step, busy, authorize, authorizeOnly])
 
-  const stepIndex = STEPS.indexOf(step)
+  const visibleSteps = authorizeOnly ? (['authorize'] as Step[]) : STEPS
+  const stepIndex = Math.max(0, visibleSteps.indexOf(step))
   const stepLabel =
     step === 'welcome'
       ? t('keychain.step.welcome')
@@ -116,7 +120,7 @@ export function KeychainOnboarding({
             <p className="keychain-gate-stepmeta">
               <span className="keychain-gate-stepnum">
                 {stepIndex + 1}
-                <span className="keychain-gate-stepof"> / {STEPS.length}</span>
+                <span className="keychain-gate-stepof"> / {visibleSteps.length}</span>
               </span>
               <span className="keychain-gate-steplabel">{stepLabel}</span>
             </p>
@@ -190,16 +194,18 @@ export function KeychainOnboarding({
         </div>
 
         <footer className="keychain-gate-footer">
-          <div className="keychain-gate-progress" aria-hidden>
-            {STEPS.map((s, i) => (
-              <span
-                key={s}
-                className="keychain-gate-progress-seg"
-                data-active={stepIndex === i ? 'true' : 'false'}
-                data-done={stepIndex > i ? 'true' : 'false'}
-              />
-            ))}
-          </div>
+          {!authorizeOnly && (
+            <div className="keychain-gate-progress" aria-hidden>
+              {visibleSteps.map((s, i) => (
+                <span
+                  key={s}
+                  className="keychain-gate-progress-seg"
+                  data-active={stepIndex === i ? 'true' : 'false'}
+                  data-done={stepIndex > i ? 'true' : 'false'}
+                />
+              ))}
+            </div>
+          )}
 
           <div className="keychain-gate-actions">
             {step === 'welcome' && (
@@ -242,14 +248,16 @@ export function KeychainOnboarding({
                   disabled={busy}
                   onClick={() => void authorize()}
                 />
-                <button
-                  type="button"
-                  className="keychain-gate-back"
-                  disabled={busy}
-                  onClick={() => setStep('privacy')}
-                >
-                  {t('keychain.back')}
-                </button>
+                {!authorizeOnly && (
+                  <button
+                    type="button"
+                    className="keychain-gate-back"
+                    disabled={busy}
+                    onClick={() => setStep('privacy')}
+                  >
+                    {t('keychain.back')}
+                  </button>
+                )}
               </>
             )}
           </div>

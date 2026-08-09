@@ -10,6 +10,7 @@ import {
   setCachedDiagramSvg,
   type DiagramTheme
 } from './diagramCache'
+import { normalizeDiagramSvgSize } from './diagramSvgPick'
 
 let mermaidReady: Promise<typeof import('mermaid').default> | null = null
 let diagramSeq = 0
@@ -102,6 +103,9 @@ function decodeB64(b64: string): string {
 export function adaptMermaidSvgForTheme(host: HTMLElement, theme: DiagramTheme): void {
   const svg = host.querySelector('svg')
   if (!svg) return
+  // Intrinsic px size from the viewBox: mermaid's `width="100%"` + inline
+  // max-width renders at an arbitrary size and clips in narrow columns.
+  normalizeDiagramSvgSize(svg as SVGSVGElement)
 
   const ink = theme === 'dark' ? '#efeff1' : '#141416'
   const stroke = theme === 'dark' ? '#a2a2a9' : '#5c5c66'

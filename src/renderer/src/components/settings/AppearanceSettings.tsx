@@ -173,6 +173,7 @@ export function AppearanceSettings(): React.JSX.Element {
             <select
               className="text-field font-select-field"
               value={settings.codeFont}
+              title={settings.codeFont}
               style={{ fontFamily: `"${settings.codeFont}", ui-monospace, monospace` }}
               onChange={(event) => void updateSettings({ codeFont: event.target.value })}
             >
@@ -231,6 +232,24 @@ export function AppearanceSettings(): React.JSX.Element {
           />
         </div>
       </div>
+
+      {IS_MAC && (
+        <>
+          <div className="form-row">
+            <label>{t('appearance.windowVibrancy')}</label>
+            <div className="control">
+              <Toggle
+                checked={settings.windowVibrancyEnabled !== false}
+                title={t('appearance.windowVibrancy')}
+                onChange={(windowVibrancyEnabled) =>
+                  void updateSettings({ windowVibrancyEnabled })
+                }
+              />
+            </div>
+          </div>
+          <div className="form-hint">{t('appearance.windowVibrancyHint')}</div>
+        </>
+      )}
 
       <div className="form-row">
         <label>{t('appearance.sendKey')}</label>

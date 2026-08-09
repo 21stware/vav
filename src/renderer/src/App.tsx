@@ -10,7 +10,8 @@ import {
 } from './state/sessionStore'
 import { installFsWatchBridge, installPtyBridge } from './state/workspaceStore'
 import { Sidebar } from './components/Sidebar'
-import { SessionDetail, useTerminalAppearance } from './components/SessionDetail'
+import { SessionDetail } from './components/SessionDetail'
+import { useTerminalAppearance } from './lib/useTerminalAppearance'
 import { WorkspaceView } from './components/WorkspaceView'
 import { FileSessionView } from './components/FileSessionView'
 import { AppToast } from './components/AppToast'
@@ -23,15 +24,15 @@ import { useMenuCommands } from './lib/menuCommands'
 import { installDefaultContextMenu } from './lib/nativeMenu'
 import { SIDEBAR_FLOAT_MAX, useSidebarFloatMode } from './lib/sidebarLayout'
 import { getShortcuts } from './shortcuts'
+import { isTemporaryWorkspace } from './lib/format'
 import { useT } from './i18n/useT'
 
 type LaunchPhase = 'checking' | 'keychain' | 'booting' | 'ready' | 'no-preload'
 
-/** First paint: on macOS show Keychain guide immediately (no blank wait for IPC). */
+/** First paint: stay blank until secrets.status() — don't flash the welcome tour. */
 function initialLaunchPhase(): LaunchPhase {
   try {
     if (!window.vav) return 'no-preload'
-    if (window.vav.platform === 'darwin') return 'keychain'
   } catch {
     // preload may be absent in non-electron tests
   }
@@ -42,6 +43,8 @@ export default function App(): React.JSX.Element {
   const ready = useSessionStore((s) => s.ready)
   const bootstrap = useSessionStore((s) => s.bootstrap)
   const [phase, setPhase] = useState<LaunchPhase>(initialLaunchPhase)
+  /** Returning mac users who fail silent unlock only see the authorize step. */
+  const [keychainAuthorizeOnly, setKeychainAuthorizeOnly] = useState(false)
 
   useEffect(() => {
     let cancelled = false
@@ -55,6 +58,21 @@ export default function App(): React.JSX.Element {
         const status = await window.vav.secrets.status()
         if (cancelled) return
         if (status.needsUnlock) {
+          // Already finished the tour once: unlock quietly (Keychain may still
+          // sheet if the OS asks). Don't replay welcome/privacy every launch.
+          if (status.onboardingComplete) {
+            const result = await window.vav.secrets.unlock()
+            if (cancelled) return
+            if (result.ok) {
+              setPhase('booting')
+              await bootstrap()
+              if (!cancelled) setPhase('ready')
+              return
+            }
+            setKeychainAuthorizeOnly(true)
+          } else {
+            setKeychainAuthorizeOnly(false)
+          }
           setPhase('keychain')
           return
         }
@@ -151,6 +169,7 @@ export default function App(): React.JSX.Element {
   if (phase === 'keychain') {
     return (
       <KeychainOnboarding
+        authorizeOnly={keychainAuthorizeOnly}
         onUnlocked={async () => {
           setPhase('booting')
           await bootstrap()
@@ -184,12 +203,17 @@ export default function App(): React.JSX.Element {
 
 function DetailSlot(): React.JSX.Element {
   const activeGroupId = useSessionStore((s) => s.activeGroupId)
+  const tmp = useSessionStore((s) => s.tmp)
   const activeConversation = useSessionStore((s) =>
     s.conversations.find((c) => c.id === s.activeId)
   )
 
-  // Real workspace path → Preview + Agent. Sentinel / empty shell stays on chat.
-  if (activeGroupId && !activeGroupId.startsWith('__')) {
+  // Real project path → Workspace View. Default / temporary shells are not.
+  if (
+    activeGroupId &&
+    !activeGroupId.startsWith('__') &&
+    !isTemporaryWorkspace(activeGroupId, tmp)
+  ) {
     return <WorkspaceView workdir={activeGroupId} />
   }
   // File-bound sessions: file canvas + agent (list lives in sidebar File sessions).

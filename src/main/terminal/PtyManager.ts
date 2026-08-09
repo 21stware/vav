@@ -1,10 +1,14 @@
 import * as pty from 'node-pty'
-import { execFileSync } from 'node:child_process'
+import { execFile } from 'node:child_process'
 import { existsSync, writeFileSync, unlinkSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
+import { promisify } from 'node:util'
+import type { PtyActivityStatus } from '@shared/ipc'
 import type { ShellKind } from '@shared/types'
+
+const execFileAsync = promisify(execFile)
 import type { AgentContextLaunchStrategy } from '@shared/agentContextInject'
 import { shellPath } from './StickyShell'
 import { loginPath, resolveAgentExecutable } from './loginPath'
@@ -25,6 +29,21 @@ const BASH_REPLAY_TAIL = 24 * 1024
  * Keeps latency low for typing while cutting structured-clone fan-out.
  */
 const DATA_COALESCE_MS = 8
+/**
+ * How often live PTYs are re-classified as running / idle.
+ *
+ * Reading the process table costs one `ps` on POSIX but a whole PowerShell
+ * start-up on Windows, so Windows trades dot latency for not burning a core.
+ */
+const STATUS_POLL_MS = IS_WINDOWS ? 3000 : 1000
+/**
+ * Grace after the last stdout byte before a tab may be called idle.
+ *
+ * Covers the two things a child-process check cannot see: an agent TUI that is
+ * repainting a spinner while it waits on the network (no children at all), and
+ * the gap between a command's last write and its exit.
+ */
+const OUTPUT_ACTIVE_MS = 1200
 
 /**
  * Public snapshot of a live PTY — main is the source of truth for multi-window
@@ -41,6 +60,7 @@ export interface PtySessionMeta {
   agentId: string | null
   title: string
   createdAt: number
+  status: Exclude<PtyActivityStatus, 'exited'>
 }
 
 interface PtySession {
@@ -56,6 +76,9 @@ interface PtySession {
   outputBuffer: string
   appliedCols: number
   appliedRows: number
+  /** Timestamp of the last stdout byte — the fast half of the busy check. */
+  lastDataAt: number
+  status: Exclude<PtyActivityStatus, 'exited'>
 }
 
 
@@ -131,31 +154,40 @@ export function snapshotForReplay(buffer: string, agentId: string | null): strin
 
 
 
-/** True when the shell has a foreground child — a heuristic for "command running". */
-function hasChildProcesses(pid: number): boolean {
-  if (!pid || pid <= 0) return false
-  if (IS_WINDOWS) {
-    try {
-      const out = execFileSync(
-        'powershell.exe',
-        [
-          '-NoProfile',
-          '-Command',
-          `(Get-CimInstance Win32_Process -Filter "ParentProcessId=${pid}").ProcessId`
-        ],
-        { encoding: 'utf8', windowsHide: true }
-      )
-      return out.trim().length > 0
-    } catch {
-      return false
-    }
-  }
+/**
+ * Every parent pid on the machine, in one process spawn.
+ *
+ * The status poll asks "does this shell have a child?" for every live tab at
+ * once, so per-tab `pgrep -P` would cost one exec per tab per second. One
+ * table read answers all of them, and it is async so a slow `ps` cannot stall
+ * the main process the way the old synchronous check did.
+ */
+async function activeParentPids(): Promise<Set<number>> {
+  const pids = new Set<number>()
   try {
-    execFileSync('pgrep', ['-P', String(pid)], { stdio: 'ignore' })
-    return true
+    const { stdout } = IS_WINDOWS
+      ? await execFileAsync(
+          'powershell.exe',
+          [
+            '-NoProfile',
+            '-Command',
+            '(Get-CimInstance Win32_Process).ParentProcessId'
+          ],
+          { encoding: 'utf8', windowsHide: true, maxBuffer: 4 * 1024 * 1024 }
+        )
+      : await execFileAsync('ps', ['-Ao', 'ppid='], {
+          encoding: 'utf8',
+          maxBuffer: 4 * 1024 * 1024
+        })
+    for (const line of stdout.split('\n')) {
+      const value = Number.parseInt(line.trim(), 10)
+      if (Number.isFinite(value) && value > 0) pids.add(value)
+    }
   } catch {
-    return false
+    // Treat an unreadable process table as "nothing running" rather than
+    // pinning every tab to a status it cannot leave.
   }
+  return pids
 }
 
 /**
@@ -169,13 +201,83 @@ export class PtyManager {
   /** Pending stdout chunks waiting for the coalesce timer. */
   private pendingData = new Map<string, string>()
   private dataFlushTimer: ReturnType<typeof setTimeout> | null = null
+  /** Runs only while at least one PTY is alive. */
+  private statusTimer: ReturnType<typeof setInterval> | null = null
+  /** Guards against a slow process-table read overlapping the next tick. */
+  private statusPolling = false
 
   constructor(
     private onData: (tabId: string, data: string) => void,
     private onExit: (tabId: string, conversationId: string) => void,
     /** Fired after create / kill so every renderer can re-hydrate tab maps. */
-    private onChanged?: (conversationId: string) => void
+    private onChanged?: (conversationId: string) => void,
+    /** Running / idle / exited transitions for the terminal tab list. */
+    private onStatus?: (
+      tabId: string,
+      conversationId: string,
+      status: PtyActivityStatus
+    ) => void
   ) {}
+
+  /**
+   * Publish a status only when it actually changed.
+   *
+   * `exited` is not stored — the session is about to be dropped, and the
+   * renderer keeps the tab as a tombstone from this event alone.
+   */
+  private setStatus(session: PtySession, status: PtyActivityStatus): void {
+    if (status !== 'exited') {
+      if (session.status === status) return
+      session.status = status
+    }
+    this.onStatus?.(session.id, session.conversationId, status)
+  }
+
+  private startStatusPolling(): void {
+    if (this.statusTimer) return
+    this.statusTimer = setInterval(() => void this.pollStatus(), STATUS_POLL_MS)
+    // Status is a UI nicety; never hold the event loop open for it.
+    this.statusTimer.unref?.()
+  }
+
+  private stopStatusPolling(): void {
+    if (!this.statusTimer) return
+    clearInterval(this.statusTimer)
+    this.statusTimer = null
+  }
+
+  /**
+   * Re-classify every live PTY.
+   *
+   * Recent stdout alone proves the tab is working, so the process table is
+   * only consulted for the quiet ones — that is what catches a long build that
+   * has stopped printing.
+   */
+  private async pollStatus(): Promise<void> {
+    if (this.statusPolling) return
+    if (this.sessions.size === 0) {
+      this.stopStatusPolling()
+      return
+    }
+    this.statusPolling = true
+    try {
+      const now = Date.now()
+      const quiet: PtySession[] = []
+      for (const session of this.sessions.values()) {
+        if (now - session.lastDataAt < OUTPUT_ACTIVE_MS) this.setStatus(session, 'running')
+        else quiet.push(session)
+      }
+      if (quiet.length === 0) return
+      const parents = await activeParentPids()
+      for (const session of quiet) {
+        // Re-check liveness: the session may have exited during the await.
+        if (this.sessions.get(session.id) !== session) continue
+        this.setStatus(session, parents.has(session.proc.pid) ? 'running' : 'idle')
+      }
+    } finally {
+      this.statusPolling = false
+    }
+  }
 
   /** Conversation that owns a live tab (for targeted IPC). */
   conversationIdFor(tabId: string): string | null {
@@ -312,14 +414,24 @@ export class PtyManager {
       createdAt: Date.now(),
       outputBuffer: '',
       appliedCols: Math.max(2, cols),
-      appliedRows: Math.max(1, rows)
+      appliedRows: Math.max(1, rows),
+      // A shell that just spawned is still painting its prompt; the first poll
+      // settles it to idle a beat later.
+      lastDataAt: Date.now(),
+      status: 'running'
     }
     proc.onData((data) => {
       appendOutputBuffer(session, data)
+      session.lastDataAt = Date.now()
+      this.setStatus(session, 'running')
       this.enqueueData(id, data)
     })
     proc.onExit(() => {
       const current = this.sessions.get(id)
+      // `kill()` unregisters before signalling, so a missing entry means the
+      // user closed the tab. Only a process that died on its own earns a
+      // tombstone — a closed tab should just disappear.
+      const diedOnItsOwn = current === session
       if (current?.contextFile) {
         try {
           unlinkSync(current.contextFile)
@@ -330,10 +442,16 @@ export class PtyManager {
       // Deliver any coalesced stdout before the exit marker.
       this.flushPendingData(id)
       this.sessions.delete(id)
+      // Must precede onChanged: that triggers a re-hydrate from the live list,
+      // and the renderer needs to know this tab is a tombstone before the
+      // projection drops it.
+      if (diedOnItsOwn) this.setStatus(session, 'exited')
       this.onExit(id, conversationId)
       this.onChanged?.(conversationId)
+      if (this.sessions.size === 0) this.stopStatusPolling()
     })
     this.sessions.set(id, session)
+    this.startStatusPolling()
     this.onChanged?.(conversationId)
 
     return id
@@ -349,7 +467,8 @@ export class PtyManager {
         conversationId: session.conversationId,
         agentId: session.agentId,
         title: session.title,
-        createdAt: session.createdAt
+        createdAt: session.createdAt,
+        status: session.status
       })
     }
     out.sort((a, b) => a.createdAt - b.createdAt)
@@ -432,10 +551,11 @@ export class PtyManager {
   }
 
   /** Idle shells have no children; a running command usually does. */
-  isBusy(tabId: string): boolean {
+  async isBusy(tabId: string): Promise<boolean> {
     const session = this.sessions.get(tabId)
     if (!session) return false
-    return hasChildProcesses(session.proc.pid)
+    const parents = await activeParentPids()
+    return parents.has(session.proc.pid)
   }
 
   killForConversation(conversationId: string): void {

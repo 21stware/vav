@@ -350,7 +350,12 @@ export function ChangeReviewPanel(): React.JSX.Element | null {
             <>
               <div className="review-inspector-head">
                 <div>
-                  <div className="review-file-name">{selected.relativePath}</div>
+                  <div
+                    className="review-file-name"
+                    title={selected.filePath || selected.relativePath}
+                  >
+                    {selected.relativePath}
+                  </div>
                   <div className="muted">
                     {changeTypeLabel(selected.changeType, t)} ·{' '}
                     {(() => {

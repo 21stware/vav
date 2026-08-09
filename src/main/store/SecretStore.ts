@@ -30,13 +30,40 @@ export class SecretStore {
     return join(app.getPath('userData'), `secret-${name}.bin`)
   }
 
+  /** Marker written after a successful unlock — returning launches skip the tour. */
+  private onboardingDonePath(): string {
+    return join(app.getPath('userData'), 'keychain-onboarding-done')
+  }
+
+  /**
+   * True after the user has finished the Keychain gate once (or already has a
+   * persisted API key from before we tracked the marker).
+   */
+  hasCompletedOnboarding(): boolean {
+    if (process.platform !== 'darwin') return true
+    if (existsSync(this.onboardingDonePath())) return true
+    // Migrate older installs: a key file means they already authorized before.
+    if (existsSync(this.pathFor('api'))) return true
+    return false
+  }
+
+  private markOnboardingDone(): void {
+    try {
+      const file = this.onboardingDonePath()
+      mkdirSync(dirname(file), { recursive: true })
+      writeFileSync(file, `${Date.now()}\n`)
+    } catch (err) {
+      console.error('[secret] failed to persist onboarding marker', err)
+    }
+  }
+
   /** Whether this session has already warmed Keychain (or does not need to). */
   isUnlocked(): boolean {
     return this.gateOpen
   }
 
   /**
-   * True when the UI should show the Keychain onboarding gate before bootstrap.
+   * True when this session still needs an unlock before bootstrap.
    * Pure gate check — never calls safeStorage (that would pop Keychain early).
    */
   needsUnlock(): boolean {
@@ -52,6 +79,8 @@ export class SecretStore {
     needsUnlock: boolean
     encryptionAvailable: boolean
     hasKeyFile: boolean
+    /** When true, renderer should unlock quietly — not replay welcome/privacy. */
+    onboardingComplete: boolean
   } {
     let encryptionAvailable = false
     if (this.gateOpen) {
@@ -69,7 +98,8 @@ export class SecretStore {
       needsUnlock: this.needsUnlock(),
       encryptionAvailable,
       // File presence is fine — existsSync does not touch Keychain.
-      hasKeyFile: existsSync(this.pathFor('api'))
+      hasKeyFile: existsSync(this.pathFor('api')),
+      onboardingComplete: this.hasCompletedOnboarding()
     }
   }
 
@@ -97,6 +127,7 @@ export class SecretStore {
         }
       }
       this.gateOpen = true
+      this.markOnboardingDone()
       return { ok: true }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)

@@ -39,12 +39,21 @@ export function StreamingMessage({ conversationId }: { conversationId: string })
             return <ToolCard key={block.key} block={block.block} />
           }
 
+          // One `.markdown` root for sealed + tail so heading/paragraph margins
+          // match the finished MessageRow (multi-root first/last-child resets
+          // were collapsing section spacing mid-stream).
           return (
-            <div key={block.key}>
+            <div key={block.key} className="markdown">
               {block.sealed.map((chunk, index) => (
-                <MarkdownView key={`${block.key}-${index}`} source={chunk} />
+                <MarkdownView
+                  key={`${block.key}-${index}`}
+                  source={chunk}
+                  fragment
+                />
               ))}
-              {block.tail && <MarkdownView source={block.tail} cached={false} />}
+              {block.tail && (
+                <MarkdownView source={block.tail} cached={false} fragment />
+              )}
             </div>
           )
         })}

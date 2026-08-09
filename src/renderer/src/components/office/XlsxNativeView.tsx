@@ -225,6 +225,7 @@ export function XlsxNativeView({
                   key={s.name}
                   type="button"
                   className={`structured-doc-nav-item${i === active ? ' active' : ''}`}
+                  title={s.name}
                   onClick={() => {
                     setActive(i)
                     setRowStart(0)

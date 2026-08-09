@@ -93,23 +93,34 @@ export function handoffFocusToCli(
   if (draft) clearDraft(conversationId)
 }
 
-/** File chip attached while a CLI host is already foreground. */
-export function handoffFileFocusToCli(conversationId: string, filePath: string): void {
+/**
+ * Explicit insert (Files context menu). Uses conversation.agentBinaryName from
+ * meta — does not require the Bash/CLI surface to already be foreground.
+ * Brings that host forward (or spawns it), then pastes brief file context.
+ */
+export async function handoffFileFocusToCli(
+  conversationId: string,
+  filePath: string
+): Promise<void> {
   const meta = useSessionStore.getState().conversations.find((c) => c.id === conversationId)
   const agentId = meta?.agentBinaryName
   if (!agentId || agentId === 'vav') return
-  const ws = useWorkspaceStore.getState().workspaces[conversationId]
-  if (ws?.activeHostAgentId !== agentId) return
+
+  const workspace = useWorkspaceStore.getState()
+  // Activate from meta so insert works even when the main chat / preview is up.
+  const result = await workspace.activateAgentHost(conversationId, agentId, 80, 24, null)
+  if (result === 'missing') return
 
   const draft = takeDraft(conversationId)
   const context = formatFocusedFileContextBrief(filePath)
   const paste = composeCliPromptPaste({ context, draft })
   if (!paste) return
 
+  // No fingerprint: menu inserts are intentional; user may re-insert after editing.
   useWorkspaceStore.getState().injectContextToActivePane(conversationId, paste, {
     submit: false,
-    delayMs: 80,
-    fingerprint: cliPromptFingerprint(context, draft || null)
+    delayMs: result === 'created' ? 700 : 80,
+    agentId
   })
   if (draft) clearDraft(conversationId)
 }

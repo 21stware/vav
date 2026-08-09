@@ -1,4 +1,12 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type ReactNode,
+  type RefObject
+} from 'react'
 import { ChevronDown, Clock, Columns2, Plus, Rows2, Search } from 'lucide-react'
 import { buildWorkspaceFocusContext } from '@shared/agentContextInject'
 import { DEFAULT_CLI_AGENTS, enabledCliAgents, type AgentConfig } from '@shared/types'
@@ -25,7 +33,7 @@ import {
   markAgentBinaryMissing,
   markAgentBinaryReady
 } from '../lib/agentBinaryCache'
-import { applyTerminalAppearance, disposeTerminal } from '../lib/terminalRegistry'
+import { disposeTerminal } from '../lib/terminalRegistry'
 import { useT } from '../i18n/useT'
 import { keys } from '../lib/platform'
 import { useSidebarFloatMode } from '../lib/sidebarLayout'
@@ -45,7 +53,10 @@ function isCompanionSessionShell(): boolean {
  */
 type SessionDetailVariant = 'main' | 'workspace' | 'preview-edit'
 
-/** Single-file drawer chrome folded into the agent row (vav mode only). */
+/**
+ * Session chrome folded into the agent row (file-preview vav, or workspace).
+ * Optional `trail` is for workspace-only controls (e.g. preview drawer toggle).
+ */
 export type FileSessionChromeProps = {
   title: string
   sessions: FileSessionMeta[]
@@ -58,6 +69,8 @@ export type FileSessionChromeProps = {
   onRenameSession: (id: string, title: string) => Promise<void>
   onDeleteSessions: (ids: string[]) => void
   onNewSession: () => void
+  /** Trailing controls after search (workspace preview toggle, etc.). */
+  trail?: ReactNode
 }
 
 /** CLI host gate: no dedicated "checking" UI — resolve silently or restore. */
@@ -78,7 +91,7 @@ export function SessionDetail({
   hideChrome = false
 }: {
   variant?: SessionDetailVariant
-  /** File-preview: session name / history / new in the same row as agent + search. */
+  /** File-preview / workspace: session name / history / new in the agent row. */
   fileSessionChrome?: FileSessionChromeProps | null
   hideChrome?: boolean
 }): React.JSX.Element {
@@ -455,12 +468,20 @@ export function SessionDetail({
     }
   }, [isVavMode])
 
-  // Main shell only: when the list is not a docked left column, park toggle +
+  // Main / workspace: when the list is not a docked left column, park toggle +
   // new-session ahead of the agent select (no separate window titlebar).
   const sidebarVisible = useSessionStore((s) => s.sidebarVisible)
   const sidebarFloating = useSidebarFloatMode()
   const showShellLeading =
-    variant === 'main' && !(sidebarVisible && !sidebarFloating)
+    (variant === 'main' || variant === 'workspace') &&
+    !(sidebarVisible && !sidebarFloating)
+
+  // File-preview: session chrome only in vav (CLI keeps a separate session bar).
+  // Workspace: always fold sessions into this row (vav + CLI).
+  const chromeSession =
+    variant === 'workspace' || (previewEdit && isVavMode)
+      ? (fileSessionChrome ?? null)
+      : null
 
   const chrome =
     showAgentSwitcher && !hideChrome ? (
@@ -470,7 +491,7 @@ export function SessionDetail({
         showSplits={!isVavMode && probe === 'ready'}
         showSearch={isVavMode}
         showShellLeading={showShellLeading}
-        fileSessionChrome={previewEdit && isVavMode ? fileSessionChrome ?? null : null}
+        fileSessionChrome={chromeSession}
       />
     ) : null
 
@@ -705,7 +726,10 @@ export function AgentModeChrome({
       ) : null}
 
       {/* Icon + name are one control; native <select> covers the whole face. */}
-      <label className="agent-mode-select" title={t('agents.switchHint')}>
+      <label
+        className="agent-mode-select"
+        title={`${displayName} — ${t('agents.switchHint')}`}
+      >
         <span className="agent-mode-select-face" aria-hidden>
           <AgentBrandMark agent={active} size={20} />
           <span className="agent-mode-select-name">{displayName}</span>
@@ -793,6 +817,8 @@ export function AgentModeChrome({
         />
       ) : null}
 
+      {fs?.trail ? <div className="agent-mode-chrome-trail">{fs.trail}</div> : null}
+
       {/* History panel is a child of the full chrome row so left/right:8px spans
           the agent panel — not the narrow clock/+ cluster (that became a stick). */}
       {fs ? (
@@ -814,14 +840,3 @@ export function AgentModeChrome({
   )
 }
 
-export function useTerminalAppearance(): void {
-  const codeFont = useSessionStore((s) => s.settings.codeFont)
-  const fontSize = useSessionStore((s) => s.settings.fontSize)
-
-  useEffect(() => {
-    applyTerminalAppearance(codeFont, Math.max(9, fontSize - 3))
-  }, [codeFont, fontSize])
-}
-
-/** @deprecated Prefer `useMenuCommands` from `lib/menuCommands` (full surface). */
-export { useMenuCommands as useSessionMenuCommands } from '../lib/menuCommands'

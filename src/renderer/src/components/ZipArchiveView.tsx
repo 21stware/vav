@@ -151,6 +151,7 @@ export function ZipArchiveView({
         <div
           className={`zip-tree-row${selected ? ' selected' : ''}${selecting ? ' selectable' : ''}`}
           style={{ paddingLeft: 8 + depth * 14 }}
+          title={node.path}
           onMouseDown={(event) => {
             if (!selecting) return
             if (event.button !== 0) return
@@ -208,7 +209,9 @@ export function ZipArchiveView({
     <div className="zip-archive-view">
       <div className="zip-archive-head">
         <Folder size={16} className="zip-archive-head-icon" aria-hidden />
-        <span className="zip-archive-title">{name}</span>
+        <span className="zip-archive-title" title={name}>
+          {name}
+        </span>
         <span className="muted tiny">
           {passwordProtected
             ? t('preview.zipPassword')

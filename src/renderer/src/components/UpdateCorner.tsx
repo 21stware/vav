@@ -41,6 +41,7 @@ export function UpdateCorner({
       <button
         type="button"
         className="update-corner-btn"
+        title={t('update.availableButton', { version: latestVersion ?? '' })}
         onClick={() => void downloadUpdate()}
       >
         <Download size={13} strokeWidth={2} aria-hidden />
@@ -79,6 +80,7 @@ export function UpdateCorner({
       <button
         type="button"
         className="update-corner-btn is-ready"
+        title={t('update.restartInstall')}
         onClick={() => void installUpdate()}
       >
         <RotateCw size={13} strokeWidth={2} aria-hidden />

@@ -8,12 +8,9 @@ import {
   installWindowBridge
 } from './state/sessionStore'
 import { installFsWatchBridge, installPtyBridge, useWorkspaceStore } from './state/workspaceStore'
-import {
-  AgentModeChrome,
-  SessionDetail,
-  useTerminalAppearance
-} from './components/SessionDetail'
+import { AgentModeChrome, SessionDetail } from './components/SessionDetail'
 import { useAppearance } from './lib/appearance'
+import { useTerminalAppearance } from './lib/useTerminalAppearance'
 import { useMenuCommands } from './lib/menuCommands'
 import { installDefaultContextMenu } from './lib/nativeMenu'
 import { useT } from './i18n/useT'

@@ -201,6 +201,7 @@ export function SqliteView({
               className={`structured-doc-nav-item${tb.name === active ? ' active' : ''}${
                 selected.has(`db-table-${tb.name}`) ? ' selected' : ''
               }`}
+              title={tb.name}
               onClick={() => setActive(tb.name)}
               onMouseDown={
                 selecting

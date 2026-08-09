@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { COLOR_TINTS, type ColorTint } from '@shared/types'
 import { useSessionStore } from '../state/sessionStore'
+import { IS_MAC } from './platform'
 
 /** CSS custom properties driven by a fixed or system tint. */
 const SYSTEM_TINT_VARS = [
@@ -159,6 +160,7 @@ export function useAppearance(): void {
   const codeFont = useSessionStore((s) => s.settings.codeFont)
   const fontSize = useSessionStore((s) => s.settings.fontSize)
   const reduceMotion = useSessionStore((s) => s.settings.reduceMotion)
+  const windowVibrancyEnabled = useSessionStore((s) => s.settings.windowVibrancyEnabled)
   const storedAccent = useSessionStore((s) => s.systemAccentColor)
 
   const [systemAccent, setSystemAccent] = useState(storedAccent || '#007aff')
@@ -224,7 +226,10 @@ export function useAppearance(): void {
     root.style.setProperty('--font-code', `"${codeFont}", Menlo, monospace`)
     root.style.setProperty('--code-size', `${Math.max(10, fontSize)}px`)
     root.dataset.reduceMotion = String(reduceMotion)
-  }, [codeFont, fontSize, reduceMotion])
+    // macOS system glass: CSS must stay clear when on, solid when Settings turns it off.
+    root.dataset.vibrancy =
+      IS_MAC && windowVibrancyEnabled !== false ? 'true' : 'false'
+  }, [codeFont, fontSize, reduceMotion, windowVibrancyEnabled])
 
   useEffect(() => {
     return window.vav.onFullscreen((fullscreen) => {

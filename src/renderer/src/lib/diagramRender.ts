@@ -17,6 +17,7 @@ import {
   setCachedDiagramSvg,
   type DiagramSlotState
 } from './diagramCache'
+import { normalizeDiagramSvgSize } from './diagramSvgPick'
 import { renderMermaidBlocks } from './mermaidRender'
 
 export type DiagramKind = 'mermaid' | 'graphviz' | 'vegalite' | 'erd'
@@ -179,7 +180,25 @@ async function loadViz(): Promise<import('@viz-js/viz').Viz> {
 
 async function renderGraphvizSvg(source: string): Promise<string> {
   const viz = await loadViz()
-  return viz.renderString(source.trim(), { format: 'svg' })
+  return normalizeSvgMarkup(viz.renderString(source.trim(), { format: 'svg' }))
+}
+
+/**
+ * Re-express an SVG's size in px from its viewBox. Graphviz emits `pt`, which
+ * the browser inflates by 4/3 — the graph rendered oversized and clipped in the
+ * message column, and text landed off the pixel grid (soft glyphs).
+ */
+function normalizeSvgMarkup(markup: string): string {
+  try {
+    const holder = document.createElement('div')
+    holder.innerHTML = markup
+    const svg = holder.querySelector('svg')
+    if (!svg) return markup
+    normalizeDiagramSvgSize(svg as SVGSVGElement)
+    return holder.innerHTML
+  } catch {
+    return markup
+  }
 }
 
 // —— Vega-Lite ——

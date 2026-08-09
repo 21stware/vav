@@ -25,7 +25,10 @@
               : theme === 'light'
                 ? false
                 : window.matchMedia('(prefers-color-scheme: dark)').matches
-          var bg = dark ? '#121213' : '#ececee'
+          // Main shell (no view=) uses macOS vibrancy — opaque !important here
+          // would permanently mask NSVisualEffectView. Companion windows stay solid.
+          var clearShell = !q.get('view')
+          var bg = clearShell ? 'transparent' : dark ? '#121213' : '#ececee'
           document.documentElement.style.background = bg
           document.documentElement.dataset.theme = dark ? 'dark' : 'light'
           document.documentElement.style.colorScheme = dark ? 'dark' : 'light'

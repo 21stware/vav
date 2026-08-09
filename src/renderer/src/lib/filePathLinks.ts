@@ -21,27 +21,34 @@ const FILE_EXTS =
  * - workspace-relative with at least one directory separator + extension
  *
  * Does NOT match bare `foo.json` or `@vegalite-spec-v5.json`.
+ *
+ * Lookbehind uses `\p{L}`/`\p{N}` (not ASCII-only) so CJK prose like
+ * `最大化/还原面板` does not treat `/还原面板` as an absolute path. Built
+ * without unnecessary escapes — the `u` flag rejects things like `` \` ``.
  */
 const PATH_GLOBAL = new RegExp(
-  String.raw`(?<![A-Za-z0-9_./\\-])` +
-    String.raw`(` +
+  [
+    '(?<![\\p{L}\\p{N}_./\\\\-])(',
     // Absolute, home, or explicit relative
-    String.raw`(?:~|\/|\.\/|\.\.\/|[A-Za-z]:[\\/])` +
-    String.raw`(?:[^\s\`'"<>|)\]]+)` +
-    String.raw`|` +
+    '(?:~|/|\\./|\\.\\./|[A-Za-z]:[\\\\/])',
+    '[^\\s`\'"<>|)\\]]+',
+    '|',
     // dir/…/file.ext (must contain /)
-    String.raw`(?:[\w.+-]+\/)+[\w.+-]+\.(?:${FILE_EXTS})\b` +
-    String.raw`)`,
-  'gi'
+    '(?:[\\w.+-]+/)+[\\w.+-]+\\.(?:' + FILE_EXTS + ')\\b',
+    ')'
+  ].join(''),
+  'giu'
 )
 
 const INLINE_PATH = new RegExp(
-  String.raw`^(?:` +
-    String.raw`(?:~|\/|\.\/|\.\.\/|[A-Za-z]:[\\/])[^\s\`'"<>|]+` +
-    String.raw`|` +
-    String.raw`(?:[\w.+-]+\/)+[\w.+-]+\.(?:${FILE_EXTS})` +
-    String.raw`)$`,
-  'i'
+  [
+    '^(?:',
+    '(?:~|/|\\./|\\.\\./|[A-Za-z]:[\\\\/])[^\\s`\'"<>|]+',
+    '|',
+    '(?:[\\w.+-]+/)+[\\w.+-]+\\.(?:' + FILE_EXTS + ')',
+    ')$'
+  ].join(''),
+  'iu'
 )
 
 export function looksLikeFilePath(value: string): boolean {
@@ -54,12 +61,17 @@ export function looksLikeFilePath(value: string): boolean {
   if (v.startsWith('@')) return false
   // Bare filename without a directory — too many false positives (specs, packages).
   if (!/[\\/]/.test(v) && !v.startsWith('~')) return false
+  // Lone `/词` with no further slash/extension is almost always prose, not a path
+  // (e.g. Chinese "最大化/还原面板" leaking `/还原面板`).
+  if (/^\/[^/\s.]+$/.test(v) && /[^\u0000-\u007F]/.test(v)) return false
   return INLINE_PATH.test(v)
 }
 
 /** Strip trailing sentence punctuation that is not part of the path. */
 export function trimPathCandidate(raw: string): string {
-  return raw.replace(/[.,;:!?]+$/g, '').replace(/['")\]]+$/g, '')
+  return raw
+    .replace(/[.,;:!?。，；：！？、]+$/g, '')
+    .replace(/['")\]】》」』）]+$/g, '')
 }
 
 /**

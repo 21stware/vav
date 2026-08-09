@@ -148,6 +148,14 @@ export class SettingsStore {
     s.recentWorkspaceDirectories = s.recentWorkspaceDirectories
       .filter((path): path is string => typeof path === 'string' && path.length > 0)
       .slice(0, 10)
+    if (!Array.isArray(s.pinnedWorkspaceDirectories)) s.pinnedWorkspaceDirectories = []
+    s.pinnedWorkspaceDirectories = [
+      ...new Set(
+        s.pinnedWorkspaceDirectories.filter(
+          (path): path is string => typeof path === 'string' && path.length > 0
+        )
+      )
+    ]
     if (
       s.sidebarGroupingMode !== 'none' && s.sidebarGroupingMode !== 'workspace'
     ) {

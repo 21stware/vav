@@ -106,7 +106,10 @@ export function FileSessionView({
         {shellLeading ? (
           <div className="file-viewer-shell-leading">{shellLeading}</div>
         ) : null}
-        <span className="file-viewer-name" title={resolved?.path ?? undefined}>
+        <span
+          className="file-viewer-name titlebar-no-drag"
+          title={resolved?.path ?? undefined}
+        >
           {missingName || t('common.preview')}
         </span>
       </div>

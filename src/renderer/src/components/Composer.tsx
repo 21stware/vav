@@ -105,7 +105,7 @@ export function ComposerContext({
           <button
             type="button"
             className="quote-strip-body"
-            title={t('composer.quoteJump')}
+            title={`${quote.summary}\n${t('composer.quoteJump')}`}
             onClick={() => scrollToMessage(quote.messageId)}
           >
             <CornerUpLeft size={14} />
@@ -419,7 +419,10 @@ export function Composer({
           <button
             type="button"
             className="model-picker"
-            title={t('composer.model')}
+            title={
+              PRESET_MODELS.find((m) => m.id === activeModel)?.label ?? activeModel
+            }
+            aria-label={t('composer.model')}
             disabled={!conversation}
             onClick={(event) => {
               event.preventDefault()

@@ -5,8 +5,10 @@ import {
   ChevronDown,
   ChevronRight,
   MoreVertical,
+  Pin,
   Plus,
   Search,
+  Terminal as TerminalIcon,
   X
 } from 'lucide-react'
 import {
@@ -17,8 +19,9 @@ import {
 } from '@shared/types'
 import type { FileSessionListEntry } from '@shared/ipc'
 import { useSessionStore, type TurnRuntime } from '../state/sessionStore'
+import { useWorkspaceStore } from '../state/workspaceStore'
 import { isTemporaryWorkspace, middleTruncate, relativeTime, workdirShortLabel } from '../lib/format'
-import { DEFAULT_WORKSPACE_KEY, flatten, groupConversations } from '../lib/grouping'
+import { flatten, groupConversations, type ConversationGroup } from '../lib/grouping'
 import { showMenu, type MenuItem } from '../lib/nativeMenu'
 import { fileManagerLabel } from '../lib/platform'
 import { basename } from '../lib/path'
@@ -51,7 +54,9 @@ function subtitleFor(
   isActive: boolean,
   tmp: string,
   t: ReturnType<typeof useT>,
-  agentLabel: string | null
+  agentLabel: string | null,
+  /** Workspace grouping already labels the bucket — hide the path under each row. */
+  hideWorkdir = false
 ): string {
   if (turn?.awaitingToolCallId) return t('sidebar.awaitingAnswer')
   if (turn?.isRunning && isActive) {
@@ -62,7 +67,7 @@ function subtitleFor(
     const core = t('sidebar.backgroundRunning', { count: turn.toolCount })
     return agentLabel ? `${agentLabel} · ${core}` : core
   }
-  if (!isTemporaryWorkspace(conversation.workingDirectory, tmp)) {
+  if (!hideWorkdir && !isTemporaryWorkspace(conversation.workingDirectory, tmp)) {
     return workdirShortLabel(conversation.workingDirectory, tmp)
   }
   const age = Date.now() - conversation.updatedAt
@@ -103,6 +108,20 @@ export function Sidebar({
   })
   void turnBusyKey
   const turns = useSessionStore.getState().turns
+  // Same trick for terminals: collapse the whole status map to the set of
+  // conversations with a live command, so a chatty PTY repaints at most the
+  // rows whose rollup actually flipped.
+  const shellBusyKey = useWorkspaceStore((s) => {
+    const ids: string[] = []
+    for (const [conversationId, tabs] of Object.entries(s.ptyStatus)) {
+      if (Object.values(tabs).some((status) => status === 'running')) ids.push(conversationId)
+    }
+    return ids.sort().join('|')
+  })
+  const shellBusy = useMemo(
+    () => new Set(shellBusyKey ? shellBusyKey.split('|') : []),
+    [shellBusyKey]
+  )
   const tmp = useSessionStore((s) => s.tmp)
   const renamingId = useSessionStore((s) => s.renamingId)
   const groupingMode = useSessionStore((s) => s.settings.sidebarGroupingMode)
@@ -121,6 +140,8 @@ export function Sidebar({
   const beginRename = useSessionStore((s) => s.beginRename)
   const renameConversation = useSessionStore((s) => s.renameConversation)
   const setPinned = useSessionStore((s) => s.setPinned)
+  const setWorkspacePinned = useSessionStore((s) => s.setWorkspacePinned)
+  const pinnedWorkspaces = useSessionStore((s) => s.settings.pinnedWorkspaceDirectories)
   const setArchived = useSessionStore((s) => s.setArchived)
   const openDetached = useSessionStore((s) => s.openDetached)
   const updateSettings = useSessionStore((s) => s.updateSettings)
@@ -135,6 +156,7 @@ export function Sidebar({
   /** File-session list: same delay so dblclick can open the standalone window. */
   const fileClickTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [collapsedKeys, setCollapsedKeys] = useState<Set<string>>(() => new Set())
+  const [pinnedCollapsed, setPinnedCollapsed] = useState(false)
   const [fileSessionRows, setFileSessionRows] = useState<FileSessionListEntry[]>([])
   const [fileSessionsLoading, setFileSessionsLoading] = useState(false)
 
@@ -193,8 +215,24 @@ export function Sidebar({
     const rows = conversations
       .filter((c) => !c.archived && !c.fileId)
       .filter((c) => !needle || c.title.toLowerCase().includes(needle))
-    return groupConversations(rows, searching, groupingMode, tmp)
-  }, [conversations, query, searching, groupingMode, tmp, archiveView, fileSessionsView])
+    return groupConversations(rows, searching, groupingMode, tmp, pinnedWorkspaces)
+  }, [
+    conversations,
+    query,
+    searching,
+    groupingMode,
+    tmp,
+    pinnedWorkspaces,
+    archiveView,
+    fileSessionsView
+  ])
+
+  const pinnedGroups = useMemo(() => groups.filter((g) => g.pinned), [groups])
+  const mainGroups = useMemo(() => groups.filter((g) => !g.pinned), [groups])
+  const pinnedCount = useMemo(
+    () => pinnedGroups.reduce((sum, g) => sum + (g.kind === 'workspace' ? 1 : g.conversations.length), 0),
+    [pinnedGroups]
+  )
 
   const filteredFileSessions = useMemo(() => {
     const needle = query.trim().toLowerCase()
@@ -207,7 +245,10 @@ export function Sidebar({
     )
   }, [fileSessionRows, query])
 
-  const visible = useMemo(() => flatten(groups, collapsedKeys), [groups, collapsedKeys])
+  const visible = useMemo(
+    () => flatten(pinnedCollapsed ? mainGroups : groups, collapsedKeys),
+    [groups, mainGroups, pinnedCollapsed, collapsedKeys]
+  )
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent): void => {
@@ -425,6 +466,282 @@ export function Sidebar({
     })
   }
 
+  const renderGroup = (group: ConversationGroup, groupIndex: number): React.JSX.Element => {
+    const collapsible = group.kind === 'workspace'
+    const collapsed = collapsible && collapsedKeys.has(group.key)
+    const groupWorkdir = group.workdir ?? group.conversations[0]?.workingDirectory ?? null
+    // Default workspace buckets unrooted sessions — not a project, not selectable.
+    const workspaceSelectable =
+      group.kind === 'workspace' &&
+      group.workspaceSelectable !== false &&
+      !!groupWorkdir &&
+      !groupWorkdir.startsWith('__') &&
+      !isTemporaryWorkspace(groupWorkdir, tmp)
+    const isWorkspaceSelected =
+      workspaceSelectable && !!groupWorkdir && activeGroupId === groupWorkdir
+    // A Temporary Workspace is minted per session and has no durable path to pin.
+    const pinnableWorkdir = workspaceSelectable ? groupWorkdir : null
+    const workspacePinned = !!pinnableWorkdir && pinnedWorkspaces.includes(pinnableWorkdir)
+    return (
+      <div
+        className={`conv-group${collapsible ? ' is-workspace' : ''}${group.pinned ? ' pinned' : ''}${workspaceSelectable ? '' : ' is-default-workspace'}`}
+        key={group.key || `group-${groupIndex}`}
+      >
+        {groupIndex > 0 && <div className="conv-group-divider" />}
+        {group.label &&
+          (collapsible ? (
+            <div
+              className={`conv-group-header interactive${isWorkspaceSelected ? ' selected' : ''}`}
+              onContextMenu={(event) => {
+                if (!workspaceSelectable || !groupWorkdir) return
+                event.preventDefault()
+                void showMenu([
+                  {
+                    label: t('sidebar.menu.newSessionInDir'),
+                    onSelect: () =>
+                      void createConversation({
+                        workingDirectory: groupWorkdir,
+                        model: useSessionStore.getState().settings.defaultModel
+                      })
+                  },
+                  {
+                    label: workspacePinned
+                      ? t('sidebar.menu.unpinWorkspace')
+                      : t('sidebar.menu.pinWorkspace'),
+                    onSelect: () => void setWorkspacePinned(groupWorkdir, !workspacePinned)
+                  }
+                ])
+              }}
+            >
+              <button
+                type="button"
+                className="conv-group-title-hit"
+                title={
+                  groupWorkdir
+                    ? groupWorkdir
+                    : workspaceSelectable
+                      ? t('sidebar.openWorkspaceView')
+                      : collapsed
+                        ? t('common.expand')
+                        : t('common.collapse')
+                }
+                onClick={() => {
+                  if (!workspaceSelectable || !groupWorkdir) {
+                    toggleGroup(group.key)
+                    return
+                  }
+                  void selectWorkspaceGroup(groupWorkdir)
+                  onNavigate?.()
+                }}
+              >
+                <span className="conv-group-title">{group.label}</span>
+              </button>
+              {pinnableWorkdir && (
+                <button
+                  type="button"
+                  className={`conv-group-pin-hit${workspacePinned ? ' pinned' : ''}`}
+                  title={
+                    workspacePinned
+                      ? t('sidebar.menu.unpinWorkspace')
+                      : t('sidebar.menu.pinWorkspace')
+                  }
+                  aria-label={
+                    workspacePinned
+                      ? t('sidebar.menu.unpinWorkspace')
+                      : t('sidebar.menu.pinWorkspace')
+                  }
+                  aria-pressed={workspacePinned}
+                  onClick={(event) => {
+                    event.stopPropagation()
+                    void setWorkspacePinned(pinnableWorkdir, !workspacePinned)
+                  }}
+                >
+                  <Pin size={11} strokeWidth={1.75} aria-hidden />
+                </button>
+              )}
+              <button
+                type="button"
+                className="conv-group-collapse-hit"
+                title={collapsed ? t('common.expand') : t('common.collapse')}
+                aria-expanded={!collapsed}
+                onClick={(event) => {
+                  event.stopPropagation()
+                  toggleGroup(group.key)
+                }}
+              >
+                <span className="conv-group-count">{group.conversations.length}</span>
+                {collapsed ? (
+                  <ChevronRight className="conv-group-chevron" size={12} aria-hidden />
+                ) : (
+                  <ChevronDown className="conv-group-chevron" size={12} aria-hidden />
+                )}
+              </button>
+              <button
+                type="button"
+                className="conv-group-add-hit"
+                title={t('sidebar.menu.newSessionInDir')}
+                aria-label={t('sidebar.menu.newSessionInDir')}
+                onClick={(event) => {
+                  event.stopPropagation()
+                  if (groupWorkdir) {
+                    void createConversation({
+                      workingDirectory: groupWorkdir,
+                      model: useSessionStore.getState().settings.defaultModel
+                    })
+                  } else {
+                    // Empty Temporary Workspace — mint on demand.
+                    void createConversation()
+                  }
+                  onNavigate?.()
+                }}
+              >
+                <Plus size={12} aria-hidden />
+              </button>
+            </div>
+          ) : (
+            <div className="conv-group-header">
+              <span className="conv-group-title" title={group.label}>
+                {group.label}
+              </span>
+            </div>
+          ))}
+
+        {!collapsed &&
+          group.conversations.map((conversation) => {
+            const turn = turns[conversation.id]
+            const isActive = conversation.id === activeId
+            const isMultiSelected =
+              selectedIds.length > 1 && selectedIds.includes(conversation.id)
+            const runClass = selectionRunClass(conversation.id)
+            const awaiting = !!turn?.awaitingToolCallId
+            const running = !!turn?.isRunning && !awaiting
+            const agentLabel = agentTypeLabel(conversation, cliAgents)
+            const subtitle = subtitleFor(
+              conversation,
+              turn,
+              isActive,
+              tmp,
+              t,
+              agentLabel,
+              group.kind === 'workspace'
+            )
+            const rowTitle =
+              conversation.workingDirectory &&
+              !isTemporaryWorkspace(conversation.workingDirectory, tmp) &&
+              group.kind !== 'workspace'
+                ? `${conversation.title}\n${conversation.workingDirectory}`
+                : conversation.title
+
+            return (
+              <div
+                key={conversation.id}
+                className={`conv-row${isActive ? ' selected' : ''}${isMultiSelected ? ` multi ${runClass}` : ''}`}
+                title={rowTitle}
+                onClick={(event) => {
+                  // detail: ignore the second half of a double-click pair
+                  if (event.detail > 1) return
+                  const additive = event.metaKey
+                  const range = event.shiftKey
+                  void selectConversation(conversation.id, { additive, range })
+                  // Multi-select keeps the float open so the user can keep picking.
+                  if (additive || range) return
+                  // Floating: delay close so a double-click can still open
+                  // a companion window (immediate unmount ate dblclick before).
+                  if (floating && onNavigate) {
+                    if (clickTimerRef.current) clearTimeout(clickTimerRef.current)
+                    clickTimerRef.current = setTimeout(() => {
+                      clickTimerRef.current = null
+                      onNavigate()
+                    }, 280)
+                    return
+                  }
+                  onNavigate?.()
+                }}
+                onDoubleClick={(event) => {
+                  event.preventDefault()
+                  if (clickTimerRef.current) {
+                    clearTimeout(clickTimerRef.current)
+                    clickTimerRef.current = null
+                  }
+                  void openDetached(conversation.id)
+                  onNavigate?.()
+                }}
+                onContextMenu={(event) => {
+                  event.preventDefault()
+                  event.stopPropagation()
+                  if (clickTimerRef.current) {
+                    clearTimeout(clickTimerRef.current)
+                    clickTimerRef.current = null
+                  }
+                  // Finder-style: right-click inside a multi-selection keeps
+                  // the set and operates on all of it; outside collapses to one.
+                  const targets =
+                    selectedIds.length > 1 && selectedIds.includes(conversation.id)
+                      ? selectedIds
+                      : [conversation.id]
+                  if (targets.length === 1 && selectedIds.length > 1) {
+                    void selectConversation(conversation.id)
+                  }
+                  void showMenu(menuItems(targets))
+                }}
+              >
+                {renamingId === conversation.id ? (
+                  <RenameField
+                    initial={conversation.title}
+                    onCommit={(title) => void renameConversation(conversation.id, title)}
+                    onCancel={() => beginRename(null)}
+                  />
+                ) : (
+                  <span className="conv-text">
+                    <span className="conv-title">{middleTruncate(conversation.title)}</span>
+                    <span className="conv-subtitle">{subtitle}</span>
+                  </span>
+                )}
+
+                {!archiveView && renamingId !== conversation.id && (
+                  <button
+                    type="button"
+                    className={`conv-pin-hit${conversation.pinned ? ' pinned' : ''}`}
+                    title={conversation.pinned ? t('sidebar.menu.unpin') : t('sidebar.menu.pin')}
+                    aria-label={
+                      conversation.pinned ? t('sidebar.menu.unpin') : t('sidebar.menu.pin')
+                    }
+                    aria-pressed={!!conversation.pinned}
+                    onClick={(event) => {
+                      event.stopPropagation()
+                      void setPinned(conversation.id, !conversation.pinned)
+                    }}
+                  >
+                    <Pin size={10} strokeWidth={1.75} aria-hidden />
+                  </button>
+                )}
+
+                {/* Unlike the agent badge this stays up on the active
+                    row: the tools tray is often collapsed over it. */}
+                {shellBusy.has(conversation.id) && (
+                  <span
+                    className="conv-shell-badge"
+                    title={t('sidebar.badge.terminalRunning')}
+                  >
+                    <TerminalIcon size={11} aria-hidden />
+                  </span>
+                )}
+                {awaiting && (
+                  <span className="conv-badge awaiting" title={t('sidebar.awaitingAnswer')} />
+                )}
+                {running && !isActive && (
+                  <span
+                    className="conv-badge running"
+                    title={t('sidebar.badge.backgroundRunning')}
+                  />
+                )}
+              </div>
+            )
+          })}
+      </div>
+    )
+  }
+
   return (
     <aside className={`sidebar${floating ? ' floating' : ''}`}>
       <div className="sidebar-search">
@@ -578,6 +895,7 @@ export function Sidebar({
                   role="listitem"
                   key={`${row.fileId}:${row.sessionId}`}
                   className={`file-session-item${isActive ? ' is-active' : ''}${statusLabel ? ' is-missing' : ''}`}
+                  title={`${title}\n${row.path}`}
                   onClick={(event) => {
                     // Ignore the second half of a double-click pair (open window).
                     if (event.detail > 1) return
@@ -689,194 +1007,28 @@ export function Sidebar({
           </div>
         )}
 
-        {!fileSessionsView &&
-          groups.map((group, groupIndex) => {
-          const collapsible = group.kind === 'workspace'
-          const collapsed = collapsible && collapsedKeys.has(group.key)
-          const groupWorkdir = group.workdir ?? group.conversations[0]?.workingDirectory ?? null
-          const workspaceSelectId =
-            group.kind === 'workspace'
-              ? (groupWorkdir ?? DEFAULT_WORKSPACE_KEY)
-              : null
-          const isWorkspaceSelected =
-            group.kind === 'workspace' &&
-            !!workspaceSelectId &&
-            activeGroupId === workspaceSelectId
-          return (
-            <div className="conv-group" key={group.key || `group-${groupIndex}`}>
-              {groupIndex > 0 && <div className="conv-group-divider" />}
-              {group.label &&
-                (collapsible ? (
-                  <div
-                    className={`conv-group-header interactive${isWorkspaceSelected ? ' selected' : ''}`}
-                    onContextMenu={(event) => {
-                      if (group.kind !== 'workspace' || !groupWorkdir) return
-                      if (isTemporaryWorkspace(groupWorkdir, tmp)) return
-                      event.preventDefault()
-                      void showMenu([
-                        {
-                          label: t('sidebar.menu.newSessionInDir'),
-                          onSelect: () =>
-                            void createConversation({
-                              workingDirectory: groupWorkdir,
-                              model: useSessionStore.getState().settings.defaultModel
-                            })
-                        }
-                      ])
-                    }}
-                  >
-                    <button
-                      type="button"
-                      className="conv-group-chevron-hit"
-                      title={collapsed ? t('common.expand') : t('common.collapse')}
-                      onClick={(event) => {
-                        event.stopPropagation()
-                        toggleGroup(group.key)
-                      }}
-                    >
-                      {collapsed ? (
-                        <ChevronRight className="conv-group-chevron" size={12} aria-hidden />
-                      ) : (
-                        <ChevronDown className="conv-group-chevron" size={12} aria-hidden />
-                      )}
-                    </button>
-                    <button
-                      type="button"
-                      className="conv-group-title-hit"
-                      title={t('sidebar.openWorkspaceView')}
-                      onClick={() => {
-                        if (group.kind !== 'workspace' || !workspaceSelectId) {
-                          toggleGroup(group.key)
-                          return
-                        }
-                        void selectWorkspaceGroup(workspaceSelectId)
-                        onNavigate?.()
-                      }}
-                    >
-                      <span className="conv-group-title">{group.label}</span>
-                      <span className="conv-group-count">{group.conversations.length}</span>
-                    </button>
-                    <button
-                      type="button"
-                      className="conv-group-add-hit"
-                      title={t('sidebar.menu.newSessionInDir')}
-                      aria-label={t('sidebar.menu.newSessionInDir')}
-                      onClick={(event) => {
-                        event.stopPropagation()
-                        if (groupWorkdir) {
-                          void createConversation({
-                            workingDirectory: groupWorkdir,
-                            model: useSessionStore.getState().settings.defaultModel
-                          })
-                        } else {
-                          // Empty Temporary Workspace — mint on demand.
-                          void createConversation()
-                        }
-                        onNavigate?.()
-                      }}
-                    >
-                      <Plus size={12} aria-hidden />
-                    </button>
-                  </div>
-                ) : (
-                  <div className="conv-group-header">
-                    <span className="conv-group-title">{group.label}</span>
-                  </div>
-                ))}
+        {!fileSessionsView && pinnedGroups.length > 0 && (
+          <div className="conv-pinned-section">
+            <button
+              type="button"
+              className="conv-section-header"
+              title={pinnedCollapsed ? t('common.expand') : t('common.collapse')}
+              aria-expanded={!pinnedCollapsed}
+              onClick={() => setPinnedCollapsed((value) => !value)}
+            >
+              {pinnedCollapsed ? (
+                <ChevronRight className="conv-group-chevron" size={11} aria-hidden />
+              ) : (
+                <ChevronDown className="conv-group-chevron" size={11} aria-hidden />
+              )}
+              <span className="conv-section-title">{t('sidebar.section.pinned')}</span>
+              <span className="conv-section-count">{pinnedCount}</span>
+            </button>
+            {!pinnedCollapsed && pinnedGroups.map(renderGroup)}
+          </div>
+        )}
 
-              {!collapsed &&
-                group.conversations.map((conversation) => {
-                  const turn = turns[conversation.id]
-                  const isActive = conversation.id === activeId
-                  const isMultiSelected =
-                    selectedIds.length > 1 && selectedIds.includes(conversation.id)
-                  const runClass = selectionRunClass(conversation.id)
-                  const awaiting = !!turn?.awaitingToolCallId
-                  const running = !!turn?.isRunning && !awaiting
-                  const agentLabel = agentTypeLabel(conversation, cliAgents)
-
-                  return (
-                    <div
-                      key={conversation.id}
-                      className={`conv-row${isActive ? ' selected' : ''}${isMultiSelected ? ` multi ${runClass}` : ''}`}
-                      onClick={(event) => {
-                        // detail: ignore the second half of a double-click pair
-                        if (event.detail > 1) return
-                        const additive = event.metaKey
-                        const range = event.shiftKey
-                        void selectConversation(conversation.id, { additive, range })
-                        // Multi-select keeps the float open so the user can keep picking.
-                        if (additive || range) return
-                        // Floating: delay close so a double-click can still open
-                        // a companion window (immediate unmount ate dblclick before).
-                        if (floating && onNavigate) {
-                          if (clickTimerRef.current) clearTimeout(clickTimerRef.current)
-                          clickTimerRef.current = setTimeout(() => {
-                            clickTimerRef.current = null
-                            onNavigate()
-                          }, 280)
-                          return
-                        }
-                        onNavigate?.()
-                      }}
-                      onDoubleClick={(event) => {
-                        event.preventDefault()
-                        if (clickTimerRef.current) {
-                          clearTimeout(clickTimerRef.current)
-                          clickTimerRef.current = null
-                        }
-                        void openDetached(conversation.id)
-                        onNavigate?.()
-                      }}
-                      onContextMenu={(event) => {
-                        event.preventDefault()
-                        event.stopPropagation()
-                        if (clickTimerRef.current) {
-                          clearTimeout(clickTimerRef.current)
-                          clickTimerRef.current = null
-                        }
-                        // Finder-style: right-click inside a multi-selection keeps
-                        // the set and operates on all of it; outside collapses to one.
-                        const targets =
-                          selectedIds.length > 1 && selectedIds.includes(conversation.id)
-                            ? selectedIds
-                            : [conversation.id]
-                        if (targets.length === 1 && selectedIds.length > 1) {
-                          void selectConversation(conversation.id)
-                        }
-                        void showMenu(menuItems(targets))
-                      }}
-                    >
-                      {renamingId === conversation.id ? (
-                        <RenameField
-                          initial={conversation.title}
-                          onCommit={(title) => void renameConversation(conversation.id, title)}
-                          onCancel={() => beginRename(null)}
-                        />
-                      ) : (
-                        <span className="conv-text">
-                          <span className="conv-title">{middleTruncate(conversation.title)}</span>
-                          <span className="conv-subtitle">
-                            {subtitleFor(conversation, turn, isActive, tmp, t, agentLabel)}
-                          </span>
-                        </span>
-                      )}
-
-                      {awaiting && (
-                        <span className="conv-badge awaiting" title={t('sidebar.awaitingAnswer')} />
-                      )}
-                      {running && !isActive && (
-                        <span
-                          className="conv-badge running"
-                          title={t('sidebar.badge.backgroundRunning')}
-                        />
-                      )}
-                    </div>
-                  )
-                })}
-            </div>
-          )
-        })}
+        {!fileSessionsView && mainGroups.map(renderGroup)}
       </div>
 
       <UpdateCorner variant="inline" />

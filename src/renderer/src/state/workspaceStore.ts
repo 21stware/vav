@@ -8,7 +8,7 @@ import {
 const lastInjectFingerprint = new Map<string, string>()
 /** Pending delayed inject timers keyed by conversation id. */
 const pendingInjectTimers = new Map<string, number>()
-import type { PtySessionMeta } from '@shared/ipc'
+import type { PtyActivityStatus, PtySessionMeta } from '@shared/ipc'
 import {
   enabledCliAgents,
   normalizeFileSortKey,
@@ -276,6 +276,27 @@ function agentHostsEqual(
   return true
 }
 
+/**
+ * Re-insert panes whose process exited but which the user has not closed.
+ *
+ * Main only reports live PTYs, so a straight projection would yank the tab out
+ * from under whatever the dead process last printed. A tombstone keeps its
+ * original slot — and its xterm buffer — until the user dismisses it.
+ */
+function withTombstones(
+  projected: TerminalTab[],
+  previous: TerminalTab[],
+  status: Record<string, PtyActivityStatus>
+): TerminalTab[] {
+  const live = new Set(projected.map((t) => t.id))
+  const merged = [...projected]
+  previous.forEach((tab, index) => {
+    if (live.has(tab.id) || status[tab.id] !== 'exited') return
+    merged.splice(Math.min(index, merged.length), 0, tab)
+  })
+  return merged
+}
+
 /** Project main-process PTY snapshots into renderer tab/host maps. */
 function projectPtySessions(sessions: PtySessionMeta[]): {
   tabs: TerminalTab[]
@@ -376,11 +397,25 @@ function writeToTerminal(conversationId: string, tabId: string, data: string): v
 
 interface WorkspaceState {
   workspaces: Record<string, WorkspaceSlice>
+  /**
+   * Terminal activity per conversation, then per tab id.
+   *
+   * Kept outside `workspaces` on purpose: the sidebar has to show a rollup for
+   * every conversation, including ones this window never bound a slice for.
+   */
+  ptyStatus: Record<string, Record<string, PtyActivityStatus>>
+
+  setTabStatus(conversationId: string, tabId: string, status: PtyActivityStatus): void
 
   bindConversation(id: string, root: string | null): Promise<void>
   setWorkingDirectory(id: string, root: string | null): Promise<void>
   ensureFilesLoaded(id: string): Promise<void>
-  loadDirectory(id: string, path: string): Promise<void>
+  /**
+   * List one directory into the slice.
+   * `quiet` — used by fs-watch refresh: skip the loadingDirs flash and skip
+   * state updates when the listing is unchanged (CLI agents thrash the watch).
+   */
+  loadDirectory(id: string, path: string, options?: { quiet?: boolean }): Promise<void>
   refreshDirectories(id: string, dirs: string[]): Promise<void>
   toggleExpand(id: string, path: string): Promise<void>
   selectPath(id: string, path: string | null): void
@@ -449,8 +484,10 @@ interface WorkspaceState {
   /** Leave CLI main surface (keep agent PTYs parked; user bash untouched). */
   parkAgentHost(id: string): void
   /**
-   * Paste into the active CLI agent pane (focus handoff, block pick, draft).
+   * Paste into a CLI agent pane (focus handoff, block pick, draft).
    * Prefer launch argv for silent ambient bootstrap when the binary supports it.
+   * Pass `agentId` (from conversation meta) to target that host even when it
+   * is not currently the foreground surface.
    */
   injectContextToActivePane(
     id: string,
@@ -460,6 +497,8 @@ interface WorkspaceState {
       delayMs?: number
       /** Skip if this pane already received the same payload. */
       fingerprint?: string
+      /** Conversation agentBinaryName — prefer this host over activeHostAgentId. */
+      agentId?: string
     }
   ): void
   selectTab(id: string, tabId: string): void
@@ -480,6 +519,24 @@ interface WorkspaceState {
 
 export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   workspaces: {},
+  ptyStatus: {},
+
+  setTabStatus(conversationId, tabId, status) {
+    set((state) => {
+      const forConversation = state.ptyStatus[conversationId]
+      if (forConversation?.[tabId] === status) return state
+      return {
+        ptyStatus: {
+          ...state.ptyStatus,
+          [conversationId]: { ...forConversation, [tabId]: status }
+        }
+      }
+    })
+    // An exited tab is only a tombstone if the projection knows to keep it.
+    if (status === 'exited' && get().workspaces[conversationId]) {
+      void get().hydratePtyState(conversationId)
+    }
+  },
 
   async bindConversation(id, root) {
     if (!get().workspaces[id]) {
@@ -508,6 +565,23 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     if (!get().workspaces[id]) {
       set((state) => ({ workspaces: { ...state.workspaces, [id]: emptySlice(null) } }))
     }
+    // Adopt main's view of the live tabs, and forget any tombstone whose id is
+    // no longer referenced anywhere (the pane was closed while we were away).
+    set((state) => {
+      const current = state.ptyStatus[id] ?? {}
+      const next: Record<string, PtyActivityStatus> = {}
+      for (const meta of sessions) next[meta.id] = meta.status
+      for (const [tabId, status] of Object.entries(current)) {
+        if (status === 'exited' && !(tabId in next)) next[tabId] = status
+      }
+      const keys = Object.keys(next)
+      const unchanged =
+        keys.length === Object.keys(current).length &&
+        keys.every((tabId) => current[tabId] === next[tabId])
+      if (unchanged) return state
+      return { ptyStatus: { ...state.ptyStatus, [id]: next } }
+    })
+    const status = get().ptyStatus[id] ?? {}
     const projected = projectPtySessions(sessions)
     patch(set, id, (s) => {
       // Preserve activeHostAgentId only while that host still has live panes.
@@ -518,24 +592,33 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         activeHostAgentId = null
       }
 
+      // Tombstones apply to the tools-tray list only. Agent hosts are excluded
+      // deliberately: `isLiveAgentSession` would read a dead pane as restorable
+      // and suppress the relaunch that switching back to that agent needs.
+      const tabs = withTombstones(projected.tabs, s.tabs, status)
+      const layout =
+        tabs.length === projected.tabs.length
+          ? projected.layout
+          : layoutFromTabIds(tabs.map((t) => t.id))
+
       // Skip no-op patches to avoid re-render thrash on frequent pty:changed.
       if (
-        tabsEqual(s.tabs, projected.tabs) &&
+        tabsEqual(s.tabs, tabs) &&
         agentHostsEqual(s.agentHostSessions, projected.agentHostSessions) &&
         s.activeHostAgentId === activeHostAgentId &&
-        collectLeaves(s.layout).join(',') === collectLeaves(projected.layout).join(',')
+        collectLeaves(s.layout).join(',') === collectLeaves(layout).join(',')
       ) {
         return {}
       }
 
       // Prefer keeping the user's current active bash tab when it still exists.
-      const activeTabId = projected.tabs.some((t) => t.id === s.activeTabId)
+      const activeTabId = tabs.some((t) => t.id === s.activeTabId)
         ? s.activeTabId
-        : projected.activeTabId
+        : (tabs[0]?.id ?? '')
 
       return {
-        tabs: projected.tabs,
-        layout: projected.layout,
+        tabs,
+        layout,
         activeTabId,
         agentHostSessions: projected.agentHostSessions,
         activeHostAgentId
@@ -544,22 +627,31 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   },
 
   async setWorkingDirectory(id, root) {
+    const previous = get().workspaces[id]
+    // Same root: keep the cached tree. Clearing dirs here was flashing the
+    // Files panel whenever FileViewer re-bound an unchanged workdir.
+    if (previous && previous.root === root) {
+      await window.vav.files.watch(id, root)
+      await get().ensureFilesLoaded(id)
+      return
+    }
+
     // A new root invalidates every cached level; tabs and PTYs are untouched.
     set((state) => {
-      const previous = state.workspaces[id] ?? emptySlice(root)
+      const prev = state.workspaces[id] ?? emptySlice(root)
       return {
         workspaces: {
           ...state.workspaces,
           [id]: {
             ...emptySlice(root),
-            sort: previous.sort,
-            ascending: previous.ascending,
+            sort: prev.sort,
+            ascending: prev.ascending,
 
-            tabs: previous.tabs,
-            activeTabId: previous.activeTabId,
-            layout: previous.layout,
-            activeHostAgentId: previous.activeHostAgentId,
-            agentHostSessions: previous.agentHostSessions
+            tabs: prev.tabs,
+            activeTabId: prev.activeTabId,
+            layout: prev.layout,
+            activeHostAgentId: prev.activeHostAgentId,
+            agentHostSessions: prev.agentHostSessions
           }
         }
       }
@@ -575,13 +667,19 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     await get().loadDirectory(id, slice.root)
   },
 
-  async loadDirectory(id, path) {
+  async loadDirectory(id, path, options) {
+    const quiet = options?.quiet === true
     const slice = get().workspaces[id]
     if (!slice) return
     if (slice.loadingDirs.includes(path)) return
-    patch(set, id, (s) => ({ loadingDirs: [...s.loadingDirs, path] }))
+    // Watch refresh: never flash skeleton rows — keep the previous listing until
+    // the new one arrives, and bail if nothing changed.
+    if (!quiet) {
+      patch(set, id, (s) => ({ loadingDirs: [...s.loadingDirs, path] }))
+    }
 
-    const listing = await window.vav.files.list(path, slice.sort, slice.ascending)
+    const live = get().workspaces[id] ?? slice
+    const listing = await window.vav.files.list(path, live.sort, live.ascending)
     // Normalize missing-path errors so the Files panel can show a calm empty state
     // instead of raw ENOENT stack noise (common for file-sessions whose dir is gone).
     const error = listing.error
@@ -589,14 +687,43 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         ? 'ENOENT'
         : listing.error
       : undefined
+    const nextEntries = error ? [] : listing.entries
 
-    patch(set, id, (s) => ({
-      loadingDirs: s.loadingDirs.filter((p) => p !== path),
-      // Empty list on missing root so we don't keep a stale tree.
-      dirs: error ? { ...s.dirs, [path]: [] } : { ...s.dirs, [path]: listing.entries },
-      dirErrors: error ? { ...s.dirErrors, [path]: error } : omit(s.dirErrors, path),
-      dirTruncated: { ...s.dirTruncated, [path]: listing.truncated }
-    }))
+    patch(set, id, (s) => {
+      const prev = s.dirs[path]
+      const sameEntries =
+        Array.isArray(prev) &&
+        prev.length === nextEntries.length &&
+        prev.every((entry, i) => {
+          const next = nextEntries[i]
+          return (
+            !!next &&
+            entry.path === next.path &&
+            entry.name === next.name &&
+            entry.isDirectory === next.isDirectory &&
+            entry.size === next.size &&
+            entry.modifiedAt === next.modifiedAt
+          )
+        })
+      const sameTrunc = (s.dirTruncated[path] ?? 0) === listing.truncated
+      const prevErr = s.dirErrors[path]
+      const sameErr = error ? prevErr === error : prevErr === undefined
+      const nextLoading = s.loadingDirs.filter((p) => p !== path)
+      const loadingChanged = nextLoading.length !== s.loadingDirs.length
+
+      if (sameEntries && sameTrunc && sameErr) {
+        if (!loadingChanged) return {}
+        return { loadingDirs: nextLoading }
+      }
+
+      return {
+        loadingDirs: nextLoading,
+        // Empty list on missing root so we don't keep a stale tree.
+        dirs: { ...s.dirs, [path]: nextEntries },
+        dirErrors: error ? { ...s.dirErrors, [path]: error } : omit(s.dirErrors, path),
+        dirTruncated: { ...s.dirTruncated, [path]: listing.truncated }
+      }
+    })
   },
 
   async refreshDirectories(id, dirs) {
@@ -604,7 +731,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     if (!slice) return
     // Only levels the user actually has open are worth re-reading.
     const relevant = dirs.filter((dir) => slice.dirs[dir] !== undefined)
-    for (const dir of relevant) await get().loadDirectory(id, dir)
+    for (const dir of relevant) await get().loadDirectory(id, dir, { quiet: true })
   },
 
   async toggleExpand(id, path) {
@@ -1011,6 +1138,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     const submit = options?.submit !== false
     const delayMs = options?.delayMs ?? 0
     const fingerprint = options?.fingerprint
+    const preferredAgentId = options?.agentId?.trim() || null
 
     const prevTimer = pendingInjectTimers.get(id)
     if (prevTimer != null) {
@@ -1021,9 +1149,16 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     const run = (): void => {
       pendingInjectTimers.delete(id)
       const ws = get().workspaces[id]
-      const agentId = ws?.activeHostAgentId
+      // Meta-driven agentId wins over whichever surface happens to be painted.
+      const agentId =
+        (preferredAgentId && getAgentHost(ws, preferredAgentId)
+          ? preferredAgentId
+          : null) ||
+        ws?.activeHostAgentId ||
+        preferredAgentId
       const host = agentId ? getAgentHost(ws, agentId) : null
-      const tabId = host?.activeTabId || host?.tabs[0]?.id || ws?.activeTabId || ws?.tabs[0]?.id
+      const tabId = host?.activeTabId || host?.tabs[0]?.id
+        || (!preferredAgentId ? (ws?.activeTabId || ws?.tabs[0]?.id) : undefined)
       if (!tabId) return
       if (fingerprint) {
         if (lastInjectFingerprint.get(tabId) === fingerprint) return
@@ -1075,6 +1210,13 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     terminalSinks.delete(sinkKey(id, tabId))
     pendingMirrors.delete(sinkKey(id, tabId))
     lastInjectFingerprint.delete(tabId)
+    // Drop the status before the tab, or the next hydrate resurrects a
+    // tombstone the user just dismissed.
+    set((state) => {
+      const forConversation = state.ptyStatus[id]
+      if (!forConversation || !(tabId in forConversation)) return state
+      return { ptyStatus: { ...state.ptyStatus, [id]: omit(forConversation, tabId) } }
+    })
     patch(set, id, (s) => {
       const tabs = userBashTabsOnly(s.tabs).filter((t) => t.id !== tabId)
       const layout = s.layout ? removeLeaf(s.layout, tabId) : null
@@ -1138,7 +1280,10 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       window.clearTimeout(timer)
       pendingInjectTimers.delete(id)
     }
-    set((state) => ({ workspaces: omit(state.workspaces, id) }))
+    set((state) => ({
+      workspaces: omit(state.workspaces, id),
+      ptyStatus: omit(state.ptyStatus, id)
+    }))
   }
 }))
 
@@ -1201,9 +1346,17 @@ export function installPtyBridge(): () => void {
         void useWorkspaceStore.getState().hydratePtyState(conversationId)
       })
     : () => {}
+  // Unlike the other bridges this one tracks every conversation, not just the
+  // bound ones — the sidebar needs a rollup for sessions it has never opened.
+  const offStatus = pty.onStatus
+    ? pty.onStatus(({ conversationId, tabId, status }) => {
+        useWorkspaceStore.getState().setTabStatus(conversationId, tabId, status)
+      })
+    : () => {}
   return () => {
     offData()
     offExit()
     offChanged()
+    offStatus()
   }
 }

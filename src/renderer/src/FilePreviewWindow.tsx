@@ -11,7 +11,7 @@ import {
 import { installFsWatchBridge, installPtyBridge } from './state/workspaceStore'
 import { tt } from './i18n/useT'
 import { AppToast } from './components/AppToast'
-import { useTerminalAppearance } from './components/SessionDetail'
+import { useTerminalAppearance } from './lib/useTerminalAppearance'
 import { useMenuCommands } from './lib/menuCommands'
 
 const FileViewer = lazy(() =>
@@ -65,14 +65,22 @@ export default function FilePreviewWindow({ path }: { path: string }): React.JSX
           </div>
           <span className="spacer" />
         </div>
-        <div className="file-viewer-body muted">{tt('common.loading')}</div>
+        <div className="file-viewer-body muted" data-pad="text">
+          {tt('common.loading')}
+        </div>
       </div>
     )
   }
 
   return (
     <>
-      <Suspense fallback={<div className="file-viewer-body muted">{tt('common.loading')}</div>}>
+      <Suspense
+        fallback={
+          <div className="file-viewer-body muted" data-pad="text">
+            {tt('common.loading')}
+          </div>
+        }
+      >
         <FileViewer
           path={path}
           origin={origin}

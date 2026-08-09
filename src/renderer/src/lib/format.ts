@@ -18,20 +18,19 @@ export function relativeTime(timestamp: number): string {
   return new Date(timestamp).toLocaleDateString(getResolvedLocale())
 }
 
-/** A Temporary Workspace shows as "Workspace", never as a raw /var/folders path. */
+/** Temp / unrooted shells — not a project path; labeled "Default workspace". */
 export function isTemporaryWorkspace(path: string | null, tmp: string): boolean {
   if (!path) return true
   return path.startsWith(tmp) || path.startsWith('/private' + tmp)
 }
 
 export function workdirLabel(path: string | null, tmp: string, home: string): string {
-  if (isTemporaryWorkspace(path, tmp)) return tt('sidebar.workspace')
-  if (!path) return tt('sidebar.workspace')
+  if (isTemporaryWorkspace(path, tmp) || !path) return tt('sidebar.defaultWorkspace')
   return path.startsWith(home) ? `~${path.slice(home.length)}` : path
 }
 
 export function workdirShortLabel(path: string | null, tmp: string): string {
-  if (isTemporaryWorkspace(path, tmp) || !path) return tt('sidebar.workspace')
+  if (isTemporaryWorkspace(path, tmp) || !path) return tt('sidebar.defaultWorkspace')
   return basename(path)
 }
 

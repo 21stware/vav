@@ -65,6 +65,8 @@ import { UpdateService } from './updates'
 import { PtyManager } from './terminal/PtyManager'
 import { resolveAgentExecutable } from './terminal/loginPath'
 import { menuCommandFromInput } from './menuShortcuts'
+import { isDevRuntime } from './devRuntime'
+import { installDevParentWatchdog } from './devParentWatchdog'
 import { AgentRuntime } from './agent/AgentRuntime'
 import { SkillService } from './agent/SkillService'
 import { validateApiKey } from './agent/provider'
@@ -124,6 +126,8 @@ process.on('uncaughtException', (err: NodeJS.ErrnoException) => {
 // the menu bar reads "VAV" instead of "Electron").
 pinUserDataPath()
 applyBranding()
+// Dev: quit if `npm run dev` / electron-vite dies (prevents orphan VAV).
+installDevParentWatchdog()
 
 // Local-file scheme for in-window PDF (and other) previews. Must be registered
 // before ready so Chromium treats it as a privileged, streamable origin.
@@ -144,6 +148,8 @@ protocol.registerSchemesAsPrivileged([
 let mainWindow: BrowserWindow | null = null
 let settingsWindow: BrowserWindow | null = null
 let tokenUsageWindow: BrowserWindow | null = null
+/** Last BrowserWindow that held focus — Dock activate raises this, not always main. */
+let lastFocusedWindow: BrowserWindow | null = null
 /** Conversation currently shown in the token-usage panel (for live hydrate). */
 let tokenUsageConversationId: string | null = null
 /** Parent window id the panel was last attached to (recreate if parent changes). */
@@ -184,7 +190,9 @@ const ptyManager = new PtyManager(
     sendToWorkspaceWindows(IPC.ptyData, { tabId, data }, ptyManager.conversationIdFor(tabId)),
   (tabId, conversationId) => sendToWorkspaceWindows(IPC.ptyExit, tabId, conversationId),
   // Workspace windows re-hydrate tab maps from main — no per-renderer PTY ownership.
-  (conversationId) => sendToWorkspaceWindows(IPC.ptyChanged, { conversationId }, conversationId)
+  (conversationId) => sendToWorkspaceWindows(IPC.ptyChanged, { conversationId }, conversationId),
+  (tabId, conversationId, status) =>
+    sendToWorkspaceWindows(IPC.ptyStatus, { tabId, conversationId, status }, conversationId)
 )
 
 /** Conversation ids with a live or paused turn — drives the tray badge/menu. */
@@ -432,9 +440,13 @@ function sendMenuCommand(command: MenuCommand): void {
   lastMenuCommand = command
   lastMenuCommandAt = now
   const target = BrowserWindow.getFocusedWindow() ?? mainWindow
-  if (target && !target.isDestroyed() && target !== settingsWindow) {
-    safeSend(target.webContents, IPC.menuCommand, command)
+  if (!target || target.isDestroyed()) return
+  if (target === settingsWindow) {
+    // Settings runs a light renderer with no menu-command router; ⌘W still closes it.
+    if (command === 'close-context') hideSettingsWindow()
+    return
   }
+  safeSend(target.webContents, IPC.menuCommand, command)
 }
 
 /**
@@ -444,6 +456,19 @@ function sendMenuCommand(command: MenuCommand): void {
  */
 function wireMenuAccelerators(contents: Electron.WebContents): void {
   contents.on('before-input-event', (event, input) => {
+    // Branded vav.app often reports isPackaged=true, so the View → DevTools menu
+    // item may be missing — keep ⌥⌘I / Ctrl+Shift+I available in dev anyway.
+    if (isDevRuntime() && input.type === 'keyDown' && (input.key === 'I' || input.key === 'i')) {
+      const macDevtools = process.platform === 'darwin' && input.meta && input.alt && !input.control
+      const winDevtools =
+        process.platform !== 'darwin' && input.control && input.shift && !input.meta
+      if (macDevtools || winDevtools) {
+        event.preventDefault()
+        contents.toggleDevTools()
+        return
+      }
+    }
+
     const command = menuCommandFromInput(input)
     if (!command) return
     event.preventDefault()
@@ -503,13 +528,17 @@ function windowThemeName(): 'dark' | 'light' {
   return nativeTheme.shouldUseDarkColors ? 'dark' : 'light'
 }
 
+/** Clear native fill so macOS vibrancy (NSVisualEffectView) can show through. */
+const VIBRANCY_CLEAR = '#00000000'
+
 /**
  * Paint html/body/#root before React/CSS arrive so dark-mode cold opens
- * (⌘⇧↵ session, Settings, main) never flash system white.
+ * (session / Settings / main) never flash system white.
+ * Main window with vibrancy must stay transparent or it masks the system glass.
  */
-function primeRendererShell(win: BrowserWindow): void {
+function primeRendererShell(win: BrowserWindow, options?: { clear?: boolean }): void {
   if (win.isDestroyed() || win.webContents.isDestroyed()) return
-  const bg = windowBackground()
+  const bg = options?.clear ? 'transparent' : windowBackground()
   const scheme = windowThemeName()
   const css = `html,body,#root{background:${bg}!important;margin:0;height:100%;color-scheme:${scheme}}`
   const inject = (): void => {
@@ -519,6 +548,47 @@ function primeRendererShell(win: BrowserWindow): void {
   inject()
   win.webContents.once('dom-ready', inject)
 }
+
+/**
+ * macOS system glass on the main shell (not CSS backdrop-filter).
+ * `under-window` blurs the desktop through transparent regions — `sidebar`
+ * alone is nearly invisible on recent macOS when the web layer was opaque.
+ */
+function applyMainVibrancy(win: BrowserWindow): void {
+  if (!IS_MAC || win.isDestroyed()) return
+  try {
+    win.setBackgroundColor(VIBRANCY_CLEAR)
+    win.setVibrancy('under-window', { animationDuration: 0 })
+  } catch {
+    try {
+      win.setVibrancy('under-window')
+    } catch {
+      // Older Electron / non-mac
+    }
+  }
+}
+
+function clearMainVibrancy(win: BrowserWindow): void {
+  if (!IS_MAC || win.isDestroyed()) return
+  try {
+    win.setVibrancy(null)
+    win.setBackgroundColor(windowBackground())
+  } catch {
+    // ignore
+  }
+}
+
+function isMainVibrancyEnabled(): boolean {
+  return IS_MAC && settingsStore.get().windowVibrancyEnabled !== false
+}
+
+/** Apply or clear main-window glass from the current settings toggle. */
+function syncMainWindowMaterial(): void {
+  if (!mainWindow || mainWindow.isDestroyed() || !IS_MAC) return
+  if (isMainVibrancyEnabled()) applyMainVibrancy(mainWindow)
+  else clearMainVibrancy(mainWindow)
+}
+
 
 /** `barHeight` matches the renderer's own title bar, so the two rows line up. */
 function overlayColors(barHeight = 52): {
@@ -542,11 +612,27 @@ function overlayColors(barHeight = 52): {
  * gets a native overlay drawn on top of our own title bar instead — the only
  * way to keep the system buttons without also getting the system frame.
  */
-function chrome(barHeight: number): Electron.BrowserWindowConstructorOptions {
-  // Solid `backgroundColor` (no vibrancy): during a fast drag-resize Chromium
-  // trails the NSWindow by a frame or two. Vibrancy paints those uncovered
-  // strips black; a solid wash matching `--bg-window` makes the lag invisible.
+function chrome(
+  barHeight: number,
+  options?: { mainShell?: boolean }
+): Electron.BrowserWindowConstructorOptions {
   if (IS_MAC) {
+    // Main shell stays transparent so Settings can toggle vibrancy live.
+    // Companion / Settings stay solid (no resize black-edge lag there).
+    if (options?.mainShell) {
+      return {
+        titleBarStyle: 'hiddenInset',
+        trafficLightPosition: { x: 12, y: Math.round((barHeight - 12) / 2) },
+        transparent: true,
+        backgroundColor: VIBRANCY_CLEAR,
+        ...(isMainVibrancyEnabled()
+          ? {
+              vibrancy: 'under-window' as const,
+              visualEffectState: 'active' as const
+            }
+          : {})
+      }
+    }
     return {
       titleBarStyle: 'hiddenInset',
       // Vertically centred on the title bar, so the traffic lights sit on the
@@ -571,6 +657,11 @@ function repaintChrome(): void {
   applyDockIcon()
   for (const window of BrowserWindow.getAllWindows()) {
     if (window.isDestroyed()) continue
+    // Main: respect the Settings vibrancy toggle (do not force solid chrome).
+    if (mainWindow && !mainWindow.isDestroyed() && window.id === mainWindow.id) {
+      syncMainWindowMaterial()
+      continue
+    }
     window.setBackgroundColor(background)
     if (IS_MAC) continue
     try {
@@ -789,7 +880,10 @@ async function revealBrowserWindow(win: BrowserWindow): Promise<void> {
   // Steal focus first so Space switching starts before pixels land.
   app.focus({ steal: true })
   try {
-    win.setBackgroundColor(windowBackground())
+    const isMain =
+      IS_MAC && mainWindow != null && !mainWindow.isDestroyed() && win.id === mainWindow.id
+    if (isMain) syncMainWindowMaterial()
+    else win.setBackgroundColor(windowBackground())
   } catch {
     // ignore
   }
@@ -843,7 +937,7 @@ function createWindow(): BrowserWindow {
     paintWhenInitiallyHidden: true,
     title: APP_NAME,
     icon,
-    ...chrome(52),
+    ...chrome(52, { mainShell: IS_MAC }),
     webPreferences: rendererPrefs()
   })
   applyMenuBar(window)
@@ -900,9 +994,18 @@ function loadRenderer(window: BrowserWindow, query: Record<string, string> = {})
   // Always stamp theme so index.html can paint the matching wash before CSS.
   const withTheme = { theme: windowThemeName(), ...query }
   const search = new URLSearchParams(withTheme).toString()
-  primeRendererShell(window)
+  // Main shell (no view=) on macOS uses system vibrancy — keep the page clear.
+  // Settings / session / preview pass view= and stay opaque.
+  const useClear = IS_MAC && !query.view
+  primeRendererShell(window, { clear: useClear })
   try {
-    window.setBackgroundColor(windowBackground())
+    if (useClear) {
+      // createWindow calls loadRenderer before `mainWindow = …` is assigned.
+      if (isMainVibrancyEnabled()) applyMainVibrancy(window)
+      else clearMainVibrancy(window)
+    } else {
+      window.setBackgroundColor(windowBackground())
+    }
   } catch {
     // ignore
   }
@@ -974,6 +1077,11 @@ function ensureSettingsWindow(view: SettingsView = 'api', showNow: boolean): voi
     })
   }
   loadRenderer(settingsWindow, { view: 'settings', category: view })
+}
+
+/** Hide (don't destroy) so the next open is instant. */
+function hideSettingsWindow(): void {
+  if (settingsWindow && !settingsWindow.isDestroyed()) settingsWindow.hide()
 }
 
 function warmSettingsWindow(): void {
@@ -1238,6 +1346,16 @@ function openFilePreviewWindow(
 ): void {
   const path = previewPathKey(filePath)
   if (!path) return
+
+  // Directories have no file preview — reveal in Finder / Explorer instead.
+  try {
+    if (statSync(path).isDirectory()) {
+      shell.showItemInFolder(path)
+      return
+    }
+  } catch {
+    // Missing / unreadable: fall through to the preview's own error state.
+  }
 
   const existing = previewWindows.get(path)
   if (existing && !existing.isDestroyed()) {
@@ -1733,7 +1851,8 @@ function popupNativeMenu(
     }
 
     // Dev: every native menu gets Inspect Element (custom menus otherwise block it).
-    if (!app.isPackaged) {
+    // Use isDevRuntime — branded vav.app often reports isPackaged=true.
+    if (isDevRuntime()) {
       const x = opts.x ?? 0
       const y = opts.y ?? 0
       if (template.length) template.push({ type: 'separator' })
@@ -1893,6 +2012,50 @@ function showMainWindow(): void {
     return
   }
   void revealBrowserWindow(mainWindow)
+}
+
+/**
+ * Dock click / bare second-instance: raise the window the user was last in.
+ * Do not force the main shell forward when a companion is already open.
+ */
+function pickActivateWindow(): BrowserWindow | null {
+  const windows = BrowserWindow.getAllWindows().filter((w) => !w.isDestroyed())
+  if (!windows.length) return null
+
+  const last =
+    lastFocusedWindow && !lastFocusedWindow.isDestroyed() ? lastFocusedWindow : null
+  // Hidden warm Settings / token shells stay in getAllWindows — only raise them
+  // when they were last focused and are still visible (or minimized).
+  if (
+    last &&
+    (last.isVisible() || last.isMinimized() || !isAuxiliaryWindow(last))
+  ) {
+    return last
+  }
+
+  const visibleContent = windows.find(
+    (w) => (w.isVisible() || w.isMinimized()) && !isAuxiliaryWindow(w)
+  )
+  if (visibleContent) return visibleContent
+
+  if (mainWindow && !mainWindow.isDestroyed()) return mainWindow
+  return windows.find((w) => !isAuxiliaryWindow(w)) ?? null
+}
+
+function activateApp(): void {
+  if (process.platform === 'darwin' && app.dock && !app.dock.isVisible()) {
+    app.dock.show()
+  }
+  const target = pickActivateWindow()
+  if (!target) {
+    mainWindow = createWindow()
+    return
+  }
+  if (mainWindow && !mainWindow.isDestroyed() && target === mainWindow) {
+    void revealBrowserWindow(target)
+    return
+  }
+  raiseDetachedWindow(target)
 }
 
 /**
@@ -2129,7 +2292,8 @@ function watchSystemAccentColor(): void {
     // ignore
   }
   // macOS has no accent-color-changed event — re-sample when a window focuses.
-  app.on('browser-window-focus', () => {
+  app.on('browser-window-focus', (_event, window) => {
+    if (window && !window.isDestroyed()) lastFocusedWindow = window
     publishSystemAccentColor(false)
   })
 }
@@ -2225,6 +2389,9 @@ function registerIpc(): void {
       patch.notificationsEnabled !== undefined
     ) {
       notifications.applySettings()
+    }
+    if (patch.windowVibrancyEnabled !== undefined) {
+      syncMainWindowMaterial()
     }
     const settings = currentSettings()
     broadcast(IPC.settingsChanged, settings)
@@ -2836,10 +3003,7 @@ function registerIpc(): void {
   ipcMain.handle(IPC.windowShellPath, (_event, kind: ShellKind) => shellPath(kind))
 
   ipcMain.handle(IPC.windowOpenSettings, (_event, view?: SettingsView) => openSettingsWindow(view))
-  ipcMain.handle(IPC.windowCloseSettings, () => {
-    // Hide (don't destroy) so the next open is instant.
-    if (settingsWindow && !settingsWindow.isDestroyed()) settingsWindow.hide()
-  })
+  ipcMain.handle(IPC.windowCloseSettings, () => hideSettingsWindow())
 
   ipcMain.handle(IPC.windowOpenSession, (_event, id: string) => {
     // Must not return BrowserWindow — structured clone can't send it over IPC.
@@ -3118,7 +3282,7 @@ if (!singleInstance) {
       openFromDroppedPaths(dropped)
       return
     }
-    showMainWindow()
+    activateApp()
   })
 
   // Must register before ready — macOS delivers Dock / Finder opens here.
@@ -3288,7 +3452,7 @@ if (!singleInstance) {
       flushPendingOpens(parseOpenPathsFromArgv(process.argv))
     }
 
-    // Dock click restores the single main window instead of spawning another.
-    app.on('activate', showMainWindow)
+    // Dock click: raise last-focused open window (not always main).
+    app.on('activate', activateApp)
   })
 }

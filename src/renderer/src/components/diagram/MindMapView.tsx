@@ -179,7 +179,7 @@ export function MindMapView({
                   ry={8}
                   className="mindmap-node-plate"
                   onMouseDown={(ev) => {
-                    if (isEdit) return
+                    if (isEdit || zoom.panning) return
                     scheduleClickPick(ev.nativeEvent, () => pickNode(n.id, ev))
                   }}
                   onDoubleClick={(ev) => {

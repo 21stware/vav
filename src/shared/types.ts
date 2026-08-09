@@ -606,6 +606,11 @@ export interface AppSettings {
   fontSize: number
   reduceMotion: boolean
   /**
+   * macOS: system window vibrancy (desktop blur behind the sidebar).
+   * Ignored on Windows / Linux. Default on.
+   */
+  windowVibrancyEnabled: boolean
+  /**
    * How the main composer submits a message.
    * - `enter` (default): Enter sends; Shift+Enter inserts a newline.
    * - `mod-enter`: ⌘↵ / Ctrl+Enter sends; Enter inserts a newline.
@@ -625,6 +630,12 @@ export interface AppSettings {
    * Cap 10; Temporary Workspace paths are never recorded.
    */
   recentWorkspaceDirectories: string[]
+  /**
+   * Workspaces pinned to the sidebar's 置顶 section, most recently pinned first.
+   * A pinned workspace moves out of its normal bucket and takes its sessions
+   * with it, so the same path must never appear twice.
+   */
+  pinnedWorkspaceDirectories: string[]
   /** Master switch for OS notifications. */
   notificationsEnabled: boolean
   /** Play the system notification sound. */
@@ -676,6 +687,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   codeFont: 'SF Mono',
   fontSize: 12,
   reduceMotion: false,
+  windowVibrancyEnabled: true,
   sendKey: 'enter',
   globalHotkey: 'Control+Command+Space',
   sidebarGroupingMode: 'workspace',
@@ -683,6 +695,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   fileSortKey: 'name',
   fileSortAscending: true,
   recentWorkspaceDirectories: [],
+  pinnedWorkspaceDirectories: [],
   notificationsEnabled: true,
   notificationSound: true,
   notifyOnTurnComplete: true,

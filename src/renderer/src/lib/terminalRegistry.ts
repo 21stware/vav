@@ -2,6 +2,7 @@ import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { WebLinksAddon } from '@xterm/addon-web-links'
 import { registerTerminalSink } from '../state/workspaceStore'
+import { IS_MAC } from './platform'
 
 export interface TerminalEntry {
   term: Terminal
@@ -51,6 +52,20 @@ const THEME_DARK = {
 }
 
 /**
+ * Both xterm's OSC 8 handler and the web-links addon open a blank window and
+ * then assign `location` — Electron denies a `window.open()` that carries no
+ * URL, so those clicks did nothing. Send the URL with the call instead; main's
+ * window-open handler is what passes it to the browser.
+ *
+ * Terminal convention: only the modifier-held click leaves the app, so a click
+ * that was aimed at the shell cannot fling the user into a browser.
+ */
+function openTerminalLink(event: MouseEvent, uri: string): void {
+  if (!(IS_MAC ? event.metaKey : event.ctrlKey)) return
+  window.open(uri, '_blank', 'noopener,noreferrer')
+}
+
+/**
  * Creates (or returns) the live terminal for a tab.
  *
  * Instances live outside the React tree so switching tabs, collapsing the tools
@@ -94,12 +109,17 @@ export function acquireTerminal(options: {
     theme: THEME_DARK,
     // Mac: option as meta for readline-style shortcuts in agents.
     macOptionIsMeta: true,
-    macOptionClickForcesSelection: true
+    macOptionClickForcesSelection: true,
+    // OSC 8 hyperlinks (gh, eza, agent CLIs) — same route as plain URLs, and
+    // without xterm's stock "Do you want to navigate to…" confirm.
+    linkHandler: {
+      activate: (event, text) => openTerminalLink(event, text)
+    }
   })
 
   const fit = new FitAddon()
   term.loadAddon(fit)
-  term.loadAddon(new WebLinksAddon())
+  term.loadAddon(new WebLinksAddon(openTerminalLink))
   term.open(container)
 
   term.onData((data) => {
@@ -252,6 +272,10 @@ export function acquireTerminal(options: {
     pendingSize = { cols, rows }
     if (!document.hasFocus()) return
     if (resizeTimer) clearTimeout(resizeTimer)
+    // Live panel/window drag fits xterm for a tracking canvas, but must not
+    // SIGWINCH the agent every frame (Claude half-draws / stacked borders).
+    // Stash until settle — vav:resize-end / focus flush applyResize.
+    if (document.documentElement.dataset.resizing === 'true') return
     // Title-bar maximize/restore settles over multiple layout passes; short
     // debounces SIGWINCH'd intermediate sizes that Claude half-drew.
     resizeTimer = setTimeout(applyResize, 150)
@@ -264,7 +288,14 @@ export function acquireTerminal(options: {
     if (resizeTimer) clearTimeout(resizeTimer)
     resizeTimer = setTimeout(applyResize, 0)
   }
+  const onResizeEnd = (): void => {
+    if (!pendingSize || !document.hasFocus()) return
+    if (resizeTimer) clearTimeout(resizeTimer)
+    // Drag already fitted to the final box — onResize may not fire again.
+    resizeTimer = setTimeout(applyResize, 0)
+  }
   window.addEventListener('focus', onWindowFocus)
+  window.addEventListener('vav:resize-end', onResizeEnd)
 
   // Let product accelerators leave the terminal (⌘⇧E, Ctrl+`, …). Main also
   // re-dispatches via before-input-event; this stops xterm from consuming them
@@ -328,6 +359,7 @@ export function acquireTerminal(options: {
       }
       suppressPtyPaint = false
       window.removeEventListener('focus', onWindowFocus)
+      window.removeEventListener('vav:resize-end', onResizeEnd)
       // Flush last size if we dispose mid-debounce (window close / tab kill).
       if (pendingSize && document.hasFocus()) {
         const { cols, rows } = pendingSize

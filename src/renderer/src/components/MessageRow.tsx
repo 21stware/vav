@@ -213,7 +213,7 @@ export const MessageRow = memo(function MessageRow({
             <button
               type="button"
               className="message-quote-ref"
-              title={t('composer.quoteJump')}
+              title={`${message.quoteSummary}\n${t('composer.quoteJump')}`}
               onClick={() => scrollToMessage(message.quoteMessageId!)}
             >
               <CornerUpLeft size={12} />

@@ -1,6 +1,6 @@
 import { StrictMode, Suspense, lazy } from 'react'
 import { createRoot } from 'react-dom/client'
-import { PLATFORM } from './lib/platform'
+import { IS_MAC, PLATFORM } from './lib/platform'
 import { installLiveResizeTracking } from './lib/liveResize'
 import './styles/index.css'
 import '@xterm/xterm/css/xterm.css'
@@ -23,6 +23,10 @@ const params = new URLSearchParams(window.location.search)
 const view = params.get('view')
 const conversationId = params.get('conversationId')
 const filePath = params.get('path')
+// Main shell defaults to system glass until settings hydrate (Appearance can turn it off).
+if (IS_MAC && !view) {
+  document.documentElement.dataset.vibrancy = 'true'
+}
 
 function Root(): React.JSX.Element {
   if (view === 'settings') return <SettingsWindow />

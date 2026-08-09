@@ -113,7 +113,7 @@ export function DrawioView({
                 data-block-id={`drawio-${c.id}`}
                 transform={`translate(${x}, ${y})`}
                 onMouseDown={(ev) => {
-                  if (!selecting) return
+                  if (!selecting || zoom.panning) return
                   scheduleClickPick(ev.nativeEvent, () => pick(c, ev))
                 }}
               >

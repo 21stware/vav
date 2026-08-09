@@ -232,12 +232,17 @@ function AssociationRow({
     <div className="assoc-row">
       <FileText size={16} className="assoc-row-icon" />
       <div className="assoc-row-meta">
-        <div className="assoc-row-label">{row.label}</div>
+        <div className="assoc-row-label" title={row.label}>
+          {row.label}
+        </div>
         <div className="muted tiny">
           {row.extensions.join(', ')} · {row.uti}
         </div>
       </div>
-      <span className={`assoc-tag${row.isVav ? ' is-vav' : ''}`}>
+      <span
+        className={`assoc-tag${row.isVav ? ' is-vav' : ''}`}
+        title={row.isVav ? 'VAV' : row.defaultApp || unsetLabel}
+      >
         {row.isVav ? 'VAV' : row.defaultApp || unsetLabel}
       </span>
       <Button

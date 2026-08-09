@@ -1,7 +1,7 @@
 {
   "name": "vav",
   "productName": "VAV",
-  "version": "1.4.9",
+  "version": "1.4.10",
   "description": "Local-first CLI agent terminal workspace: host Claude Code, Codex, and other agent CLIs with multi-split PTYs and a file tree.",
   "license": "PolyForm-Noncommercial-1.0.0",
   "author": "Oboo Cheng",
@@ -9,6 +9,7 @@
   "scripts": {
     "postinstall": "node scripts/fix-pty-permissions.mjs",
     "dev": "node scripts/run-dev.mjs",
+    "dev:kill": "node scripts/kill-dev.mjs",
     "start": "node scripts/run-preview.mjs",
     "build": "npm run typecheck && electron-vite build",
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",

@@ -327,24 +327,43 @@ function TerminalHost({
 
     let raf = 0
     let debounce: ReturnType<typeof setTimeout> | null = null
+    let liveFitAt = 0
     /** Only the focused window should fit→resize the shared PTY. */
     const fit = (force = false): void => {
       if (!force && !document.hasFocus()) return
       if (host.clientWidth === 0 || host.clientHeight === 0) return
+      // Hidden tools-tray hosts still sit in the layout; fitting them only
+      // feeds the scrollbar↔cols oscillation that SIGWINCH-flashes the agent.
+      if (!force && host.dataset.hidden === 'true') return
       try {
+        const dims = entry.fit.proposeDimensions?.()
+        if (
+          dims &&
+          dims.cols === entry.term.cols &&
+          dims.rows === entry.term.rows
+        ) {
+          return
+        }
         entry.fit.fit()
       } catch {
         // ignore
       }
     }
-    // During live window / panel drag, skip; settle on vav:resize-end.
-    // Debounce internal layout so TUIs get one fit→SIGWINCH, not a storm of
-    // half-frames (Claude Code stacked borders above Welcome back).
+    // Live window / panel drag: track the pointer, but not every frame —
+    // FitAddon.clear() + alt-buffer rebuilds flash the whole column (and the
+    // Files / preview empty states beside it). PTY SIGWINCH stays gated in
+    // terminalRegistry until settle.
     const scheduleFit = (): void => {
-      if (document.documentElement.dataset.resizing === 'true') return
       if (raf) cancelAnimationFrame(raf)
       raf = requestAnimationFrame(() => {
         raf = 0
+        if (document.documentElement.dataset.resizing === 'true') {
+          const now = performance.now()
+          if (now - liveFitAt < 80) return
+          liveFitAt = now
+          fit()
+          return
+        }
         if (debounce) clearTimeout(debounce)
         debounce = setTimeout(() => {
           debounce = null

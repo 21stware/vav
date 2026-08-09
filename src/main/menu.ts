@@ -1,6 +1,7 @@
-import { app, Menu, type MenuItemConstructorOptions } from 'electron'
+import { Menu, type MenuItemConstructorOptions } from 'electron'
 import type { MenuCommand } from '@shared/ipc'
 import { APP_NAME } from './brand'
+import { isDevRuntime } from './devRuntime'
 import { t } from './i18n'
 
 const IS_MAC = process.platform === 'darwin'
@@ -26,7 +27,7 @@ export function buildAppMenu(
   newDetachedSession: () => void
 ): Menu {
   const send = (command: MenuCommand) => () => dispatch(command)
-  const isDev = !app.isPackaged
+  const isDev = isDevRuntime()
 
   const settingsItem: MenuItemConstructorOptions = {
     label: t('common.settingsEllipsis'),

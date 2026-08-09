@@ -14,6 +14,7 @@ import { DEFAULT_CLI_AGENTS, DEFAULT_SETTINGS } from '@shared/types'
 import type { ChangeSet, UpdateState } from '@shared/changeSet'
 import { resolveLocale } from '@shared/i18n'
 import { tt } from '../i18n/useT'
+import { isTemporaryWorkspace } from '../lib/format'
 import { compactionForLeaf, upsertCompaction } from '@shared/compaction'
 import { threadPath } from '@shared/thread'
 import { getProjection, disposeProjection } from './StreamProjection'
@@ -461,14 +462,19 @@ interface SessionState {
   locateWorkspace(id: string): Promise<void>
   setSidebarQuery(query: string): void
   setPinned(id: string, pinned: boolean): Promise<void>
+  /**
+   * Pin a workspace to the sidebar's 置顶 section. Temporary Workspace shells
+   * have no durable path, so they cannot be pinned.
+   */
+  setWorkspacePinned(workdir: string, pinned: boolean): Promise<void>
   setArchived(id: string, archived: boolean): Promise<void>
   setApprovalMode(id: string, mode: import('@shared/types').ApprovalMode): Promise<void>
-  /** Workspace preview focus — system prompt + CLI inject. */
+  /** Workspace preview focus — built-in VAV agent system / open-file context. */
   setFocusedFile(id: string, path: string | null): Promise<void>
   /**
    * Attach (or replace) the File Attachment Chip for a conversation.
-   * Syncs focusedFilePath for the agent. Pass null to clear without touching
-   * tree selection / preview window.
+   * Syncs focusedFilePath for the built-in agent. Does not paste into CLI TUIs.
+   * Pass null to clear without touching tree selection / preview window.
    */
   attachContextFile(id: string, path: string | null): Promise<void>
   /** Dismiss the chip only — does not close the file preview or deselect. */
@@ -577,6 +583,9 @@ interface SessionState {
 
 const globalLayout = loadGlobalLayout()
 const sessionToolsLayouts = loadSessionToolsMap()
+
+/** Cancels overlapping Workspace View enters (fast sidebar clicks / HMR remounts). */
+let workspaceSelectGen = 0
 
 export const useSessionStore = create<SessionState>((set, get) => ({
   sidebarVisible: globalLayout.sidebarVisible,
@@ -688,31 +697,33 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   },
 
   async selectWorkspaceGroup(workdir) {
+    // Collapse / clear — no generation needed.
     if (!workdir) {
+      workspaceSelectGen += 1
+      set({ activeGroupId: null })
+      return
+    }
+    // Default / temporary shells are session buckets, not project workspaces.
+    if (workdir.startsWith('__') || isTemporaryWorkspace(workdir, get().tmp)) {
+      workspaceSelectGen += 1
       set({ activeGroupId: null })
       return
     }
     if (get().activeGroupId === workdir) {
+      workspaceSelectGen += 1
       set({ activeGroupId: null })
       return
     }
-    // Sentinel / empty Temporary Workspace — select the shell only; mint on
-    // first chat or file add (no phantom session in the list).
-    if (workdir.startsWith('__')) {
-      set({
-        activeGroupId: workdir,
-        activeId: '',
-        selectedIds: [],
-        ...activeToolsFields(toolsFor(get(), ''))
-      })
-      return
-    }
+
+    const gen = ++workspaceSelectGen
+
     // Prefer an existing session; only mint when the workspace already has one
     // path but lost its agent mapping — never auto-create for an empty group.
     const rooted = get().conversations.find(
       (c) => !c.archived && !c.fileId && c.workingDirectory === workdir
     )
     if (!rooted) {
+      if (gen !== workspaceSelectGen) return
       set({
         activeGroupId: workdir,
         activeId: '',
@@ -721,9 +732,13 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       })
       return
     }
-    // Enter Workspace View with the existing agent (no create side-effect).
-    set({ activeGroupId: workdir })
+
+    // Resolve the agent *before* mounting Workspace View. Setting activeGroupId
+    // early left the previous conversation's activeId in place — WorkspaceView
+    // bound the wrong slice, then rebound after await (double load / empty flash).
     const agentId = await get().ensureWorkspaceAgent(workdir)
+    if (gen !== workspaceSelectGen) return
+
     set({
       activeGroupId: workdir,
       activeId: agentId,
@@ -731,6 +746,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       ...activeToolsFields(toolsFor(get(), agentId))
     })
     await get().loadMessages(agentId)
+    if (gen !== workspaceSelectGen) return
     await useWorkspaceStore.getState().bindConversation(agentId, workdir)
   },
 
@@ -1275,6 +1291,20 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     }))
   },
 
+  async setWorkspacePinned(workdir, pinned) {
+    const path = workdir.trim()
+    if (!path || path.startsWith('__')) return
+    const current = get().settings.pinnedWorkspaceDirectories
+    const rest = current.filter((entry) => entry !== path)
+    if (pinned && rest.length === current.length) {
+      await get().updateSettings({ pinnedWorkspaceDirectories: [path, ...rest] })
+      return
+    }
+    if (!pinned && rest.length !== current.length) {
+      await get().updateSettings({ pinnedWorkspaceDirectories: rest })
+    }
+  },
+
   async setArchived(id, archived) {
     const conversations = await window.vav.conversations.setArchived(id, archived)
     const { activeId } = get()
@@ -1335,22 +1365,16 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
   async attachContextFile(id, path) {
     const prev = get().contextFiles[id] ?? null
-    if (prev !== path) {
+    const pathChanged = prev !== path
+    if (pathChanged) {
       set((state) => ({
         contextFiles: { ...state.contextFiles, [id]: path }
       }))
     }
-    // Always push to main so agent open-file context stays in sync.
+    // Always push to main so the built-in VAV agent open-file context stays in sync.
+    // CLI / Bash hosts are NOT auto-pasted here — that stacked a new TUI block on
+    // every file click. Use Files → “Insert information to agent” for that.
     await get().setFocusedFile(id, path)
-
-    // CLI agent already live: brief focus + composer draft into the TUI prompt.
-    if (!path) return
-    try {
-      const { handoffFileFocusToCli } = await import('../lib/cliFocusHandoff')
-      handoffFileFocusToCli(id, path)
-    } catch {
-      // best-effort
-    }
   },
 
   async dismissContextFile(id) {

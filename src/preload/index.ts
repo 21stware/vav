@@ -213,7 +213,8 @@ const api: VavApi = {
     replay: (tabId: string) => ipcRenderer.invoke(IPC.ptyReplay, tabId),
     onData: (handler) => subscribe(IPC.ptyData, handler),
     onExit: (handler) => subscribe<string>(IPC.ptyExit, handler),
-    onChanged: (handler) => subscribe(IPC.ptyChanged, handler)
+    onChanged: (handler) => subscribe(IPC.ptyChanged, handler),
+    onStatus: (handler) => subscribe(IPC.ptyStatus, handler)
   },
 
   window: {

@@ -83,6 +83,7 @@ export function StructuredDocView({
                   key={section.id}
                   type="button"
                   className={`structured-doc-nav-item${on ? ' active' : ''}${hasSel ? ' has-selection' : ''}`}
+                  title={section.title}
                   onClick={() => {
                     setActiveSectionId(section.id)
                     scrollRef.current?.scrollTo({ top: 0 })
@@ -154,7 +155,9 @@ function StructuredSectionView({
               : undefined
           }
         >
-          <span className="structured-section-title">{section.title}</span>
+          <span className="structured-section-title" title={section.title}>
+            {section.title}
+          </span>
           <span className="structured-section-meta muted tiny">
             {section.blocks.length} blocks
           </span>

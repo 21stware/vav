@@ -112,7 +112,9 @@ export const ToolCard = memo(function ToolCard({
         }}
       >
         {canToggle ? <ChevronRight className="tool-chevron" size={11} /> : <span className="tool-chevron-spacer" />}
-        <span className="tool-name">{toolName}</span>
+        <span className="tool-name" title={toolName}>
+          {toolName}
+        </span>
         <span className="tool-summary" title={headline}>
           {truncate(headline, SUMMARY_MAX)}
         </span>
@@ -603,7 +605,9 @@ function MultiAskForm({
                         }
                       />
                       <span className="ask-choice-mark" aria-hidden />
-                      <span className="ask-choice-label">{choice}</span>
+                      <span className="ask-choice-label" title={choice}>
+                        {choice}
+                      </span>
                     </label>
                   )
                 }
@@ -623,7 +627,9 @@ function MultiAskForm({
                       }
                     />
                     <span className="ask-choice-mark" aria-hidden />
-                    <span className="ask-choice-label">{choice}</span>
+                    <span className="ask-choice-label" title={choice}>
+                      {choice}
+                    </span>
                   </label>
                 )
               })}

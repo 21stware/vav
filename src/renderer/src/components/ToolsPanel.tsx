@@ -1,11 +1,12 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import {
   ArrowLeftRight,
   Bot,
   ChevronDown,
   ChevronUp,
   Folder,
-  Terminal as TerminalIcon
+  Terminal as TerminalIcon,
+  Unplug
 } from 'lucide-react'
 import { useSessionStore, PANEL_MAX_HEIGHT, PANEL_MIN_HEIGHT } from '../state/sessionStore'
 import { useWorkspaceStore } from '../state/workspaceStore'
@@ -68,11 +69,32 @@ export function ToolsPanel({
   const newBash = useWorkspaceStore((s) => s.newBash)
   const selectTab = useWorkspaceStore((s) => s.selectTab)
   const closeTab = useWorkspaceStore((s) => s.closeTab)
+  const tabStatus = useWorkspaceStore((s) => s.ptyStatus[activeId])
 
   const [dragHeight, setDragHeight] = useState<number | null>(null)
   const dragState = useRef<{ startY: number; startHeight: number } | null>(null)
   const pathChipRef = useRef<HTMLDivElement>(null)
+  const bodyRef = useRef<HTMLDivElement>(null)
   const seenMenuNonce = useRef(0)
+
+  /**
+   * Switching sessions restores that conversation's tray state. The tray must
+   * already be open (or closed) when the new session paints — animating it is
+   * reporting on a switch the user did not perform on the tray itself.
+   * Toggling stays animated: only this commit is snapped.
+   */
+  useLayoutEffect(() => {
+    const el = bodyRef.current
+    if (!el) return
+    el.dataset.instant = 'true'
+    // Land the restored height/segment in this style pass, before the frame
+    // where the transition would otherwise start.
+    void el.offsetHeight
+    const frame = requestAnimationFrame(() => {
+      delete el.dataset.instant
+    })
+    return () => cancelAnimationFrame(frame)
+  }, [activeId])
 
   const workdir = conversation?.workingDirectory ?? null
   const temporary = isTemporaryWorkspace(workdir, tmp)
@@ -117,8 +139,8 @@ export function ToolsPanel({
     (event: React.MouseEvent) => {
       event.preventDefault()
       dragState.current = { startY: event.clientY, startHeight: panelHeight }
-      // Gate terminal fit→PTY resize while the tools tray is dragged so the
-      // agent host above is not hit with a SIGWINCH storm (ghost TUI frames).
+      // Mark live tray drag: xterm still fits (tracks the pointer), but
+      // terminalRegistry holds SIGWINCH until settle (ghost TUI frames).
       document.documentElement.dataset.resizing = 'true'
       setDragHeight(panelHeight)
     },
@@ -256,7 +278,8 @@ export function ToolsPanel({
     })()
   }
 
-  const bodyHeight = collapsed ? 0 : (dragHeight ?? panelHeight)
+  /** Well paint size — grid 0fr/1fr owns open/close; this stays at the open px. */
+  const openHeight = dragHeight ?? panelHeight
 
   const createBash = (): void => {
     void (async () => {
@@ -355,24 +378,40 @@ export function ToolsPanel({
             // Agent-controlled tabs: bot icon (green when agent is executing).
             // Plain Shell tabs: terminal icon, no agent prefix.
             const isAgentTab = tab.isAgent || !!tab.agentId
-            const agentActive = isAgentTab && agentRunning && tab.id === activeTabId
+            const status = tabStatus?.[tab.id] ?? 'idle'
+            const exited = status === 'exited'
+            // The VAV tab mirrors the built-in agent rather than owning a shell,
+            // so its liveness is the turn, not the PTY.
+            const running =
+              tab.agentId === 'vav' || tab.isAgent ? agentRunning : status === 'running'
+            const statusLabel = exited
+              ? t('tools.status.exited')
+              : running
+                ? t('tools.status.running')
+                : t('tools.status.idle')
             return (
               <Chip
                 key={tab.id}
                 label={tab.title}
                 icon={
-                  isAgentTab ? (
+                  exited ? (
+                    <Unplug size={12} className="terminal-tab-icon is-exited" />
+                  ) : isAgentTab ? (
                     <Bot
                       size={12}
-                      className={agentActive ? 'agent-bot-icon is-running' : 'agent-bot-icon'}
+                      className={running ? 'agent-bot-icon is-running' : 'agent-bot-icon'}
                     />
                   ) : (
-                    <TerminalIcon size={12} />
+                    <TerminalIcon
+                      size={12}
+                      className={running ? 'terminal-tab-icon is-running' : 'terminal-tab-icon'}
+                    />
                   )
                 }
                 active={on}
-                emphasis={isAgentTab}
-                title={tab.title}
+                emphasis={isAgentTab && !exited}
+                muted={exited}
+                title={`${tab.title} · ${statusLabel}`}
                 onClick={() => {
                   if (on) {
                     setToolsCollapsed(true)
@@ -407,24 +446,32 @@ export function ToolsPanel({
 
       <div
         className="tools-body"
+        ref={bodyRef}
         data-collapsed={collapsed}
         data-resizing={dragHeight !== null}
         style={
-          collapsed
-            ? { height: 0 }
-            : previewEdit
-              ? // Prefer panelHeight when the dock has room; shrink when the
-                // agent drawer caps the dock at 50% so empty-state can center
-                // in the visible box instead of a clipped midpoint.
-                { height: bodyHeight, flex: '1 1 auto', minHeight: 0 }
-              : { height: bodyHeight }
+          previewEdit && !collapsed
+            ? // Cap inside the 50% preview dock; row animation still drives open/close.
+              { maxHeight: '100%', minHeight: 0 }
+            : undefined
         }
       >
-        <div className="tools-pane" data-hidden={collapsed || segment !== 'files'}>
-          <FilesPanel visible={!collapsed && segment === 'files'} />
-        </div>
-        <div className="tools-pane" data-hidden={collapsed || segment !== 'terminal'}>
-          <TerminalPanel visible={!collapsed && segment === 'terminal'} />
+        <div className="tools-body-clip">
+          <div
+            className="tools-body-well"
+            style={
+              previewEdit && !collapsed
+                ? { height: openHeight, maxHeight: '100%' }
+                : { height: openHeight }
+            }
+          >
+            <div className="tools-pane" data-hidden={collapsed || segment !== 'files'}>
+              <FilesPanel visible={!collapsed && segment === 'files'} />
+            </div>
+            <div className="tools-pane" data-hidden={collapsed || segment !== 'terminal'}>
+              <TerminalPanel visible={!collapsed && segment === 'terminal'} />
+            </div>
+          </div>
         </div>
       </div>
     </div>

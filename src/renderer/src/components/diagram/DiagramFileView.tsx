@@ -66,6 +66,7 @@ export function DiagramFileView({
             startOnLoad: false,
             securityLevel: 'strict',
             theme: dark ? 'dark' : 'neutral',
+            fontFamily: 'var(--font-ui, system-ui, sans-serif)',
             themeVariables: dark
               ? {
                   darkMode: true,
@@ -139,7 +140,7 @@ export function DiagramFileView({
         data-panning={zoom.panning ? 'true' : 'false'}
         {...zoom.viewportProps}
         onMouseDown={(ev) => {
-          if (!selecting) return
+          if (!selecting || zoom.panning) return
           const raw = ev.target as Element | null
           const target = raw?.closest?.('.diagram-pick-target') as HTMLElement | null
           if (!target || !hostRef.current?.contains(target)) return

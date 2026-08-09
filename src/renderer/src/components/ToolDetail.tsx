@@ -175,7 +175,11 @@ function ListingView({ listing }: { listing: string }): React.JSX.Element {
   return (
     <div className="detail-listing">
       {entries.map((entry, index) => (
-        <div key={index} className={`listing-row${entry.isDirectory ? ' dir' : ''}`}>
+        <div
+          key={index}
+          className={`listing-row${entry.isDirectory ? ' dir' : ''}`}
+          title={entry.name}
+        >
           {entry.isDirectory ? <Folder size={12} /> : <FileText size={12} />}
           <span>{entry.name}</span>
         </div>

@@ -46,7 +46,18 @@ export function FilesPanel({ visible }: { visible: boolean }): React.JSX.Element
   const locateWorkspace = useSessionStore((s) => s.locateWorkspace)
   const settings = useSessionStore((s) => s.settings)
   const updateSettings = useSessionStore((s) => s.updateSettings)
-  const workspace = useWorkspaceStore((s) => s.workspaces[activeId])
+  // Narrow selectors — CLI host / PTY hydrate mutates tabs & layout constantly;
+  // subscribing to the whole workspace slice re-renders the Files browser every tick.
+  const root = useWorkspaceStore((s) => s.workspaces[activeId]?.root ?? null)
+  const sort = useWorkspaceStore((s) => s.workspaces[activeId]?.sort ?? 'name')
+  const ascending = useWorkspaceStore((s) => s.workspaces[activeId]?.ascending ?? true)
+  const selectedPath = useWorkspaceStore((s) => s.workspaces[activeId]?.selectedPath ?? null)
+  const expanded = useWorkspaceStore((s) => s.workspaces[activeId]?.expanded)
+  const dirs = useWorkspaceStore((s) => s.workspaces[activeId]?.dirs)
+  const rootError = useWorkspaceStore((s) => {
+    const r = s.workspaces[activeId]?.root
+    return r ? s.workspaces[activeId]?.dirErrors[r] : undefined
+  })
   const ensureFilesLoaded = useWorkspaceStore((s) => s.ensureFilesLoaded)
   const setSort = useWorkspaceStore((s) => s.setSort)
   const selectPathRaw = useWorkspaceStore((s) => s.selectPath)
@@ -76,18 +87,18 @@ export function FilesPanel({ visible }: { visible: boolean }): React.JSX.Element
 
   // Restore Finder sort prefs into the active workspace once when it appears.
   useEffect(() => {
-    if (!activeId || !workspace) return
+    if (!activeId || !root) return
     const key = normalizeFileSortKey(settings.fileSortKey)
-    const ascending = settings.fileSortAscending ?? true
-    if (workspace.sort === key && workspace.ascending === ascending) return
-    void setSort(activeId, key, ascending)
+    const sortAscending = settings.fileSortAscending ?? true
+    if (sort === key && ascending === sortAscending) return
+    void setSort(activeId, key, sortAscending)
     // Only sync from persisted settings when the workspace first binds.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeId, workspace?.root])
+  }, [activeId, root])
 
   useEffect(() => {
     setColumnPath([])
-  }, [workspace?.root])
+  }, [root])
 
   useEffect(() => {
     // Keep the browser visible when modes already match — a cancelled mid-fade
@@ -126,26 +137,24 @@ export function FilesPanel({ visible }: { visible: boolean }): React.JSX.Element
     return () => window.removeEventListener('keydown', onKey)
   }, [visible, activeId])
 
-  if (!workspace?.root) {
+  if (!root) {
     return (
       <EmptyState title={t('files.noWorkdirTitle')} description={t('files.noWorkdirDesc')} />
     )
   }
 
-  const rootError = workspace.dirErrors[workspace.root]
   const rootMissing = rootError === 'ENOENT' || /enoent|no such file|not found/i.test(rootError ?? '')
 
   const applySort = (key: FileSortKey): void => {
     const next = normalizeFileSortKey(key)
-    const ascending =
-      next !== 'none' && workspace.sort === next ? !workspace.ascending : true
-    void setSort(activeId, next, ascending)
-    void updateSettings({ fileSortKey: next, fileSortAscending: ascending })
+    const nextAscending = next !== 'none' && sort === next ? !ascending : true
+    void setSort(activeId, next, nextAscending)
+    void updateSettings({ fileSortKey: next, fileSortAscending: nextAscending })
   }
 
   const sortItems: MenuItem[] = FILE_SORT_OPTIONS.map((option) => ({
     label: t(fileSortLabelKey(option.key)),
-    checked: normalizeFileSortKey(workspace.sort) === option.key,
+    checked: normalizeFileSortKey(sort) === option.key,
     onSelect: () => applySort(option.key)
   }))
 
@@ -167,11 +176,10 @@ export function FilesPanel({ visible }: { visible: boolean }): React.JSX.Element
 
   /** Directory that owns the next “new file” (focused folder, else parent of file, else root). */
   const resolveCreateDir = (): string | null => {
-    const root = workspace.root
     if (!root) return null
-    const sel = workspace.selectedPath
+    const sel = selectedPath
     if (!sel || sel === root) return root
-    for (const entries of Object.values(workspace.dirs)) {
+    for (const entries of Object.values(dirs ?? {})) {
       const hit = entries.find((e) => e.path === sel)
       if (hit) return hit.isDirectory ? hit.path : dirname(hit.path)
     }
@@ -182,21 +190,21 @@ export function FilesPanel({ visible }: { visible: boolean }): React.JSX.Element
 
   const startCreateFile = (): void => {
     const dir = resolveCreateDir()
-    if (!dir || !workspace.root) return
+    if (!dir || !root) return
     // Ensure the target folder is expanded in tree view so the inline row is visible.
-    const expanded = workspace.expanded ?? []
-    if (dir !== workspace.root && !expanded.includes(dir)) {
+    const open = expanded ?? []
+    if (dir !== root && !open.includes(dir)) {
       void useWorkspaceStore.getState().toggleExpand(activeId, dir)
     }
     // Column browser: open the parent column if needed.
-    if (displayMode === 'column' && dir !== workspace.root) {
+    if (displayMode === 'column' && dir !== root) {
       const parent = dirname(dir)
-      const base = parent === workspace.root ? [] : columnPath
-      if (!columnPath.includes(dir) && dir !== workspace.root) {
+      const base = parent === root ? [] : columnPath
+      if (!columnPath.includes(dir) && dir !== root) {
         // Keep ancestors; append dir as last open folder.
         const idx = columnPath.indexOf(parent)
         if (idx >= 0) setColumnPath([...columnPath.slice(0, idx + 1), dir])
-        else if (parent === workspace.root) setColumnPath([dir])
+        else if (parent === root) setColumnPath([dir])
         else setColumnPath([...base, dir].filter((p, i, a) => a.indexOf(p) === i))
       }
     }
@@ -237,7 +245,7 @@ export function FilesPanel({ visible }: { visible: boolean }): React.JSX.Element
     <>
       <div className="files-toolbar">
         <Button
-          label={sortButtonLabel(normalizeFileSortKey(workspace.sort), t)}
+          label={sortButtonLabel(normalizeFileSortKey(sort), t)}
           icon={<ArrowUpDown size={12} />}
           size="sm"
           onClick={(event) =>
@@ -262,9 +270,9 @@ export function FilesPanel({ visible }: { visible: boolean }): React.JSX.Element
           icon={<FileManagerIcon size={13} />}
           size="sm"
           title={t('tools.revealInFm', { fileManager: fileManagerLabel() })}
-          disabled={rootMissing || !workspace?.root}
+          disabled={rootMissing || !root}
           onClick={() => {
-            const target = workspace?.selectedPath || workspace?.root
+            const target = selectedPath || root
             if (!target) return
             void window.vav.conversations.revealInFinder(target)
           }}
@@ -298,7 +306,7 @@ export function FilesPanel({ visible }: { visible: boolean }): React.JSX.Element
           <div className="files-missing-root">
             <EmptyState
               title={t('sidebar.dirNotExist')}
-              description={workspace.root || undefined}
+              description={root || undefined}
             />
           </div>
         ) : displayMode === 'tree' ? (
@@ -307,7 +315,7 @@ export function FilesPanel({ visible }: { visible: boolean }): React.JSX.Element
               <InlineAlert kind="error" title={t('files.error.readDir')} message={rootError} />
             ) : (
               <TreeLevel
-                path={workspace.root}
+                path={root}
                 level={0}
                 onOpen={openViewer}
                 onMutated={refreshParent}
@@ -322,7 +330,7 @@ export function FilesPanel({ visible }: { visible: boolean }): React.JSX.Element
           </div>
         ) : (
           <ColumnBrowser
-            root={workspace.root}
+            root={root}
             columnPath={columnPath}
             setColumnPath={setColumnPath}
             onOpen={openViewer}
@@ -361,7 +369,10 @@ function ColumnBrowser({
 }): React.JSX.Element {
   const t = useT()
   const activeId = useSessionStore((s) => s.activeId)
-  const workspace = useWorkspaceStore((s) => s.workspaces[activeId])
+  const dirs = useWorkspaceStore((s) => s.workspaces[activeId]?.dirs)
+  const loadingDirs = useWorkspaceStore((s) => s.workspaces[activeId]?.loadingDirs)
+  const dirErrors = useWorkspaceStore((s) => s.workspaces[activeId]?.dirErrors)
+  const selectedPath = useWorkspaceStore((s) => s.workspaces[activeId]?.selectedPath ?? null)
   const loadDirectory = useWorkspaceStore((s) => s.loadDirectory)
   const selectPathRaw = useWorkspaceStore((s) => s.selectPath)
   const attachContextFile = useSessionStore((s) => s.attachContextFile)
@@ -375,14 +386,18 @@ function ColumnBrowser({
     else void attachContextFile(id, null)
   }
   const columns = [root, ...columnPath]
+  const columnsKey = columns.join('\0')
 
   useEffect(() => {
     for (const dir of columns) {
-      if (workspace && !workspace.dirs[dir] && !workspace.loadingDirs.includes(dir)) {
+      if (dirs && !dirs[dir] && !(loadingDirs ?? []).includes(dir)) {
         void loadDirectory(activeId, dir)
       }
     }
-  }, [activeId, columns.join('\0'), workspace, loadDirectory])
+    // Intentionally keyed by path list + whether each dir is present — not the
+    // whole workspace (PTY hydrate must not re-kick loads).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeId, columnsKey, dirs, loadingDirs, loadDirectory])
 
   const columnsRef = useRef<HTMLDivElement>(null)
 
@@ -407,9 +422,9 @@ function ColumnBrowser({
   return (
     <div className="file-columns" ref={columnsRef}>
       {columns.map((dir, index) => {
-        const entries = workspace?.dirs[dir] ?? []
-        const error = workspace?.dirErrors[dir]
-        const loading = workspace?.loadingDirs.includes(dir)
+        const entries = dirs?.[dir] ?? []
+        const error = dirErrors?.[dir]
+        const loading = (loadingDirs ?? []).includes(dir)
         return (
           <div
             className="file-column"
@@ -427,7 +442,7 @@ function ColumnBrowser({
               ) : (
                 <InlineAlert kind="error" title={t('files.readError')} message={error} />
               ))}
-            {loading && !workspace?.dirs[dir] && (
+            {loading && !dirs?.[dir] && (
               <div className="muted tiny" style={{ padding: 8 }}>
                 {tt('common.loading')}
               </div>
@@ -443,7 +458,7 @@ function ColumnBrowser({
             )}
             {!error &&
               entries.map((entry) => {
-                const selected = workspace?.selectedPath === entry.path
+                const selected = selectedPath === entry.path
                 const open = columnPath[index] === entry.path
                 return (
                   <div
@@ -518,7 +533,7 @@ function ColumnBrowser({
                   </div>
                 )
               })}
-            {!error && !loading && entries.length === 0 && workspace?.dirs[dir] && (
+            {!error && !loading && entries.length === 0 && dirs?.[dir] && (
               <div className="muted tiny" style={{ padding: 8 }}>
                 {tt('files.emptyFolder')}
               </div>
@@ -853,6 +868,21 @@ async function showEntryMenu(
         {
           label: tt('files.quickLook'),
           onSelect: () => void window.vav.files.quickLook(entry.path)
+        },
+        {
+          label: tt('files.insertToAgent'),
+          onSelect: () => {
+            const id = useSessionStore.getState().activeId
+            if (!id) return
+            void useSessionStore
+              .getState()
+              .attachContextFile(id, entry.path)
+              .then(() =>
+                import('../lib/cliFocusHandoff').then(({ handoffFileFocusToCli }) =>
+                  handoffFileFocusToCli(id, entry.path)
+                )
+              )
+          }
         },
         { label: '', divider: true },
         {

@@ -46,6 +46,10 @@ function useResolvedTheme(): 'light' | 'dark' {
  * Sealed chunks pass `cached` (the default). The open stream tail passes
  * `cached={false}` and re-parses each tick.
  *
+ * Pass `fragment` when several views share one outer `.markdown` (streaming):
+ * each chunk must not be its own `.markdown` root, or first/last-child margin
+ * resets make heading/paragraph spacing diverge from the finished message.
+ *
  * Diagram fences use a progressive visual host: once detected, the UI stays
  * in image mode and updates the last good SVG — it does not bounce back to
  * a syntax-highlighted source block between frames.
@@ -54,15 +58,21 @@ export const MarkdownView = memo(function MarkdownView({
   source,
   highlight,
   cached = true,
-  filePath
+  filePath,
+  fragment = false
 }: {
   source: string
   highlight?: string
   cached?: boolean
   /** Absolute path of the previewed file — switches to preview markdown. */
   filePath?: string
+  /**
+   * Render as a chunk inside a parent `.markdown` (no nested root). Used by
+   * the live stream so sealed + tail share one typography context.
+   */
+  fragment?: boolean
 }): React.JSX.Element {
-  const ref = useRef<HTMLDivElement>(null)
+  const ref = useRef<HTMLElement>(null)
   /** Slot-aligned last good diagram frames for this view instance. */
   const diagramSlotsRef = useRef<DiagramSlotState[]>([])
   const paintGenRef = useRef(0)
@@ -117,46 +127,61 @@ export const MarkdownView = memo(function MarkdownView({
     })
   }, [html, highlight, plain, cached, resolvedTheme])
 
-  if (plain) return <pre className="plain-tail">{source}</pre>
+  const onMarkdownClick = (event: React.MouseEvent<HTMLElement>): void => {
+    const target = event.target as HTMLElement | null
+    if (!target) return
+
+    const fileLink = target.closest<HTMLAnchorElement>('a.md-file-link')
+    if (fileLink) {
+      event.preventDefault()
+      event.stopPropagation()
+      const raw = fileLink.dataset.path || fileLink.textContent || ''
+      if (!raw.trim()) return
+      const state = useSessionStore.getState()
+      const conv = state.conversations.find((c) => c.id === state.activeId)
+      const resolved = resolveMentionedPath(
+        raw,
+        conv?.workingDirectory ?? null,
+        state.home || ''
+      )
+      void window.vav.window.openFilePreview(resolved, {
+        origin: 'session',
+        conversationId: state.activeId || undefined
+      })
+      return
+    }
+
+    // File preview only: inert hyperlinks (no navigate / no system browser).
+    // Chat / agent log Markdown keeps normal link behaviour (open externally).
+    if (filePath && suppressHyperlinkClick(event)) return
+
+    const button = target.closest<HTMLButtonElement>('[data-md-action]')
+    if (!button) return
+    const block = button.closest<HTMLElement>('.md-block')
+    if (!block) return
+    event.preventDefault()
+    void handleBlockAction(button.dataset.mdAction, block, button)
+  }
+
+  if (plain) {
+    // Do not mark as `.markdown-chunk` — that class uses `display: contents`,
+    // which would dissolve a <pre> and drop the text from the box tree.
+    return (
+      <pre className="plain-tail" ref={ref as React.RefObject<HTMLPreElement>}>
+        {source}
+      </pre>
+    )
+  }
+
   return (
     <div
-      className={`markdown${filePath ? ' preview-markdown' : ''}`}
-      ref={ref}
-      onClick={(event) => {
-        const target = event.target as HTMLElement | null
-        if (!target) return
-
-        const fileLink = target.closest<HTMLAnchorElement>('a.md-file-link')
-        if (fileLink) {
-          event.preventDefault()
-          event.stopPropagation()
-          const raw = fileLink.dataset.path || fileLink.textContent || ''
-          if (!raw.trim()) return
-          const state = useSessionStore.getState()
-          const conv = state.conversations.find((c) => c.id === state.activeId)
-          const resolved = resolveMentionedPath(
-            raw,
-            conv?.workingDirectory ?? null,
-            state.home || ''
-          )
-          void window.vav.window.openFilePreview(resolved, {
-            origin: 'session',
-            conversationId: state.activeId || undefined
-          })
-          return
-        }
-
-        // File preview only: inert hyperlinks (no navigate / no system browser).
-        // Chat / agent log Markdown keeps normal link behaviour (open externally).
-        if (filePath && suppressHyperlinkClick(event)) return
-
-        const button = target.closest<HTMLButtonElement>('[data-md-action]')
-        if (!button) return
-        const block = button.closest<HTMLElement>('.md-block')
-        if (!block) return
-        event.preventDefault()
-        void handleBlockAction(button.dataset.mdAction, block, button)
-      }}
+      className={
+        fragment
+          ? 'markdown-chunk'
+          : `markdown${filePath ? ' preview-markdown' : ''}`
+      }
+      ref={ref as React.RefObject<HTMLDivElement>}
+      onClick={onMarkdownClick}
     />
   )
 })

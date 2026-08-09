@@ -53,6 +53,7 @@ export function Chip({
   active,
   emphasis,
   danger,
+  muted,
   disabled,
   title,
   onClick,
@@ -70,6 +71,8 @@ export function Chip({
   emphasis?: boolean
   /** Error / missing path — red capsule (e.g. dir not exist). */
   danger?: boolean
+  /** Still interactive, but no longer live (e.g. a terminal whose process exited). */
+  muted?: boolean
   disabled?: boolean
   title?: string
   onClick?: () => void
@@ -92,6 +95,7 @@ export function Chip({
     active ? 'active' : '',
     emphasis ? 'emphasis' : '',
     danger ? 'danger' : '',
+    muted ? 'muted' : '',
     disabled ? 'is-disabled' : '',
     trailing ? 'has-trailing' : ''
   ]

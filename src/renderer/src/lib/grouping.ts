@@ -10,17 +10,24 @@ export interface ConversationGroup {
   /** Stable id for collapse state; empty for pinned/search flat buckets. */
   key: string
   /**
-   * Empty for the pinned section and for search results — neither gets a header.
-   * Workspace mode puts a label on every non-pinned bucket.
+   * Empty for the loose-pinned bucket and for search results — neither gets a
+   * header. Workspace mode puts a label on every other bucket.
    */
   label: string
   /** Visual cue on the group header; omitted for time buckets. */
   kind?: 'workspace' | 'time'
   /**
    * Absolute workdir when kind is workspace.
-   * `null` = default Temporary Workspace shell (not minted until first chat/file).
+   * `null` = Default workspace shell (not a project path; not selectable).
    */
   workdir?: string | null
+  /**
+   * False for the Default workspace bucket — it groups loose sessions but is
+   * not a project path, so the header cannot open Workspace View.
+   */
+  workspaceSelectable?: boolean
+  /** Renders inside the sidebar's 置顶 section instead of the main list. */
+  pinned?: boolean
   conversations: ConversationMeta[]
 }
 
@@ -64,29 +71,65 @@ function workspaceKey(conversation: ConversationMeta, tmp: string): string {
 
 function workspaceLabel(conversation: ConversationMeta, tmp: string): string {
   if (isTemporaryWorkspace(conversation.workingDirectory, tmp) || !conversation.workingDirectory) {
-    return tt('sidebar.workspace')
+    return tt('sidebar.defaultWorkspace')
   }
   return basename(conversation.workingDirectory)
 }
 
+function byPinTimeDesc(a: ConversationMeta, b: ConversationMeta): number {
+  return (b.pinTime ?? 0) - (a.pinTime ?? 0)
+}
+
+/** Inside a pinned workspace, pinned rows still float above the rest. */
+function pinnedFirst(a: ConversationMeta, b: ConversationMeta): number {
+  if (a.pinned !== b.pinned) return a.pinned ? -1 : 1
+  return a.pinned ? byPinTimeDesc(a, b) : byUpdatedDesc(a, b)
+}
+
 /**
- * Orders the sidebar: pinned rows first by pinTime, then by the active grouping
- * mode. Searching collapses every header — they would only add noise.
+ * Orders the sidebar. Everything the user pinned comes first — whole workspaces
+ * (in pin order, carrying their sessions) then loose pinned rows — and the
+ * remainder follows the active grouping mode. A pinned workspace is *moved*,
+ * never duplicated, so its sessions leave the time/workspace buckets below.
+ * Searching collapses the remaining headers — they would only add noise.
  */
 export function groupConversations(
   conversations: ConversationMeta[],
   searching: boolean,
   mode: SidebarGroupingMode = 'none',
   tmp = '',
+  pinnedWorkspaces: readonly string[] = [],
   now = Date.now()
 ): ConversationGroup[] {
-  const pinned = conversations
-    .filter((c) => c.pinned)
-    .sort((a, b) => (b.pinTime ?? 0) - (a.pinTime ?? 0))
-  const rest = conversations.filter((c) => !c.pinned).sort(byUpdatedDesc)
-
   const groups: ConversationGroup[] = []
-  if (pinned.length) groups.push({ key: 'pinned', label: '', conversations: pinned })
+  // Sessions already claimed by a pinned workspace must not appear again below.
+  const claimed = new Set<string>()
+
+  for (const path of pinnedWorkspaces) {
+    if (!path || path.startsWith('__') || isTemporaryWorkspace(path, tmp)) continue
+    const rows = conversations
+      .filter((c) => c.workingDirectory === path)
+      .sort(pinnedFirst)
+    // An empty pin is still a useful shortcut, but not while filtering.
+    if (searching && rows.length === 0) continue
+    for (const row of rows) claimed.add(row.id)
+    groups.push({
+      key: `workspace:${path}`,
+      label: basename(path),
+      kind: 'workspace',
+      workdir: path,
+      pinned: true,
+      conversations: rows
+    })
+  }
+
+  const loose = conversations.filter((c) => !claimed.has(c.id))
+  const pinned = loose.filter((c) => c.pinned).sort(byPinTimeDesc)
+  const rest = loose.filter((c) => !c.pinned).sort(byUpdatedDesc)
+
+  if (pinned.length) {
+    groups.push({ key: 'pinned', label: '', pinned: true, conversations: pinned })
+  }
 
   if (searching) {
     if (rest.length) groups.push({ key: 'search', label: '', conversations: rest })
@@ -136,11 +179,14 @@ function bucketByWorkspace(rows: ConversationMeta[], tmp: string): ConversationG
         key === DEFAULT_WORKSPACE_KEY
           ? (first?.workingDirectory ?? null)
           : (first?.workingDirectory ?? key)
+      const isDefault = key === DEFAULT_WORKSPACE_KEY
       return {
         key: `workspace:${key}`,
-        label: first ? workspaceLabel(first, tmp) : tt('sidebar.workspace'),
+        label: first ? workspaceLabel(first, tmp) : tt('sidebar.defaultWorkspace'),
         kind: 'workspace' as const,
         workdir,
+        // Default workspace is a bucket for unrooted sessions, not a project.
+        workspaceSelectable: !isDefault,
         conversations: sorted
       }
     })
