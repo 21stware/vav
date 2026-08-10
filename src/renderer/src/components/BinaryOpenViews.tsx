@@ -10,9 +10,13 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useT } from '../i18n/useT'
 
 const TEXT_CHUNK = 256 * 1024
+/** Spec: first 64 KB hex window; further 64 KB windows load on scroll. */
 const HEX_CHUNK = 64 * 1024
-/** Auto progressive fill ceiling; further bytes load on scroll. */
-const AUTO_FILL_CAP = 512 * 1024
+/**
+ * Soft auto-fill ceiling for forced text (hex only loads the first window
+ * automatically). Further bytes load on scroll near the bottom.
+ */
+const TEXT_AUTO_FILL_CAP = 512 * 1024
 
 export type BinaryOpenMode = 'text' | 'hex'
 
@@ -66,7 +70,7 @@ export function ForcedBinaryTextView({ path }: { path: string }): React.JSX.Elem
     if (!state || state.busy) return
     if (state.endByte >= state.totalBytes) return
     // Cap idle auto-fill; scroll path passes force to continue past the soft ceiling.
-    if (!opts?.force && state.endByte >= AUTO_FILL_CAP) return
+    if (!opts?.force && state.endByte >= TEXT_AUTO_FILL_CAP) return
     state.busy = true
     try {
       const win = await window.vav.files.readTextWindow(path, {
@@ -82,7 +86,7 @@ export function ForcedBinaryTextView({ path }: { path: string }): React.JSX.Elem
       state.endByte = win.endByte
       state.totalBytes = win.totalBytes
       setMeta({ endByte: win.endByte, totalBytes: win.totalBytes })
-      if (win.truncated && win.endByte < win.totalBytes && win.endByte < AUTO_FILL_CAP) {
+      if (win.truncated && win.endByte < win.totalBytes && win.endByte < TEXT_AUTO_FILL_CAP) {
         state.busy = false
         const schedule =
           typeof requestIdleCallback === 'function'
@@ -126,7 +130,7 @@ export function ForcedBinaryTextView({ path }: { path: string }): React.JSX.Elem
       }
       setMeta({ endByte: win.endByte, totalBytes: win.totalBytes })
       setLoading(false)
-      if (win.truncated && win.endByte < AUTO_FILL_CAP) void extend()
+      if (win.truncated && win.endByte < TEXT_AUTO_FILL_CAP) void extend()
     })()
     return () => {
       cancelled = true
@@ -184,11 +188,10 @@ export function HexDumpView({ path }: { path: string }): React.JSX.Element {
   const fillRef = useRef<{ endByte: number; totalBytes: number; busy: boolean } | null>(null)
   const wrapRef = useRef<HTMLDivElement>(null)
 
-  const extend = useCallback(async (opts?: { force?: boolean }): Promise<void> => {
+  const extend = useCallback(async (): Promise<void> => {
     const state = fillRef.current
     if (!state || state.busy) return
     if (state.endByte >= state.totalBytes) return
-    if (!opts?.force && state.endByte >= AUTO_FILL_CAP) return
     state.busy = true
     try {
       const win = await window.vav.files.readBinaryWindow(path, {
@@ -207,17 +210,6 @@ export function HexDumpView({ path }: { path: string }): React.JSX.Element {
       state.endByte = win.endByte
       state.totalBytes = win.totalBytes
       setMeta({ endByte: win.endByte, totalBytes: win.totalBytes })
-      if (win.truncated && win.endByte < win.totalBytes && win.endByte < AUTO_FILL_CAP) {
-        state.busy = false
-        const schedule =
-          typeof requestIdleCallback === 'function'
-            ? (fn: () => void) => requestIdleCallback(() => fn(), { timeout: 120 })
-            : (fn: () => void) => window.setTimeout(fn, 0)
-        schedule(() => {
-          if (fillRef.current === state) void extend()
-        })
-        return
-      }
     } finally {
       if (fillRef.current === state) state.busy = false
       setLoading(false)
@@ -232,6 +224,7 @@ export function HexDumpView({ path }: { path: string }): React.JSX.Element {
     setMeta(null)
     fillRef.current = null
     void (async () => {
+      // Spec: first 64 KB only; further windows load on scroll.
       const win = await window.vav.files.readBinaryWindow(path, {
         startByte: 0,
         maxBytes: HEX_CHUNK
@@ -251,13 +244,12 @@ export function HexDumpView({ path }: { path: string }): React.JSX.Element {
       }
       setMeta({ endByte: win.endByte, totalBytes: win.totalBytes })
       setLoading(false)
-      if (win.truncated && win.endByte < AUTO_FILL_CAP) void extend()
     })()
     return () => {
       cancelled = true
       fillRef.current = null
     }
-  }, [path, extend])
+  }, [path])
 
   const onScroll = (): void => {
     const el = wrapRef.current
@@ -265,7 +257,7 @@ export function HexDumpView({ path }: { path: string }): React.JSX.Element {
     if (!el || !state || state.busy) return
     if (state.endByte >= state.totalBytes) return
     if (el.scrollTop + el.clientHeight >= el.scrollHeight - 240) {
-      void extend({ force: true })
+      void extend()
     }
   }
 
