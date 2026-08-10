@@ -174,6 +174,7 @@ export function attachDomPick(
     event.stopPropagation()
 
     const id = best.dataset.blockId
+    if (!id) return
     const kind: PreviewBlock['kind'] =
       isImage && !rawText ? 'image' : blockKindForElement(best)
     const tag = best.tagName.toLowerCase()

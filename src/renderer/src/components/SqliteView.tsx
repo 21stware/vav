@@ -114,11 +114,13 @@ export function SqliteView({
       }
       if (needed.length === 0) return
 
-      for (const c of needed) inflightRef.current.add(c)
+      // Cap concurrent IPCs during a fling — rest will refill on next scroll tick.
+      const batch = needed.slice(0, 2)
+      for (const c of batch) inflightRef.current.add(c)
       setLoading(true)
       try {
         await Promise.all(
-          needed.map(async (c) => {
+          batch.map(async (c) => {
             try {
               const result = await window.vav.files.dbQuery(path, table, c * CHUNK, CHUNK)
               if (gen !== genRef.current) return
@@ -127,7 +129,8 @@ export function SqliteView({
                 return
               }
               if (result.columns.length) setColumns(result.columns)
-              setTotal(result.total)
+              // Prefer server total when present; never shrink a known count to 0.
+              if (result.total > 0) setTotal(result.total)
               setChunks((prev) => {
                 if (prev.has(c)) return prev
                 const next = new Map(prev)
