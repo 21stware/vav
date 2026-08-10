@@ -17,3 +17,10 @@ src/renderer/public/pdfjs/
 resources/agent-skills/**/slides/
 resources/agent-skills/**/output/
 resources/agent-skills/**/.skill-work/
+
+# OfficeCLI release binaries (fetched by scripts/fetch-officecli.mjs — ~32MB each)
+resources/bin/officecli
+resources/bin/officecli.exe
+resources/bin/officecli.*
+resources/bin/officecli.version
+!resources/bin/README.md

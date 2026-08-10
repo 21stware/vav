@@ -15,6 +15,7 @@ import {
 } from '@aiden0z/pptx-renderer'
 import type { PreviewBlock } from '@shared/previewBlock'
 import { loadFileBuffer } from '../../lib/officeBinary'
+import { slideMeasureMinPx, slideMeasurePx, stableContentWidth } from '../../lib/docMeasure'
 import {
   attachDomPick,
   syncSelectedClasses,
@@ -36,8 +37,13 @@ function fitPptxSlides(
   force = false
 ): void {
   if (!(naturalW > 0) || !(naturalH > 0)) return
-  const avail = Math.max(120, host.clientWidth)
-  const scale = Math.min(2.75, Math.max(0.25, avail / naturalW))
+  // Stable slide width — pane only scrolls; no responsive contain-fit.
+  const target = stableContentWidth(
+    naturalW,
+    slideMeasureMinPx(host),
+    slideMeasurePx(host)
+  )
+  const scale = Math.min(2.75, Math.max(0.25, target / naturalW))
   const prev = Number(host.dataset.pptxScale || 0)
   if (!force && prev && Math.abs(prev - scale) < 0.008) return
   host.dataset.pptxScale = String(scale)
@@ -48,6 +54,8 @@ function fitPptxSlides(
     const outer = slot.firstElementChild as HTMLElement | null
     if (!outer) return
     outer.style.width = `${dw}px`
+    outer.style.minWidth = `${dw}px`
+    outer.style.maxWidth = 'none'
     outer.style.height = `${dh}px`
     const inner = outer.firstElementChild as HTMLElement | null
     if (inner) {
@@ -63,13 +71,15 @@ export function PptxNativeView({
   revision = 0,
   selecting,
   selectedIds,
-  onPick
+  onPick,
+  onReady
 }: {
   path: string
   revision?: number
   selecting: boolean
   selectedIds: string[]
   onPick: (block: PreviewBlock, event: MouseEvent) => void
+  onReady?: () => void
 }): React.JSX.Element {
   const t = useT()
   const hostRef = useRef<HTMLDivElement>(null)
@@ -95,8 +105,8 @@ export function PptxNativeView({
     setLoading(true)
     setReady(false)
     setError(null)
-    host.innerHTML = ''
-    host.dataset.pptxScale = ''
+    // Defer clearing until the next buffer is in hand so agent rewrites don't
+    // blank the stage while bytes are still loading.
     naturalSizeRef.current = { w: 0, h: 0 }
     viewerRef.current = null
     disposePickRef.current?.()
@@ -154,6 +164,9 @@ export function PptxNativeView({
       try {
         const buf = await loadFileBuffer(path)
         if (cancelled || !hostRef.current) return
+
+        host.innerHTML = ''
+        host.dataset.pptxScale = ''
 
         // IntersectionObserver root must be the scrollport (outer stage), not
         // the inner measure host — otherwise lazy windowing / slide tracking
@@ -235,6 +248,7 @@ export function PptxNativeView({
 
         setLoading(false)
         setReady(true)
+        onReady?.()
       } catch (err) {
         if (cancelled || ac.signal.aborted) return
         if ((err as Error)?.name === 'AbortError') return
@@ -243,6 +257,7 @@ export function PptxNativeView({
         setError(msg)
         setLoading(false)
         setReady(false)
+        onReady?.()
       }
     })()
 

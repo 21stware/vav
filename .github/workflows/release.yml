@@ -54,6 +54,16 @@ jobs:
 
       - run: npm ci
 
+      # OfficeCLI binaries are gitignored; fetch the pinned host build into
+      # resources/bin so electron-builder extraResources can ship them.
+      - name: Fetch OfficeCLI (macOS)
+        if: runner.os == 'macOS'
+        run: node scripts/fetch-officecli.mjs --target darwin-arm64 --clean
+
+      - name: Fetch OfficeCLI (Windows)
+        if: runner.os == 'Windows'
+        run: node scripts/fetch-officecli.mjs --target win32-x64 --clean
+
       - run: npm run build
 
       # macOS: Developer ID sign + notarytool. Secrets are repo Actions secrets.

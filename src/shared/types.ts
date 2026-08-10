@@ -541,6 +541,37 @@ export type LocalePreference = 'system' | 'zh-CN' | 'en'
 /** Resolved BCP-47 tag used for catalogs and date formatting. */
 export type AppLocale = 'zh-CN' | 'en'
 
+/**
+ * Currency for estimated token-cost display. Model rates are USD; amounts are
+ * converted with a static FX table for presentation only.
+ */
+export type DisplayCurrency =
+  | 'USD'
+  | 'CNY'
+  | 'EUR'
+  | 'GBP'
+  | 'JPY'
+  | 'HKD'
+  | 'TWD'
+  | 'KRW'
+  | 'SGD'
+  | 'AUD'
+  | 'CAD'
+
+export const DISPLAY_CURRENCIES: readonly DisplayCurrency[] = [
+  'USD',
+  'CNY',
+  'EUR',
+  'GBP',
+  'JPY',
+  'HKD',
+  'TWD',
+  'KRW',
+  'SGD',
+  'AUD',
+  'CAD'
+] as const
+
 export interface AppSettings {
   apiEndpoint: string
   apiKeyPresent: boolean
@@ -602,6 +633,11 @@ export interface AppSettings {
   colorTint: ColorTint
   /** UI language; default follows the OS. */
   locale: LocalePreference
+  /**
+   * Currency used when showing estimated turn / session cost.
+   * Does not change how providers bill — display conversion only.
+   */
+  displayCurrency: DisplayCurrency
   codeFont: string
   fontSize: number
   reduceMotion: boolean
@@ -660,6 +696,16 @@ export interface AppSettings {
   cliAgents: AgentConfig[]
   /** Default agent id for new terminal splits (null = plain shell). */
   defaultAgentId: string | null
+  /**
+   * When true, a square Agent mark sits outside the top-right of a selected
+   * preview block (every file preview surface). Off hides the mark.
+   */
+  previewSelectionAgentMark: boolean
+  /**
+   * When true, Read mode still allows picking blocks for Agent context.
+   * When false, block selection is Edit-only (Read is view + copy).
+   */
+  previewReadModeSelection: boolean
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -684,6 +730,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   theme: 'system',
   colorTint: 'system',
   locale: 'system',
+  displayCurrency: 'USD',
   codeFont: 'SF Mono',
   fontSize: 12,
   reduceMotion: false,
@@ -708,7 +755,9 @@ export const DEFAULT_SETTINGS: AppSettings = {
   autoCheckUpdates: true,
   cliAgents: DEFAULT_CLI_AGENTS.map((a) => ({ ...a, envVars: { ...a.envVars } })),
   /** null = plain vav shell (default host mode). */
-  defaultAgentId: null
+  defaultAgentId: null,
+  previewSelectionAgentMark: true,
+  previewReadModeSelection: true
 }
 
 export const FILE_SORT_OPTIONS: { key: FileSortKey; label: string }[] = [
@@ -817,6 +866,34 @@ export interface TerminalTab {
   splitWeight?: number
 }
 
+/**
+ * Split axis for a binary pane branch (VS Code style).
+ * - `row` = left/right (⌘D)
+ * - `column` = top/bottom (⌘⇧D)
+ */
+export type TerminalSplitAxis = 'row' | 'column'
+
+/**
+ * Binary split tree for terminal panes. Authoritative copy lives in the main
+ * process so detached session windows restore the same directions/weights.
+ */
+export type TerminalLayoutNode =
+  | { type: 'leaf'; tabId: string; weight: number }
+  | {
+      type: 'branch'
+      direction: TerminalSplitAxis
+      weight: number
+      children: [TerminalLayoutNode, TerminalLayoutNode]
+    }
+
+/** Per-conversation terminal split trees shared across BrowserWindows. */
+export interface ConversationPtyLayouts {
+  /** Tools-tray plain bash. */
+  bash: TerminalLayoutNode | null
+  /** CLI agent id → host layout. */
+  agents: Record<string, TerminalLayoutNode | null>
+}
+
 // ---------------------------------------------------------------------------
 // Turn events (main → renderer)
 // ---------------------------------------------------------------------------
@@ -834,6 +911,11 @@ export type TurnEvent =
   | { type: 'start'; conversationId: string }
   /** The prompt this turn answers, as stored — carries its place in the tree. */
   | { type: 'user'; conversationId: string; message: ChatMessage }
+  /**
+   * Workspace / UI notice (e.g. user discarded file changes). Shown muted in
+   * the transcript and included in the next model history path.
+   */
+  | { type: 'notice'; conversationId: string; message: ChatMessage }
   | { type: 'phase'; conversationId: string; phase: TurnPhase }
   /**
    * Coalesced token deltas. `kind` selects reasoning vs. markdown body.

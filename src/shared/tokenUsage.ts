@@ -1,4 +1,4 @@
-import type { TokenSnapshot } from './types'
+import type { DisplayCurrency, TokenSnapshot } from './types'
 import { t, type AppLocale } from './i18n'
 
 /** Anthropic prompt-cache TTL used for expiry display. */
@@ -119,10 +119,62 @@ export function sessionCostOf(history: TokenSnapshot[]): number {
   return history.reduce((sum, row) => sum + row.estimatedCost, 0)
 }
 
+/**
+ * Approximate USD→currency multipliers for estimate display only.
+ * Not live FX — costs remain rough provider-rate estimates.
+ */
+const USD_TO: Record<DisplayCurrency, number> = {
+  USD: 1,
+  CNY: 7.25,
+  EUR: 0.92,
+  GBP: 0.79,
+  JPY: 150,
+  HKD: 7.8,
+  TWD: 32,
+  KRW: 1350,
+  SGD: 1.35,
+  AUD: 1.55,
+  CAD: 1.38
+}
+
+const CURRENCY_LOCALE: Record<DisplayCurrency, string> = {
+  USD: 'en-US',
+  CNY: 'zh-CN',
+  EUR: 'de-DE',
+  GBP: 'en-GB',
+  JPY: 'ja-JP',
+  HKD: 'zh-HK',
+  TWD: 'zh-TW',
+  KRW: 'ko-KR',
+  SGD: 'en-SG',
+  AUD: 'en-AU',
+  CAD: 'en-CA'
+}
+
+/** @deprecated Prefer {@link formatCost}. Kept for call sites that assume USD. */
 export function formatUsd(amount: number): string {
-  if (amount <= 0) return '~$0.00'
-  if (amount < 0.01) return `~$${amount.toFixed(4)}`
-  return `~$${amount.toFixed(2)}`
+  return formatCost(amount, 'USD')
+}
+
+/** Format an estimated USD cost in the user's display currency. */
+export function formatCost(amountUsd: number, currency: DisplayCurrency = 'USD'): string {
+  const rate = USD_TO[currency] ?? 1
+  const amount = amountUsd * rate
+  const zeroFraction = currency === 'JPY' || currency === 'KRW'
+  const maxFrac = amount <= 0 ? (zeroFraction ? 0 : 2) : amount < 0.01 && !zeroFraction ? 4 : zeroFraction ? 0 : 2
+  const minFrac = amount <= 0 ? (zeroFraction ? 0 : 2) : amount < 0.01 && !zeroFraction ? 4 : zeroFraction ? 0 : 2
+  try {
+    const formatted = new Intl.NumberFormat(CURRENCY_LOCALE[currency] ?? 'en-US', {
+      style: 'currency',
+      currency,
+      minimumFractionDigits: minFrac,
+      maximumFractionDigits: maxFrac
+    }).format(Math.max(0, amount))
+    return `~${formatted}`
+  } catch {
+    if (amount <= 0) return `~${currency} 0.00`
+    return `~${currency} ${amount.toFixed(maxFrac)}`
+  }
 }
 
 export function formatClock(ts: number | null | undefined, locale = 'en'): string {

@@ -6,10 +6,12 @@ import {
   COLOR_TINTS,
   DEFAULT_CLI_AGENTS,
   DEFAULT_SETTINGS,
+  DISPLAY_CURRENCIES,
   mergeBuiltinDefaultArgs,
   type AgentConfig,
   type AppSettings,
-  type ColorTint
+  type ColorTint,
+  type DisplayCurrency
 } from '@shared/types'
 import { coerceShell, platformDefaults, type Platform } from '@shared/platform'
 
@@ -40,6 +42,16 @@ export class SettingsStore {
     }
     this.migrateLegacy()
     this.coerceToPlatform()
+    // Prune deleted workspace paths on boot (switcher list stays honest).
+    const beforeRecent = this.settings.recentWorkspaceDirectories.join('\0')
+    const beforePinned = this.settings.pinnedWorkspaceDirectories.join('\0')
+    this.clampToAllowedRanges()
+    if (
+      this.settings.recentWorkspaceDirectories.join('\0') !== beforeRecent ||
+      this.settings.pinnedWorkspaceDirectories.join('\0') !== beforePinned
+    ) {
+      this.persist()
+    }
     return this.settings
   }
 
@@ -95,6 +107,12 @@ export class SettingsStore {
       this.settings.colorTint = DEFAULT_SETTINGS.colorTint
       dirty = true
     }
+    if (
+      !DISPLAY_CURRENCIES.includes(this.settings.displayCurrency as DisplayCurrency)
+    ) {
+      this.settings.displayCurrency = DEFAULT_SETTINGS.displayCurrency
+      dirty = true
+    }
     if (dirty) this.persist()
   }
 
@@ -145,14 +163,17 @@ export class SettingsStore {
       if (!ids.has(s.defaultAgentId)) s.defaultAgentId = s.cliAgents[0]?.id ?? null
     }
     if (!Array.isArray(s.recentWorkspaceDirectories)) s.recentWorkspaceDirectories = []
+    // Drop paths that no longer exist so the switcher never lists dead dirs.
     s.recentWorkspaceDirectories = s.recentWorkspaceDirectories
       .filter((path): path is string => typeof path === 'string' && path.length > 0)
+      .filter((path) => existsSync(path))
       .slice(0, 10)
     if (!Array.isArray(s.pinnedWorkspaceDirectories)) s.pinnedWorkspaceDirectories = []
     s.pinnedWorkspaceDirectories = [
       ...new Set(
         s.pinnedWorkspaceDirectories.filter(
-          (path): path is string => typeof path === 'string' && path.length > 0
+          (path): path is string =>
+            typeof path === 'string' && path.length > 0 && existsSync(path)
         )
       )
     ]
@@ -179,6 +200,9 @@ export class SettingsStore {
     ])
     if (!sortKeys.has(s.fileSortKey)) s.fileSortKey = 'name'
     if (typeof s.fileSortAscending !== 'boolean') s.fileSortAscending = true
+    if (!DISPLAY_CURRENCIES.includes(s.displayCurrency as DisplayCurrency)) {
+      s.displayCurrency = DEFAULT_SETTINGS.displayCurrency
+    }
   }
 
   /**
@@ -191,11 +215,33 @@ export class SettingsStore {
     if (normalized.startsWith(tmpRoot) || normalized.startsWith('/private' + tmpRoot)) {
       return this.settings
     }
+    if (!existsSync(normalized)) return this.settings
     const next = [
       normalized,
       ...this.settings.recentWorkspaceDirectories.filter((entry) => entry !== normalized)
     ].slice(0, 10)
     return this.update({ recentWorkspaceDirectories: next })
+  }
+
+  /**
+   * Remove a path from recent (and pinned) after ENOENT / user discovery.
+   * Safe no-op when the path is not listed.
+   */
+  forgetWorkspaceDirectory(path: string): AppSettings {
+    const normalized = path.trim()
+    if (!normalized) return this.settings
+    const recent = this.settings.recentWorkspaceDirectories.filter((entry) => entry !== normalized)
+    const pinned = this.settings.pinnedWorkspaceDirectories.filter((entry) => entry !== normalized)
+    if (
+      recent.length === this.settings.recentWorkspaceDirectories.length &&
+      pinned.length === this.settings.pinnedWorkspaceDirectories.length
+    ) {
+      return this.settings
+    }
+    return this.update({
+      recentWorkspaceDirectories: recent,
+      pinnedWorkspaceDirectories: pinned
+    })
   }
 
   private persist(): void {

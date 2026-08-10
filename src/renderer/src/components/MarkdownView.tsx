@@ -9,7 +9,11 @@ import type { DiagramSlotState } from '../lib/diagramCache'
 import { renderDiagramBlocks } from '../lib/diagramRender'
 import { resolveMentionedPath } from '../lib/filePathLinks'
 import { onHljsReady } from '../lib/hljsLazy'
-import { renderPreviewMarkdown } from '../lib/previewMarkdown'
+import {
+  renderPreviewMarkdown,
+  renderPreviewMarkdownProgressive,
+  type ProgressivePreviewSeal
+} from '../lib/previewMarkdown'
 import { TAIL_PLAIN_TEXT_THRESHOLD } from '../lib/segmenter'
 import { suppressHyperlinkClick } from '../lib/suppressHyperlinks'
 import { useSessionStore } from '../state/sessionStore'
@@ -59,7 +63,8 @@ export const MarkdownView = memo(function MarkdownView({
   highlight,
   cached = true,
   filePath,
-  fragment = false
+  fragment = false,
+  progressive = false
 }: {
   source: string
   highlight?: string
@@ -71,12 +76,18 @@ export const MarkdownView = memo(function MarkdownView({
    * the live stream so sealed + tail share one typography context.
    */
   fragment?: boolean
+  /**
+   * File preview windowed fill: seal completed blocks as HTML and only
+   * re-parse the open tail as bytes append.
+   */
+  progressive?: boolean
 }): React.JSX.Element {
   const ref = useRef<HTMLElement>(null)
   /** Slot-aligned last good diagram frames for this view instance. */
   const diagramSlotsRef = useRef<DiagramSlotState[]>([])
   const paintGenRef = useRef(0)
   const lastThemeRef = useRef<'light' | 'dark' | null>(null)
+  const progressiveSealRef = useRef<ProgressivePreviewSeal | null>(null)
   // Theme drives mermaid/vega palette; include so dark↔light re-paints diagrams.
   const resolvedTheme = useResolvedTheme()
   // highlight.js loads async — bump so sealed rows re-render with real spans.
@@ -85,17 +96,29 @@ export const MarkdownView = memo(function MarkdownView({
 
   const plain = !cached && !filePath && source.length > TAIL_PLAIN_TEXT_THRESHOLD
   void hljsEpoch
+
+  const progressiveParts =
+    progressive && filePath && !plain
+      ? renderPreviewMarkdownProgressive(source, filePath, progressiveSealRef.current)
+      : null
+  if (progressiveParts) progressiveSealRef.current = progressiveParts.seal
+
+  // Progressive mode paints via sealed fragment views — no single root HTML.
   const html = plain
     ? ''
-    : filePath
-      ? renderPreviewMarkdown(source, filePath)
-      : cached
-        ? renderMarkdown(source)
-        : renderMarkdownUncached(source)
+    : progressiveParts
+      ? ''
+      : filePath
+        ? renderPreviewMarkdown(source, filePath)
+        : cached
+          ? renderMarkdown(source)
+          : renderMarkdownUncached(source)
+  const progressiveTail = progressiveParts?.tail ?? ''
+  const progressiveSealed = progressiveParts?.sealedChunks ?? []
 
   useLayoutEffect(() => {
     const element = ref.current
-    if (!element || plain) return
+    if (!element || plain || progressive) return
 
     const gen = ++paintGenRef.current
     element.innerHTML = html
@@ -125,7 +148,7 @@ export const MarkdownView = memo(function MarkdownView({
     }).then(() => {
       if (gen !== paintGenRef.current) return
     })
-  }, [html, highlight, plain, cached, resolvedTheme])
+  }, [html, highlight, plain, cached, resolvedTheme, progressive])
 
   const onMarkdownClick = (event: React.MouseEvent<HTMLElement>): void => {
     const target = event.target as HTMLElement | null
@@ -170,6 +193,29 @@ export const MarkdownView = memo(function MarkdownView({
       <pre className="plain-tail" ref={ref as React.RefObject<HTMLPreElement>}>
         {source}
       </pre>
+    )
+  }
+
+  if (progressive && filePath) {
+    // Sealed chunks are append-only (index keys stable). Only the open tail
+    // re-parses — same streaming model as agent chat.
+    return (
+      <div
+        className={`markdown${filePath ? ' preview-markdown' : ''}`}
+        onClick={onMarkdownClick}
+      >
+        {progressiveSealed.map((chunk, index) => (
+          <MarkdownView
+            key={`seal-${index}`}
+            source={chunk}
+            filePath={filePath}
+            fragment
+          />
+        ))}
+        {progressiveTail ? (
+          <MarkdownView source={progressiveTail} filePath={filePath} fragment cached={false} />
+        ) : null}
+      </div>
     )
   }
 

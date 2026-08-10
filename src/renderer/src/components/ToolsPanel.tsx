@@ -102,7 +102,8 @@ export function ToolsPanel({
   // File session: show "Enclosed dir" until user switches workdir (like Temporary → Workspace).
   const useEnclosedLabel =
     Boolean(conversation?.fileId) && !pathRevealed && !temporary
-  // Parent folder gone (ENOENT) — chip becomes red "dir not exist"; Files is dead.
+  // Parent folder gone (ENOENT) — chip becomes red "dir not exist"; Files is empty.
+  // Still allow switch so the session can recover (pick a live workspace).
   const rootMissing =
     Boolean(workspaceRoot) &&
     (rootError === 'ENOENT' || /enoent|no such file|not found/i.test(rootError ?? ''))
@@ -116,8 +117,9 @@ export function ToolsPanel({
     : useEnclosedLabel
       ? t('tools.enclosedDirHint')
       : (workdir ?? t('sidebar.temporaryWorkspace'))
-  // Enclosed dir / missing root: no switch-workdir control (session list owns path).
-  const allowWorkdirSwitch = !useEnclosedLabel && !rootMissing
+  // Enclosed dir (file session path bound): no switch while the path still works.
+  // Missing root always allows switch so the conversation is not a dead end.
+  const allowWorkdirSwitch = rootMissing || !useEnclosedLabel
   // Tools tray shows user bash only — never main-surface CLI agent hosts.
   const tabs = (workspaceTabs ?? []).filter(
     (t) => !t.agentId || t.agentId === 'vav' || t.isAgent
@@ -218,8 +220,20 @@ export function ToolsPanel({
   )
 
   const pathContextItems = (): MenuItem[] => {
-    if (rootMissing || useEnclosedLabel) {
-      // Enclosed / missing: no switch or locate — path is bound to the open file.
+    // Missing root: only switch / pick / copy — nothing to browse or reveal.
+    if (rootMissing) {
+      return [
+        ...workspaceSwitchItems(),
+        { label: '', divider: true },
+        {
+          label: t('tools.copyPath'),
+          disabled: !workdir,
+          onSelect: () => void window.vav.conversations.copyToClipboard(workdir ?? '')
+        }
+      ]
+    }
+    // Enclosed dir: path is bound to the open file (no switch).
+    if (useEnclosedLabel) {
       return [
         {
           label: t('tools.copyPath'),
@@ -250,7 +264,7 @@ export function ToolsPanel({
       },
       {
         label: t('tools.revealInFm', { fileManager: fileManagerLabel() }),
-        disabled: !workdir || rootMissing,
+        disabled: !workdir,
         onSelect: () => void window.vav.conversations.revealInFinder(workdir ?? '')
       }
     ]
@@ -319,7 +333,7 @@ export function ToolsPanel({
       <div className="tools-header">
         <div className="tools-header-lead">
           {/* Path chip opens Files. File sessions use Enclosed dir (no switch).
-              Missing root → red "dir not exist", chip dead (no expand / switch). */}
+              Missing root → red "dir not exist"; click / action still switches. */}
           <div className="workdir-chip" ref={pathChipRef}>
             <Chip
               label={label}
@@ -327,10 +341,10 @@ export function ToolsPanel({
               title={pathTitle}
               active={filesOn}
               danger={rootMissing}
-              disabled={rootMissing}
               onClick={
                 rootMissing
-                  ? undefined
+                  ? // Recover: open switch menu instead of dead Files expand.
+                    () => openWorkspaceMenu(pathChipRef.current)
                   : () => {
                       if (filesOn) {
                         setToolsCollapsed(true)
@@ -345,17 +359,13 @@ export function ToolsPanel({
                       })()
                     }
               }
-              onContextMenu={
-                rootMissing
-                  ? undefined
-                  : (event) => {
-                      event.preventDefault()
-                      void showMenu(pathContextItems(), {
-                        x: event.clientX,
-                        y: event.clientY
-                      })
-                    }
-              }
+              onContextMenu={(event) => {
+                event.preventDefault()
+                void showMenu(pathContextItems(), {
+                  x: event.clientX,
+                  y: event.clientY
+                })
+              }}
               onAction={
                 allowWorkdirSwitch
                   ? () => openWorkspaceMenu(pathChipRef.current)

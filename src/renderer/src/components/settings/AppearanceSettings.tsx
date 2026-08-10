@@ -2,7 +2,9 @@ import { useEffect, useState } from 'react'
 import { ChevronDown } from 'lucide-react'
 import {
   COLOR_TINTS,
+  DISPLAY_CURRENCIES,
   type ColorTint,
+  type DisplayCurrency,
   type LocalePreference,
   type ThemeMode
 } from '@shared/types'
@@ -167,6 +169,29 @@ export function AppearanceSettings(): React.JSX.Element {
       </div>
 
       <div className="form-row">
+        <label>{t('appearance.currency')}</label>
+        <div className="control">
+          <div className="font-select">
+            <select
+              className="text-field font-select-field"
+              value={settings.displayCurrency ?? 'USD'}
+              onChange={(event) =>
+                void updateSettings({ displayCurrency: event.target.value as DisplayCurrency })
+              }
+            >
+              {DISPLAY_CURRENCIES.map((code) => (
+                <option key={code} value={code}>
+                  {t(`appearance.currency.${code}`)}
+                </option>
+              ))}
+            </select>
+            <ChevronDown className="font-select-chevron" size={14} strokeWidth={2} aria-hidden />
+          </div>
+        </div>
+      </div>
+      <div className="form-hint">{t('appearance.currencyHint')}</div>
+
+      <div className="form-row">
         <label>{t('appearance.codeFont')}</label>
         <div className="control">
           <div className="font-select">
@@ -232,6 +257,34 @@ export function AppearanceSettings(): React.JSX.Element {
           />
         </div>
       </div>
+
+      <div className="form-row">
+        <label>{t('appearance.previewSelectionAgentMark')}</label>
+        <div className="control">
+          <Toggle
+            checked={settings.previewSelectionAgentMark !== false}
+            title={t('appearance.previewSelectionAgentMark')}
+            onChange={(previewSelectionAgentMark) =>
+              void updateSettings({ previewSelectionAgentMark })
+            }
+          />
+        </div>
+      </div>
+      <div className="form-hint">{t('appearance.previewSelectionAgentMarkHint')}</div>
+
+      <div className="form-row">
+        <label>{t('appearance.previewReadModeSelection')}</label>
+        <div className="control">
+          <Toggle
+            checked={settings.previewReadModeSelection !== false}
+            title={t('appearance.previewReadModeSelection')}
+            onChange={(previewReadModeSelection) =>
+              void updateSettings({ previewReadModeSelection })
+            }
+          />
+        </div>
+      </div>
+      <div className="form-hint">{t('appearance.previewReadModeSelectionHint')}</div>
 
       {IS_MAC && (
         <>

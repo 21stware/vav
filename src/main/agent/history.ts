@@ -79,7 +79,19 @@ export function buildHistory(
 
   for (let i = start; i < path.length; i++) {
     const message = path[i]!
-    if (message.role === 'system') continue
+    if (message.role === 'system') {
+      // Workspace notices (Discard, etc.) — model-visible as a tagged user turn
+      // so providers that reject mid-thread system roles still see them.
+      const notice = message.content.trim()
+      if (notice) {
+        history.push({
+          role: 'user',
+          content: [{ type: 'text', text: `[Workspace notice]\n${notice}` }],
+          timestamp: message.createdAt
+        })
+      }
+      continue
+    }
     if (message.role === 'user') {
       const quote =
         message.quoteMessageId && message.quoteSummary && message.quoteRole
@@ -116,7 +128,11 @@ export function buildHistory(
 export function pathToSummarySource(messages: ChatMessage[], maxChars = 48_000): string {
   const parts: string[] = []
   for (const message of messages) {
-    if (message.role === 'system') continue
+    if (message.role === 'system') {
+      const body = message.content.trim()
+      if (body) parts.push(`Notice:\n${truncate(body, 1_500)}`)
+      continue
+    }
     if (message.role === 'user') {
       const body = message.content.trim() || '(empty)'
       parts.push(`User:\n${truncate(body, 4_000)}`)

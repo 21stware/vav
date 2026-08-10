@@ -44,6 +44,7 @@ import {
   type ToolDetails
 } from './tools'
 import type { ConversationStore } from '../store/ConversationStore'
+import { kindFromFilePath } from '../store/FileSessionStore'
 import type { SettingsStore } from '../store/SettingsStore'
 import type { SecretStore } from '../store/SecretStore'
 import type { FileService } from '../fs/FileService'
@@ -141,6 +142,9 @@ export interface AgentRuntimeDeps {
  * `cancel` always targets a single id (README §8).
  */
 export class AgentRuntime {
+  /** Notices deferred while a turn is streaming (must land after the assistant leaf). */
+  private pendingNotices = new Map<string, string[]>()
+
   private turns = new Map<string, TurnState>()
   private shells = new Map<string, StickyShell>()
 
@@ -195,6 +199,48 @@ export class AgentRuntime {
         contextFile
       )
     )
+  }
+
+  /**
+   * Append a system notice without starting a turn. Used for UI actions the
+   * model should see on the next send (Discard Changes, etc.).
+   * While a turn is running, notices are queued and flushed after the assistant
+   * leaf so they stay on the active transcript path.
+   */
+  appendNotice(conversationId: string, text: string): void {
+    const body = text.trim()
+    if (!body) return
+    if (!this.deps.conversations.get(conversationId)) return
+    if (this.turns.has(conversationId)) {
+      const queue = this.pendingNotices.get(conversationId) ?? []
+      queue.push(body)
+      this.pendingNotices.set(conversationId, queue)
+      return
+    }
+    this.writeNotice(conversationId, body)
+  }
+
+  private writeNotice(conversationId: string, body: string): void {
+    const leaf = this.deps.conversations.activeLeaf(conversationId)
+    const parentId = leaf === ROOT_LEAF ? null : leaf
+    const message: ChatMessage = {
+      id: randomUUID(),
+      parentId,
+      role: 'system',
+      content: body,
+      blocks: [{ kind: 'text', text: body }],
+      createdAt: Date.now()
+    }
+    this.deps.conversations.appendMessage(conversationId, message)
+    this.deps.conversations.flush()
+    this.deps.emit({ type: 'notice', conversationId, message })
+  }
+
+  private flushPendingNotices(conversationId: string): void {
+    const queue = this.pendingNotices.get(conversationId)
+    if (!queue?.length) return
+    this.pendingNotices.delete(conversationId)
+    for (const body of queue) this.writeNotice(conversationId, body)
   }
 
   /**
@@ -467,7 +513,7 @@ export class AgentRuntime {
       selectionRefs: parentMessage?.contextBlocks ?? []
     }
     this.turns.set(conversationId, turn)
-    this.deps.changeSets?.beginTurn(conversationId)
+    this.deps.changeSets?.beginTurn(conversationId, this.workdirOf(conversation))
     // Strip prior turn changeSetId from stored messages so reloads don't show
     // dead "Could not load changes" cards under Done.
     this.stripPriorChangeSetIds(conversationId)
@@ -483,12 +529,13 @@ export class AgentRuntime {
             // Dismissing the chip clears this — do not fall back to fileId path,
             // or "remove context" would still inject the open file into the prompt.
             openFilePath: conversation.focusedFilePath || null,
-            openFileKind:
-              conversation.focusedFilePath &&
-              conversation.fileId &&
-              this.deps.fileSessions
-                ? this.deps.fileSessions.kindForFileId(conversation.fileId)
-                : null,
+            // Prefer the focused path (chip may differ from session fileId).
+            openFileKind: conversation.focusedFilePath
+              ? kindFromFilePath(conversation.focusedFilePath) ??
+                (conversation.fileId && this.deps.fileSessions
+                  ? this.deps.fileSessions.kindForFileId(conversation.fileId)
+                  : null)
+              : null,
             skillCatalog: this.deps.skills?.catalogForPrompt() ?? null
           }),
           messages: history,
@@ -1289,12 +1336,13 @@ export class AgentRuntime {
     const conversation = this.deps.conversations.get(conversationId)
     const parent = conversation?.messages.find((m) => m.id === turn.parentId)
     const turnTitle = parent?.content?.trim() || conversation?.title || 'Agent turn'
-    let changeSet = this.deps.changeSets?.finalizeTurn(
-      conversationId,
-      turnTitle,
-      conversation?.model || '',
-      { cancelled: turn.cancelled, error: !!turn.error }
-    )
+    let changeSet =
+      (await this.deps.changeSets?.finalizeTurn(
+        conversationId,
+        turnTitle,
+        conversation?.model || '',
+        { cancelled: turn.cancelled, error: !!turn.error }
+      )) ?? null
     if (changeSet) {
       // Bypass: writes already on disk — auto-accept; no review gate.
       const mode = conversation?.approvalMode ?? 'auto'
@@ -1318,6 +1366,9 @@ export class AgentRuntime {
       error: turn.error,
       cancelled: turn.cancelled
     })
+
+    // UI notices deferred during the turn (e.g. Discard) — after the assistant leaf.
+    this.flushPendingNotices(conversationId)
 
     if (changeSet) {
       this.deps.emit({

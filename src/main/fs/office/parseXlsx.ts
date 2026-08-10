@@ -14,13 +14,22 @@ import type { StructuredDocument, StructuredSection } from '@shared/structuredDo
 const MAX_INDEX_CELLS = 80_000
 const MAX_INDEX_COLS = 256
 
-export async function parseXlsx(path: string): Promise<StructuredDocument> {
+export async function parseXlsx(
+  path: string,
+  opts?: { maxRows?: number }
+): Promise<StructuredDocument> {
   const buf = await readFile(path)
-  const workbook = XLSX.read(buf, { type: 'buffer', cellDates: true })
+  const sheetRows = opts?.maxRows != null ? Math.max(1, opts.maxRows) : undefined
+  const workbook = XLSX.read(buf, {
+    type: 'buffer',
+    cellDates: true,
+    ...(sheetRows != null ? { sheetRows } : {})
+  })
   const sections: StructuredSection[] = []
   const rootChildren: PreviewBlock[] = []
   const plainParts: string[] = []
   let line = 1
+  let rowCapped = false
 
   for (const sheetName of workbook.SheetNames) {
     const sheet = workbook.Sheets[sheetName]
@@ -42,7 +51,9 @@ export async function parseXlsx(path: string): Promise<StructuredDocument> {
     const fullCols = Math.max(0, range.e.c - range.s.c + 1)
     const colCount = Math.min(fullCols, MAX_INDEX_COLS)
     const rowBudget = Math.max(1, Math.floor(MAX_INDEX_CELLS / Math.max(1, colCount)))
-    const rowCount = Math.min(fullRows, rowBudget)
+    const softCap = opts?.maxRows != null ? Math.min(rowBudget, opts.maxRows) : rowBudget
+    const rowCount = Math.min(fullRows, softCap)
+    if (rowCount < fullRows) rowCapped = true
 
     const grid: string[][] = []
     const rowBlocks: PreviewBlock[] = []
@@ -130,7 +141,10 @@ export async function parseXlsx(path: string): Promise<StructuredDocument> {
     path,
     blocks: rootChildren,
     sections,
-    plainText: plainParts.join('\n')
+    plainText: plainParts.join('\n'),
+    warnings: rowCapped
+      ? ['Partial structured index — first rows only; grid continues loading.']
+      : undefined
   }
 }
 

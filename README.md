@@ -6,7 +6,7 @@
 <br/>
 
 <!-- originai-release-badge:start -->
-<a href="https://spec.getoriginai.com/feea5b82-31bd-4418-a57f-23bc4042e8ff/8c856bf1023a6e68b0d9843ca32da57589a8b1fd3a0bed70d1262a4745b7abe7" target="_blank" rel="noopener noreferrer"><img src="https://spec.getoriginai.com/feea5b82-31bd-4418-a57f-23bc4042e8ff/8c856bf1023a6e68b0d9843ca32da57589a8b1fd3a0bed70d1262a4745b7abe7/badge-dark.svg" alt="originai" /></a>
+[![originai](https://spec.getoriginai.com/feea5b82-31bd-4418-a57f-23bc4042e8ff/8e42e29d5fcbe9bc5ff471cd16152fa73ca19e123a761d45aa4d915c0f6f40b1/badge-dark.svg)](https://spec.getoriginai.com/feea5b82-31bd-4418-a57f-23bc4042e8ff/8e42e29d5fcbe9bc5ff471cd16152fa73ca19e123a761d45aa4d915c0f6f40b1)
 <!-- originai-release-badge:end -->
 
 
@@ -68,8 +68,10 @@ Requires Node 20+, macOS or Windows.
 
 ```bash
 npm install
-npm run dev
+npm run dev         # auto-fetches bundled officecli into resources/bin/ if missing
 ```
+
+`officecli` (Office OOXML CLI) is vendored at build time (~32 MB) via `npm run fetch:officecli` and shipped in the app `Resources/bin` so the agent can create/edit `.docx`/`.xlsx`/`.pptx` without a system install.
 
 Package (native modules mean you only build for the platform you’re on):
 

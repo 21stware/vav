@@ -34,6 +34,7 @@ import { APP_NAME, applyBranding, applyDockIcon, loadAppIcon, pinUserDataPath } 
 import {
   IPC,
   type Bootstrap,
+  type FileInspectResult,
   type MenuCommand,
   type NativeMenuItem,
   type SettingsView,
@@ -550,11 +551,12 @@ function primeRendererShell(win: BrowserWindow, options?: { clear?: boolean }): 
 }
 
 /**
- * macOS system glass on the main shell (not CSS backdrop-filter).
+ * macOS system glass (not CSS backdrop-filter).
  * `under-window` blurs the desktop through transparent regions — `sidebar`
  * alone is nearly invisible on recent macOS when the web layer was opaque.
+ * Used by the main shell and the Settings nav column.
  */
-function applyMainVibrancy(win: BrowserWindow): void {
+function applyWindowVibrancy(win: BrowserWindow): void {
   if (!IS_MAC || win.isDestroyed()) return
   try {
     win.setBackgroundColor(VIBRANCY_CLEAR)
@@ -568,7 +570,7 @@ function applyMainVibrancy(win: BrowserWindow): void {
   }
 }
 
-function clearMainVibrancy(win: BrowserWindow): void {
+function clearWindowVibrancy(win: BrowserWindow): void {
   if (!IS_MAC || win.isDestroyed()) return
   try {
     win.setVibrancy(null)
@@ -578,15 +580,31 @@ function clearMainVibrancy(win: BrowserWindow): void {
   }
 }
 
-function isMainVibrancyEnabled(): boolean {
+function isVibrancyEnabled(): boolean {
   return IS_MAC && settingsStore.get().windowVibrancyEnabled !== false
 }
 
-/** Apply or clear main-window glass from the current settings toggle. */
-function syncMainWindowMaterial(): void {
-  if (!mainWindow || mainWindow.isDestroyed() || !IS_MAC) return
-  if (isMainVibrancyEnabled()) applyMainVibrancy(mainWindow)
-  else clearMainVibrancy(mainWindow)
+function isVibrancyShellWindow(win: BrowserWindow): boolean {
+  if (!IS_MAC || win.isDestroyed()) return false
+  if (mainWindow && !mainWindow.isDestroyed() && win.id === mainWindow.id) return true
+  if (settingsWindow && !settingsWindow.isDestroyed() && win.id === settingsWindow.id) {
+    return true
+  }
+  return false
+}
+
+/** Apply or clear glass on one vibrancy-capable window from the settings toggle. */
+function syncWindowMaterial(win: BrowserWindow): void {
+  if (!IS_MAC || win.isDestroyed()) return
+  if (isVibrancyEnabled()) applyWindowVibrancy(win)
+  else clearWindowVibrancy(win)
+}
+
+/** Apply or clear glass on main + Settings (create, toggle, theme repaint). */
+function syncVibrancyShellWindows(): void {
+  if (!IS_MAC) return
+  if (mainWindow && !mainWindow.isDestroyed()) syncWindowMaterial(mainWindow)
+  if (settingsWindow && !settingsWindow.isDestroyed()) syncWindowMaterial(settingsWindow)
 }
 
 
@@ -614,18 +632,18 @@ function overlayColors(barHeight = 52): {
  */
 function chrome(
   barHeight: number,
-  options?: { mainShell?: boolean }
+  options?: { vibrancyShell?: boolean }
 ): Electron.BrowserWindowConstructorOptions {
   if (IS_MAC) {
-    // Main shell stays transparent so Settings can toggle vibrancy live.
-    // Companion / Settings stay solid (no resize black-edge lag there).
-    if (options?.mainShell) {
+    // Main + Settings stay transparent so Appearance can toggle vibrancy live.
+    // Companion / preview / token stay solid (avoids resize black-edge lag).
+    if (options?.vibrancyShell) {
       return {
         titleBarStyle: 'hiddenInset',
         trafficLightPosition: { x: 12, y: Math.round((barHeight - 12) / 2) },
         transparent: true,
         backgroundColor: VIBRANCY_CLEAR,
-        ...(isMainVibrancyEnabled()
+        ...(isVibrancyEnabled()
           ? {
               vibrancy: 'under-window' as const,
               visualEffectState: 'active' as const
@@ -657,9 +675,9 @@ function repaintChrome(): void {
   applyDockIcon()
   for (const window of BrowserWindow.getAllWindows()) {
     if (window.isDestroyed()) continue
-    // Main: respect the Settings vibrancy toggle (do not force solid chrome).
-    if (mainWindow && !mainWindow.isDestroyed() && window.id === mainWindow.id) {
-      syncMainWindowMaterial()
+    // Main + Settings: respect the vibrancy toggle (do not force solid chrome).
+    if (isVibrancyShellWindow(window)) {
+      syncWindowMaterial(window)
       continue
     }
     window.setBackgroundColor(background)
@@ -727,9 +745,24 @@ function rendererPrefs(extra: Electron.WebPreferences = {}): Electron.WebPrefere
 
 const PREVIEW_IDLE_MS = 5 * 60 * 1000
 const PREVIEW_MAX_OPEN = 6
+/**
+ * Hidden warm shells kept ready so the next open skips BrowserWindow+load.
+ * Two, not one: a fresh shell needs ~1s of renderer boot before
+ * `previewShellReady`, and opening a second file inside that window used to
+ * fall all the way back to a cold create.
+ */
+const PREVIEW_WARM_POOL = 2
+/** Let the just-shown window paint before a replacement shell steals CPU. */
+const PREVIEW_POOL_REFILL_MS = 200
 
 /** Preview windows that must confirm before close (unsaved edit). */
 const previewCloseGuards = new WeakSet<BrowserWindow>()
+/** Idle warm shells (loaded, hidden, no path claimed). */
+const warmPreviewPool: BrowserWindow[] = []
+/** Warm shell finished renderer bootstrap. */
+const warmPreviewReady = new WeakSet<BrowserWindow>()
+/** Monotonic navigate seq so late IPC cannot clobber a newer open. */
+let previewNavigateSeq = 0
 
 /** Close an unfocused preview after idle; cap how many stay around. */
 function wirePreviewLifecycle(window: BrowserWindow, path: string): void {
@@ -737,22 +770,25 @@ function wirePreviewLifecycle(window: BrowserWindow, path: string): void {
   const armIdle = (): void => {
     if (idleTimer) clearTimeout(idleTimer)
     idleTimer = setTimeout(() => {
-      if (!window.isDestroyed() && !window.isFocused()) {
+      if (!window.isDestroyed() && !window.isFocused() && !previewCloseGuards.has(window)) {
         afterLeavingFullscreen(window, () => {
           if (!window.isDestroyed() && !window.isFocused()) {
-            fullscreenCloseAllowed.add(window)
-            window.close()
+            parkWarmPreviewShell(window)
           }
         })
       }
     }, PREVIEW_IDLE_MS)
   }
+  // Replace prior blur/focus/close handlers when reclaiming a warm shell.
+  window.removeAllListeners('blur')
+  window.removeAllListeners('focus')
+  window.removeAllListeners('close')
   window.on('blur', armIdle)
   window.on('focus', () => {
     if (idleTimer) clearTimeout(idleTimer)
     idleTimer = null
   })
-  // Unsaved guard first; then leave native fullscreen before destroy.
+  // Unsaved guard → park into warm pool (hide) instead of destroy when clean.
   window.on('close', (event) => {
     if (quitting) return
     if (fullscreenCloseAllowed.has(window)) {
@@ -764,21 +800,22 @@ function wirePreviewLifecycle(window: BrowserWindow, path: string): void {
       safeSend(window.webContents, IPC.previewCloseAttempt)
       return
     }
-    if (!window.isFullScreen()) return
+    if (window.isFullScreen()) {
+      event.preventDefault()
+      window.once('leave-full-screen', () => {
+        if (window.isDestroyed()) return
+        parkWarmPreviewShell(window)
+      })
+      window.setFullScreen(false)
+      return
+    }
+    // Recycle into the warm pool — next open skips cold start.
     event.preventDefault()
-    window.once('leave-full-screen', () => {
-      if (window.isDestroyed()) return
-      fullscreenCloseAllowed.add(window)
-      window.close()
-    })
-    window.setFullScreen(false)
-  })
-  window.on('closed', () => {
     if (idleTimer) clearTimeout(idleTimer)
-    previewCloseGuards.delete(window)
+    parkWarmPreviewShell(window)
   })
 
-  // Cap open previews: close the oldest unfocused ones first.
+  // Cap open previews: park the oldest unfocused ones first.
   while (previewWindows.size > PREVIEW_MAX_OPEN) {
     let victimPath: string | null = null
     let victim: BrowserWindow | null = null
@@ -793,10 +830,7 @@ function wirePreviewLifecycle(window: BrowserWindow, path: string): void {
     if (!victimPath || !victim) break
     previewWindows.delete(victimPath)
     afterLeavingFullscreen(victim, () => {
-      if (!victim.isDestroyed()) {
-        fullscreenCloseAllowed.add(victim)
-        victim.close()
-      }
+      if (!victim.isDestroyed()) parkWarmPreviewShell(victim)
     })
   }
 }
@@ -880,9 +914,7 @@ async function revealBrowserWindow(win: BrowserWindow): Promise<void> {
   // Steal focus first so Space switching starts before pixels land.
   app.focus({ steal: true })
   try {
-    const isMain =
-      IS_MAC && mainWindow != null && !mainWindow.isDestroyed() && win.id === mainWindow.id
-    if (isMain) syncMainWindowMaterial()
+    if (isVibrancyShellWindow(win)) syncWindowMaterial(win)
     else win.setBackgroundColor(windowBackground())
   } catch {
     // ignore
@@ -937,7 +969,7 @@ function createWindow(): BrowserWindow {
     paintWhenInitiallyHidden: true,
     title: APP_NAME,
     icon,
-    ...chrome(52, { mainShell: IS_MAC }),
+    ...chrome(52, { vibrancyShell: IS_MAC }),
     webPreferences: rendererPrefs()
   })
   applyMenuBar(window)
@@ -994,15 +1026,15 @@ function loadRenderer(window: BrowserWindow, query: Record<string, string> = {})
   // Always stamp theme so index.html can paint the matching wash before CSS.
   const withTheme = { theme: windowThemeName(), ...query }
   const search = new URLSearchParams(withTheme).toString()
-  // Main shell (no view=) on macOS uses system vibrancy — keep the page clear.
-  // Settings / session / preview pass view= and stay opaque.
-  const useClear = IS_MAC && !query.view
+  // Main (no view=) and Settings use system vibrancy — keep the page clear.
+  // Session / preview / token stay opaque.
+  const useClear = IS_MAC && (!query.view || query.view === 'settings')
   primeRendererShell(window, { clear: useClear })
   try {
     if (useClear) {
       // createWindow calls loadRenderer before `mainWindow = …` is assigned.
-      if (isMainVibrancyEnabled()) applyMainVibrancy(window)
-      else clearMainVibrancy(window)
+      if (isVibrancyEnabled()) applyWindowVibrancy(window)
+      else clearWindowVibrancy(window)
     } else {
       window.setBackgroundColor(windowBackground())
     }
@@ -1044,7 +1076,8 @@ function ensureSettingsWindow(view: SettingsView = 'api', showNow: boolean): voi
     paintWhenInitiallyHidden: true,
     title: t('app.settingsWindowTitle'),
     icon: loadAppIcon(),
-    ...chrome(38),
+    // 52 matches --toolbar-height / .settings-head so traffic lights align.
+    ...chrome(52, { vibrancyShell: IS_MAC }),
     minimizable: false,
     maximizable: false,
     fullscreenable: false,
@@ -1220,8 +1253,6 @@ function openDetachedWindow(
     title: conversation.title,
     icon: loadAppIcon(),
     ...chrome(38),
-    // Companion column — never enter macOS fullscreen itself.
-    fullscreenable: false,
     // Not a child of main — child windows can inherit geometry quirks on macOS.
     parent: undefined,
     webPreferences: rendererPrefs()
@@ -1245,6 +1276,8 @@ function openDetachedWindow(
 
   // Unlike the main window, closing here really does close: the conversation
   // is not going away, it just goes back to being a row in the sidebar.
+  // Leave native fullscreen first so macOS does not leave a black Space.
+  wireCloseLeavingFullscreen(window)
   window.on('closed', () => {
     detachedWindows.delete(conversationId)
     publishDetachedSessions()
@@ -1271,6 +1304,8 @@ function openDetachedWindow(
   wireExternalLinks(window.webContents)
   wireMenuAccelerators(window.webContents)
   wirePtyViewerLifecycle(window.webContents)
+  // Traffic-light inset + menu View → Full Screen for ⌘⇧↵ / double-click windows.
+  wireFullscreenState(window)
 
   if (!app.isPackaged) {
     window.webContents.on('console-message', (event) => {
@@ -1304,7 +1339,7 @@ function openDetachedWindow(
 
 function previewQuery(
   path: string,
-  options?: { origin?: 'dock' | 'session'; conversationId?: string }
+  options?: { origin?: 'dock' | 'session'; conversationId?: string; requestedAt?: number }
 ): Record<string, string> {
   const query: Record<string, string> = {
     view: 'file-preview',
@@ -1312,6 +1347,7 @@ function previewQuery(
     origin: options?.origin ?? 'session'
   }
   if (options?.conversationId) query.conversationId = options.conversationId
+  if (options?.requestedAt) query.requestedAt = String(options.requestedAt)
   return query
 }
 
@@ -1335,10 +1371,160 @@ function previewPathKey(filePath: string): string {
 }
 
 /**
+ * `app.isPackaged` is true even in `npm run dev` — the dev Electron binary is
+ * rebranded to vav.app. The renderer dev-server URL is the reliable signal.
+ */
+const IS_DEV_LAUNCH = Boolean(process.env.ELECTRON_RENDERER_URL)
+/** Env escape hatch so a real build can be timed too. */
+const PREVIEW_PERF_LOG = IS_DEV_LAUNCH || process.env.VAV_PREVIEW_PERF === '1'
+
+function previewOpenMark(label: string, detail?: string): void {
+  if (!PREVIEW_PERF_LOG) return
+  const suffix = detail ? ` ${detail}` : ''
+  console.log(`[preview-perf] ${label}${suffix} t=${Date.now()}`)
+}
+
+/**
+ * `inspect()` started the moment the open request lands, so the stat + first
+ * text window overlap window show and renderer mount instead of queueing
+ * behind them. The renderer's own `files.inspect` call then resolves from here.
+ *
+ * Served once and short-lived — a later reopen must re-read disk.
+ */
+const inspectPreload = new Map<string, Promise<FileInspectResult>>()
+const INSPECT_PRELOAD_TTL_MS = 4000
+
+function preloadInspect(path: string): void {
+  if (inspectPreload.has(path)) return
+  const pending = fileService.inspect(path)
+  inspectPreload.set(path, pending)
+  // Never let a failed/ignored preload keep a stale result reachable.
+  void pending.catch(() => undefined)
+  setTimeout(() => {
+    if (inspectPreload.get(path) === pending) inspectPreload.delete(path)
+  }, INSPECT_PRELOAD_TTL_MS)
+}
+
+function takePreloadedInspect(path: string): Promise<FileInspectResult> | null {
+  const pending = inspectPreload.get(path)
+  if (!pending) return null
+  inspectPreload.delete(path)
+  return pending
+}
+
+function takeWarmPreviewShell(): BrowserWindow | null {
+  const notReady: BrowserWindow[] = []
+  while (warmPreviewPool.length > 0) {
+    const win = warmPreviewPool.pop()!
+    if (win.isDestroyed()) continue
+    if (!warmPreviewReady.has(win)) {
+      notReady.push(win)
+      continue
+    }
+    warmPreviewPool.push(...notReady)
+    return win
+  }
+  warmPreviewPool.push(...notReady)
+  return null
+}
+
+function parkWarmPreviewShell(window: BrowserWindow): void {
+  if (window.isDestroyed()) return
+  if (warmPreviewPool.includes(window)) return
+  if (warmPreviewPool.length >= PREVIEW_WARM_POOL) {
+    afterLeavingFullscreen(window, () => {
+      if (!window.isDestroyed()) {
+        fullscreenCloseAllowed.add(window)
+        window.destroy()
+      }
+    })
+    return
+  }
+  previewCloseGuards.delete(window)
+  forgetPreviewWindow(window)
+  try {
+    window.setTitle('Preview')
+    if (window.isVisible()) window.hide()
+  } catch {
+    // ignore
+  }
+  warmPreviewPool.push(window)
+  // Clear canvas so the next navigate starts clean.
+  previewNavigateSeq += 1
+  safeSend(window.webContents, IPC.previewNavigate, {
+    path: '',
+    openSeq: previewNavigateSeq
+  })
+  // Top up pool asynchronously.
+  setTimeout(() => warmPreviewShellPool(), PREVIEW_POOL_REFILL_MS)
+}
+
+function createPreviewBrowserWindow(opts: {
+  show: boolean
+  path?: string
+  width: number
+  height: number
+  x?: number
+  y?: number
+}): BrowserWindow {
+  const window = new BrowserWindow({
+    width: opts.width,
+    height: opts.height,
+    ...(opts.x != null && opts.y != null ? { x: opts.x, y: opts.y } : {}),
+    minWidth: 520,
+    minHeight: 400,
+    show: opts.show,
+    paintWhenInitiallyHidden: true,
+    title: opts.path ? basename(opts.path) : 'Preview',
+    icon: loadAppIcon(),
+    ...chrome(42),
+    webPreferences: rendererPrefs({
+      plugins: true
+    })
+  })
+  applyMenuBar(window)
+  wireFullscreenState(window)
+  wireExternalLinks(window.webContents)
+  wireMenuAccelerators(window.webContents)
+  wirePtyViewerLifecycle(window.webContents)
+  if (IS_DEV_LAUNCH || !app.isPackaged) {
+    window.webContents.on('console-message', (event) => {
+      console.log(`[preview:${event.level}] ${event.message}`)
+    })
+  }
+  return window
+}
+
+/** Preload hidden preview shells after the main window is up. */
+function warmPreviewShellPool(): void {
+  const live = warmPreviewPool.filter((w) => !w.isDestroyed())
+  warmPreviewPool.length = 0
+  warmPreviewPool.push(...live)
+  while (warmPreviewPool.length < PREVIEW_WARM_POOL) {
+    const area = screen.getPrimaryDisplay().workArea
+    const width = Math.min(800, area.width - 40)
+    const height = Math.min(700, area.height - 40)
+    // Only the lead shell warms every format canvas; the pptx renderer alone is
+    // ~2 MB of parsed JS and spares should not each hold a copy.
+    const deep = warmPreviewPool.length === 0
+    const window = createPreviewBrowserWindow({ show: false, width, height })
+    warmPreviewPool.push(window)
+    window.on('closed', () => {
+      const idx = warmPreviewPool.indexOf(window)
+      if (idx >= 0) warmPreviewPool.splice(idx, 1)
+      warmPreviewReady.delete(window)
+      forgetPreviewWindow(window)
+    })
+    // Warm entry: no path — renderer bootstraps and prefetches canvases.
+    loadRenderer(window, { view: 'file-preview', warm: deep ? 'deep' : '1' })
+    previewOpenMark(`warm-shell-created${deep ? ':deep' : ''}`)
+  }
+}
+
+/**
  * File preview in its own window (file-preview.rpml).
- * One absolute path → one BrowserWindow: reopen focuses the existing window;
- * a different path always opens a new window (never navigates an open preview
- * in place). Capped by PREVIEW_MAX_OPEN.
+ * Prefers a warm hidden shell + in-place navigate (no cold BrowserWindow load).
+ * Same path → focus existing. Capped by PREVIEW_MAX_OPEN.
  */
 function openFilePreviewWindow(
   filePath: string,
@@ -1346,6 +1532,8 @@ function openFilePreviewWindow(
 ): void {
   const path = previewPathKey(filePath)
   if (!path) return
+  const requestedAt = Date.now()
+  previewOpenMark('open:start', path)
 
   // Directories have no file preview — reveal in Finder / Explorer instead.
   try {
@@ -1359,6 +1547,7 @@ function openFilePreviewWindow(
 
   const existing = previewWindows.get(path)
   if (existing && !existing.isDestroyed()) {
+    previewOpenMark('open:reuse-focus', path)
     void revealBrowserWindow(existing)
     return
   }
@@ -1367,12 +1556,10 @@ function openFilePreviewWindow(
   const area = (
     anchor && !anchor.isDestroyed() ? screen.getDisplayMatching(anchor.getBounds()) : screen.getPrimaryDisplay()
   ).workArea
-  // Marketing snapshots need a wide preview (canvas + agent) — not the compact default.
   const snapshotting = Boolean(process.env.VAV_SNAPSHOT || process.env.VAV_SNAPSHOT_PLAN)
   const width = Math.min(snapshotting ? 1280 : 800, area.width - 40)
   const height = Math.min(snapshotting ? 820 : 700, area.height - 40)
 
-  // Cascade off the frontmost preview (or focused window) so each open is visible.
   let x: number | undefined
   let y: number | undefined
   let cascadeFrom: BrowserWindow | null = null
@@ -1395,48 +1582,70 @@ function openFilePreviewWindow(
     if (y + height > area.y + area.height) y = area.y + Math.max(0, area.height - height)
   }
 
-  const window = new BrowserWindow({
-    width,
-    height,
-    ...(x != null && y != null ? { x, y } : {}),
-    minWidth: 520,
-    minHeight: 400,
-    // Show immediately so Dock / Finder open feels snappy; content paints after load.
-    show: true,
-    title: basename(path),
-    icon: loadAppIcon(),
-    // Match `.file-viewer-header` height so traffic lights sit on the drag bar.
-    ...chrome(42),
-    webPreferences: rendererPrefs({
-      // Chromium's built-in PDF viewer.
-      plugins: true
+  // Kick the disk work off now so it overlaps window show + renderer mount.
+  preloadInspect(path)
+
+  const warm = takeWarmPreviewShell()
+  const window =
+    warm ??
+    createPreviewBrowserWindow({
+      show: true,
+      path,
+      width,
+      height,
+      x,
+      y
     })
-  })
-  applyMenuBar(window)
 
-  previewWindows.set(path, window)
-  window.on('closed', () => {
-    forgetPreviewWindow(window)
-  })
-  wirePreviewLifecycle(window, path)
-  // Same as main window: drop traffic-light lead inset when fullscreen so the
-  // title is not left with a blank gutter (file-viewer-header uses --chrome-lead).
-  wireFullscreenState(window)
-
-  wireExternalLinks(window.webContents)
-  wireMenuAccelerators(window.webContents)
-  wirePtyViewerLifecycle(window.webContents)
-
-  if (!app.isPackaged) {
-    window.webContents.on('console-message', (event) => {
-      console.log(`[preview:${event.level}] ${event.message}`)
-    })
+  if (warm) {
+    previewOpenMark('open:warm-claim', path)
+    try {
+      window.setBounds({
+        width,
+        height,
+        ...(x != null && y != null ? { x, y } : { x: window.getBounds().x, y: window.getBounds().y })
+      })
+      window.setTitle(basename(path))
+    } catch {
+      // ignore geometry races
+    }
+  } else {
+    previewOpenMark('open:cold-create', path)
   }
 
-  loadRenderer(window, previewQuery(path, options))
-  // Bring to front after create — Dock open can leave focus on the previous window.
+  previewWindows.set(path, window)
+  window.removeAllListeners('closed')
+  window.on('closed', () => {
+    forgetPreviewWindow(window)
+    warmPreviewReady.delete(window)
+  })
+  wirePreviewLifecycle(window, path)
+
+  previewNavigateSeq += 1
+  const openSeq = previewNavigateSeq
+  const payload = {
+    path,
+    origin: options?.origin ?? 'session',
+    conversationId: options?.conversationId,
+    openSeq,
+    requestedAt
+  }
+
+  if (warm) {
+    safeSend(window.webContents, IPC.previewNavigate, payload)
+    if (window.isMinimized()) window.restore()
+    if (!window.isVisible()) window.show()
+    window.focus()
+    previewOpenMark('open:warm-navigated', path)
+    setTimeout(() => warmPreviewShellPool(), PREVIEW_POOL_REFILL_MS)
+    return
+  }
+
+  loadRenderer(window, previewQuery(path, { ...options, requestedAt }))
   if (window.isMinimized()) window.restore()
   window.focus()
+  previewOpenMark('open:cold-loaded', path)
+  setTimeout(() => warmPreviewShellPool(), 1200)
 }
 
 type TokenUsageAnchor = { x: number; y: number; width: number; height: number }
@@ -1501,6 +1710,7 @@ function buildTokenUsagePayload(conversationId: string): TokenUsageViewPayload |
     apiEndpoint: settings.apiEndpoint,
     theme: settings.theme,
     locale: currentLocale(),
+    displayCurrency: settings.displayCurrency ?? 'USD',
     now: Date.now(),
     hasCompaction: !!activeCompaction,
     compactedCount: activeCompaction?.compactedCount ?? 0,
@@ -2144,6 +2354,16 @@ function openFromDroppedPaths(paths: string[]): void {
   })
 }
 
+/** A launch argument that will become a preview window rather than a session. */
+function isPreviewableColdOpenPath(path: string): boolean {
+  if (!path) return false
+  try {
+    return existsSync(path) && !statSync(realpathSync(path)).isDirectory()
+  } catch {
+    return false
+  }
+}
+
 /** Coalesce bursty macOS `open-file` events from a single Dock drop. */
 const pendingOpenPaths: string[] = []
 let pendingOpenTimer: ReturnType<typeof setTimeout> | null = null
@@ -2391,7 +2611,15 @@ function registerIpc(): void {
       notifications.applySettings()
     }
     if (patch.windowVibrancyEnabled !== undefined) {
-      syncMainWindowMaterial()
+      syncVibrancyShellWindows()
+    }
+    if (
+      patch.displayCurrency !== undefined &&
+      patch.displayCurrency !== previous.displayCurrency &&
+      tokenUsageConversationId &&
+      tokenUsageConversationId !== '_'
+    ) {
+      sendTokenUsagePayload(tokenUsageConversationId)
     }
     const settings = currentSettings()
     broadcast(IPC.settingsChanged, settings)
@@ -2406,6 +2634,7 @@ function registerIpc(): void {
     applyTheme(next.theme)
     registerGlobalHotkey(next.globalHotkey)
     rebuildAppChrome()
+    syncVibrancyShellWindows()
     const settings = currentSettings()
     broadcast(IPC.settingsChanged, settings)
     return settings
@@ -2726,6 +2955,9 @@ function registerIpc(): void {
       )
     }
   )
+  ipcMain.handle(IPC.agentAppendNotice, (_event, id: string, text: string) => {
+    agent.appendNotice(id, text)
+  })
   ipcMain.handle(IPC.agentCancel, (_event, id: string) => agent.cancel(id))
   ipcMain.handle(IPC.agentAnswer, (_event, id: string, toolCallId: string, answer: string) =>
     agent.answer(id, toolCallId, answer)
@@ -2804,10 +3036,23 @@ function registerIpc(): void {
     previewCloseGuards.delete(win)
     afterLeavingFullscreen(win, () => {
       if (win.isDestroyed()) return
-      fullscreenCloseAllowed.add(win)
-      win.close()
+      parkWarmPreviewShell(win)
     })
   })
+  ipcMain.on(IPC.previewShellReady, (event) => {
+    const win = BrowserWindow.fromWebContents(event.sender)
+    if (!win || win.isDestroyed()) return
+    warmPreviewReady.add(win)
+    previewOpenMark('warm-shell-ready')
+  })
+  ipcMain.handle(
+    IPC.filesInspectStructured,
+    (
+      _event,
+      path: string,
+      opts?: { maxBlocks?: number; maxRows?: number }
+    ) => fileService.inspectStructured(String(path || ''), opts)
+  )
   ipcMain.handle(
     IPC.filesSaveAs,
     async (
@@ -2833,7 +3078,10 @@ function registerIpc(): void {
     fileService.rename(path, newName)
   )
   ipcMain.handle(IPC.filesTrash, (_event, paths: string[]) => fileService.trash(paths))
-  ipcMain.handle(IPC.filesInspect, (_event, path: string) => fileService.inspect(path))
+  ipcMain.handle(
+    IPC.filesInspect,
+    (_event, path: string) => takePreloadedInspect(path) ?? fileService.inspect(path)
+  )
   ipcMain.handle(
     IPC.filesDbQuery,
     (_event, path: string, table: string, offset?: number, limit?: number) =>
@@ -2992,6 +3240,16 @@ function registerIpc(): void {
   ipcMain.handle(IPC.ptyIsBusy, (_event, tabId: string) => ptyManager.isBusy(tabId))
   ipcMain.handle(IPC.ptyList, (_event, conversationId: string) =>
     ptyManager.listForConversation(String(conversationId || ''))
+  )
+  ipcMain.handle(
+    IPC.ptySetLayouts,
+    (
+      _event,
+      conversationId: string,
+      layouts: import('@shared/types').ConversationPtyLayouts
+    ) => {
+      ptyManager.setLayouts(String(conversationId || ''), layouts ?? { bash: null, agents: {} })
+    }
   )
   ipcMain.handle(IPC.ptyReplay, (_event, tabId: string) =>
     ptyManager.replay(String(tabId || ''))
@@ -3231,12 +3489,12 @@ async function seedSmokeChangeReview(): Promise<void> {
   const modified = join(dir, 'existing.ts')
   const added = join(dir, 'added.ts')
   writeFileSync(modified, 'const a = 1\n', 'utf8')
-  changeSetStore.beginTurn(meta.id)
+  changeSetStore.beginTurn(meta.id, workdir)
   changeSetStore.recordWrite(meta.id, workdir, modified, 'const a = 1\n', 'const a = 2\n')
   changeSetStore.recordWrite(meta.id, workdir, added, null, 'export const x = 1\n')
   writeFileSync(modified, 'const a = 2\n', 'utf8')
   writeFileSync(added, 'export const x = 1\n', 'utf8')
-  const set = changeSetStore.finalizeTurn(meta.id, 'smoke change review', meta.model || 'test')
+  const set = await changeSetStore.finalizeTurn(meta.id, 'smoke change review', meta.model || 'test')
   if (!set) {
     console.error('[smoke] finalize failed')
     return
@@ -3407,11 +3665,28 @@ if (!singleInstance) {
       await session.defaultSession.clearStorageData({ storages: ['localstorage'] })
     }
 
-    mainWindow = createWindow()
+    const snapshotting = Boolean(process.env.VAV_SNAPSHOT)
+    const cliOpen = argvRequestsCliOpen(process.argv)
+    const argvOpens = snapshotting || cliOpen ? [] : parseOpenPathsFromArgv(process.argv)
+    // Finder "Open With" / Dock drop cold start: the file the user asked for
+    // goes up first. Booting the much heavier main shell ahead of it costs a
+    // second of contended CPU and raises a window nobody asked for.
+    let previewColdOpen =
+      !snapshotting &&
+      !cliOpen &&
+      [...pendingOpenPaths, ...argvOpens].some(isPreviewableColdOpenPath)
+    if (previewColdOpen) {
+      flushPendingOpens(argvOpens)
+      // Nothing actually opened (vanished path, or it resolved to a workdir) —
+      // fall back to the normal "show the main shell" boot.
+      if (previewWindows.size === 0) previewColdOpen = false
+    }
+
+    mainWindow ??= createWindow()
     // Belt-and-suspenders: ready-to-show can race with Dock hide / focus steals
     // from the IDE. Force the main window up once the renderer finishes loading.
     mainWindow.webContents.once('did-finish-load', () => {
-      showMainWindow()
+      if (!previewColdOpen) showMainWindow()
       if (process.env.VAV_SMOKE_SEED === '1') {
         void seedSmokeChangeReview()
       }
@@ -3424,6 +3699,13 @@ if (!singleInstance) {
           // non-fatal
         }
       }, 1600)
+      setTimeout(() => {
+        try {
+          warmPreviewShellPool()
+        } catch {
+          // non-fatal
+        }
+      }, 1800)
       setTimeout(() => {
         try {
           warmSettingsWindow()
@@ -3440,16 +3722,16 @@ if (!singleInstance) {
       void updateService.check()
     }
 
-    if (process.env.VAV_SNAPSHOT) {
+    if (snapshotting) {
       // Marketing captures seed their own conversations; ignore argv path opens.
       appReadyForOpens = true
-    } else if (argvRequestsCliOpen(process.argv)) {
+    } else if (cliOpen) {
       // Bare `vav` with the flag but empty value still goes through openFromCli.
       appReadyForOpens = true
       openFromCli(parseCliWorkdir(process.argv))
-    } else {
+    } else if (!previewColdOpen) {
       // Dock cold-start / Finder "Open With": queued open-file + argv paths.
-      flushPendingOpens(parseOpenPathsFromArgv(process.argv))
+      flushPendingOpens(argvOpens)
     }
 
     // Dock click: raise last-focused open window (not always main).

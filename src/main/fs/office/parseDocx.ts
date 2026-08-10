@@ -240,13 +240,19 @@ function walkBodyItems(
   items: unknown[],
   into: PreviewBlock[],
   plainParts: string[],
-  lineStart: number
-): number {
+  lineStart: number,
+  maxBlocks?: number
+): { line: number; truncated: boolean } {
   let line = lineStart
   let tableIndex = 0
+  let truncated = false
 
   const visit = (list: unknown[]): void => {
     for (const item of list) {
+      if (maxBlocks != null && into.length >= maxBlocks) {
+        truncated = true
+        return
+      }
       const e = entryOf(item)
       if (!e) continue
       if (e.name === 'p') {
@@ -277,10 +283,13 @@ function walkBodyItems(
   }
 
   visit(items)
-  return line
+  return { line, truncated }
 }
 
-export async function parseDocx(path: string): Promise<StructuredDocument> {
+export async function parseDocx(
+  path: string,
+  opts?: { maxBlocks?: number }
+): Promise<StructuredDocument> {
   if (isOfficeLockFile(path)) {
     throw new Error(OFFICE_LOCK_FILE_MESSAGE)
   }
@@ -341,7 +350,13 @@ export async function parseDocx(path: string): Promise<StructuredDocument> {
 
   const blocks: PreviewBlock[] = []
   const plainParts: string[] = []
-  const line = walkBodyItems(bodyItems, blocks, plainParts, 1)
+  const { line, truncated } = walkBodyItems(
+    bodyItems,
+    blocks,
+    plainParts,
+    1,
+    opts?.maxBlocks
+  )
 
   const section: StructuredSection = {
     id: 'docx-body',
@@ -365,6 +380,7 @@ export async function parseDocx(path: string): Promise<StructuredDocument> {
     path,
     blocks: [bodyBlock],
     sections: [section],
-    plainText: plainParts.join('\n')
+    plainText: plainParts.join('\n'),
+    warnings: truncated ? ['Partial structured index — first blocks only; native canvas continues.'] : undefined
   }
 }

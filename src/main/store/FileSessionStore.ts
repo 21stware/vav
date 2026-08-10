@@ -39,6 +39,32 @@ function pathHash(path: string): string {
 }
 
 /**
+ * Extension → system-prompt playbook kind. Exported for AgentRuntime / tests.
+ * null = ordinary text/code (use the generic open-file playbook).
+ */
+export function kindFromFilePath(path: string): string | null {
+  const base = path.split(/[/\\]/).pop() ?? ''
+  const dot = base.lastIndexOf('.')
+  if (dot <= 0) return 'text'
+  const ext = base.slice(dot).toLowerCase()
+  if (ext === '.zip') return 'zip'
+  if (ext === '.pdf') return 'pdf'
+  if (ext === '.csv' || ext === '.tsv') return 'csv'
+  if (/\.(docx|xlsx|xls|pptx|ppt)$/i.test(ext)) return 'office'
+  if (/\.(png|jpe?g|gif|webp|bmp|svg|heic|tif|tiff|avif)$/i.test(ext)) return 'image'
+  if (/\.(mp3|wav|m4a|aac|flac|ogg)$/i.test(ext)) return 'audio'
+  if (/\.(mp4|mov|webm|mkv|avi)$/i.test(ext)) return 'video'
+  if (/\.(db|sqlite|sqlite3|db3)$/i.test(ext)) return 'sqlite'
+  if (ext === '.parquet') return 'parquet'
+  const knownText =
+    /\.(md|markdown|mdx|txt|json|js|ts|tsx|jsx|py|rs|go|swift|ipynb|html|css|xml|yml|yaml|toml|sh|zsh)$/i.test(
+      ext
+    )
+  if (knownText) return null
+  return 'binary'
+}
+
+/**
  * Per-file multi-session store for File Preview (file-preview.rpml FileSessionStore).
  *
  * Conversation bodies live in {@link ConversationStore} with `fileId` set so the
@@ -101,26 +127,14 @@ export class FileSessionStore {
   }
 
   /**
-   * Coarse preview kind for system-prompt hints (zip / binary / other).
+   * Coarse preview kind for system-prompt hints.
    * Derived from the stored path extension — no disk I/O.
+   * Returns null for ordinary text/code (generic playbook).
    */
   kindForFileId(fileId: string): string | null {
     const path = this.pathForFileId(fileId)
     if (!path) return null
-    const lower = path.toLowerCase()
-    if (lower.endsWith('.zip')) return 'zip'
-    // Match FileService binary-ish unknowns: no known text/office extension.
-    // Keep this conservative — only flag clearly binary/archive unknowns via agent when needed.
-    const base = path.split(/[/\\]/).pop() ?? ''
-    const dot = base.lastIndexOf('.')
-    if (dot <= 0) return 'text'
-    const ext = base.slice(dot).toLowerCase()
-    const known =
-      /\.(md|markdown|mdx|txt|csv|tsv|json|js|ts|tsx|jsx|py|rs|go|swift|pdf|docx|xlsx|xls|pptx|png|jpe?g|gif|webp|mp3|mp4|mov|wav|ipynb|db|sqlite|sqlite3|html|css|xml|yml|yaml|toml|sh|zsh)$/i.test(
-        ext
-      )
-    if (known) return null
-    return 'binary'
+    return kindFromFilePath(path)
   }
 
   /** Resolve file identity: prefer inode+device, fall back to path hash. */

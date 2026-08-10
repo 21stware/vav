@@ -4,14 +4,22 @@ export type ChangeType = 'modified' | 'added' | 'deleted'
 export type ChangeEntryStatus = 'pending' | 'accepted' | 'rejected' | 'edited'
 export type ChangeSetRisk = 'low' | 'medium' | 'high'
 export type ChangeSetStatus = 'pending' | 'accepted' | 'rejected' | 'partial'
+/** How to interpret {@link ChangeEntry.originalContent} / {@link ChangeEntry.newContent}. */
+export type ChangeContentEncoding = 'utf8' | 'base64'
 
 export interface ChangeEntry {
   filePath: string
   relativePath: string
   changeType: ChangeType
+  /**
+   * Unified diff for text, or a short non-diff summary for binary/raw
+   * (e.g. `Binary file · DOCX · +42.1 KB`).
+   */
   diffText: string
   originalContent: string | null
   newContent: string
+  /** When `base64`, contents are raw bytes (office/PDF/images) — never line-diff. */
+  contentEncoding?: ChangeContentEncoding
   status: ChangeEntryStatus
   riskLevel: ChangeSetRisk
 }
@@ -48,6 +56,16 @@ export interface UpdateState {
   /** Bytes/sec while downloading; null when not transferring. */
   bytesPerSecond: number | null
   message: string | null
+}
+
+export function isBinaryChange(file: ChangeEntry): boolean {
+  return file.contentEncoding === 'base64' || isLikelyBinaryPath(file.filePath)
+}
+
+export function isLikelyBinaryPath(path: string): boolean {
+  return /\.(pdf|docx?|xlsx?|pptx?|pages|numbers|key|png|jpe?g|gif|webp|svg|ico|heic|heif|zip|tar|gz|tgz|rar|7z|dylib|so|dll|exe|bin|wasm|mp4|mov|webm|mkv|wav|mp3|m4a|aac|flac|ogg|woff2?|ttf|otf)$/i.test(
+    path
+  )
 }
 
 export function computeRisk(files: ChangeEntry[]): ChangeSetRisk {

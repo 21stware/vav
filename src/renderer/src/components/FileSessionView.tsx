@@ -135,7 +135,6 @@ export function FileSessionView({
               embedded
               agentPanelOpen={agentOpen}
               onToggleAgentPanel={() => setAgentOpen((v) => !v)}
-              onPickBlock={() => setAgentOpen(true)}
               shellLeading={shellLeading}
             />
           </Suspense>

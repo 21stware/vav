@@ -58,7 +58,10 @@ function collectParagraphs(node: unknown, out: string[]): void {
   }
 }
 
-export async function parsePptx(path: string): Promise<StructuredDocument> {
+export async function parsePptx(
+  path: string,
+  opts?: { maxSlides?: number }
+): Promise<StructuredDocument> {
   const buf = await readFile(path)
   const zip = await JSZip.loadAsync(buf)
 
@@ -74,12 +77,16 @@ export async function parsePptx(path: string): Promise<StructuredDocument> {
     throw new Error('Invalid PPTX: no slides found')
   }
 
+  const limit =
+    opts?.maxSlides != null ? Math.max(1, Math.min(slidePaths.length, opts.maxSlides)) : slidePaths.length
+  const truncated = limit < slidePaths.length
+
   const sections: StructuredSection[] = []
   const rootChildren: PreviewBlock[] = []
   const plainParts: string[] = []
   let line = 1
 
-  for (let si = 0; si < slidePaths.length; si++) {
+  for (let si = 0; si < limit; si++) {
     const slidePath = slidePaths[si]!
     const xml = await zip.file(slidePath)!.async('string')
     const root = parser.parse(xml) as Record<string, unknown>
@@ -143,6 +150,9 @@ export async function parsePptx(path: string): Promise<StructuredDocument> {
     path,
     blocks: rootChildren,
     sections,
-    plainText: plainParts.join('\n')
+    plainText: plainParts.join('\n'),
+    ...(truncated
+      ? { warnings: [`Partial structured index — first ${limit} of ${slidePaths.length} slides.`] }
+      : {})
   }
 }

@@ -2,10 +2,13 @@ import { execFileSync } from 'node:child_process'
 import { accessSync, constants, existsSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { delimiter, join } from 'node:path'
+import { bundledBinDir } from '../bundledBin'
 
 /**
  * GUI apps (Electron / launchd) inherit a stripped PATH. Ask the login shell
  * once so CLI agents like `claude` / `codex` resolve the same way as Terminal.app.
+ * Bundled helper bins (e.g. officecli) are prepended so they win over a stale
+ * system install when present.
  */
 let cachedLoginPath: string | null = null
 
@@ -61,16 +64,32 @@ export function loginPath(): string {
     '/opt/homebrew/sbin',
     '/usr/local/sbin'
   ]
-  const parts = new Set(
-    [
-      ...cachedLoginPath.split(delimiter),
-      ...(process.env.PATH ?? '').split(delimiter),
-      ...extras
-    ]
-      .map((p) => p.trim())
-      .filter(Boolean)
-  )
-  cachedLoginPath = [...parts].join(delimiter)
+  const parts = [
+    ...cachedLoginPath.split(delimiter),
+    ...(process.env.PATH ?? '').split(delimiter),
+    ...extras
+  ]
+    .map((p) => p.trim())
+    .filter(Boolean)
+  // Dedupe while preserving order; prepend bundled bin last so it leads.
+  const seen = new Set<string>()
+  const ordered: string[] = []
+  for (const p of parts) {
+    if (seen.has(p)) continue
+    seen.add(p)
+    ordered.push(p)
+  }
+  const bundled = bundledBinDir()
+  if (bundled && !seen.has(bundled)) {
+    ordered.unshift(bundled)
+  } else if (bundled) {
+    const i = ordered.indexOf(bundled)
+    if (i > 0) {
+      ordered.splice(i, 1)
+      ordered.unshift(bundled)
+    }
+  }
+  cachedLoginPath = ordered.join(delimiter)
   return cachedLoginPath
 }
 

@@ -11,9 +11,8 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import type { PreviewBlock } from '@shared/previewBlock'
 import type { StructuredDocument, StructuredSection } from '@shared/structuredDoc'
 import { handleClickPickMouseDown } from '../lib/clickPick'
+import { useSheetVirtualWindow } from '../lib/useSheetVirtualWindow'
 import { useT } from '../i18n/useT'
-
-const SHEET_ROW_WINDOW = 60
 
 export function StructuredDocView({
   doc,
@@ -209,74 +208,36 @@ function SheetGrid({
   selected: Set<string>
   onSelect: (id: string, event?: React.MouseEvent | null) => void
 }): React.JSX.Element {
-  const t = useT()
   const grid = section.grid ?? []
   const colCount = Math.max(1, ...grid.map((r) => r.length), 1)
-  const [windowStart, setWindowStart] = useState(0)
   const wrapRef = useRef<HTMLDivElement>(null)
+  const {
+    rowStart: windowStart,
+    rowEnd: end,
+    topPad,
+    bottomPad,
+    revealRow,
+    onScroll: onWrapScroll
+  } = useSheetVirtualWindow(wrapRef, grid.length, section.id)
 
   // Keep selected row visible in the window.
   useEffect(() => {
     for (let i = 0; i < section.blocks.length; i++) {
       const row = section.blocks[i]!
       if (selected.has(row.id) || row.children?.some((c) => selected.has(c.id))) {
-        if (i < windowStart || i >= windowStart + SHEET_ROW_WINDOW) {
-          setWindowStart(Math.max(0, i - Math.floor(SHEET_ROW_WINDOW / 3)))
-        }
+        if (i < windowStart || i >= end) revealRow(i)
         break
       }
     }
-  }, [selected, section.blocks, windowStart])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selected, section.blocks])
 
-  const end = Math.min(grid.length, windowStart + SHEET_ROW_WINDOW)
   const slice = grid.slice(windowStart, end)
-  const canUp = windowStart > 0
-  const canDown = end < grid.length
+  const paintedColSpan = colCount + 1
 
   return (
     <div className="structured-sheet-panel">
-      <div className="structured-sheet-toolbar muted tiny">
-        <span>
-          Rows {grid.length === 0 ? 0 : windowStart + 1}–{end} of {grid.length}
-          {colCount > 0 ? ` · ${colCount} cols` : ''}
-        </span>
-        <span className="spacer" />
-        <button
-          type="button"
-          className="btn ghost sm"
-          disabled={!canUp}
-          title={t('common.pageUp')}
-          aria-label={t('common.pageUp')}
-          onClick={() => setWindowStart((s) => Math.max(0, s - SHEET_ROW_WINDOW))}
-        >
-          ↑
-        </button>
-        <button
-          type="button"
-          className="btn ghost sm"
-          disabled={!canDown}
-          title={t('common.pageDown')}
-          aria-label={t('common.pageDown')}
-          onClick={() =>
-            setWindowStart((s) => Math.min(Math.max(0, grid.length - SHEET_ROW_WINDOW), s + SHEET_ROW_WINDOW))
-          }
-        >
-          ↓
-        </button>
-      </div>
-      <div
-        className="structured-sheet-wrap"
-        ref={wrapRef}
-        onWheel={(e) => {
-          // Page through rows with shift+wheel for large sheets.
-          if (!e.shiftKey) return
-          e.preventDefault()
-          const delta = e.deltaY > 0 ? SHEET_ROW_WINDOW : -SHEET_ROW_WINDOW
-          setWindowStart((s) =>
-            Math.min(Math.max(0, grid.length - SHEET_ROW_WINDOW), Math.max(0, s + delta))
-          )
-        }}
-      >
+      <div className="structured-sheet-wrap" ref={wrapRef} onScroll={onWrapScroll}>
         <table
           className={`structured-sheet${selecting ? ' selecting' : ''}`}
           style={{ ['--gutter-digits' as string]: Math.max(2, String(grid.length).length) }}
@@ -292,6 +253,14 @@ function SheetGrid({
             </tr>
           </thead>
           <tbody>
+            {topPad > 0 && (
+              <tr aria-hidden className="structured-sheet-spacer">
+                <td
+                  colSpan={paintedColSpan}
+                  style={{ height: topPad, padding: 0, border: 'none' }}
+                />
+              </tr>
+            )}
             {slice.map((row, offset) => {
               const ri = windowStart + offset
               const rowBlock = section.blocks[ri]
@@ -348,6 +317,14 @@ function SheetGrid({
                 </tr>
               )
             })}
+            {bottomPad > 0 && (
+              <tr aria-hidden className="structured-sheet-spacer">
+                <td
+                  colSpan={paintedColSpan}
+                  style={{ height: bottomPad, padding: 0, border: 'none' }}
+                />
+              </tr>
+            )}
           </tbody>
         </table>
       </div>

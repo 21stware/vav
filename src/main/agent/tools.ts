@@ -285,7 +285,7 @@ export function createTools(host: ToolHost): AgentTool[] {
     name: 'fs_read',
     label: TOOL_LABELS.fs_read,
     description:
-      'Read a UTF-8 text file by byte window (default first ~2MB). Pass start_byte / max_bytes to page further — large files are never refused. Relative paths resolve against the workdir. For PDF/DOCX/XLSX/PPTX use doc_search / doc_fetch instead.',
+      'Read a UTF-8 text file by byte window (default first ~2MB). Pass start_byte / max_bytes to page further — large files are never refused. Relative paths resolve against the workdir. For PDF/DOCX/XLSX/PPTX/CSV prefer doc_search / doc_fetch (or sql_query for CSV/TSV/Parquet/SQLite analysis). Images, audio, video, and other binaries are not readable as text.',
     parameters: Type.Object({
       path: Type.String({ description: 'File path, absolute or relative to the workdir.' }),
       start_byte: Type.Optional(
@@ -305,11 +305,15 @@ export function createTools(host: ToolHost): AgentTool[] {
         params.max_bytes != null ? Math.floor(Number(params.max_bytes)) : undefined
       const result = await host.files.readTextWindow(path, { startByte, maxBytes })
       if (result.error) {
-        const hint =
-          /\.(pdf|docx|xlsx|xls|pptx)$/i.test(String(params.path ?? '')) ||
-          /binary/i.test(result.error)
-            ? ' For office/PDF documents, use doc_search / doc_fetch.'
-            : ''
+        const hint = /\.(pdf|docx|xlsx|xls|pptx)$/i.test(String(params.path ?? ''))
+          ? ' For office/PDF documents, use doc_search / doc_fetch.'
+          : /\.(csv|tsv)$/i.test(String(params.path ?? ''))
+            ? ' For CSV/TSV analysis prefer sql_query; doc_search also works.'
+            : /\.(png|jpe?g|gif|webp|bmp|svg|heic|mp3|mp4|mov|wav|webm|mkv)$/i.test(
+                  String(params.path ?? '')
+                ) || /binary/i.test(result.error)
+              ? ' Images/audio/video and other binaries cannot be read as UTF-8 text.'
+              : ''
         return failure(`${result.error}${hint}`)
       }
       const header = result.truncated
@@ -329,7 +333,7 @@ export function createTools(host: ToolHost): AgentTool[] {
     name: 'fs_write',
     label: TOOL_LABELS.fs_write,
     description:
-      'Create or overwrite a UTF-8 text file, creating parent directories as needed. Relative paths resolve against the conversation working directory.',
+      'Create or overwrite a UTF-8 text file, creating parent directories as needed. Relative paths resolve against the conversation working directory. Do not use for .docx/.xlsx/.pptx/.pdf (would corrupt them) — use officecli or the pdf skill instead.',
     parameters: Type.Object({
       path: Type.String({ description: 'File path, absolute or relative to the workdir.' }),
       content: Type.String({ description: 'Full file contents to write.' })
@@ -380,7 +384,7 @@ export function createTools(host: ToolHost): AgentTool[] {
     name: 'doc_search',
     label: TOOL_LABELS.doc_search,
     description:
-      'Search inside a PDF, Word, Excel, PowerPoint, or text document using local retrieval (BM25 + structure). Prefer this over fs_read for binary office/PDF files. Use related_to_selection=true to expand around the user\'s selected preview blocks.',
+      'Search inside a PDF, Word, Excel, PowerPoint, CSV/TSV, or text document using local retrieval (BM25 + structure). Prefer this over fs_read for binary office/PDF files. PDF indexing uses the extractable text layer only (no OCR). Not for images/audio/video. Use related_to_selection=true to expand around the user\'s selected preview blocks.',
     parameters: Type.Object({
       query: Type.Optional(
         Type.String({
@@ -535,7 +539,7 @@ export function createTools(host: ToolHost): AgentTool[] {
     name: 'sql_query',
     label: TOOL_LABELS.sql_query,
     description:
-      'Run read-only analytical SQL (DuckDB dialect) over a SQLite, CSV, TSV, or Parquet file. The file is attached in-memory; tables from a SQLite DB or a single CSV/TSV/Parquet file are queryable by name. Use this for analysis (aggregation, GROUP BY, JOIN, window functions) instead of paging the DB preview. Run `SHOW TABLES` first to list available tables, or `DESCRIBE <table>` for columns.',
+      'Run read-only analytical SQL (DuckDB dialect) over a SQLite, CSV, TSV, or Parquet file (not .xlsx/.xls). The file is attached in-memory; tables from a SQLite DB or a single CSV/TSV/Parquet file are queryable by name. Use this for analysis (aggregation, GROUP BY, JOIN, window functions) instead of paging the DB preview. Run `SHOW TABLES` first to list available tables, or `DESCRIBE <table>` for columns. For Excel workbooks use doc_search or officecli/xlsx instead.',
     parameters: Type.Object({
       sql: Type.String({
         description:
@@ -791,7 +795,7 @@ export function createTools(host: ToolHost): AgentTool[] {
       name: Type.Optional(
         Type.String({
           description:
-            'Skill id (preferred) or name, e.g. "pptx", "xlsx", "docx", "pdf", "frontend-design", "doc-coauthoring".'
+            'Skill id (preferred) or name, e.g. "officecli", "pptx", "xlsx", "docx", "pdf", "frontend-design", "doc-coauthoring".'
         })
       ),
       path: Type.Optional(
@@ -1037,21 +1041,65 @@ export function buildSystemPrompt(
     ''
   ]
   if (openFile) {
-    lines.push(
-      `The user is viewing this file in the preview: ${openFile}`,
-      'That file is the primary document for this session. Prefer it for doc_search / doc_fetch / analysis.',
-      'Do not open or search other documents in the folder unless the user explicitly asks for them.',
-      'When calling doc_search or doc_fetch, pass path to that file (or omit path so the default open file is used).',
-      ''
-    )
-    if (openKind === 'zip') {
+    lines.push(`The user is viewing this file in the preview: ${openFile}`)
+    if (openKind === 'image') {
+      lines.push(
+        'This is an image. The preview shows it to the user; you do **not** receive pixels or a vision encoding — only this path (and any selected captions/notes).',
+        'Do not claim you can see the image contents. Describe only what the user states or what tools return. Generative image work uses skills such as `canvas-design` / `gif-sticker`, not this file.',
+        'Do not call `doc_search` / `doc_fetch` / `fs_read` expecting image understanding — they cannot decode pixels.',
+        'Do not open or search other documents in the folder unless the user explicitly asks for them.',
+        ''
+      )
+    } else if (openKind === 'audio' || openKind === 'video') {
+      lines.push(
+        `This is a ${openKind} file. The preview can play it for the user; you do **not** receive audio/video bytes, frames, or a transcript — only this path (and any selected notes).`,
+        'Do not invent spoken content, scenes, or timestamps. There is no built-in transcription/vision tool for this file.',
+        'Do not call `doc_search` / `doc_fetch` / `fs_read` expecting media understanding.',
+        'Do not open or search other documents in the folder unless the user explicitly asks for them.',
+        ''
+      )
+    } else if (openKind === 'zip') {
       lines.push(
         'This is a ZIP archive. The file tree is available — you may reference entries by path. Individual file contents are not extracted for preview.',
+        'Do not open or search other documents in the folder unless the user explicitly asks for them.',
         ''
       )
     } else if (openKind === 'binary') {
       lines.push(
         'This file type (application/octet-stream) cannot be parsed for content. Only file metadata is available.',
+        'Do not open or search other documents in the folder unless the user explicitly asks for them.',
+        ''
+      )
+    } else if (openKind === 'csv' || openKind === 'parquet' || openKind === 'sqlite') {
+      lines.push(
+        'That file is the primary document for this session.',
+        openKind === 'csv'
+          ? 'For tabular analysis prefer `sql_query` (DuckDB). `doc_search` / `doc_fetch` and `fs_read` also work for text inspection; for edits use `fs_write` with the full CSV/TSV contents.'
+          : 'For tabular analysis prefer `sql_query` (DuckDB) on this file. Do not treat it as OOXML.',
+        'Do not open or search other documents in the folder unless the user explicitly asks for them.',
+        'When calling `sql_query` / `doc_search` / `doc_fetch`, pass path to that file (or omit path so the default open file is used).',
+        ''
+      )
+    } else if (openKind === 'pdf') {
+      lines.push(
+        'That file is the primary document for this session. Prefer `doc_search` / `doc_fetch` to read its **text layer** (no OCR — scanned/empty PDFs may return nothing).',
+        'Create / form-fill / reformat PDFs via `load_skill("pdf")` — not `officecli`, and never `fs_write`.',
+        'Do not open or search other documents in the folder unless the user explicitly asks for them.',
+        'When calling doc_search or doc_fetch, pass path to that file (or omit path so the default open file is used).',
+        ''
+      )
+    } else if (openKind === 'office') {
+      lines.push(
+        'That file is the primary Office document for this session. Prefer `doc_search` / `doc_fetch` for reading; create/edit with `officecli` (`load_skill("officecli")` first). Never `fs_write` OOXML.',
+        'Do not open or search other documents in the folder unless the user explicitly asks for them.',
+        'When calling doc_search or doc_fetch, pass path to that file (or omit path so the default open file is used).',
+        ''
+      )
+    } else {
+      lines.push(
+        'That file is the primary document for this session. Prefer it for doc_search / doc_fetch / analysis (and `fs_read` when it is plain text).',
+        'Do not open or search other documents in the folder unless the user explicitly asks for them.',
+        'When calling doc_search or doc_fetch, pass path to that file (or omit path so the default open file is used).',
         ''
       )
     }
@@ -1075,8 +1123,8 @@ export function buildSystemPrompt(
     options?.fileReadOnly
       ? '- `fs_read` / `fs_list` only — filesystem reads. Write tools are disabled for this session.'
       : '- `fs_read` / `fs_write` / `fs_list` operate on the local filesystem.',
-    '- `doc_search` / `doc_fetch` — local retrieval over PDF, Word, Excel, PowerPoint, CSV/TSV, and text. Prefer these over terminal/python for office/PDF content. Do not install python-docx/pdf tools when doc_search can read the file.',
-    '- `sql_query` — analytical SQL (DuckDB) over a SQLite, CSV, TSV, or Parquet file. The file is attached in-memory; tables are queryable by name. Use this for any analysis on a DB or tabular file: aggregation, GROUP BY, JOIN, window functions, filtering. Run `SHOW TABLES` first to list tables, `DESCRIBE <table>` for columns. Prefer this over paging the DB preview when you need to compute, not just browse.',
+    '- `doc_search` / `doc_fetch` — local retrieval over PDF, Word, Excel, PowerPoint, CSV/TSV, and text. Prefer these over terminal/python for office/PDF **reading** (PDF = extractable text layer only; no OCR). Do not install python-docx/pdf tools when doc_search can read the file. Not for images/audio/video.',
+    '- `sql_query` — analytical SQL (DuckDB) over a SQLite, CSV, TSV, or Parquet file (not `.xlsx`). The file is attached in-memory; tables are queryable by name. Use for aggregation, GROUP BY, JOIN, window functions, filtering. Run `SHOW TABLES` first, `DESCRIBE <table>` for columns. Prefer this over paging the DB/CSV preview when you need to compute.',
     '- `web_search` / `web_fetch` — public web from this machine (Brave if key configured, else optional SearXNG, else DuckDuckGo HTML). Search first, then fetch promising URLs. HTML/PDF/text/JSON supported; private/localhost URLs are blocked. Prefer these over `terminal` curl/wget for reading pages.',
     '- `load_skill` — load a domain skill (SKILL.md + optional scripts/references) before specialized work. Catalog metadata is below; full instructions load on demand.',
     '- `request` and `ask_user_question` pause the turn to involve the user (VAV tools).',
@@ -1088,12 +1136,11 @@ export function buildSystemPrompt(
     'Load companion files with `path` (e.g. `references/…`).',
     'When to load (examples):',
     '- Markdown / long-form docs / specs → `doc-coauthoring`, `internal-comms`, `theme-factory`',
-    '- PowerPoint / slides → `pptx`',
-    '- Excel / spreadsheets / tabular analysis → `xlsx` (and `sql_query` for pure SQL over CSV/Parquet)',
-    '- Word documents → `docx`',
-    '- Polished PDF reports → `pdf`',
+    '- Word / Excel / PowerPoint **create or edit** → `officecli` first (bundled binary on PATH; do not install it). Fall back to `docx` / `xlsx` / `pptx` only if officecli cannot complete the task. Catalog MUST text on fallbacks does not override this order.',
+    '- Tabular **analysis** on `.csv` / `.tsv` / `.parquet` / SQLite → `sql_query` (not `.xlsx`). For `.xlsx` reading/analysis use `doc_search` / `officecli`, or `xlsx` if needed.',
+    '- PDF create / form fill / reformat (including polished reports) → `pdf` (not `officecli`).',
     '- Web UI, landing pages, dashboards → `frontend-design` / `frontend-dev` / `web-artifacts-builder`',
-    '- Charts in chat → still emit `vega-lite` / `mermaid` fences (see Visual diagrams); for file-based viz follow xlsx or frontend skills',
+    '- Charts in chat → still emit `vega-lite` / `mermaid` fences (see Visual diagrams); for file-based viz follow officecli or frontend skills',
     '- Generative / static visual art → `algorithmic-art` / `canvas-design` / `shader-dev` / `gif-sticker`',
     '- Full-stack app structure → `fullstack-dev`',
     '- MCP servers → `mcp-builder`',
@@ -1108,9 +1155,11 @@ export function buildSystemPrompt(
     '5) Save — user reviews (Change Review) then accepts or discards.',
     options?.fileReadOnly
       ? '- This session is READ-ONLY: analyze and propose only; never write files.'
-      : '- For text files: inspect with windowed `fs_read`, then `fs_write` the complete new contents when editing.',
-    '- For PDF/Office binary: prefer `doc_search` / `doc_fetch`; do not UTF-8-overwrite OOXML/PDF.',
-    '- Selected context in the user message is only an anchor; call `doc_search` when you need more evidence from the same document.',
+      : '- For text / CSV / TSV: inspect with windowed `fs_read`, then `fs_write` the complete new contents when editing.',
+    '- Office OOXML (`.docx` / `.xlsx` / `.pptx`): read via `doc_search` / `doc_fetch`; create/edit via `officecli` (`load_skill("officecli")` first, then `terminal`). Never UTF-8-overwrite with `fs_write`.',
+    '- PDF: read via `doc_search` / `doc_fetch` (text layer only — no OCR). CREATE / FILL / REFORMAT via `load_skill("pdf")`. `officecli` does not handle PDF. Never `fs_write` a PDF.',
+    '- Images / audio / video: no built-in vision or transcription — do not invent contents from the path alone.',
+    '- Selected context in the user message is only an anchor; call `doc_search` when you need more evidence from the same document (office/PDF/CSV/text).',
     '- Cite retrieved passages with their `[doc:…]` ids; cite web sources by url or `[web:N]`.',
     '- Ask via `request` before destructive or irreversible operations.',
     '- `ask_user_question`: keep it short — few questions, 2–4 real choices each (UI adds Other). No long option menus or joke fillers.',

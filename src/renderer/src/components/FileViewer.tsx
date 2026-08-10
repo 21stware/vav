@@ -36,6 +36,9 @@ import {
   type PreviewBlock
 } from '../lib/previewBlocks'
 import { basename, dirname, replaceExt } from '../lib/path'
+import { previewOpenElapsed } from '../lib/previewOpenClock'
+import { createWarmComponent } from '../lib/warmComponent'
+import type { OfficeNativeView as OfficeNativeViewType } from './office/OfficeNativeView'
 import { fileManagerLabel } from '../lib/platform'
 import { FileManagerIcon } from './FileManagerIcon'
 import { handleClickPickMouseDown, isPickGestureActive, type ClickPickPointer } from '../lib/clickPick'
@@ -43,16 +46,94 @@ import { suppressHyperlinkClick } from '../lib/suppressHyperlinks'
 import { useT } from '../i18n/useT'
 import { useSessionStore } from '../state/sessionStore'
 import { useWorkspaceStore } from '../state/workspaceStore'
-import { SessionDetail, type FileSessionChromeProps } from './SessionDetail'
+import type { FileSessionChromeProps } from './SessionDetail'
 import { menuAnchor, showMenu } from '../lib/nativeMenu'
 import { Button, EmptyState, InlineAlert } from './ui'
 import { looksLikeFreeMind, looksLikeOpml } from '@shared/mindmap'
 import { BinaryFileView } from './BinaryFileView'
+import { localFileStreamUrl } from '@shared/localFileUrl'
+import type { StructuredDocument } from '@shared/structuredDoc'
+import { attachDomPick, updateDomPick } from './office/pickFromDom'
+import { useSheetVirtualWindow } from '../lib/useSheetVirtualWindow'
+import { SelectionAgentFab } from './SelectionAgentFab'
+
+// The agent side panel drags in the whole chat surface (composer, transcript,
+// xterm). A preview that is never asked for an agent must not parse it.
+const SessionDetail = lazy(() =>
+  import('./SessionDetail').then((m) => ({ default: m.SessionDetail }))
+)
 
 // Heavy format canvases — keep out of the chat / settings critical path.
-const OfficeNativeView = lazy(() =>
-  import('./office/OfficeNativeView').then((m) => ({ default: m.OfficeNativeView }))
+// Warm handle rather than `lazy`: the router is resident in a warm shell, and a
+// Suspense fallback would cost React's ~300 ms reveal throttle.
+const officeRouter = createWarmComponent<React.ComponentProps<typeof OfficeNativeViewType>>(
+  () => import('./office/OfficeNativeView').then((m) => m.OfficeNativeView)
 )
+const StructuredDocView = lazy(() =>
+  import('./StructuredDocView').then((m) => ({ default: m.StructuredDocView }))
+)
+
+function markViewer(label: string): void {
+  try {
+    performance.mark(`viewer:${label}`)
+  } catch {
+    // ignore
+  }
+  if (import.meta.env.DEV) {
+    const elapsed = previewOpenElapsed()
+    const since = elapsed == null ? '' : ` (+${elapsed}ms since open)`
+    console.debug(`[preview-perf] viewer:${label}`, performance.now().toFixed(1), since)
+  }
+}
+
+function provisionalInspect(path: string): FileInspectResult | null {
+  const name = basename(path)
+  const base = {
+    path,
+    name,
+    size: 0,
+    streamUrl: localFileStreamUrl(path)
+  }
+  if (/\.pdf$/i.test(path)) {
+    return { ...base, kind: 'pdf', mime: 'application/pdf' }
+  }
+  if (/\.docx$/i.test(path)) {
+    return {
+      ...base,
+      kind: 'docx',
+      mime: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+    }
+  }
+  if (/\.xlsx$/i.test(path)) {
+    return {
+      ...base,
+      kind: 'xlsx',
+      mime: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    }
+  }
+  if (/\.pptx$/i.test(path)) {
+    return {
+      ...base,
+      kind: 'pptx',
+      mime: 'application/vnd.openxmlformats-officedocument.presentationml.presentation'
+    }
+  }
+  if (/\.zip$/i.test(path)) {
+    return {
+      ...base,
+      kind: 'zip',
+      mime: 'application/zip',
+      zip: {
+        entries: [],
+        entryCount: 0,
+        compressedSize: 0,
+        uncompressedSize: 0,
+        ratio: 0
+      }
+    }
+  }
+  return null
+}
 const HtmlNativeView = lazy(() =>
   import('./office/HtmlNativeView').then((m) => ({ default: m.HtmlNativeView }))
 )
@@ -86,7 +167,7 @@ function loadPanelWidth(): number {
   return 360
 }
 
-type UnsavedIntent = 'done' | 'close'
+type UnsavedIntent = 'close'
 
 /**
  * File preview (file-preview.rpml).
@@ -139,7 +220,7 @@ export function FileViewer({
   /** Workspace split-pane: agent column open (for toolbar toggle). */
   agentPanelOpen?: boolean
   onToggleAgentPanel?: () => void
-  /** Workspace Peek: block pick should auto-expand a collapsed Agent panel. */
+  /** Optional hook after a canvas block pick (selection only — does not open Agent). */
   onPickBlock?: () => void
   /**
    * Workspace + collapsed sidebar: panel toggle / new session ahead of the
@@ -151,16 +232,20 @@ export function FileViewer({
   const [filePath, setFilePath] = useState(initialPath)
   const [info, setInfo] = useState<FileInspectResult | null>(null)
   /** Standalone drawer open state (embedded uses agentPanelOpenProp from parent). */
-  const [localAgentOpen, setLocalAgentOpen] = useState(() => {
-    // Double-click / open with conversationId → file conversation surface open.
-    if (embedded) return false
-    try {
-      return !!new URLSearchParams(window.location.search).get('conversationId')
-    } catch {
-      return false
-    }
-  })
-  const agentPanelOpen = embedded ? !!agentPanelOpenProp : localAgentOpen
+  // Instant-open: Agent stays collapsed until the user expands it (T3 deferred).
+  const [localAgentOpen, setLocalAgentOpen] = useState(false)
+  /** Progressive structured index (block-pick) while native canvas paints. */
+  const [structuredPreview, setStructuredPreview] = useState<StructuredDocument | null>(null)
+  const [nativeOfficeReady, setNativeOfficeReady] = useState(false)
+  /**
+   * Standalone: local drawer. FileSessionView: parent toggle.
+   * Workspace peek: agent column is always a sibling (no toggle prop) → treat open.
+   */
+  const agentPanelOpen = embedded
+    ? onToggleAgentPanel
+      ? !!agentPanelOpenProp
+      : true
+    : localAgentOpen
   const [panelWidth, setPanelWidth] = useState(loadPanelWidth)
   const panelWidthRef = useRef(panelWidth)
   panelWidthRef.current = panelWidth
@@ -191,6 +276,7 @@ export function FileViewer({
   const unsavedPromptOpen = useRef(false)
   /** Blocks picked from mature office/PDF renderers (DOM / sheet). */
   const officeBlocksRef = useRef<Map<string, PreviewBlock>>(new Map())
+  const OfficeNativeView = officeRouter.use()
   const selectConversation = useSessionStore((s) => s.selectConversation)
   const createConversation = useSessionStore((s) => s.createConversation)
   const agentCommentCards = useSessionStore((s) => {
@@ -225,7 +311,9 @@ export function FileViewer({
       prevInitialPathRef.current !== null && prevInitialPathRef.current !== initialPath
     prevInitialPathRef.current = initialPath
     setFilePath(initialPath)
-    setInfo(null)
+    setInfo(provisionalInspect(initialPath))
+    setStructuredPreview(null)
+    setNativeOfficeReady(false)
     if (pathChanged) setLocalAgentOpen(false)
     setSelectedIds([])
     setWorkingContent(null)
@@ -235,6 +323,7 @@ export function FileViewer({
     setPreviewRevision(0)
     unsavedPromptOpen.current = false
     officeBlocksRef.current.clear()
+    markViewer(`path:${basename(initialPath)}`)
   }, [initialPath])
 
   const refreshAssoc = useCallback(async (): Promise<void> => {
@@ -362,51 +451,25 @@ export function FileViewer({
   useEffect(() => {
     let cancelled = false
     textWindowFillRef.current = null
-    // Mount kind-known canvases immediately while inspect IPC returns.
-    // PDF: native stream. ZIP: archive tree (structure filled by inspect).
-    // Binary-ish unknown extensions: metadata panel (meta filled by inspect).
-    if (/\.pdf$/i.test(filePath)) {
+    const provisional = provisionalInspect(filePath)
+    if (provisional) {
       setInfo((prev) =>
-        prev?.path === filePath && prev.kind === 'pdf'
-          ? prev
-          : {
-              path: filePath,
-              name: basename(filePath),
-              size: prev?.path === filePath ? prev.size : 0,
-              kind: 'pdf',
-              mime: 'application/pdf'
-            }
+        prev?.path === filePath && prev.kind === provisional.kind ? prev : provisional
       )
-    } else if (/\.zip$/i.test(filePath)) {
-      setInfo((prev) =>
-        prev?.path === filePath && prev.kind === 'zip'
-          ? prev
-          : {
-              path: filePath,
-              name: basename(filePath),
-              size: prev?.path === filePath ? prev.size : 0,
-              kind: 'zip',
-              mime: 'application/zip',
-              zip: {
-                entries: [],
-                entryCount: 0,
-                compressedSize: prev?.path === filePath ? prev.size : 0,
-                uncompressedSize: 0,
-                ratio: 0
-              }
-            }
-      )
+      markViewer(`provisional:${provisional.kind}`)
+      markViewer('first-paint')
     }
     void reloadInfo(filePath).then(async (result) => {
       if (cancelled) return
+      markViewer(`inspect:${result.kind}`)
       if (result.kind === 'text' || result.kind === 'csv' || result.kind === 'html') {
         if (result.text != null) {
           setWorkingContent(result.text)
+          // Baseline deferred until Edit / Agent open — keep a soft copy for dirty detect.
           setBaselineContent(result.text)
         }
         setBaselineBinary(null)
-        // Silent progressive fill to EOF (no user "load more"). Chunks via idle
-        // callback so open stays responsive for multi‑MB logs.
+        markViewer('first-paint')
         if (result.truncated && result.textWindow) {
           textWindowFillRef.current = {
             path: filePath,
@@ -424,24 +487,49 @@ export function FileViewer({
         // plainText is an index, not the file body — never use it for Save/Discard.
         setWorkingContent(null)
         setBaselineContent(null)
-        // PDF streams via vav-local; don't block open on a full-file baseline read.
-        if (result.kind === 'pdf') {
-          setBaselineBinary(null)
-        } else {
-          await captureBaseline(filePath, result.kind, null)
-        }
+        setBaselineBinary(null)
+        // Progressive structured index for block-pick (does not block native canvas).
+        void window.vav.files
+          .inspectStructured?.(filePath, {
+            maxBlocks:
+              result.kind === 'docx' ? 48 : result.kind === 'pptx' ? 1 : undefined,
+            maxRows: result.kind === 'xlsx' ? 120 : undefined
+          })
+          .then((chunk) => {
+            if (cancelled || !chunk || !chunk.ok) return
+            setStructuredPreview(chunk.structured)
+            setInfo((prev) =>
+              prev?.path === filePath
+                ? { ...prev, structured: chunk.structured, text: chunk.structured.plainText }
+                : prev
+            )
+            markViewer('structured:partial')
+            if (chunk.partial) {
+              void window.vav.files.inspectStructured?.(filePath).then((full) => {
+                if (cancelled || !full?.ok) return
+                setStructuredPreview(full.structured)
+                setInfo((prev) =>
+                  prev?.path === filePath
+                    ? { ...prev, structured: full.structured, text: full.structured.plainText }
+                    : prev
+                )
+                markViewer('structured:full')
+              })
+            }
+          })
       } else if (result.text != null) {
         setWorkingContent(result.text)
         setBaselineContent(result.text)
       }
       setHasUnsavedChanges(false)
-      // Keep revision if we already painted under the provisional pdf info.
-      if (result.kind !== 'pdf') setPreviewRevision(0)
+      if (result.kind !== 'pdf' && result.kind !== 'docx' && result.kind !== 'xlsx' && result.kind !== 'pptx') {
+        setPreviewRevision(0)
+      }
     })
     return () => {
       cancelled = true
     }
-  }, [filePath, reloadInfo, isBinaryOfficeKind, captureBaseline, extendTextWindow])
+  }, [filePath, reloadInfo, isBinaryOfficeKind, extendTextWindow])
 
   useEffect(() => {
     try {
@@ -676,11 +764,18 @@ export function FileViewer({
   }, [allBlocks, selectedIds, mediaBlock])
 
   /**
-   * Block pick for Agent context works in Read and Edit.
-   * Read only blocks *writing* the file (tools + Save), not selecting for chat.
+   * Block pick for Agent context. By default works in Read and Edit; a setting
+   * can make Read view/copy-only (pick then requires Edit).
+   * Read always blocks *writing* the file (tools + Save).
    */
   const pickConversationId = agentConversationId ?? parentConversationId ?? null
-  const selectable =
+  const allowReadModeSelection = useSessionStore(
+    (s) => s.settings.previewReadModeSelection !== false
+  )
+  const showSelectionAgentMark = useSessionStore(
+    (s) => s.settings.previewSelectionAgentMark !== false
+  )
+  const kindSelectable =
     !!info &&
     !info.error &&
     (info.kind === 'text' ||
@@ -693,6 +788,13 @@ export function FileViewer({
       info.kind === 'html' ||
       info.kind === 'zip' ||
       !!mediaSrc)
+  const selectable =
+    kindSelectable && (!effectiveReadOnly || allowReadModeSelection)
+
+  // Drop stale picks when Read-mode selection is turned off.
+  useEffect(() => {
+    if (!selectable && selectedIds.length > 0) setSelectedIds([])
+  }, [selectable, selectedIds.length])
 
   /**
    * Pointer-down creates/toggles a comment card (same for MD / TS / office).
@@ -758,11 +860,11 @@ export function FileViewer({
       void import('../lib/cliFocusHandoff').then(({ handoffBlockToCli }) => {
         handoffBlockToCli(conversationId, ref)
       })
-      // Open agent column + focus comment *after* paint; skip if another pick
-      // gesture already started (focus thrash between canvas and comment).
+      // Selection only — do not expand the agent panel on click. Focus the
+      // comment card if the panel is already open; skip if another pick gesture
+      // already started (focus thrash between canvas and comment).
       requestAnimationFrame(() => {
         if (isPickGestureActive()) return
-        if (!embedded) setLocalAgentOpen(true)
         onPickBlock?.()
         requestAnimationFrame(() => {
           if (isPickGestureActive()) return
@@ -945,12 +1047,8 @@ export function FileViewer({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [embedded, parentConversationId, filePath])
 
-  // Standalone: restore file session as soon as the window is ready.
-  useEffect(() => {
-    if (embedded) return
-    void ensureFileSession()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [embedded, filePath])
+  // Instant-open: do NOT hydrate file sessions on mount — wait for Agent expand.
+  // (ensureFileSession runs from toggleAgentPanel / explicit actions.)
 
   // Keep session title in sync with store renames / auto-title.
   useEffect(() => {
@@ -978,25 +1076,27 @@ export function FileViewer({
 
   const toggleAgentPanel = async (): Promise<void> => {
     if (agentPanelOpen) {
-      if (hasUnsavedChanges) {
-        await promptUnsaved('done')
-        return
-      }
+      // Collapsing the agent column must not ask to Save/Discard — dirty buffer
+      // stays on the file canvas until the user Saves or closes the window.
       closeAgentPanel()
+      onToggleAgentPanel?.()
       return
     }
 
-    // Snapshot the pre-agent body so Discard can restore (binary or text).
-    if (isBinaryOfficeKind(info?.kind)) {
-      await captureBaseline(filePath, info?.kind, null)
-      setWorkingContent(null)
-    } else {
-      const text = info?.text ?? workingContent ?? ''
-      setBaselineContent(text)
-      setWorkingContent(text)
-      setBaselineBinary(null)
+    // First open: snapshot baseline for Discard. If the canvas is already dirty
+    // (e.g. user collapsed Agent then reopened), keep the existing baseline.
+    if (!hasUnsavedChanges) {
+      if (isBinaryOfficeKind(info?.kind)) {
+        await captureBaseline(filePath, info?.kind, null)
+        setWorkingContent(null)
+      } else {
+        const text = info?.text ?? workingContent ?? ''
+        setBaselineContent(text)
+        setWorkingContent(text)
+        setBaselineBinary(null)
+      }
+      setHasUnsavedChanges(false)
     }
-    setHasUnsavedChanges(false)
     setLocalAgentOpen(true)
 
     const id = (await ensureFileSession()) ?? agentConversationId
@@ -1471,7 +1571,8 @@ export function FileViewer({
     }
   }
 
-  const discard = async (): Promise<void> => {
+  /** Restore baseline on disk. Returns false if the write failed. */
+  const discard = async (): Promise<boolean> => {
     applyingOwnWrite.current = true
     try {
       if (isBinaryOfficeKind(info?.kind)) {
@@ -1480,23 +1581,32 @@ export function FileViewer({
           if (!result.ok) {
             showToast({
               kind: 'error',
-              title: t('preview.saveFailed'),
+              title: t('preview.discardFailed'),
               description: result.error
             })
-            return
+            return false
           }
           await reloadInfo(filePath)
           setPreviewRevision((n) => n + 1)
         }
         setHasUnsavedChanges(false)
-        return
+        return true
       }
       if (baselineContent != null) {
-        await window.vav.files.write(filePath, baselineContent)
+        const result = await window.vav.files.write(filePath, baselineContent)
+        if (!result.ok) {
+          showToast({
+            kind: 'error',
+            title: t('preview.discardFailed'),
+            description: result.error
+          })
+          return false
+        }
         setWorkingContent(baselineContent)
         await reloadInfo(filePath)
       }
       setHasUnsavedChanges(false)
+      return true
     } finally {
       window.setTimeout(() => {
         applyingOwnWrite.current = false
@@ -1504,12 +1614,55 @@ export function FileViewer({
     }
   }
 
+  /** Tell the file session (and CLI host, if any) that the user discarded edits. */
+  const notifyDiscardToAgent = async (): Promise<void> => {
+    let conversationId = agentConversationId ?? parentConversationId ?? null
+    if (!conversationId) {
+      conversationId = await ensureFileSession()
+      if (conversationId) setAgentConversationId(conversationId)
+    }
+    if (!conversationId) return
+    const notice = t('preview.discardNotice', { path: filePath })
+    await window.vav.agent.appendNotice(conversationId, notice)
+    // CLI hosts: paste a brief note into the prompt buffer (no auto-submit).
+    const meta = useSessionStore.getState().conversations.find((c) => c.id === conversationId)
+    const agentId = meta?.agentBinaryName
+    if (agentId && agentId !== 'vav') {
+      useWorkspaceStore.getState().injectContextToActivePane(conversationId, notice, {
+        submit: false,
+        delayMs: 80
+      })
+    }
+  }
+
+  /**
+   * Save ▾ → Discard Changes: confirm, restore baseline, notify agent context.
+   */
+  const confirmDiscardChanges = async (): Promise<void> => {
+    if (!hasUnsavedChanges) return
+    const name = info?.name ?? basename(filePath)
+    const response = await window.vav.dialog.messageBox({
+      type: 'warning',
+      title: t('preview.discardConfirmTitle'),
+      message: t('preview.discardConfirmTitle'),
+      detail: t('preview.discardConfirmBody', { name }),
+      buttons: [t('preview.discardConfirmAction'), t('common.cancel')],
+      defaultId: 1,
+      cancelId: 1
+    })
+    if (response !== 0) return
+    const ok = await discard()
+    if (!ok) return
+    showToast({ kind: 'success', title: t('preview.discarded') })
+    await notifyDiscardToAgent()
+  }
+
   /**
    * Native Save / Cancel / Discard sheet (macOS: buttons[0] is rightmost primary).
-   * Used for window close and for folding the agent panel with dirty buffer.
+   * Only for closing the preview window — not for collapsing the agent panel.
    */
   const promptUnsaved = useCallback(
-    async (intent: UnsavedIntent): Promise<void> => {
+    async (_intent: UnsavedIntent): Promise<void> => {
       if (unsavedPromptOpen.current) return
       unsavedPromptOpen.current = true
       try {
@@ -1530,21 +1683,15 @@ export function FileViewer({
         if (response === 0) {
           const ok = await save()
           if (!ok) return
-          if (intent === 'close') {
-            void window.vav.window.forcePreviewClose()
-            return
-          }
-          closeAgentPanel()
+          void window.vav.window.forcePreviewClose()
           return
         }
         if (response === 2) {
-          await discard()
-          if (intent === 'close') {
-            void window.vav.window.setPreviewCloseGuard(false)
-            void window.vav.window.forcePreviewClose()
-            return
-          }
-          closeAgentPanel()
+          const ok = await discard()
+          if (!ok) return
+          void notifyDiscardToAgent()
+          void window.vav.window.setPreviewCloseGuard(false)
+          void window.vav.window.forcePreviewClose()
         }
         // Cancel (1) or dismiss — stay put.
       } finally {
@@ -1676,20 +1823,39 @@ export function FileViewer({
     return t('preview.blocksSelected', { n: selectedBlocks.length })
   }, [selectedBlocks, t, isBinaryUnsupported, isZip])
 
+  const openAgentFromToggle = (): void => {
+    if (embedded && onToggleAgentPanel) {
+      onToggleAgentPanel()
+      return
+    }
+    if (!embedded) {
+      void toggleAgentPanel()
+      return
+    }
+    // Workspace drawer: agent column is already a sibling — focus the composer.
+    useSessionStore.getState().focusComposer()
+  }
+
+  const onSelectionAgentMarkClick = (): void => {
+    if (!agentPanelOpen && ((embedded && onToggleAgentPanel) || !embedded)) {
+      openAgentFromToggle()
+    }
+    useSessionStore.getState().focusComposer()
+  }
+
   const agentToggle = (
     <AgentPanelToggleButton
       open={agentPanelOpen}
       title={embedded ? t('workspace.toggleAgentPanel') : t('preview.agentPanel')}
-      onClick={() => {
-        if (embedded && onToggleAgentPanel) {
-          onToggleAgentPanel()
-          return
-        }
-        void toggleAgentPanel()
-      }}
+      onClick={openAgentFromToggle}
       className={embedded ? undefined : 'titlebar-no-drag'}
     />
   )
+
+  const previewMainRef = useRef<HTMLDivElement>(null)
+  /** Setting on + selection + agent collapsed — hide once the panel is open. */
+  const showSelectionAgentFab =
+    showSelectionAgentMark && selectedIds.length > 0 && !agentPanelOpen
 
   const fileHeader = (
       <header
@@ -1789,6 +1955,7 @@ export function FileViewer({
                   const items: {
                     label: string
                     divider?: boolean
+                    disabled?: boolean
                     onSelect?: () => void
                   }[] = [
                     {
@@ -1796,6 +1963,12 @@ export function FileViewer({
                       onSelect: () => void saveAs()
                     }
                   ]
+                  if (hasUnsavedChanges) {
+                    items.push({
+                      label: t('preview.discardChanges'),
+                      onSelect: () => void confirmDiscardChanges()
+                    })
+                  }
                   if (!embedded) {
                     items.push({ label: '', divider: true })
                     items.push({
@@ -1933,7 +2106,9 @@ export function FileViewer({
                     </div>
                   )}
                   {agentConversationId ? (
-                    <SessionDetail variant="preview-edit" fileSessionChrome={fileChrome} />
+                    <Suspense fallback={<div className="muted" data-pad="text" />}>
+                      <SessionDetail variant="preview-edit" fileSessionChrome={fileChrome} />
+                    </Suspense>
                   ) : (
                     <EmptyState
                       title={t('preview.startChat')}
@@ -2087,14 +2262,49 @@ export function FileViewer({
               </div>
             )}
           {info && !info.error && isOfficeKind && (
-            <OfficeNativeView
-              path={info.contentPath || filePath}
-              kind={info.kind}
-              revision={previewRevision}
-              selecting={selectable}
-              selectedIds={selectedIds}
-              onPick={onOfficePick}
-            />
+            <>
+              {/* Progressive structured canvas for docx/xlsx/pptx until native paints. */}
+              {structuredPreview &&
+                !nativeOfficeReady &&
+                info.kind !== 'pdf' && (
+                  <Suspense fallback={null}>
+                    <StructuredDocView
+                      doc={structuredPreview}
+                      selecting={selectable}
+                      selectedIds={selectedIds}
+                      onSelect={(id, event) => applySelection(id, event ?? null)}
+                    />
+                  </Suspense>
+                )}
+              <div
+                className={
+                  structuredPreview && !nativeOfficeReady && info.kind !== 'pdf'
+                    ? 'file-viewer-native-office is-pending'
+                    : 'file-viewer-native-office'
+                }
+                aria-hidden={
+                  structuredPreview && !nativeOfficeReady && info.kind !== 'pdf'
+                    ? true
+                    : undefined
+                }
+              >
+                {OfficeNativeView ? (
+                  <OfficeNativeView
+                    path={info.contentPath || filePath}
+                    kind={info.kind}
+                    revision={previewRevision}
+                    selecting={selectable}
+                    selectedIds={selectedIds}
+                    onPick={onOfficePick}
+                    onReady={() => {
+                      setNativeOfficeReady(true)
+                      markViewer('native-ready')
+                    }}
+                    progressiveStructured={structuredPreview}
+                  />
+                ) : null}
+              </div>
+            </>
           )}
           {info && !info.error && isHtmlKind && (
             <HtmlNativeView
@@ -2300,7 +2510,15 @@ export function FileViewer({
   const fileColumn = (
     <>
       {fileHeader}
-      <div className="file-preview-main">
+      <div className="file-preview-main" ref={previewMainRef}>
+        {showSelectionAgentFab ? (
+          <SelectionAgentFab
+            hostRef={previewMainRef}
+            selectedIds={selectedIds}
+            title={embedded ? t('workspace.toggleAgentPanel') : t('preview.agentPanel')}
+            onClick={onSelectionAgentMarkClick}
+          />
+        ) : null}
         <div
           className={`file-viewer-body${selectable ? ' selecting pick-mode' : ''}`}
           data-pad={bodyPad}
@@ -2426,6 +2644,137 @@ function MediaSelectFrame({
   )
 }
 
+// Descendants (not `>`): sealed chunks use `display: contents` hosts, so block
+// nodes are nested under `.markdown-chunk` in the DOM tree.
+const MD_PICK_SELECTOR = [
+  '.preview-markdown p',
+  '.preview-markdown h1',
+  '.preview-markdown h2',
+  '.preview-markdown h3',
+  '.preview-markdown h4',
+  '.preview-markdown h5',
+  '.preview-markdown h6',
+  '.preview-markdown li',
+  '.preview-markdown blockquote',
+  '.preview-markdown .md-preview-fence',
+  '.preview-markdown .md-block',
+  '.preview-markdown .table-scroll',
+  '.preview-markdown td',
+  '.preview-markdown th'
+].join(',')
+
+/**
+ * Streaming markdown canvas: sealed chunks stay mounted; only the open tail
+ * re-parses. Pick mode uses DOM hit-testing (same path as office).
+ */
+function StreamingMarkdownDocument({
+  path,
+  text,
+  selecting,
+  selectedIds,
+  onSelectBlock,
+  onAskAgent
+}: {
+  path: string
+  text: string
+  selecting: boolean
+  selectedIds: string[]
+  onSelectBlock: (id: string, event?: React.MouseEvent | ClickPickPointer | null, hint?: PreviewBlock) => void
+  onAskAgent: (prompt: string, target: PreviewBlock) => void
+}): React.JSX.Element {
+  const t = useT()
+  const rootRef = useRef<HTMLDivElement>(null)
+  const onSelectRef = useRef(onSelectBlock)
+  onSelectRef.current = onSelectBlock
+  const onAskRef = useRef(onAskAgent)
+  onAskRef.current = onAskAgent
+
+  useEffect(() => {
+    const root = rootRef.current
+    if (!root) return
+    const dispose = attachDomPick(root, {
+      selecting,
+      selectedIds,
+      idPrefix: 'md',
+      selector: MD_PICK_SELECTOR,
+      onPick: (block, event) => {
+        onSelectRef.current(block.id, event, block)
+      }
+    })
+    return dispose
+    // Attach once; selection chrome updates below.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [path])
+
+  useEffect(() => {
+    updateDomPick(rootRef.current, {
+      selecting,
+      selectedIds,
+      onPick: (block, event) => {
+        onSelectRef.current(block.id, event, block)
+      }
+    })
+  }, [selecting, selectedIds])
+
+  useEffect(() => {
+    const root = rootRef.current
+    if (!root || !selecting) return
+    const onContext = (event: MouseEvent): void => {
+      const raw = event.target as HTMLElement | null
+      if (!raw || !root.contains(raw)) return
+      const hit = raw.closest<HTMLElement>('[data-block-id]')
+      if (!hit?.dataset.blockId) return
+      event.preventDefault()
+      event.stopPropagation()
+      const id = hit.dataset.blockId
+      const textContent = (hit.innerText || hit.textContent || '').replace(/\s+/g, ' ').trim()
+      const block: PreviewBlock = {
+        id,
+        kind: hit.tagName.startsWith('H') ? 'heading' : 'paragraph',
+        text: textContent.slice(0, 8000),
+        label: textContent.slice(0, 64) || id,
+        startLine: 1,
+        endLine: 1
+      }
+      void window.vav.window
+        .popupMenu(
+          [
+            { id: 'copy', label: t('preview.copyBlock') },
+            { id: 'analyze', label: t('preview.analyzeBlock') },
+            { id: 'refactor', label: t('preview.refactorBlock') }
+          ],
+          { x: event.clientX, y: event.clientY }
+        )
+        .then((choice) => {
+          if (choice === 'copy') {
+            void window.vav.conversations.copyToClipboard(block.text)
+            return
+          }
+          if (choice === 'analyze') {
+            onSelectRef.current(block.id, null, block)
+            onAskRef.current(t('preview.analyzePrompt'), block)
+            return
+          }
+          if (choice === 'refactor') {
+            onSelectRef.current(block.id, null, block)
+            onAskRef.current(t('preview.refactorPrompt'), block)
+          }
+        })
+    }
+    root.addEventListener('contextmenu', onContext)
+    return () => root.removeEventListener('contextmenu', onContext)
+  }, [selecting, t])
+
+  return (
+    <div
+      ref={rootRef}
+      className={`preview-document${selecting ? ' selecting' : ''}`}
+    >
+      <MarkdownView source={text} filePath={path} progressive />
+    </div>
+  )
+}
+
 /**
  * Same rendered document in preview and edit. Edit only enables inspect-style
  * block selection — never a source/code editor or inline cell inputs.
@@ -2464,32 +2813,22 @@ function DocumentView({
   const t = useT()
 
   if (markdown) {
-    if (blocks.length === 0) {
-      if (!text.trim()) {
-        return (
-          <EmptyState title={t('preview.emptyFile')} description={t('preview.emptyFileDesc')} />
-        )
-      }
+    if (!text.trim()) {
       return (
-        <div className={`preview-document${selecting ? ' selecting' : ''}`}>
-          <MarkdownView source={text} filePath={path} />
-        </div>
+        <EmptyState title={t('preview.emptyFile')} description={t('preview.emptyFileDesc')} />
       )
     }
+    // Always stream (sealed chunks + live tail). Block-tree remounts used to
+    // flash the whole document on every agent rewrite / window fill.
     return (
-      <div className={`preview-document${selecting ? ' selecting' : ''}`}>
-        {blocks.map((block) => (
-          <MarkdownSelectRegion
-            key={block.id}
-            filePath={path}
-            block={block}
-            selecting={selecting}
-            selectedIds={selectedIds}
-            onSelect={onSelectBlock}
-            onAskAgent={onAskAgent}
-          />
-        ))}
-      </div>
+      <StreamingMarkdownDocument
+        path={path}
+        text={text}
+        selecting={selecting}
+        selectedIds={selectedIds}
+        onSelectBlock={onSelectBlock}
+        onAskAgent={onAskAgent}
+      />
     )
   }
 
@@ -2950,129 +3289,11 @@ function CodeBlockCanvas({
   )
 }
 
-/**
- * Markdown pick targets — same semantics as CodeBlockCanvas:
- * click deepest region, selection outline stays while the block is picked,
- * nested children are independently selectable (no double-click drill).
- */
-function MarkdownSelectRegion({
-  filePath,
-  block,
-  selecting,
-  selectedIds,
-  onSelect,
-  onAskAgent,
-  forceSelected = false
-}: {
-  filePath: string
-  block: PreviewBlock
-  selecting: boolean
-  selectedIds: string[]
-  onSelect: (id: string, event?: React.MouseEvent | ClickPickPointer | null) => void
-  onAskAgent: (prompt: string, target: PreviewBlock) => void
-  forceSelected?: boolean
-}): React.JSX.Element {
-  const t = useT()
-  const children = block.children ?? []
-  const section = children.find((c) => c.kind === 'heading-section')
-  const nested = children.filter((c) => c.kind !== 'heading-section')
-  const sectionSelected = selecting && !!section && selectedIds.includes(section.id)
-  const selected =
-    selecting && (forceSelected || selectedIds.includes(block.id) || sectionSelected)
-  const childForce = forceSelected || sectionSelected
-
-  const renderNested = (): React.ReactNode =>
-    nested.map((child) => (
-      <MarkdownSelectRegion
-        key={child.id}
-        filePath={filePath}
-        block={child}
-        selecting={selecting}
-        selectedIds={selectedIds}
-        onSelect={onSelect}
-        onAskAgent={onAskAgent}
-        forceSelected={childForce}
-      />
-    ))
-
-  // Prefer nested hit targets when children cover content (lists, etc.) so
-  // granularity matches code's deepest-block pick. Headings still show the
-  // heading line plus nested body blocks.
-  let body: React.ReactNode
-  if (block.kind === 'code') {
-    body = (
-      <pre className="file-viewer-code">
-        <code
-          className="hljs"
-          dangerouslySetInnerHTML={{
-            __html: highlightCode(
-              block.text.replace(/^```[^\n]*\n?/, '').replace(/\n?```$/, ''),
-              block.language
-            )
-          }}
-        />
-      </pre>
-    )
-  } else if (block.kind === 'heading') {
-    body = (
-      <>
-        <MarkdownView source={block.text} filePath={filePath} />
-        {renderNested()}
-      </>
-    )
-  } else if (nested.length > 0) {
-    body = renderNested()
-  } else {
-    body = <MarkdownView source={block.text} filePath={filePath} />
-  }
-
-  return (
-    <div
-      className={`preview-select-region kind-${block.kind}${selected ? ' selected' : ''}`}
-      onMouseDown={
-        selecting
-          ? (event) =>
-              handleClickPickMouseDown(event, () => onSelect(block.id, null))
-          : undefined
-      }
-      onContextMenu={
-        selecting
-          ? (event) => {
-              event.preventDefault()
-              event.stopPropagation()
-              const items = [
-                { id: 'copy', label: t('preview.copyBlock') },
-                ...(section ? [{ id: 'section', label: t('preview.selectSection') }] : []),
-                { id: 'analyze', label: t('preview.analyzeBlock') },
-                { id: 'refactor', label: t('preview.refactorBlock') }
-              ]
-              void window.vav.window
-                .popupMenu(items, { x: event.clientX, y: event.clientY })
-                .then((id) => {
-                  const target = id === 'section' && section ? section : block
-                  if (id === 'copy') void window.vav.conversations.copyToClipboard(target.text)
-                  if (id === 'section' && section) onSelect(section.id, event)
-                  if (id === 'analyze') onAskAgent(t('preview.analyzePrompt'), target)
-                  if (id === 'refactor') onAskAgent(t('preview.refactorPrompt'), target)
-                })
-            }
-          : undefined
-      }
-    >
-      {body}
-    </div>
-  )
-}
-
-/** Rows rendered at once — full DOM for huge CSVs freezes/crashes Electron. */
-const CSV_WINDOW = 80
-/** Columns painted at once; wide sheets page horizontally. */
-const CSV_COL_WINDOW = 32
 /** Truncate cell text in the DOM (title still holds full value for hover). */
 const CSV_CELL_DISPLAY_CAP = 120
 
 /**
- * Sheet-style CSV: sticky header/gutter, windowed rows+cols, cell/row/col pick
+ * Sheet-style CSV: sticky header/gutter, scroll-virtualized rows, cell/row/col pick
  * using the same preview-select-region chrome as code/MD.
  */
 function CsvView({
@@ -3091,46 +3312,35 @@ function CsvView({
   ) => void
 }): React.JSX.Element {
   const t = useT()
-  const [rowStart, setRowStart] = useState(0)
-  const [colStart, setColStart] = useState(0)
+  const wrapRef = useRef<HTMLDivElement>(null)
   const selected = useMemo(() => new Set(selectedIds), [selectedIds])
+  const total = model.rows.length
+  const {
+    rowStart,
+    rowEnd,
+    topPad,
+    bottomPad,
+    revealRow,
+    onScroll: onWrapScroll,
+    resetScroll
+  } = useSheetVirtualWindow(wrapRef, total, `${model.headers.join('\0')}:${total}`)
 
   useEffect(() => {
-    setRowStart(0)
-    setColStart(0)
+    resetScroll()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [model])
 
-  // Keep the selected row/col visible when selection changes from outside.
+  // Keep the selected row visible when selection changes from outside.
   useEffect(() => {
     for (const id of selectedIds) {
       const cell = /^cell-r(\d+)-c(\d+)$/.exec(id)
       const row = /^row-(\d+)$/.exec(id)
-      const col = /^col-/.exec(id)
-      if (cell) {
-        const ri = Number(cell[1]) - 1
-        const ci = Number(cell[2])
-        if (ri >= 0 && ri < model.rows.length) {
-          if (ri < rowStart || ri >= rowStart + CSV_WINDOW) {
-            setRowStart(Math.max(0, Math.min(model.rows.length - CSV_WINDOW, ri - 10)))
-          }
-        }
-        if (ci >= 0) {
-          if (ci < colStart || ci >= colStart + CSV_COL_WINDOW) {
-            setColStart(Math.max(0, ci - 4))
-          }
-        }
-        break
+      const parsed = cell ? Number(cell[1]) - 1 : row ? Number(row[1]) - 1 : null
+      if (parsed == null) continue
+      if (parsed >= 0 && parsed < model.rows.length) {
+        if (parsed < rowStart || parsed >= rowEnd) revealRow(parsed)
       }
-      if (row) {
-        const ri = Number(row[1]) - 1
-        if (ri >= 0 && ri < model.rows.length) {
-          if (ri < rowStart || ri >= rowStart + CSV_WINDOW) {
-            setRowStart(Math.max(0, Math.min(model.rows.length - CSV_WINDOW, ri - 10)))
-          }
-        }
-        break
-      }
-      void col
+      break
     }
     // Only react to selection identity, not window offsets themselves.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -3146,12 +3356,10 @@ function CsvView({
     if (n > maxRowCols) maxRowCols = n
   }
   const totalCols = Math.max(maxRowCols, 1)
-  const colEnd = Math.min(totalCols, colStart + CSV_COL_WINDOW)
-  const visibleColIndexes = Array.from({ length: colEnd - colStart }, (_, i) => colStart + i)
+  const visibleColIndexes = Array.from({ length: totalCols }, (_, i) => i)
   const headers = Array.from({ length: totalCols }, (_, i) => model.headers[i] ?? `col${i + 1}`)
-  const end = Math.min(model.rows.length, rowStart + CSV_WINDOW)
-  const slice = model.rows.slice(rowStart, end)
-  const total = model.rows.length
+  const slice = model.rows.slice(rowStart, rowEnd)
+  const paintedColSpan = totalCols + 1
 
   const pick = (id: string, event: React.MouseEvent, hint?: PreviewBlock): void => {
     // Click (not drag) → conversation pick; drag → native text select/copy.
@@ -3163,59 +3371,7 @@ function CsvView({
 
   return (
     <div className={`csv-sheet-root${selecting ? ' selecting' : ''}`}>
-      <div className="csv-sheet-toolbar muted tiny">
-        <span>
-          {total === 0
-            ? t('common.empty')
-            : `Rows ${rowStart + 1}–${end} / ${total} · Cols ${colStart + 1}–${colEnd} / ${totalCols}`}
-        </span>
-        <span className="spacer" />
-        <button
-          type="button"
-          className="btn ghost sm"
-          disabled={colStart <= 0}
-          title={t('common.pageLeft')}
-          aria-label={t('common.pageLeft')}
-          onClick={() => setColStart((s) => Math.max(0, s - CSV_COL_WINDOW))}
-        >
-          ←
-        </button>
-        <button
-          type="button"
-          className="btn ghost sm"
-          disabled={colEnd >= totalCols}
-          title={t('common.pageRight')}
-          aria-label={t('common.pageRight')}
-          onClick={() =>
-            setColStart((s) => Math.min(Math.max(0, totalCols - CSV_COL_WINDOW), s + CSV_COL_WINDOW))
-          }
-        >
-          →
-        </button>
-        <button
-          type="button"
-          className="btn ghost sm"
-          disabled={rowStart <= 0}
-          title={t('common.pageUp')}
-          aria-label={t('common.pageUp')}
-          onClick={() => setRowStart((s) => Math.max(0, s - CSV_WINDOW))}
-        >
-          ↑
-        </button>
-        <button
-          type="button"
-          className="btn ghost sm"
-          disabled={end >= total}
-          title={t('common.pageDown')}
-          aria-label={t('common.pageDown')}
-          onClick={() =>
-            setRowStart((s) => Math.min(Math.max(0, total - CSV_WINDOW), s + CSV_WINDOW))
-          }
-        >
-          ↓
-        </button>
-      </div>
-      <div className="csv-sheet-wrap file-viewer-table">
+      <div className="csv-sheet-wrap file-viewer-table" ref={wrapRef} onScroll={onWrapScroll}>
         <table
           className="csv-sheet"
           style={{ ['--gutter-digits' as string]: Math.max(2, String(total).length) }}
@@ -3259,6 +3415,14 @@ function CsvView({
             </tr>
           </thead>
           <tbody>
+            {topPad > 0 && (
+              <tr aria-hidden className="csv-sheet-spacer">
+                <td
+                  colSpan={paintedColSpan}
+                  style={{ height: topPad, padding: 0, border: 'none' }}
+                />
+              </tr>
+            )}
             {slice.map((row, offset) => {
               const rowIndex = rowStart + offset
               const rowId = `row-${rowIndex + 1}`
@@ -3308,6 +3472,14 @@ function CsvView({
                 </tr>
               )
             })}
+            {bottomPad > 0 && (
+              <tr aria-hidden className="csv-sheet-spacer">
+                <td
+                  colSpan={paintedColSpan}
+                  style={{ height: bottomPad, padding: 0, border: 'none' }}
+                />
+              </tr>
+            )}
           </tbody>
         </table>
       </div>

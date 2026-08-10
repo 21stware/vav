@@ -26,6 +26,15 @@ From [anthropics/skills](https://github.com/anthropics/skills) (example / open-s
 
 Each skill folder retains its `LICENSE.txt` when present. Full Apache-2.0 text is in those files.
 
+### OfficeCLI (binary + skill)
+
+From [iOfficeAI/OfficeCLI](https://github.com/iOfficeAI/OfficeCLI) (Apache-2.0):
+
+- Skill package: `officecli/` (SKILL.md documents the CLI; no install step — VAV ships the binary)
+- Native binary: fetched at build time into `resources/bin/officecli` (see `scripts/fetch-officecli.mjs`), packaged as `extraResources`
+
+Prefer `officecli` for OOXML create/edit. MiniMax `docx` / `xlsx` / `pptx` skills remain as fallbacks.
+
 ## Included — MIT License
 
 From [MiniMax-AI/skills](https://github.com/MiniMax-AI/skills):

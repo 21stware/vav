@@ -8,6 +8,7 @@ import {
   MessageSquare,
   Paperclip,
   Quote,
+  Send,
   Square,
   Trash2,
   X
@@ -15,7 +16,11 @@ import {
 import type { ApprovalMode } from '@shared/types'
 import { PRESET_MODELS } from '@shared/types'
 import type { MessageKey, TParams } from '@shared/i18n'
-import { useSessionStore } from '../state/sessionStore'
+import {
+  MESSAGE_QUEUE_MAX,
+  useSessionStore,
+  type QueuedMessage
+} from '../state/sessionStore'
 import { useWorkspaceStore } from '../state/workspaceStore'
 import { formatBytes, formatTokens } from '../lib/format'
 import { basename } from '../lib/path'
@@ -26,6 +31,8 @@ import { resolveSendKeyMode, shouldSendOnKeyDown } from '../lib/composerSendKey'
 import { isPickGestureActive } from '../lib/clickPick'
 import { useT } from '../i18n/useT'
 import { Button } from './ui'
+
+const NO_QUEUE: QueuedMessage[] = []
 
 function approvalModeOptions(
   t: (key: MessageKey, params?: TParams) => string
@@ -44,9 +51,9 @@ function approvalModeOptions(
 /**
  * Prompt input for the active conversation.
  *
- * Gating follows main-chat.rpml annotation 8: disabled while this conversation
- * is running, `canSend` requires text or an attachment, and a missing key turns
- * send into a prompt that opens Settings.
+ * Streaming (main-chat-streaming.rpml §5): composer stays enabled and enqueues
+ * instead of disabling. ask_user_question still disables. `canSend` requires
+ * text or an attachment; a missing key turns send into Settings.
  */
 /** Stable identity: a fresh [] from a selector would re-render forever. */
 const NO_ATTACHMENTS: string[] = []
@@ -54,11 +61,13 @@ const NO_REFS: import('@shared/types').PreviewRef[] = []
 const NO_CARDS: { ref: import('@shared/types').PreviewRef; comment: string }[] = []
 
 /**
- * Quote strip, file-context chip, and comment cards.
+ * Quote strip, file-context chip, message queue, and comment cards.
  *
  * Lives at the bottom of the Agent log column (not inside the dock) so
  * appear/disappear only resizes the transcript — composer box + tools tray
  * keep a stable height (no jump when Files selection toggles the chip).
+ *
+ * Vertical order: queue → quote/chip → comment cards → (composer in dock).
  */
 export function ComposerContext({
   conversationId: pinnedConversationId
@@ -70,12 +79,14 @@ export function ComposerContext({
   const conversationId = (pinnedConversationId?.trim() || storeActiveId) || ''
   const contextFile = useSessionStore((s) => s.contextFiles[conversationId] ?? null)
   const commentCards = useSessionStore((s) => s.commentCards[conversationId] ?? NO_CARDS)
+  const messageQueue = useSessionStore((s) => s.messageQueues[conversationId] ?? NO_QUEUE)
   const quote = useSessionStore((s) => s.quotes[conversationId] ?? null)
   const dismissContextFile = useSessionStore((s) => s.dismissContextFile)
   const clearQuote = useSessionStore((s) => s.clearQuote)
   const scrollToMessage = useSessionStore((s) => s.scrollToMessage)
 
   const hasCommentCards = commentCards.length > 0
+  const hasQueue = messageQueue.length > 0
   const showFileContextChip = Boolean(contextFile && !hasCommentCards)
   const quoteSource =
     quote?.role === 'user' ? t('composer.quoteFromUser') : t('composer.quoteFromAgent')
@@ -93,13 +104,14 @@ export function ComposerContext({
   }, [quote, conversationId, clearQuote])
 
   if (!conversationId) return null
-  if (!quote && !showFileContextChip && !hasCommentCards) return null
+  if (!quote && !showFileContextChip && !hasCommentCards && !hasQueue) return null
 
   return (
     <div
-      className={`composer-context${hasCommentCards ? ' has-comment-cards' : ''}`}
+      className={`composer-context${hasCommentCards ? ' has-comment-cards' : ''}${hasQueue ? ' has-message-queue' : ''}`}
       data-has-context="true"
     >
+      {hasQueue && <MessageQueueBar conversationId={conversationId} items={messageQueue} />}
       {quote && (
         <div className="quote-strip">
           <button
@@ -162,6 +174,8 @@ export function Composer({
   const contextFile = useSessionStore((s) => s.contextFiles[conversationId] ?? null)
   const isRunning = useSessionStore((s) => !!s.turns[conversationId]?.isRunning)
   const awaiting = useSessionStore((s) => !!s.turns[conversationId]?.awaitingToolCallId)
+  const queueLen = useSessionStore((s) => (s.messageQueues[conversationId] ?? NO_QUEUE).length)
+  const queueFull = queueLen >= MESSAGE_QUEUE_MAX
   const sendKeySetting = useSessionStore((s) => s.settings.sendKey)
   const defaultModel = useSessionStore((s) => s.settings.defaultModel)
   const customModels = useSessionStore((s) => s.settings.customModels)
@@ -194,13 +208,16 @@ export function Composer({
       if (draftFlushTimer.current) clearTimeout(draftFlushTimer.current)
     }
   }, [])
+  // Composer stays editable while streaming; only ask_user_question locks it.
+  const inputDisabled = awaiting
   // Allow send with no session yet — store.send mints on first submit.
-  const canSend =
-    !isRunning &&
-    (draft.trim().length > 0 ||
-      attachments.length > 0 ||
-      previewRefs.length > 0 ||
-      commentCards.length > 0)
+  // While streaming, send enqueues (blocked only when queue is full).
+  const hasPayload =
+    draft.trim().length > 0 ||
+    attachments.length > 0 ||
+    previewRefs.length > 0 ||
+    commentCards.length > 0
+  const canSend = !awaiting && hasPayload && !(isRunning && queueFull)
 
   /** Focused floor / empty-blur floor / hard ceiling (main-chat-search.rpml). */
   const COMPOSER_MIN_FOCUSED_ROWS = 3
@@ -227,7 +244,9 @@ export function Composer({
   const placeholder = awaiting
     ? t('composer.placeholderAwaiting')
     : isRunning
-      ? t('composer.thinking')
+      ? queueFull
+        ? t('composer.placeholderQueueFull', { n: MESSAGE_QUEUE_MAX })
+        : t('composer.placeholderQueue')
       : `${idlePlaceholder}  ${shortcutHints}`
 
   useEffect(() => {
@@ -241,14 +260,14 @@ export function Composer({
     // Avoid reflowing height mid-composition — can cancel IME on macOS.
     if (composingRef.current) return
     const lineHeight = parseFloat(getComputedStyle(element).lineHeight) || 20
-    const minRows = focused && !isRunning ? COMPOSER_MIN_FOCUSED_ROWS : 1
+    const minRows = focused && !inputDisabled ? COMPOSER_MIN_FOCUSED_ROWS : 1
     const minHeight = minRows * lineHeight
     const maxHeight = COMPOSER_MAX_ROWS * lineHeight
     element.style.height = 'auto'
     const next = Math.min(maxHeight, Math.max(minHeight, element.scrollHeight))
     element.style.height = `${next}px`
     element.style.overflowY = element.scrollHeight > maxHeight + 1 ? 'auto' : 'hidden'
-  }, [draft, focused, isRunning])
+  }, [draft, focused, inputDisabled])
 
   const activeModel = conversation?.model ?? defaultModel
 
@@ -380,7 +399,7 @@ export function Composer({
           rows={1}
           placeholder={placeholder}
           value={draft}
-          disabled={isRunning}
+          disabled={inputDisabled}
           onFocus={() => setFocused(true)}
           onCompositionStart={() => {
             composingRef.current = true
@@ -468,7 +487,7 @@ export function Composer({
             />
           )}
 
-          {isRunning ? (
+          {isRunning && (
             <Button
               label={t('composer.stop')}
               icon={<Square size={11} />}
@@ -477,18 +496,182 @@ export function Composer({
               title={t('composer.stop')}
               onClick={() => conversationId && void cancel(conversationId)}
             />
-          ) : (
-            <button
-              className="send-button"
-              disabled={!canSend}
-              onClick={submit}
-              title={`${t('composer.send')} ${sendShortcut}`}
-            >
-              <ArrowUp size={14} />
-            </button>
           )}
+          <button
+            className="send-button"
+            disabled={!canSend}
+            onClick={submit}
+            title={
+              isRunning
+                ? `${t('queue.enqueue')} ${sendShortcut}`
+                : `${t('composer.send')} ${sendShortcut}`
+            }
+          >
+            <ArrowUp size={14} />
+          </button>
         </div>
       </div>
+    </div>
+  )
+}
+
+/**
+ * FIFO pending sends — same visual language as comment cards (light strip,
+ * icon actions). Empty queue renders nothing.
+ */
+function MessageQueueBar({
+  conversationId,
+  items
+}: {
+  conversationId: string
+  items: QueuedMessage[]
+}): React.JSX.Element | null {
+  const t = useT()
+  const updateQueuedMessage = useSessionStore((s) => s.updateQueuedMessage)
+  const removeQueuedMessage = useSessionStore((s) => s.removeQueuedMessage)
+  const sendQueuedNow = useSessionStore((s) => s.sendQueuedNow)
+  const showDialog = useSessionStore((s) => s.showDialog)
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [editDraft, setEditDraft] = useState('')
+  const editRef = useRef<HTMLTextAreaElement>(null)
+
+  useEffect(() => {
+    if (!editingId) return
+    const el = editRef.current
+    if (!el) return
+    el.focus()
+    try {
+      el.setSelectionRange(el.value.length, el.value.length)
+    } catch {
+      // ignore
+    }
+  }, [editingId])
+
+  if (items.length === 0) return null
+
+  const startEdit = (item: QueuedMessage): void => {
+    setEditingId(item.id)
+    setEditDraft(item.text)
+  }
+
+  const saveEdit = (id: string): void => {
+    const next = editDraft.trim()
+    if (next) updateQueuedMessage(conversationId, id, next)
+    setEditingId(null)
+    setEditDraft('')
+  }
+
+  const cancelEdit = (): void => {
+    setEditingId(null)
+    setEditDraft('')
+  }
+
+  const confirmDelete = (item: QueuedMessage): void => {
+    const preview = item.text.trim() || t('queue.emptyBody')
+    const clipped = preview.length > 80 ? `${preview.slice(0, 79)}…` : preview
+    showDialog({
+      title: t('queue.deleteTitle'),
+      body: t('queue.deleteBody', { text: clipped }),
+      confirmLabel: t('common.delete'),
+      cancelLabel: t('common.cancel'),
+      destructive: true,
+      onConfirm: () => removeQueuedMessage(conversationId, item.id)
+    })
+  }
+
+  return (
+    <div className="message-queue" role="list" aria-label={t('queue.regionLabel')}>
+      {items.map((item) => {
+        const editing = editingId === item.id
+        const body = item.text.trim() || t('queue.emptyBody')
+        return (
+          <div
+            className={`message-queue-item${editing ? ' is-editing' : ''}`}
+            key={item.id}
+            role="listitem"
+          >
+            {editing ? (
+              <>
+                <div className="message-queue-item-header">
+                  <span className="message-queue-item-icon" aria-hidden>
+                    <Send size={12} strokeWidth={2} />
+                  </span>
+                  <span className="message-queue-item-label">{t('queue.editing')}</span>
+                  <button
+                    type="button"
+                    className="message-queue-icon-btn"
+                    title={t('common.close')}
+                    aria-label={t('common.close')}
+                    onClick={cancelEdit}
+                  >
+                    <X size={12} strokeWidth={2.25} />
+                  </button>
+                </div>
+                <textarea
+                  ref={editRef}
+                  className="message-queue-input"
+                  rows={2}
+                  value={editDraft}
+                  onChange={(e) => setEditDraft(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Escape') {
+                      e.preventDefault()
+                      cancelEdit()
+                      return
+                    }
+                    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+                      e.preventDefault()
+                      saveEdit(item.id)
+                    }
+                  }}
+                  onBlur={() => {
+                    // Commit on blur if non-empty (same spirit as comment cards).
+                    window.setTimeout(() => {
+                      if (editingId !== item.id) return
+                      if (document.activeElement === editRef.current) return
+                      saveEdit(item.id)
+                    }, 0)
+                  }}
+                />
+              </>
+            ) : (
+              <>
+                <div className="message-queue-item-header">
+                  <span className="message-queue-item-icon" aria-hidden>
+                    <Send size={12} strokeWidth={2} />
+                  </span>
+                  <button
+                    type="button"
+                    className="message-queue-item-text"
+                    title={t('queue.clickToEdit')}
+                    onClick={() => startEdit(item)}
+                  >
+                    {body}
+                  </button>
+                  <button
+                    type="button"
+                    className="message-queue-icon-btn is-send"
+                    title={t('queue.sendNowTitle')}
+                    aria-label={t('queue.sendNow')}
+                    onClick={() => void sendQueuedNow(conversationId, item.id)}
+                  >
+                    <ArrowUp size={12} strokeWidth={2.25} />
+                  </button>
+                  <button
+                    type="button"
+                    className="message-queue-icon-btn is-trash"
+                    title={t('common.delete')}
+                    aria-label={t('common.delete')}
+                    onClick={() => confirmDelete(item)}
+                  >
+                    <Trash2 size={12} strokeWidth={2} />
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        )
+      })}
     </div>
   )
 }

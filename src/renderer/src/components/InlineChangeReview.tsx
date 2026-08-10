@@ -16,6 +16,7 @@ import type { ChangeEntry, ChangeSet } from '@shared/changeSet'
 import { useSessionStore } from '../state/sessionStore'
 import { useT } from '../i18n/useT'
 import { basename } from '../lib/path'
+import { BinaryChangeCard, looksLikeBinaryChange } from './BinaryChangeCard'
 
 function diffStats(diffText: string): { plus: number; minus: number } {
   let plus = 0
@@ -211,6 +212,7 @@ function FileRow({
 }): React.JSX.Element {
   const t = useT()
   const { plus, minus } = diffStats(file.diffText)
+  const binary = looksLikeBinaryChange(file)
   const name = file.relativePath || basename(file.filePath)
   const typeLabel =
     file.changeType === 'added'
@@ -219,7 +221,15 @@ function FileRow({
         ? t('review.typeDeleted')
         : t('review.typeModified')
   const stats =
-    plus || minus ? `+${plus}/−${minus}` : file.changeType === 'added' ? 'new' : ''
+    plus || minus
+      ? `+${plus}/−${minus}`
+      : binary
+        ? file.diffText && file.diffText.length < 48
+          ? file.diffText
+          : 'raw'
+        : file.changeType === 'added'
+          ? 'new'
+          : ''
   const meta = [typeLabel, stats].filter(Boolean).join(' · ')
   const statusLabel =
     file.status === 'pending'
@@ -231,9 +241,17 @@ function FileRow({
           : t('review.statusAccepted')
 
   return (
-    <li className={`inline-review-file status-${file.status}`}>
+    <li
+      className={`inline-review-file status-${file.status}`}
+      data-open={expanded || undefined}
+    >
       <div className="inline-review-file-main">
-        <button type="button" className="inline-review-file-row" onClick={onToggle}>
+        <button
+          type="button"
+          className="inline-review-file-row"
+          aria-expanded={expanded}
+          onClick={onToggle}
+        >
           <span className="inline-review-chevron" aria-hidden>
             {expanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
           </span>
@@ -266,11 +284,18 @@ function FileRow({
           )}
         </div>
       </div>
-      {expanded && (
-        <div className="inline-review-file-body">
-          <MiniDiff text={file.diffText} />
+      {/* Stay mounted so grid-template-rows can retarget open/close mid-flight. */}
+      <div className="inline-review-file-detail">
+        <div className="inline-review-file-detail-inner">
+          <div className="inline-review-file-body">
+            {binary ? (
+              <BinaryChangeCard file={file} compact />
+            ) : (
+              <MiniDiff text={file.diffText} />
+            )}
+          </div>
         </div>
-      )}
+      </div>
     </li>
   )
 }

@@ -55,6 +55,18 @@
   --radius-lg: 14px;
   --radius-xl: 18px;
 
+  /*
+   * Stable document measures. Paper/slides keep a fixed width between min and
+   * max — the stage scrolls when the pane is narrower, instead of reflowing
+   * the page with the window. 860px ≈ Letter/A4 at ~100% zoom.
+   */
+  --doc-measure: 860px;
+  --doc-measure-min: 720px;
+  --slide-measure: 1000px;
+  --slide-measure-min: 800px;
+  --md-measure: 42rem;
+  --md-measure-min: 36rem;
+
   --shadow-sheet: 0 24px 64px rgba(20, 20, 28, 0.26), 0 2px 8px rgba(20, 20, 28, 0.12);
   --shadow-card: 0 1px 2px rgba(20, 20, 28, 0.07);
   --shadow-raised: 0 1px 3px rgba(20, 20, 28, 0.09), 0 4px 14px rgba(20, 20, 28, 0.06);
@@ -324,7 +336,8 @@ html[data-summoning] .tools-body {
 /* Accessibility: solid sidebar when the OS asks to reduce transparency. */
 @media (prefers-reduced-transparency: reduce) {
   :root[data-platform='darwin'] .sidebar-column,
-  :root[data-platform='darwin'] .app-shell .body-split > .sidebar:not(.floating) {
+  :root[data-platform='darwin'] .app-shell .body-split > .sidebar:not(.floating),
+  :root[data-platform='darwin'] .settings-nav {
     background: var(--bg-window);
   }
 }
@@ -346,19 +359,24 @@ html[data-summoning] .tools-body {
   .app-toast,
   .session-history-popover,
   .sidebar-float-panel,
-  .change-review {
+  .change-review,
+  .inline-review,
+  .update-corner {
     transform: none !important;
   }
   .tools-body,
   .reasoning-detail,
   .files-browser,
-  .plan-overlay-body {
+  .plan-overlay-body,
+  .inline-review-file-detail,
+  .compaction-log-detail {
     transition: none !important;
   }
   .btn:active:not(:disabled),
   .chip:active:not(:disabled),
   .send-button:active:not(:disabled),
-  .variant-step:active:not(:disabled) {
+  .variant-step:active:not(:disabled),
+  .inline-review-icon-btn:active {
     transform: none;
   }
 }
@@ -574,19 +592,21 @@ html[data-resizing='true'] .banner.error {
 /*
  * macOS system vibrancy (BrowserWindow vibrancy: under-window).
  * Must beat index.html / theme fills — otherwise the glass never shows.
- * Opaque detail/workspace sit on top of the clear shell.
- * Settings → Appearance can set data-vibrancy=false for a solid sidebar.
+ * Opaque detail / Settings content sit on top of the clear shell.
+ * Appearance can set data-vibrancy=false for a solid sidebar.
  */
 :root[data-platform='darwin'][data-vibrancy='true'] html,
 :root[data-platform='darwin'][data-vibrancy='true'] body,
 :root[data-platform='darwin'][data-vibrancy='true'] #root,
-:root[data-platform='darwin'][data-vibrancy='true'] .app-shell {
+:root[data-platform='darwin'][data-vibrancy='true'] .app-shell,
+:root[data-platform='darwin'][data-vibrancy='true'] .settings-window {
   background: transparent !important;
 }
 
 :root[data-platform='darwin'][data-vibrancy='true'] .sidebar-column,
 :root[data-platform='darwin'][data-vibrancy='true'] .app-shell .body-split > .sidebar:not(.floating),
-:root[data-platform='darwin'][data-vibrancy='true'] .titlebar.sidebar-chrome {
+:root[data-platform='darwin'][data-vibrancy='true'] .titlebar.sidebar-chrome,
+:root[data-platform='darwin'][data-vibrancy='true'] .settings-nav {
   background: transparent !important;
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;
@@ -597,8 +617,15 @@ html[data-resizing='true'] .banner.error {
 :root[data-platform='darwin'][data-vibrancy='false'] #root,
 :root[data-platform='darwin'][data-vibrancy='false'] .app-shell,
 :root[data-platform='darwin'][data-vibrancy='false'] .sidebar-column,
-:root[data-platform='darwin'][data-vibrancy='false'] .app-shell .body-split > .sidebar:not(.floating) {
+:root[data-platform='darwin'][data-vibrancy='false'] .app-shell .body-split > .sidebar:not(.floating),
+:root[data-platform='darwin'][data-vibrancy='false'] .settings-window,
+:root[data-platform='darwin'][data-vibrancy='false'] .settings-nav {
   background: var(--bg-window) !important;
+}
+
+/* Settings content pane stays opaque so forms sit on cardboard, not glass. */
+:root[data-platform='darwin'][data-vibrancy='false'] .settings-main {
+  background: var(--bg-content) !important;
 }
 
 .app-shell .detail,
@@ -1770,11 +1797,165 @@ kbd {
   gap: 4px;
 }
 
+.composer-context.has-message-queue {
+  gap: 6px;
+}
+
 .preview-edit-stream .composer-context {
   width: 100%;
   max-width: none;
   padding-left: 8px;
   padding-right: 8px;
+}
+
+/*
+ * Streaming message queue — same strip language as .comment-cards:
+ * one sunken panel, stacked rows, icon actions only (no heavy primary chips).
+ */
+.message-queue {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  flex: 0 0 auto;
+  max-height: 148px;
+  overflow-y: auto;
+  margin: 0 10px;
+  padding: 0;
+  background: var(--bg-sunken);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  position: relative;
+  z-index: 4;
+  min-width: 0;
+}
+
+.message-queue-item {
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  border-bottom: 1px solid var(--border);
+  padding: 6px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.message-queue-item:last-child {
+  border-bottom: 0;
+}
+
+.message-queue-item.is-editing {
+  background: var(--accent-soft);
+}
+
+.message-queue-item-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.message-queue-item-icon {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-tertiary);
+  line-height: 0;
+  opacity: 0.85;
+}
+
+.message-queue-item-label {
+  flex: 1;
+  min-width: 0;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--accent-text);
+}
+
+.message-queue-item-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  cursor: text;
+  font-family: var(--font-ui);
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.message-queue-item-text:hover {
+  color: var(--text);
+}
+
+.message-queue-icon-btn {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  cursor: pointer;
+  color: var(--text-tertiary);
+}
+
+.message-queue-icon-btn:hover {
+  color: var(--text);
+  background: var(--bg-hover);
+}
+
+.message-queue-icon-btn.is-send {
+  color: var(--accent-text);
+  opacity: 0.85;
+}
+
+.message-queue-icon-btn.is-send:hover {
+  opacity: 1;
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.message-queue-icon-btn.is-trash {
+  opacity: 0.7;
+  color: var(--danger);
+}
+
+.message-queue-icon-btn.is-trash:hover,
+.message-queue-icon-btn.is-trash:focus-visible {
+  opacity: 1;
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+}
+
+.message-queue-input {
+  font-family: var(--font-ui);
+  font-size: 12px;
+  line-height: 1.4;
+  min-height: 28px;
+  width: 100%;
+  box-sizing: border-box;
+  resize: vertical;
+  background: var(--bg-content);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 4px 8px;
+}
+
+.message-queue-input:focus {
+  outline: none;
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
 }
 
 .banner {
@@ -2667,9 +2848,25 @@ kbd {
   font-size: 11.5px;
 }
 
+/* Grid rows animate open/close and retarget mid-flight; height would not. */
+.compaction-log-detail {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows var(--dur-pop) var(--ease-out);
+}
+
+.compaction-log[data-expanded] .compaction-log-detail {
+  grid-template-rows: 1fr;
+}
+
+.compaction-log-detail-inner {
+  overflow: hidden;
+  min-height: 0;
+}
+
 .compaction-log-summary {
-  margin: 6px 0 0;
-  padding: 0 0 0 18px;
+  margin: 0;
+  padding: 0;
   border: 0;
   background: transparent;
   font-family: var(--font-code);
@@ -2679,6 +2876,11 @@ kbd {
   color: var(--text-secondary);
   max-height: 240px;
   overflow: auto;
+}
+
+.compaction-log[data-expanded] .compaction-log-summary {
+  margin: 6px 0 0;
+  padding: 0 0 0 18px;
 }
 
 .token-usage-compact-actions {
@@ -4886,6 +5088,22 @@ mark {
   z-index: 45;
   max-width: min(220px, calc(100vw - 24px));
   -webkit-app-region: no-drag;
+  opacity: 1;
+  transform: translateY(0);
+  transition:
+    opacity var(--dur-sheet) var(--ease-drawer),
+    transform var(--dur-sheet) var(--ease-drawer);
+}
+
+/* Fixed: rise from the bottom edge. Inline sidebar foot: opacity only. */
+@starting-style {
+  .update-corner:not(.is-inline) {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  .update-corner.is-inline {
+    opacity: 0;
+  }
 }
 
 .update-corner.is-inline {
@@ -4896,6 +5114,8 @@ mark {
   width: 100%;
   max-width: none;
   margin: 4px 0 2px;
+  transform: none;
+  transition: opacity var(--dur-sheet) var(--ease-drawer);
 }
 
 .update-corner-btn {
@@ -5106,16 +5326,65 @@ mark {
   background: var(--bg-hover);
 }
 
-.file-session-item.is-active {
+.file-session-item.is-active,
+.file-session-item.multi {
   background: var(--bg-selected);
 }
 
-:root[data-platform='darwin'][data-vibrancy='true'] .file-session-item.is-active {
+:root[data-platform='darwin'][data-vibrancy='true'] .file-session-item.is-active,
+:root[data-platform='darwin'][data-vibrancy='true'] .file-session-item.multi {
   background: color-mix(in srgb, var(--text) 11%, transparent);
 }
 
-:root[data-theme='dark'][data-platform='darwin'][data-vibrancy='true'] .file-session-item.is-active {
+:root[data-theme='dark'][data-platform='darwin'][data-vibrancy='true'] .file-session-item.is-active,
+:root[data-theme='dark'][data-platform='darwin'][data-vibrancy='true'] .file-session-item.multi {
   background: color-mix(in srgb, #fff 12%, transparent);
+}
+
+/* Contiguous multi-select — same merge language as .conv-row.multi. */
+.file-session-list .file-session-item.multi {
+  border-radius: 7px;
+}
+
+.file-session-list .file-session-item.multi:has(+ .file-session-item.multi) {
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+.file-session-list .file-session-item.multi + .file-session-item.multi {
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
+  box-shadow: 0 -1px 0 var(--bg-selected);
+}
+
+:root[data-platform='darwin'][data-vibrancy='true']
+  .file-session-list
+  .file-session-item.multi
+  + .file-session-item.multi {
+  box-shadow: 0 -1px 0 color-mix(in srgb, var(--text) 11%, transparent);
+}
+
+:root[data-theme='dark'][data-platform='darwin'][data-vibrancy='true']
+  .file-session-list
+  .file-session-item.multi
+  + .file-session-item.multi {
+  box-shadow: 0 -1px 0 color-mix(in srgb, #fff 12%, transparent);
+}
+
+.file-session-list .file-session-item.multi.run-only {
+  border-radius: 7px;
+}
+
+.file-session-list .file-session-item.multi.run-start {
+  border-radius: 7px 7px 0 0;
+}
+
+.file-session-list .file-session-item.multi.run-middle {
+  border-radius: 0;
+}
+
+.file-session-list .file-session-item.multi.run-end {
+  border-radius: 0 0 7px 7px;
 }
 
 .file-session-item-title,
@@ -5137,7 +5406,8 @@ mark {
   color: var(--text);
 }
 
-.file-session-item.is-active .file-session-item-title {
+.file-session-item.is-active .file-session-item-title,
+.file-session-item.multi .file-session-item-title {
   font-weight: 500;
 }
 
@@ -5152,7 +5422,8 @@ mark {
   color: color-mix(in srgb, var(--danger) 55%, var(--text-tertiary));
 }
 
-.file-session-item.is-active .file-session-item-sub {
+.file-session-item.is-active .file-session-item-sub,
+.file-session-item.multi .file-session-item-sub {
   color: color-mix(in srgb, var(--text-tertiary) 55%, var(--accent-text));
 }
 
@@ -6227,6 +6498,133 @@ mark {
   min-height: 100vh;
 }
 
+/* Native office host fills the preview body once structured stand-in is gone. */
+.file-viewer-native-office {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/*
+ * Progressive office: keep native canvas laid out at a real viewport size while
+ * StructuredDocView is on screen. `display:none` / 0×0 staging collapses
+ * docx-preview fit metrics so the host cannot scroll after swap-in.
+ */
+.file-viewer-native-office.is-pending {
+  position: fixed;
+  left: -120vw;
+  top: 0;
+  width: 100vw;
+  height: 100vh;
+  opacity: 0;
+  pointer-events: none;
+  z-index: -1;
+  overflow: hidden;
+  /* Escape the flex column while staging off-screen. */
+  flex: none;
+}
+
+.preview-perf-hud {
+  position: fixed;
+  right: 10px;
+  bottom: 10px;
+  z-index: 9999;
+  min-width: 160px;
+  max-width: 240px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--bg-elevated, #1c1c1e) 92%, transparent);
+  color: var(--text-secondary, #aeaeb2);
+  font: 11px/1.35 ui-monospace, SFMono-Regular, Menlo, monospace;
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.28);
+  pointer-events: auto;
+  /* Dev-only cue — dashed edge so it never reads as product chrome. */
+  outline: 1px dashed color-mix(in srgb, #f5a524 55%, transparent);
+  outline-offset: -1px;
+}
+
+.preview-perf-hud-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 4px;
+  color: var(--text-primary, #f5f5f7);
+  font-weight: 600;
+}
+
+.preview-perf-hud-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.preview-perf-dev-badge {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 5px;
+  height: 14px;
+  border-radius: 3px;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #1a1200;
+  background: #f5a524;
+  line-height: 1;
+}
+
+.preview-perf-hud-head button,
+.preview-perf-hud-toggle {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  padding: 0 2px;
+  font: inherit;
+}
+
+.preview-perf-hud-toggle {
+  position: fixed;
+  right: 10px;
+  bottom: 10px;
+  z-index: 9999;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--bg-elevated, #1c1c1e) 88%, transparent);
+  opacity: 0.85;
+  outline: 1px dashed color-mix(in srgb, #f5a524 55%, transparent);
+  outline-offset: -1px;
+}
+
+.preview-perf-hud ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.preview-perf-hud li {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.preview-perf-hud code {
+  font: inherit;
+  color: var(--text-primary, #f5f5f7);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /*
  * Standalone: file | agent columns both flush to the window top
  * (same geometry language as FileSessionView in the main shell).
@@ -6250,10 +6648,64 @@ mark {
 }
 
 .file-preview-main {
+  position: relative;
   display: flex;
   flex: 1;
   min-height: 0;
   overflow: hidden;
+}
+
+/*
+ * Selection Agent mark — icon only at the pick box's top-right (no outer
+ * plate / ring). JS translate + clamp keeps it in the stage while scrolling.
+ */
+.selection-agent-fab {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 50;
+  box-sizing: border-box;
+  width: 26px;
+  height: 26px;
+  margin: 0;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  cursor: pointer;
+  will-change: transform;
+  aspect-ratio: 1 / 1;
+  flex: 0 0 26px;
+}
+
+.selection-agent-fab:hover {
+  background: transparent;
+  filter: brightness(1.06);
+}
+
+.selection-agent-fab:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 55%, transparent);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+.selection-agent-fab-mark {
+  display: block;
+  width: 26px;
+  height: 26px;
+  line-height: 0;
+}
+
+.selection-agent-fab .selection-agent-fab-icon.brand-app-icon {
+  width: 26px !important;
+  height: 26px !important;
+  border-radius: 5.8px;
+  /* Icon asset already has its squircle — don't add a second plate/shadow. */
+  box-shadow: none !important;
 }
 
 /* Agent column is a peer of the file column (full height), not under the file header. */
@@ -6291,8 +6743,10 @@ mark {
   min-height: 0;
   display: flex;
   flex-direction: column;
-  /* Scroll long markdown / tall images; media + document fill rules refine this. */
+  /* Scroll long markdown / tall images; also sideways when the reading
+     column is wider than the pane (stable measure, not responsive shrink). */
   overflow: auto;
+  overflow-x: auto;
   overscroll-behavior: contain;
   /* Body is user-select:none app-wide — reading previews must opt back in. */
   user-select: text;
@@ -6433,9 +6887,10 @@ mark {
   transition: none;
 }
 
-/* MD/notebook shrink-wrap content; office/PDF keep their natural boxes.
-   Images need full width of the measure so tall assets aren't squeezed. */
-.preview-document.selecting .preview-select-region,
+/*
+ * MD pick targets stay full reading width (prose must not shrink-wrap).
+ * Notebook cells can hug content; images always fill the measure.
+ */
 .preview-notebook-cell.preview-select-region {
   width: fit-content;
   height: fit-content;
@@ -6443,7 +6898,9 @@ mark {
 }
 
 .preview-document.selecting .preview-select-region:has(img),
-.preview-document.selecting .preview-select-region:has(picture) {
+.preview-document.selecting .preview-select-region:has(picture),
+.preview-notebook-cell.preview-select-region:has(img),
+.preview-notebook-cell.preview-select-region:has(picture) {
   width: 100%;
   max-width: 100%;
   height: auto;
@@ -6819,12 +7276,19 @@ mark {
 }
 
 /* Mature office / PDF viewers (docx-preview, pdf.js, SheetJS). */
-.file-viewer-body:has(.office-native-root) {
+.file-viewer-body:has(.office-native-root):not(:has(.structured-doc)) {
   display: flex;
   flex-direction: column;
   overflow: hidden;
   /* Host is not the scrollport — inner .docx-body-host / stages scroll. */
   cursor: default;
+}
+
+/* Structured stand-in owns scroll while native is still off-screen pending. */
+.file-viewer-body:has(.structured-doc) {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 
 .office-native-root {
@@ -6868,12 +7332,14 @@ mark {
   flex: 1;
   min-height: 0;
   overflow: auto;
-  overflow-x: hidden;
+  /* Narrow panes scroll sideways — pages keep their stable measure. */
+  overflow-x: auto;
   -webkit-overflow-scrolling: touch;
   padding: 20px 16px 48px;
   display: flex;
   flex-direction: column;
-  align-items: center;
+  /* `safe` keeps the leading edge reachable when content is wider than the stage. */
+  align-items: safe center;
   gap: 20px;
   background: var(--bg-sunken);
   overscroll-behavior: contain;
@@ -6934,7 +7400,7 @@ mark {
   flex: 1;
   min-height: 0;
   overflow: auto;
-  overflow-x: hidden;
+  overflow-x: auto;
   padding: 20px 16px 48px;
   background: var(--bg-sunken);
   overscroll-behavior: contain;
@@ -7036,12 +7502,12 @@ mark {
   flex: 1;
   min-height: 0;
   overflow: auto;
-  overflow-x: hidden;
+  overflow-x: auto;
   -webkit-overflow-scrolling: touch;
   padding: 20px 16px 48px;
   display: flex;
   flex-direction: column;
-  align-items: center;
+  align-items: safe center;
   gap: 20px;
   background: var(--bg-sunken);
   overscroll-behavior: contain;
@@ -7183,14 +7649,15 @@ mark {
 
 /* Library mounts slides here; clientWidth === usable slide width. */
 .pptx-render-host {
-  width: 100%;
-  max-width: 100%;
+  width: max-content;
+  min-width: 100%;
+  max-width: none;
   box-sizing: border-box;
   /* Not the scrollport — parent stage scrolls. */
   overflow: visible;
   display: flex;
   flex-direction: column;
-  align-items: center;
+  align-items: safe center;
   gap: 20px;
   /* No horizontal padding — measure target for CSS fit. */
   padding: 0;
@@ -7263,12 +7730,6 @@ mark {
 }
 
 /* Legacy structured-doc styles (text index fallback) kept below. */
-.file-viewer-body:has(.structured-doc) {
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-}
-
 .structured-doc {
   flex: 1;
   min-height: 0;
@@ -7354,12 +7815,16 @@ mark {
   flex: 1;
   min-height: 0;
   overflow: auto;
+  overflow-x: auto;
   padding: 16px 18px 32px;
 }
 
 .structured-section {
   margin: 0 auto;
-  max-width: 820px;
+  width: var(--doc-measure);
+  min-width: var(--doc-measure-min);
+  max-width: var(--doc-measure);
+  box-sizing: border-box;
   border: 1px solid var(--border);
   border-radius: var(--radius);
   background: var(--bg-raised);
@@ -7368,13 +7833,16 @@ mark {
 }
 
 .structured-section.is-paper {
-  max-width: 720px;
+  width: var(--doc-measure-min);
+  min-width: var(--doc-measure-min);
+  max-width: var(--doc-measure);
   min-height: 280px;
 }
 
 .structured-section.kind-sheet {
-  max-width: none;
   width: 100%;
+  min-width: 0;
+  max-width: none;
 }
 
 .structured-section-head {
@@ -7631,6 +8099,14 @@ mark {
   box-shadow:
     1px 0 0 var(--border),
     0 1px 0 var(--border);
+}
+
+/*
+ * Uniform body row height keeps spacer virtualization (top/bottom pad) aligned
+ * with the scrollTop math. Cells are nowrap, so this stays a pure floor.
+ */
+.structured-sheet tbody tr:not([aria-hidden]) {
+  height: 28px;
 }
 
 .structured-sheet tbody td {
@@ -7986,6 +8462,10 @@ mark {
   top: 0;
 }
 
+.csv-sheet tbody tr:not([aria-hidden]) {
+  height: 28px;
+}
+
 .csv-sheet tbody td {
   background-color: var(--bg-content);
   z-index: 0;
@@ -8111,23 +8591,34 @@ mark {
 }
 
 /*
- * Block-based MD preview: each region is its own .markdown root
- * (first/last-child margins go to 0). Vertical rhythm is owned here.
+ * Block-based MD preview.
+ *
+ * Structure is a *tree* of `.preview-select-region` (heading owns nested body
+ * regions). Spacing rules MUST apply at every nesting level — the previous
+ * `.preview-document > …` direct-child selectors left nested paragraphs /
+ * headings with zero gap (every mini-`.markdown` also zeroed first/last
+ * margins). Rhythm tokens match Agent log `.markdown`.
  */
 .preview-document {
-  --md-lh: 1.78;
-  --md-track: 0.012em;
-  max-width: 42rem;
+  --md-lh: 1.65;
+  --md-block: 0.8em;
+  --md-section: 1.35em;
+  /* Stable reading column — pane scrolls when narrower than the measure. */
+  width: var(--md-measure);
+  min-width: var(--md-measure-min);
+  max-width: var(--md-measure);
   margin: 0 auto;
+  padding: 8px 0 48px;
+  box-sizing: border-box;
   user-select: text;
   -webkit-user-select: text;
   display: flex;
   flex-direction: column;
   gap: 0;
-  font-size: 16px;
+  font-size: 14px;
   line-height: var(--md-lh);
-  letter-spacing: var(--md-track);
-  color: color-mix(in srgb, var(--text) 94%, var(--text-secondary));
+  letter-spacing: normal;
+  color: var(--text);
   cursor: text;
 }
 
@@ -8136,74 +8627,98 @@ mark {
   user-select: text;
   -webkit-user-select: text;
   cursor: text;
-}
-
-.preview-document > .preview-select-region {
   min-width: 0;
+  /* Full reading width — never shrink-wrap prose (fit-content made pick
+     outlines hug each line like a broken card). */
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
 }
 
-.preview-document > .preview-select-region.kind-heading {
-  margin-top: 1.85em;
+/* --- Section / body rhythm (any depth) --- */
+.preview-document .preview-select-region.kind-heading {
+  margin-top: var(--md-section);
 }
 
 .preview-document > .preview-select-region.kind-heading:first-child {
   margin-top: 0;
 }
 
-/* Paragraph air — ~ one blank line of optical space between regions. */
-.preview-document > .preview-select-region.kind-paragraph {
-  margin-top: 0;
-  margin-bottom: 0;
+/* Heading title fragment → nested body (title is a sibling .markdown, not a region). */
+.preview-document .preview-select-region.kind-heading > .markdown.preview-markdown {
+  margin: 0 0 0.4em;
 }
 
-.preview-document > .preview-select-region.kind-paragraph + .preview-select-region.kind-paragraph {
-  margin-top: 1.15em;
+.preview-document
+  .preview-select-region.kind-heading
+  > .markdown.preview-markdown
+  > :is(h1, h2, h3, h4, h5, h6) {
+  margin-top: 0 !important;
+  margin-bottom: 0 !important;
 }
 
-.preview-document > .preview-select-region.kind-paragraph + .preview-select-region.kind-list,
-.preview-document > .preview-select-region.kind-paragraph + .preview-select-region.kind-code {
-  margin-top: 1em;
+/* Adjacent body regions at the same nesting level. */
+.preview-document .preview-select-region.kind-paragraph + .preview-select-region.kind-paragraph,
+.preview-document .preview-select-region.kind-paragraph + .preview-select-region.kind-list,
+.preview-document .preview-select-region.kind-paragraph + .preview-select-region.kind-code,
+.preview-document .preview-select-region.kind-list + .preview-select-region.kind-paragraph,
+.preview-document .preview-select-region.kind-list + .preview-select-region.kind-list,
+.preview-document .preview-select-region.kind-list + .preview-select-region.kind-code,
+.preview-document .preview-select-region.kind-code + .preview-select-region.kind-paragraph,
+.preview-document .preview-select-region.kind-code + .preview-select-region.kind-list,
+.preview-document .preview-select-region.kind-code + .preview-select-region.kind-code,
+.preview-document .preview-select-region.kind-blockquote + .preview-select-region.kind-paragraph,
+.preview-document .preview-select-region.kind-paragraph + .preview-select-region.kind-blockquote {
+  margin-top: var(--md-block);
 }
 
-.preview-document > .preview-select-region.kind-heading + .preview-select-region.kind-paragraph {
-  margin-top: 0.55em;
-}
-
-.preview-document > .preview-select-region.kind-code,
-.preview-document > .preview-select-region.kind-list {
-  margin-top: 0.85em;
-  margin-bottom: 0.55em;
+/* Body → nested heading (e.g. paragraph then ## under same parent). */
+.preview-document .preview-select-region.kind-paragraph + .preview-select-region.kind-heading,
+.preview-document .preview-select-region.kind-list + .preview-select-region.kind-heading,
+.preview-document .preview-select-region.kind-code + .preview-select-region.kind-heading,
+.preview-document .preview-select-region.kind-blockquote + .preview-select-region.kind-heading {
+  margin-top: var(--md-section);
 }
 
 /* Code blocks: tighter mono leading than body prose. */
 .preview-document .file-viewer-code {
-  margin: 0.25em 0 0.5em;
-  padding: 14px 16px;
-  border-radius: 10px;
-  background: color-mix(in srgb, var(--bg-sunken) 88%, var(--bg-raised));
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--border) 80%, transparent);
+  margin: 0;
+  padding: 12px 14px;
+  border-radius: var(--radius);
+  background: var(--bg-sunken);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--border) 65%, transparent);
   font-size: 0.86em;
-  line-height: 1.62;
+  line-height: 1.55;
   letter-spacing: 0;
   overflow-x: auto;
 }
 
 .preview-document .markdown.preview-markdown {
-  /* Keep the centered reading column from .preview-markdown (max-width +
-     margin-inline:auto). Only neutralize the inner padding — .file-viewer-body
-     already supplies the outer reading gutters. */
+  /* Outer .preview-document owns the reading measure. */
   padding: 0;
+  width: 100%;
+  max-width: none;
+  margin-inline: 0;
   font-size: inherit;
   line-height: inherit;
   letter-spacing: inherit;
 }
 
-/* In block mode, kill double vertical margin on the sole child. */
-.preview-document .preview-markdown > *:first-child {
-  margin-top: 0;
+/*
+ * Leaf fragments zero outer edges so region margins own the stack.
+ * Heading titles are handled above (keep 0 vertical on the hx itself).
+ */
+.preview-document
+  .preview-select-region:not(.kind-heading)
+  > .preview-markdown
+  > *:first-child {
+  margin-top: 0 !important;
 }
-.preview-document .preview-markdown > *:last-child {
-  margin-bottom: 0;
+.preview-document
+  .preview-select-region:not(.kind-heading)
+  > .preview-markdown
+  > *:last-child {
+  margin-bottom: 0 !important;
 }
 
 .preview-document.notebook {
@@ -9670,26 +10185,27 @@ mark {
 }
 
 /*
- * File-preview markdown — document reading surface.
- * Chat `.markdown` stays compact for agent bubbles; this is long-form.
+ * File-preview markdown — same vertical rhythm as Agent log `.markdown`.
+ * Keep a reading measure; do not re-inflate heading tops / line-height.
  */
 .preview-markdown {
-  --md-lh: 1.8;
-  --md-track: 0.012em;
-  --md-measure: 44rem;
-  --md-block: 1.35em;
-  --md-section: 2.6em;
-  font-size: 16px;
+  --md-lh: 1.65;
+  --md-block: 0.8em;
+  --md-section: 1.35em;
+  font-size: 14px;
   line-height: var(--md-lh);
-  letter-spacing: var(--md-track);
+  letter-spacing: normal;
+  width: var(--md-measure);
+  min-width: var(--md-measure-min);
   max-width: var(--md-measure);
   margin-inline: auto;
-  padding: 16px 8px 72px;
-  color: color-mix(in srgb, var(--text) 94%, var(--text-secondary));
+  padding: 8px 0 48px;
+  box-sizing: border-box;
+  color: var(--text);
   font-weight: 400;
+  font-family: var(--font-ui);
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
-  font-feature-settings: 'kern' 1, 'liga' 1;
 }
 
 .preview-markdown > *:first-child {
@@ -9700,76 +10216,96 @@ mark {
   margin-bottom: 0 !important;
 }
 
-/* --- Headings: clear hierarchy, quiet hairlines on major breaks --- */
+/* Headings: match Agent log (space before = section, after = glue to body). */
 .preview-markdown h1,
 .preview-markdown h2,
 .preview-markdown h3,
 .preview-markdown h4,
 .preview-markdown h5,
 .preview-markdown h6 {
-  font-weight: 700;
-  letter-spacing: 0.008em;
-  line-height: 1.28;
+  margin: var(--md-section) 0 0.4em;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  line-height: 1.3;
   color: var(--text);
   text-wrap: balance;
   scroll-margin-top: 1rem;
-}
-
-.preview-markdown h1 {
-  font-size: 1.85em;
-  font-weight: 720;
-  letter-spacing: -0.01em;
-  line-height: 1.22;
-  margin: 0.4em 0 0.9em;
-  padding-bottom: 0.5em;
-  border-bottom: 1px solid color-mix(in srgb, var(--border) 85%, transparent);
-}
-
-.preview-markdown h2 {
-  font-size: 1.28em;
-  letter-spacing: -0.005em;
-  margin: var(--md-section) 0 0.7em;
-  padding-bottom: 0.32em;
-  border-bottom: 1px solid color-mix(in srgb, var(--border) 55%, transparent);
-}
-
-.preview-markdown h3 {
-  font-size: 1.12em;
-  margin: 2.1em 0 0.6em;
-  font-weight: 650;
-  line-height: 1.35;
   border-bottom: none;
   padding-bottom: 0;
 }
 
+.preview-markdown h1 {
+  font-size: 1.35em;
+  font-weight: 700;
+  margin-top: 0.75em;
+  margin-bottom: 0.45em;
+}
+
+.preview-markdown h2 {
+  font-size: 1.18em;
+  margin-top: 1.4em;
+  margin-bottom: 0.4em;
+}
+
+.preview-markdown h3 {
+  font-size: 1.08em;
+  margin-top: 1.2em;
+  margin-bottom: 0.35em;
+}
+
 .preview-markdown h4 {
-  font-size: 1.04em;
-  margin: 1.85em 0 0.55em;
-  font-weight: 650;
-  line-height: 1.4;
+  font-size: 1.02em;
+  font-weight: 600;
+  margin-top: 1.05em;
+  margin-bottom: 0.3em;
 }
 
 .preview-markdown h5,
 .preview-markdown h6 {
-  font-size: 0.98em;
-  margin: 1.6em 0 0.5em;
+  font-size: 1em;
   font-weight: 600;
   color: var(--text-secondary);
-  letter-spacing: 0.02em;
+  margin-top: 1em;
+  margin-bottom: 0.3em;
+  letter-spacing: normal;
   text-transform: none;
 }
 
 .preview-markdown h1 + p,
 .preview-markdown h2 + p,
 .preview-markdown h3 + p,
-.preview-markdown h4 + p {
+.preview-markdown h4 + p,
+.preview-markdown h5 + p,
+.preview-markdown h6 + p {
   margin-top: 0;
+}
+
+/* Body → heading: same section token as Agent log. */
+.preview-markdown p + h1,
+.preview-markdown p + h2,
+.preview-markdown p + h3,
+.preview-markdown p + h4,
+.preview-markdown p + h5,
+.preview-markdown p + h6,
+.preview-markdown ul + h1,
+.preview-markdown ul + h2,
+.preview-markdown ul + h3,
+.preview-markdown ol + h1,
+.preview-markdown ol + h2,
+.preview-markdown ol + h3,
+.preview-markdown .md-block + h1,
+.preview-markdown .md-block + h2,
+.preview-markdown .md-block + h3,
+.preview-markdown pre + h1,
+.preview-markdown pre + h2,
+.preview-markdown pre + h3 {
+  margin-top: var(--md-section);
 }
 
 .preview-markdown p {
   margin: 0 0 var(--md-block);
   line-height: var(--md-lh);
-  letter-spacing: var(--md-track);
+  letter-spacing: normal;
 }
 
 .preview-markdown p:last-child {
@@ -9784,10 +10320,10 @@ mark {
 }
 
 .preview-markdown li {
-  margin: 0.28em 0;
+  margin: 0.2em 0;
   line-height: var(--md-lh);
-  letter-spacing: var(--md-track);
-  padding-left: 0.25em;
+  letter-spacing: normal;
+  padding-left: 0.15em;
 }
 
 .preview-markdown li::marker {
@@ -9869,11 +10405,11 @@ mark {
 
 /* --- Quote / rule --- */
 .preview-markdown blockquote {
-  margin: 1.25em 0;
-  padding: 0.65em 0 0.65em 1.05em;
-  border-left: 3px solid color-mix(in srgb, var(--accent) 50%, var(--border));
-  border-radius: 0 8px 8px 0;
-  background: color-mix(in srgb, var(--accent) 5%, transparent);
+  margin: 0 0 var(--md-block);
+  padding: 0.15em 0 0.15em 0.9em;
+  border-left: 3px solid color-mix(in srgb, var(--accent) 45%, var(--border));
+  border-radius: 0;
+  background: transparent;
   color: var(--text-secondary);
 }
 
@@ -9892,7 +10428,7 @@ mark {
 
 .preview-markdown hr,
 .preview-markdown .md-preview-hr {
-  margin: 2.1em auto;
+  margin: var(--md-section) 0;
   border: none;
   height: 0;
   max-width: 100%;
@@ -9903,11 +10439,11 @@ mark {
 /* --- Fenced code --- */
 .preview-markdown .md-block,
 .preview-markdown .md-preview-fence {
-  margin: 1.2em 0 1.4em;
-  border-radius: 12px;
-  background: color-mix(in srgb, var(--bg-sunken) 92%, var(--bg-raised));
+  margin: 0 0 var(--md-block);
+  border-radius: var(--radius);
+  background: var(--bg-sunken);
   box-shadow:
-    inset 0 0 0 1px color-mix(in srgb, var(--border) 75%, transparent),
+    inset 0 0 0 1px color-mix(in srgb, var(--border) 70%, transparent),
     0 1px 2px color-mix(in srgb, #000 6%, transparent);
   overflow: hidden;
 }
@@ -10104,8 +10640,7 @@ mark {
   padding: 18px 24px 28px;
 }
 
-/* Markdown paper: same padding as every other preview — the generous gutters
-   read as wasted space, and 6vw tracked the window, not a narrow panel. */
+/* Markdown paper: reading column is centered; body padding supplies gutters. */
 .file-viewer-body:has(> .markdown.preview-markdown),
 .file-viewer-body:has(.preview-markdown),
 .file-viewer-body:has(> .preview-document) {
@@ -10713,27 +11248,32 @@ mark {
 }
 
 .terminal-split-root {
-  flex: 1;
+  flex: 1 1 0%;
   min-height: 0;
   min-width: 0;
+  height: 100%;
   display: flex;
   flex-direction: column;
+  overflow: hidden;
 }
 
 /* Binary tree branch: flexDirection set inline (column=top/bottom, row=left/right). */
 .terminal-split-branch {
-  flex: 1;
+  flex: 1 1 0%;
   min-height: 0;
   min-width: 0;
   display: flex;
   position: relative;
+  overflow: hidden;
 }
 
 .terminal-split-pane {
   display: flex;
   flex-direction: column;
-  min-height: 48px;
-  min-width: 48px;
+  flex: 1 1 0%;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
   position: relative;
   /* No chrome labels over the PTY — agent TUIs own the full surface. */
 }
@@ -11772,7 +12312,7 @@ mark {
 }
 
 /* Frameless native panel popup (main process BrowserWindow, not in-app overlay).
-   Background MUST match BrowserWindow.backgroundColor (#121213 / #eceaf1) so
+   Background MUST match BrowserWindow.backgroundColor (#121213 / #ececee) so
    show() never reveals a different wash under the content. */
 html:has(.token-usage-popup),
 html:has(.token-usage-popup) body,
@@ -11794,14 +12334,14 @@ html:has(.token-usage-popup) #root {
 }
 
 :root[data-theme='light'] .token-usage-popup {
-  background: #eceaf1;
+  background: #ececee;
   color: var(--text, #131b35);
 }
 
 :root[data-theme='light'] html:has(.token-usage-popup),
 :root[data-theme='light'] html:has(.token-usage-popup) body,
 :root[data-theme='light'] html:has(.token-usage-popup) #root {
-  background: #eceaf1;
+  background: #ececee;
 }
 
 .token-usage-popup-title {
@@ -11968,7 +12508,8 @@ html:has(.token-usage-popup) #root {
 .settings-window {
   display: flex;
   height: 100%;
-  background: var(--bg-content);
+  /* Default solid; macOS vibrancy clears the shell + nav (see data-vibrancy). */
+  background: var(--bg-window);
 }
 
 .settings-nav {
@@ -11979,6 +12520,7 @@ html:has(.token-usage-popup) #root {
      nothing at that end anyway. */
   padding: var(--chrome-gutter) 9px 14px;
   background: var(--bg-window);
+  box-shadow: inset -1px 0 0 var(--border);
   -webkit-app-region: drag;
 }
 
@@ -11991,6 +12533,8 @@ html:has(.token-usage-popup) #root {
   min-width: 0;
   display: flex;
   flex-direction: column;
+  /* Opaque content column — forms never sit on glass. */
+  background: var(--bg-content);
 }
 
 .settings-head {
@@ -12522,6 +13066,16 @@ html:has(.token-usage-popup) #root {
   overflow: hidden;
   max-width: min(100%, 520px);
   min-width: 0;
+  transition:
+    opacity var(--dur-pop) var(--ease-out),
+    transform var(--dur-pop) var(--ease-out);
+}
+
+@starting-style {
+  .inline-review {
+    opacity: 0;
+    transform: translateY(4px) scale(0.98);
+  }
 }
 
 .inline-review.is-loading {
@@ -12585,10 +13139,18 @@ html:has(.token-usage-popup) #root {
   color: var(--text-secondary);
   cursor: default;
   flex: 0 0 auto;
+  transition:
+    background var(--dur-hover) ease,
+    color var(--dur-hover) ease,
+    transform var(--dur-press) var(--ease-out);
 }
 
 .inline-review-icon-btn:hover {
   background: var(--bg-hover);
+}
+
+.inline-review-icon-btn:active {
+  transform: scale(0.97);
 }
 
 .inline-review-icon-btn.kind-accept {
@@ -12719,14 +13281,34 @@ html:has(.token-usage-popup) #root {
   flex: 0 0 auto;
 }
 
+/* Grid rows animate open/close and retarget mid-flight; height would not. */
+.inline-review-file-detail {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows var(--dur-pop) var(--ease-out);
+}
+
+.inline-review-file[data-open] .inline-review-file-detail {
+  grid-template-rows: 1fr;
+}
+
+.inline-review-file-detail-inner {
+  overflow: hidden;
+  min-height: 0;
+}
+
 .inline-review-file-body {
-  margin: 0 8px 8px;
+  margin: 0;
   border-radius: var(--radius-sm);
   overflow: hidden;
   box-shadow: inset 0 0 0 1px var(--border);
   background: var(--bg-content);
   max-height: 280px;
   overflow-y: auto;
+}
+
+.inline-review-file[data-open] .inline-review-file-body {
+  margin: 0 8px 8px;
 }
 
 .inline-review-diff {
@@ -13050,6 +13632,20 @@ html:has(.token-usage-popup) #root {
   overflow: auto;
 }
 
+.review-binary.is-compact {
+  gap: 8px;
+  padding: 10px 12px;
+}
+
+.review-binary-badge {
+  align-self: flex-start;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+}
+
 .review-binary-meta {
   display: flex;
   flex-direction: column;
@@ -13075,7 +13671,8 @@ html:has(.token-usage-popup) #root {
   user-select: text;
 }
 
-.review-binary-hint {
+.review-binary-hint,
+.review-binary-summary {
   margin: 0;
   line-height: 1.5;
 }

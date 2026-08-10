@@ -5,8 +5,8 @@ import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { promisify } from 'node:util'
-import type { PtyActivityStatus } from '@shared/ipc'
-import type { ShellKind } from '@shared/types'
+import type { PtyActivityStatus, PtyListResult } from '@shared/ipc'
+import type { ConversationPtyLayouts, ShellKind, TerminalLayoutNode } from '@shared/types'
 
 const execFileAsync = promisify(execFile)
 import type { AgentContextLaunchStrategy } from '@shared/agentContextInject'
@@ -457,8 +457,11 @@ export class PtyManager {
     return id
   }
 
-  /** Live PTY metadata for one conversation (stable tab ids across windows). */
-  listForConversation(conversationId: string): PtySessionMeta[] {
+  /** Split trees for bash / CLI hosts — shared across main + detached windows. */
+  private layouts = new Map<string, ConversationPtyLayouts>()
+
+  /** Live PTY metadata + layouts for one conversation (stable across windows). */
+  listForConversation(conversationId: string): PtyListResult {
     const out: PtySessionMeta[] = []
     for (const session of this.sessions.values()) {
       if (session.conversationId !== conversationId) continue
@@ -472,7 +475,28 @@ export class PtyManager {
       })
     }
     out.sort((a, b) => a.createdAt - b.createdAt)
-    return out
+    return {
+      sessions: out,
+      layouts: cloneLayouts(this.layouts.get(conversationId))
+    }
+  }
+
+  /**
+   * Persist pane split directions/weights. Detached session windows hydrate
+   * from this instead of inventing an all-`row` tree via layoutFromTabIds.
+   */
+  setLayouts(conversationId: string, layouts: ConversationPtyLayouts): void {
+    if (!conversationId) return
+    this.layouts.set(conversationId, {
+      bash: cloneLayout(layouts.bash),
+      agents: Object.fromEntries(
+        Object.entries(layouts.agents ?? {}).map(([id, node]) => [id, cloneLayout(node)])
+      )
+    })
+  }
+
+  clearLayouts(conversationId: string): void {
+    this.layouts.delete(conversationId)
   }
 
   /**
@@ -562,6 +586,7 @@ export class PtyManager {
     for (const session of [...this.sessions.values()]) {
       if (session.conversationId === conversationId) this.kill(session.id)
     }
+    this.clearLayouts(conversationId)
   }
 
   /** True if any live PTY is bound to this conversation (user bash or CLI host). */
@@ -574,6 +599,30 @@ export class PtyManager {
 
   killAll(): void {
     for (const session of [...this.sessions.values()]) this.kill(session.id)
+    this.layouts.clear()
+  }
+}
+
+function cloneLayout(node: TerminalLayoutNode | null | undefined): TerminalLayoutNode | null {
+  if (!node) return null
+  if (node.type === 'leaf') {
+    return { type: 'leaf', tabId: node.tabId, weight: node.weight }
+  }
+  return {
+    type: 'branch',
+    direction: node.direction === 'column' ? 'column' : 'row',
+    weight: node.weight,
+    children: [cloneLayout(node.children[0])!, cloneLayout(node.children[1])!]
+  }
+}
+
+function cloneLayouts(layouts: ConversationPtyLayouts | undefined): ConversationPtyLayouts {
+  if (!layouts) return { bash: null, agents: {} }
+  return {
+    bash: cloneLayout(layouts.bash),
+    agents: Object.fromEntries(
+      Object.entries(layouts.agents ?? {}).map(([id, node]) => [id, cloneLayout(node)])
+    )
   }
 }
 

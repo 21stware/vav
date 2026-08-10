@@ -250,6 +250,177 @@ export function Sidebar({
     [groups, mainGroups, pinnedCollapsed, collapsedKeys]
   )
 
+  const fileSessionOrderedIds = useMemo(
+    () => filteredFileSessions.map((row) => row.sessionId),
+    [filteredFileSessions]
+  )
+
+  const deleteSelectedFileSessions = useCallback(
+    (sessionIds: string[]): void => {
+      const wanted = [...new Set(sessionIds)].filter(Boolean)
+      if (wanted.length === 0) return
+      const targets = filteredFileSessions.filter((row) => wanted.includes(row.sessionId))
+      if (targets.length === 0) return
+      const messageTotal = targets.reduce((sum, row) => sum + (row.messageCount || 0), 0)
+      const title =
+        targets.length === 1
+          ? targets[0]!.title.replace(/^[#\s\u00a0\u3000]+/, '').trim() ||
+            targets[0]!.title.trim() ||
+            t('sidebar.fileSessionDelete')
+          : t('sidebar.fileSessionDeleteCount', { count: targets.length })
+      const body =
+        targets.length === 1
+          ? title
+          : t('preview.sessionDeleteBulkWarn', {
+              count: targets.length,
+              messages: messageTotal
+            })
+      showDialog({
+        title: t('sidebar.fileSessionDelete'),
+        body,
+        confirmLabel:
+          targets.length === 1
+            ? t('sidebar.fileSessionDelete')
+            : t('sidebar.fileSessionDeleteCount', { count: targets.length }),
+        onConfirm: () => {
+          void (async () => {
+            const byFile = new Map<string, string[]>()
+            for (const row of targets) {
+              const list = byFile.get(row.fileId) ?? []
+              list.push(row.sessionId)
+              byFile.set(row.fileId, list)
+            }
+            let failed = false
+            for (const [fileId, ids] of byFile) {
+              const result = await window.vav.fileSessions.forceDelete(fileId, ids)
+              if (!result.ok) failed = true
+            }
+            if (failed) {
+              showToast({ kind: 'error', title: t('preview.sessionDeleteFailed') })
+            }
+            await refreshFileSessions()
+            // Drop deleted ids from the multi-selection.
+            const alive = new Set(
+              (await window.vav.fileSessions.listAll()).map((r) => r.sessionId)
+            )
+            const { selectedIds: prev, activeId: cur } = useSessionStore.getState()
+            const nextSel = prev.filter((id) => alive.has(id))
+            const nextActive = cur && alive.has(cur) ? cur : nextSel[0] ?? ''
+            useSessionStore.setState({
+              selectedIds: nextSel.length ? nextSel : nextActive ? [nextActive] : []
+            })
+            if (nextActive && nextActive !== cur) {
+              void selectConversation(nextActive)
+            }
+          })()
+        }
+      })
+    },
+    [filteredFileSessions, refreshFileSessions, selectConversation, showDialog, showToast, t]
+  )
+
+  const fileSessionMenuItems = useCallback(
+    (ids: string[]): MenuItem[] => {
+      const targets = filteredFileSessions.filter((row) => ids.includes(row.sessionId))
+      if (targets.length === 0) return []
+      const multi = targets.length > 1
+      const openable = targets.filter((row) => row.pathStatus === 'ok')
+
+      const openPreviews = (rows: FileSessionListEntry[]): void => {
+        for (const row of rows) {
+          void window.vav.window.openFilePreview(row.path, {
+            origin: 'session',
+            conversationId: row.sessionId
+          })
+        }
+      }
+
+      if (multi) {
+        return [
+          {
+            label: t('sidebar.fileSessionOpenFileCount', { count: openable.length || targets.length }),
+            disabled: openable.length === 0,
+            onSelect: () => openPreviews(openable)
+          },
+          {
+            label: t('sidebar.fileSessionOpenDetachedCount', { count: targets.length }),
+            disabled: openable.length === 0,
+            onSelect: () => {
+              openPreviews(openable)
+              onNavigate?.()
+            }
+          },
+          {
+            label: t('sidebar.menu.copyTitle'),
+            onSelect: () => {
+              const text = targets
+                .map(
+                  (row) =>
+                    row.title.replace(/^[#\s\u00a0\u3000]+/, '').trim() || row.title.trim()
+                )
+                .filter(Boolean)
+                .join('\n')
+              void window.vav.conversations.copyToClipboard(text)
+            }
+          },
+          { label: '', divider: true },
+          {
+            label: t('sidebar.fileSessionDeleteCount', { count: targets.length }),
+            destructive: true,
+            onSelect: () => deleteSelectedFileSessions(targets.map((row) => row.sessionId))
+          }
+        ]
+      }
+
+      const row = targets[0]!
+      const title =
+        row.title.replace(/^[#\s\u00a0\u3000]+/, '').trim() || row.title.trim() || 'New session'
+      return [
+        {
+          label: t('sidebar.fileSessionOpenChat'),
+          onSelect: () => {
+            void selectConversation(row.sessionId)
+            onNavigate?.()
+          }
+        },
+        {
+          label: t('sidebar.fileSessionOpenFile'),
+          disabled: row.pathStatus !== 'ok',
+          onSelect: () => {
+            void selectConversation(row.sessionId)
+            void window.vav.window.openFilePreview(row.path, {
+              origin: 'session',
+              conversationId: row.sessionId
+            })
+          }
+        },
+        {
+          label: t('sidebar.menu.openDetached'),
+          disabled: row.pathStatus !== 'ok',
+          onSelect: () => {
+            void selectConversation(row.sessionId)
+            void window.vav.window.openFilePreview(row.path, {
+              origin: 'session',
+              conversationId: row.sessionId
+            })
+            onNavigate?.()
+          }
+        },
+        {
+          label: t('sidebar.menu.copyTitle'),
+          onSelect: () => void window.vav.conversations.copyToClipboard(title)
+        },
+        { label: '', divider: true },
+        {
+          label: t('sidebar.fileSessionDelete'),
+          destructive: true,
+          onSelect: () => deleteSelectedFileSessions([row.sessionId])
+        }
+      ]
+    },
+    [deleteSelectedFileSessions, filteredFileSessions, onNavigate, selectConversation, t]
+  )
+
   useEffect(() => {
     const onKey = (event: KeyboardEvent): void => {
       const target = event.target as HTMLElement | null
@@ -262,6 +433,39 @@ export function Sidebar({
       if (!listRef.current?.contains(document.activeElement) && document.activeElement !== document.body)
         return
 
+      if (fileSessionsView) {
+        if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+          event.preventDefault()
+          const index = fileSessionOrderedIds.indexOf(activeId)
+          const base = index < 0 ? (event.key === 'ArrowDown' ? -1 : 0) : index
+          const next = fileSessionOrderedIds[base + (event.key === 'ArrowDown' ? 1 : -1)]
+          if (next) {
+            void selectConversation(next, {
+              range: event.shiftKey,
+              rangeIds: fileSessionOrderedIds
+            })
+          }
+          return
+        }
+        if (event.key === 'Backspace' || event.key === 'Delete') {
+          event.preventDefault()
+          const ids = selectedIds.length ? selectedIds : activeId ? [activeId] : []
+          deleteSelectedFileSessions(ids)
+          return
+        }
+        if (event.key === 'a' && (event.metaKey || event.ctrlKey)) {
+          event.preventDefault()
+          useSessionStore.setState({ selectedIds: [...fileSessionOrderedIds] })
+          return
+        }
+        if (event.key === 'Escape') {
+          event.preventDefault()
+          event.stopImmediatePropagation()
+          setListMode('main')
+        }
+        return
+      }
+
       if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
         event.preventDefault()
         const index = visible.findIndex((c) => c.id === activeId)
@@ -270,7 +474,7 @@ export function Sidebar({
       } else if (event.key === 'Backspace' || event.key === 'Delete') {
         event.preventDefault()
         requestDelete(selectedIds.length ? selectedIds : [activeId])
-      } else       if (event.key === 'a' && event.metaKey) {
+      } else if (event.key === 'a' && event.metaKey) {
         event.preventDefault()
         useSessionStore.setState({ selectedIds: visible.map((c) => c.id) })
       } else if (event.key === 'Escape' && listMode !== 'main') {
@@ -282,7 +486,18 @@ export function Sidebar({
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [visible, activeId, selectedIds, selectConversation, requestDelete, listMode])
+  }, [
+    visible,
+    activeId,
+    selectedIds,
+    selectConversation,
+    requestDelete,
+    listMode,
+    fileSessionsView,
+    fileSessionOrderedIds,
+    deleteSelectedFileSessions,
+    setListMode
+  ])
 
   const menuItems = (ids: string[]): MenuItem[] => {
     const targets = ids
@@ -877,8 +1092,23 @@ export function Sidebar({
 
         {fileSessionsView && (
           <div className="file-session-list" role="list">
-            {filteredFileSessions.map((row) => {
+            {filteredFileSessions.map((row, index) => {
               const isActive = row.sessionId === activeId
+              const isMultiSelected = selectedIds.includes(row.sessionId)
+              const prevMulti =
+                index > 0 && selectedIds.includes(filteredFileSessions[index - 1]!.sessionId)
+              const nextMulti =
+                index < filteredFileSessions.length - 1 &&
+                selectedIds.includes(filteredFileSessions[index + 1]!.sessionId)
+              const runClass = isMultiSelected
+                ? prevMulti && nextMulti
+                  ? 'run-middle'
+                  : prevMulti
+                    ? 'run-end'
+                    : nextMulti
+                      ? 'run-start'
+                      : 'run-only'
+                : ''
               const statusLabel =
                 row.pathStatus === 'dir_missing'
                   ? t('sidebar.dirNotExist')
@@ -894,12 +1124,22 @@ export function Sidebar({
                   type="button"
                   role="listitem"
                   key={`${row.fileId}:${row.sessionId}`}
-                  className={`file-session-item${isActive ? ' is-active' : ''}${statusLabel ? ' is-missing' : ''}`}
+                  className={`file-session-item${isActive ? ' is-active' : ''}${
+                    isMultiSelected ? ` multi ${runClass}` : ''
+                  }${statusLabel ? ' is-missing' : ''}`}
                   title={`${title}\n${row.path}`}
                   onClick={(event) => {
                     // Ignore the second half of a double-click pair (open window).
                     if (event.detail > 1) return
-                    void selectConversation(row.sessionId)
+                    const additive = event.metaKey || event.ctrlKey
+                    const range = event.shiftKey
+                    void selectConversation(row.sessionId, {
+                      additive,
+                      range,
+                      rangeIds: fileSessionOrderedIds
+                    })
+                    // Multi-select keeps the float open so the user can keep picking.
+                    if (additive || range) return
                     // Floating: delay close so dblclick can open the companion.
                     if (floating && onNavigate) {
                       if (fileClickTimerRef.current) clearTimeout(fileClickTimerRef.current)
@@ -933,66 +1173,16 @@ export function Sidebar({
                       clearTimeout(fileClickTimerRef.current)
                       fileClickTimerRef.current = null
                     }
-                    const items: MenuItem[] = [
-                      {
-                        label: t('sidebar.fileSessionOpenChat'),
-                        onSelect: () => {
-                          void selectConversation(row.sessionId)
-                          onNavigate?.()
-                        }
-                      },
-                      {
-                        label: t('sidebar.fileSessionOpenFile'),
-                        disabled: row.pathStatus !== 'ok',
-                        onSelect: () => {
-                          void selectConversation(row.sessionId)
-                          void window.vav.window.openFilePreview(row.path, {
-                            origin: 'session',
-                            conversationId: row.sessionId
-                          })
-                        }
-                      },
-                      {
-                        label: t('sidebar.menu.openDetached'),
-                        onSelect: () => {
-                          void selectConversation(row.sessionId)
-                          void window.vav.window.openFilePreview(row.path, {
-                            origin: 'session',
-                            conversationId: row.sessionId
-                          })
-                          onNavigate?.()
-                        }
-                      },
-                      { label: '', divider: true },
-                      {
-                        label: t('sidebar.fileSessionDelete'),
-                        destructive: true,
-                        onSelect: () => {
-                          showDialog({
-                            title: t('sidebar.fileSessionDelete'),
-                            body: title,
-                            confirmLabel: t('sidebar.fileSessionDelete'),
-                            onConfirm: () => {
-                              void (async () => {
-                                const result = await window.vav.fileSessions.forceDelete(
-                                  row.fileId,
-                                  [row.sessionId]
-                                )
-                                if (!result.ok) {
-                                  showToast({
-                                    kind: 'error',
-                                    title: t('preview.sessionDeleteFailed')
-                                  })
-                                  return
-                                }
-                                await refreshFileSessions()
-                              })()
-                            }
-                          })
-                        }
-                      }
-                    ]
-                    void showMenu(items)
+                    // Finder-style: right-click inside a multi-selection keeps
+                    // the set and operates on all of it; outside collapses to one.
+                    const targets =
+                      selectedIds.length > 1 && selectedIds.includes(row.sessionId)
+                        ? selectedIds
+                        : [row.sessionId]
+                    if (targets.length === 1 && selectedIds.length > 1) {
+                      void selectConversation(row.sessionId)
+                    }
+                    void showMenu(fileSessionMenuItems(targets))
                   }}
                 >
                   <span className="file-session-item-title">{middleTruncate(title)}</span>

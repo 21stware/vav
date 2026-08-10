@@ -9,7 +9,7 @@ import {
   cacheHitPercent,
   formatClock,
   formatExpiry,
-  formatUsd,
+  formatCost,
   modelDisplayName,
   providerLabel,
   sessionCostOf
@@ -209,11 +209,11 @@ export function TokenUsagePanel({
       <dl className="token-usage-kv">
         <div>
           <dt>{t('token.turnCost')}</dt>
-          <dd>{formatUsd(turnCost)}</dd>
+          <dd>{formatCost(turnCost, payload.displayCurrency ?? 'USD')}</dd>
         </div>
         <div>
           <dt>{t('token.sessionCost')}</dt>
-          <dd>{formatUsd(sessionCost)}</dd>
+          <dd>{formatCost(sessionCost, payload.displayCurrency ?? 'USD')}</dd>
         </div>
       </dl>
 

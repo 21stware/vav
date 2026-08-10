@@ -133,6 +133,57 @@ const IDLE_TURN: TurnRuntime = {
   awaitingToolCallId: null
 }
 
+/**
+ * In-memory pending send while a turn is streaming (main-chat-streaming.rpml §5).
+ * Not persisted; cleared when the conversation is removed.
+ */
+export interface QueuedMessage {
+  id: string
+  text: string
+  attachments: string[]
+  previewRefs: PreviewRef[]
+  commentCards: { ref: PreviewRef; comment: string }[]
+  quote: QuoteDraft | null
+  contextFile: string | null
+  createdAt: number
+}
+
+/** Max pending items per conversation (spec §2.10). */
+export const MESSAGE_QUEUE_MAX = 20
+
+/**
+ * Conversations currently inside {@link SessionState.sendQueuedNow} (manual
+ * interrupt path). Suppresses auto-drain on the interim `end` from cancel so
+ * we do not pop the *next* queue item while "send now" is still running.
+ */
+const queueSendInFlight = new Set<string>()
+
+/** Fire agent.send for a dequeued payload (caller already removed it from the queue). */
+async function dispatchQueuedPayload(
+  conversationId: string,
+  item: QueuedMessage,
+  selectIfNeeded: () => Promise<void>
+): Promise<void> {
+  const cardRefs = item.commentCards.map((c) => {
+    const note = c.comment.trim()
+    return note ? { ...c.ref, comment: note } : { ...c.ref }
+  })
+  const byId = new Map<string, PreviewRef>()
+  for (const ref of item.previewRefs) byId.set(ref.id, ref)
+  for (const ref of cardRefs) byId.set(ref.id, ref)
+  const allRefs = [...byId.values()]
+
+  await selectIfNeeded()
+  await window.vav.agent.send(
+    conversationId,
+    item.text,
+    item.attachments,
+    item.quote,
+    allRefs.length ? allRefs : null,
+    item.contextFile
+  )
+}
+
 export interface DialogState {
   title: string
   body: string
@@ -348,6 +399,11 @@ interface SessionState {
   /** Comment cards from Pick mode — block ref + per-block comment text. */
   commentCards: Record<string, { ref: PreviewRef; comment: string }[]>
   /**
+   * Messages queued while the agent is streaming (composer stays enabled).
+   * Per conversation, in-memory only — never written to message history.
+   */
+  messageQueues: Record<string, QueuedMessage[]>
+  /**
    * File Attachment Chip path (main-chat / file-preview / workspace-view).
    * When set, the composer shows the chip and the agent system prompt treats
    * this file as open context. Null = dismissed or none — preview/selection
@@ -421,6 +477,11 @@ interface SessionState {
     options?: {
       additive?: boolean
       range?: boolean
+      /**
+       * Ordered id list for shift-range (e.g. File Sessions sidebar order).
+       * Defaults to non-archived, non-file workspace conversations.
+       */
+      rangeIds?: string[]
       /**
        * Stay in Workspace View (History / New within workspace-view.rpml).
        * Default false: sidebar clicks leave workspace view.
@@ -500,8 +561,23 @@ interface SessionState {
    * Send on the given conversation (defaults to {@link activeId}).
    * File-preview / workspace must pass their session id when it may differ
    * from the global selection for a tick.
+   * While streaming (and not awaiting user), enqueues instead of interrupting.
    */
   send(text: string, attachments: string[], conversationId?: string | null): Promise<void>
+  /** Update text of a queued item (inline edit save). */
+  updateQueuedMessage(conversationId: string, queueId: string, text: string): void
+  /** Remove a queued item after confirm. */
+  removeQueuedMessage(conversationId: string, queueId: string): void
+  /**
+   * Interrupt the active turn (if any) then send this queued message as a new
+   * turn. Remaining queue items stay pending.
+   */
+  sendQueuedNow(conversationId: string, queueId: string): Promise<void>
+  /**
+   * FIFO: when idle, pop and send the head of the message queue.
+   * Called after a turn ends so queued follow-ups run automatically.
+   */
+  drainMessageQueue(conversationId: string): Promise<void>
   cancel(id: string): Promise<void>
   answerTool(toolCallId: string, answer: string): Promise<boolean>
   regenerate(messageId: string): Promise<void>
@@ -625,6 +701,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   previewRefs: {},
   pickMode: {},
   commentCards: {},
+  messageQueues: {},
   contextFiles: {},
   workdirPathRevealed: {},
   flashMessageId: null,
@@ -819,8 +896,17 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         : [...selectedIds, id]
       if (nextSelection.length === 0) nextSelection = [id]
     } else if (options?.range && activeId) {
-      const ids = conversations.filter((c) => !c.archived && !c.fileId).map((c) => c.id)
-      const from = ids.indexOf(activeId)
+      const ids =
+        options.rangeIds ??
+        conversations.filter((c) => !c.archived && !c.fileId).map((c) => c.id)
+      // Anchor on the prior active row when it is in the list; otherwise the
+      // first already-selected id that appears in `ids` (File Sessions view).
+      let anchor = activeId
+      if (!ids.includes(anchor)) {
+        const fromSelection = selectedIds.find((sid) => ids.includes(sid))
+        if (fromSelection) anchor = fromSelection
+      }
+      const from = ids.indexOf(anchor)
       const to = ids.indexOf(id)
       if (from >= 0 && to >= 0) {
         const [start, end] = from < to ? [from, to] : [to, from]
@@ -1127,14 +1213,23 @@ export const useSessionStore = create<SessionState>((set, get) => ({
           const activeLeaf = { ...state.activeLeaf }
           const turns = { ...state.turns }
           const toolsLayouts = { ...state.toolsLayouts }
+          const messageQueues = { ...state.messageQueues }
           for (const id of removed) {
             delete messages[id]
             delete activeLeaf[id]
             delete turns[id]
             delete toolsLayouts[id]
+            delete messageQueues[id]
           }
           saveSessionToolsMap(toolsLayouts)
-          return { conversations: next, messages, activeLeaf, turns, toolsLayouts }
+          return {
+            conversations: next,
+            messages,
+            activeLeaf,
+            turns,
+            toolsLayouts,
+            messageQueues
+          }
         })
         if (removed.includes(get().activeId)) {
           const fallback = next.find((c) => !c.archived && !c.fileId)?.id ?? next[0]?.id
@@ -1385,6 +1480,9 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   },
 
   async openDetached(id) {
+    // Persist split directions before the companion hydrates (otherwise it
+    // rebuilds an all-row tree from live PTY ids alone).
+    useWorkspaceStore.getState().syncPtyLayouts(id)
     await window.vav.window.openSession(id)
   },
 
@@ -1466,7 +1564,8 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       previewRefs,
       commentCards,
       contextFiles,
-      conversations
+      conversations,
+      messageQueues
     } = get()
     let activeId = conversationId?.trim() || storeActiveId
     // Empty chat shell: mint the session on first send (workspace materializes).
@@ -1475,10 +1574,13 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       activeId = get().activeId
       if (!activeId) return
     }
-    if (turns[activeId]?.isRunning) return
+    const turn = turns[activeId]
     const refs = previewRefs[activeId] ?? []
     const cards = commentCards[activeId] ?? []
     if (!text.trim() && attachments.length === 0 && refs.length === 0 && cards.length === 0) return
+
+    // ask_user_question pause: composer is disabled — never enqueue here.
+    if (turn?.awaitingToolCallId) return
 
     if (!settings.apiKeyPresent) {
       get().showDialog({
@@ -1487,6 +1589,50 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         confirmLabel: tt('error.openSettings'),
         onConfirm: () => get().openSettings('api')
       })
+      return
+    }
+
+    // Streaming: enqueue instead of interrupting (main-chat-streaming.rpml §5).
+    if (turn?.isRunning) {
+      const queue = messageQueues[activeId] ?? []
+      if (queue.length >= MESSAGE_QUEUE_MAX) {
+        get().showToast({
+          kind: 'error',
+          title: tt('queue.fullTitle'),
+          description: tt('queue.fullBody', { n: MESSAGE_QUEUE_MAX })
+        })
+        return
+      }
+      const quote = quotes[activeId] ?? null
+      const contextFile =
+        (contextFiles[activeId] ?? null) ||
+        conversations.find((c) => c.id === activeId)?.focusedFilePath ||
+        null
+      const item: QueuedMessage = {
+        id: `q-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
+        text: text.trim(),
+        attachments: [...attachments],
+        previewRefs: refs.map((r) => ({ ...r })),
+        commentCards: cards.map((c) => ({
+          ref: { ...c.ref },
+          comment: c.comment
+        })),
+        quote: quote ? { ...quote } : null,
+        contextFile,
+        createdAt: Date.now()
+      }
+      set((state) => ({
+        messageQueues: {
+          ...state.messageQueues,
+          [activeId!]: [...(state.messageQueues[activeId!] ?? []), item]
+        },
+        drafts: { ...state.drafts, [activeId!]: '' },
+        attachments: { ...state.attachments, [activeId!]: [] },
+        quotes: { ...state.quotes, [activeId!]: null },
+        previewRefs: { ...state.previewRefs, [activeId!]: [] },
+        commentCards: { ...state.commentCards, [activeId!]: [] },
+        errorBanner: null
+      }))
       return
     }
 
@@ -1535,6 +1681,110 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       allRefs.length ? allRefs : null,
       contextFile
     )
+  },
+
+  updateQueuedMessage(conversationId, queueId, text) {
+    set((state) => {
+      const queue = state.messageQueues[conversationId]
+      if (!queue) return state
+      const next = queue.map((item) =>
+        item.id === queueId ? { ...item, text: text.trim() } : item
+      )
+      return { messageQueues: { ...state.messageQueues, [conversationId]: next } }
+    })
+  },
+
+  removeQueuedMessage(conversationId, queueId) {
+    set((state) => {
+      const queue = state.messageQueues[conversationId]
+      if (!queue) return state
+      return {
+        messageQueues: {
+          ...state.messageQueues,
+          [conversationId]: queue.filter((item) => item.id !== queueId)
+        }
+      }
+    })
+  },
+
+  async sendQueuedNow(conversationId, queueId) {
+    const state = get()
+    const queue = state.messageQueues[conversationId] ?? []
+    const item = queue.find((q) => q.id === queueId)
+    if (!item) return
+    if (
+      !item.text.trim() &&
+      item.attachments.length === 0 &&
+      item.previewRefs.length === 0 &&
+      item.commentCards.length === 0
+    ) {
+      get().removeQueuedMessage(conversationId, queueId)
+      return
+    }
+
+    // Drop from queue first so a second click can't double-send.
+    get().removeQueuedMessage(conversationId, queueId)
+
+    queueSendInFlight.add(conversationId)
+    try {
+      const turn = get().turns[conversationId]
+      if (turn?.isRunning) {
+        await get().cancel(conversationId)
+        const idle = await new Promise<boolean>((resolve) => {
+          const started = Date.now()
+          const tick = (): void => {
+            if (!get().turns[conversationId]?.isRunning) {
+              resolve(true)
+              return
+            }
+            if (Date.now() - started >= 20_000) {
+              resolve(false)
+              return
+            }
+            window.setTimeout(tick, 40)
+          }
+          tick()
+        })
+        if (!idle) {
+          // Put the item back if we could not interrupt cleanly.
+          set((s) => ({
+            messageQueues: {
+              ...s.messageQueues,
+              [conversationId]: [item, ...(s.messageQueues[conversationId] ?? [])]
+            }
+          }))
+          get().showToast({
+            kind: 'error',
+            title: tt('queue.sendNowFailed'),
+            description: tt('queue.sendNowFailedBusy')
+          })
+          return
+        }
+      }
+
+      set({ errorBanner: null })
+      await dispatchQueuedPayload(conversationId, item, async () => {
+        if (get().activeId !== conversationId) {
+          await get().selectConversation(conversationId)
+        }
+      })
+    } finally {
+      queueSendInFlight.delete(conversationId)
+    }
+  },
+
+  /**
+   * After a turn ends, send the head of the queue (FIFO) if idle.
+   * Does nothing while ask_user_question is pending or a manual send-now is in flight.
+   */
+  async drainMessageQueue(conversationId) {
+    if (queueSendInFlight.has(conversationId)) return
+    const turn = get().turns[conversationId]
+    if (turn?.isRunning || turn?.awaitingToolCallId) return
+    const head = get().messageQueues[conversationId]?.[0]
+    if (!head) return
+    // Re-use sendQueuedNow so removal + payload path stay single-sourced.
+    await get().sendQueuedNow(conversationId, head.id)
   },
 
   async regenerate(messageId) {
@@ -2150,6 +2400,17 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         })
         break
 
+      case 'notice':
+        // UI / workspace notice — no turn, but advances the leaf for history.
+        set((state) => ({
+          messages: {
+            ...state.messages,
+            [id]: upsert(state.messages[id], event.message)
+          },
+          activeLeaf: { ...state.activeLeaf, [id]: event.message.id }
+        }))
+        break
+
       case 'phase':
         projection.ensureLive(event.phase)
         projection.setPhase(event.phase)
@@ -2239,6 +2500,8 @@ export const useSessionStore = create<SessionState>((set, get) => ({
           }))
         )
         if (event.error) set({ errorBanner: event.error })
+        // Auto-run the next queued message after this turn finishes (FIFO).
+        void get().drainMessageQueue(id)
         break
       }
 

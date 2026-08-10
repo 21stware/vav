@@ -11,14 +11,11 @@ metadata:
     - "IEEE / ACM / APA / MLA / Chicago / Turabian Style Guides"
     - "Springer LNCS / Nature / HBR Document Templates"
 description: >
-  Professional DOCX document creation, editing, and formatting using OpenXML SDK (.NET).
-  Three pipelines: (A) create new documents from scratch, (B) fill/edit content in existing
-  documents, (C) apply template formatting with XSD validation gate-check.
-  MUST use this skill whenever the user wants to produce, modify, or format a Word document —
-  including when they say "write a report", "draft a proposal", "make a contract",
-  "fill in this form", "reformat to match this template", or any task whose final output
-  is a .docx file. Even if the user doesn't mention "docx" explicitly, if the task
-  implies a printable/formal document, use this skill.
+  Fallback Word/OpenXML skill (OpenXML SDK) when officecli cannot complete the task.
+  In VAV, prefer load_skill("officecli") first for .docx create/edit/read structure.
+  Three pipelines: (A) create from scratch, (B) fill/edit existing documents,
+  (C) apply template formatting with XSD validation. Use only after officecli is
+  insufficient — do not treat this skill as the default Word path in VAV.
 triggers:
   - Word
   - docx

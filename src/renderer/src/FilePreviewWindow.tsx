@@ -1,4 +1,4 @@
-import { Suspense, lazy, useEffect } from 'react'
+import { useEffect, useLayoutEffect, useState } from 'react'
 import { basename } from './lib/path'
 import { useAppearance } from './lib/appearance'
 import { installDefaultContextMenu } from './lib/nativeMenu'
@@ -11,29 +11,109 @@ import {
 import { installFsWatchBridge, installPtyBridge } from './state/workspaceStore'
 import { tt } from './i18n/useT'
 import { AppToast } from './components/AppToast'
+import { PreviewPerfHud } from './components/PreviewPerfHud'
 import { useTerminalAppearance } from './lib/useTerminalAppearance'
 import { useMenuCommands } from './lib/menuCommands'
+import { prefetchPreviewCanvases } from './lib/prefetchHeavy'
+import { previewOpenElapsed, setPreviewOpenClock } from './lib/previewOpenClock'
 
-const FileViewer = lazy(() =>
-  import('./components/FileViewer').then((m) => ({ default: m.FileViewer }))
-)
+import { loadFileViewer, loadedFileViewer } from './lib/fileViewerModule'
+
+function markPreview(label: string): void {
+  try {
+    performance.mark(`preview:${label}`)
+  } catch {
+    // ignore
+  }
+  if (import.meta.env.DEV) {
+    const elapsed = previewOpenElapsed()
+    const since = elapsed == null ? '' : ` (+${elapsed}ms since open)`
+    console.debug(`[preview-perf] ${label}`, performance.now().toFixed(1), since)
+  }
+}
 
 /**
  * Standalone file preview window — one path per window; reopen focuses it.
- * (file-preview.rpml)
+ * Warm shells start with empty path and receive `onPreviewNavigate`.
  */
-export default function FilePreviewWindow({ path }: { path: string }): React.JSX.Element {
+export default function FilePreviewWindow({
+  path: initialPath
+}: {
+  path: string
+}): React.JSX.Element {
   const ready = useSessionStore((s) => s.ready)
   const bootstrap = useSessionStore((s) => s.bootstrap)
   const params = new URLSearchParams(window.location.search)
-  const origin = (params.get('origin') === 'dock' ? 'dock' : 'session') as 'dock' | 'session'
-  const parentConversationId = params.get('conversationId')
+  const warmMode = params.get('warm')
+  const warmShell = warmMode === '1' || warmMode === 'deep'
+  const requestedAtParam = Number(params.get('requestedAt')) || 0
+  const [path, setPath] = useState(initialPath || '')
+  const [origin, setOrigin] = useState<'dock' | 'session'>(
+    params.get('origin') === 'dock' ? 'dock' : 'session'
+  )
+  const [parentConversationId, setParentConversationId] = useState<string | null>(
+    params.get('conversationId')
+  )
+  const [openSeq, setOpenSeq] = useState(0)
+  const [Viewer, setViewer] = useState(() => loadedFileViewer())
 
   useEffect(() => {
-    document.title = basename(path) || tt('common.preview')
+    if (Viewer) return
+    let alive = true
+    void loadFileViewer().then((component) => {
+      if (alive) setViewer(() => component)
+    })
+    return () => {
+      alive = false
+    }
+  }, [Viewer])
+
+  useEffect(() => {
+    setPreviewOpenClock(requestedAtParam)
+    document.title = path ? basename(path) || tt('common.preview') : tt('common.preview')
     // Light bootstrap: settings only — skip selectConversation so open is fast.
-    void bootstrap(parentConversationId ?? undefined, { light: true })
-  }, [bootstrap, path, parentConversationId])
+    void bootstrap(parentConversationId ?? undefined, { light: true }).then(() => {
+      markPreview('bootstrap-ready')
+      window.vav.window.previewShellReady?.()
+    })
+  }, [bootstrap, parentConversationId, requestedAtParam])
+
+  // Idle shell (fresh warm boot or re-parked after close): pull every format
+  // canvas in now so the next claim is paint-only. A shell that already holds a
+  // path must not compete with the file the user is waiting on.
+  useEffect(() => {
+    if (path) return
+    prefetchPreviewCanvases(warmMode === 'deep')
+  }, [path, warmMode])
+
+  // Splits "shell re-rendered for the new path" from "FileViewer mounted", so a
+  // slow open can be blamed on React/lazy resolution vs. the canvas itself.
+  useLayoutEffect(() => {
+    if (!path) return
+    markPreview(`shell-committed:${openSeq}`)
+  }, [path, openSeq])
+
+  useEffect(() => {
+    const off = window.vav.window.onPreviewNavigate?.((payload) => {
+      try {
+        performance.clearMarks()
+      } catch {
+        // ignore
+      }
+      setPreviewOpenClock(payload.requestedAt)
+      markPreview(`navigate:${payload.openSeq}`)
+      setOpenSeq(payload.openSeq)
+      setPath(payload.path || '')
+      if (payload.origin === 'dock' || payload.origin === 'session') {
+        setOrigin(payload.origin)
+      }
+      setParentConversationId(payload.conversationId ?? null)
+      if (payload.path) {
+        document.title = basename(payload.path) || tt('common.preview')
+      }
+    })
+    return () => off?.()
+  }, [])
 
   useEffect(() => {
     const offSettings = installSettingsBridge()
@@ -61,7 +141,9 @@ export default function FilePreviewWindow({ path }: { path: string }): React.JSX
       <div className="file-preview-shell">
         <div className="file-viewer-header titlebar-drag">
           <div className="file-viewer-lead">
-            <span className="file-viewer-name">{basename(path) || tt('common.preview')}</span>
+            <span className="file-viewer-name">
+              {path ? basename(path) : tt('common.preview')}
+            </span>
           </div>
           <span className="spacer" />
         </div>
@@ -72,21 +154,36 @@ export default function FilePreviewWindow({ path }: { path: string }): React.JSX
     )
   }
 
+  // Warm pool idle — keep shell alive with no FileViewer work.
+  if (!path) {
+    return (
+      <div className="file-preview-shell" data-warm={warmShell ? '1' : undefined}>
+        <div className="file-viewer-header titlebar-drag">
+          <div className="file-viewer-lead">
+            <span className="file-viewer-name">{tt('common.preview')}</span>
+          </div>
+          <span className="spacer" />
+        </div>
+        <div className="file-viewer-body muted" data-pad="text" />
+      </div>
+    )
+  }
+
   return (
     <>
-      <Suspense
-        fallback={
-          <div className="file-viewer-body muted" data-pad="text">
-            {tt('common.loading')}
-          </div>
-        }
-      >
-        <FileViewer
+      {Viewer ? (
+        <Viewer
+          key={`${path}::${openSeq}`}
           path={path}
           origin={origin}
           parentConversationId={parentConversationId}
         />
-      </Suspense>
+      ) : (
+        <div className="file-viewer-body muted" data-pad="text">
+          {tt('common.loading')}
+        </div>
+      )}
+      <PreviewPerfHud />
       <AppToast />
     </>
   )

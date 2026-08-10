@@ -3,6 +3,7 @@ import { FitAddon } from '@xterm/addon-fit'
 import { WebLinksAddon } from '@xterm/addon-web-links'
 import { registerTerminalSink } from '../state/workspaceStore'
 import { IS_MAC } from './platform'
+import { publishTerminalRegistry } from './terminalRegistryHandle'
 
 export interface TerminalEntry {
   term: Terminal
@@ -425,3 +426,5 @@ export function applyTerminalAppearance(fontFamily: string, fontSize: number): v
     }
   }
 }
+
+publishTerminalRegistry({ applyTerminalAppearance, disposeTerminal })

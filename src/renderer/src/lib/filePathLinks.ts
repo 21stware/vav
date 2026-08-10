@@ -25,12 +25,16 @@ const FILE_EXTS =
  * Lookbehind uses `\p{L}`/`\p{N}` (not ASCII-only) so CJK prose like
  * `最大化/还原面板` does not treat `/还原面板` as an absolute path. Built
  * without unnecessary escapes — the `u` flag rejects things like `` \` ``.
+ *
+ * Absolute `/` uses `/(?!/)` so `https://example.io` never yields `//example.io`
+ * (protocol-relative host) as a fake Unix path.
  */
 const PATH_GLOBAL = new RegExp(
   [
-    '(?<![\\p{L}\\p{N}_./\\\\-])(',
-    // Absolute, home, or explicit relative
-    '(?:~|/|\\./|\\.\\./|[A-Za-z]:[\\\\/])',
+    // Also exclude `:` so `https://…` cannot match at the `//`.
+    '(?<![\\p{L}\\p{N}_./\\\\:-])(',
+    // Absolute, home, or explicit relative (`/` but not `//host`)
+    '(?:~/|/(?!/)|\\./|\\.\\./|[A-Za-z]:[\\\\/])',
     '[^\\s`\'"<>|)\\]]+',
     '|',
     // dir/…/file.ext (must contain /)
@@ -43,7 +47,7 @@ const PATH_GLOBAL = new RegExp(
 const INLINE_PATH = new RegExp(
   [
     '^(?:',
-    '(?:~|/|\\./|\\.\\./|[A-Za-z]:[\\\\/])[^\\s`\'"<>|]+',
+    '(?:~/|/(?!/)|\\./|\\.\\./|[A-Za-z]:[\\\\/])[^\\s`\'"<>|]+',
     '|',
     '(?:[\\w.+-]+/)+[\\w.+-]+\\.(?:' + FILE_EXTS + ')',
     ')$'
@@ -51,11 +55,17 @@ const INLINE_PATH = new RegExp(
   'iu'
 )
 
+/** `example.io/docs/readme.md` — host-shaped, not a workspace path. */
+const HOST_RELATIVE =
+  /^(?:www\.)?(?:[a-z0-9-]+\.)+(?:[a-z]{2,})(?:[/:?#]|$)/i
+
 export function looksLikeFilePath(value: string): boolean {
   const v = value.trim()
   if (!v || v.length < 2 || v.length > 512) return false
-  // URLs
+  // URLs (incl. protocol-relative `//cdn.example.com/…`)
   if (/^[a-z][a-z0-9+.-]*:\/\//i.test(v)) return false
+  if (v.startsWith('//')) return false
+  if (v.includes('://')) return false
   if (v.startsWith('mailto:')) return false
   // npm scopes / schema-ish tokens (e.g. @vegalite-spec-v5.json)
   if (v.startsWith('@')) return false
@@ -64,6 +74,8 @@ export function looksLikeFilePath(value: string): boolean {
   // Lone `/词` with no further slash/extension is almost always prose, not a path
   // (e.g. Chinese "最大化/还原面板" leaking `/还原面板`).
   if (/^\/[^/\s.]+$/.test(v) && /[^\u0000-\u007F]/.test(v)) return false
+  // Domain / path shaped (`.io` / `.com` sites without a scheme).
+  if (HOST_RELATIVE.test(v)) return false
   return INLINE_PATH.test(v)
 }
 
@@ -122,8 +134,12 @@ export function filePathLinksPlugin(md: MarkdownIt): void {
     for (const block of state.tokens) {
       if (block.type !== 'inline' || !block.children?.length) continue
       const out: MdToken[] = []
+      // Do not rewrite text that is already inside a hyperlink (linkify / MD links).
+      let linkDepth = 0
       for (const token of block.children as MdToken[]) {
-        if (token.type === 'text' && token.content) {
+        if (token.type === 'link_open') linkDepth++
+        if (token.type === 'link_close') linkDepth = Math.max(0, linkDepth - 1)
+        if (token.type === 'text' && token.content && linkDepth === 0) {
           pushSplitPaths(Token, token.content, out)
           continue
         }

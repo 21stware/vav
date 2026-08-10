@@ -76,6 +76,90 @@ export function renderPreviewMarkdown(source: string, filePath: string): string 
   return html
 }
 
+/**
+ * End index of the last complete markdown block (blank-line separated), never
+ * mid-fence. Used to seal progressive preview HTML while the file window grows.
+ */
+export function findMarkdownSealEnd(source: string): number {
+  if (!source) return 0
+  let fence: string | null = null
+  let lastSeal = 0
+  let lineStart = 0
+  for (let i = 0; i <= source.length; i++) {
+    const atEnd = i === source.length
+    const ch = atEnd ? '\n' : source[i]!
+    if (ch !== '\n' && !atEnd) continue
+    const line = source.slice(lineStart, i)
+    const fenceMatch = /^(```|~~~)/.exec(line)
+    if (fenceMatch) {
+      const marker = fenceMatch[1]!
+      if (!fence) fence = marker
+      else if (line.startsWith(fence)) fence = null
+    } else if (!fence && line === '' && lineStart > 0) {
+      // Blank line ends a block — seal after the newline at i.
+      lastSeal = Math.min(source.length, i + (atEnd ? 0 : 1))
+    }
+    lineStart = i + 1
+  }
+  // Never seal the entire source while it may still grow — keep a live tail.
+  if (lastSeal >= source.length) {
+    const prev = source.lastIndexOf('\n\n', Math.max(0, source.length - 2))
+    return prev >= 0 ? prev + 2 : 0
+  }
+  return lastSeal
+}
+
+export type ProgressivePreviewSeal = {
+  filePath: string
+  sealedSource: string
+  /** Append-only source chunks — each maps to a memoised MarkdownView fragment. */
+  sealedChunks: string[]
+}
+
+/**
+ * Incremental preview markdown: seal completed blocks as immutable source
+ * chunks; only the open tail is re-parsed each tick (same model as agent chat
+ * streaming). Chunks never rewrite earlier DOM.
+ */
+export function renderPreviewMarkdownProgressive(
+  source: string,
+  filePath: string,
+  prev: ProgressivePreviewSeal | null
+): { sealedChunks: string[]; tail: string; seal: ProgressivePreviewSeal } {
+  if (!source) {
+    return {
+      sealedChunks: [],
+      tail: '',
+      seal: { filePath, sealedSource: '', sealedChunks: [] }
+    }
+  }
+
+  const sealEnd = findMarkdownSealEnd(source)
+  const sealedSource = source.slice(0, sealEnd)
+  const tail = source.slice(sealEnd)
+
+  if (
+    prev &&
+    prev.filePath === filePath &&
+    sealedSource.startsWith(prev.sealedSource)
+  ) {
+    if (sealedSource.length === prev.sealedSource.length) {
+      return { sealedChunks: prev.sealedChunks, tail, seal: prev }
+    }
+    const delta = sealedSource.slice(prev.sealedSource.length)
+    const sealedChunks =
+      delta.trim().length > 0 ? [...prev.sealedChunks, delta] : prev.sealedChunks
+    const seal = { filePath, sealedSource, sealedChunks }
+    return { sealedChunks, tail, seal }
+  }
+
+  // Reset (path change or mid-doc rewrite): one chunk for the sealed prefix so
+  // we don't remount N fragments on a cold open of a large file.
+  const sealedChunks = sealedSource.trim().length > 0 ? [sealedSource] : []
+  const seal = { filePath, sealedSource, sealedChunks }
+  return { sealedChunks, tail, seal }
+}
+
 function rewriteLocalUrls(html: string, baseDir: string): string {
   const doc = new DOMParser().parseFromString(`<div id="vav-md-root">${html}</div>`, 'text/html')
   const root = doc.getElementById('vav-md-root')

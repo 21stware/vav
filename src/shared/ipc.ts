@@ -4,7 +4,9 @@ import type {
   AppSettings,
   Conversation,
   ConversationMeta,
+  ConversationPtyLayouts,
   DirectoryListing,
+  DisplayCurrency,
   FileSortKey,
   PreviewRef,
   QuoteDraft,
@@ -74,6 +76,12 @@ export interface PtySessionMeta {
   createdAt: number
   /** Live sessions only, so a freshly attached window paints the right dot. */
   status: Exclude<PtyActivityStatus, 'exited'>
+}
+
+/** Live PTYs plus the split trees every window must hydrate from. */
+export interface PtyListResult {
+  sessions: PtySessionMeta[]
+  layouts: ConversationPtyLayouts
 }
 
 /** Options for `pty.create` — spawn a CLI agent directly into the PTY. */
@@ -216,6 +224,8 @@ export interface TokenUsageViewPayload {
   apiEndpoint: string
   theme: ThemeMode
   locale: AppLocale
+  /** Currency for estimated cost labels (converted from USD estimates). */
+  displayCurrency: DisplayCurrency
   /** Wall clock at emit time — used for cache-expiry relative labels. */
   now: number
   /** Active leaf has a manual compaction. */
@@ -505,6 +515,11 @@ export interface VavApi {
       contextBlocks?: PreviewRef[] | null,
       contextFile?: string | null
     ): Promise<void>
+    /**
+     * Append a system notice to the transcript (no agent turn). Used for UI
+     * actions the model should see on the next send (e.g. Discard Changes).
+     */
+    appendNotice(conversationId: string, text: string): Promise<void>
     cancel(conversationId: string): Promise<void>
     answer(conversationId: string, toolCallId: string, answer: string): Promise<boolean>
     status(conversationId: string): Promise<TurnStatus>
@@ -590,6 +605,18 @@ export interface VavApi {
     /** Metadata + optional data URL for in-app preview. */
     inspect(path: string): Promise<FileInspectResult>
     /**
+     * Background structured office/PDF parse (block pick / search).
+     * Never required for first paint — call after provisional canvas mounts.
+     */
+    inspectStructured(
+      path: string,
+      opts?: { maxBlocks?: number; maxRows?: number }
+    ): Promise<{
+      ok: true
+      structured: import('./structuredDoc').StructuredDocument
+      partial: boolean
+    } | { ok: false; error: string }>
+    /**
      * Page through a SQLite table (read-only). Used by the DB preview canvas.
      */
     dbQuery(
@@ -660,8 +687,13 @@ export interface VavApi {
     kill(tabId: string): Promise<void>
     /** Whether the tab's shell currently has a running (child) command. */
     isBusy(tabId: string): Promise<boolean>
-    /** Live PTYs for a conversation — hydrate tabs/agent hosts after attach. */
-    list(conversationId: string): Promise<PtySessionMeta[]>
+    /** Live PTYs + split layouts for a conversation (multi-window hydrate). */
+    list(conversationId: string): Promise<PtyListResult>
+    /**
+     * Persist bash / CLI-agent split trees so a detached window restores
+     * ⌘D / ⌘⇧D directions instead of flattening to row.
+     */
+    setLayouts(conversationId: string, layouts: ConversationPtyLayouts): Promise<void>
     /** Recent scrollback for a tab (empty if unknown). */
     replay(tabId: string): Promise<string>
     onData(handler: (event: PtyDataEvent) => void): () => void
@@ -712,6 +744,22 @@ export interface VavApi {
       path: string,
       options?: { origin?: 'dock' | 'session'; conversationId?: string }
     ): Promise<void>
+    /**
+     * Warm preview shell: main pushes a new path without reloading the window.
+     * Fired on the file-preview BrowserWindow only.
+     */
+    onPreviewNavigate(
+      handler: (payload: {
+        path: string
+        origin?: 'dock' | 'session'
+        conversationId?: string
+        openSeq: number
+        /** Date.now() when main received the open request (open→paint timing). */
+        requestedAt?: number
+      }) => void
+    ): () => void
+    /** Warm shell finished light bootstrap + chunk prefetch — ready to claim. */
+    previewShellReady(): void
     /** When true, the next native close is deferred to `onPreviewCloseAttempt`. */
     setPreviewCloseGuard(enabled: boolean): Promise<void>
     /** Close the preview window after the renderer cleared the unsaved guard. */
@@ -907,6 +955,7 @@ export const IPC = {
   convChanged: 'vav:conv:changed',
 
   agentSend: 'vav:agent:send',
+  agentAppendNotice: 'vav:agent:append-notice',
   agentCancel: 'vav:agent:cancel',
   agentAnswer: 'vav:agent:answer',
   agentStatus: 'vav:agent:status',
@@ -933,6 +982,9 @@ export const IPC = {
   filesRename: 'vav:files:rename',
   filesTrash: 'vav:files:trash',
   filesInspect: 'vav:files:inspect',
+  filesInspectStructured: 'vav:files:inspect-structured',
+  previewNavigate: 'vav:preview:navigate',
+  previewShellReady: 'vav:preview:shell-ready',
   filesParseBlocks: 'vav:files:parse-blocks',
   previewCloseAttempt: 'vav:preview:close-attempt',
   previewSetCloseGuard: 'vav:preview:set-close-guard',
@@ -957,6 +1009,7 @@ export const IPC = {
   ptyKill: 'vav:pty:kill',
   ptyIsBusy: 'vav:pty:is-busy',
   ptyList: 'vav:pty:list',
+  ptySetLayouts: 'vav:pty:set-layouts',
   ptyReplay: 'vav:pty:replay',
   ptyData: 'vav:pty:data',
   ptyExit: 'vav:pty:exit',

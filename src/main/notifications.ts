@@ -8,10 +8,13 @@ import {
   type NativeImage
 } from 'electron'
 import type { AppSettings } from '@shared/types'
-import { existsSync } from 'node:fs'
-import { join } from 'node:path'
+import { existsSync, readFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
 import { APP_NAME, applyDockIcon, loadAppIcon } from './brand'
 import { t } from './i18n'
+
+/** One multi-res tray glyph for the process lifetime — avoid rebuild thrash. */
+let cachedTrayIcon: NativeImage | null = null
 
 export type NotifyKind = 'turn-complete' | 'ask' | 'approval' | 'request'
 export type NotificationPermission = 'granted' | 'denied' | 'unknown'
@@ -130,7 +133,10 @@ export class NotificationCenter {
     this.refreshTrayMenu()
     this.refreshTrayTitle()
     const size = icon.getSize()
-    console.log(`[tray] status item ready ${size.width}x${size.height} platform=${process.platform}`)
+    const scales = icon.getScaleFactors?.() ?? []
+    console.log(
+      `[tray] status item ready ${size.width}x${size.height}pt scales=[${scales.join(',')}] platform=${process.platform}`
+    )
     return true
   }
 
@@ -218,19 +224,23 @@ function readNotificationPermission(): NotificationPermission {
 
 /**
  * Tray glyph:
- * - macOS: dedicated template PNGs (black + alpha) for the menu bar.
- * - Windows / Linux: colour app mark resized for the notification area.
+ * - macOS: multi-resolution template PNGs (1x/2x/3x, black + alpha).
+ *   Loading only the 22px 1x file made Retina menu-bar icons look soft /
+ *   “over-drawn” — @2x/@3x assets were packaged but never attached.
+ * - Windows / Linux: colour app mark with 1x+2x reps for the notification area.
  */
 function trayIcon(): NativeImage {
+  if (cachedTrayIcon && !cachedTrayIcon.isEmpty()) return cachedTrayIcon
+
+  const built = buildTrayIcon()
+  if (!built.isEmpty()) cachedTrayIcon = built
+  return built
+}
+
+function buildTrayIcon(): NativeImage {
   if (IS_MAC) {
-    const path = resolveTrayTemplatePath()
-    if (path) {
-      const image = nativeImage.createFromPath(path)
-      if (!image.isEmpty()) {
-        image.setTemplateImage(true)
-        return image
-      }
-    }
+    const multi = loadMacTrayTemplate()
+    if (multi && !multi.isEmpty()) return multi
     try {
       const named = nativeImage.createFromNamedImage('NSActionTemplate')
       if (named && !named.isEmpty()) {
@@ -242,25 +252,93 @@ function trayIcon(): NativeImage {
     }
   }
 
-  const markPath = resolveTrayColorIconPath()
-  if (markPath) {
-    const image = nativeImage.createFromPath(markPath)
-    if (!image.isEmpty()) {
-      // Notification area is typically 16 CSS px; @2x displays cleaner on HiDPI.
-      return image.resize({ width: 16, height: 16, quality: 'best' })
-    }
-  }
-
-  const fallback = loadAppIcon('light')
-  if (fallback && !fallback.isEmpty()) {
-    return fallback.resize({ width: 16, height: 16, quality: 'best' })
-  }
+  const color = loadColorTrayIcon()
+  if (color && !color.isEmpty()) return color
 
   console.warn('[tray] missing tray icon assets — status item may be blank')
   return nativeImage.createEmpty()
 }
 
-function resolveTrayTemplatePath(): string | null {
+/**
+ * Attach every available trayTemplate scale into one NSImage so the menu bar
+ * picks the right bitmap instead of upscaling 22×22 into mush.
+ */
+function loadMacTrayTemplate(): NativeImage | null {
+  const dir = resolveTrayTemplateDir()
+  if (!dir) return null
+
+  // Logical menu-bar size (points). Bitmaps: 22 / 44 / 66.
+  const reps: Array<{ file: string; scale: number }> = [
+    { file: 'trayTemplate.png', scale: 1 },
+    { file: 'trayTemplate@2x.png', scale: 2 },
+    { file: 'trayTemplate@3x.png', scale: 3 }
+  ]
+
+  const image = nativeImage.createEmpty()
+  let added = 0
+  for (const rep of reps) {
+    const path = join(dir, rep.file)
+    if (!existsSync(path)) continue
+    try {
+      // Prefer buffer + scaleFactor: createFromPath(1x) alone never finds @2x siblings.
+      image.addRepresentation({
+        scaleFactor: rep.scale,
+        buffer: readFileSync(path)
+      })
+      added += 1
+    } catch (err) {
+      console.warn(`[tray] failed to add ${rep.file}`, err)
+    }
+  }
+
+  if (added === 0) {
+    // Last resort: single file (may be blurry on HiDPI).
+    const fallbackPath = join(dir, 'trayTemplate.png')
+    if (!existsSync(fallbackPath)) return null
+    const single = nativeImage.createFromPath(fallbackPath)
+    if (single.isEmpty()) return null
+    single.setTemplateImage(true)
+    return single
+  }
+
+  image.setTemplateImage(true)
+  return image
+}
+
+/** Colour mark with 16pt + 32pt bitmaps so Win/Linux tray isn’t a soft 16px upscale. */
+function loadColorTrayIcon(): NativeImage | null {
+  const markPath = resolveTrayColorIconPath()
+  const source = markPath
+    ? nativeImage.createFromPath(markPath)
+    : loadAppIcon('light')
+  if (!source || source.isEmpty()) return null
+
+  // Build multi-res from the large mark rather than a single 16px resize.
+  const image = nativeImage.createEmpty()
+  try {
+    const px16 = source.resize({ width: 16, height: 16, quality: 'best' })
+    const px32 = source.resize({ width: 32, height: 32, quality: 'best' })
+    image.addRepresentation({
+      scaleFactor: 1,
+      width: 16,
+      height: 16,
+      buffer: px16.toPNG()
+    })
+    image.addRepresentation({
+      scaleFactor: 2,
+      width: 32,
+      height: 32,
+      buffer: px32.toPNG()
+    })
+    if (!image.isEmpty()) return image
+  } catch {
+    // fall through to simple resize
+  }
+  return source.resize({ width: 16, height: 16, quality: 'best' })
+}
+
+/** Directory that holds trayTemplate.png (and ideally @2x/@3x). */
+function resolveTrayTemplateDir(): string | null {
   const file = 'trayTemplate.png'
   const candidates = [
     join(process.resourcesPath, file),
@@ -270,7 +348,8 @@ function resolveTrayTemplatePath(): string | null {
     join(app.getAppPath(), 'build', file),
     join(app.getAppPath(), '../build', file)
   ]
-  return candidates.find((path) => existsSync(path)) ?? null
+  const hit = candidates.find((path) => existsSync(path))
+  return hit ? dirname(hit) : null
 }
 
 function resolveTrayColorIconPath(): string | null {

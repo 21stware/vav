@@ -35,8 +35,13 @@ import { convertLegacyOffice, legacyOfficeKind } from './legacyOfficeConvert'
  * "file too large" limits. Larger files are opened via further windows or
  * `vav-local://` streaming.
  */
-/** First paint / default agent fs_read window for UTF-8 text. */
-const TEXT_WINDOW_BYTES = 2 * 1024 * 1024
+/** First paint window for UTF-8 text (progressive fill continues via readTextWindow). */
+const TEXT_WINDOW_BYTES = 128 * 1024
+/** Larger window for agent fs_read / full-ish first load when explicitly requested. */
+const TEXT_WINDOW_BYTES_AGENT = 2 * 1024 * 1024
+/** First structured office chunk for block-pick while native canvas loads. */
+const STRUCTURED_FIRST_BLOCKS = 48
+const STRUCTURED_FIRST_ROWS = 120
 /** Soft ceiling for base64 IPC convenience (renderer should prefer vav-local stream). */
 const BINARY_BASE64_SOFT = 16 * 1024 * 1024
 /** Soft budget for full OOXML structured parse in main (best-effort index). */
@@ -45,6 +50,8 @@ const STRUCTURED_PARSE_SOFT = 32 * 1024 * 1024
 const ZIP_FULL_LOAD_MAX = 64 * 1024 * 1024
 
 const WATCH_DEBOUNCE_MS = 300
+/** Keep document indexing off the main thread while a preview is opening. */
+const INDEX_AFTER_OPEN_MS = 1500
 
 /**
  * Filesystem access for both the Files panel and the agent's fs_* tools.
@@ -104,7 +111,10 @@ export class FileService {
   }
 
   async readTextFile(path: string): Promise<{ content: string; truncated: boolean; error?: string }> {
-    const win = await this.readTextWindow(path, { startByte: 0, maxBytes: TEXT_WINDOW_BYTES })
+    const win = await this.readTextWindow(path, {
+      startByte: 0,
+      maxBytes: TEXT_WINDOW_BYTES_AGENT
+    })
     if (win.error) return { content: '', truncated: false, error: win.error }
     return { content: win.content, truncated: win.truncated }
   }
@@ -278,6 +288,20 @@ export class FileService {
     }
   }
 
+  /**
+   * Build the retrieval index well after the preview has painted.
+   *
+   * Extracting text from a PDF is hundreds of milliseconds of main-process
+   * work; on a 0 ms timer it lands inside the open and delays every IPC the
+   * opening window is waiting on.
+   */
+  private scheduleIndex(path: string): void {
+    if (!this.retrieval) return
+    setTimeout(() => {
+      void this.retrieval?.ensureIndex(path).catch(() => {})
+    }, INDEX_AFTER_OPEN_MS)
+  }
+
   async inspect(path: string): Promise<FileInspectResult> {
     const name = basename(path)
     try {
@@ -386,11 +410,7 @@ export class FileService {
       if (kind === 'text' || kind === 'csv' || kind === 'html') {
         const win = await this.readTextWindow(path, { startByte: 0, maxBytes: TEXT_WINDOW_BYTES })
         if (win.error) return { ...base, error: win.error }
-        if (kind === 'csv') {
-          setTimeout(() => {
-            void this.retrieval?.ensureIndex(path).catch(() => {})
-          }, 0)
-        }
+        if (kind === 'csv') this.scheduleIndex(path)
         // truncated/textWindow are for silent progressive fill in the renderer —
         // never surface a product "file too large" or "load more" affordance.
         return {
@@ -511,36 +531,10 @@ export class FileService {
         if (info.size <= 0) return { ...base, error: 'File is empty.' }
         // Always streamable; never refuse open on size.
         base.streamUrl = localFileStreamUrl(path)
-        if (kind === 'pdf') {
-          setTimeout(() => {
-            void this.retrieval?.ensureIndex(path).catch(() => {})
-          }, 0)
-          return base
-        }
-        // OOXML: structured index best-effort within soft memory budget.
-        if (info.size <= STRUCTURED_PARSE_SOFT) {
-          try {
-            const structured = await parseStructuredDocument(path, info.size)
-            setTimeout(() => {
-              void this.retrieval?.ensureIndex(path).catch(() => {})
-            }, 0)
-            return {
-              ...base,
-              structured,
-              text: structured.plainText,
-              lineCount: structured.plainText
-                ? structured.plainText.split(/\r?\n/).length
-                : 0,
-              truncated: !!structured.warnings?.length,
-              warnings: structured.warnings
-            }
-          } catch {
-            // Client renderer can still open via stream/buffer.
-          }
-        } else {
-          setTimeout(() => {
-            void this.retrieval?.ensureIndex(path).catch(() => {})
-          }, 0)
+        // Fast path: kind + streamUrl only. Structured parse is
+        // `inspectStructured` (background) so first paint is not blocked.
+        this.scheduleIndex(path)
+        if (info.size > STRUCTURED_PARSE_SOFT) {
           return {
             ...base,
             warnings: [
@@ -580,6 +574,45 @@ export class FileService {
         mime: '',
         error: (err as Error).message
       }
+    }
+  }
+
+  /**
+   * Background structured parse for block-pick / search. Supports a first
+   * partial chunk (maxBlocks / maxRows) for progressive DOCX/XLSX.
+   */
+  async inspectStructured(
+    path: string,
+    opts?: { maxBlocks?: number; maxRows?: number }
+  ): Promise<
+    | { ok: true; structured: import('@shared/structuredDoc').StructuredDocument; partial: boolean }
+    | { ok: false; error: string }
+  > {
+    try {
+      const info = await stat(path)
+      if (!info.isFile()) return { ok: false, error: 'Not a file' }
+      if (isOfficeLockFile(path)) return { ok: false, error: OFFICE_LOCK_FILE_MESSAGE }
+      if (info.size <= 0) return { ok: false, error: 'File is empty.' }
+      if (info.size > STRUCTURED_PARSE_SOFT) {
+        return { ok: false, error: 'Document too large for full structured index' }
+      }
+      const progressive = opts?.maxBlocks != null || opts?.maxRows != null
+      const structured = await parseStructuredDocument(
+        path,
+        info.size,
+        progressive
+          ? {
+              maxBlocks: opts?.maxBlocks ?? STRUCTURED_FIRST_BLOCKS,
+              maxRows: opts?.maxRows ?? STRUCTURED_FIRST_ROWS
+            }
+          : undefined
+      )
+      const partial =
+        progressive ||
+        (structured.warnings ?? []).some((w) => /partial|truncated|first/i.test(w))
+      return { ok: true, structured, partial }
+    } catch (err) {
+      return { ok: false, error: (err as Error).message }
     }
   }
 

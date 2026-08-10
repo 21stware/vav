@@ -123,6 +123,8 @@ const api: VavApi = {
         contextBlocks ?? null,
         contextFile ?? null
       ),
+    appendNotice: (id: string, text: string) =>
+      ipcRenderer.invoke(IPC.agentAppendNotice, id, text),
     cancel: (id: string) => ipcRenderer.invoke(IPC.agentCancel, id),
     answer: (id: string, toolCallId: string, answer: string): Promise<boolean> =>
       ipcRenderer.invoke(IPC.agentAnswer, id, toolCallId, answer),
@@ -163,6 +165,10 @@ const api: VavApi = {
     rename: (path: string, newName: string) => ipcRenderer.invoke(IPC.filesRename, path, newName),
     trash: (paths: string[]) => ipcRenderer.invoke(IPC.filesTrash, paths),
     inspect: (path: string) => ipcRenderer.invoke(IPC.filesInspect, path),
+    inspectStructured: (
+      path: string,
+      opts?: { maxBlocks?: number; maxRows?: number }
+    ) => ipcRenderer.invoke(IPC.filesInspectStructured, path, opts),
     dbQuery: (path: string, table: string, offset?: number, limit?: number) =>
       ipcRenderer.invoke(IPC.filesDbQuery, path, table, offset ?? 0, limit ?? 100),
     parseBlocks: (path: string, text: string) =>
@@ -210,6 +216,10 @@ const api: VavApi = {
     kill: (tabId: string) => ipcRenderer.invoke(IPC.ptyKill, tabId),
     isBusy: (tabId: string) => ipcRenderer.invoke(IPC.ptyIsBusy, tabId),
     list: (conversationId: string) => ipcRenderer.invoke(IPC.ptyList, conversationId),
+    setLayouts: (
+      conversationId: string,
+      layouts: import('@shared/types').ConversationPtyLayouts
+    ) => ipcRenderer.invoke(IPC.ptySetLayouts, conversationId, layouts),
     replay: (tabId: string) => ipcRenderer.invoke(IPC.ptyReplay, tabId),
     onData: (handler) => subscribe(IPC.ptyData, handler),
     onExit: (handler) => subscribe<string>(IPC.ptyExit, handler),
@@ -238,6 +248,18 @@ const api: VavApi = {
       subscribe<string[]>(IPC.windowDetachedChanged, handler),
     openFilePreview: (path, options) =>
       ipcRenderer.invoke(IPC.windowOpenFilePreview, path, options),
+    onPreviewNavigate: (handler) =>
+      subscribe<{
+        path: string
+        origin?: 'dock' | 'session'
+        conversationId?: string
+        openSeq: number
+        /** Date.now() when main received the open request (open→paint timing). */
+        requestedAt?: number
+      }>(IPC.previewNavigate, handler),
+    previewShellReady: () => {
+      ipcRenderer.send(IPC.previewShellReady)
+    },
     setPreviewCloseGuard: (enabled: boolean) =>
       ipcRenderer.invoke(IPC.previewSetCloseGuard, enabled),
     forcePreviewClose: () => ipcRenderer.invoke(IPC.previewForceClose),

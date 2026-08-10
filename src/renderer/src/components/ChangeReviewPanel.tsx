@@ -10,6 +10,7 @@ import {
 import type { ChangeEntry, ChangeType } from '@shared/changeSet'
 import { useSessionStore } from '../state/sessionStore'
 import { useT } from '../i18n/useT'
+import { BinaryChangeCard, looksLikeBinaryChange } from './BinaryChangeCard'
 import { Button, EmptyState, Modal, Segmented } from './ui'
 import wordmark from '../assets/wordmark.png'
 import wordmarkDark from '../assets/wordmark-dark.png'
@@ -30,70 +31,6 @@ function diffStats(diffText: string): { plus: number; minus: number } {
     else if (line.startsWith('-') && !line.startsWith('---')) minus++
   }
   return { plus, minus }
-}
-
-function isLikelyBinaryPath(path: string): boolean {
-  return /\.(pdf|docx?|xlsx?|pptx?|png|jpe?g|gif|webp|svg|ico|zip|dylib|so|dll|exe|bin|wasm|mp4|mov|wav|mp3)$/i.test(
-    path
-  )
-}
-
-function binaryKind(path: string): 'pdf' | 'office' | 'image' | 'other' {
-  if (/\.pdf$/i.test(path)) return 'pdf'
-  if (/\.(docx?|xlsx?|pptx?)$/i.test(path)) return 'office'
-  if (/\.(png|jpe?g|gif|webp|svg|ico)$/i.test(path)) return 'image'
-  return 'other'
-}
-
-function formatBytes(n: number): string {
-  if (n < 1024) return `${n} B`
-  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`
-  return `${(n / (1024 * 1024)).toFixed(1)} MB`
-}
-
-function BinaryCompare({ file }: { file: ChangeEntry }): React.JSX.Element {
-  const t = useT()
-  const kind = binaryKind(file.filePath)
-  const beforeLen = file.originalContent?.length ?? 0
-  const afterLen = file.newContent?.length ?? 0
-  const kindLabel =
-    kind === 'pdf' ? 'PDF' : kind === 'office' ? 'Office' : kind === 'image' ? 'Image' : 'Binary'
-
-  return (
-    <div className="review-binary">
-      <div className="review-binary-meta">
-        <div className="kv-row">
-          <span className="kv-label">File</span>
-          <span className="kv-value">{file.relativePath}</span>
-        </div>
-        <div className="kv-row">
-          <span className="kv-label">Change</span>
-          <span className="kv-value">
-            {changeTypeLabel(file.changeType, t)} ({kindLabel})
-          </span>
-        </div>
-        <div className="kv-row">
-          <span className="kv-label">Before</span>
-          <span className="kv-value">
-            {file.originalContent == null ? '—' : formatBytes(beforeLen)}
-          </span>
-        </div>
-        <div className="kv-row">
-          <span className="kv-label">After</span>
-          <span className="kv-value">{formatBytes(afterLen)}</span>
-        </div>
-      </div>
-      <p className="muted tiny review-binary-hint">
-        {kind === 'pdf'
-          ? t('review.binaryPdfHint')
-          : kind === 'office'
-            ? t('review.binaryOfficeHint')
-            : kind === 'image'
-              ? t('review.binaryImageHint')
-              : t('review.binaryOtherHint')}
-      </p>
-    </div>
-  )
 }
 
 function DiffView({ text }: { text: string }): React.JSX.Element {
@@ -131,10 +68,7 @@ function DiffView({ text }: { text: string }): React.JSX.Element {
 }
 
 function FileInspector({ file }: { file: ChangeEntry }): React.JSX.Element {
-  const looksBinary =
-    isLikelyBinaryPath(file.filePath) ||
-    (!file.diffText.startsWith('@@') && !file.diffText.startsWith('+') && file.diffText.length < 80)
-  if (looksBinary) return <BinaryCompare file={file} />
+  if (looksLikeBinaryChange(file)) return <BinaryChangeCard file={file} />
   return <DiffView text={file.diffText} />
 }
 
@@ -326,21 +260,26 @@ export function ChangeReviewPanel(): React.JSX.Element | null {
                 onClick={() => void rejectChangeFiles([...checked])}
               />
               <span className="spacer" />
-              <Button
-                icon={<Pencil size={14} />}
-                label={t('review.editBeforeApply')}
-                size="sm"
-                onClick={() => {
-                  const path =
-                    [...checked].find(
-                      (p) => files.find((f) => f.filePath === p)?.status === 'pending'
-                    ) ?? selected?.filePath
-                  const file = files.find((f) => f.filePath === path)
-                  if (!file || file.status !== 'pending') return
-                  setEditPath(file.filePath)
-                  setEditDraft(file.newContent)
-                }}
-              />
+              {(() => {
+                const path =
+                  [...checked].find(
+                    (p) => files.find((f) => f.filePath === p)?.status === 'pending'
+                  ) ?? selected?.filePath
+                const file = files.find((f) => f.filePath === path)
+                if (!file || looksLikeBinaryChange(file)) return null
+                return (
+                  <Button
+                    icon={<Pencil size={14} />}
+                    label={t('review.editBeforeApply')}
+                    size="sm"
+                    onClick={() => {
+                      if (file.status !== 'pending') return
+                      setEditPath(file.filePath)
+                      setEditDraft(file.newContent)
+                    }}
+                  />
+                )
+              })()}
             </div>
           )}
         </div>

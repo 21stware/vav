@@ -8,15 +8,40 @@ import {
 const lastInjectFingerprint = new Map<string, string>()
 /** Pending delayed inject timers keyed by conversation id. */
 const pendingInjectTimers = new Map<string, number>()
-import type { PtyActivityStatus, PtySessionMeta } from '@shared/ipc'
+import type { PtyActivityStatus, PtyListResult, PtySessionMeta } from '@shared/ipc'
 import {
   enabledCliAgents,
   normalizeFileSortKey,
   type AgentConfig,
+  type ConversationPtyLayouts,
   type FileEntry,
   type FileSortKey,
+  type TerminalLayoutNode,
+  type TerminalSplitAxis,
   type TerminalTab
 } from '@shared/types'
+
+export type { TerminalLayoutNode, TerminalSplitAxis }
+
+/**
+ * After ENOENT on a workspace root, remove it from recent/pinned lists.
+ * Uses settings.update so main broadcasts the pruned list to all windows.
+ */
+async function forgetMissingWorkspaceDir(path: string): Promise<void> {
+  try {
+    const { useSessionStore } = await import('./sessionStore')
+    const settings = useSessionStore.getState().settings
+    const recent = settings.recentWorkspaceDirectories ?? []
+    const pinned = settings.pinnedWorkspaceDirectories ?? []
+    if (!recent.includes(path) && !pinned.includes(path)) return
+    await window.vav.settings.update({
+      recentWorkspaceDirectories: recent.filter((entry) => entry !== path),
+      pinnedWorkspaceDirectories: pinned.filter((entry) => entry !== path)
+    })
+  } catch {
+    // settings may be mid-bootstrap
+  }
+}
 
 /**
  * Resolve a CLI agent from renderer settings when available (no IPC).
@@ -77,27 +102,6 @@ async function resolveTerminalCwd(conversationId: string, sliceRoot: string | nu
 }
 
 export const AGENT_TAB_ID = 'agent'
-
-/**
- * Split direction for an individual split operation (not a global reflow).
- * Spec release 9ed447d6…:
- * - `row` = left/right (⌘D vertical split, flex-direction row)
- * - `column` = top/bottom (⌘⇧D horizontal split, flex-direction column)
- */
-export type TerminalSplitAxis = 'row' | 'column'
-
-/**
- * Binary split tree: each ⌘D / ⌘⇧D replaces the *active leaf* with a branch,
- * so directions compose independently (VS Code style).
- */
-export type TerminalLayoutNode =
-  | { type: 'leaf'; tabId: string; weight: number }
-  | {
-      type: 'branch'
-      direction: TerminalSplitAxis
-      weight: number
-      children: [TerminalLayoutNode, TerminalLayoutNode]
-    }
 
 /** One CLI agent's terminal host layout — survives agent switching. */
 export interface AgentHostSession {
@@ -244,6 +248,89 @@ function layoutFromTabIds(tabIds: string[]): TerminalLayoutNode | null {
   }
 }
 
+/**
+ * Reconcile a live PTY id set into an existing split tree without discarding
+ * direction / weights. `layoutFromTabIds` always builds `row` branches, so a
+ * naïve hydrate after ⌘⇧D would flatten top/bottom splits into left/right.
+ */
+function reconcileLayout(
+  existing: TerminalLayoutNode | null,
+  tabIds: string[]
+): TerminalLayoutNode | null {
+  if (tabIds.length === 0) return null
+  if (!existing) return layoutFromTabIds(tabIds)
+
+  const want = new Set(tabIds)
+  let layout: TerminalLayoutNode | null = existing
+
+  for (const id of collectLeaves(layout)) {
+    if (!want.has(id)) {
+      layout = layout ? removeLeaf(layout, id) : null
+    }
+  }
+
+  const have = new Set(collectLeaves(layout))
+  // Same membership → keep topology (column vs row, flex weights).
+  if (tabIds.length === have.size && tabIds.every((id) => have.has(id))) {
+    return layout
+  }
+
+  for (const id of tabIds) {
+    if (have.has(id)) continue
+    if (!layout) {
+      layout = { type: 'leaf', tabId: id, weight: 1 }
+    } else {
+      // Hydrate-only attach (other window / race before splitAgentHost patch).
+      // Local splits write direction themselves before the next hydrate lands.
+      const leaves = collectLeaves(layout)
+      const focus = leaves[leaves.length - 1]!
+      layout = splitLeaf(layout, focus, 'row', id)
+    }
+    have.add(id)
+  }
+  return layout
+}
+
+/** Merge projected agent hosts while preserving each host's split topology. */
+function reconcileAgentHosts(
+  prev: Record<string, AgentHostSession>,
+  projected: Record<string, AgentHostSession>,
+  remoteAgents?: Record<string, TerminalLayoutNode | null>
+): Record<string, AgentHostSession> {
+  const out: Record<string, AgentHostSession> = {}
+  for (const [agentId, proj] of Object.entries(projected)) {
+    const old = prev[agentId]
+    const tabIds = proj.tabs.map((t) => t.id)
+    // Main-process layouts win so a detached window does not flatten ⌘⇧D → row.
+    const base = remoteAgents?.[agentId] ?? old?.layout ?? null
+    const layout = reconcileLayout(base, tabIds)
+    const activeTabId =
+      old && tabIds.includes(old.activeTabId)
+        ? old.activeTabId
+        : (proj.activeTabId || tabIds[0] || '')
+    out[agentId] = {
+      tabs: proj.tabs,
+      layout,
+      activeTabId
+    }
+  }
+  return out
+}
+
+function emptyPtyLayouts(): ConversationPtyLayouts {
+  return { bash: null, agents: {} }
+}
+
+function normalizePtyListResult(raw: PtyListResult | PtySessionMeta[]): PtyListResult {
+  if (Array.isArray(raw)) {
+    return { sessions: raw, layouts: emptyPtyLayouts() }
+  }
+  return {
+    sessions: raw?.sessions ?? [],
+    layouts: raw?.layouts ?? emptyPtyLayouts()
+  }
+}
+
 function tabsEqual(a: TerminalTab[], b: TerminalTab[]): boolean {
   if (a.length !== b.length) return false
   for (let i = 0; i < a.length; i++) {
@@ -254,6 +341,13 @@ function tabsEqual(a: TerminalTab[], b: TerminalTab[]): boolean {
     }
   }
   return true
+}
+
+/** Stable fingerprint of split axes so hydrate can tell row vs column apart. */
+function layoutDirectionKey(node: TerminalLayoutNode | null): string {
+  if (!node) return ''
+  if (node.type === 'leaf') return `L:${node.tabId}`
+  return `B:${node.direction}(${layoutDirectionKey(node.children[0])}|${layoutDirectionKey(node.children[1])})`
 }
 
 function agentHostsEqual(
@@ -269,9 +363,7 @@ function agentHostsEqual(
     const hb = b[bk[i]!]!
     if (ha.activeTabId !== hb.activeTabId) return false
     if (!tabsEqual(ha.tabs, hb.tabs)) return false
-    const la = collectLeaves(ha.layout).join(',')
-    const lb = collectLeaves(hb.layout).join(',')
-    if (la !== lb) return false
+    if (layoutDirectionKey(ha.layout) !== layoutDirectionKey(hb.layout)) return false
   }
   return true
 }
@@ -514,6 +606,12 @@ interface WorkspaceState {
    */
   hydratePtyState(id: string): Promise<void>
 
+  /**
+   * Push current bash / agent split trees to main so other windows (detached)
+   * hydrate the same directions. No-op when the API is missing.
+   */
+  syncPtyLayouts(id: string): void
+
   disposeConversation(id: string): void
 }
 
@@ -557,8 +655,11 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   async hydratePtyState(id) {
     if (!window.vav.pty.list) return
     let sessions: PtySessionMeta[] = []
+    let remoteLayouts = emptyPtyLayouts()
     try {
-      sessions = await window.vav.pty.list(id)
+      const listed = normalizePtyListResult(await window.vav.pty.list(id))
+      sessions = listed.sessions
+      remoteLayouts = listed.layouts
     } catch {
       return
     }
@@ -596,17 +697,26 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       // deliberately: `isLiveAgentSession` would read a dead pane as restorable
       // and suppress the relaunch that switching back to that agent needs.
       const tabs = withTombstones(projected.tabs, s.tabs, status)
-      const layout =
-        tabs.length === projected.tabs.length
-          ? projected.layout
-          : layoutFromTabIds(tabs.map((t) => t.id))
+      // Prefer main-process layouts (detached ↔ main). Fall back to local, never
+      // to a fresh layoutFromTabIds row tree when a persisted tree exists.
+      const layout = reconcileLayout(
+        remoteLayouts.bash ?? s.layout,
+        tabs.map((t) => t.id)
+      )
+      const agentHostSessions = reconcileAgentHosts(
+        s.agentHostSessions,
+        projected.agentHostSessions,
+        remoteLayouts.agents
+      )
 
       // Skip no-op patches to avoid re-render thrash on frequent pty:changed.
       if (
         tabsEqual(s.tabs, tabs) &&
-        agentHostsEqual(s.agentHostSessions, projected.agentHostSessions) &&
+        agentHostsEqual(s.agentHostSessions, agentHostSessions) &&
         s.activeHostAgentId === activeHostAgentId &&
-        collectLeaves(s.layout).join(',') === collectLeaves(layout).join(',')
+        collectLeaves(s.layout).join(',') === collectLeaves(layout).join(',') &&
+        // Direction matters: same leaves with row vs column is a real change.
+        layoutDirectionKey(s.layout) === layoutDirectionKey(layout)
       ) {
         return {}
       }
@@ -620,10 +730,22 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         tabs,
         layout,
         activeTabId,
-        agentHostSessions: projected.agentHostSessions,
+        agentHostSessions,
         activeHostAgentId
       }
     })
+  },
+
+  syncPtyLayouts(id) {
+    const setLayouts = window.vav?.pty?.setLayouts
+    if (typeof setLayouts !== 'function') return
+    const slice = get().workspaces[id]
+    if (!slice) return
+    const agents: ConversationPtyLayouts['agents'] = {}
+    for (const [agentId, host] of Object.entries(slice.agentHostSessions)) {
+      agents[agentId] = host.layout
+    }
+    void setLayouts(id, { bash: slice.layout, agents }).catch(() => undefined)
   },
 
   async setWorkingDirectory(id, root) {
@@ -688,6 +810,11 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         : listing.error
       : undefined
     const nextEntries = error ? [] : listing.entries
+
+    // Root gone → drop from recent/pinned so the switcher never offers a dead path.
+    if (error === 'ENOENT' && live.root && path === live.root) {
+      void forgetMissingWorkspaceDir(path)
+    }
 
     patch(set, id, (s) => {
       const prev = s.dirs[path]
@@ -906,22 +1033,45 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         layout: { type: 'leaf', tabId, weight: 1 },
         activeTabId: tabId
       }))
+      get().syncPtyLayouts(id)
       return
     }
     const focusId = slice.activeTabId || bashTabs[0]!.id
     const newTabId = await get().newUserTerminal(id, cols, rows, null)
     patch(set, id, (s) => {
-      const tabs = userBashTabsOnly(s.tabs)
-      const layout = s.layout ?? { type: 'leaf', tabId: focusId, weight: 1 }
+      // Hydrate may have attached newTabId as a default-row leaf during the
+      // await — strip it, then re-split with the caller's axis (⌘D / ⌘⇧D).
+      let baseTabs = userBashTabsOnly(s.tabs).filter((t) => t.id !== newTabId)
+      let layout = s.layout ?? { type: 'leaf', tabId: focusId, weight: 1 }
+      if (collectLeaves(layout).includes(newTabId)) {
+        layout = removeLeaf(layout, newTabId) ?? {
+          type: 'leaf',
+          tabId: focusId,
+          weight: 1
+        }
+      }
       const focusInLayout = collectLeaves(layout).includes(focusId)
       const splitAt = focusInLayout ? focusId : (collectLeaves(layout)[0] ?? focusId)
       const nextLayout = splitLeaf(layout, splitAt, axis, newTabId)
+      if (!baseTabs.some((t) => t.id === newTabId)) {
+        baseTabs = [
+          ...baseTabs,
+          {
+            id: newTabId,
+            title: `bash-${baseTabs.length + 1}`,
+            isAgent: false,
+            agentId: null,
+            splitWeight: 1
+          }
+        ]
+      }
       return {
-        tabs,
+        tabs: baseTabs,
         layout: nextLayout,
         activeTabId: newTabId
       }
     })
+    get().syncPtyLayouts(id)
   },
 
   async splitAgentHost(id, cols = 80, rows = 24, axis: TerminalSplitAxis = 'row') {
@@ -958,6 +1108,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         if (msg.includes('AGENT_NOT_FOUND')) return
         throw err
       }
+      get().syncPtyLayouts(id)
       return
     }
 
@@ -972,15 +1123,24 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     }
     patch(set, id, (s) => {
       const cur = getAgentHost(s, agentId) ?? host
-      const layout = cur.layout ?? { type: 'leaf', tabId: focusId, weight: 1 }
+      // Drop a hydrate race that may have already inserted this pane as `row`.
+      let layout = cur.layout ?? { type: 'leaf', tabId: focusId, weight: 1 }
+      if (collectLeaves(layout).includes(newTabId)) {
+        layout = removeLeaf(layout, newTabId) ?? {
+          type: 'leaf',
+          tabId: focusId,
+          weight: 1
+        }
+      }
+      const baseTabs = cur.tabs.filter((t) => t.id !== newTabId)
       const focusInLayout = collectLeaves(layout).includes(focusId)
       const splitAt = focusInLayout ? focusId : (collectLeaves(layout)[0] ?? focusId)
       const nextLayout = splitLeaf(layout, splitAt, axis, newTabId)
       const tabs = [
-        ...cur.tabs,
+        ...baseTabs,
         {
           id: newTabId,
-          title: `${agent.name}-${cur.tabs.length + 1}`,
+          title: `${agent.name}-${baseTabs.length + 1}`,
           isAgent: false as const,
           agentId,
           splitWeight: 1
@@ -993,6 +1153,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         }
       }
     })
+    get().syncPtyLayouts(id)
   },
 
   async activateAgentHost(id, agentId, cols = 80, rows = 24, initialContext = null) {
@@ -1109,6 +1270,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         }
       }
     })
+    get().syncPtyLayouts(id)
     // Align with main (and other windows) after spawn.
     await get().hydratePtyState(id)
     return 'created'
@@ -1228,6 +1390,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         activeTabId: nextActive
       }
     })
+    get().syncPtyLayouts(id)
   },
 
   closeAgentTab(id, tabId) {
@@ -1256,6 +1419,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         }
       }
     })
+    get().syncPtyLayouts(id)
   },
 
   notifyShellChanged() {

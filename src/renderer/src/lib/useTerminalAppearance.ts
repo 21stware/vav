@@ -1,6 +1,6 @@
 import { useEffect } from 'react'
 import { useSessionStore } from '../state/sessionStore'
-import { applyTerminalAppearance } from './terminalRegistry'
+import { applyTerminalAppearance } from './terminalRegistryHandle'
 
 /** Keep xterm font in sync with Settings (code font + size). */
 export function useTerminalAppearance(): void {

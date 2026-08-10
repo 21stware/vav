@@ -105,6 +105,15 @@ function findBranch(
 const SPLIT_RESIZER_PX = 4
 const SPLIT_MIN_WEIGHT = 0.35
 
+/**
+ * Flex shorthand with basis 0 so row *and* column splits share space by weight.
+ * A bare `flex: N` leaves basis `auto`, and xterm's intrinsic height then
+ * collapses ⌘⇧D (top/bottom) panes to content size instead of 50/50.
+ */
+function splitFlex(weight: number): string {
+  return `${Math.max(SPLIT_MIN_WEIGHT, weight)} 1 0%`
+}
+
 function adjustBranchWeightsByPixels(
   root: TerminalLayoutNode,
   branchKey: string,
@@ -168,7 +177,7 @@ function LayoutNodeView({
     return (
       <div
         className={`terminal-split-pane${node.tabId === activeTabId ? ' is-active' : ''}`}
-        style={{ flex: Math.max(SPLIT_MIN_WEIGHT, node.weight) }}
+        style={{ flex: splitFlex(node.weight) }}
         onMouseDown={() =>
           surface === 'agent'
             ? selectAgentTab(conversationId, node.tabId)
@@ -187,7 +196,7 @@ function LayoutNodeView({
   return (
     <div
       className="terminal-split-branch"
-      style={{ flexDirection: direction, flex: Math.max(SPLIT_MIN_WEIGHT, node.weight) }}
+      style={{ flexDirection: direction, flex: splitFlex(node.weight) }}
     >
       <LayoutNodeView
         conversationId={conversationId}
@@ -232,8 +241,8 @@ function LayoutNodeView({
             const branch = findBranch(layout, branchKey)
             if (!branch || branch.type === 'leaf' || childEls.length < 2) return
             const [wa, wb] = branch.children
-            childEls[0]!.style.flex = String(Math.max(SPLIT_MIN_WEIGHT, wa.weight))
-            childEls[1]!.style.flex = String(Math.max(SPLIT_MIN_WEIGHT, wb.weight))
+            childEls[0]!.style.flex = splitFlex(wa.weight)
+            childEls[1]!.style.flex = splitFlex(wb.weight)
           }
           const onMove = (e: PointerEvent): void => {
             pendingDelta = (direction === 'column' ? e.clientY : e.clientX) - start
@@ -276,6 +285,7 @@ function LayoutNodeView({
                 }
               }
             })
+            useWorkspaceStore.getState().syncPtyLayouts(conversationId)
           }
           const onUp = (): void => {
             if (raf) cancelAnimationFrame(raf)

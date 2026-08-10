@@ -7,6 +7,7 @@ import { useEffect, useRef, useState } from 'react'
 import { renderAsync } from 'docx-preview'
 import type { PreviewBlock } from '@shared/previewBlock'
 import { loadFileBuffer } from '../../lib/officeBinary'
+import { docMeasureMinPx, docMeasurePx, stableContentWidth } from '../../lib/docMeasure'
 import { attachDomPick, updateDomPick } from './pickFromDom'
 import { useT } from '../../i18n/useT'
 
@@ -42,6 +43,15 @@ function fitDocxToHost(host: HTMLElement): void {
     frame.appendChild(wrapper)
   }
 
+  // Host not laid out yet (or was staged at 0×0) — drop stale cache and bail;
+  // ResizeObserver will re-fit once the scrollport has a real width.
+  if (host.clientWidth < 40) {
+    delete wrapper.dataset.naturalPageW
+    delete wrapper.dataset.naturalH
+    delete wrapper.dataset.docxScale
+    return
+  }
+
   // Cache natural metrics once (or when content changes).
   let pageW = Number(wrapper.dataset.naturalPageW || 0)
   let naturalH = Number(wrapper.dataset.naturalH || 0)
@@ -56,13 +66,15 @@ function fitDocxToHost(host: HTMLElement): void {
     })
     if (pageW < 40) pageW = wrapper.scrollWidth || 816
     naturalH = wrapper.scrollHeight || 1
+    // Refuse to lock in a collapsed measurement.
+    if (!(pageW > 40) || !(naturalH > 40)) return
     wrapper.dataset.naturalPageW = String(pageW)
     wrapper.dataset.naturalH = String(naturalH)
   }
 
-  // Match PDF fit: fill host width on large panes (was capped at 1.15 → tiny page).
-  const avail = Math.max(120, host.clientWidth - 32)
-  const scale = Math.min(2.75, Math.max(0.35, avail / pageW))
+  // Stable paper width (min…max). Pane size only scrolls — never reflows scale.
+  const target = stableContentWidth(pageW, docMeasureMinPx(host), docMeasurePx(host))
+  const scale = Math.min(2.75, Math.max(0.35, target / pageW))
   const prev = Number(wrapper.dataset.docxScale || 0)
   // Skip no-op style thrash during sub-pixel ResizeObserver noise.
   if (prev && Math.abs(prev - scale) < 0.008) return
@@ -72,9 +84,11 @@ function fitDocxToHost(host: HTMLElement): void {
   wrapper.dataset.docxScale = String(scale)
 
   // Visual width tracks the scaled page so the stage centers like PDF frames.
+  // No max-width:100% — narrower stages scroll horizontally instead of squashing.
   const visW = Math.ceil(pageW * scale)
   frame.style.width = `${visW}px`
-  frame.style.maxWidth = '100%'
+  frame.style.maxWidth = 'none'
+  frame.style.minWidth = `${visW}px`
   frame.style.height = `${Math.ceil(naturalH * scale)}px`
   frame.style.minHeight = `${Math.ceil(naturalH * scale)}px`
   frame.style.margin = '0 auto'
@@ -85,7 +99,8 @@ export function DocxNativeView({
   revision = 0,
   selecting,
   selectedIds,
-  onPick
+  onPick,
+  onReady
 }: {
   path: string
   /** Bump when the file is rewritten on disk so the canvas reloads. */
@@ -93,6 +108,7 @@ export function DocxNativeView({
   selecting: boolean
   selectedIds: string[]
   onPick: (block: PreviewBlock, event: MouseEvent) => void
+  onReady?: () => void
 }): React.JSX.Element {
   const t = useT()
   const bodyRef = useRef<HTMLDivElement>(null)
@@ -112,10 +128,11 @@ export function DocxNativeView({
     const styleHost = styleRef.current
     if (!body) return
 
-    setLoading(true)
-    setReady(false)
+    // Keep the previous canvas painted until the next render is ready —
+    // clearing first was a full-page white flash on every agent rewrite.
+    const hadContent = body.childNodes.length > 0
+    if (!hadContent) setLoading(true)
     setError(null)
-    body.innerHTML = ''
 
     const pick = (block: PreviewBlock, event: MouseEvent): void => {
       onPickRef.current(block, event)
@@ -125,7 +142,8 @@ export function DocxNativeView({
       try {
         const buffer = await loadFileBuffer(path)
         if (cancelled) return
-        await renderAsync(buffer, body, styleHost ?? undefined, {
+        const staging = document.createElement('div')
+        await renderAsync(buffer, staging, styleHost ?? undefined, {
           className: 'docx-native',
           inWrapper: true,
           breakPages: true,
@@ -139,7 +157,7 @@ export function DocxNativeView({
 
         // Library default injects gray stage on the wrapper — strip it explicitly
         // (CSS targets .docx-native-wrapper; also clear any inline leftovers).
-        const wrapper = body.querySelector(
+        const wrapper = staging.querySelector(
           '.docx-native-wrapper, .docx-wrapper'
         ) as HTMLElement | null
         if (wrapper) {
@@ -148,6 +166,7 @@ export function DocxNativeView({
           wrapper.style.boxShadow = 'none'
         }
 
+        body.replaceChildren(...Array.from(staging.childNodes))
         fitDocxToHost(body)
 
         dispose = attachDomPick(body, {
@@ -173,10 +192,12 @@ export function DocxNativeView({
 
         setLoading(false)
         setReady(true)
+        onReady?.()
       } catch (err) {
         if (!cancelled) {
           setError((err as Error).message || t('preview.loadFailed'))
           setLoading(false)
+          onReady?.()
           setReady(false)
         }
       }

@@ -44,9 +44,12 @@ export function CompactionBanner({
           onClick={onClear}
         />
       </div>
-      {showSummary && (
-        <pre className="compaction-log-summary">{compaction.summary}</pre>
-      )}
+      {/* Stay mounted so grid-template-rows can retarget open/close mid-flight. */}
+      <div className="compaction-log-detail">
+        <div className="compaction-log-detail-inner">
+          <pre className="compaction-log-summary">{compaction.summary}</pre>
+        </div>
+      </div>
     </div>
   )
 }

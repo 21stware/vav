@@ -31,7 +31,8 @@ if (IS_MAC && !view) {
 function Root(): React.JSX.Element {
   if (view === 'settings') return <SettingsWindow />
   if (view === 'session' && conversationId) return <SessionWindow conversationId={conversationId} />
-  if (view === 'file-preview' && filePath) return <FilePreviewWindow path={filePath} />
+  // Warm shells load with view=file-preview&warm=1 and no path yet.
+  if (view === 'file-preview') return <FilePreviewWindow path={filePath || ''} />
   if (view === 'token-usage' && conversationId) {
     return <TokenUsageWindow conversationId={conversationId} />
   }

@@ -1,7 +1,7 @@
 {
   "version": 1,
-  "generatedAt": "2026-08-04T14:42:54.983Z",
-  "note": "Bundled Agent Skills for vav. See NOTICE.md for licenses. Anthropic document skills (docx/pdf/pptx/xlsx from anthropics/skills) are NOT included — their LICENSE forbids redistribution outside Anthropic services. Document skills here are MIT from MiniMax-AI/skills.",
+  "generatedAt": "2026-08-10T02:00:00.000Z",
+  "note": "Bundled Agent Skills for vav. See NOTICE.md for licenses. Anthropic document skills (docx/pdf/pptx/xlsx from anthropics/skills) are NOT included — their LICENSE forbids redistribution outside Anthropic services. Prefer officecli (Apache-2.0, bundled binary) for OOXML create/edit; MiniMax docx/xlsx/pptx remain as fallbacks.",
   "skills": [
     {
       "id": "algorithmic-art",
@@ -50,7 +50,7 @@
     {
       "id": "docx",
       "name": "minimax-docx",
-      "description": "Professional DOCX document creation, editing, and formatting using OpenXML SDK (.NET). Three pipelines: (A) create new documents from scratch, (B) fill/edit content in existing documents, (C) apply template formatting with XSD validation gate-check. MUST use this skill whenever the user wants to produce, modify, or format a Word document — including when they say \"write a report\", \"draft a proposal\", \"make a contract\", \"fill in this form\", \"reformat to match this template\", or any task whose fin",
+      "description": "Fallback Word/OpenXML skill when officecli cannot complete the task. In VAV, prefer load_skill(\"officecli\") first for .docx create/edit. Three pipelines: create, fill/edit, template formatting with XSD validation — use only after officecli is insufficient.",
       "license": "MIT",
       "source": "MiniMax-AI/skills (minimax-docx)",
       "sourceUrl": "https://github.com/MiniMax-AI/skills/tree/main/skills/minimax-docx",
@@ -148,9 +148,27 @@
       "dir": "mcp-builder"
     },
     {
+      "id": "officecli",
+      "name": "officecli",
+      "description": "Create, analyze, proofread, and modify Office documents (.docx, .xlsx, .pptx) with the bundled officecli CLI. Prefer for Word / Excel / PowerPoint create and edit over docx, xlsx, pptx skills and over python-docx / openpyxl / PptxGenJS.",
+      "license": "Apache-2.0",
+      "source": "iOfficeAI/OfficeCLI",
+      "sourceUrl": "https://github.com/iOfficeAI/OfficeCLI",
+      "tags": [
+        "docx",
+        "xlsx",
+        "pptx",
+        "office",
+        "word",
+        "excel",
+        "powerpoint"
+      ],
+      "dir": "officecli"
+    },
+    {
       "id": "pdf",
       "name": "minimax-pdf",
-      "description": "Use this skill when visual quality and design identity matter for a PDF. CREATE (generate from scratch): \"make a PDF\", \"generate a report\", \"write a proposal\", \"create a resume\", \"beautiful PDF\", \"professional document\", \"cover page\", \"polished PDF\", \"client-ready document\". FILL (complete form fields): \"fill in the form\", \"fill out this PDF\", \"complete the form fields\", \"write values into PDF\", \"what fields does this PDF have\". REFORMAT (apply design to an existing doc): \"reformat this document",
+      "description": "PDF CREATE / FILL / REFORMAT in VAV (officecli does not handle PDF). CREATE polished reports; FILL form fields; REFORMAT existing docs/Markdown to PDF. Prefer this skill for PDF work — not officecli, not fs_write.",
       "license": "MIT",
       "source": "MiniMax-AI/skills (minimax-pdf)",
       "sourceUrl": "https://github.com/MiniMax-AI/skills/tree/main/skills/minimax-pdf",
@@ -164,7 +182,7 @@
     {
       "id": "pptx",
       "name": "pptx-generator",
-      "description": "Generate, edit, and read PowerPoint presentations. Create from scratch with PptxGenJS (cover, TOC, content, section divider, summary slides), edit existing PPTX via XML workflows, or extract text with markitdown. Triggers: PPT, PPTX, PowerPoint, presentation, slide, deck, slides.",
+      "description": "Fallback PowerPoint skill when officecli cannot complete the task. In VAV prefer load_skill(\"officecli\") first for .pptx create/edit. Covers PptxGenJS create, XML edit workflows, and markitdown extract — use only after officecli is insufficient.",
       "license": "MIT",
       "source": "MiniMax-AI/skills (pptx-generator)",
       "sourceUrl": "https://github.com/MiniMax-AI/skills/tree/main/skills/pptx-generator",
@@ -235,7 +253,7 @@
     {
       "id": "xlsx",
       "name": "minimax-xlsx",
-      "description": "Open, create, read, analyze, edit, or validate Excel/spreadsheet files (.xlsx, .xlsm, .csv, .tsv). Use when the user asks to create, build, modify, analyze, read, validate, or format any Excel spreadsheet, financial model, pivot table, or tabular data file. Covers: creating new xlsx from scratch, reading and analyzing existing files, editing existing xlsx with zero format loss, formula recalculation and validation, and applying professional financial formatting standards. Triggers on 'spreadshee",
+      "description": "Fallback Excel/OpenXML skill when officecli cannot complete the task. In VAV prefer officecli for .xlsx create/edit; prefer sql_query for .csv/.tsv/.parquet/SQLite analysis. Use for complex Excel authoring or formula validation when officecli is insufficient.",
       "license": "MIT",
       "source": "MiniMax-AI/skills (minimax-xlsx)",
       "sourceUrl": "https://github.com/MiniMax-AI/skills/tree/main/skills/minimax-xlsx",

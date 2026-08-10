@@ -20,9 +20,17 @@ export function structuredKindForPath(path: string): StructuredDocKind | null {
  * Parsers (SheetJS / pdf.js / OOXML) load on demand so FileService import
  * does not pull them into every main-process boot.
  */
+export interface StructuredParseOptions {
+  /** Stop after this many body blocks (docx progressive first paint). */
+  maxBlocks?: number
+  /** Cap rows per sheet for xlsx first chunk. */
+  maxRows?: number
+}
+
 export async function parseStructuredDocument(
   path: string,
-  _size: number
+  _size: number,
+  opts?: StructuredParseOptions
 ): Promise<StructuredDocument> {
   if (isOfficeLockFile(path)) {
     throw new Error(OFFICE_LOCK_FILE_MESSAGE)
@@ -35,11 +43,18 @@ export async function parseStructuredDocument(
 
   switch (kind) {
     case 'docx':
-      return (await import('./parseDocx')).parseDocx(path)
+      return (await import('./parseDocx')).parseDocx(path, {
+        maxBlocks: opts?.maxBlocks
+      })
     case 'xlsx':
-      return (await import('./parseXlsx')).parseXlsx(path)
+      return (await import('./parseXlsx')).parseXlsx(path, {
+        maxRows: opts?.maxRows
+      })
     case 'pptx':
-      return (await import('./parsePptx')).parsePptx(path)
+      return (await import('./parsePptx')).parsePptx(path, {
+        // Reuse maxBlocks as first-N slides for progressive PPTX.
+        maxSlides: opts?.maxBlocks
+      })
     case 'pdf':
       return (await import('./parsePdf')).parsePdf(path)
   }

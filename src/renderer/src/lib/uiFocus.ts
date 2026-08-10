@@ -1,5 +1,5 @@
 import { tt } from '../i18n/useT'
-import { disposeTerminal } from './terminalRegistry'
+import { disposeTerminal } from './terminalRegistryHandle'
 import { useSessionStore } from '../state/sessionStore'
 import { useWorkspaceStore } from '../state/workspaceStore'
 

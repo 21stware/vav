@@ -5,6 +5,7 @@ import {
 } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import type { ShellKind } from '@shared/types'
+import { agentShellEnv } from './agentShellEnv'
 
 const IS_WINDOWS = process.platform === 'win32'
 
@@ -259,7 +260,7 @@ export class StickyShell {
         oneShotArgs(this.shell, command),
         {
           cwd: this.cwd,
-          env: { ...process.env, TERM: 'dumb', PAGER: 'cat', GIT_PAGER: 'cat' },
+          env: agentShellEnv(),
           detached: !IS_WINDOWS,
           windowsHide: true,
           stdio: ['ignore', 'pipe', 'pipe']
@@ -479,7 +480,7 @@ export class StickyShell {
   private spawnShell(): void {
     const child = spawn(shellPath(this.shell), stdinArgs(this.shell), {
       cwd: this.cwd,
-      env: { ...process.env, TERM: 'dumb', PAGER: 'cat', GIT_PAGER: 'cat' },
+      env: agentShellEnv(),
       // Own process group, so a timeout can take the whole command tree down.
       detached: !IS_WINDOWS,
       windowsHide: true
@@ -509,7 +510,7 @@ export class StickyShell {
     return new Promise((resolve) => {
       const child = spawn(shellPath(this.shell), oneShotArgs(this.shell, command), {
         cwd: this.cwd,
-        env: { ...process.env, TERM: 'dumb' },
+        env: agentShellEnv({ TERM: 'dumb' }),
         detached: !IS_WINDOWS,
         windowsHide: true
       })
