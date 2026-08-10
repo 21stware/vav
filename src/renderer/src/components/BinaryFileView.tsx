@@ -1,10 +1,11 @@
-import { ExternalLink, File } from 'lucide-react'
+import { ExternalLink, File, FileCode2, Binary } from 'lucide-react'
 import { FileManagerIcon } from './FileManagerIcon'
 import type { BinaryFileMeta, FileInspectResult } from '@shared/ipc'
 import { formatBytes } from '../lib/format'
 import { useT } from '../i18n/useT'
 import { Button } from './ui'
 import { getResolvedLocale } from '../i18n/useT'
+import type { BinaryOpenMode } from './BinaryOpenViews'
 
 function formatWhen(ms: number | null | undefined): string {
   if (ms == null || !Number.isFinite(ms)) return '—'
@@ -19,12 +20,15 @@ export function BinaryFileView({
   info,
   meta,
   onOpenWithDefault,
-  onReveal
+  onReveal,
+  onOpenAs
 }: {
   info: FileInspectResult
   meta?: BinaryFileMeta | null
   onOpenWithDefault: () => void | Promise<void>
   onReveal: () => void | Promise<void>
+  /** Ephemeral override — parent must not persist across file opens. */
+  onOpenAs?: (mode: BinaryOpenMode) => void
 }): React.JSX.Element {
   const t = useT()
   const defaultApp = meta?.defaultApp?.trim() || null
@@ -83,6 +87,34 @@ export function BinaryFileView({
         ))}
       </dl>
       <div className="binary-file-actions">
+        {onOpenAs ? (
+          <>
+            <Button
+              label={t('preview.openAsText')}
+              size="sm"
+              variant="secondary"
+              icon={<FileCode2 size={13} />}
+              title={t('preview.openAsTextHint')}
+              onClick={(event) => {
+                event.preventDefault()
+                event.stopPropagation()
+                onOpenAs('text')
+              }}
+            />
+            <Button
+              label={t('preview.openAsHex')}
+              size="sm"
+              variant="secondary"
+              icon={<Binary size={13} />}
+              title={t('preview.openAsHexHint')}
+              onClick={(event) => {
+                event.preventDefault()
+                event.stopPropagation()
+                onOpenAs('hex')
+              }}
+            />
+          </>
+        ) : null}
         <Button
           label={openLabel}
           size="sm"

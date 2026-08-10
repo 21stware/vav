@@ -1,13 +1,14 @@
 /**
  * Read-only SQLite preview helpers (node:sqlite DatabaseSync).
- * Tables list + paged SELECT — no arbitrary SQL from the renderer.
+ * Tables list + windowed SELECT for scroll virtualization — no arbitrary SQL
+ * from the renderer, and no product pagination UI.
  */
 
 import { DatabaseSync } from 'node:sqlite'
 import { basename } from 'node:path'
 import type { SqliteDatabaseInfo, SqliteQueryResult, SqliteTableInfo } from '@shared/ipc'
 
-const DEFAULT_LIMIT = 100
+const DEFAULT_LIMIT = 500
 const MAX_LIMIT = 500
 
 /** Safe SQL identifier: letters, digits, underscore only. */

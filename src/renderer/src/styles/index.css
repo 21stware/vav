@@ -13,6 +13,15 @@
   --font-ui: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'PingFang SC', system-ui, sans-serif;
   --font-code: 'SF Mono', Menlo, monospace;
   --code-size: 12px;
+  /*
+   * Document prose (.md preview) reads at a larger optical size than chrome,
+   * so it gets its own stack: the system face still leads — it carries the
+   * Text/Display optical switch and the best CJK hinting — with explicit
+   * Windows and CJK fallbacks behind it.
+   */
+  --font-reading:
+    -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI Variable Text', 'Segoe UI',
+    'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', system-ui, sans-serif;
 
   /* Mono accent (default tint). */
   --accent: #3a3a42;
@@ -64,8 +73,16 @@
   --doc-measure-min: 720px;
   --slide-measure: 1000px;
   --slide-measure-min: 800px;
-  --md-measure: 42rem;
-  --md-measure-min: 36rem;
+  /*
+   * Prose measure, not pane width: sized so an English line lands near
+   * ~75 characters at the document body size. Code, tables and diagrams
+   * share the same column — no side bleed.
+   */
+  --md-measure: 38rem;
+  --md-measure-min: 32rem;
+  /* Document body type — chrome and chat markdown keep the 14px UI size. */
+  --md-doc-size: 15px;
+  --md-doc-lh: 1.68;
 
   --shadow-sheet: 0 24px 64px rgba(20, 20, 28, 0.26), 0 2px 8px rgba(20, 20, 28, 0.12);
   --shadow-card: 0 1px 2px rgba(20, 20, 28, 0.07);
@@ -6966,9 +6983,9 @@ mark {
 }
 
 /*
- * Media stage: short images center in the viewport; tall images (HEIC etc.)
- * keep native height so the body/scroll stack can scroll. Never overflow:hidden
- * here — that clipped long photos and blocked meta text selection.
+ * Media stage: images fill the remaining viewport and use contain — small
+ * images stay at natural size and sit centered; large ones scale down and
+ * reflow with the window. EXIF meta stays above and scrolls on its own.
  */
 .file-viewer-body:has(> .preview-media-stage),
 .file-viewer-body:has(.preview-media-stage),
@@ -6976,27 +6993,27 @@ mark {
 .file-viewer-body:has(> .file-viewer-image-scroll) {
   display: flex;
   flex-direction: column;
-  /* Sole scrollport for meta + tall image. */
-  overflow: auto;
+  overflow: hidden;
   overscroll-behavior: contain;
   min-height: 0;
   user-select: text;
   -webkit-user-select: text;
 }
 
-/* Stack meta + image as one scrollable column (HEIC EXIF + tall decode). */
 .file-viewer-image-scroll {
-  flex: 0 0 auto;
+  flex: 1 1 auto;
   width: 100%;
   min-width: 0;
+  min-height: 0;
+  height: 100%;
   display: flex;
   flex-direction: column;
   align-items: stretch;
+  overflow: hidden;
 }
 
 .preview-media-stage {
-  /* Grow with content; do not flex-shrink the image into a clipped box. */
-  flex: 0 0 auto;
+  flex: 1 1 auto;
   width: 100%;
   min-height: 0;
   height: auto;
@@ -7004,10 +7021,9 @@ mark {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  overflow: visible;
+  overflow: hidden;
   padding: 24px;
   box-sizing: border-box;
-  /* Don't steal text selection from meta above / captions. */
   user-select: text;
   -webkit-user-select: text;
 }
@@ -7018,13 +7034,33 @@ mark {
 .preview-media-stage > audio,
 .preview-media-stage .file-viewer-media {
   max-width: 100%;
-  /* No max-height:100% — tall images must expand the scroll container. */
-  max-height: none;
+  max-height: 100%;
   width: auto;
   height: auto;
   min-width: 0;
   min-height: 0;
   object-fit: contain;
+}
+
+/* Image stack: inherit the stage box so max-height:100% resolves against it. */
+.file-viewer-image-scroll .preview-media-stage .file-viewer-media-stack {
+  max-width: 100%;
+  max-height: 100%;
+  min-width: 0;
+  min-height: 0;
+  height: auto;
+  flex: 0 1 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.file-viewer-image-scroll .preview-media-stage > .media-pick-frame,
+.file-viewer-image-scroll .preview-media-stage > .preview-select-region {
+  max-width: 100%;
+  max-height: 100%;
+  min-width: 0;
+  min-height: 0;
 }
 
 /* Prefer viewport fit for video; still scrollable if taller than the window. */
@@ -7075,11 +7111,12 @@ mark {
   width: auto !important;
   height: auto !important;
   max-width: 100%;
-  max-height: none;
+  max-height: 100%;
   position: relative;
   display: flex;
   flex-direction: column;
   align-items: center;
+  justify-content: center;
   /* Room for the pick outline around the player card. */
   padding: 4px;
   box-sizing: border-box;
@@ -7292,6 +7329,7 @@ mark {
 }
 
 .office-native-root {
+  position: relative;
   flex: 1;
   min-height: 0;
   display: flex;
@@ -7302,6 +7340,100 @@ mark {
   /* Read mode: allow selecting text on the page. */
   user-select: text;
   -webkit-user-select: text;
+}
+
+/*
+ * Floating page chrome — bottom center of PDF / DOCX / PPTX stages.
+ * Compact pill (‹ 19 / 100 ›); does not steal scroll (pointer-events only on self).
+ */
+.doc-page-pager {
+  position: absolute;
+  left: 50%;
+  bottom: 12px;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px 4px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--border-strong) 70%, transparent);
+  background: color-mix(in srgb, var(--bg-content) 88%, transparent);
+  color: var(--text-secondary);
+  box-shadow:
+    0 1px 2px color-mix(in srgb, var(--text) 6%, transparent),
+    0 6px 18px color-mix(in srgb, var(--text) 8%, transparent);
+  font-size: 12px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  transform: translateX(-50%);
+  backdrop-filter: blur(14px) saturate(1.2);
+  -webkit-backdrop-filter: blur(14px) saturate(1.2);
+  pointer-events: auto;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.doc-page-pager-step {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: default;
+  transition:
+    background 140ms var(--ease-out, cubic-bezier(0.23, 1, 0.32, 1)),
+    color 140ms var(--ease-out, cubic-bezier(0.23, 1, 0.32, 1)),
+    transform 120ms var(--ease-out, cubic-bezier(0.23, 1, 0.32, 1));
+}
+
+.doc-page-pager-step:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--text) 9%, transparent);
+  color: var(--text);
+}
+
+.doc-page-pager-step:active:not(:disabled) {
+  transform: scale(0.94);
+  background: color-mix(in srgb, var(--text) 14%, transparent);
+  color: var(--text);
+}
+
+.doc-page-pager-step:disabled {
+  opacity: 0.32;
+  color: var(--text-tertiary);
+  cursor: default;
+}
+
+.doc-page-pager-count {
+  min-width: 4.6em;
+  padding: 0 6px;
+  text-align: center;
+  color: var(--text);
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .doc-page-pager-step {
+    transition: none;
+  }
+  .doc-page-pager-step:active:not(:disabled) {
+    transform: none;
+  }
+}
+
+:root[data-reduce-motion='true'] .doc-page-pager-step {
+  transition: none;
+}
+
+:root[data-reduce-motion='true'] .doc-page-pager-step:active:not(:disabled) {
+  transform: none;
 }
 
 /* Block-pick: still allow drag-select text for copy (click = Agent pick). */
@@ -8597,25 +8729,27 @@ mark {
  * regions). Spacing rules MUST apply at every nesting level — the previous
  * `.preview-document > …` direct-child selectors left nested paragraphs /
  * headings with zero gap (every mini-`.markdown` also zeroed first/last
- * margins). Rhythm tokens match Agent log `.markdown`.
+ * margins). Type and rhythm are the document ones (see `.preview-markdown`),
+ * not the Agent log's UI-sized markdown.
  */
 .preview-document {
-  --md-lh: 1.65;
-  --md-block: 0.8em;
-  --md-section: 1.35em;
+  --md-lh: var(--md-doc-lh);
+  --md-block: 0.9em;
+  --md-section: 1.7em;
   /* Stable reading column — pane scrolls when narrower than the measure. */
   width: var(--md-measure);
   min-width: var(--md-measure-min);
   max-width: var(--md-measure);
   margin: 0 auto;
-  padding: 8px 0 48px;
+  padding: 10px 0 48px;
   box-sizing: border-box;
   user-select: text;
   -webkit-user-select: text;
   display: flex;
   flex-direction: column;
   gap: 0;
-  font-size: 14px;
+  font-family: var(--font-reading);
+  font-size: var(--md-doc-size);
   line-height: var(--md-lh);
   letter-spacing: normal;
   color: var(--text);
@@ -8633,6 +8767,18 @@ mark {
   width: 100%;
   max-width: 100%;
   box-sizing: border-box;
+}
+
+/*
+ * Table cells are also pick targets, but width:100% on every td/th makes the
+ * auto table algorithm give each column the full measure — text piles up on
+ * the right with a huge empty middle. Let cells size from content again.
+ */
+.preview-document table .preview-select-region:is(td, th),
+.preview-markdown td.preview-select-region,
+.preview-markdown th.preview-select-region {
+  width: auto;
+  max-width: 22rem;
 }
 
 /* --- Section / body rhythm (any depth) --- */
@@ -9686,6 +9832,73 @@ mark {
   flex-wrap: wrap;
 }
 
+/* Ephemeral text/hex override for unsupported files (not persisted). */
+.file-viewer-body:has(> .binary-open-toolbar) {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.binary-open-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 0 auto;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--bg-raised) 70%, var(--bg-content));
+}
+
+.binary-open-tab {
+  border: 0;
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 550;
+  padding: 4px 10px;
+  border-radius: 6px;
+  cursor: default;
+}
+
+.binary-open-tab:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.binary-open-tab.active {
+  background: color-mix(in srgb, var(--accent) 12%, var(--bg-sunken));
+  color: var(--text);
+}
+
+.binary-open-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 12px 16px 24px;
+}
+
+.binary-open-body.hex {
+  font-variant-numeric: tabular-nums;
+}
+
+.binary-force-text,
+.binary-hex-dump {
+  margin: 0;
+  white-space: pre;
+  overflow: visible;
+}
+
+.binary-hex-dump {
+  font-family: var(--font-code);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.binary-hex-more {
+  padding: 8px 0 0;
+}
+
 .preview-mode.is-forced {
   opacity: 0.72;
 }
@@ -10185,25 +10398,34 @@ mark {
 }
 
 /*
- * File-preview markdown — same vertical rhythm as Agent log `.markdown`.
- * Keep a reading measure; do not re-inflate heading tops / line-height.
+ * File-preview markdown — this is a *document*, not chat: it reads at
+ * --md-doc-size on a ~75-character measure, with a heading scale wide enough
+ * that structure is legible while scrolling. Space before a heading marks the
+ * section; space after glues the heading to its body. Adjacent margins are
+ * left to collapse, so each level owns its own top gap.
  */
 .preview-markdown {
-  --md-lh: 1.65;
-  --md-block: 0.8em;
-  --md-section: 1.35em;
-  font-size: 14px;
+  --md-lh: var(--md-doc-lh);
+  --md-block: 0.9em;
+  --md-section: 1.7em;
+  font-size: var(--md-doc-size);
   line-height: var(--md-lh);
   letter-spacing: normal;
   width: var(--md-measure);
   min-width: var(--md-measure-min);
   max-width: var(--md-measure);
   margin-inline: auto;
-  padding: 8px 0 48px;
+  padding: 10px 0 48px;
   box-sizing: border-box;
   color: var(--text);
   font-weight: 400;
-  font-family: var(--font-ui);
+  font-family: var(--font-reading);
+  /* Let the system face pick its Text/Display cut per heading size. */
+  font-optical-sizing: auto;
+  font-kerning: normal;
+  font-variant-ligatures: common-ligatures contextual;
+  /* Break long words only when they cannot fit — never mid-word by default. */
+  overflow-wrap: break-word;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
 }
@@ -10216,16 +10438,21 @@ mark {
   margin-bottom: 0 !important;
 }
 
-/* Headings: match Agent log (space before = section, after = glue to body). */
+/*
+ * Heading scale ≈ 1.22 steps. Tracking tightens as size grows (large type
+ * looks loose at the body's default fit); heading margins are expressed in the
+ * heading's own em, so each level's section gap scales with its size.
+ */
 .preview-markdown h1,
 .preview-markdown h2,
 .preview-markdown h3,
 .preview-markdown h4,
 .preview-markdown h5,
 .preview-markdown h6 {
-  margin: var(--md-section) 0 0.4em;
+  margin: var(--md-section) 0 0.45em;
+  font-family: var(--font-reading);
   font-weight: 650;
-  letter-spacing: -0.01em;
+  letter-spacing: -0.012em;
   line-height: 1.3;
   color: var(--text);
   text-wrap: balance;
@@ -10235,39 +10462,61 @@ mark {
 }
 
 .preview-markdown h1 {
-  font-size: 1.35em;
+  font-size: 1.85em;
   font-weight: 700;
-  margin-top: 0.75em;
-  margin-bottom: 0.45em;
+  letter-spacing: -0.022em;
+  line-height: 1.18;
+  margin-top: 0.1em;
+  margin-bottom: 0.5em;
 }
 
 .preview-markdown h2 {
-  font-size: 1.18em;
-  margin-top: 1.4em;
+  font-size: 1.38em;
+  font-weight: 660;
+  letter-spacing: -0.018em;
+  line-height: 1.26;
+  margin-top: 1.45em;
   margin-bottom: 0.4em;
 }
 
 .preview-markdown h3 {
-  font-size: 1.08em;
-  margin-top: 1.2em;
+  font-size: 1.18em;
+  letter-spacing: -0.013em;
+  line-height: 1.34;
+  margin-top: 1.3em;
   margin-bottom: 0.35em;
 }
 
 .preview-markdown h4 {
-  font-size: 1.02em;
-  font-weight: 600;
-  margin-top: 1.05em;
+  font-size: 1.05em;
+  font-weight: 660;
+  letter-spacing: -0.006em;
+  line-height: 1.4;
+  margin-top: 1.35em;
   margin-bottom: 0.3em;
 }
 
-.preview-markdown h5,
-.preview-markdown h6 {
-  font-size: 1em;
-  font-weight: 600;
+/*
+ * Past h4 the scale runs out of size, so the last two levels separate by
+ * weight and ink instead — still sentence case, never a small-caps label.
+ */
+.preview-markdown h5 {
+  font-size: 0.97em;
+  font-weight: 680;
   color: var(--text-secondary);
-  margin-top: 1em;
+  margin-top: 1.4em;
   margin-bottom: 0.3em;
   letter-spacing: normal;
+  text-transform: none;
+}
+
+.preview-markdown h6 {
+  font-size: 0.94em;
+  font-weight: 680;
+  color: var(--text-tertiary);
+  margin-top: 1.45em;
+  margin-bottom: 0.3em;
+  letter-spacing: 0.01em;
   text-transform: none;
 }
 
@@ -10280,32 +10529,18 @@ mark {
   margin-top: 0;
 }
 
-/* Body → heading: same section token as Agent log. */
-.preview-markdown p + h1,
-.preview-markdown p + h2,
-.preview-markdown p + h3,
-.preview-markdown p + h4,
-.preview-markdown p + h5,
-.preview-markdown p + h6,
-.preview-markdown ul + h1,
-.preview-markdown ul + h2,
-.preview-markdown ul + h3,
-.preview-markdown ol + h1,
-.preview-markdown ol + h2,
-.preview-markdown ol + h3,
-.preview-markdown .md-block + h1,
-.preview-markdown .md-block + h2,
-.preview-markdown .md-block + h3,
-.preview-markdown pre + h1,
-.preview-markdown pre + h2,
-.preview-markdown pre + h3 {
-  margin-top: var(--md-section);
-}
+/*
+ * Body → heading needs no rule of its own: the body block's bottom margin and
+ * the heading's own top margin collapse to the larger of the two, which keeps
+ * every level's graded gap intact. A flat `--md-section` here would erase it.
+ */
 
 .preview-markdown p {
   margin: 0 0 var(--md-block);
   line-height: var(--md-lh);
   letter-spacing: normal;
+  /* Avoid a one-word last line; falls back to `wrap` where unsupported. */
+  text-wrap: pretty;
 }
 
 .preview-markdown p:last-child {
@@ -10316,23 +10551,24 @@ mark {
 .preview-markdown ul,
 .preview-markdown ol {
   margin: 0 0 var(--md-block);
-  padding-left: 1.45em;
+  padding-left: 1.5em;
 }
 
 .preview-markdown li {
-  margin: 0.2em 0;
+  margin: 0.32em 0;
   line-height: var(--md-lh);
   letter-spacing: normal;
-  padding-left: 0.15em;
+  padding-left: 0.2em;
+  text-wrap: pretty;
 }
 
 .preview-markdown li::marker {
-  color: color-mix(in srgb, var(--text-tertiary) 55%, var(--accent-text));
-  font-weight: 500;
+  color: var(--text-tertiary);
+  font-weight: 400;
 }
 
 .preview-markdown li > p {
-  margin: 0 0 0.45em;
+  margin: 0 0 0.5em;
 }
 
 .preview-markdown li > p:last-child {
@@ -10341,34 +10577,45 @@ mark {
 
 .preview-markdown li > ul,
 .preview-markdown li > ol {
-  margin: 0.3em 0 0.45em;
+  margin: 0.35em 0 0.5em;
 }
 
+/* Numbers align on their own column; the label sits a touch below body size. */
 .preview-markdown ol > li::marker {
   font-variant-numeric: tabular-nums;
   font-size: 0.92em;
+  color: var(--text-secondary);
 }
 
 /* --- Inline --- */
+/* Mono runs 0.86em so its x-height matches the surrounding prose. */
 .preview-markdown :not(pre) > code {
-  padding: 0.14em 0.4em;
-  border-radius: 6px;
+  padding: 0.12em 0.36em;
+  border-radius: 5px;
+  font-family: var(--font-code);
   font-size: 0.86em;
-  font-weight: 500;
+  font-weight: 450;
   letter-spacing: 0;
   line-height: 1.4;
-  background: color-mix(in srgb, var(--bg-sunken) 70%, var(--bg-hover));
-  color: color-mix(in srgb, var(--accent-text) 35%, var(--text));
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--border) 70%, transparent);
+  font-variant-ligatures: none;
+  background: color-mix(in srgb, var(--bg-sunken) 60%, var(--bg-hover));
+  color: color-mix(in srgb, var(--text) 88%, var(--accent-text));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--border) 55%, transparent);
 }
 
+/*
+ * Links carry colour and an underline — not extra weight as well. Bolding
+ * them too speckled the paragraph with dark spots at document size.
+ */
 .preview-markdown a {
   color: color-mix(in srgb, var(--accent-text) 88%, #6eb6ff);
   text-decoration: underline;
-  text-decoration-color: color-mix(in srgb, var(--accent) 35%, transparent);
-  text-underline-offset: 3px;
+  /* Carries the whole affordance now the weight is gone — keep it readable. */
+  text-decoration-color: color-mix(in srgb, var(--accent) 50%, transparent);
+  text-decoration-skip-ink: auto;
+  text-underline-offset: 0.16em;
   text-decoration-thickness: from-font;
-  font-weight: 500;
+  font-weight: inherit;
   transition:
     color var(--dur-hover) ease,
     text-decoration-color var(--dur-hover) ease;
@@ -10376,12 +10623,12 @@ mark {
 
 .preview-markdown a:hover {
   color: color-mix(in srgb, var(--accent-text) 100%, #9ecfff);
-  text-decoration-color: color-mix(in srgb, var(--accent) 70%, transparent);
+  text-decoration-color: color-mix(in srgb, var(--accent) 85%, transparent);
 }
 
 :root:not([data-theme='dark']) .preview-markdown a {
   color: color-mix(in srgb, var(--accent) 75%, #1565c0);
-  text-decoration-color: color-mix(in srgb, var(--accent) 40%, transparent);
+  text-decoration-color: color-mix(in srgb, var(--accent) 50%, transparent);
 }
 
 :root:not([data-theme='dark']) .preview-markdown a:hover {
@@ -10389,13 +10636,13 @@ mark {
 }
 
 .preview-markdown strong {
-  font-weight: 680;
+  font-weight: 640;
   color: var(--text);
 }
 
 .preview-markdown em {
   font-style: italic;
-  color: color-mix(in srgb, var(--text) 92%, var(--text-secondary));
+  color: inherit;
 }
 
 .preview-markdown del {
@@ -10406,15 +10653,16 @@ mark {
 /* --- Quote / rule --- */
 .preview-markdown blockquote {
   margin: 0 0 var(--md-block);
-  padding: 0.15em 0 0.15em 0.9em;
-  border-left: 3px solid color-mix(in srgb, var(--accent) 45%, var(--border));
+  padding: 0.1em 0 0.1em 1em;
+  border-left: 2px solid color-mix(in srgb, var(--accent) 30%, var(--border));
   border-radius: 0;
   background: transparent;
   color: var(--text-secondary);
 }
 
 .preview-markdown blockquote p {
-  margin: 0 0 0.55em;
+  margin: 0 0 0.6em;
+  text-wrap: pretty;
 }
 
 .preview-markdown blockquote p:last-child {
@@ -10426,9 +10674,10 @@ mark {
   background: color-mix(in srgb, var(--accent) 4%, transparent);
 }
 
+/* A break between sections, so it gets section air on both sides. */
 .preview-markdown hr,
 .preview-markdown .md-preview-hr {
-  margin: var(--md-section) 0;
+  margin: 1.8em 0;
   border: none;
   height: 0;
   max-width: 100%;
@@ -10470,13 +10719,16 @@ mark {
 }
 
 .preview-markdown pre {
-  margin: 1.2em 0 1.4em;
-  padding: 14px 16px;
+  margin: 0 0 var(--md-block);
+  padding: 12px 14px;
   border-radius: 12px;
   background: color-mix(in srgb, var(--bg-sunken) 92%, var(--bg-raised));
-  line-height: 1.6;
+  font-family: var(--font-code);
+  line-height: 1.55;
   letter-spacing: 0;
   font-size: 0.84em;
+  font-variant-ligatures: none;
+  font-variant-numeric: tabular-nums;
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--border) 75%, transparent);
   overflow-x: auto;
 }
@@ -10509,7 +10761,7 @@ mark {
 /* --- Tables --- */
 .preview-markdown .table-scroll,
 .preview-markdown .md-preview-table {
-  margin: 1.25em 0 1.45em;
+  margin: 0 0 var(--md-block);
   border-radius: 12px;
   overflow-x: auto;
   overscroll-behavior-x: contain;
@@ -10523,13 +10775,15 @@ mark {
   width: max-content;
   min-width: 100%;
   margin: 0;
-  font-size: 0.9em;
-  line-height: 1.5;
+  font-size: 0.92em;
+  line-height: 1.55;
+  /* Figures line up down a column even across rows. */
+  font-variant-numeric: tabular-nums;
 }
 
 .preview-markdown th,
 .preview-markdown td {
-  padding: 9px 14px;
+  padding: 10px 14px;
   text-align: left;
   vertical-align: top;
   border-bottom: 1px solid color-mix(in srgb, var(--border) 75%, transparent);
@@ -10538,11 +10792,11 @@ mark {
 }
 
 .preview-markdown th {
-  background: color-mix(in srgb, var(--accent) 10%, var(--bg-raised));
+  background: color-mix(in srgb, var(--accent) 8%, var(--bg-raised));
   color: var(--text);
-  font-weight: 650;
-  font-size: 0.92em;
-  letter-spacing: 0.01em;
+  font-weight: 620;
+  font-size: 0.94em;
+  letter-spacing: normal;
   white-space: nowrap;
   border-bottom-color: color-mix(in srgb, var(--border) 90%, var(--accent));
 }
@@ -10603,7 +10857,7 @@ mark {
 
 /* Mermaid in document preview */
 .preview-markdown .md-mermaid-wrap {
-  margin: 1.25em 0 1.45em;
+  margin: 0 0 var(--md-block);
 }
 
 .preview-markdown .md-mermaid {
@@ -10681,7 +10935,7 @@ mark {
 .file-viewer-media {
   display: block;
   max-width: 100%;
-  max-height: none;
+  max-height: 100%;
   width: auto;
   height: auto;
   object-fit: contain;
@@ -10695,7 +10949,6 @@ mark {
   gap: 10px;
   max-width: 100%;
   min-width: 0;
-  /* Grow with image height so the outer body can scroll. */
   height: auto;
   flex: 0 0 auto;
 }
@@ -10705,6 +10958,8 @@ mark {
   flex: 0 0 auto;
   align-self: center;
   width: min(100%, 480px);
+  max-height: min(28vh, 220px);
+  overflow: auto;
   margin: 16px 16px 0;
   padding: 8px 10px;
   border-radius: var(--radius-sm);

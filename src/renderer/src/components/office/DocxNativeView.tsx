@@ -10,6 +10,8 @@ import { loadFileBuffer } from '../../lib/officeBinary'
 import { docMeasureMinPx, docMeasurePx, stableContentWidth } from '../../lib/docMeasure'
 import { attachDomPick, updateDomPick } from './pickFromDom'
 import { useT } from '../../i18n/useT'
+import { PagePager } from './PagePager'
+import { useDocumentPageIndex } from './useDocumentPageIndex'
 
 const DOCX_SELECTOR = [
   '.docx-native p',
@@ -118,6 +120,13 @@ export function DocxNativeView({
   const [ready, setReady] = useState(false)
   const onPickRef = useRef(onPick)
   onPickRef.current = onPick
+
+  // docx-preview emits one <section> per page when breakPages is true.
+  const pageIndex = useDocumentPageIndex({
+    scrollRef: bodyRef,
+    pageSelector: 'section.docx-native, section.docx, .docx-native-wrapper > section, .docx-wrapper > section',
+    enabled: ready && !error
+  })
 
   useEffect(() => {
     let cancelled = false
@@ -232,6 +241,13 @@ export function DocxNativeView({
         </div>
       )}
       <div ref={bodyRef} className="docx-body-host" data-pick-root="true" />
+      <PagePager
+        current={pageIndex.current}
+        total={pageIndex.total}
+        onPrev={pageIndex.prev}
+        onNext={pageIndex.next}
+        disabled={!ready || !!error}
+      />
     </div>
   )
 }

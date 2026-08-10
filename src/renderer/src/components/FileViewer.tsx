@@ -51,6 +51,12 @@ import { menuAnchor, showMenu } from '../lib/nativeMenu'
 import { Button, EmptyState, InlineAlert } from './ui'
 import { looksLikeFreeMind, looksLikeOpml } from '@shared/mindmap'
 import { BinaryFileView } from './BinaryFileView'
+import {
+  BinaryOpenToolbar,
+  ForcedBinaryTextView,
+  HexDumpView,
+  type BinaryOpenMode
+} from './BinaryOpenViews'
 import { localFileStreamUrl } from '@shared/localFileUrl'
 import type { StructuredDocument } from '@shared/structuredDoc'
 import { attachDomPick, updateDomPick } from './office/pickFromDom'
@@ -272,6 +278,11 @@ export function FileViewer({
   /** Forces OfficeNativeView to re-read disk after an external/agent rewrite. */
   const [previewRevision, setPreviewRevision] = useState(0)
   const [assoc, setAssoc] = useState<FileAssociationStatus | null>(null)
+  /**
+   * Ephemeral binary override (text / hex). Never persisted — resets every
+   * time the open path changes so we don't remember a preference.
+   */
+  const [binaryOpenAs, setBinaryOpenAs] = useState<BinaryOpenMode | null>(null)
   /** Prevent stacking native sheets if close is re-triggered while one is open. */
   const unsavedPromptOpen = useRef(false)
   /** Blocks picked from mature office/PDF renderers (DOM / sheet). */
@@ -447,6 +458,10 @@ export function FileViewer({
       if (textWindowFillRef.current === state) state.busy = false
     }
   }, [])
+
+  useEffect(() => {
+    setBinaryOpenAs(null)
+  }, [filePath])
 
   useEffect(() => {
     let cancelled = false
@@ -1805,24 +1820,6 @@ export function FileViewer({
     return parts.join(' · ')
   }, [info, badge, filePath, t, hasUnsavedChanges])
 
-  const statusRight = useMemo(() => {
-    if (isBinaryUnsupported) return ''
-    if (selectedBlocks.length === 0) return ''
-    if (isZip) {
-      return t('preview.entriesSelected', { n: selectedBlocks.length })
-    }
-    const first = selectedBlocks[0]
-    if (selectedBlocks.length === 1 && first?.label) return first.label
-    if (selectedBlocks.length === 1 && first) {
-      return t('preview.blocksSelectedLines', {
-        n: 1,
-        start: first.startLine,
-        end: first.endLine
-      })
-    }
-    return t('preview.blocksSelected', { n: selectedBlocks.length })
-  }, [selectedBlocks, t, isBinaryUnsupported, isZip])
-
   const openAgentFromToggle = (): void => {
     if (embedded && onToggleAgentPanel) {
       onToggleAgentPanel()
@@ -2241,14 +2238,25 @@ export function FileViewer({
           {info &&
             !info.error &&
             (info.kind === 'audio' || info.kind === 'video') &&
-            !mediaSrc && (
+            !mediaSrc &&
+            (binaryOpenAs ? (
+              <>
+                <BinaryOpenToolbar mode={binaryOpenAs} onMode={setBinaryOpenAs} />
+                {binaryOpenAs === 'text' ? (
+                  <ForcedBinaryTextView path={filePath} />
+                ) : (
+                  <HexDumpView path={filePath} />
+                )}
+              </>
+            ) : (
               <BinaryFileView
                 info={info}
                 meta={info.binaryMeta ?? null}
                 onOpenWithDefault={() => void window.vav.files.openWithDefault(filePath)}
                 onReveal={() => void window.vav.conversations.revealInFinder(filePath)}
+                onOpenAs={setBinaryOpenAs}
               />
-            )}
+            ))}
           {info?.warnings &&
             info.warnings.some((w) => !isSilentPreviewWindowWarning(w)) && (
               <div className="file-viewer-warnings" role="status">
@@ -2430,66 +2438,78 @@ export function FileViewer({
               {t('files.error.directory')}
             </div>
           )}
-          {info && info.kind === 'binary' && (
-            <BinaryFileView
-              info={info}
-              meta={{
-                ...(info.binaryMeta ?? {
-                  uti: 'public.data',
-                  permissions: '—',
-                  owner: '—',
-                  createdAt: null,
-                  modifiedAt: info.mtimeMs ?? null,
-                  inode: '—',
-                  defaultApp: null
-                }),
-                defaultApp:
-                  info.binaryMeta?.defaultApp ?? assoc?.defaultApp ?? null
-              }}
-              onOpenWithDefault={async () => {
-                try {
-                  if (typeof window.vav.files.openWithDefault !== 'function') {
+          {info &&
+            info.kind === 'binary' &&
+            (binaryOpenAs ? (
+              <>
+                <BinaryOpenToolbar mode={binaryOpenAs} onMode={setBinaryOpenAs} />
+                {binaryOpenAs === 'text' ? (
+                  <ForcedBinaryTextView path={filePath} />
+                ) : (
+                  <HexDumpView path={filePath} />
+                )}
+              </>
+            ) : (
+              <BinaryFileView
+                info={info}
+                meta={{
+                  ...(info.binaryMeta ?? {
+                    uti: 'public.data',
+                    permissions: '—',
+                    owner: '—',
+                    createdAt: null,
+                    modifiedAt: info.mtimeMs ?? null,
+                    inode: '—',
+                    defaultApp: null
+                  }),
+                  defaultApp:
+                    info.binaryMeta?.defaultApp ?? assoc?.defaultApp ?? null
+                }}
+                onOpenAs={setBinaryOpenAs}
+                onOpenWithDefault={async () => {
+                  try {
+                    if (typeof window.vav.files.openWithDefault !== 'function') {
+                      showToast({
+                        kind: 'error',
+                        title: t('preview.openFailed'),
+                        description: t('preview.openFailedNoApi')
+                      })
+                      return
+                    }
+                    const result = await window.vav.files.openWithDefault(filePath)
+                    if (!result?.ok) {
+                      showToast({
+                        kind: 'error',
+                        title: t('preview.openFailed'),
+                        description: result && 'error' in result ? result.error : undefined
+                      })
+                      return
+                    }
+                    showToast({
+                      kind: 'success',
+                      title: t('preview.openLaunched')
+                    })
+                  } catch (err) {
                     showToast({
                       kind: 'error',
                       title: t('preview.openFailed'),
-                      description: t('preview.openFailedNoApi')
+                      description: (err as Error).message
                     })
-                    return
                   }
-                  const result = await window.vav.files.openWithDefault(filePath)
-                  if (!result?.ok) {
+                }}
+                onReveal={async () => {
+                  try {
+                    await window.vav.conversations.revealInFinder(filePath)
+                  } catch (err) {
                     showToast({
                       kind: 'error',
-                      title: t('preview.openFailed'),
-                      description: result && 'error' in result ? result.error : undefined
+                      title: t('preview.revealFailed'),
+                      description: (err as Error).message
                     })
-                    return
                   }
-                  showToast({
-                    kind: 'success',
-                    title: t('preview.openLaunched')
-                  })
-                } catch (err) {
-                  showToast({
-                    kind: 'error',
-                    title: t('preview.openFailed'),
-                    description: (err as Error).message
-                  })
-                }
-              }}
-              onReveal={async () => {
-                try {
-                  await window.vav.conversations.revealInFinder(filePath)
-                } catch (err) {
-                  showToast({
-                    kind: 'error',
-                    title: t('preview.revealFailed'),
-                    description: (err as Error).message
-                  })
-                }
-              }}
-            />
-          )}
+                }}
+              />
+            ))}
           </>
           </Suspense>
   )
@@ -2499,11 +2519,6 @@ export function FileViewer({
         <span className="file-preview-status-left" title={statusLeft}>
           {statusLeft}
         </span>
-        {statusRight ? (
-          <span className="file-preview-status-right" title={statusRight}>
-            {statusRight}
-          </span>
-        ) : null}
       </footer>
   )
 

@@ -565,7 +565,7 @@ export interface VavApi {
      */
     readTextWindow(
       path: string,
-      opts?: { startByte?: number; maxBytes?: number }
+      opts?: { startByte?: number; maxBytes?: number; force?: boolean }
     ): Promise<TextWindowResult>
     /**
      * Binary file bytes as base64 for mature client renderers
@@ -575,6 +575,23 @@ export interface VavApi {
     readBinary(
       path: string
     ): Promise<{ ok: true; base64: string; size: number; mime: string } | { ok: false; error: string }>
+    /**
+     * Byte-window raw read for hex dump. Ephemeral override view — not stored.
+     */
+    readBinaryWindow(
+      path: string,
+      opts?: { startByte?: number; maxBytes?: number }
+    ): Promise<
+      | {
+          ok: true
+          base64: string
+          startByte: number
+          endByte: number
+          totalBytes: number
+          truncated: boolean
+        }
+      | { ok: false; error: string; startByte: number; endByte: number; totalBytes: number }
+    >
     /** Write raw bytes (base64) — office discard / binary restore. */
     writeBinary(
       path: string,
@@ -617,7 +634,8 @@ export interface VavApi {
       partial: boolean
     } | { ok: false; error: string }>
     /**
-     * Page through a SQLite table (read-only). Used by the DB preview canvas.
+     * Windowed read of a SQLite table (read-only). Used by the DB preview's
+     * scroll virtualization — not a product page API.
      */
     dbQuery(
       path: string,
@@ -972,6 +990,7 @@ export const IPC = {
   filesRead: 'vav:files:read',
   filesReadTextWindow: 'vav:files:read-text-window',
   filesReadBinary: 'vav:files:read-binary',
+  filesReadBinaryWindow: 'vav:files:read-binary-window',
   filesWriteBinary: 'vav:files:write-binary',
   filesDbQuery: 'vav:files:db-query',
   filesWrite: 'vav:files:write',
