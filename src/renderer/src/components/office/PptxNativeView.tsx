@@ -22,6 +22,7 @@ import {
   updateDomPick
 } from './pickFromDom'
 import { useT } from '../../i18n/useT'
+import { PagePager } from './PagePager'
 
 /** Shape / picture frames annotated for pick. */
 const PPTX_SHAPE_SELECTOR = '.pptx-shape-pick'
@@ -94,6 +95,9 @@ export function PptxNativeView({
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [ready, setReady] = useState(false)
+  /** 1-based slide index for the floating pager. */
+  const [slideCurrent, setSlideCurrent] = useState(1)
+  const [slideTotal, setSlideTotal] = useState(0)
   const onPickRef = useRef(onPick)
   onPickRef.current = onPick
 
@@ -105,6 +109,8 @@ export function PptxNativeView({
     setLoading(true)
     setReady(false)
     setError(null)
+    setSlideTotal(0)
+    setSlideCurrent(1)
     // Defer clearing until the next buffer is in hand so agent rewrites don't
     // blank the stage while bytes are still loading.
     naturalSizeRef.current = { w: 0, h: 0 }
@@ -203,6 +209,11 @@ export function PptxNativeView({
               syncSelectedClasses(hostRef.current, selectedIdsRef.current)
               syncSlideSelectedClasses(hostRef.current, selectedIdsRef.current)
             }
+          },
+          // Library tracks the active slide on scroll + goToSlide (0-based).
+          onSlideChange: (index) => {
+            if (cancelled) return
+            setSlideCurrent(Math.max(1, index + 1))
           }
         })
         if (cancelled) {
@@ -217,6 +228,9 @@ export function PptxNativeView({
         const nw = viewer.slideWidth || 960
         const nh = viewer.slideHeight || 540
         naturalSizeRef.current = { w: nw, h: nh }
+        const count = viewer.slideCount || 0
+        setSlideTotal(count)
+        setSlideCurrent(Math.max(1, (viewer.currentSlideIndex ?? 0) + 1))
         reannotate(hostRef.current)
         applyFit(true)
 
@@ -310,6 +324,27 @@ export function PptxNativeView({
           data-pick-root="true"
         />
       </div>
+      <PagePager
+        current={slideCurrent}
+        total={slideTotal}
+        onPrev={() => {
+          const v = viewerRef.current
+          if (!v) return
+          void v.goToSlide(Math.max(0, v.currentSlideIndex - 1), {
+            behavior: 'auto',
+            block: 'start'
+          })
+        }}
+        onNext={() => {
+          const v = viewerRef.current
+          if (!v) return
+          void v.goToSlide(Math.min(v.slideCount - 1, v.currentSlideIndex + 1), {
+            behavior: 'auto',
+            block: 'start'
+          })
+        }}
+        disabled={!ready || !!error}
+      />
     </div>
   )
 }

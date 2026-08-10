@@ -148,9 +148,13 @@ const api: VavApi = {
     list: (path: string, sort: FileSortKey, ascending: boolean) =>
       ipcRenderer.invoke(IPC.filesList, path, sort, ascending),
     read: (path: string) => ipcRenderer.invoke(IPC.filesRead, path),
-    readTextWindow: (path: string, opts?: { startByte?: number; maxBytes?: number }) =>
-      ipcRenderer.invoke(IPC.filesReadTextWindow, path, opts),
+    readTextWindow: (
+      path: string,
+      opts?: { startByte?: number; maxBytes?: number; force?: boolean }
+    ) => ipcRenderer.invoke(IPC.filesReadTextWindow, path, opts),
     readBinary: (path: string) => ipcRenderer.invoke(IPC.filesReadBinary, path),
+    readBinaryWindow: (path: string, opts?: { startByte?: number; maxBytes?: number }) =>
+      ipcRenderer.invoke(IPC.filesReadBinaryWindow, path, opts),
     writeBinary: (path: string, base64: string) =>
       ipcRenderer.invoke(IPC.filesWriteBinary, path, base64),
     write: (path: string, content: string) => ipcRenderer.invoke(IPC.filesWrite, path, content),
@@ -170,7 +174,7 @@ const api: VavApi = {
       opts?: { maxBlocks?: number; maxRows?: number }
     ) => ipcRenderer.invoke(IPC.filesInspectStructured, path, opts),
     dbQuery: (path: string, table: string, offset?: number, limit?: number) =>
-      ipcRenderer.invoke(IPC.filesDbQuery, path, table, offset ?? 0, limit ?? 100),
+      ipcRenderer.invoke(IPC.filesDbQuery, path, table, offset ?? 0, limit ?? 500),
     parseBlocks: (path: string, text: string) =>
       ipcRenderer.invoke(IPC.filesParseBlocks, path, text)
   },

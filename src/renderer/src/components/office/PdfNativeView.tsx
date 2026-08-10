@@ -11,6 +11,8 @@ import { docMeasureMinPx, docMeasurePx, stableContentWidth } from '../../lib/doc
 import { isOfficeLockFile, OFFICE_LOCK_FILE_MESSAGE } from '@shared/officeLock'
 import { scheduleClickPick } from '../../lib/clickPick'
 import { useT } from '../../i18n/useT'
+import { PagePager } from './PagePager'
+import { useDocumentPageIndex } from './useDocumentPageIndex'
 
 type PdfJsModule = typeof import('pdfjs-dist')
 type PdfDocument = Awaited<ReturnType<PdfJsModule['getDocument']>['promise']>
@@ -110,12 +112,21 @@ export function PdfNativeView({
   const t = useT()
   const hostRef = useRef<HTMLDivElement>(null)
   const [error, setError] = useState<string | null>(null)
+  const [pageTotal, setPageTotal] = useState(0)
   const onPickRef = useRef(onPick)
   onPickRef.current = onPick
   const selectingRef = useRef(selecting)
   selectingRef.current = selecting
   const selectedIdsRef = useRef(selectedIds)
   selectedIdsRef.current = selectedIds
+
+  const pageIndex = useDocumentPageIndex({
+    scrollRef: hostRef,
+    pageSelector: '.pdf-page-frame[data-page-number]',
+    enabled: !error && pageTotal > 0,
+    totalOverride: pageTotal > 0 ? pageTotal : null,
+    pageNumberFromEl: (el) => Number(el.dataset.pageNumber) || 1
+  })
 
   useEffect(() => {
     let cancelled = false
@@ -506,6 +517,7 @@ export function PdfNativeView({
     }
 
     setError(null)
+    setPageTotal(0)
 
     void (async () => {
       try {
@@ -549,6 +561,7 @@ export function PdfNativeView({
         // Swap only when the new document is ready — keep the previous paint
         // on screen during agent rewrites (no blank flash).
         host.innerHTML = ''
+        setPageTotal(doc.numPages)
         await mountSlots(doc)
         if (cancelled) return
         onReady?.()
@@ -758,6 +771,13 @@ export function PdfNativeView({
         </div>
       )}
       <div ref={hostRef} className="pdf-pages-host" />
+      <PagePager
+        current={pageIndex.current}
+        total={pageIndex.total}
+        onPrev={pageIndex.prev}
+        onNext={pageIndex.next}
+        disabled={!!error}
+      />
     </div>
   )
 }

@@ -3009,10 +3009,18 @@ function registerIpc(): void {
   ipcMain.handle(IPC.filesRead, (_event, path: string) => fileService.readTextFile(path))
   ipcMain.handle(
     IPC.filesReadTextWindow,
-    (_event, path: string, opts?: { startByte?: number; maxBytes?: number }) =>
-      fileService.readTextWindow(path, opts)
+    (
+      _event,
+      path: string,
+      opts?: { startByte?: number; maxBytes?: number; force?: boolean }
+    ) => fileService.readTextWindow(path, opts)
   )
   ipcMain.handle(IPC.filesReadBinary, (_event, path: string) => fileService.readBinary(path))
+  ipcMain.handle(
+    IPC.filesReadBinaryWindow,
+    (_event, path: string, opts?: { startByte?: number; maxBytes?: number }) =>
+      fileService.readBinaryWindow(path, opts)
+  )
   ipcMain.handle(IPC.filesWriteBinary, (_event, path: string, base64: string) =>
     fileService.writeBinary(path, base64)
   )

@@ -73,6 +73,24 @@ function blockKindForElement(el: HTMLElement): PreviewBlock['kind'] {
   return 'paragraph'
 }
 
+/**
+ * When the deepest match is an empty paragraph/span inside a table cell,
+ * prefer the cell (which is also a pick target). Keeps empty-cell hover + click aligned.
+ */
+function promoteEmptyLeafToCell(el: HTMLElement, root: HTMLElement): HTMLElement | null {
+  const tag = el.tagName.toLowerCase()
+  if (tag === 'td' || tag === 'th') return el
+  const text = (el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim()
+  if (text) return el
+  // Images keep their own target even when nested in a cell.
+  if (el.dataset.pickKind === 'image' || el.tagName === 'IMG' || el.querySelector?.('img')) {
+    return el
+  }
+  const cell = el.closest('td, th') as HTMLElement | null
+  if (!cell || !root.contains(cell) || !cell.dataset.blockId) return el
+  return cell
+}
+
 export type AttachDomPickOptions = {
   selecting: boolean
   selectedIds: string[]
@@ -132,21 +150,39 @@ export function attachDomPick(
 
     if (!best?.dataset.blockId) return
 
+    // Empty <p>/<span> inside a table cell: promote to the cell so the whole
+    // empty cell is pickable (hover already outlined the leaf; click must match).
+    best = promoteEmptyLeafToCell(best, root) ?? best
+
     const rawText = (best.innerText || best.textContent || '').replace(/\s+/g, ' ').trim()
     const isImage =
       best.dataset.pickKind === 'image' ||
       best.tagName === 'IMG' ||
       !!best.querySelector?.('img')
-    // Pictures have no text — still pickable with a placeholder label.
-    const blockText = rawText || (isImage ? best.dataset.pickLabel || 'Image' : '')
+    const isCell = (() => {
+      const tag = best!.tagName.toLowerCase()
+      return tag === 'td' || tag === 'th'
+    })()
+    // Pictures / empty table cells have no text — still pickable with a placeholder.
+    const blockText =
+      rawText ||
+      (isImage ? best.dataset.pickLabel || 'Image' : '') ||
+      (isCell ? best.dataset.pickLabel || '(empty cell)' : '')
     if (!blockText) return
 
     // Allow native text select/copy — only stop bubbling so parents don't also pick.
     event.stopPropagation()
 
     const id = best.dataset.blockId
-    const kind: PreviewBlock['kind'] = isImage && !rawText ? 'image' : blockKindForElement(best)
+    if (!id) return
+    const kind: PreviewBlock['kind'] =
+      isImage && !rawText ? 'image' : blockKindForElement(best)
     const tag = best.tagName.toLowerCase()
+    const label =
+      rawText.slice(0, 64) ||
+      (isCell ? best.dataset.pickLabel || '(empty cell)' : '') ||
+      (isImage ? best.dataset.pickLabel || 'Image' : '') ||
+      id
 
     const win = root.ownerDocument?.defaultView ?? window
     scheduleClickPick(
@@ -157,7 +193,7 @@ export function attachDomPick(
             id,
             kind,
             text: blockText.slice(0, 8000),
-            label: blockText.slice(0, 64) || id,
+            label,
             startLine: 1,
             endLine: 1,
             level: kind === 'heading' ? Number(tag.slice(1)) || 1 : undefined

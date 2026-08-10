@@ -122,13 +122,15 @@ export class FileService {
   /**
    * Byte-window UTF-8 read. Does not load the whole file into memory.
    * `maxBytes` is a technical payload size, not a product refusal.
+   * Pass `force: true` to open known-binary files as text (null bytes allowed).
    */
   async readTextWindow(
     path: string,
-    opts?: { startByte?: number; maxBytes?: number }
+    opts?: { startByte?: number; maxBytes?: number; force?: boolean }
   ): Promise<TextWindowResult> {
     const startByte = Math.max(0, Math.floor(opts?.startByte ?? 0))
     const maxBytes = Math.max(1024, Math.min(16 * 1024 * 1024, Math.floor(opts?.maxBytes ?? TEXT_WINDOW_BYTES)))
+    const force = !!opts?.force
     try {
       const info = await stat(path)
       if (info.isDirectory()) {
@@ -157,8 +159,9 @@ export class FileService {
         const buf = Buffer.alloc(length)
         const { bytesRead } = await fh.read(buf, 0, length, startByte)
         const slice = buf.subarray(0, bytesRead)
-        // Null byte in the first window → treat as binary (unless mid-file continuation).
-        if (startByte === 0 && slice.includes(0)) {
+        // Null byte in the first window → treat as binary (unless mid-file
+        // continuation, or the caller forced a text/hex override).
+        if (!force && startByte === 0 && slice.includes(0)) {
           return {
             content: '',
             startByte,
@@ -187,6 +190,80 @@ export class FileService {
         totalBytes: 0,
         truncated: false,
         error: (err as Error).message
+      }
+    }
+  }
+
+  /**
+   * Byte-window raw read for hex dump (base64 payload). Same soft window
+   * budget as text — not a product size gate.
+   */
+  async readBinaryWindow(
+    path: string,
+    opts?: { startByte?: number; maxBytes?: number }
+  ): Promise<
+    | {
+        ok: true
+        base64: string
+        startByte: number
+        endByte: number
+        totalBytes: number
+        truncated: boolean
+      }
+    | { ok: false; error: string; startByte: number; endByte: number; totalBytes: number }
+  > {
+    const startByte = Math.max(0, Math.floor(opts?.startByte ?? 0))
+    const maxBytes = Math.max(
+      1024,
+      Math.min(4 * 1024 * 1024, Math.floor(opts?.maxBytes ?? TEXT_WINDOW_BYTES))
+    )
+    try {
+      const info = await stat(path)
+      if (info.isDirectory()) {
+        return {
+          ok: false,
+          error: t('files.error.directory'),
+          startByte: 0,
+          endByte: 0,
+          totalBytes: 0
+        }
+      }
+      const totalBytes = info.size
+      if (startByte >= totalBytes) {
+        return {
+          ok: true,
+          base64: '',
+          startByte,
+          endByte: startByte,
+          totalBytes,
+          truncated: false
+        }
+      }
+      const length = Math.min(maxBytes, totalBytes - startByte)
+      const fh = await open(path, 'r')
+      try {
+        const buf = Buffer.alloc(length)
+        const { bytesRead } = await fh.read(buf, 0, length, startByte)
+        const slice = buf.subarray(0, bytesRead)
+        const endByte = startByte + bytesRead
+        return {
+          ok: true,
+          base64: slice.toString('base64'),
+          startByte,
+          endByte,
+          totalBytes,
+          truncated: endByte < totalBytes
+        }
+      } finally {
+        await fh.close()
+      }
+    } catch (err) {
+      return {
+        ok: false,
+        error: (err as Error).message,
+        startByte,
+        endByte: startByte,
+        totalBytes: 0
       }
     }
   }
