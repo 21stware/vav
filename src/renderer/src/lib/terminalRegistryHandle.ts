@@ -11,6 +11,7 @@
 export type TerminalRegistryApi = {
   applyTerminalAppearance(fontFamily: string, fontSize: number): void
   disposeTerminal(conversationId: string, tabId: string): void
+  parkTerminal?(conversationId: string, tabId: string): void
 }
 
 let api: TerminalRegistryApi | null = null
@@ -24,5 +25,14 @@ export function applyTerminalAppearance(fontFamily: string, fontSize: number): v
 }
 
 export function disposeTerminal(conversationId: string, tabId: string): void {
+  api?.disposeTerminal(conversationId, tabId)
+}
+
+/** Soft-park when available; falls back to hard dispose for older bundles. */
+export function parkTerminal(conversationId: string, tabId: string): void {
+  if (api?.parkTerminal) {
+    api.parkTerminal(conversationId, tabId)
+    return
+  }
   api?.disposeTerminal(conversationId, tabId)
 }

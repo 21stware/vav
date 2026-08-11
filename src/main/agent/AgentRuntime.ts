@@ -514,6 +514,25 @@ export class AgentRuntime {
     }
     this.turns.set(conversationId, turn)
     this.deps.changeSets?.beginTurn(conversationId, this.workdirOf(conversation))
+    // Document sandbox: ensure a working copy for the focused / file-session path
+    // so agent tools and officecli mutate the copy, not the user's original.
+    const logicalOpenPath =
+      conversation.focusedFilePath ||
+      (conversation.fileId && this.deps.fileSessions
+        ? this.deps.fileSessions.pathForFileId(conversation.fileId)
+        : null)
+    let openFilePathForPrompt: string | null = conversation.focusedFilePath || null
+    if (logicalOpenPath && this.deps.files.workingCopies) {
+      try {
+        const wc = await this.deps.files.workingCopies.ensure(logicalOpenPath, {
+          fileId: conversation.fileId
+        })
+        // Point the model at the sandbox path so officecli/shell write the copy.
+        if (conversation.focusedFilePath) openFilePathForPrompt = wc.copyPath
+      } catch (err) {
+        console.warn('[agent] working-copy ensure failed', logicalOpenPath, err)
+      }
+    }
     // Strip prior turn changeSetId from stored messages so reloads don't show
     // dead "Could not load changes" cards under Done.
     this.stripPriorChangeSetIds(conversationId)
@@ -526,9 +545,8 @@ export class AgentRuntime {
           systemPrompt: buildSystemPrompt(this.workdirOf(conversation), settings.shell, {
             fileReadOnly: !!conversation.fileReadOnly,
             // Only when the File Attachment Chip is attached (focusedFilePath).
-            // Dismissing the chip clears this — do not fall back to fileId path,
-            // or "remove context" would still inject the open file into the prompt.
-            openFilePath: conversation.focusedFilePath || null,
+            // When sandboxed, this is the working-copy path (agent must edit that).
+            openFilePath: openFilePathForPrompt,
             // Prefer the focused path (chip may differ from session fileId).
             openFileKind: conversation.focusedFilePath
               ? kindFromFilePath(conversation.focusedFilePath) ??

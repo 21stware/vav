@@ -378,7 +378,8 @@ html[data-summoning] .tools-body {
   .sidebar-float-panel,
   .change-review,
   .inline-review,
-  .update-corner {
+  .update-corner,
+  .agents-add-menu {
     transform: none !important;
   }
   .tools-body,
@@ -393,7 +394,8 @@ html[data-summoning] .tools-body {
   .chip:active:not(:disabled),
   .send-button:active:not(:disabled),
   .variant-step:active:not(:disabled),
-  .inline-review-icon-btn:active {
+  .inline-review-icon-btn:active,
+  .agents-list-tool-btn:active:not(:disabled) {
     transform: none;
   }
 }
@@ -563,6 +565,7 @@ html[data-resizing='true'] .banner.error {
   padding: 0 var(--chrome-trail) 0 var(--chrome-lead);
   -webkit-app-region: drag;
   background: transparent;
+  border-bottom: 0;
 }
 
 /* Docked sidebar chrome: sits in the list column so the detail panel can
@@ -658,7 +661,8 @@ html[data-resizing='true'] .banner.error {
  */
 .app-shell .detail > .terminal-host-chrome,
 .app-shell .terminal-host-session > .terminal-host-chrome {
-  height: var(--toolbar-height);
+  /* Allow multi-row chrome (running CLI list); single-row still min toolbar. */
+  height: auto;
   min-height: var(--toolbar-height);
   box-sizing: border-box;
   padding-top: 0;
@@ -737,6 +741,17 @@ html[data-resizing='true'] .banner.error {
   flex: 1;
   min-height: 0;
   min-width: 0;
+  background: var(--bg-content);
+}
+
+.workspace-preview-empty-bar {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+  height: var(--toolbar-height);
+  min-height: var(--toolbar-height);
+  padding: 0 10px;
+  box-sizing: border-box;
 }
 
 /* Drawer empty-state sits next to a live agent host — entrance animation
@@ -753,7 +768,7 @@ html[data-resizing='true'] .banner.error {
   height: var(--toolbar-height);
   min-height: var(--toolbar-height);
   padding: 0 10px;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 0;
   box-sizing: border-box;
 }
 
@@ -796,7 +811,7 @@ html[data-resizing='true'] .banner.error {
   background: var(--bg-content);
   /* Lead clears traffic lights; modest trail so the label isn’t flush or sparse. */
   padding: 0 12px 0 var(--chrome-lead);
-  border-bottom: 1px solid var(--border);
+  border-bottom: 0;
 }
 
 /*
@@ -823,11 +838,11 @@ html[data-resizing='true'] .banner.error {
   background: transparent;
   flex: 0 1 auto;
   justify-content: flex-start;
-  gap: 4px;
+  gap: 0;
 }
 
 /* Keep search / splits next to the agent select (not pinned to the far edge). */
-.session-window-titlebar-chrome .agent-mode-chrome > .spacer {
+.session-window-titlebar-chrome .agent-mode-chrome-row > .spacer {
   display: none;
 }
 
@@ -1791,7 +1806,9 @@ kbd {
   min-height: 0;
 }
 
-/* Bubbles above the dock, still inside the Agent log column. */
+/* Bubbles above the dock, still inside the Agent log column.
+   Modes: empty (unmounted) · file chip · comments · quote · queue · combinations.
+   Always share the same reading column as composer + tools-header. */
 .composer-context {
   flex: 0 0 auto;
   align-self: center;
@@ -1812,10 +1829,17 @@ kbd {
 
 .composer-context.has-comment-cards {
   gap: 4px;
+  /* Comments own more vertical mass — tighten into the composer. */
+  padding-bottom: 4px;
 }
 
 .composer-context.has-message-queue {
   gap: 6px;
+}
+
+/* File-only chip: slightly more bottom air so it doesn't glue to the prompt. */
+.composer-context:not(.has-comment-cards):not(.has-message-queue) {
+  padding-bottom: 8px;
 }
 
 .preview-edit-stream .composer-context {
@@ -3327,7 +3351,12 @@ kbd {
   overflow: visible;
 }
 
-/* Clickable file paths in agent log. */
+/* Clickable file paths in agent log (+ Finder/Explorer control after the link). */
+.md-file-mention {
+  display: inline;
+  white-space: normal;
+}
+
 a.md-file-link {
   color: var(--accent-text);
   text-decoration: underline;
@@ -3340,6 +3369,40 @@ a.md-file-link {
 a.md-file-link:hover {
   color: var(--accent-hover, var(--accent));
   text-decoration-color: var(--accent);
+}
+
+button.md-file-reveal {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  vertical-align: -0.15em;
+  margin: 0 0 0 3px;
+  padding: 1px 3px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-tertiary, var(--text-secondary));
+  cursor: default;
+  line-height: 0;
+  opacity: 0.75;
+  transition:
+    opacity var(--dur-hover, 120ms) ease,
+    color var(--dur-hover, 120ms) ease,
+    background var(--dur-hover, 120ms) ease;
+}
+
+button.md-file-reveal:hover {
+  opacity: 1;
+  color: var(--text);
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+}
+
+button.md-file-reveal:active {
+  transform: scale(0.96);
+}
+
+.md-file-mention:hover button.md-file-reveal {
+  opacity: 1;
 }
 
 code.md-file-code {
@@ -3357,12 +3420,41 @@ code.md-file-code a.md-file-link:hover {
   text-decoration: underline;
 }
 
+code.md-file-code button.md-file-reveal {
+  vertical-align: middle;
+}
+
 .message-user-context .context-refs,
 .message-user-context .attachments {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
   min-width: 0;
+}
+
+.attachment-file-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding-right: 4px;
+}
+
+.attachment-file-open {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  min-width: 0;
+}
+
+.attachment-file-open .chip-label {
+  max-width: 14em;
 }
 
 .message.user.is-context-only {
@@ -5510,7 +5602,7 @@ mark {
  */
 .file-session-view .workspace-view-agent .terminal-host-chrome,
 .file-session-view .workspace-view-agent .agent-mode-chrome {
-  height: var(--toolbar-height);
+  height: auto;
   min-height: var(--toolbar-height);
   padding: 0 10px;
   box-sizing: border-box;
@@ -6225,11 +6317,12 @@ mark {
 
 /**
  * CLI agent host / install gate: dock is tools only (no composer above).
- * Mirror the vertical air a prompt card would have given — otherwise the
- * path/New strip sits flush under the terminal and reads too tight.
+ * Header geometry still comes from the shared `.tools-header` rules — do not
+ * re-tune height/padding here or VAV ↔ CLI will drift again.
  */
 .dock.dock-tools-only {
-  padding-top: 6px;
+  /* No extra top pad — vertical air lives only on .tools-header. */
+  padding-top: 0;
 }
 
 .tools-panel {
@@ -6245,22 +6338,29 @@ mark {
   box-sizing: border-box;
 }
 
+/*
+ * Tools header — single geometry for VAV (under composer) and CLI Agents
+ * (dock-tools-only). Modes (data-mode / data-tools-mode):
+ *   idle           — path + New/chevron only (no bash tabs)
+ *   tabs-collapsed — path | tabs | New, body closed
+ *   tabs-open      — path | tabs | New, body expanded
+ *
+ * Vertical air is only here (not on .dock / composer sibling overrides), so
+ * switching VAV ↔ CLI does not jump the path chip.
+ */
 .tools-header {
   position: relative;
   z-index: 3;
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
+  /* Chip ~24px + 4px air above/below (border-box). */
   height: 32px;
-  /*
-   * Same reading column as Agent log + composer (Workspace / New / chips).
-   * tools-body below stays full-bleed — only this control row is centered.
-   */
   width: min(100%, var(--reading-max));
   max-width: var(--reading-max);
   margin-left: auto;
   margin-right: auto;
-  padding: 0 var(--reading-gutter);
+  padding: 4px var(--composer-gutter);
   box-sizing: border-box;
   flex: 0 0 auto;
   align-self: center;
@@ -6270,12 +6370,18 @@ mark {
 }
 
 .tools-header-lead {
-  flex: 0 0 auto;
+  flex: 0 1 auto;
   min-width: 0;
-  max-width: 48%;
+  max-width: min(52%, 280px);
   display: flex;
   align-items: center;
-  gap: 5px;
+  gap: 6px;
+}
+
+/* Idle: path may use more width — no tab strip competing. */
+.tools-header[data-mode='idle'] .tools-header-lead {
+  max-width: min(70%, 360px);
+  flex: 0 1 auto;
 }
 
 .tools-header-lead .btn.sm.icon-only:has(svg + svg) {
@@ -6293,8 +6399,9 @@ mark {
   flex: 0 0 auto;
   width: 1px;
   height: 14px;
-  margin: 0 2px;
-  background: var(--border-strong, var(--border));
+  margin: 0;
+  background: color-mix(in srgb, var(--text) 12%, transparent);
+  border-radius: 1px;
 }
 
 .tools-header-tabs {
@@ -6310,6 +6417,15 @@ mark {
   scrollbar-color: var(--border-strong) transparent;
 }
 
+/* No tabs: collapse the flex slot so New isn't marooned across empty air. */
+.tools-header-tabs[data-empty='true'] {
+  flex: 1 1 auto;
+  min-width: 8px;
+  overflow: hidden;
+  scrollbar-gutter: auto;
+  pointer-events: none;
+}
+
 .tools-header-tabs::-webkit-scrollbar {
   height: 4px;
 }
@@ -6323,7 +6439,36 @@ mark {
   flex: 0 0 auto;
   display: flex;
   align-items: center;
+  gap: 2px;
+  margin-left: auto;
+}
+
+/* Soft pill for New so it matches path chip weight when the strip is idle. */
+.tools-header-trail .btn.sm:not(.icon-only) {
+  height: 24px;
+  padding: 0 9px 0 7px;
+  border-radius: 999px;
   gap: 4px;
+  font-size: 12px;
+  font-weight: 550;
+  color: var(--text-secondary);
+}
+
+.tools-header-trail .btn.sm:not(.icon-only):hover {
+  color: var(--text);
+  background: var(--bg-hover);
+}
+
+.tools-header-trail .btn.sm.icon-only {
+  width: 24px;
+  height: 24px;
+  border-radius: 999px;
+  color: var(--text-secondary);
+}
+
+.tools-header-trail .btn.sm.icon-only:hover {
+  color: var(--text);
+  background: var(--bg-hover);
 }
 
 .tools-header-trail .btn.sm.icon-only:has(svg + svg) {
@@ -6738,7 +6883,7 @@ mark {
 .file-preview-shell:not(.embedded) .preview-agent-panel .agent-mode-chrome,
 .file-preview-shell:not(.embedded) .preview-agent-panel .terminal-host-chrome,
 .file-preview-shell:not(.embedded) .preview-agent-panel .preview-file-session-bar {
-  height: 42px;
+  height: auto;
   min-height: 42px;
   box-sizing: border-box;
   -webkit-app-region: drag;
@@ -6809,16 +6954,31 @@ mark {
   height: 42px;
   min-height: 42px;
   padding: 0 var(--chrome-trail) 0 var(--chrome-lead);
-  border-bottom: 1px solid var(--border);
+  border-top: 0;
+  border-bottom: 0;
+  /* Same plate as the window / shell — no second “titlebar” tint. */
+  background: var(--bg-content);
   flex: 0 0 auto;
   box-sizing: border-box;
 }
 
-/* Embedded (workspace): same row height as sidebar chrome + agent head. */
+/* Embedded side preview: same row height as agent chrome; no rule under header
+   so title bar and body share one surface. */
 .file-preview-shell.embedded .file-viewer-header {
   padding: 0 10px;
   height: var(--toolbar-height);
   min-height: var(--toolbar-height);
+  border-bottom: 0;
+  background: transparent;
+}
+
+.file-preview-shell.embedded {
+  background: var(--bg-content);
+}
+
+.file-preview-shell.embedded .file-viewer-body,
+.file-preview-shell.embedded .file-viewer-main {
+  background: transparent;
 }
 
 .file-viewer-lead {
@@ -8302,7 +8462,8 @@ mark {
   min-height: 28px;
   max-height: 28px;
   padding: 0 14px;
-  border-top: 1px solid var(--border);
+  border-top: 0;
+  background: var(--bg-content);
   font-size: 11px;
   color: var(--text-tertiary);
   flex: 0 0 auto;
@@ -8368,9 +8529,16 @@ mark {
   background: var(--bg-content);
 }
 
+/* CLI drawer: match terminal plate (overrides content bg above). */
+.preview-edit-session.terminal-host-session {
+  background: var(--bg-terminal);
+}
+
 .preview-edit-session .agent-mode-chrome,
 .preview-edit-session .terminal-host-chrome {
   flex: 0 0 auto;
+  border-bottom: 0;
+  background: transparent;
 }
 
 .preview-edit-session.terminal-host-session .terminal-host-main {
@@ -11315,23 +11483,161 @@ mark {
   align-items: center;
   gap: 6px;
   padding: 6px 10px;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 0;
   flex: 0 0 auto;
-  background: var(--bg-content);
+  /* Transparent — parent surface color (terminal / content) shows through. */
+  background: transparent;
 }
 
-/* Agent switcher — brand mark + name are one hit target. */
+/* Agent chrome — single row: VAV | CLI Agent (+ split actions in CLI). */
 .agent-mode-chrome {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0;
+  width: 100%;
+  min-width: 0;
+  position: relative;
+  /* Single toolbar row — trail-only chrome must not grow the strip. */
+  height: var(--toolbar-height);
+  min-height: var(--toolbar-height);
+  max-height: var(--toolbar-height);
+  box-sizing: border-box;
+  overflow: hidden;
+  border-bottom: 0;
+  background: transparent;
+}
+
+/*
+ * CLI Screen: one continuous terminal surface — chrome + picker/PTY share
+ * --bg-terminal so no hairline band between the top bar and the body.
+ */
+.detail.terminal-host-session,
+.preview-edit-session.terminal-host-session {
+  background: var(--bg-terminal);
+}
+
+.agent-mode-chrome-row {
   display: flex;
   align-items: center;
   gap: 6px;
+  width: 100%;
   min-width: 0;
-  position: relative;
+  min-height: var(--toolbar-height);
+  box-sizing: border-box;
+  padding: 0;
 }
 
-/* Single-file vav: agent · session name · history · new · search on one row. */
+/* Push trailing chrome (file-preview toggle) to the far right. */
+.agent-mode-chrome-row > .spacer {
+  flex: 1 1 auto;
+  min-width: 8px;
+}
+
+/* VAV | CLI Agent segmented control */
+.agent-mode-segment {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 9px;
+  background: var(--bg-hover);
+  border: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+}
+
+.agent-mode-segment-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 24px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 550;
+  cursor: default;
+  white-space: nowrap;
+  transition:
+    background var(--dur-hover) ease,
+    color var(--dur-hover) ease,
+    box-shadow var(--dur-hover) ease;
+}
+
+.agent-mode-segment-btn:hover {
+  color: var(--text);
+}
+
+.agent-mode-segment-btn.is-active {
+  background: var(--bg-content);
+  color: var(--text);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--border) 55%, transparent);
+}
+
+/* VAV side of the switch: mark only, no “VAV” label. */
+.agent-mode-segment-btn.is-icon-only {
+  width: 28px;
+  min-width: 28px;
+  padding: 0;
+  justify-content: center;
+  gap: 0;
+}
+
+.agent-mode-vav-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  line-height: 0;
+}
+
+.agent-mode-vav-icon img {
+  display: block;
+  width: 16px;
+  height: 16px;
+  object-fit: contain;
+}
+
+.agent-mode-vav-icon .logo-dark {
+  display: none;
+}
+
+.agent-mode-vav-icon .logo-light {
+  display: block;
+}
+
+:root[data-theme='dark'] .agent-mode-vav-icon .logo-light {
+  display: none;
+}
+
+:root[data-theme='dark'] .agent-mode-vav-icon .logo-dark {
+  display: block;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) .agent-mode-vav-icon .logo-light {
+    display: none;
+  }
+  :root:not([data-theme='light']) .agent-mode-vav-icon .logo-dark {
+    display: block;
+  }
+}
+
+.agent-mode-segment-chevron {
+  opacity: 0.7;
+  flex: 0 0 auto;
+}
+
+/* File-preview VAV: title/history on one row; popover may escape the strip. */
 .agent-mode-chrome.has-file-session {
   gap: 8px;
+  max-height: none;
+  overflow: visible;
   /* History popover anchors under this chrome. */
   z-index: 30;
   isolation: isolate;
@@ -11363,6 +11669,12 @@ mark {
   align-items: center;
   gap: 2px;
   flex: 0 0 auto;
+}
+
+/* After .spacer — pin to the trailing edge of the full-width chrome row. */
+.agent-mode-chrome-trail-end {
+  flex: 0 0 auto;
+  margin-left: auto;
 }
 
 /* History under the unified file-session chrome (full row width). */
@@ -11530,13 +11842,68 @@ mark {
   min-width: 0;
   overflow: hidden;
   position: relative;
+  isolation: isolate;
   /* No chrome labels over the PTY — agent TUIs own the full surface. */
 }
 
 .terminal-split-pane.is-active {
   z-index: 1;
-  outline: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
-  outline-offset: -1px;
+}
+
+/*
+ * Active-pane ring when multi-pane (live PTY or pending picker).
+ * ::after sits above xterm/canvas so the frame is never covered.
+ * Single full-area leaf stays frameless.
+ */
+.terminal-split-branch .terminal-split-pane.is-active.is-multi::after {
+  content: '';
+  position: absolute;
+  inset: 1px;
+  z-index: 50;
+  pointer-events: none;
+  box-sizing: border-box;
+  border: 1px solid color-mix(in srgb, var(--accent, #0a84ff) 70%, #fff);
+  border-radius: 1px;
+}
+
+/* Close control on multi-pane leaves (live or pending picker). */
+.terminal-split-pane-close {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  z-index: 60;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--bg-content) 82%, transparent);
+  color: var(--text-secondary);
+  cursor: default;
+  opacity: 0;
+  transition:
+    opacity var(--dur-hover, 120ms) ease,
+    background var(--dur-hover, 120ms) ease,
+    color var(--dur-hover, 120ms) ease;
+}
+
+.terminal-split-pane.is-multi:hover .terminal-split-pane-close,
+.terminal-split-pane.is-multi.is-active .terminal-split-pane-close,
+.terminal-split-pane-close:focus-visible {
+  opacity: 1;
+}
+
+.terminal-split-pane-close:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.terminal-split-pane-close:active {
+  transform: scale(0.96);
 }
 
 /* Flex sibling divider — not absolute, so nested splits keep independent axes. */
@@ -11586,14 +11953,19 @@ mark {
 /*
  * Workspace agent chrome is the only top row (session chrome fused in) —
  * match the main toolbar height, not a compact secondary strip.
+ * No bottom rule — same continuous surface as the CLI body.
  */
 .workspace-view-agent .terminal-host-chrome,
 .workspace-floating-agent-body .terminal-host-chrome {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  width: 100%;
   height: var(--toolbar-height);
   min-height: var(--toolbar-height);
   padding: 0 10px;
   box-sizing: border-box;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 0;
   background: transparent;
 }
 
@@ -11882,12 +12254,306 @@ mark {
   font-weight: 560;
 }
 
+/*
+ * CLI agent picker — compact by default; container queries switch to a list
+ * when the pane is narrow or short (split leaves, small session windows).
+ */
+.cli-agent-picker {
+  --cli-picker-pad-x: 16px;
+  --cli-picker-pad-y: 16px;
+  --cli-picker-gap: 10px;
+  --cli-picker-icon: 32px;
+  --cli-picker-item-w: 72px;
+
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--cli-picker-gap);
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  padding: var(--cli-picker-pad-y) var(--cli-picker-pad-x);
+  box-sizing: border-box;
+  background: var(--bg-terminal, var(--bg-content));
+  overflow: auto;
+  container-type: size;
+  container-name: cli-picker;
+}
+
+.cli-agent-picker.is-compact {
+  --cli-picker-pad-x: 12px;
+  --cli-picker-pad-y: 20px;
+  --cli-picker-gap: 8px;
+  --cli-picker-icon: 28px;
+  --cli-picker-item-w: 64px;
+}
+
+.cli-agent-picker-head {
+  text-align: center;
+  width: 100%;
+  max-width: 420px;
+  flex: 0 0 auto;
+}
+
+.cli-agent-picker-title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--text);
+}
+
+.cli-agent-picker-empty {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+  text-align: center;
+}
+
+/* Framed strip: gradient rules top + bottom. */
+.cli-agent-picker-block {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  max-width: 420px;
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+.cli-agent-picker-rule {
+  flex: 0 0 auto;
+  height: 1px;
+  width: 100%;
+  border: 0;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    color-mix(in srgb, var(--text) 8%, transparent) 12%,
+    color-mix(in srgb, var(--text) 18%, transparent) 50%,
+    color-mix(in srgb, var(--text) 8%, transparent) 88%,
+    transparent 100%
+  );
+  pointer-events: none;
+}
+
+:root[data-theme='dark'] .cli-agent-picker-rule {
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    color-mix(in srgb, #fff 10%, transparent) 12%,
+    color-mix(in srgb, #fff 22%, transparent) 50%,
+    color-mix(in srgb, #fff 10%, transparent) 88%,
+    transparent 100%
+  );
+}
+
+/* Default: compact icon grid. */
+.cli-agent-picker-grid {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: flex-start;
+  gap: 4px 2px;
+  width: 100%;
+  padding: 2px 0;
+}
+
+.cli-agent-picker-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 6px;
+  width: var(--cli-picker-item-w);
+  margin: 0;
+  padding: 6px 4px 8px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  cursor: default;
+  transition:
+    background var(--dur-hover, 120ms) ease,
+    transform var(--dur-press, 80ms) var(--ease-out, ease);
+}
+
+.cli-agent-picker-item:hover {
+  background: color-mix(in srgb, var(--text) 5%, transparent);
+}
+
+.cli-agent-picker-item:active {
+  transform: scale(0.97);
+  background: color-mix(in srgb, var(--text) 7%, transparent);
+}
+
+/* Keyboard focus: light label + icon ring — no full-tile border/fill. */
+.cli-agent-picker-item:focus {
+  outline: none;
+}
+
+.cli-agent-picker-item:focus-visible,
+.cli-agent-picker-item.is-keyboard-active {
+  background: transparent;
+  box-shadow: none;
+}
+
+.cli-agent-picker-item:focus-visible .cli-agent-picker-item-name,
+.cli-agent-picker-item.is-keyboard-active .cli-agent-picker-item-name {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.cli-agent-picker-item:focus-visible .cli-agent-picker-icon,
+.cli-agent-picker-item.is-keyboard-active .cli-agent-picker-icon {
+  box-shadow: 0 0 0 1.5px color-mix(in srgb, var(--accent, #0a84ff) 55%, transparent);
+  border-radius: 10px;
+}
+
+.cli-agent-picker-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: var(--cli-picker-icon);
+  height: var(--cli-picker-icon);
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.cli-agent-picker-icon .agent-brand-mark {
+  background: transparent;
+  border-radius: 8px;
+}
+
+.cli-agent-picker-icon .agent-brand-mark-fallback {
+  border-radius: 8px;
+}
+
+.cli-agent-picker-item-name {
+  display: block;
+  width: 100%;
+  min-height: 1.2em;
+  font-size: 11px;
+  font-weight: 550;
+  letter-spacing: -0.01em;
+  text-align: center;
+  line-height: 1.2;
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  transition: color var(--dur-hover, 120ms) ease;
+}
+
+.cli-agent-picker-item:hover .cli-agent-picker-item-name {
+  color: var(--text);
+}
+
+/* Narrow or short pane → dense list (icon + name row). */
+@container cli-picker (max-width: 360px), cli-picker (max-height: 280px) {
+  .cli-agent-picker {
+    --cli-picker-pad-x: 10px;
+    --cli-picker-pad-y: 12px;
+    --cli-picker-gap: 8px;
+    --cli-picker-icon: 22px;
+    justify-content: flex-start;
+    align-items: stretch;
+  }
+
+  .cli-agent-picker-head {
+    text-align: left;
+    max-width: none;
+    padding: 0 2px;
+  }
+
+  .cli-agent-picker-title {
+    font-size: 12px;
+  }
+
+  .cli-agent-picker-block {
+    align-items: stretch;
+    max-width: none;
+    gap: 6px;
+  }
+
+  .cli-agent-picker-grid {
+    flex-direction: column;
+    flex-wrap: nowrap;
+    align-items: stretch;
+    justify-content: flex-start;
+    gap: 2px;
+    padding: 0;
+  }
+
+  .cli-agent-picker-item {
+    flex-direction: row;
+    align-items: center;
+    justify-content: flex-start;
+    gap: 10px;
+    width: 100%;
+    padding: 7px 8px;
+    border-radius: 8px;
+  }
+
+  .cli-agent-picker-item-name {
+    flex: 1 1 auto;
+    min-width: 0;
+    width: auto;
+    min-height: 0;
+    text-align: left;
+    font-size: 12px;
+  }
+}
+
+/* Very tight split: hide gradient rules, tighter list. */
+@container cli-picker (max-width: 220px), cli-picker (max-height: 180px) {
+  .cli-agent-picker-rule {
+    display: none;
+  }
+
+  .cli-agent-picker-item {
+    padding: 5px 6px;
+    gap: 8px;
+  }
+
+  .cli-agent-picker-title {
+    font-size: 11px;
+  }
+}
+
+/* Pending leaf fills the flex track so compact picker can scroll inside. */
+.terminal-split-pane.is-pending-cli > .cli-agent-picker {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
 .terminal-host {
   min-height: 0;
   min-width: 0;
   width: 100%;
   height: 100%;
   background: var(--bg-terminal);
+}
+
+/*
+ * Multi-split panes: fill the flex track with a relative host so FitAddon
+ * sees real width/height. Absolute inset-0 alone collapses when the only
+ * previous child was a picker (content-sized) and reuse remounts mid-layout.
+ */
+.terminal-stack.multi-split .terminal-split-pane > .terminal-host {
+  position: relative;
+  inset: auto;
+  flex: 1 1 0%;
+  width: 100%;
+  height: auto;
+  min-height: 0;
+  min-width: 0;
+  align-self: stretch;
 }
 
 .terminal-host .xterm-host,
@@ -11907,29 +12573,48 @@ mark {
 
 .agents-settings .agents-layout {
   display: grid;
-  grid-template-columns: 200px 1fr;
+  grid-template-columns: 220px 1fr;
   gap: 16px;
   min-height: 280px;
+}
+
+.agents-list-panel {
+  display: flex;
+  flex-direction: column;
+  /* Fixed-height source list: box never hugs content, rows scroll inside.
+     360px fits the full 10-agent catalogue without a scrollbar. */
+  height: 360px;
+  border: 1px solid var(--border-subtle, color-mix(in srgb, var(--text) 10%, transparent));
+  border-radius: var(--radius-md, 10px);
+  background: color-mix(in srgb, var(--bg-content, var(--bg)) 92%, transparent);
+  overflow: hidden;
 }
 
 .agents-list {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 1px;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: 4px;
 }
 
 .agents-list-row {
   display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 2px;
-  padding: 8px 10px;
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 7px 8px 7px 4px;
   border: 0;
   border-radius: var(--radius-sm);
   background: transparent;
   color: var(--text);
   text-align: left;
   cursor: pointer;
+  user-select: none;
+  box-sizing: border-box;
 }
 
 .agents-list-row:hover {
@@ -11945,9 +12630,191 @@ mark {
   opacity: 0.55;
 }
 
+.agents-list-row.is-drag-over {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent, #0a84ff) 45%, transparent);
+}
+
+.agents-list-row.is-dragging {
+  opacity: 0.45;
+}
+
+.agents-list-grip {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 22px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-secondary);
+  opacity: 0.55;
+  cursor: grab;
+  -webkit-user-drag: element;
+}
+
+.agents-list-grip:active {
+  cursor: grabbing;
+  opacity: 1;
+}
+
+.agents-list-row:hover .agents-list-grip,
+.agents-list-row.selected .agents-list-grip {
+  opacity: 0.9;
+}
+
 .agents-list-name {
+  flex: 1 1 auto;
+  min-width: 0;
   font-weight: 560;
   font-size: 12.5px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.agents-list-badge {
+  flex: 0 0 auto;
+  font-size: 10px;
+  opacity: 0.7;
+}
+
+.agents-skip-picker {
+  margin-top: 28px;
+  padding-top: 4px;
+  max-width: 520px;
+  gap: 10px;
+  align-items: flex-start;
+  line-height: 1.4;
+}
+
+.agents-skip-picker input[type='checkbox'] {
+  margin-top: 2px;
+  flex: 0 0 auto;
+}
+
+/* macOS-style +/− footer under the source list. */
+.agents-list-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  flex: 0 0 auto;
+  border-top: 1px solid var(--border-subtle, color-mix(in srgb, var(--text) 10%, transparent));
+  background: color-mix(in srgb, var(--bg-elevated, var(--bg)) 80%, transparent);
+}
+
+.agents-list-add-wrap {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.agents-list-tool-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 26px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-right: 1px solid var(--border-subtle, color-mix(in srgb, var(--text) 10%, transparent));
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  transition:
+    background var(--dur-hover) ease,
+    transform var(--dur-press) var(--ease-out);
+}
+
+.agents-list-tool-btn:hover:not(:disabled) {
+  background: var(--bg-hover);
+}
+
+.agents-list-tool-btn:active:not(:disabled) {
+  transform: scale(0.97);
+}
+
+.agents-list-tool-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+/* Catalogue + menu — same enter/leave family as session-history-popover. */
+.agents-add-menu {
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 4px);
+  z-index: 40;
+  min-width: 180px;
+  max-height: 280px;
+  overflow: auto;
+  padding: 4px;
+  border: 1px solid var(--border-subtle, color-mix(in srgb, var(--text) 12%, transparent));
+  border-radius: 10px;
+  background: var(--bg-elevated, var(--bg-content, var(--bg)));
+  box-shadow:
+    0 8px 28px color-mix(in srgb, #000 22%, transparent),
+    0 0 0 0.5px color-mix(in srgb, var(--text) 8%, transparent);
+  transform-origin: bottom left;
+  opacity: 1;
+  transform: translateY(0) scale(1);
+  transition:
+    opacity var(--dur-pop) var(--ease-out),
+    transform var(--dur-pop) var(--ease-out);
+}
+
+@starting-style {
+  .agents-add-menu {
+    opacity: 0;
+    transform: translateY(4px) scale(0.97);
+  }
+}
+
+.agents-add-menu[data-leaving] {
+  opacity: 0;
+  transform: translateY(4px) scale(0.97);
+  pointer-events: none;
+}
+
+.agents-add-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  margin: 0;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 12.5px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.agents-add-menu-item:hover {
+  background: var(--bg-hover);
+}
+
+.agents-add-menu-sep {
+  height: 1px;
+  margin: 4px 6px;
+  background: color-mix(in srgb, var(--text) 10%, transparent);
+}
+
+.agents-add-menu-custom-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
 }
 
 .agents-editor {
@@ -11991,28 +12858,16 @@ mark {
   box-sizing: border-box;
 }
 
-/* Composer is first in the dock (above tools): modest top inset vs transcript;
-   tight gap into the tools header (was top-heavy under the prompt). */
+/* Composer is first in the dock (above tools): modest top inset vs transcript.
+   Bottom pad is 0 — tools-header owns the shared vertical air under the prompt
+   (same as CLI dock-tools-only, so the path chip does not jump on mode switch). */
 .dock > .composer:first-child {
   flex: 0 1 auto;
   align-self: center;
   width: min(100%, var(--reading-max));
   max-width: var(--reading-max);
-  padding-top: 8px;
-  padding-bottom: 2px;
-}
-
-/* Tools strip sits close under the prompt — no extra top air. */
-.dock > .composer + .tools-panel .tools-header {
-  padding-top: 0;
-  height: 32px;
-  /* Match composer side pad so Workspace / New line up under the prompt. */
-  width: min(100%, var(--reading-max));
-  max-width: var(--reading-max);
-  margin-left: auto;
-  margin-right: auto;
-  padding-left: var(--composer-gutter);
-  padding-right: var(--composer-gutter);
+  padding-top: 6px;
+  padding-bottom: 0;
 }
 
 /*
@@ -12028,7 +12883,6 @@ mark {
     padding-right: 8px;
   }
 
-  .dock > .composer + .tools-panel .tools-header,
   .tools-header {
     width: 100%;
     max-width: none;
@@ -12054,7 +12908,6 @@ mark {
     padding-right: 6px;
   }
 
-  .dock > .composer + .tools-panel .tools-header,
   .tools-header {
     padding-left: 6px;
     padding-right: 6px;
@@ -12072,10 +12925,10 @@ mark {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 6px 10px;
-  border-radius: var(--radius);
-  background: var(--bg-raised);
-  box-shadow: inset 0 0 0 1px var(--border);
+  padding: 5px 8px 5px 10px;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--text) 4%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--border) 80%, transparent);
 }
 
 .quote-strip-body {
@@ -12116,17 +12969,18 @@ mark {
   color: var(--text-secondary);
 }
 
-/* File Attachment Chip — above comment cards / composer (file-preview.rpml). */
+/* File Attachment Chip — above comment cards / composer (file-preview.rpml).
+   Same capsule language as tools path chip so file / bare / comment stacks match. */
 .file-context-chip {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 6px 10px;
-  border-radius: var(--radius);
-  background: var(--bg-raised);
-  box-shadow: inset 0 0 0 1px var(--border);
+  padding: 5px 8px 5px 10px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--text) 4.5%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--border) 80%, transparent);
   color: var(--text-secondary);
-  font-size: 12.5px;
+  font-size: 12px;
   min-width: 0;
 }
 
@@ -12807,6 +13661,18 @@ html:has(.token-usage-popup) #root {
   flex: 1;
   overflow-y: auto;
   padding: 22px 22px 28px;
+}
+
+/* Category switch: light opacity fade only (no slide — keeps nav crisp). */
+.settings-body-panel {
+  opacity: 1;
+  transition: opacity var(--dur-pop) var(--ease-out);
+}
+
+@starting-style {
+  .settings-body-panel {
+    opacity: 0;
+  }
 }
 
 .api-validate-status {

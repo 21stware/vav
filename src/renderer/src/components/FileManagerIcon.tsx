@@ -1,6 +1,6 @@
 /**
  * Platform file-manager glyph for “Reveal in Finder / Explorer”.
- * macOS: outline Finder face (stroke, matches Lucide toolbar icons).
+ * macOS: simplified Finder face (from brand SVG, stroke matches Lucide weight).
  * Windows / Linux: open-folder (Lucide).
  */
 
@@ -33,12 +33,14 @@ export function FileManagerIcon({
       className={`file-manager-icon${className ? ` ${className}` : ''}`}
       aria-hidden
     >
-      <rect x="3" y="3" width="18" height="18" rx="4" />
-      <path d="M12 3v18" />
-      <circle cx="8.5" cy="10" r="0.9" fill="currentColor" stroke="none" />
-      <circle cx="15.5" cy="10" r="0.9" fill="currentColor" stroke="none" />
-      <path d="M6.8 14.2c1.1 1.4 2.4 2.1 3.7 2.1" />
-      <path d="M17.2 14.2c-1.1 1.4-2.4 2.1-3.7 2.1" />
+      <rect x="2" y="2" width="20" height="20" rx="4.3" />
+      {/* Face seam + notch (Finder smile channel). */}
+      <polyline points="11.8 2 12 9.6 8.8 14.4 12 14.4 11.8 21.5" />
+      <path d="M6.1 16.1c1.2 1.5 2.6 2.3 4 2.3" />
+      <path d="M17.9 16.1c-1.2 1.5-2.6 2.3-4 2.3" />
+      {/* Eyes as short strokes (not filled dots). */}
+      <path d="M8.1 6.4v1.5" />
+      <path d="M15.9 6.4v1.5" />
     </svg>
   )
 }

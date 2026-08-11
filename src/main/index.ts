@@ -43,6 +43,7 @@ import {
 import {
   DEFAULT_SETTINGS,
   type AppSettings,
+  type Conversation,
   type ConversationMeta,
   type FileSortKey,
   type ShellKind,
@@ -56,6 +57,7 @@ import { ConversationStore } from './store/ConversationStore'
 import { VavPackService } from './store/VavPackService'
 import { FileSessionStore } from './store/FileSessionStore'
 import { FileService } from './fs/FileService'
+import { WorkingCopyService } from './fs/WorkingCopyService'
 import { FileAssociationService, formatIdForPath } from './fs/FileAssociationService'
 import { DocumentRetrievalService } from './retrieval/DocumentRetrievalService'
 import { DuckDbService } from './fs/DuckDbService'
@@ -88,6 +90,7 @@ import {
   uninstallCli,
   type CliInstallLocation
 } from './cli'
+import { ensureMacOpenDirectoryService } from './macOpenDirectoryService'
 import { NotificationCenter } from './notifications'
 
 const PLATFORM = process.platform as Platform
@@ -164,6 +167,8 @@ let tokenUsagePendingShow: {
 } | null = null
 /** At most one standalone window per conversation (sidebar spec, 双击). */
 const detachedWindows = new Map<string, BrowserWindow>()
+/** Reverse lookup so park/close can resolve the bound conversation. */
+const detachedWindowIds = new WeakMap<BrowserWindow, string>()
 /** At most one preview window per absolute file path. */
 const previewWindows = new Map<string, BrowserWindow>()
 /**
@@ -173,6 +178,25 @@ const previewWindows = new Map<string, BrowserWindow>()
 const ephemeralConversations = new Set<string>()
 let quitting = false
 
+/**
+ * Hidden warm session shells — ⌘⇧↵ claims one instead of cold BrowserWindow+load.
+ * One is enough for the hotkey (single new chat); refill after claim.
+ */
+const SESSION_WARM_POOL = 1
+const SESSION_POOL_REFILL_MS = 200
+/**
+ * If the user hits ⌘⇧↵ while a shell is still booting, wait this long before
+ * falling back to cold create. Avoids racing a second BrowserWindow against the
+ * in-flight warm load (which made "first open" feel even slower).
+ */
+const SESSION_WARM_WAIT_MS = 1200
+const warmSessionPool: BrowserWindow[] = []
+const warmSessionReady = new WeakSet<BrowserWindow>()
+/** Monotonic navigate seq so late IPC cannot clobber a newer open. */
+let sessionNavigateSeq = 0
+/** Hotkey / open clock for [session-perf] logs. */
+let sessionOpenT0 = 0
+
 const settingsStore = new SettingsStore()
 const secretStore = new SecretStore()
 const conversationStore = new ConversationStore()
@@ -181,9 +205,11 @@ const vavPackService = new VavPackService(conversationStore, () => resolveNewWor
 const fileSessionStore = new FileSessionStore()
 
 const fileAssociationService = new FileAssociationService()
+const workingCopyService = new WorkingCopyService()
 const fileService = new FileService((conversationId, dirs) => {
   sendToWorkspaceWindows(IPC.filesDirty, { conversationId, dirs }, conversationId)
 })
+fileService.workingCopies = workingCopyService
 // Wired after construction — retrieval is defined below; assigned once created.
 
 const ptyManager = new PtyManager(
@@ -191,7 +217,11 @@ const ptyManager = new PtyManager(
     sendToWorkspaceWindows(IPC.ptyData, { tabId, data }, ptyManager.conversationIdFor(tabId)),
   (tabId, conversationId) => sendToWorkspaceWindows(IPC.ptyExit, tabId, conversationId),
   // Workspace windows re-hydrate tab maps from main — no per-renderer PTY ownership.
-  (conversationId) => sendToWorkspaceWindows(IPC.ptyChanged, { conversationId }, conversationId),
+  (conversationId) => {
+    sendToWorkspaceWindows(IPC.ptyChanged, { conversationId }, conversationId)
+    // Live CLI agent count drives the tray badge / menu.
+    refreshTraySessions()
+  },
   (tabId, conversationId, status) =>
     sendToWorkspaceWindows(IPC.ptyStatus, { tabId, conversationId, status }, conversationId)
 )
@@ -246,11 +276,36 @@ const notifications = new NotificationCenter(
 )
 
 function refreshTraySessions(): void {
-  const sessions = [...activeTurns.keys()].map((id) => {
+  const settings = settingsStore.get()
+  const agentLabel = (agentId: string): string => {
+    const fromSettings = settings.cliAgents?.find((a) => a.id === agentId)
+    if (fromSettings?.name) return fromSettings.name
+    return agentId
+  }
+
+  // Prefer live CLI agent panes for the tray badge/menu.
+  const cliRows = ptyManager.listCliAgentSessions().map((s) => {
+    const conversation = conversationStore.get(s.conversationId)
+    const convTitle =
+      (conversation?.title && conversation.title.trim()) || s.title || s.conversationId
+    const name = s.agentId ? agentLabel(s.agentId) : 'CLI'
+    return {
+      id: s.conversationId,
+      title: `${name} — ${convTitle}`
+    }
+  })
+
+  // Fall back to VAV active turns when no CLI agent is live (built-in chat).
+  if (cliRows.length > 0) {
+    notifications.updateRunningSessions(cliRows)
+    return
+  }
+
+  const vavRows = [...activeTurns.keys()].map((id) => {
     const conversation = conversationStore.get(id)
     return { id, title: conversation?.title ?? id }
   })
-  notifications.updateRunningSessions(sessions)
+  notifications.updateRunningSessions(vavRows)
 }
 
 /** Last built app menu — Windows/Linux attach it per-window so the bar stays visible. */
@@ -347,6 +402,7 @@ function handleAgentEvent(event: TurnEvent): void {
 }
 
 const changeSetStore = new ChangeSetStore()
+changeSetStore.workingCopies = workingCopyService
 const updateService = new UpdateService()
 const documentRetrieval = new DocumentRetrievalService()
 fileService.retrieval = documentRetrieval
@@ -1216,20 +1272,264 @@ function raiseDetachedWindow(win: BrowserWindow): void {
   void waitForRendererPaint(win).then(finish)
 }
 
+/** Strip message bodies for IPC seed (sidebar meta shape). */
+function conversationToMeta(conversation: Conversation): ConversationMeta {
+  const {
+    messages: _messages,
+    tokenHistory: _history,
+    cacheCreatedAt: _created,
+    cacheExpiresAt: _expires,
+    compactions: _compactions,
+    ...meta
+  } = conversation
+  void _messages
+  void _history
+  void _created
+  void _expires
+  void _compactions
+  return meta
+}
+
+function bindDetachedWindow(window: BrowserWindow, conversationId: string): void {
+  for (const [id, win] of detachedWindows) {
+    if (win === window && id !== conversationId) detachedWindows.delete(id)
+  }
+  detachedWindows.set(conversationId, window)
+  detachedWindowIds.set(window, conversationId)
+}
+
+function unbindDetachedWindow(window: BrowserWindow): string | null {
+  const id = detachedWindowIds.get(window) ?? null
+  if (id) {
+    const mapped = detachedWindows.get(id)
+    if (mapped === window) detachedWindows.delete(id)
+    detachedWindowIds.delete(window)
+  }
+  return id
+}
+
+/**
+ * Empty ephemeral ⌘⇧↵ shells die on close; anything with messages / CLI / PTY stays.
+ */
+function disposeEphemeralIfEmpty(conversationId: string): boolean {
+  if (!ephemeralConversations.delete(conversationId)) return false
+  const stale = conversationStore.get(conversationId)
+  const agentActive = !!stale?.agentBinaryName && stale.agentBinaryName !== 'vav'
+  const hasPty = ptyManager.hasConversation(conversationId)
+  if (stale && stale.messages.length === 0 && !agentActive && !hasPty) {
+    const removed = conversationStore.remove([conversationId])
+    for (const id of removed) {
+      agent.disposeConversation(id)
+      ptyManager.killForConversation(id)
+      fileService.unwatch(id)
+    }
+    if (removed.length) conversationStore.flush()
+    return removed.length > 0
+  }
+  return false
+}
+
+function createSessionBrowserWindow(opts: {
+  show: boolean
+  title?: string
+  bounds?: { width: number; height: number; x: number; y: number }
+}): BrowserWindow {
+  const bounds = opts.bounds ?? detachedBounds(0)
+  const window = new BrowserWindow({
+    ...bounds,
+    minWidth: 380,
+    minHeight: 420,
+    show: opts.show,
+    paintWhenInitiallyHidden: true,
+    title: opts.title ?? 'Session',
+    icon: loadAppIcon(),
+    ...chrome(38),
+    parent: undefined,
+    webPreferences: rendererPrefs()
+  })
+  applyMenuBar(window)
+  wireExternalLinks(window.webContents)
+  wireMenuAccelerators(window.webContents)
+  wirePtyViewerLifecycle(window.webContents)
+  wireFullscreenState(window)
+  if (!app.isPackaged) {
+    window.webContents.on('console-message', (event) => {
+      console.log(`[session:${event.level}] ${event.message}`)
+    })
+  }
+  return window
+}
+
+function takeWarmSessionShell(): BrowserWindow | null {
+  const notReady: BrowserWindow[] = []
+  while (warmSessionPool.length > 0) {
+    const win = warmSessionPool.pop()!
+    if (win.isDestroyed()) continue
+    if (!warmSessionReady.has(win)) {
+      notReady.push(win)
+      continue
+    }
+    warmSessionPool.push(...notReady)
+    return win
+  }
+  warmSessionPool.push(...notReady)
+  return null
+}
+
+function hasWarmSessionInFlight(): boolean {
+  return warmSessionPool.some((w) => !w.isDestroyed())
+}
+
+/**
+ * Prefer a ready shell; if one is still booting, wait up to `budgetMs` instead
+ * of spawning a competing cold window.
+ */
+async function acquireWarmSessionShell(budgetMs: number): Promise<BrowserWindow | null> {
+  const ready = takeWarmSessionShell()
+  if (ready) return ready
+
+  if (!hasWarmSessionInFlight()) {
+    try {
+      warmSessionShellPool()
+    } catch {
+      // non-fatal
+    }
+  }
+  if (!hasWarmSessionInFlight()) return null
+
+  sessionOpenMark('open:warm-wait')
+  const deadline = Date.now() + budgetMs
+  while (Date.now() < deadline) {
+    const win = takeWarmSessionShell()
+    if (win) {
+      sessionOpenMark('open:warm-wait-hit')
+      return win
+    }
+    await new Promise<void>((r) => setTimeout(r, 20))
+  }
+  sessionOpenMark('open:warm-wait-miss')
+  return null
+}
+
+/** Preload hidden session shells so ⌘⇧↵ skips BrowserWindow+renderer boot. */
+function warmSessionShellPool(): void {
+  const live = warmSessionPool.filter((w) => !w.isDestroyed())
+  warmSessionPool.length = 0
+  warmSessionPool.push(...live)
+  while (warmSessionPool.length < SESSION_WARM_POOL) {
+    const window = createSessionBrowserWindow({ show: false })
+    warmSessionPool.push(window)
+    window.on('closed', () => {
+      const idx = warmSessionPool.indexOf(window)
+      if (idx >= 0) warmSessionPool.splice(idx, 1)
+      warmSessionReady.delete(window)
+      unbindDetachedWindow(window)
+    })
+    loadRenderer(window, { view: 'session', warm: '1' })
+    sessionOpenMark('warm-shell-created')
+  }
+}
+
+/**
+ * Recycle a companion into the warm pool (hide) so the next ⌘⇧↵ is instant.
+ * Full pool → destroy.
+ */
+function parkWarmSessionShell(window: BrowserWindow): void {
+  if (window.isDestroyed()) return
+  if (warmSessionPool.includes(window)) return
+  if (warmSessionPool.length >= SESSION_WARM_POOL) {
+    afterLeavingFullscreen(window, () => {
+      if (!window.isDestroyed()) {
+        fullscreenCloseAllowed.add(window)
+        window.destroy()
+      }
+    })
+    return
+  }
+  try {
+    window.setTitle('Session')
+    if (window.isVisible()) window.hide()
+  } catch {
+    // ignore
+  }
+  warmSessionPool.push(window)
+  sessionNavigateSeq += 1
+  safeSend(window.webContents, IPC.sessionNavigate, {
+    conversationId: '',
+    openSeq: sessionNavigateSeq
+  })
+  setTimeout(() => warmSessionShellPool(), SESSION_POOL_REFILL_MS)
+}
+
+/**
+ * Close path for companion windows: unbind, maybe drop empty ephemeral, park.
+ */
+function finalizeDetachedClose(window: BrowserWindow): void {
+  if (window.isDestroyed()) return
+  const conversationId = unbindDetachedWindow(window)
+  publishDetachedSessions()
+  if (conversationId) disposeEphemeralIfEmpty(conversationId)
+  // Sidebar refresh off the critical path (park/hide first).
+  setImmediate(() => publishConversations())
+  parkWarmSessionShell(window)
+}
+
+function wireDetachedSessionLifecycle(window: BrowserWindow): void {
+  // Reclaim may re-wire a warm shell that already had listeners.
+  window.removeAllListeners('close')
+  window.removeAllListeners('closed')
+
+  window.on('close', (event) => {
+    if (quitting || window.isDestroyed()) return
+    if (fullscreenCloseAllowed.has(window)) {
+      fullscreenCloseAllowed.delete(window)
+      return
+    }
+    if (window.isFullScreen()) {
+      event.preventDefault()
+      window.once('leave-full-screen', () => {
+        if (!window.isDestroyed()) finalizeDetachedClose(window)
+      })
+      window.setFullScreen(false)
+      return
+    }
+    event.preventDefault()
+    finalizeDetachedClose(window)
+  })
+
+  window.on('closed', () => {
+    const id = unbindDetachedWindow(window)
+    if (id) {
+      publishDetachedSessions()
+      disposeEphemeralIfEmpty(id)
+      setImmediate(() => publishConversations())
+    }
+    const idx = warmSessionPool.indexOf(window)
+    if (idx >= 0) warmSessionPool.splice(idx, 1)
+    warmSessionReady.delete(window)
+  })
+}
+
 /**
  * Opens one conversation in its own window: transcript, tools and composer,
  * no sidebar.
  *
+ * Prefers a warm hidden shell + in-place navigate (⌘⇧↵ critical path).
+ * If a shell is still booting, waits briefly instead of cold-racing it.
  * The main window is deliberately left alone — its selection, transcript,
- * bounds, and PTY size votes are independent. Detaching is "also show it over
- * here", not "hand it over" or "resize the main window to companion size".
+ * bounds, and PTY size votes are independent.
  */
-function openDetachedWindow(
+async function openDetachedWindow(
   conversationId: string,
-  options: { collapseTools?: boolean } = {}
-): BrowserWindow | null {
+  options: { collapseTools?: boolean; requestedAt?: number } = {}
+): Promise<BrowserWindow | null> {
+  const requestedAt = options.requestedAt ?? Date.now()
+  sessionOpenT0 = requestedAt
+  sessionOpenMark('open:start', conversationId)
+
   const existing = detachedWindows.get(conversationId)
   if (existing && !existing.isDestroyed()) {
+    sessionOpenMark('open:reuse-focus', conversationId)
     raiseDetachedWindow(existing)
     safeSend(existing.webContents, IPC.menuCommand, 'focus-composer')
     return existing
@@ -1243,79 +1543,75 @@ function openDetachedWindow(
     mainWindow && !mainWindow.isDestroyed() ? mainWindow.getBounds() : null
 
   const bounds = detachedBounds(detachedWindows.size)
+  const meta = conversationToMeta(conversation)
+  const empty = conversation.messages.length === 0
 
-  const window = new BrowserWindow({
-    ...bounds,
-    minWidth: 380,
-    minHeight: 420,
-    show: false,
-    paintWhenInitiallyHidden: true,
-    title: conversation.title,
-    icon: loadAppIcon(),
-    ...chrome(38),
-    // Not a child of main — child windows can inherit geometry quirks on macOS.
-    parent: undefined,
-    webPreferences: rendererPrefs()
-  })
-  applyMenuBar(window)
+  // Ready shell, or wait for an in-flight warm boot (never dual-load).
+  const warm = await acquireWarmSessionShell(SESSION_WARM_WAIT_MS)
+  const window =
+    warm ??
+    createSessionBrowserWindow({
+      show: false,
+      title: conversation.title,
+      bounds
+    })
+
+  if (warm) {
+    sessionOpenMark('open:warm-claim', conversationId)
+    try {
+      window.setBounds(bounds)
+      window.setTitle(conversation.title)
+    } catch {
+      // geometry races
+    }
+  } else {
+    sessionOpenMark('open:cold-create', conversationId)
+  }
 
   // Space membership is handled in raiseDetachedWindow (brief join-desktops,
   // then pin). Do not set visibleOnFullScreen here — that causes the flash
   // when switching into other apps’ fullscreen Spaces.
 
-  detachedWindows.set(conversationId, window)
+  bindDetachedWindow(window, conversationId)
   // Main window must drop its live agent xterm for this id (exclusive PTY view).
   publishDetachedSessions()
+  wireDetachedSessionLifecycle(window)
 
-  // Raise exactly once when the window is ready — a second raise on
-  // did-finish-load re-focused the frame and made the shadow flicker.
-  // Composer focus is owned by SessionWindow after React mounts.
-  window.once('ready-to-show', () => {
-    raiseDetachedWindow(window)
-  })
-
-  // Unlike the main window, closing here really does close: the conversation
-  // is not going away, it just goes back to being a row in the sidebar.
-  // Leave native fullscreen first so macOS does not leave a black Space.
-  wireCloseLeavingFullscreen(window)
-  window.on('closed', () => {
-    detachedWindows.delete(conversationId)
-    publishDetachedSessions()
-    if (ephemeralConversations.delete(conversationId)) {
-      const stale = conversationStore.get(conversationId)
-      // Empty *chat* is not empty work: a CLI agent host (Grok / Cursor / …)
-      // or any PTY means the user already invested in this session.
-      const agentActive =
-        !!stale?.agentBinaryName && stale.agentBinaryName !== 'vav'
-      const hasPty = ptyManager.hasConversation(conversationId)
-      if (stale && stale.messages.length === 0 && !agentActive && !hasPty) {
-        const removed = conversationStore.remove([conversationId])
-        for (const id of removed) {
-          agent.disposeConversation(id)
-          ptyManager.killForConversation(id)
-          fileService.unwatch(id)
-        }
-        if (removed.length) conversationStore.flush()
-      }
-    }
-    publishConversations()
-  })
-
-  wireExternalLinks(window.webContents)
-  wireMenuAccelerators(window.webContents)
-  wirePtyViewerLifecycle(window.webContents)
-  // Traffic-light inset + menu View → Full Screen for ⌘⇧↵ / double-click windows.
-  wireFullscreenState(window)
-
-  if (!app.isPackaged) {
-    window.webContents.on('console-message', (event) => {
-      console.log(`[session:${event.level}] ${event.message}`)
-    })
+  sessionNavigateSeq += 1
+  const openSeq = sessionNavigateSeq
+  const payload = {
+    conversationId,
+    meta,
+    empty,
+    collapseTools: !!options.collapseTools,
+    openSeq,
+    requestedAt
   }
 
-  const query: Record<string, string> = { view: 'session', conversationId }
-  if (options.collapseTools) query.collapseTools = '1'
-  loadRenderer(window, query)
+  if (warm) {
+    safeSend(window.webContents, IPC.sessionNavigate, payload)
+    // Shell is already bootstrapped — raise now; renderer focuses composer.
+    raiseDetachedWindow(window)
+    sessionOpenMark('open:warm-raised', conversationId)
+    setTimeout(() => warmSessionShellPool(), SESSION_POOL_REFILL_MS)
+  } else {
+    // Cold companion: raise once when ready — a second raise on did-finish-load
+    // re-focused the frame and made the shadow flicker.
+    window.once('ready-to-show', () => {
+      sessionOpenMark('open:cold-ready-to-show', conversationId)
+      raiseDetachedWindow(window)
+    })
+    const query: Record<string, string> = {
+      view: 'session',
+      conversationId,
+      requestedAt: String(requestedAt)
+    }
+    if (options.collapseTools) query.collapseTools = '1'
+    if (empty) query.empty = '1'
+    loadRenderer(window, query)
+    sessionOpenMark('open:cold-loaded', conversationId)
+    setTimeout(() => warmSessionShellPool(), 1200)
+  }
 
   // Hard invariant: opening a companion must never resize the main window.
   if (mainBoundsBefore && mainWindow && !mainWindow.isDestroyed()) {
@@ -1377,11 +1673,21 @@ function previewPathKey(filePath: string): string {
 const IS_DEV_LAUNCH = Boolean(process.env.ELECTRON_RENDERER_URL)
 /** Env escape hatch so a real build can be timed too. */
 const PREVIEW_PERF_LOG = IS_DEV_LAUNCH || process.env.VAV_PREVIEW_PERF === '1'
+/** Session companion open timing (⌘⇧↵). Always on in dev; force with VAV_SESSION_PERF=1. */
+const SESSION_PERF_LOG = IS_DEV_LAUNCH || process.env.VAV_SESSION_PERF === '1'
 
 function previewOpenMark(label: string, detail?: string): void {
   if (!PREVIEW_PERF_LOG) return
   const suffix = detail ? ` ${detail}` : ''
   console.log(`[preview-perf] ${label}${suffix} t=${Date.now()}`)
+}
+
+function sessionOpenMark(label: string, detail?: string): void {
+  if (!SESSION_PERF_LOG) return
+  const now = Date.now()
+  const elapsed = sessionOpenT0 ? ` +${now - sessionOpenT0}ms` : ''
+  const suffix = detail ? ` ${detail}` : ''
+  console.log(`[session-perf] ${label}${suffix}${elapsed}`)
 }
 
 /**
@@ -1995,15 +2301,22 @@ function newDetachedSession(): void {
   const now = Date.now()
   if (now - lastDetachedSessionAt < 450) return
   lastDetachedSessionAt = now
+  sessionOpenT0 = now
+  sessionOpenMark('hotkey:start')
   const settings = settingsStore.get()
   const conversation = conversationStore.create(resolveNewWorkdir(), settings.defaultModel, {
     approvalMode: settings.defaultApprovalMode ?? 'auto'
   })
   ephemeralConversations.add(conversation.id)
-  publishConversations()
+  sessionOpenMark('hotkey:created', conversation.id)
   // ⌘⇧↵: tools panel starts collapsed (main-chat.rpml).
   // raiseDetachedWindow handles focus — do not app.focus alone (fullscreen steal).
-  openDetachedWindow(conversation.id, { collapseTools: true })
+  // Defer sidebar broadcast so main-window re-render does not fight the raise.
+  void openDetachedWindow(conversation.id, { collapseTools: true, requestedAt: now }).then(
+    () => sessionOpenMark('hotkey:open-settled', conversation.id)
+  )
+  setImmediate(() => publishConversations())
+  sessionOpenMark('hotkey:open-dispatched', conversation.id)
 }
 
 /**
@@ -2682,7 +2995,7 @@ function registerIpc(): void {
     return result.canceled ? null : (result.filePaths[0] ?? null)
   })
 
-  ipcMain.handle(IPC.settingsCliStatus, () => getCliStatus())
+  ipcMain.handle(IPC.settingsCliStatus, () => getCliStatus()) // async — login PATH probe
   ipcMain.handle(IPC.settingsCliSetLocation, (_event, location: CliInstallLocation) =>
     setCliPreferredLocation(location)
   )
@@ -3027,6 +3340,31 @@ function registerIpc(): void {
   ipcMain.handle(IPC.filesWrite, (_event, path: string, content: string) =>
     fileService.writeTextFile(path, content)
   )
+  ipcMain.handle(
+    IPC.filesWorkingCopyEnsure,
+    async (_event, path: string, opts?: { fileId?: string | null }) => {
+      try {
+        const st = await workingCopyService.ensure(String(path || ''), {
+          fileId: opts?.fileId
+        })
+        return { ok: true as const, ...st }
+      } catch (err) {
+        return { ok: false as const, error: (err as Error).message }
+      }
+    }
+  )
+  ipcMain.handle(IPC.filesWorkingCopyPromote, async (_event, path: string) =>
+    workingCopyService.promote(String(path || ''))
+  )
+  ipcMain.handle(IPC.filesWorkingCopyDiscard, async (_event, path: string) => {
+    const result = await workingCopyService.discard(String(path || ''), { reseed: true })
+    if (!result.ok) return result
+    const st = workingCopyService.status(String(path || ''))
+    return { ok: true as const, dirty: st?.dirty ?? false }
+  })
+  ipcMain.handle(IPC.filesWorkingCopyStatus, (_event, path: string) =>
+    workingCopyService.status(String(path || ''))
+  )
   ipcMain.handle(IPC.filesQuickLook, (_event, path: string) => fileService.preview(path))
   ipcMain.handle(IPC.filesOpenWithDefault, (_event, path: string) => fileService.openWithDefault(path))
   ipcMain.handle(IPC.filesWatch, (_event, id: string, root: string | null) =>
@@ -3052,6 +3390,12 @@ function registerIpc(): void {
     if (!win || win.isDestroyed()) return
     warmPreviewReady.add(win)
     previewOpenMark('warm-shell-ready')
+  })
+  ipcMain.on(IPC.sessionShellReady, (event) => {
+    const win = BrowserWindow.fromWebContents(event.sender)
+    if (!win || win.isDestroyed()) return
+    warmSessionReady.add(win)
+    sessionOpenMark('warm-shell-ready')
   })
   ipcMain.handle(
     IPC.filesInspectStructured,
@@ -3271,9 +3615,9 @@ function registerIpc(): void {
   ipcMain.handle(IPC.windowOpenSettings, (_event, view?: SettingsView) => openSettingsWindow(view))
   ipcMain.handle(IPC.windowCloseSettings, () => hideSettingsWindow())
 
-  ipcMain.handle(IPC.windowOpenSession, (_event, id: string) => {
+  ipcMain.handle(IPC.windowOpenSession, async (_event, id: string) => {
     // Must not return BrowserWindow — structured clone can't send it over IPC.
-    openDetachedWindow(String(id || ''))
+    await openDetachedWindow(String(id || ''))
   })
   ipcMain.handle(IPC.windowRevealInList, (event, id: string) => {
     revealConversationInList(String(id || ''))
@@ -3698,8 +4042,16 @@ if (!singleInstance) {
       if (process.env.VAV_SMOKE_SEED === '1') {
         void seedSmokeChangeReview()
       }
-      // After the main shell is up, preload companion windows so Settings /
-      // token ring open without a cold BrowserWindow + renderer load.
+      // Companion warm order: session first (global ⌘⇧↵ is latency-critical),
+      // then token / preview / settings. A short delay lets the main shell paint
+      // once so the hidden session boot does not contend on first frame.
+      setTimeout(() => {
+        try {
+          warmSessionShellPool()
+        } catch {
+          // non-fatal
+        }
+      }, 400)
       setTimeout(() => {
         try {
           warmTokenUsageWindow()
@@ -3713,7 +4065,7 @@ if (!singleInstance) {
         } catch {
           // non-fatal
         }
-      }, 1800)
+      }, 2000)
       setTimeout(() => {
         try {
           warmSettingsWindow()
@@ -3728,6 +4080,18 @@ if (!singleInstance) {
     // Silent check so the bottom-left update chip can appear when a newer release exists.
     if (currentSettings().autoCheckUpdates) {
       void updateService.check()
+    }
+
+    // Finder → Services → “Open Directory in VAV” (folders only).
+    // Defer so first paint is not blocked by osacompile.
+    if (IS_MAC) {
+      setTimeout(() => {
+        try {
+          ensureMacOpenDirectoryService()
+        } catch {
+          // non-fatal
+        }
+      }, 2800)
     }
 
     if (snapshotting) {

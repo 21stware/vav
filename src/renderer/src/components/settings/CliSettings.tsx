@@ -15,21 +15,36 @@ function relativeInstalledAt(at: number | null, t: ReturnType<typeof useT>): str
 
 /**
  * Install / uninstall the `vav` shell command (settings-cli.rpml).
- * Location picker and inline behavior docs were removed — point users to `vav -h`.
+ *
+ * Mount paints the page shell immediately; status (and the login-PATH probe)
+ * loads in the background so switching to this tab never freezes Settings.
  */
 export function CliSettings(): React.JSX.Element {
   const t = useT()
   const showDialog = useSessionStore((s) => s.showDialog)
   const [status, setStatus] = useState<CliStatus | null>(null)
+  const [loadError, setLoadError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
 
   useEffect(() => {
-    void window.vav.settings.cliStatus().then(setStatus)
+    let cancelled = false
+    setLoadError(null)
+    void window.vav.settings
+      .cliStatus()
+      .then((next) => {
+        if (!cancelled) setStatus(next)
+      })
+      .catch((err: unknown) => {
+        if (cancelled) return
+        const message = err instanceof Error ? err.message : String(err)
+        setLoadError(message)
+      })
+    return () => {
+      cancelled = true
+    }
   }, [])
 
-  if (!status) return <div className="muted">{t('common.loading')}</div>
-
-  const location = status.preferredLocation
+  const location = status?.preferredLocation ?? '~/.local/bin'
   const targetLabel = `${location}/vav`
 
   const install = async (): Promise<void> => {
@@ -42,6 +57,7 @@ export function CliSettings(): React.JSX.Element {
   }
 
   const uninstall = (): void => {
+    if (!status) return
     showDialog({
       title: t('cli.uninstallTitle'),
       body: t('cli.uninstallBody', { path: status.path ?? targetLabel }),
@@ -62,15 +78,18 @@ export function CliSettings(): React.JSX.Element {
 
   const installLabel = busy
     ? t('common.installing')
-    : status.error
+    : status?.error
       ? t('cli.retry')
       : t('common.install')
 
-  const versionSuffix = status.version
-    ? `（v${status.version}${
-        status.installedAt ? ` · ${relativeInstalledAt(status.installedAt, t)}` : ''
-      }）`
-    : ''
+  const versionSuffix =
+    status?.version
+      ? `（v${status.version}${
+          status.installedAt ? ` · ${relativeInstalledAt(status.installedAt, t)}` : ''
+        }）`
+      : ''
+
+  const loading = !status && !loadError
 
   return (
     <div className="settings-form">
@@ -82,57 +101,65 @@ export function CliSettings(): React.JSX.Element {
         </div>
       </div>
 
-      <div className="cli-status-row">
-        {busy ? (
+      <div className="cli-status-row" aria-busy={loading || busy}>
+        {loading || busy ? (
           <Loader2 className="spin" size={14} />
-        ) : status.installed && !status.error ? (
+        ) : status?.installed && !status.error ? (
           <Check size={14} />
-        ) : status.error ? (
+        ) : status?.error || loadError ? (
           <XCircle size={14} />
         ) : (
           <FileCode2 size={14} />
         )}
         <div className="cli-status-text">
-          {busy ? (
+          {loading ? (
+            <span className="muted">{t('common.loading')}</span>
+          ) : loadError ? (
+            <span className="muted">{t('cli.installFailedPrefix', { message: loadError })}</span>
+          ) : busy ? (
             <span>{t('cli.installingTo', { path: targetLabel })}</span>
-          ) : status.installed && status.path && !status.error ? (
+          ) : status?.installed && status.path && !status.error ? (
             <>
               <div>
                 {t('cli.installedAt', { path: status.path, version: versionSuffix })}
               </div>
               <div className="muted tiny">{t('cli.installedHint')}</div>
             </>
-          ) : status.error ? (
-            <span className="muted">{t('cli.installFailedPrefix', { message: status.error })}</span>
+          ) : status?.error ? (
+            <span className="muted">
+              {t('cli.installFailedPrefix', { message: status.error })}
+            </span>
           ) : (
             <span className="muted">{t('cli.notInstalled', { path: targetLabel })}</span>
           )}
         </div>
-        {status.installed && !status.error ? (
-          <Button
-            label={t('common.uninstall')}
-            variant="danger"
-            size="sm"
-            disabled={busy}
-            onClick={uninstall}
-          />
-        ) : (
-          <Button
-            label={installLabel}
-            variant="primary"
-            size="sm"
-            icon={busy ? <Loader2 className="spin" size={12} /> : <Download size={12} />}
-            disabled={busy}
-            onClick={() => void install()}
-          />
-        )}
+        {!loading && !loadError && status ? (
+          status.installed && !status.error ? (
+            <Button
+              label={t('common.uninstall')}
+              variant="danger"
+              size="sm"
+              disabled={busy}
+              onClick={uninstall}
+            />
+          ) : (
+            <Button
+              label={installLabel}
+              variant="primary"
+              size="sm"
+              icon={busy ? <Loader2 className="spin" size={12} /> : <Download size={12} />}
+              disabled={busy}
+              onClick={() => void install()}
+            />
+          )
+        ) : null}
       </div>
 
-      {status.notice && <InlineAlert kind="success" message={status.notice} />}
+      {status?.notice ? <InlineAlert kind="success" message={status.notice} /> : null}
 
-      {!status.pathInPath && (
+      {status && !status.pathInPath ? (
         <InlineAlert kind="warning" message={t('cli.pathWarning', { location })} />
-      )}
+      ) : null}
 
       <p className="muted tiny">{t('cli.afterInstallHint')}</p>
     </div>

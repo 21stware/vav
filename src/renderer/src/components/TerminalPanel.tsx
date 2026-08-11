@@ -1,19 +1,29 @@
 import { useEffect, useRef } from 'react'
 // useEffect still used by TerminalHost
+import { X } from 'lucide-react'
 import { useSessionStore } from '../state/sessionStore'
 import {
+  CLI_SURFACE_KEY,
   useWorkspaceStore,
   type TerminalLayoutNode,
   type TerminalSplitAxis
 } from '../state/workspaceStore'
 import { acquireTerminal } from '../lib/terminalRegistry'
+import { focusRemainingAgentPane, setUiFocusScope } from '../lib/uiFocus'
 import { useT } from '../i18n/useT'
 import { EmptyState } from './ui'
+import { CliAgentPicker } from './CliAgentPicker'
+
+function countLeaves(node: TerminalLayoutNode | null): number {
+  if (!node) return 0
+  if (node.type === 'leaf') return 1
+  return countLeaves(node.children[0]) + countLeaves(node.children[1])
+}
 
 /**
  * Multi-split terminal with a binary layout tree.
  * - `bash` (default): Tools-tray user shells
- * - `agent`: main-surface CLI agent host (separate store, never tools chips)
+ * - `agent`: unified CLI Agent surface (picker panes + multi-type PTYs)
  */
 export function TerminalPanel({
   visible,
@@ -24,22 +34,21 @@ export function TerminalPanel({
 }): React.JSX.Element {
   const t = useT()
   const activeId = useSessionStore((s) => s.activeId)
-  const agentId = useWorkspaceStore((s) => s.workspaces[activeId]?.activeHostAgentId ?? null)
-  const agentHostLayout = useWorkspaceStore((s) =>
-    surface === 'agent' && agentId
-      ? (s.workspaces[activeId]?.agentHostSessions[agentId]?.layout ?? null)
-      : null
-  )
-  const agentHostActiveTabId = useWorkspaceStore((s) =>
-    surface === 'agent' && agentId
-      ? (s.workspaces[activeId]?.agentHostSessions[agentId]?.activeTabId ?? '')
-      : ''
-  )
-  const agentHostFirstTabId = useWorkspaceStore((s) =>
-    surface === 'agent' && agentId
-      ? (s.workspaces[activeId]?.agentHostSessions[agentId]?.tabs[0]?.id ?? null)
-      : null
-  )
+  // Unified CLI surface (preferred) — falls back to legacy per-agent host.
+  const agentSurface = useWorkspaceStore((s) => {
+    if (surface !== 'agent') return null
+    const ws = s.workspaces[activeId]
+    if (!ws) return null
+    return (
+      ws.agentHostSessions[CLI_SURFACE_KEY] ??
+      (ws.activeHostAgentId
+        ? (ws.agentHostSessions[ws.activeHostAgentId] ?? null)
+        : null)
+    )
+  })
+  const agentHostLayout = agentSurface?.layout ?? null
+  const agentHostActiveTabId = agentSurface?.activeTabId ?? ''
+  const agentHostFirstTabId = agentSurface?.tabs[0]?.id ?? null
   const bashLayout = useWorkspaceStore((s) => s.workspaces[activeId]?.layout ?? null)
   const bashActiveTabId = useWorkspaceStore((s) => s.workspaces[activeId]?.activeTabId ?? '')
   const bashFirstTabId = useWorkspaceStore((s) => s.workspaces[activeId]?.tabs[0]?.id ?? null)
@@ -51,22 +60,24 @@ export function TerminalPanel({
   const displayLayout: TerminalLayoutNode | null =
     layout ?? (recoverId ? { type: 'leaf', tabId: recoverId, weight: 1 } : null)
   const empty = !displayLayout
+  const multiPane = countLeaves(displayLayout) > 1
 
   return (
     <div
       className="terminal-stack multi-split"
       data-empty={empty}
       data-terminal-surface={surface}
+      data-multi-pane={multiPane ? 'true' : 'false'}
     >
       {empty ? (
-        <EmptyState
-          title={
-            surface === 'agent' ? t('agents.hostEmptyTitle') : t('tools.noTerminalTitle')
-          }
-          description={
-            surface === 'agent' ? t('agents.hostEmptyDesc') : t('tools.bashHint')
-          }
-        />
+        surface === 'agent' ? (
+          <CliAgentPicker conversationId={activeId} />
+        ) : (
+          <EmptyState
+            title={t('tools.noTerminalTitle')}
+            description={t('tools.bashHint')}
+          />
+        )
       ) : (
         <div className="terminal-split-root">
           <LayoutNodeView
@@ -74,6 +85,7 @@ export function TerminalPanel({
             node={displayLayout}
             visible={visible}
             surface={surface}
+            multiPane={multiPane}
           />
         </div>
       )}
@@ -152,39 +164,115 @@ function LayoutNodeView({
   conversationId,
   node,
   visible,
-  surface
+  surface,
+  multiPane
 }: {
   conversationId: string
   node: TerminalLayoutNode
   visible: boolean
   surface: 'bash' | 'agent'
+  multiPane: boolean
 }): React.JSX.Element {
-  const agentId = useWorkspaceStore((s) => s.workspaces[conversationId]?.activeHostAgentId)
+  const t = useT()
   const activeTabId = useWorkspaceStore((s) => {
     if (surface === 'agent') {
-      const id = s.workspaces[conversationId]?.activeHostAgentId
-      return id
-        ? (s.workspaces[conversationId]?.agentHostSessions[id]?.activeTabId ?? '')
-        : ''
+      const ws = s.workspaces[conversationId]
+      const surfaceHost =
+        ws?.agentHostSessions[CLI_SURFACE_KEY] ??
+        (ws?.activeHostAgentId
+          ? ws.agentHostSessions[ws.activeHostAgentId]
+          : undefined)
+      return surfaceHost?.activeTabId ?? ''
     }
     return s.workspaces[conversationId]?.activeTabId ?? ''
   })
+  const pendingCli = useWorkspaceStore((s) => {
+    if (surface !== 'agent' || node.type !== 'leaf') return false
+    const ws = s.workspaces[conversationId]
+    const surfaceHost =
+      ws?.agentHostSessions[CLI_SURFACE_KEY] ??
+      (ws?.activeHostAgentId
+        ? ws.agentHostSessions[ws.activeHostAgentId]
+        : undefined)
+    const tab = surfaceHost?.tabs.find((t) => t.id === node.tabId)
+    return !!tab?.pendingCli
+  })
   const selectTab = useWorkspaceStore((s) => s.selectTab)
   const selectAgentTab = useWorkspaceStore((s) => s.selectAgentTab)
-  void agentId
+  const closeAgentTab = useWorkspaceStore((s) => s.closeAgentTab)
+  const closeTab = useWorkspaceStore((s) => s.closeTab)
 
   if (node.type === 'leaf') {
+    const isActive = node.tabId === activeTabId
     return (
       <div
-        className={`terminal-split-pane${node.tabId === activeTabId ? ' is-active' : ''}`}
+        className={`terminal-split-pane${isActive ? ' is-active' : ''}${pendingCli ? ' is-pending-cli' : ''}${multiPane ? ' is-multi' : ''}`}
         style={{ flex: splitFlex(node.weight) }}
-        onMouseDown={() =>
-          surface === 'agent'
-            ? selectAgentTab(conversationId, node.tabId)
-            : selectTab(conversationId, node.tabId)
-        }
+        tabIndex={surface === 'agent' ? -1 : undefined}
+        data-cli-pane={surface === 'agent' ? node.tabId : undefined}
+        onMouseDown={(e) => {
+          if (surface === 'agent') {
+            selectAgentTab(conversationId, node.tabId)
+            setUiFocusScope('agent')
+            const pane = e.currentTarget
+            requestAnimationFrame(() => {
+              if (pendingCli) {
+                // Pending: land on first agent option for keyboard pick.
+                const first = pane.querySelector(
+                  '.cli-agent-picker-item'
+                ) as HTMLButtonElement | null
+                try {
+                  if (first) first.focus({ preventScroll: true })
+                  else pane.focus({ preventScroll: true })
+                } catch {
+                  // ignore
+                }
+              } else {
+                // Live PTY: ensure xterm textarea gets keys after pane click.
+                focusXtermIn(pane)
+              }
+              setUiFocusScope('agent')
+            })
+          } else {
+            selectTab(conversationId, node.tabId)
+          }
+        }}
       >
-        <TerminalHost conversationId={conversationId} tabId={node.tabId} hidden={!visible} />
+        {multiPane ? (
+          <button
+            type="button"
+            className="terminal-split-pane-close"
+            title={t('common.close')}
+            aria-label={t('common.close')}
+            onMouseDown={(e) => {
+              // Select this pane first so focus ring follows, without focusing the button.
+              e.stopPropagation()
+              if (surface === 'agent') selectAgentTab(conversationId, node.tabId)
+              else selectTab(conversationId, node.tabId)
+            }}
+            onClick={(e) => {
+              e.stopPropagation()
+              if (surface === 'agent') {
+                closeAgentTab(conversationId, node.tabId)
+                // Keep keyboard focus on the survivor so ⌘W continues pane-close.
+                focusRemainingAgentPane(conversationId)
+              } else {
+                closeTab(conversationId, node.tabId)
+              }
+            }}
+          >
+            <X size={12} strokeWidth={2} />
+          </button>
+        ) : null}
+        {surface === 'agent' && pendingCli ? (
+          <CliAgentPicker
+            conversationId={conversationId}
+            tabId={node.tabId}
+            compact={multiPane}
+          />
+        ) : (
+          <TerminalHost conversationId={conversationId} tabId={node.tabId} hidden={!visible} />
+        )}
       </div>
     )
   }
@@ -203,6 +291,7 @@ function LayoutNodeView({
         node={a}
         visible={visible}
         surface={surface}
+        multiPane={multiPane}
       />
       <div
         className={`terminal-split-resizer axis-${direction}`}
@@ -217,10 +306,16 @@ function LayoutNodeView({
           if (branchSizePx <= 0) return
           const slice = useWorkspaceStore.getState().workspaces[conversationId]
           if (!slice) return
+          const agentHostKey =
+            surface === 'agent'
+              ? slice.agentHostSessions[CLI_SURFACE_KEY]
+                ? CLI_SURFACE_KEY
+                : slice.activeHostAgentId
+              : null
           const baseLayout =
             surface === 'agent'
-              ? slice.activeHostAgentId
-                ? slice.agentHostSessions[slice.activeHostAgentId]?.layout
+              ? agentHostKey
+                ? (slice.agentHostSessions[agentHostKey]?.layout ?? null)
                 : null
               : slice.layout
           if (!baseLayout) return
@@ -262,8 +357,8 @@ function LayoutNodeView({
             useWorkspaceStore.setState((state) => {
               const cur = state.workspaces[conversationId]
               if (!cur) return state
-              if (surface === 'agent' && cur.activeHostAgentId) {
-                const host = cur.agentHostSessions[cur.activeHostAgentId]
+              if (surface === 'agent' && agentHostKey) {
+                const host = cur.agentHostSessions[agentHostKey]
                 if (!host) return state
                 return {
                   workspaces: {
@@ -272,7 +367,7 @@ function LayoutNodeView({
                       ...cur,
                       agentHostSessions: {
                         ...cur.agentHostSessions,
-                        [cur.activeHostAgentId]: { ...host, layout: next }
+                        [agentHostKey]: { ...host, layout: next }
                       }
                     }
                   }
@@ -306,9 +401,22 @@ function LayoutNodeView({
         node={b}
         visible={visible}
         surface={surface}
+        multiPane={multiPane}
       />
     </div>
   )
+}
+
+function focusXtermIn(host: HTMLElement | null): void {
+  if (!host) return
+  const ta = host.querySelector('.xterm-helper-textarea') as HTMLTextAreaElement | null
+  if (!ta) return
+  try {
+    ta.focus({ preventScroll: true })
+  } catch {
+    ta.focus()
+  }
+  setUiFocusScope('agent')
 }
 
 function TerminalHost({
@@ -333,13 +441,20 @@ function TerminalHost({
       fontFamily: `"${codeFont}", Menlo, Monaco, "Courier New", monospace`,
       fontSize: Math.max(11, fontSize - 1)
     })
-    host.appendChild(entry.container)
+    // Re-parent on every mount (reuse path). Clear parked so fit/SIGWINCH run.
+    entry.parked = false
+    if (entry.container.parentElement !== host) {
+      host.appendChild(entry.container)
+    }
 
     let raf = 0
     let debounce: ReturnType<typeof setTimeout> | null = null
     let liveFitAt = 0
+    let cancelled = false
+
     /** Only the focused window should fit→resize the shared PTY. */
     const fit = (force = false): void => {
+      if (cancelled) return
       if (!force && !document.hasFocus()) return
       if (host.clientWidth === 0 || host.clientHeight === 0) return
       // Hidden tools-tray hosts still sit in the layout; fitting them only
@@ -348,6 +463,7 @@ function TerminalHost({
       try {
         const dims = entry.fit.proposeDimensions?.()
         if (
+          !force &&
           dims &&
           dims.cols === entry.term.cols &&
           dims.rows === entry.term.rows
@@ -355,10 +471,34 @@ function TerminalHost({
           return
         }
         entry.fit.fit()
+        // Reuse can leave the canvas at a 1-row “strip”; force PTY to match
+        // once we have a real host box.
+        if (
+          force &&
+          document.hasFocus() &&
+          entry.term.cols > 2 &&
+          entry.term.rows > 1
+        ) {
+          void window.vav.pty.resize(tabId, entry.term.cols, entry.term.rows, true)
+        }
       } catch {
         // ignore
       }
     }
+
+    /** Retry fit until the flex pane has non-zero size (picker → live swap). */
+    const fitWhenReady = (attempt: number): void => {
+      if (cancelled) return
+      if (host.clientWidth > 0 && host.clientHeight > 0) {
+        fit(true)
+        if (!hidden) focusXtermIn(host)
+        return
+      }
+      if (attempt < 12) {
+        requestAnimationFrame(() => fitWhenReady(attempt + 1))
+      }
+    }
+
     // Live window / panel drag: track the pointer, but not every frame —
     // FitAddon.clear() + alt-buffer rebuilds flash the whole column (and the
     // Files / preview empty states beside it). PTY SIGWINCH stays gated in
@@ -399,12 +539,16 @@ function TerminalHost({
     }
     const observer = new ResizeObserver(scheduleFit)
     observer.observe(host)
+    // Also watch the split pane — host may be 0×0 for a frame after reparent.
+    const pane = host.parentElement
+    if (pane) observer.observe(pane)
     window.addEventListener('vav:resize-end', onResizeEnd)
     window.addEventListener('focus', onFocus)
-    // Initial mount: fit even if focus is racing ready-to-show.
-    fit(true)
+    // Initial mount / reuse: wait for layout, then fit + focus.
+    requestAnimationFrame(() => fitWhenReady(0))
 
     return () => {
+      cancelled = true
       observer.disconnect()
       window.removeEventListener('vav:resize-end', onResizeEnd)
       window.removeEventListener('focus', onFocus)
@@ -412,14 +556,25 @@ function TerminalHost({
       if (debounce) clearTimeout(debounce)
       if (entry.container.parentElement === host) host.removeChild(entry.container)
     }
-  }, [conversationId, tabId, codeFont, fontSize])
+  }, [conversationId, tabId, codeFont, fontSize, hidden])
 
   useEffect(() => {
     if (hidden) return
-    const ta = hostRef.current?.querySelector(
-      '.xterm-helper-textarea'
-    ) as HTMLTextAreaElement | null
-    ta?.focus()
+    let cancelled = false
+    const run = (attempt: number): void => {
+      if (cancelled) return
+      const host = hostRef.current
+      const ta = host?.querySelector('.xterm-helper-textarea') as HTMLTextAreaElement | null
+      if (ta) {
+        focusXtermIn(host)
+        return
+      }
+      if (attempt < 10) requestAnimationFrame(() => run(attempt + 1))
+    }
+    requestAnimationFrame(() => run(0))
+    return () => {
+      cancelled = true
+    }
   }, [hidden, tabId])
 
   return (

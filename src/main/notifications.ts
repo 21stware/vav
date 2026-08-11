@@ -126,8 +126,15 @@ export class NotificationCenter {
       return false
     }
     this.tray.setToolTip(APP_NAME)
-    // Left-click opens the app; context menu on right-click (Windows + macOS).
-    this.tray.on('click', () => this.onShowMain())
+    // Left-click: show running-session menu when any CLI/VAV work is live;
+    // otherwise open the main window. Right-click always shows the menu.
+    this.tray.on('click', () => {
+      if (this.runningSessions.length > 0) {
+        this.tray?.popUpContextMenu()
+      } else {
+        this.onShowMain()
+      }
+    })
     this.tray.on('double-click', () => this.onShowMain())
     this.tray.on('right-click', () => this.tray?.popUpContextMenu())
     this.refreshTrayMenu()
@@ -166,6 +173,7 @@ export class NotificationCenter {
         label: t('tray.running', { count: this.runningSessions.length }),
         enabled: false
       })
+      items.push({ type: 'separator' })
       for (const row of this.runningSessions) {
         items.push({
           label: row.title,

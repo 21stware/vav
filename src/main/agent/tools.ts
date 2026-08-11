@@ -137,8 +137,13 @@ export function createTools(host: ToolHost): AgentTool[] {
       )
     }),
     async execute(_id, params) {
-      const command = params.command.trim()
+      let command = params.command.trim()
       if (!command) return failure('缺少 command 参数')
+      // Force officecli/shell writes onto document sandboxes when the model
+      // still uses the user's original absolute path.
+      if (host.files.workingCopies) {
+        command = host.files.workingCopies.rewriteCommand(command)
+      }
 
       const timeout = host.settings().commandTimeout
       const background = params.background === true || looksLikeServerCommand(command)
@@ -179,6 +184,14 @@ export function createTools(host: ToolHost): AgentTool[] {
       const body = result.output
       const transcript = `$ ${command}\n${body}${body && !body.endsWith('\n') ? '\n' : ''}exit ${result.exitCode}\n`
       host.mirror(`exit ${result.exitCode}\n`)
+      // officecli writes the sandbox path; mark dirtied copies for preview refresh.
+      if (host.files.workingCopies) {
+        void host.files.workingCopies.scanDirtiedCopies().then((paths) => {
+          for (const p of paths) {
+            host.fsChanged(dirname(p), p)
+          }
+        })
+      }
       return {
         content: [{ type: 'text', text: cap(`${result.output}\n[exit ${result.exitCode}]`) }],
         details: { display: transcript, failed: result.exitCode !== 0 }

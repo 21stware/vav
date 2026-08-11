@@ -446,10 +446,15 @@ interface SessionState {
   workspaceMenuNonce: number
 
   /**
-   * When set, the main detail column shows Workspace View for this workdir
-   * (sidebar-conversation-list / workspace-view.rpml).
+   * @deprecated Workspace group selection removed — sessions are selected directly.
+   * Kept null; grouping/pin still use workdir paths in the sidebar.
    */
   activeGroupId: string | null
+  /**
+   * Right file-preview drawer on the session surface (was Workspace View only).
+   * Open/closed is session UI state; path comes from workspace.selectedPath.
+   */
+  filePreviewOpen: boolean
   /** Workspace-level agent conversation ids keyed by workdir path. */
   workspaceAgentByPath: Record<string, string>
   /** File path → conversationId for standalone file preview windows. */
@@ -469,9 +474,19 @@ interface SessionState {
   /** A detached window passes the one conversation it exists to show. */
   /**
    * @param pinnedConversationId force active conversation (detached session)
-   * @param options.light skip selectConversation — file-preview windows only need settings
+   * @param options.light skip selectConversation + updates — preview / session warm shells
    */
   bootstrap(pinnedConversationId?: string, options?: { light?: boolean }): Promise<void>
+  /**
+   * Fast path for warm session shells: seed meta + empty messages and paint
+   * without awaiting disk hydrate / PTY list. Background bind follows.
+   */
+  claimDetachedSession(
+    meta: ConversationMeta,
+    options?: { empty?: boolean; collapseTools?: boolean }
+  ): void
+  /** Warm pool park — clear the pinned active conversation without full teardown. */
+  releaseDetachedSession(): void
   selectConversation(
     id: string,
     options?: {
@@ -491,11 +506,17 @@ interface SessionState {
   ): Promise<void>
   /**
    * Open current workspace agent chat as a main-panel session
-   * (duplicate if history exists, else mint empty) and exit Workspace View.
+   * (duplicate if history exists, else mint empty).
    */
   openWorkspaceInMainPanel(workdir: string): Promise<void>
-  /** Toggle workspace group selection → Workspace View. */
+  /**
+   * @deprecated No-op — workspace groups are not selectable.
+   * Kept so call sites compile; clears any stale activeGroupId.
+   */
   selectWorkspaceGroup(workdir: string | null): Promise<void>
+  /** Right file preview drawer on the session surface. */
+  setFilePreviewOpen(open: boolean): void
+  toggleFilePreview(): void
   /** Ensure a durable agent conversation exists for this workspace path. */
   ensureWorkspaceAgent(workdir: string): Promise<string>
   loadMessages(id: string): Promise<void>
@@ -721,6 +742,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   commentFocusTick: 0,
   workspaceMenuNonce: 0,
   activeGroupId: null,
+  filePreviewOpen: false,
   workspaceAgentByPath: loadWorkspaceAgents(),
   previewAgentByPath: loadPreviewAgents(),
   changeReviewId: null,
@@ -733,7 +755,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     const light = options?.light === true
     const data = await window.vav.bootstrap()
     const activeId = pinnedConversationId ?? data.activeConversationId
-    // File-preview does not need update-state IPC on the critical open path.
+    // File-preview / warm session shells skip update-state on the critical path.
     const updateState = light
       ? IDLE_UPDATE
       : await window.vav.updates.getState().catch(() => IDLE_UPDATE)
@@ -757,8 +779,10 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       systemAccentColor: data.systemAccentColor || '#007aff',
       apiKeyHint: data.apiKeyHint,
       conversations: data.conversations,
-      activeId,
-      selectedIds: activeId ? [activeId] : [],
+      // Warm idle shell: no active conversation until sessionNavigate claims one.
+      // Cold companion pins id here; SessionWindow.claimDetachedSession hydrates.
+      activeId: light && !pinnedConversationId ? '' : activeId,
+      selectedIds: light && !pinnedConversationId ? [] : activeId ? [activeId] : [],
       pinnedConversationId: pinnedConversationId ?? null,
       home: data.home,
       tmp: data.tmp,
@@ -768,63 +792,91 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         currentVersion: updateState.currentVersion || data.about.version
       }
     })
-    // Detached session windows pin a conversation; file-preview skips the
-    // message load so the window paints as soon as settings are ready.
-    if (activeId && !light) await get().selectConversation(activeId)
+    // Full bootstrap (main shell): await select.
+    // Light companions: SessionWindow owns claim + non-blocking hydrate.
+    if (activeId && !light) {
+      await get().selectConversation(activeId)
+    }
   },
 
-  async selectWorkspaceGroup(workdir) {
-    // Collapse / clear — no generation needed.
-    if (!workdir) {
-      workspaceSelectGen += 1
-      set({ activeGroupId: null })
-      return
-    }
-    // Default / temporary shells are session buckets, not project workspaces.
-    if (workdir.startsWith('__') || isTemporaryWorkspace(workdir, get().tmp)) {
-      workspaceSelectGen += 1
-      set({ activeGroupId: null })
-      return
-    }
-    if (get().activeGroupId === workdir) {
-      workspaceSelectGen += 1
-      set({ activeGroupId: null })
-      return
-    }
-
-    const gen = ++workspaceSelectGen
-
-    // Prefer an existing session; only mint when the workspace already has one
-    // path but lost its agent mapping — never auto-create for an empty group.
-    const rooted = get().conversations.find(
-      (c) => !c.archived && !c.fileId && c.workingDirectory === workdir
-    )
-    if (!rooted) {
-      if (gen !== workspaceSelectGen) return
-      set({
-        activeGroupId: workdir,
-        activeId: '',
-        selectedIds: [],
-        ...activeToolsFields(toolsFor(get(), ''))
-      })
-      return
-    }
-
-    // Resolve the agent *before* mounting Workspace View. Setting activeGroupId
-    // early left the previous conversation's activeId in place — WorkspaceView
-    // bound the wrong slice, then rebound after await (double load / empty flash).
-    const agentId = await get().ensureWorkspaceAgent(workdir)
-    if (gen !== workspaceSelectGen) return
-
-    set({
-      activeGroupId: workdir,
-      activeId: agentId,
-      selectedIds: [agentId],
-      ...activeToolsFields(toolsFor(get(), agentId))
+  claimDetachedSession(meta, options) {
+    // Only skip disk hydrate when main explicitly says the thread is empty
+    // (⌘⇧↵). Otherwise leave messages unset so loadMessages does a full get —
+    // seeding `[]` would make loadMessages think the id is already cached.
+    const knownEmpty = options?.empty === true
+    const prevMessages = get().messages[meta.id]
+    const baseTools = toolsFor(get(), meta.id)
+    const nextTools = options?.collapseTools
+      ? { ...baseTools, toolsCollapsed: true }
+      : baseTools
+    set((state) => {
+      const toolsLayouts = options?.collapseTools
+        ? { ...state.toolsLayouts, [meta.id]: nextTools }
+        : state.toolsLayouts
+      if (options?.collapseTools) saveSessionToolsMap(toolsLayouts)
+      const messages = { ...state.messages }
+      if (knownEmpty) {
+        messages[meta.id] = prevMessages ?? []
+      }
+      return {
+        ready: true,
+        conversations: state.conversations.some((c) => c.id === meta.id)
+          ? state.conversations.map((c) => (c.id === meta.id ? { ...c, ...meta } : c))
+          : [meta, ...state.conversations],
+        messages,
+        activeLeaf: {
+          ...state.activeLeaf,
+          [meta.id]: state.activeLeaf[meta.id] ?? null
+        },
+        activeId: meta.id,
+        selectedIds: [meta.id],
+        pinnedConversationId: meta.id,
+        toolsLayouts,
+        ...activeToolsFields(nextTools)
+      }
     })
-    await get().loadMessages(agentId)
-    if (gen !== workspaceSelectGen) return
-    await useWorkspaceStore.getState().bindConversation(agentId, workdir)
+    // Background only — must not gate composer focus.
+    void useWorkspaceStore.getState().bindConversation(meta.id, meta.workingDirectory ?? null)
+    if (!knownEmpty) void get().loadMessages(meta.id)
+    void window.vav.agent
+      .status(meta.id)
+      .then((status) => {
+        if (get().activeId !== meta.id) return
+        set((state) => ({
+          turns: {
+            ...state.turns,
+            [meta.id]: {
+              isRunning: status.isRunning,
+              phase: status.phase,
+              toolCount: status.toolCount,
+              awaitingToolCallId: status.awaitingToolCallId
+            }
+          }
+        }))
+      })
+      .catch(() => undefined)
+  },
+
+  releaseDetachedSession() {
+    set({
+      activeId: '',
+      selectedIds: [],
+      pinnedConversationId: null
+    })
+  },
+
+  async selectWorkspaceGroup(_workdir) {
+    // Workspace groups are no longer selectable — only pin / collapse / aggregate.
+    workspaceSelectGen += 1
+    set({ activeGroupId: null })
+  },
+
+  setFilePreviewOpen(open) {
+    set({ filePreviewOpen: open })
+  },
+
+  toggleFilePreview() {
+    set((state) => ({ filePreviewOpen: !state.filePreviewOpen }))
   },
 
   async ensureWorkspaceAgent(workdir) {
@@ -850,7 +902,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     const id = get().activeId
     if (!id) throw new Error('failed to create workspace agent')
     const map = { ...get().workspaceAgentByPath, [workdir]: id }
-    set({ workspaceAgentByPath: map, activeGroupId: workdir })
+    set({ workspaceAgentByPath: map })
     saveWorkspaceAgents(map)
     return id
   },
@@ -915,11 +967,8 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     }
 
     // Switching never cancels an in-flight turn; it only rebinds the detail column.
-    // Sidebar clicks leave Workspace View; History/New inside workspace stay put.
-    // File-bound sessions must NEVER keep workspace view — otherwise DetailSlot
-    // stays on WorkspaceView (“Select a file…”) while the agent shows the file
-    // chat (infinite empty-state flash). File canvas is FileSessionView.
-    const keepGroup = !!options?.stayInWorkspace && !target?.fileId
+    // File-bound sessions use FileSessionView (file canvas + agent).
+    void options?.stayInWorkspace
     // Tools tray state is per-session — restore this conversation's layout.
     // File sessions always enter with the tray collapsed: Enclosed dir is opt-in
     // (prepareFileWorkspace / file-session surface). Persist so a later Quiet
@@ -940,7 +989,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     set({
       activeId: id,
       selectedIds: nextSelection,
-      activeGroupId: keepGroup ? get().activeGroupId : null,
+      activeGroupId: null,
       ...(toolsLayoutsPatch ? { toolsLayouts: toolsLayoutsPatch } : {}),
       ...activeToolsFields(sessionTools)
     })
@@ -1079,15 +1128,14 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   },
 
   async createConversation(options) {
-    const keepGroupId = get().activeGroupId
-    // Empty Temporary Workspace shell → mint a real temp workdir on first create.
-    // Concrete path selected with no sessions → root the new session there.
+    // Prefer explicit opts; else inherit active session workdir (session is the unit).
     let createOpts = options
     if (createOpts?.workingDirectory === undefined) {
-      if (keepGroupId && !keepGroupId.startsWith('__')) {
-        createOpts = { ...createOpts, workingDirectory: keepGroupId }
+      const current = get().conversations.find((c) => c.id === get().activeId)
+      const wd = current?.workingDirectory
+      if (wd && !wd.startsWith('__') && !isTemporaryWorkspace(wd, get().tmp)) {
+        createOpts = { ...createOpts, workingDirectory: wd }
       }
-      // keepGroupId === '__temporary__' (or null): omit → main mints Temporary.
     }
     const meta = await window.vav.conversations.create(createOpts)
     // Main publishes the full list on create; `onChanged` may already have
@@ -1100,34 +1148,21 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       messages: { ...state.messages, [meta.id]: [] },
       activeLeaf: { ...state.activeLeaf, [meta.id]: null }
     }))
-    // Stay in chat after minting from an empty shell (not Workspace View).
-    const stayInWorkspace =
-      !!keepGroupId &&
-      !keepGroupId.startsWith('__') &&
-      meta.workingDirectory === keepGroupId
-    await get().selectConversation(meta.id, stayInWorkspace ? { stayInWorkspace: true } : undefined)
+    await get().selectConversation(meta.id)
     // New session → default tools layout (collapsed, files segment). Explicit so
     // we never inherit another session's open Terminal tray.
     get().setToolsCollapsed(true)
-    // Creating a session inside the open Workspace View must not kick the user out.
-    if (stayInWorkspace) {
-      set({ activeGroupId: keepGroupId })
-    }
     get().focusComposer()
   },
 
   async createConversationInCurrentWorkspace() {
-    const { activeId, conversations, activeGroupId } = get()
+    const { activeId, conversations } = get()
     const current = conversations.find((c) => c.id === activeId)
     if (current) {
       await get().createConversation({
         workingDirectory: current.workingDirectory ?? null,
         model: current.model
       })
-      return
-    }
-    if (activeGroupId && !activeGroupId.startsWith('__')) {
-      await get().createConversation({ workingDirectory: activeGroupId })
       return
     }
     await get().createConversation()
@@ -1165,16 +1200,12 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     if (!path) return
     const activeId = get().activeId
     const msgs = activeId ? (get().messages[activeId] ?? []) : []
-    // Exit workspace view first so selectConversation doesn't get re-entered.
     set({ activeGroupId: null })
     if (activeId && msgs.length > 0) {
-      // Clone transcript into a fresh main-panel session (workspace store kept).
       await get().duplicateConversation(activeId)
     } else {
       await get().createConversation({ workingDirectory: path })
     }
-    // Ensure we left workspace view even if create/duplicate restored it.
-    if (get().activeGroupId) set({ activeGroupId: null })
     get().focusComposer()
   },
 
@@ -1480,9 +1511,9 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   },
 
   async openDetached(id) {
-    // Persist split directions before the companion hydrates (otherwise it
-    // rebuilds an all-row tree from live PTY ids alone).
-    useWorkspaceStore.getState().syncPtyLayouts(id)
+    // Persist split directions + cliMode before the companion hydrates.
+    // Must await: racing open used to land with cliMode=false → bounced to VAV.
+    await useWorkspaceStore.getState().syncPtyLayouts(id)
     await window.vav.window.openSession(id)
   },
 

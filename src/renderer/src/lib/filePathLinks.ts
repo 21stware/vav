@@ -1,12 +1,15 @@
 /**
  * Detect file-path mentions in agent markdown and turn them into clickable
- * links that open the local file preview.
+ * links that open the session side preview, with a Finder/Explorer control
+ * after each path.
  *
  * Only real path shapes — not bare "name.json" / "@scope/pkg" / schema ids
  * (those false-positives as hyperlinks, e.g. vega-lite-spec-v5.json).
  */
 
 import type MarkdownIt from 'markdown-it'
+import { tt } from '../i18n/useT'
+import { fileManagerLabel } from './platform'
 import { joinPath } from './path'
 
 /** Extensions that strongly suggest a file when the string is a real path. */
@@ -115,6 +118,32 @@ function escapeHtml(value: string): string {
     .replace(/"/g, '&quot;')
 }
 
+/** Compact folder glyph for the post-link Finder/Explorer control. */
+const REVEAL_SVG =
+  '<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg>'
+
+function revealButtonHtml(path: string): string {
+  const title = tt('tools.revealInFm', { fileManager: fileManagerLabel() })
+  return (
+    `<button type="button" class="md-file-reveal" data-path="${escapeHtml(path)}" ` +
+    `title="${escapeHtml(title)}" aria-label="${escapeHtml(title)}">` +
+    REVEAL_SVG +
+    `</button>`
+  )
+}
+
+/** Path link + Finder control as a single inline unit. */
+export function fileMentionHtml(path: string, label: string): string {
+  return (
+    `<span class="md-file-mention">` +
+    `<a class="md-file-link" href="#" data-path="${escapeHtml(path)}" title="${escapeHtml(path)}">` +
+    `${escapeHtml(label)}` +
+    `</a>` +
+    revealButtonHtml(path) +
+    `</span>`
+  )
+}
+
 type MdToken = {
   type: string
   content: string
@@ -126,7 +155,7 @@ type MdToken = {
 
 /**
  * markdown-it plugin: turn path-like text (and path-like inline code) into
- * `<a class="md-file-link" data-path="…">` anchors.
+ * path links with a trailing Finder/Explorer button.
  */
 export function filePathLinksPlugin(md: MarkdownIt): void {
   md.core.ruler.after('inline', 'file_path_links', (state) => {
@@ -157,12 +186,7 @@ export function filePathLinksPlugin(md: MarkdownIt): void {
     const content = tokens[idx]?.content ?? ''
     if (looksLikeFilePath(content)) {
       const path = trimPathCandidate(content)
-      return (
-        `<code class="md-file-code">` +
-        `<a class="md-file-link" href="#" data-path="${escapeHtml(path)}" title="${escapeHtml(path)}">` +
-        `${escapeHtml(content)}` +
-        `</a></code>`
-      )
+      return `<code class="md-file-code">${fileMentionHtml(path, content)}</code>`
     }
     return defaultCodeInline(tokens, idx, options, env, self)
   }
@@ -186,17 +210,9 @@ function pushSplitPaths(Token: any, text: string, out: MdToken[]): void {
       t.content = text.slice(last, pathStart)
       out.push(t)
     }
-    const open = new Token('link_open', 'a', 1)
-    open.attrs = [
-      ['href', '#'],
-      ['class', 'md-file-link'],
-      ['data-path', path],
-      ['title', path]
-    ]
-    const body = new Token('text', '', 0)
-    body.content = path
-    const close = new Token('link_close', 'a', -1)
-    out.push(open, body, close)
+    const html = new Token('html_inline', '', 0)
+    html.content = fileMentionHtml(path, path)
+    out.push(html)
     last = pathStart + full.length
     PATH_GLOBAL.lastIndex = last
   }

@@ -129,7 +129,6 @@ export function Sidebar({
   // (it returns a new array each time → getSnapshot infinite loop).
   const rawCliAgents = useSessionStore((s) => s.settings.cliAgents)
   const cliAgents = useMemo(() => enabledCliAgents(rawCliAgents), [rawCliAgents])
-  const activeGroupId = useSessionStore((s) => s.activeGroupId)
   const selectWorkspaceGroup = useSessionStore((s) => s.selectWorkspaceGroup)
 
   const setSidebarQuery = useSessionStore((s) => s.setSidebarQuery)
@@ -685,30 +684,28 @@ export function Sidebar({
     const collapsible = group.kind === 'workspace'
     const collapsed = collapsible && collapsedKeys.has(group.key)
     const groupWorkdir = group.workdir ?? group.conversations[0]?.workingDirectory ?? null
-    // Default workspace buckets unrooted sessions — not a project, not selectable.
-    const workspaceSelectable =
+    // Project path groups can pin / aggregate; they are not a selectable surface.
+    const workspacePinnable =
       group.kind === 'workspace' &&
       group.workspaceSelectable !== false &&
       !!groupWorkdir &&
       !groupWorkdir.startsWith('__') &&
       !isTemporaryWorkspace(groupWorkdir, tmp)
-    const isWorkspaceSelected =
-      workspaceSelectable && !!groupWorkdir && activeGroupId === groupWorkdir
     // A Temporary Workspace is minted per session and has no durable path to pin.
-    const pinnableWorkdir = workspaceSelectable ? groupWorkdir : null
+    const pinnableWorkdir = workspacePinnable ? groupWorkdir : null
     const workspacePinned = !!pinnableWorkdir && pinnedWorkspaces.includes(pinnableWorkdir)
     return (
       <div
-        className={`conv-group${collapsible ? ' is-workspace' : ''}${group.pinned ? ' pinned' : ''}${workspaceSelectable ? '' : ' is-default-workspace'}`}
+        className={`conv-group${collapsible ? ' is-workspace' : ''}${group.pinned ? ' pinned' : ''}${workspacePinnable ? '' : ' is-default-workspace'}`}
         key={group.key || `group-${groupIndex}`}
       >
         {groupIndex > 0 && <div className="conv-group-divider" />}
         {group.label &&
           (collapsible ? (
             <div
-              className={`conv-group-header interactive${isWorkspaceSelected ? ' selected' : ''}`}
+              className="conv-group-header interactive"
               onContextMenu={(event) => {
-                if (!workspaceSelectable || !groupWorkdir) return
+                if (!workspacePinnable || !groupWorkdir) return
                 event.preventDefault()
                 void showMenu([
                   {
@@ -734,19 +731,12 @@ export function Sidebar({
                 title={
                   groupWorkdir
                     ? groupWorkdir
-                    : workspaceSelectable
-                      ? t('sidebar.openWorkspaceView')
-                      : collapsed
-                        ? t('common.expand')
-                        : t('common.collapse')
+                    : collapsed
+                      ? t('common.expand')
+                      : t('common.collapse')
                 }
                 onClick={() => {
-                  if (!workspaceSelectable || !groupWorkdir) {
-                    toggleGroup(group.key)
-                    return
-                  }
-                  void selectWorkspaceGroup(groupWorkdir)
-                  onNavigate?.()
+                  toggleGroup(group.key)
                 }}
               >
                 <span className="conv-group-title">{group.label}</span>
@@ -1252,7 +1242,6 @@ export function Sidebar({
                     label: t('sidebar.showFileSessions'),
                     onSelect: () => {
                       setSidebarQuery('')
-                      // Leave workspace canvas so File sessions land on FileSessionView.
                       void selectWorkspaceGroup(null)
                       setListMode('fileSessions')
                     }

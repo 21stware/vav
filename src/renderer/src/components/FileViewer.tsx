@@ -13,7 +13,8 @@ import {
   ChevronDown,
   Clock,
   Plus,
-  Save
+  Save,
+  X
 } from 'lucide-react'
 import type { FileAssociationStatus, FileInspectResult, FileSessionMeta } from '@shared/ipc'
 import type { PreviewRef } from '@shared/types'
@@ -216,7 +217,8 @@ export function FileViewer({
   agentPanelOpen: agentPanelOpenProp,
   onToggleAgentPanel,
   onPickBlock,
-  shellLeading = null
+  shellLeading = null,
+  onClose = null
 }: {
   path: string
   origin?: 'dock' | 'session'
@@ -233,6 +235,8 @@ export function FileViewer({
    * file name (traffic lights sit over this column).
    */
   shellLeading?: ReactNode
+  /** Embedded side preview: close control in the header trailing edge. */
+  onClose?: (() => void) | null
 }): React.JSX.Element {
   const t = useT()
   const [filePath, setFilePath] = useState(initialPath)
@@ -271,8 +275,6 @@ export function FileViewer({
   const [historyOpen, setHistoryOpen] = useState(false)
   const historyAnchorRef = useRef<HTMLButtonElement | null>(null)
   const [baselineContent, setBaselineContent] = useState<string | null>(null)
-  /** Binary office baseline (base64) for Discard — never treat plainText as the file body. */
-  const [baselineBinary, setBaselineBinary] = useState<string | null>(null)
   const [workingContent, setWorkingContent] = useState<string | null>(null)
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false)
   /** Forces OfficeNativeView to re-read disk after an external/agent rewrite. */
@@ -329,7 +331,6 @@ export function FileViewer({
     setSelectedIds([])
     setWorkingContent(null)
     setBaselineContent(null)
-    setBaselineBinary(null)
     setHasUnsavedChanges(false)
     setPreviewRevision(0)
     unsavedPromptOpen.current = false
@@ -361,17 +362,20 @@ export function FileViewer({
     return kind === 'docx' || kind === 'xlsx' || kind === 'pptx' || kind === 'pdf'
   }, [])
 
+  /**
+   * Text-only soft baseline for dirty detect. Office Discard uses the working-copy
+   * service (real is never mutated until Save), so no in-memory binary baseline.
+   */
   const captureBaseline = useCallback(
-    async (path: string, kind: FileInspectResult['kind'] | undefined, text: string | null | undefined) => {
+    async (
+      _path: string,
+      kind: FileInspectResult['kind'] | undefined,
+      text: string | null | undefined
+    ) => {
       if (isBinaryOfficeKind(kind)) {
-        const bin = await window.vav.files.readBinary(path)
-        if (bin.ok) {
-          setBaselineBinary(bin.base64)
-          setBaselineContent(null)
-        }
+        setBaselineContent(null)
         return
       }
-      setBaselineBinary(null)
       if (text != null) setBaselineContent(text)
     },
     [isBinaryOfficeKind]
@@ -483,7 +487,6 @@ export function FileViewer({
           // Baseline deferred until Edit / Agent open — keep a soft copy for dirty detect.
           setBaselineContent(result.text)
         }
-        setBaselineBinary(null)
         markViewer('first-paint')
         if (result.truncated && result.textWindow) {
           textWindowFillRef.current = {
@@ -502,7 +505,9 @@ export function FileViewer({
         // plainText is an index, not the file body — never use it for Save/Discard.
         setWorkingContent(null)
         setBaselineContent(null)
-        setBaselineBinary(null)
+        // Capture open-time bytes so Discard can restore even before Agent opens.
+        // Also used as a safety net if working-copy discard is unavailable.
+        void captureBaseline(filePath, result.kind, null)
         // Progressive structured index for block-pick (does not block native canvas).
         void window.vav.files
           .inspectStructured?.(filePath, {
@@ -544,7 +549,7 @@ export function FileViewer({
     return () => {
       cancelled = true
     }
-  }, [filePath, reloadInfo, isBinaryOfficeKind, extendTextWindow])
+  }, [filePath, reloadInfo, isBinaryOfficeKind, extendTextWindow, captureBaseline])
 
   useEffect(() => {
     try {
@@ -562,13 +567,28 @@ export function FileViewer({
    * Agent fs_write / Change Review — and any tool that emits fs-changed.
    * Always listen while this file is open (embedded workspace never flips local
    * agentPanelOpen, so gating on that left DOCX edits invisible).
+   *
+   * Turn end: officecli often writes the sandboxed copy under userData (no
+   * workdir watcher). Refresh dirty + canvas when the working copy moved.
    */
   useEffect(() => {
     return window.vav.agent.onEvent((event) => {
-      if (event.type !== 'fs-changed') return
-      void handleExternalFileChange(event.filePath)
+      if (event.type === 'fs-changed') {
+        void handleExternalFileChange(event.filePath)
+        return
+      }
+      if (event.type !== 'end') return
+      void (async () => {
+        if (applyingOwnWrite.current) return
+        const st = await window.vav.files.workingCopyStatus?.(filePathRef.current)
+        if (st?.dirty) {
+          setHasUnsavedChanges(true)
+          setPreviewRevision((n) => n + 1)
+          await reloadInfo(filePathRef.current)
+        }
+      })()
     })
-  }, [handleExternalFileChange])
+  }, [handleExternalFileChange, reloadInfo])
 
   /**
    * Shell/python-docx edits don't emit fs-changed. Workspace dir watchers still
@@ -1017,20 +1037,20 @@ export function FileViewer({
   ): Promise<void> => {
     const dir = dirname(path)
     const store = useSessionStore.getState()
-    const groupId = store.activeGroupId
-    const underWorkspaceView =
-      !!groupId &&
-      !groupId.startsWith('__') &&
-      (path === groupId ||
-        path.startsWith(`${groupId}/`) ||
-        path.startsWith(`${groupId}\\`))
+    const meta = store.conversations.find((c) => c.id === conversationId)
+    // Session already rooted at a project that contains this file — only
+    // highlight the path (right preview drawer). Never shrink the Files tree.
+    const root = meta?.workingDirectory ?? null
+    const underSessionRoot =
+      !!root &&
+      !root.startsWith('__') &&
+      (path === root || path.startsWith(`${root}/`) || path.startsWith(`${root}\\`))
 
-    if (underWorkspaceView) {
+    if (underSessionRoot) {
       useWorkspaceStore.getState().selectPath(conversationId, path)
       return
     }
 
-    const meta = store.conversations.find((c) => c.id === conversationId)
     // Always bind workdir for Enclosed dir chip; missing dirs surface a calm
     // empty state in FilesPanel (ENOENT → "dir not exist"), not a raw error.
     if ((meta?.workingDirectory ?? null) !== dir) {
@@ -1098,8 +1118,22 @@ export function FileViewer({
       return
     }
 
-    // First open: snapshot baseline for Discard. If the canvas is already dirty
-    // (e.g. user collapsed Agent then reopened), keep the existing baseline.
+    // Ensure document sandbox so agent edits never hit the real path.
+    // Save promotes; Discard drops the copy (real file untouched).
+    if (isBinaryOfficeKind(info?.kind) && window.vav.files.workingCopyEnsure) {
+      const ensured = await window.vav.files.workingCopyEnsure(filePath, {
+        fileId: fileId
+      })
+      if (!ensured.ok) {
+        showToast({
+          kind: 'error',
+          title: t('preview.saveFailed'),
+          description: ensured.error
+        })
+      } else if (!hasUnsavedChanges) {
+        setPreviewRevision((n) => n + 1)
+      }
+    }
     if (!hasUnsavedChanges) {
       if (isBinaryOfficeKind(info?.kind)) {
         await captureBaseline(filePath, info?.kind, null)
@@ -1108,7 +1142,6 @@ export function FileViewer({
         const text = info?.text ?? workingContent ?? ''
         setBaselineContent(text)
         setWorkingContent(text)
-        setBaselineBinary(null)
       }
       setHasUnsavedChanges(false)
     }
@@ -1465,17 +1498,57 @@ export function FileViewer({
     })
   }
 
+  /**
+   * Save / Discard contract (office + sandboxed paths):
+   *
+   * - real path: only written by promote (Save / Accept)
+   * - working copy: all agent/tool/preview I/O while sandboxed
+   * - Save  = ensure(attach) → promote(working → real)
+   * - Discard = drop working, re-seed from real (real never held edits)
+   */
   const save = async (): Promise<boolean> => {
     applyingOwnWrite.current = true
     try {
       if (isBinaryOfficeKind(info?.kind)) {
-        // Agent/shell already wrote the binary on disk — Save means accept.
+        if (!window.vav.files.workingCopyEnsure || !window.vav.files.workingCopyPromote) {
+          showToast({
+            kind: 'error',
+            title: t('preview.saveFailed'),
+            description: 'working-copy API unavailable — rebuild preload'
+          })
+          return false
+        }
+        // Attach existing working (or recover from disk). Never wipes edits.
+        const ensured = await window.vav.files.workingCopyEnsure(filePath, {
+          fileId: fileId
+        })
+        if (!ensured.ok) {
+          showToast({
+            kind: 'error',
+            title: t('preview.saveFailed'),
+            description: ensured.error
+          })
+          return false
+        }
+        const promoted = await window.vav.files.workingCopyPromote(filePath)
+        if (!promoted.ok) {
+          showToast({
+            kind: 'error',
+            title: t('preview.saveFailed'),
+            description: promoted.error
+          })
+          return false
+        }
+        // After promote, working === real; soft baseline for UI only.
         await captureBaseline(filePath, info?.kind, null)
         setHasUnsavedChanges(false)
         await reloadInfo(filePath)
+        setPreviewRevision((n) => n + 1)
         showToast({ kind: 'success', title: t('preview.saved') })
         return true
       }
+
+      // Text: flush editor buffer into the I/O path (sandbox if active), then promote.
       const content = workingContent ?? info?.text ?? ''
       const result = await window.vav.files.write(filePath, content)
       if (!result.ok) {
@@ -1486,13 +1559,26 @@ export function FileViewer({
         })
         return false
       }
+      if (window.vav.files.workingCopyPromote) {
+        const st = await window.vav.files.workingCopyStatus?.(filePath)
+        if (st) {
+          const promoted = await window.vav.files.workingCopyPromote(filePath)
+          if (!promoted.ok) {
+            showToast({
+              kind: 'error',
+              title: t('preview.saveFailed'),
+              description: promoted.error
+            })
+            return false
+          }
+        }
+      }
       setBaselineContent(content)
       setHasUnsavedChanges(false)
       await reloadInfo(filePath)
       showToast({ kind: 'success', title: t('preview.saved') })
       return true
     } finally {
-      // Defer so filesystem watchers from our own write don't re-dirty.
       window.setTimeout(() => {
         applyingOwnWrite.current = false
       }, 400)
@@ -1501,7 +1587,8 @@ export function FileViewer({
 
   const saveAs = async (): Promise<boolean> => {
     if (isBinaryOfficeKind(info?.kind)) {
-      // Copy current on-disk bytes to a new path (Save As for office).
+      // Working content (sandbox if active) → new real path. Original real is
+      // untouched under the sandbox model (never held agent edits).
       applyingOwnWrite.current = true
       try {
         const bin = await window.vav.files.readBinary(filePath)
@@ -1514,7 +1601,6 @@ export function FileViewer({
           return false
         }
         const originalPath = filePath
-        // Reuse text saveAs dialog, then overwrite with binary bytes.
         const result = await window.vav.files.saveAs(originalPath, '')
         if (!result.ok) {
           if (!result.cancelled) {
@@ -1526,6 +1612,7 @@ export function FileViewer({
           }
           return false
         }
+        // New path is not sandboxed — writeBinary hits the real new file.
         const written = await window.vav.files.writeBinary(result.path, bin.base64)
         if (!written.ok) {
           showToast({
@@ -1535,12 +1622,11 @@ export function FileViewer({
           })
           return false
         }
-        // Spec: original stays at the pre-edit snapshot when possible.
-        if (baselineBinary != null && result.path !== originalPath) {
-          await window.vav.files.writeBinary(originalPath, baselineBinary)
+        // Drop sandbox for the old path so we don't leave a dirty clone behind.
+        if (window.vav.files.workingCopyDiscard && result.path !== originalPath) {
+          await window.vav.files.workingCopyDiscard(originalPath)
         }
         setFilePath(result.path)
-        setBaselineBinary(bin.base64)
         setHasUnsavedChanges(false)
         await reloadInfo(result.path)
         setPreviewRevision((n) => n + 1)
@@ -1568,9 +1654,18 @@ export function FileViewer({
         }
         return false
       }
-      // Spec: original file stays at the edit-entry snapshot.
-      if (baselineContent != null && result.path !== originalPath) {
+      // Sandboxed: original real was never mutated — skip restore write.
+      // Legacy (no sandbox): restore original text baseline.
+      const sandboxed = !!(await window.vav.files.workingCopyStatus?.(originalPath))
+      if (
+        !sandboxed &&
+        baselineContent != null &&
+        result.path !== originalPath
+      ) {
         await window.vav.files.write(originalPath, baselineContent)
+      }
+      if (window.vav.files.workingCopyDiscard && result.path !== originalPath) {
+        await window.vav.files.workingCopyDiscard(originalPath)
       }
       setFilePath(result.path)
       setBaselineContent(content)
@@ -1586,40 +1681,70 @@ export function FileViewer({
     }
   }
 
-  /** Restore baseline on disk. Returns false if the write failed. */
+  /**
+   * Discard = throw away working copy and re-seed from real.
+   * Real path is never written here when sandbox is active.
+   */
   const discard = async (): Promise<boolean> => {
     applyingOwnWrite.current = true
     try {
       if (isBinaryOfficeKind(info?.kind)) {
-        if (baselineBinary != null) {
-          const result = await window.vav.files.writeBinary(filePath, baselineBinary)
-          if (!result.ok) {
-            showToast({
-              kind: 'error',
-              title: t('preview.discardFailed'),
-              description: result.error
-            })
-            return false
-          }
-          await reloadInfo(filePath)
-          setPreviewRevision((n) => n + 1)
+        if (!window.vav.files.workingCopyDiscard) {
+          showToast({
+            kind: 'error',
+            title: t('preview.discardFailed'),
+            description: 'workingCopyDiscard unavailable — rebuild preload'
+          })
+          return false
+        }
+        const dropped = await window.vav.files.workingCopyDiscard(filePath)
+        if (!dropped.ok) {
+          showToast({
+            kind: 'error',
+            title: t('preview.discardFailed'),
+            description: dropped.error
+          })
+          return false
+        }
+        await captureBaseline(filePath, info?.kind, null)
+        await reloadInfo(filePath)
+        setPreviewRevision((n) => n + 1)
+        setHasUnsavedChanges(false)
+        return true
+      }
+
+      // Text: prefer sandbox discard; else restore in-memory baseline only.
+      const st = await window.vav.files.workingCopyStatus?.(filePath)
+      if (st && window.vav.files.workingCopyDiscard) {
+        const dropped = await window.vav.files.workingCopyDiscard(filePath)
+        if (!dropped.ok) {
+          showToast({
+            kind: 'error',
+            title: t('preview.discardFailed'),
+            description: dropped.error
+          })
+          return false
+        }
+        const reloaded = await reloadInfo(filePath)
+        if (reloaded.text != null) {
+          setWorkingContent(reloaded.text)
+          setBaselineContent(reloaded.text)
+        } else if (baselineContent != null) {
+          setWorkingContent(baselineContent)
         }
         setHasUnsavedChanges(false)
         return true
       }
-      if (baselineContent != null) {
-        const result = await window.vav.files.write(filePath, baselineContent)
-        if (!result.ok) {
-          showToast({
-            kind: 'error',
-            title: t('preview.discardFailed'),
-            description: result.error
-          })
-          return false
-        }
-        setWorkingContent(baselineContent)
-        await reloadInfo(filePath)
+
+      if (baselineContent == null) {
+        showToast({
+          kind: 'error',
+          title: t('preview.discardFailed'),
+          description: t('preview.discardNoBaseline')
+        })
+        return false
       }
+      setWorkingContent(baselineContent)
       setHasUnsavedChanges(false)
       return true
     } finally {
@@ -2007,6 +2132,14 @@ export function FileViewer({
             }}
           />
           {(embedded && onToggleAgentPanel) || !embedded ? agentToggle : null}
+          {embedded && onClose ? (
+            <Button
+              icon={<X size={14} />}
+              size="sm"
+              title={t('common.close')}
+              onClick={onClose}
+            />
+          ) : null}
         </div>
       </header>
   )

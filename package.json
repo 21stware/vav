@@ -1,7 +1,7 @@
 {
   "name": "vav",
   "productName": "VAV",
-  "version": "1.4.12",
+  "version": "1.4.13",
   "description": "Local-first CLI agent terminal workspace: host Claude Code, Codex, and other agent CLIs with multi-split PTYs and a file tree.",
   "license": "PolyForm-Noncommercial-1.0.0",
   "author": "Oboo Cheng",
@@ -153,6 +153,25 @@
       "entitlementsInherit": "build/entitlements.mac.plist",
       "notarize": true,
       "extendInfo": {
+        "NSServices": [
+          {
+            "NSMenuItem": {
+              "default": "Open Directory in VAV",
+              "zh_CN": "用 VAV 打开目录",
+              "zh-Hans": "用 VAV 打开目录"
+            },
+            "NSMessage": "openDirectoryInVAV",
+            "NSPortName": "VAV",
+            "NSSendFileTypes": [
+              "public.folder",
+              "public.directory"
+            ],
+            "NSRequiredContext": {
+              "NSTextContent": "FilePath"
+            },
+            "NSTimeout": 30000
+          }
+        ],
         "CFBundleDocumentTypes": [
           {
             "CFBundleTypeName": "Folders",

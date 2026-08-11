@@ -122,6 +122,15 @@ agent 的 bash session 不是默认存在的标签，而是 agent 自己控制�
 
 `terminalRegistry.ts` 让 xterm 实例脱离 React 生命周期：切换标签、折叠面板、切换会话都不销毁终端。React 只负责把 `entry.container` append 到当前宿主 div，卸载时 detach 而不 dispose。
 
+**CLI agent host 的 live persistence（对齐 Herdr）**
+
+Herdr 的模型是「headless server 持有 pane 进程；client 只 attach/detach」。VAV 的 main 进程就是那个 server：
+
+- 主 pane 用稳定 id `agent-host:<agentId>:<conversationId>`（`preferredId`），多窗口 `activate` 竞态走 attach 而不是再 spawn 一份 CLI。
+- 分屏（⌘D / ⌘⇧D）不带 preferredId，每次新起 pane。
+- 独立会话窗口打开时，主窗 soft-park xterm（`parkTerminal`：detach DOM、保留 buffer 与 live sink），关窗后 reclaim 秒画，再 `SIGWINCH` 对齐几何。
+- `snapshotForReplay` 从 last clear / alt-screen 切一帧给冷 attach；新 viewer 挂上后 force resize，让 TUI 自己重绘。
+
 node-pty 的 `spawn-helper` 在某些解包路径下会丢掉可执行位，导致每次 `pty.spawn` 都 `posix_spawnp failed`。`scripts/fix-pty-permissions.mjs` 在 postinstall 修回来。
 
 ## 6. 工作目录即会话

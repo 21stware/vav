@@ -29,6 +29,7 @@ import { OFFICE_LOCK_FILE_MESSAGE } from '@shared/officeLock'
 import type { DocumentRetrievalService } from '../retrieval/DocumentRetrievalService'
 import { isHeicPath, prepareHeicPreview } from './heicPreview'
 import { convertLegacyOffice, legacyOfficeKind } from './legacyOfficeConvert'
+import type { WorkingCopyService } from './WorkingCopyService'
 
 /**
  * Technical windows — memory budgets for a single IPC/payload, NOT product
@@ -66,8 +67,24 @@ export class FileService {
   private debounceTimers = new Map<string, NodeJS.Timeout>()
   /** Optional: warm document RAG index after office inspect. */
   retrieval: DocumentRetrievalService | null = null
+  /**
+   * Optional sandbox layer: when set, I/O for registered real paths is redirected
+   * to the working copy so Save/Discard can promote or drop without touching real
+   * until promote.
+   */
+  workingCopies: WorkingCopyService | null = null
 
   constructor(private onDirtyDirectories: (conversationId: string, dirs: string[]) => void) {}
+
+  /** Filesystem path for read/write (may be a working copy). */
+  private forIo(path: string): string {
+    return this.workingCopies?.ioPath(path) ?? path
+  }
+
+  /** Notify the sandbox that a write landed on this logical path. */
+  private noteWrite(logicalPath: string): void {
+    this.workingCopies?.markDirtyFromWrite(logicalPath)
+  }
 
   /** Loads exactly one level; callers expand lazily as the user opens folders. */
   async listDirectory(path: string, sort: FileSortKey = 'name', ascending = true): Promise<DirectoryListing> {
@@ -131,8 +148,9 @@ export class FileService {
     const startByte = Math.max(0, Math.floor(opts?.startByte ?? 0))
     const maxBytes = Math.max(1024, Math.min(16 * 1024 * 1024, Math.floor(opts?.maxBytes ?? TEXT_WINDOW_BYTES)))
     const force = !!opts?.force
+    const io = this.forIo(path)
     try {
-      const info = await stat(path)
+      const info = await stat(io)
       if (info.isDirectory()) {
         return {
           content: '',
@@ -154,7 +172,7 @@ export class FileService {
         }
       }
       const length = Math.min(maxBytes, totalBytes - startByte)
-      const fh = await open(path, 'r')
+      const fh = await open(io, 'r')
       try {
         const buf = Buffer.alloc(length)
         const { bytesRead } = await fh.read(buf, 0, length, startByte)
@@ -217,8 +235,9 @@ export class FileService {
       1024,
       Math.min(4 * 1024 * 1024, Math.floor(opts?.maxBytes ?? TEXT_WINDOW_BYTES))
     )
+    const io = this.forIo(path)
     try {
-      const info = await stat(path)
+      const info = await stat(io)
       if (info.isDirectory()) {
         return {
           ok: false,
@@ -240,7 +259,7 @@ export class FileService {
         }
       }
       const length = Math.min(maxBytes, totalBytes - startByte)
-      const fh = await open(path, 'r')
+      const fh = await open(io, 'r')
       try {
         const buf = Buffer.alloc(length)
         const { bytesRead } = await fh.read(buf, 0, length, startByte)
@@ -279,22 +298,29 @@ export class FileService {
           error: `Cannot write ${ext} as UTF-8 text (would corrupt the file). Use a format-aware tool or shell for binary office documents.`
         }
       }
-      await mkdir(dirname(path), { recursive: true })
-      await writeFile(path, content, 'utf8')
+      const io = this.forIo(path)
+      await mkdir(dirname(io), { recursive: true })
+      await writeFile(io, content, 'utf8')
+      this.noteWrite(path)
       return { ok: true }
     } catch (err) {
       return { ok: false, error: (err as Error).message }
     }
   }
 
-  /** Restore or write raw file bytes (base64), used for office discard/accept. */
+  /**
+   * Write raw bytes (base64). When a working copy is active for `path`, writes
+   * the sandbox — never the real user file until {@link WorkingCopyService.promote}.
+   */
   async writeBinary(path: string, base64: string): Promise<{ ok: boolean; error?: string }> {
     try {
       if (isOfficeLockFile(path)) {
         return { ok: false, error: OFFICE_LOCK_FILE_MESSAGE }
       }
-      await mkdir(dirname(path), { recursive: true })
-      await writeFile(path, Buffer.from(base64, 'base64'))
+      const io = this.forIo(path)
+      await mkdir(dirname(io), { recursive: true })
+      await writeFile(io, Buffer.from(base64, 'base64'))
+      this.noteWrite(path)
       return { ok: true }
     } catch (err) {
       return { ok: false, error: (err as Error).message }
@@ -315,7 +341,8 @@ export class FileService {
       if (isOfficeLockFile(path)) {
         return { ok: false, error: OFFICE_LOCK_FILE_MESSAGE }
       }
-      const info = await stat(path)
+      const io = this.forIo(path)
+      const info = await stat(io)
       if (info.isDirectory()) return { ok: false, error: t('files.error.directory') }
       if (info.size <= 0) return { ok: false, error: 'File is empty.' }
       if (info.size > BINARY_BASE64_SOFT) {
@@ -325,7 +352,7 @@ export class FileService {
         }
       }
       const kind = previewKind(basename(path))
-      const buffer = await readFile(path)
+      const buffer = await readFile(io)
       return {
         ok: true,
         base64: buffer.toString('base64'),
@@ -381,8 +408,10 @@ export class FileService {
 
   async inspect(path: string): Promise<FileInspectResult> {
     const name = basename(path)
+    // Sandbox: I/O against working copy when active; result.path stays logical.
+    const io = this.forIo(path)
     try {
-      const info = await stat(path)
+      const info = await stat(io)
       if (info.isDirectory()) {
         // Not a file preview — callers (Workspace) should not open FileViewer on dirs.
         // Never label folders as binary (that surfaces "Open with default app" for workdirs).
@@ -607,10 +636,11 @@ export class FileService {
         }
         if (info.size <= 0) return { ...base, error: 'File is empty.' }
         // Always streamable; never refuse open on size.
-        base.streamUrl = localFileStreamUrl(path)
+        // Stream the I/O path (working copy when sandboxed).
+        base.streamUrl = localFileStreamUrl(io)
         // Fast path: kind + streamUrl only. Structured parse is
         // `inspectStructured` (background) so first paint is not blocked.
-        this.scheduleIndex(path)
+        this.scheduleIndex(io)
         if (info.size > STRUCTURED_PARSE_SOFT) {
           return {
             ...base,
@@ -665,8 +695,9 @@ export class FileService {
     | { ok: true; structured: import('@shared/structuredDoc').StructuredDocument; partial: boolean }
     | { ok: false; error: string }
   > {
+    const io = this.forIo(path)
     try {
-      const info = await stat(path)
+      const info = await stat(io)
       if (!info.isFile()) return { ok: false, error: 'Not a file' }
       if (isOfficeLockFile(path)) return { ok: false, error: OFFICE_LOCK_FILE_MESSAGE }
       if (info.size <= 0) return { ok: false, error: 'File is empty.' }
@@ -675,7 +706,7 @@ export class FileService {
       }
       const progressive = opts?.maxBlocks != null || opts?.maxRows != null
       const structured = await parseStructuredDocument(
-        path,
+        io,
         info.size,
         progressive
           ? {

@@ -44,6 +44,32 @@ async function forgetMissingWorkspaceDir(path: string): Promise<void> {
 }
 
 /**
+ * When settings say so and exactly one CLI agent is enabled, launch it into
+ * a pending picker pane instead of leaving the chooser open.
+ */
+function maybeAutoAssignSingleAgent(conversationId: string, pendingTabId: string): void {
+  void (async () => {
+    try {
+      const { useSessionStore } = await import('./sessionStore')
+      const settings = useSessionStore.getState().settings
+      if (settings.skipCliAgentPickerWhenSingle !== true) return
+      const enabled = enabledCliAgents(settings.cliAgents)
+      if (enabled.length !== 1) return
+      const sole = enabled[0]
+      if (!sole?.id) return
+      // Pane may have been closed already.
+      const surface = getCliSurface(useWorkspaceStore.getState().workspaces[conversationId])
+      if (!surface?.tabs.some((t) => t.id === pendingTabId && t.pendingCli)) return
+      await useWorkspaceStore
+        .getState()
+        .assignCliPane(conversationId, pendingTabId, sole.id, 80, 24)
+    } catch {
+      // settings / store not ready
+    }
+  })()
+}
+
+/**
  * Resolve a CLI agent from renderer settings when available (no IPC).
  * Falls back to main-process settings. Lazy-requires sessionStore to avoid a
  * circular import (sessionStore → workspaceStore).
@@ -103,11 +129,41 @@ async function resolveTerminalCwd(conversationId: string, sliceRoot: string | nu
 
 export const AGENT_TAB_ID = 'agent'
 
+/**
+ * Stable primary pane id for a conversation's CLI agent host.
+ * Multi-window activate races resolve to one live process (Herdr ensure).
+ * Extra splits use random UUIDs via {@link newUserTerminal} without preferredId.
+ */
+export function primaryAgentPaneId(conversationId: string, agentId: string): string {
+  return `agent-host:${agentId}:${conversationId}`
+}
+
 /** One CLI agent's terminal host layout — survives agent switching. */
 export interface AgentHostSession {
   tabs: TerminalTab[]
   layout: TerminalLayoutNode | null
   activeTabId: string
+}
+
+/**
+ * Unified CLI Agent surface key — holds mixed pending + multi-type panes.
+ * (Per-agent keys may still exist for legacy hydrate; display uses this.)
+ */
+export const CLI_SURFACE_KEY = '__cli__'
+
+export function makePendingCliTab(): TerminalTab {
+  const id =
+    typeof crypto !== 'undefined' && crypto.randomUUID
+      ? `cli-pending:${crypto.randomUUID()}`
+      : `cli-pending:${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
+  return {
+    id,
+    title: 'CLI',
+    isAgent: false,
+    agentId: null,
+    pendingCli: true,
+    splitWeight: 1
+  }
 }
 
 export interface WorkspaceSlice {
@@ -132,6 +188,11 @@ export interface WorkspaceSlice {
   /** Binary tree of pane splits for user bash. Null until first bash exists. */
   layout: TerminalLayoutNode | null
   /**
+   * Main session is CLI Agent surface (not built-in VAV chat).
+   * Layout lives at {@link CLI_SURFACE_KEY} in agentHostSessions.
+   */
+  cliMode: boolean
+  /**
    * Which CLI agent is shown in the main session surface (null = vav chat).
    * Agent PTYs live only in {@link agentHostSessions}, not in `tabs`.
    */
@@ -139,6 +200,7 @@ export interface WorkspaceSlice {
   /**
    * Main-surface CLI agent layouts keyed by agent id. Switching agents parks
    * here without touching user bash tabs. PTYs are not killed.
+   * Unified surface: {@link CLI_SURFACE_KEY}.
    */
   agentHostSessions: Record<string, AgentHostSession>
   /** PTY body under the tab strip; default collapsed (terminal-panel.rpml). */
@@ -161,11 +223,16 @@ function emptySlice(root: string | null): WorkspaceSlice {
     tabs: [],
     activeTabId: '',
     layout: null,
+    cliMode: false,
     activeHostAgentId: null,
     agentHostSessions: {},
     terminalOutputExpanded: false,
     terminalHasUnseenOutput: false
   }
+}
+
+function getCliSurface(slice: WorkspaceSlice | undefined): AgentHostSession | undefined {
+  return slice?.agentHostSessions[CLI_SURFACE_KEY]
 }
 
 /** Agent main-surface session from agentHostSessions (never user bash tabs). */
@@ -184,30 +251,38 @@ function isLiveAgentSession(session: AgentHostSession | undefined, agentId: stri
   return session.tabs.some((t) => t.agentId === agentId)
 }
 
-/** Replace the leaf with tabId by a branch(direction, [old, newLeaf]). */
+/**
+ * Replace the leaf with tabId by a branch(direction, [old, newLeaf]).
+ * New pending panes get a smaller weight so live agents keep more of the Screen
+ * (avoids 50/50 “empty ocean” under a row of TUIs when ⌘⇧D-ing a picker).
+ */
 function splitLeaf(
   node: TerminalLayoutNode,
   tabId: string,
   direction: TerminalSplitAxis,
-  newTabId: string
+  newTabId: string,
+  /** Weight for the new leaf; existing keeps the complement toward 2. */
+  newWeight = 1
 ): TerminalLayoutNode {
   if (node.type === 'leaf') {
     if (node.tabId !== tabId) return node
+    const nw = Math.max(0.35, Math.min(1.65, newWeight))
+    const ow = Math.max(0.35, 2 - nw)
     return {
       type: 'branch',
       direction,
       weight: node.weight,
       children: [
-        { type: 'leaf', tabId: node.tabId, weight: 1 },
-        { type: 'leaf', tabId: newTabId, weight: 1 }
+        { type: 'leaf', tabId: node.tabId, weight: ow },
+        { type: 'leaf', tabId: newTabId, weight: nw }
       ]
     }
   }
   return {
     ...node,
     children: [
-      splitLeaf(node.children[0], tabId, direction, newTabId),
-      splitLeaf(node.children[1], tabId, direction, newTabId)
+      splitLeaf(node.children[0], tabId, direction, newTabId, newWeight),
+      splitLeaf(node.children[1], tabId, direction, newTabId, newWeight)
     ]
   }
 }
@@ -299,6 +374,7 @@ function reconcileAgentHosts(
 ): Record<string, AgentHostSession> {
   const out: Record<string, AgentHostSession> = {}
   for (const [agentId, proj] of Object.entries(projected)) {
+    if (agentId === CLI_SURFACE_KEY) continue
     const old = prev[agentId]
     const tabIds = proj.tabs.map((t) => t.id)
     // Main-process layouts win so a detached window does not flatten ⌘⇧D → row.
@@ -314,11 +390,179 @@ function reconcileAgentHosts(
       activeTabId
     }
   }
+  // Unified CLI Screen: keep layout + pending picker panes across hydrate.
+  // Live PTYs of any agent type are folded into this single surface.
+  const prevSurface = prev[CLI_SURFACE_KEY]
+  const remoteSurface = remoteAgents?.[CLI_SURFACE_KEY] ?? null
+  const mergedSurface = mergeCliSurface(prevSurface, projected, remoteSurface)
+  if (mergedSurface) {
+    out[CLI_SURFACE_KEY] = mergedSurface
+  }
   return out
 }
 
+/** Replace every leaf tabId `from` with `to` (pending picker → real PTY id). */
+function replaceLayoutTabId(
+  node: TerminalLayoutNode | null,
+  from: string,
+  to: string
+): TerminalLayoutNode | null {
+  if (!node) return null
+  if (node.type === 'leaf') {
+    return node.tabId === from ? { ...node, tabId: to } : node
+  }
+  return {
+    ...node,
+    children: [
+      replaceLayoutTabId(node.children[0], from, to)!,
+      replaceLayoutTabId(node.children[1], from, to)!
+    ]
+  }
+}
+
+/**
+ * Prefer the layout tree that already names the current pane ids.
+ * Stale remote trees still holding `cli-pending:…` must not beat a local tree
+ * that already replaced those leaves with real PTY ids (would re-attach with
+ * `row` and shove the new agent to the far right after ⌘⇧D).
+ */
+function pickCliLayoutBase(
+  prevLayout: TerminalLayoutNode | null | undefined,
+  remoteLayout: TerminalLayoutNode | null | undefined,
+  tabIds: string[]
+): TerminalLayoutNode | null {
+  const want = new Set(tabIds)
+  const score = (layout: TerminalLayoutNode | null | undefined): number => {
+    if (!layout) return -1
+    const leaves = collectLeaves(layout)
+    let hit = 0
+    for (const id of leaves) if (want.has(id)) hit++
+    const orphan = leaves.filter((id) => !want.has(id)).length
+    return hit * 10 - orphan
+  }
+  const sp = score(prevLayout)
+  const sr = score(remoteLayout)
+  if (sp > sr) return prevLayout ?? null
+  if (sr > sp) return remoteLayout ?? null
+  // Equal completeness: remote for multi-window reclaim, else prev.
+  return remoteLayout ?? prevLayout ?? null
+}
+
+/**
+ * Screen-level CLI surface: panes are not grouped by agent type.
+ * Pending picker leaves stay until the user assigns a CLI.
+ * Hydrate must never drop an existing Screen when re-entering from VAV.
+ */
+function mergeCliSurface(
+  prev: AgentHostSession | undefined,
+  projected: Record<string, AgentHostSession>,
+  remoteLayout: TerminalLayoutNode | null
+): AgentHostSession | null {
+  const liveById = new Map<string, TerminalTab>()
+  for (const [agentId, host] of Object.entries(projected)) {
+    if (agentId === CLI_SURFACE_KEY) continue
+    for (const t of host.tabs) {
+      liveById.set(t.id, {
+        ...t,
+        pendingCli: false,
+        agentId: t.agentId ?? agentId
+      })
+    }
+  }
+
+  // Map pending picker leaves → newly spawned PTYs in order so we never treat
+  // "pending + live" as two panes and re-split with row.
+  let layoutSeed = prev?.layout ?? null
+  const pendingQueue = (prev?.tabs ?? []).filter((t) => t.pendingCli).map((t) => t.id)
+  const prevKnown = new Set((prev?.tabs ?? []).map((t) => t.id))
+  const brandNewLives = [...liveById.keys()].filter((id) => !prevKnown.has(id))
+  const pendingToLive = new Map<string, string>()
+  for (const pendingId of pendingQueue) {
+    if (brandNewLives.length === 0) break
+    // Prefer when layout still names this pending leaf.
+    const leaves = layoutSeed ? collectLeaves(layoutSeed) : []
+    if (!leaves.includes(pendingId) && !prevKnown.has(pendingId)) continue
+    const liveId = brandNewLives.shift()!
+    pendingToLive.set(pendingId, liveId)
+    layoutSeed = replaceLayoutTabId(layoutSeed, pendingId, liveId)
+  }
+
+  const tabs: TerminalTab[] = []
+  const seen = new Set<string>()
+
+  // Preserve previous pane order (Screen topology).
+  for (const t of prev?.tabs ?? []) {
+    if (t.pendingCli) {
+      const mapped = pendingToLive.get(t.id)
+      if (mapped) {
+        const live = liveById.get(mapped)
+        if (live && !seen.has(mapped)) {
+          tabs.push(live)
+          seen.add(mapped)
+          liveById.delete(mapped)
+        }
+        continue
+      }
+      // Keep unassigned picker panes (no PTY in main yet).
+      if (!seen.has(t.id)) {
+        tabs.push({ ...t, pendingCli: true, agentId: null })
+        seen.add(t.id)
+      }
+      continue
+    }
+    const live = liveById.get(t.id)
+    if (live && !seen.has(t.id)) {
+      tabs.push(live)
+      seen.add(t.id)
+      liveById.delete(t.id)
+    }
+  }
+  // Attach any newly discovered live PTYs (other window / restore).
+  for (const live of liveById.values()) {
+    if (seen.has(live.id)) continue
+    tabs.push(live)
+    seen.add(live.id)
+  }
+
+  if (tabs.length === 0) {
+    // Screen existed but projection is empty (brief list race / all exited).
+    // Prefer keeping the previous Screen topology over inventing a new picker —
+    // enterCliMode + VAV park must not look like a wipe.
+    if (prev && prev.tabs.length > 0) {
+      return {
+        tabs: prev.tabs,
+        layout: prev.layout ?? layoutFromTabIds(prev.tabs.map((t) => t.id)),
+        activeTabId: prev.activeTabId || prev.tabs[0]!.id
+      }
+    }
+    if (!prev) return null
+    const pending = makePendingCliTab()
+    return {
+      tabs: [pending],
+      layout: { type: 'leaf', tabId: pending.id, weight: 1 },
+      activeTabId: pending.id
+    }
+  }
+
+  const tabIds = tabs.map((t) => t.id)
+  // Also remap pending→live on remote seed so stale main trees stay column/row.
+  let remoteSeed = remoteLayout
+  for (const [from, to] of pendingToLive) {
+    remoteSeed = replaceLayoutTabId(remoteSeed, from, to)
+  }
+  const base = pickCliLayoutBase(layoutSeed, remoteSeed, tabIds)
+  const layout = reconcileLayout(base, tabIds)
+  const activeTabId =
+    prev && tabIds.includes(prev.activeTabId)
+      ? prev.activeTabId
+      : prev?.activeTabId && pendingToLive.has(prev.activeTabId)
+        ? (pendingToLive.get(prev.activeTabId) ?? tabIds[0] ?? '')
+        : (tabIds[0] ?? '')
+  return { tabs, layout, activeTabId }
+}
+
 function emptyPtyLayouts(): ConversationPtyLayouts {
-  return { bash: null, agents: {} }
+  return { bash: null, agents: {}, cliMode: false }
 }
 
 function normalizePtyListResult(raw: PtyListResult | PtySessionMeta[]): PtyListResult {
@@ -336,7 +580,13 @@ function tabsEqual(a: TerminalTab[], b: TerminalTab[]): boolean {
   for (let i = 0; i < a.length; i++) {
     const x = a[i]!
     const y = b[i]!
-    if (x.id !== y.id || x.agentId !== y.agentId || x.title !== y.title || !!x.isAgent !== !!y.isAgent) {
+    if (
+      x.id !== y.id ||
+      x.agentId !== y.agentId ||
+      x.title !== y.title ||
+      !!x.isAgent !== !!y.isAgent ||
+      !!x.pendingCli !== !!y.pendingCli
+    ) {
       return false
     }
   }
@@ -530,7 +780,12 @@ interface WorkspaceState {
      * Ambient launch context (focused file, etc.) for CLI agent spawn only.
      * Passed as process args — never typed into the PTY.
      */
-    launchContext?: string | null
+    launchContext?: string | null,
+    /**
+     * Stable tab id for multi-window ensure (primary agent pane).
+     * Omit for splits so each pane gets a fresh process.
+     */
+    preferredId?: string
   ): Promise<string>
   /**
    * Split the *active* pane (or create first pane).
@@ -548,13 +803,37 @@ interface WorkspaceState {
     axis?: TerminalSplitAxis
   ): Promise<void>
   /**
-   * Split / new pane on the main-surface CLI agent host (⌘D / ⌘⇧D / ⌘T while agent active).
+   * Enter CLI Agent mode: show unified surface with a type-picker pane if empty.
+   */
+  enterCliMode(id: string): void
+  /** Leave CLI Agent mode (back to VAV chat). Parks PTYs; does not kill. */
+  exitCliMode(id: string): void
+  /**
+   * Split the CLI surface and put a **picker** in the new pane (⌘D / ⌘⇧D).
+   * User chooses the CLI type in that pane before a PTY is spawned.
+   */
+  splitCliSurface(id: string, axis?: TerminalSplitAxis): void
+  /**
+   * User picked a CLI type for a pending (or empty) pane — spawn PTY into it.
+   */
+  assignCliPane(
+    id: string,
+    tabId: string,
+    agentId: string,
+    cols?: number,
+    rows?: number,
+    initialContext?: string | null
+  ): Promise<'created' | 'missing'>
+  /**
+   * Split / new pane on a CLI agent host (legacy same-type split).
+   * Prefer {@link splitCliSurface} for the CLI Agent surface.
    */
   splitAgentHost(
     id: string,
     cols?: number,
     rows?: number,
-    axis?: TerminalSplitAxis
+    axis?: TerminalSplitAxis,
+    agentIdOverride?: string | null
   ): Promise<void>
   /**
    * Switch to a CLI agent host session without destroying others or user bash.
@@ -608,9 +887,10 @@ interface WorkspaceState {
 
   /**
    * Push current bash / agent split trees to main so other windows (detached)
-   * hydrate the same directions. No-op when the API is missing.
+   * hydrate the same directions. Returns a promise so openDetached can await
+   * cliMode before the companion hydrates.
    */
-  syncPtyLayouts(id: string): void
+  syncPtyLayouts(id: string): Promise<void>
 
   disposeConversation(id: string): void
 }
@@ -685,11 +965,28 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     const status = get().ptyStatus[id] ?? {}
     const projected = projectPtySessions(sessions)
     patch(set, id, (s) => {
-      // Preserve activeHostAgentId only while that host still has live panes.
-      // Do NOT auto-pick a host from count alone — SessionDetail drives mode from
-      // conversation.agentBinaryName and calls activateAgentHost to set this.
+      // CLI Screen mode — single flag on ConversationPtyLayouts.cliMode.
+      // Same rules in every window (main, detached, reclaim):
+      // 1. remote true  → CLI (synced from a window that is in CLI).
+      // 2. remote false → VAV, unless local is still cliMode true (pre-hydrate
+      //    race must not demote an active CLI Screen in this window).
+      // 3. remote unset → keep local (main never wrote the flag yet).
+      // Parked CLI panes (agentHostSessions still present) do NOT imply mode —
+      // user may be on VAV with agents running in the background.
+      const remoteCli = remoteLayouts.cliMode
+      const cliMode =
+        remoteCli === true
+          ? true
+          : remoteCli === false
+            ? s.cliMode === true
+            : s.cliMode === true
       let activeHostAgentId = s.activeHostAgentId
-      if (activeHostAgentId && !projected.agentHostSessions[activeHostAgentId]) {
+      if (cliMode) {
+        activeHostAgentId = CLI_SURFACE_KEY
+      } else if (activeHostAgentId === CLI_SURFACE_KEY) {
+        activeHostAgentId = null
+      } else if (activeHostAgentId && !projected.agentHostSessions[activeHostAgentId]) {
+        // Legacy per-agent host gone — clear pointer only.
         activeHostAgentId = null
       }
 
@@ -714,6 +1011,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         tabsEqual(s.tabs, tabs) &&
         agentHostsEqual(s.agentHostSessions, agentHostSessions) &&
         s.activeHostAgentId === activeHostAgentId &&
+        s.cliMode === cliMode &&
         collectLeaves(s.layout).join(',') === collectLeaves(layout).join(',') &&
         // Direction matters: same leaves with row vs column is a real change.
         layoutDirectionKey(s.layout) === layoutDirectionKey(layout)
@@ -731,12 +1029,13 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         layout,
         activeTabId,
         agentHostSessions,
-        activeHostAgentId
+        activeHostAgentId,
+        cliMode
       }
     })
   },
 
-  syncPtyLayouts(id) {
+  async syncPtyLayouts(id) {
     const setLayouts = window.vav?.pty?.setLayouts
     if (typeof setLayouts !== 'function') return
     const slice = get().workspaces[id]
@@ -745,7 +1044,15 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     for (const [agentId, host] of Object.entries(slice.agentHostSessions)) {
       agents[agentId] = host.layout
     }
-    void setLayouts(id, { bash: slice.layout, agents }).catch(() => undefined)
+    try {
+      await setLayouts(id, {
+        bash: slice.layout,
+        agents,
+        cliMode: slice.cliMode === true
+      })
+    } catch {
+      // Best-effort — companion may still hydrate from live PTYs.
+    }
   },
 
   async setWorkingDirectory(id, root) {
@@ -772,6 +1079,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
             tabs: prev.tabs,
             activeTabId: prev.activeTabId,
             layout: prev.layout,
+            cliMode: prev.cliMode,
             activeHostAgentId: prev.activeHostAgentId,
             agentHostSessions: prev.agentHostSessions
           }
@@ -962,7 +1270,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
    * - `agentIdOverride === null` / omit for user bash → plain shell into `tabs`
    * - `agentIdOverride` = CLI agent id → agent host session only (not tools tray)
    */
-  async newUserTerminal(id, cols, rows, agentIdOverride, launchContext) {
+  async newUserTerminal(id, cols, rows, agentIdOverride, launchContext, preferredId) {
     const slice = get().workspaces[id]
     // Absolute cwd only — node-pty rejects "~". Prefer in-memory state (no IPC).
     const cwd = await resolveTerminalCwd(id, slice?.root ?? null)
@@ -981,6 +1289,8 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       rows,
       agent?.binaryPath
         ? {
+            // preferredId makes multi-window activate attach, not respawn.
+            ...(preferredId ? { preferredId } : {}),
             command: agent.binaryPath,
             args: agent.defaultArgs ?? [],
             commandCandidates: agent.binaryCandidates,
@@ -994,6 +1304,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
             title: agent.name
           }
         : {
+            ...(preferredId ? { preferredId } : {}),
             agentId: null,
             title: 'bash'
           }
@@ -1074,17 +1385,279 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     get().syncPtyLayouts(id)
   },
 
-  async splitAgentHost(id, cols = 80, rows = 24, axis: TerminalSplitAxis = 'row') {
+  enterCliMode(id) {
+    if (!id) return
+    if (!get().workspaces[id]) {
+      set((state) => ({ workspaces: { ...state.workspaces, [id]: emptySlice(null) } }))
+    }
+    const slice = get().workspaces[id]!
+    const existing = getCliSurface(slice)
+    // Screen already exists (live panes and/or pending pickers) — only flip mode.
+    // Never rebuild or drop panes when re-entering from VAV.
+    if (existing && existing.tabs.length > 0) {
+      const layout =
+        existing.layout ??
+        layoutFromTabIds(existing.tabs.map((t) => t.id))
+      patch(set, id, (s) => ({
+        cliMode: true,
+        activeHostAgentId: CLI_SURFACE_KEY,
+        agentHostSessions: {
+          ...s.agentHostSessions,
+          [CLI_SURFACE_KEY]: {
+            ...existing,
+            layout,
+            activeTabId:
+              existing.activeTabId && existing.tabs.some((t) => t.id === existing.activeTabId)
+                ? existing.activeTabId
+                : (existing.tabs[0]?.id ?? '')
+          }
+        }
+      }))
+      get().syncPtyLayouts(id)
+      return
+    }
+    // Prefer promoting a single live per-agent host into the surface if present.
+    const liveAgents = Object.entries(slice.agentHostSessions).filter(
+      ([key, host]) => key !== CLI_SURFACE_KEY && isLiveAgentSession(host, key)
+    )
+    if (liveAgents.length === 1) {
+      const [agentId, host] = liveAgents[0]!
+      patch(set, id, (s) => ({
+        cliMode: true,
+        activeHostAgentId: CLI_SURFACE_KEY,
+        agentHostSessions: {
+          ...s.agentHostSessions,
+          [CLI_SURFACE_KEY]: {
+            tabs: host.tabs.map((t) => ({ ...t, pendingCli: false, agentId: t.agentId ?? agentId })),
+            layout: host.layout,
+            activeTabId: host.activeTabId
+          }
+        }
+      }))
+      get().syncPtyLayouts(id)
+      return
+    }
+    if (liveAgents.length > 1) {
+      // Multiple types already running: fold all leaves into one flat row for now.
+      const tabs: TerminalTab[] = []
+      for (const [agentId, host] of liveAgents) {
+        for (const t of host.tabs) {
+          tabs.push({ ...t, pendingCli: false, agentId: t.agentId ?? agentId })
+        }
+      }
+      let layout: TerminalLayoutNode | null = null
+      for (const t of tabs) {
+        if (!layout) layout = { type: 'leaf', tabId: t.id, weight: 1 }
+        else layout = splitLeaf(layout, collectLeaves(layout).slice(-1)[0]!, 'row', t.id)
+      }
+      patch(set, id, (s) => ({
+        cliMode: true,
+        activeHostAgentId: CLI_SURFACE_KEY,
+        agentHostSessions: {
+          ...s.agentHostSessions,
+          [CLI_SURFACE_KEY]: {
+            tabs,
+            layout,
+            activeTabId: tabs[0]?.id ?? ''
+          }
+        }
+      }))
+      get().syncPtyLayouts(id)
+      return
+    }
+    // Fresh: one picker pane (may auto-assign when only one agent is enabled).
+    const pending = makePendingCliTab()
+    patch(set, id, (s) => ({
+      cliMode: true,
+      activeHostAgentId: CLI_SURFACE_KEY,
+      agentHostSessions: {
+        ...s.agentHostSessions,
+        [CLI_SURFACE_KEY]: {
+          tabs: [pending],
+          layout: { type: 'leaf', tabId: pending.id, weight: 1 },
+          activeTabId: pending.id
+        }
+      }
+    }))
+    get().syncPtyLayouts(id)
+    maybeAutoAssignSingleAgent(id, pending.id)
+  },
+
+  exitCliMode(id) {
+    if (!id) return
+    patch(set, id, () => ({
+      cliMode: false,
+      activeHostAgentId: null
+    }))
+    get().syncPtyLayouts(id)
+  },
+
+  splitCliSurface(id, axis: TerminalSplitAxis = 'row') {
+    if (!id) return
+    get().enterCliMode(id)
     const slice = get().workspaces[id]
-    const agentId = slice?.activeHostAgentId
+    const surface = getCliSurface(slice)
+    if (!surface) return
+    const pending = makePendingCliTab()
+    const focusId =
+      surface.activeTabId || surface.tabs[0]?.id || collectLeaves(surface.layout!)[0]
+    if (!focusId || !surface.layout) {
+      patch(set, id, (s) => ({
+        agentHostSessions: {
+          ...s.agentHostSessions,
+          [CLI_SURFACE_KEY]: {
+            tabs: [pending],
+            layout: { type: 'leaf', tabId: pending.id, weight: 1 },
+            activeTabId: pending.id
+          }
+        },
+        activeHostAgentId: CLI_SURFACE_KEY,
+        cliMode: true
+      }))
+      maybeAutoAssignSingleAgent(id, pending.id)
+      return
+    }
+    // Equal split (1:1) for both ⌘D row and ⌘⇧D column.
+    const nextLayout = splitLeaf(surface.layout, focusId, axis, pending.id)
+    patch(set, id, (s) => {
+      const cur = getCliSurface(s) ?? surface
+      return {
+        cliMode: true,
+        activeHostAgentId: CLI_SURFACE_KEY,
+        agentHostSessions: {
+          ...s.agentHostSessions,
+          [CLI_SURFACE_KEY]: {
+            tabs: [...cur.tabs.filter((t) => t.id !== pending.id), pending],
+            layout: nextLayout,
+            activeTabId: pending.id
+          }
+        }
+      }
+    })
+    get().syncPtyLayouts(id)
+    maybeAutoAssignSingleAgent(id, pending.id)
+  },
+
+  async assignCliPane(id, tabId, agentId, cols = 80, rows = 24, initialContext = null) {
+    if (!id || !tabId || !agentId) return 'missing'
+    get().enterCliMode(id)
+    const agent = await resolveCliAgentConfig(agentId)
+    if (!agent) return 'missing'
+
+    let newTabId: string
+    try {
+      // Prefer stable primary id when this is the first live pane of that agent.
+      const surface = getCliSurface(get().workspaces[id])
+      const liveOfType =
+        surface?.tabs.filter((t) => !t.pendingCli && t.agentId === agentId).length ?? 0
+      const preferred =
+        liveOfType === 0 && (surface?.tabs.some((t) => t.id === tabId && t.pendingCli) ?? false)
+          ? primaryAgentPaneId(id, agentId)
+          : undefined
+      newTabId = await get().newUserTerminal(id, cols, rows, agentId, initialContext, preferred)
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      if (msg.includes('AGENT_NOT_FOUND')) return 'missing'
+      throw err
+    }
+
+    patch(set, id, (s) => {
+      const surface = getCliSurface(s)
+      if (!surface) return {}
+      // Replace pending tab id with real PTY id in tabs + layout.
+      const replaceId = (node: TerminalLayoutNode): TerminalLayoutNode => {
+        if (node.type === 'leaf') {
+          return node.tabId === tabId ? { ...node, tabId: newTabId } : node
+        }
+        return {
+          ...node,
+          children: [replaceId(node.children[0]), replaceId(node.children[1])]
+        }
+      }
+      const tabs = surface.tabs
+        .filter((t) => t.id !== newTabId)
+        .map((t) =>
+          t.id === tabId
+            ? {
+                id: newTabId,
+                title: agent.name,
+                isAgent: false as const,
+                agentId,
+                pendingCli: false,
+                splitWeight: 1
+              }
+            : t
+        )
+      if (!tabs.some((t) => t.id === newTabId)) {
+        tabs.push({
+          id: newTabId,
+          title: agent.name,
+          isAgent: false,
+          agentId,
+          pendingCli: false,
+          splitWeight: 1
+        })
+      }
+      const layout = surface.layout ? replaceId(surface.layout) : { type: 'leaf' as const, tabId: newTabId, weight: 1 }
+      return {
+        cliMode: true,
+        activeHostAgentId: CLI_SURFACE_KEY,
+        agentHostSessions: {
+          ...s.agentHostSessions,
+          [CLI_SURFACE_KEY]: {
+            tabs,
+            layout,
+            activeTabId: newTabId
+          }
+        }
+      }
+    })
+    get().syncPtyLayouts(id)
+    // Keep conversation meta pointing at the focused CLI type for prompts.
+    try {
+      const { useSessionStore } = await import('./sessionStore')
+      await useSessionStore.getState().setAgentBinaryName(id, agentId)
+    } catch {
+      // ignore
+    }
+    return 'created'
+  },
+
+  async splitAgentHost(
+    id,
+    cols = 80,
+    rows = 24,
+    axis: TerminalSplitAxis = 'row',
+    agentIdOverride = null
+  ) {
+    // Unified CLI surface: always open a picker pane (user's product model).
+    if (get().workspaces[id]?.cliMode || agentIdOverride) {
+      get().splitCliSurface(id, axis)
+      return
+    }
+    const slice = get().workspaces[id]
+    const agentId = agentIdOverride || slice?.activeHostAgentId
     if (!agentId) return
-    const host = getAgentHost(slice, agentId)
+    // Switching CLI type for this split — surface that host before spawning.
+    if (agentIdOverride && agentIdOverride !== slice?.activeHostAgentId) {
+      patch(set, id, () => ({ activeHostAgentId: agentIdOverride }))
+    }
+    const host = getAgentHost(get().workspaces[id], agentId)
     const agent = await resolveCliAgentConfig(agentId)
     if (!agent) return
 
     if (!host || host.tabs.length === 0 || !host.layout) {
       try {
-        const tabId = await get().newUserTerminal(id, cols, rows, agentId)
+        // First pane uses the same stable id as activateAgentHost so a split
+        // after a cold open still attaches when main already owns the process.
+        const tabId = await get().newUserTerminal(
+          id,
+          cols,
+          rows,
+          agentId,
+          null,
+          primaryAgentPaneId(id, agentId)
+        )
         patch(set, id, (s) => ({
           agentHostSessions: {
             ...s.agentHostSessions,
@@ -1163,11 +1736,46 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       set((state) => ({ workspaces: { ...state.workspaces, [id]: emptySlice(null) } }))
     }
 
+    // Prefer the unified CLI Screen when it already has this agent (or any panes).
+    // Focusing a type must not leave Screen mode or drop mixed panes.
+    const focusOnCliScreen = (): boolean => {
+      const s = get().workspaces[id]
+      const surface = getCliSurface(s)
+      if (!surface?.tabs.length) return false
+      const tab =
+        surface.tabs.find((t) => !t.pendingCli && t.agentId === agentId) ??
+        surface.tabs.find((t) => !t.pendingCli) ??
+        surface.tabs[0]
+      if (!tab) return false
+      patch(set, id, (prev) => {
+        const cur = getCliSurface(prev) ?? surface
+        return {
+          cliMode: true,
+          activeHostAgentId: CLI_SURFACE_KEY,
+          agentHostSessions: {
+            ...prev.agentHostSessions,
+            [CLI_SURFACE_KEY]: { ...cur, activeTabId: tab.id }
+          }
+        }
+      })
+      return true
+    }
+
     // Optimistic local restore — no IPC. Parked hosts keep agentHostSessions;
     // paint the terminal on this frame, reconcile with main in the background.
     let slice = get().workspaces[id]!
+    if (focusOnCliScreen()) {
+      void get().hydratePtyState(id)
+      return 'restored'
+    }
     if (isLiveAgentSession(getAgentHost(slice, agentId), agentId)) {
-      patch(set, id, () => ({ activeHostAgentId: agentId }))
+      // Legacy per-agent host only — promote into Screen so mixed panes can follow.
+      get().enterCliMode(id)
+      if (focusOnCliScreen()) {
+        void get().hydratePtyState(id)
+        return 'restored'
+      }
+      patch(set, id, () => ({ activeHostAgentId: agentId, cliMode: true }))
       void get().hydratePtyState(id)
       return 'restored'
     }
@@ -1177,8 +1785,11 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     if (relaunchSerial.get(id) !== serial) return 'restored'
 
     slice = get().workspaces[id]!
+    if (focusOnCliScreen()) return 'restored'
     if (isLiveAgentSession(getAgentHost(slice, agentId), agentId)) {
-      patch(set, id, () => ({ activeHostAgentId: agentId }))
+      get().enterCliMode(id)
+      if (focusOnCliScreen()) return 'restored'
+      patch(set, id, () => ({ activeHostAgentId: agentId, cliMode: true }))
       return 'restored'
     }
 
@@ -1225,11 +1836,25 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       return 'missing'
     }
 
+    const preferredId = primaryAgentPaneId(id, agentId)
+    // Capture whether main already had this primary pane *before* create so a
+    // multi-window race that attaches (preferredId hit) reports 'restored'.
+    const hadPrimaryBefore = (get().ptyStatus[id] ?? {})[preferredId] != null
+
     let tabId: string
     try {
+      // Stable preferredId: multi-window / re-activate attaches the same live
+      // process instead of spawning a fresh CLI agent (Herdr live persistence).
       // Pass ambient context at spawn when strategy is launch-argv; prompt-paste
       // agents are filled after activate returns (SessionDetail).
-      tabId = await get().newUserTerminal(id, cols, rows, agentId, initialContext)
+      tabId = await get().newUserTerminal(
+        id,
+        cols,
+        rows,
+        agentId,
+        initialContext,
+        preferredId
+      )
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
       if (msg.includes('AGENT_NOT_FOUND')) {
@@ -1245,10 +1870,15 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     if (relaunchSerial.get(id) !== serial) {
       // Another activate won the race — leave the PTY if hydrate already owns it.
       await get().hydratePtyState(id)
-      return 'created'
+      return hadPrimaryBefore ? 'restored' : 'created'
     }
 
     patch(set, id, (s) => {
+      const existingHost = getAgentHost(s, agentId)
+      // Prefer hydrate/race-built host maps that already include this tab.
+      if (existingHost?.tabs.some((t) => t.id === tabId)) {
+        return { activeHostAgentId: agentId }
+      }
       const host: AgentHostSession = {
         tabs: [
           {
@@ -1271,14 +1901,44 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       }
     })
     get().syncPtyLayouts(id)
-    // Align with main (and other windows) after spawn.
+    // Align with main (and other windows) after spawn / attach.
     await get().hydratePtyState(id)
+    // preferredId hit means attach, not a new process — even if our pre-check
+    // missed it (other window created between hydrate and create).
+    if (hadPrimaryBefore || tabId === preferredId) {
+      // If create returned the preferred id, it may still be a first spawn.
+      // hadPrimaryBefore is the reliable attach signal; when false this is create.
+      return hadPrimaryBefore ? 'restored' : 'created'
+    }
     return 'created'
   },
 
   focusAgentHost(id, agentId) {
     const slice = get().workspaces[id]
     if (!slice) return
+    // CLI Screen mode: focus a pane of this agent type inside the Screen.
+    // Never re-key the surface to a per-agent host (that wiped mixed panes).
+    const surface = getCliSurface(slice)
+    if (slice.cliMode || surface) {
+      const tab =
+        surface?.tabs.find((t) => !t.pendingCli && t.agentId === agentId) ??
+        surface?.tabs.find((t) => !t.pendingCli) ??
+        surface?.tabs[0]
+      if (tab) {
+        patch(set, id, (s) => {
+          const cur = getCliSurface(s) ?? surface!
+          return {
+            cliMode: true,
+            activeHostAgentId: CLI_SURFACE_KEY,
+            agentHostSessions: {
+              ...s.agentHostSessions,
+              [CLI_SURFACE_KEY]: { ...cur, activeTabId: tab.id }
+            }
+          }
+        })
+      }
+      return
+    }
     if (!isLiveAgentSession(getAgentHost(slice, agentId), agentId)) return
     if (slice.activeHostAgentId === agentId) return
     patch(set, id, () => ({ activeHostAgentId: agentId }))
@@ -1286,9 +1946,13 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 
   parkAgentHost(id) {
     const slice = get().workspaces[id]
-    if (!slice?.activeHostAgentId) return
-    // Keep agentHostSessions + user bash; only leave the main agent surface.
+    if (!slice?.activeHostAgentId && !slice?.cliMode) return
+    // Keep agentHostSessions (incl. CLI Screen layout + panes); leave main surface.
+    // Mode persistence is owned by exitCliMode only — never push cliMode=false
+    // from park. Accidental parks (pre-hydrate / missing binary) must not clobber
+    // main-process layouts that other windows hydrate from.
     patch(set, id, (s) => ({
+      cliMode: false,
       activeHostAgentId: null,
       tabs: userBashTabsOnly(s.tabs)
     }))
@@ -1343,14 +2007,27 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 
   selectAgentTab(id, tabId) {
     patch(set, id, (s) => {
-      const agentId = s.activeHostAgentId
-      if (!agentId) return {}
-      const host = getAgentHost(s, agentId)
+      // Prefer unified CLI Screen whenever it exists (mixed-type panes).
+      const key =
+        s.agentHostSessions[CLI_SURFACE_KEY] != null || s.cliMode
+          ? CLI_SURFACE_KEY
+          : s.activeHostAgentId
+      if (!key) return {}
+      const host = getAgentHost(s, key)
       if (!host) return {}
+      // Remember focused pane's agent type for install/prompt only — not UI tabs.
+      const tab = host.tabs.find((t) => t.id === tabId)
+      if (tab?.agentId && !tab.pendingCli) {
+        void import('./sessionStore').then(({ useSessionStore }) => {
+          void useSessionStore.getState().setAgentBinaryName(id, tab.agentId!)
+        })
+      }
       return {
+        cliMode: key === CLI_SURFACE_KEY ? true : s.cliMode,
+        activeHostAgentId: key,
         agentHostSessions: {
           ...s.agentHostSessions,
-          [agentId]: { ...host, activeTabId: tabId }
+          [key]: { ...host, activeTabId: tabId }
         }
       }
     })
@@ -1394,28 +2071,65 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   },
 
   closeAgentTab(id, tabId) {
-    void window.vav.pty.kill(tabId)
+    // Pending picker panes have no PTY.
+    const surface = getCliSurface(get().workspaces[id])
+    const tabMeta =
+      surface?.tabs.find((t) => t.id === tabId) ??
+      (() => {
+        const key = get().workspaces[id]?.activeHostAgentId
+        return key
+          ? getAgentHost(get().workspaces[id]!, key)?.tabs.find((t) => t.id === tabId)
+          : undefined
+      })()
+    if (!tabMeta?.pendingCli) {
+      void window.vav.pty.kill(tabId)
+    }
     terminalSinks.delete(sinkKey(id, tabId))
     pendingMirrors.delete(sinkKey(id, tabId))
     lastInjectFingerprint.delete(tabId)
     patch(set, id, (s) => {
-      const agentId = s.activeHostAgentId
-      if (!agentId) return {}
-      const host = getAgentHost(s, agentId)
+      const key =
+        s.agentHostSessions[CLI_SURFACE_KEY] != null
+          ? CLI_SURFACE_KEY
+          : s.activeHostAgentId
+      if (!key) return {}
+      const host = getAgentHost(s, key)
       if (!host) return {}
       const tabs = host.tabs.filter((t) => t.id !== tabId)
       const layout = host.layout ? removeLeaf(host.layout, tabId) : null
       const nextActive =
         host.activeTabId === tabId ? (tabs[0]?.id ?? '') : host.activeTabId
       if (tabs.length === 0) {
+        // Last CLI Screen pane: stay in CLI mode and show the initial agent picker.
+        // (Do not bounce back to VAV chat.)
+        if (key === CLI_SURFACE_KEY || s.cliMode) {
+          const pending = makePendingCliTab()
+          // Defer auto-assign so this patch commits first.
+          queueMicrotask(() => maybeAutoAssignSingleAgent(id, pending.id))
+          return {
+            cliMode: true,
+            activeHostAgentId: CLI_SURFACE_KEY,
+            agentHostSessions: {
+              ...s.agentHostSessions,
+              [CLI_SURFACE_KEY]: {
+                tabs: [pending],
+                layout: { type: 'leaf', tabId: pending.id, weight: 1 },
+                activeTabId: pending.id
+              }
+            }
+          }
+        }
         const sessions = { ...s.agentHostSessions }
-        delete sessions[agentId]
-        return { activeHostAgentId: null, agentHostSessions: sessions }
+        delete sessions[key]
+        return {
+          activeHostAgentId: null,
+          agentHostSessions: sessions
+        }
       }
       return {
         agentHostSessions: {
           ...s.agentHostSessions,
-          [agentId]: { tabs, layout, activeTabId: nextActive }
+          [key]: { tabs, layout, activeTabId: nextActive }
         }
       }
     })

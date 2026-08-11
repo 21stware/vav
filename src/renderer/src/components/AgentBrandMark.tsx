@@ -5,11 +5,15 @@ import cursorIcon from '../assets/agents/cursor.svg'
 import devinIcon from '../assets/agents/devin-color.svg'
 import grokIcon from '../assets/agents/grok.svg'
 import piIcon from '../assets/agents/pi-coding-agent.svg'
+import antigravityIcon from '../assets/agents/antigravity.png'
+import kiroIcon from '../assets/agents/kiro.svg'
+import opencodeIcon from '../assets/agents/opencode.svg'
+import clineIcon from '../assets/agents/cline.svg'
 // Product mark — full app-icon plates (Any light / Any dark). Theme via CSS, no invert.
 import vavIcon from '../assets/agents/vav-mark.png'
 import vavIconDark from '../assets/agents/vav-mark-dark.png'
 
-/** Official brand marks from `static/` (copied into renderer assets). */
+/** Official / catalogue brand marks from `assets/agents/`. */
 const AGENT_ICONS: Record<string, string> = {
   vav: vavIcon,
   claude: claudeIcon,
@@ -17,14 +21,18 @@ const AGENT_ICONS: Record<string, string> = {
   cursor: cursorIcon,
   grok: grokIcon,
   devin: devinIcon,
-  pi: piIcon
+  pi: piIcon,
+  antigravity: antigravityIcon,
+  kiro: kiroIcon,
+  opencode: opencodeIcon,
+  cline: clineIcon
 }
 
 /**
- * Agent brand icon for install panel / chrome.
+ * Agent brand icon for install panel / chrome / settings.
  *
  * Theme adaptation (glyphs must stay readable on light + dark chips):
- * - `is-mono` — dark monochrome (cursor, grok): invert on dark
+ * - `is-mono` — dark monochrome (cursor, grok, lobe currentColor marks): invert on dark
  * - `is-mono-on-dark` — light monochrome (pi ships white): invert on light
  * - vav — dual PNG plates (light / dark Any); never invert (solid app icon)
  */
@@ -37,8 +45,13 @@ export function AgentBrandMark({
 }): React.JSX.Element {
   const src = AGENT_ICONS[agent.id]
   const isVav = agent.id === 'vav'
-  // Dark-on-light assets
-  const mono = agent.id === 'cursor' || agent.id === 'grok'
+  // Dark-on-light / currentColor monochrome assets
+  const mono =
+    agent.id === 'cursor' ||
+    agent.id === 'grok' ||
+    agent.id === 'opencode' ||
+    agent.id === 'cline' ||
+    agent.id === 'kiro'
   // Light-on-dark assets (Pi SVG fill is #fff)
   const monoOnDark = agent.id === 'pi'
 

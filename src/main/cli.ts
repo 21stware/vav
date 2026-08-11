@@ -1,5 +1,5 @@
 import { app } from 'electron'
-import { execFileSync } from 'node:child_process'
+import { execFile } from 'node:child_process'
 import {
   chmodSync,
   existsSync,
@@ -12,8 +12,11 @@ import {
 } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, isAbsolute, join, resolve as resolvePath } from 'node:path'
+import { promisify } from 'node:util'
 import { APP_NAME } from './brand'
 import { t } from './i18n'
+
+const execFileAsync = promisify(execFile)
 
 export type CliInstallLocation = '/usr/local/bin' | '~/.local/bin'
 
@@ -50,12 +53,15 @@ function binaryPath(location: CliInstallLocation): string {
 /**
  * GUI apps inherit a stripped PATH from launchd, so `process.env.PATH` often
  * omits `/usr/local/bin` even when every terminal has it. Ask the login shell.
+ *
+ * Must stay **async** — `execFileSync` blocked the Electron main process for
+ * up to 5s and froze Settings when opening Command Line.
  */
-function loginPathDirs(): string[] {
+async function loginPathDirs(): Promise<string[]> {
   if (cachedLoginPathDirs) return cachedLoginPathDirs
   const shell = process.env.SHELL || (process.platform === 'darwin' ? '/bin/zsh' : '/bin/bash')
   try {
-    const out = execFileSync(shell, ['-ilc', 'printenv PATH'], {
+    const { stdout } = await execFileAsync(shell, ['-ilc', 'printenv PATH'], {
       encoding: 'utf8',
       timeout: 5000,
       env: {
@@ -67,10 +73,8 @@ function loginPathDirs(): string[] {
         PATH: '/usr/bin:/bin:/usr/sbin:/sbin'
       }
     })
-      .trim()
-      .split('\n')
-      .at(-1)
-    cachedLoginPathDirs = (out ?? '')
+    const lastLine = stdout.trim().split('\n').at(-1)
+    cachedLoginPathDirs = (lastLine ?? '')
       .split(':')
       .map((part) => part.trim())
       .filter(Boolean)
@@ -80,8 +84,9 @@ function loginPathDirs(): string[] {
   return cachedLoginPathDirs
 }
 
-function pathEnvHas(dir: string): boolean {
-  return loginPathDirs().includes(dir)
+async function pathEnvHas(dir: string): Promise<boolean> {
+  const dirs = await loginPathDirs()
+  return dirs.includes(dir)
 }
 
 function isAccessError(error: unknown): boolean {
@@ -104,7 +109,7 @@ const CLI_HELP = [
 ].join('\n')
 
 /** Packaged macOS: …/vav.app/Contents/MacOS/vav → …/vav.app */
-function packagedAppBundlePath(): string {
+export function packagedAppBundlePath(): string {
   return resolvePath(dirname(process.execPath), '..', '..')
 }
 
@@ -250,7 +255,7 @@ function writeMeta(meta: {
   )
 }
 
-export function getCliStatus(): CliStatus {
+export async function getCliStatus(): Promise<CliStatus> {
   if (process.platform === 'win32') {
     return {
       installed: false,
@@ -283,13 +288,15 @@ export function getCliStatus(): CliStatus {
     installed,
     path: installed ? candidate : null,
     preferredLocation: meta.preferredLocation,
-    pathInPath: pathEnvHas(locationDir),
+    pathInPath: await pathEnvHas(locationDir),
     version: installed ? app.getVersion() : null,
     installedAt
   }
 }
 
-export function setCliPreferredLocation(location: CliInstallLocation): CliStatus {
+export async function setCliPreferredLocation(
+  location: CliInstallLocation
+): Promise<CliStatus> {
   const meta = readMeta()
   writeMeta({ ...meta, preferredLocation: location })
   return getCliStatus()
@@ -316,9 +323,9 @@ function writeLauncher(location: CliInstallLocation, previousPath: string | null
   return target
 }
 
-export function installCli(): CliStatus {
+export async function installCli(): Promise<CliStatus> {
   if (process.platform === 'win32') {
-    return { ...getCliStatus(), error: t('cli.winUnsupported') }
+    return { ...(await getCliStatus()), error: t('cli.winUnsupported') }
   }
 
   const meta = readMeta()
@@ -326,21 +333,21 @@ export function installCli(): CliStatus {
 
   try {
     writeLauncher(preferred, meta.path)
-    return getCliStatus()
+    return await getCliStatus()
   } catch (error) {
     // /usr/local/bin is often root-owned — fall back to the user bin automatically.
     if (preferred === '/usr/local/bin' && isAccessError(error)) {
       try {
         writeLauncher('~/.local/bin', meta.path)
         return {
-          ...getCliStatus(),
+          ...(await getCliStatus()),
           notice: t('cli.fellBackToLocal')
         }
       } catch (fallbackError) {
         const message =
           fallbackError instanceof Error ? fallbackError.message : String(fallbackError)
         return {
-          ...getCliStatus(),
+          ...(await getCliStatus()),
           error: t('cli.installFailed', {
             dir: expandLocation('~/.local/bin'),
             message
@@ -351,13 +358,13 @@ export function installCli(): CliStatus {
 
     const message = error instanceof Error ? error.message : String(error)
     return {
-      ...getCliStatus(),
+      ...(await getCliStatus()),
       error: t('cli.installFailed', { dir: expandLocation(preferred), message })
     }
   }
 }
 
-export function uninstallCli(): CliStatus {
+export async function uninstallCli(): Promise<CliStatus> {
   const meta = readMeta()
   const target = meta.path ?? binaryPath(meta.preferredLocation)
   try {
@@ -367,10 +374,10 @@ export function uninstallCli(): CliStatus {
       path: null,
       installedAt: null
     })
-    return getCliStatus()
+    return await getCliStatus()
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
-    return { ...getCliStatus(), error: t('cli.uninstallFailed', { message }) }
+    return { ...(await getCliStatus()), error: t('cli.uninstallFailed', { message }) }
   }
 }
 

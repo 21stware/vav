@@ -59,8 +59,10 @@ const WALK_MAX_DEPTH = 8
  * - workdir snapshot diff at finalize (officecli / shell / skills writing
  *   .docx/.pdf/etc. that never go through fs_write)
  *
- * Writes already landed on disk during the turn — Accept keeps them, Reject
- * restores `originalContent` (or deletes a newly added file).
+ * When a {@link WorkingCopyService} is attached and the path has an active
+ * sandbox, Accept promotes sandbox → real and Reject discards the sandbox
+ * (real path never mutated during the turn). Fallback for untracked paths:
+ * Accept is status-only; Reject restores from originalContent.
  */
 export class ChangeSetStore {
   private pending = new Map<string, PendingWrite[]>()
@@ -71,6 +73,8 @@ export class ChangeSetStore {
   private baselines = new Map<string, Map<string, BaselineFile>>()
   private workdirs = new Map<string, string>()
   private baselineReady = new Map<string, Promise<void>>()
+  /** Optional document sandbox (preview / focused file). */
+  workingCopies: import('../fs/WorkingCopyService').WorkingCopyService | null = null
 
   beginTurn(conversationId: string, workdir: string): void {
     this.pending.set(conversationId, [])
@@ -125,6 +129,9 @@ export class ChangeSetStore {
     const workdir = this.workdirs.get(conversationId)
     if (workdir && !opts?.cancelled && !opts?.error) {
       await this.collectExternalChanges(conversationId, workdir)
+      // officecli/shell may write the sandboxed open file under userData —
+      // fold those into the set as the logical real path.
+      await this.collectWorkingCopyChanges(conversationId, workdir)
     }
 
     const list = this.pending.get(conversationId) ?? []
@@ -185,7 +192,15 @@ export class ChangeSetStore {
     for (const file of set.files) {
       if (!filePaths.includes(file.filePath)) continue
       if (file.status !== 'pending' && file.status !== 'edited') continue
-      // Already on disk from the agent write.
+      // Sandboxed open docs: promote working copy → real path.
+      const real = this.workingCopies?.logicalPath(file.filePath) ?? file.filePath
+      if (this.workingCopies?.status(real)) {
+        const promoted = await this.workingCopies.promote(real)
+        if (!promoted.ok) {
+          console.warn('[change-set] promote failed', real, promoted.error)
+        }
+      }
+      // Untracked paths: agent already wrote the real path (legacy).
       file.status = 'accepted'
     }
     set.status = summarizeChangeSetStatus(set.files)
@@ -198,7 +213,13 @@ export class ChangeSetStore {
     if (!set) return null
     for (const file of set.files) {
       if (!filePaths.includes(file.filePath)) continue
-      await restoreFile(file)
+      const real = this.workingCopies?.logicalPath(file.filePath) ?? file.filePath
+      if (this.workingCopies?.status(real)) {
+        // Sandbox: drop the copy and re-seed from the untouched real file.
+        await this.workingCopies.discard(real, { reseed: true })
+      } else {
+        await restoreFile(file)
+      }
       file.status = 'rejected'
     }
     set.status = summarizeChangeSetStatus(set.files)
@@ -228,11 +249,62 @@ export class ChangeSetStore {
     const file = set.files.find((f) => f.filePath === filePath)
     if (!file || file.status === 'pending') return set
 
+    const real = this.workingCopies?.logicalPath(file.filePath) ?? file.filePath
+    const sandboxed = !!this.workingCopies?.status(real)
+
     if (file.status === 'accepted' || file.status === 'edited') {
-      await restoreFile(file)
+      // Roll back Accept: real should return to pre-accept; sandbox holds agent edits again.
+      if (sandboxed && this.workingCopies) {
+        // Discard re-seeds working from current real (post-accept = agent content).
+        // Restore real to original first when we have it, then re-seed working from that.
+        if (file.changeType !== 'added' && file.originalContent != null) {
+          await writeEntryContent(real, file.originalContent, file.contentEncoding ?? 'utf8')
+        } else if (file.changeType === 'added') {
+          try {
+            await unlink(real)
+          } catch {
+            // ignore
+          }
+        }
+        await this.workingCopies.discard(real, { reseed: true })
+        // Put agent content back into the working copy only.
+        const st = this.workingCopies.status(real)
+        if (st && file.changeType !== 'deleted') {
+          await writeEntryContent(
+            st.copyPath,
+            file.newContent,
+            file.contentEncoding ?? 'utf8'
+          )
+          this.workingCopies.markDirtyFromWrite(real)
+        }
+      } else {
+        await restoreFile(file)
+      }
       file.status = 'pending'
     } else if (file.status === 'rejected') {
-      await writeEntryContent(file.filePath, file.newContent, file.contentEncoding ?? 'utf8')
+      // Re-apply agent content into working (sandbox) or real (legacy).
+      if (sandboxed && this.workingCopies) {
+        await this.workingCopies.ensure(real)
+        const st = this.workingCopies.status(real)
+        if (st) {
+          if (file.changeType === 'deleted') {
+            try {
+              await unlink(st.copyPath)
+            } catch {
+              // ignore
+            }
+          } else {
+            await writeEntryContent(
+              st.copyPath,
+              file.newContent,
+              file.contentEncoding ?? 'utf8'
+            )
+          }
+          this.workingCopies.markDirtyFromWrite(real)
+        }
+      } else {
+        await writeEntryContent(file.filePath, file.newContent, file.contentEncoding ?? 'utf8')
+      }
       file.status = 'pending'
     }
     set.status = summarizeChangeSetStatus(set.files)
@@ -248,8 +320,19 @@ export class ChangeSetStore {
     if ((file.contentEncoding ?? 'utf8') === 'base64' || isLikelyBinaryPath(file.filePath)) {
       return set // binary / raw — no in-review text edit
     }
-    await mkdir(dirname(file.filePath), { recursive: true })
-    await writeFile(file.filePath, content, 'utf8')
+    const real = this.workingCopies?.logicalPath(file.filePath) ?? file.filePath
+    // Prefer writing the sandbox when active so Accept still owns promote→real.
+    let target = file.filePath
+    if (this.workingCopies) {
+      await this.workingCopies.ensure(real)
+      const st = this.workingCopies.status(real)
+      if (st) {
+        target = st.copyPath
+        this.workingCopies.markDirtyFromWrite(real)
+      }
+    }
+    await mkdir(dirname(target), { recursive: true })
+    await writeFile(target, content, 'utf8')
     file.newContent = content
     file.contentEncoding = 'utf8'
     file.diffText =
@@ -345,6 +428,37 @@ export class ChangeSetStore {
         originalContent: before.content,
         newContent: '',
         contentEncoding: before.encoding
+      })
+    }
+  }
+
+  /**
+   * Detect dirtied document sandboxes (officecli wrote the copy path under
+   * userData). Record against the logical real path for review UI.
+   */
+  private async collectWorkingCopyChanges(
+    conversationId: string,
+    workdir: string
+  ): Promise<void> {
+    if (!this.workingCopies) return
+    const dirtied = await this.workingCopies.scanDirtiedCopies()
+    const pending = this.pending.get(conversationId) ?? []
+    const already = new Set(pending.map((p) => p.filePath))
+    const baseline = this.baselines.get(conversationId) ?? new Map<string, BaselineFile>()
+
+    for (const realPath of dirtied) {
+      if (already.has(realPath)) continue
+      const st = this.workingCopies.status(realPath)
+      if (!st) continue
+      const after = await readSnapshot(st.copyPath)
+      if (!after) continue
+      const before = baseline.get(realPath)
+      this.upsertPending(conversationId, workdir, {
+        filePath: realPath,
+        changeType: before ? 'modified' : 'added',
+        originalContent: before?.content ?? null,
+        newContent: after.content ?? '',
+        contentEncoding: after.encoding
       })
     }
   }
@@ -496,12 +610,22 @@ function formatBytes(n: number): string {
 }
 
 async function restoreFile(file: ChangeEntry): Promise<void> {
-  if (file.changeType === 'added' || file.originalContent === null) {
+  // Only delete files that were created this turn. Never unlink a "modified"
+  // path just because the baseline snapshot was missing (large file / failure)
+  // — that destroyed the user's real document on Reject.
+  if (file.changeType === 'added') {
     try {
       await unlink(file.filePath)
     } catch {
       // Already gone.
     }
+    return
+  }
+  if (file.originalContent === null) {
+    console.warn(
+      '[change-set] reject skipped restore (no baseline content):',
+      file.filePath
+    )
     return
   }
   await writeEntryContent(file.filePath, file.originalContent, file.contentEncoding ?? 'utf8')

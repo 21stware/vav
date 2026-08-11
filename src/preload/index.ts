@@ -158,6 +158,11 @@ const api: VavApi = {
     writeBinary: (path: string, base64: string) =>
       ipcRenderer.invoke(IPC.filesWriteBinary, path, base64),
     write: (path: string, content: string) => ipcRenderer.invoke(IPC.filesWrite, path, content),
+    workingCopyEnsure: (path: string, opts?: { fileId?: string | null }) =>
+      ipcRenderer.invoke(IPC.filesWorkingCopyEnsure, path, opts),
+    workingCopyPromote: (path: string) => ipcRenderer.invoke(IPC.filesWorkingCopyPromote, path),
+    workingCopyDiscard: (path: string) => ipcRenderer.invoke(IPC.filesWorkingCopyDiscard, path),
+    workingCopyStatus: (path: string) => ipcRenderer.invoke(IPC.filesWorkingCopyStatus, path),
     quickLook: (path: string) => ipcRenderer.invoke(IPC.filesQuickLook, path),
     openWithDefault: (path: string) => ipcRenderer.invoke(IPC.filesOpenWithDefault, path),
     watch: (conversationId: string, root: string | null) =>
@@ -263,6 +268,18 @@ const api: VavApi = {
       }>(IPC.previewNavigate, handler),
     previewShellReady: () => {
       ipcRenderer.send(IPC.previewShellReady)
+    },
+    onSessionNavigate: (handler) =>
+      subscribe<{
+        conversationId: string
+        meta?: import('@shared/types').ConversationMeta
+        empty?: boolean
+        collapseTools?: boolean
+        openSeq: number
+        requestedAt?: number
+      }>(IPC.sessionNavigate, handler),
+    sessionShellReady: () => {
+      ipcRenderer.send(IPC.sessionShellReady)
     },
     setPreviewCloseGuard: (enabled: boolean) =>
       ipcRenderer.invoke(IPC.previewSetCloseGuard, enabled),

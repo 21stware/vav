@@ -7,13 +7,14 @@ import {
   type ReactNode,
   type RefObject
 } from 'react'
-import { ChevronDown, Clock, Columns2, Plus, Rows2, Search } from 'lucide-react'
+import { Clock, Columns2, Plus, Rows2, Search } from 'lucide-react'
 import { buildWorkspaceFocusContext } from '@shared/agentContextInject'
 import { DEFAULT_CLI_AGENTS, enabledCliAgents, type AgentConfig } from '@shared/types'
 import type { FileSessionMeta } from '@shared/ipc'
 import { handoffFocusToCli } from '../lib/cliFocusHandoff'
+import { focusCliAgentPickerFirstOption } from './CliAgentPicker'
 import { useSessionStore } from '../state/sessionStore'
-import { useWorkspaceStore } from '../state/workspaceStore'
+import { CLI_SURFACE_KEY, useWorkspaceStore } from '../state/workspaceStore'
 import { SessionHistoryPopover } from './SessionHistoryPopover'
 import { TerminalPanel } from './TerminalPanel'
 import { ToolsPanel } from './ToolsPanel'
@@ -23,17 +24,18 @@ import { SearchStrip } from './SearchStrip'
 import { PlanOverlay } from './PlanOverlay'
 import { ErrorBanner } from './ErrorBanner'
 import { AgentInstallPanel } from './AgentInstallPanel'
-import { AgentBrandMark } from './AgentBrandMark'
 import { teardownInlineTerminal } from './InlineTerminal'
 import { Button, EmptyState } from './ui'
 import { ShellLeadingControls } from './ShellLeadingControls'
+import wordmark from '../assets/wordmark.png'
+import wordmarkDark from '../assets/wordmark-dark.png'
 import {
   clearAgentBinaryCache,
   getAgentBinaryCache,
   markAgentBinaryMissing,
   markAgentBinaryReady
 } from '../lib/agentBinaryCache'
-import { disposeTerminal } from '../lib/terminalRegistry'
+import { parkTerminal } from '../lib/terminalRegistry'
 import { useT } from '../i18n/useT'
 import { keys } from '../lib/platform'
 import { useSidebarFloatMode } from '../lib/sidebarLayout'
@@ -44,6 +46,21 @@ function isCompanionSessionShell(): boolean {
   } catch {
     return false
   }
+}
+
+/** Split CLI Screen and move keyboard focus to the new pane’s first agent. */
+function splitCliAndFocusPicker(
+  conversationId: string,
+  axis: 'row' | 'column'
+): void {
+  if (!conversationId) return
+  useWorkspaceStore.getState().splitCliSurface(conversationId, axis)
+  const host =
+    useWorkspaceStore.getState().workspaces[conversationId]?.agentHostSessions[
+      CLI_SURFACE_KEY
+    ]
+  const pendingId = host?.activeTabId
+  if (pendingId) focusCliAgentPickerFirstOption(conversationId, pendingId)
 }
 
 /**
@@ -114,17 +131,16 @@ export function SessionDetail({
   const previewEdit = variant === 'preview-edit'
   const isKeyProblem = !!errorBanner && /401|API Key/i.test(errorBanner)
 
-  // null / "vav" → built-in chat; any other id → CLI host
-  // Product: switching agent only replaces the transcript surface; the bottom
-  // ToolsPanel (Files + Terminal) stays the same dock as vav mode.
-  // File-preview drawer uses the same switcher (standalone file Agent sessions).
+  // VAV chat vs CLI Screen is solely cliMode. agentBinaryName only tracks the
+  // focused pane's CLI type for install/prompt handoff — not surface identity.
   const agentKey = conversation?.agentBinaryName ?? null
-  const isVavMode = !agentKey || agentKey === 'vav'
+  const cliMode = useWorkspaceStore((s) => !!s.workspaces[activeId]?.cliMode)
+  const isVavMode = !cliMode
   const showAgentSwitcher = true
 
   const agents = enabledCliAgents(settings.cliAgents)
   const activeAgent: AgentConfig | null =
-    agentKey && agentKey !== 'vav'
+    agentKey && agentKey !== 'vav' && agentKey !== '__cli__'
       ? (agents.find((a) => a.id === agentKey) ?? {
           id: agentKey,
           name: agentKey,
@@ -274,69 +290,57 @@ export function SessionDetail({
         }
         markAgentBinaryMissing(agent.id)
         setProbe('missing')
-        useWorkspaceStore.getState().parkAgentHost(activeId)
+        // Stay on CLI Screen when already there (install gate paints in-screen).
+        // Never park→sync cliMode false here — that raced hydrate and bounced
+        // detached opens back to VAV.
+        const slice = useWorkspaceStore.getState().workspaces[activeId]
+        if (!slice?.cliMode) {
+          useWorkspaceStore.getState().parkAgentHost(activeId)
+        }
       }
     },
     [activeId, activateHost, agentCandidates, hasLiveAgentSession]
   )
 
-  // Park CLI host when returning to vav; restore / optimistically spawn when
-  // selecting a CLI agent. useLayoutEffect so probe=ready + focusAgentHost run
-  // before paint — avoids a one-frame install flash when probe was still idle.
+  // Screen mode is owned by workspace.cliMode (hydrated from main layouts).
+  //
+  // Do NOT park when cliMode is false: false means either "user chose VAV" or
+  // "hydrate not finished yet". Auto-parking on false was racing openDetached /
+  // session switch and writing cliMode=false into main, so double-click open
+  // always bounced CLI sessions back to VAV.
+  //
+  // Only assert CLI surface once cliMode is already true (user or hydrate).
   useLayoutEffect(() => {
-    if (isVavMode || !agentKey || agentKey === 'vav') {
-      useWorkspaceStore.getState().parkAgentHost(activeId)
+    if (!activeId) return
+    if (isVavMode) {
       setProbe('idle')
       return
     }
-    const list = enabledCliAgents(useSessionStore.getState().settings.cliAgents)
-    const agent: AgentConfig =
-      list.find((a) => a.id === agentKey) ?? {
-        id: agentKey,
-        name: agentKey,
-        binaryPath: agentKey,
-        defaultArgs: [],
-        envVars: {},
-        enabled: true
-      }
-
-    // Terminal first. Install panel only after spawn fails with AGENT_NOT_FOUND.
     setProbe('ready')
-    if (hasLiveAgentSession(agent.id)) {
-      useWorkspaceStore.getState().focusAgentHost(activeId, agent.id)
-    }
-    void checkAndActivate(agent)
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- only re-run when agent id changes
-  }, [activeId, isVavMode, agentKey])
+    useWorkspaceStore.getState().enterCliMode(activeId)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeId, isVavMode])
 
-  // Agent-host split shortcuts only when CLI host is ready (not tools-tray bash).
-  // ⌘W is owned by uiFocus / close-context (close pane when multi-split agent).
+  // CLI surface: ⌘D / ⌘⇧D split a picker pane (no separate “add” action).
   useEffect(() => {
-    if (isVavMode || probe !== 'ready') return
+    if (isVavMode) return
     const onKey = (event: KeyboardEvent): void => {
       const meta = event.metaKey || event.ctrlKey
       if (!meta || event.altKey) return
       const key = event.key.toLowerCase()
-      const store = useWorkspaceStore.getState()
       if (key === 'd' && event.shiftKey) {
         event.preventDefault()
-        void store.splitAgentHost(activeId, 80, 24, 'column')
+        splitCliAndFocusPicker(activeId, 'column')
         return
       }
       if (key === 'd' && !event.shiftKey) {
         event.preventDefault()
-        void store.splitAgentHost(activeId, 80, 24, 'row')
-        return
-      }
-      if (key === 't' && !event.shiftKey) {
-        event.preventDefault()
-        void store.splitAgentHost(activeId, 80, 24)
-        return
+        splitCliAndFocusPicker(activeId, 'row')
       }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [activeId, previewEdit, isVavMode, probe])
+  }, [activeId, previewEdit, isVavMode])
 
   // Install-inline PTY — hooks must stay above every early return (Rules of Hooks).
   const teardownInstallPty = useCallback((): void => {
@@ -448,15 +452,16 @@ export function SessionDetail({
     }
   }, [probe, activeAgent, installTabId, agentCandidates, finishInstallAndRecheck])
 
-  // Companion window owns the live agent PTY. Main shell must not keep a second
-  // xterm attached (shared PTY has one geometry). Hook must stay above returns.
+  // Companion window owns PTY geometry. Soft-park main's xterm (detach DOM,
+  // keep buffer + live sink) so reclaim is instant when the companion closes —
+  // never dispose/respawn (Herdr detach semantics). Hook must stay above returns.
   useEffect(() => {
     if (!detachedElsewhere || !activeId) return
     const ws = useWorkspaceStore.getState().workspaces[activeId]
-    const agentId = ws?.activeHostAgentId
-    const host = agentId ? ws?.agentHostSessions[agentId] : null
-    for (const tab of host?.tabs ?? []) {
-      disposeTerminal(activeId, tab.id)
+    for (const host of Object.values(ws?.agentHostSessions ?? {})) {
+      for (const tab of host.tabs) {
+        parkTerminal(activeId, tab.id)
+      }
     }
   }, [detachedElsewhere, activeId])
 
@@ -645,9 +650,8 @@ export function SessionDetail({
         />
       )}
       {mainSurface}
-      {/* Files + user bash tray — always present in CLI mode, even before install.
-          No Composer above: `.dock-tools-only` adds top air so the strip isn’t tight.
-          File-preview drawer keeps the slim preview tools tray (terminal-first). */}
+      {/* Same ToolsPanel as VAV — only the composer is omitted. Header geometry
+          is shared CSS (.tools-header); dock-tools-only does not re-tune it. */}
       <div className={`dock dock-tools-only${previewEdit ? ' preview-edit-dock' : ''}`}>
         <ToolsPanel variant={previewEdit ? 'preview-edit' : 'main'} />
       </div>
@@ -656,18 +660,18 @@ export function SessionDetail({
 }
 
 /**
- * Agent switcher — same visual language as sidebar "group by workspace" select.
- * No redundant "Agent" label; value alone is the control.
+ * Agent chrome: VAV | CLI Agent screen switch.
+ * CLI Screen holds panes (splits); agent types are chosen in-pane, not as tabs.
  */
 export function AgentModeChrome({
   conversationId,
-  agentBinaryName,
+  agentBinaryName: _agentBinaryName,
   showSplits = false,
   /** Transcript find only — hide for CLI / terminal hosts (no chat stream). */
   showSearch = true,
   /** Sidebar collapsed / floating: toggle + new ahead of the agent select. */
   showShellLeading = false,
-  /** Single-file vav: session name + history + new in this same chrome row. */
+  /** Single-file vav: session name / history / new in this same chrome row. */
   fileSessionChrome = null
 }: {
   conversationId: string
@@ -678,165 +682,176 @@ export function AgentModeChrome({
   fileSessionChrome?: FileSessionChromeProps | null
 }): React.JSX.Element {
   const t = useT()
-  const settings = useSessionStore((s) => s.settings)
-  const agents = enabledCliAgents(settings.cliAgents)
-  const value =
-    !agentBinaryName || agentBinaryName === 'vav' ? 'vav' : agentBinaryName
-  const active =
-    value === 'vav'
-      ? { id: 'vav', name: t('agents.plainShell') }
-      : (agents.find((a) => a.id === value) ?? {
-          id: value,
-          name: value
-        })
+  // Screen-level mode only — panes live inside the CLI Screen, not as agent tabs.
+  const cliMode = useWorkspaceStore((s) => !!s.workspaces[conversationId]?.cliMode)
+  const isVav = !cliMode
+  void _agentBinaryName
+  void showSplits
 
-  const setMode = async (id: string): Promise<void> => {
-    const nextId = id === 'vav' ? null : id
-    // Leaving chat → terminal: close find so the strip does not linger.
-    if (nextId && useSessionStore.getState().search.open) {
-      useSessionStore.getState().closeSearch()
-    }
-    const store = useSessionStore.getState()
+  const ensureConversation = async (): Promise<string | null> => {
     let targetId = conversationId
     if (!targetId) {
-      // Empty chat shell — mint a session before switching agent host.
-      await store.createConversation()
+      await useSessionStore.getState().createConversation()
       targetId = useSessionStore.getState().activeId
-      if (!targetId) return
     }
-    // Via store so file-preview sessions (hidden from listMeta) keep their
-    // agentBinaryName instead of being wiped by a raw list replace.
-    await useSessionStore.getState().setAgentBinaryName(targetId, nextId)
+    return targetId || null
   }
 
-  const displayName = active.name
+  const switchToVav = async (): Promise<void> => {
+    const targetId = await ensureConversation()
+    if (!targetId) return
+    // exitCliMode persists cliMode=false to main; park clears the active host
+    // pointer in this window without a second layout write.
+    useWorkspaceStore.getState().exitCliMode(targetId)
+    useWorkspaceStore.getState().parkAgentHost(targetId)
+    await useSessionStore.getState().setAgentBinaryName(targetId, null)
+  }
+
+  /** Enter CLI Screen — restores existing Screen if present, else picker pane. */
+  const openCliMode = async (): Promise<void> => {
+    if (useSessionStore.getState().search.open) {
+      useSessionStore.getState().closeSearch()
+    }
+    const targetId = await ensureConversation()
+    if (!targetId) return
+    useWorkspaceStore.getState().enterCliMode(targetId)
+  }
+
+  const splitWithPicker = (axis: 'row' | 'column'): void => {
+    if (!conversationId) return
+    splitCliAndFocusPicker(conversationId, axis)
+  }
+
   const searchOpen = useSessionStore((s) => s.search.open)
   const openSearch = useSessionStore((s) => s.openSearch)
   const closeSearch = useSessionStore((s) => s.closeSearch)
   const fs = fileSessionChrome
 
+  // Full file-session chrome only when VAV has real sessions (file-preview).
+  // Session shell only passes trail (preview toggle) with empty sessions.
+  const showFileSessionChrome = !!(fs && isVav && fs.sessions.length > 0)
+
   return (
     <div
-      className={`terminal-host-chrome agent-mode-chrome${fs ? ' has-file-session' : ''}${showShellLeading ? ' has-shell-leading' : ''}`}
+      className={`terminal-host-chrome agent-mode-chrome${showFileSessionChrome ? ' has-file-session' : ''}${showShellLeading ? ' has-shell-leading' : ''}`}
     >
-      {showShellLeading ? (
-        <div className="agent-mode-shell-leading">
-          <ShellLeadingControls />
-        </div>
-      ) : null}
+      <div className="agent-mode-chrome-row">
+        {showShellLeading ? (
+          <div className="agent-mode-shell-leading">
+            <ShellLeadingControls />
+          </div>
+        ) : null}
 
-      {/* Icon + name are one control; native <select> covers the whole face. */}
-      <label
-        className="agent-mode-select"
-        title={`${displayName} — ${t('agents.switchHint')}`}
-      >
-        <span className="agent-mode-select-face" aria-hidden>
-          <AgentBrandMark agent={active} size={20} />
-          <span className="agent-mode-select-name">{displayName}</span>
-          <ChevronDown className="agent-mode-select-chevron" size={12} />
-        </span>
-        <select
-          className="agent-mode-select-native"
-          value={value}
-          onChange={(e) => void setMode(e.target.value)}
+        <div
+          className="agent-mode-segment"
+          role="group"
           aria-label={t('agents.selector')}
+          title={t('agents.switchHint')}
         >
-          <option value="vav">{t('agents.plainShell')}</option>
-          {agents
-            .filter((a) => !!a.id && !!a.name)
-            .map((a) => (
-              <option key={a.id} value={a.id}>
-                {a.name}
-              </option>
-            ))}
-        </select>
-      </label>
-
-      {fs ? (
-        <span className="agent-mode-session-title" title={fs.title}>
-          {fs.title || t('common.session')}
-        </span>
-      ) : null}
-
-      <span className="spacer" />
-
-      {showSplits ? (
-        <>
-          <Button
-            icon={<Columns2 size={13} />}
-            size="sm"
-            variant="ghost"
-            title={`${t('agents.splitRight')} (${keys('⌘D')})`}
-            onClick={() =>
-              void useWorkspaceStore.getState().splitAgentHost(conversationId, 80, 24, 'row')
-            }
-          />
-          <Button
-            icon={<Rows2 size={13} />}
-            size="sm"
-            variant="ghost"
-            title={`${t('agents.splitDown')} (${keys('⌘⇧D')})`}
-            onClick={() =>
-              void useWorkspaceStore
-                .getState()
-                .splitAgentHost(conversationId, 80, 24, 'column')
-            }
-          />
-        </>
-      ) : null}
-
-      {fs ? (
-        <div className="agent-mode-file-actions">
+          {/* VAV: icon only (empty-state mark). CLI Agents: label with trailing “s”. */}
           <button
             type="button"
-            ref={fs.historyAnchorRef}
-            className={`btn ghost sm icon-only${fs.historyOpen ? ' is-active-toggle' : ''}`}
-            title={t('preview.sessionHistory')}
-            onClick={fs.onToggleHistory}
+            className={`agent-mode-segment-btn is-icon-only${isVav ? ' is-active' : ''}`}
+            title={t('agents.plainShell')}
+            aria-label={t('agents.plainShell')}
+            onClick={() => void switchToVav()}
           >
-            <Clock size={12} />
+            <span className="agent-mode-vav-icon" aria-hidden>
+              <img className="logo-light" src={wordmark} alt="" width={16} height={16} draggable={false} />
+              <img className="logo-dark" src={wordmarkDark} alt="" width={16} height={16} draggable={false} />
+            </span>
           </button>
+          <button
+            type="button"
+            className={`agent-mode-segment-btn${!isVav ? ' is-active' : ''}`}
+            title={t('agents.cliModeHint')}
+            onClick={() => void openCliMode()}
+          >
+            <span>{t('agents.cliMode')}</span>
+          </button>
+        </div>
+
+        {/* File-preview VAV only — session shell / CLI never show title here. */}
+        {showFileSessionChrome ? (
+          <span className="agent-mode-session-title" title={fs!.title}>
+            {fs!.title || t('common.session')}
+          </span>
+        ) : null}
+
+        {!isVav ? (
+          <>
+            <Button
+              icon={<Columns2 size={13} />}
+              size="sm"
+              variant="ghost"
+              title={`${t('agents.splitRight')} (${keys('⌘D')})`}
+              onClick={() => splitWithPicker('row')}
+            />
+            <Button
+              icon={<Rows2 size={13} />}
+              size="sm"
+              variant="ghost"
+              title={`${t('agents.splitDown')} (${keys('⌘⇧D')})`}
+              onClick={() => splitWithPicker('column')}
+            />
+          </>
+        ) : null}
+
+        {showFileSessionChrome ? (
+          <div className="agent-mode-file-actions">
+            <button
+              type="button"
+              ref={fs!.historyAnchorRef}
+              className={`btn ghost sm icon-only${fs!.historyOpen ? ' is-active-toggle' : ''}`}
+              title={t('preview.sessionHistory')}
+              onClick={fs!.onToggleHistory}
+            >
+              <Clock size={12} />
+            </button>
+            <Button
+              icon={<Plus size={12} />}
+              size="sm"
+              variant="ghost"
+              title={t('preview.newSession')}
+              onClick={fs!.onNewSession}
+            />
+          </div>
+        ) : null}
+
+        <span className="spacer" />
+
+        {/* Search flush-right (before file-preview toggle). */}
+        {showSearch && isVav ? (
           <Button
-            icon={<Plus size={12} />}
+            icon={<Search size={13} />}
             size="sm"
             variant="ghost"
-            title={t('preview.newSession')}
-            onClick={fs.onNewSession}
+            title={`${t('common.search')} ${keys('⌘F')}`}
+            onClick={() => (searchOpen ? closeSearch() : openSearch())}
           />
-        </div>
-      ) : null}
+        ) : null}
 
-      {/* Find only works on the built-in chat transcript — not CLI / bash PTYs. */}
-      {showSearch ? (
-        <Button
-          icon={<Search size={13} />}
-          size="sm"
-          variant="ghost"
-          title={`${t('common.search')} ${keys('⌘F')}`}
-          onClick={() => (searchOpen ? closeSearch() : openSearch())}
-        />
-      ) : null}
+        {/* Far-right pin: file preview (counterpart of left PanelLeft). */}
+        {fs?.trail ? (
+          <div className="agent-mode-chrome-trail agent-mode-chrome-trail-end">{fs.trail}</div>
+        ) : null}
+      </div>
 
-      {fs?.trail ? <div className="agent-mode-chrome-trail">{fs.trail}</div> : null}
-
-      {/* History panel is a child of the full chrome row so left/right:8px spans
-          the agent panel — not the narrow clock/+ cluster (that became a stick). */}
-      {fs ? (
+      {showFileSessionChrome ? (
         <SessionHistoryPopover
-          open={fs.historyOpen}
-          onClose={fs.onCloseHistory}
-          sessions={fs.sessions}
-          activeSessionId={fs.activeSessionId}
+          open={fs!.historyOpen}
+          onClose={fs!.onCloseHistory}
+          sessions={fs!.sessions}
+          activeSessionId={fs!.activeSessionId}
           onSwitch={(id) => {
-            fs.onSwitchSession(id)
-            fs.onCloseHistory()
+            fs!.onSwitchSession(id)
+            fs!.onCloseHistory()
           }}
-          onRename={fs.onRenameSession}
-          onDelete={fs.onDeleteSessions}
-          anchorRef={fs.historyAnchorRef}
+          onRename={fs!.onRenameSession}
+          onDelete={fs!.onDeleteSessions}
+          anchorRef={fs!.historyAnchorRef}
         />
       ) : null}
     </div>
   )
 }
-

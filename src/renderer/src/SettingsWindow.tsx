@@ -113,14 +113,17 @@ export default function SettingsWindow(): React.JSX.Element {
       <div className="settings-main">
         <header className="settings-head">{title}</header>
         <div className="settings-body">
-          {category === 'api' && <ApiSettings />}
-          {category === 'workspace' && <WorkspaceSettings />}
-          {category === 'appearance' && <AppearanceSettings />}
-          {category === 'notifications' && <NotificationsSettings />}
-          {category === 'agents' && <AgentsSettings />}
-          {category === 'cli' && <CliSettings />}
-          {category === 'file-associations' && <FileAssociationsSettings />}
-          {category === 'about' && <AboutSettings />}
+          {/* key remounts the panel so @starting-style opacity fade runs on switch. */}
+          <div key={category} className="settings-body-panel">
+            {category === 'api' && <ApiSettings />}
+            {category === 'workspace' && <WorkspaceSettings />}
+            {category === 'appearance' && <AppearanceSettings />}
+            {category === 'notifications' && <NotificationsSettings />}
+            {category === 'agents' && <AgentsSettings />}
+            {category === 'cli' && <CliSettings />}
+            {category === 'file-associations' && <FileAssociationsSettings />}
+            {category === 'about' && <AboutSettings />}
+          </div>
         </div>
       </div>
 

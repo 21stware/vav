@@ -148,9 +148,10 @@ Only when L2 cannot express the change. Validate afterward.
 
 1. **Read path:** `doc_search` / `doc_fetch` for evidence from an open file; officecli for precise structure + edits.
 2. **Write path:** officecli via `terminal` — never `fs_write` UTF-8 into `.docx`/`.xlsx`/`.pptx`.
-3. **Preview:** after `close`/`save`, VAV refreshes the canvas; skip `officecli watch` unless the user asks for a browser preview.
-4. **Fallbacks:** `docx` / `xlsx` / `pptx` skills only if officecli cannot do the task (rare). Do not install python-docx/openpyxl/PptxGenJS when officecli works.
-5. **Help first:** unknown props → `officecli help <format> <element>`.
+3. **Open document path:** when the system prompt names an absolute path for the open file, edit **that exact path** (it may be a VAV working-copy sandbox). Do not rewrite it to a different location. User Save/Accept promotes; Discard drops the sandbox.
+4. **Preview:** after `close`/`save`, VAV refreshes the canvas; skip `officecli watch` unless the user asks for a browser preview.
+5. **Fallbacks:** `docx` / `xlsx` / `pptx` skills only if officecli cannot do the task (rare). Do not install python-docx/openpyxl/PptxGenJS when officecli works.
+6. **Help first:** unknown props → `officecli help <format> <element>`.
 
 ## More help
 

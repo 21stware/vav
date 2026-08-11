@@ -326,11 +326,20 @@ export function ToolsPanel({
     }
   }, [tabs.length, setToolsCollapsed])
 
+  const hasTabs = tabs.length > 0
+  // Modes for layout polish (empty strip vs tab strip vs open tray).
+  const headerMode = !hasTabs ? 'idle' : collapsed ? 'tabs-collapsed' : 'tabs-open'
+
   return (
-    <div className="tools-panel">
+    <div
+      className="tools-panel"
+      data-tools-collapsed={collapsed ? 'true' : 'false'}
+      data-tools-mode={headerMode}
+      data-has-session={activeId ? 'true' : 'false'}
+    >
       {!collapsed && <div className="panel-resizer" onMouseDown={onResizeStart} />}
 
-      <div className="tools-header">
+      <div className="tools-header" data-mode={headerMode}>
         <div className="tools-header-lead">
           {/* Path chip opens Files. File sessions use Enclosed dir (no switch).
               Missing root → red "dir not exist"; click / action still switches. */}
@@ -379,10 +388,15 @@ export function ToolsPanel({
               }
             />
           </div>
-          <span className="tools-header-divider" aria-hidden="true" />
+          {/* Divider only when tabs exist — avoids a lone rule after the path chip. */}
+          {hasTabs ? <span className="tools-header-divider" aria-hidden="true" /> : null}
         </div>
 
-        <div className="tools-header-tabs">
+        <div
+          className="tools-header-tabs"
+          data-empty={hasTabs ? 'false' : 'true'}
+          aria-hidden={!hasTabs}
+        >
           {tabs.map((tab) => {
             const on = !collapsed && segment === 'terminal' && tab.id === activeTabId
             // Agent-controlled tabs: bot icon (green when agent is executing).

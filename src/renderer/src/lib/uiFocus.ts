@@ -54,8 +54,14 @@ export function resolveUiFocusScope(target: EventTarget | null): UiFocusScope {
     return session.panelSegment === 'terminal' ? 'bash' : 'files'
   }
 
-  // Main-surface agent host (SessionDetail terminal area, not tools tray).
-  if (el.closest('.terminal-host-main') || el.closest('[data-terminal-surface="agent"]')) {
+  // Main-surface CLI Screen: live PTY, pending picker, split chrome.
+  if (
+    el.closest('.terminal-host-main') ||
+    el.closest('[data-terminal-surface="agent"]') ||
+    el.closest('.cli-agent-picker') ||
+    el.closest('.terminal-split-pane') ||
+    el.closest('.terminal-host-session')
+  ) {
     return 'agent'
   }
 
@@ -111,17 +117,100 @@ function closeActiveBash(conversationId: string): boolean {
   return true
 }
 
-function closeActiveAgentTab(conversationId: string): boolean {
+function getAgentHostForConversation(conversationId: string) {
   const ws = useWorkspaceStore.getState().workspaces[conversationId]
-  const agentId = ws?.activeHostAgentId
-  const host = agentId ? ws?.agentHostSessions[agentId] : null
-  const tabs = host?.tabs ?? []
-  const activeTab = host?.activeTabId ?? ''
-  if (tabs.length > 1 && activeTab) {
-    useWorkspaceStore.getState().closeAgentTab(conversationId, activeTab)
-    return true
+  return (
+    ws?.agentHostSessions['__cli__'] ??
+    (ws?.activeHostAgentId ? ws.agentHostSessions[ws.activeHostAgentId] : null) ??
+    null
+  )
+}
+
+/** True when the conversation still has a CLI Screen with panes. */
+function hasCliScreenPanes(conversationId: string): boolean {
+  const ws = useWorkspaceStore.getState().workspaces[conversationId]
+  if (!ws) return false
+  if (ws.cliMode) return true
+  const host = getAgentHostForConversation(conversationId)
+  return !!(host && host.tabs.length > 0)
+}
+
+/** document.activeElement after a pane unmount often lands on body/html. */
+function isFocusLost(): boolean {
+  const el = document.activeElement
+  return !el || el === document.body || el === document.documentElement
+}
+
+/**
+ * Put keyboard focus back on the remaining CLI pane so sequential ⌘W keeps
+ * closing panes instead of falling through to window-close.
+ * Call after any pane close (⌘W or the multi-pane X button).
+ */
+export function focusRemainingAgentPane(conversationId: string): void {
+  const host = getAgentHostForConversation(conversationId)
+  if (!host?.tabs.length) {
+    setUiFocusScope('agent')
+    return
   }
-  return false
+  const tabId =
+    (host.activeTabId && host.tabs.some((t) => t.id === host.activeTabId)
+      ? host.activeTabId
+      : host.tabs[0]?.id) ?? ''
+  if (!tabId) {
+    setUiFocusScope('agent')
+    return
+  }
+
+  setUiFocusScope('agent')
+
+  const apply = (attempt: number): void => {
+    const pane = document.querySelector(
+      `[data-cli-pane="${CSS.escape(tabId)}"]`
+    ) as HTMLElement | null
+    if (!pane) {
+      // Zustand updates sync, React paint may lag — retry a couple frames.
+      if (attempt < 4) {
+        requestAnimationFrame(() => apply(attempt + 1))
+        return
+      }
+      setUiFocusScope('agent')
+      return
+    }
+    // Prefer live xterm (typing) over a residual picker button.
+    const ta = pane.querySelector('.xterm-helper-textarea') as HTMLTextAreaElement | null
+    const firstOpt = pane.querySelector('.cli-agent-picker-item') as HTMLButtonElement | null
+    try {
+      if (ta) ta.focus({ preventScroll: true })
+      else if (firstOpt) firstOpt.focus({ preventScroll: true })
+      else pane.focus({ preventScroll: true })
+    } catch {
+      // ignore
+    }
+    setUiFocusScope('agent')
+  }
+
+  // closeAgentTab → React commit → xterm re-attach.
+  requestAnimationFrame(() => apply(0))
+}
+
+/**
+ * Close the focused CLI Screen pane (live PTY or pending picker).
+ * Always consumes ⌘W when a pane is active — including the last live agent
+ * (reseeds the Screen with the agent picker; stays in CLI mode).
+ */
+function closeActiveAgentTab(conversationId: string): boolean {
+  const host = getAgentHostForConversation(conversationId)
+  if (!host?.tabs.length) return false
+  const activeTab =
+    (host.activeTabId && host.tabs.some((t) => t.id === host.activeTabId)
+      ? host.activeTabId
+      : host.tabs[0]?.id) ?? ''
+  if (!activeTab) return false
+  useWorkspaceStore.getState().closeAgentTab(conversationId, activeTab)
+  // Closing unmounts the focused xterm/picker; reclaim focus on the survivor
+  // so the next ⌘W still targets a pane, not the window.
+  focusRemainingAgentPane(conversationId)
+  return true
 }
 
 /**
@@ -132,7 +221,7 @@ function closeActiveAgentTab(conversationId: string): boolean {
  * Rules:
  * - Bash UI → close active bash tab (confirm if busy); empty → collapse tray
  * - Files UI → collapse tools tray
- * - Agent host with multiple panes → close active agent pane
+ * - CLI Screen (any pane, including last / pending) → close that pane
  * - Otherwise → window close
  */
 export function handleContextClose(): boolean {
@@ -144,7 +233,16 @@ export function handleContextClose(): boolean {
   const session = useSessionStore.getState()
   const id = session.activeId
 
-  switch (scope) {
+  // After a pane unmounts, focus often sits on <body> while the visual active
+  // ring already moved to another pane. Treat that as still-on-CLI so ⌘W
+  // continues closing panes instead of the window.
+  let effective: UiFocusScope = scope
+  if (effective === 'app' && id && isFocusLost() && hasCliScreenPanes(id)) {
+    effective = 'agent'
+    setUiFocusScope('agent')
+  }
+
+  switch (effective) {
     case 'bash':
       if (!id) return false
       return closeActiveBash(id)
@@ -155,6 +253,7 @@ export function handleContextClose(): boolean {
       }
       return false
     case 'agent':
+      // Any CLI Screen pane (live or pending, including the last one).
       if (!id) return false
       return closeActiveAgentTab(id)
     case 'app':

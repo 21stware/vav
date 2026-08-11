@@ -24,7 +24,6 @@ import { useMenuCommands } from './lib/menuCommands'
 import { installDefaultContextMenu } from './lib/nativeMenu'
 import { SIDEBAR_FLOAT_MAX, useSidebarFloatMode } from './lib/sidebarLayout'
 import { getShortcuts } from './shortcuts'
-import { isTemporaryWorkspace } from './lib/format'
 import { useT } from './i18n/useT'
 
 type LaunchPhase = 'checking' | 'keychain' | 'booting' | 'ready' | 'no-preload'
@@ -202,26 +201,27 @@ export default function App(): React.JSX.Element {
 }
 
 function DetailSlot(): React.JSX.Element {
-  const activeGroupId = useSessionStore((s) => s.activeGroupId)
-  const tmp = useSessionStore((s) => s.tmp)
   const activeConversation = useSessionStore((s) =>
     s.conversations.find((c) => c.id === s.activeId)
   )
 
-  // Real project path → Workspace View. Default / temporary shells are not.
-  if (
-    activeGroupId &&
-    !activeGroupId.startsWith('__') &&
-    !isTemporaryWorkspace(activeGroupId, tmp)
-  ) {
-    return <WorkspaceView workdir={activeGroupId} />
-  }
   // File-bound sessions: file canvas + agent (list lives in sidebar File sessions).
   if (activeConversation?.fileId) {
     return (
       <FileSessionView
         conversationId={activeConversation.id}
         fileId={activeConversation.fileId}
+      />
+    )
+  }
+  // Session surface + optional right file preview (session state).
+  // Workspace groups only aggregate/pin in the sidebar — no group selection.
+  if (activeConversation) {
+    const wd = activeConversation.workingDirectory
+    return (
+      <WorkspaceView
+        conversationId={activeConversation.id}
+        workdir={wd && !wd.startsWith('__') ? wd : null}
       />
     )
   }

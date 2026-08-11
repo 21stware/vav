@@ -62,6 +62,7 @@ export function FilesPanel({ visible }: { visible: boolean }): React.JSX.Element
   const setSort = useWorkspaceStore((s) => s.setSort)
   const selectPathRaw = useWorkspaceStore((s) => s.selectPath)
   const attachContextFile = useSessionStore((s) => s.attachContextFile)
+  const setFilePreviewOpen = useSessionStore((s) => s.setFilePreviewOpen)
   /** Select tree path and drive the File Attachment Chip (files only). */
   const selectPath = (
     id: string,
@@ -69,8 +70,13 @@ export function FilesPanel({ visible }: { visible: boolean }): React.JSX.Element
     kind: 'file' | 'dir' | 'clear' = path ? 'file' : 'clear'
   ): void => {
     selectPathRaw(id, path)
-    if (kind === 'file' && path) void attachContextFile(id, path)
-    else if (kind === 'clear' || kind === 'dir') void attachContextFile(id, null)
+    if (kind === 'file' && path) {
+      void attachContextFile(id, path)
+      // Session right preview lives on sessionStore (not a workspace selection).
+      setFilePreviewOpen(true)
+    } else if (kind === 'clear' || kind === 'dir') {
+      void attachContextFile(id, null)
+    }
   }
   const loadDirectory = useWorkspaceStore((s) => s.loadDirectory)
   const temporary = isTemporaryWorkspace(conversation?.workingDirectory ?? null, tmp)
@@ -376,14 +382,19 @@ function ColumnBrowser({
   const loadDirectory = useWorkspaceStore((s) => s.loadDirectory)
   const selectPathRaw = useWorkspaceStore((s) => s.selectPath)
   const attachContextFile = useSessionStore((s) => s.attachContextFile)
+  const setFilePreviewOpen = useSessionStore((s) => s.setFilePreviewOpen)
   const selectPath = (
     id: string,
     path: string | null,
     kind: 'file' | 'dir' | 'clear' = path ? 'file' : 'clear'
   ): void => {
     selectPathRaw(id, path)
-    if (kind === 'file' && path) void attachContextFile(id, path)
-    else void attachContextFile(id, null)
+    if (kind === 'file' && path) {
+      void attachContextFile(id, path)
+      setFilePreviewOpen(true)
+    } else {
+      void attachContextFile(id, null)
+    }
   }
   const columns = [root, ...columnPath]
   const columnsKey = columns.join('\0')

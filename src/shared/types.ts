@@ -282,13 +282,12 @@ export interface AgentConfig {
 }
 
 /**
- * Well-known coding-agent CLIs — always present, no manual "add agent" needed.
- * User only needs the matching binary installed on PATH (or override the path).
- */
-/**
- * Built-in catalogue — defaultArgs skip interactive security / approval prompts
- * so agents can run inside vav without stopping for tool confirmations.
- * Flags are CLI-specific (verified against each binary’s --help / docs).
+ * Catalogue of well-known coding-agent CLIs.
+ * Fresh installs seed the settings list from this; users can remove entries
+ * (except the last) and re-add via Settings “+” popup.
+ *
+ * defaultArgs skip interactive security / approval prompts so agents can run
+ * inside vav without stopping for tool confirmations when the CLI supports it.
  */
 export const DEFAULT_CLI_AGENTS: AgentConfig[] = [
   {
@@ -303,86 +302,131 @@ export const DEFAULT_CLI_AGENTS: AgentConfig[] = [
     enabled: true,
     providerName: 'anthropic',
     builtin: true,
-    // Official native installer (Claude Code docs)
     installCommand: 'curl -fsSL https://claude.ai/install.sh | bash',
     installDocsUrl: 'https://docs.anthropic.com/en/docs/claude-code/overview'
-  },
-  {
-    id: 'codex',
-    name: 'Codex',
-    binaryPath: 'codex',
-    binaryCandidates: ['codex'],
-    // skip approvals + sandbox (alias: --yolo)
-    defaultArgs: ['--dangerously-bypass-approvals-and-sandbox'],
-    envVars: {},
-    enabled: true,
-    providerName: 'openai',
-    builtin: true,
-    // OpenAI Codex official install script
-    installCommand: 'curl -fsSL https://chatgpt.com/codex/install.sh | sh',
-    installDocsUrl: 'https://github.com/openai/codex'
-  },
-  {
-    id: 'cursor',
-    name: 'Cursor',
-    binaryPath: 'cursor-agent',
-    binaryCandidates: ['cursor-agent', 'agent', 'cursor'],
-    // --force: auto-allow tool/shell commands; --trust: skip workspace trust prompt
-    defaultArgs: ['--force', '--trust'],
-    envVars: {},
-    enabled: true,
-    providerName: null,
-    builtin: true,
-    // Cursor CLI official installer
-    installCommand: 'curl -fsSL https://cursor.com/install | bash',
-    installDocsUrl: 'https://cursor.com/docs/cli/overview'
-  },
-  {
-    id: 'grok',
-    name: 'Grok',
-    binaryPath: 'grok',
-    binaryCandidates: ['grok'],
-    // auto-approve tools; bypassPermissions for the full permission cycle
-    defaultArgs: ['--always-approve', '--permission-mode', 'bypassPermissions'],
-    envVars: {},
-    enabled: true,
-    providerName: 'xai',
-    builtin: true,
-    // xAI Grok Build official installer
-    installCommand: 'curl -fsSL https://x.ai/cli/install.sh | bash',
-    installDocsUrl: 'https://docs.x.ai/build/overview'
-  },
-  {
-    id: 'devin',
-    name: 'Devin',
-    binaryPath: 'devin',
-    binaryCandidates: ['devin'],
-    // bypass ≈ /yolo — auto-approve all tools
-    defaultArgs: ['--permission-mode', 'bypass'],
-    envVars: {},
-    enabled: true,
-    providerName: null,
-    builtin: true,
-    // Cognition Devin CLI official installer
-    installCommand: 'curl -fsSL https://cli.devin.ai/install.sh | bash',
-    installDocsUrl: 'https://docs.devin.ai/cli'
   },
   {
     id: 'pi',
     name: 'Pi',
     binaryPath: 'pi',
     binaryCandidates: ['pi', 'pi-agent'],
-    // trust project-local settings without the interactive approve prompt
     defaultArgs: ['--approve'],
     envVars: {},
     enabled: true,
     providerName: null,
     builtin: true,
-    // pi.dev official installer
     installCommand: 'curl -fsSL https://pi.dev/install.sh | sh',
     installDocsUrl: 'https://pi.dev/'
+  },
+  {
+    id: 'cursor',
+    name: 'Cursor',
+    binaryPath: 'cursor-agent',
+    binaryCandidates: ['cursor-agent', 'agent', 'cursor'],
+    defaultArgs: ['--force', '--trust'],
+    envVars: {},
+    enabled: true,
+    providerName: null,
+    builtin: true,
+    installCommand: 'curl -fsSL https://cursor.com/install | bash',
+    installDocsUrl: 'https://cursor.com/docs/cli/overview'
+  },
+  {
+    id: 'devin',
+    name: 'Devin',
+    binaryPath: 'devin',
+    binaryCandidates: ['devin'],
+    defaultArgs: ['--permission-mode', 'bypass'],
+    envVars: {},
+    enabled: true,
+    providerName: null,
+    builtin: true,
+    installCommand: 'curl -fsSL https://cli.devin.ai/install.sh | bash',
+    installDocsUrl: 'https://docs.devin.ai/cli'
+  },
+  {
+    id: 'antigravity',
+    name: 'Antigravity',
+    binaryPath: 'agy',
+    binaryCandidates: ['agy', 'antigravity'],
+    defaultArgs: ['--dangerously-skip-permissions'],
+    envVars: {},
+    enabled: true,
+    providerName: null,
+    builtin: true,
+    installCommand: 'curl -fsSL https://antigravity.google/cli/install.sh | bash',
+    installDocsUrl: 'https://antigravity.google/docs/cli/getting-started'
+  },
+  {
+    id: 'codex',
+    name: 'Codex',
+    binaryPath: 'codex',
+    binaryCandidates: ['codex'],
+    defaultArgs: ['--dangerously-bypass-approvals-and-sandbox'],
+    envVars: {},
+    enabled: true,
+    providerName: 'openai',
+    builtin: true,
+    installCommand: 'curl -fsSL https://chatgpt.com/codex/install.sh | sh',
+    installDocsUrl: 'https://github.com/openai/codex'
+  },
+  {
+    id: 'grok',
+    name: 'Grok',
+    binaryPath: 'grok',
+    binaryCandidates: ['grok'],
+    defaultArgs: ['--always-approve', '--permission-mode', 'bypassPermissions'],
+    envVars: {},
+    enabled: true,
+    providerName: 'xai',
+    builtin: true,
+    installCommand: 'curl -fsSL https://x.ai/cli/install.sh | bash',
+    installDocsUrl: 'https://docs.x.ai/build/overview'
+  },
+  {
+    id: 'kiro',
+    name: 'Kiro',
+    binaryPath: 'kiro-cli',
+    binaryCandidates: ['kiro-cli', 'kiro'],
+    defaultArgs: [],
+    envVars: {},
+    enabled: true,
+    providerName: null,
+    builtin: true,
+    installCommand: 'curl -fsSL https://cli.kiro.dev/install | bash',
+    installDocsUrl: 'https://kiro.dev/cli/'
+  },
+  {
+    id: 'opencode',
+    name: 'OpenCode',
+    binaryPath: 'opencode',
+    binaryCandidates: ['opencode'],
+    // --auto approves permission prompts that are not explicitly denied
+    defaultArgs: ['--auto'],
+    envVars: {},
+    enabled: true,
+    providerName: null,
+    builtin: true,
+    installCommand: 'curl -fsSL https://opencode.ai/install | bash',
+    installDocsUrl: 'https://opencode.ai/docs/'
+  },
+  {
+    id: 'cline',
+    name: 'Cline',
+    binaryPath: 'cline',
+    binaryCandidates: ['cline'],
+    defaultArgs: [],
+    envVars: {},
+    enabled: true,
+    providerName: null,
+    builtin: true,
+    installCommand: 'npm i -g cline',
+    installDocsUrl: 'https://cline.bot/cli'
   }
 ]
+
+/** Alias — same catalogue used by Settings “+” picker. */
+export const CLI_AGENT_CATALOGUE = DEFAULT_CLI_AGENTS
 
 /**
  * Ensure builtin safety/skip flags are present in a user-edited args list.
@@ -694,8 +738,16 @@ export interface AppSettings {
    * Defaults cover Claude Code, Codex, Cursor, Pi, Grok, Devin.
    */
   cliAgents: AgentConfig[]
-  /** Default agent id for new terminal splits (null = plain shell). */
+  /**
+   * Legacy: previously “default for new splits”. List order is the source of
+   * truth now; kept for settings migration only.
+   */
   defaultAgentId: string | null
+  /**
+   * When only one enabled CLI agent is configured, skip the in-pane picker and
+   * launch that agent directly (new Screen / new split pending panes).
+   */
+  skipCliAgentPickerWhenSingle: boolean
   /**
    * When true, a square Agent mark sits outside the top-right of a selected
    * preview block (every file preview surface). Off hides the mark.
@@ -750,12 +802,14 @@ export const DEFAULT_SETTINGS: AppSettings = {
   notifyOnToolApproval: true,
   notifyOnRequest: true,
   /** macOS optional menu-bar item; Windows always shows a tray (see NotificationCenter). */
-  trayEnabled: false,
+  /** Menu-bar status item — shows live CLI agent count when sessions are running. */
+  trayEnabled: true,
   hideDockIcon: false,
   autoCheckUpdates: true,
   cliAgents: DEFAULT_CLI_AGENTS.map((a) => ({ ...a, envVars: { ...a.envVars } })),
   /** null = plain vav shell (default host mode). */
   defaultAgentId: null,
+  skipCliAgentPickerWhenSingle: false,
   previewSelectionAgentMark: true,
   previewReadModeSelection: true
 }
@@ -862,6 +916,11 @@ export interface TerminalTab {
   isAgent: boolean
   /** CLI agent config id spawned in this pane (null = plain shell). */
   agentId?: string | null
+  /**
+   * Pane shows a CLI type picker until the user chooses; no PTY yet.
+   * Used by the unified CLI Agent surface (split panes start pending).
+   */
+  pendingCli?: boolean
   /** Flex weight for multi-split layout (default 1). */
   splitWeight?: number
 }
@@ -890,8 +949,13 @@ export type TerminalLayoutNode =
 export interface ConversationPtyLayouts {
   /** Tools-tray plain bash. */
   bash: TerminalLayoutNode | null
-  /** CLI agent id → host layout. */
+  /** CLI agent id → host layout (includes unified `__cli__` Screen). */
   agents: Record<string, TerminalLayoutNode | null>
+  /**
+   * Main surface is CLI Agents Screen (not VAV chat).
+   * Shared so detached → main reclaim restores mode, not only PTYs.
+   */
+  cliMode?: boolean
 }
 
 // ---------------------------------------------------------------------------

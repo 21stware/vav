@@ -30,7 +30,8 @@ if (IS_MAC && !view) {
 
 function Root(): React.JSX.Element {
   if (view === 'settings') return <SettingsWindow />
-  if (view === 'session' && conversationId) return <SessionWindow conversationId={conversationId} />
+  // Session companions: cold (conversationId in query) or warm pool (warm=1, no id).
+  if (view === 'session') return <SessionWindow conversationId={conversationId || ''} />
   // Warm shells load with view=file-preview&warm=1 and no path yet.
   if (view === 'file-preview') return <FilePreviewWindow path={filePath || ''} />
   if (view === 'token-usage' && conversationId) {

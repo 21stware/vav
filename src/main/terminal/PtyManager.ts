@@ -21,9 +21,15 @@ function shQuote(value: string): string {
 const IS_WINDOWS = process.platform === 'win32'
 
 /** Raw ring — used to reconstruct a single attach snapshot, not full history. */
-const OUTPUT_BUFFER_CAP = 256 * 1024
+const OUTPUT_BUFFER_CAP = 512 * 1024
 /** Plain-shell attach: keep a short tail of line scrollback. */
 const BASH_REPLAY_TAIL = 24 * 1024
+/**
+ * CLI agent attach without a clear/alt-screen marker: keep a modest tail so a
+ * second window is not blank, without replaying a full TUI redraw storm.
+ * (Herdr keeps a host-side screen buffer; this is the cheap equivalent.)
+ */
+const AGENT_REPLAY_TAIL = 48 * 1024
 /**
  * Coalesce PTY→IPC bursts (TUI redraw storms) into short batches.
  * Keeps latency low for typing while cutting structured-clone fan-out.
@@ -70,7 +76,10 @@ interface PtySession {
   /** Temp context file for --append-system-prompt-file; deleted on exit. */
   contextFile?: string | null
   agentId: string | null
+  /** Live display title (may follow foreground process for bash tabs). */
   title: string
+  /** Idle/default title restored when no child process is running. */
+  baseTitle: string
   createdAt: number
   /** Ring buffer of recent stdout for attach/replay. */
   outputBuffer: string
@@ -124,7 +133,10 @@ function appendOutputBuffer(session: PtySession, data: string): void {
  *
  * Dumping the full ring buffer replays every TUI full-screen redraw as
  * scrollback ("legacy" junk above the live UI). Prefer content after the last
- * clear / alternate-screen enter; otherwise a short tail for bash only.
+ * clear / alternate-screen enter; otherwise a short tail.
+ *
+ * Mirrors Herdr's detach→reattach path: the process keeps running in main, and
+ * a new viewer paints from host-held output rather than respawning the agent.
  */
 export function snapshotForReplay(buffer: string, agentId: string | null): string {
   if (!buffer) return ''
@@ -144,12 +156,20 @@ export function snapshotForReplay(buffer: string, agentId: string | null): strin
   }
   if (cut >= 0) return buffer.slice(cut)
 
-  // CLI agent hosts without a clear marker: empty is better than 256KB of junk.
-  // The next TUI paint (or resize) redraws the live UI.
-  if (agentId && agentId !== 'vav') return ''
-
-  if (buffer.length > BASH_REPLAY_TAIL) return buffer.slice(-BASH_REPLAY_TAIL)
+  const isCliAgent = !!agentId && agentId !== 'vav'
+  const tail = isCliAgent ? AGENT_REPLAY_TAIL : BASH_REPLAY_TAIL
+  if (buffer.length > tail) return buffer.slice(-tail)
   return buffer
+}
+
+/**
+ * Stable primary pane id for a conversation's CLI agent host.
+ *
+ * Multi-window activate races must resolve to the same live process (Herdr
+ * "ensure pane" semantics). Extra splits intentionally use random ids.
+ */
+export function primaryAgentPaneId(conversationId: string, agentId: string): string {
+  return `agent-host:${agentId}:${conversationId}`
 }
 
 
@@ -190,6 +210,219 @@ async function activeParentPids(): Promise<Set<number>> {
   return pids
 }
 
+interface ProcRow {
+  pid: number
+  ppid: number
+  comm: string
+  args: string
+}
+
+const SHELLISH =
+  /^(?:-?bash|-?zsh|-?sh|-?fish|-?dash|-?ksh|-?csh|-?tcsh|login|ssh|screen|tmux|nu|pwsh|powershell|cmd|conhost)(?:\.exe)?$/i
+
+function isShellish(row: ProcRow): boolean {
+  const base = row.comm.replace(/^\(|\)$/g, '').split(/[/\\]/).pop() || row.comm
+  return SHELLISH.test(base)
+}
+
+/** Parse `ps -axo pid=,ppid=,command=` style lines. */
+function parsePsRows(stdout: string): ProcRow[] {
+  const rows: ProcRow[] = []
+  for (const line of stdout.split('\n')) {
+    const trimmed = line.trim()
+    if (!trimmed) continue
+    const m = trimmed.match(/^(\d+)\s+(\d+)\s+(.+)$/)
+    if (!m) continue
+    const pid = Number.parseInt(m[1]!, 10)
+    const ppid = Number.parseInt(m[2]!, 10)
+    const args = m[3]!.trim()
+    if (!Number.isFinite(pid) || !Number.isFinite(ppid) || !args) continue
+    const first = args.split(/\s+/)[0] || args
+    const comm = first.split(/[/\\]/).pop() || first
+    rows.push({ pid, ppid, comm, args })
+  }
+  return rows
+}
+
+async function listProcessRows(): Promise<ProcRow[]> {
+  try {
+    if (IS_WINDOWS) {
+      const { stdout } = await execFileAsync(
+        'powershell.exe',
+        [
+          '-NoProfile',
+          '-Command',
+          // Pipe-separated: pid|ppid|name|commandline
+          "Get-CimInstance Win32_Process | ForEach-Object { '{0}|{1}|{2}|{3}' -f $_.ProcessId,$_.ParentProcessId,$_.Name,(($_.CommandLine) -replace '[\\r\\n|]', ' ') }"
+        ],
+        { encoding: 'utf8', windowsHide: true, maxBuffer: 8 * 1024 * 1024, timeout: 4000 }
+      )
+      const rows: ProcRow[] = []
+      for (const line of stdout.split('\n')) {
+        const parts = line.trim().split('|')
+        if (parts.length < 3) continue
+        const pid = Number.parseInt(parts[0]!, 10)
+        const ppid = Number.parseInt(parts[1]!, 10)
+        const comm = (parts[2] || 'process').replace(/\.exe$/i, '')
+        const args = parts.slice(3).join('|') || comm
+        if (!Number.isFinite(pid) || !Number.isFinite(ppid)) continue
+        rows.push({ pid, ppid, comm, args })
+      }
+      return rows
+    }
+    const { stdout } = await execFileAsync('ps', ['-axo', 'pid=,ppid=,command='], {
+      encoding: 'utf8',
+      maxBuffer: 8 * 1024 * 1024,
+      timeout: 3000
+    })
+    return parsePsRows(stdout)
+  } catch {
+    return []
+  }
+}
+
+function childrenByParent(rows: ProcRow[]): Map<number, ProcRow[]> {
+  const map = new Map<number, ProcRow[]>()
+  for (const row of rows) {
+    const list = map.get(row.ppid)
+    if (list) list.push(row)
+    else map.set(row.ppid, [row])
+  }
+  return map
+}
+
+/** Walk the shell's process tree; prefer the deepest non-shell child. */
+function foregroundProcess(
+  shellPid: number,
+  byParent: Map<number, ProcRow[]>
+): ProcRow | null {
+  let best: ProcRow | null = null
+  const stack = [shellPid]
+  const seen = new Set<number>()
+  while (stack.length) {
+    const pid = stack.pop()!
+    if (seen.has(pid)) continue
+    seen.add(pid)
+    const kids = byParent.get(pid) ?? []
+    for (const kid of kids) {
+      stack.push(kid.pid)
+      if (!isShellish(kid)) best = kid
+    }
+  }
+  return best
+}
+
+function collectTreePids(root: number, byParent: Map<number, ProcRow[]>): number[] {
+  const out: number[] = []
+  const stack = [root]
+  const seen = new Set<number>()
+  while (stack.length) {
+    const pid = stack.pop()!
+    if (seen.has(pid)) continue
+    seen.add(pid)
+    out.push(pid)
+    for (const kid of byParent.get(pid) ?? []) stack.push(kid.pid)
+  }
+  return out
+}
+
+/** pid → listening TCP ports (LISTEN). Empty on Windows / when lsof is missing. */
+async function listeningPortsByPid(): Promise<Map<number, number[]>> {
+  const map = new Map<number, number[]>()
+  if (IS_WINDOWS) return map
+  try {
+    const { stdout } = await execFileAsync(
+      'lsof',
+      ['-nP', '-iTCP', '-sTCP:LISTEN', '-F', 'pn'],
+      { encoding: 'utf8', maxBuffer: 4 * 1024 * 1024, timeout: 2500 }
+    )
+    let pid = 0
+    for (const line of stdout.split('\n')) {
+      if (line.startsWith('p')) {
+        pid = Number.parseInt(line.slice(1), 10) || 0
+      } else if (line.startsWith('n') && pid > 0) {
+        const m = line.match(/:(\d+)\s*$/)
+        if (!m) continue
+        const port = Number.parseInt(m[1]!, 10)
+        if (!Number.isFinite(port) || port <= 0) continue
+        const list = map.get(pid) ?? []
+        if (!list.includes(port)) list.push(port)
+        map.set(pid, list)
+      }
+    }
+  } catch {
+    // lsof missing or denied — titles fall back to process name only.
+  }
+  return map
+}
+
+function extractPortFromArgs(args: string): number | null {
+  const patterns = [
+    /(?:--port| -p|--listen-port)[= ](\d{2,5})\b/i,
+    /(?:localhost|127\.0\.0\.1|0\.0\.0\.0|\[::\]):(\d{2,5})\b/,
+    /\bport[=:](\d{2,5})\b/i
+  ]
+  for (const re of patterns) {
+    const m = args.match(re)
+    if (m) {
+      const n = Number.parseInt(m[1]!, 10)
+      if (n >= 1 && n <= 65535) return n
+    }
+  }
+  return null
+}
+
+/** Short label for tab chips: `vite :5173`, `node`, `python3`. */
+function prettyProcessName(proc: ProcRow): string {
+  const args = proc.args
+  const lower = args.toLowerCase()
+  // Common front-end / app servers — prefer product name over node/python.
+  if (/\bvite\b/.test(lower)) return 'vite'
+  if (/\bnext(?:-server|\.js|\b)/.test(lower)) return 'next'
+  if (/\bnuxt\b/.test(lower)) return 'nuxt'
+  if (/\bastro\b/.test(lower)) return 'astro'
+  if (/\bwebpack\b/.test(lower)) return 'webpack'
+  if (/\besbuild\b/.test(lower)) return 'esbuild'
+  if (/\bparcel\b/.test(lower)) return 'parcel'
+  if (/\breact-scripts\b/.test(lower)) return 'react'
+  if (/\bdjango\b/.test(lower) || /\bmanage\.py\s+runserver\b/.test(lower)) return 'django'
+  if (/\buvicorn\b/.test(lower)) return 'uvicorn'
+  if (/\bgunicorn\b/.test(lower)) return 'gunicorn'
+  if (/\bflask\b/.test(lower)) return 'flask'
+  if (/\bhttp\.server\b/.test(lower)) return 'http.server'
+  if (/\brails\b/.test(lower) || /\bpuma\b/.test(lower)) return 'rails'
+  if (/\bdocker\b/.test(lower) && /\bcompose\b/.test(lower)) return 'compose'
+  if (/\bnpm\b/.test(lower) && /\brun\b/.test(lower)) return 'npm'
+  if (/\bpnpm\b/.test(lower)) return 'pnpm'
+  if (/\byarn\b/.test(lower)) return 'yarn'
+  if (/\bbun\b/.test(lower)) return 'bun'
+
+  let name = proc.comm.replace(/^\(|\)$/g, '').replace(/\.exe$/i, '')
+  name = name.split(/[/\\]/).pop() || name
+  // node script.js → script when obvious
+  if (/^node(?:js)?$/i.test(name)) {
+    const m = args.match(
+      /(?:^|[\\/ ])node(?:js)?(?:\.exe)?\s+(?:--[\w-]+(?:=[\w.-]+)?\s+)*(?:.*[\\/])?([\w.-]+\.m?js|[\w.-]+)/i
+    )
+    if (m?.[1] && !m[1].startsWith('-')) {
+      return m[1].replace(/\.m?js$/i, '').slice(0, 18)
+    }
+  }
+  return name.slice(0, 18) || 'process'
+}
+
+function formatBashTabTitle(
+  proc: ProcRow | null,
+  ports: number[],
+  baseTitle: string
+): string {
+  if (!proc) return baseTitle
+  const name = prettyProcessName(proc)
+  const port = ports[0] ?? extractPortFromArgs(proc.args)
+  if (port) return `${name} :${port}`
+  return name
+}
+
 /**
  * Interactive PTYs for user shells and CLI agent hosts.
  *
@@ -205,6 +438,9 @@ export class PtyManager {
   private statusTimer: ReturnType<typeof setInterval> | null = null
   /** Guards against a slow process-table read overlapping the next tick. */
   private statusPolling = false
+  /** Throttle lsof (ports) relative to ps (process names). */
+  private titlePollTick = 0
+  private cachedListenPorts = new Map<number, number[]>()
 
   constructor(
     private onData: (tabId: string, data: string) => void,
@@ -247,11 +483,8 @@ export class PtyManager {
   }
 
   /**
-   * Re-classify every live PTY.
-   *
-   * Recent stdout alone proves the tab is working, so the process table is
-   * only consulted for the quiet ones — that is what catches a long build that
-   * has stopped printing.
+   * Re-classify every live PTY and refresh bash tab titles from the
+   * foreground process (+ listen port when available).
    */
   private async pollStatus(): Promise<void> {
     if (this.statusPolling) return
@@ -267,12 +500,47 @@ export class PtyManager {
         if (now - session.lastDataAt < OUTPUT_ACTIVE_MS) this.setStatus(session, 'running')
         else quiet.push(session)
       }
-      if (quiet.length === 0) return
-      const parents = await activeParentPids()
+
+      // One process-table snapshot serves busy checks + bash tab titles.
+      const rows = await listProcessRows()
+      const byParent = childrenByParent(rows)
+      const parents = new Set<number>()
+      for (const row of rows) {
+        if (row.ppid > 0) parents.add(row.ppid)
+      }
+
       for (const session of quiet) {
-        // Re-check liveness: the session may have exited during the await.
         if (this.sessions.get(session.id) !== session) continue
         this.setStatus(session, parents.has(session.proc.pid) ? 'running' : 'idle')
+      }
+
+      // lsof is heavier than ps — refresh ports every other tick (~2s macOS).
+      this.titlePollTick += 1
+      if (this.titlePollTick % 2 === 1 || this.cachedListenPorts.size === 0) {
+        this.cachedListenPorts = await listeningPortsByPid()
+      }
+
+      const titleChanged = new Set<string>()
+      for (const session of this.sessions.values()) {
+        // Only tools-tray bash (not CLI agents / VAV mirror).
+        if (session.agentId != null) continue
+        const proc = foregroundProcess(session.proc.pid, byParent)
+        const tree = collectTreePids(session.proc.pid, byParent)
+        const ports: number[] = []
+        for (const pid of tree) {
+          for (const p of this.cachedListenPorts.get(pid) ?? []) {
+            if (!ports.includes(p)) ports.push(p)
+          }
+        }
+        ports.sort((a, b) => a - b)
+        const next = formatBashTabTitle(proc, ports, session.baseTitle)
+        if (next !== session.title) {
+          session.title = next
+          titleChanged.add(session.conversationId)
+        }
+      }
+      for (const conversationId of titleChanged) {
+        this.onChanged?.(conversationId)
       }
     } finally {
       this.statusPolling = false
@@ -282,6 +550,20 @@ export class PtyManager {
   /** Conversation that owns a live tab (for targeted IPC). */
   conversationIdFor(tabId: string): string | null {
     return this.sessions.get(tabId)?.conversationId ?? null
+  }
+
+  /**
+   * Oldest live pane for a CLI agent host in this conversation.
+   * Used to attach rather than respawn when preferredId was not supplied.
+   */
+  findLiveAgentPane(conversationId: string, agentId: string): string | null {
+    let best: PtySession | null = null
+    for (const session of this.sessions.values()) {
+      if (session.conversationId !== conversationId) continue
+      if (session.agentId !== agentId) continue
+      if (!best || session.createdAt < best.createdAt) best = session
+    }
+    return best?.id ?? null
   }
 
   private enqueueData(tabId: string, data: string): void {
@@ -322,15 +604,40 @@ export class PtyManager {
     const opts: PtyLaunchOptions =
       typeof options === 'string' ? { preferredId: options } : (options ?? {})
     const preferredId = opts.preferredId
-    if (preferredId && this.sessions.has(preferredId)) return preferredId
-    const id = preferredId ?? randomUUID()
     // Prefer explicit agentId from the renderer; only special-case the legacy
     // vav mirror preferredId. Never infer from binary path (paths are not ids).
     const agentId =
-      opts.agentId !== undefined ? opts.agentId : preferredId === 'agent' ? 'vav' : null
+      opts.agentId !== undefined
+        ? opts.agentId
+        : preferredId === 'agent'
+          ? 'vav'
+          : null
+    // Stable preferredId is the multi-window ensure key (Herdr attach semantics).
+    // Splits omit preferredId and always mint a new pane — never dedupe those.
+    if (preferredId && this.sessions.has(preferredId)) return preferredId
+    // Activate path with preferredId: if an older random-id pane is still live
+    // for this agent (pre-stable-id sessions), attach it instead of spawning a
+    // second CLI process.
+    if (
+      preferredId &&
+      agentId &&
+      agentId !== 'vav' &&
+      opts.command?.trim()
+    ) {
+      const existing = this.findLiveAgentPane(conversationId, agentId)
+      if (existing) return existing
+    }
+    const id = preferredId ?? randomUUID()
+    // Number idle bash tabs so multi-shell trays stay distinguishable.
+    const bashIndex =
+      [...this.sessions.values()].filter((s) => s.agentId == null).length + 1
     const title =
       opts.title?.trim() ||
-      (agentId && agentId !== 'vav' ? agentId : preferredId === 'agent' ? 'vav' : 'bash')
+      (agentId && agentId !== 'vav'
+        ? agentId
+        : preferredId === 'agent'
+          ? 'vav'
+          : `bash-${bashIndex}`)
     // node-pty requires a real absolute directory — "~" or empty → process exits.
     let safeCwd = cwd && cwd !== '~' ? cwd : homedir()
     if (!safeCwd || !existsSync(safeCwd)) safeCwd = homedir()
@@ -411,6 +718,7 @@ export class PtyManager {
       contextFile,
       agentId,
       title,
+      baseTitle: title,
       createdAt: Date.now(),
       outputBuffer: '',
       appliedCols: Math.max(2, cols),
@@ -491,7 +799,8 @@ export class PtyManager {
       bash: cloneLayout(layouts.bash),
       agents: Object.fromEntries(
         Object.entries(layouts.agents ?? {}).map(([id, node]) => [id, cloneLayout(node)])
-      )
+      ),
+      cliMode: layouts.cliMode === true
     })
   }
 
@@ -597,6 +906,27 @@ export class PtyManager {
     return false
   }
 
+  /**
+   * Live CLI agent host panes (excludes plain bash and the built-in VAV mirror).
+   * Used by the tray badge / menu.
+   */
+  listCliAgentSessions(): PtySessionMeta[] {
+    const out: PtySessionMeta[] = []
+    for (const session of this.sessions.values()) {
+      if (!session.agentId || session.agentId === 'vav') continue
+      out.push({
+        id: session.id,
+        conversationId: session.conversationId,
+        agentId: session.agentId,
+        title: session.title,
+        createdAt: session.createdAt,
+        status: session.status
+      })
+    }
+    out.sort((a, b) => a.createdAt - b.createdAt)
+    return out
+  }
+
   killAll(): void {
     for (const session of [...this.sessions.values()]) this.kill(session.id)
     this.layouts.clear()
@@ -617,12 +947,13 @@ function cloneLayout(node: TerminalLayoutNode | null | undefined): TerminalLayou
 }
 
 function cloneLayouts(layouts: ConversationPtyLayouts | undefined): ConversationPtyLayouts {
-  if (!layouts) return { bash: null, agents: {} }
+  if (!layouts) return { bash: null, agents: {}, cliMode: false }
   return {
     bash: cloneLayout(layouts.bash),
     agents: Object.fromEntries(
       Object.entries(layouts.agents ?? {}).map(([id, node]) => [id, cloneLayout(node)])
-    )
+    ),
+    cliMode: layouts.cliMode === true
   }
 }
 

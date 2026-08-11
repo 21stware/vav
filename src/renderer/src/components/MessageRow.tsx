@@ -6,6 +6,7 @@ import {
   CornerUpLeft,
   FileDiff,
   FileText,
+  Folder,
   GitBranch,
   MessageSquare,
   Paperclip,
@@ -16,7 +17,9 @@ import {
 } from 'lucide-react'
 import type { ChatMessage, PreviewRef } from '@shared/types'
 import { showMenu, type MenuItem } from '../lib/nativeMenu'
+import { fileManagerLabel } from '../lib/platform'
 import { basename } from '../lib/path'
+import { openFileInSessionPreview, revealSessionFileInFinder } from '../lib/openSessionFile'
 import { formatBadge } from '../lib/previewBlocks'
 import { useSessionStore } from '../state/sessionStore'
 import { useT } from '../i18n/useT'
@@ -554,9 +557,25 @@ function UserMessageContext({
       {files.length > 0 && (
         <div className="attachments">
           {files.map((path) => (
-            <span className="chip" key={path} title={path}>
-              <Paperclip size={11} />
-              <span className="chip-label">{basename(path)}</span>
+            <span className="chip attachment-file-chip" key={path} title={path}>
+              <button
+                type="button"
+                className="attachment-file-open"
+                title={path}
+                onClick={() => openFileInSessionPreview(path)}
+              >
+                <Paperclip size={11} />
+                <span className="chip-label">{basename(path)}</span>
+              </button>
+              <button
+                type="button"
+                className="md-file-reveal"
+                title={t('tools.revealInFm', { fileManager: fileManagerLabel() })}
+                aria-label={t('tools.revealInFm', { fileManager: fileManagerLabel() })}
+                onClick={() => revealSessionFileInFinder(path)}
+              >
+                <Folder size={11} />
+              </button>
             </span>
           ))}
         </div>

@@ -158,6 +158,9 @@ export class SettingsStore {
     s.temperature = Math.min(2, Math.max(0, s.temperature))
     s.maxTokens = Math.min(200_000, Math.max(256, Math.round(s.maxTokens)))
     s.cliAgents = mergeBuiltinAgents(Array.isArray(s.cliAgents) ? s.cliAgents : [])
+    if (typeof s.skipCliAgentPickerWhenSingle !== 'boolean') {
+      s.skipCliAgentPickerWhenSingle = false
+    }
     if (s.defaultAgentId !== null && s.defaultAgentId !== undefined) {
       const ids = new Set(s.cliAgents.map((a) => a.id))
       if (!ids.has(s.defaultAgentId)) s.defaultAgentId = s.cliAgents[0]?.id ?? null
@@ -311,8 +314,11 @@ function normalizeAgentConfig(raw: Partial<AgentConfig> & { id?: string }): Agen
 }
 
 /**
- * Built-ins always present (order fixed). User path/args/enabled kept.
- * Legacy id `cursor-agent` → `cursor`. Custom agents append after.
+ * User list is authoritative (order kept). Catalogue agents present in the list
+ * get install scripts / safety args refreshed from {@link DEFAULT_CLI_AGENTS}.
+ * Missing catalogue entries are NOT auto-injected — Settings “+” adds them.
+ * Empty / legacy `[]` seeds the full catalogue.
+ * Legacy id `cursor-agent` → `cursor`.
  */
 function mergeBuiltinAgents(existing: AgentConfig[]): AgentConfig[] {
   const normalized = existing.map((raw) => normalizeAgentConfig(raw))
@@ -326,45 +332,50 @@ function mergeBuiltinAgents(existing: AgentConfig[]): AgentConfig[] {
     byId.delete('cursor-agent')
   }
 
+  // Fresh / wiped settings — seed the full catalogue.
+  if (byId.size === 0) {
+    return DEFAULT_CLI_AGENTS.map((builtin) =>
+      normalizeAgentConfig({
+        ...builtin,
+        envVars: { ...builtin.envVars },
+        defaultArgs: [...builtin.defaultArgs],
+        binaryCandidates: builtin.binaryCandidates ? [...builtin.binaryCandidates] : undefined
+      })
+    )
+  }
+
+  // Preserve **array order** from the user list (reorder / remove are sticky).
+  // Map iteration alone is not enough if we ever re-seed keys out of order.
   const result: AgentConfig[] = []
-  for (const builtin of DEFAULT_CLI_AGENTS) {
-    const prev = byId.get(builtin.id)
-    if (prev) {
+  const seen = new Set<string>()
+  for (const prev of normalized) {
+    if (seen.has(prev.id)) continue
+    seen.add(prev.id)
+    // Prefer the map entry (post cursor-agent migration).
+    const row = byId.get(prev.id) ?? prev
+    const builtin = DEFAULT_CLI_AGENTS.find((a) => a.id === row.id)
+    if (builtin) {
       result.push(
         normalizeAgentConfig({
           ...builtin,
-          ...prev,
+          ...row,
           id: builtin.id,
-          binaryPath: prev.binaryPath || builtin.binaryPath,
+          binaryPath: row.binaryPath || builtin.binaryPath,
           binaryCandidates:
-            prev.binaryCandidates && prev.binaryCandidates.length > 0
-              ? prev.binaryCandidates
+            row.binaryCandidates && row.binaryCandidates.length > 0
+              ? row.binaryCandidates
               : builtin.binaryCandidates,
-          defaultArgs: mergeBuiltinDefaultArgs(prev.defaultArgs, builtin.defaultArgs),
-          // Always refresh catalogue install scripts / docs for builtins
-          // (e.g. npm → official curl installers).
-          installCommand: builtin.installCommand ?? prev.installCommand ?? null,
-          installDocsUrl: builtin.installDocsUrl ?? prev.installDocsUrl ?? null,
-          enabled: prev.enabled !== false,
-          name: prev.name || builtin.name,
+          defaultArgs: mergeBuiltinDefaultArgs(row.defaultArgs, builtin.defaultArgs),
+          installCommand: builtin.installCommand ?? row.installCommand ?? null,
+          installDocsUrl: builtin.installDocsUrl ?? row.installDocsUrl ?? null,
+          enabled: row.enabled !== false,
+          name: row.name || builtin.name,
           builtin: true
         })
       )
-      byId.delete(builtin.id)
     } else {
-      result.push(
-        normalizeAgentConfig({
-          ...builtin,
-          envVars: { ...builtin.envVars },
-          defaultArgs: [...builtin.defaultArgs],
-          binaryCandidates: builtin.binaryCandidates ? [...builtin.binaryCandidates] : undefined
-        })
-      )
+      result.push(normalizeAgentConfig({ ...row, builtin: false }))
     }
-  }
-  for (const custom of byId.values()) {
-    if (BUILTIN_AGENT_IDS.includes(custom.id)) continue
-    result.push(normalizeAgentConfig({ ...custom, builtin: false }))
   }
   return result
 }

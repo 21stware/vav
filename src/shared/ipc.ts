@@ -597,6 +597,29 @@ export interface VavApi {
       path: string,
       base64: string
     ): Promise<{ ok: true } | { ok: false; error?: string }>
+    /**
+     * Document sandbox: clone real path → working copy (or return existing).
+     * Agent/tools then mutate the copy; Save/Accept promote; Discard drops it.
+     */
+    workingCopyEnsure(
+      path: string,
+      opts?: { fileId?: string | null }
+    ): Promise<
+      | { ok: true; realPath: string; copyPath: string; dirty: boolean }
+      | { ok: false; error: string }
+    >
+    /** Promote working copy → real path (Save / Accept). */
+    workingCopyPromote(
+      path: string
+    ): Promise<{ ok: true } | { ok: false; error: string }>
+    /** Discard working copy and re-seed from real (Discard / Reject). */
+    workingCopyDiscard(
+      path: string
+    ): Promise<{ ok: true; dirty?: boolean } | { ok: false; error: string }>
+    /** Current sandbox status for a real path (null if none). */
+    workingCopyStatus(
+      path: string
+    ): Promise<{ realPath: string; copyPath: string; dirty: boolean } | null>
     quickLook(path: string): Promise<void>
     /** Open path with the OS default application (binary "Open with …"). */
     openWithDefault(path: string): Promise<{ ok: true } | { ok: false; error: string }>
@@ -778,6 +801,24 @@ export interface VavApi {
     ): () => void
     /** Warm shell finished light bootstrap + chunk prefetch — ready to claim. */
     previewShellReady(): void
+    /**
+     * Warm session shell: main assigns a conversation without reloading the window.
+     * Empty `conversationId` parks the shell idle (warm pool recycle).
+     */
+    onSessionNavigate(
+      handler: (payload: {
+        conversationId: string
+        meta?: ConversationMeta
+        /** True when the conversation has no messages — skip disk hydrate. */
+        empty?: boolean
+        collapseTools?: boolean
+        openSeq: number
+        /** Date.now() when main received the open request (hotkey→interactive). */
+        requestedAt?: number
+      }) => void
+    ): () => void
+    /** Warm session shell finished light bootstrap — ready to claim for ⌘⇧↵. */
+    sessionShellReady(): void
     /** When true, the next native close is deferred to `onPreviewCloseAttempt`. */
     setPreviewCloseGuard(enabled: boolean): Promise<void>
     /** Close the preview window after the renderer cleared the unsaved guard. */
@@ -994,6 +1035,10 @@ export const IPC = {
   filesWriteBinary: 'vav:files:write-binary',
   filesDbQuery: 'vav:files:db-query',
   filesWrite: 'vav:files:write',
+  filesWorkingCopyEnsure: 'vav:files:working-copy-ensure',
+  filesWorkingCopyPromote: 'vav:files:working-copy-promote',
+  filesWorkingCopyDiscard: 'vav:files:working-copy-discard',
+  filesWorkingCopyStatus: 'vav:files:working-copy-status',
   filesQuickLook: 'vav:files:quick-look',
   filesWatch: 'vav:files:watch',
   filesDirty: 'vav:files:dirty',
@@ -1004,6 +1049,8 @@ export const IPC = {
   filesInspectStructured: 'vav:files:inspect-structured',
   previewNavigate: 'vav:preview:navigate',
   previewShellReady: 'vav:preview:shell-ready',
+  sessionNavigate: 'vav:session:navigate',
+  sessionShellReady: 'vav:session:shell-ready',
   filesParseBlocks: 'vav:files:parse-blocks',
   previewCloseAttempt: 'vav:preview:close-attempt',
   previewSetCloseGuard: 'vav:preview:set-close-guard',

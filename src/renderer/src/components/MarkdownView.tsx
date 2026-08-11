@@ -8,6 +8,7 @@ import {
 import type { DiagramSlotState } from '../lib/diagramCache'
 import { renderDiagramBlocks } from '../lib/diagramRender'
 import { resolveMentionedPath } from '../lib/filePathLinks'
+import { openFileInSessionPreview, revealSessionFileInFinder } from '../lib/openSessionFile'
 import { onHljsReady } from '../lib/hljsLazy'
 import {
   renderPreviewMarkdown,
@@ -154,23 +155,40 @@ export const MarkdownView = memo(function MarkdownView({
     const target = event.target as HTMLElement | null
     if (!target) return
 
+    // Finder/Explorer control after the path link.
+    const revealBtn = target.closest<HTMLButtonElement>('button.md-file-reveal')
+    if (revealBtn) {
+      event.preventDefault()
+      event.stopPropagation()
+      const raw = revealBtn.dataset.path || ''
+      if (!raw.trim()) return
+      revealSessionFileInFinder(raw)
+      return
+    }
+
     const fileLink = target.closest<HTMLAnchorElement>('a.md-file-link')
     if (fileLink) {
       event.preventDefault()
       event.stopPropagation()
       const raw = fileLink.dataset.path || fileLink.textContent || ''
       if (!raw.trim()) return
-      const state = useSessionStore.getState()
-      const conv = state.conversations.find((c) => c.id === state.activeId)
-      const resolved = resolveMentionedPath(
-        raw,
-        conv?.workingDirectory ?? null,
-        state.home || ''
-      )
-      void window.vav.window.openFilePreview(resolved, {
-        origin: 'session',
-        conversationId: state.activeId || undefined
-      })
+      // Chat / agent log: open in the session right drawer. Previewed .md files
+      // keep standalone open so nested docs stay a separate window.
+      if (filePath) {
+        const resolved = resolveMentionedPath(
+          raw,
+          useSessionStore.getState().conversations.find(
+            (c) => c.id === useSessionStore.getState().activeId
+          )?.workingDirectory ?? null,
+          useSessionStore.getState().home || ''
+        )
+        void window.vav.window.openFilePreview(resolved, {
+          origin: 'session',
+          conversationId: useSessionStore.getState().activeId || undefined
+        })
+      } else {
+        openFileInSessionPreview(raw)
+      }
       return
     }
 

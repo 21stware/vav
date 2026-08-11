@@ -11,6 +11,11 @@ export interface TerminalEntry {
   /** Detached host element; views adopt it on mount and release it on unmount. */
   container: HTMLDivElement
   dispose: () => void
+  /**
+   * Soft-park: sink still receives bytes (buffer stays live) but the host is
+   * not driving PTY geometry. Used when a companion window owns the viewer.
+   */
+  parked: boolean
 }
 
 const entries = new Map<string, TerminalEntry>()
@@ -84,6 +89,32 @@ export function acquireTerminal(options: {
   if (existing) {
     existing.term.options.fontFamily = options.fontFamily
     existing.term.options.fontSize = options.fontSize
+    // Reclaim after soft-park or React remount/reparent — keep the painted
+    // buffer, then force fit/SIGWINCH so TUIs match this host's real box
+    // (avoids the 1-row “narrow strip” from a prior zero-size fit).
+    const wasParked = existing.parked
+    existing.parked = false
+    if (wasParked || !existing.container.isConnected) {
+      queueMicrotask(() => {
+        if (entries.get(id) !== existing) return
+        try {
+          if (
+            existing.container.clientWidth > 0 &&
+            existing.container.clientHeight > 0
+          ) {
+            existing.fit.fit()
+            window.vav.pty.resize(
+              options.tabId,
+              existing.term.cols,
+              existing.term.rows,
+              true
+            )
+          }
+        } catch {
+          // host may not be in the DOM yet; TerminalHost fit handles that
+        }
+      })
+    }
     return existing
   }
 
@@ -353,6 +384,7 @@ export function acquireTerminal(options: {
     term,
     fit,
     container,
+    parked: false,
     dispose: () => {
       if (resizeTimer) {
         clearTimeout(resizeTimer)
@@ -379,6 +411,8 @@ export function acquireTerminal(options: {
   entries.set(id, entry)
 
   // Multi-window attach: main keeps a ring buffer so a detached window is not blank.
+  // After paint, force SIGWINCH so alt-screen TUIs redraw for this viewer's size
+  // (Herdr attaches with a fresh screen frame from the host).
   if (replaying) {
     void window.vav.pty
       .replay(options.tabId)
@@ -388,6 +422,16 @@ export function acquireTerminal(options: {
         replaying = false
         for (const chunk of liveQueue) term.write(chunk)
         liveQueue.length = 0
+        requestAnimationFrame(() => {
+          if (entries.get(id)?.term !== term) return
+          if (!document.hasFocus()) return
+          try {
+            fit.fit()
+            window.vav.pty.resize(options.tabId, term.cols, term.rows, true)
+          } catch {
+            // ignore
+          }
+        })
       })
       .catch(() => {
         replaying = false
@@ -397,6 +441,19 @@ export function acquireTerminal(options: {
   }
 
   return entry
+}
+
+/**
+ * Soft-park: detach from the DOM but keep the xterm + live sink so reclaim is
+ * instant when the companion window closes. Does **not** kill the PTY.
+ *
+ * Hard dispose is reserved for user-closed tabs.
+ */
+export function parkTerminal(conversationId: string, tabId: string): void {
+  const entry = entries.get(key(conversationId, tabId))
+  if (!entry) return
+  entry.parked = true
+  entry.container.remove()
 }
 
 export function disposeTerminal(conversationId: string, tabId: string): void {
@@ -427,4 +484,4 @@ export function applyTerminalAppearance(fontFamily: string, fontSize: number): v
   }
 }
 
-publishTerminalRegistry({ applyTerminalAppearance, disposeTerminal })
+publishTerminalRegistry({ applyTerminalAppearance, disposeTerminal, parkTerminal })
