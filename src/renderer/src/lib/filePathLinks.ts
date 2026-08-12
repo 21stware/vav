@@ -3,91 +3,25 @@
  * links that open the session side preview, with a Finder/Explorer control
  * after each path.
  *
- * Only real path shapes — not bare "name.json" / "@scope/pkg" / schema ids
- * (those false-positives as hyperlinks, e.g. vega-lite-spec-v5.json).
+ * Matching rules live in `@shared/filePathMentions` (unit-tested).
  */
 
 import type MarkdownIt from 'markdown-it'
+import {
+  findFilePathMentions,
+  looksLikeFilePath,
+  trimPathCandidate
+} from '@shared/filePathMentions'
 import { tt } from '../i18n/useT'
 import { fileManagerLabel } from './platform'
 import { joinPath } from './path'
 
-/** Extensions that strongly suggest a file when the string is a real path. */
-const FILE_EXTS =
-  'ts|tsx|js|jsx|mjs|cjs|json|jsonc|md|mdx|txt|log|csv|tsv|yml|yaml|toml|xml|html|css|scss|less|py|rb|go|rs|java|kt|swift|c|cc|cpp|h|hpp|cs|php|sh|bash|zsh|fish|sql|graphql|proto|env|ini|cfg|conf|lock|svg|png|jpg|jpeg|gif|webp|pdf|docx|xlsx|pptx|ipynb|vue|svelte|astro|zig|lua|r|R|dart|scala|clj|ex|exs|erl|hs|ml|mli|nim|v|sv|vhd|asm|s|makefile|dockerfile|gitignore|editorconfig'
-
-/**
- * Match only path-shaped mentions:
- * - absolute Unix / Windows
- * - ~/…
- * - ./… or ../…
- * - workspace-relative with at least one directory separator + extension
- *
- * Does NOT match bare `foo.json` or `@vegalite-spec-v5.json`.
- *
- * Lookbehind uses `\p{L}`/`\p{N}` (not ASCII-only) so CJK prose like
- * `最大化/还原面板` does not treat `/还原面板` as an absolute path. Built
- * without unnecessary escapes — the `u` flag rejects things like `` \` ``.
- *
- * Absolute `/` uses `/(?!/)` so `https://example.io` never yields `//example.io`
- * (protocol-relative host) as a fake Unix path.
- */
-const PATH_GLOBAL = new RegExp(
-  [
-    // Also exclude `:` so `https://…` cannot match at the `//`.
-    '(?<![\\p{L}\\p{N}_./\\\\:-])(',
-    // Absolute, home, or explicit relative (`/` but not `//host`)
-    '(?:~/|/(?!/)|\\./|\\.\\./|[A-Za-z]:[\\\\/])',
-    '[^\\s`\'"<>|)\\]]+',
-    '|',
-    // dir/…/file.ext (must contain /)
-    '(?:[\\w.+-]+/)+[\\w.+-]+\\.(?:' + FILE_EXTS + ')\\b',
-    ')'
-  ].join(''),
-  'giu'
-)
-
-const INLINE_PATH = new RegExp(
-  [
-    '^(?:',
-    '(?:~/|/(?!/)|\\./|\\.\\./|[A-Za-z]:[\\\\/])[^\\s`\'"<>|]+',
-    '|',
-    '(?:[\\w.+-]+/)+[\\w.+-]+\\.(?:' + FILE_EXTS + ')',
-    ')$'
-  ].join(''),
-  'iu'
-)
-
-/** `example.io/docs/readme.md` — host-shaped, not a workspace path. */
-const HOST_RELATIVE =
-  /^(?:www\.)?(?:[a-z0-9-]+\.)+(?:[a-z]{2,})(?:[/:?#]|$)/i
-
-export function looksLikeFilePath(value: string): boolean {
-  const v = value.trim()
-  if (!v || v.length < 2 || v.length > 512) return false
-  // URLs (incl. protocol-relative `//cdn.example.com/…`)
-  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(v)) return false
-  if (v.startsWith('//')) return false
-  if (v.includes('://')) return false
-  if (v.startsWith('mailto:')) return false
-  // npm scopes / schema-ish tokens (e.g. @vegalite-spec-v5.json)
-  if (v.startsWith('@')) return false
-  // Bare filename without a directory — too many false positives (specs, packages).
-  if (!/[\\/]/.test(v) && !v.startsWith('~')) return false
-  // Lone `/词` with no further slash/extension is almost always prose, not a path
-  // (e.g. Chinese "最大化/还原面板" leaking `/还原面板`).
-  if (/^\/[^/\s.]+$/.test(v) && /[^\u0000-\u007F]/.test(v)) return false
-  // Domain / path shaped (`.io` / `.com` sites without a scheme).
-  if (HOST_RELATIVE.test(v)) return false
-  return INLINE_PATH.test(v)
-}
-
-/** Strip trailing sentence punctuation that is not part of the path. */
-export function trimPathCandidate(raw: string): string {
-  return raw
-    .replace(/[.,;:!?。，；：！？、]+$/g, '')
-    .replace(/['")\]】》」』）]+$/g, '')
-}
+export {
+  findFilePathMentions,
+  looksLikeFilePath,
+  trimPathCandidate
+} from '@shared/filePathMentions'
+export type { FilePathMention } from '@shared/filePathMentions'
 
 /**
  * Resolve a path mention against the session workdir / home.
@@ -194,33 +128,24 @@ export function filePathLinksPlugin(md: MarkdownIt): void {
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function pushSplitPaths(Token: any, text: string, out: MdToken[]): void {
-  PATH_GLOBAL.lastIndex = 0
-  let last = 0
-  let match: RegExpExecArray | null
-  let any = false
-  while ((match = PATH_GLOBAL.exec(text)) !== null) {
-    const full = match[1] ?? ''
-    const path = trimPathCandidate(full)
-    if (!path || !looksLikeFilePath(path)) continue
-    const pathStart = match.index + match[0].lastIndexOf(full)
-    if (pathStart < last) continue
-    any = true
-    if (pathStart > last) {
-      const t = new Token('text', '', 0)
-      t.content = text.slice(last, pathStart)
-      out.push(t)
-    }
-    const html = new Token('html_inline', '', 0)
-    html.content = fileMentionHtml(path, path)
-    out.push(html)
-    last = pathStart + full.length
-    PATH_GLOBAL.lastIndex = last
-  }
-  if (!any) {
+  const mentions = findFilePathMentions(text)
+  if (mentions.length === 0) {
     const t = new Token('text', '', 0)
     t.content = text
     out.push(t)
     return
+  }
+  let last = 0
+  for (const mention of mentions) {
+    if (mention.index > last) {
+      const t = new Token('text', '', 0)
+      t.content = text.slice(last, mention.index)
+      out.push(t)
+    }
+    const html = new Token('html_inline', '', 0)
+    html.content = fileMentionHtml(mention.path, mention.path)
+    out.push(html)
+    last = mention.index + mention.raw.length
   }
   if (last < text.length) {
     const t = new Token('text', '', 0)

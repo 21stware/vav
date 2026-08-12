@@ -1,10 +1,72 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { Fragment, useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { enabledCliAgents } from '@shared/types'
 import { useSessionStore } from '../state/sessionStore'
 import { CLI_SURFACE_KEY, useWorkspaceStore } from '../state/workspaceStore'
 import { setUiFocusScope } from '../lib/uiFocus'
+import { IS_MAC } from '../lib/platform'
 import { AgentBrandMark } from './AgentBrandMark'
 import { useT } from '../i18n/useT'
+
+/**
+ * Mac glyph chord (`⌘⇧D`) → icon spans with full modifier names in `title`.
+ * Non-Mac shows Ctrl/Shift words with the same titles.
+ */
+function ShortcutChord({ chord }: { chord: string }): React.JSX.Element {
+  const t = useT()
+  const nodes: ReactNode[] = []
+  let key = ''
+  for (const ch of chord) {
+    if (ch === '⌘' || ch === '⌃') {
+      nodes.push(
+        <span
+          key={`mod-${nodes.length}`}
+          className="cli-agent-picker-kbd"
+          title={IS_MAC ? t('keys.command') : t('keys.control')}
+        >
+          {IS_MAC ? '⌘' : 'Ctrl'}
+        </span>
+      )
+    } else if (ch === '⇧') {
+      nodes.push(
+        <span key={`shift-${nodes.length}`} className="cli-agent-picker-kbd" title={t('keys.shift')}>
+          {IS_MAC ? '⇧' : 'Shift'}
+        </span>
+      )
+    } else if (ch === '⌥') {
+      nodes.push(
+        <span
+          key={`opt-${nodes.length}`}
+          className="cli-agent-picker-kbd"
+          title={IS_MAC ? t('keys.option') : t('keys.alt')}
+        >
+          {IS_MAC ? '⌥' : 'Alt'}
+        </span>
+      )
+    } else {
+      key += ch
+    }
+  }
+  if (key) {
+    nodes.push(
+      <span key="key" className="cli-agent-picker-kbd is-key">
+        {key}
+      </span>
+    )
+  }
+  if (!IS_MAC) {
+    return (
+      <span className="cli-agent-picker-chord">
+        {nodes.map((node, i) => (
+          <Fragment key={i}>
+            {i > 0 ? <span className="cli-agent-picker-kbd-join">+</span> : null}
+            {node}
+          </Fragment>
+        ))}
+      </span>
+    )
+  }
+  return <span className="cli-agent-picker-chord">{nodes}</span>
+}
 
 /**
  * In-pane CLI type chooser. Shown for pending split panes and empty CLI mode.
@@ -157,14 +219,20 @@ export function CliAgentPicker({
     focusItem(activeIndexRef.current + delta)
   }
 
+  const help = (
+    <div className="cli-agent-picker-help">
+      <p>{t('agents.swarmHelpIntro')}</p>
+      <p>
+        <ShortcutChord chord="⌘D" /> {t('agents.swarmHelpSplitVertical')}
+        <span className="cli-agent-picker-help-sep">, </span>
+        <ShortcutChord chord="⌘⇧D" /> {t('agents.swarmHelpSplitHorizontal')}
+      </p>
+      <p>{t('agents.swarmHelpNavigate')}</p>
+    </div>
+  )
+
   return (
     <div className={`cli-agent-picker${compact ? ' is-compact' : ''}`}>
-      <div className="cli-agent-picker-head">
-        <h2 className="cli-agent-picker-title" id={tabId ? `cli-picker-title-${tabId}` : undefined}>
-          {t('agents.pickCliTitle')}
-        </h2>
-      </div>
-
       {agents.length === 0 ? (
         <p className="cli-agent-picker-empty">{t('agents.empty')}</p>
       ) : (
@@ -173,7 +241,7 @@ export function CliAgentPicker({
           <div
             className="cli-agent-picker-grid"
             role="listbox"
-            aria-labelledby={tabId ? `cli-picker-title-${tabId}` : undefined}
+            aria-label={t('agents.pickCliTitle')}
             aria-activedescendant={
               agents[activeIndex] ? `cli-picker-opt-${tabId ?? 'root'}-${agents[activeIndex]!.id}` : undefined
             }
@@ -207,6 +275,7 @@ export function CliAgentPicker({
           <div className="cli-agent-picker-rule" aria-hidden />
         </div>
       )}
+      {help}
     </div>
   )
 }

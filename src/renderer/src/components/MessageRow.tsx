@@ -1,5 +1,6 @@
-import { memo, useEffect, useRef, useState } from 'react'
+import { memo, useEffect, useRef, useState, type ReactNode } from 'react'
 import {
+  Check,
   ChevronLeft,
   ChevronRight,
   Copy,
@@ -68,6 +69,97 @@ interface MessageRowProps {
 /** Long enough that a collapsed preview + expand control is worth the chrome. */
 const USER_COLLAPSE_CHARS = 280
 const USER_COLLAPSE_LINES = 5
+
+/**
+ * Message action icon button with post-click feedback (Emil: state indication).
+ * - `check`: blur → Check → restore (copy / quote / fork)
+ * - `spin`: one-shot RotateCcw spin (regenerate)
+ * - false: press scale only (opens another surface)
+ */
+function MessageActionButton({
+  icon,
+  title,
+  doneTitle,
+  disabled,
+  ack = 'check',
+  onClick
+}: {
+  icon: ReactNode
+  title: string
+  doneTitle?: string
+  disabled?: boolean
+  ack?: 'check' | 'spin' | false
+  onClick: () => void | Promise<void>
+}): React.JSX.Element {
+  const [phase, setPhase] = useState<'idle' | 'out' | 'done'>('idle')
+  const [showDone, setShowDone] = useState(false)
+  const timers = useRef<number[]>([])
+
+  useEffect(() => {
+    return () => {
+      for (const id of timers.current) window.clearTimeout(id)
+    }
+  }, [])
+
+  const clearTimers = (): void => {
+    for (const id of timers.current) window.clearTimeout(id)
+    timers.current = []
+  }
+
+  const playAck = (): void => {
+    if (!ack) return
+    clearTimers()
+    if (ack === 'spin') {
+      setShowDone(false)
+      setPhase('done')
+      timers.current.push(
+        window.setTimeout(() => {
+          setPhase('idle')
+        }, 480)
+      )
+      return
+    }
+    setPhase('out')
+    timers.current.push(
+      window.setTimeout(() => {
+        setShowDone(true)
+        setPhase('done')
+      }, 100),
+      window.setTimeout(() => {
+        setPhase('out')
+      }, 980),
+      window.setTimeout(() => {
+        setShowDone(false)
+        setPhase('idle')
+      }, 1100)
+    )
+  }
+
+  return (
+    <Button
+      className={[
+        'message-action-btn',
+        phase !== 'idle' ? `is-ack-${phase}` : '',
+        ack === 'spin' && phase === 'done' ? 'is-ack-spin' : ''
+      ]
+        .filter(Boolean)
+        .join(' ')}
+      icon={
+        <span className="message-action-glyph" aria-hidden>
+          {showDone ? <Check size={12} strokeWidth={2.25} /> : icon}
+        </span>
+      }
+      size="sm"
+      title={showDone && doneTitle ? doneTitle : title}
+      disabled={disabled}
+      onClick={() => {
+        void Promise.resolve(onClick()).finally(() => {
+          playAck()
+        })
+      }}
+    />
+  )
+}
 
 /**
  * A finished message: a value row that never mutates again.
@@ -241,35 +333,33 @@ export const MessageRow = memo(function MessageRow({
           )}
           <div className="message-actions">
             {onEdit && (
-              <Button
+              <MessageActionButton
                 icon={<Pencil size={12} />}
-                size="sm"
                 title={busy ? t('message.editWhileRunning') : t('message.editResend')}
                 disabled={busy}
+                ack={false}
                 onClick={() => setEditing(true)}
               />
             )}
             {onRegenerate && (
-              <Button
+              <MessageActionButton
                 icon={<RotateCcw size={12} />}
-                size="sm"
                 title={t('message.retry')}
                 disabled={busy}
+                ack="spin"
                 onClick={() => onRegenerate(message.id)}
               />
             )}
             {onQuote && (
-              <Button
+              <MessageActionButton
                 icon={<Quote size={12} />}
-                size="sm"
                 title={t('message.quote')}
                 onClick={() => onQuote(message)}
               />
             )}
             {onFork && (
-              <Button
+              <MessageActionButton
                 icon={<GitBranch size={12} />}
-                size="sm"
                 title={t('message.branchHere')}
                 disabled={busy}
                 onClick={() => onFork(message.id)}
@@ -323,42 +413,39 @@ export const MessageRow = memo(function MessageRow({
         <div className="message-tail">
           <div className="message-actions-slot">
             <div className="message-actions">
-              <Button
+              <MessageActionButton
                 icon={<Copy size={12} />}
-                size="sm"
                 title={t('message.copy')}
-                onClick={() => void window.vav.conversations.copyToClipboard(message.content)}
+                doneTitle={t('common.copied')}
+                onClick={() => window.vav.conversations.copyToClipboard(message.content)}
               />
               {onRegenerate && (
-                <Button
+                <MessageActionButton
                   icon={<RotateCcw size={12} />}
-                  size="sm"
                   title={t('message.regenerate')}
                   disabled={busy}
+                  ack="spin"
                   onClick={() => onRegenerate(message.id)}
                 />
               )}
               {onQuote && (
-                <Button
+                <MessageActionButton
                   icon={<Quote size={12} />}
-                  size="sm"
                   title={t('message.quote')}
                   onClick={() => onQuote(message)}
                 />
               )}
               {onFork && (
-                <Button
+                <MessageActionButton
                   icon={<GitBranch size={12} />}
-                  size="sm"
                   title={t('message.branchHere')}
                   disabled={busy}
                   onClick={() => onFork(message.id)}
                 />
               )}
               {message.changeSetId && (
-                <Button
+                <MessageActionButton
                   icon={<FileDiff size={12} />}
-                  size="sm"
                   title={t('message.reviewChanges')}
                   onClick={() => {
                     document
@@ -369,11 +456,11 @@ export const MessageRow = memo(function MessageRow({
               )}
               {writePathsOf(message).length > 0 && (
                 <>
-                  <Button
+                  <MessageActionButton
                     icon={<Undo2 size={12} />}
-                    size="sm"
                     title={t('message.revertWorkspace')}
                     disabled={busy}
+                    ack={false}
                     onClick={() => {
                       const paths = writePathsOf(message)
                       const store = useSessionStore.getState()

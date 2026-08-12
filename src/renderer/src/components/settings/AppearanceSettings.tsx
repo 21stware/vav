@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react'
 import { ChevronDown } from 'lucide-react'
+import { tintSwatchColor, type FixedColorTint } from '@shared/colorTints'
 import {
   COLOR_TINTS,
   DISPLAY_CURRENCIES,
-  type ColorTint,
   type DisplayCurrency,
   type LocalePreference,
   type ThemeMode
@@ -12,17 +12,6 @@ import { useSessionStore } from '../../state/sessionStore'
 import { useT } from '../../i18n/useT'
 import { Button, InlineAlert, Segmented, Toggle } from '../ui'
 import { IS_MAC, keys } from '../../lib/platform'
-
-/** Preview chip colour for fixed tints (light-mode accent). System is live. */
-const TINT_SWATCH: Record<Exclude<ColorTint, 'system'>, string> = {
-  mono: 'linear-gradient(135deg, #2a2a30 50%, #e8e8ec 50%)',
-  lavender: '#6b5bc0',
-  blue: '#2563eb',
-  teal: '#0f766e',
-  rose: '#c44b6a',
-  amber: '#b45309',
-  green: '#2f7a52'
-}
 
 const MODIFIER_SYMBOL: Record<string, string> = {
   Command: '⌘',
@@ -54,6 +43,19 @@ export function AppearanceSettings(): React.JSX.Element {
   const [fonts, setFonts] = useState<string[]>([])
   const [recording, setRecording] = useState(false)
   const [hotkeyError, setHotkeyError] = useState<string | null>(null)
+  // Match applied tokens (system theme follows OS, not the light-only swatch table).
+  const [resolvedTheme, setResolvedTheme] = useState<'light' | 'dark'>('light')
+
+  useEffect(() => {
+    const media = window.matchMedia('(prefers-color-scheme: dark)')
+    const apply = (): void => {
+      const mode = settings.theme
+      setResolvedTheme(mode === 'system' ? (media.matches ? 'dark' : 'light') : mode)
+    }
+    apply()
+    media.addEventListener('change', apply)
+    return () => media.removeEventListener('change', apply)
+  }, [settings.theme])
 
   // Only offer fonts this machine can actually render.
   useEffect(() => {
@@ -130,8 +132,11 @@ export function AppearanceSettings(): React.JSX.Element {
           <div className="tint-swatches" role="radiogroup" aria-label={t('appearance.colorTint')}>
             {COLOR_TINTS.map((tint) => {
               const active = (settings.colorTint ?? 'system') === tint
+              // Same hex (or mono gradient) that appearance.ts applies for this theme.
               const swatch =
-                tint === 'system' ? systemAccent || '#007aff' : TINT_SWATCH[tint]
+                tint === 'system'
+                  ? systemAccent || '#007aff'
+                  : tintSwatchColor(tint as FixedColorTint, resolvedTheme)
               return (
                 <button
                   key={tint}

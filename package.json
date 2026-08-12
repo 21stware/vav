@@ -1,7 +1,7 @@
 {
   "name": "vav",
   "productName": "VAV",
-  "version": "1.4.13",
+  "version": "1.4.14",
   "description": "Local-first CLI agent terminal workspace: host Claude Code, Codex, and other agent CLIs with multi-split PTYs and a file tree.",
   "license": "PolyForm-Noncommercial-1.0.0",
   "author": "Oboo Cheng",
@@ -14,6 +14,8 @@
     "start": "node scripts/run-preview.mjs",
     "build": "npm run typecheck && electron-vite build",
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
+    "test": "node --test --experimental-strip-types src/shared/filePathMentions.test.ts",
+    "test:file-path-mentions": "node --test --experimental-strip-types src/shared/filePathMentions.test.ts",
     "site:images": "node scripts/optimize-site-images.mjs",
     "brand:icons": "python3 scripts/sync-brand-icons.py",
     "dist": "node scripts/fetch-officecli.mjs --target darwin-arm64 --clean && npm run build && electron-builder --mac",
@@ -89,18 +91,6 @@
       {
         "from": "build/icon-mark.png",
         "to": "icon-mark.png"
-      },
-      {
-        "from": "build/trayTemplate.png",
-        "to": "trayTemplate.png"
-      },
-      {
-        "from": "build/nina.v@example.com",
-        "to": "nina.v@example.com"
-      },
-      {
-        "from": "build/carol.w@example.org",
-        "to": "carol.w@example.org"
       },
       {
         "from": "resources/agent-skills",

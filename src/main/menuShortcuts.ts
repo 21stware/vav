@@ -35,6 +35,8 @@ export function menuCommandFromInput(input: Electron.Input): MenuCommand | null 
   if (shift && !control && lower === 'h') return 'toggle-sidebar'
   if (shift && !control && lower === 't') return 'toggle-panel-segment'
   if (shift && !control && lower === 'o') return 'switch-workdir'
+  if (shift && !control && lower === 'c') return 'switch-cli-mode'
+  if (shift && !control && lower === 'v') return 'switch-vav-mode'
   if (shift && !control && (key === 'Enter' || code === 'Enter' || code === 'NumpadEnter')) {
     // New detached session is handled by globalShortcut; skip here.
     return null

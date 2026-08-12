@@ -3,11 +3,18 @@ import { GripVertical, Minus, Plus } from 'lucide-react'
 import {
   CLI_AGENT_CATALOGUE,
   DEFAULT_CLI_AGENTS,
-  type AgentConfig
+  STRUCTURED_CLI_HOSTS,
+  displayNameForCliHost,
+  isStructuredCliHost,
+  type AgentConfig,
+  type CliHostKind
 } from '@shared/types'
+import { isAgentModelEnabled, modelsForChatHost } from '@shared/agentModels'
 import { useSessionStore } from '../../state/sessionStore'
 import { useT } from '../../i18n/useT'
 import { AgentBrandMark } from '../AgentBrandMark'
+
+const VAV_ROW_ID = 'vav'
 
 function cloneAgents(list: AgentConfig[]): AgentConfig[] {
   return list.map((a) => ({
@@ -38,6 +45,8 @@ export function AgentsSettings(): React.JSX.Element {
   const t = useT()
   const settings = useSessionStore((s) => s.settings)
   const updateSettings = useSessionStore((s) => s.updateSettings)
+  const catalog = useSessionStore((s) => s.agentModelCatalog)
+  const refreshCatalog = useSessionStore((s) => s.refreshAgentModelCatalog)
 
   // Optimistic local list — do not wait for IPC round-trip to re-render.
   const [agents, setAgents] = useState<AgentConfig[]>(() =>
@@ -80,19 +89,26 @@ export function AgentsSettings(): React.JSX.Element {
   }, [remoteKey, remoteOrderKey])
 
   const [selectedId, setSelectedId] = useState<string | null>(
-    () => agents[0]?.id ?? null
+    () => VAV_ROW_ID
   )
+  const selectedIsVav = selectedId === VAV_ROW_ID
   const selected = useMemo(
-    () => agents.find((a) => a.id === selectedId) ?? agents[0] ?? null,
-    [agents, selectedId]
+    () => (selectedIsVav ? null : agents.find((a) => a.id === selectedId) ?? null),
+    [agents, selectedId, selectedIsVav]
   )
 
-  // Keep selection valid after remove/reorder.
+  // Keep selection valid after external sync / reorder. Removal picks the next
+  // row itself — do not yank focus to VAV here.
   useEffect(() => {
+    if (selectedId === VAV_ROW_ID) return
     if (!selectedId || !agents.some((a) => a.id === selectedId)) {
-      setSelectedId(agents[0]?.id ?? null)
+      setSelectedId(agents[agents.length - 1]?.id ?? VAV_ROW_ID)
     }
   }, [agents, selectedId])
+
+  useEffect(() => {
+    void refreshCatalog(false)
+  }, [refreshCatalog])
 
   /** Menu open + leave path (matches toast / history popover). */
   const ADD_MENU_LEAVE_MS = 180 // --dur-pop
@@ -153,15 +169,69 @@ export function AgentsSettings(): React.JSX.Element {
     const cloned = cloneAgents(next)
     setAgents(cloned)
     agentsRef.current = cloned
+    const currentDefault = settings.defaultAgentId
+    // Keep VAV (null) or a still-present CLI id; never force a CLI default.
+    const nextDefault =
+      !currentDefault || currentDefault === 'vav'
+        ? null
+        : cloned.some((a) => a.id === currentDefault)
+          ? currentDefault
+          : null
     void updateSettings({
       cliAgents: cloned,
-      defaultAgentId:
-        settings.defaultAgentId && cloned.some((a) => a.id === settings.defaultAgentId)
-          ? settings.defaultAgentId
-          : (cloned.find((a) => a.enabled !== false)?.id ?? cloned[0]?.id ?? null)
+      defaultAgentId: nextDefault
     }).catch((err) => {
       console.error('[agents] failed to persist cliAgents', err)
     })
+  }
+
+  const defaultHostOptions = useMemo(() => {
+    const structured = agents.filter(
+      (a) => isStructuredCliHost(a.id) && a.enabled !== false
+    )
+    return [
+      { id: null as string | null, name: t('agents.plainShell'), markId: 'vav' },
+      ...STRUCTURED_CLI_HOSTS.filter((id) => structured.some((a) => a.id === id)).map(
+        (id) => {
+          const agent = structured.find((a) => a.id === id)!
+          return {
+            id: id as string,
+            name: agent.name ?? displayNameForCliHost(id),
+            markId: id
+          }
+        }
+      )
+    ]
+  }, [agents, t])
+
+  const activeDefaultId =
+    !settings.defaultAgentId || settings.defaultAgentId === 'vav'
+      ? null
+      : settings.defaultAgentId
+
+  const modelHostKey = selectedIsVav
+    ? 'vav'
+    : selected && isStructuredCliHost(selected.id)
+      ? selected.id
+      : null
+  const modelHost = (modelHostKey === 'vav' ? null : modelHostKey) as CliHostKind | null
+  const modelList = useMemo(() => {
+    if (!modelHostKey) return []
+    const entry = catalog[modelHostKey]
+    if (entry?.models?.length) return entry.models
+    return modelsForChatHost(modelHost, settings.customModels)
+  }, [catalog, modelHost, modelHostKey, settings.customModels])
+
+  const toggleModelEnabled = (modelId: string, enabled: boolean): void => {
+    if (!modelHostKey) return
+    const prev = settings.disabledAgentModels ?? {}
+    const disabled = new Set(prev[modelHostKey] ?? [])
+    if (enabled) disabled.delete(modelId)
+    else disabled.add(modelId)
+    const next = { ...prev }
+    if (disabled.size === 0) delete next[modelHostKey]
+    else next[modelHostKey] = [...disabled]
+    void updateSettings({ disabledAgentModels: next })
   }
 
   const patchAgent = (id: string, patch: Partial<AgentConfig>): void => {
@@ -209,15 +279,18 @@ export function AgentsSettings(): React.JSX.Element {
     closeAddMenu()
   }
 
-  const canRemove = agents.length > 1 && !!selected
+  const canRemove = agents.length > 1 && !!selected && !selectedIsVav
 
   const removeSelected = (): void => {
     if (!selected || agents.length <= 1) return
+    const removedIndex = agents.findIndex((a) => a.id === selected.id)
     const next = agents.filter((a) => a.id !== selected.id)
+    // Keep the same list index; if we removed the last row, step up to the new last.
     const nextSelected =
-      next.find((a) => a.id === selectedId)?.id ?? next[0]?.id ?? null
-    commitAgents(next)
+      next[Math.min(Math.max(removedIndex, 0), next.length - 1)]?.id ?? VAV_ROW_ID
+    // Select before list commit so the validity effect never sees a stale id.
     setSelectedId(nextSelected)
+    commitAgents(next)
   }
 
   const reorder = (fromId: string, toId: string): void => {
@@ -246,8 +319,18 @@ export function AgentsSettings(): React.JSX.Element {
               e.dataTransfer.dropEffect = 'move'
             }}
           >
+            <div
+              role="option"
+              aria-selected={selectedIsVav}
+              className={`agents-list-row${selectedIsVav ? ' selected' : ''}`}
+              onClick={() => setSelectedId(VAV_ROW_ID)}
+            >
+              <span className="agents-list-grip agents-list-grip-spacer" aria-hidden />
+              <AgentBrandMark agent={{ id: 'vav', name: t('agents.plainShell') }} size={18} />
+              <span className="agents-list-name">{t('agents.plainShell')}</span>
+            </div>
             {agents.map((agent) => {
-              const isSelected = agent.id === selected?.id
+              const isSelected = !selectedIsVav && agent.id === selected?.id
               const isDragging = dragId === agent.id
               const isOver = dragOverId === agent.id && dragId !== agent.id
               return (
@@ -393,57 +476,152 @@ export function AgentsSettings(): React.JSX.Element {
           </div>
         </div>
 
-        {selected ? (
+        {selectedIsVav || selected ? (
           <div className="agents-editor">
-            <label className="settings-field">
-              <span>{t('agents.field.name')}</span>
-              <input
-                className="text-field"
-                value={selected.name}
-                disabled={!!selected.builtin}
-                onChange={(e) => patchAgent(selected.id, { name: e.target.value })}
-              />
-            </label>
-            <label className="settings-field">
-              <span>{t('agents.field.binary')}</span>
-              <input
-                className="text-field"
-                value={selected.binaryPath}
-                placeholder="claude"
-                onChange={(e) => patchAgent(selected.id, { binaryPath: e.target.value.trim() })}
-              />
-              <span className="muted tiny" style={{ marginTop: 4 }}>
-                {t('agents.field.binaryHint')}
-              </span>
-            </label>
-            <label className="settings-field">
-              <span>{t('agents.field.args')}</span>
-              <input
-                className="text-field"
-                value={selected.defaultArgs.join(' ')}
-                placeholder="--flag value"
-                onChange={(e) =>
-                  patchAgent(selected.id, {
-                    defaultArgs: e.target.value
-                      .split(/\s+/)
-                      .map((s) => s.trim())
-                      .filter(Boolean)
-                  })
-                }
-              />
-            </label>
-            <label className="settings-field row">
-              <input
-                type="checkbox"
-                checked={selected.enabled}
-                onChange={(e) => patchAgent(selected.id, { enabled: e.target.checked })}
-              />
-              <span>{t('agents.field.enabled')}</span>
-            </label>
+            {selectedIsVav ? (
+              <>
+                <div className="settings-field">
+                  <span>{t('agents.field.name')}</span>
+                  <input className="text-field" value={t('agents.plainShell')} disabled />
+                </div>
+                <p className="muted tiny" style={{ marginTop: -4, marginBottom: 8 }}>
+                  {t('agents.vavModelsHint')}
+                </p>
+              </>
+            ) : selected ? (
+              <>
+                <label className="settings-field">
+                  <span>{t('agents.field.name')}</span>
+                  <input
+                    className="text-field"
+                    value={selected.name}
+                    disabled={!!selected.builtin}
+                    onChange={(e) => patchAgent(selected.id, { name: e.target.value })}
+                  />
+                </label>
+                <label className="settings-field">
+                  <span>{t('agents.field.binary')}</span>
+                  <input
+                    className="text-field"
+                    value={selected.binaryPath}
+                    placeholder="claude"
+                    onChange={(e) =>
+                      patchAgent(selected.id, { binaryPath: e.target.value.trim() })
+                    }
+                  />
+                  <span className="muted tiny" style={{ marginTop: 4 }}>
+                    {t('agents.field.binaryHint')}
+                  </span>
+                </label>
+                <label className="settings-field">
+                  <span>{t('agents.field.args')}</span>
+                  <input
+                    className="text-field"
+                    value={selected.defaultArgs.join(' ')}
+                    placeholder="--flag value"
+                    onChange={(e) =>
+                      patchAgent(selected.id, {
+                        defaultArgs: e.target.value
+                          .split(/\s+/)
+                          .map((s) => s.trim())
+                          .filter(Boolean)
+                      })
+                    }
+                  />
+                </label>
+                <label className="settings-field row">
+                  <input
+                    type="checkbox"
+                    checked={selected.enabled}
+                    onChange={(e) =>
+                      patchAgent(selected.id, { enabled: e.target.checked })
+                    }
+                  />
+                  <span>{t('agents.field.enabled')}</span>
+                </label>
+              </>
+            ) : null}
+
+            {modelHostKey ? (
+              <div className="agents-models-field">
+                <div className="agents-models-head">
+                  <span>{t('agents.models')}</span>
+                  <button
+                    type="button"
+                    className="btn ghost sm"
+                    onClick={() => void refreshCatalog(true)}
+                  >
+                    {t('agents.modelsRefresh')}
+                  </button>
+                </div>
+                <p className="muted tiny" style={{ margin: '0 0 8px' }}>
+                  {t('agents.modelsHint')}
+                </p>
+                {modelList.length === 0 ? (
+                  <div className="muted tiny">{t('composer.modelsLoading')}</div>
+                ) : (
+                  <div className="agents-models-list">
+                    {modelList.map((model) => {
+                      const enabled = isAgentModelEnabled(
+                        modelHost,
+                        model.id,
+                        settings.disabledAgentModels
+                      )
+                      return (
+                        <label key={model.id || '__default__'} className="agents-models-row">
+                          <input
+                            type="checkbox"
+                            checked={enabled}
+                            onChange={(e) =>
+                              toggleModelEnabled(model.id, e.target.checked)
+                            }
+                          />
+                          <span className="agents-models-text">
+                            <span className="agents-models-label">{model.label}</span>
+                            {model.id ? (
+                              <span className="agents-models-id muted tiny">{model.id}</span>
+                            ) : null}
+                          </span>
+                        </label>
+                      )
+                    })}
+                  </div>
+                )}
+              </div>
+            ) : null}
           </div>
         ) : (
           <div className="muted">{t('agents.empty')}</div>
         )}
+      </div>
+
+      <div className="settings-field agents-default-host">
+        <span>{t('agents.defaultChatHost')}</span>
+        <p className="muted tiny" style={{ margin: '4px 0 10px' }}>
+          {t('agents.defaultChatHostHint')}
+        </p>
+        <div className="agents-default-host-list" role="radiogroup" aria-label={t('agents.defaultChatHost')}>
+          {defaultHostOptions.map((opt) => {
+            const selected = opt.id === activeDefaultId
+            return (
+              <button
+                key={opt.markId}
+                type="button"
+                role="radio"
+                aria-checked={selected}
+                className={`agents-default-host-row${selected ? ' is-selected' : ''}`}
+                onClick={() =>
+                  void updateSettings({
+                    defaultAgentId: opt.id
+                  })
+                }
+              >
+                <AgentBrandMark agent={{ id: opt.markId, name: opt.name }} size={18} />
+                <span className="agents-default-host-name">{opt.name}</span>
+              </button>
+            )
+          })}
+        </div>
       </div>
 
       <label className="settings-field row agents-skip-picker">

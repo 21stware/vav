@@ -203,11 +203,17 @@ export function resolveAgentExecutable(
     resolveResultCache.set(key, { path: pathHit, at: now })
     return pathHit
   }
-  for (const c of list) {
-    const hit = whichViaLoginShell(c)
-    if (hit) {
-      resolveResultCache.set(key, { path: hit, at: now })
-      return hit
+  // Login PATH was already loaded above. Spawning `zsh -ilc 'command -v …'`
+  // for every miss freezes the Electron main process (seen when Settings /
+  // quick-chat hammered settings.get / model preload). Only pay that cost on
+  // an explicit force recheck (post-install).
+  if (options?.force) {
+    for (const c of list) {
+      const hit = whichViaLoginShell(c)
+      if (hit) {
+        resolveResultCache.set(key, { path: hit, at: now })
+        return hit
+      }
     }
   }
   resolveResultCache.set(key, { path: null, at: now })

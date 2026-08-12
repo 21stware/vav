@@ -14,8 +14,23 @@ import {
   type DisplayCurrency
 } from '@shared/types'
 import { coerceShell, platformDefaults, type Platform } from '@shared/platform'
+import { resolveFirstOnLoginPath } from '../terminal/loginPath'
 
 const PLATFORM = process.platform as Platform
+
+/**
+ * Cheap filesystem PATH walk only (no `zsh -ilc`). Safe for a single boot-time
+ * reconcile — never call this from settings.get() / clamp hot paths.
+ */
+function agentBinaryInstalled(agent: Pick<AgentConfig, 'binaryPath' | 'binaryCandidates'>): boolean {
+  const candidates = [
+    agent.binaryPath,
+    ...(Array.isArray(agent.binaryCandidates) ? agent.binaryCandidates : [])
+  ]
+    .map((c) => (typeof c === 'string' ? c.trim() : ''))
+    .filter(Boolean)
+  return resolveFirstOnLoginPath(candidates) != null
+}
 
 /** Defaults with the shell, code font and hotkey this platform can honour. */
 const DEFAULTS: AppSettings = { ...DEFAULT_SETTINGS, ...platformDefaults(PLATFORM) }
@@ -84,10 +99,12 @@ export class SettingsStore {
       )
       dirty = true
     }
-    // CLI agent host: always merge built-in catalogue (Claude/Codex/Cursor/Grok/Devin/Pi).
+    // One-time PATH reconcile (install detect). Must NOT run on every get() —
+    // probing used to spawn login shells and freeze the main process.
     const beforeAgents = JSON.stringify(this.settings.cliAgents ?? [])
     this.settings.cliAgents = mergeBuiltinAgents(
-      Array.isArray(this.settings.cliAgents) ? this.settings.cliAgents : []
+      Array.isArray(this.settings.cliAgents) ? this.settings.cliAgents : [],
+      { discoverInstalled: true }
     )
     if (JSON.stringify(this.settings.cliAgents) !== beforeAgents) dirty = true
     if (this.settings.defaultAgentId === undefined) {
@@ -117,7 +134,7 @@ export class SettingsStore {
   }
 
   get(): AppSettings {
-    // Never hand the renderer an empty catalogue (legacy settings.json had []).
+    // Structural normalize only — never touch the filesystem / login shell here.
     this.settings.cliAgents = mergeBuiltinAgents(
       Array.isArray(this.settings.cliAgents) ? this.settings.cliAgents : []
     )
@@ -161,9 +178,22 @@ export class SettingsStore {
     if (typeof s.skipCliAgentPickerWhenSingle !== 'boolean') {
       s.skipCliAgentPickerWhenSingle = false
     }
-    if (s.defaultAgentId !== null && s.defaultAgentId !== undefined) {
+    if (!s.disabledAgentModels || typeof s.disabledAgentModels !== 'object') {
+      s.disabledAgentModels = {}
+    } else {
+      const cleaned: Record<string, string[]> = {}
+      for (const [host, ids] of Object.entries(s.disabledAgentModels)) {
+        if (!Array.isArray(ids)) continue
+        cleaned[host] = ids.filter((id): id is string => typeof id === 'string')
+      }
+      s.disabledAgentModels = cleaned
+    }
+    // null / "vav" = built-in VAV; otherwise must be a configured CLI agent id.
+    if (s.defaultAgentId === undefined) s.defaultAgentId = null
+    if (s.defaultAgentId === 'vav') s.defaultAgentId = null
+    if (s.defaultAgentId !== null) {
       const ids = new Set(s.cliAgents.map((a) => a.id))
-      if (!ids.has(s.defaultAgentId)) s.defaultAgentId = s.cliAgents[0]?.id ?? null
+      if (!ids.has(s.defaultAgentId)) s.defaultAgentId = null
     }
     if (!Array.isArray(s.recentWorkspaceDirectories)) s.recentWorkspaceDirectories = []
     // Drop paths that no longer exist so the switcher never lists dead dirs.
@@ -171,6 +201,23 @@ export class SettingsStore {
       .filter((path): path is string => typeof path === 'string' && path.length > 0)
       .filter((path) => existsSync(path))
       .slice(0, 10)
+    if (!Array.isArray(s.recentAgentModels)) s.recentAgentModels = []
+    else {
+      const seen = new Set<string>()
+      const cleaned: { hostId: string; model: string }[] = []
+      for (const entry of s.recentAgentModels) {
+        if (!entry || typeof entry !== 'object') continue
+        const hostId = typeof entry.hostId === 'string' ? entry.hostId.trim() : ''
+        if (!hostId) continue
+        const model = typeof entry.model === 'string' ? entry.model : ''
+        const key = `${hostId}\0${model}`
+        if (seen.has(key)) continue
+        seen.add(key)
+        cleaned.push({ hostId, model })
+        if (cleaned.length >= 6) break
+      }
+      s.recentAgentModels = cleaned
+    }
     if (!Array.isArray(s.pinnedWorkspaceDirectories)) s.pinnedWorkspaceDirectories = []
     s.pinnedWorkspaceDirectories = [
       ...new Set(
@@ -314,13 +361,22 @@ function normalizeAgentConfig(raw: Partial<AgentConfig> & { id?: string }): Agen
 }
 
 /**
- * User list is authoritative (order kept). Catalogue agents present in the list
- * get install scripts / safety args refreshed from {@link DEFAULT_CLI_AGENTS}.
- * Missing catalogue entries are NOT auto-injected — Settings “+” adds them.
- * Empty / legacy `[]` seeds the full catalogue.
+ * Normalize / migrate the CLI agent list.
+ *
+ * Hot path (`get` / clamp): structural only — no PATH probes.
+ * Boot (`discoverInstalled: true`): seed an empty list from installed binaries.
+ *
+ * settings.json is the source of truth after the first save. We do **not**
+ * re-attach catalogue agents the user removed, and we do **not** drop kept
+ * rows when a PATH probe fails — that used to make Settings “come back” on
+ * every restart.
  * Legacy id `cursor-agent` → `cursor`.
  */
-function mergeBuiltinAgents(existing: AgentConfig[]): AgentConfig[] {
+function mergeBuiltinAgents(
+  existing: AgentConfig[],
+  options?: { discoverInstalled?: boolean }
+): AgentConfig[] {
+  const discover = options?.discoverInstalled === true
   const normalized = existing.map((raw) => normalizeAgentConfig(raw))
   const byId = new Map(normalized.map((a) => [a.id, a]))
 
@@ -332,20 +388,23 @@ function mergeBuiltinAgents(existing: AgentConfig[]): AgentConfig[] {
     byId.delete('cursor-agent')
   }
 
-  // Fresh / wiped settings — seed the full catalogue.
+  // Fresh / wiped settings — only place we invent a catalogue from PATH.
   if (byId.size === 0) {
-    return DEFAULT_CLI_AGENTS.map((builtin) =>
+    const seed = discover
+      ? DEFAULT_CLI_AGENTS.filter((builtin) => agentBinaryInstalled(builtin))
+      : DEFAULT_CLI_AGENTS
+    return seed.map((builtin) =>
       normalizeAgentConfig({
         ...builtin,
         envVars: { ...builtin.envVars },
         defaultArgs: [...builtin.defaultArgs],
-        binaryCandidates: builtin.binaryCandidates ? [...builtin.binaryCandidates] : undefined
+        binaryCandidates: builtin.binaryCandidates ? [...builtin.binaryCandidates] : undefined,
+        enabled: true
       })
     )
   }
 
-  // Preserve **array order** from the user list (reorder / remove are sticky).
-  // Map iteration alone is not enough if we ever re-seed keys out of order.
+  // Preserve **array order** from the user list (reorder is sticky).
   const result: AgentConfig[] = []
   const seen = new Set<string>()
   for (const prev of normalized) {
@@ -368,8 +427,13 @@ function mergeBuiltinAgents(existing: AgentConfig[]): AgentConfig[] {
           defaultArgs: mergeBuiltinDefaultArgs(row.defaultArgs, builtin.defaultArgs),
           installCommand: builtin.installCommand ?? row.installCommand ?? null,
           installDocsUrl: builtin.installDocsUrl ?? row.installDocsUrl ?? null,
+          // Preserve explicit disable (`enabled: false`).
           enabled: row.enabled !== false,
-          name: row.name || builtin.name,
+          // Catalogue renames: refresh known old defaults (e.g. Grok → Grok build).
+          name:
+            row.id === 'grok' && (!row.name || row.name === 'Grok')
+              ? builtin.name
+              : row.name || builtin.name,
           builtin: true
         })
       )
@@ -377,5 +441,6 @@ function mergeBuiltinAgents(existing: AgentConfig[]): AgentConfig[] {
       result.push(normalizeAgentConfig({ ...row, builtin: false }))
     }
   }
+
   return result
 }

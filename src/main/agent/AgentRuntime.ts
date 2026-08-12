@@ -39,6 +39,7 @@ import {
   buildSystemPrompt,
   createTools,
   FILE_READONLY_BLOCKED_TOOLS,
+  isFileEditLockedPath,
   isReadonlyTerminalCommand,
   summarizeToolInput,
   type ToolDetails
@@ -126,6 +127,8 @@ export interface AgentRuntimeDeps {
   webFetch?: WebFetchService
   skills?: SkillService
   fileSessions?: FileSessionStore
+  /** Sync preview chrome when the agent flips Read/Edit via switch_mode. */
+  onFileReadOnlyChange?: (conversationId: string, readOnly: boolean) => void
 }
 
 /**
@@ -318,6 +321,9 @@ export class AgentRuntime {
     }
     const conversation = this.deps.conversations.get(conversationId)
     if (!conversation) return { ok: false, error: t('compact.error.missing') }
+    if (conversation.cliHost) {
+      return { ok: false, error: t('compact.error.cliHost') }
+    }
 
     const leafId = conversation.activeLeafId ?? threadPath(conversation.messages, null).at(-1)?.id
     if (!leafId) return { ok: false, error: t('compact.error.empty') }
@@ -383,8 +389,12 @@ export class AgentRuntime {
     if (this.turns.has(conversationId)) {
       return { ok: false, error: t('compact.error.busy') }
     }
-    if (!this.deps.conversations.get(conversationId)) {
+    const conversation = this.deps.conversations.get(conversationId)
+    if (!conversation) {
       return { ok: false, error: t('compact.error.missing') }
+    }
+    if (conversation.cliHost) {
+      return { ok: false, error: t('compact.error.cliHost') }
     }
     this.deps.conversations.clearCompaction(conversationId, leafId)
     return { ok: true }
@@ -758,9 +768,11 @@ export class AgentRuntime {
                 type: 'usage',
                 conversationId,
                 tokensUsed: next.tokensUsed,
+                tokenLimit: next.tokenLimit,
                 history: next.tokenHistory,
                 cacheCreatedAt: next.cacheCreatedAt,
-                cacheExpiresAt: next.cacheExpiresAt
+                cacheExpiresAt: next.cacheExpiresAt,
+                reportedSessionCostUsd: next.reportedSessionCostUsd ?? null
               })
             }
           }
@@ -988,36 +1000,36 @@ export class AgentRuntime {
       defaultDocPath: () => {
         if (!conversation.fileId || !this.deps.fileSessions) return null
         return this.deps.fileSessions.pathForFileId?.(conversation.fileId) ?? null
-      }
+      },
+      isFileReadOnly: () =>
+        !!this.deps.conversations.get(conversationId)?.fileReadOnly,
+      setFileReadOnly: (readOnly) => this.setConversationFileReadOnly(conversationId, readOnly)
     })
-    // File Preview Read mode: do not offer write tools to the model at all.
-    if (conversation.fileReadOnly) {
-      tools = tools.filter((tool) => !FILE_READONLY_BLOCKED_TOOLS.has(tool.name as ToolName))
-    }
+    // Keep fs_write offered in Read mode so the same turn can write after
+    // switch_mode; execute-time gates still refuse until Edit is on.
     // web_search / web_fetch always offered (no product kill-switch).
     // Edit-mode approvals may rewrite args after the user edits the card.
     return tools.map((tool) => ({
       ...tool,
       execute: (toolCallId, params, signal, onUpdate) => {
-        // Defense in depth: even if a blocked tool is still wired, refuse at execute.
-        if (
-          conversation.fileReadOnly &&
-          FILE_READONLY_BLOCKED_TOOLS.has(tool.name as ToolName)
-        ) {
+        const live = this.deps.conversations.get(conversationId)
+        const readOnly = !!live?.fileReadOnly
+        // Defense in depth: refuse writes while the session is still Read.
+        if (readOnly && FILE_READONLY_BLOCKED_TOOLS.has(tool.name as ToolName)) {
           return Promise.resolve({
             content: [
               {
                 type: 'text' as const,
-                text: 'Read-only session: this tool is disabled. Switch the preview to Edit (or convert/Save As) before writing files.'
+                text: 'Read-only session: call switch_mode with mode "edit" first (user may need to Approve), or ask them to switch the preview to Edit / convert / Save As.'
               }
             ],
             details: {
-              display: '已拦截：当前为 Read 模式，写文件工具已禁用。',
+              display: '已拦截：当前为 Read 模式 — 先 switch_mode → Edit。',
               failed: true
             }
           })
         }
-        if (conversation.fileReadOnly && tool.name === 'terminal') {
+        if (readOnly && tool.name === 'terminal') {
           const command =
             params && typeof params === 'object' && 'command' in params
               ? String((params as { command: unknown }).command ?? '')
@@ -1027,7 +1039,7 @@ export class AgentRuntime {
               content: [
                 {
                   type: 'text' as const,
-                  text: `Read-only session: refused non-read-only shell command. Use ls/cat/grep/rg/head/tail (no redirects or mutators).\nRefused: ${command}`
+                  text: `Read-only session: refused non-read-only shell command. Call switch_mode (mode: "edit") first, or use ls/cat/grep/rg/head/tail.\nRefused: ${command}`
                 }
               ],
               details: {
@@ -1041,6 +1053,35 @@ export class AgentRuntime {
         return tool.execute(toolCallId, (override ?? params) as typeof params, signal, onUpdate)
       }
     }))
+  }
+
+  /**
+   * Flip file-preview Read/Edit from the agent (`switch_mode`) or shared helper.
+   * Returns an error message when the open file cannot edit in-place.
+   */
+  private setConversationFileReadOnly(
+    conversationId: string,
+    readOnly: boolean
+  ): string | null {
+    const conversation = this.deps.conversations.get(conversationId)
+    if (!conversation) return 'Conversation not found.'
+    if (!readOnly) {
+      const path =
+        conversation.focusedFilePath ||
+        (conversation.fileId && this.deps.fileSessions
+          ? this.deps.fileSessions.pathForFileId(conversation.fileId)
+          : null)
+      if (isFileEditLockedPath(path)) {
+        return (
+          'This format cannot switch to Edit in-place (PDF / HEIC / legacy Office / ZIP). ' +
+          'Ask the user to convert or Save As from the preview chrome.'
+        )
+      }
+    }
+    if (!!conversation.fileReadOnly === readOnly) return null
+    this.deps.conversations.updateMeta(conversationId, { fileReadOnly: readOnly })
+    this.deps.onFileReadOnlyChange?.(conversationId, readOnly)
+    return null
   }
 
   /**
@@ -1067,18 +1108,19 @@ export class AgentRuntime {
         : ''
 
     // File Preview Read: hard-block write tools / mutating shell before approval UI.
-    if (conversation?.fileReadOnly) {
+    // switch_mode itself is allowed through so the user can Approve → Edit.
+    if (conversation?.fileReadOnly && name !== 'switch_mode') {
       if (FILE_READONLY_BLOCKED_TOOLS.has(name)) {
         return {
           block: true,
           reason:
-            'Read-only session: write tools are disabled. Switch to Edit (or convert/Save As) first.'
+            'Read-only session: call switch_mode with mode "edit" first (or ask the user to switch / convert / Save As).'
         }
       }
       if (name === 'terminal' && command && !isReadonlyTerminalCommand(command)) {
         return {
           block: true,
-          reason: `Read-only session: only read-only shell commands are allowed (refused: ${command.slice(0, 120)})`
+          reason: `Read-only session: only read-only shell commands are allowed until Edit (refused: ${command.slice(0, 120)})`
         }
       }
     }

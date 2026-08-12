@@ -14,7 +14,6 @@ import {
   X
 } from 'lucide-react'
 import type { ApprovalMode } from '@shared/types'
-import { PRESET_MODELS } from '@shared/types'
 import type { MessageKey, TParams } from '@shared/i18n'
 import {
   MESSAGE_QUEUE_MAX,
@@ -31,6 +30,7 @@ import { resolveSendKeyMode, shouldSendOnKeyDown } from '../lib/composerSendKey'
 import { isPickGestureActive } from '../lib/clickPick'
 import { useT } from '../i18n/useT'
 import { Button } from './ui'
+import { AgentModelPicker } from './AgentModelPicker'
 
 const NO_QUEUE: QueuedMessage[] = []
 
@@ -177,8 +177,6 @@ export function Composer({
   const queueLen = useSessionStore((s) => (s.messageQueues[conversationId] ?? NO_QUEUE).length)
   const queueFull = queueLen >= MESSAGE_QUEUE_MAX
   const sendKeySetting = useSessionStore((s) => s.settings.sendKey)
-  const defaultModel = useSessionStore((s) => s.settings.defaultModel)
-  const customModels = useSessionStore((s) => s.settings.customModels)
   const focusTick = useSessionStore((s) => s.composerFocusTick)
 
   const setDraft = useSessionStore((s) => s.setDraft)
@@ -186,7 +184,6 @@ export function Composer({
   const setPreviewRefs = useSessionStore((s) => s.setPreviewRefs)
   const send = useSessionStore((s) => s.send)
   const cancel = useSessionStore((s) => s.cancel)
-  const setModel = useSessionStore((s) => s.setModel)
   const setApprovalMode = useSessionStore((s) => s.setApprovalMode)
 
   const textareaRef = useRef<HTMLTextAreaElement>(null)
@@ -268,23 +265,6 @@ export function Composer({
     element.style.height = `${next}px`
     element.style.overflowY = element.scrollHeight > maxHeight + 1 ? 'auto' : 'hidden'
   }, [draft, focused, inputDisabled])
-
-  const activeModel = conversation?.model ?? defaultModel
-
-  const modelItems = useMemo((): MenuItem[] => {
-    if (!conversationId) return []
-    const custom = customModels.map((id) => ({
-      label: id,
-      checked: id === activeModel,
-      onSelect: () => void setModel(conversationId, id)
-    }))
-    const presets = PRESET_MODELS.map((model) => ({
-      label: model.label,
-      checked: model.id === activeModel,
-      onSelect: () => void setModel(conversationId, model.id)
-    }))
-    return custom.length ? [...presets, { label: '', divider: true }, ...custom] : presets
-  }, [customModels, conversationId, activeModel, setModel])
 
   const approvalItems = useMemo((): MenuItem[] => {
     if (!conversation) return []
@@ -435,26 +415,7 @@ export function Composer({
         />
 
         <div className="composer-bar">
-          <button
-            type="button"
-            className="model-picker"
-            title={
-              PRESET_MODELS.find((m) => m.id === activeModel)?.label ?? activeModel
-            }
-            aria-label={t('composer.model')}
-            disabled={!conversation}
-            onClick={(event) => {
-              event.preventDefault()
-              event.stopPropagation()
-              if (!conversation) return
-              void showMenu(modelItems, menuAnchor(event.currentTarget as HTMLElement))
-            }}
-          >
-            <span className="model-name">
-              {PRESET_MODELS.find((m) => m.id === activeModel)?.label ?? activeModel}
-            </span>
-            <ChevronDown size={11} />
-          </button>
+          {conversationId ? <AgentModelPicker conversationId={conversationId} /> : null}
 
           <button
             type="button"

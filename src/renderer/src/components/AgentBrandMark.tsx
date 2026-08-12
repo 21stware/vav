@@ -9,13 +9,13 @@ import antigravityIcon from '../assets/agents/antigravity.png'
 import kiroIcon from '../assets/agents/kiro.svg'
 import opencodeIcon from '../assets/agents/opencode.svg'
 import clineIcon from '../assets/agents/cline.svg'
-// Product mark — full app-icon plates (Any light / Any dark). Theme via CSS, no invert.
-import vavIcon from '../assets/agents/vav-mark.png'
-import vavIconDark from '../assets/agents/vav-mark-dark.png'
+// VAV: line graphic (wordmark), not the app-icon plate.
+import vavGlyph from '../assets/wordmark.png'
+import vavGlyphDark from '../assets/wordmark-dark.png'
 
-/** Official / catalogue brand marks from `assets/agents/`. */
+/** Official / catalogue brand marks from `assets/agents/` (+ VAV glyph). */
 const AGENT_ICONS: Record<string, string> = {
-  vav: vavIcon,
+  vav: vavGlyph,
   claude: claudeIcon,
   codex: codexIcon,
   cursor: cursorIcon,
@@ -34,7 +34,7 @@ const AGENT_ICONS: Record<string, string> = {
  * Theme adaptation (glyphs must stay readable on light + dark chips):
  * - `is-mono` — dark monochrome (cursor, grok, lobe currentColor marks): invert on dark
  * - `is-mono-on-dark` — light monochrome (pi ships white): invert on light
- * - vav — dual PNG plates (light / dark Any); never invert (solid app icon)
+ * - vav — dual wordmark glyphs (light / dark); never the solid app-icon plate
  */
 export function AgentBrandMark({
   agent,
@@ -78,8 +78,8 @@ export function AgentBrandMark({
     .filter(Boolean)
     .join(' ')
 
-  // Full-bleed app icon fills the chip; other logos keep a small inset.
-  const imgSize = Math.round(size * (isVav ? 1 : 0.72))
+  // Same inset as other catalogue glyphs (VAV is a graphic, not a full-bleed plate).
+  const imgSize = Math.round(size * 0.72)
 
   return (
     <span className={classes} style={{ width: size, height: size }} title={agent.name}>
@@ -87,7 +87,7 @@ export function AgentBrandMark({
         <>
           <img
             className="logo-light"
-            src={vavIcon}
+            src={vavGlyph}
             alt=""
             width={imgSize}
             height={imgSize}
@@ -95,7 +95,7 @@ export function AgentBrandMark({
           />
           <img
             className="logo-dark"
-            src={vavIconDark}
+            src={vavGlyphDark}
             alt=""
             width={imgSize}
             height={imgSize}

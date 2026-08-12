@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { TINT_ACCENT, type FixedColorTint } from '@shared/colorTints'
 import { COLOR_TINTS, type ColorTint } from '@shared/types'
 import { useSessionStore } from '../state/sessionStore'
 import { IS_MAC } from './platform'
@@ -75,18 +76,31 @@ function accentFg(rgb: Rgb): string {
 }
 
 /**
- * Derive the full accent token family from a raw OS accent hex.
- * Mirrors the fixed-tint CSS blocks (soft wash, selected surface, light cast).
+ * Derive the full accent token family from an accent hex.
+ *
+ * @param adapt - When true (OS system accent), lift/deepen extremes so unknown
+ *   colours stay readable. When false (fixed palette), keep the hex exact so
+ *   swatches match toggle / slider / buttons.
  */
-function systemTintVars(hex: string, theme: 'light' | 'dark'): Record<string, string> {
+function accentTintVars(
+  hex: string,
+  theme: 'light' | 'dark',
+  adapt: boolean
+): Record<string, string> {
   const base = parseHex(hex) ?? { r: 0, g: 122, b: 255 }
   const L = luminance(base)
 
   if (theme === 'dark') {
-    // Lift very dark system accents so they read on charcoal chrome.
-    const accent = L < 0.2 ? lighten(base, 0.45) : L < 0.45 ? lighten(base, 0.22) : base
+    // System only: lift very dark OS accents so they read on charcoal chrome.
+    const accent = adapt
+      ? L < 0.2
+        ? lighten(base, 0.45)
+        : L < 0.45
+          ? lighten(base, 0.22)
+          : base
+      : base
     const hover = lighten(accent, 0.12)
-    const text = lighten(accent, 0.22)
+    const text = lighten(accent, 0.18)
     const selected = {
       r: 0x12 + accent.r * 0.22,
       g: 0x12 + accent.g * 0.22,
@@ -97,34 +111,40 @@ function systemTintVars(hex: string, theme: 'light' | 'dark'): Record<string, st
     return {
       '--accent': accentHex,
       '--accent-hover': toHex(hover),
-      '--accent-soft': toRgba(accent, 0.18),
-      '--accent-veil': toRgba(accent, 0.08),
+      '--accent-soft': toRgba(accent, 0.2),
+      '--accent-veil': toRgba(accent, 0.09),
       '--accent-text': textHex,
       '--accent-fg': accentFg(accent),
       '--tone-list': accentHex,
       // Web tool labels / links track the accent (same as Agent role colour).
       '--tone-web': textHex,
       '--bg-selected': toHex(selected),
-      // Keep dark surfaces neutral (same as fixed dark tints).
+      // Keep dark surfaces neutral.
       '--bg-window': '#121213',
       '--bg-sunken': '#161617'
     }
   }
 
-  // Light theme: slightly deepen pale accents so buttons stay readable.
-  const accent = L > 0.72 ? darken(base, 0.18) : L > 0.55 ? darken(base, 0.08) : base
-  const hover = darken(accent, 0.12)
-  const text = darken(accent, 0.1)
-  const wash = lighten(accent, 0.88)
-  const selected = lighten(accent, 0.78)
-  const sunken = lighten(accent, 0.92)
+  // Light: system may deepen pale OS accents; fixed palette stays exact.
+  const accent = adapt
+    ? L > 0.72
+      ? darken(base, 0.18)
+      : L > 0.55
+        ? darken(base, 0.08)
+        : base
+    : base
+  const hover = darken(accent, 0.1)
+  const text = darken(accent, 0.08)
+  const wash = lighten(accent, 0.9)
+  const selected = lighten(accent, 0.82)
+  const sunken = lighten(accent, 0.93)
   const accentHex = toHex(accent)
   const textHex = toHex(text)
   return {
     '--accent': accentHex,
     '--accent-hover': toHex(hover),
-    '--accent-soft': toRgba(accent, 0.11),
-    '--accent-veil': toRgba(accent, 0.05),
+    '--accent-soft': toRgba(accent, 0.12),
+    '--accent-veil': toRgba(accent, 0.055),
     '--accent-text': textHex,
     '--accent-fg': accentFg(accent),
     '--tone-list': accentHex,
@@ -141,8 +161,13 @@ function clearSystemTintVars(root: HTMLElement): void {
   }
 }
 
-function applySystemTintVars(root: HTMLElement, hex: string, theme: 'light' | 'dark'): void {
-  const vars = systemTintVars(hex, theme)
+function applyAccentTintVars(
+  root: HTMLElement,
+  hex: string,
+  theme: 'light' | 'dark',
+  adapt: boolean
+): void {
+  const vars = accentTintVars(hex, theme, adapt)
   for (const [key, value] of Object.entries(vars)) {
     root.style.setProperty(key, value)
   }
@@ -215,9 +240,16 @@ export function useAppearance(): void {
     root.dataset.tint = tint
 
     if (tint === 'system') {
-      applySystemTintVars(root, systemAccent, resolvedTheme)
-    } else {
+      // Live OS accent — adapt extremes so unknown colours stay readable.
+      applyAccentTintVars(root, systemAccent, resolvedTheme, true)
+    } else if (tint === 'mono') {
+      // Drop inline overrides so base :root / dark mono tokens apply.
       clearSystemTintVars(root)
+    } else {
+      // Fixed hues: exact palette hex (swatch === toggle/slider), then soft tokens.
+      const fixed = tint as FixedColorTint
+      const hex = TINT_ACCENT[fixed][resolvedTheme]
+      applyAccentTintVars(root, hex, resolvedTheme, false)
     }
   }, [colorTint, systemAccent, resolvedTheme])
 

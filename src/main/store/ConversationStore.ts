@@ -18,13 +18,22 @@ import { randomUUID } from 'node:crypto'
 import type {
   ApprovalMode,
   ChatMessage,
+  CliHostKind,
   Conversation,
   ConversationMeta,
+  HostTranscriptBucket,
   LeafCompaction,
+  QuotaWindow,
   TokenSnapshot
 } from '@shared/types'
+import { hostTranscriptKey } from '@shared/types'
 import { removeCompaction, upsertCompaction } from '@shared/compaction'
-import { CACHE_TTL_MS, TOKEN_HISTORY_LIMIT } from '@shared/tokenUsage'
+import {
+  CACHE_TTL_MS,
+  TOKEN_HISTORY_LIMIT,
+  mergeQuotaWindows,
+  resolveContextWindow
+} from '@shared/tokenUsage'
 import { deepestLeaf, newestLeafId, threadPath } from '@shared/thread'
 import { defaultSessionTitle, isDefaultSessionTitle, t } from '@shared/i18n'
 import { currentLocale } from '../i18n'
@@ -108,13 +117,34 @@ export class ConversationStore {
       if (conversation.archivedAt === undefined) conversation.archivedAt = null
       if (!conversation.approvalMode) conversation.approvalMode = 'auto'
       if (!Array.isArray(conversation.tokenHistory)) conversation.tokenHistory = []
+      if (conversation.reportedSessionCostUsd === undefined) {
+        conversation.reportedSessionCostUsd = null
+      }
+      if (!Array.isArray(conversation.quotaWindows)) conversation.quotaWindows = []
       if (conversation.cacheCreatedAt === undefined) conversation.cacheCreatedAt = null
       if (conversation.cacheExpiresAt === undefined) conversation.cacheExpiresAt = null
       if (conversation.fileId === undefined) conversation.fileId = null
       if (conversation.fileReadOnly === undefined) conversation.fileReadOnly = false
       if (conversation.agentBinaryName === undefined) conversation.agentBinaryName = null
+      if (conversation.cliHost === undefined) conversation.cliHost = null
+      if (conversation.cliResumeCursor === undefined) conversation.cliResumeCursor = null
       if (conversation.focusedFilePath === undefined) conversation.focusedFilePath = null
       if (!Array.isArray(conversation.compactions)) conversation.compactions = []
+      if (!conversation.hostTranscripts || typeof conversation.hostTranscripts !== 'object') {
+        conversation.hostTranscripts = {}
+      } else {
+        for (const key of Object.keys(conversation.hostTranscripts)) {
+          const bucket = conversation.hostTranscripts[key]
+          if (!bucket || typeof bucket !== 'object') continue
+          if (typeof bucket.tokenLimit !== 'number') {
+            bucket.tokenLimit = resolveContextWindow(bucket.model ?? conversation.model)
+          }
+          if (bucket.reportedSessionCostUsd === undefined) {
+            bucket.reportedSessionCostUsd = null
+          }
+          if (!Array.isArray(bucket.quotaWindows)) bucket.quotaWindows = []
+        }
+      }
       // Legacy untitled titles from earlier builds; normalize to the current locale.
       if (isDefaultSessionTitle(conversation.title) && !conversation.fileId) {
         conversation.title = defaultSessionTitle(currentLocale())
@@ -142,6 +172,8 @@ export class ConversationStore {
           cacheCreatedAt: _created,
           cacheExpiresAt: _expires,
           compactions: _compactions,
+          hostTranscripts: _hostTranscripts,
+          quotaWindows: _quota,
           ...meta
         }) => {
           void _messages
@@ -149,6 +181,8 @@ export class ConversationStore {
           void _created
           void _expires
           void _compactions
+          void _hostTranscripts
+          void _quota
           return meta
         }
       )
@@ -167,9 +201,12 @@ export class ConversationStore {
       title?: string
       fileReadOnly?: boolean
       approvalMode?: import('@shared/types').ApprovalMode
+      /** Structured CLI host; null/omit = built-in VAV. */
+      cliHost?: CliHostKind | null
     }
   ): Conversation {
     const now = Date.now()
+    const cliHost = options?.cliHost ?? null
     const conversation: Conversation = {
       id: randomUUID(),
       title: options?.title ?? defaultSessionTitle(currentLocale()),
@@ -178,10 +215,12 @@ export class ConversationStore {
       workingDirectory,
       model,
       tokensUsed: 0,
-      tokenLimit: 200_000,
+      tokenLimit: resolveContextWindow(model),
       messages: [],
       activeLeafId: null,
       tokenHistory: [],
+      reportedSessionCostUsd: null,
+      quotaWindows: [],
       cacheCreatedAt: null,
       cacheExpiresAt: null,
       pinned: false,
@@ -193,9 +232,12 @@ export class ConversationStore {
       approvalMode: options?.approvalMode ?? 'auto',
       fileId: options?.fileId ?? null,
       fileReadOnly: options?.fileReadOnly ?? false,
-      agentBinaryName: null,
+      agentBinaryName: cliHost,
+      cliHost,
+      cliResumeCursor: null,
       focusedFilePath: null,
-      compactions: []
+      compactions: [],
+      hostTranscripts: {}
     }
     this.conversations.unshift(conversation)
     this.markDirty(conversation.id)
@@ -243,9 +285,18 @@ export class ConversationStore {
     if (!imported.title) imported.title = defaultSessionTitle(currentLocale())
     if (!imported.approvalMode) imported.approvalMode = 'auto'
     if (typeof imported.tokensUsed !== 'number') imported.tokensUsed = 0
-    if (typeof imported.tokenLimit !== 'number') imported.tokenLimit = 200_000
+    if (typeof imported.tokenLimit !== 'number') {
+      imported.tokenLimit = resolveContextWindow(imported.model)
+    }
+    if (imported.reportedSessionCostUsd === undefined) imported.reportedSessionCostUsd = null
+    if (!Array.isArray(imported.quotaWindows)) imported.quotaWindows = []
     if (imported.agentBinaryName === undefined) imported.agentBinaryName = null
+    if (imported.cliHost === undefined) imported.cliHost = null
+    if (imported.cliResumeCursor === undefined) imported.cliResumeCursor = null
     if (imported.focusedFilePath === undefined) imported.focusedFilePath = null
+    if (!imported.hostTranscripts || typeof imported.hostTranscripts !== 'object') {
+      imported.hostTranscripts = {}
+    }
     imported.compactions = (source.compactions ?? [])
       .map((c) => {
         const leafId = idMap.get(c.leafId)
@@ -292,6 +343,8 @@ export class ConversationStore {
       approvalMode: source.approvalMode ?? 'auto',
       activeLeafId: source.activeLeafId ? (idMap.get(source.activeLeafId) ?? null) : null,
       tokenHistory: [],
+      reportedSessionCostUsd: null,
+      quotaWindows: [],
       cacheCreatedAt: null,
       cacheExpiresAt: null,
       messages: source.messages.map((message) => ({
@@ -303,6 +356,42 @@ export class ConversationStore {
     this.conversations.unshift(copy)
     this.markDirty(copy.id)
     return copy
+  }
+
+  /**
+   * Park the active host's transcript and restore the target host's bucket.
+   * Each host keeps its own history; there is no cross-host context handoff.
+   */
+  switchHostTranscript(
+    id: string,
+    nextHost: CliHostKind | null
+  ): Conversation | undefined {
+    const conversation = this.get(id)
+    if (!conversation) return undefined
+    if (!conversation.hostTranscripts) conversation.hostTranscripts = {}
+
+    const prevKey = hostTranscriptKey(conversation.cliHost)
+    const nextKey = hostTranscriptKey(nextHost)
+    if (prevKey === nextKey) return conversation
+
+    // Park current live tree under the previous host.
+    conversation.hostTranscripts[prevKey] = snapshotHostBucket(conversation)
+
+    const parked = conversation.hostTranscripts[nextKey]
+    applyHostBucket(conversation, parked ?? emptyHostBucket())
+    if (!parked) {
+      conversation.tokenLimit = resolveContextWindow(conversation.model)
+      conversation.reportedSessionCostUsd = null
+      conversation.quotaWindows = []
+    }
+    // Active bucket is live on the conversation — drop the stale parked copy.
+    delete conversation.hostTranscripts[nextKey]
+
+    conversation.cliHost = nextHost
+    conversation.agentBinaryName = nextHost
+    conversation.updatedAt = Date.now()
+    this.markDirty(id)
+    return conversation
   }
 
   /**
@@ -411,6 +500,49 @@ export class ConversationStore {
     if (!conversation) return
     conversation.tokensUsed = Math.max(0, Math.round(tokens))
     this.markDirty(id)
+  }
+
+  setTokenLimit(id: string, limit: number): void {
+    const conversation = this.get(id)
+    if (!conversation) return
+    const next = Math.max(1, Math.round(limit))
+    if (conversation.tokenLimit === next) return
+    conversation.tokenLimit = next
+    this.markDirty(id)
+  }
+
+  setReportedSessionCostUsd(id: string, costUsd: number | null): void {
+    const conversation = this.get(id)
+    if (!conversation) return
+    const next =
+      costUsd == null || !Number.isFinite(costUsd) ? null : Math.max(0, costUsd)
+    if (conversation.reportedSessionCostUsd === next) return
+    conversation.reportedSessionCostUsd = next
+    this.markDirty(id)
+  }
+
+  /**
+   * Merge live CLI quota windows (by id). Returns true when the stored list changed.
+   */
+  mergeQuotaWindows(id: string, incoming: QuotaWindow[]): boolean {
+    const conversation = this.get(id)
+    if (!conversation || incoming.length === 0) return false
+    const next = mergeQuotaWindows(conversation.quotaWindows, incoming)
+    const prev = conversation.quotaWindows ?? []
+    if (
+      prev.length === next.length &&
+      prev.every(
+        (w, i) =>
+          w.id === next[i]!.id &&
+          w.usedPercent === next[i]!.usedPercent &&
+          w.resetsAt === next[i]!.resetsAt
+      )
+    ) {
+      return false
+    }
+    conversation.quotaWindows = next
+    this.markDirty(id)
+    return true
   }
 
   /** Append a usage sample and refresh cache TTL when a write was observed. */
@@ -773,4 +905,57 @@ export class ConversationStore {
       /* ignore missing */
     }
   }
+}
+
+function emptyHostBucket(): HostTranscriptBucket {
+  return {
+    messages: [],
+    activeLeafId: null,
+    tokenHistory: [],
+    tokensUsed: 0,
+    tokenLimit: 200_000,
+    reportedSessionCostUsd: null,
+    quotaWindows: [],
+    cacheCreatedAt: null,
+    cacheExpiresAt: null,
+    compactions: [],
+    cliResumeCursor: null,
+    model: null
+  }
+}
+
+function snapshotHostBucket(conversation: Conversation): HostTranscriptBucket {
+  return {
+    messages: conversation.messages.map((m) => structuredClone(m)),
+    activeLeafId: conversation.activeLeafId,
+    tokenHistory: [...(conversation.tokenHistory ?? [])],
+    tokensUsed: conversation.tokensUsed ?? 0,
+    tokenLimit: conversation.tokenLimit ?? 200_000,
+    reportedSessionCostUsd: conversation.reportedSessionCostUsd ?? null,
+    quotaWindows: [...(conversation.quotaWindows ?? [])],
+    cacheCreatedAt: conversation.cacheCreatedAt ?? null,
+    cacheExpiresAt: conversation.cacheExpiresAt ?? null,
+    compactions: structuredClone(conversation.compactions ?? []),
+    cliResumeCursor: conversation.cliResumeCursor
+      ? structuredClone(conversation.cliResumeCursor)
+      : null,
+    model: conversation.model ?? null
+  }
+}
+
+function applyHostBucket(conversation: Conversation, bucket: HostTranscriptBucket): void {
+  conversation.messages = bucket.messages.map((m) => structuredClone(m))
+  conversation.activeLeafId = bucket.activeLeafId
+  conversation.tokenHistory = [...bucket.tokenHistory]
+  conversation.tokensUsed = bucket.tokensUsed
+  conversation.tokenLimit = bucket.tokenLimit ?? resolveContextWindow(bucket.model)
+  conversation.reportedSessionCostUsd = bucket.reportedSessionCostUsd ?? null
+  conversation.quotaWindows = [...(bucket.quotaWindows ?? [])]
+  conversation.cacheCreatedAt = bucket.cacheCreatedAt
+  conversation.cacheExpiresAt = bucket.cacheExpiresAt
+  conversation.compactions = structuredClone(bucket.compactions)
+  conversation.cliResumeCursor = bucket.cliResumeCursor
+    ? structuredClone(bucket.cliResumeCursor)
+    : null
+  if (bucket.model) conversation.model = bucket.model
 }

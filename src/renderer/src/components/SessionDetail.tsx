@@ -7,11 +7,12 @@ import {
   type ReactNode,
   type RefObject
 } from 'react'
-import { Clock, Columns2, Plus, Rows2, Search } from 'lucide-react'
+import { Clock, Plus, Search } from 'lucide-react'
 import { buildWorkspaceFocusContext } from '@shared/agentContextInject'
 import { DEFAULT_CLI_AGENTS, enabledCliAgents, type AgentConfig } from '@shared/types'
 import type { FileSessionMeta } from '@shared/ipc'
 import { handoffFocusToCli } from '../lib/cliFocusHandoff'
+import { focusAgentPane } from '../lib/uiFocus'
 import { focusCliAgentPickerFirstOption } from './CliAgentPicker'
 import { useSessionStore } from '../state/sessionStore'
 import { CLI_SURFACE_KEY, useWorkspaceStore } from '../state/workspaceStore'
@@ -27,8 +28,6 @@ import { AgentInstallPanel } from './AgentInstallPanel'
 import { teardownInlineTerminal } from './InlineTerminal'
 import { Button, EmptyState } from './ui'
 import { ShellLeadingControls } from './ShellLeadingControls'
-import wordmark from '../assets/wordmark.png'
-import wordmarkDark from '../assets/wordmark-dark.png'
 import {
   clearAgentBinaryCache,
   getAgentBinaryCache,
@@ -493,7 +492,6 @@ export function SessionDetail({
       <AgentModeChrome
         conversationId={activeId}
         agentBinaryName={agentKey}
-        showSplits={!isVavMode && probe === 'ready'}
         showSearch={isVavMode}
         showShellLeading={showShellLeading}
         fileSessionChrome={chromeSession}
@@ -660,14 +658,13 @@ export function SessionDetail({
 }
 
 /**
- * Agent chrome: VAV | CLI Agent screen switch.
- * CLI Screen holds panes (splits); agent types are chosen in-pane, not as tabs.
+ * Agent chrome: VAV built-in | structured CLI host | raw Terminal screen.
+ * Structured hosts share Transcript/Composer with VAV; Terminal is the PTY UI.
  */
 export function AgentModeChrome({
   conversationId,
   agentBinaryName: _agentBinaryName,
-  showSplits = false,
-  /** Transcript find only — hide for CLI / terminal hosts (no chat stream). */
+  /** Transcript find only — hide for raw terminal hosts (no chat stream). */
   showSearch = true,
   /** Sidebar collapsed / floating: toggle + new ahead of the agent select. */
   showShellLeading = false,
@@ -676,17 +673,15 @@ export function AgentModeChrome({
 }: {
   conversationId: string
   agentBinaryName: string | null
-  showSplits?: boolean
   showSearch?: boolean
   showShellLeading?: boolean
   fileSessionChrome?: FileSessionChromeProps | null
 }): React.JSX.Element {
   const t = useT()
-  // Screen-level mode only — panes live inside the CLI Screen, not as agent tabs.
   const cliMode = useWorkspaceStore((s) => !!s.workspaces[conversationId]?.cliMode)
-  const isVav = !cliMode
+  const isTerminal = cliMode
+  const isChat = !cliMode
   void _agentBinaryName
-  void showSplits
 
   const ensureConversation = async (): Promise<string | null> => {
     let targetId = conversationId
@@ -697,29 +692,27 @@ export function AgentModeChrome({
     return targetId || null
   }
 
-  const switchToVav = async (): Promise<void> => {
+  /** Leave Terminal / PTY and return to Composer + Transcript. */
+  const openChatMode = async (): Promise<void> => {
+    if (useSessionStore.getState().search.open) {
+      useSessionStore.getState().closeSearch()
+    }
     const targetId = await ensureConversation()
     if (!targetId) return
-    // exitCliMode persists cliMode=false to main; park clears the active host
-    // pointer in this window without a second layout write.
     useWorkspaceStore.getState().exitCliMode(targetId)
     useWorkspaceStore.getState().parkAgentHost(targetId)
-    await useSessionStore.getState().setAgentBinaryName(targetId, null)
   }
 
-  /** Enter CLI Screen — restores existing Screen if present, else picker pane. */
-  const openCliMode = async (): Promise<void> => {
+  /** Raw PTY screen — restores existing Screen if present, else picker pane. */
+  const openTerminalMode = async (): Promise<void> => {
     if (useSessionStore.getState().search.open) {
       useSessionStore.getState().closeSearch()
     }
     const targetId = await ensureConversation()
     if (!targetId) return
     useWorkspaceStore.getState().enterCliMode(targetId)
-  }
-
-  const splitWithPicker = (axis: 'row' | 'column'): void => {
-    if (!conversationId) return
-    splitCliAndFocusPicker(conversationId, axis)
+    // Leave the segment button — keyboard (←/→/Enter, xterm) needs the pane.
+    focusAgentPane(targetId)
   }
 
   const searchOpen = useSessionStore((s) => s.search.open)
@@ -727,9 +720,7 @@ export function AgentModeChrome({
   const closeSearch = useSessionStore((s) => s.closeSearch)
   const fs = fileSessionChrome
 
-  // Full file-session chrome only when VAV has real sessions (file-preview).
-  // Session shell only passes trail (preview toggle) with empty sessions.
-  const showFileSessionChrome = !!(fs && isVav && fs.sessions.length > 0)
+  const showFileSessionChrome = !!(fs && isChat && fs.sessions.length > 0)
 
   return (
     <div
@@ -745,56 +736,31 @@ export function AgentModeChrome({
         <div
           className="agent-mode-segment"
           role="group"
-          aria-label={t('agents.selector')}
+          aria-label={t('agents.surfaceSelector')}
           title={t('agents.switchHint')}
         >
-          {/* VAV: icon only (empty-state mark). CLI Agents: label with trailing “s”. */}
           <button
             type="button"
-            className={`agent-mode-segment-btn is-icon-only${isVav ? ' is-active' : ''}`}
-            title={t('agents.plainShell')}
-            aria-label={t('agents.plainShell')}
-            onClick={() => void switchToVav()}
+            className={`agent-mode-segment-btn${isChat ? ' is-active' : ''}`}
+            title={t('agents.chatModeHint')}
+            onClick={() => void openChatMode()}
           >
-            <span className="agent-mode-vav-icon" aria-hidden>
-              <img className="logo-light" src={wordmark} alt="" width={16} height={16} draggable={false} />
-              <img className="logo-dark" src={wordmarkDark} alt="" width={16} height={16} draggable={false} />
-            </span>
+            <span>{t('agents.chatMode')}</span>
           </button>
           <button
             type="button"
-            className={`agent-mode-segment-btn${!isVav ? ' is-active' : ''}`}
-            title={t('agents.cliModeHint')}
-            onClick={() => void openCliMode()}
+            className={`agent-mode-segment-btn${isTerminal ? ' is-active' : ''}`}
+            title={t('agents.terminalModeHint')}
+            onClick={() => void openTerminalMode()}
           >
-            <span>{t('agents.cliMode')}</span>
+            <span>{t('agents.terminalMode')}</span>
           </button>
         </div>
 
-        {/* File-preview VAV only — session shell / CLI never show title here. */}
         {showFileSessionChrome ? (
           <span className="agent-mode-session-title" title={fs!.title}>
             {fs!.title || t('common.session')}
           </span>
-        ) : null}
-
-        {!isVav ? (
-          <>
-            <Button
-              icon={<Columns2 size={13} />}
-              size="sm"
-              variant="ghost"
-              title={`${t('agents.splitRight')} (${keys('⌘D')})`}
-              onClick={() => splitWithPicker('row')}
-            />
-            <Button
-              icon={<Rows2 size={13} />}
-              size="sm"
-              variant="ghost"
-              title={`${t('agents.splitDown')} (${keys('⌘⇧D')})`}
-              onClick={() => splitWithPicker('column')}
-            />
-          </>
         ) : null}
 
         {showFileSessionChrome ? (
@@ -821,7 +787,7 @@ export function AgentModeChrome({
         <span className="spacer" />
 
         {/* Search flush-right (before file-preview toggle). */}
-        {showSearch && isVav ? (
+        {showSearch && isChat ? (
           <Button
             icon={<Search size={13} />}
             size="sm"

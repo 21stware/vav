@@ -5,6 +5,7 @@ import {
   ChevronDown,
   ChevronUp,
   Folder,
+  GitBranch,
   Terminal as TerminalIcon,
   Unplug
 } from 'lucide-react'
@@ -76,6 +77,8 @@ export function ToolsPanel({
   const pathChipRef = useRef<HTMLDivElement>(null)
   const bodyRef = useRef<HTMLDivElement>(null)
   const seenMenuNonce = useRef(0)
+  /** Path chip glyph: git branch when the workdir is a repository. */
+  const [workdirIsGit, setWorkdirIsGit] = useState(false)
 
   /**
    * Switching sessions restores that conversation's tray state. The tray must
@@ -98,6 +101,31 @@ export function ToolsPanel({
 
   const workdir = conversation?.workingDirectory ?? null
   const temporary = isTemporaryWorkspace(workdir, tmp)
+
+  useEffect(() => {
+    let cancelled = false
+    if (!workdir || temporary || !window.vav?.git?.status) {
+      setWorkdirIsGit(false)
+      return
+    }
+    void window.vav.git
+      .status(workdir)
+      .then((snap) => {
+        if (!cancelled) setWorkdirIsGit(!!snap.isRepo)
+      })
+      .catch(() => {
+        if (!cancelled) setWorkdirIsGit(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [workdir, temporary])
+
+  // Session / workdir switches must dismiss the path-chip native menu (⌘⇧O /
+  // context menu). AppKit does not always close it when only the renderer swaps.
+  useEffect(() => {
+    void window.vav.window.closePopupMenu?.()
+  }, [activeId, workdir])
   const pathRevealed = useSessionStore((s) => s.workdirPathRevealed[s.activeId] === true)
   // File session: show "Enclosed dir" until user switches workdir (like Temporary → Workspace).
   const useEnclosedLabel =
@@ -154,6 +182,7 @@ export function ToolsPanel({
     const onMove = (event: MouseEvent): void => {
       const state = dragState.current
       if (!state) return
+      // Grip sits above the tray body: drag up → taller, drag down → shorter.
       const next = state.startHeight - (event.clientY - state.startY)
       setDragHeight(Math.min(PANEL_MAX_HEIGHT, Math.max(PANEL_MIN_HEIGHT, next)))
     }
@@ -337,8 +366,6 @@ export function ToolsPanel({
       data-tools-mode={headerMode}
       data-has-session={activeId ? 'true' : 'false'}
     >
-      {!collapsed && <div className="panel-resizer" onMouseDown={onResizeStart} />}
-
       <div className="tools-header" data-mode={headerMode}>
         <div className="tools-header-lead">
           {/* Path chip opens Files. File sessions use Enclosed dir (no switch).
@@ -346,7 +373,9 @@ export function ToolsPanel({
           <div className="workdir-chip" ref={pathChipRef}>
             <Chip
               label={label}
-              icon={<Folder size={12} />}
+              icon={
+                workdirIsGit && !rootMissing ? <GitBranch size={12} /> : <Folder size={12} />
+              }
               title={pathTitle}
               active={filesOn}
               danger={rootMissing}
@@ -467,6 +496,9 @@ export function ToolsPanel({
           />
         </div>
       </div>
+
+      {/* Below path/tabs chrome, above the tray body — not under the window edge. */}
+      {!collapsed && <div className="panel-resizer" onMouseDown={onResizeStart} />}
 
       <div
         className="tools-body"

@@ -68,24 +68,23 @@ export default function SessionWindow({
     return !s.workspaces[conversationId]?.cliMode
   })
 
-  // CLI Screen splits: any pane tree on the unified surface (not per-agent host).
-  const showSplits = useWorkspaceStore((s) => {
-    if (!conversationId) return false
-    const ws = s.workspaces[conversationId]
-    if (!ws?.cliMode) return false
-    const surface =
-      ws.agentHostSessions['__cli__'] ??
-      (ws.activeHostAgentId ? ws.agentHostSessions[ws.activeHostAgentId] : null)
-    return Boolean(surface?.layout && (surface.tabs?.length ?? 0) > 0)
-  })
-
-  const scheduleFocus = (reason: string): void => {
+  /** Focus CLI pane or VAV composer based on hydrated cliMode (not always composer). */
+  const scheduleSurfaceFocus = (conversationId: string, reason: string): void => {
     const gen = ++focusGenRef.current
     requestAnimationFrame(() => {
       requestAnimationFrame(() => {
         if (gen !== focusGenRef.current) return
-        useSessionStore.getState().focusComposer()
-        markSession(reason)
+        void (async () => {
+          if (gen !== focusGenRef.current) return
+          const { applySessionSurfaceFocus } = await import('./lib/sessionFocus')
+          const cli = useWorkspaceStore.getState().workspaces[conversationId]?.cliMode === true
+          await applySessionSurfaceFocus({
+            conversationId,
+            toast: null,
+            surface: cli ? 'cli' : 'vav'
+          })
+          if (gen === focusGenRef.current) markSession(reason)
+        })()
       })
     })
   }
@@ -108,7 +107,7 @@ export default function SessionWindow({
             collapseTools: collapseToolsBoot
           })
           markSession('boot:cold-claimed')
-          scheduleFocus('focus-composer-cold')
+          scheduleSurfaceFocus(initialConversationId, 'focus-surface-cold')
         }
       }
       window.vav.window.sessionShellReady?.()
@@ -139,7 +138,7 @@ export default function SessionWindow({
       }
       setConversationId(payload.conversationId)
       markSession('navigate:claimed')
-      scheduleFocus('focus-composer')
+      scheduleSurfaceFocus(payload.conversationId, 'focus-surface-navigate')
     })
     return () => off?.()
     // eslint-disable-next-line react-hooks/exhaustive-deps -- stable subscribe
@@ -154,6 +153,24 @@ export default function SessionWindow({
     const offWindow = installWindowBridge()
     const offUpdates = installUpdateBridge()
     const offMenu = installDefaultContextMenu()
+    // Tray / notify: main may raise this companion and ask for CLI pane focus.
+    const offCli = window.vav.onCliOpen((event) => {
+      if (!event.conversationId) return
+      // Only handle opens for this companion's session (or warm shell claiming).
+      if (conversationId && event.conversationId !== conversationId) return
+      void (async () => {
+        if (!conversationId && event.conversationId) {
+          setConversationId(event.conversationId)
+        }
+        // Cancel any pending composer-focus from navigate/reuse.
+        focusGenRef.current += 1
+        const { applySessionSurfaceFocus } = await import('./lib/sessionFocus')
+        await applySessionSurfaceFocus(event)
+        markSession(
+          event.surface === 'cli' || event.tabId ? 'focus-cli-pane' : 'focus-composer-cliOpen'
+        )
+      })()
+    })
     return () => {
       offTurn()
       offFs()
@@ -163,8 +180,9 @@ export default function SessionWindow({
       offWindow()
       offUpdates()
       offMenu()
+      offCli()
     }
-  }, [])
+  }, [conversationId])
 
   useAppearance()
   useTerminalAppearance()
@@ -198,7 +216,7 @@ export default function SessionWindow({
   return (
     <div className="app-shell session-window">
       {/*
-        Title bar: traffic lights + agent switcher / search / splits, then
+        Title bar: traffic lights + agent switcher / search, then
         Reveal in List. Agent chrome used to sit under this bar and felt like
         a second toolbar.
       */}
@@ -207,7 +225,6 @@ export default function SessionWindow({
           <AgentModeChrome
             conversationId={conversationId}
             agentBinaryName={agentBinaryName}
-            showSplits={showSplits}
             showSearch={isVavMode}
           />
         </div>

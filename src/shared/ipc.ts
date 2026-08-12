@@ -2,13 +2,18 @@ import type {
   AboutInfo,
   AppLocale,
   AppSettings,
+  ChatMessage,
+  CliHostKind,
   Conversation,
   ConversationMeta,
   ConversationPtyLayouts,
   DirectoryListing,
   DisplayCurrency,
   FileSortKey,
+  LeafCompaction,
   PreviewRef,
+  ProviderResumeCursor,
+  QuotaWindow,
   QuoteDraft,
   ShellKind,
   ThemeMode,
@@ -18,6 +23,7 @@ import type {
   ValidateKeyResult
 } from './types'
 import type { ChangeSet, UpdateState } from './changeSet'
+import type { GitResult, GitSnapshot } from './git'
 import type { Platform } from './platform'
 
 export interface Bootstrap {
@@ -215,6 +221,12 @@ export interface FileSessionListEntry {
 export interface TokenUsageViewPayload {
   conversationId: string
   model: string
+  /** Display label for {@link model} (host-aware; not raw VAV preset lookup). */
+  modelLabel: string
+  /** Provider / agent name shown under the model row. */
+  providerLabel: string
+  /** Structured CLI host, or null for built-in VAV. */
+  cliHost: CliHostKind | null
   tokensUsed: number
   tokenLimit: number
   history: TokenSnapshot[]
@@ -241,6 +253,31 @@ export interface TokenUsageViewPayload {
   contextTokens: number
   /** True when contextTokens is a post-compact estimate (not provider-reported). */
   contextTokensEstimated: boolean
+  /**
+   * Host-reported cumulative session cost in USD when available.
+   * Null → UI sums turn estimates instead.
+   */
+  reportedSessionCostUsd: number | null
+  /**
+   * True when the host has pushed real usage (history, fill, or reported cost).
+   * False → panel should say usage is not available yet, not pretend zeros are real.
+   */
+  hasProviderUsage: boolean
+  /**
+   * Cache expiry is an Anthropic-style TTL estimate after a cache write — not
+   * a live provider clock for every host.
+   */
+  cacheExpiryEstimated: boolean
+  /**
+   * Manual compact is VAV-history only. Hidden for structured CLI hosts
+   * (their native session context is unchanged by VAV compact).
+   */
+  compactAvailable: boolean
+  /**
+   * Live CLI subscription / rate-limit windows (only when the host stream
+   * reported a used percentage). Empty for VAV or hosts that never emit % .
+   */
+  quotaWindows: QuotaWindow[]
 }
 
 export interface CliOpenEvent {
@@ -248,6 +285,16 @@ export interface CliOpenEvent {
   toast: string | null
   /** Absolute file paths to seed the composer attachment strip (Dock / CLI file open). */
   attachments?: string[]
+  /**
+   * Which main surface to show after selecting the session.
+   * - `cli` — CLI Agents screen (tray live CLI panes, open/focus agent).
+   * - `vav` — built-in chat / composer (default when omitted).
+   */
+  surface?: 'vav' | 'cli'
+  /** CLI Screen tab id (PTY id) to select and focus. */
+  tabId?: string
+  /** Prefer a pane of this agent type when tabId is absent. */
+  agentId?: string
 }
 
 export type FilePreviewKind =
@@ -457,6 +504,31 @@ export interface VavApi {
     setModel(id: string, model: string): Promise<ConversationMeta[]>
     /** CLI agent id for new terminal splits (null = plain shell). */
     setAgentBinaryName(id: string, agentBinaryName: string | null): Promise<ConversationMeta[]>
+    /**
+     * Structured CLI host for Transcript/Composer (claude/codex/cursor/…).
+     * Null returns the session to the built-in VAV agent.
+     * Switching parks the previous host's transcript and restores this host's
+     * (each agent keeps its own history; no cross-host context handoff).
+     */
+    setCliHost(
+      id: string,
+      host: string | null
+    ): Promise<{
+      conversations: ConversationMeta[]
+      hostChanged: boolean
+      transcript: {
+        messages: ChatMessage[]
+        activeLeafId: string | null
+        compactions: LeafCompaction[]
+        tokenHistory: TokenSnapshot[]
+        tokensUsed: number
+        cacheCreatedAt: number | null
+        cacheExpiresAt: number | null
+        cliResumeCursor: ProviderResumeCursor | null
+        cliHost: CliHostKind | null
+        model: string
+      } | null
+    }>
     /** Workspace preview focus — carried into agent context. */
     setFocusedFile(id: string, path: string | null): Promise<ConversationMeta[]>
     setWorkingDirectory(id: string, path: string): Promise<ConversationMeta[]>
@@ -676,6 +748,33 @@ export interface VavApi {
     ): Promise<import('./previewBlock').PreviewBlock[] | null>
   }
 
+  /** Workspace git status / worktree / branch / diff (CLI wrapper). */
+  git: {
+    status(cwd: string): Promise<GitSnapshot>
+    diff(
+      cwd: string,
+      path: string,
+      opts?: { staged?: boolean }
+    ): Promise<GitResult<string>>
+    /** Blob at `ref:path` as base64 (image diffs). */
+    showBase64(
+      cwd: string,
+      path: string,
+      ref?: string
+    ): Promise<GitResult<{ base64: string | null; missing: boolean }>>
+    init(cwd: string): Promise<GitResult<GitSnapshot>>
+    createBranch(
+      cwd: string,
+      name: string,
+      opts?: { checkout?: boolean }
+    ): Promise<GitResult<{ branch: string }>>
+    checkoutBranch(cwd: string, name: string): Promise<GitResult<{ branch: string }>>
+    createWorktree(
+      cwd: string,
+      options: { path: string; newBranch?: string; branch?: string }
+    ): Promise<GitResult<{ path: string; branch: string | null }>>
+  }
+
   /** File Preview multi-session store (independent of sidebar conversations). */
   fileSessions: {
     open(path: string): Promise<FileSessionsState>
@@ -689,6 +788,10 @@ export interface VavApi {
       fileId: string
     ): Promise<{ path: string; pathStatus: FileSessionListEntry['pathStatus'] } | null>
     setReadOnly(sessionId: string, readOnly: boolean): Promise<void>
+    /** Agent or another window flipped Read/Edit — sync preview chrome. */
+    onReadOnlyChanged(
+      handler: (payload: { sessionId: string; readOnly: boolean }) => void
+    ): () => void
     rename(fileId: string, sessionId: string, title: string): Promise<FileSessionsState | null>
     delete(
       fileId: string,
@@ -704,6 +807,56 @@ export interface VavApi {
   /** Resolve a CLI agent binary on the login PATH (cached; pass force after install). */
   agents: {
     resolveBinary(candidates: string[], force?: boolean): Promise<string | null>
+    /**
+     * Models for a chat host. VAV → presets + customModels; CLI hosts → live
+     * probe of that agent's CLI when supported, else a documented fallback.
+     */
+    listModels(
+      host: string | null,
+      force?: boolean
+    ): Promise<{
+      host: string
+      models: import('./types').ModelOption[]
+      source: 'live' | 'static' | 'fallback'
+      error?: string
+    }>
+    /** Cached catalogues for all hosts (populated by background preload). */
+    getModelCatalog(): Promise<
+      Record<
+        string,
+        {
+          host: string
+          models: import('./types').ModelOption[]
+          source: 'live' | 'static' | 'fallback'
+          error?: string
+        }
+      >
+    >
+    /** Force / refresh background preload; returns the full catalog. */
+    preloadModels(force?: boolean): Promise<
+      Record<
+        string,
+        {
+          host: string
+          models: import('./types').ModelOption[]
+          source: 'live' | 'static' | 'fallback'
+          error?: string
+        }
+      >
+    >
+    onModelCatalogChanged(
+      handler: (
+        catalog: Record<
+          string,
+          {
+            host: string
+            models: import('./types').ModelOption[]
+            source: 'live' | 'static' | 'fallback'
+            error?: string
+          }
+        >
+      ) => void
+    ): () => void
   }
 
   pty: {
@@ -833,6 +986,11 @@ export interface VavApi {
       anchor?: { x: number; y: number; width: number; height: number }
     ): Promise<void>
     /**
+     * Pull the current context-window payload (panel is reused; no full bootstrap).
+     * Use on mount so a push that raced the subscription is not lost.
+     */
+    getTokenUsageView(): Promise<TokenUsageViewPayload | null>
+    /**
      * Token-usage panel hydrate payload (window is reused; no full bootstrap).
      * Prefer this over loading the whole app shell into the popup.
      */
@@ -844,6 +1002,8 @@ export interface VavApi {
       items: NativeMenuItem[],
       position?: { x: number; y: number }
     ): Promise<string | null>
+    /** Dismiss any open renderer-driven native popup (session switch / unmount). */
+    closePopupMenu(): Promise<void>
   }
 
   notifications: {
@@ -928,6 +1088,10 @@ export type MenuCommand =
   /** Ctrl+` — expand tools tray Terminal and focus bash. */
   | 'focus-bash'
   | 'switch-workdir'
+  /** ⌘⇧C — main surface CLI Agents. */
+  | 'switch-cli-mode'
+  /** ⌘⇧V — main surface VAV chat. */
+  | 'switch-vav-mode'
   | 'send'
   /** Stop the in-flight agent turn for the active session. */
   | 'cancel-turn'
@@ -991,6 +1155,7 @@ export const IPC = {
   convRename: 'vav:conv:rename',
   convSetModel: 'vav:conv:set-model',
   convSetAgentBinary: 'vav:conv:set-agent-binary',
+  convSetCliHost: 'vav:conv:set-cli-host',
   convSetFocusedFile: 'vav:conv:set-focused-file',
   convSetWorkdir: 'vav:conv:set-workdir',
   convPickWorkdir: 'vav:conv:pick-workdir',
@@ -1063,12 +1228,25 @@ export const IPC = {
   fileSessionsListAll: 'vav:file-sessions:list-all',
   fileSessionsResolve: 'vav:file-sessions:resolve',
   fileSessionsSetReadOnly: 'vav:file-sessions:set-read-only',
+  fileSessionReadOnlyChanged: 'vav:file-sessions:read-only-changed',
   fileSessionsRename: 'vav:file-sessions:rename',
   fileSessionsDelete: 'vav:file-sessions:delete',
   fileSessionsForceDelete: 'vav:file-sessions:force-delete',
   filesOpenWithDefault: 'vav:files:open-with-default',
 
+  gitStatus: 'vav:git:status',
+  gitDiff: 'vav:git:diff',
+  gitShowBase64: 'vav:git:show-base64',
+  gitInit: 'vav:git:init',
+  gitCreateBranch: 'vav:git:create-branch',
+  gitCheckoutBranch: 'vav:git:checkout-branch',
+  gitCreateWorktree: 'vav:git:create-worktree',
+
   agentsResolveBinary: 'vav:agents:resolve-binary',
+  agentsListModels: 'vav:agents:list-models',
+  agentsGetModelCatalog: 'vav:agents:get-model-catalog',
+  agentsPreloadModels: 'vav:agents:preload-models',
+  agentsModelCatalogChanged: 'vav:agents:model-catalog-changed',
   ptyCreate: 'vav:pty:create',
   ptyWrite: 'vav:pty:write',
   ptyResize: 'vav:pty:resize',
@@ -1089,6 +1267,7 @@ export const IPC = {
   windowOpenSettings: 'vav:window:open-settings',
   windowCloseSettings: 'vav:window:close-settings',
   windowPopupMenu: 'vav:window:popup-menu',
+  windowClosePopupMenu: 'vav:window:close-popup-menu',
   windowOpenSession: 'vav:window:open-session',
   windowRevealInList: 'vav:window:reveal-in-list',
   windowCloseDetached: 'vav:window:close-detached',
@@ -1097,6 +1276,7 @@ export const IPC = {
   windowDetachedChanged: 'vav:window:detached-changed',
   windowOpenFilePreview: 'vav:window:open-file-preview',
   windowOpenTokenUsage: 'vav:window:open-token-usage',
+  tokenUsageGetView: 'vav:token-usage:get-view',
   tokenUsageView: 'vav:token-usage:view',
   windowRelaunch: 'vav:window:relaunch',
   windowFullscreen: 'vav:window:fullscreen',

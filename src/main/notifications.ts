@@ -8,16 +8,52 @@ import {
   type NativeImage
 } from 'electron'
 import type { AppSettings } from '@shared/types'
-import { existsSync, readFileSync } from 'node:fs'
-import { dirname, join } from 'node:path'
+import { existsSync, unlinkSync } from 'node:fs'
+import { join } from 'node:path'
 import { APP_NAME, applyDockIcon, loadAppIcon } from './brand'
 import { t } from './i18n'
 
 /** One multi-res tray glyph for the process lifetime — avoid rebuild thrash. */
 let cachedTrayIcon: NativeImage | null = null
 
+/** Retired abstract tray art (wrong brand). Remove if still on disk. */
+function purgeRetiredTrayTemplates(): void {
+  const roots = [
+    process.resourcesPath,
+    join(process.cwd(), 'build'),
+    join(__dirname, '../../build'),
+    join(__dirname, '../../../build')
+  ]
+  const names = [
+    'trayTemplate.png',
+    'nina.v@example.com',
+    'carol.w@example.org',
+    'trayTemplate-2x.png',
+    'trayTemplate-3x.png'
+  ]
+  for (const root of roots) {
+    for (const name of names) {
+      const path = join(root, name)
+      try {
+        if (existsSync(path)) unlinkSync(path)
+      } catch {
+        // ignore
+      }
+    }
+  }
+}
+
 export type NotifyKind = 'turn-complete' | 'ask' | 'approval' | 'request'
 export type NotificationPermission = 'granted' | 'denied' | 'unknown'
+
+/** Tray / notification target — conversation plus optional CLI pane. */
+export type RunningSessionTarget = {
+  conversationId: string
+  title: string
+  surface: 'vav' | 'cli'
+  tabId?: string
+  agentId?: string
+}
 
 const IS_MAC = process.platform === 'darwin'
 const IS_WIN = process.platform === 'win32'
@@ -32,12 +68,12 @@ export class NotificationCenter {
   private tray: Tray | null = null
   private permissionAsked = false
   private runningCount = 0
-  private runningSessions: { id: string; title: string }[] = []
+  private runningSessions: RunningSessionTarget[] = []
   private lastPermission: NotificationPermission = 'unknown'
 
   constructor(
     private getSettings: () => AppSettings,
-    private onOpenConversation: (conversationId: string) => void,
+    private onOpenSession: (target: RunningSessionTarget) => void,
     private onOpenSettings: () => void,
     private onShowMain: () => void,
     _getMainWindow: () => BrowserWindow | null
@@ -97,7 +133,13 @@ export class NotificationCenter {
       body: truncate(body, 120),
       silent: !settings.notificationSound
     })
-    notification.on('click', () => this.onOpenConversation(conversationId))
+    notification.on('click', () =>
+      this.onOpenSession({
+        conversationId,
+        title: title,
+        surface: 'vav'
+      })
+    )
     notification.show()
   }
 
@@ -177,7 +219,7 @@ export class NotificationCenter {
       for (const row of this.runningSessions) {
         items.push({
           label: row.title,
-          click: () => this.onOpenConversation(row.id)
+          click: () => this.onOpenSession(row)
         })
       }
     }
@@ -191,7 +233,7 @@ export class NotificationCenter {
   }
 
   /** Call when turn activity changes so the tray menu lists live sessions. */
-  updateRunningSessions(sessions: { id: string; title: string }[]): void {
+  updateRunningSessions(sessions: RunningSessionTarget[]): void {
     this.runningSessions = sessions
     this.setRunningCount(sessions.length)
     this.refreshTrayMenu()
@@ -231,14 +273,18 @@ function readNotificationPermission(): NotificationPermission {
 }
 
 /**
- * Tray glyph:
- * - macOS: multi-resolution template PNGs (1x/2x/3x, black + alpha).
- *   Loading only the 22px 1x file made Retina menu-bar icons look soft /
- *   “over-drawn” — @2x/@3x assets were packaged but never attached.
- * - Windows / Linux: colour app mark with 1x+2x reps for the notification area.
+ * Tray glyph — derived from brand `icon-mark.png` (cat “a”), not the retired
+ * abstract `trayTemplate*.png` set (wrong art; deleted).
+ *
+ * - macOS: multi-res template (22/44/66pt) so Retina stays sharp; system
+ *   tints the mark light/dark via `setTemplateImage`.
+ * - Win/Linux: colour multi-res from the same mark.
  */
 function trayIcon(): NativeImage {
   if (cachedTrayIcon && !cachedTrayIcon.isEmpty()) return cachedTrayIcon
+
+  // Drop the wrong abstract trayTemplate set if present (dev build/ or old install).
+  purgeRetiredTrayTemplates()
 
   const built = buildTrayIcon()
   if (!built.isEmpty()) cachedTrayIcon = built
@@ -246,9 +292,17 @@ function trayIcon(): NativeImage {
 }
 
 function buildTrayIcon(): NativeImage {
+  const mark = loadBrandMarkSource()
+  if (mark && !mark.isEmpty()) {
+    if (IS_MAC) {
+      const template = trayTemplateFromMark(mark)
+      if (template && !template.isEmpty()) return template
+    }
+    const color = trayColorFromMark(mark)
+    if (color && !color.isEmpty()) return color
+  }
+
   if (IS_MAC) {
-    const multi = loadMacTrayTemplate()
-    if (multi && !multi.isEmpty()) return multi
     try {
       const named = nativeImage.createFromNamedImage('NSActionTemplate')
       if (named && !named.isEmpty()) {
@@ -260,68 +314,116 @@ function buildTrayIcon(): NativeImage {
     }
   }
 
-  const color = loadColorTrayIcon()
-  if (color && !color.isEmpty()) return color
-
-  console.warn('[tray] missing tray icon assets — status item may be blank')
+  console.warn('[tray] missing icon-mark — status item may be blank')
   return nativeImage.createEmpty()
 }
 
+/** Large brand mark used for Dock / tray (icon-mark preferred over full plate). */
+function loadBrandMarkSource(): NativeImage | null {
+  const path = resolveBrandAsset(['icon-mark.png', 'icon-mark-dark.png', 'icon.png'])
+  if (!path) return loadAppIcon('light') ?? null
+  const img = nativeImage.createFromPath(path)
+  return img.isEmpty() ? null : img
+}
+
 /**
- * Attach every available trayTemplate scale into one NSImage so the menu bar
- * picks the right bitmap instead of upscaling 22×22 into mush.
+ * Menu-bar template: black ink + alpha only (no plate fill).
+ * Feeding the full icon-mark (cream/black rounded square) as a template made
+ * the entire tile render as a solid black block — AppKit treats every opaque
+ * pixel as “ink”.
  */
-function loadMacTrayTemplate(): NativeImage | null {
-  const dir = resolveTrayTemplateDir()
-  if (!dir) return null
-
-  // Logical menu-bar size (points). Bitmaps: 22 / 44 / 66.
-  const reps: Array<{ file: string; scale: number }> = [
-    { file: 'trayTemplate.png', scale: 1 },
-    { file: 'trayTemplate@2x.png', scale: 2 },
-    { file: 'trayTemplate@3x.png', scale: 3 }
-  ]
-
+function trayTemplateFromMark(source: NativeImage): NativeImage | null {
   const image = nativeImage.createEmpty()
-  let added = 0
-  for (const rep of reps) {
-    const path = join(dir, rep.file)
-    if (!existsSync(path)) continue
-    try {
-      // Prefer buffer + scaleFactor: createFromPath(1x) alone never finds @2x siblings.
+  const sizes: Array<{ px: number; scale: number }> = [
+    { px: 22, scale: 1 },
+    { px: 44, scale: 2 },
+    { px: 66, scale: 3 }
+  ]
+  try {
+    for (const { px, scale } of sizes) {
+      const sil = silhouetteForTemplate(source, px)
+      if (!sil || sil.isEmpty()) continue
       image.addRepresentation({
-        scaleFactor: rep.scale,
-        buffer: readFileSync(path)
+        scaleFactor: scale,
+        width: px,
+        height: px,
+        buffer: sil.toPNG()
       })
-      added += 1
-    } catch (err) {
-      console.warn(`[tray] failed to add ${rep.file}`, err)
     }
+    if (image.isEmpty()) return null
+    image.setTemplateImage(true)
+    return image
+  } catch (err) {
+    console.warn('[tray] failed to build template from mark', err)
+    return null
   }
+}
 
-  if (added === 0) {
-    // Last resort: single file (may be blurry on HiDPI).
-    const fallbackPath = join(dir, 'trayTemplate.png')
-    if (!existsSync(fallbackPath)) return null
-    const single = nativeImage.createFromPath(fallbackPath)
-    if (single.isEmpty()) return null
-    single.setTemplateImage(true)
-    return single
+/**
+ * Convert a full-colour app mark into black-on-transparent ink for template images.
+ * Light plate (cream + dark cat) → dark pixels become ink.
+ * Dark plate (black + light cat) → light pixels become ink.
+ */
+function silhouetteForTemplate(source: NativeImage, px: number): NativeImage | null {
+  try {
+    const resized = source.resize({ width: px, height: px, quality: 'best' })
+    const { width, height } = resized.getSize()
+    if (width <= 0 || height <= 0) return null
+    // BGRA, premultiplied on some platforms — we recompute alpha from luminance.
+    const bgra = Buffer.from(resized.toBitmap())
+    if (bgra.length < width * height * 4) return null
+
+    // Sample corners to decide whether the plate is light or dark.
+    const cornerIdx = [
+      0,
+      (width - 1) * 4,
+      (height - 1) * width * 4,
+      ((height - 1) * width + (width - 1)) * 4
+    ]
+    let cornerLum = 0
+    for (const c of cornerIdx) {
+      const b = bgra[c] ?? 0
+      const g = bgra[c + 1] ?? 0
+      const r = bgra[c + 2] ?? 0
+      cornerLum += 0.2126 * r + 0.7152 * g + 0.0722 * b
+    }
+    cornerLum /= cornerIdx.length
+    const darkPlate = cornerLum < 128
+
+    for (let i = 0; i < bgra.length; i += 4) {
+      const b = bgra[i] ?? 0
+      const g = bgra[i + 1] ?? 0
+      const r = bgra[i + 2] ?? 0
+      const a = bgra[i + 3] ?? 0
+      if (a < 12) {
+        bgra[i] = 0
+        bgra[i + 1] = 0
+        bgra[i + 2] = 0
+        bgra[i + 3] = 0
+        continue
+      }
+      const lum = 0.2126 * r + 0.7152 * g + 0.0722 * b
+      // Ink strength: how far from the plate background toward the glyph.
+      let ink = darkPlate ? lum : 255 - lum
+      // Soft threshold so soft shadows / plate edges fall away.
+      ink = Math.max(0, Math.min(255, (ink - 48) * 1.55))
+      const alpha = Math.round(ink * (a / 255))
+      // Template ink is black; system recolors via setTemplateImage.
+      bgra[i] = 0
+      bgra[i + 1] = 0
+      bgra[i + 2] = 0
+      bgra[i + 3] = alpha
+    }
+
+    return nativeImage.createFromBitmap(bgra, { width, height })
+  } catch (err) {
+    console.warn('[tray] silhouette failed', err)
+    return null
   }
-
-  image.setTemplateImage(true)
-  return image
 }
 
 /** Colour mark with 16pt + 32pt bitmaps so Win/Linux tray isn’t a soft 16px upscale. */
-function loadColorTrayIcon(): NativeImage | null {
-  const markPath = resolveTrayColorIconPath()
-  const source = markPath
-    ? nativeImage.createFromPath(markPath)
-    : loadAppIcon('light')
-  if (!source || source.isEmpty()) return null
-
-  // Build multi-res from the large mark rather than a single 16px resize.
+function trayColorFromMark(source: NativeImage): NativeImage | null {
   const image = nativeImage.createEmpty()
   try {
     const px16 = source.resize({ width: 16, height: 16, quality: 'best' })
@@ -340,28 +442,16 @@ function loadColorTrayIcon(): NativeImage | null {
     })
     if (!image.isEmpty()) return image
   } catch {
-    // fall through to simple resize
+    // fall through
   }
-  return source.resize({ width: 16, height: 16, quality: 'best' })
+  try {
+    return source.resize({ width: 16, height: 16, quality: 'best' })
+  } catch {
+    return null
+  }
 }
 
-/** Directory that holds trayTemplate.png (and ideally @2x/@3x). */
-function resolveTrayTemplateDir(): string | null {
-  const file = 'trayTemplate.png'
-  const candidates = [
-    join(process.resourcesPath, file),
-    join(process.cwd(), 'build', file),
-    join(__dirname, '../../build', file),
-    join(__dirname, '../../../build', file),
-    join(app.getAppPath(), 'build', file),
-    join(app.getAppPath(), '../build', file)
-  ]
-  const hit = candidates.find((path) => existsSync(path))
-  return hit ? dirname(hit) : null
-}
-
-function resolveTrayColorIconPath(): string | null {
-  const files = ['icon-mark.png', 'icon.png']
+function resolveBrandAsset(files: string[]): string | null {
   const roots = [
     process.resourcesPath,
     join(process.cwd(), 'build'),
@@ -370,11 +460,13 @@ function resolveTrayColorIconPath(): string | null {
     join(app.getAppPath(), 'build'),
     join(app.getAppPath(), '../build')
   ]
-  for (const file of files) {
-    for (const root of roots) {
+  for (const root of roots) {
+    for (const file of files) {
       const path = join(root, file)
       if (existsSync(path)) return path
     }
   }
   return null
 }
+
+

@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import type { AppLocale, TokenSnapshot } from '@shared/types'
+import type { AppLocale, QuotaWindow, QuotaWindowKind, TokenSnapshot } from '@shared/types'
 import type { TokenUsageViewPayload } from '@shared/ipc'
 import type { MessageKey, TParams } from '@shared/i18n'
 import { PRESET_MODELS } from '@shared/types'
@@ -21,6 +21,57 @@ function formatCount(value: number): string {
 
 type TFn = (key: MessageKey, params?: TParams) => string
 
+function quotaLabel(kind: QuotaWindowKind, t: TFn): string {
+  switch (kind) {
+    case 'five_hour':
+      return t('token.quotaFiveHour')
+    case 'seven_day':
+      return t('token.quotaWeekly')
+    case 'seven_day_opus':
+      return t('token.quotaWeeklyOpus')
+    case 'seven_day_sonnet':
+      return t('token.quotaWeeklySonnet')
+    case 'primary':
+      return t('token.quotaPrimary')
+    case 'secondary':
+      return t('token.quotaSecondary')
+    default:
+      return t('token.quotaOther')
+  }
+}
+
+function QuotaWindowRow({
+  window,
+  now,
+  locale,
+  t
+}: {
+  window: QuotaWindow
+  now: number
+  locale: AppLocale
+  t: TFn
+}): React.JSX.Element {
+  const pct = Math.min(100, Math.max(0, window.usedPercent))
+  const resets =
+    window.resetsAt != null
+      ? t('token.quotaResets', { clock: formatExpiry(window.resetsAt, now, locale) })
+      : null
+  return (
+    <div className="token-usage-quota-row">
+      <div className="token-usage-quota-meta">
+        <span className="token-usage-quota-name">{quotaLabel(window.kind, t)}</span>
+        <span className="token-usage-quota-pct">
+          {t('token.quotaUsed', { percent: pct.toFixed(pct >= 10 ? 0 : 1) })}
+        </span>
+      </div>
+      <div className="token-usage-bar">
+        <div className="token-usage-bar-fill" style={{ width: `${pct}%` }} />
+      </div>
+      {resets ? <div className="token-usage-muted">{resets}</div> : null}
+    </div>
+  )
+}
+
 /**
  * Context-window details body — pure props, no sessionStore.
  * Used by the native token-usage panel (hydrated from main).
@@ -37,17 +88,26 @@ export function TokenUsagePanel({
   /** Refresh fields after compact/clear without a full re-open. */
   onPayloadPatch?: (patch: Partial<TokenUsageViewPayload>) => void
 }): React.JSX.Element {
-  const { history, isRunning, model, tokenLimit, apiEndpoint } = payload
+  const { history, isRunning, model, tokenLimit } = payload
   const chartRows = useMemo(() => history.slice(-TOKEN_CHART_POINTS), [history])
   const latest = history.at(-1)
   // Prefer post-compact estimate / last-turn input over cumulative tokensUsed.
   const used = payload.contextTokens ?? latest?.totalInputTokens ?? payload.tokensUsed ?? 0
   const limit = tokenLimit ?? 200_000
   const pct = limit > 0 ? (used / limit) * 100 : 0
+  // Prefer host-aware labels from main (CLI hosts are not VAV presets).
   const modelLabel =
-    PRESET_MODELS.find((m) => m.id === model)?.label ?? modelDisplayName(model)
-  const sessionCost = sessionCostOf(history)
+    payload.modelLabel ||
+    PRESET_MODELS.find((m) => m.id === model)?.label ||
+    modelDisplayName(model)
+  const providerName =
+    payload.providerLabel || providerLabel(model, payload.apiEndpoint)
+  const turnCostReported = latest?.costSource === 'provider'
   const turnCost = latest?.estimatedCost ?? 0
+  const sessionCostReported = payload.reportedSessionCostUsd != null
+  const sessionCost = sessionCostReported
+    ? payload.reportedSessionCostUsd!
+    : sessionCostOf(history)
 
   const hitPct = latest ? Math.round(cacheHitPercent(latest)) : 0
   const cacheHitLabel = latest
@@ -63,7 +123,7 @@ export function TokenUsagePanel({
   const [compactNote, setCompactNote] = useState<string | null>(null)
 
   const runCompact = async (): Promise<void> => {
-    if (!enoughForCompact || compactBusy) return
+    if (payload.compactAvailable === false || !enoughForCompact || compactBusy) return
     setCompactBusy(true)
     setCompactNote(null)
     try {
@@ -87,7 +147,9 @@ export function TokenUsagePanel({
   }
 
   const runClear = async (): Promise<void> => {
-    if (!payload.hasCompaction || compactBusy || isRunning) return
+    if (payload.compactAvailable === false || !payload.hasCompaction || compactBusy || isRunning) {
+      return
+    }
     setCompactBusy(true)
     setCompactNote(null)
     try {
@@ -135,38 +197,61 @@ export function TokenUsagePanel({
           {formatCount(used)} / {formatCount(limit)} tokens · {pct.toFixed(1)}%
           {payload.contextTokensEstimated ? ` · ${t('compact.estimateNote')}` : ''}
         </div>
+        {!payload.hasProviderUsage && !payload.contextTokensEstimated && (
+          <div className="token-usage-muted">{t('token.noProviderUsage')}</div>
+        )}
       </section>
 
-      <section className="token-usage-section token-usage-compact">
-        <div className="token-usage-heading">{t('compact.panelTitle')}</div>
-        <div className="token-usage-muted">{t('compact.panelHint')}</div>
-        <div className="token-usage-compact-actions">
-          <button
-            type="button"
-            className="token-usage-btn"
-            disabled={!enoughForCompact || compactBusy || payload.hasCompaction}
-            onClick={() => void runCompact()}
-          >
-            {compactBusy ? t('common.loading') : t('compact.menuDefault')}
-          </button>
-          {payload.hasCompaction && (
+      {payload.cliHost && (payload.quotaWindows?.length ?? 0) > 0 ? (
+        <section className="token-usage-section token-usage-quota">
+          <div className="token-usage-heading">{t('token.quotaSection')}</div>
+          <div className="token-usage-quota-list">
+            {payload.quotaWindows!.map((window) => (
+              <QuotaWindowRow
+                key={window.id}
+                window={window}
+                now={payload.now}
+                locale={locale}
+                t={t}
+              />
+            ))}
+          </div>
+          <div className="token-usage-muted">{t('token.quotaLiveHint')}</div>
+        </section>
+      ) : null}
+
+      {payload.compactAvailable !== false && (
+        <section className="token-usage-section token-usage-compact">
+          <div className="token-usage-heading">{t('compact.panelTitle')}</div>
+          <div className="token-usage-muted">{t('compact.panelHint')}</div>
+          <div className="token-usage-compact-actions">
             <button
               type="button"
-              className="token-usage-btn secondary"
-              disabled={compactBusy || isRunning}
-              onClick={() => void runClear()}
+              className="token-usage-btn"
+              disabled={!enoughForCompact || compactBusy || payload.hasCompaction}
+              onClick={() => void runCompact()}
             >
-              {t('compact.restore')}
+              {compactBusy ? t('common.loading') : t('compact.menuDefault')}
             </button>
-          )}
-        </div>
-        {payload.hasCompaction && (
-          <div className="token-usage-muted">
-            {t('compact.banner', { count: payload.compactedCount })}
+            {payload.hasCompaction && (
+              <button
+                type="button"
+                className="token-usage-btn secondary"
+                disabled={compactBusy || isRunning}
+                onClick={() => void runClear()}
+              >
+                {t('compact.restore')}
+              </button>
+            )}
           </div>
-        )}
-        {compactNote && <div className="token-usage-compact-note">{compactNote}</div>}
-      </section>
+          {payload.hasCompaction && (
+            <div className="token-usage-muted">
+              {t('compact.banner', { count: payload.compactedCount })}
+            </div>
+          )}
+          {compactNote && <div className="token-usage-compact-note">{compactNote}</div>}
+        </section>
+      )}
 
       <section className="token-usage-section">
         <div className="token-usage-heading">{t('token.cacheHitChart')}</div>
@@ -194,7 +279,12 @@ export function TokenUsagePanel({
         </div>
         <div>
           <dt>{t('token.cacheExpireTime')}</dt>
-          <dd>{formatExpiry(payload.cacheExpiresAt, payload.now, locale)}</dd>
+          <dd>
+            {formatExpiry(payload.cacheExpiresAt, payload.now, locale)}
+            {payload.cacheExpiryEstimated ? (
+              <div className="token-usage-muted">{t('token.cacheExpiryNote')}</div>
+            ) : null}
+          </dd>
         </div>
         <div>
           <dt>{t('token.cacheReadTokens')}</dt>
@@ -208,12 +298,22 @@ export function TokenUsagePanel({
 
       <dl className="token-usage-kv">
         <div>
-          <dt>{t('token.turnCost')}</dt>
-          <dd>{formatCost(turnCost, payload.displayCurrency ?? 'USD')}</dd>
+          <dt>{turnCostReported ? t('token.turnCostReported') : t('token.turnCost')}</dt>
+          <dd>
+            {latest
+              ? formatCost(turnCost, payload.displayCurrency ?? 'USD', !turnCostReported)
+              : '—'}
+          </dd>
         </div>
         <div>
-          <dt>{t('token.sessionCost')}</dt>
-          <dd>{formatCost(sessionCost, payload.displayCurrency ?? 'USD')}</dd>
+          <dt>
+            {sessionCostReported ? t('token.sessionCostReported') : t('token.sessionCost')}
+          </dt>
+          <dd>
+            {payload.hasProviderUsage || sessionCostReported
+              ? formatCost(sessionCost, payload.displayCurrency ?? 'USD', !sessionCostReported)
+              : '—'}
+          </dd>
         </div>
       </dl>
 
@@ -224,7 +324,7 @@ export function TokenUsagePanel({
         </div>
         <div>
           <dt>{t('token.provider')}</dt>
-          <dd>{providerLabel(model, apiEndpoint)}</dd>
+          <dd>{providerName || '—'}</dd>
         </div>
       </dl>
     </div>

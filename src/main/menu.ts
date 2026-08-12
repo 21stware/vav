@@ -136,6 +136,17 @@ export function buildAppMenu(
     },
     { type: 'separator' },
     {
+      label: t('menu.switchCliMode'),
+      accelerator: 'CmdOrCtrl+Shift+C',
+      click: send('switch-cli-mode')
+    },
+    {
+      label: t('menu.switchVavMode'),
+      accelerator: 'CmdOrCtrl+Shift+V',
+      click: send('switch-vav-mode')
+    },
+    { type: 'separator' },
+    {
       label: t('menu.focusWorkspace'),
       accelerator: 'CmdOrCtrl+1',
       click: send('focus-tools-1')

@@ -38,7 +38,7 @@ function agentTypeLabel(
   conversation: ConversationMeta,
   cliAgents: ReturnType<typeof enabledCliAgents>
 ): string | null {
-  const id = conversation.agentBinaryName
+  const id = conversation.cliHost || conversation.agentBinaryName
   if (!id || id === 'vav') return null
   return cliAgents.find((a) => a.id === id)?.name ?? id
 }
@@ -1250,6 +1250,10 @@ export function Sidebar({
                   {
                     label: t('sidebar.menu.import'),
                     onSelect: () => void importSessions()
+                  },
+                  {
+                    label: t('common.settingsEllipsis'),
+                    onSelect: () => useSessionStore.getState().openSettings()
                   }
                 ],
                 { x: Math.round(rect.right), y: Math.round(rect.top) }

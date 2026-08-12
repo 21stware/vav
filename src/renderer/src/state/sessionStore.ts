@@ -11,6 +11,15 @@ import type {
   TurnPhase
 } from '@shared/types'
 import { DEFAULT_CLI_AGENTS, DEFAULT_SETTINGS } from '@shared/types'
+import { agentModelHostKey, resolveModelForChatHost } from '@shared/agentModels'
+import type { ModelOption } from '@shared/types'
+
+export type AgentModelCatalogEntry = {
+  host: string
+  models: ModelOption[]
+  source: 'live' | 'static' | 'fallback'
+  error?: string
+}
 import type { ChangeSet, UpdateState } from '@shared/changeSet'
 import { resolveLocale } from '@shared/i18n'
 import { tt } from '../i18n/useT'
@@ -380,6 +389,14 @@ interface SessionState {
   /** Set in a detached window, which follows exactly one conversation. */
   pinnedConversationId: string | null
 
+  /**
+   * Preloaded per-host model catalogues (from CLI probes / VAV presets).
+   * Populated at bootstrap + background preload — picker reads this instantly.
+   */
+  agentModelCatalog: Record<string, AgentModelCatalogEntry>
+  setAgentModelCatalog(catalog: Record<string, AgentModelCatalogEntry>): void
+  refreshAgentModelCatalog(force?: boolean): Promise<void>
+
   /** Every node of each conversation's tree; the visible thread is derived. */
   messages: Record<string, ChatMessage[]>
   /** Which leaf each conversation currently follows. */
@@ -538,6 +555,13 @@ interface SessionState {
    * File-preview sessions are omitted from listMeta — must merge like setModel.
    */
   setAgentBinaryName(id: string, agentBinaryName: string | null): Promise<void>
+  /** Structured CLI host (claude/codex/…) for Transcript — null = built-in VAV. */
+  setCliHost(id: string, host: string | null): Promise<void>
+  /**
+   * Switch chat host from UI: leave Terminal mode, park/restore per-host
+   * transcript (via setCliHost).
+   */
+  selectChatHost(id: string, host: string | null): Promise<void>
   pickWorkingDirectory(id: string): Promise<void>
   setWorkingDirectory(id: string, path: string): Promise<void>
   /** Move a Temporary workspace into a real directory (name + copy). */
@@ -712,6 +736,25 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   renamingId: null,
   pinnedConversationId: null,
 
+  agentModelCatalog: {},
+  setAgentModelCatalog(catalog) {
+    set({ agentModelCatalog: catalog })
+  },
+  async refreshAgentModelCatalog(force = false) {
+    try {
+      const catalog = force
+        ? await window.vav.agents.preloadModels(true)
+        : await window.vav.agents.getModelCatalog()
+      set({ agentModelCatalog: catalog })
+      if (!force && Object.keys(catalog).length === 0) {
+        const warmed = await window.vav.agents.preloadModels(false)
+        set({ agentModelCatalog: warmed })
+      }
+    } catch (err) {
+      console.warn('[agents] model catalog refresh failed', err)
+    }
+  },
+
   messages: {},
   activeLeaf: {},
   compactions: {},
@@ -771,6 +814,9 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       }))
       void window.vav.settings.update({ cliAgents: settings.cliAgents }).catch(() => undefined)
     }
+    if (!settings.disabledAgentModels || typeof settings.disabledAgentModels !== 'object') {
+      settings.disabledAgentModels = {}
+    }
 
     set({
       ready: true,
@@ -792,6 +838,8 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         currentVersion: updateState.currentVersion || data.about.version
       }
     })
+    // Pull preloaded catalogues (main warms them shortly after launch).
+    void get().refreshAgentModelCatalog(false)
     // Full bootstrap (main shell): await select.
     // Light companions: SessionWindow owns claim + non-blocking hydrate.
     if (activeId && !light) {
@@ -1318,8 +1366,10 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       set((state) => ({
         conversations: mergeConversationList(state.conversations, list)
       }))
-      // Remember as default for subsequent new conversations.
-      if (model && model !== get().settings.defaultModel) {
+      // Only VAV model picks update the global default — CLI ids (grok-4.5, …)
+      // must not overwrite settings.defaultModel used by the built-in agent.
+      const host = get().conversations.find((c) => c.id === id)?.cliHost ?? null
+      if (!host && model && model !== get().settings.defaultModel) {
         void get().updateSettings({ defaultModel: model })
       }
     } catch (err) {
@@ -1343,6 +1393,103 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       }))
     } catch (err) {
       console.error('[setAgentBinaryName] failed', err)
+    }
+  },
+
+  async setCliHost(id, host) {
+    const nextHost = (host as ConversationMeta['cliHost']) ?? null
+    set((state) => ({
+      conversations: state.conversations.map((c) =>
+        c.id === id
+          ? {
+              ...c,
+              cliHost: nextHost,
+              agentBinaryName: host
+            }
+          : c
+      )
+    }))
+    try {
+      const result = await window.vav.conversations.setCliHost(id, host)
+      if (result.hostChanged) disposeProjection(id)
+      const transcript = result.transcript
+      set((state) => {
+        const pendingReviewByConversation = { ...state.pendingReviewByConversation }
+        const turns = { ...state.turns }
+        if (result.hostChanged) {
+          delete pendingReviewByConversation[id]
+          delete turns[id]
+        }
+        let conversations = mergeConversationList(state.conversations, result.conversations)
+        if (transcript) {
+          conversations = conversations.map((c) =>
+            c.id === id
+              ? {
+                  ...c,
+                  tokensUsed: transcript.tokensUsed,
+                  cliResumeCursor: transcript.cliResumeCursor,
+                  cliHost: transcript.cliHost,
+                  model: transcript.model || c.model
+                }
+              : c
+          )
+        }
+        return {
+          conversations,
+          messages: transcript
+            ? { ...state.messages, [id]: transcript.messages }
+            : state.messages,
+          activeLeaf: transcript
+            ? { ...state.activeLeaf, [id]: transcript.activeLeafId }
+            : state.activeLeaf,
+          compactions: transcript
+            ? { ...state.compactions, [id]: transcript.compactions }
+            : state.compactions,
+          tokenHistories: transcript
+            ? { ...state.tokenHistories, [id]: transcript.tokenHistory }
+            : state.tokenHistories,
+          cacheCreatedAt: transcript
+            ? { ...state.cacheCreatedAt, [id]: transcript.cacheCreatedAt }
+            : state.cacheCreatedAt,
+          cacheExpiresAt: transcript
+            ? { ...state.cacheExpiresAt, [id]: transcript.cacheExpiresAt }
+            : state.cacheExpiresAt,
+          pendingReviewByConversation,
+          turns,
+          errorBanner: result.hostChanged && state.activeId === id ? null : state.errorBanner
+        }
+      })
+    } catch (err) {
+      console.error('[setCliHost] failed', err)
+    }
+  },
+
+  async selectChatHost(id, host) {
+    if (useWorkspaceStore.getState().workspaces[id]?.cliMode) {
+      useWorkspaceStore.getState().exitCliMode(id)
+    }
+    useWorkspaceStore.getState().parkAgentHost(id)
+    if (get().search.open) get().closeSearch()
+    await get().setCliHost(id, host)
+    // Agent owns the model catalogue — coerce to a valid id for the new host
+    // when the parked bucket did not restore one (or restored a foreign id).
+    const state = get()
+    const conversation = state.conversations.find((c) => c.id === id)
+    if (!conversation) return
+    const catalogue =
+      state.agentModelCatalog[agentModelHostKey(host as ConversationMeta['cliHost'])]
+        ?.models ?? null
+    const nextModel = resolveModelForChatHost(
+      host as ConversationMeta['cliHost'],
+      conversation.model,
+      {
+        customModels: state.settings.customModels,
+        vavDefaultModel: state.settings.defaultModel,
+        catalogue
+      }
+    )
+    if (nextModel !== conversation.model) {
+      await get().setModel(id, nextModel)
     }
   },
 
@@ -1613,7 +1760,10 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     // ask_user_question pause: composer is disabled — never enqueue here.
     if (turn?.awaitingToolCallId) return
 
-    if (!settings.apiKeyPresent) {
+    // Built-in VAV needs an API key; structured CLI hosts use their own auth.
+    const activeHost =
+      conversations.find((c) => c.id === activeId)?.cliHost ?? null
+    if (!activeHost && !settings.apiKeyPresent) {
       get().showDialog({
         title: tt('common.hint'),
         body: tt('dialog.configureApiKeyBody'),
@@ -1891,6 +2041,10 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   async compactConversation(keepAfterMessageId) {
     const { activeId } = get()
     if (!activeId) return false
+    if (get().conversations.find((c) => c.id === activeId)?.cliHost) {
+      set({ errorBanner: tt('compact.error.cliHost') })
+      return false
+    }
     if (get().turns[activeId]?.isRunning) {
       set({ errorBanner: tt('compact.error.busy') })
       return false
@@ -1922,6 +2076,10 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   async clearCompaction() {
     const { activeId } = get()
     if (!activeId) return false
+    if (get().conversations.find((c) => c.id === activeId)?.cliHost) {
+      set({ errorBanner: tt('compact.error.cliHost') })
+      return false
+    }
     const leafId = get().activeLeaf[activeId]
     const messages = get().messages[activeId] ?? []
     const active = compactionForLeaf(get().compactions[activeId], messages, leafId)
@@ -2501,7 +2659,21 @@ export const useSessionStore = create<SessionState>((set, get) => ({
           cacheCreatedAt: { ...state.cacheCreatedAt, [id]: event.cacheCreatedAt },
           cacheExpiresAt: { ...state.cacheExpiresAt, [id]: event.cacheExpiresAt },
           conversations: state.conversations.map((c) =>
-            c.id === id ? { ...c, tokensUsed: event.tokensUsed } : c
+            c.id === id
+              ? {
+                  ...c,
+                  tokensUsed: event.tokensUsed,
+                  ...(typeof event.tokenLimit === 'number'
+                    ? { tokenLimit: event.tokenLimit }
+                    : {}),
+                  ...(event.reportedSessionCostUsd !== undefined
+                    ? { reportedSessionCostUsd: event.reportedSessionCostUsd }
+                    : {}),
+                  ...(event.quotaWindows !== undefined
+                    ? { quotaWindows: event.quotaWindows }
+                    : {})
+                }
+              : c
           )
         }))
         break
@@ -2838,6 +3010,15 @@ export function installDetachedBridge(): () => void {
     return noopOff()
   }
   return api.onDetachedChanged(apply)
+}
+
+/** Keeps the composer agent/model picker in sync with background CLI probes. */
+export function installAgentModelCatalogBridge(): () => void {
+  const onChanged = window.vav?.agents?.onModelCatalogChanged
+  if (!onChanged) return noopOff()
+  return onChanged((catalog) => {
+    useSessionStore.getState().setAgentModelCatalog(catalog)
+  })
 }
 
 /** Keeps toolbar / About update UI in step with the main-process checker. */

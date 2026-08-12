@@ -27,6 +27,8 @@ export function getShortcuts(
     [keys('⌘⇧T'), t('menu.togglePanelSegment')],
     [keys('⌘T'), t('menu.newTerminal')],
     [keys('⌘⇧O'), t('shortcut.switchWorkdir')],
+    [keys('⌘⇧C'), t('shortcut.switchCliMode')],
+    [keys('⌘⇧V'), t('shortcut.switchVavMode')],
     [keys('⌘1'), t('menu.focusWorkspace')],
     [['⌘2', '⌘3', '⌘4'].map(keys).join(' / '), t('shortcut.focusTerminalTabs')],
     ...(IS_MAC ? ([['Space', t('shortcut.quickLook')]] as [string, string][]) : []),

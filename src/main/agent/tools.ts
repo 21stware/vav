@@ -80,6 +80,13 @@ export interface ToolHost {
   selectionAnchor?: () => PreviewRef[]
   /** File-session path when this conversation is bound to one document. */
   defaultDocPath?: () => string | null
+  /** File-preview session is currently Read (write tools gated). */
+  isFileReadOnly?: () => boolean
+  /**
+   * Flip file-preview Read/Edit. Returns an error string when the format cannot
+   * enter Edit in-place (PDF / HEIC / legacy Office / …).
+   */
+  setFileReadOnly?: (readOnly: boolean) => string | null
 }
 
 export const INTERACTIVE_TOOLS: ReadonlySet<ToolName> = new Set(['request', 'ask_user_question'])
@@ -94,12 +101,27 @@ export const READONLY_TOOLS: ReadonlySet<ToolName> = new Set([
   'load_skill'
 ])
 /** Auto-mode tools that pause for Approve / Deny. */
-export const HIGH_RISK_TOOLS: ReadonlySet<ToolName> = new Set(['fs_write', 'terminal'])
+export const HIGH_RISK_TOOLS: ReadonlySet<ToolName> = new Set([
+  'fs_write',
+  'terminal',
+  'switch_mode'
+])
 /**
- * Tools removed entirely when the conversation is file-preview Read mode.
- * Agent must not be able to mutate the open file (or siblings via write tools).
+ * Tools that stay offered in file-preview Read mode but hard-fail at execute
+ * until the session is switched to Edit (via {@link switch_mode} or the UI).
  */
 export const FILE_READONLY_BLOCKED_TOOLS: ReadonlySet<ToolName> = new Set(['fs_write'])
+
+/** Formats that cannot switch to in-place Edit (need convert / Save As). */
+export function isFileEditLockedPath(filePath: string | null | undefined): boolean {
+  if (!filePath) return false
+  if (/\.(heic|heif|hif)$/i.test(filePath)) return true
+  if (/\.pdf$/i.test(filePath)) return true
+  if (/\.(doc|ppt|xls)$/i.test(filePath) && !/\.(docx|pptx|xlsx)$/i.test(filePath)) return true
+  if (/\.zip$/i.test(filePath)) return true
+  if (/\.drawio$/i.test(filePath)) return true
+  return false
+}
 /** Terminal commands treated as read-only under Auto approval / file Read mode. */
 const READONLY_TERMINAL =
   /^(?:cat|ls|grep|rg|head|tail|wc|pwd|echo|which|type|file|stat|find|tree|du|df|uname|date|whoami|id|env|printenv|realpath|basename|dirname|md5|shasum|sha256sum|hexdump|xxd|jq|yq|sed\s+-n|awk)\b/
@@ -941,7 +963,50 @@ export function createTools(host: ToolHost): AgentTool[] {
     }
   })
 
-  return [
+  const switchMode = defineTool({
+    name: 'switch_mode',
+    label: TOOL_LABELS.switch_mode,
+    description: [
+      'Switch the file-preview session from Read to Edit so write tools (`fs_write`, mutating shell) can run.',
+      'Only available while the session is Read. Under Auto approval the user must Approve; Bypass runs immediately.',
+      'Call this before attempting file edits when the session is Read. After success, proceed with writes in the same turn.',
+      'If the format cannot edit in-place (PDF / HEIC / legacy Office / ZIP), tell the user to convert or Save As instead.'
+    ].join(' '),
+    parameters: Type.Object({
+      mode: Type.Literal('edit'),
+      reason: Type.Optional(
+        Type.String({
+          description: 'Short reason shown on the approval card (what you need to change).'
+        })
+      )
+    }),
+    async execute(_id, params) {
+      if (!host.setFileReadOnly) {
+        return failure('Switch mode is unavailable in this session.')
+      }
+      if (!host.isFileReadOnly?.()) {
+        return {
+          content: [{ type: 'text', text: 'Already in Edit mode. Write tools are available.' }],
+          details: { display: '已是 Edit 模式' }
+        }
+      }
+      if (params.mode !== 'edit') {
+        return failure('Only mode "edit" is supported.')
+      }
+      const err = host.setFileReadOnly(false)
+      if (err) return failure(err)
+      const note = typeof params.reason === 'string' ? params.reason.trim() : ''
+      const text = note
+        ? `Switched to Edit mode (${note}). You may now use fs_write and mutating shell commands.`
+        : 'Switched to Edit mode. You may now use fs_write and mutating shell commands.'
+      return {
+        content: [{ type: 'text', text }],
+        details: { display: note ? `切换到 Edit · ${note}` : '切换到 Edit' }
+      }
+    }
+  })
+
+  const tools: AgentTool[] = [
     terminal,
     wait,
     readBashSession,
@@ -957,7 +1022,10 @@ export function createTools(host: ToolHost): AgentTool[] {
     request,
     askUserQuestion,
     plan
-  ] as AgentTool[]
+  ]
+  // File-preview Read: offer Switch to Edit so the agent can request write access.
+  if (host.isFileReadOnly?.()) tools.push(switchMode)
+  return tools
 }
 
 function resolveDocPath(host: ToolHost, raw: unknown): string | null {
@@ -1120,11 +1188,11 @@ export function buildSystemPrompt(
   if (options?.fileReadOnly) {
     lines.push(
       '## READ-ONLY SESSION (enforced)',
-      'The user set this preview session to Read. You MUST NOT modify any files on disk.',
-      '- `fs_write` is not available — do not invent write APIs.',
-      '- `terminal` may only run read-only inspection commands (ls, cat, grep, rg, head, tail, …).',
-      '- Do not use redirects (`>`/`>>`), `tee`, `rm`, `mv`, `cp`, `mkdir`, `touch`, `sed -i`, or install packages.',
-      '- Analyze, explain, and propose edits in chat only. The user must switch to Edit (or convert/Save As) before you can write.',
+      'The user set this preview session to Read. Writes are blocked until Edit is enabled.',
+      '- Call `switch_mode` with `mode: "edit"` when you need to modify files. Under Auto the user must Approve; Bypass applies immediately.',
+      '- Until Edit is enabled: do not call `fs_write`; `terminal` may only run read-only inspection (ls, cat, grep, rg, head, tail, …).',
+      '- No redirects (`>`/`>>`), `tee`, `rm`, `mv`, `cp`, `mkdir`, `touch`, `sed -i`, or package installs while Read.',
+      '- If `switch_mode` fails (PDF / HEIC / legacy Office / ZIP), tell the user to convert or Save As — do not invent write APIs.',
       ''
     )
   }
@@ -1134,7 +1202,7 @@ export function buildSystemPrompt(
     '- `wait` — block until a bash session prints `expect` (regex/literal), or timeout.',
     '- `read_bash_session` — poll the last N lines of bash scrollback without waiting.',
     options?.fileReadOnly
-      ? '- `fs_read` / `fs_list` only — filesystem reads. Write tools are disabled for this session.'
+      ? '- `fs_read` / `fs_list` for reads. `switch_mode` (`mode: "edit"`) to unlock writes; `fs_write` is blocked until Edit.'
       : '- `fs_read` / `fs_write` / `fs_list` operate on the local filesystem.',
     '- `doc_search` / `doc_fetch` — local retrieval over PDF, Word, Excel, PowerPoint, CSV/TSV, and text. Prefer these over terminal/python for office/PDF **reading** (PDF = extractable text layer only; no OCR). Do not install python-docx/pdf tools when doc_search can read the file. Not for images/audio/video.',
     '- `sql_query` — analytical SQL (DuckDB) over a SQLite, CSV, TSV, or Parquet file (not `.xlsx`). The file is attached in-memory; tables are queryable by name. Use for aggregation, GROUP BY, JOIN, window functions, filtering. Run `SHOW TABLES` first, `DESCRIBE <table>` for columns. Prefer this over paging the DB/CSV preview when you need to compute.',
@@ -1167,7 +1235,7 @@ export function buildSystemPrompt(
     '4) Agent edit — you propose/apply changes; the user does not hand-edit bytes as the primary path.',
     '5) Save — user reviews (Change Review) then accepts or discards.',
     options?.fileReadOnly
-      ? '- This session is READ-ONLY: analyze and propose only; never write files.'
+      ? '- This session is READ-ONLY until you `switch_mode` to Edit (user may need to Approve).'
       : '- For text / CSV / TSV: inspect with windowed `fs_read`, then `fs_write` the complete new contents when editing.',
     '- Office OOXML (`.docx` / `.xlsx` / `.pptx`): read via `doc_search` / `doc_fetch`; create/edit via `officecli` (`load_skill("officecli")` first, then `terminal`). Never UTF-8-overwrite with `fs_write`.',
     '- PDF: read via `doc_search` / `doc_fetch` (text layer only — no OCR). CREATE / FILL / REFORMAT via `load_skill("pdf")`. `officecli` does not handle PDF. Never `fs_write` a PDF.',
@@ -1281,6 +1349,10 @@ export function summarizeToolInput(tool: ToolName, input: Record<string, unknown
       const steps = normalizePlanSteps(input.steps)
       const done = steps.filter((step) => step.status === 'done').length
       return truncate(`Plan · ${String(input.title ?? 'Plan')} (${done}/${steps.length || 0})`, 120)
+    }
+    case 'switch_mode': {
+      const reason = String(input.reason ?? '').trim()
+      return reason ? truncate(`Switch to Edit · ${reason}`, 120) : 'Switch to Edit'
     }
     default:
       return ''

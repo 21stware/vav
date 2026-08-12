@@ -685,10 +685,9 @@ export function FileViewer({
   /** Legacy Office extensions (not OOXML). */
   const isLegacyOffice = /\.(doc|ppt|xls)$/i.test(filePath) && !/\.(docx|pptx|xlsx)$/i.test(filePath)
   /**
-   * Format-locked read-only → Edit prompts convert + Save As (original untouched).
-   * Only for formats we cannot write in-place: HEIC, PDF, legacy .doc/.ppt/.xls.
-   * Native OOXML (docx / xlsx / pptx) toggles Edit freely so Agent write tools
-   * can target the open path without a bogus “Convert to PPTX” sheet.
+   * Format-locked → Edit requires convert + Save As (original untouched).
+   * Only formats we cannot write in-place: HEIC, PDF, legacy .doc/.ppt/.xls.
+   * Native OOXML (docx / xlsx / pptx) and ordinary text/code default to **Write**.
    */
   const formatLockedReadOnly =
     isHeic ||
@@ -704,19 +703,14 @@ export function FileViewer({
   const forcedReadOnly = hardForcedReadOnly || formatLockedReadOnly
   const effectiveReadOnly = readOnly || forcedReadOnly
 
-  // Open locked formats (and soft-default office canvases) as Read.
-  // Native OOXML is not locked: user may switch to Edit without convert.
+  /**
+   * Default mode on open / path change:
+   * - Write for anything editable in place (text, code, md, images, docx/xlsx/pptx, …)
+   * - Read only when convert is required (legacy Office, PDF, HEIC) or format is non-editable
+   */
   useEffect(() => {
-    if (hardForcedReadOnly || formatLockedReadOnly) {
-      if (!readOnly) setReadOnly(true)
-      return
-    }
-  }, [hardForcedReadOnly, formatLockedReadOnly, readOnly])
-
-  // Soft default: native OOXML/PDF canvas opens in Read (pick still works).
-  useEffect(() => {
-    if (/\.(docx|xlsx|pptx|pdf)$/i.test(filePath)) setReadOnly(true)
-  }, [filePath])
+    setReadOnly(hardForcedReadOnly || formatLockedReadOnly)
+  }, [filePath, hardForcedReadOnly, formatLockedReadOnly])
 
   // Keep main-process conversation.fileReadOnly in sync so the agent tool list
   // strips write tools for the entire session (not only after a manual toggle).
@@ -725,6 +719,18 @@ export function FileViewer({
     if (typeof window.vav.fileSessions?.setReadOnly !== 'function') return
     void window.vav.fileSessions.setReadOnly(agentConversationId, effectiveReadOnly)
   }, [agentConversationId, effectiveReadOnly])
+
+  // Agent `switch_mode` (or another window) flipped Read/Edit — mirror chrome.
+  useEffect(() => {
+    if (!agentConversationId) return
+    if (typeof window.vav.fileSessions?.onReadOnlyChanged !== 'function') return
+    return window.vav.fileSessions.onReadOnlyChanged(({ sessionId, readOnly: next }) => {
+      if (sessionId !== agentConversationId) return
+      // Hard-forced formats cannot leave Read.
+      if (!next && forcedReadOnly) return
+      setReadOnly(next)
+    })
+  }, [agentConversationId, forcedReadOnly])
 
   const syncBlocks = useMemo((): PreviewBlock[] => {
     if (info?.structured?.blocks?.length) return info.structured.blocks

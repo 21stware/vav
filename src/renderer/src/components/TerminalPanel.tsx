@@ -186,17 +186,20 @@ function LayoutNodeView({
     }
     return s.workspaces[conversationId]?.activeTabId ?? ''
   })
-  const pendingCli = useWorkspaceStore((s) => {
-    if (surface !== 'agent' || node.type !== 'leaf') return false
-    const ws = s.workspaces[conversationId]
-    const surfaceHost =
-      ws?.agentHostSessions[CLI_SURFACE_KEY] ??
-      (ws?.activeHostAgentId
-        ? ws.agentHostSessions[ws.activeHostAgentId]
-        : undefined)
-    const tab = surfaceHost?.tabs.find((t) => t.id === node.tabId)
-    return !!tab?.pendingCli
+  const paneTab = useWorkspaceStore((s) => {
+    if (node.type !== 'leaf') return null
+    if (surface === 'agent') {
+      const ws = s.workspaces[conversationId]
+      const surfaceHost =
+        ws?.agentHostSessions[CLI_SURFACE_KEY] ??
+        (ws?.activeHostAgentId
+          ? ws.agentHostSessions[ws.activeHostAgentId]
+          : undefined)
+      return surfaceHost?.tabs.find((t) => t.id === node.tabId) ?? null
+    }
+    return s.workspaces[conversationId]?.tabs.find((t) => t.id === node.tabId) ?? null
   })
+  const pendingCli = !!paneTab?.pendingCli
   const selectTab = useWorkspaceStore((s) => s.selectTab)
   const selectAgentTab = useWorkspaceStore((s) => s.selectAgentTab)
   const closeAgentTab = useWorkspaceStore((s) => s.closeAgentTab)
@@ -245,7 +248,6 @@ function LayoutNodeView({
             title={t('common.close')}
             aria-label={t('common.close')}
             onMouseDown={(e) => {
-              // Select this pane first so focus ring follows, without focusing the button.
               e.stopPropagation()
               if (surface === 'agent') selectAgentTab(conversationId, node.tabId)
               else selectTab(conversationId, node.tabId)
@@ -254,7 +256,6 @@ function LayoutNodeView({
               e.stopPropagation()
               if (surface === 'agent') {
                 closeAgentTab(conversationId, node.tabId)
-                // Keep keyboard focus on the survivor so ⌘W continues pane-close.
                 focusRemainingAgentPane(conversationId)
               } else {
                 closeTab(conversationId, node.tabId)

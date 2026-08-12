@@ -47,13 +47,30 @@ export default function TokenUsageWindow({
       paintShell(next.theme)
       document.title = translate(next.locale, 'token.contextWindow')
     }
+    const pull = (): void => {
+      void window.vav.window.getTokenUsageView().then((next) => {
+        if (next) apply(next)
+      })
+    }
     const off = window.vav.window.onTokenUsageView(apply)
+    // Pull after subscribe — open() may have pushed before this effect ran
+    // (warm shell + React StrictMode remount race → stuck on Loading).
+    // Also re-pull on focus/visibility: the shell is reused (hide, not destroy).
+    pull()
+    const onFocus = (): void => pull()
+    const onVisibility = (): void => {
+      if (document.visibilityState === 'visible') pull()
+    }
     const onKeyDown = (event: KeyboardEvent): void => {
       if (event.key === 'Escape') window.close()
     }
+    window.addEventListener('focus', onFocus)
+    document.addEventListener('visibilitychange', onVisibility)
     window.addEventListener('keydown', onKeyDown)
     return () => {
       off()
+      window.removeEventListener('focus', onFocus)
+      document.removeEventListener('visibilitychange', onVisibility)
       window.removeEventListener('keydown', onKeyDown)
     }
   }, [])

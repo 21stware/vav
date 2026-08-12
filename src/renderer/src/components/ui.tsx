@@ -7,6 +7,12 @@ import wordmarkDark from '../assets/wordmark-dark.png'
 /** Match --dur-pop so exit stays on-screen through the transition. */
 const MODAL_LEAVE_MS = 180
 
+/** Empty-state entrance budget (logo + title delays). After this, motion is latched off. */
+const EMPTY_ENTER_MS = 700
+
+/** Survives EmptyState remounts so entrance cannot loop for the same session shell. */
+const emptyEnteredKeys = new Set<string>()
+
 type ButtonVariant = 'ghost' | 'secondary' | 'primary' | 'danger'
 
 export function Button({
@@ -191,7 +197,7 @@ export function Segmented<T extends string>({
   value,
   onChange
 }: {
-  options: { value: T; label: string; title?: string }[]
+  options: { value: T; label: string; title?: string; icon?: ReactNode }[]
   value: T
   onChange: (value: T) => void
 }): React.JSX.Element {
@@ -206,9 +212,42 @@ export function Segmented<T extends string>({
           aria-label={option.title ?? option.label}
           onClick={() => onChange(option.value)}
         >
+          {option.icon ? <span className="segmented-icon">{option.icon}</span> : null}
           {option.label}
         </button>
       ))}
+    </div>
+  )
+}
+
+/** Word units when spaced; Unicode chars for CJK / unspaced agent names. */
+function splitNameUnits(text: string): string[] {
+  if (/\s/.test(text)) return text.split(/(\s+)/).filter((s) => s.length > 0)
+  return Array.from(text)
+}
+
+function EmptyAgentName({
+  text,
+  nameKey
+}: {
+  text: string
+  nameKey?: string
+}): React.JSX.Element {
+  const units = splitNameUnits(text)
+  let step = 0
+  return (
+    <div className="empty-agent-name" aria-label={text} key={nameKey ?? text}>
+      {units.map((unit, i) => {
+        if (/^\s+$/.test(unit)) {
+          return <span key={i}>{unit}</span>
+        }
+        const index = step++
+        return (
+          <span key={i} className="empty-agent-name-unit" data-stagger={index} aria-hidden>
+            {unit}
+          </span>
+        )
+      })}
     </div>
   )
 }
@@ -217,26 +256,103 @@ export function EmptyState({
   title,
   description,
   logo,
+  logoLabel,
+  logoKey,
+  enterKey,
+  layout = 'centered',
+  foot,
   children
 }: {
-  title: string
+  /** Omit for session hero (logo + agent name only). */
+  title?: string
   description?: string
-  /** The blank transcript is where the app can say its own name. */
-  logo?: boolean
+  /**
+   * Blank-transcript mark. `true` = VAV wordmark; pass a node (e.g. agent
+   * brand) so the empty state tracks the active host.
+   */
+  logo?: boolean | ReactNode
+  /** Agent / product name under the mark — staggered on change. */
+  logoLabel?: string
+  /**
+   * When this changes (e.g. agent host id), only the inner mark remounts and
+   * replays `empty-in` once — the outer shell stays mounted.
+   */
+  logoKey?: string
+  /**
+   * Latches entrance off after the first play for this key (survives remounts
+   * from git chrome / container-query layout thrash).
+   */
+  enterKey?: string
+  /**
+   * `session` — hero (logo + name) centered; `foot` pinned to the bottom.
+   * `centered` — classic stacked empty state.
+   */
+  layout?: 'centered' | 'session'
+  /** Bottom chrome (e.g. workspace / git prose). */
+  foot?: ReactNode
   children?: ReactNode
 }): React.JSX.Element {
-  return (
-    <div className="empty-state">
-      {logo && (
-        /* Both variants ship; CSS picks one so no theme state is needed here. */
-        <span className="empty-logo" role="img" aria-label="VAV">
-          <img className="logo-light" src={wordmark} alt="" />
-          <img className="logo-dark" src={wordmarkDark} alt="" />
+  const latchKey = enterKey ?? logoKey ?? title ?? 'empty'
+  /**
+   * Claim synchronously on first paint. A post-timeout latch failed when the
+   * shell remounted (git chrome / layout thrash): cleanup cleared the timer,
+   * the key never stuck, and empty-in replayed forever.
+   */
+  const [playEntrance] = useState(() => {
+    if (emptyEnteredKeys.has(latchKey)) return false
+    emptyEnteredKeys.add(latchKey)
+    return true
+  })
+  const [entered, setEntered] = useState(!playEntrance)
+
+  useEffect(() => {
+    if (!playEntrance) return
+    const timer = window.setTimeout(() => setEntered(true), EMPTY_ENTER_MS)
+    return () => window.clearTimeout(timer)
+  }, [playEntrance])
+
+  const logoNode =
+    logo === true ? (
+      <>
+        <img className="logo-light" src={wordmark} alt="" />
+        <img className="logo-dark" src={wordmarkDark} alt="" />
+      </>
+    ) : logo ? (
+      logo
+    ) : null
+
+  const hero = (
+    <>
+      {logoNode && (
+        <span className="empty-logo" role="img" aria-label={logoLabel ?? 'VAV'}>
+          <span key={logoKey ?? 'logo'} className="empty-logo-mark">
+            {logoNode}
+          </span>
         </span>
       )}
-      <div className="empty-title">{title}</div>
+      {logoLabel ? <EmptyAgentName text={logoLabel} nameKey={logoKey} /> : null}
+      {title ? <div className="empty-title">{title}</div> : null}
       {description && <div className="empty-desc">{description}</div>}
       {children}
+    </>
+  )
+
+  if (layout === 'session') {
+    return (
+      <div
+        className="empty-state empty-state-session"
+        data-entered={entered ? '' : undefined}
+      >
+        <div className="empty-state-hero">{hero}</div>
+        {foot ? <div className="empty-state-foot">{foot}</div> : null}
+      </div>
+    )
+  }
+
+  return (
+    <div className="empty-state" data-entered={entered ? '' : undefined}>
+      {hero}
+      {foot}
     </div>
   )
 }

@@ -66,6 +66,8 @@ const api: VavApi = {
     setModel: (id: string, model: string) => ipcRenderer.invoke(IPC.convSetModel, id, model),
     setAgentBinaryName: (id: string, agentBinaryName: string | null) =>
       ipcRenderer.invoke(IPC.convSetAgentBinary, id, agentBinaryName),
+    setCliHost: (id: string, host: string | null) =>
+      ipcRenderer.invoke(IPC.convSetCliHost, id, host),
     setFocusedFile: (id: string, path: string | null) =>
       ipcRenderer.invoke(IPC.convSetFocusedFile, id, path),
     setWorkingDirectory: (id: string, path: string) =>
@@ -184,6 +186,23 @@ const api: VavApi = {
       ipcRenderer.invoke(IPC.filesParseBlocks, path, text)
   },
 
+  git: {
+    status: (cwd: string) => ipcRenderer.invoke(IPC.gitStatus, cwd),
+    diff: (cwd: string, path: string, opts?: { staged?: boolean }) =>
+      ipcRenderer.invoke(IPC.gitDiff, cwd, path, opts),
+    showBase64: (cwd: string, path: string, ref?: string) =>
+      ipcRenderer.invoke(IPC.gitShowBase64, cwd, path, ref),
+    init: (cwd: string) => ipcRenderer.invoke(IPC.gitInit, cwd),
+    createBranch: (cwd: string, name: string, opts?: { checkout?: boolean }) =>
+      ipcRenderer.invoke(IPC.gitCreateBranch, cwd, name, opts),
+    checkoutBranch: (cwd: string, name: string) =>
+      ipcRenderer.invoke(IPC.gitCheckoutBranch, cwd, name),
+    createWorktree: (
+      cwd: string,
+      options: { path: string; newBranch?: string; branch?: string }
+    ) => ipcRenderer.invoke(IPC.gitCreateWorktree, cwd, options)
+  },
+
   fileSessions: {
     open: (path: string) => ipcRenderer.invoke(IPC.fileSessionsOpen, path),
     create: (path: string) => ipcRenderer.invoke(IPC.fileSessionsCreate, path),
@@ -194,6 +213,11 @@ const api: VavApi = {
     resolve: (fileId: string) => ipcRenderer.invoke(IPC.fileSessionsResolve, fileId),
     setReadOnly: (sessionId: string, readOnly: boolean) =>
       ipcRenderer.invoke(IPC.fileSessionsSetReadOnly, sessionId, readOnly),
+    onReadOnlyChanged: (handler) =>
+      subscribe<{ sessionId: string; readOnly: boolean }>(
+        IPC.fileSessionReadOnlyChanged,
+        handler
+      ),
     rename: (fileId: string, sessionId: string, title: string) =>
       ipcRenderer.invoke(IPC.fileSessionsRename, fileId, sessionId, title),
     delete: (fileId: string, sessionIds: string[]) =>
@@ -204,7 +228,22 @@ const api: VavApi = {
 
   agents: {
     resolveBinary: (candidates: string[], force?: boolean) =>
-      ipcRenderer.invoke(IPC.agentsResolveBinary, candidates, force === true)
+      ipcRenderer.invoke(IPC.agentsResolveBinary, candidates, force === true),
+    listModels: (host: string | null, force?: boolean) =>
+      ipcRenderer.invoke(IPC.agentsListModels, host, force === true),
+    getModelCatalog: () => ipcRenderer.invoke(IPC.agentsGetModelCatalog),
+    preloadModels: (force?: boolean) =>
+      ipcRenderer.invoke(IPC.agentsPreloadModels, force === true),
+    onModelCatalogChanged: (handler) => {
+      const listener = (
+        _event: Electron.IpcRendererEvent,
+        catalog: Parameters<typeof handler>[0]
+      ): void => {
+        handler(catalog)
+      }
+      ipcRenderer.on(IPC.agentsModelCatalogChanged, listener)
+      return () => ipcRenderer.removeListener(IPC.agentsModelCatalogChanged, listener)
+    }
   },
 
   pty: {
@@ -245,6 +284,7 @@ const api: VavApi = {
     closeSettings: () => ipcRenderer.invoke(IPC.windowCloseSettings),
     popupMenu: (items: NativeMenuItem[], position?: { x: number; y: number }) =>
       ipcRenderer.invoke(IPC.windowPopupMenu, items, position),
+    closePopupMenu: () => ipcRenderer.invoke(IPC.windowClosePopupMenu),
     openSession: (conversationId: string) =>
       ipcRenderer.invoke(IPC.windowOpenSession, conversationId),
     revealInList: (conversationId: string) =>
@@ -288,6 +328,7 @@ const api: VavApi = {
       subscribe(IPC.previewCloseAttempt, () => handler()),
     openTokenUsage: (conversationId, anchor) =>
       ipcRenderer.invoke(IPC.windowOpenTokenUsage, conversationId, anchor),
+    getTokenUsageView: () => ipcRenderer.invoke(IPC.tokenUsageGetView),
     onTokenUsageView: (handler) => subscribe<TokenUsageViewPayload>(IPC.tokenUsageView, handler),
     relaunch: () => ipcRenderer.invoke(IPC.windowRelaunch)
   },

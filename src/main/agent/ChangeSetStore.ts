@@ -76,6 +76,22 @@ export class ChangeSetStore {
   /** Optional document sandbox (preview / focused file). */
   workingCopies: import('../fs/WorkingCopyService').WorkingCopyService | null = null
 
+  /** Drop pending / review sets for a conversation (host switch, delete, …). */
+  clearConversation(conversationId: string): void {
+    this.pending.delete(conversationId)
+    this.baselines.delete(conversationId)
+    this.baselineReady.delete(conversationId)
+    this.workdirs.delete(conversationId)
+    const active = this.activeByConversation.get(conversationId)
+    if (active) {
+      this.sets.delete(active)
+      this.activeByConversation.delete(conversationId)
+    }
+    for (const [id, set] of [...this.sets.entries()]) {
+      if (set.conversationId === conversationId) this.sets.delete(id)
+    }
+  }
+
   beginTurn(conversationId: string, workdir: string): void {
     this.pending.set(conversationId, [])
     this.workdirs.set(conversationId, workdir)

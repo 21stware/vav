@@ -1,4 +1,4 @@
-import type { DisplayCurrency, TokenSnapshot } from './types'
+import type { DisplayCurrency, QuotaWindow, QuotaWindowKind, TokenSnapshot } from './types'
 import { t, type AppLocale } from './i18n'
 
 /** Anthropic prompt-cache TTL used for expiry display. */
@@ -92,6 +92,8 @@ export function buildSnapshot(input: {
   }
   modelId: string
   timestamp?: number
+  /** When set, use host-reported USD instead of the local rate table. */
+  costUsd?: number
 }): TokenSnapshot {
   const cacheReadTokens = Math.max(0, input.usage.cacheRead)
   const cacheWriteTokens = Math.max(0, input.usage.cacheWrite)
@@ -99,10 +101,13 @@ export function buildSnapshot(input: {
   const outputTokens = Math.max(0, input.usage.output)
   const totalInputTokens = newInputTokens + cacheReadTokens
   const timestamp = input.timestamp ?? Date.now()
-  const estimatedCost = estimateCost(
-    { newInputTokens, outputTokens, cacheWriteTokens, cacheReadTokens },
-    ratesForModel(input.modelId)
-  )
+  const fromProvider = typeof input.costUsd === 'number' && Number.isFinite(input.costUsd)
+  const estimatedCost = fromProvider
+    ? Math.max(0, input.costUsd!)
+    : estimateCost(
+        { newInputTokens, outputTokens, cacheWriteTokens, cacheReadTokens },
+        ratesForModel(input.modelId)
+      )
   return {
     turnIndex: input.turnIndex,
     totalInputTokens,
@@ -111,8 +116,38 @@ export function buildSnapshot(input: {
     newInputTokens,
     outputTokens,
     timestamp,
-    estimatedCost
+    estimatedCost,
+    costSource: fromProvider ? 'provider' : 'estimated'
   }
+}
+
+/**
+ * Best-known context window for a model id when the host has not reported
+ * `contextSize`. Prefer live host size over this table.
+ */
+export function resolveContextWindow(modelId: string | null | undefined): number {
+  const id = (modelId ?? '').toLowerCase()
+  if (!id) return 200_000
+  if (id.includes('deepseek')) return 1_000_000
+  if (id.includes('gpt-4.1') || id.includes('gpt-4o')) return 128_000
+  if (id.includes('o3') || id.includes('o4') || id.includes('codex')) return 200_000
+  if (id.includes('gemini') && id.includes('flash')) return 1_000_000
+  if (id.includes('gemini')) return 1_000_000
+  if (id.includes('grok')) return 256_000
+  // Claude aliases + dated Anthropic ids (Sonnet/Opus/Haiku 4.x / 3.5)
+  if (
+    id === 'sonnet' ||
+    id === 'opus' ||
+    id === 'haiku' ||
+    id === 'fable' ||
+    id.includes('claude') ||
+    id.includes('sonnet') ||
+    id.includes('opus') ||
+    id.includes('haiku')
+  ) {
+    return 200_000
+  }
+  return 200_000
 }
 
 export function sessionCostOf(history: TokenSnapshot[]): number {
@@ -151,18 +186,36 @@ const CURRENCY_LOCALE: Record<DisplayCurrency, string> = {
   CAD: 'en-CA'
 }
 
+/** Convert a host-reported cost into USD for storage. Unknown currencies → null. */
+export function costToUsd(amount: number, currency: string | null | undefined): number | null {
+  if (!Number.isFinite(amount)) return null
+  const c = (currency ?? 'USD').toUpperCase()
+  if (c === 'USD') return amount
+  const rate = USD_TO[c as DisplayCurrency]
+  if (!rate) return null
+  return amount / rate
+}
+
 /** @deprecated Prefer {@link formatCost}. Kept for call sites that assume USD. */
 export function formatUsd(amount: number): string {
   return formatCost(amount, 'USD')
 }
 
-/** Format an estimated USD cost in the user's display currency. */
-export function formatCost(amountUsd: number, currency: DisplayCurrency = 'USD'): string {
+/**
+ * Format a USD cost in the user's display currency.
+ * `approx` (default true) prefixes `~` for rate-table estimates.
+ */
+export function formatCost(
+  amountUsd: number,
+  currency: DisplayCurrency = 'USD',
+  approx = true
+): string {
   const rate = USD_TO[currency] ?? 1
   const amount = amountUsd * rate
   const zeroFraction = currency === 'JPY' || currency === 'KRW'
   const maxFrac = amount <= 0 ? (zeroFraction ? 0 : 2) : amount < 0.01 && !zeroFraction ? 4 : zeroFraction ? 0 : 2
   const minFrac = amount <= 0 ? (zeroFraction ? 0 : 2) : amount < 0.01 && !zeroFraction ? 4 : zeroFraction ? 0 : 2
+  const prefix = approx ? '~' : ''
   try {
     const formatted = new Intl.NumberFormat(CURRENCY_LOCALE[currency] ?? 'en-US', {
       style: 'currency',
@@ -170,10 +223,10 @@ export function formatCost(amountUsd: number, currency: DisplayCurrency = 'USD')
       minimumFractionDigits: minFrac,
       maximumFractionDigits: maxFrac
     }).format(Math.max(0, amount))
-    return `~${formatted}`
+    return `${prefix}${formatted}`
   } catch {
-    if (amount <= 0) return `~${currency} 0.00`
-    return `~${currency} ${amount.toFixed(maxFrac)}`
+    if (amount <= 0) return `${prefix}${currency} 0.00`
+    return `${prefix}${currency} ${amount.toFixed(maxFrac)}`
   }
 }
 
@@ -199,4 +252,81 @@ export function formatExpiry(
   if (remain <= 0) return t(locale, 'time.clockExpired', { clock })
   const mins = Math.max(1, Math.round(remain / 60_000))
   return t(locale, 'time.clockInMinutes', { clock, mins })
+}
+
+const QUOTA_KIND_ORDER: Record<QuotaWindowKind, number> = {
+  five_hour: 0,
+  seven_day: 1,
+  seven_day_opus: 2,
+  seven_day_sonnet: 3,
+  primary: 4,
+  secondary: 5,
+  other: 6
+}
+
+/** Normalize host percent: fraction (0–1) or already 0–100. */
+export function normalizeQuotaPercent(value: number): number | null {
+  if (!Number.isFinite(value) || value < 0) return null
+  const pct = value <= 1.0001 ? value * 100 : value
+  if (!Number.isFinite(pct)) return null
+  return Math.min(100, Math.max(0, pct))
+}
+
+/** Unix seconds → ms; already-ms values pass through. */
+export function normalizeQuotaResetsAt(value: number | null | undefined): number | null {
+  if (value == null || !Number.isFinite(value) || value <= 0) return null
+  // Seconds since epoch are ~1e9; ms are ~1e12.
+  return value < 1e12 ? Math.round(value * 1000) : Math.round(value)
+}
+
+export function quotaKindFromClaudeType(raw: string | null | undefined): QuotaWindowKind {
+  const id = (raw ?? '').toLowerCase().replace(/-/g, '_')
+  if (id === 'five_hour' || id === 'fivehour') return 'five_hour'
+  if (id === 'seven_day_opus' || id === 'seven_day_opus_limit') return 'seven_day_opus'
+  if (id === 'seven_day_sonnet' || id === 'seven_day_sonnet_limit') return 'seven_day_sonnet'
+  if (id === 'seven_day' || id === 'seven_day_limit' || id === 'weekly') return 'seven_day'
+  return 'other'
+}
+
+/**
+ * Codex primary/secondary windows: prefer `window_minutes` (≈300 → 5h, ≈10080 → week).
+ */
+export function quotaKindFromCodexWindow(
+  key: string,
+  windowMinutes: number | null | undefined
+): QuotaWindowKind {
+  if (typeof windowMinutes === 'number' && Number.isFinite(windowMinutes)) {
+    if (windowMinutes <= 360) return 'five_hour'
+    if (windowMinutes >= 9000) return 'seven_day'
+  }
+  const k = key.toLowerCase()
+  if (k === 'secondary') return 'secondary'
+  if (k === 'primary') return 'primary'
+  return 'other'
+}
+
+export function mergeQuotaWindows(
+  prev: QuotaWindow[] | null | undefined,
+  incoming: QuotaWindow[]
+): QuotaWindow[] {
+  const map = new Map<string, QuotaWindow>()
+  for (const w of prev ?? []) {
+    if (!w?.id || !Number.isFinite(w.usedPercent)) continue
+    map.set(w.id, w)
+  }
+  for (const w of incoming) {
+    if (!w?.id || !Number.isFinite(w.usedPercent)) continue
+    const pct = normalizeQuotaPercent(w.usedPercent)
+    if (pct == null) continue
+    map.set(w.id, {
+      ...w,
+      usedPercent: pct,
+      resetsAt: normalizeQuotaResetsAt(w.resetsAt) ?? w.resetsAt ?? null
+    })
+  }
+  return [...map.values()].sort(
+    (a, b) =>
+      (QUOTA_KIND_ORDER[a.kind] ?? 99) - (QUOTA_KIND_ORDER[b.kind] ?? 99) ||
+      a.id.localeCompare(b.id)
+  )
 }

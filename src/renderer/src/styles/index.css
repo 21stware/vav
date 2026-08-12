@@ -169,163 +169,11 @@
   --shadow-raised: 0 1px 3px rgba(0, 0, 0, 0.38), 0 6px 18px rgba(0, 0, 0, 0.26);
 }
 
-/* —— Colour tints (accent + soft selection; optional light surface cast) —— */
-
-:root[data-tint='lavender'] {
-  --accent: #6b5bc0;
-  --accent-hover: #5c4cb1;
-  --accent-soft: rgba(107, 91, 192, 0.11);
-  --accent-veil: rgba(107, 91, 192, 0.055);
-  --accent-text: #5a4bab;
-  --tone-list: #6b5bc0;
-  --tone-web: #5a4bab;
-  --bg-window: #eceaf1;
-  --bg-sunken: #f3f2f7;
-  --bg-selected: #ddd7f0;
-}
-
-:root[data-theme='dark'][data-tint='lavender'] {
-  --accent: #8d7ce6;
-  --accent-hover: #9e8ff1;
-  --accent-soft: rgba(141, 124, 230, 0.18);
-  --accent-veil: rgba(141, 124, 230, 0.08);
-  --accent-text: #b7aaf3;
-  --tone-list: #b0a2ec;
-  --tone-web: #b7aaf3;
-  --bg-window: #121213;
-  --bg-sunken: #161617;
-  --bg-selected: #2d2a38;
-}
-
-:root[data-tint='blue'] {
-  --accent: #2563eb;
-  --accent-hover: #1d4ed8;
-  --accent-soft: rgba(37, 99, 235, 0.11);
-  --accent-veil: rgba(37, 99, 235, 0.05);
-  --accent-text: #1d4ed8;
-  --tone-list: #2563eb;
-  --tone-web: #1d4ed8;
-  --bg-window: #e9eef8;
-  --bg-sunken: #f0f3f9;
-  --bg-selected: #d6e2f8;
-}
-
-:root[data-theme='dark'][data-tint='blue'] {
-  --accent: #7aa2f7;
-  --accent-hover: #93b4ff;
-  --accent-soft: rgba(122, 162, 247, 0.18);
-  --accent-veil: rgba(122, 162, 247, 0.08);
-  --accent-text: #a8c4ff;
-  --tone-list: #93b4ea;
-  --tone-web: #a8c4ff;
-  --bg-window: #121213;
-  --bg-sunken: #161617;
-  --bg-selected: #243044;
-}
-
-:root[data-tint='teal'] {
-  --accent: #0f766e;
-  --accent-hover: #0d6660;
-  --accent-soft: rgba(15, 118, 110, 0.11);
-  --accent-veil: rgba(15, 118, 110, 0.05);
-  --accent-text: #0f766e;
-  --tone-list: #0f766e;
-  --tone-web: #0f766e;
-  --bg-window: #e8f1f0;
-  --bg-sunken: #eef5f4;
-  --bg-selected: #cfe6e3;
-}
-
-:root[data-theme='dark'][data-tint='teal'] {
-  --accent: #5ecfc4;
-  --accent-hover: #7adbd2;
-  --accent-soft: rgba(94, 207, 196, 0.18);
-  --accent-veil: rgba(94, 207, 196, 0.08);
-  --accent-text: #8ee0d8;
-  --tone-list: #5eead4;
-  --tone-web: #8ee0d8;
-  --bg-window: #121213;
-  --bg-sunken: #161617;
-  --bg-selected: #1f3332;
-}
-
-:root[data-tint='rose'] {
-  --accent: #c44b6a;
-  --accent-hover: #ad3f5c;
-  --accent-soft: rgba(196, 75, 106, 0.11);
-  --accent-veil: rgba(196, 75, 106, 0.05);
-  --accent-text: #b03f5c;
-  --tone-list: #c44b6a;
-  --tone-web: #b03f5c;
-  --bg-window: #f3e9ec;
-  --bg-sunken: #f7f0f2;
-  --bg-selected: #f0d4dc;
-}
-
-:root[data-theme='dark'][data-tint='rose'] {
-  --accent: #f0a0b0;
-  --accent-hover: #f5b4c0;
-  --accent-soft: rgba(240, 160, 176, 0.18);
-  --accent-veil: rgba(240, 160, 176, 0.08);
-  --accent-text: #f5b8c4;
-  --tone-list: #f0a0b0;
-  --tone-web: #f5b8c4;
-  --bg-window: #121213;
-  --bg-sunken: #161617;
-  --bg-selected: #3a2830;
-}
-
-:root[data-tint='amber'] {
-  --accent: #b45309;
-  --accent-hover: #9a4508;
-  --accent-soft: rgba(180, 83, 9, 0.11);
-  --accent-veil: rgba(180, 83, 9, 0.05);
-  --accent-text: #9a4508;
-  --tone-list: #b45309;
-  --tone-web: #9a4508;
-  --bg-window: #f3eee6;
-  --bg-sunken: #f7f3ec;
-  --bg-selected: #ead9bf;
-}
-
-:root[data-theme='dark'][data-tint='amber'] {
-  --accent: #e0b060;
-  --accent-hover: #ebc078;
-  --accent-soft: rgba(224, 176, 96, 0.18);
-  --accent-veil: rgba(224, 176, 96, 0.08);
-  --accent-text: #ebc078;
-  --tone-list: #ddaf74;
-  --tone-web: #ebc078;
-  --bg-window: #121213;
-  --bg-sunken: #161617;
-  --bg-selected: #3a3224;
-}
-
-:root[data-tint='green'] {
-  --accent: #2f7a52;
-  --accent-hover: #276644;
-  --accent-soft: rgba(47, 122, 82, 0.11);
-  --accent-veil: rgba(47, 122, 82, 0.05);
-  --accent-text: #276644;
-  --tone-list: #2f7a52;
-  --tone-web: #276644;
-  --bg-window: #e9f0eb;
-  --bg-sunken: #eef5f0;
-  --bg-selected: #cfe3d6;
-}
-
-:root[data-theme='dark'][data-tint='green'] {
-  --accent: #6ec596;
-  --accent-hover: #82d1a6;
-  --accent-soft: rgba(110, 197, 150, 0.18);
-  --accent-veil: rgba(110, 197, 150, 0.08);
-  --accent-text: #8ad4ac;
-  --tone-list: #6ec596;
-  --tone-web: #8ad4ac;
-  --bg-window: #121213;
-  --bg-sunken: #161617;
-  --bg-selected: #24362c;
-}
+/*
+ * Fixed colour tints are applied in JS from `@shared/colorTints` via the same
+ * token derivation as system accent (`appearance.ts`). Keeping hues in one
+ * place avoids swatch ≠ toggle/slider drift between light and dark.
+ */
 
 :root[data-reduce-motion='true'] * {
   animation-duration: 0.01ms !important;
@@ -338,6 +186,9 @@
  * hidden — kill entrance cinema for a beat so reveal feels instantaneous.
  */
 html[data-summoning] .empty-state > *,
+html[data-summoning] .empty-state-hero > *,
+html[data-summoning] .empty-logo-mark,
+html[data-summoning] .empty-agent-name-unit,
 html[data-summoning] .transcript-inner.is-branch-swap .message-turn.assistant {
   animation: none !important;
 }
@@ -397,6 +248,13 @@ html[data-summoning] .tools-body {
   .inline-review-icon-btn:active,
   .agents-list-tool-btn:active:not(:disabled) {
     transform: none;
+  }
+  .message-action-glyph {
+    transition: none !important;
+    filter: none !important;
+  }
+  .message-actions .message-action-btn.is-ack-spin .message-action-glyph {
+    animation: none !important;
   }
 }
 
@@ -1182,9 +1040,22 @@ button.chip:active {
   cursor: default;
   font-size: 12px;
   color: var(--text-secondary);
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
   transition:
     background var(--dur-hover) ease,
     color var(--dur-hover) ease;
+}
+
+.segmented-icon {
+  display: inline-flex;
+  flex-shrink: 0;
+  opacity: 0.9;
+}
+
+.segmented button:has(.segmented-icon) {
+  padding: 0 10px 0 8px;
 }
 
 .segmented button.active {
@@ -2058,6 +1929,9 @@ kbd {
    * user scroll-up. Search / flash jumps pass behavior: 'smooth' explicitly.
    */
   scroll-behavior: auto;
+  /* Empty-state scales with the visible stream (height + width). */
+  container-type: size;
+  container-name: transcript;
 }
 
 /*
@@ -2090,6 +1964,14 @@ kbd {
   /* Tighter turn rhythm — action chrome no longer reserves a permanent strip. */
   gap: 12px;
   box-sizing: border-box;
+}
+
+/* Empty session hero needs the full scrollport so the foot can sit low. */
+.transcript-inner:has(> .empty-state-session) {
+  position: relative;
+  min-height: 100%;
+  height: 100%;
+  gap: 0;
 }
 
 /* ==========================================================================
@@ -3533,16 +3415,18 @@ mark {
 
 /*
  * Code / table / diagram chrome:
- * - OUTER .md-block keeps the single card (radius + border + fill + Copy bar).
- * - INNER pre must NOT re-apply radius/border (that was the nested double frame).
- * Rules that strip the inner chrome MUST come after `.markdown pre` so they win.
+ * - OUTER .md-block is the only card frame (radius + border + fill + Copy bar).
+ * - INNER pre must NOT re-apply radius/border (nested frame looks like “content
+ *   has a border, shell has none”).
+ * Strip rules MUST come after `.markdown pre` so they win cascade.
  */
 .md-block {
   margin: 0 0 var(--md-block);
+  border: 1px solid var(--border);
   border-radius: var(--radius);
   background: var(--bg-sunken);
   overflow: hidden;
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--border) 70%, transparent);
+  box-shadow: none;
 }
 
 .md-block-bar {
@@ -3603,9 +3487,12 @@ mark {
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--border) 65%, transparent);
 }
 
-/* AFTER .markdown pre — strip INNER frame only; keep OUTER .md-block shell. */
+/* AFTER .markdown pre — strip INNER frame only; keep OUTER .md-block shell.
+ * Also match without `.markdown` ancestor (sealed chunks / alternate hosts). */
 .markdown .md-block > pre,
-.markdown .md-block pre {
+.markdown .md-block pre,
+.md-block > pre,
+.md-block pre {
   margin: 0;
   padding: 12px 14px;
   border: 0 !important;
@@ -3619,7 +3506,8 @@ mark {
  * inset + zebra on <tr> reads as floating rounded strips that never reach the
  * card edges (the bug behind "broken" chat tables).
  */
-.markdown .md-block > .table-scroll {
+.markdown .md-block > .table-scroll,
+.md-block > .table-scroll {
   margin: 0;
   padding: 0;
   border: 0 !important;
@@ -3630,7 +3518,10 @@ mark {
 
 .markdown .md-block.md-diagram-wrap > .md-diagram,
 .markdown .md-block.md-mermaid-wrap > .md-mermaid,
-.markdown .md-block.md-diagram-wrap > .md-mermaid {
+.markdown .md-block.md-diagram-wrap > .md-mermaid,
+.md-block.md-diagram-wrap > .md-diagram,
+.md-block.md-mermaid-wrap > .md-mermaid,
+.md-block.md-diagram-wrap > .md-mermaid {
   margin: 0;
   padding: 12px 14px;
   border: 0 !important;
@@ -3993,11 +3884,56 @@ mark {
   color: var(--text);
 }
 
+/* Post-click feedback: blur-masked icon swap (check) or one-shot spin. */
+.message-action-glyph {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition:
+    opacity var(--dur-press) var(--ease-out),
+    filter var(--dur-press) var(--ease-out),
+    transform var(--dur-press) var(--ease-out);
+}
+
+.message-actions .message-action-btn.is-ack-out .message-action-glyph {
+  opacity: 0.55;
+  filter: blur(2px);
+  transform: scale(0.92);
+}
+
+.message-actions .message-action-btn.is-ack-done:not(.is-ack-spin) {
+  color: var(--success, #3dd68c);
+}
+
+.message-actions .message-action-btn.is-ack-done .message-action-glyph {
+  opacity: 1;
+  filter: blur(0);
+  transform: scale(1);
+}
+
+.message-actions .message-action-btn.is-ack-spin .message-action-glyph {
+  animation: message-action-spin 480ms var(--ease-out);
+  color: var(--text);
+}
+
+@keyframes message-action-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    /* RotateCcw — spin against the clock to match the glyph. */
+    transform: rotate(-360deg);
+  }
+}
+
 .message.assistant:hover .message-actions,
 .message-group:hover .message-actions,
 .message-group:focus-within .message-actions,
 /* Keep strip live while the pointer is on the buttons themselves. */
-.message-actions:hover {
+.message-actions:hover,
+/* Hold strip visible through ack so the feedback is not cut by hover-out. */
+.message-actions:has(.message-action-btn.is-ack-out),
+.message-actions:has(.message-action-btn.is-ack-done) {
   opacity: 1;
   pointer-events: auto;
 }
@@ -6146,6 +6082,7 @@ mark {
    ========================================================================== */
 
 .empty-state {
+  position: relative;
   margin: auto;
   padding: 40px 24px;
   max-width: 480px;
@@ -6156,23 +6093,116 @@ mark {
   gap: 12px;
 }
 
+/* Session empty: fill the transcript column — hero centered, prose at the foot. */
+.empty-state-session {
+  flex: 1 1 auto;
+  align-self: stretch;
+  width: 100%;
+  max-width: none;
+  min-height: 100%;
+  height: 100%;
+  margin: 0;
+  /* Tight bottom-left for workspace prose; hero still has room above. */
+  padding: 28px 28px 4px 8px;
+  gap: 0;
+  box-sizing: border-box;
+}
+
+.empty-state-hero {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 0;
+}
+
+.empty-state-foot {
+  flex: 0 0 auto;
+  width: auto;
+  max-width: min(560px, 100%);
+  margin: 0;
+  align-self: flex-start;
+  padding: 0;
+  text-align: left;
+  /* Idle: faded; hover/focus → full (color change → ease, not ease-out). */
+  opacity: 0.45;
+  transition: opacity var(--dur-hover) ease;
+}
+
+.empty-state-foot:hover,
+.empty-state-foot:focus-within {
+  opacity: 1;
+}
+
 /* A blank transcript is seen rarely and deliberately, so it can afford the
    delight budget the rest of the app spends nothing on.
    fill-mode is backwards only: with reduce-motion the global rule collapses
    duration to ~0ms, and `both`/`forwards` can pin the from { opacity: 0 }
    keyframe forever — which is how the empty-conversation logo disappeared. */
-.empty-state > * {
+.empty-state > *:not(.empty-state-hero):not(.empty-state-foot),
+.empty-state-hero > * {
   animation: empty-in 320ms var(--ease-out) backwards;
 }
 
-.empty-state > *:nth-child(2) {
+/*
+ * Foot entrance (rare empty-session): rise from bottom-left into the faded rest
+ * state. Gated by EmptyState’s data-entered latch so git status remounts do not
+ * replay. Inner chrome stays unanimated — only the foot shell moves.
+ */
+.empty-state-session:not([data-entered]) .empty-state-foot {
+  animation: empty-foot-in 300ms var(--ease-out) backwards;
+}
+
+.empty-state > .session-workspace-chrome,
+.empty-state-foot .session-workspace-chrome {
+  animation: none !important;
+}
+
+/* Logo enter lives on `.empty-logo-mark` only — avoid shell + mark double-play. */
+.empty-state > .empty-logo,
+.empty-state-hero > .empty-logo {
+  animation: none;
+}
+
+.empty-state-hero > *:nth-child(2) {
   animation-delay: 50ms;
 }
-.empty-state > *:nth-child(3) {
+.empty-state-hero > *:nth-child(3) {
   animation-delay: 100ms;
 }
-.empty-state > *:nth-child(4) {
+.empty-state-hero > *:nth-child(4) {
   animation-delay: 150ms;
+}
+
+.empty-state > .empty-title,
+.empty-state-hero > .empty-title {
+  animation: empty-in 320ms var(--ease-out) backwards;
+  animation-delay: 50ms;
+}
+
+/* Agent name uses per-unit stagger (not frozen by data-entered — remounts on host switch). */
+.empty-state-hero > .empty-agent-name {
+  animation: none;
+}
+
+/* After the first entrance for this shell, freeze — remount / CQ thrash must
+   not replay empty-in. Attribute is latched in EmptyState.
+   Agent-name units stay free so host switches can restagger. */
+.empty-state[data-entered] > *:not(.empty-state-hero):not(.empty-state-foot),
+.empty-state[data-entered] .empty-state-hero > *:not(.empty-agent-name),
+.empty-state[data-entered] .empty-logo-mark {
+  animation: none !important;
+  opacity: 1;
+  transform: none;
+}
+
+.empty-state[data-entered] .empty-state-foot {
+  animation: none !important;
+  transform: none;
+  /* Keep faded rest opacity — do not force 1 like the hero latch. */
 }
 
 @keyframes empty-in {
@@ -6186,27 +6216,65 @@ mark {
   }
 }
 
+/* From bottom-left into the idle faded rest (matches foot placement). */
+@keyframes empty-foot-in {
+  from {
+    opacity: 0;
+    transform: translate3d(-6px, 10px, 0);
+  }
+  to {
+    opacity: 0.45;
+    transform: translate3d(0, 0, 0);
+  }
+}
+
 /* In-app reduce-motion: skip the entrance entirely so nothing stays at
    opacity 0 after a near-zero-duration animation. */
-:root[data-reduce-motion='true'] .empty-state > * {
+:root[data-reduce-motion='true'] .empty-state > *:not(.empty-state-foot),
+:root[data-reduce-motion='true'] .empty-logo-mark {
   animation: none !important;
   opacity: 1;
   transform: none;
 }
 
+:root[data-reduce-motion='true'] .empty-state-foot {
+  animation: none !important;
+  transition: none;
+  transform: none;
+}
+
 .empty-logo {
   display: inline-flex;
+  align-items: center;
+  justify-content: center;
   margin-bottom: 10px;
   opacity: 0.95;
   /* Never collapse if one theme image is still loading. */
-  min-height: 72px;
+  min-height: 96px;
 }
 
-.empty-logo img {
+/* One empty-in per mount / agent switch (keyed in EmptyState). */
+.empty-logo-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  animation: empty-in 320ms var(--ease-out) backwards;
+  transform-origin: center top;
+}
+
+/* VAV wordmark graphic (boolean logo). */
+.empty-logo-mark > img,
+.empty-logo > img {
   display: block;
   /* Square mark — sized as the empty-state hero, not a titlebar wordmark. */
-  height: 72px;
+  height: 96px;
   width: auto;
+}
+
+/* Active-host mark — no chip plate on the empty canvas. */
+.empty-logo .agent-brand-mark {
+  background: transparent;
+  box-shadow: none;
 }
 
 /* Light wordmark by default; dark wordmark when theme is dark. */
@@ -6244,9 +6312,164 @@ mark {
   letter-spacing: -0.3px;
 }
 
+.empty-agent-name {
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: -0.35px;
+  line-height: 1.2;
+}
+
+.empty-agent-name-unit {
+  display: inline-block;
+  --empty-stagger: 0;
+  animation: empty-in 320ms var(--ease-out) backwards;
+  animation-delay: calc(70ms + (var(--empty-stagger) * 32ms));
+}
+
+.empty-agent-name-unit[data-stagger='1'] {
+  --empty-stagger: 1;
+}
+.empty-agent-name-unit[data-stagger='2'] {
+  --empty-stagger: 2;
+}
+.empty-agent-name-unit[data-stagger='3'] {
+  --empty-stagger: 3;
+}
+.empty-agent-name-unit[data-stagger='4'] {
+  --empty-stagger: 4;
+}
+.empty-agent-name-unit[data-stagger='5'] {
+  --empty-stagger: 5;
+}
+.empty-agent-name-unit[data-stagger='6'] {
+  --empty-stagger: 6;
+}
+.empty-agent-name-unit[data-stagger='7'] {
+  --empty-stagger: 7;
+}
+.empty-agent-name-unit[data-stagger='8'] {
+  --empty-stagger: 8;
+}
+.empty-agent-name-unit[data-stagger='9'] {
+  --empty-stagger: 9;
+}
+.empty-agent-name-unit[data-stagger='10'] {
+  --empty-stagger: 10;
+}
+.empty-agent-name-unit[data-stagger='11'] {
+  --empty-stagger: 11;
+}
+.empty-agent-name-unit[data-stagger='12'] {
+  --empty-stagger: 12;
+}
+
+:root[data-reduce-motion='true'] .empty-agent-name-unit {
+  animation: none !important;
+  opacity: 1;
+  transform: none;
+}
+
 .empty-state .empty-desc {
   color: var(--text-secondary);
   line-height: 1.7;
+}
+
+/* Compact empty session when the transcript viewport is short / narrow. */
+@container transcript (max-height: 420px) {
+  .empty-state:not(.empty-state-session) {
+    padding: 16px 16px;
+    gap: 8px;
+    max-width: 100%;
+  }
+
+  .empty-state:not(.empty-state-session) .empty-logo {
+    min-height: 48px;
+    margin-bottom: 2px;
+  }
+
+  .empty-state:not(.empty-state-session) .empty-logo-mark > img,
+  .empty-state:not(.empty-state-session) .empty-logo > img {
+    height: 48px;
+  }
+
+  .empty-state .empty-title {
+    font-size: 17px;
+  }
+
+  .session-workspace-prose {
+    font-size: 11px;
+  }
+}
+
+@container transcript (max-width: 400px) {
+  .empty-state:not(.empty-state-session) {
+    padding-left: 12px;
+    padding-right: 12px;
+  }
+
+  .empty-state-session {
+    padding-left: 8px;
+    padding-right: 12px;
+    padding-bottom: 4px;
+  }
+}
+
+/* Short session empty: keep hero / foot stack; shrink the mark. */
+@container transcript (max-height: 360px) {
+  .empty-state-session {
+    padding: 12px 16px 4px 8px;
+  }
+
+  .empty-state-session .empty-logo {
+    min-height: 48px;
+    margin-bottom: 0;
+  }
+
+  .empty-state-session .empty-logo-mark > img,
+  .empty-state-session .empty-logo > img {
+    height: 48px;
+  }
+
+  .empty-state-session .empty-logo .agent-brand-mark {
+    transform: scale(0.67);
+    transform-origin: center center;
+  }
+
+  .empty-state-session .empty-agent-name {
+    font-size: 18px;
+  }
+
+  .empty-state-session .empty-title,
+  .empty-state-session .empty-desc {
+    display: none;
+  }
+
+  .empty-state-foot {
+    max-width: 100%;
+  }
+}
+
+@container transcript (max-height: 220px) {
+  .empty-state-session {
+    padding: 8px 12px 2px 6px;
+  }
+
+  .empty-state-session .empty-logo {
+    min-height: 36px;
+  }
+
+  .empty-state-session .empty-logo-mark > img,
+  .empty-state-session .empty-logo > img {
+    height: 36px;
+  }
+
+  .empty-state-session .empty-logo .agent-brand-mark {
+    transform: scale(0.5);
+  }
+
+  .empty-state-session .empty-agent-name {
+    font-size: 15px;
+  }
 }
 
 .suggestions {
@@ -6478,13 +6701,14 @@ mark {
   border-radius: 999px;
 }
 
-/* Sits between composer and tools body (when expanded). Slim hit target. */
+/* Between tools header and open tray body. Slim hit target. */
 .panel-resizer {
   position: relative;
   height: 6px;
-  margin: 0;
+  margin: 0 12px;
   cursor: ns-resize;
   flex: 0 0 auto;
+  z-index: 2;
 }
 
 /* The grip only draws itself under the pointer. */
@@ -6583,8 +6807,28 @@ mark {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 8px 12px 6px;
+  box-sizing: border-box;
+  /* Fixed row metrics — Files ↔ Git must not reflow the chrome. */
+  height: 38px;
+  padding: 0 12px;
   flex: 0 0 auto;
+}
+
+.files-toolbar-tabs {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  height: 24px;
+}
+
+.files-toolbar-actions {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  height: 24px;
+  min-width: 0;
 }
 
 /* Finder line mark (macOS) — same stroke/color as Lucide toolbar icons. */
@@ -6601,6 +6845,12 @@ mark {
   flex-direction: column;
   opacity: 1;
   transition: opacity var(--dur-hover) var(--ease-out);
+  outline: none;
+}
+
+/* Keyboard focus ring on the list region (not every row). */
+.files-browser:focus-visible {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent, #0a84ff) 55%, transparent);
 }
 
 .files-browser:not([data-opaque]) {
@@ -6624,6 +6874,469 @@ mark {
 
 .files-toolbar .segmented {
   flex: 0 0 auto;
+  /* Text-only switch — no track / active pill. */
+  gap: 0;
+  height: 24px;
+  padding: 0;
+  background: transparent;
+  box-shadow: none;
+  border-radius: 0;
+}
+
+.files-toolbar .segmented button {
+  box-sizing: border-box;
+  /* Equal slots so active/idle color swaps never nudge neighbors. */
+  width: 72px;
+  height: 24px;
+  padding: 0;
+  border-radius: 0;
+  justify-content: center;
+  font-size: 11.5px;
+  font-weight: 500;
+  color: var(--text-tertiary);
+  background: transparent;
+  box-shadow: none;
+}
+
+.files-toolbar .segmented button:has(.segmented-icon) {
+  padding: 0;
+}
+
+.files-toolbar .segmented button:hover:not(.active) {
+  color: var(--text-secondary);
+  background: transparent;
+}
+
+.files-toolbar .segmented button.active {
+  background: transparent;
+  box-shadow: none;
+  color: var(--text);
+  /* Same weight as idle — only color changes (avoids glyph reflow). */
+  font-weight: 500;
+}
+
+.files-toolbar .segmented-icon {
+  opacity: 0.7;
+}
+
+.files-toolbar .segmented button.active .segmented-icon {
+  opacity: 1;
+}
+
+.files-toolbar-actions .btn.sm {
+  height: 24px;
+}
+
+.files-toolbar-actions .btn.sm.icon-only {
+  width: 24px;
+}
+
+/* Git refresh: press scale (shared .btn:active) + spin while loading. */
+.files-toolbar .git-refresh-btn.is-refreshing:disabled {
+  opacity: 0.9;
+  cursor: progress;
+}
+
+.files-toolbar .git-refresh-btn.is-refreshing svg {
+  animation: git-refresh-spin 650ms linear infinite;
+}
+
+@keyframes git-refresh-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+:root[data-reduce-motion='true'] .files-toolbar .git-refresh-btn.is-refreshing svg {
+  animation: none;
+}
+
+.files-toolbar-spacer {
+  flex: 1;
+  min-width: 8px;
+}
+
+/* —— Git tray (Files | Git) —— */
+.git-panel {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.git-panel-meta {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 46%;
+  font-size: 11px;
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: right;
+}
+
+.git-panel-body {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(120px, 38%) 1fr;
+  gap: 0;
+  border-top: 1px solid var(--border-subtle, color-mix(in srgb, var(--text) 10%, transparent));
+}
+
+.git-panel > .empty-state {
+  border-top: 1px solid var(--border-subtle, color-mix(in srgb, var(--text) 10%, transparent));
+}
+
+.git-change-list {
+  list-style: none;
+  margin: 0;
+  padding: 4px 0;
+  overflow: auto;
+  outline: none;
+  border-right: 1px solid var(--border-subtle, color-mix(in srgb, var(--text) 10%, transparent));
+}
+
+.git-change-list:focus-visible {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent, #0a84ff) 55%, transparent);
+}
+
+.git-change-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 4px 10px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.git-change-row:hover {
+  background: color-mix(in srgb, var(--text) 6%, transparent);
+}
+
+.git-change-row.is-selected {
+  background: color-mix(in srgb, var(--accent, #0a84ff) 16%, transparent);
+}
+
+.git-change-row.is-focused:not(.is-selected) {
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+}
+
+.git-change-dir .git-change-path {
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+
+.git-dir-chevron {
+  display: inline-flex;
+  width: 12px;
+  flex: 0 0 auto;
+  color: var(--text-tertiary);
+}
+
+.git-status {
+  flex: 0 0 auto;
+  width: 1.1em;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  font-size: 11px;
+}
+
+.git-status-modified,
+.git-status-typechange {
+  color: #e3b341;
+}
+.git-status-added {
+  color: #3fb950;
+}
+.git-status-deleted {
+  color: #f85149;
+}
+.git-status-untracked {
+  color: #8b949e;
+}
+.git-status-conflict {
+  color: #f85149;
+}
+
+.git-change-path {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.git-diff-pane {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.git-diff-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border-subtle, color-mix(in srgb, var(--text) 10%, transparent));
+}
+
+.git-diff-filename {
+  flex: 1;
+  min-width: 0;
+  font-size: 11px;
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+}
+
+.git-diff-scroll {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  overflow: auto;
+  padding: 6px 0 12px;
+}
+
+.git-diff {
+  margin: 0;
+  min-width: max-content;
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: pre;
+  tab-size: 2;
+}
+
+.git-diff .diff-line {
+  display: flex;
+  width: max-content;
+  min-width: 100%;
+  padding: 0 10px;
+}
+
+.git-diff .diff-prefix {
+  flex: 0 0 1.1em;
+  user-select: none;
+  opacity: 0.7;
+}
+
+.git-diff .diff-code {
+  flex: 1 0 auto;
+}
+
+.git-diff .diff-line.add {
+  background: color-mix(in srgb, #3fb950 14%, transparent);
+}
+
+.git-diff .diff-line.del {
+  background: color-mix(in srgb, #f85149 14%, transparent);
+}
+
+.git-diff .diff-line.hunk {
+  color: var(--accent, #0a84ff);
+  background: color-mix(in srgb, var(--accent, #0a84ff) 8%, transparent);
+}
+
+.git-diff .diff-line.meta {
+  color: var(--text-tertiary);
+}
+
+.git-diff .diff-more {
+  display: block;
+  margin: 6px 10px 0;
+  padding: 4px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--text) 6%, transparent);
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.git-diff-error {
+  font-size: 12px;
+  color: var(--danger, #f85149);
+  padding: 8px 10px;
+}
+
+.git-binary-note {
+  padding: 12px 10px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.git-image-diff {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  padding: 8px 10px 12px;
+  min-width: min(100%, 480px);
+}
+
+.git-image-col {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.git-image-label {
+  font-size: 11px;
+  color: var(--text-tertiary);
+}
+
+.git-image-preview {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  border-radius: 8px;
+  background:
+    linear-gradient(45deg, color-mix(in srgb, var(--text) 8%, transparent) 25%, transparent 25%),
+    linear-gradient(-45deg, color-mix(in srgb, var(--text) 8%, transparent) 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, color-mix(in srgb, var(--text) 8%, transparent) 75%),
+    linear-gradient(-45deg, transparent 75%, color-mix(in srgb, var(--text) 8%, transparent) 75%);
+  background-size: 12px 12px;
+  background-position: 0 0, 0 6px, 6px -6px, -6px 0;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--text) 10%, transparent);
+}
+
+.git-image-missing {
+  min-height: 72px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  font-size: 11px;
+  color: var(--text-tertiary);
+  background: color-mix(in srgb, var(--text) 4%, transparent);
+}
+
+/* —— Session empty: project / worktree / branch (prose) —— */
+.session-workspace-chrome {
+  width: 100%;
+  margin-top: 0;
+  text-align: left;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.session-workspace-prose {
+  margin: 0;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+  text-wrap: pretty;
+}
+
+.session-workspace-prose-strong {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.session-workspace-prose-muted {
+  color: var(--text-secondary);
+}
+
+.session-workspace-text-btn {
+  display: inline;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--accent, var(--text));
+  font: inherit;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, var(--accent, var(--text)) 45%, transparent);
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+.session-workspace-text-btn:hover:not(:disabled) {
+  text-decoration-color: var(--accent, var(--text));
+}
+
+.session-workspace-text-btn:active:not(:disabled) {
+  opacity: 0.85;
+}
+
+.session-workspace-text-btn:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.session-workspace-project {
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.session-workspace-hint {
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-secondary);
+}
+
+.session-workspace-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--text) 4%, transparent);
+  border: 1px solid color-mix(in srgb, var(--text) 10%, transparent);
+}
+
+.session-workspace-form-title {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.session-workspace-form-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.session-workspace-input {
+  width: 100%;
+  padding: 6px 8px;
+  border-radius: 6px;
+  border: 1px solid color-mix(in srgb, var(--text) 14%, transparent);
+  background: var(--bg, transparent);
+  color: inherit;
+  font: inherit;
+  font-size: 12px;
+}
+
+.session-workspace-check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.session-workspace-error {
+  font-size: 11px;
+  color: var(--danger, #f85149);
 }
 
 .file-columns {
@@ -10857,11 +11570,10 @@ mark {
 .preview-markdown .md-block,
 .preview-markdown .md-preview-fence {
   margin: 0 0 var(--md-block);
+  border: 1px solid var(--border);
   border-radius: var(--radius);
   background: var(--bg-sunken);
-  box-shadow:
-    inset 0 0 0 1px color-mix(in srgb, var(--border) 70%, transparent),
-    0 1px 2px color-mix(in srgb, #000 6%, transparent);
+  box-shadow: 0 1px 2px color-mix(in srgb, #000 6%, transparent);
   overflow: hidden;
 }
 
@@ -11409,7 +12121,8 @@ mark {
 }
 
 /* Entrance animation shifts content down — skip it in the tight tools tray. */
-.terminal-stack[data-empty='true'] .empty-state > * {
+.terminal-stack[data-empty='true'] .empty-state > *,
+.terminal-stack[data-empty='true'] .empty-logo-mark {
   animation: none;
 }
 
@@ -11489,7 +12202,7 @@ mark {
   background: transparent;
 }
 
-/* Agent chrome — single row: VAV | CLI Agent (+ split actions in CLI). */
+/* Agent chrome — single row: Thread | Swarm (+ optional session chrome). */
 .agent-mode-chrome {
   display: flex;
   flex-direction: column;
@@ -11631,6 +12344,38 @@ mark {
 .agent-mode-segment-chevron {
   opacity: 0.7;
   flex: 0 0 auto;
+}
+
+/* Structured CLI host picker — looks like a segment button, native select on top. */
+.agent-mode-host-select {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding-right: 18px;
+  max-width: 180px;
+}
+
+.agent-mode-host-select .agent-mode-vav-icon {
+  flex: 0 0 auto;
+}
+
+.agent-mode-host-select-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+}
+
+.agent-mode-host-select-native {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  cursor: default;
+  font: inherit;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: transparent;
 }
 
 /* File-preview VAV: title/history on one row; popover may escape the strip. */
@@ -11843,7 +12588,6 @@ mark {
   overflow: hidden;
   position: relative;
   isolation: isolate;
-  /* No chrome labels over the PTY — agent TUIs own the full surface. */
 }
 
 .terminal-split-pane.is-active {
@@ -11866,7 +12610,7 @@ mark {
   border-radius: 1px;
 }
 
-/* Close control on multi-pane leaves (live or pending picker). */
+/* Multi-pane close floats top-right; no title chrome (covers active ring). */
 .terminal-split-pane-close {
   position: absolute;
   top: 6px;
@@ -12086,19 +12830,13 @@ mark {
   box-shadow: none;
 }
 
-/* Built-in VAV product mark — full app icon plate (Icon Composer Any). */
+/* VAV line graphic (wordmark) — sits in the same chip as other agent glyphs. */
 .agent-brand-mark-vav {
   overflow: hidden;
-  /* Icon already has its own plate; drop the chip fill so edges don't double-frame. */
-  background: transparent;
-  box-shadow: none;
 }
 
 .agent-brand-mark-vav img {
-  width: 100%;
-  height: 100%;
-  border-radius: 0;
-  object-fit: cover;
+  object-fit: contain;
 }
 
 /* Theme swap — same pattern as empty-logo / BrandAppIcon. */
@@ -12289,19 +13027,59 @@ mark {
   --cli-picker-item-w: 64px;
 }
 
-.cli-agent-picker-head {
-  text-align: center;
+.cli-agent-picker-help {
+  margin: 14px 0 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
   width: 100%;
   max-width: 420px;
   flex: 0 0 auto;
+  text-align: center;
+  color: var(--text-secondary);
+  font-size: 11.5px;
+  font-weight: 400;
+  line-height: 1.45;
 }
 
-.cli-agent-picker-title {
+.cli-agent-picker-help p {
   margin: 0;
-  font-size: 13px;
-  font-weight: 600;
-  letter-spacing: -0.01em;
+}
+
+.cli-agent-picker-help-sep {
+  white-space: pre;
+}
+
+.cli-agent-picker-chord {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 1px;
+  margin-inline-end: 0.2em;
   color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+.cli-agent-picker-kbd {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: 0.02em;
+  cursor: default;
+}
+
+.cli-agent-picker-kbd.is-key {
+  font-weight: 700;
+}
+
+.cli-agent-picker-kbd-join {
+  margin: 0 1px;
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+
+.cli-agent-picker.is-compact .cli-agent-picker-help {
+  display: none;
 }
 
 .cli-agent-picker-empty {
@@ -12465,14 +13243,8 @@ mark {
     align-items: stretch;
   }
 
-  .cli-agent-picker-head {
-    text-align: left;
-    max-width: none;
-    padding: 0 2px;
-  }
-
-  .cli-agent-picker-title {
-    font-size: 12px;
+  .cli-agent-picker-help {
+    display: none;
   }
 
   .cli-agent-picker-block {
@@ -12519,10 +13291,6 @@ mark {
   .cli-agent-picker-item {
     padding: 5px 6px;
     gap: 8px;
-  }
-
-  .cli-agent-picker-title {
-    font-size: 11px;
   }
 }
 
@@ -12682,6 +13450,134 @@ mark {
   opacity: 0.7;
 }
 
+.agents-list-grip-spacer {
+  width: 12px;
+  flex: 0 0 auto;
+  visibility: hidden;
+}
+
+.agents-models-field {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border-subtle, color-mix(in srgb, var(--text) 10%, transparent));
+}
+
+.agents-models-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12.5px;
+  font-weight: 550;
+  color: var(--text);
+}
+
+.agents-models-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 220px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding: 4px;
+  border-radius: 10px;
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-sunken, var(--bg-secondary));
+}
+
+.agents-models-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  min-width: 0;
+  min-height: 28px;
+  padding: 5px 6px;
+  border-radius: 6px;
+  font-size: 12.5px;
+  color: var(--text);
+  cursor: default;
+}
+
+.agents-models-row:hover {
+  background: var(--bg-hover);
+}
+
+.agents-models-row input[type='checkbox'] {
+  flex: 0 0 auto;
+  margin: 2px 0 0;
+}
+
+.agents-models-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.agents-models-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agents-models-id {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  line-height: 1.25;
+}
+
+.agents-default-host {
+  margin-top: 18px;
+}
+
+.agents-default-host-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 240px;
+  overflow: auto;
+  padding: 4px;
+  border-radius: 10px;
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-secondary);
+}
+
+.agents-default-host-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 32px;
+  padding: 5px 8px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text);
+  font-size: 12.5px;
+  text-align: left;
+  cursor: default;
+}
+
+.agents-default-host-row:hover {
+  background: var(--bg-hover);
+}
+
+.agents-default-host-row.is-selected {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+
+.agents-default-host-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .agents-skip-picker {
   margin-top: 28px;
   padding-top: 4px;
@@ -12821,6 +13717,7 @@ mark {
   display: flex;
   flex-direction: column;
   gap: 10px;
+  min-width: 0;
 }
 
 .agents-editor .settings-field.row {
@@ -13105,6 +14002,233 @@ mark {
 .model-picker:disabled {
   opacity: 0.45;
   pointer-events: none;
+}
+
+.agent-model-picker {
+  position: relative;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 220px;
+}
+
+.agent-model-picker-trigger {
+  max-width: 220px;
+  gap: 5px;
+  padding-left: 4px;
+}
+
+.agent-model-picker-trigger .agent-brand-mark {
+  flex: 0 0 auto;
+  border-radius: 5px;
+}
+
+.agent-model-picker-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.agent-model-picker-sep {
+  color: var(--text-tertiary);
+  opacity: 0.7;
+}
+
+.agent-model-picker-agent,
+.agent-model-picker-model {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-model-menu {
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 6px);
+  z-index: 50;
+  min-width: 220px;
+  max-width: min(280px, 80vw);
+  max-height: min(360px, 50vh);
+  overflow: auto;
+  padding: 6px;
+  border-radius: 12px;
+  /* Opaque raised surface — --bg-elevated/--bg-secondary are not theme tokens. */
+  border: 1px solid var(--border);
+  background: var(--bg-raised, var(--bg-content));
+  box-shadow: 0 12px 40px color-mix(in srgb, #000 35%, transparent);
+  transform-origin: bottom left;
+  animation: agent-model-menu-in var(--dur-pop) var(--ease-out);
+}
+
+.agent-model-menu[data-leaving] {
+  animation: agent-model-menu-out var(--dur-pop) var(--ease-out) forwards;
+}
+
+@keyframes agent-model-menu-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes agent-model-menu-out {
+  from {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(4px) scale(0.98);
+  }
+}
+
+.agent-model-menu-section-label {
+  padding: 6px 8px 4px;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+}
+
+.agent-model-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 30px;
+  padding: 5px 8px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text);
+  font-size: 12.5px;
+  text-align: left;
+  cursor: default;
+}
+
+.agent-model-menu-item:hover {
+  background: var(--bg-hover);
+}
+
+.agent-model-menu-item.is-selected {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+
+.agent-model-menu-item-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-model-menu-item .agent-brand-mark {
+  flex: 0 0 auto;
+  border-radius: 5px;
+}
+
+.agent-model-menu-sep {
+  height: 1px;
+  margin: 6px 4px;
+  background: var(--border-subtle);
+}
+
+.agent-model-menu-recent .agent-model-menu-item-label {
+  display: flex;
+  align-items: baseline;
+  gap: 0;
+  min-width: 0;
+}
+
+.agent-model-menu-recent-agent {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 550;
+}
+
+.agent-model-menu-recent-model {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-secondary);
+  font-weight: 450;
+}
+
+.agent-model-menu-recent .agent-model-picker-sep {
+  flex: 0 0 auto;
+  margin: 0 5px;
+}
+
+.agent-model-menu-agent {
+  font-weight: 550;
+}
+
+.agent-model-menu-current {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 88px;
+  margin-left: auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  font-weight: 450;
+  color: var(--text-tertiary);
+}
+
+.agent-model-menu-back {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-height: 32px;
+  margin-bottom: 2px;
+  padding: 5px 8px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text);
+  font-size: 12.5px;
+  font-weight: 550;
+  text-align: left;
+  cursor: default;
+}
+
+.agent-model-menu-back:hover {
+  background: var(--bg-hover);
+}
+
+.agent-model-menu-back .agent-brand-mark {
+  flex: 0 0 auto;
+  border-radius: 5px;
+}
+
+.agent-model-menu-model {
+  color: var(--text-secondary);
+  font-size: 12.5px;
+  padding-left: 12px;
+}
+
+.agent-model-menu-model.is-selected {
+  color: var(--text);
+}
+
+.agent-model-menu-note {
+  padding: 4px 8px 8px;
+  font-size: 11px;
+  line-height: 1.35;
+  color: var(--text-tertiary);
 }
 
 .composer-box textarea::placeholder {
@@ -13501,6 +14625,36 @@ html:has(.token-usage-popup) #root {
   overflow: hidden;
 }
 
+.token-usage-quota-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.token-usage-quota-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.token-usage-quota-meta {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.token-usage-quota-name {
+  color: var(--text);
+  font-weight: 500;
+}
+
+.token-usage-quota-pct {
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
 .token-usage-bar-fill {
   height: 100%;
   border-radius: inherit;
@@ -13635,6 +14789,37 @@ html:has(.token-usage-popup) #root {
 
 .settings-nav .conv-row {
   -webkit-app-region: no-drag;
+  /* Single-line nav: match icon box height so label centers with glyph. */
+  gap: 9px;
+  padding: 0 10px;
+}
+
+/* Fixed icon column — Lucide defaults to baseline, which sits off text center. */
+.settings-nav .conv-icon {
+  flex: 0 0 16px;
+  width: 16px;
+  height: 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-secondary);
+}
+
+.settings-nav .conv-icon svg {
+  display: block;
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+}
+
+.settings-nav .conv-title {
+  line-height: 16px;
+  font-size: 13px;
+  letter-spacing: -0.01em;
+}
+
+.settings-nav .conv-row.selected .conv-icon {
+  color: var(--text);
 }
 
 .settings-main {

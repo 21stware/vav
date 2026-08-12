@@ -3,6 +3,7 @@ import { Bell, Bot, FileCheck2, Folder, Info, KeyRound, Palette, Terminal } from
 import type { SettingsView } from '@shared/ipc'
 import type { MessageKey } from '@shared/i18n'
 import {
+  installAgentModelCatalogBridge,
   installSettingsBridge,
   installUpdateBridge,
   useSessionStore
@@ -22,19 +23,33 @@ import { FileAssociationsSettings } from './components/settings/FileAssociations
 import { AboutSettings } from './components/settings/AboutSettings'
 import { getShortcuts } from './shortcuts'
 
+const NAV_ICON = 14
+
 const CATEGORY_KEYS: { id: SettingsView; labelKey: MessageKey; icon: React.JSX.Element }[] = [
-  { id: 'api', labelKey: 'settings.nav.api', icon: <KeyRound size={13} /> },
-  { id: 'workspace', labelKey: 'settings.nav.workspace', icon: <Folder size={13} /> },
-  { id: 'appearance', labelKey: 'settings.nav.appearance', icon: <Palette size={13} /> },
-  { id: 'notifications', labelKey: 'settings.nav.notifications', icon: <Bell size={13} /> },
-  { id: 'agents', labelKey: 'settings.nav.agents', icon: <Bot size={13} /> },
-  { id: 'cli', labelKey: 'settings.nav.cli', icon: <Terminal size={13} /> },
+  { id: 'api', labelKey: 'settings.nav.api', icon: <KeyRound size={NAV_ICON} strokeWidth={1.75} /> },
+  {
+    id: 'workspace',
+    labelKey: 'settings.nav.workspace',
+    icon: <Folder size={NAV_ICON} strokeWidth={1.75} />
+  },
+  {
+    id: 'appearance',
+    labelKey: 'settings.nav.appearance',
+    icon: <Palette size={NAV_ICON} strokeWidth={1.75} />
+  },
+  {
+    id: 'notifications',
+    labelKey: 'settings.nav.notifications',
+    icon: <Bell size={NAV_ICON} strokeWidth={1.75} />
+  },
+  { id: 'agents', labelKey: 'settings.nav.agents', icon: <Bot size={NAV_ICON} strokeWidth={1.75} /> },
+  { id: 'cli', labelKey: 'settings.nav.cli', icon: <Terminal size={NAV_ICON} strokeWidth={1.75} /> },
   {
     id: 'file-associations',
     labelKey: 'settings.nav.fileAssociations',
-    icon: <FileCheck2 size={13} />
+    icon: <FileCheck2 size={NAV_ICON} strokeWidth={1.75} />
   },
-  { id: 'about', labelKey: 'settings.nav.about', icon: <Info size={13} /> }
+  { id: 'about', labelKey: 'settings.nav.about', icon: <Info size={NAV_ICON} strokeWidth={1.75} /> }
 ]
 
 function initialCategory(): SettingsView {
@@ -65,13 +80,16 @@ export default function SettingsWindow(): React.JSX.Element {
   useEffect(() => {
     const offSettings = installSettingsBridge()
     const offUpdates = installUpdateBridge()
+    const offModels = installAgentModelCatalogBridge()
     const offView = window.vav.onSettingsView((view) =>
       useSessionStore.setState({ settingsCategory: view })
     )
     const offMenu = installDefaultContextMenu()
+    void useSessionStore.getState().refreshAgentModelCatalog(false)
     return () => {
       offSettings()
       offUpdates()
+      offModels()
       offView()
       offMenu()
     }

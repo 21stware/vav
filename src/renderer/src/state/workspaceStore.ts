@@ -356,10 +356,10 @@ function reconcileLayout(
       layout = { type: 'leaf', tabId: id, weight: 1 }
     } else {
       // Hydrate-only attach (other window / race before splitAgentHost patch).
-      // Local splits write direction themselves before the next hydrate lands.
+      // Keep the tree's existing axis — always `row` flattened ⌘⇧D column splits.
       const leaves = collectLeaves(layout)
       const focus = leaves[leaves.length - 1]!
-      layout = splitLeaf(layout, focus, 'row', id)
+      layout = splitLeaf(layout, focus, layoutPrimaryAxis(layout), id)
     }
     have.add(id)
   }
@@ -420,32 +420,59 @@ function replaceLayoutTabId(
   }
 }
 
+/** True if any branch is top/bottom (⌘⇧D). `layoutFromTabIds` only builds row. */
+function layoutHasColumn(node: TerminalLayoutNode | null | undefined): boolean {
+  if (!node || node.type === 'leaf') return false
+  if (node.direction === 'column') return true
+  return layoutHasColumn(node.children[0]) || layoutHasColumn(node.children[1])
+}
+
+/** Root (or first) split axis — used when hydrate attaches a new leaf. */
+function layoutPrimaryAxis(node: TerminalLayoutNode | null | undefined): TerminalSplitAxis {
+  if (!node || node.type === 'leaf') return 'row'
+  return node.direction === 'column' ? 'column' : 'row'
+}
+
+/** How well a layout covers `tabIds` (hits*10 − orphans). Missing layout → -1. */
+function scoreLayoutLeaves(
+  layout: TerminalLayoutNode | null | undefined,
+  tabIds: string[]
+): number {
+  if (!layout) return -1
+  const want = new Set(tabIds)
+  const leaves = collectLeaves(layout)
+  let hit = 0
+  for (const id of leaves) if (want.has(id)) hit++
+  const orphan = leaves.filter((id) => !want.has(id)).length
+  return hit * 10 - orphan
+}
+
 /**
  * Prefer the layout tree that already names the current pane ids.
  * Stale remote trees still holding `cli-pending:…` must not beat a local tree
  * that already replaced those leaves with real PTY ids (would re-attach with
  * `row` and shove the new agent to the far right after ⌘⇧D).
+ *
+ * On equal leaf coverage, never let a lagging all-`row` remote wipe a local
+ * `column` tree (syncPtyLayouts is async; pty:changed hydrate often wins the race).
  */
 function pickCliLayoutBase(
   prevLayout: TerminalLayoutNode | null | undefined,
   remoteLayout: TerminalLayoutNode | null | undefined,
   tabIds: string[]
 ): TerminalLayoutNode | null {
-  const want = new Set(tabIds)
-  const score = (layout: TerminalLayoutNode | null | undefined): number => {
-    if (!layout) return -1
-    const leaves = collectLeaves(layout)
-    let hit = 0
-    for (const id of leaves) if (want.has(id)) hit++
-    const orphan = leaves.filter((id) => !want.has(id)).length
-    return hit * 10 - orphan
-  }
-  const sp = score(prevLayout)
-  const sr = score(remoteLayout)
+  const sp = scoreLayoutLeaves(prevLayout, tabIds)
+  const sr = scoreLayoutLeaves(remoteLayout, tabIds)
   if (sp > sr) return prevLayout ?? null
   if (sr > sp) return remoteLayout ?? null
-  // Equal completeness: remote for multi-window reclaim, else prev.
-  return remoteLayout ?? prevLayout ?? null
+  // Equal completeness (same leaves): keep real axes, not layoutFromTabIds rows.
+  const pc = layoutHasColumn(prevLayout)
+  const rc = layoutHasColumn(remoteLayout)
+  if (pc && !rc) return prevLayout ?? null
+  if (rc && !pc) return remoteLayout ?? null
+  // True tie: prefer local (just-split window) over remote lag.
+  // Cold multi-window reclaim has prev=null and already took sr > sp / remote above.
+  return prevLayout ?? remoteLayout ?? null
 }
 
 /**
@@ -1038,18 +1065,43 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   async syncPtyLayouts(id) {
     const setLayouts = window.vav?.pty?.setLayouts
     if (typeof setLayouts !== 'function') return
+    // Snapshot at call time — do not re-read after await (hydrate may race and
+    // momentarily hold a flattened row tree from layoutFromTabIds).
     const slice = get().workspaces[id]
     if (!slice) return
     const agents: ConversationPtyLayouts['agents'] = {}
     for (const [agentId, host] of Object.entries(slice.agentHostSessions)) {
       agents[agentId] = host.layout
     }
+    const payload: ConversationPtyLayouts = {
+      bash: slice.layout,
+      agents,
+      cliMode: slice.cliMode === true
+    }
     try {
-      await setLayouts(id, {
-        bash: slice.layout,
-        agents,
-        cliMode: slice.cliMode === true
-      })
+      await setLayouts(id, payload)
+      // If hydrate flattened local axes while IPC was in flight, restore the
+      // tree we just persisted (column vs row lives only in this snapshot).
+      const sentCli = payload.agents[CLI_SURFACE_KEY] ?? null
+      if (!sentCli) return
+      const now = getCliSurface(get().workspaces[id])
+      if (
+        now &&
+        layoutDirectionKey(now.layout) !== layoutDirectionKey(sentCli) &&
+        (layoutHasColumn(sentCli) || scoreLayoutLeaves(sentCli, now.tabs.map((t) => t.id)) >=
+          scoreLayoutLeaves(now.layout, now.tabs.map((t) => t.id)))
+      ) {
+        patch(set, id, (s) => {
+          const cur = getCliSurface(s)
+          if (!cur) return {}
+          return {
+            agentHostSessions: {
+              ...s.agentHostSessions,
+              [CLI_SURFACE_KEY]: { ...cur, layout: sentCli }
+            }
+          }
+        })
+      }
     } catch {
       // Best-effort — companion may still hydrate from live PTYs.
     }

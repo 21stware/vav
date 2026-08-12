@@ -6,6 +6,15 @@
  */
 
 import type { ChangeSet } from './changeSet'
+import type { CliHostKind, ProviderResumeCursor } from './cliHost'
+
+export type { CliHostKind, ProviderResumeCursor } from './cliHost'
+export {
+  STRUCTURED_CLI_HOSTS,
+  displayNameForCliHost,
+  isStructuredCliHost,
+  resolveDefaultChatHost
+} from './cliHost'
 
 export type ToolName =
   | 'terminal'
@@ -23,6 +32,9 @@ export type ToolName =
   | 'plan'
   | 'sql_query'
   | 'load_skill'
+  | 'switch_mode'
+  /** External CLI tool that does not map to a built-in schema name. */
+  | 'external'
 
 /**
  * What the tool card shows. The schema names above are the model's ABI and
@@ -43,7 +55,9 @@ export const TOOL_LABELS: Record<ToolName, string> = {
   ask_user_question: '提问',
   plan: '计划',
   sql_query: 'SQL 查询',
-  load_skill: '加载技能'
+  load_skill: '加载技能',
+  switch_mode: '切换到编辑',
+  external: '工具'
 }
 
 export type PlanStepStatus = 'pending' | 'executing' | 'done' | 'error' | 'skipped'
@@ -203,7 +217,38 @@ export interface TokenSnapshot {
   newInputTokens: number
   outputTokens: number
   timestamp: number
+  /**
+   * Cost for this sample in USD. When {@link costSource} is `provider`, this is
+   * host-reported; otherwise it is a local rate-table estimate.
+   */
   estimatedCost: number
+  /** Omitted on legacy snapshots — treat as `estimated`. */
+  costSource?: 'estimated' | 'provider'
+}
+
+/**
+ * Subscription / rate-limit window from a live CLI stream (Claude rate_limit_event,
+ * Codex rate_limits on token usage, …). Only windows with a known used % are kept.
+ */
+export type QuotaWindowKind =
+  | 'five_hour'
+  | 'seven_day'
+  | 'seven_day_opus'
+  | 'seven_day_sonnet'
+  | 'primary'
+  | 'secondary'
+  | 'other'
+
+export interface QuotaWindow {
+  /** Stable id for merge (usually matches {@link kind}). */
+  id: string
+  kind: QuotaWindowKind
+  /** 0–100. */
+  usedPercent: number
+  /** Absolute reset time (ms), when the host reported one. */
+  resetsAt: number | null
+  /** When this sample was last observed from the live stream. */
+  updatedAt: number
 }
 
 export interface ConversationMeta {
@@ -216,6 +261,12 @@ export interface ConversationMeta {
   model: string
   tokensUsed: number
   tokenLimit: number
+  /**
+   * Host-reported cumulative session cost in USD when the CLI/provider sends it
+   * (ACP `usage_update.cost`, OpenCode session.cost, Pi session stats, …).
+   * Null = no provider cost; UI falls back to summing estimated turn costs.
+   */
+  reportedSessionCostUsd?: number | null
   /** Pinned rows sort above every time group, newest pin first. */
   pinned: boolean
   /** When the pin was set; orders the pinned section. Null when unpinned. */
@@ -243,13 +294,52 @@ export interface ConversationMeta {
   /**
    * CLI agent binary id for this session (matches {@link AgentConfig.id}).
    * Null = plain shell for new terminal splits (release 599702fe… terminal host).
+   * Also used as the structured host kind when {@link cliHost} is set.
    */
   agentBinaryName?: string | null
+  /**
+   * When set, Composer/Transcript are driven by a structured CLI protocol
+   * (Claude stream-json, Codex app-server, ACP, …) instead of the built-in
+   * pi-agent loop. Null = built-in VAV agent.
+   */
+  cliHost?: CliHostKind | null
+  /** Native session resume cursor for {@link cliHost}. */
+  cliResumeCursor?: ProviderResumeCursor | null
   /**
    * File currently focused in the workspace preview for this conversation.
    * Fed into the built-in agent system prompt and injected into CLI agent PTYs.
    */
   focusedFilePath?: string | null
+}
+
+/**
+ * Parked transcript for one chat host inside a conversation.
+ * Active host lives on {@link Conversation}.messages; others sit here so
+ * switching VAV ↔ Claude ↔ Codex restores each agent's own history (no
+ * cross-host context handoff — only UI persistence per host).
+ */
+export interface HostTranscriptBucket {
+  messages: ChatMessage[]
+  activeLeafId: string | null
+  tokenHistory: TokenSnapshot[]
+  tokensUsed: number
+  tokenLimit: number
+  reportedSessionCostUsd: number | null
+  cacheCreatedAt: number | null
+  cacheExpiresAt: number | null
+  /** Last live CLI quota windows for this host (empty when none reported). */
+  quotaWindows: QuotaWindow[]
+  compactions: LeafCompaction[]
+  cliResumeCursor: ProviderResumeCursor | null
+  /** Model id last used with this host (restored on switch). */
+  model: string | null
+}
+
+/** Bucket key for the built-in VAV agent (`cliHost == null`). */
+export const VAV_HOST_KEY = 'vav'
+
+export function hostTranscriptKey(cliHost: CliHostKind | null | undefined): string {
+  return cliHost ?? VAV_HOST_KEY
 }
 
 /**
@@ -372,7 +462,7 @@ export const DEFAULT_CLI_AGENTS: AgentConfig[] = [
   },
   {
     id: 'grok',
-    name: 'Grok',
+    name: 'Grok build',
     binaryPath: 'grok',
     binaryCandidates: ['grok'],
     defaultArgs: ['--always-approve', '--permission-mode', 'bypassPermissions'],
@@ -538,10 +628,20 @@ export interface Conversation extends ConversationMeta {
   /** cacheCreatedAt + 5 minutes. */
   cacheExpiresAt: number | null
   /**
+   * Live CLI subscription / rate-limit windows (5h, weekly, …).
+   * Populated only from host stream events that include a used percentage.
+   */
+  quotaWindows?: QuotaWindow[]
+  /**
    * Per-leaf context compressions. Originals remain in {@link messages};
    * the model sees the summary + tail of the active path.
    */
   compactions?: LeafCompaction[]
+  /**
+   * Parked transcripts for inactive chat hosts (keyed by {@link hostTranscriptKey}).
+   * The active host's tree stays in {@link messages}.
+   */
+  hostTranscripts?: Record<string, HostTranscriptBucket>
 }
 
 export type ShellKind = 'zsh' | 'bash' | 'fish' | 'powershell'
@@ -615,6 +715,15 @@ export const DISPLAY_CURRENCIES: readonly DisplayCurrency[] = [
   'AUD',
   'CAD'
 ] as const
+
+/**
+ * One entry in the Agent/Model picker’s “Recently” queue.
+ * `hostId` is `"vav"` for the built-in agent, otherwise a {@link CliHostKind}.
+ */
+export interface RecentAgentModelEntry {
+  hostId: string
+  model: string
+}
 
 export interface AppSettings {
   apiEndpoint: string
@@ -739,8 +848,8 @@ export interface AppSettings {
    */
   cliAgents: AgentConfig[]
   /**
-   * Legacy: previously “default for new splits”. List order is the source of
-   * truth now; kept for settings migration only.
+   * Default chat host for new / quick-launch sessions.
+   * `null` or `"vav"` = built-in VAV agent; otherwise a structured CLI host id.
    */
   defaultAgentId: string | null
   /**
@@ -748,6 +857,17 @@ export interface AppSettings {
    * launch that agent directly (new Screen / new split pending panes).
    */
   skipCliAgentPickerWhenSingle: boolean
+  /**
+   * Per chat-host model ids the user has turned off in Settings.
+   * Keys: `"vav"` or a {@link CliHostKind}. Missing / empty = all catalogue
+   * models enabled for that host.
+   */
+  disabledAgentModels: Record<string, string[]>
+  /**
+   * Recently picked agent+model pairs (picker queue), most recent first.
+   * Cap enforced in SettingsStore; used for one-click switch in AgentModelPicker.
+   */
+  recentAgentModels: RecentAgentModelEntry[]
   /**
    * When true, a square Agent mark sits outside the top-right of a selected
    * preview block (every file preview surface). Off hides the mark.
@@ -810,6 +930,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   /** null = plain vav shell (default host mode). */
   defaultAgentId: null,
   skipCliAgentPickerWhenSingle: false,
+  disabledAgentModels: {},
+  recentAgentModels: [],
   previewSelectionAgentMark: true,
   previewReadModeSelection: true
 }
@@ -1017,9 +1139,12 @@ export type TurnEvent =
       type: 'usage'
       conversationId: string
       tokensUsed: number
+      tokenLimit?: number
       history: TokenSnapshot[]
       cacheCreatedAt: number | null
       cacheExpiresAt: number | null
+      reportedSessionCostUsd?: number | null
+      quotaWindows?: QuotaWindow[]
     }
   /** Turn is over: the finished assistant message replaces all streaming state. */
   | {

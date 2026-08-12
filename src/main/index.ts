@@ -28,7 +28,7 @@ import {
   statSync,
   writeFileSync
 } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { homedir, tmpdir } from 'node:os'
 import { randomUUID } from 'node:crypto'
 import { APP_NAME, applyBranding, applyDockIcon, loadAppIcon, pinUserDataPath } from './brand'
 import {
@@ -64,6 +64,15 @@ import { DuckDbService } from './fs/DuckDbService'
 import { WebSearchService } from './web/WebSearchService'
 import { WebFetchService } from './web/WebFetchService'
 import { ChangeSetStore } from './agent/ChangeSetStore'
+import {
+  checkoutGitBranch,
+  createGitBranch,
+  createGitWorktree,
+  getGitDiff,
+  getGitShowBase64,
+  getGitSnapshot,
+  initGitRepo
+} from './git/GitService'
 import { UpdateService } from './updates'
 import { PtyManager } from './terminal/PtyManager'
 import { resolveAgentExecutable } from './terminal/loginPath'
@@ -71,7 +80,27 @@ import { menuCommandFromInput } from './menuShortcuts'
 import { isDevRuntime } from './devRuntime'
 import { installDevParentWatchdog } from './devParentWatchdog'
 import { AgentRuntime } from './agent/AgentRuntime'
+import { CliAgentHost } from './agent/CliAgentHost'
+import {
+  getModelCatalogSnapshot,
+  listHostModels,
+  preloadHostModels
+} from './agent/listHostModels'
 import { SkillService } from './agent/SkillService'
+import {
+  displayNameForCliHost,
+  isStructuredCliHost,
+  resolveDefaultChatHost,
+  type CliHostKind
+} from '@shared/cliHost'
+import {
+  labelForChatModel,
+  resolveModelForChatHost
+} from '@shared/agentModels'
+import {
+  providerLabel as vavProviderLabel,
+  resolveContextWindow
+} from '@shared/tokenUsage'
 import { validateApiKey } from './agent/provider'
 import { shellPath } from './terminal/StickyShell'
 import { buildAppMenu } from './menu'
@@ -229,12 +258,49 @@ const ptyManager = new PtyManager(
 /** Conversation ids with a live or paused turn — drives the tray badge/menu. */
 const activeTurns = new Map<string, 'running' | 'paused'>()
 
-function focusConversation(conversationId: string): void {
+/**
+ * Raise the session where the user left it (detached companion if open, else
+ * main) and tell the renderer which surface/pane to show.
+ *
+ * Tray CLI rows pass surface=cli + tabId so we enter CLI Agents and focus that
+ * pane — never only select the row and leave VAV composer focused.
+ */
+function focusRunningSession(target: {
+  conversationId: string
+  surface?: 'vav' | 'cli'
+  tabId?: string
+  agentId?: string
+}): void {
+  const conversationId = target.conversationId
+  if (!conversationId) return
+  const payload = {
+    conversationId,
+    toast: null as string | null,
+    surface: target.surface,
+    tabId: target.tabId,
+    agentId: target.agentId
+  }
+
+  const detached = detachedWindows.get(conversationId)
+  if (detached && !detached.isDestroyed()) {
+    raiseDetachedWindow(detached)
+    const send = (): void => {
+      if (detached.isDestroyed()) return
+      safeSend(detached.webContents, IPC.cliOpen, payload)
+    }
+    if (detached.webContents.isLoading()) {
+      detached.webContents.once('did-finish-load', () => setTimeout(send, 50))
+    } else {
+      setTimeout(send, 50)
+    }
+    return
+  }
+
   const wasMissing = !mainWindow || mainWindow.isDestroyed()
   showMainWindow()
   const send = (): void => {
     if (!mainWindow || mainWindow.isDestroyed()) return
-    safeSend(mainWindow.webContents, IPC.cliOpen, { conversationId, toast: null })
+    safeSend(mainWindow.webContents, IPC.cliOpen, payload)
   }
   // Main may still be loading after create/show — wait so the renderer
   // has onCliOpen wired before we ask it to select the session.
@@ -246,6 +312,11 @@ function focusConversation(conversationId: string): void {
   } else {
     setTimeout(send, 50)
   }
+}
+
+/** Notification / list reveal — VAV chat surface in main (or existing detached). */
+function focusConversation(conversationId: string): void {
+  focusRunningSession({ conversationId, surface: 'vav' })
 }
 
 /**
@@ -269,11 +340,24 @@ function revealConversationInList(conversationId: string): void {
 
 const notifications = new NotificationCenter(
   () => settingsStore.get(),
-  focusConversation,
+  (target) => focusRunningSession(target),
   () => openSettingsWindow(),
   showMainWindow,
   () => mainWindow
 )
+
+/** Compact path for tray labels: `/Users/me/repo/vav` → `~/repo/vav`. */
+function trayDirLabel(workingDirectory: string | null | undefined): string {
+  if (!workingDirectory || workingDirectory === '~') return '~'
+  const home = homedir()
+  if (workingDirectory === home) return '~'
+  if (workingDirectory.startsWith(home + '/') || workingDirectory.startsWith(home + '\\')) {
+    return `~${workingDirectory.slice(home.length).replace(/\\/g, '/')}`
+  }
+  // Fall back to last segment if path is long and outside home.
+  const parts = workingDirectory.replace(/\\/g, '/').split('/').filter(Boolean)
+  return parts.length ? parts[parts.length - 1]! : workingDirectory
+}
 
 function refreshTraySessions(): void {
   const settings = settingsStore.get()
@@ -284,14 +368,20 @@ function refreshTraySessions(): void {
   }
 
   // Prefer live CLI agent panes for the tray badge/menu.
+  // Format: [session name] - [agent name] - [dir]  e.g. New Session - Grok - ~/repo/vav
+  // One row per pane (tabId) so multi-pane sessions can focus the right agent.
   const cliRows = ptyManager.listCliAgentSessions().map((s) => {
     const conversation = conversationStore.get(s.conversationId)
-    const convTitle =
+    const sessionName =
       (conversation?.title && conversation.title.trim()) || s.title || s.conversationId
-    const name = s.agentId ? agentLabel(s.agentId) : 'CLI'
+    const agentName = s.agentId ? agentLabel(s.agentId) : 'CLI'
+    const dirName = trayDirLabel(conversation?.workingDirectory)
     return {
-      id: s.conversationId,
-      title: `${name} — ${convTitle}`
+      conversationId: s.conversationId,
+      title: `${sessionName} - ${agentName} - ${dirName}`,
+      surface: 'cli' as const,
+      tabId: s.id,
+      agentId: s.agentId || undefined
     }
   })
 
@@ -303,7 +393,13 @@ function refreshTraySessions(): void {
 
   const vavRows = [...activeTurns.keys()].map((id) => {
     const conversation = conversationStore.get(id)
-    return { id, title: conversation?.title ?? id }
+    const sessionName = conversation?.title?.trim() || id
+    const dirName = trayDirLabel(conversation?.workingDirectory)
+    return {
+      conversationId: id,
+      title: `${sessionName} - VAV - ${dirName}`,
+      surface: 'vav' as const
+    }
   })
   notifications.updateRunningSessions(vavRows)
 }
@@ -423,8 +519,26 @@ const agent = new AgentRuntime({
   webFetch,
   skills: skillService,
   fileSessions: fileSessionStore,
+  emit: handleAgentEvent,
+  onFileReadOnlyChange: (conversationId, readOnly) => {
+    broadcast(IPC.fileSessionReadOnlyChanged, { sessionId: conversationId, readOnly })
+    publishConversations()
+  }
+})
+
+/** Structured CLI hosts (Claude stream-json, Codex app-server, ACP, …). */
+const cliHost = new CliAgentHost({
+  conversations: conversationStore,
+  settings: settingsStore,
+  changeSets: changeSetStore,
   emit: handleAgentEvent
 })
+
+setInterval(() => cliHost.reapIdle(), 5 * 60_000)
+
+function agentFor(conversationId: string): 'builtin' | 'cli' {
+  return cliHost.owns(conversationId) ? 'cli' : 'builtin'
+}
 
 /** IPC to a renderer that may already be tearing down (close / HMR / pkill). */
 function safeSend(contents: Electron.WebContents | null | undefined, channel: string, payload?: unknown): void {
@@ -1012,6 +1126,13 @@ function wireCloseLeavingFullscreen(win: BrowserWindow): void {
   })
 }
 
+function wirePopupDismiss(window: BrowserWindow): void {
+  // Hide-on-close and Space hops leave AppKit menus floating unless we close them.
+  window.on('blur', () => closeActiveNativePopup())
+  window.on('hide', () => closeActiveNativePopup())
+  window.on('closed', () => closeActiveNativePopup())
+}
+
 function createWindow(): BrowserWindow {
   const icon = loadAppIcon()
   const snapshotting = Boolean(process.env.VAV_SNAPSHOT)
@@ -1029,6 +1150,7 @@ function createWindow(): BrowserWindow {
     webPreferences: rendererPrefs()
   })
   applyMenuBar(window)
+  wirePopupDismiss(window)
 
   window.once('ready-to-show', () => {
     void revealBrowserWindow(window)
@@ -1222,8 +1344,8 @@ function detachedBounds(cascade: number): {
  * shadow (the flicker users saw on ⌘⇧↵). Only hop Spaces when we are not the
  * frontmost app (e.g. global hotkey from another fullscreen app).
  */
-function raiseDetachedWindow(win: BrowserWindow): void {
-  if (win.isDestroyed()) return
+function raiseDetachedWindow(win: BrowserWindow): Promise<void> {
+  if (win.isDestroyed()) return Promise.resolve()
   if (win.isMinimized()) win.restore()
 
   // Only hop Spaces when another app is frontmost (global ⌘⇧↵). When vav is
@@ -1266,10 +1388,52 @@ function raiseDetachedWindow(win: BrowserWindow): void {
 
   if (win.isVisible()) {
     finish()
-    return
+    return Promise.resolve()
   }
   // Cold companion: paint a frame while still hidden, then raise.
-  void waitForRendererPaint(win).then(finish)
+  return waitForRendererPaint(win).then(finish)
+}
+
+function isWindowInPlay(win: BrowserWindow | null | undefined): boolean {
+  return !!(win && !win.isDestroyed() && (win.isVisible() || win.isMinimized()))
+}
+
+function moveWindowTop(win: BrowserWindow): void {
+  if (win.isDestroyed()) return
+  if (win.isMinimized()) {
+    try {
+      win.restore()
+    } catch {
+      // ignore
+    }
+  }
+  try {
+    win.moveTop()
+  } catch {
+    // ignore
+  }
+}
+
+/**
+ * Fixed Z-order for Dock / second-instance activate (bottom → top):
+ *   main shell < Quick Chat (detached session) < Settings
+ *
+ * `focus()` raises its target, so call this *after* focusing the activate
+ * window — higher layers are re-pinned with `moveTop` only (no focus steal).
+ */
+function enforceAppZOrder(focused: BrowserWindow | null): void {
+  if (isWindowInPlay(mainWindow)) moveWindowTop(mainWindow!)
+
+  const quickChats = [...detachedWindows.values()].filter((w) => isWindowInPlay(w))
+  for (const win of quickChats) {
+    if (focused && win.id === focused.id) continue
+    moveWindowTop(win)
+  }
+  if (focused && quickChats.some((w) => w.id === focused.id)) {
+    moveWindowTop(focused)
+  }
+
+  if (isWindowInPlay(settingsWindow)) moveWindowTop(settingsWindow!)
 }
 
 /** Strip message bodies for IPC seed (sidebar meta shape). */
@@ -1309,17 +1473,77 @@ function unbindDetachedWindow(window: BrowserWindow): string | null {
 }
 
 /**
+ * Keep the session companion URL in sync with the claimed conversation.
+ * Warm shells load as `?view=session&warm=1`; without this, Cmd+R reloads that
+ * URL and the renderer never re-claims — blank “hung” quick-chat window.
+ */
+function syncSessionShellQuery(
+  window: BrowserWindow,
+  opts: { conversationId: string | null }
+): void {
+  if (window.isDestroyed()) return
+  const wc = window.webContents
+  if (wc.isDestroyed()) return
+  const conversationId = opts.conversationId ?? ''
+  const script = `(() => {
+    try {
+      const u = new URL(window.location.href);
+      u.searchParams.set('view', 'session');
+      if (${JSON.stringify(conversationId)}) {
+        u.searchParams.set('conversationId', ${JSON.stringify(conversationId)});
+        u.searchParams.delete('warm');
+      } else {
+        u.searchParams.set('warm', '1');
+        u.searchParams.delete('conversationId');
+        u.searchParams.delete('empty');
+        u.searchParams.delete('collapseTools');
+      }
+      const next = u.pathname + u.search + u.hash;
+      if (location.pathname + location.search + location.hash !== next) {
+        history.replaceState(null, '', next);
+      }
+    } catch (_) {}
+  })();`
+  const run = (): void => {
+    if (window.isDestroyed() || wc.isDestroyed()) return
+    void wc.executeJavaScript(script).catch(() => undefined)
+  }
+  if (wc.isLoadingMainFrame()) {
+    wc.once('did-finish-load', run)
+  } else {
+    run()
+  }
+}
+
+/** Re-push claim after refresh / warm reclaim. */
+function pushDetachedSessionClaim(window: BrowserWindow, conversationId: string): void {
+  const conversation = conversationStore.get(conversationId)
+  if (!conversation || window.isDestroyed()) return
+  sessionNavigateSeq += 1
+  safeSend(window.webContents, IPC.sessionNavigate, {
+    conversationId,
+    meta: conversationToMeta(conversation),
+    empty: conversation.messages.length === 0,
+    openSeq: sessionNavigateSeq,
+    requestedAt: Date.now()
+  })
+  syncSessionShellQuery(window, { conversationId })
+}
+
+/**
  * Empty ephemeral ⌘⇧↵ shells die on close; anything with messages / CLI / PTY stays.
  */
 function disposeEphemeralIfEmpty(conversationId: string): boolean {
   if (!ephemeralConversations.delete(conversationId)) return false
   const stale = conversationStore.get(conversationId)
-  const agentActive = !!stale?.agentBinaryName && stale.agentBinaryName !== 'vav'
+  const agentActive =
+    (!!stale?.agentBinaryName && stale.agentBinaryName !== 'vav') || !!stale?.cliHost
   const hasPty = ptyManager.hasConversation(conversationId)
   if (stale && stale.messages.length === 0 && !agentActive && !hasPty) {
     const removed = conversationStore.remove([conversationId])
     for (const id of removed) {
       agent.disposeConversation(id)
+      cliHost.dispose(id)
       ptyManager.killForConversation(id)
       fileService.unwatch(id)
     }
@@ -1348,6 +1572,7 @@ function createSessionBrowserWindow(opts: {
     webPreferences: rendererPrefs()
   })
   applyMenuBar(window)
+  wirePopupDismiss(window)
   wireExternalLinks(window.webContents)
   wireMenuAccelerators(window.webContents)
   wirePtyViewerLifecycle(window.webContents)
@@ -1458,6 +1683,7 @@ function parkWarmSessionShell(window: BrowserWindow): void {
     conversationId: '',
     openSeq: sessionNavigateSeq
   })
+  syncSessionShellQuery(window, { conversationId: null })
   setTimeout(() => warmSessionShellPool(), SESSION_POOL_REFILL_MS)
 }
 
@@ -1531,7 +1757,15 @@ async function openDetachedWindow(
   if (existing && !existing.isDestroyed()) {
     sessionOpenMark('open:reuse-focus', conversationId)
     raiseDetachedWindow(existing)
-    safeSend(existing.webContents, IPC.menuCommand, 'focus-composer')
+    // Restore the surface the session was on (CLI Agents vs VAV composer).
+    // Always forcing focus-composer left CLI mode visually stuck / unfocused.
+    const listed = ptyManager.listForConversation(conversationId)
+    const surface: 'vav' | 'cli' = listed.layouts.cliMode === true ? 'cli' : 'vav'
+    safeSend(existing.webContents, IPC.cliOpen, {
+      conversationId,
+      toast: null,
+      surface
+    })
     return existing
   }
 
@@ -1590,6 +1824,8 @@ async function openDetachedWindow(
 
   if (warm) {
     safeSend(window.webContents, IPC.sessionNavigate, payload)
+    // Persist id in the URL so Cmd+R / reload can cold-claim the same session.
+    syncSessionShellQuery(window, { conversationId })
     // Shell is already bootstrapped — raise now; renderer focuses composer.
     raiseDetachedWindow(window)
     sessionOpenMark('open:warm-raised', conversationId)
@@ -1981,6 +2217,49 @@ function dismissTokenUsageSoon(): void {
   }, 120)
 }
 
+/**
+ * Coerce conversation.model to a valid id for its chat host.
+ * Fixes sessions created with defaultAgentId=CLI but still holding the VAV
+ * defaultModel (e.g. grok + deepseek-v4-flash) — picker resolved for display
+ * only, so the context-window panel showed the wrong model.
+ */
+function coerceConversationModel(conversationId: string): string | null {
+  const conversation = conversationStore.get(conversationId)
+  if (!conversation) return null
+  const settings = settingsStore.get()
+  const host = (conversation.cliHost ?? null) as CliHostKind | null
+  const key = host ?? 'vav'
+  const catalogue = getModelCatalogSnapshot()[key]?.models
+  const resolved = resolveModelForChatHost(host, conversation.model, {
+    customModels: settings.customModels,
+    vavDefaultModel: settings.defaultModel,
+    catalogue
+  })
+  if (resolved !== conversation.model) {
+    conversationStore.updateMeta(conversationId, {
+      model: resolved,
+      tokenLimit: resolveContextWindow(resolved)
+    })
+    // Keep sidebar / composer meta in sync when healing a foreign model id.
+    publishConversations()
+  }
+  return resolved
+}
+
+function modelForNewConversation(
+  host: CliHostKind | null,
+  preferredModel?: string | null
+): string {
+  const settings = settingsStore.get()
+  const key = host ?? 'vav'
+  const catalogue = getModelCatalogSnapshot()[key]?.models
+  return resolveModelForChatHost(host, preferredModel ?? settings.defaultModel, {
+    customModels: settings.customModels,
+    vavDefaultModel: settings.defaultModel,
+    catalogue
+  })
+}
+
 /** Lean snapshot for the panel — never ships message bodies. */
 function buildTokenUsagePayload(conversationId: string): TokenUsageViewPayload | null {
   const conversation = conversationStore.get(conversationId)
@@ -1991,11 +2270,11 @@ function buildTokenUsagePayload(conversationId: string): TokenUsageViewPayload |
   const pathLen = leafId
     ? threadPath(conversation.messages, leafId).length
     : conversation.messages.length
-  const activeCompaction = compactionForLeaf(
-    conversation.compactions,
-    conversation.messages,
-    leafId
-  )
+  const cliHost = (conversation.cliHost ?? null) as CliHostKind | null
+  // Compact only affects VAV history — ignore leftovers while on a CLI host.
+  const activeCompaction = cliHost
+    ? null
+    : compactionForLeaf(conversation.compactions, conversation.messages, leafId)
   const latestInput = conversation.tokenHistory?.at(-1)?.totalInputTokens ?? 0
   const estimated = activeCompaction?.estimatedContextTokens ?? 0
   const contextTokens =
@@ -2004,12 +2283,33 @@ function buildTokenUsagePayload(conversationId: string): TokenUsageViewPayload |
       : latestInput > 0
         ? latestInput
         : conversation.tokensUsed
+  const model = coerceConversationModel(conversationId) ?? conversation.model
+  const catalogue = getModelCatalogSnapshot()[cliHost ?? 'vav']?.models
+  const modelLabel = labelForChatModel(
+    cliHost,
+    model,
+    settings.customModels,
+    catalogue
+  )
+  const provider = cliHost
+    ? displayNameForCliHost(cliHost)
+    : vavProviderLabel(model, settings.apiEndpoint)
+  const history = conversation.tokenHistory ?? []
+  const reportedSessionCostUsd = conversation.reportedSessionCostUsd ?? null
+  const hasProviderUsage =
+    history.length > 0 ||
+    (conversation.tokensUsed ?? 0) > 0 ||
+    reportedSessionCostUsd != null ||
+    estimated > 0
   return {
     conversationId: conversation.id,
-    model: conversation.model,
+    model,
+    modelLabel,
+    providerLabel: provider,
+    cliHost,
     tokensUsed: conversation.tokensUsed,
     tokenLimit: conversation.tokenLimit,
-    history: conversation.tokenHistory ?? [],
+    history,
     cacheCreatedAt: conversation.cacheCreatedAt ?? null,
     cacheExpiresAt: conversation.cacheExpiresAt ?? null,
     isRunning: phase === 'running' || phase === 'paused',
@@ -2022,13 +2322,36 @@ function buildTokenUsagePayload(conversationId: string): TokenUsageViewPayload |
     compactedCount: activeCompaction?.compactedCount ?? 0,
     pathMessageCount: pathLen,
     contextTokens,
-    contextTokensEstimated: estimated > 0
+    contextTokensEstimated: estimated > 0,
+    reportedSessionCostUsd,
+    hasProviderUsage,
+    cacheExpiryEstimated: !!(conversation.cacheExpiresAt && conversation.cacheCreatedAt),
+    // Manual compact only rewrites VAV buildHistory — not CLI native sessions.
+    compactAvailable: !cliHost,
+    quotaWindows: cliHost ? (conversation.quotaWindows ?? []) : []
+  }
+}
+
+function currentTokenUsagePayload(): TokenUsageViewPayload | null {
+  const id = tokenUsageConversationId
+  if (!id || id === '_') return null
+  try {
+    return buildTokenUsagePayload(id)
+  } catch (err) {
+    console.error('[token-usage] payload failed', err)
+    return null
   }
 }
 
 function sendTokenUsagePayload(conversationId: string): void {
   if (!tokenUsageWindow || tokenUsageWindow.isDestroyed()) return
-  const payload = buildTokenUsagePayload(conversationId)
+  let payload: TokenUsageViewPayload | null = null
+  try {
+    payload = buildTokenUsagePayload(conversationId)
+  } catch (err) {
+    console.error('[token-usage] payload failed', err)
+    return
+  }
   if (!payload) return
   safeSend(tokenUsageWindow.webContents, IPC.tokenUsageView, payload)
 }
@@ -2177,6 +2500,9 @@ function openTokenUsageWindow(
   ).catch(() => undefined)
 
   tokenUsageWindow.on('blur', () => dismissTokenUsageSoon())
+  // Focus can bounce during show(); cancel a pending blur-dismiss so the
+  // panel does not flash open then close 120ms later.
+  tokenUsageWindow.on('focus', () => cancelTokenUsageDismiss())
   // Hide instead of destroy so reopen is free.
   tokenUsageWindow.on('close', (event) => {
     if (quitting) return
@@ -2272,6 +2598,7 @@ function warmTokenUsageWindow(): void {
     }}`
   ).catch(() => undefined)
   tokenUsageWindow.on('blur', () => dismissTokenUsageSoon())
+  tokenUsageWindow.on('focus', () => cancelTokenUsageDismiss())
   tokenUsageWindow.on('close', (event) => {
     if (quitting) return
     event.preventDefault()
@@ -2304,9 +2631,15 @@ function newDetachedSession(): void {
   sessionOpenT0 = now
   sessionOpenMark('hotkey:start')
   const settings = settingsStore.get()
-  const conversation = conversationStore.create(resolveNewWorkdir(), settings.defaultModel, {
-    approvalMode: settings.defaultApprovalMode ?? 'auto'
-  })
+  const defaultHost = resolveDefaultChatHost(settings.defaultAgentId)
+  const conversation = conversationStore.create(
+    resolveNewWorkdir(),
+    modelForNewConversation(defaultHost),
+    {
+      approvalMode: settings.defaultApprovalMode ?? 'auto',
+      cliHost: defaultHost
+    }
+  )
   ephemeralConversations.add(conversation.id)
   sessionOpenMark('hotkey:created', conversation.id)
   // ⌘⇧↵: tools panel starts collapsed (main-chat.rpml).
@@ -2320,6 +2653,34 @@ function newDetachedSession(): void {
 }
 
 /**
+ * At most one renderer-driven popup at a time.
+ * Without this, ⌘⇧O / chip menus stack when the user switches sessions or
+ * re-opens before the previous AppKit menu closes — leaving a sticky menu.
+ */
+let activeNativePopup: {
+  menu: Electron.Menu
+  window: BrowserWindow
+  finish: () => void
+  seq: number
+} | null = null
+let nativePopupSeq = 0
+
+function closeActiveNativePopup(): void {
+  const active = activeNativePopup
+  if (!active) return
+  activeNativePopup = null
+  // Invalidate any deferred popup() that has not shown yet.
+  nativePopupSeq += 1
+  try {
+    if (!active.window.isDestroyed()) active.menu.closePopup(active.window)
+    else active.menu.closePopup()
+  } catch {
+    // Menu may already be gone
+  }
+  active.finish()
+}
+
+/**
  * Native popup menu driven by the renderer.
  *
  * Resolves to the chosen row's id — `click` fires before popup's `callback`,
@@ -2330,12 +2691,17 @@ function popupNativeMenu(
   items: NativeMenuItem[],
   position?: { x: number; y: number }
 ): Promise<string | null> {
+  // Dismiss any previous popup first (session switch / double ⌘⇧O).
+  closeActiveNativePopup()
+  const seq = ++nativePopupSeq
+
   return new Promise((resolve) => {
     let chosen: string | null = null
     let settled = false
     const finish = (): void => {
       if (settled) return
       settled = true
+      if (activeNativePopup?.seq === seq) activeNativePopup = null
       // setImmediate so click handlers that themselves open menus still run first.
       setImmediate(() => resolve(chosen))
     }
@@ -2392,12 +2758,14 @@ function popupNativeMenu(
     // Defer past the originating mouseup. Opening a native menu synchronously inside a
     // button click often dismisses it immediately (menu never appears).
     setTimeout(() => {
-      if (window.isDestroyed()) {
+      if (window.isDestroyed() || seq !== nativePopupSeq) {
         finish()
         return
       }
       try {
-        Menu.buildFromTemplate(template).popup(opts)
+        const menu = Menu.buildFromTemplate(template)
+        activeNativePopup = { menu, window, finish, seq }
+        menu.popup(opts)
       } catch {
         finish()
       }
@@ -2574,11 +2942,26 @@ function activateApp(): void {
     mainWindow = createWindow()
     return
   }
-  if (mainWindow && !mainWindow.isDestroyed() && target === mainWindow) {
-    void revealBrowserWindow(target)
-    return
-  }
-  raiseDetachedWindow(target)
+  void (async () => {
+    if (target.isDestroyed()) return
+    // Main + Settings use the paint-safe reveal; companions use the Space hop.
+    if (
+      (mainWindow && !mainWindow.isDestroyed() && target.id === mainWindow.id) ||
+      (settingsWindow && !settingsWindow.isDestroyed() && target.id === settingsWindow.id)
+    ) {
+      await revealBrowserWindow(target)
+    } else {
+      await raiseDetachedWindow(target)
+    }
+    if (target.isDestroyed()) return
+    // focus() may raise `target` above Settings / other Quick Chats — re-pin.
+    try {
+      target.focus()
+    } catch {
+      // ignore
+    }
+    enforceAppZOrder(target)
+  })()
 }
 
 /**
@@ -2604,9 +2987,16 @@ function openWorkspaceSession(options: {
     broadcast(IPC.settingsChanged, currentSettings())
   }
   const sessionSettings = settingsStore.get()
-  const conversation = conversationStore.create(resolved, sessionSettings.defaultModel, {
-    approvalMode: sessionSettings.defaultApprovalMode ?? 'auto'
-  })
+  const defaultHost = resolveDefaultChatHost(sessionSettings.defaultAgentId)
+  const conversation = conversationStore.create(
+    resolved,
+    modelForNewConversation(defaultHost),
+    {
+      approvalMode: sessionSettings.defaultApprovalMode ?? 'auto',
+      cliHost: defaultHost
+    }
+  )
+  if (defaultHost) promoteEphemeralConversation(conversation.id)
   publishConversations()
   const payload = {
     conversationId: conversation.id,
@@ -3039,9 +3429,16 @@ function registerIpc(): void {
         settingsStore.rememberWorkspaceDirectory(workdir, tmpdir())
         broadcast(IPC.settingsChanged, currentSettings())
       }
-      const conversation = conversationStore.create(workdir, model, {
-        approvalMode: settings.defaultApprovalMode ?? 'auto'
-      })
+      const defaultHost = resolveDefaultChatHost(settings.defaultAgentId)
+      const conversation = conversationStore.create(
+        workdir,
+        modelForNewConversation(defaultHost, model),
+        {
+          approvalMode: settings.defaultApprovalMode ?? 'auto',
+          cliHost: defaultHost
+        }
+      )
+      if (defaultHost) promoteEphemeralConversation(conversation.id)
       const { messages: _messages, ...meta } = conversation
       void _messages
       publishConversations()
@@ -3116,8 +3513,13 @@ function registerIpc(): void {
   })
 
   ipcMain.handle(IPC.convSetModel, (_event, id: string, model: string) => {
-    conversationStore.updateMeta(id, { model })
+    conversationStore.updateMeta(id, {
+      model,
+      tokenLimit: resolveContextWindow(model)
+    })
+    if (cliHost.owns(id)) cliHost.applyModel(id, model)
     publishConversations()
+    pushTokenUsageIfOpen(id)
     return conversationStore.listMeta()
   })
 
@@ -3130,6 +3532,53 @@ function registerIpc(): void {
       if (agentBinaryName) promoteEphemeralConversation(id)
       publishConversations()
       return conversationStore.listMeta()
+    }
+  )
+
+  ipcMain.handle(
+    IPC.convSetCliHost,
+    (_event, id: string, host: string | null) => {
+      const prev = conversationStore.get(id)
+      const prevHost = prev?.cliHost ?? null
+      const nextHost = isStructuredCliHost(host) ? host : null
+      const hostChanged = prevHost !== nextHost
+      if (hostChanged) {
+        // Park previous host's transcript, restore the next host's bucket.
+        // Runtimes are per-host; tear down so the wrong process cannot resume.
+        agent.disposeConversation(id)
+        cliHost.dispose(id)
+        changeSetStore.clearConversation(id)
+        conversationStore.switchHostTranscript(id, nextHost)
+        // Empty buckets keep the previous host's model string — coerce so the
+        // picker / context-window panel do not show a foreign VAV preset.
+        coerceConversationModel(id)
+      } else {
+        conversationStore.updateMeta(id, {
+          cliHost: nextHost,
+          agentBinaryName: nextHost
+        })
+      }
+      if (nextHost) promoteEphemeralConversation(id)
+      publishConversations()
+      const conversation = conversationStore.get(id)
+      return {
+        conversations: conversationStore.listMeta(),
+        hostChanged,
+        transcript: conversation
+          ? {
+              messages: conversation.messages,
+              activeLeafId: conversation.activeLeafId,
+              compactions: conversation.compactions ?? [],
+              tokenHistory: conversation.tokenHistory ?? [],
+              tokensUsed: conversation.tokensUsed,
+              cacheCreatedAt: conversation.cacheCreatedAt,
+              cacheExpiresAt: conversation.cacheExpiresAt,
+              cliResumeCursor: conversation.cliResumeCursor ?? null,
+              cliHost: conversation.cliHost ?? null,
+              model: conversation.model
+            }
+          : null
+      }
     }
   )
 
@@ -3206,6 +3655,7 @@ function registerIpc(): void {
     for (const id of removed) {
       // Deleting a conversation is the one path that tears down its processes.
       agent.disposeConversation(id)
+      cliHost.dispose(id)
       ptyManager.killForConversation(id)
       fileService.unwatch(id)
     }
@@ -3244,7 +3694,7 @@ function registerIpc(): void {
     conversationStore.selectBranch(id, messageId)
   )
 
-  // --- agent ---
+  // --- agent (built-in pi loop OR structured CLI host) ---
   ipcMain.handle(
     IPC.agentSend,
     (
@@ -3258,6 +3708,17 @@ function registerIpc(): void {
     ) => {
       // Not awaited: the turn streams for as long as it needs, and the renderer
       // is driven entirely by turn events.
+      if (agentFor(id) === 'cli') {
+        void cliHost.run(
+          id,
+          text,
+          attachments ?? [],
+          quote ?? null,
+          contextBlocks ?? null,
+          contextFile ?? null
+        )
+        return
+      }
       void agent.run(
         id,
         text,
@@ -3271,16 +3732,24 @@ function registerIpc(): void {
   ipcMain.handle(IPC.agentAppendNotice, (_event, id: string, text: string) => {
     agent.appendNotice(id, text)
   })
-  ipcMain.handle(IPC.agentCancel, (_event, id: string) => agent.cancel(id))
-  ipcMain.handle(IPC.agentAnswer, (_event, id: string, toolCallId: string, answer: string) =>
-    agent.answer(id, toolCallId, answer)
+  ipcMain.handle(IPC.agentCancel, (_event, id: string) => {
+    if (agentFor(id) === 'cli') cliHost.cancel(id)
+    else agent.cancel(id)
+  })
+  ipcMain.handle(IPC.agentAnswer, (_event, id: string, toolCallId: string, answer: string) => {
+    if (cliHost.answer(id, toolCallId, answer)) return true
+    return agent.answer(id, toolCallId, answer)
+  })
+  ipcMain.handle(IPC.agentStatus, (_event, id: string) =>
+    agentFor(id) === 'cli' ? cliHost.status(id) : agent.status(id)
   )
-  ipcMain.handle(IPC.agentStatus, (_event, id: string) => agent.status(id))
   ipcMain.handle(IPC.agentRegenerate, (_event, id: string, messageId: string) => {
-    void agent.regenerate(id, messageId)
+    if (agentFor(id) === 'cli') void cliHost.regenerate(id, messageId)
+    else void agent.regenerate(id, messageId)
   })
   ipcMain.handle(IPC.agentEditUser, (_event, id: string, messageId: string, text: string) => {
-    void agent.editUserMessage(id, messageId, text)
+    if (agentFor(id) === 'cli') void cliHost.editUserMessage(id, messageId, text)
+    else void agent.editUserMessage(id, messageId, text)
   })
   ipcMain.handle(IPC.agentFork, (_event, id: string, messageId: string) =>
     agent.fork(id, messageId)
@@ -3288,12 +3757,16 @@ function registerIpc(): void {
   ipcMain.handle(
     IPC.agentCompact,
     async (_event, id: string, options?: { keepAfterMessageId?: string | null }) => {
+      const conversation = conversationStore.get(id)
+      if (conversation?.cliHost) {
+        return { ok: false as const, error: t('compact.error.cliHost') }
+      }
       const result = await agent.compact(id, options)
       if (result.ok) {
-        const conversation = conversationStore.get(id)
+        const next = conversationStore.get(id)
         broadcast(IPC.compactionsChanged, {
           conversationId: id,
-          compactions: conversation?.compactions ?? []
+          compactions: next?.compactions ?? []
         })
         pushTokenUsageIfOpen(id)
       }
@@ -3301,12 +3774,16 @@ function registerIpc(): void {
     }
   )
   ipcMain.handle(IPC.agentClearCompaction, (_event, id: string, leafId: string) => {
+    const conversation = conversationStore.get(id)
+    if (conversation?.cliHost) {
+      return { ok: false as const, error: t('compact.error.cliHost') }
+    }
     const result = agent.clearCompaction(id, leafId)
     if (result.ok) {
-      const conversation = conversationStore.get(id)
+      const next = conversationStore.get(id)
       broadcast(IPC.compactionsChanged, {
         conversationId: id,
-        compactions: conversation?.compactions ?? []
+        compactions: next?.compactions ?? []
       })
       pushTokenUsageIfOpen(id)
     }
@@ -3367,6 +3844,33 @@ function registerIpc(): void {
   )
   ipcMain.handle(IPC.filesQuickLook, (_event, path: string) => fileService.preview(path))
   ipcMain.handle(IPC.filesOpenWithDefault, (_event, path: string) => fileService.openWithDefault(path))
+  ipcMain.handle(IPC.gitStatus, (_event, cwd: string) => getGitSnapshot(cwd))
+  ipcMain.handle(
+    IPC.gitDiff,
+    (_event, cwd: string, path: string, opts?: { staged?: boolean }) => getGitDiff(cwd, path, opts)
+  )
+  ipcMain.handle(
+    IPC.gitShowBase64,
+    (_event, cwd: string, path: string, ref?: string) =>
+      getGitShowBase64(cwd, path, ref || 'HEAD')
+  )
+  ipcMain.handle(IPC.gitInit, (_event, cwd: string) => initGitRepo(cwd))
+  ipcMain.handle(
+    IPC.gitCreateBranch,
+    (_event, cwd: string, name: string, opts?: { checkout?: boolean }) =>
+      createGitBranch(cwd, name, opts)
+  )
+  ipcMain.handle(IPC.gitCheckoutBranch, (_event, cwd: string, name: string) =>
+    checkoutGitBranch(cwd, name)
+  )
+  ipcMain.handle(
+    IPC.gitCreateWorktree,
+    (
+      _event,
+      cwd: string,
+      options: { path: string; newBranch?: string; branch?: string }
+    ) => createGitWorktree(cwd, options)
+  )
   ipcMain.handle(IPC.filesWatch, (_event, id: string, root: string | null) =>
     fileService.watchRoot(id, root)
   )
@@ -3396,6 +3900,10 @@ function registerIpc(): void {
     if (!win || win.isDestroyed()) return
     warmSessionReady.add(win)
     sessionOpenMark('warm-shell-ready')
+    // Refresh recovery: bound companion reloaded as warm=1 (or lost claim) —
+    // push the conversation back into the renderer.
+    const boundId = detachedWindowIds.get(win)
+    if (boundId) pushDetachedSessionClaim(win, boundId)
   })
   ipcMain.handle(
     IPC.filesInspectStructured,
@@ -3504,6 +4012,7 @@ function registerIpc(): void {
 
   ipcMain.handle(IPC.fileSessionsSetReadOnly, (_event, sessionId: string, readOnly: boolean) => {
     conversationStore.updateMeta(sessionId, { fileReadOnly: readOnly })
+    broadcast(IPC.fileSessionReadOnlyChanged, { sessionId, readOnly })
   })
 
   ipcMain.handle(
@@ -3524,6 +4033,7 @@ function registerIpc(): void {
       if (!result) return null
       for (const id of result.removed) {
         agent.disposeConversation(id)
+        cliHost.dispose(id)
         ptyManager.killForConversation(id)
         fileService.unwatch(id)
       }
@@ -3549,6 +4059,20 @@ function registerIpc(): void {
       return resolveAgentExecutable(list, { force: force === true })
     }
   )
+
+  ipcMain.handle(
+    IPC.agentsListModels,
+    (_event, host: string | null, force?: boolean) =>
+      listHostModels(host, settingsStore, { force: force === true })
+  )
+
+  ipcMain.handle(IPC.agentsGetModelCatalog, () => getModelCatalogSnapshot())
+
+  ipcMain.handle(IPC.agentsPreloadModels, async (_event, force?: boolean) => {
+    const catalog = await preloadHostModels(settingsStore, { force: force === true })
+    broadcast(IPC.agentsModelCatalogChanged, catalog)
+    return catalog
+  })
 
   // --- pty ---
   ipcMain.handle(
@@ -3663,6 +4187,8 @@ function registerIpc(): void {
       anchor?: { x: number; y: number; width: number; height: number }
     ) => openTokenUsageWindow(event.sender, conversationId, anchor)
   )
+  // Panel pulls on mount — avoids missing the push during React StrictMode remount.
+  ipcMain.handle(IPC.tokenUsageGetView, () => currentTokenUsagePayload())
   ipcMain.handle(IPC.windowRelaunch, () => {
     app.relaunch()
     app.exit(0)
@@ -3764,6 +4290,9 @@ function registerIpc(): void {
       return window ? popupNativeMenu(window, items, position) : null
     }
   )
+  ipcMain.handle(IPC.windowClosePopupMenu, () => {
+    closeActiveNativePopup()
+  })
 
   ipcMain.handle(IPC.changeSetGet, (_e, id: string) => changeSetStore.get(id))
   ipcMain.handle(IPC.changeSetActive, (_e, conversationId: string) =>
@@ -3805,6 +4334,7 @@ function registerIpc(): void {
       // with a Tray/Dock-only lifetime after windows close.
       electronAutoUpdater.once('before-quit-for-update', () => {
         agent.disposeAll()
+        cliHost.disposeAll()
         ptyManager.killAll()
         fileService.disposeAll()
         conversationStore.flush()
@@ -3914,6 +4444,7 @@ if (!singleInstance) {
   app.on('before-quit', () => {
     quitting = true
     agent.disposeAll()
+    cliHost.disposeAll()
     ptyManager.killAll()
     fileService.disposeAll()
     conversationStore.flush()
@@ -4073,6 +4604,12 @@ if (!singleInstance) {
           // non-fatal
         }
       }, 2400)
+      // Prefetch agent model catalogues so the composer picker is instant.
+      setTimeout(() => {
+        void preloadHostModels(settingsStore)
+          .then((catalog) => broadcast(IPC.agentsModelCatalogChanged, catalog))
+          .catch((err) => console.warn('[agents] model preload failed', err))
+      }, 900)
     })
     // Dock tiles cache aggressively for the rebranded Electron.dev bundle —
     // re-assert the PNG after the first window exists so the tile updates.

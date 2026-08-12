@@ -15,7 +15,8 @@ const TOOL_NAME_KEYS: Partial<Record<ToolName, MessageKey>> = {
   web_fetch: 'tool.webFetch',
   load_skill: 'tool.loadSkill',
   ask_user_question: 'tool.ask',
-  request: 'tool.ask'
+  request: 'tool.ask',
+  switch_mode: 'tool.switchMode'
 }
 
 function localizedToolName(tool: ToolName, t: ReturnType<typeof useT>): string {

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   ArrowUpDown,
   ChevronDown,
@@ -6,10 +6,12 @@ import {
   Columns3,
   File as FileIcon,
   Folder,
+  GitBranch,
   Info,
   List,
   MapPin,
-  Plus
+  Plus,
+  RefreshCw
 } from 'lucide-react'
 import { IGNORED_NAMES, IGNORED_SUFFIXES } from '@shared/types'
 import {
@@ -28,9 +30,55 @@ import { formatBytes, isTemporaryWorkspace } from '../lib/format'
 import { basename, dirname, joinPath } from '../lib/path'
 import { menuAnchor, showMenu, type MenuItem } from '../lib/nativeMenu'
 import { fileManagerLabel } from '../lib/platform'
-import { Button, EmptyState, InlineAlert } from './ui'
+import { getUiFocusScope, setUiFocusScope } from '../lib/uiFocus'
+import { Button, EmptyState, InlineAlert, Segmented } from './ui'
 import { FileManagerIcon } from './FileManagerIcon'
+import { GitChangesPanel, type GitPanelChrome } from './GitChangesPanel'
 import { prefetchForPath } from '../lib/prefetchHeavy'
+
+type FilesTrayView = 'files' | 'git'
+
+/** Scroll the row for `path` into view inside the files browser. */
+function scrollFileRowIntoView(path: string): void {
+  requestAnimationFrame(() => {
+    try {
+      const el = document.querySelector(
+        `.files-browser [data-file-path="${CSS.escape(path)}"]`
+      ) as HTMLElement | null
+      el?.scrollIntoView({ block: 'nearest' })
+    } catch {
+      // CSS.escape may throw on odd paths — ignore
+    }
+  })
+}
+
+/**
+ * Direct parent of a selected path (Finder-style: arrows move among siblings
+ * in this directory only). Root selection → root itself.
+ */
+function selectionParent(
+  selected: string | null,
+  root: string,
+  dirMap: Record<string, FileEntry[]> | undefined
+): string {
+  if (!selected || selected === root) return root
+  // Selected path is itself a column dir (columnPath entry) listed only as a
+  // child of its parent — still dirname.
+  const parent = dirname(selected)
+  if (!parent || parent === selected) return root
+  // Prefer a parent we already have loaded.
+  if (dirMap?.[parent]) return parent
+  return parent || root
+}
+
+function entryInDir(
+  dir: string,
+  path: string | null,
+  dirMap: Record<string, FileEntry[]> | undefined
+): FileEntry | null {
+  if (!path) return null
+  return (dirMap?.[dir] ?? []).find((e) => e.path === path) ?? null
+}
 
 function sortButtonLabel(key: FileSortKey, t: ReturnType<typeof useT>): string {
   if (key === 'none') return '—'
@@ -86,10 +134,52 @@ export function FilesPanel({ visible }: { visible: boolean }): React.JSX.Element
   const [browserOpaque, setBrowserOpaque] = useState(true)
   /** Inline “new file” row: parent dir + draft name. */
   const [creating, setCreating] = useState<{ dir: string; name: string } | null>(null)
+  const [trayView, setTrayView] = useState<FilesTrayView>('files')
+  const [rootIsGit, setRootIsGit] = useState(false)
+  const [gitChrome, setGitChrome] = useState<GitPanelChrome | null>(null)
+  const onGitChrome = useCallback((next: GitPanelChrome | null) => {
+    setGitChrome((prev) => {
+      if (prev === next) return prev
+      if (
+        prev &&
+        next &&
+        prev.meta === next.meta &&
+        prev.loading === next.loading &&
+        prev.refresh === next.refresh
+      ) {
+        return prev
+      }
+      return next
+    })
+  }, [])
 
   useEffect(() => {
-    if (visible && activeId) void ensureFilesLoaded(activeId)
-  }, [visible, activeId, ensureFilesLoaded])
+    let cancelled = false
+    if (!root || temporary || !window.vav?.git?.status) {
+      setRootIsGit(false)
+      return
+    }
+    void window.vav.git
+      .status(root)
+      .then((snap) => {
+        if (!cancelled) setRootIsGit(!!snap.isRepo)
+      })
+      .catch(() => {
+        if (!cancelled) setRootIsGit(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [root, temporary])
+
+  // Leave Git tab when the workspace is no longer a repository.
+  useEffect(() => {
+    if (!rootIsGit && trayView === 'git') setTrayView('files')
+  }, [rootIsGit, trayView])
+
+  useEffect(() => {
+    if (visible && activeId && trayView === 'files') void ensureFilesLoaded(activeId)
+  }, [visible, activeId, ensureFilesLoaded, trayView])
 
   // Restore Finder sort prefs into the active workspace once when it appears.
   useEffect(() => {
@@ -124,32 +214,242 @@ export function FilesPanel({ visible }: { visible: boolean }): React.JSX.Element
     }
   }, [viewMode, displayMode])
 
+  const rootMissing =
+    !!rootError &&
+    (rootError === 'ENOENT' || /enoent|no such file|not found/i.test(rootError))
+
+  const openViewer = (path: string): void => {
+    void window.vav.window.openFilePreview(path, {
+      origin: 'session',
+      conversationId: activeId
+    })
+  }
+
+  /**
+   * Finder-style keyboard (UiFocusScope `files`):
+   * - ↑↓ move among **siblings in the current directory only**
+   * - Focusing a folder **shows its children** (tree expand / column open)
+   * - → enter folder and focus **first child**
+   * - ← leave to parent (at root: collapse open folder; never select invisible root)
+   * - Enter open file / toggle; Space preview
+   * Highlight only on arrows — no attachContext / preview per key.
+   */
   useEffect(() => {
-    if (!visible) return
+    if (!visible || !root || rootMissing) return
     const onKey = (event: KeyboardEvent): void => {
       const target = event.target as HTMLElement | null
-      if (target?.tagName === 'INPUT' || target?.tagName === 'TEXTAREA') return
-      if (event.code !== 'Space') return
-      const selected = useWorkspaceStore.getState().workspaces[activeId]?.selectedPath
-      if (!selected) return
+      if (
+        target?.tagName === 'INPUT' ||
+        target?.tagName === 'TEXTAREA' ||
+        target?.tagName === 'SELECT' ||
+        target?.isContentEditable
+      ) {
+        return
+      }
+      const inBrowser = !!target?.closest?.('.files-browser')
+      if (!inBrowser && getUiFocusScope() !== 'files') return
+
+      const ws = useWorkspaceStore.getState().workspaces[activeId]
+      const workRoot = ws?.root
+      if (!workRoot) return
+      const dirMap = ws.dirs
+      let selected = ws.selectedPath
+      const mode = displayMode
+      const key = event.key
+
+      const isNav =
+        key === 'ArrowDown' ||
+        key === 'ArrowUp' ||
+        key === 'ArrowLeft' ||
+        key === 'ArrowRight' ||
+        key === 'Enter' ||
+        key === ' ' ||
+        key === 'Spacebar'
+      if (!isNav) return
+
+      // —— Space: preview ——
+      if (key === ' ' || key === 'Spacebar') {
+        if (!selected) return
+        if (target?.closest?.('button')) return
+        event.preventDefault()
+        setUiFocusScope('files')
+        void window.vav.window.openFilePreview(selected, {
+          origin: 'session',
+          conversationId: activeId
+        })
+        return
+      }
+
       event.preventDefault()
-      // file-preview.rpml: Space opens the dedicated preview window (Quick Look stays in the menu).
-      void window.vav.window.openFilePreview(selected, {
-        origin: 'session',
-        conversationId: activeId
-      })
+      setUiFocusScope('files')
+
+      /** Open folder columns from root → … → folder (exclusive of files). */
+      const columnChainTo = (folderPath: string): string[] => {
+        if (folderPath === workRoot) return []
+        const chain: string[] = []
+        let cur: string = folderPath
+        while (cur && cur !== workRoot) {
+          chain.unshift(cur)
+          const p = dirname(cur)
+          if (!p || p === cur) break
+          cur = p
+        }
+        return chain
+      }
+
+      /**
+       * Highlight a path. Directories also reveal children (expand / open column)
+       * without moving focus into the child list.
+       */
+      const highlight = (path: string, asDir: boolean): void => {
+        selectPathRaw(activeId, path)
+        selected = path
+        if (asDir) {
+          if (mode === 'tree') {
+            if (!ws.expanded.includes(path)) {
+              void useWorkspaceStore.getState().toggleExpand(activeId, path)
+            }
+          } else {
+            setColumnPath(columnChainTo(path))
+            void loadDirectory(activeId, path)
+          }
+        } else if (mode === 'column') {
+          // File: columns up through parent only.
+          const parent = selectionParent(path, workRoot, dirMap)
+          setColumnPath(parent === workRoot ? [] : columnChainTo(parent))
+        }
+        scrollFileRowIntoView(path)
+      }
+
+      // Active directory = parent of selection (↑↓ only move among these siblings).
+      const navDir = selectionParent(selected, workRoot, dirMap)
+      const siblings = dirMap?.[navDir] ?? []
+      const entry = entryInDir(navDir, selected, dirMap)
+
+      // Seed: first root entry when nothing selected.
+      if (!selected && key !== 'Enter') {
+        const rootList = dirMap?.[workRoot] ?? []
+        if (rootList.length === 0) {
+          void loadDirectory(activeId, workRoot)
+          return
+        }
+        if (key === 'ArrowDown' || key === 'ArrowUp' || key === 'ArrowRight') {
+          const first = rootList[0]!
+          highlight(first.path, first.isDirectory)
+          return
+        }
+      }
+
+      if (key === 'ArrowDown' || key === 'ArrowUp') {
+        const list = siblings.length > 0 ? siblings : (dirMap?.[workRoot] ?? [])
+        if (list.length === 0) return
+        const delta = key === 'ArrowDown' ? 1 : -1
+        const idx = selected ? list.findIndex((e) => e.path === selected) : -1
+        const base = idx < 0 ? (delta > 0 ? -1 : 0) : idx
+        const next = list[base + delta]
+        if (next) highlight(next.path, next.isDirectory)
+        return
+      }
+
+      if (key === 'ArrowRight') {
+        // Enter folder → reveal children, focus first child.
+        if (!entry?.isDirectory) return
+        const folder = entry.path
+        if (mode === 'tree') {
+          if (!ws.expanded.includes(folder)) {
+            void useWorkspaceStore.getState().toggleExpand(activeId, folder)
+          }
+        } else {
+          setColumnPath(columnChainTo(folder))
+        }
+        void loadDirectory(activeId, folder).then(() => {
+          const kids =
+            useWorkspaceStore.getState().workspaces[activeId]?.dirs[folder] ?? []
+          const first = kids[0]
+          if (!first) {
+            selectPathRaw(activeId, folder)
+            return
+          }
+          // Focus first child; if it is a dir, show *its* children too.
+          highlight(first.path, first.isDirectory)
+        })
+        return
+      }
+
+      if (key === 'ArrowLeft') {
+        // Root listing: collapse revealed folder (keep row selected). Never select
+        // the invisible workspace root path.
+        if (navDir === workRoot) {
+          if (entry?.isDirectory) {
+            if (mode === 'tree' && ws.expanded.includes(entry.path)) {
+              void useWorkspaceStore.getState().toggleExpand(activeId, entry.path)
+            } else if (mode === 'column' && columnPath[0] === entry.path) {
+              setColumnPath([])
+              selectPathRaw(activeId, entry.path)
+              scrollFileRowIntoView(entry.path)
+            }
+          }
+          return
+        }
+
+        // Inside a subfolder: select the parent folder row and show its content.
+        const parentFolder = navDir
+        if (mode === 'tree') {
+          selectPathRaw(activeId, parentFolder)
+          // Keep parent expanded so we still see siblings of the dir we left.
+          scrollFileRowIntoView(parentFolder)
+        } else {
+          // Parent is a root child → columnPath = [parent] so its content shows.
+          // Deeper → chain ending at parent.
+          setColumnPath(columnChainTo(parentFolder))
+          selectPathRaw(activeId, parentFolder)
+          void loadDirectory(activeId, parentFolder)
+          scrollFileRowIntoView(parentFolder)
+        }
+        return
+      }
+
+      if (key === 'Enter') {
+        if (!entry) return
+        if (entry.isDirectory) {
+          // Toggle reveal (→ still enters first child).
+          if (mode === 'tree') {
+            void useWorkspaceStore.getState().toggleExpand(activeId, entry.path)
+          } else {
+            const open = columnPath.includes(entry.path)
+            if (open) {
+              // Close this folder column and deeper.
+              const idx = columnPath.indexOf(entry.path)
+              setColumnPath(columnPath.slice(0, idx))
+            } else {
+              highlight(entry.path, true)
+            }
+          }
+        } else {
+          selectPath(activeId, entry.path, 'file')
+          openViewer(entry.path)
+        }
+      }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [visible, activeId])
+  }, [
+    visible,
+    activeId,
+    root,
+    rootMissing,
+    displayMode,
+    columnPath,
+    selectPath,
+    selectPathRaw,
+    loadDirectory
+  ])
 
   if (!root) {
     return (
       <EmptyState title={t('files.noWorkdirTitle')} description={t('files.noWorkdirDesc')} />
     )
   }
-
-  const rootMissing = rootError === 'ENOENT' || /enoent|no such file|not found/i.test(rootError ?? '')
 
   const applySort = (key: FileSortKey): void => {
     const next = normalizeFileSortKey(key)
@@ -163,13 +463,6 @@ export function FilesPanel({ visible }: { visible: boolean }): React.JSX.Element
     checked: normalizeFileSortKey(sort) === option.key,
     onSelect: () => applySort(option.key)
   }))
-
-  const openViewer = (path: string): void => {
-    void window.vav.window.openFilePreview(path, {
-      origin: 'session',
-      conversationId: activeId
-    })
-  }
 
   const refreshParent = (path: string): void => {
     void loadDirectory(activeId, dirname(path))
@@ -250,64 +543,116 @@ export function FilesPanel({ visible }: { visible: boolean }): React.JSX.Element
   return (
     <>
       <div className="files-toolbar">
-        <Button
-          label={sortButtonLabel(normalizeFileSortKey(sort), t)}
-          icon={<ArrowUpDown size={12} />}
-          size="sm"
-          onClick={(event) =>
-            void showMenu(sortItems, menuAnchor(event.currentTarget as HTMLElement))
-          }
-        />
-        <Button
-          icon={<Plus size={13} />}
-          size="sm"
-          title={t('files.newFile')}
-          disabled={rootMissing}
-          onClick={startCreateFile}
-        />
-        <Button
-          icon={viewMode === 'tree' ? <List size={13} /> : <Columns3 size={13} />}
-          size="sm"
-          title={viewMode === 'tree' ? t('files.viewList') : t('files.viewColumn')}
-          disabled={rootMissing}
-          onClick={toggleViewMode}
-        />
-        <Button
-          icon={<FileManagerIcon size={13} />}
-          size="sm"
-          title={t('tools.revealInFm', { fileManager: fileManagerLabel() })}
-          disabled={rootMissing || !root}
-          onClick={() => {
-            const target = selectedPath || root
-            if (!target) return
-            void window.vav.conversations.revealInFinder(target)
-          }}
-        />
-        {temporary && (
-          <Button
-            icon={<MapPin size={13} />}
-            size="sm"
-            title={t('files.locateWorkspace')}
-            onClick={() => void locateWorkspace(activeId)}
-          />
-        )}
-        <Button
-          icon={<Info size={13} />}
-          size="sm"
-          title={t('files.ignoredTitle')}
-          onClick={() =>
-            showDialog({
-              title: t('files.ignoredTitle'),
-              body: t('files.ignoredBody', {
-                list: [...IGNORED_NAMES, ...IGNORED_SUFFIXES].join('\n')
-              }),
-              confirmLabel: t('common.ok')
-            })
-          }
-        />
+        {rootIsGit ? (
+          <div className="files-toolbar-tabs">
+            <Segmented<FilesTrayView>
+              value={trayView}
+              onChange={setTrayView}
+              options={[
+                {
+                  value: 'files',
+                  label: t('files.tabFiles'),
+                  icon: <Folder size={12} />
+                },
+                {
+                  value: 'git',
+                  label: t('files.tabGit'),
+                  icon: <GitBranch size={12} />
+                }
+              ]}
+            />
+          </div>
+        ) : null}
+        {/* Push actions to the trailing edge. */}
+        <span className="files-toolbar-spacer" aria-hidden />
+        <div className="files-toolbar-actions">
+          {trayView === 'files' && (
+            <>
+              <Button
+                label={sortButtonLabel(normalizeFileSortKey(sort), t)}
+                icon={<ArrowUpDown size={12} />}
+                size="sm"
+                onClick={(event) =>
+                  void showMenu(sortItems, menuAnchor(event.currentTarget as HTMLElement))
+                }
+              />
+              <Button
+                icon={<Plus size={13} />}
+                size="sm"
+                title={t('files.newFile')}
+                disabled={rootMissing}
+                onClick={startCreateFile}
+              />
+              <Button
+                icon={viewMode === 'tree' ? <List size={13} /> : <Columns3 size={13} />}
+                size="sm"
+                title={viewMode === 'tree' ? t('files.viewList') : t('files.viewColumn')}
+                disabled={rootMissing}
+                onClick={toggleViewMode}
+              />
+              <Button
+                icon={<FileManagerIcon size={13} />}
+                size="sm"
+                title={t('tools.revealInFm', { fileManager: fileManagerLabel() })}
+                disabled={rootMissing || !root}
+                onClick={() => {
+                  const target = selectedPath || root
+                  if (!target) return
+                  void window.vav.conversations.revealInFinder(target)
+                }}
+              />
+              {temporary && (
+                <Button
+                  icon={<MapPin size={13} />}
+                  size="sm"
+                  title={t('files.locateWorkspace')}
+                  onClick={() => void locateWorkspace(activeId)}
+                />
+              )}
+              <Button
+                icon={<Info size={13} />}
+                size="sm"
+                title={t('files.ignoredTitle')}
+                onClick={() =>
+                  showDialog({
+                    title: t('files.ignoredTitle'),
+                    body: t('files.ignoredBody', {
+                      list: [...IGNORED_NAMES, ...IGNORED_SUFFIXES].join('\n')
+                    }),
+                    confirmLabel: t('common.ok')
+                  })
+                }
+              />
+            </>
+          )}
+          {trayView === 'git' && gitChrome && (
+            <>
+              {gitChrome.meta ? <span className="git-panel-meta">{gitChrome.meta}</span> : null}
+              <Button
+                icon={<RefreshCw size={12} />}
+                size="sm"
+                className={`git-refresh-btn${gitChrome.loading ? ' is-refreshing' : ''}`}
+                title={t('git.refresh')}
+                disabled={gitChrome.loading}
+                onClick={gitChrome.refresh}
+              />
+            </>
+          )}
+        </div>
       </div>
 
-      <div className="files-browser" data-opaque={browserOpaque || undefined}>
+      {trayView === 'git' ? (
+        <GitChangesPanel visible={visible} onChrome={onGitChrome} />
+      ) : (
+      <div
+        className="files-browser"
+        data-opaque={browserOpaque || undefined}
+        tabIndex={0}
+        role="tree"
+        aria-label={t('tools.files')}
+        onMouseDown={() => setUiFocusScope('files')}
+        onFocus={() => setUiFocusScope('files')}
+      >
         {rootMissing ? (
           <div className="files-missing-root">
             <EmptyState
@@ -348,6 +693,7 @@ export function FilesPanel({ visible }: { visible: boolean }): React.JSX.Element
           />
         )}
       </div>
+      )}
     </>
   )
 }
@@ -474,10 +820,14 @@ function ColumnBrowser({
                 return (
                   <div
                     key={entry.path}
+                    data-file-path={entry.path}
+                    role="treeitem"
+                    aria-selected={selected}
                     className={`tree-row ${entry.isDirectory ? 'dir' : 'file'}${selected ? ' selected' : ''}${open && !selected ? ' open' : ''}`}
                     title={entry.path}
                     onClick={(event) => {
                       event.stopPropagation()
+                      setUiFocusScope('files')
                       // Re-click an open folder → collapse only its deeper columns
                       // (Finder-style), keep this folder selected.
                       if (entry.isDirectory && open) {
@@ -747,6 +1097,10 @@ function TreeRow({
     <>
       <div
         className={`tree-row ${entry.isDirectory ? 'dir' : 'file'}${selected ? ' selected' : ''}`}
+        data-file-path={entry.path}
+        role="treeitem"
+        aria-selected={selected}
+        aria-expanded={entry.isDirectory ? !!expanded : undefined}
         style={{ paddingLeft: level * 14 + 10 }}
         title={entry.path}
         onMouseEnter={() => {
@@ -754,6 +1108,7 @@ function TreeRow({
         }}
         onClick={(event) => {
           event.stopPropagation()
+          setUiFocusScope('files')
           if (!entry.isDirectory) prefetchForPath(entry.path)
           selectEntry(entry.path, entry.isDirectory)
           if (entry.isDirectory) void toggleExpand(activeId, entry.path)
@@ -764,6 +1119,7 @@ function TreeRow({
         onContextMenu={(event) => {
           event.preventDefault()
           event.stopPropagation()
+          setUiFocusScope('files')
           selectEntry(entry.path, entry.isDirectory)
           void showEntryMenu(entry, {
             onOpen,

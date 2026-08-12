@@ -1,6 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { useSessionStore } from './state/sessionStore'
 import {
+  installAgentModelCatalogBridge,
   installCompactionsBridge,
   installDetachedBridge,
   installSettingsBridge,
@@ -105,13 +106,14 @@ export default function App(): React.JSX.Element {
     const offWindow = installWindowBridge()
     const offDetached = installDetachedBridge()
     const offUpdates = installUpdateBridge()
+    const offModels = installAgentModelCatalogBridge()
     const offMenu = installDefaultContextMenu()
     const offCli = window.vav.onCliOpen((event) => {
       const store = useSessionStore.getState()
       // Reveal in List / CLI open: leave workspace view so the sidebar row is visible.
       if (store.activeGroupId) store.selectWorkspaceGroup(null)
       if (!store.sidebarVisible) store.toggleSidebar()
-      void store.selectConversation(event.conversationId).then(() => {
+      void store.selectConversation(event.conversationId).then(async () => {
         const next = useSessionStore.getState()
         // File-bound sessions live under File sessions — jump the list there.
         const meta = next.conversations.find((c) => c.id === event.conversationId)
@@ -125,7 +127,10 @@ export default function App(): React.JSX.Element {
         if (event.attachments?.length) {
           next.setAttachments(event.conversationId, event.attachments)
         }
-        next.focusComposer()
+        // Tray / notify: enter CLI Agents + focus pane, or VAV composer.
+        // selectConversation already hydrated PTYs; apply flips surface/mode.
+        const { applySessionSurfaceFocus } = await import('./lib/sessionFocus')
+        await applySessionSurfaceFocus(event)
       })
       if (event.toast) store.setErrorBanner(event.toast)
     })
@@ -138,6 +143,7 @@ export default function App(): React.JSX.Element {
       offWindow()
       offDetached()
       offUpdates()
+      offModels()
       offMenu()
       offCli()
     }

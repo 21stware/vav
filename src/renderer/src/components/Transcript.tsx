@@ -16,7 +16,10 @@ import { useSessionStore, visibleMessages } from '../state/sessionStore'
 import { CompactionBanner } from './CompactionBanner'
 import { BranchPager, MessageRow } from './MessageRow'
 import { StreamingMessage } from './StreamingMessage'
+import { displayNameForCliHost, enabledCliAgents, isStructuredCliHost } from '@shared/types'
 import { Button, EmptyState } from './ui'
+import { AgentBrandMark } from './AgentBrandMark'
+import { SessionWorkspaceChrome } from './SessionWorkspaceChrome'
 import { useT } from '../i18n/useT'
 
 /**
@@ -97,6 +100,21 @@ export function Transcript(): React.JSX.Element {
   const clearCompaction = useSessionStore((s) => s.clearCompaction)
   // Do not `?? []` here — a fresh array each snapshot loops zustand/React.
   const compactions = useSessionStore((s) => s.compactions[s.activeId])
+  const cliHost = useSessionStore(
+    (s) => s.conversations.find((c) => c.id === s.activeId)?.cliHost ?? null
+  )
+  const cliAgents = useSessionStore((s) => s.settings.cliAgents)
+
+  const emptyLogoAgent = useMemo(() => {
+    if (cliHost && isStructuredCliHost(cliHost)) {
+      const named = enabledCliAgents(cliAgents).find((a) => a.id === cliHost)
+      return {
+        id: cliHost,
+        name: named?.name ?? displayNameForCliHost(cliHost)
+      }
+    }
+    return { id: 'vav', name: t('agents.plainShell') }
+  }, [cliHost, cliAgents, t])
 
   const scrollRef = useRef<HTMLDivElement>(null)
   const contentRef = useRef<HTMLDivElement>(null)
@@ -377,9 +395,13 @@ export function Transcript(): React.JSX.Element {
   const isEmpty = messages.length === 0 && !turnRunning
   const rootBranch = branches.get(ROOT_LEAF)
 
+  // Manual compact is VAV-only; CLI hosts manage their own context.
   const activeCompaction = useMemo(
-    () => compactionForLeaf(compactions ?? null, nodes ?? [], activeLeaf),
-    [compactions, nodes, activeLeaf]
+    () =>
+      cliHost
+        ? null
+        : compactionForLeaf(compactions ?? null, nodes ?? [], activeLeaf),
+    [cliHost, compactions, nodes, activeLeaf]
   )
   /**
    * Index of the first message still sent in full to the model.
@@ -518,15 +540,16 @@ export function Transcript(): React.JSX.Element {
         className={`transcript-inner${branchSwapActive ? ' is-branch-swap' : ''}`}
       >
         {isEmpty && !apiKeyPresent && (
-          /* Four elements used to say "there is no key yet": this description,
-             a warning card's heading, its body, and the button. The logo says
-             the app's name, the heading says what is missing, the description
-             says what still works meanwhile, and the button does the one thing
-             worth doing. Nothing is amber — on a first run nothing is wrong. */
+          /* Logo + agent name centered; key CTA in the hero; workspace prose at the foot. */
           <EmptyState
-            logo
+            layout="session"
+            logo={<AgentBrandMark agent={emptyLogoAgent} size={96} />}
+            logoKey={emptyLogoAgent.id}
+            logoLabel={emptyLogoAgent.name}
+            enterKey={`${activeId}:nokey`}
             title={t('transcript.configureKey')}
             description={t('transcript.configureKeyDesc')}
+            foot={<SessionWorkspaceChrome />}
           >
             <Button
               label={t('transcript.openSettings')}
@@ -537,7 +560,15 @@ export function Transcript(): React.JSX.Element {
         )}
 
         {isEmpty && apiKeyPresent && (
-          <EmptyState logo title={t('transcript.startSession')} />
+          /* Hero = mark + staggered agent name only; git / workspace prose sits low. */
+          <EmptyState
+            layout="session"
+            logo={<AgentBrandMark agent={emptyLogoAgent} size={96} />}
+            logoKey={emptyLogoAgent.id}
+            logoLabel={emptyLogoAgent.name}
+            enterKey={`${activeId}:ready`}
+            foot={<SessionWorkspaceChrome />}
+          />
         )}
 
         {/* Branches that start before the first prompt have no message to

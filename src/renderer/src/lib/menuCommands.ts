@@ -3,7 +3,12 @@ import type { MenuCommand } from '@shared/ipc'
 import { tt } from '../i18n/useT'
 import { useSessionStore } from '../state/sessionStore'
 import { useWorkspaceStore } from '../state/workspaceStore'
-import { closeCurrentWindow, handleContextClose, installUiFocusTracking } from './uiFocus'
+import {
+  closeCurrentWindow,
+  focusAgentPane,
+  handleContextClose,
+  installUiFocusTracking
+} from './uiFocus'
 
 /** Ensure the session list is visible when switching archive / file-session modes. */
 function ensureSidebarVisible(): void {
@@ -60,6 +65,22 @@ export function handleMenuCommand(command: MenuCommand): void {
     case 'switch-workdir':
       store.openWorkspaceSwitcher()
       break
+    case 'switch-cli-mode': {
+      // Same path as AgentModeChrome “Swarm” — enter Screen, keep panes.
+      const id = store.activeId
+      if (!id) break
+      if (store.search.open) store.closeSearch()
+      useWorkspaceStore.getState().enterCliMode(id)
+      focusAgentPane(id)
+      break
+    }
+    case 'switch-vav-mode': {
+      // Leave Terminal and switch the chat host back to built-in VAV.
+      const id = store.activeId
+      if (!id) break
+      void store.selectChatHost(id, null)
+      break
+    }
     case 'send': {
       // ⌘↵ is composer-only. Never fire while Find / sidebar filter / other
       // inputs own the keyboard (plain Enter in search was already local;
