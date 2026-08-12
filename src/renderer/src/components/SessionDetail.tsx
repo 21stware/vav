@@ -12,6 +12,12 @@ import { buildWorkspaceFocusContext } from '@shared/agentContextInject'
 import { DEFAULT_CLI_AGENTS, enabledCliAgents, type AgentConfig } from '@shared/types'
 import type { FileSessionMeta } from '@shared/ipc'
 import { handoffFocusToCli } from '../lib/cliFocusHandoff'
+import {
+  arrowKeyToPaneDirection,
+  findNeighborPane,
+  focusedCliPaneId,
+  measureCliPaneRects
+} from '../lib/cliPaneNavigate'
 import { focusAgentPane } from '../lib/uiFocus'
 import { focusCliAgentPickerFirstOption } from './CliAgentPicker'
 import { useSessionStore } from '../state/sessionStore'
@@ -59,7 +65,11 @@ function splitCliAndFocusPicker(
       CLI_SURFACE_KEY
     ]
   const pendingId = host?.activeTabId
-  if (pendingId) focusCliAgentPickerFirstOption(conversationId, pendingId)
+  if (!pendingId) return
+  // Prefer pane-scoped focus (retries across paint). Also nudge the picker
+  // button so ←/→ works even if a sibling TerminalHost raced for focus.
+  focusAgentPane(conversationId, pendingId)
+  focusCliAgentPickerFirstOption(conversationId, pendingId)
 }
 
 /**
@@ -320,12 +330,44 @@ export function SessionDetail({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeId, isVavMode])
 
-  // CLI surface: ⌘D / ⌘⇧D split a picker pane (no separate “add” action).
+  // CLI surface: ⌘D / ⌘⇧D split; ⌘←↑↓→ spatial pane focus.
   useEffect(() => {
     if (isVavMode) return
     const onKey = (event: KeyboardEvent): void => {
       const meta = event.metaKey || event.ctrlKey
       if (!meta || event.altKey) return
+
+      const paneDir = arrowKeyToPaneDirection(event.key)
+      if (paneDir) {
+        const host =
+          useWorkspaceStore.getState().workspaces[activeId]?.agentHostSessions[
+            CLI_SURFACE_KEY
+          ]
+        if (!host || host.tabs.length < 2) return
+        const panes = measureCliPaneRects()
+        if (panes.length < 2) return
+        // Prefer the pane that actually owns DOM focus (narrow vertical agent
+        // lists often leave activeTabId stale after ←/→ inside the picker).
+        const focused = focusedCliPaneId()
+        const from =
+          (focused && panes.some((p) => p.tabId === focused) ? focused : null) ||
+          (host.activeTabId && panes.some((p) => p.tabId === host.activeTabId)
+            ? host.activeTabId
+            : null) ||
+          panes[0]?.tabId ||
+          ''
+        if (!from) return
+        const next = findNeighborPane(from, paneDir, panes)
+        // Always consume ⌘+arrow in multi-pane Swarm so the picker list does
+        // not treat it as in-list navigation when no geometric neighbor exists.
+        event.preventDefault()
+        event.stopPropagation()
+        if (!next || next === from) return
+        useWorkspaceStore.getState().selectAgentTab(activeId, next)
+        focusAgentPane(activeId, next)
+        return
+      }
+
       const key = event.key.toLowerCase()
       if (key === 'd' && event.shiftKey) {
         event.preventDefault()
@@ -337,8 +379,9 @@ export function SessionDetail({
         splitCliAndFocusPicker(activeId, 'row')
       }
     }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
+    // Capture so ⌘←/→ reach us before xterm treats them as line motion.
+    window.addEventListener('keydown', onKey, true)
+    return () => window.removeEventListener('keydown', onKey, true)
   }, [activeId, previewEdit, isVavMode])
 
   // Install-inline PTY — hooks must stay above every early return (Rules of Hooks).
@@ -498,146 +541,30 @@ export function SessionDetail({
       />
     ) : null
 
-  // —— Built-in vav agent (chat workstation) ——
-  if (isVavMode) {
-    // File-preview drawer: tighter chrome, no Plan overlay, preview tools tray.
-    if (previewEdit) {
-      return (
-        <main className="preview-edit-session">
-          {chrome}
-          {errorBanner && (
-            <ErrorBanner
-              message={errorBanner}
-              actionLabel={isKeyProblem ? t('error.openSettings') : undefined}
-              onAction={isKeyProblem ? () => openSettings('api') : undefined}
-              onDismiss={() => setErrorBanner(null)}
-            />
-          )}
-          <div className="preview-edit-stream" data-search={searchOpen}>
-            {searchOpen && <SearchStrip />}
-            <Transcript />
-            {/* Bubbles eat log space only — dock height stays put. */}
-            <ComposerContext conversationId={activeId} />
-          </div>
-          <div className="preview-edit-dock dock">
-            <Composer conversationId={activeId} />
-            <ToolsPanel variant="preview-edit" />
-          </div>
-        </main>
-      )
-    }
-    const shellClass =
-      variant === 'workspace' ? 'detail session-detail-workspace' : 'detail'
-    return (
-      <main className={shellClass}>
-        {chrome}
-        {errorBanner && (
-          <ErrorBanner
-            message={errorBanner}
-            actionLabel={isKeyProblem ? t('error.openSettings') : undefined}
-            onAction={isKeyProblem ? () => openSettings('api') : undefined}
-            onDismiss={() => setErrorBanner(null)}
-          />
-        )}
-        {pending && pending.count > 0 && (
-          <div className="banner review-pending">
-            <span>{t('review.pendingBanner', { n: pending.count })}</span>
-            <span className="spacer" />
-            <Button
-              label={t('review.openReview')}
-              size="sm"
-              variant="primary"
-              onClick={() => {
-                document
-                  .getElementById(`inline-review-${pending.changeSetId}`)
-                  ?.scrollIntoView({ block: 'center', behavior: 'smooth' })
-                void openChangeReview(pending.changeSetId)
-              }}
-            />
-          </div>
-        )}
-        <div className="detail-stream" data-search={searchOpen}>
-          {searchOpen && <SearchStrip />}
-          <PlanOverlay />
-          <Transcript />
-          {/* File / quote / comment bubbles resize only this column — not the
-              tools tray or composer box (avoids jump while browsing Files). */}
-          <ComposerContext conversationId={activeId} />
-        </div>
-        {/* Composer sits above the tools tray so the prompt stays next to the
-            transcript; Files/Terminal expand downward from the dock. */}
-        <div className="dock">
-          <Composer conversationId={activeId} />
-          <ToolsPanel variant="main" />
-        </div>
-      </main>
-    )
-  }
+  // Install only on hard failure / explicit install flow — never for idle/ready.
+  const showInstallGate =
+    !!activeAgent &&
+    (probe === 'missing' || probe === 'installing' || probe === 'rechecking')
 
-  // —— CLI agent: terminal host first; install only after confirmed missing ——
-  const hostClass = [
+  const shellClass = [
     previewEdit ? 'preview-edit-session' : 'detail',
-    'terminal-host-session',
+    !isVavMode ? 'terminal-host-session' : '',
     variant === 'workspace' ? 'session-detail-workspace' : ''
   ]
     .filter(Boolean)
     .join(' ')
 
-  // Install only on hard failure / explicit install flow — never for idle/ready.
-  // Previously idle (default) rendered the install card for one frame on switch.
-  const showInstallGate =
-    !!activeAgent &&
-    (probe === 'missing' || probe === 'installing' || probe === 'rechecking')
+  const streamClass = previewEdit ? 'preview-edit-stream' : 'detail-stream'
+  const toolsVariant = previewEdit ? 'preview-edit' : 'main'
+  const swarmVisible = !isVavMode && !detachedElsewhere && !showInstallGate
 
-  // Main surface (install gate or agent host) — Tools dock always stays.
-  const mainSurface = detachedElsewhere ? (
-    <div className="terminal-host-main terminal-host-stream detached-session-park">
-      <EmptyState title={t('session.detachedTitle')} description={t('session.detachedDesc')}>
-        <div className="detached-session-park-actions">
-          <Button
-            label={t('session.detachedTakeBack')}
-            variant="secondary"
-            size="sm"
-            onClick={() => void window.vav.window.closeDetachedSession(activeId)}
-          />
-          <Button
-            label={t('session.detachedFocus')}
-            variant="primary"
-            size="sm"
-            onClick={() => void window.vav.window.openSession(activeId)}
-          />
-        </div>
-      </EmptyState>
-    </div>
-  ) : showInstallGate && activeAgent ? (
-    <div className="terminal-host-main terminal-host-stream">
-      <AgentInstallPanel
-        agent={activeAgent}
-        conversationId={activeId}
-        rechecking={probe === 'rechecking'}
-        installing={probe === 'installing'}
-        installTabId={installTabId}
-        onRecheck={() => {
-          teardownInstallPty()
-          void checkAndActivate(activeAgent, { force: true })
-        }}
-        onInstallInShell={() => void runInstallInShell()}
-        onCancelInstall={cancelInstall}
-        onOpenDocs={() => {
-          if (activeAgent.installDocsUrl) {
-            window.open(activeAgent.installDocsUrl, '_blank', 'noopener,noreferrer')
-          }
-        }}
-      />
-    </div>
-  ) : (
-    <div className="terminal-host-main terminal-host-stream">
-      <TerminalPanel visible surface="agent" />
-    </div>
-  )
-
+  /*
+   * Thread and Swarm stay mounted across switches. Park with `.is-surface-parked`
+   * (`display: none !important`) — HTML `hidden` loses to our `display: flex`
+   * rules and was painting the Swarm picker over Thread.
+   */
   return (
-    <main className={hostClass}>
+    <main className={shellClass}>
       {chrome}
       {errorBanner && (
         <ErrorBanner
@@ -647,11 +574,107 @@ export function SessionDetail({
           onDismiss={() => setErrorBanner(null)}
         />
       )}
-      {mainSurface}
-      {/* Same ToolsPanel as VAV — only the composer is omitted. Header geometry
-          is shared CSS (.tools-header); dock-tools-only does not re-tune it. */}
-      <div className={`dock dock-tools-only${previewEdit ? ' preview-edit-dock' : ''}`}>
-        <ToolsPanel variant={previewEdit ? 'preview-edit' : 'main'} />
+
+      {!previewEdit && pending && pending.count > 0 && isVavMode && (
+        <div className="banner review-pending">
+          <span>{t('review.pendingBanner', { n: pending.count })}</span>
+          <span className="spacer" />
+          <Button
+            label={t('review.openReview')}
+            size="sm"
+            variant="primary"
+            onClick={() => {
+              document
+                .getElementById(`inline-review-${pending.changeSetId}`)
+                ?.scrollIntoView({ block: 'center', behavior: 'smooth' })
+              void openChangeReview(pending.changeSetId)
+            }}
+          />
+        </div>
+      )}
+
+      <div
+        className={`${streamClass}${!isVavMode ? ' is-surface-parked' : ''}`}
+        data-search={searchOpen}
+        aria-hidden={!isVavMode}
+        inert={!isVavMode ? true : undefined}
+      >
+        {searchOpen && isVavMode && <SearchStrip />}
+        {!previewEdit && <PlanOverlay />}
+        <Transcript />
+        <ComposerContext conversationId={activeId} />
+      </div>
+
+      <div
+        className={`terminal-host-main terminal-host-stream${
+          isVavMode ? ' is-surface-parked' : ''
+        }`}
+        aria-hidden={isVavMode}
+        inert={isVavMode ? true : undefined}
+      >
+        {detachedElsewhere ? (
+          <div className="detached-session-park">
+            <EmptyState title={t('session.detachedTitle')} description={t('session.detachedDesc')}>
+              <div className="detached-session-park-actions">
+                <Button
+                  label={t('session.detachedTakeBack')}
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => void window.vav.window.closeDetachedSession(activeId)}
+                />
+                <Button
+                  label={t('session.detachedFocus')}
+                  variant="primary"
+                  size="sm"
+                  onClick={() => void window.vav.window.openSession(activeId)}
+                />
+              </div>
+            </EmptyState>
+          </div>
+        ) : null}
+        {showInstallGate && activeAgent && !detachedElsewhere ? (
+          <AgentInstallPanel
+            agent={activeAgent}
+            conversationId={activeId}
+            rechecking={probe === 'rechecking'}
+            installing={probe === 'installing'}
+            installTabId={installTabId}
+            onRecheck={() => {
+              teardownInstallPty()
+              void checkAndActivate(activeAgent, { force: true })
+            }}
+            onInstallInShell={() => void runInstallInShell()}
+            onCancelInstall={cancelInstall}
+            onOpenDocs={() => {
+              if (activeAgent.installDocsUrl) {
+                window.open(activeAgent.installDocsUrl, '_blank', 'noopener,noreferrer')
+              }
+            }}
+          />
+        ) : null}
+        {/* Keep agent xterms mounted across Thread↔Swarm and install overlays. */}
+        <div
+          className={`terminal-host-agent-keep${
+            detachedElsewhere || showInstallGate ? ' is-surface-parked' : ''
+          }`}
+        >
+          <TerminalPanel visible={swarmVisible} surface="agent" />
+        </div>
+      </div>
+
+      <div
+        className={`dock${previewEdit ? ' preview-edit-dock' : ''}${
+          !isVavMode ? ' dock-tools-only' : ''
+        }`}
+      >
+        <div
+          className={!isVavMode ? 'is-surface-parked' : undefined}
+          aria-hidden={!isVavMode}
+          inert={!isVavMode ? true : undefined}
+        >
+          <Composer conversationId={activeId} />
+        </div>
+        <ToolsPanel variant={toolsVariant} />
       </div>
     </main>
   )
@@ -699,8 +722,8 @@ export function AgentModeChrome({
     }
     const targetId = await ensureConversation()
     if (!targetId) return
+    // Single patch + layout sync (includes bash-tab park).
     useWorkspaceStore.getState().exitCliMode(targetId)
-    useWorkspaceStore.getState().parkAgentHost(targetId)
   }
 
   /** Raw PTY screen — restores existing Screen if present, else picker pane. */

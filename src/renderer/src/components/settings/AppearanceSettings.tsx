@@ -10,29 +10,8 @@ import {
 } from '@shared/types'
 import { useSessionStore } from '../../state/sessionStore'
 import { useT } from '../../i18n/useT'
-import { Button, InlineAlert, Segmented, Toggle } from '../ui'
-import { IS_MAC, keys } from '../../lib/platform'
-
-const MODIFIER_SYMBOL: Record<string, string> = {
-  Command: '⌘',
-  Control: '⌃',
-  Alt: '⌥',
-  Shift: '⇧'
-}
-
-/** The modifiers this keyboard actually has, for the "needs a modifier" hint. */
-const MODIFIER_HINT = IS_MAC ? '⌘⌃⌥⇧' : 'Ctrl / Alt / Shift'
-
-/**
- * Renders an Electron accelerator the way the platform writes it: "⌃⌘Space" on
- * macOS, "Ctrl+Alt+Space" on Windows.
- */
-function prettyAccelerator(accelerator: string, notSet: string): string {
-  if (!accelerator) return notSet
-  const parts = accelerator.split('+')
-  if (!IS_MAC) return parts.join('+')
-  return parts.map((part) => MODIFIER_SYMBOL[part] ?? part).join('')
-}
+import { Segmented, Toggle } from '../ui'
+import { IS_MAC } from '../../lib/platform'
 
 export function AppearanceSettings(): React.JSX.Element {
   const t = useT()
@@ -41,8 +20,6 @@ export function AppearanceSettings(): React.JSX.Element {
   const systemAccent = useSessionStore((s) => s.systemAccentColor)
 
   const [fonts, setFonts] = useState<string[]>([])
-  const [recording, setRecording] = useState(false)
-  const [hotkeyError, setHotkeyError] = useState<string | null>(null)
   // Match applied tokens (system theme follows OS, not the light-only swatch table).
   const [resolvedTheme, setResolvedTheme] = useState<'light' | 'dark'>('light')
 
@@ -70,44 +47,6 @@ export function AppearanceSettings(): React.JSX.Element {
       setFonts(installed.length ? installed : candidates)
     })
   }, [])
-
-  useEffect(() => {
-    if (!recording) return
-    const onKey = async (event: KeyboardEvent): Promise<void> => {
-      event.preventDefault()
-      event.stopPropagation()
-
-      if (event.key === 'Escape') {
-        setRecording(false)
-        return
-      }
-
-      const modifiers: string[] = []
-      if (event.ctrlKey) modifiers.push('Control')
-      if (event.altKey) modifiers.push('Alt')
-      if (event.shiftKey) modifiers.push('Shift')
-      if (event.metaKey) modifiers.push('Command')
-
-      const key = normalizeKey(event)
-      if (!key) return
-      if (modifiers.length === 0) {
-        setHotkeyError(t('appearance.hotkeyNeedModifier', { modifiers: MODIFIER_HINT }))
-        return
-      }
-
-      const accelerator = [...modifiers, key].join('+')
-      const response = await window.vav.settings.setHotkey(accelerator)
-      setRecording(false)
-      if (response.ok) {
-        setHotkeyError(null)
-        useSessionStore.setState({ settings: response.settings })
-      } else {
-        setHotkeyError(t('appearance.hotkeyTaken'))
-      }
-    }
-    window.addEventListener('keydown', onKey, true)
-    return () => window.removeEventListener('keydown', onKey, true)
-  }, [recording, t])
 
   return (
     <div className="form">
@@ -308,87 +247,6 @@ export function AppearanceSettings(): React.JSX.Element {
           <div className="form-hint">{t('appearance.windowVibrancyHint')}</div>
         </>
       )}
-
-      <div className="form-row">
-        <label>{t('appearance.sendKey')}</label>
-        <div className="control">
-          <Segmented<'enter' | 'mod-enter'>
-            options={[
-              { value: 'enter', label: t('appearance.sendKey.enter') },
-              { value: 'mod-enter', label: keys('⌘↵') }
-            ]}
-            value={settings.sendKey === 'mod-enter' ? 'mod-enter' : 'enter'}
-            onChange={(sendKey) => void updateSettings({ sendKey })}
-          />
-        </div>
-      </div>
-      <div className="form-hint">
-        {t('appearance.sendKeyHint', { mod: keys('⌘↵'), enter: keys('↵') })}
-      </div>
-
-      <div className="form-row">
-        <label>{t('appearance.hotkey')}</label>
-        <div className="control">
-          <kbd>
-            {recording
-              ? t('appearance.hotkeyRecording')
-              : prettyAccelerator(settings.globalHotkey, t('common.notSet'))}
-          </kbd>
-          <Button
-            label={recording ? t('common.cancel') : t('common.record')}
-            variant="secondary"
-            size="sm"
-            onClick={() => {
-              setHotkeyError(null)
-              setRecording(!recording)
-            }}
-          />
-          {settings.globalHotkey && (
-            <Button
-              label={t('appearance.hotkeyClear')}
-              size="sm"
-              onClick={() =>
-                void window.vav.settings.setHotkey('').then((r) =>
-                  useSessionStore.setState({ settings: r.settings })
-                )
-              }
-            />
-          )}
-        </div>
-      </div>
-      <div className="form-hint">
-        {t('appearance.hotkeyHint', { modifiers: MODIFIER_HINT })}
-      </div>
-
-      {/* `hotkeyError` already opens with what went wrong, so a heading here
-          repeated its first four characters back at the reader. */}
-      {hotkeyError && <InlineAlert kind="warning" message={hotkeyError} />}
     </div>
   )
-}
-
-/** Maps a DOM key event to the Electron accelerator key name. */
-function normalizeKey(event: KeyboardEvent): string | null {
-  const code = event.code
-  if (code.startsWith('Key')) return code.slice(3)
-  if (code.startsWith('Digit')) return code.slice(5)
-  if (code.startsWith('Arrow')) return code.slice(5)
-  if (/^F\d{1,2}$/.test(code)) return code
-  const named: Record<string, string> = {
-    Space: 'Space',
-    Enter: 'Return',
-    Tab: 'Tab',
-    Backquote: '`',
-    Minus: '-',
-    Equal: '=',
-    BracketLeft: '[',
-    BracketRight: ']',
-    Backslash: '\\',
-    Semicolon: ';',
-    Quote: "'",
-    Comma: ',',
-    Period: '.',
-    Slash: '/'
-  }
-  return named[code] ?? null
 }

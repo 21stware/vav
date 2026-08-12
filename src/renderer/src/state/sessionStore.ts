@@ -126,6 +126,7 @@ export type SettingsCategory =
   | 'cli'
   | 'agents'
   | 'file-associations'
+  | 'keybindings'
   | 'about'
 
 export interface TurnRuntime {
@@ -450,7 +451,6 @@ interface SessionState {
   dialog: DialogState | null
   toast: ToastState | null
   settingsCategory: SettingsCategory
-  shortcutsOpen: boolean
   composerFocusTick: number
   /** Which comment card should take focus (set on pick). */
   commentFocusId: string | null
@@ -644,7 +644,6 @@ interface SessionState {
   resetSettings(): Promise<void>
   openSettings(category?: SettingsCategory): void
   closeSettings(): void
-  setShortcutsOpen(open: boolean): void
 
   openSearch(): void
   closeSearch(): void
@@ -779,7 +778,6 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   dialog: null,
   toast: null,
   settingsCategory: 'api',
-  shortcutsOpen: false,
   composerFocusTick: 0,
   commentFocusId: null,
   commentFocusTick: 0,
@@ -1465,10 +1463,8 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   },
 
   async selectChatHost(id, host) {
-    if (useWorkspaceStore.getState().workspaces[id]?.cliMode) {
-      useWorkspaceStore.getState().exitCliMode(id)
-    }
-    useWorkspaceStore.getState().parkAgentHost(id)
+    // Surface park is one call (exitCliMode is idempotent + syncs layouts).
+    useWorkspaceStore.getState().exitCliMode(id)
     if (get().search.open) get().closeSearch()
     await get().setCliHost(id, host)
     // Agent owns the model catalogue — coerce to a valid id for the new host
@@ -2159,10 +2155,6 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
   closeSettings() {
     void window.vav.window.closeSettings()
-  },
-
-  setShortcutsOpen(open) {
-    set({ shortcutsOpen: open })
   },
 
   openSearch() {

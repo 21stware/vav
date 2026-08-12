@@ -14,6 +14,7 @@ import {
   type DisplayCurrency
 } from '@shared/types'
 import { coerceShell, platformDefaults, type Platform } from '@shared/platform'
+import { sanitizeKeyBindings } from '@shared/keyBindings'
 import { resolveFirstOnLoginPath } from '../terminal/loginPath'
 
 const PLATFORM = process.platform as Platform
@@ -172,6 +173,7 @@ export class SettingsStore {
     if (!providers.has(s.webSearchProvider)) s.webSearchProvider = 'auto'
     s.fontSize = Math.min(24, Math.max(10, s.fontSize))
     if (s.sendKey !== 'enter' && s.sendKey !== 'mod-enter') s.sendKey = 'enter'
+    s.keyBindings = sanitizeKeyBindings(s.keyBindings)
     s.temperature = Math.min(2, Math.max(0, s.temperature))
     s.maxTokens = Math.min(200_000, Math.max(256, Math.round(s.maxTokens)))
     s.cliAgents = mergeBuiltinAgents(Array.isArray(s.cliAgents) ? s.cliAgents : [])

@@ -1,5 +1,6 @@
 import { Menu, type MenuItemConstructorOptions } from 'electron'
 import type { MenuCommand } from '@shared/ipc'
+import type { ResolvedKeyBindings } from '@shared/keyBindings'
 import { APP_NAME } from './brand'
 import { isDevRuntime } from './devRuntime'
 import { t } from './i18n'
@@ -24,14 +25,16 @@ const IS_MAC = process.platform === 'darwin'
 export function buildAppMenu(
   dispatch: (command: MenuCommand) => void,
   openSettings: () => void,
-  newDetachedSession: () => void
+  newDetachedSession: () => void,
+  bindings: ResolvedKeyBindings
 ): Menu {
   const send = (command: MenuCommand) => () => dispatch(command)
   const isDev = isDevRuntime()
+  const b = bindings
 
   const settingsItem: MenuItemConstructorOptions = {
     label: t('common.settingsEllipsis'),
-    accelerator: 'CmdOrCtrl+,',
+    accelerator: b.openSettings,
     click: openSettings
   }
 
@@ -65,12 +68,12 @@ export function buildAppMenu(
   const fileSubmenu: MenuItemConstructorOptions[] = [
     {
       label: t('menu.newSession'),
-      accelerator: 'CmdOrCtrl+N',
+      accelerator: b.newSession,
       click: send('new-conversation')
     },
     {
       label: t('menu.newSessionWindow'),
-      accelerator: 'CmdOrCtrl+Shift+Return',
+      accelerator: b.newSessionWindow,
       click: newDetachedSession
     },
     { type: 'separator' },
@@ -85,12 +88,12 @@ export function buildAppMenu(
     { type: 'separator' },
     {
       label: t('menu.newTerminal'),
-      accelerator: 'CmdOrCtrl+T',
+      accelerator: b.newTerminal,
       click: send('new-terminal')
     },
     {
       label: t('menu.switchWorkdir'),
-      accelerator: 'CmdOrCtrl+Shift+O',
+      accelerator: b.switchWorkdir,
       click: send('switch-workdir')
     },
     { type: 'separator' },
@@ -99,7 +102,7 @@ export function buildAppMenu(
     // (close bash / collapse Files tray / else close window).
     {
       label: t('menu.closeWindow'),
-      accelerator: 'CmdOrCtrl+W',
+      accelerator: b.closeContext,
       click: send('close-context')
     },
     ...(IS_MAC
@@ -115,49 +118,49 @@ export function buildAppMenu(
   const viewSubmenu: MenuItemConstructorOptions[] = [
     {
       label: t('menu.toggleSidebar'),
-      accelerator: 'CmdOrCtrl+Shift+H',
+      accelerator: b.toggleSidebar,
       click: send('toggle-sidebar')
     },
     {
       label: t('menu.toggleTools'),
-      accelerator: 'CmdOrCtrl+Shift+E',
+      accelerator: b.toggleTools,
       click: send('toggle-tools-panel')
     },
     {
       label: t('menu.togglePanelSegment'),
-      accelerator: 'CmdOrCtrl+Shift+T',
+      accelerator: b.togglePanelSegment,
       click: send('toggle-panel-segment')
     },
     {
       label: t('menu.focusBash'),
-      // Control+` — main-chat / tools tray bash focus.
-      accelerator: 'Control+`',
+      accelerator: b.focusBash,
       click: send('focus-bash')
     },
     { type: 'separator' },
     {
       label: t('menu.switchCliMode'),
-      accelerator: 'CmdOrCtrl+Shift+C',
+      accelerator: b.switchCliMode,
       click: send('switch-cli-mode')
     },
     {
       label: t('menu.switchVavMode'),
-      accelerator: 'CmdOrCtrl+Shift+V',
+      accelerator: b.switchVavMode,
       click: send('switch-vav-mode')
     },
     { type: 'separator' },
     {
       label: t('menu.focusWorkspace'),
-      accelerator: 'CmdOrCtrl+1',
+      accelerator: b.focusTools1,
       click: send('focus-tools-1')
     },
-    ...([2, 3, 4, 5, 6, 7, 8, 9] as const).map(
-      (n): MenuItemConstructorOptions => ({
+    ...([2, 3, 4, 5, 6, 7, 8, 9] as const).map((n): MenuItemConstructorOptions => {
+      const id = `focusTools${n}` as keyof ResolvedKeyBindings
+      return {
         label: t('menu.focusTerminal', { n: n - 1 }),
-        accelerator: `CmdOrCtrl+${n}`,
+        accelerator: b[id],
         click: send(`focus-tools-${n}` as MenuCommand)
-      })
-    ),
+      }
+    }),
     { type: 'separator' },
     { role: 'resetZoom', label: t('menu.actualSize') },
     { role: 'zoomIn', label: t('menu.zoomIn') },
@@ -175,12 +178,12 @@ export function buildAppMenu(
   const sessionSubmenu: MenuItemConstructorOptions[] = [
     {
       label: t('menu.focusComposer'),
-      accelerator: 'CmdOrCtrl+K',
+      accelerator: b.focusComposer,
       click: send('focus-composer')
     },
     {
       label: t('menu.send'),
-      accelerator: 'CmdOrCtrl+Return',
+      accelerator: b.sendMenu,
       click: send('send')
     },
     {
@@ -207,9 +210,7 @@ export function buildAppMenu(
       label: t('menu.keyboardShortcuts'),
       click: send('open-shortcuts')
     },
-    ...(IS_MAC
-      ? []
-      : [checkUpdatesItem])
+    ...(IS_MAC ? [] : [checkUpdatesItem])
   ]
 
   const template: MenuItemConstructorOptions[] = [
@@ -229,11 +230,11 @@ export function buildAppMenu(
         { role: 'paste', label: t('menu.paste') },
         { role: 'selectAll', label: t('menu.selectAll') },
         { type: 'separator' },
-        { label: t('menu.find'), accelerator: 'CmdOrCtrl+F', click: send('find') },
-        { label: t('menu.findNext'), accelerator: 'CmdOrCtrl+G', click: send('find-next') },
+        { label: t('menu.find'), accelerator: b.find, click: send('find') },
+        { label: t('menu.findNext'), accelerator: b.findNext, click: send('find-next') },
         {
           label: t('menu.findPrevious'),
-          accelerator: 'CmdOrCtrl+Shift+G',
+          accelerator: b.findPrevious,
           click: send('find-previous')
         }
       ]

@@ -16,6 +16,9 @@ function ensureSidebarVisible(): void {
   if (!store.sidebarVisible) store.toggleSidebar()
 }
 
+/** last close-context handling time (renderer) — pairs with main’s 80ms debounce. */
+let lastCloseContextAt = 0
+
 /**
  * Dispatch a native-menu / before-input MenuCommand against the local store.
  * Shared by main App and detached SessionWindow so accelerators work in both.
@@ -75,10 +78,11 @@ export function handleMenuCommand(command: MenuCommand): void {
       break
     }
     case 'switch-vav-mode': {
-      // Leave Terminal and switch the chat host back to built-in VAV.
+      // Same path as AgentModeChrome “Thread” — park Screen, keep panes.
       const id = store.activeId
       if (!id) break
-      void store.selectChatHost(id, null)
+      if (store.search.open) store.closeSearch()
+      useWorkspaceStore.getState().exitCliMode(id)
       break
     }
     case 'send': {
@@ -170,7 +174,7 @@ export function handleMenuCommand(command: MenuCommand): void {
       break
     }
     case 'open-shortcuts':
-      store.setShortcutsOpen(true)
+      store.openSettings('keybindings')
       break
     case 'show-sessions':
       ensureSidebarVisible()
@@ -187,11 +191,19 @@ export function handleMenuCommand(command: MenuCommand): void {
     case 'check-updates':
       void store.checkForUpdates()
       break
-    case 'close-context':
-      // Bash → close tab; Files → collapse tray; multi-pane agent → close pane;
+    case 'close-context': {
+      // Bash → close tab; Files → collapse tray;
+      // Swarm: pane / last live agent→picker / sole picker→window;
       // otherwise close/hide this window.
+      // Debounce twin delivery (before-input + menu accelerator): the first
+      // stroke may reseed a picker; a second close-context must not instantly
+      // close the window.
+      const now = Date.now()
+      if (now - lastCloseContextAt < 400) break
+      lastCloseContextAt = now
       if (!handleContextClose()) closeCurrentWindow()
       break
+    }
     case 'focus-tools-1':
     case 'focus-tools-2':
     case 'focus-tools-3':

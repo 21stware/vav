@@ -11,7 +11,7 @@ import type { GitChangeEntry, GitSnapshot } from '@shared/git'
 import { useSessionStore } from '../state/sessionStore'
 import { useWorkspaceStore } from '../state/workspaceStore'
 import { useT, tt } from '../i18n/useT'
-import { isTemporaryWorkspace } from '../lib/format'
+import { useGitRepoSyncEpoch } from '../lib/gitRepoSync'
 import { fileManagerLabel } from '../lib/platform'
 import { highlightCode, languageFromPath } from '../lib/highlightCode'
 import { onHljsReady } from '../lib/hljsLazy'
@@ -329,9 +329,9 @@ export function GitChangesPanel({
 }): React.JSX.Element {
   const t = useT()
   const activeId = useSessionStore((s) => s.activeId)
-  const tmp = useSessionStore((s) => s.tmp)
   const root = useWorkspaceStore((s) => s.workspaces[activeId]?.root ?? null)
-  const temporary = isTemporaryWorkspace(root, tmp)
+  /** Temp dirs can become repos after empty-session “enable version control”. */
+  const gitRepoEpoch = useGitRepoSyncEpoch()
 
   const [snap, setSnap] = useState<GitSnapshot | null>(null)
   const [selected, setSelected] = useState<string | null>(null)
@@ -361,7 +361,7 @@ export function GitChangesPanel({
   )
 
   const refresh = useCallback(async (): Promise<void> => {
-    if (!root || temporary) {
+    if (!root) {
       setSnap(null)
       setSelected(null)
       setDiff(null)
@@ -388,7 +388,7 @@ export function GitChangesPanel({
     } finally {
       setLoading(false)
     }
-  }, [root, temporary])
+  }, [root, gitRepoEpoch])
 
   const refreshRef = useRef(refresh)
   refreshRef.current = refresh
@@ -403,7 +403,7 @@ export function GitChangesPanel({
 
   useEffect(() => {
     if (!onChrome) return
-    if (!visible || !root || temporary) {
+    if (!visible || !root) {
       onChrome(null)
       return
     }
@@ -412,7 +412,7 @@ export function GitChangesPanel({
         ? `${snap.branch || t('git.detached', { head: snap.headShort ?? '?' })} · ${t('git.changeCount', { n: snap.changes.length })}`
         : null
     onChrome({ meta, loading, refresh: stableRefresh })
-  }, [onChrome, visible, root, temporary, snap, loading, stableRefresh, t])
+  }, [onChrome, visible, root, snap, loading, stableRefresh, t])
 
   useEffect(() => {
     return () => onChrome?.(null)
@@ -528,7 +528,7 @@ export function GitChangesPanel({
     }
   }
 
-  if (!root || temporary) {
+  if (!root) {
     return (
       <div className="git-panel">
         <EmptyState title={t('git.needProject')} description={t('git.needProjectDesc')} />

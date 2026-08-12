@@ -18,13 +18,12 @@ import { FileSessionView } from './components/FileSessionView'
 import { AppToast } from './components/AppToast'
 import { UpdateCorner } from './components/UpdateCorner'
 import { ShellLeadingControls } from './components/ShellLeadingControls'
-import { Button, EmptyState, Modal } from './components/ui'
+import { EmptyState } from './components/ui'
 import { KeychainOnboarding } from './components/KeychainOnboarding'
 import { useAppearance } from './lib/appearance'
 import { useMenuCommands } from './lib/menuCommands'
 import { installDefaultContextMenu } from './lib/nativeMenu'
 import { SIDEBAR_FLOAT_MAX, useSidebarFloatMode } from './lib/sidebarLayout'
-import { getShortcuts } from './shortcuts'
 import { useT } from './i18n/useT'
 
 type LaunchPhase = 'checking' | 'keychain' | 'booting' | 'ready' | 'no-preload'
@@ -198,7 +197,6 @@ export default function App(): React.JSX.Element {
         />
         <DetailSlot />
       </div>
-      <Overlays />
       {/* When the sidebar is open it hosts the chip; otherwise pin bottom-left. */}
       {!sidebarVisible ? <UpdateCorner /> : null}
       <AppToast />
@@ -347,36 +345,6 @@ function SidebarSlot({
         <Sidebar floating onNavigate={close} />
       </div>
     </div>
-  )
-}
-
-function Overlays(): React.JSX.Element {
-  const t = useT()
-  const shortcutsOpen = useSessionStore((s) => s.shortcutsOpen)
-  const setShortcutsOpen = useSessionStore((s) => s.setShortcutsOpen)
-  const sendKey = useSessionStore((s) => s.settings.sendKey)
-
-  if (!shortcutsOpen) return <></>
-
-  const shortcuts = getShortcuts(t, { sendKey })
-
-  return (
-    <Modal
-      title={t('about.shortcuts')}
-      onDismiss={() => setShortcutsOpen(false)}
-      actions={(dismiss) => (
-        <Button label={t('common.ok')} variant="primary" onClick={dismiss} />
-      )}
-    >
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-        {shortcuts.map(([shortcutKeys, description]) => (
-          <div key={shortcutKeys} style={{ display: 'flex', gap: 12 }}>
-            <kbd style={{ minWidth: 130 }}>{shortcutKeys}</kbd>
-            <span>{description}</span>
-          </div>
-        ))}
-      </div>
-    </Modal>
   )
 }
 

@@ -13,7 +13,7 @@ export function AboutSettings(): React.JSX.Element {
   const updateSettings = useSessionStore((s) => s.updateSettings)
   const resetSettings = useSessionStore((s) => s.resetSettings)
   const showDialog = useSessionStore((s) => s.showDialog)
-  const setShortcutsOpen = useSessionStore((s) => s.setShortcutsOpen)
+  const openSettings = useSessionStore((s) => s.openSettings)
   const checkForUpdates = useSessionStore((s) => s.checkForUpdates)
   const checking = updateState.phase === 'checking'
   const downloading =
@@ -99,7 +99,7 @@ export function AboutSettings(): React.JSX.Element {
         <Button
           label={t('about.viewShortcuts')}
           variant="secondary"
-          onClick={() => setShortcutsOpen(true)}
+          onClick={() => openSettings('keybindings')}
         />
         <Button
           label={t('about.reset')}

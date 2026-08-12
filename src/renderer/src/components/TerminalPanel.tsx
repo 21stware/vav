@@ -272,7 +272,14 @@ function LayoutNodeView({
             compact={multiPane}
           />
         ) : (
-          <TerminalHost conversationId={conversationId} tabId={node.tabId} hidden={!visible} />
+          <TerminalHost
+            conversationId={conversationId}
+            tabId={node.tabId}
+            hidden={!visible}
+            // Inactive live panes must not steal keys from a pending picker
+            // after ⌘D / ⌘⇧D (UI highlights the new pane; focus was jumping back).
+            autoFocus={visible && isActive}
+          />
         )}
       </div>
     )
@@ -423,15 +430,22 @@ function focusXtermIn(host: HTMLElement | null): void {
 function TerminalHost({
   conversationId,
   tabId,
-  hidden
+  hidden,
+  autoFocus
 }: {
   conversationId: string
   tabId: string
   hidden: boolean
+  /** When false, fit/resize only — never yank focus from another pane’s picker. */
+  autoFocus: boolean
 }): React.JSX.Element {
   const codeFont = useSessionStore((s) => s.settings.codeFont)
   const fontSize = useSessionStore((s) => s.settings.fontSize)
   const hostRef = useRef<HTMLDivElement>(null)
+  /** Stable across Thread↔Swarm visibility toggles — do not tear down xterm. */
+  const fitRef = useRef<(force?: boolean) => void>(() => {})
+  const autoFocusRef = useRef(autoFocus)
+  autoFocusRef.current = autoFocus
 
   useEffect(() => {
     const host = hostRef.current
@@ -458,8 +472,8 @@ function TerminalHost({
       if (cancelled) return
       if (!force && !document.hasFocus()) return
       if (host.clientWidth === 0 || host.clientHeight === 0) return
-      // Hidden tools-tray hosts still sit in the layout; fitting them only
-      // feeds the scrollbar↔cols oscillation that SIGWINCH-flashes the agent.
+      // Hidden tools-tray / parked Swarm hosts still sit in the tree; skip
+      // fit so we don't SIGWINCH-flash while Thread is showing.
       if (!force && host.dataset.hidden === 'true') return
       try {
         const dims = entry.fit.proposeDimensions?.()
@@ -486,13 +500,17 @@ function TerminalHost({
         // ignore
       }
     }
+    fitRef.current = fit
 
     /** Retry fit until the flex pane has non-zero size (picker → live swap). */
     const fitWhenReady = (attempt: number): void => {
       if (cancelled) return
       if (host.clientWidth > 0 && host.clientHeight > 0) {
         fit(true)
-        if (!hidden) focusXtermIn(host)
+        // Only the active pane may take keys — inactive hosts still fit.
+        if (host.dataset.hidden !== 'true' && autoFocusRef.current) {
+          focusXtermIn(host)
+        }
         return
       }
       if (attempt < 12) {
@@ -545,7 +563,7 @@ function TerminalHost({
     if (pane) observer.observe(pane)
     window.addEventListener('vav:resize-end', onResizeEnd)
     window.addEventListener('focus', onFocus)
-    // Initial mount / reuse: wait for layout, then fit + focus.
+    // Initial mount / reuse: wait for layout, then fit (+ focus only if active).
     requestAnimationFrame(() => fitWhenReady(0))
 
     return () => {
@@ -557,26 +575,30 @@ function TerminalHost({
       if (debounce) clearTimeout(debounce)
       if (entry.container.parentElement === host) host.removeChild(entry.container)
     }
-  }, [conversationId, tabId, codeFont, fontSize, hidden])
+    // Intentionally omit `hidden` / `autoFocus`: Thread↔Swarm and ⌘D must not
+    // tear down xterm; focus is handled in a separate effect.
+  }, [conversationId, tabId, codeFont, fontSize])
 
+  // Refit when shown; take keyboard only when this pane is the active one.
   useEffect(() => {
     if (hidden) return
     let cancelled = false
     const run = (attempt: number): void => {
       if (cancelled) return
       const host = hostRef.current
-      const ta = host?.querySelector('.xterm-helper-textarea') as HTMLTextAreaElement | null
-      if (ta) {
-        focusXtermIn(host)
+      if (!host) return
+      if (host.clientWidth > 0 && host.clientHeight > 0) {
+        fitRef.current(true)
+        if (autoFocus) focusXtermIn(host)
         return
       }
-      if (attempt < 10) requestAnimationFrame(() => run(attempt + 1))
+      if (attempt < 12) requestAnimationFrame(() => run(attempt + 1))
     }
     requestAnimationFrame(() => run(0))
     return () => {
       cancelled = true
     }
-  }, [hidden, tabId])
+  }, [hidden, tabId, autoFocus])
 
   return (
     <div

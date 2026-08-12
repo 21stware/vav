@@ -1,4 +1,42 @@
 import type { MenuCommand } from '@shared/ipc'
+import {
+  acceleratorKeyBindingIds,
+  matchesAccelerator,
+  type ResolvedKeyBindings
+} from '@shared/keyBindings'
+import type { Platform } from '@shared/platform'
+
+const PLATFORM = process.platform as Platform
+
+/** Accelerator ids → menu command bus (newSessionWindow is handled separately). */
+const KEY_BINDING_MENU_COMMAND: Partial<Record<keyof ResolvedKeyBindings, MenuCommand>> = {
+  newSession: 'new-conversation',
+  focusComposer: 'focus-composer',
+  focusComposerAlt: 'focus-composer',
+  sendMenu: 'send',
+  toggleSidebar: 'toggle-sidebar',
+  toggleTools: 'toggle-tools-panel',
+  togglePanelSegment: 'toggle-panel-segment',
+  focusBash: 'focus-bash',
+  switchWorkdir: 'switch-workdir',
+  switchCliMode: 'switch-cli-mode',
+  switchVavMode: 'switch-vav-mode',
+  closeContext: 'close-context',
+  openSettings: 'open-settings',
+  find: 'find',
+  findNext: 'find-next',
+  findPrevious: 'find-previous',
+  newTerminal: 'new-terminal',
+  focusTools1: 'focus-tools-1',
+  focusTools2: 'focus-tools-2',
+  focusTools3: 'focus-tools-3',
+  focusTools4: 'focus-tools-4',
+  focusTools5: 'focus-tools-5',
+  focusTools6: 'focus-tools-6',
+  focusTools7: 'focus-tools-7',
+  focusTools8: 'focus-tools-8',
+  focusTools9: 'focus-tools-9'
+}
 
 /**
  * Map a Chromium/Electron keyboard input to a product MenuCommand.
@@ -7,60 +45,30 @@ import type { MenuCommand } from '@shared/ipc'
  * focus sits in xterm’s hidden textarea (menu accelerators alone are unreliable
  * there — the terminal steals the key before the native menu can act).
  */
-export function menuCommandFromInput(input: Electron.Input): MenuCommand | null {
+export function menuCommandFromInput(
+  input: Electron.Input,
+  bindings: ResolvedKeyBindings
+): MenuCommand | null {
   if (input.type !== 'keyDown') return null
 
-  const key = input.key
-  const code = input.code
-  const { control, alt, shift, meta } = input
-  if (alt) return null
+  // Prefer longer chords first so Shift variants win over bare keys.
+  const ids = acceleratorKeyBindingIds().sort(
+    (a, b) => bindings[b].split('+').length - bindings[a].split('+').length
+  )
 
-  // Control+` — tools-tray bash focus (menu accelerator is Control+`, not Cmd).
-  if (
-    control &&
-    !meta &&
-    !shift &&
-    (key === '`' || key === '~' || code === 'Backquote')
-  ) {
-    return 'focus-bash'
+  for (const id of ids) {
+    if (id === 'newSessionWindow') continue
+    if (!matchesAccelerator(input, bindings[id], PLATFORM)) continue
+    const command = KEY_BINDING_MENU_COMMAND[id]
+    if (command) return command
   }
-
-  // CmdOrCtrl family — Command on macOS, Control on Windows/Linux.
-  const primary = process.platform === 'darwin' ? meta && !control : control && !meta
-  if (!primary) return null
-
-  const lower = key.length === 1 ? key.toLowerCase() : key
-
-  if (shift && !control && lower === 'e') return 'toggle-tools-panel'
-  if (shift && !control && lower === 'h') return 'toggle-sidebar'
-  if (shift && !control && lower === 't') return 'toggle-panel-segment'
-  if (shift && !control && lower === 'o') return 'switch-workdir'
-  if (shift && !control && lower === 'c') return 'switch-cli-mode'
-  if (shift && !control && lower === 'v') return 'switch-vav-mode'
-  if (shift && !control && (key === 'Enter' || code === 'Enter' || code === 'NumpadEnter')) {
-    // New detached session is handled by globalShortcut; skip here.
-    return null
-  }
-  if (shift && !control && lower === 'g') return 'find-previous'
-
-  if (!shift) {
-    if (lower === 'n') return 'new-conversation'
-    if (lower === 'k' || lower === 'i') return 'focus-composer'
-    if (lower === 'f') return 'find'
-    if (lower === 'g') return 'find-next'
-    if (lower === 't') return 'new-terminal'
-    if (lower === 'w') return 'close-context'
-    if (lower === ',' || code === 'Comma') return 'open-settings'
-    if (key === 'Enter' || code === 'Enter' || code === 'NumpadEnter') return 'send'
-    // ⌘1…⌘9
-    if (/^[1-9]$/.test(key)) {
-      return `focus-tools-${key}` as MenuCommand
-    }
-    if (code.startsWith('Digit')) {
-      const n = code.slice('Digit'.length)
-      if (/^[1-9]$/.test(n)) return `focus-tools-${n}` as MenuCommand
-    }
-  }
-
   return null
+}
+
+/** True when the input matches the (possibly rebound) new-session-window chord. */
+export function matchesNewSessionWindow(
+  input: Electron.Input,
+  bindings: ResolvedKeyBindings
+): boolean {
+  return matchesAccelerator(input, bindings.newSessionWindow, PLATFORM)
 }

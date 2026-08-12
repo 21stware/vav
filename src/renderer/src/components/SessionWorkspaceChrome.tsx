@@ -3,6 +3,7 @@ import type { GitSnapshot } from '@shared/git'
 import { useSessionStore } from '../state/sessionStore'
 import { useT, tt } from '../i18n/useT'
 import { isTemporaryWorkspace, workdirShortLabel } from '../lib/format'
+import { bumpGitRepoSync } from '../lib/gitRepoSync'
 import { menuAnchor, showMenu, type MenuItem } from '../lib/nativeMenu'
 import { Button } from './ui'
 
@@ -138,6 +139,8 @@ export function SessionWorkspaceChrome(): React.JSX.Element | null {
         return
       }
       setSnap(result.data)
+      // Path unchanged — Files / Tools still need to re-probe isRepo (incl. temp).
+      bumpGitRepoSync()
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     } finally {

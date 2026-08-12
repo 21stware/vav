@@ -1444,6 +1444,10 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     }
     const slice = get().workspaces[id]!
     const existing = getCliSurface(slice)
+    // Already on Screen with panes — skip (avoids double sync from UI + layout effect).
+    if (slice.cliMode && existing && existing.tabs.length > 0) {
+      return
+    }
     // Screen already exists (live panes and/or pending pickers) — only flip mode.
     // Never rebuild or drop panes when re-entering from VAV.
     if (existing && existing.tabs.length > 0) {
@@ -1537,9 +1541,15 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 
   exitCliMode(id) {
     if (!id) return
-    patch(set, id, () => ({
+    const slice = get().workspaces[id]
+    if (!slice) return
+    // Idempotent — openChatMode / menu / park callers may stack.
+    if (!slice.cliMode && !slice.activeHostAgentId) return
+    patch(set, id, (s) => ({
       cliMode: false,
-      activeHostAgentId: null
+      activeHostAgentId: null,
+      // Drop agent-owned bash tabs from the tray; keep user shells.
+      tabs: userBashTabsOnly(s.tabs)
     }))
     get().syncPtyLayouts(id)
   },
@@ -1997,17 +2007,8 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   },
 
   parkAgentHost(id) {
-    const slice = get().workspaces[id]
-    if (!slice?.activeHostAgentId && !slice?.cliMode) return
-    // Keep agentHostSessions (incl. CLI Screen layout + panes); leave main surface.
-    // Mode persistence is owned by exitCliMode only — never push cliMode=false
-    // from park. Accidental parks (pre-hydrate / missing binary) must not clobber
-    // main-process layouts that other windows hydrate from.
-    patch(set, id, (s) => ({
-      cliMode: false,
-      activeHostAgentId: null,
-      tabs: userBashTabsOnly(s.tabs)
-    }))
+    // Same as exitCliMode — keep agentHostSessions, clear surface flag + tray agent tabs.
+    get().exitCliMode(id)
   },
 
   injectContextToActivePane(id, text, options) {

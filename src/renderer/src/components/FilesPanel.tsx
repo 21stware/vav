@@ -27,6 +27,7 @@ import { useWorkspaceStore } from '../state/workspaceStore'
 import { useT } from '../i18n/useT'
 import { tt } from '../i18n/useT'
 import { formatBytes, isTemporaryWorkspace } from '../lib/format'
+import { useGitRepoSyncEpoch } from '../lib/gitRepoSync'
 import { basename, dirname, joinPath } from '../lib/path'
 import { menuAnchor, showMenu, type MenuItem } from '../lib/nativeMenu'
 import { fileManagerLabel } from '../lib/platform'
@@ -137,6 +138,8 @@ export function FilesPanel({ visible }: { visible: boolean }): React.JSX.Element
   const [trayView, setTrayView] = useState<FilesTrayView>('files')
   const [rootIsGit, setRootIsGit] = useState(false)
   const [gitChrome, setGitChrome] = useState<GitPanelChrome | null>(null)
+  /** Temp dirs can become repos after empty-session “enable version control”. */
+  const gitRepoEpoch = useGitRepoSyncEpoch()
   const onGitChrome = useCallback((next: GitPanelChrome | null) => {
     setGitChrome((prev) => {
       if (prev === next) return prev
@@ -155,7 +158,7 @@ export function FilesPanel({ visible }: { visible: boolean }): React.JSX.Element
 
   useEffect(() => {
     let cancelled = false
-    if (!root || temporary || !window.vav?.git?.status) {
+    if (!root || !window.vav?.git?.status) {
       setRootIsGit(false)
       return
     }
@@ -170,7 +173,7 @@ export function FilesPanel({ visible }: { visible: boolean }): React.JSX.Element
     return () => {
       cancelled = true
     }
-  }, [root, temporary])
+  }, [root, gitRepoEpoch])
 
   // Leave Git tab when the workspace is no longer a repository.
   useEffect(() => {
@@ -543,8 +546,8 @@ export function FilesPanel({ visible }: { visible: boolean }): React.JSX.Element
   return (
     <>
       <div className="files-toolbar">
-        {rootIsGit ? (
-          <div className="files-toolbar-tabs">
+        <div className="files-toolbar-tabs">
+          {rootIsGit ? (
             <Segmented<FilesTrayView>
               value={trayView}
               onChange={setTrayView}
@@ -561,8 +564,13 @@ export function FilesPanel({ visible }: { visible: boolean }): React.JSX.Element
                 }
               ]}
             />
-          </div>
-        ) : null}
+          ) : (
+            <span className="files-toolbar-title">
+              <Folder size={12} aria-hidden className="files-toolbar-title-icon" />
+              {t('files.tabFiles')}
+            </span>
+          )}
+        </div>
         {/* Push actions to the trailing edge. */}
         <span className="files-toolbar-spacer" aria-hidden />
         <div className="files-toolbar-actions">

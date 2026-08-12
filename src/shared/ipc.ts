@@ -144,6 +144,7 @@ export type SettingsView =
   | 'cli'
   | 'agents'
   | 'file-associations'
+  | 'keybindings'
   | 'about'
 
 export interface FileAssociationStatus {
@@ -1098,7 +1099,7 @@ export type MenuCommand =
   /** Import / export .vav session packs (same as sidebar ⋮). */
   | 'import-pack'
   | 'export-pack'
-  /** Raise the in-app keyboard shortcuts sheet. */
+  /** Open Settings → Key Bindings. */
   | 'open-shortcuts'
   /** Sidebar list modes: main sessions / archive / file-bound sessions. */
   | 'show-sessions'

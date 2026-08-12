@@ -13,6 +13,7 @@ import { useSessionStore, PANEL_MAX_HEIGHT, PANEL_MIN_HEIGHT } from '../state/se
 import { useWorkspaceStore } from '../state/workspaceStore'
 import { basename } from '../lib/path'
 import { isTemporaryWorkspace, truncatePathLabel, workdirLabel } from '../lib/format'
+import { useGitRepoSyncEpoch } from '../lib/gitRepoSync'
 import { FilesPanel } from './FilesPanel'
 import { TerminalPanel } from './TerminalPanel'
 import { disposeTerminal } from '../lib/terminalRegistry'
@@ -101,10 +102,12 @@ export function ToolsPanel({
 
   const workdir = conversation?.workingDirectory ?? null
   const temporary = isTemporaryWorkspace(workdir, tmp)
+  const gitRepoEpoch = useGitRepoSyncEpoch()
 
   useEffect(() => {
     let cancelled = false
-    if (!workdir || temporary || !window.vav?.git?.status) {
+    // Temp dirs can become repos after empty-session “enable version control”.
+    if (!workdir || !window.vav?.git?.status) {
       setWorkdirIsGit(false)
       return
     }
@@ -119,7 +122,7 @@ export function ToolsPanel({
     return () => {
       cancelled = true
     }
-  }, [workdir, temporary])
+  }, [workdir, gitRepoEpoch])
 
   // Session / workdir switches must dismiss the path-chip native menu (⌘⇧O /
   // context menu). AppKit does not always close it when only the renderer swaps.

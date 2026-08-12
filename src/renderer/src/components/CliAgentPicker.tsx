@@ -199,6 +199,8 @@ export function CliAgentPicker({
 
   const onGridKeyDown = (event: React.KeyboardEvent<HTMLDivElement>): void => {
     if (agents.length === 0) return
+    // ⌘/Ctrl+arrow is Swarm pane focus — never steal it for in-list moves.
+    if (event.metaKey || event.ctrlKey) return
     const key = event.key
     let delta: number | null = null
     if (key === 'ArrowRight' || key === 'ArrowDown') delta = 1
@@ -227,7 +229,12 @@ export function CliAgentPicker({
         <span className="cli-agent-picker-help-sep">, </span>
         <ShortcutChord chord="⌘⇧D" /> {t('agents.swarmHelpSplitHorizontal')}
       </p>
-      <p>{t('agents.swarmHelpNavigate')}</p>
+      <p>
+        <ShortcutChord chord="⌘←" />{' '}
+        <ShortcutChord chord="⌘→" />{' '}
+        <ShortcutChord chord="⌘↑" />{' '}
+        <ShortcutChord chord="⌘↓" /> {t('agents.swarmHelpNavigate')}
+      </p>
     </div>
   )
 
@@ -288,13 +295,26 @@ export function CliAgentPicker({
 export function focusCliAgentPickerFirstOption(_conversationId: string, tabId?: string): void {
   const apply = (attempt: number): void => {
     const root = tabId
-      ? document.querySelector(`[data-cli-pane="${CSS.escape(tabId)}"] .cli-agent-picker`)
+      ? document.querySelector(
+          `[data-cli-pane="${CSS.escape(tabId)}"]:not(.is-surface-parked) .cli-agent-picker`
+        )
       : document.querySelector(
-          `.terminal-host-main [data-terminal-surface="agent"] .cli-agent-picker`
+          `.terminal-host-main:not(.is-surface-parked) [data-terminal-surface="agent"] .cli-agent-picker`
         )
     const first = root?.querySelector('.cli-agent-picker-item') as HTMLButtonElement | null
     if (!first) {
-      if (attempt < 6) requestAnimationFrame(() => apply(attempt + 1))
+      if (attempt < 12) requestAnimationFrame(() => apply(attempt + 1))
+      return
+    }
+    // Sibling TerminalHost fit/focus can win a frame later after ⌘D — reclaim.
+    if (document.activeElement !== first && attempt < 12) {
+      setUiFocusScope('agent')
+      try {
+        first.focus({ preventScroll: true })
+      } catch {
+        first.focus()
+      }
+      requestAnimationFrame(() => apply(attempt + 1))
       return
     }
     setUiFocusScope('agent')

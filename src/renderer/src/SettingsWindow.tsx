@@ -1,5 +1,15 @@
 import { useCallback, useEffect } from 'react'
-import { Bell, Bot, FileCheck2, Folder, Info, KeyRound, Palette, Terminal } from 'lucide-react'
+import {
+  Bell,
+  Bot,
+  FileCheck2,
+  Folder,
+  Info,
+  KeyRound,
+  Keyboard,
+  Palette,
+  Terminal
+} from 'lucide-react'
 import type { SettingsView } from '@shared/ipc'
 import type { MessageKey } from '@shared/i18n'
 import {
@@ -12,7 +22,6 @@ import { useT } from './i18n/useT'
 import { useAppearance } from './lib/appearance'
 import { installDefaultContextMenu } from './lib/nativeMenu'
 import { AppToast } from './components/AppToast'
-import { Button, Modal } from './components/ui'
 import { ApiSettings } from './components/settings/ApiSettings'
 import { WorkspaceSettings } from './components/settings/WorkspaceSettings'
 import { AppearanceSettings } from './components/settings/AppearanceSettings'
@@ -20,8 +29,8 @@ import { NotificationsSettings } from './components/settings/NotificationsSettin
 import { CliSettings } from './components/settings/CliSettings'
 import { AgentsSettings } from './components/settings/AgentsSettings'
 import { FileAssociationsSettings } from './components/settings/FileAssociationsSettings'
+import { KeyBindingsSettings } from './components/settings/KeyBindingsSettings'
 import { AboutSettings } from './components/settings/AboutSettings'
-import { getShortcuts } from './shortcuts'
 
 const NAV_ICON = 14
 
@@ -36,6 +45,11 @@ const CATEGORY_KEYS: { id: SettingsView; labelKey: MessageKey; icon: React.JSX.E
     id: 'appearance',
     labelKey: 'settings.nav.appearance',
     icon: <Palette size={NAV_ICON} strokeWidth={1.75} />
+  },
+  {
+    id: 'keybindings',
+    labelKey: 'settings.nav.keybindings',
+    icon: <Keyboard size={NAV_ICON} strokeWidth={1.75} />
   },
   {
     id: 'notifications',
@@ -136,6 +150,7 @@ export default function SettingsWindow(): React.JSX.Element {
             {category === 'api' && <ApiSettings />}
             {category === 'workspace' && <WorkspaceSettings />}
             {category === 'appearance' && <AppearanceSettings />}
+            {category === 'keybindings' && <KeyBindingsSettings />}
             {category === 'notifications' && <NotificationsSettings />}
             {category === 'agents' && <AgentsSettings />}
             {category === 'cli' && <CliSettings />}
@@ -145,39 +160,7 @@ export default function SettingsWindow(): React.JSX.Element {
         </div>
       </div>
 
-      <SettingsOverlays />
       <AppToast />
     </div>
-  )
-}
-
-/** Shortcut list still uses an in-window Modal; confirms go through native dialogs. */
-function SettingsOverlays(): React.JSX.Element | null {
-  const t = useT()
-  const shortcutsOpen = useSessionStore((s) => s.shortcutsOpen)
-  const setShortcutsOpen = useSessionStore((s) => s.setShortcutsOpen)
-  const sendKey = useSessionStore((s) => s.settings.sendKey)
-
-  if (!shortcutsOpen) return null
-
-  const shortcuts = getShortcuts(t, { sendKey })
-
-  return (
-    <Modal
-      title={t('about.shortcuts')}
-      onDismiss={() => setShortcutsOpen(false)}
-      actions={(dismiss) => (
-        <Button label={t('common.ok')} variant="primary" onClick={dismiss} />
-      )}
-    >
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-        {shortcuts.map(([shortcutKeys, description]) => (
-          <div key={shortcutKeys} style={{ display: 'flex', gap: 12 }}>
-            <kbd style={{ minWidth: 130 }}>{shortcutKeys}</kbd>
-            <span>{description}</span>
-          </div>
-        ))}
-      </div>
-    </Modal>
   )
 }

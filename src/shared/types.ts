@@ -7,6 +7,7 @@
 
 import type { ChangeSet } from './changeSet'
 import type { CliHostKind, ProviderResumeCursor } from './cliHost'
+import type { AcceleratorKeyBindingId } from './keyBindings'
 
 export type { CliHostKind, ProviderResumeCursor } from './cliHost'
 export {
@@ -807,6 +808,11 @@ export interface AppSettings {
   sendKey: 'enter' | 'mod-enter'
   /** Electron accelerator, e.g. "Control+Command+Space". Empty disables. */
   globalHotkey: string
+  /**
+   * Overrides for product accelerators (see `shared/keyBindings`).
+   * Only non-default chords are stored; missing ids use registry defaults.
+   */
+  keyBindings: Partial<Record<AcceleratorKeyBindingId, string>>
   /** Sidebar grouping segmented control; persisted. */
   sidebarGroupingMode: SidebarGroupingMode
   /** Files panel: indented tree vs Finder-style columns. */
@@ -909,6 +915,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   windowVibrancyEnabled: true,
   sendKey: 'enter',
   globalHotkey: 'Control+Command+Space',
+  keyBindings: {},
   sidebarGroupingMode: 'workspace',
   fileViewMode: 'tree',
   fileSortKey: 'name',

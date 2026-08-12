@@ -76,7 +76,8 @@ import {
 import { UpdateService } from './updates'
 import { PtyManager } from './terminal/PtyManager'
 import { resolveAgentExecutable } from './terminal/loginPath'
-import { menuCommandFromInput } from './menuShortcuts'
+import { menuCommandFromInput, matchesNewSessionWindow } from './menuShortcuts'
+import { resolveKeyBindings } from '@shared/keyBindings'
 import { isDevRuntime } from './devRuntime'
 import { installDevParentWatchdog } from './devParentWatchdog'
 import { AgentRuntime } from './agent/AgentRuntime'
@@ -418,8 +419,17 @@ function applyMenuBar(window: BrowserWindow): void {
   window.setMenuBarVisibility(true)
 }
 
+function currentKeyBindings() {
+  return resolveKeyBindings(settingsStore.get().keyBindings)
+}
+
 function rebuildAppChrome(): void {
-  appMenu = buildAppMenu(sendMenuCommand, () => openSettingsWindow(), newDetachedSession)
+  appMenu = buildAppMenu(
+    sendMenuCommand,
+    () => openSettingsWindow(),
+    newDetachedSession,
+    currentKeyBindings()
+  )
   Menu.setApplicationMenu(appMenu)
   for (const window of BrowserWindow.getAllWindows()) {
     applyMenuBar(window)
@@ -607,7 +617,11 @@ let lastMenuCommand: MenuCommand | null = null
 /** Accelerators act on the window the user is actually looking at. */
 function sendMenuCommand(command: MenuCommand): void {
   const now = Date.now()
-  if (command === lastMenuCommand && now - lastMenuCommandAt < 80) return
+  // close-context needs a longer window: before-input + menu often arrive
+  // >80ms apart, and the second stroke used to close the window right after
+  // Swarm reseeding the agent picker.
+  const debounceMs = command === 'close-context' ? 400 : 80
+  if (command === lastMenuCommand && now - lastMenuCommandAt < debounceMs) return
   lastMenuCommand = command
   lastMenuCommandAt = now
   const target = BrowserWindow.getFocusedWindow() ?? mainWindow
@@ -640,7 +654,13 @@ function wireMenuAccelerators(contents: Electron.WebContents): void {
       }
     }
 
-    const command = menuCommandFromInput(input)
+    const bindings = currentKeyBindings()
+    if (matchesNewSessionWindow(input, bindings)) {
+      event.preventDefault()
+      newDetachedSession()
+      return
+    }
+    const command = menuCommandFromInput(input, bindings)
     if (!command) return
     event.preventDefault()
     // open-settings is owned by main (native window), not the renderer list.
@@ -3106,8 +3126,6 @@ function toggleMainWindow(): void {
  * Menu accelerators alone only fire while vav is the active app — that is why
  * ⌘⇧↵ felt "broken" for summoning a new chat from anywhere.
  */
-const GLOBAL_NEW_SESSION_WINDOW = 'CommandOrControl+Shift+Return'
-
 function registerGlobalHotkey(accelerator: string): boolean {
   globalShortcut.unregisterAll()
   let toggleOk = true
@@ -3130,18 +3148,19 @@ function registerGlobalHotkey(accelerator: string): boolean {
   } else {
     console.log('[hotkey] toggle hotkey cleared (empty)')
   }
-  // 2) Fixed: new detached session from any app (⌘⇧↵ / Ctrl+Shift+Enter)
+  // 2) New detached session from any app (default ⌘⇧↵ / Ctrl+Shift+Enter)
+  const newSessionAccel = currentKeyBindings().newSessionWindow
   try {
-    const ok = globalShortcut.register(GLOBAL_NEW_SESSION_WINDOW, () => {
-      console.log(`[hotkey] new-session fired: ${GLOBAL_NEW_SESSION_WINDOW}`)
+    const ok = globalShortcut.register(newSessionAccel, () => {
+      console.log(`[hotkey] new-session fired: ${newSessionAccel}`)
       newDetachedSession()
     })
     if (!ok) {
       console.warn(
-        `[hotkey] failed to register global new-session: ${GLOBAL_NEW_SESSION_WINDOW} (taken by another app?)`
+        `[hotkey] failed to register global new-session: ${newSessionAccel} (taken by another app?)`
       )
     } else {
-      console.log(`[hotkey] registered global new-session: ${GLOBAL_NEW_SESSION_WINDOW}`)
+      console.log(`[hotkey] registered global new-session: ${newSessionAccel}`)
     }
   } catch (err) {
     console.warn('[hotkey] new-session register threw', err)
@@ -3305,6 +3324,11 @@ function registerIpc(): void {
     if (patch.locale !== undefined && patch.locale !== previous.locale) {
       setLocalePreference(next.locale)
       rebuildAppChrome()
+    }
+    if (patch.keyBindings !== undefined) {
+      rebuildAppChrome()
+      // Rebind global ⌘⇧↵ (or user override) alongside the toggle hotkey.
+      registerGlobalHotkey(next.globalHotkey)
     }
     if (
       patch.trayEnabled !== undefined ||
