@@ -9,7 +9,13 @@ import {
   Terminal as TerminalIcon,
   Unplug
 } from 'lucide-react'
-import { useSessionStore, PANEL_MAX_HEIGHT, PANEL_MIN_HEIGHT } from '../state/sessionStore'
+import {
+  useSessionStore,
+  DEFAULT_SESSION_TOOLS,
+  PANEL_MAX_HEIGHT,
+  PANEL_MIN_HEIGHT,
+  PANEL_SNAP_RATIO
+} from '../state/sessionStore'
 import { useWorkspaceStore } from '../state/workspaceStore'
 import { basename } from '../lib/path'
 import { isTemporaryWorkspace, truncatePathLabel, workdirLabel } from '../lib/format'
@@ -74,9 +80,16 @@ export function ToolsPanel({
   const tabStatus = useWorkspaceStore((s) => s.ptyStatus[activeId])
 
   const [dragHeight, setDragHeight] = useState<number | null>(null)
-  const dragState = useRef<{ startY: number; startHeight: number } | null>(null)
+  const dragState = useRef<{
+    startY: number
+    startHeight: number
+    maxHeight: number
+  } | null>(null)
   const pathChipRef = useRef<HTMLDivElement>(null)
   const bodyRef = useRef<HTMLDivElement>(null)
+  const panelRef = useRef<HTMLDivElement>(null)
+  /** Height before the last snap-to-70%. Restored on a second double-click. */
+  const restoreHeightRef = useRef<{ id: string; height: number } | null>(null)
   const seenMenuNonce = useRef(0)
   /** Path chip glyph: git branch when the workdir is a repository. */
   const [workdirIsGit, setWorkdirIsGit] = useState(false)
@@ -168,16 +181,53 @@ export function ToolsPanel({
     if (!collapsed && segment === 'files') setToolsCollapsed(true)
   }, [rootMissing, collapsed, segment, setToolsCollapsed])
 
+  const snapHeight = useCallback((): number => {
+    const column = panelRef.current?.closest('main')
+    const raw = Math.round((column?.clientHeight ?? window.innerHeight) * PANEL_SNAP_RATIO)
+    return Math.min(PANEL_MAX_HEIGHT, Math.max(PANEL_MIN_HEIGHT, raw))
+  }, [])
+
   const onResizeStart = useCallback(
     (event: React.MouseEvent) => {
+      // Second click of a double-click must not start a drag.
+      if (event.detail > 1) {
+        event.preventDefault()
+        return
+      }
       event.preventDefault()
-      dragState.current = { startY: event.clientY, startHeight: panelHeight }
+      dragState.current = {
+        startY: event.clientY,
+        startHeight: panelHeight,
+        maxHeight: snapHeight()
+      }
       // Mark live tray drag: xterm still fits (tracks the pointer), but
       // terminalRegistry holds SIGWINCH until settle (ghost TUI frames).
       document.documentElement.dataset.resizing = 'true'
       setDragHeight(panelHeight)
     },
-    [panelHeight]
+    [panelHeight, snapHeight]
+  )
+
+  const onResizerDoubleClick = useCallback(
+    (event: React.MouseEvent) => {
+      event.preventDefault()
+      const snap = snapHeight()
+      const current = dragHeight ?? panelHeight
+      const atSnap = current >= snap - 12
+      if (atSnap) {
+        const saved =
+          restoreHeightRef.current?.id === activeId
+            ? restoreHeightRef.current.height
+            : DEFAULT_SESSION_TOOLS.panelHeight
+        restoreHeightRef.current = null
+        setPanelHeight(Math.min(snap, Math.max(PANEL_MIN_HEIGHT, saved)))
+      } else {
+        if (activeId) restoreHeightRef.current = { id: activeId, height: current }
+        setPanelHeight(snap)
+      }
+      window.dispatchEvent(new Event('vav:resize-end'))
+    },
+    [activeId, dragHeight, panelHeight, setPanelHeight, snapHeight]
   )
 
   useEffect(() => {
@@ -187,7 +237,7 @@ export function ToolsPanel({
       if (!state) return
       // Grip sits above the tray body: drag up → taller, drag down → shorter.
       const next = state.startHeight - (event.clientY - state.startY)
-      setDragHeight(Math.min(PANEL_MAX_HEIGHT, Math.max(PANEL_MIN_HEIGHT, next)))
+      setDragHeight(Math.min(state.maxHeight, Math.max(PANEL_MIN_HEIGHT, next)))
     }
     const onUp = (): void => {
       setDragHeight((height) => {
@@ -208,6 +258,25 @@ export function ToolsPanel({
       delete document.documentElement.dataset.resizing
     }
   }, [dragHeight, setPanelHeight])
+
+  // Persisted / snapped height can outgrow a smaller window — clamp to 70%.
+  useLayoutEffect(() => {
+    const columnH = panelRef.current?.closest('main')?.clientHeight ?? 0
+    if (columnH < PANEL_MIN_HEIGHT) return
+    const max = snapHeight()
+    if (panelHeight > max) setPanelHeight(max)
+  }, [panelHeight, setPanelHeight, snapHeight])
+
+  useEffect(() => {
+    const onEnd = (): void => {
+      const columnH = panelRef.current?.closest('main')?.clientHeight ?? 0
+      if (columnH < PANEL_MIN_HEIGHT) return
+      const max = snapHeight()
+      if (useSessionStore.getState().panelHeight > max) setPanelHeight(max)
+    }
+    window.addEventListener('vav:resize-end', onEnd)
+    return () => window.removeEventListener('vav:resize-end', onEnd)
+  }, [setPanelHeight, snapHeight])
 
   const workspaceSwitchItems = useCallback((): MenuItem[] => {
     const items: MenuItem[] = []
@@ -364,6 +433,7 @@ export function ToolsPanel({
 
   return (
     <div
+      ref={panelRef}
       className="tools-panel"
       data-tools-collapsed={collapsed ? 'true' : 'false'}
       data-tools-mode={headerMode}
@@ -501,7 +571,17 @@ export function ToolsPanel({
       </div>
 
       {/* Below path/tabs chrome, above the tray body — not under the window edge. */}
-      {!collapsed && <div className="panel-resizer" onMouseDown={onResizeStart} />}
+      {!collapsed && (
+        <div
+          className="panel-resizer"
+          role="separator"
+          aria-orientation="horizontal"
+          aria-label={t('tools.resizePanel')}
+          title={t('tools.resizePanel')}
+          onMouseDown={onResizeStart}
+          onDoubleClick={onResizerDoubleClick}
+        />
+      )}
 
       <div
         className="tools-body"

@@ -26,7 +26,8 @@ export function InlineTerminal({
       conversationId,
       tabId,
       fontFamily: `"${codeFont}", Menlo, Monaco, "Courier New", monospace`,
-      fontSize: Math.max(11, fontSize - 1)
+      fontSize: Math.max(11, fontSize - 1),
+      surface: 'agent'
     })
     host.appendChild(entry.container)
 

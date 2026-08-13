@@ -28,6 +28,7 @@ import {
   type DriverEvent
 } from './drivers'
 import { inputJson, mapToolName, summarizeCliTool } from './drivers/toolMap'
+import { FileDraftCoalescer, writeToolDraft } from '@shared/writeToolDraft'
 
 const COALESCE_MS = 32
 
@@ -68,6 +69,8 @@ export interface CliAgentHostDeps {
   settings: SettingsStore
   changeSets?: ChangeSetStore
   emit: (event: TurnEvent) => void
+  /** Sandbox copy → user-visible path (for streaming drafts). */
+  logicalPath?: (path: string) => string
 }
 
 /**
@@ -79,6 +82,7 @@ export class CliAgentHost {
   private runtimes = new Map<string, HostRuntime>()
   private turns = new Map<string, HostTurn>()
   private starting = new Map<string, Promise<HostRuntime>>()
+  private fileDrafts = new FileDraftCoalescer()
 
   constructor(private deps: CliAgentHostDeps) {}
 
@@ -590,7 +594,19 @@ export class CliAgentHost {
     }
     turn.blocks[index] = { ...block }
     this.deps.emit({ type: 'tool', conversationId, index, block: { ...block } })
+    if (event.status === 'started' || event.status === 'updated') {
+      this.emitFileDraft(conversationId, event.name, event.input)
+    }
     this.setPhase(conversationId, turn, 'working')
+  }
+
+  private emitFileDraft(conversationId: string, toolName: string, input: unknown): void {
+    const draft = writeToolDraft(toolName, input)
+    if (!draft) return
+    const logical = this.deps.logicalPath?.(draft.path) ?? draft.path
+    const payload = this.fileDrafts.next(logical, draft.content)
+    if (!payload) return
+    this.deps.emit({ type: 'file-draft', conversationId, ...payload })
   }
 
   private applyPermission(

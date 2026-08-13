@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { dirname } from 'node:path'
 import type { AgentEvent, AgentTool } from '@earendil-works/pi-agent-core'
 import { runAgentLoopContinue } from '@earendil-works/pi-agent-core'
 import type { AssistantMessage, Message } from '@earendil-works/pi-ai'
@@ -44,6 +45,7 @@ import {
   summarizeToolInput,
   type ToolDetails
 } from './tools'
+import { FileDraftCoalescer, writeToolDraft } from '@shared/writeToolDraft'
 import type { ConversationStore } from '../store/ConversationStore'
 import { kindFromFilePath } from '../store/FileSessionStore'
 import type { SettingsStore } from '../store/SettingsStore'
@@ -150,6 +152,7 @@ export class AgentRuntime {
 
   private turns = new Map<string, TurnState>()
   private shells = new Map<string, StickyShell>()
+  private fileDrafts = new FileDraftCoalescer()
 
   constructor(private deps: AgentRuntimeDeps) {}
 
@@ -598,22 +601,26 @@ export class AgentRuntime {
   }
 
   cancel(conversationId: string): void {
-    const turn = this.turns.get(conversationId)
-    if (turn) {
+    const stopTurn = (id: string, turn: TurnState): void => {
       turn.cancelled = true
       // An interactive tool waiting on the user must be released, or the loop
       // would stay parked on its promise forever.
       this.releaseAllPending(turn, { text: '', cancelled: true })
+      // Kill the in-flight terminal command first — aborting the loop alone
+      // leaves `shell.run` blocked until exit/timeout, so Stop looked dead.
+      this.shells.get(id)?.interrupt()
       turn.abort.abort()
+    }
+    const turn = this.turns.get(conversationId)
+    if (turn) {
+      stopTurn(conversationId, turn)
       return
     }
     // Focus desync (file-preview agent session ≠ sidebar activeId): stop every
     // parked/awaiting turn so Stop still works.
-    for (const t of this.turns.values()) {
+    for (const [id, t] of this.turns) {
       if (t.pending.size === 0 && t.phase !== 'awaiting-user' && t.phase !== 'working') continue
-      t.cancelled = true
-      this.releaseAllPending(t, { text: '', cancelled: true })
-      t.abort.abort()
+      stopTurn(id, t)
     }
   }
 
@@ -826,6 +833,10 @@ export class AgentRuntime {
             ? (turn.blocks[existingSlot] as ToolCallBlock)
             : null
 
+        if (event.type !== 'toolcall_end') {
+          this.emitFileDraft(conversationId, call.name, args)
+        }
+
         // Deltas that only grow `contents` must not rewrite the card — summary
         // is stable once path/command is known, and re-stringifying megabyte
         // bodies would flood IPC.
@@ -965,6 +976,19 @@ export class AgentRuntime {
     this.deps.emit({ type: 'tool', conversationId, index, block })
   }
 
+  private emitFileDraft(
+    conversationId: string,
+    toolName: string,
+    args: Record<string, unknown>
+  ): void {
+    const draft = writeToolDraft(toolName, args)
+    if (!draft) return
+    const logical = this.deps.files.workingCopies?.logicalPath(draft.path) ?? draft.path
+    const payload = this.fileDrafts.next(logical, draft.content)
+    if (!payload) return
+    this.deps.emit({ type: 'file-draft', conversationId, ...payload })
+  }
+
   // -------------------------------------------------------------------------
   // Tools
   // -------------------------------------------------------------------------
@@ -978,8 +1002,15 @@ export class AgentRuntime {
       files: this.deps.files,
       shell: () => this.shellFor(conversation),
       mirror: (text) => this.deps.emit({ type: 'mirror', conversationId, text }),
-      fsChanged: (parentPath, filePath) =>
-        this.deps.emit({ type: 'fs-changed', conversationId, parentPath, filePath }),
+      fsChanged: (_parentPath, filePath) => {
+        const logical = this.deps.files.workingCopies?.logicalPath(filePath) ?? filePath
+        this.deps.emit({
+          type: 'fs-changed',
+          conversationId,
+          parentPath: dirname(logical),
+          filePath: logical
+        })
+      },
       ask: (toolCallId, summary, options) =>
         this.askUser(conversationId, turn, toolCallId, summary, options),
       recordWrite: (filePath, originalContent, newContent) =>

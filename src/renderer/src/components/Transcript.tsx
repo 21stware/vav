@@ -539,36 +539,27 @@ export function Transcript(): React.JSX.Element {
         ref={contentRef}
         className={`transcript-inner${branchSwapActive ? ' is-branch-swap' : ''}`}
       >
-        {isEmpty && !apiKeyPresent && (
-          /* Logo + agent name centered; key CTA in the hero; workspace prose at the foot. */
+        {isEmpty && (
+          /* One empty tree — swapping nokey/ready remounted the agent name and
+             replayed stagger while `.is-entering` was still on. */
           <EmptyState
             layout="session"
             logo={<AgentBrandMark agent={emptyLogoAgent} size={96} />}
             logoKey={emptyLogoAgent.id}
             logoLabel={emptyLogoAgent.name}
-            enterKey={`${activeId}:nokey`}
-            title={t('transcript.configureKey')}
-            description={t('transcript.configureKeyDesc')}
+            enterKey={activeId}
+            title={!apiKeyPresent ? t('transcript.configureKey') : undefined}
+            description={!apiKeyPresent ? t('transcript.configureKeyDesc') : undefined}
             foot={<SessionWorkspaceChrome />}
           >
-            <Button
-              label={t('transcript.openSettings')}
-              variant="primary"
-              onClick={() => openSettings('api')}
-            />
+            {!apiKeyPresent ? (
+              <Button
+                label={t('transcript.openSettings')}
+                variant="primary"
+                onClick={() => openSettings('api')}
+              />
+            ) : null}
           </EmptyState>
-        )}
-
-        {isEmpty && apiKeyPresent && (
-          /* Hero = mark + staggered agent name only; git / workspace prose sits low. */
-          <EmptyState
-            layout="session"
-            logo={<AgentBrandMark agent={emptyLogoAgent} size={96} />}
-            logoKey={emptyLogoAgent.id}
-            logoLabel={emptyLogoAgent.name}
-            enterKey={`${activeId}:ready`}
-            foot={<SessionWorkspaceChrome />}
-          />
         )}
 
         {/* Branches that start before the first prompt have no message to

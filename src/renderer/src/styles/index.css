@@ -48,8 +48,8 @@
   --bg-sunken: #f2f2f4;
   --bg-hover: rgba(20, 20, 28, 0.05);
   --bg-selected: #e2e2e6;
-  /* Kept in sync with THEME_DARK.background in terminalRegistry.ts. */
-  --bg-terminal: #101012;
+  /* Live bash (when matching theme) / swarm / CLI agents share the Thread plate. */
+  --bg-terminal: var(--bg-content);
 
   --text: #141416;
   --text-secondary: #5c5c66;
@@ -154,7 +154,7 @@
   --bg-sunken: #161617;
   --bg-hover: rgba(255, 255, 255, 0.055);
   --bg-selected: #2f2f33;
-  --bg-terminal: #101012;
+  --bg-terminal: var(--bg-content);
 
   --text: #efeff1;
   --text-secondary: #a2a2a9;
@@ -188,7 +188,8 @@
 html[data-summoning] .empty-state > *,
 html[data-summoning] .empty-state-hero > *,
 html[data-summoning] .empty-logo-mark,
-html[data-summoning] .empty-agent-name-unit,
+html[data-summoning] .empty-stagger-unit,
+html[data-summoning] .session-workspace-prose,
 html[data-summoning] .transcript-inner.is-branch-swap .message-turn.assistant {
   animation: none !important;
 }
@@ -1966,11 +1967,11 @@ kbd {
   box-sizing: border-box;
 }
 
-/* Empty session hero needs the full scrollport so the foot can sit low. */
+/* Empty session: fill the scrollport so the stack can sit in the middle. */
 .transcript-inner:has(> .empty-state-session) {
   position: relative;
   min-height: 100%;
-  height: 100%;
+  height: auto;
   gap: 0;
 }
 
@@ -4716,11 +4717,9 @@ mark {
 }
 
 
-/* The shell result keeps the shell's own colours — it is a terminal, and
-   reading it next to the real one below should not feel like a translation.
-   Its fill is darker than any app surface, so it needs no edge drawn. */
+/* Transcript shell card — always a dark plate (not the live PTY wash). */
 .detail-terminal {
-  background: var(--bg-terminal);
+  background: #101012;
   color: #d7d7da;
   padding: 8px 11px;
 }
@@ -5048,13 +5047,13 @@ mark {
 /*
  * Command body sits on the always-dark terminal surface (same as .detail-terminal).
  * Do not use --text-inverse here: in dark theme that token is near-black and
- * collapses contrast against --bg-terminal.
+ * collapses contrast against the plate.
  */
 .approval-args {
   margin: 0;
   padding: 10px 12px;
   border-radius: var(--radius-sm);
-  background: var(--bg-terminal);
+  background: #101012;
   color: #e8e8ec;
   font-family: var(--font-code);
   font-size: 12.5px;
@@ -6093,122 +6092,82 @@ mark {
   gap: 12px;
 }
 
-/* Session empty: fill the transcript column — hero centered, prose at the foot. */
+/* Session empty: fill the transcript column — logo, name, and git prose as one stack. */
 .empty-state-session {
-  flex: 1 1 auto;
+  flex: 1 0 auto;
   align-self: stretch;
   width: 100%;
   max-width: none;
   min-height: 100%;
-  height: 100%;
   margin: 0;
-  /* Tight bottom-left for workspace prose; hero still has room above. */
-  padding: 28px 28px 4px 8px;
+  padding: 28px;
   gap: 0;
   box-sizing: border-box;
+  overflow: visible;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
 }
 
 .empty-state-hero {
-  flex: 1 1 auto;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
   gap: 10px;
   width: 100%;
+  flex: 0 0 auto;
+  min-height: auto;
+  overflow: visible;
+}
+
+.empty-state-session .empty-logo {
+  /* Beat the default 96px floor so short columns can shrink the mark.
+     Stepped sizes (not cqh) — container units restart sibling CSS animations. */
   min-height: 0;
+  margin-bottom: 0;
+  --agent-mark-size: 96px;
+}
+
+.empty-state-session .empty-logo .agent-brand-mark img {
+  width: 72%;
+  height: 72%;
 }
 
 .empty-state-foot {
   flex: 0 0 auto;
-  width: auto;
-  max-width: min(560px, 100%);
-  margin: 0;
-  align-self: flex-start;
+  box-sizing: border-box;
+  width: min(420px, 100%);
+  min-width: min(420px, 100%);
+  max-width: min(420px, 100%);
+  /* Two prose lines + chrome gap. Pin before git status lands so the
+     empty-in stack cannot hitch when “加载中” swaps for the real copy. */
+  min-height: calc(11.5px * 1.5 * 2 + 4px);
+  margin: 22px 0 0;
   padding: 0;
-  text-align: left;
-  /*
-   * Pin the idle git-prose slot (2 lines + chrome gap) so the brief
-   * “Loading…” paint cannot shrink the foot and shove the hero logo.
-   * Forms / errors may grow past this; min-height is enough for startup.
-   */
-  min-height: calc(11.5px * 1.5 * 2 + 6px);
-  /* Idle: faded; hover/focus → full (color change → ease, not ease-out). */
-  opacity: 0.45;
-  transition: opacity var(--dur-hover) ease;
+  text-align: center;
 }
 
-.empty-state-foot:hover,
-.empty-state-foot:focus-within {
-  opacity: 1;
-}
-
-/* A blank transcript is seen rarely and deliberately, so it can afford the
-   delight budget the rest of the app spends nothing on.
-   fill-mode is backwards only: with reduce-motion the global rule collapses
-   duration to ~0ms, and `both`/`forwards` can pin the from { opacity: 0 }
-   keyframe forever — which is how the empty-conversation logo disappeared. */
-.empty-state > *:not(.empty-state-hero):not(.empty-state-foot),
-.empty-state-hero > * {
-  animation: empty-in 320ms var(--ease-out) backwards;
-}
-
-/*
- * Foot entrance (rare empty-session): rise from bottom-left into the faded rest
- * state. Gated by EmptyState’s data-entered latch so git status remounts do not
- * replay. Inner chrome stays unanimated — only the foot shell moves.
- */
-.empty-state-session:not([data-entered]) .empty-state-foot {
-  animation: empty-foot-in 300ms var(--ease-out) backwards;
-}
-
-.empty-state > .session-workspace-chrome,
-.empty-state-foot .session-workspace-chrome {
-  animation: none !important;
-}
-
-/* Logo enter lives on `.empty-logo-mark` only — avoid shell + mark double-play. */
+/* Empty-state motion: ONLY under .is-entering, set in useLayoutEffect
+   before paint. Never animate on mount by default — that double-plays in
+   Strict Mode and again when git chrome swaps. */
+.empty-state-hero > .empty-state-foot,
 .empty-state > .empty-logo,
-.empty-state-hero > .empty-logo {
-  animation: none;
-}
-
-.empty-state-hero > *:nth-child(2) {
-  animation-delay: 50ms;
-}
-.empty-state-hero > *:nth-child(3) {
-  animation-delay: 100ms;
-}
-.empty-state-hero > *:nth-child(4) {
-  animation-delay: 150ms;
-}
-
-.empty-state > .empty-title,
-.empty-state-hero > .empty-title {
-  animation: empty-in 320ms var(--ease-out) backwards;
-  animation-delay: 50ms;
-}
-
-/* Agent name uses per-unit stagger (not frozen by data-entered — remounts on host switch). */
+.empty-state-hero > .empty-logo,
 .empty-state-hero > .empty-agent-name {
   animation: none;
 }
 
-/* After the first entrance for this shell, freeze — remount / CQ thrash must
-   not replay empty-in. Attribute is latched in EmptyState.
-   Agent-name units stay free so host switches can restagger. */
-.empty-state[data-entered] > *:not(.empty-state-hero):not(.empty-state-foot),
-.empty-state[data-entered] .empty-state-hero > *:not(.empty-agent-name),
-.empty-state[data-entered] .empty-logo-mark {
-  animation: none !important;
-  opacity: 1;
-  transform: none;
+.empty-state.is-entering .empty-logo-mark,
+.empty-state.is-entering .empty-title,
+.empty-state.is-entering .empty-desc {
+  animation: empty-in 320ms var(--ease-out) backwards;
 }
 
-.empty-state[data-entered] .empty-state-foot {
-  animation: none !important;
-  transform: none;
-  /* Keep faded rest opacity — do not force 1 like the hero latch. */
+.empty-state.is-entering .empty-title,
+.empty-state.is-entering .empty-desc {
+  animation-delay: 40ms;
 }
 
 @keyframes empty-in {
@@ -6222,30 +6181,13 @@ mark {
   }
 }
 
-/* From bottom-left into the idle faded rest (matches foot placement). */
-@keyframes empty-foot-in {
-  from {
-    opacity: 0;
-    transform: translate3d(-6px, 10px, 0);
-  }
-  to {
-    opacity: 0.45;
-    transform: translate3d(0, 0, 0);
-  }
-}
-
 /* In-app reduce-motion: skip the entrance entirely so nothing stays at
    opacity 0 after a near-zero-duration animation. */
-:root[data-reduce-motion='true'] .empty-state > *:not(.empty-state-foot),
-:root[data-reduce-motion='true'] .empty-logo-mark {
+:root[data-reduce-motion='true'] .empty-state > *,
+:root[data-reduce-motion='true'] .empty-logo-mark,
+:root[data-reduce-motion='true'] .empty-stagger-unit {
   animation: none !important;
   opacity: 1;
-  transform: none;
-}
-
-:root[data-reduce-motion='true'] .empty-state-foot {
-  animation: none !important;
-  transition: none;
   transform: none;
 }
 
@@ -6259,12 +6201,11 @@ mark {
   min-height: 96px;
 }
 
-/* One empty-in per mount / agent switch (keyed in EmptyState). */
+/* One empty-in per entrance (classed on the empty-state, not on mount). */
 .empty-logo-mark {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  animation: empty-in 320ms var(--ease-out) backwards;
   transform-origin: center top;
 }
 
@@ -6323,53 +6264,21 @@ mark {
   font-weight: 600;
   letter-spacing: -0.35px;
   line-height: 1.2;
+  min-height: 1.2em;
+  max-width: 100%;
 }
 
-.empty-agent-name-unit {
+.empty-stagger-unit {
   display: inline-block;
-  --empty-stagger: 0;
+}
+
+.empty-state.is-entering .empty-stagger-unit,
+.session-workspace-chrome.is-entering .empty-stagger-unit {
   animation: empty-in 320ms var(--ease-out) backwards;
-  animation-delay: calc(70ms + (var(--empty-stagger) * 32ms));
 }
 
-.empty-agent-name-unit[data-stagger='1'] {
-  --empty-stagger: 1;
-}
-.empty-agent-name-unit[data-stagger='2'] {
-  --empty-stagger: 2;
-}
-.empty-agent-name-unit[data-stagger='3'] {
-  --empty-stagger: 3;
-}
-.empty-agent-name-unit[data-stagger='4'] {
-  --empty-stagger: 4;
-}
-.empty-agent-name-unit[data-stagger='5'] {
-  --empty-stagger: 5;
-}
-.empty-agent-name-unit[data-stagger='6'] {
-  --empty-stagger: 6;
-}
-.empty-agent-name-unit[data-stagger='7'] {
-  --empty-stagger: 7;
-}
-.empty-agent-name-unit[data-stagger='8'] {
-  --empty-stagger: 8;
-}
-.empty-agent-name-unit[data-stagger='9'] {
-  --empty-stagger: 9;
-}
-.empty-agent-name-unit[data-stagger='10'] {
-  --empty-stagger: 10;
-}
-.empty-agent-name-unit[data-stagger='11'] {
-  --empty-stagger: 11;
-}
-.empty-agent-name-unit[data-stagger='12'] {
-  --empty-stagger: 12;
-}
-
-:root[data-reduce-motion='true'] .empty-agent-name-unit {
+:root[data-reduce-motion='true'] .empty-stagger-unit,
+:root[data-reduce-motion='true'] .session-workspace-prose {
   animation: none !important;
   opacity: 1;
   transform: none;
@@ -6404,10 +6313,12 @@ mark {
 
   .session-workspace-prose {
     font-size: 11px;
+    min-height: calc(11px * 1.5);
   }
 
+  .session-workspace-chrome,
   .empty-state-foot {
-    min-height: calc(11px * 1.5 * 2 + 6px);
+    min-height: calc(11px * 1.5 * 2 + 4px);
   }
 }
 
@@ -6418,31 +6329,35 @@ mark {
   }
 
   .empty-state-session {
-    padding-left: 8px;
-    padding-right: 12px;
-    padding-bottom: 4px;
+    padding: 16px;
   }
 }
 
-/* Short session empty: keep hero / foot stack; shrink the mark. */
+/* Short session empty: shrink the mark first. Do not display:none the
+   stack while the column is still tall enough to show it — previous
+   240/320px queries fired early (transcript padding is outside the CQ
+   box) and overflow:hidden clipped the rest. */
 @container transcript (max-height: 360px) {
   .empty-state-session {
-    padding: 12px 16px 4px 8px;
+    padding: 20px 16px;
   }
 
   .empty-state-session .empty-logo {
-    min-height: 48px;
-    margin-bottom: 0;
+    --agent-mark-size: 72px;
   }
 
-  .empty-state-session .empty-logo-mark > img,
-  .empty-state-session .empty-logo > img {
-    height: 48px;
+  .empty-state-foot {
+    margin-top: 16px;
+  }
+}
+
+@container transcript (max-height: 280px) {
+  .empty-state-session {
+    padding: 12px 16px;
   }
 
-  .empty-state-session .empty-logo .agent-brand-mark {
-    transform: scale(0.67);
-    transform-origin: center center;
+  .empty-state-session .empty-logo {
+    --agent-mark-size: 56px;
   }
 
   .empty-state-session .empty-agent-name {
@@ -6455,30 +6370,18 @@ mark {
   }
 
   .empty-state-foot {
+    margin-top: 12px;
     max-width: 100%;
   }
 }
 
-@container transcript (max-height: 220px) {
-  .empty-state-session {
-    padding: 8px 12px 2px 6px;
-  }
-
-  .empty-state-session .empty-logo {
-    min-height: 36px;
-  }
-
-  .empty-state-session .empty-logo-mark > img,
-  .empty-state-session .empty-logo > img {
-    height: 36px;
-  }
-
-  .empty-state-session .empty-logo .agent-brand-mark {
-    transform: scale(0.5);
-  }
-
+@container transcript (max-height: 180px) {
   .empty-state-session .empty-agent-name {
-    font-size: 15px;
+    display: none;
+  }
+
+  .empty-state-foot {
+    margin-top: 8px;
   }
 }
 
@@ -6719,6 +6622,7 @@ mark {
   cursor: ns-resize;
   flex: 0 0 auto;
   z-index: 2;
+  user-select: none;
 }
 
 /* The grip only draws itself under the pointer. */
@@ -6818,7 +6722,7 @@ mark {
   align-items: center;
   gap: 6px;
   box-sizing: border-box;
-  /* Fixed row metrics — Files ↔ Git must not reflow the chrome. */
+  /* Fixed row metrics — Files ↔ Git ↔ GitHub must not reflow the chrome. */
   height: 38px;
   padding: 0 12px;
   flex: 0 0 auto;
@@ -6904,7 +6808,7 @@ mark {
 .files-toolbar .segmented {
   flex: 0 0 auto;
   /* Text-only switch — no track / active pill. */
-  gap: 0;
+  gap: 2px;
   height: 24px;
   padding: 0;
   background: transparent;
@@ -6914,10 +6818,9 @@ mark {
 
 .files-toolbar .segmented button {
   box-sizing: border-box;
-  /* Equal slots so active/idle color swaps never nudge neighbors. */
-  width: 72px;
+  width: auto;
   height: 24px;
-  padding: 0;
+  padding: 0 7px;
   border-radius: 0;
   justify-content: center;
   font-size: 11.5px;
@@ -6925,10 +6828,11 @@ mark {
   color: var(--text-tertiary);
   background: transparent;
   box-shadow: none;
+  white-space: nowrap;
 }
 
 .files-toolbar .segmented button:has(.segmented-icon) {
-  padding: 0;
+  padding: 0 7px 0 6px;
 }
 
 .files-toolbar .segmented button:hover:not(.active) {
@@ -6950,6 +6854,22 @@ mark {
 
 .files-toolbar .segmented button.active .segmented-icon {
   opacity: 1;
+}
+
+/* Narrow dock: Files / Git / GitHub become icon-only; label lives on title. */
+@container dock (max-width: 640px) {
+  .files-toolbar .segmented-label,
+  .files-toolbar-title-text {
+    display: none;
+  }
+
+  .files-toolbar .segmented button,
+  .files-toolbar .segmented button:has(.segmented-icon) {
+    width: 26px;
+    min-width: 26px;
+    padding: 0;
+    gap: 0;
+  }
 }
 
 .files-toolbar-actions .btn.sm {
@@ -6985,7 +6905,7 @@ mark {
   min-width: 8px;
 }
 
-/* —— Git tray (Files | Git) —— */
+/* —— Git tray (Files | Git | GitHub) —— */
 .git-panel {
   flex: 1;
   min-height: 0;
@@ -7013,6 +6933,14 @@ mark {
   grid-template-columns: minmax(120px, 38%) 1fr;
   gap: 0;
   border-top: 1px solid var(--border-subtle, color-mix(in srgb, var(--text) 10%, transparent));
+}
+
+.git-panel-body.is-list-only {
+  grid-template-columns: 1fr;
+}
+
+.git-panel-body.is-list-only .git-change-list {
+  border-right: 0;
 }
 
 .git-panel > .empty-state {
@@ -7109,6 +7037,23 @@ mark {
   display: flex;
   flex-direction: column;
   overflow: hidden;
+}
+
+.git-preview {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  background: var(--bg-content);
+}
+
+.git-preview .git-diff-filename {
+  flex: 1;
+}
+
+.git-preview .git-diff-scroll {
+  flex: 1;
 }
 
 .git-diff-header {
@@ -7254,22 +7199,993 @@ mark {
   background: color-mix(in srgb, var(--text) 4%, transparent);
 }
 
-/* —— Session empty: project / worktree / branch (prose) —— */
-.session-workspace-chrome {
+/* —— GitHub tray (Files | Git | GitHub) —— */
+.github-panel {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.github-panel-body {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(140px, 42%) 1fr;
+  gap: 0;
+  border-top: 1px solid var(--border-subtle, color-mix(in srgb, var(--text) 10%, transparent));
+}
+
+.github-panel-body.is-list-only {
+  grid-template-columns: 1fr;
+}
+
+.github-panel-body.is-list-only .github-list-pane {
+  border-right: 0;
+}
+
+.github-panel > .empty-state {
+  border-top: 1px solid var(--border-subtle, color-mix(in srgb, var(--text) 10%, transparent));
+}
+
+.github-list-pane {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--border-subtle, color-mix(in srgb, var(--text) 10%, transparent));
+}
+
+.github-list-pane > .empty-state {
+  flex: 1;
+  border-top: 0;
+}
+
+.github-filter {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  padding: 4px 6px 2px;
+}
+
+.github-filter .segmented {
+  height: 22px;
+  padding: 0;
+  gap: 2px;
+  background: transparent;
+  box-shadow: none;
+  border-radius: 0;
+}
+
+.github-filter .segmented button {
+  box-sizing: border-box;
+  width: auto;
+  height: 22px;
+  padding: 0 7px;
+  border-radius: 0;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-tertiary);
+  background: transparent;
+  box-shadow: none;
+}
+
+.github-filter .segmented button:hover:not(.active) {
+  color: var(--text-secondary);
+  background: transparent;
+}
+
+.github-filter .segmented button.active {
+  background: transparent;
+  box-shadow: none;
+  color: var(--text);
+  font-weight: 500;
+}
+
+.github-pr-list {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 2px 0 6px;
+  outline: none;
+}
+
+.github-pr-list:focus-visible {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent, #0a84ff) 55%, transparent);
+}
+
+.github-pr-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   width: 100%;
-  margin-top: 0;
+  padding: 5px 10px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 12px;
   text-align: left;
+  cursor: pointer;
+}
+
+.github-pr-row:hover {
+  background: color-mix(in srgb, var(--text) 6%, transparent);
+}
+
+.github-pr-row.is-selected {
+  background: color-mix(in srgb, var(--accent, #0a84ff) 16%, transparent);
+}
+
+.github-pr-row.is-focused:not(.is-selected) {
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+}
+
+.github-pr-state {
+  display: inline-flex;
+  flex: 0 0 auto;
+  color: var(--text-tertiary);
+}
+
+.github-pr-list .github-pr-state.is-open {
+  color: #3fb950;
+}
+
+.github-pr-list .github-pr-state.is-draft {
+  color: #8b949e;
+}
+
+.github-pr-list .github-pr-state.is-merged {
+  color: #a371f7;
+}
+
+.github-pr-list .github-pr-state.is-closed {
+  color: #f85149;
+}
+
+.github-pr-num {
+  flex: 0 0 auto;
+  font-variant-numeric: tabular-nums;
+  font-size: 11px;
+  color: var(--text-tertiary);
+}
+
+.github-pr-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.github-pr-age {
+  flex: 0 0 auto;
+  font-size: 10.5px;
+  color: var(--text-tertiary);
+  white-space: nowrap;
+}
+
+.github-detail-pane {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  container-type: inline-size;
+  container-name: github-detail;
+}
+
+.github-preview {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  background: var(--bg-content);
+}
+
+.github-preview .github-detail-pane {
+  flex: 1;
+}
+
+.github-preview-title {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  font-weight: 550;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.git-preview .workspace-preview-chrome,
+.github-preview .workspace-preview-chrome {
+  border-bottom: 1px solid var(--border-subtle, color-mix(in srgb, var(--text) 10%, transparent));
+}
+
+.workspace-view-preview .github-detail-heading {
+  font-size: 16px;
+  -webkit-line-clamp: unset;
+}
+
+.workspace-view-preview .git-diff {
+  font-size: 12px;
+}
+
+.github-detail-hero {
+  flex: 0 0 auto;
+  padding: 8px 10px 6px;
+}
+
+.github-detail-title-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+.github-detail-title-row .github-pr-state {
+  margin-top: 2px;
+}
+
+.github-detail-heading {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  font-size: 13px;
+  font-weight: 550;
+  line-height: 1.35;
+  text-align: left;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.github-detail-num {
+  flex: 0 0 auto;
+  margin-top: 3px;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-tertiary);
+}
+
+.github-open-web {
+  flex: 0 0 auto;
+  margin-left: auto;
+  margin-top: -1px;
+}
+
+.github-detail-status-row {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin-top: 5px;
+  min-width: 0;
+}
+
+.github-detail-state {
+  flex: 0 0 auto;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+
+.github-merge-prose {
+  margin: 0;
+  min-width: 0;
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: var(--text-secondary);
+  text-align: left;
+}
+
+.github-merge-prose code {
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 11px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--text) 6%, transparent);
+}
+
+.github-pr-tabs {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 0 auto;
+  min-width: 0;
+  height: 28px;
+  padding: 0 6px;
+  border-top: 1px solid var(--border-subtle, color-mix(in srgb, var(--text) 10%, transparent));
+  border-bottom: 1px solid var(--border-subtle, color-mix(in srgb, var(--text) 10%, transparent));
+}
+
+.github-pr-tablist {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+  overflow-x: auto;
+}
+
+.github-pr-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 24px;
+  padding: 0 7px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--text-tertiary);
+  font: inherit;
+  font-size: 11.5px;
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.github-pr-tab:hover:not(.is-active) {
+  color: var(--text-secondary);
+}
+
+.github-pr-tab.is-active {
+  color: var(--text);
+}
+
+.github-pr-tab-count {
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 500;
+  opacity: 0.55;
+}
+
+.github-tab-diffstat {
+  flex: 0 0 auto;
+  display: flex;
+  gap: 6px;
+  font-size: 11px;
+}
+
+@container github-detail (max-width: 380px) {
+  .github-pr-tab-label {
+    display: none;
+  }
+
+  .github-pr-tab {
+    width: 24px;
+    padding: 0;
+    gap: 0;
+    justify-content: center;
+  }
+
+  .github-pr-tab-count {
+    display: none;
+  }
+}
+
+.github-conversation,
+.github-commits {
+  width: 100%;
+  text-align: left;
+}
+
+.github-commit-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 4px 2px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+  border-radius: 0;
+}
+
+.github-commit-row:hover {
+  background: color-mix(in srgb, var(--text) 6%, transparent);
+}
+
+.github-commit-msg {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.github-commit-sha {
+  flex: 0 0 auto;
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 11px;
+  color: var(--text-tertiary);
+}
+
+.github-pr-body {
+  min-width: 0;
+  width: 100%;
+  font-size: 12.5px;
+  text-align: left;
+}
+
+.github-pr-body .markdown {
+  width: 100%;
+  min-width: 0;
+  max-width: none;
+  margin-inline: 0;
+  padding: 0;
+  font-size: 12.5px;
+  font-family: var(--font-ui);
+  text-align: left;
+}
+
+.github-pr-body .markdown ul.contains-task-list,
+.github-pr-body .markdown ol.contains-task-list {
+  list-style: none;
+  padding-left: 0;
+  margin-left: 0;
+}
+
+.github-pr-body .markdown .task-list-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding-left: 0;
+  list-style: none;
+}
+
+.github-pr-body .markdown .task-list-item::marker {
+  content: none;
+}
+
+.github-pr-body .markdown .task-list-item-checkbox {
+  flex: 0 0 auto;
+  margin-top: 0.38em;
+  accent-color: var(--accent, #0a84ff);
+}
+
+.github-detail-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border-subtle, color-mix(in srgb, var(--text) 10%, transparent));
+}
+
+.github-detail-title {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.github-detail-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+.github-detail-body {
+  padding: 8px 10px 16px;
+}
+
+.github-detail-empty,
+.github-no-body,
+.github-detail-error {
+  padding: 10px 2px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.github-detail-error {
+  color: var(--danger, #f85149);
+}
+
+.github-detail-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.github-detail-byline {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  font-size: 12px;
+}
+
+.github-avatar {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+  object-fit: cover;
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+}
+
+.github-author {
+  font-weight: 500;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.github-state-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 0 auto;
+  font-size: 10.5px;
+  font-weight: 500;
+  padding: 1px 6px;
+  border-radius: 999px;
+  color: var(--text-secondary);
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+}
+
+.github-detail-time {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  margin-left: auto;
+}
+
+.github-branches {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.github-branches code {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 11px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--text) 6%, transparent);
+}
+
+.github-labels {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 6px;
+}
+
+.github-label {
+  font-size: 10.5px;
+  line-height: 16px;
+  height: 16px;
+  padding: 0 6px;
+  border-radius: 4px;
+  color: var(--text-secondary);
+  background: color-mix(in srgb, var(--text) 6%, transparent);
+}
+
+.github-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 10px;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.github-stat-add,
+.github-stat-del {
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
+.github-reviewers {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  font-size: 11.5px;
+}
+
+.github-reviewers-label,
+.github-files-label {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-tertiary);
+}
+
+.github-reviewer {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.github-pr-body img {
+  max-width: 100%;
+  height: auto;
+  vertical-align: middle;
+}
+
+.github-pr-body .table-scroll {
+  margin: 8px 0;
+  width: 100%;
+  max-width: 100%;
+}
+
+.github-pr-body table {
+  width: auto;
+  min-width: 0;
+  max-width: 100%;
+  border-collapse: collapse;
+}
+
+.github-pr-body th,
+.github-pr-body td {
+  text-align: left;
+  vertical-align: top;
+  max-width: none;
+  padding: 6px 10px;
+  border: 1px solid color-mix(in srgb, var(--text) 12%, transparent);
+}
+
+.github-pr-body table table {
+  margin: 4px 0;
+  width: auto;
+  min-width: 0;
+}
+
+.github-pr-body td > .table-scroll {
+  margin: 4px 0;
+  width: auto;
+  max-width: 100%;
+}
+
+.github-pr-body details,
+.github-pr-body .github-details {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.github-pr-body summary {
+  display: inline;
+  cursor: pointer;
+  font-weight: 400;
+  color: var(--text-secondary);
+  list-style: none;
+}
+
+.github-pr-body summary::-webkit-details-marker {
+  display: none;
+}
+
+.github-pr-body summary::before {
+  content: '';
+  display: inline-block;
+  width: 0;
+  height: 0;
+  margin-right: 5px;
+  border-top: 3.5px solid transparent;
+  border-bottom: 3.5px solid transparent;
+  border-left: 4.5px solid currentColor;
+  transform: translateY(-1px);
+}
+
+.github-pr-body details[open] > summary::before {
+  transform: rotate(90deg) translateY(-1px);
+}
+
+.github-pr-body details[open] > summary {
+  margin-bottom: 4px;
+}
+
+.github-pr-body .github-details-body {
+  margin: 2px 0 8px 12px;
+  color: var(--text-secondary);
+}
+
+.github-pr-body .github-details-body > *:first-child {
+  margin-top: 0;
+}
+
+.github-pr-body .github-details-body > *:last-child {
+  margin-bottom: 0;
+}
+
+.github-pr-body .github-details-prompt {
+  color: var(--text-tertiary);
+}
+
+.github-files {
+  margin-top: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.github-files-label {
+  margin-bottom: 4px;
+}
+
+.github-file-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 0;
+  font-size: 12px;
+  min-width: 0;
+}
+
+.github-file-path {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 11px;
+}
+
+.github-file-stats {
+  flex: 0 0 auto;
+  display: flex;
+  gap: 6px;
+  font-size: 11px;
+}
+
+.github-merge-pill {
+  font-size: 10.5px;
+  font-weight: 500;
+  padding: 1px 6px;
+  border-radius: 999px;
+  color: var(--text-secondary);
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+}
+
+.github-merge-pill.is-clean {
+  color: #3fb950;
+  background: color-mix(in srgb, #3fb950 16%, transparent);
+}
+
+.github-merge-pill.is-conflict,
+.github-merge-pill.is-blocked,
+.github-merge-pill.is-unstable {
+  color: #f85149;
+  background: color-mix(in srgb, #f85149 16%, transparent);
+}
+
+.github-merge-pill.is-behind {
+  color: #e3b341;
+  background: color-mix(in srgb, #e3b341 16%, transparent);
+}
+
+.github-people {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-bottom: 8px;
+  margin-bottom: 8px;
+  border-bottom: 1px solid var(--border-subtle, color-mix(in srgb, var(--text) 8%, transparent));
+}
+
+.github-review-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.github-review-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.github-review-chip.is-approved {
+  color: #3fb950;
+}
+
+.github-review-chip.is-changes_requested {
+  color: #f85149;
+}
+
+.github-checks {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  margin-bottom: 12px;
+}
+
+.github-checks .github-files-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.github-checks-count {
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-tertiary);
+  font-weight: 400;
+}
+
+.github-check-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 3px 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.github-check-row:disabled {
+  cursor: default;
+}
+
+.github-check-row:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--text) 5%, transparent);
+}
+
+.github-check-dot {
+  display: inline-flex;
+  flex: 0 0 auto;
+  color: var(--text-tertiary);
+}
+
+.github-check-dot.is-success {
+  color: #3fb950;
+}
+
+.github-check-dot.is-failure,
+.github-check-dot.is-error,
+.github-check-dot.is-timed_out,
+.github-check-dot.is-action_required {
+  color: #f85149;
+}
+
+.github-check-dot.is-pending {
+  color: #e3b341;
+}
+
+.github-check-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.github-check-state {
+  flex: 0 0 auto;
+  font-size: 11px;
+  color: var(--text-tertiary);
+}
+
+.github-thread {
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.github-thread-item {
+  padding: 10px 0;
+  border-top: 1px solid var(--border-subtle, color-mix(in srgb, var(--text) 8%, transparent));
+}
+
+.github-thread-item:first-child,
+.github-people + .github-thread-item {
+  border-top: 0;
+  padding-top: 0;
+}
+
+.github-thread-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  margin-bottom: 4px;
+  font-size: 11.5px;
+}
+
+.github-thread-line {
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-tertiary);
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+}
+
+.github-thread-body {
+  padding-left: 22px;
+}
+
+.github-thread-nested {
+  margin-left: 22px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border-subtle, color-mix(in srgb, var(--text) 8%, transparent));
+}
+
+.github-thread-nested:first-of-type {
+  margin-top: 8px;
+}
+
+.github-thread-path {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 10.5px;
+  color: var(--text-tertiary);
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+}
+
+.github-inline-group {
   display: flex;
   flex-direction: column;
   gap: 6px;
 }
 
+.github-inline-path {
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 11px;
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* —— Session empty: project / worktree / branch (prose) —— */
+.session-workspace-chrome {
+  width: 100%;
+  min-width: 100%;
+  min-height: calc(11.5px * 1.5 * 2 + 4px);
+  margin-top: 0;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+}
+
 .session-workspace-prose {
   margin: 0;
+  width: 100%;
+  min-height: calc(11.5px * 1.5);
   font-size: 11.5px;
   line-height: 1.5;
   color: var(--text-secondary);
+  text-align: center;
   text-wrap: pretty;
+  overflow-wrap: anywhere;
 }
 
 .session-workspace-prose-strong {
@@ -7327,6 +8243,8 @@ mark {
   display: flex;
   flex-direction: column;
   gap: 8px;
+  align-self: stretch;
+  text-align: left;
   padding: 10px;
   border-radius: 10px;
   background: color-mix(in srgb, var(--text) 4%, transparent);
@@ -9271,7 +10189,7 @@ mark {
   background: var(--bg-content);
 }
 
-/* CLI drawer: match terminal plate (overrides content bg above). */
+/* CLI drawer: same wash as the window (overrides content bg above). */
 .preview-edit-session.terminal-host-session {
   background: var(--bg-terminal);
 }
@@ -10065,7 +10983,9 @@ mark {
   overflow: hidden;
 }
 
-.workspace-view-preview .file-preview-shell {
+.workspace-view-preview .file-preview-shell,
+.workspace-view-preview .git-preview,
+.workspace-view-preview .github-preview {
   flex: 1 1 auto;
   min-height: 0;
   height: auto;
@@ -11964,8 +12884,8 @@ mark {
 /* File tree rows — fixed metrics so Retina zoom / long CJK names stay aligned.
    No hover wash, no bg/color transitions, no OS text-select flash on dblclick. */
 .tree-row {
-  --tree-icon: 14px;
-  --tree-chevron: 12px;
+  --tree-icon: 16px;
+  --tree-chevron: 14px;
   display: flex;
   align-items: center;
   gap: 6px;
@@ -12032,11 +12952,11 @@ mark {
 }
 
 .tree-row .disclosure {
-  width: 16px;
-  min-width: 16px;
-  max-width: 16px;
-  height: 16px;
-  flex: 0 0 16px;
+  width: 18px;
+  min-width: 18px;
+  max-width: 18px;
+  height: 18px;
+  flex: 0 0 18px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -12116,13 +13036,8 @@ mark {
   background: var(--bg-terminal);
 }
 
-/* With no session open there is no terminal to be dark: the pane goes back to
-   being an empty part of the tools tray. Pin empty-state to the stack box so
-   it stays centered even when the body is short (file-preview dock). */
-.terminal-stack[data-empty='true'] {
-  background: transparent;
-}
-
+/* Empty bash still uses the window wash (same as a live PTY / swarm picker).
+   Pin empty-state to the stack box so it stays centered in a short dock. */
 .terminal-stack[data-empty='true'] .empty-state {
   position: absolute;
   inset: 0;
@@ -12173,10 +13088,9 @@ mark {
   pointer-events: none;
 }
 
-/* xterm.css is imported after ours and hard-codes a black viewport, which
-   otherwise shows as a seam against the warm terminal background. */
+/* xterm.css hard-codes a black viewport; keep it on the content plate. */
 .terminal-stack .xterm-viewport {
-  background-color: transparent;
+  background-color: var(--bg-content);
   /* Keep the scrollbar gutter reserved so FitAddon doesn't oscillate
      cols by ±1 as the bar appears/disappears (that SIGWINCH-flashes TUIs
      and the neighbouring Files / preview empty states). */
@@ -12251,8 +13165,8 @@ mark {
 }
 
 /*
- * CLI Screen: one continuous terminal surface — chrome + picker/PTY share
- * --bg-terminal so no hairline band between the top bar and the body.
+ * CLI Screen: one continuous surface — chrome + picker/PTY share
+ * --bg-content so Swarm matches Thread.
  */
 .detail.terminal-host-session,
 .preview-edit-session.terminal-host-session {
@@ -12972,7 +13886,7 @@ mark {
   border-radius: var(--radius);
   border: 1px solid var(--border);
   overflow: hidden;
-  background: var(--bg-terminal, #101012);
+  background: var(--bg-terminal);
 }
 
 .agent-install-inline-term-bar {
@@ -13059,7 +13973,7 @@ mark {
   min-height: 0;
   padding: var(--cli-picker-pad-y) var(--cli-picker-pad-x);
   box-sizing: border-box;
-  background: var(--bg-terminal, var(--bg-content));
+  background: var(--bg-terminal);
   overflow: auto;
   container-type: size;
   container-name: cli-picker;
@@ -13374,15 +14288,53 @@ mark {
 .terminal-host .xterm {
   width: 100% !important;
   height: 100% !important;
+  background: var(--bg-content) !important;
 }
 
-/* Ensure xterm doesn’t force pure black that fights truecolor agents. */
-.terminal-stack .xterm-viewport {
-  background-color: var(--bg-terminal) !important;
+/* xterm.css hard-codes #000 on .xterm-viewport — beat it so bash is the app plate. */
+.xterm-host,
+.xterm,
+.xterm .xterm-viewport,
+.xterm .xterm-screen,
+.terminal-stack .xterm-viewport,
+.terminal-stack .xterm-screen,
+.inline-terminal-host .xterm,
+.inline-terminal-host .xterm-viewport {
+  background: var(--bg-content) !important;
+  background-color: var(--bg-content) !important;
 }
 
-.terminal-stack .xterm-screen {
-  background-color: transparent;
+/* Default glyphs (no ANSI class) inherit this. xterm injects a baked
+   foreground on .xterm-rows; without !important it stays the previous
+   theme's ink after Appearance light↔dark (black on charcoal). */
+.xterm .xterm-rows {
+  color: var(--text) !important;
+}
+
+/*
+ * Tools-tray bash can stay on the dark plate while the app is light.
+ * Beat the global --bg-content !important xterm rules, and force light
+ * default glyphs (otherwise --text stays dark ink on charcoal).
+ * Empty bash still follows the theme so the empty-state copy stays readable.
+ */
+.terminal-stack[data-bash-bg='dark']:not([data-empty='true']) {
+  --bg-terminal: #1b1b1d;
+  background: #1b1b1d;
+}
+
+.terminal-stack[data-bash-bg='dark'] .terminal-host,
+.terminal-stack[data-bash-bg='dark'] .terminal-host .xterm-host,
+.terminal-stack[data-bash-bg='dark'] .terminal-host .xterm,
+.terminal-stack[data-bash-bg='dark'] .xterm-host,
+.terminal-stack[data-bash-bg='dark'] .xterm,
+.terminal-stack[data-bash-bg='dark'] .xterm .xterm-viewport,
+.terminal-stack[data-bash-bg='dark'] .xterm .xterm-screen {
+  background: #1b1b1d !important;
+  background-color: #1b1b1d !important;
+}
+
+.terminal-stack[data-bash-bg='dark'] .xterm .xterm-rows {
+  color: #e6e6e7 !important;
 }
 
 .agents-settings .agents-layout {
@@ -13947,7 +14899,7 @@ mark {
 
 .composer-box {
   position: relative;
-  z-index: 5;
+  z-index: 1;
   display: flex;
   flex-direction: column;
   gap: 6px;

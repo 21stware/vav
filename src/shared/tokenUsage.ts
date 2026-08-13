@@ -1,5 +1,24 @@
-import type { DisplayCurrency, QuotaWindow, QuotaWindowKind, TokenSnapshot } from './types'
+import type { DisplayCurrency, TokenSnapshot } from './types'
 import { t, type AppLocale } from './i18n'
+
+export {
+  classifyCodexRateLimitWindowKinds,
+  classifyCodexWindowDuration,
+  CODEX_SESSION_WINDOW_MINUTES,
+  CODEX_WEEKLY_WINDOW_MINUTES,
+  codexWindowMinutesFromRecord,
+  mergeQuotaWindows,
+  mergeQuotaWindowsPreferNewer,
+  normalizeQuotaPercent,
+  normalizeQuotaResetsAt,
+  parseQuotaResetsAt,
+  quotaKindFromClaudeType,
+  quotaKindFromCodexWindow,
+  windowsFromClaudeOAuthPayload,
+  windowsFromCodexBackendPayload,
+  windowsFromGrokBillingPayload
+} from './quotaWindows'
+export type { CodexRateLimitWindowPair } from './quotaWindows'
 
 /** Anthropic prompt-cache TTL used for expiry display. */
 export const CACHE_TTL_MS = 5 * 60_000
@@ -252,81 +271,4 @@ export function formatExpiry(
   if (remain <= 0) return t(locale, 'time.clockExpired', { clock })
   const mins = Math.max(1, Math.round(remain / 60_000))
   return t(locale, 'time.clockInMinutes', { clock, mins })
-}
-
-const QUOTA_KIND_ORDER: Record<QuotaWindowKind, number> = {
-  five_hour: 0,
-  seven_day: 1,
-  seven_day_opus: 2,
-  seven_day_sonnet: 3,
-  primary: 4,
-  secondary: 5,
-  other: 6
-}
-
-/** Normalize host percent: fraction (0–1) or already 0–100. */
-export function normalizeQuotaPercent(value: number): number | null {
-  if (!Number.isFinite(value) || value < 0) return null
-  const pct = value <= 1.0001 ? value * 100 : value
-  if (!Number.isFinite(pct)) return null
-  return Math.min(100, Math.max(0, pct))
-}
-
-/** Unix seconds → ms; already-ms values pass through. */
-export function normalizeQuotaResetsAt(value: number | null | undefined): number | null {
-  if (value == null || !Number.isFinite(value) || value <= 0) return null
-  // Seconds since epoch are ~1e9; ms are ~1e12.
-  return value < 1e12 ? Math.round(value * 1000) : Math.round(value)
-}
-
-export function quotaKindFromClaudeType(raw: string | null | undefined): QuotaWindowKind {
-  const id = (raw ?? '').toLowerCase().replace(/-/g, '_')
-  if (id === 'five_hour' || id === 'fivehour') return 'five_hour'
-  if (id === 'seven_day_opus' || id === 'seven_day_opus_limit') return 'seven_day_opus'
-  if (id === 'seven_day_sonnet' || id === 'seven_day_sonnet_limit') return 'seven_day_sonnet'
-  if (id === 'seven_day' || id === 'seven_day_limit' || id === 'weekly') return 'seven_day'
-  return 'other'
-}
-
-/**
- * Codex primary/secondary windows: prefer `window_minutes` (≈300 → 5h, ≈10080 → week).
- */
-export function quotaKindFromCodexWindow(
-  key: string,
-  windowMinutes: number | null | undefined
-): QuotaWindowKind {
-  if (typeof windowMinutes === 'number' && Number.isFinite(windowMinutes)) {
-    if (windowMinutes <= 360) return 'five_hour'
-    if (windowMinutes >= 9000) return 'seven_day'
-  }
-  const k = key.toLowerCase()
-  if (k === 'secondary') return 'secondary'
-  if (k === 'primary') return 'primary'
-  return 'other'
-}
-
-export function mergeQuotaWindows(
-  prev: QuotaWindow[] | null | undefined,
-  incoming: QuotaWindow[]
-): QuotaWindow[] {
-  const map = new Map<string, QuotaWindow>()
-  for (const w of prev ?? []) {
-    if (!w?.id || !Number.isFinite(w.usedPercent)) continue
-    map.set(w.id, w)
-  }
-  for (const w of incoming) {
-    if (!w?.id || !Number.isFinite(w.usedPercent)) continue
-    const pct = normalizeQuotaPercent(w.usedPercent)
-    if (pct == null) continue
-    map.set(w.id, {
-      ...w,
-      usedPercent: pct,
-      resetsAt: normalizeQuotaResetsAt(w.resetsAt) ?? w.resetsAt ?? null
-    })
-  }
-  return [...map.values()].sort(
-    (a, b) =>
-      (QUOTA_KIND_ORDER[a.kind] ?? 99) - (QUOTA_KIND_ORDER[b.kind] ?? 99) ||
-      a.id.localeCompare(b.id)
-  )
 }

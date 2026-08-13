@@ -7,6 +7,7 @@ import {
   File as FileIcon,
   Folder,
   GitBranch,
+  Github,
   Info,
   List,
   MapPin,
@@ -35,9 +36,10 @@ import { getUiFocusScope, setUiFocusScope } from '../lib/uiFocus'
 import { Button, EmptyState, InlineAlert, Segmented } from './ui'
 import { FileManagerIcon } from './FileManagerIcon'
 import { GitChangesPanel, type GitPanelChrome } from './GitChangesPanel'
+import { GithubPanel, type GithubPanelChrome } from './GithubPanel'
 import { prefetchForPath } from '../lib/prefetchHeavy'
 
-type FilesTrayView = 'files' | 'git'
+type FilesTrayView = 'files' | 'git' | 'github'
 
 /** Scroll the row for `path` into view inside the files browser. */
 function scrollFileRowIntoView(path: string): void {
@@ -112,6 +114,7 @@ export function FilesPanel({ visible }: { visible: boolean }): React.JSX.Element
   const selectPathRaw = useWorkspaceStore((s) => s.selectPath)
   const attachContextFile = useSessionStore((s) => s.attachContextFile)
   const setFilePreviewOpen = useSessionStore((s) => s.setFilePreviewOpen)
+  const setSessionPreview = useSessionStore((s) => s.setSessionPreview)
   /** Select tree path and drive the File Attachment Chip (files only). */
   const selectPath = (
     id: string,
@@ -122,6 +125,7 @@ export function FilesPanel({ visible }: { visible: boolean }): React.JSX.Element
     if (kind === 'file' && path) {
       void attachContextFile(id, path)
       // Session right preview lives on sessionStore (not a workspace selection).
+      setSessionPreview({ kind: 'file' })
       setFilePreviewOpen(true)
     } else if (kind === 'clear' || kind === 'dir') {
       void attachContextFile(id, null)
@@ -135,13 +139,29 @@ export function FilesPanel({ visible }: { visible: boolean }): React.JSX.Element
   const [browserOpaque, setBrowserOpaque] = useState(true)
   /** Inline “new file” row: parent dir + draft name. */
   const [creating, setCreating] = useState<{ dir: string; name: string } | null>(null)
-  const [trayView, setTrayView] = useState<FilesTrayView>('files')
+  const [trayView, setTrayViewState] = useState<FilesTrayView>('files')
   const [rootIsGit, setRootIsGit] = useState(false)
   const [gitChrome, setGitChrome] = useState<GitPanelChrome | null>(null)
+  const [githubChrome, setGithubChrome] = useState<GithubPanelChrome | null>(null)
   /** Temp dirs can become repos after empty-session “enable version control”. */
   const gitRepoEpoch = useGitRepoSyncEpoch()
   const onGitChrome = useCallback((next: GitPanelChrome | null) => {
     setGitChrome((prev) => {
+      if (prev === next) return prev
+      if (
+        prev &&
+        next &&
+        prev.meta === next.meta &&
+        prev.loading === next.loading &&
+        prev.refresh === next.refresh
+      ) {
+        return prev
+      }
+      return next
+    })
+  }, [])
+  const onGithubChrome = useCallback((next: GithubPanelChrome | null) => {
+    setGithubChrome((prev) => {
       if (prev === next) return prev
       if (
         prev &&
@@ -175,9 +195,14 @@ export function FilesPanel({ visible }: { visible: boolean }): React.JSX.Element
     }
   }, [root, gitRepoEpoch])
 
-  // Leave Git tab when the workspace is no longer a repository.
+  const setTrayView = (view: FilesTrayView): void => {
+    setTrayViewState(view)
+    if (view === 'files') setSessionPreview({ kind: 'file' })
+  }
+
+  // Leave Git / GitHub tabs when the workspace is no longer a repository.
   useEffect(() => {
-    if (!rootIsGit && trayView === 'git') setTrayView('files')
+    if (!rootIsGit && (trayView === 'git' || trayView === 'github')) setTrayView('files')
   }, [rootIsGit, trayView])
 
   useEffect(() => {
@@ -555,19 +580,24 @@ export function FilesPanel({ visible }: { visible: boolean }): React.JSX.Element
                 {
                   value: 'files',
                   label: t('files.tabFiles'),
-                  icon: <Folder size={12} />
+                  icon: <Folder size={14} />
                 },
                 {
                   value: 'git',
                   label: t('files.tabGit'),
-                  icon: <GitBranch size={12} />
+                  icon: <GitBranch size={14} />
+                },
+                {
+                  value: 'github',
+                  label: t('files.tabGithub'),
+                  icon: <Github size={14} />
                 }
               ]}
             />
           ) : (
-            <span className="files-toolbar-title">
-              <Folder size={12} aria-hidden className="files-toolbar-title-icon" />
-              {t('files.tabFiles')}
+            <span className="files-toolbar-title" title={t('files.tabFiles')}>
+              <Folder size={14} aria-hidden className="files-toolbar-title-icon" />
+              <span className="files-toolbar-title-text">{t('files.tabFiles')}</span>
             </span>
           )}
         </div>
@@ -578,28 +608,28 @@ export function FilesPanel({ visible }: { visible: boolean }): React.JSX.Element
             <>
               <Button
                 label={sortButtonLabel(normalizeFileSortKey(sort), t)}
-                icon={<ArrowUpDown size={12} />}
+                icon={<ArrowUpDown size={14} />}
                 size="sm"
                 onClick={(event) =>
                   void showMenu(sortItems, menuAnchor(event.currentTarget as HTMLElement))
                 }
               />
               <Button
-                icon={<Plus size={13} />}
+                icon={<Plus size={14} />}
                 size="sm"
                 title={t('files.newFile')}
                 disabled={rootMissing}
                 onClick={startCreateFile}
               />
               <Button
-                icon={viewMode === 'tree' ? <List size={13} /> : <Columns3 size={13} />}
+                icon={viewMode === 'tree' ? <List size={14} /> : <Columns3 size={14} />}
                 size="sm"
                 title={viewMode === 'tree' ? t('files.viewList') : t('files.viewColumn')}
                 disabled={rootMissing}
                 onClick={toggleViewMode}
               />
               <Button
-                icon={<FileManagerIcon size={13} />}
+                icon={<FileManagerIcon size={14} />}
                 size="sm"
                 title={t('tools.revealInFm', { fileManager: fileManagerLabel() })}
                 disabled={rootMissing || !root}
@@ -611,14 +641,14 @@ export function FilesPanel({ visible }: { visible: boolean }): React.JSX.Element
               />
               {temporary && (
                 <Button
-                  icon={<MapPin size={13} />}
+                  icon={<MapPin size={14} />}
                   size="sm"
                   title={t('files.locateWorkspace')}
                   onClick={() => void locateWorkspace(activeId)}
                 />
               )}
               <Button
-                icon={<Info size={13} />}
+                icon={<Info size={14} />}
                 size="sm"
                 title={t('files.ignoredTitle')}
                 onClick={() =>
@@ -637,7 +667,7 @@ export function FilesPanel({ visible }: { visible: boolean }): React.JSX.Element
             <>
               {gitChrome.meta ? <span className="git-panel-meta">{gitChrome.meta}</span> : null}
               <Button
-                icon={<RefreshCw size={12} />}
+                icon={<RefreshCw size={14} />}
                 size="sm"
                 className={`git-refresh-btn${gitChrome.loading ? ' is-refreshing' : ''}`}
                 title={t('git.refresh')}
@@ -646,11 +676,28 @@ export function FilesPanel({ visible }: { visible: boolean }): React.JSX.Element
               />
             </>
           )}
+          {trayView === 'github' && githubChrome && (
+            <>
+              {githubChrome.meta ? (
+                <span className="git-panel-meta">{githubChrome.meta}</span>
+              ) : null}
+              <Button
+                icon={<RefreshCw size={14} />}
+                size="sm"
+                className={`git-refresh-btn${githubChrome.loading ? ' is-refreshing' : ''}`}
+                title={t('github.refresh')}
+                disabled={githubChrome.loading}
+                onClick={githubChrome.refresh}
+              />
+            </>
+          )}
         </div>
       </div>
 
       {trayView === 'git' ? (
         <GitChangesPanel visible={visible} onChrome={onGitChrome} />
+      ) : trayView === 'github' ? (
+        <GithubPanel visible={visible} onChrome={onGithubChrome} />
       ) : (
       <div
         className="files-browser"
@@ -737,6 +784,7 @@ function ColumnBrowser({
   const selectPathRaw = useWorkspaceStore((s) => s.selectPath)
   const attachContextFile = useSessionStore((s) => s.attachContextFile)
   const setFilePreviewOpen = useSessionStore((s) => s.setFilePreviewOpen)
+  const setSessionPreview = useSessionStore((s) => s.setSessionPreview)
   const selectPath = (
     id: string,
     path: string | null,
@@ -745,6 +793,7 @@ function ColumnBrowser({
     selectPathRaw(id, path)
     if (kind === 'file' && path) {
       void attachContextFile(id, path)
+      setSessionPreview({ kind: 'file' })
       setFilePreviewOpen(true)
     } else {
       void attachContextFile(id, null)
@@ -891,13 +940,13 @@ function ColumnBrowser({
                     }}
                   >
                     {entry.isDirectory ? (
-                      <Folder size={14} strokeWidth={1.75} aria-hidden />
+                      <Folder size={16} strokeWidth={1.75} aria-hidden />
                     ) : (
-                      <FileIcon size={14} strokeWidth={1.75} aria-hidden />
+                      <FileIcon size={16} strokeWidth={1.75} aria-hidden />
                     )}
                     <span className="tree-name">{entry.name}</span>
                     {entry.isDirectory && (
-                      <ChevronRight size={12} strokeWidth={1.75} className="column-chevron" aria-hidden />
+                      <ChevronRight size={14} strokeWidth={1.75} className="column-chevron" aria-hidden />
                     )}
                   </div>
                 )
@@ -1038,7 +1087,7 @@ function NewFileRow({
       onClick={(event) => event.stopPropagation()}
     >
       <span className="disclosure" aria-hidden />
-      <FileIcon size={14} strokeWidth={1.75} aria-hidden />
+      <FileIcon size={16} strokeWidth={1.75} aria-hidden />
       <input
         className="text-field rename-field"
         autoFocus
@@ -1148,16 +1197,16 @@ function TreeRow({
         <span className="disclosure" aria-hidden>
           {entry.isDirectory ? (
             expanded ? (
-              <ChevronDown size={12} strokeWidth={1.75} />
+              <ChevronDown size={14} strokeWidth={1.75} />
             ) : (
-              <ChevronRight size={12} strokeWidth={1.75} />
+              <ChevronRight size={14} strokeWidth={1.75} />
             )
           ) : null}
         </span>
         {entry.isDirectory ? (
-          <Folder size={14} strokeWidth={1.75} aria-hidden />
+          <Folder size={16} strokeWidth={1.75} aria-hidden />
         ) : (
-          <FileIcon size={14} strokeWidth={1.75} aria-hidden />
+          <FileIcon size={16} strokeWidth={1.75} aria-hidden />
         )}
         {renaming ? (
           <input

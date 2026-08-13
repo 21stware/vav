@@ -60,7 +60,11 @@ export function AgentBrandMark({
     return (
       <span
         className="agent-brand-mark agent-brand-mark-fallback"
-        style={{ width: size, height: size, fontSize: Math.round(size * 0.42) }}
+        style={{
+          width: `var(--agent-mark-size, ${size}px)`,
+          height: `var(--agent-mark-size, ${size}px)`,
+          fontSize: Math.round(size * 0.42)
+        }}
         aria-hidden
         title={agent.name}
       >
@@ -82,7 +86,14 @@ export function AgentBrandMark({
   const imgSize = Math.round(size * 0.72)
 
   return (
-    <span className={classes} style={{ width: size, height: size }} title={agent.name}>
+    <span
+      className={classes}
+      style={{
+        width: `var(--agent-mark-size, ${size}px)`,
+        height: `var(--agent-mark-size, ${size}px)`
+      }}
+      title={agent.name}
+    >
       {isVav ? (
         <>
           <img

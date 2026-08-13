@@ -24,6 +24,12 @@ import type {
 } from './types'
 import type { ChangeSet, UpdateState } from './changeSet'
 import type { GitResult, GitSnapshot } from './git'
+import type {
+  GithubPullDetail,
+  GithubPullsPage,
+  GithubPullStateFilter,
+  GithubResult
+} from './github'
 import type { Platform } from './platform'
 
 export interface Bootstrap {
@@ -80,8 +86,9 @@ export interface PtySessionMeta {
   agentId: string | null
   title: string
   createdAt: number
-  /** Live sessions only, so a freshly attached window paints the right dot. */
-  status: Exclude<PtyActivityStatus, 'exited'>
+  /** Live sessions only, so a freshly attached window paints the right dot.
+   *  Restored exited bash tombstones use `exited`. */
+  status: PtyActivityStatus
 }
 
 /** Live PTYs plus the split trees every window must hydrate from. */
@@ -275,8 +282,8 @@ export interface TokenUsageViewPayload {
    */
   compactAvailable: boolean
   /**
-   * Live CLI subscription / rate-limit windows (only when the host stream
-   * reported a used percentage). Empty for VAV or hosts that never emit % .
+   * Subscription / rate-limit windows (account OAuth/backend poll, plus any
+   * live CLI stream sample). Empty for VAV or hosts without a usage API.
    */
   quotaWindows: QuotaWindow[]
 }
@@ -289,9 +296,10 @@ export interface CliOpenEvent {
   /**
    * Which main surface to show after selecting the session.
    * - `cli` — CLI Agents screen (tray live CLI panes, open/focus agent).
+   * - `bash` — Tools-tray terminal, focused on `tabId`.
    * - `vav` — built-in chat / composer (default when omitted).
    */
-  surface?: 'vav' | 'cli'
+  surface?: 'vav' | 'cli' | 'bash'
   /** CLI Screen tab id (PTY id) to select and focus. */
   tabId?: string
   /** Prefer a pane of this agent type when tabId is absent. */
@@ -776,6 +784,15 @@ export interface VavApi {
     ): Promise<GitResult<{ path: string; branch: string | null }>>
   }
 
+  /** GitHub pull requests for the workspace remote (REST via main). */
+  github: {
+    listPulls(
+      cwd: string,
+      state?: GithubPullStateFilter
+    ): Promise<GithubResult<GithubPullsPage>>
+    getPull(cwd: string, number: number): Promise<GithubResult<GithubPullDetail>>
+  }
+
   /** File Preview multi-session store (independent of sidebar conversations). */
   fileSessions: {
     open(path: string): Promise<FileSessionsState>
@@ -1242,6 +1259,8 @@ export const IPC = {
   gitCreateBranch: 'vav:git:create-branch',
   gitCheckoutBranch: 'vav:git:checkout-branch',
   gitCreateWorktree: 'vav:git:create-worktree',
+  githubListPulls: 'vav:github:list-pulls',
+  githubGetPull: 'vav:github:get-pull',
 
   agentsResolveBinary: 'vav:agents:resolve-binary',
   agentsListModels: 'vav:agents:list-models',

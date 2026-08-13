@@ -73,6 +73,7 @@ import {
   getGitSnapshot,
   initGitRepo
 } from './git/GitService'
+import { getGithubPull, listGithubPulls } from './github/GithubService'
 import { UpdateService } from './updates'
 import { PtyManager } from './terminal/PtyManager'
 import { resolveAgentExecutable } from './terminal/loginPath'
@@ -122,6 +123,9 @@ import {
 } from './cli'
 import { ensureMacOpenDirectoryService } from './macOpenDirectoryService'
 import { NotificationCenter } from './notifications'
+import { QuotaService } from './quota/QuotaService'
+import { mergeQuotaWindowsPreferNewer } from '@shared/quotaWindows'
+import { trayItemLabel, type TrayPane } from '@shared/traySessions'
 
 const PLATFORM = process.platform as Platform
 const IS_MAC = PLATFORM === 'darwin'
@@ -240,6 +244,14 @@ const fileService = new FileService((conversationId, dirs) => {
   sendToWorkspaceWindows(IPC.filesDirty, { conversationId, dirs }, conversationId)
 })
 fileService.workingCopies = workingCopyService
+workingCopyService.onCopyChanged = (realPath) => {
+  sendToWorkspaceWindows(IPC.agentEvent, {
+    type: 'fs-changed',
+    conversationId: '',
+    parentPath: dirname(realPath),
+    filePath: realPath
+  })
+}
 // Wired after construction — retrieval is defined below; assigned once created.
 
 const ptyManager = new PtyManager(
@@ -249,7 +261,7 @@ const ptyManager = new PtyManager(
   // Workspace windows re-hydrate tab maps from main — no per-renderer PTY ownership.
   (conversationId) => {
     sendToWorkspaceWindows(IPC.ptyChanged, { conversationId }, conversationId)
-    // Live CLI agent count drives the tray badge / menu.
+    // Live CLI agent count and bash panes drive the tray badge / menu.
     refreshTraySessions()
   },
   (tabId, conversationId, status) =>
@@ -264,11 +276,11 @@ const activeTurns = new Map<string, 'running' | 'paused'>()
  * main) and tell the renderer which surface/pane to show.
  *
  * Tray CLI rows pass surface=cli + tabId so we enter CLI Agents and focus that
- * pane — never only select the row and leave VAV composer focused.
+ * pane. Bash rows pass surface=bash + tabId to open Tools → Terminal on that tab.
  */
 function focusRunningSession(target: {
   conversationId: string
-  surface?: 'vav' | 'cli'
+  surface?: 'vav' | 'cli' | 'bash'
   tabId?: string
   agentId?: string
 }): void {
@@ -368,30 +380,57 @@ function refreshTraySessions(): void {
     return agentId
   }
 
-  // Prefer live CLI agent panes for the tray badge/menu.
-  // Format: [session name] - [agent name] - [dir]  e.g. New Session - Grok - ~/repo/vav
-  // One row per pane (tabId) so multi-pane sessions can focus the right agent.
-  const cliRows = ptyManager.listCliAgentSessions().map((s) => {
+  const panes: TrayPane[] = []
+  for (const s of ptyManager.listCliAgentSessions()) {
     const conversation = conversationStore.get(s.conversationId)
-    const sessionName =
-      (conversation?.title && conversation.title.trim()) || s.title || s.conversationId
-    const agentName = s.agentId ? agentLabel(s.agentId) : 'CLI'
-    const dirName = trayDirLabel(conversation?.workingDirectory)
-    return {
+    const dir = conversation?.workingDirectory || '~'
+    panes.push({
       conversationId: s.conversationId,
-      title: `${sessionName} - ${agentName} - ${dirName}`,
-      surface: 'cli' as const,
       tabId: s.id,
+      kind: 'agent',
+      sessionTitle:
+        (conversation?.title && conversation.title.trim()) || s.title || s.conversationId,
+      paneTitle: s.agentId ? agentLabel(s.agentId) : 'CLI',
+      dirKey: dir,
+      dirLabel: trayDirLabel(dir),
+      createdAt: s.createdAt,
       agentId: s.agentId || undefined
-    }
-  })
+    })
+  }
+  for (const s of ptyManager.listBashSessions()) {
+    const conversation = conversationStore.get(s.conversationId)
+    const dir = conversation?.workingDirectory || '~'
+    panes.push({
+      conversationId: s.conversationId,
+      tabId: s.id,
+      kind: 'bash',
+      sessionTitle:
+        (conversation?.title && conversation.title.trim()) || s.title || s.conversationId,
+      paneTitle: s.title || 'bash',
+      dirKey: dir,
+      dirLabel: trayDirLabel(dir),
+      createdAt: s.createdAt
+    })
+  }
 
-  // Fall back to VAV active turns when no CLI agent is live (built-in chat).
-  if (cliRows.length > 0) {
-    notifications.updateRunningSessions(cliRows)
+  if (panes.length > 0) {
+    notifications.updateRunningSessions(
+      panes.map((pane) => ({
+        conversationId: pane.conversationId,
+        title: trayItemLabel(pane),
+        surface: pane.kind === 'agent' ? ('cli' as const) : ('bash' as const),
+        tabId: pane.tabId,
+        agentId: pane.agentId,
+        kind: pane.kind,
+        dirKey: pane.dirKey,
+        dirLabel: pane.dirLabel,
+        createdAt: pane.createdAt
+      }))
+    )
     return
   }
 
+  // Fall back to VAV active turns when no CLI agent or bash pane is live.
   const vavRows = [...activeTurns.keys()].map((id) => {
     const conversation = conversationStore.get(id)
     const sessionName = conversation?.title?.trim() || id
@@ -516,6 +555,12 @@ const duckdb = new DuckDbService()
 const webSearch = new WebSearchService()
 const webFetch = new WebFetchService()
 const skillService = new SkillService()
+const quotaService = new QuotaService({
+  onUpdate: () => {
+    const id = tokenUsageConversationId
+    if (id && id !== '_') pushTokenUsageIfOpen(id)
+  }
+})
 
 const agent = new AgentRuntime({
   conversations: conversationStore,
@@ -541,7 +586,8 @@ const cliHost = new CliAgentHost({
   conversations: conversationStore,
   settings: settingsStore,
   changeSets: changeSetStore,
-  emit: handleAgentEvent
+  emit: handleAgentEvent,
+  logicalPath: (path) => workingCopyService.logicalPath(path)
 })
 
 setInterval(() => cliHost.reapIdle(), 5 * 60_000)
@@ -2348,7 +2394,9 @@ function buildTokenUsagePayload(conversationId: string): TokenUsageViewPayload |
     cacheExpiryEstimated: !!(conversation.cacheExpiresAt && conversation.cacheCreatedAt),
     // Manual compact only rewrites VAV buildHistory — not CLI native sessions.
     compactAvailable: !cliHost,
-    quotaWindows: cliHost ? (conversation.quotaWindows ?? []) : []
+    quotaWindows: cliHost
+      ? mergeQuotaWindowsPreferNewer(quotaService.get(cliHost), conversation.quotaWindows ?? [])
+      : []
   }
 }
 
@@ -2374,6 +2422,12 @@ function sendTokenUsagePayload(conversationId: string): void {
   }
   if (!payload) return
   safeSend(tokenUsageWindow.webContents, IPC.tokenUsageView, payload)
+  requestAccountQuota(conversationId)
+}
+
+function requestAccountQuota(conversationId: string): void {
+  const host = conversationStore.get(conversationId)?.cliHost ?? null
+  void quotaService.refreshForPanel(host)
 }
 
 function pushTokenUsageIfOpen(conversationId: string): void {
@@ -3895,6 +3949,14 @@ function registerIpc(): void {
       options: { path: string; newBranch?: string; branch?: string }
     ) => createGitWorktree(cwd, options)
   )
+  ipcMain.handle(
+    IPC.githubListPulls,
+    (_event, cwd: string, state?: import('@shared/github').GithubPullStateFilter) =>
+      listGithubPulls(cwd, state)
+  )
+  ipcMain.handle(IPC.githubGetPull, (_event, cwd: string, number: number) =>
+    getGithubPull(cwd, number)
+  )
   ipcMain.handle(IPC.filesWatch, (_event, id: string, root: string | null) =>
     fileService.watchRoot(id, root)
   )
@@ -4212,7 +4274,11 @@ function registerIpc(): void {
     ) => openTokenUsageWindow(event.sender, conversationId, anchor)
   )
   // Panel pulls on mount — avoids missing the push during React StrictMode remount.
-  ipcMain.handle(IPC.tokenUsageGetView, () => currentTokenUsagePayload())
+  ipcMain.handle(IPC.tokenUsageGetView, () => {
+    const payload = currentTokenUsagePayload()
+    if (payload) requestAccountQuota(payload.conversationId)
+    return payload
+  })
   ipcMain.handle(IPC.windowRelaunch, () => {
     app.relaunch()
     app.exit(0)
@@ -4471,6 +4537,7 @@ if (!singleInstance) {
     cliHost.disposeAll()
     ptyManager.killAll()
     fileService.disposeAll()
+    quotaService.stop()
     conversationStore.flush()
   })
 
@@ -4480,8 +4547,14 @@ if (!singleInstance) {
     applyBranding()
     protocol.handle('vav-local', async (request) => {
       try {
-        const filePath = decodeURIComponent(new URL(request.url).searchParams.get('path') ?? '')
-        if (!filePath || !existsSync(filePath)) {
+        const requested = decodeURIComponent(new URL(request.url).searchParams.get('path') ?? '')
+        if (!requested) {
+          return new Response('Not found', { status: 404 })
+        }
+        // Document sandbox: preview must read the working copy when one exists.
+        const mapped = workingCopyService.ioPath(requested)
+        const filePath = existsSync(mapped) ? mapped : requested
+        if (!existsSync(filePath)) {
           return new Response('Not found', { status: 404 })
         }
         // Forward Range headers so pdf.js can stream large files efficiently.
@@ -4544,6 +4617,7 @@ if (!singleInstance) {
           out.set('Content-Type', forcedMime)
           // Range enables seeking for PDF/media/large office.
           out.set('Accept-Ranges', 'bytes')
+          out.set('Cache-Control', 'no-store')
           return new Response(response.body, {
             status: response.status,
             statusText: response.statusText,
@@ -4558,6 +4632,14 @@ if (!singleInstance) {
     const settings = settingsStore.load()
     setLocalePreference(settings.locale ?? DEFAULT_SETTINGS.locale)
     conversationStore.load({ model: settings.defaultModel, mintWorkdir: resolveNewWorkdir })
+    if (!process.env.VAV_SNAPSHOT) {
+      ptyManager.restorePersisted({
+        persistPath: join(app.getPath('userData'), 'pty-sessions.json'),
+        shell: settings.shell,
+        conversationExists: (id) => Boolean(conversationStore.get(id)),
+        restoreMarker: t('tools.bashRestored')
+      })
+    }
     fileSessionStore.bind(conversationStore)
     applyTheme(settings.theme ?? DEFAULT_SETTINGS.theme)
     nativeTheme.on('updated', repaintChrome)
@@ -4566,6 +4648,7 @@ if (!singleInstance) {
     registerIpc()
     notifications.applySettings()
     rebuildAppChrome()
+    if (!process.env.VAV_SNAPSHOT) quotaService.start()
 
     if (process.env.VAV_SNAPSHOT) {
       // Marketing captures should use default layout (tools open, files segment).

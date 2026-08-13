@@ -203,6 +203,12 @@ const api: VavApi = {
     ) => ipcRenderer.invoke(IPC.gitCreateWorktree, cwd, options)
   },
 
+  github: {
+    listPulls: (cwd: string, state?: import('@shared/github').GithubPullStateFilter) =>
+      ipcRenderer.invoke(IPC.githubListPulls, cwd, state),
+    getPull: (cwd: string, number: number) => ipcRenderer.invoke(IPC.githubGetPull, cwd, number)
+  },
+
   fileSessions: {
     open: (path: string) => ipcRenderer.invoke(IPC.fileSessionsOpen, path),
     create: (path: string) => ipcRenderer.invoke(IPC.fileSessionsCreate, path),

@@ -1,11 +1,11 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import type { GitSnapshot } from '@shared/git'
 import { useSessionStore } from '../state/sessionStore'
 import { useT, tt } from '../i18n/useT'
 import { isTemporaryWorkspace, workdirShortLabel } from '../lib/format'
 import { bumpGitRepoSync } from '../lib/gitRepoSync'
 import { menuAnchor, showMenu, type MenuItem } from '../lib/nativeMenu'
-import { Button } from './ui'
+import { Button, StaggerLine } from './ui'
 
 type CreateForm =
   | { kind: 'branch'; name: string }
@@ -62,6 +62,7 @@ export function SessionWorkspaceChrome(): React.JSX.Element | null {
 
   const cwd = conversation?.workingDirectory ?? null
   const temporary = isTemporaryWorkspace(cwd, tmp)
+  const hostId = conversation?.cliHost ?? 'vav'
 
   const [snap, setSnap] = useState<GitSnapshot | null>(null)
   const [busy, setBusy] = useState(false)
@@ -69,8 +70,19 @@ export function SessionWorkspaceChrome(): React.JSX.Element | null {
   const [form, setForm] = useState<CreateForm | null>(null)
   /** True only until the first status result for this cwd — avoids swapping chrome and replaying empty-state motion. */
   const [initialLoad, setInitialLoad] = useState(true)
+  const [proseEnter, setProseEnter] = useState(false)
   const cwdRef = useRef(cwd)
   const formInputRef = useRef<HTMLInputElement>(null)
+
+  const contentReady = !(initialLoad && !snap)
+  useLayoutEffect(() => {
+    if (!contentReady) {
+      setProseEnter(false)
+      return
+    }
+    setProseEnter(true)
+    return () => setProseEnter(false)
+  }, [activeId, hostId, contentReady])
 
   const refresh = useCallback(async (): Promise<GitSnapshot | null> => {
     if (!cwd) {
@@ -394,10 +406,13 @@ export function SessionWorkspaceChrome(): React.JSX.Element | null {
 
   if (initialLoad && !snap) {
     return (
-      <div className="session-workspace-chrome" aria-busy="true">
-        <p className="session-workspace-prose session-workspace-prose-muted">
-          {t('common.loading')}
-        </p>
+      <div
+        className="session-workspace-chrome"
+        aria-busy="true"
+        aria-label={t('common.loading')}
+      >
+        <p className="session-workspace-prose">&nbsp;</p>
+        <p className="session-workspace-prose">&nbsp;</p>
       </div>
     )
   }
@@ -405,17 +420,23 @@ export function SessionWorkspaceChrome(): React.JSX.Element | null {
   // No git yet (temp or plain folder) → one prose line + enable version control.
   if (!snap?.isRepo) {
     return (
-      <div className="session-workspace-chrome">
+      <div className={`session-workspace-chrome${proseEnter ? ' is-entering' : ''}`}>
         <p className="session-workspace-prose">
-          <span className="session-workspace-prose-strong">{projectName}</span>{' '}
-          <span className="session-workspace-prose-muted">
-            {temporary ? t('git.prose.tempNotRepo') : t('git.prose.notRepo')}
-          </span>{' '}
-          <span className="session-workspace-prose-muted">{t('git.prose.enableLead')}</span>{' '}
-          <TextBtn disabled={busy} onClick={() => void initRepo()}>
-            {busy ? t('common.loading') : t('git.prose.enableAction')}
-          </TextBtn>{' '}
-          <span className="session-workspace-prose-muted">{t('git.prose.enableTail')}</span>
+          <StaggerLine baseDelay={120} key={`${activeId}:${hostId}:norepo`}>
+            <span className="session-workspace-prose-strong">{projectName}</span>{' '}
+            <span className="session-workspace-prose-muted">
+              {temporary ? t('git.prose.tempNotRepo') : t('git.prose.notRepo')}
+            </span>
+          </StaggerLine>
+        </p>
+        <p className="session-workspace-prose">
+          <StaggerLine baseDelay={280} key={`${activeId}:${hostId}:enable`}>
+            <span className="session-workspace-prose-muted">{t('git.prose.enableLead')}</span>{' '}
+            <TextBtn disabled={busy} onClick={() => void initRepo()}>
+              {busy ? t('common.loading') : t('git.prose.enableAction')}
+            </TextBtn>{' '}
+            <span className="session-workspace-prose-muted">{t('git.prose.enableTail')}</span>
+          </StaggerLine>
         </p>
         {error && <div className="session-workspace-error">{error}</div>}
       </div>
@@ -430,32 +451,36 @@ export function SessionWorkspaceChrome(): React.JSX.Element | null {
     snap.worktreeLabel === 'Local' ? t('git.local') : snap.worktreeLabel
 
   return (
-    <div className="session-workspace-chrome">
+    <div className={`session-workspace-chrome${proseEnter ? ' is-entering' : ''}`}>
       <p className="session-workspace-prose">
-        {t('git.prose.onLead')}{' '}
-        <TextBtn
-          disabled={busy}
-          title={cwd}
-          onClick={(el) => void openWorktreeMenu(el)}
-        >
-          {worktreeLabel}
-        </TextBtn>
-        {t('git.prose.onMid')}{' '}
-        <TextBtn disabled={busy} onClick={(el) => void openBranchMenu(el)}>
-          {branchLabel}
-        </TextBtn>
-        {t('git.prose.onEnd')}
+        <StaggerLine baseDelay={120} key={`${activeId}:${hostId}:on`}>
+          {t('git.prose.onLead')}{' '}
+          <TextBtn
+            disabled={busy}
+            title={cwd}
+            onClick={(el) => void openWorktreeMenu(el)}
+          >
+            {worktreeLabel}
+          </TextBtn>
+          {t('git.prose.onMid')}{' '}
+          <TextBtn disabled={busy} onClick={(el) => void openBranchMenu(el)}>
+            {branchLabel}
+          </TextBtn>
+          {t('git.prose.onEnd')}
+        </StaggerLine>
       </p>
       <p className="session-workspace-prose">
-        {t('git.prose.createLead')}{' '}
-        <TextBtn disabled={busy} onClick={() => openWorktreeForm()}>
-          {t('git.prose.createWorktree')}
-        </TextBtn>{' '}
-        {t('git.prose.or')}{' '}
-        <TextBtn disabled={busy} onClick={() => openBranchForm()}>
-          {t('git.prose.createBranch')}
-        </TextBtn>
-        {t('git.prose.createEnd')}
+        <StaggerLine baseDelay={280} key={`${activeId}:${hostId}:create`}>
+          {t('git.prose.createLead')}{' '}
+          <TextBtn disabled={busy} onClick={() => openWorktreeForm()}>
+            {t('git.prose.createWorktree')}
+          </TextBtn>{' '}
+          {t('git.prose.or')}{' '}
+          <TextBtn disabled={busy} onClick={() => openBranchForm()}>
+            {t('git.prose.createBranch')}
+          </TextBtn>
+          {t('git.prose.createEnd')}
+        </StaggerLine>
       </p>
 
       {forms}

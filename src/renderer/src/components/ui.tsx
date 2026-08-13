@@ -1,4 +1,14 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import {
+  Children,
+  cloneElement,
+  Fragment,
+  isValidElement,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type ReactNode
+} from 'react'
 import { X } from 'lucide-react'
 import { tt } from '../i18n/useT'
 import wordmark from '../assets/wordmark.png'
@@ -7,11 +17,38 @@ import wordmarkDark from '../assets/wordmark-dark.png'
 /** Match --dur-pop so exit stays on-screen through the transition. */
 const MODAL_LEAVE_MS = 180
 
-/** Empty-state entrance budget (logo + title delays). After this, motion is latched off. */
-const EMPTY_ENTER_MS = 700
+/** Empty-state entrance budget — long enough for a full prose stagger. */
+const EMPTY_ENTER_MS = 1800
 
-/** Survives EmptyState remounts so entrance cannot loop for the same session shell. */
-const emptyEnteredKeys = new Set<string>()
+/** Scenes that already started an entrance. Claimed after first paint. */
+const emptyPlayedScenes = new Set<string>()
+
+/**
+ * One `.is-entering` per session+host. Arm in layout (before paint) so the
+ * name does not flash, then claim in a passive effect so Strict Mode's extra
+ * layout pass cannot drop the class and restart stagger.
+ */
+function useEmptyEntering(enterKey: string, logoKey: string): boolean {
+  const scene = `${enterKey}::${logoKey}`
+  const [entering, setEntering] = useState(false)
+
+  useLayoutEffect(() => {
+    if (emptyPlayedScenes.has(scene)) {
+      setEntering(false)
+      return
+    }
+    setEntering(true)
+  }, [scene])
+
+  useEffect(() => {
+    if (!entering) return
+    emptyPlayedScenes.add(scene)
+    const stop = window.setTimeout(() => setEntering(false), EMPTY_ENTER_MS)
+    return () => window.clearTimeout(stop)
+  }, [entering, scene])
+
+  return entering
+}
 
 type ButtonVariant = 'ghost' | 'secondary' | 'primary' | 'danger'
 
@@ -213,41 +250,78 @@ export function Segmented<T extends string>({
           onClick={() => onChange(option.value)}
         >
           {option.icon ? <span className="segmented-icon">{option.icon}</span> : null}
-          {option.label}
+          <span className="segmented-label">{option.label}</span>
         </button>
       ))}
     </div>
   )
 }
 
-/** Word units when spaced; Unicode chars for CJK / unspaced agent names. */
+/** Word units when spaced; Unicode chars for CJK / unspaced strings. */
 function splitNameUnits(text: string): string[] {
   if (/\s/.test(text)) return text.split(/(\s+)/).filter((s) => s.length > 0)
   return Array.from(text)
 }
 
-function EmptyAgentName({
-  text,
-  nameKey
-}: {
-  text: string
-  nameKey?: string
-}): React.JSX.Element {
-  const units = splitNameUnits(text)
-  let step = 0
-  return (
-    <div className="empty-agent-name" aria-label={text} key={nameKey ?? text}>
-      {units.map((unit, i) => {
-        if (/^\s+$/.test(unit)) {
-          return <span key={i}>{unit}</span>
+function staggerNode(node: ReactNode, step: { i: number }, baseDelay: number): ReactNode {
+  return Children.map(node, (child, idx) => {
+    if (child == null || typeof child === 'boolean') return child
+    if (typeof child === 'string' || typeof child === 'number') {
+      return splitNameUnits(String(child)).map((unit, u) => {
+        if (unit === '' || /^\s+$/.test(unit)) {
+          return (
+            <Fragment key={`s${idx}-${u}`}>
+              {unit}
+            </Fragment>
+          )
         }
-        const index = step++
+        const i = step.i++
         return (
-          <span key={i} className="empty-agent-name-unit" data-stagger={index} aria-hidden>
+          <span
+            key={`w${idx}-${u}`}
+            className="empty-stagger-unit"
+            style={{ animationDelay: `${baseDelay + i * 28}ms` }}
+          >
             {unit}
           </span>
         )
-      })}
+      })
+    }
+    if (isValidElement(child)) {
+      const nested = (child.props as { children?: ReactNode }).children
+      if (nested == null || nested === false) {
+        const i = step.i++
+        return (
+          <span
+            key={child.key ?? `e${idx}`}
+            className="empty-stagger-unit"
+            style={{ animationDelay: `${baseDelay + i * 28}ms` }}
+          >
+            {child}
+          </span>
+        )
+      }
+      return cloneElement(child, { key: child.key ?? idx }, staggerNode(nested, step, baseDelay))
+    }
+    return child
+  })
+}
+
+/** Split a line into stagger units (words, CJK chars, or leaf elements). */
+export function StaggerLine({
+  children,
+  baseDelay = 0
+}: {
+  children: ReactNode
+  baseDelay?: number
+}): React.JSX.Element {
+  return <>{staggerNode(children, { i: 0 }, baseDelay)}</>
+}
+
+function EmptyAgentName({ text }: { text: string }): React.JSX.Element {
+  return (
+    <div className="empty-agent-name" aria-label={text}>
+      <StaggerLine baseDelay={48}>{text}</StaggerLine>
     </div>
   )
 }
@@ -274,42 +348,27 @@ export function EmptyState({
   /** Agent / product name under the mark — staggered on change. */
   logoLabel?: string
   /**
-   * When this changes (e.g. agent host id), only the inner mark remounts and
-   * replays `empty-in` once — the outer shell stays mounted.
+   * When this changes with {@link enterKey}, the empty hero plays once.
+   * Identity is the host id, not the label — same name on a new session still
+   * staggers.
    */
   logoKey?: string
   /**
-   * Latches entrance off after the first play for this key (survives remounts
-   * from git chrome / container-query layout thrash).
+   * Scene id (session empty view). Combined with {@link logoKey}. Git load and
+   * layout remounts must not mint a new scene.
    */
   enterKey?: string
   /**
-   * `session` — hero (logo + name) centered; `foot` pinned to the bottom.
+   * `session` — hero (logo + name + optional foot) centered in the transcript.
    * `centered` — classic stacked empty state.
    */
   layout?: 'centered' | 'session'
-  /** Bottom chrome (e.g. workspace / git prose). */
+  /** Supporting chrome under the mark (e.g. workspace / git prose). */
   foot?: ReactNode
   children?: ReactNode
 }): React.JSX.Element {
-  const latchKey = enterKey ?? logoKey ?? title ?? 'empty'
-  /**
-   * Claim synchronously on first paint. A post-timeout latch failed when the
-   * shell remounted (git chrome / layout thrash): cleanup cleared the timer,
-   * the key never stuck, and empty-in replayed forever.
-   */
-  const [playEntrance] = useState(() => {
-    if (emptyEnteredKeys.has(latchKey)) return false
-    emptyEnteredKeys.add(latchKey)
-    return true
-  })
-  const [entered, setEntered] = useState(!playEntrance)
-
-  useEffect(() => {
-    if (!playEntrance) return
-    const timer = window.setTimeout(() => setEntered(true), EMPTY_ENTER_MS)
-    return () => window.clearTimeout(timer)
-  }, [playEntrance])
+  const entering = useEmptyEntering(enterKey ?? 'empty', logoKey ?? '')
+  const motionKey = `${enterKey ?? 'empty'}::${logoKey ?? ''}`
 
   const logoNode =
     logo === true ? (
@@ -325,36 +384,31 @@ export function EmptyState({
     <>
       {logoNode && (
         <span className="empty-logo" role="img" aria-label={logoLabel ?? 'VAV'}>
-          <span key={logoKey ?? 'logo'} className="empty-logo-mark">
-            {logoNode}
-          </span>
+          <span className="empty-logo-mark">{logoNode}</span>
         </span>
       )}
-      {logoLabel ? <EmptyAgentName text={logoLabel} nameKey={logoKey} /> : null}
+      {logoLabel ? <EmptyAgentName key={motionKey} text={logoLabel} /> : null}
       {title ? <div className="empty-title">{title}</div> : null}
       {description && <div className="empty-desc">{description}</div>}
       {children}
+      {foot ? <div className="empty-state-foot">{foot}</div> : null}
     </>
   )
 
+  const rootClass =
+    layout === 'session'
+      ? `empty-state empty-state-session${entering ? ' is-entering' : ''}`
+      : `empty-state${entering ? ' is-entering' : ''}`
+
   if (layout === 'session') {
     return (
-      <div
-        className="empty-state empty-state-session"
-        data-entered={entered ? '' : undefined}
-      >
+      <div className={rootClass}>
         <div className="empty-state-hero">{hero}</div>
-        {foot ? <div className="empty-state-foot">{foot}</div> : null}
       </div>
     )
   }
 
-  return (
-    <div className="empty-state" data-entered={entered ? '' : undefined}>
-      {hero}
-      {foot}
-    </div>
-  )
+  return <div className={rootClass}>{hero}</div>
 }
 
 /**

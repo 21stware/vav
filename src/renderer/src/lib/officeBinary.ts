@@ -3,14 +3,16 @@
 import { isOfficeLockFile, OFFICE_LOCK_FILE_MESSAGE } from '@shared/officeLock'
 import { localFileStreamUrl } from '@shared/localFileUrl'
 
-export async function loadFileBuffer(path: string): Promise<ArrayBuffer> {
+export async function loadFileBuffer(path: string, rev?: number | string): Promise<ArrayBuffer> {
   if (isOfficeLockFile(path)) {
     throw new Error(OFFICE_LOCK_FILE_MESSAGE)
   }
 
   // Stream via privileged protocol (supports large files; no base64 IPC tax).
   try {
-    const res = await fetch(localFileStreamUrl(path))
+    const base = localFileStreamUrl(path)
+    const url = rev == null ? base : `${base}&rev=${encodeURIComponent(String(rev))}`
+    const res = await fetch(url)
     if (res.ok) {
       const buffer = await res.arrayBuffer()
       assertOfficeMagic(path, buffer)

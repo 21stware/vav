@@ -134,7 +134,7 @@ export function XlsxNativeView({
     const runLocalParse = async (): Promise<void> => {
       if (cancelled || seededFromMain.current) return
       try {
-        const buf = await loadFileBuffer(path)
+        const buf = await loadFileBuffer(path, revision)
         if (cancelled || seededFromMain.current) return
         const first = XLSX.read(buf, {
           type: 'array',

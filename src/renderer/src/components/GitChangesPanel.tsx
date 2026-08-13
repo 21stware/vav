@@ -6,7 +6,7 @@ import {
   useState,
   type KeyboardEvent as ReactKeyboardEvent
 } from 'react'
-import { ChevronDown, ChevronRight } from 'lucide-react'
+import { ChevronDown, ChevronRight, X } from 'lucide-react'
 import type { GitChangeEntry, GitSnapshot } from '@shared/git'
 import { useSessionStore } from '../state/sessionStore'
 import { useWorkspaceStore } from '../state/workspaceStore'
@@ -318,6 +318,108 @@ export type GitPanelChrome = {
   refresh: () => void
 }
 
+function GitDiffContent({
+  cwd,
+  entry,
+  diff,
+  diffError
+}: {
+  cwd: string
+  entry: GitChangeEntry
+  diff: string | null
+  diffError: string | null
+}): React.JSX.Element {
+  const t = useT()
+  const showImage =
+    isImagePath(entry.path) &&
+    (diff == null || looksBinaryDiff(diff) || diff.trim() === '' || diff.includes('(no textual'))
+
+  return (
+    <div className="git-diff-scroll">
+      {diffError ? (
+        <div className="git-diff-error">{diffError}</div>
+      ) : showImage ? (
+        <ImageDiffView cwd={cwd} entry={entry} />
+      ) : diff == null ? (
+        <div className="token-usage-muted">{t('common.loading')}</div>
+      ) : looksBinaryDiff(diff) ? (
+        <div className="git-binary-note">{t('git.binaryDiff')}</div>
+      ) : (
+        <DiffLines text={diff} filePath={entry.path} />
+      )}
+    </div>
+  )
+}
+
+/** Session-right preview: git diff for the selected changed file. */
+export function GitDiffPreview({
+  cwd,
+  entry,
+  onClose
+}: {
+  cwd: string
+  entry: GitChangeEntry
+  onClose: () => void
+}): React.JSX.Element {
+  const t = useT()
+  const [diff, setDiff] = useState<string | null>(null)
+  const [diffError, setDiffError] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!window.vav?.git?.diff) {
+      setDiff(null)
+      setDiffError(t('git.apiMissing'))
+      return
+    }
+    let cancelled = false
+    setDiff(null)
+    setDiffError(null)
+    void (async () => {
+      try {
+        const result = await window.vav.git.diff(cwd, entry.path)
+        if (cancelled) return
+        if (!result.ok) {
+          setDiff(null)
+          setDiffError(result.error)
+          return
+        }
+        setDiffError(null)
+        setDiff(result.data)
+      } catch (err) {
+        if (cancelled) return
+        setDiff(null)
+        setDiffError(err instanceof Error ? err.message : String(err))
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [cwd, entry.path, t])
+
+  const reveal = (): void => {
+    const target = entry.status === 'deleted' ? dirname(entry.absolutePath) : entry.absolutePath
+    void window.vav.conversations.revealInFinder(target)
+  }
+
+  return (
+    <div className="git-preview">
+      <header className="workspace-preview-chrome">
+        <span className="git-diff-filename" title={entry.path}>
+          {entry.path}
+        </span>
+        <Button
+          icon={<FileManagerIcon size={12} />}
+          size="sm"
+          title={t('git.revealInFm', { fileManager: fileManagerLabel() })}
+          onClick={reveal}
+        />
+        <Button icon={<X size={14} />} size="sm" title={t('common.close')} onClick={onClose} />
+      </header>
+      <GitDiffContent cwd={cwd} entry={entry} diff={diff} diffError={diffError} />
+    </div>
+  )
+}
+
 /** Files tray → Git: changed files + selected file diff. */
 export function GitChangesPanel({
   visible,
@@ -329,6 +431,8 @@ export function GitChangesPanel({
 }): React.JSX.Element {
   const t = useT()
   const activeId = useSessionStore((s) => s.activeId)
+  const previewHost = useSessionStore((s) => s.filePreviewHost)
+  const setSessionPreview = useSessionStore((s) => s.setSessionPreview)
   const root = useWorkspaceStore((s) => s.workspaces[activeId]?.root ?? null)
   /** Temp dirs can become repos after empty-session “enable version control”. */
   const gitRepoEpoch = useGitRepoSyncEpoch()
@@ -419,7 +523,12 @@ export function GitChangesPanel({
   }, [onChrome])
 
   useEffect(() => {
-    if (!visible || !root || !selected || !snap?.isRepo) {
+    if (!visible || !previewHost || !root || !selectedEntry) return
+    setSessionPreview({ kind: 'git', cwd: root, entry: selectedEntry })
+  }, [visible, previewHost, root, selectedEntry, setSessionPreview])
+
+  useEffect(() => {
+    if (previewHost || !visible || !root || !selected || !snap?.isRepo) {
       setDiff(null)
       setDiffError(null)
       return
@@ -450,7 +559,7 @@ export function GitChangesPanel({
     return () => {
       cancelled = true
     }
-  }, [visible, root, selected, snap?.isRepo, t])
+  }, [previewHost, visible, root, selected, snap?.isRepo, t])
 
   // Keep focusIndex aligned with selected file when selection changes.
   useEffect(() => {
@@ -563,17 +672,12 @@ export function GitChangesPanel({
     )
   }
 
-  const showImage =
-    !!selectedEntry &&
-    isImagePath(selectedEntry.path) &&
-    (diff == null || looksBinaryDiff(diff) || diff.trim() === '' || diff.includes('(no textual'))
-
   return (
     <div className="git-panel">
       {snap.changes.length === 0 ? (
         <EmptyState title={t('git.clean')} description={t('git.cleanDesc')} />
       ) : (
-        <div className="git-panel-body">
+        <div className={`git-panel-body${previewHost ? ' is-list-only' : ''}`}>
           <div
             ref={listRef}
             className="git-change-list"
@@ -638,34 +742,31 @@ export function GitChangesPanel({
               )
             })}
           </div>
-          <div className="git-diff-pane">
-            {selectedEntry && (
-              <div className="git-diff-header">
-                <span className="git-diff-filename" title={selectedEntry.path}>
-                  {selectedEntry.path}
-                </span>
-                <Button
-                  icon={<FileManagerIcon size={12} />}
-                  size="sm"
-                  title={t('git.revealInFm', { fileManager: fileManagerLabel() })}
-                  onClick={revealSelected}
-                />
-              </div>
-            )}
-            <div className="git-diff-scroll">
-              {diffError ? (
-                <div className="git-diff-error">{diffError}</div>
-              ) : showImage && selectedEntry ? (
-                <ImageDiffView cwd={root} entry={selectedEntry} />
-              ) : diff == null ? (
-                <div className="token-usage-muted">{t('common.loading')}</div>
-              ) : looksBinaryDiff(diff) ? (
-                <div className="git-binary-note">{t('git.binaryDiff')}</div>
-              ) : (
-                <DiffLines text={diff} filePath={selected ?? ''} />
+          {!previewHost ? (
+            <div className="git-diff-pane">
+              {selectedEntry && (
+                <div className="git-diff-header">
+                  <span className="git-diff-filename" title={selectedEntry.path}>
+                    {selectedEntry.path}
+                  </span>
+                  <Button
+                    icon={<FileManagerIcon size={12} />}
+                    size="sm"
+                    title={t('git.revealInFm', { fileManager: fileManagerLabel() })}
+                    onClick={revealSelected}
+                  />
+                </div>
               )}
+              {selectedEntry ? (
+                <GitDiffContent
+                  cwd={root}
+                  entry={selectedEntry}
+                  diff={diff}
+                  diffError={diffError}
+                />
+              ) : null}
             </div>
-          </div>
+          ) : null}
         </div>
       )}
     </div>

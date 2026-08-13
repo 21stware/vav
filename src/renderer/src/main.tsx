@@ -2,8 +2,8 @@ import { StrictMode, Suspense, lazy } from 'react'
 import { createRoot } from 'react-dom/client'
 import { IS_MAC, PLATFORM } from './lib/platform'
 import { installLiveResizeTracking } from './lib/liveResize'
-import './styles/index.css'
 import '@xterm/xterm/css/xterm.css'
+import './styles/index.css'
 
 // Window roots are code-split so Settings / Token Usage / Session don't parse
 // the main App + FileViewer + office graph on open.

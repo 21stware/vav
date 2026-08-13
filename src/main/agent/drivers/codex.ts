@@ -1,8 +1,9 @@
 import type { ApprovalMode, QuotaWindow } from '@shared/types'
 import {
+  classifyCodexRateLimitWindowKinds,
+  codexWindowMinutesFromRecord,
   normalizeQuotaPercent,
-  normalizeQuotaResetsAt,
-  quotaKindFromCodexWindow
+  parseQuotaResetsAt
 } from '@shared/tokenUsage'
 import {
   asArray,
@@ -410,24 +411,31 @@ function wireCodex(
 /** Live stream only — skip windows without a numeric used_percent. */
 function quotaWindowsFromCodexRateLimits(rateLimits: Record<string, unknown>): QuotaWindow[] {
   const now = Date.now()
-  const out: QuotaWindow[] = []
-  for (const key of ['primary', 'secondary'] as const) {
+  const parsed = (['primary', 'secondary'] as const).map((key) => {
     const rec = asRecord(rateLimits[key])
-    if (!rec) continue
+    if (!rec) return { key, rec: null, pct: null, minutes: null }
     const pct = normalizeQuotaPercent(
       num(rec.used_percent) ?? num(rec.usedPercent) ?? num(rec.used_percentage) ?? -1
     )
-    if (pct == null) continue
-    const windowMinutes = num(rec.window_minutes) ?? num(rec.windowMinutes)
-    const kind = quotaKindFromCodexWindow(key, windowMinutes)
-    const resetsIn = num(rec.resets_in_seconds) ?? num(rec.resetsInSeconds)
+    return { key, rec, pct, minutes: pct == null ? null : codexWindowMinutesFromRecord(rec) }
+  })
+  const kinds = classifyCodexRateLimitWindowKinds({
+    primary: parsed[0].pct != null ? { minutes: parsed[0].minutes } : null,
+    secondary: parsed[1].pct != null ? { minutes: parsed[1].minutes } : null
+  })
+  const out: QuotaWindow[] = []
+  for (const row of parsed) {
+    if (!row.rec || row.pct == null) continue
+    const kind = kinds[row.key]
+    if (!kind) continue
+    const resetsIn = num(row.rec.resets_in_seconds) ?? num(row.rec.resetsInSeconds)
     const resetsAt =
-      normalizeQuotaResetsAt(num(rec.resets_at) ?? num(rec.resetsAt) ?? num(rec.reset_at)) ??
+      parseQuotaResetsAt(row.rec.resets_at ?? row.rec.resetsAt ?? row.rec.reset_at) ??
       (typeof resetsIn === 'number' && resetsIn >= 0 ? now + Math.round(resetsIn * 1000) : null)
     out.push({
-      id: kind === 'other' ? key : kind,
+      id: kind === 'other' ? row.key : kind,
       kind,
-      usedPercent: pct,
+      usedPercent: row.pct,
       resetsAt,
       updatedAt: now
     })

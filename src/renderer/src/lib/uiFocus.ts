@@ -213,6 +213,37 @@ export function focusAgentPane(conversationId: string, preferredTabId?: string):
 }
 
 /**
+ * Focus a tools-tray bash pane by tab id (or the first bash xterm).
+ * Retries a few frames so React can paint after expanding Tools → Terminal.
+ */
+export function focusBashPane(preferredTabId?: string): void {
+  setUiFocusScope('bash')
+  const apply = (attempt: number): void => {
+    const pane = preferredTabId
+      ? (document.querySelector(
+          `[data-bash-pane="${CSS.escape(preferredTabId)}"]`
+        ) as HTMLElement | null)
+      : (document.querySelector('.tools-body [data-bash-pane]') as HTMLElement | null)
+    const ta = (pane?.querySelector('.xterm-helper-textarea') ??
+      document.querySelector('.tools-body .xterm-helper-textarea')) as HTMLTextAreaElement | null
+    if (!ta) {
+      if (attempt < 8) {
+        requestAnimationFrame(() => apply(attempt + 1))
+        return
+      }
+      return
+    }
+    try {
+      ta.focus({ preventScroll: true })
+    } catch {
+      ta.focus()
+    }
+    setUiFocusScope('bash')
+  }
+  requestAnimationFrame(() => apply(0))
+}
+
+/**
  * Put keyboard focus back on the remaining CLI pane so sequential ⌘W keeps
  * closing panes instead of falling through to window-close.
  * Call after any pane close (⌘W or the multi-pane X button).

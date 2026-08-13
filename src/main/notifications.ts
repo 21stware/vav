@@ -8,6 +8,7 @@ import {
   type NativeImage
 } from 'electron'
 import type { AppSettings } from '@shared/types'
+import { groupTrayPanes } from '@shared/traySessions'
 import { existsSync, unlinkSync } from 'node:fs'
 import { join } from 'node:path'
 import { APP_NAME, applyDockIcon, loadAppIcon } from './brand'
@@ -50,9 +51,13 @@ export type NotificationPermission = 'granted' | 'denied' | 'unknown'
 export type RunningSessionTarget = {
   conversationId: string
   title: string
-  surface: 'vav' | 'cli'
+  surface: 'vav' | 'cli' | 'bash'
   tabId?: string
   agentId?: string
+  kind?: 'agent' | 'bash'
+  dirKey?: string
+  dirLabel?: string
+  createdAt?: number
 }
 
 const IS_MAC = process.platform === 'darwin'
@@ -168,7 +173,7 @@ export class NotificationCenter {
       return false
     }
     this.tray.setToolTip(APP_NAME)
-    // Left-click: show running-session menu when any CLI/VAV work is live;
+    // Left-click: show running-session menu when any CLI/bash/VAV work is live;
     // otherwise open the main window. Right-click always shows the menu.
     this.tray.on('click', () => {
       if (this.runningSessions.length > 0) {
@@ -201,7 +206,7 @@ export class NotificationCenter {
       this.tray.setTitle(this.runningCount > 0 ? String(this.runningCount) : '')
     }
     this.tray.setToolTip(
-      this.runningCount > 0 ? t('tray.running', { count: this.runningCount }) : APP_NAME
+      this.runningCount > 0 ? t('tray.sessions', { count: this.runningCount }) : APP_NAME
     )
   }
 
@@ -212,15 +217,47 @@ export class NotificationCenter {
       items.push({ label: APP_NAME, enabled: false })
     } else {
       items.push({
-        label: t('tray.running', { count: this.runningSessions.length }),
+        label: t('tray.sessions', { count: this.runningSessions.length }),
         enabled: false
       })
-      items.push({ type: 'separator' })
-      for (const row of this.runningSessions) {
-        items.push({
-          label: row.title,
-          click: () => this.onOpenSession(row)
-        })
+      const groups = groupTrayPanes(
+        this.runningSessions
+          .filter((row) => row.kind === 'agent' || row.kind === 'bash')
+          .map((row) => ({
+            conversationId: row.conversationId,
+            tabId: row.tabId ?? '',
+            kind: row.kind === 'bash' ? 'bash' : 'agent',
+            sessionTitle: row.title,
+            paneTitle: row.title,
+            dirKey: row.dirKey || '~',
+            dirLabel: row.dirLabel || row.dirKey || '~',
+            createdAt: row.createdAt ?? 0,
+            agentId: row.agentId
+          }))
+      )
+      if (groups.length > 0) {
+        for (const group of groups) {
+          items.push({ type: 'separator' })
+          items.push({ label: group.dirLabel, enabled: false })
+          for (const pane of group.panes) {
+            const row = this.runningSessions.find(
+              (s) => s.conversationId === pane.conversationId && s.tabId === pane.tabId
+            )
+            if (!row) continue
+            items.push({
+              label: row.title,
+              click: () => this.onOpenSession(row)
+            })
+          }
+        }
+      } else {
+        items.push({ type: 'separator' })
+        for (const row of this.runningSessions) {
+          items.push({
+            label: row.title,
+            click: () => this.onOpenSession(row)
+          })
+        }
       }
     }
     items.push(

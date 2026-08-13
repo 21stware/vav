@@ -149,7 +149,7 @@ export function DocxNativeView({
 
     void (async () => {
       try {
-        const buffer = await loadFileBuffer(path)
+        const buffer = await loadFileBuffer(path, revision)
         if (cancelled) return
         const staging = document.createElement('div')
         await renderAsync(buffer, staging, styleHost ?? undefined, {

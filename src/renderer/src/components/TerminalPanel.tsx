@@ -34,6 +34,7 @@ export function TerminalPanel({
 }): React.JSX.Element {
   const t = useT()
   const activeId = useSessionStore((s) => s.activeId)
+  const bashBackground = useSessionStore((s) => s.settings.bashBackground ?? 'theme')
   // Unified CLI surface (preferred) — falls back to legacy per-agent host.
   const agentSurface = useWorkspaceStore((s) => {
     if (surface !== 'agent') return null
@@ -67,6 +68,7 @@ export function TerminalPanel({
       className="terminal-stack multi-split"
       data-empty={empty}
       data-terminal-surface={surface}
+      data-bash-bg={surface === 'bash' ? bashBackground : undefined}
       data-multi-pane={multiPane ? 'true' : 'false'}
     >
       {empty ? (
@@ -213,6 +215,7 @@ function LayoutNodeView({
         style={{ flex: splitFlex(node.weight) }}
         tabIndex={surface === 'agent' ? -1 : undefined}
         data-cli-pane={surface === 'agent' ? node.tabId : undefined}
+        data-bash-pane={surface === 'bash' ? node.tabId : undefined}
         onMouseDown={(e) => {
           if (surface === 'agent') {
             selectAgentTab(conversationId, node.tabId)
@@ -279,6 +282,7 @@ function LayoutNodeView({
             // Inactive live panes must not steal keys from a pending picker
             // after ⌘D / ⌘⇧D (UI highlights the new pane; focus was jumping back).
             autoFocus={visible && isActive}
+            surface={surface}
           />
         )}
       </div>
@@ -431,13 +435,15 @@ function TerminalHost({
   conversationId,
   tabId,
   hidden,
-  autoFocus
+  autoFocus,
+  surface
 }: {
   conversationId: string
   tabId: string
   hidden: boolean
   /** When false, fit/resize only — never yank focus from another pane’s picker. */
   autoFocus: boolean
+  surface: 'bash' | 'agent'
 }): React.JSX.Element {
   const codeFont = useSessionStore((s) => s.settings.codeFont)
   const fontSize = useSessionStore((s) => s.settings.fontSize)
@@ -454,7 +460,8 @@ function TerminalHost({
       conversationId,
       tabId,
       fontFamily: `"${codeFont}", Menlo, Monaco, "Courier New", monospace`,
-      fontSize: Math.max(11, fontSize - 1)
+      fontSize: Math.max(11, fontSize - 1),
+      surface
     })
     // Re-parent on every mount (reuse path). Clear parked so fit/SIGWINCH run.
     entry.parked = false
@@ -577,7 +584,7 @@ function TerminalHost({
     }
     // Intentionally omit `hidden` / `autoFocus`: Thread↔Swarm and ⌘D must not
     // tear down xterm; focus is handled in a separate effect.
-  }, [conversationId, tabId, codeFont, fontSize])
+  }, [conversationId, tabId, codeFont, fontSize, surface])
 
   // Refit when shown; take keyboard only when this pane is the active one.
   useEffect(() => {

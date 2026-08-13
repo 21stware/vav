@@ -168,7 +168,7 @@ export function PptxNativeView({
 
     void (async () => {
       try {
-        const buf = await loadFileBuffer(path)
+        const buf = await loadFileBuffer(path, revision)
         if (cancelled || !hostRef.current) return
 
         host.innerHTML = ''

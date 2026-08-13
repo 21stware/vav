@@ -1,6 +1,6 @@
 import { app } from 'electron'
 import { createHash } from 'node:crypto'
-import { existsSync, realpathSync } from 'node:fs'
+import { existsSync, realpathSync, watch, type FSWatcher } from 'node:fs'
 import {
   copyFile,
   mkdir,
@@ -53,6 +53,10 @@ type Entry = {
   refCount: number
   /** Extra aliases that map to this entry (non-realpath forms). */
   aliases: Set<string>
+  /** Last copy identity we told the UI about (`size:mtime`). */
+  lastNotifiedSig?: string
+  watcher?: FSWatcher
+  watchTimer?: ReturnType<typeof setTimeout>
 }
 
 type PersistIndex = Record<
@@ -87,6 +91,8 @@ export class WorkingCopyService {
   private readonly indexPath = join(this.root, 'index.json')
   private byReal = new Map<string, Entry>()
   private byCopy = new Map<string, Entry>()
+  /** Preview refresh: fired with the user-visible real path after a copy write. */
+  onCopyChanged: ((realPath: string) => void) | null = null
 
   get storageRoot(): string {
     return this.root
@@ -359,9 +365,8 @@ export class WorkingCopyService {
     for (const entry of this.byReal.values()) {
       if (seen.has(entry)) continue
       seen.add(entry)
-      const before = entry.dirty
       await this.refreshDirtyFlag(entry)
-      if (entry.dirty && !before) dirtied.push(entry.realPath)
+      if (await this.noteCopyIdentityIfChanged(entry)) dirtied.push(entry.realPath)
     }
     return dirtied
   }
@@ -396,13 +401,67 @@ export class WorkingCopyService {
     for (const a of entry.aliases) this.byReal.set(a, entry)
     this.byCopy.set(entry.copyPath, entry)
     this.byCopy.set(canonicalPath(entry.copyPath), entry)
+    this.armCopyWatch(entry)
   }
 
   private unregister(entry: Entry): void {
+    this.disarmCopyWatch(entry)
     this.byReal.delete(entry.realPath)
     for (const a of entry.aliases) this.byReal.delete(a)
     this.byCopy.delete(entry.copyPath)
     this.byCopy.delete(canonicalPath(entry.copyPath))
+  }
+
+  private armCopyWatch(entry: Entry): void {
+    this.disarmCopyWatch(entry)
+    // Watch the copy's unique directory so atomic replace (temp + rename)
+    // still notifies — fs.watch on the file inode is dropped by that pattern.
+    const dir = dirname(entry.copyPath)
+    try {
+      entry.watcher = watch(dir, () => {
+        if (entry.watchTimer) clearTimeout(entry.watchTimer)
+        entry.watchTimer = setTimeout(() => {
+          entry.watchTimer = undefined
+          void this.refreshDirtyFlag(entry).then(async () => {
+            if (await this.noteCopyIdentityIfChanged(entry)) {
+              this.onCopyChanged?.(entry.realPath)
+            }
+          })
+        }, 120)
+      })
+      entry.watcher.on('error', () => this.disarmCopyWatch(entry))
+    } catch {
+      // Copy may not exist yet; I/O still works via ensure.
+    }
+  }
+
+  private disarmCopyWatch(entry: Entry): void {
+    if (entry.watchTimer) {
+      clearTimeout(entry.watchTimer)
+      entry.watchTimer = undefined
+    }
+    if (entry.watcher) {
+      try {
+        entry.watcher.close()
+      } catch {
+        // ignore
+      }
+      entry.watcher = undefined
+    }
+  }
+
+  /** True when the working copy bytes changed since the last UI notify. */
+  private async noteCopyIdentityIfChanged(entry: Entry): Promise<boolean> {
+    if (!entry.dirty) return false
+    try {
+      const st = await stat(entry.copyPath)
+      const sig = `${st.size}:${Math.round(st.mtimeMs)}`
+      if (sig === entry.lastNotifiedSig) return false
+      entry.lastNotifiedSig = sig
+      return true
+    } catch {
+      return false
+    }
   }
 
   private async seedFromReal(real: string, copyPath: string): Promise<void> {

@@ -81,6 +81,8 @@ export interface CommandResult {
   usedFallback: boolean
   /** Set when the command was detached and is still running after settle. */
   backgroundPid?: number
+  /** Stop / abort killed the command before it exited on its own. */
+  cancelled?: boolean
 }
 
 export type ShellOutputHandler = (chunk: string) => void
@@ -98,6 +100,7 @@ export interface WaitResult {
   matched: boolean
   output: string
   elapsedMs: number
+  cancelled?: boolean
 }
 
 /**
@@ -122,6 +125,12 @@ export class StickyShell {
   /** Full session transcript for wait / read_bash_session. */
   private scrollback = ''
   private backgroundChild: ChildProcess | null = null
+  /** Why the current command/wait is being torn down, if we initiated it. */
+  private stopReason: 'timeout' | 'cancel' | null = null
+  /** Active `waitFor` resolver — Stop must unblock it, not only kill the PTY. */
+  private waitCancel: (() => void) | null = null
+  /** Fallback one-shot child when the sticky session cannot start. */
+  private oneShotChild: ChildProcess | null = null
 
   readonly sessionId = BASH_SESSION_ID
 
@@ -151,7 +160,7 @@ export class StickyShell {
    * Block until `expect` appears in new session output, or timeout.
    * Matching is against output appended after this call starts.
    */
-  waitFor(expect: string, timeoutMs = 60_000): Promise<WaitResult> {
+  waitFor(expect: string, timeoutMs = 60_000, signal?: AbortSignal): Promise<WaitResult> {
     const pattern = expect.trim()
     if (!pattern) {
       return Promise.resolve({ matched: false, output: '', elapsedMs: 0 })
@@ -166,20 +175,43 @@ export class StickyShell {
     }
 
     return new Promise((resolve) => {
+      let timer: ReturnType<typeof setInterval> | undefined
+      let timeout: ReturnType<typeof setTimeout> | undefined
+      let settled = false
+      const done = (result: WaitResult): void => {
+        if (settled) return
+        settled = true
+        if (this.waitCancel === cancel) this.waitCancel = null
+        signal?.removeEventListener('abort', cancel)
+        if (timer) clearInterval(timer)
+        if (timeout) clearTimeout(timeout)
+        resolve(result)
+      }
+      const cancel = (): void => {
+        done({
+          matched: false,
+          output: this.scrollback.slice(baseline),
+          elapsedMs: Date.now() - startedAt,
+          cancelled: true
+        })
+      }
       const check = (): boolean => {
         const slice = this.scrollback.slice(baseline)
         const matched = regex ? regex.test(slice) : slice.includes(pattern)
         if (!matched) return false
-        clearInterval(timer)
-        clearTimeout(timeout)
-        resolve({ matched: true, output: slice, elapsedMs: Date.now() - startedAt })
+        done({ matched: true, output: slice, elapsedMs: Date.now() - startedAt })
         return true
       }
+      this.waitCancel = cancel
+      if (signal?.aborted) {
+        cancel()
+        return
+      }
+      signal?.addEventListener('abort', cancel, { once: true })
       if (check()) return
-      const timer = setInterval(() => void check(), 150)
-      const timeout = setTimeout(() => {
-        clearInterval(timer)
-        resolve({
+      timer = setInterval(() => void check(), 150)
+      timeout = setTimeout(() => {
+        done({
           matched: false,
           output: this.scrollback.slice(baseline),
           elapsedMs: Date.now() - startedAt
@@ -221,9 +253,12 @@ export class StickyShell {
   run(
     command: string,
     timeoutSeconds: number,
-    onOutput?: ShellOutputHandler
+    onOutput?: ShellOutputHandler,
+    signal?: AbortSignal
   ): Promise<CommandResult> {
-    const task = this.queue.then(() => this.execute(command, timeoutSeconds, this.tapOutput(onOutput)))
+    const task = this.queue.then(() =>
+      this.execute(command, timeoutSeconds, this.tapOutput(onOutput), signal)
+    )
     this.queue = task.catch(() => undefined)
     return task
   }
@@ -235,16 +270,42 @@ export class StickyShell {
    * startup output for a short settle window, then returns while it keeps going.
    * Further stdout still feeds the session scrollback for `wait` / `read_bash_session`.
    */
-  runBackground(command: string, onOutput?: ShellOutputHandler): Promise<CommandResult> {
-    const task = this.queue.then(() => this.executeBackground(command, this.tapOutput(onOutput)))
+  runBackground(
+    command: string,
+    onOutput?: ShellOutputHandler,
+    signal?: AbortSignal
+  ): Promise<CommandResult> {
+    const task = this.queue.then(() =>
+      this.executeBackground(command, this.tapOutput(onOutput), signal)
+    )
     this.queue = task.catch(() => undefined)
     return task
   }
 
+  /**
+   * Stop the in-flight command / wait and kill the process tree.
+   * The sticky session respawns on the next `run`.
+   */
+  interrupt(): void {
+    this.stopReason = this.stopReason ?? 'cancel'
+    this.waitCancel?.()
+    this.dispose()
+  }
+
   private executeBackground(
     command: string,
-    onOutput?: ShellOutputHandler
+    onOutput?: ShellOutputHandler,
+    signal?: AbortSignal
   ): Promise<CommandResult> {
+    if (signal?.aborted) {
+      return Promise.resolve({
+        output: '',
+        exitCode: 130,
+        timedOut: false,
+        usedFallback: true,
+        cancelled: true
+      })
+    }
     return new Promise((resolve) => {
       // Prefer a single tracked background child so wait/read keep receiving output.
       if (this.backgroundChild) {
@@ -288,7 +349,21 @@ export class StickyShell {
         if (settled) return
         settled = true
         clearTimeout(timer)
+        signal?.removeEventListener('abort', onAbort)
         resolve(result)
+      }
+
+      const onAbort = (): void => {
+        this.stopReason = 'cancel'
+        if (child.pid) killTree(child.pid, () => child.kill('SIGKILL'))
+        if (this.backgroundChild === child) this.backgroundChild = null
+        finish({
+          output: output.replace(/\n$/, ''),
+          exitCode: 130,
+          timedOut: false,
+          usedFallback: true,
+          cancelled: true
+        })
       }
 
       child.on('error', (err) => {
@@ -309,12 +384,15 @@ export class StickyShell {
         if (!settled) {
           finish({
             output: output.replace(/\n$/, ''),
-            exitCode: code ?? -1,
+            exitCode: this.stopReason === 'cancel' ? 130 : (code ?? -1),
             timedOut: false,
-            usedFallback: true
+            usedFallback: true,
+            cancelled: this.stopReason === 'cancel'
           })
         }
       })
+
+      signal?.addEventListener('abort', onAbort, { once: true })
 
       const timer = setTimeout(() => {
         if (exited) return
@@ -343,17 +421,27 @@ export class StickyShell {
   private async execute(
     command: string,
     timeoutSeconds: number,
-    onOutput?: ShellOutputHandler
+    onOutput?: ShellOutputHandler,
+    signal?: AbortSignal
   ): Promise<CommandResult> {
+    if (signal?.aborted) {
+      return {
+        output: '',
+        exitCode: 130,
+        timedOut: false,
+        usedFallback: false,
+        cancelled: true
+      }
+    }
     if (!this.child) {
       try {
         this.spawnShell()
       } catch {
-        return this.oneShot(command, timeoutSeconds, onOutput)
+        return this.oneShot(command, timeoutSeconds, onOutput, signal)
       }
     }
     const child = this.child
-    if (!child) return this.oneShot(command, timeoutSeconds, onOutput)
+    if (!child) return this.oneShot(command, timeoutSeconds, onOutput, signal)
 
     const marker = `<<<VAV_END:${randomUUID()}`
     const endPattern = new RegExp(`${escapeRegex(marker)}:(-?\\d+)>>>`)
@@ -361,6 +449,7 @@ export class StickyShell {
     // leak into the mirrored transcript or be missed.
     const holdback = marker.length + 16
     this.buffer = ''
+    this.stopReason = null
     let emitted = 0
 
     return new Promise<CommandResult>((resolve) => {
@@ -369,7 +458,9 @@ export class StickyShell {
         if (settled) return
         settled = true
         this.appendChunk = null
+        this.stopReason = null
         clearTimeout(timer)
+        signal?.removeEventListener('abort', onAbort)
         child.stdout.off('data', onData)
         child.off('exit', onExit)
         resolve(result)
@@ -404,19 +495,37 @@ export class StickyShell {
 
       this.appendChunk = onData
 
-      const onExit = (): void => {
+      const flushedPartial = (): string => {
         const output = this.buffer
         if (onOutput && emitted < output.length) onOutput(output.slice(emitted))
         this.buffer = ''
+        emitted = 0
+        return output
+      }
+
+      const onExit = (): void => {
+        const output = flushedPartial()
         this.child = null
-        finish({ output, exitCode: -1, timedOut: false, usedFallback: false })
+        const cancelled = this.stopReason === 'cancel'
+        finish({
+          output,
+          exitCode: cancelled ? 130 : this.stopReason === 'timeout' ? 124 : -1,
+          timedOut: this.stopReason === 'timeout',
+          usedFallback: false,
+          cancelled
+        })
+      }
+
+      const onAbort = (): void => {
+        this.stopReason = 'cancel'
+        this.dispose()
       }
 
       const timer = setTimeout(() => {
-        const partial = this.buffer
-        if (onOutput && emitted < partial.length) onOutput(partial.slice(emitted))
+        const partial = flushedPartial()
         // The command owns the process group; tearing it down is the only way to
         // reliably stop a wedged child, so the session restarts on the next call.
+        this.stopReason = 'timeout'
         this.dispose()
         finish({
           output: partial,
@@ -428,6 +537,7 @@ export class StickyShell {
 
       child.stdout.on('data', onData)
       child.once('exit', onExit)
+      signal?.addEventListener('abort', onAbort, { once: true })
       try {
         const ok = child.stdin.write(this.frame(command, marker))
         if (!ok) {
@@ -505,8 +615,18 @@ export class StickyShell {
   private oneShot(
     command: string,
     timeoutSeconds: number,
-    onOutput?: ShellOutputHandler
+    onOutput?: ShellOutputHandler,
+    signal?: AbortSignal
   ): Promise<CommandResult> {
+    if (signal?.aborted) {
+      return Promise.resolve({
+        output: '',
+        exitCode: 130,
+        timedOut: false,
+        usedFallback: true,
+        cancelled: true
+      })
+    }
     return new Promise((resolve) => {
       const child = spawn(shellPath(this.shell), oneShotArgs(this.shell, command), {
         cwd: this.cwd,
@@ -514,8 +634,10 @@ export class StickyShell {
         detached: !IS_WINDOWS,
         windowsHide: true
       })
+      this.oneShotChild = child
       let output = ''
       let timedOut = false
+      let cancelled = false
       const timer = setTimeout(() => {
         timedOut = true
         if (child.pid) killTree(child.pid, () => child.kill('SIGKILL'))
@@ -526,12 +648,21 @@ export class StickyShell {
         output += text
         onOutput?.(text)
       }
+
+      const onAbort = (): void => {
+        cancelled = true
+        this.stopReason = 'cancel'
+        if (child.pid) killTree(child.pid, () => child.kill('SIGKILL'))
+      }
+
       child.stdout?.setEncoding('utf8')
       child.stderr?.setEncoding('utf8')
       child.stdout?.on('data', take)
       child.stderr?.on('data', take)
       child.on('error', (err) => {
+        if (this.oneShotChild === child) this.oneShotChild = null
         clearTimeout(timer)
+        signal?.removeEventListener('abort', onAbort)
         resolve({
           output: `无法启动 ${shellPath(this.shell)}：${err.message}`,
           exitCode: 127,
@@ -540,14 +671,19 @@ export class StickyShell {
         })
       })
       child.on('close', (code) => {
+        if (this.oneShotChild === child) this.oneShotChild = null
         clearTimeout(timer)
+        signal?.removeEventListener('abort', onAbort)
+        const stopped = cancelled || this.stopReason === 'cancel'
         resolve({
           output: output.replace(/\n$/, ''),
-          exitCode: timedOut ? 124 : (code ?? -1),
+          exitCode: timedOut ? 124 : stopped ? 130 : (code ?? -1),
           timedOut,
-          usedFallback: true
+          usedFallback: true,
+          cancelled: stopped && !timedOut
         })
       })
+      signal?.addEventListener('abort', onAbort, { once: true })
     })
   }
 
@@ -558,6 +694,15 @@ export class StickyShell {
     this.buffer = ''
     const background = this.backgroundChild
     this.backgroundChild = null
+    const oneShot = this.oneShotChild
+    this.oneShotChild = null
+    if (oneShot?.pid) {
+      try {
+        killTree(oneShot.pid, () => oneShot.kill('SIGKILL'))
+      } catch {
+        // ignore
+      }
+    }
     if (background?.pid) {
       try {
         killTree(background.pid, () => background.kill('SIGKILL'))

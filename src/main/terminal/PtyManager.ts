@@ -1,8 +1,8 @@
 import * as pty from 'node-pty'
 import { execFile } from 'node:child_process'
-import { existsSync, writeFileSync, unlinkSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, writeFileSync, unlinkSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { promisify } from 'node:util'
 import type { PtyActivityStatus, PtyListResult } from '@shared/ipc'
@@ -13,6 +13,33 @@ import type { AgentContextLaunchStrategy } from '@shared/agentContextInject'
 import { shellPath } from './StickyShell'
 import { loginPath, resolveAgentExecutable } from './loginPath'
 import { ensureClaudeWorkspaceTrusted, isClaudeCodeBinary } from './claudeTrust'
+
+interface GhostBash {
+  id: string
+  conversationId: string
+  title: string
+  cwd: string
+  createdAt: number
+  outputBuffer: string
+}
+
+const PERSIST_DEBOUNCE_MS = 400
+
+type PersistedBashPane = {
+  id: string
+  conversationId: string
+  title: string
+  cwd: string
+  createdAt: number
+  alive: boolean
+  output: string
+}
+
+type PtyPersistFile = {
+  version: 1
+  bash: PersistedBashPane[]
+  layouts: Record<string, ConversationPtyLayouts>
+}
 
 function shQuote(value: string): string {
   return `'${value.replace(/'/g, `'\\''`)}'`
@@ -66,7 +93,7 @@ export interface PtySessionMeta {
   agentId: string | null
   title: string
   createdAt: number
-  status: Exclude<PtyActivityStatus, 'exited'>
+  status: PtyActivityStatus
 }
 
 interface PtySession {
@@ -80,6 +107,8 @@ interface PtySession {
   title: string
   /** Idle/default title restored when no child process is running. */
   baseTitle: string
+  /** Directory the PTY was spawned in (used to restore after VAV restart). */
+  cwd: string
   createdAt: number
   /** Ring buffer of recent stdout for attach/replay. */
   outputBuffer: string
@@ -117,6 +146,10 @@ export interface PtyLaunchOptions {
    */
   agentId?: string | null
   title?: string
+  /** Replay this scrollback after spawn (VAV restart restore). */
+  restoreOutput?: string
+  /** Preserve original createdAt when restoring a pane. */
+  createdAt?: number
 }
 
 function appendOutputBuffer(session: PtySession, data: string): void {
@@ -441,6 +474,13 @@ export class PtyManager {
   /** Throttle lsof (ports) relative to ps (process names). */
   private titlePollTick = 0
   private cachedListenPorts = new Map<number, number[]>()
+  /** Exited bash tabs the user has not closed — survive hydrate and VAV restart. */
+  private ghosts = new Map<string, GhostBash>()
+  private persistPath: string | null = null
+  private persistTimer: ReturnType<typeof setTimeout> | null = null
+  /** Skip persist mutations while shutting down (already flushed). */
+  private persistFrozen = false
+  private restoring = false
 
   constructor(
     private onData: (tabId: string, data: string) => void,
@@ -542,6 +582,7 @@ export class PtyManager {
       for (const conversationId of titleChanged) {
         this.onChanged?.(conversationId)
       }
+      if (titleChanged.size > 0) this.schedulePersist()
     } finally {
       this.statusPolling = false
     }
@@ -549,7 +590,7 @@ export class PtyManager {
 
   /** Conversation that owns a live tab (for targeted IPC). */
   conversationIdFor(tabId: string): string | null {
-    return this.sessions.get(tabId)?.conversationId ?? null
+    return this.sessions.get(tabId)?.conversationId ?? this.ghosts.get(tabId)?.conversationId ?? null
   }
 
   /**
@@ -719,8 +760,9 @@ export class PtyManager {
       agentId,
       title,
       baseTitle: title,
-      createdAt: Date.now(),
-      outputBuffer: '',
+      cwd: safeCwd,
+      createdAt: opts.createdAt ?? Date.now(),
+      outputBuffer: opts.restoreOutput ?? '',
       appliedCols: Math.max(2, cols),
       appliedRows: Math.max(1, rows),
       // A shell that just spawned is still painting its prompt; the first poll
@@ -750,17 +792,29 @@ export class PtyManager {
       // Deliver any coalesced stdout before the exit marker.
       this.flushPendingData(id)
       this.sessions.delete(id)
-      // Must precede onChanged: that triggers a re-hydrate from the live list,
-      // and the renderer needs to know this tab is a tombstone before the
-      // projection drops it.
-      if (diedOnItsOwn) this.setStatus(session, 'exited')
+      if (diedOnItsOwn) {
+        if (session.agentId == null) {
+          this.ghosts.set(id, {
+            id,
+            conversationId,
+            title: session.title,
+            cwd: session.cwd,
+            createdAt: session.createdAt,
+            outputBuffer: session.outputBuffer
+          })
+        }
+        this.setStatus(session, 'exited')
+        this.schedulePersist()
+      }
       this.onExit(id, conversationId)
       this.onChanged?.(conversationId)
       if (this.sessions.size === 0) this.stopStatusPolling()
     })
     this.sessions.set(id, session)
+    this.ghosts.delete(id)
     this.startStatusPolling()
-    this.onChanged?.(conversationId)
+    if (!this.restoring) this.onChanged?.(conversationId)
+    if (agentId == null) this.schedulePersist()
 
     return id
   }
@@ -780,6 +834,17 @@ export class PtyManager {
         title: session.title,
         createdAt: session.createdAt,
         status: session.status
+      })
+    }
+    for (const ghost of this.ghosts.values()) {
+      if (ghost.conversationId !== conversationId) continue
+      out.push({
+        id: ghost.id,
+        conversationId: ghost.conversationId,
+        agentId: null,
+        title: ghost.title,
+        createdAt: ghost.createdAt,
+        status: 'exited'
       })
     }
     out.sort((a, b) => a.createdAt - b.createdAt)
@@ -802,6 +867,7 @@ export class PtyManager {
       ),
       cliMode: layouts.cliMode === true
     })
+    this.schedulePersist()
   }
 
   clearLayouts(conversationId: string): void {
@@ -814,8 +880,10 @@ export class PtyManager {
    */
   replay(tabId: string): string {
     const session = this.sessions.get(tabId)
-    if (!session) return ''
-    return snapshotForReplay(session.outputBuffer, session.agentId)
+    if (session) return snapshotForReplay(session.outputBuffer, session.agentId)
+    const ghost = this.ghosts.get(tabId)
+    if (ghost) return snapshotForReplay(ghost.outputBuffer, null)
+    return ''
   }
 
   write(tabId: string, data: string): void {
@@ -861,6 +929,13 @@ export class PtyManager {
   }
 
   kill(tabId: string): void {
+    const ghost = this.ghosts.get(tabId)
+    if (ghost) {
+      this.ghosts.delete(tabId)
+      this.schedulePersist()
+      this.onChanged?.(ghost.conversationId)
+      return
+    }
     const session = this.sessions.get(tabId)
     if (!session) return
     const conversationId = session.conversationId
@@ -880,6 +955,7 @@ export class PtyManager {
     } catch {
       // Already gone.
     }
+    if (!this.persistFrozen) this.schedulePersist()
     this.onChanged?.(conversationId)
   }
 
@@ -895,20 +971,26 @@ export class PtyManager {
     for (const session of [...this.sessions.values()]) {
       if (session.conversationId === conversationId) this.kill(session.id)
     }
+    for (const ghost of [...this.ghosts.values()]) {
+      if (ghost.conversationId === conversationId) this.kill(ghost.id)
+    }
     this.clearLayouts(conversationId)
+    this.schedulePersist()
   }
 
-  /** True if any live PTY is bound to this conversation (user bash or CLI host). */
+  /** True if any live PTY or bash tombstone is bound to this conversation. */
   hasConversation(conversationId: string): boolean {
     for (const session of this.sessions.values()) {
       if (session.conversationId === conversationId) return true
+    }
+    for (const ghost of this.ghosts.values()) {
+      if (ghost.conversationId === conversationId) return true
     }
     return false
   }
 
   /**
    * Live CLI agent host panes (excludes plain bash and the built-in VAV mirror).
-   * Used by the tray badge / menu.
    */
   listCliAgentSessions(): PtySessionMeta[] {
     const out: PtySessionMeta[] = []
@@ -927,9 +1009,162 @@ export class PtyManager {
     return out
   }
 
+  /** Live tools-tray bash panes (not VAV mirror, not CLI agents). */
+  listBashSessions(): PtySessionMeta[] {
+    const out: PtySessionMeta[] = []
+    for (const session of this.sessions.values()) {
+      if (session.agentId != null) continue
+      out.push({
+        id: session.id,
+        conversationId: session.conversationId,
+        agentId: null,
+        title: session.title,
+        createdAt: session.createdAt,
+        status: session.status
+      })
+    }
+    out.sort((a, b) => a.createdAt - b.createdAt)
+    return out
+  }
+
+  /**
+   * Restore bash panes after a VAV restart: live shells respawn in the same
+   * slot; already-exited tabs come back as tombstones (same as process exit).
+   */
+  restorePersisted(opts: {
+    persistPath: string
+    shell: ShellKind
+    conversationExists: (id: string) => boolean
+    restoreMarker: string
+  }): void {
+    this.persistPath = opts.persistPath
+    const file = this.readPersistFile()
+    if (!file) return
+    this.restoring = true
+    try {
+      for (const [conversationId, layouts] of Object.entries(file.layouts ?? {})) {
+        if (!opts.conversationExists(conversationId)) continue
+        // Only bash splits survive a restart — CLI hosts are not respawned.
+        this.layouts.set(conversationId, {
+          bash: cloneLayout(layouts.bash),
+          agents: {},
+          cliMode: false
+        })
+      }
+      for (const pane of file.bash ?? []) {
+        if (!pane?.id || !opts.conversationExists(pane.conversationId)) continue
+        if (this.sessions.has(pane.id) || this.ghosts.has(pane.id)) continue
+        const cwd = pane.cwd && existsSync(pane.cwd) ? pane.cwd : homedir()
+        const output = typeof pane.output === 'string' ? pane.output : ''
+        if (pane.alive === false) {
+          this.ghosts.set(pane.id, {
+            id: pane.id,
+            conversationId: pane.conversationId,
+            title: pane.title || 'bash',
+            cwd,
+            createdAt: pane.createdAt || Date.now(),
+            outputBuffer: output
+          })
+          continue
+        }
+        const marker = opts.restoreMarker
+          ? `\r\n\x1b[2m${opts.restoreMarker}\x1b[0m\r\n`
+          : ''
+        try {
+          this.create(pane.conversationId, opts.shell, cwd, 80, 24, {
+            preferredId: pane.id,
+            agentId: null,
+            title: pane.title || 'bash',
+            createdAt: pane.createdAt,
+            restoreOutput: `${output}${marker}`
+          })
+        } catch (err) {
+          console.warn('[pty] restore spawn failed', pane.id, err)
+        }
+      }
+    } finally {
+      this.restoring = false
+    }
+    const changed = new Set<string>()
+    for (const session of this.sessions.values()) {
+      if (session.agentId == null) changed.add(session.conversationId)
+    }
+    for (const ghost of this.ghosts.values()) changed.add(ghost.conversationId)
+    for (const conversationId of changed) this.onChanged?.(conversationId)
+    this.schedulePersist()
+  }
+
+  /** Write live bash + tombstones now (call from before-quit before killAll). */
+  flushPersist(): void {
+    if (this.persistTimer) {
+      clearTimeout(this.persistTimer)
+      this.persistTimer = null
+    }
+    this.writePersistFile()
+  }
+
   killAll(): void {
+    this.flushPersist()
+    this.persistFrozen = true
     for (const session of [...this.sessions.values()]) this.kill(session.id)
     this.layouts.clear()
+  }
+
+  private schedulePersist(): void {
+    if (this.persistFrozen || this.restoring || !this.persistPath) return
+    if (this.persistTimer) clearTimeout(this.persistTimer)
+    this.persistTimer = setTimeout(() => {
+      this.persistTimer = null
+      this.writePersistFile()
+    }, PERSIST_DEBOUNCE_MS)
+  }
+
+  private readPersistFile(): PtyPersistFile | null {
+    if (!this.persistPath || !existsSync(this.persistPath)) return null
+    try {
+      const raw = JSON.parse(readFileSync(this.persistPath, 'utf8')) as PtyPersistFile
+      if (!raw || raw.version !== 1 || !Array.isArray(raw.bash)) return null
+      return raw
+    } catch {
+      return null
+    }
+  }
+
+  private writePersistFile(): void {
+    if (!this.persistPath || this.persistFrozen) return
+    const bash: PersistedBashPane[] = []
+    for (const session of this.sessions.values()) {
+      if (session.agentId != null) continue
+      bash.push({
+        id: session.id,
+        conversationId: session.conversationId,
+        title: session.title,
+        cwd: session.cwd,
+        createdAt: session.createdAt,
+        alive: true,
+        output: session.outputBuffer.slice(-BASH_REPLAY_TAIL)
+      })
+    }
+    for (const ghost of this.ghosts.values()) {
+      bash.push({
+        id: ghost.id,
+        conversationId: ghost.conversationId,
+        title: ghost.title,
+        cwd: ghost.cwd,
+        createdAt: ghost.createdAt,
+        alive: false,
+        output: ghost.outputBuffer.slice(-BASH_REPLAY_TAIL)
+      })
+    }
+    const layouts: Record<string, ConversationPtyLayouts> = {}
+    for (const [id, node] of this.layouts) layouts[id] = cloneLayouts(node)
+    const body: PtyPersistFile = { version: 1, bash, layouts }
+    try {
+      mkdirSync(dirname(this.persistPath), { recursive: true })
+      writeFileSync(this.persistPath, JSON.stringify(body), 'utf8')
+    } catch (err) {
+      console.warn('[pty] persist failed', err)
+    }
   }
 }
 

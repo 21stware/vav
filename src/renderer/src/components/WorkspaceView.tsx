@@ -6,6 +6,8 @@ import { useT } from '../i18n/useT'
 import { prefetchForPath } from '../lib/prefetchHeavy'
 import { Button, EmptyState } from './ui'
 import { SessionDetail, type FileSessionChromeProps } from './SessionDetail'
+import { GitDiffPreview } from './GitChangesPanel'
+import { GithubPullPreview } from './GithubPanel'
 
 const FileViewer = lazy(() => import('./FileViewer').then((m) => ({ default: m.FileViewer })))
 
@@ -83,7 +85,9 @@ export function WorkspaceView({
   const activeId = useSessionStore((s) => s.activeId) || conversationId
   const attachContextFile = useSessionStore((s) => s.attachContextFile)
   const previewOpen = useSessionStore((s) => s.filePreviewOpen)
+  const sessionPreview = useSessionStore((s) => s.sessionPreview)
   const setFilePreviewOpen = useSessionStore((s) => s.setFilePreviewOpen)
+  const setFilePreviewHost = useSessionStore((s) => s.setFilePreviewHost)
   const toggleFilePreview = useSessionStore((s) => s.toggleFilePreview)
   const closeFilePreview = useCallback((): void => {
     setFilePreviewOpen(false)
@@ -106,6 +110,11 @@ export function WorkspaceView({
   const previewWidthRef = useRef(previewWidth)
   previewWidthRef.current = previewWidth
   const colDraggingRef = useRef(false)
+
+  useEffect(() => {
+    setFilePreviewHost(true)
+    return () => setFilePreviewHost(false)
+  }, [setFilePreviewHost])
 
   useEffect(() => {
     if (activeId) void ensureFilesLoaded(activeId)
@@ -298,7 +307,19 @@ export function WorkspaceView({
               notifyTerminalResize()
             }}
           />
-          {previewMounted && previewFilePath ? (
+          {previewMounted && sessionPreview.kind === 'git' ? (
+            <GitDiffPreview
+              cwd={sessionPreview.cwd}
+              entry={sessionPreview.entry}
+              onClose={closeFilePreview}
+            />
+          ) : previewMounted && sessionPreview.kind === 'github' ? (
+            <GithubPullPreview
+              cwd={sessionPreview.cwd}
+              pull={sessionPreview.pull}
+              onClose={closeFilePreview}
+            />
+          ) : previewMounted && previewFilePath ? (
             <Suspense
               fallback={<div className="muted" style={{ padding: 24 }}>{t('common.loading')}</div>}
             >

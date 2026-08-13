@@ -228,14 +228,15 @@ export interface TokenSnapshot {
 }
 
 /**
- * Subscription / rate-limit window from a live CLI stream (Claude rate_limit_event,
- * Codex rate_limits on token usage, …). Only windows with a known used % are kept.
+ * Subscription / rate-limit window (Claude OAuth usage, Codex backend usage,
+ * or a live CLI stream). Only windows with a known used % are kept.
  */
 export type QuotaWindowKind =
   | 'five_hour'
   | 'seven_day'
   | 'seven_day_opus'
   | 'seven_day_sonnet'
+  | 'monthly'
   | 'primary'
   | 'secondary'
   | 'other'
@@ -248,7 +249,7 @@ export interface QuotaWindow {
   usedPercent: number
   /** Absolute reset time (ms), when the host reported one. */
   resetsAt: number | null
-  /** When this sample was last observed from the live stream. */
+  /** When this sample was last observed (account poll or live stream). */
   updatedAt: number
 }
 
@@ -629,8 +630,8 @@ export interface Conversation extends ConversationMeta {
   /** cacheCreatedAt + 5 minutes. */
   cacheExpiresAt: number | null
   /**
-   * Live CLI subscription / rate-limit windows (5h, weekly, …).
-   * Populated only from host stream events that include a used percentage.
+   * Subscription / rate-limit windows (5h, weekly, …).
+   * Live CLI samples; the token panel also overlays account-level OAuth/backend polls.
    */
   quotaWindows?: QuotaWindow[]
   /**
@@ -647,6 +648,12 @@ export interface Conversation extends ConversationMeta {
 
 export type ShellKind = 'zsh' | 'bash' | 'fish' | 'powershell'
 export type ThemeMode = 'light' | 'dark' | 'system'
+/**
+ * Tools-tray bash terminal background.
+ * - `dark`: always the dark ANSI palette (independent of app theme).
+ * - `theme`: follow the current light/dark appearance.
+ */
+export type BashBackgroundMode = 'dark' | 'theme'
 /**
  * Accent / surface tint.
  * - `system` (default): follow the OS accent colour (macOS / Windows).
@@ -781,6 +788,12 @@ export interface AppSettings {
   braveSearchKeyPresent?: boolean
   theme: ThemeMode
   /**
+   * Tools-tray bash background. `dark` stays dark regardless of theme;
+   * `theme` follows the current appearance. CLI agent terminals always
+   * follow the theme.
+   */
+  bashBackground: BashBackgroundMode
+  /**
    * Accent colour tint. Default `system` follows the OS accent; `mono` keeps
    * chrome black/white; fixed hues colour buttons, selection, links, and focus.
    */
@@ -906,6 +919,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   webSearxngBaseUrl: '',
   webFetchAllowRender: false,
   theme: 'system',
+  bashBackground: 'theme',
   colorTint: 'system',
   locale: 'system',
   displayCurrency: 'USD',
@@ -1141,6 +1155,18 @@ export type TurnEvent =
   | { type: 'mirror'; conversationId: string; text: string }
   /** fs_write finished: refresh only this parent directory. */
   | { type: 'fs-changed'; conversationId: string; parentPath: string; filePath: string }
+  /**
+   * Streaming draft of a text file the agent is still generating (fs_write args).
+   * `content` replaces the preview; `append` extends it when `baseLen` matches.
+   */
+  | {
+      type: 'file-draft'
+      conversationId: string
+      filePath: string
+      content?: string
+      append?: string
+      baseLen?: number
+    }
   /** Usage sample from an agent loop (may fire mid-turn on tool boundaries). */
   | {
       type: 'usage'

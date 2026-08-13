@@ -4,6 +4,9 @@ import { WebLinksAddon } from '@xterm/addon-web-links'
 import { registerTerminalSink } from '../state/workspaceStore'
 import { IS_MAC } from './platform'
 import { publishTerminalRegistry } from './terminalRegistryHandle'
+import type { BashBackgroundMode } from '@shared/types'
+
+export type TerminalSurface = 'bash' | 'agent'
 
 export interface TerminalEntry {
   term: Terminal
@@ -16,9 +19,14 @@ export interface TerminalEntry {
    * not driving PTY geometry. Used when a companion window owns the viewer.
    */
   parked: boolean
+  /** Tools-tray bash vs CLI agent / install PTY. Drives bash-only dark bg. */
+  surface: TerminalSurface
 }
 
 const entries = new Map<string, TerminalEntry>()
+
+/** Last Appearance setting; bash terminals may ignore app theme. */
+let bashBackgroundMode: BashBackgroundMode = 'theme'
 
 function key(conversationId: string, tabId: string): string {
   return `${conversationId}::${tabId}`
@@ -29,16 +37,11 @@ function key(conversationId: string, tabId: string): string {
  * box. ANSI / 256 / truecolor from CLI agents (Claude Code, etc.) paint on top
  * of this base — keep the 16-color palette saturated enough for TUI apps.
  *
- * Background must stay in sync with `--bg-terminal`.
+ * Background tracks `--bg-content` so swarm / CLI agents match Thread.
+ * Tools-tray bash can stay on the dark palette when Appearance asks for it.
+ * Light palette is ink-heavy: the dark-surface pastels wash out on paper.
  */
-const THEME_DARK = {
-  background: '#101012',
-  foreground: '#e6e6e7',
-  cursor: '#e6e6e7',
-  cursorAccent: '#101012',
-  selectionBackground: 'rgba(141, 124, 230, 0.35)',
-  selectionForeground: undefined,
-  // Standard-ish ANSI so agent TUIs don't look washed out.
+const ANSI_DARK = {
   black: '#1c1c1f',
   red: '#ff6b6b',
   green: '#51cf66',
@@ -55,6 +58,69 @@ const THEME_DARK = {
   brightMagenta: '#e599f7',
   brightCyan: '#66d9e8',
   brightWhite: '#f8f9fa'
+} as const
+
+const ANSI_LIGHT = {
+  black: '#141416',
+  red: '#c92a2a',
+  green: '#2b8a3e',
+  yellow: '#d9480f',
+  blue: '#1864ab',
+  magenta: '#9c36b5',
+  cyan: '#0b7285',
+  white: '#34343a',
+  brightBlack: '#6b6b74',
+  brightRed: '#e03131',
+  brightGreen: '#2f9e44',
+  brightYellow: '#e67700',
+  brightBlue: '#1c7ed6',
+  brightMagenta: '#ae3ec9',
+  brightCyan: '#0c8599',
+  brightWhite: '#141416'
+} as const
+
+const DARK_PLATE = '#1b1b1d'
+const DARK_INK = '#e6e6e7'
+const LIGHT_INK = '#141416'
+
+function isDarkAppearance(): boolean {
+  const theme = document.documentElement.dataset.theme
+  if (theme === 'light' || theme === 'dark') return theme === 'dark'
+  return window.matchMedia('(prefers-color-scheme: dark)').matches
+}
+
+function contentBackground(dark: boolean): string {
+  const value = getComputedStyle(document.documentElement).getPropertyValue('--bg-content').trim()
+  if (value) return value
+  return dark ? DARK_PLATE : '#fcfcfc'
+}
+
+function resolvedTerminalTheme(forceDark = false) {
+  const dark = forceDark || isDarkAppearance()
+  const background = forceDark ? DARK_PLATE : contentBackground(dark)
+  const ink = dark ? DARK_INK : LIGHT_INK
+  return {
+    background,
+    foreground: ink,
+    cursor: ink,
+    cursorAccent: background,
+    selectionBackground: dark ? 'rgba(141, 124, 230, 0.35)' : 'rgba(24, 100, 171, 0.22)',
+    ...(dark ? ANSI_DARK : ANSI_LIGHT)
+  }
+}
+
+function forceDarkBash(entry: Pick<TerminalEntry, 'surface'>): boolean {
+  return entry.surface === 'bash' && bashBackgroundMode === 'dark'
+}
+
+function paintTerminalTheme(entry: TerminalEntry): void {
+  // New object every time — xterm compares theme by reference.
+  entry.term.options.theme = { ...resolvedTerminalTheme(forceDarkBash(entry)) }
+  try {
+    if (entry.term.rows > 0) entry.term.refresh(0, entry.term.rows - 1)
+  } catch {
+    // Detached / zero-size host; next fit paints it.
+  }
 }
 
 /**
@@ -83,12 +149,16 @@ export function acquireTerminal(options: {
   tabId: string
   fontFamily: string
   fontSize: number
+  surface?: TerminalSurface
 }): TerminalEntry {
   const id = key(options.conversationId, options.tabId)
+  const surface = options.surface ?? 'bash'
   const existing = entries.get(id)
   if (existing) {
+    existing.surface = surface
     existing.term.options.fontFamily = options.fontFamily
     existing.term.options.fontSize = options.fontSize
+    paintTerminalTheme(existing)
     // Reclaim after soft-park or React remount/reparent — keep the painted
     // buffer, then force fit/SIGWINCH so TUIs match this host's real box
     // (avoids the 1-row “narrow strip” from a prior zero-size fit).
@@ -138,7 +208,7 @@ export function acquireTerminal(options: {
     drawBoldTextInBrightColors: true,
     // Don't dim / recolor agent truecolor output.
     minimumContrastRatio: 1,
-    theme: THEME_DARK,
+    theme: resolvedTerminalTheme(surface === 'bash' && bashBackgroundMode === 'dark'),
     // Mac: option as meta for readline-style shortcuts in agents.
     macOptionIsMeta: true,
     macOptionClickForcesSelection: true,
@@ -385,6 +455,7 @@ export function acquireTerminal(options: {
     fit,
     container,
     parked: false,
+    surface,
     dispose: () => {
       if (resizeTimer) {
         clearTimeout(resizeTimer)
@@ -472,10 +543,18 @@ export function fitAllTerminals(): void {
   }
 }
 
-export function applyTerminalAppearance(fontFamily: string, fontSize: number): void {
+export function applyTerminalAppearance(
+  fontFamily: string,
+  fontSize: number,
+  bashBackground?: BashBackgroundMode
+): void {
+  if (bashBackground === 'dark' || bashBackground === 'theme') {
+    bashBackgroundMode = bashBackground
+  }
   for (const entry of entries.values()) {
     entry.term.options.fontFamily = fontFamily
     entry.term.options.fontSize = fontSize
+    paintTerminalTheme(entry)
     try {
       entry.fit.fit()
     } catch {
@@ -484,4 +563,16 @@ export function applyTerminalAppearance(fontFamily: string, fontSize: number): v
   }
 }
 
-publishTerminalRegistry({ applyTerminalAppearance, disposeTerminal, parkTerminal })
+/** Re-mint xterm ink after `data-theme` flips (fonts unchanged). */
+export function paintTerminalThemes(): void {
+  for (const entry of entries.values()) {
+    paintTerminalTheme(entry)
+  }
+}
+
+publishTerminalRegistry({
+  applyTerminalAppearance,
+  paintTerminalThemes,
+  disposeTerminal,
+  parkTerminal
+})

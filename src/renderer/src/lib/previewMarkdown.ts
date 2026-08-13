@@ -80,12 +80,13 @@ export function renderPreviewMarkdown(source: string, filePath: string): string 
  * End index of the last complete markdown block (blank-line separated), never
  * mid-fence. Used to seal progressive preview HTML while the file window grows.
  */
-export function findMarkdownSealEnd(source: string): number {
+export function findMarkdownSealEnd(source: string, startAt = 0): number {
   if (!source) return 0
+  const begin = startAt > 0 && startAt <= source.length ? startAt : 0
   let fence: string | null = null
-  let lastSeal = 0
-  let lineStart = 0
-  for (let i = 0; i <= source.length; i++) {
+  let lastSeal = begin
+  let lineStart = begin
+  for (let i = begin; i <= source.length; i++) {
     const atEnd = i === source.length
     const ch = atEnd ? '\n' : source[i]!
     if (ch !== '\n' && !atEnd) continue
@@ -134,7 +135,11 @@ export function renderPreviewMarkdownProgressive(
     }
   }
 
-  const sealEnd = findMarkdownSealEnd(source)
+  const startAt =
+    prev && prev.filePath === filePath && source.startsWith(prev.sealedSource)
+      ? prev.sealedSource.length
+      : 0
+  const sealEnd = findMarkdownSealEnd(source, startAt)
   const sealedSource = source.slice(0, sealEnd)
   const tail = source.slice(sealEnd)
 

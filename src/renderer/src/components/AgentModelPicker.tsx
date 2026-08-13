@@ -250,6 +250,7 @@ export function AgentModelPicker({
     recentItems.length > 0 ? (
       <>
         <div className="agent-model-menu-section-label">{t('composer.recently')}</div>
+        <div className="agent-model-menu-sep" role="separator" />
         {recentItems.map((item) => (
           <button
             key={`${item.hostId}:${item.model || '__default__'}`}

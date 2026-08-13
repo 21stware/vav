@@ -172,6 +172,7 @@ export class SettingsStore {
     const providers = new Set(['auto', 'duckduckgo', 'searxng', 'brave'])
     if (!providers.has(s.webSearchProvider)) s.webSearchProvider = 'auto'
     s.fontSize = Math.min(24, Math.max(10, s.fontSize))
+    if (s.bashBackground !== 'dark' && s.bashBackground !== 'theme') s.bashBackground = 'theme'
     if (s.sendKey !== 'enter' && s.sendKey !== 'mod-enter') s.sendKey = 'enter'
     s.keyBindings = sanitizeKeyBindings(s.keyBindings)
     s.temperature = Math.min(2, Math.max(0, s.temperature))

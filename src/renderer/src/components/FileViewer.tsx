@@ -2,6 +2,7 @@ import {
   Suspense,
   lazy,
   useCallback,
+  useDeferredValue,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -17,7 +18,7 @@ import {
   X
 } from 'lucide-react'
 import type { FileAssociationStatus, FileInspectResult, FileSessionMeta } from '@shared/ipc'
-import type { PreviewRef } from '@shared/types'
+import type { PreviewRef, TurnEvent } from '@shared/types'
 import { formatBytes, relativeTime } from '../lib/format'
 import { highlightCode, languageFromPath } from '../lib/highlightCode'
 import { MarkdownView } from './MarkdownView'
@@ -279,6 +280,7 @@ export function FileViewer({
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false)
   /** Forces OfficeNativeView to re-read disk after an external/agent rewrite. */
   const [previewRevision, setPreviewRevision] = useState(0)
+  const officeRevTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [assoc, setAssoc] = useState<FileAssociationStatus | null>(null)
   /**
    * Ephemeral binary override (text / hex). Never persisted — resets every
@@ -386,7 +388,7 @@ export function FileViewer({
     async (sourcePath?: string): Promise<void> => {
       if (applyingOwnWrite.current) return
       const current = filePathRef.current
-      if (sourcePath && !pathsEqual(sourcePath, current)) return
+      if (sourcePath && !(await isOpenFilePath(current, sourcePath))) return
       const prev = knownIdentityRef.current
       const result = await reloadInfo(current)
       const sameIdentity =
@@ -395,13 +397,31 @@ export function FileViewer({
         prev.mtimeMs === (result.mtimeMs ?? 0)
       // Text body for text/csv/html; office uses structured plainText only for blocks.
       if (result.kind === 'text' || result.kind === 'csv' || result.kind === 'html') {
-        if (result.text != null) setWorkingContent(result.text)
+        if (result.text != null) {
+          const incoming = result.text
+          setWorkingContent((prev) => {
+            // First inspect window is 128 KB; don't clobber a longer live draft.
+            if (
+              result.truncated &&
+              prev != null &&
+              prev.length > incoming.length &&
+              prev.startsWith(incoming)
+            ) {
+              return prev
+            }
+            return incoming
+          })
+        }
       }
       setHasUnsavedChanges(true)
       // Always bump office canvas when identity moved; also bump when fs-changed
       // named this exact path even if mtime resolution is coarse.
       if (isBinaryOfficeKind(result.kind) && (!sameIdentity || !!sourcePath)) {
-        setPreviewRevision((n) => n + 1)
+        if (officeRevTimer.current) clearTimeout(officeRevTimer.current)
+        officeRevTimer.current = setTimeout(() => {
+          officeRevTimer.current = null
+          setPreviewRevision((n) => n + 1)
+        }, 120)
       }
     },
     [reloadInfo, isBinaryOfficeKind]
@@ -563,6 +583,12 @@ export function FileViewer({
     void window.vav.window.setPreviewCloseGuard(hasUnsavedChanges)
   }, [hasUnsavedChanges])
 
+  useEffect(() => {
+    return () => {
+      if (officeRevTimer.current) clearTimeout(officeRevTimer.current)
+    }
+  }, [])
+
   /**
    * Agent fs_write / Change Review — and any tool that emits fs-changed.
    * Always listen while this file is open (embedded workspace never flips local
@@ -575,6 +601,22 @@ export function FileViewer({
     return window.vav.agent.onEvent((event) => {
       if (event.type === 'fs-changed') {
         void handleExternalFileChange(event.filePath)
+        return
+      }
+      if (event.type === 'file-draft') {
+        if (applyingOwnWrite.current) return
+        const apply = (): void => {
+          setWorkingContent((prev) => applyFileDraftContent(prev, event))
+          setHasUnsavedChanges(true)
+        }
+        if (pathsEqual(filePathRef.current, event.filePath)) {
+          apply()
+          return
+        }
+        void (async () => {
+          if (!(await isOpenFilePath(filePathRef.current, event.filePath))) return
+          apply()
+        })()
         return
       }
       if (event.type !== 'end') return
@@ -616,6 +658,7 @@ export function FileViewer({
   }, [handleExternalFileChange])
 
   const displayText = workingContent ?? info?.text ?? ''
+  const deferredDisplayText = useDeferredValue(displayText)
   const isMarkdown =
     /\.(md|markdown|mdx)$/i.test(filePath) || (info?.mime ?? '').includes('markdown')
   const isNotebook = /\.ipynb$/i.test(filePath)
@@ -761,8 +804,8 @@ export function FileViewer({
     if (info?.text == null && workingContent == null) return []
     // CSV: only col + table stubs (no per-row tree). Sheet body uses the same model.
     if (isCsv) return csvModel?.blocks.filter((b) => b.kind !== 'table') ?? []
-    return parseBlocksForPath(filePath, displayText)
-  }, [displayText, info, filePath, isCsv, isSqlite, isZip, workingContent, csvModel])
+    return parseBlocksForPath(filePath, deferredDisplayText)
+  }, [deferredDisplayText, info, filePath, isCsv, isSqlite, isZip, workingContent, csvModel])
 
   const rootBlocks = syncBlocks
 
@@ -2733,6 +2776,27 @@ function pathsEqual(a: string, b: string): boolean {
   const nb = b.replace(/\/+$/, '')
   if (na === nb) return true
   return na.toLowerCase() === nb.toLowerCase()
+}
+
+/** Open preview path may be the real file while the agent writes the sandbox copy. */
+async function isOpenFilePath(openPath: string, sourcePath: string): Promise<boolean> {
+  if (pathsEqual(openPath, sourcePath)) return true
+  const st = await window.vav.files.workingCopyStatus?.(openPath)
+  if (!st) return false
+  return pathsEqual(sourcePath, st.copyPath) || pathsEqual(sourcePath, st.realPath)
+}
+
+function applyFileDraftContent(
+  prev: string | null,
+  event: Extract<TurnEvent, { type: 'file-draft' }>
+): string | null {
+  if (typeof event.content === 'string') return event.content
+  if (typeof event.append === 'string') {
+    const base = prev ?? ''
+    if (typeof event.baseLen === 'number' && base.length !== event.baseLen) return prev
+    return base + event.append
+  }
+  return prev
 }
 
 /** One selected preview block → a composer comment-block reference. */

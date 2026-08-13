@@ -4,6 +4,7 @@ import { tintSwatchColor, type FixedColorTint } from '@shared/colorTints'
 import {
   COLOR_TINTS,
   DISPLAY_CURRENCIES,
+  type BashBackgroundMode,
   type DisplayCurrency,
   type LocalePreference,
   type ThemeMode
@@ -64,6 +65,21 @@ export function AppearanceSettings(): React.JSX.Element {
           />
         </div>
       </div>
+
+      <div className="form-row">
+        <label>{t('appearance.bashBackground')}</label>
+        <div className="control">
+          <Segmented<BashBackgroundMode>
+            options={[
+              { value: 'dark', label: t('appearance.bashBackground.dark') },
+              { value: 'theme', label: t('appearance.bashBackground.theme') }
+            ]}
+            value={settings.bashBackground ?? 'theme'}
+            onChange={(bashBackground) => void updateSettings({ bashBackground })}
+          />
+        </div>
+      </div>
+      <div className="form-hint">{t('appearance.bashBackgroundHint')}</div>
 
       <div className="form-row">
         <label>{t('appearance.colorTint')}</label>

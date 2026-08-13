@@ -74,8 +74,9 @@ function scaleForWidth(pageWidthPt: number, cssTarget: number): number {
   return Math.max(0.45, Math.min(4, target / pageWidthPt))
 }
 
-function pdfUrlForPath(filePath: string): string {
-  return `vav-local://preview/?path=${encodeURIComponent(filePath)}`
+function pdfUrlForPath(filePath: string, revision = 0): string {
+  const base = `vav-local://preview/?path=${encodeURIComponent(filePath)}`
+  return revision ? `${base}&rev=${revision}` : base
 }
 
 interface PageSlot {
@@ -527,7 +528,7 @@ export function PdfNativeView({
         if (cancelled) return
 
         const assets = pdfAssetBase()
-        const url = pdfUrlForPath(path)
+        const url = pdfUrlForPath(path, revision)
 
         const open = async (withCmaps: boolean) => {
           const task = pdfjs!.getDocument({

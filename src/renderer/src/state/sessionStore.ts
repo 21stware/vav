@@ -21,6 +21,14 @@ export type AgentModelCatalogEntry = {
   error?: string
 }
 import type { ChangeSet, UpdateState } from '@shared/changeSet'
+import type { GitChangeEntry } from '@shared/git'
+import type { GithubPullListItem } from '@shared/github'
+
+/** Contents of the session-right preview drawer. */
+export type SessionPreview =
+  | { kind: 'file' }
+  | { kind: 'git'; cwd: string; entry: GitChangeEntry }
+  | { kind: 'github'; cwd: string; pull: GithubPullListItem }
 import { resolveLocale } from '@shared/i18n'
 import { tt } from '../i18n/useT'
 import { isTemporaryWorkspace } from '../lib/format'
@@ -232,7 +240,13 @@ export interface SessionToolsLayout {
 }
 
 export const PANEL_MIN_HEIGHT = 160
-export const PANEL_MAX_HEIGHT = 480
+/**
+ * Safety rail for persisted heights. Interactive drag / double-click max is
+ * `PANEL_SNAP_RATIO` of the session column (see ToolsPanel).
+ */
+export const PANEL_MAX_HEIGHT = 2400
+/** Double-click the tray resizer to jump here; again to restore. */
+export const PANEL_SNAP_RATIO = 0.7
 const GLOBAL_LAYOUT_KEY = 'vav.layout'
 const SESSION_TOOLS_KEY = 'vav.session-tools-layout'
 
@@ -469,9 +483,17 @@ interface SessionState {
   activeGroupId: string | null
   /**
    * Right file-preview drawer on the session surface (was Workspace View only).
-   * Open/closed is session UI state; path comes from workspace.selectedPath.
+   * Open/closed is session UI state; path comes from workspace.selectedPath
+   * when `sessionPreview.kind === 'file'`.
    */
   filePreviewOpen: boolean
+  /**
+   * What the session preview drawer is showing. Git / GitHub details use this
+   * instead of the cramped tools-tray split when a preview host is mounted.
+   */
+  sessionPreview: SessionPreview
+  /** True while WorkspaceView's preview column is mounted (main session). */
+  filePreviewHost: boolean
   /** Workspace-level agent conversation ids keyed by workdir path. */
   workspaceAgentByPath: Record<string, string>
   /** File path → conversationId for standalone file preview windows. */
@@ -534,6 +556,8 @@ interface SessionState {
   /** Right file preview drawer on the session surface. */
   setFilePreviewOpen(open: boolean): void
   toggleFilePreview(): void
+  setSessionPreview(preview: SessionPreview): void
+  setFilePreviewHost(mounted: boolean): void
   /** Ensure a durable agent conversation exists for this workspace path. */
   ensureWorkspaceAgent(workdir: string): Promise<string>
   loadMessages(id: string): Promise<void>
@@ -784,6 +808,8 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   workspaceMenuNonce: 0,
   activeGroupId: null,
   filePreviewOpen: false,
+  sessionPreview: { kind: 'file' },
+  filePreviewHost: false,
   workspaceAgentByPath: loadWorkspaceAgents(),
   previewAgentByPath: loadPreviewAgents(),
   changeReviewId: null,
@@ -925,6 +951,17 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     set((state) => ({ filePreviewOpen: !state.filePreviewOpen }))
   },
 
+  setSessionPreview(preview) {
+    set({
+      sessionPreview: preview,
+      ...(preview.kind === 'file' ? {} : { filePreviewOpen: true })
+    })
+  },
+
+  setFilePreviewHost(mounted) {
+    set({ filePreviewHost: mounted })
+  },
+
   async ensureWorkspaceAgent(workdir) {
     if (!workdir || workdir.startsWith('__')) {
       throw new Error('cannot ensure agent for empty workspace shell')
@@ -1036,6 +1073,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       activeId: id,
       selectedIds: nextSelection,
       activeGroupId: null,
+      sessionPreview: { kind: 'file' },
       ...(toolsLayoutsPatch ? { toolsLayouts: toolsLayoutsPatch } : {}),
       ...activeToolsFields(sessionTools)
     })
@@ -2642,6 +2680,10 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
       case 'fs-changed':
         useWorkspaceStore.getState().agentDidWriteFile(id, event.parentPath, event.filePath)
+        break
+
+      case 'file-draft':
+        // Preview windows listen on the raw agent event; no session state.
         break
 
       case 'usage':

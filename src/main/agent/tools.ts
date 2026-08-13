@@ -31,6 +31,7 @@ import { type DuckDbService, duckDbKindForPath } from '../fs/DuckDbService'
 import type { WebSearchService } from '../web/WebSearchService'
 import type { WebFetchService } from '../web/WebFetchService'
 import { BASH_SESSION_ID, type StickyShell } from '../terminal/StickyShell'
+import { t } from '../i18n'
 import type { SkillService } from './SkillService'
 import { unifiedDiff } from './diff'
 
@@ -158,7 +159,7 @@ export function createTools(host: ToolHost): AgentTool[] {
         })
       )
     }),
-    async execute(_id, params) {
+    async execute(_id, params, signal) {
       let command = params.command.trim()
       if (!command) return failure('缺少 command 参数')
       // Force officecli/shell writes onto document sandboxes when the model
@@ -172,9 +173,20 @@ export function createTools(host: ToolHost): AgentTool[] {
       const shell = host.shell()
       host.mirror(`$ ${command}${background ? '  # background' : ''}\n`)
       const result = background
-        ? await shell.runBackground(command, (chunk) => host.mirror(chunk))
-        : await shell.run(command, timeout, (chunk) => host.mirror(chunk))
+        ? await shell.runBackground(command, (chunk) => host.mirror(chunk), signal)
+        : await shell.run(command, timeout, (chunk) => host.mirror(chunk), signal)
 
+      if (result.cancelled) {
+        host.mirror(`\n${t('common.cancelled')}\n`)
+        const body = result.output
+        return {
+          content: [{ type: 'text', text: cap(`${body}\n[${t('common.cancelled')}]`) }],
+          details: {
+            display: `${body}${body && !body.endsWith('\n') ? '\n' : ''}${t('tool.cancelled')}`,
+            failed: true
+          }
+        }
+      }
       if (result.timedOut) {
         host.mirror(`exit ${result.exitCode}\n`)
         return {
@@ -237,7 +249,7 @@ export function createTools(host: ToolHost): AgentTool[] {
         Type.Number({ description: 'Milliseconds to wait (default 60000).' })
       )
     }),
-    async execute(_id, params) {
+    async execute(_id, params, signal) {
       const sessionId = String(params.sessionId ?? BASH_SESSION_ID)
       const shell = host.shell()
       if (sessionId !== shell.sessionId) {
@@ -246,8 +258,29 @@ export function createTools(host: ToolHost): AgentTool[] {
       const expect = String(params.expect ?? '').trim()
       if (!expect) return failure('缺少 expect 参数')
       const timeoutMs = Number(params.timeoutMs ?? 60_000)
-      const result = await shell.waitFor(expect, timeoutMs)
+      const result = await shell.waitFor(expect, timeoutMs, signal)
       const seconds = (result.elapsedMs / 1000).toFixed(1)
+      if (result.cancelled) {
+        return {
+          content: [
+            {
+              type: 'text',
+              text: cap(
+                JSON.stringify({
+                  matched: false,
+                  cancelled: true,
+                  output_since_start: result.output,
+                  elapsedMs: result.elapsedMs
+                })
+              )
+            }
+          ],
+          details: {
+            display: `${t('tool.cancelled')}\n${result.output}`,
+            failed: true
+          }
+        }
+      }
       if (result.matched) {
         return {
           content: [
@@ -382,7 +415,8 @@ export function createTools(host: ToolHost): AgentTool[] {
       const result = await host.files.writeTextFile(path, params.content)
       if (!result.ok) return failure(result.error ?? '写入失败')
       // Only the parent directory is refreshed; never the whole tree.
-      host.fsChanged(dirname(path), path)
+      const logical = host.files.workingCopies?.logicalPath(path) ?? path
+      host.fsChanged(dirname(logical), logical)
       if (!previous.truncated) {
         host.recordWrite?.(path, before, params.content)
       }

@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import type { ApprovalMode, QuotaWindow } from '@shared/types'
 import {
   normalizeQuotaPercent,
-  normalizeQuotaResetsAt,
+  parseQuotaResetsAt,
   quotaKindFromClaudeType
 } from '@shared/tokenUsage'
 import { ensureClaudeWorkspaceTrusted } from '../../terminal/claudeTrust'
@@ -432,9 +432,7 @@ function quotaWindowsFromClaudeMessage(msg: Record<string, unknown>): QuotaWindo
         id: kind === 'other' ? key : kind,
         kind,
         usedPercent: pct,
-        resetsAt: normalizeQuotaResetsAt(
-          num(rec.resets_at) ?? num(rec.resetsAt) ?? num(rec.reset_at)
-        ),
+        resetsAt: parseQuotaResetsAt(rec.resets_at ?? rec.resetsAt ?? rec.reset_at),
         updatedAt: now
       })
     }
@@ -461,9 +459,7 @@ function windowFromClaudeInfo(
     id: kind === 'other' ? type : kind,
     kind,
     usedPercent: pct,
-    resetsAt: normalizeQuotaResetsAt(
-      num(info.resetsAt) ?? num(info.resets_at) ?? num(info.reset_at)
-    ),
+    resetsAt: parseQuotaResetsAt(info.resetsAt ?? info.resets_at ?? info.reset_at),
     updatedAt: now
   }
 }

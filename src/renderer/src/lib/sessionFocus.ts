@@ -1,11 +1,11 @@
 import type { CliOpenEvent } from '@shared/ipc'
 import { useSessionStore } from '../state/sessionStore'
 import { useWorkspaceStore } from '../state/workspaceStore'
-import { focusAgentPane, setUiFocusScope } from './uiFocus'
+import { focusAgentPane, focusBashPane, setUiFocusScope } from './uiFocus'
 
 /**
  * After the session is selected (main) or already active (detached companion),
- * put the correct surface in front: CLI Agents + pane, or VAV composer.
+ * put the correct surface in front: CLI Agents + pane, Tools bash, or VAV composer.
  *
  * Used by tray clicks, notifications, and CLI/path open. Does not select the
  * conversation itself — callers do that when needed (main window list).
@@ -14,11 +14,25 @@ export async function applySessionSurfaceFocus(event: CliOpenEvent): Promise<voi
   const id = event.conversationId
   if (!id) return
 
-  const wantCli =
-    event.surface === 'cli' || !!event.tabId || (!!event.agentId && event.surface !== 'vav')
-
   // Ensure live PTYs are projected before we flip mode / pick a tab.
   await useWorkspaceStore.getState().hydratePtyState(id)
+
+  if (event.surface === 'bash') {
+    const slice = useWorkspaceStore.getState().workspaces[id]
+    if (slice?.cliMode) {
+      useWorkspaceStore.getState().exitCliMode(id)
+    }
+    if (event.tabId) {
+      useWorkspaceStore.getState().selectTab(id, event.tabId)
+    }
+    useSessionStore.getState().setPanelSegment('terminal')
+    focusBashPane(event.tabId)
+    return
+  }
+
+  const wantCli =
+    event.surface === 'cli' ||
+    (event.surface !== 'vav' && (!!event.tabId || !!event.agentId))
 
   if (wantCli) {
     const ws = useWorkspaceStore.getState()

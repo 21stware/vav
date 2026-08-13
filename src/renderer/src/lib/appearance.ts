@@ -3,6 +3,7 @@ import { TINT_ACCENT, type FixedColorTint } from '@shared/colorTints'
 import { COLOR_TINTS, type ColorTint } from '@shared/types'
 import { useSessionStore } from '../state/sessionStore'
 import { IS_MAC } from './platform'
+import { paintTerminalThemes } from './terminalRegistryHandle'
 
 /** CSS custom properties driven by a fixed or system tint. */
 const SYSTEM_TINT_VARS = [
@@ -228,6 +229,9 @@ export function useAppearance(): void {
       const resolved = theme === 'system' ? (media.matches ? 'dark' : 'light') : theme
       document.documentElement.dataset.theme = resolved
       setResolvedTheme(resolved)
+      // Same turn as data-theme: xterm's injected fg otherwise stays the
+      // previous appearance (black glyphs on the new dark plate).
+      paintTerminalThemes()
     }
     apply()
     media.addEventListener('change', apply)

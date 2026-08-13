@@ -31,6 +31,8 @@ function quotaLabel(kind: QuotaWindowKind, t: TFn): string {
       return t('token.quotaWeeklyOpus')
     case 'seven_day_sonnet':
       return t('token.quotaWeeklySonnet')
+    case 'monthly':
+      return t('token.quotaMonthly')
     case 'primary':
       return t('token.quotaPrimary')
     case 'secondary':
