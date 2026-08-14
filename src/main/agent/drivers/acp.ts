@@ -1,4 +1,5 @@
 import type { ApprovalMode, CliHostKind } from '@shared/types'
+import { extractRpcError, formatErrorDetail } from '@shared/cliErrors'
 import { costToUsd } from '@shared/tokenUsage'
 import {
   asArray,
@@ -177,9 +178,12 @@ function wireAcp(
       void authMethods
       for (const prompt of pendingPrompts.splice(0)) void doPrompt(prompt)
     } catch (err) {
+      const extracted = extractRpcError(err)
       emit({
         type: 'error',
-        message: err instanceof Error ? err.message : String(err)
+        message: extracted.text || (err instanceof Error ? err.message : String(err)),
+        errorCode: extracted.code ?? undefined,
+        errorDetail: formatErrorDetail(err, extracted.text)
       })
     }
   }
@@ -203,14 +207,19 @@ function wireAcp(
         turnActive = false
         const stopReason = asString(dig(msg.result, 'stopReason')) || asString(dig(msg.result, 'stop_reason'))
         const cancelled = stopReason === 'cancelled' || stopReason === 'canceled'
+        const extracted = msg.error ? extractRpcError(msg.error) : null
         emit({
           type: 'turn-finished',
           success: !msg.error && !cancelled,
-          error: msg.error
-            ? asString(dig(msg.error, 'message')) || JSON.stringify(msg.error)
+          error: extracted
+            ? extracted.text
             : cancelled
               ? 'Cancelled'
-              : undefined
+              : undefined,
+          errorCode: extracted?.code ?? undefined,
+          errorDetail: extracted
+            ? formatErrorDetail(msg.error, extracted.text)
+            : undefined
         })
       }
       return
@@ -245,7 +254,8 @@ function wireAcp(
         return
       }
       const toolCall = asRecord(params.toolCall) ?? params
-      const toolName = asString(toolCall.title) || asString(toolCall.kind) || 'tool'
+      const toolName =
+        asString(toolCall.name) || asString(toolCall.kind) || asString(toolCall.title) || 'tool'
       const detail =
         toolResultText(asArray(toolCall.content)) ||
         asString(toolCall.rawInput) ||
@@ -254,7 +264,7 @@ function wireAcp(
         type: 'permission',
         requestId: String(requestId),
         toolName,
-        summary: toolName,
+        summary: asString(toolCall.title) || toolName,
         detail,
         input: toolCall
       })
@@ -389,7 +399,10 @@ function handleSessionUpdate(params: Record<string, unknown>, emit: DriverEventS
   }
   if (kind === 'tool_call' || kind === 'tool_call_update') {
     const id = asString(update.toolCallId) || asString(update.tool_call_id) || `tool-${Date.now()}`
-    const name = asString(update.title) || asString(update.kind) || 'tool'
+    // ACP: `name` is the programmatic tool id (RFD tool-call-name), `kind` the coarse
+    // ToolKind category, `title` human UI copy — only the first two map to ToolName.
+    const name = asString(update.name) || asString(update.kind) || asString(update.title) || 'tool'
+    const title = asString(update.title) || undefined
     const statusRaw = asString(update.status) || ''
     let status: 'started' | 'updated' | 'completed' | 'error' = 'started'
     if (kind === 'tool_call_update') {
@@ -402,6 +415,7 @@ function handleSessionUpdate(params: Record<string, unknown>, emit: DriverEventS
       type: 'tool',
       id,
       name,
+      title,
       input: update.rawInput ?? update.input ?? {},
       status,
       output

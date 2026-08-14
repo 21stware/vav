@@ -7,6 +7,10 @@ import {
 } from '../lib/markdown'
 import type { DiagramSlotState } from '../lib/diagramCache'
 import { renderDiagramBlocks } from '../lib/diagramRender'
+import {
+  disposeDiagramViewportZoom,
+  syncDiagramViewportZoom
+} from '../lib/diagramViewportZoom'
 import { resolveMentionedPath } from '../lib/filePathLinks'
 import { openFileInSessionPreview, revealSessionFileInFinder } from '../lib/openSessionFile'
 import { onHljsReady } from '../lib/hljsLazy'
@@ -122,6 +126,7 @@ export const MarkdownView = memo(function MarkdownView({
     if (!element || plain || progressive) return
 
     const gen = ++paintGenRef.current
+    disposeDiagramViewportZoom(element)
     element.innerHTML = html
     if (highlight) highlightMatches(element, highlight)
 
@@ -143,11 +148,13 @@ export const MarkdownView = memo(function MarkdownView({
     }
     lastThemeRef.current = resolvedTheme
 
+    syncDiagramViewportZoom(element)
     void renderDiagramBlocks(element, {
       hard: cached,
       slots: diagramSlotsRef.current
     }).then(() => {
       if (gen !== paintGenRef.current) return
+      syncDiagramViewportZoom(element)
     })
   }, [html, highlight, plain, cached, resolvedTheme, progressive])
 

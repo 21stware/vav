@@ -14,7 +14,10 @@ import {
   type DisplayCurrency
 } from '@shared/types'
 import { coerceShell, platformDefaults, type Platform } from '@shared/platform'
+import { normalizeAccentHex } from '@shared/colorTints'
 import { sanitizeKeyBindings } from '@shared/keyBindings'
+import { RECENT_AGENT_MODELS_MAX } from '@shared/agentModels'
+import { parseThinkingLevel } from '@shared/thinkingLevel'
 import { resolveFirstOnLoginPath } from '../terminal/loginPath'
 
 const PLATFORM = process.platform as Platform
@@ -39,6 +42,7 @@ const DEFAULTS: AppSettings = { ...DEFAULT_SETTINGS, ...platformDefaults(PLATFOR
 /**
  * Non-secret preferences, under the OS's per-app data directory:
  * ~/Library/Application Support/vav on macOS, %APPDATA%\vav on Windows.
+ * The local Electron build uses `vav-dev` so it can sit beside the release app.
  *
  * Every non-key field auto-saves on change so the LLM client always reads the
  * latest endpoint/model without an explicit save step.
@@ -125,6 +129,15 @@ export class SettingsStore {
       this.settings.colorTint = DEFAULT_SETTINGS.colorTint
       dirty = true
     }
+    const customHex = normalizeAccentHex(this.settings.customAccentColor)
+    if ((this.settings.customAccentColor ?? '') !== (customHex ?? '')) {
+      this.settings.customAccentColor = customHex ?? ''
+      dirty = true
+    }
+    if (this.settings.colorTint === 'custom' && !this.settings.customAccentColor) {
+      this.settings.colorTint = DEFAULT_SETTINGS.colorTint
+      dirty = true
+    }
     if (
       !DISPLAY_CURRENCIES.includes(this.settings.displayCurrency as DisplayCurrency)
     ) {
@@ -169,14 +182,20 @@ export class SettingsStore {
     if (typeof s.webFetchAllowRender !== 'boolean') s.webFetchAllowRender = false
     if (typeof s.webSearxngBaseUrl !== 'string') s.webSearxngBaseUrl = ''
     s.webSearxngBaseUrl = s.webSearxngBaseUrl.trim()
+    if (typeof s.cloudflareAccountId !== 'string') s.cloudflareAccountId = ''
+    s.cloudflareAccountId = s.cloudflareAccountId.trim()
     const providers = new Set(['auto', 'duckduckgo', 'searxng', 'brave'])
     if (!providers.has(s.webSearchProvider)) s.webSearchProvider = 'auto'
     s.fontSize = Math.min(24, Math.max(10, s.fontSize))
     if (s.bashBackground !== 'dark' && s.bashBackground !== 'theme') s.bashBackground = 'theme'
+    if (typeof s.customAccentColor !== 'string') s.customAccentColor = ''
+    else s.customAccentColor = normalizeAccentHex(s.customAccentColor) ?? ''
+    if (s.colorTint === 'custom' && !s.customAccentColor) s.colorTint = 'system'
     if (s.sendKey !== 'enter' && s.sendKey !== 'mod-enter') s.sendKey = 'enter'
     s.keyBindings = sanitizeKeyBindings(s.keyBindings)
     s.temperature = Math.min(2, Math.max(0, s.temperature))
     s.maxTokens = Math.min(200_000, Math.max(256, Math.round(s.maxTokens)))
+    s.defaultThinkingLevel = parseThinkingLevel(s.defaultThinkingLevel)
     s.cliAgents = mergeBuiltinAgents(Array.isArray(s.cliAgents) ? s.cliAgents : [])
     if (typeof s.skipCliAgentPickerWhenSingle !== 'boolean') {
       s.skipCliAgentPickerWhenSingle = false
@@ -217,7 +236,7 @@ export class SettingsStore {
         if (seen.has(key)) continue
         seen.add(key)
         cleaned.push({ hostId, model })
-        if (cleaned.length >= 6) break
+        if (cleaned.length >= RECENT_AGENT_MODELS_MAX) break
       }
       s.recentAgentModels = cleaned
     }
@@ -304,10 +323,12 @@ export class SettingsStore {
       const {
         apiKeyPresent: _omitApi,
         braveSearchKeyPresent: _omitBrave,
+        cloudflareApiTokenPresent: _omitCf,
         ...rest
       } = this.settings
       void _omitApi
       void _omitBrave
+      void _omitCf
       writeFileSync(this.file, JSON.stringify(rest, null, 2), 'utf8')
     } catch (err) {
       console.error('[settings] persist failed', err)

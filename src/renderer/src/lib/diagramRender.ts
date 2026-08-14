@@ -107,8 +107,12 @@ export function renderDiagramFence(kind: DiagramKind, source: string): string {
     `<button type="button" class="md-block-btn" data-md-action="copy-image" title="Copy image">Copy image</button>` +
     `<button type="button" class="md-block-btn" data-md-action="download-png" title="Download PNG">Download</button>` +
     `</span></div>` +
+    `<div class="md-diagram-viewport">` +
     `<div class="md-diagram md-${kind} md-diagram-live md-diagram-pending-host" data-kind="${kind}" data-b64="${b64}">` +
     pendingShellHtml(kind) +
+    `</div>` +
+    `<p class="md-diagram-viewport-hint"></p>` +
+    `<button type="button" class="md-diagram-zoom-reset" title="Reset zoom" aria-label="Reset zoom"></button>` +
     `</div></div>`
   )
 }

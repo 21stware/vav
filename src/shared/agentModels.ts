@@ -2,7 +2,10 @@ import type { CliHostKind, ModelOption, RecentAgentModelEntry } from './types'
 import { isStructuredCliHost, PRESET_MODELS } from './types'
 
 /** Max entries kept in Settings `recentAgentModels` (MRU queue). */
-export const RECENT_AGENT_MODELS_MAX = 6
+export const RECENT_AGENT_MODELS_MAX = 10
+
+/** How many recents sit on the picker menu's first level. */
+export const RECENT_AGENT_MODELS_PINNED = 3
 
 /**
  * Client-side helpers for agent → model selection.

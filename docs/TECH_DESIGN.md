@@ -208,9 +208,17 @@ Windows 支持不是把 macOS 的代码抄一遍加 `if`，而是先划清楚哪
 
 ## 12. 品牌与开发期的 Electron 包
 
-`app.setName()` 只改菜单栏。Dock 的悬停名来自当前运行 bundle 的 Info.plist，而开发期跑的是 `node_modules/electron/dist/Electron.app` —— 所以那里一直写着 Electron。`scripts/prepare-electron-brand.mjs` 在 `npm run dev` 之前把这个 bundle 本身改名：`vav.app`、可执行文件 `vav`、写进 `CFBundleName`/`CFBundleDisplayName`、换成从 `build/icon.png` 生成的 `.icns`，并同步 `node_modules/electron/path.txt`。
+`app.setName()` 只改菜单栏。Dock 的悬停名来自当前运行 bundle 的 Info.plist，而开发期跑的是 `node_modules/electron/dist/Electron.app` —— 所以那里一直写着 Electron。`scripts/prepare-electron-brand.mjs` 在 `npm run dev` 之前把这个 bundle 本身改名：`vav.app`、可执行文件 `vav`、写进 `CFBundleName`/`CFBundleDisplayName` = `VAV Dev`、换成从 `build/icon.png` 生成的 `.icns`，并同步 `node_modules/electron/path.txt`。
 
-其中两步容易被漏掉。一是 bundle identifier 必须换成 `dev.vav.app`：LaunchServices 按 identifier 缓存显示名，`com.github.Electron` 在系统里早就登记成 “Electron”，不换的话改了 plist 也没用。二是改过 Info.plist 之后签名失效，要重新 ad-hoc 签一次。脚本按 Electron 版本与图标 mtime 打戳，`npm install` 还原了原始 bundle 时会自己再跑一遍。打包产物不走这条路，`productName` 已经够了。
+开发版和正式版必须是两套身份，否则单实例锁、userData、Dock 会抢同一个槽：
+
+| | 正式版 | 开发版 |
+| --- | --- | --- |
+| 显示名 / 进程名 | `VAV` | `VAV Dev` |
+| bundle / AppUserModelID | `com.vav.app` | `dev.vav.app` |
+| userData / Chromium lock | `…/vav` | `…/vav-dev` |
+
+其中两步容易被漏掉。一是 bundle identifier 必须换成 `dev.vav.app`：LaunchServices 按 identifier 缓存显示名，`com.github.Electron` 在系统里早就登记成 “Electron”，不换的话改了 plist 也没用。二是改过 Info.plist 之后签名失效，要重新 ad-hoc 签一次。脚本按 Electron 版本与图标 mtime 打戳，`npm install` 还原了原始 bundle 时会自己再跑一遍。打包产物不走这条路，`productName` 已经够了。`scripts/kill-dev.mjs` 只杀 `VAV Dev` / `electron/dist/vav.app`，绝不 `pkill -x VAV`。
 
 ## 13. 开发期工具
 

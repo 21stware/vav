@@ -15,6 +15,8 @@ export type DriverEvent =
       type: 'tool'
       id: string
       name: string
+      /** Human-readable invocation title from the agent (e.g. ACP `title`); used as card summary. */
+      title?: string
       input: unknown
       status: 'started' | 'updated' | 'completed' | 'error'
       output?: string
@@ -59,8 +61,17 @@ export type DriverEvent =
       /** Windows with known used % from a live rate-limit stream event. */
       windows: QuotaWindow[]
     }
-  | { type: 'turn-finished'; success: boolean; error?: string; resumeAt?: string | null }
-  | { type: 'error'; message: string }
+  | {
+      type: 'turn-finished'
+      success: boolean
+      error?: string
+      /** JSON-RPC / ACP error.code when the host sent one. */
+      errorCode?: number
+      /** Raw payload for the details sheet. */
+      errorDetail?: string
+      resumeAt?: string | null
+    }
+  | { type: 'error'; message: string; errorCode?: number; errorDetail?: string }
   | { type: 'process-exited'; code: number | null }
 
 export interface DriverStartOptions {

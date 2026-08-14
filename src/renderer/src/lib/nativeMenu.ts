@@ -8,7 +8,34 @@ export interface MenuItem {
   disabled?: boolean
   checked?: boolean
   divider?: boolean
+  submenu?: MenuItem[]
   onSelect?: () => void
+}
+
+function toNativeItems(
+  items: MenuItem[],
+  handlers: Map<string, () => void>,
+  prefix = ''
+): NativeMenuItem[] {
+  return items.map((item, index) => {
+    const id = prefix ? `${prefix}.${index}` : String(index)
+    if (item.divider) return { separator: true }
+    if (item.submenu && item.submenu.length > 0) {
+      return {
+        id,
+        label: item.label,
+        enabled: !item.disabled,
+        submenu: toNativeItems(item.submenu, handlers, id)
+      }
+    }
+    if (item.onSelect) handlers.set(id, item.onSelect)
+    return {
+      id,
+      label: item.label,
+      enabled: !item.disabled,
+      checked: item.checked
+    }
+  })
 }
 
 /**
@@ -22,26 +49,27 @@ export async function showMenu(
   items: MenuItem[],
   position?: { x: number; y: number }
 ): Promise<void> {
-  const payload: NativeMenuItem[] = items.map((item, index) =>
-    item.divider
-      ? { separator: true }
-      : {
-          id: String(index),
-          label: item.label,
-          enabled: !item.disabled,
-          checked: item.checked
-        }
-  )
-
+  const handlers = new Map<string, () => void>()
+  const payload = toNativeItems(items, handlers)
   const chosen = await window.vav.window.popupMenu(payload, position)
   if (chosen === null) return
-  items[Number(chosen)]?.onSelect?.()
+  handlers.get(chosen)?.()
 }
 
 /** Anchors a menu under a button, the way a pull-down control behaves. */
 export function menuAnchor(element: HTMLElement): { x: number; y: number } {
   const rect = element.getBoundingClientRect()
   return { x: Math.round(rect.left), y: Math.round(rect.bottom + 4) }
+}
+
+/** Same as {@link menuAnchor} when the trigger is on-screen; otherwise omit. */
+export function menuAnchorIfVisible(
+  element: HTMLElement | null | undefined
+): { x: number; y: number } | undefined {
+  if (!element) return undefined
+  const rect = element.getBoundingClientRect()
+  if (rect.width < 1 || rect.height < 1) return undefined
+  return menuAnchor(element)
 }
 
 /**

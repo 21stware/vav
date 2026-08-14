@@ -37,6 +37,8 @@ export function mapToolName(name: string): ToolName {
     n === 'strreplace' ||
     n === 'str_replace' ||
     n === 'multiedit' ||
+    n === 'delete' || // ACP ToolKind: removing files or data
+    n === 'move' || // ACP ToolKind: moving or renaming files
     n.includes('write_file') ||
     n.includes('apply_patch')
   ) {
@@ -52,6 +54,7 @@ export function mapToolName(name: string): ToolName {
   if (n.includes('web_fetch') || n === 'webfetch' || n === 'fetch') return 'web_fetch'
   if (n === 'todowrite' || n === 'todo_write' || n === 'plan' || n === 'update_plan') return 'plan'
   if (n.includes('ask') || n === 'askuserquestion') return 'ask_user_question'
+  if (n === 'switch_mode' || n === 'switchmode') return 'switch_mode' // ACP ToolKind
   return 'external'
 }
 

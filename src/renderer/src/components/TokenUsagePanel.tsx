@@ -4,6 +4,7 @@ import type { TokenUsageViewPayload } from '@shared/ipc'
 import type { MessageKey, TParams } from '@shared/i18n'
 import { PRESET_MODELS } from '@shared/types'
 import { COMPACT_MIN_FOLDED, compactionForLeaf } from '@shared/compaction'
+import { QUOTA_EXHAUSTED_PERCENT } from '@shared/cliErrors'
 import {
   TOKEN_CHART_POINTS,
   cacheHitPercent,
@@ -54,12 +55,13 @@ function QuotaWindowRow({
   t: TFn
 }): React.JSX.Element {
   const pct = Math.min(100, Math.max(0, window.usedPercent))
+  const exhausted = pct >= QUOTA_EXHAUSTED_PERCENT
   const resets =
     window.resetsAt != null
       ? t('token.quotaResets', { clock: formatExpiry(window.resetsAt, now, locale) })
       : null
   return (
-    <div className="token-usage-quota-row">
+    <div className={`token-usage-quota-row${exhausted ? ' is-exhausted' : ''}`}>
       <div className="token-usage-quota-meta">
         <span className="token-usage-quota-name">{quotaLabel(window.kind, t)}</span>
         <span className="token-usage-quota-pct">

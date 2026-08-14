@@ -59,13 +59,16 @@ function statusLabel(status: ToolCallBlock['status']): string | undefined {
  * (main-chat-awaiting-user.rpml). `plan` renders as a checklist projection.
  */
 export const ToolCard = memo(function ToolCard({
-  block
+  block,
+  startCollapsed = false
 }: {
   block: ToolCallBlock
+  /** Finished thinking-process nest: every step starts closed. */
+  startCollapsed?: boolean
 }): React.JSX.Element {
   const t = useT()
   const fireAndForget = isFireAndForget(block)
-  const [expanded, setExpanded] = useState(() => defaultExpanded(block))
+  const [expanded, setExpanded] = useState(() => !startCollapsed && defaultExpanded(block))
   const isInteractive = block.tool === 'request' || block.tool === 'ask_user_question'
   const isApproval =
     block.status === 'pending' && !!block.choices?.length && !isInteractive

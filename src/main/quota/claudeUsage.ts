@@ -71,6 +71,13 @@ async function readClaudeAccessToken(): Promise<string | null> {
   }
 }
 
+/** Fingerprint of the current Claude Code OAuth token (login switch). */
+export async function readClaudeAuthIdentity(): Promise<string | null> {
+  const token = await readClaudeAccessToken()
+  if (!token) return null
+  return `tok:${createHash('sha256').update(token).digest('hex').slice(0, 16)}`
+}
+
 export async function fetchClaudeAccountQuota(): Promise<QuotaWindow[]> {
   const token = await readClaudeAccessToken()
   if (!token) return []

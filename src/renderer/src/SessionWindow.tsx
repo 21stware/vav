@@ -216,9 +216,9 @@ export default function SessionWindow({
   return (
     <div className="app-shell session-window">
       {/*
-        Title bar: traffic lights + agent switcher / search, then
-        Reveal in List. Agent chrome used to sit under this bar and felt like
-        a second toolbar.
+        Overlay chrome: traffic lights + agent switcher / search, then
+        Reveal in List. The 40px row is a 30%-clear plate over the log;
+        the first turn is inset below it and can still scroll underneath.
       */}
       <header className="titlebar bare session-window-titlebar">
         <div className="session-window-titlebar-chrome">

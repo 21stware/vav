@@ -112,6 +112,8 @@ export interface ToolCallBlock {
 export interface ReasoningBlock {
   kind: 'reasoning'
   text: string
+  /** Wall time from first token to seal. Missing on older sessions. */
+  durationMs?: number
 }
 
 export interface TextBlock {
@@ -150,6 +152,8 @@ export interface ChatMessage {
   /** Set when the turn producing this message was cancelled or failed. */
   cancelled?: boolean
   errorText?: string
+  /** Raw host / JSON-RPC payload; shown only when the user opens details. */
+  errorDetail?: string
   /** Quoted prior message (composer 引用); content stays user-typed only. */
   quoteMessageId?: string
   quoteSummary?: string
@@ -283,6 +287,11 @@ export interface ConversationMeta {
   archivedAt: number | null
   /** Tool approval policy for this conversation. */
   approvalMode: ApprovalMode
+  /**
+   * VAV built-in agent thinking / reasoning effort.
+   * Ignored while a CLI host is active. Missing on old sessions → High.
+   */
+  thinkingLevel?: ThinkingLevel
   /**
    * File-preview session key (inode:device or path-hash). When set, the
    * conversation is owned by FileSessionStore and hidden from the main sidebar.
@@ -670,6 +679,7 @@ export type ColorTint =
   | 'rose'
   | 'amber'
   | 'green'
+  | 'custom'
 export const COLOR_TINTS: readonly ColorTint[] = [
   'system',
   'mono',
@@ -678,12 +688,20 @@ export const COLOR_TINTS: readonly ColorTint[] = [
   'teal',
   'rose',
   'amber',
-  'green'
+  'green',
+  'custom'
 ] as const
+/** Preset swatches only — `custom` is the colour well. */
+export const PRESET_COLOR_TINTS: readonly Exclude<ColorTint, 'custom'>[] = COLOR_TINTS.filter(
+  (tint): tint is Exclude<ColorTint, 'custom'> => tint !== 'custom'
+)
 /** Sidebar list grouping; default is time buckets ("无分组" in the UI). */
 export type SidebarGroupingMode = 'none' | 'workspace'
 /** Per-conversation tool approval policy (main-chat.rpml). */
 export type ApprovalMode = 'auto' | 'bypass' | 'edit'
+
+/** VAV built-in agent thinking / reasoning effort. */
+export type ThinkingLevel = 'off' | 'low' | 'medium' | 'high' | 'max'
 
 /** Files panel browser layout (files-panel.rpml). */
 export type FileViewMode = 'tree' | 'column'
@@ -742,6 +760,11 @@ export interface AppSettings {
    * Updated whenever the user changes the composer approval picker.
    */
   defaultApprovalMode: ApprovalMode
+  /**
+   * Last-used VAV thinking level for new conversations.
+   * Updated whenever the user changes the composer thinking picker.
+   */
+  defaultThinkingLevel: ThinkingLevel
   customModels: string[]
   maxTokens: number
   temperature: number
@@ -786,6 +809,15 @@ export interface AppSettings {
    * Renderer-only: whether a Brave Search API key is stored (never the key itself).
    */
   braveSearchKeyPresent?: boolean
+  /**
+   * Optional Cloudflare account id (not secret). Used with a stored API token
+   * to resolve Workers / Pages deploy status for the workspace.
+   */
+  cloudflareAccountId: string
+  /**
+   * Renderer-only: whether a Cloudflare API token is stored (never the token).
+   */
+  cloudflareApiTokenPresent?: boolean
   theme: ThemeMode
   /**
    * Tools-tray bash background. `dark` stays dark regardless of theme;
@@ -796,8 +828,19 @@ export interface AppSettings {
   /**
    * Accent colour tint. Default `system` follows the OS accent; `mono` keeps
    * chrome black/white; fixed hues colour buttons, selection, links, and focus.
+   * `custom` uses {@link customAccentColor}.
    */
   colorTint: ColorTint
+  /**
+   * User-picked accent hex (`#rrggbb`) when {@link colorTint} is `custom`.
+   * Empty until the colour well is used.
+   */
+  customAccentColor: string
+  /**
+   * When false (default), Swarm / CLI Screen is off: the Thread|Swarm
+   * switcher is hidden and enterCliMode is a no-op.
+   */
+  swarmModeEnabled: boolean
   /** UI language; default follows the OS. */
   locale: LocalePreference
   /**
@@ -884,7 +927,7 @@ export interface AppSettings {
   disabledAgentModels: Record<string, string[]>
   /**
    * Recently picked agent+model pairs (picker queue), most recent first.
-   * Cap enforced in SettingsStore; used for one-click switch in AgentModelPicker.
+   * Cap enforced in SettingsStore (`RECENT_AGENT_MODELS_MAX`).
    */
   recentAgentModels: RecentAgentModelEntry[]
   /**
@@ -904,6 +947,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   apiKeyPresent: false,
   defaultModel: 'deepseek-v4-pro',
   defaultApprovalMode: 'auto',
+  defaultThinkingLevel: 'high',
   customModels: [],
   maxTokens: 8192,
   temperature: 0.7,
@@ -918,9 +962,12 @@ export const DEFAULT_SETTINGS: AppSettings = {
   webSearchProvider: 'auto',
   webSearxngBaseUrl: '',
   webFetchAllowRender: false,
+  cloudflareAccountId: '',
   theme: 'system',
   bashBackground: 'theme',
   colorTint: 'system',
+  customAccentColor: '',
+  swarmModeEnabled: false,
   locale: 'system',
   displayCurrency: 'USD',
   codeFont: 'SF Mono',
@@ -1187,6 +1234,10 @@ export type TurnEvent =
       tokensUsed: number
       /** Fatal error text, shown in the error banner. */
       error?: string
+      /** Classified CLI / provider failure — quota banner can open usage. */
+      errorKind?: 'quota' | 'session-stale' | 'auth' | 'generic'
+      /** Raw host / JSON-RPC payload for the details sheet. */
+      errorDetail?: string
       cancelled?: boolean
     }
   /**

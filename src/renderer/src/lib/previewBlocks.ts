@@ -11,6 +11,7 @@
 export type { PreviewBlock, PreviewBlockKind } from '@shared/previewBlock'
 export { isTsJsPath } from '@shared/previewBlock'
 import type { PreviewBlock } from '@shared/previewBlock'
+import { parsePythonIndentBlocks } from './previewPythonBlocks'
 
 function slug(value: string): string {
   return value
@@ -527,15 +528,85 @@ export function parseCodeBlocks(source: string, language?: string): PreviewBlock
 /**
  * Indent-based block parser — DevTools-style element selection for code.
  *
- * Every non-blank line at the current scope's minimum indent is a block head;
- * it owns all following lines indented deeper (blank lines never break a
- * block). Recurses so every indent level is independently selectable: hover a
- * line highlights the innermost block containing it, Esc pops out to the
- * enclosing indent level.
+ * Python uses {@link parsePythonIndentBlocks} (suites + elif/else/except).
+ * Other languages: every non-blank line at the current scope's minimum indent
+ * is a block head; it owns all following lines indented deeper (blank lines
+ * never break a block). Recurses so every indent level is independently
+ * selectable.
  */
 export function parseIndentBlocks(source: string, language?: string): PreviewBlock[] {
+  if (language === 'python') return parsePythonIndentBlocks(source)
   const lines = source.split(/\r?\n/)
   return parseIndentRange(lines, 0, lines.length, language, 0)
+}
+
+/** Unified diff → whole file + one child per `@@` hunk. */
+export function parseDiffBlocks(diff: string, filePath?: string): PreviewBlock[] {
+  const lines = diff.split(/\n/)
+  if (!diff.trim()) return []
+  const hunks: PreviewBlock[] = []
+  let i = 0
+  while (i < lines.length) {
+    if (lines[i]!.startsWith('@@')) {
+      const start = i
+      i += 1
+      while (i < lines.length && !lines[i]!.startsWith('@@')) i += 1
+      const head = lines[start]!.trim()
+      hunks.push({
+        id: `hunk-L${start + 1}`,
+        kind: 'section',
+        text: sliceLines(lines, start, i),
+        startLine: start + 1,
+        endLine: i,
+        label: head.slice(0, 72)
+      })
+      continue
+    }
+    i += 1
+  }
+  return [
+    {
+      id: 'diff-file',
+      kind: 'code',
+      text: diff,
+      startLine: 1,
+      endLine: Math.max(1, lines.length),
+      label: filePath ? `diff · ${filePath}` : `diff · lines 1–${lines.length}`,
+      children: hunks.length ? hunks : undefined
+    }
+  ]
+}
+
+/** Terminal / bash log → blank-line paragraphs under one output root. */
+export function parseTerminalOutputBlocks(body: string): PreviewBlock[] {
+  const lines = body.split(/\r?\n/)
+  const end = Math.max(1, lines.length)
+  const inner = parseTextBlocks(body)
+  if (inner.length <= 1) {
+    return inner.length
+      ? inner
+      : [
+          {
+            id: 'term-all',
+            kind: 'code',
+            text: body,
+            startLine: 1,
+            endLine: end,
+            label: `output · lines 1–${end}`
+          }
+        ]
+  }
+  return [
+    {
+      id: 'term-all',
+      kind: 'code',
+      text: body,
+      startLine: 1,
+      endLine: end,
+      label: `output · lines 1–${end}`,
+      children: inner
+    }
+  ]
 }
 
 function indentOf(line: string): number {
@@ -834,6 +905,8 @@ const CODE_EXTS = new Set([
   'mts',
   'cts',
   'py',
+  'pyi',
+  'pyw',
   'rb',
   'go',
   'rs',
@@ -982,6 +1055,8 @@ function languageHint(ext: string): string | undefined {
     ts: 'typescript',
     tsx: 'typescript',
     py: 'python',
+    pyi: 'python',
+    pyw: 'python',
     rb: 'ruby',
     go: 'go',
     rs: 'rust',

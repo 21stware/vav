@@ -17,8 +17,8 @@ import { execFileSync, execSync } from 'node:child_process'
 
 /** On-disk bundle / executable (lowercase — stable paths, npm electron layout). */
 const APP_SLUG = 'vav'
-/** Dock tooltip + Finder display name (uppercase brand). */
-const APP_DISPLAY_NAME = 'VAV'
+/** Dock tooltip + Finder display name — distinct from the shipped VAV.app. */
+const APP_DISPLAY_NAME = 'VAV Dev'
 const BUNDLE_ID = 'dev.vav.app'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
@@ -38,7 +38,7 @@ function currentStamp() {
     ? execSync(`stat -f %m "${iconDark}"`).toString().trim()
     : '0'
   // Bump the trailing token when Info.plist shape changes (e.g. document types).
-  return `${version}:${iconMtime}:${iconDarkMtime}:${BUNDLE_ID}:dock-name-VAV`
+  return `${version}:${iconMtime}:${iconDarkMtime}:${BUNDLE_ID}:dock-name-VAV-Dev`
 }
 
 function isBranded() {

@@ -12,6 +12,7 @@ import { groupTrayPanes } from '@shared/traySessions'
 import { existsSync, unlinkSync } from 'node:fs'
 import { join } from 'node:path'
 import { APP_NAME, applyDockIcon, loadAppIcon } from './brand'
+import { isDevRuntime } from './devRuntime'
 import { t } from './i18n'
 
 /** One multi-res tray glyph for the process lifetime — avoid rebuild thrash. */
@@ -173,6 +174,7 @@ export class NotificationCenter {
       return false
     }
     this.tray.setToolTip(APP_NAME)
+    if (IS_MAC && isDevRuntime()) this.tray.setTitle('DEV')
     // Left-click: show running-session menu when any CLI/bash/VAV work is live;
     // otherwise open the main window. Right-click always shows the menu.
     this.tray.on('click', () => {
@@ -203,7 +205,11 @@ export class NotificationCenter {
     if (!this.tray) return
     // macOS menu bar can show a numeric title; Windows uses tooltip only.
     if (IS_MAC) {
-      this.tray.setTitle(this.runningCount > 0 ? String(this.runningCount) : '')
+      if (isDevRuntime()) {
+        this.tray.setTitle(this.runningCount > 0 ? `DEV ${this.runningCount}` : 'DEV')
+      } else {
+        this.tray.setTitle(this.runningCount > 0 ? String(this.runningCount) : '')
+      }
     }
     this.tray.setToolTip(
       this.runningCount > 0 ? t('tray.sessions', { count: this.runningCount }) : APP_NAME
@@ -380,11 +386,13 @@ function trayTemplateFromMark(source: NativeImage): NativeImage | null {
     for (const { px, scale } of sizes) {
       const sil = silhouetteForTemplate(source, px)
       if (!sil || sil.isEmpty()) continue
+      const marked = isDevRuntime() ? paintTemplateDevBar(sil) : sil
+      if (!marked || marked.isEmpty()) continue
       image.addRepresentation({
         scaleFactor: scale,
         width: px,
         height: px,
-        buffer: sil.toPNG()
+        buffer: marked.toPNG()
       })
     }
     if (image.isEmpty()) return null
@@ -394,6 +402,26 @@ function trayTemplateFromMark(source: NativeImage): NativeImage | null {
     console.warn('[tray] failed to build template from mark', err)
     return null
   }
+}
+
+function paintTemplateDevBar(source: NativeImage): NativeImage {
+  const { width, height } = source.getSize()
+  const dst = Buffer.from(source.toBitmap())
+  if (width < 8 || height < 8 || dst.length < width * height * 4) return source
+  const y0 = Math.round(height * 0.82)
+  const y1 = Math.min(height, Math.round(height * 0.94))
+  const x0 = Math.round(width * 0.16)
+  const x1 = Math.round(width * 0.84)
+  for (let y = y0; y < y1; y++) {
+    for (let x = x0; x < x1; x++) {
+      const i = (y * width + x) * 4
+      dst[i] = 0
+      dst[i + 1] = 0
+      dst[i + 2] = 0
+      dst[i + 3] = 255
+    }
+  }
+  return nativeImage.createFromBitmap(dst, { width, height })
 }
 
 /**

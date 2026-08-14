@@ -11,13 +11,18 @@ import type { GitChangeEntry, GitSnapshot } from '@shared/git'
 import { useSessionStore } from '../state/sessionStore'
 import { useWorkspaceStore } from '../state/workspaceStore'
 import { useT, tt } from '../i18n/useT'
-import { useGitRepoSyncEpoch } from '../lib/gitRepoSync'
+import { isTemporaryWorkspace, workdirShortLabel } from '../lib/format'
+import { bumpGitRepoSync, useGitRepoSyncEpoch } from '../lib/gitRepoSync'
 import { fileManagerLabel } from '../lib/platform'
 import { highlightCode, languageFromPath } from '../lib/highlightCode'
+import { parseDiffBlocks } from '../lib/previewBlocks'
+import { TextBlockPick } from './TextBlockPick'
 import { onHljsReady } from '../lib/hljsLazy'
 import { dirname } from '../lib/path'
 import { FileManagerIcon } from './FileManagerIcon'
+import { EnableVersionControlChrome } from './SessionWorkspaceChrome'
 import { Button, EmptyState } from './ui'
+import { showMenu, type MenuItem } from '../lib/nativeMenu'
 
 const IMAGE_EXT = /\.(png|jpe?g|gif|webp|svg|ico|bmp|avif)$/i
 
@@ -170,59 +175,68 @@ function DiffLines({ text, filePath }: { text: string; filePath: string }): Reac
   const truncated = lines.length > 800
   const [expanded, setExpanded] = useState(false)
   const render = expanded || !truncated ? lines : lines.slice(0, 800)
+  const visibleText = expanded || !truncated ? text : render.join('\n')
+  const blocks = useMemo(() => parseDiffBlocks(visibleText, filePath), [visibleText, filePath])
 
   return (
-    <pre className="git-diff">
-      {render.map((line, i) => {
-        let cls = 'ctx'
-        let prefix = ''
-        let code = line
-        if (line.startsWith('+++') || line.startsWith('---') || line.startsWith('diff ')) {
-          cls = 'meta'
-        } else if (line.startsWith('@@')) {
-          cls = 'hunk'
-        } else if (line.startsWith('+')) {
-          cls = 'add'
-          prefix = '+'
-          code = line.slice(1)
-        } else if (line.startsWith('-')) {
-          cls = 'del'
-          prefix = '-'
-          code = line.slice(1)
-        } else if (line.startsWith(' ')) {
-          prefix = ' '
-          code = line.slice(1)
-        }
+    <>
+      <TextBlockPick
+        className="git-diff"
+        lines={render}
+        blocks={blocks}
+        sourcePath={`git-diff:${filePath}`}
+        badge="DIFF"
+        renderLine={(line) => {
+          let cls = 'ctx'
+          let prefix = ''
+          let code = line
+          if (line.startsWith('+++') || line.startsWith('---') || line.startsWith('diff ')) {
+            cls = 'meta'
+          } else if (line.startsWith('@@')) {
+            cls = 'hunk'
+          } else if (line.startsWith('+')) {
+            cls = 'add'
+            prefix = '+'
+            code = line.slice(1)
+          } else if (line.startsWith('-')) {
+            cls = 'del'
+            prefix = '-'
+            code = line.slice(1)
+          } else if (line.startsWith(' ')) {
+            prefix = ' '
+            code = line.slice(1)
+          }
 
-        const highlighted =
-          cls === 'add' || cls === 'del' || cls === 'ctx'
-            ? highlightCode(code, lang)
-            : null
+          const highlighted =
+            cls === 'add' || cls === 'del' || cls === 'ctx'
+              ? highlightCode(code, lang)
+              : null
 
-        return (
-          <div key={i} className={`diff-line ${cls}`}>
-            {highlighted != null ? (
-              <>
-                <span className="diff-prefix" aria-hidden>
-                  {prefix || ' '}
-                </span>
-                <span
-                  className="diff-code"
-                  dangerouslySetInnerHTML={{ __html: highlighted || ' ' }}
-                />
-              </>
-            ) : (
-              <span className="diff-code">{line || ' '}</span>
-            )}
-          </div>
-        )
-      })}
+          return (
+            <div className={`diff-line ${cls}`}>
+              {highlighted != null ? (
+                <>
+                  <span className="diff-prefix" aria-hidden>
+                    {prefix || ' '}
+                  </span>
+                  <span
+                    className="diff-code"
+                    dangerouslySetInnerHTML={{ __html: highlighted || ' ' }}
+                  />
+                </>
+              ) : (
+                <span className="diff-code">{line || ' '}</span>
+              )}
+            </div>
+          )
+        }}
+      />
       {truncated && !expanded && (
         <button type="button" className="diff-more" onClick={() => setExpanded(true)}>
           … {lines.length - 800} {t('git.moreLines')}
         </button>
       )}
-    </pre>
+    </>
   )
 }
 
@@ -423,19 +437,32 @@ export function GitDiffPreview({
 /** Files tray → Git: changed files + selected file diff. */
 export function GitChangesPanel({
   visible,
+  active = true,
+  isRepo = null,
   onChrome
 }: {
   visible: boolean
+  /** Git tab is the one on screen — chrome / preview only then. */
+  active?: boolean
+  /** Parent probe. `false` → paint enable-VC immediately; don't wait on status. */
+  isRepo?: boolean | null
   /** Lift branch/count + refresh into the Files toolbar row. */
   onChrome?: (chrome: GitPanelChrome | null) => void
 }): React.JSX.Element {
   const t = useT()
   const activeId = useSessionStore((s) => s.activeId)
   const previewHost = useSessionStore((s) => s.filePreviewHost)
+  const filePreviewOpen = useSessionStore((s) => s.filePreviewOpen)
+  const sessionPreview = useSessionStore((s) => s.sessionPreview)
   const setSessionPreview = useSessionStore((s) => s.setSessionPreview)
+  const setFilePreviewOpen = useSessionStore((s) => s.setFilePreviewOpen)
+  const conversation = useSessionStore((s) => s.conversations.find((c) => c.id === s.activeId))
+  const tmp = useSessionStore((s) => s.tmp)
   const root = useWorkspaceStore((s) => s.workspaces[activeId]?.root ?? null)
   /** Temp dirs can become repos after empty-session “enable version control”. */
   const gitRepoEpoch = useGitRepoSyncEpoch()
+  const cwd = conversation?.workingDirectory ?? root
+  const temporary = isTemporaryWorkspace(cwd, tmp)
 
   const [snap, setSnap] = useState<GitSnapshot | null>(null)
   const [selected, setSelected] = useState<string | null>(null)
@@ -443,6 +470,8 @@ export function GitChangesPanel({
   const [diffError, setDiffError] = useState<string | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
+  const [initing, setIniting] = useState(false)
+  const [initError, setInitError] = useState<string | null>(null)
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set())
   const [focusIndex, setFocusIndex] = useState(0)
   const listRef = useRef<HTMLDivElement>(null)
@@ -507,28 +536,38 @@ export function GitChangesPanel({
 
   useEffect(() => {
     if (!onChrome) return
-    if (!visible || !root) {
+    if (!active || !visible || !root || !snap?.isRepo) {
       onChrome(null)
       return
     }
-    const meta =
-      snap?.isRepo
-        ? `${snap.branch || t('git.detached', { head: snap.headShort ?? '?' })} · ${t('git.changeCount', { n: snap.changes.length })}`
-        : null
-    onChrome({ meta, loading, refresh: stableRefresh })
-  }, [onChrome, visible, root, snap, loading, stableRefresh, t])
+    onChrome({
+      meta: `${snap.branch || t('git.detached', { head: snap.headShort ?? '?' })} · ${t('git.changeCount', { n: snap.changes.length })}`,
+      loading,
+      refresh: stableRefresh
+    })
+  }, [onChrome, active, visible, root, snap, loading, stableRefresh, t])
 
   useEffect(() => {
     return () => onChrome?.(null)
   }, [onChrome])
 
   useEffect(() => {
-    if (!visible || !previewHost || !root || !selectedEntry) return
+    if (!active || !visible || !previewHost || !root || !selectedEntry) return
+    if (!filePreviewOpen || sessionPreview.kind !== 'git') return
     setSessionPreview({ kind: 'git', cwd: root, entry: selectedEntry })
-  }, [visible, previewHost, root, selectedEntry, setSessionPreview])
+  }, [
+    active,
+    visible,
+    previewHost,
+    root,
+    selectedEntry,
+    filePreviewOpen,
+    sessionPreview.kind,
+    setSessionPreview
+  ])
 
   useEffect(() => {
-    if (previewHost || !visible || !root || !selected || !snap?.isRepo) {
+    if (previewHost || !active || !visible || !root || !selected || !snap?.isRepo) {
       setDiff(null)
       setDiffError(null)
       return
@@ -559,7 +598,7 @@ export function GitChangesPanel({
     return () => {
       cancelled = true
     }
-  }, [previewHost, visible, root, selected, snap?.isRepo, t])
+  }, [previewHost, active, visible, root, selected, snap?.isRepo, t])
 
   // Keep focusIndex aligned with selected file when selection changes.
   useEffect(() => {
@@ -577,6 +616,29 @@ export function GitChangesPanel({
     void window.vav.conversations.revealInFinder(target)
   }, [selectedEntry])
 
+  const initRepo = useCallback(async (): Promise<void> => {
+    if (!cwd || !window.vav?.git?.init) {
+      setInitError(t('git.apiMissing'))
+      return
+    }
+    setIniting(true)
+    setInitError(null)
+    try {
+      const result = await window.vav.git.init(cwd)
+      if (!result.ok) {
+        setInitError(result.error)
+        return
+      }
+      setSnap(result.data)
+      bumpGitRepoSync()
+      await refresh()
+    } catch (err) {
+      setInitError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setIniting(false)
+    }
+  }, [cwd, refresh, t])
+
   const toggleDir = (path: string): void => {
     setExpanded((prev) => {
       const next = new Set(prev)
@@ -584,6 +646,24 @@ export function GitChangesPanel({
       else next.add(path)
       return next
     })
+  }
+
+  const previewGitEntry = (entry: GitChangeEntry): void => {
+    if (!root) return
+    setSelected(entry.path)
+    setSessionPreview({ kind: 'git', cwd: root, entry })
+    setFilePreviewOpen(true)
+  }
+
+  const showGitEntryMenu = (entry: GitChangeEntry, x: number, y: number): void => {
+    const items: MenuItem[] = [
+      { label: t('common.preview'), onSelect: () => previewGitEntry(entry) },
+      {
+        label: t('git.revealInFm', { fileManager: fileManagerLabel() }),
+        onSelect: () => void window.vav.conversations.revealInFinder(entry.absolutePath)
+      }
+    ]
+    void showMenu(items, { x, y })
   }
 
   const onListKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>): void => {
@@ -621,7 +701,7 @@ export function GitChangesPanel({
       if (!row) return
       event.preventDefault()
       if (row.kind === 'dir') toggleDir(row.path)
-      else setSelected(row.path)
+      else previewGitEntry(row.entry)
     } else if (event.key === 'ArrowRight') {
       const row = rows[focusIndex]
       if (row?.kind === 'dir' && !row.expanded) {
@@ -653,21 +733,22 @@ export function GitChangesPanel({
     )
   }
 
-  if (!snap) {
+  if (!snap?.isRepo) {
+    if (isRepo === true && !snap) {
+      return <div className="git-panel" aria-busy="true" />
+    }
+    const projectName = temporary
+      ? t('sidebar.defaultWorkspace')
+      : workdirShortLabel(cwd, tmp)
     return (
-      <div className="git-panel">
-        <EmptyState
-          title={loading ? t('common.loading') : t('git.loadFailed')}
-          description={loading ? undefined : t('git.apiMissing')}
+      <div className="git-panel git-panel-not-repo">
+        <EnableVersionControlChrome
+          projectName={projectName}
+          temporary={temporary}
+          busy={initing}
+          error={initError || snap?.error || null}
+          onInit={() => void initRepo()}
         />
-      </div>
-    )
-  }
-
-  if (!snap.isRepo) {
-    return (
-      <div className="git-panel">
-        <EmptyState title={t('git.notARepo')} description={t('git.notARepoDesc')} />
       </div>
     )
   }
@@ -728,8 +809,13 @@ export function GitChangesPanel({
                     setFocusIndex(index)
                     setSelected(row.path)
                   }}
-                  onDoubleClick={() => {
-                    void window.vav.conversations.revealInFinder(row.entry.absolutePath)
+                  onDoubleClick={() => previewGitEntry(row.entry)}
+                  onContextMenu={(event) => {
+                    event.preventDefault()
+                    event.stopPropagation()
+                    setFocusIndex(index)
+                    setSelected(row.path)
+                    showGitEntryMenu(row.entry, event.clientX, event.clientY)
                   }}
                 >
                   <span className={`git-status git-status-${row.entry.status}`}>

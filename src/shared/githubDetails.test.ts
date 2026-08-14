@@ -117,4 +117,17 @@ describe('renderGithubTables', () => {
     assert.match(html, /Nested Data 1/)
     assert.ok((html.match(/<table/g)?.length ?? 0) >= 2)
   })
+
+  it('renders markdown links inside a Cloudflare status cell', () => {
+    const src = [
+      '| Status |',
+      '| --- |',
+      '| [View logs](https://dash.cloudflare.com/builds/abc) |'
+    ].join('\n')
+    const html = renderGithubTables(src, fakeMd, (text) =>
+      text.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2">$1</a>')
+    )
+    assert.match(html, /<a href="https:\/\/dash.cloudflare.com\/builds\/abc">View logs<\/a>/)
+    assert.doesNotMatch(html, /\[View logs\]/)
+  })
 })

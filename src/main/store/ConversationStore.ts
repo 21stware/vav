@@ -24,8 +24,10 @@ import type {
   HostTranscriptBucket,
   LeafCompaction,
   QuotaWindow,
+  ThinkingLevel,
   TokenSnapshot
 } from '@shared/types'
+import { parseThinkingLevel } from '@shared/thinkingLevel'
 import { hostTranscriptKey } from '@shared/types'
 import { removeCompaction, upsertCompaction } from '@shared/compaction'
 import {
@@ -116,6 +118,7 @@ export class ConversationStore {
       if (typeof conversation.archived !== 'boolean') conversation.archived = false
       if (conversation.archivedAt === undefined) conversation.archivedAt = null
       if (!conversation.approvalMode) conversation.approvalMode = 'auto'
+      conversation.thinkingLevel = parseThinkingLevel(conversation.thinkingLevel)
       if (!Array.isArray(conversation.tokenHistory)) conversation.tokenHistory = []
       if (conversation.reportedSessionCostUsd === undefined) {
         conversation.reportedSessionCostUsd = null
@@ -201,6 +204,7 @@ export class ConversationStore {
       title?: string
       fileReadOnly?: boolean
       approvalMode?: import('@shared/types').ApprovalMode
+      thinkingLevel?: ThinkingLevel
       /** Structured CLI host; null/omit = built-in VAV. */
       cliHost?: CliHostKind | null
     }
@@ -230,6 +234,7 @@ export class ConversationStore {
       archived: false,
       archivedAt: null,
       approvalMode: options?.approvalMode ?? 'auto',
+      thinkingLevel: parseThinkingLevel(options?.thinkingLevel),
       fileId: options?.fileId ?? null,
       fileReadOnly: options?.fileReadOnly ?? false,
       agentBinaryName: cliHost,
@@ -284,6 +289,7 @@ export class ConversationStore {
     if (!imported.model) imported.model = 'unknown'
     if (!imported.title) imported.title = defaultSessionTitle(currentLocale())
     if (!imported.approvalMode) imported.approvalMode = 'auto'
+    imported.thinkingLevel = parseThinkingLevel(imported.thinkingLevel)
     if (typeof imported.tokensUsed !== 'number') imported.tokensUsed = 0
     if (typeof imported.tokenLimit !== 'number') {
       imported.tokenLimit = resolveContextWindow(imported.model)
@@ -341,6 +347,7 @@ export class ConversationStore {
       archived: false,
       archivedAt: null,
       approvalMode: source.approvalMode ?? 'auto',
+      thinkingLevel: parseThinkingLevel(source.thinkingLevel),
       activeLeafId: source.activeLeafId ? (idMap.get(source.activeLeafId) ?? null) : null,
       tokenHistory: [],
       reportedSessionCostUsd: null,
@@ -608,6 +615,14 @@ export class ConversationStore {
     return conversation
   }
 
+  setThinkingLevel(id: string, level: ThinkingLevel): Conversation | undefined {
+    const conversation = this.get(id)
+    if (!conversation) return undefined
+    conversation.thinkingLevel = parseThinkingLevel(level)
+    this.markDirty(id)
+    return conversation
+  }
+
   /**
    * Copies the visible thread up to and including `messageId` into a brand new
    * conversation. The copy is a fresh linear chain — branches the user did not
@@ -621,6 +636,7 @@ export class ConversationStore {
     if (cut < 0) return undefined
 
     const next = this.create(source.workingDirectory, source.model)
+    next.thinkingLevel = parseThinkingLevel(source.thinkingLevel)
     next.title = source.title
     next.tokenLimit = source.tokenLimit
     // Token usage is inherited only up to the fork point, not the whole source.

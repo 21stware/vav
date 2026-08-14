@@ -1064,7 +1064,7 @@ export function FileViewer({
     }
 
     // 3) Last resort: mint a normal conversation in this file's directory
-    await createConversation({ workingDirectory: dirname(filePath) })
+    await createConversation({ workingDirectory: dirname(filePath), openIn: 'here' })
     const id = useSessionStore.getState().activeId
     if (!id) return null
     setAgentConversationId(id)
@@ -1234,7 +1234,7 @@ export function FileViewer({
         return
       }
       // Fallback without FileSessionStore
-      await createConversation({ workingDirectory: dirname(filePath) })
+      await createConversation({ workingDirectory: dirname(filePath), openIn: 'here' })
       const id = useSessionStore.getState().activeId
       if (id) {
         setAgentConversationId(id)

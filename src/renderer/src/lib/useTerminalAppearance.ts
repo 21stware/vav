@@ -12,6 +12,7 @@ export function useTerminalAppearance(): void {
   const fontSize = useSessionStore((s) => s.settings.fontSize)
   const theme = useSessionStore((s) => s.settings.theme)
   const colorTint = useSessionStore((s) => s.settings.colorTint)
+  const customAccentColor = useSessionStore((s) => s.settings.customAccentColor)
   const bashBackground = useSessionStore((s) => s.settings.bashBackground ?? 'theme')
 
   useEffect(() => {
@@ -34,5 +35,5 @@ export function useTerminalAppearance(): void {
       obs.disconnect()
       media.removeEventListener('change', apply)
     }
-  }, [codeFont, fontSize, theme, colorTint, bashBackground])
+  }, [codeFont, fontSize, theme, colorTint, customAccentColor, bashBackground])
 }

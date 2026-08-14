@@ -24,14 +24,40 @@ import { openFileInSessionPreview, revealSessionFileInFinder } from '../lib/open
 import { formatBadge } from '../lib/previewBlocks'
 import { useSessionStore } from '../state/sessionStore'
 import { useT } from '../i18n/useT'
+import { ErrorDetailModal } from './ErrorBanner'
 import { InlineChangeReview } from './InlineChangeReview'
 import { MarkdownView } from './MarkdownView'
 import { ReasoningBlock } from './ReasoningBlock'
-import { StreamStatus } from './StreamStatus'
+import { ThinkingProcess } from './ThinkingProcess'
+import { processThoughtMs, splitAssistantProcess } from '../lib/assistantProcess'
+
 import { ToolCard } from './ToolCard'
 import { Button } from './ui'
 
 /** Paths touched by write/delete tools on this assistant message. */
+function MessageErrorLine({
+  text,
+  detail
+}: {
+  text: string
+  detail?: string
+}): React.JSX.Element {
+  const t = useT()
+  const [open, setOpen] = useState(false)
+  const detailText = (detail ?? text).trim()
+  return (
+    <>
+      <div className="message-error-row">
+        <div className="message system is-error">{text}</div>
+        {detailText ? (
+          <Button label={t('error.viewDetail')} size="sm" onClick={() => setOpen(true)} />
+        ) : null}
+      </div>
+      {open ? <ErrorDetailModal detail={detailText} onDismiss={() => setOpen(false)} /> : null}
+    </>
+  )
+}
+
 function writePathsOf(message: ChatMessage): string[] {
   const paths: string[] = []
   for (const block of message.blocks) {
@@ -332,6 +358,14 @@ export const MessageRow = memo(function MessageRow({
             <div className={`${classes} is-context-only`} id={`msg-${message.id}`} />
           )}
           <div className="message-actions">
+            {hasBody && (
+              <MessageActionButton
+                icon={<Copy size={12} />}
+                title={t('message.copy')}
+                doneTitle={t('common.copied')}
+                onClick={() => window.vav.conversations.copyToClipboard(message.content)}
+              />
+            )}
             {onEdit && (
               <MessageActionButton
                 icon={<Pencil size={12} />}
@@ -386,22 +420,48 @@ export const MessageRow = memo(function MessageRow({
     <div className="message-turn assistant" onContextMenu={onContextMenu}>
       <div className="message-role">Agent</div>
       <div className={classes} id={`msg-${message.id}`}>
-        {message.blocks.map((block, index) => {
-          if (block.kind === 'reasoning') {
-            return <ReasoningBlock key={`r${index}`} text={block.text} />
-          }
-          if (block.kind === 'plan') {
-            // Legacy PlanBlock rows, if any, are ignored in favour of plan tools.
+        {(() => {
+          const { process, conclusion } = splitAssistantProcess(message.blocks)
+          const render = (
+            item: (typeof process)[number],
+            nested: boolean
+          ): React.JSX.Element | null => {
+            const { block, index } = item
+            if (block.kind === 'reasoning') {
+              return nested ? (
+                <ReasoningBlock key={`r${index}`} text={block.text} flat />
+              ) : (
+                <ReasoningBlock
+                  key={`r${index}`}
+                  text={block.text}
+                  durationMs={block.durationMs}
+                />
+              )
+            }
+            if (block.kind === 'toolCall') {
+              return <ToolCard key={block.id} block={block} startCollapsed={nested} />
+            }
+            if (block.kind === 'text') {
+              return <MarkdownView key={`t${index}`} source={block.text} highlight={highlight} />
+            }
             return null
           }
-          if (block.kind === 'toolCall') {
-            if (block.tool === 'plan') return null
-            return <ToolCard key={block.id} block={block} />
-          }
-          return <MarkdownView key={`t${index}`} source={block.text} highlight={highlight} />
-        })}
+          return (
+            <>
+              {process.length > 0 ? (
+                <ThinkingProcess steps={process.length} durationMs={processThoughtMs(process)}>
+                  {process.map((item) => render(item, true))}
+                </ThinkingProcess>
+              ) : null}
+              {conclusion.map((item) => render(item, false))}
+            </>
+          )
+        })()}
 
         {message.cancelled && <div className="message system">{t('message.cancelled')}</div>}
+        {!message.cancelled && message.errorText && (
+          <MessageErrorLine text={message.errorText} detail={message.errorDetail} />
+        )}
 
         {message.changeSetId && (
           <div id={`inline-review-${message.changeSetId}`}>
@@ -542,10 +602,7 @@ export const MessageRow = memo(function MessageRow({
             </div>
           </div>
 
-          <div className="message-footer">
-            {pager}
-            {!message.cancelled && !message.errorText && <StreamStatus state="done" />}
-          </div>
+          {pager ? <div className="message-footer">{pager}</div> : null}
         </div>
       </div>
     </div>

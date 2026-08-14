@@ -29,7 +29,7 @@ console.log('starting electron app (detached)...')
 // Absolute app path — a relative "." can resolve wrong once the parent exits.
 const child = spawn(electronBin, [root], {
   cwd: root,
-  env: process.env,
+  env: { ...process.env, ELECTRON_IS_DEV: '1' },
   detached: true,
   stdio: 'ignore'
 })

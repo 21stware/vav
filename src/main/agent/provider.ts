@@ -15,16 +15,17 @@ import type { AssistantMessageEventStream } from '@earendil-works/pi-ai'
 import { streamSimple as anthropicMessages } from '@earendil-works/pi-ai/api/anthropic-messages'
 import { streamSimple as openaiCompletions } from '@earendil-works/pi-ai/api/openai-completions'
 import type { AppSettings } from '@shared/types'
+import {
+  DEEPSEEK_THINKING_LEVEL_MAP,
+  deepSeekEffort,
+  isDeepSeekModel,
+  parseThinkingLevel,
+  vavModelSupportsThinking
+} from '@shared/thinkingLevel'
+import { detectProtocol, type VavProtocol } from '@shared/vavProtocol'
 
-export type Protocol = 'anthropic' | 'openai'
-
-/** Anthropic-native unless the endpoint clearly points at an OpenAI-shaped API. */
-export function detectProtocol(endpoint: string): Protocol {
-  const value = endpoint.toLowerCase()
-  if (value.includes('anthropic')) return 'anthropic'
-  if (value.includes('/chat/completions') || value.includes('openai')) return 'openai'
-  return 'anthropic'
-}
+export type Protocol = VavProtocol
+export { detectProtocol }
 
 /**
  * The SDKs append their own route, so a pasted full URL has to be trimmed back
@@ -42,19 +43,68 @@ export function buildModel(
   modelId: string,
   contextWindow: number
 ): Model<Api> {
-  const protocol = detectProtocol(settings.apiEndpoint)
+  const protocol = detectProtocol(settings.apiEndpoint, modelId)
+  const deepseek = isDeepSeekModel(modelId) || /deepseek/i.test(settings.apiEndpoint)
   return {
     id: modelId,
     name: modelId,
     api: protocol === 'anthropic' ? 'anthropic-messages' : 'openai-completions',
     provider: 'vav',
     baseUrl: baseUrlFor(settings.apiEndpoint, protocol),
-    reasoning: true,
+    reasoning: vavModelSupportsThinking(modelId),
+    ...(deepseek
+      ? {
+          thinkingLevelMap: { ...DEEPSEEK_THINKING_LEVEL_MAP },
+          ...(protocol === 'openai'
+            ? {
+                compat: {
+                  thinkingFormat: 'deepseek' as const,
+                  supportsReasoningEffort: true
+                }
+              }
+            : {})
+        }
+      : {}),
     input: ['text'],
     // vav bills nothing; the conversation meter counts tokens, not dollars.
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
     contextWindow,
     maxTokens: settings.maxTokens
+  }
+}
+
+/**
+ * DeepSeek's OpenAI path wants `thinking.type` + `reasoning_effort`.
+ * The Anthropic path wants `reasoning.effort` / `output_config.effort`.
+ * pi-ai's Claude budget-thinking is neither; rewrite the payload.
+ */
+function applyDeepSeekThinking(
+  params: Record<string, unknown>,
+  model: Model<Api>,
+  options: SimpleStreamOptions
+): Record<string, unknown> {
+  if (!isDeepSeekModel(model.id)) return params
+  const effort = options.reasoning
+    ? deepSeekEffort(parseThinkingLevel(options.reasoning))
+    : null
+  if (model.api === 'anthropic-messages') {
+    const next = { ...params }
+    delete next.thinking
+    if (!effort) {
+      next.reasoning = { effort: 'none' }
+    } else {
+      next.reasoning = { effort }
+      next.output_config = { effort }
+    }
+    return next
+  }
+  if (!effort) {
+    return { ...params, thinking: { type: 'disabled' } }
+  }
+  return {
+    ...params,
+    thinking: { type: 'enabled' },
+    reasoning_effort: effort
   }
 }
 
@@ -64,7 +114,24 @@ export function streamWith(
   options: SimpleStreamOptions
 ): AssistantMessageEventStream {
   const stream = model.api === 'anthropic-messages' ? anthropicMessages : openaiCompletions
-  return stream(model as Model<'anthropic-messages'> & Model<'openai-completions'>, context, options)
+  const patched: SimpleStreamOptions = {
+    ...options,
+    onPayload: (params, payloadModel) => {
+      const next = applyDeepSeekThinking(
+        params as Record<string, unknown>,
+        payloadModel,
+        options
+      )
+      return options.onPayload
+        ? options.onPayload(next, payloadModel)
+        : next
+    }
+  }
+  return stream(
+    model as Model<'anthropic-messages'> & Model<'openai-completions'>,
+    context,
+    patched
+  )
 }
 
 /** Turns a provider error into something worth showing in the banner. */

@@ -52,7 +52,7 @@ export function resolveDefaultChatHost(
  * Per-provider resume cursor persisted on {@link ConversationMeta}.
  * Survives process restarts so the next prompt can attach to the native thread.
  */
-export type ProviderResumeCursor =
+export type ProviderResumeCursor = (
   | { provider: 'claude'; sessionId: string; resumeAt?: string | null }
   | { provider: 'codex'; threadId: string }
   | { provider: 'cursor'; sessionId: string }
@@ -63,6 +63,26 @@ export type ProviderResumeCursor =
   | { provider: 'antigravity'; conversationId: string }
   | { provider: 'kiro'; sessionId: string }
   | { provider: 'cline'; sessionId: string }
+) & {
+  /**
+   * Account fingerprint when the cursor was written (Grok user id, Claude
+   * token hash, Codex account id). A mismatch after login switch drops resume.
+   */
+  authIdentity?: string
+}
+
+export function cursorAuthIdentity(cursor: ProviderResumeCursor | null | undefined): string | null {
+  const id = cursor?.authIdentity?.trim()
+  return id ? id : null
+}
+
+export function withCursorAuthIdentity(
+  cursor: ProviderResumeCursor,
+  identity: string | null
+): ProviderResumeCursor {
+  if (!identity) return cursor
+  return { ...cursor, authIdentity: identity }
+}
 
 export function displayNameForCliHost(kind: CliHostKind): string {
   switch (kind) {

@@ -14,10 +14,28 @@ import type {
   TurnPhase,
   TurnStatus
 } from '@shared/types'
+import {
+  cursorAuthIdentity,
+  isStructuredCliHost,
+  withCursorAuthIdentity
+} from '@shared/cliHost'
 import { ROOT_LEAF } from '@shared/thread'
-import { buildSnapshot } from '@shared/tokenUsage'
+import { buildSnapshot, formatExpiry, mergeQuotaWindowsPreferNewer } from '@shared/tokenUsage'
+import {
+  classifyCliError,
+  extractRpcError,
+  formatErrorDetail,
+  formatErrorDetailFromParts,
+  isBareInternalError,
+  pickExhaustedQuotaWindow,
+  quotaKindMessageKey,
+  shouldRetryFreshSession,
+  type CliErrorKind
+} from '@shared/cliErrors'
 import { isApprovalApproveText } from '@shared/i18n'
-import { enabledCliAgents, isStructuredCliHost } from '@shared/types'
+import { enabledCliAgents } from '@shared/types'
+import { currentLocale, t } from '../i18n'
+import { readHostAuthIdentity } from './hostAuth'
 import type { ConversationStore } from '../store/ConversationStore'
 import type { SettingsStore } from '../store/SettingsStore'
 import type { ChangeSetStore } from './ChangeSetStore'
@@ -31,6 +49,40 @@ import { inputJson, mapToolName, summarizeCliTool } from './drivers/toolMap'
 import { FileDraftCoalescer, writeToolDraft } from '@shared/writeToolDraft'
 
 const COALESCE_MS = 32
+
+function describeCliHostError(
+  raw: string,
+  windows: QuotaWindow[],
+  code?: number | null
+): { kind: CliErrorKind; message: string } {
+  const text = raw.trim() || 'Internal error'
+  const locale = currentLocale()
+  const kind = classifyCliError(text, windows, code)
+  if (kind === 'cancelled') return { kind: 'generic', message: text }
+  if (kind === 'quota') {
+    const window = pickExhaustedQuotaWindow(windows)
+    if (window) {
+      const name = t(quotaKindMessageKey(window.kind))
+      const percent = window.usedPercent.toFixed(window.usedPercent >= 10 ? 0 : 1)
+      if (window.resetsAt != null) {
+        return {
+          kind,
+          message: t('error.quotaExceededReset', {
+            window: name,
+            percent,
+            clock: formatExpiry(window.resetsAt, Date.now(), locale)
+          })
+        }
+      }
+      return { kind, message: t('error.quotaExceeded', { window: name, percent }) }
+    }
+    return { kind, message: t('error.quotaExceededGeneric') }
+  }
+  if (kind === 'session-stale') return { kind, message: t('error.sessionStale') }
+  if (kind === 'auth') return { kind, message: t('error.agentAuthRequired') }
+  if (isBareInternalError(text)) return { kind: 'generic', message: t('error.agentInternal') }
+  return { kind, message: text }
+}
 
 interface PendingPermission {
   requestId: string
@@ -52,7 +104,15 @@ interface HostTurn {
   toolCount: number
   cancelled: boolean
   error?: string
+  errorKind?: CliErrorKind
+  errorCode?: number | null
+  errorDetail?: string
+  prompt: string
+  sawTurnStarted: boolean
+  retriedFreshSession: boolean
+  settling: boolean
   pendingPermissions: Map<string, PendingPermission>
+  reasoningStartedAt: Map<number, number>
   /** permission requestId → toolCallId for answer routing */
   permissionByRequest: Map<string, string>
 }
@@ -61,6 +121,7 @@ interface HostRuntime {
   kind: CliHostKind
   driver: DriverControl
   cursor: ProviderResumeCursor | null
+  authIdentity: string | null
   lastTouch: number
 }
 
@@ -71,6 +132,10 @@ export interface CliAgentHostDeps {
   emit: (event: TurnEvent) => void
   /** Sandbox copy → user-visible path (for streaming drafts). */
   logicalPath?: (path: string) => string
+  quota?: {
+    get(host: CliHostKind): QuotaWindow[]
+    forceRefresh(host: CliHostKind): Promise<QuotaWindow[]>
+  }
 }
 
 /**
@@ -83,6 +148,8 @@ export class CliAgentHost {
   private turns = new Map<string, HostTurn>()
   private starting = new Map<string, Promise<HostRuntime>>()
   private fileDrafts = new FileDraftCoalescer()
+  /** Ignore the next process-exited for this conversation (runtime replace). */
+  private ignoreNextExit = new Set<string>()
 
   constructor(private deps: CliAgentHostDeps) {}
 
@@ -287,11 +354,7 @@ export class CliAgentHost {
 
   dispose(conversationId: string): void {
     this.cancel(conversationId)
-    const runtime = this.runtimes.get(conversationId)
-    if (runtime) {
-      runtime.driver.dispose()
-      this.runtimes.delete(conversationId)
-    }
+    this.disposeRuntime(conversationId)
     this.turns.delete(conversationId)
   }
 
@@ -344,7 +407,12 @@ export class CliAgentHost {
       flushTimer: null,
       toolCount: 0,
       cancelled: false,
+      prompt,
+      sawTurnStarted: false,
+      retriedFreshSession: false,
+      settling: false,
       pendingPermissions: new Map(),
+      reasoningStartedAt: new Map(),
       permissionByRequest: new Map()
     }
     // For regenerate we mint a fresh assistant id
@@ -365,14 +433,30 @@ export class CliAgentHost {
       runtime.lastTouch = Date.now()
       runtime.driver.prompt(prompt)
     } catch (err) {
-      turn.error = err instanceof Error ? err.message : String(err)
+      const extracted = extractRpcError(err)
+      const described = await this.describeTurnError(
+        conversationId,
+        extracted.text || (err instanceof Error ? err.message : String(err)),
+        extracted.code
+      )
+      turn.error = described.message
+      turn.errorKind = described.kind
+      turn.errorDetail = formatErrorDetail(err, extracted.text)
       void this.finishTurn(conversationId, turn, false)
     }
   }
 
   private async ensureRuntime(conversationId: string): Promise<HostRuntime> {
     const existing = this.runtimes.get(conversationId)
-    if (existing) return existing
+    if (existing) {
+      const identity = await readHostAuthIdentity(existing.kind)
+      if (identity && existing.authIdentity && existing.authIdentity !== identity) {
+        this.clearResumeCursor(conversationId)
+        this.disposeRuntime(conversationId, { replacing: true })
+      } else {
+        return existing
+      }
+    }
     const inflight = this.starting.get(conversationId)
     if (inflight) return inflight
 
@@ -403,13 +487,20 @@ export class CliAgentHost {
     }
 
     const cwd = conversation.workingDirectory || homedir()
+    const identity = await readHostAuthIdentity(kind)
     let cursor = conversation.cliResumeCursor ?? null
     if (cursor && cursor.provider !== kind) cursor = null
+    const cursorIdentity = cursorAuthIdentity(cursor)
+    if (cursor && identity && cursorIdentity && cursorIdentity !== identity) {
+      cursor = null
+      this.clearResumeCursor(conversationId)
+    }
 
     const runtime: HostRuntime = {
       kind,
       driver: null as unknown as DriverControl,
       cursor,
+      authIdentity: identity,
       lastTouch: Date.now()
     }
 
@@ -434,17 +525,19 @@ export class CliAgentHost {
     if (runtime) runtime.lastTouch = Date.now()
 
     if (event.type === 'connected') {
+      const cursor = withCursorAuthIdentity(event.cursor, runtime?.authIdentity ?? null)
       this.deps.conversations.updateMeta(conversationId, {
-        cliResumeCursor: event.cursor,
+        cliResumeCursor: cursor,
         agentBinaryName: event.cursor.provider
       })
-      if (runtime) runtime.cursor = event.cursor
+      if (runtime) runtime.cursor = cursor
       return
     }
 
     const turn = this.turns.get(conversationId)
     if (!turn) {
       if (event.type === 'process-exited') {
+        if (this.ignoreNextExit.delete(conversationId)) return
         this.runtimes.get(conversationId)?.driver.dispose()
         this.runtimes.delete(conversationId)
       }
@@ -453,6 +546,7 @@ export class CliAgentHost {
 
     switch (event.type) {
       case 'turn-started':
+        turn.sawTurnStarted = true
         this.setPhase(conversationId, turn, 'thinking')
         break
       case 'text-delta':
@@ -475,26 +569,50 @@ export class CliAgentHost {
         break
       case 'error':
         turn.error = event.message
+        turn.errorCode = event.errorCode ?? turn.errorCode
+        turn.errorDetail = event.errorDetail ?? turn.errorDetail
+        if (!turn.sawTurnStarted && !turn.cancelled) {
+          void this.settleFailedTurn(
+            conversationId,
+            turn,
+            event.message,
+            event.errorCode,
+            event.errorDetail
+          )
+        }
         break
       case 'turn-finished':
         if (event.resumeAt && runtime?.cursor?.provider === 'claude') {
-          const next = {
-            provider: 'claude' as const,
-            sessionId: runtime.cursor.sessionId,
-            resumeAt: event.resumeAt
-          }
+          const next = withCursorAuthIdentity(
+            {
+              provider: 'claude',
+              sessionId: runtime.cursor.sessionId,
+              resumeAt: event.resumeAt
+            },
+            runtime.authIdentity
+          )
           runtime.cursor = next
           this.deps.conversations.updateMeta(conversationId, { cliResumeCursor: next })
         }
-        if (event.error) turn.error = event.error
-        if (!event.success && !turn.cancelled && !turn.error) {
-          turn.error = 'Turn failed'
+        if (event.success || turn.cancelled) {
+          if (event.error) turn.error = event.error
+          void this.finishTurn(conversationId, turn, event.success)
+          break
         }
-        void this.finishTurn(conversationId, turn, event.success)
+        void this.settleFailedTurn(
+          conversationId,
+          turn,
+          event.error || turn.error || t('error.model'),
+          event.errorCode ?? turn.errorCode,
+          event.errorDetail ?? turn.errorDetail
+        )
         break
       case 'process-exited':
+        if (this.ignoreNextExit.delete(conversationId)) return
         if (this.turns.has(conversationId)) {
           turn.error = turn.error || `Agent process exited (${event.code ?? '?'})`
+          turn.errorDetail =
+            turn.errorDetail || formatErrorDetailFromParts(turn.error, event.code)
           void this.finishTurn(conversationId, turn, false)
         }
         this.runtimes.delete(conversationId)
@@ -511,10 +629,14 @@ export class CliAgentHost {
     if (!text) return
     let index = kind === 'text' ? turn.textIndex : turn.reasoningIndex
     if (index == null) {
+      if (kind === 'text') this.sealOpenReasoning(turn)
       index = turn.blocks.length
       turn.blocks.push(kind === 'text' ? { kind: 'text', text: '' } : { kind: 'reasoning', text: '' })
       if (kind === 'text') turn.textIndex = index
-      else turn.reasoningIndex = index
+      else {
+        turn.reasoningIndex = index
+        turn.reasoningStartedAt.set(index, Date.now())
+      }
     }
     // Opening a text block after tools — start a new slot
     if (kind === 'text' && turn.toolCount > 0) {
@@ -530,6 +652,15 @@ export class CliAgentHost {
     this.setPhase(conversationId, turn, kind === 'reasoning' ? 'thinking' : 'outputting')
     if (!turn.flushTimer) {
       turn.flushTimer = setTimeout(() => this.flushBuffers(conversationId, turn), COALESCE_MS)
+    }
+  }
+
+  private sealOpenReasoning(turn: HostTurn): void {
+    const now = Date.now()
+    for (const [index, started] of turn.reasoningStartedAt) {
+      const block = turn.blocks[index]
+      if (!block || block.kind !== 'reasoning' || block.durationMs != null) continue
+      block.durationMs = Math.max(0, now - started)
     }
   }
 
@@ -565,13 +696,14 @@ export class CliAgentHost {
         kind: 'toolCall',
         id: event.id,
         tool: mapToolName(event.name),
-        summary: summarizeCliTool(event.name, event.input),
+        summary: event.title || summarizeCliTool(event.name, event.input),
         input: inputJson(event.input),
         output: '',
         status: 'pending'
       }
       turn.blocks.push(block)
       // New content after a tool should open fresh text/reasoning slots
+      this.sealOpenReasoning(turn)
       turn.textIndex = null
       turn.reasoningIndex = null
     }
@@ -580,8 +712,13 @@ export class CliAgentHost {
       block.status = 'executing'
       if (event.input && Object.keys(event.input as object).length) {
         block.input = inputJson(event.input)
-        block.summary = summarizeCliTool(event.name, event.input)
-        block.tool = mapToolName(event.name)
+        block.summary = event.title || summarizeCliTool(event.name, event.input)
+        // ACP tool_call_update is a patch and may omit name/kind — never regress
+        // a specific mapping back to 'external' on a sparse update.
+        const mapped = mapToolName(event.name)
+        if (mapped !== 'external' || block.tool === 'external') block.tool = mapped
+      } else if (event.title) {
+        block.summary = event.title
       }
     } else if (event.status === 'completed') {
       block.status = 'completed'
@@ -731,6 +868,7 @@ export class CliAgentHost {
     // Prevent double-finish from cancel grace + turn-finished race.
     this.turns.delete(conversationId)
     this.flushBuffers(conversationId, turn)
+    this.sealOpenReasoning(turn)
 
     for (const block of turn.blocks) {
       if (block.kind !== 'toolCall') continue
@@ -753,7 +891,8 @@ export class CliAgentHost {
       blocks: turn.blocks.map((b) => ({ ...b })),
       createdAt: Date.now(),
       cancelled: turn.cancelled || undefined,
-      errorText: turn.error
+      errorText: turn.error,
+      errorDetail: turn.errorDetail
     }
 
     let changeSet =
@@ -787,6 +926,8 @@ export class CliAgentHost {
       message,
       tokensUsed,
       error: turn.error,
+      errorKind: turn.errorKind,
+      errorDetail: turn.errorDetail,
       cancelled: turn.cancelled || undefined
     })
 
@@ -800,6 +941,95 @@ export class CliAgentHost {
         changeSet
       })
     }
+  }
+
+  private clearResumeCursor(conversationId: string): void {
+    this.deps.conversations.updateMeta(conversationId, { cliResumeCursor: null })
+  }
+
+  private disposeRuntime(
+    conversationId: string,
+    options?: { replacing?: boolean }
+  ): void {
+    const runtime = this.runtimes.get(conversationId)
+    if (!runtime) return
+    if (options?.replacing) this.ignoreNextExit.add(conversationId)
+    runtime.driver.dispose()
+    this.runtimes.delete(conversationId)
+  }
+
+  private quotaWindowsFor(conversationId: string): QuotaWindow[] {
+    const conversation = this.deps.conversations.get(conversationId)
+    const host = conversation?.cliHost
+    const account = host && this.deps.quota ? this.deps.quota.get(host) : []
+    return mergeQuotaWindowsPreferNewer(account, conversation?.quotaWindows ?? [])
+  }
+
+  private async describeTurnError(
+    conversationId: string,
+    raw: string,
+    code?: number | null
+  ): Promise<{ kind: CliErrorKind; message: string }> {
+    const conversation = this.deps.conversations.get(conversationId)
+    const host = conversation?.cliHost
+    if (host && this.deps.quota) {
+      await this.deps.quota.forceRefresh(host)
+    }
+    return describeCliHostError(raw, this.quotaWindowsFor(conversationId), code)
+  }
+
+  private async settleFailedTurn(
+    conversationId: string,
+    turn: HostTurn,
+    raw: string,
+    code?: number | null,
+    detail?: string
+  ): Promise<void> {
+    if (!this.turns.has(conversationId) || this.turns.get(conversationId) !== turn) return
+    if (turn.settling) return
+    if (turn.cancelled) {
+      void this.finishTurn(conversationId, turn, false)
+      return
+    }
+    turn.settling = true
+    turn.errorDetail = detail?.trim() || formatErrorDetailFromParts(raw, code)
+
+    const described = await this.describeTurnError(conversationId, raw, code)
+    if (!this.turns.has(conversationId) || this.turns.get(conversationId) !== turn) return
+    const runtime = this.runtimes.get(conversationId)
+    const hadCursor = !!runtime?.cursor || !!this.deps.conversations.get(conversationId)?.cliResumeCursor
+
+    if (!turn.retriedFreshSession && shouldRetryFreshSession(described.kind, raw, hadCursor, code)) {
+      turn.retriedFreshSession = true
+      turn.settling = false
+      turn.error = undefined
+      turn.errorKind = undefined
+      turn.errorDetail = undefined
+      this.clearResumeCursor(conversationId)
+      this.disposeRuntime(conversationId, { replacing: true })
+      try {
+        const next = await this.ensureRuntime(conversationId)
+        next.lastTouch = Date.now()
+        next.driver.prompt(turn.prompt)
+        return
+      } catch (err) {
+        const extracted = extractRpcError(err)
+        const fallback = await this.describeTurnError(
+          conversationId,
+          extracted.text || (err instanceof Error ? err.message : String(err)),
+          extracted.code
+        )
+        turn.error = fallback.message
+        turn.errorKind = fallback.kind
+        turn.errorDetail = formatErrorDetail(err, extracted.text)
+        void this.finishTurn(conversationId, turn, false)
+        return
+      }
+    }
+
+    turn.error = described.message
+    turn.errorKind = described.kind
+    void this.finishTurn(conversationId, turn, false)
   }
 
   private setPhase(conversationId: string, turn: HostTurn, phase: TurnPhase): void {

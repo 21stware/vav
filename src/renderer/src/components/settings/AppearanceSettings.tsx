@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react'
-import { ChevronDown } from 'lucide-react'
-import { tintSwatchColor, type FixedColorTint } from '@shared/colorTints'
+import { ChevronDown, Plus } from 'lucide-react'
+import { normalizeAccentHex, tintSwatchColor, type FixedColorTint } from '@shared/colorTints'
 import {
-  COLOR_TINTS,
+  PRESET_COLOR_TINTS,
   DISPLAY_CURRENCIES,
   type BashBackgroundMode,
   type DisplayCurrency,
@@ -49,6 +49,12 @@ export function AppearanceSettings(): React.JSX.Element {
     })
   }, [])
 
+  const customHex = normalizeAccentHex(settings.customAccentColor)
+  const customActive = (settings.colorTint ?? 'system') === 'custom'
+  const customLabel = customHex
+    ? `${t('appearance.colorTint.custom')} · ${customHex}`
+    : t('appearance.colorTint.custom')
+
   return (
     <div className="form">
       <div className="form-row">
@@ -85,7 +91,7 @@ export function AppearanceSettings(): React.JSX.Element {
         <label>{t('appearance.colorTint')}</label>
         <div className="control">
           <div className="tint-swatches" role="radiogroup" aria-label={t('appearance.colorTint')}>
-            {COLOR_TINTS.map((tint) => {
+            {PRESET_COLOR_TINTS.map((tint) => {
               const active = (settings.colorTint ?? 'system') === tint
               // Same hex (or mono gradient) that appearance.ts applies for this theme.
               const swatch =
@@ -108,6 +114,35 @@ export function AppearanceSettings(): React.JSX.Element {
                 />
               )
             })}
+            <button
+              type="button"
+              role="radio"
+              aria-checked={customActive}
+              className={`tint-swatch is-custom${customActive ? ' is-active' : ''}${
+                customHex ? '' : ' is-empty'
+              }`}
+              title={customLabel}
+              aria-label={customLabel}
+              style={customHex ? { ['--tint-swatch' as string]: customHex } : undefined}
+              onClick={async () => {
+                // Select "custom" immediately so the swatch shows as active
+                // while the picker is open.
+                if (settings.colorTint !== 'custom') {
+                  void updateSettings({ colorTint: 'custom' })
+                }
+                const picked = await window.vav.settings.pickColor(customHex ?? undefined)
+                if (!picked) return // cancelled — keep current selection
+                const hex = normalizeAccentHex(picked)
+                if (!hex) return
+                void updateSettings({ colorTint: 'custom', customAccentColor: hex })
+              }}
+            >
+              {customHex ? (
+                <span className="tint-custom-fill" aria-hidden />
+              ) : (
+                <Plus className="tint-custom-plus" size={12} strokeWidth={2.5} aria-hidden />
+              )}
+            </button>
           </div>
         </div>
       </div>

@@ -37,9 +37,13 @@ const api: VavApi = {
     apiKeyHint: () => ipcRenderer.invoke(IPC.settingsKeyHint),
     setBraveSearchKey: (key: string) => ipcRenderer.invoke(IPC.settingsSetBraveSearchKey, key),
     braveSearchKeyHint: () => ipcRenderer.invoke(IPC.settingsBraveSearchKeyHint),
+    setCloudflareApiToken: (token: string) =>
+      ipcRenderer.invoke(IPC.settingsSetCloudflareToken, token),
+    cloudflareApiTokenHint: () => ipcRenderer.invoke(IPC.settingsCloudflareTokenHint),
     validateKey: (key: string) => ipcRenderer.invoke(IPC.settingsValidateKey, key),
     availableFonts: () => ipcRenderer.invoke(IPC.settingsFonts),
     pickDirectory: () => ipcRenderer.invoke(IPC.settingsPickDirectory),
+    pickColor: (defaultHex?: string) => ipcRenderer.invoke(IPC.settingsPickColor, defaultHex),
     setHotkey: (accelerator: string) => ipcRenderer.invoke(IPC.settingsSetHotkey, accelerator),
     cliStatus: () => ipcRenderer.invoke(IPC.settingsCliStatus),
     cliSetLocation: (location: CliInstallLocation) =>
@@ -91,6 +95,8 @@ const api: VavApi = {
       ipcRenderer.invoke(IPC.convSetArchived, id, archived),
     setApprovalMode: (id: string, mode) =>
       ipcRenderer.invoke(IPC.convSetApprovalMode, id, mode),
+    setThinkingLevel: (id: string, level) =>
+      ipcRenderer.invoke(IPC.convSetThinkingLevel, id, level),
     continueInNewSession: (id: string, messageId: string) =>
       ipcRenderer.invoke(IPC.convContinueNew, id, messageId),
     duplicate: (id: string) => ipcRenderer.invoke(IPC.convDuplicate, id),
@@ -206,7 +212,11 @@ const api: VavApi = {
   github: {
     listPulls: (cwd: string, state?: import('@shared/github').GithubPullStateFilter) =>
       ipcRenderer.invoke(IPC.githubListPulls, cwd, state),
-    getPull: (cwd: string, number: number) => ipcRenderer.invoke(IPC.githubGetPull, cwd, number)
+    getPull: (cwd: string, number: number) => ipcRenderer.invoke(IPC.githubGetPull, cwd, number),
+    listActions: (cwd: string) => ipcRenderer.invoke(IPC.githubListActions, cwd),
+    getActionRun: (cwd: string, runId: number) =>
+      ipcRenderer.invoke(IPC.githubGetActionRun, cwd, runId),
+    getSite: (cwd: string) => ipcRenderer.invoke(IPC.githubGetSite, cwd)
   },
 
   fileSessions: {

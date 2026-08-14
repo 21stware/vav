@@ -8,6 +8,7 @@ import {
   spawnStdioProcess,
   type StdioProcess
 } from './process'
+import { extractRpcErrorText } from '@shared/cliErrors'
 import type { DriverControl, DriverEventSink, DriverStartOptions } from './types'
 
 /**
@@ -247,7 +248,7 @@ function wirePi(
     } catch (err) {
       emit({
         type: 'error',
-        message: err instanceof Error ? err.message : String(err)
+        message: extractRpcErrorText(err)
       })
     }
   })()

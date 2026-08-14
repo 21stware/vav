@@ -36,6 +36,18 @@ async function readCodexAuthHeaders(): Promise<Record<string, string> | null> {
   }
 }
 
+/** ChatGPT account id from Codex auth.json, when present. */
+export async function readCodexAuthIdentity(): Promise<string | null> {
+  try {
+    const raw = await readFile(join(codexHome(), 'auth.json'), 'utf8')
+    const parsed = JSON.parse(raw) as { tokens?: { account_id?: unknown } }
+    const accountId = parsed.tokens?.account_id
+    return typeof accountId === 'string' && accountId.trim() ? accountId.trim() : null
+  } catch {
+    return null
+  }
+}
+
 export async function fetchCodexAccountQuota(): Promise<QuotaWindow[]> {
   const headers = await readCodexAuthHeaders()
   if (!headers) return []

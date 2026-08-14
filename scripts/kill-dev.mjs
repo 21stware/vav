@@ -1,7 +1,7 @@
 /**
- * Tear down every local VAV / electron-vite process before a fresh `npm run
- * dev`. Branded binary shows up as process name "VAV", which plain
- * `pkill -f electron/dist/vav.app` often misses once argv is shortened.
+ * Tear down local electron-vite / branded *dev* VAV processes before a fresh
+ * `npm run dev`. Never touch the installed release app (`/Applications/VAV.app`,
+ * process name `VAV`, userData `vav`).
  */
 import { execSync } from 'node:child_process'
 import { rmSync } from 'node:fs'
@@ -24,26 +24,30 @@ for (const pattern of patterns) {
   }
 }
 
-// Exact process name after branding (Dock / Activity Monitor show "VAV").
-try {
-  execSync('pkill -x VAV', { stdio: 'ignore' })
-} catch {
-  // none
+// Dev process.title / Dock name after branding. Must NOT match release `VAV`.
+for (const name of ['VAV Dev', 'VAVDev']) {
+  try {
+    execSync(`pkill -x ${JSON.stringify(name)}`, { stdio: 'ignore' })
+  } catch {
+    // none
+  }
 }
 
-// Brief wait, then force leftovers.
 try {
   execSync('sleep 0.4', { stdio: 'ignore' })
 } catch {
   // ignore
 }
-try {
-  execSync('pkill -9 -x VAV', { stdio: 'ignore' })
-} catch {
-  // none
+
+for (const name of ['VAV Dev', 'VAVDev']) {
+  try {
+    execSync(`pkill -9 -x ${JSON.stringify(name)}`, { stdio: 'ignore' })
+  } catch {
+    // none
+  }
 }
 
-const singletonGlob = join(homedir(), 'Library/Application Support/vav/Singleton')
+const singletonGlob = join(homedir(), 'Library/Application Support/vav-dev/Singleton')
 for (const suffix of ['Lock', 'Cookie', 'Socket']) {
   try {
     rmSync(`${singletonGlob}${suffix}`, { force: true })
@@ -52,4 +56,4 @@ for (const suffix of ['Lock', 'Cookie', 'Socket']) {
   }
 }
 
-console.log('[kill-dev] cleared VAV / electron-vite processes')
+console.log('[kill-dev] cleared VAV Dev / electron-vite processes')

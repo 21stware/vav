@@ -44,14 +44,7 @@ import { parkTerminal } from '../lib/terminalRegistry'
 import { useT } from '../i18n/useT'
 import { keys } from '../lib/platform'
 import { useSidebarFloatMode } from '../lib/sidebarLayout'
-
-function isCompanionSessionShell(): boolean {
-  try {
-    return new URLSearchParams(window.location.search).get('view') === 'session'
-  } catch {
-    return false
-  }
-}
+import { isCompanionSessionShell } from '../lib/windowKind'
 
 /** Split CLI Screen and move keyboard focus to the new pane’s first agent. */
 function splitCliAndFocusPicker(
@@ -124,6 +117,8 @@ export function SessionDetail({
   const t = useT()
   const searchOpen = useSessionStore((s) => s.search.open)
   const errorBanner = useSessionStore((s) => s.errorBanner)
+  const errorBannerKind = useSessionStore((s) => s.errorBannerKind)
+  const errorBannerDetail = useSessionStore((s) => s.errorBannerDetail)
   const setErrorBanner = useSessionStore((s) => s.setErrorBanner)
   const openSettings = useSessionStore((s) => s.openSettings)
   const activeId = useSessionStore((s) => s.activeId)
@@ -139,12 +134,14 @@ export function SessionDetail({
 
   const previewEdit = variant === 'preview-edit'
   const isKeyProblem = !!errorBanner && /401|API Key/i.test(errorBanner)
+  const isQuotaProblem = errorBannerKind === 'quota'
 
   // VAV chat vs CLI Screen is solely cliMode. agentBinaryName only tracks the
   // focused pane's CLI type for install/prompt handoff — not surface identity.
   const agentKey = conversation?.agentBinaryName ?? null
   const cliMode = useWorkspaceStore((s) => !!s.workspaces[activeId]?.cliMode)
-  const isVavMode = !cliMode
+  const swarmEnabled = useSessionStore((s) => s.settings.swarmModeEnabled === true)
+  const isVavMode = !cliMode || !swarmEnabled
   const showAgentSwitcher = true
 
   const agents = enabledCliAgents(settings.cliAgents)
@@ -329,6 +326,14 @@ export function SessionDetail({
     useWorkspaceStore.getState().enterCliMode(activeId)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeId, isVavMode])
+
+  // Swarm off: leave Screen if a session still has cliMode from last time.
+  useEffect(() => {
+    if (!activeId || swarmEnabled) return
+    if (useWorkspaceStore.getState().workspaces[activeId]?.cliMode) {
+      useWorkspaceStore.getState().exitCliMode(activeId)
+    }
+  }, [activeId, swarmEnabled])
 
   // CLI surface: ⌘D / ⌘⇧D split; ⌘←↑↓→ spatial pane focus.
   useEffect(() => {
@@ -569,8 +574,31 @@ export function SessionDetail({
       {errorBanner && (
         <ErrorBanner
           message={errorBanner}
-          actionLabel={isKeyProblem ? t('error.openSettings') : undefined}
-          onAction={isKeyProblem ? () => openSettings('api') : undefined}
+          detail={errorBannerDetail || errorBanner}
+          actionLabel={
+            isQuotaProblem
+              ? t('error.viewQuota')
+              : isKeyProblem
+                ? t('error.openSettings')
+                : undefined
+          }
+          onAction={
+            isQuotaProblem
+              ? () => {
+                  if (!activeId) return
+                  const el = document.querySelector('.banner.error')
+                  const rect = el?.getBoundingClientRect()
+                  void window.vav.window.openTokenUsage(
+                    activeId,
+                    rect
+                      ? { x: rect.x, y: rect.y, width: rect.width, height: rect.height }
+                      : undefined
+                  )
+                }
+              : isKeyProblem
+                ? () => openSettings('api')
+                : undefined
+          }
           onDismiss={() => setErrorBanner(null)}
         />
       )}
@@ -702,14 +730,15 @@ export function AgentModeChrome({
 }): React.JSX.Element {
   const t = useT()
   const cliMode = useWorkspaceStore((s) => !!s.workspaces[conversationId]?.cliMode)
-  const isTerminal = cliMode
-  const isChat = !cliMode
+  const swarmEnabled = useSessionStore((s) => s.settings.swarmModeEnabled === true)
+  const isTerminal = swarmEnabled && cliMode
+  const isChat = !isTerminal
   void _agentBinaryName
 
   const ensureConversation = async (): Promise<string | null> => {
     let targetId = conversationId
     if (!targetId) {
-      await useSessionStore.getState().createConversation()
+      await useSessionStore.getState().createConversation({ openIn: 'here' })
       targetId = useSessionStore.getState().activeId
     }
     return targetId || null
@@ -728,6 +757,7 @@ export function AgentModeChrome({
 
   /** Raw PTY screen — restores existing Screen if present, else picker pane. */
   const openTerminalMode = async (): Promise<void> => {
+    if (useSessionStore.getState().settings.swarmModeEnabled !== true) return
     if (useSessionStore.getState().search.open) {
       useSessionStore.getState().closeSearch()
     }
@@ -756,29 +786,31 @@ export function AgentModeChrome({
           </div>
         ) : null}
 
-        <div
-          className="agent-mode-segment"
-          role="group"
-          aria-label={t('agents.surfaceSelector')}
-          title={t('agents.switchHint')}
-        >
-          <button
-            type="button"
-            className={`agent-mode-segment-btn${isChat ? ' is-active' : ''}`}
-            title={t('agents.chatModeHint')}
-            onClick={() => void openChatMode()}
+        {swarmEnabled ? (
+          <div
+            className="agent-mode-segment"
+            role="group"
+            aria-label={t('agents.surfaceSelector')}
+            title={t('agents.switchHint')}
           >
-            <span>{t('agents.chatMode')}</span>
-          </button>
-          <button
-            type="button"
-            className={`agent-mode-segment-btn${isTerminal ? ' is-active' : ''}`}
-            title={t('agents.terminalModeHint')}
-            onClick={() => void openTerminalMode()}
-          >
-            <span>{t('agents.terminalMode')}</span>
-          </button>
-        </div>
+            <button
+              type="button"
+              className={`agent-mode-segment-btn${isChat ? ' is-active' : ''}`}
+              title={t('agents.chatModeHint')}
+              onClick={() => void openChatMode()}
+            >
+              <span>{t('agents.chatMode')}</span>
+            </button>
+            <button
+              type="button"
+              className={`agent-mode-segment-btn${isTerminal ? ' is-active' : ''}`}
+              title={t('agents.terminalModeHint')}
+              onClick={() => void openTerminalMode()}
+            >
+              <span>{t('agents.terminalMode')}</span>
+            </button>
+          </div>
+        ) : null}
 
         {showFileSessionChrome ? (
           <span className="agent-mode-session-title" title={fs!.title}>

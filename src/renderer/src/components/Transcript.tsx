@@ -12,10 +12,18 @@ import { quoteSummaryFromContent } from '@shared/quote'
 import { compactionBoundaryIndex, compactionForLeaf } from '@shared/compaction'
 import { ROOT_LEAF, branchPoints } from '@shared/thread'
 import { getProjection } from '../state/StreamProjection'
+import { visitScene } from '../lib/emptyEntrance'
+import {
+  pickRewindTurnAtScroll,
+  rewindTurnsFromMessages,
+  shouldShowRewind
+} from '../lib/rewindTurns'
 import { useSessionStore, visibleMessages } from '../state/sessionStore'
 import { CompactionBanner } from './CompactionBanner'
 import { BranchPager, MessageRow } from './MessageRow'
+import { RewindRail } from './RewindRail'
 import { StreamingMessage } from './StreamingMessage'
+import { StreamStatus } from './StreamStatus'
 import { displayNameForCliHost, enabledCliAgents, isStructuredCliHost } from '@shared/types'
 import { Button, EmptyState } from './ui'
 import { AgentBrandMark } from './AgentBrandMark'
@@ -74,6 +82,12 @@ function estimateOffset(
 export function Transcript(): React.JSX.Element {
   const t = useT()
   const activeId = useSessionStore((s) => s.activeId)
+  /**
+   * Empty-log entrance scene. Tracked here, not in the empty state itself:
+   * leaving for a conversation with messages unmounts the hero, and coming back
+   * has to greet you again.
+   */
+  const emptyScene = visitScene('transcript', activeId)
   const nodes = useSessionStore((s) => s.messages[s.activeId])
   const activeLeaf = useSessionStore((s) => s.activeLeaf[s.activeId] ?? null)
   // Never select visibleMessages() directly — even with pathCache, interleaving
@@ -92,6 +106,7 @@ export function Transcript(): React.JSX.Element {
   const focusComposer = useSessionStore((s) => s.focusComposer)
   const openSettings = useSessionStore((s) => s.openSettings)
   const regenerate = useSessionStore((s) => s.regenerate)
+  const scrollToMessage = useSessionStore((s) => s.scrollToMessage)
   const editUserMessage = useSessionStore((s) => s.editUserMessage)
   const selectBranch = useSessionStore((s) => s.selectBranch)
   const selectPendingBranch = useSessionStore((s) => s.selectPendingBranch)
@@ -139,6 +154,7 @@ export function Transcript(): React.JSX.Element {
   const [branchSwapActive, setBranchSwapActive] = useState(false)
   /** Scroll metrics for the virtual window (rAF-coalesced). */
   const [view, setView] = useState({ top: 0, height: 600 })
+  const viewRaf = useRef(0)
   const heightsRef = useRef(new Map<string, number>())
   const [heightEpoch, setHeightEpoch] = useState(0)
   /** Keep a search/flash target mounted even when outside the estimated window. */
@@ -220,6 +236,31 @@ export function Transcript(): React.JSX.Element {
   }, [activeLeaf, activeId, nodes, pinAndScrollToBottom, followToBottom])
 
   /**
+   * The virtual window is driven only by `view` — `pinnedToBottom` is a ref and
+   * cannot re-render. So metrics must be published on every scroll, independent
+   * of the pin hysteresis below: suppression windows there routinely span a whole
+   * scroll-up gesture, and a frozen window renders as blank padding.
+   */
+  const syncView = useCallback((element: HTMLElement) => {
+    if (viewRaf.current) return
+    viewRaf.current = window.requestAnimationFrame(() => {
+      viewRaf.current = 0
+      setView((prev) =>
+        prev.top === element.scrollTop && prev.height === element.clientHeight
+          ? prev
+          : { top: element.scrollTop, height: element.clientHeight }
+      )
+    })
+  }, [])
+
+  useEffect(
+    () => () => {
+      if (viewRaf.current) window.cancelAnimationFrame(viewRaf.current)
+    },
+    []
+  )
+
+  /**
    * Hysteresis on pin:
    * - following  → unpin only if distance > UNPIN_PX (clear leave)
    * - not following → pin only if distance ≤ REPIN_PX (really at bottom)
@@ -230,6 +271,7 @@ export function Transcript(): React.JSX.Element {
     const now = performance.now()
     const element = scrollRef.current
     if (!element) return
+    syncView(element)
     const distance = distanceFromBottom(element)
     if (pinnedToBottom.current) {
       if (now < suppressUnpinUntil.current) return
@@ -238,8 +280,7 @@ export function Transcript(): React.JSX.Element {
       if (now < suppressRepinUntil.current) return
       if (distance <= REPIN_PX) pinnedToBottom.current = true
     }
-    setView({ top: element.scrollTop, height: element.clientHeight })
-  }, [])
+  }, [syncView])
 
   /**
    * Wheel/trackpad up: release follow on a clear upward gesture so stream
@@ -247,15 +288,34 @@ export function Transcript(): React.JSX.Element {
    * Block re-pin for a short window so the matching onScroll (still near 0)
    * cannot stick us again before the scroll position moves.
    */
-  const onWheel = useCallback((event: ReactWheelEvent<HTMLDivElement>) => {
-    if (event.deltaY >= 0) return
+  const releaseFollow = useCallback((deltaY: number) => {
+    if (deltaY >= 0) return
     // Ignore trackpad noise at rest.
-    if (event.deltaY > -6) return
+    if (deltaY > -6) return
     pinnedToBottom.current = false
     suppressUnpinUntil.current = 0
     // Keep unpinned until gesture + layout settle; then REPIN_PX applies.
     suppressRepinUntil.current = performance.now() + 280
   }, [])
+
+  const onWheel = useCallback(
+    (event: ReactWheelEvent<HTMLDivElement>) => releaseFollow(event.deltaY),
+    [releaseFollow]
+  )
+
+  /**
+   * The rewind rail floats over the log and never scrolls itself, so a wheel
+   * there has no scrollable ancestor to fall through to — drive the log by hand.
+   */
+  const onRailScroll = useCallback(
+    (deltaY: number) => {
+      const el = scrollRef.current
+      if (!el) return
+      releaseFollow(deltaY)
+      el.scrollTop += deltaY
+    },
+    [releaseFollow]
+  )
 
   // Switching conversations always lands at the bottom and re-enables follow.
   useEffect(() => {
@@ -333,7 +393,11 @@ export function Transcript(): React.JSX.Element {
     })
   }, [search.open, search.index, search.tick, search.matchIds])
 
-  // Quote strip / bubble citation: jump + 1.5s yellow flash.
+  /**
+   * Quote strip / bubble citation / rewind rail: jump + 1.5s yellow flash.
+   * The jump is instant on purpose — smooth scrolling a long log lags behind the
+   * click and makes scrubbing the rail feel like dragging the whole transcript.
+   */
   useEffect(() => {
     if (!flashMessageId || flashTick === 0) return
     pinnedToBottom.current = false
@@ -341,9 +405,7 @@ export function Transcript(): React.JSX.Element {
     suppressRepinUntil.current = performance.now() + 400
     setAnchorMessageId(flashMessageId)
     window.requestAnimationFrame(() => {
-      document
-        .getElementById(`msg-${flashMessageId}`)
-        ?.scrollIntoView({ block: 'center', behavior: 'smooth' })
+      document.getElementById(`msg-${flashMessageId}`)?.scrollIntoView({ block: 'center' })
     })
   }, [flashMessageId, flashTick])
 
@@ -533,53 +595,92 @@ export function Transcript(): React.JSX.Element {
 
   const visibleItems = virtualize ? items.slice(range.start, range.end) : items
 
+  const rewindTurns = useMemo(() => rewindTurnsFromMessages(messages), [messages])
+  const rewindOffsets = useMemo(() => {
+    const out: Array<{ id: string; top: number }> = []
+    let top = 0
+    for (const item of items) {
+      if (item.kind === 'message' && item.message.role === 'user') {
+        out.push({ id: item.message.id, top })
+      }
+      top += heightsRef.current.get(item.key) ?? EST_ROW_PX
+    }
+    return out
+  }, [items, heightEpoch])
+  const currentRewindId = useMemo(
+    () => pickRewindTurnAtScroll(rewindOffsets, view.top + view.height * 0.28),
+    [rewindOffsets, view.top, view.height]
+  )
+  const showRewind = !isEmpty && shouldShowRewind(rewindTurns)
+
+  const lastSealedAssistantOk = useMemo(() => {
+    const last = messages[messages.length - 1]
+    return !!last && last.role === 'assistant' && !last.cancelled && !last.errorText
+  }, [messages])
+
   return (
-    <div className="transcript" ref={scrollRef} onScroll={onScroll} onWheel={onWheel}>
-      <div
-        ref={contentRef}
-        className={`transcript-inner${branchSwapActive ? ' is-branch-swap' : ''}`}
-      >
-        {isEmpty && (
-          /* One empty tree — swapping nokey/ready remounted the agent name and
-             replayed stagger while `.is-entering` was still on. */
-          <EmptyState
-            layout="session"
-            logo={<AgentBrandMark agent={emptyLogoAgent} size={96} />}
-            logoKey={emptyLogoAgent.id}
-            logoLabel={emptyLogoAgent.name}
-            enterKey={activeId}
-            title={!apiKeyPresent ? t('transcript.configureKey') : undefined}
-            description={!apiKeyPresent ? t('transcript.configureKeyDesc') : undefined}
-            foot={<SessionWorkspaceChrome />}
-          >
-            {!apiKeyPresent ? (
-              <Button
-                label={t('transcript.openSettings')}
-                variant="primary"
-                onClick={() => openSettings('api')}
+    <div className={`transcript-stage${showRewind ? ' has-rewind' : ''}`}>
+      {showRewind && (
+        <RewindRail
+          key={activeId}
+          turns={rewindTurns}
+          currentId={currentRewindId}
+          onJump={scrollToMessage}
+          onPassScroll={onRailScroll}
+        />
+      )}
+      <div className="transcript" ref={scrollRef} onScroll={onScroll} onWheel={onWheel}>
+        <div
+          ref={contentRef}
+          className={`transcript-inner${branchSwapActive ? ' is-branch-swap' : ''}`}
+        >
+          {isEmpty && (
+            /* One empty tree — swapping nokey/ready remounted the agent name and
+               replayed stagger while `.is-entering` was still on. */
+            <EmptyState
+              layout="session"
+              logo={<AgentBrandMark agent={emptyLogoAgent} size={96} />}
+              logoKey={emptyLogoAgent.id}
+              logoLabel={emptyLogoAgent.name}
+              enterKey={emptyScene}
+              title={!apiKeyPresent ? t('transcript.configureKey') : undefined}
+              description={!apiKeyPresent ? t('transcript.configureKeyDesc') : undefined}
+              foot={<SessionWorkspaceChrome />}
+            >
+              {!apiKeyPresent ? (
+                <Button
+                  label={t('transcript.openSettings')}
+                  variant="primary"
+                  onClick={() => openSettings('api')}
+                />
+              ) : null}
+            </EmptyState>
+          )}
+
+          {/* Branches that start before the first prompt have no message to
+              hang off, so their pager sits at the top of the transcript. */}
+          {rootBranch && (
+            <div className="branch-pager-row">
+              <BranchPager
+                index={rootBranch.index}
+                count={rootBranch.targets.length}
+                pulseKey={branchSwap}
+                onStep={(step) => onStepBranch(ROOT_LEAF, step)}
               />
-            ) : null}
-          </EmptyState>
-        )}
+            </div>
+          )}
 
-        {/* Branches that start before the first prompt have no message to
-            hang off, so their pager sits at the top of the transcript. */}
-        {rootBranch && (
-          <div className="branch-pager-row">
-            <BranchPager
-              index={rootBranch.index}
-              count={rootBranch.targets.length}
-              pulseKey={branchSwap}
-              onStep={(step) => onStepBranch(ROOT_LEAF, step)}
-            />
-          </div>
-        )}
+          {padTop > 0 ? <div style={{ height: padTop }} aria-hidden /> : null}
+          {visibleItems.map(renderItem)}
+          {padBottom > 0 ? <div style={{ height: padBottom }} aria-hidden /> : null}
 
-        {padTop > 0 ? <div style={{ height: padTop }} aria-hidden /> : null}
-        {visibleItems.map(renderItem)}
-        {padBottom > 0 ? <div style={{ height: padBottom }} aria-hidden /> : null}
-
-        <StreamingMessage conversationId={activeId} />
+          <StreamingMessage conversationId={activeId} />
+          {!turnRunning && lastSealedAssistantOk ? (
+            <div className="transcript-stream-status">
+              <StreamStatus state="done" />
+            </div>
+          ) : null}
+        </div>
       </div>
     </div>
   )

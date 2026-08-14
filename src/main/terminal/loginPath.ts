@@ -1,4 +1,4 @@
-import { execFileSync } from 'node:child_process'
+import { execFile, execFileSync } from 'node:child_process'
 import { accessSync, constants, existsSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { delimiter, join } from 'node:path'
@@ -11,6 +11,7 @@ import { bundledBinDir } from '../bundledBin'
  * system install when present.
  */
 let cachedLoginPath: string | null = null
+let loginPathWarm: Promise<string> | null = null
 
 function isExecutable(file: string): boolean {
   try {
@@ -23,29 +24,19 @@ function isExecutable(file: string): boolean {
   }
 }
 
-export function loginPath(): string {
-  if (cachedLoginPath) return cachedLoginPath
+function loginShellEnv(): NodeJS.ProcessEnv {
   const shell = process.env.SHELL || (process.platform === 'darwin' ? '/bin/zsh' : '/bin/bash')
-  try {
-    const out = execFileSync(shell, ['-ilc', 'printenv PATH'], {
-      encoding: 'utf8',
-      timeout: 5000,
-      env: {
-        HOME: homedir(),
-        USER: process.env.USER,
-        LOGNAME: process.env.LOGNAME,
-        SHELL: shell,
-        TERM: 'dumb',
-        PATH: '/usr/bin:/bin:/usr/sbin:/sbin'
-      }
-    })
-      .trim()
-      .split('\n')
-      .at(-1)
-    cachedLoginPath = (out ?? '').trim() || process.env.PATH || '/usr/bin:/bin'
-  } catch {
-    cachedLoginPath = process.env.PATH || '/usr/bin:/bin'
+  return {
+    HOME: homedir(),
+    USER: process.env.USER,
+    LOGNAME: process.env.LOGNAME,
+    SHELL: shell,
+    TERM: 'dumb',
+    PATH: '/usr/bin:/bin:/usr/sbin:/sbin'
   }
+}
+
+function assembleLoginPath(shellPath: string): string {
   const home = homedir()
   // Common install prefixes GUI PATH often misses.
   const extras = [
@@ -65,7 +56,7 @@ export function loginPath(): string {
     '/usr/local/sbin'
   ]
   const parts = [
-    ...cachedLoginPath.split(delimiter),
+    ...shellPath.split(delimiter),
     ...(process.env.PATH ?? '').split(delimiter),
     ...extras
   ]
@@ -89,8 +80,69 @@ export function loginPath(): string {
       ordered.unshift(bundled)
     }
   }
-  cachedLoginPath = ordered.join(delimiter)
+  return ordered.join(delimiter)
+}
+
+function readLoginShellPathSync(): string {
+  const shell = process.env.SHELL || (process.platform === 'darwin' ? '/bin/zsh' : '/bin/bash')
+  try {
+    const out = execFileSync(shell, ['-ilc', 'printenv PATH'], {
+      encoding: 'utf8',
+      timeout: 5000,
+      env: loginShellEnv()
+    })
+      .trim()
+      .split('\n')
+      .at(-1)
+    return (out ?? '').trim() || process.env.PATH || '/usr/bin:/bin'
+  } catch {
+    return process.env.PATH || '/usr/bin:/bin'
+  }
+}
+
+export function loginPath(): string {
+  if (cachedLoginPath) return cachedLoginPath
+  cachedLoginPath = assembleLoginPath(readLoginShellPathSync())
   return cachedLoginPath
+}
+
+/**
+ * Resolve the login PATH without blocking the Electron main thread.
+ * Safe to call repeatedly; shares one in-flight shell. Sync {@link loginPath}
+ * still works and will reuse this result once it lands.
+ */
+export function ensureLoginPath(): Promise<string> {
+  if (cachedLoginPath) return Promise.resolve(cachedLoginPath)
+  if (loginPathWarm) return loginPathWarm
+  const shell = process.env.SHELL || (process.platform === 'darwin' ? '/bin/zsh' : '/bin/bash')
+  const pending = new Promise<string>((resolve) => {
+    execFile(
+      shell,
+      ['-ilc', 'printenv PATH'],
+      { encoding: 'utf8', timeout: 5000, env: loginShellEnv() },
+      (err, stdout) => {
+        if (cachedLoginPath) {
+          resolve(cachedLoginPath)
+          return
+        }
+        const line = err
+          ? ''
+          : String(stdout ?? '')
+              .trim()
+              .split('\n')
+              .at(-1)
+              ?.trim()
+        const shellPath = line || process.env.PATH || '/usr/bin:/bin'
+        cachedLoginPath = assembleLoginPath(shellPath)
+        resolve(cachedLoginPath)
+      }
+    )
+  })
+  loginPathWarm = pending
+  void pending.finally(() => {
+    if (loginPathWarm === pending) loginPathWarm = null
+  })
+  return pending
 }
 
 /** Absolute path to an executable on login PATH, or null if missing. */
@@ -223,5 +275,6 @@ export function resolveAgentExecutable(
 /** Drop PATH + binary resolve caches (tests / after user installs a CLI mid-session). */
 export function clearLoginPathCache(): void {
   cachedLoginPath = null
+  loginPathWarm = null
   resolveResultCache.clear()
 }

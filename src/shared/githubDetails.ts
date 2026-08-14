@@ -88,7 +88,17 @@ function splitCells(line: string): string[] {
  * Turn GFM pipe tables into HTML so markdown-it (no table plugin) still
  * shows Cloudflare / Dependabot status grids instead of raw pipes.
  */
-export function convertGfmTables(source: string): string {
+function cellHtml(raw: string, renderInline?: (src: string) => string): string {
+  const text = raw.trim()
+  if (!text) return ''
+  if (/<[a-z][\s\S]*>/i.test(text)) return raw
+  return renderInline ? renderInline(text) : raw
+}
+
+export function convertGfmTables(
+  source: string,
+  renderInline?: (src: string) => string
+): string {
   const lines = source.split('\n')
   const out: string[] = []
   let i = 0
@@ -103,10 +113,10 @@ export function convertGfmTables(source: string): string {
         rows.push(splitCells(lines[j]!))
         j += 1
       }
-      const thead = heads.map((c) => `<th>${c}</th>`).join('')
+      const thead = heads.map((c) => `<th>${cellHtml(c, renderInline)}</th>`).join('')
       const tbody = rows
         .map((row) => {
-          const cells = heads.map((_, idx) => `<td>${row[idx] ?? ''}</td>`).join('')
+          const cells = heads.map((_, idx) => `<td>${cellHtml(row[idx] ?? '', renderInline)}</td>`).join('')
           return `<tr>${cells}</tr>`
         })
         .join('')
@@ -120,6 +130,19 @@ export function convertGfmTables(source: string): string {
     i += 1
   }
   return out.join('\n')
+}
+
+/** Render leftover markdown in text-only table cells (HTML cells stay as-is). */
+export function renderInlineInTableCells(
+  html: string,
+  renderInline: (src: string) => string
+): string {
+  return html.replace(/<(td|th)(\b[^>]*)>([\s\S]*?)<\/\1>/gi, (all, tag, attrs, inner) => {
+    if (/<[a-z][\s\S]*>/i.test(inner)) return all
+    const text = String(inner).replace(/<br\s*\/?>/gi, '\n').trim()
+    if (!text) return all
+    return `<${tag}${attrs}>${renderInline(text)}</${tag}>`
+  })
 }
 
 const TABLE_OPEN = /<table\b[^>]*>/i
@@ -170,14 +193,20 @@ function replaceHtmlTables(source: string, replace: (html: string) => string): s
  * out, convert any GFM pipes inside cells, then splice them back after
  * markdown has been rendered.
  */
-export function renderGithubTables(source: string, renderMarkdown: (src: string) => string): string {
+export function renderGithubTables(
+  source: string,
+  renderMarkdown: (src: string) => string,
+  renderInline?: (src: string) => string
+): string {
   const tables: string[] = []
   const marked = replaceHtmlTables(source, (html) => {
     const i = tables.length
-    tables.push(`<div class="table-scroll">${convertGfmTables(html)}</div>`)
+    let converted = convertGfmTables(html, renderInline)
+    if (renderInline) converted = renderInlineInTableCells(converted, renderInline)
+    tables.push(`<div class="table-scroll">${converted}</div>`)
     return `\n\n${TABLE_PLACEHOLDER(i)}\n\n`
   })
-  const html = renderMarkdown(convertGfmTables(marked))
+  const html = renderMarkdown(convertGfmTables(marked, renderInline))
   return html.replace(TABLE_PLACEHOLDER_RE, (_all, id) => tables[Number(id)] ?? '')
 }
 

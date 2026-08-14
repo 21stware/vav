@@ -9,7 +9,7 @@ prepareBrandedElectron()
 
 const child = spawn('npx', ['electron-vite', 'dev'], {
   cwd: root,
-  env: process.env,
+  env: { ...process.env, ELECTRON_IS_DEV: '1' },
   stdio: 'inherit'
 })
 

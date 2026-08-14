@@ -18,6 +18,7 @@ import {
 } from 'electron'
 import { basename, dirname, extname, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
+import { execFile } from 'node:child_process'
 import {
   existsSync,
   mkdirSync,
@@ -50,6 +51,7 @@ import {
   type TurnEvent
 } from '@shared/types'
 import { compactionForLeaf } from '@shared/compaction'
+import { parseThinkingLevel } from '@shared/thinkingLevel'
 import { threadPath } from '@shared/thread'
 import { SettingsStore } from './store/SettingsStore'
 import { SecretStore } from './store/SecretStore'
@@ -73,10 +75,17 @@ import {
   getGitSnapshot,
   initGitRepo
 } from './git/GitService'
-import { getGithubPull, listGithubPulls } from './github/GithubService'
+import {
+  getGithubActionRun,
+  getGithubPull,
+  getGithubSite,
+  listGithubActions,
+  listGithubPulls
+} from './github/GithubService'
+import { getCloudflareStatus } from './cloudflare/CloudflareService'
 import { UpdateService } from './updates'
 import { PtyManager } from './terminal/PtyManager'
-import { resolveAgentExecutable } from './terminal/loginPath'
+import { ensureLoginPath, resolveAgentExecutable } from './terminal/loginPath'
 import { menuCommandFromInput, matchesNewSessionWindow } from './menuShortcuts'
 import { resolveKeyBindings } from '@shared/keyBindings'
 import { isDevRuntime } from './devRuntime'
@@ -86,7 +95,8 @@ import { CliAgentHost } from './agent/CliAgentHost'
 import {
   getModelCatalogSnapshot,
   listHostModels,
-  preloadHostModels
+  preloadHostModels,
+  seedModelCatalog
 } from './agent/listHostModels'
 import { SkillService } from './agent/SkillService'
 import {
@@ -587,7 +597,11 @@ const cliHost = new CliAgentHost({
   settings: settingsStore,
   changeSets: changeSetStore,
   emit: handleAgentEvent,
-  logicalPath: (path) => workingCopyService.logicalPath(path)
+  logicalPath: (path) => workingCopyService.logicalPath(path),
+  quota: {
+    get: (host) => quotaService.get(host),
+    forceRefresh: (host) => quotaService.forceRefresh(host)
+  }
 })
 
 setInterval(() => cliHost.reapIdle(), 5 * 60_000)
@@ -873,10 +887,13 @@ function chrome(
   if (IS_MAC) {
     // Main + Settings stay transparent so Appearance can toggle vibrancy live.
     // Companion / preview / token stay solid (avoids resize black-edge lag).
+    // acceptFirstMouse: an inactive window's first click also hits the control
+    // (native AppKit), instead of only focusing the window.
     if (options?.vibrancyShell) {
       return {
         titleBarStyle: 'hiddenInset',
         trafficLightPosition: { x: 12, y: Math.round((barHeight - 12) / 2) },
+        acceptFirstMouse: true,
         transparent: true,
         backgroundColor: VIBRANCY_CLEAR,
         ...(isVibrancyEnabled()
@@ -892,6 +909,7 @@ function chrome(
       // Vertically centred on the title bar, so the traffic lights sit on the
       // same line as the buttons at the other end of it.
       trafficLightPosition: { x: 12, y: Math.round((barHeight - 12) / 2) },
+      acceptFirstMouse: true,
       backgroundColor: windowBackground()
     }
   }
@@ -899,6 +917,7 @@ function chrome(
     titleBarStyle: 'hidden',
     titleBarOverlay: overlayColors(barHeight),
     backgroundColor: windowBackground(),
+    acceptFirstMouse: true,
     // Keep File/Edit/View… visible; default + titleBarOverlay often Alt-hides it.
     autoHideMenuBar: false
   }
@@ -1117,16 +1136,35 @@ function hideLeavingFullscreen(win: BrowserWindow): void {
  */
 const REVEAL_PAINT_BUDGET_MS = 64
 
+/**
+ * Windows that have been through a hidden → shown reveal.
+ *
+ * Only the *second* reveal onwards is a summon. A window opening for the first
+ * time (new companion, detach-to-window) is new content arriving, and its
+ * entrance animations should play — suppressing them there is why detaching a
+ * session used to land at rest.
+ */
+const revealedWindows = new WeakSet<BrowserWindow>()
+
 async function waitForRendererPaint(win: BrowserWindow): Promise<void> {
   if (win.isDestroyed() || win.webContents.isDestroyed()) return
   if (win.webContents.isLoadingMainFrame()) return
+  const summon = revealedWindows.has(win)
+  revealedWindows.add(win)
+  // `revealing` spans the off-screen paint (entrances wait it out so they are
+  // not spent while hidden); `summoning` additionally says the user has seen
+  // this window before, so its chrome must come back at rest.
   const script = `(function(){
     try {
-      document.documentElement.dataset.summoning = '1';
+      document.documentElement.dataset.revealing = '1';
+      ${summon ? "document.documentElement.dataset.summoning = '1';" : ''}
       var prev = window.__vavSummonClear;
       if (prev) window.clearTimeout(prev);
       window.__vavSummonClear = window.setTimeout(function(){
-        try { delete document.documentElement.dataset.summoning; } catch (e) {}
+        try {
+          delete document.documentElement.dataset.summoning;
+          delete document.documentElement.dataset.revealing;
+        } catch (e) {}
       }, 160);
     } catch (e) {}
     return new Promise(function(resolve){
@@ -1143,6 +1181,23 @@ async function waitForRendererPaint(win: BrowserWindow): Promise<void> {
   } catch {
     // Mid-reload / torn-down frame — show anyway.
   }
+}
+
+/**
+ * The window is on screen: release entrances that were waiting for it. The
+ * renderer's own timeout is only a fallback for a torn-down frame — leaving it
+ * to fire would start the build-up a beat after the window landed.
+ */
+function markRevealDone(win: BrowserWindow): void {
+  if (win.isDestroyed() || win.webContents.isDestroyed()) return
+  win.webContents
+    .executeJavaScript(
+      `try { delete document.documentElement.dataset.revealing } catch (e) {}`,
+      true
+    )
+    .catch(() => {
+      // Navigated away mid-reveal — the fallback timeout clears it.
+    })
 }
 
 async function revealBrowserWindow(win: BrowserWindow): Promise<void> {
@@ -1165,6 +1220,7 @@ async function revealBrowserWindow(win: BrowserWindow): Promise<void> {
   if (win.isDestroyed()) return
   win.show()
   win.focus()
+  markRevealDone(win)
 }
 
 /** Windows that may proceed with close after a deferred leave-full-screen. */
@@ -1440,6 +1496,7 @@ function raiseDetachedWindow(win: BrowserWindow): Promise<void> {
     }
     if (needSpaceHop) app.focus({ steal: true })
     if (!win.isDestroyed()) win.focus()
+    markRevealDone(win)
     if (needSpaceHop) {
       setTimeout(() => {
         if (win.isDestroyed()) return
@@ -2283,6 +2340,24 @@ function dismissTokenUsageSoon(): void {
   }, 120)
 }
 
+function publishModelCatalog(
+  catalog: ReturnType<typeof getModelCatalogSnapshot>
+): void {
+  broadcast(IPC.agentsModelCatalogChanged, catalog)
+}
+
+function preferredModelHosts(): CliHostKind[] {
+  const hosts: CliHostKind[] = []
+  for (const entry of settingsStore.get().recentAgentModels ?? []) {
+    if (isStructuredCliHost(entry.hostId)) hosts.push(entry.hostId)
+  }
+  for (const conversation of conversationStore.all()) {
+    const host = conversation.cliHost
+    if (host && isStructuredCliHost(host)) hosts.push(host)
+  }
+  return hosts
+}
+
 /**
  * Coerce conversation.model to a valid id for its chat host.
  * Fixes sessions created with defaultAgentId=CLI but still holding the VAV
@@ -2554,7 +2629,9 @@ function openTokenUsageWindow(
     title: t('token.contextWindow'),
     // Solid wash matching the renderer shell — never flash system white.
     backgroundColor: bg,
-    ...(IS_MAC ? { type: 'panel' as const, roundedCorners: true } : {}),
+    ...(IS_MAC
+      ? { type: 'panel' as const, roundedCorners: true, acceptFirstMouse: true }
+      : {}),
     webPreferences: rendererPrefs()
   })
   tokenUsageParentId = parent.id
@@ -2656,7 +2733,9 @@ function warmTokenUsageWindow(): void {
     hasShadow: true,
     title: t('token.contextWindow'),
     backgroundColor: bg,
-    ...(IS_MAC ? { type: 'panel' as const, roundedCorners: true } : {}),
+    ...(IS_MAC
+      ? { type: 'panel' as const, roundedCorners: true, acceptFirstMouse: true }
+      : {}),
     webPreferences: rendererPrefs()
   })
   tokenUsageParentId = mainWindow.id
@@ -2711,6 +2790,7 @@ function newDetachedSession(): void {
     modelForNewConversation(defaultHost),
     {
       approvalMode: settings.defaultApprovalMode ?? 'auto',
+      thinkingLevel: parseThinkingLevel(settings.defaultThinkingLevel),
       cliHost: defaultHost
     }
   )
@@ -2782,20 +2862,30 @@ function popupNativeMenu(
 
     // Use `radio` (not `checkbox`) for exclusive picks like model / approval mode.
     // Checkbox groups on AppKit often fail to fire click for non-checked rows.
-    const template: Electron.MenuItemConstructorOptions[] = items.map((item) => {
-      if (item.separator) return { type: 'separator' }
-      if (item.role) return { role: item.role, label: item.label }
-      const hasCheck = item.checked !== undefined
-      return {
-        label: item.label ?? '',
-        enabled: item.enabled !== false,
-        type: hasCheck ? 'radio' : 'normal',
-        checked: hasCheck ? !!item.checked : undefined,
-        click: () => {
-          chosen = item.id ?? null
+    const toTemplate = (rows: NativeMenuItem[]): Electron.MenuItemConstructorOptions[] =>
+      rows.map((item) => {
+        if (item.separator) return { type: 'separator' }
+        if (item.role) return { role: item.role, label: item.label }
+        if (item.submenu && item.submenu.length > 0) {
+          return {
+            type: 'submenu',
+            label: item.label ?? '',
+            enabled: item.enabled !== false,
+            submenu: toTemplate(item.submenu)
+          }
         }
-      }
-    })
+        const hasCheck = item.checked !== undefined
+        return {
+          label: item.label ?? '',
+          enabled: item.enabled !== false,
+          type: hasCheck ? 'radio' : 'normal',
+          checked: hasCheck ? !!item.checked : undefined,
+          click: () => {
+            chosen = item.id ?? null
+          }
+        }
+      })
+    const template: Electron.MenuItemConstructorOptions[] = toTemplate(items)
 
     const opts: Electron.PopupOptions = {
       window,
@@ -3067,6 +3157,7 @@ function openWorkspaceSession(options: {
     modelForNewConversation(defaultHost),
     {
       approvalMode: sessionSettings.defaultApprovalMode ?? 'auto',
+      thinkingLevel: parseThinkingLevel(sessionSettings.defaultThinkingLevel),
       cliHost: defaultHost
     }
   )
@@ -3319,7 +3410,8 @@ function currentSettings(): AppSettings {
   return {
     ...settingsStore.get(),
     apiKeyPresent: secretStore.has('api'),
-    braveSearchKeyPresent: secretStore.has('braveSearch')
+    braveSearchKeyPresent: secretStore.has('braveSearch'),
+    cloudflareApiTokenPresent: secretStore.has('cloudflare')
   }
 }
 
@@ -3410,6 +3502,7 @@ function registerIpc(): void {
   ipcMain.handle(IPC.settingsReset, () => {
     secretStore.clear('api')
     secretStore.clear('braveSearch')
+    secretStore.clear('cloudflare')
     const next = settingsStore.reset()
     setLocalePreference(next.locale)
     applyTheme(next.theme)
@@ -3437,6 +3530,13 @@ function registerIpc(): void {
   })
   ipcMain.handle(IPC.settingsBraveSearchKeyHint, () => secretStore.maskedHint('braveSearch'))
 
+  ipcMain.handle(IPC.settingsSetCloudflareToken, (_event, token: string) => {
+    secretStore.set(token, 'cloudflare')
+    broadcast(IPC.settingsChanged, currentSettings())
+    return { hint: secretStore.maskedHint('cloudflare') }
+  })
+  ipcMain.handle(IPC.settingsCloudflareTokenHint, () => secretStore.maskedHint('cloudflare'))
+
   ipcMain.handle(IPC.settingsValidateKey, async (_event, key: string) => {
     const settings = settingsStore.get()
     const effective = key?.trim() || secretStore.get('api')
@@ -3461,6 +3561,32 @@ function registerIpc(): void {
   ipcMain.handle(IPC.settingsPickDirectory, async () => {
     const result = await dialog.showOpenDialog({ properties: ['openDirectory', 'createDirectory'] })
     return result.canceled ? null : (result.filePaths[0] ?? null)
+  })
+
+  ipcMain.handle(IPC.settingsPickColor, (_event, defaultHex?: string) => {
+    // `choose color` returns 16-bit RGB {r,g,b} (0–65535).
+    // Must be async — the dialog is modal and blocks until the user closes it.
+    const rgb16 = parseHexToRgb16(defaultHex) ?? [0, 0, 0]
+    // AppleScript `&` with a numeric left operand builds a LIST (prints as
+    // "65535, ,, 0"), which fails the 3-part parse below — join via text item
+    // delimiters so OK returns plain "r,g,b". Cancel throws -128 → err → null.
+    const script = `set c to choose color default color {${rgb16[0]}, ${rgb16[1]}, ${rgb16[2]}}
+set AppleScript's text item delimiters to ","
+return c as text`
+    return new Promise<string | null>((resolve) => {
+      execFile('/usr/bin/osascript', ['-e', script], { timeout: 120_000, encoding: 'utf8' }, (err, stdout) => {
+        if (err) return resolve(null)
+        const out = stdout.trim()
+        if (!out || out === 'false') return resolve(null) // cancelled
+        const parts = out.split(',')
+        if (parts.length !== 3) return resolve(null)
+        const r = Math.round(Number(parts[0]) / 65535 * 255)
+        const g = Math.round(Number(parts[1]) / 65535 * 255)
+        const b = Math.round(Number(parts[2]) / 65535 * 255)
+        if ([r, g, b].some((v) => Number.isNaN(v))) return resolve(null)
+        resolve(`#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`)
+      })
+    })
   })
 
   ipcMain.handle(IPC.settingsCliStatus, () => getCliStatus()) // async — login PATH probe
@@ -3513,6 +3639,7 @@ function registerIpc(): void {
         modelForNewConversation(defaultHost, model),
         {
           approvalMode: settings.defaultApprovalMode ?? 'auto',
+          thinkingLevel: parseThinkingLevel(settings.defaultThinkingLevel),
           cliHost: defaultHost
         }
       )
@@ -3557,6 +3684,12 @@ function registerIpc(): void {
       conversationStore.setApprovalMode(id, mode)
       publishConversations()
     }
+    return conversationStore.listMeta()
+  })
+
+  ipcMain.handle(IPC.convSetThinkingLevel, (_event, id: string, level: string) => {
+    conversationStore.setThinkingLevel(id, parseThinkingLevel(level))
+    publishConversations()
     return conversationStore.listMeta()
   })
 
@@ -3957,6 +4090,17 @@ function registerIpc(): void {
   ipcMain.handle(IPC.githubGetPull, (_event, cwd: string, number: number) =>
     getGithubPull(cwd, number)
   )
+  ipcMain.handle(IPC.cloudflareStatus, (_event, cwd: string) =>
+    getCloudflareStatus(String(cwd || ''), {
+      token: secretStore.get('cloudflare'),
+      accountId: settingsStore.get().cloudflareAccountId || null
+    })
+  )
+  ipcMain.handle(IPC.githubListActions, (_event, cwd: string) => listGithubActions(cwd))
+  ipcMain.handle(IPC.githubGetActionRun, (_event, cwd: string, runId: number) =>
+    getGithubActionRun(cwd, runId)
+  )
+  ipcMain.handle(IPC.githubGetSite, (_event, cwd: string) => getGithubSite(cwd))
   ipcMain.handle(IPC.filesWatch, (_event, id: string, root: string | null) =>
     fileService.watchRoot(id, root)
   )
@@ -4056,7 +4200,8 @@ function registerIpc(): void {
     const opened = await fileSessionStore.open(
       path,
       settings.defaultModel,
-      settings.defaultApprovalMode ?? 'auto'
+      settings.defaultApprovalMode ?? 'auto',
+      parseThinkingLevel(settings.defaultThinkingLevel)
     )
     // Don't broadcast file sessions into the main sidebar list (already filtered).
     return toFileSessionsState(opened.fileId, opened.activeSessionId, opened.sessions)
@@ -4067,7 +4212,8 @@ function registerIpc(): void {
     const created = await fileSessionStore.createSession(
       path,
       settings.defaultModel,
-      settings.defaultApprovalMode ?? 'auto'
+      settings.defaultApprovalMode ?? 'auto',
+      parseThinkingLevel(settings.defaultThinkingLevel)
     )
     return toFileSessionsState(created.fileId, created.activeSessionId, created.sessions)
   })
@@ -4152,11 +4298,19 @@ function registerIpc(): void {
       listHostModels(host, settingsStore, { force: force === true })
   )
 
-  ipcMain.handle(IPC.agentsGetModelCatalog, () => getModelCatalogSnapshot())
+  ipcMain.handle(IPC.agentsGetModelCatalog, () => {
+    const snap = getModelCatalogSnapshot()
+    if (Object.keys(snap).length > 0) return snap
+    return seedModelCatalog(settingsStore)
+  })
 
   ipcMain.handle(IPC.agentsPreloadModels, async (_event, force?: boolean) => {
-    const catalog = await preloadHostModels(settingsStore, { force: force === true })
-    broadcast(IPC.agentsModelCatalogChanged, catalog)
+    const catalog = await preloadHostModels(settingsStore, {
+      force: force === true,
+      prefer: preferredModelHosts(),
+      onProgress: publishModelCatalog
+    })
+    publishModelCatalog(catalog)
     return catalog
   })
 
@@ -4445,7 +4599,8 @@ async function seedSmokeChangeReview(): Promise<void> {
     console.log('[smoke] minting conversation for seed')
     const s = settingsStore.get()
     const created = conversationStore.create(resolveNewWorkdir(), s.defaultModel, {
-      approvalMode: s.defaultApprovalMode ?? 'auto'
+      approvalMode: s.defaultApprovalMode ?? 'auto',
+      thinkingLevel: parseThinkingLevel(s.defaultThinkingLevel)
     })
     meta = conversationStore.listMeta().find((c) => c.id === created.id)
     broadcast(IPC.convChanged, conversationStore.listMeta())
@@ -4545,6 +4700,8 @@ if (!singleInstance) {
 
   app.whenReady().then(async () => {
     applyBranding()
+    // Login PATH via zsh -ilc is ~2s; start it now so model probes don't pay it sync.
+    void ensureLoginPath()
     protocol.handle('vav-local', async (request) => {
       try {
         const requested = decodeURIComponent(new URL(request.url).searchParams.get('path') ?? '')
@@ -4711,10 +4868,18 @@ if (!singleInstance) {
           // non-fatal
         }
       }, 2400)
-      // Prefetch agent model catalogues so the composer picker is instant.
+      // Seed static catalogues immediately, then live-probe in the background.
+      try {
+        publishModelCatalog(seedModelCatalog(settingsStore))
+      } catch {
+        // non-fatal
+      }
       setTimeout(() => {
-        void preloadHostModels(settingsStore)
-          .then((catalog) => broadcast(IPC.agentsModelCatalogChanged, catalog))
+        void preloadHostModels(settingsStore, {
+          prefer: preferredModelHosts(),
+          onProgress: publishModelCatalog
+        })
+          .then(publishModelCatalog)
           .catch((err) => console.warn('[agents] model preload failed', err))
       }, 900)
     })
@@ -4753,4 +4918,17 @@ if (!singleInstance) {
     // Dock click: raise last-focused open window (not always main).
     app.on('activate', activateApp)
   })
+}
+
+/** Convert `#rrggbb` → 16-bit RGB triplets for AppleScript `choose color`. */
+function parseHexToRgb16(hex?: string): [number, number, number] | null {
+  if (!hex) return null
+  const m = /^#?([0-9a-fA-F]{6})$/.exec(hex.trim())
+  if (!m) return null
+  const n = parseInt(m[1], 16)
+  return [
+    Math.round(((n >> 16) & 0xff) / 255 * 65535),
+    Math.round(((n >> 8) & 0xff) / 255 * 65535),
+    Math.round((n & 0xff) / 255 * 65535)
+  ]
 }

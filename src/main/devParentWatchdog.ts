@@ -7,7 +7,7 @@ import { isDevRuntime } from './devRuntime'
  *
  * Closing a terminal, Cursor killing the shell, or SIGKILL on the parent does
  * not always tear down Electron — especially with the branded `vav.app` binary,
- * whose process name is just "VAV". The orphan keeps the userData lock / Dock
+ * whose process name is "VAV Dev". The orphan keeps the userData lock / Dock
  * tile alive and the next `npm run dev` races it → hung UI.
  *
  * Production launches (Finder / Dock) must never use this: their parent can be

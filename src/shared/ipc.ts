@@ -25,10 +25,13 @@ import type {
 import type { ChangeSet, UpdateState } from './changeSet'
 import type { GitResult, GitSnapshot } from './git'
 import type {
+  GithubActionRunDetail,
+  GithubActionsPage,
   GithubPullDetail,
   GithubPullsPage,
   GithubPullStateFilter,
-  GithubResult
+  GithubResult,
+  GithubSite
 } from './github'
 import type { Platform } from './platform'
 
@@ -134,13 +137,15 @@ export interface FsDirtyEvent {
 
 /** A row in a native popup menu. `role` defers the action to Electron itself. */
 export interface NativeMenuItem {
-  /** Echoed back when this row is chosen; omit for separators and roles. */
+  /** Echoed back when this row is chosen; omit for separators, roles, and parents. */
   id?: string
   label?: string
   separator?: boolean
   enabled?: boolean
   checked?: boolean
   role?: 'copy' | 'cut' | 'paste' | 'selectAll' | 'undo' | 'redo'
+  /** Nested menu. Parent rows are not selectable. */
+  submenu?: NativeMenuItem[]
 }
 
 export type SettingsView =
@@ -485,9 +490,14 @@ export interface VavApi {
     /** Brave Search API subscription token (encrypted, not the LLM key). */
     setBraveSearchKey(key: string): Promise<{ hint: string | null }>
     braveSearchKeyHint(): Promise<string | null>
+    /** Cloudflare API token (encrypted). Empty string clears. */
+    setCloudflareApiToken(token: string): Promise<{ hint: string | null }>
+    cloudflareApiTokenHint(): Promise<string | null>
     validateKey(key: string): Promise<ValidateKeyResult>
     availableFonts(): Promise<string[]>
     pickDirectory(): Promise<string | null>
+    /** Shows the native OS colour picker; returns `#rrggbb` or null if cancelled. */
+    pickColor(defaultHex?: string): Promise<string | null>
     /** `ok: false` means the accelerator is already taken by another app. */
     setHotkey(accelerator: string): Promise<{ ok: boolean; settings: AppSettings }>
     cliStatus(): Promise<CliStatus>
@@ -565,6 +575,11 @@ export interface VavApi {
     setApprovalMode(
       id: string,
       mode: 'auto' | 'bypass' | 'edit'
+    ): Promise<ConversationMeta[]>
+    /** Per-conversation VAV thinking / reasoning effort. */
+    setThinkingLevel(
+      id: string,
+      level: 'off' | 'low' | 'medium' | 'high' | 'max'
     ): Promise<ConversationMeta[]>
     /** Deep-copies the thread up to `messageId` into a new conversation. */
     continueInNewSession(id: string, messageId: string): Promise<ConversationMeta | null>
@@ -784,13 +799,16 @@ export interface VavApi {
     ): Promise<GitResult<{ path: string; branch: string | null }>>
   }
 
-  /** GitHub pull requests for the workspace remote (REST via main). */
+  /** GitHub pull requests, running Actions, and Pages/site for the workspace remote. */
   github: {
     listPulls(
       cwd: string,
       state?: GithubPullStateFilter
     ): Promise<GithubResult<GithubPullsPage>>
     getPull(cwd: string, number: number): Promise<GithubResult<GithubPullDetail>>
+    listActions(cwd: string): Promise<GithubResult<GithubActionsPage>>
+    getActionRun(cwd: string, runId: number): Promise<GithubResult<GithubActionRunDetail>>
+    getSite(cwd: string): Promise<GithubResult<GithubSite>>
   }
 
   /** File Preview multi-session store (independent of sidebar conversations). */
@@ -1110,6 +1128,10 @@ export type MenuCommand =
   | 'switch-cli-mode'
   /** ⌘⇧V — main surface VAV chat. */
   | 'switch-vav-mode'
+  /** ⌘⇧M — open the composer agent/model picker. */
+  | 'switch-model'
+  /** ⌘⇧P — open the composer permission (approval mode) menu. */
+  | 'switch-approval'
   | 'send'
   /** Stop the in-flight agent turn for the active session. */
   | 'cancel-turn'
@@ -1153,9 +1175,12 @@ export const IPC = {
   settingsKeyHint: 'vav:settings:key-hint',
   settingsSetBraveSearchKey: 'vav:settings:set-brave-search-key',
   settingsBraveSearchKeyHint: 'vav:settings:brave-search-key-hint',
+  settingsSetCloudflareToken: 'vav:settings:set-cloudflare-token',
+  settingsCloudflareTokenHint: 'vav:settings:cloudflare-token-hint',
   settingsValidateKey: 'vav:settings:validate-key',
   settingsFonts: 'vav:settings:fonts',
   settingsPickDirectory: 'vav:settings:pick-directory',
+  settingsPickColor: 'vav:settings:pick-color',
   settingsSetHotkey: 'vav:settings:set-hotkey',
   settingsCliStatus: 'vav:settings:cli-status',
   settingsCliSetLocation: 'vav:settings:cli-set-location',
@@ -1188,6 +1213,7 @@ export const IPC = {
   convSetPinned: 'vav:conv:set-pinned',
   convSetArchived: 'vav:conv:set-archived',
   convSetApprovalMode: 'vav:conv:set-approval-mode',
+  convSetThinkingLevel: 'vav:conv:set-thinking-level',
   convContinueNew: 'vav:conv:continue-new',
   convDuplicate: 'vav:conv:duplicate',
   /** Export one or more sessions as a .vavpack (zip) package. */
@@ -1261,6 +1287,10 @@ export const IPC = {
   gitCreateWorktree: 'vav:git:create-worktree',
   githubListPulls: 'vav:github:list-pulls',
   githubGetPull: 'vav:github:get-pull',
+  cloudflareStatus: 'vav:cloudflare:status',
+  githubListActions: 'vav:github:list-actions',
+  githubGetActionRun: 'vav:github:get-action-run',
+  githubGetSite: 'vav:github:get-site',
 
   agentsResolveBinary: 'vav:agents:resolve-binary',
   agentsListModels: 'vav:agents:list-models',

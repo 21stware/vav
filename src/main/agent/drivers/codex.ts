@@ -1,4 +1,5 @@
 import type { ApprovalMode, QuotaWindow } from '@shared/types'
+import { extractRpcError, extractRpcErrorText } from '@shared/cliErrors'
 import {
   classifyCodexRateLimitWindowKinds,
   codexWindowMinutesFromRecord,
@@ -151,10 +152,11 @@ function wireCodex(
         for (const prompt of pendingPrompts.splice(0)) startTurn(prompt)
       }
       if (asRecord(msg.error)) {
-        const err = asRecord(msg.error)
+        const extracted = extractRpcError(msg.error)
         emit({
           type: 'error',
-          message: asString(err?.message) || JSON.stringify(msg.error)
+          message: extracted.text,
+          errorCode: extracted.code ?? undefined
         })
       }
       return
@@ -330,7 +332,7 @@ function wireCodex(
     if (method === 'error') {
       emit({
         type: 'error',
-        message: asString(params.message) || JSON.stringify(params)
+        message: extractRpcErrorText(params) || JSON.stringify(params)
       })
     }
   })

@@ -13,6 +13,8 @@ import { isAgentModelEnabled, modelsForChatHost } from '@shared/agentModels'
 import { useSessionStore } from '../../state/sessionStore'
 import { useT } from '../../i18n/useT'
 import { AgentBrandMark } from '../AgentBrandMark'
+import { Toggle } from '../ui'
+import { useWorkspaceStore } from '../../state/workspaceStore'
 
 const VAV_ROW_ID = 'vav'
 
@@ -234,6 +236,27 @@ export function AgentsSettings(): React.JSX.Element {
     void updateSettings({ disabledAgentModels: next })
   }
 
+  const modelEnablement = useMemo(() => {
+    let enabled = 0
+    for (const model of modelList) {
+      if (isAgentModelEnabled(modelHost, model.id, settings.disabledAgentModels)) enabled++
+    }
+    return {
+      enabled,
+      all: modelList.length > 0 && enabled === modelList.length,
+      none: enabled === 0
+    }
+  }, [modelList, modelHost, settings.disabledAgentModels])
+
+  const setAllModelsEnabled = (enabled: boolean): void => {
+    if (!modelHostKey || modelList.length === 0) return
+    const prev = settings.disabledAgentModels ?? {}
+    const next = { ...prev }
+    if (enabled) delete next[modelHostKey]
+    else next[modelHostKey] = modelList.map((model) => model.id)
+    void updateSettings({ disabledAgentModels: next })
+  }
+
   const patchAgent = (id: string, patch: Partial<AgentConfig>): void => {
     commitAgents(agents.map((a) => (a.id === id ? { ...a, ...patch } : a)))
   }
@@ -307,6 +330,25 @@ export function AgentsSettings(): React.JSX.Element {
 
   return (
     <div className="settings-section agents-settings">
+      <div className="form-row">
+        <label>{t('agents.swarmMode')}</label>
+        <div className="control">
+          <Toggle
+            checked={settings.swarmModeEnabled === true}
+            title={t('agents.swarmMode')}
+            onChange={(swarmModeEnabled) => {
+              void updateSettings({ swarmModeEnabled })
+              if (!swarmModeEnabled) {
+                const { workspaces, exitCliMode } = useWorkspaceStore.getState()
+                for (const id of Object.keys(workspaces)) {
+                  if (workspaces[id]?.cliMode) exitCliMode(id)
+                }
+              }
+            }}
+          />
+        </div>
+      </div>
+      <div className="form-hint">{t('agents.swarmModeHint')}</div>
       <div className="agents-layout">
         <div className="agents-list-panel">
           <div
@@ -561,6 +603,31 @@ export function AgentsSettings(): React.JSX.Element {
                   <div className="muted tiny">{t('composer.modelsLoading')}</div>
                 ) : (
                   <div className="agents-models-list">
+                    <label className="agents-models-row agents-models-all">
+                      <input
+                        type="checkbox"
+                        checked={modelEnablement.all}
+                        ref={(el) => {
+                          if (el) {
+                            el.indeterminate =
+                              !modelEnablement.all && !modelEnablement.none
+                          }
+                        }}
+                        aria-checked={
+                          modelEnablement.all
+                            ? 'true'
+                            : modelEnablement.none
+                              ? 'false'
+                              : 'mixed'
+                        }
+                        onChange={(e) => setAllModelsEnabled(e.target.checked)}
+                      />
+                      <span className="agents-models-text">
+                        <span className="agents-models-label">
+                          {t('agents.modelsSelectAll')}
+                        </span>
+                      </span>
+                    </label>
                     {modelList.map((model) => {
                       const enabled = isAgentModelEnabled(
                         modelHost,

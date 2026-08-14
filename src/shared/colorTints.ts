@@ -9,7 +9,18 @@ import type { ColorTint } from './types'
  *
  * Applied by `appearance.ts` via the same token derivation as system accent.
  */
-export type FixedColorTint = Exclude<ColorTint, 'system'>
+export type FixedColorTint = Exclude<ColorTint, 'system' | 'custom'>
+
+const HEX6 = /^#([0-9a-fA-F]{6})$/
+
+/** Normalize a colour-well value to `#rrggbb`, or null if it is not a hex. */
+export function normalizeAccentHex(value: string | null | undefined): string | null {
+  if (!value) return null
+  const trimmed = value.trim()
+  const withHash = trimmed.startsWith('#') ? trimmed : `#${trimmed}`
+  if (!HEX6.test(withHash)) return null
+  return `#${withHash.slice(1).toLowerCase()}`
+}
 
 export const TINT_ACCENT: Record<FixedColorTint, { light: string; dark: string }> = {
   // Neutral chrome (base :root tokens when mono is selected).

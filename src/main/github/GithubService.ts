@@ -1,8 +1,14 @@
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
-import { resolve } from 'node:path'
+import { join, resolve } from 'node:path'
 import { existsSync } from 'node:fs'
+import { readFile } from 'node:fs/promises'
 import type {
+  GithubActionJob,
+  GithubActionRun,
+  GithubActionRunDetail,
+  GithubActionStatus,
+  GithubActionsPage,
   GithubCheck,
   GithubCheckConclusion,
   GithubComment,
@@ -18,9 +24,15 @@ import type {
   GithubResult,
   GithubReview,
   GithubReviewState,
+  GithubSite,
   GithubUserRef
 } from '@shared/github'
-import { parseGithubRemote } from '@shared/github'
+import {
+  fillGithubSiteGaps,
+  isRunningGithubActionStatus,
+  mapGithubSite,
+  parseGithubRemote
+} from '@shared/github'
 import { loginPath, resolveOnLoginPath } from '../terminal/loginPath'
 
 const execFileAsync = promisify(execFile)
@@ -785,6 +797,198 @@ export async function listGithubPulls(
       truncated: pulls.length >= LIST_PAGE_SIZE
     }
   }
+}
+
+type GhWorkflowRun = {
+  id: number
+  name?: string
+  display_title?: string
+  status?: string
+  conclusion?: string | null
+  html_url?: string
+  url?: string
+  event?: string
+  head_branch?: string
+  actor?: GhUser | null
+  created_at?: string
+  updated_at?: string
+  run_started_at?: string | null
+}
+
+type GhWorkflowJob = {
+  id: number
+  name?: string
+  status?: string
+  conclusion?: string | null
+  html_url?: string
+  started_at?: string | null
+  completed_at?: string | null
+}
+
+function mapActionStatus(status: string | undefined): GithubActionStatus {
+  if (status === 'completed') return 'completed'
+  if (isRunningGithubActionStatus(status ?? '')) return status as GithubActionStatus
+  return 'queued'
+}
+
+function mapActionRun(run: GhWorkflowRun): GithubActionRun {
+  return {
+    id: run.id,
+    name: run.name ?? '',
+    title: (run.display_title || run.name || '').trim(),
+    status: mapActionStatus(run.status),
+    conclusion: run.conclusion ?? null,
+    url: run.url ?? '',
+    htmlUrl: run.html_url ?? '',
+    event: run.event ?? '',
+    headBranch: run.head_branch ?? '',
+    actor: mapUser(run.actor),
+    createdAt: run.created_at ?? '',
+    updatedAt: run.updated_at ?? '',
+    runStartedAt: run.run_started_at ?? null
+  }
+}
+
+function mapActionJob(job: GhWorkflowJob): GithubActionJob {
+  return {
+    id: job.id,
+    name: job.name ?? '',
+    status: mapActionStatus(job.status),
+    conclusion: job.conclusion ?? null,
+    htmlUrl: job.html_url ?? '',
+    startedAt: job.started_at ?? null,
+    completedAt: job.completed_at ?? null
+  }
+}
+
+const RUNNING_ACTION_STATUSES = [
+  'in_progress',
+  'queued',
+  'waiting',
+  'pending',
+  'requested'
+] as const
+
+export async function listGithubActions(cwd: string): Promise<GithubResult<GithubActionsPage>> {
+  const detected = await detectGithubRepo(cwd)
+  if (!detected.ok) return detected
+  const repo = detected.data
+  const token = await resolveToken(repo.host)
+  const base = repoApi(repo)
+  const fetched = await Promise.all(
+    RUNNING_ACTION_STATUSES.map((status) =>
+      githubFetch(`${base}/actions/runs?status=${status}&per_page=${LIST_PAGE_SIZE}`, token)
+    )
+  )
+  const byId = new Map<number, GithubActionRun>()
+  for (const page of fetched) {
+    if (!page.ok) {
+      if (page.code === 'not-found') continue
+      return page
+    }
+    const runs = asArray<GhWorkflowRun>(page.json, 'workflow_runs')
+    for (const run of runs) {
+      if (!run?.id || !isRunningGithubActionStatus(run.status ?? '')) continue
+      byId.set(run.id, mapActionRun(run))
+    }
+  }
+  const runs = [...byId.values()].sort((a, b) => {
+    const ta = Date.parse(a.updatedAt) || 0
+    const tb = Date.parse(b.updatedAt) || 0
+    return tb - ta
+  })
+  return {
+    ok: true,
+    data: { repo, runs, authenticated: Boolean(token) }
+  }
+}
+
+export async function getGithubActionRun(
+  cwd: string,
+  runId: number
+): Promise<GithubResult<GithubActionRunDetail>> {
+  const id = Math.floor(runId)
+  if (!Number.isFinite(id) || id <= 0) return fail('Invalid workflow run')
+  const detected = await detectGithubRepo(cwd)
+  if (!detected.ok) return detected
+  const repo = detected.data
+  const token = await resolveToken(repo.host)
+  const base = repoApi(repo)
+  const [runFetched, jobsFetched] = await Promise.all([
+    githubFetch(`${base}/actions/runs/${id}`, token),
+    githubFetch(`${base}/actions/runs/${id}/jobs?per_page=100`, token)
+  ])
+  if (!runFetched.ok) return runFetched
+  if (!runFetched.json || typeof runFetched.json !== 'object') {
+    return fail('Unexpected GitHub response')
+  }
+  const run = mapActionRun(runFetched.json as GhWorkflowRun)
+  const jobs = jobsFetched.ok
+    ? asArray<GhWorkflowJob>(jobsFetched.json, 'jobs').map(mapActionJob)
+    : []
+  return { ok: true, data: { ...run, jobs } }
+}
+
+type GhRepoInfo = { homepage?: string | null; has_pages?: boolean }
+
+export async function getGithubSite(cwd: string): Promise<GithubResult<GithubSite>> {
+  const detected = await detectGithubRepo(cwd)
+  if (!detected.ok) return detected
+  const repo = detected.data
+  const token = await resolveToken(repo.host)
+  const base = repoApi(repo)
+  const [repoFetched, pagesFetched, buildFetched, deployFetched] = await Promise.all([
+    githubFetch(base, token),
+    githubFetch(`${base}/pages`, token),
+    githubFetch(`${base}/pages/builds/latest`, token),
+    githubFetch(`${base}/deployments?environment=github-pages&per_page=1`, token)
+  ])
+  if (!repoFetched.ok) return repoFetched
+  const info =
+    repoFetched.json && typeof repoFetched.json === 'object'
+      ? (repoFetched.json as GhRepoInfo)
+      : {}
+  const homepage = typeof info.homepage === 'string' ? info.homepage : null
+  const pages =
+    pagesFetched.ok && pagesFetched.json && typeof pagesFetched.json === 'object'
+      ? pagesFetched.json
+      : null
+  const latestBuild =
+    (buildFetched.ok && buildFetched.json && typeof buildFetched.json === 'object'
+      ? buildFetched.json
+      : null) ??
+    (deployFetched.ok ? deployFetched.json : null)
+  const hints = await readLocalPagesHints(cwd)
+  return {
+    ok: true,
+    data: fillGithubSiteGaps(
+      mapGithubSite({
+        repo,
+        homepage,
+        hasPages: Boolean(info.has_pages),
+        pages,
+        latestBuild,
+        authenticated: Boolean(token)
+      }),
+      hints
+    )
+  }
+}
+
+async function readLocalPagesHints(
+  cwd: string
+): Promise<{ cname: string | null; workflow: boolean }> {
+  const readCname = async (rel: string): Promise<string | null> => {
+    try {
+      const line = (await readFile(join(cwd, rel), 'utf8')).trim().split(/\s+/)[0] ?? ''
+      return line || null
+    } catch {
+      return null
+    }
+  }
+  const cname = (await readCname('site/CNAME')) || (await readCname('CNAME'))
+  const workflow = existsSync(join(cwd, '.github/workflows/pages.yml'))
+  return { cname, workflow }
 }
 
 export async function getGithubPull(

@@ -1,16 +1,21 @@
 import {
   Children,
   cloneElement,
+  createContext,
   Fragment,
   isValidElement,
+  useCallback,
+  useContext,
   useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
   type ReactNode
 } from 'react'
 import { X } from 'lucide-react'
 import { tt } from '../i18n/useT'
+import { entranceStarted, markEntranceStarted } from '../lib/emptyEntrance'
 import wordmark from '../assets/wordmark.png'
 import wordmarkDark from '../assets/wordmark-dark.png'
 
@@ -20,34 +25,171 @@ const MODAL_LEAVE_MS = 180
 /** Empty-state entrance budget — long enough for a full prose stagger. */
 const EMPTY_ENTER_MS = 1800
 
-/** Scenes that already started an entrance. Claimed after first paint. */
-const emptyPlayedScenes = new Set<string>()
+/**
+ * Ceiling on waiting for async copy (git status) before playing without it.
+ * Long enough for a warm `git status`, short enough that a cold repo does not
+ * read as a stalled transcript.
+ */
+const EMPTY_COPY_HOLD_MS = 300
+
+/** Ceiling on waiting for a reveal, in case the flag is never cleared. */
+const EMPTY_REVEAL_HOLD_MS = 1200
 
 /**
- * One `.is-entering` per session+host. Arm in layout (before paint) so the
- * name does not flash, then claim in a passive effect so Strict Mode's extra
- * layout pass cannot drop the class and restart stagger.
+ * Main sets this while a hidden window paints the frame it is about to reveal,
+ * and clears it once the window is on screen. A build-up started now would be
+ * spent off-screen, so the run waits it out.
  */
-function useEmptyEntering(enterKey: string, logoKey: string): boolean {
-  const scene = `${enterKey}::${logoKey}`
-  const [entering, setEntering] = useState(false)
+function isWindowRevealing(): boolean {
+  return document.documentElement.dataset.revealing === '1'
+}
+
+function prefersNoMotion(): boolean {
+  return document.documentElement.dataset.reduceMotion === 'true'
+}
+
+type EntranceRun = {
+  scene: string
+  /** This scene gets a build-up at all (first visit, motion enabled). */
+  play: boolean
+  /** Copy is in and the window is on screen: `.is-entering` may go on. */
+  armed: boolean
+  /** Wall clock ceiling for holding an unarmed run. */
+  holdUntil: number
+}
+
+function startRun(slot: string, scene: string): EntranceRun {
+  const play = !entranceStarted(slot, scene) && !prefersNoMotion()
+  return {
+    scene,
+    play,
+    // Nothing to wait for when there is no build-up — stay out of the hold.
+    armed: !play,
+    holdUntil: performance.now() + EMPTY_COPY_HOLD_MS
+  }
+}
+
+/**
+ * One build-up per scene: armed on the frame the whole stack is ready, ended
+ * once, and never restarted — not by a remount, not by late copy, not by a
+ * reveal. `holding` means the stack is not paintable yet; the caller must keep
+ * it invisible, because a rest frame followed by `empty-in` reads as a flash of
+ * finished content that then rewinds.
+ */
+function useEntranceRun(
+  slot: string,
+  scene: string,
+  hold: boolean
+): { entering: boolean; holding: boolean } {
+  const [run, setRun] = useState(() => startRun(slot, scene))
+
+  // Decided in render, not after paint: the first committed style must already
+  // be `empty-in` + backwards, or the rest state shows for a frame.
+  if (run.scene !== scene) setRun(startRun(slot, scene))
 
   useLayoutEffect(() => {
-    if (emptyPlayedScenes.has(scene)) {
-      setEntering(false)
+    markEntranceStarted(slot, scene)
+  }, [slot, scene])
+
+  useLayoutEffect(() => {
+    if (!run.play || run.armed || run.scene !== scene) return
+    const arm = (): void =>
+      setRun((r) => (r.scene === scene && !r.armed ? { ...r, armed: true } : r))
+    const revealing = isWindowRevealing()
+    if (!hold && !revealing) {
+      arm()
       return
     }
-    setEntering(true)
-  }, [scene])
+    const deadline = revealing
+      ? EMPTY_REVEAL_HOLD_MS
+      : Math.max(0, run.holdUntil - performance.now())
+    const cap = window.setTimeout(arm, deadline)
+    const observer = new MutationObserver(() => {
+      if (isWindowRevealing()) return
+      if (!hold) {
+        arm()
+        return
+      }
+      // On screen now: give the copy its full grace from here, not from a
+      // budget that was spent while the window was still hidden.
+      setRun((r) =>
+        r.scene === scene && !r.armed
+          ? { ...r, holdUntil: performance.now() + EMPTY_COPY_HOLD_MS }
+          : r
+      )
+    })
+    observer.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ['data-revealing']
+    })
+    return () => {
+      window.clearTimeout(cap)
+      observer.disconnect()
+    }
+  }, [run.play, run.armed, run.holdUntil, run.scene, scene, hold])
 
   useEffect(() => {
-    if (!entering) return
-    emptyPlayedScenes.add(scene)
-    const stop = window.setTimeout(() => setEntering(false), EMPTY_ENTER_MS)
-    return () => window.clearTimeout(stop)
-  }, [entering, scene])
+    if (!run.play || !run.armed || run.scene !== scene) return
+    const stop = window.setTimeout(
+      () => setRun((r) => (r.scene === scene ? { ...r, play: false } : r)),
+      EMPTY_ENTER_MS
+    )
+    // The window went off-screen mid-build-up (a reveal is being prepared, e.g.
+    // the app booting behind a hidden window). Re-queue instead of burning the
+    // run on frames nobody sees: it plays once, on screen.
+    const observer = new MutationObserver(() => {
+      if (!isWindowRevealing()) return
+      setRun((r) =>
+        r.scene === scene && r.armed
+          ? { ...r, armed: false, holdUntil: performance.now() + EMPTY_COPY_HOLD_MS }
+          : r
+      )
+    })
+    observer.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ['data-revealing']
+    })
+    return () => {
+      window.clearTimeout(stop)
+      observer.disconnect()
+    }
+  }, [run.play, run.armed, run.scene, scene])
 
-  return entering
+  const live = run.scene === scene && run.play
+  return { entering: live && run.armed, holding: live && !run.armed }
+}
+
+type EmptyEntranceValue = {
+  /** Scene id — children key their stagger off it so a new visit remounts it. */
+  scene: string
+  /** `.is-entering` is live: children mounted now belong to this run. */
+  entering: boolean
+  /** Async copy reports itself in, so the run starts with the stack complete. */
+  setCopyReady: (ready: boolean) => void
+}
+
+const EmptyEntranceContext = createContext<EmptyEntranceValue | null>(null)
+
+/**
+ * Supporting copy that arrives after mount (git status). Holds the entrance
+ * until it is in and then rides the same run — logo, name and prose build up
+ * as one stack instead of the hero playing and the prose entering after it.
+ */
+export function useEmptyEntranceCopy(ready: boolean): {
+  entering: boolean
+  motionKey: string | null
+} {
+  const entrance = useContext(EmptyEntranceContext)
+  const setCopyReady = entrance?.setCopyReady
+  const scene = entrance?.scene ?? null
+
+  // Layout effect: reporting after paint would spend a frame with the stack
+  // held back even when the copy was already there.
+  useLayoutEffect(() => {
+    setCopyReady?.(ready)
+  }, [setCopyReady, ready, scene])
+
+  return { entering: entrance?.entering ?? false, motionKey: scene }
 }
 
 type ButtonVariant = 'ghost' | 'secondary' | 'primary' | 'danger'
@@ -354,8 +496,9 @@ export function EmptyState({
    */
   logoKey?: string
   /**
-   * Scene id (session empty view). Combined with {@link logoKey}. Git load and
-   * layout remounts must not mint a new scene.
+   * Scene id (session empty view). Combined with {@link logoKey}. Must carry the
+   * visit, not just the session id: git load and layout remounts may not mint a
+   * new scene, but returning to a conversation must.
    */
   enterKey?: string
   /**
@@ -367,8 +510,28 @@ export function EmptyState({
   foot?: ReactNode
   children?: ReactNode
 }): React.JSX.Element {
-  const entering = useEmptyEntering(enterKey ?? 'empty', logoKey ?? '')
-  const motionKey = `${enterKey ?? 'empty'}::${logoKey ?? ''}`
+  // Panel empty states share one slot and one scene: they greet you once per
+  // window, and tab / filter remounts are not visits.
+  const session = layout === 'session'
+  const slot = session ? 'session' : 'panel'
+  const motionKey = session ? `${enterKey ?? 'empty'}::${logoKey ?? ''}` : 'panel'
+
+  // Pessimistic: a foot means copy we do not have yet (git status), so hold the
+  // run until it reports in rather than play the hero and trail the prose.
+  const needCopy = session && !!foot
+  const [copy, setCopy] = useState({ scene: motionKey, ready: !needCopy })
+  if (copy.scene !== motionKey) setCopy({ scene: motionKey, ready: !needCopy })
+  const setCopyReady = useCallback(
+    (ready: boolean) => setCopy((c) => (c.ready === ready ? c : { ...c, ready })),
+    []
+  )
+
+  const copyReady = copy.scene === motionKey ? copy.ready : !needCopy
+  const { entering, holding } = useEntranceRun(slot, motionKey, needCopy && !copyReady)
+  const entrance = useMemo<EmptyEntranceValue>(
+    () => ({ scene: motionKey, entering, setCopyReady }),
+    [motionKey, entering]
+  )
 
   const logoNode =
     logo === true ? (
@@ -395,20 +558,22 @@ export function EmptyState({
     </>
   )
 
-  const rootClass =
-    layout === 'session'
-      ? `empty-state empty-state-session${entering ? ' is-entering' : ''}`
-      : `empty-state${entering ? ' is-entering' : ''}`
+  const rootClass = [
+    'empty-state',
+    session ? 'empty-state-session' : '',
+    entering ? 'is-entering' : '',
+    holding ? 'is-holding' : ''
+  ]
+    .filter(Boolean)
+    .join(' ')
 
-  if (layout === 'session') {
-    return (
+  return (
+    <EmptyEntranceContext.Provider value={entrance}>
       <div className={rootClass}>
-        <div className="empty-state-hero">{hero}</div>
+        {session ? <div className="empty-state-hero">{hero}</div> : hero}
       </div>
-    )
-  }
-
-  return <div className={rootClass}>{hero}</div>
+    </EmptyEntranceContext.Provider>
+  )
 }
 
 /**

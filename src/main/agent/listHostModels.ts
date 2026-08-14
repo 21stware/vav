@@ -3,10 +3,14 @@ import type { CliHostKind, ModelOption } from '@shared/types'
 import { PRESET_MODELS } from '@shared/types'
 import { enabledCliAgents, isStructuredCliHost } from '@shared/types'
 import type { SettingsStore } from '../store/SettingsStore'
+import { ensureLoginPath } from '../terminal/loginPath'
 import { resolveHostBinary } from './drivers'
 
 const CACHE_TTL_MS = 30 * 60_000
 const RUN_TIMEOUT_MS = 12_000
+
+/** Hosts whose CLI can actually print a catalogue. Others stay on static fallback. */
+const LIVE_PROBE_HOSTS = new Set<CliHostKind>(['cursor', 'grok', 'opencode', 'pi'])
 
 /** Empty id = omit `--model` / use the CLI's own default. */
 export const CLI_DEFAULT_MODEL: ModelOption = { id: '', label: 'Default' }
@@ -27,9 +31,19 @@ interface CacheEntry {
   models: ModelOption[]
   source: 'live' | 'static' | 'fallback'
   error?: string
+  /** False = seeded fallback, live probe still outstanding. */
+  settled: boolean
 }
 
 const cache = new Map<string, CacheEntry>()
+const inflight = new Map<string, Promise<ListHostModelsResult>>()
+
+export interface PreloadHostModelsOptions {
+  force?: boolean
+  /** Probe these live hosts first (recent picks / open sessions). */
+  prefer?: Array<CliHostKind | null | string>
+  onProgress?: (catalog: Record<string, ListHostModelsResult>) => void
+}
 
 export interface ListHostModelsResult {
   host: CliHostKind | 'vav'
@@ -52,25 +66,104 @@ export function getModelCatalogSnapshot(): Record<string, ListHostModelsResult> 
   return out
 }
 
+function resultFromCache(host: CliHostKind | 'vav', entry: CacheEntry): ListHostModelsResult {
+  return {
+    host,
+    models: entry.models,
+    source: entry.source,
+    error: entry.error
+  }
+}
+
+function vavModels(settings: SettingsStore): ModelOption[] {
+  const custom = settings.get().customModels ?? []
+  const presetIds = new Set(PRESET_MODELS.map((m) => m.id))
+  const extras = custom
+    .filter((id) => id.trim() && !presetIds.has(id))
+    .map((id) => ({ id, label: id }))
+  return extras.length ? [...PRESET_MODELS, ...extras] : [...PRESET_MODELS]
+}
+
+/** Instant catalogue so the picker never waits on CLI spawn. */
+export function seedModelCatalog(
+  settings: SettingsStore
+): Record<string, ListHostModelsResult> {
+  seedHost('vav', settings)
+  for (const agent of enabledCliAgents(settings.get().cliAgents)) {
+    if (isStructuredCliHost(agent.id)) seedHost(agent.id, settings)
+  }
+  return getModelCatalogSnapshot()
+}
+
+function seedHost(host: CliHostKind | 'vav', settings: SettingsStore): ListHostModelsResult {
+  if (host === 'vav') {
+    const models = vavModels(settings)
+    const entry: CacheEntry = { at: Date.now(), models, source: 'static', settled: true }
+    cache.set('vav', entry)
+    return resultFromCache('vav', entry)
+  }
+  const existing = cache.get(host)
+  if (existing) return resultFromCache(host, existing)
+  const models = staticFallback(host)
+  const needsProbe = LIVE_PROBE_HOSTS.has(host)
+  const entry: CacheEntry = {
+    at: Date.now(),
+    models,
+    source: host === 'claude' ? 'static' : 'fallback',
+    settled: !needsProbe
+  }
+  cache.set(host, entry)
+  return resultFromCache(host, entry)
+}
+
+function preferredLiveHosts(
+  enabled: CliHostKind[],
+  prefer?: Array<CliHostKind | null | string>
+): CliHostKind[] {
+  const enabledSet = new Set(enabled)
+  const live = enabled.filter((id) => LIVE_PROBE_HOSTS.has(id))
+  const liveSet = new Set(live)
+  const ordered: CliHostKind[] = []
+  const seen = new Set<CliHostKind>()
+  for (const raw of prefer ?? []) {
+    if (!raw || raw === 'vav' || !isStructuredCliHost(raw)) continue
+    if (!liveSet.has(raw) || seen.has(raw)) continue
+    seen.add(raw)
+    ordered.push(raw)
+  }
+  for (const id of live) {
+    if (seen.has(id)) continue
+    if (!enabledSet.has(id)) continue
+    seen.add(id)
+    ordered.push(id)
+  }
+  return ordered
+}
+
 /**
  * Warm the catalogue for VAV + every structured host (enabled agents first).
- * Safe to call repeatedly; respects cache unless `force`.
+ * Seeds static fallbacks immediately, then live-probes only CLIs that can list.
  */
 export async function preloadHostModels(
   settings: SettingsStore,
-  options?: { force?: boolean }
+  options?: PreloadHostModelsOptions
 ): Promise<Record<string, ListHostModelsResult>> {
-  // Only warm hosts the user actually has enabled — probing every catalogue
-  // CLI (including missing ones) spikes CPU and blocked the UI.
+  seedModelCatalog(settings)
+  options?.onProgress?.(getModelCatalogSnapshot())
+
   const enabled = enabledCliAgents(settings.get().cliAgents)
     .map((a) => a.id)
     .filter((id): id is CliHostKind => isStructuredCliHost(id))
-  const hosts: Array<CliHostKind | null> = [null, ...enabled]
-  // Parallel but capped — spawning every CLI at once can spike CPU.
+  const hosts = preferredLiveHosts(enabled, options?.prefer)
   const concurrency = 3
   for (let i = 0; i < hosts.length; i += concurrency) {
     const slice = hosts.slice(i, i + concurrency)
-    await Promise.all(slice.map((h) => listHostModels(h, settings, options)))
+    await Promise.all(
+      slice.map(async (h) => {
+        await listHostModels(h, settings, options)
+        options?.onProgress?.(getModelCatalogSnapshot())
+      })
+    )
   }
   return getModelCatalogSnapshot()
 }
@@ -81,15 +174,7 @@ export async function listHostModels(
   options?: { force?: boolean }
 ): Promise<ListHostModelsResult> {
   if (!host || host === 'vav') {
-    const custom = settings.get().customModels ?? []
-    const presetIds = new Set(PRESET_MODELS.map((m) => m.id))
-    const extras = custom
-      .filter((id) => id.trim() && !presetIds.has(id))
-      .map((id) => ({ id, label: id }))
-    const models = extras.length ? [...PRESET_MODELS, ...extras] : [...PRESET_MODELS]
-    const result: ListHostModelsResult = { host: 'vav', models, source: 'static' }
-    cache.set('vav', { at: Date.now(), models, source: 'static' })
-    return result
+    return seedHost('vav', settings)
   }
 
   if (!isStructuredCliHost(host)) {
@@ -98,39 +183,69 @@ export async function listHostModels(
 
   const cacheKey = host
   const hit = cache.get(cacheKey)
-  if (!options?.force && hit && Date.now() - hit.at < CACHE_TTL_MS) {
-    return { host, models: hit.models, source: hit.source }
+  const fresh = !!hit && Date.now() - hit.at < CACHE_TTL_MS
+  if (!options?.force && hit && fresh && hit.settled) {
+    return resultFromCache(host, hit)
   }
 
+  if (!LIVE_PROBE_HOSTS.has(host)) {
+    return seedHost(host, settings)
+  }
+
+  const running = inflight.get(cacheKey)
+  if (running && !options?.force) return running
+
+  const work = probeAndCache(host, settings)
+  inflight.set(cacheKey, work)
+  try {
+    return await work
+  } finally {
+    if (inflight.get(cacheKey) === work) inflight.delete(cacheKey)
+  }
+}
+
+async function probeAndCache(
+  host: CliHostKind,
+  settings: SettingsStore
+): Promise<ListHostModelsResult> {
+  seedHost(host, settings)
+  await ensureLoginPath()
   const agent = enabledCliAgents(settings.get().cliAgents).find((a) => a.id === host) ?? null
   const binary = await resolveHostBinary(host, agent)
   if (!binary) {
     const fallback = staticFallback(host)
     const error = `${host} CLI not found`
-    cache.set(cacheKey, { at: Date.now(), models: fallback, source: 'fallback', error })
+    cache.set(host, {
+      at: Date.now(),
+      models: fallback,
+      source: 'fallback',
+      error,
+      settled: true
+    })
     return { host, models: fallback, source: 'fallback', error }
   }
 
   try {
     const live = await probeLiveModels(host, binary, agent?.envVars)
     if (live.length > 0) {
-      cache.set(cacheKey, { at: Date.now(), models: live, source: 'live' })
+      cache.set(host, { at: Date.now(), models: live, source: 'live', settled: true })
       return { host, models: live, source: 'live' }
     }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
     const fallback = staticFallback(host)
-    cache.set(cacheKey, {
+    cache.set(host, {
       at: Date.now(),
       models: fallback,
       source: 'fallback',
-      error: message
+      error: message,
+      settled: true
     })
     return { host, models: fallback, source: 'fallback', error: message }
   }
 
   const fallback = staticFallback(host)
-  cache.set(cacheKey, { at: Date.now(), models: fallback, source: 'fallback' })
+  cache.set(host, { at: Date.now(), models: fallback, source: 'fallback', settled: true })
   return { host, models: fallback, source: 'fallback' }
 }
 

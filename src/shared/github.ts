@@ -149,6 +149,295 @@ export type GithubResult<T> =
   | { ok: true; data: T }
   | { ok: false; error: string; code?: GithubErrorCode }
 
+export type GithubTrayTab = 'pulls' | 'actions' | 'site'
+
+export type GithubActionStatus =
+  | 'queued'
+  | 'in_progress'
+  | 'waiting'
+  | 'pending'
+  | 'requested'
+  | 'completed'
+
+export interface GithubActionRun {
+  id: number
+  name: string
+  title: string
+  status: GithubActionStatus
+  conclusion: string | null
+  url: string
+  htmlUrl: string
+  event: string
+  headBranch: string
+  actor: GithubUserRef
+  createdAt: string
+  updatedAt: string
+  runStartedAt: string | null
+}
+
+export interface GithubActionJob {
+  id: number
+  name: string
+  status: GithubActionStatus
+  conclusion: string | null
+  htmlUrl: string
+  startedAt: string | null
+  completedAt: string | null
+}
+
+export interface GithubActionRunDetail extends GithubActionRun {
+  jobs: GithubActionJob[]
+}
+
+export interface GithubActionsPage {
+  repo: GithubRepoRef
+  runs: GithubActionRun[]
+  authenticated: boolean
+}
+
+export type GithubSiteKind = 'pages' | 'homepage'
+
+export type GithubPagesBuildType = 'legacy' | 'workflow'
+
+export interface GithubPagesSource {
+  branch: string
+  path: string
+}
+
+export interface GithubPagesBuild {
+  status: string
+  commit: string | null
+  pusher: string | null
+  durationMs: number | null
+  createdAt: string | null
+  error: string | null
+}
+
+export interface GithubSite {
+  repo: GithubRepoRef
+  url: string | null
+  kind: GithubSiteKind | null
+  pagesStatus: string | null
+  homepage: string | null
+  authenticated: boolean
+  hasPages: boolean
+  settingsUrl: string
+  buildType: GithubPagesBuildType | null
+  source: GithubPagesSource | null
+  cname: string | null
+  httpsEnforced: boolean | null
+  protectedDomainState: string | null
+  custom404: boolean | null
+  public: boolean | null
+  latestBuild: GithubPagesBuild | null
+}
+
+const RUNNING_ACTION_STATUS = new Set<GithubActionStatus>([
+  'queued',
+  'in_progress',
+  'waiting',
+  'pending',
+  'requested'
+])
+
+export function isRunningGithubActionStatus(status: string): status is GithubActionStatus {
+  return RUNNING_ACTION_STATUS.has(status as GithubActionStatus)
+}
+
+/** Default public Pages URL when the Pages API is hidden but `has_pages` is set. */
+export function defaultGithubPagesUrl(repo: GithubRepoRef): string | null {
+  if (repo.host !== 'github.com') return null
+  const owner = repo.owner
+  const name = repo.repo
+  if (name.toLowerCase() === `${owner.toLowerCase()}.github.io`) {
+    return `https://${owner}.github.io/`
+  }
+  return `https://${owner}.github.io/${name}/`
+}
+
+export function githubPagesSettingsUrl(repo: GithubRepoRef): string {
+  return `${repo.htmlUrl.replace(/\/$/, '')}/settings/pages`
+}
+
+function trimStr(value: unknown): string | null {
+  if (typeof value !== 'string') return null
+  const trimmed = value.trim()
+  return trimmed || null
+}
+
+function httpUrl(value: unknown): string | null {
+  const raw = trimStr(value)
+  if (!raw || !/^https?:\/\//i.test(raw)) return null
+  return raw
+}
+
+export function mapGithubPagesSource(raw: unknown): GithubPagesSource | null {
+  if (!raw || typeof raw !== 'object') return null
+  const branch = trimStr((raw as { branch?: unknown }).branch)
+  if (!branch) return null
+  const path = trimStr((raw as { path?: unknown }).path) ?? '/'
+  return { branch, path }
+}
+
+export function mapGithubPagesBuild(raw: unknown): GithubPagesBuild | null {
+  if (!raw || typeof raw !== 'object') return null
+  const rec = raw as {
+    status?: unknown
+    commit?: unknown
+    duration?: unknown
+    created_at?: unknown
+    updated_at?: unknown
+    error?: unknown
+    pusher?: unknown
+  }
+  const status = trimStr(rec.status)
+  if (!status) return null
+  const error =
+    rec.error && typeof rec.error === 'object'
+      ? trimStr((rec.error as { message?: unknown }).message)
+      : null
+  const pusher =
+    rec.pusher && typeof rec.pusher === 'object'
+      ? trimStr((rec.pusher as { login?: unknown }).login)
+      : null
+  return {
+    status,
+    commit: trimStr(rec.commit),
+    pusher,
+    durationMs: typeof rec.duration === 'number' ? rec.duration : null,
+    createdAt: trimStr(rec.created_at) ?? trimStr(rec.updated_at),
+    error
+  }
+}
+
+export function mapGithubPagesDeployment(raw: unknown): GithubPagesBuild | null {
+  if (!raw || typeof raw !== 'object') return null
+  const rec = raw as {
+    sha?: unknown
+    created_at?: unknown
+    updated_at?: unknown
+    creator?: unknown
+  }
+  const pusher =
+    rec.creator && typeof rec.creator === 'object'
+      ? trimStr((rec.creator as { login?: unknown }).login)
+      : null
+  const commit = trimStr(rec.sha)
+  const createdAt = trimStr(rec.updated_at) ?? trimStr(rec.created_at)
+  if (!commit && !pusher && !createdAt) return null
+  return {
+    status: 'built',
+    commit,
+    pusher,
+    durationMs: null,
+    createdAt,
+    error: null
+  }
+}
+
+export function mapGithubSite(input: {
+  repo: GithubRepoRef
+  homepage: string | null
+  hasPages: boolean
+  pages: unknown | null
+  latestBuild: unknown | null
+  authenticated: boolean
+}): GithubSite {
+  const pages =
+    input.pages && typeof input.pages === 'object' ? (input.pages as Record<string, unknown>) : null
+  const cname = trimStr(pages?.cname)
+  const pagesUrl = httpUrl(pages?.html_url)
+  const cnameUrl = cname && !/^https?:\/\//i.test(cname) ? `https://${cname}/` : httpUrl(cname)
+  const fallback = input.hasPages || pages ? defaultGithubPagesUrl(input.repo) : null
+  const url = pagesUrl || cnameUrl || fallback
+  const hasPages = Boolean(pages || input.hasPages || cname || pagesUrl)
+  const kind = hasPages ? 'pages' : input.homepage ? 'homepage' : null
+  const rec = pages as Record<string, unknown> | null
+  const buildTypeRaw = trimStr(rec?.build_type) ?? trimStr(rec?.buildType)
+  const buildType: GithubPagesBuildType | null =
+    buildTypeRaw === 'workflow' || buildTypeRaw === 'legacy' ? buildTypeRaw : null
+  const pagesStatus = trimStr(pages?.status) ?? (hasPages && url ? 'built' : null)
+  return {
+    repo: input.repo,
+    url,
+    kind,
+    pagesStatus,
+    homepage: httpUrl(input.homepage),
+    authenticated: input.authenticated,
+    hasPages,
+    settingsUrl: githubPagesSettingsUrl(input.repo),
+    buildType,
+    source: mapGithubPagesSource(rec?.source),
+    cname,
+    httpsEnforced:
+      rec && ('https_enforced' in rec || 'httpsEnforced' in rec)
+        ? Boolean(rec.https_enforced ?? rec.httpsEnforced)
+        : null,
+    protectedDomainState: trimStr(pages?.protected_domain_state),
+    custom404: pages && 'custom_404' in pages ? Boolean(pages.custom_404) : null,
+    public: pages && 'public' in pages ? Boolean(pages.public) : null,
+    latestBuild:
+      mapGithubPagesBuild(input.latestBuild) || mapGithubPagesDeployment(firstRecord(input.latestBuild))
+  }
+}
+
+function firstRecord(raw: unknown): unknown | null {
+  if (Array.isArray(raw)) return raw[0] ?? null
+  return raw
+}
+
+/** Live Pages site — including workflow Pages where `status` is null. */
+export function isGithubPagesLive(site: {
+  hasPages?: boolean
+  kind?: GithubSiteKind | null
+  cname?: string | null
+  url?: string | null
+  pagesStatus?: string | null
+}): boolean {
+  return Boolean(
+    site.hasPages || site.kind === 'pages' || site.cname || (site.url && site.kind !== 'homepage')
+  )
+}
+
+export function githubPagesCustomDomain(site: {
+  cname?: string | null
+  url?: string | null
+}): string | null {
+  if (site.cname) return site.cname
+  if (!site.url) return null
+  try {
+    const host = new URL(site.url).hostname.replace(/^www\./i, '')
+    if (!host || host.endsWith('.github.io')) return null
+    return host
+  } catch {
+    return null
+  }
+}
+
+export function fillGithubSiteGaps(
+  site: GithubSite,
+  hints?: { cname?: string | null; workflow?: boolean }
+): GithubSite {
+  const cname = site.cname || hints?.cname || githubPagesCustomDomain(site)
+  const buildType = site.buildType || (hints?.workflow ? 'workflow' : null)
+  let httpsEnforced = site.httpsEnforced
+  if (httpsEnforced == null && site.url) {
+    if (/^https:\/\//i.test(site.url)) httpsEnforced = true
+    else if (/^http:\/\//i.test(site.url)) httpsEnforced = false
+  }
+  const url = site.url || (cname ? `https://${cname.replace(/\/$/, '')}/` : null)
+  const hasPages = Boolean(site.hasPages || cname || (url && site.kind !== 'homepage'))
+  return {
+    ...site,
+    cname,
+    buildType,
+    httpsEnforced,
+    url,
+    hasPages,
+    kind: hasPages ? 'pages' : site.kind
+  }
+}
+
 export type GithubConversationItem =
   | { kind: 'comment'; at: number; comment: GithubComment }
   | { kind: 'inline'; at: number; comment: GithubComment }

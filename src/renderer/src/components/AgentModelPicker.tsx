@@ -1,5 +1,5 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { Check, ChevronDown, ChevronLeft, ChevronRight } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useRef } from 'react'
+import { ChevronDown } from 'lucide-react'
 import {
   STRUCTURED_CLI_HOSTS,
   displayNameForCliHost,
@@ -8,6 +8,8 @@ import {
   type CliHostKind
 } from '@shared/types'
 import {
+  RECENT_AGENT_MODELS_MAX,
+  RECENT_AGENT_MODELS_PINNED,
   agentModelHostKey,
   filterEnabledModels,
   hostIdForChatHost,
@@ -19,17 +21,23 @@ import {
 } from '@shared/agentModels'
 import { useSessionStore } from '../state/sessionStore'
 import { useT } from '../i18n/useT'
+import { menuAnchorIfVisible, showMenu, type MenuItem } from '../lib/nativeMenu'
 import { AgentBrandMark } from './AgentBrandMark'
-
-const LEAVE_MS = 180 // --dur-pop
 
 type HostOption = { id: CliHostKind | null; name: string; markId: string }
 
+type RecentItem = {
+  hostId: string
+  host: HostOption
+  model: string
+  modelLabel: string
+  selected: boolean
+}
+
 /**
- * Two-step Agent → Model picker.
- * Catalogues are preloaded in the background; Settings controls which agents /
- * models stay enabled. A “Recently” queue sits above the steps for one-click
- * switch to the last few agent+model pairs.
+ * Native Agent → Model picker.
+ * Top level: last 3 switches, a Recently submenu (last 10), then each
+ * provider with its models one level down.
  */
 export function AgentModelPicker({
   conversationId
@@ -45,6 +53,9 @@ export function AgentModelPicker({
   const setModel = useSessionStore((s) => s.setModel)
   const selectChatHost = useSessionStore((s) => s.selectChatHost)
   const updateSettings = useSessionStore((s) => s.updateSettings)
+  const modelPickerMenuNonce = useSessionStore((s) => s.modelPickerMenuNonce)
+  const triggerRef = useRef<HTMLButtonElement>(null)
+  const seenMenuNonce = useRef(0)
 
   const cliHost = conversation?.cliHost ?? null
   const customModels = settings.customModels
@@ -59,7 +70,6 @@ export function AgentModelPicker({
     const hosts: HostOption[] = [
       { id: null, name: t('agents.plainShell'), markId: 'vav' }
     ]
-    // Only agents enabled in Settings appear in the picker.
     for (const id of STRUCTURED_CLI_HOSTS) {
       const agent = byId.get(id)
       if (!agent) continue
@@ -104,13 +114,7 @@ export function AgentModelPicker({
 
   const recentItems = useMemo(() => {
     const offered = new Set(hostOptions.map((h) => h.markId))
-    const out: {
-      hostId: string
-      host: HostOption
-      model: string
-      modelLabel: string
-      selected: boolean
-    }[] = []
+    const out: RecentItem[] = []
     for (const entry of settings.recentAgentModels ?? []) {
       if (!offered.has(entry.hostId)) continue
       const host = hostByMark.get(entry.hostId)
@@ -124,7 +128,7 @@ export function AgentModelPicker({
         modelLabel: labelForChatModel(host.id, entry.model, customModels, catalogue),
         selected: host.id === cliHost && entry.model === activeModel
       })
-      if (out.length >= 6) break
+      if (out.length >= RECENT_AGENT_MODELS_MAX) break
     }
     return out
     // modelsFor/catalog intentionally via settings + catalog deps
@@ -139,78 +143,6 @@ export function AgentModelPicker({
     cliHost,
     activeModel
   ])
-
-  const [open, setOpen] = useState(false)
-  const [leaving, setLeaving] = useState(false)
-  const [mounted, setMounted] = useState(false)
-  const [modelStepHost, setModelStepHost] = useState<CliHostKind | null | 'agents'>(
-    'agents'
-  )
-  const leaveTimer = useRef<number | null>(null)
-  const wrapRef = useRef<HTMLDivElement>(null)
-  const menuRef = useRef<HTMLDivElement>(null)
-
-  const close = (): void => {
-    if (!open || leaving) return
-    setLeaving(true)
-    if (leaveTimer.current != null) window.clearTimeout(leaveTimer.current)
-    leaveTimer.current = window.setTimeout(() => {
-      leaveTimer.current = null
-      setOpen(false)
-      setLeaving(false)
-      setMounted(false)
-      setModelStepHost('agents')
-    }, LEAVE_MS)
-  }
-
-  const openMenu = (): void => {
-    if (leaveTimer.current != null) {
-      window.clearTimeout(leaveTimer.current)
-      leaveTimer.current = null
-    }
-    setLeaving(false)
-    // If current host was disabled, land on the agent list.
-    const stillOffered = hostOptions.some((h) => h.id === cliHost)
-    setModelStepHost(stillOffered ? cliHost : 'agents')
-    setMounted(true)
-    setOpen(true)
-  }
-
-  useEffect(() => {
-    return () => {
-      if (leaveTimer.current != null) window.clearTimeout(leaveTimer.current)
-    }
-  }, [])
-
-  useEffect(() => {
-    if (!open || leaving) return
-    const onDoc = (event: MouseEvent): void => {
-      if (!wrapRef.current?.contains(event.target as Node)) close()
-    }
-    const onKey = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape') {
-        if (modelStepHost !== 'agents') {
-          event.preventDefault()
-          setModelStepHost('agents')
-          return
-        }
-        close()
-      }
-    }
-    document.addEventListener('mousedown', onDoc)
-    document.addEventListener('keydown', onKey)
-    return () => {
-      document.removeEventListener('mousedown', onDoc)
-      document.removeEventListener('keydown', onKey)
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, leaving, modelStepHost])
-
-  useLayoutEffect(() => {
-    if (!open || !menuRef.current) return
-    const selected = menuRef.current.querySelector<HTMLElement>('[data-selected="true"]')
-    selected?.scrollIntoView({ block: 'nearest' })
-  }, [open, modelStepHost, cliHost, activeModel])
 
   const rememberPick = (host: CliHostKind | null, model: string): void => {
     const next = pushRecentAgentModel(settings.recentAgentModels, {
@@ -234,161 +166,82 @@ export function AgentModelPicker({
     })
     await setModel(conversationId, next)
     rememberPick(host, next)
-    close()
   }
 
-  const stepHost =
-    modelStepHost === 'agents'
-      ? null
-      : hostOptions.find((h) => h.id === modelStepHost) ?? activeHost
-  const stepModels = modelStepHost === 'agents' ? [] : modelsFor(modelStepHost)
-  const stepEntry =
-    modelStepHost === 'agents' ? null : catalog[agentModelHostKey(modelStepHost)]
-  const stepSource = stepEntry?.source ?? null
+  const recentRow = (item: RecentItem): MenuItem => ({
+    label: `${item.host.name} · ${item.modelLabel}`,
+    checked: item.selected,
+    onSelect: () => void pickAgentModel(item.host.id, item.model)
+  })
 
-  const recentSection =
-    recentItems.length > 0 ? (
-      <>
-        <div className="agent-model-menu-section-label">{t('composer.recently')}</div>
-        <div className="agent-model-menu-sep" role="separator" />
-        {recentItems.map((item) => (
-          <button
-            key={`${item.hostId}:${item.model || '__default__'}`}
-            type="button"
-            role="menuitem"
-            data-selected={item.selected || undefined}
-            className={`agent-model-menu-item agent-model-menu-recent${
-              item.selected ? ' is-selected' : ''
-            }`}
-            title={`${item.host.name} · ${item.modelLabel}`}
-            onClick={() => void pickAgentModel(item.host.id, item.model)}
-          >
-            <AgentBrandMark
-              agent={{ id: item.host.markId, name: item.host.name }}
-              size={16}
-            />
-            <span className="agent-model-menu-item-label">
-              <span className="agent-model-menu-recent-agent">{item.host.name}</span>
-              <span className="agent-model-picker-sep" aria-hidden>
-                ·
-              </span>
-              <span className="agent-model-menu-recent-model">{item.modelLabel}</span>
-            </span>
-            {item.selected ? <Check size={12} strokeWidth={2.5} /> : null}
-          </button>
-        ))}
-        <div className="agent-model-menu-sep" role="separator" />
-      </>
-    ) : null
+  const openMenu = useCallback(
+    (anchor?: HTMLElement | null) => {
+      const items: MenuItem[] = []
+
+      for (const item of recentItems.slice(0, RECENT_AGENT_MODELS_PINNED)) {
+        items.push(recentRow(item))
+      }
+      if (recentItems.length > 0) {
+        items.push({
+          label: t('composer.recently'),
+          submenu: recentItems.map(recentRow)
+        })
+      }
+
+      if (items.length > 0) items.push({ label: '', divider: true })
+      items.push({ label: t('composer.providers'), disabled: true })
+
+      for (const host of hostOptions) {
+        const models = modelsFor(host.id)
+        const modelItems: MenuItem[] =
+          models.length === 0
+            ? [{ label: t('composer.modelsLoading'), disabled: true }]
+            : models.map((model) => ({
+                label: model.label,
+                checked: host.id === cliHost && model.id === activeModel,
+                onSelect: () => void pickAgentModel(host.id, model.id)
+              }))
+        items.push({
+          label: host.name,
+          submenu: modelItems
+        })
+      }
+
+      void showMenu(items, menuAnchorIfVisible(anchor))
+    },
+    // recentRow / modelsFor / pickAgentModel close over current picker state
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [recentItems, hostOptions, t, cliHost, activeModel]
+  )
+
+  useEffect(() => {
+    if (modelPickerMenuNonce === 0 || modelPickerMenuNonce === seenMenuNonce.current) return
+    seenMenuNonce.current = modelPickerMenuNonce
+    if (!conversation) return
+    openMenu(triggerRef.current)
+  }, [modelPickerMenuNonce, openMenu, conversation])
 
   return (
-    <div className="agent-model-picker" ref={wrapRef}>
+    <div className="agent-model-picker">
       <button
+        ref={triggerRef}
         type="button"
         className="model-picker agent-model-picker-trigger"
         title={`${activeHost.name} · ${modelLabel}`}
         aria-label={t('composer.agentModel')}
         aria-haspopup="menu"
-        aria-expanded={open && !leaving}
         disabled={!conversation}
         onClick={(event) => {
           event.preventDefault()
           event.stopPropagation()
           if (!conversation) return
-          if (open && !leaving) close()
-          else openMenu()
+          openMenu(event.currentTarget)
         }}
       >
         <AgentBrandMark agent={{ id: activeHost.markId, name: activeHost.name }} size={16} />
-        <span className="model-name agent-model-picker-label">
-          <span className="agent-model-picker-agent">{activeHost.name}</span>
-          <span className="agent-model-picker-sep" aria-hidden>
-            ·
-          </span>
-          <span className="agent-model-picker-model">{modelLabel}</span>
-        </span>
+        <span className="model-name">{modelLabel}</span>
         <ChevronDown size={11} />
       </button>
-
-      {mounted ? (
-        <div
-          ref={menuRef}
-          className="agent-model-menu"
-          role="menu"
-          data-leaving={leaving || undefined}
-          data-step={modelStepHost === 'agents' ? 'agents' : 'models'}
-        >
-          {recentSection}
-          {modelStepHost === 'agents' ? (
-            <>
-              <div className="agent-model-menu-section-label">{t('agents.selector')}</div>
-              {hostOptions.map((host) => {
-                const agentActive = host.id === cliHost
-                return (
-                  <button
-                    key={host.markId}
-                    type="button"
-                    role="menuitem"
-                    data-selected={agentActive || undefined}
-                    className={`agent-model-menu-item agent-model-menu-agent${
-                      agentActive ? ' is-selected' : ''
-                    }`}
-                    onClick={() => setModelStepHost(host.id)}
-                  >
-                    <AgentBrandMark agent={{ id: host.markId, name: host.name }} size={16} />
-                    <span className="agent-model-menu-item-label">{host.name}</span>
-                    {agentActive ? (
-                      <span className="agent-model-menu-current">{modelLabel}</span>
-                    ) : null}
-                    <ChevronRight size={12} strokeWidth={2.25} />
-                  </button>
-                )
-              })}
-            </>
-          ) : stepHost ? (
-            <>
-              <button
-                type="button"
-                className="agent-model-menu-back"
-                onClick={() => setModelStepHost('agents')}
-              >
-                <ChevronLeft size={14} strokeWidth={2.25} />
-                <AgentBrandMark
-                  agent={{ id: stepHost.markId, name: stepHost.name }}
-                  size={16}
-                />
-                <span className="agent-model-menu-item-label">{stepHost.name}</span>
-              </button>
-              <div className="agent-model-menu-section-label">
-                {stepSource === 'live'
-                  ? t('composer.modelsFromCli')
-                  : !stepEntry
-                    ? t('composer.modelsLoading')
-                    : t('composer.model')}
-              </div>
-              {stepModels.map((model) => {
-                const selected = stepHost.id === cliHost && model.id === activeModel
-                return (
-                  <button
-                    key={model.id || '__default__'}
-                    type="button"
-                    role="menuitemradio"
-                    aria-checked={selected}
-                    data-selected={selected || undefined}
-                    className={`agent-model-menu-item agent-model-menu-model${
-                      selected ? ' is-selected' : ''
-                    }`}
-                    onClick={() => void pickAgentModel(stepHost.id, model.id)}
-                  >
-                    <span className="agent-model-menu-item-label">{model.label}</span>
-                    {selected ? <Check size={12} strokeWidth={2.5} /> : null}
-                  </button>
-                )
-              })}
-            </>
-          ) : null}
-        </div>
-      ) : null}
     </div>
   )
 }

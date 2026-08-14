@@ -2,6 +2,8 @@ import { memo, useMemo } from 'react'
 import { Folder, FileText } from 'lucide-react'
 import type { ToolCallBlock } from '@shared/types'
 import { tt } from '../i18n/useT'
+import { parseTerminalOutputBlocks } from '../lib/previewBlocks'
+import { TextBlockPick } from './TextBlockPick'
 
 /** Rendering every line of a large result costs more than it explains. */
 const MAX_LINES = 400
@@ -23,19 +25,27 @@ export const ToolDetail = memo(function ToolDetail({
   const output = block.output || ''
 
   if (block.tool === 'terminal' && output.startsWith('$ ')) {
-    return <TerminalLog transcript={output} />
+    return <TerminalLog transcript={output} sourceId={block.id} />
   }
-  if (block.tool === 'terminal' && !output) {
+  if (block.tool === 'terminal') {
     return (
       <div className="detail-terminal">
-        <pre className="term-output">{tt('common.noOutput')}</pre>
+        {output ? (
+          <TerminalOutputPick text={output} sourceId={block.id} />
+        ) : (
+          <pre className="term-output">{tt('common.noOutput')}</pre>
+        )}
       </div>
     )
   }
   if (block.tool === 'wait' || block.tool === 'read_bash_session') {
     return (
       <div className="detail-terminal">
-        <pre className="term-output">{output || tt('common.noOutput')}</pre>
+        {output ? (
+          <TerminalOutputPick text={output} sourceId={`${block.tool}:${block.id}`} />
+        ) : (
+          <pre className="term-output">{tt('common.noOutput')}</pre>
+        )}
       </div>
     )
   }
@@ -74,7 +84,34 @@ export const ToolDetail = memo(function ToolDetail({
 })
 
 /** `$ cmd` … `exit N` — the shape StickyShell mirrors into the Agent tab. */
-function TerminalLog({ transcript }: { transcript: string }): React.JSX.Element {
+function TerminalOutputPick({
+  text,
+  sourceId
+}: {
+  text: string
+  sourceId: string
+}): React.JSX.Element {
+  const lines = useMemo(() => text.split(/\r?\n/), [text])
+  const blocks = useMemo(() => parseTerminalOutputBlocks(text), [text])
+  return (
+    <TextBlockPick
+      className="term-output"
+      lines={lines}
+      blocks={blocks}
+      sourcePath={`terminal:${sourceId}`}
+      badge="TERM"
+      renderLine={(line) => line || ' '}
+    />
+  )
+}
+
+function TerminalLog({
+  transcript,
+  sourceId
+}: {
+  transcript: string
+  sourceId: string
+}): React.JSX.Element {
   const { command, body, exitCode } = useMemo(() => parseTranscript(transcript), [transcript])
 
   return (
@@ -83,7 +120,7 @@ function TerminalLog({ transcript }: { transcript: string }): React.JSX.Element 
         <span className="term-prompt">$</span>
         <span>{command}</span>
       </div>
-      {body && <pre className="term-output">{body}</pre>}
+      {body ? <TerminalOutputPick text={body} sourceId={sourceId} /> : null}
       {exitCode !== null && (
         <div className={`term-exit${exitCode === 0 ? '' : ' failed'}`}>exit {exitCode}</div>
       )}

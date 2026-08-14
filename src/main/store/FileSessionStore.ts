@@ -3,7 +3,8 @@ import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { stat } from 'node:fs/promises'
-import type { Conversation } from '@shared/types'
+import type { Conversation, ThinkingLevel } from '@shared/types'
+import { parseThinkingLevel } from '@shared/thinkingLevel'
 import type { ConversationStore } from './ConversationStore'
 import { defaultSessionTitle } from '@shared/i18n'
 import { currentLocale } from '../i18n'
@@ -192,7 +193,8 @@ export class FileSessionStore {
   async open(
     path: string,
     model: string,
-    approvalMode: import('@shared/types').ApprovalMode = 'auto'
+    approvalMode: import('@shared/types').ApprovalMode = 'auto',
+    thinkingLevel?: ThinkingLevel
   ): Promise<{
     fileId: string
     activeSessionId: string
@@ -202,12 +204,14 @@ export class FileSessionStore {
     if (!this.conversations) throw new Error('FileSessionStore not bound')
     const identity = await this.resolveIdentity(path)
     let bundle = this.index.byId[identity.fileId]
+    const level = parseThinkingLevel(thinkingLevel)
 
     if (!bundle) {
       const conversation = this.conversations.create(path ? dirnameSafe(path) : null, model, {
         fileId: identity.fileId,
         title: defaultSessionTitle(currentLocale()),
-        approvalMode
+        approvalMode,
+        thinkingLevel: level
       })
       // Title for empty file sessions
       this.conversations.updateMeta(conversation.id, {
@@ -250,7 +254,8 @@ export class FileSessionStore {
       const conversation = this.conversations.create(dirnameSafe(path), model, {
         fileId: identity.fileId,
         title: 'New session',
-        approvalMode
+        approvalMode,
+        thinkingLevel: level
       })
       this.conversations.updateMeta(conversation.id, {
         title: 'New session',
@@ -277,7 +282,8 @@ export class FileSessionStore {
   async createSession(
     path: string,
     model: string,
-    approvalMode: import('@shared/types').ApprovalMode = 'auto'
+    approvalMode: import('@shared/types').ApprovalMode = 'auto',
+    thinkingLevel?: ThinkingLevel
   ): Promise<{
     fileId: string
     activeSessionId: string
@@ -285,11 +291,12 @@ export class FileSessionStore {
     conversation: Conversation
   }> {
     if (!this.conversations) throw new Error('FileSessionStore not bound')
-    const opened = await this.open(path, model, approvalMode)
+    const opened = await this.open(path, model, approvalMode, thinkingLevel)
     const conversation = this.conversations.create(dirnameSafe(path), model, {
       fileId: opened.fileId,
       title: 'New session',
-      approvalMode
+      approvalMode,
+      thinkingLevel: parseThinkingLevel(thinkingLevel)
     })
     this.conversations.updateMeta(conversation.id, {
       title: 'New session',

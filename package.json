@@ -1,7 +1,7 @@
 {
   "name": "vav",
   "productName": "VAV",
-  "version": "1.6.0",
+  "version": "1.7.0",
   "description": "Local-first CLI agent terminal workspace: host Claude Code, Codex, and other agent CLIs with multi-split PTYs and a file tree.",
   "license": "PolyForm-Noncommercial-1.0.0",
   "author": "Oboo Cheng",
@@ -14,7 +14,7 @@
     "start": "node scripts/run-preview.mjs",
     "build": "npm run typecheck && electron-vite build",
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
-    "test": "node --test --experimental-strip-types src/shared/filePathMentions.test.ts src/shared/github.test.ts src/shared/githubDetails.test.ts src/shared/quotaWindows.test.ts src/shared/writeToolDraft.test.ts src/shared/traySessions.test.ts",
+    "test": "node --test --experimental-strip-types src/shared/filePathMentions.test.ts src/shared/github.test.ts src/shared/githubDetails.test.ts src/shared/quotaWindows.test.ts src/shared/cliErrors.test.ts src/shared/writeToolDraft.test.ts src/shared/traySessions.test.ts src/shared/colorTints.test.ts src/shared/thinkingLevel.test.ts src/shared/vavProtocol.test.ts src/renderer/src/lib/previewPythonBlocks.test.ts src/renderer/src/lib/emptyEntrance.test.ts src/renderer/src/lib/rewindTurns.test.ts src/renderer/src/lib/rewindLayout.test.ts src/renderer/src/lib/assistantProcess.test.ts src/renderer/src/lib/diagramViewportZoom.test.ts",
     "test:file-path-mentions": "node --test --experimental-strip-types src/shared/filePathMentions.test.ts",
     "site:images": "node scripts/optimize-site-images.mjs",
     "brand:icons": "python3 scripts/sync-brand-icons.py",

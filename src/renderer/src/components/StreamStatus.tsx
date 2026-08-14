@@ -1,6 +1,6 @@
 /**
- * Footer under the agent turn: flip-book mark + shimmer while live;
- * settled mark + Done when sealed.
+ * Conversation-level stream mark: flip-book + shimmer while live;
+ * one settled Done after the last sealed assistant turn.
  *
  * Light/dark spirit strips ship as separate assets (no CSS invert) so the
  * dark sheet can keep its own gray ink.

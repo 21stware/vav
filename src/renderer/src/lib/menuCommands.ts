@@ -70,6 +70,7 @@ export function handleMenuCommand(command: MenuCommand): void {
       break
     case 'switch-cli-mode': {
       // Same path as AgentModeChrome “Swarm” — enter Screen, keep panes.
+      if (store.settings.swarmModeEnabled !== true) break
       const id = store.activeId
       if (!id) break
       if (store.search.open) store.closeSearch()
@@ -85,6 +86,12 @@ export function handleMenuCommand(command: MenuCommand): void {
       useWorkspaceStore.getState().exitCliMode(id)
       break
     }
+    case 'switch-model':
+      store.openModelPicker()
+      break
+    case 'switch-approval':
+      store.openApprovalMenu()
+      break
     case 'send': {
       // ⌘↵ is composer-only. Never fire while Find / sidebar filter / other
       // inputs own the keyboard (plain Enter in search was already local;

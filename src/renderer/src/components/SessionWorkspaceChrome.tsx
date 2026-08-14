@@ -1,11 +1,11 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import type { GitSnapshot } from '@shared/git'
 import { useSessionStore } from '../state/sessionStore'
 import { useT, tt } from '../i18n/useT'
 import { isTemporaryWorkspace, workdirShortLabel } from '../lib/format'
 import { bumpGitRepoSync } from '../lib/gitRepoSync'
 import { menuAnchor, showMenu, type MenuItem } from '../lib/nativeMenu'
-import { Button, StaggerLine } from './ui'
+import { Button, StaggerLine, useEmptyEntranceCopy } from './ui'
 
 type CreateForm =
   | { kind: 'branch'; name: string }
@@ -48,6 +48,69 @@ function TextBtn({
   )
 }
 
+/** Folder is not a repo — same prose + enable action as the empty session. */
+export function EnableVersionControlChrome({
+  projectName,
+  temporary,
+  busy,
+  error,
+  onInit,
+  motionKey,
+  entering
+}: {
+  projectName: string
+  temporary: boolean
+  busy: boolean
+  error: string | null
+  onInit: () => void
+  /** Session empty-state only — omit in the Git tray so tab switches stay still. */
+  motionKey?: string
+  /** The hero's entrance is running: these lines are part of that one build-up. */
+  entering?: boolean
+}): React.JSX.Element {
+  const t = useT()
+  const nameLine = (
+    <>
+      <span className="session-workspace-prose-strong">{projectName}</span>{' '}
+      <span className="session-workspace-prose-muted">
+        {temporary ? t('git.prose.tempNotRepo') : t('git.prose.notRepo')}
+      </span>
+    </>
+  )
+  const enableLine = (
+    <>
+      <span className="session-workspace-prose-muted">{t('git.prose.enableLead')}</span>{' '}
+      <TextBtn disabled={busy} onClick={() => onInit()}>
+        {busy ? t('common.loading') : t('git.prose.enableAction')}
+      </TextBtn>{' '}
+      <span className="session-workspace-prose-muted">{t('git.prose.enableTail')}</span>
+    </>
+  )
+  return (
+    <div className={`session-workspace-chrome${entering ? ' is-entering' : ''}`}>
+      <p className="session-workspace-prose">
+        {motionKey ? (
+          <StaggerLine baseDelay={120} key={`${motionKey}:norepo`}>
+            {nameLine}
+          </StaggerLine>
+        ) : (
+          nameLine
+        )}
+      </p>
+      <p className="session-workspace-prose">
+        {motionKey ? (
+          <StaggerLine baseDelay={280} key={`${motionKey}:enable`}>
+            {enableLine}
+          </StaggerLine>
+        ) : (
+          enableLine
+        )}
+      </p>
+      {error && <div className="session-workspace-error">{error}</div>}
+    </div>
+  )
+}
+
 /**
  * Empty-session project chrome — prose lines with inline text actions.
  * Git → worktree / branch + create; non-git → enable version control.
@@ -70,19 +133,11 @@ export function SessionWorkspaceChrome(): React.JSX.Element | null {
   const [form, setForm] = useState<CreateForm | null>(null)
   /** True only until the first status result for this cwd — avoids swapping chrome and replaying empty-state motion. */
   const [initialLoad, setInitialLoad] = useState(true)
-  const [proseEnter, setProseEnter] = useState(false)
   const cwdRef = useRef(cwd)
   const formInputRef = useRef<HTMLInputElement>(null)
-
-  const contentReady = !(initialLoad && !snap)
-  useLayoutEffect(() => {
-    if (!contentReady) {
-      setProseEnter(false)
-      return
-    }
-    setProseEnter(true)
-    return () => setProseEnter(false)
-  }, [activeId, hostId, contentReady])
+  // Hold the hero's entrance until the real prose is here, then stagger with it.
+  const copy = useEmptyEntranceCopy(!initialLoad || !!snap)
+  const motionKey = copy.motionKey ?? `${activeId}:${hostId}`
 
   const refresh = useCallback(async (): Promise<GitSnapshot | null> => {
     if (!cwd) {
@@ -420,26 +475,15 @@ export function SessionWorkspaceChrome(): React.JSX.Element | null {
   // No git yet (temp or plain folder) → one prose line + enable version control.
   if (!snap?.isRepo) {
     return (
-      <div className={`session-workspace-chrome${proseEnter ? ' is-entering' : ''}`}>
-        <p className="session-workspace-prose">
-          <StaggerLine baseDelay={120} key={`${activeId}:${hostId}:norepo`}>
-            <span className="session-workspace-prose-strong">{projectName}</span>{' '}
-            <span className="session-workspace-prose-muted">
-              {temporary ? t('git.prose.tempNotRepo') : t('git.prose.notRepo')}
-            </span>
-          </StaggerLine>
-        </p>
-        <p className="session-workspace-prose">
-          <StaggerLine baseDelay={280} key={`${activeId}:${hostId}:enable`}>
-            <span className="session-workspace-prose-muted">{t('git.prose.enableLead')}</span>{' '}
-            <TextBtn disabled={busy} onClick={() => void initRepo()}>
-              {busy ? t('common.loading') : t('git.prose.enableAction')}
-            </TextBtn>{' '}
-            <span className="session-workspace-prose-muted">{t('git.prose.enableTail')}</span>
-          </StaggerLine>
-        </p>
-        {error && <div className="session-workspace-error">{error}</div>}
-      </div>
+      <EnableVersionControlChrome
+        projectName={projectName}
+        temporary={temporary}
+        busy={busy}
+        error={error}
+        onInit={() => void initRepo()}
+        motionKey={motionKey}
+        entering={copy.entering}
+      />
     )
   }
 
@@ -451,9 +495,9 @@ export function SessionWorkspaceChrome(): React.JSX.Element | null {
     snap.worktreeLabel === 'Local' ? t('git.local') : snap.worktreeLabel
 
   return (
-    <div className={`session-workspace-chrome${proseEnter ? ' is-entering' : ''}`}>
+    <div className={`session-workspace-chrome${copy.entering ? ' is-entering' : ''}`}>
       <p className="session-workspace-prose">
-        <StaggerLine baseDelay={120} key={`${activeId}:${hostId}:on`}>
+        <StaggerLine baseDelay={120} key={`${motionKey}:on`}>
           {t('git.prose.onLead')}{' '}
           <TextBtn
             disabled={busy}
@@ -470,7 +514,7 @@ export function SessionWorkspaceChrome(): React.JSX.Element | null {
         </StaggerLine>
       </p>
       <p className="session-workspace-prose">
-        <StaggerLine baseDelay={280} key={`${activeId}:${hostId}:create`}>
+        <StaggerLine baseDelay={280} key={`${motionKey}:create`}>
           {t('git.prose.createLead')}{' '}
           <TextBtn disabled={busy} onClick={() => openWorktreeForm()}>
             {t('git.prose.createWorktree')}

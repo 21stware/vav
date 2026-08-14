@@ -22,16 +22,19 @@ export type AgentModelCatalogEntry = {
 }
 import type { ChangeSet, UpdateState } from '@shared/changeSet'
 import type { GitChangeEntry } from '@shared/git'
-import type { GithubPullListItem } from '@shared/github'
+import type { GithubActionRun, GithubPullListItem, GithubSite } from '@shared/github'
 
 /** Contents of the session-right preview drawer. */
 export type SessionPreview =
   | { kind: 'file' }
   | { kind: 'git'; cwd: string; entry: GitChangeEntry }
   | { kind: 'github'; cwd: string; pull: GithubPullListItem }
+  | { kind: 'github-action'; cwd: string; run: GithubActionRun }
+  | { kind: 'github-site'; cwd: string; site: GithubSite }
 import { resolveLocale } from '@shared/i18n'
 import { tt } from '../i18n/useT'
 import { isTemporaryWorkspace } from '../lib/format'
+import { isCompanionSessionShell } from '../lib/windowKind'
 import { compactionForLeaf, upsertCompaction } from '@shared/compaction'
 import { threadPath } from '@shared/thread'
 import { getProjection, disposeProjection } from './StreamProjection'
@@ -462,6 +465,8 @@ interface SessionState {
 
   search: SearchState
   errorBanner: string | null
+  errorBannerKind: 'quota' | 'session-stale' | 'auth' | 'generic' | null
+  errorBannerDetail: string | null
   dialog: DialogState | null
   toast: ToastState | null
   settingsCategory: SettingsCategory
@@ -475,6 +480,16 @@ interface SessionState {
    * menu without holding open/closed boolean state in the store.
    */
   workspaceMenuNonce: number
+  /**
+   * Bumped by ⌘⇧M / menu command so the composer model picker can open the
+   * native menu without holding open/closed boolean state in the store.
+   */
+  modelPickerMenuNonce: number
+  /**
+   * Bumped by ⌘⇧P / menu command so the composer permission menu can open
+   * without holding open/closed boolean state in the store.
+   */
+  approvalMenuNonce: number
 
   /**
    * @deprecated Workspace group selection removed — sessions are selected directly.
@@ -490,6 +505,8 @@ interface SessionState {
   /**
    * What the session preview drawer is showing. Git / GitHub details use this
    * instead of the cramped tools-tray split when a preview host is mounted.
+   * Changing this does not open the drawer — callers that mean “preview”
+   * also call setFilePreviewOpen(true).
    */
   sessionPreview: SessionPreview
   /** True while WorkspaceView's preview column is mounted (main session). */
@@ -564,6 +581,11 @@ interface SessionState {
   createConversation(options?: {
     workingDirectory?: string | null
     model?: string
+    /**
+     * Where the new session should appear.
+     * Default: select in this window, except companion shells open a new window.
+     */
+    openIn?: 'here' | 'detached'
   }): Promise<void>
   /** New blank session reusing the active conversation's workdir + model. */
   createConversationInCurrentWorkspace(): Promise<void>
@@ -599,6 +621,7 @@ interface SessionState {
   setWorkspacePinned(workdir: string, pinned: boolean): Promise<void>
   setArchived(id: string, archived: boolean): Promise<void>
   setApprovalMode(id: string, mode: import('@shared/types').ApprovalMode): Promise<void>
+  setThinkingLevel(id: string, level: import('@shared/types').ThinkingLevel): Promise<void>
   /** Workspace preview focus — built-in VAV agent system / open-file context. */
   setFocusedFile(id: string, path: string | null): Promise<void>
   /**
@@ -721,6 +744,8 @@ interface SessionState {
   focusCommentCard(refId: string): void
   setPreviewAgentForPath(path: string, conversationId: string): void
   openWorkspaceSwitcher(): void
+  openModelPicker(): void
+  openApprovalMenu(): void
 
   applyTurnEvent(event: import('@shared/types').TurnEvent): void
 }
@@ -765,13 +790,18 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   },
   async refreshAgentModelCatalog(force = false) {
     try {
-      const catalog = force
-        ? await window.vav.agents.preloadModels(true)
-        : await window.vav.agents.getModelCatalog()
+      if (force) {
+        const catalog = await window.vav.agents.preloadModels(true)
+        set({ agentModelCatalog: catalog })
+        return
+      }
+      const catalog = await window.vav.agents.getModelCatalog()
       set({ agentModelCatalog: catalog })
-      if (!force && Object.keys(catalog).length === 0) {
-        const warmed = await window.vav.agents.preloadModels(false)
-        set({ agentModelCatalog: warmed })
+      if (Object.keys(catalog).length === 0) {
+        // Don't block the picker — incremental catalog events fill this in.
+        void window.vav.agents.preloadModels(false).then((warmed) => {
+          set({ agentModelCatalog: warmed })
+        })
       }
     } catch (err) {
       console.warn('[agents] model catalog refresh failed', err)
@@ -799,6 +829,8 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
   search: { open: false, query: '', matchIds: [], index: 0, tick: 0 },
   errorBanner: null,
+  errorBannerKind: null,
+  errorBannerDetail: null,
   dialog: null,
   toast: null,
   settingsCategory: 'api',
@@ -806,6 +838,8 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   commentFocusId: null,
   commentFocusTick: 0,
   workspaceMenuNonce: 0,
+  modelPickerMenuNonce: 0,
+  approvalMenuNonce: 0,
   activeGroupId: null,
   filePreviewOpen: false,
   sessionPreview: { kind: 'file' },
@@ -952,10 +986,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   },
 
   setSessionPreview(preview) {
-    set({
-      sessionPreview: preview,
-      ...(preview.kind === 'file' ? {} : { filePreviewOpen: true })
-    })
+    set({ sessionPreview: preview })
   },
 
   setFilePreviewHost(mounted) {
@@ -981,7 +1012,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       return rooted.id
     }
 
-    await get().createConversation({ workingDirectory: workdir })
+    await get().createConversation({ workingDirectory: workdir, openIn: 'here' })
     const id = get().activeId
     if (!id) throw new Error('failed to create workspace agent')
     const map = { ...get().workspaceAgentByPath, [workdir]: id }
@@ -1232,6 +1263,20 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       messages: { ...state.messages, [meta.id]: [] },
       activeLeaf: { ...state.activeLeaf, [meta.id]: null }
     }))
+
+    // Companion windows are bound to one conversation (native map + local
+    // SessionWindow id). Selecting here replaces the chrome but not the
+    // binding — send works, the transcript never updates. Open a new window.
+    const spawnDetached =
+      options?.openIn === 'detached' ||
+      (options?.openIn !== 'here' &&
+        isCompanionSessionShell() &&
+        Boolean(get().pinnedConversationId))
+    if (spawnDetached) {
+      await get().openDetached(meta.id)
+      return
+    }
+
     await get().selectConversation(meta.id)
     // New session → default tools layout (collapsed, files segment). Explicit so
     // we never inherit another session's open Terminal tray.
@@ -1288,7 +1333,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     if (activeId && msgs.length > 0) {
       await get().duplicateConversation(activeId)
     } else {
-      await get().createConversation({ workingDirectory: path })
+      await get().createConversation({ workingDirectory: path, openIn: 'here' })
     }
     get().focusComposer()
   },
@@ -1492,7 +1537,11 @@ export const useSessionStore = create<SessionState>((set, get) => ({
             : state.cacheExpiresAt,
           pendingReviewByConversation,
           turns,
-          errorBanner: result.hostChanged && state.activeId === id ? null : state.errorBanner
+          errorBanner: result.hostChanged && state.activeId === id ? null : state.errorBanner,
+          errorBannerKind:
+            result.hostChanged && state.activeId === id ? null : state.errorBannerKind,
+          errorBannerDetail:
+            result.hostChanged && state.activeId === id ? null : state.errorBannerDetail
         }
       })
     } catch (err) {
@@ -1653,6 +1702,25 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     }
   },
 
+  async setThinkingLevel(id, level) {
+    set((state) => ({
+      conversations: state.conversations.map((c) =>
+        c.id === id ? { ...c, thinkingLevel: level } : c
+      )
+    }))
+    try {
+      const list = await window.vav.conversations.setThinkingLevel(id, level)
+      set((state) => ({
+        conversations: mergeConversationList(state.conversations, list)
+      }))
+      if (level && level !== get().settings.defaultThinkingLevel) {
+        void get().updateSettings({ defaultThinkingLevel: level })
+      }
+    } catch (err) {
+      console.error('[setThinkingLevel] failed', err)
+    }
+  },
+
   async setFocusedFile(id, path) {
     // Viewing / focusing a file must not reorder the sidebar — patch one row only.
     const current = get().conversations.find((c) => c.id === id)
@@ -1782,7 +1850,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     let activeId = conversationId?.trim() || storeActiveId
     // Empty chat shell: mint the session on first send (workspace materializes).
     if (!activeId || !conversations.some((c) => c.id === activeId)) {
-      await get().createConversation()
+      await get().createConversation({ openIn: 'here' })
       activeId = get().activeId
       if (!activeId) return
     }
@@ -1846,7 +1914,9 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         quotes: { ...state.quotes, [activeId!]: null },
         previewRefs: { ...state.previewRefs, [activeId!]: [] },
         commentCards: { ...state.commentCards, [activeId!]: [] },
-        errorBanner: null
+        errorBanner: null,
+        errorBannerKind: null,
+        errorBannerDetail: null
       }))
       return
     }
@@ -1885,7 +1955,9 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       quotes: { ...state.quotes, [activeId]: null },
       previewRefs: { ...state.previewRefs, [activeId]: [] },
       commentCards: { ...state.commentCards, [activeId]: [] },
-      errorBanner: null
+      errorBanner: null,
+      errorBannerKind: null,
+      errorBannerDetail: null
     }))
 
     await window.vav.agent.send(
@@ -1977,7 +2049,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         }
       }
 
-      set({ errorBanner: null })
+      set({ errorBanner: null, errorBannerKind: null, errorBannerDetail: null })
       await dispatchQueuedPayload(conversationId, item, async () => {
         if (get().activeId !== conversationId) {
           await get().selectConversation(conversationId)
@@ -2011,7 +2083,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     const target = state.messages[activeId]?.find((m) => m.id === messageId)
     if (!target) return
     setLeaf(set, state, activeId, target.role === 'assistant' ? target.parentId : target.id)
-    set({ errorBanner: null })
+    set({ errorBanner: null, errorBannerKind: null, errorBannerDetail: null })
     await window.vav.agent.regenerate(activeId, messageId)
   },
 
@@ -2022,7 +2094,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     const target = state.messages[activeId]?.find((m) => m.id === messageId)
     if (!target) return
     setLeaf(set, state, activeId, target.parentId)
-    set({ errorBanner: null })
+    set({ errorBanner: null, errorBannerKind: null, errorBannerDetail: null })
     await window.vav.agent.editUserMessage(activeId, messageId, text)
   },
 
@@ -2076,11 +2148,19 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     const { activeId } = get()
     if (!activeId) return false
     if (get().conversations.find((c) => c.id === activeId)?.cliHost) {
-      set({ errorBanner: tt('compact.error.cliHost') })
+      set({
+        errorBanner: tt('compact.error.cliHost'),
+        errorBannerKind: 'generic',
+        errorBannerDetail: tt('compact.error.cliHost')
+      })
       return false
     }
     if (get().turns[activeId]?.isRunning) {
-      set({ errorBanner: tt('compact.error.busy') })
+      set({
+        errorBanner: tt('compact.error.busy'),
+        errorBannerKind: 'generic',
+        errorBannerDetail: tt('compact.error.busy')
+      })
       return false
     }
     const result = await window.vav.agent.compact(
@@ -2088,7 +2168,11 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       keepAfterMessageId ? { keepAfterMessageId } : undefined
     )
     if (!result.ok) {
-      set({ errorBanner: result.error })
+      set({
+        errorBanner: result.error,
+        errorBannerKind: 'generic',
+        errorBannerDetail: result.error
+      })
       return false
     }
     // No toast — transcript shows a quiet "history compact" log via CompactionBanner.
@@ -2111,7 +2195,11 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     const { activeId } = get()
     if (!activeId) return false
     if (get().conversations.find((c) => c.id === activeId)?.cliHost) {
-      set({ errorBanner: tt('compact.error.cliHost') })
+      set({
+        errorBanner: tt('compact.error.cliHost'),
+        errorBannerKind: 'generic',
+        errorBannerDetail: tt('compact.error.cliHost')
+      })
       return false
     }
     const leafId = get().activeLeaf[activeId]
@@ -2120,7 +2208,11 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     if (!active) return false
     const result = await window.vav.agent.clearCompaction(activeId, active.leafId)
     if (!result.ok) {
-      set({ errorBanner: result.error })
+      set({
+        errorBanner: result.error,
+        errorBannerKind: 'generic',
+        errorBannerDetail: result.error
+      })
       return false
     }
     set((state) => ({
@@ -2244,7 +2336,11 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   },
 
   setErrorBanner(message) {
-    set({ errorBanner: message })
+    set({
+      errorBanner: message,
+      errorBannerKind: message ? 'generic' : null,
+      errorBannerDetail: message
+    })
   },
 
   showDialog(dialog) {
@@ -2591,6 +2687,14 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     set((state) => ({ workspaceMenuNonce: state.workspaceMenuNonce + 1 }))
   },
 
+  openModelPicker() {
+    set((state) => ({ modelPickerMenuNonce: state.modelPickerMenuNonce + 1 }))
+  },
+
+  openApprovalMenu() {
+    set((state) => ({ approvalMenuNonce: state.approvalMenuNonce + 1 }))
+  },
+
   applyTurnEvent(event) {
     const id = event.conversationId
     const projection = getProjection(id)
@@ -2736,7 +2840,13 @@ export const useSessionStore = create<SessionState>((set, get) => ({
             conversations: mergeConversationList(state.conversations, list)
           }))
         )
-        if (event.error) set({ errorBanner: event.error })
+        if (event.error) {
+          set({
+            errorBanner: event.error,
+            errorBannerKind: event.errorKind ?? 'generic',
+            errorBannerDetail: event.errorDetail || event.error
+          })
+        }
         // Auto-run the next queued message after this turn finishes (FIFO).
         void get().drainMessageQueue(id)
         break

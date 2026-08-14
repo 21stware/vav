@@ -400,7 +400,7 @@ export function ToolsPanel({
     void (async () => {
       let id = useSessionStore.getState().activeId
       if (!id) {
-        await useSessionStore.getState().createConversation()
+        await useSessionStore.getState().createConversation({ openIn: 'here' })
         id = useSessionStore.getState().activeId
       }
       if (!id) return
@@ -464,7 +464,7 @@ export function ToolsPanel({
                       // Opening Files on an empty shell mints the Workspace.
                       void (async () => {
                         if (!useSessionStore.getState().activeId) {
-                          await useSessionStore.getState().createConversation()
+                          await useSessionStore.getState().createConversation({ openIn: 'here' })
                         }
                         setPanelSegment('files')
                       })()

@@ -248,6 +248,9 @@ function sanitizeGithubHtml(html: string): string {
       if (el.tagName === 'A' && el.getAttribute('target') === '_blank') {
         el.setAttribute('rel', 'noopener noreferrer')
       }
+      if (el.tagName === 'DETAILS') {
+        el.removeAttribute('open')
+      }
       walk(el)
     }
   }
@@ -265,7 +268,11 @@ export function renderGithubMarkdown(source: string): string {
   try {
     const prepared = stripHtmlComments(source)
     const html = sanitizeGithubHtml(
-      renderGithubTables(prepared, (src) => renderGithubDetails(src, (inner) => md.render(inner)))
+      renderGithubTables(
+        prepared,
+        (src) => renderGithubDetails(src, (inner) => md.render(inner)),
+        (src) => md.renderInline(src)
+      )
     )
     if (cache.size >= CACHE_LIMIT) cache.clear()
     cache.set(source, html)

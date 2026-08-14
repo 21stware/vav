@@ -13,7 +13,7 @@ import {
 import { homedir } from 'node:os'
 import { dirname, isAbsolute, join, resolve as resolvePath } from 'node:path'
 import { promisify } from 'node:util'
-import { APP_NAME } from './brand'
+import { APP_CLI_NAME } from './brand'
 import { t } from './i18n'
 
 const execFileAsync = promisify(execFile)
@@ -47,7 +47,7 @@ function expandLocation(location: CliInstallLocation): string {
 }
 
 function binaryPath(location: CliInstallLocation): string {
-  return join(expandLocation(location), APP_NAME)
+  return join(expandLocation(location), APP_CLI_NAME)
 }
 
 /**

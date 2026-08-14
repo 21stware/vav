@@ -192,6 +192,17 @@ export function buildAppMenu(
     },
     { type: 'separator' },
     {
+      label: t('menu.switchModel'),
+      accelerator: b.switchModel,
+      click: send('switch-model')
+    },
+    {
+      label: t('menu.switchApproval'),
+      accelerator: b.switchApproval,
+      click: send('switch-approval')
+    },
+    { type: 'separator' },
+    {
       label: t('menu.showSessions'),
       click: send('show-sessions')
     },

@@ -21,6 +21,8 @@ const KEY_BINDING_MENU_COMMAND: Partial<Record<keyof ResolvedKeyBindings, MenuCo
   switchWorkdir: 'switch-workdir',
   switchCliMode: 'switch-cli-mode',
   switchVavMode: 'switch-vav-mode',
+  switchModel: 'switch-model',
+  switchApproval: 'switch-approval',
   closeContext: 'close-context',
   openSettings: 'open-settings',
   find: 'find',

@@ -200,7 +200,21 @@ function replayAssistant(message: ChatMessage, model: Model<Api>): Message[] {
   }
 
   for (const block of message.blocks) {
-    if (block.kind === 'reasoning' || block.kind === 'plan') continue
+    if (block.kind === 'plan') continue
+    // DeepSeek (and other thinking models) require reasoning_content back on
+    // any turn that used tools. Dropping it disables thinking on the next
+    // LLM call or 400s the request.
+    if (block.kind === 'reasoning') {
+      if (results.length) flush()
+      if (block.text.trim()) {
+        content.push({
+          type: 'thinking',
+          thinking: block.text,
+          thinkingSignature: 'reasoning_content'
+        })
+      }
+      continue
+    }
     if (block.kind === 'text') {
       if (results.length) flush()
       if (block.text.trim()) content.push({ type: 'text', text: block.text })

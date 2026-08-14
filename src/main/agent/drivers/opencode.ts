@@ -2,6 +2,7 @@ import { createServer } from 'node:net'
 import { spawn } from 'node:child_process'
 import { homedir } from 'node:os'
 import { loginPath } from '../../terminal/loginPath'
+import { extractRpcErrorText } from '@shared/cliErrors'
 import { asArray, asRecord, asString, dig, num } from './process'
 import type { DriverControl, DriverEventSink, DriverStartOptions } from './types'
 
@@ -132,17 +133,26 @@ export async function startOpenCodeDriver(
       const body: Record<string, unknown> = {
         parts: [{ type: 'text', text }]
       }
-      if (options.model) body.model = options.model
+      // OpenCode's HTTP API expects `model` as `{ providerID, modelID }`,
+      // not a bare string. Model ids from `opencode models` are `provider/model`.
+      if (options.model) {
+        const slash = options.model.indexOf('/')
+        if (slash > 0) {
+          body.model = {
+            providerID: options.model.slice(0, slash),
+            modelID: options.model.slice(slash + 1)
+          }
+        }
+        // No slash => unknown shape; omit and let OpenCode use its default.
+      }
       void jsonFetch(`${base}/session/${sessionId}/prompt_async`, {
         method: 'POST',
         body: JSON.stringify(body)
       }).catch((err) => {
-        emit({
-          type: 'error',
-          message: err instanceof Error ? err.message : String(err)
-        })
+        const message = extractRpcErrorText(err)
+        emit({ type: 'error', message })
         turnActive = false
-        emit({ type: 'turn-finished', success: false, error: String(err) })
+        emit({ type: 'turn-finished', success: false, error: message })
       })
     },
     steer(text: string): void {
@@ -287,7 +297,7 @@ function handleOpenCodeEvent(
     emit({
       type: 'turn-finished',
       success: false,
-      error: asString(props.message) || 'OpenCode session error'
+      error: extractRpcErrorText(props) || asString(props.message) || 'OpenCode session error'
     })
     return
   }

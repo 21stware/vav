@@ -5,7 +5,7 @@ import { MarkdownSegmenter } from '../lib/segmenter'
 const TICK_MS = 80
 
 export type StreamBlock =
-  | { kind: 'reasoning'; key: string; text: string }
+  | { kind: 'reasoning'; key: string; text: string; durationMs?: number }
   | { kind: 'tool'; key: string; block: ToolCallBlock }
   | { kind: 'text'; key: string; sealed: string[]; tail: string }
 
@@ -18,7 +18,7 @@ export interface StreamSnapshot {
 const EMPTY_SNAPSHOT: StreamSnapshot = { active: false, phase: 'idle', blocks: [] }
 
 type Internal =
-  | { kind: 'reasoning'; key: string; text: string }
+  | { kind: 'reasoning'; key: string; text: string; startedAt: number; durationMs?: number }
   | { kind: 'tool'; key: string; block: ToolCallBlock }
   | { kind: 'text'; key: string; segmenter: MarkdownSegmenter }
 
@@ -76,7 +76,13 @@ export class StreamProjection {
         if (block.text) segmenter.push(block.text)
         this.slots[index] = { kind: 'text', key: `t${index}`, segmenter }
       } else if (block.kind === 'reasoning') {
-        this.slots[index] = { kind: 'reasoning', key: `r${index}`, text: block.text }
+        this.slots[index] = {
+          kind: 'reasoning',
+          key: `r${index}`,
+          text: block.text,
+          startedAt: Date.now(),
+          durationMs: block.durationMs
+        }
       }
       // `plan` message blocks are unused in the live path — plan UI is a toolCall.
     }
@@ -121,7 +127,9 @@ export class StreamProjection {
     this.ensureLive()
     const slot = this.slots[index]
     if (slot?.kind === 'reasoning') slot.text += text
-    else this.slots[index] = { kind: 'reasoning', key: `r${index}`, text }
+    else {
+      this.slots[index] = { kind: 'reasoning', key: `r${index}`, text, startedAt: Date.now() }
+    }
     this.dirty = true
     this.ensureTicking()
   }
@@ -172,6 +180,24 @@ export class StreamProjection {
           // Sealed chunk identities are stable, so memoised children skip re-render.
           sealed: block.segmenter.sealed,
           tail: block.segmenter.tail
+        })
+      } else if (block.kind === 'reasoning') {
+        if (block.durationMs == null) {
+          let last: Internal | undefined
+          for (let i = this.slots.length - 1; i >= 0; i--) {
+            if (this.slots[i]) {
+              last = this.slots[i]
+              break
+            }
+          }
+          const live = this.phase === 'thinking' && last === block
+          if (!live) block.durationMs = Math.max(0, Date.now() - block.startedAt)
+        }
+        blocks.push({
+          kind: 'reasoning',
+          key: block.key,
+          text: block.text,
+          durationMs: block.durationMs
         })
       } else {
         blocks.push(block)

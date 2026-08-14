@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { existsSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
@@ -76,6 +77,14 @@ function readGrokAuthSession(): GrokAuthSession | null {
   } catch {
     return null
   }
+}
+
+/** Current Grok CLI account id (user id, else a token fingerprint). */
+export function readGrokAuthIdentity(): string | null {
+  const session = readGrokAuthSession()
+  if (!session) return null
+  if (session.userId) return `user:${session.userId}`
+  return `tok:${createHash('sha256').update(session.accessToken).digest('hex').slice(0, 16)}`
 }
 
 function grokHeaders(session: GrokAuthSession): Record<string, string> {

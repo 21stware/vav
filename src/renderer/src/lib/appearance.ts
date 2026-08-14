@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { TINT_ACCENT, type FixedColorTint } from '@shared/colorTints'
+import { TINT_ACCENT, normalizeAccentHex, type FixedColorTint } from '@shared/colorTints'
 import { COLOR_TINTS, type ColorTint } from '@shared/types'
 import { useSessionStore } from '../state/sessionStore'
 import { IS_MAC } from './platform'
@@ -183,6 +183,7 @@ function applyAccentTintVars(
 export function useAppearance(): void {
   const theme = useSessionStore((s) => s.settings.theme)
   const colorTint = useSessionStore((s) => s.settings.colorTint)
+  const customAccentColor = useSessionStore((s) => s.settings.customAccentColor)
   const codeFont = useSessionStore((s) => s.settings.codeFont)
   const fontSize = useSessionStore((s) => s.settings.fontSize)
   const reduceMotion = useSessionStore((s) => s.settings.reduceMotion)
@@ -246,6 +247,9 @@ export function useAppearance(): void {
     if (tint === 'system') {
       // Live OS accent — adapt extremes so unknown colours stay readable.
       applyAccentTintVars(root, systemAccent, resolvedTheme, true)
+    } else if (tint === 'custom') {
+      const hex = normalizeAccentHex(customAccentColor) ?? systemAccent
+      applyAccentTintVars(root, hex, resolvedTheme, true)
     } else if (tint === 'mono') {
       // Drop inline overrides so base :root / dark mono tokens apply.
       clearSystemTintVars(root)
@@ -255,7 +259,7 @@ export function useAppearance(): void {
       const hex = TINT_ACCENT[fixed][resolvedTheme]
       applyAccentTintVars(root, hex, resolvedTheme, false)
     }
-  }, [colorTint, systemAccent, resolvedTheme])
+  }, [colorTint, customAccentColor, systemAccent, resolvedTheme])
 
   useEffect(() => {
     const root = document.documentElement

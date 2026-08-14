@@ -19,6 +19,7 @@ import {
 import { ROOT_LEAF } from '@shared/thread'
 import { buildSnapshot } from '@shared/tokenUsage'
 import { buildModel, describeError, streamWith } from './provider'
+import { parseThinkingLevel, toPiReasoning } from '@shared/thinkingLevel'
 import { normalizePlanSteps } from '@shared/askPlan'
 import {
   COMPACT_MIN_FOLDED,
@@ -112,6 +113,8 @@ interface TurnState {
   argOverrides: Map<string, Record<string, unknown>>
   /** User selection for this turn (doc_search related_to_selection). */
   selectionRefs: PreviewRef[]
+  /** First-token wall time per reasoning slot, used to stamp `durationMs`. */
+  reasoningStartedAt: Map<number, number>
   error?: string
   cancelled?: boolean
 }
@@ -523,7 +526,8 @@ export class AgentRuntime {
       flushTimer: null,
       pending: new Map(),
       argOverrides: new Map(),
-      selectionRefs: parentMessage?.contextBlocks ?? []
+      selectionRefs: parentMessage?.contextBlocks ?? [],
+      reasoningStartedAt: new Map()
     }
     this.turns.set(conversationId, turn)
     this.deps.changeSets?.beginTurn(conversationId, this.workdirOf(conversation))
@@ -552,6 +556,10 @@ export class AgentRuntime {
     this.deps.emit({ type: 'start', conversationId })
     this.setPhase(conversationId, turn, 'thinking')
 
+    const reasoning = model.reasoning
+      ? toPiReasoning(parseThinkingLevel(conversation.thinkingLevel))
+      : undefined
+
     try {
       await runAgentLoopContinue(
         {
@@ -577,6 +585,7 @@ export class AgentRuntime {
           apiKey,
           temperature: settings.temperature,
           maxTokens: settings.maxTokens,
+          ...(reasoning ? { reasoning } : {}),
           // The sticky shell is one serialized process and the interactive
           // cards are answered one at a time, so parallel execution would be a
           // lie in both cases.
@@ -813,6 +822,10 @@ export class AgentRuntime {
         break
       }
 
+      case 'thinking_end':
+        this.sealReasoning(turn, turn.slots.get(`${turn.llmTurn}:${event.contentIndex}`))
+        break
+
       case 'toolcall_start':
       case 'toolcall_delta':
       case 'toolcall_end': {
@@ -871,10 +884,23 @@ export class AgentRuntime {
     const key = `${turn.llmTurn}:${contentIndex}`
     const existing = turn.slots.get(key)
     if (existing !== undefined) return existing
+    if (seed.kind !== 'reasoning') this.sealReasoning(turn)
     const slot = turn.blocks.length
     turn.blocks.push(seed)
     turn.slots.set(key, slot)
+    if (seed.kind === 'reasoning') turn.reasoningStartedAt.set(slot, Date.now())
     return slot
+  }
+
+  private sealReasoning(turn: TurnState, slot?: number): void {
+    const now = Date.now()
+    const targets = slot !== undefined ? [slot] : [...turn.reasoningStartedAt.keys()]
+    for (const index of targets) {
+      const block = turn.blocks[index]
+      if (!block || block.kind !== 'reasoning' || block.durationMs != null) continue
+      const started = turn.reasoningStartedAt.get(index) ?? now
+      block.durationMs = Math.max(0, now - started)
+    }
   }
 
   private appendDelta(
@@ -1384,6 +1410,7 @@ export class AgentRuntime {
   private async finishAsync(conversationId: string, turn: TurnState): Promise<void> {
     this.flushBuffers(conversationId, turn)
     if (turn.flushTimer) clearTimeout(turn.flushTimer)
+    this.sealReasoning(turn)
 
     // Seal plan checklist to match turn outcome. Models often finish the work
     // then reply without a last `plan` call — without this the UI stays "paused".
@@ -1420,7 +1447,8 @@ export class AgentRuntime {
 
     const message = this.snapshot(turn, {
       cancelled: turn.cancelled,
-      errorText: turn.error
+      errorText: turn.error,
+      errorDetail: turn.error
     })
     this.turns.delete(conversationId)
 
@@ -1484,7 +1512,8 @@ export class AgentRuntime {
       content: error,
       blocks: [{ kind: 'text', text: `> ${error}` }],
       createdAt: Date.now(),
-      errorText: error
+      errorText: error,
+      errorDetail: error
     }
     this.deps.conversations.appendMessage(conversationId, message)
     this.deps.conversations.flush()

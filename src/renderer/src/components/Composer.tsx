@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from 'react'
 import {
   ArrowUp,
   ChevronDown,
@@ -24,15 +24,27 @@ import { useWorkspaceStore } from '../state/workspaceStore'
 import { formatBytes, formatTokens } from '../lib/format'
 import { basename } from '../lib/path'
 import { formatBadge } from '../lib/previewBlocks'
-import { menuAnchor, showMenu, type MenuItem } from '../lib/nativeMenu'
+import { menuAnchorIfVisible, showMenu, type MenuItem } from '../lib/nativeMenu'
 import { keys } from '../lib/platform'
 import { resolveSendKeyMode, shouldSendOnKeyDown } from '../lib/composerSendKey'
 import { isPickGestureActive } from '../lib/clickPick'
 import { useT } from '../i18n/useT'
 import { Button } from './ui'
 import { AgentModelPicker } from './AgentModelPicker'
+import { ThinkingLevelPicker } from './ThinkingLevelPicker'
 
 const NO_QUEUE: QueuedMessage[] = []
+
+/**
+ * Keep the composer from blurring (and collapsing) on mousedown of a nearby
+ * control. Blur-first would shrink the dock, move the card, and eat the click.
+ */
+function retainComposerFocus(event: MouseEvent): void {
+  const target = event.target
+  if (!(target instanceof Element)) return
+  if (target.closest('textarea, input, [contenteditable="true"]')) return
+  if (target.closest('button, [role="button"]')) event.preventDefault()
+}
 
 function approvalModeOptions(
   t: (key: MessageKey, params?: TParams) => string
@@ -110,6 +122,7 @@ export function ComposerContext({
     <div
       className={`composer-context${hasCommentCards ? ' has-comment-cards' : ''}${hasQueue ? ' has-message-queue' : ''}`}
       data-has-context="true"
+      onMouseDown={retainComposerFocus}
     >
       {hasQueue && <MessageQueueBar conversationId={conversationId} items={messageQueue} />}
       {quote && (
@@ -185,8 +198,11 @@ export function Composer({
   const send = useSessionStore((s) => s.send)
   const cancel = useSessionStore((s) => s.cancel)
   const setApprovalMode = useSessionStore((s) => s.setApprovalMode)
+  const approvalMenuNonce = useSessionStore((s) => s.approvalMenuNonce)
 
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const approvalTriggerRef = useRef<HTMLButtonElement>(null)
+  const seenApprovalMenuNonce = useRef(0)
   /** True while IME / dictation composition is active (Enter must not submit). */
   const composingRef = useRef(false)
   const approvalMode: ApprovalMode = conversation?.approvalMode ?? 'auto'
@@ -275,6 +291,20 @@ export function Composer({
     }))
   }, [conversation, approvalMode, setApprovalMode, modes])
 
+  const openApprovalMenu = useCallback(
+    (anchor?: HTMLElement | null) => {
+      if (!conversation || approvalItems.length === 0) return
+      void showMenu(approvalItems, menuAnchorIfVisible(anchor))
+    },
+    [conversation, approvalItems]
+  )
+
+  useEffect(() => {
+    if (approvalMenuNonce === 0 || approvalMenuNonce === seenApprovalMenuNonce.current) return
+    seenApprovalMenuNonce.current = approvalMenuNonce
+    openApprovalMenu(approvalTriggerRef.current)
+  }, [approvalMenuNonce, openApprovalMenu])
+
   const activeMode = modes.find((m) => m.value === approvalMode) ?? modes[0]!
   const approvalLabel = activeMode.label
   const approvalTitle = activeMode.title
@@ -305,6 +335,7 @@ export function Composer({
   return (
     <div
       className={`composer${hasCommentCards ? ' has-comment-cards' : ''}`}
+      onMouseDown={retainComposerFocus}
       onDragOver={(event) => event.preventDefault()}
       onDrop={(event) => {
         event.preventDefault()
@@ -416,18 +447,20 @@ export function Composer({
 
         <div className="composer-bar">
           {conversationId ? <AgentModelPicker conversationId={conversationId} /> : null}
+          {conversationId ? <ThinkingLevelPicker conversationId={conversationId} /> : null}
 
           <button
+            ref={approvalTriggerRef}
             type="button"
-            className={`model-picker${approvalMode === 'bypass' ? ' warning' : ''}`}
+            className={`model-picker approval-picker${approvalMode === 'bypass' ? ' warning' : ''}`}
             aria-label={t('composer.approvalMode')}
+            aria-haspopup="menu"
             title={approvalTitle}
             disabled={!conversation}
             onClick={(event) => {
               event.preventDefault()
               event.stopPropagation()
-              if (!conversation) return
-              void showMenu(approvalItems, menuAnchor(event.currentTarget as HTMLElement))
+              openApprovalMenu(event.currentTarget)
             }}
           >
             <span className="model-name">{approvalLabel}</span>

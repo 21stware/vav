@@ -55,6 +55,13 @@ export class QuotaService {
     await this.refresh(host, false)
   }
 
+  /** Bypass the panel debounce — used when a turn fails and we need a fresh read. */
+  async forceRefresh(host: CliHostKind | null | undefined): Promise<QuotaWindow[]> {
+    if (!isQuotaAccountHost(host)) return []
+    await this.refresh(host, true)
+    return this.get(host)
+  }
+
   private async refreshAll(): Promise<void> {
     await Promise.all((Object.keys(FETCHERS) as QuotaAccountHost[]).map((host) => this.refresh(host, true)))
   }

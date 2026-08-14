@@ -33,6 +33,8 @@ export type AcceleratorKeyBindingId =
   | 'switchWorkdir'
   | 'switchCliMode'
   | 'switchVavMode'
+  | 'switchModel'
+  | 'switchApproval'
   | 'closeContext'
   | 'openSettings'
   | 'find'
@@ -177,6 +179,20 @@ export const KEY_BINDING_DEFS: readonly KeyBindingDef[] = [
     labelKey: 'shortcut.switchVavMode',
     kind: 'accelerator',
     defaultAccelerator: 'CmdOrCtrl+Shift+V'
+  },
+  {
+    id: 'switchModel',
+    group: 'session',
+    labelKey: 'shortcut.switchModel',
+    kind: 'accelerator',
+    defaultAccelerator: 'CmdOrCtrl+Shift+M'
+  },
+  {
+    id: 'switchApproval',
+    group: 'session',
+    labelKey: 'shortcut.switchApproval',
+    kind: 'accelerator',
+    defaultAccelerator: 'CmdOrCtrl+Shift+P'
   },
   {
     id: 'closeContext',
