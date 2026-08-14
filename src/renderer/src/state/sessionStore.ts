@@ -465,7 +465,7 @@ interface SessionState {
 
   search: SearchState
   errorBanner: string | null
-  errorBannerKind: 'quota' | 'session-stale' | 'auth' | 'generic' | null
+  errorBannerKind: 'quota' | 'session-stale' | 'auth' | 'cancelled' | 'generic' | null
   errorBannerDetail: string | null
   dialog: DialogState | null
   toast: ToastState | null
