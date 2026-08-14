@@ -1235,7 +1235,7 @@ export type TurnEvent =
       /** Fatal error text, shown in the error banner. */
       error?: string
       /** Classified CLI / provider failure — quota banner can open usage. */
-      errorKind?: 'quota' | 'session-stale' | 'auth' | 'generic'
+      errorKind?: 'quota' | 'session-stale' | 'auth' | 'cancelled' | 'generic'
       /** Raw host / JSON-RPC payload for the details sheet. */
       errorDetail?: string
       cancelled?: boolean
