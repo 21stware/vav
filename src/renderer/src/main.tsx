@@ -2,6 +2,7 @@ import { StrictMode, Suspense, lazy } from 'react'
 import { createRoot } from 'react-dom/client'
 import { IS_MAC, PLATFORM } from './lib/platform'
 import { installLiveResizeTracking } from './lib/liveResize'
+import { installSiblingRepaint } from './lib/siblingRepaint'
 import '@xterm/xterm/css/xterm.css'
 import './styles/index.css'
 
@@ -12,11 +13,13 @@ const SettingsWindow = lazy(() => import('./SettingsWindow'))
 const SessionWindow = lazy(() => import('./SessionWindow'))
 const FilePreviewWindow = lazy(() => import('./FilePreviewWindow'))
 const TokenUsageWindow = lazy(() => import('./TokenUsageWindow'))
+const ProviderAccountWindow = lazy(() => import('./ProviderAccountWindow'))
 
 // The window controls sit on opposite ends on macOS and Windows, and the
 // stylesheet has to leave room for whichever end that is before first paint.
 document.documentElement.dataset.platform = PLATFORM
 installLiveResizeTracking()
+installSiblingRepaint()
 
 // One bundle, several window kinds; main says which one it is opening.
 const params = new URLSearchParams(window.location.search)
@@ -36,6 +39,9 @@ function Root(): React.JSX.Element {
   if (view === 'file-preview') return <FilePreviewWindow path={filePath || ''} />
   if (view === 'token-usage' && conversationId) {
     return <TokenUsageWindow conversationId={conversationId} />
+  }
+  if (view === 'provider-account' && conversationId) {
+    return <ProviderAccountWindow conversationId={conversationId} />
   }
   return <App />
 }

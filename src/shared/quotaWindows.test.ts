@@ -11,7 +11,9 @@ import {
   quotaKindFromCodexWindow,
   windowsFromClaudeOAuthPayload,
   windowsFromCodexBackendPayload,
-  windowsFromGrokBillingPayload
+  windowsFromCursorPeriodPayload,
+  windowsFromGrokBillingPayload,
+  windowsFromOpencodeGoUsagePayload
 } from './quotaWindows.ts'
 
 describe('normalizeQuotaPercent', () => {
@@ -159,13 +161,13 @@ describe('windowsFromCodexBackendPayload', () => {
     assert.equal(windows[1]?.usedPercent, 40)
   })
 
-  it('ignores payloads without plan_type', () => {
-    assert.deepEqual(
-      windowsFromCodexBackendPayload({
-        rate_limit: { primary_window: { used_percent: 10, limit_window_seconds: 18000 } }
-      }),
-      []
-    )
+  it('parses rate_limit windows without plan_type', () => {
+    const windows = windowsFromCodexBackendPayload({
+      rate_limit: { primary_window: { used_percent: 10, limit_window_seconds: 18000 } }
+    })
+    assert.equal(windows.length, 1)
+    assert.equal(windows[0]?.kind, 'five_hour')
+    assert.equal(windows[0]?.usedPercent, 10)
   })
 })
 
@@ -225,5 +227,44 @@ describe('windowsFromGrokBillingPayload', () => {
     })
     assert.equal(windows[0]?.kind, 'monthly')
     assert.ok(Math.abs((windows[0]?.usedPercent ?? 0) - (837 / 150000) * 100) < 1e-6)
+  })
+})
+
+describe('windowsFromCursorPeriodPayload', () => {
+  it('maps included plan percent and billing cycle end', () => {
+    const windows = windowsFromCursorPeriodPayload(
+      {
+        billingCycleEnd: '1788969122000',
+        planUsage: { totalPercentUsed: 37.1468 }
+      },
+      100
+    )
+    assert.equal(windows.length, 1)
+    assert.equal(windows[0]?.kind, 'monthly')
+    assert.equal(windows[0]?.usedPercent, 37.1468)
+    assert.equal(windows[0]?.resetsAt, 1788969122000)
+  })
+})
+
+describe('windowsFromOpencodeGoUsagePayload', () => {
+  it('maps rolling / weekly / monthly lanes', () => {
+    const windows = windowsFromOpencodeGoUsagePayload(
+      {
+        usage: {
+          rolling: { percent: 13, resetsAt: '2026-08-15T04:52:50.951Z' },
+          weekly: { percent: 42, resetsAt: '2026-08-17T00:00:00.951Z' },
+          monthly: { percent: 21, resetsAt: '2026-09-12T16:41:54.951Z' }
+        }
+      },
+      100
+    )
+    assert.deepEqual(
+      windows.map((w) => w.kind),
+      ['five_hour', 'seven_day', 'monthly']
+    )
+    assert.equal(windows[0]?.usedPercent, 13)
+    assert.equal(windows[1]?.usedPercent, 42)
+    assert.equal(windows[2]?.usedPercent, 21)
+    assert.equal(windows[0]?.resetsAt, Date.parse('2026-08-15T04:52:50.951Z'))
   })
 })

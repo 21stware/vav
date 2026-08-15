@@ -197,9 +197,13 @@ export function focusAgentPane(conversationId: string, preferredTabId?: string):
     }
     // Prefer live xterm (typing) over a residual picker button.
     const ta = pane.querySelector('.xterm-helper-textarea') as HTMLTextAreaElement | null
+    const selectedOpt = pane.querySelector(
+      '.cli-agent-picker-item[aria-selected="true"]'
+    ) as HTMLButtonElement | null
     const firstOpt = pane.querySelector('.cli-agent-picker-item') as HTMLButtonElement | null
     try {
       if (ta) ta.focus({ preventScroll: true })
+      else if (selectedOpt) selectedOpt.focus({ preventScroll: true })
       else if (firstOpt) firstOpt.focus({ preventScroll: true })
       else pane.focus({ preventScroll: true })
     } catch {
@@ -260,12 +264,53 @@ export function focusRemainingAgentPane(conversationId: string): void {
 let lastCliPaneReseedAt = 0
 const CLI_RESEED_GRACE_MS = 500
 
+/** One native sheet at a time — ⌘W + pane X must not stack confirms. */
+let agentCloseConfirming = false
+
+function finishCloseAgentTab(conversationId: string, tabId: string): void {
+  const host = getAgentHostForConversation(conversationId)
+  const tab = host?.tabs.find((t) => t.id === tabId)
+  if (!tab) return
+  const closingLastLive = host!.tabs.length === 1 && !tab.pendingCli
+  useWorkspaceStore.getState().closeAgentTab(conversationId, tabId)
+  if (closingLastLive) lastCliPaneReseedAt = Date.now()
+  focusRemainingAgentPane(conversationId)
+}
+
 /**
- * Close the focused CLI Screen pane.
- * Returns false only when the sole remaining pane is already a picker — then
- * the caller closes the window. A sole live agent reseeds the picker instead
- * (`closeAgentTab` creates a pending leaf).
+ * Close a CLI Screen pane. Live agent sessions confirm first (killing the PTY
+ * drops the TUI conversation). Pending pickers close immediately.
  */
+export function requestCloseAgentTab(conversationId: string, tabId: string): boolean {
+  const host = getAgentHostForConversation(conversationId)
+  const tab = host?.tabs.find((t) => t.id === tabId)
+  if (!tab) return false
+
+  if (tab.pendingCli) {
+    finishCloseAgentTab(conversationId, tabId)
+    return true
+  }
+
+  if (agentCloseConfirming) return true
+  agentCloseConfirming = true
+  const name = tab.title.trim() || tt('agents.selector')
+  void window.vav.dialog
+    .confirm({
+      title: tt('agents.closeSession'),
+      message: tt('agents.closeSessionBody', { name }),
+      confirmLabel: tt('common.close'),
+      cancelLabel: tt('common.cancel'),
+      destructive: true
+    })
+    .then((ok) => {
+      if (ok) finishCloseAgentTab(conversationId, tabId)
+    })
+    .finally(() => {
+      agentCloseConfirming = false
+    })
+  return true
+}
+
 function closeActiveAgentTab(conversationId: string): boolean {
   const host = getAgentHostForConversation(conversationId)
   if (!host?.tabs.length) return false
@@ -282,12 +327,7 @@ function closeActiveAgentTab(conversationId: string): boolean {
     return false
   }
 
-  const closingLastLive = host.tabs.length === 1 && !tab?.pendingCli
-  useWorkspaceStore.getState().closeAgentTab(conversationId, activeTab)
-  if (closingLastLive) lastCliPaneReseedAt = Date.now()
-  // Survivor pane or freshly reseeded picker — reclaim keyboard navigate.
-  focusRemainingAgentPane(conversationId)
-  return true
+  return requestCloseAgentTab(conversationId, activeTab)
 }
 
 /**

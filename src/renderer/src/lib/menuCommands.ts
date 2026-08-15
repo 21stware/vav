@@ -5,10 +5,10 @@ import { useSessionStore } from '../state/sessionStore'
 import { useWorkspaceStore } from '../state/workspaceStore'
 import {
   closeCurrentWindow,
-  focusAgentPane,
   handleContextClose,
   installUiFocusTracking
 } from './uiFocus'
+import { requestCliSurface } from './cliSurfaceSwitch'
 
 /** Ensure the session list is visible when switching archive / file-session modes. */
 function ensureSidebarVisible(): void {
@@ -74,8 +74,7 @@ export function handleMenuCommand(command: MenuCommand): void {
       const id = store.activeId
       if (!id) break
       if (store.search.open) store.closeSearch()
-      useWorkspaceStore.getState().enterCliMode(id)
-      focusAgentPane(id)
+      requestCliSurface(id, true)
       break
     }
     case 'switch-vav-mode': {
@@ -83,7 +82,7 @@ export function handleMenuCommand(command: MenuCommand): void {
       const id = store.activeId
       if (!id) break
       if (store.search.open) store.closeSearch()
-      useWorkspaceStore.getState().exitCliMode(id)
+      requestCliSurface(id, false)
       break
     }
     case 'switch-model':

@@ -17,7 +17,7 @@ import {
   type TurnStatus
 } from '@shared/types'
 import { ROOT_LEAF } from '@shared/thread'
-import { buildSnapshot } from '@shared/tokenUsage'
+import { buildSnapshot, resolveContextWindow, resolveMaxTokens } from '@shared/tokenUsage'
 import { buildModel, describeError, streamWith } from './provider'
 import { parseThinkingLevel, toPiReasoning } from '@shared/thinkingLevel'
 import { normalizePlanSteps } from '@shared/askPlan'
@@ -356,15 +356,17 @@ export class AgentRuntime {
     if (!apiKey) return { ok: false, error: t('error.noApiKey') }
 
     const settings = this.deps.settings.get()
-    const model = buildModel(
-      settings,
-      conversation.model || settings.defaultModel,
-      conversation.tokenLimit
-    )
+    const modelId = conversation.model || settings.defaultModel
+    const model = buildModel(settings, modelId, resolveContextWindow(modelId))
 
     let summary: string
     try {
-      summary = await this.summarizeForCompact(toFold, model, apiKey, settings.maxTokens)
+      summary = await this.summarizeForCompact(
+        toFold,
+        model,
+        apiKey,
+        resolveMaxTokens(modelId)
+      )
     } catch (err) {
       return { ok: false, error: describeError((err as Error).message) }
     }
@@ -494,11 +496,8 @@ export class AgentRuntime {
     }
 
     const settings = this.deps.settings.get()
-    const model = buildModel(
-      settings,
-      conversation.model || settings.defaultModel,
-      conversation.tokenLimit
-    )
+    const modelId = conversation.model || settings.defaultModel
+    const model = buildModel(settings, modelId, resolveContextWindow(modelId))
     const history = buildHistory(
       conversation.messages,
       parentId,
@@ -584,7 +583,7 @@ export class AgentRuntime {
           model,
           apiKey,
           temperature: settings.temperature,
-          maxTokens: settings.maxTokens,
+          maxTokens: resolveMaxTokens(modelId),
           ...(reasoning ? { reasoning } : {}),
           // The sticky shell is one serialized process and the interactive
           // cards are answered one at a time, so parallel execution would be a

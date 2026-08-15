@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { PRESET_MODELS } from '@shared/types'
+import { resolveMaxTokens } from '@shared/tokenUsage'
 import { useSessionStore } from '../../state/sessionStore'
 import { useT } from '../../i18n/useT'
 import { Button } from '../ui'
@@ -167,16 +168,13 @@ export function ApiSettings(): React.JSX.Element {
 
       <div className="form-row">
         <label>{t('api.maxTokens')}</label>
-        <div className="control">
-          <input
-            className="text-field"
-            type="number"
-            min={256}
-            max={200000}
-            step={256}
-            value={settings.maxTokens}
-            onChange={(event) => void updateSettings({ maxTokens: Number(event.target.value) })}
-          />
+        <div className="control" style={{ flexDirection: 'column', alignItems: 'flex-start', gap: 4 }}>
+          <span className="muted">
+            {t('api.maxTokensValue', {
+              n: resolveMaxTokens(settings.defaultModel).toLocaleString('en-US')
+            })}
+          </span>
+          <span className="muted">{t('api.maxTokensHint')}</span>
         </div>
       </div>
 

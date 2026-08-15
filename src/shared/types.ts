@@ -895,6 +895,11 @@ export interface AppSettings {
   notifyOnAskUserQuestion: boolean
   notifyOnToolApproval: boolean
   notifyOnRequest: boolean
+  /**
+   * When true, hold an OS idle-sleep assertion while any agent is actively
+   * working (Caffeine-style). Does not block lid-close or choosing Sleep.
+   */
+  keepAwakeWhileAgentRunning: boolean
   /** Show the menu-bar tray icon. */
   trayEnabled: boolean
   /** macOS: hide Dock icon (accessory). Requires restart. */
@@ -989,6 +994,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   notifyOnAskUserQuestion: true,
   notifyOnToolApproval: true,
   notifyOnRequest: true,
+  keepAwakeWhileAgentRunning: false,
   /** macOS optional menu-bar item; Windows always shows a tray (see NotificationCenter). */
   /** Menu-bar status item — shows live CLI agent count when sessions are running. */
   trayEnabled: true,
@@ -1025,6 +1031,8 @@ export function normalizeFileSortKey(key: FileSortKey | string | undefined): Fil
 export interface ModelOption {
   id: string
   label: string
+  /** Context window in tokens when the catalogue published one (e.g. `1M`). */
+  contextWindow?: number
 }
 
 export const PRESET_MODELS: ModelOption[] = [
@@ -1111,6 +1119,10 @@ export interface TerminalTab {
    * Used by the unified CLI Agent surface (split panes start pending).
    */
   pendingCli?: boolean
+  /** Tools-tray install job — shown in its own strip, title stays pinned. */
+  purpose?: 'install'
+  /** Agent being installed when {@link purpose} is `install`. */
+  installAgentId?: string
   /** Flex weight for multi-split layout (default 1). */
   splitWeight?: number
 }

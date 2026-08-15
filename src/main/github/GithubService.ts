@@ -9,6 +9,9 @@ import type {
   GithubActionRunDetail,
   GithubActionStatus,
   GithubActionsPage,
+  GithubActionsScope,
+  GithubRelease,
+  GithubReleasesPage,
   GithubCheck,
   GithubCheckConclusion,
   GithubComment,
@@ -869,12 +872,30 @@ const RUNNING_ACTION_STATUSES = [
   'requested'
 ] as const
 
-export async function listGithubActions(cwd: string): Promise<GithubResult<GithubActionsPage>> {
+export async function listGithubActions(
+  cwd: string,
+  scope: GithubActionsScope = 'running'
+): Promise<GithubResult<GithubActionsPage>> {
   const detected = await detectGithubRepo(cwd)
   if (!detected.ok) return detected
   const repo = detected.data
   const token = await resolveToken(repo.host)
   const base = repoApi(repo)
+  if (scope === 'history') {
+    const page = await githubFetch(
+      `${base}/actions/runs?status=completed&per_page=${LIST_PAGE_SIZE}`,
+      token
+    )
+    if (!page.ok) return page
+    const runs = asArray<GhWorkflowRun>(page.json, 'workflow_runs')
+      .filter((run) => run?.id)
+      .map(mapActionRun)
+      .sort((a, b) => (Date.parse(b.updatedAt) || 0) - (Date.parse(a.updatedAt) || 0))
+    return {
+      ok: true,
+      data: { repo, runs, authenticated: Boolean(token), scope }
+    }
+  }
   const fetched = await Promise.all(
     RUNNING_ACTION_STATUSES.map((status) =>
       githubFetch(`${base}/actions/runs?status=${status}&per_page=${LIST_PAGE_SIZE}`, token)
@@ -899,7 +920,60 @@ export async function listGithubActions(cwd: string): Promise<GithubResult<Githu
   })
   return {
     ok: true,
-    data: { repo, runs, authenticated: Boolean(token) }
+    data: { repo, runs, authenticated: Boolean(token), scope: 'running' }
+  }
+}
+
+type GhRelease = {
+  id: number
+  tag_name?: string
+  name?: string | null
+  draft?: boolean
+  prerelease?: boolean
+  html_url?: string
+  url?: string
+  body?: string | null
+  author?: GhUser | null
+  published_at?: string | null
+  created_at?: string
+}
+
+function mapRelease(row: GhRelease): GithubRelease {
+  return {
+    id: row.id,
+    tag: row.tag_name ?? '',
+    name: (row.name || row.tag_name || '').trim(),
+    draft: row.draft === true,
+    prerelease: row.prerelease === true,
+    url: row.url ?? '',
+    htmlUrl: row.html_url ?? '',
+    author: mapUser(row.author),
+    publishedAt: row.published_at ?? null,
+    createdAt: row.created_at ?? '',
+    body: row.body ?? null
+  }
+}
+
+export async function listGithubReleases(cwd: string): Promise<GithubResult<GithubReleasesPage>> {
+  const detected = await detectGithubRepo(cwd)
+  if (!detected.ok) return detected
+  const repo = detected.data
+  const token = await resolveToken(repo.host)
+  const fetched = await githubFetch(
+    `${repoApi(repo)}/releases?per_page=${LIST_PAGE_SIZE}`,
+    token
+  )
+  if (!fetched.ok) return fetched
+  if (!Array.isArray(fetched.json)) return fail('Unexpected GitHub response')
+  const releases = (fetched.json as GhRelease[]).filter((row) => row?.id).map(mapRelease)
+  return {
+    ok: true,
+    data: {
+      repo,
+      releases,
+      authenticated: Boolean(token),
+      truncated: releases.length >= LIST_PAGE_SIZE
+    }
   }
 }
 

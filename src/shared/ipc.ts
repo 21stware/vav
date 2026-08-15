@@ -34,6 +34,9 @@ import type {
   GithubSite
 } from './github'
 import type { Platform } from './platform'
+import type { AgentInstallRun } from './agentInstall'
+
+export type { AgentInstallRun } from './agentInstall'
 
 export interface Bootstrap {
   settings: AppSettings
@@ -92,6 +95,8 @@ export interface PtySessionMeta {
   /** Live sessions only, so a freshly attached window paints the right dot.
    *  Restored exited bash tombstones use `exited`. */
   status: PtyActivityStatus
+  purpose?: 'install'
+  installAgentId?: string
 }
 
 /** Live PTYs plus the split trees every window must hydrate from. */
@@ -128,6 +133,10 @@ export interface PtyCreateOptions {
    */
   agentId?: string | null
   title?: string
+  /** Keep `title` as-is (install jobs). Default bash titles follow the child. */
+  pinTitle?: boolean
+  purpose?: 'install'
+  installAgentId?: string
 }
 
 export interface FsDirtyEvent {
@@ -158,6 +167,12 @@ export type SettingsView =
   | 'file-associations'
   | 'keybindings'
   | 'about'
+
+/** Raise Settings on a category, optionally selecting a provider row. */
+export interface SettingsViewPayload {
+  view: SettingsView
+  agentId?: string
+}
 
 export interface FileAssociationStatus {
   id: string
@@ -291,6 +306,36 @@ export interface TokenUsageViewPayload {
    * live CLI stream sample). Empty for VAV or hosts without a usage API.
    */
   quotaWindows: QuotaWindow[]
+}
+
+/** Lean account + subscription snapshot for the provider-icon popover. */
+export interface HostAccountQuota {
+  host: CliHostKind | null
+  hostName: string
+  signedIn: boolean
+  accountId: string | null
+  plan: string | null
+  windows: QuotaWindow[]
+}
+
+/**
+ * Hydrate payload for the native provider-account panel.
+ * Same lean-shell pattern as {@link TokenUsageViewPayload}.
+ */
+export interface ProviderAccountViewPayload {
+  conversationId: string
+  host: CliHostKind | null
+  /** Brand-mark id (`vav` or a {@link CliHostKind}). */
+  hostId: string
+  hostName: string
+  signedIn: boolean
+  accountId: string | null
+  plan: string | null
+  windows: QuotaWindow[]
+  loading: boolean
+  theme: ThemeMode
+  locale: AppLocale
+  now: number
 }
 
 export interface CliOpenEvent {
@@ -546,6 +591,7 @@ export interface VavApi {
         cliResumeCursor: ProviderResumeCursor | null
         cliHost: CliHostKind | null
         model: string
+        quotaWindows: QuotaWindow[]
       } | null
     }>
     /** Workspace preview focus — carried into agent context. */
@@ -576,6 +622,8 @@ export interface VavApi {
       id: string,
       mode: 'auto' | 'bypass' | 'edit'
     ): Promise<ConversationMeta[]>
+    /** Account login + weekly quota for the provider-icon popover. */
+    accountQuota(id: string, host?: CliHostKind | null): Promise<HostAccountQuota | null>
     /** Per-conversation VAV thinking / reasoning effort. */
     setThinkingLevel(
       id: string,
@@ -799,16 +847,20 @@ export interface VavApi {
     ): Promise<GitResult<{ path: string; branch: string | null }>>
   }
 
-  /** GitHub pull requests, running Actions, and Pages/site for the workspace remote. */
+  /** GitHub pull requests, Actions, Releases, and Pages for the workspace remote. */
   github: {
     listPulls(
       cwd: string,
       state?: GithubPullStateFilter
     ): Promise<GithubResult<GithubPullsPage>>
     getPull(cwd: string, number: number): Promise<GithubResult<GithubPullDetail>>
-    listActions(cwd: string): Promise<GithubResult<GithubActionsPage>>
+    listActions(
+      cwd: string,
+      scope?: import('./github').GithubActionsScope
+    ): Promise<GithubResult<GithubActionsPage>>
     getActionRun(cwd: string, runId: number): Promise<GithubResult<GithubActionRunDetail>>
     getSite(cwd: string): Promise<GithubResult<GithubSite>>
+    listReleases(cwd: string): Promise<GithubResult<import('./github').GithubReleasesPage>>
   }
 
   /** File Preview multi-session store (independent of sidebar conversations). */
@@ -843,6 +895,11 @@ export interface VavApi {
   /** Resolve a CLI agent binary on the login PATH (cached; pass force after install). */
   agents: {
     resolveBinary(candidates: string[], force?: boolean): Promise<string | null>
+    /** Batch PATH probe (one login-PATH refresh when `force`). */
+    probeBinaries(
+      items: Array<{ id: string; candidates: string[] }>,
+      force?: boolean
+    ): Promise<Record<string, string | null>>
     /**
      * Models for a chat host. VAV → presets + customModels; CLI hosts → live
      * probe of that agent's CLI when supported, else a documented fallback.
@@ -893,6 +950,22 @@ export interface VavApi {
         >
       ) => void
     ): () => void
+    /**
+     * Headless CLI install — a detached child process with no stdin, so
+     * confirmation prompts can never wedge it. Progress arrives as one
+     * sanitized log line via {@link onInstallRunsChanged}.
+     */
+    installStart(payload: {
+      agentId: string
+      name?: string
+      command: string
+    }): Promise<{ ok: boolean; error?: string }>
+    /** Stop a running install (kills the whole process group). */
+    installCancel(agentId: string): Promise<void>
+    /** Forget a finished run so the row disappears. */
+    installClear(agentId: string): Promise<void>
+    listInstallRuns(): Promise<AgentInstallRun[]>
+    onInstallRunsChanged(handler: (runs: AgentInstallRun[]) => void): () => void
   }
 
   pty: {
@@ -945,7 +1018,7 @@ export interface VavApi {
     onAccentColorChanged(handler: (hex: string) => void): () => void
     shellPath(shell: ShellKind): Promise<string>
     /** Settings live in their own window, not a sheet over the transcript. */
-    openSettings(view?: SettingsView): Promise<void>
+    openSettings(view?: SettingsView, agentId?: string): Promise<void>
     closeSettings(): Promise<void>
     /** Opens (or raises) the standalone window for one conversation. */
     openSession(conversationId: string): Promise<void>
@@ -969,6 +1042,13 @@ export interface VavApi {
     listDetachedSessions(): Promise<string[]>
     /** Fired whenever the set of open companion windows changes. */
     onDetachedChanged(handler: (conversationIds: string[]) => void): () => void
+    /**
+     * Another BrowserWindow just allocated a GPU surface (new isolated
+     * session / warm-pool refill). Existing windows must re-blit xterm
+     * canvases and compositor layers — Chromium otherwise keeps a stale
+     * frame until the next content write.
+     */
+    onRepaint(handler: () => void): () => void
     /** Opens (or raises) a standalone file preview window for `path`. */
     openFilePreview(
       path: string,
@@ -1031,6 +1111,18 @@ export interface VavApi {
      * Prefer this over loading the whole app shell into the popup.
      */
     onTokenUsageView(handler: (payload: TokenUsageViewPayload) => void): () => void
+    /**
+     * Native provider-account popup (panel shell, not an in-app overlay).
+     * `anchor` is the host-mark rect in the sender window’s content coordinates.
+     */
+    openProviderAccount(
+      conversationId: string,
+      anchor?: { x: number; y: number; width: number; height: number }
+    ): Promise<void>
+    getProviderAccountView(): Promise<ProviderAccountViewPayload | null>
+    onProviderAccountView(handler: (payload: ProviderAccountViewPayload) => void): () => void
+    /** Hug the account popup to the rendered body (avoids a tall empty panel). */
+    fitProviderAccount(height: number): Promise<void>
     /** Relaunch the app (e.g. after Dock-hide preference). */
     relaunch(): Promise<void>
     /** Resolves to the chosen row's id, or null if the menu was dismissed. */
@@ -1045,6 +1137,11 @@ export interface VavApi {
   notifications: {
     /** System notification authorization for the settings hint. */
     permission(): Promise<'granted' | 'denied' | 'unknown'>
+    /**
+     * This window is showing `conversationId`. Main uses it to drop the
+     * corresponding Dock attention badge when the window is focused.
+     */
+    seen(conversationId: string): void
   }
 
   changeSets: {
@@ -1103,7 +1200,7 @@ export interface VavApi {
   /** Any window changing settings must reach the others. */
   onSettingsChanged(handler: (settings: AppSettings) => void): () => void
   /** Category to show, pushed when ⌘, hits an already-open settings window. */
-  onSettingsView(handler: (view: SettingsView) => void): () => void
+  onSettingsView(handler: (payload: SettingsViewPayload) => void): () => void
   /** `vav /path` from the installed CLI — select the minted conversation. */
   onCliOpen(handler: (event: CliOpenEvent) => void): () => void
   /** Native fullscreen entered/left — used to collapse traffic-light inset. */
@@ -1214,6 +1311,7 @@ export const IPC = {
   convSetArchived: 'vav:conv:set-archived',
   convSetApprovalMode: 'vav:conv:set-approval-mode',
   convSetThinkingLevel: 'vav:conv:set-thinking-level',
+  convAccountQuota: 'vav:conv:account-quota',
   convContinueNew: 'vav:conv:continue-new',
   convDuplicate: 'vav:conv:duplicate',
   /** Export one or more sessions as a .vavpack (zip) package. */
@@ -1289,14 +1387,21 @@ export const IPC = {
   githubGetPull: 'vav:github:get-pull',
   cloudflareStatus: 'vav:cloudflare:status',
   githubListActions: 'vav:github:list-actions',
+  githubListReleases: 'vav:github:list-releases',
   githubGetActionRun: 'vav:github:get-action-run',
   githubGetSite: 'vav:github:get-site',
 
   agentsResolveBinary: 'vav:agents:resolve-binary',
+  agentsProbeBinaries: 'vav:agents:probe-binaries',
   agentsListModels: 'vav:agents:list-models',
   agentsGetModelCatalog: 'vav:agents:get-model-catalog',
   agentsPreloadModels: 'vav:agents:preload-models',
   agentsModelCatalogChanged: 'vav:agents:model-catalog-changed',
+  agentsInstallStart: 'vav:agents:install-start',
+  agentsInstallCancel: 'vav:agents:install-cancel',
+  agentsInstallClear: 'vav:agents:install-clear',
+  agentsListInstallRuns: 'vav:agents:list-install-runs',
+  agentsInstallRunsChanged: 'vav:agents:install-runs-changed',
   ptyCreate: 'vav:pty:create',
   ptyWrite: 'vav:pty:write',
   ptyResize: 'vav:pty:resize',
@@ -1324,13 +1429,19 @@ export const IPC = {
   windowNewDetached: 'vav:window:new-detached',
   windowListDetached: 'vav:window:list-detached',
   windowDetachedChanged: 'vav:window:detached-changed',
+  windowRepaint: 'vav:window:repaint',
   windowOpenFilePreview: 'vav:window:open-file-preview',
   windowOpenTokenUsage: 'vav:window:open-token-usage',
   tokenUsageGetView: 'vav:token-usage:get-view',
   tokenUsageView: 'vav:token-usage:view',
+  windowOpenProviderAccount: 'vav:window:open-provider-account',
+  providerAccountGetView: 'vav:provider-account:get-view',
+  providerAccountView: 'vav:provider-account:view',
+  providerAccountFit: 'vav:provider-account:fit',
   windowRelaunch: 'vav:window:relaunch',
   windowFullscreen: 'vav:window:fullscreen',
   notificationsPermission: 'vav:notifications:permission',
+  notificationsSeen: 'vav:notifications:seen',
   dialogAlert: 'vav:dialog:alert',
   dialogConfirm: 'vav:dialog:confirm',
   dialogMessageBox: 'vav:dialog:message-box',

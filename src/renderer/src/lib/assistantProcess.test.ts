@@ -29,14 +29,44 @@ function tool(id: string): MessageBlock {
 }
 
 describe('splitAssistantProcess', () => {
-  it('leaves a no-tool reply ungrouped', () => {
+  it('folds leading think on a no-tool reply so it is not left with the answer', () => {
     const blocks = [think('hmm'), text('Here is the answer.')]
     const split = splitAssistantProcess(blocks)
-    assert.equal(split.process.length, 0)
+    assert.deepEqual(
+      split.process.map((item) => item.block.kind),
+      ['reasoning']
+    )
     assert.deepEqual(
       split.conclusion.map((item) => item.block.kind),
-      ['reasoning', 'text']
+      ['text']
     )
+  })
+
+  it('peels trailing think off the answer', () => {
+    const blocks = [text('Here is the answer.'), think('leftover')]
+    const split = splitAssistantProcess(blocks)
+    assert.deepEqual(
+      split.process.map((item) => item.block.kind),
+      ['reasoning']
+    )
+    assert.deepEqual(
+      split.conclusion.map((item) => item.block.kind),
+      ['text']
+    )
+  })
+
+  it('leaves a text-only reply ungrouped', () => {
+    const split = splitAssistantProcess([text('Just the answer.')])
+    assert.equal(split.process.length, 0)
+    assert.equal(split.conclusion.length, 1)
+    assert.equal(split.conclusion[0]?.block.kind, 'text')
+  })
+
+  it('leaves a think-only reply ungrouped', () => {
+    const split = splitAssistantProcess([think('still thinking')])
+    assert.equal(split.process.length, 0)
+    assert.equal(split.conclusion.length, 1)
+    assert.equal(split.conclusion[0]?.block.kind, 'reasoning')
   })
 
   it('groups everything before the post-tool answer', () => {
@@ -52,6 +82,32 @@ describe('splitAssistantProcess', () => {
     assert.deepEqual(
       split.process.map((item) => item.block.kind),
       ['reasoning', 'text', 'toolCall', 'text', 'toolCall']
+    )
+    assert.equal(split.conclusion.length, 1)
+    assert.equal(split.conclusion[0]?.block.kind, 'text')
+  })
+
+  it('keeps leading and trailing think out of a no-tool answer', () => {
+    const split = splitAssistantProcess([
+      think('first'),
+      text('Here is the answer.'),
+      think('leftover')
+    ])
+    assert.deepEqual(
+      split.process.map((item) => item.block.kind),
+      ['reasoning', 'reasoning']
+    )
+    assert.deepEqual(
+      split.conclusion.map((item) => item.block.kind),
+      ['text']
+    )
+  })
+
+  it('peels leftover think after a post-tool answer', () => {
+    const split = splitAssistantProcess([tool('a'), text('Gold is up.'), think('leftover')])
+    assert.deepEqual(
+      split.process.map((item) => item.block.kind),
+      ['toolCall', 'reasoning']
     )
     assert.equal(split.conclusion.length, 1)
     assert.equal(split.conclusion[0]?.block.kind, 'text')
@@ -96,6 +152,16 @@ describe('splitLiveAssistantProcess', () => {
     const split = splitLiveAssistantProcess([think('plan'), text('Looking.'), tool('a')])
     assert.equal(split.process.length, 0)
     assert.equal(split.live.length, 3)
+  })
+
+  it('folds leading think as soon as the no-tool answer starts', () => {
+    const split = splitLiveAssistantProcess([think('hmm'), text('Here is the answer.')])
+    assert.deepEqual(
+      split.process.map((item) => item.block.kind),
+      ['reasoning']
+    )
+    assert.equal(split.live.length, 1)
+    assert.equal(split.live[0]?.block.kind, 'text')
   })
 })
 

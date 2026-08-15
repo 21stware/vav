@@ -7,7 +7,12 @@ import { prefetchForPath } from '../lib/prefetchHeavy'
 import { Button, EmptyState } from './ui'
 import { SessionDetail, type FileSessionChromeProps } from './SessionDetail'
 import { GitDiffPreview } from './GitChangesPanel'
-import { GithubActionPreview, GithubPullPreview, GithubSitePreview } from './GithubPanel'
+import {
+  GithubActionPreview,
+  GithubPullPreview,
+  GithubReleasePreview,
+  GithubSitePreview
+} from './GithubPanel'
 
 const FileViewer = lazy(() => import('./FileViewer').then((m) => ({ default: m.FileViewer })))
 
@@ -329,6 +334,12 @@ export function WorkspaceView({
             />
           ) : previewMounted && sessionPreview.kind === 'github-site' ? (
             <GithubSitePreview site={sessionPreview.site} onClose={closeFilePreview} />
+          ) : previewMounted && sessionPreview.kind === 'github-release' ? (
+            <GithubReleasePreview
+              key={`release-${sessionPreview.release.id}`}
+              release={sessionPreview.release}
+              onClose={closeFilePreview}
+            />
           ) : previewMounted && previewFilePath ? (
             <Suspense
               fallback={<div className="muted" style={{ padding: 24 }}>{t('common.loading')}</div>}

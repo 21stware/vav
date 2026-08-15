@@ -23,6 +23,7 @@ import {
   vavModelSupportsThinking
 } from '@shared/thinkingLevel'
 import { detectProtocol, type VavProtocol } from '@shared/vavProtocol'
+import { resolveMaxTokens } from '@shared/tokenUsage'
 
 export type Protocol = VavProtocol
 export { detectProtocol }
@@ -69,7 +70,7 @@ export function buildModel(
     // vav bills nothing; the conversation meter counts tokens, not dollars.
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
     contextWindow,
-    maxTokens: settings.maxTokens
+    maxTokens: resolveMaxTokens(modelId)
   }
 }
 

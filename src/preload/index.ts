@@ -5,6 +5,8 @@ import {
   type NativeMenuItem,
   type CliInstallLocation,
   type SettingsView,
+  type SettingsViewPayload,
+  type ProviderAccountViewPayload,
   type TokenUsageViewPayload,
   type VavApi
 } from '@shared/ipc'
@@ -74,6 +76,8 @@ const api: VavApi = {
       ipcRenderer.invoke(IPC.convSetCliHost, id, host),
     setFocusedFile: (id: string, path: string | null) =>
       ipcRenderer.invoke(IPC.convSetFocusedFile, id, path),
+    accountQuota: (id: string, host?: import('@shared/types').CliHostKind | null) =>
+      ipcRenderer.invoke(IPC.convAccountQuota, id, host),
     setWorkingDirectory: (id: string, path: string) =>
       ipcRenderer.invoke(IPC.convSetWorkdir, id, path),
     pickWorkingDirectory: (id: string) => ipcRenderer.invoke(IPC.convPickWorkdir, id),
@@ -213,10 +217,12 @@ const api: VavApi = {
     listPulls: (cwd: string, state?: import('@shared/github').GithubPullStateFilter) =>
       ipcRenderer.invoke(IPC.githubListPulls, cwd, state),
     getPull: (cwd: string, number: number) => ipcRenderer.invoke(IPC.githubGetPull, cwd, number),
-    listActions: (cwd: string) => ipcRenderer.invoke(IPC.githubListActions, cwd),
+    listActions: (cwd: string, scope?: import('@shared/github').GithubActionsScope) =>
+      ipcRenderer.invoke(IPC.githubListActions, cwd, scope),
     getActionRun: (cwd: string, runId: number) =>
       ipcRenderer.invoke(IPC.githubGetActionRun, cwd, runId),
-    getSite: (cwd: string) => ipcRenderer.invoke(IPC.githubGetSite, cwd)
+    getSite: (cwd: string) => ipcRenderer.invoke(IPC.githubGetSite, cwd),
+    listReleases: (cwd: string) => ipcRenderer.invoke(IPC.githubListReleases, cwd)
   },
 
   fileSessions: {
@@ -245,6 +251,8 @@ const api: VavApi = {
   agents: {
     resolveBinary: (candidates: string[], force?: boolean) =>
       ipcRenderer.invoke(IPC.agentsResolveBinary, candidates, force === true),
+    probeBinaries: (items, force?: boolean) =>
+      ipcRenderer.invoke(IPC.agentsProbeBinaries, items, force === true),
     listModels: (host: string | null, force?: boolean) =>
       ipcRenderer.invoke(IPC.agentsListModels, host, force === true),
     getModelCatalog: () => ipcRenderer.invoke(IPC.agentsGetModelCatalog),
@@ -259,7 +267,12 @@ const api: VavApi = {
       }
       ipcRenderer.on(IPC.agentsModelCatalogChanged, listener)
       return () => ipcRenderer.removeListener(IPC.agentsModelCatalogChanged, listener)
-    }
+    },
+    installStart: (payload) => ipcRenderer.invoke(IPC.agentsInstallStart, payload),
+    installCancel: (agentId) => ipcRenderer.invoke(IPC.agentsInstallCancel, agentId),
+    installClear: (agentId) => ipcRenderer.invoke(IPC.agentsInstallClear, agentId),
+    listInstallRuns: () => ipcRenderer.invoke(IPC.agentsListInstallRuns),
+    onInstallRunsChanged: (handler) => subscribe(IPC.agentsInstallRunsChanged, handler)
   },
 
   pty: {
@@ -296,7 +309,8 @@ const api: VavApi = {
     getAccentColor: () => ipcRenderer.invoke(IPC.windowGetAccentColor) as Promise<string>,
     onAccentColorChanged: (handler) => subscribe<string>(IPC.accentColorChanged, handler),
     shellPath: (kind: ShellKind) => ipcRenderer.invoke(IPC.windowShellPath, kind),
-    openSettings: (view?: SettingsView) => ipcRenderer.invoke(IPC.windowOpenSettings, view),
+    openSettings: (view?: SettingsView, agentId?: string) =>
+      ipcRenderer.invoke(IPC.windowOpenSettings, view, agentId),
     closeSettings: () => ipcRenderer.invoke(IPC.windowCloseSettings),
     popupMenu: (items: NativeMenuItem[], position?: { x: number; y: number }) =>
       ipcRenderer.invoke(IPC.windowPopupMenu, items, position),
@@ -311,6 +325,7 @@ const api: VavApi = {
     listDetachedSessions: () => ipcRenderer.invoke(IPC.windowListDetached),
     onDetachedChanged: (handler) =>
       subscribe<string[]>(IPC.windowDetachedChanged, handler),
+    onRepaint: (handler) => subscribe(IPC.windowRepaint, () => handler()),
     openFilePreview: (path, options) =>
       ipcRenderer.invoke(IPC.windowOpenFilePreview, path, options),
     onPreviewNavigate: (handler) =>
@@ -346,11 +361,18 @@ const api: VavApi = {
       ipcRenderer.invoke(IPC.windowOpenTokenUsage, conversationId, anchor),
     getTokenUsageView: () => ipcRenderer.invoke(IPC.tokenUsageGetView),
     onTokenUsageView: (handler) => subscribe<TokenUsageViewPayload>(IPC.tokenUsageView, handler),
+    openProviderAccount: (conversationId, anchor) =>
+      ipcRenderer.invoke(IPC.windowOpenProviderAccount, conversationId, anchor),
+    getProviderAccountView: () => ipcRenderer.invoke(IPC.providerAccountGetView),
+    onProviderAccountView: (handler) =>
+      subscribe<ProviderAccountViewPayload>(IPC.providerAccountView, handler),
+    fitProviderAccount: (height) => ipcRenderer.invoke(IPC.providerAccountFit, height),
     relaunch: () => ipcRenderer.invoke(IPC.windowRelaunch)
   },
 
   notifications: {
-    permission: () => ipcRenderer.invoke(IPC.notificationsPermission)
+    permission: () => ipcRenderer.invoke(IPC.notificationsPermission),
+    seen: (conversationId) => ipcRenderer.send(IPC.notificationsSeen, conversationId)
   },
 
   changeSets: {
@@ -381,7 +403,7 @@ const api: VavApi = {
 
   onMenuCommand: (handler) => subscribe<MenuCommand>(IPC.menuCommand, handler),
   onSettingsChanged: (handler) => subscribe<AppSettings>(IPC.settingsChanged, handler),
-  onSettingsView: (handler) => subscribe<SettingsView>(IPC.settingsView, handler),
+  onSettingsView: (handler) => subscribe<SettingsViewPayload>(IPC.settingsView, handler),
   onCliOpen: (handler) => subscribe(IPC.cliOpen, handler),
   onFullscreen: (handler) => subscribe<boolean>(IPC.windowFullscreen, handler)
 }

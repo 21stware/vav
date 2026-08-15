@@ -67,15 +67,24 @@ export function loadAppIcon(variant?: 'light' | 'dark'): NativeImage | undefined
   return undefined
 }
 
+/** Last Dock badge text — restored after setIcon, which can drop AppKit's badge. */
+let dockBadgeText = ''
+
+/** Set the macOS Dock numeric badge. Empty string clears it. */
+export function setDockBadge(text: string): void {
+  dockBadgeText = text
+  if (process.platform !== 'darwin' || !app.dock) return
+  app.dock.setBadge(text)
+}
+
 /** Push the brand tile onto the Dock (safe to call after hide/show / theme flip). */
 export function applyDockIcon(): void {
   if (process.platform !== 'darwin' || !app.dock) return
   const icon = loadAppIcon()
   if (!icon) return
   app.dock.setIcon(icon)
-  // Notification badges are easy to hide in System Settings and do not
-  // carry three-letter text reliably. The marker is painted on the tile.
-  app.dock.setBadge('')
+  // setIcon drops a runtime badge — put the attention count back.
+  app.dock.setBadge(dockBadgeText)
   const variant = nativeTheme.shouldUseDarkColors ? 'dark' : 'light'
   console.log(`[brand] dock icon ← ${resolveAppIconPath(variant) ?? resolveAppIconPath('light')}`)
 }

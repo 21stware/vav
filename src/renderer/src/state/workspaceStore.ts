@@ -9,6 +9,19 @@ const lastInjectFingerprint = new Map<string, string>()
 /** Pending delayed inject timers keyed by conversation id. */
 const pendingInjectTimers = new Map<string, number>()
 import type { PtyActivityStatus, PtyListResult, PtySessionMeta } from '@shared/ipc'
+import { retainInstallMeta } from '../lib/retainInstallMeta'
+import {
+  adoptRemotePendingTabs,
+  CLI_PENDING_PREFIX,
+  pendingTabFromId
+} from '../lib/cliPendingLayout'
+import { resolveHydratedCliMode } from '../lib/cliSurfaceAuthority'
+import { isCompanionSessionShell } from '../lib/windowKind'
+import {
+  disposeTerminal,
+  markTerminalProcessExited,
+  resetTerminalForNewProcess
+} from '../lib/terminalRegistryHandle'
 import {
   enabledCliAgents,
   normalizeFileSortKey,
@@ -57,6 +70,11 @@ function maybeAutoAssignSingleAgent(conversationId: string, pendingTabId: string
       if (enabled.length !== 1) return
       const sole = enabled[0]
       if (!sole?.id) return
+      const { getAgentInstallStatus, refreshAgentInstallStatus } = await import(
+        '../lib/agentInstallStatus'
+      )
+      await refreshAgentInstallStatus({ force: false, discover: false })
+      if (getAgentInstallStatus(sole.id) === 'missing') return
       // Pane may have been closed already.
       const surface = getCliSurface(useWorkspaceStore.getState().workspaces[conversationId])
       if (!surface?.tabs.some((t) => t.id === pendingTabId && t.pendingCli)) return
@@ -154,16 +172,9 @@ export const CLI_SURFACE_KEY = '__cli__'
 export function makePendingCliTab(): TerminalTab {
   const id =
     typeof crypto !== 'undefined' && crypto.randomUUID
-      ? `cli-pending:${crypto.randomUUID()}`
-      : `cli-pending:${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
-  return {
-    id,
-    title: 'CLI',
-    isAgent: false,
-    agentId: null,
-    pendingCli: true,
-    splitWeight: 1
-  }
+      ? `${CLI_PENDING_PREFIX}${crypto.randomUUID()}`
+      : `${CLI_PENDING_PREFIX}${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
+  return pendingTabFromId(id)
 }
 
 export interface WorkspaceSlice {
@@ -552,6 +563,18 @@ function mergeCliSurface(
   }
 
   if (tabs.length === 0) {
+    // Companion closed every live pane and reseeded a picker. Main still holds
+    // those dead PTY tabs — adopt the persisted pending leaves so reclaim is
+    // not a blank Screen.
+    const adopted = adoptRemotePendingTabs(prev?.tabs, remoteLayout)
+    if (adopted) {
+      const tabIds = adopted.map((t) => t.id)
+      return {
+        tabs: adopted,
+        layout: reconcileLayout(remoteLayout, tabIds) ?? layoutFromTabIds(tabIds),
+        activeTabId: adopted[0]!.id
+      }
+    }
     // Screen existed but projection is empty (brief list race / all exited).
     // Prefer keeping the previous Screen topology over inventing a new picker —
     // enterCliMode + VAV park must not look like a wipe.
@@ -612,12 +635,20 @@ function tabsEqual(a: TerminalTab[], b: TerminalTab[]): boolean {
       x.agentId !== y.agentId ||
       x.title !== y.title ||
       !!x.isAgent !== !!y.isAgent ||
-      !!x.pendingCli !== !!y.pendingCli
+      !!x.pendingCli !== !!y.pendingCli ||
+      x.purpose !== y.purpose ||
+      x.installAgentId !== y.installAgentId
     ) {
       return false
     }
   }
   return true
+}
+
+export type NewBashOptions = {
+  title?: string
+  purpose?: 'install'
+  installAgentId?: string
 }
 
 /** Stable fingerprint of split axes so hydrate can tell row vs column apart. */
@@ -683,6 +714,8 @@ function projectPtySessions(sessions: PtySessionMeta[]): {
       title: isVavMirror ? 'VAV' : s.title || `bash-${index + 1}`,
       isAgent: isVavMirror,
       agentId: isVavMirror ? 'vav' : null,
+      purpose: s.purpose,
+      installAgentId: s.installAgentId,
       splitWeight: 1
     }
   })
@@ -812,7 +845,8 @@ interface WorkspaceState {
      * Stable tab id for multi-window ensure (primary agent pane).
      * Omit for splits so each pane gets a fresh process.
      */
-    preferredId?: string
+    preferredId?: string,
+    extras?: NewBashOptions
   ): Promise<string>
   /**
    * Split the *active* pane (or create first pane).
@@ -827,8 +861,9 @@ interface WorkspaceState {
     id: string,
     cols?: number,
     rows?: number,
-    axis?: TerminalSplitAxis
-  ): Promise<void>
+    axis?: TerminalSplitAxis,
+    extras?: NewBashOptions
+  ): Promise<string>
   /**
    * Enter CLI Agent mode: show unified surface with a type-picker pane if empty.
    */
@@ -910,7 +945,7 @@ interface WorkspaceState {
    * Rebuild tabs + agentHostSessions from main-process live PTYs.
    * Safe to call from any window — never spawns, only projects.
    */
-  hydratePtyState(id: string): Promise<void>
+  hydratePtyState(id: string, opts?: { acceptRemoteSurface?: boolean }): Promise<void>
 
   /**
    * Push current bash / agent split trees to main so other windows (detached)
@@ -920,6 +955,11 @@ interface WorkspaceState {
   syncPtyLayouts(id: string): Promise<void>
 
   disposeConversation(id: string): void
+  /**
+   * Drop this renderer's projection + xterms. Does not kill PTYs — used when a
+   * warm session shell parks so the next claim does not remount a stale Screen.
+   */
+  forgetLocalWorkspace(id: string): void
 }
 
 export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
@@ -959,7 +999,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     await get().hydratePtyState(id)
   },
 
-  async hydratePtyState(id) {
+  async hydratePtyState(id, opts) {
     if (!window.vav.pty.list) return
     let sessions: PtySessionMeta[] = []
     let remoteLayouts = emptyPtyLayouts()
@@ -991,22 +1031,28 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     })
     const status = get().ptyStatus[id] ?? {}
     const projected = projectPtySessions(sessions)
+    let followRemote = opts?.acceptRemoteSurface === true
+    if (!followRemote && !isCompanionSessionShell()) {
+      try {
+        const { useSessionStore } = await import('./sessionStore')
+        followRemote = useSessionStore.getState().detachedConversationIds.includes(id)
+      } catch {
+        followRemote = false
+      }
+    }
     patch(set, id, (s) => {
       // CLI Screen mode — single flag on ConversationPtyLayouts.cliMode.
-      // Same rules in every window (main, detached, reclaim):
-      // 1. remote true  → CLI (synced from a window that is in CLI).
-      // 2. remote false → VAV, unless local is still cliMode true (pre-hydrate
-      //    race must not demote an active CLI Screen in this window).
-      // 3. remote unset → keep local (main never wrote the flag yet).
+      // Companion is the writer while detached. Parked main / reclaim follow
+      // remote false so Thread in the companion comes back as Thread.
+      // The writing window still ignores a stale remote false (enterCliMode
+      // race must not bounce Swarm → VAV).
       // Parked CLI panes (agentHostSessions still present) do NOT imply mode —
       // user may be on VAV with agents running in the background.
-      const remoteCli = remoteLayouts.cliMode
-      const cliMode =
-        remoteCli === true
-          ? true
-          : remoteCli === false
-            ? s.cliMode === true
-            : s.cliMode === true
+      const cliMode = resolveHydratedCliMode({
+        remoteCli: remoteLayouts.cliMode,
+        localCli: s.cliMode === true,
+        followRemote
+      })
       let activeHostAgentId = s.activeHostAgentId
       if (cliMode) {
         activeHostAgentId = CLI_SURFACE_KEY
@@ -1020,7 +1066,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       // Tombstones apply to the tools-tray list only. Agent hosts are excluded
       // deliberately: `isLiveAgentSession` would read a dead pane as restorable
       // and suppress the relaunch that switching back to that agent needs.
-      const tabs = withTombstones(projected.tabs, s.tabs, status)
+      const tabs = retainInstallMeta(withTombstones(projected.tabs, s.tabs, status), s.tabs)
       // Prefer main-process layouts (detached ↔ main). Fall back to local, never
       // to a fresh layoutFromTabIds row tree when a persisted tree exists.
       const layout = reconcileLayout(
@@ -1322,7 +1368,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
    * - `agentIdOverride === null` / omit for user bash → plain shell into `tabs`
    * - `agentIdOverride` = CLI agent id → agent host session only (not tools tray)
    */
-  async newUserTerminal(id, cols, rows, agentIdOverride, launchContext, preferredId) {
+  async newUserTerminal(id, cols, rows, agentIdOverride, launchContext, preferredId, extras) {
     const slice = get().workspaces[id]
     // Absolute cwd only — node-pty rejects "~". Prefer in-memory state (no IPC).
     const cwd = await resolveTerminalCwd(id, slice?.root ?? null)
@@ -1334,6 +1380,9 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     const agent = forAgentHost ? await resolveCliAgentConfig(agentIdOverride) : null
 
     const strategy = contextLaunchStrategyForAgent(agent?.id)
+    // A stable preferredId (CLI agent primary pane) may still own the xterm of
+    // a process that already quit — blank it before the new one writes a byte.
+    if (preferredId) resetTerminalForNewProcess(id, preferredId)
     const tabId = await window.vav.pty.create(
       id,
       cwd,
@@ -1358,9 +1407,15 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         : {
             ...(preferredId ? { preferredId } : {}),
             agentId: null,
-            title: 'bash'
+            title: extras?.title?.trim() || 'bash',
+            pinTitle: extras?.purpose === 'install',
+            purpose: extras?.purpose,
+            installAgentId: extras?.installAgentId
           }
     )
+
+    // Main may have minted (or attached) a different id than we guessed.
+    resetTerminalForNewProcess(id, tabId)
 
     if (forAgentHost && agent) {
       // Caller (activate/splitAgentHost) folds this into agentHostSessions.
@@ -1374,9 +1429,11 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         ...userBashTabsOnly(s.tabs),
         {
           id: tabId,
-          title: `bash-${index}`,
+          title: extras?.title?.trim() || `bash-${index}`,
           isAgent: false,
           agentId: null,
+          purpose: extras?.purpose,
+          installAgentId: extras?.installAgentId,
           splitWeight: 1
         }
       ],
@@ -1385,22 +1442,31 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     return tabId
   },
 
-  async newBash(id, cols = 80, rows = 24, axis: TerminalSplitAxis = 'row') {
+  async newBash(id, cols = 80, rows = 24, axis: TerminalSplitAxis = 'row', extras) {
     const slice = get().workspaces[id]
     const bashTabs = userBashTabsOnly(slice?.tabs ?? [])
     // First pane: single leaf, no split.
     if (!slice || bashTabs.length === 0 || !slice.layout) {
-      const tabId = await get().newUserTerminal(id, cols, rows, null)
+      const tabId = await get().newUserTerminal(id, cols, rows, null, undefined, undefined, extras)
       patch(set, id, (s) => ({
-        tabs: userBashTabsOnly(s.tabs),
+        tabs: userBashTabsOnly(s.tabs).map((t) =>
+          t.id === tabId
+            ? {
+                ...t,
+                title: extras?.title?.trim() || t.title,
+                purpose: extras?.purpose ?? t.purpose,
+                installAgentId: extras?.installAgentId ?? t.installAgentId
+              }
+            : t
+        ),
         layout: { type: 'leaf', tabId, weight: 1 },
         activeTabId: tabId
       }))
       get().syncPtyLayouts(id)
-      return
+      return tabId
     }
     const focusId = slice.activeTabId || bashTabs[0]!.id
-    const newTabId = await get().newUserTerminal(id, cols, rows, null)
+    const newTabId = await get().newUserTerminal(id, cols, rows, null, undefined, undefined, extras)
     patch(set, id, (s) => {
       // Hydrate may have attached newTabId as a default-row leaf during the
       // await — strip it, then re-split with the caller's axis (⌘D / ⌘⇧D).
@@ -1421,12 +1487,25 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
           ...baseTabs,
           {
             id: newTabId,
-            title: `bash-${baseTabs.length + 1}`,
+            title: extras?.title?.trim() || `bash-${baseTabs.length + 1}`,
             isAgent: false,
             agentId: null,
+            purpose: extras?.purpose,
+            installAgentId: extras?.installAgentId,
             splitWeight: 1
           }
         ]
+      } else if (extras?.purpose === 'install' || extras?.title) {
+        baseTabs = baseTabs.map((t) =>
+          t.id === newTabId
+            ? {
+                ...t,
+                title: extras?.title?.trim() || t.title,
+                purpose: extras?.purpose ?? t.purpose,
+                installAgentId: extras?.installAgentId ?? t.installAgentId
+              }
+            : t
+        )
       }
       return {
         tabs: baseTabs,
@@ -1435,6 +1514,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       }
     })
     get().syncPtyLayouts(id)
+    return newTabId
   },
 
   enterCliMode(id) {
@@ -2136,6 +2216,9 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       })()
     if (!tabMeta?.pendingCli) {
       void window.vav.pty.kill(tabId)
+      // The pane is gone for good, so drop its xterm too. Agent panes share one
+      // stable id per agent: a surviving buffer would resurface in the relaunch.
+      disposeTerminal(id, tabId)
     }
     terminalSinks.delete(sinkKey(id, tabId))
     pendingMirrors.delete(sinkKey(id, tabId))
@@ -2193,30 +2276,44 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     // Existing PTYs keep their original shell; only new tabs pick up the change.
   },
 
+  forgetLocalWorkspace(id) {
+    dropLocalWorkspace(set, get, id, { killPty: false })
+  },
+
   disposeConversation(id) {
-    const slice = get().workspaces[id]
-    const allTabs = new Map<string, TerminalTab>()
-    for (const tab of slice?.tabs ?? []) allTabs.set(tab.id, tab)
-    for (const host of Object.values(slice?.agentHostSessions ?? {})) {
-      for (const tab of host.tabs) allTabs.set(tab.id, tab)
-    }
-    for (const tab of allTabs.values()) {
-      void window.vav.pty.kill(tab.id)
-      terminalSinks.delete(sinkKey(id, tab.id))
-      pendingMirrors.delete(sinkKey(id, tab.id))
-      lastInjectFingerprint.delete(tab.id)
-    }
-    const timer = pendingInjectTimers.get(id)
-    if (timer != null) {
-      window.clearTimeout(timer)
-      pendingInjectTimers.delete(id)
-    }
-    set((state) => ({
-      workspaces: omit(state.workspaces, id),
-      ptyStatus: omit(state.ptyStatus, id)
-    }))
+    dropLocalWorkspace(set, get, id, { killPty: true })
   }
 }))
+
+function dropLocalWorkspace(
+  set: (fn: (state: WorkspaceState) => Partial<WorkspaceState>) => void,
+  get: () => WorkspaceState,
+  id: string,
+  opts: { killPty: boolean }
+): void {
+  const slice = get().workspaces[id]
+  const allTabs = new Map<string, TerminalTab>()
+  for (const tab of slice?.tabs ?? []) allTabs.set(tab.id, tab)
+  for (const host of Object.values(slice?.agentHostSessions ?? {})) {
+    for (const tab of host.tabs) allTabs.set(tab.id, tab)
+  }
+  for (const tab of allTabs.values()) {
+    if (opts.killPty) void window.vav.pty.kill(tab.id)
+    disposeTerminal(id, tab.id)
+    terminalSinks.delete(sinkKey(id, tab.id))
+    pendingMirrors.delete(sinkKey(id, tab.id))
+    lastInjectFingerprint.delete(tab.id)
+  }
+  const timer = pendingInjectTimers.get(id)
+  if (timer != null) {
+    window.clearTimeout(timer)
+    pendingInjectTimers.delete(id)
+  }
+  set((state) => ({
+    workspaces: omit(state.workspaces, id),
+    ptyStatus: omit(state.ptyStatus, id)
+  }))
+}
 
 function patch(
   set: (fn: (state: WorkspaceState) => Partial<WorkspaceState>) => void,
@@ -2269,6 +2366,9 @@ export function installPtyBridge(): () => void {
     for (const [key, sink] of terminalSinks) {
       if (key.endsWith(`::${tabId}`)) sink('\r\n[process exited]\r\n')
     }
+    // Keep the buffer readable, but never hand it to the next process on this
+    // tab id (CLI agents relaunch into the same stable pane id).
+    markTerminalProcessExited(tabId)
   })
   const offChanged = pty.onChanged
     ? pty.onChanged(({ conversationId }) => {

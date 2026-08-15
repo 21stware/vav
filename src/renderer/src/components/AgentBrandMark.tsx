@@ -1,8 +1,8 @@
 import type { AgentConfig } from '@shared/types'
 import claudeIcon from '../assets/agents/claudecode-color.svg'
-import codexIcon from '../assets/agents/codex-color.svg'
+import codexIcon from '../assets/agents/codex.svg'
 import cursorIcon from '../assets/agents/cursor.svg'
-import devinIcon from '../assets/agents/devin-color.svg'
+import devinIcon from '../assets/agents/devin.svg'
 import grokIcon from '../assets/agents/grok.svg'
 import piIcon from '../assets/agents/pi-coding-agent.svg'
 import antigravityIcon from '../assets/agents/antigravity.png'
@@ -48,6 +48,8 @@ export function AgentBrandMark({
   // Dark-on-light / currentColor monochrome assets
   const mono =
     agent.id === 'cursor' ||
+    agent.id === 'codex' ||
+    agent.id === 'devin' ||
     agent.id === 'grok' ||
     agent.id === 'opencode' ||
     agent.id === 'cline' ||

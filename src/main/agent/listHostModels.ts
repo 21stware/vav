@@ -327,6 +327,19 @@ function parseLineIds(text: string): ModelOption[] {
   return dedupe(models)
 }
 
+function parseContextSize(raw: string): number | undefined {
+  const m = raw.trim().match(/^(\d+(?:\.\d+)?)(k|m|b)?$/i)
+  if (!m) return undefined
+  const n = Number(m[1])
+  if (!Number.isFinite(n) || n <= 0) return undefined
+  const unit = (m[2] || '').toLowerCase()
+  if (unit === 'k') return Math.round(n * 1_000)
+  if (unit === 'm') return Math.round(n * 1_000_000)
+  if (unit === 'b') return Math.round(n * 1_000_000_000)
+  if (n >= 1_024) return Math.round(n)
+  return undefined
+}
+
 function parsePiModels(text: string): ModelOption[] {
   const models: ModelOption[] = []
   for (const raw of text.split(/\r?\n/)) {
@@ -339,7 +352,8 @@ function parsePiModels(text: string): ModelOption[] {
     const model = parts[1]!
     if (!provider || !model) continue
     const id = `${provider}/${model}`
-    models.push({ id, label: id })
+    const contextWindow = parts[2] ? parseContextSize(parts[2]) : undefined
+    models.push(contextWindow ? { id, label: id, contextWindow } : { id, label: id })
   }
   return dedupe(models)
 }

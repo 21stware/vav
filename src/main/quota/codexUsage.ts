@@ -2,6 +2,7 @@ import { readFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { net } from 'electron'
+import { emptyAccount, parseCodexIdToken, type HostAccountInfo } from '@shared/cliAccountParse'
 import { windowsFromCodexBackendPayload } from '@shared/quotaWindows'
 import type { QuotaWindow } from '@shared/types'
 
@@ -48,11 +49,32 @@ export async function readCodexAuthIdentity(): Promise<string | null> {
   }
 }
 
+/** Email + plan from the ChatGPT id_token — not the account UUID. */
+export async function readCodexAccountInfo(): Promise<HostAccountInfo> {
+  try {
+    const raw = await readFile(join(codexHome(), 'auth.json'), 'utf8')
+    const parsed = JSON.parse(raw) as {
+      tokens?: { id_token?: unknown; access_token?: unknown }
+    }
+    const idToken = parsed.tokens?.id_token
+    if (typeof idToken === 'string' && idToken.trim()) {
+      return parseCodexIdToken(idToken.trim())
+    }
+    const access = parsed.tokens?.access_token
+    if (typeof access === 'string' && access.trim()) {
+      return { signedIn: true, accountId: null, plan: null }
+    }
+  } catch {
+    // missing / malformed
+  }
+  return emptyAccount()
+}
+
 export async function fetchCodexAccountQuota(): Promise<QuotaWindow[]> {
   const headers = await readCodexAuthHeaders()
   if (!headers) return []
   const res = await net.fetch(USAGE_URL, {
-    headers,
+    headers: { ...headers, Accept: 'application/json' },
     signal: AbortSignal.timeout(API_TIMEOUT_MS)
   })
   if (!res.ok) return []

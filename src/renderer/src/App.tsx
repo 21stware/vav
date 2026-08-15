@@ -23,8 +23,10 @@ import { KeychainOnboarding } from './components/KeychainOnboarding'
 import { useAppearance } from './lib/appearance'
 import { useMenuCommands } from './lib/menuCommands'
 import { installDefaultContextMenu } from './lib/nativeMenu'
+import { installInstallRunBridge } from './state/installRunStore'
 import { SIDEBAR_FLOAT_MAX, useSidebarFloatMode } from './lib/sidebarLayout'
 import { useT } from './i18n/useT'
+import { useAttentionSeen } from './lib/useAttentionSeen'
 
 type LaunchPhase = 'checking' | 'keychain' | 'booting' | 'ready' | 'no-preload'
 
@@ -111,7 +113,7 @@ export default function App(): React.JSX.Element {
       const store = useSessionStore.getState()
       // Reveal in List / CLI open: leave workspace view so the sidebar row is visible.
       if (store.activeGroupId) store.selectWorkspaceGroup(null)
-      if (!store.sidebarVisible) store.toggleSidebar()
+      store.setSidebarVisible(true)
       void store.selectConversation(event.conversationId).then(async () => {
         const next = useSessionStore.getState()
         // File-bound sessions live under File sessions — jump the list there.
@@ -133,6 +135,7 @@ export default function App(): React.JSX.Element {
       })
       if (event.toast) store.setErrorBanner(event.toast)
     })
+    const offInstall = installInstallRunBridge()
     return () => {
       offTurn()
       offFs()
@@ -145,6 +148,7 @@ export default function App(): React.JSX.Element {
       offModels()
       offMenu()
       offCli()
+      offInstall()
     }
   }, [])
 
@@ -152,6 +156,8 @@ export default function App(): React.JSX.Element {
   useTerminalAppearance()
   useMenuCommands()
   useResponsiveSidebar()
+  const activeId = useSessionStore((s) => s.activeId)
+  useAttentionSeen(activeId)
 
   const floating = useSidebarFloatMode()
   const sidebarVisible = useSessionStore((s) => s.sidebarVisible)

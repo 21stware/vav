@@ -28,6 +28,7 @@ import { displayNameForCliHost, enabledCliAgents, isStructuredCliHost } from '@s
 import { Button, EmptyState } from './ui'
 import { AgentBrandMark } from './AgentBrandMark'
 import { SessionWorkspaceChrome } from './SessionWorkspaceChrome'
+import { EmptyQuotaUsage } from './EmptyQuotaUsage'
 import { useT } from '../i18n/useT'
 
 /**
@@ -643,6 +644,11 @@ export function Transcript(): React.JSX.Element {
               logoKey={emptyLogoAgent.id}
               logoLabel={emptyLogoAgent.name}
               enterKey={emptyScene}
+              meta={
+                activeId ? (
+                  <EmptyQuotaUsage conversationId={activeId} host={cliHost} />
+                ) : null
+              }
               title={!apiKeyPresent ? t('transcript.configureKey') : undefined}
               description={!apiKeyPresent ? t('transcript.configureKeyDesc') : undefined}
               foot={<SessionWorkspaceChrome />}

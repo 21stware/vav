@@ -9,7 +9,7 @@ import {
   type TerminalSplitAxis
 } from '../state/workspaceStore'
 import { acquireTerminal } from '../lib/terminalRegistry'
-import { focusRemainingAgentPane, setUiFocusScope } from '../lib/uiFocus'
+import { requestCloseAgentTab, setUiFocusScope } from '../lib/uiFocus'
 import { useT } from '../i18n/useT'
 import { EmptyState } from './ui'
 import { CliAgentPicker } from './CliAgentPicker'
@@ -204,7 +204,6 @@ function LayoutNodeView({
   const pendingCli = !!paneTab?.pendingCli
   const selectTab = useWorkspaceStore((s) => s.selectTab)
   const selectAgentTab = useWorkspaceStore((s) => s.selectAgentTab)
-  const closeAgentTab = useWorkspaceStore((s) => s.closeAgentTab)
   const closeTab = useWorkspaceStore((s) => s.closeTab)
 
   if (node.type === 'leaf') {
@@ -258,8 +257,7 @@ function LayoutNodeView({
             onClick={(e) => {
               e.stopPropagation()
               if (surface === 'agent') {
-                closeAgentTab(conversationId, node.tabId)
-                focusRemainingAgentPane(conversationId)
+                requestCloseAgentTab(conversationId, node.tabId)
               } else {
                 closeTab(conversationId, node.tabId)
               }
@@ -479,13 +477,11 @@ function TerminalHost({
       if (cancelled) return
       if (!force && !document.hasFocus()) return
       if (host.clientWidth === 0 || host.clientHeight === 0) return
-      // Hidden tools-tray / parked Swarm hosts still sit in the tree; skip
-      // fit so we don't SIGWINCH-flash while Thread is showing.
-      if (!force && host.dataset.hidden === 'true') return
+      // Parked hosts keep last geometry — never SIGWINCH while Thread is up.
+      if (host.dataset.hidden === 'true') return
       try {
         const dims = entry.fit.proposeDimensions?.()
         if (
-          !force &&
           dims &&
           dims.cols === entry.term.cols &&
           dims.rows === entry.term.rows
@@ -493,16 +489,6 @@ function TerminalHost({
           return
         }
         entry.fit.fit()
-        // Reuse can leave the canvas at a 1-row “strip”; force PTY to match
-        // once we have a real host box.
-        if (
-          force &&
-          document.hasFocus() &&
-          entry.term.cols > 2 &&
-          entry.term.rows > 1
-        ) {
-          void window.vav.pty.resize(tabId, entry.term.cols, entry.term.rows, true)
-        }
       } catch {
         // ignore
       }
@@ -513,10 +499,9 @@ function TerminalHost({
     const fitWhenReady = (attempt: number): void => {
       if (cancelled) return
       if (host.clientWidth > 0 && host.clientHeight > 0) {
-        fit(true)
-        // Only the active pane may take keys — inactive hosts still fit.
-        if (host.dataset.hidden !== 'true' && autoFocusRef.current) {
-          focusXtermIn(host)
+        if (host.dataset.hidden !== 'true') {
+          fit()
+          if (autoFocusRef.current) focusXtermIn(host)
         }
         return
       }
@@ -595,7 +580,7 @@ function TerminalHost({
       const host = hostRef.current
       if (!host) return
       if (host.clientWidth > 0 && host.clientHeight > 0) {
-        fitRef.current(true)
+        fitRef.current()
         if (autoFocus) focusXtermIn(host)
         return
       }

@@ -7,7 +7,7 @@ import {
   type ReactNode,
   type RefObject
 } from 'react'
-import { Clock, Plus, Search } from 'lucide-react'
+import { ArrowLeft, ArrowRight, Clock, Plus, Search } from 'lucide-react'
 import { buildWorkspaceFocusContext } from '@shared/agentContextInject'
 import { DEFAULT_CLI_AGENTS, enabledCliAgents, type AgentConfig } from '@shared/types'
 import type { FileSessionMeta } from '@shared/ipc'
@@ -19,6 +19,8 @@ import {
   measureCliPaneRects
 } from '../lib/cliPaneNavigate'
 import { focusAgentPane } from '../lib/uiFocus'
+import { requestCliSurface } from '../lib/cliSurfaceSwitch'
+import { isCliSurfaceLocked } from '../lib/cliSurfaceAuthority'
 import { focusCliAgentPickerFirstOption } from './CliAgentPicker'
 import { useSessionStore } from '../state/sessionStore'
 import { CLI_SURFACE_KEY, useWorkspaceStore } from '../state/workspaceStore'
@@ -40,8 +42,10 @@ import {
   markAgentBinaryMissing,
   markAgentBinaryReady
 } from '../lib/agentBinaryCache'
+import { refreshAgentInstallStatus } from '../lib/agentInstallStatus'
 import { parkTerminal } from '../lib/terminalRegistry'
 import { useT } from '../i18n/useT'
+import { workdirLabel } from '../lib/format'
 import { keys } from '../lib/platform'
 import { useSidebarFloatMode } from '../lib/sidebarLayout'
 import { isCompanionSessionShell } from '../lib/windowKind'
@@ -322,10 +326,12 @@ export function SessionDetail({
       setProbe('idle')
       return
     }
+    // Companion owns enter/exit while this session is detached.
+    if (detachedElsewhere) return
     setProbe('ready')
     useWorkspaceStore.getState().enterCliMode(activeId)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeId, isVavMode])
+  }, [activeId, isVavMode, detachedElsewhere])
 
   // Swarm off: leave Screen if a session still has cliMode from last time.
   useEffect(() => {
@@ -334,6 +340,26 @@ export function SessionDetail({
       useWorkspaceStore.getState().exitCliMode(activeId)
     }
   }, [activeId, swarmEnabled])
+
+  // Each time Swarm is shown or the window is focused, re-probe PATH so a
+  // newly installed CLI appears (and un-grays) without restarting.
+  useEffect(() => {
+    if (isVavMode || detachedElsewhere) return
+    const scan = (): void => {
+      void refreshAgentInstallStatus({ force: false, discover: true })
+    }
+    scan()
+    const onFocus = (): void => scan()
+    const onVisible = (): void => {
+      if (document.visibilityState === 'visible') scan()
+    }
+    window.addEventListener('focus', onFocus)
+    document.addEventListener('visibilitychange', onVisible)
+    return () => {
+      window.removeEventListener('focus', onFocus)
+      document.removeEventListener('visibilitychange', onVisible)
+    }
+  }, [isVavMode, detachedElsewhere, activeId])
 
   // CLI surface: ⌘D / ⌘⇧D split; ⌘←↑↓→ spatial pane focus.
   useEffect(() => {
@@ -564,9 +590,8 @@ export function SessionDetail({
   const swarmVisible = !isVavMode && !detachedElsewhere && !showInstallGate
 
   /*
-   * Thread and Swarm stay mounted across switches. Park with `.is-surface-parked`
-   * (`display: none !important`) — HTML `hidden` loses to our `display: flex`
-   * rules and was painting the Swarm picker over Thread.
+   * Thread and Swarm stay mounted. Surfaces park with visibility (not
+   * display:none) so the transcript render tree survives the flip.
    */
   return (
     <main className={shellClass}>
@@ -621,11 +646,11 @@ export function SessionDetail({
         </div>
       )}
 
+      <div className="session-surfaces">
       <div
         className={`${streamClass}${!isVavMode ? ' is-surface-parked' : ''}`}
         data-search={searchOpen}
         aria-hidden={!isVavMode}
-        inert={!isVavMode ? true : undefined}
       >
         {searchOpen && isVavMode && <SearchStrip />}
         {!previewEdit && <PlanOverlay />}
@@ -638,7 +663,6 @@ export function SessionDetail({
           isVavMode ? ' is-surface-parked' : ''
         }`}
         aria-hidden={isVavMode}
-        inert={isVavMode ? true : undefined}
       >
         {detachedElsewhere ? (
           <div className="detached-session-park">
@@ -689,6 +713,7 @@ export function SessionDetail({
           <TerminalPanel visible={swarmVisible} surface="agent" />
         </div>
       </div>
+      </div>
 
       <div
         className={`dock${previewEdit ? ' preview-edit-dock' : ''}${
@@ -731,6 +756,9 @@ export function AgentModeChrome({
   const t = useT()
   const cliMode = useWorkspaceStore((s) => !!s.workspaces[conversationId]?.cliMode)
   const swarmEnabled = useSessionStore((s) => s.settings.swarmModeEnabled === true)
+  const surfaceLocked = useSessionStore((s) =>
+    isCliSurfaceLocked(conversationId, s.detachedConversationIds, isCompanionSessionShell())
+  )
   const isTerminal = swarmEnabled && cliMode
   const isChat = !isTerminal
   void _agentBinaryName
@@ -751,8 +779,7 @@ export function AgentModeChrome({
     }
     const targetId = await ensureConversation()
     if (!targetId) return
-    // Single patch + layout sync (includes bash-tab park).
-    useWorkspaceStore.getState().exitCliMode(targetId)
+    requestCliSurface(targetId, false)
   }
 
   /** Raw PTY screen — restores existing Screen if present, else picker pane. */
@@ -763,14 +790,19 @@ export function AgentModeChrome({
     }
     const targetId = await ensureConversation()
     if (!targetId) return
-    useWorkspaceStore.getState().enterCliMode(targetId)
-    // Leave the segment button — keyboard (←/→/Enter, xterm) needs the pane.
-    focusAgentPane(targetId)
+    requestCliSurface(targetId, true)
   }
 
   const searchOpen = useSessionStore((s) => s.search.open)
   const openSearch = useSessionStore((s) => s.openSearch)
   const closeSearch = useSessionStore((s) => s.closeSearch)
+  const conversation = useSessionStore((s) =>
+    s.conversations.find((c) => c.id === conversationId)
+  )
+  const tmp = useSessionStore((s) => s.tmp)
+  const home = useSessionStore((s) => s.home)
+  const workdir = conversation?.workingDirectory ?? null
+  const workspacePath = workdirLabel(workdir, tmp, home)
   const fs = fileSessionChrome
 
   const showFileSessionChrome = !!(fs && isChat && fs.sessions.length > 0)
@@ -787,28 +819,37 @@ export function AgentModeChrome({
         ) : null}
 
         {swarmEnabled ? (
-          <div
-            className="agent-mode-segment"
-            role="group"
-            aria-label={t('agents.surfaceSelector')}
-            title={t('agents.switchHint')}
-          >
+          <div className="agent-mode-swarm-toggle">
             <button
               type="button"
-              className={`agent-mode-segment-btn${isChat ? ' is-active' : ''}`}
-              title={t('agents.chatModeHint')}
-              onClick={() => void openChatMode()}
+              className="agent-mode-swarm-btn"
+              disabled={surfaceLocked}
+              title={
+                surfaceLocked
+                  ? t('session.detachedTitle')
+                  : isTerminal
+                    ? `${t('agents.chatModeHint')} ${keys('⌘⇧V')}`
+                    : `${t('agents.terminalModeHint')} ${keys('⌘⇧C')}`
+              }
+              onClick={() => void (isTerminal ? openChatMode() : openTerminalMode())}
             >
-              <span>{t('agents.chatMode')}</span>
+              {isTerminal ? (
+                <ArrowLeft size={13} strokeWidth={2} />
+              ) : (
+                <ArrowRight size={13} strokeWidth={2} />
+              )}
+              <span>{isTerminal ? t('agents.chatMode') : t('agents.terminalMode')}</span>
             </button>
-            <button
-              type="button"
-              className={`agent-mode-segment-btn${isTerminal ? ' is-active' : ''}`}
-              title={t('agents.terminalModeHint')}
-              onClick={() => void openTerminalMode()}
-            >
-              <span>{t('agents.terminalMode')}</span>
-            </button>
+            {isTerminal ? (
+              <>
+                <span className="agent-mode-workspace-dot" aria-hidden="true">
+                  ·
+                </span>
+                <span className="agent-mode-workspace-name" title={workdir ?? workspacePath}>
+                  {workspacePath}
+                </span>
+              </>
+            ) : null}
           </div>
         ) : null}
 

@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { claudeContextUsed } from '@shared/cliAccountParse'
 import type { ApprovalMode, QuotaWindow } from '@shared/types'
 import {
   normalizeQuotaPercent,
@@ -303,17 +304,9 @@ function handleClaudeMessage(value: unknown, ctx: ClaudeHandlerCtx): void {
 
   if (type === 'assistant') {
     if (asString(msg.parent_tool_use_id)) return
-    const usage = dig(msg, 'message.usage')
-    if (usage) {
-      const u = asRecord(usage)
-      ctx.emit({
-        type: 'usage',
-        inputTokens: num(u?.input_tokens) ?? num(u?.inputTokens),
-        outputTokens: num(u?.output_tokens) ?? num(u?.outputTokens),
-        cacheRead: num(u?.cache_read_input_tokens) ?? num(u?.cacheReadInputTokens),
-        cacheWrite: num(u?.cache_creation_input_tokens) ?? num(u?.cacheCreationInputTokens)
-      })
-    }
+    emitClaudeUsage(ctx, asRecord(dig(msg, 'message.usage')))
+    const windows = quotaWindowsFromClaudeMessage(msg)
+    if (windows.length) ctx.emit({ type: 'quota', windows })
     const content = asArray(dig(msg, 'message.content')) ?? []
     for (const block of content) {
       const b = asRecord(block)
@@ -387,17 +380,29 @@ function handleClaudeMessage(value: unknown, ctx: ClaudeHandlerCtx): void {
       error: error ?? undefined,
       resumeAt
     })
-    const usage = asRecord(msg.usage)
-    if (usage) {
-      ctx.emit({
-        type: 'usage',
-        inputTokens: num(usage.input_tokens) ?? num(usage.inputTokens),
-        outputTokens: num(usage.output_tokens) ?? num(usage.outputTokens),
-        cacheRead: num(usage.cache_read_input_tokens),
-        cacheWrite: num(usage.cache_creation_input_tokens)
-      })
-    }
+    emitClaudeUsage(ctx, asRecord(msg.usage))
+    const windows = quotaWindowsFromClaudeMessage(msg)
+    if (windows.length) ctx.emit({ type: 'quota', windows })
   }
+}
+
+function emitClaudeUsage(
+  ctx: { emit: DriverEventSink },
+  usage: Record<string, unknown> | null
+): void {
+  if (!usage) return
+  const inputTokens = num(usage.input_tokens) ?? num(usage.inputTokens)
+  const outputTokens = num(usage.output_tokens) ?? num(usage.outputTokens)
+  const cacheRead = num(usage.cache_read_input_tokens) ?? num(usage.cacheReadInputTokens)
+  const cacheWrite = num(usage.cache_creation_input_tokens) ?? num(usage.cacheCreationInputTokens)
+  ctx.emit({
+    type: 'usage',
+    inputTokens,
+    outputTokens,
+    cacheRead,
+    cacheWrite,
+    contextUsed: claudeContextUsed({ inputTokens, cacheRead, cacheWrite })
+  })
 }
 
 /**

@@ -1,17 +1,20 @@
 /**
  * DOCX via docx-preview. Selection: single capture listener, leaf targets only.
- * Fit-to-width via CSS transform when the preview pane is narrower/wider than a page.
+ * Layout is CSS-only: the parsed page is measured once, then scaled to whatever
+ * fit-to-width or the user's pinch asks for (see {@link useDocZoom}).
  */
 
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { renderAsync } from 'docx-preview'
 import type { PreviewBlock } from '@shared/previewBlock'
 import { loadFileBuffer } from '../../lib/officeBinary'
-import { docMeasureMinPx, docMeasurePx, stableContentWidth } from '../../lib/docMeasure'
 import { attachDomPick, updateDomPick } from './pickFromDom'
 import { useT } from '../../i18n/useT'
 import { PagePager } from './PagePager'
+import { DocZoomControls, DOC_ZOOM_STEP } from './DocZoomControls'
+import { useDocZoom } from './useDocZoom'
 import { useDocumentPageIndex } from './useDocumentPageIndex'
+import { writeDocZoom } from '../../lib/selectionChrome'
 
 const DOCX_SELECTOR = [
   '.docx-native p',
@@ -26,74 +29,68 @@ const DOCX_SELECTOR = [
   '.docx-native th'
 ].join(',')
 
-/**
- * CSS-only fit. Never re-parses DOCX.
- * Caches natural page width so resize only does arithmetic + style writes.
- */
-function fitDocxToHost(host: HTMLElement): void {
+type DocxNatural = { pageWidth: number; height: number }
+
+/** Wrap the docx-preview output in a frame whose box is the *visual* page. */
+function ensureFitFrame(host: HTMLElement): HTMLElement | null {
   // className: 'docx-native' → wrapper is `.docx-native-wrapper` (not `.docx-wrapper`).
   const wrapper = host.querySelector(
     '.docx-native-wrapper, .docx-wrapper'
   ) as HTMLElement | null
-  if (!wrapper) return
+  if (!wrapper) return null
+  const parent = wrapper.parentElement
+  if (parent?.classList.contains('docx-fit-frame')) return parent
+  const frame = document.createElement('div')
+  frame.className = 'docx-fit-frame'
+  wrapper.replaceWith(frame)
+  frame.appendChild(wrapper)
+  return frame
+}
 
-  let frame = wrapper.parentElement
-  if (!frame?.classList.contains('docx-fit-frame')) {
-    frame = document.createElement('div')
-    frame.className = 'docx-fit-frame'
-    wrapper.replaceWith(frame)
-    frame.appendChild(wrapper)
-  }
-
-  // Host not laid out yet (or was staged at 0×0) — drop stale cache and bail;
-  // ResizeObserver will re-fit once the scrollport has a real width.
-  if (host.clientWidth < 40) {
-    delete wrapper.dataset.naturalPageW
-    delete wrapper.dataset.naturalH
-    delete wrapper.dataset.docxScale
-    return
-  }
-
-  // Cache natural metrics once (or when content changes).
-  let pageW = Number(wrapper.dataset.naturalPageW || 0)
-  let naturalH = Number(wrapper.dataset.naturalH || 0)
-  if (!(pageW > 40) || !(naturalH > 40)) {
-    wrapper.style.transform = 'none'
-    const pages = wrapper.querySelectorAll<HTMLElement>(
-      'section.docx-native, section.docx, .docx'
-    )
-    pageW = 0
-    pages.forEach((p) => {
-      pageW = Math.max(pageW, p.offsetWidth || p.scrollWidth || 0)
+/**
+ * Natural (100%) page width + document height, measured once per render at
+ * transform: none. Everything after that is arithmetic on these two numbers.
+ */
+function measureDocxNatural(host: HTMLElement): DocxNatural | null {
+  const wrapper = host.querySelector(
+    '.docx-native-wrapper, .docx-wrapper'
+  ) as HTMLElement | null
+  if (!wrapper) return null
+  wrapper.style.transform = 'none'
+  let pageWidth = 0
+  wrapper
+    .querySelectorAll<HTMLElement>('section.docx-native, section.docx, .docx')
+    .forEach((page) => {
+      pageWidth = Math.max(pageWidth, page.offsetWidth || page.scrollWidth || 0)
     })
-    if (pageW < 40) pageW = wrapper.scrollWidth || 816
-    naturalH = wrapper.scrollHeight || 1
-    // Refuse to lock in a collapsed measurement.
-    if (!(pageW > 40) || !(naturalH > 40)) return
-    wrapper.dataset.naturalPageW = String(pageW)
-    wrapper.dataset.naturalH = String(naturalH)
-  }
+  if (pageWidth < 40) pageWidth = wrapper.scrollWidth || 816
+  const height = wrapper.scrollHeight || 0
+  // Refuse to lock in a collapsed measurement — the host may still be 0×0.
+  if (!(pageWidth > 40) || !(height > 40)) return null
+  return { pageWidth, height }
+}
 
-  // Stable paper width (min…max). Pane size only scrolls — never reflows scale.
-  const target = stableContentWidth(pageW, docMeasureMinPx(host), docMeasurePx(host))
-  const scale = Math.min(2.75, Math.max(0.35, target / pageW))
-  const prev = Number(wrapper.dataset.docxScale || 0)
-  // Skip no-op style thrash during sub-pixel ResizeObserver noise.
-  if (prev && Math.abs(prev - scale) < 0.008) return
+/** CSS-only scale. Never re-parses DOCX. */
+function applyDocxScale(host: HTMLElement, natural: DocxNatural, scale: number): void {
+  const frame = ensureFitFrame(host)
+  const wrapper = frame?.firstElementChild as HTMLElement | null
+  if (!frame || !wrapper) return
 
+  wrapper.dataset.chromeSubject = 'true'
   wrapper.style.transformOrigin = 'top center'
   wrapper.style.transform = Math.abs(scale - 1) < 0.004 ? 'none' : `scale(${scale})`
-  wrapper.dataset.docxScale = String(scale)
+  writeDocZoom(frame, scale)
 
-  // Visual width tracks the scaled page so the stage centers like PDF frames.
-  // No max-width:100% — narrower stages scroll horizontally instead of squashing.
-  const visW = Math.ceil(pageW * scale)
+  // Frame box tracks the scaled page so the stage can centre it and the
+  // scrollport knows the real pan bounds. Floor, never ceil: at fit the page is
+  // exactly the stage's usable width, and a rounded-up pixel adds a scrollbar.
+  const visW = Math.floor(natural.pageWidth * scale)
+  const visH = Math.floor(natural.height * scale)
   frame.style.width = `${visW}px`
-  frame.style.maxWidth = 'none'
   frame.style.minWidth = `${visW}px`
-  frame.style.height = `${Math.ceil(naturalH * scale)}px`
-  frame.style.minHeight = `${Math.ceil(naturalH * scale)}px`
-  frame.style.margin = '0 auto'
+  frame.style.maxWidth = 'none'
+  frame.style.height = `${visH}px`
+  frame.style.minHeight = `${visH}px`
 }
 
 export function DocxNativeView({
@@ -114,12 +111,31 @@ export function DocxNativeView({
 }): React.JSX.Element {
   const t = useT()
   const bodyRef = useRef<HTMLDivElement>(null)
+  const frameRef = useRef<HTMLElement | null>(null)
   const styleRef = useRef<HTMLDivElement>(null)
+  const naturalRef = useRef<DocxNatural | null>(null)
+  const [naturalWidth, setNaturalWidth] = useState(0)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [ready, setReady] = useState(false)
   const onPickRef = useRef(onPick)
   onPickRef.current = onPick
+
+  const applyScale = useCallback((scale: number): void => {
+    const body = bodyRef.current
+    const natural = naturalRef.current
+    if (!body || !natural) return
+    applyDocxScale(body, natural, scale)
+    frameRef.current = body.querySelector<HTMLElement>('.docx-fit-frame')
+  }, [])
+
+  const zoom = useDocZoom({
+    stageRef: bodyRef,
+    contentRef: frameRef,
+    naturalWidth,
+    apply: applyScale,
+    enabled: ready && !error
+  })
 
   // docx-preview emits one <section> per page when breakPages is true.
   const pageIndex = useDocumentPageIndex({
@@ -131,8 +147,7 @@ export function DocxNativeView({
   useEffect(() => {
     let cancelled = false
     let dispose: (() => void) | undefined
-    let ro: ResizeObserver | null = null
-    let fitRaf = 0
+    let measureRaf = 0
     const body = bodyRef.current
     const styleHost = styleRef.current
     if (!body) return
@@ -176,7 +191,24 @@ export function DocxNativeView({
         }
 
         body.replaceChildren(...Array.from(staging.childNodes))
-        fitDocxToHost(body)
+
+        // Measure at 100% before any scale lands. A host that is still 0×0
+        // (background tab, staged open) reports nothing — retry next frame.
+        const measure = (attempt: number): void => {
+          if (cancelled) return
+          const natural = measureDocxNatural(body)
+          if (!natural) {
+            if (attempt < 8) measureRaf = requestAnimationFrame(() => measure(attempt + 1))
+            return
+          }
+          naturalRef.current = natural
+          frameRef.current = ensureFitFrame(body)
+          setNaturalWidth(natural.pageWidth)
+          // A rewrite at the same page width changes no state, but the DOM
+          // carrying the scale is new — re-assert it.
+          zoom.refresh()
+        }
+        measure(0)
 
         dispose = attachDomPick(body, {
           selecting,
@@ -185,19 +217,6 @@ export function DocxNativeView({
           idPrefix: 'docx',
           selector: DOCX_SELECTOR
         })
-
-        if (typeof ResizeObserver !== 'undefined') {
-          // rAF-throttle: CSS-only, never re-render DOCX on resize.
-          ro = new ResizeObserver(() => {
-            if (fitRaf) return
-            fitRaf = requestAnimationFrame(() => {
-              fitRaf = 0
-              if (cancelled) return
-              fitDocxToHost(body)
-            })
-          })
-          ro.observe(body)
-        }
 
         setLoading(false)
         setReady(true)
@@ -214,12 +233,19 @@ export function DocxNativeView({
 
     return () => {
       cancelled = true
-      if (fitRaf) cancelAnimationFrame(fitRaf)
-      ro?.disconnect()
+      if (measureRaf) cancelAnimationFrame(measureRaf)
       dispose?.()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [path, revision])
+
+  // A different file always opens fitted; an agent rewrite keeps the zoom.
+  useEffect(() => {
+    naturalRef.current = null
+    setNaturalWidth(0)
+    zoom.fit()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [path])
 
   useEffect(() => {
     if (!ready) return
@@ -246,6 +272,14 @@ export function DocxNativeView({
         total={pageIndex.total}
         onPrev={pageIndex.prev}
         onNext={pageIndex.next}
+        disabled={!ready || !!error}
+      />
+      <DocZoomControls
+        scale={zoom.scale}
+        atFit={zoom.atFit}
+        onZoomIn={() => zoom.zoomBy(DOC_ZOOM_STEP)}
+        onZoomOut={() => zoom.zoomBy(1 / DOC_ZOOM_STEP)}
+        onFit={zoom.actualSize}
         disabled={!ready || !!error}
       />
     </div>

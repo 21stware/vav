@@ -1,18 +1,21 @@
 /**
  * PDF.js viewer — performance via virtualization, not product page caps:
  *  - All pages get light slots; paint only when near viewport (IO)
- *  - Resize: CSS transform fit only (no page.render per frame)
- *  - Idle + large scale drift: optional quality re-paint of painted pages
+ *  - Fit/zoom changes are CSS transforms first (no page.render per frame)
+ *  - Idle + large scale drift: quality re-paint of painted pages
  */
 
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { PreviewBlock } from '@shared/previewBlock'
-import { docMeasureMinPx, docMeasurePx, stableContentWidth } from '../../lib/docMeasure'
 import { isOfficeLockFile, OFFICE_LOCK_FILE_MESSAGE } from '@shared/officeLock'
+import { computeFitScale, stageUsableWidth } from '../../lib/docZoom'
 import { scheduleClickPick } from '../../lib/clickPick'
 import { useT } from '../../i18n/useT'
 import { PagePager } from './PagePager'
+import { DocZoomControls, DOC_ZOOM_STEP } from './DocZoomControls'
+import { useDocZoom } from './useDocZoom'
 import { useDocumentPageIndex } from './useDocumentPageIndex'
+import { writeDocZoom } from '../../lib/selectionChrome'
 
 type PdfJsModule = typeof import('pdfjs-dist')
 type PdfDocument = Awaited<ReturnType<PdfJsModule['getDocument']>['promise']>
@@ -49,29 +52,27 @@ async function getPdfJs(): Promise<PdfJsModule> {
   return pdfjsPromise
 }
 
-/** CSS fit updates are cheap — rAF-throttle only. */
-const FIT_RAF_MIN_DELTA_PX = 2
-/** Quality re-paint only after resize fully settles. */
+/** Quality re-paint only after resize/zoom fully settles. */
 const QUALITY_IDLE_MS = 520
-/** Re-paint only if fit width drifted this much vs last canvas paint. */
+/** Re-paint only if display width drifted this much vs the last canvas paint. */
 const QUALITY_WIDTH_RATIO = 0.12
 /** First paint: only page 1 (canvas). Neighbours fill in after first frame. */
 const EAGER_PAGES = 2
 /**
  * Soft paint budget in CSS pixels (not a product page-size cap).
- * Previously 960 left wide windows with tiny, upscaled pages; 2000 fills
- * typical large panes while avoiding multi‑GB bitmaps on 5K displays.
+ * Deep zoom keeps rasterising up to here, then rides a CSS upscale rather than
+ * allocating multi-GB bitmaps.
  */
 const PAINT_WIDTH_BUDGET = 2000
 /** How many lightweight page frames to insert per idle chunk (large books). */
 const PLACEHOLDER_CHUNK = 40
+/** pdf.js unit is 1/72in; CSS is 96dpi. 100% zoom means the page at 96dpi. */
+const PDF_TO_CSS_UNITS = 96 / 72
 
 function scaleForWidth(pageWidthPt: number, cssTarget: number): number {
-  // Paint at the stable reading width (not the live pane) so resize never
-  // re-rasters and narrow windows scroll instead of shrinking the page.
   const target = Math.max(160, Math.min(cssTarget, PAINT_WIDTH_BUDGET))
-  // A4 ≈ 595pt → scale ≈ 1.45 at 860 CSS px.
-  return Math.max(0.45, Math.min(4, target / pageWidthPt))
+  // A4 ≈ 595pt → scale ≈ 1.33 at its 794 CSS px 100% width.
+  return Math.max(0.45, Math.min(6, target / pageWidthPt))
 }
 
 function pdfUrlForPath(filePath: string, revision = 0): string {
@@ -85,7 +86,10 @@ interface PageSlot {
   pageEl: HTMLDivElement
   canvas: HTMLCanvasElement
   textLayer: HTMLDivElement
-  /** CSS pixel size of last canvas paint (pre fit-scale). */
+  /** Page size at 100% zoom, in CSS px. */
+  naturalW: number
+  naturalH: number
+  /** CSS pixel size of last canvas paint (pre display-scale). */
   paintW: number
   paintH: number
   /** pdf.js scale used for last paint. */
@@ -112,14 +116,38 @@ export function PdfNativeView({
 }): React.JSX.Element {
   const t = useT()
   const hostRef = useRef<HTMLDivElement>(null)
+  const trackRef = useRef<HTMLElement | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [pageTotal, setPageTotal] = useState(0)
+  const [naturalWidth, setNaturalWidth] = useState(0)
   const onPickRef = useRef(onPick)
   onPickRef.current = onPick
   const selectingRef = useRef(selecting)
   selectingRef.current = selecting
   const selectedIdsRef = useRef(selectedIds)
   selectedIdsRef.current = selectedIds
+
+  /** Current zoom, read by the imperative render loop below. */
+  const scaleRef = useRef(1)
+  const atFitRef = useRef(true)
+  /** Wired by the render effect; null until a document is mounted. */
+  const applyCssFitRef = useRef<(() => void) | null>(null)
+  const scheduleQualityRef = useRef<(() => void) | null>(null)
+
+  const applyScale = useCallback((scale: number): void => {
+    scaleRef.current = scale
+    applyCssFitRef.current?.()
+    scheduleQualityRef.current?.()
+  }, [])
+
+  const zoom = useDocZoom({
+    stageRef: hostRef,
+    contentRef: trackRef,
+    naturalWidth,
+    apply: applyScale,
+    enabled: !error
+  })
+  atFitRef.current = zoom.atFit
 
   const pageIndex = useDocumentPageIndex({
     scrollRef: hostRef,
@@ -135,14 +163,19 @@ export function PdfNativeView({
     let doc: PdfDocument | null = null
     let pdfjs: PdfJsModule | null = null
     let slots: PageSlot[] = []
-    /** Fit width (measure-capped) used for the last full canvas paint. */
-    let paintHostWidth = 0
-    let fitRaf = 0
+    /** Page-1 width at 100% zoom, in CSS px — the fit reference for the doc. */
+    let naturalPageW = 0
+    /** Canvas target width used for the last full paint (drift detector). */
+    let paintedTargetW = 0
     let qualityTimer: ReturnType<typeof setTimeout> | null = null
     let qualityRunning = false
     let io: IntersectionObserver | null = null
     const host = hostRef.current
     if (!host) return
+
+    /** All page frames live in one track so the stage can centre/measure them. */
+    const track = document.createElement('div')
+    track.className = 'pdf-pages-track'
 
     const applySelectionChrome = (): void => {
       const set = new Set(selectedIdsRef.current)
@@ -156,45 +189,40 @@ export function PdfNativeView({
       })
     }
 
-    /** Stable reading width — independent of the live pane. */
-    const usableWidth = (): number => {
-      // Prefer first painted page's natural CSS width when known; else the max measure.
-      const natural =
-        slots.find((s) => s.paintW > 0)?.paintW ||
-        docMeasurePx(host)
-      return Math.max(
-        160,
-        stableContentWidth(natural, docMeasureMinPx(host), docMeasurePx(host))
-      )
-    }
+    /** Canvas raster width the current zoom asks for, before the paint budget. */
+    const targetPaintWidth = (): number =>
+      Math.min(PAINT_WIDTH_BUDGET, Math.max(160, naturalPageW * scaleRef.current))
 
     /**
-     * Keep frames at the stable painted size. Resize of the pane must not
-     * re-scale pages — the stage scrolls horizontally when narrower.
+     * Lay every frame out at the current zoom. Painted pages ride a CSS scale
+     * off their last raster until the quality pass catches up, so a pinch is a
+     * transform per page and never a re-render.
      */
     const applyCssFit = (): void => {
+      const scale = scaleRef.current
       for (const slot of slots) {
-        if (!slot.painted || slot.paintW <= 0 || slot.paintH <= 0) continue
-        const visW = Math.max(1, slot.paintW)
-        const visH = Math.max(1, slot.paintH)
-        slot.frame.style.width = `${visW}px`
-        slot.frame.style.minWidth = `${visW}px`
+        if (slot.naturalW <= 0 || slot.naturalH <= 0) continue
+        // Floor, never ceil: at fit the page is exactly the stage's usable
+        // width, and a rounded-up pixel adds a horizontal scrollbar.
+        const dispW = Math.max(1, Math.floor(slot.naturalW * scale))
+        const dispH = Math.max(1, Math.floor(slot.naturalH * scale))
+        slot.frame.style.width = `${dispW}px`
+        slot.frame.style.minWidth = `${dispW}px`
         slot.frame.style.maxWidth = 'none'
-        slot.frame.style.height = `${visH}px`
+        slot.frame.style.height = `${dispH}px`
+        if (!slot.painted || slot.paintW <= 0) {
+          writeDocZoom(slot.frame, scale)
+          continue
+        }
+        const css = dispW / slot.paintW
         slot.pageEl.style.width = `${slot.paintW}px`
         slot.pageEl.style.height = `${slot.paintH}px`
-        slot.pageEl.style.transform = 'none'
+        slot.pageEl.dataset.chromeSubject = 'true'
+        slot.pageEl.style.transform = Math.abs(css - 1) < 0.002 ? 'none' : `scale(${css})`
         slot.pageEl.style.transformOrigin = 'top left'
-        slot.frame.dataset.cssScale = '1'
+        slot.frame.dataset.cssScale = String(css)
+        writeDocZoom(slot.frame, css)
       }
-    }
-
-    const scheduleCssFit = (): void => {
-      if (fitRaf) cancelAnimationFrame(fitRaf)
-      fitRaf = requestAnimationFrame(() => {
-        fitRaf = 0
-        if (!cancelled) applyCssFit()
-      })
     }
 
     const cancelSlotRender = (slot: PageSlot): void => {
@@ -221,9 +249,15 @@ export function PdfNativeView({
       if (cancelled) return
       slot.page = page
 
-      const usable = usableWidth()
       const base = page.getViewport({ scale: 1 })
-      const scale = scaleForWidth(base.width, usable)
+      // Page-specific 100% size — a PDF may mix portrait and landscape pages.
+      slot.naturalW = base.width * PDF_TO_CSS_UNITS
+      slot.naturalH = base.height * PDF_TO_CSS_UNITS
+      // Correct the placeholder box now, before the (async) raster lands.
+      slot.frame.style.width = `${Math.floor(slot.naturalW * scaleRef.current)}px`
+      slot.frame.style.minWidth = slot.frame.style.width
+      slot.frame.style.height = `${Math.floor(slot.naturalH * scaleRef.current)}px`
+      const scale = scaleForWidth(base.width, slot.naturalW * scaleRef.current)
       const viewport = page.getViewport({ scale })
       const dpr = Math.min(window.devicePixelRatio || 1, 2)
 
@@ -234,9 +268,6 @@ export function PdfNativeView({
       // Drop placeholder aspect-ratio once we know real metrics.
       slot.frame.style.aspectRatio = ''
       slot.frame.style.maxWidth = 'none'
-      // Layout size = paint size until applyCssFit (may scale for current host).
-      slot.frame.style.width = `${viewport.width}px`
-      slot.frame.style.height = `${viewport.height}px`
 
       // Absolute paint layer — must not participate in frame flow height.
       slot.pageEl.style.position = 'absolute'
@@ -300,18 +331,17 @@ export function PdfNativeView({
       })()
     }
 
-    const makeSlot = (n: number, aspect: number): PageSlot => {
+    const makeSlot = (n: number, naturalW: number, naturalH: number): PageSlot => {
       const frame = document.createElement('div')
       frame.className = 'pdf-page-frame'
       frame.dataset.pageNumber = String(n)
-      // Lightweight placeholder until paint (stable measure × real aspect).
-      // Explicit height from aspect so unpainted slots still reserve space and
-      // do not collapse under absolute-positioned siblings once painted.
-      const phW = usableWidth()
-      frame.style.width = `${phW}px`
-      frame.style.minWidth = `${phW}px`
+      // Lightweight placeholder until paint. Explicit size so unpainted slots
+      // reserve space and do not collapse under absolute-positioned siblings.
+      const scale = scaleRef.current
+      frame.style.width = `${Math.floor(naturalW * scale)}px`
+      frame.style.minWidth = `${Math.floor(naturalW * scale)}px`
       frame.style.maxWidth = 'none'
-      frame.style.aspectRatio = `1 / ${aspect}`
+      frame.style.height = `${Math.floor(naturalH * scale)}px`
 
       const pageEl = document.createElement('div')
       pageEl.className = 'pdf-page pdf-pick-page'
@@ -336,6 +366,8 @@ export function PdfNativeView({
         pageEl,
         canvas,
         textLayer,
+        naturalW,
+        naturalH,
         paintW: 0,
         paintH: 0,
         paintScale: 0,
@@ -352,27 +384,40 @@ export function PdfNativeView({
      *  3) IntersectionObserver paints the rest on demand
      */
     const mountSlots = async (pdf: PdfDocument): Promise<void> => {
-      host.innerHTML = ''
+      host.replaceChildren(track)
+      track.replaceChildren()
+      trackRef.current = track
       slots = []
       const total = pdf.numPages
       if (total <= 0) return
 
-      paintHostWidth = usableWidth()
-
-      // Aspect from page 1 only — don't touch every page up front.
-      let aspect = 1.294
+      // Page 1 sets the document's 100% size — don't touch every page up front.
+      let naturalW = 612 * PDF_TO_CSS_UNITS
+      let naturalH = 792 * PDF_TO_CSS_UNITS
       try {
         const p1 = await pdf.getPage(1)
         if (cancelled) return
         const v = p1.getViewport({ scale: 1 })
-        if (v.width > 0) aspect = v.height / v.width
+        if (v.width > 0) {
+          naturalW = v.width * PDF_TO_CSS_UNITS
+          naturalH = v.height * PDF_TO_CSS_UNITS
+        }
       } catch {
         // keep default
       }
+      naturalPageW = naturalW
+
+      // Paint straight at the fit scale. Publishing naturalWidth to the zoom
+      // hook would land a frame later, and page 1 would raster twice.
+      if (atFitRef.current) {
+        scaleRef.current = computeFitScale(stageUsableWidth(host), naturalW)
+      }
+      setNaturalWidth(naturalW)
+      paintedTargetW = targetPaintWidth()
 
       // Page 1 immediately.
-      const first = makeSlot(1, aspect)
-      host.appendChild(first.frame)
+      const first = makeSlot(1, naturalW, naturalH)
+      track.appendChild(first.frame)
       slots.push(first)
       await paintSlot(first, false)
       if (cancelled) return
@@ -382,8 +427,8 @@ export function PdfNativeView({
       const eagerEnd = Math.min(EAGER_PAGES, total)
       for (let n = 2; n <= eagerEnd; n++) {
         if (cancelled) return
-        const slot = makeSlot(n, aspect)
-        host.appendChild(slot.frame)
+        const slot = makeSlot(n, naturalW, naturalH)
+        track.appendChild(slot.frame)
         slots.push(slot)
         await paintSlot(slot, false)
       }
@@ -429,11 +474,11 @@ export function PdfNativeView({
         const batch: PageSlot[] = []
         const end = Math.min(total, next + PLACEHOLDER_CHUNK - 1)
         for (let n = next; n <= end; n++) {
-          const slot = makeSlot(n, aspect)
+          const slot = makeSlot(n, naturalW, naturalH)
           frag.appendChild(slot.frame)
           batch.push(slot)
         }
-        host.appendChild(frag)
+        track.appendChild(frag)
         slots.push(...batch)
         next = end + 1
         for (const slot of batch) io?.observe(slot.frame)
@@ -453,8 +498,8 @@ export function PdfNativeView({
     }
 
     /**
-     * After resize settles, re-paint only if CSS scale drifted a lot
-     * (avoids blurry upscale). Still one shot — never per-frame.
+     * After zoom/resize settles, re-paint only if the CSS upscale drifted a lot
+     * (avoids blurry pages). Still one shot — never per-frame.
      */
     const scheduleQualityRepaint = (): void => {
       if (qualityTimer) clearTimeout(qualityTimer)
@@ -466,13 +511,13 @@ export function PdfNativeView({
           applyCssFit()
           return
         }
-        // Compare fit widths, not pane widths: past the measure the pane can
-        // grow without changing a single painted pixel.
-        const w = usableWidth()
-        if (w < 80 || paintHostWidth < 80) return
-        const ratio = Math.abs(w - paintHostWidth) / paintHostWidth
+        // Compare raster targets, not pane widths: past the paint budget the
+        // zoom can keep growing without changing a single painted pixel.
+        const w = targetPaintWidth()
+        if (w < 80 || paintedTargetW < 80) return
+        const ratio = Math.abs(w - paintedTargetW) / paintedTargetW
         if (ratio < QUALITY_WIDTH_RATIO) {
-          // Still just CSS fit — sharp enough.
+          // Still just a CSS scale — sharp enough.
           applyCssFit()
           return
         }
@@ -494,7 +539,7 @@ export function PdfNativeView({
             const rest = slots.filter((s) => !priority.includes(s))
             const order = [...priority, ...rest]
 
-            paintHostWidth = w
+            paintedTargetW = w
             for (const slot of order) {
               if (cancelled) return
               // Only re-paint already painted pages; unpainted stay lazy.
@@ -561,35 +606,22 @@ export function PdfNativeView({
 
         // Swap only when the new document is ready — keep the previous paint
         // on screen during agent rewrites (no blank flash).
-        host.innerHTML = ''
         setPageTotal(doc.numPages)
         await mountSlots(doc)
         if (cancelled) return
         onReady?.()
 
-        if (typeof ResizeObserver !== 'undefined') {
-          let lastFitW = host.clientWidth
-          const ro = new ResizeObserver((entries) => {
-            const w = entries[0]?.contentRect.width ?? host.clientWidth
-            if (!Number.isFinite(w) || w < 80) return
-            // Instant CSS fit while dragging (column or window).
-            if (Math.abs(w - lastFitW) >= FIT_RAF_MIN_DELTA_PX) {
-              lastFitW = w
-              scheduleCssFit()
-            }
-            // Quality re-paint only after settle + large drift (not mid-drag).
-            if (document.documentElement.dataset.resizing !== 'true') {
-              scheduleQualityRepaint()
-            }
-          })
-          ro.observe(host)
-          ;(host as HTMLElement & { __pdfRo?: ResizeObserver }).__pdfRo = ro
-        }
+        // Layout follows the zoom hook (it owns the stage ResizeObserver);
+        // this component only owns raster quality. Reconcile once here: the
+        // hook may have settled on a fit scale while pages were still mounting.
+        applyCssFitRef.current = applyCssFit
+        scheduleQualityRef.current = scheduleQualityRepaint
+        applyCssFit()
 
         // Column/window resize end: one sharp fit (+ quality if needed).
         const onResizeEnd = (): void => {
           if (cancelled) return
-          scheduleCssFit()
+          applyCssFit()
           scheduleQualityRepaint()
         }
         window.addEventListener('vav:resize-end', onResizeEnd)
@@ -605,13 +637,11 @@ export function PdfNativeView({
 
     return () => {
       cancelled = true
-      if (fitRaf) cancelAnimationFrame(fitRaf)
       if (qualityTimer) clearTimeout(qualityTimer)
       io?.disconnect()
       for (const slot of slots) cancelSlotRender(slot)
-      const ro = (host as HTMLElement & { __pdfRo?: ResizeObserver }).__pdfRo
-      ro?.disconnect()
-      delete (host as HTMLElement & { __pdfRo?: ResizeObserver }).__pdfRo
+      applyCssFitRef.current = null
+      scheduleQualityRef.current = null
       const onEnd = (host as HTMLElement & { __pdfResizeEnd?: () => void }).__pdfResizeEnd
       if (onEnd) {
         window.removeEventListener('vav:resize-end', onEnd)
@@ -631,6 +661,13 @@ export function PdfNativeView({
     // onReady is stable enough for open; omit from deps to avoid reload loops.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [path, revision, t])
+
+  // A different file always opens fitted; an agent rewrite keeps the zoom.
+  useEffect(() => {
+    setNaturalWidth(0)
+    zoom.fit()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [path])
 
   // Pick + hover
   useEffect(() => {
@@ -778,6 +815,14 @@ export function PdfNativeView({
         onPrev={pageIndex.prev}
         onNext={pageIndex.next}
         disabled={!!error}
+      />
+      <DocZoomControls
+        scale={zoom.scale}
+        atFit={zoom.atFit}
+        onZoomIn={() => zoom.zoomBy(DOC_ZOOM_STEP)}
+        onZoomOut={() => zoom.zoomBy(1 / DOC_ZOOM_STEP)}
+        onFit={zoom.actualSize}
+        disabled={!!error || pageTotal <= 0}
       />
     </div>
   )

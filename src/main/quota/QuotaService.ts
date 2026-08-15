@@ -1,10 +1,16 @@
 import type { CliHostKind } from '@shared/cliHost'
+import {
+  hostMayHaveAccountQuota,
+  type AccountQuotaHost
+} from '@shared/quotaWindows'
 import type { QuotaWindow } from '@shared/types'
 import { fetchClaudeAccountQuota } from './claudeUsage'
 import { fetchCodexAccountQuota } from './codexUsage'
+import { fetchCursorAccountQuota } from './cursorUsage'
 import { fetchGrokAccountQuota } from './grokUsage'
+import { fetchOpencodeAccountQuota } from './opencodeUsage'
 
-export type QuotaAccountHost = 'claude' | 'codex' | 'grok'
+export type QuotaAccountHost = AccountQuotaHost
 
 const POLL_MS = 15 * 60_000
 const PANEL_REFETCH_MS = 5 * 60_000
@@ -12,11 +18,13 @@ const PANEL_REFETCH_MS = 5 * 60_000
 const FETCHERS: Record<QuotaAccountHost, () => Promise<QuotaWindow[]>> = {
   claude: fetchClaudeAccountQuota,
   codex: fetchCodexAccountQuota,
-  grok: fetchGrokAccountQuota
+  cursor: fetchCursorAccountQuota,
+  grok: fetchGrokAccountQuota,
+  opencode: fetchOpencodeAccountQuota
 }
 
 function isQuotaAccountHost(host: CliHostKind | null | undefined): host is QuotaAccountHost {
-  return host === 'claude' || host === 'codex' || host === 'grok'
+  return hostMayHaveAccountQuota(host)
 }
 
 export class QuotaService {

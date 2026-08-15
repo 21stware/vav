@@ -9,6 +9,7 @@ import {
   useSessionStore
 } from './state/sessionStore'
 import { installFsWatchBridge, installPtyBridge } from './state/workspaceStore'
+import { installInstallRunBridge } from './state/installRunStore'
 import { tt } from './i18n/useT'
 import { AppToast } from './components/AppToast'
 import { PreviewPerfHud } from './components/PreviewPerfHud'
@@ -122,6 +123,7 @@ export default function FilePreviewWindow({
     const offFs = installFsWatchBridge()
     const offPty = installPtyBridge()
     const offUpdates = installUpdateBridge()
+    const offInstall = installInstallRunBridge()
     return () => {
       offSettings()
       offMenu()
@@ -129,6 +131,7 @@ export default function FilePreviewWindow({
       offFs()
       offPty()
       offUpdates()
+      offInstall()
     }
   }, [])
 

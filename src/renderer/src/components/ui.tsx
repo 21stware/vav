@@ -476,6 +476,7 @@ export function EmptyState({
   logoKey,
   enterKey,
   layout = 'centered',
+  meta,
   foot,
   children
 }: {
@@ -506,6 +507,8 @@ export function EmptyState({
    * `centered` — classic stacked empty state.
    */
   layout?: 'centered' | 'session'
+  /** Quiet facts under the mark (subscription usage). */
+  meta?: ReactNode
   /** Supporting chrome under the mark (e.g. workspace / git prose). */
   foot?: ReactNode
   children?: ReactNode
@@ -551,6 +554,7 @@ export function EmptyState({
         </span>
       )}
       {logoLabel ? <EmptyAgentName key={motionKey} text={logoLabel} /> : null}
+      {meta}
       {title ? <div className="empty-title">{title}</div> : null}
       {description && <div className="empty-desc">{description}</div>}
       {children}

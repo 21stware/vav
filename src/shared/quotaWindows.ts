@@ -1,4 +1,17 @@
+import type { CliHostKind } from './cliHost'
 import type { QuotaWindow, QuotaWindowKind } from './types'
+
+/** Hosts that expose an account-level subscription / rate-limit poll. */
+export const ACCOUNT_QUOTA_HOSTS = ['claude', 'codex', 'cursor', 'grok', 'opencode'] as const
+export type AccountQuotaHost = (typeof ACCOUNT_QUOTA_HOSTS)[number]
+
+const ACCOUNT_QUOTA_HOST_SET = new Set<string>(ACCOUNT_QUOTA_HOSTS)
+
+export function hostMayHaveAccountQuota(
+  host: CliHostKind | string | null | undefined
+): host is AccountQuotaHost {
+  return typeof host === 'string' && ACCOUNT_QUOTA_HOST_SET.has(host)
+}
 
 const QUOTA_KIND_ORDER: Record<QuotaWindowKind, number> = {
   five_hour: 0,
@@ -250,8 +263,9 @@ export function windowsFromCodexBackendPayload(
   now = Date.now()
 ): QuotaWindow[] {
   const data = asRecord(payload)
-  if (!data || typeof data.plan_type !== 'string') return []
-  const rateLimit = asRecord(data.rate_limit)
+  if (!data) return []
+  const rateLimit = asRecord(data.rate_limit) ?? asRecord(data.rateLimit)
+  if (!rateLimit) return []
   const primary = asRecord(rateLimit?.primary_window)
   const secondary = asRecord(rateLimit?.secondary_window)
   const primaryPct =
@@ -367,6 +381,55 @@ export function windowsFromGrokBillingPayload(
   const windows = [grokWeeklyWindow(config, now), grokMonthlyWindow(config, now)].filter(
     (row): row is QuotaWindow => row != null
   )
+  return sortQuotaWindows(windows)
+}
+
+/** Cursor CLI `POST …/GetCurrentPeriodUsage` — included plan pool. */
+export function windowsFromCursorPeriodPayload(
+  payload: unknown,
+  now = Date.now()
+): QuotaWindow[] {
+  const data = asRecord(payload)
+  const plan = asRecord(data?.planUsage)
+  const pct = normalizeQuotaPercent(finiteNumber(plan?.totalPercentUsed) ?? NaN)
+  if (pct == null) return []
+  return [
+    {
+      id: 'monthly',
+      kind: 'monthly',
+      usedPercent: pct,
+      resetsAt: parseQuotaResetsAt(data?.billingCycleEnd),
+      updatedAt: now
+    }
+  ]
+}
+
+const OPENCODE_GO_LANES: Array<{ key: string; kind: QuotaWindowKind }> = [
+  { key: 'rolling', kind: 'five_hour' },
+  { key: 'weekly', kind: 'seven_day' },
+  { key: 'monthly', kind: 'monthly' }
+]
+
+/** OpenCode Go `GET /zen/go/v1/usage`. */
+export function windowsFromOpencodeGoUsagePayload(
+  payload: unknown,
+  now = Date.now()
+): QuotaWindow[] {
+  const usage = asRecord(asRecord(payload)?.usage)
+  if (!usage) return []
+  const windows: QuotaWindow[] = []
+  for (const lane of OPENCODE_GO_LANES) {
+    const rec = asRecord(usage[lane.key])
+    const pct = normalizeQuotaPercent(finiteNumber(rec?.percent) ?? NaN)
+    if (!rec || pct == null) continue
+    windows.push({
+      id: lane.kind,
+      kind: lane.kind,
+      usedPercent: pct,
+      resetsAt: parseQuotaResetsAt(rec.resetsAt ?? rec.resets_at),
+      updatedAt: now
+    })
+  }
   return sortQuotaWindows(windows)
 }
 

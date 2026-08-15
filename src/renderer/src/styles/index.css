@@ -229,6 +229,7 @@ html[data-summoning] .tools-body {
   .composer-context,
   .app-toast,
   .session-history-popover,
+  .provider-account-panel,
   .sidebar-float-panel,
   .change-review,
   .inline-review,
@@ -819,6 +820,77 @@ html[data-resizing='true'] .banner.error {
 
 .session-window .terminal-host-main {
   padding-top: var(--session-titlebar-h);
+}
+
+/*
+ * Main panel agent chrome — same overlay glass as standalone preview /
+ * quick-chat. The row floats over the log; first-screen padding keeps the
+ * opening turn clear, and scrolling still carries messages under the bar.
+ */
+.app-shell:not(.session-window) .detail {
+  --agent-chrome-h: var(--toolbar-height);
+}
+
+.app-shell:not(.session-window) .detail > .terminal-host-chrome.agent-mode-chrome {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 20;
+  height: var(--agent-chrome-h);
+  min-height: var(--agent-chrome-h);
+  max-height: var(--agent-chrome-h);
+  overflow: visible;
+  background: color-mix(in srgb, var(--bg-content) 52%, transparent);
+  backdrop-filter: blur(20px) saturate(1.35);
+  -webkit-backdrop-filter: blur(20px) saturate(1.35);
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .app-shell:not(.session-window) .detail > .terminal-host-chrome.agent-mode-chrome {
+    background: var(--bg-content);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+}
+
+.app-shell:not(.session-window) .detail .transcript {
+  padding-top: calc(var(--agent-chrome-h) + 22px);
+  scroll-padding-top: var(--agent-chrome-h);
+}
+
+.app-shell:not(.session-window) .detail .transcript:has(> .transcript-inner > .empty-state-session) {
+  padding-top: var(--agent-chrome-h);
+}
+
+.app-shell:not(.session-window) .detail:has(> .banner) .transcript,
+.app-shell:not(.session-window) .detail-stream[data-search='true'] .transcript {
+  padding-top: 22px;
+}
+
+.app-shell:not(.session-window) .detail > .banner,
+.app-shell:not(.session-window) .detail-stream > .search-strip {
+  margin-top: var(--agent-chrome-h);
+}
+
+.app-shell:not(.session-window) .detail:has(> .banner) .search-strip {
+  margin-top: 0;
+}
+
+.app-shell:not(.session-window) .detail .plan-overlay {
+  top: calc(var(--agent-chrome-h) + 8px);
+}
+
+.app-shell:not(.session-window) .detail-stream[data-search='true'] .plan-overlay {
+  top: calc(var(--agent-chrome-h) + 48px);
+}
+
+.app-shell:not(.session-window) .detail:has(> .banner) .plan-overlay {
+  top: 8px;
+}
+
+.app-shell:not(.session-window) .detail .terminal-host-main {
+  padding-top: var(--agent-chrome-h);
 }
 
 .titlebar .spacer {
@@ -5179,14 +5251,7 @@ mark {
   cursor: default;
 }
 
-.text-block-pick-line.is-pick-hover {
-  background: color-mix(in srgb, var(--accent) 10%, transparent);
-}
-
-.text-block-pick-line.is-picked {
-  background: color-mix(in srgb, var(--accent) 16%, transparent);
-  box-shadow: inset 2px 0 0 var(--accent);
-}
+/* Pick chrome is `.preview-code-overlay` — same dashed/solid box as file preview. */
 
 .term-exit {
   margin-top: 6px;
@@ -5945,8 +6010,9 @@ mark {
   min-height: 0;
 }
 
-/* Missing / loading: same top bar geometry as FileViewer embedded header. */
+/* Missing / loading: same overlay glass as the embedded FileViewer header. */
 .file-session-missing {
+  position: relative;
   flex: 1;
   min-height: 0;
   min-width: 0;
@@ -5955,9 +6021,25 @@ mark {
 }
 
 .file-session-missing-header.file-viewer-header {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 20;
   padding: 0 10px;
   height: var(--toolbar-height);
   min-height: var(--toolbar-height);
+  background: color-mix(in srgb, var(--bg-content) 52%, transparent);
+  backdrop-filter: blur(20px) saturate(1.35);
+  -webkit-backdrop-filter: blur(20px) saturate(1.35);
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .file-session-missing-header.file-viewer-header {
+    background: var(--bg-content);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
 }
 
 .file-session-missing-body {
@@ -5967,6 +6049,8 @@ mark {
   flex-direction: column;
   align-items: stretch;
   justify-content: center;
+  padding-top: var(--toolbar-height);
+  box-sizing: border-box;
 }
 
 .file-session-missing-body > .empty-state {
@@ -6605,7 +6689,8 @@ mark {
 .empty-state-hero > .empty-state-foot,
 .empty-state > .empty-logo,
 .empty-state-hero > .empty-logo,
-.empty-state-hero > .empty-agent-name {
+.empty-state-hero > .empty-agent-name,
+.empty-state-hero > .empty-quota {
   animation: none;
 }
 
@@ -6635,7 +6720,8 @@ mark {
    opacity 0 after a near-zero-duration animation. */
 :root[data-reduce-motion='true'] .empty-state > *,
 :root[data-reduce-motion='true'] .empty-logo-mark,
-:root[data-reduce-motion='true'] .empty-stagger-unit {
+:root[data-reduce-motion='true'] .empty-stagger-unit,
+:root[data-reduce-motion='true'] .empty-quota {
   animation: none !important;
   opacity: 1;
   transform: none;
@@ -6722,6 +6808,145 @@ mark {
   line-height: 1.2;
   min-height: 1.2em;
   max-width: 100%;
+}
+
+.empty-quota {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  width: auto;
+  max-width: 100%;
+  margin-top: 2px;
+}
+
+.empty-quota.is-empty {
+  margin-top: 0;
+  gap: 0;
+}
+
+.empty-quota-reveal {
+  display: grid;
+  grid-template-rows: 0fr;
+  width: 100%;
+  transition: grid-template-rows var(--dur-pop) var(--ease-out);
+}
+
+.empty-quota.is-pending .empty-quota-reveal,
+.empty-quota.is-ready .empty-quota-reveal {
+  grid-template-rows: 1fr;
+}
+
+.empty-quota-reveal-inner {
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+
+.empty-quota-row {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 5px;
+  width: max-content;
+  max-width: 100%;
+  min-width: 7.5em;
+}
+
+.empty-quota-line {
+  font-size: 11.5px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+  line-height: 1.3;
+  text-align: center;
+  color: var(--text-secondary);
+}
+
+.empty-quota-row.is-exhausted .empty-quota-line {
+  color: var(--danger);
+}
+
+.empty-quota-bar-slot {
+  display: block;
+  width: 100%;
+}
+
+.empty-quota-bar {
+  height: 3px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+  overflow: hidden;
+}
+
+.empty-quota-bar-fill {
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+}
+
+.empty-quota-line.is-pending {
+  height: 1.3em;
+  width: 7.5em;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+}
+
+.empty-quota-bar.is-indeterminate,
+.provider-account-bar.is-indeterminate {
+  position: relative;
+}
+
+.empty-quota-bar.is-indeterminate .empty-quota-bar-fill,
+.provider-account-bar.is-indeterminate .provider-account-bar-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 36%;
+  animation: empty-quota-indeterminate 1.1s var(--ease-out) infinite;
+}
+
+.empty-quota.is-ready .empty-quota-row,
+.provider-account-quota-slot.is-ready .provider-account-quota,
+.provider-account-quota-slot.is-empty .provider-account-muted {
+  transition:
+    opacity var(--dur-pop) var(--ease-out),
+    transform var(--dur-pop) var(--ease-out);
+}
+
+@starting-style {
+  .empty-quota.is-ready .empty-quota-row,
+  .provider-account-quota-slot.is-ready .provider-account-quota,
+  .provider-account-quota-slot.is-empty .provider-account-muted {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+}
+
+@keyframes empty-quota-indeterminate {
+  0% {
+    left: -36%;
+  }
+  100% {
+    left: 100%;
+  }
+}
+
+:root[data-reduce-motion='true'] .empty-quota-bar.is-indeterminate .empty-quota-bar-fill,
+:root[data-reduce-motion='true'] .provider-account-bar.is-indeterminate .provider-account-bar-fill {
+  width: 100%;
+  animation: none;
+  opacity: 0.45;
+}
+
+.empty-quota-row.is-exhausted .empty-quota-bar-fill {
+  background: var(--danger);
+}
+
+.empty-state.is-entering .empty-quota-bar-slot {
+  animation: empty-in 320ms var(--ease-out) backwards;
 }
 
 .empty-stagger-unit {
@@ -6827,7 +7052,8 @@ mark {
      build-up several times per visit. Height + visibility keep the box (and
      its animations) alive while taking no space. */
   .empty-state-session .empty-title,
-  .empty-state-session .empty-desc {
+  .empty-state-session .empty-desc,
+  .empty-state-session .empty-quota {
     height: 0;
     min-height: 0;
     /* Swallow the hero gap this row would still leave behind. */
@@ -7561,6 +7787,7 @@ mark {
   flex: 1;
 }
 
+.git-preview .git-diff-stage,
 .git-preview .git-diff-scroll {
   flex: 1;
 }
@@ -7585,7 +7812,18 @@ mark {
   font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
 }
 
+.git-diff-stage {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
 .git-diff-scroll {
+  position: relative;
   flex: 1;
   min-height: 0;
   min-width: 0;
@@ -7764,6 +8002,13 @@ mark {
   padding: 4px 8px 2px;
 }
 
+.github-site-host {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
 .github-site {
   flex: 1;
   min-height: 0;
@@ -7772,8 +8017,121 @@ mark {
   border-top: 1px solid var(--border-subtle, color-mix(in srgb, var(--text) 10%, transparent));
 }
 
-.github-preview .github-site {
+.github-preview .github-site,
+.github-detail-pane .github-site {
   border-top: 0;
+}
+
+.github-site .github-detail-hero {
+  padding: 12px 14px 8px;
+}
+
+.github-site .github-detail-body {
+  padding: 2px 14px 18px;
+}
+
+.github-site-config {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 0 auto;
+  margin: 0 0 0 auto;
+  padding: 2px 0;
+  border: 0;
+  background: none;
+  color: var(--text-tertiary);
+  font: inherit;
+  font-size: 11px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.github-site-config:hover {
+  color: var(--text);
+}
+
+.empty-state .github-site-config {
+  margin-left: 0;
+}
+
+.github-group-head {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-top: 8px;
+  padding: 0 6px 0 8px;
+}
+
+.github-group-toggle {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  padding: 4px 2px;
+  border: 0;
+  background: none;
+  color: var(--text-tertiary);
+  font: inherit;
+  font-size: 11px;
+  font-weight: 550;
+  letter-spacing: 0.01em;
+  text-align: left;
+  cursor: pointer;
+}
+
+.github-group-toggle:hover {
+  color: var(--text-secondary);
+}
+
+.github-group-toggle svg {
+  flex: 0 0 auto;
+  transition: transform 160ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+.github-group-toggle svg.is-open {
+  transform: rotate(90deg);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .github-group-toggle svg {
+    transition: none;
+  }
+}
+
+:root[data-reduce-motion='true'] .github-group-toggle svg {
+  transition: none;
+}
+
+.github-group-web {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--text-tertiary);
+  cursor: pointer;
+}
+
+.github-group-web:hover {
+  color: var(--text);
+  background: color-mix(in srgb, var(--text) 6%, transparent);
+}
+
+.github-group-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 8px 12px 10px;
+  font-size: 12px;
+  color: var(--text-tertiary);
 }
 
 .github-site-section {
@@ -8007,6 +8365,10 @@ mark {
   color: #f85149;
 }
 
+.github-pr-list .github-pr-state.is-tag {
+  color: var(--text-secondary);
+}
+
 .github-pr-num {
   flex: 0 0 auto;
   font-variant-numeric: tabular-nums;
@@ -8130,14 +8492,23 @@ mark {
 
 .github-site .github-detail-status-row {
   margin-top: 0;
+  align-items: center;
+  gap: 8px;
+}
+
+.github-site .github-detail-status-row .github-site-link {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .github-site .github-detail-status-row .github-open-web {
   margin-left: auto;
 }
 
-.github-site .github-detail-status-row .github-open-web + .github-open-web {
-  margin-left: 0;
+.github-site .github-detail-status-row .github-open-web + .github-site-config {
+  margin-left: 8px;
 }
 
 .github-site-fields-wrap {
@@ -9134,6 +9505,7 @@ mark {
 }
 
 .file-preview-file-col {
+  position: relative;
   display: flex;
   flex-direction: column;
   flex: 1 1 auto;
@@ -9144,10 +9516,12 @@ mark {
 
 .file-preview-main {
   position: relative;
+  z-index: 0;
   display: flex;
   flex: 1;
   min-height: 0;
   overflow: hidden;
+  isolation: isolate;
 }
 
 /*
@@ -9158,7 +9532,7 @@ mark {
   position: absolute;
   top: 0;
   left: 0;
-  z-index: 50;
+  z-index: 5;
   box-sizing: border-box;
   width: 26px;
   height: 26px;
@@ -9172,9 +9546,21 @@ mark {
   background: transparent;
   box-shadow: none;
   cursor: pointer;
-  will-change: transform;
   aspect-ratio: 1 / 1;
   flex: 0 0 26px;
+  /* Size is constant; only the *position* rides --doc-zoom.
+     Sits just inside the box so overflow:hidden frames do not clip it. */
+  transform: translate(
+    calc(var(--hud-x, 0) * var(--doc-zoom, 1) * 1px - 34px),
+    calc(var(--hud-y, 0) * var(--doc-zoom, 1) * 1px + 8px)
+  );
+}
+
+.selection-agent-fab.is-fill {
+  top: 8px;
+  right: 8px;
+  left: auto;
+  transform: none;
 }
 
 .selection-agent-fab:hover {
@@ -9201,6 +9587,83 @@ mark {
   border-radius: 5.8px;
   /* Icon asset already has its squircle — don't add a second plate/shadow. */
   box-shadow: none !important;
+}
+
+/*
+ * Selection HUD — camera overlay. Content (the subject) may CSS-scale or
+ * reflow; this sibling paints the ring / wash in screen pixels so a 2px
+ * stroke and the agent mark stay the same size at every zoom.
+ */
+.selection-hud {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  overflow: visible;
+  pointer-events: none;
+}
+
+/*
+ * --doc-zoom must not inherit into the scaled document. apply() writes it
+ * on .selection-hud only; this cuts any leftover on the frame.
+ */
+.docx-fit-frame > .docx-native-wrapper,
+.docx-fit-frame > .docx-wrapper,
+.pdf-page-frame > .pdf-page,
+[data-chrome-subject] {
+  --doc-zoom: initial;
+}
+
+.selection-hud-box {
+  position: absolute;
+  top: 0;
+  left: 0;
+  box-sizing: border-box;
+  border-radius: 2px;
+  pointer-events: none;
+  transition: none;
+  width: calc(var(--hud-w, 0) * var(--doc-zoom, 1) * 1px);
+  height: calc(var(--hud-h, 0) * var(--doc-zoom, 1) * 1px);
+  transform: translate(
+    calc(var(--hud-x, 0) * var(--doc-zoom, 1) * 1px),
+    calc(var(--hud-y, 0) * var(--doc-zoom, 1) * 1px)
+  );
+}
+
+.selection-hud-box.is-fill {
+  inset: 0;
+  width: auto;
+  height: auto;
+  transform: none;
+}
+
+.selection-hud-box.is-hovered {
+  outline: 1px dashed var(--accent);
+  outline-offset: -1px;
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+}
+
+.selection-hud-box.is-selected {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+/* Image wrappers clip overflow — keep the ring inside the bitmap. */
+.selection-hud-box.is-media,
+.selection-hud-box.is-fill {
+  background: transparent;
+  outline-offset: -2px;
+  box-shadow: none;
+}
+
+.selection-hud-box.is-media.is-selected,
+.selection-hud-box.is-fill.is-selected {
+  box-shadow: inset 0 0 0 2px var(--accent);
+}
+
+.selection-hud-box.is-media.is-hovered,
+.selection-hud-box.is-fill.is-hovered {
+  box-shadow: inset 0 0 0 1px var(--accent);
 }
 
 /* Agent column is a peer of the file column (full height), not under the file header. */
@@ -9295,14 +9758,108 @@ mark {
   box-sizing: border-box;
 }
 
-/* Embedded side preview: same row height as agent chrome; no rule under header
-   so title bar and body share one surface. */
+/*
+ * File chrome floats as glass over the stage — standalone preview and the
+ * embedded File session / workspace peek. The scrollport is full-bleed
+ * underneath; padding on the *scrolling* element keeps the first screen clear.
+ */
+.file-preview-shell {
+  --preview-chrome-h: 42px;
+  --preview-status-h: 28px;
+  position: relative;
+}
+
+.file-preview-shell.embedded {
+  --preview-chrome-h: var(--toolbar-height);
+}
+
+.file-preview-shell .file-viewer-header,
+.file-preview-shell .file-preview-statusbar {
+  position: absolute;
+  left: 0;
+  right: 0;
+  z-index: 20;
+  flex: none;
+  background: color-mix(in srgb, var(--bg-content) 52%, transparent);
+  backdrop-filter: blur(20px) saturate(1.35);
+  -webkit-backdrop-filter: blur(20px) saturate(1.35);
+}
+
+.file-preview-shell .file-viewer-header {
+  top: 0;
+}
+
+.file-preview-shell .file-preview-statusbar {
+  bottom: 0;
+}
+
+/* Body is the scrollport (markdown / code / html). */
+.file-preview-shell .file-viewer-body {
+  box-sizing: border-box;
+  padding-top: var(--preview-chrome-h);
+  padding-bottom: var(--preview-status-h);
+  scroll-padding-top: var(--preview-chrome-h);
+  scroll-padding-bottom: var(--preview-status-h);
+}
+
+.file-preview-shell .file-viewer-body[data-pad='text'] {
+  padding: calc(var(--preview-chrome-h) + 18px) 24px calc(var(--preview-status-h) + 28px);
+}
+
+/*
+ * Nested scrollports (image / office): the body must not inset them, or the
+ * picture can never travel under the glass. Put the chrome inset on the
+ * element that actually scrolls.
+ */
+.file-preview-shell .file-viewer-body:has(> .file-viewer-image-scroll),
+.file-preview-shell .file-viewer-body:has(.preview-media-stage),
+.file-preview-shell .file-viewer-body:has(.office-native-root),
+.file-preview-shell .file-viewer-body:has(> .file-viewer-code.continuous.is-virtualized) {
+  padding-top: 0;
+  padding-bottom: 0;
+}
+
+.file-preview-shell .image-zoom-stage,
+.file-preview-shell .preview-media-stage {
+  padding-top: calc(var(--preview-chrome-h) + 24px);
+  padding-bottom: calc(var(--preview-status-h) + 24px);
+  scroll-padding-top: var(--preview-chrome-h);
+  scroll-padding-bottom: var(--preview-status-h);
+}
+
+.file-preview-shell .pdf-pages-host,
+.file-preview-shell .docx-body-host {
+  padding-top: calc(var(--preview-chrome-h) + 20px);
+  padding-bottom: calc(var(--preview-status-h) + 48px);
+  scroll-padding-top: var(--preview-chrome-h);
+}
+
+.file-preview-shell .file-viewer-code.continuous.is-virtualized {
+  padding-top: var(--preview-chrome-h);
+  padding-bottom: var(--preview-status-h);
+  scroll-padding-top: var(--preview-chrome-h);
+}
+
+.file-preview-shell .doc-zoom-controls,
+.file-preview-shell .doc-page-pager {
+  bottom: calc(var(--preview-status-h) + 10px);
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .file-preview-shell .file-viewer-header,
+  .file-preview-shell .file-preview-statusbar {
+    background: var(--bg-content);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+}
+
+/* Embedded: same row height as agent chrome; glass comes from the overlay. */
 .file-preview-shell.embedded .file-viewer-header {
   padding: 0 10px;
   height: var(--toolbar-height);
   min-height: var(--toolbar-height);
   border-bottom: 0;
-  background: transparent;
 }
 
 .file-preview-shell.embedded {
@@ -9350,7 +9907,8 @@ mark {
    Shared tokens across MD / code / notebook / media / CSV / DOCX / PDF / PPTX / XLSX.
    Hover + selected update instantly (no transition). Parent rings are suppressed
    while a nested pick target is hovered (:has).
-   Chrome lives on ::after with pointer-events:none so text select/copy is free. */
+   Visual chrome is the screen-space .selection-hud. Content keeps classes for
+   hit-testing; ::after below is the fallback when no HUD is mounted. */
 .file-viewer-body.selecting {
   cursor: text;
 }
@@ -9466,6 +10024,84 @@ mark {
   background: color-mix(in srgb, var(--accent) 12%, transparent);
 }
 
+/*
+ * HUD is the camera: hide content-layer strokes so a CSS-scaled page does not
+ * thicken the ring. Hit targets and .selected / .hovered markers stay.
+ */
+.has-selection-hud .preview-select-region::after,
+.has-selection-hud .office-pick-target::after,
+.has-selection-hud .pdf-page.pdf-pick-page::after,
+.has-selection-hud .structured-doc.selecting .preview-select-region::after,
+.has-selection-hud .file-viewer-body.selecting .csv-sheet .preview-select-region::after,
+.has-selection-hud
+  .file-viewer-body.selecting
+  .csv-sheet
+  .preview-select-region.selected::after,
+.has-selection-hud
+  .file-viewer-body.selecting
+  .csv-sheet
+  .preview-select-region:hover:not(.selected)::after {
+  content: none;
+  display: none;
+}
+
+.has-selection-hud .pdf-page .textLayer span.selected,
+.has-selection-hud .pdf-page .textLayer span.hovered,
+.has-selection-hud .pdf-page .textLayer span:hover,
+.has-selection-hud .pdf-page.pdf-pick-page.hovered,
+.has-selection-hud .preview-code-overlay.selected,
+.has-selection-hud .preview-code-overlay.hovered,
+.has-selection-hud .file-viewer-code.continuous .preview-code-line.is-selected,
+.has-selection-hud .file-viewer-code.continuous .preview-code-line.is-hovered:not(.is-selected) {
+  outline: none;
+  background: transparent;
+}
+
+.has-selection-hud .structured-docx-table tr.selected td,
+.has-selection-hud .structured-sheet tr.selected td,
+.has-selection-hud .structured-sheet tr.selected th {
+  background: transparent;
+}
+
+.has-selection-hud .zip-tree-row.selected {
+  background: transparent;
+  box-shadow: none;
+}
+
+.has-selection-hud .zip-tree-row.selectable:hover {
+  background: transparent;
+}
+
+.has-selection-hud .diagram-file-view.is-selecting .diagram-pick-target > .diagram-select-rect,
+.has-selection-hud
+  .diagram-file-view.is-selecting
+  .diagram-pick-target:hover:not(.selected)
+  > .diagram-select-rect,
+.has-selection-hud .diagram-file-view.is-selecting .diagram-pick-target.selected > .diagram-select-rect {
+  stroke: transparent !important;
+  fill: none !important;
+  stroke-width: 0 !important;
+}
+
+.has-selection-hud .mindmap-view.is-selecting .mindmap-node:hover:not(.selected) .mindmap-node-plate,
+.has-selection-hud .mindmap-view.is-selecting .mindmap-node.selected .mindmap-node-plate,
+.has-selection-hud .drawio-view.is-selecting .drawio-cell:hover:not(.selected) .drawio-cell-plate,
+.has-selection-hud .drawio-view.is-selecting .drawio-cell.selected .drawio-cell-plate {
+  stroke: var(--border-strong);
+  stroke-width: 1;
+  stroke-dasharray: none;
+  fill: var(--bg-raised);
+}
+
+.has-selection-hud .mindmap-view.is-selecting .mindmap-node.is-root.selected .mindmap-node-plate,
+.has-selection-hud
+  .mindmap-view.is-selecting
+  .mindmap-node.is-root:hover:not(.selected)
+  .mindmap-node-plate {
+  fill: var(--accent-soft);
+  stroke: color-mix(in srgb, var(--accent) 40%, var(--border-strong));
+}
+
 /* Image/video pick: outline only, no accent wash over the pixels. */
 .preview-media-stage > .preview-select-region.selected::after,
 .preview-media-stage > .preview-select-region:hover:not(.selected)::after,
@@ -9494,6 +10130,7 @@ mark {
 }
 
 .file-viewer-image-scroll {
+  position: relative;
   flex: 1 1 auto;
   width: 100%;
   min-width: 0;
@@ -9535,25 +10172,49 @@ mark {
   object-fit: contain;
 }
 
-/* Image stack: inherit the stage box so max-height:100% resolves against it. */
-.file-viewer-image-scroll .preview-media-stage .file-viewer-media-stack {
+.file-viewer-image-scroll .preview-media-stage > .media-pick-frame:not(.image-zoom-content),
+.file-viewer-image-scroll .preview-media-stage > .preview-select-region:not(.image-zoom-content) {
   max-width: 100%;
   max-height: 100%;
   min-width: 0;
   min-height: 0;
-  height: auto;
-  flex: 0 1 auto;
-  display: flex;
-  align-items: center;
-  justify-content: center;
 }
 
-.file-viewer-image-scroll .preview-media-stage > .media-pick-frame,
-.file-viewer-image-scroll .preview-media-stage > .preview-select-region {
-  max-width: 100%;
-  max-height: 100%;
-  min-width: 0;
-  min-height: 0;
+/*
+ * Zoomable image stage. The picture carries a real pixel box written by the
+ * zoom controller, so panning is the stage's own scrolling — bounded, with
+ * momentum, and impossible to fling the photo out of view. `safe center` keeps
+ * a fitted image centred but stops centring once it outgrows the stage, which
+ * is what otherwise puts the top-left corner out of scroll reach.
+ */
+.preview-media-stage.image-zoom-stage {
+  position: relative;
+  overflow: auto;
+  justify-content: safe center;
+  align-items: safe center;
+  scrollbar-gutter: stable;
+}
+
+.file-viewer-image-scroll .preview-media-stage.image-zoom-stage > .image-zoom-content {
+  flex: 0 0 auto;
+  flex-shrink: 0;
+  position: relative;
+  overflow: hidden;
+  box-sizing: border-box;
+  max-width: none;
+  max-height: none;
+  padding: 0;
+}
+
+/* Bitmap stays natural-sized; zoom is transform. Clipped by the wrapper so
+   the unscaled box cannot inflate the stage's scroll overflow. */
+.image-zoom-stage[data-zoomable='true'] .file-viewer-media {
+  position: absolute;
+  top: 0;
+  left: 0;
+  max-width: none;
+  max-height: none;
+  will-change: transform;
 }
 
 /* Prefer viewport fit for video; still scrollable if taller than the window. */
@@ -9598,9 +10259,11 @@ mark {
   white-space: nowrap;
 }
 
-/* Outline on the media frame (wrapper), not on native <audio>/<video>. */
-.preview-media-stage > .preview-select-region,
-.preview-media-stage > .media-pick-frame {
+/* Outline on the media frame (wrapper), not on native <audio>/<video>.
+   Image zoom writes a real pixel box on .image-zoom-content — do not
+   force height:auto there or the absolutely-positioned bitmap collapses. */
+.preview-media-stage > .preview-select-region:not(.image-zoom-content),
+.preview-media-stage > .media-pick-frame:not(.image-zoom-content) {
   width: auto !important;
   height: auto !important;
   max-width: 100%;
@@ -9929,6 +10592,122 @@ mark {
   transform: none;
 }
 
+/*
+ * Zoom chrome — bottom right of the same stages. Idles nearly invisible so a
+ * document at fit-to-width reads as plain paper, and lights up on hover or
+ * whenever the view is off fit.
+ */
+.doc-zoom-controls {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px 4px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--bg-content) 92%, transparent);
+  color: var(--text-secondary);
+  box-shadow: none;
+  font-size: 12px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  user-select: none;
+  -webkit-user-select: none;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 160ms var(--ease-out, cubic-bezier(0.23, 1, 0.32, 1));
+}
+
+.office-native-root:hover .doc-zoom-controls,
+.file-preview-main:hover > .doc-zoom-controls,
+.file-viewer-image-scroll:hover > .doc-zoom-controls,
+.doc-zoom-controls:focus-within,
+.doc-zoom-controls[data-off-fit='true'] {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.doc-zoom-step {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: default;
+  transition:
+    background 140ms var(--ease-out, cubic-bezier(0.23, 1, 0.32, 1)),
+    color 140ms var(--ease-out, cubic-bezier(0.23, 1, 0.32, 1)),
+    transform 120ms var(--ease-out, cubic-bezier(0.23, 1, 0.32, 1));
+}
+
+.doc-zoom-step:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--text) 9%, transparent);
+  color: var(--text);
+}
+
+.doc-zoom-step:active:not(:disabled) {
+  transform: scale(0.94);
+  background: color-mix(in srgb, var(--text) 14%, transparent);
+  color: var(--text);
+}
+
+.doc-zoom-step:disabled {
+  opacity: 0.32;
+  color: var(--text-tertiary);
+}
+
+.doc-zoom-readout {
+  min-width: 3.4em;
+  height: 26px;
+  margin: 0;
+  padding: 0 6px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+  cursor: default;
+  transition: background 140ms var(--ease-out, cubic-bezier(0.23, 1, 0.32, 1));
+}
+
+.doc-zoom-readout:hover {
+  background: color-mix(in srgb, var(--text) 9%, transparent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .doc-zoom-controls,
+  .doc-zoom-step,
+  .doc-zoom-readout {
+    transition: none;
+  }
+  .doc-zoom-step:active:not(:disabled) {
+    transform: none;
+  }
+}
+
+:root[data-reduce-motion='true'] .doc-zoom-controls,
+:root[data-reduce-motion='true'] .doc-zoom-step,
+:root[data-reduce-motion='true'] .doc-zoom-readout {
+  transition: none;
+}
+
+:root[data-reduce-motion='true'] .doc-zoom-step:active:not(:disabled) {
+  transform: none;
+}
+
 /* Block-pick: still allow drag-select text for copy (click = Agent pick). */
 .office-native-root.selecting {
   user-select: text;
@@ -9953,22 +10732,30 @@ mark {
  * Shared document stage (PDF / DOCX / PPTX): same sunken desk, same paper
  * chrome, same gutter — so switching formats does not re-teach the eye.
  */
+/*
+ * Scroll *is* the pan gesture, so the stage can never lose the page: content
+ * is fitted to width on open and only overflows once the user zooms in.
+ * `safe` centring keeps a short document optically centred while a tall or
+ * zoomed one still starts at its top-left corner.
+ */
 .office-doc-stage {
   flex: 1;
   min-height: 0;
   overflow: auto;
-  /* Narrow panes scroll sideways — pages keep their stable measure. */
   overflow-x: auto;
   -webkit-overflow-scrolling: touch;
   padding: 20px 16px 48px;
   display: flex;
   flex-direction: column;
-  /* `safe` keeps the leading edge reachable when content is wider than the stage. */
   align-items: safe center;
+  justify-content: safe center;
   gap: 20px;
   background: var(--bg-sunken);
   overscroll-behavior: contain;
   pointer-events: auto;
+  /* Classic scrollbars would otherwise shrink the pane, shrink the fit, hide
+     the scrollbar, and start the whole cycle again. */
+  scrollbar-gutter: stable;
 }
 
 /* Paper surface: always print-white, independent of app theme. */
@@ -10027,9 +10814,14 @@ mark {
   overflow: auto;
   overflow-x: auto;
   padding: 20px 16px 48px;
+  display: flex;
+  flex-direction: column;
+  align-items: safe center;
+  justify-content: safe center;
   background: var(--bg-sunken);
   overscroll-behavior: contain;
   -webkit-overflow-scrolling: touch;
+  scrollbar-gutter: stable;
   /* Ensure wheel/trackpad reach this scrollport. */
   pointer-events: auto;
 }
@@ -10060,7 +10852,8 @@ mark {
 
 /* Layout box sized to the *visual* (post-scale) document height. */
 .docx-fit-frame {
-  width: 100%;
+  position: relative;
+  flex: 0 0 auto;
   display: flex;
   justify-content: center;
   align-items: flex-start;
@@ -10133,9 +10926,19 @@ mark {
   display: flex;
   flex-direction: column;
   align-items: safe center;
-  gap: 20px;
+  justify-content: safe center;
   background: var(--bg-sunken);
   overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
+/* One track holds every page frame so the stage has a single measurable box. */
+.pdf-pages-track {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 20px;
 }
 
 /*
@@ -10272,17 +11075,18 @@ mark {
   box-sizing: border-box;
 }
 
-/* Library mounts slides here; clientWidth === usable slide width. */
+/* Library mounts slides here; its offset box is the laid-out deck. */
 .pptx-render-host {
+  flex: 0 0 auto;
   width: max-content;
-  min-width: 100%;
+  min-width: 0;
   max-width: none;
   box-sizing: border-box;
   /* Not the scrollport — parent stage scrolls. */
   overflow: visible;
   display: flex;
   flex-direction: column;
-  align-items: safe center;
+  align-items: center;
   gap: 20px;
   /* No horizontal padding — measure target for CSS fit. */
   padding: 0;
@@ -10328,6 +11132,10 @@ mark {
 
 .pptx-root.selecting .pptx-visual-slide {
   cursor: default;
+}
+
+.pptx-root [data-chrome-frame] {
+  position: relative;
 }
 
 /* Shape pick targets (absolute frames inside a slide). */
@@ -10652,7 +11460,7 @@ mark {
   border-spacing: 0;
   width: max-content;
   min-width: 100%;
-  font-size: 12px;
+  font-size: calc(12px * var(--text-zoom, 1));
   font-family: var(--font-code);
   line-height: 1.4;
 }
@@ -10661,11 +11469,13 @@ mark {
 .structured-sheet td {
   border-right: 1px solid var(--border);
   border-bottom: 1px solid var(--border);
-  padding: 5px 9px;
+  /* em, not px: cell metrics have to track the type so zoom widens the column
+     instead of ellipsing more of every value. */
+  padding: 0.42em 0.75em;
   text-align: left;
   vertical-align: top;
-  min-width: 72px;
-  max-width: 220px;
+  min-width: 6em;
+  max-width: 18.3em;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -10803,6 +11613,7 @@ mark {
   overflow: hidden;
   white-space: nowrap;
   min-width: 0;
+  box-sizing: border-box;
 }
 
 .file-preview-status-left {
@@ -10988,7 +11799,7 @@ mark {
   border-spacing: 0;
   width: max-content;
   min-width: 100%;
-  font-size: var(--code-size);
+  font-size: calc(var(--code-size) * var(--text-zoom, 1));
   font-family: var(--font-code);
   line-height: 1.4;
 }
@@ -10997,11 +11808,13 @@ mark {
 .csv-sheet td {
   border-right: 1px solid var(--border);
   border-bottom: 1px solid var(--border);
-  padding: 5px 10px;
+  /* em, not px: cell metrics have to track the type so zoom widens the column
+     instead of ellipsing more of every value. */
+  padding: 0.42em 0.83em;
   text-align: left;
   vertical-align: top;
-  min-width: 72px;
-  max-width: 280px;
+  min-width: 6em;
+  max-width: 23.3em;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -11237,10 +12050,10 @@ mark {
   --md-lh: var(--md-doc-lh);
   --md-block: 0.9em;
   --md-section: 1.7em;
-  /* Stable reading column — pane scrolls when narrower than the measure. */
-  width: var(--md-measure);
-  min-width: var(--md-measure-min);
-  max-width: var(--md-measure);
+  /* Reading column, reflowing below the measure and scaling with type zoom. */
+  width: min(100%, calc(var(--md-measure) * var(--text-zoom, 1)));
+  min-width: 0;
+  max-width: 100%;
   margin: 0 auto;
   padding: 10px 0 48px;
   box-sizing: border-box;
@@ -11250,7 +12063,7 @@ mark {
   flex-direction: column;
   gap: 0;
   font-family: var(--font-reading);
-  font-size: var(--md-doc-size);
+  font-size: calc(var(--md-doc-size) * var(--text-zoom, 1));
   line-height: var(--md-lh);
   letter-spacing: normal;
   color: var(--text);
@@ -12911,12 +13724,14 @@ mark {
   --md-lh: var(--md-doc-lh);
   --md-block: 0.9em;
   --md-section: 1.7em;
-  font-size: var(--md-doc-size);
+  /* Type zoom scales the measure with the type, so the line keeps its ~75
+     characters instead of running longer as the text grows. */
+  font-size: calc(var(--md-doc-size) * var(--text-zoom, 1));
   line-height: var(--md-lh);
   letter-spacing: normal;
-  width: var(--md-measure);
-  min-width: var(--md-measure-min);
-  max-width: var(--md-measure);
+  width: min(100%, calc(var(--md-measure) * var(--text-zoom, 1)));
+  min-width: 0;
+  max-width: 100%;
   margin-inline: auto;
   padding: 10px 0 48px;
   box-sizing: border-box;
@@ -13390,6 +14205,7 @@ mark {
  * FileViewer sets data-pad from the renderer it mounted.
  */
 .file-viewer-body {
+  position: relative;
   flex: 1;
   min-height: 0;
   overflow: auto;
@@ -13424,7 +14240,7 @@ mark {
 .file-viewer-code {
   margin: 0;
   font-family: var(--font-code);
-  font-size: var(--code-size);
+  font-size: calc(var(--code-size) * var(--text-zoom, 1));
   line-height: 1.55;
   white-space: pre;
   overflow: auto;
@@ -13446,17 +14262,6 @@ mark {
   height: auto;
   object-fit: contain;
   margin: 0;
-}
-
-.file-viewer-media-stack {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 10px;
-  max-width: 100%;
-  min-width: 0;
-  height: auto;
-  flex: 0 0 auto;
 }
 
 /* Always-visible image metadata above the picture (no accordion). */
@@ -14024,6 +14829,76 @@ mark {
   white-space: nowrap;
 }
 
+/* Thread: [grid] Enter Swarm. Swarm: [grid] Exit Swarm · ~/repo/project */
+.agent-mode-swarm-toggle {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  gap: 8px;
+  flex: 0 1 auto;
+}
+
+.agent-mode-swarm-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 24px;
+  margin: 0;
+  padding: 0 8px 0 6px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 550;
+  cursor: default;
+  white-space: nowrap;
+  flex: 0 0 auto;
+  transition:
+    background var(--dur-hover) ease,
+    color var(--dur-hover) ease,
+    transform var(--dur-press) var(--ease-out);
+}
+
+.agent-mode-swarm-btn:hover {
+  color: var(--text);
+  background: var(--bg-hover);
+}
+
+.agent-mode-swarm-btn:active {
+  transform: scale(0.97);
+}
+
+.agent-mode-swarm-btn:disabled {
+  opacity: 0.45;
+  pointer-events: none;
+}
+
+.agent-mode-swarm-btn svg {
+  flex: 0 0 auto;
+}
+
+.agent-mode-workspace-dot {
+  flex: 0 0 auto;
+  color: var(--text-tertiary);
+  font-size: 12px;
+  line-height: 1;
+  user-select: none;
+}
+
+.agent-mode-workspace-name {
+  min-width: 0;
+  max-width: 22em;
+  flex: 0 1 auto;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .agent-mode-file-actions {
   display: flex;
   align-items: center;
@@ -14155,11 +15030,29 @@ mark {
 
 /*
  * Park inactive Thread/Swarm surfaces without unmounting.
- * Must beat `.detail-stream` / `.terminal-host-main { display: flex }` —
- * HTML [hidden] alone was losing that fight and painting Swarm over Thread.
+ * display:none throws away the transcript render tree and freezes the main
+ * thread on the way back. Stack both surfaces and hide with visibility.
  */
+.session-surfaces {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
 .is-surface-parked {
   display: none !important;
+}
+
+.session-surfaces > .is-surface-parked {
+  display: flex !important;
+  position: absolute;
+  inset: 0;
+  visibility: hidden;
+  pointer-events: none;
+  content-visibility: hidden;
 }
 
 /* Main shell parks the agent surface while a companion window owns the PTY. */
@@ -14874,6 +15767,37 @@ mark {
   color: var(--text);
 }
 
+.cli-agent-picker-item.is-missing {
+  cursor: pointer;
+}
+
+.cli-agent-picker-item.is-missing .cli-agent-picker-icon {
+  opacity: 0.38;
+  filter: grayscale(0.4);
+}
+
+.cli-agent-picker-item.is-missing .cli-agent-picker-item-name {
+  color: var(--accent, #0a84ff);
+  font-weight: 550;
+}
+
+.cli-agent-picker-item.is-missing .cli-agent-picker-item-name.is-link {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  text-decoration-thickness: 1px;
+}
+
+.cli-agent-picker-item.is-missing:hover .cli-agent-picker-item-name,
+.cli-agent-picker-item.is-missing:focus-visible .cli-agent-picker-item-name,
+.cli-agent-picker-item.is-missing.is-keyboard-active .cli-agent-picker-item-name {
+  color: var(--accent, #0a84ff);
+}
+
+.cli-agent-picker-item.is-missing:focus-visible .cli-agent-picker-icon,
+.cli-agent-picker-item.is-missing.is-keyboard-active .cli-agent-picker-icon {
+  opacity: 0.55;
+}
+
 /* Narrow or short pane → dense list (icon + name row). */
 @container cli-picker (max-width: 360px), cli-picker (max-height: 280px) {
   .cli-agent-picker {
@@ -15061,6 +15985,7 @@ mark {
 }
 
 .agents-list-row {
+  position: relative;
   display: flex;
   flex-direction: row;
   align-items: center;
@@ -15090,8 +16015,209 @@ mark {
   opacity: 0.55;
 }
 
-.agents-list-row.is-drag-over {
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent, #0a84ff) 45%, transparent);
+.agents-list-row.is-missing .agent-brand-mark {
+  opacity: 0.42;
+  filter: grayscale(0.35);
+}
+
+.agents-list-name.is-link {
+  appearance: none;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent, #0a84ff);
+  font: inherit;
+  font-weight: 500;
+  text-align: left;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  text-decoration-thickness: 1px;
+  cursor: pointer;
+}
+
+.agents-list-name.is-link:hover {
+  color: var(--accent, #0a84ff);
+}
+
+.agents-list-row.selected .agents-list-name.is-link {
+  color: var(--accent-text, var(--accent, #0a84ff));
+}
+
+.agents-list-badge {
+  color: var(--text-secondary);
+  letter-spacing: 0.01em;
+}
+
+.agents-editor-hero {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 40px;
+}
+
+.agents-editor-hero-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  line-height: 1.25;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.agents-editor-hero-link {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.agents-editor-hero-link:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.agents-editor-hero-link:active {
+  transform: scale(0.97);
+}
+
+.agents-editor-install {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+}
+
+.agents-install-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.agents-editor-install .btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.agents-install-spin {
+  animation: agents-recheck-spin 0.8s linear infinite;
+}
+
+.agents-install-error {
+  font-size: 12px;
+  color: var(--danger, #e5484d);
+}
+
+/* One line only: the installer is headless, this is a heartbeat, not a log. */
+.agents-install-log {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 5px 6px 5px 8px;
+  border-radius: var(--radius-sm, 7px);
+  background: var(--bg-subtle, rgb(0 0 0 / 4%));
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.agents-install-log-status {
+  flex: 0 0 auto;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.agents-install-log[data-status='success'] .agents-install-log-status {
+  color: var(--success, #2f9e44);
+}
+
+.agents-install-log[data-status='error'] .agents-install-log-status {
+  color: var(--danger, #e5484d);
+}
+
+.agents-install-log-line {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  color: var(--text-secondary);
+}
+
+.agents-install-log-dismiss {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-tertiary, var(--text-secondary));
+  cursor: pointer;
+}
+
+.agents-install-log-dismiss:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.tools-header-installs {
+  flex: 0 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.tools-header-installs .chip {
+  max-width: 220px;
+}
+
+.tools-install-icon {
+  color: var(--accent, #0a84ff);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .agents-install-spin {
+    animation: none;
+  }
+}
+
+.agents-list-row.is-drag-over[data-drop='before']::before,
+.agents-list-row.is-drag-over[data-drop='after']::after {
+  content: '';
+  position: absolute;
+  left: 6px;
+  right: 6px;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--accent, #0a84ff);
+  pointer-events: none;
+}
+
+.agents-list-row.is-drag-over[data-drop='before']::before {
+  top: -1px;
+}
+
+.agents-list-row.is-drag-over[data-drop='after']::after {
+  bottom: -1px;
 }
 
 .agents-list-row.is-dragging {
@@ -15180,20 +16306,111 @@ mark {
   background: var(--bg-sunken, var(--bg-secondary));
 }
 
-.agents-models-all {
+.agents-models-row.agents-models-all {
   position: sticky;
   top: 0;
   z-index: 1;
+  align-items: center;
   margin: 0 0 2px;
-  padding: 7px 10px;
+  padding: 5px 6px 5px 10px;
   border-bottom: 1px solid var(--border-subtle);
   border-radius: 10px 10px 0 0;
   font-weight: 550;
   background: var(--bg-sunken, var(--bg-secondary));
 }
 
-.agents-models-all:hover {
+.agents-models-row.agents-models-all:hover {
   background: var(--bg-hover);
+}
+
+.agents-models-all-check {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  flex: 0 1 auto;
+  min-width: 0;
+  cursor: default;
+}
+
+.agents-models-filter-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 26px;
+  height: 22px;
+  margin-left: auto;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition:
+    background var(--dur-hover) ease,
+    color var(--dur-hover) ease,
+    transform var(--dur-press) var(--ease-out);
+}
+
+.agents-models-filter-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.agents-models-filter-btn:active {
+  transform: scale(0.97);
+}
+
+.agents-models-filter {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: 1 1 120px;
+  min-width: 0;
+  margin-left: 8px;
+}
+
+.agents-models-filter-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 22px;
+  padding: 0 8px;
+  font-size: 12px;
+  font-weight: 450;
+}
+
+.agents-models-filter-clear {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  transition:
+    background var(--dur-hover) ease,
+    color var(--dur-hover) ease,
+    transform var(--dur-press) var(--ease-out);
+}
+
+.agents-models-filter-clear:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.agents-models-filter-clear:active {
+  transform: scale(0.97);
+}
+
+.agents-models-empty {
+  padding: 18px 12px 16px;
+  text-align: center;
 }
 
 .agents-models-row {
@@ -15310,28 +16527,28 @@ mark {
   white-space: nowrap;
 }
 
-.agents-skip-picker {
-  justify-content: flex-start;
-  gap: 8px;
+.agents-prefs {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-width: 420px;
 }
 
-.agents-skip-picker > span {
-  flex: 0 1 auto;
-  color: var(--text);
-  font-size: 13px;
+.agents-prefs > .form-hint {
+  margin-top: -4px;
+  margin-bottom: 2px;
+  margin-left: 0;
 }
 
 .agents-pref-row {
   display: flex;
   align-items: flex-start;
-  justify-content: space-between;
-  gap: 16px;
-  max-width: 520px;
-  padding-top: 2px;
+  justify-content: flex-start;
+  gap: 12px;
 }
 
 .agents-pref-row > span {
-  flex: 1 1 auto;
+  flex: 0 1 auto;
   min-width: 0;
   font-size: 13px;
   line-height: 1.45;
@@ -15388,6 +16605,36 @@ mark {
 .agents-list-tool-btn:disabled {
   opacity: 0.35;
   cursor: default;
+}
+
+.agents-list-tool-btn.is-text {
+  width: auto;
+  padding: 0 10px;
+  font-size: 12px;
+  font-weight: 550;
+  letter-spacing: -0.01em;
+}
+
+.agents-list-tool-btn.is-trailing {
+  margin-left: auto;
+  border-right: 0;
+  border-left: 1px solid var(--border-subtle, color-mix(in srgb, var(--text) 10%, transparent));
+}
+
+.agents-list-tool-btn.is-spinning svg {
+  animation: agents-recheck-spin 0.8s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .agents-list-tool-btn.is-spinning svg {
+    animation: none;
+  }
+}
+
+@keyframes agents-recheck-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 /* Catalogue + menu — same enter/leave family as session-history-popover. */
@@ -15504,7 +16751,12 @@ mark {
 .agents-editor .settings-field.row {
   display: flex;
   align-items: center;
-  gap: 12px;
+  justify-content: flex-start;
+  gap: 8px;
+}
+
+.agents-editor .settings-field.row > span {
+  flex: 0 1 auto;
 }
 
 .agents-editor-actions {
@@ -15787,20 +17039,254 @@ mark {
 
 .agent-model-picker {
   position: relative;
+  display: inline-flex;
+  align-items: center;
   flex: 0 1 auto;
   min-width: 0;
-  max-width: 180px;
+  max-width: 196px;
+  height: 22px;
+  gap: 0;
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  transition:
+    background var(--dur-hover) ease,
+    color var(--dur-hover) ease,
+    transform var(--dur-press) var(--ease-out);
 }
 
-.agent-model-picker-trigger {
-  max-width: 180px;
-  gap: 5px;
-  padding-left: 4px;
+.provider-account-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
 }
 
-.agent-model-picker-trigger .agent-brand-mark {
+.provider-account-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.provider-account-who {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.provider-account-name {
+  font-size: 12.5px;
+  font-weight: 560;
+  color: var(--text);
+  letter-spacing: -0.01em;
+}
+
+.provider-account-status,
+.provider-account-muted {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  line-height: 1.4;
+}
+
+.provider-account-status {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.provider-account-quota-slot.is-empty {
+  min-height: 0;
+}
+
+.provider-account-quota-reveal {
+  display: grid;
+  grid-template-rows: 1fr;
+  transition: grid-template-rows var(--dur-pop) var(--ease-out);
+}
+
+.provider-account-quota-reveal-inner {
+  min-height: 0;
+  overflow: hidden;
+}
+
+.provider-account-list {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+
+.provider-account-skel {
+  display: inline-block;
+  height: 0.85em;
+  width: 4.5em;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--text) 10%, transparent);
+}
+
+.provider-account-skel.is-short {
+  width: 2.4em;
+}
+
+.provider-account-quota {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.provider-account-quota-meta {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 11.5px;
+  color: var(--text);
+}
+
+.provider-account-quota-pct {
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.provider-account-quota.is-exhausted .provider-account-quota-pct {
+  color: var(--danger);
+}
+
+.provider-account-bar {
+  height: 5px;
+  border-radius: 999px;
+  background: var(--bg-hover);
+  overflow: hidden;
+}
+
+.provider-account-bar-fill {
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+}
+
+.provider-account-quota.is-exhausted .provider-account-bar-fill {
+  background: var(--danger);
+}
+
+html:has(.provider-account-popup),
+html:has(.provider-account-popup) body,
+html:has(.provider-account-popup) #root {
+  height: auto;
+  min-height: 0;
+}
+
+.token-usage-popup.provider-account-popup {
+  height: auto;
+  min-height: 0;
+}
+
+.provider-account-popup .token-usage-popup-title {
+  padding: 10px 12px 0;
+}
+
+.provider-account-popup .token-usage-popup-body {
+  flex: 0 0 auto;
+  overflow: visible;
+  padding: 8px 12px 12px;
+}
+
+.agent-model-picker-host {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  height: 22px;
+  padding: 0 4px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: default;
+  border-radius: var(--radius-sm);
+}
+
+.agent-model-picker-host .agent-brand-mark {
   flex: 0 0 auto;
   border-radius: 5px;
+}
+
+.agent-model-picker-model {
+  max-width: none;
+  min-width: 0;
+  padding-left: 5px;
+  border-radius: var(--radius-sm);
+}
+
+/* Split gap. Kept in sync with SPLIT_GAP in AgentModelPicker.tsx, which
+   animates column-gap up from 0 so the pickers to the right slide over
+   instead of jumping when the pill tears in two. */
+.agent-model-picker[data-phase='splitting'],
+.agent-model-picker[data-phase='settled'] {
+  gap: 6px;
+}
+
+/* Joined: one control, so the container owns the only hover surface — the
+   halves have to stay clear or the right one double-paints over it. */
+.agent-model-picker[data-phase='joined']:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.agent-model-picker[data-phase='joined']:active {
+  transform: scale(0.97);
+}
+
+.agent-model-picker[data-phase='joined'] .agent-model-picker-host,
+.agent-model-picker[data-phase='joined'] .agent-model-picker-host:hover,
+.agent-model-picker[data-phase='joined'] .agent-model-picker-model,
+.agent-model-picker[data-phase='joined'] .agent-model-picker-model:hover,
+.agent-model-picker[data-phase='joined'] .agent-model-picker-model:active {
+  background: transparent;
+  color: inherit;
+  transform: none;
+}
+
+/* Split pose: the WAAPI timeline drives fill, joining radius and the gap while
+   it runs. These are the poses it starts from, and where a cancelled run
+   lands — no transitions, or the halves would fight the timeline. */
+.agent-model-picker[data-phase='splitting'] .agent-model-picker-host {
+  background: var(--bg-hover);
+  color: var(--text);
+  border-radius: var(--radius-sm) 0 0 var(--radius-sm);
+  transform: none;
+  transition: none;
+}
+
+.agent-model-picker[data-phase='splitting'] .agent-model-picker-model {
+  background: var(--bg-hover);
+  color: var(--text);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  transform: none;
+  transition: none;
+}
+
+/* Settled: two independent chips, each with its own hover target. */
+.agent-model-picker[data-phase='settled'] .agent-model-picker-host,
+.agent-model-picker[data-phase='settled'] .agent-model-picker-model {
+  background: transparent;
+  color: inherit;
+  border-radius: var(--radius-sm);
+  transition:
+    background var(--dur-hover) ease,
+    color var(--dur-hover) ease,
+    transform var(--dur-press) var(--ease-out);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .agent-model-picker[data-phase='settled'] .agent-model-picker-host:hover,
+  .agent-model-picker[data-phase='settled'] .agent-model-picker-model:hover {
+    background: var(--bg-hover);
+    color: var(--text);
+  }
+}
+
+.agent-model-picker[data-phase='settled'] .agent-model-picker-host:active,
+.agent-model-picker[data-phase='settled'] .agent-model-picker-model:active {
+  transform: scale(0.97);
 }
 
 .thinking-level-picker {
@@ -16444,15 +17930,22 @@ html:has(.token-usage-popup) #root {
   padding: 22px 22px 28px;
 }
 
-/* Category switch: light opacity fade only (no slide — keeps nav crisp). */
+/* Category switch fade. First paint must stay opaque — Settings is warmed
+   hidden, and @starting-style opacity:0 never commits until a click. */
 .settings-body-panel {
   opacity: 1;
-  transition: opacity var(--dur-pop) var(--ease-out);
 }
 
-@starting-style {
-  .settings-body-panel {
+.settings-body-panel.is-enter {
+  animation: settings-panel-in var(--dur-pop) var(--ease-out);
+}
+
+@keyframes settings-panel-in {
+  from {
     opacity: 0;
+  }
+  to {
+    opacity: 1;
   }
 }
 

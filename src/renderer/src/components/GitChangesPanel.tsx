@@ -15,8 +15,10 @@ import { isTemporaryWorkspace, workdirShortLabel } from '../lib/format'
 import { bumpGitRepoSync, useGitRepoSyncEpoch } from '../lib/gitRepoSync'
 import { fileManagerLabel } from '../lib/platform'
 import { highlightCode, languageFromPath } from '../lib/highlightCode'
+import { selectedBlockIdsForPath } from '../lib/applyBlockPick'
 import { parseDiffBlocks } from '../lib/previewBlocks'
 import { TextBlockPick } from './TextBlockPick'
+import { SelectionChrome } from './SelectionChrome'
 import { onHljsReady } from '../lib/hljsLazy'
 import { dirname } from '../lib/path'
 import { FileManagerIcon } from './FileManagerIcon'
@@ -344,23 +346,48 @@ function GitDiffContent({
   diffError: string | null
 }): React.JSX.Element {
   const t = useT()
+  const hostRef = useRef<HTMLDivElement>(null)
+  const activeId = useSessionStore((s) => s.activeId)
+  const commentCards = useSessionStore((s) => (activeId ? s.commentCards[activeId] : undefined))
+  const showSelectionAgentMark = useSessionStore(
+    (s) => s.settings.previewSelectionAgentMark !== false
+  )
+  const selectedIds = useMemo(
+    () => selectedBlockIdsForPath(activeId, `git-diff:${entry.path}`),
+    [activeId, entry.path, commentCards]
+  )
   const showImage =
     isImagePath(entry.path) &&
     (diff == null || looksBinaryDiff(diff) || diff.trim() === '' || diff.includes('(no textual'))
 
   return (
-    <div className="git-diff-scroll">
-      {diffError ? (
-        <div className="git-diff-error">{diffError}</div>
-      ) : showImage ? (
-        <ImageDiffView cwd={cwd} entry={entry} />
-      ) : diff == null ? (
-        <div className="token-usage-muted">{t('common.loading')}</div>
-      ) : looksBinaryDiff(diff) ? (
-        <div className="git-binary-note">{t('git.binaryDiff')}</div>
-      ) : (
-        <DiffLines text={diff} filePath={entry.path} />
-      )}
+    <div className="git-diff-stage has-selection-hud" ref={hostRef}>
+      <SelectionChrome
+        hostRef={hostRef}
+        selectedIds={selectedIds}
+        enabled
+        fab={
+          showSelectionAgentMark && selectedIds.length > 0
+            ? {
+                title: t('preview.agentPanel'),
+                onClick: () => useSessionStore.getState().focusComposer()
+              }
+            : null
+        }
+      />
+      <div className="git-diff-scroll">
+        {diffError ? (
+          <div className="git-diff-error">{diffError}</div>
+        ) : showImage ? (
+          <ImageDiffView cwd={cwd} entry={entry} />
+        ) : diff == null ? (
+          <div className="token-usage-muted">{t('common.loading')}</div>
+        ) : looksBinaryDiff(diff) ? (
+          <div className="git-binary-note">{t('git.binaryDiff')}</div>
+        ) : (
+          <DiffLines text={diff} filePath={entry.path} />
+        )}
+      </div>
     </div>
   )
 }

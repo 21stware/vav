@@ -8,7 +8,9 @@ import {
 } from 'react'
 import {
   Check,
+  ChevronRight,
   CircleDashed,
+  ExternalLink,
   GitMerge,
   GitPullRequest,
   GitPullRequestClosed,
@@ -16,7 +18,7 @@ import {
   LoaderCircle,
   MessageSquare,
   Play,
-  Settings,
+  Tag,
   X
 } from 'lucide-react'
 import type {
@@ -31,6 +33,9 @@ import type {
   GithubPullListItem,
   GithubPullsPage,
   GithubPullState,
+  GithubRelease,
+  GithubReleasesPage,
+  GithubRepoRef,
   GithubReview,
   GithubReviewState,
   GithubSite,
@@ -38,7 +43,9 @@ import type {
 } from '@shared/github'
 import {
   fillGithubSiteGaps,
+  githubClosedPullsUrl,
   githubPagesCustomDomain,
+  githubRepoSectionUrl,
   isGithubPagesLive,
   mergePullConversation
 } from '@shared/github'
@@ -224,6 +231,7 @@ export function GithubSitePreview({
   onClose: () => void
 }): React.JSX.Element {
   const t = useT()
+  const liveUrl = fillGithubSiteGaps(site).url
   return (
     <div className="github-preview">
       <header className="workspace-preview-chrome">
@@ -231,13 +239,45 @@ export function GithubSitePreview({
         <Button
           icon={<SafariIcon size={14} />}
           size="sm"
-          title={t('github.openPagesSettings')}
-          onClick={() => window.open(site.settingsUrl, '_blank', 'noopener,noreferrer')}
+          title={liveUrl ? t('github.openSite') : t('github.openPagesSettings')}
+          onClick={() =>
+            window.open(liveUrl || site.settingsUrl, '_blank', 'noopener,noreferrer')
+          }
         />
         <Button icon={<X size={14} />} size="sm" title={t('common.close')} onClick={onClose} />
       </header>
       <div className="github-detail-pane">
         <SitePane site={site} loading={false} error={null} code={undefined} showOpen={false} />
+      </div>
+    </div>
+  )
+}
+
+/** Session-right preview: selected GitHub release. */
+export function GithubReleasePreview({
+  release,
+  onClose
+}: {
+  release: GithubRelease
+  onClose: () => void
+}): React.JSX.Element {
+  const t = useT()
+  return (
+    <div className="github-preview">
+      <header className="workspace-preview-chrome">
+        <span className="github-preview-title" title={release.name || release.tag}>
+          {release.name || release.tag}
+        </span>
+        <Button
+          icon={<SafariIcon size={14} />}
+          size="sm"
+          title={t('github.openOnGithub')}
+          onClick={() => window.open(release.htmlUrl, '_blank', 'noopener,noreferrer')}
+        />
+        <Button icon={<X size={14} />} size="sm" title={t('common.close')} onClick={onClose} />
+      </header>
+      <div className="github-detail-pane">
+        <ReleaseDetail release={release} showOpen={false} />
       </div>
     </div>
   )
@@ -332,6 +372,24 @@ export function GithubPanel({
   const [siteError, setSiteError] = useState<string | null>(null)
   const [siteCode, setSiteCode] = useState<GithubErrorCode | undefined>(undefined)
   const [siteLoading, setSiteLoading] = useState(false)
+
+  const [closedPage, setClosedPage] = useState<GithubPullsPage | null>(null)
+  const [closedOpen, setClosedOpen] = useState(false)
+  const [closedLoading, setClosedLoading] = useState(false)
+  const [closedError, setClosedError] = useState<string | null>(null)
+
+  const [historyPage, setHistoryPage] = useState<GithubActionsPage | null>(null)
+  const [historyOpen, setHistoryOpen] = useState(false)
+  const [historyLoading, setHistoryLoading] = useState(false)
+  const [historyError, setHistoryError] = useState<string | null>(null)
+
+  const [releasesPage, setReleasesPage] = useState<GithubReleasesPage | null>(null)
+  const [releasesError, setReleasesError] = useState<string | null>(null)
+  const [releasesCode, setReleasesCode] = useState<GithubErrorCode | undefined>(undefined)
+  const [releasesLoading, setReleasesLoading] = useState(false)
+  const [selectedReleaseId, setSelectedReleaseId] = useState<number | null>(null)
+  const [releaseFocusIndex, setReleaseFocusIndex] = useState(0)
+  const releaseListRef = useRef<HTMLDivElement>(null)
 
   const refreshPulls = useCallback(async (): Promise<void> => {
     if (!root) {
@@ -451,11 +509,123 @@ export function GithubPanel({
     }
   }, [root])
 
+  const loadClosedPulls = useCallback(async (): Promise<void> => {
+    if (!root || !window.vav?.github?.listPulls) return
+    setClosedLoading(true)
+    setClosedError(null)
+    try {
+      const result = await window.vav.github.listPulls(root, 'closed')
+      if (!result.ok) {
+        setClosedPage(null)
+        setClosedError(result.error)
+        return
+      }
+      setClosedPage(result.data)
+    } catch (err) {
+      setClosedPage(null)
+      setClosedError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setClosedLoading(false)
+    }
+  }, [root])
+
+  const loadActionHistory = useCallback(async (): Promise<void> => {
+    if (!root || !window.vav?.github?.listActions) return
+    setHistoryLoading(true)
+    setHistoryError(null)
+    try {
+      const result = await window.vav.github.listActions(root, 'history')
+      if (!result.ok) {
+        setHistoryPage(null)
+        setHistoryError(result.error)
+        return
+      }
+      setHistoryPage(result.data)
+    } catch (err) {
+      setHistoryPage(null)
+      setHistoryError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setHistoryLoading(false)
+    }
+  }, [root])
+
+  const refreshReleases = useCallback(async (): Promise<void> => {
+    if (!root) {
+      setReleasesPage(null)
+      setSelectedReleaseId(null)
+      setReleasesError(null)
+      setReleasesCode(undefined)
+      return
+    }
+    if (!window.vav?.github?.listReleases) {
+      setReleasesPage(null)
+      setReleasesError(tt('github.apiMissing'))
+      setReleasesCode(undefined)
+      return
+    }
+    setReleasesLoading(true)
+    setReleasesError(null)
+    setReleasesCode(undefined)
+    try {
+      const result = await window.vav.github.listReleases(root)
+      if (!result.ok) {
+        setReleasesPage(null)
+        setSelectedReleaseId(null)
+        setReleasesError(result.error)
+        setReleasesCode(result.code)
+        return
+      }
+      setReleasesPage(result.data)
+      setSelectedReleaseId((prev) => {
+        if (prev && result.data.releases.some((row) => row.id === prev)) return prev
+        return null
+      })
+    } catch (err) {
+      setReleasesPage(null)
+      setReleasesError(err instanceof Error ? err.message : String(err))
+      setReleasesCode('network')
+    } finally {
+      setReleasesLoading(false)
+    }
+  }, [root])
+
+  const toggleClosedPulls = useCallback((): void => {
+    setClosedOpen((open) => {
+      const next = !open
+      if (next && !closedPage && !closedLoading) void loadClosedPulls()
+      return next
+    })
+  }, [closedPage, closedLoading, loadClosedPulls])
+
+  const toggleActionHistory = useCallback((): void => {
+    setHistoryOpen((open) => {
+      const next = !open
+      if (next && !historyPage && !historyLoading) void loadActionHistory()
+      return next
+    })
+  }, [historyPage, historyLoading, loadActionHistory])
+
   const refresh = useCallback(async (): Promise<void> => {
-    if (tab === 'actions') return refreshActions()
+    if (tab === 'actions') {
+      await refreshActions()
+      if (historyOpen) await loadActionHistory()
+      return
+    }
     if (tab === 'site') return refreshSite()
-    return refreshPulls()
-  }, [tab, refreshActions, refreshSite, refreshPulls])
+    if (tab === 'releases') return refreshReleases()
+    await refreshPulls()
+    if (closedOpen) await loadClosedPulls()
+  }, [
+    tab,
+    historyOpen,
+    closedOpen,
+    refreshActions,
+    refreshSite,
+    refreshReleases,
+    refreshPulls,
+    loadActionHistory,
+    loadClosedPulls
+  ])
 
   const refreshRef = useRef(refresh)
   refreshRef.current = refresh
@@ -464,12 +634,32 @@ export function GithubPanel({
   }, [])
 
   useEffect(() => {
+    setClosedPage(null)
+    setClosedOpen(false)
+    setClosedError(null)
+    setClosedLoading(false)
+    setHistoryPage(null)
+    setHistoryOpen(false)
+    setHistoryError(null)
+    setHistoryLoading(false)
+    setReleasesPage(null)
+    setSelectedReleaseId(null)
+    setReleaseFocusIndex(0)
+  }, [root])
+
+  useEffect(() => {
     if (!visible) return
     void refresh()
   }, [visible, refresh])
 
   const chromeLoading =
-    tab === 'actions' ? actionsLoading : tab === 'site' ? siteLoading : loading
+    tab === 'actions'
+      ? actionsLoading
+      : tab === 'site'
+        ? siteLoading
+        : tab === 'releases'
+          ? releasesLoading
+          : loading
   const chromeMeta = useMemo(() => {
     if (tab === 'actions') {
       if (!actionsPage) return null
@@ -480,13 +670,17 @@ export function GithubPanel({
       if (!isGithubPagesLive(site)) return `${site.repo.fullName} · ${t('github.noSite')}`
       return `${site.repo.fullName} · ${site.pagesStatus || t('github.sitePages')}`
     }
+    if (tab === 'releases') {
+      if (!releasesPage) return null
+      return `${releasesPage.repo.fullName} · ${t('github.releaseCount', { n: releasesPage.releases.length })}`
+    }
     if (!page) return null
     return `${page.repo.fullName} · ${
       page.truncated
         ? t('github.pullCountTruncated', { n: page.pulls.length })
         : t('github.pullCount', { n: page.pulls.length })
     }`
-  }, [tab, actionsPage, site, page, t])
+  }, [tab, actionsPage, site, releasesPage, page, t])
 
   useEffect(() => {
     if (!onChrome) return
@@ -505,15 +699,26 @@ export function GithubPanel({
     if (!visible || !previewHost || !root || !filePreviewOpen) return
     if (tab === 'actions') {
       if (sessionPreview.kind !== 'github-action') return
-      const run = (actionsPage?.runs ?? []).find((item) => item.id === selectedRunId)
+      const run =
+        (actionsPage?.runs ?? []).find((item) => item.id === selectedRunId) ??
+        (historyPage?.runs ?? []).find((item) => item.id === selectedRunId)
       if (!run) return
       setSessionPreview({ kind: 'github-action', cwd: root, run })
       return
     }
     if (tab === 'site') return
+    if (tab === 'releases') {
+      if (sessionPreview.kind !== 'github-release') return
+      const release = (releasesPage?.releases ?? []).find((item) => item.id === selectedReleaseId)
+      if (!release) return
+      setSessionPreview({ kind: 'github-release', cwd: root, release })
+      return
+    }
     if (sessionPreview.kind !== 'github') return
     if (selected == null) return
-    const pull = (page?.pulls ?? []).find((item) => item.number === selected)
+    const pull =
+      (page?.pulls ?? []).find((item) => item.number === selected) ??
+      (closedPage?.pulls ?? []).find((item) => item.number === selected)
     if (!pull) return
     setSessionPreview({ kind: 'github', cwd: root, pull })
   }, [
@@ -523,8 +728,12 @@ export function GithubPanel({
     tab,
     selected,
     selectedRunId,
+    selectedReleaseId,
     page,
+    closedPage,
     actionsPage,
+    historyPage,
+    releasesPage,
     filePreviewOpen,
     sessionPreview.kind,
     setSessionPreview
@@ -609,7 +818,20 @@ export function GithubPanel({
   }, [previewHost, visible, root, tab, selectedRunId, t])
 
   const pulls = page?.pulls ?? []
+  const closedPulls = closedPage?.pulls ?? []
   const runs = actionsPage?.runs ?? []
+  const historyRuns = historyPage?.runs ?? []
+  const releases = releasesPage?.releases ?? []
+  const allRuns = useMemo(() => {
+    const seen = new Set<number>()
+    const out: GithubActionRun[] = []
+    for (const run of [...runs, ...historyRuns]) {
+      if (seen.has(run.id)) continue
+      seen.add(run.id)
+      out.push(run)
+    }
+    return out
+  }, [runs, historyRuns])
 
   useEffect(() => {
     if (selected == null) return
@@ -622,6 +844,12 @@ export function GithubPanel({
     const idx = runs.findIndex((run) => run.id === selectedRunId)
     if (idx >= 0) setActionFocusIndex(idx)
   }, [selectedRunId, runs])
+
+  useEffect(() => {
+    if (selectedReleaseId == null) return
+    const idx = releases.findIndex((row) => row.id === selectedReleaseId)
+    if (idx >= 0) setReleaseFocusIndex(idx)
+  }, [selectedReleaseId, releases])
 
   const previewPull = (pull: GithubPullListItem): void => {
     if (!root) return
@@ -643,12 +871,23 @@ export function GithubPanel({
     setFilePreviewOpen(true)
   }
 
+  const previewRelease = (release: GithubRelease): void => {
+    if (!root) return
+    setSelectedReleaseId(release.id)
+    setSessionPreview({ kind: 'github-release', cwd: root, release })
+    setFilePreviewOpen(true)
+  }
+
+  const openUrl = (url: string): void => {
+    window.open(url, '_blank', 'noopener,noreferrer')
+  }
+
   const showPullMenu = (pull: GithubPullListItem, x: number, y: number): void => {
     const items: MenuItem[] = [
       { label: t('common.preview'), onSelect: () => previewPull(pull) },
       {
         label: t('github.openOnGithub'),
-        onSelect: () => window.open(pull.url, '_blank', 'noopener,noreferrer')
+        onSelect: () => openUrl(pull.url)
       }
     ]
     void showMenu(items, { x, y })
@@ -659,8 +898,16 @@ export function GithubPanel({
       { label: t('common.preview'), onSelect: () => previewRun(run) },
       {
         label: t('github.openOnGithub'),
-        onSelect: () => window.open(run.htmlUrl, '_blank', 'noopener,noreferrer')
+        onSelect: () => openUrl(run.htmlUrl)
       }
+    ]
+    void showMenu(items, { x, y })
+  }
+
+  const showReleaseMenu = (release: GithubRelease, x: number, y: number): void => {
+    const items: MenuItem[] = [
+      { label: t('common.preview'), onSelect: () => previewRelease(release) },
+      { label: t('github.openOnGithub'), onSelect: () => openUrl(release.htmlUrl) }
     ]
     void showMenu(items, { x, y })
   }
@@ -695,6 +942,21 @@ export function GithubPanel({
     rowAttr: 'data-github-run-row'
   })
 
+  const onReleaseListKeyDown = makeListKeyDown({
+    count: releases.length,
+    setIndex: setReleaseFocusIndex,
+    selectAt: (index) => {
+      const row = releases[index]
+      if (row) setSelectedReleaseId(row.id)
+    },
+    previewAt: (index) => {
+      const row = releases[index]
+      if (row) previewRelease(row)
+    },
+    scrollParent: releaseListRef,
+    rowAttr: 'data-github-release-row'
+  })
+
   if (!root) {
     return (
       <div className="github-panel">
@@ -703,10 +965,15 @@ export function GithubPanel({
     )
   }
 
-  const selectedItem = pulls.find((p) => p.number === selected) ?? null
+  const selectedItem =
+    pulls.find((p) => p.number === selected) ??
+    closedPulls.find((p) => p.number === selected) ??
+    null
   const shown = detail && detail.number === selected ? detail : selectedItem
-  const selectedRun = runs.find((run) => run.id === selectedRunId) ?? null
+  const selectedRun = allRuns.find((run) => run.id === selectedRunId) ?? null
   const shownRun = runDetail && runDetail.id === selectedRunId ? runDetail : selectedRun
+  const selectedRelease = releases.find((row) => row.id === selectedReleaseId) ?? null
+  const repoRef = page?.repo ?? actionsPage?.repo ?? releasesPage?.repo ?? site?.repo ?? null
 
   return (
     <div className="github-panel">
@@ -717,6 +984,7 @@ export function GithubPanel({
           options={[
             { value: 'pulls', label: t('github.tabOpenPr') },
             { value: 'actions', label: t('github.tabActions') },
+            { value: 'releases', label: t('github.tabReleases') },
             { value: 'site', label: t('github.tabSite') }
           ]}
         />
@@ -734,14 +1002,20 @@ export function GithubPanel({
           <div className="github-list-pane">
             <ActionsList
               runs={runs}
+              history={historyRuns}
+              historyOpen={historyOpen}
+              historyLoading={historyLoading}
+              historyError={historyError}
               selectedId={selectedRunId}
               focusIndex={actionFocusIndex}
               loading={actionsLoading}
               error={actionsError}
               code={actionsCode}
               loaded={Boolean(actionsPage)}
+              repo={actionsPage?.repo ?? repoRef}
               listRef={actionListRef}
               onKeyDown={onActionListKeyDown}
+              onToggleHistory={toggleActionHistory}
               onSelect={(index, id) => {
                 setActionFocusIndex(index)
                 setSelectedRunId(id)
@@ -753,7 +1027,7 @@ export function GithubPanel({
           {!previewHost ? (
             <div className="github-detail-pane">
               {!shownRun ? (
-                runs.length > 0 ? (
+                runs.length > 0 || historyRuns.length > 0 ? (
                   <div className="github-detail-empty">{t('github.selectAction')}</div>
                 ) : null
               ) : (
@@ -763,6 +1037,42 @@ export function GithubPanel({
                   loading={runDetailLoading}
                   error={runDetailError}
                 />
+              )}
+            </div>
+          ) : null}
+        </div>
+      ) : tab === 'releases' ? (
+        <div className={`github-panel-body${previewHost ? ' is-list-only' : ''}`}>
+          <div className="github-list-pane">
+            <ReleasesList
+              releases={releases}
+              selectedId={selectedReleaseId}
+              focusIndex={releaseFocusIndex}
+              loading={releasesLoading}
+              error={releasesError}
+              code={releasesCode}
+              loaded={Boolean(releasesPage)}
+              listRef={releaseListRef}
+              onKeyDown={onReleaseListKeyDown}
+              onSelect={(index, id) => {
+                setReleaseFocusIndex(index)
+                setSelectedReleaseId(id)
+              }}
+              onPreview={previewRelease}
+              onMenu={showReleaseMenu}
+              onOpenWeb={
+                repoRef ? () => openUrl(githubRepoSectionUrl(repoRef, 'releases')) : undefined
+              }
+            />
+          </div>
+          {!previewHost ? (
+            <div className="github-detail-pane">
+              {!selectedRelease ? (
+                releases.length > 0 ? (
+                  <div className="github-detail-empty">{t('github.selectRelease')}</div>
+                ) : null
+              ) : (
+                <ReleaseDetail release={selectedRelease} />
               )}
             </div>
           ) : null}
@@ -777,8 +1087,6 @@ export function GithubPanel({
                 title={loading ? t('common.loading') : t('github.loadFailed')}
                 description={loading ? undefined : t('github.apiMissing')}
               />
-            ) : pulls.length === 0 ? (
-              <EmptyState title={t('github.noPulls')} description={t('github.noPullsDesc')} />
             ) : (
               <div
                 ref={listRef}
@@ -788,56 +1096,62 @@ export function GithubPanel({
                 aria-label={t('github.pulls')}
                 onKeyDown={onListKeyDown}
               >
-                {pulls.map((pull, index) => {
-                  const selectedRow = selected === pull.number
-                  const focused = index === focusIndex
-                  const updated = Date.parse(pull.updatedAt)
-                  return (
-                    <button
+                {pulls.length === 0 ? (
+                  <div className="github-group-empty">{t('github.noPulls')}</div>
+                ) : (
+                  pulls.map((pull, index) => (
+                    <PullRow
                       key={pull.number}
-                      type="button"
-                      role="option"
-                      aria-selected={selectedRow}
-                      data-github-row={index}
-                      className={`github-pr-row${selectedRow ? ' is-selected' : ''}${
-                        focused ? ' is-focused' : ''
-                      }`}
-                      onClick={() => {
+                      pull={pull}
+                      index={index}
+                      selected={selected === pull.number}
+                      focused={index === focusIndex}
+                      onSelect={() => {
                         setFocusIndex(index)
                         setSelected(pull.number)
                       }}
-                      onDoubleClick={() => previewPull(pull)}
-                      onContextMenu={(event) => {
-                        event.preventDefault()
-                        event.stopPropagation()
-                        setFocusIndex(index)
-                        setSelected(pull.number)
-                        showPullMenu(pull, event.clientX, event.clientY)
-                      }}
-                    >
-                      <span
-                        className={`github-pr-state ${stateClass(pull.state, pull.draft)}`}
-                        aria-hidden
-                      >
-                        <PullStateIcon state={pull.state} draft={pull.draft} />
-                      </span>
-                      <span className="github-pr-num">#{pull.number}</span>
-                      <span className="github-pr-title" title={pull.title}>
-                        {pull.title}
-                      </span>
-                      <span className="github-pr-age">
-                        {Number.isFinite(updated) ? relativeTime(updated) : ''}
-                      </span>
-                    </button>
+                      onPreview={() => previewPull(pull)}
+                      onMenu={(x, y) => showPullMenu(pull, x, y)}
+                    />
+                  ))
+                )}
+                {repoRef ? (
+                  <ListGroupHead
+                    label={t('github.closedPulls')}
+                    expanded={closedOpen}
+                    loading={closedLoading}
+                    onToggle={toggleClosedPulls}
+                    onOpenWeb={() => openUrl(githubClosedPullsUrl(repoRef))}
+                    openWebLabel={t('github.openClosedOnGithub')}
+                  />
+                ) : null}
+                {closedOpen ? (
+                  closedError && !closedPage ? (
+                    <div className="github-group-empty">{closedError}</div>
+                  ) : closedLoading && !closedPage ? (
+                    <div className="github-group-empty">{t('common.loading')}</div>
+                  ) : closedPulls.length === 0 ? (
+                    <div className="github-group-empty">{t('github.closedPullsEmpty')}</div>
+                  ) : (
+                    closedPulls.map((pull) => (
+                      <PullRow
+                        key={`c-${pull.number}`}
+                        pull={pull}
+                        selected={selected === pull.number}
+                        onSelect={() => setSelected(pull.number)}
+                        onPreview={() => previewPull(pull)}
+                        onMenu={(x, y) => showPullMenu(pull, x, y)}
+                      />
+                    ))
                   )
-                })}
+                ) : null}
               </div>
             )}
           </div>
           {!previewHost ? (
             <div className="github-detail-pane">
               {!shown ? (
-                pulls.length > 0 ? (
+                pulls.length > 0 || closedPulls.length > 0 ? (
                   <div className="github-detail-empty">{t('github.selectPull')}</div>
                 ) : null
               ) : (
@@ -909,29 +1223,171 @@ function makeListKeyDown({
   }
 }
 
+function ListGroupHead({
+  label,
+  expanded,
+  loading,
+  onToggle,
+  onOpenWeb,
+  openWebLabel
+}: {
+  label: string
+  expanded: boolean
+  loading: boolean
+  onToggle: () => void
+  onOpenWeb?: () => void
+  openWebLabel?: string
+}): React.JSX.Element {
+  return (
+    <div className="github-group-head">
+      <button type="button" className="github-group-toggle" onClick={onToggle}>
+        <ChevronRight size={12} className={expanded ? 'is-open' : undefined} aria-hidden />
+        <span>{label}</span>
+        {loading ? <LoaderCircle size={11} className="github-action-spin" aria-hidden /> : null}
+      </button>
+      {onOpenWeb ? (
+        <button
+          type="button"
+          className="github-group-web"
+          title={openWebLabel}
+          onClick={(event) => {
+            event.preventDefault()
+            event.stopPropagation()
+            onOpenWeb()
+          }}
+        >
+          <ExternalLink size={11} />
+        </button>
+      ) : null}
+    </div>
+  )
+}
+
+function PullRow({
+  pull,
+  index,
+  selected,
+  focused,
+  onSelect,
+  onPreview,
+  onMenu
+}: {
+  pull: GithubPullListItem
+  index?: number
+  selected: boolean
+  focused?: boolean
+  onSelect: () => void
+  onPreview: () => void
+  onMenu: (x: number, y: number) => void
+}): React.JSX.Element {
+  const updated = Date.parse(pull.updatedAt)
+  return (
+    <button
+      type="button"
+      role="option"
+      aria-selected={selected}
+      data-github-row={index}
+      className={`github-pr-row${selected ? ' is-selected' : ''}${focused ? ' is-focused' : ''}`}
+      onClick={onSelect}
+      onDoubleClick={onPreview}
+      onContextMenu={(event) => {
+        event.preventDefault()
+        event.stopPropagation()
+        onSelect()
+        onMenu(event.clientX, event.clientY)
+      }}
+    >
+      <span className={`github-pr-state ${stateClass(pull.state, pull.draft)}`} aria-hidden>
+        <PullStateIcon state={pull.state} draft={pull.draft} />
+      </span>
+      <span className="github-pr-title" title={pull.title}>
+        {pull.title}
+      </span>
+      <span className="github-pr-age">{Number.isFinite(updated) ? relativeTime(updated) : ''}</span>
+    </button>
+  )
+}
+
+function ActionRunRow({
+  run,
+  index,
+  selected,
+  focused,
+  onSelect,
+  onPreview,
+  onMenu
+}: {
+  run: GithubActionRun
+  index?: number
+  selected: boolean
+  focused?: boolean
+  onSelect: () => void
+  onPreview?: (run: GithubActionRun) => void
+  onMenu?: (run: GithubActionRun, x: number, y: number) => void
+}): React.JSX.Element {
+  const updated = Date.parse(run.updatedAt || run.runStartedAt || '')
+  return (
+    <button
+      type="button"
+      role="option"
+      aria-selected={selected}
+      data-github-run-row={index}
+      className={`github-pr-row${selected ? ' is-selected' : ''}${focused ? ' is-focused' : ''}`}
+      onClick={onSelect}
+      onDoubleClick={() => onPreview?.(run)}
+      onContextMenu={(event) => {
+        event.preventDefault()
+        event.stopPropagation()
+        onSelect()
+        onMenu?.(run, event.clientX, event.clientY)
+      }}
+    >
+      <span className={`github-pr-state ${actionStateClass(run.status)}`} aria-hidden>
+        <ActionStatusIcon status={run.status} />
+      </span>
+      <span className="github-pr-title" title={run.title || run.name}>
+        {run.title || run.name}
+      </span>
+      <span className="github-pr-age">{Number.isFinite(updated) ? relativeTime(updated) : ''}</span>
+    </button>
+  )
+}
+
 function ActionsList({
   runs,
+  history,
+  historyOpen,
+  historyLoading,
+  historyError,
   selectedId,
   focusIndex,
   loading,
   error,
   code,
   loaded,
+  repo,
   listRef,
   onKeyDown,
+  onToggleHistory,
   onSelect,
   onPreview,
   onMenu
 }: {
   runs: GithubActionRun[]
+  history: GithubActionRun[]
+  historyOpen: boolean
+  historyLoading: boolean
+  historyError: string | null
   selectedId: number | null
   focusIndex: number
   loading: boolean
   error: string | null
   code: GithubErrorCode | undefined
   loaded: boolean
+  repo: GithubRepoRef | null
   listRef: React.RefObject<HTMLDivElement | null>
   onKeyDown: (event: ReactKeyboardEvent<HTMLDivElement>) => void
+  onToggleHistory: () => void
   onSelect: (index: number, id: number) => void
   onPreview?: (run: GithubActionRun) => void
   onMenu?: (run: GithubActionRun, x: number, y: number) => void
@@ -948,9 +1404,6 @@ function ActionsList({
       />
     )
   }
-  if (runs.length === 0) {
-    return <EmptyState title={t('github.noActions')} description={t('github.noActionsDesc')} />
-  }
   return (
     <div
       ref={listRef}
@@ -960,41 +1413,221 @@ function ActionsList({
       aria-label={t('github.actions')}
       onKeyDown={onKeyDown}
     >
-      {runs.map((run, index) => {
-        const selectedRow = selectedId === run.id
-        const focused = index === focusIndex
-        const updated = Date.parse(run.updatedAt || run.runStartedAt || '')
-        return (
-          <button
+      {runs.length === 0 ? (
+        <div className="github-group-empty">{t('github.noActions')}</div>
+      ) : (
+        runs.map((run, index) => (
+          <ActionRunRow
             key={run.id}
-            type="button"
-            role="option"
-            aria-selected={selectedRow}
-            data-github-run-row={index}
-            className={`github-pr-row${selectedRow ? ' is-selected' : ''}${
-              focused ? ' is-focused' : ''
-            }`}
-            onClick={() => onSelect(index, run.id)}
-            onDoubleClick={() => onPreview?.(run)}
-            onContextMenu={(event) => {
-              event.preventDefault()
-              event.stopPropagation()
-              onSelect(index, run.id)
-              onMenu?.(run, event.clientX, event.clientY)
-            }}
-          >
-            <span className={`github-pr-state ${actionStateClass(run.status)}`} aria-hidden>
-              <ActionStatusIcon status={run.status} />
-            </span>
-            <span className="github-pr-title" title={run.title || run.name}>
-              {run.title || run.name}
-            </span>
-            <span className="github-pr-age">
-              {Number.isFinite(updated) ? relativeTime(updated) : ''}
-            </span>
-          </button>
+            run={run}
+            index={index}
+            selected={selectedId === run.id}
+            focused={index === focusIndex}
+            onSelect={() => onSelect(index, run.id)}
+            onPreview={onPreview}
+            onMenu={onMenu}
+          />
+        ))
+      )}
+      {repo ? (
+        <ListGroupHead
+          label={t('github.actionHistory')}
+          expanded={historyOpen}
+          loading={historyLoading}
+          onToggle={onToggleHistory}
+          onOpenWeb={() =>
+            window.open(githubRepoSectionUrl(repo, 'actions'), '_blank', 'noopener,noreferrer')
+          }
+          openWebLabel={t('github.openActionsOnGithub')}
+        />
+      ) : null}
+      {historyOpen ? (
+        historyError && history.length === 0 ? (
+          <div className="github-group-empty">{historyError}</div>
+        ) : historyLoading && history.length === 0 ? (
+          <div className="github-group-empty">{t('common.loading')}</div>
+        ) : history.length === 0 ? (
+          <div className="github-group-empty">{t('github.actionHistoryEmpty')}</div>
+        ) : (
+          history.map((run) => (
+            <ActionRunRow
+              key={`h-${run.id}`}
+              run={run}
+              selected={selectedId === run.id}
+              onSelect={() => onSelect(-1, run.id)}
+              onPreview={onPreview}
+              onMenu={onMenu}
+            />
+          ))
         )
-      })}
+      ) : null}
+    </div>
+  )
+}
+
+function ReleasesList({
+  releases,
+  selectedId,
+  focusIndex,
+  loading,
+  error,
+  code,
+  loaded,
+  listRef,
+  onKeyDown,
+  onSelect,
+  onPreview,
+  onMenu,
+  onOpenWeb
+}: {
+  releases: GithubRelease[]
+  selectedId: number | null
+  focusIndex: number
+  loading: boolean
+  error: string | null
+  code: GithubErrorCode | undefined
+  loaded: boolean
+  listRef: React.RefObject<HTMLDivElement | null>
+  onKeyDown: (event: ReactKeyboardEvent<HTMLDivElement>) => void
+  onSelect: (index: number, id: number) => void
+  onPreview: (release: GithubRelease) => void
+  onMenu: (release: GithubRelease, x: number, y: number) => void
+  onOpenWeb?: () => void
+}): React.JSX.Element {
+  const t = useT()
+  if (error && !loaded) {
+    return <EmptyState {...emptyForCode(code, error, t)} />
+  }
+  if (!loaded) {
+    return (
+      <EmptyState
+        title={loading ? t('common.loading') : t('github.loadFailedReleases')}
+        description={loading ? undefined : t('github.apiMissing')}
+      />
+    )
+  }
+  const latestId = releases.find((row) => !row.draft && !row.prerelease)?.id ?? null
+  return (
+    <div
+      ref={listRef}
+      className="github-pr-list"
+      role="listbox"
+      tabIndex={0}
+      aria-label={t('github.releases')}
+      onKeyDown={onKeyDown}
+    >
+      {releases.length === 0 ? (
+        <div className="github-group-empty">
+          <span>{t('github.noReleases')}</span>
+          {onOpenWeb ? (
+            <button type="button" className="github-site-link" onClick={onOpenWeb}>
+              {t('github.openReleasesOnGithub')}
+            </button>
+          ) : null}
+        </div>
+      ) : (
+        releases.map((release, index) => {
+          const selectedRow = selectedId === release.id
+          const published = Date.parse(release.publishedAt || release.createdAt)
+          return (
+            <button
+              key={release.id}
+              type="button"
+              role="option"
+              aria-selected={selectedRow}
+              data-github-release-row={index}
+              className={`github-pr-row${selectedRow ? ' is-selected' : ''}${
+                index === focusIndex ? ' is-focused' : ''
+              }`}
+              onClick={() => onSelect(index, release.id)}
+              onDoubleClick={() => onPreview(release)}
+              onContextMenu={(event) => {
+                event.preventDefault()
+                event.stopPropagation()
+                onSelect(index, release.id)
+                onMenu(release, event.clientX, event.clientY)
+              }}
+            >
+              <span className="github-pr-state is-tag" aria-hidden>
+                <Tag size={12} />
+              </span>
+              <span className="github-pr-title" title={release.name || release.tag}>
+                {release.name || release.tag}
+              </span>
+              {release.draft ? (
+                <span className="github-pr-age">{t('github.releaseDraft')}</span>
+              ) : release.prerelease ? (
+                <span className="github-pr-age">{t('github.releasePrerelease')}</span>
+              ) : release.id === latestId ? (
+                <span className="github-pr-age">{t('github.releaseLatest')}</span>
+              ) : Number.isFinite(published) ? (
+                <span className="github-pr-age">{relativeTime(published)}</span>
+              ) : null}
+            </button>
+          )
+        })
+      )}
+    </div>
+  )
+}
+
+function ReleaseDetail({
+  release,
+  showOpen = true
+}: {
+  release: GithubRelease
+  showOpen?: boolean
+}): React.JSX.Element {
+  const t = useT()
+  const published = Date.parse(release.publishedAt || release.createdAt)
+  const body = release.body?.trim() ?? ''
+  return (
+    <div className="github-detail-scroll">
+      <div className="github-detail-hero">
+        <div className="github-detail-title-row">
+          <span className="github-pr-state is-tag" aria-hidden>
+            <Tag size={13} />
+          </span>
+          <h2 className="github-detail-heading" title={release.name || release.tag}>
+            {release.name || release.tag}
+          </h2>
+          {showOpen ? (
+            <Button
+              icon={<SafariIcon size={14} />}
+              size="sm"
+              className="github-open-web"
+              title={t('github.openOnGithub')}
+              onClick={() => window.open(release.htmlUrl, '_blank', 'noopener,noreferrer')}
+            />
+          ) : null}
+        </div>
+        <div className="github-detail-status-row">
+          <span
+            className={`github-detail-state ${
+              release.draft ? 'is-draft' : release.prerelease ? 'is-open' : 'is-merged'
+            }`}
+          >
+            {release.draft
+              ? t('github.releaseDraft')
+              : release.prerelease
+                ? t('github.releasePrerelease')
+                : release.tag}
+          </span>
+          <p className="github-merge-prose">
+            {release.author.login ? <span>{release.author.login}</span> : null}
+            {Number.isFinite(published) ? ` · ${relativeTime(published)}` : ''}
+          </p>
+        </div>
+      </div>
+      <div className="github-detail-body">
+        {body ? (
+          <div className="github-pr-body">
+            <GithubMarkdown source={body} />
+          </div>
+        ) : (
+          <div className="github-no-body">{t('github.noReleaseBody')}</div>
+        )}
+      </div>
     </div>
   )
 }
@@ -1153,11 +1786,10 @@ function SitePane({
   if (!isGithubPagesLive(site) && !site.homepage) {
     return (
       <EmptyState title={t('github.noSite')} description={t('github.noSiteDesc')}>
-        <Button
-          icon={<Settings size={14} />}
-          size="sm"
-          label={t('github.openPagesSettings')}
-          onClick={() => window.open(site.settingsUrl, '_blank', 'noopener,noreferrer')}
+        <SiteConfigLink
+          url={site.settingsUrl}
+          label={t('github.siteConfig')}
+          title={t('github.openPagesSettings')}
         />
       </EmptyState>
     )
@@ -1178,6 +1810,28 @@ function SitePane({
   )
 }
 
+function SiteConfigLink({
+  url,
+  label,
+  title
+}: {
+  url: string
+  label: string
+  title?: string
+}): React.JSX.Element {
+  return (
+    <button
+      type="button"
+      className="github-site-config"
+      title={title ?? label}
+      onClick={() => window.open(url, '_blank', 'noopener,noreferrer')}
+    >
+      <span>{label}</span>
+      <ExternalLink size={11} aria-hidden />
+    </button>
+  )
+}
+
 function SiteConfig({
   site,
   showOpen
@@ -1189,14 +1843,23 @@ function SiteConfig({
   const view = fillGithubSiteGaps(site)
   const live = isGithubPagesLive(view)
   const customDomain = githubPagesCustomDomain(view)
+  let urlHost: string | null = null
+  if (view.url) {
+    try {
+      urlHost = new URL(view.url).hostname.replace(/^www\./i, '')
+    } catch {
+      urlHost = null
+    }
+  }
+  const showDomain = Boolean(customDomain && customDomain !== urlHost)
   const sourceLabel = view.buildType === 'workflow'
     ? t('github.siteSourceWorkflow')
     : view.buildType === 'legacy' || view.source
       ? t('github.siteSourceLegacy')
-      : t('github.siteNone')
+      : null
   const branchLabel = view.source
-    ? `${view.source.branch} ${view.source.path === '/' ? t('github.siteRoot') : view.source.path}`
-    : t('github.siteNone')
+    ? `${view.source.branch}${view.source.path === '/' ? '' : ` ${view.source.path}`}`
+    : null
   const showHomepage = Boolean(
     view.homepage && !sameSiteHost(view.homepage, view.url, view.cname)
   )
@@ -1212,16 +1875,13 @@ function SiteConfig({
               {live ? pagesStatusLabel(view.pagesStatus ?? 'built', t) : t('github.noSite')}
             </span>
             {live && view.url ? (
-              <p className="github-merge-prose">
-                {t('github.siteLiveAt')}{' '}
-                <button
-                  type="button"
-                  className="github-site-link"
-                  onClick={() => window.open(view.url!, '_blank', 'noopener,noreferrer')}
-                >
-                  {view.url}
-                </button>
-              </p>
+              <button
+                type="button"
+                className="github-site-link"
+                onClick={() => window.open(view.url!, '_blank', 'noopener,noreferrer')}
+              >
+                {view.url.replace(/^https?:\/\//, '').replace(/\/$/, '')}
+              </button>
             ) : (
               <p className="github-merge-prose">{t('github.noSiteDesc')}</p>
             )}
@@ -1235,12 +1895,10 @@ function SiteConfig({
               />
             ) : null}
             {showOpen ? (
-              <Button
-                icon={<Settings size={14} />}
-                size="sm"
-                className="github-open-web"
+              <SiteConfigLink
+                url={view.settingsUrl}
+                label={t('github.siteConfig')}
                 title={t('github.openPagesSettings')}
-                onClick={() => window.open(view.settingsUrl, '_blank', 'noopener,noreferrer')}
               />
             ) : null}
           </div>
@@ -1254,46 +1912,27 @@ function SiteConfig({
           ) : null}
         </div>
         <div className="github-detail-body">
-          {live ? (
+          {live && (sourceLabel || branchLabel || showDomain || showHomepage) ? (
             <div className="github-site-fields-wrap">
-              <SiteField label={t('github.siteSource')}>{sourceLabel}</SiteField>
-              <SiteField label={t('github.siteBranch')}>{branchLabel}</SiteField>
-              <SiteField label={t('github.siteCustomDomain')}>
-                {customDomain || t('github.siteNone')}
-              </SiteField>
-              <SiteField label={t('github.siteHttps')}>
-                {view.httpsEnforced == null
-                  ? t('github.siteNone')
-                  : view.httpsEnforced
-                    ? t('github.siteHttpsOn')
-                    : t('github.siteHttpsOff')}
-              </SiteField>
-              {view.protectedDomainState ? (
-                <SiteField label={t('github.siteDomainState')}>
-                  {domainStateLabel(view.protectedDomainState, t)}
-                </SiteField>
+              {sourceLabel ? <SiteField label={t('github.siteSource')}>{sourceLabel}</SiteField> : null}
+              {branchLabel ? <SiteField label={t('github.siteBranch')}>{branchLabel}</SiteField> : null}
+              {showDomain ? (
+                <SiteField label={t('github.siteCustomDomain')}>{customDomain}</SiteField>
               ) : null}
-              {view.public != null ? (
-                <SiteField label={t('github.siteVisibility')}>
-                  {view.public ? t('github.sitePublic') : t('github.sitePrivate')}
+              {showHomepage ? (
+                <SiteField label={t('github.siteHomepage')}>
+                  <button
+                    type="button"
+                    className="github-site-link"
+                    onClick={() => window.open(view.homepage!, '_blank', 'noopener,noreferrer')}
+                  >
+                    {view.homepage}
+                  </button>
                 </SiteField>
               ) : null}
             </div>
-          ) : (
+          ) : !live ? (
             <div className="github-no-body">{t('github.noSiteDesc')}</div>
-          )}
-          {showHomepage ? (
-            <SiteSection title={t('github.siteAbout')}>
-              <SiteField label={t('github.siteHomepage')}>
-                <button
-                  type="button"
-                  className="github-site-link"
-                  onClick={() => window.open(view.homepage!, '_blank', 'noopener,noreferrer')}
-                >
-                  {view.homepage}
-                </button>
-              </SiteField>
-            </SiteSection>
           ) : null}
         </div>
       </div>
@@ -1318,21 +1957,6 @@ function sameSiteHost(
   const home = host(homepage)
   if (!home) return false
   return home === host(url) || home === host(cname)
-}
-
-function SiteSection({
-  title,
-  children
-}: {
-  title: string
-  children: React.ReactNode
-}): React.JSX.Element {
-  return (
-    <section className="github-site-section">
-      <h3 className="github-site-section-title">{title}</h3>
-      <dl className="github-site-fields">{children}</dl>
-    </section>
-  )
 }
 
 function SiteField({
@@ -1362,13 +1986,6 @@ function pagesStatusClass(status: string | null): string {
   if (status === 'building') return 'is-open'
   if (status === 'errored') return 'is-closed'
   return 'is-draft'
-}
-
-function domainStateLabel(state: string | null, t: ReturnType<typeof useT>): string {
-  if (state === 'verified') return t('github.siteDomainVerified')
-  if (state === 'pending') return t('github.siteDomainPending')
-  if (state === 'unverified') return t('github.siteDomainUnverified')
-  return state || t('github.siteNone')
 }
 
 function PullDetail({

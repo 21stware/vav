@@ -4,6 +4,7 @@ import {
   Bot,
   ChevronDown,
   ChevronUp,
+  Download,
   Folder,
   GitBranch,
   Terminal as TerminalIcon,
@@ -27,6 +28,7 @@ import { menuAnchor, showMenu, type MenuItem } from '../lib/nativeMenu'
 import { fileManagerLabel, keys } from '../lib/platform'
 import { useT } from '../i18n/useT'
 import { Button, Chip } from './ui'
+import { useInstallRunStore } from '../state/installRunStore'
 
 /**
  * The tools tray in the bottom dock (below the composer).
@@ -427,9 +429,12 @@ export function ToolsPanel({
     }
   }, [tabs.length, setToolsCollapsed])
 
+  const installRuns = useInstallRunStore((s) => s.runs)
+  const installList = Object.values(installRuns)
   const hasTabs = tabs.length > 0
+  const hasInstalls = installList.length > 0
   // Modes for layout polish (empty strip vs tab strip vs open tray).
-  const headerMode = !hasTabs ? 'idle' : collapsed ? 'tabs-collapsed' : 'tabs-open'
+  const headerMode = !hasTabs && !hasInstalls ? 'idle' : collapsed ? 'tabs-collapsed' : 'tabs-open'
 
   return (
     <div
@@ -490,9 +495,60 @@ export function ToolsPanel({
               }
             />
           </div>
-          {/* Divider only when tabs exist — avoids a lone rule after the path chip. */}
-          {hasTabs ? <span className="tools-header-divider" aria-hidden="true" /> : null}
+          {/* Divider only when tabs / installs exist — avoids a lone rule after the path chip. */}
+          {hasTabs || hasInstalls ? (
+            <span className="tools-header-divider" aria-hidden="true" />
+          ) : null}
         </div>
+
+        {hasInstalls ? (
+          <div className="tools-header-installs" aria-label={t('agents.installingGroup')}>
+            {installList.map((run) => {
+              const failed = run.status === 'error' || run.status === 'cancelled'
+              const running = run.status === 'running'
+              const label = t('agents.installingNamed', { name: run.name })
+              return (
+                <Chip
+                  key={run.agentId}
+                  label={label}
+                  icon={
+                    failed ? (
+                      <Unplug size={12} className="terminal-tab-icon is-exited" />
+                    ) : (
+                      <Download
+                        size={12}
+                        className={
+                          running
+                            ? 'terminal-tab-icon is-running tools-install-icon'
+                            : 'tools-install-icon'
+                        }
+                      />
+                    )
+                  }
+                  emphasis={running}
+                  muted={!running}
+                  title={t('agents.installOpenSettings', { name: run.name })}
+                  onClick={() => {
+                    useSessionStore.getState().openSettings('agents', run.agentId)
+                  }}
+                  onClose={() => {
+                    if (run.status === 'running') {
+                      void window.vav.agents.installCancel?.(run.agentId)
+                    } else {
+                      void window.vav.agents.installClear?.(run.agentId)
+                    }
+                  }}
+                  closeTitle={
+                    run.status === 'running' ? t('agents.installStop') : t('tools.closeTab')
+                  }
+                />
+              )
+            })}
+          </div>
+        ) : null}
+        {hasInstalls && hasTabs ? (
+          <span className="tools-header-divider" aria-hidden="true" />
+        ) : null}
 
         <div
           className="tools-header-tabs"

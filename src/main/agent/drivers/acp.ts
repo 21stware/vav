@@ -436,19 +436,11 @@ function handleSessionUpdate(params: Record<string, unknown>, emit: DriverEventS
 
   // ACP session context + optional cumulative cost (RFD: session-usage).
   if (kind === 'usage_update') {
-    const used = num(update.used)
-    const size = num(update.size)
-    const cost = asRecord(update.cost)
-    const amount = num(cost?.amount)
-    const currency = asString(cost?.currency)
-    const sessionCostUsd =
-      amount != null ? costToUsd(amount, currency ?? 'USD') : undefined
-    if (used == null && size == null && sessionCostUsd == null) return
+    const sample = acpUsageSample(update)
+    if (!sample) return
     emit({
       type: 'usage',
-      contextUsed: used,
-      contextSize: size,
-      sessionCostUsd: sessionCostUsd ?? undefined,
+      ...sample,
       recordHistory: false
     })
     return
@@ -463,13 +455,100 @@ function handleSessionUpdate(params: Record<string, unknown>, emit: DriverEventS
     const cacheRead = num(usage.cachedReadTokens) ?? num(usage.cached_read_tokens)
     const cacheWrite = num(usage.cachedWriteTokens) ?? num(usage.cached_write_tokens)
     if (input == null && output == null && cacheRead == null && cacheWrite == null) return
+    const contextUsed = (input ?? 0) + (cacheRead ?? 0)
     emit({
       type: 'usage',
       inputTokens: input,
       outputTokens: output,
       cacheRead,
-      cacheWrite
+      cacheWrite,
+      contextUsed: contextUsed > 0 ? contextUsed : undefined
     })
+  }
+}
+
+function firstNum(...values: unknown[]): number | undefined {
+  for (const value of values) {
+    const n = num(value)
+    if (n != null) return n
+  }
+  return undefined
+}
+
+/** Cursor / Grok / other ACP hosts disagree on usage_update field names. */
+function acpUsageSample(update: Record<string, unknown>): {
+  contextUsed?: number
+  contextSize?: number
+  inputTokens?: number
+  outputTokens?: number
+  cacheRead?: number
+  cacheWrite?: number
+  sessionCostUsd?: number
+} | null {
+  const tokens = asRecord(update.tokens) ?? asRecord(update.usage)
+  const context = asRecord(update.context)
+  const used = firstNum(
+    update.used,
+    update.usedTokens,
+    update.contextUsed,
+    tokens?.used,
+    tokens?.usedTokens,
+    context?.used
+  )
+  const size = firstNum(
+    update.size,
+    update.maxTokens,
+    update.contextSize,
+    update.contextWindow,
+    tokens?.size,
+    tokens?.maxTokens,
+    context?.size
+  )
+  const input = firstNum(update.inputTokens, update.input_tokens, tokens?.inputTokens, tokens?.input)
+  const output = firstNum(
+    update.outputTokens,
+    update.output_tokens,
+    tokens?.outputTokens,
+    tokens?.output
+  )
+  const cacheRead = firstNum(
+    update.cacheRead,
+    update.cachedReadTokens,
+    update.cache_read,
+    tokens?.cacheRead,
+    tokens?.cached
+  )
+  const cacheWrite = firstNum(
+    update.cacheWrite,
+    update.cachedWriteTokens,
+    update.cache_write,
+    tokens?.cacheWrite
+  )
+  const cost = asRecord(update.cost)
+  const amount = num(cost?.amount)
+  const currency = asString(cost?.currency)
+  const sessionCostUsd =
+    amount != null ? costToUsd(amount, currency ?? 'USD') : undefined
+  const contextUsed = used ?? ((input ?? 0) + (cacheRead ?? 0) > 0 ? (input ?? 0) + (cacheRead ?? 0) : undefined)
+  if (
+    contextUsed == null &&
+    size == null &&
+    input == null &&
+    output == null &&
+    cacheRead == null &&
+    cacheWrite == null &&
+    sessionCostUsd == null
+  ) {
+    return null
+  }
+  return {
+    contextUsed,
+    contextSize: size,
+    inputTokens: input,
+    outputTokens: output,
+    cacheRead,
+    cacheWrite,
+    sessionCostUsd: sessionCostUsd ?? undefined
   }
 }
 

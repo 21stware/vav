@@ -63,23 +63,10 @@ img, video, svg, canvas {
   max-width: 100%;
   height: auto;
 }
-/* Pick outlines — classes are injected by vav, never by author CSS. */
+/* Hit targets only — pick chrome is the parent screen-space HUD. */
 .office-pick-target,
 .preview-select-region {
-  border-radius: 2px;
-  outline: 1px solid transparent;
-  outline-offset: 1px;
   cursor: default;
-}
-.office-pick-target:hover:not(.selected):not(:has(.office-pick-target:hover)),
-.preview-select-region:hover:not(.selected):not(:has(.preview-select-region:hover)) {
-  outline: 1px dashed #3b82f6;
-  background: color-mix(in srgb, #3b82f6 6%, transparent);
-}
-.office-pick-target.selected,
-.preview-select-region.selected {
-  outline: 2px solid #3b82f6;
-  background: color-mix(in srgb, #3b82f6 12%, transparent);
 }
 `
 

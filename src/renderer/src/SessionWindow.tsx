@@ -13,7 +13,10 @@ import { useAppearance } from './lib/appearance'
 import { useTerminalAppearance } from './lib/useTerminalAppearance'
 import { useMenuCommands } from './lib/menuCommands'
 import { installDefaultContextMenu } from './lib/nativeMenu'
+import { installInstallRunBridge } from './state/installRunStore'
 import { useT } from './i18n/useT'
+import { useAttentionSeen } from './lib/useAttentionSeen'
+import { acceptSessionNavigateSeq } from './lib/cliSurfaceAuthority'
 
 /** Open clock from main (requestedAt) for [session-perf] logs. */
 let sessionOpenClock = 0
@@ -54,7 +57,9 @@ export default function SessionWindow({
   const [conversationId, setConversationId] = useState(initialConversationId || '')
   const focusGenRef = useRef(0)
   const coldClaimedRef = useRef(false)
+  const navigateSeqRef = useRef(0)
 
+  useAttentionSeen(conversationId)
   const ready = useSessionStore((s) => s.ready)
   const bootstrap = useSessionStore((s) => s.bootstrap)
   const conversation = useSessionStore((s) =>
@@ -118,6 +123,12 @@ export default function SessionWindow({
 
   useEffect(() => {
     const off = window.vav.window.onSessionNavigate?.((payload) => {
+      const nav = acceptSessionNavigateSeq(navigateSeqRef.current, payload.openSeq)
+      if (!nav.accept) {
+        markSession(`navigate:stale:${payload.openSeq}`)
+        return
+      }
+      navigateSeqRef.current = nav.seq
       if (payload.requestedAt) sessionOpenClock = payload.requestedAt
       markSession(`navigate:${payload.openSeq}`)
 
@@ -153,6 +164,7 @@ export default function SessionWindow({
     const offWindow = installWindowBridge()
     const offUpdates = installUpdateBridge()
     const offMenu = installDefaultContextMenu()
+    const offInstall = installInstallRunBridge()
     // Tray / notify: main may raise this companion and ask for CLI pane focus.
     const offCli = window.vav.onCliOpen((event) => {
       if (!event.conversationId) return
@@ -181,6 +193,7 @@ export default function SessionWindow({
       offUpdates()
       offMenu()
       offCli()
+      offInstall()
     }
   }, [conversationId])
 

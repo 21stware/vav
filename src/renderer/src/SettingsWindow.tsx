@@ -1,4 +1,4 @@
-import { useCallback, useEffect } from 'react'
+import { useCallback, useEffect, useRef } from 'react'
 import {
   Bell,
   Bot,
@@ -21,6 +21,7 @@ import {
 import { useT } from './i18n/useT'
 import { useAppearance } from './lib/appearance'
 import { installDefaultContextMenu } from './lib/nativeMenu'
+import { installInstallRunBridge } from './state/installRunStore'
 import { AppToast } from './components/AppToast'
 import { ApiSettings } from './components/settings/ApiSettings'
 import { WorkspaceSettings } from './components/settings/WorkspaceSettings'
@@ -71,6 +72,10 @@ function initialCategory(): SettingsView {
   return CATEGORY_KEYS.some((c) => c.id === requested) ? (requested as SettingsView) : 'api'
 }
 
+function initialFocusAgentId(): string | null {
+  return new URLSearchParams(window.location.search).get('agentId')?.trim() || null
+}
+
 /**
  * Settings, in a window of its own rather than a sheet over the transcript.
  *
@@ -84,9 +89,17 @@ export default function SettingsWindow(): React.JSX.Element {
   const ready = useSessionStore((s) => s.ready)
   const bootstrap = useSessionStore((s) => s.bootstrap)
   const category = useSessionStore((s) => s.settingsCategory)
+  const prevCategory = useRef<SettingsView | null>(null)
+  const animateEnter = prevCategory.current !== null && prevCategory.current !== category
+  useEffect(() => {
+    prevCategory.current = category
+  }, [category])
 
   useEffect(() => {
-    useSessionStore.setState({ settingsCategory: initialCategory() })
+    useSessionStore.setState({
+      settingsCategory: initialCategory(),
+      settingsFocusAgentId: initialFocusAgentId()
+    })
     // Light: settings only — never load the active chat transcript into this window.
     void bootstrap(undefined, { light: true })
   }, [bootstrap])
@@ -95,10 +108,14 @@ export default function SettingsWindow(): React.JSX.Element {
     const offSettings = installSettingsBridge()
     const offUpdates = installUpdateBridge()
     const offModels = installAgentModelCatalogBridge()
-    const offView = window.vav.onSettingsView((view) =>
-      useSessionStore.setState({ settingsCategory: view })
+    const offView = window.vav.onSettingsView((payload) =>
+      useSessionStore.setState({
+        settingsCategory: payload.view,
+        settingsFocusAgentId: payload.agentId?.trim() || null
+      })
     )
     const offMenu = installDefaultContextMenu()
+    const offInstall = installInstallRunBridge()
     void useSessionStore.getState().refreshAgentModelCatalog(false)
     return () => {
       offSettings()
@@ -106,6 +123,7 @@ export default function SettingsWindow(): React.JSX.Element {
       offModels()
       offView()
       offMenu()
+      offInstall()
     }
   }, [])
 
@@ -145,8 +163,13 @@ export default function SettingsWindow(): React.JSX.Element {
       <div className="settings-main">
         <header className="settings-head">{title}</header>
         <div className="settings-body">
-          {/* key remounts the panel so @starting-style opacity fade runs on switch. */}
-          <div key={category} className="settings-body-panel">
+          {/* Remount on switch for the enter fade. Skip it on first paint —
+              the window is often already mounted (warm/hidden), and an
+              opacity-0 start would stay blank until the next click. */}
+          <div
+            key={category}
+            className={`settings-body-panel${animateEnter ? ' is-enter' : ''}`}
+          >
             {category === 'api' && <ApiSettings />}
             {category === 'workspace' && <WorkspaceSettings />}
             {category === 'appearance' && <AppearanceSettings />}

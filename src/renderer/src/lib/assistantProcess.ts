@@ -16,10 +16,10 @@ export function isVisibleAssistantBlock(block: MessageBlock): boolean {
 /**
  * Split a finished assistant turn into the working trail and the last answer.
  *
- * Providers VAV actually drives (DeepSeek / Claude Messages / OpenAI
- * Completions) do not tag commentary vs. final_answer. After the last tool,
- * trailing text is the conclusion; everything before it is the process.
- * No tools, or no text after the last tool → leave the turn ungrouped.
+ * After the last tool, first trailing text is the conclusion. With no tools,
+ * first text is the answer and leading reasoning is the process — otherwise
+ * the last think sits next to the result every turn. Trailing reasoning after
+ * the answer is peeled back into the process. No concluding text → ungrouped.
  */
 export function splitAssistantProcess(blocks: MessageBlock[]): {
   process: IndexedBlock[]
@@ -32,26 +32,55 @@ export function splitAssistantProcess(blocks: MessageBlock[]): {
   }
 
   const lastTool = lastWhere(visible, (item) => item.block.kind === 'toolCall')
-  if (lastTool < 0) return { process: [], conclusion: visible }
+  const lastText = lastWhere(
+    visible,
+    (item) => item.block.kind === 'text' && item.block.text.trim().length > 0
+  )
+  if (lastText < 0) return { process: [], conclusion: visible }
 
   let cut = -1
-  for (let i = lastTool + 1; i < visible.length; i++) {
-    const item = visible[i]!
-    if (item.block.kind === 'text' && item.block.text.trim()) {
-      cut = i
-      break
+  if (lastTool >= 0) {
+    for (let i = lastTool + 1; i < visible.length; i++) {
+      const item = visible[i]!
+      if (item.block.kind === 'text' && item.block.text.trim()) {
+        cut = i
+        break
+      }
+    }
+    if (cut < 0) return { process: [], conclusion: visible }
+  } else {
+    for (let i = 0; i < visible.length; i++) {
+      const item = visible[i]!
+      if (item.block.kind === 'text' && item.block.text.trim()) {
+        cut = i
+        break
+      }
     }
   }
-  if (cut <= 0) return { process: [], conclusion: visible }
+  if (cut < 0) return { process: [], conclusion: visible }
 
-  return {
-    process: visible.slice(0, cut),
-    conclusion: visible.slice(cut)
+  const process = visible.slice(0, cut)
+  const conclusion = visible.slice(cut)
+  peelTrailingReasoning(process, conclusion)
+
+  if (process.length === 0 || conclusion.length === 0) {
+    return { process: [], conclusion: visible }
   }
+
+  return { process, conclusion }
+}
+
+/** Move leftover think after the answer back onto the process trail. */
+function peelTrailingReasoning(process: IndexedBlock[], conclusion: IndexedBlock[]): void {
+  let end = conclusion.length
+  while (end > 0 && conclusion[end - 1]!.block.kind === 'reasoning') end--
+  if (end === conclusion.length) return
+  process.push(...conclusion.splice(end))
 }
 
 /**
- * Live split: collapse as soon as post-tool text starts (the likely answer).
+ * Live split: collapse as soon as the likely answer starts — first text after
+ * the last tool, or first text after leading think when there are no tools.
  * If another tool follows, keep the earlier trail folded and leave only the
  * in-flight tail visible so the process does not spring back open.
  */

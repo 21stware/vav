@@ -1,9 +1,15 @@
 import { Fragment, useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
+import { agentWebsiteUrl } from '@shared/agentBinary'
 import { enabledCliAgents } from '@shared/types'
 import { useSessionStore } from '../state/sessionStore'
 import { CLI_SURFACE_KEY, useWorkspaceStore } from '../state/workspaceStore'
 import { setUiFocusScope } from '../lib/uiFocus'
 import { IS_MAC } from '../lib/platform'
+import {
+  getAgentInstallStatus,
+  openAgentWebsite,
+  useAgentInstallMap
+} from '../lib/agentInstallStatus'
 import { AgentBrandMark } from './AgentBrandMark'
 import { useT } from '../i18n/useT'
 
@@ -91,6 +97,7 @@ export function CliAgentPicker({
   const t = useT()
   const settings = useSessionStore((s) => s.settings)
   const agents = enabledCliAgents(settings.cliAgents).filter((a) => !!a.id && !!a.name)
+  const installById = useAgentInstallMap()
 
   const isActivePane = useWorkspaceStore((s) => {
     // Full-surface empty picker (no tabId) is always the sole target.
@@ -111,6 +118,10 @@ export function CliAgentPicker({
   const onPick = useCallback(
     (agentId: string): void => {
       if (!conversationId) return
+      const agent = agents.find((row) => row.id === agentId)
+      const missing =
+        !!agent && (installById[agentId] ?? getAgentInstallStatus(agentId)) === 'missing'
+      if (missing && agent && openAgentWebsite(agent)) return
       void (async () => {
         if (tabId) {
           const result = await useWorkspaceStore
@@ -138,7 +149,7 @@ export function CliAgentPicker({
         }
       })()
     },
-    [conversationId, tabId]
+    [agents, conversationId, installById, tabId]
   )
 
   const focusItem = useCallback(
@@ -160,6 +171,8 @@ export function CliAgentPicker({
   )
 
   // Only steal focus when this pane *becomes* active (new split / click / ⌘W).
+  // Keep the last highlighted agent — jumping to the first item on Thread↔Swarm
+  // made the picker look like it forgot the selection.
   // Do not re-focus on every agents[] refresh — that yanks keys away from a
   // live PTY if a stale picker remount races the terminal host.
   const wasActiveRef = useRef(false)
@@ -170,12 +183,13 @@ export function CliAgentPicker({
     let cancelled = false
     const run = (attempt: number): void => {
       if (cancelled) return
-      const el = itemRefs.current[0]
+      const index = Math.min(activeIndexRef.current, agents.length - 1)
+      const el = itemRefs.current[index] ?? itemRefs.current[0]
       if (!el) {
         if (attempt < 6) requestAnimationFrame(() => run(attempt + 1))
         return
       }
-      setActiveIndex(0)
+      setActiveIndex(index)
       setUiFocusScope('agent')
       try {
         el.focus({ preventScroll: true })
@@ -254,30 +268,51 @@ export function CliAgentPicker({
             }
             onKeyDown={onGridKeyDown}
           >
-            {agents.map((agent, index) => (
-              <button
-                key={agent.id}
-                id={`cli-picker-opt-${tabId ?? 'root'}-${agent.id}`}
-                ref={(el) => {
-                  itemRefs.current[index] = el
-                }}
-                type="button"
-                role="option"
-                aria-selected={index === activeIndex}
-                tabIndex={isActivePane && index === activeIndex ? 0 : -1}
-                className={`cli-agent-picker-item${index === activeIndex ? ' is-keyboard-active' : ''}`}
-                onClick={() => onPick(agent.id)}
-                onFocus={() => {
-                  setActiveIndex(index)
-                  setUiFocusScope('agent')
-                }}
-              >
-                <span className="cli-agent-picker-icon" aria-hidden>
-                  <AgentBrandMark agent={agent} size={compact ? 24 : 28} />
-                </span>
-                <span className="cli-agent-picker-item-name">{agent.name}</span>
-              </button>
-            ))}
+            {agents.map((agent, index) => {
+              const missing =
+                (installById[agent.id] ?? getAgentInstallStatus(agent.id)) === 'missing'
+              const website = missing ? agentWebsiteUrl(agent) : null
+              return (
+                <button
+                  key={agent.id}
+                  id={`cli-picker-opt-${tabId ?? 'root'}-${agent.id}`}
+                  ref={(el) => {
+                    itemRefs.current[index] = el
+                  }}
+                  type="button"
+                  role="option"
+                  aria-selected={index === activeIndex}
+                  aria-disabled={missing || undefined}
+                  title={
+                    missing && website
+                      ? t('agents.openWebsiteNamed', { name: agent.name })
+                      : missing
+                        ? t('agents.notInstalled')
+                        : undefined
+                  }
+                  tabIndex={isActivePane && index === activeIndex ? 0 : -1}
+                  className={[
+                    'cli-agent-picker-item',
+                    index === activeIndex ? 'is-keyboard-active' : '',
+                    missing ? 'is-missing' : ''
+                  ]
+                    .filter(Boolean)
+                    .join(' ')}
+                  onClick={() => onPick(agent.id)}
+                  onFocus={() => {
+                    setActiveIndex(index)
+                    setUiFocusScope('agent')
+                  }}
+                >
+                  <span className="cli-agent-picker-icon" aria-hidden>
+                    <AgentBrandMark agent={agent} size={compact ? 24 : 28} />
+                  </span>
+                  <span className={`cli-agent-picker-item-name${website ? ' is-link' : ''}`}>
+                    {agent.name}
+                  </span>
+                </button>
+              )
+            })}
           </div>
           <div className="cli-agent-picker-rule" aria-hidden />
         </div>

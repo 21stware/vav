@@ -17,8 +17,11 @@ export type TerminalRegistryApi = {
     bashBackground?: BashBackgroundMode
   ): void
   paintTerminalThemes?(): void
+  refreshAllTerminals?(): void
   disposeTerminal(conversationId: string, tabId: string): void
   parkTerminal?(conversationId: string, tabId: string): void
+  markTerminalProcessExited?(tabId: string): void
+  resetTerminalForNewProcess?(conversationId: string, tabId: string): void
 }
 
 let api: TerminalRegistryApi | null = null
@@ -64,6 +67,21 @@ export function paintTerminalThemes(): void {
 
 export function disposeTerminal(conversationId: string, tabId: string): void {
   api?.disposeTerminal(conversationId, tabId)
+}
+
+/** Re-blit live xterm canvases after a sibling window steals GPU textures. */
+export function refreshAllTerminals(): void {
+  api?.refreshAllTerminals?.()
+}
+
+/** A PTY died: its buffer is history, not the next process's scrollback. */
+export function markTerminalProcessExited(tabId: string): void {
+  api?.markTerminalProcessExited?.(tabId)
+}
+
+/** Blank a reused tab id (stable CLI agent pane) before a fresh PTY paints. */
+export function resetTerminalForNewProcess(conversationId: string, tabId: string): void {
+  api?.resetTerminalForNewProcess?.(conversationId, tabId)
 }
 
 /** Soft-park when available; falls back to hard dispose for older bundles. */

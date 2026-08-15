@@ -4,6 +4,7 @@ import { WebLinksAddon } from '@xterm/addon-web-links'
 import { registerTerminalSink } from '../state/workspaceStore'
 import { IS_MAC } from './platform'
 import { publishTerminalRegistry } from './terminalRegistryHandle'
+import { isBareShiftEnter, KITTY_SHIFT_ENTER } from './terminalKeys'
 import type { BashBackgroundMode } from '@shared/types'
 
 export type TerminalSurface = 'bash' | 'agent'
@@ -21,6 +22,12 @@ export interface TerminalEntry {
   parked: boolean
   /** Tools-tray bash vs CLI agent / install PTY. Drives bash-only dark bg. */
   surface: TerminalSurface
+  /**
+   * The PTY behind this buffer is gone. Kept for reading, but a new process on
+   * the same tab id (CLI agents reuse `agent-host:<agent>:<conv>`) must not
+   * inherit it.
+   */
+  processExited: boolean
 }
 
 const entries = new Map<string, TerminalEntry>()
@@ -151,6 +158,7 @@ export function acquireTerminal(options: {
   fontSize: number
   surface?: TerminalSurface
 }): TerminalEntry {
+  installCaretScrollGuard()
   const id = key(options.conversationId, options.tabId)
   const surface = options.surface ?? 'bash'
   const existing = entries.get(id)
@@ -404,6 +412,14 @@ export function acquireTerminal(options: {
   // as shell input when the native path still delivers the key to the page.
   term.attachCustomKeyEventHandler((ev) => {
     if (ev.type !== 'keydown') return true
+    // Agent TUIs: xterm sends `\r` for both Enter and Shift+Enter, so Claude /
+    // Codex / Grok treat Shift+Enter as submit. Emit Kitty CSI-u instead.
+    // Read surface from the live entry — reuse can flip bash ↔ agent.
+    if (entries.get(id)?.surface === 'agent' && isBareShiftEnter(ev)) {
+      ev.preventDefault()
+      term.input(KITTY_SHIFT_ENTER)
+      return false
+    }
     const meta = ev.metaKey || ev.ctrlKey
     if (!meta && !(ev.ctrlKey && !ev.metaKey)) return true
     // Control+` (tools bash) — never send backtick to the shell with Ctrl held.
@@ -456,6 +472,7 @@ export function acquireTerminal(options: {
     container,
     parked: false,
     surface,
+    processExited: false,
     dispose: () => {
       if (resizeTimer) {
         clearTimeout(resizeTimer)
@@ -531,6 +548,55 @@ export function disposeTerminal(conversationId: string, tabId: string): void {
   entries.get(key(conversationId, tabId))?.dispose()
 }
 
+/**
+ * A PTY died. Its buffer stays on screen (bash tombstones, an agent that just
+ * printed a stack trace), but it is now history: the next process to claim this
+ * tab id starts from a blank screen.
+ */
+export function markTerminalProcessExited(tabId: string): void {
+  const suffix = `::${tabId}`
+  for (const [id, entry] of entries) {
+    if (id.endsWith(suffix)) entry.processExited = true
+  }
+}
+
+/**
+ * Called when a fresh PTY takes over a tab id we already have a terminal for.
+ *
+ * CLI agent panes reuse the stable `agent-host:<agent>:<conversation>` id, so
+ * relaunching an agent after quitting it used to paint the new session below
+ * the dead one's scrollback (including "[process exited]"). Only a buffer whose
+ * process is known dead is wiped — a live attach keeps its scrollback.
+ */
+export function resetTerminalForNewProcess(conversationId: string, tabId: string): void {
+  const entry = entries.get(key(conversationId, tabId))
+  if (!entry?.processExited) return
+  entry.processExited = false
+  try {
+    entry.term.reset()
+    entry.term.clear()
+  } catch {
+    // Disposing / detached — the next acquire mints a fresh terminal anyway.
+  }
+}
+
+/**
+ * Re-blit every live xterm from its buffer. Does not fit or SIGWINCH —
+ * a sibling BrowserWindow can drop GPU textures while the cell buffer is
+ * still correct; new PTY bytes would hide this, idle windows stay stale.
+ */
+export function refreshAllTerminals(): void {
+  for (const entry of entries.values()) {
+    if (entry.parked) continue
+    try {
+      entry.term.clearTextureAtlas?.()
+      if (entry.term.rows > 0) entry.term.refresh(0, entry.term.rows - 1)
+    } catch {
+      // Detached / disposing.
+    }
+  }
+}
+
 /** Re-fit every live xterm in this renderer (call on window focus). */
 export function fitAllTerminals(): void {
   if (!document.hasFocus()) return
@@ -570,9 +636,45 @@ export function paintTerminalThemes(): void {
   }
 }
 
+/**
+ * xterm parks its hidden input textarea at the cursor cell, and an IME keeps
+ * the whole in-progress phrase in it (pinyin: one keystroke, a dozen columns).
+ * The caret then sits outside the pane, so Chromium "reveals" it by scrolling
+ * the nearest clipped ancestor — `.terminal-split-pane` — and the terminal is
+ * left permanently shifted, since nothing ever scrolls it back.
+ *
+ * Terminal chrome outside `.xterm` is never scrollable by design, so clamp it.
+ * xterm's own scrollports (viewport / scrollable-element) own real scrollback
+ * and are left alone.
+ */
+function clampCaretScroll(event: Event): void {
+  const el = event.target === document ? document.documentElement : event.target
+  if (!(el instanceof HTMLElement)) return
+  if (el.scrollLeft === 0 && el.scrollTop === 0) return
+  if (el.closest('.xterm')) return
+  const focused = document.activeElement
+  if (!(focused instanceof HTMLTextAreaElement)) return
+  if (!focused.classList.contains('xterm-helper-textarea')) return
+  if (!el.contains(focused)) return
+  el.scrollLeft = 0
+  el.scrollTop = 0
+}
+
+let caretScrollGuardInstalled = false
+
+/** Scroll does not bubble; capture on the document sees every pane. */
+function installCaretScrollGuard(): void {
+  if (caretScrollGuardInstalled) return
+  caretScrollGuardInstalled = true
+  document.addEventListener('scroll', clampCaretScroll, true)
+}
+
 publishTerminalRegistry({
   applyTerminalAppearance,
   paintTerminalThemes,
+  refreshAllTerminals,
   disposeTerminal,
-  parkTerminal
+  parkTerminal,
+  markTerminalProcessExited,
+  resetTerminalForNewProcess
 })

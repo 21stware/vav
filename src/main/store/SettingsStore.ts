@@ -197,6 +197,9 @@ export class SettingsStore {
     s.maxTokens = Math.min(200_000, Math.max(256, Math.round(s.maxTokens)))
     s.defaultThinkingLevel = parseThinkingLevel(s.defaultThinkingLevel)
     s.cliAgents = mergeBuiltinAgents(Array.isArray(s.cliAgents) ? s.cliAgents : [])
+    if (typeof s.keepAwakeWhileAgentRunning !== 'boolean') {
+      s.keepAwakeWhileAgentRunning = false
+    }
     if (typeof s.skipCliAgentPickerWhenSingle !== 'boolean') {
       s.skipCliAgentPickerWhenSingle = false
     }

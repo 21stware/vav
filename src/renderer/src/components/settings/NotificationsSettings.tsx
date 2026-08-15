@@ -106,6 +106,22 @@ export function NotificationsSettings(): React.JSX.Element {
         </div>
       </div>
       <div className="form-hint">{t('notifications.requestHint')}</div>
+
+      <div className="settings-section-title">{t('notifications.sectionPower')}</div>
+
+      <div className="form-row">
+        <label>{t('notifications.keepAwake')}</label>
+        <div className="control">
+          <Toggle
+            checked={settings.keepAwakeWhileAgentRunning === true}
+            title={t('notifications.keepAwake')}
+            onChange={(keepAwakeWhileAgentRunning) =>
+              void updateSettings({ keepAwakeWhileAgentRunning })
+            }
+          />
+        </div>
+      </div>
+      <div className="form-hint">{t('notifications.keepAwakeHint')}</div>
     </div>
   )
 }

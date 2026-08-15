@@ -63,7 +63,17 @@ import { localFileStreamUrl } from '@shared/localFileUrl'
 import type { StructuredDocument } from '@shared/structuredDoc'
 import { attachDomPick, updateDomPick } from './office/pickFromDom'
 import { useSheetVirtualWindow } from '../lib/useSheetVirtualWindow'
-import { SelectionAgentFab } from './SelectionAgentFab'
+import { SelectionChrome } from './SelectionChrome'
+import { writeDocZoom } from '../lib/selectionChrome'
+import { DocZoomControls, DOC_ZOOM_STEP } from './office/DocZoomControls'
+import { useDocZoom } from './office/useDocZoom'
+import { useTextZoom } from '../lib/useTextZoom'
+import { TEXT_ZOOM_MAX, TEXT_ZOOM_MIN, TEXT_ZOOM_STEP } from '../lib/docZoom'
+import {
+  isMediaPreviewKind,
+  isMediaPreviewPath,
+  shouldArmUnsavedFromExternalChange
+} from '../lib/previewDirty'
 
 // The agent side panel drags in the whole chat surface (composer, transcript,
 // xterm). A preview that is never asked for an agent must not parse it.
@@ -383,7 +393,7 @@ export function FileViewer({
     [isBinaryOfficeKind]
   )
 
-  /** Agent/shell rewrote the open file on disk — refresh canvas + mark dirty. */
+  /** Agent/shell rewrote the open file on disk — refresh canvas + maybe mark dirty. */
   const handleExternalFileChange = useCallback(
     async (sourcePath?: string): Promise<void> => {
       if (applyingOwnWrite.current) return
@@ -399,21 +409,31 @@ export function FileViewer({
       if (result.kind === 'text' || result.kind === 'csv' || result.kind === 'html') {
         if (result.text != null) {
           const incoming = result.text
-          setWorkingContent((prev) => {
+          setWorkingContent((prevText) => {
             // First inspect window is 128 KB; don't clobber a longer live draft.
             if (
               result.truncated &&
-              prev != null &&
-              prev.length > incoming.length &&
-              prev.startsWith(incoming)
+              prevText != null &&
+              prevText.length > incoming.length &&
+              prevText.startsWith(incoming)
             ) {
-              return prev
+              return prevText
             }
             return incoming
           })
         }
       }
-      setHasUnsavedChanges(true)
+      const st = isMediaPreviewKind(result.kind)
+        ? await window.vav.files.workingCopyStatus?.(current)
+        : null
+      const armDirty = shouldArmUnsavedFromExternalChange({
+        kind: result.kind,
+        hadPriorIdentity: prev != null,
+        identityChanged: !sameIdentity,
+        namedSource: !!sourcePath,
+        workingCopyDirty: !!st?.dirty
+      })
+      if (armDirty) setHasUnsavedChanges(true)
       // Always bump office canvas when identity moved; also bump when fs-changed
       // named this exact path even if mtime resolution is coarse.
       if (isBinaryOfficeKind(result.kind) && (!sameIdentity || !!sourcePath)) {
@@ -605,6 +625,9 @@ export function FileViewer({
       }
       if (event.type === 'file-draft') {
         if (applyingOwnWrite.current) return
+        // Media canvases are not text editors — a draft would arm Save/Discard
+        // with no baseline and trap the window.
+        if (isMediaPreviewPath(filePathRef.current)) return
         const apply = (): void => {
           setWorkingContent((prev) => applyFileDraftContent(prev, event))
           setHasUnsavedChanges(true)
@@ -644,15 +667,21 @@ export function FileViewer({
         if (applyingOwnWrite.current) return
         const prev = knownIdentityRef.current
         const probe = await window.vav.files.inspect(filePathRef.current)
-        if (
-          prev != null &&
-          prev.size === probe.size &&
-          prev.mtimeMs === (probe.mtimeMs ?? 0)
-        ) {
+        if (prev == null) {
+          // First sighting while inspect is still in flight — record identity
+          // only. Treating this as a rewrite marks a just-opened image dirty
+          // with no baseline, and Discard cannot unstick the window.
+          knownIdentityRef.current = {
+            size: probe.size,
+            mtimeMs: probe.mtimeMs ?? 0
+          }
+          return
+        }
+        if (prev.size === probe.size && prev.mtimeMs === (probe.mtimeMs ?? 0)) {
           // Sibling churn only — our open file is unchanged.
           return
         }
-        await handleExternalFileChange(filePathRef.current)
+        await handleExternalFileChange()
       })()
     })
   }, [handleExternalFileChange])
@@ -721,6 +750,18 @@ export function FileViewer({
     info?.kind === 'binary'
       ? 'none'
       : 'text'
+  /**
+   * Reflowing surfaces zoom by type size instead of geometry. Paged documents
+   * are excluded on purpose — they run their own stage zoom, and a wheel event
+   * would otherwise be claimed by both.
+   */
+  const textZoomable =
+    !!info &&
+    !info.error &&
+    (isCsv ||
+      isSqlite ||
+      info.kind === 'xlsx' ||
+      (info.kind === 'text' && !isDiagramCanvas))
   const isBinaryUnsupported = info?.kind === 'binary'
   const isDirectoryKind = info?.kind === 'directory'
   const isHeic =
@@ -1786,12 +1827,11 @@ export function FileViewer({
       }
 
       if (baselineContent == null) {
-        showToast({
-          kind: 'error',
-          title: t('preview.discardFailed'),
-          description: t('preview.discardNoBaseline')
-        })
-        return false
+        // Nothing to restore (typical for a media preview that was never
+        // edited). Clearing the flag unsticks close; do not trap the window.
+        setWorkingContent(null)
+        setHasUnsavedChanges(false)
+        return true
       }
       setWorkingContent(baselineContent)
       setHasUnsavedChanges(false)
@@ -2024,6 +2064,8 @@ export function FileViewer({
   )
 
   const previewMainRef = useRef<HTMLDivElement>(null)
+  const bodyRef = useRef<HTMLDivElement>(null)
+  const textZoom = useTextZoom({ hostRef: bodyRef, enabled: textZoomable })
   /** Setting on + selection + agent collapsed — hide once the panel is open. */
   const showSelectionAgentFab =
     showSelectionAgentMark && selectedIds.length > 0 && !agentPanelOpen
@@ -2367,20 +2409,14 @@ export function FileViewer({
                   ))}
                 </div>
               )}
-              <MediaSelectFrame
+              <ImageZoomStage
+                key={mediaSrc}
+                src={mediaSrc}
+                alt={info.name}
                 selecting={selectable}
                 selected={selectedIds.includes('media')}
                 onSelect={(event) => applySelection('media', event)}
-              >
-                <div className="file-viewer-media-stack">
-                  <img
-                    className="file-viewer-media"
-                    src={mediaSrc}
-                    alt={info.name}
-                    draggable={false}
-                  />
-                </div>
-              </MediaSelectFrame>
+              />
             </div>
           )}
           {info && mediaSrc && info.kind === 'audio' && (
@@ -2707,16 +2743,25 @@ export function FileViewer({
   const fileColumn = (
     <>
       {fileHeader}
-      <div className="file-preview-main" ref={previewMainRef}>
-        {showSelectionAgentFab ? (
-          <SelectionAgentFab
-            hostRef={previewMainRef}
-            selectedIds={selectedIds}
-            title={embedded ? t('workspace.toggleAgentPanel') : t('preview.agentPanel')}
-            onClick={onSelectionAgentMarkClick}
-          />
-        ) : null}
+      <div
+        className={`file-preview-main${selectable ? ' has-selection-hud' : ''}`}
+        ref={previewMainRef}
+      >
+        <SelectionChrome
+          hostRef={previewMainRef}
+          selectedIds={selectedIds}
+          enabled={selectable}
+          fab={
+            showSelectionAgentFab
+              ? {
+                  title: embedded ? t('workspace.toggleAgentPanel') : t('preview.agentPanel'),
+                  onClick: onSelectionAgentMarkClick
+                }
+              : null
+          }
+        />
         <div
+          ref={bodyRef}
           className={`file-viewer-body${selectable ? ' selecting pick-mode' : ''}`}
           data-pad={bodyPad}
           onClickCapture={(event) => {
@@ -2726,6 +2771,18 @@ export function FileViewer({
         >
           {fileBody}
         </div>
+        {textZoomable ? (
+          <DocZoomControls
+            scale={textZoom.scale}
+            atFit={textZoom.atFit}
+            onZoomIn={() => textZoom.zoomBy(TEXT_ZOOM_STEP)}
+            onZoomOut={() => textZoom.zoomBy(1 / TEXT_ZOOM_STEP)}
+            onFit={textZoom.fit}
+            minScale={TEXT_ZOOM_MIN}
+            maxScale={TEXT_ZOOM_MAX}
+            resetKey="preview.actualSize"
+          />
+        ) : null}
       </div>
       {statusFooter}
     </>
@@ -2831,6 +2888,127 @@ function formatCommentCardLabel(block: PreviewBlock): string {
  * <video>. Assigning pick classes (display:flex) onto native controls collapsed
  * the player to an empty stage (MP3 looked blank).
  */
+/**
+ * Image stage with the same zoom feel as the document viewers: opens contained
+ * (whole picture, never blown past 100%), pinches up to 4×, and pans by real
+ * scrolling so the photo can never be flung off into empty canvas. While it is
+ * still contained the stage keeps re-fitting, so opening the agent panel
+ * reflows the picture; once the reader has zoomed in, the panel just covers
+ * part of it instead of yanking the view.
+ */
+function readImageNatural(img: HTMLImageElement | null): { width: number; height: number } | null {
+  if (!img) return null
+  const width = img.naturalWidth
+  const height = img.naturalHeight
+  if (!(width > 0) || !(height > 0)) return null
+  return { width, height }
+}
+
+function ImageZoomStage({
+  src,
+  alt,
+  selecting,
+  selected,
+  onSelect
+}: {
+  src: string
+  alt: string
+  selecting: boolean
+  selected: boolean
+  onSelect: (event?: React.MouseEvent | ClickPickPointer | null) => void
+}): React.JSX.Element {
+  const stageRef = useRef<HTMLDivElement>(null)
+  const contentRef = useRef<HTMLDivElement>(null)
+  const imgRef = useRef<HTMLImageElement>(null)
+  const [natural, setNatural] = useState({ width: 0, height: 0 })
+  const naturalRef = useRef(natural)
+  naturalRef.current = natural
+
+  const apply = useCallback((scale: number): void => {
+    const content = contentRef.current
+    const img = imgRef.current
+    const { width, height } = naturalRef.current
+    if (!content || !img || !(width > 0)) return
+    // Wrapper is the scroll box. The bitmap stays at natural CSS px and is
+    // GPU-scaled — resizing <img> width/height every pinch tick re-decodes
+    // a multi-megapixel PNG and drops frames.
+    const w = Math.max(1, Math.floor(width * scale))
+    const h = Math.max(1, Math.floor(height * scale))
+    content.style.width = `${w}px`
+    content.style.height = `${h}px`
+    content.style.minWidth = `${w}px`
+    content.style.minHeight = `${h}px`
+    writeDocZoom(content, 1)
+    if (img.dataset.zoomSized !== '1') {
+      img.style.width = `${width}px`
+      img.style.height = `${height}px`
+      img.style.transformOrigin = '0 0'
+      img.dataset.zoomSized = '1'
+    }
+    img.style.transform = `scale(${scale})`
+  }, [])
+
+  const zoom = useDocZoom({
+    stageRef,
+    contentRef,
+    naturalWidth: natural.width,
+    naturalHeight: natural.height,
+    apply,
+    enabled: natural.width > 0
+  })
+
+  // Cached images often skip `onLoad`. Read natural size from the element
+  // itself so fit/readout are not left sitting at the 100% placeholder.
+  useEffect(() => {
+    const measured = readImageNatural(imgRef.current)
+    if (measured) setNatural(measured)
+  }, [src])
+
+  const zoomable = natural.width > 0
+  return (
+    <>
+      <div
+        className="preview-media-stage image-zoom-stage"
+        ref={stageRef}
+        data-zoomable={zoomable ? 'true' : 'false'}
+      >
+        <div
+          ref={contentRef}
+          className={`image-zoom-content${
+            selecting ? ` preview-select-region media-pick-frame${selected ? ' selected' : ''}` : ''
+          }`}
+          onMouseDown={(event) => {
+            if (!selecting) return
+            handleClickPickMouseDown(event, () => onSelect(null))
+          }}
+        >
+          <img
+            ref={imgRef}
+            className="file-viewer-media"
+            src={src}
+            alt={alt}
+            draggable={false}
+            onLoad={(event) => {
+              const measured = readImageNatural(event.currentTarget)
+              if (measured) setNatural(measured)
+            }}
+          />
+        </div>
+      </div>
+      {/* Outside the stage: chrome inside a scrollport scrolls away with it. */}
+      <DocZoomControls
+        scale={zoom.scale}
+        atFit={zoom.atFit}
+        onZoomIn={() => zoom.zoomBy(DOC_ZOOM_STEP)}
+        onZoomOut={() => zoom.zoomBy(1 / DOC_ZOOM_STEP)}
+        onFit={zoom.actualSize}
+        resetKey="preview.actualSize"
+        disabled={!zoomable}
+      />
+    </>
+  )
+}
+
 function MediaSelectFrame({
   selecting,
   selected,
@@ -3183,22 +3361,24 @@ function CodeBlockCanvas({
   onNearEndRef.current = onNearEnd
 
   // Measure line-height from a real line box (must match CSS --code-line-height).
+  // Runs every render rather than on a dep list: type zoom changes the line box
+  // without touching the text, and virtual scroll math built on a stale pitch
+  // paints blank bands.
   useLayoutEffect(() => {
     const el = containerRef.current
     if (!el) return
     const probe = el.querySelector<HTMLElement>('.preview-code-line')
-    if (probe) {
-      const h = probe.getBoundingClientRect().height
-      if (h > 0) {
-        setLinePx(h)
-        return
-      }
+    const measured = probe ? probe.getBoundingClientRect().height : 0
+    let next = measured
+    if (!(next > 0)) {
+      const cs = getComputedStyle(el)
+      const fontSize = parseFloat(cs.fontSize) || 12
+      const lh = parseFloat(cs.lineHeight)
+      next = Number.isFinite(lh) && lh > 0 ? lh : fontSize * 1.55
     }
-    const cs = getComputedStyle(el)
-    const fontSize = parseFloat(cs.fontSize) || 12
-    const lh = parseFloat(cs.lineHeight)
-    setLinePx(Number.isFinite(lh) && lh > 0 ? lh : fontSize * 1.55)
-  }, [text, language, virtualize])
+    if (Math.abs(next - linePx) < 0.5) return
+    setLinePx(next)
+  })
 
   useEffect(() => {
     const el = containerRef.current

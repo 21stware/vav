@@ -94,6 +94,8 @@ export interface PtySessionMeta {
   title: string
   createdAt: number
   status: PtyActivityStatus
+  purpose?: 'install'
+  installAgentId?: string
 }
 
 interface PtySession {
@@ -107,6 +109,10 @@ interface PtySession {
   title: string
   /** Idle/default title restored when no child process is running. */
   baseTitle: string
+  /** When true, status polling must not replace {@link title}. */
+  pinTitle?: boolean
+  purpose?: 'install'
+  installAgentId?: string
   /** Directory the PTY was spawned in (used to restore after VAV restart). */
   cwd: string
   createdAt: number
@@ -146,6 +152,10 @@ export interface PtyLaunchOptions {
    */
   agentId?: string | null
   title?: string
+  /** Keep `title` as-is (install jobs). Default bash titles follow the child. */
+  pinTitle?: boolean
+  purpose?: 'install'
+  installAgentId?: string
   /** Replay this scrollback after spawn (VAV restart restore). */
   restoreOutput?: string
   /** Preserve original createdAt when restoring a pane. */
@@ -562,8 +572,8 @@ export class PtyManager {
 
       const titleChanged = new Set<string>()
       for (const session of this.sessions.values()) {
-        // Only tools-tray bash (not CLI agents / VAV mirror).
-        if (session.agentId != null) continue
+        // Only tools-tray bash (not CLI agents / VAV mirror / pinned install).
+        if (session.agentId != null || session.pinTitle) continue
         const proc = foregroundProcess(session.proc.pid, byParent)
         const tree = collectTreePids(session.proc.pid, byParent)
         const ports: number[] = []
@@ -760,6 +770,9 @@ export class PtyManager {
       agentId,
       title,
       baseTitle: title,
+      pinTitle: opts.pinTitle === true || opts.purpose === 'install',
+      purpose: opts.purpose,
+      installAgentId: opts.installAgentId,
       cwd: safeCwd,
       createdAt: opts.createdAt ?? Date.now(),
       outputBuffer: opts.restoreOutput ?? '',
@@ -833,7 +846,9 @@ export class PtyManager {
         agentId: session.agentId,
         title: session.title,
         createdAt: session.createdAt,
-        status: session.status
+        status: session.status,
+        purpose: session.purpose,
+        installAgentId: session.installAgentId
       })
     }
     for (const ghost of this.ghosts.values()) {
@@ -857,17 +872,24 @@ export class PtyManager {
   /**
    * Persist pane split directions/weights. Detached session windows hydrate
    * from this instead of inventing an all-`row` tree via layoutFromTabIds.
+   * Notifies companions — pending-only pickers have no PTY, so kill/list
+   * events alone never carry the reseeded layout.
    */
   setLayouts(conversationId: string, layouts: ConversationPtyLayouts): void {
     if (!conversationId) return
-    this.layouts.set(conversationId, {
+    const next: ConversationPtyLayouts = {
       bash: cloneLayout(layouts.bash),
       agents: Object.fromEntries(
         Object.entries(layouts.agents ?? {}).map(([id, node]) => [id, cloneLayout(node)])
       ),
       cliMode: layouts.cliMode === true
-    })
+    }
+    const prev = this.layouts.get(conversationId)
+    this.layouts.set(conversationId, next)
     this.schedulePersist()
+    if (JSON.stringify(prev ?? null) !== JSON.stringify(next)) {
+      this.onChanged?.(conversationId)
+    }
   }
 
   clearLayouts(conversationId: string): void {
@@ -1020,7 +1042,9 @@ export class PtyManager {
         agentId: null,
         title: session.title,
         createdAt: session.createdAt,
-        status: session.status
+        status: session.status,
+        purpose: session.purpose,
+        installAgentId: session.installAgentId
       })
     }
     out.sort((a, b) => a.createdAt - b.createdAt)

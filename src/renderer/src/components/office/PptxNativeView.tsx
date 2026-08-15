@@ -8,14 +8,13 @@
  * ourselves so resize only updates transforms.
  */
 
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   PptxViewer,
   RECOMMENDED_ZIP_LIMITS
 } from '@aiden0z/pptx-renderer'
 import type { PreviewBlock } from '@shared/previewBlock'
 import { loadFileBuffer } from '../../lib/officeBinary'
-import { slideMeasureMinPx, slideMeasurePx, stableContentWidth } from '../../lib/docMeasure'
 import {
   attachDomPick,
   syncSelectedClasses,
@@ -23,6 +22,9 @@ import {
 } from './pickFromDom'
 import { useT } from '../../i18n/useT'
 import { PagePager } from './PagePager'
+import { DocZoomControls, DOC_ZOOM_STEP } from './DocZoomControls'
+import { useDocZoom } from './useDocZoom'
+import { writeDocZoom } from '../../lib/selectionChrome'
 
 /** Shape / picture frames annotated for pick. */
 const PPTX_SHAPE_SELECTOR = '.pptx-shape-pick'
@@ -35,22 +37,18 @@ function fitPptxSlides(
   host: HTMLElement,
   naturalW: number,
   naturalH: number,
+  scale: number,
   force = false
 ): void {
   if (!(naturalW > 0) || !(naturalH > 0)) return
-  // Stable slide width — pane only scrolls; no responsive contain-fit.
-  const target = stableContentWidth(
-    naturalW,
-    slideMeasureMinPx(host),
-    slideMeasurePx(host)
-  )
-  const scale = Math.min(2.75, Math.max(0.25, target / naturalW))
   const prev = Number(host.dataset.pptxScale || 0)
   if (!force && prev && Math.abs(prev - scale) < 0.008) return
   host.dataset.pptxScale = String(scale)
 
-  const dw = naturalW * scale
-  const dh = naturalH * scale
+  // Floor, never round up: at fit a slide is exactly the stage's usable width,
+  // and one extra pixel adds a horizontal scrollbar.
+  const dw = Math.floor(naturalW * scale)
+  const dh = Math.floor(naturalH * scale)
   host.querySelectorAll<HTMLElement>('[data-slide-index]').forEach((slot) => {
     const outer = slot.firstElementChild as HTMLElement | null
     if (!outer) return
@@ -59,8 +57,11 @@ function fitPptxSlides(
     outer.style.maxWidth = 'none'
     outer.style.height = `${dh}px`
     const inner = outer.firstElementChild as HTMLElement | null
+    outer.dataset.chromeFrame = 'true'
+    writeDocZoom(outer, scale)
     if (inner) {
       // Library already uses transform:scale; origin is typically top-left.
+      inner.dataset.chromeSubject = 'true'
       inner.style.transformOrigin = inner.style.transformOrigin || 'top left'
       inner.style.transform = `scale(${scale})`
     }
@@ -88,6 +89,8 @@ export function PptxNativeView({
   const viewerRef = useRef<PptxViewer | null>(null)
   const disposePickRef = useRef<(() => void) | null>(null)
   const naturalSizeRef = useRef<{ w: number; h: number }>({ w: 0, h: 0 })
+  const scaleRef = useRef(1)
+  const [naturalWidth, setNaturalWidth] = useState(0)
   const selectedIdsRef = useRef(selectedIds)
   selectedIdsRef.current = selectedIds
   const selectingRef = useRef(selecting)
@@ -100,6 +103,20 @@ export function PptxNativeView({
   const [slideTotal, setSlideTotal] = useState(0)
   const onPickRef = useRef(onPick)
   onPickRef.current = onPick
+
+  const applyScale = useCallback((scale: number): void => {
+    scaleRef.current = scale
+    const { w, h } = naturalSizeRef.current
+    if (hostRef.current && w > 0) fitPptxSlides(hostRef.current, w, h, scale)
+  }, [])
+
+  const zoom = useDocZoom({
+    stageRef,
+    contentRef: hostRef,
+    naturalWidth,
+    apply: applyScale,
+    enabled: ready && !error
+  })
 
   useEffect(() => {
     let cancelled = false
@@ -114,20 +131,23 @@ export function PptxNativeView({
     // Defer clearing until the next buffer is in hand so agent rewrites don't
     // blank the stage while bytes are still loading.
     naturalSizeRef.current = { w: 0, h: 0 }
+    setNaturalWidth(0)
     viewerRef.current = null
     disposePickRef.current?.()
     disposePickRef.current = null
 
     const ac = new AbortController()
-    let resizeObserver: ResizeObserver | null = null
 
     const pick = (block: PreviewBlock, event: MouseEvent): void => {
       onPickRef.current(block, event)
     }
 
+    /** Re-assert the live scale on slides the library just window-mounted. */
     const applyFit = (force = false): void => {
       const { w, h } = naturalSizeRef.current
-      if (hostRef.current && w > 0) fitPptxSlides(hostRef.current, w, h, force)
+      if (hostRef.current && w > 0) {
+        fitPptxSlides(hostRef.current, w, h, scaleRef.current, force)
+      }
     }
 
     /** Re-tag shapes/pictures + restore selection chrome (windowed remount safe). */
@@ -232,22 +252,9 @@ export function PptxNativeView({
         setSlideTotal(count)
         setSlideCurrent(Math.max(1, (viewer.currentSlideIndex ?? 0) + 1))
         reannotate(hostRef.current)
+        // Publish the natural slide width — the zoom hook fits from here on.
+        setNaturalWidth(nw)
         applyFit(true)
-
-        // CSS-only refit on panel resize (no library re-render).
-        if (typeof ResizeObserver !== 'undefined') {
-          let raf = 0
-          resizeObserver = new ResizeObserver(() => {
-            if (raf) cancelAnimationFrame(raf)
-            raf = requestAnimationFrame(() => {
-              raf = 0
-              applyFit(false)
-            })
-          })
-          // Observe the stage (width changes with agent panel) and the host.
-          if (stageRef.current) resizeObserver.observe(stageRef.current)
-          resizeObserver.observe(hostRef.current)
-        }
 
         disposePickRef.current = attachDomPick(hostRef.current, {
           selecting: selectingRef.current,
@@ -278,13 +285,19 @@ export function PptxNativeView({
     return () => {
       cancelled = true
       ac.abort()
-      resizeObserver?.disconnect()
       disposePickRef.current?.()
       disposePickRef.current = null
       viewerRef.current = null
       if (hostRef.current) hostRef.current.innerHTML = ''
     }
   }, [path, revision, t])
+
+  // A different deck always opens fitted; an agent rewrite keeps the zoom.
+  useEffect(() => {
+    setNaturalWidth(0)
+    zoom.fit()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [path])
 
   useEffect(() => {
     if (!ready) return
@@ -343,6 +356,14 @@ export function PptxNativeView({
             block: 'start'
           })
         }}
+        disabled={!ready || !!error}
+      />
+      <DocZoomControls
+        scale={zoom.scale}
+        atFit={zoom.atFit}
+        onZoomIn={() => zoom.zoomBy(DOC_ZOOM_STEP)}
+        onZoomOut={() => zoom.zoomBy(1 / DOC_ZOOM_STEP)}
+        onFit={zoom.actualSize}
         disabled={!ready || !!error}
       />
     </div>

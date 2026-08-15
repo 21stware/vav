@@ -39,10 +39,12 @@ import {
   type MenuCommand,
   type NativeMenuItem,
   type SettingsView,
+  type ProviderAccountViewPayload,
   type TokenUsageViewPayload
 } from '@shared/ipc'
 import {
   DEFAULT_SETTINGS,
+  enabledCliAgents,
   type AppSettings,
   type Conversation,
   type ConversationMeta,
@@ -51,9 +53,11 @@ import {
   type TurnEvent
 } from '@shared/types'
 import { compactionForLeaf } from '@shared/compaction'
+import { hasActiveAgentWork, shouldBlockIdleSleep } from '@shared/sleepBlocker'
 import { parseThinkingLevel } from '@shared/thinkingLevel'
 import { threadPath } from '@shared/thread'
 import { SettingsStore } from './store/SettingsStore'
+import { SleepBlocker } from './power/SleepBlocker'
 import { SecretStore } from './store/SecretStore'
 import { ConversationStore } from './store/ConversationStore'
 import { VavPackService } from './store/VavPackService'
@@ -80,12 +84,13 @@ import {
   getGithubPull,
   getGithubSite,
   listGithubActions,
-  listGithubPulls
+  listGithubPulls,
+  listGithubReleases
 } from './github/GithubService'
 import { getCloudflareStatus } from './cloudflare/CloudflareService'
 import { UpdateService } from './updates'
 import { PtyManager } from './terminal/PtyManager'
-import { ensureLoginPath, resolveAgentExecutable } from './terminal/loginPath'
+import { ensureLoginPath, probeAgentExecutables, resolveAgentExecutable } from './terminal/loginPath'
 import { menuCommandFromInput, matchesNewSessionWindow } from './menuShortcuts'
 import { resolveKeyBindings } from '@shared/keyBindings'
 import { isDevRuntime } from './devRuntime'
@@ -99,6 +104,15 @@ import {
   seedModelCatalog
 } from './agent/listHostModels'
 import { SkillService } from './agent/SkillService'
+import {
+  cancelAgentInstall,
+  clearAgentInstall,
+  listAgentInstallRuns,
+  onAgentInstallRunsChanged,
+  startAgentInstall,
+  stopAllAgentInstalls
+} from './agent/AgentInstaller'
+import { readHostAccountInfo } from './agent/hostAuth'
 import {
   displayNameForCliHost,
   isStructuredCliHost,
@@ -134,7 +148,7 @@ import {
 import { ensureMacOpenDirectoryService } from './macOpenDirectoryService'
 import { NotificationCenter } from './notifications'
 import { QuotaService } from './quota/QuotaService'
-import { mergeQuotaWindowsPreferNewer } from '@shared/quotaWindows'
+import { hostMayHaveAccountQuota, mergeQuotaWindowsPreferNewer } from '@shared/quotaWindows'
 import { trayItemLabel, type TrayPane } from '@shared/traySessions'
 
 const PLATFORM = process.platform as Platform
@@ -196,6 +210,7 @@ protocol.registerSchemesAsPrivileged([
 let mainWindow: BrowserWindow | null = null
 let settingsWindow: BrowserWindow | null = null
 let tokenUsageWindow: BrowserWindow | null = null
+let providerAccountWindow: BrowserWindow | null = null
 /** Last BrowserWindow that held focus — Dock activate raises this, not always main. */
 let lastFocusedWindow: BrowserWindow | null = null
 /** Conversation currently shown in the token-usage panel (for live hydrate). */
@@ -209,6 +224,16 @@ let tokenUsagePendingShow: {
   parent: BrowserWindow
   anchor?: { x: number; y: number; width: number; height: number }
 } | null = null
+let providerAccountConversationId: string | null = null
+let providerAccountParentId: number | null = null
+let providerAccountReady = false
+let providerAccountAuth: { signedIn: boolean; accountId: string | null; plan: string | null } | null =
+  null
+let providerAccountPendingShow: {
+  parent: BrowserWindow
+  anchor?: { x: number; y: number; width: number; height: number }
+} | null = null
+let providerAccountAnchor: ProviderAccountAnchor | undefined
 /** At most one standalone window per conversation (sidebar spec, 双击). */
 const detachedWindows = new Map<string, BrowserWindow>()
 /** Reverse lookup so park/close can resolve the bound conversation. */
@@ -274,12 +299,24 @@ const ptyManager = new PtyManager(
     // Live CLI agent count and bash panes drive the tray badge / menu.
     refreshTraySessions()
   },
-  (tabId, conversationId, status) =>
+  (tabId, conversationId, status) => {
     sendToWorkspaceWindows(IPC.ptyStatus, { tabId, conversationId, status }, conversationId)
+    syncSleepBlocker()
+  }
 )
 
 /** Conversation ids with a live or paused turn — drives the tray badge/menu. */
 const activeTurns = new Map<string, 'running' | 'paused'>()
+const sleepBlocker = new SleepBlocker()
+
+function syncSleepBlocker(): void {
+  const enabled = settingsStore.get().keepAwakeWhileAgentRunning === true
+  const hasWork = hasActiveAgentWork({
+    turns: activeTurns.values(),
+    cliAgentStatuses: ptyManager.listCliAgentSessions().map((session) => session.status)
+  })
+  sleepBlocker.setActive(shouldBlockIdleSleep(enabled, hasWork))
+}
 
 /**
  * Raise the session where the user left it (detached companion if open, else
@@ -337,27 +374,39 @@ function focusRunningSession(target: {
   }
 }
 
-/** Notification / list reveal — VAV chat surface in main (or existing detached). */
-function focusConversation(conversationId: string): void {
-  focusRunningSession({ conversationId, surface: 'vav' })
-}
-
 /**
- * Detached session → main window: select the row, focus main, close companion.
- * (Reveal in List — user leaves the floating window for the sidebar list.)
+ * Detached session / file preview → main window: select the row, raise main,
+ * close the companion. Must not go through {@link focusRunningSession} — that
+ * prefers an open detached pane and never shows the sidebar list.
  */
-function revealConversationInList(conversationId: string): void {
-  if (!conversationId || !conversationStore.get(conversationId)) return
-  // ⌘⇧↵ sessions are ephemeral until they get a message; revealing into the
-  // list is an explicit keep — don't auto-delete when the companion closes.
-  ephemeralConversations.delete(conversationId)
-  focusConversation(conversationId)
-  const detached = detachedWindows.get(conversationId)
+async function revealConversationInList(conversationId: string): Promise<void> {
+  // Always raise the main shell first. A missing id / unknown conversation
+  // must still summon the list — otherwise the companion close leaves no UI.
+  if (conversationId) ephemeralConversations.delete(conversationId)
+  await showMainWindow()
+
+  if (conversationId && conversationStore.get(conversationId)) {
+    const payload = {
+      conversationId,
+      toast: null as string | null,
+      surface: 'vav' as const
+    }
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      if (mainWindow.webContents.isLoading()) {
+        mainWindow.webContents.once('did-finish-load', () => {
+          if (mainWindow && !mainWindow.isDestroyed()) {
+            safeSend(mainWindow.webContents, IPC.cliOpen, payload)
+          }
+        })
+      } else {
+        safeSend(mainWindow.webContents, IPC.cliOpen, payload)
+      }
+    }
+  }
+
+  const detached = conversationId ? detachedWindows.get(conversationId) : undefined
   if (detached && !detached.isDestroyed()) {
-    // Defer close so main can take focus first (macOS Space / z-order).
-    setTimeout(() => {
-      if (!detached.isDestroyed()) detached.close()
-    }, 80)
+    detached.close()
   }
 }
 
@@ -383,75 +432,79 @@ function trayDirLabel(workingDirectory: string | null | undefined): string {
 }
 
 function refreshTraySessions(): void {
-  const settings = settingsStore.get()
-  const agentLabel = (agentId: string): string => {
-    const fromSettings = settings.cliAgents?.find((a) => a.id === agentId)
-    if (fromSettings?.name) return fromSettings.name
-    return agentId
-  }
-
-  const panes: TrayPane[] = []
-  for (const s of ptyManager.listCliAgentSessions()) {
-    const conversation = conversationStore.get(s.conversationId)
-    const dir = conversation?.workingDirectory || '~'
-    panes.push({
-      conversationId: s.conversationId,
-      tabId: s.id,
-      kind: 'agent',
-      sessionTitle:
-        (conversation?.title && conversation.title.trim()) || s.title || s.conversationId,
-      paneTitle: s.agentId ? agentLabel(s.agentId) : 'CLI',
-      dirKey: dir,
-      dirLabel: trayDirLabel(dir),
-      createdAt: s.createdAt,
-      agentId: s.agentId || undefined
-    })
-  }
-  for (const s of ptyManager.listBashSessions()) {
-    const conversation = conversationStore.get(s.conversationId)
-    const dir = conversation?.workingDirectory || '~'
-    panes.push({
-      conversationId: s.conversationId,
-      tabId: s.id,
-      kind: 'bash',
-      sessionTitle:
-        (conversation?.title && conversation.title.trim()) || s.title || s.conversationId,
-      paneTitle: s.title || 'bash',
-      dirKey: dir,
-      dirLabel: trayDirLabel(dir),
-      createdAt: s.createdAt
-    })
-  }
-
-  if (panes.length > 0) {
-    notifications.updateRunningSessions(
-      panes.map((pane) => ({
-        conversationId: pane.conversationId,
-        title: trayItemLabel(pane),
-        surface: pane.kind === 'agent' ? ('cli' as const) : ('bash' as const),
-        tabId: pane.tabId,
-        agentId: pane.agentId,
-        kind: pane.kind,
-        dirKey: pane.dirKey,
-        dirLabel: pane.dirLabel,
-        createdAt: pane.createdAt
-      }))
-    )
-    return
-  }
-
-  // Fall back to VAV active turns when no CLI agent or bash pane is live.
-  const vavRows = [...activeTurns.keys()].map((id) => {
-    const conversation = conversationStore.get(id)
-    const sessionName = conversation?.title?.trim() || id
-    const dirName = trayDirLabel(conversation?.workingDirectory)
-    return {
-      conversationId: id,
-      title: `${sessionName} - VAV - ${dirName}`,
-      surface: 'vav' as const
+  try {
+    const settings = settingsStore.get()
+    const agentLabel = (agentId: string): string => {
+      const fromSettings = settings.cliAgents?.find((a) => a.id === agentId)
+      if (fromSettings?.name) return fromSettings.name
+      return agentId
     }
-  })
-  notifications.updateRunningSessions(vavRows)
+
+    const panes: TrayPane[] = []
+    for (const s of ptyManager.listCliAgentSessions()) {
+      const conversation = conversationStore.get(s.conversationId)
+      const dir = conversation?.workingDirectory || '~'
+      panes.push({
+        conversationId: s.conversationId,
+        tabId: s.id,
+        kind: 'agent',
+        sessionTitle:
+          (conversation?.title && conversation.title.trim()) || s.title || s.conversationId,
+        paneTitle: s.agentId ? agentLabel(s.agentId) : 'CLI',
+        dirKey: dir,
+        dirLabel: trayDirLabel(dir),
+        createdAt: s.createdAt,
+        agentId: s.agentId || undefined
+      })
+    }
+    for (const s of ptyManager.listBashSessions()) {
+      const conversation = conversationStore.get(s.conversationId)
+      const dir = conversation?.workingDirectory || '~'
+      panes.push({
+        conversationId: s.conversationId,
+        tabId: s.id,
+        kind: 'bash',
+        sessionTitle:
+          (conversation?.title && conversation.title.trim()) || s.title || s.conversationId,
+        paneTitle: s.title || 'bash',
+        dirKey: dir,
+        dirLabel: trayDirLabel(dir),
+        createdAt: s.createdAt
+      })
+    }
+
+    if (panes.length > 0) {
+      notifications.updateRunningSessions(
+        panes.map((pane) => ({
+          conversationId: pane.conversationId,
+          title: trayItemLabel(pane),
+          surface: pane.kind === 'agent' ? ('cli' as const) : ('bash' as const),
+          tabId: pane.tabId,
+          agentId: pane.agentId,
+          kind: pane.kind,
+          dirKey: pane.dirKey,
+          dirLabel: pane.dirLabel,
+          createdAt: pane.createdAt
+        }))
+      )
+      return
+    }
+
+    // Fall back to VAV active turns when no CLI agent or bash pane is live.
+    const vavRows = [...activeTurns.keys()].map((id) => {
+      const conversation = conversationStore.get(id)
+      const sessionName = conversation?.title?.trim() || id
+      const dirName = trayDirLabel(conversation?.workingDirectory)
+      return {
+        conversationId: id,
+        title: `${sessionName} - VAV - ${dirName}`,
+        surface: 'vav' as const
+      }
+    })
+    notifications.updateRunningSessions(vavRows)
+  } finally {
+    syncSleepBlocker()
+  }
 }
 
 /** Last built app menu — Windows/Linux attach it per-window so the bar stays visible. */
@@ -509,6 +562,8 @@ function handleAgentEvent(event: TurnEvent): void {
       activeTurns.set(event.conversationId, 'running')
       refreshTraySessions()
       pushTokenUsageIfOpen(event.conversationId)
+      // User answered / approved — drop that session's Dock attention items.
+      notifications.acknowledgeConversation(event.conversationId)
     }
     return
   }
@@ -518,25 +573,28 @@ function handleAgentEvent(event: TurnEvent): void {
     const tool = event.block.tool
     const body = event.block.summary || event.block.tool
     if (tool === 'ask_user_question') {
-      notifications.notify(
+      notifications.alertUser(
         'ask',
         event.conversationId,
         t('notify.awaitingAnswer', { title }),
-        body
+        body,
+        event.toolCallId
       )
     } else if (tool === 'request') {
-      notifications.notify(
+      notifications.alertUser(
         'request',
         event.conversationId,
         t('notify.requestConfirm', { title }),
-        body
+        body,
+        event.toolCallId
       )
     } else if (event.block.choices?.length) {
-      notifications.notify(
+      notifications.alertUser(
         'approval',
         event.conversationId,
         t('notify.awaitingApproval', { title }),
-        body
+        body,
+        event.toolCallId
       )
     }
     return
@@ -551,7 +609,9 @@ function handleAgentEvent(event: TurnEvent): void {
     pushTokenUsageIfOpen(event.conversationId)
     if (!event.cancelled && !event.error) {
       const body = event.message.content || t('notify.turnComplete')
-      notifications.notify('turn-complete', event.conversationId, title, body)
+      notifications.alertUser('turn-complete', event.conversationId, title, body)
+    } else {
+      notifications.acknowledgeConversation(event.conversationId)
     }
   }
 }
@@ -569,6 +629,8 @@ const quotaService = new QuotaService({
   onUpdate: () => {
     const id = tokenUsageConversationId
     if (id && id !== '_') pushTokenUsageIfOpen(id)
+    const accountId = providerAccountConversationId
+    if (accountId && accountId !== '_') void pushProviderAccountIfOpen(accountId)
   }
 })
 
@@ -628,6 +690,9 @@ function isAuxiliaryWindow(window: BrowserWindow): boolean {
   // streaming transcripts — skip them on the hot path.
   if (settingsWindow && !settingsWindow.isDestroyed() && window === settingsWindow) return true
   if (tokenUsageWindow && !tokenUsageWindow.isDestroyed() && window === tokenUsageWindow) return true
+  if (providerAccountWindow && !providerAccountWindow.isDestroyed() && window === providerAccountWindow) {
+    return true
+  }
   return false
 }
 
@@ -1000,6 +1065,8 @@ function rendererPrefs(extra: Electron.WebPreferences = {}): Electron.WebPrefere
 
 const PREVIEW_IDLE_MS = 5 * 60 * 1000
 const PREVIEW_MAX_OPEN = 6
+/** Default preview window width — see the note where it is clamped to the display. */
+const PREVIEW_DEFAULT_WIDTH = 880
 /**
  * Hidden warm shells kept ready so the next open skips BrowserWindow+load.
  * Two, not one: a fresh shell needs ~1s of renderer boot before
@@ -1348,22 +1415,26 @@ function loadRenderer(window: BrowserWindow, query: Record<string, string> = {})
   }
 }
 
-function openSettingsWindow(view: SettingsView = 'api'): void {
+function openSettingsWindow(view: SettingsView = 'api', agentId?: string): void {
   if (settingsWindow && !settingsWindow.isDestroyed()) {
-    safeSend(settingsWindow.webContents, IPC.settingsView, view)
+    safeSend(settingsWindow.webContents, IPC.settingsView, { view, agentId })
     void revealBrowserWindow(settingsWindow)
     return
   }
 
-  ensureSettingsWindow(view, true)
+  ensureSettingsWindow(view, true, agentId)
 }
 
 /**
  * Keep Settings warm like the token panel: hide on close, show instantly next time.
  */
-function ensureSettingsWindow(view: SettingsView = 'api', showNow: boolean): void {
+function ensureSettingsWindow(
+  view: SettingsView = 'api',
+  showNow: boolean,
+  agentId?: string
+): void {
   if (settingsWindow && !settingsWindow.isDestroyed()) {
-    if (showNow) openSettingsWindow(view)
+    if (showNow) openSettingsWindow(view, agentId)
     return
   }
 
@@ -1409,7 +1480,11 @@ function ensureSettingsWindow(view: SettingsView = 'api', showNow: boolean): voi
       }
     })
   }
-  loadRenderer(settingsWindow, { view: 'settings', category: view })
+  loadRenderer(settingsWindow, {
+    view: 'settings',
+    category: view,
+    ...(agentId ? { agentId } : {})
+  })
 }
 
 /** Hide (don't destroy) so the next open is instant. */
@@ -1497,6 +1572,9 @@ function raiseDetachedWindow(win: BrowserWindow): Promise<void> {
     if (needSpaceHop) app.focus({ steal: true })
     if (!win.isDestroyed()) win.focus()
     markRevealDone(win)
+    // New GPU surface can leave sibling windows on a stale compositor frame
+    // (xterm canvas + vibrancy) until the next content write.
+    scheduleVisibleWindowRepaint(win)
     if (needSpaceHop) {
       setTimeout(() => {
         if (win.isDestroyed()) return
@@ -1515,6 +1593,32 @@ function raiseDetachedWindow(win: BrowserWindow): Promise<void> {
   }
   // Cold companion: paint a frame while still hidden, then raise.
   return waitForRendererPaint(win).then(finish)
+}
+
+/**
+ * Force visible windows to paint after a sibling BrowserWindow is created.
+ * Chromium/macOS often keeps the previous compositor textures until the next
+ * write; streaming text hides it, idle transcripts and xterm canvases do not.
+ */
+function repaintVisibleWindows(except?: BrowserWindow | null): void {
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (except && win.id === except.id) continue
+    if (win.isDestroyed() || !win.isVisible()) continue
+    safeSend(win.webContents, IPC.windowRepaint)
+  }
+}
+
+function scheduleVisibleWindowRepaint(except?: BrowserWindow | null): void {
+  const run = (): void => {
+    if (except && except.isDestroyed()) {
+      repaintVisibleWindows()
+      return
+    }
+    repaintVisibleWindows(except)
+  }
+  run()
+  setTimeout(run, 80)
+  setTimeout(run, 260)
 }
 
 function isWindowInPlay(win: BrowserWindow | null | undefined): boolean {
@@ -1583,6 +1687,7 @@ function bindDetachedWindow(window: BrowserWindow, conversationId: string): void
   }
   detachedWindows.set(conversationId, window)
   detachedWindowIds.set(window, conversationId)
+  notifications.noteConversationView(window.id, conversationId)
 }
 
 function unbindDetachedWindow(window: BrowserWindow): string | null {
@@ -1775,6 +1880,9 @@ function warmSessionShellPool(): void {
     })
     loadRenderer(window, { view: 'session', warm: '1' })
     sessionOpenMark('warm-shell-created')
+    // Hidden warm shells still allocate a compositor surface (~200ms after
+    // ⌘⇧↵). Visible siblings must re-blit or they keep the pre-alloc frame.
+    scheduleVisibleWindowRepaint(window)
   }
 }
 
@@ -2167,7 +2275,7 @@ function warmPreviewShellPool(): void {
   warmPreviewPool.push(...live)
   while (warmPreviewPool.length < PREVIEW_WARM_POOL) {
     const area = screen.getPrimaryDisplay().workArea
-    const width = Math.min(800, area.width - 40)
+    const width = Math.min(PREVIEW_DEFAULT_WIDTH, area.width - 40)
     const height = Math.min(700, area.height - 40)
     // Only the lead shell warms every format canvas; the pptx renderer alone is
     // ~2 MB of parsed JS and spares should not each hold a copy.
@@ -2222,7 +2330,9 @@ function openFilePreviewWindow(
     anchor && !anchor.isDestroyed() ? screen.getDisplayMatching(anchor.getBounds()) : screen.getPrimaryDisplay()
   ).workArea
   const snapshotting = Boolean(process.env.VAV_SNAPSHOT || process.env.VAV_SNAPSHOT_PLAN)
-  const width = Math.min(snapshotting ? 1280 : 800, area.width - 40)
+  // 880 ≈ a Letter/A4 page at 100% plus the document stage's gutters, so paged
+  // formats open fitted *and* full size rather than fitted and shrunken.
+  const width = Math.min(snapshotting ? 1280 : PREVIEW_DEFAULT_WIDTH, area.width - 40)
   const height = Math.min(snapshotting ? 820 : 700, area.height - 40)
 
   let x: number | undefined
@@ -2358,6 +2468,19 @@ function preferredModelHosts(): CliHostKind[] {
   return hosts
 }
 
+/** Catalogue size when the host published one; else the model-id table. */
+function contextWindowForModel(
+  host: CliHostKind | null,
+  modelId: string,
+  reported?: number
+): number {
+  const listed = getModelCatalogSnapshot()[host ?? 'vav']?.models?.find((m) => m.id === modelId)
+    ?.contextWindow
+  if (listed && listed > 0) return listed
+  if (host && reported && reported > 0) return reported
+  return resolveContextWindow(modelId)
+}
+
 /**
  * Coerce conversation.model to a valid id for its chat host.
  * Fixes sessions created with defaultAgentId=CLI but still holding the VAV
@@ -2379,7 +2502,7 @@ function coerceConversationModel(conversationId: string): string | null {
   if (resolved !== conversation.model) {
     conversationStore.updateMeta(conversationId, {
       model: resolved,
-      tokenLimit: resolveContextWindow(resolved)
+      tokenLimit: contextWindowForModel(host, resolved)
     })
     // Keep sidebar / composer meta in sync when healing a foreign model id.
     publishConversations()
@@ -2449,7 +2572,7 @@ function buildTokenUsagePayload(conversationId: string): TokenUsageViewPayload |
     providerLabel: provider,
     cliHost,
     tokensUsed: conversation.tokensUsed,
-    tokenLimit: conversation.tokenLimit,
+    tokenLimit: contextWindowForModel(cliHost, model, conversation.tokenLimit),
     history,
     cacheCreatedAt: conversation.cacheCreatedAt ?? null,
     cacheExpiresAt: conversation.cacheExpiresAt ?? null,
@@ -2571,6 +2694,8 @@ function openTokenUsageWindow(
     hideTokenUsageWindow()
     return
   }
+
+  hideProviderAccountWindow()
 
   // Parent changed (e.g. main → detached): recreate so z-order stays correct.
   if (
@@ -2771,6 +2896,340 @@ function warmTokenUsageWindow(): void {
     if (tokenUsagePendingShow) onTokenUsageShellReady()
   })
   loadRenderer(tokenUsageWindow, { view: 'token-usage', conversationId: '_' })
+}
+
+type ProviderAccountAnchor = { x: number; y: number; width: number; height: number }
+
+let providerAccountCloseTimer: ReturnType<typeof setTimeout> | null = null
+
+function cancelProviderAccountDismiss(): void {
+  if (!providerAccountCloseTimer) return
+  clearTimeout(providerAccountCloseTimer)
+  providerAccountCloseTimer = null
+}
+
+function hideProviderAccountWindow(): void {
+  cancelProviderAccountDismiss()
+  if (!providerAccountWindow || providerAccountWindow.isDestroyed()) return
+  if (providerAccountWindow.isVisible()) providerAccountWindow.hide()
+}
+
+function dismissProviderAccountSoon(): void {
+  if (process.env.VAV_SNAPSHOT || process.env.VAV_SNAPSHOT_PLAN) return
+  if (providerAccountCloseTimer) return
+  providerAccountCloseTimer = setTimeout(() => {
+    providerAccountCloseTimer = null
+    hideProviderAccountWindow()
+  }, 120)
+}
+
+function hostDisplayName(host: CliHostKind | null): string {
+  if (!host) return t('agents.plainShell')
+  const agent = enabledCliAgents(settingsStore.get().cliAgents).find((a) => a.id === host)
+  return agent?.name ?? displayNameForCliHost(host)
+}
+
+function buildProviderAccountPayload(
+  conversationId: string,
+  extras?: {
+    loading?: boolean
+    signedIn?: boolean
+    accountId?: string | null
+    plan?: string | null
+  }
+): ProviderAccountViewPayload | null {
+  const conversation = conversationStore.get(conversationId)
+  if (!conversation) return null
+  const host = (conversation.cliHost ?? null) as CliHostKind | null
+  const settings = settingsStore.get()
+  return {
+    conversationId: conversation.id,
+    host,
+    hostId: host ?? 'vav',
+    hostName: hostDisplayName(host),
+    signedIn: extras?.signedIn ?? false,
+    accountId: extras?.accountId ?? null,
+    plan: extras?.plan ?? null,
+    windows: host
+      ? mergeQuotaWindowsPreferNewer(quotaService.get(host), conversation.quotaWindows ?? [])
+      : [],
+    loading: extras?.loading ?? false,
+    theme: settings.theme,
+    locale: currentLocale(),
+    now: Date.now()
+  }
+}
+
+function currentProviderAccountPayload(): ProviderAccountViewPayload | null {
+  const id = providerAccountConversationId
+  if (!id || id === '_') return null
+  try {
+    return buildProviderAccountPayload(id, {
+      loading: !providerAccountAuth,
+      signedIn: providerAccountAuth?.signedIn ?? false,
+      accountId: providerAccountAuth?.accountId ?? null,
+      plan: providerAccountAuth?.plan ?? null
+    })
+  } catch (err) {
+    console.error('[provider-account] payload failed', err)
+    return null
+  }
+}
+
+function sendProviderAccountPayload(payload: ProviderAccountViewPayload): void {
+  if (!providerAccountWindow || providerAccountWindow.isDestroyed()) return
+  safeSend(providerAccountWindow.webContents, IPC.providerAccountView, payload)
+}
+
+async function hydrateProviderAccount(conversationId: string): Promise<void> {
+  const conversation = conversationStore.get(conversationId)
+  if (!conversation) return
+  const host = (conversation.cliHost ?? null) as CliHostKind | null
+  const waitingQuota = hostMayHaveAccountQuota(host)
+  const loading = buildProviderAccountPayload(conversationId, {
+    loading: waitingQuota,
+    signedIn: providerAccountAuth?.signedIn ?? false,
+    accountId: providerAccountAuth?.accountId ?? null,
+    plan: providerAccountAuth?.plan ?? null
+  })
+  if (loading) sendProviderAccountPayload(loading)
+  const account = await readHostAccountInfo(host)
+  providerAccountAuth = {
+    signedIn: account.signedIn,
+    accountId: account.accountId,
+    plan: account.plan
+  }
+  await quotaService.refreshForPanel(host)
+  const next = buildProviderAccountPayload(conversationId, {
+    loading: false,
+    signedIn: account.signedIn,
+    accountId: account.accountId,
+    plan: account.plan
+  })
+  if (next) sendProviderAccountPayload(next)
+}
+
+async function pushProviderAccountIfOpen(conversationId: string): Promise<void> {
+  if (!providerAccountWindow || providerAccountWindow.isDestroyed()) return
+  if (!providerAccountWindow.isVisible()) return
+  if (providerAccountConversationId !== conversationId) return
+  await hydrateProviderAccount(conversationId)
+}
+
+function placeProviderAccountPopup(
+  win: BrowserWindow,
+  parent: BrowserWindow,
+  anchor?: ProviderAccountAnchor
+): void {
+  const [width, height] = win.getSize()
+  const content = parent.getContentBounds()
+  const gap = 8
+  let x: number
+  let y: number
+  if (anchor) {
+    x = Math.round(content.x + anchor.x)
+    y = Math.round(content.y + anchor.y - height - gap)
+    if (y < content.y) {
+      y = Math.round(content.y + anchor.y + anchor.height + gap)
+    }
+  } else {
+    x = Math.round(content.x + 24)
+    y = Math.round(content.y + content.height - height - 80)
+  }
+
+  const area = screen.getDisplayMatching(content).workArea
+  x = Math.min(Math.max(area.x + 8, x), area.x + area.width - width - 8)
+  y = Math.min(Math.max(area.y + 8, y), area.y + area.height - height - 8)
+  win.setPosition(x, y)
+}
+
+function attachProviderAccountWindowChrome(win: BrowserWindow): void {
+  const bg = windowBackground()
+  try {
+    win.setBackgroundColor(bg)
+  } catch {
+    // ignore
+  }
+  void win.webContents.insertCSS(
+    `html,body,#root{background:${bg}!important;margin:0;height:100%;color-scheme:${
+      nativeTheme.shouldUseDarkColors ? 'dark' : 'light'
+    }}`
+  ).catch(() => undefined)
+  win.on('blur', () => dismissProviderAccountSoon())
+  win.on('focus', () => cancelProviderAccountDismiss())
+  win.on('close', (event) => {
+    if (quitting) return
+    event.preventDefault()
+    hideProviderAccountWindow()
+  })
+  win.on('closed', () => {
+    cancelProviderAccountDismiss()
+    providerAccountWindow = null
+    providerAccountConversationId = null
+    providerAccountParentId = null
+    providerAccountReady = false
+    providerAccountAuth = null
+    providerAccountAnchor = undefined
+  })
+  wireExternalLinks(win.webContents)
+}
+
+const PROVIDER_ACCOUNT_WIDTH = 280
+const PROVIDER_ACCOUNT_MIN_HEIGHT = 108
+const PROVIDER_ACCOUNT_MAX_HEIGHT = 360
+
+function fitProviderAccountWindow(height: number): void {
+  if (!providerAccountWindow || providerAccountWindow.isDestroyed()) return
+  const next = Math.round(
+    Math.min(PROVIDER_ACCOUNT_MAX_HEIGHT, Math.max(PROVIDER_ACCOUNT_MIN_HEIGHT, height))
+  )
+  const [, current] = providerAccountWindow.getContentSize()
+  if (current !== next) providerAccountWindow.setContentSize(PROVIDER_ACCOUNT_WIDTH, next)
+  const parent =
+    providerAccountParentId != null ? BrowserWindow.fromId(providerAccountParentId) : null
+  if (parent && !parent.isDestroyed()) {
+    placeProviderAccountPopup(providerAccountWindow, parent, providerAccountAnchor)
+  }
+}
+
+function createProviderAccountWindow(parent: BrowserWindow): BrowserWindow {
+  const bg = windowBackground()
+  const win = new BrowserWindow({
+    width: PROVIDER_ACCOUNT_WIDTH,
+    height: 148,
+    useContentSize: true,
+    show: false,
+    frame: false,
+    parent,
+    modal: false,
+    resizable: false,
+    movable: false,
+    minimizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    skipTaskbar: true,
+    hasShadow: true,
+    title: t('composer.accountTitle'),
+    backgroundColor: bg,
+    ...(IS_MAC
+      ? { type: 'panel' as const, roundedCorners: true, acceptFirstMouse: true }
+      : {}),
+    webPreferences: rendererPrefs()
+  })
+  attachProviderAccountWindowChrome(win)
+  return win
+}
+
+function openProviderAccountWindow(
+  sender: Electron.WebContents,
+  conversationId: string,
+  anchor?: ProviderAccountAnchor
+): void {
+  const id = conversationId.trim()
+  if (!id) return
+
+  cancelProviderAccountDismiss()
+
+  const parent = BrowserWindow.fromWebContents(sender) ?? mainWindow
+  if (!parent || parent.isDestroyed()) return
+
+  if (
+    providerAccountWindow &&
+    !providerAccountWindow.isDestroyed() &&
+    providerAccountWindow.isVisible() &&
+    providerAccountConversationId === id &&
+    providerAccountParentId === parent.id
+  ) {
+    hideProviderAccountWindow()
+    return
+  }
+
+  hideTokenUsageWindow()
+
+  if (
+    providerAccountWindow &&
+    !providerAccountWindow.isDestroyed() &&
+    providerAccountParentId !== null &&
+    providerAccountParentId !== parent.id
+  ) {
+    providerAccountWindow.destroy()
+    providerAccountWindow = null
+    providerAccountReady = false
+  }
+
+  if (providerAccountConversationId !== id) providerAccountAuth = null
+  providerAccountConversationId = id
+  providerAccountAnchor = anchor
+
+  if (providerAccountWindow && !providerAccountWindow.isDestroyed() && providerAccountReady) {
+    try {
+      providerAccountWindow.setBackgroundColor(windowBackground())
+    } catch {
+      // ignore
+    }
+    placeProviderAccountPopup(providerAccountWindow, parent, anchor)
+    void hydrateProviderAccount(id)
+    providerAccountPendingShow = null
+    if (!providerAccountWindow.isVisible()) providerAccountWindow.show()
+    providerAccountWindow.focus()
+    return
+  }
+
+  if (providerAccountWindow && !providerAccountWindow.isDestroyed()) {
+    providerAccountPendingShow = { parent, anchor }
+    placeProviderAccountPopup(providerAccountWindow, parent, anchor)
+    return
+  }
+
+  providerAccountWindow = createProviderAccountWindow(parent)
+  providerAccountParentId = parent.id
+  providerAccountReady = false
+
+  if (!app.isPackaged) {
+    providerAccountWindow.webContents.on('console-message', (event) => {
+      console.log(`[provider-account:${event.level}] ${event.message}`)
+    })
+  }
+
+  providerAccountPendingShow = { parent, anchor }
+  providerAccountWindow.webContents.once('did-finish-load', () => {
+    onProviderAccountShellReady()
+  })
+
+  loadRenderer(providerAccountWindow, { view: 'provider-account', conversationId: id })
+}
+
+function onProviderAccountShellReady(): void {
+  if (!providerAccountWindow || providerAccountWindow.isDestroyed()) return
+  providerAccountReady = true
+  const pending = providerAccountPendingShow
+  providerAccountPendingShow = null
+  if (!pending) return
+  const target = providerAccountConversationId
+  if (target && target !== '_') void hydrateProviderAccount(target)
+  if (pending.parent && !pending.parent.isDestroyed()) {
+    placeProviderAccountPopup(providerAccountWindow, pending.parent, pending.anchor)
+  }
+  try {
+    providerAccountWindow.setBackgroundColor(windowBackground())
+  } catch {
+    // ignore
+  }
+  providerAccountWindow.show()
+  providerAccountWindow.focus()
+}
+
+function warmProviderAccountWindow(): void {
+  if (providerAccountWindow && !providerAccountWindow.isDestroyed()) return
+  if (!mainWindow || mainWindow.isDestroyed()) return
+  providerAccountWindow = createProviderAccountWindow(mainWindow)
+  providerAccountParentId = mainWindow.id
+  providerAccountReady = false
+  providerAccountWindow.webContents.once('did-finish-load', () => {
+    providerAccountReady = true
+    if (providerAccountPendingShow) onProviderAccountShellReady()
+  })
+  loadRenderer(providerAccountWindow, { view: 'provider-account', conversationId: '_' })
 }
 
 /** Debounce: menu accelerator + globalShortcut can both fire when vav is focused. */
@@ -3016,7 +3475,8 @@ function installSnapshotHook(window: BrowserWindow): void {
                 w !== window &&
                 !w.isDestroyed() &&
                 w.isVisible() &&
-                w !== tokenUsageWindow
+                w !== tokenUsageWindow &&
+                w !== providerAccountWindow
             )
             .sort((a, b) => b.id - a.id)[0]
           if (!child) {
@@ -3055,7 +3515,7 @@ function installSnapshotHook(window: BrowserWindow): void {
   })
 }
 
-function showMainWindow(): void {
+async function showMainWindow(): Promise<void> {
   // Hidden-Dock sessions still need a visible window when the user (or a second
   // launch) asks for the app — briefly surface the Dock so Mission Control /
   // Cmd-Tab can find us too.
@@ -3064,9 +3524,17 @@ function showMainWindow(): void {
   }
   if (!mainWindow || mainWindow.isDestroyed()) {
     mainWindow = createWindow()
+    const win = mainWindow
+    if (!win || win.isDestroyed()) return
+    if (!win.webContents.isLoading()) return
+    await new Promise<void>((resolve) => {
+      const done = (): void => resolve()
+      win.webContents.once('did-finish-load', done)
+      setTimeout(done, 2000)
+    })
     return
   }
-  void revealBrowserWindow(mainWindow)
+  await revealBrowserWindow(mainWindow)
 }
 
 /**
@@ -3382,6 +3850,10 @@ function watchSystemAccentColor(): void {
   app.on('browser-window-focus', (_event, window) => {
     if (window && !window.isDestroyed()) lastFocusedWindow = window
     publishSystemAccentColor(false)
+    notifications.acknowledgeFocusedWindow(window)
+  })
+  app.on('browser-window-created', (_event, window) => {
+    window.on('closed', () => notifications.forgetWindow(window.id))
   })
 }
 
@@ -3483,6 +3955,9 @@ function registerIpc(): void {
     ) {
       notifications.applySettings()
     }
+    if (patch.keepAwakeWhileAgentRunning !== undefined) {
+      syncSleepBlocker()
+    }
     if (patch.windowVibrancyEnabled !== undefined) {
       syncVibrancyShellWindows()
     }
@@ -3509,6 +3984,7 @@ function registerIpc(): void {
     registerGlobalHotkey(next.globalHotkey)
     rebuildAppChrome()
     syncVibrancyShellWindows()
+    syncSleepBlocker()
     const settings = currentSettings()
     broadcast(IPC.settingsChanged, settings)
     return settings
@@ -3724,9 +4200,10 @@ return c as text`
   })
 
   ipcMain.handle(IPC.convSetModel, (_event, id: string, model: string) => {
+    const host = (conversationStore.get(id)?.cliHost ?? null) as CliHostKind | null
     conversationStore.updateMeta(id, {
       model,
-      tokenLimit: resolveContextWindow(model)
+      tokenLimit: contextWindowForModel(host, model)
     })
     if (cliHost.owns(id)) cliHost.applyModel(id, model)
     publishConversations()
@@ -3753,6 +4230,13 @@ return c as text`
       const prevHost = prev?.cliHost ?? null
       const nextHost = isStructuredCliHost(host) ? host : null
       const hostChanged = prevHost !== nextHost
+      if (hostChanged && (prev?.messages.length ?? 0) > 0) {
+        return {
+          conversations: conversationStore.listMeta(),
+          hostChanged: false,
+          transcript: null
+        }
+      }
       if (hostChanged) {
         // Park previous host's transcript, restore the next host's bucket.
         // Runtimes are per-host; tear down so the wrong process cannot resume.
@@ -3786,7 +4270,8 @@ return c as text`
               cacheExpiresAt: conversation.cacheExpiresAt,
               cliResumeCursor: conversation.cliResumeCursor ?? null,
               cliHost: conversation.cliHost ?? null,
-              model: conversation.model
+              model: conversation.model,
+              quotaWindows: conversation.quotaWindows ?? []
             }
           : null
       }
@@ -3807,6 +4292,29 @@ return c as text`
       return conversationStore.listMeta()
     }
   )
+
+  ipcMain.handle(IPC.convAccountQuota, async (_event, id: string, hostOverride?: unknown) => {
+    const conversation = conversationStore.get(id)
+    if (!conversation) return null
+    const host =
+      hostOverride === null
+        ? null
+        : typeof hostOverride === 'string' && isStructuredCliHost(hostOverride)
+          ? hostOverride
+          : (conversation.cliHost ?? null)
+    const account = await readHostAccountInfo(host)
+    await quotaService.refreshForPanel(host)
+    return {
+      host,
+      hostName: host ? displayNameForCliHost(host) : 'VAV',
+      signedIn: account.signedIn,
+      accountId: account.accountId,
+      plan: account.plan,
+      windows: host
+        ? mergeQuotaWindowsPreferNewer(quotaService.get(host), conversation.quotaWindows ?? [])
+        : []
+    }
+  })
 
   const applyWorkingDirectory = (id: string, path: string): ConversationMeta[] => {
     conversationStore.updateMeta(id, { workingDirectory: path })
@@ -3869,6 +4377,7 @@ return c as text`
       cliHost.dispose(id)
       ptyManager.killForConversation(id)
       fileService.unwatch(id)
+      notifications.acknowledgeConversation(id)
     }
     if (removed.length) conversationStore.flush()
     publishConversations()
@@ -4096,11 +4605,16 @@ return c as text`
       accountId: settingsStore.get().cloudflareAccountId || null
     })
   )
-  ipcMain.handle(IPC.githubListActions, (_event, cwd: string) => listGithubActions(cwd))
+  ipcMain.handle(
+    IPC.githubListActions,
+    (_event, cwd: string, scope?: import('@shared/github').GithubActionsScope) =>
+      listGithubActions(cwd, scope)
+  )
   ipcMain.handle(IPC.githubGetActionRun, (_event, cwd: string, runId: number) =>
     getGithubActionRun(cwd, runId)
   )
   ipcMain.handle(IPC.githubGetSite, (_event, cwd: string) => getGithubSite(cwd))
+  ipcMain.handle(IPC.githubListReleases, (_event, cwd: string) => listGithubReleases(cwd))
   ipcMain.handle(IPC.filesWatch, (_event, id: string, root: string | null) =>
     fileService.watchRoot(id, root)
   )
@@ -4293,6 +4807,25 @@ return c as text`
   )
 
   ipcMain.handle(
+    IPC.agentsProbeBinaries,
+    (_event, items: unknown, force?: boolean) => {
+      const list = Array.isArray(items) ? items : []
+      const specs: Array<{ id: string; candidates: string[] }> = []
+      for (const row of list) {
+        if (!row || typeof row !== 'object') continue
+        const rec = row as { id?: unknown; candidates?: unknown }
+        const id = typeof rec.id === 'string' ? rec.id.trim() : ''
+        if (!id) continue
+        const candidates = Array.isArray(rec.candidates)
+          ? rec.candidates.filter((c): c is string => typeof c === 'string' && c.trim().length > 0)
+          : []
+        specs.push({ id, candidates })
+      }
+      return probeAgentExecutables(specs, { force: force === true })
+    }
+  )
+
+  ipcMain.handle(
     IPC.agentsListModels,
     (_event, host: string | null, force?: boolean) =>
       listHostModels(host, settingsStore, { force: force === true })
@@ -4313,6 +4846,24 @@ return c as text`
     publishModelCatalog(catalog)
     return catalog
   })
+
+  ipcMain.handle(
+    IPC.agentsInstallStart,
+    (_event, payload: { agentId?: string; name?: string; command?: string }) =>
+      startAgentInstall({
+        agentId: typeof payload?.agentId === 'string' ? payload.agentId : '',
+        name: typeof payload?.name === 'string' ? payload.name : '',
+        command: typeof payload?.command === 'string' ? payload.command : ''
+      })
+  )
+  ipcMain.handle(IPC.agentsInstallCancel, (_event, agentId: string) => {
+    cancelAgentInstall(String(agentId || ''))
+  })
+  ipcMain.handle(IPC.agentsInstallClear, (_event, agentId: string) => {
+    clearAgentInstall(String(agentId || ''))
+  })
+  ipcMain.handle(IPC.agentsListInstallRuns, () => listAgentInstallRuns())
+  onAgentInstallRunsChanged((runs) => broadcast(IPC.agentsInstallRunsChanged, runs))
 
   // --- pty ---
   ipcMain.handle(
@@ -4376,15 +4927,17 @@ return c as text`
   ipcMain.handle(IPC.windowGetAccentColor, () => readSystemAccentColor())
   ipcMain.handle(IPC.windowShellPath, (_event, kind: ShellKind) => shellPath(kind))
 
-  ipcMain.handle(IPC.windowOpenSettings, (_event, view?: SettingsView) => openSettingsWindow(view))
+  ipcMain.handle(IPC.windowOpenSettings, (_event, view?: SettingsView, agentId?: string) =>
+    openSettingsWindow(view, typeof agentId === 'string' ? agentId : undefined)
+  )
   ipcMain.handle(IPC.windowCloseSettings, () => hideSettingsWindow())
 
   ipcMain.handle(IPC.windowOpenSession, async (_event, id: string) => {
     // Must not return BrowserWindow — structured clone can't send it over IPC.
     await openDetachedWindow(String(id || ''))
   })
-  ipcMain.handle(IPC.windowRevealInList, (event, id: string) => {
-    revealConversationInList(String(id || ''))
+  ipcMain.handle(IPC.windowRevealInList, async (event, id: string) => {
+    await revealConversationInList(String(id || ''))
     // Companion (detached session or file-preview): close the window that asked
     // so focus lands cleanly on main (same as Reveal in List for SessionWindow).
     const senderWin = BrowserWindow.fromWebContents(event.sender)
@@ -4395,9 +4948,7 @@ return c as text`
       !mainWindow.isDestroyed() &&
       senderWin.id !== mainWindow.id
     ) {
-      setTimeout(() => {
-        if (!senderWin.isDestroyed()) senderWin.close()
-      }, 80)
+      senderWin.close()
     }
   })
   ipcMain.handle(IPC.windowCloseDetached, (_event, id: string) => {
@@ -4433,11 +4984,31 @@ return c as text`
     if (payload) requestAccountQuota(payload.conversationId)
     return payload
   })
+  ipcMain.handle(
+    IPC.windowOpenProviderAccount,
+    (
+      event,
+      conversationId: string,
+      anchor?: { x: number; y: number; width: number; height: number }
+    ) => openProviderAccountWindow(event.sender, conversationId, anchor)
+  )
+  ipcMain.handle(IPC.providerAccountGetView, () => currentProviderAccountPayload())
+  ipcMain.handle(IPC.providerAccountFit, (_event, height: unknown) => {
+    if (typeof height !== 'number' || !Number.isFinite(height)) return
+    fitProviderAccountWindow(height)
+  })
   ipcMain.handle(IPC.windowRelaunch, () => {
     app.relaunch()
     app.exit(0)
   })
   ipcMain.handle(IPC.notificationsPermission, () => notifications.permissionStatus())
+  ipcMain.on(IPC.notificationsSeen, (event, conversationId: unknown) => {
+    const id = typeof conversationId === 'string' ? conversationId.trim() : ''
+    if (!id) return
+    const window = BrowserWindow.fromWebContents(event.sender)
+    if (!window || window.isDestroyed()) return
+    notifications.noteConversationView(window.id, id)
+  })
 
   ipcMain.handle(
     IPC.dialogAlert,
@@ -4688,8 +5259,10 @@ if (!singleInstance) {
 
   app.on('before-quit', () => {
     quitting = true
+    sleepBlocker.release()
     agent.disposeAll()
     cliHost.disposeAll()
+    stopAllAgentInstalls()
     ptyManager.killAll()
     fileService.disposeAll()
     quotaService.stop()
@@ -4854,6 +5427,13 @@ if (!singleInstance) {
           // non-fatal
         }
       }, 1600)
+      setTimeout(() => {
+        try {
+          warmProviderAccountWindow()
+        } catch {
+          // non-fatal
+        }
+      }, 1800)
       setTimeout(() => {
         try {
           warmPreviewShellPool()

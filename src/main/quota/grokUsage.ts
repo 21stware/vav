@@ -3,6 +3,7 @@ import { existsSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { net } from 'electron'
+import { emptyAccount, type HostAccountInfo } from '@shared/cliAccountParse'
 import { windowsFromGrokBillingPayload } from '@shared/quotaWindows'
 import type { QuotaWindow } from '@shared/types'
 
@@ -19,6 +20,7 @@ const PREFERRED_ISSUER = 'https://auth.x.ai'
 type GrokAuthSession = {
   accessToken: string
   userId: string | null
+  email: string | null
   expiresAtMs: number | null
 }
 
@@ -44,9 +46,11 @@ function isPreferredIssuer(key: string): boolean {
 function sessionFromEntry(entry: Record<string, unknown>): GrokAuthSession | null {
   const key = entry.key
   if (typeof key !== 'string' || !key) return null
+  const email = typeof entry.email === 'string' ? entry.email.trim() : ''
   return {
     accessToken: key,
     userId: typeof entry.user_id === 'string' ? entry.user_id : null,
+    email: email.includes('@') ? email : null,
     expiresAtMs: parseExpiresAtMs(entry.expires_at)
   }
 }
@@ -85,6 +89,13 @@ export function readGrokAuthIdentity(): string | null {
   if (!session) return null
   if (session.userId) return `user:${session.userId}`
   return `tok:${createHash('sha256').update(session.accessToken).digest('hex').slice(0, 16)}`
+}
+
+/** Login state + email for the account popover (never the user UUID). */
+export function readGrokAccountInfo(): HostAccountInfo {
+  const session = readGrokAuthSession()
+  if (!session) return emptyAccount()
+  return { signedIn: true, accountId: session.email, plan: null }
 }
 
 function grokHeaders(session: GrokAuthSession): Record<string, string> {

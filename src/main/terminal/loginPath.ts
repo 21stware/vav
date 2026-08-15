@@ -278,3 +278,25 @@ export function clearLoginPathCache(): void {
   loginPathWarm = null
   resolveResultCache.clear()
 }
+
+/**
+ * Resolve many agent binaries after at most one login-PATH refresh.
+ * Never pays `command -v` per miss (that froze Settings when hammered).
+ */
+export function probeAgentExecutables(
+  items: Array<{ id: string; candidates: string[] }>,
+  options?: { force?: boolean }
+): Record<string, string | null> {
+  if (options?.force) clearLoginPathCache()
+  loginPath()
+  const out: Record<string, string | null> = {}
+  const seen = new Set<string>()
+  for (const item of items) {
+    const id = typeof item?.id === 'string' ? item.id.trim() : ''
+    if (!id || seen.has(id)) continue
+    seen.add(id)
+    const candidates = Array.isArray(item.candidates) ? item.candidates : []
+    out[id] = resolveAgentExecutable(candidates, { force: false })
+  }
+  return out
+}

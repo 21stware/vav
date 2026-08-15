@@ -22,7 +22,7 @@ export type AgentModelCatalogEntry = {
 }
 import type { ChangeSet, UpdateState } from '@shared/changeSet'
 import type { GitChangeEntry } from '@shared/git'
-import type { GithubActionRun, GithubPullListItem, GithubSite } from '@shared/github'
+import type { GithubActionRun, GithubPullListItem, GithubRelease, GithubSite } from '@shared/github'
 
 /** Contents of the session-right preview drawer. */
 export type SessionPreview =
@@ -31,6 +31,7 @@ export type SessionPreview =
   | { kind: 'github'; cwd: string; pull: GithubPullListItem }
   | { kind: 'github-action'; cwd: string; run: GithubActionRun }
   | { kind: 'github-site'; cwd: string; site: GithubSite }
+  | { kind: 'github-release'; cwd: string; release: GithubRelease }
 import { resolveLocale } from '@shared/i18n'
 import { tt } from '../i18n/useT'
 import { isTemporaryWorkspace } from '../lib/format'
@@ -470,6 +471,8 @@ interface SessionState {
   dialog: DialogState | null
   toast: ToastState | null
   settingsCategory: SettingsCategory
+  /** Settings → Providers: select this row when the window opens. */
+  settingsFocusAgentId: string | null
   composerFocusTick: number
   /** Which comment card should take focus (set on pick). */
   commentFocusId: string | null
@@ -689,7 +692,7 @@ interface SessionState {
   updateSettings(patch: Partial<AppSettings>): Promise<void>
   refreshApiKeyHint(): Promise<void>
   resetSettings(): Promise<void>
-  openSettings(category?: SettingsCategory): void
+  openSettings(category?: SettingsCategory, agentId?: string): void
   closeSettings(): void
 
   openSearch(): void
@@ -724,6 +727,7 @@ interface SessionState {
   installUpdate(): Promise<void>
 
   toggleSidebar(): void
+  setSidebarVisible(visible: boolean): void
   setSidebarListMode(mode: SidebarListMode): void
   toggleToolsPanel(): void
   setToolsCollapsed(collapsed: boolean): void
@@ -741,6 +745,14 @@ interface SessionState {
    * Toggle-close when already focused on an open terminal tray.
    */
   focusBashTerminal(): void
+  /** Open Tools → Terminal and run a command (agent install from Settings). */
+  installAgentInToolsTray(payload: {
+    command: string
+    name?: string
+    agentId?: string
+    tabId?: string
+    conversationId?: string
+  }): Promise<void>
   focusCommentCard(refId: string): void
   setPreviewAgentForPath(path: string, conversationId: string): void
   openWorkspaceSwitcher(): void
@@ -834,6 +846,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   dialog: null,
   toast: null,
   settingsCategory: 'api',
+  settingsFocusAgentId: null,
   composerFocusTick: 0,
   commentFocusId: null,
   commentFocusTick: 0,
@@ -964,11 +977,13 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   },
 
   releaseDetachedSession() {
+    const id = get().pinnedConversationId || get().activeId
     set({
       activeId: '',
       selectedIds: [],
       pinnedConversationId: null
     })
+    if (id) useWorkspaceStore.getState().forgetLocalWorkspace(id)
   },
 
   async selectWorkspaceGroup(_workdir) {
@@ -1359,7 +1374,6 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       // Need message counts for every target; empty chats skip the confirm.
       await Promise.all(targets.map((id) => get().loadMessages(id)))
       const empty = targets.filter((id) => (get().messages[id]?.length ?? 0) === 0)
-      const nonempty = targets.filter((id) => (get().messages[id]?.length ?? 0) > 0)
 
       const applyRemove = async (toRemove: string[]): Promise<void> => {
         if (toRemove.length === 0) return
@@ -1400,25 +1414,28 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         }
       }
 
-      // Empty sessions (no messages) delete silently — nothing worth warning about.
-      if (empty.length) await applyRemove(empty)
-      if (nonempty.length === 0) return
+      // A lone empty chat can go without a sheet. Multi-select always confirms
+      // — even if every target is empty — so Backspace on a range is reversible.
+      if (targets.length === 1 && empty.length === 1) {
+        await applyRemove(empty)
+        return
+      }
 
-      const single = nonempty.length === 1
+      const single = targets.length === 1
       const title = single
         ? tt('dialog.deleteSession')
-        : tt('dialog.deleteSessions', { count: nonempty.length })
-      const name = conversations.find((c) => c.id === nonempty[0])?.title ?? ''
+        : tt('dialog.deleteSessions', { count: targets.length })
+      const name = conversations.find((c) => c.id === targets[0])?.title ?? ''
       const body = single
         ? tt('dialog.deleteConfirmSingle', { name })
-        : tt('dialog.deleteConfirmMultiple', { count: nonempty.length })
+        : tt('dialog.deleteConfirmMultiple', { count: targets.length })
 
       get().showDialog({
         title,
         body,
         confirmLabel: tt('common.delete'),
         destructive: true,
-        onConfirm: () => void applyRemove(nonempty)
+        onConfirm: () => void applyRemove(targets)
       })
     })()
   },
@@ -1479,6 +1496,11 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
   async setCliHost(id, host) {
     const nextHost = (host as ConversationMeta['cliHost']) ?? null
+    const current = get().conversations.find((c) => c.id === id)
+    const nodes = get().messages[id]
+    if (nodes && nodes.length > 0 && (current?.cliHost ?? null) !== nextHost) {
+      return
+    }
     set((state) => ({
       conversations: state.conversations.map((c) =>
         c.id === id
@@ -1510,7 +1532,8 @@ export const useSessionStore = create<SessionState>((set, get) => ({
                   tokensUsed: transcript.tokensUsed,
                   cliResumeCursor: transcript.cliResumeCursor,
                   cliHost: transcript.cliHost,
-                  model: transcript.model || c.model
+                  model: transcript.model || c.model,
+                  quotaWindows: transcript.quotaWindows ?? []
                 }
               : c
           )
@@ -2278,9 +2301,9 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     })
   },
 
-  openSettings(category) {
+  openSettings(category, agentId) {
     // Settings own a window; the main window only asks for it to be raised.
-    void window.vav.window.openSettings(category ?? 'api')
+    void window.vav.window.openSettings(category ?? 'api', agentId)
   },
 
   closeSettings() {
@@ -2561,6 +2584,14 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     })
   },
 
+  setSidebarVisible(visible) {
+    set((state) => {
+      if (state.sidebarVisible === visible) return {}
+      saveGlobalLayout({ sidebarVisible: visible })
+      return { sidebarVisible: visible }
+    })
+  },
+
   setSidebarListMode(mode) {
     set({ sidebarListMode: mode })
   },
@@ -2648,6 +2679,47 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       void ws.newBash(activeId, 80, 24)
     }
     // Focus after layout paints.
+    window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => {
+        const ta = document.querySelector(
+          '.tools-body .xterm-helper-textarea'
+        ) as HTMLTextAreaElement | null
+        ta?.focus()
+      })
+    })
+  },
+
+  async installAgentInToolsTray(payload) {
+    const cmd = payload.command.trim()
+    if (!cmd && !payload.tabId) return
+    let id = payload.conversationId?.trim() || get().activeId
+    if (payload.conversationId && payload.conversationId !== get().activeId) {
+      await get().selectConversation(payload.conversationId)
+      id = payload.conversationId
+    }
+    if (!id) {
+      await get().createConversation({ openIn: 'here' })
+      id = get().activeId
+    }
+    if (!id) return
+    get().setToolsCollapsed(false)
+    get().setPanelSegment('terminal')
+    const ws = useWorkspaceStore.getState()
+    if (payload.tabId) {
+      await ws.hydratePtyState(id)
+      ws.selectTab(id, payload.tabId)
+    } else {
+      const name = payload.name?.trim() || payload.agentId?.trim() || 'CLI'
+      const tabId = await ws.newBash(id, 80, 24, 'row', {
+        title: tt('agents.installingNamed', { name }),
+        purpose: 'install',
+        installAgentId: payload.agentId?.trim() || undefined
+      })
+      if (!tabId) return
+      window.setTimeout(() => {
+        window.vav.pty.write(tabId, `${cmd}\r`)
+      }, 280)
+    }
     window.requestAnimationFrame(() => {
       window.requestAnimationFrame(() => {
         const ta = document.querySelector(
@@ -3144,7 +3216,16 @@ export function installDetachedBridge(): () => void {
   const api = window.vav?.window
   if (!api) return noopOff()
   const apply = (ids: string[]): void => {
+    const previous = useSessionStore.getState().detachedConversationIds
+    // Reveal immediately — a delayed write can lose a newer publish
+    // (close A in-flight, then detach B → stale `[]` wipes B).
     useSessionStore.setState({ detachedConversationIds: ids })
+    const next = new Set(ids)
+    for (const id of previous) {
+      if (next.has(id)) continue
+      if (!useWorkspaceStore.getState().workspaces[id]) continue
+      void useWorkspaceStore.getState().hydratePtyState(id, { acceptRemoteSurface: true })
+    }
   }
   // Initial hydrate (main may boot after companions already exist).
   if (typeof api.listDetachedSessions === 'function') {

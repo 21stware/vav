@@ -1,119 +1,39 @@
 /**
  * Agent mark at the top-right of the active selection chrome (icon only —
- * no outer plate). Tracks the selection box (or multi-select union) and is
- * clamped into the preview stage so document scroll never carries it away.
+ * no outer plate). Lives in the screen-space HUD: it tracks the subject's
+ * projected box and never inherits the document's zoom transform.
  */
 
 import { useLayoutEffect, useRef, useState, type RefObject } from 'react'
 import { BrandAppIcon } from './BrandAppIcon'
+import {
+  collectSelectedElements,
+  unionClientRects,
+  type ClientRect
+} from '../lib/selectionChrome'
 
 const SIZE = 26
 /** Clear air outside the selection's top-right corner. */
 const OUTSIDE_GAP = 8
 const VIEW_PAD = 8
 
-const SELECTED_SEL = [
-  '.preview-select-region.selected',
-  '.office-pick-target.selected',
-  '.pdf-page.pdf-pick-page.selected',
-  '.pdf-page .textLayer span.selected',
-  '.preview-code-overlay.selected',
-  'tr.selected',
-  'tr.row-selected',
-  '.zip-tree-row.selected',
-  '[data-block-id].selected'
-].join(',')
-
 type Pos = { left: number; top: number; visible: boolean }
-type Box = { left: number; top: number; right: number; bottom: number }
 
-function escapeAttr(value: string): string {
-  if (typeof CSS !== 'undefined' && typeof CSS.escape === 'function') return CSS.escape(value)
-  return value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')
-}
-
-function isRowLikeId(id: string): boolean {
-  return /(?:^|-)row-\d+$/i.test(id) || /^row-\d+$/i.test(id)
-}
-
-/**
- * Empty sheet cells often promote the pick to the whole row, and the selected
- * class lands on the narrow gutter <th>. Prefer the enclosing <tr>.
- */
-function resolveOne(host: HTMLElement, preferredId: string | null): HTMLElement | null {
-  let target: HTMLElement | null = null
-  if (preferredId) {
-    const safe = escapeAttr(preferredId)
-    target =
-      host.querySelector<HTMLElement>(`[data-block-id="${safe}"].selected`) ||
-      host.querySelector<HTMLElement>(`[data-block-id="${safe}"]`)
-  }
-  if (!target) {
-    const all = host.querySelectorAll<HTMLElement>(SELECTED_SEL)
-    target = all.length > 0 ? all[all.length - 1]! : null
-  }
-  if (!target) return null
-
-  const gutter = target.closest(
-    'th.csv-sheet-gutter, td.csv-sheet-gutter, th.structured-sheet-gutter, td.structured-sheet-gutter'
-  )
-  if (gutter || (preferredId && isRowLikeId(preferredId))) {
-    const row = target.closest('tr')
-    if (row instanceof HTMLElement) return row
-  }
-
-  const rect = target.getBoundingClientRect()
-  if ((rect.width < 8 || rect.height < 8) && target.closest('table')) {
-    const row = target.closest('tr')
-    if (row instanceof HTMLElement) {
-      const rowRect = row.getBoundingClientRect()
-      if (rowRect.width >= 8 && rowRect.height >= 8) return row
-    }
-  }
-
-  return target
-}
-
-/** Collect every selected paint box; fall back to the primary if none match. */
-function collectSelected(host: HTMLElement, selectedIds: string[]): HTMLElement[] {
-  const seen = new Set<HTMLElement>()
-  const out: HTMLElement[] = []
-  for (const id of selectedIds) {
-    const el = resolveOne(host, id)
-    if (el && !seen.has(el)) {
-      seen.add(el)
-      out.push(el)
-    }
-  }
-  if (out.length === 0) {
-    host.querySelectorAll<HTMLElement>(SELECTED_SEL).forEach((el) => {
-      if (!seen.has(el)) {
-        seen.add(el)
-        out.push(el)
-      }
+/** Bottom of frozen sheet chrome (toolbar + sticky thead) inside the stage. */
+function reservedTop(host: HTMLElement, hostTop: number): number {
+  let bottom = hostTop
+  host
+    .querySelectorAll<HTMLElement>(
+      'thead, .structured-sheet-toolbar, .csv-sheet-toolbar'
+    )
+    .forEach((el) => {
+      const r = el.getBoundingClientRect()
+      if (r.bottom > bottom) bottom = r.bottom
     })
-  }
-  return out
+  return Math.max(VIEW_PAD, bottom - hostTop + VIEW_PAD)
 }
 
-function unionBox(els: HTMLElement[]): Box | null {
-  let box: Box | null = null
-  for (const el of els) {
-    const r = el.getBoundingClientRect()
-    if (r.width < 2 || r.height < 2) continue
-    if (!box) {
-      box = { left: r.left, top: r.top, right: r.right, bottom: r.bottom }
-    } else {
-      box.left = Math.min(box.left, r.left)
-      box.top = Math.min(box.top, r.top)
-      box.right = Math.max(box.right, r.right)
-      box.bottom = Math.max(box.bottom, r.bottom)
-    }
-  }
-  return box
-}
-
-function computePos(host: HTMLElement, sel: Box | null): Pos {
+function computePos(host: HTMLElement, sel: ClientRect | null): Pos {
   if (!sel) return { left: 0, top: 0, visible: false }
   const hostRect = host.getBoundingClientRect()
   if (hostRect.width < 40 || hostRect.height < 40) {
@@ -135,7 +55,7 @@ function computePos(host: HTMLElement, sel: Box | null): Pos {
 
   const minL = VIEW_PAD
   const maxL = Math.max(VIEW_PAD, hostRect.width - SIZE - VIEW_PAD)
-  const minT = VIEW_PAD
+  const minT = reservedTop(host, hostRect.top)
   const maxT = Math.max(VIEW_PAD, hostRect.height - SIZE - VIEW_PAD)
 
   if (left > maxL) left = sel.right - hostRect.left - SIZE
@@ -171,8 +91,8 @@ export function SelectionAgentFab({
     let raf = 0
     const update = (): void => {
       raf = 0
-      const els = collectSelected(host, selectedIds)
-      setPos(computePos(host, unionBox(els)))
+      const els = collectSelectedElements(host, selectedIds)
+      setPos(computePos(host, unionClientRects(els, host)))
     }
     const schedule = (): void => {
       if (raf) return

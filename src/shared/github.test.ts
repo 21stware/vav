@@ -4,8 +4,10 @@ import {
   defaultGithubPagesUrl,
   fillGithubSiteGaps,
   githubApiBase,
+  githubClosedPullsUrl,
   githubPagesCustomDomain,
   githubPagesSettingsUrl,
+  githubRepoSectionUrl,
   isGithubPagesLive,
   isRunningGithubActionStatus,
   mapGithubSite,
@@ -92,6 +94,23 @@ describe('isRunningGithubActionStatus', () => {
     assert.equal(isRunningGithubActionStatus('pending'), true)
     assert.equal(isRunningGithubActionStatus('completed'), false)
     assert.equal(isRunningGithubActionStatus('failure'), false)
+  })
+})
+
+describe('githubRepoSectionUrl', () => {
+  const repo = parseGithubRemote('git@github.com:oboo/vav.git')!
+
+  it('builds pulls, actions, and releases URLs', () => {
+    assert.equal(githubRepoSectionUrl(repo, 'pulls'), 'https://github.com/oboo/vav/pulls')
+    assert.equal(githubRepoSectionUrl(repo, 'actions'), 'https://github.com/oboo/vav/actions')
+    assert.equal(githubRepoSectionUrl(repo, 'releases'), 'https://github.com/oboo/vav/releases')
+  })
+
+  it('builds the closed PR search URL', () => {
+    assert.equal(
+      githubClosedPullsUrl(repo),
+      'https://github.com/oboo/vav/pulls?q=is%3Apr+is%3Aclosed'
+    )
   })
 })
 

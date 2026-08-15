@@ -149,7 +149,9 @@ export type GithubResult<T> =
   | { ok: true; data: T }
   | { ok: false; error: string; code?: GithubErrorCode }
 
-export type GithubTrayTab = 'pulls' | 'actions' | 'site'
+export type GithubTrayTab = 'pulls' | 'actions' | 'releases' | 'site'
+
+export type GithubActionsScope = 'running' | 'history'
 
 export type GithubActionStatus =
   | 'queued'
@@ -193,6 +195,28 @@ export interface GithubActionsPage {
   repo: GithubRepoRef
   runs: GithubActionRun[]
   authenticated: boolean
+  scope?: GithubActionsScope
+}
+
+export interface GithubRelease {
+  id: number
+  tag: string
+  name: string
+  draft: boolean
+  prerelease: boolean
+  url: string
+  htmlUrl: string
+  author: GithubUserRef
+  publishedAt: string | null
+  createdAt: string
+  body: string | null
+}
+
+export interface GithubReleasesPage {
+  repo: GithubRepoRef
+  releases: GithubRelease[]
+  authenticated: boolean
+  truncated: boolean
 }
 
 export type GithubSiteKind = 'pages' | 'homepage'
@@ -257,6 +281,17 @@ export function defaultGithubPagesUrl(repo: GithubRepoRef): string | null {
 
 export function githubPagesSettingsUrl(repo: GithubRepoRef): string {
   return `${repo.htmlUrl.replace(/\/$/, '')}/settings/pages`
+}
+
+export function githubRepoSectionUrl(
+  repo: GithubRepoRef,
+  section: 'pulls' | 'actions' | 'releases'
+): string {
+  return `${repo.htmlUrl.replace(/\/$/, '')}/${section}`
+}
+
+export function githubClosedPullsUrl(repo: GithubRepoRef): string {
+  return `${githubRepoSectionUrl(repo, 'pulls')}?q=is%3Apr+is%3Aclosed`
 }
 
 function trimStr(value: unknown): string | null {

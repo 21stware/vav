@@ -4,14 +4,22 @@ import {
   Menu,
   app,
   nativeImage,
-  type BrowserWindow,
+  BrowserWindow,
   type NativeImage
 } from 'electron'
 import type { AppSettings } from '@shared/types'
 import { groupTrayPanes } from '@shared/traySessions'
 import { existsSync, unlinkSync } from 'node:fs'
 import { join } from 'node:path'
-import { APP_NAME, applyDockIcon, loadAppIcon } from './brand'
+import { APP_NAME, applyDockIcon, loadAppIcon, setDockBadge } from './brand'
+import { playFinishAlert } from './sound/finishAlert'
+import {
+  acknowledgeConversation as dropConversationAttention,
+  addAttentionItem,
+  dockBadgeLabel,
+  type AttentionItem,
+  type AttentionKind
+} from '@shared/attentionBadge'
 import { isDevRuntime } from './devRuntime'
 import { t } from './i18n'
 
@@ -76,6 +84,12 @@ export class NotificationCenter {
   private runningCount = 0
   private runningSessions: RunningSessionTarget[] = []
   private lastPermission: NotificationPermission = 'unknown'
+  /** Unseen complete / ask / approve / request items → Dock badge. */
+  private attention: AttentionItem[] = []
+  /** BrowserWindow.id → conversation currently shown in that window. */
+  private viewByWindow = new Map<number, string>()
+  /** Dedupe the chime when the same tool call is re-emitted. */
+  private lastAlertAt = new Map<string, number>()
 
   constructor(
     private getSettings: () => AppSettings,
@@ -114,6 +128,91 @@ export class NotificationCenter {
         applyDockIcon()
       }
     }
+    this.syncDockBadge()
+  }
+
+  /**
+   * Record which conversation a workspace / companion window is showing.
+   * When that window is focused, its unseen attention items are acknowledged.
+   */
+  noteConversationView(windowId: number, conversationId: string): void {
+    if (!conversationId) return
+    this.viewByWindow.set(windowId, conversationId)
+    const focused = BrowserWindow.getFocusedWindow()
+    if (focused && !focused.isDestroyed() && focused.id === windowId) {
+      this.acknowledgeConversation(conversationId)
+    }
+  }
+
+  forgetWindow(windowId: number): void {
+    this.viewByWindow.delete(windowId)
+  }
+
+  /** Window gained focus — clear the badge items for the session it is showing. */
+  acknowledgeFocusedWindow(window: BrowserWindow | null): void {
+    if (!window || window.isDestroyed()) return
+    const conversationId = this.viewByWindow.get(window.id)
+    if (conversationId) this.acknowledgeConversation(conversationId)
+  }
+
+  isConversationForeground(conversationId: string): boolean {
+    if (!conversationId) return false
+    const focused = BrowserWindow.getFocusedWindow()
+    if (!focused || focused.isDestroyed()) return false
+    return this.viewByWindow.get(focused.id) === conversationId
+  }
+
+  acknowledgeConversation(conversationId: string): void {
+    const next = dropConversationAttention(this.attention, conversationId)
+    if (next === this.attention) return
+    this.attention = next
+    this.syncDockBadge()
+  }
+
+  /**
+   * Play the finish-alert chime, optionally badge the Dock, and show the
+   * existing OS banner. Sound is independent of notification permission.
+   */
+  alertUser(
+    kind: NotifyKind,
+    conversationId: string,
+    title: string,
+    body: string,
+    attentionId?: string
+  ): void {
+    const settings = this.getSettings()
+    const typeOn = notifyTypeEnabled(settings, kind)
+    let chimed = false
+    if (settings.notificationsEnabled && settings.notificationSound && typeOn) {
+      chimed = this.playAlertOnce(attentionId ?? `${kind}:${conversationId}`)
+    }
+    if (typeOn && !this.isConversationForeground(conversationId)) {
+      const itemKind: AttentionKind = kind === 'turn-complete' ? 'complete' : kind
+      const id = attentionId ?? `${kind}:${conversationId}:${Date.now()}`
+      let queue = this.attention
+      // A finished turn replaces any leftover ask/approve on the same session.
+      if (itemKind === 'complete') {
+        queue = dropConversationAttention(queue, conversationId)
+      }
+      const next = addAttentionItem(queue, { id, conversationId, kind: itemKind })
+      if (next !== this.attention) {
+        this.attention = next
+        this.syncDockBadge()
+      }
+    }
+    if (typeOn) this.notify(kind, conversationId, title, body, chimed)
+  }
+
+  private playAlertOnce(key: string): boolean {
+    const now = Date.now()
+    const prev = this.lastAlertAt.get(key) ?? 0
+    if (now - prev < 800) return true
+    this.lastAlertAt.set(key, now)
+    return playFinishAlert()
+  }
+
+  private syncDockBadge(): void {
+    setDockBadge(dockBadgeLabel(this.attention.length))
   }
 
   setRunningCount(count: number): void {
@@ -121,7 +220,13 @@ export class NotificationCenter {
     this.refreshTrayTitle()
   }
 
-  notify(kind: NotifyKind, conversationId: string, title: string, body: string): void {
+  notify(
+    kind: NotifyKind,
+    conversationId: string,
+    title: string,
+    body: string,
+    alreadyChiming = false
+  ): void {
     const settings = this.getSettings()
     if (!settings.notificationsEnabled) return
     if (kind === 'turn-complete' && !settings.notifyOnTurnComplete) return
@@ -137,7 +242,7 @@ export class NotificationCenter {
     const notification = new Notification({
       title,
       body: truncate(body, 120),
-      silent: !settings.notificationSound
+      silent: alreadyChiming || !settings.notificationSound
     })
     notification.on('click', () =>
       this.onOpenSession({
@@ -281,6 +386,14 @@ export class NotificationCenter {
     this.setRunningCount(sessions.length)
     this.refreshTrayMenu()
   }
+}
+
+function notifyTypeEnabled(settings: AppSettings, kind: NotifyKind): boolean {
+  if (kind === 'turn-complete') return settings.notifyOnTurnComplete !== false
+  if (kind === 'ask') return settings.notifyOnAskUserQuestion !== false
+  if (kind === 'approval') return settings.notifyOnToolApproval !== false
+  if (kind === 'request') return settings.notifyOnRequest !== false
+  return true
 }
 
 function truncate(text: string, max: number): string {

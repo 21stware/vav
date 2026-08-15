@@ -159,6 +159,21 @@ export function Sidebar({
   const [fileSessionRows, setFileSessionRows] = useState<FileSessionListEntry[]>([])
   const [fileSessionsLoading, setFileSessionsLoading] = useState(false)
 
+  useEffect(() => {
+    if (!activeId) return
+    const root = listRef.current
+    if (!root) return
+    const frame = window.requestAnimationFrame(() => {
+      const escaped =
+        typeof CSS !== 'undefined' && typeof CSS.escape === 'function'
+          ? CSS.escape(activeId)
+          : activeId.replace(/\\/g, '\\\\').replace(/"/g, '\\"')
+      const el = root.querySelector(`[data-conversation-id="${escaped}"]`)
+      if (el instanceof HTMLElement) el.scrollIntoView({ block: 'nearest' })
+    })
+    return () => window.cancelAnimationFrame(frame)
+  }, [activeId, listMode, fileSessionRows.length])
+
   const archiveView = listMode === 'archive'
   const fileSessionsView = listMode === 'fileSessions'
 
@@ -841,6 +856,7 @@ export function Sidebar({
               <div
                 key={conversation.id}
                 className={`conv-row${isActive ? ' selected' : ''}${isMultiSelected ? ` multi ${runClass}` : ''}`}
+                data-conversation-id={conversation.id}
                 title={rowTitle}
                 onClick={(event) => {
                   // detail: ignore the second half of a double-click pair
@@ -1117,6 +1133,7 @@ export function Sidebar({
                   className={`file-session-item${isActive ? ' is-active' : ''}${
                     isMultiSelected ? ` multi ${runClass}` : ''
                   }${statusLabel ? ' is-missing' : ''}`}
+                  data-conversation-id={row.sessionId}
                   title={`${title}\n${row.path}`}
                   onClick={(event) => {
                     // Ignore the second half of a double-click pair (open window).

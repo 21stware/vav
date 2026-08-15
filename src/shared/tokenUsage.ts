@@ -169,6 +169,27 @@ export function resolveContextWindow(modelId: string | null | undefined): number
   return 200_000
 }
 
+/**
+ * Per-turn output cap for the VAV API call. Prefer the model's own max
+ * completion size over a global settings field.
+ */
+export function resolveMaxTokens(modelId: string | null | undefined): number {
+  const id = (modelId ?? '').toLowerCase()
+  if (!id) return 16_384
+  if (id.includes('deepseek')) return 64_000
+  if (id.includes('gemini')) return 65_536
+  if (id.includes('grok')) return 64_000
+  if (id.includes('gpt-4.1') || id.includes('o3') || id.includes('o4') || id.includes('codex')) {
+    return 32_768
+  }
+  if (id.includes('gpt-4o')) return 16_384
+  if (id.includes('opus') || id.includes('sonnet') || id.includes('fable') || id.includes('claude')) {
+    return 64_000
+  }
+  if (id.includes('haiku')) return 16_384
+  return 16_384
+}
+
 export function sessionCostOf(history: TokenSnapshot[]): number {
   return history.reduce((sum, row) => sum + row.estimatedCost, 0)
 }
@@ -269,6 +290,10 @@ export function formatExpiry(
   const clock = formatClock(expiresAt, locale)
   const remain = expiresAt - now
   if (remain <= 0) return t(locale, 'time.clockExpired', { clock })
-  const mins = Math.max(1, Math.round(remain / 60_000))
-  return t(locale, 'time.clockInMinutes', { clock, mins })
+  const hoursTotal = Math.max(1, Math.round(remain / 3_600_000))
+  const days = Math.floor(hoursTotal / 24)
+  const hours = hoursTotal % 24
+  if (days <= 0) return t(locale, 'time.clockInHours', { clock, hours: hoursTotal })
+  if (hours <= 0) return t(locale, 'time.clockInDays', { clock, days })
+  return t(locale, 'time.clockInDaysHours', { clock, days, hours })
 }

@@ -1,12 +1,20 @@
 import { execFile } from 'node:child_process'
 import { createHash } from 'node:crypto'
+import { readFileSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { net } from 'electron'
+import {
+  emptyAccount,
+  hostFromAnthropicBaseUrl,
+  parseClaudeAuthStatusPayload,
+  type HostAccountInfo
+} from '@shared/cliAccountParse'
 import { windowsFromClaudeOAuthPayload } from '@shared/quotaWindows'
 import type { QuotaWindow } from '@shared/types'
+import { execCliJson } from './cliProbe'
 
 const execFileAsync = promisify(execFile)
 const OAUTH_USAGE_URL = 'https://api.anthropic.com/api/oauth/usage'
@@ -63,19 +71,72 @@ async function readClaudeAccessToken(): Promise<string | null> {
       if (token) return token
     }
   }
+  const files = [
+    join(configDir, '.credentials.json'),
+    join(homedir(), '.config', 'claude', '.credentials.json')
+  ]
+  for (const file of files) {
+    try {
+      const raw = await readFile(file, 'utf8')
+      const token = tokenFromCredentialsJson(raw)
+      if (token) return token
+    } catch {
+      // next
+    }
+  }
+  return null
+}
+
+function readClaudeSettingsEnv(): { token: string | null; customHost: string | null } {
   try {
-    const raw = await readFile(join(configDir, '.credentials.json'), 'utf8')
-    return tokenFromCredentialsJson(raw)
+    const raw = readFileSync(join(claudeConfigDir(), 'settings.json'), 'utf8')
+    const parsed = JSON.parse(raw) as {
+      env?: { ANTHROPIC_AUTH_TOKEN?: unknown; ANTHROPIC_BASE_URL?: unknown }
+    }
+    const token =
+      typeof parsed?.env?.ANTHROPIC_AUTH_TOKEN === 'string'
+        ? parsed.env.ANTHROPIC_AUTH_TOKEN.trim()
+        : ''
+    const customHost = hostFromAnthropicBaseUrl(
+      typeof parsed?.env?.ANTHROPIC_BASE_URL === 'string' ? parsed.env.ANTHROPIC_BASE_URL : null
+    )
+    return {
+      token: token || process.env.ANTHROPIC_AUTH_TOKEN?.trim() || null,
+      customHost: customHost ?? hostFromAnthropicBaseUrl(process.env.ANTHROPIC_BASE_URL)
+    }
   } catch {
-    return null
+    return {
+      token: process.env.ANTHROPIC_AUTH_TOKEN?.trim() || null,
+      customHost: hostFromAnthropicBaseUrl(process.env.ANTHROPIC_BASE_URL)
+    }
   }
 }
 
-/** Fingerprint of the current Claude Code OAuth token (login switch). */
+/** Fingerprint of the current Claude token (OAuth or settings env). */
 export async function readClaudeAuthIdentity(): Promise<string | null> {
-  const token = await readClaudeAccessToken()
+  const token = (await readClaudeAccessToken()) ?? readClaudeSettingsEnv().token
   if (!token) return null
   return `tok:${createHash('sha256').update(token).digest('hex').slice(0, 16)}`
+}
+
+/**
+ * Prefer `claude auth status` (same source the CLI uses) over scraping
+ * keychain — MCP plugin blobs live in the same service and are not a login.
+ */
+export async function readClaudeAccountInfo(): Promise<HostAccountInfo> {
+  const settings = readClaudeSettingsEnv()
+  const status = await execCliJson(['claude'], ['auth', 'status', '--json'])
+  const fromCli = parseClaudeAuthStatusPayload(status)
+  if (fromCli.signedIn) {
+    return {
+      signedIn: true,
+      accountId: fromCli.accountId,
+      plan: fromCli.plan ?? settings.customHost
+    }
+  }
+  const token = (await readClaudeAccessToken()) ?? settings.token
+  if (token) return { signedIn: true, accountId: null, plan: settings.customHost }
+  return emptyAccount()
 }
 
 export async function fetchClaudeAccountQuota(): Promise<QuotaWindow[]> {
