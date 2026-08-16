@@ -26,6 +26,7 @@ import { TerminalPanel } from './TerminalPanel'
 import { disposeTerminal } from '../lib/terminalRegistry'
 import { menuAnchor, showMenu, type MenuItem } from '../lib/nativeMenu'
 import { fileManagerLabel, keys } from '../lib/platform'
+import { allowWorkdirSwitch as workdirSwitchAllowed, isSwarmSurfaceActive } from '../lib/workdirSwitch'
 import { useT } from '../i18n/useT'
 import { Button, Chip } from './ui'
 import { useInstallRunStore } from '../state/installRunStore'
@@ -72,6 +73,8 @@ export function ToolsPanel({
   const workspaceActiveTabId = useWorkspaceStore(
     (s) => s.workspaces[activeId]?.activeTabId ?? ''
   )
+  const swarmEnabled = useSessionStore((s) => s.settings.swarmModeEnabled === true)
+  const cliMode = useWorkspaceStore((s) => !!s.workspaces[activeId]?.cliMode)
   const rootError = useWorkspaceStore((s) => {
     const root = s.workspaces[activeId]?.root
     return root ? s.workspaces[activeId]?.dirErrors[root] : undefined
@@ -164,8 +167,14 @@ export function ToolsPanel({
       ? t('tools.enclosedDirHint')
       : (workdir ?? t('sidebar.temporaryWorkspace'))
   // Enclosed dir (file session path bound): no switch while the path still works.
-  // Missing root always allows switch so the conversation is not a dead end.
-  const allowWorkdirSwitch = rootMissing || !useEnclosedLabel
+  // Missing root allows switch so the conversation is not a dead end — except
+  // Swarm, where live CLI PTYs stay on the spawn cwd.
+  const swarmSurface = isSwarmSurfaceActive(swarmEnabled, cliMode)
+  const allowWorkdirSwitch = workdirSwitchAllowed({
+    swarmSurface,
+    enclosedUnrevealed: useEnclosedLabel,
+    rootMissing
+  })
   // Tools tray shows user bash only — never main-surface CLI agent hosts.
   const tabs = (workspaceTabs ?? []).filter(
     (t) => !t.agentId || t.agentId === 'vav' || t.isAgent
@@ -323,6 +332,26 @@ export function ToolsPanel({
   )
 
   const pathContextItems = (): MenuItem[] => {
+    if (swarmSurface) {
+      return [
+        { label: t('tools.switchWorkdirSwarmLocked'), disabled: true },
+        { label: '', divider: true },
+        {
+          label: t('tools.copyPath'),
+          disabled: !workdir,
+          onSelect: () => void window.vav.conversations.copyToClipboard(workdir ?? '')
+        },
+        ...(!rootMissing
+          ? [
+              {
+                label: t('tools.revealInFm', { fileManager: fileManagerLabel() }),
+                disabled: !workdir,
+                onSelect: () => void window.vav.conversations.revealInFinder(workdir ?? '')
+              } satisfies MenuItem
+            ]
+          : [])
+      ]
+    }
     // Missing root: only switch / pick / copy — nothing to browse or reveal.
     if (rootMissing) {
       return [
@@ -458,7 +487,7 @@ export function ToolsPanel({
               active={filesOn}
               danger={rootMissing}
               onClick={
-                rootMissing
+                rootMissing && allowWorkdirSwitch
                   ? // Recover: open switch menu instead of dead Files expand.
                     () => openWorkspaceMenu(pathChipRef.current)
                   : () => {

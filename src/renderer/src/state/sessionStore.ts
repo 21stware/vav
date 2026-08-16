@@ -45,6 +45,15 @@ import { compactionForLeaf, upsertCompaction } from '@shared/compaction'
 import { threadPath } from '@shared/thread'
 import { getProjection, disposeProjection } from './StreamProjection'
 import { AGENT_TAB_ID, useWorkspaceStore } from './workspaceStore'
+import { isSwarmSurfaceActive } from '../lib/workdirSwitch'
+
+function swarmBlocksWorkdirSwitch(id: string | null | undefined, swarmEnabled: boolean): boolean {
+  if (!id) return false
+  return isSwarmSurfaceActive(
+    swarmEnabled,
+    !!useWorkspaceStore.getState().workspaces[id]?.cliMode
+  )
+}
 
 function notifyImageAttachPlan(
   showToast: (toast: ToastState | null) => void,
@@ -1671,6 +1680,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   },
 
   async pickWorkingDirectory(id) {
+    if (swarmBlocksWorkdirSwitch(id, get().settings.swarmModeEnabled === true)) return
     const conversations = await window.vav.conversations.pickWorkingDirectory(id)
     if (!conversations) return
     // Any explicit switch reveals the real path (even if same directory).
@@ -1683,6 +1693,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   },
 
   async setWorkingDirectory(id, path) {
+    if (swarmBlocksWorkdirSwitch(id, get().settings.swarmModeEnabled === true)) return
     // User-driven switch (menu / recent) — always reveal real path thereafter.
     get().revealWorkdirPath(id)
     const conversations = await window.vav.conversations.setWorkingDirectory(id, path)
@@ -1693,6 +1704,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   },
 
   async locateWorkspace(id) {
+    if (swarmBlocksWorkdirSwitch(id, get().settings.swarmModeEnabled === true)) return
     const conversation = get().conversations.find((c) => c.id === id)
     const destination = await window.vav.settings.pickDirectory()
     if (!destination) return
@@ -2828,6 +2840,8 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   },
 
   openWorkspaceSwitcher() {
+    const { activeId, settings } = get()
+    if (swarmBlocksWorkdirSwitch(activeId, settings.swarmModeEnabled === true)) return
     set((state) => ({ workspaceMenuNonce: state.workspaceMenuNonce + 1 }))
   },
 

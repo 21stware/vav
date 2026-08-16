@@ -55,6 +55,7 @@ import {
   type DriverControl,
   type DriverEvent
 } from './drivers'
+import { shouldReplaceCliRuntime } from './cliWorkspaceRestart'
 import { inputJson, mapToolName, summarizeCliTool } from './drivers/toolMap'
 import { FileDraftCoalescer, writeToolDraft } from '@shared/writeToolDraft'
 import {
@@ -141,6 +142,8 @@ interface HostTurn {
 interface HostRuntime {
   kind: CliHostKind
   driver: DriverControl
+  /** Directory the driver process was spawned in. */
+  cwd: string
   cursor: ProviderResumeCursor | null
   authIdentity: string | null
   lastTouch: number
@@ -171,6 +174,11 @@ export class CliAgentHost {
   private fileDrafts = new FileDraftCoalescer()
   /** Ignore the next process-exited for this conversation (runtime replace). */
   private ignoreNextExit = new Set<string>()
+  /**
+   * Bumped when the conversation root changes mid-spawn so {@link spawnUntilCurrent}
+   * discards the process that still has the old cwd.
+   */
+  private cwdEpoch = new Map<string, number>()
 
   constructor(private deps: CliAgentHostDeps) {}
 
@@ -397,6 +405,7 @@ export class CliAgentHost {
     this.cancel(conversationId)
     this.disposeRuntime(conversationId)
     this.turns.delete(conversationId)
+    this.cwdEpoch.delete(conversationId)
   }
 
   /** Apply a model change to a live driver; dispose when the transport needs restart. */
@@ -405,6 +414,23 @@ export class CliAgentHost {
     if (!runtime) return
     const ok = runtime.driver.applyOptions?.({ model })
     if (ok === false) this.dispose(conversationId)
+  }
+
+  /**
+   * Conversation root changed. Live drivers and resume cursors belong to the
+   * old workspace — the next turn must spawn a fresh session in `cwd`.
+   */
+  setWorkingDirectory(conversationId: string, cwd: string): void {
+    const wanted = cwd || homedir()
+    const runtime = this.runtimes.get(conversationId)
+    if (!shouldReplaceCliRuntime(runtime?.cwd, wanted, this.starting.has(conversationId))) {
+      return
+    }
+
+    this.cwdEpoch.set(conversationId, (this.cwdEpoch.get(conversationId) ?? 0) + 1)
+    this.clearResumeCursor(conversationId)
+    if (this.turns.has(conversationId)) this.cancel(conversationId)
+    this.disposeRuntime(conversationId, { replacing: true })
   }
 
   disposeAll(): void {
@@ -433,7 +459,7 @@ export class CliAgentHost {
     const conversation = this.deps.conversations.get(conversationId)
     if (!conversation || !isStructuredCliHost(conversation.cliHost)) return
 
-    const workdir = conversation.workingDirectory || homedir()
+    const workdir = this.conversationCwd(conversationId)
     this.deps.changeSets?.beginTurn(conversationId, workdir)
 
     const turn: HostTurn = {
@@ -488,11 +514,28 @@ export class CliAgentHost {
     }
   }
 
+  private conversationCwd(conversationId: string): string {
+    return this.deps.conversations.get(conversationId)?.workingDirectory || homedir()
+  }
+
   private async ensureRuntime(conversationId: string): Promise<HostRuntime> {
+    const wanted = this.conversationCwd(conversationId)
     const existing = this.runtimes.get(conversationId)
     if (existing) {
       const identity = await readHostAuthIdentity(existing.kind)
-      if (identity && existing.authIdentity && existing.authIdentity !== identity) {
+      const authChanged = !!(
+        identity &&
+        existing.authIdentity &&
+        existing.authIdentity !== identity
+      )
+      const cwdChanged = existing.cwd !== wanted
+      if (cwdChanged || authChanged) {
+        if (cwdChanged) {
+          this.cwdEpoch.set(
+            conversationId,
+            (this.cwdEpoch.get(conversationId) ?? 0) + 1
+          )
+        }
         this.clearResumeCursor(conversationId)
         this.disposeRuntime(conversationId, { replacing: true })
       } else {
@@ -502,7 +545,7 @@ export class CliAgentHost {
     const inflight = this.starting.get(conversationId)
     if (inflight) return inflight
 
-    const promise = this.spawnRuntime(conversationId)
+    const promise = this.spawnUntilCurrent(conversationId)
     this.starting.set(conversationId, promise)
     try {
       const runtime = await promise
@@ -510,6 +553,17 @@ export class CliAgentHost {
       return runtime
     } finally {
       this.starting.delete(conversationId)
+    }
+  }
+
+  /** Spawn, retrying when {@link setWorkingDirectory} invalidates this attempt. */
+  private async spawnUntilCurrent(conversationId: string): Promise<HostRuntime> {
+    for (;;) {
+      const epoch = this.cwdEpoch.get(conversationId) ?? 0
+      const runtime = await this.spawnRuntime(conversationId)
+      if ((this.cwdEpoch.get(conversationId) ?? 0) === epoch) return runtime
+      this.ignoreNextExit.add(conversationId)
+      runtime.driver.dispose()
     }
   }
 
@@ -528,7 +582,7 @@ export class CliAgentHost {
       )
     }
 
-    const cwd = conversation.workingDirectory || homedir()
+    const cwd = this.conversationCwd(conversationId)
     const identity = await readHostAuthIdentity(kind)
     let cursor = conversation.cliResumeCursor ?? null
     if (cursor && cursor.provider !== kind) cursor = null
@@ -541,6 +595,7 @@ export class CliAgentHost {
     const runtime: HostRuntime = {
       kind,
       driver: null as unknown as DriverControl,
+      cwd,
       cursor,
       authIdentity: identity,
       lastTouch: Date.now()

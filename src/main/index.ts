@@ -4721,8 +4721,11 @@ return c as text`
   })
 
   const applyWorkingDirectory = (id: string, path: string): ConversationMeta[] => {
+    const prev = conversationStore.get(id)?.workingDirectory ?? null
     conversationStore.updateMeta(id, { workingDirectory: path })
     agent.setWorkingDirectory(id, path)
+    // Live CLI drivers + resume cursors are bound to the old root.
+    if (prev !== path) cliHost.setWorkingDirectory(id, path)
     fileService.watchRoot(id, path)
     settingsStore.rememberWorkspaceDirectory(path, tmpdir())
     broadcast(IPC.settingsChanged, currentSettings())
