@@ -112,6 +112,31 @@ function wirePi(
       }
       return
     }
+    if (
+      type === 'permission_request' ||
+      type === 'ask_user' ||
+      type === 'ui_request' ||
+      type === 'question'
+    ) {
+      const id = asString(msg.id) || asString(msg.requestId) || `ask-${Date.now()}`
+      const questions = msg.questions ?? msg.input ?? msg
+      emit({
+        type: 'tool',
+        id,
+        name: asString(msg.toolName) || asString(msg.name) || 'question',
+        input: questions,
+        status: 'started'
+      })
+      emit({
+        type: 'elicitation',
+        requestId: id,
+        toolCallId: id,
+        kind: 'ask',
+        title: asString(msg.title) || undefined,
+        input: questions
+      })
+      return
+    }
     if (type === 'tool_execution_start') {
       const id = asString(msg.toolCallId) || asString(msg.id) || `tool-${Date.now()}`
       emit({

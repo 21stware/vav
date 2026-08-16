@@ -513,7 +513,7 @@ export class FileService {
         streamUrl: localFileStreamUrl(path)
       }
 
-      if (kind === 'text' || kind === 'csv' || kind === 'html') {
+      if (kind === 'text' || kind === 'csv' || kind === 'html' || kind === 'html-clip') {
         const win = await this.readTextWindow(path, { startByte: 0, maxBytes: TEXT_WINDOW_BYTES })
         if (win.error) return { ...base, error: win.error }
         if (kind === 'csv') this.scheduleIndex(path)
@@ -1032,6 +1032,14 @@ function previewKind(name: string): FilePreviewKind {
   if (ext === '.docx') return 'docx'
   if (ext === '.xlsx' || ext === '.xls') return 'xlsx'
   if (ext === '.pptx') return 'pptx'
+  if (
+    ext === '.html-clip' ||
+    name.toLowerCase() === 'app.html' ||
+    name.toLowerCase() === 'xstate.html' ||
+    name.toLowerCase().endsWith('.app.html')
+  ) {
+    return 'html-clip'
+  }
   if (ext === '.html' || ext === '.htm' || ext === '.xhtml') return 'html'
   if (ext === '.db' || ext === '.sqlite' || ext === '.sqlite3' || ext === '.db3') return 'sqlite'
   if (['.mp3', '.wav', '.m4a', '.aac', '.ogg', '.flac', '.opus'].includes(ext)) return 'audio'
@@ -1126,6 +1134,7 @@ function mimeFor(name: string, kind: FilePreviewKind): string {
     case 'pptx':
       return 'application/vnd.openxmlformats-officedocument.presentationml.presentation'
     case 'html':
+    case 'html-clip':
       return ext === '.xhtml' ? 'application/xhtml+xml' : 'text/html'
     case 'csv':
       return 'text/csv'

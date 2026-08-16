@@ -11,6 +11,7 @@ import {
   useAgentInstallMap
 } from '../lib/agentInstallStatus'
 import { AgentBrandMark } from './AgentBrandMark'
+import { SurfaceSwitchButton } from './SurfaceSwitchButton'
 import { useT } from '../i18n/useT'
 
 /**
@@ -318,6 +319,7 @@ export function CliAgentPicker({
         </div>
       )}
       {help}
+      {!compact ? <SurfaceSwitchButton conversationId={conversationId} target="thread" /> : null}
     </div>
   )
 }

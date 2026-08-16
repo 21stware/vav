@@ -1012,6 +1012,30 @@ export class PtyManager {
   }
 
   /**
+   * Live CLI agent pane used for Swarm finish-watch (not bash, not VAV mirror).
+   * Call only while the session is still registered — `exited` is emitted after delete.
+   */
+  cliAgentWatchTarget(tabId: string): {
+    id: string
+    conversationId: string
+    agentId: string
+    createdAt: number
+    lastDataAt: number
+    status: PtyActivityStatus
+  } | null {
+    const session = this.sessions.get(tabId)
+    if (!session?.agentId || session.agentId === 'vav') return null
+    return {
+      id: session.id,
+      conversationId: session.conversationId,
+      agentId: session.agentId,
+      createdAt: session.createdAt,
+      lastDataAt: session.lastDataAt,
+      status: session.status
+    }
+  }
+
+  /**
    * Live CLI agent host panes (excludes plain bash and the built-in VAV mirror).
    */
   listCliAgentSessions(): PtySessionMeta[] {

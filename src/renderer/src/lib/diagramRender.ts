@@ -17,6 +17,7 @@ import {
   setCachedDiagramSvg,
   type DiagramSlotState
 } from './diagramCache'
+import { mdBlockActionButtons } from './mdBlockActions'
 import { normalizeDiagramSvgSize } from './diagramSvgPick'
 import { renderMermaidBlocks } from './mermaidRender'
 
@@ -90,23 +91,10 @@ export function renderDiagramFence(kind: DiagramKind, source: string): string {
   const raw = source.replace(/\r\n/g, '\n').replace(/\r/g, '\n')
   const b64 = encodeDiagramSource(raw)
   const name = diagramFilename(kind)
-  const label =
-    kind === 'vegalite'
-      ? 'vega-lite'
-      : kind === 'graphviz'
-        ? 'graphviz'
-        : kind === 'erd'
-          ? 'erd'
-          : kind
   return (
     `<div class="md-block md-diagram-wrap md-${kind}-wrap" data-kind="${kind}" data-filename="${escapeHtml(name)}" data-diagram-b64="${b64}">` +
     `<div class="md-block-bar">` +
-    `<span class="md-block-name">${escapeHtml(label)}</span>` +
-    `<span class="md-block-actions">` +
-    `<button type="button" class="md-block-btn" data-md-action="copy" title="Copy source">Copy</button>` +
-    `<button type="button" class="md-block-btn" data-md-action="copy-image" title="Copy image">Copy image</button>` +
-    `<button type="button" class="md-block-btn" data-md-action="download-png" title="Download PNG">Download</button>` +
-    `</span></div>` +
+    `${mdBlockActionButtons('visual')}</div>` +
     `<div class="md-diagram-viewport">` +
     `<div class="md-diagram md-${kind} md-diagram-live md-diagram-pending-host" data-kind="${kind}" data-b64="${b64}">` +
     pendingShellHtml(kind) +
@@ -432,7 +420,7 @@ function vegaHasCategoricalAxis(
 }
 
 // —— ERD via Mermaid ——
-function normalizeErdSource(source: string): string {
+export function normalizeErdSource(source: string): string {
   const trimmed = source.trim()
   if (/^erDiagram\b/i.test(trimmed)) return trimmed
   return `erDiagram\n${trimmed}`
@@ -513,7 +501,8 @@ export async function renderDiagramBlocks(
 
     // Exact cache hit for this source.
     // Vega-Lite is width-dependent — handled below with a bucketed key.
-    if (b64 && kind !== 'vegalite') {
+    // Mermaid / ERD go through mermaidRender (beautiful-mermaid cache).
+    if (b64 && kind !== 'vegalite' && kind !== 'mermaid' && kind !== 'erd') {
       const hit =
         getCachedDiagramSvg(kind, b64) ||
         (kind === 'erd' ? getCachedDiagramSvg('mermaid', b64) : undefined)

@@ -12,6 +12,7 @@ import { quoteSummaryFromContent } from '@shared/quote'
 import { compactionBoundaryIndex, compactionForLeaf } from '@shared/compaction'
 import { ROOT_LEAF, branchPoints } from '@shared/thread'
 import { getProjection } from '../state/StreamProjection'
+import { paintChromeSolid } from '../lib/chromeSolid'
 import { visitScene } from '../lib/emptyEntrance'
 import {
   pickRewindTurnAtScroll,
@@ -29,6 +30,7 @@ import { Button, EmptyState } from './ui'
 import { AgentBrandMark } from './AgentBrandMark'
 import { SessionWorkspaceChrome } from './SessionWorkspaceChrome'
 import { EmptyQuotaUsage } from './EmptyQuotaUsage'
+import { SurfaceSwitchButton } from './SurfaceSwitchButton'
 import { useT } from '../i18n/useT'
 
 /**
@@ -119,6 +121,9 @@ export function Transcript(): React.JSX.Element {
   const cliHost = useSessionStore(
     (s) => s.conversations.find((c) => c.id === s.activeId)?.cliHost ?? null
   )
+  const archived = useSessionStore(
+    (s) => !!s.conversations.find((c) => c.id === s.activeId)?.archived
+  )
   const cliAgents = useSessionStore((s) => s.settings.cliAgents)
 
   const emptyLogoAgent = useMemo(() => {
@@ -167,16 +172,19 @@ export function Transcript(): React.JSX.Element {
     // Hold unpin long enough that lag from large layout jumps cannot kill follow.
     suppressUnpinUntil.current = performance.now() + PROGRAMMATIC_SUPPRESS_MS
     scrollToBottomNow(el)
+    paintChromeSolid(el, el.scrollTop)
     // Double rAF: first paint may still have a stale scrollHeight (tool card
     // open, markdown reflow). Snap again after layout settles.
     window.requestAnimationFrame(() => {
       const a = scrollRef.current
       if (!a || !pinnedToBottom.current) return
       scrollToBottomNow(a)
+      paintChromeSolid(a, a.scrollTop)
       window.requestAnimationFrame(() => {
         const b = scrollRef.current
         if (!b || !pinnedToBottom.current) return
         scrollToBottomNow(b)
+        paintChromeSolid(b, b.scrollTop)
         suppressUnpinUntil.current = performance.now() + PROGRAMMATIC_SUPPRESS_MS
       })
     })
@@ -272,6 +280,7 @@ export function Transcript(): React.JSX.Element {
     const now = performance.now()
     const element = scrollRef.current
     if (!element) return
+    paintChromeSolid(element, element.scrollTop)
     syncView(element)
     const distance = distanceFromBottom(element)
     if (pinnedToBottom.current) {
@@ -428,10 +437,12 @@ export function Transcript(): React.JSX.Element {
       // Explicit branch navigation: land at the end of the chosen path.
       forcePinOnNextLeaf.current = true
       // The branch named after its own starting point is the empty one.
-      if (next === key) void selectPendingBranch(key)
-      else void selectBranch(next)
+      if (next === key) {
+        if (archived) return
+        void selectPendingBranch(key)
+      } else void selectBranch(next)
     },
-    [branches, selectBranch, selectPendingBranch]
+    [archived, branches, selectBranch, selectPendingBranch]
   )
 
   const onQuote = useCallback(
@@ -456,6 +467,11 @@ export function Transcript(): React.JSX.Element {
   )
 
   const isEmpty = messages.length === 0 && !turnRunning
+
+  useLayoutEffect(() => {
+    const el = scrollRef.current
+    if (el) paintChromeSolid(el, el.scrollTop)
+  }, [activeId, isEmpty])
   const rootBranch = branches.get(ROOT_LEAF)
 
   // Manual compact is VAV-only; CLI hosts manage their own context.
@@ -562,7 +578,7 @@ export function Transcript(): React.JSX.Element {
           <CompactionBanner
             compaction={item.compaction}
             busy={turnRunning}
-            onClear={() => void clearCompaction()}
+            onClear={archived ? undefined : () => void clearCompaction()}
           />
         </div>
       )
@@ -584,11 +600,11 @@ export function Transcript(): React.JSX.Element {
           branchCount={branch?.targets.length ?? 1}
           busy={turnRunning}
           onStepBranch={onStepBranch}
-          onRegenerate={regenerate}
-          onEdit={editUserMessage}
-          onQuote={onQuote}
-          onFork={fork}
-          onContinueInNewSession={continueInNewSession}
+          onRegenerate={archived ? undefined : regenerate}
+          onEdit={archived ? undefined : editUserMessage}
+          onQuote={archived ? undefined : onQuote}
+          onFork={archived ? undefined : fork}
+          onContinueInNewSession={archived ? undefined : continueInNewSession}
         />
       </div>
     )
@@ -651,7 +667,14 @@ export function Transcript(): React.JSX.Element {
               }
               title={!apiKeyPresent ? t('transcript.configureKey') : undefined}
               description={!apiKeyPresent ? t('transcript.configureKeyDesc') : undefined}
-              foot={<SessionWorkspaceChrome />}
+              foot={
+                <>
+                  <SessionWorkspaceChrome />
+                  {activeId && !archived ? (
+                    <SurfaceSwitchButton conversationId={activeId} target="swarm" />
+                  ) : null}
+                </>
+              }
             >
               {!apiKeyPresent ? (
                 <Button

@@ -78,10 +78,8 @@ let queuedDiscover = false
 
 async function runProbe(options: { force: boolean; discover: boolean }): Promise<void> {
   const { useSessionStore } = await import('../state/sessionStore')
-  const configured = configuredAgentList(
-    useSessionStore.getState().settings.cliAgents,
-    DEFAULT_CLI_AGENTS
-  )
+  const settings = useSessionStore.getState().settings
+  const configured = configuredAgentList(settings.cliAgents, DEFAULT_CLI_AGENTS)
   const specs = specsToProbe(configured)
   let result: Record<string, string | null> = {}
   const probe = window.vav.agents?.probeBinaries
@@ -109,11 +107,19 @@ async function runProbe(options: { force: boolean; discover: boolean }): Promise
   const added = newlyInstalledCatalogueAgents(
     configured.map((agent) => agent.id),
     result,
-    CLI_AGENT_CATALOGUE
+    CLI_AGENT_CATALOGUE,
+    settings.removedCliAgentIds
   )
   if (added.length === 0) return
-  const next = [...configured, ...added]
-  await useSessionStore.getState().updateSettings({ cliAgents: next })
+  // Re-read — a remove during the PATH probe must not be overwritten.
+  const latest = useSessionStore.getState().settings
+  const latestConfigured = configuredAgentList(latest.cliAgents, DEFAULT_CLI_AGENTS)
+  const present = new Set(latestConfigured.map((agent) => agent.id))
+  const stillNew = added.filter((agent) => !present.has(agent.id))
+  if (stillNew.length === 0) return
+  await useSessionStore.getState().updateSettings({
+    cliAgents: [...latestConfigured, ...stillNew]
+  })
 }
 
 /** Re-walk login PATH. `discover` appends newly installed catalogue agents. */

@@ -17,7 +17,7 @@ export function CompactionBanner({
 }: {
   compaction: LeafCompaction
   busy: boolean
-  onClear: () => void
+  onClear?: () => void
 }): React.JSX.Element {
   const t = useT()
   const [showSummary, setShowSummary] = useState(false)
@@ -36,13 +36,15 @@ export function CompactionBanner({
             {t('compact.logLine', { count: compaction.compactedCount })}
           </span>
         </button>
-        <Button
-          label={t('compact.restore')}
-          size="sm"
-          variant="secondary"
-          disabled={busy}
-          onClick={onClear}
-        />
+        {onClear ? (
+          <Button
+            label={t('compact.restore')}
+            size="sm"
+            variant="secondary"
+            disabled={busy}
+            onClick={onClear}
+          />
+        ) : null}
       </div>
       {/* Stay mounted so grid-template-rows can retarget open/close mid-flight. */}
       <div className="compaction-log-detail">

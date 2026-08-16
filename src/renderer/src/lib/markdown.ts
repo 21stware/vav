@@ -6,6 +6,15 @@ import {
 } from './diagramRender'
 import { filePathLinksPlugin } from './filePathLinks'
 import { highlightFence, onHljsReady } from './hljsLazy'
+import {
+  isHtmlClipLang,
+  isXstateLang,
+  renderHtmlClipFence,
+  renderXstateFence,
+  renderOutputImage,
+  suggestedImageFilename
+} from './htmlClipRender'
+import { mdBlockActionButtons } from './mdBlockActions'
 
 /**
  * Markdown for agent output.
@@ -46,6 +55,11 @@ const LANG_EXT: Record<string, string> = {
   markdown: 'md',
   md: 'md',
   html: 'html',
+  app: 'html',
+  'html-clip': 'html',
+  xstate: 'json',
+  'xstate-viz': 'json',
+  statechart: 'json',
   css: 'css',
   sql: 'sql',
   xml: 'xml',
@@ -63,11 +77,7 @@ function blockChrome(filename: string, kind: 'code' | 'table'): string {
   return (
     `<div class="md-block" data-kind="${kind}" data-filename="${escapeHtml(filename)}">` +
     `<div class="md-block-bar">` +
-    `<span class="md-block-name">${escapeHtml(filename)}</span>` +
-    `<span class="md-block-actions">` +
-    `<button type="button" class="md-block-btn" data-md-action="copy" title="Copy">Copy</button>` +
-    `<button type="button" class="md-block-btn" data-md-action="save" title="Save as file">Save as file</button>` +
-    `</span></div>`
+    `${mdBlockActionButtons('source')}</div>`
   )
 }
 
@@ -95,9 +105,27 @@ md.renderer.rules.fence = (tokens, idx, options, env, self): string => {
   if (diagram) {
     return renderDiagramFence(diagram, token.content)
   }
+  if (isXstateLang(language)) {
+    return renderXstateFence(token.content)
+  }
+  if (isHtmlClipLang(language)) {
+    return renderHtmlClipFence(token.content)
+  }
   const filename = suggestedFilenameForLang(language)
   const inner = defaultFence(tokens, idx, options, env, self)
   return `${blockChrome(filename, 'code')}${inner}</div>`
+}
+
+const defaultImage =
+  md.renderer.rules.image ??
+  ((tokens, idx, options, _env, self) => self.renderToken(tokens, idx, options))
+
+md.renderer.rules.image = (tokens, idx, options, env, self): string => {
+  const token = tokens[idx]!
+  const src = token.attrGet('src') || ''
+  const alt = token.content || token.attrGet('alt') || ''
+  if (!src) return defaultImage(tokens, idx, options, env, self)
+  return renderOutputImage(src, alt, suggestedImageFilename(src, alt))
 }
 
 /** @deprecated use renderDiagramFence('mermaid', source) */
@@ -174,6 +202,14 @@ export function highlightMatches(container: HTMLElement, query: string): void {
 /** Plain text for Copy / Save — diagram source, code fence body, or table→CSV. */
 export function extractBlockPlainText(block: HTMLElement): string {
   const kind = block.dataset.kind
+  if (kind === 'html-clip' || kind === 'xstate') {
+    const b64 = block.dataset.clipB64 || block.querySelector('.md-html-clip-host')?.getAttribute('data-b64') || ''
+    if (b64) {
+      const decoded = decodeDiagramSource(b64)
+      if (decoded) return decoded
+    }
+    return ''
+  }
   if (kind === 'mermaid' || kind === 'graphviz' || kind === 'vegalite' || kind === 'erd') {
     const b64 =
       block.dataset.diagramB64 ||
@@ -198,6 +234,10 @@ export function extractBlockPlainText(block: HTMLElement): string {
           .join(',')
       )
       .join('\n')
+  }
+  if (kind === 'image') {
+    const img = block.querySelector<HTMLImageElement>('img.md-output-image')
+    return img?.getAttribute('src') || img?.alt || ''
   }
   const code = block.querySelector('pre code') ?? block.querySelector('pre')
   return code?.textContent ?? ''

@@ -1,4 +1,12 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ClipboardEvent,
+  type MouseEvent
+} from 'react'
 import {
   ArrowUp,
   ChevronDown,
@@ -6,7 +14,6 @@ import {
   FileText,
   MapPin,
   MessageSquare,
-  Paperclip,
   Quote,
   Send,
   Square,
@@ -28,9 +35,12 @@ import { menuAnchorIfVisible, showMenu, type MenuItem } from '../lib/nativeMenu'
 import { keys } from '../lib/platform'
 import { resolveSendKeyMode, shouldSendOnKeyDown } from '../lib/composerSendKey'
 import { isPickGestureActive } from '../lib/clickPick'
+import { imageInputLimits, modelAcceptsImageInput } from '@shared/agentImageInput'
 import { useT } from '../i18n/useT'
+import { collectClipboardImages, imageSizeByPath, writeClipboardImage } from '../lib/pasteImages'
 import { Button } from './ui'
 import { AgentModelPicker } from './AgentModelPicker'
+import { ComposerAttachments } from './ComposerAttachments'
 import { ThinkingLevelPicker } from './ThinkingLevelPicker'
 
 const NO_QUEUE: QueuedMessage[] = []
@@ -194,6 +204,8 @@ export function Composer({
 
   const setDraft = useSessionStore((s) => s.setDraft)
   const setAttachments = useSessionStore((s) => s.setAttachments)
+  const addAttachments = useSessionStore((s) => s.addAttachments)
+  const showToast = useSessionStore((s) => s.showToast)
   const setPreviewRefs = useSessionStore((s) => s.setPreviewRefs)
   const send = useSessionStore((s) => s.send)
   const cancel = useSessionStore((s) => s.cancel)
@@ -207,6 +219,11 @@ export function Composer({
   const composingRef = useRef(false)
   const approvalMode: ApprovalMode = conversation?.approvalMode ?? 'auto'
   const [focused, setFocused] = useState(false)
+  const imageLimits = imageInputLimits(conversation?.cliHost ?? null)
+  const imageInputSupported = modelAcceptsImageInput(
+    conversation?.cliHost ?? null,
+    conversation?.model ?? null
+  )
   // Local draft mirrors the store but keeps keystrokes off the React commit path
   // of every other subscriber for one frame when the store write coalesces.
   const [draft, setLocalDraft] = useState(storeDraft)
@@ -332,6 +349,54 @@ export function Composer({
 
   const hasCommentCards = commentCards.length > 0
 
+  const handlePaste = async (event: ClipboardEvent<HTMLTextAreaElement>): Promise<void> => {
+    const { filePaths, pathSizes, memoryImages, text } = collectClipboardImages(event.clipboardData)
+    if (filePaths.length === 0 && memoryImages.length === 0) return
+    event.preventDefault()
+    if (!conversationId) return
+
+    if (memoryImages.length > 0) {
+      const incoming: string[] = []
+      const sizes: Record<string, number> = {}
+      for (const image of memoryImages) {
+        const written = await writeClipboardImage(image, imageLimits)
+        if ('error' in written) {
+          if (written.error === 'too-large') {
+            const mb = Math.max(1, Math.round(imageLimits.maxBytes / (1024 * 1024)))
+            showToast({ kind: 'info', title: t('composer.imageTooLarge', { mb }) })
+          } else if (written.error === 'bad-type') {
+            showToast({ kind: 'info', title: t('composer.imageTypeUnsupported') })
+          }
+          continue
+        }
+        incoming.push(written.path)
+        sizes[written.path] = written.bytes
+      }
+      if (incoming.length) addAttachments(conversationId, incoming, { sizes })
+    }
+
+    if (filePaths.length) addAttachments(conversationId, filePaths, { sizes: pathSizes })
+
+    const clipped = text.trim()
+    if (!clipped) return
+    const el = textareaRef.current
+    if (!el) {
+      const next = `${draft}${draft && !draft.endsWith('\n') ? '\n' : ''}${clipped}`
+      setLocalDraft(next)
+      flushDraft(next)
+      return
+    }
+    const start = el.selectionStart
+    const end = el.selectionEnd
+    const next = `${el.value.slice(0, start)}${clipped}${el.value.slice(end)}`
+    setLocalDraft(next)
+    flushDraft(next)
+    requestAnimationFrame(() => {
+      const pos = start + clipped.length
+      el.setSelectionRange(pos, pos)
+    })
+  }
+
   return (
     <div
       className={`composer${hasCommentCards ? ' has-comment-cards' : ''}`}
@@ -339,12 +404,9 @@ export function Composer({
       onDragOver={(event) => event.preventDefault()}
       onDrop={(event) => {
         event.preventDefault()
-        const paths = [...event.dataTransfer.files]
-          .map((file) => window.vav.files.pathForFile(file))
-          .filter(Boolean)
-        if (conversationId && paths.length) {
-          setAttachments(conversationId, [...new Set([...attachments, ...paths])])
-        }
+        if (!conversationId) return
+        const { paths, sizes } = imageSizeByPath([...event.dataTransfer.files])
+        if (paths.length) addAttachments(conversationId, paths, { sizes })
       }}
     >
       {/* Context chips / comments live in ComposerContext (Agent log column). */}
@@ -380,29 +442,17 @@ export function Composer({
           </div>
         )}
         {attachments.length > 0 && conversationId && (
-          <div className="attachments">
-            {attachments.map((path) => (
-              <span className="chip" key={path} title={path}>
-                <Paperclip size={11} />
-                <span className="chip-label">{basename(path)}</span>
-                <button
-                  type="button"
-                  className="btn icon-only sm"
-                  style={{ width: 16, height: 16 }}
-                  title={t('composer.removeAttachment')}
-                  aria-label={t('composer.removeAttachment')}
-                  onClick={() =>
-                    setAttachments(
-                      conversationId,
-                      attachments.filter((p) => p !== path)
-                    )
-                  }
-                >
-                  <X size={10} />
-                </button>
-              </span>
-            ))}
-          </div>
+          <ComposerAttachments
+            paths={attachments}
+            conversationId={conversationId}
+            imageInputSupported={imageInputSupported}
+            onRemove={(path) =>
+              setAttachments(
+                conversationId,
+                attachments.filter((p) => p !== path)
+              )
+            }
+          />
         )}
 
         <textarea
@@ -435,6 +485,9 @@ export function Composer({
             // Composition can be aborted without compositionend (focus loss).
             composingRef.current = false
             if (conversationId) flushDraft(textareaRef.current?.value ?? draft)
+          }}
+          onPaste={(event) => {
+            void handlePaste(event)
           }}
           onKeyDown={(event) => {
             // Don’t treat IME “confirm” Enter as send.

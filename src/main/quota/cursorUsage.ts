@@ -2,7 +2,12 @@ import { execFile } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { promisify } from 'node:util'
 import { net } from 'electron'
-import { emptyAccount, parseCursorStatusPayload, type HostAccountInfo } from '@shared/cliAccountParse'
+import {
+  accountInfo,
+  emptyAccount,
+  parseCursorStatusPayload,
+  type HostAccountInfo
+} from '@shared/cliAccountParse'
 import { windowsFromCursorPeriodPayload } from '@shared/quotaWindows'
 import type { QuotaWindow } from '@shared/types'
 import { execCliJson } from './cliProbe'
@@ -38,17 +43,17 @@ export async function readCursorAccountInfo(): Promise<HostAccountInfo> {
     if (!fromStatus.plan) {
       const about = await execCliJson(['cursor-agent', 'agent'], ['about', '--format', 'json'])
       const fromAbout = parseCursorStatusPayload(about)
-      if (fromAbout.plan) return { ...fromStatus, plan: fromAbout.plan, signedIn: true }
+      if (fromAbout.plan) return accountInfo('oauth', { accountId: fromStatus.accountId, plan: fromAbout.plan })
     }
-    return { ...fromStatus, signedIn: true }
+    return accountInfo('oauth', { accountId: fromStatus.accountId, plan: fromStatus.plan })
   }
   const about = await execCliJson(['cursor-agent', 'agent'], ['about', '--format', 'json'])
   const fromAbout = parseCursorStatusPayload(about)
   if (fromAbout.accountId || fromAbout.plan) {
-    return { signedIn: true, accountId: fromAbout.accountId, plan: fromAbout.plan }
+    return accountInfo('oauth', { accountId: fromAbout.accountId, plan: fromAbout.plan })
   }
-  const token = await readCursorAccessToken()
-  if (token) return { signedIn: true, accountId: null, plan: null }
+  if (process.env.CURSOR_API_KEY?.trim()) return accountInfo('api-key')
+  if (await readCursorAccessToken()) return accountInfo('oauth')
   return emptyAccount()
 }
 

@@ -32,7 +32,17 @@ import {
   shouldRetryFreshSession,
   type CliErrorKind
 } from '@shared/cliErrors'
-import { isApprovalApproveText } from '@shared/i18n'
+import { en, isApprovalApproveText, isApprovalDenyText, zhCN } from '@shared/i18n'
+import { normalizeAskQuestions, parseToolInput } from '@shared/askPlan'
+import {
+  isAskToolName,
+  isPlanDocToolName,
+  normalizePlanDocInput,
+  planDocHasBody,
+  planDocSummary,
+  planDocToChecklistInput,
+  projectChecklistInput
+} from '@shared/planDoc'
 import { enabledCliAgents } from '@shared/types'
 import { currentLocale, t } from '../i18n'
 import { readHostAuthIdentity } from './hostAuth'
@@ -47,6 +57,12 @@ import {
 } from './drivers'
 import { inputJson, mapToolName, summarizeCliTool } from './drivers/toolMap'
 import { FileDraftCoalescer, writeToolDraft } from '@shared/writeToolDraft'
+import {
+  expireOpenTools,
+  findToolBlock,
+  snapshotToolBlock,
+  topLevelToolIndex
+} from '@shared/subtask'
 
 const COALESCE_MS = 32
 
@@ -58,7 +74,7 @@ function describeCliHostError(
   const text = raw.trim() || 'Internal error'
   const locale = currentLocale()
   const kind = classifyCliError(text, windows, code)
-  if (kind === 'cancelled') return { kind: 'generic', message: text }
+  if (kind === 'cancelled') return { kind, message: text }
   if (kind === 'quota') {
     const window = pickExhaustedQuotaWindow(windows)
     if (window) {
@@ -87,6 +103,9 @@ function describeCliHostError(
 interface PendingPermission {
   requestId: string
   toolCallId: string
+  kind: 'permission' | 'plan_doc' | 'ask'
+  /** True when we parked a host tool_use that has no RPC to answer. */
+  synthetic?: boolean
   resolve: (decision: 'allow' | 'deny') => void
 }
 
@@ -115,6 +134,8 @@ interface HostTurn {
   reasoningStartedAt: Map<number, number>
   /** permission requestId → toolCallId for answer routing */
   permissionByRequest: Map<string, string>
+  /** Parent task ids with nested transcript waiting to emit. */
+  nestedDirty: Set<string>
 }
 
 interface HostRuntime {
@@ -328,23 +349,43 @@ export class CliAgentHost {
       turn.pendingPermissions.get(toolCallId) ||
       [...turn.pendingPermissions.values()].find((p) => p.toolCallId === toolCallId)
     if (!pending) return false
-    const allow = isApprovalApproveText(text, false)
+    const allow =
+      pending.kind === 'ask'
+        ? !isAskCancelText(text)
+        : pending.kind === 'plan_doc'
+          ? !isPlanDocRejectText(text)
+          : isApprovalApproveText(text, false)
     turn.pendingPermissions.delete(pending.toolCallId)
     const runtime = this.runtimes.get(conversationId)
-    runtime?.driver.respond(pending.requestId, allow ? 'allow' : 'deny', text)
-    // Update card
+    if (pending.synthetic) {
+      runtime?.driver.steer?.(text)
+    } else {
+      runtime?.driver.respond(pending.requestId, allow ? 'allow' : 'deny', text)
+    }
     const idx = turn.toolIndex.get(pending.toolCallId)
     if (idx != null) {
       const block = turn.blocks[idx]
       if (block?.kind === 'toolCall') {
         const next: ToolCallBlock = {
           ...block,
-          status: allow ? 'executing' : 'skipped',
-          output: allow ? 'Approved' : 'Denied',
+          status: allow ? (pending.kind === 'permission' ? 'executing' : 'completed') : 'skipped',
+          output:
+            pending.kind === 'ask'
+              ? text
+              : pending.kind === 'plan_doc'
+                ? allow
+                  ? t('planDoc.accepted')
+                  : t('planDoc.rejected')
+                : allow
+                  ? 'Approved'
+                  : 'Denied',
           choices: undefined
         }
         turn.blocks[idx] = next
         this.deps.emit({ type: 'tool', conversationId, index: idx, block: next })
+        if (allow && pending.kind === 'plan_doc') {
+          this.seedChecklistFromPlanDoc(conversationId, turn, next)
+        }
       }
     }
     this.setPhase(conversationId, turn, 'working')
@@ -413,7 +454,8 @@ export class CliAgentHost {
       settling: false,
       pendingPermissions: new Map(),
       reasoningStartedAt: new Map(),
-      permissionByRequest: new Map()
+      permissionByRequest: new Map(),
+      nestedDirty: new Set()
     }
     // For regenerate we mint a fresh assistant id
     if (!conversation.messages.some((m) => m.id === messageId && m.role === 'user')) {
@@ -550,16 +592,24 @@ export class CliAgentHost {
         this.setPhase(conversationId, turn, 'thinking')
         break
       case 'text-delta':
-        this.appendDelta(conversationId, turn, 'text', event.text)
+        if (event.parentId) this.appendNestedDelta(conversationId, turn, event.parentId, 'text', event.text)
+        else this.appendDelta(conversationId, turn, 'text', event.text)
         break
       case 'reasoning-delta':
-        this.appendDelta(conversationId, turn, 'reasoning', event.text)
+        if (event.parentId) {
+          this.appendNestedDelta(conversationId, turn, event.parentId, 'reasoning', event.text)
+        } else {
+          this.appendDelta(conversationId, turn, 'reasoning', event.text)
+        }
         break
       case 'tool':
         this.applyTool(conversationId, turn, event)
         break
       case 'permission':
         this.applyPermission(conversationId, turn, event)
+        break
+      case 'elicitation':
+        this.applyElicitation(conversationId, turn, event)
         break
       case 'usage':
         this.applyUsage(conversationId, event)
@@ -568,10 +618,18 @@ export class CliAgentHost {
         this.applyQuota(conversationId, event.windows)
         break
       case 'error':
+        if (
+          turn.cancelled ||
+          classifyCliError(event.message, this.quotaWindowsFor(conversationId), event.errorCode) ===
+            'cancelled'
+        ) {
+          turn.cancelled = true
+          break
+        }
         turn.error = event.message
         turn.errorCode = event.errorCode ?? turn.errorCode
         turn.errorDetail = event.errorDetail ?? turn.errorDetail
-        if (!turn.sawTurnStarted && !turn.cancelled) {
+        if (!turn.sawTurnStarted) {
           void this.settleFailedTurn(
             conversationId,
             turn,
@@ -594,8 +652,18 @@ export class CliAgentHost {
           runtime.cursor = next
           this.deps.conversations.updateMeta(conversationId, { cliResumeCursor: next })
         }
+        if (
+          event.cancelled ||
+          classifyCliError(
+            event.error || '',
+            this.quotaWindowsFor(conversationId),
+            event.errorCode
+          ) === 'cancelled'
+        ) {
+          turn.cancelled = true
+        }
         if (event.success || turn.cancelled) {
-          if (event.error) turn.error = event.error
+          if (event.error && !turn.cancelled) turn.error = event.error
           void this.finishTurn(conversationId, turn, event.success)
           break
         }
@@ -610,9 +678,11 @@ export class CliAgentHost {
       case 'process-exited':
         if (this.ignoreNextExit.delete(conversationId)) return
         if (this.turns.has(conversationId)) {
-          turn.error = turn.error || `Agent process exited (${event.code ?? '?'})`
-          turn.errorDetail =
-            turn.errorDetail || formatErrorDetailFromParts(turn.error, event.code)
+          if (!turn.cancelled) {
+            turn.error = turn.error || `Agent process exited (${event.code ?? '?'})`
+            turn.errorDetail =
+              turn.errorDetail || formatErrorDetailFromParts(turn.error, event.code)
+          }
           void this.finishTurn(conversationId, turn, false)
         }
         this.runtimes.delete(conversationId)
@@ -680,6 +750,14 @@ export class CliAgentHost {
         text
       })
     }
+    if (turn.nestedDirty.size) {
+      const ids = [...turn.nestedDirty]
+      turn.nestedDirty.clear()
+      for (const id of ids) {
+        const parent = findToolBlock(turn.blocks, id)
+        if (parent) this.emitParentTool(conversationId, turn, parent)
+      }
+    }
   }
 
   private applyTool(
@@ -688,6 +766,10 @@ export class CliAgentHost {
     event: Extract<DriverEvent, { type: 'tool' }>
   ): void {
     this.flushBuffers(conversationId, turn)
+    if (event.parentId && event.parentId !== event.id) {
+      this.applyNestedTool(conversationId, turn, event)
+      return
+    }
     let index = turn.toolIndex.get(event.id)
     if (index == null) {
       index = turn.blocks.length
@@ -696,7 +778,7 @@ export class CliAgentHost {
         kind: 'toolCall',
         id: event.id,
         tool: mapToolName(event.name),
-        summary: event.title || summarizeCliTool(event.name, event.input),
+        summary: event.title || summarizeCliTool(event.name, event.input) || event.name,
         input: inputJson(event.input),
         output: '',
         status: 'pending'
@@ -708,11 +790,65 @@ export class CliAgentHost {
       turn.reasoningIndex = null
     }
     const block = turn.blocks[index] as ToolCallBlock
+    if (block.tool === 'plan') {
+      block.input = inputJson(projectChecklistInput(parseToolInput(block.input)))
+    }
+    this.patchToolBlock(block, event)
+    if (block.tool === 'plan' && event.input && Object.keys(event.input as object).length) {
+      block.input = inputJson(projectChecklistInput(event.input))
+    }
+    if (event.status === 'completed' || event.status === 'error') {
+      turn.toolCount++
+      turn.pendingPermissions.delete(block.id)
+    }
+    const next = snapshotToolBlock(block)
+    turn.blocks[index] = next
+    this.deps.emit({ type: 'tool', conversationId, index, block: next })
     if (event.status === 'started' || event.status === 'updated') {
-      block.status = 'executing'
+      this.emitFileDraft(conversationId, event.name, event.input)
+    }
+    if (this.parkInteractiveTool(conversationId, turn, event, next, index)) return
+    this.setPhase(conversationId, turn, 'working')
+  }
+
+  private applyNestedTool(
+    conversationId: string,
+    turn: HostTurn,
+    event: Extract<DriverEvent, { type: 'tool' }>
+  ): void {
+    const parent = this.ensureParentTask(turn, event.parentId!)
+    parent.children ??= []
+    let child = findToolBlock(parent.children, event.id)
+    if (!child) {
+      child = {
+        kind: 'toolCall',
+        id: event.id,
+        tool: mapToolName(event.name),
+        summary: event.title || summarizeCliTool(event.name, event.input) || event.name,
+        input: inputJson(event.input),
+        output: '',
+        status: 'pending'
+      }
+      parent.children.push(child)
+    }
+    this.patchToolBlock(child, event)
+    this.emitParentTool(conversationId, turn, parent)
+    if (event.status === 'started' || event.status === 'updated') {
+      this.emitFileDraft(conversationId, event.name, event.input)
+    }
+    this.setPhase(conversationId, turn, 'working')
+  }
+
+  private patchToolBlock(
+    block: ToolCallBlock,
+    event: Extract<DriverEvent, { type: 'tool' }>
+  ): void {
+    if (event.status === 'started' || event.status === 'updated') {
+      const parked = block.status === 'pending' && (block.tool === 'plan_doc' || block.tool === 'ask_user_question')
+      if (!parked) block.status = 'executing'
       if (event.input && Object.keys(event.input as object).length) {
         block.input = inputJson(event.input)
-        block.summary = event.title || summarizeCliTool(event.name, event.input)
+        block.summary = event.title || summarizeCliTool(event.name, event.input) || event.name
         // ACP tool_call_update is a patch and may omit name/kind — never regress
         // a specific mapping back to 'external' on a sparse update.
         const mapped = mapToolName(event.name)
@@ -723,18 +859,64 @@ export class CliAgentHost {
     } else if (event.status === 'completed') {
       block.status = 'completed'
       block.output = event.output ?? block.output
-      turn.toolCount++
     } else if (event.status === 'error') {
       block.status = 'error'
       block.output = event.output ?? block.output
-      turn.toolCount++
     }
-    turn.blocks[index] = { ...block }
-    this.deps.emit({ type: 'tool', conversationId, index, block: { ...block } })
-    if (event.status === 'started' || event.status === 'updated') {
-      this.emitFileDraft(conversationId, event.name, event.input)
+  }
+
+  private ensureParentTask(turn: HostTurn, parentId: string): ToolCallBlock {
+    const existing = findToolBlock(turn.blocks, parentId)
+    if (existing) return existing
+    const block: ToolCallBlock = {
+      kind: 'toolCall',
+      id: parentId,
+      tool: 'task',
+      summary: t('tool.task'),
+      input: '{}',
+      output: '',
+      status: 'executing',
+      children: []
     }
-    this.setPhase(conversationId, turn, 'working')
+    turn.toolIndex.set(parentId, turn.blocks.length)
+    turn.blocks.push(block)
+    this.sealOpenReasoning(turn)
+    turn.textIndex = null
+    turn.reasoningIndex = null
+    return block
+  }
+
+  private appendNestedDelta(
+    conversationId: string,
+    turn: HostTurn,
+    parentId: string,
+    kind: 'text' | 'reasoning',
+    text: string
+  ): void {
+    if (!text) return
+    const parent = this.ensureParentTask(turn, parentId)
+    parent.children ??= []
+    const last = parent.children[parent.children.length - 1]
+    if (last && last.kind === kind) {
+      last.text += text
+    } else {
+      parent.children.push(kind === 'text' ? { kind: 'text', text } : { kind: 'reasoning', text })
+    }
+    turn.nestedDirty.add(parent.id)
+    this.setPhase(conversationId, turn, kind === 'reasoning' ? 'thinking' : 'working')
+    if (!turn.flushTimer) {
+      turn.flushTimer = setTimeout(() => this.flushBuffers(conversationId, turn), COALESCE_MS)
+    }
+  }
+
+  private emitParentTool(conversationId: string, turn: HostTurn, parent: ToolCallBlock): void {
+    const index = topLevelToolIndex(turn.blocks, parent.id) ?? turn.toolIndex.get(parent.id)
+    if (index == null) return
+    const top = turn.blocks[index]
+    if (!top || top.kind !== 'toolCall') return
+    const next = snapshotToolBlock(top)
+    turn.blocks[index] = next
+    this.deps.emit({ type: 'tool', conversationId, index, block: next })
   }
 
   private emitFileDraft(conversationId: string, toolName: string, input: unknown): void {
@@ -746,12 +928,176 @@ export class CliAgentHost {
     this.deps.emit({ type: 'file-draft', conversationId, ...payload })
   }
 
+  /** Park ask / plan-doc tool cards until the user answers (any host). */
+  private parkInteractiveTool(
+    conversationId: string,
+    turn: HostTurn,
+    event: Extract<DriverEvent, { type: 'tool' }>,
+    block: ToolCallBlock,
+    index: number
+  ): boolean {
+    if (event.status === 'completed' || event.status === 'error') return false
+    if (turn.pendingPermissions.has(block.id)) return false
+    const parsed = parseToolInput(block.input)
+    if (block.tool === 'ask_user_question') {
+      const questions = normalizeAskQuestions(parsed)
+      if (questions.length === 0) return false
+      const next: ToolCallBlock = {
+        ...block,
+        status: 'pending',
+        questions,
+        askTitle: event.title || String(parsed.title ?? parsed.header ?? '') || block.askTitle
+      }
+      turn.blocks[index] = next
+      turn.pendingPermissions.set(block.id, {
+        requestId: block.id,
+        toolCallId: block.id,
+        kind: 'ask',
+        synthetic: true,
+        resolve: () => undefined
+      })
+      this.deps.emit({
+        type: 'awaiting',
+        conversationId,
+        toolCallId: block.id,
+        index,
+        block: next
+      })
+      this.setPhase(conversationId, turn, 'awaiting-user')
+      return true
+    }
+    if (block.tool === 'plan_doc') {
+      const doc = normalizePlanDocInput(parsed)
+      if (!isPlanDocToolName(event.name) && !planDocHasBody(doc)) return false
+      const next: ToolCallBlock = { ...block, status: 'pending' }
+      turn.blocks[index] = next
+      turn.pendingPermissions.set(block.id, {
+        requestId: block.id,
+        toolCallId: block.id,
+        kind: 'plan_doc',
+        synthetic: true,
+        resolve: () => undefined
+      })
+      this.deps.emit({
+        type: 'awaiting',
+        conversationId,
+        toolCallId: block.id,
+        index,
+        block: next
+      })
+      this.setPhase(conversationId, turn, 'awaiting-user')
+      return true
+    }
+    return false
+  }
+
+  private applyElicitation(
+    conversationId: string,
+    turn: HostTurn,
+    event: Extract<DriverEvent, { type: 'elicitation' }>
+  ): void {
+    this.flushBuffers(conversationId, turn)
+    const tool: ToolCallBlock['tool'] = event.kind === 'plan_doc' ? 'plan_doc' : 'ask_user_question'
+    const parsed = event.input && typeof event.input === 'object' ? (event.input as Record<string, unknown>) : {}
+    const questions = event.kind === 'ask' ? normalizeAskQuestions(parsed) : undefined
+    const summary =
+      event.kind === 'plan_doc'
+        ? planDocSummary(normalizePlanDocInput(event.input))
+        : event.title || questions?.[0]?.question || t('tool.ask')
+    let index = turn.toolIndex.get(event.toolCallId)
+    if (index == null) {
+      for (const [id, pending] of turn.pendingPermissions) {
+        if (pending.kind !== event.kind) continue
+        const found = turn.toolIndex.get(id)
+        if (found == null) continue
+        index = found
+        turn.toolIndex.set(event.toolCallId, found)
+        turn.pendingPermissions.delete(id)
+        break
+      }
+    }
+    let block: ToolCallBlock
+    if (index == null) {
+      index = turn.blocks.length
+      turn.toolIndex.set(event.toolCallId, index)
+      block = {
+        kind: 'toolCall',
+        id: event.toolCallId,
+        tool,
+        summary,
+        input: inputJson(event.input),
+        output: '',
+        status: 'pending',
+        questions,
+        askTitle: event.title
+      }
+      turn.blocks.push(block)
+      this.sealOpenReasoning(turn)
+      turn.textIndex = null
+      turn.reasoningIndex = null
+    } else {
+      const current = turn.blocks[index]
+      if (!current || current.kind !== 'toolCall') return
+      block = {
+        ...current,
+        tool,
+        summary: summary || current.summary,
+        input: inputJson(event.input),
+        status: 'pending',
+        questions,
+        askTitle: event.title ?? current.askTitle
+      }
+      turn.blocks[index] = block
+    }
+    turn.pendingPermissions.set(block.id, {
+      requestId: event.requestId,
+      toolCallId: block.id,
+      kind: event.kind,
+      resolve: () => undefined
+    })
+    this.deps.emit({
+      type: 'awaiting',
+      conversationId,
+      toolCallId: block.id,
+      index,
+      block
+    })
+    this.setPhase(conversationId, turn, 'awaiting-user')
+  }
+
+  private seedChecklistFromPlanDoc(
+    conversationId: string,
+    turn: HostTurn,
+    block: ToolCallBlock
+  ): void {
+    const doc = normalizePlanDocInput(parseToolInput(block.input))
+    if (doc.todos.length === 0) return
+    this.applyTool(conversationId, turn, {
+      type: 'tool',
+      id: `${block.id}-todos`,
+      name: 'plan',
+      input: planDocToChecklistInput(doc),
+      status: 'updated'
+    })
+  }
+
   private applyPermission(
     conversationId: string,
     turn: HostTurn,
     event: Extract<DriverEvent, { type: 'permission' }>
   ): void {
     this.flushBuffers(conversationId, turn)
+    if (isAskToolName(event.toolName) || isPlanDocToolName(event.toolName)) {
+      this.applyElicitation(conversationId, turn, {
+        type: 'elicitation',
+        requestId: event.requestId,
+        toolCallId: event.requestId,
+        kind: isPlanDocToolName(event.toolName) ? 'plan_doc' : 'ask',
+        title: event.summary,
+        input: event.input ?? { detail: event.detail, tool: event.toolName }
+      })
+      return
+    }
     const toolCallId = `perm-${event.requestId}`
     const index = turn.blocks.length
     turn.toolIndex.set(toolCallId, index)
@@ -770,6 +1116,7 @@ export class CliAgentHost {
     turn.pendingPermissions.set(toolCallId, {
       requestId: event.requestId,
       toolCallId,
+      kind: 'permission',
       resolve: () => undefined
     })
     turn.permissionByRequest.set(event.requestId, toolCallId)
@@ -870,18 +1217,19 @@ export class CliAgentHost {
     this.flushBuffers(conversationId, turn)
     this.sealOpenReasoning(turn)
 
-    for (const block of turn.blocks) {
-      if (block.kind !== 'toolCall') continue
-      if (block.status === 'pending' || block.status === 'executing') {
-        block.status = turn.cancelled ? 'expired' : 'skipped'
-      }
-    }
+    expireOpenTools(turn.blocks, turn.cancelled)
 
     const content = turn.blocks
       .filter((b): b is Extract<MessageBlock, { kind: 'text' }> => b.kind === 'text')
       .map((b) => b.text)
       .join('\n\n')
       .trim()
+
+    if (turn.cancelled) {
+      turn.error = undefined
+      turn.errorKind = undefined
+      turn.errorDetail = undefined
+    }
 
     const message: ChatMessage = {
       id: turn.messageId,
@@ -987,7 +1335,11 @@ export class CliAgentHost {
   ): Promise<void> {
     if (!this.turns.has(conversationId) || this.turns.get(conversationId) !== turn) return
     if (turn.settling) return
-    if (turn.cancelled) {
+    if (turn.cancelled || classifyCliError(raw, null, code) === 'cancelled') {
+      turn.cancelled = true
+      turn.error = undefined
+      turn.errorKind = undefined
+      turn.errorDetail = undefined
       void this.finishTurn(conversationId, turn, false)
       return
     }
@@ -996,6 +1348,14 @@ export class CliAgentHost {
 
     const described = await this.describeTurnError(conversationId, raw, code)
     if (!this.turns.has(conversationId) || this.turns.get(conversationId) !== turn) return
+    if (described.kind === 'cancelled') {
+      turn.cancelled = true
+      turn.error = undefined
+      turn.errorKind = undefined
+      turn.errorDetail = undefined
+      void this.finishTurn(conversationId, turn, false)
+      return
+    }
     const runtime = this.runtimes.get(conversationId)
     const hadCursor = !!runtime?.cursor || !!this.deps.conversations.get(conversationId)?.cliResumeCursor
 
@@ -1101,6 +1461,27 @@ export class CliAgentHost {
     parts.push(text)
     return parts.join('\n\n')
   }
+}
+
+function isPlanDocRejectText(text: string): boolean {
+  const line = text.split('\n')[0]?.trim() ?? ''
+  return (
+    isApprovalDenyText(text) ||
+    line === zhCN['planDoc.reject'] ||
+    line === en['planDoc.reject'] ||
+    line === zhCN['common.cancel'] ||
+    line === en['common.cancel']
+  )
+}
+
+function isAskCancelText(text: string): boolean {
+  const line = text.split('\n')[0]?.trim() ?? ''
+  return (
+    isApprovalDenyText(text) ||
+    line === zhCN['common.cancel'] ||
+    line === en['common.cancel'] ||
+    line === '已取消'
+  )
 }
 
 /** Resolve AgentConfig for a host kind from settings. */

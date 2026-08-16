@@ -7,8 +7,11 @@ import {
   type BashBackgroundMode,
   type DisplayCurrency,
   type LocalePreference,
+  type SurfacePattern,
   type ThemeMode
 } from '@shared/types'
+import { swatchPatternSize } from '@shared/surfacePattern'
+import { SURFACE_PATTERN_PRESETS } from '../../lib/surfacePatterns'
 import { useSessionStore } from '../../state/sessionStore'
 import { useT } from '../../i18n/useT'
 import { Segmented, Toggle } from '../ui'
@@ -18,6 +21,7 @@ export function AppearanceSettings(): React.JSX.Element {
   const t = useT()
   const settings = useSessionStore((s) => s.settings)
   const updateSettings = useSessionStore((s) => s.updateSettings)
+  const showToast = useSessionStore((s) => s.showToast)
   const systemAccent = useSessionStore((s) => s.systemAccentColor)
 
   const [fonts, setFonts] = useState<string[]>([])
@@ -298,6 +302,102 @@ export function AppearanceSettings(): React.JSX.Element {
           <div className="form-hint">{t('appearance.windowVibrancyHint')}</div>
         </>
       )}
+
+      <div className="form-row form-row-patterns">
+        <label>{t('appearance.surfacePattern')}</label>
+        <div className="control">
+          <div
+            className="pattern-swatches"
+            role="radiogroup"
+            aria-label={t('appearance.surfacePattern')}
+          >
+            {SURFACE_PATTERN_PRESETS.filter((preset) => preset.id !== 'custom').map((preset) => {
+              const active = (settings.surfacePattern ?? 'none') === preset.id
+              const name = t(`appearance.surfacePattern.${preset.id}`)
+              return (
+                <button
+                  key={preset.id}
+                  type="button"
+                  role="radio"
+                  aria-checked={active}
+                  className={`pattern-swatch${active ? ' is-active' : ''}`}
+                  data-pattern={preset.id}
+                  title={name}
+                  aria-label={name}
+                  style={
+                    preset.url
+                      ? {
+                          ['--surface-pattern-url' as string]: `url("${preset.url}")`,
+                          ['--surface-pattern-size' as string]: swatchPatternSize(preset.size)
+                        }
+                      : undefined
+                  }
+                  onClick={() =>
+                    void updateSettings({ surfacePattern: preset.id as SurfacePattern })
+                  }
+                >
+                  <span className="pattern-swatch-name">{name}</span>
+                </button>
+              )
+            })}
+            <button
+              type="button"
+              role="radio"
+              aria-checked={(settings.surfacePattern ?? 'none') === 'custom'}
+              className={`pattern-swatch is-custom${
+                (settings.surfacePattern ?? 'none') === 'custom' ? ' is-active' : ''
+              }${settings.customSurfacePatternUrl ? '' : ' is-empty'}`}
+              data-pattern="custom"
+              title={
+                settings.customSurfacePatternUrl
+                  ? t('appearance.surfacePattern.custom')
+                  : t('appearance.surfacePattern.customEmpty')
+              }
+              aria-label={
+                settings.customSurfacePatternUrl
+                  ? t('appearance.surfacePattern.custom')
+                  : t('appearance.surfacePattern.customEmpty')
+              }
+              style={
+                settings.customSurfacePatternUrl
+                  ? {
+                      ['--surface-pattern-url' as string]: `url("${settings.customSurfacePatternUrl}")`,
+                      ['--surface-pattern-size' as string]: swatchPatternSize(
+                        settings.customSurfacePatternSize || '40px 40px'
+                      )
+                    }
+                  : undefined
+              }
+              onClick={() => {
+                void (async () => {
+                  const has = !!settings.customSurfacePatternUrl
+                  if (has && settings.surfacePattern !== 'custom') {
+                    void updateSettings({ surfacePattern: 'custom' })
+                    return
+                  }
+                  const picked = await window.vav.settings.pickSurfacePatternImage()
+                  if (!picked) return
+                  if (!picked.ok) {
+                    showToast({
+                      kind: 'error',
+                      title: t(
+                        picked.reason === 'no-alpha'
+                          ? 'appearance.surfacePattern.needAlpha'
+                          : 'appearance.surfacePattern.invalid'
+                      )
+                    })
+                  }
+                })()
+              }}
+            >
+              <span className="pattern-swatch-name">{t('appearance.surfacePattern.custom')}</span>
+            </button>
+          </div>
+        </div>
+      </div>
+      <div className="form-hint">
+        {t('appearance.surfacePatternHint')} {t('appearance.surfacePattern.customHint')}
+      </div>
     </div>
   )
 }

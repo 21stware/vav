@@ -263,13 +263,6 @@ function attachViewport(viewport: HTMLElement): void {
     paint()
   }
 
-  const onDblClick = (e: MouseEvent): void => {
-    if ((e.target as HTMLElement | null)?.closest?.('.md-diagram-zoom-reset')) return
-    if (isIdentityView(view)) return
-    e.preventDefault()
-    reset()
-  }
-
   const onResetClick = (e: MouseEvent): void => {
     e.preventDefault()
     e.stopPropagation()
@@ -296,7 +289,6 @@ function attachViewport(viewport: HTMLElement): void {
   viewport.addEventListener('pointermove', onPointerMove)
   viewport.addEventListener('pointerup', endDrag)
   viewport.addEventListener('pointercancel', endDrag)
-  viewport.addEventListener('dblclick', onDblClick)
   btn.addEventListener('click', onResetClick)
   btn.addEventListener('mousedown', onResetDown)
   window.addEventListener('keydown', onModKey)
@@ -312,7 +304,6 @@ function attachViewport(viewport: HTMLElement): void {
       viewport.removeEventListener('pointermove', onPointerMove)
       viewport.removeEventListener('pointerup', endDrag)
       viewport.removeEventListener('pointercancel', endDrag)
-      viewport.removeEventListener('dblclick', onDblClick)
       btn.removeEventListener('click', onResetClick)
       btn.removeEventListener('mousedown', onResetDown)
       window.removeEventListener('keydown', onModKey)

@@ -2,7 +2,7 @@ import { readFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { net } from 'electron'
-import { emptyAccount, parseCodexIdToken, type HostAccountInfo } from '@shared/cliAccountParse'
+import { parseCodexAuthFile, type HostAccountInfo } from '@shared/cliAccountParse'
 import { windowsFromCodexBackendPayload } from '@shared/quotaWindows'
 import type { QuotaWindow } from '@shared/types'
 
@@ -37,37 +37,33 @@ async function readCodexAuthHeaders(): Promise<Record<string, string> | null> {
   }
 }
 
+function codexEnvKeys(): Array<string | undefined> {
+  return [process.env.OPENAI_API_KEY, process.env.CODEX_API_KEY]
+}
+
 /** ChatGPT account id from Codex auth.json, when present. */
 export async function readCodexAuthIdentity(): Promise<string | null> {
   try {
     const raw = await readFile(join(codexHome(), 'auth.json'), 'utf8')
     const parsed = JSON.parse(raw) as { tokens?: { account_id?: unknown } }
     const accountId = parsed.tokens?.account_id
-    return typeof accountId === 'string' && accountId.trim() ? accountId.trim() : null
-  } catch {
-    return null
-  }
-}
-
-/** Email + plan from the ChatGPT id_token — not the account UUID. */
-export async function readCodexAccountInfo(): Promise<HostAccountInfo> {
-  try {
-    const raw = await readFile(join(codexHome(), 'auth.json'), 'utf8')
-    const parsed = JSON.parse(raw) as {
-      tokens?: { id_token?: unknown; access_token?: unknown }
-    }
-    const idToken = parsed.tokens?.id_token
-    if (typeof idToken === 'string' && idToken.trim()) {
-      return parseCodexIdToken(idToken.trim())
-    }
-    const access = parsed.tokens?.access_token
-    if (typeof access === 'string' && access.trim()) {
-      return { signedIn: true, accountId: null, plan: null }
-    }
+    if (typeof accountId === 'string' && accountId.trim()) return accountId.trim()
   } catch {
     // missing / malformed
   }
-  return emptyAccount()
+  const info = await readCodexAccountInfo()
+  return info.authKind === 'api-key' ? 'apikey' : null
+}
+
+/** ChatGPT OAuth, API key in auth.json / env, or expired tokens. */
+export async function readCodexAccountInfo(): Promise<HostAccountInfo> {
+  try {
+    const raw = await readFile(join(codexHome(), 'auth.json'), 'utf8')
+    return parseCodexAuthFile(JSON.parse(raw), codexEnvKeys())
+  } catch {
+    // missing / malformed
+  }
+  return parseCodexAuthFile(null, codexEnvKeys())
 }
 
 export async function fetchCodexAccountQuota(): Promise<QuotaWindow[]> {

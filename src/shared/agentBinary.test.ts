@@ -71,4 +71,22 @@ describe('newlyInstalledCatalogueAgents', () => {
     const installed = Object.fromEntries(ids.map((id) => [id, `/bin/${id}`]))
     assert.deepEqual(newlyInstalledCatalogueAgents(ids, installed, catalogue), [])
   })
+
+  it('does not re-attach catalogue agents the user removed', () => {
+    const added = newlyInstalledCatalogueAgents(
+      ['claude'],
+      {
+        claude: '/usr/bin/claude',
+        grok: '/usr/bin/grok',
+        opencode: '/usr/local/bin/opencode',
+        cursor: '/usr/bin/cursor'
+      },
+      catalogue,
+      ['grok', 'cursor']
+    )
+    assert.deepEqual(
+      added.map((a) => a.id),
+      ['opencode']
+    )
+  })
 })

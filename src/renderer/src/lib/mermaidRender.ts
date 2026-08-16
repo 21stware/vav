@@ -1,7 +1,7 @@
 /**
  * Lazy mermaid rendering for markdown fences.
- * Keeps mermaid out of the main chunk until a diagram is actually present.
- * Successful SVGs are cached by source+theme so progressive updates reuse frames.
+ * Prefers beautiful-mermaid (flowchart / state / sequence / class / ER / XY).
+ * Falls back to mermaid.js for types it does not cover (gantt, pie, timeline, …).
  */
 
 import {
@@ -11,10 +11,21 @@ import {
   type DiagramTheme
 } from './diagramCache'
 import { normalizeDiagramSvgSize } from './diagramSvgPick'
+import { stripMermaidPreamble } from './mermaidSource'
 
+export { stripMermaidPreamble }
+
+export type MermaidEngine = 'beautiful' | 'mermaid'
+
+let beautifulReady: Promise<typeof import('beautiful-mermaid')> | null = null
 let mermaidReady: Promise<typeof import('mermaid').default> | null = null
 let diagramSeq = 0
 let lastTheme: DiagramTheme | null = null
+
+function loadBeautiful(): Promise<typeof import('beautiful-mermaid')> {
+  if (!beautifulReady) beautifulReady = import('beautiful-mermaid')
+  return beautifulReady
+}
 
 /** Theme variables tuned for our card surfaces (timeline needs explicit scales). */
 function mermaidInitConfig(theme: DiagramTheme): Parameters<
@@ -96,6 +107,91 @@ function decodeB64(b64: string): string {
   }
 }
 
+function cssToken(name: string, fallback: string): string {
+  if (typeof document === 'undefined') return fallback
+  return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || fallback
+}
+
+function beautifulOptions(theme: DiagramTheme): {
+  bg: string
+  fg: string
+  muted: string
+  surface: string
+  border: string
+  accent: string
+  transparent: true
+  font: string
+  padding: number
+} {
+  const dark = theme === 'dark'
+  return {
+    bg: cssToken('--bg-content', dark ? '#1b1b1d' : '#fcfcfc'),
+    fg: cssToken('--text', dark ? '#efeff1' : '#141416'),
+    muted: cssToken('--text-secondary', dark ? '#a2a2a9' : '#5c5c66'),
+    surface: cssToken('--bg-raised', dark ? '#242427' : '#ffffff'),
+    border: cssToken('--border-strong', dark ? 'rgba(255, 255, 255, 0.14)' : 'rgba(20, 20, 28, 0.16)'),
+    accent: cssToken('--accent', dark ? '#c8c8d0' : '#3a3a42'),
+    transparent: true,
+    // Single family name: beautiful-mermaid always @import's Google Fonts for
+    // this string. We strip that import after render and keep the local stack.
+    font: '-apple-system',
+    padding: 24
+  }
+}
+
+function stripGoogleFontImports(svg: string): string {
+  return svg.replace(/@import url\('https:\/\/fonts\.googleapis\.com[^']*'\);\s*/gi, '')
+}
+
+function looksLikeSvg(markup: string): boolean {
+  return /<svg[\s>]/i.test(markup)
+}
+
+/**
+ * Render mermaid source to SVG markup.
+ * beautiful-mermaid first; mermaid.js if the type or syntax is unsupported.
+ */
+export async function renderMermaidSvgMarkup(
+  source: string,
+  theme: DiagramTheme = resolvedDiagramTheme()
+): Promise<{ svg: string; engine: MermaidEngine }> {
+  const trimmed = source.trim()
+  if (!trimmed) throw new Error('Empty mermaid diagram')
+
+  try {
+    const { renderMermaidSVG } = await loadBeautiful()
+    const svg = stripGoogleFontImports(
+      renderMermaidSVG(stripMermaidPreamble(trimmed), beautifulOptions(theme))
+    )
+    if (looksLikeSvg(svg)) return { svg, engine: 'beautiful' }
+  } catch {
+    // Unsupported type or parser gap — mermaid.js still covers gantt/pie/timeline/…
+  }
+
+  const mermaid = await loadMermaid()
+  if (theme !== lastTheme) {
+    lastTheme = theme
+    mermaid.initialize(mermaidInitConfig(theme))
+  }
+  const id = `vav-mmd-${++diagramSeq}`
+  const { svg } = await mermaid.render(id, trimmed)
+  return { svg, engine: 'mermaid' }
+}
+
+export function finishMermaidHost(
+  host: HTMLElement,
+  theme: DiagramTheme,
+  engine: MermaidEngine
+): void {
+  if (engine === 'mermaid') {
+    adaptMermaidSvgForTheme(host, theme)
+    return
+  }
+  const svg = host.querySelector('svg')
+  if (svg) normalizeDiagramSvgSize(svg as SVGSVGElement)
+  host.dataset.themeRendered = theme
+}
+
 /**
  * Timeline (and some other diagrams) hardcode black strokes / bare titles with
  * no fill. Patch after render so dark chrome stays readable.
@@ -164,24 +260,6 @@ export async function renderMermaidBlocks(
   })
   if (list.length === 0) return
 
-  let mermaid: typeof import('mermaid').default
-  try {
-    mermaid = await loadMermaid()
-  } catch (err) {
-    if (!hard) return
-    for (const el of list) {
-      el.dataset.rendered = 'error'
-      el.classList.add('md-mermaid-error')
-      el.textContent = `Mermaid failed to load: ${(err as Error).message}`
-    }
-    return
-  }
-
-  if (theme !== lastTheme) {
-    lastTheme = theme
-    mermaid.initialize(mermaidInitConfig(theme))
-  }
-
   for (const el of list) {
     if (el.dataset.rendered === 'ok' && el.dataset.themeRendered === theme) continue
 
@@ -194,13 +272,15 @@ export async function renderMermaidBlocks(
     const kind = el.dataset.kind || 'mermaid'
 
     if (b64) {
-      const hit = getCachedDiagramSvg(kind, b64, theme) || getCachedDiagramSvg('mermaid', b64, theme)
+      const cacheKind = `bm:${kind}`
+      const hit = getCachedDiagramSvg(cacheKind, b64, theme)
       if (hit) {
         el.innerHTML = hit
         el.dataset.rendered = 'ok'
         el.classList.add('md-mermaid-ready', 'md-diagram-ready', 'md-diagram-live')
         el.classList.remove('md-mermaid-error', 'md-diagram-error', 'md-diagram-pending-host')
-        adaptMermaidSvgForTheme(el, theme)
+        const engine = (el.querySelector('svg')?.dataset.engine as MermaidEngine | undefined) || 'beautiful'
+        finishMermaidHost(el, theme, engine)
         continue
       }
       source = decodeB64(b64)
@@ -213,22 +293,26 @@ export async function renderMermaidBlocks(
       continue
     }
 
-    const id = `vav-mmd-${++diagramSeq}`
     try {
-      const { svg } = await mermaid.render(id, source.trim())
+      const { svg, engine } = await renderMermaidSvgMarkup(source, theme)
       el.innerHTML = svg
-      adaptMermaidSvgForTheme(el, theme)
+      const painted = el.querySelector('svg')
+      if (painted) painted.dataset.engine = engine
+      finishMermaidHost(el, theme, engine)
       const finalHtml = el.innerHTML
-      if (b64) setCachedDiagramSvg(kind, b64, finalHtml, theme)
+      if (b64) setCachedDiagramSvg(`bm:${kind}`, b64, finalHtml, theme)
       el.dataset.rendered = 'ok'
       el.classList.add('md-mermaid-ready', 'md-diagram-ready', 'md-diagram-live')
       el.classList.remove('md-mermaid-error', 'md-diagram-error', 'md-diagram-pending-host')
-    } catch {
+    } catch (err) {
       // Leave node as-is (pending shell or previous visual). Caller decides.
       if (hard) {
         el.dataset.rendered = 'error'
         el.classList.add('md-mermaid-error', 'md-diagram-error')
-        el.textContent = 'Invalid mermaid diagram'
+        el.textContent =
+          err instanceof Error && /failed to load/i.test(err.message)
+            ? `Mermaid failed to load: ${err.message}`
+            : 'Invalid mermaid diagram'
       } else {
         // Mark not-ok without wiping — progressive layer keeps last SVG.
         delete el.dataset.rendered

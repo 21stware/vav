@@ -126,7 +126,7 @@ export default function App(): React.JSX.Element {
           next.setSidebarListMode('main')
         }
         if (event.attachments?.length) {
-          next.setAttachments(event.conversationId, event.attachments)
+          next.addAttachments(event.conversationId, event.attachments)
         }
         // Tray / notify: enter CLI Agents + focus pane, or VAV composer.
         // selectConversation already hydrated PTYs; apply flips surface/mode.

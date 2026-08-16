@@ -3,6 +3,7 @@ import { spawn } from 'node:child_process'
 import { homedir } from 'node:os'
 import { loginPath } from '../../terminal/loginPath'
 import { extractRpcErrorText } from '@shared/cliErrors'
+import { childSessionIdFrom, isTaskToolName } from '@shared/subtask'
 import { asArray, asRecord, asString, dig, num } from './process'
 import type { DriverControl, DriverEventSink, DriverStartOptions } from './types'
 
@@ -63,17 +64,24 @@ export async function startOpenCodeDriver(
   }
   if (!sessionId) throw new Error('OpenCode session create failed')
 
-  // Agent mode: build
-  try {
-    await jsonFetch(`${base}/session/${sessionId}/agent`, {
-      method: 'POST',
-      body: JSON.stringify({ agent: 'build' })
-    })
-  } catch {
-    /* older servers may not have this route */
-  }
+  // Leave plan vs build as the session default. Pinning `build` hid OpenCode plan mode.
 
   emit({ type: 'connected', cursor: { provider: 'opencode', sessionId } })
+
+  const ctx: OpenCodeHandlerCtx = {
+    turnActive: false,
+    setTurnActive(v) {
+      turnActive = v
+      ctx.turnActive = v
+    },
+    autoApprove,
+    base,
+    sessionId,
+    childToParent: new Map(),
+    pendingTaskIds: [],
+    unmatchedChildren: [],
+    permissionSessions: new Map()
+  }
 
   // SSE
   const sseAbort = new AbortController()
@@ -98,15 +106,7 @@ export async function startOpenCodeDriver(
             .join('')
           if (!dataLine) continue
           try {
-            handleOpenCodeEvent(JSON.parse(dataLine), sessionId!, emit, {
-              turnActive,
-              setTurnActive: (v) => {
-                turnActive = v
-              },
-              autoApprove,
-              base,
-              sessionId: sessionId!
-            })
+            handleOpenCodeEvent(JSON.parse(dataLine), sessionId!, emit, ctx)
           } catch {
             /* ignore */
           }
@@ -121,14 +121,14 @@ export async function startOpenCodeDriver(
     if (disposed) return
     if (turnActive) {
       emit({ type: 'turn-finished', success: false, error: `opencode exited (${code})` })
-      turnActive = false
+      ctx.setTurnActive(false)
     }
     emit({ type: 'process-exited', code })
   })
 
   return {
     prompt(text: string): void {
-      turnActive = true
+      ctx.setTurnActive(true)
       emit({ type: 'turn-started' })
       const body: Record<string, unknown> = {
         parts: [{ type: 'text', text }]
@@ -151,7 +151,7 @@ export async function startOpenCodeDriver(
       }).catch((err) => {
         const message = extractRpcErrorText(err)
         emit({ type: 'error', message })
-        turnActive = false
+        ctx.setTurnActive(false)
         emit({ type: 'turn-finished', success: false, error: message })
       })
     },
@@ -166,10 +166,26 @@ export async function startOpenCodeDriver(
     },
     cancel(): void {
       void jsonFetch(`${base}/session/${sessionId}/abort`, { method: 'POST' })
+      for (const childSid of ctx.childToParent.keys()) {
+        void jsonFetch(`${base}/session/${childSid}/abort`, { method: 'POST' })
+      }
     },
-    respond(requestId: string, optionId: 'allow' | 'deny'): void {
+    respond(requestId: string, optionId: 'allow' | 'deny', message?: string): void {
+      const target = ctx.permissionSessions.get(requestId) || sessionId
+      ctx.permissionSessions.delete(requestId)
+      if (message && (optionId === 'allow' || message.trim())) {
+        void jsonFetch(`${base}/session/${target}/question/${requestId}/reply`, {
+          method: 'POST',
+          body: JSON.stringify({ answers: message, reply: message })
+        }).catch(() => undefined)
+        void jsonFetch(`${base}/session/${target}/prompt_async`, {
+          method: 'POST',
+          body: JSON.stringify({ parts: [{ type: 'text', text: message }] })
+        }).catch(() => undefined)
+        return
+      }
       const reply = optionId === 'allow' ? 'once' : 'reject'
-      void jsonFetch(`${base}/session/${sessionId}/permission/${requestId}/reply`, {
+      void jsonFetch(`${base}/session/${target}/permission/${requestId}/reply`, {
         method: 'POST',
         body: JSON.stringify({ reply })
       })
@@ -232,58 +248,77 @@ async function jsonFetch(url: string, init?: RequestInit): Promise<unknown> {
   }
 }
 
+interface OpenCodeHandlerCtx {
+  turnActive: boolean
+  setTurnActive(v: boolean): void
+  autoApprove: boolean
+  base: string
+  sessionId: string
+  /** Child session id → parent task tool id. */
+  childToParent: Map<string, string>
+  /** Task tool ids waiting for a child session. */
+  pendingTaskIds: string[]
+  /** Child sessions seen before their task tool part. */
+  unmatchedChildren: string[]
+  permissionSessions: Map<string, string>
+}
+
 function handleOpenCodeEvent(
   raw: unknown,
   sessionId: string,
   emit: DriverEventSink,
-  ctx: {
-    turnActive: boolean
-    setTurnActive(v: boolean): void
-    autoApprove: boolean
-    base: string
-    sessionId: string
-  }
+  ctx: OpenCodeHandlerCtx
 ): void {
   const ev = asRecord(raw)
   if (!ev) return
   const type = asString(ev.type) || asString(ev.event) || ''
   const props = asRecord(ev.properties) ?? asRecord(ev.data) ?? ev
-  const sid = asString(props.sessionID) || asString(props.sessionId)
-  if (sid && sid !== sessionId) return
+  const part = asRecord(props.part)
+  const sid = eventSessionId(props, part)
+
+  if (type === 'session.created' || type === 'session.updated') {
+    const info = asRecord(props.info) ?? props
+    const id = asString(info.id)
+    const parent = asString(info.parentID) || asString(info.parentId)
+    if (id && parent === sessionId) bindChildSession(ctx, id)
+    return
+  }
+
+  const parentId = parentIdForSession(ctx, sid, sessionId)
+  const foreign = !!sid && sid !== sessionId && !parentId
+  if (foreign && !type.startsWith('permission')) return
 
   if (type === 'message.part.delta') {
     const field = asString(props.field) || asString(props.key)
     const delta = asString(props.delta) || asString(props.text) || ''
     if (!delta) return
-    if (field === 'reasoning' || field === 'thinking') emit({ type: 'reasoning-delta', text: delta })
-    else emit({ type: 'text-delta', text: delta })
-    return
-  }
-
-  if (type === 'message.part.updated') {
-    const part = asRecord(props.part) ?? props
-    const partType = asString(part.type)
-    if (partType === 'tool') {
-      const id = asString(part.id) || asString(part.callID) || `tool-${Date.now()}`
-      const name = asString(part.tool) || asString(dig(part, 'state.tool')) || 'tool'
-      const statusRaw = asString(dig(part, 'state.status')) || ''
-      let status: 'started' | 'completed' | 'error' | 'updated' = 'updated'
-      if (statusRaw === 'pending' || statusRaw === 'running') status = 'started'
-      else if (statusRaw === 'completed' || statusRaw === 'success') status = 'completed'
-      else if (statusRaw === 'error' || statusRaw === 'failed') status = 'error'
-      emit({
-        type: 'tool',
-        id,
-        name,
-        input: dig(part, 'state.input') ?? {},
-        status,
-        output: asString(dig(part, 'state.output')) ?? undefined
-      })
+    if (field === 'reasoning' || field === 'thinking') {
+      emit({ type: 'reasoning-delta', text: delta, parentId })
+    } else {
+      emit({ type: 'text-delta', text: delta, parentId })
     }
     return
   }
 
+  if (type === 'message.part.updated') {
+    emitOpenCodePart(part ?? props, props, emit, ctx, parentId)
+    return
+  }
+
+  if (type === 'session.next.text.delta') {
+    const delta = asString(props.delta) || asString(props.text) || ''
+    if (delta) emit({ type: 'text-delta', text: delta, parentId })
+    return
+  }
+
+  if (type === 'session.next.reasoning.delta') {
+    const delta = asString(props.delta) || asString(props.text) || ''
+    if (delta) emit({ type: 'reasoning-delta', text: delta, parentId })
+    return
+  }
+
   if (type === 'session.idle') {
+    if (sid && sid !== sessionId) return
     ctx.setTurnActive(false)
     // Pull real tokens/cost from the session API before finishing the turn.
     void emitOpenCodeUsage(ctx.base, ctx.sessionId, emit).finally(() => {
@@ -293,6 +328,7 @@ function handleOpenCodeEvent(
   }
 
   if (type === 'session.error') {
+    if (sid && sid !== sessionId) return
     ctx.setTurnActive(false)
     emit({
       type: 'turn-finished',
@@ -302,11 +338,42 @@ function handleOpenCodeEvent(
     return
   }
 
+  if (type === 'question.asked' || type.endsWith('question.asked')) {
+    const questions = props.questions ?? dig(props, 'tool.questions') ?? props
+    const callId =
+      asString(dig(props, 'tool.callID')) ||
+      asString(dig(props, 'tool.callId')) ||
+      asString(props.callID) ||
+      asString(props.id) ||
+      `question-${Date.now()}`
+    ctx.permissionSessions.set(callId, sid || ctx.sessionId)
+    emit({
+      type: 'tool',
+      id: callId,
+      name: 'question',
+      title: asString(props.header) || asString(props.title) || undefined,
+      input: { questions },
+      status: 'started'
+    })
+    emit({
+      type: 'elicitation',
+      requestId: callId,
+      toolCallId: callId,
+      kind: 'ask',
+      title: asString(props.title) || undefined,
+      input: { questions }
+    })
+    return
+  }
+
   if (type.startsWith('permission')) {
     const requestId = asString(props.id) || asString(props.requestID) || ''
     if (!requestId) return
+    const replySession = sid || ctx.sessionId
+    ctx.permissionSessions.set(requestId, replySession)
     if (ctx.autoApprove) {
-      void jsonFetch(`${ctx.base}/session/${ctx.sessionId}/permission/${requestId}/reply`, {
+      ctx.permissionSessions.delete(requestId)
+      void jsonFetch(`${ctx.base}/session/${replySession}/permission/${requestId}/reply`, {
         method: 'POST',
         body: JSON.stringify({ reply: 'always' })
       })
@@ -322,6 +389,136 @@ function handleOpenCodeEvent(
   }
 
   void asArray
+}
+
+function eventSessionId(
+  props: Record<string, unknown>,
+  part: Record<string, unknown> | null
+): string | null {
+  return (
+    asString(props.sessionID) ||
+    asString(props.sessionId) ||
+    asString(part?.sessionID) ||
+    asString(part?.sessionId) ||
+    asString(dig(props, 'info.sessionID')) ||
+    asString(dig(props, 'info.id')) ||
+    null
+  )
+}
+
+function bindChildSession(ctx: OpenCodeHandlerCtx, childSid: string, taskId?: string): void {
+  if (taskId) {
+    ctx.childToParent.set(childSid, taskId)
+    const pending = ctx.pendingTaskIds.indexOf(taskId)
+    if (pending >= 0) ctx.pendingTaskIds.splice(pending, 1)
+    const unmatched = ctx.unmatchedChildren.indexOf(childSid)
+    if (unmatched >= 0) ctx.unmatchedChildren.splice(unmatched, 1)
+    return
+  }
+  const waiting = ctx.pendingTaskIds[0]
+  if (waiting) {
+    ctx.childToParent.set(childSid, waiting)
+    ctx.pendingTaskIds.shift()
+    return
+  }
+  if (!ctx.unmatchedChildren.includes(childSid)) ctx.unmatchedChildren.push(childSid)
+}
+
+function rememberTask(ctx: OpenCodeHandlerCtx, taskId: string, childSid: string | null): void {
+  if (childSid) {
+    bindChildSession(ctx, childSid, taskId)
+    return
+  }
+  const orphan = ctx.unmatchedChildren.shift()
+  if (orphan) {
+    ctx.childToParent.set(orphan, taskId)
+    return
+  }
+  if (!ctx.pendingTaskIds.includes(taskId)) ctx.pendingTaskIds.push(taskId)
+}
+
+function parentIdForSession(
+  ctx: OpenCodeHandlerCtx,
+  sid: string | null,
+  rootSessionId: string
+): string | undefined {
+  if (!sid || sid === rootSessionId) return undefined
+  const mapped = ctx.childToParent.get(sid)
+  if (mapped) return mapped
+  const pending = ctx.pendingTaskIds[0]
+  if (pending) {
+    ctx.childToParent.set(sid, pending)
+    return pending
+  }
+  const synthetic = `task-${sid}`
+  ctx.childToParent.set(sid, synthetic)
+  return synthetic
+}
+
+function emitOpenCodePart(
+  part: Record<string, unknown>,
+  props: Record<string, unknown>,
+  emit: DriverEventSink,
+  ctx: OpenCodeHandlerCtx,
+  parentId?: string
+): void {
+  const partType = asString(part.type)
+
+  if (partType === 'subtask') {
+    const id = asString(part.id) || `subtask-${Date.now()}`
+    const input = {
+      description: asString(part.description) || '',
+      prompt: asString(part.prompt) || '',
+      agent: asString(part.agent) || '',
+      command: asString(part.command) || undefined
+    }
+    rememberTask(ctx, id, childSessionIdFrom(part, part.metadata))
+    emit({
+      type: 'tool',
+      id,
+      name: 'subtask',
+      title: input.description || input.agent || undefined,
+      input,
+      status: 'started',
+      parentId
+    })
+    return
+  }
+
+  if (partType === 'reasoning' || partType === 'thinking') {
+    const delta = asString(props.delta)
+    if (delta) emit({ type: 'reasoning-delta', text: delta, parentId })
+    return
+  }
+
+  if (partType === 'text') {
+    const delta = asString(props.delta)
+    if (delta) emit({ type: 'text-delta', text: delta, parentId })
+    return
+  }
+
+  if (partType !== 'tool') return
+
+  const id = asString(part.id) || asString(part.callID) || `tool-${Date.now()}`
+  const name = asString(part.tool) || asString(dig(part, 'state.tool')) || 'tool'
+  const statusRaw = asString(dig(part, 'state.status')) || ''
+  let status: 'started' | 'completed' | 'error' | 'updated' = 'updated'
+  if (statusRaw === 'pending' || statusRaw === 'running') status = 'started'
+  else if (statusRaw === 'completed' || statusRaw === 'success') status = 'completed'
+  else if (statusRaw === 'error' || statusRaw === 'failed') status = 'error'
+  const input = dig(part, 'state.input') ?? {}
+  const metadata = dig(part, 'state.metadata') ?? part.metadata
+  if (isTaskToolName(name)) rememberTask(ctx, id, childSessionIdFrom(input, metadata))
+  emit({
+    type: 'tool',
+    id,
+    name,
+    title: asString(dig(part, 'state.title')) || undefined,
+    input,
+    status,
+    output: asString(dig(part, 'state.output')) ?? undefined,
+    parentId
+  })
 }
 
 async function emitOpenCodeUsage(

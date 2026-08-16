@@ -12,6 +12,7 @@ const App = lazy(() => import('./App'))
 const SettingsWindow = lazy(() => import('./SettingsWindow'))
 const SessionWindow = lazy(() => import('./SessionWindow'))
 const FilePreviewWindow = lazy(() => import('./FilePreviewWindow'))
+const AppClipWindow = lazy(() => import('./AppClipWindow'))
 const TokenUsageWindow = lazy(() => import('./TokenUsageWindow'))
 const ProviderAccountWindow = lazy(() => import('./ProviderAccountWindow'))
 
@@ -37,6 +38,7 @@ function Root(): React.JSX.Element {
   if (view === 'session') return <SessionWindow conversationId={conversationId || ''} />
   // Warm shells load with view=file-preview&warm=1 and no path yet.
   if (view === 'file-preview') return <FilePreviewWindow path={filePath || ''} />
+  if (view === 'app-window') return <AppClipWindow path={filePath || ''} />
   if (view === 'token-usage' && conversationId) {
     return <TokenUsageWindow conversationId={conversationId} />
   }

@@ -1,9 +1,19 @@
 import type { ToolName } from '@shared/types'
+import {
+  isAskToolName,
+  isChecklistToolName,
+  isEnterPlanModeName,
+  isPlanDocToolName
+} from '@shared/planDoc'
+import { isTaskToolName } from '@shared/subtask'
 import { asRecord, asString } from './process'
 
 /** Map a CLI tool name onto VAV's ToolName (for card chrome / grouping). */
 export function mapToolName(name: string): ToolName {
   const n = name.toLowerCase().replace(/[^a-z0-9_]/g, '')
+  if (isPlanDocToolName(name)) return 'plan_doc'
+  if (isEnterPlanModeName(name)) return 'plan'
+  if (isTaskToolName(name)) return 'task'
   if (
     n === 'bash' ||
     n === 'shell' ||
@@ -52,14 +62,24 @@ export function mapToolName(name: string): ToolName {
   }
   if (n.includes('web_search') || n === 'websearch') return 'web_search'
   if (n.includes('web_fetch') || n === 'webfetch' || n === 'fetch') return 'web_fetch'
-  if (n === 'todowrite' || n === 'todo_write' || n === 'plan' || n === 'update_plan') return 'plan'
-  if (n.includes('ask') || n === 'askuserquestion') return 'ask_user_question'
+  if (isChecklistToolName(name)) return 'plan'
+  if (isAskToolName(name)) return 'ask_user_question'
+  if (n === 'skill' || n === 'loadskill' || n === 'load_skill') return 'load_skill'
   if (n === 'switch_mode' || n === 'switchmode') return 'switch_mode' // ACP ToolKind
   return 'external'
 }
 
 export function summarizeCliTool(name: string, input: unknown): string {
   const args = asRecord(input) ?? {}
+  const description = asString(args.description) || asString(args.title)
+  const agent =
+    asString(args.agent) || asString(args.subagent_type) || asString(args.subagent)
+  if (isTaskToolName(name) || description) {
+    if (description && agent) return truncate(`${agent} · ${description}`, 80)
+    if (description) return truncate(description, 80)
+    if (isTaskToolName(name) && agent) return truncate(agent, 80)
+  }
+
   const command =
     asString(args.command) ||
     asString(args.cmd) ||
@@ -76,14 +96,14 @@ export function summarizeCliTool(name: string, input: unknown): string {
     asString(args.targetFile)
   if (path) return truncate(path, 80)
 
-  const query = asString(args.query) || asString(args.pattern) || asString(args.prompt)
+  const query =
+    asString(args.query) ||
+    asString(args.pattern) ||
+    (isTaskToolName(name) ? null : asString(args.prompt))
   if (query) return truncate(query, 80)
 
   const url = asString(args.url)
   if (url) return truncate(url, 80)
-
-  const description = asString(args.description) || asString(args.title)
-  if (description) return truncate(description, 80)
 
   return name
 }

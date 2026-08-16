@@ -2,6 +2,8 @@ import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import type { MessageBlock } from '@shared/types'
 import {
+  isHollowToolCard,
+  isVisibleAssistantBlock,
   previewProcessText,
   processThoughtMs,
   splitAssistantProcess,
@@ -118,6 +120,53 @@ describe('splitAssistantProcess', () => {
     const split = splitAssistantProcess(blocks)
     assert.equal(split.process.length, 0)
     assert.equal(split.conclusion.length, 2)
+  })
+
+  it('ignores a hollow subtask stub so narration is not folded away', () => {
+    const hollow: MessageBlock = {
+      kind: 'toolCall',
+      id: 'task-1',
+      tool: 'task',
+      summary: 'subtask',
+      input: '{}',
+      output: '',
+      status: 'skipped'
+    }
+    const blocks = [
+      text('The subagent task got interrupted. Let me re-launch the exploration task.'),
+      hollow,
+      text('Now I have a comprehensive analysis.')
+    ]
+    const split = splitAssistantProcess(blocks)
+    assert.equal(split.process.length, 0)
+    assert.deepEqual(
+      split.conclusion.map((item) => item.block.kind),
+      ['text', 'text']
+    )
+  })
+
+  it('keeps a plan document visible and does not treat it as the checklist plan', () => {
+    const doc: MessageBlock = {
+      kind: 'toolCall',
+      id: 'plan-1',
+      tool: 'plan_doc',
+      summary: 'Refactor tabs',
+      input: JSON.stringify({ name: 'Refactor tabs', plan: '# Steps' }),
+      output: '',
+      status: 'completed'
+    }
+    const checklist: MessageBlock = {
+      kind: 'toolCall',
+      id: 'plan-todos',
+      tool: 'plan',
+      summary: 'Plan',
+      input: '{}',
+      output: '',
+      status: 'completed'
+    }
+    assert.equal(isHollowToolCard(doc), false)
+    assert.equal(isVisibleAssistantBlock(doc), true)
+    assert.equal(isVisibleAssistantBlock(checklist), false)
   })
 })
 

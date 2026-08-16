@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="80" height="80" viewBox="0 0 80 80">
+  <!-- Scattered doodles, not a regiment. Different size, tilt, and seat. -->
+  <g fill="none" stroke="#000" stroke-linecap="round" stroke-linejoin="round">
+    <g transform="translate(20 18) rotate(-24) scale(1.7) translate(-15.2 -12.5)">
+      <path
+        stroke-width="1.15"
+        d="M15.2 6.4l1.1 4.6 4.4.4-3.6 2.8 1.4 4.4-4.3-2.2-3.9 2.6 1.1-4.6-3.5-3 4.5-.3z"
+      />
+    </g>
+    <g transform="translate(58 56) rotate(32) scale(1.15) translate(-15.2 -12.5)">
+      <path
+        stroke-width="1.2"
+        d="M15.2 6.4l1.1 4.6 4.4.4-3.6 2.8 1.4 4.4-4.3-2.2-3.9 2.6 1.1-4.6-3.5-3 4.5-.3z"
+      />
+    </g>
+    <g transform="translate(54 16) rotate(18) scale(0.72) translate(-15.2 -12.5)">
+      <path
+        stroke-width="1.25"
+        d="M15.2 6.4l1.1 4.6 4.4.4-3.6 2.8 1.4 4.4-4.3-2.2-3.9 2.6 1.1-4.6-3.5-3 4.5-.3z"
+      />
+    </g>
+  </g>
+</svg>

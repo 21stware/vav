@@ -7,7 +7,7 @@ import {
   type ReactNode,
   type RefObject
 } from 'react'
-import { ArrowLeft, ArrowRight, Clock, Plus, Search } from 'lucide-react'
+import { Clock, Plus, Search } from 'lucide-react'
 import { buildWorkspaceFocusContext } from '@shared/agentContextInject'
 import { DEFAULT_CLI_AGENTS, enabledCliAgents, type AgentConfig } from '@shared/types'
 import type { FileSessionMeta } from '@shared/ipc'
@@ -19,8 +19,6 @@ import {
   measureCliPaneRects
 } from '../lib/cliPaneNavigate'
 import { focusAgentPane } from '../lib/uiFocus'
-import { requestCliSurface } from '../lib/cliSurfaceSwitch'
-import { isCliSurfaceLocked } from '../lib/cliSurfaceAuthority'
 import { focusCliAgentPickerFirstOption } from './CliAgentPicker'
 import { useSessionStore } from '../state/sessionStore'
 import { CLI_SURFACE_KEY, useWorkspaceStore } from '../state/workspaceStore'
@@ -127,6 +125,8 @@ export function SessionDetail({
   const openSettings = useSessionStore((s) => s.openSettings)
   const activeId = useSessionStore((s) => s.activeId)
   const conversation = useSessionStore((s) => s.conversations.find((c) => c.id === s.activeId))
+  const setArchived = useSessionStore((s) => s.setArchived)
+  const archived = !!conversation?.archived
   const settings = useSessionStore((s) => s.settings)
   const pending = useSessionStore((s) => s.pendingReviewByConversation[s.activeId])
   const openChangeReview = useSessionStore((s) => s.openChangeReview)
@@ -145,7 +145,7 @@ export function SessionDetail({
   const agentKey = conversation?.agentBinaryName ?? null
   const cliMode = useWorkspaceStore((s) => !!s.workspaces[activeId]?.cliMode)
   const swarmEnabled = useSessionStore((s) => s.settings.swarmModeEnabled === true)
-  const isVavMode = !cliMode || !swarmEnabled
+  const isVavMode = archived || !cliMode || !swarmEnabled
   const showAgentSwitcher = true
 
   const agents = enabledCliAgents(settings.cliAgents)
@@ -655,7 +655,7 @@ export function SessionDetail({
         {searchOpen && isVavMode && <SearchStrip />}
         {!previewEdit && <PlanOverlay />}
         <Transcript />
-        <ComposerContext conversationId={activeId} />
+        {!archived && <ComposerContext conversationId={activeId} />}
       </div>
 
       <div
@@ -720,13 +720,26 @@ export function SessionDetail({
           !isVavMode ? ' dock-tools-only' : ''
         }`}
       >
-        <div
-          className={!isVavMode ? 'is-surface-parked' : undefined}
-          aria-hidden={!isVavMode}
-          inert={!isVavMode ? true : undefined}
-        >
-          <Composer conversationId={activeId} />
-        </div>
+        {archived ? (
+          <div className="banner archived-readonly">
+            <span>{t('session.archivedReadonly')}</span>
+            <span className="spacer" />
+            <Button
+              label={t('sidebar.menu.unarchive')}
+              size="sm"
+              variant="secondary"
+              onClick={() => void setArchived(activeId, false)}
+            />
+          </div>
+        ) : (
+          <div
+            className={!isVavMode ? 'is-surface-parked' : undefined}
+            aria-hidden={!isVavMode}
+            inert={!isVavMode ? true : undefined}
+          >
+            <Composer conversationId={activeId} />
+          </div>
+        )}
         <ToolsPanel variant={toolsVariant} />
       </div>
     </main>
@@ -756,42 +769,9 @@ export function AgentModeChrome({
   const t = useT()
   const cliMode = useWorkspaceStore((s) => !!s.workspaces[conversationId]?.cliMode)
   const swarmEnabled = useSessionStore((s) => s.settings.swarmModeEnabled === true)
-  const surfaceLocked = useSessionStore((s) =>
-    isCliSurfaceLocked(conversationId, s.detachedConversationIds, isCompanionSessionShell())
-  )
   const isTerminal = swarmEnabled && cliMode
   const isChat = !isTerminal
   void _agentBinaryName
-
-  const ensureConversation = async (): Promise<string | null> => {
-    let targetId = conversationId
-    if (!targetId) {
-      await useSessionStore.getState().createConversation({ openIn: 'here' })
-      targetId = useSessionStore.getState().activeId
-    }
-    return targetId || null
-  }
-
-  /** Leave Terminal / PTY and return to Composer + Transcript. */
-  const openChatMode = async (): Promise<void> => {
-    if (useSessionStore.getState().search.open) {
-      useSessionStore.getState().closeSearch()
-    }
-    const targetId = await ensureConversation()
-    if (!targetId) return
-    requestCliSurface(targetId, false)
-  }
-
-  /** Raw PTY screen — restores existing Screen if present, else picker pane. */
-  const openTerminalMode = async (): Promise<void> => {
-    if (useSessionStore.getState().settings.swarmModeEnabled !== true) return
-    if (useSessionStore.getState().search.open) {
-      useSessionStore.getState().closeSearch()
-    }
-    const targetId = await ensureConversation()
-    if (!targetId) return
-    requestCliSurface(targetId, true)
-  }
 
   const searchOpen = useSessionStore((s) => s.search.open)
   const openSearch = useSessionStore((s) => s.openSearch)
@@ -818,38 +798,11 @@ export function AgentModeChrome({
           </div>
         ) : null}
 
-        {swarmEnabled ? (
+        {isTerminal ? (
           <div className="agent-mode-swarm-toggle">
-            <button
-              type="button"
-              className="agent-mode-swarm-btn"
-              disabled={surfaceLocked}
-              title={
-                surfaceLocked
-                  ? t('session.detachedTitle')
-                  : isTerminal
-                    ? `${t('agents.chatModeHint')} ${keys('⌘⇧V')}`
-                    : `${t('agents.terminalModeHint')} ${keys('⌘⇧C')}`
-              }
-              onClick={() => void (isTerminal ? openChatMode() : openTerminalMode())}
-            >
-              {isTerminal ? (
-                <ArrowLeft size={13} strokeWidth={2} />
-              ) : (
-                <ArrowRight size={13} strokeWidth={2} />
-              )}
-              <span>{isTerminal ? t('agents.chatMode') : t('agents.terminalMode')}</span>
-            </button>
-            {isTerminal ? (
-              <>
-                <span className="agent-mode-workspace-dot" aria-hidden="true">
-                  ·
-                </span>
-                <span className="agent-mode-workspace-name" title={workdir ?? workspacePath}>
-                  {workspacePath}
-                </span>
-              </>
-            ) : null}
+            <span className="agent-mode-workspace-name" title={workdir ?? workspacePath}>
+              {workspacePath}
+            </span>
           </div>
         ) : null}
 

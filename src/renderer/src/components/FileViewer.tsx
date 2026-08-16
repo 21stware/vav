@@ -18,6 +18,7 @@ import {
   X
 } from 'lucide-react'
 import type { FileAssociationStatus, FileInspectResult, FileSessionMeta } from '@shared/ipc'
+import { isClipPath } from '@shared/clipPath'
 import type { PreviewRef, TurnEvent } from '@shared/types'
 import { formatBytes, relativeTime } from '../lib/format'
 import { highlightCode, languageFromPath } from '../lib/highlightCode'
@@ -154,6 +155,9 @@ function provisionalInspect(path: string): FileInspectResult | null {
 }
 const HtmlNativeView = lazy(() =>
   import('./office/HtmlNativeView').then((m) => ({ default: m.HtmlNativeView }))
+)
+const HtmlClipFrame = lazy(() =>
+  import('./HtmlClipFrame').then((m) => ({ default: m.HtmlClipFrame }))
 )
 const SqliteView = lazy(() => import('./SqliteView').then((m) => ({ default: m.SqliteView })))
 const MindMapView = lazy(() =>
@@ -406,7 +410,12 @@ export function FileViewer({
         prev.size === result.size &&
         prev.mtimeMs === (result.mtimeMs ?? 0)
       // Text body for text/csv/html; office uses structured plainText only for blocks.
-      if (result.kind === 'text' || result.kind === 'csv' || result.kind === 'html') {
+      if (
+        result.kind === 'text' ||
+        result.kind === 'csv' ||
+        result.kind === 'html' ||
+        result.kind === 'html-clip'
+      ) {
         if (result.text != null) {
           const incoming = result.text
           setWorkingContent((prevText) => {
@@ -521,7 +530,12 @@ export function FileViewer({
     void reloadInfo(filePath).then(async (result) => {
       if (cancelled) return
       markViewer(`inspect:${result.kind}`)
-      if (result.kind === 'text' || result.kind === 'csv' || result.kind === 'html') {
+      if (
+        result.kind === 'text' ||
+        result.kind === 'csv' ||
+        result.kind === 'html' ||
+        result.kind === 'html-clip'
+      ) {
         if (result.text != null) {
           setWorkingContent(result.text)
           // Baseline deferred until Edit / Agent open — keep a soft copy for dirty detect.
@@ -730,6 +744,7 @@ export function FileViewer({
     info?.kind === 'xlsx' ||
     info?.kind === 'pptx'
   const isHtmlKind = info?.kind === 'html'
+  const isHtmlClipKind = info?.kind === 'html-clip'
   const isZip = info?.kind === 'zip'
   /**
    * Reading gutters are per-renderer, not a frame-wide inset.
@@ -744,6 +759,7 @@ export function FileViewer({
     isSqlite ||
     isOfficeKind ||
     isHtmlKind ||
+    isHtmlClipKind ||
     isZip ||
     info?.kind === 'image' ||
     info?.kind === 'video' ||
@@ -783,7 +799,8 @@ export function FileViewer({
     isZip ||
     (isBinaryUnsupported && !isLegacyOffice) ||
     isDirectoryKind ||
-    isDrawioFile
+    isDrawioFile ||
+    isHtmlClipKind
   const forcedReadOnly = hardForcedReadOnly || formatLockedReadOnly
   const effectiveReadOnly = readOnly || forcedReadOnly
 
@@ -1062,31 +1079,48 @@ export function FileViewer({
    * (missing IPC after HMR would otherwise leave only the empty state).
    */
   const ensureFileSession = async (): Promise<string | null> => {
+    // Temp conversation clips are preview windows — never bind a File Session.
+    if (isClipPath(filePath)) {
+      if (parentConversationId) {
+        setAgentConversationId(parentConversationId)
+        await selectConversation(parentConversationId)
+        const meta = useSessionStore
+          .getState()
+          .conversations.find((c) => c.id === parentConversationId)
+        setSessionTitle(meta?.title || t('common.session'))
+        await prepareFileWorkspace(parentConversationId, filePath)
+        return parentConversationId
+      }
+      return null
+    }
+
     // 1) FileSessionStore (preferred — multi-session, hidden from sidebar)
     try {
       if (typeof window.vav.fileSessions?.open === 'function') {
         const state = await window.vav.fileSessions.open(filePath)
-        setFileId(state.fileId)
-        setFileSessions(state.sessions)
-        setAgentConversationId(state.activeSessionId)
-        const active = state.sessions.find((s) => s.id === state.activeSessionId)
-        setSessionTitle(active?.title || 'New session')
-        await selectConversation(state.activeSessionId)
-        const meta = useSessionStore
-          .getState()
-          .conversations.find((c) => c.id === state.activeSessionId)
-        if (meta?.title) setSessionTitle(meta.title)
-        try {
-          // Prefer effectiveReadOnly (format lock / forced RO), not the stale local flag.
-          await window.vav.fileSessions.setReadOnly(
-            state.activeSessionId,
-            forcedReadOnly || readOnly
-          )
-        } catch {
-          // optional on older main
+        if (state) {
+          setFileId(state.fileId)
+          setFileSessions(state.sessions)
+          setAgentConversationId(state.activeSessionId)
+          const active = state.sessions.find((s) => s.id === state.activeSessionId)
+          setSessionTitle(active?.title || 'New session')
+          await selectConversation(state.activeSessionId)
+          const meta = useSessionStore
+            .getState()
+            .conversations.find((c) => c.id === state.activeSessionId)
+          if (meta?.title) setSessionTitle(meta.title)
+          try {
+            // Prefer effectiveReadOnly (format lock / forced RO), not the stale local flag.
+            await window.vav.fileSessions.setReadOnly(
+              state.activeSessionId,
+              forcedReadOnly || readOnly
+            )
+          } catch {
+            // optional on older main
+          }
+          await prepareFileWorkspace(state.activeSessionId, filePath)
+          return state.activeSessionId
         }
-        await prepareFileWorkspace(state.activeSessionId, filePath)
-        return state.activeSessionId
       }
     } catch (err) {
       console.error('[file-sessions] open failed, falling back', err)
@@ -1257,9 +1291,11 @@ export function FileViewer({
   }
 
   const newFileSession = async (): Promise<void> => {
+    if (isClipPath(filePath)) return
     try {
       if (typeof window.vav.fileSessions?.create === 'function') {
         const state = await window.vav.fileSessions.create(filePath)
+        if (!state) return
         setFileId(state.fileId)
         setFileSessions(state.sessions)
         setAgentConversationId(state.activeSessionId)
@@ -2088,7 +2124,7 @@ export function FileViewer({
           ) : null}
           <span
             className={`file-viewer-name${embedded ? '' : ' titlebar-no-drag'}`}
-            title={filePath}
+            title={isClipPath(filePath) ? (info?.name ?? basename(filePath)) : filePath}
           >
             {info?.name ?? basename(filePath)}
           </span>
@@ -2541,6 +2577,11 @@ export function FileViewer({
               selectedIds={selectedIds}
               onPick={onOfficePick}
             />
+          )}
+          {info && !info.error && isHtmlClipKind && (
+            <Suspense fallback={null}>
+              <HtmlClipFrame source={displayText} title={info.name} />
+            </Suspense>
           )}
           {info && !info.error && info.kind === 'text' && isMindMap && (
             <MindMapView

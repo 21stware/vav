@@ -1,13 +1,36 @@
-import type { MessageBlock } from '@shared/types'
+import type { MessageBlock, ToolCallBlock } from '@shared/types'
 
 export interface IndexedBlock {
   block: MessageBlock
   index: number
 }
 
+const RAW_TOOL_SUMMARY = /^(task|subtask|tool|external)$/i
+
+/**
+ * A tool card with nothing the user can recognize — no label, no output, no
+ * nested work. These render as a blank sunken pill and should not split the
+ * turn into a Thinking process.
+ */
+export function isHollowToolCard(block: ToolCallBlock): boolean {
+  if (block.tool === 'plan') return true
+  if (block.tool === 'plan_doc') return false
+  if (block.tool === 'request' || block.tool === 'ask_user_question') return false
+  if (block.status === 'executing' || block.status === 'pending') return false
+  if (block.children?.some((child) => isVisibleAssistantBlock(child))) return false
+  if (block.output.trim()) return false
+  const summary = block.summary.trim()
+  if (!summary || RAW_TOOL_SUMMARY.test(summary)) return true
+  return false
+}
+
 export function isVisibleAssistantBlock(block: MessageBlock): boolean {
   if (block.kind === 'plan') return false
-  if (block.kind === 'toolCall' && block.tool === 'plan') return false
+  if (block.kind === 'toolCall') {
+    if (block.tool === 'plan') return false
+    if (isHollowToolCard(block)) return false
+    return true
+  }
   if (block.kind === 'text') return block.text.trim().length > 0
   if (block.kind === 'reasoning') return block.text.trim().length > 0
   return true

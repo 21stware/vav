@@ -3,7 +3,7 @@ import { existsSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { net } from 'electron'
-import { emptyAccount, type HostAccountInfo } from '@shared/cliAccountParse'
+import { accountInfo, emptyAccount, type HostAccountInfo } from '@shared/cliAccountParse'
 import { windowsFromGrokBillingPayload } from '@shared/quotaWindows'
 import type { QuotaWindow } from '@shared/types'
 
@@ -95,7 +95,8 @@ export function readGrokAuthIdentity(): string | null {
 export function readGrokAccountInfo(): HostAccountInfo {
   const session = readGrokAuthSession()
   if (!session) return emptyAccount()
-  return { signedIn: true, accountId: session.email, plan: null }
+  if (!isFresh(session)) return accountInfo('expired', { accountId: session.email })
+  return accountInfo('oauth', { accountId: session.email })
 }
 
 function grokHeaders(session: GrokAuthSession): Record<string, string> {

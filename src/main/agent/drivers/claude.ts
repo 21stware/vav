@@ -16,6 +16,7 @@ import {
   spawnStdioProcess,
   type StdioProcess
 } from './process'
+import { isAskToolName, isPlanDocToolName } from '@shared/planDoc'
 import type { DriverControl, DriverEventSink, DriverStartOptions } from './types'
 
 function permissionMode(approval: ApprovalMode): string {
@@ -252,6 +253,26 @@ function handleClaudeMessage(value: unknown, ctx: ClaudeHandlerCtx): void {
       asString(request?.blocked_path) ||
       asString(dig(request, 'permission_suggestions.0')) ||
       toolName
+    if (isAskToolName(toolName) || isPlanDocToolName(toolName)) {
+      const kind = isPlanDocToolName(toolName) ? 'plan_doc' : 'ask'
+      ctx.emit({
+        type: 'tool',
+        id: requestId,
+        name: toolName,
+        title: String(summary),
+        input: input ?? {},
+        status: 'started'
+      })
+      ctx.emit({
+        type: 'elicitation',
+        requestId,
+        toolCallId: requestId,
+        kind,
+        title: String(summary),
+        input: input ?? {}
+      })
+      return
+    }
     if (ctx.autoApprove) {
       ctx.write({
         type: 'control_response',
@@ -281,30 +302,30 @@ function handleClaudeMessage(value: unknown, ctx: ClaudeHandlerCtx): void {
   }
 
   if (type === 'stream_event') {
-    if (asString(msg.parent_tool_use_id)) return
+    const parentId = asString(msg.parent_tool_use_id) || undefined
     const event = asRecord(msg.event) ?? {}
-    if (asString(event.type) === 'message_start') ctx.resetDeltas()
+    if (!parentId && asString(event.type) === 'message_start') ctx.resetDeltas()
     const delta = asRecord(event.delta) ?? {}
     const deltaType = asString(delta.type)
     if (deltaType === 'text_delta') {
       const text = asString(delta.text)
       if (text) {
-        ctx.setSawTextDelta(true)
-        ctx.emit({ type: 'text-delta', text })
+        if (!parentId) ctx.setSawTextDelta(true)
+        ctx.emit({ type: 'text-delta', text, parentId })
       }
     } else if (deltaType === 'thinking_delta') {
       const text = asString(delta.thinking)
       if (text) {
-        ctx.setSawReasoningDelta(true)
-        ctx.emit({ type: 'reasoning-delta', text })
+        if (!parentId) ctx.setSawReasoningDelta(true)
+        ctx.emit({ type: 'reasoning-delta', text, parentId })
       }
     }
     return
   }
 
   if (type === 'assistant') {
-    if (asString(msg.parent_tool_use_id)) return
-    emitClaudeUsage(ctx, asRecord(dig(msg, 'message.usage')))
+    const parentId = asString(msg.parent_tool_use_id) || undefined
+    if (!parentId) emitClaudeUsage(ctx, asRecord(dig(msg, 'message.usage')))
     const windows = quotaWindowsFromClaudeMessage(msg)
     if (windows.length) ctx.emit({ type: 'quota', windows })
     const content = asArray(dig(msg, 'message.content')) ?? []
@@ -312,12 +333,12 @@ function handleClaudeMessage(value: unknown, ctx: ClaudeHandlerCtx): void {
       const b = asRecord(block)
       if (!b) continue
       const bType = asString(b.type)
-      if (bType === 'text' && !ctx.sawTextDelta) {
+      if (bType === 'text' && (parentId || !ctx.sawTextDelta)) {
         const text = asString(b.text)
-        if (text) ctx.emit({ type: 'text-delta', text })
-      } else if (bType === 'thinking' && !ctx.sawReasoningDelta) {
+        if (text) ctx.emit({ type: 'text-delta', text, parentId })
+      } else if (bType === 'thinking' && (parentId || !ctx.sawReasoningDelta)) {
         const text = asString(b.thinking)
-        if (text) ctx.emit({ type: 'reasoning-delta', text })
+        if (text) ctx.emit({ type: 'reasoning-delta', text, parentId })
       } else if (bType === 'tool_use') {
         const id = asString(b.id) || randomUUID()
         const name = asString(b.name) || 'tool'
@@ -326,7 +347,8 @@ function handleClaudeMessage(value: unknown, ctx: ClaudeHandlerCtx): void {
           id,
           name,
           input: b.input ?? {},
-          status: 'started'
+          status: 'started',
+          parentId
         })
       }
     }
@@ -334,7 +356,7 @@ function handleClaudeMessage(value: unknown, ctx: ClaudeHandlerCtx): void {
   }
 
   if (type === 'user') {
-    if (asString(msg.parent_tool_use_id)) return
+    const parentId = asString(msg.parent_tool_use_id) || undefined
     if (msg.isReplay === true) return
     const content = asArray(dig(msg, 'message.content')) ?? []
     for (const block of content) {
@@ -351,7 +373,8 @@ function handleClaudeMessage(value: unknown, ctx: ClaudeHandlerCtx): void {
         name: 'tool',
         input: {},
         status: isError ? 'error' : 'completed',
-        output
+        output,
+        parentId
       })
     }
     return

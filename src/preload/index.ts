@@ -46,6 +46,7 @@ const api: VavApi = {
     availableFonts: () => ipcRenderer.invoke(IPC.settingsFonts),
     pickDirectory: () => ipcRenderer.invoke(IPC.settingsPickDirectory),
     pickColor: (defaultHex?: string) => ipcRenderer.invoke(IPC.settingsPickColor, defaultHex),
+    pickSurfacePatternImage: () => ipcRenderer.invoke(IPC.settingsPickSurfacePattern),
     setHotkey: (accelerator: string) => ipcRenderer.invoke(IPC.settingsSetHotkey, accelerator),
     cliStatus: () => ipcRenderer.invoke(IPC.settingsCliStatus),
     cliSetLocation: (location: CliInstallLocation) =>
@@ -181,6 +182,7 @@ const api: VavApi = {
       ipcRenderer.invoke(IPC.filesWatch, conversationId, root),
     onDirty: (handler) => subscribe(IPC.filesDirty, handler),
     pathForFile: (file: File) => webUtils.getPathForFile(file),
+    writeClip: (input) => ipcRenderer.invoke(IPC.filesWriteClip, input),
     saveAs: (defaultName: string, content: string) =>
       ipcRenderer.invoke(IPC.filesSaveAs, defaultName, content),
     rename: (path: string, newName: string) => ipcRenderer.invoke(IPC.filesRename, path, newName),
@@ -328,15 +330,9 @@ const api: VavApi = {
     onRepaint: (handler) => subscribe(IPC.windowRepaint, () => handler()),
     openFilePreview: (path, options) =>
       ipcRenderer.invoke(IPC.windowOpenFilePreview, path, options),
+    openOverlay: (payload) => ipcRenderer.invoke(IPC.windowOpenOverlay, payload),
     onPreviewNavigate: (handler) =>
-      subscribe<{
-        path: string
-        origin?: 'dock' | 'session'
-        conversationId?: string
-        openSeq: number
-        /** Date.now() when main received the open request (open→paint timing). */
-        requestedAt?: number
-      }>(IPC.previewNavigate, handler),
+      subscribe<import('@shared/overlayOpen').OverlayNavigatePayload>(IPC.previewNavigate, handler),
     previewShellReady: () => {
       ipcRenderer.send(IPC.previewShellReady)
     },

@@ -3,7 +3,12 @@ import { readFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { net } from 'electron'
-import { emptyAccount, parseOpencodeAuthFile, type HostAccountInfo } from '@shared/cliAccountParse'
+import {
+  accountInfo,
+  emptyAccount,
+  parseOpencodeAuthFile,
+  type HostAccountInfo
+} from '@shared/cliAccountParse'
 import { windowsFromOpencodeGoUsagePayload } from '@shared/quotaWindows'
 import type { QuotaWindow } from '@shared/types'
 
@@ -45,7 +50,7 @@ export async function readOpencodeAccountInfo(): Promise<HostAccountInfo> {
   } catch {
     // missing / malformed
   }
-  if (env) return { signedIn: true, accountId: null, plan: null }
+  if (env) return accountInfo('api-key')
   return emptyAccount()
 }
 

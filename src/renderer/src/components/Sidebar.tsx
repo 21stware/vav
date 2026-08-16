@@ -344,7 +344,8 @@ export function Sidebar({
         for (const row of rows) {
           void window.vav.window.openFilePreview(row.path, {
             origin: 'session',
-            conversationId: row.sessionId
+            conversationId: row.sessionId,
+            surface: 'file'
           })
         }
       }
@@ -404,7 +405,8 @@ export function Sidebar({
             void selectConversation(row.sessionId)
             void window.vav.window.openFilePreview(row.path, {
               origin: 'session',
-              conversationId: row.sessionId
+              conversationId: row.sessionId,
+              surface: 'file'
             })
           }
         },
@@ -415,7 +417,8 @@ export function Sidebar({
             void selectConversation(row.sessionId)
             void window.vav.window.openFilePreview(row.path, {
               origin: 'session',
-              conversationId: row.sessionId
+              conversationId: row.sessionId,
+              surface: 'file'
             })
             onNavigate?.()
           }
@@ -1035,7 +1038,7 @@ export function Sidebar({
                 // showing FileSessionView only while still on a file-bound id.
                 const store = useSessionStore.getState()
                 const active = store.conversations.find((c) => c.id === store.activeId)
-                if (active?.fileId) {
+                if (active?.fileId || active?.archived) {
                   const next = store.conversations.find((c) => !c.archived && !c.fileId)
                   if (next) void store.selectConversation(next.id)
                 }
@@ -1169,7 +1172,8 @@ export function Sidebar({
                     void selectConversation(row.sessionId)
                     void window.vav.window.openFilePreview(row.path, {
                       origin: 'session',
-                      conversationId: row.sessionId
+                      conversationId: row.sessionId,
+                      surface: 'file'
                     })
                     onNavigate?.()
                   }}

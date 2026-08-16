@@ -8,7 +8,8 @@ import {
   MinusCircle,
   XCircle
 } from 'lucide-react'
-import { normalizePlanSteps, parseToolInput } from '@shared/askPlan'
+import { parseToolInput } from '@shared/askPlan'
+import { projectChecklistInput } from '@shared/planDoc'
 import type { PlanStep, PlanStepStatus, ToolCallBlock, TurnPhase } from '@shared/types'
 import { getProjection } from '../state/StreamProjection'
 import { useSessionStore, visibleMessages } from '../state/sessionStore'
@@ -32,9 +33,7 @@ interface PlanView {
 }
 
 function viewFromBlock(block: ToolCallBlock, turnRunning: boolean): PlanView | null {
-  const input = parseToolInput(block.input)
-  const title = String(input.title ?? 'Plan').trim() || 'Plan'
-  const steps = normalizePlanSteps(input.steps)
+  const { title, steps } = projectChecklistInput(parseToolInput(block.input))
   if (steps.length === 0) return null
   const done = steps.filter((s) => s.status === 'done').length
   const executing = steps.find((s) => s.status === 'executing')

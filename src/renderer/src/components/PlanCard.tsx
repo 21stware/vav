@@ -5,7 +5,8 @@ import {
   MinusCircle,
   XCircle
 } from 'lucide-react'
-import { normalizePlanSteps, parseToolInput } from '@shared/askPlan'
+import { parseToolInput } from '@shared/askPlan'
+import { projectChecklistInput } from '@shared/planDoc'
 import type { PlanStep, PlanStepStatus, ToolCallBlock } from '@shared/types'
 import { useT } from '../i18n/useT'
 
@@ -24,15 +25,14 @@ export function PlanCard({
   animate?: boolean
 }): React.JSX.Element {
   const t = useT()
-  const input = parseToolInput(block.input)
-  const title = String(input.title ?? t('plan.title')).trim() || t('plan.title')
-  const steps = normalizePlanSteps(input.steps)
+  const { title, steps } = projectChecklistInput(parseToolInput(block.input))
+  const heading = title.trim() || t('plan.title')
   const done = steps.filter((step) => step.status === 'done').length
 
   return (
     <div className="plan-card" data-status={block.status}>
       <div className="plan-header">
-        {t('plan.title')} · {title}{' '}
+        {t('plan.title')} · {heading}{' '}
         <span className="plan-count">
           ({done}/{steps.length})
         </span>

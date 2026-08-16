@@ -9,6 +9,7 @@ import {
   installUiFocusTracking
 } from './uiFocus'
 import { requestCliSurface } from './cliSurfaceSwitch'
+import { isSoleEmptyCliPicker } from '../components/SurfaceSwitchButton'
 
 /** Ensure the session list is visible when switching archive / file-session modes. */
 function ensureSidebarVisible(): void {
@@ -69,18 +70,19 @@ export function handleMenuCommand(command: MenuCommand): void {
       store.openWorkspaceSwitcher()
       break
     case 'switch-cli-mode': {
-      // Same path as AgentModeChrome “Swarm” — enter Screen, keep panes.
+      // Empty Thread only — a session with messages stays on Thread.
       if (store.settings.swarmModeEnabled !== true) break
       const id = store.activeId
       if (!id) break
+      if (store.conversations.some((c) => c.id === id && c.archived)) break
       if (store.search.open) store.closeSearch()
       requestCliSurface(id, true)
       break
     }
     case 'switch-vav-mode': {
-      // Same path as AgentModeChrome “Thread” — park Screen, keep panes.
+      // Only from a single empty Swarm panel — same as the on-panel button.
       const id = store.activeId
-      if (!id) break
+      if (!id || !isSoleEmptyCliPicker(id)) break
       if (store.search.open) store.closeSearch()
       requestCliSurface(id, false)
       break

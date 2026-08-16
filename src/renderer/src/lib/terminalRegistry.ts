@@ -120,14 +120,20 @@ function forceDarkBash(entry: Pick<TerminalEntry, 'surface'>): boolean {
   return entry.surface === 'bash' && bashBackgroundMode === 'dark'
 }
 
+/** Re-blit the cell buffer onto the canvas. Safe after fit / reparent / compositor drop. */
+export function blitTerminal(term: Terminal): void {
+  try {
+    term.clearTextureAtlas?.()
+    if (term.rows > 0) term.refresh(0, term.rows - 1)
+  } catch {
+    // Detached / disposing.
+  }
+}
+
 function paintTerminalTheme(entry: TerminalEntry): void {
   // New object every time — xterm compares theme by reference.
   entry.term.options.theme = { ...resolvedTerminalTheme(forceDarkBash(entry)) }
-  try {
-    if (entry.term.rows > 0) entry.term.refresh(0, entry.term.rows - 1)
-  } catch {
-    // Detached / zero-size host; next fit paints it.
-  }
+  blitTerminal(entry.term)
 }
 
 /**
@@ -288,53 +294,6 @@ export function acquireTerminal(options: {
     wb._bufferOffset = 0x7fffffff
   }
 
-  /**
-   * Synchronously blank the active (alt) buffer without RIS / leave-alt.
-   * Keeps DEC modes the TUI already negotiated; only cells + cursor + scroll
-   * region are reset. Dropping the write queue first is essential — otherwise
-   * pending half-frames repaint after this clear.
-   */
-  const hardRebuildAlt = (): void => {
-    const core = (term as unknown as { _core?: XtermCore })._core
-    if (core) {
-      discardWriteQueue(core)
-      const buf = core._bufferService?.buffer
-      if (buf && typeof buf.clear === 'function') {
-        buf.clear()
-        buf.fillViewportRows()
-        buf.scrollTop = 0
-        buf.scrollBottom = Math.max(0, (core._bufferService?.rows ?? term.rows) - 1)
-        buf.x = 0
-        buf.y = 0
-        buf.ybase = 0
-        buf.ydisp = 0
-        try {
-          term.refresh(0, Math.max(0, term.rows - 1))
-          term.clearTextureAtlas?.()
-        } catch {
-          // ignore
-        }
-        return
-      }
-      // Fallback: leave+re-enter alt in one sync turn (blank alt, no flash).
-      if (typeof core.writeSync === 'function') {
-        core.writeSync('\x1b[?1049l\x1b[?1049h\x1b[r\x1b[0m\x1b[H\x1b[2J\x1b[3J')
-        try {
-          term.refresh(0, Math.max(0, term.rows - 1))
-        } catch {
-          // ignore
-        }
-        return
-      }
-    }
-    term.write('\x1b[H\x1b[2J\x1b[3J')
-    try {
-      term.refresh(0, Math.max(0, term.rows - 1))
-    } catch {
-      // ignore
-    }
-  }
-
   const applyResize = (): void => {
     resizeTimer = null
     if (!pendingSize) return
@@ -347,26 +306,28 @@ export function acquireTerminal(options: {
 
     try {
       if (term.buffer.active.type === 'alternate') {
-        // 1) Sync blank the alt buffer + drop queued half-frames.
-        // 2) Hold the paint gate two frames so in-flight IPC from the old
-        //    geometry cannot land on the fresh cells (title-bar maximize
-        //    especially races main→renderer with the winsize change).
-        // 3) SIGWINCH, then open the gate for the app's full redraw.
-        suppressPtyPaint = true
-        hardRebuildAlt()
+        // Keep the last frame on screen. Wiping the alt buffer (old maximize
+        // path) left Swarm splits on the app plate until the TUI happened to
+        // reprint — Grok often waits for input/scroll. Drop only stale
+        // old-geometry writes, blit what we have, then SIGWINCH.
+        const core = (term as unknown as { _core?: XtermCore })._core
+        if (core) discardWriteQueue(core)
+        blitTerminal(term)
         const signalCols = cols
         const signalRows = rows
+        suppressPtyPaint = true
         requestAnimationFrame(() => {
           requestAnimationFrame(() => {
             if (lastApplied.cols !== signalCols || lastApplied.rows !== signalRows) {
-              // Superseded by a newer settle.
               suppressPtyPaint = false
+              flushLiveQueue()
               return
             }
             try {
               window.vav.pty.resize(options.tabId, signalCols, signalRows, true)
             } finally {
               suppressPtyPaint = false
+              flushLiveQueue()
             }
           })
         })
@@ -374,6 +335,7 @@ export function acquireTerminal(options: {
       }
     } catch {
       suppressPtyPaint = false
+      flushLiveQueue()
     }
     window.vav.pty.resize(options.tabId, cols, rows)
   }
@@ -455,11 +417,15 @@ export function acquireTerminal(options: {
   // paint "new chunks first, then full history" (which looks like a corrupt TUI).
   let replaying = typeof window.vav.pty.replay === 'function'
   const liveQueue: string[] = []
+  const flushLiveQueue = (): void => {
+    if (replaying || suppressPtyPaint) return
+    const chunks = liveQueue.splice(0)
+    for (const chunk of chunks) term.write(chunk)
+  }
   const unregister = registerTerminalSink(options.conversationId, options.tabId, (data) => {
-    // Stale bytes from the previous geometry while we wipe + SIGWINCH — drop.
-    // Replaying them after the wipe reintroduces the "scrolled-up" ghosts.
-    if (suppressPtyPaint) return
-    if (replaying) {
+    // Hold bytes across the two-frame SIGWINCH settle — do not drop them
+    // (⌘D used to eat Grok's redraw and leave the pane on --bg-content).
+    if (suppressPtyPaint || replaying) {
       liveQueue.push(data)
       return
     }
@@ -588,12 +554,7 @@ export function resetTerminalForNewProcess(conversationId: string, tabId: string
 export function refreshAllTerminals(): void {
   for (const entry of entries.values()) {
     if (entry.parked) continue
-    try {
-      entry.term.clearTextureAtlas?.()
-      if (entry.term.rows > 0) entry.term.refresh(0, entry.term.rows - 1)
-    } catch {
-      // Detached / disposing.
-    }
+    blitTerminal(entry.term)
   }
 }
 

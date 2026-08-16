@@ -19,42 +19,75 @@ function normalizeChoices(raw: unknown): string[] | undefined {
   return cleaned.slice(0, ASK_CHOICES_CAP)
 }
 
+function choicesFromQuestion(row: Record<string, unknown>): string[] | undefined {
+  if (Array.isArray(row.options) && row.options.length > 0) {
+    const labels = row.options
+      .map((item) => {
+        if (typeof item === 'string') return item.trim()
+        if (item && typeof item === 'object') {
+          const rec = item as Record<string, unknown>
+          return String(rec.label ?? rec.value ?? '').trim()
+        }
+        return ''
+      })
+      .filter((label) => label.length > 0)
+    return labels.length ? labels : undefined
+  }
+  return normalizeChoices(row.choices)
+}
+
 export function normalizeAskQuestions(params: Record<string, unknown>): AskQuestion[] {
   if (Array.isArray(params.questions) && params.questions.length > 0) {
     return params.questions
       .map((item) => {
         const row = item as Record<string, unknown>
         return {
-          question: String(row.question ?? '').trim(),
-          choices: normalizeChoices(row.choices),
-          multiSelect: row.multiSelect === true
+          question: String(row.question ?? row.prompt ?? row.header ?? '').trim(),
+          choices: choicesFromQuestion(row),
+          multiSelect:
+            row.multiSelect === true || row.allowMultiple === true || row.multiple === true
         }
       })
       .filter((item) => item.question.length > 0)
       .slice(0, ASK_QUESTIONS_CAP)
   }
-  const question = String(params.question ?? '').trim()
+  const question = String(params.question ?? params.prompt ?? params.header ?? '').trim()
   if (!question) return []
   return [
     {
       question,
-      choices: normalizeChoices(params.choices),
-      multiSelect: params.multiSelect === true
+      choices: choicesFromQuestion(params) ?? normalizeChoices(params.choices),
+      multiSelect: params.multiSelect === true || params.allowMultiple === true
     }
   ]
 }
 
+const PLAN_STATUS_ALIAS: Record<string, PlanStepStatus> = {
+  pending: 'pending',
+  executing: 'executing',
+  in_progress: 'executing',
+  inprogress: 'executing',
+  done: 'done',
+  completed: 'done',
+  complete: 'done',
+  error: 'error',
+  skipped: 'skipped',
+  cancelled: 'skipped',
+  canceled: 'skipped'
+}
+
 export function normalizePlanSteps(raw: unknown): PlanStep[] {
   if (!Array.isArray(raw)) return []
-  const allowed: PlanStepStatus[] = ['pending', 'executing', 'done', 'error', 'skipped']
   return raw.map((item, index) => {
     const row = item as Record<string, unknown>
-    const status = allowed.includes(row.status as PlanStepStatus)
-      ? (row.status as PlanStepStatus)
-      : 'pending'
+    const alias = String(row.status ?? '')
+      .trim()
+      .toLowerCase()
+      .replace(/[\s-]+/g, '_')
+    const status = PLAN_STATUS_ALIAS[alias] ?? 'pending'
     return {
       id: String(row.id ?? `step-${index}`),
-      title: String(row.title ?? `Step ${index + 1}`),
+      title: String(row.title ?? row.content ?? `Step ${index + 1}`),
       status,
       subtitle: row.subtitle != null ? String(row.subtitle) : undefined
     }

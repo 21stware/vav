@@ -36,16 +36,22 @@ export function agentWebsiteUrl(agent: Pick<AgentConfig, 'installDocsUrl'>): str
 /**
  * Catalogue rows that are now on PATH but missing from the user's provider
  * list (first-boot seed only included what was installed then).
+ *
+ * `removedIds` are providers the user deleted in Settings — never re-attach
+ * those just because the binary is still on PATH.
  */
 export function newlyInstalledCatalogueAgents(
   presentIds: Iterable<string>,
   installedById: Record<string, string | null | undefined>,
-  catalogue: AgentConfig[]
+  catalogue: AgentConfig[],
+  removedIds?: Iterable<string> | null
 ): AgentConfig[] {
   const present = new Set(presentIds)
+  const removed = new Set(removedIds ?? [])
   const added: AgentConfig[] = []
   for (const agent of catalogue) {
     if (present.has(agent.id)) continue
+    if (removed.has(agent.id)) continue
     if (!installedById[agent.id]) continue
     added.push(
       cloneAgentConfig({

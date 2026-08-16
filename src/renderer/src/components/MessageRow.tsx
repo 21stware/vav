@@ -16,11 +16,18 @@ import {
   RotateCcw,
   Undo2
 } from 'lucide-react'
-import type { ChatMessage, PreviewRef } from '@shared/types'
+import type { ChatMessage, PreviewRef, TextBlock } from '@shared/types'
+import { isImageAttachmentPath } from '@shared/agentImageInput'
+import { localFileStreamUrl } from '@shared/localFileUrl'
+import { markdownToPlainText } from '@shared/markdownPlain'
 import { showMenu, type MenuItem } from '../lib/nativeMenu'
 import { fileManagerLabel } from '../lib/platform'
 import { basename } from '../lib/path'
-import { openFileInSessionPreview, revealSessionFileInFinder } from '../lib/openSessionFile'
+import {
+  openAttachmentPreview,
+  openConversationFile,
+  revealSessionFileInFinder
+} from '../lib/openSessionFile'
 import { formatBadge } from '../lib/previewBlocks'
 import { useSessionStore } from '../state/sessionStore'
 import { useT } from '../i18n/useT'
@@ -56,6 +63,28 @@ function MessageErrorLine({
       {open ? <ErrorDetailModal detail={detailText} onDismiss={() => setOpen(false)} /> : null}
     </>
   )
+}
+
+function messageMarkdown(message: ChatMessage): string {
+  const parts = message.blocks
+    .filter((block): block is TextBlock => block.kind === 'text')
+    .map((block) => block.text)
+    .filter((text) => text.length > 0)
+  return parts.join('\n\n') || message.content || ''
+}
+
+/** Visible selection that intersects `root`, or empty if the range is elsewhere. */
+function selectedTextIn(root: EventTarget | null): string {
+  const selection = window.getSelection()
+  if (!selection || selection.rangeCount === 0 || selection.isCollapsed) return ''
+  const text = selection.toString()
+  if (!text) return ''
+  if (!(root instanceof Element)) return text
+  try {
+    return selection.getRangeAt(0).intersectsNode(root) ? text : ''
+  } catch {
+    return ''
+  }
 }
 
 function writePathsOf(message: ChatMessage): string[] {
@@ -260,42 +289,63 @@ export const MessageRow = memo(function MessageRow({
 
   const onContextMenu = (event: React.MouseEvent): void => {
     event.preventDefault()
+    const selected = selectedTextIn(event.currentTarget)
+    const markdown = messageMarkdown(message)
+    const plain = markdownToPlainText(markdown) || message.content
     const items: MenuItem[] = [
       {
         label: t('message.copy'),
-        onSelect: () => void window.vav.conversations.copyToClipboard(message.content)
+        disabled: !(selected || markdown || message.content),
+        onSelect: () =>
+          void window.vav.conversations.copyToClipboard(
+            selected || markdown || message.content
+          )
+      },
+      {
+        label: t('message.copyAsMarkdown'),
+        disabled: !markdown,
+        onSelect: () => void window.vav.conversations.copyToClipboard(markdown)
+      },
+      {
+        label: t('message.copyAsPlain'),
+        disabled: !(plain || message.content),
+        onSelect: () =>
+          void window.vav.conversations.copyToClipboard(plain || message.content)
       }
     ]
+    const actions: MenuItem[] = []
     if (message.role === 'user' && onEdit) {
-      items.push({
+      actions.push({
         label: t('message.editResend'),
         disabled: busy,
         onSelect: () => setEditing(true)
       })
     }
     if (onRegenerate) {
-      items.push({
+      actions.push({
         label: message.role === 'user' ? t('message.retry') : t('message.regenerate'),
         disabled: busy,
         onSelect: () => onRegenerate(message.id)
       })
     }
-    if (onQuote) items.push({ label: t('message.quote'), onSelect: () => onQuote(message) })
-    items.push({ label: '', divider: true })
+    if (onQuote) actions.push({ label: t('message.quote'), onSelect: () => onQuote(message) })
+    const branch: MenuItem[] = []
     if (onFork) {
-      items.push({
+      branch.push({
         label: t('message.branchHere'),
         disabled: busy,
         onSelect: () => onFork(message.id)
       })
     }
     if (onContinueInNewSession) {
-      items.push({
+      branch.push({
         label: t('message.continueInNew'),
         onSelect: () => onContinueInNewSession(message.id)
       })
     }
-    void showMenu(items)
+    if (actions.length) items.push({ label: '', divider: true }, ...actions)
+    if (branch.length) items.push({ label: '', divider: true }, ...branch)
+    void showMenu(items, { x: event.clientX, y: event.clientY })
   }
 
   if (message.role === 'system') {
@@ -700,28 +750,42 @@ function UserMessageContext({
       )}
       {files.length > 0 && (
         <div className="attachments">
-          {files.map((path) => (
-            <span className="chip attachment-file-chip" key={path} title={path}>
-              <button
-                type="button"
-                className="attachment-file-open"
-                title={path}
-                onClick={() => openFileInSessionPreview(path)}
-              >
-                <Paperclip size={11} />
-                <span className="chip-label">{basename(path)}</span>
-              </button>
-              <button
-                type="button"
-                className="md-file-reveal"
-                title={t('tools.revealInFm', { fileManager: fileManagerLabel() })}
-                aria-label={t('tools.revealInFm', { fileManager: fileManagerLabel() })}
-                onClick={() => revealSessionFileInFinder(path)}
-              >
-                <Folder size={11} />
-              </button>
-            </span>
-          ))}
+          {files.map((path) =>
+            isImageAttachmentPath(path) ? (
+              <span className="attachment-image-chip" key={path}>
+                <button
+                  type="button"
+                  className="attachment-image-thumb"
+                  title={path}
+                  aria-label={t('composer.previewImage')}
+                  onClick={() => openAttachmentPreview(path)}
+                >
+                  <img src={localFileStreamUrl(path)} alt="" draggable={false} />
+                </button>
+              </span>
+            ) : (
+              <span className="chip attachment-file-chip" key={path} title={path}>
+                <button
+                  type="button"
+                  className="attachment-file-open"
+                  title={path}
+                  onClick={() => openConversationFile(path)}
+                >
+                  <Paperclip size={11} />
+                  <span className="chip-label">{basename(path)}</span>
+                </button>
+                <button
+                  type="button"
+                  className="md-file-reveal"
+                  title={t('tools.revealInFm', { fileManager: fileManagerLabel() })}
+                  aria-label={t('tools.revealInFm', { fileManager: fileManagerLabel() })}
+                  onClick={() => revealSessionFileInFinder(path)}
+                >
+                  <Folder size={11} />
+                </button>
+              </span>
+            )
+          )}
         </div>
       )}
     </div>

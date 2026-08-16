@@ -1,0 +1,445 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light" data-surface-pattern="none">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>VAV surface patterns</title>
+    <style>
+      :root {
+        --font-ui: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'PingFang SC', system-ui, sans-serif;
+        --accent: #3a3a42;
+        --accent-veil: rgba(20, 20, 28, 0.045);
+        --bg-window: #ececee;
+        --bg-content: #fcfcfc;
+        --bg-raised: #ffffff;
+        --bg-sunken: #f2f2f4;
+        --bg-selected: #e2e2e6;
+        --text: #141416;
+        --text-secondary: #5c5c66;
+        --text-tertiary: #8a8a94;
+        --border: rgba(20, 20, 28, 0.09);
+        --border-strong: rgba(20, 20, 28, 0.16);
+        --radius-lg: 14px;
+        --radius-xl: 18px;
+        --surface-pattern-color: #3a3a42;
+        --surface-pattern-opacity: 0.2;
+        --surface-pattern-url: none;
+        --surface-pattern-size: 16px;
+      }
+
+      :root[data-theme='dark'] {
+        --accent: #c8c8d0;
+        --accent-veil: rgba(255, 255, 255, 0.055);
+        --bg-window: #121213;
+        --bg-content: #1b1b1d;
+        --bg-raised: #242427;
+        --bg-sunken: #161617;
+        --bg-selected: #2f2f33;
+        --text: #efeff1;
+        --text-secondary: #a2a2a9;
+        --text-tertiary: #73737b;
+        --border: rgba(255, 255, 255, 0.07);
+        --border-strong: rgba(255, 255, 255, 0.14);
+        --surface-pattern-color: #c8c8d0;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        margin: 0;
+        min-height: 100%;
+        font-family: var(--font-ui);
+        color: var(--text);
+        background: var(--bg-window);
+        -webkit-font-smoothing: antialiased;
+      }
+
+      .wrap {
+        position: relative;
+        z-index: 1;
+        max-width: 1180px;
+        margin: 0 auto;
+        padding: 36px 28px 80px;
+      }
+
+      header {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: flex-end;
+        justify-content: space-between;
+        gap: 20px;
+        margin-bottom: 28px;
+      }
+      h1 {
+        margin: 0 0 6px;
+        font-size: 22px;
+        font-weight: 590;
+        letter-spacing: -0.03em;
+      }
+      .lede {
+        margin: 0;
+        max-width: 46rem;
+        color: var(--text-secondary);
+        font-size: 13.5px;
+        line-height: 1.55;
+      }
+
+      .controls {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 10px;
+      }
+      button,
+      label.ctrl {
+        height: 30px;
+        padding: 0 11px;
+        border: 0;
+        border-radius: 8px;
+        background: var(--bg-raised);
+        box-shadow: inset 0 0 0 1px var(--border);
+        color: var(--text-secondary);
+        font: inherit;
+        font-size: 12.5px;
+        cursor: pointer;
+      }
+      button[aria-pressed='true'] {
+        background: var(--bg-selected);
+        color: var(--text);
+      }
+      label.ctrl {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+      }
+      input[type='range'] {
+        width: 92px;
+        accent-color: var(--accent);
+      }
+      input[type='color'] {
+        width: 28px;
+        height: 28px;
+        padding: 0;
+        border: 0;
+        background: transparent;
+        cursor: pointer;
+      }
+
+      .stage {
+        display: grid;
+        grid-template-columns: 232px 1fr;
+        min-height: 420px;
+        margin-bottom: 28px;
+        border-radius: var(--radius-xl);
+        overflow: hidden;
+      }
+      .stage-side {
+        padding: 18px 14px;
+      }
+      .stage-side .mark {
+        width: 18px;
+        height: 18px;
+        margin-bottom: 18px;
+        border-radius: 5px;
+        background: var(--text);
+        opacity: 0.78;
+      }
+      .stage-side .row {
+        height: 28px;
+        margin-bottom: 6px;
+        border-radius: 7px;
+        background: color-mix(in srgb, var(--text) 6%, transparent);
+      }
+      .stage-side .row.is-on {
+        background: var(--bg-selected);
+      }
+
+      .stage-plate {
+        position: relative;
+        isolation: isolate;
+        margin: 10px 10px 10px 0;
+        border-radius: var(--radius-lg);
+        background: var(--bg-content);
+        overflow: hidden;
+        padding: 28px 28px 24px;
+      }
+      .stage-plate::before,
+      .stage-plate::after {
+        content: none;
+        position: absolute;
+        inset: 0;
+        z-index: 0;
+        pointer-events: none;
+      }
+      html[data-surface-pattern]:not([data-surface-pattern='none']) .stage-plate::before {
+        content: '';
+        background-color: var(--surface-pattern-color);
+        opacity: var(--surface-pattern-opacity);
+        -webkit-mask-image: var(--surface-pattern-url);
+        mask-image: var(--surface-pattern-url);
+        -webkit-mask-size: var(--surface-pattern-size);
+        mask-size: var(--surface-pattern-size);
+        -webkit-mask-repeat: repeat;
+        mask-repeat: repeat;
+      }
+      html[data-surface-pattern]:not([data-surface-pattern='none']) .stage-plate::after {
+        content: '';
+        background: linear-gradient(
+          180deg,
+          transparent 0%,
+          color-mix(in srgb, var(--bg-content) 28%, transparent) 32%,
+          var(--bg-content) 76%
+        );
+      }
+      .stage-plate > * {
+        position: relative;
+        z-index: 1;
+      }
+      .stage-plate h2 {
+        margin: 0 0 8px;
+        font-size: 15px;
+        font-weight: 590;
+      }
+      .stage-plate p {
+        margin: 0;
+        color: var(--text-secondary);
+        font-size: 13px;
+        line-height: 1.55;
+      }
+      .code {
+        margin-top: 16px;
+        padding: 12px 14px;
+        border-radius: 10px;
+        background: var(--bg-sunken);
+        color: var(--text-secondary);
+        font-family: 'SF Mono', Menlo, monospace;
+        font-size: 11.5px;
+        line-height: 1.55;
+        white-space: pre-wrap;
+      }
+
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+        gap: 14px;
+      }
+      .card {
+        padding: 0;
+        border: 0;
+        background: transparent;
+        box-shadow: none;
+        text-align: left;
+        cursor: pointer;
+        color: inherit;
+        height: auto;
+        display: block;
+      }
+      .swatch {
+        position: relative;
+        height: 148px;
+        border-radius: var(--radius-lg);
+        overflow: hidden;
+        background: var(--bg-content);
+        box-shadow: inset 0 0 0 1px var(--border);
+      }
+      .swatch::before,
+      .swatch::after {
+        content: none;
+        position: absolute;
+        inset: 0;
+        pointer-events: none;
+      }
+      .card:not([data-id='none']) .swatch::after {
+        content: '';
+        background-color: var(--surface-pattern-color);
+        opacity: 0.22;
+        -webkit-mask-image: var(--local-url);
+        mask-image: var(--local-url);
+        -webkit-mask-size: var(--local-size);
+        mask-size: var(--local-size);
+        -webkit-mask-repeat: repeat;
+        mask-repeat: repeat;
+      }
+      .card:not([data-id='none']) .swatch::before {
+        content: '';
+        z-index: 1;
+        background: linear-gradient(180deg, transparent 8%, var(--bg-content) 88%);
+      }
+      .card[data-id='none'] .swatch::before {
+        content: '';
+        position: absolute;
+        inset: 0;
+        background: linear-gradient(
+          to top right,
+          transparent calc(50% - 0.5px),
+          var(--border-strong) calc(50% - 0.5px),
+          var(--border-strong) calc(50% + 0.5px),
+          transparent calc(50% + 0.5px)
+        );
+      }
+      .meta {
+        padding: 10px 4px 2px;
+      }
+      .meta strong {
+        display: block;
+        font-size: 13px;
+        font-weight: 590;
+      }
+      .meta span {
+        display: block;
+        margin-top: 3px;
+        color: var(--text-tertiary);
+        font-size: 12px;
+      }
+      .card.is-on .swatch {
+        box-shadow: inset 0 0 0 2px var(--text);
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <header>
+        <div>
+          <h1>VAV surface patterns</h1>
+          <p class="lede">
+            默认是「无」。选中后只染纹理本身（没有底色块），并且从上往下淡出。颜色可以改，避免跟内容板糊在一起。
+          </p>
+        </div>
+        <div class="controls">
+          <button type="button" id="theme-light" aria-pressed="true">浅色</button>
+          <button type="button" id="theme-dark" aria-pressed="false">深色</button>
+          <label class="ctrl">
+            颜色
+            <input id="color" type="color" value="#3a3a42" />
+          </label>
+          <label class="ctrl">
+            强度
+            <input id="opacity" type="range" min="0.08" max="0.4" step="0.01" value="0.2" />
+          </label>
+        </div>
+      </header>
+
+      <div class="stage">
+        <div class="stage-side">
+          <div class="mark"></div>
+          <div class="row is-on"></div>
+          <div class="row"></div>
+          <div class="row"></div>
+        </div>
+        <div class="stage-plate">
+          <h2 id="stage-title">无 None</h2>
+          <p id="stage-desc">默认。内容列保持干净的 --bg-content，没有叠加层。</p>
+          <pre class="code" id="stage-css"></pre>
+        </div>
+      </div>
+
+      <div class="grid" id="grid"></div>
+    </div>
+    <script>
+      const patterns = [
+        { id: 'none', name: '无 None', use: '默认。不加纹理，也没有额外底色。', file: '', size: '0', opacity: 0 },
+        { id: 'grain', name: '纸纹 Grain', use: '窗口内容列。纸纹从顶上淡下去。', file: './grain.svg', size: '180px', opacity: 0.24 },
+        { id: 'dots', name: '网点 Dots', use: '空状态。活版网点。', file: './dots.svg', size: '16px', opacity: 0.2 },
+        { id: 'graph', name: '坐标纸 Graph', use: '文件树 / 工作区。', file: './graph.svg', size: '32px', opacity: 0.2 },
+        { id: 'plus', name: '十字 Plus', use: '工具、Git 间隔。', file: './plus.svg', size: '24px', opacity: 0.2 },
+        { id: 'hatch', name: '斜线 Hatch', use: '文档预览背后。', file: './hatch.svg', size: '10px', opacity: 0.18 },
+        { id: 'scan', name: '扫描线 Scan', use: '终端空态。', file: './scan.svg', size: '8px', opacity: 0.18 },
+        { id: 'fiber', name: '纤维 Fiber', use: '纸面空态。', file: './fiber.svg', size: '96px', opacity: 0.2 },
+        { id: 'speckle', name: '墨点 Speckle', use: '不规则墨点。', file: './speckle.svg', size: '64px', opacity: 0.22 },
+        { id: 'ripple', name: '涟漪 Ripple', use: '会话空态。', file: './ripple.svg', size: '48px 24px', opacity: 0.2 }
+      ]
+
+      const root = document.documentElement
+      const grid = document.getElementById('grid')
+      const opacity = document.getElementById('opacity')
+      const color = document.getElementById('color')
+      let current = patterns[0]
+
+      function snippet(p) {
+        if (p.id === 'none') return '/* default — no overlay */'
+        return `.detail::before {
+  background-color: var(--surface-pattern-color);
+  opacity: ${opacity.value};
+  -webkit-mask-image: url('${p.file}');
+  -webkit-mask-size: ${p.size};
+}
+.detail::after {
+  background: linear-gradient(180deg, transparent, var(--bg-content) 76%);
+}`
+      }
+
+      function apply(p) {
+        current = p
+        root.dataset.surfacePattern = p.id
+        if (p.file) {
+          root.style.setProperty('--surface-pattern-url', `url('${p.file}')`)
+          root.style.setProperty('--surface-pattern-size', p.size)
+          root.style.setProperty('--surface-pattern-opacity', opacity.value)
+        } else {
+          root.style.removeProperty('--surface-pattern-url')
+        }
+        root.style.setProperty('--surface-pattern-color', color.value)
+        document.getElementById('stage-title').textContent = p.name
+        document.getElementById('stage-desc').textContent = p.use
+        document.getElementById('stage-css').textContent = snippet(p)
+        for (const btn of grid.querySelectorAll('.card')) {
+          btn.classList.toggle('is-on', btn.dataset.id === p.id)
+        }
+      }
+
+      for (const p of patterns) {
+        const btn = document.createElement('button')
+        btn.type = 'button'
+        btn.className = 'card'
+        btn.dataset.id = p.id
+        if (p.file) {
+          btn.style.setProperty('--local-url', `url('${p.file}')`)
+          btn.style.setProperty('--local-size', p.size)
+        }
+        btn.innerHTML = `<div class="swatch"></div>
+          <div class="meta"><strong>${p.name}</strong><span>${p.use}</span></div>`
+        btn.addEventListener('click', () => {
+          if (p.opacity) opacity.value = String(p.opacity)
+          apply(p)
+        })
+        grid.appendChild(btn)
+      }
+
+      opacity.addEventListener('input', () => apply(current))
+      color.addEventListener('input', () => apply(current))
+
+      document.getElementById('theme-light').addEventListener('click', () => {
+        root.dataset.theme = 'light'
+        document.getElementById('theme-light').setAttribute('aria-pressed', 'true')
+        document.getElementById('theme-dark').setAttribute('aria-pressed', 'false')
+        if (color.value === '#c8c8d0') color.value = '#3a3a42'
+        apply(current)
+      })
+      document.getElementById('theme-dark').addEventListener('click', () => {
+        root.dataset.theme = 'dark'
+        document.getElementById('theme-light').setAttribute('aria-pressed', 'false')
+        document.getElementById('theme-dark').setAttribute('aria-pressed', 'true')
+        if (color.value === '#3a3a42') color.value = '#c8c8d0'
+        apply(current)
+      })
+
+      const params = new URLSearchParams(location.search)
+      if (params.get('theme') === 'dark') {
+        root.dataset.theme = 'dark'
+        document.getElementById('theme-light').setAttribute('aria-pressed', 'false')
+        document.getElementById('theme-dark').setAttribute('aria-pressed', 'true')
+        color.value = '#c8c8d0'
+      }
+      if (params.get('color')) color.value = `#${params.get('color').replace(/^#/, '')}`
+      const wanted = patterns.find((p) => p.id === params.get('p'))
+      if (wanted) {
+        if (wanted.opacity) opacity.value = String(wanted.opacity)
+        apply(wanted)
+      } else {
+        apply(current)
+      }
+    </script>
+  </body>
+</html>

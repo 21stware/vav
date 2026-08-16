@@ -8,7 +8,7 @@ import {
   type TerminalLayoutNode,
   type TerminalSplitAxis
 } from '../state/workspaceStore'
-import { acquireTerminal } from '../lib/terminalRegistry'
+import { acquireTerminal, blitTerminal } from '../lib/terminalRegistry'
 import { requestCloseAgentTab, setUiFocusScope } from '../lib/uiFocus'
 import { useT } from '../i18n/useT'
 import { EmptyState } from './ui'
@@ -481,14 +481,12 @@ function TerminalHost({
       if (host.dataset.hidden === 'true') return
       try {
         const dims = entry.fit.proposeDimensions?.()
-        if (
-          dims &&
-          dims.cols === entry.term.cols &&
-          dims.rows === entry.term.rows
-        ) {
-          return
-        }
-        entry.fit.fit()
+        const sameCells =
+          !!dims && dims.cols === entry.term.cols && dims.rows === entry.term.rows
+        if (!sameCells) entry.fit.fit()
+        // ⌘D remounts the host in a half-size flex pane. Even when cols/rows
+        // match, the canvas can be empty until the next write/scroll — blit.
+        blitTerminal(entry.term)
       } catch {
         // ignore
       }

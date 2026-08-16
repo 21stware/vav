@@ -41,7 +41,9 @@ const SESSION_STALE_RE =
 const AUTH_RE =
   /authentication required|unauthori[sz]ed|\b401\b|not logged in|please (?:log|sign)\s?in|unauthenticated|auth(?:entication)? failed|invalid.?token|token.?expired/i
 
-const CANCELLED_RE = /^(?:request )?cancell?ed$/i
+/** User-stop / interrupt wording from CLIs (Codex “Aborted”, ACP “Cancelled”, …). */
+const CANCELLED_RE =
+  /^(?:(?:request|turn|operation|the operation) )?(?:was )?(?:cancell?ed|aborted|interrupted|stopped)(?: by (?:the )?user)?\.?$/i
 
 const BARE_INTERNAL_RE = /^(?:internal error|json-?rpc\s+internal error)(?:\s*[.:—-]\s*)?$/i
 

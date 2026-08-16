@@ -1,8 +1,10 @@
 import MarkdownIt from 'markdown-it'
 import { suggestedFilenameForLang } from './markdown'
 import { diagramKindForLang, renderDiagramFence } from './diagramRender'
+import { isHtmlClipLang, isXstateLang, renderHtmlClipFence, renderXstateFence } from './htmlClipRender'
 import { dirname, joinPath } from './path'
 import { highlightFence } from './hljsLazy'
+import { mdBlockActionButtons } from './mdBlockActions'
 
 /**
  * Markdown for trusted local file preview.
@@ -34,14 +36,11 @@ const previewDefaultFence =
   ((tokens, idx, options, _env, self) => self.renderToken(tokens, idx, options))
 
 /** Document fences: language label + copy chrome (quieter than chat). */
-function previewFenceChrome(label: string, filename: string): string {
+function previewFenceChrome(filename: string): string {
   return (
     `<div class="md-block md-preview-fence" data-kind="code" data-filename="${escapeHtml(filename)}">` +
     `<div class="md-block-bar">` +
-    `<span class="md-block-name">${escapeHtml(label)}</span>` +
-    `<span class="md-block-actions">` +
-    `<button type="button" class="md-block-btn" data-md-action="copy" title="Copy">Copy</button>` +
-    `</span></div>`
+    `${mdBlockActionButtons('source')}</div>`
   )
 }
 
@@ -51,10 +50,11 @@ previewMd.renderer.rules.fence = (tokens, idx, options, env, self): string => {
   const language = (info.split(/\s+/g)[0] ?? '').toLowerCase()
   const diagram = diagramKindForLang(language)
   if (diagram) return renderDiagramFence(diagram, token.content)
+  if (isXstateLang(language)) return renderXstateFence(token.content)
+  if (isHtmlClipLang(language)) return renderHtmlClipFence(token.content)
   const inner = previewDefaultFence(tokens, idx, options, env, self)
-  const label = language || 'code'
   const filename = suggestedFilenameForLang(language || 'text')
-  return `${previewFenceChrome(label, filename)}${inner}</div>`
+  return `${previewFenceChrome(filename)}${inner}</div>`
 }
 
 previewMd.renderer.rules.table_open = (): string =>

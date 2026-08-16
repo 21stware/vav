@@ -1,5 +1,19 @@
-import type { ApprovalMode, CliHostKind } from '@shared/types'
+import type { ApprovalMode, CliHostKind, PlanStep } from '@shared/types'
 import { extractRpcError, formatErrorDetail } from '@shared/cliErrors'
+import {
+  acpPlanEntriesToSteps,
+  cursorAskOutcomeFromAnswer,
+  cursorAskToToolInput,
+  isPlanDocToolName,
+  mergeTodos,
+  normalizeCursorAskInput,
+  normalizePlanDocInput,
+  planDocHasBody,
+  planDocOutcomeFromAnswer,
+  planDocToChecklistInput,
+  todosToSteps,
+  type CursorAskInput
+} from '@shared/planDoc'
 import { costToUsd } from '@shared/tokenUsage'
 import {
   asArray,
@@ -12,6 +26,14 @@ import {
   type StdioProcess
 } from './process'
 import type { DriverControl, DriverEventSink, DriverStartOptions } from './types'
+
+const ACP_PLAN_ID = 'acp-session-plan'
+const CURSOR_TODOS_ID = 'cursor-todos'
+
+type PendingClient =
+  | { kind: 'permission'; id: unknown; options: unknown[] }
+  | { kind: 'create_plan'; id: unknown; toolCallId: string }
+  | { kind: 'ask_question'; id: unknown; toolCallId: string; ask: CursorAskInput }
 
 /** ACP-speaking hosts in the VAV catalogue. */
 export type AcpHostKind = Extract<CliHostKind, 'cursor' | 'grok' | 'devin' | 'kiro' | 'cline'>
@@ -74,8 +96,10 @@ function wireAcp(
   let ready = false
   const pendingPrompts: string[] = []
   const pendingRpc = new Map<number, (result: unknown, error?: unknown) => void>()
+  const pendingClient = new Map<string, PendingClient>()
   const stderrChunks: string[] = []
   const autoApprove = options.approvalMode === 'bypass' || options.approvalMode === 'auto'
+  let lastTodos: PlanStep[] = []
 
   const send = (method: string, params: Record<string, unknown>, id?: number): void => {
     const payload: Record<string, unknown> = { jsonrpc: '2.0', method, params }
@@ -157,13 +181,8 @@ function wireAcp(
         return
       }
 
-      // Mode: plan vs agent — VAV has no separate plan mode yet; stay on agent.
-      // Supervised stays on agent so session/request_permission still fires.
-      try {
-        await request('session/set_mode', { sessionId, modeId: 'agent' })
-      } catch {
-        /* optional */
-      }
+      // Do not force `agent`. Cursor ACP also has `plan` / `ask`; overwriting
+      // the host default hid create_plan and left the tool card hanging.
 
       if (options.model) {
         try {
@@ -211,15 +230,13 @@ function wireAcp(
         emit({
           type: 'turn-finished',
           success: !msg.error && !cancelled,
-          error: extracted
-            ? extracted.text
-            : cancelled
-              ? 'Cancelled'
-              : undefined,
-          errorCode: extracted?.code ?? undefined,
-          errorDetail: extracted
-            ? formatErrorDetail(msg.error, extracted.text)
-            : undefined
+          cancelled: cancelled || undefined,
+          error: extracted && !cancelled ? extracted.text : undefined,
+          errorCode: extracted && !cancelled ? extracted.code ?? undefined : undefined,
+          errorDetail:
+            extracted && !cancelled
+              ? formatErrorDetail(msg.error, extracted.text)
+              : undefined
         })
       }
       return
@@ -230,56 +247,42 @@ function wireAcp(
     const params = asRecord(msg.params) ?? {}
 
     if (method === 'session/update') {
-      handleSessionUpdate(params, emit)
+      handleSessionUpdate(params, emit, (steps) => {
+        lastTodos = steps
+      })
       return
     }
 
     if (method === 'session/request_permission') {
-      const requestId = msg.id
-      if (requestId === undefined) return
-      if (autoApprove) {
-        const optionsList = asArray(params.options) ?? asArray(dig(params, 'toolCall.permissionOptions'))
-        const always =
-          optionsList?.find((o) => {
-            const r = asRecord(o)
-            const kind = asString(r?.kind) || asString(r?.optionId)
-            return kind === 'allow_always' || kind === 'allow-always' || kind === 'allow_once'
-          }) ?? optionsList?.[0]
-        const optionId =
-          asString(asRecord(always)?.optionId) ||
-          asString(asRecord(always)?.kind) ||
-          'allow_once'
-        respond(requestId, { outcome: { outcome: 'selected', optionId } })
-        // Some agents want { optionId } directly
-        return
-      }
-      const toolCall = asRecord(params.toolCall) ?? params
-      const toolName =
-        asString(toolCall.name) || asString(toolCall.kind) || asString(toolCall.title) || 'tool'
-      const detail =
-        toolResultText(asArray(toolCall.content)) ||
-        asString(toolCall.rawInput) ||
-        undefined
-      emit({
-        type: 'permission',
-        requestId: String(requestId),
-        toolName,
-        summary: asString(toolCall.title) || toolName,
-        detail,
-        input: toolCall
+      handlePermissionRequest(msg.id, params, {
+        autoApprove,
+        pendingClient,
+        respond,
+        emit
       })
-      // Stash for respond()
-      ;(proc as unknown as { __pendingPerm?: Map<string, unknown> }).__pendingPerm ??= new Map()
-      ;(proc as unknown as { __pendingPerm: Map<string, unknown> }).__pendingPerm.set(
-        String(requestId),
-        requestId
-      )
-      ;(proc as unknown as { __pendingPermOptions?: Map<string, unknown[]> }).__pendingPermOptions ??=
-        new Map()
-      ;(proc as unknown as { __pendingPermOptions: Map<string, unknown[]> }).__pendingPermOptions.set(
-        String(requestId),
-        (asArray(params.options) as unknown[]) ?? []
-      )
+      return
+    }
+
+    if (isCursorExtMethod(method)) {
+      handleCursorExt(method, msg.id, params, {
+        pendingClient,
+        lastTodos,
+        setLastTodos: (steps) => {
+          lastTodos = steps
+        },
+        respond,
+        emit
+      })
+      return
+    }
+
+    // Agent-to-client request we do not implement. Answering prevents a hang.
+    if (msg.id !== undefined) {
+      proc.writeLine({
+        jsonrpc: '2.0',
+        id: msg.id,
+        error: { code: -32601, message: `Method not found: ${method}` }
+      })
     }
   })
 
@@ -336,18 +339,40 @@ function wireAcp(
       return true
     },
     cancel(): void {
-      if (!sessionId) return
-      send('session/cancel', { sessionId })
+      if (sessionId) send('session/cancel', { sessionId })
+      for (const [key, pending] of pendingClient) {
+        if (pending.kind === 'create_plan') {
+          respond(pending.id, { outcome: { outcome: 'cancelled' } })
+        } else if (pending.kind === 'ask_question') {
+          respond(pending.id, { outcome: { outcome: 'cancelled' } })
+        }
+        pendingClient.delete(key)
+      }
     },
-    respond(requestId: string, optionId: 'allow' | 'deny'): void {
+    respond(requestId: string, optionId: 'allow' | 'deny', message?: string): void {
+      const pending = pendingClient.get(requestId)
+      if (pending?.kind === 'create_plan') {
+        const outcome = planDocOutcomeFromAnswer(message ?? '', optionId === 'deny')
+        respond(pending.id, { outcome })
+        pendingClient.delete(requestId)
+        return
+      }
+      if (pending?.kind === 'ask_question') {
+        const outcome =
+          optionId === 'deny'
+            ? { outcome: 'cancelled' as const }
+            : cursorAskOutcomeFromAnswer(pending.ask, message ?? '')
+        respond(pending.id, { outcome })
+        pendingClient.delete(requestId)
+        return
+      }
+      const optionsList = pending?.kind === 'permission' ? pending.options : []
       const rawId =
-        (proc as unknown as { __pendingPerm?: Map<string, unknown> }).__pendingPerm?.get(
-          requestId
-        ) ?? (/^\d+$/.test(requestId) ? Number(requestId) : requestId)
-      const optionsList =
-        (proc as unknown as { __pendingPermOptions?: Map<string, unknown[]> }).__pendingPermOptions?.get(
-          requestId
-        ) ?? []
+        pending?.kind === 'permission'
+          ? pending.id
+          : /^\d+$/.test(requestId)
+            ? Number(requestId)
+            : requestId
       let selected = 'allow_once'
       let reject = 'reject_once'
       for (const opt of optionsList) {
@@ -362,25 +387,40 @@ function wireAcp(
           optionId: optionId === 'allow' ? selected : reject
         }
       })
+      pendingClient.delete(requestId)
     },
     applyOptions(opts): boolean {
       if (opts.approvalMode) return false
       if (opts.model && sessionId) {
         void request('session/set_model', { sessionId, modelId: opts.model }).catch(() => undefined)
-        return true
+      }
+      if (opts.mode && sessionId) {
+        void request('session/set_mode', { sessionId, modeId: opts.mode }).catch(() => undefined)
       }
       return true
     },
     dispose(): void {
       if (disposed) return
       disposed = true
+      for (const [key, pending] of pendingClient) {
+        if (pending.kind === 'create_plan') {
+          respond(pending.id, { outcome: { outcome: 'cancelled' } })
+        } else if (pending.kind === 'ask_question') {
+          respond(pending.id, { outcome: { outcome: 'cancelled' } })
+        }
+        pendingClient.delete(key)
+      }
       proc.closeStdin()
       setTimeout(() => proc.kill(), 2_000)
     }
   }
 }
 
-function handleSessionUpdate(params: Record<string, unknown>, emit: DriverEventSink): void {
+function handleSessionUpdate(
+  params: Record<string, unknown>,
+  emit: DriverEventSink,
+  onPlanSteps?: (steps: PlanStep[]) => void
+): void {
   const update = asRecord(params.update) ?? params
   const kind =
     asString(update.sessionUpdate) ||
@@ -423,14 +463,29 @@ function handleSessionUpdate(params: Record<string, unknown>, emit: DriverEventS
     return
   }
   if (kind === 'plan') {
+    const steps = acpPlanEntriesToSteps(update.entries ?? update.steps)
+    onPlanSteps?.(steps)
+    const open = steps.some((step) => step.status === 'pending' || step.status === 'executing')
     emit({
       type: 'tool',
-      id: `plan-${Date.now()}`,
+      id: ACP_PLAN_ID,
       name: 'plan',
-      input: update,
-      status: 'completed',
-      output: JSON.stringify(update.entries ?? update)
+      input: {
+        title: asString(update.title) || 'Plan',
+        steps
+      },
+      status: open ? 'updated' : 'completed'
     })
+    return
+  }
+
+  if (
+    kind === 'available_commands_update' ||
+    kind === 'current_mode_update' ||
+    kind === 'config_option_update' ||
+    kind === 'session_info_update' ||
+    kind === 'user_message_chunk'
+  ) {
     return
   }
 
@@ -550,6 +605,217 @@ function acpUsageSample(update: Record<string, unknown>): {
     cacheWrite,
     sessionCostUsd: sessionCostUsd ?? undefined
   }
+}
+
+function normalizeRpcMethod(method: string): string {
+  return method.toLowerCase().replace(/_/g, '')
+}
+
+function isCursorExtMethod(method: string): boolean {
+  const n = normalizeRpcMethod(method)
+  return (
+    n.startsWith('cursor/') ||
+    n.endsWith('/createplan') ||
+    n.endsWith('/askquestion') ||
+    n.endsWith('/updatetodos') ||
+    n === 'createplan' ||
+    n === 'askquestion'
+  )
+}
+
+function handlePermissionRequest(
+  requestId: unknown,
+  params: Record<string, unknown>,
+  ctx: {
+    autoApprove: boolean
+    pendingClient: Map<string, PendingClient>
+    respond: (id: unknown, result: unknown) => void
+    emit: DriverEventSink
+  }
+): void {
+  if (requestId === undefined) return
+  const toolCall = asRecord(params.toolCall) ?? params
+  const toolName =
+    asString(toolCall.name) || asString(toolCall.kind) || asString(toolCall.title) || 'tool'
+  const rawInput = asRecord(toolCall.rawInput) ?? asRecord(toolCall.input) ?? toolCall
+  if (
+    (isPlanDocToolName(toolName) || isPlanDocToolName(asString(rawInput._toolName) ?? '')) &&
+    planDocHasBody(normalizePlanDocInput(rawInput))
+  ) {
+    handleCreatePlan(requestId, { ...rawInput, toolCallId: asString(toolCall.toolCallId) }, ctx)
+    return
+  }
+  const optionsList = asArray(params.options) ?? asArray(dig(params, 'toolCall.permissionOptions')) ?? []
+  if (ctx.autoApprove) {
+    const always =
+      optionsList.find((o) => {
+        const r = asRecord(o)
+        const kind = asString(r?.kind) || asString(r?.optionId)
+        return kind === 'allow_always' || kind === 'allow-always' || kind === 'allow_once'
+      }) ?? optionsList[0]
+    const optionId =
+      asString(asRecord(always)?.optionId) || asString(asRecord(always)?.kind) || 'allow_once'
+    ctx.respond(requestId, { outcome: { outcome: 'selected', optionId } })
+    return
+  }
+  const key = String(requestId)
+  ctx.pendingClient.set(key, { kind: 'permission', id: requestId, options: optionsList })
+  ctx.emit({
+    type: 'permission',
+    requestId: key,
+    toolName,
+    summary: asString(toolCall.title) || toolName,
+    detail: toolResultText(asArray(toolCall.content)) || asString(toolCall.rawInput) || undefined,
+    input: toolCall
+  })
+}
+
+function handleCursorExt(
+  method: string,
+  requestId: unknown,
+  params: Record<string, unknown>,
+  ctx: {
+    pendingClient: Map<string, PendingClient>
+    lastTodos: PlanStep[]
+    setLastTodos: (steps: PlanStep[]) => void
+    respond: (id: unknown, result: unknown) => void
+    emit: DriverEventSink
+  }
+): void {
+  const n = normalizeRpcMethod(method)
+  if (n === 'cursor/createplan' || n === 'createplan' || n.endsWith('/createplan')) {
+    handleCreatePlan(requestId, params, ctx)
+    return
+  }
+  if (n === 'cursor/askquestion' || n === 'askquestion' || n.endsWith('/askquestion')) {
+    handleAskQuestion(requestId, params, ctx)
+    return
+  }
+  if (n === 'cursor/updatetodos' || n.endsWith('/updatetodos')) {
+    const incoming = todosToSteps(params.todos)
+    const next = mergeTodos(ctx.lastTodos, incoming, params.merge !== true)
+    ctx.setLastTodos(next)
+    const open = next.some((step) => step.status === 'pending' || step.status === 'executing')
+    ctx.emit({
+      type: 'tool',
+      id: asString(params.toolCallId) || CURSOR_TODOS_ID,
+      name: 'update_todos',
+      input: { title: asString(params.title) || 'Plan', steps: next },
+      status: open ? 'updated' : 'completed'
+    })
+    return
+  }
+  if (n === 'cursor/task') {
+    const id = asString(params.toolCallId) || `task-${Date.now()}`
+    const done = params.durationMs != null || asString(params.agentId)
+    ctx.emit({
+      type: 'tool',
+      id,
+      name: 'task',
+      title: asString(params.description) || undefined,
+      input: params,
+      status: done ? 'completed' : 'started',
+      output: asString(params.description) || undefined
+    })
+    return
+  }
+  if (n === 'cursor/generateimage') {
+    const id = asString(params.toolCallId) || `image-${Date.now()}`
+    ctx.emit({
+      type: 'tool',
+      id,
+      name: 'generate_image',
+      title: asString(params.description) || asString(params.filePath) || undefined,
+      input: params,
+      status: 'completed',
+      output: asString(params.filePath) || asString(params.description) || ''
+    })
+    return
+  }
+  if (requestId !== undefined) {
+    ctx.respond(requestId, { outcome: { outcome: 'cancelled' } })
+  }
+}
+
+function handleCreatePlan(
+  requestId: unknown,
+  params: Record<string, unknown>,
+  ctx: {
+    pendingClient: Map<string, PendingClient>
+    respond: (id: unknown, result: unknown) => void
+    emit: DriverEventSink
+    lastTodos?: PlanStep[]
+    setLastTodos?: (steps: PlanStep[]) => void
+  }
+): void {
+  const doc = normalizePlanDocInput(params)
+  const toolCallId = asString(params.toolCallId) || (requestId !== undefined ? `plan-doc-${String(requestId)}` : `plan-doc-${Date.now()}`)
+  ctx.emit({
+    type: 'tool',
+    id: toolCallId,
+    name: 'create_plan',
+    title: doc.name,
+    input: { ...doc, toolCallId },
+    status: requestId === undefined ? 'completed' : 'started'
+  })
+  if (doc.todos.length) ctx.setLastTodos?.(doc.todos)
+  if (requestId === undefined) {
+    if (doc.todos.length) {
+      ctx.emit({
+        type: 'tool',
+        id: CURSOR_TODOS_ID,
+        name: 'plan',
+        input: planDocToChecklistInput(doc),
+        status: 'updated'
+      })
+    }
+    return
+  }
+  const key = String(requestId)
+  ctx.pendingClient.set(key, { kind: 'create_plan', id: requestId, toolCallId })
+  ctx.emit({
+    type: 'elicitation',
+    requestId: key,
+    toolCallId,
+    kind: 'plan_doc',
+    title: doc.name,
+    input: { ...doc, toolCallId }
+  })
+}
+
+function handleAskQuestion(
+  requestId: unknown,
+  params: Record<string, unknown>,
+  ctx: {
+    pendingClient: Map<string, PendingClient>
+    respond: (id: unknown, result: unknown) => void
+    emit: DriverEventSink
+  }
+): void {
+  const ask = normalizeCursorAskInput(params)
+  const toolCallId =
+    asString(params.toolCallId) ||
+    (requestId !== undefined ? `ask-${String(requestId)}` : `ask-${Date.now()}`)
+  const input = { ...cursorAskToToolInput(ask), toolCallId }
+  ctx.emit({
+    type: 'tool',
+    id: toolCallId,
+    name: 'ask_user_question',
+    title: ask.title,
+    input,
+    status: requestId === undefined ? 'completed' : 'started'
+  })
+  if (requestId === undefined) return
+  const key = String(requestId)
+  ctx.pendingClient.set(key, { kind: 'ask_question', id: requestId, toolCallId, ask })
+  ctx.emit({
+    type: 'elicitation',
+    requestId: key,
+    toolCallId,
+    kind: 'ask',
+    title: ask.title,
+    input
+  })
 }
 
 function toolResultText(content: unknown[] | null): string {

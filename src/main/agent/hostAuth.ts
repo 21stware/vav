@@ -1,10 +1,12 @@
 import type { CliHostKind } from '@shared/cliHost'
-import { emptyAccount, type HostAccountInfo } from '@shared/cliAccountParse'
+import { emptyAccount, unknownAccount, type HostAccountInfo } from '@shared/cliAccountParse'
 import { readClaudeAccountInfo, readClaudeAuthIdentity } from '../quota/claudeUsage'
 import { readCodexAccountInfo, readCodexAuthIdentity } from '../quota/codexUsage'
 import { readCursorAccountInfo, readCursorAuthIdentity } from '../quota/cursorUsage'
+import { readDevinAccountInfo, readDevinAuthIdentity } from '../quota/devinUsage'
 import { readGrokAccountInfo, readGrokAuthIdentity } from '../quota/grokUsage'
 import { readOpencodeAccountInfo, readOpencodeAuthIdentity } from '../quota/opencodeUsage'
+import { readPiAccountInfo } from '../quota/piUsage'
 
 /**
  * Stable id for the currently logged-in CLI account, when we can read it.
@@ -22,6 +24,8 @@ export async function readHostAuthIdentity(kind: CliHostKind): Promise<string | 
       return readCursorAuthIdentity()
     case 'opencode':
       return readOpencodeAuthIdentity()
+    case 'devin':
+      return readDevinAuthIdentity()
     default:
       return null
   }
@@ -43,7 +47,11 @@ export async function readHostAccountInfo(
       return readCursorAccountInfo()
     case 'opencode':
       return readOpencodeAccountInfo()
+    case 'devin':
+      return readDevinAccountInfo()
+    case 'pi':
+      return readPiAccountInfo()
     default:
-      return emptyAccount()
+      return unknownAccount()
   }
 }

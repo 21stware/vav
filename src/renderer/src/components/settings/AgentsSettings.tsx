@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
+  Check,
   ExternalLink,
   GripVertical,
   ListFilter,
@@ -43,9 +44,15 @@ function cloneAgents(list: AgentConfig[]): AgentConfig[] {
   }))
 }
 
-function agentsFromSettings(cliAgents: AgentConfig[] | null | undefined): AgentConfig[] {
+function agentsFromSettings(
+  cliAgents: AgentConfig[] | null | undefined,
+  removedIds?: string[] | null
+): AgentConfig[] {
   if (Array.isArray(cliAgents) && cliAgents.length > 0) return cloneAgents(cliAgents)
-  return DEFAULT_CLI_AGENTS.map((a) => ({
+  const removed = new Set(removedIds ?? [])
+  const seed = DEFAULT_CLI_AGENTS.filter((a) => !removed.has(a.id))
+  const source = seed.length > 0 ? seed : DEFAULT_CLI_AGENTS
+  return source.map((a) => ({
     ...a,
     envVars: { ...a.envVars },
     defaultArgs: [...a.defaultArgs],
@@ -72,7 +79,7 @@ export function AgentsSettings(): React.JSX.Element {
 
   // Optimistic local list — do not wait for IPC round-trip to re-render.
   const [agents, setAgents] = useState<AgentConfig[]>(() =>
-    agentsFromSettings(settings.cliAgents)
+    agentsFromSettings(settings.cliAgents, settings.removedCliAgentIds)
   )
   const agentsRef = useRef(agents)
   agentsRef.current = agents
@@ -93,7 +100,7 @@ export function AgentsSettings(): React.JSX.Element {
     [settings.cliAgents]
   )
   useEffect(() => {
-    const remote = agentsFromSettings(settings.cliAgents)
+    const remote = agentsFromSettings(settings.cliAgents, settings.removedCliAgentIds)
     const localIds = agentsRef.current.map((a) => a.id).join('\0')
     const remoteIds = remote.map((a) => a.id).join('\0')
     // Accept remote when ids order changed, or metadata changed without id churn.
@@ -122,6 +129,9 @@ export function AgentsSettings(): React.JSX.Element {
   }, [focusAgentId])
   const [modelFilterOpen, setModelFilterOpen] = useState(false)
   const [modelFilter, setModelFilter] = useState('')
+  const [modelsRefreshing, setModelsRefreshing] = useState(false)
+  const [modelsRefreshAck, setModelsRefreshAck] = useState(false)
+  const modelsRefreshTimers = useRef<number[]>([])
   const modelFilterRef = useRef<HTMLInputElement>(null)
   const selectedIsVav = selectedId === VAV_ROW_ID
   const selected = useMemo(
@@ -154,6 +164,35 @@ export function AgentsSettings(): React.JSX.Element {
   useEffect(() => {
     void refreshCatalog(false)
   }, [refreshCatalog])
+
+  useEffect(() => {
+    return () => {
+      for (const id of modelsRefreshTimers.current) window.clearTimeout(id)
+    }
+  }, [])
+
+  const refreshModels = (): void => {
+    if (modelsRefreshing) return
+    setModelsRefreshing(true)
+    setModelsRefreshAck(false)
+    for (const id of modelsRefreshTimers.current) window.clearTimeout(id)
+    modelsRefreshTimers.current = []
+    const started = Date.now()
+    void refreshCatalog(true)
+      .catch(() => undefined)
+      .finally(() => {
+        const wait = Math.max(0, 280 - (Date.now() - started))
+        const hold = window.setTimeout(() => {
+          setModelsRefreshing(false)
+          setModelsRefreshAck(true)
+          const ack = window.setTimeout(() => {
+            setModelsRefreshAck(false)
+          }, 1100)
+          modelsRefreshTimers.current.push(ack)
+        }, wait)
+        modelsRefreshTimers.current.push(hold)
+      })
+  }
 
   useEffect(() => {
     void refreshAgentInstallStatus({ force: true, discover: false })
@@ -271,7 +310,10 @@ export function AgentsSettings(): React.JSX.Element {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- closeAddMenu is stable enough for listeners
   }, [addMenuOpen, addMenuLeaving])
 
-  const commitAgents = (next: AgentConfig[]): void => {
+  const commitAgents = (
+    next: AgentConfig[],
+    extra?: { removedCliAgentIds?: string[] }
+  ): void => {
     const cloned = cloneAgents(next)
     setAgents(cloned)
     agentsRef.current = cloned
@@ -285,7 +327,8 @@ export function AgentsSettings(): React.JSX.Element {
           : null
     void updateSettings({
       cliAgents: cloned,
-      defaultAgentId: nextDefault
+      defaultAgentId: nextDefault,
+      ...extra
     }).catch((err) => {
       console.error('[agents] failed to persist cliAgents', err)
     })
@@ -380,7 +423,10 @@ export function AgentsSettings(): React.JSX.Element {
       enabled: true,
       builtin: true
     }
-    commitAgents([...agents, agent])
+    const removedCliAgentIds = (settings.removedCliAgentIds ?? []).filter(
+      (id) => id !== template.id
+    )
+    commitAgents([...agents, agent], { removedCliAgentIds })
     setSelectedId(agent.id)
     closeAddMenu()
   }
@@ -413,7 +459,10 @@ export function AgentsSettings(): React.JSX.Element {
       next[Math.min(Math.max(removedIndex, 0), next.length - 1)]?.id ?? VAV_ROW_ID
     // Select before list commit so the validity effect never sees a stale id.
     setSelectedId(nextSelected)
-    commitAgents(next)
+    const removedCliAgentIds = [
+      ...new Set([...(settings.removedCliAgentIds ?? []), selected.id])
+    ]
+    commitAgents(next, { removedCliAgentIds })
   }
 
   const reorder = (fromId: string, toId: string, edge: 'before' | 'after' = 'before'): void => {
@@ -830,10 +879,31 @@ export function AgentsSettings(): React.JSX.Element {
                   <span>{t('agents.models')}</span>
                   <button
                     type="button"
-                    className="btn ghost sm"
-                    onClick={() => void refreshCatalog(true)}
+                    className={[
+                      'btn ghost sm agents-models-refresh',
+                      modelsRefreshing ? 'is-refreshing' : '',
+                      modelsRefreshAck ? 'is-ack' : ''
+                    ]
+                      .filter(Boolean)
+                      .join(' ')}
+                    disabled={modelsRefreshing}
+                    aria-busy={modelsRefreshing}
+                    onClick={refreshModels}
                   >
-                    {t('agents.modelsRefresh')}
+                    <span className="agents-models-refresh-icon" aria-hidden>
+                      {modelsRefreshAck ? (
+                        <Check size={12} strokeWidth={2.25} />
+                      ) : (
+                        <RefreshCw size={12} strokeWidth={2.25} />
+                      )}
+                    </span>
+                    <span>
+                      {modelsRefreshing
+                        ? t('agents.modelsRefreshing')
+                        : modelsRefreshAck
+                          ? t('agents.modelsRefreshed')
+                          : t('agents.modelsRefresh')}
+                    </span>
                   </button>
                 </div>
                 <p className="muted tiny" style={{ margin: '0 0 8px' }}>

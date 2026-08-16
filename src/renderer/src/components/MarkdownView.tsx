@@ -5,15 +5,28 @@ import {
   renderMarkdown,
   renderMarkdownUncached
 } from '../lib/markdown'
+import {
+  diagramFilename,
+  normalizeErdSource,
+  renderDiagramBlocks
+} from '../lib/diagramRender'
 import type { DiagramSlotState } from '../lib/diagramCache'
-import { renderDiagramBlocks } from '../lib/diagramRender'
+import {
+  detachHtmlClips,
+  hydrateHtmlClips,
+  preparedClipDocument,
+  sourceOfHtmlClip,
+  type HtmlClipSlot
+} from '../lib/htmlClipRender'
 import {
   disposeDiagramViewportZoom,
   syncDiagramViewportZoom
 } from '../lib/diagramViewportZoom'
 import { resolveMentionedPath } from '../lib/filePathLinks'
-import { openFileInSessionPreview, revealSessionFileInFinder } from '../lib/openSessionFile'
+import { joinPath } from '../lib/path'
+import { openConversationFile, revealSessionFileInFinder } from '../lib/openSessionFile'
 import { onHljsReady } from '../lib/hljsLazy'
+import { tt } from '../i18n/useT'
 import {
   renderPreviewMarkdown,
   renderPreviewMarkdownProgressive,
@@ -22,7 +35,6 @@ import {
 import { TAIL_PLAIN_TEXT_THRESHOLD } from '../lib/segmenter'
 import { suppressHyperlinkClick } from '../lib/suppressHyperlinks'
 import { useSessionStore } from '../state/sessionStore'
-import { tt } from '../i18n/useT'
 
 /** Resolved light/dark for diagram re-paint (follows settings + OS when system). */
 function useResolvedTheme(): 'light' | 'dark' {
@@ -90,6 +102,7 @@ export const MarkdownView = memo(function MarkdownView({
   const ref = useRef<HTMLElement>(null)
   /** Slot-aligned last good diagram frames for this view instance. */
   const diagramSlotsRef = useRef<DiagramSlotState[]>([])
+  const htmlClipSlotsRef = useRef<HtmlClipSlot[]>([])
   const paintGenRef = useRef(0)
   const lastThemeRef = useRef<'light' | 'dark' | null>(null)
   const progressiveSealRef = useRef<ProgressivePreviewSeal | null>(null)
@@ -127,7 +140,9 @@ export const MarkdownView = memo(function MarkdownView({
 
     const gen = ++paintGenRef.current
     disposeDiagramViewportZoom(element)
+    detachHtmlClips(element, htmlClipSlotsRef.current)
     element.innerHTML = html
+    void hydrateHtmlClips(element, htmlClipSlotsRef.current)
     if (highlight) highlightMatches(element, highlight)
 
     const hasDiagram =
@@ -194,7 +209,7 @@ export const MarkdownView = memo(function MarkdownView({
           conversationId: useSessionStore.getState().activeId || undefined
         })
       } else {
-        openFileInSessionPreview(raw)
+        openConversationFile(raw)
       }
       return
     }
@@ -209,6 +224,10 @@ export const MarkdownView = memo(function MarkdownView({
     if (!block) return
     event.preventDefault()
     void handleBlockAction(button.dataset.mdAction, block, button)
+  }
+
+  const onMarkdownDoubleClick = (event: React.MouseEvent<HTMLElement>): void => {
+    handleMarkdownOverlayDoubleClick(event)
   }
 
   if (plain) {
@@ -228,6 +247,7 @@ export const MarkdownView = memo(function MarkdownView({
       <div
         className={`markdown${filePath ? ' preview-markdown' : ''}`}
         onClick={onMarkdownClick}
+        onDoubleClick={onMarkdownDoubleClick}
       >
         {progressiveSealed.map((chunk, index) => (
           <MarkdownView
@@ -253,9 +273,45 @@ export const MarkdownView = memo(function MarkdownView({
       }
       ref={ref as React.RefObject<HTMLDivElement>}
       onClick={onMarkdownClick}
+      onDoubleClick={onMarkdownDoubleClick}
     />
   )
 })
+
+const OVERLAY_BLOCK_KINDS = new Set([
+  'image',
+  'mermaid',
+  'graphviz',
+  'vegalite',
+  'erd',
+  'html-clip',
+  'xstate'
+])
+
+function overlayBlockFromTarget(target: Element): HTMLElement | null {
+  if (target.closest('[data-md-action], .md-diagram-zoom-reset, .md-block-bar')) return null
+  const block = target.closest<HTMLElement>('.md-block')
+  if (!block) return null
+  const kind = block.dataset.kind || ''
+  if (!OVERLAY_BLOCK_KINDS.has(kind)) return null
+  if (kind === 'image') {
+    return target.closest('.md-image-stage, img.md-output-image') ? block : null
+  }
+  if (target.closest('.md-diagram-viewport, .md-html-clip-host')) return block
+  return null
+}
+
+/** Double-click the visual (chart / image / clip) — same as 在窗口中查看. */
+export function handleMarkdownOverlayDoubleClick(event: { target: EventTarget | null; preventDefault(): void; stopPropagation(): void }): boolean {
+  const target = event.target
+  if (!(target instanceof Element)) return false
+  const block = overlayBlockFromTarget(target)
+  if (!block) return false
+  event.preventDefault()
+  event.stopPropagation()
+  void openBlockAsFile(block, block.dataset.filename || 'preview')
+  return true
+}
 
 async function handleBlockAction(
   action: string | undefined,
@@ -266,82 +322,320 @@ async function handleBlockAction(
   const filename = block.dataset.filename || 'snippet.txt'
   if (action === 'copy') {
     await window.vav.conversations.copyToClipboard(text)
-    const previous = button.textContent
-    button.textContent = tt('common.copied')
-    button.dataset.copied = 'true'
-    window.setTimeout(() => {
-      button.textContent = previous
-      delete button.dataset.copied
-    }, 1200)
+    flashBlockButton(button, true)
     return
   }
-  if (action === 'save') {
-    await window.vav.files.saveAs(filename, text)
+  if (action === 'save' || action === 'download' || action === 'download-png') {
+    const ok = await downloadBlock(block, filename, text)
+    if (ok === 'cancel') return
+    flashBlockButton(button, ok === true)
     return
   }
   if (action === 'copy-image') {
-    const previous = button.textContent
     button.disabled = true
     try {
-      const base64 = await diagramBlockToPngBase64(block)
-      if (!base64) {
-        flashBlockButton(button, previous, 'Failed', 1400)
+      const base64 = await rasterizeBlock(block)
+      if (!base64 || !(await copyPngBase64ToClipboard(base64))) {
+        flashBlockButton(button, false)
         return
       }
-      const ok = await copyPngBase64ToClipboard(base64)
-      if (!ok) {
-        flashBlockButton(button, previous, 'Failed', 1400)
-        return
-      }
-      flashBlockButton(button, previous, tt('common.copied'), 1200, true)
+      flashBlockButton(button, true)
     } catch (err) {
       console.warn('[copy-image]', err)
-      flashBlockButton(button, previous, 'Failed', 1400)
+      flashBlockButton(button, false)
     }
     return
   }
-  if (action === 'download-png') {
-    const previous = button.textContent
+  if (action === 'open-file' || action === 'view-window') {
     button.disabled = true
     try {
-      const pngName = (filename || 'diagram').replace(/\.[^.]+$/, '') + '.png'
-      const base64 = await diagramBlockToPngBase64(block)
-      if (!base64) {
-        flashBlockButton(button, previous, 'Failed', 1400)
-        return
-      }
-      // Reuse save dialog (writes empty text first), then overwrite with PNG bytes.
-      const result = await window.vav.files.saveAs(pngName, '')
-      if (!result.ok) {
-        button.disabled = false
-        return
-      }
-      const written = await window.vav.files.writeBinary(result.path, base64)
-      if (!written.ok) {
-        flashBlockButton(button, previous, 'Failed', 1400)
-        return
-      }
-      flashBlockButton(button, previous, 'Saved', 1200, true)
-    } catch {
-      flashBlockButton(button, previous, 'Failed', 1400)
+      const opened = await openBlockAsFile(block, filename)
+      flashBlockButton(button, opened)
+    } catch (err) {
+      console.warn('[open-file]', err)
+      flashBlockButton(button, false)
     }
   }
 }
 
-function flashBlockButton(
-  button: HTMLButtonElement,
-  previous: string | null,
-  label: string,
-  ms: number,
-  copied = false
-): void {
-  button.textContent = label
-  if (copied) button.dataset.copied = 'true'
-  window.setTimeout(() => {
-    button.textContent = previous
-    delete button.dataset.copied
-    button.disabled = false
-  }, ms)
+async function openBlockAsFile(block: HTMLElement, filename: string): Promise<boolean> {
+  const kind = block.dataset.kind || ''
+  const openOverlay = window.vav.window.openOverlay
+
+  if (kind === 'html-clip' || kind === 'xstate') {
+    const text = sourceOfHtmlClip(block)
+    if (!text.trim()) return false
+    if (typeof openOverlay === 'function') {
+      await openOverlay({
+        kind: 'app',
+        filename: kind === 'xstate' ? 'xstate.html' : filename || 'app.html',
+        text
+      })
+      return true
+    }
+  }
+
+  if (kind === 'image') {
+    const img = block.querySelector<HTMLImageElement>('img.md-output-image')
+    if (!img?.src) return false
+    if (typeof openOverlay === 'function') {
+      await openOverlay({
+        kind: 'image',
+        filename: filename || 'image.png',
+        mediaSrc: img.src
+      })
+      return true
+    }
+  }
+
+  if (kind === 'mermaid' || kind === 'graphviz' || kind === 'vegalite' || kind === 'erd') {
+    const source = extractBlockPlainText(block)
+    if (!source.trim()) return false
+    const text = kind === 'erd' ? normalizeErdSource(source) : source
+    if (typeof openOverlay === 'function') {
+      await openOverlay({
+        kind: 'diagram',
+        diagramKind: kind === 'graphviz' ? 'graphviz' : kind === 'vegalite' ? 'vegalite' : 'mermaid',
+        filename: kind === 'erd' ? 'diagram.mmd' : diagramFilename(kind),
+        text
+      })
+      return true
+    }
+  }
+
+  const writeClip = window.vav.files.writeClip
+  if (typeof writeClip !== 'function') return false
+
+  if (kind === 'html-clip' || kind === 'xstate') {
+    const text = sourceOfHtmlClip(block)
+    if (!text.trim()) return false
+    const body = kind === 'xstate' ? preparedClipDocument(text, 'xstate') : text
+    const result = await writeClip({
+      filename: kind === 'xstate' ? 'xstate.html' : filename || 'app.html',
+      text: body
+    })
+    if (!result.ok) return false
+    await window.vav.window.openFilePreview(result.path, { origin: 'session', surface: 'app' })
+    return true
+  }
+
+  if (kind === 'image') {
+    const img = block.querySelector<HTMLImageElement>('img.md-output-image')
+    if (!img?.src) return false
+    const packed = await bytesFromUrl(img.src)
+    if (!packed) return false
+    const result = await writeClip({
+      filename: filename || packed.filename,
+      base64: packed.base64
+    })
+    if (!result.ok) return false
+    await window.vav.window.openFilePreview(result.path, { origin: 'session', surface: 'app' })
+    return true
+  }
+
+  if (kind === 'mermaid' || kind === 'graphviz' || kind === 'vegalite' || kind === 'erd') {
+    const source = extractBlockPlainText(block)
+    if (!source.trim()) return false
+    const text = kind === 'erd' ? normalizeErdSource(source) : source
+    const result = await writeClip({
+      filename: kind === 'erd' ? 'diagram.mmd' : diagramFilename(kind),
+      text
+    })
+    if (!result.ok) return false
+    await window.vav.window.openFilePreview(result.path, { origin: 'session', surface: 'app' })
+    return true
+  }
+
+  const source = extractBlockPlainText(block)
+  if (!source.trim()) return false
+  const result = await writeClip({ filename: filename || 'snippet.txt', text: source })
+  if (!result.ok) return false
+  const htmlPage = kind === 'code' && /\.html?$/i.test(filename || '')
+  if (htmlPage && typeof openOverlay === 'function') {
+    await openOverlay({ kind: 'app', filename, text: source })
+    return true
+  }
+  await window.vav.window.openFilePreview(result.path, {
+    origin: 'session',
+    surface: htmlPage ? 'app' : 'file'
+  })
+  return true
+}
+
+async function rasterizeBlock(block: HTMLElement): Promise<string | null> {
+  const kind = block.dataset.kind || ''
+  if (kind === 'image') {
+    const img = block.querySelector<HTMLImageElement>('img.md-output-image')
+    if (!img?.src) return null
+    const packed = await bytesFromUrl(img.src)
+    return packed?.base64 ?? null
+  }
+  return diagramBlockToPngBase64(block)
+}
+
+async function downloadBlock(
+  block: HTMLElement,
+  filename: string,
+  text: string
+): Promise<boolean | 'cancel'> {
+  const kind = block.dataset.kind || ''
+  if (kind === 'mermaid' || kind === 'graphviz' || kind === 'vegalite' || kind === 'erd') {
+    const pngName = (filename || 'diagram').replace(/\.[^.]+$/, '') + '.png'
+    const base64 = await diagramBlockToPngBase64(block)
+    if (!base64) return false
+    return writeDownloadedBinary(pngName, base64)
+  }
+  if (kind === 'image') {
+    const img = block.querySelector<HTMLImageElement>('img.md-output-image')
+    if (!img?.src) return false
+    const packed = await bytesFromUrl(img.src)
+    if (!packed) return false
+    return writeDownloadedBinary(filename || packed.filename, packed.base64)
+  }
+  const result = await window.vav.files.saveAs(filename || 'snippet.txt', text)
+  if (!result.ok) return result.cancelled ? 'cancel' : false
+  return true
+}
+
+function sessionWorkspaceDir(): string | null {
+  const state = useSessionStore.getState()
+  const conv = state.conversations.find((c) => c.id === state.activeId)
+  const dir = conv?.workingDirectory?.trim()
+  return dir && !dir.startsWith('__') ? dir : null
+}
+
+function safeDownloadName(name: string): string {
+  const cleaned = name.replace(/[/\\]+/g, '-').replace(/^\.+/g, '').trim()
+  return cleaned || 'image.png'
+}
+
+function inspectLooksMissing(error: string | undefined): boolean {
+  if (!error) return false
+  return /enoent|no such file|not found|does not exist/i.test(error)
+}
+
+async function uniqueWorkspaceFile(dir: string, name: string): Promise<string> {
+  const safe = safeDownloadName(name)
+  const dot = safe.lastIndexOf('.')
+  const stem = dot > 0 ? safe.slice(0, dot) : safe
+  const ext = dot > 0 ? safe.slice(dot) : ''
+  for (let i = 0; i < 80; i++) {
+    const candidate = joinPath(dir, i === 0 ? safe : `${stem}-${i}${ext}`)
+    const info = await window.vav.files.inspect(candidate)
+    if (inspectLooksMissing(info.error)) return candidate
+    if (info.error) continue
+  }
+  return joinPath(dir, `${stem}-${Date.now()}${ext}`)
+}
+
+async function writeDownloadedBinary(name: string, base64: string): Promise<boolean | 'cancel'> {
+  const dir = sessionWorkspaceDir()
+  if (!dir) {
+    useSessionStore.getState().showToast({
+      kind: 'error',
+      title: tt('md.download.noWorkspace')
+    })
+    return false
+  }
+  const dest = await uniqueWorkspaceFile(dir, name)
+  const written = await window.vav.files.writeBinary(dest, base64)
+  if (!written.ok) {
+    useSessionStore.getState().showToast({
+      kind: 'error',
+      title: tt('md.download.failed'),
+      description: written.error
+    })
+    return false
+  }
+  useSessionStore.getState().showToast({
+    kind: 'success',
+    title: tt('md.download.saved'),
+    description: dest.slice(dir.length).replace(/^[/\\]/, '') || safeDownloadName(name)
+  })
+  return true
+}
+
+async function bytesFromUrl(src: string): Promise<{ base64: string; filename: string } | null> {
+  try {
+    if (src.startsWith('data:')) {
+      const match = /^data:([^;]+);base64,(.+)$/i.exec(src)
+      if (!match) return null
+      const ext = mimeToExt(match[1] || '')
+      return { base64: match[2]!, filename: `image.${ext}` }
+    }
+    const res = await fetch(src)
+    if (!res.ok) return null
+    const buf = await res.arrayBuffer()
+    const bytes = new Uint8Array(buf)
+    let binary = ''
+    for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]!)
+    const type = res.headers.get('content-type') || ''
+    const ext = mimeToExt(type)
+    return { base64: btoa(binary), filename: `image.${ext}` }
+  } catch {
+    return null
+  }
+}
+
+function mimeToExt(mime: string): string {
+  const type = mime.toLowerCase()
+  if (type.includes('jpeg')) return 'jpg'
+  if (type.includes('webp')) return 'webp'
+  if (type.includes('gif')) return 'gif'
+  if (type.includes('svg')) return 'svg'
+  if (type.includes('avif')) return 'avif'
+  return 'png'
+}
+
+type AckButton = HTMLButtonElement & { __ackTimers?: number[] }
+
+function clearBlockAck(button: AckButton): void {
+  for (const id of button.__ackTimers ?? []) window.clearTimeout(id)
+  button.__ackTimers = []
+  button.classList.remove('is-ack-out', 'is-ack-done')
+  delete button.dataset.copied
+  delete button.dataset.failed
+  const idle = button.dataset.titleIdle
+  if (idle) {
+    button.title = idle
+    button.setAttribute('aria-label', idle)
+  }
+}
+
+/** Same 100 / 980 / 1100 Morph as MessageActionButton (blur → check → restore). */
+function flashBlockButton(button: HTMLButtonElement, ok: boolean): void {
+  const btn = button as AckButton
+  btn.disabled = false
+  clearBlockAck(btn)
+  if (!ok) {
+    btn.dataset.failed = 'true'
+    btn.__ackTimers = [
+      window.setTimeout(() => {
+        delete btn.dataset.failed
+      }, 1200)
+    ]
+    return
+  }
+  const done = btn.dataset.titleDone
+  btn.classList.add('is-ack-out')
+  btn.__ackTimers = [
+    window.setTimeout(() => {
+      btn.dataset.copied = 'true'
+      btn.classList.remove('is-ack-out')
+      btn.classList.add('is-ack-done')
+      if (done) {
+        btn.title = done
+        btn.setAttribute('aria-label', done)
+      }
+    }, 100),
+    window.setTimeout(() => {
+      btn.classList.add('is-ack-out')
+      btn.classList.remove('is-ack-done')
+    }, 980),
+    window.setTimeout(() => {
+      clearBlockAck(btn)
+    }, 1100)
+  ]
 }
 
 /** Put a PNG (base64, no data-URL prefix) on the system clipboard. */

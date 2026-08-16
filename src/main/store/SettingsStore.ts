@@ -7,17 +7,21 @@ import {
   DEFAULT_CLI_AGENTS,
   DEFAULT_SETTINGS,
   DISPLAY_CURRENCIES,
+  SURFACE_PATTERNS,
   mergeBuiltinDefaultArgs,
   type AgentConfig,
   type AppSettings,
   type ColorTint,
-  type DisplayCurrency
+  type DisplayCurrency,
+  type SurfacePattern
 } from '@shared/types'
 import { coerceShell, platformDefaults, type Platform } from '@shared/platform'
 import { normalizeAccentHex } from '@shared/colorTints'
 import { sanitizeKeyBindings } from '@shared/keyBindings'
 import { RECENT_AGENT_MODELS_MAX } from '@shared/agentModels'
 import { parseThinkingLevel } from '@shared/thinkingLevel'
+import { isCssTileSize } from '@shared/surfacePattern'
+import { surfacePatternFilePath, writeSurfacePatternPng } from '../importSurfacePattern'
 import { resolveFirstOnLoginPath } from '../terminal/loginPath'
 
 const PLATFORM = process.platform as Platform
@@ -109,7 +113,12 @@ export class SettingsStore {
     const beforeAgents = JSON.stringify(this.settings.cliAgents ?? [])
     this.settings.cliAgents = mergeBuiltinAgents(
       Array.isArray(this.settings.cliAgents) ? this.settings.cliAgents : [],
-      { discoverInstalled: true }
+      {
+        discoverInstalled: true,
+        removedIds: Array.isArray(this.settings.removedCliAgentIds)
+          ? this.settings.removedCliAgentIds
+          : []
+      }
     )
     if (JSON.stringify(this.settings.cliAgents) !== beforeAgents) dirty = true
     if (this.settings.defaultAgentId === undefined) {
@@ -138,6 +147,16 @@ export class SettingsStore {
       this.settings.colorTint = DEFAULT_SETTINGS.colorTint
       dirty = true
     }
+    const leftover = this.settings as AppSettings & {
+      backgroundTint?: unknown
+      customBackgroundColor?: unknown
+    }
+    if (leftover.backgroundTint !== undefined || leftover.customBackgroundColor !== undefined) {
+      delete leftover.backgroundTint
+      delete leftover.customBackgroundColor
+      dirty = true
+    }
+    if (this.migrateCustomSurfacePatternFile()) dirty = true
     if (
       !DISPLAY_CURRENCIES.includes(this.settings.displayCurrency as DisplayCurrency)
     ) {
@@ -150,7 +169,12 @@ export class SettingsStore {
   get(): AppSettings {
     // Structural normalize only — never touch the filesystem / login shell here.
     this.settings.cliAgents = mergeBuiltinAgents(
-      Array.isArray(this.settings.cliAgents) ? this.settings.cliAgents : []
+      Array.isArray(this.settings.cliAgents) ? this.settings.cliAgents : [],
+      {
+        removedIds: Array.isArray(this.settings.removedCliAgentIds)
+          ? this.settings.removedCliAgentIds
+          : []
+      }
     )
     return this.settings
   }
@@ -188,6 +212,21 @@ export class SettingsStore {
     if (!providers.has(s.webSearchProvider)) s.webSearchProvider = 'auto'
     s.fontSize = Math.min(24, Math.max(10, s.fontSize))
     if (s.bashBackground !== 'dark' && s.bashBackground !== 'theme') s.bashBackground = 'theme'
+    if (!SURFACE_PATTERNS.includes(s.surfacePattern as SurfacePattern)) {
+      s.surfacePattern = DEFAULT_SETTINGS.surfacePattern
+    }
+    if (typeof s.customSurfacePatternUrl !== 'string') s.customSurfacePatternUrl = ''
+    // Runtime-only (vav-local / leftover data URLs) — never keep a payload here.
+    if (s.customSurfacePatternUrl.startsWith('data:') || s.customSurfacePatternUrl.length > 2_000) {
+      s.customSurfacePatternUrl = ''
+    }
+    if (typeof s.customSurfacePatternSize !== 'string' || !isCssTileSize(s.customSurfacePatternSize)) {
+      s.customSurfacePatternSize = ''
+    }
+    const patternFile = surfacePatternFilePath(app.getPath('userData'))
+    if (s.surfacePattern === 'custom' && !existsSync(patternFile)) {
+      s.surfacePattern = DEFAULT_SETTINGS.surfacePattern
+    }
     if (typeof s.customAccentColor !== 'string') s.customAccentColor = ''
     else s.customAccentColor = normalizeAccentHex(s.customAccentColor) ?? ''
     if (s.colorTint === 'custom' && !s.customAccentColor) s.colorTint = 'system'
@@ -196,7 +235,19 @@ export class SettingsStore {
     s.temperature = Math.min(2, Math.max(0, s.temperature))
     s.maxTokens = Math.min(200_000, Math.max(256, Math.round(s.maxTokens)))
     s.defaultThinkingLevel = parseThinkingLevel(s.defaultThinkingLevel)
-    s.cliAgents = mergeBuiltinAgents(Array.isArray(s.cliAgents) ? s.cliAgents : [])
+    if (!Array.isArray(s.removedCliAgentIds)) s.removedCliAgentIds = []
+    else {
+      s.removedCliAgentIds = [
+        ...new Set(
+          s.removedCliAgentIds.filter(
+            (id): id is string => typeof id === 'string' && id.length > 0
+          )
+        )
+      ]
+    }
+    s.cliAgents = mergeBuiltinAgents(Array.isArray(s.cliAgents) ? s.cliAgents : [], {
+      removedIds: s.removedCliAgentIds
+    })
     if (typeof s.keepAwakeWhileAgentRunning !== 'boolean') {
       s.keepAwakeWhileAgentRunning = false
     }
@@ -319,6 +370,33 @@ export class SettingsStore {
     })
   }
 
+  /**
+   * Older builds stuffed the tile into settings.json as a data URL.
+   * Lift that PNG into userData and drop the payload.
+   */
+  private migrateCustomSurfacePatternFile(): boolean {
+    const url = this.settings.customSurfacePatternUrl
+    const dest = surfacePatternFilePath(app.getPath('userData'))
+    let dirty = false
+    if (typeof url === 'string' && url.startsWith('data:image/png;base64,')) {
+      try {
+        const png = Buffer.from(url.slice('data:image/png;base64,'.length), 'base64')
+        const installed = writeSurfacePatternPng(png, dest)
+        if (installed && !isCssTileSize(this.settings.customSurfacePatternSize)) {
+          this.settings.customSurfacePatternSize = installed.size
+        }
+      } catch {
+        // Drop the payload even if the write fails — settings.json must stay small.
+      }
+      this.settings.customSurfacePatternUrl = ''
+      dirty = true
+    } else if (typeof url === 'string' && (url.startsWith('data:') || url.startsWith('vav-local:'))) {
+      this.settings.customSurfacePatternUrl = ''
+      dirty = true
+    }
+    return dirty
+  }
+
   private persist(): void {
     try {
       mkdirSync(dirname(this.file), { recursive: true })
@@ -327,11 +405,13 @@ export class SettingsStore {
         apiKeyPresent: _omitApi,
         braveSearchKeyPresent: _omitBrave,
         cloudflareApiTokenPresent: _omitCf,
+        customSurfacePatternUrl: _omitPatternUrl,
         ...rest
       } = this.settings
       void _omitApi
       void _omitBrave
       void _omitCf
+      void _omitPatternUrl
       writeFileSync(this.file, JSON.stringify(rest, null, 2), 'utf8')
     } catch (err) {
       console.error('[settings] persist failed', err)
@@ -401,9 +481,10 @@ function normalizeAgentConfig(raw: Partial<AgentConfig> & { id?: string }): Agen
  */
 function mergeBuiltinAgents(
   existing: AgentConfig[],
-  options?: { discoverInstalled?: boolean }
+  options?: { discoverInstalled?: boolean; removedIds?: string[] }
 ): AgentConfig[] {
   const discover = options?.discoverInstalled === true
+  const removed = new Set(options?.removedIds ?? [])
   const normalized = existing.map((raw) => normalizeAgentConfig(raw))
   const byId = new Map(normalized.map((a) => [a.id, a]))
 
@@ -417,10 +498,13 @@ function mergeBuiltinAgents(
 
   // Fresh / wiped settings — only place we invent a catalogue from PATH.
   if (byId.size === 0) {
-    const seed = discover
-      ? DEFAULT_CLI_AGENTS.filter((builtin) => agentBinaryInstalled(builtin))
-      : DEFAULT_CLI_AGENTS
-    return seed.map((builtin) =>
+    const seed = (
+      discover
+        ? DEFAULT_CLI_AGENTS.filter((builtin) => agentBinaryInstalled(builtin))
+        : DEFAULT_CLI_AGENTS
+    ).filter((builtin) => !removed.has(builtin.id))
+    const source = seed.length > 0 ? seed : DEFAULT_CLI_AGENTS
+    return source.map((builtin) =>
       normalizeAgentConfig({
         ...builtin,
         envVars: { ...builtin.envVars },

@@ -1678,6 +1678,13 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     })
     get().syncPtyLayouts(id)
     maybeAutoAssignSingleAgent(id, pending.id)
+    // Original pane just remounted in a half-size track — settle fit + SIGWINCH
+    // instead of waiting for the 180ms ResizeObserver debounce.
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        window.dispatchEvent(new Event('vav:resize-end'))
+      })
+    })
   },
 
   async assignCliPane(id, tabId, agentId, cols = 80, rows = 24, initialContext = null) {

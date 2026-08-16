@@ -22,6 +22,7 @@ import type {
   TurnStatus,
   ValidateKeyResult
 } from './types'
+import type { HostAuthKind } from './cliAccountParse'
 import type { ChangeSet, UpdateState } from './changeSet'
 import type { GitResult, GitSnapshot } from './git'
 import type {
@@ -35,8 +36,10 @@ import type {
 } from './github'
 import type { Platform } from './platform'
 import type { AgentInstallRun } from './agentInstall'
+import type { OverlayNavigatePayload, OverlayPayload } from './overlayOpen'
 
 export type { AgentInstallRun } from './agentInstall'
+export type { OverlayNavigatePayload, OverlayPayload } from './overlayOpen'
 
 export interface Bootstrap {
   settings: AppSettings
@@ -315,6 +318,7 @@ export interface HostAccountQuota {
   signedIn: boolean
   accountId: string | null
   plan: string | null
+  authKind: HostAuthKind
   windows: QuotaWindow[]
 }
 
@@ -331,6 +335,7 @@ export interface ProviderAccountViewPayload {
   signedIn: boolean
   accountId: string | null
   plan: string | null
+  authKind: HostAuthKind
   windows: QuotaWindow[]
   loading: boolean
   theme: ThemeMode
@@ -372,6 +377,8 @@ export type FilePreviewKind =
   | 'sqlite'
   /** Rendered HTML canvas (sandbox); source remains editable via Agent + Save. */
   | 'html'
+  /** Interactive ```app (scripts allowed, unique origin). */
+  | 'html-clip'
 
 /** One entry in a ZIP archive structure preview (no content extraction). */
 export interface ZipEntryInfo {
@@ -543,6 +550,11 @@ export interface VavApi {
     pickDirectory(): Promise<string | null>
     /** Shows the native OS colour picker; returns `#rrggbb` or null if cancelled. */
     pickColor(defaultHex?: string): Promise<string | null>
+    /**
+     * Native file picker for a custom surface tile. Writes an alpha-only PNG
+     * under userData. `null` = cancelled; `ok: false` = no usable alpha / bad file.
+     */
+    pickSurfacePatternImage(): Promise<import('./surfacePattern').SurfacePatternPickResult | null>
     /** `ok: false` means the accelerator is already taken by another app. */
     setHotkey(accelerator: string): Promise<{ ok: boolean; settings: AppSettings }>
     cliStatus(): Promise<CliStatus>
@@ -615,7 +627,7 @@ export interface VavApi {
     setLeaf(conversationId: string, leafId: string): Promise<void>
     /** Pinned rows sort above every time group. */
     setPinned(id: string, pinned: boolean): Promise<ConversationMeta[]>
-    /** Archive / restore; refuses to archive the last active conversation. */
+    /** Archive / restore. Archived sessions stay readable but cannot send. */
     setArchived(id: string, archived: boolean): Promise<ConversationMeta[]>
     /** Per-conversation Auto / Bypass / Edit tool approval policy. */
     setApprovalMode(
@@ -776,6 +788,15 @@ export interface VavApi {
       path: string,
       content: string
     ): Promise<{ ok: true } | { ok: false; error?: string }>
+    /**
+     * Write bytes/text into the OS temp clip folder and return that path.
+     * Display name is the safe filename — callers must not surface the folder.
+     */
+    writeClip(input: {
+      filename: string
+      base64?: string
+      text?: string
+    }): Promise<{ ok: true; path: string; displayName: string } | { ok: false; error: string }>
     /** Save dialog + write text contents (markdown Copy/Save, file viewer). */
     saveAs(
       defaultName: string,
@@ -865,8 +886,8 @@ export interface VavApi {
 
   /** File Preview multi-session store (independent of sidebar conversations). */
   fileSessions: {
-    open(path: string): Promise<FileSessionsState>
-    create(path: string): Promise<FileSessionsState>
+    open(path: string): Promise<FileSessionsState | null>
+    create(path: string): Promise<FileSessionsState | null>
     setActive(fileId: string, sessionId: string): Promise<FileSessionsState | null>
     list(fileId: string): Promise<FileSessionsState | null>
     /** All file-bound sessions for the sidebar browser. */
@@ -1052,22 +1073,20 @@ export interface VavApi {
     /** Opens (or raises) a standalone file preview window for `path`. */
     openFilePreview(
       path: string,
-      options?: { origin?: 'dock' | 'session'; conversationId?: string }
-    ): Promise<void>
-    /**
-     * Warm preview shell: main pushes a new path without reloading the window.
-     * Fired on the file-preview BrowserWindow only.
-     */
-    onPreviewNavigate(
-      handler: (payload: {
-        path: string
+      options?: {
         origin?: 'dock' | 'session'
         conversationId?: string
-        openSeq: number
-        /** Date.now() when main received the open request (open→paint timing). */
-        requestedAt?: number
-      }) => void
-    ): () => void
+        /** Chrome-less overlay (```app, session-opened charts / images / html). */
+        surface?: 'file' | 'app'
+      }
+    ): Promise<void>
+    /** Chrome-less overlay. Paints from inline content when given — does not wait on disk. */
+    openOverlay(payload: OverlayPayload): Promise<void>
+    /**
+     * Warm preview / overlay shell: main pushes a new path (and optional inline
+     * content) without reloading the window.
+     */
+    onPreviewNavigate(handler: (payload: OverlayNavigatePayload) => void): () => void
     /** Warm shell finished light bootstrap + chunk prefetch — ready to claim. */
     previewShellReady(): void
     /**
@@ -1278,6 +1297,7 @@ export const IPC = {
   settingsFonts: 'vav:settings:fonts',
   settingsPickDirectory: 'vav:settings:pick-directory',
   settingsPickColor: 'vav:settings:pick-color',
+  settingsPickSurfacePattern: 'vav:settings:pick-surface-pattern',
   settingsSetHotkey: 'vav:settings:set-hotkey',
   settingsCliStatus: 'vav:settings:cli-status',
   settingsCliSetLocation: 'vav:settings:cli-set-location',
@@ -1349,6 +1369,7 @@ export const IPC = {
   filesQuickLook: 'vav:files:quick-look',
   filesWatch: 'vav:files:watch',
   filesDirty: 'vav:files:dirty',
+  filesWriteClip: 'vav:files:write-clip',
   filesSaveAs: 'vav:files:save-as',
   filesRename: 'vav:files:rename',
   filesTrash: 'vav:files:trash',
@@ -1431,6 +1452,7 @@ export const IPC = {
   windowDetachedChanged: 'vav:window:detached-changed',
   windowRepaint: 'vav:window:repaint',
   windowOpenFilePreview: 'vav:window:open-file-preview',
+  windowOpenOverlay: 'vav:window:open-overlay',
   windowOpenTokenUsage: 'vav:window:open-token-usage',
   tokenUsageGetView: 'vav:token-usage:get-view',
   tokenUsageView: 'vav:token-usage:view',

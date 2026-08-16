@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react'
 import type { CliHostKind, QuotaWindow, QuotaWindowKind } from '@shared/types'
+import type { HostAuthKind } from '@shared/cliAccountParse'
+import { normalizeAuthKind } from '@shared/cliAccountParse'
+import { isStructuredCliHost } from '@shared/cliHost'
 import type { MessageKey } from '@shared/i18n'
 import { QUOTA_EXHAUSTED_PERCENT } from '@shared/cliErrors'
-import { hostMayHaveAccountQuota } from '@shared/quotaWindows'
 import { useT } from '../i18n/useT'
 import { StaggerLine } from './ui'
 
@@ -105,6 +107,16 @@ function PendingRow(): React.JSX.Element {
  * Occupies the slot while the account poll is in flight so arrival inserts
  * into an already-open hole instead of jumping the hero.
  */
+type QuotaSnap = { authKind: HostAuthKind; accountId: string | null; windows: QuotaWindow[] }
+
+const NOTICE_LINE: Record<Exclude<HostAuthKind, 'unknown'>, MessageKey> = {
+  none: 'token.quotaSignedOut',
+  expired: 'token.quotaExpired',
+  'api-key': 'token.quotaApiKey',
+  token: 'token.quotaToken',
+  oauth: 'token.quotaSignedIn'
+}
+
 export function EmptyQuotaUsage({
   conversationId,
   host
@@ -113,29 +125,41 @@ export function EmptyQuotaUsage({
   host: CliHostKind | null
 }): React.JSX.Element | null {
   const t = useT()
-  const canPoll = hostMayHaveAccountQuota(host)
-  const [windows, setWindows] = useState<QuotaWindow[] | null>(null)
+  const canShow = isStructuredCliHost(host)
+  const [snap, setSnap] = useState<QuotaSnap | null>(null)
 
   useEffect(() => {
-    setWindows(null)
+    setSnap(null)
   }, [conversationId, host])
 
   useEffect(() => {
-    if (!host || !canPoll) return
+    if (!host || !canShow) return
     let cancelled = false
     void window.vav.conversations.accountQuota(conversationId, host).then((next) => {
       if (cancelled) return
-      setWindows(next?.windows ?? [])
+      setSnap({
+        authKind: normalizeAuthKind(next?.authKind, next?.signedIn),
+        accountId: next?.accountId?.trim() || null,
+        windows: next?.windows ?? []
+      })
     })
     return () => {
       cancelled = true
     }
-  }, [conversationId, host, canPoll])
+  }, [conversationId, host, canShow])
 
-  if (!host || !canPoll) return null
-  const pending = windows === null
-  const rows = windows ?? []
-  const phase = pending ? 'pending' : rows.length > 0 ? 'ready' : 'empty'
+  if (!host || !canShow) return null
+  const pending = snap === null
+  const rows = snap?.windows ?? []
+  const noticeKind =
+    snap && rows.length === 0 && snap.authKind !== 'unknown' ? snap.authKind : null
+  const noticeText =
+    noticeKind === 'oauth' && snap?.accountId
+      ? snap.accountId
+      : noticeKind
+        ? t(NOTICE_LINE[noticeKind])
+        : null
+  const phase = pending ? 'pending' : rows.length > 0 ? 'ready' : noticeText ? 'notice' : 'empty'
   const now = Date.now()
   const showKind = rows.length > 1
 
@@ -143,12 +167,16 @@ export function EmptyQuotaUsage({
     <div
       className={`empty-quota is-${phase}`}
       aria-busy={pending}
-      aria-label={t('token.quotaSection')}
+      aria-label={noticeText || t('token.quotaSection')}
     >
       <div className="empty-quota-reveal">
         <div className="empty-quota-reveal-inner">
           {pending ? (
             <PendingRow />
+          ) : noticeText ? (
+            <div className="empty-quota-line">
+              <StaggerLine baseDelay={QUOTA_STAGGER_BASE}>{noticeText}</StaggerLine>
+            </div>
           ) : (
             rows.map((window, index) => (
               <QuotaRow

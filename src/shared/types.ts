@@ -34,6 +34,13 @@ export type ToolName =
   | 'sql_query'
   | 'load_skill'
   | 'switch_mode'
+  /** Claude Task / OpenCode task+subtask — a nested agent run. */
+  | 'task'
+  /**
+   * Reviewable plan document (Cursor createPlan / cursor/create_plan).
+   * Not the live `plan` checklist.
+   */
+  | 'plan_doc'
   /** External CLI tool that does not map to a built-in schema name. */
   | 'external'
 
@@ -58,6 +65,8 @@ export const TOOL_LABELS: Record<ToolName, string> = {
   sql_query: 'SQL 查询',
   load_skill: '加载技能',
   switch_mode: '切换到编辑',
+  task: '子任务',
+  plan_doc: '计划文档',
   external: '工具'
 }
 
@@ -107,6 +116,12 @@ export interface ToolCallBlock {
   askTitle?: string
   /** terminal only: which terminal tab mirrored this command. */
   targetTabId?: string
+  /**
+   * Nested transcript of a subagent (OpenCode task/subtask, Claude Task).
+   * Reasoning, tools, and text from the child run live here — not as sibling
+   * blocks on the parent turn.
+   */
+  children?: MessageBlock[]
 }
 
 export interface ReasoningBlock {
@@ -664,6 +679,39 @@ export type ThemeMode = 'light' | 'dark' | 'system'
  */
 export type BashBackgroundMode = 'dark' | 'theme'
 /**
+ * Wash texture on the non-sidebar content column (session, settings).
+ * `none` is the default — no overlay.
+ */
+export type SurfacePattern =
+  | 'none'
+  | 'grain'
+  | 'dots'
+  | 'graph'
+  | 'plus'
+  | 'hatch'
+  | 'scan'
+  | 'fiber'
+  | 'speckle'
+  | 'ripple'
+  | 'hearts'
+  | 'stars'
+  | 'custom'
+export const SURFACE_PATTERNS: readonly SurfacePattern[] = [
+  'none',
+  'grain',
+  'dots',
+  'graph',
+  'plus',
+  'hatch',
+  'scan',
+  'fiber',
+  'speckle',
+  'ripple',
+  'hearts',
+  'stars',
+  'custom'
+] as const
+/**
  * Accent / surface tint.
  * - `system` (default): follow the OS accent colour (macOS / Windows).
  * - `mono`: black–white chrome.
@@ -837,6 +885,22 @@ export interface AppSettings {
    */
   customAccentColor: string
   /**
+   * Repeating wash on the content column (conversation / settings).
+   * Does not paint the sidebar, document previews, or the bash terminal.
+   * Default `none` — no overlay.
+   */
+  surfacePattern: SurfacePattern
+  /**
+   * Runtime `vav-local://` URL of the user tile. Injected by main from
+   * `userData/surface-pattern.png` — never persisted as a data URL.
+   */
+  customSurfacePatternUrl: string
+  /**
+   * CSS `mask-size` for the custom tile (`Wpx Hpx`), matching the stored
+   * PNG’s pixel aspect so the motif is not square-stretched.
+   */
+  customSurfacePatternSize: string
+  /**
    * When false (default), Swarm / CLI Screen is off: the Thread|Swarm
    * switcher is hidden and enterCliMode is a no-op.
    */
@@ -915,6 +979,11 @@ export interface AppSettings {
    */
   cliAgents: AgentConfig[]
   /**
+   * Catalogue ids the user removed with −. PATH discover must not put
+   * these back; adding the same provider from + clears the id.
+   */
+  removedCliAgentIds: string[]
+  /**
    * Default chat host for new / quick-launch sessions.
    * `null` or `"vav"` = built-in VAV agent; otherwise a structured CLI host id.
    */
@@ -972,6 +1041,9 @@ export const DEFAULT_SETTINGS: AppSettings = {
   bashBackground: 'theme',
   colorTint: 'system',
   customAccentColor: '',
+  surfacePattern: 'none',
+  customSurfacePatternUrl: '',
+  customSurfacePatternSize: '',
   swarmModeEnabled: false,
   locale: 'system',
   displayCurrency: 'USD',
@@ -1001,6 +1073,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   hideDockIcon: false,
   autoCheckUpdates: true,
   cliAgents: DEFAULT_CLI_AGENTS.map((a) => ({ ...a, envVars: { ...a.envVars } })),
+  removedCliAgentIds: [],
   /** null = plain vav shell (default host mode). */
   defaultAgentId: null,
   skipCliAgentPickerWhenSingle: false,

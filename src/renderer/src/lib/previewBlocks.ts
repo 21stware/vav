@@ -1084,6 +1084,10 @@ export function formatBadge(path: string, kind: string): string {
   if (ext === 'docx') return 'DOCX'
   if (ext === 'xlsx' || ext === 'xls') return 'XLSX'
   if (ext === 'pptx') return 'PPTX'
+  const base = path.split(/[/\\]/).pop()?.toLowerCase() ?? ''
+  if (kind === 'html-clip' || base === 'app.html' || base === 'xstate.html' || base.endsWith('.app.html')) {
+    return base === 'xstate.html' ? 'XState' : 'App'
+  }
   if (kind === 'html' || ext === 'html' || ext === 'htm' || ext === 'xhtml') return 'HTML'
   if (kind === 'image') return 'Image'
   if (kind === 'audio') return 'Audio'

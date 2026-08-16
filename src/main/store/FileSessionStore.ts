@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { stat } from 'node:fs/promises'
 import type { Conversation, ThinkingLevel } from '@shared/types'
 import { parseThinkingLevel } from '@shared/thinkingLevel'
+import { isFileSessionEligible } from '@shared/clipPath'
 import type { ConversationStore } from './ConversationStore'
 import { defaultSessionTitle } from '@shared/i18n'
 import { currentLocale } from '../i18n'
@@ -71,6 +72,9 @@ export function kindFromFilePath(path: string): string | null {
  * Conversation bodies live in {@link ConversationStore} with `fileId` set so the
  * agent loop stays unchanged; this store owns the fileId → sessions index and
  * keeps them out of the main sidebar via ConversationStore.listMeta filtering.
+ *
+ * Ephemeral conversation overlays (temp clips under /vav-clips/) are not files
+ * to chat about — they never enter this index.
  */
 export class FileSessionStore {
   private readonly dir = join(app.getPath('userData'), 'file-sessions')
@@ -83,6 +87,11 @@ export class FileSessionStore {
     this.loadIndex()
     try {
       this.purgeStale()
+    } catch {
+      // best-effort
+    }
+    try {
+      this.purgePreviewOnly()
     } catch {
       // best-effort
     }
@@ -202,6 +211,7 @@ export class FileSessionStore {
     conversation: Conversation
   }> {
     if (!this.conversations) throw new Error('FileSessionStore not bound')
+    if (!isFileSessionEligible(path)) throw new Error('preview_only')
     const identity = await this.resolveIdentity(path)
     let bundle = this.index.byId[identity.fileId]
     const level = parseThinkingLevel(thinkingLevel)
@@ -291,6 +301,7 @@ export class FileSessionStore {
     conversation: Conversation
   }> {
     if (!this.conversations) throw new Error('FileSessionStore not bound')
+    if (!isFileSessionEligible(path)) throw new Error('preview_only')
     const opened = await this.open(path, model, approvalMode, thinkingLevel)
     const conversation = this.conversations.create(dirnameSafe(path), model, {
       fileId: opened.fileId,
@@ -363,6 +374,7 @@ export class FileSessionStore {
       isActive: boolean
     }[] = []
     for (const bundle of Object.values(this.index.byId)) {
+      if (!isFileSessionEligible(bundle.path)) continue
       const pathStatus = pathExistence(bundle.path)
       for (const sessionId of bundle.sessionIds) {
         const c = this.conversations.get(sessionId)
@@ -566,6 +578,32 @@ export class FileSessionStore {
       }
     }
     if (changed) this.flushIndex()
+  }
+
+  /**
+   * Conversation overlays write temp clips under /vav-clips/. Those are
+   * preview windows, not files to chat about — drop leftover bundles.
+   */
+  private purgePreviewOnly(): void {
+    if (!this.conversations) return
+    let changed = false
+    for (const [fileId, bundle] of Object.entries(this.index.byId)) {
+      if (isFileSessionEligible(bundle.path)) continue
+      if (bundle.sessionIds.length > 0) {
+        this.conversations.remove(bundle.sessionIds)
+      }
+      delete this.index.byId[fileId]
+      if (bundle.inodeKey) delete this.index.byInode[bundle.inodeKey]
+      delete this.index.byPathHash[bundle.pathHash]
+      changed = true
+    }
+    if (!changed) return
+    this.flushIndex()
+    try {
+      this.conversations.flush()
+    } catch {
+      // index already updated
+    }
   }
 }
 

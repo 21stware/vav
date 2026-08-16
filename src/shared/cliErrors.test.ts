@@ -74,6 +74,11 @@ describe('classifyCliError', () => {
     assert.equal(classifyCliError('slow down', null, RpcErrorCode.tooManyRequests), 'quota')
     assert.equal(classifyCliError('Internal error', null, RpcErrorCode.internalError), 'generic')
     assert.equal(classifyCliError('Request cancelled'), 'cancelled')
+    assert.equal(classifyCliError('Aborted'), 'cancelled')
+    assert.equal(classifyCliError('Request aborted'), 'cancelled')
+    assert.equal(classifyCliError('Interrupted'), 'cancelled')
+    assert.equal(classifyCliError('Turn interrupted'), 'cancelled')
+    assert.equal(classifyCliError('Cancelled'), 'cancelled')
   })
 
   it('maps quota / session / auth wording when no code is present', () => {

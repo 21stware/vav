@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="48" height="24" viewBox="0 0 48 24">
+  <!-- Signal wave. Start/end Y match so the period tiles on both axes. -->
+  <g fill="none" stroke="#000" stroke-linecap="square">
+    <path d="M0 0q12 6 24 0t24 0" stroke-width="0.55"/>
+    <path d="M0 12q12 6 24 0t24 0" stroke-width="0.55"/>
+  </g>
+</svg>

@@ -12,17 +12,20 @@ import {
   themeGraphvizSource,
   type DiagramSvgKind
 } from '../../lib/diagramSvgPick'
+import { normalizeErdSource, paintDiagramSource } from '../../lib/diagramRender'
+import { finishMermaidHost, renderMermaidSvgMarkup } from '../../lib/mermaidRender'
 import { useT } from '../../i18n/useT'
 import { useCanvasZoom } from './canvasZoom'
 
-export type DiagramFileKind = DiagramSvgKind
+export type DiagramFileKind = DiagramSvgKind | 'vegalite' | 'erd'
 
 export function DiagramFileView({
   kind,
   text,
   selecting,
   selectedIds,
-  onSelect
+  onSelect,
+  showControls = true
 }: {
   kind: DiagramFileKind
   text: string
@@ -32,6 +35,8 @@ export function DiagramFileView({
   readOnly?: boolean
   onSelect: (block: PreviewBlock, event?: React.MouseEvent | null) => void
   onSourceChange?: (source: string) => void
+  /** Floating +/− bar. Overlay windows keep gestures and hide the chrome. */
+  showControls?: boolean
 }): React.JSX.Element {
   const t = useT()
   const hostRef = useRef<HTMLDivElement>(null)
@@ -59,46 +64,37 @@ export function DiagramFileView({
           return
         }
         let svg = ''
-        if (kind === 'mermaid') {
-          const mermaid = (await import('mermaid')).default
-          // Match app mermaid theme tokens
-          mermaid.initialize({
-            startOnLoad: false,
-            securityLevel: 'strict',
-            theme: dark ? 'dark' : 'neutral',
-            fontFamily: 'var(--font-ui, system-ui, sans-serif)',
-            themeVariables: dark
-              ? {
-                  darkMode: true,
-                  background: 'transparent',
-                  primaryColor: '#3a3a42',
-                  primaryTextColor: '#efeff1',
-                  primaryBorderColor: '#6a6a74',
-                  lineColor: '#a2a2a9',
-                  textColor: '#efeff1',
-                  mainBkg: '#3a3a42',
-                  nodeBorder: '#6a6a74',
-                  clusterBkg: '#2a2a2e'
-                }
-              : {
-                  background: 'transparent',
-                  primaryTextColor: '#141416',
-                  textColor: '#141416',
-                  lineColor: '#5c5c66'
-                }
-          })
-          const id = `mmd-file-${Date.now()}-${gen}`
-          const { svg: out } = await mermaid.render(id, src)
-          svg = out
-        } else {
-          const { instance } = await import('@viz-js/viz')
-          const viz = await instance()
-          const themed = themeGraphvizSource(src, dark)
-          svg = viz.renderString(themed, { format: 'svg' })
+        if (kind === 'vegalite') {
+          const host = hostRef.current
+          if (!host) return
+          const widthPx = Math.max(320, host.parentElement?.clientWidth || 720)
+          const result = await paintDiagramSource('vegalite', src, { widthPx })
+          if (cancelled || gen !== renderGen.current || !hostRef.current) return
+          if (!result.ok) throw new Error(result.error || 'Invalid Vega-Lite JSON')
+          hostRef.current.innerHTML = result.html
+          return
         }
+        if (kind === 'mermaid' || kind === 'erd') {
+          const theme = dark ? 'dark' : 'light'
+          const { svg: out, engine } = await renderMermaidSvgMarkup(
+            kind === 'erd' ? normalizeErdSource(src) : src,
+            theme
+          )
+          svg = out
+          if (cancelled || gen !== renderGen.current || !hostRef.current) return
+          hostRef.current.innerHTML = svg
+          finishMermaidHost(hostRef.current, theme, engine)
+          annotateDiagramPickTargets(hostRef.current, 'mermaid')
+          syncDiagramSelection(hostRef.current, selectedIds)
+          return
+        }
+        const { instance } = await import('@viz-js/viz')
+        const viz = await instance()
+        const themed = themeGraphvizSource(src, dark)
+        svg = viz.renderString(themed, { format: 'svg' })
         if (cancelled || gen !== renderGen.current || !hostRef.current) return
         hostRef.current.innerHTML = svg
-        annotateDiagramPickTargets(hostRef.current, kind)
+        annotateDiagramPickTargets(hostRef.current, 'graphviz')
         syncDiagramSelection(hostRef.current, selectedIds)
       } catch (err) {
         if (!cancelled && gen === renderGen.current) {
@@ -165,7 +161,7 @@ export function DiagramFileView({
           <div ref={hostRef} className="diagram-file-host" />
         </div>
       </div>
-      {zoom.controls}
+      {showControls ? zoom.controls : null}
     </div>
   )
 }

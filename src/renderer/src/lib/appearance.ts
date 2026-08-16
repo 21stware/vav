@@ -4,6 +4,7 @@ import { COLOR_TINTS, type ColorTint } from '@shared/types'
 import { useSessionStore } from '../state/sessionStore'
 import { IS_MAC } from './platform'
 import { paintTerminalThemes } from './terminalRegistryHandle'
+import { customSurfaceTile, surfacePatternPreset } from './surfacePatterns'
 
 /** CSS custom properties driven by a fixed or system tint. */
 const SYSTEM_TINT_VARS = [
@@ -188,6 +189,9 @@ export function useAppearance(): void {
   const fontSize = useSessionStore((s) => s.settings.fontSize)
   const reduceMotion = useSessionStore((s) => s.settings.reduceMotion)
   const windowVibrancyEnabled = useSessionStore((s) => s.settings.windowVibrancyEnabled)
+  const surfacePattern = useSessionStore((s) => s.settings.surfacePattern)
+  const customSurfacePatternUrl = useSessionStore((s) => s.settings.customSurfacePatternUrl)
+  const customSurfacePatternSize = useSessionStore((s) => s.settings.customSurfacePatternSize)
   const storedAccent = useSessionStore((s) => s.systemAccentColor)
 
   const [systemAccent, setSystemAccent] = useState(storedAccent || '#007aff')
@@ -243,6 +247,11 @@ export function useAppearance(): void {
     const root = document.documentElement
     const tint: ColorTint = COLOR_TINTS.includes(colorTint) ? colorTint : 'system'
     root.dataset.tint = tint
+    // Drop leftover tokens from the removed background-colour setting.
+    root.style.removeProperty('--bg-content')
+    root.style.removeProperty('--bg-raised')
+    delete root.dataset.bg
+    delete root.dataset.bgHex
 
     if (tint === 'system') {
       // Live OS accent — adapt extremes so unknown colours stay readable.
@@ -270,6 +279,27 @@ export function useAppearance(): void {
     root.dataset.vibrancy =
       IS_MAC && windowVibrancyEnabled !== false ? 'true' : 'false'
   }, [codeFont, fontSize, reduceMotion, windowVibrancyEnabled])
+
+  useEffect(() => {
+    const root = document.documentElement
+    const custom =
+      surfacePattern === 'custom'
+        ? customSurfaceTile(customSurfacePatternUrl, customSurfacePatternSize)
+        : null
+    const preset = custom ?? surfacePatternPreset(surfacePattern === 'custom' ? 'none' : surfacePattern)
+    root.dataset.surfacePattern = preset.id
+    root.removeAttribute('data-surface-pattern-mode')
+    if (preset.url) {
+      root.style.setProperty('--surface-pattern-url', `url("${preset.url}")`)
+      root.style.setProperty('--surface-pattern-size', preset.size)
+      root.style.setProperty('--surface-pattern-opacity', String(preset.opacity))
+    } else {
+      root.style.removeProperty('--surface-pattern-url')
+      root.style.removeProperty('--surface-pattern-size')
+      root.style.removeProperty('--surface-pattern-opacity')
+    }
+    root.style.removeProperty('--surface-pattern-color')
+  }, [surfacePattern, customSurfacePatternUrl, customSurfacePatternSize])
 
   useEffect(() => {
     return window.vav.onFullscreen((fullscreen) => {

@@ -1,7 +1,10 @@
 import type { QuotaWindow, QuotaWindowKind } from '@shared/types'
 import type { ProviderAccountViewPayload } from '@shared/ipc'
+import type { HostAuthKind } from '@shared/cliAccountParse'
+import { normalizeAuthKind } from '@shared/cliAccountParse'
 import type { MessageKey, TParams } from '@shared/i18n'
 import { QUOTA_EXHAUSTED_PERCENT } from '@shared/cliErrors'
+import { isStructuredCliHost } from '@shared/cliHost'
 import { hostMayHaveAccountQuota } from '@shared/quotaWindows'
 import { formatExpiry } from '@shared/tokenUsage'
 import { AgentBrandMark } from './AgentBrandMark'
@@ -64,14 +67,32 @@ export function ProviderAccountPanel({
   t: TFn
 }): React.JSX.Element {
   const canPoll = hostMayHaveAccountQuota(payload.host)
-  const waiting = payload.loading && canPoll
+  const knownHost = isStructuredCliHost(payload.host)
+  const waiting = payload.loading && (canPoll || knownHost)
+  const authKind: HostAuthKind = normalizeAuthKind(payload.authKind, payload.signedIn)
   const status = waiting
     ? payload.accountId || t('composer.accountLoading')
-    : payload.signedIn
-      ? payload.accountId || t('composer.accountSignedIn')
-      : t('composer.accountSignedOut')
+    : authKind === 'api-key'
+      ? t('composer.accountApiKey')
+      : authKind === 'token'
+        ? t('composer.accountToken')
+        : authKind === 'expired'
+          ? t('composer.accountExpired')
+          : authKind === 'oauth'
+            ? payload.accountId || t('composer.accountSignedIn')
+            : authKind === 'none'
+              ? t('composer.accountSignedOut')
+              : null
   const windows = payload.windows
-  const phase = waiting ? 'pending' : windows.length > 0 ? 'ready' : 'empty'
+  const notice =
+    !waiting && windows.length === 0 && knownHost && authKind !== 'unknown' ? authKind : null
+  const phase = waiting
+    ? 'pending'
+    : windows.length > 0
+      ? 'ready'
+      : notice
+        ? 'notice'
+        : 'empty'
 
   return (
     <div className="provider-account-panel" role="document" aria-label={t('composer.accountTitle')}>
@@ -79,7 +100,7 @@ export function ProviderAccountPanel({
         <AgentBrandMark agent={{ id: payload.hostId, name: payload.hostName }} size={22} />
         <div className="provider-account-who">
           <div className="provider-account-name">{payload.hostName}</div>
-          <div className="provider-account-status">{status}</div>
+          {status ? <div className="provider-account-status">{status}</div> : null}
           {payload.plan ? <div className="provider-account-muted">{payload.plan}</div> : null}
         </div>
       </div>
@@ -103,9 +124,27 @@ export function ProviderAccountPanel({
                   />
                 ))}
               </div>
-            ) : (
-              <div className="provider-account-muted">{t('composer.accountNoQuota')}</div>
-            )}
+            ) : notice === 'none' ? (
+              <div className="provider-account-signed-out">
+                {t('composer.accountSignedOutHint')}
+              </div>
+            ) : notice === 'expired' ? (
+              <div className="provider-account-signed-out">
+                {t('composer.accountExpiredHint')}
+              </div>
+            ) : notice === 'api-key' ? (
+              <div className="provider-account-signed-out">
+                {t('composer.accountApiKeyHint')}
+              </div>
+            ) : notice === 'token' ? (
+              <div className="provider-account-signed-out">
+                {t('composer.accountTokenHint')}
+              </div>
+            ) : notice === 'oauth' ? (
+              <div className="provider-account-signed-out">
+                {t('composer.accountNoQuota')}
+              </div>
+            ) : null}
           </div>
         </div>
       </div>

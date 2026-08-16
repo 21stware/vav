@@ -7,9 +7,11 @@ import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { net } from 'electron'
 import {
+  accountInfo,
   emptyAccount,
   hostFromAnthropicBaseUrl,
   parseClaudeAuthStatusPayload,
+  resolveClaudeAccount,
   type HostAccountInfo
 } from '@shared/cliAccountParse'
 import { windowsFromClaudeOAuthPayload } from '@shared/quotaWindows'
@@ -87,29 +89,41 @@ async function readClaudeAccessToken(): Promise<string | null> {
   return null
 }
 
-function readClaudeSettingsEnv(): { token: string | null; customHost: string | null } {
-  try {
-    const raw = readFileSync(join(claudeConfigDir(), 'settings.json'), 'utf8')
-    const parsed = JSON.parse(raw) as {
-      env?: { ANTHROPIC_AUTH_TOKEN?: unknown; ANTHROPIC_BASE_URL?: unknown }
-    }
-    const token =
-      typeof parsed?.env?.ANTHROPIC_AUTH_TOKEN === 'string'
-        ? parsed.env.ANTHROPIC_AUTH_TOKEN.trim()
-        : ''
-    const customHost = hostFromAnthropicBaseUrl(
-      typeof parsed?.env?.ANTHROPIC_BASE_URL === 'string' ? parsed.env.ANTHROPIC_BASE_URL : null
-    )
-    return {
-      token: token || process.env.ANTHROPIC_AUTH_TOKEN?.trim() || null,
-      customHost: customHost ?? hostFromAnthropicBaseUrl(process.env.ANTHROPIC_BASE_URL)
-    }
-  } catch {
-    return {
-      token: process.env.ANTHROPIC_AUTH_TOKEN?.trim() || null,
-      customHost: hostFromAnthropicBaseUrl(process.env.ANTHROPIC_BASE_URL)
+function envString(value: unknown): string | null {
+  return typeof value === 'string' && value.trim() ? value.trim() : null
+}
+
+function mergeClaudeSettingsEnv(): Record<string, unknown> {
+  const merged: Record<string, unknown> = {}
+  const dir = claudeConfigDir()
+  for (const name of ['settings.json', 'settings.local.json']) {
+    try {
+      const parsed = JSON.parse(readFileSync(join(dir, name), 'utf8')) as {
+        env?: unknown
+      }
+      const env = parsed.env
+      if (env && typeof env === 'object' && !Array.isArray(env)) {
+        Object.assign(merged, env)
+      }
+    } catch {
+      // missing / malformed
     }
   }
+  return merged
+}
+
+function readClaudeSettingsEnv(): { token: string | null; customHost: string | null } {
+  const env = mergeClaudeSettingsEnv()
+  const token =
+    envString(env.ANTHROPIC_AUTH_TOKEN) ||
+    envString(env.ANTHROPIC_API_KEY) ||
+    process.env.ANTHROPIC_AUTH_TOKEN?.trim() ||
+    process.env.ANTHROPIC_API_KEY?.trim() ||
+    null
+  const customHost = hostFromAnthropicBaseUrl(
+    envString(env.ANTHROPIC_BASE_URL) ?? process.env.ANTHROPIC_BASE_URL
+  )
+  return { token, customHost }
 }
 
 /** Fingerprint of the current Claude token (OAuth or settings env). */
@@ -120,26 +134,21 @@ export async function readClaudeAuthIdentity(): Promise<string | null> {
 }
 
 /**
- * Prefer `claude auth status` (same source the CLI uses) over scraping
- * keychain — MCP plugin blobs live in the same service and are not a login.
+ * Settings / env token wins over leftover `claude auth status` OAuth.
+ * Official login is only used when no token is configured.
  */
 export async function readClaudeAccountInfo(): Promise<HostAccountInfo> {
   const settings = readClaudeSettingsEnv()
   const status = await execCliJson(['claude'], ['auth', 'status', '--json'])
-  const fromCli = parseClaudeAuthStatusPayload(status)
-  if (fromCli.signedIn) {
-    return {
-      signedIn: true,
-      accountId: fromCli.accountId,
-      plan: fromCli.plan ?? settings.customHost
-    }
-  }
-  const token = (await readClaudeAccessToken()) ?? settings.token
-  if (token) return { signedIn: true, accountId: null, plan: settings.customHost }
+  const resolved = resolveClaudeAccount(settings, parseClaudeAuthStatusPayload(status))
+  if (resolved.signedIn) return resolved
+  if (await readClaudeAccessToken()) return accountInfo('oauth', { plan: settings.customHost })
   return emptyAccount()
 }
 
 export async function fetchClaudeAccountQuota(): Promise<QuotaWindow[]> {
+  // Custom token / gateway has no Anthropic subscription windows.
+  if (readClaudeSettingsEnv().token) return []
   const token = await readClaudeAccessToken()
   if (!token) return []
   const res = await net.fetch(OAUTH_USAGE_URL, {

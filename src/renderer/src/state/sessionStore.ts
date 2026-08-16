@@ -33,6 +33,11 @@ export type SessionPreview =
   | { kind: 'github-site'; cwd: string; site: GithubSite }
   | { kind: 'github-release'; cwd: string; release: GithubRelease }
 import { resolveLocale } from '@shared/i18n'
+import {
+  imageInputLimits,
+  mergeImageAttachments,
+  type ImageAttachPlan
+} from '@shared/agentImageInput'
 import { tt } from '../i18n/useT'
 import { isTemporaryWorkspace } from '../lib/format'
 import { isCompanionSessionShell } from '../lib/windowKind'
@@ -40,6 +45,50 @@ import { compactionForLeaf, upsertCompaction } from '@shared/compaction'
 import { threadPath } from '@shared/thread'
 import { getProjection, disposeProjection } from './StreamProjection'
 import { AGENT_TAB_ID, useWorkspaceStore } from './workspaceStore'
+
+function notifyImageAttachPlan(
+  showToast: (toast: ToastState | null) => void,
+  plan: ImageAttachPlan
+): void {
+  if (
+    plan.rejectedUnsupported === 0 &&
+    plan.droppedForLimit === 0 &&
+    plan.rejectedOversize === 0 &&
+    plan.rejectedType === 0
+  ) {
+    return
+  }
+  if (plan.rejectedOversize > 0) {
+    const mb = Math.max(1, Math.round(plan.maxBytes / (1024 * 1024)))
+    showToast({ kind: 'info', title: tt('composer.imageTooLarge', { mb }) })
+    return
+  }
+  if (plan.droppedForLimit > 0) {
+    showToast({ kind: 'info', title: tt('composer.imagesTooMany', { max: plan.maxCount }) })
+    return
+  }
+  showToast({ kind: 'info', title: tt('composer.imageTypeUnsupported') })
+}
+
+function trimAttachmentsForHost(
+  id: string,
+  host: ConversationMeta['cliHost'],
+  get: () => SessionState,
+  set: (partial: Partial<SessionState> | ((state: SessionState) => Partial<SessionState>)) => void
+): void {
+  const existing = get().attachments[id] ?? []
+  if (existing.length === 0) return
+  const plan = mergeImageAttachments({
+    existing: [],
+    incoming: existing,
+    capability: imageInputLimits(host)
+  })
+  if (plan.paths.length === existing.length && plan.paths.every((p, i) => p === existing[i])) {
+    return
+  }
+  set((state) => ({ attachments: { ...state.attachments, [id]: plan.paths } }))
+  notifyImageAttachPlan(get().showToast, plan)
+}
 
 const IDLE_UPDATE: UpdateState = {
   phase: 'idle',
@@ -639,6 +688,12 @@ interface SessionState {
 
   setDraft(id: string, text: string): void
   setAttachments(id: string, paths: string[]): void
+  /** Merge incoming paths, applying the active host's image limits. */
+  addAttachments(
+    id: string,
+    incoming: string[],
+    opts?: { sizes?: Record<string, number> }
+  ): void
   setQuote(id: string, quote: QuoteDraft | null): void
   clearQuote(id?: string): void
   setPreviewRefs(id: string, refs: PreviewRef[]): void
@@ -876,8 +931,11 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
     // Legacy settings.json often had cliAgents: [] — never surface an empty catalogue.
     const settings = data.settings
+    if (!Array.isArray(settings.removedCliAgentIds)) settings.removedCliAgentIds = []
     if (!Array.isArray(settings.cliAgents) || settings.cliAgents.length === 0) {
-      settings.cliAgents = DEFAULT_CLI_AGENTS.map((a) => ({
+      const removed = new Set(settings.removedCliAgentIds)
+      const seed = DEFAULT_CLI_AGENTS.filter((a) => !removed.has(a.id))
+      settings.cliAgents = (seed.length > 0 ? seed : DEFAULT_CLI_AGENTS).map((a) => ({
         ...a,
         envVars: { ...a.envVars },
         defaultArgs: [...a.defaultArgs],
@@ -1065,11 +1123,6 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       void cacheCreatedAt
       target = meta
     }
-    // Archived sessions cannot be the active conversation (sidebar archive view).
-    if (target?.archived) {
-      set({ selectedIds: [id] })
-      return
-    }
     let nextSelection = [id]
     if (options?.additive) {
       nextSelection = selectedIds.includes(id)
@@ -1079,7 +1132,11 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     } else if (options?.range && activeId) {
       const ids =
         options.rangeIds ??
-        conversations.filter((c) => !c.archived && !c.fileId).map((c) => c.id)
+        conversations
+          .filter((c) =>
+            target?.archived ? c.archived && !c.fileId : !c.archived && !c.fileId
+          )
+          .map((c) => c.id)
       // Anchor on the prior active row when it is in the list; otherwise the
       // first already-selected id that appears in `ids` (File Sessions view).
       let anchor = activeId
@@ -1570,6 +1627,8 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     } catch (err) {
       console.error('[setCliHost] failed', err)
     }
+    const latest = get().conversations.find((c) => c.id === id)
+    trimAttachmentsForHost(id, latest?.cliHost ?? nextHost, get, set)
   },
 
   async selectChatHost(id, host) {
@@ -1686,22 +1745,14 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
   async setArchived(id, archived) {
     const conversations = await window.vav.conversations.setArchived(id, archived)
-    const { activeId } = get()
-    const stillActive = conversations.some((c) => c.id === activeId && !c.archived)
-    if (archived && !stillActive) {
-      const next = conversations.find((c) => !c.archived && !c.fileId)
-      set((state) => ({
-        conversations: mergeConversationList(state.conversations, conversations)
-      }))
-      if (next) {
-        await get().selectConversation(next.id)
-        return
-      }
-      set({ activeId: '', selectedIds: [], activeGroupId: null })
-      return
-    }
+    const { activeId, sidebarListMode } = get()
+    const isActive = id === activeId
     set((state) => ({
-      conversations: mergeConversationList(state.conversations, conversations)
+      conversations: mergeConversationList(state.conversations, conversations),
+      ...(isActive && archived ? { sidebarListMode: 'archive' as const } : {}),
+      ...(isActive && !archived && sidebarListMode === 'archive'
+        ? { sidebarListMode: 'main' as const }
+        : {})
     }))
   },
 
@@ -1797,6 +1848,20 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     set((state) => ({ attachments: { ...state.attachments, [id]: paths } }))
   },
 
+  addAttachments(id, incoming, opts) {
+    if (!id || incoming.length === 0) return
+    const host = get().conversations.find((c) => c.id === id)?.cliHost ?? null
+    const existing = get().attachments[id] ?? []
+    const plan = mergeImageAttachments({
+      existing,
+      incoming,
+      capability: imageInputLimits(host),
+      sizes: opts?.sizes
+    })
+    set((state) => ({ attachments: { ...state.attachments, [id]: plan.paths } }))
+    notifyImageAttachPlan(get().showToast, plan)
+  },
+
   setQuote(id, quote) {
     set((state) => ({ quotes: { ...state.quotes, [id]: quote } }))
   },
@@ -1871,6 +1936,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       messageQueues
     } = get()
     let activeId = conversationId?.trim() || storeActiveId
+    if (activeId && conversations.some((c) => c.id === activeId && c.archived)) return
     // Empty chat shell: mint the session on first send (workspace materializes).
     if (!activeId || !conversations.some((c) => c.id === activeId)) {
       await get().createConversation({ openIn: 'here' })
@@ -2101,6 +2167,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     const state = get()
     const { activeId } = state
     if (!activeId || state.turns[activeId]?.isRunning) return
+    if (state.conversations.some((c) => c.id === activeId && c.archived)) return
     // Drop back to the prompt right away, or the reply being replaced would sit
     // above the stream and look like one more record.
     const target = state.messages[activeId]?.find((m) => m.id === messageId)
@@ -2114,6 +2181,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     const state = get()
     const { activeId } = state
     if (!activeId || state.turns[activeId]?.isRunning || !text.trim()) return
+    if (state.conversations.some((c) => c.id === activeId && c.archived)) return
     const target = state.messages[activeId]?.find((m) => m.id === messageId)
     if (!target) return
     setLeaf(set, state, activeId, target.parentId)
@@ -2136,8 +2204,9 @@ export const useSessionStore = create<SessionState>((set, get) => ({
    * branch the user is trying to leave.
    */
   async selectPendingBranch(parentKey) {
-    const { activeId } = get()
+    const { activeId, conversations } = get()
     if (!activeId) return
+    if (conversations.some((c) => c.id === activeId && c.archived)) return
     setLeaf(set, get(), activeId, parentKey)
     await window.vav.conversations.setLeaf(activeId, parentKey)
     get().focusComposer()
@@ -2147,6 +2216,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     const state = get()
     const { activeId } = state
     if (!activeId || state.turns[activeId]?.isRunning) return
+    if (state.conversations.some((c) => c.id === activeId && c.archived)) return
     const leaf = await window.vav.agent.fork(activeId, messageId)
     if (leaf === null) return
     setLeaf(set, get(), activeId, leaf)
@@ -2154,8 +2224,9 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   },
 
   async continueInNewSession(messageId) {
-    const { activeId } = get()
+    const { activeId, conversations } = get()
     if (!activeId) return
+    if (conversations.some((c) => c.id === activeId && c.archived)) return
     const meta = await window.vav.conversations.continueInNewSession(activeId, messageId)
     if (!meta) return
     set((state) => ({
@@ -2170,6 +2241,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   async compactConversation(keepAfterMessageId) {
     const { activeId } = get()
     if (!activeId) return false
+    if (get().conversations.some((c) => c.id === activeId && c.archived)) return false
     if (get().conversations.find((c) => c.id === activeId)?.cliHost) {
       set({
         errorBanner: tt('compact.error.cliHost'),
@@ -2912,7 +2984,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
             conversations: mergeConversationList(state.conversations, list)
           }))
         )
-        if (event.error) {
+        if (event.error && !event.cancelled && event.errorKind !== 'cancelled') {
           set({
             errorBanner: event.error,
             errorBannerKind: event.errorKind ?? 'generic',

@@ -7,7 +7,7 @@ import {
 } from '../lib/assistantProcess'
 import { getProjection, type StreamBlock } from '../state/StreamProjection'
 import { useT } from '../i18n/useT'
-import { MarkdownView } from './MarkdownView'
+import { handleMarkdownOverlayDoubleClick, MarkdownView } from './MarkdownView'
 import { ReasoningBlock } from './ReasoningBlock'
 import { StreamStatus } from './StreamStatus'
 import { ThinkingProcess } from './ThinkingProcess'
@@ -61,7 +61,11 @@ export function StreamingMessage({ conversationId }: { conversationId: string })
       return <ToolCard key={block.key} block={block.block} />
     }
     return (
-      <div key={block.key} className="markdown">
+      <div
+        key={block.key}
+        className="markdown"
+        onDoubleClick={handleMarkdownOverlayDoubleClick}
+      >
         {block.sealed.map((chunk, index) => (
           <MarkdownView key={`${block.key}-${index}`} source={chunk} fragment />
         ))}

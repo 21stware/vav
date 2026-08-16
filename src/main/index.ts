@@ -52,8 +52,10 @@ import {
   type ShellKind,
   type TurnEvent
 } from '@shared/types'
+import { localFileStreamUrl } from '@shared/localFileUrl'
 import { compactionForLeaf } from '@shared/compaction'
 import { hasActiveAgentWork, shouldBlockIdleSleep } from '@shared/sleepBlocker'
+import { createSwarmFinishAlert } from './sound/swarmFinishAlert'
 import { parseThinkingLevel } from '@shared/thinkingLevel'
 import { threadPath } from '@shared/thread'
 import { SettingsStore } from './store/SettingsStore'
@@ -63,12 +65,23 @@ import { ConversationStore } from './store/ConversationStore'
 import { VavPackService } from './store/VavPackService'
 import { FileSessionStore } from './store/FileSessionStore'
 import { FileService } from './fs/FileService'
+import { writeClip } from './fs/clipStore'
+import { isFileSessionEligible } from '@shared/clipPath'
+import { OVERLAY_IMAGE_EXTS, shouldOpenAsOverlay } from '@shared/previewOverlay'
+import {
+  inferDiagramKind,
+  inferOverlayKind,
+  overlayIdentity,
+  type OverlayNavigatePayload,
+  type OverlayPayload
+} from '@shared/overlayOpen'
 import { WorkingCopyService } from './fs/WorkingCopyService'
 import { FileAssociationService, formatIdForPath } from './fs/FileAssociationService'
 import { DocumentRetrievalService } from './retrieval/DocumentRetrievalService'
 import { DuckDbService } from './fs/DuckDbService'
 import { WebSearchService } from './web/WebSearchService'
 import { WebFetchService } from './web/WebFetchService'
+import { importSurfacePattern, surfacePatternFilePath } from './importSurfacePattern'
 import { ChangeSetStore } from './agent/ChangeSetStore'
 import {
   checkoutGitBranch,
@@ -113,6 +126,7 @@ import {
   stopAllAgentInstalls
 } from './agent/AgentInstaller'
 import { readHostAccountInfo } from './agent/hostAuth'
+import type { HostAuthKind } from '@shared/cliAccountParse'
 import {
   displayNameForCliHost,
   isStructuredCliHost,
@@ -227,8 +241,12 @@ let tokenUsagePendingShow: {
 let providerAccountConversationId: string | null = null
 let providerAccountParentId: number | null = null
 let providerAccountReady = false
-let providerAccountAuth: { signedIn: boolean; accountId: string | null; plan: string | null } | null =
-  null
+let providerAccountAuth: {
+  signedIn: boolean
+  accountId: string | null
+  plan: string | null
+  authKind: HostAuthKind
+} | null = null
 let providerAccountPendingShow: {
   parent: BrowserWindow
   anchor?: { x: number; y: number; width: number; height: number }
@@ -289,10 +307,15 @@ workingCopyService.onCopyChanged = (realPath) => {
 }
 // Wired after construction — retrieval is defined below; assigned once created.
 
+let swarmFinishAlert: ReturnType<typeof createSwarmFinishAlert> | null = null
+
 const ptyManager = new PtyManager(
   (tabId, data) =>
     sendToWorkspaceWindows(IPC.ptyData, { tabId, data }, ptyManager.conversationIdFor(tabId)),
-  (tabId, conversationId) => sendToWorkspaceWindows(IPC.ptyExit, tabId, conversationId),
+  (tabId, conversationId) => {
+    sendToWorkspaceWindows(IPC.ptyExit, tabId, conversationId)
+    swarmFinishAlert?.noteGone(tabId)
+  },
   // Workspace windows re-hydrate tab maps from main — no per-renderer PTY ownership.
   (conversationId) => {
     sendToWorkspaceWindows(IPC.ptyChanged, { conversationId }, conversationId)
@@ -302,6 +325,20 @@ const ptyManager = new PtyManager(
   (tabId, conversationId, status) => {
     sendToWorkspaceWindows(IPC.ptyStatus, { tabId, conversationId, status }, conversationId)
     syncSleepBlocker()
+    if (status === 'exited') {
+      swarmFinishAlert?.noteGone(tabId)
+      return
+    }
+    const target = ptyManager.cliAgentWatchTarget(tabId)
+    if (!target) return
+    swarmFinishAlert?.noteStatus({
+      tabId,
+      conversationId,
+      agentId: target.agentId,
+      status,
+      createdAt: target.createdAt,
+      lastDataAt: target.lastDataAt
+    })
   }
 )
 
@@ -417,6 +454,11 @@ const notifications = new NotificationCenter(
   showMainWindow,
   () => mainWindow
 )
+swarmFinishAlert = createSwarmFinishAlert((conversationId) => {
+  const conversation = conversationStore.get(conversationId)
+  const title = conversation?.title ?? t('window.sessionFallback')
+  notifications.alertUser('turn-complete', conversationId, title, t('notify.turnComplete'))
+})
 
 /** Compact path for tray labels: `/Users/me/repo/vav` → `~/repo/vav`. */
 function trayDirLabel(workingDirectory: string | null | undefined): string {
@@ -577,6 +619,14 @@ function handleAgentEvent(event: TurnEvent): void {
         'ask',
         event.conversationId,
         t('notify.awaitingAnswer', { title }),
+        body,
+        event.toolCallId
+      )
+    } else if (tool === 'plan_doc') {
+      notifications.alertUser(
+        'approval',
+        event.conversationId,
+        t('notify.awaitingApproval', { title }),
         body,
         event.toolCallId
       )
@@ -756,6 +806,10 @@ function sendMenuCommand(command: MenuCommand): void {
     if (command === 'close-context') hideSettingsWindow()
     return
   }
+  if (command === 'close-context' && isAppClipBrowserWindow(target)) {
+    target.close()
+    return
+  }
   safeSend(target.webContents, IPC.menuCommand, command)
 }
 
@@ -791,6 +845,11 @@ function wireMenuAccelerators(contents: Electron.WebContents): void {
     // open-settings is owned by main (native window), not the renderer list.
     if (command === 'open-settings') {
       openSettingsWindow()
+      return
+    }
+    const host = BrowserWindow.fromWebContents(contents)
+    if (command === 'close-context' && host && isAppClipBrowserWindow(host)) {
+      host.close()
       return
     }
     sendMenuCommand(command)
@@ -913,6 +972,7 @@ function syncWindowMaterial(win: BrowserWindow): void {
   if (!IS_MAC || win.isDestroyed()) return
   if (isVibrancyEnabled()) applyWindowVibrancy(win)
   else clearWindowVibrancy(win)
+  applyTrafficLights(win)
 }
 
 /** Apply or clear glass on main + Settings (create, toggle, theme repaint). */
@@ -923,8 +983,24 @@ function syncVibrancyShellWindows(): void {
 }
 
 
+/** Matches renderer `--toolbar-height` (sidebar / agent / file-preview chrome). */
+const TOOLBAR_HEIGHT = 42
+
+function trafficLightOrigin(barHeight = TOOLBAR_HEIGHT): { x: number; y: number } {
+  return { x: 12, y: Math.round((barHeight - 12) / 2) }
+}
+
+function applyTrafficLights(win: BrowserWindow, barHeight = TOOLBAR_HEIGHT): void {
+  if (!IS_MAC || win.isDestroyed()) return
+  try {
+    win.setWindowButtonPosition(trafficLightOrigin(barHeight))
+  } catch {
+    // setWindowButtonPosition is macOS-only.
+  }
+}
+
 /** `barHeight` matches the renderer's own title bar, so the two rows line up. */
-function overlayColors(barHeight = 52): {
+function overlayColors(barHeight = TOOLBAR_HEIGHT): {
   color: string
   symbolColor: string
   height: number
@@ -957,7 +1033,7 @@ function chrome(
     if (options?.vibrancyShell) {
       return {
         titleBarStyle: 'hiddenInset',
-        trafficLightPosition: { x: 12, y: Math.round((barHeight - 12) / 2) },
+        trafficLightPosition: trafficLightOrigin(barHeight),
         acceptFirstMouse: true,
         transparent: true,
         backgroundColor: VIBRANCY_CLEAR,
@@ -973,7 +1049,7 @@ function chrome(
       titleBarStyle: 'hiddenInset',
       // Vertically centred on the title bar, so the traffic lights sit on the
       // same line as the buttons at the other end of it.
-      trafficLightPosition: { x: 12, y: Math.round((barHeight - 12) / 2) },
+      trafficLightPosition: trafficLightOrigin(barHeight),
       acceptFirstMouse: true,
       backgroundColor: windowBackground()
     }
@@ -1335,13 +1411,15 @@ function createWindow(): BrowserWindow {
     paintWhenInitiallyHidden: true,
     title: APP_NAME,
     icon,
-    ...chrome(52, { vibrancyShell: IS_MAC }),
+    ...chrome(TOOLBAR_HEIGHT, { vibrancyShell: IS_MAC }),
     webPreferences: rendererPrefs()
   })
   applyMenuBar(window)
   wirePopupDismiss(window)
+  applyTrafficLights(window)
 
   window.once('ready-to-show', () => {
+    applyTrafficLights(window)
     void revealBrowserWindow(window)
   })
 
@@ -1447,14 +1525,15 @@ function ensureSettingsWindow(
     paintWhenInitiallyHidden: true,
     title: t('app.settingsWindowTitle'),
     icon: loadAppIcon(),
-    // 52 matches --toolbar-height / .settings-head so traffic lights align.
-    ...chrome(52, { vibrancyShell: IS_MAC }),
+    // Matches --toolbar-height / .settings-head so traffic lights align.
+    ...chrome(TOOLBAR_HEIGHT, { vibrancyShell: IS_MAC }),
     minimizable: false,
     maximizable: false,
     fullscreenable: false,
     webPreferences: rendererPrefs()
   })
   applyMenuBar(settingsWindow)
+  applyTrafficLights(settingsWindow)
 
   settingsWindow.on('close', (event) => {
     if (quitting) return
@@ -1795,11 +1874,12 @@ function createSessionBrowserWindow(opts: {
     paintWhenInitiallyHidden: true,
     title: opts.title ?? 'Session',
     icon: loadAppIcon(),
-    ...chrome(38),
+    ...chrome(TOOLBAR_HEIGHT),
     parent: undefined,
     webPreferences: rendererPrefs()
   })
   applyMenuBar(window)
+  applyTrafficLights(window)
   wirePopupDismiss(window)
   wireExternalLinks(window.webContents)
   wireMenuAccelerators(window.webContents)
@@ -2250,12 +2330,13 @@ function createPreviewBrowserWindow(opts: {
     paintWhenInitiallyHidden: true,
     title: opts.path ? basename(opts.path) : 'Preview',
     icon: loadAppIcon(),
-    ...chrome(42),
+    ...chrome(TOOLBAR_HEIGHT),
     webPreferences: rendererPrefs({
       plugins: true
     })
   })
   applyMenuBar(window)
+  applyTrafficLights(window)
   wireFullscreenState(window)
   wireExternalLinks(window.webContents)
   wireMenuAccelerators(window.webContents)
@@ -2299,12 +2380,284 @@ function warmPreviewShellPool(): void {
  * Prefers a warm hidden shell + in-place navigate (no cold BrowserWindow load).
  * Same path → focus existing. Capped by PREVIEW_MAX_OPEN.
  */
+const OVERLAY_WARM_POOL = 2
+const overlayWarmPool: BrowserWindow[] = []
+const overlayWarmReady = new WeakSet<BrowserWindow>()
+const appClipWindows = new Map<string, BrowserWindow>()
+const pendingOverlayNav = new WeakMap<BrowserWindow, OverlayNavigatePayload>()
+
+function forgetOverlayWindow(window: BrowserWindow): void {
+  for (const [key, win] of appClipWindows) {
+    if (win === window) appClipWindows.delete(key)
+  }
+}
+
+function overlayGeometry(): { width: number; height: number; x?: number; y?: number } {
+  const anchor = BrowserWindow.getFocusedWindow() ?? mainWindow
+  const area = (
+    anchor && !anchor.isDestroyed() ? screen.getDisplayMatching(anchor.getBounds()) : screen.getPrimaryDisplay()
+  ).workArea
+  const width = Math.min(1180, area.width - 48)
+  const height = Math.min(860, area.height - 48)
+  let x: number | undefined
+  let y: number | undefined
+  const others = [...appClipWindows.values()].filter((w) => !w.isDestroyed())
+  if (others.length > 0) {
+    const b = others[others.length - 1]!.getBounds()
+    x = b.x + 28
+    y = b.y + 28
+    if (x + width > area.x + area.width) x = area.x + Math.max(0, area.width - width)
+    if (y + height > area.y + area.height) y = area.y + Math.max(0, area.height - height)
+  }
+  return { width, height, x, y }
+}
+
+function createOverlayBrowserWindow(opts: {
+  show: boolean
+  width: number
+  height: number
+  x?: number
+  y?: number
+}): BrowserWindow {
+  const window = new BrowserWindow({
+    width: opts.width,
+    height: opts.height,
+    ...(opts.x != null && opts.y != null ? { x: opts.x, y: opts.y } : {}),
+    minWidth: 320,
+    minHeight: 240,
+    show: opts.show,
+    paintWhenInitiallyHidden: true,
+    title: 'App',
+    icon: loadAppIcon(),
+    titleBarStyle: 'hidden',
+    acceptFirstMouse: true,
+    backgroundColor: windowBackground(),
+    hasShadow: true,
+    fullscreenable: true,
+    webPreferences: rendererPrefs({
+      plugins: true
+    })
+  })
+  if (IS_MAC) {
+    try {
+      window.setWindowButtonVisibility(false)
+    } catch {
+      // ignore
+    }
+  }
+  wireExternalLinks(window.webContents)
+  wireMenuAccelerators(window.webContents)
+  return window
+}
+
+function takeWarmOverlayShell(): BrowserWindow | null {
+  const notReady: BrowserWindow[] = []
+  while (overlayWarmPool.length > 0) {
+    const win = overlayWarmPool.pop()!
+    if (win.isDestroyed()) continue
+    if (!overlayWarmReady.has(win)) {
+      notReady.push(win)
+      continue
+    }
+    overlayWarmPool.push(...notReady)
+    return win
+  }
+  overlayWarmPool.push(...notReady)
+  return null
+}
+
+function parkWarmOverlayShell(window: BrowserWindow): void {
+  if (window.isDestroyed()) return
+  if (overlayWarmPool.includes(window)) return
+  forgetOverlayWindow(window)
+  if (overlayWarmPool.length >= OVERLAY_WARM_POOL) {
+    afterLeavingFullscreen(window, () => {
+      if (!window.isDestroyed()) {
+        fullscreenCloseAllowed.add(window)
+        window.destroy()
+      }
+    })
+    return
+  }
+  try {
+    window.setTitle('Preview')
+    if (window.isVisible()) window.hide()
+  } catch {
+    // ignore
+  }
+  previewNavigateSeq += 1
+  safeSend(window.webContents, IPC.previewNavigate, {
+    path: '',
+    openSeq: previewNavigateSeq
+  } satisfies OverlayNavigatePayload)
+  overlayWarmPool.push(window)
+  overlayWarmReady.add(window)
+  setTimeout(() => warmOverlayShellPool(), PREVIEW_POOL_REFILL_MS)
+}
+
+function warmOverlayShellPool(): void {
+  const live = overlayWarmPool.filter((w) => !w.isDestroyed())
+  overlayWarmPool.length = 0
+  overlayWarmPool.push(...live)
+  while (overlayWarmPool.length < OVERLAY_WARM_POOL) {
+    const area = screen.getPrimaryDisplay().workArea
+    const width = Math.min(960, area.width - 48)
+    const height = Math.min(720, area.height - 48)
+    const window = createOverlayBrowserWindow({ show: false, width, height })
+    overlayWarmPool.push(window)
+    window.on('closed', () => {
+      const idx = overlayWarmPool.indexOf(window)
+      if (idx >= 0) overlayWarmPool.splice(idx, 1)
+      overlayWarmReady.delete(window)
+      forgetOverlayWindow(window)
+    })
+    loadRenderer(window, { view: 'app-window', warm: '1' })
+  }
+}
+
+function wireOverlayLifecycle(window: BrowserWindow): void {
+  window.removeAllListeners('close')
+  window.on('close', (event) => {
+    if (quitting) return
+    if (fullscreenCloseAllowed.has(window)) {
+      fullscreenCloseAllowed.delete(window)
+      return
+    }
+    if (window.isFullScreen()) {
+      event.preventDefault()
+      window.once('leave-full-screen', () => {
+        if (window.isDestroyed()) return
+        parkWarmOverlayShell(window)
+      })
+      window.setFullScreen(false)
+      return
+    }
+    event.preventDefault()
+    parkWarmOverlayShell(window)
+  })
+}
+
+function sendOverlayNavigate(window: BrowserWindow, payload: OverlayPayload): void {
+  previewNavigateSeq += 1
+  const full: OverlayNavigatePayload = {
+    ...payload,
+    openSeq: previewNavigateSeq,
+    requestedAt: Date.now()
+  }
+  if (window.webContents.isLoading()) {
+    pendingOverlayNav.set(window, full)
+    window.webContents.once('did-finish-load', () => {
+      const pending = pendingOverlayNav.get(window)
+      if (!pending || window.isDestroyed()) return
+      pendingOverlayNav.delete(window)
+      safeSend(window.webContents, IPC.previewNavigate, pending)
+    })
+    return
+  }
+  safeSend(window.webContents, IPC.previewNavigate, full)
+}
+
+function normalizeOverlayPayload(input: OverlayPayload | string): OverlayPayload {
+  const raw = typeof input === 'string' ? { path: input } : input
+  const path = raw.path ? previewPathKey(raw.path) : ''
+  const kind = raw.kind ?? (path ? inferOverlayKind(path) : undefined)
+  const diagramKind = raw.diagramKind ?? (path ? inferDiagramKind(path) : undefined)
+  return {
+    ...raw,
+    path: path || raw.path,
+    kind,
+    diagramKind
+  }
+}
+
+/** Preview-style overlay: thin native frame, no file-viewer chrome. */
+function openAppClipWindow(input: OverlayPayload | string): void {
+  const payload = normalizeOverlayPayload(input)
+  const key = overlayIdentity(payload)
+  if (!key && !payload.text && !payload.mediaSrc && !payload.path) return
+
+  if (key) {
+    const existing = appClipWindows.get(key)
+    if (existing && !existing.isDestroyed()) {
+      sendOverlayNavigate(existing, payload)
+      void revealBrowserWindow(existing)
+      return
+    }
+  }
+
+  const geo = overlayGeometry()
+  const warm = takeWarmOverlayShell()
+  const window =
+    warm ??
+    createOverlayBrowserWindow({
+      show: true,
+      ...geo
+    })
+
+  if (warm) {
+    try {
+      window.setBounds({
+        width: geo.width,
+        height: geo.height,
+        ...(geo.x != null && geo.y != null
+          ? { x: geo.x, y: geo.y }
+          : { x: window.getBounds().x, y: window.getBounds().y })
+      })
+    } catch {
+      // ignore geometry races
+    }
+  }
+
+  if (key) appClipWindows.set(key, window)
+  window.removeAllListeners('closed')
+  window.on('closed', () => {
+    forgetOverlayWindow(window)
+    overlayWarmReady.delete(window)
+  })
+  wireOverlayLifecycle(window)
+
+  sendOverlayNavigate(window, payload)
+  if (window.isMinimized()) window.restore()
+  if (!window.isVisible()) window.show()
+  window.focus()
+
+  if (warm) {
+    setTimeout(() => warmOverlayShellPool(), PREVIEW_POOL_REFILL_MS)
+    return
+  }
+
+  const query: Record<string, string> = { view: 'app-window' }
+  if (payload.path) query.path = payload.path
+  if (payload.kind === 'image' || (payload.path && OVERLAY_IMAGE_EXTS.has(extname(payload.path).toLowerCase()))) {
+    query.kind = 'image'
+  }
+  loadRenderer(window, query)
+  setTimeout(() => warmOverlayShellPool(), 800)
+}
+
+function isAppClipBrowserWindow(win: BrowserWindow): boolean {
+  if (overlayWarmPool.includes(win)) return true
+  for (const open of appClipWindows.values()) {
+    if (open === win) return true
+  }
+  try {
+    return win.webContents.getURL().includes('view=app-window')
+  } catch {
+    return false
+  }
+}
+
 function openFilePreviewWindow(
   filePath: string,
-  options?: { origin?: 'dock' | 'session'; conversationId?: string }
+  options?: { origin?: 'dock' | 'session'; conversationId?: string; surface?: 'file' | 'app' }
 ): void {
   const path = previewPathKey(filePath)
   if (!path) return
+  // Overlay = ephemeral conversation preview. File Sessions pass surface:'file'.
+  if (shouldOpenAsOverlay(path, options?.surface)) {
+    openAppClipWindow(path)
+    return
+  }
   const requestedAt = Date.now()
   previewOpenMark('open:start', path)
 
@@ -2936,20 +3289,23 @@ function buildProviderAccountPayload(
     signedIn?: boolean
     accountId?: string | null
     plan?: string | null
+    authKind?: HostAuthKind
   }
 ): ProviderAccountViewPayload | null {
   const conversation = conversationStore.get(conversationId)
   if (!conversation) return null
   const host = (conversation.cliHost ?? null) as CliHostKind | null
   const settings = settingsStore.get()
+  const signedIn = extras?.signedIn ?? false
   return {
     conversationId: conversation.id,
     host,
     hostId: host ?? 'vav',
     hostName: hostDisplayName(host),
-    signedIn: extras?.signedIn ?? false,
+    signedIn,
     accountId: extras?.accountId ?? null,
     plan: extras?.plan ?? null,
+    authKind: extras?.authKind ?? (signedIn ? 'oauth' : 'none'),
     windows: host
       ? mergeQuotaWindowsPreferNewer(quotaService.get(host), conversation.quotaWindows ?? [])
       : [],
@@ -2968,7 +3324,8 @@ function currentProviderAccountPayload(): ProviderAccountViewPayload | null {
       loading: !providerAccountAuth,
       signedIn: providerAccountAuth?.signedIn ?? false,
       accountId: providerAccountAuth?.accountId ?? null,
-      plan: providerAccountAuth?.plan ?? null
+      plan: providerAccountAuth?.plan ?? null,
+      authKind: providerAccountAuth?.authKind
     })
   } catch (err) {
     console.error('[provider-account] payload failed', err)
@@ -2985,26 +3342,29 @@ async function hydrateProviderAccount(conversationId: string): Promise<void> {
   const conversation = conversationStore.get(conversationId)
   if (!conversation) return
   const host = (conversation.cliHost ?? null) as CliHostKind | null
-  const waitingQuota = hostMayHaveAccountQuota(host)
+  const waitingQuota = hostMayHaveAccountQuota(host) || isStructuredCliHost(host)
   const loading = buildProviderAccountPayload(conversationId, {
     loading: waitingQuota,
     signedIn: providerAccountAuth?.signedIn ?? false,
     accountId: providerAccountAuth?.accountId ?? null,
-    plan: providerAccountAuth?.plan ?? null
+    plan: providerAccountAuth?.plan ?? null,
+    authKind: providerAccountAuth?.authKind
   })
   if (loading) sendProviderAccountPayload(loading)
   const account = await readHostAccountInfo(host)
   providerAccountAuth = {
     signedIn: account.signedIn,
     accountId: account.accountId,
-    plan: account.plan
+    plan: account.plan,
+    authKind: account.authKind
   }
   await quotaService.refreshForPanel(host)
   const next = buildProviderAccountPayload(conversationId, {
     loading: false,
     signedIn: account.signedIn,
     accountId: account.accountId,
-    plan: account.plan
+    plan: account.plan,
+    authKind: account.authKind
   })
   if (next) sendProviderAccountPayload(next)
 }
@@ -3879,11 +4239,26 @@ function resolveNewWorkdir(): string {
 // ---------------------------------------------------------------------------
 
 function currentSettings(): AppSettings {
+  const settings = settingsStore.get()
+  const dest = surfacePatternFilePath(app.getPath('userData'))
+  const hasFile = existsSync(dest)
+  let customSurfacePatternUrl = ''
+  if (hasFile) {
+    let rev = 0
+    try {
+      rev = Math.round(statSync(dest).mtimeMs)
+    } catch {
+      // ignore
+    }
+    customSurfacePatternUrl = `${localFileStreamUrl(dest)}&rev=${rev}`
+  }
   return {
-    ...settingsStore.get(),
+    ...settings,
     apiKeyPresent: secretStore.has('api'),
     braveSearchKeyPresent: secretStore.has('braveSearch'),
-    cloudflareApiTokenPresent: secretStore.has('cloudflare')
+    cloudflareApiTokenPresent: secretStore.has('cloudflare'),
+    customSurfacePatternUrl,
+    surfacePattern: settings.surfacePattern === 'custom' && !hasFile ? 'none' : settings.surfacePattern
   }
 }
 
@@ -4037,6 +4412,34 @@ function registerIpc(): void {
   ipcMain.handle(IPC.settingsPickDirectory, async () => {
     const result = await dialog.showOpenDialog({ properties: ['openDirectory', 'createDirectory'] })
     return result.canceled ? null : (result.filePaths[0] ?? null)
+  })
+
+  ipcMain.handle(IPC.settingsPickSurfacePattern, async (event) => {
+    const parent = BrowserWindow.fromWebContents(event.sender) ?? settingsWindow
+    const opts: Electron.OpenDialogOptions = {
+      properties: ['openFile'],
+      filters: [{ name: 'PNG', extensions: ['png'] }]
+    }
+    const result = parent
+      ? await dialog.showOpenDialog(parent, opts)
+      : await dialog.showOpenDialog(opts)
+    const file = result.canceled ? null : (result.filePaths[0] ?? null)
+    if (!file) return null
+    try {
+      const dest = surfacePatternFilePath(app.getPath('userData'))
+      const imported = await importSurfacePattern(file, dest)
+      if (!imported.ok) return { ok: false as const, reason: imported.reason }
+      settingsStore.update({
+        surfacePattern: 'custom',
+        customSurfacePatternSize: imported.size,
+        customSurfacePatternUrl: ''
+      })
+      const settings = currentSettings()
+      broadcast(IPC.settingsChanged, settings)
+      return { ok: true as const, url: settings.customSurfacePatternUrl, size: imported.size }
+    } catch {
+      return { ok: false as const, reason: 'invalid' as const }
+    }
   })
 
   ipcMain.handle(IPC.settingsPickColor, (_event, defaultHex?: string) => {
@@ -4310,6 +4713,7 @@ return c as text`
       signedIn: account.signedIn,
       accountId: account.accountId,
       plan: account.plan,
+      authKind: account.authKind,
       windows: host
         ? mergeQuotaWindowsPreferNewer(quotaService.get(host), conversation.quotaWindows ?? [])
         : []
@@ -4428,6 +4832,7 @@ return c as text`
     ) => {
       // Not awaited: the turn streams for as long as it needs, and the renderer
       // is driven entirely by turn events.
+      if (conversationStore.get(id)?.archived) return
       if (agentFor(id) === 'cli') {
         void cliHost.run(
           id,
@@ -4464,20 +4869,26 @@ return c as text`
     agentFor(id) === 'cli' ? cliHost.status(id) : agent.status(id)
   )
   ipcMain.handle(IPC.agentRegenerate, (_event, id: string, messageId: string) => {
+    if (conversationStore.get(id)?.archived) return
     if (agentFor(id) === 'cli') void cliHost.regenerate(id, messageId)
     else void agent.regenerate(id, messageId)
   })
   ipcMain.handle(IPC.agentEditUser, (_event, id: string, messageId: string, text: string) => {
+    if (conversationStore.get(id)?.archived) return
     if (agentFor(id) === 'cli') void cliHost.editUserMessage(id, messageId, text)
     else void agent.editUserMessage(id, messageId, text)
   })
-  ipcMain.handle(IPC.agentFork, (_event, id: string, messageId: string) =>
-    agent.fork(id, messageId)
-  )
+  ipcMain.handle(IPC.agentFork, (_event, id: string, messageId: string) => {
+    if (conversationStore.get(id)?.archived) return null
+    return agent.fork(id, messageId)
+  })
   ipcMain.handle(
     IPC.agentCompact,
     async (_event, id: string, options?: { keepAfterMessageId?: string | null }) => {
       const conversation = conversationStore.get(id)
+      if (conversation?.archived) {
+        return { ok: false as const, error: t('session.archivedReadonly') }
+      }
       if (conversation?.cliHost) {
         return { ok: false as const, error: t('compact.error.cliHost') }
       }
@@ -4533,6 +4944,13 @@ return c as text`
   )
   ipcMain.handle(IPC.filesWriteBinary, (_event, path: string, base64: string) =>
     fileService.writeBinary(path, base64)
+  )
+  ipcMain.handle(
+    IPC.filesWriteClip,
+    (
+      _event,
+      input: { filename: string; base64?: string; text?: string }
+    ) => writeClip(input)
   )
   ipcMain.handle(IPC.filesWrite, (_event, path: string, content: string) =>
     fileService.writeTextFile(path, content)
@@ -4636,6 +5054,10 @@ return c as text`
   ipcMain.on(IPC.previewShellReady, (event) => {
     const win = BrowserWindow.fromWebContents(event.sender)
     if (!win || win.isDestroyed()) return
+    if (isAppClipBrowserWindow(win)) {
+      overlayWarmReady.add(win)
+      return
+    }
     warmPreviewReady.add(win)
     previewOpenMark('warm-shell-ready')
   })
@@ -4710,6 +5132,7 @@ return c as text`
   ) => ({ fileId, activeSessionId, sessions })
 
   ipcMain.handle(IPC.fileSessionsOpen, async (_event, path: string) => {
+    if (!isFileSessionEligible(path)) return null
     const settings = settingsStore.get()
     const opened = await fileSessionStore.open(
       path,
@@ -4722,6 +5145,7 @@ return c as text`
   })
 
   ipcMain.handle(IPC.fileSessionsCreate, async (_event, path: string) => {
+    if (!isFileSessionEligible(path)) return null
     const settings = settingsStore.get()
     const created = await fileSessionStore.createSession(
       path,
@@ -4967,9 +5391,13 @@ return c as text`
     (
       _event,
       path: string,
-      options?: { origin?: 'dock' | 'session'; conversationId?: string }
+      options?: { origin?: 'dock' | 'session'; conversationId?: string; surface?: 'file' | 'app' }
     ) => openFilePreviewWindow(path, options)
   )
+  ipcMain.handle(IPC.windowOpenOverlay, (_event, payload: OverlayPayload) => {
+    if (!payload || typeof payload !== 'object') return
+    openAppClipWindow(payload)
+  })
   ipcMain.handle(
     IPC.windowOpenTokenUsage,
     (
@@ -5434,6 +5862,13 @@ if (!singleInstance) {
           // non-fatal
         }
       }, 1800)
+      setTimeout(() => {
+        try {
+          warmOverlayShellPool()
+        } catch {
+          // non-fatal
+        }
+      }, 1200)
       setTimeout(() => {
         try {
           warmPreviewShellPool()

@@ -373,7 +373,7 @@ export function AgentModelPicker({
     },
     // recentRow / modelsFor / pickAgentModel close over current picker state
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [recentItems, hostOptions, t, cliHost, activeModel, locked]
+    [recentItems, hostOptions, t, cliHost, activeModel, locked, catalog, disabledModels]
   )
 
   useEffect(() => {

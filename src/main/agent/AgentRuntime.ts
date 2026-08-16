@@ -602,7 +602,11 @@ export class AgentRuntime {
         (model_, context, options) => streamWith(model_, context, { ...options, apiKey })
       )
     } catch (err) {
-      turn.error = describeError((err as Error).message)
+      if (turn.cancelled || turn.abort.signal.aborted) {
+        turn.cancelled = true
+      } else {
+        turn.error = describeError((err as Error).message)
+      }
     }
 
     this.finish(conversationId, turn)
@@ -1421,6 +1425,7 @@ export class AgentRuntime {
     sealPlanBlocks(turn.blocks, planMode)
 
     if (turn.cancelled) {
+      turn.error = undefined
       for (const block of turn.blocks) {
         if (block.kind !== 'toolCall') continue
         if (block.tool === 'plan') continue // already sealed
@@ -1645,6 +1650,15 @@ function leanToolArgs(tool: ToolName, args: Record<string, unknown>): Record<str
       const lean: Record<string, unknown> = {}
       if (args.title !== undefined) lean.title = args.title
       if (args.steps !== undefined) lean.steps = args.steps
+      return lean
+    }
+    case 'plan_doc': {
+      const lean: Record<string, unknown> = {}
+      if (args.name !== undefined) lean.name = args.name
+      if (args.overview !== undefined) lean.overview = args.overview
+      if (args.plan !== undefined) lean.plan = args.plan
+      if (args.todos !== undefined) lean.todos = args.todos
+      if (args.phases !== undefined) lean.phases = args.phases
       return lean
     }
     default:

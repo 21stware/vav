@@ -9,8 +9,8 @@ import type {
 export type DriverEvent =
   | { type: 'connected'; cursor: ProviderResumeCursor }
   | { type: 'turn-started' }
-  | { type: 'text-delta'; text: string }
-  | { type: 'reasoning-delta'; text: string }
+  | { type: 'text-delta'; text: string; parentId?: string }
+  | { type: 'reasoning-delta'; text: string; parentId?: string }
   | {
       type: 'tool'
       id: string
@@ -20,6 +20,8 @@ export type DriverEvent =
       input: unknown
       status: 'started' | 'updated' | 'completed' | 'error'
       output?: string
+      /** Nest under this tool (Claude `parent_tool_use_id` / OpenCode child session). */
+      parentId?: string
     }
   | {
       type: 'permission'
@@ -28,6 +30,14 @@ export type DriverEvent =
       summary: string
       detail?: string
       input?: unknown
+    }
+  | {
+      type: 'elicitation'
+      requestId: string
+      toolCallId: string
+      kind: 'plan_doc' | 'ask'
+      title?: string
+      input: unknown
     }
   | {
       type: 'usage'
@@ -65,6 +75,8 @@ export type DriverEvent =
       type: 'turn-finished'
       success: boolean
       error?: string
+      /** Host interrupted / user-stopped this turn — not a failure. */
+      cancelled?: boolean
       /** JSON-RPC / ACP error.code when the host sent one. */
       errorCode?: number
       /** Raw payload for the details sheet. */
@@ -92,7 +104,12 @@ export interface DriverControl {
   supportsSteer(): boolean
   cancel(): void
   respond(requestId: string, optionId: 'allow' | 'deny', message?: string): void
-  applyOptions?(opts: { model?: string | null; approvalMode?: ApprovalMode }): boolean
+  applyOptions?(opts: {
+    model?: string | null
+    approvalMode?: ApprovalMode
+    /** ACP session/set_mode id (agent / plan / ask). */
+    mode?: string | null
+  }): boolean
   dispose(): void
 }
 

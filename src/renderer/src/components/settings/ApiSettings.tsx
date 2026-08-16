@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
 import { PRESET_MODELS } from '@shared/types'
-import { resolveMaxTokens } from '@shared/tokenUsage'
 import { useSessionStore } from '../../state/sessionStore'
 import { useT } from '../../i18n/useT'
 import { Button } from '../ui'
@@ -163,18 +162,6 @@ export function ApiSettings(): React.JSX.Element {
               setCustomModel('')
             }}
           />
-        </div>
-      </div>
-
-      <div className="form-row">
-        <label>{t('api.maxTokens')}</label>
-        <div className="control" style={{ flexDirection: 'column', alignItems: 'flex-start', gap: 4 }}>
-          <span className="muted">
-            {t('api.maxTokensValue', {
-              n: resolveMaxTokens(settings.defaultModel).toLocaleString('en-US')
-            })}
-          </span>
-          <span className="muted">{t('api.maxTokensHint')}</span>
         </div>
       </div>
 

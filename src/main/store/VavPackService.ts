@@ -487,7 +487,10 @@ function externalizeBlock(
         messageId,
         field: `tool:${tool.tool}:output`
       }),
-      summary: tool.summary
+      summary: tool.summary,
+      children: tool.children?.map((child) =>
+        externalizeBlock(child, conversationId, messageId, externalize)
+      )
     }
   }
   // plan — leave as-is (small structured checklist)
@@ -504,7 +507,8 @@ function expandBlock(
     return {
       ...block,
       input: expand(block.input),
-      output: expand(block.output)
+      output: expand(block.output),
+      children: block.children?.map((child) => expandBlock(child, expand))
     }
   }
   return block

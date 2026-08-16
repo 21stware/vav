@@ -1289,6 +1289,40 @@ export function buildSystemPrompt(
     'When a chart, flowchart, sequence, architecture, ER diagram, or graph would help, output a fenced code block the client can paint. The language tag is how the UI chooses the renderer — wrong tag = plain code only.',
     '',
     'Required fence tags (open with exactly these labels):',
+    '- `xstate` — a live XState machine in the official Stately Inspector.',
+    '  Open the fence as exactly ```xstate. Body is the machine config only',
+    '  (JSON or a JS object literal: `id`, `initial`, `states`). Not HTML.',
+    '  Do not wrap the body in ```app. Event buttons are provided by the host.',
+    '- `app` — a compact interactive surface in the transcript (not a full web page).',
+    '  Open the fence as exactly ```app (legacy alias: ```html-clip). Display name is `App`.',
+    '  HTML fragment preferred (no doctype). Inline JS is allowed. ESM via the host import map:',
+    '  `xstate`, `@statelyai/inspect`, `p5`, `three`, `d3`, `tldraw`, `react`, `react-dom/client`.',
+    '  Prefer the real library: whiteboard = `tldraw`. State machines belong in ```xstate, not ```app.',
+    '  Extra `<script type="module" src>` only from esm.sh / jsDelivr / unpkg / cdnjs / stately.ai.',
+    '  tldraw assets may load from cdn.tldraw.com. Empty / about:blank / stately.ai iframes only.',
+    '  Layout — this is a card in the chat, the host sizes the iframe to content:',
+    '  Never `100vh` / `100dvh` / `min-height: 100vh` / `position: fixed` full viewport.',
+    '  Do not create a page scrollbar or an inner scrollport. No `overflow: auto|scroll` on',
+    '  body or a root wrapper. A short list may scroll only if it is a small region, not the page.',
+    '  Width 100%. Height follows content. No outer page padding — the host already has none.',
+    '  Theme — the host injects CSS variables on `:root` and refreshes them on light/dark switch.',
+    '  Consume those tokens. Do not hardcode `#fff`, `#000`, `#111`, `white`, `black` for',
+    '  backgrounds or text (they break the other theme). `html[data-theme=light|dark]` is set.',
+    '  Use: `var(--bg-content)` page, `var(--bg-raised)` cards, `var(--bg-sunken)` wells,',
+    '  `var(--text)`, `var(--text-secondary)`, `var(--text-tertiary)`, `var(--accent)`,',
+    '  `var(--accent-text)`, `var(--accent-fg)`, `var(--border)`, `var(--danger)`,',
+    '  `var(--success)`, `var(--warning)`. SVG stroke/fill: `currentColor` when possible.',
+    '  Labels on charts (sankey, stacked bars, maps): do not sit raw ink on a saturated fill.',
+    '  Prefer labels *beside* the node/band on `var(--bg-content)` (sources left, sinks right).',
+    '  If a label must overlap a color, give it a plate (`var(--bg-raised)` rounded chip) or a',
+    '  2px `var(--bg-content)` halo/stroke. Never `#333` / `#111` on a ribbon — it dies in dark.',
+    '  Canvas: read tokens at draw time via `getComputedStyle(document.documentElement)`.',
+    '  Do not cache hex at boot. Listen for `vav-theme` on `document.documentElement` (or',
+    '  `data-theme` mutations) and redraw. Switching light/dark must change the surface.',
+    '  Motion — none. No CSS `animation` / `transition`, no GSAP/anime.js, no intro tweens,',
+    '  no auto-playing loops, no pulsing/skeleton. Draw the final frame. User drag/click is',
+    '  fine; do not animate the result. The host strips CSS animation/transition anyway.',
+    '  Incomplete apps stream; keep markup well-formed. Users can View in window.',
     '- `mermaid` — flowcharts, sequence, state, class, timeline, mindmap, gantt, …',
     '- `erd` or `er` — entity-relationship (Mermaid erDiagram syntax)',
     '- `graphviz` or `dot` — Graphviz / DOT',
@@ -1387,6 +1421,17 @@ export function summarizeToolInput(tool: ToolName, input: Record<string, unknown
     case 'switch_mode': {
       const reason = String(input.reason ?? '').trim()
       return reason ? truncate(`Switch to Edit · ${reason}`, 120) : 'Switch to Edit'
+    }
+    case 'task': {
+      const desc = String(input.description ?? input.title ?? '').trim()
+      const agent = String(input.agent ?? input.subagent_type ?? input.subagent ?? '').trim()
+      if (desc && agent) return truncate(`${agent} · ${desc}`, 120)
+      return truncate(desc || agent || String(input.prompt ?? ''), 120)
+    }
+    case 'plan_doc': {
+      const name = String(input.name ?? input.title ?? '').trim()
+      const overview = String(input.overview ?? '').trim()
+      return truncate(overview || name, 120)
     }
     default:
       return ''

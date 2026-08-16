@@ -1,13 +1,51 @@
+/** How the host is authenticated — drives the empty-quota / account copy. */
+export type HostAuthKind = 'oauth' | 'api-key' | 'token' | 'expired' | 'none' | 'unknown'
+
 export type HostAccountInfo = {
   signedIn: boolean
   /** User-facing email or login label — never a raw token / UUID. */
   accountId: string | null
   /** Subscription / plan label when the CLI reports one. */
   plan: string | null
+  authKind: HostAuthKind
+}
+
+export function accountInfo(
+  authKind: HostAuthKind,
+  extras?: { accountId?: string | null; plan?: string | null }
+): HostAccountInfo {
+  return {
+    signedIn: authKind === 'oauth' || authKind === 'api-key' || authKind === 'token',
+    accountId: extras?.accountId ?? null,
+    plan: extras?.plan ?? null,
+    authKind
+  }
 }
 
 export function emptyAccount(): HostAccountInfo {
-  return { signedIn: false, accountId: null, plan: null }
+  return accountInfo('none')
+}
+
+/** Probe missing, failed, or not implemented — UI must not invent 未登录. */
+export function unknownAccount(): HostAccountInfo {
+  return accountInfo('unknown')
+}
+
+export function normalizeAuthKind(
+  value: unknown,
+  signedIn?: boolean
+): HostAuthKind {
+  if (
+    value === 'oauth' ||
+    value === 'api-key' ||
+    value === 'token' ||
+    value === 'expired' ||
+    value === 'none' ||
+    value === 'unknown'
+  ) {
+    return value
+  }
+  return signedIn ? 'oauth' : 'none'
 }
 
 export function asAccountRecord(value: unknown): Record<string, unknown> | null {
@@ -56,27 +94,93 @@ export function parseCursorStatusPayload(payload: unknown): HostAccountInfo {
   const accountId = emailFromUnknown(rec)
   const plan = stringField(rec.subscriptionTier) ?? stringField(rec.plan)
   if (!signedIn && !accountId) return emptyAccount()
-  return { signedIn: signedIn || !!accountId, accountId, plan }
+  return accountInfo('oauth', { accountId, plan })
+}
+
+function claudeAuthKind(method: string | null): HostAuthKind {
+  if (!method) return 'oauth'
+  const normalized = method.toLowerCase().replace(/[_-]/g, '')
+  if (normalized === 'apikey' || normalized.endsWith('apikey')) return 'api-key'
+  if (normalized === 'authtoken' || normalized === 'anthropicauthtoken') return 'api-key'
+  return 'oauth'
 }
 
 export function parseClaudeAuthStatusPayload(payload: unknown): HostAccountInfo {
   const rec = asAccountRecord(payload)
   if (!rec) return emptyAccount()
-  const signedIn = rec.loggedIn === true
-  return {
-    signedIn,
+  if (rec.loggedIn !== true) return emptyAccount()
+  return accountInfo(claudeAuthKind(stringField(rec.authMethod)), {
     accountId: emailFromUnknown(rec),
     plan: stringField(rec.apiProvider) === 'firstParty' ? null : stringField(rec.apiProvider)
+  })
+}
+
+/**
+ * Effective Claude auth for VAV: a settings / env token is what the CLI
+ * actually sends. `claude auth status` can still report leftover OAuth.
+ */
+export function resolveClaudeAccount(
+  settings: { token: string | null; customHost: string | null },
+  cli: HostAccountInfo
+): HostAccountInfo {
+  if (settings.token) return accountInfo('token', { plan: settings.customHost })
+  if (cli.signedIn) {
+    return {
+      ...cli,
+      plan: cli.plan ?? settings.customHost
+    }
   }
+  return emptyAccount()
+}
+
+/** True only when the token is a JWT with an `exp` that has already passed. */
+export function jwtIsExpired(token: string, skewSec = 120): boolean {
+  const claims = decodeJwtPayload(token)
+  if (!claims || typeof claims.exp !== 'number') return false
+  return Date.now() / 1000 >= claims.exp - skewSec
 }
 
 export function parseCodexIdToken(idToken: string): HostAccountInfo {
   const claims = decodeJwtPayload(idToken)
   if (!claims) return emptyAccount()
+  if (jwtIsExpired(idToken)) return accountInfo('expired')
   const auth = asAccountRecord(claims['https://api.openai.com/auth'])
   const plan = stringField(auth?.chatgpt_plan_type)
   const email = emailFromUnknown(claims)
-  return { signedIn: true, accountId: email, plan }
+  return accountInfo('oauth', { accountId: email, plan })
+}
+
+export function pickCodexApiKey(payload: unknown): string | null {
+  const rec = asAccountRecord(payload)
+  if (!rec) return null
+  for (const key of ['OPENAI_API_KEY', 'openai_api_key', 'api_key']) {
+    const value = stringField(rec[key])
+    if (value) return value
+  }
+  return null
+}
+
+/**
+ * Codex `auth.json`: ChatGPT OAuth tokens and/or `{ "OPENAI_API_KEY": "…" }`.
+ * Env keys are a fallback when the file has neither a live token nor a key.
+ */
+export function parseCodexAuthFile(
+  payload: unknown,
+  envKeys: Array<string | null | undefined> = []
+): HostAccountInfo {
+  const rec = asAccountRecord(payload)
+  const tokens = rec ? asAccountRecord(rec.tokens) : null
+  const idToken = stringField(tokens?.id_token)
+  const access = stringField(tokens?.access_token)
+  if (idToken && !jwtIsExpired(idToken)) return parseCodexIdToken(idToken)
+  if (access && !jwtIsExpired(access)) {
+    return accountInfo('oauth', { accountId: emailFromUnknown(tokens) })
+  }
+  if (pickCodexApiKey(rec) || envKeys.some((key) => typeof key === 'string' && key.trim())) {
+    return accountInfo('api-key')
+  }
+  if (idToken || access) return accountInfo('expired')
+  return emptyAccount()
 }
 
 /** Non-official Anthropic gateway host, for the account popover plan line. */
@@ -89,6 +193,20 @@ export function hostFromAnthropicBaseUrl(url: string | null | undefined): string
   } catch {
     return null
   }
+}
+
+/** `devin auth status` — plain text, not JSON. */
+export function parseDevinAuthStatusText(text: string): HostAccountInfo {
+  const raw = text.trim()
+  if (!raw) return emptyAccount()
+  if (/not logged in|logged out|no credentials/i.test(raw)) return emptyAccount()
+  if (!/logged in/i.test(raw)) return unknownAccount()
+  const email = raw.match(/^\s*Email:\s+(\S+@\S+)\s*$/im)?.[1] ?? null
+  const plan =
+    raw.match(/^\s*Plan:\s+(.+?)\s*$/im)?.[1]?.trim() ||
+    raw.match(/^\s*Tier:\s+(.+?)\s*$/im)?.[1]?.trim() ||
+    null
+  return accountInfo('oauth', { accountId: email, plan: plan || null })
 }
 
 /** OpenCode `auth.json`: any stored key means signed in; email only if present. */
@@ -104,7 +222,7 @@ export function parseOpencodeAuthFile(payload: unknown): HostAccountInfo {
     email ??= emailFromUnknown(entry)
   }
   if (!hasKey && !email) return emptyAccount()
-  return { signedIn: true, accountId: email, plan: null }
+  return accountInfo('api-key', { accountId: email })
 }
 
 /** Claude context fill: input + cache write + cache read (t3code / Agent SDK). */

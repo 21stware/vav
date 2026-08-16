@@ -229,51 +229,44 @@ function wireCodex(
         asString(params.itemId) ||
         asString(params.id) ||
         `${itemType}-${Date.now()}`
-      if (
-        itemType === 'commandExecution' ||
-        itemType === 'command' ||
-        itemType === 'fileChange' ||
-        itemType === 'patch' ||
-        itemType === 'mcpToolCall' ||
-        itemType === 'webSearch' ||
-        itemType === 'tool'
-      ) {
-        const name =
-          itemType === 'commandExecution' || itemType === 'command'
-            ? 'Bash'
-            : itemType === 'fileChange' || itemType === 'patch'
-              ? 'ApplyPatch'
-              : itemType === 'webSearch'
-                ? 'WebSearch'
-                : asString(item.name) || itemType
-        const input =
-          asRecord(item) ??
-          ({
-            command: asString(item.command),
-            path: asString(item.path) || asString(item.file)
-          } as Record<string, unknown>)
-        const done = method === 'item/completed'
-        const failed = item.status === 'failed' || params.status === 'failed'
-        emit({
-          type: 'tool',
-          id,
-          name,
-          input,
-          status: done ? (failed ? 'error' : 'completed') : 'started',
-          output: done
-            ? asString(item.output) || asString(item.aggregatedOutput) || undefined
-            : undefined
-        })
+      if (itemType === 'agentMessage' || itemType === 'agent_message' || itemType === 'reasoning') {
+        return
       }
+      const name = codexItemToolName(itemType, item)
+      const input =
+        asRecord(item) ??
+        ({
+          command: asString(item.command),
+          path: asString(item.path) || asString(item.file)
+        } as Record<string, unknown>)
+      const done = method === 'item/completed'
+      const failed = item.status === 'failed' || params.status === 'failed'
+      emit({
+        type: 'tool',
+        id,
+        name,
+        title: asString(item.title) || asString(item.explanation) || undefined,
+        input,
+        status: done ? (failed ? 'error' : 'completed') : 'started',
+        output: done
+          ? asString(item.output) ||
+            asString(item.aggregatedOutput) ||
+            asString(item.text) ||
+            asString(item.plan) ||
+            undefined
+          : undefined
+      })
       return
     }
 
     if (method === 'turn/completed') {
       turnActive = false
       const status = asString(params.status) || asString(dig(params, 'turn.status'))
+      const interrupted = /^(?:aborted|interrupted|cancell?ed|stopped)$/i.test(status ?? '')
       emit({
         type: 'turn-finished',
-        success: status === 'completed' || status === 'success' || !status
+        success: interrupted || status === 'completed' || status === 'success' || !status,
+        cancelled: interrupted || undefined
       })
       return
     }
@@ -408,6 +401,24 @@ function wireCodex(
       setTimeout(() => proc.kill(), 2_000)
     }
   }
+}
+
+function codexItemToolName(itemType: string, item: Record<string, unknown>): string {
+  if (itemType === 'commandExecution' || itemType === 'command') return 'Bash'
+  if (itemType === 'fileChange' || itemType === 'patch') return 'ApplyPatch'
+  if (itemType === 'webSearch') return 'WebSearch'
+  if (
+    itemType === 'todoList' ||
+    itemType === 'todo' ||
+    itemType === 'plan' ||
+    itemType === 'updatePlan' ||
+    itemType === 'update_plan'
+  ) {
+    return 'update_plan'
+  }
+  if (itemType === 'proposedPlan' || itemType === 'proposed_plan') return 'proposed_plan'
+  if (itemType === 'question' || itemType === 'askUserQuestion') return 'AskUserQuestion'
+  return asString(item.name) || itemType
 }
 
 /** Live stream only — skip windows without a numeric used_percent. */

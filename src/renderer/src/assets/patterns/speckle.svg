@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+  <!-- Ink stipple. Dots stay inside the tile so the field repeats without a seam. -->
+  <g fill="#000">
+    <circle cx="4.2" cy="7.1" r="0.62"/>
+    <circle cx="11.6" cy="19.4" r="0.42"/>
+    <circle cx="18.3" cy="5.2" r="0.7"/>
+    <circle cx="27.1" cy="28.6" r="0.5"/>
+    <circle cx="35.4" cy="12.8" r="0.38"/>
+    <circle cx="42.8" cy="41.2" r="0.66"/>
+    <circle cx="51.5" cy="8.4" r="0.44"/>
+    <circle cx="58.2" cy="33.1" r="0.56"/>
+    <circle cx="8.4" cy="48.6" r="0.5"/>
+    <circle cx="22.7" cy="52.3" r="0.38"/>
+    <circle cx="31.2" cy="44.8" r="0.68"/>
+    <circle cx="47.6" cy="55.1" r="0.44"/>
+    <circle cx="55.3" cy="21.7" r="0.52"/>
+    <circle cx="14.1" cy="35.4" r="0.38"/>
+    <circle cx="39.6" cy="3.6" r="0.42"/>
+    <circle cx="3.4" cy="31.8" r="0.52"/>
+    <circle cx="60.8" cy="50.2" r="0.38"/>
+    <circle cx="25.4" cy="15.7" r="0.56"/>
+    <circle cx="44.2" cy="26.4" r="0.42"/>
+    <circle cx="16.8" cy="59.6" r="0.5"/>
+    <circle cx="50.1" cy="46.8" r="0.36"/>
+    <circle cx="6.8" cy="22.3" r="0.4"/>
+    <circle cx="33.7" cy="59.1" r="0.48"/>
+    <circle cx="57.4" cy="14.2" r="0.38"/>
+    <circle cx="20.2" cy="40.6" r="0.34"/>
+    <circle cx="37.8" cy="34.2" r="0.46"/>
+    <circle cx="12.4" cy="11.8" r="0.36"/>
+    <circle cx="48.6" cy="17.4" r="0.4"/>
+    <circle cx="29.6" cy="7.8" r="0.34"/>
+    <circle cx="41.2" cy="61.2" r="0.42"/>
+  </g>
+</svg>

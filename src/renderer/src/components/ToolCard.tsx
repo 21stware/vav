@@ -1,10 +1,20 @@
 import { memo, useMemo, useState } from 'react'
 import { Check, ChevronRight, CircleAlert, Loader2 } from 'lucide-react'
 import { normalizeAskQuestions, parseToolInput } from '@shared/askPlan'
+import { normalizePlanDocInput, planDocHasBody } from '@shared/planDoc'
 import type { MessageKey } from '@shared/i18n'
-import { TOOL_LABELS, type AskQuestion, type ToolCallBlock, type ToolName } from '@shared/types'
+import {
+  TOOL_LABELS,
+  type AskQuestion,
+  type MessageBlock,
+  type ToolCallBlock,
+  type ToolName
+} from '@shared/types'
 import { useSessionStore } from '../state/sessionStore'
 import { useT, tt } from '../i18n/useT'
+import { isHollowToolCard } from '../lib/assistantProcess'
+import { MarkdownView } from './MarkdownView'
+import { ReasoningBlock } from './ReasoningBlock'
 
 const TOOL_NAME_KEYS: Partial<Record<ToolName, MessageKey>> = {
   terminal: 'tool.shell',
@@ -16,7 +26,9 @@ const TOOL_NAME_KEYS: Partial<Record<ToolName, MessageKey>> = {
   load_skill: 'tool.loadSkill',
   ask_user_question: 'tool.ask',
   request: 'tool.ask',
-  switch_mode: 'tool.switchMode'
+  switch_mode: 'tool.switchMode',
+  task: 'tool.task',
+  plan_doc: 'tool.planDoc'
 }
 
 function localizedToolName(tool: ToolName, t: ReturnType<typeof useT>): string {
@@ -77,8 +89,12 @@ export const ToolCard = memo(function ToolCard({
   const toolName = localizedToolName(block.tool, t)
 
   // Plan lives as a tools-panel banner, not in the transcript stream.
-  if (block.tool === 'plan') {
+  if (block.tool === 'plan' || isHollowToolCard(block)) {
     return <></>
+  }
+
+  if (block.tool === 'plan_doc') {
+    return <PlanDocCard block={block} />
   }
 
   if (isInteractive && block.status === 'pending') {
@@ -133,7 +149,24 @@ export const ToolCard = memo(function ToolCard({
           retargets from where it is instead of restarting. */}
       {canToggle && (
         <div className="tool-detail" aria-hidden={!showDetail}>
-          <div className="tool-detail-inner">{showDetail && <ToolDetail block={block} />}</div>
+          <div className="tool-detail-inner">
+            {showDetail && (
+              <>
+                <ToolDetail block={block} />
+                {block.tool === 'task' && block.children?.length ? (
+                  <>
+                    <TaskChildren
+                      blocks={block.children}
+                      live={block.status === 'executing' || block.status === 'pending'}
+                    />
+                    {block.output.trim() ? (
+                      <pre className="story-body task-result">{block.output}</pre>
+                    ) : null}
+                  </>
+                ) : null}
+              </>
+            )}
+          </div>
         </div>
       )}
     </div>
@@ -142,7 +175,48 @@ export const ToolCard = memo(function ToolCard({
 
 /** wait defaults open so the user can follow match progress. */
 function defaultExpanded(block: ToolCallBlock): boolean {
-  return block.tool === 'wait'
+  if (block.tool === 'wait') return true
+  // Live subagent with work: open so the nested transcript is visible.
+  if (
+    block.tool === 'task' &&
+    (block.status === 'executing' || block.status === 'pending') &&
+    (block.children?.length ?? 0) > 0
+  ) {
+    return true
+  }
+  return false
+}
+
+function TaskChildren({
+  blocks,
+  live
+}: {
+  blocks: MessageBlock[]
+  live: boolean
+}): React.JSX.Element {
+  return (
+    <div className="task-children">
+      {blocks.map((child, index) => {
+        if (child.kind === 'reasoning') {
+          return (
+            <ReasoningBlock
+              key={`r${index}`}
+              text={child.text}
+              live={live && index === blocks.length - 1}
+              durationMs={child.durationMs}
+            />
+          )
+        }
+        if (child.kind === 'toolCall') {
+          return <ToolCard key={child.id} block={child} />
+        }
+        if (child.kind === 'text' && child.text.trim()) {
+          return <MarkdownView key={`t${index}`} source={child.text} />
+        }
+        return null
+      })}
+    </div>
+  )
 }
 
 function isBackgroundPidOutput(output: string): boolean {
@@ -195,6 +269,74 @@ function truncate(text: string, max: number): string {
 function questionsOf(block: ToolCallBlock): AskQuestion[] {
   if (block.questions?.length) return block.questions
   return normalizeAskQuestions(parseToolInput(block.input))
+}
+
+function PlanDocCard({ block }: { block: ToolCallBlock }): React.JSX.Element {
+  const t = useT()
+  const answerTool = useSessionStore((s) => s.answerTool)
+  const doc = normalizePlanDocInput(parseToolInput(block.input))
+  const pending = block.status === 'pending'
+  const [submitting, setSubmitting] = useState<'accept' | 'reject' | null>(null)
+  const rejected = block.status === 'skipped'
+  const accepted = block.status === 'completed'
+
+  const submit = (kind: 'accept' | 'reject'): void => {
+    if (submitting) return
+    setSubmitting(kind)
+    void (async () => {
+      try {
+        const ok = await answerTool(
+          block.id,
+          kind === 'accept' ? t('planDoc.accept') : t('planDoc.reject')
+        )
+        if (!ok) setSubmitting(null)
+      } catch {
+        setSubmitting(null)
+      }
+    })()
+  }
+
+  return (
+    <div
+      className={`plan-doc-card${pending ? ' is-pending' : ''}${accepted ? ' is-accepted' : ''}${rejected ? ' is-rejected' : ''}`}
+      data-status={block.status}
+    >
+      <div className="plan-doc-head">
+        <span className="plan-doc-label">{t('tool.planDoc')}</span>
+        <span className="plan-doc-name">{doc.name}</span>
+        {pending && <span className="plan-doc-badge">{t('tool.detail.approvalPending')}</span>}
+        {accepted && <span className="plan-doc-badge is-done">{t('planDoc.accepted')}</span>}
+        {rejected && <span className="plan-doc-badge is-fail">{t('planDoc.rejected')}</span>}
+        {block.status === 'executing' && !pending && (
+          <Loader2 className="spin plan-doc-spin" size={12} />
+        )}
+      </div>
+      {doc.overview && <div className="plan-doc-overview">{doc.overview}</div>}
+      {doc.plan ? (
+        <div className="plan-doc-body">
+          <MarkdownView source={doc.plan} />
+        </div>
+      ) : (
+        !planDocHasBody(doc) &&
+        block.status === 'executing' && <div className="plan-doc-empty">{t('common.loading')}</div>
+      )}
+      {pending && (
+        <div className="plan-doc-actions">
+          <Button
+            label={t('planDoc.reject')}
+            disabled={!!submitting}
+            onClick={() => submit('reject')}
+          />
+          <Button
+            label={submitting === 'accept' ? t('common.submitting') : t('planDoc.accept')}
+            variant="primary"
+            disabled={!!submitting}
+            onClick={() => submit('accept')}
+          />
+        </div>
+      )}
+    </div>
+  )
 }
 
 /** Inline Approve / Deny for Auto / Edit tool gates (main-chat.rpml). */
