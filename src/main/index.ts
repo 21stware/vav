@@ -106,7 +106,7 @@ import {
 import { getCloudflareStatus } from './cloudflare/CloudflareService'
 import { getSupabaseStatus } from './supabase/SupabaseService'
 import { UpdateService } from './updates'
-import { PtyManager } from './terminal/PtyManager'
+import { PtyManager, type PtySessionMeta } from './terminal/PtyManager'
 import { ensureLoginPath, probeAgentExecutables, resolveAgentExecutable } from './terminal/loginPath'
 import { menuCommandFromInput, matchesNewSessionWindow } from './menuShortcuts'
 import { resolveKeyBindings } from '@shared/keyBindings'
@@ -177,7 +177,13 @@ import {
   parseSwarmHistoryId,
   swarmSessionKey
 } from '@shared/cliSessionHistory'
-import { trayItemLabel, type TrayPane } from '@shared/traySessions'
+import {
+  mergeLiveAndUnseenTrayPanes,
+  shouldRecordPtyCompletion,
+  trayItemLabel,
+  trayPaneKey,
+  type TrayPane
+} from '@shared/traySessions'
 
 const PLATFORM = process.platform as Platform
 const IS_MAC = PLATFORM === 'darwin'
@@ -345,12 +351,13 @@ const ptyManager = new PtyManager(
   // Workspace windows re-hydrate tab maps from main — no per-renderer PTY ownership.
   (conversationId) => {
     sendToWorkspaceWindows(IPC.ptyChanged, { conversationId }, conversationId)
-    // Live CLI agent count and bash panes drive the tray badge / menu.
+    // Live CLI / bash panes plus unseen completions drive the tray menu.
     refreshTraySessions()
   },
   (tabId, conversationId, status) => {
     sendToWorkspaceWindows(IPC.ptyStatus, { tabId, conversationId, status }, conversationId)
     syncSleepBlocker()
+    handlePtyStatusForTray(tabId, conversationId, status)
     if (status === 'exited') {
       swarmFinishAlert?.noteGone(tabId)
       return
@@ -377,8 +384,16 @@ liveAgentPanes.list = () =>
       agentId: session.agentId
     }))
 
-/** Conversation ids with a live or paused turn — drives the tray badge/menu. */
+/** Conversation ids with a live or paused turn — counted on the tray badge. */
 const activeTurns = new Map<string, 'running' | 'paused'>()
+/** Completed runs the user has not opened/focused yet — stay in the tray. */
+const unseenResults = new Map<string, TrayPane>()
+/** PTY tab has settled once (so the next idle is a finished command). */
+const ptyPrimed = new Set<string>()
+/** PTY tabId → when the current running streak started. */
+const ptyRunningSince = new Map<string, number>()
+/** Last built pane for a PTY tab (exit removes the session before we read it). */
+const ptyTrayPanes = new Map<string, TrayPane>()
 const sleepBlocker = new SleepBlocker()
 
 function syncSleepBlocker(): void {
@@ -396,6 +411,7 @@ function syncSleepBlocker(): void {
  *
  * Tray CLI rows pass surface=cli + tabId so we enter CLI Agents and focus that
  * pane. Bash rows pass surface=bash + tabId to open Tools → Terminal on that tab.
+ * Chat rows pass surface=vav to raise the conversation transcript.
  */
 function focusRunningSession(target: {
   conversationId: string
@@ -405,6 +421,7 @@ function focusRunningSession(target: {
 }): void {
   const conversationId = target.conversationId
   if (!conversationId) return
+  markResultViewed(conversationId)
   const payload = {
     conversationId,
     toast: null as string | null,
@@ -508,88 +525,222 @@ function trayDirLabel(workingDirectory: string | null | undefined): string {
   return parts.length ? parts[parts.length - 1]! : workingDirectory
 }
 
+function trayAgentLabel(agentId: string): string {
+  const fromSettings = settingsStore.get().cliAgents?.find((a) => a.id === agentId)
+  if (fromSettings?.name) return fromSettings.name
+  return agentId
+}
+
+function trayPaneFromConversation(
+  conversationId: string,
+  kind: TrayPane['kind'],
+  extra?: {
+    tabId?: string
+    paneTitle?: string
+    createdAt?: number
+    agentId?: string
+    sessionTitle?: string
+  }
+): TrayPane | null {
+  const conversation = conversationStore.get(conversationId)
+  if (!conversation || conversation.archived) return null
+  const dir = conversation.workingDirectory || '~'
+  const title =
+    extra?.sessionTitle ||
+    (conversation.title && conversation.title.trim()) ||
+    conversationId
+  const agentId = extra?.agentId || conversation.cliHost || undefined
+  const paneTitle =
+    extra?.paneTitle ||
+    (kind === 'agent'
+      ? agentId
+        ? trayAgentLabel(agentId)
+        : 'CLI'
+      : kind === 'bash'
+        ? 'bash'
+        : conversation.cliHost
+          ? displayNameForCliHost(conversation.cliHost)
+          : 'VAV')
+  return {
+    conversationId,
+    tabId: extra?.tabId ?? '',
+    kind,
+    sessionTitle: title,
+    paneTitle,
+    dirKey: dir,
+    dirLabel: trayDirLabel(dir),
+    createdAt: extra?.createdAt ?? conversation.updatedAt,
+    agentId
+  }
+}
+
+function agentSessionTitle(session: PtySessionMeta): string {
+  const conversation = conversationStore.get(session.conversationId)
+  const binding = conversationStore.getCliPaneBindings(session.conversationId)[session.id]
+  const sessionId = nativeSessionId(binding?.cursor)
+  const named =
+    sessionId && session.agentId
+      ? swarmHistoryStore.get(swarmSessionKey(session.agentId, sessionId))?.name?.trim()
+      : null
+  const bindingTitle = binding?.title?.trim()
+  return (
+    named ||
+    bindingTitle ||
+    (conversation?.title && conversation.title.trim()) ||
+    session.title ||
+    session.conversationId
+  )
+}
+
+function trayPaneFromAgentSession(session: PtySessionMeta): TrayPane | null {
+  if (session.agentId) swarmSession.adoptPane(session.conversationId, session.id, session.agentId)
+  return trayPaneFromConversation(session.conversationId, 'agent', {
+    tabId: session.id,
+    paneTitle: session.agentId ? trayAgentLabel(session.agentId) : 'CLI',
+    createdAt: session.createdAt,
+    agentId: session.agentId || undefined,
+    sessionTitle: agentSessionTitle(session)
+  })
+}
+
+function trayPaneFromBashSession(session: PtySessionMeta): TrayPane | null {
+  return trayPaneFromConversation(session.conversationId, 'bash', {
+    tabId: session.id,
+    paneTitle: session.title || 'bash',
+    createdAt: session.createdAt
+  })
+}
+
+function persistResultUnseen(conversationId: string, unseen: boolean): void {
+  const conversation = conversationStore.get(conversationId)
+  if (!conversation || conversation.resultUnseen === unseen) return
+  conversationStore.updateMeta(conversationId, { resultUnseen: unseen })
+}
+
+function markResultUnseen(pane: TrayPane): void {
+  if (ephemeralConversations.has(pane.conversationId)) return
+  if (notifications.isConversationForeground(pane.conversationId)) {
+    markResultViewed(pane.conversationId)
+    return
+  }
+  unseenResults.set(trayPaneKey(pane), pane)
+  persistResultUnseen(pane.conversationId, true)
+  refreshTraySessions()
+}
+
+function markResultViewed(conversationId: string): void {
+  if (!conversationId) return
+  let changed = false
+  for (const [key, pane] of unseenResults) {
+    if (pane.conversationId !== conversationId) continue
+    unseenResults.delete(key)
+    changed = true
+  }
+  const conversation = conversationStore.get(conversationId)
+  if (conversation?.resultUnseen) {
+    persistResultUnseen(conversationId, false)
+    changed = true
+  }
+  if (changed) refreshTraySessions()
+}
+
+function clearUnseenForConversation(conversationId: string): void {
+  for (const [key, pane] of unseenResults) {
+    if (pane.conversationId === conversationId) unseenResults.delete(key)
+  }
+}
+
+function handlePtyStatusForTray(
+  tabId: string,
+  _conversationId: string,
+  status: 'running' | 'idle' | 'exited'
+): void {
+  if (status === 'running') {
+    const agent = ptyManager.listCliAgentSessions().find((s) => s.id === tabId)
+    const bash = agent ? undefined : ptyManager.listBashSessions().find((s) => s.id === tabId)
+    const pane = agent
+      ? trayPaneFromAgentSession(agent)
+      : bash
+        ? trayPaneFromBashSession(bash)
+        : (ptyTrayPanes.get(tabId) ?? null)
+    if (pane) ptyTrayPanes.set(tabId, pane)
+    if (!ptyRunningSince.has(tabId)) ptyRunningSince.set(tabId, Date.now())
+    refreshTraySessions()
+    return
+  }
+
+  const runningSince = ptyRunningSince.get(tabId) ?? null
+  ptyRunningSince.delete(tabId)
+  const pane = ptyTrayPanes.get(tabId)
+  const record = shouldRecordPtyCompletion({
+    primed: ptyPrimed.has(tabId),
+    runningSince,
+    now: Date.now()
+  })
+  ptyPrimed.add(tabId)
+  if (record && pane) markResultUnseen(pane)
+  else refreshTraySessions()
+  if (status === 'exited') {
+    ptyPrimed.delete(tabId)
+    ptyTrayPanes.delete(tabId)
+  }
+}
+
 function refreshTraySessions(): void {
   try {
-    const settings = settingsStore.get()
-    const agentLabel = (agentId: string): string => {
-      const fromSettings = settings.cliAgents?.find((a) => a.id === agentId)
-      if (fromSettings?.name) return fromSettings.name
-      return agentId
+    const live: TrayPane[] = []
+
+    for (const id of activeTurns.keys()) {
+      if (ephemeralConversations.has(id)) continue
+      const pane = trayPaneFromConversation(id, 'chat')
+      if (pane) live.push(pane)
     }
 
-    const panes: TrayPane[] = []
     for (const s of ptyManager.listCliAgentSessions()) {
-      if (s.agentId) swarmSession.adoptPane(s.conversationId, s.id, s.agentId)
-      const conversation = conversationStore.get(s.conversationId)
-      const dir = conversation?.workingDirectory || '~'
-      const binding = conversationStore.getCliPaneBindings(s.conversationId)[s.id]
-      const sessionId = nativeSessionId(binding?.cursor)
-      const named = sessionId && s.agentId
-        ? swarmHistoryStore.get(swarmSessionKey(s.agentId, sessionId))?.name?.trim()
-        : null
-      const bindingTitle = binding?.title?.trim()
-      panes.push({
-        conversationId: s.conversationId,
-        tabId: s.id,
-        kind: 'agent',
-        sessionTitle:
-          named ||
-          bindingTitle ||
-          (conversation?.title && conversation.title.trim()) ||
-          s.title ||
-          s.conversationId,
-        paneTitle: s.agentId ? agentLabel(s.agentId) : 'CLI',
-        dirKey: dir,
-        dirLabel: trayDirLabel(dir),
-        createdAt: s.createdAt,
-        agentId: s.agentId || undefined
-      })
+      const pane = trayPaneFromAgentSession(s)
+      if (!pane) continue
+      ptyTrayPanes.set(s.id, pane)
+      if (s.status === 'running') live.push(pane)
     }
     for (const s of ptyManager.listBashSessions()) {
-      const conversation = conversationStore.get(s.conversationId)
-      const dir = conversation?.workingDirectory || '~'
-      panes.push({
-        conversationId: s.conversationId,
-        tabId: s.id,
-        kind: 'bash',
-        sessionTitle:
-          (conversation?.title && conversation.title.trim()) || s.title || s.conversationId,
-        paneTitle: s.title || 'bash',
-        dirKey: dir,
-        dirLabel: trayDirLabel(dir),
-        createdAt: s.createdAt
+      const pane = trayPaneFromBashSession(s)
+      if (!pane) continue
+      ptyTrayPanes.set(s.id, pane)
+      if (s.status === 'running') live.push(pane)
+    }
+
+    // Restart / persist: a conversation flagged unseen with no in-memory pane.
+    for (const conversation of conversationStore.all()) {
+      if (!conversation.resultUnseen || conversation.archived) continue
+      if (ephemeralConversations.has(conversation.id)) continue
+      const already = [...unseenResults.values()].some((p) => p.conversationId === conversation.id)
+      if (already) continue
+      const pane = trayPaneFromConversation(conversation.id, 'chat')
+      if (pane) unseenResults.set(trayPaneKey(pane), pane)
+    }
+
+    const panes = mergeLiveAndUnseenTrayPanes(
+      live,
+      [...unseenResults.values()].filter((pane) => {
+        const conversation = conversationStore.get(pane.conversationId)
+        return conversation && !conversation.archived
       })
-    }
-
-    if (panes.length > 0) {
-      notifications.updateRunningSessions(
-        panes.map((pane) => ({
-          conversationId: pane.conversationId,
-          title: trayItemLabel(pane),
-          surface: pane.kind === 'agent' ? ('cli' as const) : ('bash' as const),
-          tabId: pane.tabId,
-          agentId: pane.agentId,
-          kind: pane.kind,
-          dirKey: pane.dirKey,
-          dirLabel: pane.dirLabel,
-          createdAt: pane.createdAt
-        }))
-      )
-      return
-    }
-
-    // Fall back to VAV active turns when no CLI agent or bash pane is live.
-    const vavRows = [...activeTurns.keys()].map((id) => {
-      const conversation = conversationStore.get(id)
-      const sessionName = conversation?.title?.trim() || id
-      const dirName = trayDirLabel(conversation?.workingDirectory)
-      return {
-        conversationId: id,
-        title: `${sessionName} - VAV - ${dirName}`,
-        surface: 'vav' as const
-      }
-    })
-    notifications.updateRunningSessions(vavRows)
+    )
+    notifications.updateRunningSessions(
+      panes.map((pane) => ({
+        conversationId: pane.conversationId,
+        title: trayItemLabel(pane),
+        surface:
+          pane.kind === 'agent' ? ('cli' as const) : pane.kind === 'bash' ? ('bash' as const) : 'vav',
+        tabId: pane.tabId || undefined,
+        agentId: pane.agentId,
+        kind: pane.kind,
+        dirKey: pane.dirKey,
+        dirLabel: pane.dirLabel,
+        createdAt: pane.createdAt
+      })),
+      live.length
+    )
   } finally {
     syncSleepBlocker()
   }
@@ -701,7 +852,9 @@ function handleAgentEvent(event: TurnEvent): void {
   }
   if (event.type === 'end') {
     activeTurns.delete(event.conversationId)
-    refreshTraySessions()
+    const pane = trayPaneFromConversation(event.conversationId, 'chat')
+    if (pane) markResultUnseen(pane)
+    else refreshTraySessions()
     pushTokenUsageIfOpen(event.conversationId)
     if (!event.cancelled && !event.error) {
       const body = event.message.content || t('notify.turnComplete')
@@ -4872,6 +5025,8 @@ return c as text`
   ipcMain.handle(IPC.convSetArchived, (_event, id: string, archived: boolean) => {
     if (archived) {
       void agent.cancel(id)
+      clearUnseenForConversation(id)
+      persistResultUnseen(id, false)
     }
     conversationStore.setArchived(id, archived)
     publishConversations()
@@ -5107,6 +5262,7 @@ return c as text`
   ipcMain.handle(IPC.convRemove, (_event, ids: string[]) => {
     const removed = conversationStore.remove(ids)
     for (const id of removed) {
+      clearUnseenForConversation(id)
       // Deleting a conversation is the one path that tears down its processes.
       agent.disposeConversation(id)
       cliHost.dispose(id)
@@ -5821,6 +5977,7 @@ return c as text`
     const window = BrowserWindow.fromWebContents(event.sender)
     if (!window || window.isDestroyed()) return
     notifications.noteConversationView(window.id, id)
+    markResultViewed(id)
   })
 
   ipcMain.handle(

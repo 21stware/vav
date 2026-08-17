@@ -337,6 +337,11 @@ export interface ConversationMeta {
    * Fed into the built-in agent system prompt and injected into CLI agent PTYs.
    */
   focusedFilePath?: string | null
+  /**
+   * A turn / command finished and the user has not opened or focused this
+   * session since. Keeps the row in the tray until the result is accessed.
+   */
+  resultUnseen?: boolean
 }
 
 /**

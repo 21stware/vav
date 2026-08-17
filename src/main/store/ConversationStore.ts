@@ -136,6 +136,7 @@ export class ConversationStore {
         conversation.cliPaneBindings = {}
       }
       if (conversation.focusedFilePath === undefined) conversation.focusedFilePath = null
+      if (typeof conversation.resultUnseen !== 'boolean') conversation.resultUnseen = false
       if (!Array.isArray(conversation.compactions)) conversation.compactions = []
       if (!conversation.hostTranscripts || typeof conversation.hostTranscripts !== 'object') {
         conversation.hostTranscripts = {}
@@ -248,6 +249,7 @@ export class ConversationStore {
       cliResumeCursor: null,
       cliPaneBindings: {},
       focusedFilePath: null,
+      resultUnseen: false,
       compactions: [],
       hostTranscripts: {}
     }
@@ -309,6 +311,7 @@ export class ConversationStore {
     // Native session ids belong to the source machine / live TUI — do not reuse.
     imported.cliPaneBindings = {}
     if (imported.focusedFilePath === undefined) imported.focusedFilePath = null
+    imported.resultUnseen = false
     if (!imported.hostTranscripts || typeof imported.hostTranscripts !== 'object') {
       imported.hostTranscripts = {}
     }
@@ -363,6 +366,7 @@ export class ConversationStore {
       quotaWindows: [],
       cacheCreatedAt: null,
       cacheExpiresAt: null,
+      resultUnseen: false,
       messages: source.messages.map((message) => ({
         ...structuredClone(message),
         id: idMap.get(message.id)!,

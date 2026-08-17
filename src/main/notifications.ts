@@ -8,7 +8,7 @@ import {
   type NativeImage
 } from 'electron'
 import type { AppSettings } from '@shared/types'
-import { groupTrayPanes } from '@shared/traySessions'
+import { groupTrayPanes, trayIndentedLabel } from '@shared/traySessions'
 import { existsSync, unlinkSync } from 'node:fs'
 import { join } from 'node:path'
 import { APP_NAME, applyDockIcon, loadAppIcon, setDockBadge } from './brand'
@@ -63,7 +63,7 @@ export type RunningSessionTarget = {
   surface: 'vav' | 'cli' | 'bash'
   tabId?: string
   agentId?: string
-  kind?: 'agent' | 'bash'
+  kind?: 'agent' | 'chat' | 'bash'
   dirKey?: string
   dirLabel?: string
   createdAt?: number
@@ -332,40 +332,31 @@ export class NotificationCenter {
         enabled: false
       })
       const groups = groupTrayPanes(
-        this.runningSessions
-          .filter((row) => row.kind === 'agent' || row.kind === 'bash')
-          .map((row) => ({
-            conversationId: row.conversationId,
-            tabId: row.tabId ?? '',
-            kind: row.kind === 'bash' ? 'bash' : 'agent',
-            sessionTitle: row.title,
-            paneTitle: row.title,
-            dirKey: row.dirKey || '~',
-            dirLabel: row.dirLabel || row.dirKey || '~',
-            createdAt: row.createdAt ?? 0,
-            agentId: row.agentId
-          }))
+        this.runningSessions.map((row) => ({
+          conversationId: row.conversationId,
+          tabId: row.tabId ?? '',
+          kind: row.kind === 'bash' ? 'bash' : row.kind === 'agent' ? 'agent' : 'chat',
+          sessionTitle: row.title,
+          paneTitle: row.title,
+          dirKey: row.dirKey || '~',
+          dirLabel: row.dirLabel || row.dirKey || '~',
+          createdAt: row.createdAt ?? 0,
+          agentId: row.agentId
+        }))
       )
-      if (groups.length > 0) {
-        for (const group of groups) {
-          items.push({ type: 'separator' })
-          items.push({ label: group.dirLabel, enabled: false })
-          for (const pane of group.panes) {
-            const row = this.runningSessions.find(
-              (s) => s.conversationId === pane.conversationId && s.tabId === pane.tabId
-            )
-            if (!row) continue
-            items.push({
-              label: row.title,
-              click: () => this.onOpenSession(row)
-            })
-          }
-        }
-      } else {
+      for (const group of groups) {
         items.push({ type: 'separator' })
-        for (const row of this.runningSessions) {
+        items.push({ label: group.dirLabel, enabled: false })
+        for (const pane of group.panes) {
+          const row = this.runningSessions.find(
+            (s) =>
+              s.conversationId === pane.conversationId &&
+              (s.tabId ?? '') === pane.tabId &&
+              (s.kind ?? 'chat') === pane.kind
+          )
+          if (!row) continue
           items.push({
-            label: row.title,
+            label: trayIndentedLabel(row.title),
             click: () => this.onOpenSession(row)
           })
         }
@@ -380,10 +371,10 @@ export class NotificationCenter {
     this.tray.setContextMenu(Menu.buildFromTemplate(items))
   }
 
-  /** Call when turn activity changes so the tray menu lists live sessions. */
-  updateRunningSessions(sessions: RunningSessionTarget[]): void {
+  /** Rebuild the tray list. `runningCount` is the live badge; omit to use list length. */
+  updateRunningSessions(sessions: RunningSessionTarget[], runningCount = sessions.length): void {
     this.runningSessions = sessions
-    this.setRunningCount(sessions.length)
+    this.setRunningCount(runningCount)
     this.refreshTrayMenu()
   }
 }
