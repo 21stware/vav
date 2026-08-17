@@ -25,7 +25,10 @@ if (!existsSync(electronBin)) {
   process.exit(1)
 }
 
-spawnSync('pkill', ['-f', 'vav.app/Contents/MacOS/vav'], { stdio: 'ignore' })
+spawnSync(process.execPath, [join(root, 'scripts/kill-dev.mjs')], {
+  cwd: root,
+  stdio: 'ignore'
+})
 await new Promise((r) => setTimeout(r, 500))
 
 const outDir = join(tmpdir(), 'vav-smoke-ui')

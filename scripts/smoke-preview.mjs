@@ -5,13 +5,13 @@ import { spawn, spawnSync } from 'node:child_process'
 import { existsSync, readFileSync, writeFileSync, unlinkSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { homedir } from 'node:os'
+import { devUserDataDir } from './dev-user-data.mjs'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const electronBin = join(root, 'node_modules/electron/dist/vav.app/Contents/MacOS/vav')
-const support = join(homedir(), 'Library/Application Support/vav')
+const support = devUserDataDir()
 
-spawnSync('pkill', ['-9', '-f', 'vav.app/Contents/MacOS/vav'], { stdio: 'ignore' })
+spawnSync(process.execPath, [join(root, 'scripts/kill-dev.mjs')], { cwd: root, stdio: 'ignore' })
 for (const name of ['SingletonLock', 'SingletonCookie', 'SingletonSocket']) {
   try {
     unlinkSync(join(support, name))

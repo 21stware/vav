@@ -11,9 +11,9 @@ import { homedir } from 'node:os'
 const patterns = [
   'electron-vite',
   'scripts/run-dev.mjs',
+  // Always include `electron/dist/` so /Applications/VAV.app never matches.
   'electron/dist/vav.app',
-  'electron/dist/Electron.app',
-  'vav.app/Contents/MacOS/vav'
+  'electron/dist/Electron.app'
 ]
 
 for (const pattern of patterns) {

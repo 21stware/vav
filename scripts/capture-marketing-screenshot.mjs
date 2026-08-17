@@ -10,10 +10,10 @@
  */
 import { spawnSync } from 'node:child_process'
 import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { prepareBrandedElectron } from './prepare-electron-brand.mjs'
+import { devUserDataDir } from './dev-user-data.mjs'
 
 function sleepSync(ms) {
   spawnSync('sleep', [String(Math.max(0.1, ms / 1000))])
@@ -24,7 +24,7 @@ const shotDir = join(root, 'docs/.screenshot-capture')
 const planPath = join(shotDir, 'plan.json')
 const manifestPath = join(root, 'docs/marketing-samples/manifest.json')
 const electronBin = join(root, 'node_modules/electron/dist/vav.app/Contents/MacOS/vav')
-const userData = join(homedir(), 'Library/Application Support/vav-dev')
+const userData = devUserDataDir()
 const settingsPath = join(userData, 'settings.json')
 const settingsBackup = `${settingsPath}.bak-marketing`
 
@@ -33,16 +33,11 @@ const THEMES = ['light', 'dark']
 prepareBrandedElectron()
 
 function killApp() {
-  spawnSync('pkill', ['-9', '-f', 'electron/dist/vav.app/Contents/MacOS/vav'], { stdio: 'ignore' })
-  spawnSync('killall', ['-9', 'vav'], { stdio: 'ignore' })
-  spawnSync('killall', ['-9', 'VAV'], { stdio: 'ignore' })
-  for (const name of ['SingletonLock', 'SingletonSocket', 'SingletonCookie']) {
-    try {
-      rmSync(join(userData, name), { force: true })
-    } catch {
-      // ignore
-    }
-  }
+  // kill-dev never matches /Applications/VAV.app or process name `VAV`.
+  spawnSync(process.execPath, [join(root, 'scripts/kill-dev.mjs')], {
+    cwd: root,
+    stdio: 'ignore'
+  })
   sleepSync(600)
 }
 

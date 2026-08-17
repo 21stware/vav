@@ -20,14 +20,18 @@ import {
   statSync,
   writeFileSync
 } from 'node:fs'
-import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { devUserDataDir } from './dev-user-data.mjs'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
-// Local electron-vite / node_modules electron writes to vav-dev.
-const profile = process.env.VAV_MARKETING_PROFILE === 'release' ? 'vav' : 'vav-dev'
-const dataDir = join(homedir(), 'Library/Application Support', profile)
+// Dev Electron only. Never write the packaged app's userData (`vav`).
+if (process.env.VAV_MARKETING_PROFILE === 'release') {
+  console.error('refusing VAV_MARKETING_PROFILE=release — marketing seed only writes vav-dev')
+  process.exit(1)
+}
+const dataDir = devUserDataDir()
+const profile = 'vav-dev'
 const convPath = join(dataDir, 'conversations.json')
 const settingsPath = join(dataDir, 'settings.json')
 const fileSessionsDir = join(dataDir, 'file-sessions')
@@ -824,17 +828,19 @@ for (const session of sessions) {
   fileIndex.byPathHash[identity.pathHash] = identity.fileId
 }
 
+function backupOnce(src, bak) {
+  if (!existsSync(src) || existsSync(bak)) return
+  if (statSync(src).isDirectory()) cpSync(src, bak, { recursive: true })
+  else copyFileSync(src, bak)
+}
+
 mkdirSync(dataDir, { recursive: true })
 mkdirSync(fileSessionsDir, { recursive: true })
 const convDir = join(dataDir, 'conversations')
-if (existsSync(convPath)) copyFileSync(convPath, `${convPath}.bak-marketing`)
-if (existsSync(fileIndexPath)) copyFileSync(fileIndexPath, `${fileIndexPath}.bak-marketing`)
-if (existsSync(convDir)) {
-  const bakDir = `${convDir}.bak-marketing`
-  rmSync(bakDir, { recursive: true, force: true })
-  cpSync(convDir, bakDir, { recursive: true })
-  rmSync(convDir, { recursive: true, force: true })
-}
+backupOnce(convPath, `${convPath}.bak-marketing`)
+backupOnce(fileIndexPath, `${fileIndexPath}.bak-marketing`)
+backupOnce(convDir, `${convDir}.bak-marketing`)
+if (existsSync(convDir)) rmSync(convDir, { recursive: true, force: true })
 mkdirSync(convDir, { recursive: true })
 for (const conversation of conversations) {
   writeFileSync(join(convDir, `${conversation.id}.json`), JSON.stringify(conversation, null, 2))

@@ -22,12 +22,11 @@ const logDir = join(tmpdir(), 'vav-smoke-boot')
 mkdirSync(logDir, { recursive: true })
 const logPath = join(logDir, `boot-${Date.now()}.log`)
 
-// Kill stale instances that hold the single-instance lock.
-spawnSync('pkill', ['-f', 'Electron.app/Contents/MacOS/Electron|' + electronBin], {
+// Kill stale *dev* instances that hold the single-instance lock. Never VAV.app.
+spawnSync(process.execPath, [join(root, 'scripts/kill-dev.mjs')], {
+  cwd: root,
   stdio: 'ignore'
 })
-// Also branded binary name
-spawnSync('pkill', ['-f', 'vav.app/Contents/MacOS/vav'], { stdio: 'ignore' })
 await new Promise((r) => setTimeout(r, 400))
 
 const child = spawn(electronBin, [root], {

@@ -5,10 +5,12 @@
  */
 import { randomUUID } from 'node:crypto'
 import { readFileSync, writeFileSync } from 'node:fs'
-import { homedir } from 'node:os'
 import { join } from 'node:path'
+import { assertDevUserData, devUserDataDir } from './dev-user-data.mjs'
 
-const dir = join(homedir(), 'Library/Application Support/vav-dev/conversations')
+const dataDir = devUserDataDir()
+assertDevUserData(dataDir)
+const dir = join(dataDir, 'conversations')
 const indexPath = join(dir, 'index.json')
 const now = Date.now()
 const id = randomUUID()
