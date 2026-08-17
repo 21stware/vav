@@ -1,7 +1,7 @@
 {
   "name": "vav",
   "productName": "VAV",
-  "version": "1.9.1",
+  "version": "1.9.2",
   "description": "Local-first CLI agent terminal workspace: host Claude Code, Codex, and other agent CLIs with multi-split PTYs and a file tree.",
   "license": "PolyForm-Noncommercial-1.0.0",
   "author": "Oboo Cheng",

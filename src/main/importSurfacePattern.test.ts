@@ -100,6 +100,19 @@ describe('importSurfacePattern', () => {
       reason: 'invalid'
     })
   })
+
+  it('fits a large tile inside the max edge', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'vav-pattern-'))
+    const src = join(dir, 'huge.png')
+    const dest = join(dir, 'surface-pattern.png')
+    await writeRgbaPng(src, 400, 200, (x) => [10, 20, 30, x < 200 ? 255 : 0])
+    const result = await importSurfacePattern(src, dest)
+    assert.equal(result.ok, true)
+    if (!result.ok) return
+    assert.equal(result.width, SURFACE_PATTERN_MAX_EDGE)
+    assert.equal(result.height, SURFACE_PATTERN_MAX_EDGE / 2)
+    assert.equal(result.size, cssTileSize(result.width, result.height))
+  })
 })
 
 describe('writeSurfacePatternPng', () => {
