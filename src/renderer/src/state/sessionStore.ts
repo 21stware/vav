@@ -23,6 +23,8 @@ export type AgentModelCatalogEntry = {
 import type { ChangeSet, UpdateState } from '@shared/changeSet'
 import type { GitChangeEntry } from '@shared/git'
 import type { GithubActionRun, GithubPullListItem, GithubRelease, GithubSite } from '@shared/github'
+import type { CloudflareStatus } from '@shared/cloudflare'
+import type { SupabaseStatus } from '@shared/supabase'
 
 /** Contents of the session-right preview drawer. */
 export type SessionPreview =
@@ -32,6 +34,8 @@ export type SessionPreview =
   | { kind: 'github-action'; cwd: string; run: GithubActionRun }
   | { kind: 'github-site'; cwd: string; site: GithubSite }
   | { kind: 'github-release'; cwd: string; release: GithubRelease }
+  | { kind: 'cloudflare'; cwd: string; status: CloudflareStatus; deploymentId: string | null }
+  | { kind: 'supabase'; cwd: string; status: SupabaseStatus; functionSlug: string | null }
 import { resolveLocale } from '@shared/i18n'
 import {
   imageInputLimits,
@@ -670,6 +674,7 @@ interface SessionState {
    */
   selectChatHost(id: string, host: string | null): Promise<void>
   pickWorkingDirectory(id: string): Promise<void>
+  useTempWorkingDirectory(id: string): Promise<void>
   setWorkingDirectory(id: string, path: string): Promise<void>
   /** Move a Temporary workspace into a real directory (name + copy). */
   locateWorkspace(id: string): Promise<void>
@@ -1684,6 +1689,17 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     const conversations = await window.vav.conversations.pickWorkingDirectory(id)
     if (!conversations) return
     // Any explicit switch reveals the real path (even if same directory).
+    get().revealWorkdirPath(id)
+    set((state) => ({
+      conversations: mergeConversationList(state.conversations, conversations)
+    }))
+    const next = conversations.find((c) => c.id === id)?.workingDirectory ?? null
+    await useWorkspaceStore.getState().setWorkingDirectory(id, next)
+  },
+
+  async useTempWorkingDirectory(id) {
+    if (swarmBlocksWorkdirSwitch(id, get().settings.swarmModeEnabled === true)) return
+    const conversations = await window.vav.conversations.useTempWorkingDirectory(id)
     get().revealWorkdirPath(id)
     set((state) => ({
       conversations: mergeConversationList(state.conversations, conversations)

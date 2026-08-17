@@ -8,7 +8,13 @@ import {
   type TerminalLayoutNode,
   type TerminalSplitAxis
 } from '../state/workspaceStore'
-import { acquireTerminal, blitTerminal } from '../lib/terminalRegistry'
+import {
+  acquireTerminal,
+  parkTerminal,
+  pauseTerminalPaint,
+  resumeTerminalPaint
+} from '../lib/terminalRegistry'
+import { proposedCellsDiffer } from '../lib/terminalFit'
 import { requestCloseAgentTab, setUiFocusScope } from '../lib/uiFocus'
 import { useT } from '../i18n/useT'
 import { EmptyState } from './ui'
@@ -459,10 +465,11 @@ function TerminalHost({
       tabId,
       fontFamily: `"${codeFont}", Menlo, Monaco, "Courier New", monospace`,
       fontSize: Math.max(11, fontSize - 1),
-      surface
+      surface,
+      paintPaused: hidden
     })
-    // Re-parent on every mount (reuse path). Clear parked so fit/SIGWINCH run.
-    entry.parked = false
+    // Re-parent on every mount (reuse path). Hidden panes stay paint-paused.
+    if (!hidden) entry.parked = false
     if (entry.container.parentElement !== host) {
       host.appendChild(entry.container)
     }
@@ -481,12 +488,8 @@ function TerminalHost({
       if (host.dataset.hidden === 'true') return
       try {
         const dims = entry.fit.proposeDimensions?.()
-        const sameCells =
-          !!dims && dims.cols === entry.term.cols && dims.rows === entry.term.rows
-        if (!sameCells) entry.fit.fit()
-        // ⌘D remounts the host in a half-size flex pane. Even when cols/rows
-        // match, the canvas can be empty until the next write/scroll — blit.
-        blitTerminal(entry.term)
+        if (!proposedCellsDiffer(entry.term.cols, entry.term.rows, dims)) return
+        entry.fit.fit()
       } catch {
         // ignore
       }
@@ -513,6 +516,7 @@ function TerminalHost({
     // Files / preview empty states beside it). PTY SIGWINCH stays gated in
     // terminalRegistry until settle.
     const scheduleFit = (): void => {
+      if (host.dataset.hidden === 'true') return
       if (raf) cancelAnimationFrame(raf)
       raf = requestAnimationFrame(() => {
         raf = 0
@@ -563,15 +567,20 @@ function TerminalHost({
       window.removeEventListener('focus', onFocus)
       if (raf) cancelAnimationFrame(raf)
       if (debounce) clearTimeout(debounce)
-      if (entry.container.parentElement === host) host.removeChild(entry.container)
+      parkTerminal(conversationId, tabId)
     }
     // Intentionally omit `hidden` / `autoFocus`: Thread↔Swarm and ⌘D must not
     // tear down xterm; focus is handled in a separate effect.
   }, [conversationId, tabId, codeFont, fontSize, surface])
 
-  // Refit when shown; take keyboard only when this pane is the active one.
+  // Pause canvas work while Thread (or another surface) covers this pane.
+  // Resume replays the last PTY screen — do not keep writing hidden xterms.
   useEffect(() => {
-    if (hidden) return
+    if (hidden) {
+      pauseTerminalPaint(conversationId, tabId)
+      return
+    }
+    resumeTerminalPaint(conversationId, tabId)
     let cancelled = false
     const run = (attempt: number): void => {
       if (cancelled) return
@@ -588,7 +597,7 @@ function TerminalHost({
     return () => {
       cancelled = true
     }
-  }, [hidden, tabId, autoFocus])
+  }, [hidden, conversationId, tabId, autoFocus])
 
   return (
     <div

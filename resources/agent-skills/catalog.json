@@ -1,7 +1,7 @@
 {
   "version": 1,
   "generatedAt": "2026-08-10T02:00:00.000Z",
-  "note": "Bundled Agent Skills for vav. See NOTICE.md for licenses. Anthropic document skills (docx/pdf/pptx/xlsx from anthropics/skills) are NOT included — their LICENSE forbids redistribution outside Anthropic services. Prefer officecli (Apache-2.0, bundled binary) for OOXML create/edit; MiniMax docx/xlsx/pptx remain as fallbacks.",
+  "note": "Bundled Agent Skills for vav. See NOTICE.md for licenses. Anthropic document skills (docx/pdf/pptx/xlsx from anthropics/skills) are NOT included — their LICENSE forbids redistribution outside Anthropic services. Prefer officecli (Apache-2.0, bundled binary) for OOXML create/edit; MiniMax docx/xlsx/pptx remain as fallbacks. Only document/code skills are injected into the default system prompt (see src/shared/skillCatalog.ts); other packs stay on disk for explicit load_skill.",
   "skills": [
     {
       "id": "algorithmic-art",

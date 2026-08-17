@@ -10,6 +10,7 @@ import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
 import { join, normalize, resolve, sep } from 'node:path'
 import { request as httpsRequest } from 'node:https'
 import { request as httpRequest } from 'node:http'
+import { skillsForPrompt } from '@shared/skillCatalog'
 
 export interface SkillCatalogEntry {
   id: string
@@ -89,7 +90,7 @@ export class SkillService {
 
   /** Compact listing for system prompt (~ few hundred tokens). */
   catalogForPrompt(): string {
-    const { skills } = this.catalog()
+    const skills = skillsForPrompt(this.catalog().skills)
     if (skills.length === 0) return '(no bundled skills available)'
     return skills
       .map((s) => {

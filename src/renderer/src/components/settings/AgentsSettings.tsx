@@ -1054,6 +1054,7 @@ export function AgentsSettings(): React.JSX.Element {
             }
           />
         </label>
+        <div className="form-hint">{t('agents.skipPickerWhenSingleHint')}</div>
       </div>
     </div>
   )

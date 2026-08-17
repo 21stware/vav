@@ -27,6 +27,7 @@ import { installInstallRunBridge } from './state/installRunStore'
 import { SIDEBAR_FLOAT_MAX, useSidebarFloatMode } from './lib/sidebarLayout'
 import { useT } from './i18n/useT'
 import { useAttentionSeen } from './lib/useAttentionSeen'
+import { installSwarmHistoryBridge } from './lib/swarmHistoryBridge'
 
 type LaunchPhase = 'checking' | 'keychain' | 'booting' | 'ready' | 'no-preload'
 
@@ -109,6 +110,7 @@ export default function App(): React.JSX.Element {
     const offUpdates = installUpdateBridge()
     const offModels = installAgentModelCatalogBridge()
     const offMenu = installDefaultContextMenu()
+    const offHistory = installSwarmHistoryBridge()
     const offCli = window.vav.onCliOpen((event) => {
       const store = useSessionStore.getState()
       // Reveal in List / CLI open: leave workspace view so the sidebar row is visible.
@@ -148,6 +150,7 @@ export default function App(): React.JSX.Element {
       offModels()
       offMenu()
       offCli()
+      offHistory()
       offInstall()
     }
   }, [])

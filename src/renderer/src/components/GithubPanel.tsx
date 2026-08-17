@@ -10,6 +10,7 @@ import {
   Check,
   ChevronRight,
   CircleDashed,
+  Download,
   ExternalLink,
   GitMerge,
   GitPullRequest,
@@ -45,6 +46,7 @@ import {
   fillGithubSiteGaps,
   githubClosedPullsUrl,
   githubPagesCustomDomain,
+  githubReleaseArchiveUrls,
   githubRepoSectionUrl,
   isGithubPagesLive,
   mergePullConversation
@@ -52,7 +54,7 @@ import {
 import { useSessionStore } from '../state/sessionStore'
 import { useWorkspaceStore } from '../state/workspaceStore'
 import { useT, tt } from '../i18n/useT'
-import { relativeTime } from '../lib/format'
+import { formatBytes, relativeTime } from '../lib/format'
 import { Button, EmptyState, Segmented } from './ui'
 import { renderGithubMarkdown } from '../lib/githubMarkdown'
 import { SafariIcon } from './SafariIcon'
@@ -1581,6 +1583,9 @@ function ReleaseDetail({
   const t = useT()
   const published = Date.parse(release.publishedAt || release.createdAt)
   const body = release.body?.trim() ?? ''
+  const assets = release.assets ?? []
+  const archives = githubReleaseArchiveUrls(release.htmlUrl, release.tag)
+  const hasAssets = assets.length > 0 || Boolean(archives)
   return (
     <div className="github-detail-scroll">
       <div className="github-detail-hero">
@@ -1620,6 +1625,25 @@ function ReleaseDetail({
         </div>
       </div>
       <div className="github-detail-body">
+        {hasAssets ? (
+          <div className="github-release-assets">
+            <div className="github-release-assets-title">{t('github.releaseAssets')}</div>
+            {assets.map((asset) => (
+              <ReleaseAssetRow
+                key={asset.id}
+                name={asset.name}
+                url={asset.browserDownloadUrl}
+                size={asset.size}
+              />
+            ))}
+            {archives ? (
+              <>
+                <ReleaseAssetRow name={t('github.releaseSourceZip')} url={archives.zip} />
+                <ReleaseAssetRow name={t('github.releaseSourceTar')} url={archives.tar} />
+              </>
+            ) : null}
+          </div>
+        ) : null}
         {body ? (
           <div className="github-pr-body">
             <GithubMarkdown source={body} />
@@ -1629,6 +1653,33 @@ function ReleaseDetail({
         )}
       </div>
     </div>
+  )
+}
+
+function ReleaseAssetRow({
+  name,
+  url,
+  size
+}: {
+  name: string
+  url: string
+  size?: number
+}): React.JSX.Element {
+  const t = useT()
+  const sizeLabel = size && size > 0 ? formatBytes(size) : null
+  return (
+    <button
+      type="button"
+      className="github-release-asset"
+      title={t('github.releaseDownload', { name })}
+      onClick={() => window.open(url, '_blank', 'noopener,noreferrer')}
+    >
+      <span className="github-release-asset-icon" aria-hidden>
+        <Download size={12} />
+      </span>
+      <span className="github-release-asset-name">{name}</span>
+      {sizeLabel ? <span className="github-release-asset-meta">{sizeLabel}</span> : null}
+    </button>
   )
 }
 
@@ -1885,15 +1936,6 @@ function SiteConfig({
             ) : (
               <p className="github-merge-prose">{t('github.noSiteDesc')}</p>
             )}
-            {live && view.url ? (
-              <Button
-                icon={<SafariIcon size={14} />}
-                size="sm"
-                className="github-open-web"
-                title={t('github.openSite')}
-                onClick={() => window.open(view.url!, '_blank', 'noopener,noreferrer')}
-              />
-            ) : null}
             {showOpen ? (
               <SiteConfigLink
                 url={view.settingsUrl}

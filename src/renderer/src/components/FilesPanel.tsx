@@ -3,6 +3,7 @@ import {
   ArrowUpDown,
   ChevronDown,
   ChevronRight,
+  Cloud,
   Columns3,
   File as FileIcon,
   Folder,
@@ -37,10 +38,18 @@ import { Button, EmptyState, InlineAlert, Segmented } from './ui'
 import { FileManagerIcon } from './FileManagerIcon'
 import { GitChangesPanel, type GitPanelChrome } from './GitChangesPanel'
 import { GithubPanel, type GithubPanelChrome } from './GithubPanel'
+import { SupabasePanel, type SupabasePanelChrome } from './SupabasePanel'
+import { SupabaseMark } from './SupabaseMark'
+import { CloudflarePanel, type CloudflarePanelChrome } from './CloudflarePanel'
 import { prefetchForPath } from '../lib/prefetchHeavy'
 import { openFileInSessionPreview } from '../lib/openSessionFile'
+import {
+  isCloudflareTrayEnabled,
+  isGithubTrayEnabled,
+  isSupabaseTrayEnabled
+} from '@shared/workspaceTrays'
 
-type FilesTrayView = 'files' | 'git' | 'github'
+type FilesTrayView = 'files' | 'git' | 'github' | 'supabase' | 'cloudflare'
 
 /** Scroll the row for `path` into view inside the files browser. */
 function scrollFileRowIntoView(path: string): void {
@@ -138,10 +147,21 @@ export function FilesPanel({ visible }: { visible: boolean }): React.JSX.Element
   const [creating, setCreating] = useState<{ dir: string; name: string } | null>(null)
   const [trayView, setTrayViewState] = useState<FilesTrayView>('files')
   const [rootIsGit, setRootIsGit] = useState<boolean | null>(null)
+  const [hasSupabase, setHasSupabase] = useState<boolean | null>(null)
+  const [hasCloudflare, setHasCloudflare] = useState(false)
+  const githubTrayOn = isGithubTrayEnabled(settings)
+  const supabaseTrayOn = isSupabaseTrayEnabled(settings)
+  const cloudflareTrayOn = isCloudflareTrayEnabled(settings)
   const [gitChrome, setGitChrome] = useState<GitPanelChrome | null>(null)
   const [githubChrome, setGithubChrome] = useState<GithubPanelChrome | null>(null)
-  /** Temp dirs can become repos after empty-session “enable version control”. */
+  const [supabaseChrome, setSupabaseChrome] = useState<SupabasePanelChrome | null>(null)
+  const [cloudflareChrome, setCloudflareChrome] = useState<CloudflarePanelChrome | null>(null)
+  /** Temp dirs can become repos after Files → Git “enable version control”. */
   const gitRepoEpoch = useGitRepoSyncEpoch()
+  const supabaseHint = (dirs?.[root ?? ''] ?? [])
+    .filter((entry) => entry.name === 'supabase' || entry.name.startsWith('.env'))
+    .map((entry) => entry.name)
+    .join(',')
   const onGitChrome = useCallback((next: GitPanelChrome | null) => {
     setGitChrome((prev) => {
       if (prev === next) return prev
@@ -159,6 +179,36 @@ export function FilesPanel({ visible }: { visible: boolean }): React.JSX.Element
   }, [])
   const onGithubChrome = useCallback((next: GithubPanelChrome | null) => {
     setGithubChrome((prev) => {
+      if (prev === next) return prev
+      if (
+        prev &&
+        next &&
+        prev.meta === next.meta &&
+        prev.loading === next.loading &&
+        prev.refresh === next.refresh
+      ) {
+        return prev
+      }
+      return next
+    })
+  }, [])
+  const onSupabaseChrome = useCallback((next: SupabasePanelChrome | null) => {
+    setSupabaseChrome((prev) => {
+      if (prev === next) return prev
+      if (
+        prev &&
+        next &&
+        prev.meta === next.meta &&
+        prev.loading === next.loading &&
+        prev.refresh === next.refresh
+      ) {
+        return prev
+      }
+      return next
+    })
+  }, [])
+  const onCloudflareChrome = useCallback((next: CloudflarePanelChrome | null) => {
+    setCloudflareChrome((prev) => {
       if (prev === next) return prev
       if (
         prev &&
@@ -193,6 +243,26 @@ export function FilesPanel({ visible }: { visible: boolean }): React.JSX.Element
     }
   }, [root, gitRepoEpoch])
 
+  useEffect(() => {
+    let cancelled = false
+    if (!supabaseTrayOn || !root || !window.vav?.supabase?.status) {
+      setHasSupabase(false)
+      return
+    }
+    setHasSupabase(null)
+    void window.vav.supabase
+      .status(root, { remote: false })
+      .then((result) => {
+        if (!cancelled) setHasSupabase(result.ok && result.data.present)
+      })
+      .catch(() => {
+        if (!cancelled) setHasSupabase(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [root, visible, supabaseHint, supabaseTrayOn])
+
   const setTrayView = (view: FilesTrayView): void => {
     setTrayViewState(view)
     if (view === 'files') setSessionPreview({ kind: 'file' })
@@ -200,8 +270,35 @@ export function FilesPanel({ visible }: { visible: boolean }): React.JSX.Element
 
   // GitHub needs a repo; Git stays available so a plain folder can be inited.
   useEffect(() => {
-    if (rootIsGit !== true && trayView === 'github') setTrayView('files')
-  }, [rootIsGit, trayView])
+    if ((!githubTrayOn || rootIsGit !== true) && trayView === 'github') setTrayView('files')
+  }, [githubTrayOn, rootIsGit, trayView])
+
+  useEffect(() => {
+    if (hasSupabase !== true && trayView === 'supabase') setTrayView('files')
+  }, [hasSupabase, trayView])
+
+  useEffect(() => {
+    let cancelled = false
+    if (!cloudflareTrayOn || !root || !window.vav?.cloudflare?.status) {
+      setHasCloudflare(false)
+      return
+    }
+    void window.vav.cloudflare
+      .status(root, { remote: false })
+      .then((result) => {
+        if (!cancelled) setHasCloudflare(result.ok && Boolean(result.data.config))
+      })
+      .catch(() => {
+        if (!cancelled) setHasCloudflare(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [root, visible, cloudflareTrayOn])
+
+  useEffect(() => {
+    if (!hasCloudflare && trayView === 'cloudflare') setTrayView('files')
+  }, [hasCloudflare, trayView])
 
   useEffect(() => {
     if (visible && activeId && trayView === 'files') void ensureFilesLoaded(activeId)
@@ -581,12 +678,30 @@ export function FilesPanel({ visible }: { visible: boolean }): React.JSX.Element
                 label: t('files.tabGit'),
                 icon: <GitBranch size={14} />
               },
-              ...(rootIsGit === true
+              ...(githubTrayOn && rootIsGit === true
                 ? [
                     {
                       value: 'github' as const,
                       label: t('files.tabGithub'),
                       icon: <Github size={14} />
+                    }
+                  ]
+                : []),
+              ...(supabaseTrayOn && hasSupabase === true
+                ? [
+                    {
+                      value: 'supabase' as const,
+                      label: t('files.tabSupabase'),
+                      icon: <SupabaseMark size={14} />
+                    }
+                  ]
+                : []),
+              ...(cloudflareTrayOn && hasCloudflare
+                ? [
+                    {
+                      value: 'cloudflare' as const,
+                      label: t('files.tabCloudflare'),
+                      icon: <Cloud size={14} />
                     }
                   ]
                 : [])
@@ -683,6 +798,36 @@ export function FilesPanel({ visible }: { visible: boolean }): React.JSX.Element
               />
             </>
           )}
+          {trayView === 'supabase' && supabaseChrome && (
+            <>
+              {supabaseChrome.meta ? (
+                <span className="git-panel-meta">{supabaseChrome.meta}</span>
+              ) : null}
+              <Button
+                icon={<RefreshCw size={14} />}
+                size="sm"
+                className={`git-refresh-btn${supabaseChrome.loading ? ' is-refreshing' : ''}`}
+                title={t('supabase.refresh')}
+                disabled={supabaseChrome.loading}
+                onClick={supabaseChrome.refresh}
+              />
+            </>
+          )}
+          {trayView === 'cloudflare' && cloudflareChrome && (
+            <>
+              {cloudflareChrome.meta ? (
+                <span className="git-panel-meta">{cloudflareChrome.meta}</span>
+              ) : null}
+              <Button
+                icon={<RefreshCw size={14} />}
+                size="sm"
+                className={`git-refresh-btn${cloudflareChrome.loading ? ' is-refreshing' : ''}`}
+                title={t('cloudflare.refresh')}
+                disabled={cloudflareChrome.loading}
+                onClick={cloudflareChrome.refresh}
+              />
+            </>
+          )}
         </div>
       </div>
 
@@ -746,9 +891,25 @@ export function FilesPanel({ visible }: { visible: boolean }): React.JSX.Element
             onChrome={onGitChrome}
           />
         </div>
-        {rootIsGit === true ? (
+        {githubTrayOn && rootIsGit === true ? (
           <div className="files-tray-pane" data-hidden={trayView !== 'github'}>
             <GithubPanel visible={visible && trayView === 'github'} onChrome={onGithubChrome} />
+          </div>
+        ) : null}
+        {supabaseTrayOn && hasSupabase === true ? (
+          <div className="files-tray-pane" data-hidden={trayView !== 'supabase'}>
+            <SupabasePanel
+              visible={visible && trayView === 'supabase'}
+              onChrome={onSupabaseChrome}
+            />
+          </div>
+        ) : null}
+        {cloudflareTrayOn && hasCloudflare ? (
+          <div className="files-tray-pane" data-hidden={trayView !== 'cloudflare'}>
+            <CloudflarePanel
+              visible={visible && trayView === 'cloudflare'}
+              onChrome={onCloudflareChrome}
+            />
           </div>
         ) : null}
       </div>

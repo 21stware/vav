@@ -38,6 +38,7 @@ import {
 } from '@shared/tokenUsage'
 import { deepestLeaf, newestLeafId, threadPath } from '@shared/thread'
 import { defaultSessionTitle, isDefaultSessionTitle, t } from '@shared/i18n'
+import type { CliPaneBinding } from '@shared/cliPaneBinding'
 import { currentLocale } from '../i18n'
 
 const AUTO_TITLE_LIMIT = 40
@@ -131,6 +132,9 @@ export class ConversationStore {
       if (conversation.agentBinaryName === undefined) conversation.agentBinaryName = null
       if (conversation.cliHost === undefined) conversation.cliHost = null
       if (conversation.cliResumeCursor === undefined) conversation.cliResumeCursor = null
+      if (!conversation.cliPaneBindings || typeof conversation.cliPaneBindings !== 'object') {
+        conversation.cliPaneBindings = {}
+      }
       if (conversation.focusedFilePath === undefined) conversation.focusedFilePath = null
       if (!Array.isArray(conversation.compactions)) conversation.compactions = []
       if (!conversation.hostTranscripts || typeof conversation.hostTranscripts !== 'object') {
@@ -177,6 +181,7 @@ export class ConversationStore {
           compactions: _compactions,
           hostTranscripts: _hostTranscripts,
           quotaWindows: _quota,
+          cliPaneBindings: _paneBindings,
           ...meta
         }) => {
           void _messages
@@ -186,6 +191,7 @@ export class ConversationStore {
           void _compactions
           void _hostTranscripts
           void _quota
+          void _paneBindings
           return meta
         }
       )
@@ -240,6 +246,7 @@ export class ConversationStore {
       agentBinaryName: cliHost,
       cliHost,
       cliResumeCursor: null,
+      cliPaneBindings: {},
       focusedFilePath: null,
       compactions: [],
       hostTranscripts: {}
@@ -299,6 +306,8 @@ export class ConversationStore {
     if (imported.agentBinaryName === undefined) imported.agentBinaryName = null
     if (imported.cliHost === undefined) imported.cliHost = null
     if (imported.cliResumeCursor === undefined) imported.cliResumeCursor = null
+    // Native session ids belong to the source machine / live TUI — do not reuse.
+    imported.cliPaneBindings = {}
     if (imported.focusedFilePath === undefined) imported.focusedFilePath = null
     if (!imported.hostTranscripts || typeof imported.hostTranscripts !== 'object') {
       imported.hostTranscripts = {}
@@ -418,6 +427,36 @@ export class ConversationStore {
     Object.assign(conversation, safe)
     this.markDirty(id)
     return conversation
+  }
+
+  getCliPaneBindings(id: string): Record<string, CliPaneBinding> {
+    return { ...(this.get(id)?.cliPaneBindings ?? {}) }
+  }
+
+  upsertCliPaneBinding(id: string, binding: CliPaneBinding): void {
+    const conversation = this.get(id)
+    if (!conversation) return
+    if (!conversation.cliPaneBindings) conversation.cliPaneBindings = {}
+    conversation.cliPaneBindings[binding.tabId] = binding
+    this.markDirty(id)
+  }
+
+  deleteCliPaneBinding(id: string, tabId: string): void {
+    const conversation = this.get(id)
+    if (!conversation?.cliPaneBindings || !(tabId in conversation.cliPaneBindings)) return
+    delete conversation.cliPaneBindings[tabId]
+    this.markDirty(id)
+  }
+
+  clearCliPaneBindings(id: string): void {
+    const conversation = this.get(id)
+    if (!conversation) return
+    if (!conversation.cliPaneBindings || Object.keys(conversation.cliPaneBindings).length === 0) {
+      conversation.cliPaneBindings = {}
+      return
+    }
+    conversation.cliPaneBindings = {}
+    this.markDirty(id)
   }
 
   /** The leaf the transcript currently follows; null on an empty conversation. */

@@ -1,46 +1,50 @@
 ;(() => {
   const catalogs = {
     en: {
-      'meta.title': 'vav — local AI coding agent workstation',
+      'meta.title': 'VAV — local AI agent workbench',
       'meta.description':
-        'Local AI coding agent workstation: watch tools run, edit files on disk, open PDF/PPTX/CSV beside the agent.',
+        'Local-first agent workbench: pick a slide or a cell, ask beside it, render Mermaid and Vega-Lite in the thread, pop out an App Clip, or split Swarm for Claude and Codex.',
       'a11y.skip': 'Skip to content',
-      'nav.core': 'Why vav',
+      'nav.core': 'Why VAV',
       'nav.files': 'Files',
       'nav.formats': 'Formats',
       'nav.download': 'Download',
-      'hero.title': 'Watch the agent work.',
-      'hero.lead': 'Local coding workstation — tools, files, and terminal on your machine.',
+      'theme.group': 'Appearance',
+      'theme.light': 'Light',
+      'theme.dark': 'Dark',
+      'hero.title': 'Your agents\' workbench.',
+      'hero.lead':
+        'Pick a slide, a cell, a node — ask beside it. Charts and App Clips render in the thread. Swarm puts Claude next to Codex.',
       'hero.ctaDownload': 'Download',
       'hero.ctaSource': 'Source',
-      'core.title': 'Built for how agents work',
+      'core.title': 'The loops that close',
       'core.lead':
-        'Not a chat box with a file picker — five habits of a real workstation, each shown as it runs.',
-      'core.viewerLabel': 'Ask & edit',
-      'core.viewerBody':
-        'Open a file in its own pane — mind map, diagram, sheet, or deck — and ask beside it. Select what matters, get an answer grounded in the file, edit without leaving the window.',
-      'core.viewerNote': 'Preview + agent share one surface. The file stays the source of truth.',
-      'core.fsLabel': 'Agent + filesystem',
-      'core.fsBody':
-        'The agent reads, searches, and writes real paths on disk. Tool cards show every step — Read, search, Write — so you watch the change land in the repo you already have open.',
-      'core.fsNote':
-        'Not a hypothetical plan. A write that hits <code>src/…</code> on your machine.',
-      'core.hotkeyLabel': '<kbd>⌘⇧↵</kbd> quick ask',
+        'Not a chat box with a file picker — pick on the document, draw in the thread, pop out a clip, or split two CLIs.',
+      'core.officeLabel': 'Pick on the Office file',
+      'core.officeBody':
+        'Open a deck, a sheet, or a brief. Click the title, a card, a cell — then ask. The agent writes the same path on disk. Not a Word-style canvas.',
+      'core.officeNote': 'Selection is the prompt. The file stays the source of truth.',
+      'core.chartsLabel': 'Mermaid + Vega-Lite',
+      'core.chartsBody':
+        'Flows and charts render in the thread — Mermaid for the path, Vega-Lite for the numbers. Copy, download, or open the source file beside the chat.',
+      'core.chartsNote': 'Same turn: a flowchart and a bar chart, both live.',
+      'core.clipLabel': 'App Clip',
+      'core.clipBody':
+        'The agent can write a small interactive app in the thread — a board, a calculator, a teaching aid. Pop it out with View in window. It is a real widget, not a screenshot.',
+      'core.clipNote': '<code>```app</code> in chat, or a thin overlay from an HTML file.',
+      'core.swarmLabel': 'Swarm',
+      'core.swarmBody':
+        'Flip the surface and split the pane. Claude on the left, Codex on the right — each a real TUI in its own column. ⌘D splits; arrow keys move.',
+      'core.swarmNote': 'Optional under Settings → CLI Agents. Off until you want it.',
+      'core.hotkeyLabel': '<kbd>⌘⇧↵</kbd> Quick Ask',
       'core.hotkeyBody':
-        'From anywhere on your Mac, <kbd>⌘⇧↵</kbd> pops a floating session. Ask one thing — a path join, a regex, a naming call — get the answer, close it. No full workspace ceremony.',
+        'From anywhere on your Mac, <kbd>⌘⇧↵</kbd> opens a narrow companion column. Ask one thing — a path join, a regex, a name — get the answer, close it. No full workspace.',
       'core.hotkeyNote': 'Built for the interrupt: short, local, done.',
-      'core.skillLabel': 'Skills on disk',
-      'core.skillBody':
-        'Load a skill, then write the artifact into the project — a one-page PDF report, a deck tweak, a sheet change. The tool trail stays in the transcript.',
-      'core.skillNote':
-        '<code>load_skill</code> → <code>Write file</code> — from chat to a real path.',
-      'core.bashLabel': 'Bash agent',
-      'core.bashBody':
-        'Sticky PTY tabs under the chat — the agent can drive real shell commands while you keep the same terminal. Run, inspect, approve; you stay in control.',
-      'core.bashNote':
-        'Same cwd as the session. Same shell you already trust. Folder dock sits beside the terminal when you need the tree.',
       'files.title': 'Open any document window',
-      'files.lead': 'PDF, decks, sheets, Markdown — preview on one side, agent on the other.',
+      'files.lead': 'Mermaid source, PDF, decks, sheets, Markdown — preview on one side, agent on the other.',
+      'files.mmdLabel': 'Mermaid file',
+      'files.mmdCaption':
+        'Open the .mmd as a canvas, pick a node, ask about the failure branch.',
       'files.pdfLabel': 'PDF',
       'files.pdfCaption':
         'Stand-up summary from the brief, then a Mermaid follow-up flow — same window, same turn.',
@@ -108,7 +112,7 @@
       'formats.heic.note': 'View in-app; Edit converts to JPEG via Save As. Original HEIC unchanged.',
       'formats.zip.name': 'ZIP archive',
       'formats.zip.note': 'Structure preview only — not a full archive utility.',
-      'download.title': 'Get vav',
+      'download.title': 'Get VAV',
       'download.lead': 'Latest GitHub Release builds. Follow install notes if your OS warns on open.',
       'download.mac': 'macOS · Apple Silicon',
       'download.win': 'Windows · x64',
@@ -123,44 +127,48 @@
         'Noncommercial license: <a href="https://github.com/21stware/vav/blob/main/LICENSE">LICENSE</a> · Commercial licensing <a href="mailto:licensing@21stware.com">licensing@21stware.com</a>'
     },
     zh: {
-      'meta.title': 'vav — 本机 AI 编程代理工作台',
+      'meta.title': 'VAV — 本机 AI Agent 工作台',
       'meta.description':
-        '本机 AI 编程代理工作台：看着工具跑、改磁盘上的文件，为 PDF / PPTX / CSV 打开独立文档窗口。',
+        '本机优先的 Agent 工作台：点选幻灯片或单元格再提问；对话里渲染 Mermaid / Vega-Lite；弹出 App Clip；或把 Swarm 拆成 Claude 与 Codex。',
       'a11y.skip': '跳到正文',
-      'nav.core': '为什么是 vav',
+      'nav.core': '为什么是 VAV',
       'nav.files': '文档',
       'nav.formats': '格式',
       'nav.download': '下载',
-      'hero.title': '看着 Agent 干活。',
-      'hero.lead': '本机编程工作台——工具、文件与终端都在你的机器上。',
+      'theme.group': '外观',
+      'theme.light': '浅色',
+      'theme.dark': '深色',
+      'hero.title': '你的 Agent 工作台。',
+      'hero.lead':
+        '点选幻灯片、单元格、节点——在旁边提问。对话里出图和 App Clip。Swarm 让 Claude 和 Codex 并排。',
       'hero.ctaDownload': '下载',
       'hero.ctaSource': '源码',
-      'core.title': '为 Agent 真正怎么工作而建',
-      'core.lead': '不是带文件选择器的对话框——五种工作台习惯，每一种都有实拍。',
-      'core.viewerLabel': '提问与编辑',
-      'core.viewerBody':
-        '在独立窗格打开文件——思维导图、流程图、表格或幻灯片——在旁边提问。点选关键内容，答案基于文件本身，编辑不必离开窗口。',
-      'core.viewerNote': '预览与 Agent 共用一块表面。文件仍是真相来源。',
-      'core.fsLabel': 'Agent + 文件系统',
-      'core.fsBody':
-        'Agent 读写、搜索磁盘上的真实路径。工具卡片逐步展示——Read、搜索、Write——看着变更落进你已打开的仓库。',
-      'core.fsNote': '不是「打算」做什么。是写进本机 <code>src/…</code>。',
-      'core.hotkeyLabel': '<kbd>⌘⇧↵</kbd> 快捷提问',
+      'core.title': '真正闭环的几件事',
+      'core.lead': '不是带文件选择器的对话框——在文档上点选、在对话里出图、弹出 Clip，或并排两个 CLI。',
+      'core.officeLabel': '点选 Office 文件',
+      'core.officeBody':
+        '打开幻灯片、表格或简报。点标题、卡片、单元格——再提问。Agent 写入磁盘上的同一路径。不是 Word 式画布。',
+      'core.officeNote': '选区就是提示。文件仍是真相来源。',
+      'core.chartsLabel': 'Mermaid + Vega-Lite',
+      'core.chartsBody':
+        '流程和图表在对话里渲染——Mermaid 画路径，Vega-Lite 画数字。可复制、下载，或打开源文件并排提问。',
+      'core.chartsNote': '同一轮：一张流程图，一张柱状图，都是活的。',
+      'core.clipLabel': 'App Clip',
+      'core.clipBody':
+        'Agent 可以在对话里写出一个小互动应用——看板、计算器、教具。用「在窗口中查看」弹出。是真控件，不是截图。',
+      'core.clipNote': '对话里的 <code>```app</code>，或从 HTML 弹出的薄窗。',
+      'core.swarmLabel': 'Swarm',
+      'core.swarmBody':
+        '切到 Swarm 表面再拆分窗格。左边 Claude，右边 Codex——各自是真 TUI。⌘D 拆分，方向键切换。',
+      'core.swarmNote': '设置 → CLI Agents 里的可选项。不用时保持关闭。',
+      'core.hotkeyLabel': '<kbd>⌘⇧↵</kbd> Quick Ask',
       'core.hotkeyBody':
-        '在 Mac 任意处按 <kbd>⌘⇧↵</kbd> 弹出浮动会话。问一件事——路径拼接、正则、命名——拿到答案就关。不必拉起整套工作区。',
+        '在 Mac 任意处按 <kbd>⌘⇧↵</kbd> 打开一列窄窗。问一件事——路径拼接、正则、命名——拿到答案就关。不必拉起整套工作区。',
       'core.hotkeyNote': '为打断而生：短、本地、问完即走。',
-      'core.skillLabel': '技能写到磁盘',
-      'core.skillBody':
-        '加载技能，再把产物写进项目——一页 PDF 报告、幻灯片修改、表格变更。工具轨迹留在对话里。',
-      'core.skillNote':
-        '<code>load_skill</code> → <code>Write file</code>——从对话落到真实路径。',
-      'core.bashLabel': 'Bash Agent',
-      'core.bashBody':
-        '对话下方粘性 PTY——Agent 可驱动真实 shell，你仍握着同一终端。跑、看、批准；执行权在你。',
-      'core.bashNote':
-        '与会话同一工作目录。还是你信任的那只 shell。需要文件树时，旁边就是文件夹坞。',
       'files.title': '任意文档，独立窗口',
-      'files.lead': 'PDF、幻灯片、表格、Markdown——一边预览，一边 Agent。',
+      'files.lead': 'Mermaid 源文件、PDF、幻灯片、表格、Markdown——一边预览，一边 Agent。',
+      'files.mmdLabel': 'Mermaid 文件',
+      'files.mmdCaption': '把 .mmd 当画布打开，点选节点，问失败分支。',
       'files.pdfLabel': 'PDF',
       'files.pdfCaption': '从简报生成站会摘要，再画一张 Mermaid 跟进图——同一窗口、同一轮。',
       'files.pptxLabel': 'PPTX',
@@ -216,7 +224,7 @@
       'formats.heic.note': '应用内可查看；编辑时转换为 JPEG 另存。原 HEIC 不变。',
       'formats.zip.name': 'ZIP 压缩包',
       'formats.zip.note': '仅结构预览——不是完整解压工具。',
-      'download.title': '获取 vav',
+      'download.title': '获取 VAV',
       'download.lead': '最新 GitHub Release 构建。若系统提示无法打开，按安装说明放行即可。',
       'download.mac': 'macOS · Apple 芯片',
       'download.win': 'Windows · x64',
@@ -312,6 +320,13 @@
       btn.classList.toggle('is-active', active)
     })
 
+    const themeGroup = document.querySelector('.theme')
+    if (themeGroup) themeGroup.setAttribute('aria-label', catalog['theme.group'] || 'Appearance')
+    document.querySelectorAll('.theme-btn').forEach((btn) => {
+      const key = btn.getAttribute('data-theme-set') === 'dark' ? 'theme.dark' : 'theme.light'
+      if (catalog[key]) btn.textContent = catalog[key]
+    })
+
     syncLangUrl(lang)
 
     try {
@@ -330,7 +345,7 @@
     win: { id: 'download-win', match: /windows-x64-setup\.exe$/i, os: 'download.osWin' }
   }
 
-  let latestTag = 'v1.4.9'
+  let latestTag = 'latest'
   const assetSizes = {}
 
   function detectPlatform() {
@@ -390,7 +405,8 @@
       const asset = data.assets.find((a) => spec.match.test(a.name))
       const btn = document.getElementById(spec.id)
       if (!asset) continue
-      if (btn && asset.browser_download_url) btn.href = asset.browser_download_url
+      // Buttons stay on /releases/latest — never a pinned tag URL.
+      if (btn) btn.href = 'https://github.com/21stware/vav/releases/latest'
       if (asset.size) assetSizes[key] = asset.size
     }
   }
@@ -452,8 +468,70 @@
     }
   }
 
+  const THEME_KEY = 'vav.site.theme'
+
+  function darkAsset(path) {
+    return path.replace(
+      /\/(screenshot(?:-[a-z]+)*)(-\d+w)?(\.(?:png|avif|webp))$/i,
+      '/$1-dark$2$3'
+    )
+  }
+
+  function applyThemeShots(theme) {
+    document.querySelectorAll('picture[data-shot]').forEach((pic) => {
+      pic.querySelectorAll('source').forEach((source) => {
+        const original = source.getAttribute('data-srcset-light') || source.getAttribute('srcset') || ''
+        if (!source.getAttribute('data-srcset-light')) source.setAttribute('data-srcset-light', original)
+        source.setAttribute(
+          'srcset',
+          theme === 'dark'
+            ? original.replace(
+                /\/(screenshot(?:-[a-z]+)*)(-\d+w)?(\.(?:png|avif|webp))/gi,
+                '/$1-dark$2$3'
+              )
+            : original
+        )
+      })
+      const img = pic.querySelector('img')
+      if (!img) return
+      const original = img.getAttribute('data-src-light') || img.getAttribute('src') || ''
+      if (!img.getAttribute('data-src-light')) img.setAttribute('data-src-light', original)
+      img.setAttribute('src', theme === 'dark' ? darkAsset(original) : original)
+    })
+  }
+
+  function resolvedTheme() {
+    const fromUrl = new URLSearchParams(location.search).get('theme')
+    if (fromUrl === 'dark' || fromUrl === 'light') return fromUrl
+    const stored = document.documentElement.dataset.theme
+    if (stored === 'dark' || stored === 'light') return stored
+    return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
+  }
+
+  function applyTheme(theme, persist) {
+    const next = theme === 'dark' ? 'dark' : 'light'
+    document.documentElement.dataset.theme = next
+    document.documentElement.style.colorScheme = next
+    const meta = document.querySelector('meta[name="theme-color"]')
+    if (meta) meta.setAttribute('content', next === 'dark' ? '#121213' : '#ececee')
+    document.querySelectorAll('.theme-btn').forEach((btn) => {
+      const active = btn.getAttribute('data-theme-set') === next
+      btn.setAttribute('aria-pressed', active ? 'true' : 'false')
+      btn.classList.toggle('is-active', active)
+    })
+    applyThemeShots(next)
+    if (persist) {
+      try {
+        localStorage.setItem(THEME_KEY, next)
+      } catch {
+        // ignore
+      }
+    }
+  }
+
   const lang = detectLang()
   applyLang(lang)
+  applyTheme(resolvedTheme(), false)
   renderDownloads(lang)
   void loadLatestDownloads()
 
@@ -466,6 +544,26 @@
       }
     })
   })
+
+  document.querySelectorAll('.theme-btn').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      applyTheme(btn.getAttribute('data-theme-set'), true)
+    })
+  })
+
+  try {
+    const media = window.matchMedia('(prefers-color-scheme: dark)')
+    media.addEventListener('change', (event) => {
+      try {
+        if (localStorage.getItem(THEME_KEY)) return
+      } catch {
+        // fall through
+      }
+      applyTheme(event.matches ? 'dark' : 'light')
+    })
+  } catch {
+    // ignore
+  }
 
   /* —— Header frosts once the hero lock-up is behind it —— */
 

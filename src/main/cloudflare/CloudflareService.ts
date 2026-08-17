@@ -9,7 +9,8 @@ import type {
   CloudflareKind,
   CloudflareRemote,
   CloudflareResult,
-  CloudflareStatus
+  CloudflareStatus,
+  CloudflareStatusQuery
 } from '@shared/cloudflare'
 import {
   isWranglerConfigName,
@@ -18,6 +19,7 @@ import {
   parseWranglerConfig,
   wranglerFormatFromPath
 } from '@shared/cloudflareConfig'
+import { peekCloudflareAuth, resolveCloudflareToken } from './wranglerAuth'
 
 const API = 'https://api.cloudflare.com/client/v4'
 const API_TIMEOUT_MS = 20_000
@@ -47,7 +49,7 @@ type CfEnvelope<T> = {
   errors?: { message?: string; code?: number }[]
 }
 
-function fail(error: string, code: CloudflareErrorCode): CloudflareResult<CloudflareStatus> {
+function fail<T>(error: string, code: CloudflareErrorCode): CloudflareResult<T> {
   return { ok: false, error, code }
 }
 
@@ -111,6 +113,8 @@ async function cfFetch<T>(
       headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
       signal: ctrl.signal
     })
+    // Workers static-asset scripts return 204 (no module body) on GET /scripts/:name.
+    if (res.status === 204) return { ok: true, data: null as T }
     const json = (await res.json().catch(() => null)) as CfEnvelope<T> | null
     if (!res.ok || json?.success === false) {
       const msg =
@@ -118,7 +122,10 @@ async function cfFetch<T>(
         `Cloudflare API ${res.status}`
       return { ok: false, status: res.status, error: msg }
     }
-    return { ok: true, data: json?.result as T }
+    if (json == null) {
+      return { ok: false, status: res.status, error: `Empty Cloudflare API ${res.status}` }
+    }
+    return { ok: true, data: json.result as T }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
     return { ok: false, status: 0, error: message }
@@ -218,7 +225,7 @@ async function fetchRemote(
         `/accounts/${accountId}/pages/projects/${encodeURIComponent(name)}/deployments?per_page=8`
       )
       const recent = deploys.ok ? pagesDeployments(deploys.data) : []
-      const canonical = latestFromProject(project.data) ?? recent[0] ?? null
+      const canonical = latestFromProject(project.data ?? {}) ?? recent[0] ?? null
       return {
         ok: true,
         remote: {
@@ -250,7 +257,8 @@ async function fetchRemote(
       `/accounts/${accountId}/workers/scripts/${encodeURIComponent(name)}/deployments`
     )
     const recent = deploys.ok ? workersDeployments(deploys.data) : []
-    const modified = typeof script.data.modified_on === 'string' ? script.data.modified_on : null
+    const scriptData = script.data && typeof script.data === 'object' ? script.data : {}
+    const modified = typeof scriptData.modified_on === 'string' ? scriptData.modified_on : null
     const latest =
       recent[0] ??
       (modified
@@ -278,7 +286,8 @@ async function fetchRemote(
   return { ok: false, error: lastNotFound || 'Project not found', code: 'not-found' }
 }
 
-function latestFromProject(project: Record<string, unknown>): CloudflareDeployment | null {
+function latestFromProject(project: Record<string, unknown> | null | undefined): CloudflareDeployment | null {
+  if (!project) return null
   const latest = project.latest_deployment
   if (!latest || typeof latest !== 'object') return null
   const rec = latest as Record<string, unknown>
@@ -323,12 +332,15 @@ function collectCiHints(root: string): CloudflareCiHint[] {
   return hints
 }
 
-export async function getCloudflareStatus(
-  cwd: string,
-  auth: CloudflareAuth
-): Promise<CloudflareResult<CloudflareStatus>> {
+export function scanCloudflareWorkspace(
+  cwd: string
+): CloudflareResult<Pick<CloudflareStatus, 'workdir' | 'config' | 'extraConfigs' | 'ciHints'>> {
   const abs = resolve(cwd)
-  if (!existsSync(abs) || !statSync(abs).isDirectory()) {
+  try {
+    if (!existsSync(abs) || !statSync(abs).isDirectory()) {
+      return fail('Working directory not found', 'network')
+    }
+  } catch {
     return fail('Working directory not found', 'network')
   }
 
@@ -342,24 +354,74 @@ export async function getCloudflareStatus(
     })
     .filter((row): row is NonNullable<typeof row> => Boolean(row))
 
-  const config = parsed[0] ?? null
-  const envToken = (process.env.CLOUDFLARE_API_TOKEN || '').trim() || null
-  const token = auth.token?.trim() || envToken
+  return {
+    ok: true,
+    data: {
+      workdir: abs,
+      config: parsed[0] ?? null,
+      extraConfigs: Math.max(0, parsed.length - 1),
+      ciHints: collectCiHints(abs)
+    }
+  }
+}
+
+export async function getCloudflareStatus(
+  cwd: string,
+  auth: CloudflareAuth,
+  query?: CloudflareStatusQuery
+): Promise<CloudflareResult<CloudflareStatus>> {
+  try {
+    return await loadCloudflareStatus(cwd, auth, query)
+  } catch (err) {
+    const scanned = scanCloudflareWorkspace(cwd)
+    const message = err instanceof Error ? err.message : String(err)
+    if (scanned.ok) {
+      const peeked = peekCloudflareAuth(auth.token)
+      return {
+        ok: true,
+        data: {
+          ...scanned.data,
+          tokenPresent: peeked.present,
+          tokenSource: peeked.source,
+          accountId: auth.accountId,
+          remote: null,
+          remoteError: message,
+          remoteCode: 'network'
+        }
+      }
+    }
+    return fail(message, 'network')
+  }
+}
+
+async function loadCloudflareStatus(
+  cwd: string,
+  auth: CloudflareAuth,
+  query?: CloudflareStatusQuery
+): Promise<CloudflareResult<CloudflareStatus>> {
+  const scanned = scanCloudflareWorkspace(cwd)
+  if (!scanned.ok) return scanned
+
   const envAccount = (process.env.CLOUDFLARE_ACCOUNT_ID || '').trim() || null
-  const preferredAccount = auth.accountId?.trim() || config?.accountId || envAccount
+  const preferredAccount = auth.accountId?.trim() || scanned.data.config?.accountId || envAccount
+  const peeked = peekCloudflareAuth(auth.token)
 
   const status: CloudflareStatus = {
-    workdir: abs,
-    config,
-    extraConfigs: Math.max(0, parsed.length - 1),
-    ciHints: collectCiHints(abs),
-    tokenPresent: Boolean(token),
+    ...scanned.data,
+    tokenPresent: peeked.present,
+    tokenSource: peeked.source,
     accountId: preferredAccount,
     remote: null,
     remoteError: null,
     remoteCode: null
   }
 
+  if (query?.remote === false) return { ok: true, data: status }
+
+  const resolved = await resolveCloudflareToken(auth.token)
+  status.tokenPresent = Boolean(resolved.token)
+  status.tokenSource = resolved.source
+  const token = resolved.token
   if (!token) return { ok: true, data: status }
 
   const accountId = await resolveAccountId(token, preferredAccount)
@@ -369,6 +431,7 @@ export async function getCloudflareStatus(
     status.remoteCode = 'no-account'
     return { ok: true, data: status }
   }
+  const config = scanned.data.config
   if (!config?.name) return { ok: true, data: status }
 
   const remote = await fetchRemote(token, accountId, config.name, config.kind)

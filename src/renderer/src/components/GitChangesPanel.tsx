@@ -486,7 +486,7 @@ export function GitChangesPanel({
   const conversation = useSessionStore((s) => s.conversations.find((c) => c.id === s.activeId))
   const tmp = useSessionStore((s) => s.tmp)
   const root = useWorkspaceStore((s) => s.workspaces[activeId]?.root ?? null)
-  /** Temp dirs can become repos after empty-session “enable version control”. */
+  /** Temp dirs can become repos after Files → Git “enable version control”. */
   const gitRepoEpoch = useGitRepoSyncEpoch()
   const cwd = conversation?.workingDirectory ?? root
   const temporary = isTemporaryWorkspace(cwd, tmp)

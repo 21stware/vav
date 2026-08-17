@@ -34,6 +34,7 @@ import { AgentInstallPanel } from './AgentInstallPanel'
 import { teardownInlineTerminal } from './InlineTerminal'
 import { Button, EmptyState } from './ui'
 import { ShellLeadingControls } from './ShellLeadingControls'
+import { SurfaceSwitchButton } from './SurfaceSwitchButton'
 import {
   clearAgentBinaryCache,
   getAgentBinaryCache,
@@ -145,7 +146,7 @@ export function SessionDetail({
   const agentKey = conversation?.agentBinaryName ?? null
   const cliMode = useWorkspaceStore((s) => !!s.workspaces[activeId]?.cliMode)
   const swarmEnabled = useSessionStore((s) => s.settings.swarmModeEnabled === true)
-  const isVavMode = archived || !cliMode || !swarmEnabled
+  const isVavMode = !cliMode || !swarmEnabled
   const showAgentSwitcher = true
 
   const agents = enabledCliAgents(settings.cliAgents)
@@ -758,13 +759,16 @@ export function AgentModeChrome({
   /** Sidebar collapsed / floating: toggle + new ahead of the agent select. */
   showShellLeading = false,
   /** Single-file vav: session name / history / new in this same chrome row. */
-  fileSessionChrome = null
+  fileSessionChrome = null,
+  /** Isolated window: Reveal in List, pinned with history / search. */
+  trail = null
 }: {
   conversationId: string
   agentBinaryName: string | null
   showSearch?: boolean
   showShellLeading?: boolean
   fileSessionChrome?: FileSessionChromeProps | null
+  trail?: ReactNode
 }): React.JSX.Element {
   const t = useT()
   const cliMode = useWorkspaceStore((s) => !!s.workspaces[conversationId]?.cliMode)
@@ -784,8 +788,23 @@ export function AgentModeChrome({
   const workdir = conversation?.workingDirectory ?? null
   const workspacePath = workdirLabel(workdir, tmp, home)
   const fs = fileSessionChrome
+  const swarmHistoryRef = useRef<HTMLButtonElement>(null)
 
   const showFileSessionChrome = !!(fs && isChat && fs.sessions.length > 0)
+  const trailing = fs?.trail ?? trail
+  const showTrailing =
+    showFileSessionChrome || swarmEnabled || (showSearch && isChat) || !!trailing
+
+  const openSwarmHistory = (): void => {
+    const el = swarmHistoryRef.current
+    const rect = el?.getBoundingClientRect()
+    void window.vav.window.openSwarmHistory(
+      conversationId,
+      rect
+        ? { x: rect.x, y: rect.y, width: rect.width, height: rect.height }
+        : undefined
+    )
+  }
 
   return (
     <div
@@ -798,11 +817,22 @@ export function AgentModeChrome({
           </div>
         ) : null}
 
-        {isTerminal ? (
+        {swarmEnabled ? (
           <div className="agent-mode-swarm-toggle">
-            <span className="agent-mode-workspace-name" title={workdir ?? workspacePath}>
-              {workspacePath}
-            </span>
+            <SurfaceSwitchButton
+              conversationId={conversationId}
+              target={isTerminal ? 'thread' : 'swarm'}
+            />
+            {isTerminal ? (
+              <>
+                <span className="agent-mode-workspace-dot" aria-hidden="true">
+                  ·
+                </span>
+                <span className="agent-mode-workspace-name" title={workdir ?? workspacePath}>
+                  {workspacePath}
+                </span>
+              </>
+            ) : null}
           </div>
         ) : null}
 
@@ -812,43 +842,56 @@ export function AgentModeChrome({
           </span>
         ) : null}
 
-        {showFileSessionChrome ? (
-          <div className="agent-mode-file-actions">
-            <button
-              type="button"
-              ref={fs!.historyAnchorRef}
-              className={`btn ghost sm icon-only${fs!.historyOpen ? ' is-active-toggle' : ''}`}
-              title={t('preview.sessionHistory')}
-              onClick={fs!.onToggleHistory}
-            >
-              <Clock size={12} />
-            </button>
-            <Button
-              icon={<Plus size={12} />}
-              size="sm"
-              variant="ghost"
-              title={t('preview.newSession')}
-              onClick={fs!.onNewSession}
-            />
+        {showTrailing ? <span className="spacer" /> : null}
+
+        {showTrailing ? (
+          <div className="agent-mode-chrome-trailing">
+            {showFileSessionChrome ? (
+              <div className="agent-mode-file-actions">
+                <button
+                  type="button"
+                  ref={fs!.historyAnchorRef}
+                  className={`btn ghost sm icon-only${fs!.historyOpen ? ' is-active-toggle' : ''}`}
+                  title={t('preview.sessionHistory')}
+                  onClick={fs!.onToggleHistory}
+                >
+                  <Clock size={12} />
+                </button>
+                <Button
+                  icon={<Plus size={12} />}
+                  size="sm"
+                  variant="ghost"
+                  title={t('preview.newSession')}
+                  onClick={fs!.onNewSession}
+                />
+              </div>
+            ) : null}
+
+            {swarmEnabled ? (
+              <button
+                type="button"
+                ref={swarmHistoryRef}
+                className="btn ghost sm icon-only"
+                title={t('agents.sessionHistoryHint')}
+                aria-label={t('agents.sessionHistory')}
+                onClick={openSwarmHistory}
+              >
+                <Clock size={13} />
+              </button>
+            ) : null}
+
+            {showSearch && isChat ? (
+              <Button
+                icon={<Search size={13} />}
+                size="sm"
+                variant="ghost"
+                title={`${t('common.search')} ${keys('⌘F')}`}
+                onClick={() => (searchOpen ? closeSearch() : openSearch())}
+              />
+            ) : null}
+
+            {trailing ? <div className="agent-mode-chrome-trail">{trailing}</div> : null}
           </div>
-        ) : null}
-
-        <span className="spacer" />
-
-        {/* Search flush-right (before file-preview toggle). */}
-        {showSearch && isChat ? (
-          <Button
-            icon={<Search size={13} />}
-            size="sm"
-            variant="ghost"
-            title={`${t('common.search')} ${keys('⌘F')}`}
-            onClick={() => (searchOpen ? closeSearch() : openSearch())}
-          />
-        ) : null}
-
-        {/* Far-right pin: file preview (counterpart of left PanelLeft). */}
-        {fs?.trail ? (
-          <div className="agent-mode-chrome-trail agent-mode-chrome-trail-end">{fs.trail}</div>
         ) : null}
       </div>
 

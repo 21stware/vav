@@ -63,6 +63,7 @@ export function ToolsPanel({
   const setPanelSegment = useSessionStore((s) => s.setPanelSegment)
   const setPanelHeight = useSessionStore((s) => s.setPanelHeight)
   const pickWorkingDirectory = useSessionStore((s) => s.pickWorkingDirectory)
+  const useTempWorkingDirectory = useSessionStore((s) => s.useTempWorkingDirectory)
   const setWorkingDirectory = useSessionStore((s) => s.setWorkingDirectory)
   const showDialog = useSessionStore((s) => s.showDialog)
 
@@ -124,7 +125,7 @@ export function ToolsPanel({
 
   useEffect(() => {
     let cancelled = false
-    // Temp dirs can become repos after empty-session “enable version control”.
+    // Temp dirs can become repos after Files → Git “enable version control”.
     if (!workdir || !window.vav?.git?.status) {
       setWorkdirIsGit(false)
       return
@@ -306,11 +307,15 @@ export function ToolsPanel({
     }
     items.push({ label: '', divider: true })
     items.push({
+      label: t('tools.newTempDir'),
+      onSelect: () => void useTempWorkingDirectory(activeId)
+    })
+    items.push({
       label: t('tools.pickOtherDir'),
       onSelect: () => void pickWorkingDirectory(activeId)
     })
     return items
-  }, [recentDirs, activeId, setWorkingDirectory, pickWorkingDirectory, t])
+  }, [recentDirs, activeId, setWorkingDirectory, useTempWorkingDirectory, pickWorkingDirectory, t])
 
   const openWorkspaceMenu = useCallback(
     (anchor?: HTMLElement | null) => {

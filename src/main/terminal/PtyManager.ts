@@ -58,10 +58,11 @@ const BASH_REPLAY_TAIL = 24 * 1024
  */
 const AGENT_REPLAY_TAIL = 48 * 1024
 /**
- * Coalesce PTY→IPC bursts (TUI redraw storms) into short batches.
- * Keeps latency low for typing while cutting structured-clone fan-out.
+ * Coalesce PTY→IPC bursts into short batches.
+ * Bash stays snappy; agent TUIs redraw whole screens — 32ms is one frame.
  */
-const DATA_COALESCE_MS = 8
+const BASH_DATA_COALESCE_MS = 8
+const AGENT_DATA_COALESCE_MS = 32
 /**
  * How often live PTYs are re-classified as running / idle.
  *
@@ -476,7 +477,8 @@ export class PtyManager {
   private sessions = new Map<string, PtySession>()
   /** Pending stdout chunks waiting for the coalesce timer. */
   private pendingData = new Map<string, string>()
-  private dataFlushTimer: ReturnType<typeof setTimeout> | null = null
+  private bashFlushTimer: ReturnType<typeof setTimeout> | null = null
+  private agentFlushTimer: ReturnType<typeof setTimeout> | null = null
   /** Runs only while at least one PTY is alive. */
   private statusTimer: ReturnType<typeof setInterval> | null = null
   /** Guards against a slow process-table read overlapping the next tick. */
@@ -604,6 +606,29 @@ export class PtyManager {
   }
 
   /**
+   * True when {@link create} would attach an existing process instead of spawn.
+   * Callers that mint resume argv must skip that work on attach.
+   */
+  willAttachCreate(conversationId: string, options?: PtyLaunchOptions | string): boolean {
+    const opts: PtyLaunchOptions =
+      typeof options === 'string' ? { preferredId: options } : (options ?? {})
+    const preferredId = opts.preferredId
+    const agentId =
+      opts.agentId !== undefined ? opts.agentId : preferredId === 'agent' ? 'vav' : null
+    if (preferredId && this.sessions.has(preferredId)) return true
+    if (
+      preferredId &&
+      agentId &&
+      agentId !== 'vav' &&
+      opts.command?.trim() &&
+      preferredId === primaryAgentPaneId(conversationId, agentId)
+    ) {
+      return this.findLiveAgentPane(conversationId, agentId) != null
+    }
+    return false
+  }
+
+  /**
    * Oldest live pane for a CLI agent host in this conversation.
    * Used to attach rather than respawn when preferredId was not supplied.
    */
@@ -617,14 +642,28 @@ export class PtyManager {
     return best?.id ?? null
   }
 
+  private isAgentPty(tabId: string): boolean {
+    const agentId = this.sessions.get(tabId)?.agentId
+    return !!agentId && agentId !== 'vav'
+  }
+
   private enqueueData(tabId: string, data: string): void {
     const prev = this.pendingData.get(tabId)
     this.pendingData.set(tabId, prev ? prev + data : data)
-    if (this.dataFlushTimer != null) return
-    this.dataFlushTimer = setTimeout(() => {
-      this.dataFlushTimer = null
-      this.flushPendingData()
-    }, DATA_COALESCE_MS)
+    const agent = this.isAgentPty(tabId)
+    if (agent) {
+      if (this.agentFlushTimer != null) return
+      this.agentFlushTimer = setTimeout(() => {
+        this.agentFlushTimer = null
+        this.flushPendingKind('agent')
+      }, AGENT_DATA_COALESCE_MS)
+      return
+    }
+    if (this.bashFlushTimer != null) return
+    this.bashFlushTimer = setTimeout(() => {
+      this.bashFlushTimer = null
+      this.flushPendingKind('bash')
+    }, BASH_DATA_COALESCE_MS)
   }
 
   private flushPendingData(onlyTabId?: string): void {
@@ -635,10 +674,17 @@ export class PtyManager {
       if (chunk) this.onData(onlyTabId, chunk)
       return
     }
+    this.flushPendingKind('all')
+  }
+
+  private flushPendingKind(kind: 'agent' | 'bash' | 'all'): void {
     if (this.pendingData.size === 0) return
-    const batch = this.pendingData
-    this.pendingData = new Map()
-    for (const [tabId, chunk] of batch) {
+    for (const [tabId, chunk] of [...this.pendingData]) {
+      if (kind !== 'all') {
+        const agent = this.isAgentPty(tabId)
+        if (kind === 'agent' ? !agent : agent) continue
+      }
+      this.pendingData.delete(tabId)
       if (chunk) this.onData(tabId, chunk)
     }
   }
@@ -664,16 +710,15 @@ export class PtyManager {
           ? 'vav'
           : null
     // Stable preferredId is the multi-window ensure key (Herdr attach semantics).
-    // Splits omit preferredId and always mint a new pane — never dedupe those.
+    // Extra splits pass a fresh preferredId so the pane keeps a stable binding;
+    // only the primary activate id may attach an older live process.
     if (preferredId && this.sessions.has(preferredId)) return preferredId
-    // Activate path with preferredId: if an older random-id pane is still live
-    // for this agent (pre-stable-id sessions), attach it instead of spawning a
-    // second CLI process.
     if (
       preferredId &&
       agentId &&
       agentId !== 'vav' &&
-      opts.command?.trim()
+      opts.command?.trim() &&
+      preferredId === primaryAgentPaneId(conversationId, agentId)
     ) {
       const existing = this.findLiveAgentPane(conversationId, agentId)
       if (existing) return existing

@@ -208,6 +208,8 @@ export class SettingsStore {
     s.webSearxngBaseUrl = s.webSearxngBaseUrl.trim()
     if (typeof s.cloudflareAccountId !== 'string') s.cloudflareAccountId = ''
     s.cloudflareAccountId = s.cloudflareAccountId.trim()
+    if (typeof s.supabaseProjectRef !== 'string') s.supabaseProjectRef = ''
+    s.supabaseProjectRef = s.supabaseProjectRef.trim()
     const providers = new Set(['auto', 'duckduckgo', 'searxng', 'brave'])
     if (!providers.has(s.webSearchProvider)) s.webSearchProvider = 'auto'
     s.fontSize = Math.min(24, Math.max(10, s.fontSize))
@@ -254,6 +256,9 @@ export class SettingsStore {
     if (typeof s.skipCliAgentPickerWhenSingle !== 'boolean') {
       s.skipCliAgentPickerWhenSingle = false
     }
+    if (typeof s.githubTrayEnabled !== 'boolean') s.githubTrayEnabled = true
+    if (typeof s.cloudflareTrayEnabled !== 'boolean') s.cloudflareTrayEnabled = false
+    if (typeof s.supabaseTrayEnabled !== 'boolean') s.supabaseTrayEnabled = false
     if (!s.disabledAgentModels || typeof s.disabledAgentModels !== 'object') {
       s.disabledAgentModels = {}
     } else {
@@ -405,12 +410,14 @@ export class SettingsStore {
         apiKeyPresent: _omitApi,
         braveSearchKeyPresent: _omitBrave,
         cloudflareApiTokenPresent: _omitCf,
+        supabaseAccessTokenPresent: _omitSb,
         customSurfacePatternUrl: _omitPatternUrl,
         ...rest
       } = this.settings
       void _omitApi
       void _omitBrave
       void _omitCf
+      void _omitSb
       void _omitPatternUrl
       writeFileSync(this.file, JSON.stringify(rest, null, 2), 'utf8')
     } catch (err) {

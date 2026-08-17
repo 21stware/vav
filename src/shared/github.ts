@@ -198,6 +198,13 @@ export interface GithubActionsPage {
   scope?: GithubActionsScope
 }
 
+export interface GithubReleaseAsset {
+  id: number
+  name: string
+  size: number
+  browserDownloadUrl: string
+}
+
 export interface GithubRelease {
   id: number
   tag: string
@@ -210,6 +217,7 @@ export interface GithubRelease {
   publishedAt: string | null
   createdAt: string
   body: string | null
+  assets: GithubReleaseAsset[]
 }
 
 export interface GithubReleasesPage {
@@ -288,6 +296,27 @@ export function githubRepoSectionUrl(
   section: 'pulls' | 'actions' | 'releases'
 ): string {
   return `${repo.htmlUrl.replace(/\/$/, '')}/${section}`
+}
+
+/** Browser-facing source archives for a release tag (not the API zipball URLs). */
+export function githubReleaseArchiveUrls(
+  htmlUrl: string,
+  tag: string
+): { zip: string; tar: string } | null {
+  const tagName = tag.trim()
+  if (!tagName || !htmlUrl.trim()) return null
+  try {
+    const url = new URL(htmlUrl)
+    const segs = url.pathname.split('/').filter(Boolean)
+    if (segs.length < 2) return null
+    const owner = segs[0]!
+    const repo = segs[1]!
+    const encoded = encodeURIComponent(tagName)
+    const base = `${url.origin}/${owner}/${repo}/archive/refs/tags/${encoded}`
+    return { zip: `${base}.zip`, tar: `${base}.tar.gz` }
+  } catch {
+    return null
+  }
 }
 
 export function githubClosedPullsUrl(repo: GithubRepoRef): string {

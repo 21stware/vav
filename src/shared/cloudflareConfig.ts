@@ -130,9 +130,10 @@ function collectEnvsFromJson(root: Record<string, unknown>): CloudflareEnvironme
 function inferKind(input: {
   main: string | null
   pagesOutputDir: string | null
+  assetsDir: string | null
 }): CloudflareKind {
-  if (input.pagesOutputDir && !input.main) return 'pages'
-  if (input.main) return 'workers'
+  if (input.pagesOutputDir && !input.main && !input.assetsDir) return 'pages'
+  if (input.main || input.assetsDir) return 'workers'
   if (input.pagesOutputDir) return 'pages'
   return 'unknown'
 }
@@ -148,14 +149,16 @@ function fromJsonObject(
   const compatibilityDate = str(root.compatibility_date)
   const main = str(root.main)
   const pagesOutputDir = str(root.pages_build_output_dir)
+  const assetsDir = str(asRecord(root.assets)?.directory)
   return {
     ...meta,
-    kind: inferKind({ main, pagesOutputDir }),
+    kind: inferKind({ main, pagesOutputDir, assetsDir }),
     name,
     accountId,
     compatibilityDate,
     main,
     pagesOutputDir,
+    assetsDir,
     bindings: collectBindingsFromJson(root),
     environments: collectEnvsFromJson(root)
   }
@@ -167,6 +170,16 @@ function unquoteToml(raw: string): string {
     return t.slice(1, -1)
   }
   return t
+}
+
+function tomlSectionString(source: string, section: string, key: string): string | null {
+  const re = new RegExp(`^\\[${section}\\]\\s*$`, 'im')
+  const m = re.exec(source)
+  if (!m) return null
+  const rest = source.slice(m.index + m[0].length)
+  const end = rest.search(/\n\[/)
+  const body = end === -1 ? rest : rest.slice(0, end)
+  return tomlTopString(body, key)
 }
 
 function tomlTopString(source: string, key: string): string | null {
@@ -217,6 +230,7 @@ function parseTomlConfig(
   const compatibilityDate = tomlTopString(source, 'compatibility_date')
   const main = tomlTopString(source, 'main')
   const pagesOutputDir = tomlTopString(source, 'pages_build_output_dir')
+  const assetsDir = tomlSectionString(source, 'assets', 'directory')
   const bindings: CloudflareBinding[] = []
   const add = (kind: string, rows: Record<string, string>[], bindingKey = 'binding'): void => {
     for (const row of rows) {
@@ -253,12 +267,13 @@ function parseTomlConfig(
 
   return {
     ...meta,
-    kind: inferKind({ main, pagesOutputDir }),
+    kind: inferKind({ main, pagesOutputDir, assetsDir }),
     name,
     accountId,
     compatibilityDate,
     main,
     pagesOutputDir,
+    assetsDir,
     bindings,
     environments
   }

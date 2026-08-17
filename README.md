@@ -11,23 +11,23 @@
 
 
 
-Local-first **CLI agent terminal workspace**. Host Claude Code, Codex, Cursor, Grok, and other agent CLIs in multi-split PTYs with an integrated file tree — vav does **not** run its own agent loop.
+**Your agents' workbench.** Open a folder or a document, see it, pick a block, and ask — with the built-in VAV agent or Claude Code / Codex in the same thread. Writes land on disk and you accept or reject them. A real terminal sits beside the chat. Everything stays on your machine; each CLI agent manages its own auth.
 
-Pick an agent binary, spawn it in a terminal pane, and work in raw shell I/O. Everything stays on your machine; each CLI agent manages its own auth.
+New session: pick a workspace, pick an agent, ask one thing. Multi-split CLI TUIs (Swarm) are an optional advanced mode under Settings → CLI Agents.
 
 ![vav](docs/screenshot.png)
 
 ## Features
 
-- **Multi-split PTY terminal** (⌘D / ⌘T / ⌘W) — each pane is an independent bash session
-- **CLI agent host** — Claude Code, Codex, Cursor, Pi, Grok, Devin pre-configs + custom binaries (Settings → CLI Agents)
-- **Integrated file tree** with Quick Look and format-aware previews
-- **Real PTY tabs**: node-pty + xterm.js — `top` and `vim` work; the agent opens its own bash session on first command
-- **File tree**: on-demand expand, agent edits highlighted, spacebar Quick Look; tree or column view
+- **File workbench** — tree / columns, format-aware preview (Office, PDF, Markdown, CSV, code, …), pick a block and ask beside the file
+- **Built-in VAV chat** — Anthropic- or OpenAI-compatible API; tools write to the session folder; accept / reject the diff
+- **CLI in the same thread** — Claude Code, Codex, Cursor, Grok, and others over their structured protocol (install from Settings if the binary is missing)
+- **User PTY** (⌘T) — real bash / zsh / PowerShell; `top` and `vim` work
 - **Per-session working directory**, defaulting to a temporary workspace you can point at a real project; `vav .` / `vav /path` CLI open
+- **Git change inspector** — status + diff in the Files tray; commit stays in the terminal or the agent
 - **English / Chinese UI**, following the OS or a setting
-- **Anthropic and OpenAI-compatible** APIs, with a customizable endpoint
 - API keys stored encrypted via `safeStorage` (Keychain) — never as plaintext
+- **Swarm** (optional) — multi-split raw CLI TUIs; off by default in Settings → CLI Agents
 
 ## Website
 
@@ -36,7 +36,7 @@ The static site lives in [`site/`](site/) and is published to GitHub Pages by Ac
 https://vavapp.com  
 (also https://21stware.github.io/vav/)
 
-Bilingual (toggle in the top-right; default follows the browser language, and `?lang=zh` pins it). Marketing screenshots are captured with the English UI (chat / files / terminal / context):
+Bilingual (toggle in the top-right; default follows the browser language, and `?lang=zh` pins it). Marketing screenshots are captured in English, light and dark:
 
 ```bash
 node scripts/capture-marketing-screenshot.mjs
@@ -80,7 +80,7 @@ npm run dist        # macOS → release/vav-*-macos-arm64.dmg (signed + notarize
 npm run dist:win    # Windows → release/vav-*-windows-x64-setup.exe
 ```
 
-First launch asks for an API key (⌘, / Ctrl+,). File tree and terminal work before that; only agent turns need a key.
+First launch unlocks the Keychain store. File tree and terminal work immediately. The built-in VAV agent needs an API key (⌘, / Ctrl+,); Claude / Codex use their own login.
 
 ## Shortcuts
 

@@ -7,6 +7,7 @@ import {
   githubClosedPullsUrl,
   githubPagesCustomDomain,
   githubPagesSettingsUrl,
+  githubReleaseArchiveUrls,
   githubRepoSectionUrl,
   isGithubPagesLive,
   isRunningGithubActionStatus,
@@ -111,6 +112,36 @@ describe('githubRepoSectionUrl', () => {
       githubClosedPullsUrl(repo),
       'https://github.com/oboo/vav/pulls?q=is%3Apr+is%3Aclosed'
     )
+  })
+})
+
+describe('githubReleaseArchiveUrls', () => {
+  it('builds tag archives from a github.com release URL', () => {
+    assert.deepEqual(
+      githubReleaseArchiveUrls('https://github.com/oboo/vav/releases/tag/v1.7.0', 'v1.7.0'),
+      {
+        zip: 'https://github.com/oboo/vav/archive/refs/tags/v1.7.0.zip',
+        tar: 'https://github.com/oboo/vav/archive/refs/tags/v1.7.0.tar.gz'
+      }
+    )
+  })
+
+  it('encodes the tag and keeps enterprise hosts', () => {
+    assert.deepEqual(
+      githubReleaseArchiveUrls(
+        'https://github.company.com/org/app/releases/tag/v1.0.0-beta.1',
+        'v1.0.0-beta.1'
+      ),
+      {
+        zip: 'https://github.company.com/org/app/archive/refs/tags/v1.0.0-beta.1.zip',
+        tar: 'https://github.company.com/org/app/archive/refs/tags/v1.0.0-beta.1.tar.gz'
+      }
+    )
+  })
+
+  it('rejects empty tags and malformed URLs', () => {
+    assert.equal(githubReleaseArchiveUrls('https://github.com/oboo/vav/releases/tag/v1', ''), null)
+    assert.equal(githubReleaseArchiveUrls('not a url', 'v1'), null)
   })
 })
 

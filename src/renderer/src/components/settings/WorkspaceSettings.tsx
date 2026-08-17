@@ -16,6 +16,10 @@ export function WorkspaceSettings(): React.JSX.Element {
   const updateSettings = useSessionStore((s) => s.updateSettings)
   const [braveDraft, setBraveDraft] = useState('')
   const [braveSaving, setBraveSaving] = useState(false)
+  const [cfDraft, setCfDraft] = useState('')
+  const [cfSaving, setCfSaving] = useState(false)
+  const [sbDraft, setSbDraft] = useState('')
+  const [sbSaving, setSbSaving] = useState(false)
 
   const provider = (settings.webSearchProvider ?? 'auto') as WebSearchProvider
   const providerOptions: { value: WebSearchProvider; label: string }[] = [
@@ -32,6 +36,26 @@ export function WorkspaceSettings(): React.JSX.Element {
       setBraveDraft('')
     } finally {
       setBraveSaving(false)
+    }
+  }
+
+  const saveCloudflareToken = async (): Promise<void> => {
+    setCfSaving(true)
+    try {
+      await window.vav.settings.setCloudflareApiToken(cfDraft.trim())
+      setCfDraft('')
+    } finally {
+      setCfSaving(false)
+    }
+  }
+
+  const saveSupabaseToken = async (): Promise<void> => {
+    setSbSaving(true)
+    try {
+      await window.vav.settings.setSupabaseAccessToken(sbDraft.trim())
+      setSbDraft('')
+    } finally {
+      setSbSaving(false)
     }
   }
 
@@ -184,6 +208,144 @@ export function WorkspaceSettings(): React.JSX.Element {
         </div>
       </div>
       <div className="form-hint">{t('workspace.braveKeyHint')}</div>
+
+      <div className="form-row">
+        <label>{t('workspace.githubTray')}</label>
+        <div className="control">
+          <Toggle
+            checked={settings.githubTrayEnabled !== false}
+            title={t('workspace.githubTray')}
+            onChange={(githubTrayEnabled) => void updateSettings({ githubTrayEnabled })}
+          />
+        </div>
+      </div>
+      <div className="form-hint">{t('workspace.githubTrayHint')}</div>
+
+      <div className="form-row">
+        <label>{t('workspace.cloudflareTray')}</label>
+        <div className="control">
+          <Toggle
+            checked={settings.cloudflareTrayEnabled === true}
+            title={t('workspace.cloudflareTray')}
+            onChange={(cloudflareTrayEnabled) => void updateSettings({ cloudflareTrayEnabled })}
+          />
+        </div>
+      </div>
+      <div className="form-hint">{t('workspace.cloudflareTrayHint')}</div>
+
+      {settings.cloudflareTrayEnabled === true ? (
+        <>
+      <div className="form-row">
+        <label>{t('workspace.cloudflareToken')}</label>
+        <div className="control">
+          <input
+            className="text-field"
+            type="password"
+            placeholder={
+              settings.cloudflareApiTokenPresent
+                ? t('workspace.cloudflareTokenConfigured')
+                : t('workspace.cloudflareTokenPlaceholder')
+            }
+            value={cfDraft}
+            onChange={(event) => setCfDraft(event.target.value)}
+          />
+          <Button
+            label={cfSaving ? t('workspace.braveSaving') : t('workspace.braveSave')}
+            variant="secondary"
+            size="sm"
+            disabled={cfSaving || !cfDraft.trim()}
+            onClick={() => void saveCloudflareToken()}
+          />
+          {settings.cloudflareApiTokenPresent && (
+            <Button
+              label={t('common.clear')}
+              size="sm"
+              onClick={() => {
+                void window.vav.settings.setCloudflareApiToken('').then(() => setCfDraft(''))
+              }}
+            />
+          )}
+        </div>
+      </div>
+      <div className="form-hint">{t('workspace.cloudflareTokenHint')}</div>
+
+      <div className="form-row">
+        <label>{t('workspace.cloudflareAccount')}</label>
+        <div className="control">
+          <input
+            className="text-field"
+            placeholder={t('workspace.cloudflareAccountPlaceholder')}
+            value={settings.cloudflareAccountId ?? ''}
+            onChange={(event) => void updateSettings({ cloudflareAccountId: event.target.value })}
+          />
+        </div>
+      </div>
+      <div className="form-hint">{t('workspace.cloudflareAccountHint')}</div>
+        </>
+      ) : null}
+
+      <div className="form-row">
+        <label>{t('workspace.supabaseTray')}</label>
+        <div className="control">
+          <Toggle
+            checked={settings.supabaseTrayEnabled === true}
+            title={t('workspace.supabaseTray')}
+            onChange={(supabaseTrayEnabled) => void updateSettings({ supabaseTrayEnabled })}
+          />
+        </div>
+      </div>
+      <div className="form-hint">{t('workspace.supabaseTrayHint')}</div>
+
+      {settings.supabaseTrayEnabled === true ? (
+        <>
+      <div className="form-row">
+        <label>{t('workspace.supabaseToken')}</label>
+        <div className="control">
+          <input
+            className="text-field"
+            type="password"
+            placeholder={
+              settings.supabaseAccessTokenPresent
+                ? t('workspace.supabaseTokenConfigured')
+                : t('workspace.supabaseTokenPlaceholder')
+            }
+            value={sbDraft}
+            onChange={(event) => setSbDraft(event.target.value)}
+          />
+          <Button
+            label={sbSaving ? t('workspace.braveSaving') : t('workspace.braveSave')}
+            variant="secondary"
+            size="sm"
+            disabled={sbSaving || !sbDraft.trim()}
+            onClick={() => void saveSupabaseToken()}
+          />
+          {settings.supabaseAccessTokenPresent && (
+            <Button
+              label={t('common.clear')}
+              size="sm"
+              onClick={() => {
+                void window.vav.settings.setSupabaseAccessToken('').then(() => setSbDraft(''))
+              }}
+            />
+          )}
+        </div>
+      </div>
+      <div className="form-hint">{t('workspace.supabaseTokenHint')}</div>
+
+      <div className="form-row">
+        <label>{t('workspace.supabaseRef')}</label>
+        <div className="control">
+          <input
+            className="text-field"
+            placeholder={t('workspace.supabaseRefPlaceholder')}
+            value={settings.supabaseProjectRef ?? ''}
+            onChange={(event) => void updateSettings({ supabaseProjectRef: event.target.value })}
+          />
+        </div>
+      </div>
+      <div className="form-hint">{t('workspace.supabaseRefHint')}</div>
+        </>
+      ) : null}
 
       <div className="form-row">
         <label>{t('workspace.searxng')}</label>

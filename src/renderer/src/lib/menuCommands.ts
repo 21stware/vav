@@ -9,7 +9,6 @@ import {
   installUiFocusTracking
 } from './uiFocus'
 import { requestCliSurface } from './cliSurfaceSwitch'
-import { isSoleEmptyCliPicker } from '../components/SurfaceSwitchButton'
 
 /** Ensure the session list is visible when switching archive / file-session modes. */
 function ensureSidebarVisible(): void {
@@ -70,19 +69,16 @@ export function handleMenuCommand(command: MenuCommand): void {
       store.openWorkspaceSwitcher()
       break
     case 'switch-cli-mode': {
-      // Empty Thread only — a session with messages stays on Thread.
       if (store.settings.swarmModeEnabled !== true) break
       const id = store.activeId
       if (!id) break
-      if (store.conversations.some((c) => c.id === id && c.archived)) break
       if (store.search.open) store.closeSearch()
       requestCliSurface(id, true)
       break
     }
     case 'switch-vav-mode': {
-      // Only from a single empty Swarm panel — same as the on-panel button.
       const id = store.activeId
-      if (!id || !isSoleEmptyCliPicker(id)) break
+      if (!id) break
       if (store.search.open) store.closeSearch()
       requestCliSurface(id, false)
       break
@@ -201,11 +197,9 @@ export function handleMenuCommand(command: MenuCommand): void {
       break
     case 'close-context': {
       // Bash → close tab; Files → collapse tray;
-      // Swarm: pane / last live agent→picker / sole picker→window;
-      // otherwise close/hide this window.
-      // Debounce twin delivery (before-input + menu accelerator): the first
-      // stroke may reseed a picker; a second close-context must not instantly
-      // close the window.
+      // Swarm pane focused → close pane / last live→picker;
+      // otherwise (including Swarm on screen but not focused) close the window.
+      // Debounce twin delivery only (before-input + menu).
       const now = Date.now()
       if (now - lastCloseContextAt < 400) break
       lastCloseContextAt = now

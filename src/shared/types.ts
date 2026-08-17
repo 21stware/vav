@@ -6,6 +6,7 @@
  */
 
 import type { ChangeSet } from './changeSet'
+import type { CliPaneBinding } from './cliPaneBinding'
 import type { CliHostKind, ProviderResumeCursor } from './cliHost'
 import type { AcceleratorKeyBindingId } from './keyBindings'
 
@@ -668,6 +669,11 @@ export interface Conversation extends ConversationMeta {
    * The active host's tree stays in {@link messages}.
    */
   hostTranscripts?: Record<string, HostTranscriptBucket>
+  /**
+   * Swarm PTY pane → native CLI session. Resume argv + title projection.
+   * Stripped from {@link ConversationMeta} / the sidebar list.
+   */
+  cliPaneBindings?: Record<string, CliPaneBinding>
 }
 
 export type ShellKind = 'zsh' | 'bash' | 'fish' | 'powershell'
@@ -866,6 +872,28 @@ export interface AppSettings {
    * Renderer-only: whether a Cloudflare API token is stored (never the token).
    */
   cloudflareApiTokenPresent?: boolean
+  /**
+   * Optional linked Supabase project ref (not secret). Used with a stored
+   * access token when the workspace has no `supabase link` / env URL.
+   */
+  supabaseProjectRef: string
+  /**
+   * Renderer-only: whether a Supabase access token is stored (never the token).
+   */
+  supabaseAccessTokenPresent?: boolean
+  /**
+   * Files tray → GitHub. Read-only repo pulse (PRs / Actions / Pages).
+   * Default on — already shipped; turn off to hide the tab.
+   */
+  githubTrayEnabled: boolean
+  /**
+   * Files tray → Cloudflare Workers / Pages status. Off by default.
+   */
+  cloudflareTrayEnabled: boolean
+  /**
+   * Files tray → Supabase functions status. Off by default.
+   */
+  supabaseTrayEnabled: boolean
   theme: ThemeMode
   /**
    * Tools-tray bash background. `dark` stays dark regardless of theme;
@@ -991,6 +1019,7 @@ export interface AppSettings {
   /**
    * When only one enabled CLI agent is configured, skip the in-pane picker and
    * launch that agent directly (new Screen / new split pending panes).
+   * Closing the last live pane always reseeds the picker — never auto-launch.
    */
   skipCliAgentPickerWhenSingle: boolean
   /**
@@ -1037,6 +1066,10 @@ export const DEFAULT_SETTINGS: AppSettings = {
   webSearxngBaseUrl: '',
   webFetchAllowRender: false,
   cloudflareAccountId: '',
+  supabaseProjectRef: '',
+  githubTrayEnabled: true,
+  cloudflareTrayEnabled: false,
+  supabaseTrayEnabled: false,
   theme: 'system',
   bashBackground: 'theme',
   colorTint: 'system',

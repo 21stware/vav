@@ -17,6 +17,7 @@ import { installInstallRunBridge } from './state/installRunStore'
 import { useT } from './i18n/useT'
 import { useAttentionSeen } from './lib/useAttentionSeen'
 import { acceptSessionNavigateSeq } from './lib/cliSurfaceAuthority'
+import { installSwarmHistoryBridge } from './lib/swarmHistoryBridge'
 
 /** Open clock from main (requestedAt) for [session-perf] logs. */
 let sessionOpenClock = 0
@@ -36,8 +37,8 @@ function markSession(label: string): void {
  *
  * Same transcript, tools and composer as the main window with the sidebar and
  * its chrome taken away — this window exists to hold a single session, so it
- * has nothing to navigate between. Agent switcher / search / splits sit in the
- * title bar; top-right Reveal in List jumps back to the main window row.
+ * has nothing to navigate between. Surface switch sits left in the title bar;
+ * history / search / Reveal in List sit on the trailing edge.
  *
  * Warm shells load with `warm=1` and no conversationId, then receive
  * `onSessionNavigate` to claim a session without reloading the BrowserWindow.
@@ -165,6 +166,7 @@ export default function SessionWindow({
     const offUpdates = installUpdateBridge()
     const offMenu = installDefaultContextMenu()
     const offInstall = installInstallRunBridge()
+    const offHistory = installSwarmHistoryBridge()
     // Tray / notify: main may raise this companion and ask for CLI pane focus.
     const offCli = window.vav.onCliOpen((event) => {
       if (!event.conversationId) return
@@ -193,6 +195,7 @@ export default function SessionWindow({
       offUpdates()
       offMenu()
       offCli()
+      offHistory()
       offInstall()
     }
   }, [conversationId])
@@ -229,9 +232,10 @@ export default function SessionWindow({
   return (
     <div className="app-shell session-window">
       {/*
-        Overlay chrome: traffic lights + agent switcher / search, then
-        Reveal in List. The 40px row is a 30%-clear plate over the log;
-        the first turn is inset below it and can still scroll underneath.
+        Overlay chrome: traffic lights + surface switch on the left,
+        history / search / Reveal in List on the right. The 40px row is a
+        30%-clear plate over the log; the first turn is inset below it
+        and can still scroll underneath.
       */}
       <header className="titlebar bare session-window-titlebar">
         <div className="session-window-titlebar-chrome">
@@ -239,24 +243,25 @@ export default function SessionWindow({
             conversationId={conversationId}
             agentBinaryName={agentBinaryName}
             showSearch={isVavMode}
+            trail={
+              <button
+                type="button"
+                className="session-reveal-in-list"
+                title={t('session.revealInList')}
+                onClick={() => {
+                  const api = window.vav?.window?.revealInList
+                  if (typeof api !== 'function') {
+                    console.error('[session] revealInList unavailable — rebuild preload')
+                    return
+                  }
+                  void api(conversationId)
+                }}
+              >
+                {t('session.revealInList')}
+              </button>
+            }
           />
         </div>
-        <span className="spacer" />
-        <button
-          type="button"
-          className="session-reveal-in-list"
-          title={t('session.revealInList')}
-          onClick={() => {
-            const api = window.vav?.window?.revealInList
-            if (typeof api !== 'function') {
-              console.error('[session] revealInList unavailable — rebuild preload')
-              return
-            }
-            void api(conversationId)
-          }}
-        >
-          {t('session.revealInList')}
-        </button>
       </header>
       <SessionDetail hideChrome />
     </div>

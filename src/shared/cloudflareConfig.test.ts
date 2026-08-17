@@ -43,6 +43,20 @@ describe('cloudflareConfig', () => {
     assert.equal(parsed!.environments[0]?.name, 'preview')
   })
 
+  it('treats Workers assets-only config as workers', () => {
+    const src = `{
+      "name": "origin",
+      "compatibility_date": "2025-06-01",
+      "assets": { "directory": "./frontend/dist" }
+    }`
+    const parsed = parseWranglerConfig(src, '/repo/wrangler.jsonc', 'wrangler.jsonc')
+    assert.ok(parsed)
+    assert.equal(parsed!.kind, 'workers')
+    assert.equal(parsed!.name, 'origin')
+    assert.equal(parsed!.assetsDir, './frontend/dist')
+    assert.equal(parsed!.main, null)
+  })
+
   it('parses wrangler.toml workers config', () => {
     const src = `
 name = "edge-api"

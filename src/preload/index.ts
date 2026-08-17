@@ -7,6 +7,7 @@ import {
   type SettingsView,
   type SettingsViewPayload,
   type ProviderAccountViewPayload,
+  type SwarmHistoryResumeEvent,
   type TokenUsageViewPayload,
   type VavApi
 } from '@shared/ipc'
@@ -42,6 +43,9 @@ const api: VavApi = {
     setCloudflareApiToken: (token: string) =>
       ipcRenderer.invoke(IPC.settingsSetCloudflareToken, token),
     cloudflareApiTokenHint: () => ipcRenderer.invoke(IPC.settingsCloudflareTokenHint),
+    setSupabaseAccessToken: (token: string) =>
+      ipcRenderer.invoke(IPC.settingsSetSupabaseToken, token),
+    supabaseAccessTokenHint: () => ipcRenderer.invoke(IPC.settingsSupabaseTokenHint),
     validateKey: (key: string) => ipcRenderer.invoke(IPC.settingsValidateKey, key),
     availableFonts: () => ipcRenderer.invoke(IPC.settingsFonts),
     pickDirectory: () => ipcRenderer.invoke(IPC.settingsPickDirectory),
@@ -82,6 +86,7 @@ const api: VavApi = {
     setWorkingDirectory: (id: string, path: string) =>
       ipcRenderer.invoke(IPC.convSetWorkdir, id, path),
     pickWorkingDirectory: (id: string) => ipcRenderer.invoke(IPC.convPickWorkdir, id),
+    useTempWorkingDirectory: (id: string) => ipcRenderer.invoke(IPC.convUseTempWorkdir, id),
     locateWorkspace: (id: string, destinationDir: string, name: string) =>
       ipcRenderer.invoke(IPC.convLocateWorkspace, id, destinationDir, name),
     remove: (ids: string[]) => ipcRenderer.invoke(IPC.convRemove, ids),
@@ -213,6 +218,16 @@ const api: VavApi = {
       cwd: string,
       options: { path: string; newBranch?: string; branch?: string }
     ) => ipcRenderer.invoke(IPC.gitCreateWorktree, cwd, options)
+  },
+
+  cloudflare: {
+    status: (cwd: string, query?: import('@shared/cloudflare').CloudflareStatusQuery) =>
+      ipcRenderer.invoke(IPC.cloudflareStatus, cwd, query)
+  },
+
+  supabase: {
+    status: (cwd: string, query?: import('@shared/supabase').SupabaseStatusQuery) =>
+      ipcRenderer.invoke(IPC.supabaseStatus, cwd, query)
   },
 
   github: {
@@ -363,6 +378,10 @@ const api: VavApi = {
     onProviderAccountView: (handler) =>
       subscribe<ProviderAccountViewPayload>(IPC.providerAccountView, handler),
     fitProviderAccount: (height) => ipcRenderer.invoke(IPC.providerAccountFit, height),
+    openSwarmHistory: (conversationId, anchor) =>
+      ipcRenderer.invoke(IPC.windowOpenSwarmHistory, conversationId, anchor),
+    onSwarmHistoryResume: (handler) =>
+      subscribe<SwarmHistoryResumeEvent>(IPC.swarmHistoryResume, handler),
     relaunch: () => ipcRenderer.invoke(IPC.windowRelaunch)
   },
 

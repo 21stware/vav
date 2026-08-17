@@ -731,35 +731,44 @@ html[data-resizing='true'] .banner.error {
 }
 
 /*
- * Agent switcher + search/splits as a left-aligned cluster after the traffic
- * lights — do not grow full-width (that made the control look floating/centered
- * when an internal .spacer pushed siblings apart).
+ * Isolated window chrome fills the titlebar so history / search / Reveal
+ * sit on the trailing edge. The empty mid-span is the window drag strip;
+ * only the actual controls opt out.
  */
 .session-window-titlebar-chrome {
-  flex: 0 1 auto;
+  flex: 1 1 auto;
   min-width: 0;
   display: flex;
   align-items: center;
   justify-content: flex-start;
-  -webkit-app-region: no-drag;
+  -webkit-app-region: drag;
 }
 
 .session-window-titlebar-chrome .terminal-host-chrome.agent-mode-chrome {
-  width: auto;
+  width: 100%;
   max-width: 100%;
   min-width: 0;
   /* Title bar already has the bottom rule — don’t double-draw. */
   border-bottom: 0;
   padding: 0;
   background: transparent;
-  flex: 0 1 auto;
+  flex: 1 1 auto;
   justify-content: flex-start;
   gap: 0;
 }
 
-/* Keep search / splits next to the agent select (not pinned to the far edge). */
+.session-window-titlebar-chrome button,
+.session-window-titlebar-chrome .btn,
+.session-window-titlebar-chrome label,
+.session-window-titlebar-chrome select,
+.session-window-titlebar-chrome input {
+  -webkit-app-region: no-drag;
+}
+
 .session-window-titlebar-chrome .agent-mode-chrome-row > .spacer {
-  display: none;
+  align-self: stretch;
+  min-width: 12px;
+  -webkit-app-region: drag;
 }
 
 .session-reveal-in-list {
@@ -773,8 +782,8 @@ html[data-resizing='true'] .banner.error {
   font: inherit;
   font-size: 12px;
   font-weight: 500;
-  line-height: 40px;
-  height: 40px;
+  line-height: 24px;
+  height: 24px;
   cursor: default;
   white-space: nowrap;
   transition:
@@ -4021,6 +4030,25 @@ mark {
   backdrop-filter: blur(10px);
   -webkit-backdrop-filter: blur(10px);
   pointer-events: auto;
+}
+
+/* Hover devices: chrome stays off the card until the pointer is over it. */
+@media (hover: hover) and (pointer: fine) {
+  .md-block-bar {
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity var(--dur-hover) ease;
+  }
+
+  .md-block:hover > .md-block-bar,
+  .md-block:focus-within > .md-block-bar,
+  /* Hold the bar through copy-ack so the check is not cut by hover-out. */
+  .md-block-bar:has(.md-block-btn.is-ack-out),
+  .md-block-bar:has(.md-block-btn.is-ack-done),
+  .md-block-bar:has(.md-block-btn[data-copied='true']) {
+    opacity: 1;
+    pointer-events: auto;
+  }
 }
 
 .md-block-name {
@@ -7398,22 +7426,6 @@ mark {
   align-items: center;
 }
 
-.empty-state-foot > .agent-mode-swarm-btn {
-  margin-top: 18px;
-}
-
-/* Last beat of the empty-session stack — after git prose (120 / 280ms). */
-.empty-state.is-entering .empty-state-foot > .agent-mode-swarm-btn {
-  animation: empty-in 320ms var(--ease-out) 360ms backwards;
-}
-
-.cli-agent-picker > .agent-mode-swarm-btn {
-  flex: 0 0 auto;
-  margin-top: 4px;
-}
-
-
-
 /* Nothing to see until the run is armed: the window may still be off-screen, or
    the git prose may still be in flight. Reserve the layout, paint nothing —
    the stack has to appear out of nothing, not appear finished and rewind. */
@@ -7459,8 +7471,7 @@ mark {
 :root[data-reduce-motion='true'] .empty-state > *,
 :root[data-reduce-motion='true'] .empty-logo-mark,
 :root[data-reduce-motion='true'] .empty-stagger-unit,
-:root[data-reduce-motion='true'] .empty-quota,
-:root[data-reduce-motion='true'] .empty-state-foot > .agent-mode-swarm-btn {
+:root[data-reduce-motion='true'] .empty-quota {
   animation: none !important;
   opacity: 1;
   transform: none;
@@ -8180,7 +8191,7 @@ mark {
   align-items: center;
   gap: 6px;
   box-sizing: border-box;
-  /* Fixed row metrics — Files ↔ Git ↔ GitHub must not reflow the chrome. */
+  /* Fixed row metrics — Files ↔ Git ↔ GitHub ↔ Supabase ↔ Cloudflare must not reflow the chrome. */
   height: 38px;
   padding: 0 12px;
   flex: 0 0 auto;
@@ -8335,7 +8346,7 @@ mark {
   opacity: 1;
 }
 
-/* Narrow dock: Files / Git / GitHub become icon-only; label lives on title. */
+/* Narrow dock: Files / Git / GitHub / Cloudflare become icon-only; label lives on title. */
 @container dock (max-width: 640px) {
   .files-toolbar .segmented-label,
   .files-toolbar-title-text {
@@ -8711,7 +8722,7 @@ mark {
   background: color-mix(in srgb, var(--text) 4%, transparent);
 }
 
-/* —— GitHub tray (Files | Git | GitHub) —— */
+/* —— GitHub / Cloudflare tray (Files | Git | GitHub | Cloudflare) —— */
 .github-panel {
   flex: 1;
   min-height: 0;
@@ -8752,6 +8763,17 @@ mark {
 .github-list-pane > .empty-state {
   flex: 1;
   border-top: 0;
+}
+
+.github-list-pane > .github-detail-hero {
+  border-bottom: 1px solid var(--border-subtle, color-mix(in srgb, var(--text) 10%, transparent));
+}
+
+.github-list-pane > .github-detail-hero .github-site-link {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .github-filter {
@@ -8842,6 +8864,12 @@ mark {
 
 .github-group-toggle:hover {
   color: var(--text-secondary);
+}
+
+.github-group-toggle.is-static,
+.github-group-toggle.is-static:hover {
+  cursor: default;
+  color: var(--text-tertiary);
 }
 
 .github-group-toggle svg {
@@ -8963,6 +8991,62 @@ mark {
 
 .github-site-build-error {
   color: var(--danger, #f85149);
+}
+
+.github-release-assets {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  margin: 0 0 12px;
+}
+
+.github-release-assets-title {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--text-tertiary);
+  padding: 0 2px 4px;
+}
+
+.github-release-asset {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  margin: 0;
+  padding: 6px 2px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.github-release-asset:hover {
+  background: color-mix(in srgb, var(--text) 6%, transparent);
+}
+
+.github-release-asset-icon {
+  flex: 0 0 auto;
+  color: var(--text-tertiary);
+}
+
+.github-release-asset-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.github-release-asset-meta {
+  flex: 0 0 auto;
+  font-size: 11px;
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
 }
 
 .github-action-jobs {
@@ -9260,14 +9344,9 @@ mark {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.github-site .github-detail-status-row .github-open-web {
-  margin-left: auto;
-}
-
-.github-site .github-detail-status-row .github-open-web + .github-site-config {
-  margin-left: 8px;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  text-decoration-color: color-mix(in srgb, var(--text) 28%, transparent);
 }
 
 .github-site-fields-wrap {
@@ -15342,10 +15421,43 @@ mark {
 /* xterm.css hard-codes a black viewport; keep it on the content plate. */
 .terminal-stack .xterm-viewport {
   background-color: var(--bg-content);
-  /* Keep the scrollbar gutter reserved so FitAddon doesn't oscillate
-     cols by ±1 as the bar appears/disappears (that SIGWINCH-flashes TUIs
-     and the neighbouring Files / preview empty states). */
+}
+
+/* Bash only: reserve gutter so FitAddon doesn't oscillate ±1 col as the
+   native bar appears/disappears. Agent TUIs never scroll this viewport. */
+.terminal-stack[data-terminal-surface='bash'] .xterm-viewport {
   scrollbar-gutter: stable;
+}
+
+/*
+ * Agent TUI = one cell grid, no app scrollback. Wheel/trackpad belong to the
+ * TUI (mouse protocol), not xterm's viewport or the overlay scrollbar.
+ */
+.terminal-stack[data-terminal-surface='agent'] .terminal-host,
+.terminal-stack[data-terminal-surface='agent'] .xterm-host,
+.terminal-stack[data-terminal-surface='agent'] .xterm,
+.xterm-host.is-tui,
+.xterm-host.is-tui .xterm {
+  overflow: hidden !important;
+}
+
+.terminal-stack[data-terminal-surface='agent'] .xterm-viewport,
+.xterm-host.is-tui .xterm-viewport {
+  overflow: hidden !important;
+  scrollbar-width: none;
+  scrollbar-gutter: auto;
+}
+
+.terminal-stack[data-terminal-surface='agent'] .xterm-viewport::-webkit-scrollbar,
+.xterm-host.is-tui .xterm-viewport::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
+.terminal-stack[data-terminal-surface='agent'] .xterm .xterm-scrollable-element > .scrollbar,
+.xterm-host.is-tui .xterm-scrollable-element > .scrollbar {
+  display: none !important;
 }
 
 .terminal-hint {
@@ -15589,7 +15701,7 @@ mark {
 
 .agent-mode-session-title {
   min-width: 0;
-  flex: 1 1 auto;
+  flex: 0 1 auto;
   font-size: 12px;
   font-weight: 500;
   color: var(--text-secondary);
@@ -15656,6 +15768,11 @@ mark {
   user-select: none;
 }
 
+/* Hide the mid-dot when ← Thread is not offered (locked / live pane). */
+.agent-mode-swarm-toggle > .agent-mode-workspace-dot:first-child {
+  display: none;
+}
+
 .agent-mode-workspace-name {
   min-width: 0;
   max-width: 22em;
@@ -15677,18 +15794,21 @@ mark {
      .agent-mode-chrome so it can span the full agent panel width. */
 }
 
+/* History / search / trail — always the trailing cluster after .spacer. */
+.agent-mode-chrome-trailing {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  flex: 0 0 auto;
+  margin-left: auto;
+}
+
 /* Workspace: preview drawer toggle after search. */
 .agent-mode-chrome-trail {
   display: inline-flex;
   align-items: center;
   gap: 2px;
   flex: 0 0 auto;
-}
-
-/* After .spacer — pin to the trailing edge of the full-width chrome row. */
-.agent-mode-chrome-trail-end {
-  flex: 0 0 auto;
-  margin-left: auto;
 }
 
 /* History under the unified file-session chrome (full row width). */

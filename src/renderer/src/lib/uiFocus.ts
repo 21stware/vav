@@ -1,4 +1,5 @@
 import { tt } from '../i18n/useT'
+import { resolveContextCloseAction } from './closeContext'
 import { disposeTerminal } from './terminalRegistryHandle'
 import { useSessionStore } from '../state/sessionStore'
 import { CLI_SURFACE_KEY, useWorkspaceStore } from '../state/workspaceStore'
@@ -54,15 +55,12 @@ export function resolveUiFocusScope(target: EventTarget | null): UiFocusScope {
     return session.panelSegment === 'terminal' ? 'bash' : 'files'
   }
 
-  // Main-surface CLI Screen: live PTY, pending picker, split chrome, mode row.
+  // Swarm content only (PTY / picker / split). Title-bar chrome is not Swarm.
   if (
     el.closest('.terminal-host-main') ||
     el.closest('[data-terminal-surface="agent"]') ||
     el.closest('.cli-agent-picker') ||
-    el.closest('.terminal-split-pane') ||
-    el.closest('.terminal-host-session') ||
-    el.closest('.agent-mode-chrome') ||
-    el.closest('.terminal-host-chrome')
+    el.closest('.terminal-split-pane')
   ) {
     return 'agent'
   }
@@ -130,25 +128,6 @@ function getAgentHostForConversation(conversationId: string) {
 
 function isCliMode(conversationId: string): boolean {
   return !!useWorkspaceStore.getState().workspaces[conversationId]?.cliMode
-}
-
-/**
- * True when ⌘W should still act on a CLI pane rather than the window.
- * - Multi-pane → close a pane
- * - Sole live agent → close it and reseed the picker
- * - Sole pending picker → false (⌘W closes the window)
- */
-function hasClosableCliPanes(conversationId: string): boolean {
-  const host = getAgentHostForConversation(conversationId)
-  if (!host?.tabs.length) return false
-  if (host.tabs.length > 1) return true
-  return !host.tabs[0]?.pendingCli
-}
-
-/** document.activeElement after a pane unmount often lands on body/html. */
-function isFocusLost(): boolean {
-  const el = document.activeElement
-  return !el || el === document.body || el === document.documentElement
 }
 
 /**
@@ -256,14 +235,6 @@ export function focusRemainingAgentPane(conversationId: string): void {
   focusAgentPane(conversationId)
 }
 
-/**
- * ⌘W often arrives twice (before-input + menu accelerator). The first stroke
- * may reseed a picker; the second must not treat that new sole picker as
- * “close the window”.
- */
-let lastCliPaneReseedAt = 0
-const CLI_RESEED_GRACE_MS = 500
-
 /** One native sheet at a time — ⌘W + pane X must not stack confirms. */
 let agentCloseConfirming = false
 
@@ -271,9 +242,7 @@ function finishCloseAgentTab(conversationId: string, tabId: string): void {
   const host = getAgentHostForConversation(conversationId)
   const tab = host?.tabs.find((t) => t.id === tabId)
   if (!tab) return
-  const closingLastLive = host!.tabs.length === 1 && !tab.pendingCli
   useWorkspaceStore.getState().closeAgentTab(conversationId, tabId)
-  if (closingLastLive) lastCliPaneReseedAt = Date.now()
   focusRemainingAgentPane(conversationId)
 }
 
@@ -321,11 +290,7 @@ function closeActiveAgentTab(conversationId: string): boolean {
   if (!activeTab) return false
   const tab = host.tabs.find((t) => t.id === activeTab) ?? host.tabs[0]
   // Only a picker left → ⌘W closes the window (do not reseed another picker).
-  if (host.tabs.length === 1 && tab?.pendingCli) {
-    // Twin ⌘W right after reseed — consume, keep the picker.
-    if (Date.now() - lastCliPaneReseedAt < CLI_RESEED_GRACE_MS) return true
-    return false
-  }
+  if (host.tabs.length === 1 && tab?.pendingCli) return false
 
   return requestCloseAgentTab(conversationId, activeTab)
 }
@@ -338,8 +303,8 @@ function closeActiveAgentTab(conversationId: string): boolean {
  * Rules:
  * - Bash UI → close active bash tab (confirm if busy); empty → collapse tray
  * - Files UI → collapse tools tray
- * - CLI Screen: multi-pane → close pane; sole live agent → picker; sole picker → window
- * - Otherwise → window close
+ * - Swarm pane focused: multi-pane → close pane; sole live agent → picker
+ * - Sole picker, or Swarm not focused → window (no agent confirm)
  */
 export function handleContextClose(): boolean {
   // Re-resolve from the live active element so we stay correct even if a
@@ -351,49 +316,31 @@ export function handleContextClose(): boolean {
   const id = session.activeId
   const host = id ? getAgentHostForConversation(id) : null
   const cliMode = id ? isCliMode(id) : false
-  const closable = id ? hasClosableCliPanes(id) : false
+  const action = resolveContextCloseAction({
+    focus: scope,
+    cliMode,
+    paneCount: host?.tabs.length ?? 0,
+    soleTabIsPending: host?.tabs.length === 1 && host.tabs[0]?.pendingCli === true,
+    toolsCollapsed: session.toolsCollapsed
+  })
 
-  // After a pane unmounts, focus often sits on <body> while the visual active
-  // ring already moved to another pane. Keep closing panes only while multi.
-  let effective: UiFocusScope = scope
-  if (effective === 'app' && id && isFocusLost() && closable) {
-    effective = 'agent'
-    setUiFocusScope('agent')
-  }
-
-  // Swarm owns ⌘W unless focus is explicitly in the tools tray. Focus often
-  // sits on <body>, the Thread|Swarm chrome, or mis-resolves to `app` while a
-  // sole live agent is on screen — that used to close the window instead of
-  // reseeding the picker.
-  if (id && cliMode && effective !== 'bash' && effective !== 'files' && closable) {
-    setUiFocusScope('agent')
-    return closeActiveAgentTab(id)
-  }
-
-  switch (effective) {
+  switch (action) {
     case 'bash': {
       if (!id) return false
       return closeActiveBash(id)
     }
     case 'files': {
-      if (!session.toolsCollapsed) {
-        session.setToolsCollapsed(true)
-        return true
-      }
-      return false
+      session.setToolsCollapsed(true)
+      return true
     }
     case 'agent': {
       if (!id) return false
+      setUiFocusScope('agent')
       return closeActiveAgentTab(id)
     }
-    case 'app':
-    default: {
-      // Sole pending picker in Swarm: close the window.
-      if (id && cliMode) {
-        if (host?.tabs.length === 1 && host.tabs[0]?.pendingCli) return false
-      }
+    case 'window':
+    default:
       return false
-    }
   }
 }
 

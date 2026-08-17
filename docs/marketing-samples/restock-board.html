@@ -1,0 +1,77 @@
+<!doctype html>
+<meta charset="utf-8" />
+<title>Restock board</title>
+<style>
+  :root {
+    --bg: var(--bg-content, #fcfcfc);
+    --ink: var(--text, #141416);
+    --muted: var(--text-secondary, #5c5c66);
+    --line: var(--border, rgba(20, 20, 28, 0.09));
+    --accent: var(--accent-text, #6b5bc0);
+    --card: var(--bg-raised, #fff);
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 18px 18px 16px;
+    font: 14px/1.45 -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'PingFang SC', sans-serif;
+    color: var(--ink);
+    background: var(--bg);
+  }
+  h1 { margin: 0 0 4px; font-size: 18px; font-weight: 620; letter-spacing: -0.02em; }
+  .hint { margin: 0 0 14px; color: var(--muted); font-size: 12.5px; }
+  .row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+  button {
+    appearance: none;
+    border: 1px solid var(--line);
+    background: var(--card);
+    border-radius: 10px;
+    padding: 10px 10px 12px;
+    text-align: left;
+    cursor: pointer;
+    color: inherit;
+    font: inherit;
+  }
+  button[aria-pressed='true'] {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
+  }
+  button strong { display: block; font-size: 13px; margin-bottom: 4px; }
+  button span { color: var(--muted); font-size: 12px; }
+  .out {
+    margin: 12px 0 0;
+    padding: 10px 12px;
+    border-radius: 10px;
+    background: color-mix(in srgb, var(--accent) 8%, var(--bg));
+    color: var(--ink);
+    font-size: 13px;
+  }
+</style>
+<h1>Restock board</h1>
+<p class="hint">Tap a region. This is an App Clip — a live widget the agent wrote in the thread.</p>
+<div class="row" id="row"></div>
+<p class="out" id="out"></p>
+<script>
+const rows = [
+  { id: 'apac', t: 'APAC', d: 'On track. $31.3k shipped.', next: 'No restock.' },
+  { id: 'amer', t: 'AMER', d: 'WIDGET-A × 200 pending.', next: 'Confirm warehouse today.' },
+  { id: 'emea', t: 'EMEA', d: 'WIDGET-C × 22 short.', next: 'Expedite or drop the SKU.' }
+]
+const row = document.getElementById('row')
+const out = document.getElementById('out')
+function pick(id) {
+  const item = rows.find((r) => r.id === id)
+  row.querySelectorAll('button').forEach((b) => {
+    b.setAttribute('aria-pressed', b.dataset.id === id ? 'true' : 'false')
+  })
+  out.textContent = item.t + ' — ' + item.next
+}
+rows.forEach((item, i) => {
+  const b = document.createElement('button')
+  b.dataset.id = item.id
+  b.innerHTML = '<strong>' + item.t + '</strong><span>' + item.d + '</span>'
+  b.onclick = () => pick(item.id)
+  row.appendChild(b)
+  if (i === 1) pick(item.id)
+})
+</script>

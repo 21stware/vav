@@ -26,9 +26,7 @@ const MODAL_LEAVE_MS = 180
 const EMPTY_ENTER_MS = 1800
 
 /**
- * Ceiling on waiting for async copy (git status) before playing without it.
- * Long enough for a warm `git status`, short enough that a cold repo does not
- * read as a stalled transcript.
+ * Ceiling on waiting for async empty-session copy before playing without it.
  */
 const EMPTY_COPY_HOLD_MS = 300
 

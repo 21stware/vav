@@ -20,6 +20,8 @@ export type TerminalRegistryApi = {
   refreshAllTerminals?(): void
   disposeTerminal(conversationId: string, tabId: string): void
   parkTerminal?(conversationId: string, tabId: string): void
+  pauseTerminalPaint?(conversationId: string, tabId: string): void
+  resumeTerminalPaint?(conversationId: string, tabId: string): void
   markTerminalProcessExited?(tabId: string): void
   resetTerminalForNewProcess?(conversationId: string, tabId: string): void
 }

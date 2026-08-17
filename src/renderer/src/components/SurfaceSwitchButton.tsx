@@ -1,23 +1,14 @@
 import { ArrowLeft, ArrowRight } from 'lucide-react'
-import { useSessionStore, visibleMessages } from '../state/sessionStore'
-import {
-  canSwitchCliSurface,
-  isSoleEmptyCliPicker,
-  requestCliSurface
-} from '../lib/cliSurfaceSwitch'
+import { useSessionStore } from '../state/sessionStore'
+import { requestCliSurface } from '../lib/cliSurfaceSwitch'
 import { isCliSurfaceLocked } from '../lib/cliSurfaceAuthority'
 import { isCompanionSessionShell } from '../lib/windowKind'
 import { keys } from '../lib/platform'
 import { useT } from '../i18n/useT'
 
-export { isSoleEmptyCliPicker }
-
-export function useThreadEmpty(conversationId: string): boolean {
-  return useSessionStore((s) => visibleMessages(s, conversationId).length === 0)
-}
-
 /**
- * → Swarm on the empty Thread; ← Thread only under a single empty Swarm panel.
+ * One destination at a time: → Swarm on Thread, ← Thread on Swarm.
+ * Either side stays clickable in any session state.
  */
 export function SurfaceSwitchButton({
   conversationId,
@@ -33,8 +24,7 @@ export function SurfaceSwitchButton({
   )
 
   if (target === 'swarm' && !swarmEnabled) return null
-  if (!conversationId || locked) return null
-  if (!canSwitchCliSurface(conversationId, target === 'swarm')) return null
+  if (!conversationId) return null
 
   const label = target === 'swarm' ? t('agents.terminalMode') : t('agents.chatMode')
   const hint =
@@ -43,6 +33,7 @@ export function SurfaceSwitchButton({
       : `${t('agents.chatModeHint')} ${keys('⌘⇧V')}`
 
   const onClick = (): void => {
+    if (locked) return
     if (useSessionStore.getState().search.open) {
       useSessionStore.getState().closeSearch()
     }
@@ -50,7 +41,13 @@ export function SurfaceSwitchButton({
   }
 
   return (
-    <button type="button" className="agent-mode-swarm-btn" title={hint} onClick={onClick}>
+    <button
+      type="button"
+      className="agent-mode-swarm-btn"
+      title={hint}
+      disabled={locked}
+      onClick={onClick}
+    >
       {target === 'thread' ? (
         <ArrowLeft size={13} strokeWidth={2} />
       ) : (

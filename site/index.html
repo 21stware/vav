@@ -3,10 +3,10 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>vav — local AI coding agent workstation</title>
+    <title>VAV — local AI agent workbench</title>
     <meta
       name="description"
-      content="Local AI coding agent workstation: watch tools run, edit files on disk, open PDF/PPTX/CSV beside the agent. Data stays on your machine."
+      content="Local-first agent workbench: pick a slide or a cell, ask beside it, render Mermaid and Vega-Lite in the thread, pop out an App Clip, or split Swarm for Claude and Codex."
     />
     <meta
       name="keywords"
@@ -16,30 +16,49 @@
     <link rel="alternate" hreflang="en" href="https://vavapp.com/" />
     <link rel="alternate" hreflang="zh-Hans" href="https://vavapp.com/?lang=zh" />
     <link rel="alternate" hreflang="x-default" href="https://vavapp.com/" />
-    <meta property="og:site_name" content="vav" />
-    <meta property="og:title" content="vav — local AI coding agent workstation" />
+    <meta property="og:site_name" content="VAV" />
+    <meta property="og:title" content="VAV — local AI agent workbench" />
     <meta
       property="og:description"
-      content="Watch the agent work on your machine — files, terminal, and document windows."
+      content="Pick a slide, ask beside it. Mermaid, Vega-Lite, App Clips, and Swarm."
     />
     <meta property="og:url" content="https://vavapp.com/" />
     <meta property="og:image" content="https://vavapp.com/assets/og.png" />
     <meta property="og:image:width" content="1200" />
     <meta property="og:image:height" content="630" />
-    <meta property="og:image:alt" content="vav coding agent workstation" />
+    <meta property="og:image:alt" content="VAV agent workbench" />
     <meta property="og:type" content="website" />
     <meta property="og:locale" content="en_US" />
     <meta property="og:locale:alternate" content="zh_CN" />
     <meta name="twitter:card" content="summary_large_image" />
-    <meta name="twitter:title" content="vav — local AI coding agent workstation" />
+    <meta name="twitter:title" content="VAV — local AI agent workbench" />
     <meta
       name="twitter:description"
-      content="Watch the agent work on your machine — files, terminal, and document windows."
+      content="Pick a slide, ask beside it. Mermaid, Vega-Lite, App Clips, and Swarm."
     />
     <meta name="twitter:image" content="https://vavapp.com/assets/og.png" />
-    <meta name="theme-color" content="#eceef2" />
-    <link rel="icon" type="image/png" href="assets/favicon.png?v=1.4.9" />
-    <link rel="apple-touch-icon" href="assets/favicon.png?v=1.4.9" />
+    <meta name="theme-color" content="#ececee" />
+    <script>
+      (function () {
+        try {
+          var stored = localStorage.getItem('vav.site.theme')
+          var theme =
+            stored === 'dark' || stored === 'light'
+              ? stored
+              : window.matchMedia('(prefers-color-scheme: dark)').matches
+                ? 'dark'
+                : 'light'
+          document.documentElement.dataset.theme = theme
+          document.documentElement.style.colorScheme = theme
+          var meta = document.querySelector('meta[name="theme-color"]')
+          if (meta) meta.setAttribute('content', theme === 'dark' ? '#121213' : '#ececee')
+        } catch (e) {
+          document.documentElement.dataset.theme = 'light'
+        }
+      })()
+    </script>
+    <link rel="icon" type="image/png" href="assets/favicon.png?v=1.10.0" />
+    <link rel="apple-touch-icon" href="assets/favicon.png?v=1.10.0" />
     <link
       rel="preload"
       as="font"
@@ -49,18 +68,11 @@
     />
     <link
       rel="preload"
-      as="font"
-      type="font/woff2"
-      href="assets/fonts/instrument-serif-italic-latin.woff2"
-      crossorigin
-    />
-    <link
-      rel="preload"
       as="image"
       type="image/avif"
       href="assets/screenshot.avif"
       imagesrcset="assets/screenshot-1440w.avif 1440w, assets/screenshot.avif 2880w"
-      imagesizes="100vw"
+      imagesizes="(min-width: 1120px) 1120px, 92vw"
       fetchpriority="high"
     />
     <link rel="stylesheet" href="styles.css" />
@@ -72,14 +84,14 @@
       {
         "@context": "https://schema.org",
         "@type": "SoftwareApplication",
-        "name": "vav",
+        "name": "VAV",
         "applicationCategory": "DeveloperApplication",
         "operatingSystem": "macOS, Windows",
         "url": "https://vavapp.com/",
         "downloadUrl": "https://github.com/21stware/vav/releases",
         "softwareHelp": "https://github.com/21stware/vav#readme",
         "screenshot": "https://vavapp.com/assets/og.png",
-        "description": "Local AI coding agent workstation: watch tools run, edit files on disk, open PDF/PPTX/CSV beside the agent. Data stays on your machine.",
+        "description": "Local-first agent workbench: pick a slide or a cell, ask beside it, render Mermaid and Vega-Lite in the thread, pop out an App Clip, or split Swarm for Claude and Codex.",
         "inLanguage": ["en", "zh-Hans"],
         "author": { "@type": "Organization", "name": "21stware", "url": "https://21stware.com" },
         "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" }
@@ -93,57 +105,43 @@
 
     <header class="top" id="top">
       <nav class="nav" aria-label="Main">
-        <a class="nav-brand" href="#top" aria-label="vav">
-          <img src="assets/favicon.png?v=1.4.9" alt="" width="26" height="26" />
-          <span class="brand-name">vav</span>
+        <a class="nav-brand" href="#top" aria-label="VAV">
+          <img src="assets/favicon.png?v=1.10.0" alt="" width="26" height="26" />
+          <span class="brand-name">VAV</span>
         </a>
-        <a class="nav-secondary" href="#core" data-i18n="nav.core">Why vav</a>
+        <a class="nav-secondary" href="#core" data-i18n="nav.core">Why VAV</a>
         <a class="nav-secondary" href="#files" data-i18n="nav.files">Files</a>
         <a class="nav-secondary" href="#formats" data-i18n="nav.formats">Formats</a>
         <a href="#download" data-i18n="nav.download">Download</a>
         <a href="https://github.com/21stware/vav">GitHub</a>
-        <div class="lang" role="group" aria-label="Language">
-          <button type="button" class="lang-btn" data-lang="en" aria-pressed="true">EN</button>
-          <button type="button" class="lang-btn" data-lang="zh" aria-pressed="false">中文</button>
+        <div class="nav-end">
+          <div class="theme" role="group" aria-label="Appearance">
+            <button type="button" class="theme-btn" data-theme-set="light" aria-pressed="true">
+              Light
+            </button>
+            <button type="button" class="theme-btn" data-theme-set="dark" aria-pressed="false">
+              Dark
+            </button>
+          </div>
+          <div class="lang" role="group" aria-label="Language">
+            <button type="button" class="lang-btn" data-lang="en" aria-pressed="true">EN</button>
+            <button type="button" class="lang-btn" data-lang="zh" aria-pressed="false">中文</button>
+          </div>
         </div>
       </nav>
     </header>
 
     <main id="main" tabindex="-1">
       <section class="hero">
-        <div class="hero-stage" aria-hidden="true">
-          <picture>
-            <source
-              type="image/avif"
-              srcset="assets/screenshot-1440w.avif 1440w, assets/screenshot.avif 2880w"
-              sizes="100vw"
-            />
-            <source
-              type="image/webp"
-              srcset="assets/screenshot-1440w.webp 1440w, assets/screenshot.webp 2880w"
-              sizes="100vw"
-            />
-            <img
-              class="hero-shot"
-              src="assets/screenshot.png"
-              alt=""
-              width="2880"
-              height="1676"
-              fetchpriority="high"
-              decoding="async"
-            />
-          </picture>
-          <div class="hero-veil"></div>
-        </div>
-
         <div class="hero-copy">
           <p class="brand-lockup">
-            <img class="brand-glyph" src="assets/favicon.png?v=1.4.9" alt="" width="56" height="56" />
-            <span class="brand-name">vav</span>
+            <img class="brand-glyph" src="assets/favicon.png?v=1.10.0" alt="" width="56" height="56" />
+            <span class="brand-name">VAV</span>
           </p>
-          <h1 class="hero-title" data-i18n="hero.title">Watch the agent work.</h1>
+          <h1 class="hero-title" data-i18n="hero.title">Your agents' workbench.</h1>
           <p class="hero-lead" data-i18n="hero.lead">
-            Local coding workstation — tools, files, and terminal on your machine.
+            Pick a slide, a cell, a node — ask beside it. Charts and App Clips render in the thread.
+            Swarm puts Claude next to Codex.
           </p>
           <div class="hero-cta">
             <a class="btn primary" href="#download" data-i18n="hero.ctaDownload">Download</a>
@@ -152,52 +150,109 @@
             >
           </div>
         </div>
+
+        <figure class="hero-frame">
+          <picture class="shot-light">
+            <source
+              type="image/avif"
+              srcset="assets/screenshot-1440w.avif 1440w, assets/screenshot.avif 2880w"
+              sizes="(min-width: 1120px) 1120px, 92vw"
+            />
+            <source
+              type="image/webp"
+              srcset="assets/screenshot-1440w.webp 1440w, assets/screenshot.webp 2880w"
+              sizes="(min-width: 1120px) 1120px, 92vw"
+            />
+            <img
+              class="hero-shot"
+              src="assets/screenshot.png"
+              alt="VAV session: ask over a folder, see the write land"
+              width="2880"
+              height="1676"
+              fetchpriority="high"
+              decoding="async"
+            />
+          </picture>
+          <picture class="shot-dark">
+            <source
+              type="image/avif"
+              srcset="assets/screenshot-dark-1440w.avif 1440w, assets/screenshot-dark.avif 2880w"
+              sizes="(min-width: 1120px) 1120px, 92vw"
+            />
+            <source
+              type="image/webp"
+              srcset="assets/screenshot-dark-1440w.webp 1440w, assets/screenshot-dark.webp 2880w"
+              sizes="(min-width: 1120px) 1120px, 92vw"
+            />
+            <img
+              class="hero-shot"
+              src="assets/screenshot-dark.png"
+              alt="VAV session: ask over a folder, see the write land"
+              width="2880"
+              height="1676"
+              decoding="async"
+            />
+          </picture>
+        </figure>
       </section>
 
       <section class="band core" id="core">
-        <h2 class="band-title reveal" data-i18n="core.title">Built for how agents work</h2>
+        <h2 class="band-title reveal" data-i18n="core.title">The loops that close</h2>
         <p class="band-lead reveal delay-1" data-i18n="core.lead">
-          Not a chat box with a file picker — five habits of a real workstation, each shown as it
-          runs.
+          Not a chat box with a file picker — pick on the document, draw in the thread, pop out a
+          clip, or split two CLIs.
         </p>
 
         <div class="feature-stack">
           <article class="feature reveal">
             <div class="feature-copy">
               <span class="feature-index">01</span>
-              <h3 data-i18n="core.viewerLabel">Ask &amp; edit</h3>
-              <p data-i18n="core.viewerBody">
-                Open a file in its own pane — mind map, diagram, sheet, or deck — and ask beside it.
-                Select what matters, get an answer grounded in the file, edit without leaving the
-                window.
+              <h3 data-i18n="core.officeLabel">Pick on the Office file</h3>
+              <p data-i18n="core.officeBody">
+                Open a deck, a sheet, or a brief. Click the title, a card, a cell — then ask. The
+                agent writes the same path on disk. Not a Word-style canvas.
               </p>
-              <p class="feature-note" data-i18n="core.viewerNote">
-                Preview + agent share one surface. The file stays the source of truth.
+              <p class="feature-note" data-i18n="core.officeNote">
+                Selection is the prompt. The file stays the source of truth.
               </p>
             </div>
             <figure class="feature-media">
-              <picture>
+              <picture class="shot-light">
                 <source
                   type="image/avif"
-                  srcset="
-                    assets/screenshot-mindmap-1440w.avif 1440w,
-                    assets/screenshot-mindmap.avif       2880w
-                  "
+                  srcset="assets/screenshot-pptx-1280w.avif 1280w, assets/screenshot-pptx.avif 2560w"
                   sizes="(min-width: 1200px) 1104px, 100vw"
                 />
                 <source
                   type="image/webp"
-                  srcset="
-                    assets/screenshot-mindmap-1440w.webp 1440w,
-                    assets/screenshot-mindmap.webp       2880w
-                  "
+                  srcset="assets/screenshot-pptx-1280w.webp 1280w, assets/screenshot-pptx.webp 2560w"
                   sizes="(min-width: 1200px) 1104px, 100vw"
                 />
                 <img
-                  src="assets/screenshot-mindmap.png"
-                  alt="vav mind map file with agent asking about priorities"
-                  width="2880"
-                  height="1676"
+                  src="assets/screenshot-pptx.png"
+                  alt="VAV PowerPoint window: selected slide card, agent editing the same file"
+                  width="2560"
+                  height="1640"
+                  loading="lazy"
+                  decoding="async"
+                />
+              </picture>
+              <picture class="shot-dark">
+                <source
+                  type="image/avif"
+                  srcset="assets/screenshot-pptx-dark-1280w.avif 1280w, assets/screenshot-pptx-dark.avif 2560w"
+                  sizes="(min-width: 1200px) 1104px, 100vw"
+                />
+                <source
+                  type="image/webp"
+                  srcset="assets/screenshot-pptx-dark-1280w.webp 1280w, assets/screenshot-pptx-dark.webp 2560w"
+                  sizes="(min-width: 1200px) 1104px, 100vw"
+                />
+                <img
+                  src="assets/screenshot-pptx-dark.png"
+                  alt="VAV PowerPoint window: selected slide card, agent editing the same file"
+                  width="2560"
+                  height="1640"
                   loading="lazy"
                   decoding="async"
                 />
@@ -208,37 +263,62 @@
           <article class="feature reveal">
             <div class="feature-copy">
               <span class="feature-index">02</span>
-              <h3 data-i18n="core.fsLabel">Agent + filesystem</h3>
-              <p data-i18n="core.fsBody">
-                The agent reads, searches, and writes real paths on disk. Tool cards show every
-                step — Read, search, Write — so you watch the change land in the repo you already
-                have open.
+              <h3 data-i18n="core.chartsLabel">Mermaid + Vega-Lite</h3>
+              <p data-i18n="core.chartsBody">
+                Flows and charts render in the thread — Mermaid for the path, Vega-Lite for the
+                numbers. Copy, download, or open the source file beside the chat.
               </p>
-              <p class="feature-note" data-i18n-html="core.fsNote">
-                Not a hypothetical plan. A write that hits <code>src/…</code> on your machine.
+              <p class="feature-note" data-i18n="core.chartsNote">
+                Same turn: a flowchart and a bar chart, both live.
               </p>
             </div>
             <figure class="feature-media">
-              <picture>
+              <picture class="shot-light">
                 <source
                   type="image/avif"
                   srcset="
-                    assets/screenshot-files-1440w.avif 1440w,
-                    assets/screenshot-files.avif       2880w
+                    assets/screenshot-diagrams-1440w.avif 1440w,
+                    assets/screenshot-diagrams.avif       2880w
                   "
                   sizes="(min-width: 1200px) 1104px, 100vw"
                 />
                 <source
                   type="image/webp"
                   srcset="
-                    assets/screenshot-files-1440w.webp 1440w,
-                    assets/screenshot-files.webp       2880w
+                    assets/screenshot-diagrams-1440w.webp 1440w,
+                    assets/screenshot-diagrams.webp       2880w
                   "
                   sizes="(min-width: 1200px) 1104px, 100vw"
                 />
                 <img
-                  src="assets/screenshot-files.png"
-                  alt="vav agent reading, searching, and writing project files with tool cards"
+                  src="assets/screenshot-diagrams.png"
+                  alt="VAV chat with a Mermaid flow and a Vega-Lite chart in the same turn"
+                  width="2880"
+                  height="1676"
+                  loading="lazy"
+                  decoding="async"
+                />
+              </picture>
+              <picture class="shot-dark">
+                <source
+                  type="image/avif"
+                  srcset="
+                    assets/screenshot-diagrams-dark-1440w.avif 1440w,
+                    assets/screenshot-diagrams-dark.avif       2880w
+                  "
+                  sizes="(min-width: 1200px) 1104px, 100vw"
+                />
+                <source
+                  type="image/webp"
+                  srcset="
+                    assets/screenshot-diagrams-dark-1440w.webp 1440w,
+                    assets/screenshot-diagrams-dark.webp       2880w
+                  "
+                  sizes="(min-width: 1200px) 1104px, 100vw"
+                />
+                <img
+                  src="assets/screenshot-diagrams-dark.png"
+                  alt="VAV chat with a Mermaid flow and a Vega-Lite chart in the same turn"
                   width="2880"
                   height="1676"
                   loading="lazy"
@@ -248,28 +328,39 @@
             </figure>
           </article>
 
-          <article class="feature feature-portrait reveal">
+          <article class="feature feature-companion reveal">
             <div class="feature-copy">
               <span class="feature-index">03</span>
-              <h3 data-i18n-html="core.hotkeyLabel"><kbd>⌘⇧↵</kbd> quick ask</h3>
-              <p data-i18n-html="core.hotkeyBody">
-                From anywhere on your Mac, <kbd>⌘⇧↵</kbd> pops a floating session. Ask one thing —
-                a path join, a regex, a naming call — get the answer, close it. No full workspace
-                ceremony.
+              <h3 data-i18n="core.clipLabel">App Clip</h3>
+              <p data-i18n-html="core.clipBody">
+                The agent can write a small interactive app in the thread — a board, a calculator, a
+                teaching aid. Pop it out with View in window. It is a real widget, not a screenshot.
               </p>
-              <p class="feature-note" data-i18n="core.hotkeyNote">
-                Built for the interrupt: short, local, done.
+              <p class="feature-note" data-i18n-html="core.clipNote">
+                <code>```app</code> in chat, or a thin overlay from an HTML file.
               </p>
             </div>
-            <figure class="feature-media feature-media-portrait">
-              <picture>
-                <source type="image/avif" srcset="assets/screenshot-quick-ask.avif" />
-                <source type="image/webp" srcset="assets/screenshot-quick-ask.webp" />
+            <figure class="feature-media feature-media-clip">
+              <picture class="shot-light">
+                <source type="image/avif" srcset="assets/screenshot-clip.avif" />
+                <source type="image/webp" srcset="assets/screenshot-clip.webp" />
                 <img
-                  src="assets/screenshot-quick-ask.png"
-                  alt="vav floating quick-ask session"
-                  width="760"
-                  height="1520"
+                  src="assets/screenshot-clip.png"
+                  alt="VAV App Clip: interactive restock board popped out of chat"
+                  width="720"
+                  height="640"
+                  loading="lazy"
+                  decoding="async"
+                />
+              </picture>
+              <picture class="shot-dark">
+                <source type="image/avif" srcset="assets/screenshot-clip-dark.avif" />
+                <source type="image/webp" srcset="assets/screenshot-clip-dark.webp" />
+                <img
+                  src="assets/screenshot-clip-dark.png"
+                  alt="VAV App Clip: interactive restock board popped out of chat"
+                  width="720"
+                  height="640"
                   loading="lazy"
                   decoding="async"
                 />
@@ -280,36 +371,62 @@
           <article class="feature reveal">
             <div class="feature-copy">
               <span class="feature-index">04</span>
-              <h3 data-i18n="core.skillLabel">Skills on disk</h3>
-              <p data-i18n="core.skillBody">
-                Load a skill, then write the artifact into the project — a one-page PDF report, a
-                deck tweak, a sheet change. The tool trail stays in the transcript.
+              <h3 data-i18n="core.swarmLabel">Swarm</h3>
+              <p data-i18n="core.swarmBody">
+                Flip the surface and split the pane. Claude on the left, Codex on the right — each a
+                real TUI in its own column. ⌘D splits; arrow keys move.
               </p>
-              <p class="feature-note" data-i18n-html="core.skillNote">
-                <code>load_skill</code> → <code>Write file</code> — from chat to a real path.
+              <p class="feature-note" data-i18n="core.swarmNote">
+                Optional under Settings → CLI Agents. Off until you want it.
               </p>
             </div>
             <figure class="feature-media">
-              <picture>
+              <picture class="shot-light">
                 <source
                   type="image/avif"
                   srcset="
-                    assets/screenshot-skill-1440w.avif 1440w,
-                    assets/screenshot-skill.avif       2880w
+                    assets/screenshot-swarm-1440w.avif 1440w,
+                    assets/screenshot-swarm.avif       2880w
                   "
                   sizes="(min-width: 1200px) 1104px, 100vw"
                 />
                 <source
                   type="image/webp"
                   srcset="
-                    assets/screenshot-skill-1440w.webp 1440w,
-                    assets/screenshot-skill.webp       2880w
+                    assets/screenshot-swarm-1440w.webp 1440w,
+                    assets/screenshot-swarm.webp       2880w
                   "
                   sizes="(min-width: 1200px) 1104px, 100vw"
                 />
                 <img
-                  src="assets/screenshot-skill.png"
-                  alt="vav agent loading the PDF skill and writing docs/ops-q3.pdf"
+                  src="assets/screenshot-swarm.png"
+                  alt="VAV Swarm: two CLI agent panes side by side"
+                  width="2880"
+                  height="1676"
+                  loading="lazy"
+                  decoding="async"
+                />
+              </picture>
+              <picture class="shot-dark">
+                <source
+                  type="image/avif"
+                  srcset="
+                    assets/screenshot-swarm-dark-1440w.avif 1440w,
+                    assets/screenshot-swarm-dark.avif       2880w
+                  "
+                  sizes="(min-width: 1200px) 1104px, 100vw"
+                />
+                <source
+                  type="image/webp"
+                  srcset="
+                    assets/screenshot-swarm-dark-1440w.webp 1440w,
+                    assets/screenshot-swarm-dark.webp       2880w
+                  "
+                  sizes="(min-width: 1200px) 1104px, 100vw"
+                />
+                <img
+                  src="assets/screenshot-swarm-dark.png"
+                  alt="VAV Swarm: two CLI agent panes side by side"
                   width="2880"
                   height="1676"
                   loading="lazy"
@@ -319,42 +436,39 @@
             </figure>
           </article>
 
-          <article class="feature reveal">
+          <article class="feature feature-companion reveal" id="quick-ask">
             <div class="feature-copy">
               <span class="feature-index">05</span>
-              <h3 data-i18n="core.bashLabel">Bash agent</h3>
-              <p data-i18n="core.bashBody">
-                Sticky PTY tabs under the chat — the agent can drive real shell commands while you
-                keep the same terminal. Run, inspect, approve; you stay in control.
+              <h3 data-i18n-html="core.hotkeyLabel"><kbd>⌘⇧↵</kbd> Quick Ask</h3>
+              <p data-i18n-html="core.hotkeyBody">
+                From anywhere on your Mac, <kbd>⌘⇧↵</kbd> opens a narrow companion column. Ask one
+                thing — a path join, a regex, a name — get the answer, close it. No full workspace.
               </p>
-              <p class="feature-note" data-i18n="core.bashNote">
-                Same cwd as the session. Same shell you already trust. Folder dock sits beside the
-                terminal when you need the tree.
+              <p class="feature-note" data-i18n="core.hotkeyNote">
+                Built for the interrupt: short, local, done.
               </p>
             </div>
-            <figure class="feature-media">
-              <picture>
-                <source
-                  type="image/avif"
-                  srcset="
-                    assets/screenshot-terminal-1440w.avif 1440w,
-                    assets/screenshot-terminal.avif       2880w
-                  "
-                  sizes="(min-width: 1200px) 1104px, 100vw"
-                />
-                <source
-                  type="image/webp"
-                  srcset="
-                    assets/screenshot-terminal-1440w.webp 1440w,
-                    assets/screenshot-terminal.webp       2880w
-                  "
-                  sizes="(min-width: 1200px) 1104px, 100vw"
-                />
+            <figure class="feature-media feature-media-companion">
+              <picture class="shot-light">
+                <source type="image/avif" srcset="assets/screenshot-quick-ask.avif" />
+                <source type="image/webp" srcset="assets/screenshot-quick-ask.webp" />
                 <img
-                  src="assets/screenshot-terminal.png"
-                  alt="vav chat with sticky bash terminal and folder dock below"
-                  width="2880"
-                  height="1676"
+                  src="assets/screenshot-quick-ask.png"
+                  alt="VAV Quick Ask companion window"
+                  width="800"
+                  height="1520"
+                  loading="lazy"
+                  decoding="async"
+                />
+              </picture>
+              <picture class="shot-dark">
+                <source type="image/avif" srcset="assets/screenshot-quick-ask-dark.avif" />
+                <source type="image/webp" srcset="assets/screenshot-quick-ask-dark.webp" />
+                <img
+                  src="assets/screenshot-quick-ask-dark.png"
+                  alt="VAV Quick Ask companion window"
+                  width="800"
+                  height="1520"
                   loading="lazy"
                   decoding="async"
                 />
@@ -368,13 +482,61 @@
         <div class="files-head">
           <h2 class="band-title reveal" data-i18n="files.title">Open any document window</h2>
           <p class="band-lead reveal delay-1" data-i18n="files.lead">
-            PDF, decks, sheets, Markdown — preview on one side, agent on the other.
+            Mermaid source, PDF, decks, sheets, Markdown — preview on one side, agent on the other.
           </p>
         </div>
 
         <div class="files-rail" tabindex="0" aria-label="Document window gallery">
           <figure class="file-shot reveal">
-            <picture>
+            <picture class="shot-light">
+              <source
+                type="image/avif"
+                srcset="assets/screenshot-mermaid-1280w.avif 1280w, assets/screenshot-mermaid.avif 2560w"
+                sizes="(min-width: 1156px) 1040px, 90vw"
+              />
+              <source
+                type="image/webp"
+                srcset="assets/screenshot-mermaid-1280w.webp 1280w, assets/screenshot-mermaid.webp 2560w"
+                sizes="(min-width: 1156px) 1040px, 90vw"
+              />
+              <img
+                src="assets/screenshot-mermaid.png"
+                alt="VAV Mermaid file window with pick-to-ask"
+                width="2560"
+                height="1640"
+                loading="lazy"
+                decoding="async"
+              />
+            </picture>
+              <picture class="shot-dark">
+              <source
+                type="image/avif"
+                srcset="assets/screenshot-mermaid-dark-1280w.avif 1280w, assets/screenshot-mermaid-dark.avif 2560w"
+                sizes="(min-width: 1156px) 1040px, 90vw"
+              />
+              <source
+                type="image/webp"
+                srcset="assets/screenshot-mermaid-dark-1280w.webp 1280w, assets/screenshot-mermaid-dark.webp 2560w"
+                sizes="(min-width: 1156px) 1040px, 90vw"
+              />
+              <img
+                src="assets/screenshot-mermaid-dark.png"
+                alt="VAV Mermaid file window with pick-to-ask"
+                width="2560"
+                height="1640"
+                loading="lazy"
+                decoding="async"
+              />
+            </picture>
+            <figcaption>
+              <span class="file-label" data-i18n="files.mmdLabel">Mermaid file</span>
+              <span data-i18n="files.mmdCaption"
+                >Open the .mmd as a canvas, pick a node, ask about the failure branch.</span
+              >
+            </figcaption>
+          </figure>
+          <figure class="file-shot reveal">
+            <picture class="shot-light">
               <source
                 type="image/avif"
                 srcset="assets/screenshot-pdf-1280w.avif 1280w, assets/screenshot-pdf.avif 2560w"
@@ -394,6 +556,26 @@
                 decoding="async"
               />
             </picture>
+              <picture class="shot-dark">
+              <source
+                type="image/avif"
+                srcset="assets/screenshot-pdf-dark-1280w.avif 1280w, assets/screenshot-pdf-dark.avif 2560w"
+                sizes="(min-width: 1156px) 1040px, 90vw"
+              />
+              <source
+                type="image/webp"
+                srcset="assets/screenshot-pdf-dark-1280w.webp 1280w, assets/screenshot-pdf-dark.webp 2560w"
+                sizes="(min-width: 1156px) 1040px, 90vw"
+              />
+              <img
+                src="assets/screenshot-pdf-dark.png"
+                alt="vav PDF window with summary and Mermaid"
+                width="2560"
+                height="1640"
+                loading="lazy"
+                decoding="async"
+              />
+            </picture>
             <figcaption>
               <span class="file-label" data-i18n="files.pdfLabel">PDF</span>
               <span data-i18n="files.pdfCaption"
@@ -403,7 +585,7 @@
             </figcaption>
           </figure>
           <figure class="file-shot reveal delay-1">
-            <picture>
+            <picture class="shot-light">
               <source
                 type="image/avif"
                 srcset="assets/screenshot-pptx-1280w.avif 1280w, assets/screenshot-pptx.avif 2560w"
@@ -423,6 +605,26 @@
                 decoding="async"
               />
             </picture>
+              <picture class="shot-dark">
+              <source
+                type="image/avif"
+                srcset="assets/screenshot-pptx-dark-1280w.avif 1280w, assets/screenshot-pptx-dark.avif 2560w"
+                sizes="(min-width: 1156px) 1040px, 90vw"
+              />
+              <source
+                type="image/webp"
+                srcset="assets/screenshot-pptx-dark-1280w.webp 1280w, assets/screenshot-pptx-dark.webp 2560w"
+                sizes="(min-width: 1156px) 1040px, 90vw"
+              />
+              <img
+                src="assets/screenshot-pptx-dark.png"
+                alt="vav PowerPoint window with edit tool calls"
+                width="2560"
+                height="1640"
+                loading="lazy"
+                decoding="async"
+              />
+            </picture>
             <figcaption>
               <span class="file-label" data-i18n="files.pptxLabel">PPTX</span>
               <span data-i18n="files.pptxCaption"
@@ -432,7 +634,7 @@
             </figcaption>
           </figure>
           <figure class="file-shot reveal">
-            <picture>
+            <picture class="shot-light">
               <source
                 type="image/avif"
                 srcset="assets/screenshot-csv-1280w.avif 1280w, assets/screenshot-csv.avif 2560w"
@@ -452,6 +654,26 @@
                 decoding="async"
               />
             </picture>
+              <picture class="shot-dark">
+              <source
+                type="image/avif"
+                srcset="assets/screenshot-csv-dark-1280w.avif 1280w, assets/screenshot-csv-dark.avif 2560w"
+                sizes="(min-width: 1156px) 1040px, 90vw"
+              />
+              <source
+                type="image/webp"
+                srcset="assets/screenshot-csv-dark-1280w.webp 1280w, assets/screenshot-csv-dark.webp 2560w"
+                sizes="(min-width: 1156px) 1040px, 90vw"
+              />
+              <img
+                src="assets/screenshot-csv-dark.png"
+                alt="vav CSV window with Vega-Lite and PDF report"
+                width="2560"
+                height="1640"
+                loading="lazy"
+                decoding="async"
+              />
+            </picture>
             <figcaption>
               <span class="file-label" data-i18n="files.csvLabel">CSV / TSV</span>
               <span data-i18n="files.csvCaption"
@@ -461,7 +683,7 @@
             </figcaption>
           </figure>
           <figure class="file-shot reveal delay-1">
-            <picture>
+            <picture class="shot-light">
               <source
                 type="image/avif"
                 srcset="assets/screenshot-xlsx-1280w.avif 1280w, assets/screenshot-xlsx.avif 2560w"
@@ -481,6 +703,26 @@
                 decoding="async"
               />
             </picture>
+              <picture class="shot-dark">
+              <source
+                type="image/avif"
+                srcset="assets/screenshot-xlsx-dark-1280w.avif 1280w, assets/screenshot-xlsx-dark.avif 2560w"
+                sizes="(min-width: 1156px) 1040px, 90vw"
+              />
+              <source
+                type="image/webp"
+                srcset="assets/screenshot-xlsx-dark-1280w.webp 1280w, assets/screenshot-xlsx-dark.webp 2560w"
+                sizes="(min-width: 1156px) 1040px, 90vw"
+              />
+              <img
+                src="assets/screenshot-xlsx-dark.png"
+                alt="vav Excel window with agent editing"
+                width="2560"
+                height="1640"
+                loading="lazy"
+                decoding="async"
+              />
+            </picture>
             <figcaption>
               <span class="file-label" data-i18n="files.xlsxLabel">DOCX / XLSX</span>
               <span data-i18n="files.xlsxCaption"
@@ -490,7 +732,7 @@
             </figcaption>
           </figure>
           <figure class="file-shot reveal">
-            <picture>
+            <picture class="shot-light">
               <source
                 type="image/avif"
                 srcset="assets/screenshot-md-1280w.avif 1280w, assets/screenshot-md.avif 2560w"
@@ -510,6 +752,26 @@
                 decoding="async"
               />
             </picture>
+              <picture class="shot-dark">
+              <source
+                type="image/avif"
+                srcset="assets/screenshot-md-dark-1280w.avif 1280w, assets/screenshot-md-dark.avif 2560w"
+                sizes="(min-width: 1156px) 1040px, 90vw"
+              />
+              <source
+                type="image/webp"
+                srcset="assets/screenshot-md-dark-1280w.webp 1280w, assets/screenshot-md-dark.webp 2560w"
+                sizes="(min-width: 1156px) 1040px, 90vw"
+              />
+              <img
+                src="assets/screenshot-md-dark.png"
+                alt="vav Markdown window with read and write tools"
+                width="2560"
+                height="1640"
+                loading="lazy"
+                decoding="async"
+              />
+            </picture>
             <figcaption>
               <span class="file-label" data-i18n="files.mdLabel">Markdown</span>
               <span data-i18n="files.mdCaption"
@@ -519,7 +781,7 @@
             </figcaption>
           </figure>
           <figure class="file-shot reveal delay-1">
-            <picture>
+            <picture class="shot-light">
               <source
                 type="image/avif"
                 srcset="
@@ -538,6 +800,32 @@
               />
               <img
                 src="assets/screenshot-diagrams.png"
+                alt="vav chat with Mermaid diagram and Vega-Lite chart"
+                width="2880"
+                height="1676"
+                loading="lazy"
+                decoding="async"
+              />
+            </picture>
+              <picture class="shot-dark">
+              <source
+                type="image/avif"
+                srcset="
+                  assets/screenshot-diagrams-dark-1440w.avif 1440w,
+                  assets/screenshot-diagrams-dark.avif       2880w
+                "
+                sizes="(min-width: 1156px) 1040px, 90vw"
+              />
+              <source
+                type="image/webp"
+                srcset="
+                  assets/screenshot-diagrams-dark-1440w.webp 1440w,
+                  assets/screenshot-diagrams-dark.webp       2880w
+                "
+                sizes="(min-width: 1156px) 1040px, 90vw"
+              />
+              <img
+                src="assets/screenshot-diagrams-dark.png"
                 alt="vav chat with Mermaid diagram and Vega-Lite chart"
                 width="2880"
                 height="1676"
@@ -785,7 +1073,7 @@
       </section>
 
       <section class="band download" id="download">
-        <h2 class="band-title reveal" data-i18n="download.title">Get vav</h2>
+        <h2 class="band-title reveal" data-i18n="download.title">Get VAV</h2>
         <p class="band-lead reveal delay-1" data-i18n="download.lead">
           Latest GitHub Release builds. Follow install notes if your OS warns on open.
         </p>
@@ -793,14 +1081,14 @@
           <a
             class="btn primary"
             id="download-mac"
-            href="https://github.com/21stware/vav/releases/download/v1.4.9/VAV-1.4.9-macos-arm64.dmg"
+            href="https://github.com/21stware/vav/releases/latest"
             ><span data-i18n="download.mac">macOS · Apple Silicon</span
             ><span class="btn-size" data-size-for="mac"></span></a
           >
           <a
             class="btn primary"
             id="download-win"
-            href="https://github.com/21stware/vav/releases/download/v1.4.9/VAV-1.4.9-windows-x64-setup.exe"
+            href="https://github.com/21stware/vav/releases/latest"
             ><span data-i18n="download.win">Windows · x64</span
             ><span class="btn-size" data-size-for="win"></span></a
           >
@@ -828,7 +1116,7 @@
 
     <footer class="foot">
       <div class="foot-brand">
-        <span class="brand-name sm">vav</span>
+        <span class="brand-name sm">VAV</span>
         <span>21stware</span>
       </div>
       <p class="foot-note" data-i18n-html="footer.note">

@@ -11,6 +11,7 @@ import type {
   GithubActionsPage,
   GithubActionsScope,
   GithubRelease,
+  GithubReleaseAsset,
   GithubReleasesPage,
   GithubCheck,
   GithubCheckConclusion,
@@ -924,6 +925,14 @@ export async function listGithubActions(
   }
 }
 
+type GhReleaseAsset = {
+  id?: number
+  name?: string
+  size?: number
+  state?: string
+  browser_download_url?: string
+}
+
 type GhRelease = {
   id: number
   tag_name?: string
@@ -936,6 +945,21 @@ type GhRelease = {
   author?: GhUser | null
   published_at?: string | null
   created_at?: string
+  assets?: GhReleaseAsset[]
+}
+
+function mapReleaseAsset(row: GhReleaseAsset): GithubReleaseAsset | null {
+  const id = row.id
+  const name = row.name?.trim()
+  const url = row.browser_download_url?.trim()
+  if (!id || !name || !url) return null
+  if (row.state && row.state !== 'uploaded') return null
+  return {
+    id,
+    name,
+    size: typeof row.size === 'number' && Number.isFinite(row.size) ? Math.max(0, row.size) : 0,
+    browserDownloadUrl: url
+  }
 }
 
 function mapRelease(row: GhRelease): GithubRelease {
@@ -950,7 +974,11 @@ function mapRelease(row: GhRelease): GithubRelease {
     author: mapUser(row.author),
     publishedAt: row.published_at ?? null,
     createdAt: row.created_at ?? '',
-    body: row.body ?? null
+    body: row.body ?? null,
+    assets: (row.assets ?? []).flatMap((asset) => {
+      const mapped = mapReleaseAsset(asset)
+      return mapped ? [mapped] : []
+    })
   }
 }
 

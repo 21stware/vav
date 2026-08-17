@@ -31,6 +31,7 @@ export interface CloudflareConfig {
   compatibilityDate: string | null
   main: string | null
   pagesOutputDir: string | null
+  assetsDir: string | null
   bindings: CloudflareBinding[]
   environments: CloudflareEnvironment[]
 }
@@ -58,14 +59,36 @@ export interface CloudflareRemote {
   recent: CloudflareDeployment[]
 }
 
+export type CloudflareTokenSource = 'settings' | 'env' | 'wrangler' | null
+
 export interface CloudflareStatus {
   workdir: string
   config: CloudflareConfig | null
   extraConfigs: number
   ciHints: CloudflareCiHint[]
   tokenPresent: boolean
+  tokenSource: CloudflareTokenSource
   accountId: string | null
   remote: CloudflareRemote | null
   remoteError: string | null
   remoteCode: CloudflareErrorCode | null
+}
+
+export interface CloudflareStatusQuery {
+  /** When false, skip the Cloudflare API and return local wrangler / CI only. */
+  remote?: boolean
+}
+
+/** Latest first, de-duplicated. Empty when the remote project was not resolved. */
+export function collectCloudflareDeployments(status: CloudflareStatus): CloudflareDeployment[] {
+  const remote = status.remote
+  if (!remote) return []
+  const seen = new Set<string>()
+  const out: CloudflareDeployment[] = []
+  for (const row of [remote.latest, ...remote.recent]) {
+    if (!row || seen.has(row.id)) continue
+    seen.add(row.id)
+    out.push(row)
+  }
+  return out
 }

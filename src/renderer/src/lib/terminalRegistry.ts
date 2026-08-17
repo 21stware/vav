@@ -5,6 +5,7 @@ import { registerTerminalSink } from '../state/workspaceStore'
 import { IS_MAC } from './platform'
 import { publishTerminalRegistry } from './terminalRegistryHandle'
 import { isBareShiftEnter, KITTY_SHIFT_ENTER } from './terminalKeys'
+import { scrollbackForSurface } from './terminalFit'
 import type { BashBackgroundMode } from '@shared/types'
 
 export type TerminalSurface = 'bash' | 'agent'
@@ -20,6 +21,15 @@ export interface TerminalEntry {
    * not driving PTY geometry. Used when a companion window owns the viewer.
    */
   parked: boolean
+  /**
+   * Hidden / detached: drop PTY→canvas writes (resume replays last screen).
+   * xterm still exists so Thread↔Swarm is instant.
+   */
+  paintPaused: boolean
+  pausePaint: () => void
+  resumePaint: () => void
+  /** Last applied theme fingerprint — skip no-op theme+blit. */
+  themeKey: string
   /** Tools-tray bash vs CLI agent / install PTY. Drives bash-only dark bg. */
   surface: TerminalSurface
   /**
@@ -120,6 +130,20 @@ function forceDarkBash(entry: Pick<TerminalEntry, 'surface'>): boolean {
   return entry.surface === 'bash' && bashBackgroundMode === 'dark'
 }
 
+function applySurfaceMode(
+  entry: Pick<TerminalEntry, 'surface' | 'container' | 'term' | 'paintPaused' | 'parked'>,
+  surface: TerminalSurface
+): void {
+  entry.surface = surface
+  entry.container.classList.toggle('is-tui', surface === 'agent')
+  entry.term.options.scrollback = scrollbackForSurface(surface)
+  try {
+    entry.term.options.cursorBlink = surface === 'bash' && !entry.paintPaused && !entry.parked
+  } catch {
+    // disposing
+  }
+}
+
 /** Re-blit the cell buffer onto the canvas. Safe after fit / reparent / compositor drop. */
 export function blitTerminal(term: Terminal): void {
   try {
@@ -130,9 +154,19 @@ export function blitTerminal(term: Terminal): void {
   }
 }
 
-function paintTerminalTheme(entry: TerminalEntry): void {
-  // New object every time — xterm compares theme by reference.
+function themeFingerprint(entry: Pick<TerminalEntry, 'surface'>): string {
+  const forceDark = forceDarkBash(entry)
+  const dark = forceDark || isDarkAppearance()
+  return `${forceDark ? 'd' : 't'}:${dark ? 'k' : 'l'}:${contentBackground(dark)}`
+}
+
+function paintTerminalTheme(entry: TerminalEntry, forceBlit = false): void {
+  const nextKey = themeFingerprint(entry)
+  if (nextKey === entry.themeKey && !forceBlit) return
+  entry.themeKey = nextKey
+  // New object — xterm compares theme by reference.
   entry.term.options.theme = { ...resolvedTerminalTheme(forceDarkBash(entry)) }
+  if (entry.paintPaused || entry.parked) return
   blitTerminal(entry.term)
 }
 
@@ -163,24 +197,28 @@ export function acquireTerminal(options: {
   fontFamily: string
   fontSize: number
   surface?: TerminalSurface
+  /** Hidden / Thread-parked: do not write the canvas until resume. */
+  paintPaused?: boolean
 }): TerminalEntry {
   installCaretScrollGuard()
   const id = key(options.conversationId, options.tabId)
   const surface = options.surface ?? 'bash'
   const existing = entries.get(id)
   if (existing) {
-    existing.surface = surface
+    applySurfaceMode(existing, surface)
     existing.term.options.fontFamily = options.fontFamily
     existing.term.options.fontSize = options.fontSize
     paintTerminalTheme(existing)
-    // Reclaim after soft-park or React remount/reparent — keep the painted
-    // buffer, then force fit/SIGWINCH so TUIs match this host's real box
-    // (avoids the 1-row “narrow strip” from a prior zero-size fit).
-    const wasParked = existing.parked
-    existing.parked = false
-    if (wasParked || !existing.container.isConnected) {
+    const wantPaused = options.paintPaused === true
+    if (wantPaused) existing.pausePaint()
+    else {
+      const wasPaused = existing.paintPaused || existing.parked
+      existing.parked = false
+      if (wasPaused) existing.resumePaint()
+    }
+    if (!wantPaused && !existing.container.isConnected) {
       queueMicrotask(() => {
-        if (entries.get(id) !== existing) return
+        if (entries.get(id) !== existing || existing.paintPaused) return
         try {
           if (
             existing.container.clientWidth > 0 &&
@@ -203,7 +241,7 @@ export function acquireTerminal(options: {
   }
 
   const container = document.createElement('div')
-  container.className = 'xterm-host'
+  container.className = surface === 'agent' ? 'xterm-host is-tui' : 'xterm-host'
   container.style.width = '100%'
   container.style.height = '100%'
 
@@ -212,10 +250,12 @@ export function acquireTerminal(options: {
     fontSize: options.fontSize,
     fontWeight: '400',
     fontWeightBold: '700',
-    cursorBlink: true,
+    // Agent TUIs draw their own caret. Blinking xterm's cursor is a second
+    // animation loop per pane and fights the TUI.
+    cursorBlink: surface === 'bash' && options.paintPaused !== true,
     cursorStyle: 'block',
     disableStdin: false,
-    scrollback: 10_000,
+    scrollback: scrollbackForSurface(surface),
     convertEol: false,
     // Full color for modern CLI agent TUIs (Claude Code, etc.).
     allowProposedApi: true,
@@ -415,28 +455,81 @@ export function acquireTerminal(options: {
 
   // Gate live writes until scrollback replay finishes so a second window does not
   // paint "new chunks first, then full history" (which looks like a corrupt TUI).
-  let replaying = typeof window.vav.pty.replay === 'function'
+  let replaying =
+    options.paintPaused !== true && typeof window.vav.pty.replay === 'function'
   const liveQueue: string[] = []
-  const flushLiveQueue = (): void => {
-    if (replaying || suppressPtyPaint) return
-    const chunks = liveQueue.splice(0)
-    for (const chunk of chunks) term.write(chunk)
+  let liveQueueBytes = 0
+  const LIVE_QUEUE_CAP = 256 * 1024
+  let entry: TerminalEntry
+  const pushLive = (data: string): void => {
+    liveQueue.push(data)
+    liveQueueBytes += data.length
+    while (liveQueueBytes > LIVE_QUEUE_CAP && liveQueue.length > 1) {
+      liveQueueBytes -= liveQueue.shift()!.length
+    }
   }
-  const unregister = registerTerminalSink(options.conversationId, options.tabId, (data) => {
-    // Hold bytes across the two-frame SIGWINCH settle — do not drop them
-    // (⌘D used to eat Grok's redraw and leave the pane on --bg-content).
-    if (suppressPtyPaint || replaying) {
-      liveQueue.push(data)
+  const flushLiveQueue = (): void => {
+    if (replaying || suppressPtyPaint || entry.paintPaused || entry.parked) return
+    if (liveQueue.length === 0) return
+    const text = liveQueue.join('')
+    liveQueue.length = 0
+    liveQueueBytes = 0
+    if (text) term.write(text)
+  }
+
+  const applyCursorBlink = (on: boolean): void => {
+    try {
+      term.options.cursorBlink = on && entry.surface === 'bash'
+    } catch {
+      // disposing
+    }
+  }
+
+  const pausePaint = (): void => {
+    if (entry.paintPaused) return
+    entry.paintPaused = true
+    liveQueue.length = 0
+    liveQueueBytes = 0
+    applyCursorBlink(false)
+  }
+
+  const resumePaint = (): void => {
+    if (!entry.paintPaused && !entry.parked) {
+      applyCursorBlink(true)
       return
     }
-    term.write(data)
-  })
+    entry.parked = false
+    entry.paintPaused = false
+    applyCursorBlink(true)
+    if (typeof window.vav.pty.replay !== 'function') {
+      flushLiveQueue()
+      return
+    }
+    replaying = true
+    void window.vav.pty
+      .replay(options.tabId)
+      .then((buf) => {
+        if (entries.get(id) !== entry || entry.paintPaused || entry.parked) return
+        if (buf) term.write(buf)
+        replaying = false
+        flushLiveQueue()
+      })
+      .catch(() => {
+        if (entries.get(id) !== entry) return
+        replaying = false
+        flushLiveQueue()
+      })
+  }
 
-  const entry: TerminalEntry = {
+  entry = {
     term,
     fit,
     container,
     parked: false,
+    paintPaused: options.paintPaused === true,
+    pausePaint,
+    resumePaint,
+    themeKey: themeFingerprint({ surface }),
     surface,
     processExited: false,
     dispose: () => {
@@ -462,6 +555,17 @@ export function acquireTerminal(options: {
       entries.delete(id)
     }
   }
+  const unregister = registerTerminalSink(options.conversationId, options.tabId, (data) => {
+    // Hidden / parked: drop canvas work. Resume replays the last screen.
+    if (entry.paintPaused || entry.parked) return
+    // Hold bytes across the two-frame SIGWINCH settle — do not drop them
+    // (⌘D used to eat Grok's redraw and leave the pane on --bg-content).
+    if (suppressPtyPaint || replaying) {
+      pushLive(data)
+      return
+    }
+    term.write(data)
+  })
   entries.set(id, entry)
 
   // Multi-window attach: main keeps a ring buffer so a detached window is not blank.
@@ -471,13 +575,12 @@ export function acquireTerminal(options: {
     void window.vav.pty
       .replay(options.tabId)
       .then((buf) => {
-        if (entries.get(id)?.term !== term) return
+        if (entries.get(id) !== entry || entry.paintPaused || entry.parked) return
         if (buf) term.write(buf)
         replaying = false
-        for (const chunk of liveQueue) term.write(chunk)
-        liveQueue.length = 0
+        flushLiveQueue()
         requestAnimationFrame(() => {
-          if (entries.get(id)?.term !== term) return
+          if (entries.get(id) !== entry || entry.paintPaused) return
           if (!document.hasFocus()) return
           try {
             fit.fit()
@@ -488,9 +591,9 @@ export function acquireTerminal(options: {
         })
       })
       .catch(() => {
+        if (entries.get(id) !== entry) return
         replaying = false
-        for (const chunk of liveQueue) term.write(chunk)
-        liveQueue.length = 0
+        flushLiveQueue()
       })
   }
 
@@ -507,7 +610,19 @@ export function parkTerminal(conversationId: string, tabId: string): void {
   const entry = entries.get(key(conversationId, tabId))
   if (!entry) return
   entry.parked = true
+  entry.pausePaint()
   entry.container.remove()
+}
+
+export function pauseTerminalPaint(conversationId: string, tabId: string): void {
+  entries.get(key(conversationId, tabId))?.pausePaint()
+}
+
+export function resumeTerminalPaint(conversationId: string, tabId: string): void {
+  const entry = entries.get(key(conversationId, tabId))
+  if (!entry) return
+  entry.parked = false
+  entry.resumePaint()
 }
 
 export function disposeTerminal(conversationId: string, tabId: string): void {
@@ -553,7 +668,7 @@ export function resetTerminalForNewProcess(conversationId: string, tabId: string
  */
 export function refreshAllTerminals(): void {
   for (const entry of entries.values()) {
-    if (entry.parked) continue
+    if (entry.parked || entry.paintPaused) continue
     blitTerminal(entry.term)
   }
 }
@@ -562,6 +677,7 @@ export function refreshAllTerminals(): void {
 export function fitAllTerminals(): void {
   if (!document.hasFocus()) return
   for (const entry of entries.values()) {
+    if (entry.parked || entry.paintPaused) continue
     try {
       entry.fit.fit()
     } catch {
@@ -582,6 +698,7 @@ export function applyTerminalAppearance(
     entry.term.options.fontFamily = fontFamily
     entry.term.options.fontSize = fontSize
     paintTerminalTheme(entry)
+    if (entry.parked || entry.paintPaused) continue
     try {
       entry.fit.fit()
     } catch {
@@ -636,6 +753,8 @@ publishTerminalRegistry({
   refreshAllTerminals,
   disposeTerminal,
   parkTerminal,
+  pauseTerminalPaint,
+  resumeTerminalPaint,
   markTerminalProcessExited,
   resetTerminalForNewProcess
 })

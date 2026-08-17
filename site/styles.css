@@ -1,54 +1,11 @@
-/* vav marketing — cool zinc paper, brand-first hero, product chrome */
-
-/* Latin subsets are self-hosted so the critical path has no third-party
-   font requests. Noto Sans SC is appended by script.js only for zh. */
-
-@font-face {
-  font-family: 'Instrument Serif';
-  font-style: italic;
-  font-weight: 400;
-  font-display: swap;
-  src: url('assets/fonts/instrument-serif-italic-latin.woff2') format('woff2');
-  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304,
-    U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
-}
-
-@font-face {
-  font-family: 'Instrument Serif';
-  font-style: italic;
-  font-weight: 400;
-  font-display: swap;
-  src: url('assets/fonts/instrument-serif-italic-latin-ext.woff2') format('woff2');
-  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308,
-    U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113,
-    U+2C60-2C7F, U+A720-A7FF;
-}
-
-@font-face {
-  font-family: 'Instrument Serif';
-  font-style: normal;
-  font-weight: 400;
-  font-display: swap;
-  src: url('assets/fonts/instrument-serif-latin.woff2') format('woff2');
-  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304,
-    U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
-}
-
-@font-face {
-  font-family: 'Instrument Serif';
-  font-style: normal;
-  font-weight: 400;
-  font-display: swap;
-  src: url('assets/fonts/instrument-serif-latin-ext.woff2') format('woff2');
-  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308,
-    U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113,
-    U+2C60-2C7F, U+A720-A7FF;
-}
+/* VAV marketing — paper, ink, one accent.
+   Brand is three tracked sans capitals. Outfit is 400 only; CJK falls to
+   the system gothic. font-synthesis is off so we never fake-bold CJK. */
 
 @font-face {
   font-family: 'Outfit';
   font-style: normal;
-  font-weight: 400 600;
+  font-weight: 400;
   font-display: swap;
   src: url('assets/fonts/outfit-latin.woff2') format('woff2');
   unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304,
@@ -58,7 +15,7 @@
 @font-face {
   font-family: 'Outfit';
   font-style: normal;
-  font-weight: 400 600;
+  font-weight: 400;
   font-display: swap;
   src: url('assets/fonts/outfit-latin-ext.woff2') format('woff2');
   unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308,
@@ -67,27 +24,31 @@
 }
 
 :root {
-  --bg: #eceef2;
-  --bg-deep: #e4e6ec;
-  --bg-paper: #f7f8fa;
-  --ink: #12131a;
-  --ink-muted: #5a5d6a;
-  --ink-faint: #636774;
-  --line: rgba(18, 19, 26, 0.1);
-  --line-strong: rgba(18, 19, 26, 0.18);
-  --accent: #1c1e28;
-  --accent-soft: rgba(18, 19, 26, 0.06);
-  --font-brand: 'Instrument Serif', Georgia, 'Songti SC', serif;
-  /* Outfit covers Latin; CJK falls through to the platform UI face
-     (PingFang / YaHei) rather than a multi-megabyte webfont. */
-  --font-body:
-    'Outfit', system-ui, 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Noto Sans CJK SC',
-    sans-serif;
+  /* App chrome: window wash / content paper / ink. Accent is the one CTA. */
+  --bg: #ececee;
+  --bg-deep: #e4e4e8;
+  --bg-paper: #fcfcfc;
+  --ink: #141416;
+  --ink-muted: #5c5c66;
+  --ink-faint: #8a8a94;
+  --line: rgba(20, 20, 28, 0.09);
+  --line-strong: rgba(20, 20, 28, 0.16);
+  --accent: #6b5bc0;
+  --accent-text: #6b5bc0;
+  --accent-soft: rgba(107, 91, 192, 0.1);
+  --accent-veil: rgba(107, 91, 192, 0.08);
+  --font-brand: Outfit, -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'PingFang SC',
+    'Hiragino Sans GB', 'Microsoft YaHei', system-ui, sans-serif;
+  --font-body: Outfit, -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'PingFang SC',
+    'Hiragino Sans GB', 'Microsoft YaHei', system-ui, sans-serif;
   --font-mono: 'SF Mono', ui-monospace, Menlo, monospace;
   --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
   --max: 1120px;
   --gutter: clamp(20px, 4.5vw, 48px);
   --header-h: 64px;
+  --shadow-shot:
+    0 1px 2px rgba(20, 20, 28, 0.06),
+    0 24px 56px rgba(20, 20, 28, 0.1);
 }
 
 *,
@@ -98,8 +59,8 @@
 
 html {
   scroll-behavior: smooth;
-  /* Anchor targets clear the fixed header. */
   scroll-padding-top: calc(var(--header-h) + 12px);
+  font-synthesis: none;
 }
 
 body {
@@ -109,6 +70,7 @@ body {
   background: var(--bg);
   font-family: var(--font-body);
   font-size: 16px;
+  font-weight: 400;
   line-height: 1.55;
   -webkit-font-smoothing: antialiased;
   position: relative;
@@ -120,16 +82,15 @@ body {
   inset: 0;
   z-index: 0;
   background:
-    radial-gradient(70% 50% at 80% 0%, rgba(120, 140, 180, 0.12), transparent 55%),
-    radial-gradient(55% 40% at 8% 30%, rgba(18, 19, 26, 0.04), transparent 50%),
-    linear-gradient(180deg, #f2f3f6 0%, var(--bg) 28%, var(--bg-deep) 100%);
+    radial-gradient(120% 80% at 8% -10%, var(--accent-veil), transparent 62%),
+    linear-gradient(180deg, var(--bg) 0%, var(--bg-deep) 100%);
 }
 
 .page-atmosphere::after {
   content: '';
   position: absolute;
   inset: 0;
-  opacity: 0.35;
+  opacity: 0.28;
   background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.05'/%3E%3C/svg%3E");
   background-size: 180px 180px;
 }
@@ -162,7 +123,7 @@ a {
 }
 
 a:hover {
-  color: var(--accent);
+  color: var(--accent-text);
 }
 
 :focus-visible {
@@ -178,22 +139,21 @@ a:hover {
   padding: 10px 16px;
   border-radius: 10px;
   background: var(--ink);
-  color: #f7f8fa;
-  font-size: 13px;
-  font-weight: 600;
+  color: #fbfbfc;
+  font-size: 14px;
   text-decoration: none;
   transform: translate(-50%, calc(-100% - 20px));
   transition: transform 180ms var(--ease-out);
 }
 
 .skip-link:focus-visible {
-  color: #f7f8fa;
+  color: #fbfbfc;
   transform: translate(-50%, 0);
 }
 
 code {
   font-family: var(--font-mono);
-  font-size: 0.9em;
+  font-size: 0.86em;
   color: var(--ink);
   background: var(--accent-soft);
   padding: 0.08em 0.35em;
@@ -202,14 +162,16 @@ code {
 
 .brand-name {
   font-family: var(--font-brand);
-  font-style: italic;
+  font-style: normal;
   font-weight: 400;
-  letter-spacing: -0.03em;
+  letter-spacing: 0.16em;
   line-height: 1;
+  text-transform: uppercase;
 }
 
 .brand-name.sm {
-  font-size: 1.35rem;
+  font-size: 1.05rem;
+  letter-spacing: 0.18em;
 }
 
 /* —— Nav —— */
@@ -230,13 +192,11 @@ code {
     border-color 260ms ease;
 }
 
-/* Without scroll tracking the bar can't know it is over the dark hero,
-   so it stays frosted and legible everywhere. */
 .top.is-stuck,
 html:not(.js) .top {
-  background: rgba(242, 243, 246, 0.78);
+  background: color-mix(in srgb, var(--bg) 82%, transparent);
   border-bottom-color: var(--line);
-  backdrop-filter: saturate(180%) blur(14px);
+  backdrop-filter: saturate(160%) blur(16px);
 }
 
 .nav {
@@ -245,9 +205,8 @@ html:not(.js) .top {
   gap: 22px;
   width: 100%;
   max-width: var(--max);
-  font-size: 13px;
-  font-weight: 500;
-  letter-spacing: 0.02em;
+  font-size: 15px;
+  letter-spacing: 0.01em;
   color: var(--ink-muted);
 }
 
@@ -259,39 +218,12 @@ html:not(.js) .top {
   color: var(--ink);
 }
 
-/* Unscrolled, the nav sits on the dark top of the hero shot, so it inverts. */
-html.js .top:not(.is-stuck) .nav {
-  color: rgba(247, 248, 250, 0.82);
-}
-
-html.js .top:not(.is-stuck) .nav a:hover {
-  color: #fff;
-}
-
-html.js .top:not(.is-stuck) :focus-visible {
-  outline-color: #fff;
-}
-
-/* Brand lock-up rides in once the hero lock-up has scrolled away. */
 .nav-brand {
   display: flex;
   align-items: center;
   gap: 9px;
   margin-right: auto;
   color: var(--ink);
-  opacity: 0;
-  transform: translateY(-6px);
-  pointer-events: none;
-  transition:
-    opacity 260ms var(--ease-out),
-    transform 260ms var(--ease-out);
-}
-
-.top.is-stuck .nav-brand,
-html:not(.js) .nav-brand {
-  opacity: 1;
-  transform: none;
-  pointer-events: auto;
 }
 
 .nav-brand img {
@@ -301,9 +233,17 @@ html:not(.js) .nav-brand {
 }
 
 .nav-brand .brand-name {
-  font-size: 1.25rem;
+  font-size: 0.95rem;
+  letter-spacing: 0.18em;
 }
 
+.nav-end {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.theme,
 .lang {
   display: inline-flex;
   align-items: center;
@@ -311,10 +251,11 @@ html:not(.js) .nav-brand {
   padding: 2px;
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: rgba(247, 248, 250, 0.75);
+  background: color-mix(in srgb, var(--bg-paper) 75%, transparent);
   backdrop-filter: blur(10px);
 }
 
+.theme-btn,
 .lang-btn {
   margin: 0;
   padding: 4px 8px;
@@ -323,43 +264,25 @@ html:not(.js) .nav-brand {
   background: transparent;
   color: var(--ink-faint);
   font: inherit;
-  font-size: 11px;
-  font-weight: 600;
+  font-size: 12px;
   letter-spacing: 0.04em;
   cursor: pointer;
 }
 
+.theme-btn:hover,
 .lang-btn:hover {
   color: var(--ink);
 }
 
+.theme-btn.is-active,
 .lang-btn.is-active {
   background: var(--accent-soft);
   color: var(--ink);
 }
 
-html.js .top:not(.is-stuck) .lang {
-  border-color: rgba(247, 248, 250, 0.26);
-  background: rgba(14, 15, 20, 0.34);
-}
-
-html.js .top:not(.is-stuck) .lang-btn {
-  color: rgba(247, 248, 250, 0.72);
-}
-
-html.js .top:not(.is-stuck) .lang-btn:hover {
-  color: #fff;
-}
-
-html.js .top:not(.is-stuck) .lang-btn.is-active {
-  background: rgba(247, 248, 250, 0.92);
-  color: var(--ink);
-}
-
-/* Six nav items overflow a phone; keep brand, Download, GitHub, language. */
 @media (max-width: 720px) {
   .nav {
-    gap: 14px;
+    gap: 12px;
   }
 
   .nav-secondary {
@@ -367,109 +290,64 @@ html.js .top:not(.is-stuck) .lang-btn.is-active {
   }
 }
 
-/* —— Hero —— */
+/* —— Hero: paper first, workbench framed below —— */
 
 .hero {
   position: relative;
-  min-height: 100svh;
   display: flex;
-  align-items: flex-end;
-  overflow: hidden;
-  background: #dfe2e8;
-}
-
-.hero-stage {
-  position: absolute;
-  inset: 0;
-}
-
-.hero-stage picture {
-  position: absolute;
-  inset: 0;
-}
-
-.hero-shot {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  object-position: top center;
-  opacity: 0.9;
-  transform: scale(1.02);
-  animation: shot-in 1.4s var(--ease-out) both;
-}
-
-/* The paper scrim is anchored in px from the bottom, not in %, so the copy
-   block gets the same opaque bed on a 1440x900 laptop as on a tall monitor.
-   The dark wash at the top is what the nav reads against. */
-.hero-veil {
-  position: absolute;
-  inset: 0;
-  background:
-    linear-gradient(
-      180deg,
-      rgba(12, 13, 18, 0.42) 0px,
-      rgba(12, 13, 18, 0.14) 96px,
-      transparent 190px
-    ),
-    linear-gradient(
-      0deg,
-      var(--bg) 0px,
-      rgba(236, 238, 242, 0.98) 300px,
-      rgba(236, 238, 242, 0.88) 420px,
-      rgba(236, 238, 242, 0.38) 520px,
-      rgba(236, 238, 242, 0.08) 620px,
-      transparent 700px
-    ),
-    radial-gradient(50% 40% at 20% 90%, rgba(18, 19, 26, 0.06), transparent 60%);
+  flex-direction: column;
+  gap: clamp(36px, 6vh, 64px);
+  max-width: var(--max);
+  margin: 0 auto;
+  padding: calc(var(--header-h) + clamp(36px, 7vh, 72px)) var(--gutter) clamp(48px, 8vh, 80px);
 }
 
 .hero-copy {
   position: relative;
   z-index: 1;
-  width: 100%;
-  max-width: var(--max);
-  margin: 0 auto;
-  padding: 0 var(--gutter) clamp(52px, 11vh, 96px);
+  max-width: 34em;
 }
 
 .brand-lockup {
   display: flex;
   align-items: center;
-  gap: 16px;
+  gap: 14px;
   margin: 0 0 22px;
   animation: brand-in 900ms var(--ease-out) both;
 }
 
 .brand-glyph {
-  width: 56px;
-  height: 56px;
+  width: 44px;
+  height: 44px;
   object-fit: contain;
-  border-radius: 14px;
-  box-shadow: 0 8px 28px rgba(18, 19, 26, 0.12);
+  border-radius: 12px;
+  box-shadow: 0 6px 20px rgba(20, 20, 28, 0.1);
 }
 
 .brand-lockup .brand-name {
-  font-size: clamp(3.75rem, 10vw, 6.25rem);
+  font-size: clamp(2.8rem, 8vw, 4.6rem);
   color: var(--ink);
+  letter-spacing: 0.14em;
 }
 
 .hero-title {
-  margin: 0 0 12px;
+  margin: 0 0 14px;
   max-width: 16em;
-  font-family: var(--font-body);
-  font-size: clamp(1.45rem, 3vw, 1.95rem);
-  font-weight: 500;
+  font-family: var(--font-brand);
+  font-style: normal;
+  font-size: clamp(1.85rem, 3.6vw, 2.45rem);
+  font-weight: 400;
   letter-spacing: -0.03em;
-  line-height: 1.25;
+  line-height: 1.18;
   color: var(--ink);
   animation: brand-in 900ms var(--ease-out) 90ms both;
 }
 
 .hero-lead {
   margin: 0;
-  max-width: 28em;
+  max-width: 30em;
   color: var(--ink-muted);
-  font-size: clamp(1rem, 1.5vw, 1.1rem);
+  font-size: clamp(1.08rem, 1.7vw, 1.22rem);
   line-height: 1.55;
   animation: brand-in 900ms var(--ease-out) 160ms both;
 }
@@ -482,6 +360,32 @@ html.js .top:not(.is-stuck) .lang-btn.is-active {
   animation: brand-in 900ms var(--ease-out) 230ms both;
 }
 
+.hero-frame {
+  margin: 0;
+  animation: brand-in 900ms var(--ease-out) 280ms both;
+}
+
+picture.shot-dark {
+  display: none;
+}
+
+html[data-theme='dark'] picture.shot-light {
+  display: none;
+}
+
+html[data-theme='dark'] picture.shot-dark {
+  display: block;
+}
+
+.hero-shot {
+  width: 100%;
+  height: auto;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--bg-paper);
+  box-shadow: var(--shadow-shot);
+}
+
 /* —— Buttons —— */
 
 .btn {
@@ -491,9 +395,8 @@ html.js .top:not(.is-stuck) .lang-btn.is-active {
   min-height: 44px;
   padding: 0 20px;
   border-radius: 11px;
-  font-size: 14px;
-  font-weight: 600;
-  letter-spacing: 0.01em;
+  font-size: 15px;
+  letter-spacing: 0.02em;
   text-decoration: none;
   transition:
     transform 140ms var(--ease-out),
@@ -507,19 +410,19 @@ html.js .top:not(.is-stuck) .lang-btn.is-active {
 }
 
 .btn.primary {
-  background: var(--ink);
-  color: #f7f8fa;
+  background: var(--accent);
+  color: #fff;
 }
 
 .btn.primary:hover {
-  background: #2a2d38;
-  color: #f7f8fa;
+  background: #5a4bb0;
+  color: #fff;
 }
 
 .btn.ghost {
   border: 1px solid var(--line-strong);
   color: var(--ink);
-  background: rgba(247, 248, 250, 0.7);
+  background: color-mix(in srgb, var(--bg-paper) 70%, transparent);
   backdrop-filter: blur(8px);
 }
 
@@ -539,10 +442,10 @@ html.js .top:not(.is-stuck) .lang-btn.is-active {
 .band-title {
   margin: 0 0 12px;
   font-family: var(--font-brand);
-  font-size: clamp(2.2rem, 4.4vw, 3.1rem);
+  font-size: clamp(2.05rem, 4vw, 2.75rem);
   font-weight: 400;
-  font-style: italic;
-  letter-spacing: -0.02em;
+  font-style: normal;
+  letter-spacing: -0.03em;
   color: var(--ink);
 }
 
@@ -550,11 +453,11 @@ html.js .top:not(.is-stuck) .lang-btn.is-active {
   margin: 0 0 48px;
   max-width: 32em;
   color: var(--ink-muted);
-  font-size: 1.05rem;
+  font-size: 1.08rem;
   line-height: 1.6;
 }
 
-/* —— Feature showcases: copy above, full-width shot below —— */
+/* —— Feature showcases —— */
 
 .core {
   max-width: min(1200px, 100%);
@@ -577,8 +480,7 @@ html.js .top:not(.is-stuck) .lang-btn.is-active {
   margin-bottom: 10px;
   font-family: var(--font-mono);
   font-size: 12px;
-  font-weight: 600;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.1em;
   color: var(--ink-faint);
 }
 
@@ -588,16 +490,24 @@ html.js .top:not(.is-stuck) .lang-btn.is-active {
 
 .feature-copy h3 {
   margin: 0 0 10px;
-  font-size: clamp(1.4rem, 2.5vw, 1.8rem);
-  font-weight: 600;
+  font-family: var(--font-brand);
+  font-size: clamp(1.5rem, 2.4vw, 1.9rem);
+  font-weight: 400;
+  font-style: normal;
   letter-spacing: -0.025em;
   color: var(--ink);
+}
+
+.feature-copy h3 kbd {
+  font-style: normal;
+  vertical-align: 0.15em;
+  margin-right: 0.15em;
 }
 
 .feature-copy > p {
   margin: 0;
   color: var(--ink-muted);
-  font-size: 1.05rem;
+  font-size: 1.06rem;
   line-height: 1.6;
 }
 
@@ -606,8 +516,7 @@ html.js .top:not(.is-stuck) .lang-btn.is-active {
   padding-top: 12px;
   border-top: 1px solid var(--line);
   color: var(--ink) !important;
-  font-size: 0.95rem !important;
-  font-weight: 500;
+  font-size: 1rem !important;
 }
 
 .feature-media {
@@ -621,36 +530,57 @@ html.js .top:not(.is-stuck) .lang-btn.is-active {
   border: 1px solid var(--line);
   border-radius: 14px;
   background: var(--bg-paper);
-  box-shadow:
-    0 1px 2px rgba(18, 19, 26, 0.04),
-    0 22px 56px rgba(18, 19, 26, 0.1);
+  box-shadow: var(--shadow-shot);
 }
 
-.feature-media-portrait {
-  display: flex;
-  justify-content: center;
+/* Companion is a 400×760 column — show it at native CSS size, not as a wide shot. */
+.feature-companion {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 400px;
+  gap: clamp(32px, 6vw, 72px);
   align-items: center;
-  min-height: min(70vh, 620px);
-  padding: clamp(36px, 6vh, 64px) clamp(24px, 4vw, 48px);
-  border-radius: 18px;
-  background:
-    radial-gradient(60% 50% at 50% 40%, rgba(255, 255, 255, 0.75), transparent 70%),
-    linear-gradient(160deg, #e8eaef, #d9dde6);
-  border: 1px solid var(--line);
 }
 
-.feature-media-portrait picture {
-  display: flex;
-  justify-content: center;
-  width: 100%;
+.feature-companion:has(.feature-media-clip) {
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 560px);
 }
 
-.feature-media-portrait img {
-  width: min(100%, 400px);
+.feature-media-companion {
+  justify-self: end;
+  width: 400px;
+  max-width: 100%;
+}
+
+.feature-media-companion img {
+  width: 400px;
+  max-width: 100%;
+  height: auto;
   border-radius: 16px;
   box-shadow:
-    0 2px 4px rgba(18, 19, 26, 0.06),
-    0 28px 64px rgba(18, 19, 26, 0.18);
+    0 1px 2px rgba(20, 20, 28, 0.06),
+    0 28px 64px rgba(20, 20, 28, 0.16);
+}
+
+.feature-media-clip {
+  justify-self: end;
+  width: min(100%, 560px);
+}
+
+.feature-media-clip img {
+  width: 100%;
+  max-width: 560px;
+  height: auto;
+  border-radius: 16px;
+}
+
+@media (max-width: 860px) {
+  .feature-companion {
+    grid-template-columns: 1fr;
+  }
+
+  .feature-media-companion {
+    justify-self: center;
+  }
 }
 
 kbd {
@@ -658,10 +588,9 @@ kbd {
   padding: 0.12em 0.4em;
   border: 1px solid var(--line-strong);
   border-radius: 6px;
-  background: rgba(18, 19, 26, 0.04);
+  background: rgba(20, 20, 28, 0.04);
   font-family: var(--font-mono);
-  font-size: 0.86em;
-  font-weight: 600;
+  font-size: 0.84em;
   line-height: 1.2;
   color: var(--ink);
 }
@@ -689,11 +618,11 @@ kbd {
   padding: 8px var(--gutter) 12px;
   -webkit-overflow-scrolling: touch;
   scrollbar-width: thin;
-  scrollbar-color: rgba(18, 19, 26, 0.2) transparent;
+  scrollbar-color: rgba(20, 20, 28, 0.2) transparent;
 }
 
 .files-rail:focus-visible {
-  outline: 2px solid rgba(18, 19, 26, 0.25);
+  outline: 2px solid rgba(20, 20, 28, 0.25);
   outline-offset: 4px;
 }
 
@@ -709,14 +638,14 @@ kbd {
   border: 1px solid var(--line);
   border-radius: 14px;
   background: var(--bg-paper);
-  box-shadow:
-    0 1px 2px rgba(18, 19, 26, 0.04),
-    0 22px 56px rgba(18, 19, 26, 0.1);
+  box-shadow: var(--shadow-shot);
   transition: transform 420ms var(--ease-out);
 }
 
-.file-shot:hover img {
-  transform: translateY(-3px);
+@media (hover: hover) and (pointer: fine) {
+  .file-shot:hover img {
+    transform: translateY(-3px);
+  }
 }
 
 .file-shot figcaption {
@@ -727,12 +656,11 @@ kbd {
   margin-top: 16px;
   padding-right: 12px;
   color: var(--ink-muted);
-  font-size: 0.95rem;
+  font-size: 1rem;
 }
 
 .file-label {
-  font-size: 0.92rem;
-  font-weight: 600;
+  font-size: 1rem;
   letter-spacing: 0.02em;
   color: var(--ink);
 }
@@ -758,7 +686,7 @@ kbd {
   align-items: flex-start;
   gap: 4px;
   color: var(--ink-muted);
-  font-size: 0.9rem;
+  font-size: 0.95rem;
   line-height: 1.4;
 }
 
@@ -782,8 +710,7 @@ kbd {
   border-bottom-color: var(--line-strong);
   color: var(--ink-faint);
   font-size: 12px;
-  font-weight: 600;
-  letter-spacing: 0.06em;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
 }
 
@@ -797,13 +724,12 @@ kbd {
 .format-id code {
   width: fit-content;
   font-size: 0.92rem;
-  font-weight: 600;
   background: var(--accent-soft);
 }
 
 .format-id span {
   color: var(--ink-muted);
-  font-size: 0.9rem;
+  font-size: 0.95rem;
 }
 
 .format-caps {
@@ -817,23 +743,18 @@ kbd {
   align-items: center;
   padding: 3px 8px;
   border-radius: 6px;
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.03em;
+  font-size: 12px;
+  letter-spacing: 0.04em;
   line-height: 1.3;
   border: 1px solid var(--line);
-  background: rgba(247, 248, 250, 0.8);
+  background: color-mix(in srgb, var(--bg-paper) 80%, transparent);
   color: var(--ink);
 }
 
-.cap-preview {
-  border-color: rgba(18, 19, 26, 0.14);
-}
-
 .cap-ask {
-  background: rgba(40, 90, 160, 0.08);
-  border-color: rgba(40, 90, 160, 0.18);
-  color: #1e3a5f;
+  background: rgba(107, 91, 192, 0.1);
+  border-color: rgba(107, 91, 192, 0.22);
+  color: #43348a;
 }
 
 .cap-edit {
@@ -849,19 +770,19 @@ kbd {
 }
 
 .cap-readonly {
-  background: rgba(18, 19, 26, 0.05);
+  background: rgba(20, 20, 28, 0.05);
   color: var(--ink-muted);
 }
 
 .cap-skill {
-  background: rgba(18, 19, 26, 0.08);
-  border-color: rgba(18, 19, 26, 0.16);
+  background: rgba(20, 20, 28, 0.08);
+  border-color: rgba(20, 20, 28, 0.16);
 }
 
 .format-note {
   margin: 0;
   color: var(--ink-muted);
-  font-size: 0.95rem;
+  font-size: 0.98rem;
   line-height: 1.5;
 }
 
@@ -887,14 +808,12 @@ kbd {
   margin-bottom: 14px;
 }
 
-/* The visitor's own platform leads the row. */
 .download-row .btn.is-detected {
   order: -1;
 }
 
 .btn-size {
   margin-left: 8px;
-  font-weight: 500;
   opacity: 0.65;
 }
 
@@ -904,7 +823,7 @@ kbd {
   gap: 6px 14px;
   margin: 0 0 18px;
   color: var(--ink-faint);
-  font-size: 13px;
+  font-size: 14px;
 }
 
 .download-version {
@@ -914,7 +833,7 @@ kbd {
 .tiny {
   margin: 0;
   color: var(--ink-faint);
-  font-size: 13px;
+  font-size: 14px;
 }
 
 /* —— Footer —— */
@@ -936,13 +855,13 @@ kbd {
   align-items: baseline;
   gap: 12px;
   color: var(--ink-faint);
-  font-size: 13px;
+  font-size: 14px;
 }
 
 .foot-note {
   margin: 0;
   color: var(--ink-faint);
-  font-size: 12.5px;
+  font-size: 13.5px;
 }
 
 .foot-note a {
@@ -980,17 +899,6 @@ kbd {
   transition-delay: 190ms;
 }
 
-@keyframes shot-in {
-  from {
-    opacity: 0.4;
-    transform: scale(1.06);
-  }
-  to {
-    opacity: 0.9;
-    transform: scale(1.02);
-  }
-}
-
 @keyframes brand-in {
   from {
     opacity: 0;
@@ -1021,35 +929,15 @@ kbd {
     animation: none;
   }
 
-  .nav-brand {
-    transform: none;
-    transition: opacity 260ms ease;
-  }
-
-  .hero-shot {
-    animation: none;
-    transform: none;
-    opacity: 0.9;
-  }
-
   .file-shot:hover img {
     transform: none;
   }
 }
 
 @media (max-width: 560px) {
-  .feature-media-portrait {
-    min-height: 0;
-    padding: 28px;
-  }
-
-  .feature-media-portrait img {
-    width: min(100%, 320px);
-  }
-
   .brand-glyph {
-    width: 44px;
-    height: 44px;
+    width: 40px;
+    height: 40px;
     border-radius: 11px;
   }
 
@@ -1061,4 +949,93 @@ kbd {
     grid-template-columns: 1fr;
     gap: 4px;
   }
+}
+
+/* —— Dark theme: app charcoal, not a tinted navy —— */
+
+html[data-theme='dark'] {
+  color-scheme: dark;
+  --bg: #121213;
+  --bg-deep: #0c0c0d;
+  --bg-paper: #1b1b1d;
+  --ink: #efeff1;
+  --ink-muted: #a2a2a9;
+  --ink-faint: #73737b;
+  --line: rgba(255, 255, 255, 0.07);
+  --line-strong: rgba(255, 255, 255, 0.14);
+  --accent: #b7aaf3;
+  --accent-text: #b7aaf3;
+  --accent-soft: rgba(183, 170, 243, 0.14);
+  --accent-veil: rgba(183, 170, 243, 0.1);
+  --shadow-shot:
+    0 1px 2px rgba(0, 0, 0, 0.35),
+    0 22px 56px rgba(0, 0, 0, 0.38);
+}
+
+html[data-theme='dark'] body {
+  background: var(--bg);
+}
+
+html[data-theme='dark'] .page-atmosphere {
+  opacity: 0.7;
+}
+
+html[data-theme='dark'] .top.is-stuck,
+html[data-theme='dark']:not(.js) .top {
+  background: rgba(18, 18, 19, 0.82);
+}
+
+html[data-theme='dark'] .btn.primary {
+  background: var(--accent);
+  color: #141416;
+}
+
+html[data-theme='dark'] .btn.primary:hover {
+  background: #c9c0f7;
+  color: #141416;
+}
+
+html[data-theme='dark'] .btn.ghost {
+  background: rgba(27, 27, 29, 0.72);
+}
+
+html[data-theme='dark'] .theme,
+html[data-theme='dark'] .lang {
+  background: rgba(27, 27, 29, 0.75);
+}
+
+html[data-theme='dark'] kbd {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+html[data-theme='dark'] .cap {
+  background: rgba(27, 27, 29, 0.9);
+}
+
+html[data-theme='dark'] .cap-ask {
+  background: rgba(183, 170, 243, 0.16);
+  border-color: rgba(183, 170, 243, 0.32);
+  color: #d6cff8;
+}
+
+html[data-theme='dark'] .cap-edit {
+  background: rgba(70, 160, 110, 0.16);
+  border-color: rgba(70, 160, 110, 0.32);
+  color: #b7e0c5;
+}
+
+html[data-theme='dark'] .cap-convert {
+  background: rgba(200, 150, 70, 0.16);
+  border-color: rgba(200, 150, 70, 0.3);
+  color: #ebd3a4;
+}
+
+html[data-theme='dark'] .cap-readonly,
+html[data-theme='dark'] .cap-skill {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--ink-muted);
+}
+
+html[data-theme='dark'] .files-rail {
+  scrollbar-color: rgba(255, 255, 255, 0.22) transparent;
 }

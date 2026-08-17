@@ -30,7 +30,6 @@ import { Button, EmptyState } from './ui'
 import { AgentBrandMark } from './AgentBrandMark'
 import { SessionWorkspaceChrome } from './SessionWorkspaceChrome'
 import { EmptyQuotaUsage } from './EmptyQuotaUsage'
-import { SurfaceSwitchButton } from './SurfaceSwitchButton'
 import { useT } from '../i18n/useT'
 
 /**
@@ -121,6 +120,7 @@ export function Transcript(): React.JSX.Element {
   const cliHost = useSessionStore(
     (s) => s.conversations.find((c) => c.id === s.activeId)?.cliHost ?? null
   )
+  const needsVavKey = !apiKeyPresent && !cliHost
   const archived = useSessionStore(
     (s) => !!s.conversations.find((c) => c.id === s.activeId)?.archived
   )
@@ -665,18 +665,11 @@ export function Transcript(): React.JSX.Element {
                   <EmptyQuotaUsage conversationId={activeId} host={cliHost} />
                 ) : null
               }
-              title={!apiKeyPresent ? t('transcript.configureKey') : undefined}
-              description={!apiKeyPresent ? t('transcript.configureKeyDesc') : undefined}
-              foot={
-                <>
-                  <SessionWorkspaceChrome />
-                  {activeId && !archived ? (
-                    <SurfaceSwitchButton conversationId={activeId} target="swarm" />
-                  ) : null}
-                </>
-              }
+              title={needsVavKey ? t('transcript.configureKey') : undefined}
+              description={needsVavKey ? t('transcript.configureKeyDesc') : undefined}
+              foot={<SessionWorkspaceChrome />}
             >
-              {!apiKeyPresent ? (
+              {needsVavKey ? (
                 <Button
                   label={t('transcript.openSettings')}
                   variant="primary"

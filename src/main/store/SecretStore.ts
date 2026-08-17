@@ -14,7 +14,7 @@ import { join, dirname } from 'node:path'
  * a Keychain prompt. Never touch safeStorage until {@link unlock} runs from
  * the onboarding UI — status/needsUnlock must stay pure.
  */
-export type SecretName = 'api' | 'braveSearch' | 'cloudflare'
+export type SecretName = 'api' | 'braveSearch' | 'cloudflare' | 'supabase'
 
 export class SecretStore {
   private readonly memory = new Map<SecretName, string>()
@@ -115,7 +115,7 @@ export class SecretStore {
         const probe = safeStorage.encryptString('vav-keychain-unlock')
         safeStorage.decryptString(probe)
         // Warm stored secrets so later get() hits memory without re-prompting.
-        for (const name of ['api', 'braveSearch', 'cloudflare'] as const) {
+        for (const name of ['api', 'braveSearch', 'cloudflare', 'supabase'] as const) {
           try {
             const file = this.pathFor(name)
             if (!existsSync(file)) continue

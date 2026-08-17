@@ -29,10 +29,17 @@ import {
   type ConversationPtyLayouts,
   type FileEntry,
   type FileSortKey,
+  type ProviderResumeCursor,
   type TerminalLayoutNode,
   type TerminalSplitAxis,
   type TerminalTab
 } from '@shared/types'
+import { longEdgeSplitAxis } from '@shared/cliSessionHistory'
+import {
+  shouldAutoAssignSingleCliAgent,
+  type SkipCliPickerReason
+} from '@shared/skipCliPicker'
+import { focusedCliPaneId, measureCliPaneRects } from '../lib/cliPaneNavigate'
 
 export type { TerminalLayoutNode, TerminalSplitAxis }
 
@@ -59,15 +66,27 @@ async function forgetMissingWorkspaceDir(path: string): Promise<void> {
 /**
  * When settings say so and exactly one CLI agent is enabled, launch it into
  * a pending picker pane instead of leaving the chooser open.
+ * Last-pane reseed never auto-assigns — the picker stays so ⌘W can close.
  */
-function maybeAutoAssignSingleAgent(conversationId: string, pendingTabId: string): void {
+function maybeAutoAssignSingleAgent(
+  conversationId: string,
+  pendingTabId: string,
+  reason: SkipCliPickerReason
+): void {
   void (async () => {
     try {
       const { useSessionStore } = await import('./sessionStore')
       const settings = useSessionStore.getState().settings
-      if (settings.skipCliAgentPickerWhenSingle !== true) return
       const enabled = enabledCliAgents(settings.cliAgents)
-      if (enabled.length !== 1) return
+      if (
+        !shouldAutoAssignSingleCliAgent({
+          skipWhenSingle: settings.skipCliAgentPickerWhenSingle === true,
+          enabledCount: enabled.length,
+          reason
+        })
+      ) {
+        return
+      }
       const sole = enabled[0]
       if (!sole?.id) return
       const { getAgentInstallStatus, refreshAgentInstallStatus } = await import(
@@ -649,6 +668,8 @@ export type NewBashOptions = {
   title?: string
   purpose?: 'install'
   installAgentId?: string
+  resumeCursor?: ProviderResumeCursor | null
+  sessionTitle?: string | null
 }
 
 /** Stable fingerprint of split axes so hydrate can tell row vs column apart. */
@@ -874,7 +895,11 @@ interface WorkspaceState {
    * Split the CLI surface and put a **picker** in the new pane (⌘D / ⌘⇧D).
    * User chooses the CLI type in that pane before a PTY is spawned.
    */
-  splitCliSurface(id: string, axis?: TerminalSplitAxis): void
+  splitCliSurface(
+    id: string,
+    axis?: TerminalSplitAxis,
+    options?: { autoAssign?: boolean }
+  ): void
   /**
    * User picked a CLI type for a pending (or empty) pane — spawn PTY into it.
    */
@@ -884,7 +909,13 @@ interface WorkspaceState {
     agentId: string,
     cols?: number,
     rows?: number,
-    initialContext?: string | null
+    initialContext?: string | null,
+    resume?: { cursor: ProviderResumeCursor; title?: string | null }
+  ): Promise<'created' | 'missing'>
+  /** Split the focused pane along its long edge and resume a recorded session. */
+  resumeCliSession(
+    id: string,
+    input: { agentId: string; cursor: ProviderResumeCursor; title?: string | null }
   ): Promise<'created' | 'missing'>
   /**
    * Split / new pane on a CLI agent host (legacy same-type split).
@@ -1402,7 +1433,9 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
             launchContext: launchContext?.trim() || null,
             contextLaunchStrategy: strategy,
             agentId: agent.id,
-            title: agent.name
+            title: extras?.sessionTitle?.trim() || agent.name,
+            resumeCursor: extras?.resumeCursor ?? null,
+            sessionTitle: extras?.sessionTitle ?? null
           }
         : {
             ...(preferredId ? { preferredId } : {}),
@@ -1616,7 +1649,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       }
     }))
     get().syncPtyLayouts(id)
-    maybeAutoAssignSingleAgent(id, pending.id)
+    maybeAutoAssignSingleAgent(id, pending.id, 'enter')
   },
 
   exitCliMode(id) {
@@ -1634,13 +1667,14 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     get().syncPtyLayouts(id)
   },
 
-  splitCliSurface(id, axis: TerminalSplitAxis = 'row') {
+  splitCliSurface(id, axis: TerminalSplitAxis = 'row', options) {
     if (!id) return
     get().enterCliMode(id)
     const slice = get().workspaces[id]
     const surface = getCliSurface(slice)
     if (!surface) return
     const pending = makePendingCliTab()
+    const autoAssign = options?.autoAssign !== false
     const focusId =
       surface.activeTabId || surface.tabs[0]?.id || collectLeaves(surface.layout!)[0]
     if (!focusId || !surface.layout) {
@@ -1656,7 +1690,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         activeHostAgentId: CLI_SURFACE_KEY,
         cliMode: true
       }))
-      maybeAutoAssignSingleAgent(id, pending.id)
+      if (autoAssign) maybeAutoAssignSingleAgent(id, pending.id, 'split')
       return
     }
     // Equal split (1:1) for both ⌘D row and ⌘⇧D column.
@@ -1677,7 +1711,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       }
     })
     get().syncPtyLayouts(id)
-    maybeAutoAssignSingleAgent(id, pending.id)
+    if (autoAssign) maybeAutoAssignSingleAgent(id, pending.id, 'split')
     // Original pane just remounted in a half-size track — settle fit + SIGWINCH
     // instead of waiting for the 180ms ResizeObserver debounce.
     requestAnimationFrame(() => {
@@ -1687,7 +1721,15 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     })
   },
 
-  async assignCliPane(id, tabId, agentId, cols = 80, rows = 24, initialContext = null) {
+  async assignCliPane(
+    id,
+    tabId,
+    agentId,
+    cols = 80,
+    rows = 24,
+    initialContext = null,
+    resume
+  ) {
     if (!id || !tabId || !agentId) return 'missing'
     get().enterCliMode(id)
     const agent = await resolveCliAgentConfig(agentId)
@@ -1696,14 +1738,20 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     let newTabId: string
     try {
       // Prefer stable primary id when this is the first live pane of that agent.
+      // Resume always mints a fresh PTY so `--resume` is not attached to a dead id.
       const surface = getCliSurface(get().workspaces[id])
       const liveOfType =
         surface?.tabs.filter((t) => !t.pendingCli && t.agentId === agentId).length ?? 0
       const preferred =
-        liveOfType === 0 && (surface?.tabs.some((t) => t.id === tabId && t.pendingCli) ?? false)
+        !resume &&
+        liveOfType === 0 &&
+        (surface?.tabs.some((t) => t.id === tabId && t.pendingCli) ?? false)
           ? primaryAgentPaneId(id, agentId)
           : undefined
-      newTabId = await get().newUserTerminal(id, cols, rows, agentId, initialContext, preferred)
+      newTabId = await get().newUserTerminal(id, cols, rows, agentId, initialContext, preferred, {
+        resumeCursor: resume?.cursor ?? null,
+        sessionTitle: resume?.title ?? null
+      })
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
       if (msg.includes('AGENT_NOT_FOUND')) return 'missing'
@@ -1762,6 +1810,11 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       }
     })
     get().syncPtyLayouts(id)
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        window.dispatchEvent(new Event('vav:resize-end'))
+      })
+    })
     // Keep conversation meta pointing at the focused CLI type for prompts.
     try {
       const { useSessionStore } = await import('./sessionStore')
@@ -1770,6 +1823,67 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       // ignore
     }
     return 'created'
+  },
+
+  async resumeCliSession(id, input) {
+    if (!id || !input.agentId || !input.cursor) return 'missing'
+    if (!get().workspaces[id]) {
+      set((state) => ({ workspaces: { ...state.workspaces, [id]: emptySlice(null) } }))
+    }
+    let surface = getCliSurface(get().workspaces[id])
+    if (surface && surface.tabs.length > 0) {
+      // Flip Thread → Swarm without reseeding panes.
+      get().enterCliMode(id)
+      surface = getCliSurface(get().workspaces[id])
+    } else {
+      // One pending leaf, no auto-assign — we are about to resume into it.
+      const pending = makePendingCliTab()
+      patch(set, id, (s) => ({
+        cliMode: true,
+        activeHostAgentId: CLI_SURFACE_KEY,
+        agentHostSessions: {
+          ...s.agentHostSessions,
+          [CLI_SURFACE_KEY]: {
+            tabs: [pending],
+            layout: { type: 'leaf', tabId: pending.id, weight: 1 },
+            activeTabId: pending.id
+          }
+        }
+      }))
+      surface = getCliSurface(get().workspaces[id])
+    }
+
+    const pendingOnly =
+      surface &&
+      surface.tabs.length === 1 &&
+      surface.tabs[0]?.pendingCli === true
+        ? surface.tabs[0].id
+        : null
+
+    let tabId = pendingOnly
+    if (!tabId) {
+      const focused = focusedCliPaneId() || surface?.activeTabId
+      const rects = measureCliPaneRects()
+      const box = rects.find((row) => row.tabId === focused) ?? rects[0]
+      const axis = box
+        ? longEdgeSplitAxis(box.right - box.left, box.bottom - box.top)
+        : 'row'
+      get().splitCliSurface(id, axis, { autoAssign: false })
+      tabId = getCliSurface(get().workspaces[id])?.activeTabId ?? null
+    }
+    if (!tabId) return 'missing'
+    const result = await get().assignCliPane(id, tabId, input.agentId, 80, 24, null, {
+      cursor: input.cursor,
+      title: input.title ?? null
+    })
+    if (result === 'created') {
+      const liveId = getCliSurface(get().workspaces[id])?.activeTabId
+      if (liveId) {
+        const { focusAgentPane } = await import('../lib/uiFocus')
+        focusAgentPane(id, liveId)
+      }
+    }
+    return result
   },
 
   async splitAgentHost(
@@ -2247,8 +2361,8 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         // (Do not bounce back to VAV chat.)
         if (key === CLI_SURFACE_KEY || s.cliMode) {
           const pending = makePendingCliTab()
-          // Defer auto-assign so this patch commits first.
-          queueMicrotask(() => maybeAutoAssignSingleAgent(id, pending.id))
+          // Last live pane: always keep the picker. Skip-picker only applies
+          // to enter / new split — auto-launch here would trap ⌘W in a spawn loop.
           return {
             cliMode: true,
             activeHostAgentId: CLI_SURFACE_KEY,

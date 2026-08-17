@@ -34,6 +34,8 @@ import type {
   GithubResult,
   GithubSite
 } from './github'
+import type { CloudflareResult, CloudflareStatus, CloudflareStatusQuery } from './cloudflare'
+import type { SupabaseResult, SupabaseStatus, SupabaseStatusQuery } from './supabase'
 import type { Platform } from './platform'
 import type { AgentInstallRun } from './agentInstall'
 import type { OverlayNavigatePayload, OverlayPayload } from './overlayOpen'
@@ -124,6 +126,10 @@ export interface PtyCreateOptions {
    * fills the TUI prompt after spawn instead.
    */
   launchContext?: string | null
+  /** Resume a recorded native session instead of minting a new one. */
+  resumeCursor?: ProviderResumeCursor | null
+  /** Display title to keep on the binding when resuming. */
+  sessionTitle?: string | null
   /**
    * Which argv strategy to use for {@link launchContext}.
    * e.g. `claude-append-system-prompt-file` → writes a temp file and passes
@@ -343,6 +349,39 @@ export interface ProviderAccountViewPayload {
   now: number
 }
 
+export interface SwarmHistoryItem {
+  id: string
+  conversationId: string
+  tabId: string | null
+  agentId: string
+  agentName: string
+  title: string
+  /** Tray-identical label (`Title - Agent`). */
+  label: string
+  dirKey: string
+  dirLabel: string
+  createdAt: number
+  updatedAt: number
+  live: boolean
+  resumable: boolean
+  cursor: ProviderResumeCursor | null
+}
+
+export interface SwarmHistoryViewPayload {
+  conversationId: string
+  theme: ThemeMode
+  locale: AppLocale
+  groups: { dirKey: string; dirLabel: string; items: SwarmHistoryItem[] }[]
+}
+
+/** Parent window should long-edge-split and resume this native session. */
+export interface SwarmHistoryResumeEvent {
+  conversationId: string
+  agentId: string
+  cursor: ProviderResumeCursor
+  title: string | null
+}
+
 export interface CliOpenEvent {
   conversationId: string
   toast: string | null
@@ -545,6 +584,9 @@ export interface VavApi {
     /** Cloudflare API token (encrypted). Empty string clears. */
     setCloudflareApiToken(token: string): Promise<{ hint: string | null }>
     cloudflareApiTokenHint(): Promise<string | null>
+    /** Supabase access token (encrypted). Empty string clears. */
+    setSupabaseAccessToken(token: string): Promise<{ hint: string | null }>
+    supabaseAccessTokenHint(): Promise<string | null>
     validateKey(key: string): Promise<ValidateKeyResult>
     availableFonts(): Promise<string[]>
     pickDirectory(): Promise<string | null>
@@ -610,6 +652,8 @@ export interface VavApi {
     setFocusedFile(id: string, path: string | null): Promise<ConversationMeta[]>
     setWorkingDirectory(id: string, path: string): Promise<ConversationMeta[]>
     pickWorkingDirectory(id: string): Promise<ConversationMeta[] | null>
+    /** Mint a new Temporary Workspace folder and switch this session to it. */
+    useTempWorkingDirectory(id: string): Promise<ConversationMeta[]>
     /** Move a Temporary Workspace folder to a permanent path. */
     locateWorkspace(
       id: string,
@@ -866,6 +910,16 @@ export interface VavApi {
       cwd: string,
       options: { path: string; newBranch?: string; branch?: string }
     ): Promise<GitResult<{ path: string; branch: string | null }>>
+  }
+
+  /** Workspace Workers / Pages status from wrangler + the Cloudflare API. */
+  cloudflare: {
+    status(cwd: string, query?: CloudflareStatusQuery): Promise<CloudflareResult<CloudflareStatus>>
+  }
+
+  /** Workspace project / Edge Function status from supabase/ + the Management API. */
+  supabase: {
+    status(cwd: string, query?: SupabaseStatusQuery): Promise<SupabaseResult<SupabaseStatus>>
   }
 
   /** GitHub pull requests, Actions, Releases, and Pages for the workspace remote. */
@@ -1142,6 +1196,16 @@ export interface VavApi {
     onProviderAccountView(handler: (payload: ProviderAccountViewPayload) => void): () => void
     /** Hug the account popup to the rendered body (avoids a tall empty panel). */
     fitProviderAccount(height: number): Promise<void>
+    /**
+     * Native Swarm History select (tray-shaped AppKit/Win32 menu).
+     * `anchor` is the History button rect in the sender window’s content coordinates.
+     */
+    openSwarmHistory(
+      conversationId: string,
+      anchor?: { x: number; y: number; width: number; height: number }
+    ): Promise<void>
+    /** Parent session window: resume a closed native session via long-edge split. */
+    onSwarmHistoryResume(handler: (payload: SwarmHistoryResumeEvent) => void): () => void
     /** Relaunch the app (e.g. after Dock-hide preference). */
     relaunch(): Promise<void>
     /** Resolves to the chosen row's id, or null if the menu was dismissed. */
@@ -1293,6 +1357,8 @@ export const IPC = {
   settingsBraveSearchKeyHint: 'vav:settings:brave-search-key-hint',
   settingsSetCloudflareToken: 'vav:settings:set-cloudflare-token',
   settingsCloudflareTokenHint: 'vav:settings:cloudflare-token-hint',
+  settingsSetSupabaseToken: 'vav:settings:set-supabase-token',
+  settingsSupabaseTokenHint: 'vav:settings:supabase-token-hint',
   settingsValidateKey: 'vav:settings:validate-key',
   settingsFonts: 'vav:settings:fonts',
   settingsPickDirectory: 'vav:settings:pick-directory',
@@ -1319,6 +1385,7 @@ export const IPC = {
   convSetFocusedFile: 'vav:conv:set-focused-file',
   convSetWorkdir: 'vav:conv:set-workdir',
   convPickWorkdir: 'vav:conv:pick-workdir',
+  convUseTempWorkdir: 'vav:conv:use-temp-workdir',
   convLocateWorkspace: 'vav:conv:locate-workspace',
   convRemove: 'vav:conv:remove',
   convReveal: 'vav:conv:reveal',
@@ -1407,6 +1474,7 @@ export const IPC = {
   githubListPulls: 'vav:github:list-pulls',
   githubGetPull: 'vav:github:get-pull',
   cloudflareStatus: 'vav:cloudflare:status',
+  supabaseStatus: 'vav:supabase:status',
   githubListActions: 'vav:github:list-actions',
   githubListReleases: 'vav:github:list-releases',
   githubGetActionRun: 'vav:github:get-action-run',
@@ -1460,6 +1528,8 @@ export const IPC = {
   providerAccountGetView: 'vav:provider-account:get-view',
   providerAccountView: 'vav:provider-account:view',
   providerAccountFit: 'vav:provider-account:fit',
+  windowOpenSwarmHistory: 'vav:window:open-swarm-history',
+  swarmHistoryResume: 'vav:swarm-history:resume',
   windowRelaunch: 'vav:window:relaunch',
   windowFullscreen: 'vav:window:fullscreen',
   notificationsPermission: 'vav:notifications:permission',

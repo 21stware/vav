@@ -13,6 +13,8 @@ import {
   GithubReleasePreview,
   GithubSitePreview
 } from './GithubPanel'
+import { CloudflareDeployPreview } from './CloudflarePanel'
+import { SupabaseFunctionPreview } from './SupabasePanel'
 
 const FileViewer = lazy(() => import('./FileViewer').then((m) => ({ default: m.FileViewer })))
 
@@ -338,6 +340,20 @@ export function WorkspaceView({
             <GithubReleasePreview
               key={`release-${sessionPreview.release.id}`}
               release={sessionPreview.release}
+              onClose={closeFilePreview}
+            />
+          ) : previewMounted && sessionPreview.kind === 'cloudflare' ? (
+            <CloudflareDeployPreview
+              key={`cf-${sessionPreview.status.config?.path ?? sessionPreview.cwd}`}
+              status={sessionPreview.status}
+              deploymentId={sessionPreview.deploymentId}
+              onClose={closeFilePreview}
+            />
+          ) : previewMounted && sessionPreview.kind === 'supabase' ? (
+            <SupabaseFunctionPreview
+              key={`sb-${sessionPreview.status.projectRef ?? sessionPreview.cwd}`}
+              status={sessionPreview.status}
+              functionSlug={sessionPreview.functionSlug}
               onClose={closeFilePreview}
             />
           ) : previewMounted && previewFilePath ? (
