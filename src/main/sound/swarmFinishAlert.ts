@@ -1,5 +1,6 @@
 import {
   createSwarmFinishWatch,
+  shouldDeliverSwarmFinishChime,
   type SwarmFinishEffect,
   type SwarmFinishSample
 } from '@shared/swarmFinishWatch'
@@ -7,14 +8,23 @@ import {
 /**
  * Debounced finish chime for Swarm CLI panes. Main owns the timer; the watch
  * only decides when a running → idle edge is a candidate.
+ *
+ * If the session was in front when it went idle, drop the chime — unfocusing
+ * afterwards must not play "turn complete" for a result the user already saw.
  */
-export function createSwarmFinishAlert(notify: (conversationId: string) => void): {
+export function createSwarmFinishAlert(
+  notify: (conversationId: string) => void,
+  opts?: {
+    isForeground?: (conversationId: string) => boolean
+  }
+): {
   noteStatus: (sample: SwarmFinishSample) => void
   noteGone: (tabId: string) => void
   dispose: () => void
 } {
   const watch = createSwarmFinishWatch()
   const timers = new Map<string, ReturnType<typeof setTimeout>>()
+  const isForeground = opts?.isForeground
 
   function clearTimer(tabId: string): void {
     const timer = timers.get(tabId)
@@ -30,10 +40,24 @@ export function createSwarmFinishAlert(notify: (conversationId: string) => void)
       return
     }
     clearTimer(effect.tabId)
+    if (isForeground?.(effect.conversationId)) {
+      // Consume the armed edge now so a later unfocus cannot fire it.
+      watch.takeNotify(effect.tabId)
+      return
+    }
     const timer = setTimeout(() => {
       timers.delete(effect.tabId)
       const ready = watch.takeNotify(effect.tabId)
-      if (ready) notify(ready.conversationId)
+      if (!ready) return
+      if (
+        !shouldDeliverSwarmFinishChime({
+          completedWhileForeground: false,
+          foregroundNow: isForeground?.(ready.conversationId) === true
+        })
+      ) {
+        return
+      }
+      notify(ready.conversationId)
     }, effect.delayMs)
     timer.unref?.()
     timers.set(effect.tabId, timer)

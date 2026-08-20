@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef } from 'react'
 import {
   Bell,
   Bot,
+  ChartNoAxesColumn,
   FileCheck2,
   Folder,
   Info,
@@ -21,6 +22,7 @@ import {
 import { useT } from './i18n/useT'
 import { useAppearance } from './lib/appearance'
 import { installDefaultContextMenu } from './lib/nativeMenu'
+import { installAnalysisBridge } from './lib/analysisCache'
 import { installInstallRunBridge } from './state/installRunStore'
 import { AppToast } from './components/AppToast'
 import { ApiSettings } from './components/settings/ApiSettings'
@@ -32,11 +34,17 @@ import { AgentsSettings } from './components/settings/AgentsSettings'
 import { FileAssociationsSettings } from './components/settings/FileAssociationsSettings'
 import { KeyBindingsSettings } from './components/settings/KeyBindingsSettings'
 import { AboutSettings } from './components/settings/AboutSettings'
+import { AnalysisSettings } from './components/settings/AnalysisSettings'
 
 const NAV_ICON = 14
 
 const CATEGORY_KEYS: { id: SettingsView; labelKey: MessageKey; icon: React.JSX.Element }[] = [
   { id: 'api', labelKey: 'settings.nav.api', icon: <KeyRound size={NAV_ICON} strokeWidth={1.75} /> },
+  {
+    id: 'analysis',
+    labelKey: 'settings.nav.analysis',
+    icon: <ChartNoAxesColumn size={NAV_ICON} strokeWidth={1.75} />
+  },
   {
     id: 'workspace',
     labelKey: 'settings.nav.workspace',
@@ -116,6 +124,7 @@ export default function SettingsWindow(): React.JSX.Element {
     )
     const offMenu = installDefaultContextMenu()
     const offInstall = installInstallRunBridge()
+    const offAnalysis = installAnalysisBridge()
     void useSessionStore.getState().refreshAgentModelCatalog(false)
     return () => {
       offSettings()
@@ -124,6 +133,7 @@ export default function SettingsWindow(): React.JSX.Element {
       offView()
       offMenu()
       offInstall()
+      offAnalysis()
     }
   }, [])
 
@@ -171,6 +181,7 @@ export default function SettingsWindow(): React.JSX.Element {
             className={`settings-body-panel${animateEnter ? ' is-enter' : ''}`}
           >
             {category === 'api' && <ApiSettings />}
+            {category === 'analysis' && <AnalysisSettings />}
             {category === 'workspace' && <WorkspaceSettings />}
             {category === 'appearance' && <AppearanceSettings />}
             {category === 'keybindings' && <KeyBindingsSettings />}

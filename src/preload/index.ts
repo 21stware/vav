@@ -4,6 +4,7 @@ import {
   type MenuCommand,
   type NativeMenuItem,
   type CliInstallLocation,
+  type AnalysisSnapshot,
   type SettingsView,
   type SettingsViewPayload,
   type ProviderAccountViewPayload,
@@ -65,7 +66,9 @@ const api: VavApi = {
     unsetFileAssociation: (formatId: string) =>
       ipcRenderer.invoke(IPC.settingsUnsetFileAssociation, formatId),
     registerAllFileAssociations: () =>
-      ipcRenderer.invoke(IPC.settingsRegisterAllFileAssociations)
+      ipcRenderer.invoke(IPC.settingsRegisterAllFileAssociations),
+    analysis: (options?: { refresh?: boolean }) =>
+      ipcRenderer.invoke(IPC.settingsAnalysis, options)
   },
 
   conversations: {
@@ -419,6 +422,7 @@ const api: VavApi = {
   onMenuCommand: (handler) => subscribe<MenuCommand>(IPC.menuCommand, handler),
   onSettingsChanged: (handler) => subscribe<AppSettings>(IPC.settingsChanged, handler),
   onSettingsView: (handler) => subscribe<SettingsViewPayload>(IPC.settingsView, handler),
+  onSettingsAnalysis: (handler) => subscribe<AnalysisSnapshot>(IPC.settingsAnalysisUpdated, handler),
   onCliOpen: (handler) => subscribe(IPC.cliOpen, handler),
   onFullscreen: (handler) => subscribe<boolean>(IPC.windowFullscreen, handler)
 }

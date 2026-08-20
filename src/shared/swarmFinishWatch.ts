@@ -3,8 +3,8 @@
  * PTY running → idle, then wait so a quiet gap between tools is not a chime.
  *
  * First idle after spawn is ignored unless stdout has already spanned a
- * real work window (launch-with-prompt). After the pane has been idle once,
- * any later idle that follows running is a candidate.
+ * real work window (launch-with-prompt). Later idles only count when the
+ * run itself lasted long enough — a focus-out TUI redraw is not a turn.
  */
 import type { PtyActivityStatus } from './ipc'
 
@@ -38,6 +38,14 @@ type PaneWatch = {
 
 export function isSwarmFinishAgent(agentId: string | null | undefined): boolean {
   return typeof agentId === 'string' && agentId.length > 0 && agentId !== 'vav'
+}
+
+/** Skip the chime when the user already saw the idle, or came back before it fired. */
+export function shouldDeliverSwarmFinishChime(opts: {
+  completedWhileForeground: boolean
+  foregroundNow: boolean
+}): boolean {
+  return !opts.completedWhileForeground && !opts.foregroundNow
 }
 
 export function createSwarmFinishWatch(opts?: {
@@ -95,12 +103,22 @@ export function createSwarmFinishWatch(opts?: {
       return { type: 'cancel', tabId: sample.tabId }
     }
 
+    // Repeat idle after we already classified this rest — keep a quiet timer.
+    if (pane.status === 'idle' && pane.sawIdle) {
+      return null
+    }
+
     const prevSawIdle = pane.sawIdle
     const runningSince = pane.runningSince
     const wasArmed = pane.armed
     const runMs = runningSince != null ? now() - runningSince : 0
     const outputSpan = Math.max(0, sample.lastDataAt - sample.createdAt)
-    const qualifying = prevSawIdle || runMs >= minWorkMs || outputSpan >= minWorkMs
+    // After the first rest, lifetime outputSpan is always large. Only the
+    // current run counts — otherwise window blur (CSI focus-out → TUI paint)
+    // looks like a finished turn.
+    const qualifying = prevSawIdle
+      ? runMs >= minWorkMs
+      : runMs >= minWorkMs || outputSpan >= minWorkMs
 
     pane.status = 'idle'
     pane.sawIdle = true

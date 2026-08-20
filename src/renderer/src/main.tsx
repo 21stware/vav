@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client'
 import { IS_MAC, PLATFORM } from './lib/platform'
 import { installLiveResizeTracking } from './lib/liveResize'
 import { installSiblingRepaint } from './lib/siblingRepaint'
+import { installWindowFocusTracking } from './lib/windowFocus'
 import '@xterm/xterm/css/xterm.css'
 import './styles/index.css'
 
@@ -21,6 +22,7 @@ const ProviderAccountWindow = lazy(() => import('./ProviderAccountWindow'))
 document.documentElement.dataset.platform = PLATFORM
 installLiveResizeTracking()
 installSiblingRepaint()
+installWindowFocusTracking()
 
 // One bundle, several window kinds; main says which one it is opening.
 const params = new URLSearchParams(window.location.search)

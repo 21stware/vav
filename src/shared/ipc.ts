@@ -39,9 +39,11 @@ import type { SupabaseResult, SupabaseStatus, SupabaseStatusQuery } from './supa
 import type { Platform } from './platform'
 import type { AgentInstallRun } from './agentInstall'
 import type { OverlayNavigatePayload, OverlayPayload } from './overlayOpen'
+import type { AnalysisSnapshot } from './analysis'
 
 export type { AgentInstallRun } from './agentInstall'
 export type { OverlayNavigatePayload, OverlayPayload } from './overlayOpen'
+export type { AnalysisSnapshot } from './analysis'
 
 export interface Bootstrap {
   settings: AppSettings
@@ -168,6 +170,7 @@ export interface NativeMenuItem {
 
 export type SettingsView =
   | 'api'
+  | 'analysis'
   | 'workspace'
   | 'appearance'
   | 'notifications'
@@ -612,6 +615,8 @@ export interface VavApi {
       updated: string[]
       failed: { id: string; error: string }[]
     }>
+    /** Local API + Agent usage totals, plus account/quota for configured providers. */
+    analysis(options?: { refresh?: boolean }): Promise<AnalysisSnapshot>
   }
 
   conversations: {
@@ -1284,6 +1289,8 @@ export interface VavApi {
   onSettingsChanged(handler: (settings: AppSettings) => void): () => void
   /** Category to show, pushed when ⌘, hits an already-open settings window. */
   onSettingsView(handler: (payload: SettingsViewPayload) => void): () => void
+  /** Background spending snapshot after a cached / prefetch rebuild. */
+  onSettingsAnalysis(handler: (snapshot: AnalysisSnapshot) => void): () => void
   /** `vav /path` from the installed CLI — select the minted conversation. */
   onCliOpen(handler: (event: CliOpenEvent) => void): () => void
   /** Native fullscreen entered/left — used to collapse traffic-light inset. */
@@ -1374,6 +1381,8 @@ export const IPC = {
   settingsSetFileAssociation: 'vav:settings:set-file-association',
   settingsUnsetFileAssociation: 'vav:settings:unset-file-association',
   settingsRegisterAllFileAssociations: 'vav:settings:register-all-file-associations',
+  settingsAnalysis: 'vav:settings:analysis',
+  settingsAnalysisUpdated: 'vav:settings:analysis-updated',
 
   convList: 'vav:conv:list',
   convGet: 'vav:conv:get',

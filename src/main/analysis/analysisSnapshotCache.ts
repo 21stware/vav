@@ -1,0 +1,110 @@
+import type { AnalysisApiBalance } from '../../shared/apiBalance.ts'
+import type { AnalysisConversationInput, AnalysisSnapshot } from '../../shared/analysis.ts'
+import { applyApiBalanceToSnapshot, snapshotWithFreshUsage } from '../../shared/analysis.ts'
+
+type FullBuilder = (force: boolean) => Promise<AnalysisSnapshot>
+type BalanceReader = (
+  force: boolean
+) => Promise<{ supported: boolean; balance: AnalysisApiBalance | null }>
+
+let cached: AnalysisSnapshot | null = null
+let building: Promise<AnalysisSnapshot> | null = null
+let pendingForce = false
+let builder: FullBuilder | null = null
+let conversations: (() => AnalysisConversationInput[]) | null = null
+let readBalance: BalanceReader | null = null
+let apiKeyPresent: (() => boolean) | null = null
+let onUpdated: ((snapshot: AnalysisSnapshot) => void) | null = null
+
+export function configureAnalysisCache(options: {
+  build: FullBuilder
+  conversations: () => AnalysisConversationInput[]
+  readBalance?: BalanceReader
+  apiKeyPresent?: () => boolean
+  onUpdated?: (snapshot: AnalysisSnapshot) => void
+}): void {
+  builder = options.build
+  conversations = options.conversations
+  readBalance = options.readBalance ?? null
+  apiKeyPresent = options.apiKeyPresent ?? null
+  onUpdated = options.onUpdated ?? null
+}
+
+export function peekAnalysisCache(): AnalysisSnapshot | null {
+  return cached
+}
+
+export function resetAnalysisCacheForTests(): void {
+  cached = null
+  building = null
+  pendingForce = false
+  builder = null
+  conversations = null
+  readBalance = null
+  apiKeyPresent = null
+  onUpdated = null
+}
+
+/**
+ * Stale-while-revalidate. Cached providers return immediately with live usage;
+ * account/quota rebuilds run in the background unless `refresh` is set.
+ */
+export function invalidateAnalysisCache(): void {
+  cached = null
+}
+
+export async function serveAnalysisSnapshot(options?: {
+  refresh?: boolean
+}): Promise<AnalysisSnapshot> {
+  const force = options?.refresh === true
+  const cachedNeedsKey =
+    Boolean(cached) &&
+    cached?.providers.some((p) => p.kind === 'api' && p.balanceState === 'none') &&
+    apiKeyPresent?.() === true
+  if (!force && cached && conversations && !cachedNeedsKey) {
+    cached = snapshotWithFreshUsage(cached, conversations())
+    cached = await patchCachedBalance(false, cached)
+    void syncAnalysisSnapshot(false)
+    return cached
+  }
+  return syncAnalysisSnapshot(force)
+}
+
+async function patchCachedBalance(
+  force: boolean,
+  snapshot: AnalysisSnapshot
+): Promise<AnalysisSnapshot> {
+  if (!readBalance) return snapshot
+  try {
+    const lookup = await readBalance(force)
+    const next = applyApiBalanceToSnapshot(snapshot, lookup, apiKeyPresent?.() !== false)
+    onUpdated?.(next)
+    return next
+  } catch (err) {
+    console.error('[analysis] balance patch failed', err)
+    return snapshot
+  }
+}
+
+async function syncAnalysisSnapshot(force: boolean): Promise<AnalysisSnapshot> {
+  if (!builder) throw new Error('analysis cache is not configured')
+  pendingForce ||= force
+  if (building) return building
+  building = (async () => {
+    try {
+      let snapshot: AnalysisSnapshot | null = null
+      do {
+        const useForce = pendingForce
+        pendingForce = false
+        snapshot = await builder(useForce)
+        if (conversations) snapshot = snapshotWithFreshUsage(snapshot, conversations())
+        cached = snapshot
+        onUpdated?.(snapshot)
+      } while (pendingForce)
+      return snapshot!
+    } finally {
+      building = null
+    }
+  })()
+  return building
+}

@@ -45,6 +45,7 @@ import {
   type TokenUsageViewPayload
 } from '@shared/ipc'
 import {
+  DEFAULT_CLI_AGENTS,
   DEFAULT_SETTINGS,
   enabledCliAgents,
   type AppSettings,
@@ -54,6 +55,7 @@ import {
   type ShellKind,
   type TurnEvent
 } from '@shared/types'
+import { agentBinaryCandidates } from '@shared/agentBinary'
 import { localFileStreamUrl } from '@shared/localFileUrl'
 import { compactionForLeaf } from '@shared/compaction'
 import { hasActiveAgentWork, shouldBlockIdleSleep } from '@shared/sleepBlocker'
@@ -169,6 +171,14 @@ import {
 import { ensureMacOpenDirectoryService } from './macOpenDirectoryService'
 import { NotificationCenter } from './notifications'
 import { QuotaService } from './quota/QuotaService'
+import { deepseekBalanceUrl } from '@shared/apiBalance'
+import { fetchDeepSeekApiBalance } from './quota/deepseekBalance'
+import { buildAnalysisSnapshot } from './analysis/buildAnalysisSnapshot'
+import {
+  configureAnalysisCache,
+  invalidateAnalysisCache,
+  serveAnalysisSnapshot
+} from './analysis/analysisSnapshotCache'
 import { hostMayHaveAccountQuota, mergeQuotaWindowsPreferNewer } from '@shared/quotaWindows'
 import { nativeSessionId } from '@shared/cliPaneBinding'
 import {
@@ -506,11 +516,16 @@ const notifications = new NotificationCenter(
   showMainWindow,
   () => mainWindow
 )
-swarmFinishAlert = createSwarmFinishAlert((conversationId) => {
-  const conversation = conversationStore.get(conversationId)
-  const title = conversation?.title ?? t('window.sessionFallback')
-  notifications.alertUser('turn-complete', conversationId, title, t('notify.turnComplete'))
-})
+swarmFinishAlert = createSwarmFinishAlert(
+  (conversationId) => {
+    const conversation = conversationStore.get(conversationId)
+    const title = conversation?.title ?? t('window.sessionFallback')
+    notifications.alertUser('turn-complete', conversationId, title, t('notify.turnComplete'))
+  },
+  {
+    isForeground: (conversationId) => notifications.isConversationForeground(conversationId)
+  }
+)
 
 /** Compact path for tray labels: `/Users/me/repo/vav` → `~/repo/vav`. */
 function trayDirLabel(workingDirectory: string | null | undefined): string {
@@ -1697,6 +1712,9 @@ function loadRenderer(window: BrowserWindow, query: Record<string, string> = {})
 }
 
 function openSettingsWindow(view: SettingsView = 'api', agentId?: string): void {
+  void serveAnalysisSnapshot({ refresh: false }).catch((err) => {
+    console.error('[analysis] prefetch failed', err)
+  })
   if (settingsWindow && !settingsWindow.isDestroyed()) {
     safeSend(settingsWindow.webContents, IPC.settingsView, { view, agentId })
     void revealBrowserWindow(settingsWindow)
@@ -4739,7 +4757,16 @@ function appBuildNumber(): string {
 
 function registerIpc(): void {
   ipcMain.handle(IPC.secretsStatus, () => secretStore.status())
-  ipcMain.handle(IPC.secretsUnlock, () => secretStore.unlock())
+  ipcMain.handle(IPC.secretsUnlock, () => {
+    const result = secretStore.unlock()
+    if (result.ok) {
+      invalidateAnalysisCache()
+      void serveAnalysisSnapshot({ refresh: false }).catch((err) => {
+        console.error('[analysis] post-unlock warm failed', err)
+      })
+    }
+    return result
+  })
 
   ipcMain.handle(IPC.bootstrap, (): Bootstrap => {
     // Bootstrap must not force Keychain before onboarding unlock on macOS.
@@ -4964,6 +4991,82 @@ return c as text`
   ipcMain.handle(IPC.settingsRegisterAllFileAssociations, () =>
     fileAssociationService.registerAll()
   )
+  const analysisHasApiKey = (): boolean => {
+    if (secretStore.has('api')) return true
+    if (secretStore.status().hasKeyFile) {
+      secretStore.unlock()
+      return secretStore.has('api')
+    }
+    return false
+  }
+  const lookupVavApiBalance = async (force: boolean) => {
+    const endpoint = settingsStore.get().apiEndpoint
+    const supported = Boolean(deepseekBalanceUrl(endpoint))
+    if (!supported) return { supported: false, balance: null }
+    analysisHasApiKey()
+    const balance = await fetchDeepSeekApiBalance({
+      apiKey: secretStore.get('api'),
+      endpoint,
+      force
+    })
+    return { supported: true, balance }
+  }
+  configureAnalysisCache({
+    conversations: () => conversationStore.all(),
+    apiKeyPresent: analysisHasApiKey,
+    readBalance: lookupVavApiBalance,
+    onUpdated: (snapshot) => {
+      if (settingsWindow && !settingsWindow.isDestroyed()) {
+        safeSend(settingsWindow.webContents, IPC.settingsAnalysisUpdated, snapshot)
+      }
+    },
+    build: async (force) => {
+      const settings = settingsStore.get()
+      const catalogue = DEFAULT_CLI_AGENTS
+      const configured = settings.cliAgents ?? []
+      let presentIds: string[] | undefined
+      try {
+        const seen = new Set<string>()
+        const specs: Array<{ id: string; candidates: string[] }> = []
+        for (const agent of [...catalogue, ...configured]) {
+          if (!agent.id || seen.has(agent.id)) continue
+          seen.add(agent.id)
+          specs.push({ id: agent.id, candidates: agentBinaryCandidates(agent, catalogue) })
+        }
+        const found = probeAgentExecutables(specs, { force })
+        presentIds = Object.entries(found)
+          .filter(([, path]) => Boolean(path))
+          .map(([id]) => id)
+      } catch (err) {
+        console.error('[analysis] binary probe failed', err)
+      }
+      return await buildAnalysisSnapshot({
+        conversations: conversationStore.all(),
+        cliAgents: configured,
+        catalogue,
+        presentIds,
+        apiKeyPresent: analysisHasApiKey(),
+        forceRefresh: force,
+        refreshQuotas: (forceRefresh) => quotaService.refreshAllHosts(forceRefresh),
+        quotaWindows: (host) => quotaService.get(host),
+        readAccount: (host) => readHostAccountInfo(host),
+        readApiBalance: () => lookupVavApiBalance(force)
+      })
+    }
+  })
+  if (secretStore.has('api')) {
+    void serveAnalysisSnapshot({ refresh: false }).catch((err) => {
+      console.error('[analysis] prefetch failed', err)
+    })
+  }
+  ipcMain.handle(IPC.settingsAnalysis, async (_event, options?: { refresh?: boolean }) => {
+    try {
+      return await serveAnalysisSnapshot(options)
+    } catch (err) {
+      console.error('[analysis] snapshot failed', err)
+      throw err
+    }
+  })
 
   // --- conversations ---
   ipcMain.handle(IPC.convList, () => conversationStore.listMeta())

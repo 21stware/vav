@@ -1,5 +1,4 @@
-import { useMemo, type ReactNode } from 'react'
-import { enabledCliAgents } from '@shared/types'
+import { type ReactNode } from 'react'
 import { useSessionStore } from '../state/sessionStore'
 import { useT } from '../i18n/useT'
 import { isTemporaryWorkspace, workdirShortLabel } from '../lib/format'
@@ -93,7 +92,7 @@ export function EnableVersionControlChrome({
 }
 
 /**
- * Empty-session chrome: workspace, current agent, one example prompt.
+ * Empty-session chrome: current workspace, with a switcher.
  * Git init / branch / worktree live in Files → Git, not here.
  */
 export function SessionWorkspaceChrome(): React.JSX.Element | null {
@@ -102,43 +101,20 @@ export function SessionWorkspaceChrome(): React.JSX.Element | null {
   const conversation = useSessionStore((s) => s.conversations.find((c) => c.id === s.activeId))
   const tmp = useSessionStore((s) => s.tmp)
   const pickWorkingDirectory = useSessionStore((s) => s.pickWorkingDirectory)
-  const setDraft = useSessionStore((s) => s.setDraft)
-  const focusComposer = useSessionStore((s) => s.focusComposer)
-  const setToolsCollapsed = useSessionStore((s) => s.setToolsCollapsed)
-  const setPanelSegment = useSessionStore((s) => s.setPanelSegment)
-  const rawCliAgents = useSessionStore((s) => s.settings.cliAgents)
-  const cliAgents = useMemo(() => enabledCliAgents(rawCliAgents), [rawCliAgents])
 
   const cwd = conversation?.workingDirectory ?? null
   const temporary = isTemporaryWorkspace(cwd, tmp)
-  const hostId = conversation?.cliHost ?? 'vav'
-  const agentName =
-    hostId && hostId !== 'vav'
-      ? (cliAgents.find((a) => a.id === hostId)?.name ?? hostId)
-      : t('agents.plainShell')
-
   const copy = useEmptyEntranceCopy(true)
-  const motionKey = copy.motionKey ?? `${activeId}:${hostId}`
+  const motionKey = copy.motionKey ?? activeId ?? 'ws'
 
   if (!activeId) return null
 
   const projectName = temporary
     ? t('sidebar.defaultWorkspace')
     : workdirShortLabel(cwd ?? '', tmp)
-  const example = temporary ? t('empty.exampleTemp') : t('empty.exampleProject')
 
   const switchFolder = (): void => {
     void pickWorkingDirectory(activeId)
-  }
-
-  const openFiles = (): void => {
-    setToolsCollapsed(false)
-    setPanelSegment('files')
-  }
-
-  const useExample = (): void => {
-    setDraft(activeId, example)
-    focusComposer()
   }
 
   return (
@@ -152,22 +128,6 @@ export function SessionWorkspaceChrome(): React.JSX.Element | null {
           {t('empty.workspaceMid')}{' '}
           <TextBtn onClick={() => switchFolder()}>{t('empty.workspaceSwitch')}</TextBtn>
           {t('empty.workspaceEnd')}
-        </StaggerLine>
-      </p>
-      <p className="session-workspace-prose">
-        <StaggerLine baseDelay={240} key={`${motionKey}:agent`}>
-          {t('empty.agentLead')}{' '}
-          <span className="session-workspace-prose-strong">{agentName}</span>
-          {t('empty.agentMid')}{' '}
-          <TextBtn onClick={openFiles}>{t('empty.agentOpenFiles')}</TextBtn>
-          {t('empty.agentEnd')}
-        </StaggerLine>
-      </p>
-      <p className="session-workspace-prose">
-        <StaggerLine baseDelay={360} key={`${motionKey}:ex`}>
-          {t('empty.exampleLead')}{' '}
-          <TextBtn onClick={useExample}>{example}</TextBtn>
-          {t('empty.exampleEnd')}
         </StaggerLine>
       </p>
     </div>

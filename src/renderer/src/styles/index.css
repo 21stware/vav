@@ -1283,6 +1283,46 @@ button.chip:active {
   transform: translateX(17px);
 }
 
+/*
+ * Inactive window (desktop / another app has key focus). AppKit paints
+ * default buttons and on-toggles graphite instead of accent — without this
+ * a background VAV window keeps shouting in colour.
+ */
+:root[data-window-focused='false'] {
+  --btn-inactive-fill: color-mix(in srgb, var(--text) 18%, var(--bg-raised));
+  --btn-inactive-ink: var(--text);
+  accent-color: color-mix(in srgb, var(--text) 36%, var(--bg-raised));
+}
+
+:root[data-window-focused='false'] .btn.primary,
+:root[data-window-focused='false'] .send-button:not(:disabled),
+:root[data-window-focused='false'] .token-usage-btn:not(.secondary):not(:disabled),
+:root[data-window-focused='false'] .md-xstate-ev[data-primary] {
+  background: var(--btn-inactive-fill);
+  color: var(--btn-inactive-ink);
+  box-shadow: none;
+}
+
+:root[data-window-focused='false'] .btn.primary:hover:not(:disabled),
+:root[data-window-focused='false'] .send-button:hover:not(:disabled),
+:root[data-window-focused='false'] .token-usage-btn:not(.secondary):hover:not(:disabled) {
+  background: color-mix(in srgb, var(--text) 24%, var(--bg-raised));
+  color: var(--btn-inactive-ink);
+}
+
+:root[data-window-focused='false'] .btn.secondary:hover:not(:disabled) {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+:root[data-window-focused='false'] .toggle.on {
+  background: color-mix(in srgb, var(--text) 28%, var(--bg-sunken));
+}
+
+:root[data-window-focused='false'] .session-workspace-text-btn {
+  color: var(--text);
+}
+
 .muted {
   color: var(--text-secondary);
   font-size: 12px;
@@ -10050,11 +10090,11 @@ mark {
   white-space: nowrap;
 }
 
-/* —— Session empty: project / worktree / branch (prose) —— */
+/* —— Session empty: workspace switcher (prose) —— */
 .session-workspace-chrome {
   width: 100%;
   min-width: 100%;
-  min-height: calc(11.5px * 1.5 * 2 + 4px);
+  min-height: calc(11.5px * 1.5);
   margin-top: 0;
   text-align: center;
   display: flex;
@@ -10098,6 +10138,7 @@ mark {
   letter-spacing: -0.01em;
   text-decoration: none;
   cursor: pointer;
+  transition: color var(--dur-hover) ease;
 }
 
 .session-workspace-text-btn:active:not(:disabled) {
@@ -18255,6 +18296,7 @@ html:has(.provider-account-popup) #root {
   flex: 0 0 auto;
   transition:
     background var(--dur-hover) ease,
+    color var(--dur-hover) ease,
     transform var(--dur-press) var(--ease-out);
 }
 
@@ -19632,6 +19674,207 @@ html:has(.token-usage-popup) #root {
   font-size: 13px;
   font-weight: 600;
   margin-bottom: 2px;
+}
+
+.analysis-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+  max-width: 520px;
+}
+
+.analysis-section {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.analysis-section-head {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.analysis-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.analysis-title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+  line-height: 1.2;
+}
+
+.analysis-lede {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+
+.analysis-error {
+  color: var(--danger);
+}
+
+.analysis-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px 20px;
+}
+
+.analysis-stat-label {
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  color: var(--text-secondary);
+}
+
+.analysis-stat-value {
+  margin-top: 3px;
+  font-size: 18px;
+  font-weight: 650;
+  letter-spacing: -0.03em;
+  font-variant-numeric: tabular-nums;
+}
+
+.analysis-stat-meta,
+.analysis-row-meta {
+  font-size: 11.5px;
+  line-height: 1.4;
+  color: var(--text-secondary);
+}
+
+.analysis-stat-meta {
+  margin-top: 3px;
+}
+
+.analysis-host-list,
+.analysis-provider-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.analysis-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 9px 0;
+}
+
+.analysis-host-list .analysis-row + .analysis-row,
+.analysis-provider + .analysis-provider {
+  box-shadow: inset 0 1px 0 var(--border);
+}
+
+.analysis-provider {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 11px 0;
+}
+
+.analysis-provider-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 1px;
+}
+
+.analysis-row-who {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.analysis-row-name {
+  font-size: 13.5px;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+}
+
+.analysis-row-nums {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+}
+
+.analysis-row-cost {
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+.analysis-quota-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.analysis-quota {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.analysis-quota-meta {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.analysis-quota-pct {
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.analysis-quota.is-exhausted .analysis-quota-pct {
+  color: var(--danger);
+}
+
+.analysis-bar {
+  height: 4px;
+  border-radius: 999px;
+  background: var(--bg-hover);
+  overflow: hidden;
+}
+
+.analysis-bar-fill {
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+}
+
+.analysis-quota.is-exhausted .analysis-bar-fill {
+  background: var(--danger);
+}
+
+.analysis-spin {
+  animation: analysis-spin 0.8s linear infinite;
+}
+
+@keyframes analysis-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .analysis-spin {
+    animation: none;
+  }
 }
 
 .dock > .banner.archived-readonly {

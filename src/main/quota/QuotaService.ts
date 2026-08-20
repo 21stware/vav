@@ -70,6 +70,13 @@ export class QuotaService {
     return this.get(host)
   }
 
+  /** Refresh every host that exposes an account usage API. */
+  async refreshAllHosts(force = false): Promise<void> {
+    await Promise.all(
+      (Object.keys(FETCHERS) as QuotaAccountHost[]).map((host) => this.refresh(host, force))
+    )
+  }
+
   private async refreshAll(): Promise<void> {
     await Promise.all((Object.keys(FETCHERS) as QuotaAccountHost[]).map((host) => this.refresh(host, true)))
   }

@@ -194,6 +194,7 @@ export interface ToastState {
 
 export type SettingsCategory =
   | 'api'
+  | 'analysis'
   | 'workspace'
   | 'appearance'
   | 'notifications'

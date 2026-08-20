@@ -27,6 +27,7 @@ New session: pick a workspace, pick an agent, ask one thing. Multi-split CLI TUI
 - **Git change inspector** — status + diff in the Files tray; commit stays in the terminal or the agent
 - **English / Chinese UI**, following the OS or a setting
 - API keys stored encrypted via `safeStorage` (Keychain) — never as plaintext
+- **Spending** — Settings panel for local usage plus provider subscriptions, and DeepSeek API balance when VAV talks to official DeepSeek
 - **Swarm** (optional) — multi-split raw CLI TUIs; off by default in Settings → Providers
 
 ## Website
