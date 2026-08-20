@@ -1,5 +1,5 @@
 import type { DisplayCurrency, TokenSnapshot } from './types'
-import { t, type AppLocale } from './i18n'
+import { t, type AppLocale } from './i18n/index.ts'
 
 export {
   classifyCodexRateLimitWindowKinds,
@@ -17,8 +17,8 @@ export {
   windowsFromClaudeOAuthPayload,
   windowsFromCodexBackendPayload,
   windowsFromGrokBillingPayload
-} from './quotaWindows'
-export type { CodexRateLimitWindowPair } from './quotaWindows'
+} from './quotaWindows.ts'
+export type { CodexRateLimitWindowPair } from './quotaWindows.ts'
 
 /** Anthropic prompt-cache TTL used for expiry display. */
 export const CACHE_TTL_MS = 5 * 60_000
@@ -113,6 +113,8 @@ export function buildSnapshot(input: {
   timestamp?: number
   /** When set, use host-reported USD instead of the local rate table. */
   costUsd?: number
+  /** Caller-supplied rate table; defaults to the local per-model heuristic. */
+  rates?: ModelRates
 }): TokenSnapshot {
   const cacheReadTokens = Math.max(0, input.usage.cacheRead)
   const cacheWriteTokens = Math.max(0, input.usage.cacheWrite)
@@ -125,7 +127,7 @@ export function buildSnapshot(input: {
     ? Math.max(0, input.costUsd!)
     : estimateCost(
         { newInputTokens, outputTokens, cacheWriteTokens, cacheReadTokens },
-        ratesForModel(input.modelId)
+        input.rates ?? ratesForModel(input.modelId)
       )
   return {
     turnIndex: input.turnIndex,

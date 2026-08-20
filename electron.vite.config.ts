@@ -11,6 +11,14 @@ import react from '@vitejs/plugin-react'
 const PI_PACKAGES = ['@earendil-works/pi-ai', '@earendil-works/pi-agent-core']
 
 /**
+ * `ws` (via pi-ai's google-generative-ai → @google/genai) requires these
+ * native accel modules inside a try/catch — they are optional. Bundling turns
+ * that guarded require into a hard top-level import and kills app startup, so
+ * they stay external and let ws fall back to its pure-JS path.
+ */
+const OPTIONAL_WS_NATIVE = ['bufferutil', 'utf-8-validate']
+
+/**
  * PDF.js needs cMaps + standard fonts for CJK/forms, and the worker as a
  * same-origin static file. Vite’s `?url` import of the worker under
  * `/@fs/.../node_modules` fails in Electron (“Failed to fetch dynamically
@@ -40,7 +48,8 @@ export default defineConfig({
     plugins: [externalizeDepsPlugin({ exclude: PI_PACKAGES })],
     build: {
       rollupOptions: {
-        input: { index: resolve('src/main/index.ts') }
+        input: { index: resolve('src/main/index.ts') },
+        external: OPTIONAL_WS_NATIVE
       }
     },
     resolve: {

@@ -17,8 +17,10 @@ import {
   type TurnStatus
 } from '@shared/types'
 import { ROOT_LEAF } from '@shared/thread'
-import { buildSnapshot, resolveContextWindow, resolveMaxTokens } from '@shared/tokenUsage'
+import { buildSnapshot } from '@shared/tokenUsage'
 import { buildModel, describeError, streamWith } from './provider'
+import { catalogRatesFor, contextWindowFor, maxTokensFor } from './modelMeta'
+import { loadInlineImages } from './attachmentImages'
 import { parseThinkingLevel, toPiReasoning } from '@shared/thinkingLevel'
 import { normalizePlanSteps } from '@shared/askPlan'
 import {
@@ -357,7 +359,7 @@ export class AgentRuntime {
 
     const settings = this.deps.settings.get()
     const modelId = conversation.model || settings.defaultModel
-    const model = buildModel(settings, modelId, resolveContextWindow(modelId))
+    const model = buildModel(settings, modelId, contextWindowFor(modelId))
 
     let summary: string
     try {
@@ -365,7 +367,7 @@ export class AgentRuntime {
         toFold,
         model,
         apiKey,
-        resolveMaxTokens(modelId)
+        maxTokensFor(modelId)
       )
     } catch (err) {
       return { ok: false, error: describeError((err as Error).message) }
@@ -497,12 +499,21 @@ export class AgentRuntime {
 
     const settings = this.deps.settings.get()
     const modelId = conversation.model || settings.defaultModel
-    const model = buildModel(settings, modelId, resolveContextWindow(modelId))
-    const history = buildHistory(
+    const model = buildModel(settings, modelId, contextWindowFor(modelId))
+    // Image attachments ride along as inline ImageContent parts for vision
+    // models (newest-first cap inside); text-only models keep the path lines.
+    const inlineImages = await loadInlineImages(
       conversation.messages,
       parentId,
       model,
       conversation.compactions
+    )
+    const history = buildHistory(
+      conversation.messages,
+      parentId,
+      model,
+      conversation.compactions,
+      inlineImages
     )
     if (history.length === 0) {
       this.emitFatal(conversationId, parentId, t('error.noRetryParent'))
@@ -583,7 +594,7 @@ export class AgentRuntime {
           model,
           apiKey,
           temperature: settings.temperature,
-          maxTokens: resolveMaxTokens(modelId),
+          maxTokens: maxTokensFor(modelId),
           ...(reasoning ? { reasoning } : {}),
           // The sticky shell is one serialized process and the interactive
           // cards are answered one at a time, so parallel execution would be a
@@ -773,7 +784,10 @@ export class AgentRuntime {
               turnIndex,
               usage,
               modelId: conversation.model || event.message.model,
-              timestamp: Date.now()
+              timestamp: Date.now(),
+              // Catalog pricing (exact $/MTok incl. cache) when pi-ai knows the
+              // model; falls back to the shared rate table inside otherwise.
+              rates: catalogRatesFor(conversation.model || event.message.model) ?? undefined
             })
             this.deps.conversations.recordTokenSnapshot(conversationId, snapshot)
             // Context-window fill = this turn's input size (not cumulative session cost).

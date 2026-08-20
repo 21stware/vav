@@ -1,5 +1,4 @@
-import { useEffect, useRef } from 'react'
-// useEffect still used by TerminalHost
+import { useEffect, useLayoutEffect, useRef } from 'react'
 import { X } from 'lucide-react'
 import { useSessionStore } from '../state/sessionStore'
 import {
@@ -10,11 +9,14 @@ import {
 } from '../state/workspaceStore'
 import {
   acquireTerminal,
-  parkTerminal,
+  blitTerminal,
+  claimTerminalAttach,
   pauseTerminalPaint,
-  resumeTerminalPaint
+  resumeTerminalPaint,
+  scheduleParkIfOrphaned
 } from '../lib/terminalRegistry'
 import { proposedCellsDiffer } from '../lib/terminalFit'
+import { isPendingCliTabId } from '../lib/cliPendingLayout'
 import { requestCloseAgentTab, setUiFocusScope } from '../lib/uiFocus'
 import { useT } from '../i18n/useT'
 import { EmptyState } from './ui'
@@ -24,6 +26,34 @@ function countLeaves(node: TerminalLayoutNode | null): number {
   if (!node) return 0
   if (node.type === 'leaf') return 1
   return countLeaves(node.children[0]) + countLeaves(node.children[1])
+}
+
+function layoutLeaves(node: TerminalLayoutNode): string[] {
+  if (node.type === 'leaf') return [node.tabId]
+  return [...layoutLeaves(node.children[0]), ...layoutLeaves(node.children[1])]
+}
+
+function leafIsPending(
+  tabId: string,
+  tabs: Array<{ id: string; pendingCli?: boolean }> | undefined
+): boolean {
+  if (isPendingCliTabId(tabId)) return true
+  return Boolean(tabs?.find((t) => t.id === tabId)?.pendingCli)
+}
+
+function escapeSlotSelector(value: string): string {
+  if (typeof CSS !== 'undefined' && typeof CSS.escape === 'function') return CSS.escape(value)
+  return value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')
+}
+
+function findTerminalSlot(
+  surface: 'bash' | 'agent',
+  tabId: string
+): HTMLElement | null {
+  const stack = document.querySelector(`.terminal-stack[data-terminal-surface="${surface}"]`)
+  if (!(stack instanceof HTMLElement)) return null
+  const slot = stack.querySelector(`[data-terminal-slot="${escapeSlotSelector(tabId)}"]`)
+  return slot instanceof HTMLElement ? slot : null
 }
 
 /**
@@ -59,6 +89,7 @@ export function TerminalPanel({
   const bashLayout = useWorkspaceStore((s) => s.workspaces[activeId]?.layout ?? null)
   const bashActiveTabId = useWorkspaceStore((s) => s.workspaces[activeId]?.activeTabId ?? '')
   const bashFirstTabId = useWorkspaceStore((s) => s.workspaces[activeId]?.tabs[0]?.id ?? null)
+  const bashTabs = useWorkspaceStore((s) => s.workspaces[activeId]?.tabs)
 
   const layout = surface === 'agent' ? agentHostLayout : bashLayout
   const activeTabId = surface === 'agent' ? agentHostActiveTabId : bashActiveTabId
@@ -68,6 +99,9 @@ export function TerminalPanel({
     layout ?? (recoverId ? { type: 'leaf', tabId: recoverId, weight: 1 } : null)
   const empty = !displayLayout
   const multiPane = countLeaves(displayLayout) > 1
+  const tabs = surface === 'agent' ? agentSurface?.tabs : bashTabs
+  const leaves = displayLayout ? layoutLeaves(displayLayout) : []
+  const layoutEpoch = leaves.join('\n')
 
   return (
     <div
@@ -87,15 +121,30 @@ export function TerminalPanel({
           />
         )
       ) : (
-        <div className="terminal-split-root">
-          <LayoutNodeView
-            conversationId={activeId}
-            node={displayLayout}
-            visible={visible}
-            surface={surface}
-            multiPane={multiPane}
-          />
-        </div>
+        <>
+          <div className="terminal-split-root">
+            <LayoutNodeView
+              conversationId={activeId}
+              node={displayLayout}
+              visible={visible}
+              surface={surface}
+              multiPane={multiPane}
+            />
+          </div>
+          {leaves
+            .filter((tabId) => !leafIsPending(tabId, tabs))
+            .map((tabId) => (
+              <TerminalHost
+                key={`${activeId}:${tabId}`}
+                conversationId={activeId}
+                tabId={tabId}
+                hidden={!visible}
+                autoFocus={visible && tabId === activeTabId}
+                surface={surface}
+                layoutEpoch={layoutEpoch}
+              />
+            ))}
+        </>
       )}
     </div>
   )
@@ -104,6 +153,10 @@ export function TerminalPanel({
 function leafIds(node: TerminalLayoutNode): string {
   if (node.type === 'leaf') return node.tabId
   return `${leafIds(node.children[0])}/${leafIds(node.children[1])}`
+}
+
+function layoutNodeKey(node: TerminalLayoutNode): string {
+  return node.type === 'leaf' ? node.tabId : `split:${leafIds(node)}`
 }
 
 function findBranch(
@@ -279,14 +332,10 @@ function LayoutNodeView({
             compact={multiPane}
           />
         ) : (
-          <TerminalHost
-            conversationId={conversationId}
-            tabId={node.tabId}
-            hidden={!visible}
-            // Inactive live panes must not steal keys from a pending picker
-            // after ⌘D / ⌘⇧D (UI highlights the new pane; focus was jumping back).
-            autoFocus={visible && isActive}
-            surface={surface}
+          <div
+            className="terminal-host"
+            data-terminal-slot={node.tabId}
+            data-hidden={!visible ? 'true' : 'false'}
           />
         )}
       </div>
@@ -303,6 +352,7 @@ function LayoutNodeView({
       style={{ flexDirection: direction, flex: splitFlex(node.weight) }}
     >
       <LayoutNodeView
+        key={layoutNodeKey(a)}
         conversationId={conversationId}
         node={a}
         visible={visible}
@@ -413,6 +463,7 @@ function LayoutNodeView({
         }}
       />
       <LayoutNodeView
+        key={layoutNodeKey(b)}
         conversationId={conversationId}
         node={b}
         visible={visible}
@@ -440,7 +491,8 @@ function TerminalHost({
   tabId,
   hidden,
   autoFocus,
-  surface
+  surface,
+  layoutEpoch
 }: {
   conversationId: string
   tabId: string
@@ -448,18 +500,23 @@ function TerminalHost({
   /** When false, fit/resize only — never yank focus from another pane’s picker. */
   autoFocus: boolean
   surface: 'bash' | 'agent'
-}): React.JSX.Element {
+  /** Changes when the split tree gains/loses a leaf — re-parent, do not remount. */
+  layoutEpoch: string
+}): null {
   const codeFont = useSessionStore((s) => s.settings.codeFont)
   const fontSize = useSessionStore((s) => s.settings.fontSize)
-  const hostRef = useRef<HTMLDivElement>(null)
   /** Stable across Thread↔Swarm visibility toggles — do not tear down xterm. */
   const fitRef = useRef<(force?: boolean) => void>(() => {})
   const autoFocusRef = useRef(autoFocus)
   autoFocusRef.current = autoFocus
 
-  useEffect(() => {
-    const host = hostRef.current
-    if (!host) return
+  useLayoutEffect(() => {
+    const host = findTerminalSlot(surface, tabId)
+    if (!host) {
+      scheduleParkIfOrphaned(conversationId, tabId)
+      return
+    }
+    claimTerminalAttach(conversationId, tabId)
     const entry = acquireTerminal({
       conversationId,
       tabId,
@@ -468,11 +525,16 @@ function TerminalHost({
       surface,
       paintPaused: hidden
     })
-    // Re-parent on every mount (reuse path). Hidden panes stay paint-paused.
+    // Companion window parked this viewer — leave the xterm detached so we
+    // do not steal PTY geometry. Thread keep-alive (hidden, not parked) stays.
+    if (entry.parked) {
+      return () => scheduleParkIfOrphaned(conversationId, tabId)
+    }
     if (!hidden) entry.parked = false
     if (entry.container.parentElement !== host) {
       host.appendChild(entry.container)
     }
+    blitTerminal(entry.term)
 
     let raf = 0
     let debounce: ReturnType<typeof setTimeout> | null = null
@@ -484,8 +546,8 @@ function TerminalHost({
       if (cancelled) return
       if (!force && !document.hasFocus()) return
       if (host.clientWidth === 0 || host.clientHeight === 0) return
-      // Parked hosts keep last geometry — never SIGWINCH while Thread is up.
-      if (host.dataset.hidden === 'true') return
+      // Parked / Thread-hidden hosts keep last geometry — never SIGWINCH.
+      if (entry.parked || entry.paintPaused || host.dataset.hidden === 'true') return
       try {
         const dims = entry.fit.proposeDimensions?.()
         if (!proposedCellsDiffer(entry.term.cols, entry.term.rows, dims)) return
@@ -567,11 +629,14 @@ function TerminalHost({
       window.removeEventListener('focus', onFocus)
       if (raf) cancelAnimationFrame(raf)
       if (debounce) clearTimeout(debounce)
-      parkTerminal(conversationId, tabId)
+      if (entry.container.parentElement === host) {
+        host.removeChild(entry.container)
+      }
+      scheduleParkIfOrphaned(conversationId, tabId)
     }
-    // Intentionally omit `hidden` / `autoFocus`: Thread↔Swarm and ⌘D must not
-    // tear down xterm; focus is handled in a separate effect.
-  }, [conversationId, tabId, codeFont, fontSize, surface])
+    // autoFocus stays out (picker must keep keys). layoutEpoch re-parents
+    // into the new slot; hidden reclaim re-attaches after a companion closes.
+  }, [conversationId, tabId, codeFont, fontSize, surface, layoutEpoch, hidden])
 
   // Pause canvas work while Thread (or another surface) covers this pane.
   // Resume replays the last PTY screen — do not keep writing hidden xterms.
@@ -584,7 +649,7 @@ function TerminalHost({
     let cancelled = false
     const run = (attempt: number): void => {
       if (cancelled) return
-      const host = hostRef.current
+      const host = findTerminalSlot(surface, tabId)
       if (!host) return
       if (host.clientWidth > 0 && host.clientHeight > 0) {
         fitRef.current()
@@ -597,14 +662,7 @@ function TerminalHost({
     return () => {
       cancelled = true
     }
-  }, [hidden, conversationId, tabId, autoFocus])
+  }, [hidden, conversationId, tabId, autoFocus, surface, layoutEpoch])
 
-  return (
-    <div
-      className="terminal-host"
-      ref={hostRef}
-      data-hidden={hidden ? 'true' : 'false'}
-      style={{ flex: 1, minHeight: 0, minWidth: 0 }}
-    />
-  )
+  return null
 }

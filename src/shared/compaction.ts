@@ -4,7 +4,7 @@
  * Full transcript stays in storage; only the model history and the default
  * transcript chrome hide earlier turns behind a summary until expanded.
  */
-import { threadPath } from './thread'
+import { threadPath } from './thread.ts'
 import type { ChatMessage, LeafCompaction } from './types'
 
 /** Keep at least this many path messages full after a default compact. */

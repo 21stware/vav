@@ -1,11 +1,15 @@
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
+import { Unicode11Addon } from '@xterm/addon-unicode11'
 import { WebLinksAddon } from '@xterm/addon-web-links'
 import { registerTerminalSink } from '../state/workspaceStore'
 import { IS_MAC } from './platform'
 import { publishTerminalRegistry } from './terminalRegistryHandle'
 import { isBareShiftEnter, KITTY_SHIFT_ENTER } from './terminalKeys'
 import { scrollbackForSurface } from './terminalFit'
+import { nextAttachGeneration, shouldParkDetachedHost } from './terminalHostLifetime'
+import { activateTerminalUnicode } from './terminalUnicode'
+import { installKittyKeyboardFallback } from './terminalCapabilityReplies'
 import type { BashBackgroundMode } from '@shared/types'
 
 export type TerminalSurface = 'bash' | 'agent'
@@ -41,6 +45,8 @@ export interface TerminalEntry {
 }
 
 const entries = new Map<string, TerminalEntry>()
+/** Bumped when a host claims this xterm; deferred park observes the snapshot. */
+const attachGeneration = new Map<string, number>()
 
 /** Last Appearance setting; bash terminals may ignore app theme. */
 let bashBackgroundMode: BashBackgroundMode = 'theme'
@@ -212,30 +218,12 @@ export function acquireTerminal(options: {
     const wantPaused = options.paintPaused === true
     if (wantPaused) existing.pausePaint()
     else {
-      const wasPaused = existing.paintPaused || existing.parked
+      // Split remounts chrome around a live xterm. Replay here would dump
+      // old-geometry alt-screen ANSI into the half-size grid (Grok/OpenCode).
+      const wasPaused = existing.paintPaused
+      const wasParked = existing.parked
       existing.parked = false
-      if (wasPaused) existing.resumePaint()
-    }
-    if (!wantPaused && !existing.container.isConnected) {
-      queueMicrotask(() => {
-        if (entries.get(id) !== existing || existing.paintPaused) return
-        try {
-          if (
-            existing.container.clientWidth > 0 &&
-            existing.container.clientHeight > 0
-          ) {
-            existing.fit.fit()
-            window.vav.pty.resize(
-              options.tabId,
-              existing.term.cols,
-              existing.term.rows,
-              true
-            )
-          }
-        } catch {
-          // host may not be in the DOM yet; TerminalHost fit handles that
-        }
-      })
+      if (wasPaused || wasParked) existing.resumePaint()
     }
     return existing
   }
@@ -266,6 +254,14 @@ export function acquireTerminal(options: {
     // Mac: option as meta for readline-style shortcuts in agents.
     macOptionIsMeta: true,
     macOptionClickForcesSelection: true,
+    // Grok / OpenCode / Claude query window and cell pixels on resize.
+    windowOptions: {
+      getWinSizePixels: true,
+      getCellSizePixels: true,
+      getWinSizeChars: true
+    },
+    // Advertise Kitty CSI-u so Grok enables enhanced key reporting (6.1+).
+    vtExtensions: { kittyKeyboard: true },
     // OSC 8 hyperlinks (gh, eza, agent CLIs) — same route as plain URLs, and
     // without xterm's stock "Do you want to navigate to…" confirm.
     linkHandler: {
@@ -274,13 +270,23 @@ export function acquireTerminal(options: {
   })
 
   const fit = new FitAddon()
+  term.loadAddon(new Unicode11Addon())
+  activateTerminalUnicode(term)
   term.loadAddon(fit)
   term.loadAddon(new WebLinksAddon(openTerminalLink))
   term.open(container)
 
+  // Declared before onData: replay of a snapshot re-triggers DA / OSC queries.
+  let replaying =
+    options.paintPaused !== true && typeof window.vav.pty.replay === 'function'
+
   term.onData((data) => {
+    // Replay of a TUI snapshot re-parses DA / OSC 11 / pixel queries. Answering
+    // those into the live PTY looks like stray keystrokes (and can clobber color).
+    if (replaying) return
     window.vav.pty.write(options.tabId, data)
   })
+  installKittyKeyboardFallback(term, (data) => window.vav.pty.write(options.tabId, data), () => replaying)
   // Only the focused window drives PTY geometry. Background windows still
   // receive the stream, but must not stomp cols/rows (causes TUI ghost frames).
   //
@@ -455,8 +461,6 @@ export function acquireTerminal(options: {
 
   // Gate live writes until scrollback replay finishes so a second window does not
   // paint "new chunks first, then full history" (which looks like a corrupt TUI).
-  let replaying =
-    options.paintPaused !== true && typeof window.vav.pty.replay === 'function'
   const liveQueue: string[] = []
   let liveQueueBytes = 0
   const LIVE_QUEUE_CAP = 256 * 1024
@@ -614,6 +618,35 @@ export function parkTerminal(conversationId: string, tabId: string): void {
   entry.container.remove()
 }
 
+export function claimTerminalAttach(conversationId: string, tabId: string): void {
+  const id = key(conversationId, tabId)
+  attachGeneration.set(id, nextAttachGeneration(attachGeneration.get(id) ?? 0))
+}
+
+/**
+ * Soft-park only if nothing re-claimed this xterm before the next microtask.
+ * ⌘D detaches then immediately re-parents; parking in that gap eats the TUI
+ * redraw and replays a stale alt-screen snapshot.
+ */
+export function scheduleParkIfOrphaned(conversationId: string, tabId: string): void {
+  const id = key(conversationId, tabId)
+  const scheduled = attachGeneration.get(id) ?? 0
+  queueMicrotask(() => {
+    const entry = entries.get(id)
+    if (!entry) return
+    if (
+      !shouldParkDetachedHost(
+        scheduled,
+        attachGeneration.get(id) ?? 0,
+        entry.container.isConnected
+      )
+    ) {
+      return
+    }
+    parkTerminal(conversationId, tabId)
+  })
+}
+
 export function pauseTerminalPaint(conversationId: string, tabId: string): void {
   entries.get(key(conversationId, tabId))?.pausePaint()
 }
@@ -626,7 +659,9 @@ export function resumeTerminalPaint(conversationId: string, tabId: string): void
 }
 
 export function disposeTerminal(conversationId: string, tabId: string): void {
-  entries.get(key(conversationId, tabId))?.dispose()
+  const id = key(conversationId, tabId)
+  attachGeneration.delete(id)
+  entries.get(id)?.dispose()
 }
 
 /**

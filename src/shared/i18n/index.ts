@@ -1,4 +1,4 @@
-import { en, zhCN, type AppLocale, type LocalePreference, type MessageKey } from './messages'
+import { en, zhCN, type AppLocale, type LocalePreference, type MessageKey } from './messages.ts'
 
 export type { AppLocale, LocalePreference, MessageKey }
 export { en, zhCN }

@@ -13,16 +13,25 @@
  * Manual compaction: when a {@link LeafCompaction} applies, earlier path
  * messages are replaced by a short summary pair; originals stay on disk for UI.
  */
-import type { Api, AssistantMessage, Message, Model, ToolCall } from '@earendil-works/pi-ai'
-import { composeQuotedUserText } from '@shared/quote'
-import { composeContextUserText } from '@shared/previewContext'
+import type {
+  Api,
+  AssistantMessage,
+  ImageContent,
+  Message,
+  Model,
+  TextContent,
+  ToolCall
+} from '@earendil-works/pi-ai'
+import { composeQuotedUserText } from '../../shared/quote.ts'
+import { composeContextUserText } from '../../shared/previewContext.ts'
 import {
   compactionBoundaryIndex,
   compactionForLeaf,
   estimateTextTokens
-} from '@shared/compaction'
-import { threadPath } from '@shared/thread'
+} from '../../shared/compaction.ts'
 import type { ChatMessage, LeafCompaction, MessageBlock, ToolCallBlock } from '@shared/types'
+import { threadPath } from '../../shared/thread.ts'
+import type { InlineImage } from './attachmentImages.ts'
 
 const SUMMARY_USER_PREFIX =
   '[Conversation summary — earlier turns compacted; full transcript remains in the app]\n\n'
@@ -48,7 +57,8 @@ export function buildHistory(
   messages: ChatMessage[],
   leafId: string | null,
   model: Model<Api>,
-  compactions?: LeafCompaction[] | null
+  compactions?: LeafCompaction[] | null,
+  inlineImages?: ReadonlyMap<string, InlineImage> | null
 ): Message[] {
   if (!leafId) return []
   const path = threadPath(messages, leafId)
@@ -102,15 +112,25 @@ export function buildHistory(
             }
           : null
       // Stored content is the bubble body; quote marker, preview context and
-      // attachments are reconstituted for the model only.
+      // attachments are reconstituted for the model only. Image attachments
+      // additionally ride along as ImageContent parts (vision models) — the
+      // Attachments text line still lists every path, inlined or not.
       const text = composeContextUserText(
         composeQuotedUserText(message.content, quote),
         message.contextBlocks,
         message.attachments
       )
+      const parts: (TextContent | ImageContent)[] = []
+      if (inlineImages) {
+        for (const att of message.attachments ?? []) {
+          const image = inlineImages.get(att)
+          if (image) parts.push({ type: 'image', ...image })
+        }
+      }
+      if (text.trim() || !parts.length) parts.push({ type: 'text', text: text || '(empty)' })
       history.push({
         role: 'user',
-        content: [{ type: 'text', text }],
+        content: parts,
         timestamp: message.createdAt
       })
       continue

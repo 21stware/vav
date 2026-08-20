@@ -145,9 +145,9 @@ import {
   resolveModelForChatHost
 } from '@shared/agentModels'
 import {
-  providerLabel as vavProviderLabel,
-  resolveContextWindow
+  providerLabel as vavProviderLabel
 } from '@shared/tokenUsage'
+import { contextWindowFor } from './agent/modelMeta'
 import { validateApiKey } from './agent/provider'
 import { shellPath } from './terminal/StickyShell'
 import { buildAppMenu } from './menu'
@@ -3035,7 +3035,7 @@ function contextWindowForModel(
     ?.contextWindow
   if (listed && listed > 0) return listed
   if (host && reported && reported > 0) return reported
-  return resolveContextWindow(modelId)
+  return contextWindowFor(modelId)
 }
 
 /**
@@ -5759,7 +5759,10 @@ return c as text`
   ipcMain.handle(
     IPC.agentsListModels,
     (_event, host: string | null, force?: boolean) =>
-      listHostModels(host, settingsStore, { force: force === true })
+      listHostModels(host, settingsStore, {
+        force: force === true,
+        apiKey: secretStore.get()
+      })
   )
 
   ipcMain.handle(IPC.agentsGetModelCatalog, () => {
@@ -5772,7 +5775,8 @@ return c as text`
     const catalog = await preloadHostModels(settingsStore, {
       force: force === true,
       prefer: preferredModelHosts(),
-      onProgress: publishModelCatalog
+      onProgress: publishModelCatalog,
+      apiKey: secretStore.get()
     })
     publishModelCatalog(catalog)
     return catalog
@@ -6437,7 +6441,8 @@ if (!singleInstance) {
       setTimeout(() => {
         void preloadHostModels(settingsStore, {
           prefer: preferredModelHosts(),
-          onProgress: publishModelCatalog
+          onProgress: publishModelCatalog,
+          apiKey: secretStore.get()
         })
           .then(publishModelCatalog)
           .catch((err) => console.warn('[agents] model preload failed', err))

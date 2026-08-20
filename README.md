@@ -6,28 +6,28 @@
 <br/>
 
 <!-- originai-release-badge:start -->
-<a href="https://spec.getoriginai.com/feea5b82-31bd-4418-a57f-23bc4042e8ff/4ba60da243ca3aae0673fe2f7f8c046956298f82c6a6496817e69a52f4f4d66a" target="_blank" rel="noopener noreferrer"><img src="https://spec.getoriginai.com/feea5b82-31bd-4418-a57f-23bc4042e8ff/4ba60da243ca3aae0673fe2f7f8c046956298f82c6a6496817e69a52f4f4d66a/badge-dark.svg" alt="originai" /></a>
+<a href="https://spec.getoriginai.com/feea5b82-31bd-4418-a57f-23bc4042e8ff/b0948ef36b2345f33a3cc70344fdd84571f082976f4c4864024d68e45d2997c6" target="_blank" rel="noopener noreferrer"><img src="https://spec.getoriginai.com/feea5b82-31bd-4418-a57f-23bc4042e8ff/b0948ef36b2345f33a3cc70344fdd84571f082976f4c4864024d68e45d2997c6/badge-dark.svg" alt="OriginAI" /></a>
 <!-- originai-release-badge:end -->
 
 
 
 **Your agents' workbench.** Open a folder or a document, see it, pick a block, and ask — with the built-in VAV agent or Claude Code / Codex in the same thread. Writes land on disk and you accept or reject them. A real terminal sits beside the chat. Everything stays on your machine; each CLI agent manages its own auth.
 
-New session: pick a workspace, pick an agent, ask one thing. Multi-split CLI TUIs (Swarm) are an optional advanced mode under Settings → CLI Agents.
+New session: pick a workspace, pick an agent, ask one thing. Multi-split CLI TUIs (Swarm) are an optional advanced mode under Settings → Providers.
 
 ![vav](docs/screenshot.png)
 
 ## Features
 
 - **File workbench** — tree / columns, format-aware preview (Office, PDF, Markdown, CSV, code, …), pick a block and ask beside the file
-- **Built-in VAV chat** — Anthropic- or OpenAI-compatible API; tools write to the session folder; accept / reject the diff
+- **Built-in VAV chat** — Anthropic-, OpenAI-, or Google-native API (model metadata and live model lists come from the provider); image attachments reach vision models inline; tools write to the session folder; accept / reject the diff
 - **CLI in the same thread** — Claude Code, Codex, Cursor, Grok, and others over their structured protocol (install from Settings if the binary is missing)
 - **User PTY** (⌘T) — real bash / zsh / PowerShell; `top` and `vim` work
 - **Per-session working directory**, defaulting to a temporary workspace you can point at a real project; `vav .` / `vav /path` CLI open
 - **Git change inspector** — status + diff in the Files tray; commit stays in the terminal or the agent
 - **English / Chinese UI**, following the OS or a setting
 - API keys stored encrypted via `safeStorage` (Keychain) — never as plaintext
-- **Swarm** (optional) — multi-split raw CLI TUIs; off by default in Settings → CLI Agents
+- **Swarm** (optional) — multi-split raw CLI TUIs; off by default in Settings → Providers
 
 ## Website
 

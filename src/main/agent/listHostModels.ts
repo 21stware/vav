@@ -5,6 +5,8 @@ import { enabledCliAgents, isStructuredCliHost } from '@shared/types'
 import type { SettingsStore } from '../store/SettingsStore'
 import { ensureLoginPath } from '../terminal/loginPath'
 import { resolveHostBinary } from './drivers'
+import { contextWindowFor } from './modelMeta'
+import { fetchVavModels } from './vavModelProbe'
 
 const CACHE_TTL_MS = 30 * 60_000
 const RUN_TIMEOUT_MS = 12_000
@@ -43,6 +45,14 @@ export interface PreloadHostModelsOptions {
   /** Probe these live hosts first (recent picks / open sessions). */
   prefer?: Array<CliHostKind | null | string>
   onProgress?: (catalog: Record<string, ListHostModelsResult>) => void
+  /** Unlocked VAV api key; enables the live /models probe for the vav host. */
+  apiKey?: string | null
+}
+
+export interface ListHostModelsOptions {
+  force?: boolean
+  /** Unlocked VAV api key; enables the live /models probe for the vav host. */
+  apiKey?: string | null
 }
 
 export interface ListHostModelsResult {
@@ -81,7 +91,12 @@ function vavModels(settings: SettingsStore): ModelOption[] {
   const extras = custom
     .filter((id) => id.trim() && !presetIds.has(id))
     .map((id) => ({ id, label: id }))
-  return extras.length ? [...PRESET_MODELS, ...extras] : [...PRESET_MODELS]
+  const models = extras.length ? [...PRESET_MODELS, ...extras] : [...PRESET_MODELS]
+  // Badge picker rows with the catalog context window when pi-ai knows the id.
+  return models.map((m) => {
+    const contextWindow = contextWindowFor(m.id)
+    return contextWindow > 0 ? { ...m, contextWindow } : m
+  })
 }
 
 /** Instant catalogue so the picker never waits on CLI spawn. */
@@ -97,6 +112,12 @@ export function seedModelCatalog(
 
 function seedHost(host: CliHostKind | 'vav', settings: SettingsStore): ListHostModelsResult {
   if (host === 'vav') {
+    // Never downgrade a fresh live probe back to the static seed; anything
+    // else re-seeds so custom-model edits surface immediately.
+    const existing = cache.get('vav')
+    if (existing?.source === 'live' && Date.now() - existing.at < CACHE_TTL_MS) {
+      return resultFromCache('vav', existing)
+    }
     const models = vavModels(settings)
     const entry: CacheEntry = { at: Date.now(), models, source: 'static', settled: true }
     cache.set('vav', entry)
@@ -151,6 +172,10 @@ export async function preloadHostModels(
   seedModelCatalog(settings)
   options?.onProgress?.(getModelCatalogSnapshot())
 
+  // VAV first — the picker's own host is the most-visited list.
+  await listHostModels('vav', settings, options)
+  options?.onProgress?.(getModelCatalogSnapshot())
+
   const enabled = enabledCliAgents(settings.get().cliAgents)
     .map((a) => a.id)
     .filter((id): id is CliHostKind => isStructuredCliHost(id))
@@ -171,10 +196,10 @@ export async function preloadHostModels(
 export async function listHostModels(
   host: string | null,
   settings: SettingsStore,
-  options?: { force?: boolean }
+  options?: ListHostModelsOptions
 ): Promise<ListHostModelsResult> {
   if (!host || host === 'vav') {
-    return seedHost('vav', settings)
+    return listVavModels(settings, options)
   }
 
   if (!isStructuredCliHost(host)) {
@@ -202,6 +227,80 @@ export async function listHostModels(
   } finally {
     if (inflight.get(cacheKey) === work) inflight.delete(cacheKey)
   }
+}
+
+/** Cooldown before re-probing a failing endpoint (live hits get CACHE_TTL_MS). */
+const VAV_PROBE_RETRY_MS = 60_000
+
+/**
+ * Live model list for the VAV host. The static seed (presets + customs) is the
+ * instant answer; when an endpoint and an unlocked key exist, the provider's
+ * own /models route is probed and merged in. Without a key the seed is final —
+ * the CLI-agent probes are keyless, this one is not.
+ */
+async function listVavModels(
+  settings: SettingsStore,
+  options?: ListHostModelsOptions
+): Promise<ListHostModelsResult> {
+  const seeded = seedHost('vav', settings)
+  const entry = cache.get('vav')
+  if (!entry) return seeded
+
+  const force = options?.force === true
+  if (!force) {
+    if (entry.source === 'live' && Date.now() - entry.at < CACHE_TTL_MS) return seeded
+    if (entry.error && Date.now() - entry.at < VAV_PROBE_RETRY_MS) return seeded
+  }
+
+  const endpoint = settings.get().apiEndpoint?.trim() || ''
+  const apiKey = options?.apiKey?.trim() || null
+  if (!endpoint || !apiKey) return seeded
+
+  const running = inflight.get('vav')
+  if (running && !force) return running
+
+  const work = (async (): Promise<ListHostModelsResult> => {
+    const probe = await fetchVavModels({ endpoint, apiKey })
+    if (probe.models.length > 0) {
+      const next: CacheEntry = {
+        at: Date.now(),
+        models: mergeVavModels(settings, probe.models),
+        source: 'live',
+        settled: true
+      }
+      cache.set('vav', next)
+      return resultFromCache('vav', next)
+    }
+    // Probe failed or empty: keep the static list, cool down before retrying.
+    const fallback: CacheEntry = {
+      at: Date.now(),
+      models: entry.models,
+      source: 'static',
+      settled: true,
+      ...(probe.error ? { error: probe.error } : {})
+    }
+    cache.set('vav', fallback)
+    return resultFromCache('vav', fallback)
+  })()
+  inflight.set('vav', work)
+  try {
+    return await work
+  } finally {
+    if (inflight.get('vav') === work) inflight.delete('vav')
+  }
+}
+
+/** Presets + customs stay in front; live-discovered ids append behind them. */
+function mergeVavModels(settings: SettingsStore, live: ModelOption[]): ModelOption[] {
+  const base = vavModels(settings)
+  const known = new Set(base.map((m) => m.id.toLowerCase()))
+  const extras = live
+    .filter((m) => m.id && !known.has(m.id.toLowerCase()))
+    .map((m) => {
+      const contextWindow = contextWindowFor(m.id)
+      return contextWindow > 0 ? { ...m, contextWindow } : m
+    })
+  return [...base, ...extras]
 }
 
 async function probeAndCache(

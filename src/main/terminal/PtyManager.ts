@@ -13,6 +13,8 @@ import type { AgentContextLaunchStrategy } from '@shared/agentContextInject'
 import { shellPath } from './StickyShell'
 import { loginPath, resolveAgentExecutable } from './loginPath'
 import { ensureClaudeWorkspaceTrusted, isClaudeCodeBinary } from './claudeTrust'
+import { readPtsName, signalPosixPtyForegroundGroup } from './posixPtyForegroundGroup'
+import { SYNC_HOLD_MAX_MS, splitSynchronizedOutput } from '@shared/terminalSyncFrames'
 
 interface GhostBash {
   id: string
@@ -121,6 +123,8 @@ interface PtySession {
   outputBuffer: string
   appliedCols: number
   appliedRows: number
+  /** Slave path (`/dev/ttys003`) so resize can SIGWINCH the foreground group. */
+  ptsName?: string
   /** Timestamp of the last stdout byte — the fast half of the busy check. */
   lastDataAt: number
   status: Exclude<PtyActivityStatus, 'exited'>
@@ -214,6 +218,24 @@ export function snapshotForReplay(buffer: string, agentId: string | null): strin
  */
 export function primaryAgentPaneId(conversationId: string, agentId: string): string {
   return `agent-host:${agentId}:${conversationId}`
+}
+
+/**
+ * TIOCSWINSZ often lands on `login(1)` / the job-control shell, which does
+ * not forward SIGWINCH. Grok / OpenCode in a bash session are the tty's
+ * foreground group (`tpgid`) — signal that, fall back to the root pid.
+ */
+function deliverForegroundWinch(session: PtySession): void {
+  if (IS_WINDOWS) return
+  const pid = session.proc.pid
+  if (!pid) return
+  signalPosixPtyForegroundGroup(pid, session.ptsName, 'SIGWINCH', () => {
+    try {
+      process.kill(pid, 'SIGWINCH')
+    } catch {
+      // Root may have already exited between resize and signal.
+    }
+  })
 }
 
 
@@ -477,6 +499,8 @@ export class PtyManager {
   private sessions = new Map<string, PtySession>()
   /** Pending stdout chunks waiting for the coalesce timer. */
   private pendingData = new Map<string, string>()
+  /** When the current unclosed DEC 2026 / incomplete CSI tail started. */
+  private syncHoldSince = new Map<string, number>()
   private bashFlushTimer: ReturnType<typeof setTimeout> | null = null
   private agentFlushTimer: ReturnType<typeof setTimeout> | null = null
   /** Runs only while at least one PTY is alive. */
@@ -649,6 +673,7 @@ export class PtyManager {
 
   private enqueueData(tabId: string, data: string): void {
     const prev = this.pendingData.get(tabId)
+    if (!prev) this.syncHoldSince.set(tabId, Date.now())
     this.pendingData.set(tabId, prev ? prev + data : data)
     const agent = this.isAgentPty(tabId)
     if (agent) {
@@ -666,12 +691,26 @@ export class PtyManager {
     }, BASH_DATA_COALESCE_MS)
   }
 
+  private emitPending(tabId: string, force: boolean): boolean {
+    const chunk = this.pendingData.get(tabId)
+    if (chunk == null) return false
+    const heldMs = force
+      ? SYNC_HOLD_MAX_MS
+      : Date.now() - (this.syncHoldSince.get(tabId) ?? Date.now())
+    const { emit, hold } = splitSynchronizedOutput(chunk, heldMs)
+    if (emit) this.onData(tabId, emit)
+    if (hold) {
+      this.pendingData.set(tabId, hold)
+      return true
+    }
+    this.pendingData.delete(tabId)
+    this.syncHoldSince.delete(tabId)
+    return false
+  }
+
   private flushPendingData(onlyTabId?: string): void {
     if (onlyTabId) {
-      const chunk = this.pendingData.get(onlyTabId)
-      if (chunk == null) return
-      this.pendingData.delete(onlyTabId)
-      if (chunk) this.onData(onlyTabId, chunk)
+      this.emitPending(onlyTabId, true)
       return
     }
     this.flushPendingKind('all')
@@ -679,13 +718,29 @@ export class PtyManager {
 
   private flushPendingKind(kind: 'agent' | 'bash' | 'all'): void {
     if (this.pendingData.size === 0) return
-    for (const [tabId, chunk] of [...this.pendingData]) {
+    let holdAgent = false
+    let holdBash = false
+    for (const tabId of [...this.pendingData.keys()]) {
       if (kind !== 'all') {
         const agent = this.isAgentPty(tabId)
         if (kind === 'agent' ? !agent : agent) continue
       }
-      this.pendingData.delete(tabId)
-      if (chunk) this.onData(tabId, chunk)
+      const stillHolding = this.emitPending(tabId, false)
+      if (!stillHolding) continue
+      if (this.isAgentPty(tabId)) holdAgent = true
+      else holdBash = true
+    }
+    if (holdAgent && this.agentFlushTimer == null) {
+      this.agentFlushTimer = setTimeout(() => {
+        this.agentFlushTimer = null
+        this.flushPendingKind('agent')
+      }, AGENT_DATA_COALESCE_MS)
+    }
+    if (holdBash && this.bashFlushTimer == null) {
+      this.bashFlushTimer = setTimeout(() => {
+        this.bashFlushTimer = null
+        this.flushPendingKind('bash')
+      }, BASH_DATA_COALESCE_MS)
     }
   }
 
@@ -823,6 +878,7 @@ export class PtyManager {
       outputBuffer: opts.restoreOutput ?? '',
       appliedCols: Math.max(2, cols),
       appliedRows: Math.max(1, rows),
+      ptsName: IS_WINDOWS ? undefined : readPtsName(proc),
       // A shell that just spawned is still painting its prompt; the first poll
       // settles it to idle a beat later.
       lastDataAt: Date.now(),
@@ -985,6 +1041,7 @@ export class PtyManager {
       session.proc.resize(c, r)
       session.appliedCols = c
       session.appliedRows = r
+      deliverForegroundWinch(session)
     } catch {
       // Process may have exited between measure and apply.
     }

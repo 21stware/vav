@@ -22,4 +22,23 @@ describe('detectProtocol', () => {
       'anthropic'
     )
   })
+
+  it('detects Google AI Studio endpoints as google', () => {
+    assert.equal(
+      detectProtocol('https://generativelanguage.googleapis.com', 'gemini-3-pro-preview'),
+      'google'
+    )
+    assert.equal(
+      detectProtocol('https://generativelanguage.googleapis.com/v1beta', ''),
+      'google'
+    )
+  })
+
+  it('keeps OpenAI-compat gemini proxies on the OpenAI protocol', () => {
+    assert.equal(detectProtocol('https://api.openai.com', 'gemini-2.5-pro'), 'openai')
+    assert.equal(
+      detectProtocol('https://openrouter.ai/api/v1', 'google/gemini-2.5-pro'),
+      'openai'
+    )
+  })
 })

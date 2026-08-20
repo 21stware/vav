@@ -4,55 +4,60 @@
  * vav configures one endpoint plus one key rather than a provider registry, so
  * this module skips pi's `Models` collection and drives the API modules
  * directly: it synthesises a `Model` descriptor from settings and dispatches to
- * the Anthropic or OpenAI implementation. What pi buys us over the hand-rolled
- * SSE reader that used to live here is the part that was actually hard — token
- * accounting, retries, provider quirks, and above all a stream protocol where
- * every partial event is addressed by `contentIndex`, so text and tool calls
- * keep the order the model emitted them in.
+ * the Anthropic, OpenAI, or Google implementation. Model metadata (context
+ * window, output cap, reasoning support, input modalities, thinking-level
+ * mapping) comes from pi's generated catalogs via `./modelMeta`, falling back
+ * to vav's regex heuristics for unknown ids. What pi buys us over the
+ * hand-rolled SSE reader that used to live here is the part that was actually
+ * hard — token accounting, retries, provider quirks, and above all a stream
+ * protocol where every partial event is addressed by `contentIndex`, so text
+ * and tool calls keep the order the model emitted them in.
  */
 import type { Api, Context, Model, SimpleStreamOptions } from '@earendil-works/pi-ai'
 import type { AssistantMessageEventStream } from '@earendil-works/pi-ai'
 import { streamSimple as anthropicMessages } from '@earendil-works/pi-ai/api/anthropic-messages'
 import { streamSimple as openaiCompletions } from '@earendil-works/pi-ai/api/openai-completions'
+import { streamSimple as googleGenerativeAi } from '@earendil-works/pi-ai/api/google-generative-ai'
 import type { AppSettings } from '@shared/types'
 import {
   DEEPSEEK_THINKING_LEVEL_MAP,
   deepSeekEffort,
   isDeepSeekModel,
-  parseThinkingLevel,
-  vavModelSupportsThinking
+  parseThinkingLevel
 } from '@shared/thinkingLevel'
-import { detectProtocol, type VavProtocol } from '@shared/vavProtocol'
-import { resolveMaxTokens } from '@shared/tokenUsage'
+import { baseUrlFor, detectProtocol, type VavProtocol } from '@shared/vavProtocol'
+import {
+  contextWindowFor,
+  maxTokensFor,
+  modelAcceptsImage,
+  modelSupportsThinking,
+  thinkingLevelMapFor
+} from './modelMeta'
 
 export type Protocol = VavProtocol
-export { detectProtocol }
-
-/**
- * The SDKs append their own route, so a pasted full URL has to be trimmed back
- * to the base the client expects: bare host for Anthropic, `/v1` for OpenAI.
- */
-function baseUrlFor(endpoint: string, protocol: Protocol): string {
-  let base = endpoint.trim().replace(/\/+$/, '')
-  base = base.replace(/\/v1\/messages$/, '').replace(/\/(v1\/)?chat\/completions$/, '')
-  if (protocol === 'anthropic') return base.replace(/\/v1$/, '')
-  return /\/v1$/.test(base) ? base : `${base}/v1`
-}
+export { baseUrlFor, detectProtocol }
 
 export function buildModel(
   settings: AppSettings,
   modelId: string,
-  contextWindow: number
+  contextWindow?: number
 ): Model<Api> {
   const protocol = detectProtocol(settings.apiEndpoint, modelId)
   const deepseek = isDeepSeekModel(modelId) || /deepseek/i.test(settings.apiEndpoint)
+  const catalogMap = thinkingLevelMapFor(modelId)
   return {
     id: modelId,
     name: modelId,
-    api: protocol === 'anthropic' ? 'anthropic-messages' : 'openai-completions',
+    api:
+      protocol === 'anthropic'
+        ? 'anthropic-messages'
+        : protocol === 'google'
+          ? 'google-generative-ai'
+          : 'openai-completions',
     provider: 'vav',
     baseUrl: baseUrlFor(settings.apiEndpoint, protocol),
-    reasoning: vavModelSupportsThinking(modelId),
+    reasoning: modelSupportsThinking(modelId),
+    input: modelAcceptsImage(modelId) ? (['text', 'image'] as const) : (['text'] as const),
     ...(deepseek
       ? {
           thinkingLevelMap: { ...DEEPSEEK_THINKING_LEVEL_MAP },
@@ -65,12 +70,13 @@ export function buildModel(
               }
             : {})
         }
-      : {}),
-    input: ['text'],
+      : catalogMap
+        ? { thinkingLevelMap: { ...catalogMap } }
+        : {}),
     // vav bills nothing; the conversation meter counts tokens, not dollars.
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-    contextWindow,
-    maxTokens: resolveMaxTokens(modelId)
+    contextWindow: contextWindow ?? contextWindowFor(modelId),
+    maxTokens: maxTokensFor(modelId)
   }
 }
 
@@ -114,7 +120,12 @@ export function streamWith(
   context: Context,
   options: SimpleStreamOptions
 ): AssistantMessageEventStream {
-  const stream = model.api === 'anthropic-messages' ? anthropicMessages : openaiCompletions
+  const stream =
+    model.api === 'anthropic-messages'
+      ? anthropicMessages
+      : model.api === 'google-generative-ai'
+        ? googleGenerativeAi
+        : openaiCompletions
   const patched: SimpleStreamOptions = {
     ...options,
     onPayload: (params, payloadModel) => {
@@ -129,7 +140,9 @@ export function streamWith(
     }
   }
   return stream(
-    model as Model<'anthropic-messages'> & Model<'openai-completions'>,
+    model as Model<'anthropic-messages'> &
+      Model<'openai-completions'> &
+      Model<'google-generative-ai'>,
     context,
     patched
   )

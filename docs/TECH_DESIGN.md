@@ -27,7 +27,7 @@ renderer 的 CSP 禁止 `unsafe-eval` 与外部源；markdown 渲染走 markdown
 
 ## 2. 一次回合是怎么跑完的
 
-回合循环本身来自 [`earendil-works/pi`](https://github.com/earendil-works/pi)：`@earendil-works/pi-ai` 负责 provider 协议与流式事件，`@earendil-works/pi-agent-core` 的 `runAgentLoopContinue` 负责「补全 → 工具 → 再补全」这个循环本身。`AgentRuntime` 退化成两件事：把 vav 的存储形态翻译成 pi 的消息类型，以及把 pi 的事件投影成 renderer 订阅的那个流。
+回合循环本身来自 [`earendil-works/pi`](https://github.com/earendil-works/pi)：`@earendil-works/pi-ai` 负责 provider 协议与流式事件，`@earendil-works/pi-agent-core` 的 `runAgentLoopContinue` 负责「补全 → 工具 → 再补全」这个循环本身。`AgentRuntime` 退化成两件事：把 vav 的存储形态翻译成 pi 的消息类型，以及把 pi 的事件投影成 renderer 订阅的那个流。翻译时图片附件会按模型的模态声明内联为 `ImageContent`（`attachmentImages.ts` 预读、`buildHistory` 组装，最新优先、有数量与字节上限），纯文本模型继续走路径行。
 
 ```
 thread path ──► pi Message[] ──► runAgentLoopContinue
@@ -234,6 +234,6 @@ VAV_SNAPSHOT=/tmp/x.png VAV_SNAPSHOT_JS="<expr>" npm start
 
 - 主界面只有一个窗口（设置窗口除外）。真正的多主窗口需要重做 `StreamProjection` 的单例假设。
 - 搜索只覆盖已加载的消息，不做全库索引。
-- pi-ai 支持十几个 provider，vav 只用到 `anthropic-messages` 与 `openai-completions` 两条，且仍由 endpoint 形态推断；私有网关如果两者都不像，需要手动选择——目前没有这个开关。Responses / Bedrock / Vertex 这些都只差一个 `Model.api` 字段。
+- pi-ai 支持十几个 provider，vav 走 `anthropic-messages`、`openai-completions`、`google-generative-ai`（generativelanguage 端点）三条，仍由 endpoint 形态推断；私有网关如果都不像，需要手动选择——目前没有这个开关。Responses / Bedrock / Vertex 这些都只差一个 `Model.api` 字段。模型元数据（上下文窗口、输出上限、$/MTok、推理开关、模态、thinking 档位映射）由 `src/main/agent/modelMeta.ts` 从 pi 的生成目录查表，查不到再落回 `@shared` 的正则启发式；vav 自己的模型列表也会在解锁后探活 provider 的 `/models` 路由（`vavModelProbe.ts`）。
 - pi-agent-core 的 compaction、skills、prompt templates 都没接。上下文满了就是满了，目前只有 token 计数条提示。
 - 没有 diff 视图。Agent 改文件后你看到的是「变更条」加文件内容，不是补丁。

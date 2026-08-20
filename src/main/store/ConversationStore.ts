@@ -33,9 +33,9 @@ import { removeCompaction, upsertCompaction } from '@shared/compaction'
 import {
   CACHE_TTL_MS,
   TOKEN_HISTORY_LIMIT,
-  mergeQuotaWindows,
-  resolveContextWindow
+  mergeQuotaWindows
 } from '@shared/tokenUsage'
+import { contextWindowFor } from '../agent/modelMeta'
 import { deepestLeaf, newestLeafId, threadPath } from '@shared/thread'
 import { defaultSessionTitle, isDefaultSessionTitle, t } from '@shared/i18n'
 import type { CliPaneBinding } from '@shared/cliPaneBinding'
@@ -145,7 +145,7 @@ export class ConversationStore {
           const bucket = conversation.hostTranscripts[key]
           if (!bucket || typeof bucket !== 'object') continue
           if (typeof bucket.tokenLimit !== 'number') {
-            bucket.tokenLimit = resolveContextWindow(bucket.model ?? conversation.model)
+            bucket.tokenLimit = contextWindowFor(bucket.model ?? conversation.model)
           }
           if (bucket.reportedSessionCostUsd === undefined) {
             bucket.reportedSessionCostUsd = null
@@ -226,7 +226,7 @@ export class ConversationStore {
       workingDirectory,
       model,
       tokensUsed: 0,
-      tokenLimit: resolveContextWindow(model),
+      tokenLimit: contextWindowFor(model),
       messages: [],
       activeLeafId: null,
       tokenHistory: [],
@@ -301,7 +301,7 @@ export class ConversationStore {
     imported.thinkingLevel = parseThinkingLevel(imported.thinkingLevel)
     if (typeof imported.tokensUsed !== 'number') imported.tokensUsed = 0
     if (typeof imported.tokenLimit !== 'number') {
-      imported.tokenLimit = resolveContextWindow(imported.model)
+      imported.tokenLimit = contextWindowFor(imported.model)
     }
     if (imported.reportedSessionCostUsd === undefined) imported.reportedSessionCostUsd = null
     if (!Array.isArray(imported.quotaWindows)) imported.quotaWindows = []
@@ -400,7 +400,7 @@ export class ConversationStore {
     const parked = conversation.hostTranscripts[nextKey]
     applyHostBucket(conversation, parked ?? emptyHostBucket())
     if (!parked) {
-      conversation.tokenLimit = resolveContextWindow(conversation.model)
+      conversation.tokenLimit = contextWindowFor(conversation.model)
       conversation.reportedSessionCostUsd = null
       conversation.quotaWindows = []
     }
@@ -1007,7 +1007,7 @@ function applyHostBucket(conversation: Conversation, bucket: HostTranscriptBucke
   conversation.activeLeafId = bucket.activeLeafId
   conversation.tokenHistory = [...bucket.tokenHistory]
   conversation.tokensUsed = bucket.tokensUsed
-  conversation.tokenLimit = bucket.tokenLimit ?? resolveContextWindow(bucket.model)
+  conversation.tokenLimit = bucket.tokenLimit ?? contextWindowFor(bucket.model)
   conversation.reportedSessionCostUsd = bucket.reportedSessionCostUsd ?? null
   conversation.quotaWindows = [...(bucket.quotaWindows ?? [])]
   conversation.cacheCreatedAt = bucket.cacheCreatedAt
