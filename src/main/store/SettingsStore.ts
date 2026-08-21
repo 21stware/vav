@@ -7,6 +7,7 @@ import {
   DEFAULT_CLI_AGENTS,
   DEFAULT_SETTINGS,
   DISPLAY_CURRENCIES,
+  VAV_DEFAULT_MODEL_ID,
   SURFACE_PATTERNS,
   mergeBuiltinDefaultArgs,
   type AgentConfig,
@@ -18,7 +19,7 @@ import {
 import { coerceShell, platformDefaults, type Platform } from '@shared/platform'
 import { normalizeAccentHex } from '@shared/colorTints'
 import { sanitizeKeyBindings } from '@shared/keyBindings'
-import { RECENT_AGENT_MODELS_MAX } from '@shared/agentModels'
+import { RECENT_AGENT_MODELS_MAX, VAV_LEGACY_DEFAULT_MODELS } from '@shared/agentModels'
 import { parseThinkingLevel } from '@shared/thinkingLevel'
 import { isCssTileSize } from '@shared/surfacePattern'
 import { surfacePatternFilePath, writeSurfacePatternPng } from '../importSurfacePattern'
@@ -98,13 +99,17 @@ export class SettingsStore {
   /** One-time renames for preset ids that changed between releases. */
   private migrateLegacy(): void {
     let dirty = false
-    if (this.settings.defaultModel === 'deepseek-chat') {
-      this.settings.defaultModel = 'deepseek-v4-pro'
+    if (
+      VAV_LEGACY_DEFAULT_MODELS.includes(
+        this.settings.defaultModel as (typeof VAV_LEGACY_DEFAULT_MODELS)[number]
+      )
+    ) {
+      this.settings.defaultModel = VAV_DEFAULT_MODEL_ID
       dirty = true
     }
     if (this.settings.customModels.includes('deepseek-chat')) {
       this.settings.customModels = this.settings.customModels.map((id) =>
-        id === 'deepseek-chat' ? 'deepseek-v4-pro' : id
+        id === 'deepseek-chat' ? VAV_DEFAULT_MODEL_ID : id
       )
       dirty = true
     }

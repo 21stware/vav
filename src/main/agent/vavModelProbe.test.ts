@@ -29,6 +29,24 @@ describe('fetchVavModels', () => {
     assert.match(calls[0]!, /\/v1\/models$/)
   })
 
+  it('keeps live input/output modalities when the provider publishes them', async () => {
+    const result = await fetchVavModels({
+      endpoint: 'https://openrouter.ai/api/v1',
+      apiKey: 'sk-test',
+      fetchFn: async () =>
+        jsonResponse({
+          data: [
+            {
+              id: 'openai/gpt-4o',
+              architecture: { input_modalities: ['text', 'image'], output_modalities: ['text'] }
+            }
+          ]
+        })
+    })
+    assert.deepEqual(result.models[0]?.input, ['text', 'image'])
+    assert.deepEqual(result.models[0]?.output, ['text'])
+  })
+
   it('parses Anthropic model lists with display names', async () => {
     const result = await fetchVavModels({
       endpoint: 'https://api.anthropic.com',
@@ -86,6 +104,67 @@ describe('fetchVavModels', () => {
       result.models.map((m) => ({ id: m.id, label: m.label })),
       [{ id: 'gemini-3-pro-preview', label: 'Gemini 3 Pro Preview' }]
     )
+  })
+
+  it('lists DeepSeek models from the OpenAI root on an /anthropic mount', async () => {
+    const calls: string[] = []
+    const result = await fetchVavModels({
+      endpoint: 'https://api.deepseek.com/anthropic',
+      apiKey: 'sk-test',
+      fetchFn: async (input, init) => {
+        calls.push(String(input))
+        assert.equal((init as RequestInit | undefined)?.headers?.authorization, 'Bearer sk-test')
+        return jsonResponse({
+          data: [{ id: 'deepseek-v4-flash' }, { id: 'deepseek-v4-pro' }]
+        })
+      }
+    })
+    assert.equal(result.error, undefined)
+    assert.deepEqual(
+      result.models.map((m) => m.id),
+      ['deepseek-v4-flash', 'deepseek-v4-pro']
+    )
+    assert.deepEqual(calls, ['https://api.deepseek.com/v1/models'])
+  })
+
+  it('falls through to Anthropic /v1/models when the OpenAI-compat root 404s', async () => {
+    const calls: string[] = []
+    const result = await fetchVavModels({
+      endpoint: 'https://gateway.example/anthropic',
+      apiKey: 'ak-test',
+      fetchFn: async (input, init) => {
+        calls.push(String(input))
+        if (String(input).includes('/v1/models?limit=')) {
+          const headers = (init as RequestInit | undefined)?.headers as Record<string, string>
+          assert.equal(headers['x-api-key'], 'ak-test')
+          return jsonResponse({ data: [{ id: 'claude-sonnet-4-5' }] })
+        }
+        return new Response('nope', { status: 404 })
+      }
+    })
+    assert.deepEqual(
+      result.models.map((m) => m.id),
+      ['claude-sonnet-4-5']
+    )
+    assert.deepEqual(calls, [
+      'https://gateway.example/v1/models',
+      'https://gateway.example/anthropic/v1/models?limit=1000'
+    ])
+  })
+
+  it('does not retry a missing-route fallback after 401', async () => {
+    const calls: string[] = []
+    const result = await fetchVavModels({
+      endpoint: 'https://api.deepseek.com/anthropic',
+      apiKey: 'sk-bad',
+      fetchFn: async (input) => {
+        calls.push(String(input))
+        return new Response('nope', { status: 401 })
+      }
+    })
+    assert.deepEqual(result.models, [])
+    assert.equal(result.error, 'HTTP 401')
+    assert.deepEqual(calls, ['https://api.deepseek.com/v1/models'])
   })
 
   it('returns the HTTP status as an error without throwing', async () => {

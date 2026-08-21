@@ -9,8 +9,10 @@ import type { ChangeSet } from './changeSet'
 import type { CliPaneBinding } from './cliPaneBinding'
 import type { CliHostKind, ProviderResumeCursor } from './cliHost'
 import type { AcceleratorKeyBindingId } from './keyBindings'
+import { VAV_DEFAULT_MODEL_ID } from './vavModelList.ts'
 
 export type { CliHostKind, ProviderResumeCursor } from './cliHost'
+export { VAV_DEFAULT_MODEL_ID } from './vavModelList.ts'
 export {
   STRUCTURED_CLI_HOSTS,
   displayNameForCliHost,
@@ -168,7 +170,7 @@ export interface ChatMessage {
   /** Set when the turn producing this message was cancelled or failed. */
   cancelled?: boolean
   errorText?: string
-  /** Raw host / JSON-RPC payload; shown only when the user opens details. */
+  /** Raw host / JSON-RPC payload, kept for diagnostics. Not shown in the UI. */
   errorDetail?: string
   /** Quoted prior message (composer 引用); content stays user-typed only. */
   quoteMessageId?: string
@@ -826,6 +828,10 @@ export interface AppSettings {
   defaultThinkingLevel: ThinkingLevel
   customModels: string[]
   maxTokens: number
+  /**
+   * Unused. Kept so older settings.json files still parse; VAV no longer
+   * sends a temperature parameter (provider default).
+   */
   temperature: number
   defaultWorkingDirectory: string
   shell: ShellKind
@@ -1051,9 +1057,9 @@ export interface AppSettings {
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
-  apiEndpoint: 'https://api.anthropic.com',
+  apiEndpoint: 'https://api.deepseek.com',
   apiKeyPresent: false,
-  defaultModel: 'deepseek-v4-pro',
+  defaultModel: VAV_DEFAULT_MODEL_ID,
   defaultApprovalMode: 'auto',
   defaultThinkingLevel: 'high',
   customModels: [],
@@ -1139,14 +1145,26 @@ export function normalizeFileSortKey(key: FileSortKey | string | undefined): Fil
   return 'name'
 }
 
+/** Chat I/O channels we surface from `/models`, the catalog, or the id. */
+export type ModelModality = 'text' | 'image' | 'audio'
+
 export interface ModelOption {
   id: string
   label: string
   /** Context window in tokens when the catalogue published one (e.g. `1M`). */
   contextWindow?: number
+  /** Accepted input channels when known (live `/models`, catalog, or id). */
+  input?: ModelModality[]
+  /** Produced output channels when known. Chat models default to text. */
+  output?: ModelModality[]
 }
 
+/**
+ * Display-name overlay for known ids. Not the VAV catalogue — that comes from
+ * the provider's `/models` once an API key and endpoint are set.
+ */
 export const PRESET_MODELS: ModelOption[] = [
+  { id: 'deepseek-v4-flash-vision-exp', label: 'DeepSeek V4 Flash Vision Exp' },
   { id: 'deepseek-v4-pro', label: 'DeepSeek V4 Pro' },
   { id: 'deepseek-v4-flash', label: 'DeepSeek V4 Flash' },
   { id: 'claude-sonnet-4-20250514', label: 'Claude Sonnet 4' },
@@ -1355,11 +1373,11 @@ export type TurnEvent =
       conversationId: string
       message: ChatMessage
       tokensUsed: number
-      /** Fatal error text, shown in the error banner. */
+      /** Fatal error text. Shown on the assistant message, not a second banner. */
       error?: string
       /** Classified CLI / provider failure — quota banner can open usage. */
       errorKind?: 'quota' | 'session-stale' | 'auth' | 'cancelled' | 'generic'
-      /** Raw host / JSON-RPC payload for the details sheet. */
+      /** Raw host / JSON-RPC payload, kept for diagnostics. Not shown in the UI. */
       errorDetail?: string
       cancelled?: boolean
     }

@@ -26,6 +26,21 @@ describe('modelAcceptsImageInput', () => {
     assert.equal(modelAcceptsImageInput(null, 'my-local-7b'), false)
   })
 
+  it('is true for DeepSeek vision ids', () => {
+    assert.equal(modelAcceptsImageInput(null, 'deepseek-v4-flash-vision-exp'), true)
+  })
+
+  it('trusts a live input list over the id heuristic', () => {
+    assert.equal(
+      modelAcceptsImageInput('vav', 'deepseek-v4-flash', { input: ['text', 'image'] }),
+      true
+    )
+    assert.equal(
+      modelAcceptsImageInput('vav', 'deepseek-v4-flash-vision-exp', { input: ['text'] }),
+      false
+    )
+  })
+
   it('is true for known vision models and default CLI', () => {
     assert.equal(modelAcceptsImageInput(null, 'gpt-4o'), true)
     assert.equal(modelAcceptsImageInput(null, 'claude-sonnet-4-20250514'), true)

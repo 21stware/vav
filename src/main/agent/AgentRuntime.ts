@@ -437,7 +437,6 @@ export class AgentRuntime {
       {
         apiKey,
         maxTokens: Math.min(1200, Math.max(256, maxTokens)),
-        temperature: 0.2,
         signal: AbortSignal.timeout(90_000)
       }
     ).result()
@@ -593,7 +592,6 @@ export class AgentRuntime {
         {
           model,
           apiKey,
-          temperature: settings.temperature,
           maxTokens: maxTokensFor(modelId),
           ...(reasoning ? { reasoning } : {}),
           // The sticky shell is one serialized process and the interactive

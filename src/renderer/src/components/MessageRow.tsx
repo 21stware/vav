@@ -31,7 +31,6 @@ import {
 import { formatBadge } from '../lib/previewBlocks'
 import { useSessionStore } from '../state/sessionStore'
 import { useT } from '../i18n/useT'
-import { ErrorDetailModal } from './ErrorBanner'
 import { InlineChangeReview } from './InlineChangeReview'
 import { MarkdownView } from './MarkdownView'
 import { ReasoningBlock } from './ReasoningBlock'
@@ -40,30 +39,6 @@ import { processThoughtMs, splitAssistantProcess } from '../lib/assistantProcess
 
 import { ToolCard } from './ToolCard'
 import { Button } from './ui'
-
-/** Paths touched by write/delete tools on this assistant message. */
-function MessageErrorLine({
-  text,
-  detail
-}: {
-  text: string
-  detail?: string
-}): React.JSX.Element {
-  const t = useT()
-  const [open, setOpen] = useState(false)
-  const detailText = (detail ?? text).trim()
-  return (
-    <>
-      <div className="message-error-row">
-        <div className="message system is-error">{text}</div>
-        {detailText ? (
-          <Button label={t('error.viewDetail')} size="sm" onClick={() => setOpen(true)} />
-        ) : null}
-      </div>
-      {open ? <ErrorDetailModal detail={detailText} onDismiss={() => setOpen(false)} /> : null}
-    </>
-  )
-}
 
 function messageMarkdown(message: ChatMessage): string {
   const parts = message.blocks
@@ -510,7 +485,7 @@ export const MessageRow = memo(function MessageRow({
 
         {message.cancelled && <div className="message system">{t('message.cancelled')}</div>}
         {!message.cancelled && message.errorText && (
-          <MessageErrorLine text={message.errorText} detail={message.errorDetail} />
+          <div className="message system is-error">{message.errorText}</div>
         )}
 
         {message.changeSetId && (

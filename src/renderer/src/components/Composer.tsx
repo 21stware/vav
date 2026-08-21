@@ -35,6 +35,7 @@ import { menuAnchorIfVisible, showMenu, type MenuItem } from '../lib/nativeMenu'
 import { keys } from '../lib/platform'
 import { resolveSendKeyMode, shouldSendOnKeyDown } from '../lib/composerSendKey'
 import { isPickGestureActive } from '../lib/clickPick'
+import { agentModelHostKey } from '@shared/agentModels'
 import { imageInputLimits, modelAcceptsImageInput } from '@shared/agentImageInput'
 import { useT } from '../i18n/useT'
 import { collectClipboardImages, imageSizeByPath, writeClipboardImage } from '../lib/pasteImages'
@@ -220,9 +221,15 @@ export function Composer({
   const approvalMode: ApprovalMode = conversation?.approvalMode ?? 'auto'
   const [focused, setFocused] = useState(false)
   const imageLimits = imageInputLimits(conversation?.cliHost ?? null)
+  const catalogModel = useSessionStore((s) => {
+    const host = conversation?.cliHost ?? null
+    const id = conversation?.model ?? ''
+    return s.agentModelCatalog[agentModelHostKey(host)]?.models.find((m) => m.id === id)
+  })
   const imageInputSupported = modelAcceptsImageInput(
     conversation?.cliHost ?? null,
-    conversation?.model ?? null
+    conversation?.model ?? null,
+    catalogModel
   )
   // Local draft mirrors the store but keeps keystrokes off the React commit path
   // of every other subscriber for one frame when the store write coalesces.

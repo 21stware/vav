@@ -915,7 +915,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   errorBannerDetail: null,
   dialog: null,
   toast: null,
-  settingsCategory: 'api',
+  settingsCategory: 'agents',
   settingsFocusAgentId: null,
   composerFocusTick: 0,
   commentFocusId: null,
@@ -1988,7 +1988,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         title: tt('common.hint'),
         body: tt('dialog.configureApiKeyBody'),
         confirmLabel: tt('error.openSettings'),
-        onConfirm: () => get().openSettings('api')
+        onConfirm: () => get().openSettings('agents', 'vav')
       })
       return
     }
@@ -2404,7 +2404,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
   openSettings(category, agentId) {
     // Settings own a window; the main window only asks for it to be raised.
-    void window.vav.window.openSettings(category ?? 'api', agentId)
+    void window.vav.window.openSettings(category ?? 'agents', agentId)
   },
 
   closeSettings() {
@@ -2998,9 +2998,15 @@ export const useSessionStore = create<SessionState>((set, get) => ({
           const conversations = state.conversations.map((c) =>
             c.id === id ? { ...c, tokensUsed: event.tokensUsed } : c
           )
-          // Store the sealed message when it has content OR a change review card.
-          // (Write-only turns can land with tools + changeSetId and must still upsert.)
-          if (event.message.blocks.length === 0 && !event.message.changeSetId) {
+          // Store the sealed message when it has content, a review card, or a
+          // turn error. (Write-only turns can land with tools + changeSetId
+          // and must still upsert; error-only turns must stay on the leaf.)
+          if (
+            event.message.blocks.length === 0 &&
+            !event.message.changeSetId &&
+            !event.message.errorText &&
+            !event.message.cancelled
+          ) {
             return { conversations }
           }
           return {
@@ -3015,7 +3021,14 @@ export const useSessionStore = create<SessionState>((set, get) => ({
             conversations: mergeConversationList(state.conversations, list)
           }))
         )
-        if (event.error && !event.cancelled && event.errorKind !== 'cancelled') {
+        // Transcript already paints `errorText` on the assistant message.
+        // Raising the top banner (and a JSON-RPC details sheet) just repeats it.
+        if (
+          event.error &&
+          !event.cancelled &&
+          event.errorKind !== 'cancelled' &&
+          !event.message.errorText
+        ) {
           set({
             errorBanner: event.error,
             errorBannerKind: event.errorKind ?? 'generic',

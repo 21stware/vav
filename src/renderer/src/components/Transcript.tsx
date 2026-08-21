@@ -673,7 +673,7 @@ export function Transcript(): React.JSX.Element {
                 <Button
                   label={t('transcript.openSettings')}
                   variant="primary"
-                  onClick={() => openSettings('api')}
+                  onClick={() => openSettings('agents', 'vav')}
                 />
               ) : null}
             </EmptyState>

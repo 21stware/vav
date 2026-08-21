@@ -238,7 +238,7 @@ export function AgentModelPicker({
     const raw =
       entry?.models && entry.models.length > 0
         ? entry.models
-        : modelsForChatHost(host, customModels)
+        : modelsForChatHost(host, customModels, settings.defaultModel)
     return filterEnabledModels(host, raw, disabledModels)
   }
 

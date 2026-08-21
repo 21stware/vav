@@ -95,6 +95,7 @@ const api: VavApi = {
     remove: (ids: string[]) => ipcRenderer.invoke(IPC.convRemove, ids),
     revealInFinder: (path: string) => ipcRenderer.invoke(IPC.convReveal, path),
     copyToClipboard: (text: string) => ipcRenderer.invoke(IPC.convCopy, text),
+    readClipboard: () => ipcRenderer.invoke(IPC.convClipboardRead) as Promise<string>,
     copyImageToClipboard: (base64Png: string) =>
       ipcRenderer.invoke(IPC.convCopyImage, base64Png) as Promise<
         { ok: true } | { ok: false; error: string }

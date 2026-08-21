@@ -180,6 +180,16 @@ export type SettingsView =
   | 'keybindings'
   | 'about'
 
+/** `'api'` is a legacy alias for Providers → VAV (key + endpoint live there). */
+export function resolveSettingsView(
+  view?: SettingsView | null,
+  agentId?: string | null
+): { view: SettingsView; agentId?: string } {
+  const trimmed = agentId?.trim() || undefined
+  if (!view || view === 'api') return { view: 'agents', agentId: trimmed || 'vav' }
+  return trimmed ? { view, agentId: trimmed } : { view }
+}
+
 /** Raise Settings on a category, optionally selecting a provider row. */
 export interface SettingsViewPayload {
   view: SettingsView
@@ -668,6 +678,8 @@ export interface VavApi {
     remove(ids: string[]): Promise<{ removed: string[]; conversations: ConversationMeta[] }>
     revealInFinder(path: string): Promise<void>
     copyToClipboard(text: string): Promise<void>
+    /** Plain text from the system clipboard (terminal ⌘V / Ctrl+V). */
+    readClipboard(): Promise<string>
     /** Put a PNG on the system clipboard (base64, no data-URL prefix). */
     copyImageToClipboard(base64Png: string): Promise<{ ok: true } | { ok: false; error: string }>
     /** Shows the variant `messageId` belongs to; resolves to the new leaf. */
@@ -981,8 +993,9 @@ export interface VavApi {
       force?: boolean
     ): Promise<Record<string, string | null>>
     /**
-     * Models for a chat host. VAV → presets + customModels; CLI hosts → live
-     * probe of that agent's CLI when supported, else a documented fallback.
+     * Models for a chat host. VAV → live `/models` from the configured
+     * endpoint + API key; CLI hosts → live probe of that agent's CLI when
+     * supported, else a documented fallback.
      */
     listModels(
       host: string | null,
@@ -1399,6 +1412,7 @@ export const IPC = {
   convRemove: 'vav:conv:remove',
   convReveal: 'vav:conv:reveal',
   convCopy: 'vav:conv:copy',
+  convClipboardRead: 'vav:conv:clipboard-read',
   /** PNG bytes as base64 (no data-URL prefix) → system clipboard as image. */
   convCopyImage: 'vav:conv:copy-image',
   convSelectBranch: 'vav:conv:select-branch',

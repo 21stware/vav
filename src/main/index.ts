@@ -39,6 +39,7 @@ import {
   type MenuCommand,
   type NativeMenuItem,
   type SettingsView,
+  resolveSettingsView,
   type ProviderAccountViewPayload,
   type SwarmHistoryResumeEvent,
   type SwarmHistoryViewPayload,
@@ -1711,24 +1712,25 @@ function loadRenderer(window: BrowserWindow, query: Record<string, string> = {})
   }
 }
 
-function openSettingsWindow(view: SettingsView = 'api', agentId?: string): void {
+function openSettingsWindow(view: SettingsView = 'agents', agentId?: string): void {
+  const resolved = resolveSettingsView(view, agentId)
   void serveAnalysisSnapshot({ refresh: false }).catch((err) => {
     console.error('[analysis] prefetch failed', err)
   })
   if (settingsWindow && !settingsWindow.isDestroyed()) {
-    safeSend(settingsWindow.webContents, IPC.settingsView, { view, agentId })
+    safeSend(settingsWindow.webContents, IPC.settingsView, resolved)
     void revealBrowserWindow(settingsWindow)
     return
   }
 
-  ensureSettingsWindow(view, true, agentId)
+  ensureSettingsWindow(resolved.view, true, resolved.agentId)
 }
 
 /**
  * Keep Settings warm like the token panel: hide on close, show instantly next time.
  */
 function ensureSettingsWindow(
-  view: SettingsView = 'api',
+  view: SettingsView = 'agents',
   showNow: boolean,
   agentId?: string
 ): void {
@@ -1794,7 +1796,7 @@ function hideSettingsWindow(): void {
 
 function warmSettingsWindow(): void {
   if (settingsWindow && !settingsWindow.isDestroyed()) return
-  ensureSettingsWindow('api', false)
+  ensureSettingsWindow('agents', false)
 }
 
 /**
@@ -5386,6 +5388,8 @@ return c as text`
   ipcMain.handle(IPC.convCopy, (_event, text: string) => {
     clipboard.writeText(text)
   })
+
+  ipcMain.handle(IPC.convClipboardRead, () => clipboard.readText())
 
   ipcMain.handle(IPC.convCopyImage, (_event, base64Png: string) => {
     try {

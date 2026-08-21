@@ -6,12 +6,11 @@ import {
   FileCheck2,
   Folder,
   Info,
-  KeyRound,
   Keyboard,
   Palette,
   Terminal
 } from 'lucide-react'
-import type { SettingsView } from '@shared/ipc'
+import { resolveSettingsView, type SettingsView } from '@shared/ipc'
 import type { MessageKey } from '@shared/i18n'
 import {
   installAgentModelCatalogBridge,
@@ -25,7 +24,6 @@ import { installDefaultContextMenu } from './lib/nativeMenu'
 import { installAnalysisBridge } from './lib/analysisCache'
 import { installInstallRunBridge } from './state/installRunStore'
 import { AppToast } from './components/AppToast'
-import { ApiSettings } from './components/settings/ApiSettings'
 import { WorkspaceSettings } from './components/settings/WorkspaceSettings'
 import { AppearanceSettings } from './components/settings/AppearanceSettings'
 import { NotificationsSettings } from './components/settings/NotificationsSettings'
@@ -39,7 +37,7 @@ import { AnalysisSettings } from './components/settings/AnalysisSettings'
 const NAV_ICON = 14
 
 const CATEGORY_KEYS: { id: SettingsView; labelKey: MessageKey; icon: React.JSX.Element }[] = [
-  { id: 'api', labelKey: 'settings.nav.api', icon: <KeyRound size={NAV_ICON} strokeWidth={1.75} /> },
+  { id: 'agents', labelKey: 'settings.nav.agents', icon: <Bot size={NAV_ICON} strokeWidth={1.75} /> },
   {
     id: 'analysis',
     labelKey: 'settings.nav.analysis',
@@ -65,7 +63,6 @@ const CATEGORY_KEYS: { id: SettingsView; labelKey: MessageKey; icon: React.JSX.E
     labelKey: 'settings.nav.notifications',
     icon: <Bell size={NAV_ICON} strokeWidth={1.75} />
   },
-  { id: 'agents', labelKey: 'settings.nav.agents', icon: <Bot size={NAV_ICON} strokeWidth={1.75} /> },
   { id: 'cli', labelKey: 'settings.nav.cli', icon: <Terminal size={NAV_ICON} strokeWidth={1.75} /> },
   {
     id: 'file-associations',
@@ -75,13 +72,12 @@ const CATEGORY_KEYS: { id: SettingsView; labelKey: MessageKey; icon: React.JSX.E
   { id: 'about', labelKey: 'settings.nav.about', icon: <Info size={NAV_ICON} strokeWidth={1.75} /> }
 ]
 
-function initialCategory(): SettingsView {
-  const requested = new URLSearchParams(window.location.search).get('category')
-  return CATEGORY_KEYS.some((c) => c.id === requested) ? (requested as SettingsView) : 'api'
-}
-
-function initialFocusAgentId(): string | null {
-  return new URLSearchParams(window.location.search).get('agentId')?.trim() || null
+function initialView(): { view: SettingsView; agentId: string | null } {
+  const params = new URLSearchParams(window.location.search)
+  const requested = params.get('category') as SettingsView | null
+  const resolved = resolveSettingsView(requested, params.get('agentId'))
+  const view = CATEGORY_KEYS.some((c) => c.id === resolved.view) ? resolved.view : 'agents'
+  return { view, agentId: resolved.agentId ?? null }
 }
 
 /**
@@ -96,7 +92,8 @@ export default function SettingsWindow(): React.JSX.Element {
   const t = useT()
   const ready = useSessionStore((s) => s.ready)
   const bootstrap = useSessionStore((s) => s.bootstrap)
-  const category = useSessionStore((s) => s.settingsCategory)
+  const rawCategory = useSessionStore((s) => s.settingsCategory)
+  const category = rawCategory === 'api' ? 'agents' : rawCategory
   const prevCategory = useRef<SettingsView | null>(null)
   const animateEnter = prevCategory.current !== null && prevCategory.current !== category
   useEffect(() => {
@@ -104,9 +101,10 @@ export default function SettingsWindow(): React.JSX.Element {
   }, [category])
 
   useEffect(() => {
+    const initial = initialView()
     useSessionStore.setState({
-      settingsCategory: initialCategory(),
-      settingsFocusAgentId: initialFocusAgentId()
+      settingsCategory: initial.view,
+      settingsFocusAgentId: initial.agentId
     })
     // Light: settings only — never load the active chat transcript into this window.
     void bootstrap(undefined, { light: true })
@@ -116,12 +114,13 @@ export default function SettingsWindow(): React.JSX.Element {
     const offSettings = installSettingsBridge()
     const offUpdates = installUpdateBridge()
     const offModels = installAgentModelCatalogBridge()
-    const offView = window.vav.onSettingsView((payload) =>
+    const offView = window.vav.onSettingsView((payload) => {
+      const resolved = resolveSettingsView(payload.view, payload.agentId)
       useSessionStore.setState({
-        settingsCategory: payload.view,
-        settingsFocusAgentId: payload.agentId?.trim() || null
+        settingsCategory: resolved.view,
+        settingsFocusAgentId: resolved.agentId ?? null
       })
-    )
+    })
     const offMenu = installDefaultContextMenu()
     const offInstall = installInstallRunBridge()
     const offAnalysis = installAnalysisBridge()
@@ -153,7 +152,7 @@ export default function SettingsWindow(): React.JSX.Element {
 
   if (!ready) return <div className="settings-window" />
 
-  const title = t(CATEGORY_KEYS.find((c) => c.id === category)?.labelKey ?? 'settings.nav.api')
+  const title = t(CATEGORY_KEYS.find((c) => c.id === category)?.labelKey ?? 'settings.nav.agents')
 
   return (
     <div className="settings-window">
@@ -180,7 +179,6 @@ export default function SettingsWindow(): React.JSX.Element {
             key={category}
             className={`settings-body-panel${animateEnter ? ' is-enter' : ''}`}
           >
-            {category === 'api' && <ApiSettings />}
             {category === 'analysis' && <AnalysisSettings />}
             {category === 'workspace' && <WorkspaceSettings />}
             {category === 'appearance' && <AppearanceSettings />}

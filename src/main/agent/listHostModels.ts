@@ -1,11 +1,17 @@
 import { spawn } from 'node:child_process'
 import type { CliHostKind, ModelOption } from '@shared/types'
-import { PRESET_MODELS } from '@shared/types'
 import { enabledCliAgents, isStructuredCliHost } from '@shared/types'
+import {
+  orderVavModels,
+  pickVavDefaultModel,
+  prettyVavModelLabel,
+  vavFallbackModels
+} from '@shared/agentModels'
 import type { SettingsStore } from '../store/SettingsStore'
 import { ensureLoginPath } from '../terminal/loginPath'
 import { resolveHostBinary } from './drivers'
-import { contextWindowFor } from './modelMeta'
+import { contextWindowFor, lookupCatalogModel } from './modelMeta'
+import { resolveModelModalities } from '../../shared/modelModalities.ts'
 import { fetchVavModels } from './vavModelProbe'
 
 const CACHE_TTL_MS = 30 * 60_000
@@ -85,18 +91,18 @@ function resultFromCache(host: CliHostKind | 'vav', entry: CacheEntry): ListHost
   }
 }
 
-function vavModels(settings: SettingsStore): ModelOption[] {
-  const custom = settings.get().customModels ?? []
-  const presetIds = new Set(PRESET_MODELS.map((m) => m.id))
-  const extras = custom
-    .filter((id) => id.trim() && !presetIds.has(id))
-    .map((id) => ({ id, label: id }))
-  const models = extras.length ? [...PRESET_MODELS, ...extras] : [...PRESET_MODELS]
-  // Badge picker rows with the catalog context window when pi-ai knows the id.
-  return models.map((m) => {
-    const contextWindow = contextWindowFor(m.id)
-    return contextWindow > 0 ? { ...m, contextWindow } : m
-  })
+function decorateVavModel(model: ModelOption): ModelOption {
+  const label =
+    model.label && model.label !== model.id ? model.label : prettyVavModelLabel(model.id)
+  const contextWindow = contextWindowFor(model.id)
+  const { input, output } = resolveModelModalities(model, lookupCatalogModel(model.id)?.input)
+  return contextWindow > 0
+    ? { ...model, label, contextWindow, input, output }
+    : { ...model, label, input, output }
+}
+
+function vavSeedModels(settings: SettingsStore): ModelOption[] {
+  return vavFallbackModels(settings.get().defaultModel).map(decorateVavModel)
 }
 
 /** Instant catalogue so the picker never waits on CLI spawn. */
@@ -110,16 +116,20 @@ export function seedModelCatalog(
   return getModelCatalogSnapshot()
 }
 
-function seedHost(host: CliHostKind | 'vav', settings: SettingsStore): ListHostModelsResult {
+function seedHost(host: CliHostKind | 'vav', _settings: SettingsStore): ListHostModelsResult {
   if (host === 'vav') {
-    // Never downgrade a fresh live probe back to the static seed; anything
-    // else re-seeds so custom-model edits surface immediately.
+    // Never downgrade a fresh live probe back to the empty seed.
     const existing = cache.get('vav')
     if (existing?.source === 'live' && Date.now() - existing.at < CACHE_TTL_MS) {
       return resultFromCache('vav', existing)
     }
-    const models = vavModels(settings)
-    const entry: CacheEntry = { at: Date.now(), models, source: 'static', settled: true }
+    // Empty until /models returns — the picker uses a one-row local fallback.
+    const entry: CacheEntry = {
+      at: Date.now(),
+      models: [],
+      source: 'fallback',
+      settled: false
+    }
     cache.set('vav', entry)
     return resultFromCache('vav', entry)
   }
@@ -203,7 +213,12 @@ export async function listHostModels(
   }
 
   if (!isStructuredCliHost(host)) {
-    return { host: 'vav', models: [...PRESET_MODELS], source: 'fallback', error: 'unknown host' }
+    return {
+      host: 'vav',
+      models: vavSeedModels(settings),
+      source: 'fallback',
+      error: 'unknown host'
+    }
   }
 
   const cacheKey = host
@@ -233,10 +248,9 @@ export async function listHostModels(
 const VAV_PROBE_RETRY_MS = 60_000
 
 /**
- * Live model list for the VAV host. The static seed (presets + customs) is the
- * instant answer; when an endpoint and an unlocked key exist, the provider's
- * own /models route is probed and merged in. Without a key the seed is final —
- * the CLI-agent probes are keyless, this one is not.
+ * Live model list for the VAV host. The catalogue is whatever the configured
+ * endpoint publishes on /models — no shipped presets, no hand-typed ids.
+ * Without a key the list stays empty (picker uses a one-row local fallback).
  */
 async function listVavModels(
   settings: SettingsStore,
@@ -248,8 +262,12 @@ async function listVavModels(
 
   const force = options?.force === true
   if (!force) {
-    if (entry.source === 'live' && Date.now() - entry.at < CACHE_TTL_MS) return seeded
-    if (entry.error && Date.now() - entry.at < VAV_PROBE_RETRY_MS) return seeded
+    if (entry.source === 'live' && Date.now() - entry.at < CACHE_TTL_MS) {
+      return resultFromCache('vav', entry)
+    }
+    if (entry.error && Date.now() - entry.at < VAV_PROBE_RETRY_MS) {
+      return resultFromCache('vav', entry)
+    }
   }
 
   const endpoint = settings.get().apiEndpoint?.trim() || ''
@@ -262,22 +280,29 @@ async function listVavModels(
   const work = (async (): Promise<ListHostModelsResult> => {
     const probe = await fetchVavModels({ endpoint, apiKey })
     if (probe.models.length > 0) {
+      const models = applyLiveVavModels(settings, probe.models)
+      const nextDefault = pickVavDefaultModel(
+        settings.get().defaultModel,
+        models.map((m) => m.id)
+      )
+      if (nextDefault !== settings.get().defaultModel) {
+        settings.update({ defaultModel: nextDefault })
+      }
       const next: CacheEntry = {
         at: Date.now(),
-        models: mergeVavModels(settings, probe.models),
+        models: orderVavModels(models, nextDefault),
         source: 'live',
         settled: true
       }
       cache.set('vav', next)
       return resultFromCache('vav', next)
     }
-    // Probe failed or empty: keep the static list, cool down before retrying.
     const fallback: CacheEntry = {
       at: Date.now(),
-      models: entry.models,
-      source: 'static',
+      models: [],
+      source: 'fallback',
       settled: true,
-      ...(probe.error ? { error: probe.error } : {})
+      ...(probe.error ? { error: probe.error } : { error: 'empty catalogue' })
     }
     cache.set('vav', fallback)
     return resultFromCache('vav', fallback)
@@ -290,17 +315,8 @@ async function listVavModels(
   }
 }
 
-/** Presets + customs stay in front; live-discovered ids append behind them. */
-function mergeVavModels(settings: SettingsStore, live: ModelOption[]): ModelOption[] {
-  const base = vavModels(settings)
-  const known = new Set(base.map((m) => m.id.toLowerCase()))
-  const extras = live
-    .filter((m) => m.id && !known.has(m.id.toLowerCase()))
-    .map((m) => {
-      const contextWindow = contextWindowFor(m.id)
-      return contextWindow > 0 ? { ...m, contextWindow } : m
-    })
-  return [...base, ...extras]
+function applyLiveVavModels(settings: SettingsStore, live: ModelOption[]): ModelOption[] {
+  return orderVavModels(live.map(decorateVavModel), settings.get().defaultModel)
 }
 
 async function probeAndCache(

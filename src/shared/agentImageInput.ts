@@ -82,9 +82,14 @@ export function imageInputLimits(host: string | null | undefined): AgentImageInp
  */
 export function modelAcceptsImageInput(
   host: string | null | undefined,
-  modelId: string | null | undefined
+  modelId: string | null | undefined,
+  live?: { input?: readonly string[] } | null
 ): boolean {
   if (!imageInputForChatHost(host)) return false
+  if (live?.input?.includes('image')) return true
+  if (isVavHost(host) && live?.input && live.input.length > 0) {
+    return live.input.includes('image')
+  }
   const id = (modelId ?? '').trim().toLowerCase()
   if (isVavHost(host)) return vavModelAcceptsImage(id)
   if (!id) return true
@@ -97,6 +102,7 @@ function isVavHost(host: string | null | undefined): boolean {
 
 function vavModelAcceptsImage(modelId: string): boolean {
   if (!modelId) return false
+  if (/vision/i.test(modelId)) return true
   if (TEXT_ONLY_MODEL.test(modelId)) return false
   return VAV_VISION_MODEL.test(modelId)
 }

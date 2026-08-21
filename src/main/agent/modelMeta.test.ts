@@ -91,6 +91,7 @@ describe('modelSupportsThinking / modelAcceptsImage', () => {
     assert.equal(modelSupportsThinking('claude-sonnet-4-5'), true)
     // DeepSeek V4 is text-only even though the id family is not in the vision regex.
     assert.equal(modelAcceptsImage('deepseek-v4-pro'), false)
+    assert.equal(modelAcceptsImage('deepseek-v4-flash-vision-exp'), true)
     assert.equal(modelAcceptsImage('gpt-4o'), true)
     assert.equal(modelAcceptsImage('gemini-2.5-pro') ?? modelAcceptsImage('gemini-3-pro-preview'), true)
   })

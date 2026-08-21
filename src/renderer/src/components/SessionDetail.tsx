@@ -121,7 +121,6 @@ export function SessionDetail({
   const searchOpen = useSessionStore((s) => s.search.open)
   const errorBanner = useSessionStore((s) => s.errorBanner)
   const errorBannerKind = useSessionStore((s) => s.errorBannerKind)
-  const errorBannerDetail = useSessionStore((s) => s.errorBannerDetail)
   const setErrorBanner = useSessionStore((s) => s.setErrorBanner)
   const openSettings = useSessionStore((s) => s.openSettings)
   const activeId = useSessionStore((s) => s.activeId)
@@ -600,7 +599,6 @@ export function SessionDetail({
       {errorBanner && (
         <ErrorBanner
           message={errorBanner}
-          detail={errorBannerDetail || errorBanner}
           actionLabel={
             isQuotaProblem
               ? t('error.viewQuota')
@@ -622,7 +620,7 @@ export function SessionDetail({
                   )
                 }
               : isKeyProblem
-                ? () => openSettings('api')
+                ? () => openSettings('agents', 'vav')
                 : undefined
           }
           onDismiss={() => setErrorBanner(null)}

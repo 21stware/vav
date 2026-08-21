@@ -39,6 +39,7 @@ describe('vavModelSupportsThinking', () => {
   it('enables DeepSeek V4 and Claude 4 presets', () => {
     assert.equal(vavModelSupportsThinking('deepseek-v4-pro'), true)
     assert.equal(vavModelSupportsThinking('deepseek-v4-flash'), true)
+    assert.equal(vavModelSupportsThinking('deepseek-v4-flash-vision-exp'), true)
     assert.equal(vavModelSupportsThinking('claude-sonnet-4-20250514'), true)
     assert.equal(vavModelSupportsThinking('claude-opus-4-20250514'), true)
   })

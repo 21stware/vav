@@ -5,7 +5,7 @@ import { WebLinksAddon } from '@xterm/addon-web-links'
 import { registerTerminalSink } from '../state/workspaceStore'
 import { IS_MAC } from './platform'
 import { publishTerminalRegistry } from './terminalRegistryHandle'
-import { isBareShiftEnter, KITTY_SHIFT_ENTER } from './terminalKeys'
+import { isBareShiftEnter, isTerminalPasteChord, KITTY_SHIFT_ENTER } from './terminalKeys'
 import { scrollbackForSurface } from './terminalFit'
 import { nextAttachGeneration, shouldParkDetachedHost } from './terminalHostLifetime'
 import { activateTerminalUnicode } from './terminalUnicode'
@@ -188,6 +188,21 @@ function paintTerminalTheme(entry: TerminalEntry, forceBlit = false): void {
 function openTerminalLink(event: MouseEvent, uri: string): void {
   if (!(IS_MAC ? event.metaKey : event.ctrlKey)) return
   window.open(uri, '_blank', 'noopener,noreferrer')
+}
+
+async function pasteClipboardIntoTerminal(term: Terminal): Promise<void> {
+  let text = ''
+  try {
+    text = (await window.vav.conversations.readClipboard()) ?? ''
+  } catch {
+    try {
+      text = await navigator.clipboard.readText()
+    } catch {
+      return
+    }
+  }
+  if (!text) return
+  term.paste(text)
 }
 
 /**
@@ -426,6 +441,13 @@ export function acquireTerminal(options: {
     if (entries.get(id)?.surface === 'agent' && isBareShiftEnter(ev)) {
       ev.preventDefault()
       term.input(KITTY_SHIFT_ENTER)
+      return false
+    }
+    // Kitty keyboard encodes ⌘V as Super+v. Cursor (and other TUIs) then
+    // never see a paste — they get a key event. Read the clipboard and paste.
+    if (isTerminalPasteChord(ev, IS_MAC)) {
+      ev.preventDefault()
+      void pasteClipboardIntoTerminal(term)
       return false
     }
     const meta = ev.metaKey || ev.ctrlKey

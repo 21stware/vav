@@ -1,5 +1,15 @@
-import type { CliHostKind, ModelOption, RecentAgentModelEntry } from './types'
-import { isStructuredCliHost, PRESET_MODELS } from './types'
+import type { CliHostKind, ModelOption, RecentAgentModelEntry } from './types.ts'
+import { isStructuredCliHost, PRESET_MODELS } from './types.ts'
+import { prettyVavModelLabel, vavFallbackModels } from './vavModelList.ts'
+
+export {
+  VAV_DEFAULT_MODEL_ID,
+  VAV_LEGACY_DEFAULT_MODELS,
+  prettyVavModelLabel,
+  vavFallbackModels,
+  pickVavDefaultModel,
+  orderVavModels
+} from './vavModelList.ts'
 
 /** Max entries kept in Settings `recentAgentModels` (MRU queue). */
 export const RECENT_AGENT_MODELS_MAX = 10
@@ -10,10 +20,9 @@ export const RECENT_AGENT_MODELS_PINNED = 3
 /**
  * Client-side helpers for agent → model selection.
  *
- * VAV models come from {@link PRESET_MODELS} + settings.customModels.
- * CLI host models are listed live via `agents.listModels` (main process
- * probes each CLI). This file only holds sync fallbacks used before / without
- * a live probe — never a guessed catalogue of non-existent model ids.
+ * VAV models come from a live `/models` probe (API key + endpoint). This file
+ * only holds sync fallbacks used before / without that probe — never a
+ * shipped catalogue. CLI host models are listed live via `agents.listModels`.
  */
 
 export type ChatHostId = CliHostKind | 'vav'
@@ -36,17 +45,11 @@ export function chatHostId(cliHost: CliHostKind | null | undefined): ChatHostId 
 /** Sync fallback while live list is loading / unavailable. */
 export function modelsForChatHost(
   host: CliHostKind | null | undefined,
-  customModels: string[] = []
+  _customModels: string[] = [],
+  vavDefaultModel?: string | null
 ): ModelOption[] {
   const id = chatHostId(host)
-  if (id === 'vav') {
-    const presets = PRESET_MODELS
-    const presetIds = new Set(presets.map((m) => m.id))
-    const custom = customModels
-      .filter((m) => m.trim() && !presetIds.has(m))
-      .map((m) => ({ id: m, label: m }))
-    return custom.length ? [...presets, ...custom] : [...presets]
-  }
+  if (id === 'vav') return vavFallbackModels(vavDefaultModel)
   if (id === 'claude') return [...CLAUDE_MODEL_ALIASES]
   return [CLI_DEFAULT_MODEL]
 }
@@ -61,16 +64,19 @@ export function resolveModelForChatHost(
     catalogue?: ModelOption[] | null
   }
 ): string {
-  const list =
-    options?.catalogue && options.catalogue.length > 0
-      ? options.catalogue
-      : modelsForChatHost(host, options?.customModels)
+  const hasCatalogue = !!(options?.catalogue && options.catalogue.length > 0)
+  const list = hasCatalogue
+    ? options!.catalogue!
+    : modelsForChatHost(host, options?.customModels, options?.vavDefaultModel)
   const current = currentModel?.trim() ?? ''
   // Empty string is a valid "CLI default" choice.
   if (list.some((m) => m.id === current)) return current
   if (chatHostId(host) === 'vav') {
+    // Don't replace a stored id with the one-row seed — wait for live /models.
+    if (current && !hasCatalogue) return current
     const vavDefault = options?.vavDefaultModel?.trim()
     if (vavDefault && list.some((m) => m.id === vavDefault)) return vavDefault
+    if (current) return current
   }
   return list[0]?.id ?? ''
 }
@@ -83,10 +89,12 @@ export function labelForChatModel(
 ): string {
   if (!modelId) return CLI_DEFAULT_MODEL.label
   const list =
-    catalogue && catalogue.length > 0 ? catalogue : modelsForChatHost(host, customModels)
+    catalogue && catalogue.length > 0
+      ? catalogue
+      : modelsForChatHost(host, customModels)
   const hit = list.find((m) => m.id === modelId)
   if (hit) return hit.label
-  return PRESET_MODELS.find((m) => m.id === modelId)?.label ?? modelId
+  return PRESET_MODELS.find((m) => m.id === modelId)?.label ?? prettyVavModelLabel(modelId)
 }
 
 /** Host key used in {@link AppSettings.disabledAgentModels}. */

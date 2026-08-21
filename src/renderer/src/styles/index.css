@@ -3431,24 +3431,6 @@ kbd {
   color: var(--danger);
 }
 
-.message-error-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-
-.error-detail-pre {
-  margin: 0;
-  max-height: 280px;
-  overflow: auto;
-  white-space: pre-wrap;
-  word-break: break-word;
-  font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
-  font-size: 12px;
-  line-height: 1.45;
-}
-
 .message.search-hit {
   scroll-margin: 60px;
 }
@@ -16895,9 +16877,10 @@ mark {
 .agents-list-panel {
   display: flex;
   flex-direction: column;
-  /* Fixed-height source list: box never hugs content, rows scroll inside.
-     360px fits the full 10-agent catalogue without a scrollbar. */
-  height: 360px;
+  /* Stretch with the editor column. 360px is the floor so a short editor
+     still leaves room for the catalogue; extra rows scroll inside. */
+  min-height: 360px;
+  align-self: stretch;
   border: 1px solid var(--border-subtle, color-mix(in srgb, var(--text) 10%, transparent));
   border-radius: var(--radius-md, 10px);
   background: color-mix(in srgb, var(--bg-content, var(--bg)) 92%, transparent);
@@ -17256,7 +17239,8 @@ mark {
   display: flex;
   flex-direction: column;
   gap: 2px;
-  max-height: 220px;
+  /* 4 full rows + a half-row peek so a long list reads as scrollable. */
+  max-height: 242px;
   overflow-x: hidden;
   overflow-y: auto;
   padding: 0 0 4px;
@@ -17375,6 +17359,7 @@ mark {
 .agents-models-row {
   display: flex;
   align-items: flex-start;
+  flex: 0 0 auto;
   gap: 8px;
   min-width: 0;
   min-height: 28px;
@@ -17385,6 +17370,15 @@ mark {
   line-height: 1.35;
   color: var(--text);
   cursor: default;
+}
+
+.agents-models-row-check {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  flex: 1 1 auto;
+  min-width: 0;
+  cursor: pointer;
 }
 
 .agents-models-row:hover {
@@ -17418,6 +17412,90 @@ mark {
   white-space: nowrap;
   line-height: 1.3;
   color: var(--text-tertiary);
+}
+
+.agents-models-caps {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 10px;
+  margin-top: 2px;
+  font-size: 10px;
+  line-height: 1.3;
+  letter-spacing: 0.01em;
+  color: var(--text-tertiary);
+}
+
+.agents-models-caps-io {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.agents-models-caps-dir {
+  color: var(--text-secondary);
+}
+
+.agents-vav-credentials {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.agents-vav-credentials .control {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.agents-vav-credentials .text-field {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.agents-vav-credentials .form-hint {
+  margin-left: 0;
+  margin-top: 0;
+}
+
+.agents-models-default-badge {
+  flex: 0 0 auto;
+  margin-left: auto;
+  align-self: center;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  color: var(--text-secondary);
+}
+
+.agents-models-set-default {
+  flex: 0 0 auto;
+  margin-left: auto;
+  align-self: center;
+  padding: 2px 6px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-tertiary);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  cursor: pointer;
+  transition:
+    background var(--dur-hover) ease,
+    color var(--dur-hover) ease,
+    transform var(--dur-press) var(--ease-out);
+}
+
+.agents-models-set-default:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.agents-models-set-default:active {
+  transform: scale(0.97);
 }
 
 .agents-field-hint {
@@ -19607,20 +19685,22 @@ html:has(.token-usage-popup) #root {
   color: var(--text-tertiary);
 }
 
-.about-card {
-  padding: 18px;
-  border-radius: var(--radius);
-  background: var(--bg-sunken);
+.about-stack {
   display: flex;
   flex-direction: column;
-  gap: 13px;
+  gap: 22px;
   max-width: 470px;
+}
+
+.about-brand {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
 }
 
 .about-logo {
   display: inline-flex;
   align-items: center;
-  margin-bottom: 4px;
 }
 
 .about-logo img {
@@ -19641,6 +19721,22 @@ html:has(.token-usage-popup) #root {
   display: block;
 }
 
+.about-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.about-section .settings-section-title {
+  margin-top: 0;
+}
+
+.about-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
 .kv-row {
   display: flex;
   gap: 12px;
@@ -19653,27 +19749,40 @@ html:has(.token-usage-popup) #root {
   color: var(--text-secondary);
 }
 
+.about-stack .kv-row .kv-label {
+  width: 120px;
+}
+
 .kv-row .kv-value {
   flex: 1;
   user-select: text;
   overflow-wrap: anywhere;
 }
 
-.about-stack {
+.about-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.about-update-progress {
   display: flex;
   flex-direction: column;
-  gap: 14px;
-  max-width: 520px;
+  gap: 6px;
 }
 
-.about-stack .about-card {
-  max-width: none;
+.about-update-progress-meta {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
 }
 
-.about-card-title {
-  font-size: 13px;
-  font-weight: 600;
-  margin-bottom: 2px;
+.about-update-error {
+  color: var(--danger, var(--text));
 }
 
 .analysis-stack {

@@ -16,14 +16,17 @@ import {
   DEFAULT_CLI_AGENTS,
   isStructuredCliHost,
   type AgentConfig,
-  type CliHostKind
+  type CliHostKind,
+  type ModelModality
 } from '@shared/types'
+import type { MessageKey } from '@shared/i18n'
 import { agentWebsiteUrl } from '@shared/agentBinary'
 import { isAgentModelEnabled, modelsForChatHost } from '@shared/agentModels'
 import { useSessionStore } from '../../state/sessionStore'
 import { useT } from '../../i18n/useT'
 import { AgentBrandMark } from '../AgentBrandMark'
 import { Toggle } from '../ui'
+import { VavApiCredentials } from './VavApiCredentials'
 import { useWorkspaceStore } from '../../state/workspaceStore'
 import {
   getAgentInstallStatus,
@@ -34,6 +37,44 @@ import {
 import { useInstallRunStore } from '../../state/installRunStore'
 
 const VAV_ROW_ID = 'vav'
+
+const MODALITY_LABEL: Record<ModelModality, MessageKey> = {
+  text: 'model.modality.text',
+  image: 'model.modality.image',
+  audio: 'model.modality.audio'
+}
+
+function ModelModalityLine({
+  input,
+  output,
+  t
+}: {
+  input?: ModelModality[]
+  output?: ModelModality[]
+  t: (key: MessageKey) => string
+}): React.JSX.Element | null {
+  if (!input?.length && !output?.length) return null
+  return (
+    <span className="agents-models-caps">
+      {input?.length ? (
+        <span className="agents-models-caps-io">
+          <span className="agents-models-caps-dir">{t('model.modality.input')}</span>
+          {input.map((m) => (
+            <span key={`in-${m}`}>{t(MODALITY_LABEL[m])}</span>
+          ))}
+        </span>
+      ) : null}
+      {output?.length ? (
+        <span className="agents-models-caps-io">
+          <span className="agents-models-caps-dir">{t('model.modality.output')}</span>
+          {output.map((m) => (
+            <span key={`out-${m}`}>{t(MODALITY_LABEL[m])}</span>
+          ))}
+        </span>
+      ) : null}
+    </span>
+  )
+}
 
 function cloneAgents(list: AgentConfig[]): AgentConfig[] {
   return list.map((a) => ({
@@ -350,12 +391,26 @@ export function AgentsSettings(): React.JSX.Element {
       ? selected.id
       : null
   const modelHost = (modelHostKey === 'vav' ? null : modelHostKey) as CliHostKind | null
+  const vavCatalog = catalog.vav
+  const vavCanFetch = settings.apiKeyPresent && !!settings.apiEndpoint.trim()
+  const vavLive = vavCatalog?.source === 'live'
+  const vavFetchError = selectedIsVav ? vavCatalog?.error : undefined
+  const vavLoading = selectedIsVav && vavCanFetch && !vavLive && !vavFetchError
   const modelList = useMemo(() => {
     if (!modelHostKey) return []
     const entry = catalog[modelHostKey]
+    if (selectedIsVav) return vavLive ? (entry?.models ?? []) : []
     if (entry?.models?.length) return entry.models
-    return modelsForChatHost(modelHost, settings.customModels)
-  }, [catalog, modelHost, modelHostKey, settings.customModels])
+    return modelsForChatHost(modelHost, settings.customModels, settings.defaultModel)
+  }, [
+    catalog,
+    modelHost,
+    modelHostKey,
+    selectedIsVav,
+    settings.customModels,
+    settings.defaultModel,
+    vavLive
+  ])
 
   const modelFilterQuery = modelFilter.trim().toLowerCase()
   const visibleModels = useMemo(() => {
@@ -722,6 +777,11 @@ export function AgentsSettings(): React.JSX.Element {
                 <p className="muted tiny" style={{ marginTop: -4, marginBottom: 4 }}>
                   {t('agents.vavModelsHint')}
                 </p>
+                <VavApiCredentials
+                  onCredentialsChanged={() => {
+                    void refreshCatalog(true)
+                  }}
+                />
               </>
             ) : selected ? (
               <>
@@ -886,7 +946,7 @@ export function AgentsSettings(): React.JSX.Element {
                     ]
                       .filter(Boolean)
                       .join(' ')}
-                    disabled={modelsRefreshing}
+                    disabled={modelsRefreshing || (selectedIsVav && !vavCanFetch)}
                     aria-busy={modelsRefreshing}
                     onClick={refreshModels}
                   >
@@ -906,11 +966,18 @@ export function AgentsSettings(): React.JSX.Element {
                     </span>
                   </button>
                 </div>
-                <p className="muted tiny" style={{ margin: '0 0 8px' }}>
-                  {t('agents.modelsHint')}
-                </p>
-                {modelList.length === 0 ? (
+                {selectedIsVav && !vavCanFetch ? (
+                  <div className="muted tiny">{t('agents.modelsNeedCredentials')}</div>
+                ) : selectedIsVav && vavFetchError && modelList.length === 0 ? (
+                  <div className="agents-models-empty muted tiny">
+                    {t('agents.modelsFetchError', { error: vavFetchError })}
+                  </div>
+                ) : selectedIsVav && (vavLoading || modelsRefreshing) && modelList.length === 0 ? (
                   <div className="muted tiny">{t('composer.modelsLoading')}</div>
+                ) : modelList.length === 0 ? (
+                  <div className="muted tiny">
+                    {selectedIsVav ? t('agents.modelsEmpty') : t('composer.modelsLoading')}
+                  </div>
                 ) : (
                   <div className="agents-models-list">
                     <div className="agents-models-row agents-models-all">
@@ -997,22 +1064,50 @@ export function AgentsSettings(): React.JSX.Element {
                           model.id,
                           settings.disabledAgentModels
                         )
+                        const isDefault =
+                          selectedIsVav &&
+                          !!model.id &&
+                          model.id === settings.defaultModel
                         return (
-                          <label key={model.id || '__default__'} className="agents-models-row">
-                            <input
-                              type="checkbox"
-                              checked={enabled}
-                              onChange={(e) =>
-                                toggleModelEnabled(model.id, e.target.checked)
-                              }
-                            />
-                            <span className="agents-models-text">
-                              <span className="agents-models-label">{model.label}</span>
-                              {model.id ? (
-                                <span className="agents-models-id muted tiny">{model.id}</span>
-                              ) : null}
-                            </span>
-                          </label>
+                          <div key={model.id || '__default__'} className="agents-models-row">
+                            <label className="agents-models-row-check">
+                              <input
+                                type="checkbox"
+                                checked={enabled}
+                                onChange={(e) =>
+                                  toggleModelEnabled(model.id, e.target.checked)
+                                }
+                              />
+                              <span className="agents-models-text">
+                                <span className="agents-models-label">{model.label}</span>
+                                {model.id ? (
+                                  <span className="agents-models-id muted tiny">{model.id}</span>
+                                ) : null}
+                                <ModelModalityLine
+                                  input={model.input}
+                                  output={model.output}
+                                  t={t}
+                                />
+                              </span>
+                            </label>
+                            {selectedIsVav && model.id ? (
+                              isDefault ? (
+                                <span className="agents-models-default-badge">
+                                  {t('agents.setAsDefault')}
+                                </span>
+                              ) : (
+                                <button
+                                  type="button"
+                                  className="agents-models-set-default"
+                                  onClick={() =>
+                                    void updateSettings({ defaultModel: model.id })
+                                  }
+                                >
+                                  {t('agents.modelsSetDefault')}
+                                </button>
+                              )
+                            ) : null}
+                          </div>
                         )
                       })
                     )}
