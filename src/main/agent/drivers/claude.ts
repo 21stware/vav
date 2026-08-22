@@ -240,6 +240,9 @@ interface ClaudeHandlerCtx {
 function handleClaudeMessage(value: unknown, ctx: ClaudeHandlerCtx): void {
   const msg = asRecord(value)
   if (!msg) return
+  // --resume + --replay-user-messages re-emits prior turns. Skip them so the
+  // live turn does not reprint the previous answer.
+  if (msg.isReplay === true) return
   const type = asString(msg.type)
 
   if (type === 'control_request') {
@@ -357,7 +360,6 @@ function handleClaudeMessage(value: unknown, ctx: ClaudeHandlerCtx): void {
 
   if (type === 'user') {
     const parentId = asString(msg.parent_tool_use_id) || undefined
-    if (msg.isReplay === true) return
     const content = asArray(dig(msg, 'message.content')) ?? []
     for (const block of content) {
       const b = asRecord(block)

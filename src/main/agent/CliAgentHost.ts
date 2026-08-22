@@ -56,6 +56,7 @@ import {
   type DriverEvent
 } from './drivers'
 import { shouldReplaceCliRuntime } from './cliWorkspaceRestart'
+import { createCliHistoryReplayGate, type CliHistoryReplayGate } from './cliHistoryReplay'
 import { inputJson, mapToolName, summarizeCliTool } from './drivers/toolMap'
 import { FileDraftCoalescer, writeToolDraft } from '@shared/writeToolDraft'
 import {
@@ -137,6 +138,11 @@ interface HostTurn {
   permissionByRequest: Map<string, string>
   /** Parent task ids with nested transcript waiting to emit. */
   nestedDirty: Set<string>
+  /**
+   * Drops the previous assistant turn when an ACP host replays it at the
+   * start of the next prompt (Grok session/update dump).
+   */
+  replay: CliHistoryReplayGate
 }
 
 interface HostRuntime {
@@ -481,7 +487,8 @@ export class CliAgentHost {
       pendingPermissions: new Map(),
       reasoningStartedAt: new Map(),
       permissionByRequest: new Map(),
-      nestedDirty: new Set()
+      nestedDirty: new Set(),
+      replay: createCliHistoryReplayGate(conversation.messages)
     }
     // For regenerate we mint a fresh assistant id
     if (!conversation.messages.some((m) => m.id === messageId && m.role === 'user')) {
@@ -647,10 +654,12 @@ export class CliAgentHost {
         this.setPhase(conversationId, turn, 'thinking')
         break
       case 'text-delta':
+        if (turn.replay.text(event.text) === 'skip') break
         if (event.parentId) this.appendNestedDelta(conversationId, turn, event.parentId, 'text', event.text)
         else this.appendDelta(conversationId, turn, 'text', event.text)
         break
       case 'reasoning-delta':
+        if (turn.replay.reasoning(event.text) === 'skip') break
         if (event.parentId) {
           this.appendNestedDelta(conversationId, turn, event.parentId, 'reasoning', event.text)
         } else {
@@ -658,12 +667,15 @@ export class CliAgentHost {
         }
         break
       case 'tool':
+        if (turn.replay.tool(event.id, event.parentId) === 'skip') break
         this.applyTool(conversationId, turn, event)
         break
       case 'permission':
+        if (turn.replay.isHistoricalTool(event.requestId)) break
         this.applyPermission(conversationId, turn, event)
         break
       case 'elicitation':
+        if (turn.replay.isHistoricalTool(event.toolCallId)) break
         this.applyElicitation(conversationId, turn, event)
         break
       case 'usage':
@@ -1434,6 +1446,8 @@ export class CliAgentHost {
       try {
         const next = await this.ensureRuntime(conversationId)
         next.lastTouch = Date.now()
+        // New session has no previous-turn dump to strip.
+        turn.replay.open()
         next.driver.prompt(turn.prompt)
         return
       } catch (err) {

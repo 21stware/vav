@@ -15,6 +15,7 @@ import { loginPath, resolveAgentExecutable } from './loginPath'
 import { ensureClaudeWorkspaceTrusted, isClaudeCodeBinary } from './claudeTrust'
 import { readPtsName, signalPosixPtyForegroundGroup } from './posixPtyForegroundGroup'
 import { SYNC_HOLD_MAX_MS, splitSynchronizedOutput } from '@shared/terminalSyncFrames'
+import { ptyOutputImpliesRunning } from './ptyActivity'
 
 interface GhostBash {
   id: string
@@ -73,11 +74,11 @@ const AGENT_DATA_COALESCE_MS = 32
  */
 const STATUS_POLL_MS = IS_WINDOWS ? 3000 : 1000
 /**
- * Grace after the last stdout byte before a tab may be called idle.
+ * Grace after the last stdout byte before an *agent* tab may be called idle.
  *
- * Covers the two things a child-process check cannot see: an agent TUI that is
- * repainting a spinner while it waits on the network (no children at all), and
- * the gap between a command's last write and its exit.
+ * Covers a TUI that is repainting a spinner with no children, and the gap
+ * between a command's last write and its exit. Bash must not use this —
+ * keystroke echo would look like a running command.
  */
 const OUTPUT_ACTIVE_MS = 1200
 
@@ -573,8 +574,14 @@ export class PtyManager {
       const now = Date.now()
       const quiet: PtySession[] = []
       for (const session of this.sessions.values()) {
-        if (now - session.lastDataAt < OUTPUT_ACTIVE_MS) this.setStatus(session, 'running')
-        else quiet.push(session)
+        if (
+          ptyOutputImpliesRunning(session.agentId) &&
+          now - session.lastDataAt < OUTPUT_ACTIVE_MS
+        ) {
+          this.setStatus(session, 'running')
+        } else {
+          quiet.push(session)
+        }
       }
 
       // One process-table snapshot serves busy checks + bash tab titles.
@@ -879,15 +886,15 @@ export class PtyManager {
       appliedCols: Math.max(2, cols),
       appliedRows: Math.max(1, rows),
       ptsName: IS_WINDOWS ? undefined : readPtsName(proc),
-      // A shell that just spawned is still painting its prompt; the first poll
-      // settles it to idle a beat later.
+      // Bash starts idle (prompt paint is not a command). Agent TUIs start
+      // running until the first poll / quiet gap.
       lastDataAt: Date.now(),
-      status: 'running'
+      status: ptyOutputImpliesRunning(agentId) ? 'running' : 'idle'
     }
     proc.onData((data) => {
       appendOutputBuffer(session, data)
       session.lastDataAt = Date.now()
-      this.setStatus(session, 'running')
+      if (ptyOutputImpliesRunning(session.agentId)) this.setStatus(session, 'running')
       this.enqueueData(id, data)
     })
     proc.onExit(() => {

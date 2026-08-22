@@ -248,6 +248,9 @@ function wireAcp(
     const params = asRecord(msg.params) ?? {}
 
     if (method === 'session/update') {
+      // session/load may dump history before the first prompt; ignore until
+      // session/prompt is in flight so those updates cannot seed the next turn.
+      if (!turnActive) return
       handleSessionUpdate(params, emit, (steps) => {
         lastTodos = steps
       })
