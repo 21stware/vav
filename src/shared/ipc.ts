@@ -40,6 +40,7 @@ import type { Platform } from './platform'
 import type { AgentInstallRun } from './agentInstall'
 import type { OverlayNavigatePayload, OverlayPayload } from './overlayOpen'
 import type { AnalysisSnapshot } from './analysis'
+import type { ConversationActivityRow } from './traySessions'
 
 export type { AgentInstallRun } from './agentInstall'
 export type { OverlayNavigatePayload, OverlayPayload } from './overlayOpen'
@@ -721,6 +722,8 @@ export interface VavApi {
     >
     /** Any window changing the list must reach the others. */
     onChanged(handler: (conversations: ConversationMeta[]) => void): () => void
+    /** Tray-identical Running / Done snapshot for the window LED. */
+    onActivity(handler: (rows: ConversationActivityRow[]) => void): () => void
   }
 
   agent: {
@@ -1429,6 +1432,7 @@ export const IPC = {
   /** Import sessions from a .vavpack / .zip package. */
   convImportPack: 'vav:conv:import-pack',
   convChanged: 'vav:conv:changed',
+  activityChanged: 'vav:activity:changed',
 
   agentSend: 'vav:agent:send',
   agentAppendNotice: 'vav:agent:append-notice',

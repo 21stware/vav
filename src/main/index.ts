@@ -189,10 +189,16 @@ import {
   swarmSessionKey
 } from '@shared/cliSessionHistory'
 import {
+  AGENT_TRAY_QUIET_MS,
+  collapseTrayActivity,
+  collapseTrayPanesByConversation,
+  isAgentTrayRunning,
   mergeLiveAndUnseenTrayPanes,
+  shouldInferAgentTrayFinish,
   shouldRecordPtyCompletion,
   trayItemLabel,
   trayPaneKey,
+  traySessionLabel,
   type TrayPane
 } from '@shared/traySessions'
 
@@ -353,8 +359,10 @@ workingCopyService.onCopyChanged = (realPath) => {
 let swarmFinishAlert: ReturnType<typeof createSwarmFinishAlert> | null = null
 
 const ptyManager = new PtyManager(
-  (tabId, data) =>
-    sendToWorkspaceWindows(IPC.ptyData, { tabId, data }, ptyManager.conversationIdFor(tabId)),
+  (tabId, data) => {
+    sendToWorkspaceWindows(IPC.ptyData, { tabId, data }, ptyManager.conversationIdFor(tabId))
+    noteCliAgentOutputForTray(tabId)
+  },
   (tabId, conversationId) => {
     sendToWorkspaceWindows(IPC.ptyExit, tabId, conversationId)
     swarmFinishAlert?.noteGone(tabId)
@@ -405,6 +413,10 @@ const ptyPrimed = new Set<string>()
 const ptyRunningSince = new Map<string, number>()
 /** Last built pane for a PTY tab (exit removes the session before we read it). */
 const ptyTrayPanes = new Map<string, TrayPane>()
+/** CLI agent tabIds that already completed a turn — ignore leftover process-alive. */
+const agentTurnFinished = new Set<string>()
+/** Re-evaluate tray after stdout goes quiet while the host process stays up. */
+const trayQuietTimers = new Map<string, ReturnType<typeof setTimeout>>()
 const sleepBlocker = new SleepBlocker()
 
 function syncSleepBlocker(): void {
@@ -631,16 +643,24 @@ function persistResultUnseen(conversationId: string, unseen: boolean): void {
   const conversation = conversationStore.get(conversationId)
   if (!conversation || conversation.resultUnseen === unseen) return
   conversationStore.updateMeta(conversationId, { resultUnseen: unseen })
+  broadcast(IPC.convChanged, conversationStore.listMeta())
 }
 
-function markResultUnseen(pane: TrayPane): void {
+function applyUnseenResult(pane: TrayPane): void {
   if (ephemeralConversations.has(pane.conversationId)) return
   if (notifications.isConversationForeground(pane.conversationId)) {
-    markResultViewed(pane.conversationId)
+    for (const [key, existing] of unseenResults) {
+      if (existing.conversationId === pane.conversationId) unseenResults.delete(key)
+    }
+    persistResultUnseen(pane.conversationId, false)
     return
   }
   unseenResults.set(trayPaneKey(pane), pane)
   persistResultUnseen(pane.conversationId, true)
+}
+
+function markResultUnseen(pane: TrayPane): void {
+  applyUnseenResult(pane)
   refreshTraySessions()
 }
 
@@ -666,6 +686,34 @@ function clearUnseenForConversation(conversationId: string): void {
   }
 }
 
+function clearTrayQuietTimer(tabId: string): void {
+  const timer = trayQuietTimers.get(tabId)
+  if (!timer) return
+  clearTimeout(timer)
+  trayQuietTimers.delete(tabId)
+}
+
+function scheduleAgentTrayQuietCheck(tabId: string): void {
+  const watch = ptyManager.cliAgentWatchTarget(tabId)
+  if (!watch) return
+  clearTrayQuietTimer(tabId)
+  const delay = Math.max(80, watch.lastDataAt + AGENT_TRAY_QUIET_MS - Date.now())
+  const timer = setTimeout(() => {
+    trayQuietTimers.delete(tabId)
+    refreshTraySessions()
+  }, delay)
+  timer.unref?.()
+  trayQuietTimers.set(tabId, timer)
+}
+
+function noteCliAgentOutputForTray(tabId: string): void {
+  if (!ptyManager.cliAgentWatchTarget(tabId)) return
+  if (agentTurnFinished.has(tabId) && !ptyRunningSince.has(tabId)) {
+    ptyRunningSince.set(tabId, Date.now())
+  }
+  scheduleAgentTrayQuietCheck(tabId)
+}
+
 function handlePtyStatusForTray(
   tabId: string,
   _conversationId: string,
@@ -681,10 +729,12 @@ function handlePtyStatusForTray(
         : (ptyTrayPanes.get(tabId) ?? null)
     if (pane) ptyTrayPanes.set(tabId, pane)
     if (!ptyRunningSince.has(tabId)) ptyRunningSince.set(tabId, Date.now())
+    if (agent) scheduleAgentTrayQuietCheck(tabId)
     refreshTraySessions()
     return
   }
 
+  clearTrayQuietTimer(tabId)
   const runningSince = ptyRunningSince.get(tabId) ?? null
   ptyRunningSince.delete(tabId)
   const pane = ptyTrayPanes.get(tabId)
@@ -694,11 +744,15 @@ function handlePtyStatusForTray(
     now: Date.now()
   })
   ptyPrimed.add(tabId)
-  if (record && pane) markResultUnseen(pane)
-  else refreshTraySessions()
+  // Terminal has Running only — never a Done row after the command ends.
+  if (record && pane && pane.kind !== 'bash') {
+    agentTurnFinished.add(tabId)
+    markResultUnseen(pane)
+  } else refreshTraySessions()
   if (status === 'exited') {
     ptyPrimed.delete(tabId)
     ptyTrayPanes.delete(tabId)
+    agentTurnFinished.delete(tabId)
   }
 }
 
@@ -709,20 +763,51 @@ function refreshTraySessions(): void {
     for (const id of activeTurns.keys()) {
       if (ephemeralConversations.has(id)) continue
       const pane = trayPaneFromConversation(id, 'chat')
-      if (pane) live.push(pane)
+      if (pane) live.push({ ...pane, status: 'running' })
     }
 
     for (const s of ptyManager.listCliAgentSessions()) {
       const pane = trayPaneFromAgentSession(s)
       if (!pane) continue
       ptyTrayPanes.set(s.id, pane)
-      if (s.status === 'running') live.push(pane)
+      const watch = ptyManager.cliAgentWatchTarget(s.id)
+      const now = Date.now()
+      const lastDataAt = watch?.lastDataAt ?? 0
+      const createdAt = watch?.createdAt ?? s.createdAt
+      if (
+        shouldInferAgentTrayFinish({
+          finishedTurn: agentTurnFinished.has(s.id),
+          lastDataAt,
+          runningSince: ptyRunningSince.get(s.id) ?? null,
+          createdAt,
+          now
+        })
+      ) {
+        agentTurnFinished.add(s.id)
+        ptyRunningSince.delete(s.id)
+        applyUnseenResult(pane)
+      }
+      const working = isAgentTrayRunning({
+        finishedTurn: agentTurnFinished.has(s.id),
+        ptyStatus: s.status,
+        lastDataAt,
+        runningSince: ptyRunningSince.get(s.id) ?? null,
+        createdAt,
+        now
+      })
+      if (working) {
+        if (agentTurnFinished.has(s.id)) agentTurnFinished.delete(s.id)
+        live.push({ ...pane, status: 'running' })
+        scheduleAgentTrayQuietCheck(s.id)
+      } else if (s.status === 'running' && !agentTurnFinished.has(s.id)) {
+        scheduleAgentTrayQuietCheck(s.id)
+      }
     }
     for (const s of ptyManager.listBashSessions()) {
       const pane = trayPaneFromBashSession(s)
       if (!pane) continue
       ptyTrayPanes.set(s.id, pane)
-      if (s.status === 'running') live.push(pane)
+      if (s.status === 'running') live.push({ ...pane, status: 'running' })
     }
 
     // Restart / persist: a conversation flagged unseen with no in-memory pane.
@@ -732,31 +817,36 @@ function refreshTraySessions(): void {
       const already = [...unseenResults.values()].some((p) => p.conversationId === conversation.id)
       if (already) continue
       const pane = trayPaneFromConversation(conversation.id, 'chat')
-      if (pane) unseenResults.set(trayPaneKey(pane), pane)
+      if (pane) unseenResults.set(trayPaneKey(pane), { ...pane, status: 'done' })
     }
 
-    const panes = mergeLiveAndUnseenTrayPanes(
-      live,
-      [...unseenResults.values()].filter((pane) => {
-        const conversation = conversationStore.get(pane.conversationId)
-        return conversation && !conversation.archived
-      })
+    const panes = collapseTrayPanesByConversation(
+      mergeLiveAndUnseenTrayPanes(
+        live,
+        [...unseenResults.values()].filter((pane) => {
+          const conversation = conversationStore.get(pane.conversationId)
+          return conversation && !conversation.archived && pane.kind !== 'bash'
+        })
+      )
     )
+    const runningCount = panes.filter((pane) => pane.status === 'running').length
     notifications.updateRunningSessions(
       panes.map((pane) => ({
         conversationId: pane.conversationId,
-        title: trayItemLabel(pane),
+        title: pane.kind === 'bash' ? trayItemLabel(pane) : traySessionLabel(pane),
         surface:
           pane.kind === 'agent' ? ('cli' as const) : pane.kind === 'bash' ? ('bash' as const) : 'vav',
         tabId: pane.tabId || undefined,
         agentId: pane.agentId,
         kind: pane.kind,
+        status: pane.status ?? 'running',
         dirKey: pane.dirKey,
         dirLabel: pane.dirLabel,
         createdAt: pane.createdAt
       })),
-      live.length
+      runningCount
     )
+    broadcast(IPC.activityChanged, collapseTrayActivity(panes))
   } finally {
     syncSleepBlocker()
   }

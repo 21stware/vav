@@ -8,7 +8,7 @@ import {
   type NativeImage
 } from 'electron'
 import type { AppSettings } from '@shared/types'
-import { groupTrayPanes, trayIndentedLabel } from '@shared/traySessions'
+import { groupTrayPanes, trayIndentedLabel, trayStatusRowLabel } from '@shared/traySessions'
 import { existsSync, unlinkSync } from 'node:fs'
 import { join } from 'node:path'
 import { APP_NAME, applyDockIcon, loadAppIcon, setDockBadge } from './brand'
@@ -64,6 +64,7 @@ export type RunningSessionTarget = {
   tabId?: string
   agentId?: string
   kind?: 'agent' | 'chat' | 'bash'
+  status?: 'running' | 'done'
   dirKey?: string
   dirLabel?: string
   createdAt?: number
@@ -327,10 +328,6 @@ export class NotificationCenter {
     if (this.runningSessions.length === 0) {
       items.push({ label: APP_NAME, enabled: false })
     } else {
-      items.push({
-        label: t('tray.sessions', { count: this.runningSessions.length }),
-        enabled: false
-      })
       const groups = groupTrayPanes(
         this.runningSessions.map((row) => ({
           conversationId: row.conversationId,
@@ -341,11 +338,12 @@ export class NotificationCenter {
           dirKey: row.dirKey || '~',
           dirLabel: row.dirLabel || row.dirKey || '~',
           createdAt: row.createdAt ?? 0,
-          agentId: row.agentId
+          agentId: row.agentId,
+          status: row.status ?? 'running'
         }))
       )
       for (const group of groups) {
-        items.push({ type: 'separator' })
+        if (items.length > 0) items.push({ type: 'separator' })
         items.push({ label: group.dirLabel, enabled: false })
         for (const pane of group.panes) {
           const row = this.runningSessions.find(
@@ -356,7 +354,12 @@ export class NotificationCenter {
           )
           if (!row) continue
           items.push({
-            label: trayIndentedLabel(row.title),
+            label: trayIndentedLabel(
+              trayStatusRowLabel(row.title, pane.status ?? 'running', {
+                running: t('tray.runningTag'),
+                done: t('tray.doneTag')
+              })
+            ),
             click: () => this.onOpenSession(row)
           })
         }

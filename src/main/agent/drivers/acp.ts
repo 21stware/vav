@@ -231,12 +231,13 @@ function wireAcp(
           type: 'turn-finished',
           success: !msg.error && !cancelled,
           cancelled: cancelled || undefined,
-          error: extracted && !cancelled ? extracted.text : undefined,
-          errorCode: extracted && !cancelled ? extracted.code ?? undefined : undefined,
-          errorDetail:
-            extracted && !cancelled
-              ? formatErrorDetail(msg.error, extracted.text)
-              : undefined
+          // Keep the RPC error even when the host also marks the turn cancelled
+          // (Grok 402 often arrives as both). The host prefers quota over cancel.
+          error: extracted?.text,
+          errorCode: extracted?.code ?? undefined,
+          errorDetail: extracted
+            ? formatErrorDetail(msg.error, extracted.text)
+            : undefined
         })
       }
       return

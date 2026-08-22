@@ -87,7 +87,6 @@ export function AnalysisSettings(): React.JSX.Element {
     <div className="analysis-stack">
       <section className="analysis-section">
         <div className="analysis-section-head">
-          <h2 className="analysis-title">{t('analysis.usageTitle')}</h2>
           <p className="analysis-lede">{t('analysis.usageHint')}</p>
         </div>
         {usagePending ? (

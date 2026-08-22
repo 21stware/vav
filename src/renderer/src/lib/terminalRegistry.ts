@@ -7,6 +7,13 @@ import { IS_MAC } from './platform'
 import { publishTerminalRegistry } from './terminalRegistryHandle'
 import { isBareShiftEnter, isTerminalPasteChord, KITTY_SHIFT_ENTER } from './terminalKeys'
 import { scrollbackForSurface } from './terminalFit'
+import {
+  caretScrollTargetFromEvent,
+  clampScrolledElement,
+  isXtermHelperTextarea,
+  shouldBlockHelperTextareaWheel,
+  shouldClampCaretScroll
+} from './terminalCaretScroll'
 import { nextAttachGeneration, shouldParkDetachedHost } from './terminalHostLifetime'
 import { activateTerminalUnicode } from './terminalUnicode'
 import { installKittyKeyboardFallback } from './terminalCapabilityReplies'
@@ -778,21 +785,36 @@ export function paintTerminalThemes(): void {
  * the nearest clipped ancestor — `.terminal-split-pane` — and the terminal is
  * left permanently shifted, since nothing ever scrolls it back.
  *
- * Terminal chrome outside `.xterm` is never scrollable by design, so clamp it.
- * xterm's own scrollports (viewport / scrollable-element) own real scrollback
- * and are left alone.
+ * The helper textarea itself is also a scrollport. A focused one steals wheel
+ * from the TUI, and a large leftover IME string eats clicks on the grid.
+ *
+ * Bash viewport / scrollable-element still own real scrollback. Agent TUIs
+ * have none — clamp those ports too.
  */
 function clampCaretScroll(event: Event): void {
-  const el = event.target === document ? document.documentElement : event.target
+  const el = caretScrollTargetFromEvent(event)
   if (!(el instanceof HTMLElement)) return
-  if (el.scrollLeft === 0 && el.scrollTop === 0) return
-  if (el.closest('.xterm')) return
   const focused = document.activeElement
-  if (!(focused instanceof HTMLTextAreaElement)) return
-  if (!focused.classList.contains('xterm-helper-textarea')) return
-  if (!el.contains(focused)) return
-  el.scrollLeft = 0
-  el.scrollTop = 0
+  if (
+    !shouldClampCaretScroll({
+      hasScroll: el.scrollLeft !== 0 || el.scrollTop !== 0,
+      focusedIsHelperTextarea: isXtermHelperTextarea(focused),
+      scrolledContainsHelper: focused instanceof Node && el.contains(focused),
+      scrolledIsHelperTextarea: isXtermHelperTextarea(el),
+      insideXterm: !!el.closest('.xterm'),
+      insideTuiHost: !!el.closest('.xterm-host.is-tui, [data-terminal-surface="agent"]')
+    })
+  ) {
+    return
+  }
+  clampScrolledElement(el)
+}
+
+function blockHelperTextareaWheel(event: WheelEvent): void {
+  if (!shouldBlockHelperTextareaWheel(event.target)) return
+  const ta = event.target
+  if (ta instanceof HTMLElement) clampScrolledElement(ta)
+  event.preventDefault()
 }
 
 let caretScrollGuardInstalled = false
@@ -802,6 +824,7 @@ function installCaretScrollGuard(): void {
   if (caretScrollGuardInstalled) return
   caretScrollGuardInstalled = true
   document.addEventListener('scroll', clampCaretScroll, true)
+  document.addEventListener('wheel', blockHelperTextareaWheel, { capture: true, passive: false })
 }
 
 publishTerminalRegistry({

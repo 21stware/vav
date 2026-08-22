@@ -33,7 +33,7 @@ export const RpcErrorCode = {
 export const QUOTA_EXHAUSTED_PERCENT = 99.5
 
 const QUOTA_RE =
-  /usage[_\s-]?limit|rate[_\s-]?limit|quota|credit|billing|exceeded.*limit|limit.*exceed|too many requests|\b429\b|resource[_\s-]?exhausted|insufficient[_\s-]?credits?|out of credits|plan[_\s-]?limit|spend[_\s-]?limit|usage cap|cap reached/i
+  /usage[_\s-]?limit|rate[_\s-]?limit|quota|credit|billing|exceeded.*limit|limit.*exceed|too many requests|\b429\b|\b402\b|payment required|usage balance|balance[_\s-]?exhausted|resource[_\s-]?exhausted|insufficient[_\s-]?credits?|out of credits|plan[_\s-]?limit|spend[_\s-]?limit|usage cap|cap reached/i
 
 const SESSION_STALE_RE =
   /session not found|unknown session|no such session|invalid session|cannot load session|failed to (?:load|resume) session|resource not found|thread not found|conversation not found|session[_\s-]?(?:expired|invalid)|not found.*session/i
@@ -228,7 +228,7 @@ export function classifyCliError(
   if (code === RpcErrorCode.resourceNotFound || code === RpcErrorCode.resourceNotFoundLegacy) {
     return 'session-stale'
   }
-  if (code === RpcErrorCode.tooManyRequests || code === 429) return 'quota'
+  if (code === RpcErrorCode.tooManyRequests || code === 429 || code === 402) return 'quota'
   if (QUOTA_RE.test(raw)) return 'quota'
   if (SESSION_STALE_RE.test(raw)) return 'session-stale'
   if (AUTH_RE.test(raw)) return 'auth'

@@ -466,6 +466,8 @@ interface SessionState {
    * Main shell uses this to park its live agent xterm (exclusive PTY view).
    */
   detachedConversationIds: string[]
+  /** Tray-identical Running / Done per conversation — drives the window LED. */
+  activityById: Record<string, 'running' | 'done'>
   sidebarQuery: string
   renamingId: string | null
   /** Set in a detached window, which follows exactly one conversation. */
@@ -862,6 +864,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   selectedIds: [],
   /** Conversation ids with an open companion window (PTY exclusive there). */
   detachedConversationIds: [] as string[],
+  activityById: {} as Record<string, 'running' | 'done'>,
   sidebarQuery: '',
   renamingId: null,
   pinnedConversationId: null,
@@ -2879,7 +2882,12 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         projection.start()
         patchTurn(set, id, { isRunning: true, phase: 'thinking', toolCount: 0, awaitingToolCallId: null })
         // New turn supersedes prior file-review cards (avoid stale "Could not load changes").
-        set((state) => clearPriorChangeReviews(state, id))
+        set((state) => ({
+          ...clearPriorChangeReviews(state, id),
+          errorBanner: null,
+          errorBannerKind: null,
+          errorBannerDetail: null
+        }))
         break
 
       case 'user':
@@ -3321,6 +3329,16 @@ export function installWindowBridge(): () => void {
     useSessionStore.setState((state) => ({
       conversations: mergeConversationList(state.conversations, list)
     }))
+  })
+}
+
+export function installActivityBridge(): () => void {
+  const onActivity = window.vav?.conversations?.onActivity
+  if (!onActivity) return noopOff()
+  return onActivity((rows) => {
+    const activityById: Record<string, 'running' | 'done'> = {}
+    for (const row of rows) activityById[row.conversationId] = row.status
+    useSessionStore.setState({ activityById })
   })
 }
 

@@ -7,7 +7,8 @@ import {
   installSettingsBridge,
   installTurnEventBridge,
   installUpdateBridge,
-  installWindowBridge
+  installWindowBridge,
+  installActivityBridge
 } from './state/sessionStore'
 import { installFsWatchBridge, installPtyBridge } from './state/workspaceStore'
 import { Sidebar } from './components/Sidebar'
@@ -17,6 +18,7 @@ import { WorkspaceView } from './components/WorkspaceView'
 import { FileSessionView } from './components/FileSessionView'
 import { AppToast } from './components/AppToast'
 import { UpdateCorner } from './components/UpdateCorner'
+import { ActivityDot } from './components/ActivityDot'
 import { ShellLeadingControls } from './components/ShellLeadingControls'
 import { EmptyState } from './components/ui'
 import { KeychainOnboarding } from './components/KeychainOnboarding'
@@ -106,6 +108,7 @@ export default function App(): React.JSX.Element {
     const offSettings = installSettingsBridge()
     const offCompactions = installCompactionsBridge()
     const offWindow = installWindowBridge()
+    const offActivity = installActivityBridge()
     const offDetached = installDetachedBridge()
     const offUpdates = installUpdateBridge()
     const offModels = installAgentModelCatalogBridge()
@@ -145,6 +148,7 @@ export default function App(): React.JSX.Element {
       offSettings()
       offCompactions()
       offWindow()
+      offActivity()
       offDetached()
       offUpdates()
       offModels()
@@ -208,6 +212,7 @@ export default function App(): React.JSX.Element {
       </div>
       {/* When the sidebar is open it hosts the chip; otherwise pin bottom-left. */}
       {!sidebarVisible ? <UpdateCorner /> : null}
+      <ActivityDot conversationId={activeId} />
       <AppToast />
     </div>
   )

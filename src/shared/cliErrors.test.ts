@@ -84,6 +84,19 @@ describe('classifyCliError', () => {
   it('maps quota / session / auth wording when no code is present', () => {
     assert.equal(classifyCliError('usage limit exceeded'), 'quota')
     assert.equal(classifyCliError('Rate limit reached'), 'quota')
+    assert.equal(
+      classifyCliError('API error (status 402 Payment Required): Grok Build usage balance exhausted'),
+      'quota'
+    )
+    assert.equal(classifyCliError('Payment Required', null, 402), 'quota')
+    assert.equal(
+      classifyCliError(
+        'API error (status 402 Payment Required): Grok Build usage balance exhausted',
+        null,
+        RpcErrorCode.internalError
+      ),
+      'quota'
+    )
     assert.equal(classifyCliError('session not found'), 'session-stale')
     assert.equal(classifyCliError('Resource not found'), 'session-stale')
     assert.equal(classifyCliError('Authentication required'), 'auth')
@@ -114,6 +127,15 @@ describe('shouldRetryFreshSession', () => {
     assert.equal(shouldRetryFreshSession('session-stale', 'Resource not found', true, RpcErrorCode.resourceNotFound), true)
     assert.equal(shouldRetryFreshSession('generic', 'Internal error', true, RpcErrorCode.internalError), true)
     assert.equal(shouldRetryFreshSession('quota', 'usage limit exceeded', true), false)
+    assert.equal(
+      shouldRetryFreshSession(
+        'quota',
+        'API error (status 402 Payment Required): Grok Build usage balance exhausted',
+        true,
+        RpcErrorCode.internalError
+      ),
+      false
+    )
     assert.equal(shouldRetryFreshSession('auth', 'Authentication required', true, RpcErrorCode.authRequired), false)
     assert.equal(shouldRetryFreshSession('cancelled', 'Request cancelled', true), false)
     assert.equal(shouldRetryFreshSession('generic', 'Internal error', false, RpcErrorCode.internalError), false)

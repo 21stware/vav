@@ -124,7 +124,8 @@ const api: VavApi = {
         | { ok: true; importedIds: string[]; path: string; blobCount: number }
         | { ok: false; cancelled?: boolean; error?: string }
       >,
-    onChanged: (handler) => subscribe(IPC.convChanged, handler)
+    onChanged: (handler) => subscribe(IPC.convChanged, handler),
+    onActivity: (handler) => subscribe(IPC.activityChanged, handler)
   },
 
   agent: {

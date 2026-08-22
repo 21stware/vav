@@ -4,6 +4,14 @@ import { useSessionStore } from '../state/sessionStore'
 import { useWorkspaceStore } from '../state/workspaceStore'
 import { useT } from '../i18n/useT'
 import { prefetchForPath } from '../lib/prefetchHeavy'
+import {
+  PREVIEW_FALLBACK_PX,
+  PREVIEW_MIN,
+  clampPreviewWidth,
+  defaultPreviewForShell,
+  maxPreviewForShell,
+  previewWidthAfterShellChange
+} from '../lib/workspacePreviewFit'
 import { Button, EmptyState } from './ui'
 import { SessionDetail, type FileSessionChromeProps } from './SessionDetail'
 import { GitDiffPreview } from './GitChangesPanel'
@@ -23,15 +31,6 @@ const FileViewer = lazy(() => import('./FileViewer').then((m) => ({ default: m.F
  * Workspace groups only aggregate/pin in the sidebar — there is no workspace
  * selection mode. Preview open state lives on sessionStore.
  */
-const PREVIEW_MIN = 320
-/** First-open / double-click reset width as a fraction of the shell. */
-const PREVIEW_DEFAULT_RATIO = 0.42
-/** Hard ceiling as a fraction of the workspace split width. */
-const PREVIEW_MAX_RATIO = 0.6
-/** Fallback before the shell is measured (tight windows only). */
-const PREVIEW_FALLBACK_PX = 380
-/** The agent is the primary surface — never squeeze it below this. */
-const AGENT_MIN = 360
 
 function pathHash(key: string): string {
   let hash = 0
@@ -53,31 +52,14 @@ function loadStoredWidth(key: string, min: number): number | null {
   return null
 }
 
-function clamp(n: number, min: number, max: number): number {
-  return Math.min(max, Math.max(min, Math.round(n)))
-}
-
-/** Max preview width for the current shell — 60%, but never starve the agent. */
-function maxPreviewForShell(total: number): number {
-  if (total <= 0) return PREVIEW_FALLBACK_PX
-  const byRatio = Math.floor(total * PREVIEW_MAX_RATIO)
-  const byAgent = total - AGENT_MIN
-  return Math.max(PREVIEW_MIN, Math.min(byRatio, byAgent))
-}
-
-/** Default preview width — 42% of shell, within min/max. */
-function defaultPreviewForShell(total: number): number {
-  if (total <= 0) return PREVIEW_FALLBACK_PX
-  return clamp(Math.floor(total * PREVIEW_DEFAULT_RATIO), PREVIEW_MIN, maxPreviewForShell(total))
-}
-
 /** After preview open/close width animation settles, re-fit all PTYs. */
 function notifyTerminalResize(): void {
   window.dispatchEvent(new Event('vav:resize-end'))
 }
 
 /**
- * Session layout: agent is primary; file preview is a right drawer (session state).
+ * Session layout: conversation + optional right file preview.
+ * Shell width changes go to the preview first so the conversation stays put.
  * workdir scopes same-directory session history when the conversation has a root.
  */
 export function WorkspaceView({
@@ -116,6 +98,7 @@ export function WorkspaceView({
   const previewRef = useRef<HTMLElement>(null)
   const previewWidthRef = useRef(previewWidth)
   previewWidthRef.current = previewWidth
+  const lastShellWidthRef = useRef(0)
   const colDraggingRef = useRef(false)
 
   useEffect(() => {
@@ -130,6 +113,7 @@ export function WorkspaceView({
   useEffect(() => {
     const stored = loadStoredWidth(widthKey(widthScope), PREVIEW_MIN)
     needsDefaultRatio.current = stored == null
+    lastShellWidthRef.current = 0
     setPreviewWidth(stored ?? PREVIEW_FALLBACK_PX)
     setPreviewMounted(false)
   }, [widthScope])
@@ -156,21 +140,28 @@ export function WorkspaceView({
   const fitToShell = useCallback((): void => {
     if (colDraggingRef.current) return
     const total = rootRef.current?.clientWidth ?? 0
-    if (total <= 0 || !previewOpen) return
+    if (total <= 0) return
+    if (!previewOpen) {
+      lastShellWidthRef.current = total
+      return
+    }
     if (needsDefaultRatio.current) {
       needsDefaultRatio.current = false
       const next = defaultPreviewForShell(total)
+      lastShellWidthRef.current = total
       setPreviewWidth(next)
       persistWidth(next)
       return
     }
-    const maxPreview = maxPreviewForShell(total)
-    let preview = previewWidthRef.current
-    if (preview <= maxPreview && preview >= PREVIEW_MIN) return
-    preview = clamp(preview, PREVIEW_MIN, maxPreview)
-    if (preview === previewWidthRef.current) return
-    setPreviewWidth(preview)
-    persistWidth(preview)
+    const next = previewWidthAfterShellChange({
+      preview: previewWidthRef.current,
+      prevTotal: lastShellWidthRef.current,
+      nextTotal: total
+    })
+    lastShellWidthRef.current = total
+    if (next === previewWidthRef.current) return
+    setPreviewWidth(next)
+    persistWidth(next)
   }, [previewOpen, persistWidth])
 
   useEffect(() => {
@@ -210,7 +201,7 @@ export function WorkspaceView({
         raf = 0
         const total = rootRef.current?.clientWidth || shellW
         const raw = startPreview + (startX - pendingX)
-        latestPreview = clamp(raw, PREVIEW_MIN, maxPreviewForShell(total))
+        latestPreview = clampPreviewWidth(raw, PREVIEW_MIN, maxPreviewForShell(total))
         applyDom(latestPreview)
       })
     }

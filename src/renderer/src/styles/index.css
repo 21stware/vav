@@ -373,15 +373,30 @@ select {
   background: transparent;
 }
 
-/* xterm uses its own DOM scrollbar (default ~10px) — match the slim web bars. */
-.xterm .xterm-scrollable-element > .scrollbar.vertical {
+/* xterm uses its own DOM scrollbar (default ~10px) — match the slim web bars.
+   Current xterm class is `.xterm-scrollbar`; keep the old `.scrollbar` alias. */
+.xterm .xterm-scrollable-element > .scrollbar.vertical,
+.xterm .xterm-scrollable-element > .xterm-scrollbar.xterm-vertical {
   width: 6px !important;
 }
-.xterm .xterm-scrollable-element > .scrollbar.horizontal {
+.xterm .xterm-scrollable-element > .scrollbar.horizontal,
+.xterm .xterm-scrollable-element > .xterm-scrollbar.xterm-horizontal {
   height: 6px !important;
 }
-.xterm .xterm-scrollable-element > .scrollbar > .slider {
+.xterm .xterm-scrollable-element > .scrollbar > .slider,
+.xterm .xterm-scrollable-element > .xterm-scrollbar > .xterm-slider {
   border-radius: 3px;
+}
+
+/*
+ * Hidden IME/caret box must never become a hit target or a wheel scrollport.
+ * Keys still land on it (xterm focuses it); clicks and trackpad go to the canvas.
+ */
+.xterm .xterm-helper-textarea {
+  overflow: hidden !important;
+  overflow-anchor: none;
+  overscroll-behavior: none;
+  pointer-events: none;
 }
 
 /* ==========================================================================
@@ -6399,6 +6414,45 @@ mark {
 .sidebar-update-slot {
   flex: 0 0 auto;
   padding: 0 8px;
+}
+
+/* Bottom-right session LED: blink = running, solid = unseen done, absent = idle. */
+.activity-dot {
+  position: fixed;
+  right: 14px;
+  bottom: 14px;
+  z-index: 46;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #34c759;
+  pointer-events: none;
+  box-shadow: 0 0 0 3px color-mix(in srgb, #34c759 22%, transparent);
+}
+
+.activity-dot.is-running {
+  animation: activity-dot-blink 1.15s linear infinite;
+}
+
+.activity-dot.is-done {
+  opacity: 1;
+}
+
+@keyframes activity-dot-blink {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.22;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .activity-dot.is-running {
+    animation: none;
+    opacity: 0.65;
+  }
 }
 
 /* Bottom-left update chip (available / downloading / restart). */
@@ -15465,10 +15519,13 @@ mark {
 }
 
 .terminal-stack[data-terminal-surface='agent'] .xterm-viewport,
-.xterm-host.is-tui .xterm-viewport {
+.terminal-stack[data-terminal-surface='agent'] .xterm-scrollable-element,
+.xterm-host.is-tui .xterm-viewport,
+.xterm-host.is-tui .xterm-scrollable-element {
   overflow: hidden !important;
   scrollbar-width: none;
   scrollbar-gutter: auto;
+  overflow-anchor: none;
 }
 
 .terminal-stack[data-terminal-surface='agent'] .xterm-viewport::-webkit-scrollbar,
@@ -15479,7 +15536,9 @@ mark {
 }
 
 .terminal-stack[data-terminal-surface='agent'] .xterm .xterm-scrollable-element > .scrollbar,
-.xterm-host.is-tui .xterm-scrollable-element > .scrollbar {
+.terminal-stack[data-terminal-surface='agent'] .xterm .xterm-scrollable-element > .xterm-scrollbar,
+.xterm-host.is-tui .xterm-scrollable-element > .scrollbar,
+.xterm-host.is-tui .xterm-scrollable-element > .xterm-scrollbar {
   display: none !important;
 }
 
@@ -16033,6 +16092,7 @@ mark {
   min-height: 0;
   min-width: 0;
   overflow: hidden;
+  overflow-anchor: none;
   position: relative;
   isolation: isolate;
 }

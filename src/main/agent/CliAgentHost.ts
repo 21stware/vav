@@ -707,14 +707,19 @@ export class CliAgentHost {
           runtime.cursor = next
           this.deps.conversations.updateMeta(conversationId, { cliResumeCursor: next })
         }
-        if (
-          event.cancelled ||
-          classifyCliError(
-            event.error || '',
-            this.quotaWindowsFor(conversationId),
-            event.errorCode
-          ) === 'cancelled'
-        ) {
+        if (event.error) {
+          turn.error = turn.error || event.error
+          turn.errorCode = event.errorCode ?? turn.errorCode
+          turn.errorDetail = event.errorDetail ?? turn.errorDetail
+        }
+        const finishKind = classifyCliError(
+          event.error || turn.error || '',
+          this.quotaWindowsFor(conversationId),
+          event.errorCode ?? turn.errorCode
+        )
+        // Payment / quota must win over stopReason=cancelled so we keep the
+        // resume cursor instead of treating the thread as user-aborted.
+        if (finishKind !== 'quota' && (event.cancelled || finishKind === 'cancelled')) {
           turn.cancelled = true
         }
         if (event.success || turn.cancelled) {
@@ -1281,9 +1286,13 @@ export class CliAgentHost {
       .trim()
 
     if (turn.cancelled) {
-      turn.error = undefined
-      turn.errorKind = undefined
-      turn.errorDetail = undefined
+      if (classifyCliError(turn.error || '', null, turn.errorCode) === 'quota') {
+        turn.cancelled = false
+      } else {
+        turn.error = undefined
+        turn.errorKind = undefined
+        turn.errorDetail = undefined
+      }
     }
 
     const message: ChatMessage = {

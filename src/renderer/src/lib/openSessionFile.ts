@@ -1,12 +1,14 @@
 /**
  * Open a local path from chat / agent log into the session side preview.
- * Falls back to a standalone preview window when there is no active session.
+ * Falls back to a standalone preview window when there is no active session
+ * or this renderer has no preview column (companion / Quick Chat).
  */
 import { isClipPath } from '@shared/clipPath'
 import { looksLikeVisualOverlay } from '@shared/previewOverlay'
 import { useSessionStore } from '../state/sessionStore'
 import { useWorkspaceStore } from '../state/workspaceStore'
 import { resolveMentionedPath } from './filePathLinks'
+import { shouldOpenStandaloneFilePreview } from './workspacePreviewFit'
 
 export function resolveSessionFilePath(raw: string): string {
   const state = useSessionStore.getState()
@@ -41,10 +43,19 @@ export function openFileInSessionPreview(rawPath: string): void {
   }
   const state = useSessionStore.getState()
   const id = state.activeId
-  if (!id) {
-    void window.vav.window.openFilePreview(resolved, { origin: 'session' })
+  if (
+    shouldOpenStandaloneFilePreview({
+      conversationId: id,
+      filePreviewHost: state.filePreviewHost
+    })
+  ) {
+    void window.vav.window.openFilePreview(resolved, {
+      origin: 'session',
+      conversationId: id || undefined
+    })
     return
   }
+  if (!id) return
   useWorkspaceStore.getState().selectPath(id, resolved)
   void state.attachContextFile(id, resolved)
   state.setSessionPreview({ kind: 'file' })

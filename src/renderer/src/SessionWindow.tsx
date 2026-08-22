@@ -5,10 +5,12 @@ import {
   installSettingsBridge,
   installTurnEventBridge,
   installUpdateBridge,
-  installWindowBridge
+  installWindowBridge,
+  installActivityBridge
 } from './state/sessionStore'
 import { installFsWatchBridge, installPtyBridge, useWorkspaceStore } from './state/workspaceStore'
 import { AgentModeChrome, SessionDetail } from './components/SessionDetail'
+import { ActivityDot } from './components/ActivityDot'
 import { useAppearance } from './lib/appearance'
 import { useTerminalAppearance } from './lib/useTerminalAppearance'
 import { useMenuCommands } from './lib/menuCommands'
@@ -163,6 +165,7 @@ export default function SessionWindow({
     const offSettings = installSettingsBridge()
     const offCompactions = installCompactionsBridge()
     const offWindow = installWindowBridge()
+    const offActivity = installActivityBridge()
     const offUpdates = installUpdateBridge()
     const offMenu = installDefaultContextMenu()
     const offInstall = installInstallRunBridge()
@@ -192,6 +195,7 @@ export default function SessionWindow({
       offSettings()
       offCompactions()
       offWindow()
+      offActivity()
       offUpdates()
       offMenu()
       offCli()
@@ -264,6 +268,7 @@ export default function SessionWindow({
         </div>
       </header>
       <SessionDetail hideChrome />
+      <ActivityDot conversationId={conversationId} />
     </div>
   )
 }

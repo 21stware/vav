@@ -125,7 +125,12 @@ export const zhCN = {
 
   // —— tray / notifications ——
   'tray.running': '运行中 ({count})',
+  'tray.done': '完成 ({count})',
+  'tray.runningTag': '运行中',
+  'tray.doneTag': '完成',
   'tray.sessions': '会话 ({count})',
+  'activity.running': '运行中',
+  'activity.done': '完成',
   'notify.awaitingAnswer': '{title} · 等待回答',
   'notify.requestConfirm': '{title} · 请求确认',
   'notify.awaitingApproval': '{title} · 待批准',
@@ -1239,8 +1244,8 @@ export const zhCN = {
   'notifications.requestHint': 'Agent 通过 request 工具暂停时通知。',
   'notifications.sectionTray': '系统托盘',
   'notifications.trayLabel': '显示托盘图标',
-  'notifications.trayHint': '菜单栏显示 VAV 图标；运行中 turn ≥1 时显示计数。',
-  'notifications.trayHintWin': '关闭窗口后留在系统托盘，点击图标可重新打开。运行中会话会显示在托盘菜单。',
+  'notifications.trayHint': '菜单栏显示 VAV 图标；运行中会话 ≥1 时显示计数。托盘只列出运行中和未查看的完成项。',
+  'notifications.trayHintWin': '关闭窗口后留在系统托盘，点击图标可重新打开。运行中和未查看的完成会话会显示在托盘菜单。',
   'notifications.hideDockHint': '仅在托盘运行。需搭配「显示托盘图标」；切换后建议重启应用。',
   'notifications.sectionPower': '电源',
   'notifications.keepAwake': 'Agent 运行时保持唤醒',
@@ -1974,7 +1979,12 @@ export const en: Record<MessageKey, string> = {
   'menu.front': 'Bring All to Front',
 
   'tray.running': 'Running ({count})',
+  'tray.done': 'Done ({count})',
+  'tray.runningTag': 'Running',
+  'tray.doneTag': 'Done',
   'tray.sessions': 'Sessions ({count})',
+  'activity.running': 'Running',
+  'activity.done': 'Done',
   'notify.awaitingAnswer': '{title} · Awaiting answer',
   'notify.requestConfirm': '{title} · Confirmation needed',
   'notify.awaitingApproval': '{title} · Awaiting approval',
@@ -3087,9 +3097,10 @@ export const en: Record<MessageKey, string> = {
   'notifications.requestHint': 'Notify when the agent pauses on a request tool.',
   'notifications.sectionTray': 'Menu bar',
   'notifications.trayLabel': 'Show menu bar icon',
-  'notifications.trayHint': 'Shows the VAV icon in the menu bar; a count when ≥1 turn is running.',
+  'notifications.trayHint':
+    'Shows the VAV icon in the menu bar; a count when ≥1 session is running. The menu lists Running and unseen Done only.',
   'notifications.trayHintWin':
-    'Stays in the notification area after you close the window — click the icon to reopen. Running sessions appear in the tray menu.',
+    'Stays in the notification area after you close the window — click the icon to reopen. Running and unseen Done sessions appear in the tray menu.',
   'notifications.hideDockHint':
     'Tray-only mode. Requires “Show menu bar icon”; restart recommended after toggling.',
   'notifications.sectionPower': 'Power',
