@@ -6,11 +6,15 @@ import { bundledBinDir } from '../bundledBin'
 
 /**
  * GUI apps (Electron / launchd) inherit a stripped PATH. Ask the login shell
- * once so CLI agents like `claude` / `codex` resolve the same way as Terminal.app.
+ * once (async) so CLI agents like `claude` / `codex` resolve the same way as
+ * Terminal.app. Sync callers never wait on that shell.
  * Bundled helper bins (e.g. officecli) are prepended so they win over a stale
  * system install when present.
  */
+/** Real login-shell PATH (from async `zsh -ilc`). Never written by a sync caller. */
 let cachedLoginPath: string | null = null
+/** GUI PATH + common prefixes — instant, no shell. Overwritten when zsh lands. */
+let provisionalPath: string | null = null
 let loginPathWarm: Promise<string> | null = null
 
 function isExecutable(file: string): boolean {
@@ -83,33 +87,26 @@ function assembleLoginPath(shellPath: string): string {
   return ordered.join(delimiter)
 }
 
-function readLoginShellPathSync(): string {
-  const shell = process.env.SHELL || (process.platform === 'darwin' ? '/bin/zsh' : '/bin/bash')
-  try {
-    const out = execFileSync(shell, ['-ilc', 'printenv PATH'], {
-      encoding: 'utf8',
-      timeout: 5000,
-      env: loginShellEnv()
-    })
-      .trim()
-      .split('\n')
-      .at(-1)
-    return (out ?? '').trim() || process.env.PATH || '/usr/bin:/bin'
-  } catch {
-    return process.env.PATH || '/usr/bin:/bin'
+function provisionalLoginPath(): string {
+  if (!provisionalPath) {
+    provisionalPath = assembleLoginPath(process.env.PATH || '/usr/bin:/bin')
   }
+  return provisionalPath
 }
 
+/**
+ * Login PATH for spawn / resolve. Never blocks on `zsh -ilc` — that belongs
+ * on the boot warm path ({@link ensureLoginPath}). Until zsh lands, this is
+ * GUI PATH plus Homebrew / nvm / cargo / … prefixes.
+ */
 export function loginPath(): string {
-  if (cachedLoginPath) return cachedLoginPath
-  cachedLoginPath = assembleLoginPath(readLoginShellPathSync())
-  return cachedLoginPath
+  return cachedLoginPath ?? provisionalLoginPath()
 }
 
 /**
  * Resolve the login PATH without blocking the Electron main thread.
- * Safe to call repeatedly; shares one in-flight shell. Sync {@link loginPath}
- * still works and will reuse this result once it lands.
+ * Safe to call repeatedly; shares one in-flight shell. Overwrites the
+ * provisional PATH once zsh returns so later spawns see nvm version dirs.
  */
 export function ensureLoginPath(): Promise<string> {
   if (cachedLoginPath) return Promise.resolve(cachedLoginPath)
@@ -121,10 +118,6 @@ export function ensureLoginPath(): Promise<string> {
       ['-ilc', 'printenv PATH'],
       { encoding: 'utf8', timeout: 5000, env: loginShellEnv() },
       (err, stdout) => {
-        if (cachedLoginPath) {
-          resolve(cachedLoginPath)
-          return
-        }
         const line = err
           ? ''
           : String(stdout ?? '')
@@ -275,6 +268,7 @@ export function resolveAgentExecutable(
 /** Drop PATH + binary resolve caches (tests / after user installs a CLI mid-session). */
 export function clearLoginPathCache(): void {
   cachedLoginPath = null
+  provisionalPath = null
   loginPathWarm = null
   resolveResultCache.clear()
 }

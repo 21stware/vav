@@ -247,6 +247,8 @@ export function quotaKindMessageKey(kind: QuotaWindowKind):
   | 'token.quotaWeeklyOpus'
   | 'token.quotaWeeklySonnet'
   | 'token.quotaMonthly'
+  | 'token.quotaCursorApi'
+  | 'token.quotaCursorAuto'
   | 'token.quotaPrimary'
   | 'token.quotaSecondary'
   | 'token.quotaOther' {
@@ -261,6 +263,10 @@ export function quotaKindMessageKey(kind: QuotaWindowKind):
       return 'token.quotaWeeklySonnet'
     case 'monthly':
       return 'token.quotaMonthly'
+    case 'cursor_api':
+      return 'token.quotaCursorApi'
+    case 'cursor_auto':
+      return 'token.quotaCursorAuto'
     case 'primary':
       return 'token.quotaPrimary'
     case 'secondary':

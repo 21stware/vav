@@ -77,18 +77,6 @@ export function AboutSettings(): React.JSX.Element {
         </div>
         <div className="form-hint">{t('about.autoCheckUpdatesHint')}</div>
 
-        {phase === 'latest' ? (
-          <div className="form-hint">
-            {t('update.toastLatestBody', {
-              version: latestVersion ?? about?.version ?? ''
-            })}
-          </div>
-        ) : null}
-        {phase === 'error' ? (
-          <div className="form-hint about-update-error" role="alert">
-            {updateState.message?.trim() || t('update.toastErrorBody')}
-          </div>
-        ) : null}
         {showLatestRow ? (
           <div className="kv-row">
             <span className="kv-label">{t('about.latestVersion')}</span>
@@ -163,24 +151,18 @@ export function AboutSettings(): React.JSX.Element {
             />
           ) : null}
         </div>
-      </div>
-
-      <div className="about-section">
-        <div className="settings-section-title">{t('about.dataSecurity')}</div>
-        <div className="about-meta">
-          <div className="kv-row">
-            <span className="kv-label">{t('about.dataLabel')}</span>
-            <span className="kv-value">{t('about.dataValue')}</span>
+        {phase === 'latest' ? (
+          <div className="form-hint" aria-live="polite">
+            {t('update.toastLatestBody', {
+              version: latestVersion ?? about?.version ?? ''
+            })}
           </div>
-          <div className="kv-row">
-            <span className="kv-label">{t('about.terminalLabel')}</span>
-            <span className="kv-value">{t('about.terminalValue')}</span>
+        ) : null}
+        {phase === 'error' ? (
+          <div className="form-hint about-update-error" role="alert">
+            {updateState.message?.trim() || t('update.toastErrorBody')}
           </div>
-          <div className="kv-row">
-            <span className="kv-label">{t('about.networkLabel')}</span>
-            <span className="kv-value">{t('about.networkValue')}</span>
-          </div>
-        </div>
+        ) : null}
       </div>
 
       <div className="about-actions">

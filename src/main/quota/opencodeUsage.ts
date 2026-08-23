@@ -1,7 +1,5 @@
 import { createHash } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
-import { homedir } from 'node:os'
-import { join } from 'node:path'
 import { net } from 'electron'
 import {
   accountInfo,
@@ -11,21 +9,16 @@ import {
 } from '@shared/cliAccountParse'
 import { windowsFromOpencodeGoUsagePayload } from '@shared/quotaWindows'
 import type { QuotaWindow } from '@shared/types'
+import { opencodeAuthPath } from './hostPaths.ts'
 
 const USAGE_URL = 'https://opencode.ai/zen/go/v1/usage'
 const API_TIMEOUT_MS = 10_000
-
-function opencodeDataDir(): string {
-  return process.env.XDG_DATA_HOME?.trim()
-    ? join(process.env.XDG_DATA_HOME.trim(), 'opencode')
-    : join(homedir(), '.local', 'share', 'opencode')
-}
 
 async function readOpencodeGoKey(): Promise<string | null> {
   const env = process.env.OPENCODE_API_KEY?.trim()
   if (env) return env
   try {
-    const raw = await readFile(join(opencodeDataDir(), 'auth.json'), 'utf8')
+    const raw = await readFile(opencodeAuthPath(), 'utf8')
     const parsed = JSON.parse(raw) as Record<string, { type?: unknown; key?: unknown }>
     for (const id of ['opencode-go', 'opencode', 'zen']) {
       const key = parsed[id]?.key
@@ -44,7 +37,7 @@ async function readOpencodeGoKey(): Promise<string | null> {
 export async function readOpencodeAccountInfo(): Promise<HostAccountInfo> {
   const env = process.env.OPENCODE_API_KEY?.trim()
   try {
-    const raw = await readFile(join(opencodeDataDir(), 'auth.json'), 'utf8')
+    const raw = await readFile(opencodeAuthPath(), 'utf8')
     const fromFile = parseOpencodeAuthFile(JSON.parse(raw))
     if (fromFile.signedIn) return fromFile
   } catch {
@@ -60,8 +53,8 @@ export async function readOpencodeAuthIdentity(): Promise<string | null> {
   return `tok:${createHash('sha256').update(key).digest('hex').slice(0, 16)}`
 }
 
-export async function fetchOpencodeAccountQuota(): Promise<QuotaWindow[]> {
-  const key = await readOpencodeGoKey()
+export async function fetchOpencodeAccountQuota(ctx?: { token?: string }): Promise<QuotaWindow[]> {
+  const key = ctx?.token?.trim() || (await readOpencodeGoKey())
   if (!key) return []
   const res = await net.fetch(USAGE_URL, {
     headers: {

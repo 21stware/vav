@@ -8,7 +8,12 @@ import {
   localAnalysisProviders
 } from '../../shared/analysis.ts'
 import { displayNameForCliHost, type CliHostKind } from '../../shared/cliHost.ts'
-import { hostMayHaveAccountQuota, mergeQuotaWindowsPreferNewer } from '../../shared/quotaWindows.ts'
+import {
+  attachQuotaNamespace,
+  hostMayHaveAccountQuota,
+  latestQuotaWindowsByHost,
+  mergeNamespacedQuotaWindows
+} from '../../shared/quotaWindows.ts'
 import type { Conversation, QuotaWindow } from '../../shared/types.ts'
 
 export async function buildAnalysisSnapshot(input: {
@@ -38,7 +43,7 @@ export async function buildAnalysisSnapshot(input: {
     // Quota poll is optional — still return local providers.
   }
 
-  const conversationWindows = latestConversationWindows(input.conversations)
+  const conversationWindows = latestQuotaWindowsByHost(input.conversations)
   const providers: AnalysisProvider[] = await Promise.all(
     seeds.map(async (seed) => {
       const host = analysisHostOrNull(seed.id)
@@ -85,8 +90,14 @@ export async function buildAnalysisSnapshot(input: {
       }
       const polled = input.quotaWindows(host)
       const live = host ? (conversationWindows.get(host) ?? []) : []
+      const identity = account.signedIn ? account.accountId : null
       const windows = hostMayHaveAccountQuota(host)
-        ? mergeQuotaWindowsPreferNewer(polled, live)
+        ? mergeNamespacedQuotaWindows(
+            host,
+            identity,
+            identity ? attachQuotaNamespace(polled, host, identity) : [],
+            live
+          )
         : []
       return {
         hostKey: seed.id,
@@ -102,22 +113,4 @@ export async function buildAnalysisSnapshot(input: {
   )
 
   return { usage, providers, now: Date.now() }
-}
-
-function latestConversationWindows(
-  conversations: Conversation[]
-): Map<CliHostKind, QuotaWindow[]> {
-  const out = new Map<CliHostKind, QuotaWindow[]>()
-  const consider = (host: string | null | undefined, windows: QuotaWindow[] | undefined): void => {
-    if (!host || !hostMayHaveAccountQuota(host) || !windows?.length) return
-    const prev = out.get(host)
-    out.set(host, prev ? mergeQuotaWindowsPreferNewer(prev, windows) : windows)
-  }
-  for (const conversation of conversations) {
-    consider(conversation.cliHost, conversation.quotaWindows)
-    for (const [key, bucket] of Object.entries(conversation.hostTranscripts ?? {})) {
-      consider(key, bucket.quotaWindows)
-    }
-  }
-  return out
 }

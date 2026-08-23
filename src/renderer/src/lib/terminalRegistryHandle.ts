@@ -24,7 +24,11 @@ export type TerminalRegistryApi = {
   resumeTerminalPaint?(conversationId: string, tabId: string): void
   markTerminalProcessExited?(tabId: string): void
   resetTerminalForNewProcess?(conversationId: string, tabId: string): void
+  peekLiveTerminalGrid?(): { cols: number; rows: number } | null
 }
+
+/** Last font size applied to xterm (already `max(11, settings - 1)`). */
+let lastFontSize = 12
 
 let api: TerminalRegistryApi | null = null
 let pending: {
@@ -51,11 +55,21 @@ export function applyTerminalAppearance(
   fontSize: number,
   bashBackground?: BashBackgroundMode
 ): void {
+  lastFontSize = fontSize
   if (!api) {
     pending = { fontFamily, fontSize, bashBackground }
     return
   }
   api.applyTerminalAppearance(fontFamily, fontSize, bashBackground)
+}
+
+export function lastTerminalFontSize(): number {
+  return lastFontSize
+}
+
+/** Live agent xterm grid, if one is already fitted in this renderer. */
+export function peekLiveTerminalGrid(): { cols: number; rows: number } | null {
+  return api?.peekLiveTerminalGrid?.() ?? null
 }
 
 /** Re-mint xterm ink after Appearance light/dark. No-op until a host loads. */

@@ -120,6 +120,9 @@ export function Transcript(): React.JSX.Element {
   const cliHost = useSessionStore(
     (s) => s.conversations.find((c) => c.id === s.activeId)?.cliHost ?? null
   )
+  const accountId = useSessionStore(
+    (s) => s.conversations.find((c) => c.id === s.activeId)?.accountId ?? null
+  )
   const needsVavKey = !apiKeyPresent && !cliHost
   const archived = useSessionStore(
     (s) => !!s.conversations.find((c) => c.id === s.activeId)?.archived
@@ -662,7 +665,11 @@ export function Transcript(): React.JSX.Element {
               enterKey={emptyScene}
               meta={
                 activeId ? (
-                  <EmptyQuotaUsage conversationId={activeId} host={cliHost} />
+                  <EmptyQuotaUsage
+                    conversationId={activeId}
+                    host={cliHost}
+                    accountId={accountId}
+                  />
                 ) : null
               }
               title={needsVavKey ? t('transcript.configureKey') : undefined}

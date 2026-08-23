@@ -7,6 +7,10 @@ export {
   VAV_LEGACY_DEFAULT_MODELS,
   prettyVavModelLabel,
   vavFallbackModels,
+  deepseekOfficialModels,
+  isOfficialDeepSeekEndpoint,
+  isNativeDeepSeekModelId,
+  nativeDeepSeekModels,
   pickVavDefaultModel,
   orderVavModels
 } from './vavModelList.ts'

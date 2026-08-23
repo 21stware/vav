@@ -1,11 +1,10 @@
 import { createHash } from 'node:crypto'
 import { existsSync, readFileSync } from 'node:fs'
-import { homedir } from 'node:os'
-import { join } from 'node:path'
 import { net } from 'electron'
 import { accountInfo, emptyAccount, type HostAccountInfo } from '@shared/cliAccountParse'
 import { windowsFromGrokBillingPayload } from '@shared/quotaWindows'
 import type { QuotaWindow } from '@shared/types'
+import { grokAuthPath } from './hostPaths.ts'
 
 const GROK_CLI_PROXY_BASE =
   process.env.GROK_CLI_CHAT_PROXY_BASE_URL?.trim().replace(/\/$/, '') ||
@@ -22,10 +21,6 @@ type GrokAuthSession = {
   userId: string | null
   email: string | null
   expiresAtMs: number | null
-}
-
-function grokHome(): string {
-  return process.env.GROK_HOME?.trim() || join(homedir(), '.grok')
 }
 
 function parseExpiresAtMs(iso: unknown): number | null {
@@ -56,7 +51,7 @@ function sessionFromEntry(entry: Record<string, unknown>): GrokAuthSession | nul
 }
 
 function readGrokAuthSession(): GrokAuthSession | null {
-  const path = join(grokHome(), 'auth.json')
+  const path = grokAuthPath()
   if (!existsSync(path)) return null
   try {
     const parsed = JSON.parse(readFileSync(path, 'utf8')) as unknown
@@ -121,8 +116,10 @@ async function fetchBillingJson(
   return res.json()
 }
 
-export async function fetchGrokAccountQuota(): Promise<QuotaWindow[]> {
-  const session = readGrokAuthSession()
+export async function fetchGrokAccountQuota(ctx?: { token?: string }): Promise<QuotaWindow[]> {
+  const session = ctx?.token?.trim()
+    ? { accessToken: ctx.token.trim(), userId: null, email: null, expiresAtMs: null }
+    : readGrokAuthSession()
   if (!session || !isFresh(session)) return []
   const credits = await fetchBillingJson(BILLING_CREDITS_URL, session)
   if (credits == null) return []

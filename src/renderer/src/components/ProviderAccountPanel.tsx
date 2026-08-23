@@ -15,6 +15,8 @@ const QUOTA_LABEL: Record<QuotaWindowKind, MessageKey> = {
   seven_day_opus: 'token.quotaWeeklyOpus',
   seven_day_sonnet: 'token.quotaWeeklySonnet',
   monthly: 'token.quotaMonthly',
+  cursor_api: 'token.quotaCursorApi',
+  cursor_auto: 'token.quotaCursorAuto',
   primary: 'token.quotaPrimary',
   secondary: 'token.quotaSecondary',
   other: 'token.quotaOther'

@@ -40,6 +40,9 @@ function pathKeys(cwd: string): string[] {
   return [...keys]
 }
 
+/** cwds already known trusted this process — skip re-reading ~/.claude.json. */
+const trustedMemo = new Set<string>()
+
 function readConfig(path: string): Record<string, unknown> {
   try {
     if (!existsSync(path)) return {}
@@ -59,6 +62,7 @@ function readConfig(path: string): Record<string, unknown> {
 export function ensureClaudeWorkspaceTrusted(cwd: string): void {
   const abs = cwd?.trim()
   if (!abs || abs === '~') return
+  if (trustedMemo.has(abs)) return
 
   const configPath = claudeConfigPath()
   const keys = pathKeys(abs)
@@ -84,16 +88,24 @@ export function ensureClaudeWorkspaceTrusted(cwd: string): void {
       }
       changed = true
     }
-    if (!changed) return
+    if (!changed) {
+      trustedMemo.add(abs)
+      return
+    }
 
     config.projects = projects
     mkdirSync(dirname(configPath), { recursive: true })
     const tmp = `${configPath}.vav-tmp`
     writeFileSync(tmp, `${JSON.stringify(config, null, 2)}\n`, 'utf8')
     renameSync(tmp, configPath)
+    trustedMemo.add(abs)
   } catch (err) {
     console.warn('[claude-trust] failed to pre-trust workspace', abs, err)
   }
+}
+
+export function clearClaudeTrustMemo(): void {
+  trustedMemo.clear()
 }
 
 /** True when the executable looks like Claude Code. */

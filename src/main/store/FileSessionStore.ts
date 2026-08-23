@@ -81,9 +81,14 @@ export class FileSessionStore {
   private readonly indexPath = join(this.dir, 'index.json')
   private index: IndexFile = { version: 1, byId: {}, byInode: {}, byPathHash: {} }
   private conversations: ConversationStore | null = null
+  private accountIdFor: ((workdir: string | null) => string | null) | null = null
 
-  bind(conversations: ConversationStore): void {
+  bind(
+    conversations: ConversationStore,
+    options?: { accountIdFor?: (workdir: string | null) => string | null }
+  ): void {
     this.conversations = conversations
+    this.accountIdFor = options?.accountIdFor ?? null
     this.loadIndex()
     try {
       this.purgeStale()
@@ -217,11 +222,13 @@ export class FileSessionStore {
     const level = parseThinkingLevel(thinkingLevel)
 
     if (!bundle) {
-      const conversation = this.conversations.create(path ? dirnameSafe(path) : null, model, {
+      const workdir = path ? dirnameSafe(path) : null
+      const conversation = this.conversations.create(workdir, model, {
         fileId: identity.fileId,
         title: defaultSessionTitle(currentLocale()),
         approvalMode,
-        thinkingLevel: level
+        thinkingLevel: level,
+        accountId: this.accountIdFor?.(workdir) ?? null
       })
       // Title for empty file sessions
       this.conversations.updateMeta(conversation.id, {
@@ -261,11 +268,13 @@ export class FileSessionStore {
     // Drop session ids that no longer exist in ConversationStore.
     bundle.sessionIds = bundle.sessionIds.filter((id) => !!this.conversations!.get(id))
     if (bundle.sessionIds.length === 0) {
-      const conversation = this.conversations.create(dirnameSafe(path), model, {
+      const workdir = dirnameSafe(path)
+      const conversation = this.conversations.create(workdir, model, {
         fileId: identity.fileId,
         title: 'New session',
         approvalMode,
-        thinkingLevel: level
+        thinkingLevel: level,
+        accountId: this.accountIdFor?.(workdir) ?? null
       })
       this.conversations.updateMeta(conversation.id, {
         title: 'New session',
@@ -303,11 +312,13 @@ export class FileSessionStore {
     if (!this.conversations) throw new Error('FileSessionStore not bound')
     if (!isFileSessionEligible(path)) throw new Error('preview_only')
     const opened = await this.open(path, model, approvalMode, thinkingLevel)
-    const conversation = this.conversations.create(dirnameSafe(path), model, {
+    const workdir = dirnameSafe(path)
+    const conversation = this.conversations.create(workdir, model, {
       fileId: opened.fileId,
       title: 'New session',
       approvalMode,
-      thinkingLevel: parseThinkingLevel(thinkingLevel)
+      thinkingLevel: parseThinkingLevel(thinkingLevel),
+      accountId: this.accountIdFor?.(workdir) ?? null
     })
     this.conversations.updateMeta(conversation.id, {
       title: 'New session',

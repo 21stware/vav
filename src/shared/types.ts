@@ -247,6 +247,8 @@ export interface TokenSnapshot {
   estimatedCost: number
   /** Omitted on legacy snapshots — treat as `estimated`. */
   costSource?: 'estimated' | 'provider'
+  /** Provider account that produced this turn (Settings → Accounts). */
+  accountId?: string | null
 }
 
 /**
@@ -259,6 +261,8 @@ export type QuotaWindowKind =
   | 'seven_day_opus'
   | 'seven_day_sonnet'
   | 'monthly'
+  | 'cursor_api'
+  | 'cursor_auto'
   | 'primary'
   | 'secondary'
   | 'other'
@@ -273,6 +277,8 @@ export interface QuotaWindow {
   resetsAt: number | null
   /** When this sample was last observed (account poll or live stream). */
   updatedAt: number
+  /** `host:identity` — samples without this never attach to another login. */
+  ns?: string
 }
 
 export interface ConversationMeta {
@@ -344,6 +350,11 @@ export interface ConversationMeta {
    * session since. Keeps the row in the tray until the result is accessed.
    */
   resultUnseen?: boolean
+  /**
+   * Settings → Accounts profile stamped when the session was created.
+   * Switching the current account does not rewrite in-flight sessions.
+   */
+  accountId?: string | null
 }
 
 /**
@@ -1366,6 +1377,8 @@ export type TurnEvent =
       cacheExpiresAt: number | null
       reportedSessionCostUsd?: number | null
       quotaWindows?: QuotaWindow[]
+      /** True only when this sample appended a new token-history snapshot. */
+      newSnapshot?: boolean
     }
   /** Turn is over: the finished assistant message replaces all streaming state. */
   | {
@@ -1415,6 +1428,7 @@ export interface TurnStatus {
 export interface ValidateKeyResult {
   ok: boolean
   message: string
+  authFailed?: boolean
 }
 
 export interface AboutInfo {

@@ -771,6 +771,20 @@ export function applyTerminalAppearance(
   }
 }
 
+/** Largest fitted agent grid — used to spawn the next pane at window size. */
+export function peekLiveTerminalGrid(): { cols: number; rows: number } | null {
+  let best: { cols: number; rows: number } | null = null
+  for (const entry of entries.values()) {
+    if (entry.parked || entry.paintPaused) continue
+    if (entry.surface !== 'agent') continue
+    const cols = entry.term.cols
+    const rows = entry.term.rows
+    if (cols < 20 || rows < 8) continue
+    if (!best || cols * rows > best.cols * best.rows) best = { cols, rows }
+  }
+  return best
+}
+
 /** Re-mint xterm ink after `data-theme` flips (fonts unchanged). */
 export function paintTerminalThemes(): void {
   for (const entry of entries.values()) {
@@ -836,5 +850,6 @@ publishTerminalRegistry({
   pauseTerminalPaint,
   resumeTerminalPaint,
   markTerminalProcessExited,
-  resetTerminalForNewProcess
+  resetTerminalForNewProcess,
+  peekLiveTerminalGrid
 })

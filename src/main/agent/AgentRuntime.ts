@@ -5,6 +5,7 @@ import { runAgentLoopContinue } from '@earendil-works/pi-agent-core'
 import type { AssistantMessage, Message } from '@earendil-works/pi-ai'
 import {
   type ChatMessage,
+  type AppSettings,
   type Conversation,
   type MessageBlock,
   type PreviewRef,
@@ -136,6 +137,11 @@ export interface AgentRuntimeDeps {
   fileSessions?: FileSessionStore
   /** Sync preview chrome when the agent flips Read/Edit via switch_mode. */
   onFileReadOnlyChange?: (conversationId: string, readOnly: boolean) => void
+  /** Current / session-pinned VAV account. Falls back to the legacy API key. */
+  resolveVavCredentials?: (conversation: Conversation) => {
+    apiKey: string | null
+    endpoint: string
+  }
 }
 
 /**
@@ -160,6 +166,19 @@ export class AgentRuntime {
   private fileDrafts = new FileDraftCoalescer()
 
   constructor(private deps: AgentRuntimeDeps) {}
+
+  private vavCreds(conversation: Conversation): { apiKey: string | null; settings: AppSettings } {
+    const settings = this.deps.settings.get()
+    const resolved = this.deps.resolveVavCredentials?.(conversation)
+    if (!resolved) return { apiKey: this.deps.secrets.get(), settings }
+    return {
+      apiKey: resolved.apiKey,
+      settings: {
+        ...settings,
+        apiEndpoint: resolved.endpoint.trim() || settings.apiEndpoint
+      }
+    }
+  }
 
   isRunning(conversationId: string): boolean {
     return this.turns.has(conversationId)
@@ -354,10 +373,9 @@ export class AgentRuntime {
       return { ok: false, error: t('compact.error.notEnough') }
     }
 
-    const apiKey = this.deps.secrets.get()
+    const { apiKey, settings } = this.vavCreds(conversation)
     if (!apiKey) return { ok: false, error: t('error.noApiKey') }
 
-    const settings = this.deps.settings.get()
     const modelId = conversation.model || settings.defaultModel
     const model = buildModel(settings, modelId, contextWindowFor(modelId))
 
@@ -490,13 +508,12 @@ export class AgentRuntime {
     const conversation = this.deps.conversations.get(conversationId)
     if (!conversation) return
 
-    const apiKey = this.deps.secrets.get()
+    const { apiKey, settings } = this.vavCreds(conversation)
     if (!apiKey) {
       this.emitFatal(conversationId, parentId, t('error.noApiKey'))
       return
     }
 
-    const settings = this.deps.settings.get()
     const modelId = conversation.model || settings.defaultModel
     const model = buildModel(settings, modelId, contextWindowFor(modelId))
     // Image attachments ride along as inline ImageContent parts for vision
@@ -785,7 +802,8 @@ export class AgentRuntime {
               timestamp: Date.now(),
               // Catalog pricing (exact $/MTok incl. cache) when pi-ai knows the
               // model; falls back to the shared rate table inside otherwise.
-              rates: catalogRatesFor(conversation.model || event.message.model) ?? undefined
+              rates: catalogRatesFor(conversation.model || event.message.model) ?? undefined,
+              accountId: conversation.accountId ?? null
             })
             this.deps.conversations.recordTokenSnapshot(conversationId, snapshot)
             // Context-window fill = this turn's input size (not cumulative session cost).
@@ -803,7 +821,8 @@ export class AgentRuntime {
                 history: next.tokenHistory,
                 cacheCreatedAt: next.cacheCreatedAt,
                 cacheExpiresAt: next.cacheExpiresAt,
-                reportedSessionCostUsd: next.reportedSessionCostUsd ?? null
+                reportedSessionCostUsd: next.reportedSessionCostUsd ?? null,
+                newSnapshot: true
               })
             }
           }

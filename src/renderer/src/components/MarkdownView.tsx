@@ -8,8 +8,10 @@ import {
 import {
   diagramFilename,
   normalizeErdSource,
-  renderDiagramBlocks
+  renderDiagramBlocks,
+  restoreDiagramSlots
 } from '../lib/diagramRender'
+import { sourceHasOpenDiagramFence } from '../lib/diagramFence'
 import type { DiagramSlotState } from '../lib/diagramCache'
 import {
   detachHtmlClips,
@@ -72,8 +74,8 @@ function useResolvedTheme(): 'light' | 'dark' {
  * resets make heading/paragraph spacing diverge from the finished message.
  *
  * Diagram fences use a progressive visual host: once detected, the UI stays
- * in image mode and updates the last good SVG — it does not bounce back to
- * a syntax-highlighted source block between frames.
+ * in image mode. An open fence keeps the pending shell (and any last-good
+ * SVG) until the fence closes — mermaid/vega are not parsed every stream tick.
  */
 export const MarkdownView = memo(function MarkdownView({
   source,
@@ -164,6 +166,12 @@ export const MarkdownView = memo(function MarkdownView({
     lastThemeRef.current = resolvedTheme
 
     syncDiagramViewportZoom(element)
+    // Open diagram fences live in the stream tail. Re-parsing incomplete
+    // mermaid/vega every tick is the hitch; wait until the fence closes.
+    if (!cached && sourceHasOpenDiagramFence(source)) {
+      restoreDiagramSlots(element, diagramSlotsRef.current)
+      return
+    }
     void renderDiagramBlocks(element, {
       hard: cached,
       slots: diagramSlotsRef.current
@@ -171,7 +179,7 @@ export const MarkdownView = memo(function MarkdownView({
       if (gen !== paintGenRef.current) return
       syncDiagramViewportZoom(element)
     })
-  }, [html, highlight, plain, cached, resolvedTheme, progressive])
+  }, [html, highlight, plain, cached, resolvedTheme, progressive, source])
 
   const onMarkdownClick = (event: React.MouseEvent<HTMLElement>): void => {
     const target = event.target as HTMLElement | null

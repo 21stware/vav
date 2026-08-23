@@ -17,6 +17,12 @@ import {
 import { windowsFromClaudeOAuthPayload } from '@shared/quotaWindows'
 import type { QuotaWindow } from '@shared/types'
 import { execCliJson } from './cliProbe'
+import {
+  claudeConfigDir,
+  claudeCredentialsPath,
+  claudeKeychainService,
+  claudeKeychainUser
+} from './hostPaths.ts'
 
 const execFileAsync = promisify(execFile)
 const OAUTH_USAGE_URL = 'https://api.anthropic.com/api/oauth/usage'
@@ -26,18 +32,7 @@ const API_TIMEOUT_MS = 10_000
 const KEYCHAIN_TIMEOUT_MS = 3_000
 const ACTIVE_CLAUDE_SERVICE = 'Claude Code-credentials'
 
-function claudeConfigDir(): string {
-  return process.env.CLAUDE_CONFIG_DIR?.trim() || join(homedir(), '.claude')
-}
-
-function keychainUser(): string {
-  return process.env.USER || process.env.USERNAME || 'user'
-}
-
-function keychainService(configDir: string): string {
-  const suffix = createHash('sha256').update(configDir).digest('hex').slice(0, 8)
-  return `${ACTIVE_CLAUDE_SERVICE}-${suffix}`
-}
+export { claudeCredentialsPath, claudeKeychainService, claudeKeychainUser }
 
 function tokenFromCredentialsJson(raw: string): string | null {
   try {
@@ -54,7 +49,7 @@ async function readKeychainPassword(service: string): Promise<string | null> {
   try {
     const { stdout } = await execFileAsync(
       'security',
-      ['find-generic-password', '-s', service, '-a', keychainUser(), '-w'],
+      ['find-generic-password', '-s', service, '-a', claudeKeychainUser(), '-w'],
       { timeout: KEYCHAIN_TIMEOUT_MS, maxBuffer: 1024 * 1024 }
     )
     const raw = stdout.toString().trim()
@@ -67,14 +62,14 @@ async function readKeychainPassword(service: string): Promise<string | null> {
 async function readClaudeAccessToken(): Promise<string | null> {
   const configDir = claudeConfigDir()
   if (process.platform === 'darwin') {
-    for (const service of [keychainService(configDir), ACTIVE_CLAUDE_SERVICE]) {
+    for (const service of [claudeKeychainService(configDir), ACTIVE_CLAUDE_SERVICE]) {
       const raw = await readKeychainPassword(service)
       const token = raw ? tokenFromCredentialsJson(raw) : null
       if (token) return token
     }
   }
   const files = [
-    join(configDir, '.credentials.json'),
+    claudeCredentialsPath(configDir),
     join(homedir(), '.config', 'claude', '.credentials.json')
   ]
   for (const file of files) {
@@ -146,10 +141,10 @@ export async function readClaudeAccountInfo(): Promise<HostAccountInfo> {
   return emptyAccount()
 }
 
-export async function fetchClaudeAccountQuota(): Promise<QuotaWindow[]> {
+export async function fetchClaudeAccountQuota(ctx?: { token?: string }): Promise<QuotaWindow[]> {
   // Custom token / gateway has no Anthropic subscription windows.
-  if (readClaudeSettingsEnv().token) return []
-  const token = await readClaudeAccessToken()
+  if (!ctx?.token && readClaudeSettingsEnv().token) return []
+  const token = ctx?.token?.trim() || (await readClaudeAccessToken())
   if (!token) return []
   const res = await net.fetch(OAUTH_USAGE_URL, {
     headers: {

@@ -1,6 +1,10 @@
 import { app, safeStorage } from 'electron'
-import { readFileSync, writeFileSync, existsSync, rmSync, mkdirSync } from 'node:fs'
+import { readFileSync, writeFileSync, existsSync, rmSync, mkdirSync, readdirSync } from 'node:fs'
 import { join, dirname } from 'node:path'
+import {
+  coerceSnapshot,
+  type HostCredentialSnapshot
+} from '../accounts/credentials/adapter.ts'
 
 /**
  * Encrypted secrets via `safeStorage` (macOS Keychain-backed).
@@ -16,8 +20,13 @@ import { join, dirname } from 'node:path'
  */
 export type SecretName = 'api' | 'braveSearch' | 'cloudflare' | 'supabase'
 
+const ACCOUNT_SECRET_PREFIX = 'secret-account-'
+const OAUTH_SNAPSHOT_PREFIX = 'secret-oauth-'
+
 export class SecretStore {
   private readonly memory = new Map<SecretName, string>()
+  private readonly accountMemory = new Map<string, string>()
+  private readonly oauthSnapshotMemory = new Map<string, HostCredentialSnapshot>()
   /**
    * When false on darwin, disk decrypt is deferred so Keychain is not touched
    * until the user clicks through onboarding. Non-mac always starts unlocked.
@@ -125,6 +134,8 @@ export class SecretStore {
             // Corrupt or denied — leave that secret empty for this session.
           }
         }
+        this.warmAccountSecrets()
+        this.warmOAuthSnapshots()
       }
       this.gateOpen = true
       this.markOnboardingDone()
@@ -198,9 +209,185 @@ export class SecretStore {
 
   /** Masked form for the settings hint line, e.g. "sk-ant-…7f2a". */
   maskedHint(name: SecretName = 'api'): string | null {
-    const key = this.get(name)
+    return this.mask(this.get(name))
+  }
+
+  getAccountKey(accountId: string): string | null {
+    const id = accountId.trim()
+    if (!id) return null
+    if (this.accountMemory.has(id)) return this.accountMemory.get(id) ?? null
+    if (!this.gateOpen) return null
+    try {
+      const file = this.accountPath(id)
+      if (!existsSync(file)) return null
+      if (!safeStorage.isEncryptionAvailable()) return null
+      const value = safeStorage.decryptString(readFileSync(file))
+      if (value) this.accountMemory.set(id, value)
+      return value
+    } catch {
+      return null
+    }
+  }
+
+  hasAccountKey(accountId: string): boolean {
+    const key = this.getAccountKey(accountId)
+    return !!key && key.length > 0
+  }
+
+  setAccountKey(accountId: string, key: string): void {
+    const id = accountId.trim()
+    if (!id) return
+    const trimmed = key.trim()
+    if (!trimmed) {
+      this.clearAccountKey(id)
+      return
+    }
+    if (!this.gateOpen) {
+      const result = this.unlock()
+      if (!result.ok) {
+        this.accountMemory.set(id, trimmed)
+        return
+      }
+    }
+    try {
+      if (!safeStorage.isEncryptionAvailable()) {
+        this.accountMemory.set(id, trimmed)
+        return
+      }
+      const file = this.accountPath(id)
+      mkdirSync(dirname(file), { recursive: true })
+      writeFileSync(file, safeStorage.encryptString(trimmed))
+      this.accountMemory.set(id, trimmed)
+    } catch (err) {
+      console.error(`[secret] persist failed (account ${id})`, err)
+      this.accountMemory.set(id, trimmed)
+    }
+  }
+
+  clearAccountKey(accountId: string): void {
+    const id = accountId.trim()
+    if (!id) return
+    this.accountMemory.delete(id)
+    try {
+      const file = this.accountPath(id)
+      if (existsSync(file)) rmSync(file)
+    } catch (err) {
+      console.error(`[secret] clear failed (account ${id})`, err)
+    }
+  }
+
+  maskedAccountHint(accountId: string): string | null {
+    return this.mask(this.getAccountKey(accountId))
+  }
+
+  setOAuthSnapshot(accountId: string, snapshot: HostCredentialSnapshot): void {
+    const id = accountId.trim()
+    if (!id) return
+    this.oauthSnapshotMemory.set(id, snapshot)
+    if (!this.gateOpen) {
+      const result = this.unlock()
+      if (!result.ok) return
+    }
+    try {
+      if (!safeStorage.isEncryptionAvailable()) return
+      const file = this.oauthSnapshotPath(id)
+      mkdirSync(dirname(file), { recursive: true })
+      writeFileSync(file, safeStorage.encryptString(JSON.stringify(snapshot)))
+    } catch (err) {
+      console.error(`[secret] persist failed (oauth ${id})`, err)
+    }
+  }
+
+  getOAuthSnapshot(accountId: string): HostCredentialSnapshot | null {
+    const id = accountId.trim()
+    if (!id) return null
+    const cached = this.oauthSnapshotMemory.get(id)
+    if (cached) return cached
+    if (!this.gateOpen) return null
+    try {
+      const file = this.oauthSnapshotPath(id)
+      if (!existsSync(file) || !safeStorage.isEncryptionAvailable()) return null
+      const snap = coerceSnapshot(safeJson(safeStorage.decryptString(readFileSync(file))))
+      if (snap) this.oauthSnapshotMemory.set(id, snap)
+      return snap
+    } catch {
+      return null
+    }
+  }
+
+  clearOAuthSnapshot(accountId: string): void {
+    const id = accountId.trim()
+    if (!id) return
+    this.oauthSnapshotMemory.delete(id)
+    try {
+      const file = this.oauthSnapshotPath(id)
+      if (existsSync(file)) rmSync(file)
+    } catch (err) {
+      console.error(`[secret] clear failed (oauth ${id})`, err)
+    }
+  }
+
+  private accountPath(accountId: string): string {
+    const safe = accountId.replace(/[^a-zA-Z0-9_-]/g, '_')
+    return join(app.getPath('userData'), `${ACCOUNT_SECRET_PREFIX}${safe}.bin`)
+  }
+
+  private oauthSnapshotPath(accountId: string): string {
+    const safe = accountId.replace(/[^a-zA-Z0-9_-]/g, '_')
+    return join(app.getPath('userData'), `${OAUTH_SNAPSHOT_PREFIX}${safe}.bin`)
+  }
+
+  private warmAccountSecrets(): void {
+    try {
+      const dir = app.getPath('userData')
+      if (!existsSync(dir) || !safeStorage.isEncryptionAvailable()) return
+      for (const name of readdirSync(dir)) {
+        if (!name.startsWith(ACCOUNT_SECRET_PREFIX) || !name.endsWith('.bin')) continue
+        const id = name.slice(ACCOUNT_SECRET_PREFIX.length, -4)
+        if (!id || this.accountMemory.has(id)) continue
+        try {
+          const value = safeStorage.decryptString(readFileSync(join(dir, name)))
+          if (value) this.accountMemory.set(id, value)
+        } catch {
+          // Corrupt or denied — leave empty for this session.
+        }
+      }
+    } catch {
+      // userData unreadable
+    }
+  }
+
+  private warmOAuthSnapshots(): void {
+    try {
+      const dir = app.getPath('userData')
+      if (!existsSync(dir) || !safeStorage.isEncryptionAvailable()) return
+      for (const name of readdirSync(dir)) {
+        if (!name.startsWith(OAUTH_SNAPSHOT_PREFIX) || !name.endsWith('.bin')) continue
+        const id = name.slice(OAUTH_SNAPSHOT_PREFIX.length, -4)
+        if (!id || this.oauthSnapshotMemory.has(id)) continue
+        try {
+          const snap = coerceSnapshot(safeJson(safeStorage.decryptString(readFileSync(join(dir, name)))))
+          if (snap) this.oauthSnapshotMemory.set(id, snap)
+        } catch {
+          // Corrupt or denied — leave empty for this session.
+        }
+      }
+    } catch {
+      // userData unreadable
+    }
+  }
+
+  private mask(key: string | null): string | null {
     if (!key) return null
     if (key.length <= 10) return '••••'
     return `${key.slice(0, 7)}…${key.slice(-4)}`
+  }
+}
+
+function safeJson(raw: string): unknown {
+  try {
+    return JSON.parse(raw) as unknown
+  } catch {
+    return null
   }
 }

@@ -20,7 +20,8 @@ import {
   withCursorAuthIdentity
 } from '@shared/cliHost'
 import { ROOT_LEAF } from '@shared/thread'
-import { buildSnapshot, formatExpiry, mergeQuotaWindowsPreferNewer } from '@shared/tokenUsage'
+import { buildSnapshot, formatExpiry } from '@shared/tokenUsage'
+import { attachQuotaNamespace, mergeNamespacedQuotaWindows } from '@shared/quotaWindows'
 import {
   classifyCliError,
   extractRpcError,
@@ -164,6 +165,7 @@ export interface CliAgentHostDeps {
   logicalPath?: (path: string) => string
   quota?: {
     get(host: CliHostKind): QuotaWindow[]
+    identity?(host: CliHostKind): string | null
     forceRefresh(host: CliHostKind): Promise<QuotaWindow[]>
   }
 }
@@ -1197,13 +1199,14 @@ export class CliAgentHost {
   }
 
   private applyQuota(conversationId: string, windows: QuotaWindow[]): void {
-    if (!windows.length) return
-    const changed = this.deps.conversations.mergeQuotaWindows(conversationId, windows)
+    const tagged = this.namespaceQuota(conversationId, windows)
+    if (!tagged.length) return
+    const changed = this.deps.conversations.mergeQuotaWindows(conversationId, tagged)
     if (!changed) return
     this.emitUsageSnapshot(conversationId)
   }
 
-  private emitUsageSnapshot(conversationId: string): void {
+  private emitUsageSnapshot(conversationId: string, extras?: { newSnapshot?: boolean }): void {
     const updated = this.deps.conversations.get(conversationId)
     if (!updated) return
     this.deps.emit({
@@ -1215,7 +1218,8 @@ export class CliAgentHost {
       cacheCreatedAt: updated.cacheCreatedAt,
       cacheExpiresAt: updated.cacheExpiresAt,
       reportedSessionCostUsd: updated.reportedSessionCostUsd ?? null,
-      quotaWindows: updated.quotaWindows ?? []
+      quotaWindows: updated.quotaWindows ?? [],
+      newSnapshot: extras?.newSnapshot === true
     })
   }
 
@@ -1234,7 +1238,10 @@ export class CliAgentHost {
     }
     let quotaChanged = false
     if (event.quotaWindows?.length) {
-      quotaChanged = this.deps.conversations.mergeQuotaWindows(conversationId, event.quotaWindows)
+      const tagged = this.namespaceQuota(conversationId, event.quotaWindows)
+      if (tagged.length) {
+        quotaChanged = this.deps.conversations.mergeQuotaWindows(conversationId, tagged)
+      }
     }
 
     const input = event.inputTokens ?? 0
@@ -1251,7 +1258,8 @@ export class CliAgentHost {
         turnIndex: (live.tokenHistory?.length ?? 0) + 1,
         usage: { input, output, cacheRead, cacheWrite },
         modelId: live.model || 'cli',
-        costUsd: event.turnCostUsd
+        costUsd: event.turnCostUsd,
+        accountId: live.accountId ?? null
       })
       this.deps.conversations.recordTokenSnapshot(conversationId, snapshot)
       snapshotTotal = snapshot.totalInputTokens
@@ -1275,7 +1283,9 @@ export class CliAgentHost {
     ) {
       return
     }
-    this.emitUsageSnapshot(conversationId)
+    this.emitUsageSnapshot(conversationId, {
+      newSnapshot: Boolean(recordHistory && hasTurnTokens)
+    })
   }
 
   private async finishTurn(
@@ -1382,11 +1392,21 @@ export class CliAgentHost {
     this.runtimes.delete(conversationId)
   }
 
+  private namespaceQuota(conversationId: string, windows: QuotaWindow[]): QuotaWindow[] {
+    const host = this.deps.conversations.get(conversationId)?.cliHost
+    if (!host || !windows.length) return []
+    const identity = this.deps.quota?.identity?.(host)
+    if (!identity) return []
+    return attachQuotaNamespace(windows, host, identity)
+  }
+
   private quotaWindowsFor(conversationId: string): QuotaWindow[] {
     const conversation = this.deps.conversations.get(conversationId)
     const host = conversation?.cliHost
-    const account = host && this.deps.quota ? this.deps.quota.get(host) : []
-    return mergeQuotaWindowsPreferNewer(account, conversation?.quotaWindows ?? [])
+    if (!host) return []
+    const identity = this.deps.quota?.identity?.(host) ?? null
+    const account = this.deps.quota ? this.deps.quota.get(host) : []
+    return mergeNamespacedQuotaWindows(host, identity, account, conversation?.quotaWindows ?? [])
   }
 
   private async describeTurnError(

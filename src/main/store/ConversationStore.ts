@@ -136,6 +136,7 @@ export class ConversationStore {
         conversation.cliPaneBindings = {}
       }
       if (conversation.focusedFilePath === undefined) conversation.focusedFilePath = null
+      if (conversation.accountId === undefined) conversation.accountId = null
       if (typeof conversation.resultUnseen !== 'boolean') conversation.resultUnseen = false
       if (!Array.isArray(conversation.compactions)) conversation.compactions = []
       if (!conversation.hostTranscripts || typeof conversation.hostTranscripts !== 'object') {
@@ -214,6 +215,8 @@ export class ConversationStore {
       thinkingLevel?: ThinkingLevel
       /** Structured CLI host; null/omit = built-in VAV. */
       cliHost?: CliHostKind | null
+      /** Settings → Accounts profile for new sessions. */
+      accountId?: string | null
     }
   ): Conversation {
     const now = Date.now()
@@ -250,6 +253,7 @@ export class ConversationStore {
       cliPaneBindings: {},
       focusedFilePath: null,
       resultUnseen: false,
+      accountId: options?.accountId ?? null,
       compactions: [],
       hostTranscripts: {}
     }
@@ -285,6 +289,7 @@ export class ConversationStore {
       cacheExpiresAt: null,
       fileId: null,
       fileReadOnly: false,
+      accountId: source.accountId ?? null,
       messages: (source.messages ?? []).map((message) => ({
         ...structuredClone(message),
         id: idMap.get(message.id)!,
@@ -360,6 +365,9 @@ export class ConversationStore {
       archivedAt: null,
       approvalMode: source.approvalMode ?? 'auto',
       thinkingLevel: parseThinkingLevel(source.thinkingLevel),
+      agentBinaryName: source.agentBinaryName ?? source.cliHost ?? null,
+      cliHost: source.cliHost ?? null,
+      accountId: source.accountId ?? null,
       activeLeafId: source.activeLeafId ? (idMap.get(source.activeLeafId) ?? null) : null,
       tokenHistory: [],
       reportedSessionCostUsd: null,
@@ -678,8 +686,12 @@ export class ConversationStore {
     const cut = path.findIndex((m) => m.id === messageId)
     if (cut < 0) return undefined
 
-    const next = this.create(source.workingDirectory, source.model)
-    next.thinkingLevel = parseThinkingLevel(source.thinkingLevel)
+    const next = this.create(source.workingDirectory, source.model, {
+      approvalMode: source.approvalMode ?? 'auto',
+      thinkingLevel: parseThinkingLevel(source.thinkingLevel),
+      cliHost: source.cliHost ?? null,
+      accountId: source.accountId ?? null
+    })
     next.title = source.title
     next.tokenLimit = source.tokenLimit
     // Token usage is inherited only up to the fork point, not the whole source.

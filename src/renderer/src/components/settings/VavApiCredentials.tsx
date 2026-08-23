@@ -1,142 +1,87 @@
-import { useEffect, useRef, useState } from 'react'
+import type { AccountView } from '@shared/ipc'
+import { apiProviderBrand, isGenericAccountIdentity } from '@shared/accounts'
 import { useSessionStore } from '../../state/sessionStore'
 import { useT } from '../../i18n/useT'
-import { Button } from '../ui'
+
+function profileLabel(account: AccountView): string {
+  const username = account.identityName || account.name
+  if (account.kind === 'oauth') {
+    return account.alias && account.alias !== username ? `${account.alias} · ${username}` : username
+  }
+  const brand = apiProviderBrand(account.endpoint)
+  const label =
+    account.alias?.trim() ||
+    (!isGenericAccountIdentity(username) ? username : brand) ||
+    username
+  if (brand && label !== brand) return `${label} · ${brand}`
+  if (brand) return brand
+  const host = account.endpointHost || account.endpoint
+  return host ? `${label} · ${host}` : label
+}
 
 /**
- * VAV provider credentials. The key is draft until blur / Validate / unmount
- * persists it. Changing key or endpoint should trigger a live `/models` pull.
+ * Switch the current profile for this agent. Identity (username / account
+ * name) is shown here; keys and OAuth live in Accounts.
  */
-export function VavApiCredentials({
-  onCredentialsChanged
+export function AgentProfileSwitch({
+  agentId,
+  accounts,
+  onProfileChanged
 }: {
-  onCredentialsChanged?: () => void
+  agentId: string
+  accounts: AccountView[]
+  onProfileChanged: (accounts: AccountView[]) => void
 }): React.JSX.Element {
   const t = useT()
-  const settings = useSessionStore((s) => s.settings)
-  const apiKeyHint = useSessionStore((s) => s.apiKeyHint)
-  const updateSettings = useSessionStore((s) => s.updateSettings)
-  const refreshApiKeyHint = useSessionStore((s) => s.refreshApiKeyHint)
+  const current = accounts.find((row) => row.current) ?? accounts[0] ?? null
 
-  const [draftKey, setDraftKey] = useState('')
-  const [revealed, setRevealed] = useState(false)
-  const [validating, setValidating] = useState(false)
-  const [status, setStatus] = useState<string | null>(null)
-  const draftKeyRef = useRef(draftKey)
-  draftKeyRef.current = draftKey
-  const refreshHintRef = useRef(refreshApiKeyHint)
-  refreshHintRef.current = refreshApiKeyHint
-  const onChangedRef = useRef(onCredentialsChanged)
-  onChangedRef.current = onCredentialsChanged
-  const endpointRef = useRef(settings.apiEndpoint)
-
-  const persistDraftKey = async (): Promise<boolean> => {
-    const key = draftKeyRef.current.trim()
-    if (!key) return false
-    await window.vav.settings.setApiKey(key)
-    await refreshHintRef.current()
-    return true
-  }
-
-  useEffect(() => {
-    return () => {
-      void persistDraftKey().then((wrote) => {
-        if (wrote) onChangedRef.current?.()
-      })
-    }
-  }, [])
-
-  const notify = (): void => {
-    onChangedRef.current?.()
-  }
-
-  const validate = async (): Promise<void> => {
-    setValidating(true)
-    setStatus(t('api.validating'))
-    const key = draftKeyRef.current.trim()
-    const response = await window.vav.settings.validateKey(key)
-    setStatus(response.message)
-    if (response.ok && key) {
-      await window.vav.settings.setApiKey(key)
-      await refreshApiKeyHint()
-      setDraftKey('')
-      notify()
-    }
-    setValidating(false)
-  }
-
-  const reveal = async (): Promise<void> => {
-    if (revealed) {
-      setRevealed(false)
-      return
-    }
-    if (!draftKey) {
-      const stored = await window.vav.settings.revealApiKey()
-      if (stored) setDraftKey(stored)
-    }
-    setRevealed(true)
+  const switchTo = async (id: string): Promise<void> => {
+    if (!id || id === current?.id) return
+    const page = await window.vav.accounts.setCurrent(id)
+    onProfileChanged(page.groups.find((group) => group.agentId === agentId)?.accounts ?? [])
   }
 
   return (
     <div className="agents-vav-credentials">
       <label className="settings-field">
-        <span>{t('api.key')}</span>
-        <div className="control">
-          <input
+        <span>{t('agents.vavProfile')}</span>
+        {accounts.length > 0 ? (
+          <select
             className="text-field"
-            type={revealed ? 'text' : 'password'}
-            placeholder={settings.apiKeyPresent ? '••••••••••••••••' : 'sk-…'}
-            value={draftKey}
-            onChange={(event) => {
-              setDraftKey(event.target.value)
-              if (status) setStatus(null)
-            }}
-            onBlur={() => {
-              void persistDraftKey().then((wrote) => {
-                if (wrote) notify()
-              })
-            }}
-          />
-          <Button
-            label={revealed ? t('api.hide') : t('api.show')}
-            size="sm"
-            onClick={() => void reveal()}
-          />
-          <Button
-            label={validating ? t('api.validating') : t('api.validate')}
-            variant="secondary"
-            size="sm"
-            disabled={validating}
-            onClick={() => void validate()}
-          />
-        </div>
+            value={current?.id ?? ''}
+            onChange={(event) => void switchTo(event.target.value)}
+          >
+            {accounts.map((account) => (
+              <option key={account.id} value={account.id}>
+                {profileLabel(account)}
+              </option>
+            ))}
+          </select>
+        ) : (
+          <div className="form-hint">{t('agents.vavProfileEmpty')}</div>
+        )}
       </label>
-      <div className="form-hint">
-        {settings.apiKeyPresent
-          ? t('api.keyConfigured', { hint: apiKeyHint ?? '••••' })
-          : t('api.keyEmpty')}
-      </div>
-      {status ? (
-        <div className="form-hint api-validate-status" role="status">
-          {status}
-        </div>
+      {current?.kind === 'oauth' && current.oauthExpired ? (
+        <div className="form-hint">{t('accounts.detail.signedOut')}</div>
       ) : null}
-
-      <label className="settings-field">
-        <span>{t('api.endpoint')}</span>
-        <div className="control">
-          <input
-            className="text-field"
-            value={settings.apiEndpoint}
-            placeholder="https://api.deepseek.com"
-            onChange={(event) => {
-              endpointRef.current = event.target.value
-              void updateSettings({ apiEndpoint: event.target.value })
-            }}
-            onBlur={() => notify()}
-          />
-        </div>
-      </label>
+      {current?.kind === 'vav_key' && current.endpoint ? (
+        <div className="form-hint">{current.endpoint}</div>
+      ) : null}
+      <div className="form-hint">
+        <button
+          type="button"
+          className="accounts-inline-link"
+          onClick={() =>
+            useSessionStore.setState({
+              settingsCategory: 'accounts',
+              settingsFocusAccountId: current?.id ?? null,
+              settingsFocusAgentId: agentId
+            })
+          }
+        >
+          {t('agents.vavManageAccounts')}
+        </button>
+      </div>
     </div>
   )
 }

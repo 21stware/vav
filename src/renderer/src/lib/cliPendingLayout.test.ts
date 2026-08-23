@@ -4,7 +4,8 @@ import type { TerminalLayoutNode, TerminalTab } from '@shared/types'
 import {
   adoptRemotePendingTabs,
   isPendingCliTabId,
-  pendingTabsFromLayout
+  pendingTabsFromLayout,
+  replaceLayoutTabId
 } from './cliPendingLayout.ts'
 
 const pendingLeaf = (id: string): TerminalLayoutNode => ({
@@ -65,5 +66,21 @@ describe('cliPendingLayout', () => {
 
   it('does not invent a picker when remote still names dead live ids', () => {
     assert.equal(adoptRemotePendingTabs([liveTab('pty-dead')], pendingLeaf('pty-dead')), null)
+  })
+
+  it('replaces a pending leaf without reshaping the split', () => {
+    const tree: TerminalLayoutNode = {
+      type: 'branch',
+      direction: 'row',
+      weight: 1,
+      children: [pendingLeaf('cli-pending:a'), pendingLeaf('cli-pending:b')]
+    }
+    const next = replaceLayoutTabId(tree, 'cli-pending:a', 'agent-host:claude:c1')
+    assert.ok(next)
+    assert.equal(next.type, 'branch')
+    if (next.type !== 'branch') return
+    assert.equal(next.children[0].type, 'leaf')
+    assert.equal(next.children[0].type === 'leaf' && next.children[0].tabId, 'agent-host:claude:c1')
+    assert.equal(next.children[1].type === 'leaf' && next.children[1].tabId, 'cli-pending:b')
   })
 })

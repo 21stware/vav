@@ -172,6 +172,7 @@ export interface NativeMenuItem {
 export type SettingsView =
   | 'api'
   | 'analysis'
+  | 'accounts'
   | 'workspace'
   | 'appearance'
   | 'notifications'
@@ -329,6 +330,109 @@ export interface TokenUsageViewPayload {
    * live CLI stream sample). Empty for VAV or hosts without a usage API.
    */
   quotaWindows: QuotaWindow[]
+  /**
+   * This session's usage split by Settings → Accounts profile.
+   * Empty when no turn has an accountId yet.
+   */
+  accountUsage: TokenUsageAccountRow[]
+}
+
+export interface TokenUsageAccountRow {
+  accountId: string
+  name: string
+  tokens: number
+  percent: number
+}
+
+export type AccountViewKind = 'vav_key' | 'oauth'
+export type AccountViewProvider = 'vav' | 'anthropic' | 'openai' | 'custom'
+export type AccountViewKeyStatus = 'ok' | 'invalid' | 'unknown'
+
+export interface AccountView {
+  id: string
+  agentId: string
+  provider: AccountViewProvider
+  kind: AccountViewKind
+  name: string
+  identityName: string
+  alias: string | null
+  endpoint: string | null
+  endpointHost: string | null
+  current: boolean
+  keyPresent: boolean
+  keyHint: string | null
+  keyStatus: AccountViewKeyStatus
+  oauthHost: string | null
+  oauthSignedIn: boolean
+  /** Session gone (logout / expiry). Not merely “another profile is live”. */
+  oauthExpired: boolean
+  /** Encrypted local copy of the host CLI slot — switch without OAuth. */
+  hasCredentialSnapshot: boolean
+  credentialExpiresAtMs: number | null
+  lastModel: string | null
+  lastUsedAt: number | null
+  monthTokens: number
+  monthCostUsd: number
+  monthPercent: number
+  monthResetsAt: number
+  quotaWindows: QuotaWindow[]
+  /** Provider quota used % when windows exist; otherwise null. */
+  quotaPercent: number | null
+  quotaStatus: AccountQuotaStatus
+  quotaUpdatedAt: number | null
+  quotaError: string | null
+  /** Official API wallet when the endpoint exposes one (DeepSeek today). */
+  balance: AccountApiBalance | null
+}
+
+export interface AccountApiBalance {
+  source: string
+  amount: number
+  currency: string
+  available: boolean
+}
+
+export type AccountQuotaStatus = 'none' | 'idle' | 'loading' | 'ready' | 'empty' | 'error'
+
+export interface AccountGroupView {
+  agentId: string
+  name: string
+  createKind: 'oauth' | 'key'
+  createKinds: Array<'oauth' | 'key'>
+  oauthDomain: string
+  accounts: AccountView[]
+}
+
+export interface AccountUsageCompareRow {
+  accountId: string
+  name: string
+  tokens: number
+  estimatedCostUsd: number
+  percent: number
+}
+
+export type AccountsOAuthLoginStatus = 'running' | 'ok' | 'error' | 'cancelled'
+
+export interface AccountsOAuthLogin {
+  agentId: string
+  accountId?: string
+  status: AccountsOAuthLoginStatus
+  message?: string
+}
+
+export interface AccountsPagePayload {
+  workspaceKey: string
+  workspaceLabel: string
+  groups: AccountGroupView[]
+  accounts: AccountView[]
+  usage: AccountUsageCompareRow[]
+  oauthLogin?: AccountsOAuthLogin | null
+}
+
+export type AccountActivateKind = 'switched' | 'alreadyLive' | 'needsReauth' | 'needsRefresh'
+
+export interface AccountActivateResult {
+  kind: AccountActivateKind
 }
 
 /** Lean account + subscription snapshot for the provider-icon popover. */
@@ -628,6 +732,36 @@ export interface VavApi {
     }>
     /** Local API + Agent usage totals, plus account/quota for configured providers. */
     analysis(options?: { refresh?: boolean }): Promise<AnalysisSnapshot>
+  }
+
+  accounts: {
+    getPage(
+      workspaceKey?: string | null,
+      options?: { refresh?: boolean; force?: boolean }
+    ): Promise<AccountsPagePayload>
+    createVav(input: {
+      name: string
+      endpoint: string
+      apiKey: string
+      agentId?: string
+      provider?: AccountViewProvider
+    }): Promise<AccountsPagePayload>
+    createDraft(input: {
+      agentId: string
+      kind?: AccountViewKind
+    }): Promise<{ page: AccountsPagePayload; id: string }>
+    updateVav(
+      id: string,
+      patch: { alias?: string | null; endpoint?: string; apiKey?: string }
+    ): Promise<AccountsPagePayload>
+    setCurrent(id: string): Promise<AccountsPagePayload>
+    activate(id: string): Promise<{ page: AccountsPagePayload; result: AccountActivateResult }>
+    remove(id: string): Promise<AccountsPagePayload>
+    verify(id: string, apiKey?: string): Promise<ValidateKeyResult>
+    revealKey(id: string): Promise<string | null>
+    beginOAuth(agentId: string, accountId?: string): Promise<AccountsPagePayload>
+    cancelOAuth(agentId: string): Promise<AccountsPagePayload>
+    signOut(agentId: string): Promise<AccountsPagePayload>
   }
 
   conversations: {
@@ -1008,6 +1142,7 @@ export interface VavApi {
       models: import('./types').ModelOption[]
       source: 'live' | 'static' | 'fallback'
       error?: string
+      endpoint?: string
     }>
     /** Cached catalogues for all hosts (populated by background preload). */
     getModelCatalog(): Promise<
@@ -1018,6 +1153,7 @@ export interface VavApi {
           models: import('./types').ModelOption[]
           source: 'live' | 'static' | 'fallback'
           error?: string
+          endpoint?: string
         }
       >
     >
@@ -1030,6 +1166,7 @@ export interface VavApi {
           models: import('./types').ModelOption[]
           source: 'live' | 'static' | 'fallback'
           error?: string
+          endpoint?: string
         }
       >
     >
@@ -1042,6 +1179,7 @@ export interface VavApi {
             models: import('./types').ModelOption[]
             source: 'live' | 'static' | 'fallback'
             error?: string
+            endpoint?: string
           }
         >
       ) => void
@@ -1307,10 +1445,19 @@ export interface VavApi {
   onSettingsView(handler: (payload: SettingsViewPayload) => void): () => void
   /** Background spending snapshot after a cached / prefetch rebuild. */
   onSettingsAnalysis(handler: (snapshot: AnalysisSnapshot) => void): () => void
+  /** Settings → Accounts page after a quota / identity sync. */
+  onAccountsUpdated(handler: (page: AccountsPagePayload) => void): () => void
   /** `vav /path` from the installed CLI — select the minted conversation. */
   onCliOpen(handler: (event: CliOpenEvent) => void): () => void
   /** Native fullscreen entered/left — used to collapse traffic-light inset. */
   onFullscreen(handler: (fullscreen: boolean) => void): () => void
+  /** macOS Force Touch trackpad haptic feedback (no-op / unavailable elsewhere). */
+  haptics: {
+    /** Nudge the trackpad (e.g. crossing a detent / message node). */
+    tap(): Promise<{ ok: boolean; error?: string }>
+    /** Whether this OS + hardware can perform trackpad haptics. */
+    available(): Promise<boolean>
+  }
 }
 
 export type MenuCommand =
@@ -1399,6 +1546,19 @@ export const IPC = {
   settingsRegisterAllFileAssociations: 'vav:settings:register-all-file-associations',
   settingsAnalysis: 'vav:settings:analysis',
   settingsAnalysisUpdated: 'vav:settings:analysis-updated',
+  accountsGetPage: 'vav:accounts:get-page',
+  accountsUpdated: 'vav:accounts:updated',
+  accountsCreateVav: 'vav:accounts:create-vav',
+  accountsCreateDraft: 'vav:accounts:create-draft',
+  accountsUpdateVav: 'vav:accounts:update-vav',
+  accountsSetCurrent: 'vav:accounts:set-current',
+  accountsActivate: 'vav:accounts:activate',
+  accountsRemove: 'vav:accounts:remove',
+  accountsVerify: 'vav:accounts:verify',
+  accountsRevealKey: 'vav:accounts:reveal-key',
+  accountsBeginOAuth: 'vav:accounts:begin-oauth',
+  accountsCancelOAuth: 'vav:accounts:cancel-oauth',
+  accountsSignOut: 'vav:accounts:sign-out',
 
   convList: 'vav:conv:list',
   convGet: 'vav:conv:get',
@@ -1583,5 +1743,7 @@ export const IPC = {
   updatesCheck: 'vav:updates:check',
   updatesOpenDownload: 'vav:updates:open-download',
   updatesInstall: 'vav:updates:install',
-  updatesChanged: 'vav:updates:changed'
+  updatesChanged: 'vav:updates:changed',
+  hapticsTap: 'vav:haptics:tap',
+  hapticsAvailable: 'vav:haptics:available',
 } as const

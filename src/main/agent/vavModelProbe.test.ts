@@ -1,6 +1,11 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import { fetchVavModels } from './vavModelProbe.ts'
+import {
+  fetchVavModels,
+  filterModelsForEndpoint,
+  isVavAuthError,
+  validateVavApiKey
+} from './vavModelProbe.ts'
 import { baseUrlFor, detectProtocol } from '../../shared/vavProtocol.ts'
 
 function jsonResponse(body: unknown): Response {
@@ -127,6 +132,27 @@ describe('fetchVavModels', () => {
     assert.deepEqual(calls, ['https://api.deepseek.com/v1/models'])
   })
 
+  it('drops OpenRouter-style ids when the endpoint is DeepSeek', () => {
+    const filtered = filterModelsForEndpoint('https://api.deepseek.com/anthropic', [
+      { id: 'cohere/command-r-plus-08-2024', label: 'Cohere' },
+      { id: 'deepseek/deepseek-chat', label: 'DeepSeek Chat' },
+      { id: 'stealth/ox-alpha', label: 'ox-alpha' },
+      { id: 'deepseek-v4-flash', label: 'DeepSeek V4 Flash' }
+    ])
+    assert.deepEqual(
+      filtered.map((m) => m.id),
+      ['deepseek-v4-flash']
+    )
+  })
+
+  it('does not keep a foreign catalogue when DeepSeek returns no native ids', () => {
+    const filtered = filterModelsForEndpoint('https://api.deepseek.com/anthropic', [
+      { id: 'stealth/ox-alpha', label: 'ox-alpha' },
+      { id: '~anthropic/claude-fable-latest', label: 'Fable' }
+    ])
+    assert.deepEqual(filtered, [])
+  })
+
   it('falls through to Anthropic /v1/models when the OpenAI-compat root 404s', async () => {
     const calls: string[] = []
     const result = await fetchVavModels({
@@ -183,6 +209,39 @@ describe('fetchVavModels', () => {
     } })
     assert.deepEqual(result.models, [])
     assert.equal(result.error, 'no endpoint')
+  })
+})
+
+describe('validateVavApiKey', () => {
+  it('treats a live /models list as a valid key, not a chat with the app default model', async () => {
+    const result = await validateVavApiKey('https://api.deepseek.com/anthropic', 'sk-test', {
+      fetchFn: async (input) => {
+        assert.match(String(input), /api\.deepseek\.com\/v1\/models$/)
+        return jsonResponse({
+          data: [{ id: 'deepseek-v4-pro' }, { id: 'deepseek-v4-flash' }]
+        })
+      }
+    })
+    assert.equal(result.ok, true)
+    assert.equal(result.authFailed, false)
+    assert.equal(result.modelCount, 2)
+    assert.equal(result.error, undefined)
+  })
+
+  it('marks only 401/403 as an invalid key', () => {
+    assert.equal(isVavAuthError('HTTP 401'), true)
+    assert.equal(isVavAuthError('HTTP 403'), true)
+    assert.equal(isVavAuthError('HTTP 400'), false)
+    assert.equal(isVavAuthError('HTTP 500'), false)
+  })
+
+  it('does not treat a 400 model-list failure as an invalid key', async () => {
+    const result = await validateVavApiKey('https://api.deepseek.com', 'sk-test', {
+      fetchFn: async () => new Response('bad model', { status: 400 })
+    })
+    assert.equal(result.ok, false)
+    assert.equal(result.authFailed, false)
+    assert.equal(result.error, 'HTTP 400')
   })
 })
 

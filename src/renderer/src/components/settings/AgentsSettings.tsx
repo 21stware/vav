@@ -19,14 +19,21 @@ import {
   type CliHostKind,
   type ModelModality
 } from '@shared/types'
+import { apiProviderBrand } from '@shared/accounts'
+import type { AccountGroupView } from '@shared/ipc'
 import type { MessageKey } from '@shared/i18n'
 import { agentWebsiteUrl } from '@shared/agentBinary'
-import { isAgentModelEnabled, modelsForChatHost } from '@shared/agentModels'
+import {
+  isAgentModelEnabled,
+  isOfficialDeepSeekEndpoint,
+  modelsForChatHost,
+  nativeDeepSeekModels
+} from '@shared/agentModels'
 import { useSessionStore } from '../../state/sessionStore'
 import { useT } from '../../i18n/useT'
 import { AgentBrandMark } from '../AgentBrandMark'
 import { Toggle } from '../ui'
-import { VavApiCredentials } from './VavApiCredentials'
+import { AgentProfileSwitch } from './VavApiCredentials'
 import { useWorkspaceStore } from '../../state/workspaceStore'
 import {
   getAgentInstallStatus,
@@ -162,16 +169,17 @@ export function AgentsSettings(): React.JSX.Element {
   const [selectedId, setSelectedId] = useState<string | null>(
     () => focusAgentId || VAV_ROW_ID
   )
+  const [accountGroups, setAccountGroups] = useState<AccountGroupView[]>([])
+  const [modelFilterOpen, setModelFilterOpen] = useState(false)
+  const [modelFilter, setModelFilter] = useState('')
+  const [modelsRefreshing, setModelsRefreshing] = useState(false)
+  const [modelsRefreshAck, setModelsRefreshAck] = useState(false)
 
   useEffect(() => {
     if (!focusAgentId) return
     setSelectedId(focusAgentId)
     useSessionStore.setState({ settingsFocusAgentId: null })
   }, [focusAgentId])
-  const [modelFilterOpen, setModelFilterOpen] = useState(false)
-  const [modelFilter, setModelFilter] = useState('')
-  const [modelsRefreshing, setModelsRefreshing] = useState(false)
-  const [modelsRefreshAck, setModelsRefreshAck] = useState(false)
   const modelsRefreshTimers = useRef<number[]>([])
   const modelFilterRef = useRef<HTMLInputElement>(null)
   const selectedIsVav = selectedId === VAV_ROW_ID
@@ -205,6 +213,20 @@ export function AgentsSettings(): React.JSX.Element {
   useEffect(() => {
     void refreshCatalog(false)
   }, [refreshCatalog])
+
+  useEffect(() => {
+    let cancelled = false
+    const load = window.vav.accounts?.getPage
+    if (typeof load !== 'function') return
+    void load()
+      .then((page) => {
+        if (!cancelled) setAccountGroups(page.groups ?? [])
+      })
+      .catch(() => undefined)
+    return () => {
+      cancelled = true
+    }
+  }, [settings.apiKeyPresent])
 
   useEffect(() => {
     return () => {
@@ -392,24 +414,52 @@ export function AgentsSettings(): React.JSX.Element {
       : null
   const modelHost = (modelHostKey === 'vav' ? null : modelHostKey) as CliHostKind | null
   const vavCatalog = catalog.vav
-  const vavCanFetch = settings.apiKeyPresent && !!settings.apiEndpoint.trim()
-  const vavLive = vavCatalog?.source === 'live'
-  const vavFetchError = selectedIsVav ? vavCatalog?.error : undefined
+  const selectedAgentId = selectedIsVav ? 'vav' : selected?.id ?? null
+  const agentProfiles =
+    (selectedAgentId
+      ? accountGroups.find((group) => group.agentId === selectedAgentId)?.accounts
+      : null) ?? []
+  const currentVav = agentProfiles.find((row) => row.agentId === 'vav' && row.current) ??
+    accountGroups.find((group) => group.agentId === 'vav')?.accounts.find((row) => row.current) ??
+    accountGroups.find((group) => group.agentId === 'vav')?.accounts[0] ??
+    null
+  const vavBrand = apiProviderBrand(currentVav?.endpoint ?? settings.apiEndpoint)
+  const vavEndpointKey = (currentVav?.endpoint ?? settings.apiEndpoint).trim()
+  const vavEndpointNorm = vavEndpointKey.replace(/\/+$/, '').toLowerCase()
+  const catalogMatchesVav =
+    !vavEndpointNorm ||
+    (Boolean(vavCatalog?.endpoint) && vavCatalog.endpoint === vavEndpointNorm)
+  useEffect(() => {
+    if (!vavEndpointKey) return
+    void refreshCatalog(true)
+  }, [refreshCatalog, vavEndpointKey])
+  const vavCanFetch = currentVav
+    ? Boolean(currentVav.keyPresent && (currentVav.endpoint?.trim() || settings.apiEndpoint.trim()))
+    : settings.apiKeyPresent && !!settings.apiEndpoint.trim()
+  const vavLive = vavCatalog?.source === 'live' && catalogMatchesVav
+  const vavFetchError = selectedIsVav && catalogMatchesVav ? vavCatalog?.error : undefined
   const vavLoading = selectedIsVav && vavCanFetch && !vavLive && !vavFetchError
   const modelList = useMemo(() => {
     if (!modelHostKey) return []
     const entry = catalog[modelHostKey]
-    if (selectedIsVav) return vavLive ? (entry?.models ?? []) : []
+    if (selectedIsVav) {
+      if (!catalogMatchesVav) return []
+      const models = entry?.models ?? []
+      return isOfficialDeepSeekEndpoint(vavEndpointKey)
+        ? nativeDeepSeekModels(models)
+        : models
+    }
     if (entry?.models?.length) return entry.models
     return modelsForChatHost(modelHost, settings.customModels, settings.defaultModel)
   }, [
     catalog,
+    catalogMatchesVav,
     modelHost,
     modelHostKey,
     selectedIsVav,
     settings.customModels,
     settings.defaultModel,
-    vavLive
+    vavEndpointKey
   ])
 
   const modelFilterQuery = modelFilter.trim().toLowerCase()
@@ -556,8 +606,11 @@ export function AgentsSettings(): React.JSX.Element {
               onClick={() => setSelectedId(VAV_ROW_ID)}
             >
               <span className="agents-list-grip agents-list-grip-spacer" aria-hidden />
-              <AgentBrandMark agent={{ id: 'vav', name: t('agents.plainShell') }} size={18} />
-              <span className="agents-list-name">{t('agents.plainShell')}</span>
+              <AgentBrandMark agent={{ id: 'vav', name: vavBrand || t('agents.plainShell') }} size={18} />
+              <span className="agents-list-name">{vavBrand || t('agents.plainShell')}</span>
+              {vavBrand && vavBrand !== t('agents.plainShell') ? (
+                <span className="agents-list-badge">{t('agents.plainShell')}</span>
+              ) : null}
               {activeDefaultId === null ? (
                 <span className="agents-list-badge">{t('agents.setAsDefault')}</span>
               ) : null}
@@ -771,14 +824,23 @@ export function AgentsSettings(): React.JSX.Element {
             {selectedIsVav ? (
               <>
                 <div className="agents-editor-hero">
-                  <AgentBrandMark agent={{ id: 'vav', name: t('agents.plainShell') }} size={40} />
-                  <span className="agents-editor-hero-name">{t('agents.plainShell')}</span>
+                  <AgentBrandMark agent={{ id: 'vav', name: vavBrand || t('agents.plainShell') }} size={40} />
+                  <span className="agents-editor-hero-name">
+                    {vavBrand || t('agents.plainShell')}
+                  </span>
                 </div>
                 <p className="muted tiny" style={{ marginTop: -4, marginBottom: 4 }}>
                   {t('agents.vavModelsHint')}
                 </p>
-                <VavApiCredentials
-                  onCredentialsChanged={() => {
+                <AgentProfileSwitch
+                  agentId="vav"
+                  accounts={agentProfiles}
+                  onProfileChanged={(next) => {
+                    setAccountGroups((groups) =>
+                      groups.map((group) =>
+                        group.agentId === 'vav' ? { ...group, accounts: next } : group
+                      )
+                    )
                     void refreshCatalog(true)
                   }}
                 />
@@ -800,6 +862,17 @@ export function AgentsSettings(): React.JSX.Element {
                     </button>
                   ) : null}
                 </div>
+                <AgentProfileSwitch
+                  agentId={selected.id}
+                  accounts={agentProfiles}
+                  onProfileChanged={(next) => {
+                    setAccountGroups((groups) =>
+                      groups.map((group) =>
+                        group.agentId === selected.id ? { ...group, accounts: next } : group
+                      )
+                    )
+                  }}
+                />
                 {(installById[selected.id] ?? getAgentInstallStatus(selected.id)) ===
                   'missing' || selectedRun ? (
                   <div className="agents-editor-install">

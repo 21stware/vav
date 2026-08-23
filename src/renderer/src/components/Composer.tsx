@@ -15,7 +15,6 @@ import {
   MapPin,
   MessageSquare,
   Quote,
-  Send,
   Square,
   Trash2,
   X
@@ -349,11 +348,6 @@ export function Composer({
     void send(draft.trim(), attachments, conversationId || undefined)
   }
 
-  const tokenRatio = conversation
-    ? Math.min(1, conversation.tokensUsed / Math.max(1, conversation.tokenLimit))
-    : 0
-  const tokenPct = Math.round(tokenRatio * 100)
-
   const hasCommentCards = commentCards.length > 0
 
   const handlePaste = async (event: ClipboardEvent<HTMLTextAreaElement>): Promise<void> => {
@@ -529,17 +523,7 @@ export function Composer({
 
           <span className="spacer" />
 
-          {conversation && (
-            <ContextRing
-              ratio={tokenRatio}
-              percent={tokenPct}
-              used={conversation.tokensUsed}
-              limit={conversation.tokenLimit}
-              onClick={(anchor) =>
-                void window.vav.window.openTokenUsage(conversation.id, anchor)
-              }
-            />
-          )}
+          {conversation && <ConversationContextRing conversationId={conversation.id} />}
 
           {isRunning && (
             <Button
@@ -648,7 +632,7 @@ function MessageQueueBar({
               <>
                 <div className="message-queue-item-header">
                   <span className="message-queue-item-icon" aria-hidden>
-                    <Send size={12} strokeWidth={2} />
+                    <MessageSquare size={12} strokeWidth={2} />
                   </span>
                   <span className="message-queue-item-label">{t('queue.editing')}</span>
                   <button
@@ -692,7 +676,7 @@ function MessageQueueBar({
               <>
                 <div className="message-queue-item-header">
                   <span className="message-queue-item-icon" aria-hidden>
-                    <Send size={12} strokeWidth={2} />
+                    <MessageSquare size={12} strokeWidth={2} />
                   </span>
                   <button
                     type="button"
@@ -958,6 +942,30 @@ function FileContextChip({
         <X size={12} />
       </button>
     </div>
+  )
+}
+
+/** Composer ring that reads mid-turn tokens without remapping `conversations`. */
+function ConversationContextRing({ conversationId }: { conversationId: string }): React.JSX.Element {
+  const used = useSessionStore((s) => {
+    const live = s.liveUsage[conversationId]
+    if (live) return live.tokensUsed
+    return s.conversations.find((c) => c.id === conversationId)?.tokensUsed ?? 0
+  })
+  const limit = useSessionStore((s) => {
+    const live = s.liveUsage[conversationId]
+    if (typeof live?.tokenLimit === 'number') return live.tokenLimit
+    return s.conversations.find((c) => c.id === conversationId)?.tokenLimit ?? 0
+  })
+  const tokenRatio = Math.min(1, used / Math.max(1, limit))
+  return (
+    <ContextRing
+      ratio={tokenRatio}
+      percent={Math.round(tokenRatio * 100)}
+      used={used}
+      limit={limit}
+      onClick={(anchor) => void window.vav.window.openTokenUsage(conversationId, anchor)}
+    />
   )
 }
 

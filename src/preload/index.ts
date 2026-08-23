@@ -25,6 +25,12 @@ function subscribe<T>(channel: string, handler: (payload: T) => void): () => voi
 const api: VavApi = {
   platform: process.platform as Platform,
 
+  haptics: {
+    tap: () =>
+      ipcRenderer.invoke(IPC.hapticsTap) as Promise<{ ok: boolean; error?: string }>,
+    available: () => ipcRenderer.invoke(IPC.hapticsAvailable) as Promise<boolean>
+  },
+
   bootstrap: () => ipcRenderer.invoke(IPC.bootstrap),
 
   secrets: {
@@ -69,6 +75,23 @@ const api: VavApi = {
       ipcRenderer.invoke(IPC.settingsRegisterAllFileAssociations),
     analysis: (options?: { refresh?: boolean }) =>
       ipcRenderer.invoke(IPC.settingsAnalysis, options)
+  },
+
+  accounts: {
+    getPage: (workspaceKey?: string | null, options?: { refresh?: boolean; force?: boolean }) =>
+      ipcRenderer.invoke(IPC.accountsGetPage, workspaceKey, options),
+    createVav: (input) => ipcRenderer.invoke(IPC.accountsCreateVav, input),
+    createDraft: (input) => ipcRenderer.invoke(IPC.accountsCreateDraft, input),
+    updateVav: (id, patch) => ipcRenderer.invoke(IPC.accountsUpdateVav, id, patch),
+    setCurrent: (id) => ipcRenderer.invoke(IPC.accountsSetCurrent, id),
+    activate: (id) => ipcRenderer.invoke(IPC.accountsActivate, id),
+    remove: (id) => ipcRenderer.invoke(IPC.accountsRemove, id),
+    verify: (id, apiKey) => ipcRenderer.invoke(IPC.accountsVerify, id, apiKey),
+    revealKey: (id) => ipcRenderer.invoke(IPC.accountsRevealKey, id),
+    beginOAuth: (agentId, accountId) =>
+      ipcRenderer.invoke(IPC.accountsBeginOAuth, agentId, accountId),
+    cancelOAuth: (agentId) => ipcRenderer.invoke(IPC.accountsCancelOAuth, agentId),
+    signOut: (agentId) => ipcRenderer.invoke(IPC.accountsSignOut, agentId)
   },
 
   conversations: {
@@ -425,6 +448,8 @@ const api: VavApi = {
   onSettingsChanged: (handler) => subscribe<AppSettings>(IPC.settingsChanged, handler),
   onSettingsView: (handler) => subscribe<SettingsViewPayload>(IPC.settingsView, handler),
   onSettingsAnalysis: (handler) => subscribe<AnalysisSnapshot>(IPC.settingsAnalysisUpdated, handler),
+  onAccountsUpdated: (handler) =>
+    subscribe<import('@shared/ipc').AccountsPagePayload>(IPC.accountsUpdated, handler),
   onCliOpen: (handler) => subscribe(IPC.cliOpen, handler),
   onFullscreen: (handler) => subscribe<boolean>(IPC.windowFullscreen, handler)
 }

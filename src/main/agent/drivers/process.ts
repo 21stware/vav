@@ -2,6 +2,7 @@ import { type ChildProcessWithoutNullStreams, spawn } from 'node:child_process'
 import { createInterface } from 'node:readline'
 import { homedir } from 'node:os'
 import { loginPath } from '../../terminal/loginPath'
+import { unwrapAgentLaunch } from '../../terminal/unwrapAgentLaunch'
 
 export interface StdioProcess {
   child: ChildProcessWithoutNullStreams
@@ -28,9 +29,12 @@ export function spawnStdioProcess(
   // Avoid forcing colours into NDJSON streams.
   delete env.FORCE_COLOR
 
-  const child = spawn(binary, args, {
+  const unwrapped = unwrapAgentLaunch(binary, args)
+  Object.assign(env, unwrapped.env)
+  const child = spawn(unwrapped.file, unwrapped.args, {
     cwd,
     env,
+    argv0: unwrapped.argv0,
     stdio: ['pipe', 'pipe', 'pipe']
   }) as ChildProcessWithoutNullStreams
 

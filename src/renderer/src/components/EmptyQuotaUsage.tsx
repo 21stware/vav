@@ -18,7 +18,9 @@ const KIND_SHORT: Partial<Record<QuotaWindowKind, MessageKey>> = {
   seven_day: 'token.quotaWeeklyShort',
   seven_day_opus: 'token.quotaWeeklyOpusShort',
   seven_day_sonnet: 'token.quotaWeeklySonnetShort',
-  monthly: 'token.quotaMonthlyShort'
+  monthly: 'token.quotaMonthlyShort',
+  cursor_api: 'token.quotaCursorApiShort',
+  cursor_auto: 'token.quotaCursorAutoShort'
 }
 
 function remainShort(
@@ -119,10 +121,12 @@ const NOTICE_LINE: Record<Exclude<HostAuthKind, 'unknown'>, MessageKey> = {
 
 export function EmptyQuotaUsage({
   conversationId,
-  host
+  host,
+  accountId
 }: {
   conversationId: string
   host: CliHostKind | null
+  accountId?: string | null
 }): React.JSX.Element | null {
   const t = useT()
   const canShow = isStructuredCliHost(host)
@@ -130,7 +134,7 @@ export function EmptyQuotaUsage({
 
   useEffect(() => {
     setSnap(null)
-  }, [conversationId, host])
+  }, [conversationId, host, accountId])
 
   useEffect(() => {
     if (!host || !canShow) return
@@ -146,7 +150,7 @@ export function EmptyQuotaUsage({
     return () => {
       cancelled = true
     }
-  }, [conversationId, host, canShow])
+  }, [conversationId, host, accountId, canShow])
 
   if (!host || !canShow) return null
   const pending = snap === null

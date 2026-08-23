@@ -19,6 +19,13 @@ export type AgentModelCatalogEntry = {
   models: ModelOption[]
   source: 'live' | 'static' | 'fallback'
   error?: string
+  endpoint?: string
+}
+
+/** Mid-turn context-window overlay — must not remap `conversations`. */
+export type LiveUsage = {
+  tokensUsed: number
+  tokenLimit?: number
 }
 import type { ChangeSet, UpdateState } from '@shared/changeSet'
 import type { GitChangeEntry } from '@shared/git'
@@ -81,6 +88,15 @@ function notifyImageAttachPlan(
     return
   }
   showToast({ kind: 'info', title: tt('composer.imageTypeUnsupported') })
+}
+
+function omitLiveUsage(
+  liveUsage: Record<string, LiveUsage>,
+  id: string
+): Record<string, LiveUsage> {
+  if (!(id in liveUsage)) return liveUsage
+  const { [id]: _removed, ...rest } = liveUsage
+  return rest
 }
 
 function trimAttachmentsForHost(
@@ -195,6 +211,7 @@ export interface ToastState {
 export type SettingsCategory =
   | 'api'
   | 'analysis'
+  | 'accounts'
   | 'workspace'
   | 'appearance'
   | 'notifications'
@@ -528,6 +545,12 @@ interface SessionState {
   tokenHistories: Record<string, TokenSnapshot[]>
   cacheCreatedAt: Record<string, number | null>
   cacheExpiresAt: Record<string, number | null>
+  /**
+   * Live tokens for the composer ring while a turn is in flight.
+   * Written by `usage`; cleared on end / compact / host switch so
+   * `conversations` is not remapped on every sample.
+   */
+  liveUsage: Record<string, LiveUsage>
 
   search: SearchState
   errorBanner: string | null
@@ -538,6 +561,8 @@ interface SessionState {
   settingsCategory: SettingsCategory
   /** Settings → Providers: select this row when the window opens. */
   settingsFocusAgentId: string | null
+  /** Settings → Accounts: select this profile when the page opens. */
+  settingsFocusAccountId: string | null
   composerFocusTick: number
   /** Which comment card should take focus (set on pick). */
   commentFocusId: string | null
@@ -911,6 +936,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   tokenHistories: {},
   cacheCreatedAt: {},
   cacheExpiresAt: {},
+  liveUsage: {},
 
   search: { open: false, query: '', matchIds: [], index: 0, tick: 0 },
   errorBanner: null,
@@ -920,6 +946,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   toast: null,
   settingsCategory: 'agents',
   settingsFocusAgentId: null,
+  settingsFocusAccountId: null,
   composerFocusTick: 0,
   commentFocusId: null,
   commentFocusTick: 0,
@@ -1635,6 +1662,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
             : state.cacheExpiresAt,
           pendingReviewByConversation,
           turns,
+          liveUsage: omitLiveUsage(state.liveUsage, id),
           errorBanner: result.hostChanged && state.activeId === id ? null : state.errorBanner,
           errorBannerKind:
             result.hostChanged && state.activeId === id ? null : state.errorBannerKind,
@@ -2309,6 +2337,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         ...state.compactions,
         [activeId]: upsertCompaction(state.compactions[activeId], result.compaction)
       },
+      liveUsage: omitLiveUsage(state.liveUsage, activeId),
       conversations: state.conversations.map((c) =>
         c.id === activeId
           ? { ...c, tokensUsed: result.compaction.estimatedContextTokens }
@@ -2647,28 +2676,11 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   },
 
   async checkForUpdates() {
+    set((current) => ({
+      updateState: { ...current.updateState, phase: 'checking', message: null }
+    }))
     const state = await window.vav.updates.check()
     set({ updateState: state })
-    const version = state.latestVersion ?? state.currentVersion
-    if (state.phase === 'latest') {
-      get().showToast({
-        kind: 'info',
-        title: tt('update.toastLatestTitle'),
-        description: tt('update.toastLatestBody', { version: state.currentVersion })
-      })
-    } else if (state.phase === 'available') {
-      get().showToast({
-        kind: 'success',
-        title: tt('update.toastAvailableTitle', { version }),
-        description: tt('update.toastAvailableBody')
-      })
-    } else if (state.phase === 'error') {
-      get().showToast({
-        kind: 'error',
-        title: tt('update.toastErrorTitle'),
-        description: tt('update.toastErrorBody')
-      })
-    }
   },
 
   async downloadUpdate() {
@@ -2974,35 +2986,36 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         break
 
       case 'usage':
-        // Mid-turn usage must not reshuffle the sidebar — only tokens / cache.
-        set((state) => ({
-          tokenHistories: { ...state.tokenHistories, [id]: event.history },
-          cacheCreatedAt: { ...state.cacheCreatedAt, [id]: event.cacheCreatedAt },
-          cacheExpiresAt: { ...state.cacheExpiresAt, [id]: event.cacheExpiresAt },
-          conversations: state.conversations.map((c) =>
-            c.id === id
-              ? {
-                  ...c,
-                  tokensUsed: event.tokensUsed,
-                  ...(typeof event.tokenLimit === 'number'
-                    ? { tokenLimit: event.tokenLimit }
-                    : {}),
-                  ...(event.reportedSessionCostUsd !== undefined
-                    ? { reportedSessionCostUsd: event.reportedSessionCostUsd }
-                    : {}),
-                  ...(event.quotaWindows !== undefined
-                    ? { quotaWindows: event.quotaWindows }
-                    : {})
+        // Mid-turn usage must not remap `conversations` — that re-renders
+        // SessionDetail / Transcript / Sidebar. Ring reads `liveUsage`.
+        set((state) => {
+          const prev = state.liveUsage[id]
+          const tokenLimit =
+            typeof event.tokenLimit === 'number' ? event.tokenLimit : prev?.tokenLimit
+          const usageSame =
+            prev?.tokensUsed === event.tokensUsed && prev?.tokenLimit === tokenLimit
+          return {
+            tokenHistories: { ...state.tokenHistories, [id]: event.history },
+            cacheCreatedAt: { ...state.cacheCreatedAt, [id]: event.cacheCreatedAt },
+            cacheExpiresAt: { ...state.cacheExpiresAt, [id]: event.cacheExpiresAt },
+            liveUsage: usageSame
+              ? state.liveUsage
+              : {
+                  ...state.liveUsage,
+                  [id]: {
+                    tokensUsed: event.tokensUsed,
+                    ...(tokenLimit != null ? { tokenLimit } : {})
+                  }
                 }
-              : c
-          )
-        }))
+          }
+        })
         break
 
       case 'end': {
         projection.end()
         patchTurn(set, id, IDLE_TURN)
         set((state) => {
+          const liveUsage = omitLiveUsage(state.liveUsage, id)
           const conversations = state.conversations.map((c) =>
             c.id === id ? { ...c, tokensUsed: event.tokensUsed } : c
           )
@@ -3015,12 +3028,13 @@ export const useSessionStore = create<SessionState>((set, get) => ({
             !event.message.errorText &&
             !event.message.cancelled
           ) {
-            return { conversations }
+            return { conversations, liveUsage }
           }
           return {
             messages: { ...state.messages, [id]: upsert(state.messages[id], event.message) },
             activeLeaf: { ...state.activeLeaf, [id]: event.message.id },
-            conversations
+            conversations,
+            liveUsage
           }
         })
         // Main bumped updatedAt on append/replace — merge so order follows real activity.
@@ -3301,6 +3315,7 @@ export function installCompactionsBridge(): () => void {
     )
     useSessionStore.setState((state) => ({
       compactions: { ...state.compactions, [conversationId]: compactions },
+      liveUsage: omitLiveUsage(state.liveUsage, conversationId),
       conversations: state.conversations.map((c) => {
         if (c.id !== conversationId) return c
         if (active?.estimatedContextTokens) {

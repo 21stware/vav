@@ -32,6 +32,7 @@ import {
 import { homedir, tmpdir } from 'node:os'
 import { randomUUID } from 'node:crypto'
 import { APP_NAME, applyBranding, applyDockIcon, loadAppIcon, pinUserDataPath } from './brand'
+import { registerHapticsIpc } from './haptics'
 import {
   IPC,
   type Bootstrap,
@@ -66,6 +67,34 @@ import { threadPath } from '@shared/thread'
 import { SettingsStore } from './store/SettingsStore'
 import { SleepBlocker } from './power/SleepBlocker'
 import { SecretStore } from './store/SecretStore'
+import { AccountStore } from './store/AccountStore'
+import {
+  accountSecret,
+  buildAccountsPage,
+  cliCatalogOf,
+  resolveVavCredentials,
+  resolveWorkspaceContext,
+  syncOAuthProfiles
+} from './accounts/service'
+import { activateAccount, captureAccountCredentials, captureLiveHost } from './accounts/activateAccount'
+import { accessTokenFromSnapshot } from './accounts/credentials/parseKeychainSnapshot'
+import {
+  createKindForAgent,
+  defaultKeyEndpoint,
+  displayAccountLabel,
+  isHttpUrl,
+  isOAuthSyncAgent,
+  nameConflict,
+  nextDraftName,
+  normalizeAccountName,
+  providerForAgent,
+  agentIdOf,
+  DEFAULT_WORKSPACE_KEY,
+  resolveSessionAccountId,
+  sessionShowsHostQuota,
+  sessionUsageRowsOf,
+  workspaceKeyOf
+} from '@shared/accounts'
 import { ConversationStore } from './store/ConversationStore'
 import { VavPackService } from './store/VavPackService'
 import { FileSessionStore } from './store/FileSessionStore'
@@ -111,6 +140,7 @@ import { getSupabaseStatus } from './supabase/SupabaseService'
 import { UpdateService } from './updates'
 import { PtyManager, type PtySessionMeta } from './terminal/PtyManager'
 import { ensureLoginPath, probeAgentExecutables, resolveAgentExecutable } from './terminal/loginPath'
+import { warmAgentLaunchCache } from './terminal/agentLaunchWarm'
 import { menuCommandFromInput, matchesNewSessionWindow } from './menuShortcuts'
 import { resolveKeyBindings } from '@shared/keyBindings'
 import { isDevRuntime } from './devRuntime'
@@ -135,7 +165,17 @@ import {
   startAgentInstall,
   stopAllAgentInstalls
 } from './agent/AgentInstaller'
-import { readHostAccountInfo } from './agent/hostAuth'
+import { clearHostAuthIdentityCache, readHostAccountInfo } from './agent/hostAuth'
+import { candidatesForHost } from './agent/drivers'
+import {
+  cancelHostOAuthLogin,
+  currentOAuthLogin,
+  finishHostOAuth,
+  loginArgv,
+  runHostLogout,
+  runningOAuthAgents,
+  startHostOAuthLogin
+} from './accounts/hostLogin'
 import type { HostAuthKind } from '@shared/cliAccountParse'
 import {
   displayNameForCliHost,
@@ -151,7 +191,7 @@ import {
   providerLabel as vavProviderLabel
 } from '@shared/tokenUsage'
 import { contextWindowFor } from './agent/modelMeta'
-import { validateApiKey } from './agent/provider'
+import { validateVavApiKey } from './agent/vavModelProbe'
 import { shellPath } from './terminal/StickyShell'
 import { buildAppMenu } from './menu'
 import { currentLocale, setLocalePreference, t } from './i18n'
@@ -172,15 +212,27 @@ import {
 import { ensureMacOpenDirectoryService } from './macOpenDirectoryService'
 import { NotificationCenter } from './notifications'
 import { QuotaService } from './quota/QuotaService'
+import { fetchClaudeAccountQuota } from './quota/claudeUsage'
+import { fetchCodexAccountQuota } from './quota/codexUsage'
+import { fetchCursorAccountQuota } from './quota/cursorUsage'
+import { fetchGrokAccountQuota } from './quota/grokUsage'
+import { fetchOpencodeAccountQuota } from './quota/opencodeUsage'
 import { deepseekBalanceUrl } from '@shared/apiBalance'
 import { fetchDeepSeekApiBalance } from './quota/deepseekBalance'
+import { cachedApiBalance, clearApiBalance, refreshApiBalance } from './quota/apiBalanceCache'
 import { buildAnalysisSnapshot } from './analysis/buildAnalysisSnapshot'
 import {
   configureAnalysisCache,
   invalidateAnalysisCache,
   serveAnalysisSnapshot
 } from './analysis/analysisSnapshotCache'
-import { hostMayHaveAccountQuota, mergeQuotaWindowsPreferNewer } from '@shared/quotaWindows'
+import { raceSettle } from '@shared/asyncTimeout'
+import {
+  ACCOUNT_QUOTA_HOSTS,
+  hostMayHaveAccountQuota,
+  latestQuotaWindowsByHost,
+  mergeNamespacedQuotaWindows
+} from '@shared/quotaWindows'
 import { nativeSessionId } from '@shared/cliPaneBinding'
 import {
   buildSwarmHistoryMenuEntries,
@@ -266,6 +318,8 @@ let providerAccountWindow: BrowserWindow | null = null
 let lastFocusedWindow: BrowserWindow | null = null
 /** Conversation currently shown in the token-usage panel (for live hydrate). */
 let tokenUsageConversationId: string | null = null
+/** Last conversation the user actually viewed — Accounts workspace follows this. */
+let lastSeenConversationId: string | null = null
 /** Parent window id the panel was last attached to (recreate if parent changes). */
 let tokenUsageParentId: number | null = null
 /** True once the token-usage renderer has finished its first load. */
@@ -323,6 +377,7 @@ let sessionOpenT0 = 0
 
 const settingsStore = new SettingsStore()
 const secretStore = new SecretStore()
+const accountStore = new AccountStore(app.getPath('userData'))
 const conversationStore = new ConversationStore()
 const swarmHistoryStore = new SwarmHistoryStore(
   join(app.getPath('userData'), 'swarm-session-history.json')
@@ -953,6 +1008,20 @@ function handleAgentEvent(event: TurnEvent): void {
     return
   }
   if (event.type === 'usage') {
+    const latest = conversation?.tokenHistory?.at(-1)
+    if (event.newSnapshot && latest?.accountId) {
+      accountStore.recordUsage(latest.accountId, {
+        inputTokens: latest.newInputTokens,
+        outputTokens: latest.outputTokens,
+        cacheReadTokens: latest.cacheReadTokens,
+        cacheWriteTokens: latest.cacheWriteTokens,
+        estimatedCostUsd: latest.estimatedCost
+      }, latest.timestamp)
+      if (conversation?.model) {
+        accountStore.update(latest.accountId, { lastModel: conversation.model })
+      }
+      pushAccountsIfSettingsOpen()
+    }
     pushTokenUsageIfOpen(event.conversationId)
     return
   }
@@ -986,6 +1055,32 @@ const quotaService = new QuotaService({
     if (id && id !== '_') pushTokenUsageIfOpen(id)
     const accountId = providerAccountConversationId
     if (accountId && accountId !== '_') void pushProviderAccountIfOpen(accountId)
+    pushAccountsIfSettingsOpen()
+  },
+  fetchers: {
+    claude: fetchClaudeAccountQuota,
+    codex: fetchCodexAccountQuota,
+    cursor: fetchCursorAccountQuota,
+    grok: fetchGrokAccountQuota,
+    opencode: fetchOpencodeAccountQuota
+  },
+  identityOf: async (host) => {
+    const info = await readHostAccountInfo(host)
+    return info.signedIn ? info.accountId : null
+  },
+  identitiesOf: async (host) => {
+    const rows: { identity: string; token?: string }[] = []
+    for (const account of accountStore.listAll()) {
+      if (account.kind !== 'oauth') continue
+      if ((account.oauthHost ?? agentIdOf(account)) !== host) continue
+      if (!account.hasCredentialSnapshot) continue
+      const identity = account.name?.trim()
+      if (!identity) continue
+      const token = accessTokenFromSnapshot(host, secretStore.getOAuthSnapshot(account.id))
+      if (!token) continue
+      rows.push({ identity, token })
+    }
+    return rows
   }
 })
 
@@ -993,6 +1088,12 @@ const agent = new AgentRuntime({
   conversations: conversationStore,
   settings: settingsStore,
   secrets: secretStore,
+  resolveVavCredentials: (conversation) =>
+    resolveVavCredentials(
+      { conversation, settingsEndpoint: settingsStore.get().apiEndpoint },
+      accountStore,
+      secretStore
+    ),
   files: fileService,
   changeSets: changeSetStore,
   retrieval: documentRetrieval,
@@ -1017,6 +1118,7 @@ const cliHost = new CliAgentHost({
   logicalPath: (path) => workingCopyService.logicalPath(path),
   quota: {
     get: (host) => quotaService.get(host),
+    identity: (host) => liveOAuthIdentity(host),
     forceRefresh: (host) => quotaService.forceRefresh(host)
   }
 })
@@ -1830,9 +1932,9 @@ function ensureSettingsWindow(
   }
 
   settingsWindow = new BrowserWindow({
-    width: 720,
-    height: 560,
-    minWidth: 620,
+    width: 780,
+    height: 580,
+    minWidth: 680,
     minHeight: 440,
     show: false,
     paintWhenInitiallyHidden: true,
@@ -3259,10 +3361,24 @@ function buildTokenUsagePayload(conversationId: string): TokenUsageViewPayload |
     cacheExpiryEstimated: !!(conversation.cacheExpiresAt && conversation.cacheCreatedAt),
     // Manual compact only rewrites VAV buildHistory — not CLI native sessions.
     compactAvailable: !cliHost,
-    quotaWindows: cliHost
-      ? mergeQuotaWindowsPreferNewer(quotaService.get(cliHost), conversation.quotaWindows ?? [])
-      : []
+    quotaWindows: conversationHostQuota(conversation),
+    accountUsage: tokenUsageAccountRows(conversation)
   }
+}
+
+function tokenUsageAccountRows(
+  conversation: Conversation
+): import('@shared/ipc').TokenUsageAccountRow[] {
+  const fallback = t('accounts.workspaceDefault')
+  const dirLabel =
+    workspaceKeyOf(conversation.workingDirectory) === '__default__'
+      ? fallback
+      : conversation.workingDirectory?.split(/[\\/]/).filter(Boolean).at(-1) || fallback
+  const names = new Map<string, string>()
+  for (const account of accountStore.listVisible(workspaceKeyOf(conversation.workingDirectory))) {
+    names.set(account.id, displayAccountLabel(account, dirLabel))
+  }
+  return sessionUsageRowsOf(conversation.tokenHistory ?? [], names, t('accounts.untitled'))
 }
 
 function currentTokenUsagePayload(): TokenUsageViewPayload | null {
@@ -3620,9 +3736,7 @@ function buildProviderAccountPayload(
     accountId: extras?.accountId ?? null,
     plan: extras?.plan ?? null,
     authKind: extras?.authKind ?? (signedIn ? 'oauth' : 'none'),
-    windows: host
-      ? mergeQuotaWindowsPreferNewer(quotaService.get(host), conversation.quotaWindows ?? [])
-      : [],
+    windows: conversationHostQuota(conversation),
     loading: extras?.loading ?? false,
     theme: settings.theme,
     locale: currentLocale(),
@@ -3666,19 +3780,16 @@ async function hydrateProviderAccount(conversationId: string): Promise<void> {
   })
   if (loading) sendProviderAccountPayload(loading)
   const account = await readHostAccountInfo(host)
-  providerAccountAuth = {
-    signedIn: account.signedIn,
-    accountId: account.accountId,
-    plan: account.plan,
-    authKind: account.authKind
-  }
+  if (host) lastLiveOAuth.set(host, account.signedIn ? account.accountId : null)
+  const auth = conversationQuotaAuth(conversation, account)
+  providerAccountAuth = auth
   await quotaService.refreshForPanel(host)
   const next = buildProviderAccountPayload(conversationId, {
     loading: false,
-    signedIn: account.signedIn,
-    accountId: account.accountId,
-    plan: account.plan,
-    authKind: account.authKind
+    signedIn: auth.signedIn,
+    accountId: auth.accountId,
+    plan: auth.plan,
+    authKind: auth.authKind
   })
   if (next) sendProviderAccountPayload(next)
 }
@@ -4159,16 +4270,19 @@ function newDetachedSession(): void {
   sessionOpenMark('hotkey:start')
   const settings = settingsStore.get()
   const defaultHost = resolveDefaultChatHost(settings.defaultAgentId)
+  const workdir = resolveNewWorkdir()
   const conversation = conversationStore.create(
-    resolveNewWorkdir(),
+    workdir,
     modelForNewConversation(defaultHost),
     {
       approvalMode: settings.defaultApprovalMode ?? 'auto',
       thinkingLevel: parseThinkingLevel(settings.defaultThinkingLevel),
-      cliHost: defaultHost
+      cliHost: defaultHost,
+      accountId: accountIdForSession(workdir, defaultHost)
     }
   )
   ephemeralConversations.add(conversation.id)
+  lastSeenConversationId = conversation.id
   sessionOpenMark('hotkey:created', conversation.id)
   // ⌘⇧↵: tools panel starts collapsed (main-chat.rpml).
   // raiseDetachedWindow handles focus — do not app.focus alone (fullscreen steal).
@@ -4555,10 +4669,12 @@ function openWorkspaceSession(options: {
     {
       approvalMode: sessionSettings.defaultApprovalMode ?? 'auto',
       thinkingLevel: parseThinkingLevel(sessionSettings.defaultThinkingLevel),
-      cliHost: defaultHost
+      cliHost: defaultHost,
+      accountId: accountIdForSession(resolved, defaultHost)
     }
   )
   if (defaultHost) promoteEphemeralConversation(conversation.id)
+  lastSeenConversationId = conversation.id
   publishConversations()
   const payload = {
     conversationId: conversation.id,
@@ -4808,6 +4924,294 @@ function resolveNewWorkdir(): string {
   return mintTempWorkdir()
 }
 
+function accountIdForSession(
+  workdir: string | null,
+  cliHost?: CliHostKind | null
+): string | null {
+  const workspaceKey = workspaceKeyOf(workdir)
+  accountStore.seedIfNeeded({
+    workspaceKey,
+    endpoint: settingsStore.get().apiEndpoint || null,
+    hasApiKey: secretStore.has('api')
+  })
+  if (cliHost) {
+    return resolveSessionAccountId(accountStore.listVisible(workspaceKey), cliHost)
+  }
+  return accountStore.currentVav(workspaceKey)?.id ?? null
+}
+
+function pushAccountsIfSettingsOpen(): void {
+  if (!settingsWindow || settingsWindow.isDestroyed()) return
+  safeSend(settingsWindow.webContents, IPC.accountsUpdated, accountsPage())
+}
+
+/** Last CLI identity per OAuth host (`null` = signed out). Quota attaches here only. */
+const lastLiveOAuth = new Map<string, string | null>()
+
+function rememberLiveOAuth(live: Map<string, string | null>): void {
+  for (const [host, email] of live) lastLiveOAuth.set(host, email)
+}
+
+function liveOAuthIdentity(host: string): string | null {
+  if (lastLiveOAuth.has(host)) return lastLiveOAuth.get(host) ?? null
+  return quotaService.identity(host as CliHostKind)
+}
+
+function namespacedQuotaFor(
+  host: CliHostKind,
+  conversationWindows?: import('@shared/types').QuotaWindow[] | null
+): import('@shared/types').QuotaWindow[] {
+  const identity = liveOAuthIdentity(host)
+  return mergeNamespacedQuotaWindows(host, identity, quotaService.get(host, identity), conversationWindows)
+}
+
+function conversationQuotaAuth(
+  conversation: { accountId?: string | null },
+  live: { signedIn: boolean; accountId?: string | null; plan?: string | null; authKind?: import('@shared/cliAccountParse').HostAuthKind }
+): {
+  signedIn: boolean
+  accountId: string | null
+  plan: string | null
+  authKind: import('@shared/cliAccountParse').HostAuthKind
+} {
+  const profile = conversation.accountId ? accountStore.get(conversation.accountId) : undefined
+  const show = sessionShowsHostQuota({
+    liveSignedIn: live.signedIn,
+    liveIdentity: live.accountId,
+    profileKind: profile?.kind,
+    profileName: profile?.name
+  })
+  if (show) {
+    return {
+      signedIn: live.signedIn,
+      accountId: live.accountId ?? null,
+      plan: live.plan ?? null,
+      authKind: live.authKind ?? (live.signedIn ? 'oauth' : 'none')
+    }
+  }
+  return {
+    signedIn: false,
+    accountId: profile?.kind === 'oauth' ? profile.name : null,
+    plan: null,
+    authKind: profile?.kind === 'oauth' ? 'none' : (live.authKind ?? 'none')
+  }
+}
+
+function conversationHostQuota(conversation: {
+  accountId?: string | null
+  cliHost?: CliHostKind | null
+  quotaWindows?: import('@shared/types').QuotaWindow[] | null
+}): import('@shared/types').QuotaWindow[] {
+  const host = conversation.cliHost ?? null
+  if (!host) return []
+  const identity = liveOAuthIdentity(host)
+  const profile = conversation.accountId ? accountStore.get(conversation.accountId) : undefined
+  if (
+    !sessionShowsHostQuota({
+      liveSignedIn: Boolean(identity),
+      liveIdentity: identity,
+      profileKind: profile?.kind,
+      profileName: profile?.name
+    })
+  ) {
+    return []
+  }
+  return namespacedQuotaFor(host, conversation.quotaWindows)
+}
+
+function retargetEmptyConversations(
+  account: import('@shared/accounts').ProviderAccount,
+  workspaceKey: string
+): void {
+  if (account.kind !== 'oauth') return
+  const host = agentIdOf(account)
+  let changed = false
+  for (const conversation of conversationStore.all()) {
+    if (conversation.cliHost !== host) continue
+    if ((conversation.messages?.length ?? 0) > 0) continue
+    if (workspaceKeyOf(conversation.workingDirectory) !== workspaceKey) continue
+    if (conversation.accountId === account.id) continue
+    conversationStore.updateMeta(conversation.id, { accountId: account.id })
+    changed = true
+  }
+  if (changed) publishConversations()
+}
+
+function accountsPage(workspaceKey?: string | null): import('@shared/ipc').AccountsPagePayload {
+  const untitled = t('accounts.workspaceDefault')
+  const settings = settingsStore.get()
+  const ctx = workspaceKey?.trim()
+    ? {
+        key: workspaceKey.trim(),
+        label: workspaceKey.trim() === '__default__'
+          ? untitled
+          : workspaceKey.trim().split(/[\\/]/).filter(Boolean).at(-1) || untitled
+      }
+    : resolveWorkspaceContext(
+        conversationStore.listMeta(),
+        settings,
+        untitled,
+        lastSeenConversationId
+      )
+  accountStore.seedIfNeeded({
+    workspaceKey: ctx.key,
+    endpoint: settings.apiEndpoint || null,
+    hasApiKey: secretStore.has('api')
+  })
+  accountStore.coalesceOAuthIdentities()
+  const liveByHost = latestQuotaWindowsByHost(conversationStore.all())
+  const liveOAuth = new Map(lastLiveOAuth)
+  for (const host of ACCOUNT_QUOTA_HOSTS) {
+    if (!liveOAuth.has(host)) {
+      const identity = quotaService.identity(host)
+      if (identity) liveOAuth.set(host, identity)
+    }
+  }
+  const quotaFor = (host: CliHostKind) => namespacedQuotaFor(host, liveByHost.get(host))
+  return {
+    ...buildAccountsPage({
+      workspaceKey: ctx.key,
+      workspaceLabel: ctx.label,
+      accounts: accountStore,
+      secrets: secretStore,
+      cliAgents: cliCatalogOf(settings),
+      liveOAuth,
+      quotaWindows: quotaFor,
+      quotaState: (host, identity) => {
+        const id = identity?.trim() || liveOAuthIdentity(host)
+        const state = quotaService.getState(host, id)
+        return {
+          ...state,
+          windows: mergeNamespacedQuotaWindows(
+            host,
+            id,
+            quotaService.get(host, id),
+            liveByHost.get(host)
+          )
+        }
+      },
+      apiBalance: (accountId) => {
+        const row = cachedApiBalance(accountId)
+        if (!row) return null
+        return {
+          source: row.source,
+          amount: row.total,
+          currency: row.currency,
+          available: row.available
+        }
+      }
+    }),
+    oauthLogin: currentOAuthLogin()
+  }
+}
+
+const ACCOUNTS_REFRESH_MS = 12_000
+
+async function refreshAccountsPage(
+  workspaceKey?: string | null,
+  force = false
+): Promise<import('@shared/ipc').AccountsPagePayload> {
+  const page = accountsPage(workspaceKey)
+  const work = (async () => {
+    rememberLiveOAuth(
+      await syncOAuthProfiles(page.workspaceKey, accountStore, {
+        skipAgents: runningOAuthAgents(),
+        secrets: secretStore
+      })
+    )
+    accountStore.coalesceOAuthIdentities()
+    const hosts = accountStore
+      .listVisible(page.workspaceKey)
+      .filter(
+        (account) =>
+          account.kind === 'oauth' &&
+          (account.keyStatus === 'ok' || account.hasCredentialSnapshot)
+      )
+      .map((account) => account.oauthHost)
+      .filter((host): host is NonNullable<typeof host> => Boolean(host) && hostMayHaveAccountQuota(host))
+    await quotaService.refreshHosts(hosts, force)
+    const keys = accountStore
+      .listVisible(page.workspaceKey)
+      .filter((account) => account.kind === 'vav_key')
+    await Promise.all(
+      keys.map((account) =>
+        refreshApiBalance({
+          accountId: account.id,
+          apiKey: accountSecret(account, secretStore),
+          endpoint: account.endpoint?.trim() || settingsStore.get().apiEndpoint,
+          force
+        })
+      )
+    )
+  })()
+  const settled = await raceSettle(work, ACCOUNTS_REFRESH_MS)
+  if (settled.timedOut) {
+    void work.then(() => pushAccountsIfSettingsOpen()).catch((err) => {
+      console.error('[accounts] refresh continued after timeout', err)
+    })
+  }
+  return accountsPage(page.workspaceKey)
+}
+
+function activeVavCredentials(): { apiKey: string | null; endpoint: string } {
+  const latest = conversationStore.listMeta().find((row) => !row.archived && !row.cliHost)
+  const resolved = resolveVavCredentials(
+    {
+      conversation: latest ?? null,
+      settingsEndpoint: settingsStore.get().apiEndpoint
+    },
+    accountStore,
+    secretStore
+  )
+  return { apiKey: resolved.apiKey, endpoint: resolved.endpoint }
+}
+
+function currentWorkspaceVavCredentials(): { apiKey: string | null; endpoint: string } {
+  const untitled = t('accounts.workspaceDefault')
+  const ctx = resolveWorkspaceContext(
+    conversationStore.listMeta(),
+    settingsStore.get(),
+    untitled,
+    lastSeenConversationId
+  )
+  const resolved = resolveVavCredentials(
+    {
+      workspaceKey: ctx.key,
+      settingsEndpoint: settingsStore.get().apiEndpoint
+    },
+    accountStore,
+    secretStore
+  )
+  return { apiKey: resolved.apiKey, endpoint: resolved.endpoint }
+}
+
+function vavModelListOptions(force?: boolean): {
+  force: boolean
+  apiKey: string | null
+  endpoint: string
+} {
+  const creds = currentWorkspaceVavCredentials()
+  return { force: force === true, apiKey: creds.apiKey, endpoint: creds.endpoint }
+}
+
+async function validateAccountKey(
+  endpoint: string,
+  apiKey: string
+): Promise<{ ok: boolean; authFailed: boolean; message: string }> {
+  const probe = await validateVavApiKey(endpoint, apiKey)
+  if (probe.ok) {
+    return { ok: true, authFailed: false, message: t('api.validateOk') }
+  }
+  const error = probe.error || ''
+  return {
+    ok: false,
+    authFailed: probe.authFailed,
+    message: probe.authFailed
+      ? t('api.validateUnauthorized', { error })
+      : t('api.validateFailed', { error })
+  }
+}
+
 // ---------------------------------------------------------------------------
 // IPC
 // ---------------------------------------------------------------------------
@@ -4828,7 +5232,7 @@ function currentSettings(): AppSettings {
   }
   return {
     ...settings,
-    apiKeyPresent: secretStore.has('api'),
+    apiKeyPresent: Boolean(secretStore.has('api') || activeVavCredentials().apiKey),
     braveSearchKeyPresent: secretStore.has('braveSearch'),
     cloudflareApiTokenPresent: secretStore.has('cloudflare'),
     supabaseAccessTokenPresent: secretStore.has('supabase'),
@@ -4848,6 +5252,7 @@ function appBuildNumber(): string {
 }
 
 function registerIpc(): void {
+  registerHapticsIpc()
   ipcMain.handle(IPC.secretsStatus, () => secretStore.status())
   ipcMain.handle(IPC.secretsUnlock, () => {
     const result = secretStore.unlock()
@@ -4984,7 +5389,7 @@ function registerIpc(): void {
     const settings = settingsStore.get()
     const effective = key?.trim() || secretStore.get('api')
     if (!effective) return { ok: false, message: t('error.noApiKeyShort') }
-    return validateApiKey(settings.apiEndpoint, effective, settings.defaultModel)
+    return validateAccountKey(settings.apiEndpoint, effective)
   })
 
   // Candidates only; the renderer filters these down to fonts actually
@@ -5160,6 +5565,286 @@ return c as text`
     }
   })
 
+  ipcMain.handle(
+    IPC.accountsGetPage,
+    async (
+      _event,
+      workspaceKey?: string | null,
+      options?: { refresh?: boolean; force?: boolean }
+    ) => {
+      if (options?.refresh) return refreshAccountsPage(workspaceKey, options.force === true)
+      return accountsPage(workspaceKey)
+    }
+  )
+  ipcMain.handle(
+    IPC.accountsCreateVav,
+    async (
+      _event,
+      input: {
+        name: string
+        endpoint: string
+        apiKey: string
+        agentId?: string
+        provider?: 'vav' | 'custom'
+      }
+    ) => {
+      const page = await accountsPage()
+      const name = normalizeAccountName(input.name ?? '')
+      const endpoint = (input.endpoint ?? '').trim()
+      const apiKey = (input.apiKey ?? '').trim()
+      const agentId = input.agentId?.trim() || 'vav'
+      const provider = input.provider === 'custom' ? 'custom' : providerForAgent(agentId)
+      if (!name) return Promise.reject(new Error(t('accounts.error.nameRequired')))
+      if (nameConflict(accountStore.listAll(), agentId, name)) {
+        return Promise.reject(new Error(t('accounts.error.nameTaken')))
+      }
+      if (!isHttpUrl(endpoint)) return Promise.reject(new Error(t('accounts.error.endpoint')))
+      if (!apiKey) return Promise.reject(new Error(t('error.noApiKeyShort')))
+      const check = await validateAccountKey(endpoint, apiKey)
+      if (!check.ok) return Promise.reject(new Error(check.message))
+      const created = accountStore.add({
+        workspaceKey: DEFAULT_WORKSPACE_KEY,
+        agentId,
+        provider,
+        kind: 'vav_key',
+        name,
+        endpoint,
+        usesLegacyApiKey: false,
+        lastUsedAt: null,
+        lastModel: null,
+        keyStatus: 'ok',
+        oauthHost: null
+      })
+      secretStore.setAccountKey(created.id, apiKey)
+      return accountsPage(page.workspaceKey)
+    }
+  )
+  ipcMain.handle(
+    IPC.accountsCreateDraft,
+    async (
+      _event,
+      input: { agentId: string; kind?: 'vav_key' | 'oauth' }
+    ) => {
+      const page = await accountsPage()
+      const agentId = input.agentId?.trim() || 'vav'
+      const kind = input.kind === 'oauth' ? 'oauth' : 'vav_key'
+      if (kind === 'oauth' && createKindForAgent(agentId) !== 'oauth') {
+        return Promise.reject(new Error(t('accounts.error.missing')))
+      }
+      const name = nextDraftName(
+        accountStore.listAll(),
+        agentId,
+        t('accounts.draftName')
+      )
+      const endpoint =
+        kind === 'vav_key'
+          ? defaultKeyEndpoint(agentId, settingsStore.get().apiEndpoint || '')
+          : null
+      const created = accountStore.add({
+        workspaceKey: DEFAULT_WORKSPACE_KEY,
+        agentId,
+        provider: providerForAgent(agentId),
+        kind,
+        name,
+        endpoint: endpoint || null,
+        usesLegacyApiKey: false,
+        lastUsedAt: null,
+        lastModel: null,
+        keyStatus: 'unknown',
+        oauthHost: kind === 'oauth' ? agentId : null
+      })
+      return { page: await accountsPage(page.workspaceKey), id: created.id }
+    }
+  )
+  ipcMain.handle(
+    IPC.accountsUpdateVav,
+    async (
+      _event,
+      id: string,
+      patch: { alias?: string | null; endpoint?: string; apiKey?: string }
+    ) => {
+      const account = accountStore.get(id)
+      if (!account) {
+        return Promise.reject(new Error(t('accounts.error.missing')))
+      }
+      if (patch.alias !== undefined) {
+        const alias = patch.alias == null ? '' : normalizeAccountName(patch.alias)
+        accountStore.update(id, { alias: alias || null })
+      }
+      if (account.kind !== 'vav_key' && (patch.endpoint != null || patch.apiKey != null)) {
+        return Promise.reject(new Error(t('accounts.error.missing')))
+      }
+      if (patch.endpoint != null) {
+        const endpoint = patch.endpoint.trim()
+        if (!isHttpUrl(endpoint)) return Promise.reject(new Error(t('accounts.error.endpoint')))
+        accountStore.update(id, { endpoint })
+      }
+      if (patch.apiKey != null) {
+        const key = patch.apiKey.trim()
+        if (!key) return Promise.reject(new Error(t('error.noApiKeyShort')))
+        secretStore.setAccountKey(id, key)
+        accountStore.update(id, { usesLegacyApiKey: false, keyStatus: 'unknown' })
+      }
+      broadcast(IPC.settingsChanged, currentSettings())
+      return accountsPage(account.workspaceKey)
+    }
+  )
+  ipcMain.handle(IPC.accountsSetCurrent, (_event, id: string) => {
+    const viewing = accountsPage().workspaceKey
+    const account = accountStore.setCurrent(id, viewing)
+    if (account) retargetEmptyConversations(account, viewing)
+    broadcast(IPC.settingsChanged, currentSettings())
+    return accountsPage(viewing)
+  })
+  ipcMain.handle(IPC.accountsActivate, async (_event, id: string) => {
+    const viewing = accountsPage().workspaceKey
+    const result = await activateAccount({
+      accountId: id,
+      accounts: accountStore,
+      secrets: secretStore
+    })
+    if (result.kind === 'switched' || result.kind === 'alreadyLive') {
+      const account = accountStore.setCurrent(id, viewing)
+      if (account) retargetEmptyConversations(account, viewing)
+      const live = accountStore.get(id)
+      const host = live?.oauthHost ?? (live ? agentIdOf(live) : null)
+      if (host && live) lastLiveOAuth.set(host, live.name)
+      clearHostAuthIdentityCache()
+      if (host && hostMayHaveAccountQuota(host)) {
+        void quotaService.refreshHosts([host], true)
+      }
+    }
+    broadcast(IPC.settingsChanged, currentSettings())
+    return { page: accountsPage(viewing), result }
+  })
+  ipcMain.handle(IPC.accountsRemove, (_event, id: string) => {
+    const result = accountStore.remove(id)
+    if (result) {
+      secretStore.clearAccountKey(id)
+      secretStore.clearOAuthSnapshot(id)
+      clearApiBalance(id)
+    }
+    broadcast(IPC.settingsChanged, currentSettings())
+    return accountsPage(result?.removed.workspaceKey)
+  })
+  ipcMain.handle(IPC.accountsVerify, async (_event, id: string, apiKey?: string) => {
+    const account = accountStore.get(id)
+    if (!account || account.kind !== 'vav_key') {
+      return { ok: false, message: t('accounts.error.missing') }
+    }
+    const key = apiKey?.trim() || accountSecret(account, secretStore)
+    const endpoint = account.endpoint?.trim() || settingsStore.get().apiEndpoint
+    if (!key) return { ok: false, message: t('error.noApiKeyShort') }
+    const result = await validateAccountKey(endpoint, key)
+    accountStore.setKeyStatus(id, result.ok ? 'ok' : result.authFailed ? 'invalid' : 'unknown')
+    return { ok: result.ok, message: result.message, authFailed: result.authFailed }
+  })
+  ipcMain.handle(IPC.accountsRevealKey, (_event, id: string) => {
+    const account = accountStore.get(id)
+    if (!account || account.kind !== 'vav_key') return null
+    if (account.usesLegacyApiKey) return secretStore.get('api')
+    return secretStore.getAccountKey(id)
+  })
+  ipcMain.handle(IPC.accountsBeginOAuth, async (_event, agentId: string, accountId?: string) => {
+    const host = agentId.trim()
+    const name = DEFAULT_CLI_AGENTS.find((agent) => agent.id === host)?.name ?? host
+    if (!isStructuredCliHost(host) || createKindForAgent(host) !== 'oauth' || !loginArgv(host)) {
+      return Promise.reject(new Error(t('accounts.error.missing')))
+    }
+    const agent = settingsStore.get().cliAgents?.find((row) => row.id === host)
+    const resolved = resolveAgentExecutable(candidatesForHost(host, agent))
+    if (!resolved) {
+      return Promise.reject(new Error(t('accounts.error.cliMissing', { name })))
+    }
+    const targetId = typeof accountId === 'string' && accountId.trim() ? accountId.trim() : undefined
+    try {
+      const live = await readHostAccountInfo(host)
+      if (live.signedIn) {
+        const email = live.accountId?.trim()
+        if (email) {
+          accountStore.upsertOAuth({
+            workspaceKey: accountsPage().workspaceKey,
+            agentId: host,
+            provider: providerForAgent(host),
+            name: email,
+            oauthHost: host,
+            signedIn: true
+          })
+        }
+        await captureLiveHost(host, email ?? null, accountStore, secretStore)
+      }
+    } catch {
+      // Still start OAuth — an empty or unreadable slot just means nothing to keep.
+    }
+    startHostOAuthLogin({
+      agentId: host,
+      accountId: targetId,
+      resolved,
+      onFinished: (result) => {
+        void (async () => {
+          clearHostAuthIdentityCache()
+          if (result.cancelled) return
+          if (result.exitCode !== 0) {
+            finishHostOAuth(host, 'error', t('accounts.oauthFailedBody'))
+            return
+          }
+          await new Promise((resolve) => setTimeout(resolve, 400))
+          try {
+            const info = await readHostAccountInfo(host)
+            if (!info.signedIn && !info.accountId) {
+              finishHostOAuth(host, 'error', t('accounts.oauthFailedBody'))
+              return
+            }
+            const page = accountsPage()
+            const email = info.accountId?.trim() || name
+            const saved = accountStore.upsertOAuth({
+              id: targetId,
+              workspaceKey: page.workspaceKey,
+              agentId: host,
+              provider: providerForAgent(host),
+              name: email,
+              oauthHost: host,
+              signedIn: info.signedIn
+            })
+            if (info.signedIn) {
+              await captureAccountCredentials(saved.id, accountStore, secretStore)
+            }
+            lastLiveOAuth.set(host, info.signedIn ? email : null)
+            finishHostOAuth(host, 'ok')
+            void quotaService.refreshForPanel(host)
+          } catch {
+            finishHostOAuth(host, 'error', t('accounts.oauthFailedBody'))
+          }
+        })()
+      }
+    })
+    return accountsPage()
+  })
+  ipcMain.handle(IPC.accountsCancelOAuth, async (_event, agentId: string) => {
+    cancelHostOAuthLogin(String(agentId ?? '').trim())
+    return accountsPage()
+  })
+  ipcMain.handle(IPC.accountsSignOut, async (_event, agentId: string) => {
+    const host = agentId.trim()
+    if (!isStructuredCliHost(host) || !isOAuthSyncAgent(host)) {
+      return Promise.reject(new Error(t('accounts.error.missing')))
+    }
+    const agent = settingsStore.get().cliAgents?.find((row) => row.id === host)
+    const resolved = resolveAgentExecutable(candidatesForHost(host, agent))
+    if (resolved) {
+      try {
+        await runHostLogout(resolved, host)
+      } catch {
+        // Still drop the local signed-in mark.
+      }
+    }
+    await new Promise((resolve) => setTimeout(resolve, 200))
+    clearHostAuthIdentityCache()
+    accountStore.applyLiveOAuth(host, null, false)
+    lastLiveOAuth.set(host, null)
+    return accountsPage()
+  })
+
   // --- conversations ---
   ipcMain.handle(IPC.convList, () => conversationStore.listMeta())
   ipcMain.handle(IPC.convGet, (_event, id: string) => conversationStore.get(id) ?? null)
@@ -5187,10 +5872,12 @@ return c as text`
         {
           approvalMode: settings.defaultApprovalMode ?? 'auto',
           thinkingLevel: parseThinkingLevel(settings.defaultThinkingLevel),
-          cliHost: defaultHost
+          cliHost: defaultHost,
+          accountId: accountIdForSession(workdir, defaultHost)
         }
       )
       if (defaultHost) promoteEphemeralConversation(conversation.id)
+      lastSeenConversationId = conversation.id
       const { messages: _messages, ...meta } = conversation
       void _messages
       publishConversations()
@@ -5317,6 +6004,9 @@ return c as text`
         cliHost.dispose(id)
         changeSetStore.clearConversation(id)
         conversationStore.switchHostTranscript(id, nextHost)
+        conversationStore.updateMeta(id, {
+          accountId: accountIdForSession(prev?.workingDirectory ?? null, nextHost)
+        })
         swarmSession.syncHostCursor(id, nextHost)
         // Empty buckets keep the previous host's model string — coerce so the
         // picker / context-window panel do not show a foreign VAV preset.
@@ -5377,17 +6067,17 @@ return c as text`
           ? hostOverride
           : (conversation.cliHost ?? null)
     const account = await readHostAccountInfo(host)
+    if (host) lastLiveOAuth.set(host, account.signedIn ? account.accountId : null)
     await quotaService.refreshForPanel(host)
+    const auth = conversationQuotaAuth(conversation, account)
     return {
       host,
       hostName: host ? displayNameForCliHost(host) : 'VAV',
-      signedIn: account.signedIn,
-      accountId: account.accountId,
-      plan: account.plan,
-      authKind: account.authKind,
-      windows: host
-        ? mergeQuotaWindowsPreferNewer(quotaService.get(host), conversation.quotaWindows ?? [])
-        : []
+      signedIn: auth.signedIn,
+      accountId: auth.accountId,
+      plan: auth.plan,
+      authKind: auth.authKind,
+      windows: auth.signedIn ? conversationHostQuota(conversation) : []
     }
   })
 
@@ -5956,24 +6646,20 @@ return c as text`
   ipcMain.handle(
     IPC.agentsListModels,
     (_event, host: string | null, force?: boolean) =>
-      listHostModels(host, settingsStore, {
-        force: force === true,
-        apiKey: secretStore.get()
-      })
+      listHostModels(host, settingsStore, vavModelListOptions(force))
   )
 
   ipcMain.handle(IPC.agentsGetModelCatalog, () => {
     const snap = getModelCatalogSnapshot()
     if (Object.keys(snap).length > 0) return snap
-    return seedModelCatalog(settingsStore)
+    return seedModelCatalog(settingsStore, vavModelListOptions())
   })
 
   ipcMain.handle(IPC.agentsPreloadModels, async (_event, force?: boolean) => {
     const catalog = await preloadHostModels(settingsStore, {
-      force: force === true,
+      ...vavModelListOptions(force),
       prefer: preferredModelHosts(),
-      onProgress: publishModelCatalog,
-      apiKey: secretStore.get()
+      onProgress: publishModelCatalog
     })
     publishModelCatalog(catalog)
     return catalog
@@ -6178,6 +6864,7 @@ return c as text`
     const window = BrowserWindow.fromWebContents(event.sender)
     if (!window || window.isDestroyed()) return
     notifications.noteConversationView(window.id, id)
+    lastSeenConversationId = id
     markResultViewed(id)
   })
 
@@ -6444,7 +7131,7 @@ if (!singleInstance) {
 
   app.whenReady().then(async () => {
     applyBranding()
-    // Login PATH via zsh -ilc is ~2s; start it now so model probes don't pay it sync.
+    // Login PATH via zsh -ilc is ~1s; start it now so spawn never pays it sync.
     void ensureLoginPath()
     protocol.handle('vav-local', async (request) => {
       try {
@@ -6544,7 +7231,9 @@ if (!singleInstance) {
         restoreMarker: t('tools.bashRestored')
       })
     }
-    fileSessionStore.bind(conversationStore)
+    fileSessionStore.bind(conversationStore, {
+      accountIdFor: (workdir) => accountIdForSession(workdir, null)
+    })
     applyTheme(settings.theme ?? DEFAULT_SETTINGS.theme)
     nativeTheme.on('updated', repaintChrome)
     watchSystemAccentColor()
@@ -6552,7 +7241,28 @@ if (!singleInstance) {
     registerIpc()
     notifications.applySettings()
     rebuildAppChrome()
-    if (!process.env.VAV_SNAPSHOT) quotaService.start()
+    if (!process.env.VAV_SNAPSHOT) {
+      quotaService.start()
+      void (async () => {
+        try {
+          const untitled = t('accounts.workspaceDefault')
+          const ctx = resolveWorkspaceContext(
+            conversationStore.listMeta(),
+            settingsStore.get(),
+            untitled,
+            lastSeenConversationId
+          )
+          rememberLiveOAuth(await syncOAuthProfiles(ctx.key, accountStore, { secrets: secretStore }))
+        } catch (err) {
+          console.error('[accounts] startup sync failed', err)
+        }
+      })()
+    }
+    if (!process.env.VAV_SNAPSHOT) {
+      void warmAgentLaunchCache(settingsStore.get()).catch((err) => {
+        console.warn('[agent-launch] warm failed', err)
+      })
+    }
 
     if (process.env.VAV_SNAPSHOT) {
       // Marketing captures should use default layout (tools open, files segment).
@@ -6631,7 +7341,7 @@ if (!singleInstance) {
       }, 2400)
       // Seed static catalogues immediately, then live-probe in the background.
       try {
-        publishModelCatalog(seedModelCatalog(settingsStore))
+        publishModelCatalog(seedModelCatalog(settingsStore, vavModelListOptions()))
       } catch {
         // non-fatal
       }
@@ -6639,7 +7349,7 @@ if (!singleInstance) {
         void preloadHostModels(settingsStore, {
           prefer: preferredModelHosts(),
           onProgress: publishModelCatalog,
-          apiKey: secretStore.get()
+          ...vavModelListOptions()
         })
           .then(publishModelCatalog)
           .catch((err) => console.warn('[agents] model preload failed', err))

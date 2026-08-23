@@ -31,6 +31,26 @@ export function pendingTabsFromLayout(
   return layoutLeaves(layout).filter(isPendingCliTabId).map(pendingTabFromId)
 }
 
+/** Swap a leaf tab id (pending picker → real PTY) without reshaping the tree. */
+export function replaceLayoutTabId(
+  node: TerminalLayoutNode | null,
+  fromId: string,
+  toId: string
+): TerminalLayoutNode | null {
+  if (!node) return null
+  if (fromId === toId) return node
+  if (node.type === 'leaf') {
+    return node.tabId === fromId ? { ...node, tabId: toId } : node
+  }
+  return {
+    ...node,
+    children: [
+      replaceLayoutTabId(node.children[0], fromId, toId)!,
+      replaceLayoutTabId(node.children[1], fromId, toId)!
+    ]
+  }
+}
+
 /**
  * Companion closed every live pane and reseeded a picker. Main still holds the
  * dead PTY tabs (hydrate projection is empty). Adopt the remote pending leaves

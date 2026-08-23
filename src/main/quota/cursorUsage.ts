@@ -11,12 +11,13 @@ import {
 import { windowsFromCursorPeriodPayload } from '@shared/quotaWindows'
 import type { QuotaWindow } from '@shared/types'
 import { execCliJson } from './cliProbe'
+import { CURSOR_ACCESS_SERVICE } from './hostPaths.ts'
 
 const execFileAsync = promisify(execFile)
 const USAGE_URL = 'https://api2.cursor.sh/aiserver.v1.DashboardService/GetCurrentPeriodUsage'
 const API_TIMEOUT_MS = 10_000
 const KEYCHAIN_TIMEOUT_MS = 3_000
-const ACCESS_SERVICE = 'cursor-access-token'
+export { CURSOR_ACCESS_SERVICE }
 
 async function readCursorAccessToken(): Promise<string | null> {
   const env = process.env.CURSOR_API_KEY?.trim()
@@ -25,7 +26,7 @@ async function readCursorAccessToken(): Promise<string | null> {
   try {
     const { stdout } = await execFileAsync(
       'security',
-      ['find-generic-password', '-s', ACCESS_SERVICE, '-w'],
+      ['find-generic-password', '-s', CURSOR_ACCESS_SERVICE, '-w'],
       { timeout: KEYCHAIN_TIMEOUT_MS, maxBuffer: 64 * 1024 }
     )
     const token = stdout.toString().trim()
@@ -64,8 +65,8 @@ export async function readCursorAuthIdentity(): Promise<string | null> {
   return info.accountId ? `user:${info.accountId}` : null
 }
 
-export async function fetchCursorAccountQuota(): Promise<QuotaWindow[]> {
-  const token = await readCursorAccessToken()
+export async function fetchCursorAccountQuota(ctx?: { token?: string }): Promise<QuotaWindow[]> {
+  const token = ctx?.token?.trim() || (await readCursorAccessToken())
   if (!token) return []
   const res = await net.fetch(USAGE_URL, {
     method: 'POST',

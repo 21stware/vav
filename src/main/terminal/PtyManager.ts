@@ -12,6 +12,9 @@ const execFileAsync = promisify(execFile)
 import type { AgentContextLaunchStrategy } from '@shared/agentContextInject'
 import { shellPath } from './StickyShell'
 import { loginPath, resolveAgentExecutable } from './loginPath'
+import { planCliAgentSpawn } from './cliAgentSpawn'
+import { unwrapAgentLaunch } from './unwrapAgentLaunch'
+import { rememberHostGrid, spawnGrid } from './lastHostGrid'
 import { ensureClaudeWorkspaceTrusted, isClaudeCodeBinary } from './claudeTrust'
 import { readPtsName, signalPosixPtyForegroundGroup } from './posixPtyForegroundGroup'
 import { SYNC_HOLD_MAX_MS, splitSynchronizedOutput } from '@shared/terminalSyncFrames'
@@ -44,9 +47,6 @@ type PtyPersistFile = {
   layouts: Record<string, ConversationPtyLayouts>
 }
 
-function shQuote(value: string): string {
-  return `'${value.replace(/'/g, `'\\''`)}'`
-}
 
 const IS_WINDOWS = process.platform === 'win32'
 
@@ -504,6 +504,8 @@ export class PtyManager {
   private syncHoldSince = new Map<string, number>()
   private bashFlushTimer: ReturnType<typeof setTimeout> | null = null
   private agentFlushTimer: ReturnType<typeof setTimeout> | null = null
+  /** First agent chunk is flushed immediately; later bursts keep the 32ms batch. */
+  private agentPrimed = new Set<string>()
   /** Runs only while at least one PTY is alive. */
   private statusTimer: ReturnType<typeof setInterval> | null = null
   /** Guards against a slow process-table read overlapping the next tick. */
@@ -684,6 +686,20 @@ export class PtyManager {
     this.pendingData.set(tabId, prev ? prev + data : data)
     const agent = this.isAgentPty(tabId)
     if (agent) {
+      // Codex can emit a complete first frame in ~15ms; holding it for 32ms
+      // is a visible blank. Still go through emitPending so an incomplete CSI
+      // / unclosed DEC 2026 tail is not leaked to xterm.
+      if (!this.agentPrimed.has(tabId)) {
+        this.agentPrimed.add(tabId)
+        const stillHolding = this.emitPending(tabId, false)
+        if (stillHolding && this.agentFlushTimer == null) {
+          this.agentFlushTimer = setTimeout(() => {
+            this.agentFlushTimer = null
+            this.flushPendingKind('agent')
+          }, AGENT_DATA_COALESCE_MS)
+        }
+        return
+      }
       if (this.agentFlushTimer != null) return
       this.agentFlushTimer = setTimeout(() => {
         this.agentFlushTimer = null
@@ -835,17 +851,19 @@ export class PtyManager {
         // Launch-time context via CLI flags (never PTY paste).
         const launch = applyLaunchContext(agentArgs, opts)
         contextFile = launch.contextFile
-        if (IS_WINDOWS) {
-          // Direct spawn on Windows.
-          file = resolved
-          args = agentArgs
-        } else {
-          // Login shell + exec: inherits user PATH/nvm/fnm, then replaces itself
-          // with the agent so Claude Code / Codex own the TTY immediately.
-          file = shellPath(shell)
-          const cmdline = [shQuote(resolved), ...agentArgs.map(shQuote)].join(' ')
-          args = ['-ilc', `exec ${cmdline}`]
-        }
+        // Skip npm/bash trampolines (Grok → ~/.grok/bin/grok, Cursor → bundled node).
+        const unwrapped = unwrapAgentLaunch(resolved, agentArgs)
+        Object.assign(baseEnv, unwrapped.env)
+        // Absolute path (the resolve cache after boot warm): exec directly.
+        // Login-shell wrap is only for a bare name the GUI PATH cannot see.
+        const planned = planCliAgentSpawn({
+          resolved: unwrapped.file,
+          agentArgs: unwrapped.args,
+          shell: shellPath(shell),
+          isWindows: IS_WINDOWS
+        })
+        file = planned.file
+        args = planned.args
       } else {
         // Do not open a shell full of ANSI errors — renderer shows Install panel.
         const name = opts.command.trim()
@@ -859,10 +877,11 @@ export class PtyManager {
       args = IS_WINDOWS ? ['-NoLogo'] : ['-il']
     }
 
+    const grid = spawnGrid(cols, rows)
     const proc = pty.spawn(file, args, {
       name: 'xterm-256color',
-      cols: Math.max(2, cols),
-      rows: Math.max(1, rows),
+      cols: grid.cols,
+      rows: grid.rows,
       cwd: safeCwd,
       // ConPTY is what makes a Windows shell resizable and cursor-addressable
       // at all; without it node-pty falls back to winpty's line discipline.
@@ -883,8 +902,8 @@ export class PtyManager {
       cwd: safeCwd,
       createdAt: opts.createdAt ?? Date.now(),
       outputBuffer: opts.restoreOutput ?? '',
-      appliedCols: Math.max(2, cols),
-      appliedRows: Math.max(1, rows),
+      appliedCols: grid.cols,
+      appliedRows: grid.rows,
       ptsName: IS_WINDOWS ? undefined : readPtsName(proc),
       // Bash starts idle (prompt paint is not a command). Agent TUIs start
       // running until the first poll / quiet gap.
@@ -912,6 +931,7 @@ export class PtyManager {
       }
       // Deliver any coalesced stdout before the exit marker.
       this.flushPendingData(id)
+      this.agentPrimed.delete(id)
       this.sessions.delete(id)
       if (diedOnItsOwn) {
         if (session.agentId == null) {
@@ -1048,6 +1068,7 @@ export class PtyManager {
       session.proc.resize(c, r)
       session.appliedCols = c
       session.appliedRows = r
+      rememberHostGrid(c, r)
       deliverForegroundWinch(session)
     } catch {
       // Process may have exited between measure and apply.
@@ -1071,6 +1092,7 @@ export class PtyManager {
     if (!session) return
     const conversationId = session.conversationId
     this.flushPendingData(tabId)
+    this.agentPrimed.delete(tabId)
     if (session.contextFile) {
       try {
         unlinkSync(session.contextFile)

@@ -3,7 +3,11 @@ import { describe, it } from 'node:test'
 import {
   classifyCodexRateLimitWindowKinds,
   codexWindowMinutesFromRecord,
+  attachQuotaNamespace,
+  latestQuotaWindowsByHost,
+  mergeNamespacedQuotaWindows,
   mergeQuotaWindows,
+  selectQuotaWindows,
   mergeQuotaWindowsPreferNewer,
   normalizeQuotaPercent,
   parseQuotaResetsAt,
@@ -171,6 +175,34 @@ describe('windowsFromCodexBackendPayload', () => {
   })
 })
 
+describe('latestQuotaWindowsByHost', () => {
+  it('keeps the newer sample per host from parked and active windows', () => {
+    const byHost = latestQuotaWindowsByHost([
+      {
+        cliHost: 'cursor',
+        quotaWindows: [
+          { id: 'monthly', kind: 'monthly', usedPercent: 10, resetsAt: null, updatedAt: 10 }
+        ],
+        hostTranscripts: {
+          grok: {
+            quotaWindows: [
+              { id: 'seven_day', kind: 'seven_day', usedPercent: 4, resetsAt: null, updatedAt: 5 }
+            ]
+          }
+        }
+      },
+      {
+        cliHost: 'cursor',
+        quotaWindows: [
+          { id: 'monthly', kind: 'monthly', usedPercent: 39, resetsAt: null, updatedAt: 20 }
+        ]
+      }
+    ])
+    assert.equal(byHost.get('cursor')?.[0]?.usedPercent, 39)
+    assert.equal(byHost.get('grok')?.[0]?.usedPercent, 4)
+  })
+})
+
 describe('mergeQuotaWindowsPreferNewer', () => {
   it('keeps the newer account poll over a stale live sample', () => {
     const merged = mergeQuotaWindowsPreferNewer(
@@ -231,7 +263,29 @@ describe('windowsFromGrokBillingPayload', () => {
 })
 
 describe('windowsFromCursorPeriodPayload', () => {
-  it('maps included plan percent and billing cycle end', () => {
+  it('maps premium and Grok/SWE pools', () => {
+    const windows = windowsFromCursorPeriodPayload(
+      {
+        billingCycleEnd: '1788969122000',
+        planUsage: {
+          apiPercentUsed: 100,
+          autoPercentUsed: 25.1685,
+          totalPercentUsed: 40.472
+        }
+      },
+      100
+    )
+    assert.deepEqual(
+      windows.map((w) => ({ id: w.id, kind: w.kind, usedPercent: w.usedPercent })),
+      [
+        { id: 'cursor_api', kind: 'cursor_api', usedPercent: 100 },
+        { id: 'cursor_auto', kind: 'cursor_auto', usedPercent: 25.1685 }
+      ]
+    )
+    assert.equal(windows[0]?.resetsAt, 1788969122000)
+  })
+
+  it('falls back to totalPercentUsed when pool percents are missing', () => {
     const windows = windowsFromCursorPeriodPayload(
       {
         billingCycleEnd: '1788969122000',
@@ -266,5 +320,27 @@ describe('windowsFromOpencodeGoUsagePayload', () => {
     assert.equal(windows[1]?.usedPercent, 42)
     assert.equal(windows[2]?.usedPercent, 21)
     assert.equal(windows[0]?.resetsAt, Date.parse('2026-08-15T04:52:50.951Z'))
+  })
+})
+
+describe('quota namespace isolation', () => {
+  it('never serves another identity or an untagged sample', () => {
+    const host = 'cursor'
+    const live = attachQuotaNamespace(
+      [{ id: 'monthly', kind: 'monthly', usedPercent: 39, resetsAt: null, updatedAt: 20 }],
+      host,
+      'oboochin@gmail.com'
+    )
+    const leftover = [
+      { id: 'monthly', kind: 'monthly', usedPercent: 12, resetsAt: null, updatedAt: 1 }
+    ]
+    assert.equal(selectQuotaWindows(live, host, 'cheng.12@live.cn').length, 0)
+    assert.equal(selectQuotaWindows(leftover, host, 'oboochin@gmail.com').length, 0)
+    assert.equal(selectQuotaWindows(live, host, null).length, 0)
+    assert.equal(mergeNamespacedQuotaWindows(host, 'cheng.12@live.cn', live, leftover).length, 0)
+    assert.equal(
+      mergeNamespacedQuotaWindows(host, 'oboochin@gmail.com', live, leftover)[0]?.usedPercent,
+      39
+    )
   })
 })

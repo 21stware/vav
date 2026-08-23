@@ -13,15 +13,66 @@ export function hostMayHaveAccountQuota(
   return typeof host === 'string' && ACCOUNT_QUOTA_HOST_SET.has(host)
 }
 
+/** Cache / stamp key: one subscription per host login, never shared. */
+export function quotaIdentityOf(identity: string | null | undefined): string {
+  return (identity ?? '').trim().toLowerCase()
+}
+
+export function quotaNamespace(
+  host: string,
+  identity: string | null | undefined
+): string {
+  return `${host}:${quotaIdentityOf(identity)}`
+}
+
+export function attachQuotaNamespace(
+  windows: QuotaWindow[],
+  host: string,
+  identity: string | null | undefined
+): QuotaWindow[] {
+  const ns = quotaNamespace(host, identity)
+  return windows.map((window) => ({ ...window, ns }))
+}
+
+/**
+ * Windows stamped for this host+identity only.
+ * Signed-out / unknown identity, or a sample from another login, is empty.
+ */
+export function selectQuotaWindows(
+  windows: QuotaWindow[] | null | undefined,
+  host: string,
+  identity: string | null | undefined
+): QuotaWindow[] {
+  const id = quotaIdentityOf(identity)
+  if (!id) return []
+  const ns = quotaNamespace(host, id)
+  return (windows ?? []).filter((window) => window.ns === ns)
+}
+
+export function mergeNamespacedQuotaWindows(
+  host: string,
+  identity: string | null | undefined,
+  ...sources: Array<QuotaWindow[] | null | undefined>
+): QuotaWindow[] {
+  if (!quotaIdentityOf(identity)) return []
+  let merged: QuotaWindow[] = []
+  for (const source of sources) {
+    merged = mergeQuotaWindowsPreferNewer(merged, selectQuotaWindows(source, host, identity))
+  }
+  return merged
+}
+
 const QUOTA_KIND_ORDER: Record<QuotaWindowKind, number> = {
   five_hour: 0,
   seven_day: 1,
   seven_day_opus: 2,
   seven_day_sonnet: 3,
-  monthly: 4,
-  primary: 5,
-  secondary: 6,
-  other: 7
+  cursor_api: 4,
+  cursor_auto: 5,
+  monthly: 6,
+  primary: 7,
+  secondary: 8,
+  other: 9
 }
 
 /**
@@ -182,10 +233,12 @@ function canonicalizeQuotaWindow(window: QuotaWindow): QuotaWindow | null {
   if (!window?.id || !Number.isFinite(window.usedPercent)) return null
   const pct = normalizeQuotaPercent(window.usedPercent)
   if (pct == null) return null
+  const ns = typeof window.ns === 'string' && window.ns.trim() ? window.ns.trim() : undefined
   return {
     ...window,
     usedPercent: pct,
-    resetsAt: parseQuotaResetsAt(window.resetsAt) ?? window.resetsAt ?? null
+    resetsAt: parseQuotaResetsAt(window.resetsAt) ?? window.resetsAt ?? null,
+    ...(ns ? { ns } : {})
   }
 }
 
@@ -384,21 +437,45 @@ export function windowsFromGrokBillingPayload(
   return sortQuotaWindows(windows)
 }
 
-/** Cursor CLI `POST …/GetCurrentPeriodUsage` — included plan pool. */
+/** Cursor CLI `POST …/GetCurrentPeriodUsage` — two monthly pools. */
 export function windowsFromCursorPeriodPayload(
   payload: unknown,
   now = Date.now()
 ): QuotaWindow[] {
   const data = asRecord(payload)
   const plan = asRecord(data?.planUsage)
-  const pct = normalizeQuotaPercent(finiteNumber(plan?.totalPercentUsed) ?? NaN)
+  if (!plan) return []
+  const resetsAt = parseQuotaResetsAt(data?.billingCycleEnd)
+  const named = normalizeQuotaPercent(finiteNumber(plan.apiPercentUsed) ?? NaN)
+  const firstParty = normalizeQuotaPercent(finiteNumber(plan.autoPercentUsed) ?? NaN)
+  const windows: QuotaWindow[] = []
+  if (named != null) {
+    windows.push({
+      id: 'cursor_api',
+      kind: 'cursor_api',
+      usedPercent: named,
+      resetsAt,
+      updatedAt: now
+    })
+  }
+  if (firstParty != null) {
+    windows.push({
+      id: 'cursor_auto',
+      kind: 'cursor_auto',
+      usedPercent: firstParty,
+      resetsAt,
+      updatedAt: now
+    })
+  }
+  if (windows.length > 0) return sortQuotaWindows(windows)
+  const pct = normalizeQuotaPercent(finiteNumber(plan.totalPercentUsed) ?? NaN)
   if (pct == null) return []
   return [
     {
       id: 'monthly',
       kind: 'monthly',
       usedPercent: pct,
-      resetsAt: parseQuotaResetsAt(data?.billingCycleEnd),
+      resetsAt,
       updatedAt: now
     }
   ]
@@ -447,6 +524,29 @@ export function mergeQuotaWindows(
     if (next) map.set(next.id, next)
   }
   return sortQuotaWindows([...map.values()])
+}
+
+/** Newest sample per host from parked + active conversation quota windows. */
+export function latestQuotaWindowsByHost(
+  conversations: Array<{
+    cliHost?: string | null
+    quotaWindows?: QuotaWindow[] | null
+    hostTranscripts?: Record<string, { quotaWindows?: QuotaWindow[] | null }>
+  }>
+): Map<string, QuotaWindow[]> {
+  const out = new Map<string, QuotaWindow[]>()
+  const consider = (host: string | null | undefined, windows: QuotaWindow[] | null | undefined): void => {
+    if (!host || !hostMayHaveAccountQuota(host) || !windows?.length) return
+    const prev = out.get(host)
+    out.set(host, prev ? mergeQuotaWindowsPreferNewer(prev, windows) : windows)
+  }
+  for (const conversation of conversations) {
+    consider(conversation.cliHost, conversation.quotaWindows)
+    for (const [key, bucket] of Object.entries(conversation.hostTranscripts ?? {})) {
+      consider(key, bucket.quotaWindows)
+    }
+  }
+  return out
 }
 
 /** Account poll + live stream: keep the newer sample per window id. */

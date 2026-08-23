@@ -11,6 +11,7 @@
  * key and the cache (see listHostModels.ts).
  */
 import type { ModelOption } from '@shared/types'
+import { isOfficialDeepSeekEndpoint, nativeDeepSeekModels } from '../../shared/vavModelList.ts'
 import { parseLiveModalities } from '../../shared/modelModalities.ts'
 import { baseUrlFor, detectProtocol } from '../../shared/vavProtocol.ts'
 
@@ -100,7 +101,7 @@ export async function fetchVavModels(input: VavModelProbeInput): Promise<VavMode
       })
       if (response.ok) {
         const body = (await response.json()) as Record<string, unknown>
-        return { models: parseModelOptions(body, target.protocol) }
+        return { models: filterModelsForEndpoint(endpoint, parseModelOptions(body, target.protocol)) }
       }
       lastError = `HTTP ${response.status}`
       if (!MISSING_ROUTE.has(response.status)) {
@@ -111,6 +112,52 @@ export async function fetchVavModels(input: VavModelProbeInput): Promise<VavMode
     }
   }
   return { models: [], error: lastError }
+}
+
+export { isOfficialDeepSeekEndpoint }
+
+/** Official DeepSeek hosts should never keep OpenRouter-style `vendor/model` rows. */
+export function filterModelsForEndpoint(endpoint: string, models: ModelOption[]): ModelOption[] {
+  if (!isOfficialDeepSeekEndpoint(endpoint)) return models
+  return nativeDeepSeekModels(models)
+}
+
+export function isVavAuthError(error: string): boolean {
+  return /\b401\b|\b403\b|unauthorized|invalid[_ ]?api[_ ]?key|authentication/i.test(error)
+}
+
+export interface ValidateVavApiKeyResult {
+  ok: boolean
+  authFailed: boolean
+  modelCount: number
+  error?: string
+}
+
+/**
+ * Connection test for a VAV key profile: list models on this endpoint.
+ * Do not send a chat with the app default model — that model often does not
+ * exist on this provider, and a 400 is not an invalid key.
+ */
+export async function validateVavApiKey(
+  endpoint: string,
+  apiKey: string,
+  options?: { fetchFn?: typeof fetch; timeoutMs?: number }
+): Promise<ValidateVavApiKeyResult> {
+  const probe = await fetchVavModels({
+    endpoint,
+    apiKey,
+    fetchFn: options?.fetchFn,
+    timeoutMs: options?.timeoutMs
+  })
+  if (!probe.error) {
+    return { ok: true, authFailed: false, modelCount: probe.models.length }
+  }
+  return {
+    ok: false,
+    authFailed: isVavAuthError(probe.error),
+    modelCount: 0,
+    error: probe.error
+  }
 }
 
 function parseModelOptions(

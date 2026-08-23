@@ -1225,6 +1225,18 @@ button.chip:active {
     var(--ring-accent);
 }
 
+.text-field:read-only {
+  color: var(--text-secondary);
+  background: transparent;
+  box-shadow: none;
+  cursor: default;
+}
+
+.text-field:read-only:focus {
+  background: transparent;
+  box-shadow: none;
+}
+
 .segmented {
   display: inline-flex;
   padding: 2px;
@@ -13199,19 +13211,17 @@ mark {
   gap: 14px;
 }
 
-.assoc-register-all {
+.assoc-toolbar {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 12px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--bg-raised);
+  justify-content: space-between;
+  gap: 16px;
 }
 
-.assoc-register-all-title {
-  font-weight: 600;
-  font-size: 13px;
+.assoc-toolbar p {
+  margin: 0;
+  flex: 1;
+  min-width: 0;
 }
 
 .assoc-list {
@@ -17510,7 +17520,8 @@ mark {
   min-width: 0;
 }
 
-.agents-vav-credentials .text-field {
+.agents-vav-credentials .text-field,
+.agents-vav-credentials select.text-field {
   flex: 1 1 auto;
   min-width: 0;
 }
@@ -18881,6 +18892,40 @@ html:has(.token-usage-popup) #root {
   font-weight: 500;
 }
 
+.token-usage-accounts-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.token-usage-account-chart {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.token-usage-account-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(72px, 2fr) auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.token-usage-account-name,
+.token-usage-account-pct {
+  font-size: 11px;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.token-usage-account-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .token-usage-muted {
   font-size: 11px;
   color: var(--text-secondary);
@@ -19130,6 +19175,10 @@ html:has(.token-usage-popup) #root {
    hidden, and @starting-style opacity:0 never commits until a click. */
 .settings-body-panel {
   opacity: 1;
+}
+
+.settings-body-panel[hidden] {
+  display: none;
 }
 
 .settings-body-panel.is-enter {
@@ -19823,6 +19872,10 @@ html:has(.token-usage-popup) #root {
   display: flex;
   gap: 8px;
   flex-wrap: wrap;
+}
+
+.about-section > .about-actions + .form-hint {
+  margin-top: 8px;
 }
 
 .about-update-progress {
@@ -20834,3 +20887,459 @@ html:has(.token-usage-popup) #root {
 }
 
 /* Popup menus are drawn by AppKit (lib/nativeMenu.ts), not styled here. */
+
+.accounts-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.accounts-stack > .form-hint,
+.accounts-inspector .form-hint {
+  margin-left: 0;
+  margin-top: 0;
+}
+
+.accounts-error {
+  color: var(--danger);
+}
+
+.accounts-split {
+  display: grid;
+  grid-template-columns: 220px minmax(0, 1fr);
+  gap: 20px;
+  align-items: start;
+  min-height: 320px;
+}
+
+.accounts-list-panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 320px;
+  max-height: min(36rem, calc(100dvh - 10rem));
+  border: 1px solid var(--border-subtle, color-mix(in srgb, var(--text) 10%, transparent));
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--bg-sunken) 55%, var(--bg-content));
+  overflow: hidden;
+}
+
+.accounts-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  padding: 6px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.accounts-group {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.accounts-group-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px;
+  min-height: 24px;
+  padding: 2px 4px 2px 8px;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+}
+
+.accounts-group-head > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.accounts-group-add.btn.sm.icon-only {
+  width: 22px;
+  height: 22px;
+  opacity: 0.7;
+}
+
+.accounts-group-add:hover,
+.accounts-group.is-creating .accounts-group-add {
+  opacity: 1;
+}
+
+.accounts-group.is-creating .accounts-group-add {
+  color: var(--accent);
+}
+
+.accounts-row-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+  border-radius: var(--radius-sm);
+}
+
+.accounts-row-wrap:hover {
+  background: var(--bg-hover);
+}
+
+.accounts-row-wrap.is-selected,
+.accounts-row-wrap.is-selected:hover {
+  background: var(--accent-soft);
+}
+
+.accounts-row {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 28px;
+  padding: 5px 8px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.accounts-row-mark {
+  flex: 0 0 6px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: transparent;
+}
+
+.accounts-row-mark.is-on {
+  background: var(--accent);
+}
+
+.accounts-row-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.accounts-row-name {
+  font-size: 12.5px;
+  font-weight: 550;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.accounts-row-wrap.is-selected .accounts-row-name {
+  color: var(--accent-text);
+}
+
+.accounts-row-sub,
+.accounts-row-detail {
+  font-size: 11px;
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.accounts-row-detail.is-ok {
+  color: var(--accent);
+}
+
+.accounts-row-detail.is-warn {
+  color: var(--warning);
+}
+
+.accounts-row-detail.is-danger {
+  color: var(--danger);
+}
+
+.accounts-inspector {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 2px 2px 4px;
+}
+
+.accounts-inspector.is-empty {
+  justify-content: center;
+  min-height: 160px;
+}
+
+.accounts-inspector .settings-form {
+  gap: 16px;
+}
+
+.accounts-inspector-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 28px;
+}
+
+.accounts-inspector-head:has(.form-hint) {
+  align-items: flex-start;
+}
+
+.accounts-inspector-heading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.accounts-inspector-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.accounts-inspector-title {
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  line-height: 1.25;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.accounts-badge {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  height: 20px;
+  padding: 0 7px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 550;
+  letter-spacing: 0.01em;
+  background: var(--accent-soft);
+  color: var(--accent-text);
+}
+
+.accounts-field-value {
+  min-height: 28px;
+  display: flex;
+  align-items: center;
+  padding: 0 2px;
+  font-size: 13px;
+  line-height: 1.35;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.accounts-key-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.accounts-key-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.accounts-key-actions .is-validated {
+  color: var(--success);
+}
+
+.accounts-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.accounts-meta-error {
+  color: var(--danger);
+}
+
+.accounts-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.accounts-tag {
+  font-size: 11px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: var(--bg-sunken);
+  color: var(--text-secondary);
+}
+
+.accounts-tag.is-current {
+  color: var(--accent);
+}
+
+.accounts-alert {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 12px;
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--danger) 10%, transparent);
+  color: var(--danger);
+  font-size: 12.5px;
+}
+
+.accounts-inspector-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-top: 2px;
+}
+
+.accounts-inspector-spacer {
+  flex: 1;
+}
+
+.accounts-usage,
+.accounts-compare {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 2px;
+}
+
+.accounts-usage-bar,
+.accounts-chart-track {
+  height: 6px;
+  border-radius: 999px;
+  background: var(--bg-hover);
+  overflow: hidden;
+}
+
+.accounts-usage-bar.is-indeterminate {
+  position: relative;
+}
+
+.accounts-usage-bar.is-indeterminate .accounts-usage-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 36%;
+  animation: empty-quota-indeterminate 1.1s var(--ease-out) infinite;
+}
+
+.accounts-quota-pending-line {
+  display: block;
+  height: 0.7em;
+  width: 5.5em;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+}
+
+.accounts-quota-pending-line.is-short {
+  width: 2.4em;
+}
+
+:root[data-reduce-motion='true'] .accounts-usage-bar.is-indeterminate .accounts-usage-fill {
+  width: 100%;
+  animation: none;
+  opacity: 0.45;
+}
+
+.accounts-usage-fill,
+.accounts-chart-fill {
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+}
+
+.accounts-usage-fill.is-capped,
+.accounts-chart-fill.is-capped {
+  background: var(--danger);
+}
+
+.accounts-usage-fill.is-warn {
+  background: var(--warning);
+}
+
+.accounts-alert.is-warning {
+  background: color-mix(in srgb, var(--warning) 12%, transparent);
+  color: var(--warning);
+}
+
+.accounts-after {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.accounts-after-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.accounts-inline-link {
+  border: 0;
+  padding: 0;
+  background: none;
+  color: var(--accent);
+  cursor: pointer;
+  font: inherit;
+}
+
+.accounts-inline-link:hover {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.accounts-quotas,
+.accounts-quota {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.accounts-quota-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 11.5px;
+  color: var(--text-secondary);
+}
+
+.accounts-chart {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.accounts-chart-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(80px, 2fr) auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.accounts-chart-label,
+.accounts-chart-value {
+  font-size: 11.5px;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.accounts-chart-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

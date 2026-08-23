@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { Check, CheckCircle2, FileText, Loader2, Plus } from 'lucide-react'
+import { Check, FileText, Loader2, Plus } from 'lucide-react'
 import type { FileAssociationStatus } from '@shared/ipc'
 import { useSessionStore } from '../../state/sessionStore'
 import { useT } from '../../i18n/useT'
@@ -13,10 +13,10 @@ import { Button, InlineAlert } from '../ui'
 export function FileAssociationsSettings(): React.JSX.Element {
   const t = useT()
   const showDialog = useSessionStore((s) => s.showDialog)
-  const showToast = useSessionStore((s) => s.showToast)
   const [rows, setRows] = useState<FileAssociationStatus[] | null>(null)
   const [busyId, setBusyId] = useState<string | null>(null)
   const [registering, setRegistering] = useState(false)
+  const [status, setStatus] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null)
 
   const refresh = useCallback(async (): Promise<void> => {
     setRows(await window.vav.settings.fileAssociations())
@@ -61,21 +61,21 @@ export function FileAssociationsSettings(): React.JSX.Element {
       onConfirm: () => {
         void (async () => {
           setBusyId(row.id)
+          setStatus(null)
           try {
             await window.vav.settings.setFileAssociation(row.id)
             await refresh()
-            showToast({
-              kind: 'success',
-              title:
+            setStatus({
+              tone: 'ok',
+              text:
                 PLATFORM === 'win32'
                   ? t('assoc.setSuccessWin', { label: row.label })
                   : t('assoc.setSuccess', { label: row.label })
             })
           } catch (err) {
-            showToast({
-              kind: 'error',
-              title: t('assoc.setFailed'),
-              description: (err as Error).message
+            setStatus({
+              tone: 'error',
+              text: `${t('assoc.setFailed')} ${(err as Error).message}`.trim()
             })
           } finally {
             setBusyId(null)
@@ -95,15 +95,15 @@ export function FileAssociationsSettings(): React.JSX.Element {
       onConfirm: () => {
         void (async () => {
           setBusyId(row.id)
+          setStatus(null)
           try {
             await window.vav.settings.unsetFileAssociation(row.id)
             await refresh()
-            showToast({ kind: 'success', title: t('assoc.unsetSuccess', { label: row.label }) })
+            setStatus({ tone: 'ok', text: t('assoc.unsetSuccess', { label: row.label }) })
           } catch (err) {
-            showToast({
-              kind: 'error',
-              title: t('assoc.setFailed'),
-              description: (err as Error).message
+            setStatus({
+              tone: 'error',
+              text: `${t('assoc.setFailed')} ${(err as Error).message}`.trim()
             })
           } finally {
             setBusyId(null)
@@ -121,29 +121,28 @@ export function FileAssociationsSettings(): React.JSX.Element {
       onConfirm: () => {
         void (async () => {
           setRegistering(true)
+          setStatus(null)
           try {
             const result = await window.vav.settings.registerAllFileAssociations()
             await refresh()
             if (result.failed.length === 0) {
-              showToast({
-                kind: 'success',
-                title:
+              setStatus({
+                tone: 'ok',
+                text:
                   PLATFORM === 'win32'
                     ? t('assoc.registerAllSuccessWin')
                     : t('assoc.registerAllSuccess', { n: result.updated.length })
               })
             } else {
-              showToast({
-                kind: 'error',
-                title: t('assoc.registerAllPartial'),
-                description: result.failed.map((f) => f.id).join(', ')
+              setStatus({
+                tone: 'error',
+                text: `${t('assoc.registerAllPartial')} ${result.failed.map((f) => f.id).join(', ')}`
               })
             }
           } catch (err) {
-            showToast({
-              kind: 'error',
-              title: t('assoc.setFailed'),
-              description: (err as Error).message
+            setStatus({
+              tone: 'error',
+              text: `${t('assoc.setFailed')} ${(err as Error).message}`.trim()
             })
           } finally {
             setRegistering(false)
@@ -155,26 +154,25 @@ export function FileAssociationsSettings(): React.JSX.Element {
 
   return (
     <div className="settings-form assoc-settings">
-      <p className="muted tiny">{intro}</p>
-
-      <div className="assoc-register-all">
-        <div>
-          <div className="assoc-register-all-title">{t('assoc.registerAllHeading')}</div>
-          <div className="muted tiny">
-            {PLATFORM === 'win32' ? t('assoc.registerAllHintWin') : t('assoc.registerAllHint')}
-          </div>
-        </div>
+      <div className="assoc-toolbar">
+        <p className="muted tiny">{intro}</p>
         <Button
           label={registering ? t('assoc.registering') : t('assoc.registerAll')}
-          variant="primary"
+          variant="ghost"
           size="sm"
-          icon={
-            registering ? <Loader2 className="spin" size={12} /> : <CheckCircle2 size={12} />
-          }
+          icon={registering ? <Loader2 className="spin" size={12} /> : undefined}
           disabled={registering}
           onClick={registerAll}
         />
       </div>
+      {status ? (
+        <div
+          className={`form-hint${status.tone === 'error' ? ' accounts-error' : ''}`}
+          role={status.tone === 'error' ? 'alert' : 'status'}
+        >
+          {status.text}
+        </div>
+      ) : null}
 
       <div className="assoc-list">
         {p0.map((row) => (

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import type { Conversation } from '../../shared/types.ts'
+import { attachQuotaNamespace } from '../../shared/quotaWindows.ts'
 import { buildAnalysisSnapshot } from './buildAnalysisSnapshot.ts'
 
 function conversation(partial: Partial<Conversation>): Conversation {
@@ -48,15 +49,19 @@ describe('buildAnalysisSnapshot', () => {
               costSource: 'estimated'
             }
           ],
-          quotaWindows: [
-            {
-              id: 'seven_day',
-              kind: 'seven_day',
-              usedPercent: 18,
-              resetsAt: 2_000,
-              updatedAt: 10
-            }
-          ]
+          quotaWindows: attachQuotaNamespace(
+            [
+              {
+                id: 'seven_day',
+                kind: 'seven_day',
+                usedPercent: 18,
+                resetsAt: 2_000,
+                updatedAt: 10
+              }
+            ],
+            'claude',
+            'ada@example.com'
+          )
         })
       ],
       cliAgents: [

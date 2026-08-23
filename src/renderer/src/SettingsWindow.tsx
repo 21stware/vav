@@ -8,7 +8,8 @@ import {
   Info,
   Keyboard,
   Palette,
-  Terminal
+  Terminal,
+  User
 } from 'lucide-react'
 import { resolveSettingsView, type SettingsView } from '@shared/ipc'
 import type { MessageKey } from '@shared/i18n'
@@ -33,11 +34,13 @@ import { FileAssociationsSettings } from './components/settings/FileAssociations
 import { KeyBindingsSettings } from './components/settings/KeyBindingsSettings'
 import { AboutSettings } from './components/settings/AboutSettings'
 import { AnalysisSettings } from './components/settings/AnalysisSettings'
+import { AccountsSettings } from './components/settings/AccountsSettings'
 
 const NAV_ICON = 14
 
 const CATEGORY_KEYS: { id: SettingsView; labelKey: MessageKey; icon: React.JSX.Element }[] = [
   { id: 'agents', labelKey: 'settings.nav.agents', icon: <Bot size={NAV_ICON} strokeWidth={1.75} /> },
+  { id: 'accounts', labelKey: 'settings.nav.accounts', icon: <User size={NAV_ICON} strokeWidth={1.75} /> },
   {
     id: 'analysis',
     labelKey: 'settings.nav.analysis',
@@ -172,14 +175,12 @@ export default function SettingsWindow(): React.JSX.Element {
       <div className="settings-main">
         <header className="settings-head">{title}</header>
         <div className="settings-body">
-          {/* Remount on switch for the enter fade. Skip it on first paint —
-              the window is often already mounted (warm/hidden), and an
-              opacity-0 start would stay blank until the next click. */}
           <div
             key={category}
             className={`settings-body-panel${animateEnter ? ' is-enter' : ''}`}
           >
             {category === 'analysis' && <AnalysisSettings />}
+            {category === 'accounts' && <AccountsSettings />}
             {category === 'workspace' && <WorkspaceSettings />}
             {category === 'appearance' && <AppearanceSettings />}
             {category === 'keybindings' && <KeyBindingsSettings />}

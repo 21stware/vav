@@ -21,8 +21,8 @@ export function AppearanceSettings(): React.JSX.Element {
   const t = useT()
   const settings = useSessionStore((s) => s.settings)
   const updateSettings = useSessionStore((s) => s.updateSettings)
-  const showToast = useSessionStore((s) => s.showToast)
   const systemAccent = useSessionStore((s) => s.systemAccentColor)
+  const [patternError, setPatternError] = useState<string | null>(null)
 
   const [fonts, setFonts] = useState<string[]>([])
   // Match applied tokens (system theme follows OS, not the light-only swatch table).
@@ -370,6 +370,7 @@ export function AppearanceSettings(): React.JSX.Element {
               }
               onClick={() => {
                 void (async () => {
+                  setPatternError(null)
                   const has = !!settings.customSurfacePatternUrl
                   if (has && settings.surfacePattern !== 'custom') {
                     void updateSettings({ surfacePattern: 'custom' })
@@ -378,14 +379,13 @@ export function AppearanceSettings(): React.JSX.Element {
                   const picked = await window.vav.settings.pickSurfacePatternImage()
                   if (!picked) return
                   if (!picked.ok) {
-                    showToast({
-                      kind: 'error',
-                      title: t(
+                    setPatternError(
+                      t(
                         picked.reason === 'no-alpha'
                           ? 'appearance.surfacePattern.needAlpha'
                           : 'appearance.surfacePattern.invalid'
                       )
-                    })
+                    )
                   }
                 })()
               }}
@@ -398,6 +398,11 @@ export function AppearanceSettings(): React.JSX.Element {
       <div className="form-hint">
         {t('appearance.surfacePatternHint')} {t('appearance.surfacePattern.customHint')}
       </div>
+      {patternError ? (
+        <div className="form-hint accounts-error" role="alert">
+          {patternError}
+        </div>
+      ) : null}
     </div>
   )
 }

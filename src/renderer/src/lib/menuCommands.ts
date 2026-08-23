@@ -193,6 +193,7 @@ export function handleMenuCommand(command: MenuCommand): void {
       store.setSidebarListMode('fileSessions')
       break
     case 'check-updates':
+      store.openSettings('about')
       void store.checkForUpdates()
       break
     case 'close-context': {

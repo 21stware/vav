@@ -6,8 +6,8 @@
  * - As soon as a diagram fence is detected, UI is visual (canvas), not a code block.
  * - Source lives only in data-b64 (for Copy). Never flash syntax-highlighted source
  *   once a visual frame exists.
- * - Each stream tick re-renders on top of the last good SVG; failures keep the
- *   previous frame until a new frame succeeds.
+ * - An open fence keeps the pending shell / last-good SVG; mermaid and vega
+ *   run only after the fence closes. Failures keep the previous frame.
  */
 
 import {
@@ -20,27 +20,10 @@ import {
 import { mdBlockActionButtons } from './mdBlockActions'
 import { normalizeDiagramSvgSize } from './diagramSvgPick'
 import { renderMermaidBlocks } from './mermaidRender'
+import { diagramKindForLang, type DiagramKind } from './diagramFence'
 
-export type DiagramKind = 'mermaid' | 'graphviz' | 'vegalite' | 'erd'
-
-const DIAGRAM_LANGS: Record<string, DiagramKind> = {
-  mermaid: 'mermaid',
-  graphviz: 'graphviz',
-  dot: 'graphviz',
-  gv: 'graphviz',
-  'vega-lite': 'vegalite',
-  vegalite: 'vegalite',
-  vega: 'vegalite',
-  vl: 'vegalite',
-  erd: 'erd',
-  er: 'erd',
-  erdiagram: 'erd'
-}
-
-export function diagramKindForLang(language: string): DiagramKind | null {
-  const key = language.trim().toLowerCase()
-  return DIAGRAM_LANGS[key] ?? null
-}
+export type { DiagramKind }
+export { diagramKindForLang }
 
 export function diagramFilename(kind: DiagramKind): string {
   switch (kind) {
@@ -467,6 +450,15 @@ export async function paintDiagramSource(
 /** Bucket width so cache hits stay valid across tiny reflows. */
 function vegaWidthBucket(px: number): number {
   return Math.max(280, Math.round(px / 40) * 40)
+}
+
+/** Re-apply last-good frames after `innerHTML` without parsing new source. */
+export function restoreDiagramSlots(root: HTMLElement, slots: DiagramSlotState[]): void {
+  const nodes = [...root.querySelectorAll<HTMLElement>('.md-diagram, .md-mermaid')]
+  for (let i = 0; i < nodes.length; i++) {
+    const html = slots[i]?.visualHtml
+    if (html) applyVisual(nodes[i]!, html)
+  }
 }
 
 /**

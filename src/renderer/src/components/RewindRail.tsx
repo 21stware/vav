@@ -102,6 +102,9 @@ export function RewindRail({
     const turn = turns[index]
     if (!turn || turn.id === lastJumpRef.current) return
     lastJumpRef.current = turn.id
+    // Trackpad haptic: tick once when the press-and-hold scrub lands on a new
+    // thread node. macOS-only; Linux/Windows IPC no-ops.
+    void window.vav.haptics.tap()
     onJump(turn.id)
   }
 

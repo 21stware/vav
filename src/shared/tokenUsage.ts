@@ -115,6 +115,8 @@ export function buildSnapshot(input: {
   costUsd?: number
   /** Caller-supplied rate table; defaults to the local per-model heuristic. */
   rates?: ModelRates
+  /** Settings → Accounts profile for this turn. */
+  accountId?: string | null
 }): TokenSnapshot {
   const cacheReadTokens = Math.max(0, input.usage.cacheRead)
   const cacheWriteTokens = Math.max(0, input.usage.cacheWrite)
@@ -138,7 +140,8 @@ export function buildSnapshot(input: {
     outputTokens,
     timestamp,
     estimatedCost,
-    costSource: fromProvider ? 'provider' : 'estimated'
+    costSource: fromProvider ? 'provider' : 'estimated',
+    ...(input.accountId ? { accountId: input.accountId } : {})
   }
 }
 

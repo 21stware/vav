@@ -163,24 +163,3 @@ export function describeError(message: string): string {
   return `请求失败：${text}`
 }
 
-/** One tiny call, used by the Settings "验证" button. */
-export async function validateApiKey(
-  endpoint: string,
-  apiKey: string,
-  model: string
-): Promise<{ ok: boolean; message: string }> {
-  const settings = { apiEndpoint: endpoint, maxTokens: 16 } as AppSettings
-  try {
-    const result = await streamWith(
-      buildModel(settings, model, 200_000),
-      { messages: [{ role: 'user', content: 'hi', timestamp: Date.now() }] },
-      { apiKey, maxTokens: 16, signal: AbortSignal.timeout(20_000) }
-    ).result()
-    if (result.stopReason === 'error' || result.stopReason === 'aborted') {
-      return { ok: false, message: describeError(result.errorMessage ?? '未知错误') }
-    }
-    return { ok: true, message: '验证成功 · 模型可达' }
-  } catch (err) {
-    return { ok: false, message: describeError((err as Error).message) }
-  }
-}

@@ -9,7 +9,29 @@ export const VAV_LEGACY_DEFAULT_MODELS = ['deepseek-chat', 'deepseek-v4-pro'] as
 const LABELS: Record<string, string> = {
   'deepseek-v4-flash-vision-exp': 'DeepSeek V4 Flash Vision Exp',
   'deepseek-v4-pro': 'DeepSeek V4 Pro',
-  'deepseek-v4-flash': 'DeepSeek V4 Flash'
+  'deepseek-v4-flash': 'DeepSeek V4 Flash',
+  'deepseek-chat': 'DeepSeek Chat',
+  'deepseek-reasoner': 'DeepSeek Reasoner'
+}
+
+export function isOfficialDeepSeekEndpoint(endpoint: string): boolean {
+  return /(?:^|[/.])deepseek\.(?:com|ai)(?:[:/]|$)/i.test(endpoint)
+}
+
+export function isNativeDeepSeekModelId(id: string): boolean {
+  return /^deepseek[-_]/i.test(id) && !id.includes('/')
+}
+
+export function nativeDeepSeekModels<T extends { id: string }>(models: T[]): T[] {
+  return models.filter((model) => isNativeDeepSeekModelId(model.id))
+}
+
+export function deepseekOfficialModels(): Array<{ id: string; label: string }> {
+  return Object.entries(LABELS).map(([id, label]) => ({
+    id,
+    label,
+    ...inferModalitiesFromId(id)
+  }))
 }
 
 export function prettyVavModelLabel(id: string): string {

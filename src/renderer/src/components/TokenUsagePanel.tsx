@@ -34,6 +34,10 @@ function quotaLabel(kind: QuotaWindowKind, t: TFn): string {
       return t('token.quotaWeeklySonnet')
     case 'monthly':
       return t('token.quotaMonthly')
+    case 'cursor_api':
+      return t('token.quotaCursorApi')
+    case 'cursor_auto':
+      return t('token.quotaCursorAuto')
     case 'primary':
       return t('token.quotaPrimary')
     case 'secondary':
@@ -331,6 +335,61 @@ export function TokenUsagePanel({
           <dd>{providerName || '—'}</dd>
         </div>
       </dl>
+
+      <section className="token-usage-section token-usage-accounts">
+        <div className="token-usage-accounts-head">
+          <div className="token-usage-heading">{t('token.accountUsage')}</div>
+          <button
+            type="button"
+            className="token-usage-btn secondary"
+            onClick={() => void window.vav.window.openSettings('accounts')}
+          >
+            {t('token.accountSettings')}
+          </button>
+        </div>
+        {(payload.accountUsage?.length ?? 0) > 1 ? (
+          <>
+            <AccountUsageBars rows={payload.accountUsage} />
+            <div className="token-usage-muted">
+              {t('token.accountSplit', {
+                list: payload.accountUsage
+                  .map((row) => `${row.name} ${formatCount(row.tokens)} tokens`)
+                  .join(' · ')
+              })}
+            </div>
+          </>
+        ) : (payload.accountUsage?.length ?? 0) === 1 ? (
+          <div className="token-usage-muted">
+            {t('token.accountSingle', { name: payload.accountUsage[0]!.name })}
+          </div>
+        ) : (
+          <div className="token-usage-muted">{t('token.accountEmpty')}</div>
+        )}
+      </section>
+    </div>
+  )
+}
+
+function AccountUsageBars({
+  rows
+}: {
+  rows: TokenUsageViewPayload['accountUsage']
+}): React.JSX.Element {
+  const max = Math.max(...rows.map((row) => row.tokens), 1)
+  return (
+    <div className="token-usage-account-chart">
+      {rows.map((row) => (
+        <div key={row.accountId} className="token-usage-account-row">
+          <span className="token-usage-account-name">{row.name}</span>
+          <div className="token-usage-bar">
+            <div
+              className="token-usage-bar-fill"
+              style={{ width: `${Math.max(4, (row.tokens / max) * 100)}%` }}
+            />
+          </div>
+          <span className="token-usage-account-pct">{Math.round(row.percent)}%</span>
+        </div>
+      ))}
     </div>
   )
 }
