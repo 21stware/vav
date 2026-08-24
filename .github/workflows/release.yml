@@ -52,6 +52,12 @@ jobs:
           node-version: 22
           cache: npm
 
+      # electron-trackpad-utils preinstalls setuptools via pip --user, which
+      # Homebrew Python (PEP 668) rejects. Same python3 must already have it.
+      - name: Python setuptools (electron-trackpad-utils)
+        if: runner.os == 'macOS'
+        run: python3 -m pip install --user --break-system-packages setuptools
+
       - run: npm ci
 
       # OfficeCLI binaries are gitignored; fetch the pinned host build into
