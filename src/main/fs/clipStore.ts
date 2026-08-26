@@ -26,6 +26,24 @@ function hashBytes(bytes: Buffer): string {
   return createHash('sha256').update(bytes).digest('hex').slice(0, 16)
 }
 
+export function writeClipBytes(input: {
+  filename: string
+  bytes: Buffer
+}): { ok: true; path: string; displayName: string } | { ok: false; error: string } {
+  const bytes = input.bytes
+  if (bytes.length === 0) return { ok: false, error: 'Empty clip' }
+  const displayName = safeFilename(input.filename, 'image.png')
+  const dir = join(CLIP_ROOT, hashBytes(bytes))
+  const dest = join(dir, displayName)
+  try {
+    mkdirSync(dir, { recursive: true })
+    if (!existsSync(dest)) writeFileSync(dest, bytes)
+    return { ok: true, path: dest, displayName }
+  } catch (err) {
+    return { ok: false, error: (err as Error).message || 'Failed to write clip' }
+  }
+}
+
 export function writeClip(input: {
   filename: string
   base64?: string
@@ -41,16 +59,5 @@ export function writeClip(input: {
   } catch {
     return { ok: false, error: 'Invalid clip payload' }
   }
-  if (bytes.length === 0) return { ok: false, error: 'Empty clip' }
-
-  const displayName = safeFilename(input.filename, hasB64 ? 'image.png' : 'app.html')
-  const dir = join(CLIP_ROOT, hashBytes(bytes))
-  const dest = join(dir, displayName)
-  try {
-    mkdirSync(dir, { recursive: true })
-    if (!existsSync(dest)) writeFileSync(dest, bytes)
-    return { ok: true, path: dest, displayName }
-  } catch (err) {
-    return { ok: false, error: (err as Error).message || 'Failed to write clip' }
-  }
+  return writeClipBytes({ filename: input.filename, bytes })
 }

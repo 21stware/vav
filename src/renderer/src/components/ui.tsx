@@ -323,6 +323,7 @@ export function Chip({
         <button
           type="button"
           className="chip-action"
+          data-testid="chip-action"
           title={actionTitle}
           disabled={disabled}
           onClick={(event) => {

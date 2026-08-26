@@ -1,5 +1,4 @@
 import {
-  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -9,24 +8,21 @@ import {
 } from 'react'
 import {
   ArrowUp,
-  ChevronDown,
   CornerUpLeft,
   FileText,
   MapPin,
   MessageSquare,
+  Paperclip,
   Quote,
+  Scan,
   Square,
   Trash2,
   X
 } from 'lucide-react'
-import type { ApprovalMode } from '@shared/types'
 import {
-  acpCurrentModeId,
-  acpSessionModes,
   acpSlashMenuMatches,
   type AcpAvailableCommand
 } from '@shared/acpSession'
-import type { MessageKey, TParams } from '@shared/i18n'
 import {
   MESSAGE_QUEUE_MAX,
   useSessionStore,
@@ -36,18 +32,19 @@ import { useWorkspaceStore } from '../state/workspaceStore'
 import { formatBytes, formatTokens } from '../lib/format'
 import { basename } from '../lib/path'
 import { formatBadge } from '../lib/previewBlocks'
-import { menuAnchorIfVisible, showMenu, type MenuItem } from '../lib/nativeMenu'
-import { keys } from '../lib/platform'
+import { keys, PLATFORM } from '../lib/platform'
 import { resolveSendKeyMode, shouldSendOnKeyDown } from '../lib/composerSendKey'
 import { isPickGestureActive } from '../lib/clickPick'
 import { agentModelHostKey } from '@shared/agentModels'
 import { imageInputLimits, modelAcceptsImageInput } from '@shared/agentImageInput'
 import { useT } from '../i18n/useT'
+import { attachPickedFiles, attachScreenshot } from '../lib/composerAttach'
 import { collectClipboardImages, imageSizeByPath, writeClipboardImage } from '../lib/pasteImages'
+import { prettyAccelerator, resolveKeyBindings } from '@shared/keyBindings'
 import { Button } from './ui'
 import { AgentModelPicker } from './AgentModelPicker'
 import { ComposerAttachments } from './ComposerAttachments'
-import { ThinkingLevelPicker } from './ThinkingLevelPicker'
+import { SessionRunPicker } from './SessionRunPicker'
 
 const NO_QUEUE: QueuedMessage[] = []
 
@@ -60,20 +57,6 @@ function retainComposerFocus(event: MouseEvent): void {
   if (!(target instanceof Element)) return
   if (target.closest('textarea, input, [contenteditable="true"]')) return
   if (target.closest('button, [role="button"]')) event.preventDefault()
-}
-
-function approvalModeOptions(
-  t: (key: MessageKey, params?: TParams) => string
-): { value: ApprovalMode; label: string; title: string }[] {
-  return [
-    { value: 'auto', label: t('approvalMode.auto'), title: t('approvalMode.autoTitle') },
-    {
-      value: 'bypass',
-      label: t('approvalMode.bypass'),
-      title: t('approvalMode.yolo')
-    },
-    { value: 'edit', label: t('approvalMode.edit'), title: t('approvalMode.editTitle') }
-  ]
 }
 
 /**
@@ -206,6 +189,7 @@ export function Composer({
   const queueLen = useSessionStore((s) => (s.messageQueues[conversationId] ?? NO_QUEUE).length)
   const queueFull = queueLen >= MESSAGE_QUEUE_MAX
   const sendKeySetting = useSessionStore((s) => s.settings.sendKey)
+  const keyBindings = useSessionStore((s) => s.settings.keyBindings)
   const focusTick = useSessionStore((s) => s.composerFocusTick)
   const focusId = useSessionStore((s) => s.composerFocusId)
 
@@ -213,19 +197,14 @@ export function Composer({
   const setAttachments = useSessionStore((s) => s.setAttachments)
   const addAttachments = useSessionStore((s) => s.addAttachments)
   const showToast = useSessionStore((s) => s.showToast)
+  const [attachBusy, setAttachBusy] = useState(false)
   const setPreviewRefs = useSessionStore((s) => s.setPreviewRefs)
   const send = useSessionStore((s) => s.send)
   const cancel = useSessionStore((s) => s.cancel)
-  const setApprovalMode = useSessionStore((s) => s.setApprovalMode)
-  const approvalMenuNonce = useSessionStore((s) => s.approvalMenuNonce)
-  const approvalConversationId = useSessionStore((s) => s.approvalConversationId)
 
   const textareaRef = useRef<HTMLTextAreaElement>(null)
-  const approvalTriggerRef = useRef<HTMLButtonElement>(null)
-  const seenApprovalMenuNonce = useRef(0)
   /** True while IME / dictation composition is active (Enter must not submit). */
   const composingRef = useRef(false)
-  const approvalMode: ApprovalMode = conversation?.approvalMode ?? 'auto'
   const [focused, setFocused] = useState(false)
   const imageLimits = imageInputLimits(conversation?.cliHost ?? null)
   const catalogModel = useSessionStore((s) => {
@@ -280,7 +259,6 @@ export function Composer({
   const COMPOSER_MIN_FOCUSED_ROWS = 3
   const COMPOSER_MAX_ROWS = 8
 
-  const modes = useMemo(() => approvalModeOptions(t), [t])
   // file-preview.rpml: when the file chip is dismissed, fall back to a generic
   // "Ask the agent…" prompt; when attached on a file session, prefer the
   // file-oriented phrasing.
@@ -293,6 +271,10 @@ export function Composer({
       : t('composer.placeholderCommand')
   const sendKey = resolveSendKeyMode(sendKeySetting)
   const sendShortcut = sendKey === 'enter' ? keys('↵') : keys('⌘↵')
+  const screenshotChord = prettyAccelerator(
+    resolveKeyBindings(keyBindings).screenshot,
+    PLATFORM
+  )
   // Keep idle hint short: e.g. "↵ Send · ⌘I Focus" (no drag-files copy).
   const shortcutHints = t('composer.placeholderHints', {
     send: sendShortcut,
@@ -327,34 +309,6 @@ export function Composer({
     element.style.overflowY = element.scrollHeight > maxHeight + 1 ? 'auto' : 'hidden'
   }, [draft, focused, inputDisabled])
 
-  const approvalItems = useMemo((): MenuItem[] => {
-    if (!conversation) return []
-    return modes.map((mode) => ({
-      label: mode.label,
-      checked: mode.value === approvalMode,
-      onSelect: () => void setApprovalMode(conversation.id, mode.value)
-    }))
-  }, [conversation, approvalMode, setApprovalMode, modes])
-
-  const openApprovalMenu = useCallback(
-    (anchor?: HTMLElement | null) => {
-      if (!conversation || approvalItems.length === 0) return
-      void showMenu(approvalItems, menuAnchorIfVisible(anchor))
-    },
-    [conversation, approvalItems]
-  )
-
-  useEffect(() => {
-    if (approvalMenuNonce === 0 || approvalMenuNonce === seenApprovalMenuNonce.current) return
-    if (approvalConversationId && approvalConversationId !== conversationId) return
-    seenApprovalMenuNonce.current = approvalMenuNonce
-    openApprovalMenu(approvalTriggerRef.current)
-  }, [approvalMenuNonce, approvalConversationId, conversationId, openApprovalMenu])
-
-  const activeMode = modes.find((m) => m.value === approvalMode) ?? modes[0]!
-  const approvalLabel = activeMode.label
-  const approvalTitle = activeMode.title
-
   const flushDraft = (value: string): void => {
     if (!conversationId) return
     if (draftFlushTimer.current) {
@@ -375,7 +329,19 @@ export function Composer({
 
   const handlePaste = async (event: ClipboardEvent<HTMLTextAreaElement>): Promise<void> => {
     const { filePaths, pathSizes, memoryImages, text } = collectClipboardImages(event.clipboardData)
-    if (filePaths.length === 0 && memoryImages.length === 0) return
+    if (filePaths.length === 0 && memoryImages.length === 0) {
+      const types = event.clipboardData ? [...event.clipboardData.types] : []
+      const looksLikeImage =
+        types.some((type) => type.startsWith('image/') || type === 'Files') ||
+        [...(event.clipboardData?.items ?? [])].some((item) => item.type.startsWith('image/'))
+      if (!looksLikeImage) return
+      event.preventDefault()
+      if (!conversationId) return
+      const fromOs = await window.vav.conversations.readClipboardImage()
+      if (!fromOs.ok) return
+      addAttachments(conversationId, [fromOs.path], { sizes: { [fromOs.path]: fromOs.bytes } })
+      return
+    }
     event.preventDefault()
     if (!conversationId) return
 
@@ -397,6 +363,12 @@ export function Composer({
         sizes[written.path] = written.bytes
       }
       if (incoming.length) addAttachments(conversationId, incoming, { sizes })
+      else {
+        const fromOs = await window.vav.conversations.readClipboardImage()
+        if (fromOs.ok) {
+          addAttachments(conversationId, [fromOs.path], { sizes: { [fromOs.path]: fromOs.bytes } })
+        }
+      }
     }
 
     if (filePaths.length) addAttachments(conversationId, filePaths, { sizes: pathSizes })
@@ -563,32 +535,58 @@ export function Composer({
         />
 
         <div className="composer-bar">
-          {conversationId ? <AgentModelPicker conversationId={conversationId} /> : null}
-          {conversationId ? <AcpSessionModePicker conversationId={conversationId} /> : null}
-          {conversationId ? <ThinkingLevelPicker conversationId={conversationId} /> : null}
-
-          <button
-            ref={approvalTriggerRef}
-            type="button"
-            className={`model-picker approval-picker${approvalMode === 'bypass' ? ' warning' : ''}`}
-            data-testid="approval-mode"
-            aria-label={t('composer.approvalMode')}
-            aria-haspopup="menu"
-            title={approvalTitle}
-            disabled={!conversation}
-            onClick={(event) => {
-              event.preventDefault()
-              event.stopPropagation()
-              openApprovalMenu(event.currentTarget)
-            }}
-          >
-            <span className="model-name">{approvalLabel}</span>
-            <ChevronDown size={11} />
-          </button>
+          <span className="composer-tools">
+            <button
+              type="button"
+              className="model-picker session-run-btn is-icon"
+              data-testid="composer-attach"
+              title={t('composer.attachFileTitle')}
+              aria-label={t('composer.attachFile')}
+              disabled={inputDisabled || attachBusy}
+              onClick={() => {
+                void (async () => {
+                  if (attachBusy) return
+                  setAttachBusy(true)
+                  try {
+                    await attachPickedFiles()
+                  } finally {
+                    setAttachBusy(false)
+                  }
+                })()
+              }}
+            >
+              <Paperclip size={12} strokeWidth={2} />
+            </button>
+            <button
+              type="button"
+              className="model-picker session-run-btn is-icon"
+              data-testid="composer-screenshot"
+              title={`${t('composer.screenshotTitle')} ${screenshotChord}`}
+              aria-label={t('composer.screenshot')}
+              disabled={inputDisabled || attachBusy}
+              onClick={() => {
+                void (async () => {
+                  if (attachBusy) return
+                  setAttachBusy(true)
+                  try {
+                    await attachScreenshot()
+                  } finally {
+                    setAttachBusy(false)
+                  }
+                })()
+              }}
+            >
+              <Scan size={12} strokeWidth={2} />
+            </button>
+            {conversationId ? <SessionRunPicker conversationId={conversationId} /> : null}
+          </span>
 
           <span className="spacer" />
 
-          {conversation && <ConversationContextRing conversationId={conversation.id} />}
+          <span className="composer-meta">
+            {conversationId ? <AgentModelPicker conversationId={conversationId} /> : null}
+            {conversation && <ConversationContextRing conversationId={conversation.id} />}
+          </span>
 
           {isRunning && (
             <Button
@@ -1095,43 +1093,6 @@ function ContextRing({
         />
       </svg>
       <span className="token-pct">{percent}%</span>
-    </button>
-  )
-}
-
-function AcpSessionModePicker({ conversationId }: { conversationId: string }): React.JSX.Element | null {
-  const t = useT()
-  const conversation = useSessionStore((s) => s.conversations.find((c) => c.id === conversationId))
-  const setAcpMode = useSessionStore((s) => s.setAcpMode)
-  const setAcpConfigOption = useSessionStore((s) => s.setAcpConfigOption)
-  const modes = acpSessionModes(conversation?.acpSession)
-  const current = acpCurrentModeId(conversation?.acpSession)
-  if (!conversation?.cliHost || modes.length === 0) return null
-  const active = modes.find((mode) => mode.id === current) ?? modes[0]!
-  return (
-    <button
-      type="button"
-      className="model-picker"
-      data-testid="acp-session-mode"
-      aria-label={t('composer.sessionMode')}
-      aria-haspopup="menu"
-      title={active.description || t('composer.sessionMode')}
-      onClick={(event) => {
-        event.preventDefault()
-        const items = modes.map((mode) => ({
-          label: mode.name,
-          checked: mode.id === current,
-          onSelect: () => {
-            const config = conversation.acpSession?.configOptions?.find((option) => option.category === 'mode')
-            if (config) void setAcpConfigOption(conversationId, config.id, mode.id)
-            else void setAcpMode(conversationId, mode.id)
-          }
-        }))
-        void showMenu(items, menuAnchorIfVisible(event.currentTarget))
-      }}
-    >
-      <span className="model-name">{active.name}</span>
-      <ChevronDown size={11} />
     </button>
   )
 }

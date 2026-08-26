@@ -35,6 +35,7 @@ export type AcceleratorKeyBindingId =
   | 'switchVavMode'
   | 'switchModel'
   | 'switchApproval'
+  | 'screenshot'
   | 'closeContext'
   | 'openSettings'
   | 'find'
@@ -193,6 +194,13 @@ export const KEY_BINDING_DEFS: readonly KeyBindingDef[] = [
     labelKey: 'shortcut.switchApproval',
     kind: 'accelerator',
     defaultAccelerator: 'CmdOrCtrl+Shift+P'
+  },
+  {
+    id: 'screenshot',
+    group: 'session',
+    labelKey: 'composer.screenshot',
+    kind: 'accelerator',
+    defaultAccelerator: 'CmdOrCtrl+A'
   },
   {
     id: 'closeContext',

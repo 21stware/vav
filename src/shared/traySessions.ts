@@ -56,7 +56,7 @@ export type ConversationActivityRow = {
 /** Swarm History still uses the agent-qualified form. Tray rows use the title only. */
 export function trayItemLabel(pane: TrayPane): string {
   if (pane.kind === 'agent') return `${pane.sessionTitle} - ${pane.paneTitle}`
-  if (pane.kind === 'bash') return `${pane.sessionTitle} · ${pane.paneTitle}`
+  if (pane.kind === 'bash') return pane.paneTitle
   return pane.sessionTitle
 }
 
@@ -259,6 +259,9 @@ export function groupTrayPanes(panes: TrayPane[]): TrayPaneGroup[] {
       const aDone = a.status === 'done' ? 1 : 0
       const bDone = b.status === 'done' ? 1 : 0
       if (aDone !== bDone) return aDone - bDone
+      const aRank = KIND_RANK[a.kind] ?? 10
+      const bRank = KIND_RANK[b.kind] ?? 10
+      if (aRank !== bRank) return aRank - bRank
       return b.createdAt - a.createdAt
     })
     return {

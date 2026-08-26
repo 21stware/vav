@@ -43,6 +43,14 @@ import type { OverlayNavigatePayload, OverlayPayload } from './overlayOpen'
 import type { AnalysisSnapshot } from './analysis'
 import type { ConversationActivityRow } from './traySessions'
 
+export type ScreenshotInitPayload = {
+  imagePath: string
+  locale: AppLocale
+  displayWidth: number
+  displayHeight: number
+  nonce: number
+}
+
 export type { AgentInstallRun } from './agentInstall'
 export type { OverlayNavigatePayload, OverlayPayload } from './overlayOpen'
 export type { AnalysisSnapshot } from './analysis'
@@ -828,12 +836,25 @@ export interface VavApi {
       name: string
     ): Promise<{ ok: true; conversations: ConversationMeta[] } | { ok: false; error: string }>
     remove(ids: string[]): Promise<{ removed: string[]; conversations: ConversationMeta[] }>
+    /** Delete a message and its descendants. Remaining siblings stay. */
+    deleteMessage(
+      id: string,
+      messageId: string
+    ): Promise<{
+      conversations: ConversationMeta[]
+      messages: ChatMessage[]
+      activeLeafId: string | null
+    } | null>
     revealInFinder(path: string): Promise<void>
     copyToClipboard(text: string): Promise<void>
     /** Plain text from the system clipboard (terminal ⌘V / Ctrl+V). */
     readClipboard(): Promise<string>
     /** Put a PNG on the system clipboard (base64, no data-URL prefix). */
     copyImageToClipboard(base64Png: string): Promise<{ ok: true } | { ok: false; error: string }>
+    /** Snapshot the OS clipboard image into a PNG clip (TIFF/PNG/etc.). */
+    readClipboardImage(): Promise<
+      { ok: true; path: string; bytes: number } | { ok: false; error: string }
+    >
     /** Shows the variant `messageId` belongs to; resolves to the new leaf. */
     selectBranch(conversationId: string, messageId: string): Promise<string | null>
     /** Points the thread at an exact node — used for not-yet-written branches. */
@@ -1020,6 +1041,19 @@ export interface VavApi {
       base64?: string
       text?: string
     }): Promise<{ ok: true; path: string; displayName: string } | { ok: false; error: string }>
+    /** Copy a clip-store PNG onto the system clipboard. */
+    copyImage(path: string): Promise<{ ok: true } | { ok: false; error: string }>
+    /** Native file picker — any file type, multi-select. */
+    pickAttachments(): Promise<{ ok: true; paths: string[] } | { ok: false; cancelled?: boolean }>
+    /**
+     * Drag-select a screen region, annotate, attach PNG.
+     * App windows stay visible and are included in the capture.
+     * Resolves after confirm / cancel / failure.
+     */
+    captureScreenshot(): Promise<
+      | { ok: true; path: string }
+      | { ok: false; cancelled?: boolean; error?: 'denied' | 'failed' | 'busy' }
+    >
     /** Save dialog + write text contents (markdown Copy/Save, file viewer). */
     saveAs(
       defaultName: string,
@@ -1412,6 +1446,20 @@ export interface VavApi {
     dismissPopupMenu(): Promise<boolean>
   }
 
+  /**
+   * Overlay-only: the fullscreen screenshot annotator.
+   * Composer uses {@link VavApi.files.captureScreenshot}.
+   */
+  screenshot: {
+    ready(): void
+    painted(): void
+    onInit(handler: (payload: ScreenshotInitPayload) => void): () => void
+    dismiss(): void
+    finish(payload: { ok: true; path: string } | { ok: false }): void
+    /** Let the overlay take key focus only while editing text. */
+    setKey(on: boolean): void
+  }
+
   notifications: {
     /** System notification authorization for the settings hint. */
     permission(): Promise<'granted' | 'denied' | 'unknown'>
@@ -1518,6 +1566,8 @@ export type MenuCommand =
   | 'switch-model'
   /** ⌘⇧P — open the composer permission (approval mode) menu. */
   | 'switch-approval'
+  /** Capture a screen region, annotate, attach to the composer. */
+  | 'screenshot'
   | 'send'
   /** Stop the in-flight agent turn for the active session. */
   | 'cancel-turn'
@@ -1610,11 +1660,13 @@ export const IPC = {
   convUseTempWorkdir: 'vav:conv:use-temp-workdir',
   convLocateWorkspace: 'vav:conv:locate-workspace',
   convRemove: 'vav:conv:remove',
+  convDeleteMessage: 'vav:conv:delete-message',
   convReveal: 'vav:conv:reveal',
   convCopy: 'vav:conv:copy',
   convClipboardRead: 'vav:conv:clipboard-read',
   /** PNG bytes as base64 (no data-URL prefix) → system clipboard as image. */
   convCopyImage: 'vav:conv:copy-image',
+  convClipboardReadImage: 'vav:conv:clipboard-read-image',
   convSelectBranch: 'vav:conv:select-branch',
   convSetLeaf: 'vav:conv:set-leaf',
   convSetPinned: 'vav:conv:set-pinned',
@@ -1663,6 +1715,15 @@ export const IPC = {
   filesWatch: 'vav:files:watch',
   filesDirty: 'vav:files:dirty',
   filesWriteClip: 'vav:files:write-clip',
+  filesCopyImage: 'vav:files:copy-image',
+  filesPickAttachments: 'vav:files:pick-attachments',
+  filesCaptureScreenshot: 'vav:files:capture-screenshot',
+  screenshotReady: 'vav:screenshot:ready',
+  screenshotInit: 'vav:screenshot:init',
+  screenshotPainted: 'vav:screenshot:painted',
+  screenshotDismiss: 'vav:screenshot:dismiss',
+  screenshotFinish: 'vav:screenshot:finish',
+  screenshotSetKey: 'vav:screenshot:set-key',
   filesSaveAs: 'vav:files:save-as',
   filesRename: 'vav:files:rename',
   filesTrash: 'vav:files:trash',

@@ -65,20 +65,18 @@ function useOutputtingDetail(conversationId: string | undefined): string | null 
   const conversation = useSessionStore((s) =>
     conversationId ? s.conversations.find((c) => c.id === conversationId) : undefined
   )
+  const turn = useSessionStore((s) => (conversationId ? s.turns[conversationId] : undefined))
   const settings = useSessionStore((s) => s.settings)
   const catalog = useSessionStore((s) => s.agentModelCatalog)
   const accountGroups = useAccountGroups()
   const t = useT()
 
   if (!conversation) return null
-  const host = conversation.cliHost ?? null
+  const host = (turn?.startedCliHost as typeof conversation.cliHost | undefined) ?? conversation.cliHost ?? null
+  const model = turn?.startedModel ?? conversation.model
+  const accountId = turn?.startedAccountId ?? conversation.accountId
   const catalogue = catalog[agentModelHostKey(host)]?.models ?? null
-  const modelLabel = labelForChatModel(
-    host,
-    conversation.model,
-    settings.customModels,
-    catalogue
-  )
+  const modelLabel = labelForChatModel(host, model, settings.customModels, catalogue)
   let agentName: string
   if (host && isStructuredCliHost(host)) {
     const named = enabledCliAgents(settings.cliAgents).find((agent) => agent.id === host)
@@ -86,9 +84,7 @@ function useOutputtingDetail(conversationId: string | undefined): string | null 
   } else {
     const rows = vavAccountsOf(accountGroups)
     const current =
-      rows.find((row) => row.id === conversation.accountId) ??
-      rows.find((row) => row.current) ??
-      rows[0]
+      rows.find((row) => row.id === accountId) ?? rows.find((row) => row.current) ?? rows[0]
     const endpoint = current?.endpoint ?? settings.apiEndpoint
     agentName = vendorDisplayName(endpoint, t('agents.customModel'))
   }

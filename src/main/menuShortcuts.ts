@@ -23,6 +23,7 @@ const KEY_BINDING_MENU_COMMAND: Partial<Record<keyof ResolvedKeyBindings, MenuCo
   switchVavMode: 'switch-vav-mode',
   switchModel: 'switch-model',
   switchApproval: 'switch-approval',
+  screenshot: 'screenshot',
   closeContext: 'close-context',
   openSettings: 'open-settings',
   find: 'find',

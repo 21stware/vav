@@ -108,3 +108,39 @@ test('Files view can switch from tree to columns', async () => {
     await harness.dispose()
   }
 })
+
+test('seeded git repo lists the dirty file on the Git tab', async () => {
+  const harness = await launchVav({ seedGit: true })
+  try {
+    const { page } = harness
+    await openFilesTray(page)
+    await page.locator('[data-testid="segment-git"]').click()
+    await expect(page.locator('[data-testid="git-panel"]')).toBeVisible()
+    await expect(page.locator('.git-panel-meta')).toContainText('main · 1 changes')
+    const row = page.locator('.git-change-row')
+    await expect(row).toHaveCount(1)
+    await expect(row.locator('.git-status-modified')).toHaveText('M')
+    await expect(row.locator('.git-change-path')).toHaveText('hello.md')
+  } finally {
+    await harness.dispose()
+  }
+})
+
+test('double-clicking a git change opens the session diff drawer', async () => {
+  const harness = await launchVav({ seedGit: true })
+  try {
+    const { page } = harness
+    await openFilesTray(page)
+    await page.locator('[data-testid="segment-git"]').click()
+    const row = page.locator('.git-change-row')
+    await expect(row).toBeVisible()
+    await row.dblclick()
+
+    const preview = page.locator('[data-testid="file-preview"]')
+    await expect(preview).not.toHaveClass(/is-collapsed/)
+    await expect(page.locator('.git-diff-filename')).toHaveText('hello.md')
+    await expect(page.locator('.diff-line.add')).toContainText('changed from e2e')
+  } finally {
+    await harness.dispose()
+  }
+})

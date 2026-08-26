@@ -37,6 +37,22 @@ export function isStructuredCliHost(id: string | null | undefined): id is CliHos
   return typeof id === 'string' && STRUCTURED_SET.has(id)
 }
 
+/** Built-in VAV bucket when a session has no CLI host. */
+export const DEFAULT_PROVIDER_ID = 'vav'
+
+/**
+ * Sidebar / grouping key for the session's chat provider.
+ * CLI host wins; otherwise the agent binary; otherwise VAV.
+ */
+export function conversationProviderId(conversation: {
+  cliHost?: string | null
+  agentBinaryName?: string | null
+}): string {
+  const id = conversation.cliHost || conversation.agentBinaryName
+  if (!id || id === DEFAULT_PROVIDER_ID) return DEFAULT_PROVIDER_ID
+  return id
+}
+
 /**
  * Settings / quick-launch default chat host.
  * `null`, `""`, `"vav"`, or an LLM vendor id → built-in VAV;

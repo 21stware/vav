@@ -74,6 +74,12 @@ import {
   type DriverEvent
 } from './drivers'
 import { shouldReplaceCliRuntime } from './cliWorkspaceRestart'
+import {
+  applyCliHistoryHandoff,
+  formatCliWorkspaceHandoff,
+  type CliHistoryHandoffMark
+} from './cliHistoryHandoff'
+import { shouldContinueHeldCliTurn, shouldDeferCliTurnFinish } from './cliTurnHold'
 import { createCliHistoryReplayGate, type CliHistoryReplayGate } from './cliHistoryReplay'
 import { inputJson, mapToolName, summarizeCliTool } from './drivers/toolMap'
 import { FileDraftCoalescer, writeToolDraft } from '@shared/writeToolDraft'
@@ -162,6 +168,11 @@ interface HostTurn {
    * start of the next prompt (Grok session/update dump).
    */
   replay: CliHistoryReplayGate
+  /**
+   * Host already returned from the live prompt while a plan / ask is parked.
+   * Accept must steer a follow-up on this same turn instead of sealing.
+   */
+  hostPromptClosed: boolean
 }
 
 interface HostRuntime {
@@ -206,6 +217,13 @@ export class CliAgentHost {
    * discards the process that still has the old cwd.
    */
   private cwdEpoch = new Map<string, number>()
+  /**
+   * Workspace switch dropped the host resume cursor. The next prompt gets the
+   * stored transcript prepended so the new session keeps the conversation.
+   */
+  private historyHandoff = new Map<string, CliHistoryHandoffMark>()
+  /** Model picked while a turn is live — apply when that turn ends. */
+  private pendingModel = new Map<string, string>()
 
   constructor(private deps: CliAgentHostDeps) {}
 
@@ -414,6 +432,22 @@ export class CliAgentHost {
     } else {
       runtime?.driver.respond(pending.requestId, allow ? 'allow' : 'deny', text)
     }
+    const continueHeld = shouldContinueHeldCliTurn({
+      hostPromptClosed: turn.hostPromptClosed,
+      remaining: turn.pendingPermissions.size,
+      allow,
+      alreadySteered: pending.synthetic === true
+    })
+    const sealHeldReject =
+      !allow && turn.hostPromptClosed && turn.pendingPermissions.size === 0
+    if (continueHeld || sealHeldReject) turn.hostPromptClosed = false
+    if (continueHeld) {
+      turn.error = undefined
+      turn.errorKind = undefined
+      turn.errorCode = undefined
+      turn.errorDetail = undefined
+      runtime?.driver.steer?.(text)
+    }
     const idx = turn.toolIndex.get(pending.toolCallId)
     if (idx != null) {
       const block = turn.blocks[idx]
@@ -442,6 +476,7 @@ export class CliAgentHost {
     }
     this.setPhase(conversationId, turn, 'working')
     pending.resolve(allow ? 'allow' : 'deny')
+    if (sealHeldReject) void this.finishTurn(conversationId, turn, true)
     return true
   }
 
@@ -450,10 +485,20 @@ export class CliAgentHost {
     this.disposeRuntime(conversationId)
     this.turns.delete(conversationId)
     this.cwdEpoch.delete(conversationId)
+    this.historyHandoff.delete(conversationId)
+    this.pendingModel.delete(conversationId)
   }
 
   /** Apply a model change to a live driver; dispose when the transport needs restart. */
   applyModel(conversationId: string, model: string): void {
+    if (this.turns.has(conversationId)) {
+      this.pendingModel.set(conversationId, model)
+      return
+    }
+    this.flushModel(conversationId, model)
+  }
+
+  private flushModel(conversationId: string, model: string): void {
     const runtime = this.runtimes.get(conversationId)
     if (!runtime) return
     const ok = runtime.driver.applyOptions?.({ model })
@@ -476,16 +521,36 @@ export class CliAgentHost {
   }
 
   /**
+   * Transcript edited (message delete). Drop the host resume cursor so the
+   * next turn follows the remaining VAV tree, not the deleted turns.
+   */
+  invalidateResume(conversationId: string): void {
+    const conversation = this.deps.conversations.get(conversationId)
+    if (!conversation || !isStructuredCliHost(conversation.cliHost)) return
+    this.markHistoryHandoff(conversationId, this.conversationCwd(conversationId))
+    this.clearResumeCursor(conversationId)
+    if (this.turns.has(conversationId)) this.cancel(conversationId)
+    this.disposeRuntime(conversationId, { replacing: true })
+  }
+
+  /**
    * Conversation root changed. Live drivers and resume cursors belong to the
    * old workspace — the next turn must spawn a fresh session in `cwd`.
+   * The stored transcript is handed off on that first prompt so the
+   * conversation continues.
    */
-  setWorkingDirectory(conversationId: string, cwd: string): void {
+  setWorkingDirectory(
+    conversationId: string,
+    cwd: string,
+    previousCwd?: string | null
+  ): void {
     const wanted = cwd || homedir()
     const runtime = this.runtimes.get(conversationId)
     if (!shouldReplaceCliRuntime(runtime?.cwd, wanted, this.starting.has(conversationId))) {
       return
     }
 
+    this.markHistoryHandoff(conversationId, previousCwd ?? runtime?.cwd ?? null)
     this.cwdEpoch.set(conversationId, (this.cwdEpoch.get(conversationId) ?? 0) + 1)
     this.clearResumeCursor(conversationId)
     if (this.turns.has(conversationId)) this.cancel(conversationId)
@@ -543,7 +608,8 @@ export class CliAgentHost {
       reasoningStartedAt: new Map(),
       permissionByRequest: new Map(),
       nestedDirty: new Set(),
-      replay: createCliHistoryReplayGate(conversation.messages)
+      replay: createCliHistoryReplayGate(conversation.messages),
+      hostPromptClosed: false
     }
     // For regenerate we mint a fresh assistant id
     if (!conversation.messages.some((m) => m.id === messageId && m.role === 'user')) {
@@ -561,7 +627,11 @@ export class CliAgentHost {
     try {
       const runtime = await this.ensureRuntime(conversationId)
       runtime.lastTouch = Date.now()
-      runtime.driver.prompt(prompt, extras)
+      const handed = this.consumeHistoryHandoff(conversationId, turn.parentId)
+      if (handed !== prompt) {
+        turn.prompt = handed
+      }
+      runtime.driver.prompt(handed, extras)
     } catch (err) {
       const extracted = extractRpcError(err)
       const described = await this.describeTurnError(
@@ -593,6 +663,7 @@ export class CliAgentHost {
       const cwdChanged = existing.cwd !== wanted
       if (cwdChanged || authChanged) {
         if (cwdChanged) {
+          this.markHistoryHandoff(conversationId, existing.cwd)
           this.cwdEpoch.set(
             conversationId,
             (this.cwdEpoch.get(conversationId) ?? 0) + 1
@@ -858,6 +929,18 @@ export class CliAgentHost {
         // resume cursor instead of treating the thread as user-aborted.
         if (finishKind !== 'quota' && (event.cancelled || finishKind === 'cancelled')) {
           turn.cancelled = true
+        }
+        if (
+          shouldDeferCliTurnFinish(turn.pendingPermissions.size, turn.cancelled)
+        ) {
+          // Plan / ask still waiting — do not seal the thread. Accept plan
+          // continues this same turn instead of starting a one-shot follow-up.
+          turn.hostPromptClosed = true
+          turn.error = undefined
+          turn.errorKind = undefined
+          turn.errorCode = undefined
+          turn.errorDetail = undefined
+          break
         }
         if (event.success || turn.cancelled) {
           if (event.error && !turn.cancelled) turn.error = event.error
@@ -1511,6 +1594,11 @@ export class CliAgentHost {
     if (!this.turns.has(conversationId)) return
     // Prevent double-finish from cancel grace + turn-finished race.
     this.turns.delete(conversationId)
+    const pendingModel = this.pendingModel.get(conversationId)
+    if (pendingModel) {
+      this.pendingModel.delete(conversationId)
+      this.flushModel(conversationId, pendingModel)
+    }
     this.flushBuffers(conversationId, turn)
     this.sealOpenReasoning(turn)
 
@@ -1591,6 +1679,31 @@ export class CliAgentHost {
         changeSet
       })
     }
+  }
+
+  private markHistoryHandoff(conversationId: string, previousCwd: string | null): void {
+    const conversation = this.deps.conversations.get(conversationId)
+    if ((conversation?.messages.length ?? 0) === 0) return
+    this.historyHandoff.set(conversationId, { previousCwd })
+  }
+
+  private consumeHistoryHandoff(conversationId: string, leafId: string | null): string {
+    const turn = this.turns.get(conversationId)
+    const prompt = turn?.prompt ?? ''
+    const mark = this.historyHandoff.get(conversationId)
+    if (!mark) return prompt
+    this.historyHandoff.delete(conversationId)
+    const conversation = this.deps.conversations.get(conversationId)
+    if (!conversation) return prompt
+    const handoff = formatCliWorkspaceHandoff({
+      messages: conversation.messages,
+      leafId,
+      excludeMessageId: turn?.parentId ?? null,
+      compactions: conversation.compactions,
+      previousCwd: mark.previousCwd,
+      nextCwd: this.conversationCwd(conversationId)
+    })
+    return applyCliHistoryHandoff(prompt, handoff)
   }
 
   private clearResumeCursor(conversationId: string): void {

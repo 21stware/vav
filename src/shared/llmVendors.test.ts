@@ -19,6 +19,12 @@ describe('llm vendors', () => {
     assert.equal(vendorIdFromEndpoint('https://generativelanguage.googleapis.com'), 'google')
     assert.equal(vendorIdFromEndpoint('https://api.together.xyz/v1'), 'together')
     assert.equal(vendorIdFromEndpoint('https://api.siliconflow.cn/v1'), 'siliconflow')
+    assert.equal(vendorIdFromEndpoint('https://open.bigmodel.cn/api/paas/v4'), 'bigmodel')
+    assert.equal(vendorIdFromEndpoint('https://api.z.ai/api/paas/v4'), 'bigmodel')
+    assert.equal(vendorFromEndpoint('https://open.bigmodel.cn/api/paas/v4')?.name, 'Zhipu')
+    assert.equal(vendorIdFromEndpoint('https://api.moonshot.cn/v1'), 'kimi')
+    assert.equal(vendorIdFromEndpoint('https://api.moonshot.ai/v1'), 'kimi')
+    assert.equal(vendorFromEndpoint('https://api.moonshot.cn/v1')?.name, 'Kimi')
   })
 
   it('treats unknown endpoints as custom', () => {

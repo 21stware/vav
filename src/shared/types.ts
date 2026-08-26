@@ -16,6 +16,8 @@ export type { CliHostKind, ProviderResumeCursor } from './cliHost'
 export { VAV_DEFAULT_MODEL_ID } from './vavModelList.ts'
 export {
   STRUCTURED_CLI_HOSTS,
+  DEFAULT_PROVIDER_ID,
+  conversationProviderId,
   displayNameForCliHost,
   isStructuredCliHost,
   resolveDefaultChatHost
@@ -789,7 +791,7 @@ export const PRESET_COLOR_TINTS: readonly Exclude<ColorTint, 'custom'>[] = COLOR
   (tint): tint is Exclude<ColorTint, 'custom'> => tint !== 'custom'
 )
 /** Sidebar list grouping; default is time buckets ("无分组" in the UI). */
-export type SidebarGroupingMode = 'none' | 'workspace'
+export type SidebarGroupingMode = 'none' | 'workspace' | 'provider'
 /** Per-conversation tool approval policy (main-chat.rpml). */
 export type ApprovalMode = 'auto' | 'bypass' | 'edit'
 
@@ -1063,7 +1065,7 @@ export interface AppSettings {
   /**
    * Default chat host for new / quick-launch sessions.
    * `null` or `"vav"` = no explicit default (current VAV profile).
-   * A {@link CliHostKind} or LLM vendor id (`deepseek`, `openrouter`, …)
+   * A {@link CliHostKind} or LLM vendor id (`deepseek`, `openrouter`, `bigmodel`, `kimi`, …)
    * is set only when the user clicks Set as default.
    */
   defaultAgentId: string | null

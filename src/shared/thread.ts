@@ -123,3 +123,58 @@ export function branchPoints(
   }
   return points
 }
+
+/** `rootId` plus every descendant, walking children (not the stored array order). */
+export function subtreeIds(messages: ChatMessage[], rootId: string): Set<string> {
+  const byParent = new Map<string | null, string[]>()
+  for (const message of messages) {
+    const key = message.parentId ?? null
+    const list = byParent.get(key)
+    if (list) list.push(message.id)
+    else byParent.set(key, [message.id])
+  }
+  const ids = new Set<string>()
+  const stack = [rootId]
+  while (stack.length) {
+    const id = stack.pop()!
+    if (ids.has(id)) continue
+    ids.add(id)
+    const kids = byParent.get(id)
+    if (kids) for (let i = kids.length - 1; i >= 0; i--) stack.push(kids[i]!)
+  }
+  return ids
+}
+
+export function pruneSubtree(
+  messages: ChatMessage[],
+  rootId: string
+): { messages: ChatMessage[]; removed: Set<string> } {
+  if (!messages.some((message) => message.id === rootId)) {
+    return { messages, removed: new Set() }
+  }
+  const removed = subtreeIds(messages, rootId)
+  return {
+    messages: messages.filter((message) => !removed.has(message.id)),
+    removed
+  }
+}
+
+/** Leaf to follow after a subtree delete. Keeps the current path when it survived. */
+export function leafAfterPrune(
+  remaining: ChatMessage[],
+  removed: Set<string>,
+  deletedParentId: string | null,
+  previousLeaf: string | null
+): string | null {
+  if (
+    previousLeaf &&
+    !removed.has(previousLeaf) &&
+    remaining.some((message) => message.id === previousLeaf)
+  ) {
+    return previousLeaf
+  }
+  if (deletedParentId && remaining.some((message) => message.id === deletedParentId)) {
+    return deepestLeaf(remaining, deletedParentId)
+  }
+  return newestLeafId(remaining)
+}

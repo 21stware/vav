@@ -12,6 +12,8 @@ export type LlmVendorId =
   | 'google'
   | 'together'
   | 'siliconflow'
+  | 'bigmodel'
+  | 'kimi'
   | 'custom'
 
 export interface LlmVendor {
@@ -29,7 +31,9 @@ export const LLM_VENDOR_CATALOGUE: readonly LlmVendor[] = [
   { id: 'xai', name: 'xAI', endpoint: 'https://api.x.ai/v1' },
   { id: 'google', name: 'Google', endpoint: 'https://generativelanguage.googleapis.com/v1beta' },
   { id: 'together', name: 'Together', endpoint: 'https://api.together.xyz/v1' },
-  { id: 'siliconflow', name: 'SiliconFlow', endpoint: 'https://api.siliconflow.cn/v1' }
+  { id: 'siliconflow', name: 'SiliconFlow', endpoint: 'https://api.siliconflow.cn/v1' },
+  { id: 'bigmodel', name: 'Zhipu', endpoint: 'https://open.bigmodel.cn/api/paas/v4' },
+  { id: 'kimi', name: 'Kimi', endpoint: 'https://api.moonshot.cn/v1' }
 ]
 
 export const LLM_CUSTOM_VENDOR: LlmVendor = {
@@ -78,6 +82,17 @@ function matchVendor(endpoint: string | null | undefined): LlmVendor | null {
   }
   if (host.includes('together.ai') || host.includes('together.xyz')) return vendorById('together')
   if (host.includes('siliconflow')) return vendorById('siliconflow')
+  if (
+    host.includes('bigmodel') ||
+    host.includes('zhipuai') ||
+    host === 'api.z.ai' ||
+    host.endsWith('.z.ai')
+  ) {
+    return vendorById('bigmodel')
+  }
+  if (host.includes('moonshot') || host === 'api.kimi.com' || host.endsWith('.kimi.com')) {
+    return vendorById('kimi')
+  }
   return null
 }
 

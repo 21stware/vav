@@ -280,6 +280,18 @@ describe('baseUrlFor', () => {
     )
   })
 
+  it('keeps already-versioned OpenAI roots such as BigModel /v4', () => {
+    assert.equal(
+      baseUrlFor('https://open.bigmodel.cn/api/paas/v4', 'openai'),
+      'https://open.bigmodel.cn/api/paas/v4'
+    )
+    assert.equal(
+      baseUrlFor('https://open.bigmodel.cn/api/paas/v4/chat/completions', 'openai'),
+      'https://open.bigmodel.cn/api/paas/v4'
+    )
+    assert.equal(baseUrlFor('https://api.moonshot.cn/v1', 'openai'), 'https://api.moonshot.cn/v1')
+  })
+
   it('agrees with detectProtocol on google endpoints', () => {
     const endpoint = 'https://generativelanguage.googleapis.com/v1beta'
     assert.equal(detectProtocol(endpoint, ''), 'google')

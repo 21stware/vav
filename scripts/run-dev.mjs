@@ -2,9 +2,11 @@ import { spawn } from 'node:child_process'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { prepareBrandedElectron } from './prepare-electron-brand.mjs'
+import { ensureMacScreencap } from './build-mac-screencap.mjs'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 
+ensureMacScreencap()
 prepareBrandedElectron()
 
 const child = spawn('npx', ['electron-vite', 'dev'], {

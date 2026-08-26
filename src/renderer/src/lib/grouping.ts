@@ -1,4 +1,10 @@
-import type { ConversationMeta, SidebarGroupingMode } from '@shared/types'
+import {
+  conversationProviderId,
+  displayNameForCliHost,
+  isStructuredCliHost,
+  type ConversationMeta,
+  type SidebarGroupingMode
+} from '@shared/types'
 import { basename } from './path'
 import { isTemporaryWorkspace } from './format'
 import { tt } from '../i18n/useT'
@@ -15,7 +21,9 @@ export interface ConversationGroup {
    */
   label: string
   /** Visual cue on the group header; omitted for time buckets. */
-  kind?: 'workspace' | 'time'
+  kind?: 'workspace' | 'time' | 'provider'
+  /** Provider id when kind is provider. */
+  providerId?: string
   /**
    * Absolute workdir when kind is workspace.
    * `null` = Default workspace shell (not a project path; not selectable).
@@ -142,6 +150,11 @@ export function groupConversations(
     return groups
   }
 
+  if (mode === 'provider') {
+    groups.push(...bucketByProvider(rest))
+    return groups
+  }
+
   const labels = bucketLabels()
   for (let bucket = 0; bucket < labels.length; bucket++) {
     const rows = rest.filter((c) => bucketOf(c.updatedAt, now) === bucket)
@@ -155,6 +168,40 @@ export function groupConversations(
     }
   }
   return groups
+}
+
+function providerLabel(key: string): string {
+  if (key === 'vav') return tt('agents.plainShell')
+  if (isStructuredCliHost(key)) return displayNameForCliHost(key)
+  return key
+}
+
+/** Groups by chat provider, ordered by the newest row inside each bucket. */
+function bucketByProvider(rows: ConversationMeta[]): ConversationGroup[] {
+  const map = new Map<string, ConversationMeta[]>()
+  for (const row of rows) {
+    const key = conversationProviderId(row)
+    const list = map.get(key)
+    if (list) list.push(row)
+    else map.set(key, [row])
+  }
+
+  return [...map.entries()]
+    .map(([key, conversations]) => {
+      const sorted = [...conversations].sort(byUpdatedDesc)
+      return {
+        key: `provider:${key}`,
+        label: providerLabel(key),
+        kind: 'provider' as const,
+        providerId: key,
+        conversations: sorted
+      }
+    })
+    .sort((a, b) => {
+      const aAt = a.conversations[0]?.updatedAt ?? 0
+      const bAt = b.conversations[0]?.updatedAt ?? 0
+      return bAt - aAt
+    })
 }
 
 /** Groups by workingDirectory, ordered by the newest row inside each bucket. */

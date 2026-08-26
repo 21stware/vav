@@ -49,6 +49,17 @@ test('transcript search strip finds no matches then closes', async () => {
   }
 })
 
+test('composer exposes attach and screenshot actions', async () => {
+  const harness = await launchVav()
+  try {
+    const { page } = harness
+    await expect(page.locator('[data-testid="composer-attach"]')).toBeVisible()
+    await expect(page.locator('[data-testid="composer-screenshot"]')).toBeVisible()
+  } finally {
+    await harness.dispose()
+  }
+})
+
 test('composer token ring opens the Context window popup', async () => {
   const harness = await launchVav()
   try {

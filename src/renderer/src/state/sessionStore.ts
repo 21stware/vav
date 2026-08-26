@@ -53,7 +53,7 @@ import { tt } from '../i18n/useT'
 import { isTemporaryWorkspace } from '../lib/format'
 import { isCompanionSessionShell } from '../lib/windowKind'
 import { compactionForLeaf, upsertCompaction } from '@shared/compaction'
-import { threadPath } from '@shared/thread'
+import { subtreeIds, threadPath } from '@shared/thread'
 import { getProjection, disposeProjection } from './StreamProjection'
 import { AGENT_TAB_ID, useWorkspaceStore } from './workspaceStore'
 import { isSwarmSurfaceActive } from '../lib/workdirSwitch'
@@ -248,13 +248,20 @@ export interface TurnRuntime {
   phase: TurnPhase
   toolCount: number
   awaitingToolCallId: string | null
+  /** Frozen at turn start — composer model picks must not rewrite Outputting. */
+  startedModel?: string
+  startedCliHost?: string | null
+  startedAccountId?: string | null
 }
 
 const IDLE_TURN: TurnRuntime = {
   isRunning: false,
   phase: 'idle',
   toolCount: 0,
-  awaitingToolCallId: null
+  awaitingToolCallId: null,
+  startedModel: undefined,
+  startedCliHost: undefined,
+  startedAccountId: undefined
 }
 
 /**
@@ -719,6 +726,9 @@ interface SessionState {
   renameConversation(id: string, title: string): Promise<void>
   beginRename(id: string | null): void
   requestDelete(ids: string[]): void
+  /** Confirm, then prune a message and its descendants from the active thread. */
+  requestDeleteMessage(messageId: string): void
+  deleteMessage(messageId: string): Promise<void>
   /** ⌘1 = Workspace; ⌘2+ = bash tabs in creation order (Agent first). */
   focusToolsSlot(slot: number): void
   setModel(id: string, model: string): Promise<void>
@@ -2434,6 +2444,40 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     get().focusComposer()
   },
 
+  requestDeleteMessage(messageId) {
+    const { activeId } = get()
+    if (!activeId) return
+    if (get().turns[activeId]?.isRunning) return
+    if (get().conversations.some((c) => c.id === activeId && c.archived)) return
+    const nodes = get().messages[activeId] ?? []
+    if (!nodes.some((message) => message.id === messageId)) return
+    const extra = Math.max(0, subtreeIds(nodes, messageId).size - 1)
+    get().showDialog({
+      title: tt('message.delete'),
+      body:
+        extra > 0
+          ? tt('message.deleteConfirmFollow', { count: extra })
+          : tt('message.deleteConfirm'),
+      confirmLabel: tt('common.delete'),
+      destructive: true,
+      onConfirm: () => void get().deleteMessage(messageId)
+    })
+  },
+
+  async deleteMessage(messageId) {
+    const { activeId } = get()
+    if (!activeId) return
+    if (get().turns[activeId]?.isRunning) return
+    if (get().conversations.some((c) => c.id === activeId && c.archived)) return
+    const result = await window.vav.conversations.deleteMessage(activeId, messageId)
+    if (!result) return
+    set((state) => ({
+      conversations: mergeConversationList(state.conversations, result.conversations),
+      messages: { ...state.messages, [activeId]: result.messages },
+      activeLeaf: { ...state.activeLeaf, [activeId]: result.activeLeafId }
+    }))
+  },
+
   async fork(messageId) {
     const state = get()
     const { activeId } = state
@@ -3062,9 +3106,18 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     const projection = getProjection(id)
 
     switch (event.type) {
-      case 'start':
+      case 'start': {
         projection.start()
-        patchTurn(set, id, { isRunning: true, phase: 'thinking', toolCount: 0, awaitingToolCallId: null })
+        const started = get().conversations.find((c) => c.id === id)
+        patchTurn(set, id, {
+          isRunning: true,
+          phase: 'thinking',
+          toolCount: 0,
+          awaitingToolCallId: null,
+          startedModel: started?.model,
+          startedCliHost: started?.cliHost ?? null,
+          startedAccountId: started?.accountId ?? null
+        })
         // New turn supersedes prior file-review cards (avoid stale "Could not load changes").
         set((state) => ({
           ...clearPriorChangeReviews(state, id),
@@ -3073,6 +3126,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
           errorBannerDetail: null
         }))
         break
+      }
 
       case 'user':
         // User message = next turn intent: drop previous review chrome immediately.

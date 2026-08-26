@@ -30,7 +30,15 @@ export function detectProtocol(endpoint: string, modelId = ''): VavProtocol {
     value.includes('/chat/completions') ||
     value.includes('openai') ||
     value.includes('openrouter') ||
+    value.includes('bigmodel') ||
+    value.includes('zhipu') ||
+    value.includes('moonshot') ||
+    /(?:^|[/.])kimi(?:\.|\/|$)/.test(value) ||
+    /\/paas\/v\d+/.test(value) ||
     model.startsWith('gpt-') ||
+    model.startsWith('glm-') ||
+    model.startsWith('moonshot') ||
+    model.startsWith('kimi') ||
     /^o[134]/.test(model)
   ) {
     return 'openai'
@@ -54,5 +62,5 @@ export function baseUrlFor(endpoint: string, protocol: VavProtocol): string {
   }
   base = base.replace(/\/v1\/messages$/, '').replace(/\/(v1\/)?chat\/completions$/, '')
   if (protocol === 'anthropic') return base.replace(/\/v1$/, '')
-  return /\/v1$/.test(base) ? base : `${base}/v1`
+  return /\/v\d+[a-z]*$/i.test(base) ? base : `${base}/v1`
 }

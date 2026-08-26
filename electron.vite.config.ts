@@ -78,7 +78,10 @@ export default defineConfig({
     },
     build: {
       rollupOptions: {
-        input: { index: resolve('src/renderer/index.html') }
+        input: {
+          index: resolve('src/renderer/index.html'),
+          screenshot: resolve('src/renderer/screenshot.html')
+        }
       }
     }
   }

@@ -9,6 +9,7 @@ import {
   installUiFocusTracking
 } from './uiFocus'
 import { requestCliSurface } from './cliSurfaceSwitch'
+import { attachScreenshot } from './composerAttach'
 
 /** Ensure the session list is visible when switching archive / file-session modes. */
 function ensureSidebarVisible(): void {
@@ -88,6 +89,9 @@ export function handleMenuCommand(command: MenuCommand): void {
       break
     case 'switch-approval':
       store.openApprovalMenu()
+      break
+    case 'screenshot':
+      void attachScreenshot()
       break
     case 'send': {
       // ⌘↵ is composer-only. Never fire while Find / sidebar filter / other

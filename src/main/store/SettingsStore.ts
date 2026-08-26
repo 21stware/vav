@@ -335,7 +335,9 @@ export class SettingsStore {
       )
     ]
     if (
-      s.sidebarGroupingMode !== 'none' && s.sidebarGroupingMode !== 'workspace'
+      s.sidebarGroupingMode !== 'none' &&
+      s.sidebarGroupingMode !== 'workspace' &&
+      s.sidebarGroupingMode !== 'provider'
     ) {
       // Drop legacy `source` grouping (sidebar-conversation-list.rpml).
       s.sidebarGroupingMode = 'none'

@@ -14,7 +14,10 @@ test('live ACP turn streams a reply and publishes session modes', async () => {
 
     const assistant = page.locator('[data-testid="message-assistant"]')
     await expect(assistant).toContainText('e2e acp reply', { timeout: 20_000 })
-    await expect(page.locator('[data-testid="acp-session-mode"]')).toContainText('Agent')
+    await expect(page.locator('[data-testid="session-run-controls"]')).toHaveAttribute(
+      'data-session-mode',
+      'agent'
+    )
 
     await page.locator('[data-testid="composer-input"]').fill('/')
     await expect(page.locator('[data-testid="acp-slash-compact"]')).toBeVisible()
@@ -30,12 +33,12 @@ test('live ACP session mode native menu reaches session/set_mode', async () => {
     const { page } = harness
     await page.locator('[data-testid="composer-input"]').fill('boot')
     await page.locator('[data-testid="composer-send"]').click()
-    const mode = page.locator('[data-testid="acp-session-mode"]')
-    await expect(mode).toContainText('Agent', { timeout: 20_000 })
+    const mode = page.locator('[data-testid="session-run-controls"]')
+    await expect(mode).toHaveAttribute('data-session-mode', 'agent', { timeout: 20_000 })
 
-    await mode.click()
+    await page.locator('[data-testid="session-run-mode"]').click()
     await chooseNativeMenu(page, 'Plan')
-    await expect(mode).toContainText('Plan')
+    await expect(mode).toHaveAttribute('data-session-mode', 'plan')
 
     await expect
       .poll(async () => {

@@ -63,7 +63,8 @@ test('⌘, opens Settings and ⌘⇧P opens the native approval menu', async () 
     await settings.evaluate(() => window.vav.window.closeSettings())
 
     await page.bringToFront()
-    await expect(page.locator('[data-testid="approval-mode"]')).toContainText('Auto')
+    const run = page.locator('[data-testid="session-run-controls"]')
+    await expect(run).toHaveAttribute('data-approval', 'auto')
     await pressAccelerator(harness, 'Meta+Shift+p')
     await expect
       .poll(async () => {
@@ -72,15 +73,15 @@ test('⌘, opens Settings and ⌘⇧P opens the native approval menu', async () 
       })
       .toEqual(expect.arrayContaining(['Auto', 'Bypass', 'Edit']))
     await chooseNativeMenu(page, 'Edit')
-    await expect(page.locator('[data-testid="approval-mode"]')).toContainText('Edit')
+    await expect(run).toHaveAttribute('data-approval', 'edit')
 
-    await page.locator('[data-testid="thinking-level"]').click()
+    await page.locator('[data-testid="session-run-thinking"]').click()
     await expect
       .poll(async () => {
         const items = await peekNativeMenu(page)
         return items?.map((item) => item.label) ?? []
       })
-      .toEqual(expect.arrayContaining(['Thinking level', 'Off', 'Low', 'Medium', 'High', 'Max']))
+      .toEqual(expect.arrayContaining(['Off', 'Low', 'Medium', 'High', 'Max']))
     await dismissNativeMenu(page)
   } finally {
     await harness.dispose()

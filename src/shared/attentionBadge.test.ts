@@ -7,6 +7,7 @@ import {
   completeAttentionId,
   dockBadgeLabel,
   firstCompleteConversation,
+  isForegroundConversation,
   type AttentionItem
 } from './attentionBadge.ts'
 
@@ -89,5 +90,35 @@ describe('completeAttentionCount', () => {
       ]),
       2
     )
+  })
+})
+
+describe('isForegroundConversation', () => {
+  const views = new Map<number, string>([[1, 'c1']])
+
+  it('is true only for the visible focused session', () => {
+    assert.equal(
+      isForegroundConversation('c1', { id: 1, visible: true, minimized: false }, views),
+      true
+    )
+  })
+
+  it('is false when the window is hidden or minimized', () => {
+    assert.equal(
+      isForegroundConversation('c1', { id: 1, visible: false, minimized: false }, views),
+      false
+    )
+    assert.equal(
+      isForegroundConversation('c1', { id: 1, visible: true, minimized: true }, views),
+      false
+    )
+  })
+
+  it('is false for another session or no focus', () => {
+    assert.equal(
+      isForegroundConversation('c2', { id: 1, visible: true, minimized: false }, views),
+      false
+    )
+    assert.equal(isForegroundConversation('c1', null, views), false)
   })
 })

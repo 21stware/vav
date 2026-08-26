@@ -7,7 +7,6 @@ import {
   globalShortcut,
   ipcMain,
   Menu,
-  nativeImage,
   nativeTheme,
   net,
   protocol,
@@ -112,7 +111,9 @@ import { VavPackService } from './store/VavPackService'
 import { FileSessionStore } from './store/FileSessionStore'
 import { SwarmHistoryStore } from './store/SwarmHistoryStore'
 import { FileService } from './fs/FileService'
-import { writeClip } from './fs/clipStore'
+import { isClipPath, writeClip, writeClipBytes } from './fs/clipStore'
+import { writePngToClipboard } from './clipboardImage'
+import { createScreenshotController } from './screenshot/ScreenshotSession'
 import { isFileSessionEligible } from '@shared/clipPath'
 import { OVERLAY_IMAGE_EXTS, shouldOpenAsOverlay } from '@shared/previewOverlay'
 import {
@@ -333,6 +334,7 @@ let tokenUsageWindow: BrowserWindow | null = null
 let providerAccountWindow: BrowserWindow | null = null
 /** Last BrowserWindow that held focus — Dock activate raises this, not always main. */
 let lastFocusedWindow: BrowserWindow | null = null
+let screenshotController: ReturnType<typeof createScreenshotController> | null = null
 /** Conversation currently shown in the token-usage panel (for live hydrate). */
 let tokenUsageConversationId: string | null = null
 /** Last conversation the user actually viewed — Accounts workspace follows this. */
@@ -970,6 +972,16 @@ function handleAgentEvent(event: TurnEvent): void {
   const conversation = conversationStore.get(event.conversationId)
   const title = conversation?.title ?? t('window.sessionFallback')
 
+  if (event.type === 'user') {
+    // appendMessage already auto-titles from the prompt; push it now so the
+    // sidebar / companion title do not wait for the turn to finish.
+    const detached = detachedWindows.get(event.conversationId)
+    if (detached && !detached.isDestroyed() && conversation) {
+      detached.setTitle(conversation.title)
+    }
+    publishConversations()
+    return
+  }
   if (event.type === 'start') {
     activeTurns.set(event.conversationId, 'running')
     refreshTraySessions()
@@ -1174,6 +1186,7 @@ function isAuxiliaryWindow(window: BrowserWindow): boolean {
   if (providerAccountWindow && !providerAccountWindow.isDestroyed() && window === providerAccountWindow) {
     return true
   }
+  if (screenshotController?.isOverlay(window)) return true
   return false
 }
 
@@ -2070,6 +2083,16 @@ function loadRenderer(window: BrowserWindow, query: Record<string, string> = {})
   } else {
     window.loadFile(join(__dirname, '../renderer/index.html'), { query: withTheme })
   }
+}
+
+/** Dedicated lightweight page — no App / xterm / office graph. */
+function loadScreenshotRenderer(window: BrowserWindow): void {
+  const base = process.env.ELECTRON_RENDERER_URL?.replace(/\/$/, '')
+  if (base) {
+    window.loadURL(`${base}/screenshot.html`)
+    return
+  }
+  window.loadFile(join(__dirname, '../renderer/screenshot.html'))
 }
 
 /** Category the next Settings paint should show. ⌘, parks on Appearance. */
@@ -4788,7 +4811,11 @@ function pickActivateWindow(): BrowserWindow | null {
   if (!windows.length) return null
 
   const last =
-    lastFocusedWindow && !lastFocusedWindow.isDestroyed() ? lastFocusedWindow : null
+    lastFocusedWindow &&
+    !lastFocusedWindow.isDestroyed() &&
+    !screenshotController?.isOverlay(lastFocusedWindow)
+      ? lastFocusedWindow
+      : null
   // Hidden warm Settings / token shells stay in getAllWindows — only raise them
   // when they were last focused and are still visible (or minimized).
   if (
@@ -4808,6 +4835,7 @@ function pickActivateWindow(): BrowserWindow | null {
 }
 
 function activateApp(): void {
+  screenshotController?.cancel()
   if (process.platform === 'darwin' && app.dock && !app.dock.isVisible()) {
     app.dock.show()
   }
@@ -5100,7 +5128,13 @@ function watchSystemAccentColor(): void {
   }
   // macOS has no accent-color-changed event — re-sample when a window focuses.
   app.on('browser-window-focus', (_event, window) => {
-    if (window && !window.isDestroyed()) lastFocusedWindow = window
+    if (
+      window &&
+      !window.isDestroyed() &&
+      !screenshotController?.isOverlay(window)
+    ) {
+      lastFocusedWindow = window
+    }
     publishSystemAccentColor(false)
     notifications.acknowledgeFocusedWindow(window)
   })
@@ -5524,6 +5558,24 @@ function appBuildNumber(): string {
 
 function registerIpc(): void {
   registerHapticsIpc()
+  screenshotController ??= createScreenshotController({ loadScreenshotRenderer })
+  ipcMain.handle(IPC.filesPickAttachments, async (event) => {
+    const parent = BrowserWindow.fromWebContents(event.sender)
+    const opts: Electron.OpenDialogOptions = {
+      properties: ['openFile', 'multiSelections']
+    }
+    const result = parent
+      ? await dialog.showOpenDialog(parent, opts)
+      : await dialog.showOpenDialog(opts)
+    if (result.canceled) return { ok: false as const, cancelled: true }
+    return { ok: true as const, paths: result.filePaths }
+  })
+  ipcMain.handle(IPC.filesCaptureScreenshot, (event) => screenshotController!.start(event))
+  ipcMain.on(IPC.screenshotReady, (event) => screenshotController?.ready(event))
+  ipcMain.on(IPC.screenshotPainted, (event) => screenshotController?.painted(event))
+  ipcMain.on(IPC.screenshotDismiss, () => screenshotController?.dismiss())
+  ipcMain.on(IPC.screenshotFinish, (_event, payload) => screenshotController?.finish(payload))
+  ipcMain.on(IPC.screenshotSetKey, (event, on: boolean) => screenshotController?.setKey(event, on))
   ipcMain.handle(IPC.secretsStatus, () => secretStore.status())
   ipcMain.handle(IPC.secretsUnlock, () => {
     const result = secretStore.unlock()
@@ -6446,7 +6498,7 @@ return c as text`
     agent.setWorkingDirectory(id, path)
     // Live CLI drivers + resume cursors are bound to the old root.
     if (prev !== path) {
-      cliHost.setWorkingDirectory(id, path)
+      cliHost.setWorkingDirectory(id, path, prev)
       swarmSession.clearForConversation(id)
     }
     fileService.watchRoot(id, path)
@@ -6503,6 +6555,21 @@ return c as text`
     }
   )
 
+  ipcMain.handle(IPC.convDeleteMessage, (_event, id: string, messageId: string) => {
+    const conversation = conversationStore.deleteMessage(id, messageId)
+    if (!conversation) return null
+    if (isStructuredCliHost(conversation.cliHost)) {
+      cliHost.invalidateResume(id)
+    }
+    conversationStore.flush()
+    publishConversations()
+    return {
+      conversations: conversationStore.listMeta(),
+      messages: conversation.messages,
+      activeLeafId: conversation.activeLeafId ?? null
+    }
+  })
+
   ipcMain.handle(IPC.convRemove, (_event, ids: string[]) => {
     const removed = conversationStore.remove(ids)
     for (const id of removed) {
@@ -6530,16 +6597,29 @@ return c as text`
 
   ipcMain.handle(IPC.convClipboardRead, () => clipboard.readText())
 
+  ipcMain.handle(IPC.convClipboardReadImage, () => {
+    try {
+      const image = clipboard.readImage()
+      if (image.isEmpty()) return { ok: false as const, error: 'empty' }
+      const bytes = image.toPNG()
+      const written = writeClipBytes({ filename: 'paste.png', bytes })
+      if (!written.ok) return written
+      return { ok: true as const, path: written.path, bytes: bytes.length }
+    } catch (err) {
+      return {
+        ok: false as const,
+        error: err instanceof Error ? err.message : String(err)
+      }
+    }
+  })
+
   ipcMain.handle(IPC.convCopyImage, (_event, base64Png: string) => {
     try {
       const raw = typeof base64Png === 'string' ? base64Png.trim() : ''
       if (!raw) return { ok: false as const, error: 'empty image' }
       // Accept accidental data-URL prefix from callers.
       const b64 = raw.includes(',') ? raw.slice(raw.indexOf(',') + 1) : raw
-      const image = nativeImage.createFromBuffer(Buffer.from(b64, 'base64'))
-      if (image.isEmpty()) return { ok: false as const, error: 'invalid png' }
-      clipboard.writeImage(image)
-      return { ok: true as const }
+      return writePngToClipboard(Buffer.from(b64, 'base64'))
     } catch (err) {
       return {
         ok: false as const,
@@ -6686,6 +6766,19 @@ return c as text`
       input: { filename: string; base64?: string; text?: string }
     ) => writeClip(input)
   )
+  ipcMain.handle(IPC.filesCopyImage, (_event, path: string) => {
+    try {
+      if (typeof path !== 'string' || !isClipPath(path)) {
+        return { ok: false as const, error: 'not a clip' }
+      }
+      return writePngToClipboard(readFileSync(path))
+    } catch (err) {
+      return {
+        ok: false as const,
+        error: err instanceof Error ? err.message : String(err)
+      }
+    }
+  })
   ipcMain.handle(IPC.filesWrite, (_event, path: string, content: string) =>
     fileService.writeTextFile(path, content)
   )

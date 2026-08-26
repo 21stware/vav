@@ -16,7 +16,7 @@ describe('shouldReplaceCliRuntime', () => {
     assert.equal(shouldReplaceCliRuntime(undefined, '/b', true), true)
   })
 
-  it('replaces when there is no live process (drop the old resume cursor)', () => {
+  it('replaces when there is no live process (fresh session in the new cwd)', () => {
     assert.equal(shouldReplaceCliRuntime(undefined, '/b', false), true)
   })
 })

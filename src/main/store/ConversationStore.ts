@@ -43,7 +43,7 @@ import {
   mergeQuotaWindows
 } from '@shared/tokenUsage'
 import { contextWindowFor } from '../agent/modelMeta'
-import { deepestLeaf, newestLeafId, threadPath } from '@shared/thread'
+import { deepestLeaf, leafAfterPrune, newestLeafId, pruneSubtree, threadPath } from '@shared/thread'
 import { defaultSessionTitle, isDefaultSessionTitle, t } from '@shared/i18n'
 import type { CliPaneBinding } from '@shared/cliPaneBinding'
 import { currentLocale } from '../i18n'
@@ -509,6 +509,35 @@ export class ConversationStore {
     conversation.updatedAt = Date.now()
     this.applyAutoTitle(conversation)
     this.markDirty(id)
+  }
+
+  /**
+   * Remove a message and its descendants. Sibling branches stay.
+   * Returns null when the id is unknown.
+   */
+  deleteMessage(id: string, messageId: string): Conversation | undefined {
+    const conversation = this.get(id)
+    if (!conversation) return undefined
+    const target = conversation.messages.find((message) => message.id === messageId)
+    if (!target) return undefined
+    const { messages, removed } = pruneSubtree(conversation.messages, messageId)
+    if (removed.size === 0) return conversation
+    conversation.messages = messages
+    conversation.activeLeafId = leafAfterPrune(
+      messages,
+      removed,
+      target.parentId ?? null,
+      conversation.activeLeafId ?? null
+    )
+    if (conversation.compactions?.length) {
+      conversation.compactions = conversation.compactions.filter(
+        (compaction) =>
+          !removed.has(compaction.leafId) && !removed.has(compaction.keepAfterMessageId)
+      )
+    }
+    conversation.updatedAt = Date.now()
+    this.markDirty(id)
+    return conversation
   }
 
   replaceMessage(id: string, message: ChatMessage): void {

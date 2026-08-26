@@ -42,3 +42,18 @@ export function dockBadgeLabel(count: number): string {
 export function completeAttentionCount(items: AttentionItem[]): number {
   return items.reduce((n, item) => n + (item.kind === 'complete' ? 1 : 0), 0)
 }
+
+/**
+ * Hidden / minimized windows stay "focused" in Electron after ⌘W.
+ * Those must not count as looking at the session — otherwise Done never
+ * badges the Dock and never lands in the tray.
+ */
+export function isForegroundConversation(
+  conversationId: string,
+  focused: { id: number; visible: boolean; minimized: boolean } | null,
+  viewByWindow: ReadonlyMap<number, string>
+): boolean {
+  if (!conversationId || !focused) return false
+  if (!focused.visible || focused.minimized) return false
+  return viewByWindow.get(focused.id) === conversationId
+}

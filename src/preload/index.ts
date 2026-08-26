@@ -10,6 +10,7 @@ import {
   type ProviderAccountViewPayload,
   type SwarmHistoryResumeEvent,
   type TokenUsageViewPayload,
+  type ScreenshotInitPayload,
   type VavApi
 } from '@shared/ipc'
 import type { AppSettings, FileSortKey, ShellKind } from '@shared/types'
@@ -121,12 +122,18 @@ const api: VavApi = {
     locateWorkspace: (id: string, destinationDir: string, name: string) =>
       ipcRenderer.invoke(IPC.convLocateWorkspace, id, destinationDir, name),
     remove: (ids: string[]) => ipcRenderer.invoke(IPC.convRemove, ids),
+    deleteMessage: (id: string, messageId: string) =>
+      ipcRenderer.invoke(IPC.convDeleteMessage, id, messageId),
     revealInFinder: (path: string) => ipcRenderer.invoke(IPC.convReveal, path),
     copyToClipboard: (text: string) => ipcRenderer.invoke(IPC.convCopy, text),
     readClipboard: () => ipcRenderer.invoke(IPC.convClipboardRead) as Promise<string>,
     copyImageToClipboard: (base64Png: string) =>
       ipcRenderer.invoke(IPC.convCopyImage, base64Png) as Promise<
         { ok: true } | { ok: false; error: string }
+      >,
+    readClipboardImage: () =>
+      ipcRenderer.invoke(IPC.convClipboardReadImage) as Promise<
+        { ok: true; path: string; bytes: number } | { ok: false; error: string }
       >,
     selectBranch: (id: string, messageId: string) =>
       ipcRenderer.invoke(IPC.convSelectBranch, id, messageId),
@@ -225,6 +232,12 @@ const api: VavApi = {
     onDirty: (handler) => subscribe(IPC.filesDirty, handler),
     pathForFile: (file: File) => webUtils.getPathForFile(file),
     writeClip: (input) => ipcRenderer.invoke(IPC.filesWriteClip, input),
+    copyImage: (path) =>
+      ipcRenderer.invoke(IPC.filesCopyImage, path) as Promise<
+        { ok: true } | { ok: false; error: string }
+      >,
+    pickAttachments: () => ipcRenderer.invoke(IPC.filesPickAttachments),
+    captureScreenshot: () => ipcRenderer.invoke(IPC.filesCaptureScreenshot),
     saveAs: (defaultName: string, content: string) =>
       ipcRenderer.invoke(IPC.filesSaveAs, defaultName, content),
     rename: (path: string, newName: string) => ipcRenderer.invoke(IPC.filesRename, path, newName),
@@ -430,6 +443,25 @@ const api: VavApi = {
     onSwarmHistoryResume: (handler) =>
       subscribe<SwarmHistoryResumeEvent>(IPC.swarmHistoryResume, handler),
     relaunch: () => ipcRenderer.invoke(IPC.windowRelaunch)
+  },
+
+  screenshot: {
+    ready: () => {
+      ipcRenderer.send(IPC.screenshotReady)
+    },
+    painted: () => {
+      ipcRenderer.send(IPC.screenshotPainted)
+    },
+    onInit: (handler) => subscribe<ScreenshotInitPayload>(IPC.screenshotInit, handler),
+    dismiss: () => {
+      ipcRenderer.send(IPC.screenshotDismiss)
+    },
+    finish: (payload) => {
+      ipcRenderer.send(IPC.screenshotFinish, payload)
+    },
+    setKey: (on) => {
+      ipcRenderer.send(IPC.screenshotSetKey, on)
+    }
   },
 
   notifications: {

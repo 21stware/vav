@@ -34,20 +34,11 @@ export function modelLabel(id: string): string {
   return PRESET_MODELS.find((model) => model.id === id)?.label ?? id
 }
 
-/** Curved tree stub for a nested Swarm child — quarter-arc into the row. */
-function ConvTreeGuide({ last }: { last: boolean }): React.JSX.Element {
-  return (
-    <svg className="conv-tree-guide" viewBox="0 0 16 30" preserveAspectRatio="xMinYMid meet" aria-hidden>
-      {last ? (
-        <path d="M1 0 V9 A6 6 0 0 0 7 15" />
-      ) : (
-        <>
-          <path d="M1 0 V30" />
-          <path d="M1 9 A6 6 0 0 0 7 15" />
-        </>
-      )}
-    </svg>
-  )
+type SwarmBracketKind = 'first' | 'mid' | 'last'
+
+/** Left bracket for a Swarm cluster — ┌─ / ├─ / └─, not a parent→child tree. */
+function ConvBracket({ kind }: { kind: SwarmBracketKind }): React.JSX.Element {
+  return <span className={`conv-bracket is-${kind}`} aria-hidden />
 }
 
 /** Running CLI agent display name (sidebar-conversation-list.rpml · Agent 类型). */
@@ -60,10 +51,15 @@ function agentTypeLabel(
   return cliAgents.find((a) => a.id === id)?.name ?? id
 }
 
+type Subtitle =
+  | { kind: 'status'; text: string }
+  | { kind: 'meta'; age: string; dir: string | null }
+
 /**
  * Subtitle slot, resolved by the priority ladder in
  * sidebar-conversation-list.rpml (annotation 2 → 副标题).
  * Running: `{AgentType} · 流式中 · {Model}` / `{AgentType} · 后台运行 · N 工具`.
+ * Idle: `{相对时间} · {目录}`.
  */
 function subtitleFor(
   conversation: ConversationMeta,
@@ -74,28 +70,28 @@ function subtitleFor(
   agentLabel: string | null,
   /** Workspace grouping already labels the bucket — hide the path under each row. */
   hideWorkdir = false
-): string {
-  if (turn?.awaitingToolCallId) return t('sidebar.awaitingAnswer')
+): Subtitle {
+  if (turn?.awaitingToolCallId) return { kind: 'status', text: t('sidebar.awaitingAnswer') }
   if (turn?.isRunning && isActive) {
     const core = t('sidebar.streaming', { model: modelLabel(conversation.model) })
-    return agentLabel ? `${agentLabel} · ${core}` : core
+    return { kind: 'status', text: agentLabel ? `${agentLabel} · ${core}` : core }
   }
   if (turn?.isRunning) {
     const core = t('sidebar.backgroundRunning', { count: turn.toolCount })
-    return agentLabel ? `${agentLabel} · ${core}` : core
+    return { kind: 'status', text: agentLabel ? `${agentLabel} · ${core}` : core }
   }
-  if (!hideWorkdir && !isTemporaryWorkspace(conversation.workingDirectory, tmp)) {
-    return workdirShortLabel(conversation.workingDirectory, tmp)
-  }
-  const age = Date.now() - conversation.updatedAt
-  if (age > 7 * 24 * 60 * 60 * 1000) return `${relativeTime(conversation.updatedAt)} · ${modelLabel(conversation.model)}`
-  return relativeTime(conversation.updatedAt)
+  const dir =
+    !hideWorkdir && !isTemporaryWorkspace(conversation.workingDirectory, tmp)
+      ? workdirShortLabel(conversation.workingDirectory, tmp)
+      : null
+  return { kind: 'meta', age: relativeTime(conversation.updatedAt), dir }
 }
 
 function groupingOptions(t: ReturnType<typeof useT>): { value: SidebarGroupingMode; label: string }[] {
   return [
     { value: 'none', label: t('sidebar.group.none') },
-    { value: 'workspace', label: t('sidebar.group.workspace') }
+    { value: 'workspace', label: t('sidebar.group.workspace') },
+    { value: 'provider', label: t('sidebar.group.provider') }
   ]
 }
 
@@ -858,21 +854,26 @@ export function Sidebar({
         {!collapsed &&
           group.conversations.flatMap((conversation) => {
             const nested = swarmEnabled ? swarmChildrenOf(conversations, conversation.id) : []
-            return [
+            const rows: {
+              conversation: ConversationMeta
+              isSwarmChild: boolean
+              swarmBracket: SwarmBracketKind | null
+            }[] = [
               {
                 conversation,
                 isSwarmChild: false,
-                isSwarmParent: nested.length > 0,
-                isSwarmLast: false
-              },
-              ...nested.map((child, index) => ({
-                conversation: child,
-                isSwarmChild: true,
-                isSwarmParent: false,
-                isSwarmLast: index === nested.length - 1
-              }))
+                swarmBracket: nested.length > 0 ? 'first' : null
+              }
             ]
-          }).map(({ conversation, isSwarmChild, isSwarmParent, isSwarmLast }) => {
+            for (let index = 0; index < nested.length; index++) {
+              rows.push({
+                conversation: nested[index],
+                isSwarmChild: true,
+                swarmBracket: index === nested.length - 1 ? 'last' : 'mid'
+              })
+            }
+            return rows
+          }).map(({ conversation, isSwarmChild, swarmBracket }) => {
             const turn = turns[conversation.id]
             const isActive = conversation.id === activeId
             const isMultiSelected =
@@ -902,8 +903,8 @@ export function Sidebar({
               <div
                 key={conversation.id}
                 className={`conv-row${isActive ? ' selected' : ''}${isMultiSelected ? ` multi ${runClass}` : ''}${
-                  isSwarmParent ? ' is-swarm-parent' : ''
-                }${isSwarmChild ? ' is-swarm-child' : ''}${isSwarmLast ? ' is-swarm-last' : ''}`}
+                  swarmBracket ? ' is-swarm-item' : ''
+                }${swarmBracket === 'first' ? ' is-swarm-parent' : ''}${isSwarmChild ? ' is-swarm-child' : ''}`}
                 data-testid="session-row"
                 data-conversation-id={conversation.id}
                 title={rowTitle}
@@ -959,7 +960,7 @@ export function Sidebar({
                   void showMenu(menuItems(targets))
                 }}
               >
-                {isSwarmChild ? <ConvTreeGuide last={isSwarmLast} /> : null}
+                {swarmBracket ? <ConvBracket kind={swarmBracket} /> : null}
                 {renamingId === conversation.id ? (
                   <RenameField
                     initial={conversation.title}
@@ -973,7 +974,15 @@ export function Sidebar({
                         isSwarmChild && agentLabel ? agentLabel : conversation.title
                       )}
                     </span>
-                    <span className="conv-subtitle">{subtitle}</span>
+                    <span className="conv-subtitle">
+                      <span className="conv-subtitle-text">
+                        {subtitle.kind === 'status'
+                          ? subtitle.text
+                          : subtitle.dir
+                            ? `${subtitle.age} · ${subtitle.dir}`
+                            : subtitle.age}
+                      </span>
+                    </span>
                   </span>
                 )}
 

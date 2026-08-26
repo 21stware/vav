@@ -25,6 +25,7 @@ import {
   completeAttentionId,
   dockBadgeLabel,
   firstCompleteConversation,
+  isForegroundConversation,
   type AttentionItem,
   type AttentionKind
 } from '@shared/attentionBadge'
@@ -149,7 +150,12 @@ export class NotificationCenter {
     if (!conversationId) return
     this.viewByWindow.set(windowId, conversationId)
     const focused = BrowserWindow.getFocusedWindow()
-    if (focused && !focused.isDestroyed() && focused.id === windowId) {
+    if (
+      focused &&
+      !focused.isDestroyed() &&
+      focused.id === windowId &&
+      isForegroundConversation(conversationId, focusedWindowState(focused), this.viewByWindow)
+    ) {
       this.acknowledgeConversation(conversationId)
     }
   }
@@ -161,15 +167,15 @@ export class NotificationCenter {
   /** Window gained focus — clear the badge items for the session it is showing. */
   acknowledgeFocusedWindow(window: BrowserWindow | null): void {
     if (!window || window.isDestroyed()) return
+    if (!window.isVisible() || window.isMinimized()) return
     const conversationId = this.viewByWindow.get(window.id)
     if (conversationId) this.acknowledgeConversation(conversationId)
   }
 
   isConversationForeground(conversationId: string): boolean {
-    if (!conversationId) return false
     const focused = BrowserWindow.getFocusedWindow()
     if (!focused || focused.isDestroyed()) return false
-    return this.viewByWindow.get(focused.id) === conversationId
+    return isForegroundConversation(conversationId, focusedWindowState(focused), this.viewByWindow)
   }
 
   acknowledgeConversation(conversationId: string): void {
@@ -385,13 +391,16 @@ export class NotificationCenter {
               (s.kind ?? 'chat') === pane.kind
           )
           if (!row) continue
+          const status = pane.status ?? 'running'
+          const label =
+            row.kind === 'bash'
+              ? `Bash · ${row.title}`
+              : trayStatusRowLabel(row.title, status, {
+                  running: t('tray.runningTag'),
+                  done: t('tray.doneTag')
+                })
           items.push({
-            label: trayIndentedLabel(
-              trayStatusRowLabel(row.title, pane.status ?? 'running', {
-                running: t('tray.runningTag'),
-                done: t('tray.doneTag')
-              })
-            ),
+            label: trayIndentedLabel(label),
             click: () => this.onOpenSession(row)
           })
         }
@@ -415,6 +424,18 @@ export class NotificationCenter {
     this.runningSessions = sessions
     this.setActivityCounts(runningCount, doneCount)
     this.refreshTrayMenu()
+  }
+}
+
+function focusedWindowState(window: BrowserWindow): {
+  id: number
+  visible: boolean
+  minimized: boolean
+} {
+  return {
+    id: window.id,
+    visible: window.isVisible(),
+    minimized: window.isMinimized()
   }
 }
 

@@ -1,6 +1,7 @@
 import { app, nativeImage, nativeTheme, type NativeImage } from 'electron'
 import { existsSync, mkdirSync } from 'node:fs'
 import { join } from 'node:path'
+import { paintDockBadge } from '@shared/dockBadgePaint'
 import { isDevRuntime } from './devRuntime'
 import { isE2eRuntime, resolveE2eUserData } from './e2eRuntime'
 
@@ -68,14 +69,14 @@ export function loadAppIcon(variant?: 'light' | 'dark'): NativeImage | undefined
   return undefined
 }
 
-/** Last Dock badge text — restored after setIcon, which can drop AppKit's badge. */
+/** Last Dock badge text — baked into the tile (system setBadge needs notify permission). */
 let dockBadgeText = ''
 
 /** Set the macOS Dock numeric badge. Empty string clears it. */
 export function setDockBadge(text: string): void {
+  if (dockBadgeText === text) return
   dockBadgeText = text
-  if (process.platform !== 'darwin' || !app.dock) return
-  app.dock.setBadge(text)
+  applyDockIcon()
 }
 
 /** Push the brand tile onto the Dock (safe to call after hide/show / theme flip). */
@@ -83,11 +84,28 @@ export function applyDockIcon(): void {
   if (process.platform !== 'darwin' || !app.dock) return
   const icon = loadAppIcon()
   if (!icon) return
-  app.dock.setIcon(icon)
-  // setIcon drops a runtime badge — put the attention count back.
-  app.dock.setBadge(dockBadgeText)
+  const badged = dockBadgeText ? stampDockBadge(icon, dockBadgeText) : icon
+  app.dock.setIcon(badged)
+  // System overlay needs notification permission and often vanishes after setIcon.
+  // The count is already in the bitmap; keep AppKit's badge empty to avoid a double mark.
+  app.dock.setBadge('')
   const variant = nativeTheme.shouldUseDarkColors ? 'dark' : 'light'
   console.log(`[brand] dock icon ← ${resolveAppIconPath(variant) ?? resolveAppIconPath('light')}`)
+}
+
+/** Red count on the top-right of the squircle — visible with banners off. */
+export function stampDockBadge(source: NativeImage, text: string): NativeImage {
+  try {
+    const { width, height } = source.getSize()
+    if (width < 16 || height < 16) return source
+    const dst = Buffer.from(source.toBitmap())
+    if (dst.length < width * height * 4) return source
+    paintDockBadge(dst, width, height, text)
+    return nativeImage.createFromBitmap(dst, { width, height })
+  } catch (err) {
+    console.warn('[brand] stampDockBadge failed', err)
+    return source
+  }
 }
 
 /**

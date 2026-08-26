@@ -7,27 +7,19 @@ import {
   CornerUpLeft,
   FileDiff,
   FileText,
-  Folder,
   GitBranch,
   MessageSquare,
-  Paperclip,
   Pencil,
   Quote,
   RotateCcw,
+  Trash2,
   Undo2
 } from 'lucide-react'
 import type { ChatMessage, PreviewRef, TextBlock } from '@shared/types'
-import { isImageAttachmentPath } from '@shared/agentImageInput'
-import { localFileStreamUrl } from '@shared/localFileUrl'
+import { AttachmentTile } from './ComposerAttachments'
 import { markdownToPlainText } from '@shared/markdownPlain'
 import { showMenu, type MenuItem } from '../lib/nativeMenu'
-import { fileManagerLabel } from '../lib/platform'
 import { basename } from '../lib/path'
-import {
-  openAttachmentPreview,
-  openConversationFile,
-  revealSessionFileInFinder
-} from '../lib/openSessionFile'
 import { formatBadge } from '../lib/previewBlocks'
 import { useSessionStore } from '../state/sessionStore'
 import { useT } from '../i18n/useT'
@@ -94,6 +86,7 @@ interface MessageRowProps {
   onQuote?: (message: ChatMessage) => void
   onFork?: (messageId: string) => void
   onContinueInNewSession?: (messageId: string) => void
+  onDelete?: (messageId: string) => void
 }
 
 /** Long enough that a collapsed preview + expand control is worth the chrome. */
@@ -213,7 +206,8 @@ export const MessageRow = memo(function MessageRow({
   onEdit,
   onQuote,
   onFork,
-  onContinueInNewSession
+  onContinueInNewSession,
+  onDelete
 }: MessageRowProps): React.JSX.Element {
   const t = useT()
   const [editing, setEditing] = useState(false)
@@ -323,12 +317,27 @@ export const MessageRow = memo(function MessageRow({
     }
     if (actions.length) items.push({ label: '', divider: true }, ...actions)
     if (branch.length) items.push({ label: '', divider: true }, ...branch)
+    if (onDelete) {
+      items.push(
+        { label: '', divider: true },
+        {
+          label: t('message.delete'),
+          destructive: true,
+          disabled: busy,
+          onSelect: () => onDelete(message.id)
+        }
+      )
+    }
     void showMenu(items, { x: event.clientX, y: event.clientY })
   }
 
   if (message.role === 'system') {
     return (
-      <div className={classes} id={`msg-${message.id}`}>
+      <div
+        className={classes}
+        id={`msg-${message.id}`}
+        onContextMenu={onDelete ? onContextMenu : undefined}
+      >
         {message.content}
       </div>
     )
@@ -426,6 +435,16 @@ export const MessageRow = memo(function MessageRow({
                 title={t('message.branchHere')}
                 disabled={busy}
                 onClick={() => onFork(message.id)}
+              />
+            )}
+            {onDelete && (
+              <MessageActionButton
+                icon={<Trash2 size={12} />}
+                title={t('message.delete')}
+                testId="message-delete"
+                disabled={busy}
+                ack={false}
+                onClick={() => onDelete(message.id)}
               />
             )}
           </div>
@@ -536,6 +555,16 @@ export const MessageRow = memo(function MessageRow({
                   title={t('message.branchHere')}
                   disabled={busy}
                   onClick={() => onFork(message.id)}
+                />
+              )}
+              {onDelete && (
+                <MessageActionButton
+                  icon={<Trash2 size={12} />}
+                  title={t('message.delete')}
+                  testId="message-delete"
+                  disabled={busy}
+                  ack={false}
+                  onClick={() => onDelete(message.id)}
                 />
               )}
               {message.changeSetId && (
@@ -735,42 +764,9 @@ function UserMessageContext({
       )}
       {files.length > 0 && (
         <div className="attachments">
-          {files.map((path) =>
-            isImageAttachmentPath(path) ? (
-              <span className="attachment-image-chip" key={path}>
-                <button
-                  type="button"
-                  className="attachment-image-thumb"
-                  title={path}
-                  aria-label={t('composer.previewImage')}
-                  onClick={() => openAttachmentPreview(path)}
-                >
-                  <img src={localFileStreamUrl(path)} alt="" draggable={false} />
-                </button>
-              </span>
-            ) : (
-              <span className="chip attachment-file-chip" key={path} title={path}>
-                <button
-                  type="button"
-                  className="attachment-file-open"
-                  title={path}
-                  onClick={() => openConversationFile(path)}
-                >
-                  <Paperclip size={11} />
-                  <span className="chip-label">{basename(path)}</span>
-                </button>
-                <button
-                  type="button"
-                  className="md-file-reveal"
-                  title={t('tools.revealInFm', { fileManager: fileManagerLabel() })}
-                  aria-label={t('tools.revealInFm', { fileManager: fileManagerLabel() })}
-                  onClick={() => revealSessionFileInFinder(path)}
-                >
-                  <Folder size={11} />
-                </button>
-              </span>
-            )
-          )}
+          {files.map((path) => (
+            <AttachmentTile key={path} path={path} />
+          ))}
         </div>
       )}
     </div>

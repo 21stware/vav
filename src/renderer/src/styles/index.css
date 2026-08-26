@@ -1698,67 +1698,86 @@ kbd {
 }
 
 .sidebar-list .conv-row {
-  --tree-x: 14px;
-  /* Translucent ink — sits in the glass instead of a solid window-mix that
-     reads as a rust hairline on tinted vibrancy. */
-  --tree-line: color-mix(in srgb, var(--text-secondary) 82%, transparent);
+  --tree-x: 8px;
+  /* Solid pale ink — mix toward the window, not alpha. */
+  --tree-line: color-mix(in srgb, var(--text-tertiary) 58%, var(--bg-window));
 }
 
 :root[data-theme='dark'] .sidebar-list .conv-row {
-  --tree-line: color-mix(in srgb, var(--text-secondary) 92%, transparent);
+  --tree-line: color-mix(in srgb, var(--text-tertiary) 62%, var(--bg-window));
+}
+
+.sidebar-list .conv-row.is-swarm-item {
+  /* Title 12.5 / subtitle 10.5 at line-height 1.2, gap 1px, flex-centered. */
+  --title-lh: 15px;
+  --sub-lh: 12.6px;
+  --text-gap: 1px;
+  --bracket-join: calc(
+    (100% - var(--title-lh) - var(--sub-lh) - var(--text-gap)) / 2 + var(--title-lh) / 2
+  );
+  padding-left: 18px;
 }
 
 .sidebar-list .conv-row.is-swarm-child {
   height: 30px;
-  padding-left: 28px;
+  --title-lh: 14.4px;
 }
 
 .sidebar-list .conv-group.is-workspace .conv-row {
-  --tree-x: 28px;
+  --tree-x: 20px;
 }
 
-.sidebar-list .conv-group.is-workspace .conv-row.is-swarm-child {
-  padding-left: 42px;
+.sidebar-list .conv-group.is-workspace .conv-row.is-swarm-item {
+  padding-left: 30px;
 }
 
 .sidebar-list .conv-row.is-swarm-child .conv-title {
   font-size: 12px;
 }
 
-/* Parent stem meets the child's quarter-arc at the row seam. */
-.sidebar-list .conv-row.is-swarm-parent::before {
-  content: '';
-  position: absolute;
-  left: calc(var(--tree-x) + 0.35px);
-  top: 20px;
-  bottom: 0;
-  width: 1.5px;
-  pointer-events: none;
-  background: var(--tree-line);
-}
-
-/* Second line sits past the stem so the downward stroke does not cut the copy. */
-.sidebar-list .conv-row.is-swarm-parent .conv-subtitle {
-  padding-left: 12px;
-}
-
-.sidebar-list .conv-tree-guide {
+/* Left bracket ┌─ / ├─ / └─. Join sits on the title line, not the row mid. */
+.sidebar-list .conv-bracket {
+  --stroke: 1px;
+  --stub: 6px;
+  --radius: 3.5px;
   position: absolute;
   left: var(--tree-x);
-  top: 0;
-  width: 16px;
-  height: 100%;
-  color: var(--tree-line);
+  box-sizing: border-box;
+  width: var(--stub);
   pointer-events: none;
-  overflow: visible;
 }
 
-.sidebar-list .conv-tree-guide path {
-  fill: none;
-  stroke: currentColor;
-  stroke-width: 1.35;
-  stroke-linecap: round;
-  stroke-linejoin: round;
+.sidebar-list .conv-bracket.is-first {
+  top: calc(var(--bracket-join) - var(--stroke) / 2);
+  bottom: 0;
+  border-left: var(--stroke) solid var(--tree-line);
+  border-top: var(--stroke) solid var(--tree-line);
+  border-top-left-radius: var(--radius);
+}
+
+.sidebar-list .conv-bracket.is-last {
+  top: 0;
+  height: calc(var(--bracket-join) + var(--stroke) / 2);
+  border-left: var(--stroke) solid var(--tree-line);
+  border-bottom: var(--stroke) solid var(--tree-line);
+  border-bottom-left-radius: var(--radius);
+}
+
+.sidebar-list .conv-bracket.is-mid {
+  top: 0;
+  bottom: 0;
+  border-left: var(--stroke) solid var(--tree-line);
+}
+
+.sidebar-list .conv-bracket.is-mid::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: var(--bracket-join);
+  width: 100%;
+  height: var(--stroke);
+  background: var(--tree-line);
+  transform: translateY(-50%);
 }
 
 .conv-row.selected {
@@ -1869,10 +1888,19 @@ kbd {
 }
 
 .conv-subtitle {
+  display: flex;
+  align-items: center;
+  gap: 3.5px;
+  min-width: 0;
   font-size: 10.5px;
   font-weight: 400;
   letter-spacing: 0.01em;
   color: var(--text-tertiary);
+  --agent-mark-size: 11px;
+}
+
+.conv-subtitle-text {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -18371,6 +18399,25 @@ mark {
   min-width: 4px;
 }
 
+.composer-meta {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  min-width: 0;
+  color: inherit;
+}
+
+.composer-meta .agent-model-picker,
+.composer-meta .model-picker {
+  color: inherit;
+}
+
+.composer-meta .agent-model-picker:hover,
+.composer-meta .model-picker:hover {
+  color: var(--text-secondary);
+}
+
 .model-picker {
   display: inline-flex;
   align-items: center;
@@ -18676,19 +18723,31 @@ html:has(.provider-account-popup) #root {
   transform: scale(0.97);
 }
 
-.thinking-level-picker {
+.session-run-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 1px;
   flex: 0 0 auto;
+}
+
+.session-run-btn {
+  flex: 0 0 auto;
+  max-width: none;
+  color: inherit;
+}
+
+.session-run-btn.is-icon {
+  width: 22px;
+  padding: 0;
+  justify-content: center;
+}
+
+.session-run-level {
   min-width: 0;
-  max-width: 92px;
+  font-variant-numeric: tabular-nums;
 }
 
-.thinking-level-picker-trigger {
-  max-width: 92px;
-  gap: 4px;
-  padding-left: 4px;
-}
-
-.thinking-level-picker-trigger svg {
+.session-run-btn svg {
   flex: 0 0 auto;
 }
 
@@ -21612,3 +21671,82 @@ html:has(.token-usage-popup) #root {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+html.is-screenshotting,
+html.is-screenshotting * {
+  cursor: crosshair !important;
+}
+
+/* Attach, screenshot, thinking, mode, approval — one chip row. */
+.composer-tools {
+  display: inline-flex;
+  align-items: center;
+  gap: 1px;
+  flex: 0 0 auto;
+}
+
+.composer-tools .session-run-controls {
+  display: contents;
+}
+
+.attachment-file-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  width: 100%;
+  height: 100%;
+  padding: 4px 3px 3px;
+  border: 0;
+  background: color-mix(in srgb, var(--text) 6%, var(--bg-hover));
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.attachment-file-tile[data-kind='pdf'] {
+  color: #e11d48;
+}
+
+.attachment-file-tile[data-kind='doc'] {
+  color: #2563eb;
+}
+
+.attachment-file-tile[data-kind='sheet'] {
+  color: #16a34a;
+}
+
+.attachment-file-tile[data-kind='slide'] {
+  color: #d97706;
+}
+
+.attachment-file-tile[data-kind='code'] {
+  color: #7c3aed;
+}
+
+.attachment-file-tile[data-kind='archive'] {
+  color: #a16207;
+}
+
+.attachment-file-ext {
+  font-size: 8px;
+  font-weight: 650;
+  letter-spacing: 0.04em;
+  line-height: 1;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.attachment-file-name {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 8px;
+  font-weight: 550;
+  line-height: 1.1;
+  color: var(--text-tertiary);
+}
+

@@ -17,6 +17,8 @@ import openrouterIcon from '../assets/vendors/openrouter.svg'
 import siliconflowIcon from '../assets/vendors/siliconflow.svg'
 import togetherIcon from '../assets/vendors/together.svg'
 import xaiIcon from '../assets/vendors/xai.svg'
+import bigmodelIcon from '../assets/vendors/bigmodel.svg'
+import kimiIcon from '../assets/vendors/kimi.svg'
 // VAV: line graphic (wordmark), not the app-icon plate.
 import vavGlyph from '../assets/wordmark.png'
 import vavGlyphDark from '../assets/wordmark-dark.png'
@@ -41,7 +43,9 @@ const AGENT_ICONS: Record<string, string> = {
   xai: xaiIcon,
   google: googleIcon,
   together: togetherIcon,
-  siliconflow: siliconflowIcon
+  siliconflow: siliconflowIcon,
+  bigmodel: bigmodelIcon,
+  kimi: kimiIcon
 }
 
 const MONO_MARKS = new Set([
@@ -59,7 +63,9 @@ const MONO_MARKS = new Set([
   'xai',
   'google',
   'together',
-  'siliconflow'
+  'siliconflow',
+  'bigmodel',
+  'kimi'
 ])
 
 /**

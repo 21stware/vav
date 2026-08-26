@@ -123,7 +123,7 @@ describe('tray labels', () => {
     assert.equal(trayItemLabel(agent), 'Hello - Grok')
     assert.equal(
       trayItemLabel(pane({ tabId: 'b1', kind: 'bash', sessionTitle: 'Hello', paneTitle: 'serve :9989' })),
-      'Hello · serve :9989'
+      'serve :9989'
     )
     assert.equal(traySessionLabel(agent), 'Hello')
     assert.equal(trayStatusRowLabel('Hello', 'running', { running: 'Running', done: 'Done' }), 'Running · Hello')

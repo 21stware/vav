@@ -1,6 +1,8 @@
 import type { CliHostKind, ModelOption, RecentAgentModelEntry } from './types.ts'
 import { isStructuredCliHost, PRESET_MODELS } from './types.ts'
+import { displayNameForCliHost } from './cliHost.ts'
 import { isLlmVendorId } from './llmVendors.ts'
+import { shortenModelLabel } from './shortenModelLabel.ts'
 import { prettyVavModelLabel, vavFallbackModels } from './vavModelList.ts'
 
 export {
@@ -120,8 +122,9 @@ export function labelForChatModel(
       ? catalogue
       : modelsForChatHost(host, customModels)
   const hit = list.find((m) => m.id === modelId)
-  if (hit) return hit.label
-  return PRESET_MODELS.find((m) => m.id === modelId)?.label ?? prettyVavModelLabel(modelId)
+  const raw =
+    hit?.label ?? PRESET_MODELS.find((m) => m.id === modelId)?.label ?? prettyVavModelLabel(modelId)
+  return host ? shortenModelLabel(raw, displayNameForCliHost(host)) : raw
 }
 
 /** Host key used in {@link AppSettings.disabledAgentModels}. */

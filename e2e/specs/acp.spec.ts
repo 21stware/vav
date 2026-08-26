@@ -78,9 +78,9 @@ test('ACP slash keyboard highlights, inserts, and Escape dismisses', async () =>
 test('ACP session mode chip shows the current mode', async () => {
   const harness = await launchVav({ seedConversation: 'acp' })
   try {
-    const mode = harness.page.locator('[data-testid="acp-session-mode"]')
+    const mode = harness.page.locator('[data-testid="session-run-controls"]')
     await expect(mode).toBeVisible()
-    await expect(mode).toContainText('Agent')
+    await expect(mode).toHaveAttribute('data-session-mode', 'agent')
   } finally {
     await harness.dispose()
   }
@@ -90,21 +90,21 @@ test('ACP session mode native menu switches to Plan and persists', async () => {
   const harness = await launchVav({ seedConversation: 'acp' })
   try {
     const { page } = harness
-    const mode = page.locator('[data-testid="acp-session-mode"]')
-    await expect(mode).toContainText('Agent')
+    const mode = page.locator('[data-testid="session-run-controls"]')
+    await expect(mode).toHaveAttribute('data-session-mode', 'agent')
 
-    await mode.click()
+    await page.locator('[data-testid="session-run-mode"]').click()
     await expect
       .poll(async () => {
         const items = await peekNativeMenu(page)
         return items?.map((item) => item.label) ?? []
       })
-      .toEqual(['Agent', 'Plan'])
+      .toEqual(expect.arrayContaining(['Agent', 'Plan']))
     const items = await peekNativeMenu(page)
     expect(items?.find((item) => item.label === 'Agent')?.checked).toBe(true)
 
     await chooseNativeMenu(page, 'Plan')
-    await expect(mode).toContainText('Plan')
+    await expect(mode).toHaveAttribute('data-session-mode', 'plan')
 
     await expect
       .poll(async () => {
@@ -124,12 +124,12 @@ test('ACP session mode native menu can be dismissed without changing mode', asyn
   const harness = await launchVav({ seedConversation: 'acp' })
   try {
     const { page } = harness
-    const mode = page.locator('[data-testid="acp-session-mode"]')
-    await mode.click()
+    const mode = page.locator('[data-testid="session-run-controls"]')
+    await page.locator('[data-testid="session-run-mode"]').click()
     await expect.poll(async () => (await peekNativeMenu(page))?.length ?? 0).toBeGreaterThan(0)
     await dismissNativeMenu(page)
     await expect.poll(async () => peekNativeMenu(page)).toBeNull()
-    await expect(mode).toContainText('Agent')
+    await expect(mode).toHaveAttribute('data-session-mode', 'agent')
   } finally {
     await harness.dispose()
   }

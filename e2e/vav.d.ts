@@ -33,12 +33,20 @@ declare global {
       conversations: {
         get(id: string): Promise<{
           messages: unknown[]
+          title?: string
+          archived?: boolean
+          pinned?: boolean
+          resultUnseen?: boolean
+          workingDirectory?: string | null
           acpSession?: {
             currentModeId?: string | null
             configOptions?: { id: string; currentValue: string | boolean; category?: string }[]
           } | null
           approvalMode?: string
         } | null>
+      }
+      agent: {
+        send(id: string, text: string, attachments: string[]): Promise<unknown>
       }
     }
   }

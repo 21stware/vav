@@ -124,6 +124,7 @@ export function Transcript({
   const selectPendingBranch = useSessionStore((s) => s.selectPendingBranch)
   const fork = useSessionStore((s) => s.fork)
   const continueInNewSession = useSessionStore((s) => s.continueInNewSession)
+  const requestDeleteMessage = useSessionStore((s) => s.requestDeleteMessage)
   const clearCompaction = useSessionStore((s) => s.clearCompaction)
   // Do not `?? []` here — a fresh array each snapshot loops zustand/React.
   const compactions = useSessionStore((s) => s.compactions[activeId])
@@ -628,6 +629,7 @@ export function Transcript({
           onQuote={archived ? undefined : onQuote}
           onFork={archived ? undefined : fork}
           onContinueInNewSession={archived ? undefined : continueInNewSession}
+          onDelete={archived ? undefined : requestDeleteMessage}
         />
       </div>
     )

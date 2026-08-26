@@ -1,11 +1,13 @@
-import { Menu, type MenuItemConstructorOptions } from 'electron'
+import { BrowserWindow, Menu, type MenuItemConstructorOptions } from 'electron'
 import type { MenuCommand } from '@shared/ipc'
-import type { ResolvedKeyBindings } from '@shared/keyBindings'
+import { acceleratorsConflict, type ResolvedKeyBindings } from '@shared/keyBindings'
+import type { Platform } from '@shared/platform'
 import { APP_NAME } from './brand'
 import { isDevRuntime } from './devRuntime'
 import { t } from './i18n'
 
 const IS_MAC = process.platform === 'darwin'
+const PLATFORM = process.platform as Platform
 
 /**
  * Native application menu — product actions + standard Edit/Window roles.
@@ -201,6 +203,11 @@ export function buildAppMenu(
       accelerator: b.switchApproval,
       click: send('switch-approval')
     },
+    {
+      label: t('composer.screenshot'),
+      accelerator: b.screenshot,
+      click: send('screenshot')
+    },
     { type: 'separator' },
     {
       label: t('menu.showSessions'),
@@ -239,7 +246,12 @@ export function buildAppMenu(
         { role: 'cut', label: t('menu.cut') },
         { role: 'copy', label: t('menu.copy') },
         { role: 'paste', label: t('menu.paste') },
-        { role: 'selectAll', label: t('menu.selectAll') },
+        acceleratorsConflict(b.screenshot, 'CmdOrCtrl+A', PLATFORM)
+          ? {
+              label: t('menu.selectAll'),
+              click: () => BrowserWindow.getFocusedWindow()?.webContents.selectAll()
+            }
+          : { role: 'selectAll', label: t('menu.selectAll') },
         { type: 'separator' },
         { label: t('menu.find'), accelerator: b.find, click: send('find') },
         { label: t('menu.findNext'), accelerator: b.findNext, click: send('find-next') },

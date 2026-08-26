@@ -26,4 +26,5 @@ resources/bin/officecli
 resources/bin/officecli.exe
 resources/bin/officecli.*
 resources/bin/officecli.version
+resources/bin/vav_screencap.node
 !resources/bin/README.md

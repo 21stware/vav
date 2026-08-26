@@ -14,3 +14,7 @@ node scripts/fetch-officecli.mjs
 Version pin: `scripts/fetch-officecli.mjs` (`OFFICECLI_VERSION` env overrides).
 
 At runtime VAV prepends this directory to the agent shell `PATH` so `officecli` resolves without a system install.
+
+## vav_screencap.node
+
+macOS-only N-API addon (not committed). Built by `scripts/build-mac-screencap.mjs` during `npm run dev` / `npm run build`. Snapshots displays with CoreGraphics as they appear — VAV windows stay on screen and in the shot. Overlay panels use content protection so they are not captured.

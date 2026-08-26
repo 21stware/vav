@@ -1,6 +1,7 @@
 import { expect, _electron as electron, type ElectronApplication, type Page } from '@playwright/test'
 import { createRequire } from 'node:module'
 import {
+  appendFileSync,
   chmodSync,
   mkdtempSync,
   mkdirSync,
@@ -9,8 +10,9 @@ import {
   existsSync,
   readFileSync
 } from 'node:fs'
+import { execSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { basename, join } from 'node:path'
 import {
   buildNamedSession,
   buildSeededConversation,
@@ -45,6 +47,13 @@ export type LaunchVavOptions = {
   seedConversation?: SeedConversationKind
   /** Second sidebar session titled "Second session". */
   extraSession?: boolean
+  /**
+   * Second folder on Settings recents (not under os.tmpdir, so the chip
+   * treats it as a project path). Contains `other.md`.
+   */
+  extraWorkspace?: boolean
+  /** `git init` the default workspace, commit, then dirty `hello.md`. */
+  seedGit?: boolean
   /** Settings → Providers → Swarm mode. */
   swarmMode?: boolean
   /**
@@ -59,6 +68,7 @@ export type VavHarness = {
   page: Page
   userData: string
   workspace: string
+  extraWorkspace?: string
   dispose: () => Promise<void>
 }
 
@@ -70,10 +80,26 @@ function electronExecutable(): string {
   return path
 }
 
+function extraWorkspaceRoot(): string {
+  // os.tmpdir() is labeled "TEMP DIR"; keep the extra folder off that prefix
+  // so the workdir chip shows a real path.
+  return process.platform === 'darwin' ? '/tmp' : tmpdir()
+}
+
+function seedGitRepo(workspace: string): void {
+  execSync('git init -b main', { cwd: workspace })
+  execSync('git add hello.md notes.md', { cwd: workspace })
+  execSync('git -c user.email=e2e@vav.test -c user.name=e2e commit -m seed', {
+    cwd: workspace
+  })
+  appendFileSync(join(workspace, 'hello.md'), 'changed from e2e\n')
+}
+
 function seedUserData(
   userData: string,
   workspace: string,
-  options: LaunchVavOptions
+  options: LaunchVavOptions,
+  extraWorkspace?: string
 ): void {
   const kind = options.liveAcp ? 'acp-live' : (options.seedConversation ?? 'empty')
   const settings: Record<string, unknown> = {
@@ -89,6 +115,7 @@ function seedUserData(
     defaultWorkingDirectory: workspace,
     sidebarGroupingMode: 'workspace'
   }
+  if (extraWorkspace) settings.recentWorkspaceDirectories = [extraWorkspace]
   if (options.swarmMode) settings.swarmModeEnabled = true
   if (options.liveAcp) {
     chmodSync(ACP_AGENT_SH, 0o755)
@@ -131,7 +158,14 @@ export async function launchVav(options: LaunchVavOptions = {}): Promise<VavHarn
   const workspace = mkdtempSync(join(tmpdir(), 'vav-e2e-ws-'))
   writeFileSync(join(workspace, 'hello.md'), '# hello from e2e\n')
   writeFileSync(join(workspace, 'notes.md'), '# notes from e2e\n')
-  seedUserData(userData, workspace, options)
+  if (options.seedGit) seedGitRepo(workspace)
+  const extraWorkspace = options.extraWorkspace
+    ? mkdtempSync(join(extraWorkspaceRoot(), 'vav-e2e-other-'))
+    : undefined
+  if (extraWorkspace) {
+    writeFileSync(join(extraWorkspace, 'other.md'), '# other from e2e\n')
+  }
+  seedUserData(userData, workspace, options, extraWorkspace)
 
   const app = await electron.launch({
     executablePath: electronExecutable(),
@@ -170,9 +204,18 @@ export async function launchVav(options: LaunchVavOptions = {}): Promise<VavHarn
     }
     rmSync(userData, { recursive: true, force: true })
     rmSync(workspace, { recursive: true, force: true })
+    if (extraWorkspace) rmSync(extraWorkspace, { recursive: true, force: true })
   }
 
-  return { app, page, userData, workspace, dispose }
+  return { app, page, userData, workspace, extraWorkspace, dispose }
+}
+
+export function sessionRow(page: Page, id: string) {
+  return page.locator(`[data-testid="session-row"][data-conversation-id="${id}"]`)
+}
+
+export function extraWorkspaceLabel(path: string): string {
+  return basename(path)
 }
 
 /** Files tray: path chip → Files segment (files/files-panel.rpml). */

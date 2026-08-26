@@ -41,4 +41,11 @@ describe('detectProtocol', () => {
       'openai'
     )
   })
+
+  it('uses OpenAI completions for Zhipu BigModel and Kimi', () => {
+    assert.equal(detectProtocol('https://open.bigmodel.cn/api/paas/v4', 'glm-4.6'), 'openai')
+    assert.equal(detectProtocol('https://api.z.ai/api/paas/v4', ''), 'openai')
+    assert.equal(detectProtocol('https://api.moonshot.cn/v1', 'kimi-k2'), 'openai')
+    assert.equal(detectProtocol('https://api.moonshot.ai/v1', 'moonshot-v1-128k'), 'openai')
+  })
 })
