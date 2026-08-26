@@ -9,11 +9,19 @@ import antigravityIcon from '../assets/agents/antigravity.png'
 import kiroIcon from '../assets/agents/kiro.svg'
 import opencodeIcon from '../assets/agents/opencode.svg'
 import clineIcon from '../assets/agents/cline.svg'
+import anthropicIcon from '../assets/vendors/anthropic.svg'
+import deepseekIcon from '../assets/vendors/deepseek.svg'
+import googleIcon from '../assets/vendors/google.svg'
+import openaiIcon from '../assets/vendors/openai.svg'
+import openrouterIcon from '../assets/vendors/openrouter.svg'
+import siliconflowIcon from '../assets/vendors/siliconflow.svg'
+import togetherIcon from '../assets/vendors/together.svg'
+import xaiIcon from '../assets/vendors/xai.svg'
 // VAV: line graphic (wordmark), not the app-icon plate.
 import vavGlyph from '../assets/wordmark.png'
 import vavGlyphDark from '../assets/wordmark-dark.png'
 
-/** Official / catalogue brand marks from `assets/agents/` (+ VAV glyph). */
+/** Official / catalogue brand marks from `assets/agents/` + `assets/vendors/` (+ VAV glyph). */
 const AGENT_ICONS: Record<string, string> = {
   vav: vavGlyph,
   claude: claudeIcon,
@@ -25,8 +33,34 @@ const AGENT_ICONS: Record<string, string> = {
   antigravity: antigravityIcon,
   kiro: kiroIcon,
   opencode: opencodeIcon,
-  cline: clineIcon
+  cline: clineIcon,
+  deepseek: deepseekIcon,
+  openrouter: openrouterIcon,
+  openai: openaiIcon,
+  anthropic: anthropicIcon,
+  xai: xaiIcon,
+  google: googleIcon,
+  together: togetherIcon,
+  siliconflow: siliconflowIcon
 }
+
+const MONO_MARKS = new Set([
+  'cursor',
+  'codex',
+  'devin',
+  'grok',
+  'opencode',
+  'cline',
+  'kiro',
+  'deepseek',
+  'openrouter',
+  'openai',
+  'anthropic',
+  'xai',
+  'google',
+  'together',
+  'siliconflow'
+])
 
 /**
  * Agent brand icon for install panel / chrome / settings.
@@ -46,14 +80,7 @@ export function AgentBrandMark({
   const src = AGENT_ICONS[agent.id]
   const isVav = agent.id === 'vav'
   // Dark-on-light / currentColor monochrome assets
-  const mono =
-    agent.id === 'cursor' ||
-    agent.id === 'codex' ||
-    agent.id === 'devin' ||
-    agent.id === 'grok' ||
-    agent.id === 'opencode' ||
-    agent.id === 'cline' ||
-    agent.id === 'kiro'
+  const mono = MONO_MARKS.has(agent.id)
   // Light-on-dark assets (Pi SVG fill is #fff)
   const monoOnDark = agent.id === 'pi'
 

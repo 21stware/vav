@@ -77,9 +77,9 @@ export function handleMenuCommand(command: MenuCommand): void {
       break
     }
     case 'switch-vav-mode': {
+      if (store.settings.swarmModeEnabled !== true) break
       const id = store.activeId
       if (!id) break
-      if (store.search.open) store.closeSearch()
       requestCliSurface(id, false)
       break
     }
@@ -198,8 +198,8 @@ export function handleMenuCommand(command: MenuCommand): void {
       break
     case 'close-context': {
       // Bash → close tab; Files → collapse tray;
-      // Swarm pane focused → close pane / last live→picker;
-      // otherwise (including Swarm on screen but not focused) close the window.
+      // Multi-pane Swarm → close one conversation until the last, then window;
+      // last CLI picker / unfocused single pane → window.
       // Debounce twin delivery only (before-input + menu).
       const now = Date.now()
       if (now - lastCloseContextAt < 400) break

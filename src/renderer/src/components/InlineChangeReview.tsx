@@ -59,12 +59,14 @@ function IconBtn({
   kind,
   title,
   onClick,
-  children
+  children,
+  testId
 }: {
   kind: 'accept' | 'reject' | 'neutral'
   title: string
   onClick: () => void
   children: React.ReactNode
+  testId?: string
 }): React.JSX.Element {
   return (
     <button
@@ -72,6 +74,7 @@ function IconBtn({
       className={`inline-review-icon-btn kind-${kind}`}
       title={title}
       aria-label={title}
+      data-testid={testId}
       onClick={(e) => {
         e.stopPropagation()
         onClick()
@@ -137,7 +140,10 @@ export function InlineChangeReview({
     : t('review.modifiedFilesShort', { n })
 
   return (
-    <div className={`inline-review${allResolved ? ' is-resolved' : ''}`}>
+    <div
+      className={`inline-review${allResolved ? ' is-resolved' : ''}`}
+      data-testid="inline-review"
+    >
       <div className="inline-review-head">
         <FileDiff size={14} className="inline-review-icon" aria-hidden />
         <span className="inline-review-title" title={title}>
@@ -148,6 +154,7 @@ export function InlineChangeReview({
             <IconBtn
               kind="accept"
               title={t('review.acceptAll')}
+              testId="inline-review-accept-all"
               onClick={() => void acceptAllChangesFor(set.id)}
             >
               <CheckCheck size={14} strokeWidth={2.25} />
@@ -243,6 +250,8 @@ function FileRow({
   return (
     <li
       className={`inline-review-file status-${file.status}`}
+      data-testid="inline-review-file"
+      data-name={name}
       data-open={expanded || undefined}
     >
       <div className="inline-review-file-main">

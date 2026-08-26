@@ -59,6 +59,22 @@ describe('projectChecklistInput', () => {
     assert.equal(codex.steps[0]?.title, 'Patch')
     assert.equal(codex.steps[0]?.status, 'executing')
   })
+
+  it('reads completed booleans and items[] used by some CLI hosts', () => {
+    const fromFlag = projectChecklistInput({
+      items: [
+        { text: 'One', completed: true },
+        { text: 'Two', completed: false }
+      ]
+    })
+    assert.equal(fromFlag.steps[0]?.status, 'done')
+    assert.equal(fromFlag.steps[1]?.status, 'pending')
+    const fromJson = projectChecklistInput(
+      JSON.stringify({ todos: [{ content: 'Ship', status: 'completed' }] })
+    )
+    assert.equal(fromJson.steps[0]?.title, 'Ship')
+    assert.equal(fromJson.steps[0]?.status, 'done')
+  })
 })
 
 describe('isTodoUpdateToolName', () => {

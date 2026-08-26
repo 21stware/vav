@@ -28,12 +28,14 @@ function QuotaRow({
   window,
   now,
   locale,
-  t
+  t,
+  updating = false
 }: {
   window: QuotaWindow
   now: number
   locale: ProviderAccountViewPayload['locale']
   t: TFn
+  updating?: boolean
 }): React.JSX.Element {
   const pct = Math.min(100, Math.max(0, window.usedPercent))
   const exhausted = pct >= QUOTA_EXHAUSTED_PERCENT
@@ -45,7 +47,7 @@ function QuotaRow({
     <div className={`provider-account-quota${exhausted ? ' is-exhausted' : ''}`}>
       <div className="provider-account-quota-meta">
         <span>{t(QUOTA_LABEL[window.kind])}</span>
-        <span className="provider-account-quota-pct">
+        <span className={`provider-account-quota-pct${updating ? ' usage-shimmer' : ''}`}>
           {t('token.quotaUsed', { percent: pct.toFixed(pct >= 10 ? 0 : 1) })}
         </span>
       </div>
@@ -70,7 +72,9 @@ export function ProviderAccountPanel({
 }): React.JSX.Element {
   const canPoll = hostMayHaveAccountQuota(payload.host)
   const knownHost = isStructuredCliHost(payload.host)
-  const waiting = payload.loading && (canPoll || knownHost)
+  const windows = payload.windows
+  const waiting = payload.loading && (canPoll || knownHost) && windows.length === 0
+  const updating = payload.loading && windows.length > 0
   const authKind: HostAuthKind = normalizeAuthKind(payload.authKind, payload.signedIn)
   const status = waiting
     ? payload.accountId || t('composer.accountLoading')
@@ -85,7 +89,6 @@ export function ProviderAccountPanel({
             : authKind === 'none'
               ? t('composer.accountSignedOut')
               : null
-  const windows = payload.windows
   const notice =
     !waiting && windows.length === 0 && knownHost && authKind !== 'unknown' ? authKind : null
   const phase = waiting
@@ -106,7 +109,10 @@ export function ProviderAccountPanel({
           {payload.plan ? <div className="provider-account-muted">{payload.plan}</div> : null}
         </div>
       </div>
-      <div className={`provider-account-quota-slot is-${phase}`} aria-busy={waiting}>
+      <div
+        className={`provider-account-quota-slot is-${phase}${updating ? ' is-updating' : ''}`}
+        aria-busy={waiting || updating}
+      >
         <div className="provider-account-quota-reveal">
           <div className="provider-account-quota-reveal-inner">
             {waiting ? (
@@ -123,6 +129,7 @@ export function ProviderAccountPanel({
                     now={payload.now}
                     locale={payload.locale}
                     t={t}
+                    updating={updating}
                   />
                 ))}
               </div>

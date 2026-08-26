@@ -1,17 +1,30 @@
 import type { AnalysisApiBalance } from '../../shared/apiBalance.ts'
 import type { AnalysisConversationInput, AnalysisSnapshot } from '../../shared/analysis.ts'
-import { applyApiBalanceToSnapshot, snapshotWithFreshUsage } from '../../shared/analysis.ts'
+import {
+  aggregateAnalysisUsage,
+  applyApiBalanceToSnapshot,
+  snapshotWithFreshUsage
+} from '../../shared/analysis.ts'
 
 type FullBuilder = (force: boolean) => Promise<AnalysisSnapshot>
 type BalanceReader = (
-  force: boolean
-) => Promise<{ supported: boolean; balance: AnalysisApiBalance | null }>
+  force: boolean,
+  hostKey: string
+) => Promise<{
+  supported: boolean
+  balance: AnalysisApiBalance | null
+  keyPresent?: boolean
+}>
 
 let cached: AnalysisSnapshot | null = null
 let building: Promise<AnalysisSnapshot> | null = null
 let pendingForce = false
 let builder: FullBuilder | null = null
 let conversations: (() => AnalysisConversationInput[]) | null = null
+let usageOptions: (() => {
+  remapHost?: (hostKey: string, accountId?: string | null) => string
+  order?: string[] | null
+}) | null = null
 let readBalance: BalanceReader | null = null
 let apiKeyPresent: (() => boolean) | null = null
 let onUpdated: ((snapshot: AnalysisSnapshot) => void) | null = null
@@ -19,12 +32,17 @@ let onUpdated: ((snapshot: AnalysisSnapshot) => void) | null = null
 export function configureAnalysisCache(options: {
   build: FullBuilder
   conversations: () => AnalysisConversationInput[]
+  usageOptions?: () => {
+    remapHost?: (hostKey: string, accountId?: string | null) => string
+    order?: string[] | null
+  }
   readBalance?: BalanceReader
   apiKeyPresent?: () => boolean
   onUpdated?: (snapshot: AnalysisSnapshot) => void
 }): void {
   builder = options.build
   conversations = options.conversations
+  usageOptions = options.usageOptions ?? null
   readBalance = options.readBalance ?? null
   apiKeyPresent = options.apiKeyPresent ?? null
   onUpdated = options.onUpdated ?? null
@@ -40,6 +58,7 @@ export function resetAnalysisCacheForTests(): void {
   pendingForce = false
   builder = null
   conversations = null
+  usageOptions = null
   readBalance = null
   apiKeyPresent = null
   onUpdated = null
@@ -62,12 +81,31 @@ export async function serveAnalysisSnapshot(options?: {
     cached?.providers.some((p) => p.kind === 'api' && p.balanceState === 'none') &&
     apiKeyPresent?.() === true
   if (!force && cached && conversations && !cachedNeedsKey) {
-    cached = snapshotWithFreshUsage(cached, conversations())
-    cached = await patchCachedBalance(false, cached)
+    cached = snapshotWithFreshUsage(cached, conversations(), usageOptions?.())
+    const ready = cached
+    void patchCachedBalance(false, ready).then((next) => {
+      cached = next
+    })
     void syncAnalysisSnapshot(false)
-    return cached
+    return ready
+  }
+  if (!force) {
+    const preview = usagePreview()
+    void syncAnalysisSnapshot(false)
+    if (preview) return preview
   }
   return syncAnalysisSnapshot(force)
+}
+
+function usagePreview(): AnalysisSnapshot | null {
+  if (!conversations) return null
+  const usage = aggregateAnalysisUsage(conversations(), usageOptions?.())
+  if (!cached && usage.total.sessions === 0) return null
+  return {
+    usage,
+    providers: cached?.providers ?? [],
+    now: Date.now()
+  }
 }
 
 async function patchCachedBalance(
@@ -76,8 +114,13 @@ async function patchCachedBalance(
 ): Promise<AnalysisSnapshot> {
   if (!readBalance) return snapshot
   try {
-    const lookup = await readBalance(force)
-    const next = applyApiBalanceToSnapshot(snapshot, lookup, apiKeyPresent?.() !== false)
+    let next = snapshot
+    for (const provider of snapshot.providers) {
+      if (provider.kind !== 'api') continue
+      const lookup = await readBalance(force, provider.hostKey)
+      const keyPresent = lookup.keyPresent ?? apiKeyPresent?.() !== false
+      next = applyApiBalanceToSnapshot(next, lookup, keyPresent, provider.hostKey)
+    }
     onUpdated?.(next)
     return next
   } catch (err) {
@@ -97,7 +140,7 @@ async function syncAnalysisSnapshot(force: boolean): Promise<AnalysisSnapshot> {
         const useForce = pendingForce
         pendingForce = false
         snapshot = await builder(useForce)
-        if (conversations) snapshot = snapshotWithFreshUsage(snapshot, conversations())
+        if (conversations) snapshot = snapshotWithFreshUsage(snapshot, conversations(), usageOptions?.())
         cached = snapshot
         onUpdated?.(snapshot)
       } while (pendingForce)

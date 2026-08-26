@@ -26,6 +26,8 @@ import { RewindRail } from './RewindRail'
 import { StreamingMessage } from './StreamingMessage'
 import { StreamStatus } from './StreamStatus'
 import { displayNameForCliHost, enabledCliAgents, isStructuredCliHost } from '@shared/types'
+import { vendorDisplayName, vendorIdFromEndpoint } from '@shared/llmVendors'
+import { useAccountGroups, vavAccountsOf } from '../lib/accountGroups'
 import { Button, EmptyState } from './ui'
 import { AgentBrandMark } from './AgentBrandMark'
 import { SessionWorkspaceChrome } from './SessionWorkspaceChrome'
@@ -81,29 +83,37 @@ function estimateOffset(
   return total
 }
 
-export function Transcript(): React.JSX.Element {
+export function Transcript({
+  conversationId
+}: {
+  conversationId?: string
+} = {}): React.JSX.Element {
   const t = useT()
-  const activeId = useSessionStore((s) => s.activeId)
+  const storeActiveId = useSessionStore((s) => s.activeId)
+  const activeId = conversationId || storeActiveId
   /**
-   * Empty-log entrance scene. Tracked here, not in the empty state itself:
-   * leaving for a conversation with messages unmounts the hero, and coming back
-   * has to greet you again.
+   * One visit track per conversation. A shared `transcript` track made every
+   * mounted Swarm pane bump the others, so focus / dialogs / sidebar picks
+   * replayed the empty-state build-up.
    */
-  const emptyScene = visitScene('transcript', activeId)
-  const nodes = useSessionStore((s) => s.messages[s.activeId])
-  const activeLeaf = useSessionStore((s) => s.activeLeaf[s.activeId] ?? null)
+  const emptyScene = visitScene(`transcript:${activeId}`, 'empty')
+  const emptySlot = `session:${activeId}`
+  const nodes = useSessionStore((s) => s.messages[activeId])
+  const activeLeaf = useSessionStore((s) => s.activeLeaf[activeId] ?? null)
   // Never select visibleMessages() directly — even with pathCache, interleaving
   // calls can still hand React a new array identity mid-getSnapshot.
   const messages = useMemo(
     () => visibleMessages(useSessionStore.getState(), activeId),
     [activeId, nodes, activeLeaf]
   )
-  const turnRunning = useSessionStore((s) => !!s.turns[s.activeId]?.isRunning)
-  const turnPhase = useSessionStore((s) => s.turns[s.activeId]?.phase)
+  const turnRunning = useSessionStore((s) => !!s.turns[activeId]?.isRunning)
+  const turnPhase = useSessionStore((s) => s.turns[activeId]?.phase)
   const search = useSessionStore((s) => s.search)
   const flashMessageId = useSessionStore((s) => s.flashMessageId)
   const flashTick = useSessionStore((s) => s.flashTick)
   const apiKeyPresent = useSessionStore((s) => s.settings.apiKeyPresent)
+  const apiEndpoint = useSessionStore((s) => s.settings.apiEndpoint)
+  const accountGroups = useAccountGroups()
   const setQuote = useSessionStore((s) => s.setQuote)
   const focusComposer = useSessionStore((s) => s.focusComposer)
   const openSettings = useSessionStore((s) => s.openSettings)
@@ -116,16 +126,16 @@ export function Transcript(): React.JSX.Element {
   const continueInNewSession = useSessionStore((s) => s.continueInNewSession)
   const clearCompaction = useSessionStore((s) => s.clearCompaction)
   // Do not `?? []` here — a fresh array each snapshot loops zustand/React.
-  const compactions = useSessionStore((s) => s.compactions[s.activeId])
+  const compactions = useSessionStore((s) => s.compactions[activeId])
   const cliHost = useSessionStore(
-    (s) => s.conversations.find((c) => c.id === s.activeId)?.cliHost ?? null
+    (s) => s.conversations.find((c) => c.id === activeId)?.cliHost ?? null
   )
   const accountId = useSessionStore(
-    (s) => s.conversations.find((c) => c.id === s.activeId)?.accountId ?? null
+    (s) => s.conversations.find((c) => c.id === activeId)?.accountId ?? null
   )
   const needsVavKey = !apiKeyPresent && !cliHost
   const archived = useSessionStore(
-    (s) => !!s.conversations.find((c) => c.id === s.activeId)?.archived
+    (s) => !!s.conversations.find((c) => c.id === activeId)?.archived
   )
   const cliAgents = useSessionStore((s) => s.settings.cliAgents)
 
@@ -137,8 +147,18 @@ export function Transcript(): React.JSX.Element {
         name: named?.name ?? displayNameForCliHost(cliHost)
       }
     }
-    return { id: 'vav', name: t('agents.plainShell') }
-  }, [cliHost, cliAgents, t])
+    const vavAccounts = vavAccountsOf(accountGroups)
+    const current =
+      vavAccounts.find((row) => row.id === accountId) ??
+      vavAccounts.find((row) => row.current) ??
+      vavAccounts[0]
+    const endpoint = current?.endpoint ?? apiEndpoint
+    const vendorId = vendorIdFromEndpoint(endpoint)
+    return {
+      id: vendorId,
+      name: vendorDisplayName(endpoint, t('agents.customModel'))
+    }
+  }, [accountGroups, accountId, apiEndpoint, cliAgents, cliHost, t])
 
   const scrollRef = useRef<HTMLDivElement>(null)
   const contentRef = useRef<HTMLDivElement>(null)
@@ -663,6 +683,7 @@ export function Transcript(): React.JSX.Element {
               logoKey={emptyLogoAgent.id}
               logoLabel={emptyLogoAgent.name}
               enterKey={emptyScene}
+              enterSlot={emptySlot}
               meta={
                 activeId ? (
                   <EmptyQuotaUsage
@@ -673,13 +694,20 @@ export function Transcript(): React.JSX.Element {
                 ) : null
               }
               title={needsVavKey ? t('transcript.configureKey') : undefined}
-              description={needsVavKey ? t('transcript.configureKeyDesc') : undefined}
-              foot={<SessionWorkspaceChrome />}
+              description={
+                needsVavKey
+                  ? t('transcript.configureKeyDesc')
+                  : cliHost
+                    ? undefined
+                    : t('empty.harnessedByVav')
+              }
+              foot={<SessionWorkspaceChrome conversationId={activeId} />}
             >
               {needsVavKey ? (
                 <Button
                   label={t('transcript.openSettings')}
                   variant="primary"
+                  testId="empty-open-settings"
                   onClick={() => openSettings('agents', 'vav')}
                 />
               ) : null}

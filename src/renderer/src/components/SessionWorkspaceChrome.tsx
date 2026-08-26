@@ -1,5 +1,7 @@
 import { type ReactNode } from 'react'
 import { useSessionStore } from '../state/sessionStore'
+import { useWorkspaceStore } from '../state/workspaceStore'
+import { requestCliSurface } from '../lib/cliSurfaceSwitch'
 import { useT } from '../i18n/useT'
 import { isTemporaryWorkspace, workdirShortLabel } from '../lib/format'
 import { StaggerLine, useEmptyEntranceCopy } from './ui'
@@ -95,12 +97,19 @@ export function EnableVersionControlChrome({
  * Empty-session chrome: current workspace, with a switcher.
  * Git init / branch / worktree live in Files → Git, not here.
  */
-export function SessionWorkspaceChrome(): React.JSX.Element | null {
+export function SessionWorkspaceChrome({
+  conversationId
+}: {
+  conversationId?: string
+} = {}): React.JSX.Element | null {
   const t = useT()
-  const activeId = useSessionStore((s) => s.activeId)
-  const conversation = useSessionStore((s) => s.conversations.find((c) => c.id === s.activeId))
+  const storeActiveId = useSessionStore((s) => s.activeId)
+  const activeId = conversationId || storeActiveId
+  const conversation = useSessionStore((s) => s.conversations.find((c) => c.id === activeId))
   const tmp = useSessionStore((s) => s.tmp)
   const pickWorkingDirectory = useSessionStore((s) => s.pickWorkingDirectory)
+  const swarmEnabled = useSessionStore((s) => s.settings.swarmModeEnabled === true)
+  const cliMode = useWorkspaceStore((s) => !!s.workspaces[activeId]?.cliMode)
 
   const cwd = conversation?.workingDirectory ?? null
   const temporary = isTemporaryWorkspace(cwd, tmp)
@@ -130,6 +139,20 @@ export function SessionWorkspaceChrome(): React.JSX.Element | null {
           {t('empty.workspaceEnd')}
         </StaggerLine>
       </p>
+      {swarmEnabled && !cliMode ? (
+        <p className="session-workspace-prose">
+          <StaggerLine baseDelay={280} key={`${motionKey}:cli`}>
+            {t('empty.useCliLead')}{' '}
+            <TextBtn
+              title={t('empty.useCliHint')}
+              onClick={() => requestCliSurface(activeId, true)}
+            >
+              {t('empty.useCliAction')}
+            </TextBtn>
+            {t('empty.useCliEnd')}
+          </StaggerLine>
+        </p>
+      ) : null}
     </div>
   )
 }

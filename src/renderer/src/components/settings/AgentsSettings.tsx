@@ -19,8 +19,16 @@ import {
   type CliHostKind,
   type ModelModality
 } from '@shared/types'
-import { apiProviderBrand } from '@shared/accounts'
-import type { AccountGroupView } from '@shared/ipc'
+import {
+  LLM_CUSTOM_VENDOR,
+  LLM_VENDOR_CATALOGUE,
+  groupAccountsByVendor,
+  isLlmVendorId,
+  vendorIdFromEndpoint,
+  type LlmVendor,
+  type LlmVendorGroup
+} from '@shared/llmVendors'
+import type { AccountView } from '@shared/ipc'
 import type { MessageKey } from '@shared/i18n'
 import { agentWebsiteUrl } from '@shared/agentBinary'
 import {
@@ -31,6 +39,8 @@ import {
 } from '@shared/agentModels'
 import { useSessionStore } from '../../state/sessionStore'
 import { useT } from '../../i18n/useT'
+import { useAccountGroups, vavAccountsOf } from '../../lib/accountGroups'
+import { menuAnchor, showMenu } from '../../lib/nativeMenu'
 import { AgentBrandMark } from '../AgentBrandMark'
 import { Toggle } from '../ui'
 import { AgentProfileSwitch } from './VavApiCredentials'
@@ -42,8 +52,6 @@ import {
   useAgentInstallMap
 } from '../../lib/agentInstallStatus'
 import { useInstallRunStore } from '../../state/installRunStore'
-
-const VAV_ROW_ID = 'vav'
 
 const MODALITY_LABEL: Record<ModelModality, MessageKey> = {
   text: 'model.modality.text',
@@ -81,6 +89,56 @@ function ModelModalityLine({
       ) : null}
     </span>
   )
+}
+
+type ProviderListRow =
+  | { id: string; kind: 'agent'; agent: AgentConfig }
+  | { id: string; kind: 'vendor'; vendor: LlmVendor; accounts: AccountView[] }
+
+function orderProviderRows(
+  agents: AgentConfig[],
+  vendors: LlmVendorGroup<AccountView>[],
+  order: string[]
+): ProviderListRow[] {
+  const rows = new Map<string, ProviderListRow>()
+  for (const agent of agents) {
+    rows.set(agent.id, { id: agent.id, kind: 'agent', agent })
+  }
+  for (const row of vendors) {
+    rows.set(row.vendor.id, {
+      id: row.vendor.id,
+      kind: 'vendor',
+      vendor: row.vendor,
+      accounts: row.accounts
+    })
+  }
+  const out: ProviderListRow[] = []
+  const seen = new Set<string>()
+  for (const id of order) {
+    const row = rows.get(id)
+    if (!row || seen.has(id)) continue
+    out.push(row)
+    seen.add(id)
+  }
+  for (const agent of agents) {
+    if (seen.has(agent.id)) continue
+    out.push(rows.get(agent.id)!)
+    seen.add(agent.id)
+  }
+  for (const row of vendors) {
+    if (seen.has(row.vendor.id)) continue
+    out.push(rows.get(row.vendor.id)!)
+    seen.add(row.vendor.id)
+  }
+  return out
+}
+
+/** After a row is removed, stay on the item above it (or the new first). */
+function idAfterRemoving(rows: Array<{ id: string }>, removedId: string): string | null {
+  const index = rows.findIndex((row) => row.id === removedId)
+  const remaining = rows.filter((row) => row.id !== removedId)
+  if (remaining.length === 0) return null
+  return remaining[Math.max(0, index - 1)]?.id ?? remaining[0]?.id ?? null
 }
 
 function cloneAgents(list: AgentConfig[]): AgentConfig[] {
@@ -166,42 +224,75 @@ export function AgentsSettings(): React.JSX.Element {
   }, [remoteKey, remoteOrderKey])
 
   const focusAgentId = useSessionStore((s) => s.settingsFocusAgentId)
-  const [selectedId, setSelectedId] = useState<string | null>(
-    () => focusAgentId || VAV_ROW_ID
+  const focusAccountId = useSessionStore((s) => s.settingsFocusAccountId)
+  const accountGroups = useAccountGroups()
+  const [accountGroupsLocal, setAccountGroupsLocal] = useState(accountGroups)
+  const groups = accountGroupsLocal.length > 0 ? accountGroupsLocal : accountGroups
+  const vavAccounts = vavAccountsOf(groups)
+  const modelVendors = useMemo(() => groupAccountsByVendor(vavAccounts), [vavAccounts])
+  const [listOrder, setListOrder] = useState<string[]>(() => settings.providerListOrder ?? [])
+  useEffect(() => {
+    setListOrder(settings.providerListOrder ?? [])
+  }, [settings.providerListOrder])
+  const listRows = useMemo(
+    () => orderProviderRows(agents, modelVendors, listOrder),
+    [agents, modelVendors, listOrder]
   )
-  const [accountGroups, setAccountGroups] = useState<AccountGroupView[]>([])
+  const [selectedId, setSelectedId] = useState<string | null>(
+    () => focusAgentId && focusAgentId !== 'vav' ? focusAgentId : null
+  )
   const [modelFilterOpen, setModelFilterOpen] = useState(false)
   const [modelFilter, setModelFilter] = useState('')
+  const [modelView, setModelView] = useState<'all' | 'enabled'>('all')
   const [modelsRefreshing, setModelsRefreshing] = useState(false)
   const [modelsRefreshAck, setModelsRefreshAck] = useState(false)
 
   useEffect(() => {
+    setAccountGroupsLocal(accountGroups)
+  }, [accountGroups])
+
+  useEffect(() => {
+    if (focusAccountId) {
+      const hit = vavAccounts.find((row) => row.id === focusAccountId)
+      if (hit) {
+        setSelectedId(vendorIdFromEndpoint(hit.endpoint))
+        useSessionStore.setState({ settingsFocusAccountId: null, settingsFocusAgentId: null })
+        return
+      }
+    }
     if (!focusAgentId) return
-    setSelectedId(focusAgentId)
+    if (focusAgentId === 'vav') {
+      const current = vavAccounts.find((row) => row.current) ?? vavAccounts[0]
+      setSelectedId(current ? vendorIdFromEndpoint(current.endpoint) : modelVendors[0]?.vendor.id ?? null)
+    } else {
+      setSelectedId(focusAgentId)
+    }
     useSessionStore.setState({ settingsFocusAgentId: null })
-  }, [focusAgentId])
+  }, [focusAccountId, focusAgentId, modelVendors, vavAccounts])
   const modelsRefreshTimers = useRef<number[]>([])
   const modelFilterRef = useRef<HTMLInputElement>(null)
-  const selectedIsVav = selectedId === VAV_ROW_ID
+  const selectedVendor = useMemo(
+    () => modelVendors.find((row) => row.vendor.id === selectedId) ?? null,
+    [modelVendors, selectedId]
+  )
+  const selectedIsModel = !!selectedVendor
   const selected = useMemo(
-    () => (selectedIsVav ? null : agents.find((a) => a.id === selectedId) ?? null),
-    [agents, selectedId, selectedIsVav]
+    () => (selectedIsModel ? null : agents.find((a) => a.id === selectedId) ?? null),
+    [agents, selectedId, selectedIsModel]
   )
 
-  // Keep selection valid after external sync / reorder. Removal picks the next
-  // row itself — do not yank focus to VAV here.
+  // Keep selection valid after external sync / reorder.
   useEffect(() => {
-    if (selectedId === VAV_ROW_ID) return
-    if (!selectedId || !agents.some((a) => a.id === selectedId)) {
-      setSelectedId(agents[agents.length - 1]?.id ?? VAV_ROW_ID)
-    }
-  }, [agents, selectedId])
+    if (selectedVendor || (selectedId && agents.some((a) => a.id === selectedId))) return
+    setSelectedId(modelVendors[0]?.vendor.id ?? agents[0]?.id ?? null)
+  }, [agents, modelVendors, selectedId, selectedVendor])
 
   // Fresh query per visit (this page unmounts when leaving Settings → Agents)
   // and whenever the user picks another provider in the list.
   useEffect(() => {
     setModelFilter('')
     setModelFilterOpen(false)
+    setModelView('all')
     setStartFailed(null)
   }, [selectedId])
 
@@ -213,20 +304,6 @@ export function AgentsSettings(): React.JSX.Element {
   useEffect(() => {
     void refreshCatalog(false)
   }, [refreshCatalog])
-
-  useEffect(() => {
-    let cancelled = false
-    const load = window.vav.accounts?.getPage
-    if (typeof load !== 'function') return
-    void load()
-      .then((page) => {
-        if (!cancelled) setAccountGroups(page.groups ?? [])
-      })
-      .catch(() => undefined)
-    return () => {
-      cancelled = true
-    }
-  }, [settings.apiKeyPresent])
 
   useEffect(() => {
     return () => {
@@ -317,61 +394,10 @@ export function AgentsSettings(): React.JSX.Element {
     }
   }, [settledRuns])
 
-  /** Menu open + leave path (matches toast / history popover). */
-  const ADD_MENU_LEAVE_MS = 180 // --dur-pop
-  const [addMenuOpen, setAddMenuOpen] = useState(false)
-  const [addMenuLeaving, setAddMenuLeaving] = useState(false)
-  const addMenuLeaveTimer = useRef<number | null>(null)
-  const addWrapRef = useRef<HTMLDivElement>(null)
   const [dragId, setDragId] = useState<string | null>(null)
   const [dragOverId, setDragOverId] = useState<string | null>(null)
   const [dragOverEdge, setDragOverEdge] = useState<'before' | 'after'>('before')
   const dragIdRef = useRef<string | null>(null)
-
-  const closeAddMenu = (): void => {
-    if (!addMenuOpen || addMenuLeaving) return
-    setAddMenuLeaving(true)
-    if (addMenuLeaveTimer.current != null) window.clearTimeout(addMenuLeaveTimer.current)
-    addMenuLeaveTimer.current = window.setTimeout(() => {
-      addMenuLeaveTimer.current = null
-      setAddMenuOpen(false)
-      setAddMenuLeaving(false)
-    }, ADD_MENU_LEAVE_MS)
-  }
-
-  const openAddMenu = (): void => {
-    if (addMenuLeaveTimer.current != null) {
-      window.clearTimeout(addMenuLeaveTimer.current)
-      addMenuLeaveTimer.current = null
-    }
-    setAddMenuLeaving(false)
-    setAddMenuOpen(true)
-  }
-
-  useEffect(() => {
-    return () => {
-      if (addMenuLeaveTimer.current != null) window.clearTimeout(addMenuLeaveTimer.current)
-    }
-  }, [])
-
-  useEffect(() => {
-    if (!addMenuOpen || addMenuLeaving) return
-    const onDoc = (event: MouseEvent): void => {
-      if (!addWrapRef.current?.contains(event.target as Node)) {
-        closeAddMenu()
-      }
-    }
-    const onKey = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape') closeAddMenu()
-    }
-    document.addEventListener('mousedown', onDoc)
-    document.addEventListener('keydown', onKey)
-    return () => {
-      document.removeEventListener('mousedown', onDoc)
-      document.removeEventListener('keydown', onKey)
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- closeAddMenu is stable enough for listeners
-  }, [addMenuOpen, addMenuLeaving])
 
   const commitAgents = (
     next: AgentConfig[],
@@ -381,19 +407,28 @@ export function AgentsSettings(): React.JSX.Element {
     setAgents(cloned)
     agentsRef.current = cloned
     const currentDefault = settings.defaultAgentId
-    // Keep VAV (null) or a still-present CLI id; never force a CLI default.
+    // Keep an explicit vendor default, or a still-present CLI id.
     const nextDefault =
       !currentDefault || currentDefault === 'vav'
         ? null
-        : cloned.some((a) => a.id === currentDefault)
+        : isLlmVendorId(currentDefault)
           ? currentDefault
-          : null
+          : cloned.some((a) => a.id === currentDefault)
+            ? currentDefault
+            : null
     void updateSettings({
       cliAgents: cloned,
       defaultAgentId: nextDefault,
       ...extra
     }).catch((err) => {
       console.error('[agents] failed to persist cliAgents', err)
+    })
+  }
+
+  const persistListOrder = (next: string[]): void => {
+    setListOrder(next)
+    void updateSettings({ providerListOrder: next }).catch((err) => {
+      console.error('[agents] failed to persist providerListOrder', err)
     })
   }
 
@@ -407,24 +442,30 @@ export function AgentsSettings(): React.JSX.Element {
     !settings.defaultAgentId || settings.defaultAgentId === 'vav'
       ? null
       : settings.defaultAgentId
-  const modelHostKey = selectedIsVav
+  const defaultHostMatchesSelection = selectedIsModel
+    ? activeDefaultId === selectedVendor?.vendor.id
+    : selected?.id === activeDefaultId
+  const modelHostKey = selectedIsModel
     ? 'vav'
     : selected && isStructuredCliHost(selected.id)
       ? selected.id
       : null
   const modelHost = (modelHostKey === 'vav' ? null : modelHostKey) as CliHostKind | null
   const vavCatalog = catalog.vav
-  const selectedAgentId = selectedIsVav ? 'vav' : selected?.id ?? null
-  const agentProfiles =
-    (selectedAgentId
-      ? accountGroups.find((group) => group.agentId === selectedAgentId)?.accounts
-      : null) ?? []
-  const currentVav = agentProfiles.find((row) => row.agentId === 'vav' && row.current) ??
-    accountGroups.find((group) => group.agentId === 'vav')?.accounts.find((row) => row.current) ??
-    accountGroups.find((group) => group.agentId === 'vav')?.accounts[0] ??
+  const selectedAgentId = selectedIsModel ? 'vav' : selected?.id ?? null
+  const agentProfiles = selectedIsModel
+    ? selectedVendor?.accounts ?? []
+    : (selectedAgentId
+        ? groups.find((group) => group.agentId === selectedAgentId)?.accounts
+        : null) ?? []
+  const currentVav =
+    (selectedVendor?.accounts.find((row) => row.current) ??
+      selectedVendor?.accounts[0] ??
+      vavAccounts.find((row) => row.current) ??
+      vavAccounts[0]) ??
     null
-  const vavBrand = apiProviderBrand(currentVav?.endpoint ?? settings.apiEndpoint)
-  const vavEndpointKey = (currentVav?.endpoint ?? settings.apiEndpoint).trim()
+  const selectedVendorName = selectedVendor?.vendor.name ?? t('agents.customModel')
+  const vavEndpointKey = (currentVav?.endpoint ?? selectedVendor?.vendor.endpoint ?? settings.apiEndpoint).trim()
   const vavEndpointNorm = vavEndpointKey.replace(/\/+$/, '').toLowerCase()
   const catalogMatchesVav =
     !vavEndpointNorm ||
@@ -437,12 +478,12 @@ export function AgentsSettings(): React.JSX.Element {
     ? Boolean(currentVav.keyPresent && (currentVav.endpoint?.trim() || settings.apiEndpoint.trim()))
     : settings.apiKeyPresent && !!settings.apiEndpoint.trim()
   const vavLive = vavCatalog?.source === 'live' && catalogMatchesVav
-  const vavFetchError = selectedIsVav && catalogMatchesVav ? vavCatalog?.error : undefined
-  const vavLoading = selectedIsVav && vavCanFetch && !vavLive && !vavFetchError
+  const vavFetchError = selectedIsModel && catalogMatchesVav ? vavCatalog?.error : undefined
+  const vavLoading = selectedIsModel && vavCanFetch && !vavLive && !vavFetchError
   const modelList = useMemo(() => {
     if (!modelHostKey) return []
     const entry = catalog[modelHostKey]
-    if (selectedIsVav) {
+    if (selectedIsModel) {
       if (!catalogMatchesVav) return []
       const models = entry?.models ?? []
       return isOfficialDeepSeekEndpoint(vavEndpointKey)
@@ -456,7 +497,7 @@ export function AgentsSettings(): React.JSX.Element {
     catalogMatchesVav,
     modelHost,
     modelHostKey,
-    selectedIsVav,
+    selectedIsModel,
     settings.customModels,
     settings.defaultModel,
     vavEndpointKey
@@ -464,13 +505,19 @@ export function AgentsSettings(): React.JSX.Element {
 
   const modelFilterQuery = modelFilter.trim().toLowerCase()
   const visibleModels = useMemo(() => {
-    if (!modelFilterQuery) return modelList
     return modelList.filter((model) => {
+      if (
+        modelView === 'enabled' &&
+        !isAgentModelEnabled(modelHost, model.id, settings.disabledAgentModels)
+      ) {
+        return false
+      }
+      if (!modelFilterQuery) return true
       const label = (model.label ?? '').toLowerCase()
       const id = (model.id ?? '').toLowerCase()
       return label.includes(modelFilterQuery) || id.includes(modelFilterQuery)
     })
-  }, [modelList, modelFilterQuery])
+  }, [modelList, modelFilterQuery, modelView, modelHost, settings.disabledAgentModels])
 
   const toggleModelEnabled = (modelId: string, enabled: boolean): void => {
     if (!modelHostKey) return
@@ -495,6 +542,32 @@ export function AgentsSettings(): React.JSX.Element {
       none: enabled === 0
     }
   }, [modelList, modelHost, settings.disabledAgentModels])
+
+  const setModelAsDefault = (modelId: string): void => {
+    if (selectedIsModel) {
+      const account =
+        selectedVendor?.accounts.find((row) => row.current) ?? selectedVendor?.accounts[0]
+      void updateSettings({
+        defaultModel: modelId,
+        defaultAgentId: selectedVendor?.vendor.id ?? null
+      })
+      if (account && !account.current) {
+        void window.vav.accounts.setCurrent(account.id).then((page) => {
+          setAccountGroupsLocal(page.groups ?? [])
+          void refreshCatalog(true)
+        })
+      }
+      return
+    }
+    if (!selected || !modelHostKey) return
+    void updateSettings({
+      defaultAgentModels: {
+        ...settings.defaultAgentModels,
+        [modelHostKey]: modelId
+      },
+      defaultAgentId: selected.id
+    })
+  }
 
   const setAllModelsEnabled = (enabled: boolean): void => {
     if (!modelHostKey || modelList.length === 0) return
@@ -532,8 +605,8 @@ export function AgentsSettings(): React.JSX.Element {
       (id) => id !== template.id
     )
     commitAgents([...agents, agent], { removedCliAgentIds })
+    persistListOrder([...listRows.map((row) => row.id), agent.id])
     setSelectedId(agent.id)
-    closeAddMenu()
   }
 
   const addCustom = (): void => {
@@ -549,21 +622,88 @@ export function AgentsSettings(): React.JSX.Element {
       builtin: false
     }
     commitAgents([...agents, agent])
+    persistListOrder([...listRows.map((row) => row.id), id])
     setSelectedId(id)
-    closeAddMenu()
   }
 
-  const canRemove = agents.length > 1 && !!selected && !selectedIsVav
+  const presentVendorIds = useMemo(
+    () => new Set(modelVendors.map((row) => row.vendor.id)),
+    [modelVendors]
+  )
+
+  const addModelVendor = async (vendor: LlmVendor): Promise<void> => {
+    if (vendor.id !== 'custom' && presentVendorIds.has(vendor.id)) {
+      setSelectedId(vendor.id)
+      return
+    }
+    const { page, id } = await window.vav.accounts.createDraft({
+      agentId: 'vav',
+      kind: 'vav_key',
+      endpoint: vendor.endpoint
+    })
+    setAccountGroupsLocal(page.groups ?? [])
+    if (vendor.id !== 'custom') {
+      await window.vav.accounts.updateVav(id, { alias: vendor.name })
+    }
+    await window.vav.accounts.setCurrent(id)
+    persistListOrder(
+      listRows.some((row) => row.id === vendor.id)
+        ? listRows.map((row) => row.id)
+        : [...listRows.map((row) => row.id), vendor.id]
+    )
+    setSelectedId(vendor.id)
+    void refreshCatalog(true)
+  }
+
+  const openAddMenu = (anchor: HTMLElement): void => {
+    const addableVendors = LLM_VENDOR_CATALOGUE.filter((vendor) => !presentVendorIds.has(vendor.id))
+    void showMenu(
+      [
+        { label: t('agents.groupAgents'), disabled: true },
+        ...addableCatalogue.map((agent) => ({
+          label: agent.name,
+          onSelect: () => addFromCatalogue(agent)
+        })),
+        { label: t('agents.newCustomName'), onSelect: addCustom },
+        { label: '', divider: true },
+        { label: t('agents.groupModels'), disabled: true },
+        ...addableVendors.map((vendor) => ({
+          label: vendor.name,
+          onSelect: () => void addModelVendor(vendor)
+        })),
+        { label: t('agents.newCustomModel'), onSelect: () => void addModelVendor(LLM_CUSTOM_VENDOR) }
+      ],
+      menuAnchor(anchor)
+    )
+  }
+
+  const canRemove = selectedIsModel
+    ? (selectedVendor?.accounts.length ?? 0) > 0
+    : agents.length > 1 && !!selected
 
   const removeSelected = (): void => {
+    if (selectedIsModel && selectedVendor) {
+      const ids = selectedVendor.accounts.map((row) => row.id)
+      const remaining = listRows.filter((row) => row.id !== selectedVendor.vendor.id)
+      persistListOrder(remaining.map((row) => row.id))
+      setSelectedId(idAfterRemoving(listRows, selectedVendor.vendor.id))
+      if (settings.defaultAgentId === selectedVendor.vendor.id) {
+        void updateSettings({ defaultAgentId: null })
+      }
+      void (async () => {
+        let page = null
+        for (const id of ids) {
+          page = await window.vav.accounts.remove(id)
+        }
+        if (page) setAccountGroupsLocal(page.groups ?? [])
+      })()
+      return
+    }
     if (!selected || agents.length <= 1) return
-    const removedIndex = agents.findIndex((a) => a.id === selected.id)
+    const remaining = listRows.filter((row) => row.id !== selected.id)
+    persistListOrder(remaining.map((row) => row.id))
+    setSelectedId(idAfterRemoving(listRows, selected.id))
     const next = agents.filter((a) => a.id !== selected.id)
-    // Keep the same list index; if we removed the last row, step up to the new last.
-    const nextSelected =
-      next[Math.min(Math.max(removedIndex, 0), next.length - 1)]?.id ?? VAV_ROW_ID
-    // Select before list commit so the validity effect never sees a stale id.
-    setSelectedId(nextSelected)
     const removedCliAgentIds = [
       ...new Set([...(settings.removedCliAgentIds ?? []), selected.id])
     ]
@@ -571,18 +711,44 @@ export function AgentsSettings(): React.JSX.Element {
   }
 
   const reorder = (fromId: string, toId: string, edge: 'before' | 'after' = 'before'): void => {
-    if (!fromId || !toId) return
-    const from = agents.findIndex((a) => a.id === fromId)
-    let to = agents.findIndex((a) => a.id === toId)
+    if (!fromId || !toId || fromId === toId) return
+    const ids = listRows.map((row) => row.id)
+    const from = ids.indexOf(fromId)
+    let to = ids.indexOf(toId)
     if (from < 0 || to < 0) return
     if (edge === 'after') to += 1
     if (from < to) to -= 1
     if (from === to) return
-    const next = [...agents]
-    const [row] = next.splice(from, 1)
-    if (!row) return
-    next.splice(to, 0, row)
-    commitAgents(next)
+    const next = [...ids]
+    const [id] = next.splice(from, 1)
+    if (!id) return
+    next.splice(to, 0, id)
+    const agentIds = next.filter((rowId) => agents.some((agent) => agent.id === rowId))
+    const agentsChanged = agentIds.join('\0') !== agents.map((agent) => agent.id).join('\0')
+    if (agentsChanged) {
+      const byId = new Map(agents.map((agent) => [agent.id, agent]))
+      const nextAgents = agentIds.map((rowId) => byId.get(rowId)!).filter(Boolean)
+      const cloned = cloneAgents(nextAgents)
+      setListOrder(next)
+      setAgents(cloned)
+      agentsRef.current = cloned
+      const currentDefault = settings.defaultAgentId
+      const nextDefault =
+        !currentDefault || currentDefault === 'vav'
+          ? null
+          : cloned.some((a) => a.id === currentDefault)
+            ? currentDefault
+            : null
+      void updateSettings({
+        providerListOrder: next,
+        cliAgents: cloned,
+        defaultAgentId: nextDefault
+      }).catch((err) => {
+        console.error('[agents] failed to persist provider order', err)
+      })
+      return
+    }
+    persistListOrder(next)
   }
 
   return (
@@ -591,6 +757,7 @@ export function AgentsSettings(): React.JSX.Element {
         <div className="agents-list-panel">
           <div
             className="agents-list"
+            data-testid="providers-list"
             role="listbox"
             aria-label={t('settings.nav.agents')}
             onDragOver={(e) => {
@@ -599,38 +766,32 @@ export function AgentsSettings(): React.JSX.Element {
               e.dataTransfer.dropEffect = 'move'
             }}
           >
-            <div
-              role="option"
-              aria-selected={selectedIsVav}
-              className={`agents-list-row${selectedIsVav ? ' selected' : ''}`}
-              onClick={() => setSelectedId(VAV_ROW_ID)}
-            >
-              <span className="agents-list-grip agents-list-grip-spacer" aria-hidden />
-              <AgentBrandMark agent={{ id: 'vav', name: vavBrand || t('agents.plainShell') }} size={18} />
-              <span className="agents-list-name">{vavBrand || t('agents.plainShell')}</span>
-              {vavBrand && vavBrand !== t('agents.plainShell') ? (
-                <span className="agents-list-badge">{t('agents.plainShell')}</span>
-              ) : null}
-              {activeDefaultId === null ? (
-                <span className="agents-list-badge">{t('agents.setAsDefault')}</span>
-              ) : null}
-            </div>
-            {agents.map((agent) => {
-              const isSelected = !selectedIsVav && agent.id === selected?.id
-              const isDragging = dragId === agent.id
-              const isOver = dragOverId === agent.id && dragId !== agent.id
+            {listRows.map((row) => {
+              const isSelected = selectedId === row.id
+              const isDragging = dragId === row.id
+              const isOver = dragOverId === row.id && dragId !== row.id
               const dropEdge = isOver ? dragOverEdge : null
-              const missing =
-                (installById[agent.id] ?? getAgentInstallStatus(agent.id)) === 'missing'
+              const agent = row.kind === 'agent' ? row.agent : null
+              const missing = agent
+                ? (installById[agent.id] ?? getAgentInstallStatus(agent.id)) === 'missing'
+                : false
+              const vendorCurrent =
+                row.kind === 'vendor'
+                  ? (row.accounts.find((account) => account.current) ?? row.accounts[0])
+                  : null
+              const isDefault = agent
+                ? activeDefaultId === agent.id
+                : activeDefaultId === row.id
               return (
                 <div
-                  key={agent.id}
+                  key={row.id}
                   role="option"
                   aria-selected={isSelected}
+                  data-testid={`provider-row-${row.id}`}
                   className={[
                     'agents-list-row',
                     isSelected ? 'selected' : '',
-                    agent.enabled ? '' : 'disabled',
+                    agent && !agent.enabled ? 'disabled' : '',
                     missing ? 'is-missing' : '',
                     isOver ? 'is-drag-over' : '',
                     isDragging ? 'is-dragging' : ''
@@ -639,13 +800,21 @@ export function AgentsSettings(): React.JSX.Element {
                     .join(' ')}
                   data-drop={dropEdge ?? undefined}
                   draggable
-                  onClick={() => setSelectedId(agent.id)}
+                  onClick={() => {
+                    setSelectedId(row.id)
+                    if (vendorCurrent && !vendorCurrent.current) {
+                      void window.vav.accounts.setCurrent(vendorCurrent.id).then((page) => {
+                        setAccountGroupsLocal(page.groups ?? [])
+                        void refreshCatalog(true)
+                      })
+                    }
+                  }}
                   onDragStart={(e) => {
-                    dragIdRef.current = agent.id
-                    setDragId(agent.id)
+                    dragIdRef.current = row.id
+                    setDragId(row.id)
                     e.dataTransfer.effectAllowed = 'move'
-                    e.dataTransfer.setData('text/plain', agent.id)
-                    e.dataTransfer.setData('application/x-vav-agent-id', agent.id)
+                    e.dataTransfer.setData('text/plain', row.id)
+                    e.dataTransfer.setData('application/x-vav-agent-id', row.id)
                     try {
                       e.dataTransfer.setDragImage(e.currentTarget, 12, 12)
                     } catch {
@@ -663,13 +832,12 @@ export function AgentsSettings(): React.JSX.Element {
                     e.dataTransfer.dropEffect = 'move'
                     const rect = e.currentTarget.getBoundingClientRect()
                     const edge = e.clientY < rect.top + rect.height / 2 ? 'before' : 'after'
-                    if (dragOverId !== agent.id) setDragOverId(agent.id)
+                    if (dragOverId !== row.id) setDragOverId(row.id)
                     if (dragOverEdge !== edge) setDragOverEdge(edge)
                   }}
                   onDragLeave={(e) => {
-                    // Only clear when leaving the row (not entering a child).
                     if (!e.currentTarget.contains(e.relatedTarget as Node)) {
-                      if (dragOverId === agent.id) setDragOverId(null)
+                      if (dragOverId === row.id) setDragOverId(null)
                     }
                   }}
                   onDrop={(e) => {
@@ -685,7 +853,7 @@ export function AgentsSettings(): React.JSX.Element {
                     setDragOverId(null)
                     setDragId(null)
                     dragIdRef.current = null
-                    if (from) reorder(from, agent.id, edge)
+                    if (from) reorder(from, row.id, edge)
                   }}
                 >
                   <span
@@ -695,11 +863,21 @@ export function AgentsSettings(): React.JSX.Element {
                   >
                     <GripVertical size={12} strokeWidth={2} />
                   </span>
-                  <AgentBrandMark agent={agent} size={18} />
-                  <span className="agents-list-name">{agent.name}</span>
+                  <AgentBrandMark
+                    agent={
+                      agent ?? {
+                        id: row.kind === 'vendor' ? row.vendor.id : row.id,
+                        name: row.kind === 'vendor' ? row.vendor.name : row.id
+                      }
+                    }
+                    size={18}
+                  />
+                  <span className="agents-list-name">
+                    {agent?.name ?? (row.kind === 'vendor' ? row.vendor.name : row.id)}
+                  </span>
                   {missing ? (
                     <span className="agents-list-badge">{t('agents.notInstalled')}</span>
-                  ) : activeDefaultId === agent.id ? (
+                  ) : isDefault ? (
                     <span className="agents-list-badge">{t('agents.setAsDefault')}</span>
                   ) : null}
                 </div>
@@ -708,55 +886,20 @@ export function AgentsSettings(): React.JSX.Element {
           </div>
 
           <div className="agents-list-toolbar">
-            <div className="agents-list-add-wrap" ref={addWrapRef}>
+            <div className="agents-list-add-wrap">
               <button
                 type="button"
                 className="agents-list-tool-btn"
                 title={t('agents.add')}
                 aria-label={t('agents.add')}
                 aria-haspopup="menu"
-                aria-expanded={addMenuOpen && !addMenuLeaving}
-                onClick={() => {
-                  if (addMenuOpen && !addMenuLeaving) closeAddMenu()
-                  else openAddMenu()
+                onClick={(event) => {
+                  event.preventDefault()
+                  openAddMenu(event.currentTarget)
                 }}
               >
                 <Plus size={14} strokeWidth={2.25} />
               </button>
-              {addMenuOpen ? (
-                <div
-                  className="agents-add-menu"
-                  role="menu"
-                  data-leaving={addMenuLeaving || undefined}
-                >
-                  {addableCatalogue.map((agent) => (
-                    <button
-                      key={agent.id}
-                      type="button"
-                      role="menuitem"
-                      className="agents-add-menu-item"
-                      onClick={() => addFromCatalogue(agent)}
-                    >
-                      <AgentBrandMark agent={agent} size={16} />
-                      <span>{agent.name}</span>
-                    </button>
-                  ))}
-                  {addableCatalogue.length > 0 ? (
-                    <div className="agents-add-menu-sep" role="separator" />
-                  ) : null}
-                  <button
-                    type="button"
-                    role="menuitem"
-                    className="agents-add-menu-item"
-                    onClick={addCustom}
-                  >
-                    <span className="agents-add-menu-custom-icon" aria-hidden>
-                      …
-                    </span>
-                    <span>{t('agents.customName')}</span>
-                  </button>
-                </div>
-              ) : null}
             </div>
             <button
               type="button"
@@ -784,8 +927,8 @@ export function AgentsSettings(): React.JSX.Element {
                   : t('agents.setAsDefaultHint')
               }
               disabled={
-                selectedIsVav
-                  ? activeDefaultId === null
+                selectedIsModel
+                  ? !selectedVendor || activeDefaultId === selectedVendor.vendor.id
                   : !selected ||
                     !isStructuredCliHost(selected.id) ||
                     selected.enabled === false ||
@@ -794,7 +937,9 @@ export function AgentsSettings(): React.JSX.Element {
                     selected.id === activeDefaultId
               }
               onClick={() => {
-                const next = selectedIsVav ? null : (selected?.id ?? null)
+                const next = selectedIsModel
+                  ? (selectedVendor?.vendor.id ?? null)
+                  : (selected?.id ?? null)
                 void updateSettings({ defaultAgentId: next })
               }}
             >
@@ -819,24 +964,25 @@ export function AgentsSettings(): React.JSX.Element {
           </div>
         </div>
 
-        {selectedIsVav || selected ? (
+        {selectedIsModel || selected ? (
           <div className="agents-editor">
-            {selectedIsVav ? (
+            {selectedIsModel ? (
               <>
                 <div className="agents-editor-hero">
-                  <AgentBrandMark agent={{ id: 'vav', name: vavBrand || t('agents.plainShell') }} size={40} />
-                  <span className="agents-editor-hero-name">
-                    {vavBrand || t('agents.plainShell')}
+                  <AgentBrandMark
+                    agent={{ id: selectedVendor?.vendor.id ?? 'custom', name: selectedVendorName }}
+                    size={40}
+                  />
+                  <span className="agents-editor-hero-name" data-testid="provider-editor-name">
+                    {selectedVendorName}
                   </span>
                 </div>
-                <p className="muted tiny" style={{ marginTop: -4, marginBottom: 4 }}>
-                  {t('agents.vavModelsHint')}
-                </p>
                 <AgentProfileSwitch
                   agentId="vav"
                   accounts={agentProfiles}
+                  endpoint={selectedVendor?.vendor.endpoint}
                   onProfileChanged={(next) => {
-                    setAccountGroups((groups) =>
+                    setAccountGroupsLocal((groups) =>
                       groups.map((group) =>
                         group.agentId === 'vav' ? { ...group, accounts: next } : group
                       )
@@ -849,7 +995,9 @@ export function AgentsSettings(): React.JSX.Element {
               <>
                 <div className="agents-editor-hero">
                   <AgentBrandMark agent={selected} size={40} />
-                  <span className="agents-editor-hero-name">{selected.name}</span>
+                  <span className="agents-editor-hero-name" data-testid="provider-editor-name">
+                    {selected.name}
+                  </span>
                   {agentWebsiteUrl(selected) ? (
                     <button
                       type="button"
@@ -866,7 +1014,7 @@ export function AgentsSettings(): React.JSX.Element {
                   agentId={selected.id}
                   accounts={agentProfiles}
                   onProfileChanged={(next) => {
-                    setAccountGroups((groups) =>
+                    setAccountGroupsLocal((groups) =>
                       groups.map((group) =>
                         group.agentId === selected.id ? { ...group, accounts: next } : group
                       )
@@ -1019,7 +1167,7 @@ export function AgentsSettings(): React.JSX.Element {
                     ]
                       .filter(Boolean)
                       .join(' ')}
-                    disabled={modelsRefreshing || (selectedIsVav && !vavCanFetch)}
+                    disabled={modelsRefreshing || (selectedIsModel && !vavCanFetch)}
                     aria-busy={modelsRefreshing}
                     onClick={refreshModels}
                   >
@@ -1039,17 +1187,23 @@ export function AgentsSettings(): React.JSX.Element {
                     </span>
                   </button>
                 </div>
-                {selectedIsVav && !vavCanFetch ? (
-                  <div className="muted tiny">{t('agents.modelsNeedCredentials')}</div>
-                ) : selectedIsVav && vavFetchError && modelList.length === 0 ? (
+                {selectedIsModel && !vavCanFetch ? (
+                  <div className="muted tiny">
+                    {t(
+                      selectedVendor?.vendor.endpoint
+                        ? 'agents.modelsNeedKey'
+                        : 'agents.modelsNeedCredentials'
+                    )}
+                  </div>
+                ) : selectedIsModel && vavFetchError && modelList.length === 0 ? (
                   <div className="agents-models-empty muted tiny">
                     {t('agents.modelsFetchError', { error: vavFetchError })}
                   </div>
-                ) : selectedIsVav && (vavLoading || modelsRefreshing) && modelList.length === 0 ? (
+                ) : selectedIsModel && (vavLoading || modelsRefreshing) && modelList.length === 0 ? (
                   <div className="muted tiny">{t('composer.modelsLoading')}</div>
                 ) : modelList.length === 0 ? (
                   <div className="muted tiny">
-                    {selectedIsVav ? t('agents.modelsEmpty') : t('composer.modelsLoading')}
+                    {selectedIsModel ? t('agents.modelsEmpty') : t('composer.modelsLoading')}
                   </div>
                 ) : (
                   <div className="agents-models-list">
@@ -1079,6 +1233,17 @@ export function AgentsSettings(): React.JSX.Element {
                           </span>
                         </span>
                       </label>
+                      <button
+                        type="button"
+                        className="agents-models-view-toggle"
+                        onClick={() =>
+                          setModelView((view) => (view === 'all' ? 'enabled' : 'all'))
+                        }
+                      >
+                        {modelView === 'all'
+                          ? t('agents.modelsShowEnabled')
+                          : t('agents.modelsShowAll')}
+                      </button>
                       {modelFilterOpen ? (
                         <div className="agents-models-filter">
                           <input
@@ -1128,7 +1293,9 @@ export function AgentsSettings(): React.JSX.Element {
                     </div>
                     {visibleModels.length === 0 ? (
                       <div className="agents-models-empty muted tiny">
-                        {t('agents.modelsFilterEmpty')}
+                        {modelFilterQuery
+                          ? t('agents.modelsFilterEmpty')
+                          : t('agents.modelsEnabledEmpty')}
                       </div>
                     ) : (
                       visibleModels.map((model) => {
@@ -1137,10 +1304,10 @@ export function AgentsSettings(): React.JSX.Element {
                           model.id,
                           settings.disabledAgentModels
                         )
-                        const isDefault =
-                          selectedIsVav &&
-                          !!model.id &&
-                          model.id === settings.defaultModel
+                        const hostDefault = selectedIsModel
+                          ? settings.defaultModel
+                          : (settings.defaultAgentModels?.[modelHostKey] ?? '')
+                        const isDefault = model.id === hostDefault && defaultHostMatchesSelection
                         return (
                           <div key={model.id || '__default__'} className="agents-models-row">
                             <label className="agents-models-row-check">
@@ -1163,23 +1330,19 @@ export function AgentsSettings(): React.JSX.Element {
                                 />
                               </span>
                             </label>
-                            {selectedIsVav && model.id ? (
-                              isDefault ? (
-                                <span className="agents-models-default-badge">
-                                  {t('agents.setAsDefault')}
-                                </span>
-                              ) : (
-                                <button
-                                  type="button"
-                                  className="agents-models-set-default"
-                                  onClick={() =>
-                                    void updateSettings({ defaultModel: model.id })
-                                  }
-                                >
-                                  {t('agents.modelsSetDefault')}
-                                </button>
-                              )
-                            ) : null}
+                            {isDefault ? (
+                              <span className="agents-models-default-badge">
+                                {t('agents.setAsDefault')}
+                              </span>
+                            ) : (
+                              <button
+                                type="button"
+                                className="agents-models-set-default"
+                                onClick={() => setModelAsDefault(model.id)}
+                              >
+                                {t('agents.modelsSetDefault')}
+                              </button>
+                            )}
                           </div>
                         )
                       })
@@ -1200,6 +1363,7 @@ export function AgentsSettings(): React.JSX.Element {
           <Toggle
             checked={settings.swarmModeEnabled === true}
             title={t('agents.swarmMode')}
+            testId="settings-swarm-mode"
             onChange={(swarmModeEnabled) => {
               void updateSettings({ swarmModeEnabled })
               if (!swarmModeEnabled) {

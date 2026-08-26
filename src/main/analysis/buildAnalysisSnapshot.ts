@@ -1,4 +1,4 @@
-import type { AnalysisApiBalance } from '../../shared/apiBalance.ts'
+import { hostCanShowApiBalance, type AnalysisApiBalance } from '../../shared/apiBalance.ts'
 import { unknownAccount, type HostAccountInfo } from '../../shared/cliAccountParse.ts'
 import type { AnalysisProvider, AnalysisSnapshot } from '../../shared/analysis.ts'
 import {
@@ -21,21 +21,30 @@ export async function buildAnalysisSnapshot(input: {
   cliAgents: { id: string; name: string }[] | null | undefined
   catalogue?: { id: string; name: string }[]
   presentIds?: Iterable<string> | null
+  vendors?: { id: string; name: string }[] | null
+  order?: string[] | null
+  remapHost?: (hostKey: string, accountId?: string | null) => string
   apiKeyPresent: boolean
   forceRefresh: boolean
   refreshQuotas: (force: boolean) => Promise<void>
   quotaWindows: (host: CliHostKind | null | undefined) => QuotaWindow[]
   readAccount: (host: CliHostKind | null) => Promise<HostAccountInfo>
-  readApiBalance?: () => Promise<{
+  hasApiKey?: (hostKey: string) => boolean
+  readApiBalance?: (hostKey: string) => Promise<{
     supported: boolean
     balance: AnalysisApiBalance | null
+    keyPresent?: boolean
   }>
 }): Promise<AnalysisSnapshot> {
-  const usage = aggregateAnalysisUsage(input.conversations)
+  const usage = aggregateAnalysisUsage(input.conversations, {
+    remapHost: input.remapHost,
+    order: input.order
+  })
   const seeds = localAnalysisProviders(
     input.cliAgents,
     input.catalogue ?? [],
-    input.presentIds
+    input.presentIds,
+    { vendors: input.vendors, order: input.order }
   )
   try {
     await input.refreshQuotas(input.forceRefresh)
@@ -49,14 +58,18 @@ export async function buildAnalysisSnapshot(input: {
       const host = analysisHostOrNull(seed.id)
       const kind = analysisProviderKind(seed.id)
       if (kind === 'api') {
+        const canBalance = hostCanShowApiBalance(seed.id)
+        let keyPresent = input.hasApiKey?.(seed.id) ?? input.apiKeyPresent
         let balance: AnalysisApiBalance | null = null
-        let balanceState: AnalysisProvider['balanceState'] = input.apiKeyPresent
-          ? 'unsupported'
-          : 'none'
-        if (input.apiKeyPresent && input.readApiBalance) {
+        let balanceState: AnalysisProvider['balanceState'] = !keyPresent
+          ? 'none'
+          : 'unsupported'
+        if (canBalance && input.readApiBalance) {
           try {
-            const lookup = await input.readApiBalance()
-            if (!lookup.supported) balanceState = 'unsupported'
+            const lookup = await input.readApiBalance(seed.id)
+            if (lookup.keyPresent !== undefined) keyPresent = lookup.keyPresent
+            if (!keyPresent) balanceState = 'none'
+            else if (!lookup.supported) balanceState = 'unsupported'
             else if (lookup.balance) {
               balance = lookup.balance
               balanceState = 'ready'
@@ -64,17 +77,17 @@ export async function buildAnalysisSnapshot(input: {
               balanceState = 'error'
             }
           } catch {
-            balanceState = 'error'
+            balanceState = keyPresent ? 'error' : 'none'
           }
         }
         return {
           hostKey: seed.id,
           hostName: seed.name,
           kind,
-          signedIn: input.apiKeyPresent,
+          signedIn: keyPresent,
           accountId: null,
           plan: null,
-          authKind: input.apiKeyPresent ? 'api-key' : 'none',
+          authKind: keyPresent ? 'api-key' : 'none',
           windows: [],
           balance,
           balanceState

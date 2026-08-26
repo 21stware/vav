@@ -70,6 +70,11 @@ const PLAN_STATUS_ALIAS: Record<string, PlanStepStatus> = {
   done: 'done',
   completed: 'done',
   complete: 'done',
+  finished: 'done',
+  success: 'done',
+  working: 'executing',
+  started: 'executing',
+  progress: 'executing',
   error: 'error',
   skipped: 'skipped',
   cancelled: 'skipped',
@@ -79,12 +84,17 @@ const PLAN_STATUS_ALIAS: Record<string, PlanStepStatus> = {
 export function normalizePlanSteps(raw: unknown): PlanStep[] {
   if (!Array.isArray(raw)) return []
   return raw.map((item, index) => {
-    const row = item as Record<string, unknown>
+    const row = (item && typeof item === 'object' ? item : {}) as Record<string, unknown>
     const alias = String(row.status ?? '')
       .trim()
       .toLowerCase()
       .replace(/[\s-]+/g, '_')
-    const status = PLAN_STATUS_ALIAS[alias] ?? 'pending'
+    let status = PLAN_STATUS_ALIAS[alias]
+    if (!status) {
+      if (row.completed === true || row.done === true) status = 'done'
+      else if (row.active === true) status = 'executing'
+      else status = 'pending'
+    }
     return {
       id: String(row.id ?? `step-${index}`),
       title: String(row.title ?? row.content ?? `Step ${index + 1}`),

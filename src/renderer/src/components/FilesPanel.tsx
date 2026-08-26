@@ -724,6 +724,7 @@ export function FilesPanel({ visible }: { visible: boolean }): React.JSX.Element
               <Button
                 icon={<Plus size={14} />}
                 size="sm"
+                testId="files-new-file"
                 title={t('files.newFile')}
                 disabled={rootMissing}
                 onClick={startCreateFile}
@@ -731,6 +732,7 @@ export function FilesPanel({ visible }: { visible: boolean }): React.JSX.Element
               <Button
                 icon={viewMode === 'tree' ? <List size={14} /> : <Columns3 size={14} />}
                 size="sm"
+                testId="files-view-mode"
                 title={viewMode === 'tree' ? t('files.viewList') : t('files.viewColumn')}
                 disabled={rootMissing}
                 onClick={toggleViewMode}
@@ -835,6 +837,7 @@ export function FilesPanel({ visible }: { visible: boolean }): React.JSX.Element
         <div className="files-tray-pane" data-hidden={trayView !== 'files'}>
           <div
             className="files-browser"
+            data-testid="files-panel"
             data-opaque={browserOpaque || undefined}
             tabIndex={trayView === 'files' ? 0 : -1}
             role="tree"
@@ -883,7 +886,7 @@ export function FilesPanel({ visible }: { visible: boolean }): React.JSX.Element
         )}
       </div>
         </div>
-        <div className="files-tray-pane" data-hidden={trayView !== 'git'}>
+        <div className="files-tray-pane" data-hidden={trayView !== 'git'} data-testid="git-panel">
           <GitChangesPanel
             visible={visible}
             active={trayView === 'git'}
@@ -1245,6 +1248,7 @@ function NewFileRow({
   return (
     <div
       className="tree-row file is-creating"
+      data-testid="files-create-row"
       style={{ paddingLeft: level * 14 + 10 }}
       onClick={(event) => event.stopPropagation()}
     >
@@ -1252,6 +1256,7 @@ function NewFileRow({
       <FileIcon size={16} strokeWidth={1.75} aria-hidden />
       <input
         className="text-field rename-field"
+        data-testid="files-create-name"
         autoFocus
         value={name}
         placeholder={t('files.newFilePlaceholder')}

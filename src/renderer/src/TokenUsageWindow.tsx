@@ -109,7 +109,7 @@ export default function TokenUsageWindow({
   }, [payload, t, locale])
 
   return (
-    <div className="token-usage-popup">
+    <div className="token-usage-popup" data-testid="token-usage-window">
       <div className="token-usage-popup-title">{t('token.contextWindow')}</div>
       {body}
     </div>

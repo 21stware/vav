@@ -7,7 +7,7 @@ import {
   type ReactNode,
   type RefObject
 } from 'react'
-import { Clock, Plus, Search } from 'lucide-react'
+import { Clock, Plus, Search, SquareSplitHorizontal, SquareSplitVertical } from 'lucide-react'
 import { buildWorkspaceFocusContext } from '@shared/agentContextInject'
 import { DEFAULT_CLI_AGENTS, enabledCliAgents, type AgentConfig } from '@shared/types'
 import type { FileSessionMeta } from '@shared/ipc'
@@ -34,7 +34,8 @@ import { AgentInstallPanel } from './AgentInstallPanel'
 import { teardownInlineTerminal } from './InlineTerminal'
 import { Button, EmptyState } from './ui'
 import { ShellLeadingControls } from './ShellLeadingControls'
-import { SurfaceSwitchButton } from './SurfaceSwitchButton'
+import { SwarmSplitView } from './SwarmSplitView'
+import { collectSwarmLeaves, swarmLeaf, swarmRootId } from '@shared/swarmLayout'
 import {
   clearAgentBinaryCache,
   getAgentBinaryCache,
@@ -145,7 +146,17 @@ export function SessionDetail({
   const agentKey = conversation?.agentBinaryName ?? null
   const cliMode = useWorkspaceStore((s) => !!s.workspaces[activeId]?.cliMode)
   const swarmEnabled = useSessionStore((s) => s.settings.swarmModeEnabled === true)
+  const conversations = useSessionStore((s) => s.conversations)
+  const swarmRoot = conversation
+    ? swarmRootId(conversation.id, conversation.swarmParentId)
+    : activeId
+  const swarmLayout =
+    conversations.find((c) => c.id === swarmRoot)?.swarmLayout ??
+    (swarmRoot ? swarmLeaf(swarmRoot) : null)
+  const swarmLeaves = collectSwarmLeaves(swarmLayout)
+  const swarmMulti = swarmEnabled && swarmLeaves.length > 1
   const isVavMode = !cliMode || !swarmEnabled
+  const threadSplit = swarmEnabled === true
   const showAgentSwitcher = true
 
   const agents = enabledCliAgents(settings.cliAgents)
@@ -361,15 +372,46 @@ export function SessionDetail({
     }
   }, [isVavMode, detachedElsewhere, activeId])
 
-  // CLI surface: ⌘D / ⌘⇧D split; ⌘←↑↓→ spatial pane focus.
   useEffect(() => {
-    if (isVavMode) return
+    if (!swarmMulti) return
+    for (const id of swarmLeaves) {
+      const meta = useSessionStore.getState().conversations.find((c) => c.id === id)
+      void useWorkspaceStore.getState().bindConversation(id, meta?.workingDirectory ?? null)
+      if (!useSessionStore.getState().messages[id]) {
+        void useSessionStore.getState().loadMessages(id)
+      }
+    }
+  }, [swarmMulti, swarmLeaves.join('|')])
+
+  // CLI surface: ⌘D / ⌘⇧D split; ⌘←↑↓→ spatial pane focus.
+  // Swarm-on Thread uses the same chords to mint sibling agent sessions.
+  useEffect(() => {
+    if (!threadSplit && isVavMode) return
     const onKey = (event: KeyboardEvent): void => {
       const meta = event.metaKey || event.ctrlKey
       if (!meta || event.altKey) return
 
       const paneDir = arrowKeyToPaneDirection(event.key)
+      if (paneDir && threadSplit && swarmMulti) {
+        const panes = measureCliPaneRects(document.querySelector('.session-swarm-split'))
+        if (panes.length >= 2) {
+          const focused = focusedCliPaneId(document.querySelector('.session-swarm-split'))
+          const from =
+            (focused && panes.some((p) => p.tabId === focused) ? focused : null) ||
+            (activeId && panes.some((p) => p.tabId === activeId) ? activeId : null) ||
+            panes[0]?.tabId ||
+            ''
+          if (from) {
+            const next = findNeighborPane(from, paneDir, panes)
+            event.preventDefault()
+            event.stopPropagation()
+            if (next && next !== from) void useSessionStore.getState().selectConversation(next)
+            return
+          }
+        }
+      }
       if (paneDir) {
+        if (threadSplit) return
         const host =
           useWorkspaceStore.getState().workspaces[activeId]?.agentHostSessions[
             CLI_SURFACE_KEY
@@ -402,18 +444,20 @@ export function SessionDetail({
       const key = event.key.toLowerCase()
       if (key === 'd' && event.shiftKey) {
         event.preventDefault()
-        splitCliAndFocusPicker(activeId, 'column')
+        if (threadSplit) void useSessionStore.getState().splitSwarmPane('column')
+        else splitCliAndFocusPicker(activeId, 'column')
         return
       }
       if (key === 'd' && !event.shiftKey) {
         event.preventDefault()
-        splitCliAndFocusPicker(activeId, 'row')
+        if (threadSplit) void useSessionStore.getState().splitSwarmPane('row')
+        else splitCliAndFocusPicker(activeId, 'row')
       }
     }
     // Capture so ⌘←/→ reach us before xterm treats them as line motion.
     window.addEventListener('keydown', onKey, true)
     return () => window.removeEventListener('keydown', onKey, true)
-  }, [activeId, previewEdit, isVavMode])
+  }, [activeId, previewEdit, isVavMode, threadSplit, swarmMulti])
 
   // Install-inline PTY — hooks must stay above every early return (Rules of Hooks).
   const teardownInstallPty = useCallback((): void => {
@@ -566,7 +610,7 @@ export function SessionDetail({
       <AgentModeChrome
         conversationId={activeId}
         agentBinaryName={agentKey}
-        showSearch={isVavMode}
+        showSearch={isVavMode || swarmMulti}
         showShellLeading={showShellLeading}
         fileSessionChrome={chromeSession}
       />
@@ -580,6 +624,7 @@ export function SessionDetail({
   const shellClass = [
     previewEdit ? 'preview-edit-session' : 'detail',
     !isVavMode ? 'terminal-host-session' : '',
+    swarmMulti ? 'is-swarm-multi' : '',
     variant === 'workspace' ? 'session-detail-workspace' : ''
   ]
     .filter(Boolean)
@@ -594,7 +639,7 @@ export function SessionDetail({
    * display:none) so the transcript render tree survives the flip.
    */
   return (
-    <main className={shellClass}>
+    <main className={shellClass} data-testid="session-detail">
       {chrome}
       {errorBanner && (
         <ErrorBanner
@@ -645,6 +690,12 @@ export function SessionDetail({
         </div>
       )}
 
+      {swarmMulti && swarmLayout && !previewEdit ? (
+        <>
+          {searchOpen && <SearchStrip />}
+          <SwarmSplitView rootId={swarmRoot} layout={swarmLayout} compact />
+        </>
+      ) : (
       <div className="session-surfaces">
       <div
         className={`${streamClass}${!isVavMode ? ' is-surface-parked' : ''}`}
@@ -713,13 +764,14 @@ export function SessionDetail({
         </div>
       </div>
       </div>
+      )}
 
       <div
         className={`dock${previewEdit ? ' preview-edit-dock' : ''}${
-          !isVavMode ? ' dock-tools-only' : ''
+          !isVavMode || swarmMulti ? ' dock-tools-only' : ''
         }`}
       >
-        {archived ? (
+        {swarmMulti ? null : archived ? (
           <div className="banner archived-readonly">
             <span>{t('session.archivedReadonly')}</span>
             <span className="spacer" />
@@ -786,22 +838,16 @@ export function AgentModeChrome({
   const workdir = conversation?.workingDirectory ?? null
   const workspacePath = workdirLabel(workdir, tmp, home)
   const fs = fileSessionChrome
-  const swarmHistoryRef = useRef<HTMLButtonElement>(null)
 
   const showFileSessionChrome = !!(fs && isChat && fs.sessions.length > 0)
   const trailing = fs?.trail ?? trail
+  const showSplit = swarmEnabled
   const showTrailing =
-    showFileSessionChrome || swarmEnabled || (showSearch && isChat) || !!trailing
+    showFileSessionChrome || (showSearch && isChat) || showSplit || !!trailing
 
-  const openSwarmHistory = (): void => {
-    const el = swarmHistoryRef.current
-    const rect = el?.getBoundingClientRect()
-    void window.vav.window.openSwarmHistory(
-      conversationId,
-      rect
-        ? { x: rect.x, y: rect.y, width: rect.width, height: rect.height }
-        : undefined
-    )
+  const splitSwarm = (axis: 'row' | 'column'): void => {
+    if (isTerminal) splitCliAndFocusPicker(conversationId, axis)
+    else void useSessionStore.getState().splitSwarmPane(axis)
   }
 
   return (
@@ -815,22 +861,11 @@ export function AgentModeChrome({
           </div>
         ) : null}
 
-        {swarmEnabled ? (
+        {swarmEnabled && isTerminal ? (
           <div className="agent-mode-swarm-toggle">
-            <SurfaceSwitchButton
-              conversationId={conversationId}
-              target={isTerminal ? 'thread' : 'swarm'}
-            />
-            {isTerminal ? (
-              <>
-                <span className="agent-mode-workspace-dot" aria-hidden="true">
-                  ·
-                </span>
-                <span className="agent-mode-workspace-name" title={workdir ?? workspacePath}>
-                  {workspacePath}
-                </span>
-              </>
-            ) : null}
+            <span className="agent-mode-workspace-name" title={workdir ?? workspacePath}>
+              {workspacePath}
+            </span>
           </div>
         ) : null}
 
@@ -865,27 +900,36 @@ export function AgentModeChrome({
               </div>
             ) : null}
 
-            {swarmEnabled ? (
-              <button
-                type="button"
-                ref={swarmHistoryRef}
-                className="btn ghost sm icon-only"
-                title={t('agents.sessionHistoryHint')}
-                aria-label={t('agents.sessionHistory')}
-                onClick={openSwarmHistory}
-              >
-                <Clock size={13} />
-              </button>
-            ) : null}
-
             {showSearch && isChat ? (
               <Button
                 icon={<Search size={13} />}
                 size="sm"
                 variant="ghost"
+                testId="session-search"
                 title={`${t('common.search')} ${keys('⌘F')}`}
                 onClick={() => (searchOpen ? closeSearch() : openSearch())}
               />
+            ) : null}
+
+            {showSplit ? (
+              <>
+                <Button
+                  icon={<SquareSplitVertical size={13} />}
+                  size="sm"
+                  variant="ghost"
+                  testId="swarm-split-right"
+                  title={`${t('agents.splitRight')} ${keys('⌘D')}`}
+                  onClick={() => splitSwarm('row')}
+                />
+                <Button
+                  icon={<SquareSplitHorizontal size={13} />}
+                  size="sm"
+                  variant="ghost"
+                  testId="swarm-split-down"
+                  title={`${t('agents.splitDown')} ${keys('⌘⇧D')}`}
+                  onClick={() => splitSwarm('column')}
+                />
+              </>
             ) : null}
 
             {trailing ? <div className="agent-mode-chrome-trail">{trailing}</div> : null}

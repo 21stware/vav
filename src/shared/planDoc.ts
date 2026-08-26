@@ -53,12 +53,24 @@ export function isTodoUpdateToolName(raw: string): boolean {
 
 /** Host-agnostic checklist: Claude todos, Codex plan[], ACP entries, VAV steps. */
 export function projectChecklistInput(raw: unknown): { title: string; steps: PlanStep[] } {
-  const rec = raw && typeof raw === 'object' && !Array.isArray(raw) ? (raw as Record<string, unknown>) : {}
+  let value = raw
+  if (typeof value === 'string') {
+    try {
+      value = JSON.parse(value)
+    } catch {
+      value = {}
+    }
+  }
+  const rec =
+    value && typeof value === 'object' && !Array.isArray(value)
+      ? (value as Record<string, unknown>)
+      : {}
   let steps = todosToSteps(rec.steps)
   if (!steps.length) steps = todosToSteps(rec.todos)
   if (!steps.length) steps = todosToSteps(rec.plan)
   if (!steps.length) steps = todosToSteps(rec.entries)
-  if (!steps.length && Array.isArray(raw)) steps = todosToSteps(raw)
+  if (!steps.length) steps = todosToSteps(rec.items)
+  if (!steps.length && Array.isArray(value)) steps = todosToSteps(value)
   const title = String(rec.title ?? rec.name ?? rec.explanation ?? '').trim() || 'Plan'
   return { title, steps }
 }
@@ -80,6 +92,11 @@ const TODO_STATUS: Record<string, PlanStepStatus> = {
   done: 'done',
   completed: 'done',
   complete: 'done',
+  finished: 'done',
+  success: 'done',
+  working: 'executing',
+  started: 'executing',
+  progress: 'executing',
   error: 'error',
   skipped: 'skipped',
   cancelled: 'skipped',
@@ -94,6 +111,26 @@ export function todoStatusFrom(raw: unknown): PlanStepStatus {
   return TODO_STATUS[key] ?? 'pending'
 }
 
+function stepStatusFromRow(row: Record<string, unknown>): PlanStepStatus {
+  const key = String(row.status ?? '')
+    .trim()
+    .toLowerCase()
+    .replace(/[\s-]+/g, '_')
+  if (key && TODO_STATUS[key]) return TODO_STATUS[key]!
+  if (
+    row.completed === true ||
+    row.done === true ||
+    row.isCompleted === true ||
+    row.is_completed === true
+  ) {
+    return 'done'
+  }
+  if (row.active === true || row.inProgress === true || row.in_progress === true) {
+    return 'executing'
+  }
+  return 'pending'
+}
+
 export function todosToSteps(raw: unknown): PlanStep[] {
   if (!Array.isArray(raw)) return []
   return raw.map((item, index) => {
@@ -103,9 +140,37 @@ export function todosToSteps(raw: unknown): PlanStep[] {
       title:
         String(row.title ?? row.content ?? row.step ?? row.text ?? `Step ${index + 1}`).trim() ||
         `Step ${index + 1}`,
-      status: todoStatusFrom(row.status),
+      status: stepStatusFromRow(row),
       subtitle: row.subtitle != null ? String(row.subtitle) : undefined
     }
+  })
+}
+
+export function sealPlanSteps(
+  steps: PlanStep[],
+  mode: 'cancel' | 'error' | 'success',
+  labels?: { cancelled?: string; failed?: string }
+): PlanStep[] {
+  return steps.map((step) => {
+    if (mode === 'cancel') {
+      if (step.status === 'executing') {
+        return { ...step, status: 'error' as const, subtitle: step.subtitle ?? labels?.cancelled }
+      }
+      if (step.status === 'pending') {
+        return { ...step, status: 'skipped' as const, subtitle: step.subtitle ?? labels?.cancelled }
+      }
+      return step
+    }
+    if (mode === 'error') {
+      if (step.status === 'executing') {
+        return { ...step, status: 'error' as const, subtitle: step.subtitle ?? labels?.failed }
+      }
+      return step
+    }
+    if (step.status === 'executing' || step.status === 'pending') {
+      return { ...step, status: 'done' as const }
+    }
+    return step
   })
 }
 

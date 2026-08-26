@@ -89,7 +89,7 @@ export function StreamingMessage({ conversationId }: { conversationId: string })
   }
 
   return (
-    <div className="message-turn assistant">
+    <div className="message-turn assistant" data-testid="streaming-message">
       <div className="message-role">Agent</div>
       <div className="message assistant">
         {process.length > 0 ? (
@@ -110,7 +110,7 @@ export function StreamingMessage({ conversationId }: { conversationId: string })
         )}
 
         {awaiting && <div className="muted tiny">{t('transcript.awaitingContinue')}</div>}
-        {live && <StreamStatus state="outputting" />}
+        {live && <StreamStatus state="outputting" conversationId={conversationId} />}
       </div>
     </div>
   )

@@ -20,6 +20,12 @@ import {
   X
 } from 'lucide-react'
 import type { ApprovalMode } from '@shared/types'
+import {
+  acpCurrentModeId,
+  acpSessionModes,
+  acpSlashMenuMatches,
+  type AcpAvailableCommand
+} from '@shared/acpSession'
 import type { MessageKey, TParams } from '@shared/i18n'
 import {
   MESSAGE_QUEUE_MAX,
@@ -136,7 +142,7 @@ export function ComposerContext({
     >
       {hasQueue && <MessageQueueBar conversationId={conversationId} items={messageQueue} />}
       {quote && (
-        <div className="quote-strip">
+        <div className="quote-strip" data-testid="composer-quote">
           <button
             type="button"
             className="quote-strip-body"
@@ -201,6 +207,7 @@ export function Composer({
   const queueFull = queueLen >= MESSAGE_QUEUE_MAX
   const sendKeySetting = useSessionStore((s) => s.settings.sendKey)
   const focusTick = useSessionStore((s) => s.composerFocusTick)
+  const focusId = useSessionStore((s) => s.composerFocusId)
 
   const setDraft = useSessionStore((s) => s.setDraft)
   const setAttachments = useSessionStore((s) => s.setAttachments)
@@ -211,6 +218,7 @@ export function Composer({
   const cancel = useSessionStore((s) => s.cancel)
   const setApprovalMode = useSessionStore((s) => s.setApprovalMode)
   const approvalMenuNonce = useSessionStore((s) => s.approvalMenuNonce)
+  const approvalConversationId = useSessionStore((s) => s.approvalConversationId)
 
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const approvalTriggerRef = useRef<HTMLButtonElement>(null)
@@ -234,6 +242,19 @@ export function Composer({
   // of every other subscriber for one frame when the store write coalesces.
   const [draft, setLocalDraft] = useState(storeDraft)
   const draftFlushTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const acpCommands = conversation?.acpSession?.commands ?? NO_COMMANDS
+  const slashMatches = useMemo(
+    () => acpSlashMenuMatches(draft, acpCommands),
+    [draft, acpCommands]
+  )
+  const [slashIndex, setSlashIndex] = useState(0)
+  const [slashDismissed, setSlashDismissed] = useState(false)
+  const slashOpen = Boolean(slashMatches && !slashDismissed)
+
+  useEffect(() => {
+    setSlashIndex(0)
+    setSlashDismissed(false)
+  }, [draft])
 
   useEffect(() => {
     setLocalDraft(storeDraft)
@@ -287,8 +308,9 @@ export function Composer({
 
   useEffect(() => {
     if (focusTick === 0) return
+    if (focusId && focusId !== conversationId) return
     textareaRef.current?.focus()
-  }, [focusTick])
+  }, [focusTick, focusId, conversationId])
 
   useEffect(() => {
     const element = textareaRef.current
@@ -324,9 +346,10 @@ export function Composer({
 
   useEffect(() => {
     if (approvalMenuNonce === 0 || approvalMenuNonce === seenApprovalMenuNonce.current) return
+    if (approvalConversationId && approvalConversationId !== conversationId) return
     seenApprovalMenuNonce.current = approvalMenuNonce
     openApprovalMenu(approvalTriggerRef.current)
-  }, [approvalMenuNonce, openApprovalMenu])
+  }, [approvalMenuNonce, approvalConversationId, conversationId, openApprovalMenu])
 
   const activeMode = modes.find((m) => m.value === approvalMode) ?? modes[0]!
   const approvalLabel = activeMode.label
@@ -401,6 +424,7 @@ export function Composer({
   return (
     <div
       className={`composer${hasCommentCards ? ' has-comment-cards' : ''}`}
+      data-testid="composer"
       onMouseDown={retainComposerFocus}
       onDragOver={(event) => event.preventDefault()}
       onDrop={(event) => {
@@ -442,6 +466,18 @@ export function Composer({
             ))}
           </div>
         )}
+        {conversationId && slashOpen && slashMatches ? (
+          <AcpSlashMenu
+            matches={slashMatches}
+            selectedIndex={slashIndex}
+            onHover={setSlashIndex}
+            onPick={(next) => {
+              setLocalDraft(next)
+              flushDraft(next)
+              textareaRef.current?.focus()
+            }}
+          />
+        ) : null}
         {attachments.length > 0 && conversationId && (
           <ComposerAttachments
             paths={attachments}
@@ -458,6 +494,7 @@ export function Composer({
 
         <textarea
           ref={textareaRef}
+          data-testid="composer-input"
           rows={1}
           placeholder={placeholder}
           value={draft}
@@ -493,6 +530,32 @@ export function Composer({
           onKeyDown={(event) => {
             // Don’t treat IME “confirm” Enter as send.
             if (composingRef.current || event.nativeEvent.isComposing) return
+            if (slashOpen && slashMatches) {
+              if (event.key === 'ArrowDown') {
+                event.preventDefault()
+                setSlashIndex((index) => (index + 1) % slashMatches.length)
+                return
+              }
+              if (event.key === 'ArrowUp') {
+                event.preventDefault()
+                setSlashIndex((index) => (index - 1 + slashMatches.length) % slashMatches.length)
+                return
+              }
+              if (event.key === 'Enter' || event.key === 'Tab') {
+                event.preventDefault()
+                const command = slashMatches[slashIndex] ?? slashMatches[0]
+                if (!command) return
+                const next = `/${command.name} `
+                setLocalDraft(next)
+                flushDraft(next)
+                return
+              }
+              if (event.key === 'Escape') {
+                event.preventDefault()
+                setSlashDismissed(true)
+                return
+              }
+            }
             if (!shouldSendOnKeyDown(event, sendKey)) return
             event.preventDefault()
             submit()
@@ -501,12 +564,14 @@ export function Composer({
 
         <div className="composer-bar">
           {conversationId ? <AgentModelPicker conversationId={conversationId} /> : null}
+          {conversationId ? <AcpSessionModePicker conversationId={conversationId} /> : null}
           {conversationId ? <ThinkingLevelPicker conversationId={conversationId} /> : null}
 
           <button
             ref={approvalTriggerRef}
             type="button"
             className={`model-picker approval-picker${approvalMode === 'bypass' ? ' warning' : ''}`}
+            data-testid="approval-mode"
             aria-label={t('composer.approvalMode')}
             aria-haspopup="menu"
             title={approvalTitle}
@@ -537,6 +602,7 @@ export function Composer({
           )}
           <button
             className="send-button"
+            data-testid="composer-send"
             disabled={!canSend}
             onClick={submit}
             title={
@@ -995,6 +1061,7 @@ function ContextRing({
     <button
       type="button"
       className="token-ring"
+      data-testid="token-ring"
       data-level={level}
       title={t('token.contextDetail', {
         percent,
@@ -1031,3 +1098,84 @@ function ContextRing({
     </button>
   )
 }
+
+function AcpSessionModePicker({ conversationId }: { conversationId: string }): React.JSX.Element | null {
+  const t = useT()
+  const conversation = useSessionStore((s) => s.conversations.find((c) => c.id === conversationId))
+  const setAcpMode = useSessionStore((s) => s.setAcpMode)
+  const setAcpConfigOption = useSessionStore((s) => s.setAcpConfigOption)
+  const modes = acpSessionModes(conversation?.acpSession)
+  const current = acpCurrentModeId(conversation?.acpSession)
+  if (!conversation?.cliHost || modes.length === 0) return null
+  const active = modes.find((mode) => mode.id === current) ?? modes[0]!
+  return (
+    <button
+      type="button"
+      className="model-picker"
+      data-testid="acp-session-mode"
+      aria-label={t('composer.sessionMode')}
+      aria-haspopup="menu"
+      title={active.description || t('composer.sessionMode')}
+      onClick={(event) => {
+        event.preventDefault()
+        const items = modes.map((mode) => ({
+          label: mode.name,
+          checked: mode.id === current,
+          onSelect: () => {
+            const config = conversation.acpSession?.configOptions?.find((option) => option.category === 'mode')
+            if (config) void setAcpConfigOption(conversationId, config.id, mode.id)
+            else void setAcpMode(conversationId, mode.id)
+          }
+        }))
+        void showMenu(items, menuAnchorIfVisible(event.currentTarget))
+      }}
+    >
+      <span className="model-name">{active.name}</span>
+      <ChevronDown size={11} />
+    </button>
+  )
+}
+
+function AcpSlashMenu({
+  matches,
+  selectedIndex,
+  onHover,
+  onPick
+}: {
+  matches: AcpAvailableCommand[]
+  selectedIndex: number
+  onHover: (index: number) => void
+  onPick: (next: string) => void
+}): React.JSX.Element {
+  const t = useT()
+  return (
+    <div
+      className="acp-slash-menu"
+      data-testid="acp-slash-menu"
+      role="listbox"
+      aria-label={t('composer.slashCommands')}
+    >
+      {matches.map((command, index) => (
+        <button
+          key={command.name}
+          type="button"
+          className={`acp-slash-item${index === selectedIndex ? ' is-active' : ''}`}
+          data-testid={`acp-slash-${command.name}`}
+          data-active={index === selectedIndex ? 'true' : undefined}
+          role="option"
+          aria-selected={index === selectedIndex}
+          onMouseEnter={() => onHover(index)}
+          onMouseDown={(event) => {
+            event.preventDefault()
+            onPick(`/${command.name} `)
+          }}
+        >
+          <span className="acp-slash-name">/{command.name}</span>
+          {command.description ? <span className="acp-slash-desc">{command.description}</span> : null}
+        </button>
+      ))}
+    </div>
+  )
+}
+
+const NO_COMMANDS: AcpAvailableCommand[] = []

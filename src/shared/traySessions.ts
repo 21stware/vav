@@ -77,6 +77,14 @@ export function trayIndentedLabel(label: string): string {
   return `${TRAY_ITEM_INDENT}${label}`
 }
 
+/** Menu-bar title: `running·done`. Empty when both are zero. */
+export function trayTitleCounts(running: number, done: number): string {
+  const live = Math.max(0, running)
+  const finished = Math.max(0, done)
+  if (live <= 0 && finished <= 0) return ''
+  return `${live}·${finished}`
+}
+
 export function trayPaneKey(pane: Pick<TrayPane, 'conversationId' | 'kind' | 'tabId'>): string {
   return `${pane.conversationId}:${pane.kind}:${pane.tabId}`
 }

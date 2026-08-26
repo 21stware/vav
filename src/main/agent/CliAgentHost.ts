@@ -17,6 +17,7 @@ import type {
 import {
   cursorAuthIdentity,
   isStructuredCliHost,
+  transportForCliHost,
   withCursorAuthIdentity
 } from '@shared/cliHost'
 import { ROOT_LEAF } from '@shared/thread'
@@ -30,6 +31,7 @@ import {
   isBareInternalError,
   pickExhaustedQuotaWindow,
   quotaKindMessageKey,
+  RpcErrorCode,
   shouldRetryFreshSession,
   type CliErrorKind
 } from '@shared/cliErrors'
@@ -37,15 +39,30 @@ import { en, isApprovalApproveText, isApprovalDenyText, zhCN } from '@shared/i18
 import { normalizeAskQuestions, parseToolInput } from '@shared/askPlan'
 import {
   isAskToolName,
+  isChecklistToolName,
+  isEnterPlanModeName,
   isPlanDocToolName,
   normalizePlanDocInput,
   planDocHasBody,
   planDocSummary,
   planDocToChecklistInput,
-  projectChecklistInput
+  projectChecklistInput,
+  sealPlanSteps
 } from '@shared/planDoc'
 import { enabledCliAgents } from '@shared/types'
+import type { AcpSessionState } from '@shared/acpSession'
+import {
+  acpFormToQuestions,
+  parseAcpFormSchema,
+  patchAcpConfigOption,
+  patchAcpSessionMode
+} from '@shared/acpSession'
 import { currentLocale, t } from '../i18n'
+import { shell } from 'electron'
+import type { FileService } from '../fs/FileService'
+function isAcpHost(kind: CliHostKind | null | undefined): boolean {
+  return !!kind && transportForCliHost(kind) === 'acp'
+}
 import { readHostAuthIdentity } from './hostAuth'
 import type { ConversationStore } from '../store/ConversationStore'
 import type { SettingsStore } from '../store/SettingsStore'
@@ -106,7 +123,7 @@ function describeCliHostError(
 interface PendingPermission {
   requestId: string
   toolCallId: string
-  kind: 'permission' | 'plan_doc' | 'ask'
+  kind: 'permission' | 'plan_doc' | 'ask' | 'form' | 'url'
   /** True when we parked a host tool_use that has no RPC to answer. */
   synthetic?: boolean
   resolve: (decision: 'allow' | 'deny') => void
@@ -130,6 +147,7 @@ interface HostTurn {
   errorCode?: number | null
   errorDetail?: string
   prompt: string
+  attachments?: string[]
   sawTurnStarted: boolean
   retriedFreshSession: boolean
   settling: boolean
@@ -160,6 +178,7 @@ export interface CliAgentHostDeps {
   conversations: ConversationStore
   settings: SettingsStore
   changeSets?: ChangeSetStore
+  files?: FileService
   emit: (event: TurnEvent) => void
   /** Sandbox copy → user-visible path (for streaming drafts). */
   logicalPath?: (path: string) => string
@@ -246,9 +265,12 @@ export class CliAgentHost {
       contextBlocks,
       attachments,
       openFile,
-      conversation.fileReadOnly === true
+      conversation.fileReadOnly === true,
+      isAcpHost(conversation.cliHost)
     )
-    await this.startTurn(conversationId, userMessage.id, userMessage.parentId, prompt)
+    await this.startTurn(conversationId, userMessage.id, userMessage.parentId, prompt, {
+      attachments
+    })
   }
 
   async regenerate(conversationId: string, messageId: string): Promise<void> {
@@ -279,9 +301,12 @@ export class CliAgentHost {
       user.contextBlocks,
       user.attachments,
       openFile,
-      conversation!.fileReadOnly === true
+      conversation!.fileReadOnly === true,
+      isAcpHost(conversation!.cliHost)
     )
-    await this.startTurn(conversationId, randomUUID(), parentId, prompt)
+    await this.startTurn(conversationId, randomUUID(), parentId, prompt, {
+      attachments: user.attachments
+    })
   }
 
   async editUserMessage(conversationId: string, messageId: string, text: string): Promise<void> {
@@ -319,9 +344,12 @@ export class CliAgentHost {
       userMessage.contextBlocks,
       userMessage.attachments,
       openFile,
-      conversation.fileReadOnly === true
+      conversation.fileReadOnly === true,
+      isAcpHost(conversation.cliHost)
     )
-    await this.startTurn(conversationId, userMessage.id, userMessage.parentId, prompt)
+    await this.startTurn(conversationId, userMessage.id, userMessage.parentId, prompt, {
+      attachments: userMessage.attachments
+    })
   }
 
   cancel(conversationId: string): void {
@@ -366,13 +394,21 @@ export class CliAgentHost {
       [...turn.pendingPermissions.values()].find((p) => p.toolCallId === toolCallId)
     if (!pending) return false
     const allow =
-      pending.kind === 'ask'
+      pending.kind === 'ask' || pending.kind === 'form'
         ? !isAskCancelText(text)
         : pending.kind === 'plan_doc'
           ? !isPlanDocRejectText(text)
-          : isApprovalApproveText(text, false)
+          : pending.kind === 'url'
+            ? !isAskCancelText(text) && !isApprovalDenyText(text)
+            : isApprovalApproveText(text, false)
     turn.pendingPermissions.delete(pending.toolCallId)
     const runtime = this.runtimes.get(conversationId)
+    if (pending.kind === 'url' && allow) {
+      const url = extractUrlFromInput(
+        turn.blocks.find((b) => b.kind === 'toolCall' && b.id === pending.toolCallId)
+      )
+      if (url) void shell.openExternal(url)
+    }
     if (pending.synthetic) {
       runtime?.driver.steer?.(text)
     } else {
@@ -424,6 +460,21 @@ export class CliAgentHost {
     if (ok === false) this.dispose(conversationId)
   }
 
+  applySessionMode(conversationId: string, modeId: string): void {
+    const runtime = this.runtimes.get(conversationId)
+    runtime?.driver.applyOptions?.({ mode: modeId })
+    const current = this.deps.conversations.get(conversationId)?.acpSession
+    this.persistAcpSession(conversationId, patchAcpSessionMode(current, modeId))
+  }
+
+  applySessionConfig(conversationId: string, id: string, value: string | boolean): void {
+    const runtime = this.runtimes.get(conversationId)
+    runtime?.driver.applyOptions?.({ configOption: { id, value } })
+    const current = this.deps.conversations.get(conversationId)?.acpSession
+    const next = patchAcpConfigOption(current, id, value)
+    if (next) this.persistAcpSession(conversationId, next)
+  }
+
   /**
    * Conversation root changed. Live drivers and resume cursors belong to the
    * old workspace — the next turn must spawn a fresh session in `cwd`.
@@ -462,7 +513,8 @@ export class CliAgentHost {
     conversationId: string,
     messageId: string,
     parentId: string | null,
-    prompt: string
+    prompt: string,
+    extras?: { attachments?: string[] }
   ): Promise<void> {
     const conversation = this.deps.conversations.get(conversationId)
     if (!conversation || !isStructuredCliHost(conversation.cliHost)) return
@@ -483,6 +535,7 @@ export class CliAgentHost {
       toolCount: 0,
       cancelled: false,
       prompt,
+      attachments: extras?.attachments,
       sawTurnStarted: false,
       retriedFreshSession: false,
       settling: false,
@@ -508,7 +561,7 @@ export class CliAgentHost {
     try {
       const runtime = await this.ensureRuntime(conversationId)
       runtime.lastTouch = Date.now()
-      runtime.driver.prompt(prompt)
+      runtime.driver.prompt(prompt, extras)
     } catch (err) {
       const extracted = extractRpcError(err)
       const described = await this.describeTurnError(
@@ -618,7 +671,14 @@ export class CliAgentHost {
         approvalMode: conversation.approvalMode,
         model: conversation.model || null,
         cursor,
-        env: agent?.envVars
+        env: agent?.envVars,
+        extraArgs: agent?.defaultArgs,
+        files: this.deps.files
+          ? {
+              readTextFile: (path) => this.deps.files!.readTextFile(path),
+              writeTextFile: (path, content) => this.deps.files!.writeTextFile(path, content)
+            }
+          : undefined
       },
       (event) => this.onDriverEvent(conversationId, event)
     )
@@ -640,8 +700,37 @@ export class CliAgentHost {
       return
     }
 
+    if (event.type === 'session-state') {
+      this.persistAcpSession(conversationId, event.state)
+    }
+
     const turn = this.turns.get(conversationId)
     if (!turn) {
+      if (event.type === 'fs-write') {
+        const workdir = this.conversationCwd(conversationId)
+        this.deps.changeSets?.recordWrite(
+          conversationId,
+          workdir,
+          event.path,
+          event.original,
+          event.content
+        )
+        this.deps.emit({
+          type: 'fs-changed',
+          conversationId,
+          parentPath: event.path.replace(/[/\\][^/\\]+$/, '') || workdir,
+          filePath: event.path
+        })
+        return
+      }
+      if (event.type === 'usage') {
+        this.applyUsage(conversationId, event)
+        return
+      }
+      if (event.type === 'quota') {
+        this.applyQuota(conversationId, event.windows)
+        return
+      }
       if (event.type === 'process-exited') {
         if (this.ignoreNextExit.delete(conversationId)) return
         this.runtimes.get(conversationId)?.driver.dispose()
@@ -680,6 +769,40 @@ export class CliAgentHost {
         if (turn.replay.isHistoricalTool(event.toolCallId)) break
         this.applyElicitation(conversationId, turn, event)
         break
+      case 'session-state':
+        break
+      case 'auth-required': {
+        const message = turn.error || t('error.agentAuthRequired')
+        turn.error = message
+        turn.errorCode = turn.errorCode ?? RpcErrorCode.authRequired
+        if (!turn.sawTurnStarted) {
+          void this.settleFailedTurn(
+            conversationId,
+            turn,
+            message,
+            turn.errorCode,
+            turn.errorDetail
+          )
+        }
+        break
+      }
+      case 'fs-write': {
+        const workdir = this.conversationCwd(conversationId)
+        this.deps.changeSets?.recordWrite(
+          conversationId,
+          workdir,
+          event.path,
+          event.original,
+          event.content
+        )
+        this.deps.emit({
+          type: 'fs-changed',
+          conversationId,
+          parentPath: event.path.replace(/[/\\][^/\\]+$/, '') || workdir,
+          filePath: event.path
+        })
+        break
+      }
       case 'usage':
         this.applyUsage(conversationId, event)
         break
@@ -844,6 +967,7 @@ export class CliAgentHost {
       this.applyNestedTool(conversationId, turn, event)
       return
     }
+    if (this.applyChecklistTool(conversationId, turn, event)) return
     let index = turn.toolIndex.get(event.id)
     if (index == null) {
       index = turn.blocks.length
@@ -883,6 +1007,76 @@ export class CliAgentHost {
     }
     if (this.parkInteractiveTool(conversationId, turn, event, next, index)) return
     this.setPhase(conversationId, turn, 'working')
+  }
+
+  /**
+   * Fold every host checklist (TodoWrite / update_plan / ACP plan) onto one
+   * live `plan` block so the overlay can tick steps instead of freezing at 0.
+   */
+  private applyChecklistTool(
+    conversationId: string,
+    turn: HostTurn,
+    event: Extract<DriverEvent, { type: 'tool' }>
+  ): boolean {
+    if (isEnterPlanModeName(event.name)) return false
+    if (!isChecklistToolName(event.name) && mapToolName(event.name) !== 'plan') return false
+    if (mapToolName(event.name) !== 'plan') return false
+
+    const incoming = projectChecklistInput(event.input)
+    let index = turn.toolIndex.get(event.id)
+    if (index == null) {
+      const existing = findChecklistIndex(turn.blocks)
+      if (existing != null) {
+        index = existing
+        turn.toolIndex.set(event.id, index)
+      }
+    }
+    if (index == null) {
+      if (incoming.steps.length === 0 && event.status !== 'started' && event.status !== 'updated') {
+        return false
+      }
+      index = turn.blocks.length
+      turn.toolIndex.set(event.id, index)
+      const title = event.title || incoming.title || event.name
+      const block: ToolCallBlock = {
+        kind: 'toolCall',
+        id: event.id,
+        tool: 'plan',
+        summary: title,
+        input: inputJson(incoming),
+        output: '',
+        status: 'pending'
+      }
+      turn.blocks.push(block)
+      this.sealOpenReasoning(turn)
+      turn.textIndex = null
+      turn.reasoningIndex = null
+    }
+
+    const block = turn.blocks[index] as ToolCallBlock
+    const previousInput = block.input
+    this.patchToolBlock(block, event)
+    block.tool = 'plan'
+    if (incoming.steps.length) {
+      const current = projectChecklistInput(parseToolInput(previousInput))
+      const title =
+        incoming.title && incoming.title !== 'Plan' ? incoming.title : current.title || incoming.title
+      block.input = inputJson({ title, steps: incoming.steps })
+      const done = incoming.steps.filter((step) => step.status === 'done').length
+      block.summary = `Plan · ${title} (${done}/${incoming.steps.length})`
+    } else {
+      block.input = previousInput
+    }
+
+    if (event.status === 'completed' || event.status === 'error') {
+      turn.toolCount++
+      turn.pendingPermissions.delete(block.id)
+    }
+    const next = snapshotToolBlock(block)
+    turn.blocks[index] = next
+    this.deps.emit({ type: 'tool', conversationId, index, block: next })
+    this.setPhase(conversationId, turn, 'working')
+    return true
   }
 
   private applyNestedTool(
@@ -1071,13 +1265,22 @@ export class CliAgentHost {
     event: Extract<DriverEvent, { type: 'elicitation' }>
   ): void {
     this.flushBuffers(conversationId, turn)
-    const tool: ToolCallBlock['tool'] = event.kind === 'plan_doc' ? 'plan_doc' : 'ask_user_question'
+    const tool: ToolCallBlock['tool'] =
+      event.kind === 'plan_doc' ? 'plan_doc' : event.kind === 'url' ? 'request' : 'ask_user_question'
     const parsed = event.input && typeof event.input === 'object' ? (event.input as Record<string, unknown>) : {}
-    const questions = event.kind === 'ask' ? normalizeAskQuestions(parsed) : undefined
+    const formFields = event.kind === 'form' ? parseAcpFormSchema(parsed.requestedSchema ?? parsed.schema) : []
+    const questions =
+      event.kind === 'ask'
+        ? normalizeAskQuestions(parsed)
+        : event.kind === 'form'
+          ? acpFormToQuestions(formFields.length ? formFields : parseAcpFormSchema(parsed))
+          : undefined
     const summary =
       event.kind === 'plan_doc'
         ? planDocSummary(normalizePlanDocInput(event.input))
-        : event.title || questions?.[0]?.question || t('tool.ask')
+        : event.kind === 'url'
+          ? event.title || (typeof parsed.url === 'string' ? parsed.url : t('tool.ask'))
+          : event.title || questions?.[0]?.question || t('tool.ask')
     let index = turn.toolIndex.get(event.toolCallId)
     if (index == null) {
       for (const [id, pending] of turn.pendingPermissions) {
@@ -1103,7 +1306,8 @@ export class CliAgentHost {
         output: '',
         status: 'pending',
         questions,
-        askTitle: event.title
+        askTitle: event.title,
+        choices: event.kind === 'url' ? [t('common.open'), t('common.cancel')] : undefined
       }
       turn.blocks.push(block)
       this.sealOpenReasoning(turn)
@@ -1254,15 +1458,26 @@ export class CliAgentHost {
     let snapshotTotal: number | null = null
     if (recordHistory && hasTurnTokens) {
       const live = this.deps.conversations.get(conversationId)!
-      const snapshot = buildSnapshot({
-        turnIndex: (live.tokenHistory?.length ?? 0) + 1,
-        usage: { input, output, cacheRead, cacheWrite },
-        modelId: live.model || 'cli',
-        costUsd: event.turnCostUsd,
-        accountId: live.accountId ?? null
-      })
-      this.deps.conversations.recordTokenSnapshot(conversationId, snapshot)
-      snapshotTotal = snapshot.totalInputTokens
+      const last = live.tokenHistory?.at(-1)
+      const duplicate =
+        last != null &&
+        last.newInputTokens === input &&
+        last.outputTokens === output &&
+        last.cacheReadTokens === cacheRead &&
+        last.cacheWriteTokens === cacheWrite
+      if (!duplicate) {
+        const snapshot = buildSnapshot({
+          turnIndex: (live.tokenHistory?.length ?? 0) + 1,
+          usage: { input, output, cacheRead, cacheWrite },
+          modelId: live.model || 'cli',
+          costUsd: event.turnCostUsd,
+          accountId: live.accountId ?? null
+        })
+        this.deps.conversations.recordTokenSnapshot(conversationId, snapshot)
+        snapshotTotal = snapshot.totalInputTokens
+      } else {
+        snapshotTotal = last.totalInputTokens
+      }
     }
 
     const fill =
@@ -1300,6 +1515,7 @@ export class CliAgentHost {
     this.sealOpenReasoning(turn)
 
     expireOpenTools(turn.blocks, turn.cancelled)
+    sealCliPlanBlocks(turn.blocks, turn.cancelled ? 'cancel' : turn.error ? 'error' : 'success')
 
     const content = turn.blocks
       .filter((b): b is Extract<MessageBlock, { kind: 'text' }> => b.kind === 'text')
@@ -1468,7 +1684,7 @@ export class CliAgentHost {
         next.lastTouch = Date.now()
         // New session has no previous-turn dump to strip.
         turn.replay.open()
-        next.driver.prompt(turn.prompt)
+        next.driver.prompt(turn.prompt, { attachments: turn.attachments })
         return
       } catch (err) {
         const extracted = extractRpcError(err)
@@ -1525,13 +1741,19 @@ export class CliAgentHost {
     return message
   }
 
+  private persistAcpSession(conversationId: string, state: AcpSessionState): void {
+    this.deps.conversations.updateMeta(conversationId, { acpSession: state })
+    this.deps.emit({ type: 'cli-session', conversationId, state })
+  }
+
   private composePrompt(
     text: string,
     quote?: QuoteDraft | null,
     contextBlocks?: PreviewRef[] | null,
     attachments?: string[],
     contextFile?: string | null,
-    fileReadOnly = false
+    fileReadOnly = false,
+    omitAttachmentPaths = false
   ): string {
     const parts: string[] = []
     if (contextFile) {
@@ -1550,7 +1772,7 @@ export class CliAgentHost {
         )
       }
     }
-    if (attachments?.length) {
+    if (attachments?.length && !omitAttachmentPaths) {
       parts.push(`[Attachments]\n${attachments.map((a) => `- ${a}`).join('\n')}`)
     }
     if (quote?.summary) {
@@ -1558,6 +1780,35 @@ export class CliAgentHost {
     }
     parts.push(text)
     return parts.join('\n\n')
+  }
+}
+
+function findChecklistIndex(blocks: MessageBlock[]): number | null {
+  for (let i = 0; i < blocks.length; i++) {
+    const block = blocks[i]
+    if (block?.kind === 'toolCall' && block.tool === 'plan') return i
+  }
+  return null
+}
+
+function sealCliPlanBlocks(
+  blocks: MessageBlock[],
+  mode: 'cancel' | 'error' | 'success'
+): void {
+  for (const block of blocks) {
+    if (block.kind !== 'toolCall' || block.tool !== 'plan') continue
+    const input = projectChecklistInput(parseToolInput(block.input))
+    if (input.steps.length === 0) continue
+    const steps = sealPlanSteps(input.steps, mode, {
+      cancelled: t('common.cancelled'),
+      failed: t('common.failed')
+    })
+    const done = steps.filter((step) => step.status === 'done').length
+    block.input = inputJson({ title: input.title, steps })
+    block.summary = `Plan · ${input.title} (${done}/${steps.length})`
+    if (block.status === 'pending' || block.status === 'executing') {
+      block.status = 'completed'
+    }
   }
 }
 
@@ -1570,6 +1821,12 @@ function isPlanDocRejectText(text: string): boolean {
     line === zhCN['common.cancel'] ||
     line === en['common.cancel']
   )
+}
+
+function extractUrlFromInput(block: MessageBlock | undefined): string | null {
+  if (!block || block.kind !== 'toolCall') return null
+  const parsed = parseToolInput(block.input)
+  return typeof parsed.url === 'string' && parsed.url.trim() ? parsed.url.trim() : null
 }
 
 function isAskCancelText(text: string): boolean {

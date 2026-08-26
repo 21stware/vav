@@ -23,7 +23,7 @@ import { buildModel, describeError, streamWith } from './provider'
 import { catalogRatesFor, contextWindowFor, maxTokensFor } from './modelMeta'
 import { loadInlineImages } from './attachmentImages'
 import { parseThinkingLevel, toPiReasoning } from '@shared/thinkingLevel'
-import { normalizePlanSteps } from '@shared/askPlan'
+import { projectChecklistInput, sealPlanSteps } from '@shared/planDoc'
 import {
   COMPACT_MIN_FOLDED,
   defaultKeepAfterIndex
@@ -64,6 +64,7 @@ import type { SkillService } from './SkillService'
 import { StickyShell } from '../terminal/StickyShell'
 import { isApprovalApproveText, isApprovalDenyText } from '@shared/i18n'
 import { t } from '../i18n'
+import { isE2eRuntime } from '../e2eRuntime'
 
 /** Token deltas are batched this often before crossing the IPC boundary. */
 const COALESCE_MS = 32
@@ -164,6 +165,8 @@ export class AgentRuntime {
   private turns = new Map<string, TurnState>()
   private shells = new Map<string, StickyShell>()
   private fileDrafts = new FileDraftCoalescer()
+  /** Playwright ask-card waiters — not a full TurnState. */
+  private e2eAskWaiters = new Map<string, (text: string) => void>()
 
   constructor(private deps: AgentRuntimeDeps) {}
 
@@ -508,6 +511,23 @@ export class AgentRuntime {
     const conversation = this.deps.conversations.get(conversationId)
     if (!conversation) return
 
+    if (isE2eRuntime() && process.env.VAV_E2E_STUB_TURN === '1') {
+      if (process.env.VAV_E2E_STUB_ASK === '1') {
+        this.startE2eStubAsk(conversationId, parentId)
+        return
+      }
+      if (process.env.VAV_E2E_STUB_APPROVE === '1') {
+        this.startE2eStubApprove(conversationId, parentId)
+        return
+      }
+      if (process.env.VAV_E2E_STUB_STREAM === '1') {
+        this.startE2eStubStream(conversationId, parentId)
+        return
+      }
+      this.completeE2eStubTurn(conversationId, parentId)
+      return
+    }
+
     const { apiKey, settings } = this.vavCreds(conversation)
     if (!apiKey) {
       this.emitFatal(conversationId, parentId, t('error.noApiKey'))
@@ -668,6 +688,12 @@ export class AgentRuntime {
 
   /** Routes a card answer back into the paused turn. */
   answer(conversationId: string, toolCallId: string, text: string): boolean {
+    const e2e = this.e2eAskWaiters.get(toolCallId)
+    if (e2e) {
+      this.e2eAskWaiters.delete(toolCallId)
+      e2e(text)
+      return true
+    }
     const payload = { text, cancelled: false as const }
     const preferred = this.turns.get(conversationId)
     if (preferred && this.resolvePending(preferred, toolCallId, payload)) return true
@@ -1538,6 +1564,187 @@ export class AgentRuntime {
     }
   }
 
+  /**
+   * Playwright-only: finish a turn without calling a provider.
+   * Gated on VAV_E2E=1 and VAV_E2E_STUB_TURN=1.
+   */
+  private completeE2eStubTurn(conversationId: string, parentId: string | null): void {
+    const text = 'e2e stub reply'
+    const message: ChatMessage = {
+      id: randomUUID(),
+      parentId,
+      role: 'assistant',
+      content: text,
+      blocks: [{ kind: 'text', text }],
+      createdAt: Date.now()
+    }
+    this.deps.emit({ type: 'start', conversationId })
+    this.deps.conversations.appendMessage(conversationId, message)
+    this.deps.conversations.flush()
+    this.deps.emit({
+      type: 'end',
+      conversationId,
+      message,
+      tokensUsed: 0
+    })
+  }
+
+  /** Live reasoning + tool + text so StreamingMessage / StreamStatus can be asserted. */
+  private startE2eStubStream(conversationId: string, parentId: string | null): void {
+    const read: ToolCallBlock = {
+      kind: 'toolCall',
+      id: 'e2e-stream-read',
+      tool: 'fs_read',
+      summary: 'hello.md',
+      input: JSON.stringify({ path: 'hello.md' }),
+      output: '',
+      status: 'executing'
+    }
+    const done: ToolCallBlock = { ...read, status: 'completed', output: '# hello from e2e\n' }
+    const text = 'e2e stub reply'
+    const message: ChatMessage = {
+      id: randomUUID(),
+      parentId,
+      role: 'assistant',
+      content: text,
+      createdAt: Date.now(),
+      blocks: [
+        { kind: 'reasoning', text: 'e2e live thought', durationMs: 80 },
+        done,
+        { kind: 'text', text }
+      ]
+    }
+
+    this.deps.emit({ type: 'start', conversationId })
+    this.deps.emit({ type: 'phase', conversationId, phase: 'thinking' })
+    this.deps.emit({
+      type: 'delta',
+      conversationId,
+      index: 0,
+      kind: 'reasoning',
+      text: 'e2e live thought'
+    })
+
+    setTimeout(() => {
+      this.deps.emit({ type: 'phase', conversationId, phase: 'working' })
+      this.deps.emit({ type: 'tool', conversationId, index: 1, block: read })
+    }, 160)
+
+    setTimeout(() => {
+      this.deps.emit({ type: 'tool', conversationId, index: 1, block: done })
+      this.deps.emit({ type: 'phase', conversationId, phase: 'outputting' })
+      this.deps.emit({
+        type: 'delta',
+        conversationId,
+        index: 2,
+        kind: 'text',
+        text
+      })
+    }, 420)
+
+    setTimeout(() => {
+      this.deps.conversations.appendMessage(conversationId, message)
+      this.deps.conversations.flush()
+      this.deps.emit({ type: 'end', conversationId, message, tokensUsed: 0 })
+    }, 780)
+  }
+
+  /** Park on ask_user_question until the renderer answers the card. */
+  private startE2eStubAsk(conversationId: string, parentId: string | null): void {
+    const askId = 'e2e-live-ask'
+    const block: ToolCallBlock = {
+      kind: 'toolCall',
+      id: askId,
+      tool: 'ask_user_question',
+      summary: 'Pick a next step',
+      input: JSON.stringify({
+        question: 'Pick a next step',
+        choices: ['Keep writing', 'Open review']
+      }),
+      output: '',
+      status: 'pending',
+      questions: [
+        { question: 'Pick a next step', choices: ['Keep writing', 'Open review'] }
+      ]
+    }
+
+    this.deps.emit({ type: 'start', conversationId })
+    this.deps.emit({ type: 'phase', conversationId, phase: 'awaiting-user' })
+    this.deps.emit({
+      type: 'awaiting',
+      conversationId,
+      toolCallId: askId,
+      index: 0,
+      block
+    })
+
+    this.e2eAskWaiters.set(askId, (text) => {
+      const sealed: ToolCallBlock = { ...block, status: 'completed', output: text }
+      const reply = `e2e stub reply · ${text}`
+      const message: ChatMessage = {
+        id: randomUUID(),
+        parentId,
+        role: 'assistant',
+        content: reply,
+        createdAt: Date.now(),
+        blocks: [sealed, { kind: 'text', text: reply }]
+      }
+      this.deps.emit({ type: 'tool', conversationId, index: 0, block: sealed })
+      this.deps.conversations.appendMessage(conversationId, message)
+      this.deps.conversations.flush()
+      this.deps.emit({ type: 'end', conversationId, message, tokensUsed: 0 })
+    })
+  }
+
+  /** Park on an Approve/Deny write gate until the renderer answers. */
+  private startE2eStubApprove(conversationId: string, parentId: string | null): void {
+    const approveId = 'e2e-live-approve'
+    const block: ToolCallBlock = {
+      kind: 'toolCall',
+      id: approveId,
+      tool: 'fs_write',
+      summary: 'Write hello.md',
+      input: JSON.stringify({ path: 'hello.md', contents: 'patched\n' }),
+      output: '',
+      status: 'pending',
+      choices: ['Approve', 'Deny']
+    }
+
+    this.deps.emit({ type: 'start', conversationId })
+    this.deps.emit({ type: 'phase', conversationId, phase: 'awaiting-user' })
+    this.deps.emit({
+      type: 'awaiting',
+      conversationId,
+      toolCallId: approveId,
+      index: 0,
+      block
+    })
+
+    this.e2eAskWaiters.set(approveId, (text) => {
+      const approved = /approve/i.test(text)
+      const sealed: ToolCallBlock = {
+        ...block,
+        status: approved ? 'completed' : 'skipped',
+        output: text,
+        choices: undefined
+      }
+      delete sealed.choices
+      const reply = approved ? 'e2e stub reply · approved' : 'e2e stub reply · denied'
+      const message: ChatMessage = {
+        id: randomUUID(),
+        parentId,
+        role: 'assistant',
+        content: reply,
+        createdAt: Date.now(),
+        blocks: [sealed, { kind: 'text', text: reply }]
+      }
+      this.deps.emit({ type: 'tool', conversationId, index: 0, block: sealed })
+      this.deps.conversations.appendMessage(conversationId, message)
+      this.deps.conversations.flush()
+      this.deps.emit({ type: 'end', conversationId, message, tokensUsed: 0 })
+    })
+  }
+
   /** Emits a terminal failure for a turn that never started (e.g. missing key). */
   private emitFatal(conversationId: string, parentId: string | null, error: string): void {
     const message: ChatMessage = {
@@ -1742,30 +1949,12 @@ function sealPlanBlocks(
 ): void {
   for (const block of blocks) {
     if (block.kind !== 'toolCall' || block.tool !== 'plan') continue
-    const input = safeParseJson(block.input)
-    const steps = normalizePlanSteps(input.steps).map((step) => {
-      if (mode === 'cancel') {
-        if (step.status === 'executing') {
-          return { ...step, status: 'error' as const, subtitle: step.subtitle ?? t('common.cancelled') }
-        }
-        if (step.status === 'pending') {
-          return { ...step, status: 'skipped' as const, subtitle: step.subtitle ?? t('common.cancelled') }
-        }
-        return step
-      }
-      if (mode === 'error') {
-        if (step.status === 'executing') {
-          return { ...step, status: 'error' as const, subtitle: step.subtitle ?? t('common.failed') }
-        }
-        return step
-      }
-      // success — promote open steps so a completed turn does not show half-checked todos
-      if (step.status === 'executing' || step.status === 'pending') {
-        return { ...step, status: 'done' as const }
-      }
-      return step
+    const input = projectChecklistInput(safeParseJson(block.input))
+    const steps = sealPlanSteps(input.steps, mode, {
+      cancelled: t('common.cancelled'),
+      failed: t('common.failed')
     })
-    const title = String(input.title ?? 'Plan')
+    const title = input.title || 'Plan'
     const done = steps.filter((step) => step.status === 'done').length
     block.input = JSON.stringify({ ...input, title, steps }, null, 2)
     block.summary = `Plan · ${title} (${done}/${steps.length})`

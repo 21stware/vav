@@ -51,7 +51,9 @@ export function AboutSettings(): React.JSX.Element {
       <div className="about-meta">
         <div className="kv-row">
           <span className="kv-label">{t('about.currentVersion')}</span>
-          <span className="kv-value">{about?.version ?? '—'}</span>
+          <span className="kv-value" data-testid="settings-about-version">
+            {about?.version ?? '—'}
+          </span>
         </div>
         <div className="kv-row">
           <span className="kv-label">{t('about.buildNumber')}</span>
@@ -59,7 +61,9 @@ export function AboutSettings(): React.JSX.Element {
         </div>
         <div className="kv-row">
           <span className="kv-label">{t('about.license')}</span>
-          <span className="kv-value">{t('about.licenseValue')}</span>
+          <span className="kv-value" data-testid="settings-about-license">
+            {t('about.licenseValue')}
+          </span>
         </div>
       </div>
 

@@ -1,9 +1,7 @@
 /**
- * Unseen attention items that drive the macOS Dock badge.
- *
- * One session usually holds a single item, so focusing it drops the badge
- * by 1. Completions, asks, approvals, and requests all count until the
- * user looks at that session (or the turn moves on).
+ * Unseen attention items. Completions drive the macOS Dock badge;
+ * asks / approvals / requests still notify and clear when the session
+ * is focused (or the turn moves on).
  */
 export type AttentionKind = 'ask' | 'approval' | 'request' | 'complete'
 
@@ -18,6 +16,10 @@ export function addAttentionItem(items: AttentionItem[], next: AttentionItem): A
   return [...items, next]
 }
 
+export function completeAttentionId(conversationId: string): string {
+  return `complete:${conversationId}`
+}
+
 export function acknowledgeConversation(
   items: AttentionItem[],
   conversationId: string
@@ -26,7 +28,17 @@ export function acknowledgeConversation(
   return items.filter((item) => item.conversationId !== conversationId)
 }
 
+/** Earliest unseen Done — insertion order is completion order. */
+export function firstCompleteConversation(items: AttentionItem[]): string | null {
+  return items.find((item) => item.kind === 'complete')?.conversationId ?? null
+}
+
 export function dockBadgeLabel(count: number): string {
   if (count <= 0) return ''
   return count > 99 ? '99+' : String(count)
+}
+
+/** Dock shows unseen Done only — not asks / approvals / requests. */
+export function completeAttentionCount(items: AttentionItem[]): number {
+  return items.reduce((n, item) => n + (item.kind === 'complete' ? 1 : 0), 0)
 }

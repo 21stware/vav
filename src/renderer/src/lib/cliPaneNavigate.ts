@@ -149,8 +149,9 @@ export function focusedCliPaneId(root?: ParentNode | null): string | null {
   const pane = active.closest('[data-cli-pane]') as HTMLElement | null
   if (!pane) return null
   // Must belong to the live Swarm surface (not a parked Thread keep-alive).
+  if (pane.closest('.is-surface-parked')) return null
   if (
-    pane.closest('.is-surface-parked') ||
+    !pane.closest('.session-swarm-split') &&
     !pane.closest('.terminal-host-main:not(.is-surface-parked)')
   ) {
     return null

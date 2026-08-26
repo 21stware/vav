@@ -13,7 +13,7 @@ import { projectChecklistInput } from '@shared/planDoc'
 import type { PlanStep, PlanStepStatus, ToolCallBlock, TurnPhase } from '@shared/types'
 import { getProjection } from '../state/StreamProjection'
 import { useSessionStore, visibleMessages } from '../state/sessionStore'
-import { latestPlanToolId, PlanCard } from './PlanCard'
+import { PlanCard } from './PlanCard'
 import { useT, tt } from '../i18n/useT'
 
 /** Matches the 200ms slide-up + fade dismiss in main-chat-streaming.rpml. */
@@ -30,6 +30,16 @@ interface PlanView {
   errored: PlanStep | undefined
   allDone: boolean
   cancelled: boolean
+}
+
+function latestPlanBlock(blocks: ToolCallBlock[]): ToolCallBlock | null {
+  for (let i = blocks.length - 1; i >= 0; i--) {
+    const block = blocks[i]
+    if (block?.tool !== 'plan') continue
+    if (projectChecklistInput(parseToolInput(block.input)).steps.length === 0) continue
+    return block
+  }
+  return null
 }
 
 function viewFromBlock(block: ToolCallBlock, turnRunning: boolean): PlanView | null {
@@ -55,16 +65,21 @@ function isPlanStreaming(phase: TurnPhase | undefined, isRunning: boolean): bool
  * Collapsible plan mask over the transcript — active only while running.
  * Completes / cancels auto-dismiss; PlanTodo data stays in the agent log.
  */
-export function PlanOverlay(): React.JSX.Element | null {
+export function PlanOverlay({
+  conversationId
+}: {
+  conversationId?: string
+} = {}): React.JSX.Element | null {
   const t = useT()
-  const activeId = useSessionStore((s) => s.activeId)
-  const nodes = useSessionStore((s) => s.messages[s.activeId])
-  const activeLeaf = useSessionStore((s) => s.activeLeaf[s.activeId] ?? null)
+  const storeActiveId = useSessionStore((s) => s.activeId)
+  const activeId = conversationId || storeActiveId
+  const nodes = useSessionStore((s) => s.messages[activeId])
+  const activeLeaf = useSessionStore((s) => s.activeLeaf[activeId] ?? null)
   const messages = useMemo(
     () => visibleMessages(useSessionStore.getState(), activeId),
     [activeId, nodes, activeLeaf]
   )
-  const turn = useSessionStore((s) => s.turns[s.activeId])
+  const turn = useSessionStore((s) => s.turns[activeId])
   const turnRunning = !!turn?.isRunning
   const streaming = isPlanStreaming(turn?.phase, turnRunning)
   const [streamTick, setStreamTick] = useState(0)
@@ -96,11 +111,12 @@ export function PlanOverlay(): React.JSX.Element | null {
     const sealed = messages.flatMap((m) =>
       m.blocks.filter((b): b is ToolCallBlock => b.kind === 'toolCall')
     )
-    const all = [...sealed, ...liveBlocks]
-    const id = latestPlanToolId(all.map((b) => ({ kind: 'toolCall', id: b.id, tool: b.tool })))
-    if (!id || dismissedIds.has(id)) return null
-    const block = all.find((b) => b.id === id && b.tool === 'plan')
-    return block ? viewFromBlock(block, turnRunning) : null
+    // Live wins: CLI hosts reuse a stable plan id across turns, so a sealed
+    // copy of the same id would otherwise freeze the overlay at 0 done.
+    const block =
+      latestPlanBlock(liveBlocks) ?? latestPlanBlock(sealed)
+    if (!block || dismissedIds.has(block.id)) return null
+    return viewFromBlock(block, turnRunning)
   }, [activeId, messages, streamTick, dismissedIds, turnRunning])
 
   useEffect(() => {
@@ -189,6 +205,7 @@ export function PlanOverlay(): React.JSX.Element | null {
   return (
     <div
       className="plan-overlay"
+      data-testid="plan-overlay"
       data-kind={kind}
       data-expanded={expanded && !leaving}
       data-leaving={leaving}
@@ -207,6 +224,7 @@ export function PlanOverlay(): React.JSX.Element | null {
           <button
             type="button"
             className="plan-overlay-toggle"
+            data-testid="plan-overlay-toggle"
             title={expanded ? t('common.collapse') : t('common.expand')}
             onClick={() => setExpanded((value) => !value)}
           >

@@ -102,12 +102,13 @@ export function groupConversations(
   now = Date.now()
 ): ConversationGroup[] {
   const groups: ConversationGroup[] = []
+  const roots = conversations.filter((c) => !c.swarmParentId)
   // Sessions already claimed by a pinned workspace must not appear again below.
   const claimed = new Set<string>()
 
   for (const path of pinnedWorkspaces) {
     if (!path || path.startsWith('__') || isTemporaryWorkspace(path, tmp)) continue
-    const rows = conversations
+    const rows = roots
       .filter((c) => c.workingDirectory === path)
       .sort(pinnedFirst)
     // An empty pin is still a useful shortcut, but not while filtering.
@@ -123,7 +124,7 @@ export function groupConversations(
     })
   }
 
-  const loose = conversations.filter((c) => !claimed.has(c.id))
+  const loose = roots.filter((c) => !claimed.has(c.id))
   const pinned = loose.filter((c) => c.pinned).sort(byPinTimeDesc)
   const rest = loose.filter((c) => !c.pinned).sort(byUpdatedDesc)
 
@@ -203,9 +204,11 @@ function bucketByWorkspace(rows: ConversationMeta[], tmp: string): ConversationG
 /** Flat visible order, for arrow-key movement and ⌘A. */
 export function flatten(
   groups: ConversationGroup[],
-  collapsedKeys: ReadonlySet<string> = new Set()
+  collapsedKeys: ReadonlySet<string> = new Set(),
+  extras?: (conversation: ConversationMeta) => ConversationMeta[]
 ): ConversationMeta[] {
-  return groups.flatMap((group) =>
-    collapsedKeys.has(group.key) ? [] : group.conversations
-  )
+  return groups.flatMap((group) => {
+    if (collapsedKeys.has(group.key)) return []
+    return group.conversations.flatMap((row) => [row, ...(extras?.(row) ?? [])])
+  })
 }

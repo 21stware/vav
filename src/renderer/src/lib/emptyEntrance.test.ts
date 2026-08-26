@@ -44,4 +44,13 @@ describe('empty-state entrance scenes', () => {
     visitScene('companion', 'chat-2')
     assert.equal(visitScene('main', 'chat-1'), held)
   })
+
+  it('keeps simultaneous conversation tracks from bumping each other', () => {
+    const a = visitScene('transcript:a', 'empty')
+    visitScene('transcript:b', 'empty')
+    assert.equal(visitScene('transcript:a', 'empty'), a)
+    const b = visitScene('transcript:b', 'empty')
+    visitScene('transcript:a', 'empty')
+    assert.equal(visitScene('transcript:b', 'empty'), b)
+  })
 })

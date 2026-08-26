@@ -4,8 +4,12 @@ import type { AnalysisSnapshot } from '@shared/analysis'
 export interface AnalysisCacheState {
   snapshot: AnalysisSnapshot | null
   error: string | null
+  /** First load — no snapshot yet. */
   syncing: boolean
+  /** Manual refresh button. */
   refreshing: boolean
+  /** In-flight fetch while a snapshot is already on screen. */
+  updating: boolean
 }
 
 const listeners = new Set<() => void>()
@@ -13,7 +17,8 @@ let state: AnalysisCacheState = {
   snapshot: null,
   error: null,
   syncing: false,
-  refreshing: false
+  refreshing: false,
+  updating: false
 }
 let background: Promise<void> | null = null
 let forceRun: Promise<void> | null = null
@@ -49,7 +54,7 @@ export function refreshAnalysis(options?: { force?: boolean }): Promise<void> {
   if (options?.force) {
     if (forceRun) return forceRun
     forceRun = (async () => {
-      emit({ refreshing: true, error: null })
+      emit({ refreshing: true, updating: Boolean(state.snapshot), error: null })
       try {
         const next = await window.vav.settings.analysis({ refresh: true })
         emit({ snapshot: next, error: null })
@@ -58,7 +63,7 @@ export function refreshAnalysis(options?: { force?: boolean }): Promise<void> {
           error: err instanceof Error ? err.message : String(err)
         })
       } finally {
-        emit({ refreshing: false })
+        emit({ refreshing: false, updating: false })
         forceRun = null
       }
     })()
@@ -66,10 +71,10 @@ export function refreshAnalysis(options?: { force?: boolean }): Promise<void> {
   }
   if (background || forceRun) return forceRun ?? background!
   background = (async () => {
-    emit({ syncing: !state.snapshot, error: null })
+    emit({ syncing: !state.snapshot, updating: Boolean(state.snapshot), error: null })
     try {
       const next = await window.vav.settings.analysis({ refresh: false })
-      emit({ snapshot: next, error: null })
+      emit({ snapshot: next, error: null, syncing: false, updating: false })
     } catch (err) {
       if (!state.snapshot) {
         emit({
@@ -77,7 +82,7 @@ export function refreshAnalysis(options?: { force?: boolean }): Promise<void> {
         })
       }
     } finally {
-      emit({ syncing: false })
+      emit({ syncing: false, updating: false })
       background = null
     }
   })()

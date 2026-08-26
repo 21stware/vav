@@ -1,8 +1,9 @@
 import { useEffect, useMemo } from 'react'
 import { RefreshCw } from 'lucide-react'
 import type { AnalysisHostUsage, AnalysisProvider, AnalysisUsageTotals } from '@shared/analysis'
-import { localAnalysisProviders, stubAnalysisProviders } from '@shared/analysis'
-import { apiBalanceProviderLabel, deepseekBalanceUrl, formatApiBalanceAmount } from '@shared/apiBalance'
+import { localAnalysisProviders, orderByProviderList, stubAnalysisProviders } from '@shared/analysis'
+import { isLlmVendorId, vendorById, groupAccountsByVendor } from '@shared/llmVendors'
+import { apiBalanceProviderLabel, formatApiBalanceAmount } from '@shared/apiBalance'
 import type { AppLocale, DisplayCurrency, QuotaWindow, QuotaWindowKind } from '@shared/types'
 import { DEFAULT_CLI_AGENTS } from '@shared/types'
 import { displayNameForCliHost, isStructuredCliHost } from '@shared/cliHost'
@@ -12,6 +13,7 @@ import { formatCost, formatExpiry } from '@shared/tokenUsage'
 import type { MessageKey } from '@shared/i18n'
 import { useSessionStore } from '../../state/sessionStore'
 import { useT } from '../../i18n/useT'
+import { useAccountGroups, vavAccountsOf } from '../../lib/accountGroups'
 import {
   getAgentInstallStatus,
   refreshAgentInstallStatus,
@@ -40,6 +42,7 @@ function formatCount(value: number): string {
 
 function hostLabel(hostKey: string, fallback?: string): string {
   if (fallback) return fallback
+  if (isLlmVendorId(hostKey)) return vendorById(hostKey)?.name ?? hostKey
   if (hostKey === 'vav') return 'VAV'
   return isStructuredCliHost(hostKey) ? displayNameForCliHost(hostKey) : hostKey
 }
@@ -54,6 +57,15 @@ export function AnalysisSettings(): React.JSX.Element {
   const settings = useSessionStore((s) => s.settings)
   const currency = settings.displayCurrency
   const installById = useAgentInstallMap()
+  const accountGroups = useAccountGroups()
+  const vendors = useMemo(
+    () =>
+      groupAccountsByVendor(vavAccountsOf(accountGroups)).map((row) => ({
+        id: row.vendor.id,
+        name: row.vendor.name
+      })),
+    [accountGroups]
+  )
   const localProviders = useMemo(() => {
     const present = new Set<string>()
     for (const agent of DEFAULT_CLI_AGENTS) {
@@ -67,12 +79,29 @@ export function AnalysisSettings(): React.JSX.Element {
       }
     }
     return stubAnalysisProviders(
-      localAnalysisProviders(settings.cliAgents, DEFAULT_CLI_AGENTS, present),
+      localAnalysisProviders(settings.cliAgents, DEFAULT_CLI_AGENTS, present, {
+        vendors,
+        order: settings.providerListOrder
+      }),
       settings.apiKeyPresent,
-      { apiBalanceSupported: Boolean(deepseekBalanceUrl(settings.apiEndpoint)) }
+      {
+        keyPresentByHost: Object.fromEntries(
+          groupAccountsByVendor(vavAccountsOf(accountGroups)).map((row) => [
+            row.vendor.id,
+            row.accounts.some((account) => account.keyPresent)
+          ])
+        )
+      }
     )
-  }, [installById, settings.apiEndpoint, settings.apiKeyPresent, settings.cliAgents])
-  const { snapshot, error, refreshing, syncing } = useAnalysisCache()
+  }, [
+    accountGroups,
+    installById,
+    settings.apiKeyPresent,
+    settings.cliAgents,
+    settings.providerListOrder,
+    vendors
+  ])
+  const { snapshot, error, refreshing, syncing, updating } = useAnalysisCache()
 
   useEffect(() => {
     void refreshAgentInstallStatus({ force: false, discover: false })
@@ -80,53 +109,57 @@ export function AnalysisSettings(): React.JSX.Element {
   }, [])
 
   const usage = snapshot?.usage
-  const providers = snapshot?.providers?.length ? snapshot.providers : localProviders
+  const listOrder = settings.providerListOrder ?? []
+  const providers = orderByProviderList(
+    snapshot?.providers?.length ? snapshot.providers : localProviders,
+    (provider) => provider.hostKey,
+    listOrder
+  )
+  const hosts = orderByProviderList(
+    usage?.hosts ?? [],
+    (host) => host.hostKey,
+    listOrder,
+    (a, b) => b.costUsd - a.costUsd || b.turns - a.turns
+  )
   const now = snapshot?.now ?? Date.now()
-  const usagePending = !snapshot && syncing
+  const usagePending = !usage && syncing
   const names = new Map(providers.map((p) => [p.hostKey, p.hostName]))
 
   return (
-    <div className="analysis-stack">
+    <div className="analysis-stack" data-testid="settings-analysis">
       <section className="analysis-section">
         <div className="analysis-section-head">
           <p className="analysis-lede">{t('analysis.usageHint')}</p>
         </div>
-        {usagePending ? (
-          <p className="analysis-lede">{t('common.loading')}</p>
-        ) : usage && usage.total.sessions > 0 ? (
+        {usage && usage.total.sessions > 0 ? (
           <>
-            <div className="analysis-summary">
+            <div
+              className={`analysis-summary${updating ? ' is-updating' : ''}`}
+              aria-busy={updating}
+            >
               <UsageStat
                 label={t('analysis.total')}
                 totals={usage.total}
                 currency={currency}
-                t={t}
-              />
-              <UsageStat
-                label={t('analysis.api')}
-                totals={usage.api}
-                currency={currency}
-                t={t}
-              />
-              <UsageStat
-                label={t('analysis.agents')}
-                totals={usage.agent}
-                currency={currency}
+                updating={updating}
                 t={t}
               />
             </div>
-            <div className="analysis-host-list">
-              {usage.hosts.map((host) => (
+            <div className={`analysis-host-list${updating ? ' is-updating' : ''}`}>
+              {hosts.map((host) => (
                 <HostUsageRow
                   key={host.hostKey}
                   host={host}
                   name={hostLabel(host.hostKey, names.get(host.hostKey))}
                   currency={currency}
+                  updating={updating}
                   t={t}
                 />
               ))}
             </div>
           </>
+        ) : usagePending ? (
+          <p className="analysis-lede">{t('common.loading')}</p>
         ) : (
           <p className="analysis-lede">{t('analysis.usageEmpty')}</p>
         )}
@@ -151,14 +184,15 @@ export function AnalysisSettings(): React.JSX.Element {
         {providers.length === 0 ? (
           <p className="analysis-lede">{t('analysis.subscriptionEmpty')}</p>
         ) : (
-          <div className="analysis-provider-list">
+          <div className={`analysis-provider-list${updating ? ' is-updating' : ''}`}>
             {providers.map((provider) => (
               <ProviderSubscription
                 key={provider.hostKey}
                 provider={provider}
                 now={now}
                 locale={locale}
-                querying={refreshing || syncing}
+                querying={updating && !provider.windows.length && !provider.balance}
+                updating={updating}
                 t={t}
               />
             ))}
@@ -173,17 +207,19 @@ function UsageStat({
   label,
   totals,
   currency,
+  updating = false,
   t
 }: {
   label: string
   totals: AnalysisUsageTotals
   currency: DisplayCurrency
+  updating?: boolean
   t: ReturnType<typeof useT>
 }): React.JSX.Element {
   return (
     <div className="analysis-stat">
       <div className="analysis-stat-label">{label}</div>
-      <div className="analysis-stat-value">
+      <div className={`analysis-stat-value${updating ? ' usage-shimmer' : ''}`}>
         {formatCost(totals.costUsd, currency, totals.costApprox)}
       </div>
       <div className="analysis-stat-meta">
@@ -200,11 +236,13 @@ function HostUsageRow({
   host,
   name,
   currency,
+  updating = false,
   t
 }: {
   host: AnalysisHostUsage
   name: string
   currency: DisplayCurrency
+  updating?: boolean
   t: ReturnType<typeof useT>
 }): React.JSX.Element {
   return (
@@ -213,8 +251,6 @@ function HostUsageRow({
       <div className="analysis-row-who">
         <div className="analysis-row-name">{name}</div>
         <div className="analysis-row-meta">
-          {t(host.kind === 'api' ? 'analysis.kindApi' : 'analysis.kindAgent')}
-          {' · '}
           {t('analysis.hostMeta', {
             sessions: formatCount(host.sessions),
             turns: formatCount(host.turns)
@@ -222,7 +258,7 @@ function HostUsageRow({
         </div>
       </div>
       <div className="analysis-row-nums">
-        <div className="analysis-row-cost">
+        <div className={`analysis-row-cost${updating ? ' usage-shimmer' : ''}`}>
           {formatCost(host.costUsd, currency, host.costApprox)}
         </div>
         <div className="analysis-row-meta">
@@ -238,12 +274,14 @@ function ProviderSubscription({
   now,
   locale,
   querying,
+  updating = false,
   t
 }: {
   provider: AnalysisProvider
   now: number
   locale: AppLocale
   querying: boolean
+  updating?: boolean
   t: ReturnType<typeof useT>
 }): React.JSX.Element {
   const authKind = normalizeAuthKind(provider.authKind, provider.signedIn)
@@ -304,12 +342,23 @@ function ProviderSubscription({
       <div className="analysis-provider-body">
         <div className="analysis-row-who">
           <div className="analysis-row-name">{provider.hostName}</div>
-          {who ? <div className="analysis-row-meta">{who}</div> : null}
+          {who ? (
+            <div className={`analysis-row-meta${updating && windows.length === 0 ? ' usage-shimmer' : ''}`}>
+              {who}
+            </div>
+          ) : null}
         </div>
         {windows.length > 0 ? (
           <div className="analysis-quota-list">
             {windows.map((window) => (
-              <QuotaRow key={window.id} window={window} now={now} locale={locale} t={t} />
+              <QuotaRow
+                key={window.id}
+                window={window}
+                now={now}
+                locale={locale}
+                updating={updating}
+                t={t}
+              />
             ))}
           </div>
         ) : null}
@@ -322,11 +371,13 @@ function QuotaRow({
   window,
   now,
   locale,
+  updating = false,
   t
 }: {
   window: QuotaWindow
   now: number
   locale: AppLocale
+  updating?: boolean
   t: ReturnType<typeof useT>
 }): React.JSX.Element {
   const pct = Math.min(100, Math.max(0, window.usedPercent))
@@ -339,7 +390,7 @@ function QuotaRow({
     <div className={`analysis-quota${exhausted ? ' is-exhausted' : ''}`}>
       <div className="analysis-quota-meta">
         <span>{t(QUOTA_LABEL[window.kind])}</span>
-        <span className="analysis-quota-pct">
+        <span className={`analysis-quota-pct${updating ? ' usage-shimmer' : ''}`}>
           {t('token.quotaUsed', { percent: pct.toFixed(pct >= 10 ? 0 : 1) })}
         </span>
       </div>

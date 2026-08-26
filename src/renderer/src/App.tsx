@@ -202,7 +202,10 @@ export default function App(): React.JSX.Element {
 
   // Change review is inline in the transcript (not a full-screen takeover).
   return (
-    <div className={`app-shell${panelFlushTop ? ' panel-flush-top' : ' panel-shell-chrome'}`}>
+    <div
+      className={`app-shell${panelFlushTop ? ' panel-flush-top' : ' panel-shell-chrome'}`}
+      data-testid="app-shell"
+    >
       <div className="body-split">
         <SidebarSlot
           floating={floating}

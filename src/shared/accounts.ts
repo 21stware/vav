@@ -1,7 +1,9 @@
 /**
- * Provider accounts (Settings → Accounts).
+ * Provider accounts (Settings → Providers).
  * Profiles, keys, and endpoints are app data — a new temp folder must not hide them.
  */
+
+import { vendorFromEndpoint } from './llmVendors.ts'
 
 export const DEFAULT_WORKSPACE_KEY = '__default__'
 export const WORKSPACE_ACCOUNT_NAME = '__workspace__'
@@ -174,17 +176,7 @@ export function addUsage(
 
 /** Known API brands inferred from the VAV key endpoint — not CLI hosts. */
 export function apiProviderBrand(endpoint: string | null | undefined): string | null {
-  const host = (endpointHostOf(endpoint) ?? '').toLowerCase()
-  const raw = (endpoint ?? '').toLowerCase()
-  if (host.includes('deepseek') || raw.includes('deepseek')) return 'DeepSeek'
-  if (host.includes('openrouter')) return 'OpenRouter'
-  if (host === 'api.x.ai' || host.endsWith('.x.ai') || raw.includes('api.x.ai')) return 'xAI'
-  if (host === 'api.openai.com' || host.endsWith('.openai.com')) return 'OpenAI'
-  if (host.includes('anthropic')) return 'Anthropic'
-  if (host.includes('googleapis.com') || host.includes('generativelanguage')) return 'Google'
-  if (host.includes('together.ai') || host.includes('together.xyz')) return 'Together'
-  if (host.includes('siliconflow')) return 'SiliconFlow'
-  return null
+  return vendorFromEndpoint(endpoint)?.name ?? null
 }
 
 export function isGenericAccountIdentity(name: string | null | undefined): boolean {

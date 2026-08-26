@@ -141,7 +141,7 @@ export default function FilePreviewWindow({
 
   if (!ready) {
     return (
-      <div className="file-preview-shell">
+      <div className="file-preview-shell" data-testid="file-preview-window">
         <div className="file-viewer-header titlebar-drag">
           <div className="file-viewer-lead">
             <span className="file-viewer-name">
@@ -160,7 +160,11 @@ export default function FilePreviewWindow({
   // Warm pool idle — keep shell alive with no FileViewer work.
   if (!path) {
     return (
-      <div className="file-preview-shell" data-warm={warmShell ? '1' : undefined}>
+      <div
+        className="file-preview-shell"
+        data-testid="file-preview-window"
+        data-warm={warmShell ? '1' : undefined}
+      >
         <div className="file-viewer-header titlebar-drag">
           <div className="file-viewer-lead">
             <span className="file-viewer-name">{tt('common.preview')}</span>

@@ -474,6 +474,7 @@ export function ToolsPanel({
     <div
       ref={panelRef}
       className="tools-panel"
+      data-testid="tools-panel"
       data-tools-collapsed={collapsed ? 'true' : 'false'}
       data-tools-mode={headerMode}
       data-has-session={activeId ? 'true' : 'false'}
@@ -482,7 +483,7 @@ export function ToolsPanel({
         <div className="tools-header-lead">
           {/* Path chip opens Files. File sessions use Enclosed dir (no switch).
               Missing root → red "dir not exist"; click / action still switches. */}
-          <div className="workdir-chip" ref={pathChipRef}>
+          <div className="workdir-chip" data-testid="workdir-chip" ref={pathChipRef}>
             <Chip
               label={label}
               icon={
@@ -648,12 +649,14 @@ export function ToolsPanel({
             label={t('tools.newBashShort')}
             icon={<TerminalIcon size={12} />}
             size="sm"
+            testId="new-bash"
             title={`${t('tools.newBash')} ${keys('⌘T')}`}
             onClick={createBash}
           />
           <Button
             icon={collapsed ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
             size="sm"
+            testId="tools-toggle"
             title={`${t('shortcut.toggleTools')} ${keys('⌘⇧E')}`}
             onClick={toggleToolsPanel}
           />

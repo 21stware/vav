@@ -39,7 +39,8 @@ export function isStructuredCliHost(id: string | null | undefined): id is CliHos
 
 /**
  * Settings / quick-launch default chat host.
- * `null`, `""`, or `"vav"` → built-in VAV; otherwise a structured CLI id.
+ * `null`, `""`, `"vav"`, or an LLM vendor id → built-in VAV;
+ * otherwise a structured CLI id.
  */
 export function resolveDefaultChatHost(
   defaultAgentId: string | null | undefined

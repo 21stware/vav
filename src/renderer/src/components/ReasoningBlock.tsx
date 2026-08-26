@@ -38,7 +38,7 @@ export function ReasoningBlock({
 
   if (flat) {
     return (
-      <div className="reasoning-flat">
+      <div className="reasoning-flat" data-testid="reasoning">
         <div className="reasoning-body">{text}</div>
       </div>
     )
@@ -49,6 +49,7 @@ export function ReasoningBlock({
   return (
     <div
       className={`tool-call reasoning-call${open ? ' expanded' : ''}${live ? ' is-live' : ''}`}
+      data-testid="reasoning"
     >
       <button
         type="button"

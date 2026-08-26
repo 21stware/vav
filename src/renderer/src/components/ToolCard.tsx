@@ -117,6 +117,7 @@ export const ToolCard = memo(function ToolCard({
   return (
     <div
       className={`tool-call${showDetail ? ' expanded' : ''}`}
+      data-testid="tool-card"
       data-tool={block.tool}
       data-status={block.status}
       data-expandable={canToggle}
@@ -195,7 +196,7 @@ function TaskChildren({
   live: boolean
 }): React.JSX.Element {
   return (
-    <div className="task-children">
+    <div className="task-children" data-testid="task-children">
       {blocks.map((child, index) => {
         if (child.kind === 'reasoning') {
           return (
@@ -299,6 +300,7 @@ function PlanDocCard({ block }: { block: ToolCallBlock }): React.JSX.Element {
   return (
     <div
       className={`plan-doc-card${pending ? ' is-pending' : ''}${accepted ? ' is-accepted' : ''}${rejected ? ' is-rejected' : ''}`}
+      data-testid="plan-doc"
       data-status={block.status}
     >
       <div className="plan-doc-head">
@@ -378,7 +380,11 @@ function ApprovalCard({ block }: { block: ToolCallBlock }): React.JSX.Element {
 
   if (submitting) {
     return (
-      <div className="approval-card is-submitting" data-status={submitting}>
+      <div
+        className="approval-card is-submitting"
+        data-testid="approval-card"
+        data-status={submitting}
+      >
         <div className="approval-head">
           <span className="approval-tool">{toolLabel}</span>
           <span className="approval-badge">
@@ -394,7 +400,7 @@ function ApprovalCard({ block }: { block: ToolCallBlock }): React.JSX.Element {
   }
 
   return (
-    <div className="approval-card">
+    <div className="approval-card" data-testid="approval-card">
       <div className="approval-head">
         <span className="approval-tool">{toolLabel}</span>
         <span className="approval-badge">
@@ -438,7 +444,7 @@ function AskCard({ block }: { block: ToolCallBlock }): React.JSX.Element {
 
   if (block.tool === 'request') {
     return (
-      <div className="ask-card request">
+      <div className="ask-card request" data-testid="ask-card">
         <InlineAlert kind="warning" message={block.summary} />
         <div className="ask-actions">
           <Button
@@ -474,7 +480,7 @@ function AskCard({ block }: { block: ToolCallBlock }): React.JSX.Element {
   // No parseable questions (stale/corrupt tool input) — free-text fallback.
   if (questions.length === 0) {
     return (
-      <div className={`ask-card${submitting ? ' submitting' : ''}`}>
+      <div className={`ask-card${submitting ? ' submitting' : ''}`} data-testid="ask-card">
         <div className="ask-q">{block.summary || t('tool.ask')}</div>
         {error && <InlineAlert kind="error" message={error} />}
         <textarea
@@ -536,7 +542,10 @@ function AskSealed({ block }: { block: ToolCallBlock }): React.JSX.Element {
     block.output === '已取消'
 
   return (
-    <div className={`ask-card sealed${cancelled ? ' cancelled' : ''}`}>
+    <div
+      className={`ask-card sealed${cancelled ? ' cancelled' : ''}`}
+      data-testid="ask-card-sealed"
+    >
       {questions.length > 1 && (
         <div className="ask-title">
           {block.askTitle?.trim() || t('ask.questions', { n: questions.length })}
@@ -670,7 +679,10 @@ function MultiAskForm({
   }
 
   return (
-    <div className={`ask-card${submitting ? ' submitting' : ''}${multiStep ? ' multi-step' : ''}`}>
+    <div
+      className={`ask-card${submitting ? ' submitting' : ''}${multiStep ? ' multi-step' : ''}`}
+      data-testid="ask-card"
+    >
       {(title || multiStep) && (
         <div className="ask-head">
           {title && <div className="ask-title">{title}</div>}

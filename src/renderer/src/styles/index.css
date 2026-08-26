@@ -303,6 +303,14 @@ html[data-theme='light'] #root {
   background: var(--bg-window, #ececee);
 }
 
+html[data-theme='light'] {
+  color-scheme: light;
+}
+
+html[data-theme='dark'] {
+  color-scheme: dark;
+}
+
 /* Detached ⌘⇧↵ session: keep the shell wash while messages hydrate. */
 .session-window-booting {
   background: var(--bg-window, #121213);
@@ -441,6 +449,14 @@ html[data-resizing='true'] .plan-overlay {
 html[data-resizing='true'] .sidebar-column,
 html[data-resizing='true'] .app-shell .body-split > .sidebar:not(.floating) {
   background: var(--bg-window);
+}
+
+/* Cover the glass hole while NSVisualEffectView is torn down after Dock restore. */
+html[data-vibrancy-refresh] .sidebar-column,
+html[data-vibrancy-refresh] .app-shell .body-split > .sidebar:not(.floating),
+html[data-vibrancy-refresh] .titlebar.sidebar-chrome,
+html[data-vibrancy-refresh] .settings-nav {
+  background: var(--bg-window) !important;
 }
 
 html[data-resizing='true'] .tools-body,
@@ -870,9 +886,8 @@ html[data-resizing='true'] .banner.error {
 }
 
 /*
- * Main panel agent chrome — same overlay glass as standalone preview /
- * quick-chat. The row floats over the log; first-screen padding keeps the
- * opening turn clear, and scrolling still carries messages under the bar.
+ * Main-panel agent chrome sits in flow so the log, empty hero, and Swarm
+ * focus ring start below the toolbar — never painted under it.
  */
 .app-shell:not(.session-window) .detail {
   --agent-chrome-h: var(--toolbar-height);
@@ -880,70 +895,35 @@ html[data-resizing='true'] .banner.error {
 }
 
 .app-shell:not(.session-window) .detail > .terminal-host-chrome.agent-mode-chrome {
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
+  position: relative;
   z-index: 20;
+  flex: 0 0 var(--agent-chrome-h);
   height: var(--agent-chrome-h);
   min-height: var(--agent-chrome-h);
   max-height: var(--agent-chrome-h);
   overflow: visible;
   isolation: isolate;
-  background: color-mix(
-    in srgb,
-    var(--bg-content) calc(var(--chrome-solid) * 52%),
-    transparent
-  );
-  backdrop-filter: blur(calc(var(--chrome-solid) * 20px)) saturate(1.35);
-  -webkit-backdrop-filter: blur(calc(var(--chrome-solid) * 20px)) saturate(1.35);
-}
-
-@media (prefers-reduced-transparency: reduce) {
-  .app-shell:not(.session-window) .detail > .terminal-host-chrome.agent-mode-chrome {
-    background: var(--bg-content);
-    backdrop-filter: none;
-    -webkit-backdrop-filter: none;
-  }
+  /* In-flow, so the log never paints under the bar. Keep the plate clear so
+   * the surface texture on `.detail::before` still reads in the top chrome. */
+  background: transparent;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
 }
 
 .app-shell:not(.session-window) .detail .transcript {
-  padding-top: calc(var(--agent-chrome-h) + 22px);
-  scroll-padding-top: var(--agent-chrome-h);
-}
-
-.app-shell:not(.session-window) .detail .transcript:has(> .transcript-inner > .empty-state-session) {
-  padding-top: var(--agent-chrome-h);
-}
-
-.app-shell:not(.session-window) .detail:has(> .banner) .transcript,
-.app-shell:not(.session-window) .detail-stream[data-search='true'] .transcript {
   padding-top: 22px;
 }
 
-.app-shell:not(.session-window) .detail > .banner,
-.app-shell:not(.session-window) .detail-stream > .search-strip {
-  margin-top: var(--agent-chrome-h);
-}
-
-.app-shell:not(.session-window) .detail:has(> .banner) .search-strip {
-  margin-top: 0;
-}
-
-.app-shell:not(.session-window) .detail .plan-overlay {
-  top: calc(var(--agent-chrome-h) + 8px);
+.app-shell:not(.session-window) .detail .transcript:has(> .transcript-inner > .empty-state-session) {
+  padding-top: 8px;
 }
 
 .app-shell:not(.session-window) .detail-stream[data-search='true'] .plan-overlay {
-  top: calc(var(--agent-chrome-h) + 48px);
+  top: 48px;
 }
 
-.app-shell:not(.session-window) .detail:has(> .banner) .plan-overlay {
+.app-shell:not(.session-window) .detail .plan-overlay {
   top: 8px;
-}
-
-.app-shell:not(.session-window) .detail .terminal-host-main {
-  padding-top: var(--agent-chrome-h);
 }
 
 .titlebar .spacer {
@@ -1717,6 +1697,70 @@ kbd {
   padding: 0 8px;
 }
 
+.sidebar-list .conv-row {
+  --tree-x: 14px;
+  /* Translucent ink — sits in the glass instead of a solid window-mix that
+     reads as a rust hairline on tinted vibrancy. */
+  --tree-line: color-mix(in srgb, var(--text-secondary) 82%, transparent);
+}
+
+:root[data-theme='dark'] .sidebar-list .conv-row {
+  --tree-line: color-mix(in srgb, var(--text-secondary) 92%, transparent);
+}
+
+.sidebar-list .conv-row.is-swarm-child {
+  height: 30px;
+  padding-left: 28px;
+}
+
+.sidebar-list .conv-group.is-workspace .conv-row {
+  --tree-x: 28px;
+}
+
+.sidebar-list .conv-group.is-workspace .conv-row.is-swarm-child {
+  padding-left: 42px;
+}
+
+.sidebar-list .conv-row.is-swarm-child .conv-title {
+  font-size: 12px;
+}
+
+/* Parent stem meets the child's quarter-arc at the row seam. */
+.sidebar-list .conv-row.is-swarm-parent::before {
+  content: '';
+  position: absolute;
+  left: calc(var(--tree-x) + 0.35px);
+  top: 20px;
+  bottom: 0;
+  width: 1.5px;
+  pointer-events: none;
+  background: var(--tree-line);
+}
+
+/* Second line sits past the stem so the downward stroke does not cut the copy. */
+.sidebar-list .conv-row.is-swarm-parent .conv-subtitle {
+  padding-left: 12px;
+}
+
+.sidebar-list .conv-tree-guide {
+  position: absolute;
+  left: var(--tree-x);
+  top: 0;
+  width: 16px;
+  height: 100%;
+  color: var(--tree-line);
+  pointer-events: none;
+  overflow: visible;
+}
+
+.sidebar-list .conv-tree-guide path {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.35;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
 .conv-row.selected {
   background: var(--bg-selected);
   color: var(--text);
@@ -1849,6 +1893,10 @@ kbd {
 .conv-badge.running {
   background: var(--success);
   animation: pulse 1.4s ease-in-out infinite;
+}
+
+.conv-badge.done {
+  background: var(--success);
 }
 
 .conv-badge.awaiting {
@@ -2328,8 +2376,8 @@ kbd {
 
 /* ==========================================================================
    Rewind rail — takes the scrollbar's place on the right of the log.
-   The rail itself never scrolls: slot spacing is squeezed away from the focused
-   turn so any number of turns lands in the same height (macOS Dock, vertical).
+   The rail itself never scrolls. A short thread keeps a natural tick pitch and
+   sits in the middle; a long one squeezes into max-height (macOS Dock, vertical).
    Tick size, position and label opacity are written from rewindLayout.ts —
    never transition those properties here.
    ========================================================================== */
@@ -2352,7 +2400,9 @@ kbd {
   /* Hairline at rest; the strip itself widens under the pointer so the
      magnified ticks have somewhere to grow into. */
   width: 10px;
-  height: min(46vh, 340px);
+  /* JS sets height to the packed cluster, capped here. */
+  max-height: min(46vh, 340px);
+  height: auto;
   margin: 0;
   padding: 0;
   overflow: visible;
@@ -5223,7 +5273,8 @@ mark {
   }
 }
 
-.stream-status-shimmer {
+.stream-status-shimmer,
+.usage-shimmer {
   display: inline-block;
   background: linear-gradient(
     90deg,
@@ -5254,7 +5305,8 @@ mark {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .stream-status-shimmer {
+  .stream-status-shimmer,
+  .usage-shimmer {
     animation: none;
     color: var(--text-secondary);
     background: none;
@@ -7528,8 +7580,18 @@ mark {
 .empty-state > .empty-logo,
 .empty-state-hero > .empty-logo,
 .empty-state-hero > .empty-agent-name,
-.empty-state-hero > .empty-quota {
+.empty-state-hero > .empty-quota,
+.empty-state-hero > .empty-desc {
   animation: none;
+}
+
+.empty-state-session .empty-harness {
+  margin-top: -2px;
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  color: var(--text-secondary);
+  line-height: 1.3;
 }
 
 .empty-state.is-entering .empty-logo-mark,
@@ -16023,6 +16085,90 @@ mark {
   flex-direction: column;
 }
 
+.session-swarm-split {
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+  padding: 0;
+  box-sizing: border-box;
+  background: transparent;
+}
+
+.detail.is-swarm-multi {
+  border-radius: 0;
+}
+
+/* Companion titlebar still overlays; keep the split (and its ring) below it. */
+.session-window .detail.is-swarm-multi {
+  padding-top: var(--session-titlebar-h);
+}
+
+.session-window .detail.is-swarm-multi > .banner,
+.session-window .detail.is-swarm-multi > .search-strip {
+  margin-top: 0;
+}
+
+.session-window .detail.is-swarm-multi .transcript,
+.session-window .detail.is-swarm-multi .transcript:has(> .transcript-inner > .empty-state-session) {
+  padding-top: 8px;
+}
+
+.session-window .detail.is-swarm-multi .plan-overlay {
+  top: 8px;
+}
+
+.session-swarm-pane {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  position: relative;
+}
+
+.session-swarm-stream {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.session-swarm-pane.is-cli {
+  padding: 0;
+}
+
+.session-swarm-pane.is-compact .composer {
+  width: 100%;
+  max-width: none;
+  align-self: stretch;
+  padding: 0;
+  margin: 0;
+}
+
+.session-swarm-pane.is-compact .composer-box {
+  padding: 4px 6px 4px 8px;
+  border-radius: 0;
+  box-shadow: none;
+  background: color-mix(in srgb, var(--text) 5%, var(--bg-content));
+}
+
+.session-swarm-pane.is-compact .plan-overlay {
+  top: 0;
+  left: 0;
+  right: 0;
+  padding: 4px 6px;
+  border-radius: 0;
+  box-shadow: none;
+  max-width: none;
+  background: color-mix(in srgb, var(--bg-raised) 88%, transparent);
+}
+
+.session-swarm-pane.is-compact .plan-overlay .plan-card {
+  box-shadow: none;
+}
+
 .is-surface-parked {
   display: none !important;
 }
@@ -16125,6 +16271,11 @@ mark {
   box-sizing: border-box;
   border: 1px solid color-mix(in srgb, var(--accent, #0a84ff) 70%, #fff);
   border-radius: 1px;
+}
+
+.session-swarm-split .terminal-split-branch .terminal-split-pane.is-active.is-multi::after {
+  inset: 0;
+  border-radius: 0;
 }
 
 /* Multi-pane close floats top-right; no title chrome (covers active ring). */
@@ -16542,6 +16693,22 @@ mark {
   --cli-picker-gap: 8px;
   --cli-picker-icon: 28px;
   --cli-picker-item-w: 64px;
+}
+
+.cli-agent-picker-switch {
+  margin: 14px 0 0;
+  width: 100%;
+  max-width: 420px;
+  text-align: center;
+  color: var(--text-secondary);
+  font-size: 11.5px;
+  font-weight: 400;
+  line-height: 1.45;
+}
+
+.cli-agent-picker.is-compact .cli-agent-picker-switch {
+  margin-top: 10px;
+  font-size: 11px;
 }
 
 .cli-agent-picker-help {
@@ -16967,6 +17134,15 @@ mark {
   padding: 4px;
 }
 
+.agents-list-group-label {
+  padding: 8px 10px 4px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--text-secondary);
+  user-select: none;
+}
+
 .agents-list-row {
   position: relative;
   display: flex;
@@ -17333,7 +17509,10 @@ mark {
 }
 
 .agents-models-row.agents-models-all:hover {
-  background: var(--bg-hover);
+  /* Keep the sticky header opaque — --bg-hover is a wash, not a fill. */
+  background:
+    linear-gradient(var(--bg-hover), var(--bg-hover)),
+    var(--bg-sunken, var(--bg-secondary));
 }
 
 .agents-models-all-check {
@@ -17343,6 +17522,31 @@ mark {
   flex: 0 1 auto;
   min-width: 0;
   cursor: default;
+}
+
+.agents-models-view-toggle {
+  flex: 0 0 auto;
+  margin: 0 0 0 2px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  cursor: pointer;
+  transition:
+    color var(--dur-hover) ease,
+    transform var(--dur-press) var(--ease-out);
+}
+
+.agents-models-view-toggle:hover {
+  color: var(--text);
+}
+
+.agents-models-view-toggle:active {
+  transform: scale(0.97);
 }
 
 .agents-models-filter-btn {
@@ -17511,6 +17715,28 @@ mark {
   display: flex;
   flex-direction: column;
   gap: 8px;
+}
+
+.agents-account-switch {
+  align-items: center;
+}
+
+.agents-account-switch > span:first-child {
+  flex: 0 0 auto;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+}
+
+.agents-new-account {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.agents-new-account-error {
+  color: var(--danger);
 }
 
 .agents-vav-credentials .control {
@@ -18048,8 +18274,8 @@ mark {
   gap: 6px;
   padding: 8px 8px 7px 12px;
   border-radius: var(--radius-lg);
-  /* Same surface as Agent Message / transcript — not a raised card. */
-  background: var(--bg-content);
+  /* Slightly inked vs the transcript plate so the prompt reads as its own field. */
+  background: color-mix(in srgb, var(--text) 4%, var(--bg-content));
   box-shadow: inset 0 0 0 1px var(--border);
   overflow: visible;
   min-width: 0;
@@ -18058,8 +18284,51 @@ mark {
   box-sizing: border-box;
 }
 
+.acp-slash-menu {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px 6px 2px;
+  max-height: 168px;
+  overflow-y: auto;
+}
+
+.acp-slash-item {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  width: 100%;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  border-radius: var(--radius-sm, 6px);
+  padding: 5px 6px;
+  cursor: pointer;
+}
+
+.acp-slash-item:hover,
+.acp-slash-item:focus-visible,
+.acp-slash-item.is-active {
+  background: var(--bg-hover);
+}
+
+.acp-slash-name {
+  font-size: 12px;
+  font-weight: 550;
+  flex-shrink: 0;
+}
+
+.acp-slash-desc {
+  font-size: 11px;
+  color: var(--fg-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .composer-box:focus-within {
-  background: var(--bg-content);
+  background: color-mix(in srgb, var(--text) 5.5%, var(--bg-content));
   box-shadow: inset 0 0 0 1px var(--border);
 }
 
@@ -19945,7 +20214,7 @@ html:has(.token-usage-popup) #root {
 
 .analysis-summary {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: minmax(0, 1fr);
   gap: 16px 20px;
 }
 

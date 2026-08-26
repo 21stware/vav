@@ -22,6 +22,7 @@ import { useSessionStore, type TurnRuntime } from '../state/sessionStore'
 import { useWorkspaceStore } from '../state/workspaceStore'
 import { isTemporaryWorkspace, middleTruncate, relativeTime, workdirShortLabel } from '../lib/format'
 import { flatten, groupConversations, type ConversationGroup } from '../lib/grouping'
+import { swarmChildrenOf } from '@shared/swarmLayout'
 import { showMenu, type MenuItem } from '../lib/nativeMenu'
 import { fileManagerLabel } from '../lib/platform'
 import { basename } from '../lib/path'
@@ -31,6 +32,22 @@ import { UpdateCorner } from './UpdateCorner'
 
 export function modelLabel(id: string): string {
   return PRESET_MODELS.find((model) => model.id === id)?.label ?? id
+}
+
+/** Curved tree stub for a nested Swarm child — quarter-arc into the row. */
+function ConvTreeGuide({ last }: { last: boolean }): React.JSX.Element {
+  return (
+    <svg className="conv-tree-guide" viewBox="0 0 16 30" preserveAspectRatio="xMinYMid meet" aria-hidden>
+      {last ? (
+        <path d="M1 0 V9 A6 6 0 0 0 7 15" />
+      ) : (
+        <>
+          <path d="M1 0 V30" />
+          <path d="M1 9 A6 6 0 0 0 7 15" />
+        </>
+      )}
+    </svg>
+  )
 }
 
 /** Running CLI agent display name (sidebar-conversation-list.rpml · Agent 类型). */
@@ -122,6 +139,7 @@ export function Sidebar({
     () => new Set(shellBusyKey ? shellBusyKey.split('|') : []),
     [shellBusyKey]
   )
+  const activityById = useSessionStore((s) => s.activityById)
   const tmp = useSessionStore((s) => s.tmp)
   const renamingId = useSessionStore((s) => s.renamingId)
   const groupingMode = useSessionStore((s) => s.settings.sidebarGroupingMode)
@@ -226,9 +244,14 @@ export function Sidebar({
         .sort((a, b) => (b.archivedAt ?? b.updatedAt) - (a.archivedAt ?? a.updatedAt))
       return [{ key: 'archive', label: '', conversations: rows }]
     }
-    const rows = conversations
+    const matched = conversations
       .filter((c) => !c.archived && !c.fileId)
       .filter((c) => !needle || c.title.toLowerCase().includes(needle))
+    const keep = new Set(matched.map((c) => c.id))
+    for (const row of matched) {
+      if (row.swarmParentId) keep.add(row.swarmParentId)
+    }
+    const rows = conversations.filter((c) => keep.has(c.id) && !c.archived && !c.fileId)
     return groupConversations(rows, searching, groupingMode, tmp, pinnedWorkspaces)
   }, [
     conversations,
@@ -259,9 +282,14 @@ export function Sidebar({
     )
   }, [fileSessionRows, query])
 
+  const swarmEnabled = useSessionStore((s) => s.settings.swarmModeEnabled === true)
+  const focusSwarmSession = useSessionStore((s) => s.focusSwarmSession)
   const visible = useMemo(
-    () => flatten(pinnedCollapsed ? mainGroups : groups, collapsedKeys),
-    [groups, mainGroups, pinnedCollapsed, collapsedKeys]
+    () =>
+      flatten(pinnedCollapsed ? mainGroups : groups, collapsedKeys, (row) =>
+        swarmEnabled ? swarmChildrenOf(conversations, row.id) : []
+      ),
+    [groups, mainGroups, pinnedCollapsed, collapsedKeys, conversations, swarmEnabled]
   )
 
   const fileSessionOrderedIds = useMemo(
@@ -730,8 +758,7 @@ export function Sidebar({
                     label: t('sidebar.menu.newSessionInDir'),
                     onSelect: () =>
                       void createConversation({
-                        workingDirectory: groupWorkdir,
-                        model: useSessionStore.getState().settings.defaultModel
+                        workingDirectory: groupWorkdir
                       })
                   },
                   {
@@ -808,8 +835,7 @@ export function Sidebar({
                   event.stopPropagation()
                   if (groupWorkdir) {
                     void createConversation({
-                      workingDirectory: groupWorkdir,
-                      model: useSessionStore.getState().settings.defaultModel
+                      workingDirectory: groupWorkdir
                     })
                   } else {
                     // Empty Temporary Workspace — mint on demand.
@@ -830,7 +856,23 @@ export function Sidebar({
           ))}
 
         {!collapsed &&
-          group.conversations.map((conversation) => {
+          group.conversations.flatMap((conversation) => {
+            const nested = swarmEnabled ? swarmChildrenOf(conversations, conversation.id) : []
+            return [
+              {
+                conversation,
+                isSwarmChild: false,
+                isSwarmParent: nested.length > 0,
+                isSwarmLast: false
+              },
+              ...nested.map((child, index) => ({
+                conversation: child,
+                isSwarmChild: true,
+                isSwarmParent: false,
+                isSwarmLast: index === nested.length - 1
+              }))
+            ]
+          }).map(({ conversation, isSwarmChild, isSwarmParent, isSwarmLast }) => {
             const turn = turns[conversation.id]
             const isActive = conversation.id === activeId
             const isMultiSelected =
@@ -838,6 +880,7 @@ export function Sidebar({
             const runClass = selectionRunClass(conversation.id)
             const awaiting = !!turn?.awaitingToolCallId
             const running = !!turn?.isRunning && !awaiting
+            const doneUnseen = !awaiting && !running && activityById[conversation.id] === 'done'
             const agentLabel = agentTypeLabel(conversation, cliAgents)
             const subtitle = subtitleFor(
               conversation,
@@ -858,7 +901,10 @@ export function Sidebar({
             return (
               <div
                 key={conversation.id}
-                className={`conv-row${isActive ? ' selected' : ''}${isMultiSelected ? ` multi ${runClass}` : ''}`}
+                className={`conv-row${isActive ? ' selected' : ''}${isMultiSelected ? ` multi ${runClass}` : ''}${
+                  isSwarmParent ? ' is-swarm-parent' : ''
+                }${isSwarmChild ? ' is-swarm-child' : ''}${isSwarmLast ? ' is-swarm-last' : ''}`}
+                data-testid="session-row"
                 data-conversation-id={conversation.id}
                 title={rowTitle}
                 onClick={(event) => {
@@ -866,7 +912,11 @@ export function Sidebar({
                   if (event.detail > 1) return
                   const additive = event.metaKey
                   const range = event.shiftKey
-                  void selectConversation(conversation.id, { additive, range })
+                  if (swarmEnabled && !additive && !range) {
+                    void focusSwarmSession(conversation.id)
+                  } else {
+                    void selectConversation(conversation.id, { additive, range })
+                  }
                   // Multi-select keeps the float open so the user can keep picking.
                   if (additive || range) return
                   // Floating: delay close so a double-click can still open
@@ -909,6 +959,7 @@ export function Sidebar({
                   void showMenu(menuItems(targets))
                 }}
               >
+                {isSwarmChild ? <ConvTreeGuide last={isSwarmLast} /> : null}
                 {renamingId === conversation.id ? (
                   <RenameField
                     initial={conversation.title}
@@ -917,7 +968,11 @@ export function Sidebar({
                   />
                 ) : (
                   <span className="conv-text">
-                    <span className="conv-title">{middleTruncate(conversation.title)}</span>
+                    <span className="conv-title">
+                      {middleTruncate(
+                        isSwarmChild && agentLabel ? agentLabel : conversation.title
+                      )}
+                    </span>
                     <span className="conv-subtitle">{subtitle}</span>
                   </span>
                 )}
@@ -959,6 +1014,9 @@ export function Sidebar({
                     title={t('sidebar.badge.backgroundRunning')}
                   />
                 )}
+                {doneUnseen && (
+                  <span className="conv-badge done" title={t('sidebar.badge.done')} />
+                )}
               </div>
             )
           })}
@@ -967,7 +1025,7 @@ export function Sidebar({
   }
 
   return (
-    <aside className={`sidebar${floating ? ' floating' : ''}`}>
+    <aside className={`sidebar${floating ? ' floating' : ''}`} data-testid="sidebar">
       <div className="sidebar-search">
         <div style={{ position: 'relative' }}>
           <Search
@@ -982,6 +1040,7 @@ export function Sidebar({
           />
           <input
             className="text-field"
+            data-testid="sidebar-search"
             style={{ paddingLeft: 24, paddingRight: query ? 24 : 8 }}
             placeholder={t('sidebar.searchPlaceholder')}
             value={query}
@@ -1009,6 +1068,7 @@ export function Sidebar({
             <span className="sidebar-grouping-control">
               <select
                 className="text-field sidebar-grouping-select"
+                data-testid="sidebar-grouping"
                 value={groupingMode}
                 onChange={(event) =>
                   void updateSettings({
@@ -1031,6 +1091,7 @@ export function Sidebar({
             <button
               type="button"
               className="sidebar-archive-back"
+              data-testid="sidebar-archive-back"
               title={t('sidebar.back')}
               onClick={() => {
                 setListMode('main')
@@ -1239,6 +1300,7 @@ export function Sidebar({
           <button
             type="button"
             className="btn ghost sm sidebar-archive-btn"
+            data-testid="sidebar-archive"
             title={t('sidebar.archived')}
             onClick={() => {
               setSidebarQuery('')

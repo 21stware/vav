@@ -27,10 +27,28 @@ describe('resolveContextCloseAction', () => {
     assert.equal(resolveContextCloseAction({ ...base, focus: 'agent' }), 'agent')
   })
 
-  it('closes the window when Swarm is on screen but not focused', () => {
+  it('closes the window when a single CLI Swarm is on screen but not focused', () => {
     assert.equal(resolveContextCloseAction({ ...base, focus: 'app' }), 'window')
     assert.equal(
       resolveContextCloseAction({ ...base, focus: 'app', paneCount: 2 }),
+      'window'
+    )
+  })
+
+  it('closes one conversation pane while several Thread/Swarm panes are visible', () => {
+    assert.equal(
+      resolveContextCloseAction({ ...base, cliMode: false, focus: 'app', swarmPaneCount: 2 }),
+      'agent'
+    )
+    assert.equal(
+      resolveContextCloseAction({ ...base, cliMode: false, focus: 'agent', swarmPaneCount: 3 }),
+      'agent'
+    )
+  })
+
+  it('closes the window on the last remaining conversation pane', () => {
+    assert.equal(
+      resolveContextCloseAction({ ...base, cliMode: false, focus: 'app', swarmPaneCount: 1 }),
       'window'
     )
   })

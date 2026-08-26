@@ -7,6 +7,7 @@ import {
   hostBucketsFromConversation,
   localAnalysisProviders,
   applyApiBalanceToSnapshot,
+  orderByProviderList,
   snapshotWithFreshUsage,
   stubAnalysisProviders,
   usageKindForHost
@@ -27,10 +28,28 @@ function snap(partial: Partial<TokenSnapshot> & { turnIndex: number }): TokenSna
 }
 
 describe('usageKindForHost', () => {
-  it('treats vav as API and every other key as an agent', () => {
+  it('treats VAV and LLM vendors as API, everything else as an agent', () => {
     assert.equal(usageKindForHost('vav'), 'api')
+    assert.equal(usageKindForHost('deepseek'), 'api')
+    assert.equal(usageKindForHost('openrouter'), 'api')
     assert.equal(usageKindForHost('claude'), 'agent')
     assert.equal(usageKindForHost('custom-1'), 'agent')
+  })
+})
+
+describe('orderByProviderList', () => {
+  it('uses the saved order, then the tie-break for unknown ids', () => {
+    const rows = [{ id: 'claude' }, { id: 'deepseek' }, { id: 'openrouter' }]
+    assert.deepEqual(
+      orderByProviderList(rows, (row) => row.id, ['openrouter', 'claude']).map((row) => row.id),
+      ['openrouter', 'claude', 'deepseek']
+    )
+    assert.deepEqual(
+      orderByProviderList(rows, (row) => row.id, null, (a, b) => a.id.localeCompare(b.id)).map(
+        (row) => row.id
+      ),
+      ['claude', 'deepseek', 'openrouter']
+    )
   })
 })
 
@@ -113,7 +132,55 @@ describe('aggregateAnalysisUsage', () => {
     assert.equal(usage.total.sessions, 3)
     assert.equal(usage.total.turns, 3)
     assert.equal(usage.total.inputTokens, 180)
-    assert.equal(usage.hosts.map((h) => h.hostKey).join(','), 'vav,claude')
+    assert.equal(usage.hosts.map((h) => h.hostKey).join(','), 'claude,vav')
+  })
+
+  it('remaps VAV usage onto a vendor and sorts by the provider list', () => {
+    const usage = aggregateAnalysisUsage(
+      [
+        {
+          cliHost: null,
+          accountId: 'acc-1',
+          tokenHistory: [snap({ turnIndex: 1, newInputTokens: 20, outputTokens: 8, estimatedCost: 0.1 })],
+          tokensUsed: 28
+        },
+        {
+          cliHost: 'claude',
+          tokenHistory: [snap({ turnIndex: 1, newInputTokens: 10, outputTokens: 4, estimatedCost: 0.05 })],
+          reportedSessionCostUsd: 0.4
+        }
+      ],
+      {
+        remapHost: (hostKey, accountId) =>
+          hostKey === 'vav' && accountId === 'acc-1' ? 'deepseek' : hostKey,
+        order: ['claude', 'deepseek']
+      }
+    )
+    assert.deepEqual(
+      usage.hosts.map((host) => host.hostKey),
+      ['claude', 'deepseek']
+    )
+    assert.equal(usage.hosts[1]?.kind, 'api')
+    assert.equal(usage.api.sessions, 1)
+    assert.equal(usage.agent.sessions, 1)
+  })
+
+  it('uses a turn accountId when the conversation has none', () => {
+    const usage = aggregateAnalysisUsage(
+      [
+        {
+          cliHost: null,
+          tokenHistory: [
+            snap({ turnIndex: 1, newInputTokens: 10, outputTokens: 2, accountId: 'acc-2' })
+          ]
+        }
+      ],
+      {
+        remapHost: (hostKey, accountId) =>
+          hostKey === 'vav' && accountId === 'acc-2' ? 'openrouter' : hostKey
+      }
+    )
+    assert.equal(usage.hosts[0]?.hostKey, 'openrouter')
   })
 
   it('ignores empty conversations and empty parked buckets', () => {
@@ -190,6 +257,73 @@ describe('applyApiBalanceToSnapshot', () => {
     assert.equal(next.providers[0]?.balanceState, 'ready')
     assert.equal(next.providers[0]?.balance?.total, 69.73)
   })
+
+  it('does not write a DeepSeek wallet onto other vendor cards', () => {
+    const prev = {
+      usage: aggregateAnalysisUsage([]),
+      providers: stubAnalysisProviders(
+        [
+          { id: 'deepseek', name: 'DeepSeek' },
+          { id: 'openrouter', name: 'OpenRouter' }
+        ],
+        true,
+        { apiBalanceSupported: true }
+      ),
+      now: 1
+    }
+    const next = applyApiBalanceToSnapshot(
+      prev,
+      {
+        supported: true,
+        balance: {
+          source: 'deepseek',
+          currency: 'CNY',
+          total: 1,
+          granted: 0,
+          toppedUp: 1,
+          available: true
+        }
+      },
+      true
+    )
+    assert.equal(next.providers[0]?.balanceState, 'ready')
+    assert.equal(next.providers[1]?.balance, null)
+    assert.notEqual(next.providers[1]?.balanceState, 'ready')
+  })
+
+  it('writes an OpenRouter wallet onto the matching vendor card', () => {
+    const prev = {
+      usage: aggregateAnalysisUsage([]),
+      providers: stubAnalysisProviders(
+        [
+          { id: 'deepseek', name: 'DeepSeek' },
+          { id: 'openrouter', name: 'OpenRouter' }
+        ],
+        true
+      ),
+      now: 1
+    }
+    const next = applyApiBalanceToSnapshot(
+      prev,
+      {
+        supported: true,
+        balance: {
+          source: 'openrouter',
+          currency: 'USD',
+          total: 12.5,
+          granted: 0,
+          toppedUp: 20,
+          available: true
+        }
+      },
+      true,
+      'openrouter'
+    )
+    assert.equal(next.providers[0]?.balance, null)
+    assert.notEqual(next.providers[0]?.balanceState, 'ready')
+    assert.equal(next.providers[1]?.balanceState, 'ready')
+    assert.equal(next.providers[1]?.balance?.total, 12.5)
+  })
 })
 
 describe('localAnalysisProviders', () => {
@@ -232,6 +366,25 @@ describe('localAnalysisProviders', () => {
     assert.deepEqual(
       list.map((row) => row.id),
       ['vav', 'claude', 'codex', 'grok']
+    )
+  })
+
+  it('replaces the VAV seed with vendor rows and honors the provider list order', () => {
+    const list = localAnalysisProviders(
+      [{ id: 'claude', name: 'Claude Code' }],
+      catalogue,
+      ['claude'],
+      {
+        vendors: [
+          { id: 'deepseek', name: 'DeepSeek' },
+          { id: 'openrouter', name: 'OpenRouter' }
+        ],
+        order: ['claude', 'openrouter', 'deepseek']
+      }
+    )
+    assert.deepEqual(
+      list.map((row) => row.id),
+      ['claude', 'openrouter', 'deepseek']
     )
   })
 })

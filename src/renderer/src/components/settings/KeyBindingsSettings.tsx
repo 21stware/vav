@@ -173,7 +173,7 @@ export function KeyBindingsSettings(): React.JSX.Element {
     settings.sendKey !== 'enter'
 
   return (
-    <div className="keybind-panel">
+    <div className="keybind-panel" data-testid="settings-keybindings">
       <div className="keybind-toolbar">
         <p className="keybind-intro">{t('keybindings.intro')}</p>
         <Button

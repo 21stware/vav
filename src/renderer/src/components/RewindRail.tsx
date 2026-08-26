@@ -1,6 +1,6 @@
 import { useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useT } from '../i18n/useT'
-import { layoutRewindRail, rewindIndexAtY } from '../lib/rewindLayout'
+import { REWIND_PAD, REST_SLOT, layoutRewindRail, rewindIndexAtY } from '../lib/rewindLayout'
 import type { RewindTurn } from '../lib/rewindTurns'
 
 /**
@@ -41,7 +41,9 @@ export function RewindRail({
 
   passScrollRef.current = onPassScroll
 
-  const height = measured > 0 ? measured : RAIL_FALLBACK_PX
+  const packed = turns.length * REST_SLOT + REWIND_PAD * 2
+  const cap = measured > 0 ? measured : RAIL_FALLBACK_PX
+  const height = Math.min(cap, Math.max(packed, REWIND_PAD * 2 + REST_SLOT))
   const lens = hover ?? keyIndex
   const focus = lens ?? indexOfId(turns, currentId)
   const rows = useMemo(
@@ -60,7 +62,9 @@ export function RewindRail({
     const rail = railRef.current
     if (!rail) return
     const applySize = (): void => {
-      const next = Math.round(rail.getBoundingClientRect().height)
+      const raw = getComputedStyle(rail).maxHeight
+      const px = parseFloat(raw)
+      const next = Number.isFinite(px) && px > 0 ? Math.round(px) : RAIL_FALLBACK_PX
       setMeasured((prev) => (prev === next ? prev : next))
     }
     applySize()
@@ -112,6 +116,7 @@ export function RewindRail({
     <nav
       ref={railRef}
       className="rewind-rail"
+      style={{ height }}
       data-hot={lens != null ? 'true' : undefined}
       aria-label={t('transcript.rewindNav')}
       onPointerEnter={(event) => setHover(lensAt(event.clientY))}

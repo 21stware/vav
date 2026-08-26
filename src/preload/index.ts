@@ -105,6 +105,11 @@ const api: VavApi = {
       ipcRenderer.invoke(IPC.convSetAgentBinary, id, agentBinaryName),
     setCliHost: (id: string, host: string | null) =>
       ipcRenderer.invoke(IPC.convSetCliHost, id, host),
+    setSwarmLayout: (
+      id: string,
+      layout: import('@shared/types').TerminalLayoutNode | null,
+      full?: import('@shared/types').TerminalLayoutNode | null
+    ) => ipcRenderer.invoke(IPC.convSetSwarmLayout, id, layout, full),
     setFocusedFile: (id: string, path: string | null) =>
       ipcRenderer.invoke(IPC.convSetFocusedFile, id, path),
     accountQuota: (id: string, host?: import('@shared/types').CliHostKind | null) =>
@@ -134,6 +139,10 @@ const api: VavApi = {
       ipcRenderer.invoke(IPC.convSetApprovalMode, id, mode),
     setThinkingLevel: (id: string, level) =>
       ipcRenderer.invoke(IPC.convSetThinkingLevel, id, level),
+    setAcpMode: (id: string, modeId: string) =>
+      ipcRenderer.invoke(IPC.convSetAcpMode, id, modeId),
+    setAcpConfigOption: (id: string, configId: string, value: string | boolean) =>
+      ipcRenderer.invoke(IPC.convSetAcpConfig, id, configId, value),
     continueInNewSession: (id: string, messageId: string) =>
       ipcRenderer.invoke(IPC.convContinueNew, id, messageId),
     duplicate: (id: string) => ipcRenderer.invoke(IPC.convDuplicate, id),
@@ -357,9 +366,19 @@ const api: VavApi = {
     openSettings: (view?: SettingsView, agentId?: string) =>
       ipcRenderer.invoke(IPC.windowOpenSettings, view, agentId),
     closeSettings: () => ipcRenderer.invoke(IPC.windowCloseSettings),
+    desiredSettingsView: () =>
+      ipcRenderer.invoke(IPC.settingsDesiredView) as Promise<SettingsViewPayload>,
     popupMenu: (items: NativeMenuItem[], position?: { x: number; y: number }) =>
       ipcRenderer.invoke(IPC.windowPopupMenu, items, position),
     closePopupMenu: () => ipcRenderer.invoke(IPC.windowClosePopupMenu),
+    peekPopupMenu: () =>
+      ipcRenderer.invoke(IPC.windowE2ePeekMenu) as Promise<
+        { id?: string; label?: string; checked?: boolean }[] | null
+      >,
+    choosePopupMenu: (idOrLabel: string) =>
+      ipcRenderer.invoke(IPC.windowE2eChooseMenu, idOrLabel) as Promise<boolean>,
+    dismissPopupMenu: () =>
+      ipcRenderer.invoke(IPC.windowE2eDismissMenu) as Promise<boolean>,
     openSession: (conversationId: string) =>
       ipcRenderer.invoke(IPC.windowOpenSession, conversationId),
     revealInList: (conversationId: string) =>

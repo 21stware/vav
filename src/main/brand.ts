@@ -1,7 +1,8 @@
 import { app, nativeImage, nativeTheme, type NativeImage } from 'electron'
-import { existsSync } from 'node:fs'
+import { existsSync, mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { isDevRuntime } from './devRuntime'
+import { isE2eRuntime, resolveE2eUserData } from './e2eRuntime'
 
 export const APP_NAME_RELEASE = 'VAV'
 export const APP_NAME_DEV = 'VAV Dev'
@@ -218,12 +219,21 @@ function drawDevGlyphs(
  */
 export function pinUserDataPath(): void {
   try {
+    const e2eDir = resolveE2eUserData()
+    if (e2eDir) {
+      mkdirSync(e2eDir, { recursive: true })
+      if (app.getPath('userData') !== e2eDir) {
+        app.setPath('userData', e2eDir)
+      }
+      return
+    }
     const target = join(app.getPath('appData'), APP_USER_DATA_DIR)
     if (app.getPath('userData') !== target) {
       app.setPath('userData', target)
     }
   } catch (err) {
     console.error('[brand] pinUserDataPath failed', err)
+    if (isE2eRuntime()) throw err
   }
 }
 

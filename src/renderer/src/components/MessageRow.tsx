@@ -112,6 +112,7 @@ function MessageActionButton({
   doneTitle,
   disabled,
   ack = 'check',
+  testId,
   onClick
 }: {
   icon: ReactNode
@@ -119,6 +120,7 @@ function MessageActionButton({
   doneTitle?: string
   disabled?: boolean
   ack?: 'check' | 'spin' | false
+  testId?: string
   onClick: () => void | Promise<void>
 }): React.JSX.Element {
   const [phase, setPhase] = useState<'idle' | 'out' | 'done'>('idle')
@@ -180,6 +182,7 @@ function MessageActionButton({
         </span>
       }
       size="sm"
+      testId={testId}
       title={showDone && doneTitle ? doneTitle : title}
       disabled={disabled}
       onClick={() => {
@@ -352,13 +355,14 @@ export const MessageRow = memo(function MessageRow({
     const hasBody = body.trim().length > 0
 
     return (
-      <div className="message-turn user" onContextMenu={onContextMenu}>
+      <div className="message-turn user" data-testid="message-user" onContextMenu={onContextMenu}>
         <div className="message-role">You</div>
         <div className="message-group user">
           {message.quoteSummary && message.quoteMessageId && (
             <button
               type="button"
               className="message-quote-ref"
+              data-testid="message-quote-ref"
               title={`${message.quoteSummary}\n${t('composer.quoteJump')}`}
               onClick={() => scrollToMessage(message.quoteMessageId!)}
             >
@@ -442,7 +446,7 @@ export const MessageRow = memo(function MessageRow({
   }
 
   return (
-    <div className="message-turn assistant" onContextMenu={onContextMenu}>
+    <div className="message-turn assistant" data-testid="message-assistant" onContextMenu={onContextMenu}>
       <div className="message-role">Agent</div>
       <div className={classes} id={`msg-${message.id}`}>
         {(() => {
@@ -483,7 +487,11 @@ export const MessageRow = memo(function MessageRow({
           )
         })()}
 
-        {message.cancelled && <div className="message system">{t('message.cancelled')}</div>}
+        {message.cancelled && (
+          <div className="message system" data-testid="message-cancelled">
+            {t('message.cancelled')}
+          </div>
+        )}
         {!message.cancelled && message.errorText && (
           <div className="message system is-error">{message.errorText}</div>
         )}
@@ -508,6 +516,7 @@ export const MessageRow = memo(function MessageRow({
                 <MessageActionButton
                   icon={<RotateCcw size={12} />}
                   title={t('message.regenerate')}
+                  testId="message-regenerate"
                   disabled={busy}
                   ack="spin"
                   onClick={() => onRegenerate(message.id)}
@@ -517,6 +526,7 @@ export const MessageRow = memo(function MessageRow({
                 <MessageActionButton
                   icon={<Quote size={12} />}
                   title={t('message.quote')}
+                  testId="message-quote"
                   onClick={() => onQuote(message)}
                 />
               )}
@@ -783,7 +793,11 @@ export function BranchPager({
   const t = useT()
 
   return (
-    <div className="variant-pager" data-pulse={pulseKey > 0 ? pulseKey : undefined}>
+    <div
+      className="variant-pager"
+      data-testid="branch-pager"
+      data-pulse={pulseKey > 0 ? pulseKey : undefined}
+    >
       <button
         className="variant-step"
         title={t('message.prevBranch')}

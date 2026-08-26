@@ -20,6 +20,7 @@ import { coerceShell, platformDefaults, type Platform } from '@shared/platform'
 import { normalizeAccentHex } from '@shared/colorTints'
 import { sanitizeKeyBindings } from '@shared/keyBindings'
 import { RECENT_AGENT_MODELS_MAX, VAV_LEGACY_DEFAULT_MODELS } from '@shared/agentModels'
+import { isLlmVendorId } from '@shared/llmVendors'
 import { parseThinkingLevel } from '@shared/thinkingLevel'
 import { isCssTileSize } from '@shared/surfacePattern'
 import { surfacePatternFilePath, writeSurfacePatternPng } from '../importSurfacePattern'
@@ -255,6 +256,15 @@ export class SettingsStore {
     s.cliAgents = mergeBuiltinAgents(Array.isArray(s.cliAgents) ? s.cliAgents : [], {
       removedIds: s.removedCliAgentIds
     })
+    if (!Array.isArray(s.providerListOrder)) s.providerListOrder = []
+    else {
+      const seen = new Set<string>()
+      s.providerListOrder = s.providerListOrder.filter((id): id is string => {
+        if (typeof id !== 'string' || !id.trim() || seen.has(id)) return false
+        seen.add(id)
+        return true
+      })
+    }
     if (typeof s.keepAwakeWhileAgentRunning !== 'boolean') {
       s.keepAwakeWhileAgentRunning = false
     }
@@ -274,10 +284,21 @@ export class SettingsStore {
       }
       s.disabledAgentModels = cleaned
     }
-    // null / "vav" = built-in VAV; otherwise must be a configured CLI agent id.
+    if (!s.defaultAgentModels || typeof s.defaultAgentModels !== 'object') {
+      s.defaultAgentModels = {}
+    } else {
+      const cleaned: Record<string, string> = {}
+      for (const [host, id] of Object.entries(s.defaultAgentModels)) {
+        if (typeof host !== 'string' || !host.trim()) continue
+        if (typeof id !== 'string') continue
+        cleaned[host] = id
+      }
+      s.defaultAgentModels = cleaned
+    }
+    // null / "vav" = no explicit default. Otherwise a CLI agent id or LLM vendor id.
     if (s.defaultAgentId === undefined) s.defaultAgentId = null
     if (s.defaultAgentId === 'vav') s.defaultAgentId = null
-    if (s.defaultAgentId !== null) {
+    if (s.defaultAgentId !== null && !isLlmVendorId(s.defaultAgentId)) {
       const ids = new Set(s.cliAgents.map((a) => a.id))
       if (!ids.has(s.defaultAgentId)) s.defaultAgentId = null
     }

@@ -63,13 +63,16 @@ function findTerminalSlot(
  */
 export function TerminalPanel({
   visible,
-  surface = 'bash'
+  surface = 'bash',
+  conversationId
 }: {
   visible: boolean
   surface?: 'bash' | 'agent'
+  conversationId?: string
 }): React.JSX.Element {
   const t = useT()
-  const activeId = useSessionStore((s) => s.activeId)
+  const storeActiveId = useSessionStore((s) => s.activeId)
+  const activeId = conversationId || storeActiveId
   const bashBackground = useSessionStore((s) => s.settings.bashBackground ?? 'theme')
   // Unified CLI surface (preferred) — falls back to legacy per-agent host.
   const agentSurface = useWorkspaceStore((s) => {
@@ -106,6 +109,7 @@ export function TerminalPanel({
   return (
     <div
       className="terminal-stack multi-split"
+      data-testid="terminal-panel"
       data-empty={empty}
       data-terminal-surface={surface}
       data-bash-bg={surface === 'bash' ? bashBackground : undefined}

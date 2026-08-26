@@ -8,8 +8,7 @@ import {
   Info,
   Keyboard,
   Palette,
-  Terminal,
-  User
+  Terminal
 } from 'lucide-react'
 import { resolveSettingsView, type SettingsView } from '@shared/ipc'
 import type { MessageKey } from '@shared/i18n'
@@ -34,17 +33,25 @@ import { FileAssociationsSettings } from './components/settings/FileAssociations
 import { KeyBindingsSettings } from './components/settings/KeyBindingsSettings'
 import { AboutSettings } from './components/settings/AboutSettings'
 import { AnalysisSettings } from './components/settings/AnalysisSettings'
-import { AccountsSettings } from './components/settings/AccountsSettings'
 
 const NAV_ICON = 14
 
 const CATEGORY_KEYS: { id: SettingsView; labelKey: MessageKey; icon: React.JSX.Element }[] = [
+  {
+    id: 'appearance',
+    labelKey: 'settings.nav.appearance',
+    icon: <Palette size={NAV_ICON} strokeWidth={1.75} />
+  },
   { id: 'agents', labelKey: 'settings.nav.agents', icon: <Bot size={NAV_ICON} strokeWidth={1.75} /> },
-  { id: 'accounts', labelKey: 'settings.nav.accounts', icon: <User size={NAV_ICON} strokeWidth={1.75} /> },
   {
     id: 'analysis',
     labelKey: 'settings.nav.analysis',
     icon: <ChartNoAxesColumn size={NAV_ICON} strokeWidth={1.75} />
+  },
+  {
+    id: 'notifications',
+    labelKey: 'settings.nav.notifications',
+    icon: <Bell size={NAV_ICON} strokeWidth={1.75} />
   },
   {
     id: 'workspace',
@@ -52,35 +59,26 @@ const CATEGORY_KEYS: { id: SettingsView; labelKey: MessageKey; icon: React.JSX.E
     icon: <Folder size={NAV_ICON} strokeWidth={1.75} />
   },
   {
-    id: 'appearance',
-    labelKey: 'settings.nav.appearance',
-    icon: <Palette size={NAV_ICON} strokeWidth={1.75} />
-  },
-  {
     id: 'keybindings',
     labelKey: 'settings.nav.keybindings',
     icon: <Keyboard size={NAV_ICON} strokeWidth={1.75} />
   },
   {
-    id: 'notifications',
-    labelKey: 'settings.nav.notifications',
-    icon: <Bell size={NAV_ICON} strokeWidth={1.75} />
-  },
-  { id: 'cli', labelKey: 'settings.nav.cli', icon: <Terminal size={NAV_ICON} strokeWidth={1.75} /> },
-  {
     id: 'file-associations',
     labelKey: 'settings.nav.fileAssociations',
     icon: <FileCheck2 size={NAV_ICON} strokeWidth={1.75} />
   },
+  { id: 'cli', labelKey: 'settings.nav.cli', icon: <Terminal size={NAV_ICON} strokeWidth={1.75} /> },
   { id: 'about', labelKey: 'settings.nav.about', icon: <Info size={NAV_ICON} strokeWidth={1.75} /> }
 ]
 
-function initialView(): { view: SettingsView; agentId: string | null } {
-  const params = new URLSearchParams(window.location.search)
-  const requested = params.get('category') as SettingsView | null
-  const resolved = resolveSettingsView(requested, params.get('agentId'))
-  const view = CATEGORY_KEYS.some((c) => c.id === resolved.view) ? resolved.view : 'agents'
-  return { view, agentId: resolved.agentId ?? null }
+function applySettingsView(view?: SettingsView | null, agentId?: string | null): void {
+  const resolved = resolveSettingsView(view, agentId)
+  const next = CATEGORY_KEYS.some((c) => c.id === resolved.view) ? resolved.view : 'appearance'
+  useSessionStore.setState({
+    settingsCategory: next,
+    settingsFocusAgentId: resolved.agentId ?? null
+  })
 }
 
 /**
@@ -96,7 +94,7 @@ export default function SettingsWindow(): React.JSX.Element {
   const ready = useSessionStore((s) => s.ready)
   const bootstrap = useSessionStore((s) => s.bootstrap)
   const rawCategory = useSessionStore((s) => s.settingsCategory)
-  const category = rawCategory === 'api' ? 'agents' : rawCategory
+  const category = rawCategory === 'api' || rawCategory === 'accounts' ? 'agents' : rawCategory
   const prevCategory = useRef<SettingsView | null>(null)
   const animateEnter = prevCategory.current !== null && prevCategory.current !== category
   useEffect(() => {
@@ -104,26 +102,21 @@ export default function SettingsWindow(): React.JSX.Element {
   }, [category])
 
   useEffect(() => {
-    const initial = initialView()
-    useSessionStore.setState({
-      settingsCategory: initial.view,
-      settingsFocusAgentId: initial.agentId
+    const offView = window.vav.onSettingsView((payload) => {
+      applySettingsView(payload.view, payload.agentId)
+    })
+    void window.vav.window.desiredSettingsView?.().then((payload) => {
+      applySettingsView(payload?.view, payload?.agentId)
     })
     // Light: settings only — never load the active chat transcript into this window.
     void bootstrap(undefined, { light: true })
+    return offView
   }, [bootstrap])
 
   useEffect(() => {
     const offSettings = installSettingsBridge()
     const offUpdates = installUpdateBridge()
     const offModels = installAgentModelCatalogBridge()
-    const offView = window.vav.onSettingsView((payload) => {
-      const resolved = resolveSettingsView(payload.view, payload.agentId)
-      useSessionStore.setState({
-        settingsCategory: resolved.view,
-        settingsFocusAgentId: resolved.agentId ?? null
-      })
-    })
     const offMenu = installDefaultContextMenu()
     const offInstall = installInstallRunBridge()
     const offAnalysis = installAnalysisBridge()
@@ -132,7 +125,6 @@ export default function SettingsWindow(): React.JSX.Element {
       offSettings()
       offUpdates()
       offModels()
-      offView()
       offMenu()
       offInstall()
       offAnalysis()
@@ -155,14 +147,15 @@ export default function SettingsWindow(): React.JSX.Element {
 
   if (!ready) return <div className="settings-window" />
 
-  const title = t(CATEGORY_KEYS.find((c) => c.id === category)?.labelKey ?? 'settings.nav.agents')
+  const title = t(CATEGORY_KEYS.find((c) => c.id === category)?.labelKey ?? 'settings.nav.appearance')
 
   return (
-    <div className="settings-window">
+    <div className="settings-window" data-testid="settings-window">
       <nav className="settings-nav">
         {CATEGORY_KEYS.map((item) => (
           <div
             key={item.id}
+            data-testid={`settings-nav-${item.id}`}
             className={`conv-row${item.id === category ? ' selected' : ''}`}
             onClick={() => useSessionStore.setState({ settingsCategory: item.id })}
           >
@@ -180,7 +173,6 @@ export default function SettingsWindow(): React.JSX.Element {
             className={`settings-body-panel${animateEnter ? ' is-enter' : ''}`}
           >
             {category === 'analysis' && <AnalysisSettings />}
-            {category === 'accounts' && <AccountsSettings />}
             {category === 'workspace' && <WorkspaceSettings />}
             {category === 'appearance' && <AppearanceSettings />}
             {category === 'keybindings' && <KeyBindingsSettings />}

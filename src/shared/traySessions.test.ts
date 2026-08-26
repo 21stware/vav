@@ -15,6 +15,7 @@ import {
   trayPaneKey,
   traySessionLabel,
   trayStatusRowLabel,
+  trayTitleCounts,
   type TrayPane
 } from './traySessions.ts'
 
@@ -128,6 +129,13 @@ describe('tray labels', () => {
     assert.equal(trayStatusRowLabel('Hello', 'running', { running: 'Running', done: 'Done' }), 'Running · Hello')
     assert.equal(trayStatusRowLabel('Hello', 'done', { running: 'Running', done: 'Done' }), 'Done · Hello')
     assert.equal(trayIndentedLabel('Hello'), '\u2003\u2003Hello')
+  })
+
+  it('splits the menu-bar title into running·done', () => {
+    assert.equal(trayTitleCounts(0, 0), '')
+    assert.equal(trayTitleCounts(3, 2), '3·2')
+    assert.equal(trayTitleCounts(3, 0), '3·0')
+    assert.equal(trayTitleCounts(0, 2), '0·2')
   })
 })
 

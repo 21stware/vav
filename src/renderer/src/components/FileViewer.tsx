@@ -2124,6 +2124,7 @@ export function FileViewer({
           ) : null}
           <span
             className={`file-viewer-name${embedded ? '' : ' titlebar-no-drag'}`}
+            data-testid="file-preview-name"
             title={isClipPath(filePath) ? (info?.name ?? basename(filePath)) : filePath}
           >
             {info?.name ?? basename(filePath)}
@@ -2263,6 +2264,7 @@ export function FileViewer({
             <Button
               icon={<X size={14} />}
               size="sm"
+              testId="file-preview-close"
               title={t('common.close')}
               onClick={onClose}
             />
@@ -2832,6 +2834,7 @@ export function FileViewer({
   return (
     <div
       className={`file-preview-shell${agentPanelOpen && !embedded ? ' agent-open' : ''}${embedded ? ' embedded' : ''}`}
+      data-testid={embedded ? undefined : 'file-preview-window'}
     >
       {embedded ? (
         fileColumn

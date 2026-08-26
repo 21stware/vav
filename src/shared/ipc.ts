@@ -7,6 +7,7 @@ import type {
   Conversation,
   ConversationMeta,
   ConversationPtyLayouts,
+  TerminalLayoutNode,
   DirectoryListing,
   DisplayCurrency,
   FileSortKey,
@@ -164,6 +165,8 @@ export interface NativeMenuItem {
   separator?: boolean
   enabled?: boolean
   checked?: boolean
+  /** macOS 14+ section header. Not selectable. */
+  header?: boolean
   role?: 'copy' | 'cut' | 'paste' | 'selectAll' | 'undo' | 'redo'
   /** Nested menu. Parent rows are not selectable. */
   submenu?: NativeMenuItem[]
@@ -182,13 +185,18 @@ export type SettingsView =
   | 'keybindings'
   | 'about'
 
-/** `'api'` is a legacy alias for Providers → VAV (key + endpoint live there). */
+/** `'api'` / `'accounts'` are legacy aliases for Providers. */
 export function resolveSettingsView(
   view?: SettingsView | null,
   agentId?: string | null
 ): { view: SettingsView; agentId?: string } {
   const trimmed = agentId?.trim() || undefined
-  if (!view || view === 'api') return { view: 'agents', agentId: trimmed || 'vav' }
+  if (view === 'api' || view === 'accounts') {
+    return { view: 'agents', agentId: trimmed }
+  }
+  if (!view) {
+    return { view: trimmed ? 'agents' : 'appearance', agentId: trimmed }
+  }
   return trimmed ? { view, agentId: trimmed } : { view }
 }
 
@@ -228,6 +236,8 @@ export interface CreateConversationOptions {
   workingDirectory?: string | null
   /** Defaults to Settings.defaultModel when omitted. */
   model?: string
+  /** Extra Swarm agent pane under this session. */
+  swarmParentId?: string | null
 }
 
 /** One session in a file's FileSessionStore history list. */
@@ -381,7 +391,7 @@ export interface AccountView {
   quotaStatus: AccountQuotaStatus
   quotaUpdatedAt: number | null
   quotaError: string | null
-  /** Official API wallet when the endpoint exposes one (DeepSeek today). */
+  /** Official API wallet when the endpoint exposes one (DeepSeek, OpenRouter). */
   balance: AccountApiBalance | null
 }
 
@@ -749,6 +759,8 @@ export interface VavApi {
     createDraft(input: {
       agentId: string
       kind?: AccountViewKind
+      /** VAV key drafts only. Empty string stores no endpoint. */
+      endpoint?: string
     }): Promise<{ page: AccountsPagePayload; id: string }>
     updateVav(
       id: string,
@@ -778,6 +790,11 @@ export interface VavApi {
      * Switching parks the previous host's transcript and restores this host's
      * (each agent keeps its own history; no cross-host context handoff).
      */
+    setSwarmLayout(
+      id: string,
+      layout: TerminalLayoutNode | null,
+      full?: TerminalLayoutNode | null
+    ): Promise<ConversationMeta[]>
     setCliHost(
       id: string,
       host: string | null
@@ -836,6 +853,14 @@ export interface VavApi {
     setThinkingLevel(
       id: string,
       level: 'off' | 'low' | 'medium' | 'high' | 'max'
+    ): Promise<ConversationMeta[]>
+    /** ACP session/set_mode. */
+    setAcpMode(id: string, modeId: string): Promise<ConversationMeta[]>
+    /** ACP session/set_config_option. */
+    setAcpConfigOption(
+      id: string,
+      configId: string,
+      value: string | boolean
     ): Promise<ConversationMeta[]>
     /** Deep-copies the thread up to `messageId` into a new conversation. */
     continueInNewSession(id: string, messageId: string): Promise<ConversationMeta | null>
@@ -1254,6 +1279,8 @@ export interface VavApi {
     /** Settings live in their own window, not a sheet over the transcript. */
     openSettings(view?: SettingsView, agentId?: string): Promise<void>
     closeSettings(): Promise<void>
+    /** Last category ⌘, / Open Settings asked for — pull after the lazy chunk mounts. */
+    desiredSettingsView(): Promise<SettingsViewPayload>
     /** Opens (or raises) the standalone window for one conversation. */
     openSession(conversationId: string): Promise<void>
     /**
@@ -1374,6 +1401,15 @@ export interface VavApi {
     ): Promise<string | null>
     /** Dismiss any open renderer-driven native popup (session switch / unmount). */
     closePopupMenu(): Promise<void>
+    /**
+     * E2E only: last native popup payload (AppKit is skipped under VAV_E2E).
+     * Null when no menu is waiting.
+     */
+    peekPopupMenu(): Promise<{ id?: string; label?: string; checked?: boolean }[] | null>
+    /** E2E only: choose a pending native row by id or label. */
+    choosePopupMenu(idOrLabel: string): Promise<boolean>
+    /** E2E only: dismiss a pending native popup without choosing. */
+    dismissPopupMenu(): Promise<boolean>
   }
 
   notifications: {
@@ -1567,6 +1603,7 @@ export const IPC = {
   convSetModel: 'vav:conv:set-model',
   convSetAgentBinary: 'vav:conv:set-agent-binary',
   convSetCliHost: 'vav:conv:set-cli-host',
+  convSetSwarmLayout: 'vav:conv:set-swarm-layout',
   convSetFocusedFile: 'vav:conv:set-focused-file',
   convSetWorkdir: 'vav:conv:set-workdir',
   convPickWorkdir: 'vav:conv:pick-workdir',
@@ -1584,6 +1621,8 @@ export const IPC = {
   convSetArchived: 'vav:conv:set-archived',
   convSetApprovalMode: 'vav:conv:set-approval-mode',
   convSetThinkingLevel: 'vav:conv:set-thinking-level',
+  convSetAcpMode: 'vav:conv:set-acp-mode',
+  convSetAcpConfig: 'vav:conv:set-acp-config',
   convAccountQuota: 'vav:conv:account-quota',
   convContinueNew: 'vav:conv:continue-new',
   convDuplicate: 'vav:conv:duplicate',
@@ -1697,8 +1736,12 @@ export const IPC = {
   windowShellPath: 'vav:window:shell-path',
   windowOpenSettings: 'vav:window:open-settings',
   windowCloseSettings: 'vav:window:close-settings',
+  settingsDesiredView: 'vav:settings:desired-view',
   windowPopupMenu: 'vav:window:popup-menu',
   windowClosePopupMenu: 'vav:window:close-popup-menu',
+  windowE2ePeekMenu: 'vav:window:e2e-peek-menu',
+  windowE2eChooseMenu: 'vav:window:e2e-choose-menu',
+  windowE2eDismissMenu: 'vav:window:e2e-dismiss-menu',
   windowOpenSession: 'vav:window:open-session',
   windowRevealInList: 'vav:window:reveal-in-list',
   windowCloseDetached: 'vav:window:close-detached',

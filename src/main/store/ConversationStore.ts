@@ -24,12 +24,19 @@ import type {
   HostTranscriptBucket,
   LeafCompaction,
   QuotaWindow,
+  TerminalLayoutNode,
   ThinkingLevel,
   TokenSnapshot
 } from '@shared/types'
 import { parseThinkingLevel } from '@shared/thinkingLevel'
 import { hostTranscriptKey } from '@shared/types'
+import {
+  expandRemovedSwarmIds,
+  removeSwarmLeaf,
+  sanitizeSwarmLayout
+} from '@shared/swarmLayout'
 import { removeCompaction, upsertCompaction } from '@shared/compaction'
+import { applyMissingHostUsage } from '../agent/hostSessionUsage'
 import {
   CACHE_TTL_MS,
   TOKEN_HISTORY_LIMIT,
@@ -137,6 +144,9 @@ export class ConversationStore {
       }
       if (conversation.focusedFilePath === undefined) conversation.focusedFilePath = null
       if (conversation.accountId === undefined) conversation.accountId = null
+      if (conversation.swarmParentId === undefined) conversation.swarmParentId = null
+      conversation.swarmLayout = sanitizeSwarmLayout(conversation.swarmLayout)
+      conversation.swarmLayoutFull = sanitizeSwarmLayout(conversation.swarmLayoutFull)
       if (typeof conversation.resultUnseen !== 'boolean') conversation.resultUnseen = false
       if (!Array.isArray(conversation.compactions)) conversation.compactions = []
       if (!conversation.hostTranscripts || typeof conversation.hostTranscripts !== 'object') {
@@ -217,6 +227,7 @@ export class ConversationStore {
       cliHost?: CliHostKind | null
       /** Settings → Accounts profile for new sessions. */
       accountId?: string | null
+      swarmParentId?: string | null
     }
   ): Conversation {
     const now = Date.now()
@@ -250,10 +261,14 @@ export class ConversationStore {
       agentBinaryName: cliHost,
       cliHost,
       cliResumeCursor: null,
+      acpSession: null,
       cliPaneBindings: {},
       focusedFilePath: null,
       resultUnseen: false,
       accountId: options?.accountId ?? null,
+      swarmParentId: options?.swarmParentId ?? null,
+      swarmLayout: null,
+      swarmLayoutFull: null,
       compactions: [],
       hostTranscripts: {}
     }
@@ -317,6 +332,9 @@ export class ConversationStore {
     imported.cliPaneBindings = {}
     if (imported.focusedFilePath === undefined) imported.focusedFilePath = null
     imported.resultUnseen = false
+    imported.swarmParentId = null
+    imported.swarmLayout = sanitizeSwarmLayout(imported.swarmLayout)
+    imported.swarmLayoutFull = sanitizeSwarmLayout(imported.swarmLayoutFull)
     if (!imported.hostTranscripts || typeof imported.hostTranscripts !== 'object') {
       imported.hostTranscripts = {}
     }
@@ -368,6 +386,9 @@ export class ConversationStore {
       agentBinaryName: source.agentBinaryName ?? source.cliHost ?? null,
       cliHost: source.cliHost ?? null,
       accountId: source.accountId ?? null,
+      swarmParentId: null,
+      swarmLayout: null,
+      swarmLayoutFull: null,
       activeLeafId: source.activeLeafId ? (idMap.get(source.activeLeafId) ?? null) : null,
       tokenHistory: [],
       reportedSessionCostUsd: null,
@@ -417,6 +438,7 @@ export class ConversationStore {
 
     conversation.cliHost = nextHost
     conversation.agentBinaryName = nextHost
+    conversation.acpSession = null
     conversation.updatedAt = Date.now()
     this.markDirty(id)
     return conversation
@@ -569,6 +591,25 @@ export class ConversationStore {
     this.markDirty(id)
   }
 
+  /** Backfill empty CLI usage from the host's on-disk session (Grok updates.jsonl). */
+  hydrateMissingHostUsage(id: string): boolean {
+    const conversation = this.get(id)
+    if (!conversation) return false
+    if (!applyMissingHostUsage(conversation)) return false
+    this.markDirty(id)
+    return true
+  }
+
+  hydrateMissingHostUsageAll(): number {
+    let n = 0
+    for (const conversation of this.conversations) {
+      if (!applyMissingHostUsage(conversation)) continue
+      this.markDirty(conversation.id)
+      n++
+    }
+    return n
+  }
+
   setReportedSessionCostUsd(id: string, costUsd: number | null): void {
     const conversation = this.get(id)
     if (!conversation) return
@@ -622,10 +663,29 @@ export class ConversationStore {
    * an empty state and creates a session on demand.
    */
   remove(ids: string[]): string[] {
-    const target = new Set(ids)
+    const target = new Set(expandRemovedSwarmIds(this.conversations, ids))
     const removed = this.conversations.filter((c) => target.has(c.id)).map((c) => c.id)
     if (removed.length === 0) return []
+    const parents = new Set(
+      this.conversations
+        .filter((c) => target.has(c.id) && c.swarmParentId)
+        .map((c) => c.swarmParentId!)
+    )
     this.conversations = this.conversations.filter((c) => !target.has(c.id))
+    for (const parentId of parents) {
+      if (target.has(parentId)) continue
+      const parent = this.get(parentId)
+      if (!parent?.swarmLayout && !parent?.swarmLayoutFull) continue
+      let layout: TerminalLayoutNode | null = parent.swarmLayout ?? null
+      let full: TerminalLayoutNode | null = parent.swarmLayoutFull ?? null
+      for (const id of removed) {
+        if (layout) layout = removeSwarmLeaf(layout, id)
+        if (full) full = removeSwarmLeaf(full, id)
+      }
+      parent.swarmLayout = layout
+      parent.swarmLayoutFull = full
+      this.markDirty(parentId)
+    }
     this.markDeleted(removed)
     return removed
   }

@@ -1,11 +1,11 @@
-import { useEffect, useState } from 'react'
+import { useEffect } from 'react'
 import type { CliHostKind, QuotaWindow, QuotaWindowKind } from '@shared/types'
 import type { HostAuthKind } from '@shared/cliAccountParse'
-import { normalizeAuthKind } from '@shared/cliAccountParse'
 import { isStructuredCliHost } from '@shared/cliHost'
 import type { MessageKey } from '@shared/i18n'
 import { QUOTA_EXHAUSTED_PERCENT } from '@shared/cliErrors'
 import { useT } from '../i18n/useT'
+import { refreshUsage, useUsageCache } from '../lib/usageCache'
 import { StaggerLine } from './ui'
 
 /** After the agent-name stagger (48ms + a couple of word units). */
@@ -38,10 +38,6 @@ function remainShort(
   return t('token.quotaRemainDays', { n: Math.round(hours / 24) })
 }
 
-function wordCount(text: string): number {
-  return text.split(/\s+/).filter(Boolean).length
-}
-
 function lineFor(
   window: QuotaWindow,
   showKind: boolean,
@@ -65,21 +61,23 @@ function QuotaRow({
   window,
   showKind,
   now,
-  baseDelay
+  baseDelay,
+  updating
 }: {
   window: QuotaWindow
   showKind: boolean
   now: number
   baseDelay: number
+  updating: boolean
 }): React.JSX.Element {
   const t = useT()
   const pct = Math.min(100, Math.max(0, window.usedPercent))
   const exhausted = pct >= QUOTA_EXHAUSTED_PERCENT
   const line = lineFor(window, showKind, now, t)
-  const barDelay = baseDelay + wordCount(line) * UNIT_MS
+  const barDelay = baseDelay + line.split(/\s+/).filter(Boolean).length * UNIT_MS
   return (
     <div className={`empty-quota-row${exhausted ? ' is-exhausted' : ''}`}>
-      <div className="empty-quota-line">
+      <div className={`empty-quota-line${updating ? ' usage-shimmer' : ''}`}>
         <StaggerLine baseDelay={baseDelay}>{line}</StaggerLine>
       </div>
       <div className="empty-quota-bar-slot" style={{ animationDelay: `${barDelay}ms` }}>
@@ -106,11 +104,8 @@ function PendingRow(): React.JSX.Element {
 
 /**
  * Compact usage under the empty-session mark.
- * Occupies the slot while the account poll is in flight so arrival inserts
- * into an already-open hole instead of jumping the hero.
+ * Cached quota paints immediately; a later refresh shimmers in place.
  */
-type QuotaSnap = { authKind: HostAuthKind; accountId: string | null; windows: QuotaWindow[] }
-
 const NOTICE_LINE: Record<Exclude<HostAuthKind, 'unknown'>, MessageKey> = {
   none: 'token.quotaSignedOut',
   expired: 'token.quotaExpired',
@@ -130,26 +125,11 @@ export function EmptyQuotaUsage({
 }): React.JSX.Element | null {
   const t = useT()
   const canShow = isStructuredCliHost(host)
-  const [snap, setSnap] = useState<QuotaSnap | null>(null)
-
-  useEffect(() => {
-    setSnap(null)
-  }, [conversationId, host, accountId])
+  const { snap, updating } = useUsageCache(host, accountId)
 
   useEffect(() => {
     if (!host || !canShow) return
-    let cancelled = false
-    void window.vav.conversations.accountQuota(conversationId, host).then((next) => {
-      if (cancelled) return
-      setSnap({
-        authKind: normalizeAuthKind(next?.authKind, next?.signedIn),
-        accountId: next?.accountId?.trim() || null,
-        windows: next?.windows ?? []
-      })
-    })
-    return () => {
-      cancelled = true
-    }
+    void refreshUsage({ conversationId, host, accountId })
   }, [conversationId, host, accountId, canShow])
 
   if (!host || !canShow) return null
@@ -169,8 +149,8 @@ export function EmptyQuotaUsage({
 
   return (
     <div
-      className={`empty-quota is-${phase}`}
-      aria-busy={pending}
+      className={`empty-quota is-${phase}${updating && snap ? ' is-updating' : ''}`}
+      aria-busy={pending || updating}
       aria-label={noticeText || t('token.quotaSection')}
     >
       <div className="empty-quota-reveal">
@@ -178,7 +158,7 @@ export function EmptyQuotaUsage({
           {pending ? (
             <PendingRow />
           ) : noticeText ? (
-            <div className="empty-quota-line">
+            <div className={`empty-quota-line${updating ? ' usage-shimmer' : ''}`}>
               <StaggerLine baseDelay={QUOTA_STAGGER_BASE}>{noticeText}</StaggerLine>
             </div>
           ) : (
@@ -189,6 +169,7 @@ export function EmptyQuotaUsage({
                 showKind={showKind}
                 now={now}
                 baseDelay={QUOTA_STAGGER_BASE + index * QUOTA_STAGGER_STEP}
+                updating={updating}
               />
             ))
           )}

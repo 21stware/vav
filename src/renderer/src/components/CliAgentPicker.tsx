@@ -4,6 +4,7 @@ import { enabledCliAgents } from '@shared/types'
 import { useSessionStore } from '../state/sessionStore'
 import { CLI_SURFACE_KEY, useWorkspaceStore } from '../state/workspaceStore'
 import { setUiFocusScope } from '../lib/uiFocus'
+import { requestCliSurface } from '../lib/cliSurfaceSwitch'
 import { IS_MAC } from '../lib/platform'
 import {
   getAgentInstallStatus,
@@ -253,7 +254,10 @@ export function CliAgentPicker({
   )
 
   return (
-    <div className={`cli-agent-picker${compact ? ' is-compact' : ''}`}>
+    <div
+      className={`cli-agent-picker${compact ? ' is-compact' : ''}`}
+      data-testid="cli-agent-picker"
+    >
       {agents.length === 0 ? (
         <p className="cli-agent-picker-empty">{t('agents.empty')}</p>
       ) : (
@@ -291,6 +295,7 @@ export function CliAgentPicker({
                         : undefined
                   }
                   tabIndex={isActivePane && index === activeIndex ? 0 : -1}
+                  data-testid={`cli-picker-${agent.id}`}
                   className={[
                     'cli-agent-picker-item',
                     index === activeIndex ? 'is-keyboard-active' : '',
@@ -317,6 +322,18 @@ export function CliAgentPicker({
           <div className="cli-agent-picker-rule" aria-hidden />
         </div>
       )}
+      <p className="cli-agent-picker-switch">
+        {t('empty.useThreadLead')}{' '}
+        <button
+          type="button"
+          className="session-workspace-text-btn"
+          title={t('empty.useThreadHint')}
+          onClick={() => requestCliSurface(conversationId, false)}
+        >
+          {t('empty.useThreadAction')}
+        </button>
+        {t('empty.useThreadEnd')}
+      </p>
       {help}
     </div>
   )

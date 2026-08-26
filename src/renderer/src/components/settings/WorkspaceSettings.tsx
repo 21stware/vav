@@ -66,6 +66,7 @@ export function WorkspaceSettings(): React.JSX.Element {
         <div className="control">
           <input
             className="text-field"
+            data-testid="settings-default-dir"
             placeholder={t('workspace.defaultDirPlaceholder')}
             value={settings.defaultWorkingDirectory}
             onChange={(event) =>
@@ -215,6 +216,7 @@ export function WorkspaceSettings(): React.JSX.Element {
           <Toggle
             checked={settings.githubTrayEnabled !== false}
             title={t('workspace.githubTray')}
+            testId="settings-github-tray"
             onChange={(githubTrayEnabled) => void updateSettings({ githubTrayEnabled })}
           />
         </div>
@@ -227,6 +229,7 @@ export function WorkspaceSettings(): React.JSX.Element {
           <Toggle
             checked={settings.cloudflareTrayEnabled === true}
             title={t('workspace.cloudflareTray')}
+            testId="settings-cloudflare-tray"
             onChange={(cloudflareTrayEnabled) => void updateSettings({ cloudflareTrayEnabled })}
           />
         </div>
@@ -290,6 +293,7 @@ export function WorkspaceSettings(): React.JSX.Element {
           <Toggle
             checked={settings.supabaseTrayEnabled === true}
             title={t('workspace.supabaseTray')}
+            testId="settings-supabase-tray"
             onChange={(supabaseTrayEnabled) => void updateSettings({ supabaseTrayEnabled })}
           />
         </div>

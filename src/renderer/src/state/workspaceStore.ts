@@ -512,8 +512,13 @@ function mergeCliSurface(
 
   // Map pending picker leaves → newly spawned PTYs in order so we never treat
   // "pending + live" as two panes and re-split with row.
+  // Optimistic assign marks the picker live (preferred id) before spawn
+  // returns; that tab is not pendingCli but also has no PTY yet — treat it
+  // the same so a minted id does not become a second pane beside the chooser.
   let layoutSeed = prev?.layout ?? null
-  const pendingQueue = (prev?.tabs ?? []).filter((t) => t.pendingCli).map((t) => t.id)
+  const pendingQueue = (prev?.tabs ?? [])
+    .filter((t) => t.pendingCli || !liveById.has(t.id))
+    .map((t) => t.id)
   const prevKnown = new Set((prev?.tabs ?? []).map((t) => t.id))
   const brandNewLives = [...liveById.keys()].filter((id) => !prevKnown.has(id))
   const pendingToLive = new Map<string, string>()
@@ -532,17 +537,17 @@ function mergeCliSurface(
 
   // Preserve previous pane order (Screen topology).
   for (const t of prev?.tabs ?? []) {
-    if (t.pendingCli) {
-      const mapped = pendingToLive.get(t.id)
-      if (mapped) {
-        const live = liveById.get(mapped)
-        if (live && !seen.has(mapped)) {
-          tabs.push(live)
-          seen.add(mapped)
-          liveById.delete(mapped)
-        }
-        continue
+    const mapped = pendingToLive.get(t.id)
+    if (mapped) {
+      const live = liveById.get(mapped)
+      if (live && !seen.has(mapped)) {
+        tabs.push(live)
+        seen.add(mapped)
+        liveById.delete(mapped)
       }
+      continue
+    }
+    if (t.pendingCli) {
       // Keep unassigned picker panes (no PTY in main yet).
       if (!seen.has(t.id)) {
         tabs.push({ ...t, pendingCli: true, agentId: null })

@@ -8,6 +8,8 @@ export interface MenuItem {
   disabled?: boolean
   checked?: boolean
   divider?: boolean
+  /** Section title (macOS 14+ `header`). Not selectable. */
+  header?: boolean
   submenu?: MenuItem[]
   onSelect?: () => void
 }
@@ -20,6 +22,7 @@ function toNativeItems(
   return items.map((item, index) => {
     const id = prefix ? `${prefix}.${index}` : String(index)
     if (item.divider) return { separator: true }
+    if (item.header) return { header: true, label: item.label, enabled: false }
     if (item.submenu && item.submenu.length > 0) {
       return {
         id,

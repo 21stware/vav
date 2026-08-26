@@ -76,7 +76,7 @@ function rowUsage(
     return {
       text: usage.available
         ? formatApiBalanceAmount({
-            source: 'deepseek',
+            source: account.balance?.source === 'openrouter' ? 'openrouter' : 'deepseek',
             currency: usage.currency,
             total: usage.amount,
             granted: 0,
@@ -382,7 +382,11 @@ export function AccountsSettings(): React.JSX.Element {
                           <span className="accounts-row-name">{account.name}</span>
                         </span>
                         {usage ? (
-                          <span className={`accounts-row-detail is-${usage.tone}`}>{usage.text}</span>
+                          <span
+                            className={`accounts-row-detail is-${usage.tone}${refreshing ? ' usage-shimmer' : ''}`}
+                          >
+                            {usage.text}
+                          </span>
                         ) : null}
                       </button>
                     </div>
@@ -764,7 +768,8 @@ function AccountInspector({
                   {account.balance.available
                     ? t('accounts.balance', {
                         amount: formatApiBalanceAmount({
-                          source: 'deepseek',
+                          source:
+                            account.balance.source === 'openrouter' ? 'openrouter' : 'deepseek',
                           currency: account.balance.currency,
                           total: account.balance.amount,
                           granted: 0,
@@ -908,14 +913,18 @@ function AccountQuotaSection({
   const windows = account.quotaWindows
   if (windows.length > 0) {
     return (
-      <div className="accounts-quotas">
+      <div className={`accounts-quotas${pending ? ' is-updating' : ''}`} aria-busy={pending}>
         {windows.map((window) => (
-          <QuotaBar key={`${window.kind}-${window.resetsAt ?? 0}`} window={window} locale={locale} t={t} />
+          <QuotaBar
+            key={`${window.kind}-${window.resetsAt ?? 0}`}
+            window={window}
+            locale={locale}
+            updating={pending}
+            t={t}
+          />
         ))}
         {account.quotaStatus === 'error' ? (
           <div className="form-hint accounts-error">{t('accounts.quotaFailed')}</div>
-        ) : pending ? (
-          <div className="form-hint">{t('accounts.detail.syncing')}</div>
         ) : null}
       </div>
     )
@@ -952,10 +961,12 @@ function QuotaPending(): React.JSX.Element {
 function QuotaBar({
   window,
   locale,
+  updating = false,
   t
 }: {
   window: QuotaWindow
   locale: AppLocale
+  updating?: boolean
   t: ReturnType<typeof useT>
 }): React.JSX.Element {
   const pct = Math.min(100, Math.max(0, window.usedPercent))
@@ -983,7 +994,9 @@ function QuotaBar({
     <div className="accounts-quota">
       <div className="accounts-quota-meta">
         <span>{label}</span>
-        <span>{t('token.quotaUsed', { percent: pct.toFixed(pct >= 10 ? 0 : 1) })}</span>
+        <span className={updating ? 'usage-shimmer' : undefined}>
+          {t('token.quotaUsed', { percent: pct.toFixed(pct >= 10 ? 0 : 1) })}
+        </span>
       </div>
       <div className="accounts-usage-bar">
         <div

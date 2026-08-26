@@ -5,6 +5,7 @@ import {
   coerceSnapshot,
   type HostCredentialSnapshot
 } from '../accounts/credentials/adapter.ts'
+import { isE2eRuntime } from '../e2eRuntime.ts'
 
 /**
  * Encrypted secrets via `safeStorage` (macOS Keychain-backed).
@@ -32,7 +33,10 @@ export class SecretStore {
    * until the user clicks through onboarding. Non-mac always starts unlocked.
    * Marketing snapshots skip the gate so capture scripts can reach the shell.
    */
-  private gateOpen = process.platform !== 'darwin' || Boolean(process.env.VAV_SNAPSHOT)
+  private gateOpen =
+    process.platform !== 'darwin' ||
+    Boolean(process.env.VAV_SNAPSHOT) ||
+    isE2eRuntime()
 
   private pathFor(name: SecretName): string {
     if (name === 'api') return join(app.getPath('userData'), 'apikey.bin')

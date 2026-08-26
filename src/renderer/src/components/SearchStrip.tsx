@@ -26,12 +26,13 @@ export function SearchStrip(): React.JSX.Element {
   const hasQuery = search.query.trim().length > 0
 
   return (
-    <div className="search-strip">
+    <div className="search-strip" data-testid="search-strip">
       <Search size={13} style={{ opacity: 0.6 }} />
       <input
         ref={inputRef}
         className="text-field"
         style={{ flex: 1 }}
+        data-testid="search-input"
         placeholder={t('search.placeholder')}
         value={search.query}
         onChange={(event) => setSearchQuery(event.target.value)}
@@ -50,7 +51,11 @@ export function SearchStrip(): React.JSX.Element {
         }}
       />
       {hasQuery && (
-        <span className="muted" style={{ minWidth: 42, textAlign: 'right' }}>
+        <span
+          className="muted"
+          style={{ minWidth: 42, textAlign: 'right' }}
+          data-testid="search-count"
+        >
           {total === 0 ? t('search.noMatch') : `${search.index + 1} / ${total}`}
         </span>
       )}

@@ -3,7 +3,10 @@ import { describe, it } from 'node:test'
 import {
   acknowledgeConversation,
   addAttentionItem,
+  completeAttentionCount,
+  completeAttentionId,
   dockBadgeLabel,
+  firstCompleteConversation,
   type AttentionItem
 } from './attentionBadge.ts'
 
@@ -49,6 +52,21 @@ describe('acknowledgeConversation', () => {
   })
 })
 
+describe('firstCompleteConversation', () => {
+  it('returns the earliest Done session, skipping asks', () => {
+    const items = [
+      item({ id: 'ask', conversationId: 'c-ask', kind: 'ask' }),
+      item({ id: completeAttentionId('c-first'), conversationId: 'c-first', kind: 'complete' }),
+      item({ id: completeAttentionId('c-later'), conversationId: 'c-later', kind: 'complete' })
+    ]
+    assert.equal(firstCompleteConversation(items), 'c-first')
+  })
+
+  it('is null when nothing has finished unseen', () => {
+    assert.equal(firstCompleteConversation([item({ id: 'ask', kind: 'ask' })]), null)
+  })
+})
+
 describe('dockBadgeLabel', () => {
   it('is empty when there is nothing to handle', () => {
     assert.equal(dockBadgeLabel(0), '')
@@ -58,5 +76,18 @@ describe('dockBadgeLabel', () => {
     assert.equal(dockBadgeLabel(1), '1')
     assert.equal(dockBadgeLabel(12), '12')
     assert.equal(dockBadgeLabel(100), '99+')
+  })
+})
+
+describe('completeAttentionCount', () => {
+  it('counts unseen Done only', () => {
+    assert.equal(
+      completeAttentionCount([
+        item({ id: 'ask', kind: 'ask' }),
+        item({ id: completeAttentionId('c1'), conversationId: 'c1', kind: 'complete' }),
+        item({ id: completeAttentionId('c2'), conversationId: 'c2', kind: 'complete' })
+      ]),
+      2
+    )
   })
 })

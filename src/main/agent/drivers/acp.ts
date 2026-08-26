@@ -1,5 +1,22 @@
-import type { ApprovalMode, CliHostKind, PlanStep } from '@shared/types'
-import { extractRpcError, formatErrorDetail } from '@shared/cliErrors'
+import type { ApprovalMode, CliHostKind, PlanStep } from '../../../shared/types.ts'
+import { extractRpcError, formatErrorDetail, RpcErrorCode } from '../../../shared/cliErrors.ts'
+import {
+  ACP_CLIENT_CAPABILITIES,
+  ACP_PROTOCOL_VERSION,
+  acpFormContentFromAnswers,
+  mergeAcpSessionState,
+  parseAcpAuthMethods,
+  parseAcpAvailableCommands,
+  parseAcpConfigOptions,
+  parseAcpFormSchema,
+  parseAcpPromptCapabilities,
+  parseAcpSessionModes,
+  type AcpAuthMethod,
+  type AcpContentBlock,
+  type AcpFormField,
+  type AcpPromptCapabilities,
+  type AcpSessionState
+} from '../../../shared/acpSession.ts'
 import {
   acpPlanEntriesToSteps,
   cursorAskOutcomeFromAnswer,
@@ -13,19 +30,31 @@ import {
   planDocToChecklistInput,
   todosToSteps,
   type CursorAskInput
-} from '@shared/planDoc'
-import { costToUsd } from '@shared/tokenUsage'
+} from '../../../shared/planDoc.ts'
+import {
+  isSessionLevelAcpUpdate,
+  normalizeUpdateKind,
+  readAcpUsageFromPromptResult,
+  readAcpUsageFromUpdate,
+  type AcpUsageSample
+} from './acpUsage.ts'
+import { acpReadTextFile, acpWriteTextFile, AcpRpcError } from './acpFs.ts'
+import { buildAcpPrompt } from './acpPrompt.ts'
+import { AcpTerminalRegistry } from './acpTerminal.ts'
 import {
   asArray,
   asRecord,
   asString,
   dig,
-  num,
   onJsonLines,
-  spawnStdioProcess,
   type StdioProcess
-} from './process'
-import type { DriverControl, DriverEventSink, DriverStartOptions } from './types'
+} from './stdioJson.ts'
+import type {
+  DriverControl,
+  DriverEventSink,
+  DriverPromptExtras,
+  DriverStartOptions
+} from './types.ts'
 
 const ACP_PLAN_ID = 'acp-session-plan'
 const CURSOR_TODOS_ID = 'cursor-todos'
@@ -34,6 +63,10 @@ type PendingClient =
   | { kind: 'permission'; id: unknown; options: unknown[] }
   | { kind: 'create_plan'; id: unknown; toolCallId: string }
   | { kind: 'ask_question'; id: unknown; toolCallId: string; ask: CursorAskInput }
+  | { kind: 'form'; id: unknown; toolCallId: string; fields: AcpFormField[] }
+  | { kind: 'url'; id: unknown; toolCallId: string; elicitationId?: string }
+
+type QueuedPrompt = { text: string; extras?: DriverPromptExtras }
 
 /** ACP-speaking hosts in the VAV catalogue. */
 export type AcpHostKind = Extract<CliHostKind, 'cursor' | 'grok' | 'devin' | 'kiro' | 'cline'>
@@ -47,7 +80,6 @@ function acpArgs(kind: AcpHostKind, approvalMode: ApprovalMode): string[] {
     case 'devin':
       return ['acp']
     case 'kiro':
-      // --trust-all-tools skips interactive approvals when we auto-approve.
       return approvalMode === 'bypass' || approvalMode === 'auto'
         ? ['acp', '--trust-all-tools']
         : ['acp']
@@ -59,27 +91,26 @@ function acpArgs(kind: AcpHostKind, approvalMode: ApprovalMode): string[] {
 }
 
 /**
- * Agent Client Protocol over stdio.
+ * Full ACP v1 client over stdio.
  *
  * - Cursor: `cursor-agent acp`
  * - Grok:   `grok agent stdio`
  * - Devin:  `devin acp`
  * - Kiro:   `kiro-cli acp`
  * - Cline:  `cline --acp`
- *
- * Do NOT advertise fs/terminal client capabilities — we don't serve them.
  */
 export async function startAcpDriver(
   kind: AcpHostKind,
   options: DriverStartOptions,
   emit: DriverEventSink
 ): Promise<DriverControl> {
-  const args = acpArgs(kind, options.approvalMode)
+  const { spawnStdioProcess } = await import('./process.ts')
+  const args = [...acpArgs(kind, options.approvalMode), ...(options.extraArgs ?? [])]
   const proc = spawnStdioProcess(options.binary, args, options.cwd, options.env)
   return wireAcp(kind, proc, options, emit)
 }
 
-function wireAcp(
+export function wireAcp(
   kind: AcpHostKind,
   proc: StdioProcess,
   options: DriverStartOptions,
@@ -94,11 +125,19 @@ function wireAcp(
   let turnActive = false
   let promptInFlightId: number | null = null
   let ready = false
-  const pendingPrompts: string[] = []
+  let canLogout = false
+  let promptCapabilities: AcpPromptCapabilities = {
+    image: false,
+    audio: false,
+    embeddedContext: false
+  }
+  let sessionState: AcpSessionState = {}
+  const pendingPrompts: QueuedPrompt[] = []
   const pendingRpc = new Map<number, (result: unknown, error?: unknown) => void>()
   const pendingClient = new Map<string, PendingClient>()
   const stderrChunks: string[] = []
   const autoApprove = options.approvalMode === 'bypass' || options.approvalMode === 'auto'
+  const terminals = new AcpTerminalRegistry()
   let lastTodos: PlanStep[] = []
 
   const send = (method: string, params: Record<string, unknown>, id?: number): void => {
@@ -107,10 +146,7 @@ function wireAcp(
     proc.writeLine(payload)
   }
 
-  const request = (
-    method: string,
-    params: Record<string, unknown>
-  ): Promise<unknown> => {
+  const request = (method: string, params: Record<string, unknown>): Promise<unknown> => {
     const id = nextId++
     return new Promise((resolve, reject) => {
       pendingRpc.set(id, (result, error) => {
@@ -125,64 +161,130 @@ function wireAcp(
     proc.writeLine({ jsonrpc: '2.0', id, result })
   }
 
+  const respondError = (id: unknown, error: { code: number; message: string; data?: unknown }): void => {
+    proc.writeLine({ jsonrpc: '2.0', id, error })
+  }
+
+  const publishSessionState = (patch: Partial<AcpSessionState>): void => {
+    sessionState = mergeAcpSessionState(sessionState, patch)
+    emit({ type: 'session-state', state: sessionState })
+  }
+
   proc.child.stderr.on('data', (buf: Buffer) => {
     stderrChunks.push(buf.toString('utf8'))
     if (stderrChunks.length > 40) stderrChunks.shift()
   })
 
-  const bootstrap = async (): Promise<void> => {
+  const tryAuthenticate = async (methods: AcpAuthMethod[]): Promise<boolean> => {
+    const agentMethod = methods.find((method) => !method.type || method.type === 'agent')
+    if (!agentMethod) {
+      emit({
+        type: 'error',
+        message: 'Authentication required',
+        errorCode: RpcErrorCode.authRequired
+      })
+      emit({ type: 'auth-required', methods })
+      return false
+    }
     try {
-      const init = asRecord(
-        await request('initialize', {
-          protocolVersion: 1,
-          clientCapabilities: {
-            // Intentionally empty — advertising fs/terminal we cannot honor
-            // strands the agent mid-tool-call (Waku docs).
-          },
-          clientInfo: { name: 'vav', version: '1.0.0' }
+      await request('authenticate', { methodId: agentMethod.id })
+      return true
+    } catch (err) {
+      const extracted = extractRpcError(err)
+      emit({
+        type: 'error',
+        message: extracted.text || 'Authentication failed',
+        errorCode: extracted.code ?? RpcErrorCode.authRequired,
+        errorDetail: formatErrorDetail(err, extracted.text)
+      })
+      emit({ type: 'auth-required', methods })
+      return false
+    }
+  }
+
+  const openOrCreateSession = async (): Promise<void> => {
+    if (sessionId) {
+      try {
+        await request('session/load', {
+          sessionId,
+          cwd: options.cwd,
+          mcpServers: []
         })
-      )
-      send('initialized', {})
-
-      const caps = asRecord(init?.agentCapabilities) ?? asRecord(init?.capabilities)
-      const authMethods = asArray(init?.authMethods)
-
-      // Resume / load / new session
-      if (sessionId) {
+        return
+      } catch {
         try {
-          if (caps && (caps.loadSession === true || dig(caps, 'session.loadSession'))) {
-            await request('session/load', {
-              sessionId,
-              cwd: options.cwd,
-              mcpServers: []
-            })
-          } else {
-            await request('session/resume', { sessionId, cwd: options.cwd })
-          }
+          await request('session/resume', { sessionId, cwd: options.cwd })
+          return
         } catch {
           sessionId = null
         }
       }
-      if (!sessionId) {
-        const created = asRecord(
-          await request('session/new', {
-            cwd: options.cwd,
-            mcpServers: []
-          })
-        )
-        sessionId =
-          asString(created?.sessionId) ||
-          asString(created?.session_id) ||
-          asString(dig(created, 'session.id'))
+    }
+    const created = asRecord(
+      await request('session/new', {
+        cwd: options.cwd,
+        mcpServers: []
+      })
+    )
+    sessionId =
+      asString(created?.sessionId) ||
+      asString(created?.session_id) ||
+      asString(dig(created, 'session.id'))
+    ingestSessionSetup(created)
+  }
+
+  const ingestSessionSetup = (created: Record<string, unknown> | null): void => {
+    if (!created) return
+    const modes = parseAcpSessionModes(created.modes)
+    const configOptions = parseAcpConfigOptions(created.configOptions ?? created.config_options)
+    const commands = parseAcpAvailableCommands(
+      created.availableCommands ?? created.available_commands
+    )
+    publishSessionState({
+      currentModeId: modes.currentModeId,
+      modes: modes.modes,
+      configOptions,
+      commands,
+      sessionTitle: asString(created.title)
+    })
+  }
+
+  const bootstrap = async (): Promise<void> => {
+    try {
+      const init = asRecord(
+        await request('initialize', {
+          protocolVersion: ACP_PROTOCOL_VERSION,
+          clientCapabilities: ACP_CLIENT_CAPABILITIES,
+          clientInfo: { name: 'vav', version: '1.0.0' }
+        })
+      )
+      const caps = asRecord(init?.agentCapabilities) ?? asRecord(init?.capabilities)
+      promptCapabilities = parseAcpPromptCapabilities(
+        caps?.promptCapabilities ?? caps?.prompt_capabilities
+      )
+      canLogout = asRecord(caps?.auth)?.logout != null || caps?.logout === true
+      const authMethods = parseAcpAuthMethods(init?.authMethods ?? init?.auth_methods)
+
+      try {
+        await openOrCreateSession()
+      } catch (err) {
+        const extracted = extractRpcError(err)
+        if (extracted.code === RpcErrorCode.authRequired && authMethods.length) {
+          if (await tryAuthenticate(authMethods)) {
+            sessionId = null
+            await openOrCreateSession()
+          } else {
+            return
+          }
+        } else {
+          throw err
+        }
       }
 
       if (!sessionId) {
         emit({ type: 'error', message: `${kind} ACP session/new returned no sessionId` })
         return
       }
-
-      // Do not force `agent`. Cursor ACP also has `plan` / `ask`; overwriting
-      // the host default hid create_plan and left the tool card hanging.
 
       if (options.model) {
         try {
@@ -194,8 +296,7 @@ function wireAcp(
 
       ready = true
       emit({ type: 'connected', cursor: { provider: kind, sessionId } })
-      void authMethods
-      for (const prompt of pendingPrompts.splice(0)) void doPrompt(prompt)
+      for (const queued of pendingPrompts.splice(0)) void doPrompt(queued.text, queued.extras)
     } catch (err) {
       const extracted = extractRpcError(err)
       emit({
@@ -207,11 +308,14 @@ function wireAcp(
     }
   }
 
-  onJsonLines(proc.child.stdout, (value) => {
+  const handleInbound = (value: unknown): void => {
+    if (Array.isArray(value)) {
+      for (const item of value) handleInbound(item)
+      return
+    }
     const msg = asRecord(value)
     if (!msg) return
 
-    // Response to our request
     if (msg.id !== undefined && msg.method === undefined) {
       const id = typeof msg.id === 'number' ? msg.id : Number(msg.id)
       const waiter = pendingRpc.get(id)
@@ -220,24 +324,21 @@ function wireAcp(
         if (msg.error) waiter(undefined, msg.error)
         else waiter(msg.result)
       }
-      // session/prompt response settles the turn
       if (id === promptInFlightId) {
         promptInFlightId = null
         turnActive = false
-        const stopReason = asString(dig(msg.result, 'stopReason')) || asString(dig(msg.result, 'stop_reason'))
+        emitAcpUsage(emit, readAcpUsageFromPromptResult(msg.result))
+        const stopReason =
+          asString(dig(msg.result, 'stopReason')) || asString(dig(msg.result, 'stop_reason'))
         const cancelled = stopReason === 'cancelled' || stopReason === 'canceled'
         const extracted = msg.error ? extractRpcError(msg.error) : null
         emit({
           type: 'turn-finished',
           success: !msg.error && !cancelled,
           cancelled: cancelled || undefined,
-          // Keep the RPC error even when the host also marks the turn cancelled
-          // (Grok 402 often arrives as both). The host prefers quota over cancel.
           error: extracted?.text,
           errorCode: extracted?.code ?? undefined,
-          errorDetail: extracted
-            ? formatErrorDetail(msg.error, extracted.text)
-            : undefined
+          errorDetail: extracted ? formatErrorDetail(msg.error, extracted.text) : undefined
         })
       }
       return
@@ -248,12 +349,12 @@ function wireAcp(
     const params = asRecord(msg.params) ?? {}
 
     if (method === 'session/update') {
-      // session/load may dump history before the first prompt; ignore until
-      // session/prompt is in flight so those updates cannot seed the next turn.
-      if (!turnActive) return
+      const update = asRecord(params.update) ?? params
+      const updateKind = sessionUpdateKind(update, params)
+      if (!turnActive && !isSessionLevelAcpUpdate(updateKind, update)) return
       handleSessionUpdate(params, emit, (steps) => {
         lastTodos = steps
-      })
+      }, publishSessionState)
       return
     }
 
@@ -264,6 +365,61 @@ function wireAcp(
         respond,
         emit
       })
+      return
+    }
+
+    if (method === 'fs/read_text_file' || method === 'fs/readTextFile') {
+      void handleClientMethod(msg.id, async () => {
+        if (!options.files) throw new AcpRpcError(RpcErrorCode.methodNotFound, 'fs not available')
+        return acpReadTextFile(options.files, params, options.cwd)
+      })
+      return
+    }
+
+    if (method === 'fs/write_text_file' || method === 'fs/writeTextFile') {
+      void handleClientMethod(msg.id, async () => {
+        if (!options.files) throw new AcpRpcError(RpcErrorCode.methodNotFound, 'fs not available')
+        const written = await acpWriteTextFile(options.files, params, options.cwd)
+        emit({
+          type: 'fs-write',
+          path: written.path,
+          original: written.original,
+          content: written.content
+        })
+        return null
+      })
+      return
+    }
+
+    if (method === 'terminal/create') {
+      void handleClientMethod(msg.id, async () => terminals.create(params, options.cwd))
+      return
+    }
+    if (method === 'terminal/output') {
+      void handleClientMethod(msg.id, async () => terminals.output(asString(params.terminalId) || ''))
+      return
+    }
+    if (method === 'terminal/wait_for_exit' || method === 'terminal/waitForExit') {
+      void handleClientMethod(msg.id, async () =>
+        terminals.waitForExit(asString(params.terminalId) || '')
+      )
+      return
+    }
+    if (method === 'terminal/kill') {
+      void handleClientMethod(msg.id, async () => terminals.kill(asString(params.terminalId) || ''))
+      return
+    }
+    if (method === 'terminal/release') {
+      void handleClientMethod(msg.id, async () => terminals.release(asString(params.terminalId) || ''))
+      return
+    }
+
+    if (method === 'elicitation/create') {
+      handleElicitationCreate(msg.id, params, { pendingClient, emit })
+      return
+    }
+
+    if (method === 'elicitation/complete') {
       return
     }
 
@@ -280,15 +436,34 @@ function wireAcp(
       return
     }
 
-    // Agent-to-client request we do not implement. Answering prevents a hang.
     if (msg.id !== undefined) {
-      proc.writeLine({
-        jsonrpc: '2.0',
-        id: msg.id,
-        error: { code: -32601, message: `Method not found: ${method}` }
+      respondError(msg.id, {
+        code: RpcErrorCode.methodNotFound,
+        message: `Method not found: ${method}`
       })
     }
-  })
+  }
+
+  const handleClientMethod = async (
+    id: unknown,
+    run: () => Promise<unknown>
+  ): Promise<void> => {
+    if (id === undefined) return
+    try {
+      respond(id, await run())
+    } catch (err) {
+      if (err instanceof AcpRpcError) {
+        respondError(id, err.toJson())
+        return
+      }
+      respondError(id, {
+        code: RpcErrorCode.internalError,
+        message: err instanceof Error ? err.message : String(err)
+      })
+    }
+  }
+
+  onJsonLines(proc.child.stdout, handleInbound)
 
   proc.child.on('exit', (code) => {
     if (disposed) return
@@ -305,9 +480,9 @@ function wireAcp(
 
   void bootstrap()
 
-  const doPrompt = async (text: string): Promise<void> => {
+  const doPrompt = async (text: string, extras?: DriverPromptExtras): Promise<void> => {
     if (!sessionId) {
-      pendingPrompts.push(text)
+      pendingPrompts.push({ text, extras })
       return
     }
     turnActive = true
@@ -317,26 +492,39 @@ function wireAcp(
     pendingRpc.set(id, () => {
       /* settled in onJsonLines */
     })
-    send(
-      'session/prompt',
-      {
-        sessionId,
-        prompt: [{ type: 'text', text }]
-      },
-      id
-    )
+    let prompt: AcpContentBlock[]
+    try {
+      prompt = await buildAcpPrompt({
+        text,
+        attachments: extras?.attachments,
+        capabilities: promptCapabilities
+      })
+    } catch {
+      prompt = [{ type: 'text', text }]
+    }
+    send('session/prompt', { sessionId, prompt }, id)
+  }
+
+  const cancelPending = (outcome: 'cancelled' | 'decline'): void => {
+    for (const [key, pending] of pendingClient) {
+      if (pending.kind === 'create_plan' || pending.kind === 'ask_question') {
+        respond(pending.id, { outcome: { outcome: 'cancelled' } })
+      } else if (pending.kind === 'form' || pending.kind === 'url') {
+        respond(pending.id, { action: outcome === 'decline' ? 'decline' : 'cancel' })
+      }
+      pendingClient.delete(key)
+    }
   }
 
   return {
-    prompt(text: string): void {
+    prompt(text: string, extras?: DriverPromptExtras): void {
       if (!ready) {
-        pendingPrompts.push(text)
+        pendingPrompts.push({ text, extras })
         return
       }
-      void doPrompt(text)
+      void doPrompt(text, extras)
     },
     steer(text: string): void {
-      // Second session/prompt while one is open — last prompt settles.
       void doPrompt(text)
     },
     supportsSteer(): boolean {
@@ -344,29 +532,46 @@ function wireAcp(
     },
     cancel(): void {
       if (sessionId) send('session/cancel', { sessionId })
-      for (const [key, pending] of pendingClient) {
-        if (pending.kind === 'create_plan') {
-          respond(pending.id, { outcome: { outcome: 'cancelled' } })
-        } else if (pending.kind === 'ask_question') {
-          respond(pending.id, { outcome: { outcome: 'cancelled' } })
-        }
-        pendingClient.delete(key)
-      }
+      cancelPending('cancelled')
     },
     respond(requestId: string, optionId: 'allow' | 'deny', message?: string): void {
       const pending = pendingClient.get(requestId)
       if (pending?.kind === 'create_plan') {
-        const outcome = planDocOutcomeFromAnswer(message ?? '', optionId === 'deny')
-        respond(pending.id, { outcome })
+        respond(pending.id, { outcome: planDocOutcomeFromAnswer(message ?? '', optionId === 'deny') })
         pendingClient.delete(requestId)
         return
       }
       if (pending?.kind === 'ask_question') {
-        const outcome =
-          optionId === 'deny'
-            ? { outcome: 'cancelled' as const }
-            : cursorAskOutcomeFromAnswer(pending.ask, message ?? '')
-        respond(pending.id, { outcome })
+        respond(pending.id, {
+          outcome:
+            optionId === 'deny'
+              ? { outcome: 'cancelled' as const }
+              : cursorAskOutcomeFromAnswer(pending.ask, message ?? '')
+        })
+        pendingClient.delete(requestId)
+        return
+      }
+      if (pending?.kind === 'form') {
+        if (optionId === 'deny') {
+          respond(pending.id, { action: 'decline' })
+        } else {
+          let content: Record<string, string | number | boolean> = {}
+          try {
+            const parsed = JSON.parse(message || '{}') as {
+              answers?: Array<{ answer?: string; answers?: string[] }>
+              content?: Record<string, string | number | boolean>
+            }
+            content = parsed.content ?? acpFormContentFromAnswers(pending.fields, parsed.answers ?? [])
+          } catch {
+            content = {}
+          }
+          respond(pending.id, { action: 'accept', content })
+        }
+        pendingClient.delete(requestId)
+        return
+      }
+      if (pending?.kind === 'url') {
+        respond(pending.id, { action: optionId === 'allow' ? 'accept' : 'decline' })
         pendingClient.delete(requestId)
         return
       }
@@ -399,20 +604,34 @@ function wireAcp(
         void request('session/set_model', { sessionId, modelId: opts.model }).catch(() => undefined)
       }
       if (opts.mode && sessionId) {
-        void request('session/set_mode', { sessionId, modeId: opts.mode }).catch(() => undefined)
+        void request('session/set_mode', { sessionId, modeId: opts.mode })
+          .then(() => publishSessionState({ currentModeId: opts.mode }))
+          .catch(() => undefined)
+      }
+      if (opts.configOption && sessionId) {
+        void request('session/set_config_option', {
+          sessionId,
+          configId: opts.configOption.id,
+          value: opts.configOption.value
+        })
+          .then((result) => {
+            const options = parseAcpConfigOptions(asRecord(result)?.configOptions)
+            if (options.length) publishSessionState({ configOptions: options })
+          })
+          .catch(() => undefined)
       }
       return true
     },
     dispose(): void {
       if (disposed) return
       disposed = true
-      for (const [key, pending] of pendingClient) {
-        if (pending.kind === 'create_plan') {
-          respond(pending.id, { outcome: { outcome: 'cancelled' } })
-        } else if (pending.kind === 'ask_question') {
-          respond(pending.id, { outcome: { outcome: 'cancelled' } })
+      cancelPending('cancelled')
+      terminals.disposeAll()
+      if (sessionId) {
+        if (canLogout) {
+          void request('logout', {}).catch(() => undefined)
         }
-        pendingClient.delete(key)
+        send('session/close', { sessionId }, nextId++)
       }
       proc.closeStdin()
       setTimeout(() => proc.kill(), 2_000)
@@ -420,31 +639,40 @@ function wireAcp(
   }
 }
 
+function sessionUpdateKind(
+  update: Record<string, unknown>,
+  params?: Record<string, unknown>
+): string {
+  return (
+    asString(update.sessionUpdate) ||
+    asString(update.session_update) ||
+    asString(params?.sessionUpdate) ||
+    ''
+  )
+}
+
 function handleSessionUpdate(
   params: Record<string, unknown>,
   emit: DriverEventSink,
-  onPlanSteps?: (steps: PlanStep[]) => void
+  onPlanSteps?: (steps: PlanStep[]) => void,
+  onSessionState?: (patch: Partial<AcpSessionState>) => void
 ): void {
   const update = asRecord(params.update) ?? params
-  const kind =
-    asString(update.sessionUpdate) ||
-    asString(update.session_update) ||
-    asString(params.sessionUpdate)
+  const kind = sessionUpdateKind(update, params)
+  const norm = normalizeUpdateKind(kind)
 
-  if (kind === 'agent_message_chunk' || kind === 'agent_message_chunk'.replace(/_/g, '')) {
+  if (kind === 'agent_message_chunk' || norm === 'agentmessagechunk') {
     const text = asString(dig(update, 'content.text')) || asString(update.text) || ''
     if (text) emit({ type: 'text-delta', text })
     return
   }
-  if (kind === 'agent_thought_chunk') {
+  if (kind === 'agent_thought_chunk' || norm === 'agentthoughtchunk') {
     const text = asString(dig(update, 'content.text')) || asString(update.text) || ''
     if (text) emit({ type: 'reasoning-delta', text })
     return
   }
   if (kind === 'tool_call' || kind === 'tool_call_update') {
     const id = asString(update.toolCallId) || asString(update.tool_call_id) || `tool-${Date.now()}`
-    // ACP: `name` is the programmatic tool id (RFD tool-call-name), `kind` the coarse
-    // ToolKind category, `title` human UI copy — only the first two map to ToolName.
     const name = asString(update.name) || asString(update.kind) || asString(update.title) || 'tool'
     const title = asString(update.title) || undefined
     const statusRaw = asString(update.status) || ''
@@ -483,132 +711,49 @@ function handleSessionUpdate(
     return
   }
 
-  if (
-    kind === 'available_commands_update' ||
-    kind === 'current_mode_update' ||
-    kind === 'config_option_update' ||
-    kind === 'session_info_update' ||
-    kind === 'user_message_chunk'
-  ) {
+  if (norm === 'availablecommandsupdate') {
+    onSessionState?.({ commands: parseAcpAvailableCommands(update) })
     return
   }
-
-  // ACP session context + optional cumulative cost (RFD: session-usage).
-  if (kind === 'usage_update') {
-    const sample = acpUsageSample(update)
-    if (!sample) return
-    emit({
-      type: 'usage',
-      ...sample,
-      recordHistory: false
+  if (norm === 'currentmodeupdate') {
+    onSessionState?.({
+      currentModeId: asString(update.modeId) || asString(update.currentModeId) || asString(update.mode)
     })
     return
   }
+  if (norm === 'configoptionupdate') {
+    onSessionState?.({ configOptions: parseAcpConfigOptions(update) })
+    return
+  }
+  if (norm === 'sessioninfoupdate') {
+    onSessionState?.({
+      sessionTitle: asString(update.title) || asString(dig(update, 'sessionInfo.title'))
+    })
+    return
+  }
+  if (kind === 'user_message_chunk' || norm === 'usermessagechunk') return
 
-  // Draft end-turn token usage (may appear on idle state_update / prompt result).
+  if (norm === 'usageupdate') {
+    emitAcpUsage(emit, readAcpUsageFromUpdate(update), { recordHistory: false })
+    return
+  }
+
   if (kind === 'state_update' || asRecord(update.usage)) {
-    const usage = asRecord(update.usage)
-    if (!usage) return
-    const input = num(usage.inputTokens) ?? num(usage.input_tokens)
-    const output = num(usage.outputTokens) ?? num(usage.output_tokens)
-    const cacheRead = num(usage.cachedReadTokens) ?? num(usage.cached_read_tokens)
-    const cacheWrite = num(usage.cachedWriteTokens) ?? num(usage.cached_write_tokens)
-    if (input == null && output == null && cacheRead == null && cacheWrite == null) return
-    const contextUsed = (input ?? 0) + (cacheRead ?? 0)
-    emit({
-      type: 'usage',
-      inputTokens: input,
-      outputTokens: output,
-      cacheRead,
-      cacheWrite,
-      contextUsed: contextUsed > 0 ? contextUsed : undefined
-    })
+    emitAcpUsage(emit, readAcpUsageFromUpdate(update))
   }
 }
 
-function firstNum(...values: unknown[]): number | undefined {
-  for (const value of values) {
-    const n = num(value)
-    if (n != null) return n
-  }
-  return undefined
-}
-
-/** Cursor / Grok / other ACP hosts disagree on usage_update field names. */
-function acpUsageSample(update: Record<string, unknown>): {
-  contextUsed?: number
-  contextSize?: number
-  inputTokens?: number
-  outputTokens?: number
-  cacheRead?: number
-  cacheWrite?: number
-  sessionCostUsd?: number
-} | null {
-  const tokens = asRecord(update.tokens) ?? asRecord(update.usage)
-  const context = asRecord(update.context)
-  const used = firstNum(
-    update.used,
-    update.usedTokens,
-    update.contextUsed,
-    tokens?.used,
-    tokens?.usedTokens,
-    context?.used
-  )
-  const size = firstNum(
-    update.size,
-    update.maxTokens,
-    update.contextSize,
-    update.contextWindow,
-    tokens?.size,
-    tokens?.maxTokens,
-    context?.size
-  )
-  const input = firstNum(update.inputTokens, update.input_tokens, tokens?.inputTokens, tokens?.input)
-  const output = firstNum(
-    update.outputTokens,
-    update.output_tokens,
-    tokens?.outputTokens,
-    tokens?.output
-  )
-  const cacheRead = firstNum(
-    update.cacheRead,
-    update.cachedReadTokens,
-    update.cache_read,
-    tokens?.cacheRead,
-    tokens?.cached
-  )
-  const cacheWrite = firstNum(
-    update.cacheWrite,
-    update.cachedWriteTokens,
-    update.cache_write,
-    tokens?.cacheWrite
-  )
-  const cost = asRecord(update.cost)
-  const amount = num(cost?.amount)
-  const currency = asString(cost?.currency)
-  const sessionCostUsd =
-    amount != null ? costToUsd(amount, currency ?? 'USD') : undefined
-  const contextUsed = used ?? ((input ?? 0) + (cacheRead ?? 0) > 0 ? (input ?? 0) + (cacheRead ?? 0) : undefined)
-  if (
-    contextUsed == null &&
-    size == null &&
-    input == null &&
-    output == null &&
-    cacheRead == null &&
-    cacheWrite == null &&
-    sessionCostUsd == null
-  ) {
-    return null
-  }
-  return {
-    contextUsed,
-    contextSize: size,
-    inputTokens: input,
-    outputTokens: output,
-    cacheRead,
-    cacheWrite,
-    sessionCostUsd: sessionCostUsd ?? undefined
-  }
+function emitAcpUsage(
+  emit: DriverEventSink,
+  sample: AcpUsageSample | null,
+  extras?: { recordHistory?: boolean }
+): void {
+  if (!sample) return
+  emit({
+    type: 'usage',
+    ...sample,
+    ...(extras?.recordHistory === false ? { recordHistory: false } : {})
+  })
 }
 
 function normalizeRpcMethod(method: string): string {
@@ -649,7 +794,8 @@ function handlePermissionRequest(
     handleCreatePlan(requestId, { ...rawInput, toolCallId: asString(toolCall.toolCallId) }, ctx)
     return
   }
-  const optionsList = asArray(params.options) ?? asArray(dig(params, 'toolCall.permissionOptions')) ?? []
+  const optionsList =
+    asArray(params.options) ?? asArray(dig(params, 'toolCall.permissionOptions')) ?? []
   if (ctx.autoApprove) {
     const always =
       optionsList.find((o) => {
@@ -671,6 +817,62 @@ function handlePermissionRequest(
     summary: asString(toolCall.title) || toolName,
     detail: toolResultText(asArray(toolCall.content)) || asString(toolCall.rawInput) || undefined,
     input: toolCall
+  })
+}
+
+function handleElicitationCreate(
+  requestId: unknown,
+  params: Record<string, unknown>,
+  ctx: {
+    pendingClient: Map<string, PendingClient>
+    emit: DriverEventSink
+  }
+): void {
+  if (requestId === undefined) return
+  const mode = asString(params.mode) || 'form'
+  const toolCallId =
+    asString(params.toolCallId) ||
+    asString(params.elicitationId) ||
+    `elicit-${String(requestId)}`
+  const title = asString(params.message) || asString(params.title) || 'Question'
+  if (mode === 'url') {
+    const url = asString(params.url) || ''
+    const key = String(requestId)
+    ctx.pendingClient.set(key, {
+      kind: 'url',
+      id: requestId,
+      toolCallId,
+      elicitationId: asString(params.elicitationId) ?? undefined
+    })
+    ctx.emit({
+      type: 'elicitation',
+      requestId: key,
+      toolCallId,
+      kind: 'url',
+      title,
+      input: { url, message: title, elicitationId: params.elicitationId }
+    })
+    return
+  }
+  const fields = parseAcpFormSchema(params.requestedSchema ?? params.schema)
+  const key = String(requestId)
+  ctx.pendingClient.set(key, { kind: 'form', id: requestId, toolCallId, fields })
+  ctx.emit({
+    type: 'elicitation',
+    requestId: key,
+    toolCallId,
+    kind: 'form',
+    title,
+    input: {
+      message: title,
+      requestedSchema: params.requestedSchema ?? params.schema,
+      fields,
+      questions: fields.map((field) => ({
+        question: field.title,
+        choices: field.enum,
+        multiSelect: false
+      }))
+    }
   })
 }
 
@@ -753,7 +955,9 @@ function handleCreatePlan(
   }
 ): void {
   const doc = normalizePlanDocInput(params)
-  const toolCallId = asString(params.toolCallId) || (requestId !== undefined ? `plan-doc-${String(requestId)}` : `plan-doc-${Date.now()}`)
+  const toolCallId =
+    asString(params.toolCallId) ||
+    (requestId !== undefined ? `plan-doc-${String(requestId)}` : `plan-doc-${Date.now()}`)
   ctx.emit({
     type: 'tool',
     id: toolCallId,
@@ -838,6 +1042,8 @@ function toolResultText(content: unknown[] | null): string {
       if (text) parts.push(text)
     } else if (t === 'diff') {
       parts.push(asString(r.diff) || asString(r.text) || '[diff]')
+    } else if (t === 'terminal') {
+      parts.push(asString(r.terminalId) ? `[terminal ${asString(r.terminalId)}]` : '[terminal]')
     } else if (asString(r.text)) {
       parts.push(asString(r.text)!)
     }

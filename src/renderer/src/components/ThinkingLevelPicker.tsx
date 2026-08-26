@@ -43,11 +43,14 @@ export function ThinkingLevelPicker({
 
   const items = useMemo((): MenuItem[] => {
     if (!conversation) return []
-    return THINKING_LEVELS.map((value) => ({
-      label: t(LEVEL_KEYS[value]),
-      checked: value === level,
-      onSelect: () => void setThinkingLevel(conversation.id, value)
-    }))
+    return [
+      { label: t('composer.thinkingLevel'), header: true },
+      ...THINKING_LEVELS.map((value) => ({
+        label: t(LEVEL_KEYS[value]),
+        checked: value === level,
+        onSelect: () => void setThinkingLevel(conversation.id, value)
+      }))
+    ]
   }, [conversation, level, setThinkingLevel, t])
 
   const openMenu = useCallback(
@@ -65,6 +68,7 @@ export function ThinkingLevelPicker({
       <button
         type="button"
         className="model-picker thinking-level-picker-trigger"
+        data-testid="thinking-level"
         aria-label={t('composer.thinkingLevel')}
         aria-haspopup="menu"
         title={`${t('composer.thinkingLevel')} · ${label}`}

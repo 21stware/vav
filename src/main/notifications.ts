@@ -8,7 +8,12 @@ import {
   type NativeImage
 } from 'electron'
 import type { AppSettings } from '@shared/types'
-import { groupTrayPanes, trayIndentedLabel, trayStatusRowLabel } from '@shared/traySessions'
+import {
+  groupTrayPanes,
+  trayIndentedLabel,
+  trayStatusRowLabel,
+  trayTitleCounts
+} from '@shared/traySessions'
 import { existsSync, unlinkSync } from 'node:fs'
 import { join } from 'node:path'
 import { APP_NAME, applyDockIcon, loadAppIcon, setDockBadge } from './brand'
@@ -16,7 +21,10 @@ import { playFinishAlert } from './sound/finishAlert'
 import {
   acknowledgeConversation as dropConversationAttention,
   addAttentionItem,
+  completeAttentionCount,
+  completeAttentionId,
   dockBadgeLabel,
+  firstCompleteConversation,
   type AttentionItem,
   type AttentionKind
 } from '@shared/attentionBadge'
@@ -83,6 +91,7 @@ export class NotificationCenter {
   private tray: Tray | null = null
   private permissionAsked = false
   private runningCount = 0
+  private doneCount = 0
   private runningSessions: RunningSessionTarget[] = []
   private lastPermission: NotificationPermission = 'unknown'
   /** Unseen complete / ask / approve / request items → Dock badge. */
@@ -170,6 +179,16 @@ export class NotificationCenter {
     this.syncDockBadge()
   }
 
+  /** Unseen Done — always badges the Dock, even when OS banners are off. */
+  noteUnseenComplete(conversationId: string): void {
+    this.enqueueAttention('complete', conversationId, completeAttentionId(conversationId))
+  }
+
+  /** First conversation that finished while the user was not looking. */
+  firstUnseenComplete(): string | null {
+    return firstCompleteConversation(this.attention)
+  }
+
   /**
    * Play the finish-alert chime, optionally badge the Dock, and show the
    * existing OS banner. Sound is independent of notification permission.
@@ -187,21 +206,30 @@ export class NotificationCenter {
     if (settings.notificationsEnabled && settings.notificationSound && typeOn) {
       chimed = this.playAlertOnce(attentionId ?? `${kind}:${conversationId}`)
     }
-    if (typeOn && !this.isConversationForeground(conversationId)) {
-      const itemKind: AttentionKind = kind === 'turn-complete' ? 'complete' : kind
-      const id = attentionId ?? `${kind}:${conversationId}:${Date.now()}`
-      let queue = this.attention
-      // A finished turn replaces any leftover ask/approve on the same session.
-      if (itemKind === 'complete') {
-        queue = dropConversationAttention(queue, conversationId)
-      }
-      const next = addAttentionItem(queue, { id, conversationId, kind: itemKind })
-      if (next !== this.attention) {
-        this.attention = next
-        this.syncDockBadge()
-      }
+    const itemKind: AttentionKind = kind === 'turn-complete' ? 'complete' : kind
+    // Done always unread-badges the Dock. Ask / approve still follow their toggles.
+    if (itemKind === 'complete' || typeOn) {
+      const id =
+        itemKind === 'complete'
+          ? completeAttentionId(conversationId)
+          : (attentionId ?? `${kind}:${conversationId}:${Date.now()}`)
+      this.enqueueAttention(itemKind, conversationId, id)
     }
     if (typeOn) this.notify(kind, conversationId, title, body, chimed)
+  }
+
+  private enqueueAttention(kind: AttentionKind, conversationId: string, id: string): void {
+    if (!conversationId || this.isConversationForeground(conversationId)) return
+    let queue = this.attention
+    if (kind === 'complete') {
+      // Keep the first Done in place so Dock-open lands on the earliest finish.
+      if (queue.some((item) => item.id === id)) return
+      queue = dropConversationAttention(queue, conversationId)
+    }
+    const next = addAttentionItem(queue, { id, conversationId, kind })
+    if (next === this.attention) return
+    this.attention = next
+    this.syncDockBadge()
   }
 
   private playAlertOnce(key: string): boolean {
@@ -213,11 +241,12 @@ export class NotificationCenter {
   }
 
   private syncDockBadge(): void {
-    setDockBadge(dockBadgeLabel(this.attention.length))
+    setDockBadge(dockBadgeLabel(completeAttentionCount(this.attention)))
   }
 
-  setRunningCount(count: number): void {
-    this.runningCount = Math.max(0, count)
+  setActivityCounts(running: number, done: number): void {
+    this.runningCount = Math.max(0, running)
+    this.doneCount = Math.max(0, done)
     this.refreshTrayTitle()
   }
 
@@ -309,17 +338,20 @@ export class NotificationCenter {
 
   private refreshTrayTitle(): void {
     if (!this.tray) return
-    // macOS menu bar can show a numeric title; Windows uses tooltip only.
+    const counts = trayTitleCounts(this.runningCount, this.doneCount)
+    // macOS menu bar: `running·done`. Windows uses tooltip only.
     if (IS_MAC) {
       if (isDevRuntime()) {
-        this.tray.setTitle(this.runningCount > 0 ? `DEV ${this.runningCount}` : 'DEV')
+        this.tray.setTitle(counts ? `DEV ${counts}` : 'DEV')
       } else {
-        this.tray.setTitle(this.runningCount > 0 ? String(this.runningCount) : '')
+        this.tray.setTitle(counts)
       }
     }
-    this.tray.setToolTip(
-      this.runningCount > 0 ? t('tray.sessions', { count: this.runningCount }) : APP_NAME
-    )
+    this.tray.setToolTip(counts ? this.trayCountsTooltip() : APP_NAME)
+  }
+
+  private trayCountsTooltip(): string {
+    return `${t('tray.running', { count: this.runningCount })} · ${t('tray.done', { count: this.doneCount })}`
   }
 
   private refreshTrayMenu(): void {
@@ -374,10 +406,14 @@ export class NotificationCenter {
     this.tray.setContextMenu(Menu.buildFromTemplate(items))
   }
 
-  /** Rebuild the tray list. `runningCount` is the live badge; omit to use list length. */
-  updateRunningSessions(sessions: RunningSessionTarget[], runningCount = sessions.length): void {
+  /** Rebuild the tray list. Counts default from the session statuses. */
+  updateRunningSessions(
+    sessions: RunningSessionTarget[],
+    runningCount = sessions.filter((row) => row.status !== 'done').length,
+    doneCount = sessions.filter((row) => row.status === 'done').length
+  ): void {
     this.runningSessions = sessions
-    this.setRunningCount(runningCount)
+    this.setActivityCounts(runningCount, doneCount)
     this.refreshTrayMenu()
   }
 }

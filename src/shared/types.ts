@@ -5,6 +5,7 @@
  * main process (owner of persistence + agent runtime) and the renderer.
  */
 
+import type { AcpSessionState } from './acpSession'
 import type { ChangeSet } from './changeSet'
 import type { CliPaneBinding } from './cliPaneBinding'
 import type { CliHostKind, ProviderResumeCursor } from './cliHost'
@@ -341,6 +342,11 @@ export interface ConversationMeta {
   /** Native session resume cursor for {@link cliHost}. */
   cliResumeCursor?: ProviderResumeCursor | null
   /**
+   * Live ACP session chrome: modes, slash commands, config options.
+   * Cleared when the structured host changes.
+   */
+  acpSession?: AcpSessionState | null
+  /**
    * File currently focused in the workspace preview for this conversation.
    * Fed into the built-in agent system prompt and injected into CLI agent PTYs.
    */
@@ -355,6 +361,21 @@ export interface ConversationMeta {
    * Switching the current account does not rewrite in-flight sessions.
    */
   accountId?: string | null
+  /**
+   * Parent session when this row is an extra Swarm agent pane.
+   * Null / omit = top-level sidebar session.
+   */
+  swarmParentId?: string | null
+  /**
+   * Visible Swarm pane tree for this session (leaf.tabId = conversation id).
+   * Only the root session stores it. Closed panes stay as child rows.
+   */
+  swarmLayout?: TerminalLayoutNode | null
+  /**
+   * Last full Swarm tree, including parked panes. Used to put a closed
+   * conversation back in its old slot instead of always splitting to the right.
+   */
+  swarmLayoutFull?: TerminalLayoutNode | null
 }
 
 /**
@@ -816,7 +837,7 @@ export const DISPLAY_CURRENCIES: readonly DisplayCurrency[] = [
 
 /**
  * One entry in the Agent/Model picker’s “Recently” queue.
- * `hostId` is `"vav"` for the built-in agent, otherwise a {@link CliHostKind}.
+ * `hostId` is a CLI host, an LLM vendor id (DeepSeek, OpenRouter, …), or `"vav"`.
  */
 export interface RecentAgentModelEntry {
   hostId: string
@@ -1034,8 +1055,16 @@ export interface AppSettings {
    */
   removedCliAgentIds: string[]
   /**
+   * Mixed Providers list order (CLI agent ids + LLM vendor ids).
+   * Unknown ids are ignored; missing ids append — agents first (cliAgents
+   * order), then vendors (catalogue order).
+   */
+  providerListOrder: string[]
+  /**
    * Default chat host for new / quick-launch sessions.
-   * `null` or `"vav"` = built-in VAV agent; otherwise a structured CLI host id.
+   * `null` or `"vav"` = no explicit default (current VAV profile).
+   * A {@link CliHostKind} or LLM vendor id (`deepseek`, `openrouter`, …)
+   * is set only when the user clicks Set as default.
    */
   defaultAgentId: string | null
   /**
@@ -1050,6 +1079,12 @@ export interface AppSettings {
    * models enabled for that host.
    */
   disabledAgentModels: Record<string, string[]>
+  /**
+   * Per chat-host default model for new sessions / host switches.
+   * Keys: `"vav"` or a {@link CliHostKind}. Missing = use {@link defaultModel}
+   * for VAV, or the host's own Default (empty id) for CLI agents.
+   */
+  defaultAgentModels: Record<string, string>
   /**
    * Recently picked agent+model pairs (picker queue), most recent first.
    * Cap enforced in SettingsStore (`RECENT_AGENT_MODELS_MAX`).
@@ -1129,10 +1164,12 @@ export const DEFAULT_SETTINGS: AppSettings = {
   autoCheckUpdates: true,
   cliAgents: DEFAULT_CLI_AGENTS.map((a) => ({ ...a, envVars: { ...a.envVars } })),
   removedCliAgentIds: [],
+  providerListOrder: [],
   /** null = plain vav shell (default host mode). */
   defaultAgentId: null,
   skipCliAgentPickerWhenSingle: false,
   disabledAgentModels: {},
+  defaultAgentModels: {},
   recentAgentModels: [],
   previewSelectionAgentMark: true,
   previewReadModeSelection: true
@@ -1408,6 +1445,8 @@ export type TurnEvent =
       /** Full set when available — avoids "Loading changes…" after remount/next turn. */
       changeSet?: ChangeSet
     }
+  /** ACP session modes / slash commands / config options. */
+  | { type: 'cli-session'; conversationId: string; state: AcpSessionState }
 
 export interface TurnStatus {
   conversationId: string

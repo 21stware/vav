@@ -74,9 +74,11 @@ describe('analysisSnapshotCache', () => {
     })
 
     const first = serveAnalysisSnapshot()
+    const preview = await first
+    assert.equal(preview.usage.api.sessions, 1)
+    assert.equal(preview.usage.api.inputTokens, 40)
     resolveBuild?.(emptySnap(1, 0))
-    const seeded = await first
-    assert.equal(seeded.providers[0]?.hostKey, 'vav')
+    await new Promise((resolve) => setTimeout(resolve, 0))
     assert.equal(builds, 1)
 
     let background = 0

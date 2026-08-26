@@ -342,7 +342,7 @@ export function TokenUsagePanel({
           <button
             type="button"
             className="token-usage-btn secondary"
-            onClick={() => void window.vav.window.openSettings('accounts')}
+            onClick={() => void window.vav.window.openSettings('agents')}
           >
             {t('token.accountSettings')}
           </button>

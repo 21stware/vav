@@ -34,7 +34,13 @@ export function FileAssociationsSettings(): React.JSX.Element {
     )
   }
 
-  if (!rows) return <div className="muted">{t('common.loading')}</div>
+  if (!rows) {
+    return (
+      <div className="muted" data-testid="settings-assoc">
+        {t('common.loading')}
+      </div>
+    )
+  }
 
   const intro = PLATFORM === 'win32' ? t('assoc.introWin') : t('assoc.intro')
 
@@ -153,7 +159,7 @@ export function FileAssociationsSettings(): React.JSX.Element {
   }
 
   return (
-    <div className="settings-form assoc-settings">
+    <div className="settings-form assoc-settings" data-testid="settings-assoc">
       <div className="assoc-toolbar">
         <p className="muted tiny">{intro}</p>
         <Button

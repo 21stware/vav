@@ -39,6 +39,7 @@ export function NotificationsSettings(): React.JSX.Element {
           <Toggle
             checked={settings.notificationsEnabled}
             title={t('notifications.enabled')}
+            testId="settings-notifications-enabled"
             onChange={(notificationsEnabled) => void updateSettings({ notificationsEnabled })}
           />
         </div>

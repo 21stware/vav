@@ -32,6 +32,13 @@ import {
 import { homedir, tmpdir } from 'node:os'
 import { randomUUID } from 'node:crypto'
 import { APP_NAME, applyBranding, applyDockIcon, loadAppIcon, pinUserDataPath } from './brand'
+import { isE2eRuntime } from './e2eRuntime'
+import {
+  e2eChoosePopupMenu,
+  e2eDismissPopupMenu,
+  e2ePeekPopupMenu,
+  e2ePopupMenu
+} from './e2ePopupMenu'
 import { registerHapticsIpc } from './haptics'
 import {
   IPC,
@@ -51,6 +58,7 @@ import {
   DEFAULT_SETTINGS,
   enabledCliAgents,
   type AppSettings,
+  type ChatMessage,
   type Conversation,
   type ConversationMeta,
   type FileSortKey,
@@ -64,11 +72,13 @@ import { hasActiveAgentWork, shouldBlockIdleSleep } from '@shared/sleepBlocker'
 import { createSwarmFinishAlert } from './sound/swarmFinishAlert'
 import { parseThinkingLevel } from '@shared/thinkingLevel'
 import { threadPath } from '@shared/thread'
+import { sanitizeSwarmLayout } from '@shared/swarmLayout'
 import { SettingsStore } from './store/SettingsStore'
 import { SleepBlocker } from './power/SleepBlocker'
 import { SecretStore } from './store/SecretStore'
 import { AccountStore } from './store/AccountStore'
 import {
+  accountHasKey,
   accountSecret,
   buildAccountsPage,
   cliCatalogOf,
@@ -95,6 +105,8 @@ import {
   sessionUsageRowsOf,
   workspaceKeyOf
 } from '@shared/accounts'
+import { ANALYSIS_API_HOST } from '@shared/analysis'
+import { groupAccountsByVendor, isLlmVendorId, vendorById, vendorIdFromEndpoint } from '@shared/llmVendors'
 import { ConversationStore } from './store/ConversationStore'
 import { VavPackService } from './store/VavPackService'
 import { FileSessionStore } from './store/FileSessionStore'
@@ -184,6 +196,7 @@ import {
   type CliHostKind
 } from '@shared/cliHost'
 import {
+  defaultModelForChatHost,
   labelForChatModel,
   resolveModelForChatHost
 } from '@shared/agentModels'
@@ -217,9 +230,13 @@ import { fetchCodexAccountQuota } from './quota/codexUsage'
 import { fetchCursorAccountQuota } from './quota/cursorUsage'
 import { fetchGrokAccountQuota } from './quota/grokUsage'
 import { fetchOpencodeAccountQuota } from './quota/opencodeUsage'
-import { deepseekBalanceUrl } from '@shared/apiBalance'
-import { fetchDeepSeekApiBalance } from './quota/deepseekBalance'
-import { cachedApiBalance, clearApiBalance, refreshApiBalance } from './quota/apiBalanceCache'
+import { apiBalanceUrl, hostCanShowApiBalance } from '@shared/apiBalance'
+import {
+  cachedApiBalance,
+  clearApiBalance,
+  fetchApiBalance,
+  refreshApiBalance
+} from './quota/apiBalanceCache'
 import { buildAnalysisSnapshot } from './analysis/buildAnalysisSnapshot'
 import {
   configureAnalysisCache,
@@ -580,7 +597,7 @@ async function revealConversationInList(conversationId: string): Promise<void> {
 const notifications = new NotificationCenter(
   () => settingsStore.get(),
   (target) => focusRunningSession(target),
-  () => openSettingsWindow(),
+  () => openSettingsWindow('appearance'),
   showMainWindow,
   () => mainWindow
 )
@@ -712,6 +729,7 @@ function applyUnseenResult(pane: TrayPane): void {
   }
   unseenResults.set(trayPaneKey(pane), pane)
   persistResultUnseen(pane.conversationId, true)
+  notifications.noteUnseenComplete(pane.conversationId)
 }
 
 function markResultUnseen(pane: TrayPane): void {
@@ -872,7 +890,10 @@ function refreshTraySessions(): void {
       const already = [...unseenResults.values()].some((p) => p.conversationId === conversation.id)
       if (already) continue
       const pane = trayPaneFromConversation(conversation.id, 'chat')
-      if (pane) unseenResults.set(trayPaneKey(pane), { ...pane, status: 'done' })
+      if (pane) {
+        unseenResults.set(trayPaneKey(pane), { ...pane, status: 'done' })
+        notifications.noteUnseenComplete(conversation.id)
+      }
     }
 
     const panes = collapseTrayPanesByConversation(
@@ -885,6 +906,7 @@ function refreshTraySessions(): void {
       )
     )
     const runningCount = panes.filter((pane) => pane.status === 'running').length
+    const doneCount = panes.filter((pane) => pane.status === 'done').length
     notifications.updateRunningSessions(
       panes.map((pane) => ({
         conversationId: pane.conversationId,
@@ -899,7 +921,8 @@ function refreshTraySessions(): void {
         dirLabel: pane.dirLabel,
         createdAt: pane.createdAt
       })),
-      runningCount
+      runningCount,
+      doneCount
     )
     broadcast(IPC.activityChanged, collapseTrayActivity(panes))
   } finally {
@@ -928,7 +951,7 @@ function currentKeyBindings() {
 function rebuildAppChrome(): void {
   appMenu = buildAppMenu(
     sendMenuCommand,
-    () => openSettingsWindow(),
+    () => openSettingsWindow('appearance'),
     newDetachedSession,
     currentKeyBindings()
   )
@@ -1114,6 +1137,7 @@ const cliHost = new CliAgentHost({
   conversations: conversationStore,
   settings: settingsStore,
   changeSets: changeSetStore,
+  files: fileService,
   emit: handleAgentEvent,
   logicalPath: (path) => workingCopyService.logicalPath(path),
   quota: {
@@ -1251,7 +1275,7 @@ function wireMenuAccelerators(contents: Electron.WebContents): void {
     event.preventDefault()
     // open-settings is owned by main (native window), not the renderer list.
     if (command === 'open-settings') {
-      openSettingsWindow()
+      openSettingsWindow('appearance')
       return
     }
     const host = BrowserWindow.fromWebContents(contents)
@@ -1261,6 +1285,54 @@ function wireMenuAccelerators(contents: Electron.WebContents): void {
     }
     sendMenuCommand(command)
   })
+}
+
+function e2eMainWindow(): BrowserWindow | null {
+  return (
+    BrowserWindow.getAllWindows().find((window) => {
+      if (window.isDestroyed() || !window.isVisible()) return false
+      const url = window.webContents.getURL()
+      return (
+        !url.includes('view=settings') &&
+        !url.includes('view=token') &&
+        !url.includes('view=app-window')
+      )
+    }) ?? null
+  )
+}
+
+/** E2E: same matcher + dispatch as `before-input-event`, without Chromium key delivery. */
+function e2eDispatchAccelerator(input: {
+  type: string
+  key: string
+  code: string
+  control: boolean
+  alt: boolean
+  shift: boolean
+  meta: boolean
+}): MenuCommand | 'new-session-window' | null {
+  const main = e2eMainWindow()
+  main?.focus()
+  const bindings = currentKeyBindings()
+  const electronInput = input as Electron.Input
+  if (matchesNewSessionWindow(electronInput, bindings)) {
+    newDetachedSession()
+    return 'new-session-window'
+  }
+  const command = menuCommandFromInput(electronInput, bindings)
+  if (!command) return null
+  if (command === 'open-settings') {
+    openSettingsWindow('appearance')
+    return command
+  }
+  sendMenuCommand(command)
+  return command
+}
+
+if (isE2eRuntime()) {
+  ;(
+    globalThis as { __e2eDispatchAccelerator?: typeof e2eDispatchAccelerator }
+  ).__e2eDispatchAccelerator = e2eDispatchAccelerator
 }
 
 /** When a window dies, drop its PTY size votes so max-across-viewers updates. */
@@ -1382,6 +1454,92 @@ function syncWindowMaterial(win: BrowserWindow): void {
   if (isVibrancyEnabled()) applyWindowVibrancy(win)
   else clearWindowVibrancy(win)
   applyTrafficLights(win)
+}
+
+const vibrancyRefreshTimers = new WeakMap<BrowserWindow, ReturnType<typeof setTimeout>>()
+/** Set on minimize/hide; Dock restore sometimes skips Electron `restore`. */
+const vibrancyNeedsRefresh = new WeakSet<BrowserWindow>()
+
+/**
+ * After minimize/hide, NSVisualEffectView often stops compositing. Sidebar
+ * CSS is intentionally clear so the glass shows through — without the native
+ * layer the column is a hole. Tear the effect down and re-attach on-screen.
+ */
+function refreshWindowVibrancy(win: BrowserWindow): void {
+  if (!IS_MAC || win.isDestroyed() || !isVibrancyShellWindow(win)) return
+  if (!isVibrancyEnabled()) {
+    clearWindowVibrancy(win)
+    applyTrafficLights(win)
+    return
+  }
+  if (!win.webContents.isDestroyed()) {
+    void win.webContents
+      .executeJavaScript(
+        `try { document.documentElement.dataset.vibrancyRefresh = '1' } catch (e) {}`,
+        true
+      )
+      .catch(() => undefined)
+  }
+  try {
+    win.setVibrancy(null)
+  } catch {
+    // ignore
+  }
+  setTimeout(() => {
+    if (win.isDestroyed() || win.isMinimized()) return
+    applyWindowVibrancy(win)
+    applyTrafficLights(win)
+    if (win.isDestroyed() || win.webContents.isDestroyed()) return
+    void win.webContents
+      .executeJavaScript(
+        `(function(){
+          requestAnimationFrame(function(){
+            requestAnimationFrame(function(){
+              try { delete document.documentElement.dataset.vibrancyRefresh } catch (e) {}
+            });
+          });
+        })()`,
+        true
+      )
+      .catch(() => undefined)
+  }, 16)
+}
+
+function scheduleVibrancyRefresh(win: BrowserWindow): void {
+  if (!IS_MAC || win.isDestroyed() || !isVibrancyShellWindow(win)) return
+  const prev = vibrancyRefreshTimers.get(win)
+  if (prev) clearTimeout(prev)
+  // AppKit finishes restore compositing a tick after the `restore` event.
+  vibrancyRefreshTimers.set(
+    win,
+    setTimeout(() => {
+      vibrancyRefreshTimers.delete(win)
+      if (win.isDestroyed() || win.isMinimized()) return
+      refreshWindowVibrancy(win)
+    }, 32)
+  )
+}
+
+/** Dock restore / hide→show: NSVisualEffectView must be recreated, not just set. */
+function wireVibrancyRefresh(win: BrowserWindow): void {
+  if (!IS_MAC) return
+  win.on('minimize', () => {
+    vibrancyNeedsRefresh.add(win)
+  })
+  win.on('hide', () => {
+    vibrancyNeedsRefresh.add(win)
+  })
+  win.on('restore', () => {
+    if (win.isDestroyed()) return
+    vibrancyNeedsRefresh.delete(win)
+    scheduleVibrancyRefresh(win)
+  })
+  win.on('show', () => {
+    if (win.isDestroyed() || win.isMinimized()) return
+    if (!vibrancyNeedsRefresh.has(win)) return
+    vibrancyNeedsRefresh.delete(win)
+    scheduleVibrancyRefresh(win)
+  })
 }
 
 /** Apply or clear glass on main + Settings (create, toggle, theme repaint). */
@@ -1758,13 +1916,21 @@ async function revealBrowserWindow(win: BrowserWindow): Promise<void> {
   if (win.isDestroyed()) return
   // Steal focus first so Space switching starts before pixels land.
   app.focus({ steal: true })
+  const wasMinimized = win.isMinimized()
   try {
-    if (isVibrancyShellWindow(win)) syncWindowMaterial(win)
-    else win.setBackgroundColor(windowBackground())
+    if (!isVibrancyShellWindow(win)) win.setBackgroundColor(windowBackground())
+    // Minimized: `restore` recreates NSVisualEffectView. Re-applying glass
+    // while still miniaturized is what leaves the sidebar as a hole.
+    else if (!wasMinimized && vibrancyNeedsRefresh.has(win)) {
+      vibrancyNeedsRefresh.delete(win)
+      scheduleVibrancyRefresh(win)
+    } else if (!wasMinimized) {
+      syncWindowMaterial(win)
+    }
   } catch {
     // ignore
   }
-  if (win.isMinimized()) win.restore()
+  if (wasMinimized) win.restore()
   if (win.isVisible()) {
     win.moveTop()
     win.focus()
@@ -1812,8 +1978,9 @@ function wirePopupDismiss(window: BrowserWindow): void {
 function createWindow(): BrowserWindow {
   const icon = loadAppIcon()
   const snapshotting = Boolean(process.env.VAV_SNAPSHOT)
+  const e2e = isE2eRuntime()
   const window = new BrowserWindow({
-    width: snapshotting ? 1440 : 720,
+    width: snapshotting ? 1440 : e2e ? 1100 : 720,
     height: snapshotting ? 900 : 820,
     minWidth: MAIN_WINDOW_MIN_WIDTH,
     minHeight: 560,
@@ -1828,6 +1995,7 @@ function createWindow(): BrowserWindow {
   applyMenuBar(window)
   wirePopupDismiss(window)
   applyTrafficLights(window)
+  wireVibrancyRefresh(window)
 
   window.once('ready-to-show', () => {
     applyTrafficLights(window)
@@ -1904,8 +2072,12 @@ function loadRenderer(window: BrowserWindow, query: Record<string, string> = {})
   }
 }
 
-function openSettingsWindow(view: SettingsView = 'agents', agentId?: string): void {
-  const resolved = resolveSettingsView(view, agentId)
+/** Category the next Settings paint should show. ⌘, parks on Appearance. */
+let settingsDesiredView: { view: SettingsView; agentId?: string } = { view: 'appearance' }
+
+function openSettingsWindow(view: SettingsView = 'appearance', agentId?: string): void {
+  const resolved = resolveSettingsView(view ?? 'appearance', agentId)
+  settingsDesiredView = resolved
   void serveAnalysisSnapshot({ refresh: false }).catch((err) => {
     console.error('[analysis] prefetch failed', err)
   })
@@ -1922,7 +2094,7 @@ function openSettingsWindow(view: SettingsView = 'agents', agentId?: string): vo
  * Keep Settings warm like the token panel: hide on close, show instantly next time.
  */
 function ensureSettingsWindow(
-  view: SettingsView = 'agents',
+  view: SettingsView = 'appearance',
   showNow: boolean,
   agentId?: string
 ): void {
@@ -1949,6 +2121,7 @@ function ensureSettingsWindow(
   })
   applyMenuBar(settingsWindow)
   applyTrafficLights(settingsWindow)
+  wireVibrancyRefresh(settingsWindow)
 
   settingsWindow.on('close', (event) => {
     if (quitting) return
@@ -1983,12 +2156,16 @@ function ensureSettingsWindow(
 
 /** Hide (don't destroy) so the next open is instant. */
 function hideSettingsWindow(): void {
-  if (settingsWindow && !settingsWindow.isDestroyed()) settingsWindow.hide()
+  settingsDesiredView = { view: 'appearance' }
+  if (settingsWindow && !settingsWindow.isDestroyed()) {
+    safeSend(settingsWindow.webContents, IPC.settingsView, settingsDesiredView)
+    settingsWindow.hide()
+  }
 }
 
 function warmSettingsWindow(): void {
   if (settingsWindow && !settingsWindow.isDestroyed()) return
-  ensureSettingsWindow('agents', false)
+  ensureSettingsWindow('appearance', false)
 }
 
 /**
@@ -3266,6 +3443,7 @@ function coerceConversationModel(conversationId: string): string | null {
   const resolved = resolveModelForChatHost(host, conversation.model, {
     customModels: settings.customModels,
     vavDefaultModel: settings.defaultModel,
+    hostDefaultModel: defaultModelForChatHost(host, settings),
     catalogue
   })
   if (resolved !== conversation.model) {
@@ -3286,15 +3464,20 @@ function modelForNewConversation(
   const settings = settingsStore.get()
   const key = host ?? 'vav'
   const catalogue = getModelCatalogSnapshot()[key]?.models
-  return resolveModelForChatHost(host, preferredModel ?? settings.defaultModel, {
+  const hostDefault = defaultModelForChatHost(host, settings)
+  return resolveModelForChatHost(host, preferredModel ?? hostDefault, {
     customModels: settings.customModels,
     vavDefaultModel: settings.defaultModel,
+    hostDefaultModel: hostDefault,
     catalogue
   })
 }
 
 /** Lean snapshot for the panel — never ships message bodies. */
 function buildTokenUsagePayload(conversationId: string): TokenUsageViewPayload | null {
+  if (conversationStore.hydrateMissingHostUsage(conversationId)) {
+    publishConversations()
+  }
   const conversation = conversationStore.get(conversationId)
   if (!conversation) return null
   const settings = settingsStore.get()
@@ -3771,12 +3954,13 @@ async function hydrateProviderAccount(conversationId: string): Promise<void> {
   if (!conversation) return
   const host = (conversation.cliHost ?? null) as CliHostKind | null
   const waitingQuota = hostMayHaveAccountQuota(host) || isStructuredCliHost(host)
+  const peek = peekHostAccountQuota(conversation, host)
   const loading = buildProviderAccountPayload(conversationId, {
-    loading: waitingQuota,
-    signedIn: providerAccountAuth?.signedIn ?? false,
-    accountId: providerAccountAuth?.accountId ?? null,
-    plan: providerAccountAuth?.plan ?? null,
-    authKind: providerAccountAuth?.authKind
+    loading: waitingQuota && (peek ? peek.windows.length > 0 : true),
+    signedIn: peek?.signedIn ?? providerAccountAuth?.signedIn ?? false,
+    accountId: peek?.accountId ?? providerAccountAuth?.accountId ?? null,
+    plan: peek?.plan ?? providerAccountAuth?.plan ?? null,
+    authKind: peek?.authKind ?? providerAccountAuth?.authKind
   })
   if (loading) sendProviderAccountPayload(loading)
   const account = await readHostAccountInfo(host)
@@ -4271,9 +4455,11 @@ function newDetachedSession(): void {
   const settings = settingsStore.get()
   const defaultHost = resolveDefaultChatHost(settings.defaultAgentId)
   const workdir = resolveNewWorkdir()
+  const source = lastSeenConversationId ? conversationStore.get(lastSeenConversationId) : null
+  const inheritModel = settings.swarmModeEnabled === true ? source?.model : undefined
   const conversation = conversationStore.create(
     workdir,
-    modelForNewConversation(defaultHost),
+    modelForNewConversation(defaultHost, inheritModel),
     {
       approvalMode: settings.defaultApprovalMode ?? 'auto',
       thinkingLevel: parseThinkingLevel(settings.defaultThinkingLevel),
@@ -4353,6 +4539,12 @@ function popupNativeMenu(
     const toTemplate = (rows: NativeMenuItem[]): Electron.MenuItemConstructorOptions[] =>
       rows.map((item) => {
         if (item.separator) return { type: 'separator' }
+        if (item.header) {
+          // macOS 14+ section header; older platforms fall back to a disabled title.
+          return process.platform === 'darwin'
+            ? { type: 'header', label: item.label ?? '' }
+            : { label: item.label ?? '', enabled: false }
+        }
         if (item.role) return { role: item.role, label: item.label }
         if (item.submenu && item.submenu.length > 0) {
           return {
@@ -4580,6 +4772,13 @@ async function showMainWindow(): Promise<void> {
   await revealBrowserWindow(mainWindow)
 }
 
+/** Session window the user can already see — Settings / usage panels do not count. */
+function hasVisibleSessionWindow(): boolean {
+  return BrowserWindow.getAllWindows().some(
+    (w) => !w.isDestroyed() && !isAuxiliaryWindow(w) && w.isVisible() && !w.isMinimized()
+  )
+}
+
 /**
  * Dock click / bare second-instance: raise the window the user was last in.
  * Do not force the main shell forward when a companion is already open.
@@ -4611,6 +4810,14 @@ function pickActivateWindow(): BrowserWindow | null {
 function activateApp(): void {
   if (process.platform === 'darwin' && app.dock && !app.dock.isVisible()) {
     app.dock.show()
+  }
+  // Hidden / minimized: Dock click opens the earliest unseen Done session.
+  if (!hasVisibleSessionWindow()) {
+    const firstDone = notifications.firstUnseenComplete()
+    if (firstDone) {
+      focusRunningSession({ conversationId: firstDone, surface: 'vav' })
+      return
+    }
   }
   const target = pickActivateWindow()
   if (!target) {
@@ -4937,6 +5144,16 @@ function accountIdForSession(
   if (cliHost) {
     return resolveSessionAccountId(accountStore.listVisible(workspaceKey), cliHost)
   }
+  const vendorId = settingsStore.get().defaultAgentId
+  if (isLlmVendorId(vendorId)) {
+    const rows = accountStore
+      .listVisible(workspaceKey)
+      .filter((row) => row.provider === 'vav' || agentIdOf(row) === 'vav')
+    const match =
+      rows.find((row) => row.current && vendorIdFromEndpoint(row.endpoint) === vendorId) ??
+      rows.find((row) => vendorIdFromEndpoint(row.endpoint) === vendorId)
+    if (match) return match.id
+  }
   return accountStore.currentVav(workspaceKey)?.id ?? null
 }
 
@@ -5017,6 +5234,60 @@ function conversationHostQuota(conversation: {
     return []
   }
   return namespacedQuotaFor(host, conversation.quotaWindows)
+}
+
+function peekHostAccountQuota(
+  conversation: {
+    accountId?: string | null
+    cliHost?: CliHostKind | null
+    quotaWindows?: import('@shared/types').QuotaWindow[] | null
+  },
+  host: CliHostKind | null
+): import('@shared/ipc').HostAccountQuota | null {
+  if (!host) return null
+  const identity = liveOAuthIdentity(host)
+  const signedOut = lastLiveOAuth.has(host) && !identity
+  const auth = conversationQuotaAuth(conversation, {
+    signedIn: Boolean(identity),
+    accountId: identity,
+    plan: null,
+    authKind: identity ? 'oauth' : 'none'
+  })
+  const windows = auth.signedIn ? conversationHostQuota(conversation) : []
+  if (windows.length === 0 && !signedOut) return null
+  return {
+    host,
+    hostName: displayNameForCliHost(host),
+    signedIn: auth.signedIn,
+    accountId: auth.accountId,
+    plan: auth.plan,
+    authKind: auth.authKind,
+    windows
+  }
+}
+
+async function loadHostAccountQuota(
+  conversation: {
+    id: string
+    accountId?: string | null
+    cliHost?: CliHostKind | null
+    quotaWindows?: import('@shared/types').QuotaWindow[] | null
+  },
+  host: CliHostKind | null
+): Promise<import('@shared/ipc').HostAccountQuota> {
+  const account = await readHostAccountInfo(host)
+  if (host) lastLiveOAuth.set(host, account.signedIn ? account.accountId : null)
+  await quotaService.refreshForPanel(host)
+  const auth = conversationQuotaAuth(conversation, account)
+  return {
+    host,
+    hostName: host ? displayNameForCliHost(host) : 'VAV',
+    signedIn: auth.signedIn,
+    accountId: auth.accountId,
+    plan: auth.plan,
+    authKind: auth.authKind,
+    windows: auth.signedIn ? conversationHostQuota(conversation) : []
+  }
 }
 
 function retargetEmptyConversations(
@@ -5496,22 +5767,71 @@ return c as text`
     }
     return false
   }
-  const lookupVavApiBalance = async (force: boolean) => {
-    const endpoint = settingsStore.get().apiEndpoint
-    const supported = Boolean(deepseekBalanceUrl(endpoint))
-    if (!supported) return { supported: false, balance: null }
-    analysisHasApiKey()
-    const balance = await fetchDeepSeekApiBalance({
-      apiKey: secretStore.get('api'),
-      endpoint,
-      force
-    })
-    return { supported: true, balance }
+  const vavAccounts = () =>
+    accountStore.listAll().filter((account) => agentIdOf(account) === 'vav')
+
+  const accountForBalanceHost = (hostKey: string) => {
+    const rows = vavAccounts()
+    if (hostKey === ANALYSIS_API_HOST) {
+      return rows.find((row) => row.current) ?? rows[0] ?? null
+    }
+    const group = groupAccountsByVendor(rows).find((row) => row.vendor.id === hostKey)
+    return group?.accounts.find((row) => row.current) ?? group?.accounts[0] ?? null
   }
+
+  const lookupVendorApiBalance = async (hostKey: string, force: boolean) => {
+    const account = accountForBalanceHost(hostKey)
+    const endpoint =
+      account?.endpoint?.trim() ||
+      vendorById(hostKey)?.endpoint ||
+      (hostKey === ANALYSIS_API_HOST ? settingsStore.get().apiEndpoint : '')
+    const keyPresent = account
+      ? accountHasKey(account, secretStore)
+      : hostKey === ANALYSIS_API_HOST && analysisHasApiKey()
+    const supported = hostCanShowApiBalance(hostKey) && Boolean(apiBalanceUrl(endpoint))
+    if (!supported) return { supported: false, balance: null, keyPresent }
+    if (!keyPresent) return { supported: true, balance: null, keyPresent: false }
+    const apiKey = account ? accountSecret(account, secretStore) : secretStore.get('api')
+    const balance = account
+      ? await refreshApiBalance({
+          accountId: account.id,
+          apiKey,
+          endpoint,
+          force
+        })
+      : await fetchApiBalance({ apiKey, endpoint, force })
+    return { supported: true, balance, keyPresent: true }
+  }
+  const analysisVendors = (): { id: string; name: string }[] =>
+    groupAccountsByVendor(
+      accountStore.listAll().filter((account) => agentIdOf(account) === 'vav')
+    ).map((row) => ({ id: row.vendor.id, name: row.vendor.name }))
+
+  const analysisUsageOptions = (): {
+    remapHost: (hostKey: string, accountId?: string | null) => string
+    order: string[]
+  } => {
+    const vendors = analysisVendors()
+    const fallbackVendor = vendors.length === 1 ? vendors[0]!.id : null
+    return {
+      order: settingsStore.get().providerListOrder ?? [],
+      remapHost: (hostKey, accountId) => {
+        if (hostKey !== ANALYSIS_API_HOST) return hostKey
+        const account = accountId ? accountStore.get(accountId) : undefined
+        if (account) return vendorIdFromEndpoint(account.endpoint)
+        return fallbackVendor ?? hostKey
+      }
+    }
+  }
+
   configureAnalysisCache({
-    conversations: () => conversationStore.all(),
+    conversations: () => {
+      conversationStore.hydrateMissingHostUsageAll()
+      return conversationStore.all()
+    },
+    usageOptions: analysisUsageOptions,
     apiKeyPresent: analysisHasApiKey,
-    readBalance: lookupVavApiBalance,
+    readBalance: (force, hostKey) => lookupVendorApiBalance(hostKey, force),
     onUpdated: (snapshot) => {
       if (settingsWindow && !settingsWindow.isDestroyed()) {
         safeSend(settingsWindow.webContents, IPC.settingsAnalysisUpdated, snapshot)
@@ -5542,12 +5862,19 @@ return c as text`
         cliAgents: configured,
         catalogue,
         presentIds,
+        vendors: analysisVendors(),
+        ...analysisUsageOptions(),
         apiKeyPresent: analysisHasApiKey(),
         forceRefresh: force,
         refreshQuotas: (forceRefresh) => quotaService.refreshAllHosts(forceRefresh),
         quotaWindows: (host) => quotaService.get(host),
         readAccount: (host) => readHostAccountInfo(host),
-        readApiBalance: () => lookupVavApiBalance(force)
+        hasApiKey: (hostKey) => {
+          const account = accountForBalanceHost(hostKey)
+          if (account) return accountHasKey(account, secretStore)
+          return hostKey === ANALYSIS_API_HOST && analysisHasApiKey()
+        },
+        readApiBalance: (hostKey) => lookupVendorApiBalance(hostKey, force)
       })
     }
   })
@@ -5623,7 +5950,7 @@ return c as text`
     IPC.accountsCreateDraft,
     async (
       _event,
-      input: { agentId: string; kind?: 'vav_key' | 'oauth' }
+      input: { agentId: string; kind?: 'vav_key' | 'oauth'; endpoint?: string }
     ) => {
       const page = await accountsPage()
       const agentId = input.agentId?.trim() || 'vav'
@@ -5638,7 +5965,9 @@ return c as text`
       )
       const endpoint =
         kind === 'vav_key'
-          ? defaultKeyEndpoint(agentId, settingsStore.get().apiEndpoint || '')
+          ? input.endpoint !== undefined
+            ? input.endpoint.trim() || null
+            : defaultKeyEndpoint(agentId, settingsStore.get().apiEndpoint || '')
           : null
       const created = accountStore.add({
         workspaceKey: DEFAULT_WORKSPACE_KEY,
@@ -5847,20 +6176,23 @@ return c as text`
 
   // --- conversations ---
   ipcMain.handle(IPC.convList, () => conversationStore.listMeta())
-  ipcMain.handle(IPC.convGet, (_event, id: string) => conversationStore.get(id) ?? null)
+  ipcMain.handle(IPC.convGet, (_event, id: string) => {
+    if (conversationStore.hydrateMissingHostUsage(id)) publishConversations()
+    return conversationStore.get(id) ?? null
+  })
 
   ipcMain.handle(
     IPC.convCreate,
     (
       _event,
-      options?: { workingDirectory?: string | null; model?: string }
+      options?: { workingDirectory?: string | null; model?: string; swarmParentId?: string | null }
     ): ConversationMeta => {
       const workdir =
         options && 'workingDirectory' in options
           ? (options.workingDirectory ?? null)
           : resolveNewWorkdir()
       const settings = settingsStore.get()
-      const model = options?.model?.trim() || settings.defaultModel
+      const model = options?.model?.trim() || undefined
       if (workdir) {
         settingsStore.rememberWorkspaceDirectory(workdir, tmpdir())
         broadcast(IPC.settingsChanged, currentSettings())
@@ -5873,7 +6205,8 @@ return c as text`
           approvalMode: settings.defaultApprovalMode ?? 'auto',
           thinkingLevel: parseThinkingLevel(settings.defaultThinkingLevel),
           cliHost: defaultHost,
-          accountId: accountIdForSession(workdir, defaultHost)
+          accountId: accountIdForSession(workdir, defaultHost),
+          swarmParentId: options?.swarmParentId ?? null
         }
       )
       if (defaultHost) promoteEphemeralConversation(conversation.id)
@@ -5929,6 +6262,25 @@ return c as text`
     return conversationStore.listMeta()
   })
 
+  ipcMain.handle(IPC.convSetAcpMode, (_event, id: string, modeId: string) => {
+    if (typeof modeId === 'string' && modeId.trim()) {
+      cliHost.applySessionMode(id, modeId.trim())
+      publishConversations()
+    }
+    return conversationStore.listMeta()
+  })
+
+  ipcMain.handle(
+    IPC.convSetAcpConfig,
+    (_event, id: string, configId: string, value: string | boolean) => {
+      if (typeof configId === 'string' && configId.trim()) {
+        cliHost.applySessionConfig(id, configId.trim(), value)
+        publishConversations()
+      }
+      return conversationStore.listMeta()
+    }
+  )
+
   ipcMain.handle(IPC.convContinueNew, (_event, id: string, messageId: string) => {
     const conversation = conversationStore.branchToNewConversation(id, messageId)
     if (!conversation) return null
@@ -5978,6 +6330,18 @@ return c as text`
       // Selecting a CLI agent (or returning to vav after one) is durable intent —
       // never auto-delete this ⌘⇧↵ session when the companion window closes.
       if (agentBinaryName) promoteEphemeralConversation(id)
+      publishConversations()
+      return conversationStore.listMeta()
+    }
+  )
+
+  ipcMain.handle(
+    IPC.convSetSwarmLayout,
+    (_event, id: string, layout: unknown, full?: unknown) => {
+      const patch: { swarmLayout: ReturnType<typeof sanitizeSwarmLayout>; swarmLayoutFull?: ReturnType<typeof sanitizeSwarmLayout> } =
+        { swarmLayout: sanitizeSwarmLayout(layout) }
+      if (full !== undefined) patch.swarmLayoutFull = sanitizeSwarmLayout(full)
+      conversationStore.updateMeta(id, patch)
       publishConversations()
       return conversationStore.listMeta()
     }
@@ -6066,19 +6430,14 @@ return c as text`
         : typeof hostOverride === 'string' && isStructuredCliHost(hostOverride)
           ? hostOverride
           : (conversation.cliHost ?? null)
-    const account = await readHostAccountInfo(host)
-    if (host) lastLiveOAuth.set(host, account.signedIn ? account.accountId : null)
-    await quotaService.refreshForPanel(host)
-    const auth = conversationQuotaAuth(conversation, account)
-    return {
-      host,
-      hostName: host ? displayNameForCliHost(host) : 'VAV',
-      signedIn: auth.signedIn,
-      accountId: auth.accountId,
-      plan: auth.plan,
-      authKind: auth.authKind,
-      windows: auth.signedIn ? conversationHostQuota(conversation) : []
+    const cached = peekHostAccountQuota(conversation, host)
+    if (cached) {
+      void loadHostAccountQuota(conversation, host).catch((err) => {
+        console.error('[account-quota] background refresh failed', err)
+      })
+      return cached
     }
+    return loadHostAccountQuota(conversation, host)
   })
 
   const applyWorkingDirectory = (id: string, path: string): ConversationMeta[] => {
@@ -6772,8 +7131,9 @@ return c as text`
   ipcMain.handle(IPC.windowShellPath, (_event, kind: ShellKind) => shellPath(kind))
 
   ipcMain.handle(IPC.windowOpenSettings, (_event, view?: SettingsView, agentId?: string) =>
-    openSettingsWindow(view, typeof agentId === 'string' ? agentId : undefined)
+    openSettingsWindow(view ?? 'appearance', typeof agentId === 'string' ? agentId : undefined)
   )
+  ipcMain.handle(IPC.settingsDesiredView, () => settingsDesiredView)
   ipcMain.handle(IPC.windowCloseSettings, () => hideSettingsWindow())
 
   ipcMain.handle(IPC.windowOpenSession, async (_event, id: string) => {
@@ -6959,13 +7319,23 @@ return c as text`
   ipcMain.handle(
     IPC.windowPopupMenu,
     (event, items: NativeMenuItem[], position?: { x: number; y: number }) => {
+      if (isE2eRuntime()) return e2ePopupMenu(items)
       const window = BrowserWindow.fromWebContents(event.sender)
       return window ? popupNativeMenu(window, items, position) : null
     }
   )
   ipcMain.handle(IPC.windowClosePopupMenu, () => {
+    if (isE2eRuntime()) {
+      e2eDismissPopupMenu()
+      return
+    }
     closeActiveNativePopup()
   })
+  ipcMain.handle(IPC.windowE2ePeekMenu, () => e2ePeekPopupMenu())
+  ipcMain.handle(IPC.windowE2eChooseMenu, (_event, idOrLabel: string) =>
+    typeof idOrLabel === 'string' ? e2eChoosePopupMenu(idOrLabel) : false
+  )
+  ipcMain.handle(IPC.windowE2eDismissMenu, () => e2eDismissPopupMenu())
 
   ipcMain.handle(IPC.changeSetGet, (_e, id: string) => changeSetStore.get(id))
   ipcMain.handle(IPC.changeSetActive, (_e, conversationId: string) =>
@@ -7055,21 +7425,40 @@ async function seedSmokeChangeReview(): Promise<void> {
     console.error('[smoke] finalize failed')
     return
   }
-  // Emit twice spaced so a late-joining renderer still opens the panel.
+  const userMsg: ChatMessage = {
+    id: randomUUID(),
+    parentId: null,
+    role: 'user',
+    content: 'Please update the smoke files.',
+    blocks: [{ kind: 'text', text: 'Please update the smoke files.' }],
+    createdAt: Date.now()
+  }
+  const assistantMsg: ChatMessage = {
+    id: randomUUID(),
+    parentId: userMsg.id,
+    role: 'assistant',
+    content: 'Updated two files.',
+    blocks: [{ kind: 'text', text: 'Updated two files.' }],
+    createdAt: Date.now() + 1,
+    changeSetId: set.id
+  }
+  conversationStore.appendMessage(meta.id, userMsg)
+  conversationStore.appendMessage(meta.id, assistantMsg)
+  conversationStore.flush()
+  handleAgentEvent({ type: 'user', conversationId: meta.id, message: userMsg })
   handleAgentEvent({
-    type: 'change-review',
+    type: 'end',
     conversationId: meta.id,
-    changeSetId: set.id,
-    pendingCount: set.files.length,
-    changeSet: set
+    message: assistantMsg,
+    tokensUsed: 0
   })
-  await new Promise((r) => setTimeout(r, 300))
   handleAgentEvent({
     type: 'change-review',
     conversationId: meta.id,
     changeSetId: set.id,
     pendingCount: set.files.length,
-    changeSet: set
+    changeSet: set,
+    messageId: assistantMsg.id
   })
   console.log('[smoke] seeded change review', set.id, 'conv', meta.id)
 }
@@ -7078,7 +7467,7 @@ async function seedSmokeChangeReview(): Promise<void> {
 // Lifecycle
 // ---------------------------------------------------------------------------
 
-const singleInstance = app.requestSingleInstanceLock()
+const singleInstance = isE2eRuntime() || app.requestSingleInstanceLock()
 if (!singleInstance) {
   // Straight out, with no listeners attached. A second instance exists only to
   // hand focus to the first one; it has loaded nothing and so has nothing to
@@ -7271,13 +7660,15 @@ if (!singleInstance) {
 
     const snapshotting = Boolean(process.env.VAV_SNAPSHOT)
     const cliOpen = argvRequestsCliOpen(process.argv)
-    const argvOpens = snapshotting || cliOpen ? [] : parseOpenPathsFromArgv(process.argv)
+    const argvOpens =
+      snapshotting || cliOpen || isE2eRuntime() ? [] : parseOpenPathsFromArgv(process.argv)
     // Finder "Open With" / Dock drop cold start: the file the user asked for
     // goes up first. Booting the much heavier main shell ahead of it costs a
     // second of contended CPU and raises a window nobody asked for.
     let previewColdOpen =
       !snapshotting &&
       !cliOpen &&
+      !isE2eRuntime() &&
       [...pendingOpenPaths, ...argvOpens].some(isPreviewableColdOpenPath)
     if (previewColdOpen) {
       flushPendingOpens(argvOpens)
@@ -7291,54 +7682,57 @@ if (!singleInstance) {
     // from the IDE. Force the main window up once the renderer finishes loading.
     mainWindow.webContents.once('did-finish-load', () => {
       if (!previewColdOpen) showMainWindow()
-      if (process.env.VAV_SMOKE_SEED === '1') {
+      if (process.env.VAV_SMOKE_SEED === '1' || process.env.VAV_E2E_SEED_REVIEW === '1') {
         void seedSmokeChangeReview()
       }
       // Companion warm order: session first (global ⌘⇧↵ is latency-critical),
       // then token / preview / settings. A short delay lets the main shell paint
       // once so the hidden session boot does not contend on first frame.
-      setTimeout(() => {
-        try {
-          warmSessionShellPool()
-        } catch {
-          // non-fatal
-        }
-      }, 400)
-      setTimeout(() => {
-        try {
-          warmTokenUsageWindow()
-        } catch {
-          // non-fatal
-        }
-      }, 1600)
-      setTimeout(() => {
-        try {
-          warmProviderAccountWindow()
-        } catch {
-          // non-fatal
-        }
-      }, 1800)
-      setTimeout(() => {
-        try {
-          warmOverlayShellPool()
-        } catch {
-          // non-fatal
-        }
-      }, 1200)
-      setTimeout(() => {
-        try {
-          warmPreviewShellPool()
-        } catch {
-          // non-fatal
-        }
-      }, 2000)
-      setTimeout(() => {
-        try {
-          warmSettingsWindow()
-        } catch {
-          // non-fatal
-        }
-      }, 2400)
+      // E2E skips this — extra BrowserWindows make firstWindow() / focus flake.
+      if (!isE2eRuntime()) {
+        setTimeout(() => {
+          try {
+            warmSessionShellPool()
+          } catch {
+            // non-fatal
+          }
+        }, 400)
+        setTimeout(() => {
+          try {
+            warmTokenUsageWindow()
+          } catch {
+            // non-fatal
+          }
+        }, 1600)
+        setTimeout(() => {
+          try {
+            warmProviderAccountWindow()
+          } catch {
+            // non-fatal
+          }
+        }, 1800)
+        setTimeout(() => {
+          try {
+            warmOverlayShellPool()
+          } catch {
+            // non-fatal
+          }
+        }, 1200)
+        setTimeout(() => {
+          try {
+            warmPreviewShellPool()
+          } catch {
+            // non-fatal
+          }
+        }, 2000)
+        setTimeout(() => {
+          try {
+            warmSettingsWindow()
+          } catch {
+            // non-fatal
+          }
+        }, 2400)
+      }
       // Seed static catalogues immediately, then live-probe in the background.
       try {
         publishModelCatalog(seedModelCatalog(settingsStore, vavModelListOptions()))
@@ -7365,7 +7759,7 @@ if (!singleInstance) {
 
     // Finder → Services → “Open Directory in VAV” (folders only).
     // Defer so first paint is not blocked by osacompile.
-    if (IS_MAC) {
+    if (IS_MAC && !isE2eRuntime()) {
       setTimeout(() => {
         try {
           ensureMacOpenDirectoryService()

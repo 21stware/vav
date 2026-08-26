@@ -1,9 +1,14 @@
 import type {
+  AcpAuthMethod,
+  AcpSessionState
+} from '../../../shared/acpSession.ts'
+import type {
   ApprovalMode,
   CliHostKind,
   ProviderResumeCursor,
   QuotaWindow
-} from '@shared/types'
+} from '../../../shared/types.ts'
+import type { AcpFileAccess } from './acpFs.ts'
 
 /** Normalized events from a CLI transport → CliAgentHost projects these to TurnEvent. */
 export type DriverEvent =
@@ -35,10 +40,13 @@ export type DriverEvent =
       type: 'elicitation'
       requestId: string
       toolCallId: string
-      kind: 'plan_doc' | 'ask'
+      kind: 'plan_doc' | 'ask' | 'form' | 'url'
       title?: string
       input: unknown
     }
+  | { type: 'session-state'; state: AcpSessionState }
+  | { type: 'auth-required'; methods: AcpAuthMethod[] }
+  | { type: 'fs-write'; path: string; original: string | null; content: string }
   | {
       type: 'usage'
       /** Per-turn (or delta) input tokens, excluding cache-read when the host splits them. */
@@ -86,6 +94,10 @@ export type DriverEvent =
   | { type: 'error'; message: string; errorCode?: number; errorDetail?: string }
   | { type: 'process-exited'; code: number | null }
 
+export interface DriverPromptExtras {
+  attachments?: string[]
+}
+
 export interface DriverStartOptions {
   binary: string
   cwd: string
@@ -95,10 +107,12 @@ export interface DriverStartOptions {
   env?: Record<string, string>
   /** Extra argv from AgentConfig.defaultArgs that are still relevant. */
   extraArgs?: string[]
+  /** Workspace file I/O for ACP `fs/*` client methods. */
+  files?: AcpFileAccess
 }
 
 export interface DriverControl {
-  prompt(text: string): void
+  prompt(text: string, extras?: DriverPromptExtras): void
   /** Inject into the running turn when the transport supports it. */
   steer?(text: string): void
   supportsSteer(): boolean
@@ -109,6 +123,7 @@ export interface DriverControl {
     approvalMode?: ApprovalMode
     /** ACP session/set_mode id (agent / plan / ask). */
     mode?: string | null
+    configOption?: { id: string; value: string | boolean }
   }): boolean
   dispose(): void
 }

@@ -1,3 +1,4 @@
+import { collectSwarmLeaves, swarmLeaf, swarmRootId } from '@shared/swarmLayout'
 import { tt } from '../i18n/useT'
 import { resolveContextCloseAction } from './closeContext'
 import { disposeTerminal } from './terminalRegistryHandle'
@@ -57,6 +58,7 @@ export function resolveUiFocusScope(target: EventTarget | null): UiFocusScope {
 
   // Swarm content only (PTY / picker / split). Title-bar chrome is not Swarm.
   if (
+    el.closest('.session-swarm-split') ||
     el.closest('.terminal-host-main') ||
     el.closest('[data-terminal-surface="agent"]') ||
     el.closest('.cli-agent-picker') ||
@@ -303,8 +305,8 @@ function closeActiveAgentTab(conversationId: string): boolean {
  * Rules:
  * - Bash UI → close active bash tab (confirm if busy); empty → collapse tray
  * - Files UI → collapse tools tray
- * - Swarm pane focused: multi-pane → close pane; sole live agent → picker
- * - Sole picker, or Swarm not focused → window (no agent confirm)
+ * - Multi-pane Swarm (composer / transcript / agent) → close one conversation
+ * - Last remaining conversation, or sole picker → window
  */
 export function handleContextClose(): boolean {
   // Re-resolve from the live active element so we stay correct even if a
@@ -316,12 +318,19 @@ export function handleContextClose(): boolean {
   const id = session.activeId
   const host = id ? getAgentHostForConversation(id) : null
   const cliMode = id ? isCliMode(id) : false
+  const family = id ? session.conversations.find((c) => c.id === id) : undefined
+  const rootId = id ? swarmRootId(id, family?.swarmParentId) : ''
+  const root = rootId ? session.conversations.find((c) => c.id === rootId) : undefined
+  const swarmLeaves = rootId
+    ? collectSwarmLeaves(root?.swarmLayout ?? swarmLeaf(rootId))
+    : []
   const action = resolveContextCloseAction({
     focus: scope,
     cliMode,
     paneCount: host?.tabs.length ?? 0,
     soleTabIsPending: host?.tabs.length === 1 && host.tabs[0]?.pendingCli === true,
-    toolsCollapsed: session.toolsCollapsed
+    toolsCollapsed: session.toolsCollapsed,
+    swarmPaneCount: session.settings.swarmModeEnabled ? swarmLeaves.length : 0
   })
 
   switch (action) {
@@ -335,6 +344,10 @@ export function handleContextClose(): boolean {
     }
     case 'agent': {
       if (!id) return false
+      if (session.settings.swarmModeEnabled && swarmLeaves.length > 1) {
+        void session.closeSwarmPane(id)
+        return true
+      }
       setUiFocusScope('agent')
       return closeActiveAgentTab(id)
     }

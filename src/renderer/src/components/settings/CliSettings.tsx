@@ -92,7 +92,7 @@ export function CliSettings(): React.JSX.Element {
   const loading = !status && !loadError
 
   return (
-    <div className="settings-form">
+    <div className="settings-form" data-testid="settings-cli">
       <div className="cli-intro">
         <Terminal size={18} />
         <div>

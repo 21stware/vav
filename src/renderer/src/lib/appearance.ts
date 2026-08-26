@@ -233,6 +233,10 @@ export function useAppearance(): void {
     const apply = (): void => {
       const resolved = theme === 'system' ? (media.matches ? 'dark' : 'light') : theme
       document.documentElement.dataset.theme = resolved
+      // Native range / checkbox follow color-scheme, not data-theme.
+      // Bootstrap sets an inline value — keep it in lockstep or light
+      // mode keeps a dark charcoal slider track.
+      document.documentElement.style.colorScheme = resolved
       setResolvedTheme(resolved)
       // Same turn as data-theme: xterm's injected fg otherwise stays the
       // previous appearance (black glyphs on the new dark plate).

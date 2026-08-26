@@ -11,6 +11,7 @@ import {
   RECENT_AGENT_MODELS_MAX,
   RECENT_AGENT_MODELS_PINNED,
   agentModelHostKey,
+  defaultModelForChatHost,
   filterEnabledModels,
   hostIdForChatHost,
   isAgentModelEnabled,
@@ -19,13 +20,26 @@ import {
   pushRecentAgentModel,
   resolveModelForChatHost
 } from '@shared/agentModels'
+import {
+  groupAccountsByVendor,
+  vendorDisplayName,
+  vendorIdFromEndpoint,
+  type LlmVendorId
+} from '@shared/llmVendors'
 import { isAgentPickerLocked } from '../lib/agentPickerLock'
+import { useAccountGroups, vavAccountsOf } from '../lib/accountGroups'
 import { useSessionStore } from '../state/sessionStore'
 import { useT } from '../i18n/useT'
 import { menuAnchorIfVisible, showMenu, type MenuItem } from '../lib/nativeMenu'
 import { AgentBrandMark } from './AgentBrandMark'
 
-type HostOption = { id: CliHostKind | null; name: string; markId: string }
+type HostOption = {
+  id: CliHostKind | null
+  name: string
+  markId: string
+  vendorId?: LlmVendorId
+  accountId?: string
+}
 
 type RecentItem = {
   hostId: string
@@ -141,6 +155,7 @@ export function AgentModelPicker({
   const selectChatHost = useSessionStore((s) => s.selectChatHost)
   const updateSettings = useSessionStore((s) => s.updateSettings)
   const modelPickerMenuNonce = useSessionStore((s) => s.modelPickerMenuNonce)
+  const modelPickerConversationId = useSessionStore((s) => s.modelPickerConversationId)
   const messages = useSessionStore((s) => s.messages[conversationId])
   const locked = isAgentPickerLocked(messages)
 
@@ -204,16 +219,15 @@ export function AgentModelPicker({
   const cliHost = conversation?.cliHost ?? null
   const customModels = settings.customModels
   const disabledModels = settings.disabledAgentModels ?? {}
+  const accountGroups = useAccountGroups()
 
-  const hostOptions = useMemo((): HostOption[] => {
+  const agentOptions = useMemo((): HostOption[] => {
     const byId = new Map(
       enabledCliAgents(settings.cliAgents)
         .filter((a) => isStructuredCliHost(a.id))
         .map((a) => [a.id, a] as const)
     )
-    const hosts: HostOption[] = [
-      { id: null, name: t('agents.plainShell'), markId: 'vav' }
-    ]
+    const hosts: HostOption[] = []
     for (const id of STRUCTURED_CLI_HOSTS) {
       const agent = byId.get(id)
       if (!agent) continue
@@ -224,7 +238,37 @@ export function AgentModelPicker({
       })
     }
     return hosts
-  }, [settings.cliAgents, t])
+  }, [settings.cliAgents])
+
+  const modelOptions = useMemo((): HostOption[] => {
+    const grouped = groupAccountsByVendor(vavAccountsOf(accountGroups))
+    if (grouped.length > 0) {
+      return grouped.map((group) => {
+        const current = group.accounts.find((row) => row.current) ?? group.accounts[0]!
+        return {
+          id: null,
+          name: group.vendor.name,
+          markId: group.vendor.id,
+          vendorId: group.vendor.id,
+          accountId: current.id
+        }
+      })
+    }
+    const vendorId = vendorIdFromEndpoint(settings.apiEndpoint)
+    return [
+      {
+        id: null,
+        name: vendorDisplayName(settings.apiEndpoint, t('agents.customModel')),
+        markId: vendorId,
+        vendorId
+      }
+    ]
+  }, [accountGroups, settings.apiEndpoint, t])
+
+  const hostOptions = useMemo(
+    () => [...modelOptions, ...agentOptions],
+    [agentOptions, modelOptions]
+  )
 
   const hostByMark = useMemo(() => {
     const map = new Map<string, HostOption>()
@@ -246,9 +290,31 @@ export function AgentModelPicker({
   const activeModel = resolveModelForChatHost(cliHost, conversation?.model, {
     customModels,
     vavDefaultModel: settings.defaultModel,
+    hostDefaultModel: defaultModelForChatHost(cliHost, settings),
     catalogue: activeCatalogue
   })
-  const activeHost = hostOptions.find((h) => h.id === cliHost) ?? hostOptions[0]!
+  const currentVav = useMemo(() => {
+    const rows = vavAccountsOf(accountGroups)
+    return (
+      rows.find((row) => row.id === conversation?.accountId) ??
+      rows.find((row) => row.current) ??
+      rows[0] ??
+      null
+    )
+  }, [accountGroups, conversation?.accountId])
+  const activeVendorId =
+    cliHost == null ? vendorIdFromEndpoint(currentVav?.endpoint ?? settings.apiEndpoint) : null
+  const activeHost =
+    (cliHost
+      ? agentOptions.find((h) => h.id === cliHost)
+      : modelOptions.find((h) => h.vendorId === activeVendorId)) ??
+    modelOptions[0] ??
+    agentOptions[0] ?? {
+      id: null,
+      name: vendorDisplayName(settings.apiEndpoint, t('agents.customModel')),
+      markId: activeVendorId ?? 'custom',
+      vendorId: activeVendorId ?? 'custom'
+    }
   const modelLabel = labelForChatModel(
     cliHost,
     activeModel,
@@ -260,8 +326,9 @@ export function AgentModelPicker({
     const offered = new Set(hostOptions.map((h) => h.markId))
     const out: RecentItem[] = []
     for (const entry of settings.recentAgentModels ?? []) {
-      if (!offered.has(entry.hostId)) continue
-      const host = hostByMark.get(entry.hostId)
+      const hostId = entry.hostId === 'vav' ? (activeVendorId ?? 'custom') : entry.hostId
+      if (!offered.has(hostId) && !offered.has(entry.hostId)) continue
+      const host = hostByMark.get(hostId) ?? hostByMark.get(entry.hostId)
       if (!host) continue
       if (!isAgentModelEnabled(host.id, entry.model, disabledModels)) continue
       const catalogue = modelsFor(host.id)
@@ -270,7 +337,10 @@ export function AgentModelPicker({
         host,
         model: entry.model,
         modelLabel: labelForChatModel(host.id, entry.model, customModels, catalogue),
-        selected: host.id === cliHost && entry.model === activeModel
+        selected:
+          host.id === cliHost &&
+          entry.model === activeModel &&
+          (host.vendorId == null || host.vendorId === activeVendorId)
       })
       if (out.length >= RECENT_AGENT_MODELS_MAX) break
     }
@@ -285,12 +355,17 @@ export function AgentModelPicker({
     customModels,
     catalog,
     cliHost,
-    activeModel
+    activeModel,
+    activeVendorId
   ])
 
-  const rememberPick = (host: CliHostKind | null, model: string): void => {
+  const rememberPick = (
+    host: CliHostKind | null,
+    model: string,
+    vendorId?: string | null
+  ): void => {
     const next = pushRecentAgentModel(settings.recentAgentModels, {
-      hostId: hostIdForChatHost(host),
+      hostId: hostIdForChatHost(host, vendorId),
       model
     })
     void updateSettings({ recentAgentModels: next })
@@ -298,25 +373,32 @@ export function AgentModelPicker({
 
   const pickAgentModel = async (
     host: CliHostKind | null,
-    model: string
+    model: string,
+    vendor?: { vendorId?: LlmVendorId; accountId?: string }
   ): Promise<void> => {
     if (locked && host !== cliHost) return
+    if (host == null && vendor?.accountId) {
+      const currentId =
+        currentVav?.id ?? vavAccountsOf(accountGroups).find((row) => row.current)?.id
+      if (vendor.accountId !== currentId) {
+        await window.vav.accounts.setCurrent(vendor.accountId)
+      }
+    }
     if (!locked && cliHost !== host) {
       await selectChatHost(conversationId, host)
     }
-    const next = resolveModelForChatHost(host, model, {
-      customModels,
-      vavDefaultModel: settings.defaultModel,
-      catalogue: modelsFor(host)
-    })
-    await setModel(conversationId, next)
-    rememberPick(host, next)
+    await setModel(conversationId, model)
+    rememberPick(host, model, vendor?.vendorId ?? (host == null ? activeVendorId : null))
   }
 
   const recentRow = (item: RecentItem): MenuItem => ({
     label: `${item.host.name} · ${item.modelLabel}`,
     checked: item.selected,
-    onSelect: () => void pickAgentModel(item.host.id, item.model)
+    onSelect: () =>
+      void pickAgentModel(item.host.id, item.model, {
+        vendorId: item.host.vendorId,
+        accountId: item.host.accountId
+      })
   })
 
   const openMenu = useCallback(
@@ -351,37 +433,63 @@ export function AgentModelPicker({
       }
 
       if (items.length > 0) items.push({ label: '', divider: true })
-      items.push({ label: t('composer.providers'), disabled: true })
 
-      for (const host of hostOptions) {
-        const models = modelsFor(host.id)
-        const modelItems: MenuItem[] =
-          models.length === 0
-            ? [{ label: t('composer.modelsLoading'), disabled: true }]
-            : models.map((model) => ({
-                label: model.label,
-                checked: host.id === cliHost && model.id === activeModel,
-                onSelect: () => void pickAgentModel(host.id, model.id)
-              }))
-        items.push({
-          label: host.name,
-          submenu: modelItems
+      const hostMenu = (hosts: HostOption[]): MenuItem[] =>
+        hosts.map((host) => {
+          const models = modelsFor(host.id)
+          const modelItems: MenuItem[] =
+            models.length === 0
+              ? [{ label: t('composer.modelsLoading'), disabled: true }]
+              : models.map((model) => ({
+                  label: model.label,
+                  checked:
+                    host.id === cliHost &&
+                    model.id === activeModel &&
+                    (host.vendorId == null || host.vendorId === activeVendorId),
+                  onSelect: () =>
+                    void pickAgentModel(host.id, model.id, {
+                      vendorId: host.vendorId,
+                      accountId: host.accountId
+                    })
+                }))
+          return { label: host.name, submenu: modelItems }
         })
+
+      if (agentOptions.length > 0) {
+        items.push({ label: t('composer.agents'), disabled: true })
+        items.push(...hostMenu(agentOptions))
+      }
+      if (modelOptions.length > 0) {
+        if (agentOptions.length > 0) items.push({ label: '', divider: true })
+        items.push({ label: t('composer.models'), disabled: true })
+        items.push(...hostMenu(modelOptions))
       }
 
       void showMenu(items, menuAnchorIfVisible(anchor))
     },
     // recentRow / modelsFor / pickAgentModel close over current picker state
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [recentItems, hostOptions, t, cliHost, activeModel, locked, catalog, disabledModels]
+    [
+      recentItems,
+      agentOptions,
+      modelOptions,
+      t,
+      cliHost,
+      activeModel,
+      activeVendorId,
+      locked,
+      catalog,
+      disabledModels
+    ]
   )
 
   useEffect(() => {
     if (modelPickerMenuNonce === 0 || modelPickerMenuNonce === seenMenuNonce.current) return
+    if (modelPickerConversationId && modelPickerConversationId !== conversationId) return
     seenMenuNonce.current = modelPickerMenuNonce
     if (!conversation) return
     openMenu(locked ? triggerRef.current : rootRef.current)
-  }, [modelPickerMenuNonce, openMenu, conversation, locked])
+  }, [modelPickerMenuNonce, modelPickerConversationId, conversationId, openMenu, conversation, locked])
 
   return (
     <div

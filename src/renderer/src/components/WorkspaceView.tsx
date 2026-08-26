@@ -283,6 +283,7 @@ export function WorkspaceView({
 
       <aside
         ref={previewRef}
+        data-testid="file-preview"
         className={`workspace-view-preview${previewOpen ? '' : ' is-collapsed'}`}
         style={{ width: previewOpen ? previewWidth : 0 }}
         aria-hidden={!previewOpen}

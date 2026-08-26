@@ -38,7 +38,10 @@ export function ThinkingProcess({
       : t('composer.thinkingProcessSteps', { n: steps })
 
   return (
-    <div className={`tool-call thinking-process${open ? ' expanded' : ''}`}>
+    <div
+      className={`tool-call thinking-process${open ? ' expanded' : ''}`}
+      data-testid="thinking-process"
+    >
       <button
         type="button"
         className="tool-row"

@@ -153,4 +153,75 @@ describe('buildAnalysisSnapshot', () => {
       ['vav', 'claude', 'codex', 'grok']
     )
   })
+
+  it('lists vendor cards in provider-list order and remaps VAV usage', async () => {
+    const snap = await buildAnalysisSnapshot({
+      conversations: [
+        conversation({
+          cliHost: null,
+          accountId: 'acc-1',
+          tokensUsed: 40
+        })
+      ],
+      cliAgents: [{ id: 'claude', name: 'Claude Code' }],
+      catalogue: [{ id: 'claude', name: 'Claude Code' }],
+      presentIds: ['claude'],
+      vendors: [
+        { id: 'deepseek', name: 'DeepSeek' },
+        { id: 'openrouter', name: 'OpenRouter' }
+      ],
+      order: ['claude', 'openrouter', 'deepseek'],
+      remapHost: (hostKey, accountId) =>
+        hostKey === 'vav' && accountId === 'acc-1' ? 'deepseek' : hostKey,
+      apiKeyPresent: true,
+      forceRefresh: false,
+      refreshQuotas: async () => undefined,
+      quotaWindows: () => [],
+      readAccount: async () => ({
+        signedIn: false,
+        accountId: null,
+        plan: null,
+        authKind: 'unknown'
+      }),
+      readApiBalance: async (hostKey) => {
+        if (hostKey === 'deepseek') {
+          return {
+            supported: true,
+            balance: {
+              source: 'deepseek',
+              currency: 'CNY',
+              total: 5,
+              granted: 0,
+              toppedUp: 5,
+              available: true
+            },
+            keyPresent: true
+          }
+        }
+        if (hostKey === 'openrouter') {
+          return {
+            supported: true,
+            balance: {
+              source: 'openrouter',
+              currency: 'USD',
+              total: 12.5,
+              granted: 0,
+              toppedUp: 20,
+              available: true
+            },
+            keyPresent: true
+          }
+        }
+        return { supported: false, balance: null, keyPresent: false }
+      }
+    })
+    assert.deepEqual(
+      snap.providers.map((p) => p.hostKey),
+      ['claude', 'openrouter', 'deepseek']
+    )
+    assert.equal(snap.usage.hosts[0]?.hostKey, 'deepseek')
+    assert.equal(snap.providers.find((p) => p.hostKey === 'deepseek')?.balanceState, 'ready')
+    assert.equal(snap.providers.find((p) => p.hostKey === 'openrouter')?.balanceState, 'ready')
+    assert.equal(snap.providers.find((p) => p.hostKey === 'openrouter')?.balance?.total, 12.5)
+  })
 })

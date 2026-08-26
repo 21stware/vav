@@ -42,6 +42,13 @@ describe('rewindCenters', () => {
       if (i > 0) assert.ok(centers[i]! > centers[i - 1]!)
     }
   })
+
+  it('packs a short stack in the middle instead of stretching to the rail', () => {
+    const centers = rewindCenters([20, 20, 20], 400, 10)
+    assert.equal(centers.length, 3)
+    assert.ok(centers[2]! - centers[0]! < 50)
+    assert.ok(Math.abs((centers[0]! + centers[2]!) / 2 - 200) < 1)
+  })
 })
 
 describe('dockMagnify', () => {
@@ -104,6 +111,14 @@ describe('layoutRewindRail', () => {
     assert.deepEqual(named(layoutRewindRail({ count: 60, height: 400, focus: 30, hover: 30 })), [
       29, 30, 31
     ])
+  })
+
+  it('centers a short thread instead of spreading it across the rail', () => {
+    const rows = layoutRewindRail({ count: 3, height: 400, focus: 1, hover: null })
+    assert.ok(rows[2]!.y - rows[0]!.y < 50)
+    assert.ok(Math.abs((rows[0]!.y + rows[2]!.y) / 2 - 200) < 2)
+    assert.ok(rows[0]!.y > 140)
+    assert.ok(rows[2]!.y < 260)
   })
 
   it('keeps even spacing at rest and only opens the cluster while hovering', () => {

@@ -12,7 +12,7 @@ import { asRecord, asString } from './process'
 export function mapToolName(name: string): ToolName {
   const n = name.toLowerCase().replace(/[^a-z0-9_]/g, '')
   if (isPlanDocToolName(name)) return 'plan_doc'
-  if (isEnterPlanModeName(name)) return 'plan'
+  if (isEnterPlanModeName(name)) return 'switch_mode'
   if (isTaskToolName(name)) return 'task'
   if (
     n === 'bash' ||

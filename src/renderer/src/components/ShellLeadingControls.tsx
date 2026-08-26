@@ -24,6 +24,7 @@ export function ShellLeadingControls(): React.JSX.Element {
       />
       <Button
         icon={<Plus size={14} />}
+        testId="new-session"
         title={t('app.newSessionTitle', { shortcut: keys('⌘N') })}
         onClick={() => void createConversation()}
       />

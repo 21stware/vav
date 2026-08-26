@@ -252,6 +252,7 @@ export function AppearanceSettings(): React.JSX.Element {
           <Toggle
             checked={settings.reduceMotion}
             title={t('appearance.reduceMotion')}
+            testId="settings-reduce-motion"
             onChange={(reduceMotion) => void updateSettings({ reduceMotion })}
           />
         </div>

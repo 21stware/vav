@@ -37,10 +37,11 @@ export function dockMagnify(index: number, hover: number | null, radius = DOCK_R
 
 /**
  * Slot spacing is solved in px, not in relative weights: the lens keeps exactly
- * FOCUS_SLOT so its label always fits, and the far field takes whatever pitch
- * makes the rail add up to its fixed height.
+ * REST_SLOT so its label always fits. A short thread keeps that pitch and sits
+ * in the middle of the rail; only a long thread stretches to the full height.
  */
-const FOCUS_SLOT = 20
+export const REST_SLOT = 20
+const FOCUS_SLOT = REST_SLOT
 /** Floor for the far field once even hairlines stop fitting. */
 const MIN_SLOT = 1.2
 /** Spread of the space bulge, matched to DOCK_RADIUS so the slots that gain
@@ -56,9 +57,10 @@ export function rewindSlotWeights(
   awake = true
 ): number[] {
   if (count <= 0) return []
-  if (count === 1) return [innerHeight]
-  // At rest the current tick is only a highlight — no empty padding around it.
-  if (!awake || count <= FISHEYE_MIN_TURNS) return new Array<number>(count).fill(1)
+  if (count === 1) return [REST_SLOT]
+  // At rest — or on a short thread — keep the natural pitch. Stretching those
+  // weights to the rail height is what made two or three turns look sparse.
+  if (!awake || count <= FISHEYE_MIN_TURNS) return new Array<number>(count).fill(REST_SLOT)
 
   const boosts: number[] = []
   let spread = 0
@@ -86,11 +88,16 @@ export function rewindSlotWeights(
 export function rewindCenters(weights: number[], height: number, pad = REWIND_PAD): number[] {
   const inner = Math.max(1, height - pad * 2)
   const total = weights.reduce((sum, w) => sum + w, 0)
-  if (total <= 0) return weights.map((_, i) => pad + ((i + 0.5) / Math.max(1, weights.length)) * inner)
+  if (total <= 0) {
+    return weights.map((_, i) => pad + ((i + 0.5) / Math.max(1, weights.length)) * inner)
+  }
+  // Shorter than the rail: keep natural pitch and center the stack.
+  const scale = total > inner ? inner / total : 1
+  const start = pad + (inner - total * scale) / 2
   const centers: number[] = []
   let acc = 0
   for (const weight of weights) {
-    centers.push(pad + ((acc + weight / 2) / total) * inner)
+    centers.push(start + (acc + weight / 2) * scale)
     acc += weight
   }
   return centers

@@ -11,7 +11,7 @@ import type {
   TurnPhase
 } from '@shared/types'
 import { DEFAULT_CLI_AGENTS, DEFAULT_SETTINGS } from '@shared/types'
-import { agentModelHostKey, resolveModelForChatHost } from '@shared/agentModels'
+import { agentModelHostKey, defaultModelForChatHost, resolveModelForChatHost } from '@shared/agentModels'
 import type { ModelOption } from '@shared/types'
 
 export type AgentModelCatalogEntry = {
@@ -57,6 +57,17 @@ import { threadPath } from '@shared/thread'
 import { getProjection, disposeProjection } from './StreamProjection'
 import { AGENT_TAB_ID, useWorkspaceStore } from './workspaceStore'
 import { isSwarmSurfaceActive } from '../lib/workdirSwitch'
+import {
+  collectSwarmLeaves,
+  insertSwarmLeaf,
+  rememberSwarmLayout,
+  restoreSwarmLeaf,
+  removeSwarmLeaf,
+  swarmLeaf,
+  swarmRootId
+} from '@shared/swarmLayout'
+import { patchAcpConfigOption, patchAcpSessionMode } from '@shared/acpSession'
+import type { TerminalLayoutNode, TerminalSplitAxis } from '@shared/types'
 
 function swarmBlocksWorkdirSwitch(id: string | null | undefined, swarmEnabled: boolean): boolean {
   if (!id) return false
@@ -200,6 +211,17 @@ function mergeConversationList(
     return (prevIndex.get(a.id) ?? 1e9) - (prevIndex.get(b.id) ?? 1e9)
   })
   return [...sorted, ...fileSessions]
+}
+
+async function persistSwarmLayout(
+  set: (partial: { conversations: ConversationMeta[] }) => void,
+  getConversations: () => ConversationMeta[],
+  rootId: string,
+  layout: TerminalLayoutNode | null,
+  full?: TerminalLayoutNode | null
+): Promise<void> {
+  const list = await window.vav.conversations.setSwarmLayout(rootId, layout, full)
+  set({ conversations: mergeConversationList(getConversations(), list) })
 }
 
 export interface ToastState {
@@ -564,6 +586,8 @@ interface SessionState {
   /** Settings → Accounts: select this profile when the page opens. */
   settingsFocusAccountId: string | null
   composerFocusTick: number
+  /** Conversation whose composer should take the latest focusComposer tick. */
+  composerFocusId: string | null
   /** Which comment card should take focus (set on pick). */
   commentFocusId: string | null
   /** Bumped on every pick so re-selecting the same block re-focuses the field. */
@@ -578,11 +602,13 @@ interface SessionState {
    * native menu without holding open/closed boolean state in the store.
    */
   modelPickerMenuNonce: number
+  modelPickerConversationId: string | null
   /**
    * Bumped by ⌘⇧P / menu command so the composer permission menu can open
    * without holding open/closed boolean state in the store.
    */
   approvalMenuNonce: number
+  approvalConversationId: string | null
 
   /**
    * @deprecated Workspace group selection removed — sessions are selected directly.
@@ -674,12 +700,19 @@ interface SessionState {
   createConversation(options?: {
     workingDirectory?: string | null
     model?: string
+    swarmParentId?: string | null
     /**
      * Where the new session should appear.
      * Default: select in this window, except companion shells open a new window.
      */
-    openIn?: 'here' | 'detached'
-  }): Promise<void>
+    openIn?: 'here' | 'detached' | 'none'
+  }): Promise<string | void>
+  /** ⌘D / ⌘⇧D: mint a sibling agent session and split the Thread surface. */
+  splitSwarmPane(axis?: TerminalSplitAxis): Promise<void>
+  /** Hide a Swarm pane without deleting the agent session. */
+  closeSwarmPane(conversationId: string): Promise<void>
+  /** Focus a Swarm agent session, restoring its last layout slot when parked. */
+  focusSwarmSession(conversationId: string): Promise<void>
   /** New blank session reusing the active conversation's workdir + model. */
   createConversationInCurrentWorkspace(): Promise<void>
   duplicateConversation(id: string): Promise<void>
@@ -716,6 +749,8 @@ interface SessionState {
   setArchived(id: string, archived: boolean): Promise<void>
   setApprovalMode(id: string, mode: import('@shared/types').ApprovalMode): Promise<void>
   setThinkingLevel(id: string, level: import('@shared/types').ThinkingLevel): Promise<void>
+  setAcpMode(id: string, modeId: string): Promise<void>
+  setAcpConfigOption(id: string, configId: string, value: string | boolean): Promise<void>
   /** Workspace preview focus — built-in VAV agent system / open-file context. */
   setFocusedFile(id: string, path: string | null): Promise<void>
   /**
@@ -836,7 +871,7 @@ interface SessionState {
   setPanelSegmentQuiet(segment: 'files' | 'terminal'): void
   togglePanelSegment(): void
   setPanelHeight(height: number): void
-  focusComposer(): void
+  focusComposer(conversationId?: string): void
   /**
    * Ctrl+`: expand Tools → Terminal, ensure a plain bash exists, focus it.
    * Toggle-close when already focused on an open terminal tray.
@@ -944,15 +979,18 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   errorBannerDetail: null,
   dialog: null,
   toast: null,
-  settingsCategory: 'agents',
+  settingsCategory: 'appearance',
   settingsFocusAgentId: null,
   settingsFocusAccountId: null,
   composerFocusTick: 0,
+  composerFocusId: null,
   commentFocusId: null,
   commentFocusTick: 0,
   workspaceMenuNonce: 0,
   modelPickerMenuNonce: 0,
+  modelPickerConversationId: null,
   approvalMenuNonce: 0,
+  approvalConversationId: null,
   activeGroupId: null,
   filePreviewOpen: false,
   sessionPreview: { kind: 'file' },
@@ -990,6 +1028,9 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     }
     if (!settings.disabledAgentModels || typeof settings.disabledAgentModels !== 'object') {
       settings.disabledAgentModels = {}
+    }
+    if (!settings.defaultAgentModels || typeof settings.defaultAgentModels !== 'object') {
+      settings.defaultAgentModels = {}
     }
 
     set({
@@ -1370,6 +1411,16 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       }
     }
     const meta = await window.vav.conversations.create(createOpts)
+    if (options?.openIn === 'none') {
+      set((state) => ({
+        conversations: state.conversations.some((c) => c.id === meta.id)
+          ? state.conversations
+          : [meta, ...state.conversations],
+        messages: { ...state.messages, [meta.id]: [] },
+        activeLeaf: { ...state.activeLeaf, [meta.id]: null }
+      }))
+      return meta.id
+    }
     // Main publishes the full list on create; `onChanged` may already have
     // applied it by the time we get here. Prepending unconditionally would
     // put the same id in the sidebar twice (⌘N made that obvious).
@@ -1399,6 +1450,75 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     // we never inherit another session's open Terminal tray.
     get().setToolsCollapsed(true)
     get().focusComposer()
+    return meta.id
+  },
+
+  async splitSwarmPane(axis = 'row') {
+    const { activeId, conversations } = get()
+    if (!activeId) return
+    const current = conversations.find((c) => c.id === activeId)
+    if (!current || current.fileId) return
+    const rootId = swarmRootId(current.id, current.swarmParentId)
+    const root = conversations.find((c) => c.id === rootId) ?? current
+    const layout = root.swarmLayout ?? swarmLeaf(rootId)
+    const childId = await get().createConversation({
+      workingDirectory: current.workingDirectory ?? null,
+      model: current.model,
+      swarmParentId: rootId,
+      openIn: 'none'
+    })
+    if (!childId) return
+    const next = insertSwarmLeaf(layout, activeId, axis, childId)
+    const full = insertSwarmLeaf(root.swarmLayoutFull ?? layout, activeId, axis, childId)
+    await persistSwarmLayout((partial) => set(partial), () => get().conversations, rootId, next, full)
+    await get().selectConversation(childId)
+    get().focusComposer(childId)
+    // New pane mounts with the layout update — refocus after paint so the
+    // textarea exists (⌘D used to leave focus on the previous composer).
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => get().focusComposer(childId))
+    })
+  },
+
+  async closeSwarmPane(conversationId) {
+    if (!conversationId) return
+    const { conversations, activeId } = get()
+    const current = conversations.find((c) => c.id === conversationId)
+    if (!current) return
+    const rootId = swarmRootId(current.id, current.swarmParentId)
+    const root = conversations.find((c) => c.id === rootId)
+    const layout = root?.swarmLayout ?? swarmLeaf(rootId)
+    const leaves = collectSwarmLeaves(layout)
+    if (leaves.length <= 1) return
+    const full = rememberSwarmLayout(root?.swarmLayoutFull, layout)
+    const next = removeSwarmLeaf(layout, conversationId) ?? swarmLeaf(rootId)
+    await persistSwarmLayout((partial) => set(partial), () => get().conversations, rootId, next, full)
+    if (activeId === conversationId) {
+      const remain = collectSwarmLeaves(next)
+      const fallback = remain[0]
+      if (fallback) await get().selectConversation(fallback)
+    }
+  },
+
+  async focusSwarmSession(conversationId) {
+    if (!conversationId) return
+    const { conversations, activeId } = get()
+    const current = conversations.find((c) => c.id === conversationId)
+    if (!current) {
+      await get().selectConversation(conversationId)
+      return
+    }
+    const rootId = swarmRootId(current.id, current.swarmParentId)
+    const root = conversations.find((c) => c.id === rootId)
+    const layout = root?.swarmLayout ?? swarmLeaf(rootId)
+    if (collectSwarmLeaves(layout).includes(conversationId)) {
+      await get().selectConversation(conversationId)
+      return
+    }
+    const next = restoreSwarmLeaf(layout, root?.swarmLayoutFull, conversationId, activeId)
+    const full = rememberSwarmLayout(root?.swarmLayoutFull, next)
+    await persistSwarmLayout((partial) => set(partial), () => get().conversations, rootId, next, full)
+    await get().selectConversation(conversationId)
   },
 
   async createConversationInCurrentWorkspace() {
@@ -1544,14 +1664,16 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
   focusToolsSlot(slot) {
     if (slot < 1 || slot > 9) return
+    const activeId = get().activeId
     if (slot === 1) {
       get().setPanelSegment('files')
       return
     }
-    const tabs = useWorkspaceStore.getState().workspaces[get().activeId]?.tabs ?? []
+    if (!activeId) return
+    const tabs = useWorkspaceStore.getState().workspaces[activeId]?.tabs ?? []
     const tab = tabs[slot - 2]
     if (!tab) return
-    useWorkspaceStore.getState().selectTab(get().activeId, tab.id)
+    useWorkspaceStore.getState().selectTab(activeId, tab.id)
     get().setPanelSegment('terminal')
   },
 
@@ -1566,11 +1688,16 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       set((state) => ({
         conversations: mergeConversationList(state.conversations, list)
       }))
-      // Only VAV model picks update the global default — CLI ids (grok-4.5, …)
-      // must not overwrite settings.defaultModel used by the built-in agent.
       const host = get().conversations.find((c) => c.id === id)?.cliHost ?? null
-      if (!host && model && model !== get().settings.defaultModel) {
-        void get().updateSettings({ defaultModel: model })
+      const settings = get().settings
+      if (!host) {
+        if (model && model !== settings.defaultModel) {
+          void get().updateSettings({ defaultModel: model })
+        }
+      } else if ((settings.defaultAgentModels?.[host] ?? '') !== model) {
+        void get().updateSettings({
+          defaultAgentModels: { ...settings.defaultAgentModels, [host]: model }
+        })
       }
     } catch (err) {
       console.error('[setModel] failed', err)
@@ -1696,6 +1823,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       {
         customModels: state.settings.customModels,
         vavDefaultModel: state.settings.defaultModel,
+        hostDefaultModel: defaultModelForChatHost(host as ConversationMeta['cliHost'], state.settings),
         catalogue
       }
     )
@@ -1833,6 +1961,40 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       }
     } catch (err) {
       console.error('[setApprovalMode] failed', err)
+    }
+  },
+
+  async setAcpMode(id, modeId) {
+    set((state) => ({
+      conversations: state.conversations.map((c) =>
+        c.id === id ? { ...c, acpSession: patchAcpSessionMode(c.acpSession, modeId) } : c
+      )
+    }))
+    try {
+      const list = await window.vav.conversations.setAcpMode(id, modeId)
+      set((state) => ({
+        conversations: mergeConversationList(state.conversations, list)
+      }))
+    } catch (err) {
+      console.error('[setAcpMode] failed', err)
+    }
+  },
+
+  async setAcpConfigOption(id, configId, value) {
+    set((state) => ({
+      conversations: state.conversations.map((c) => {
+        if (c.id !== id) return c
+        const next = patchAcpConfigOption(c.acpSession, configId, value)
+        return next ? { ...c, acpSession: next } : c
+      })
+    }))
+    try {
+      const list = await window.vav.conversations.setAcpConfigOption(id, configId, value)
+      set((state) => ({
+        conversations: mergeConversationList(state.conversations, list)
+      }))
+    } catch (err) {
+      console.error('[setAcpConfigOption] failed', err)
     }
   },
 
@@ -2436,7 +2598,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
   openSettings(category, agentId) {
     // Settings own a window; the main window only asks for it to be raised.
-    void window.vav.window.openSettings(category ?? 'agents', agentId)
+    void window.vav.window.openSettings(category ?? 'appearance', agentId)
   },
 
   closeSettings() {
@@ -2854,8 +3016,12 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     })
   },
 
-  focusComposer() {
-    set((state) => ({ composerFocusTick: state.composerFocusTick + 1 }))
+  focusComposer(conversationId) {
+    const id = conversationId?.trim() || get().activeId
+    set((state) => ({
+      composerFocusId: id || null,
+      composerFocusTick: state.composerFocusTick + 1
+    }))
   },
 
   focusCommentCard(refId: string) {
@@ -2878,11 +3044,17 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   },
 
   openModelPicker() {
-    set((state) => ({ modelPickerMenuNonce: state.modelPickerMenuNonce + 1 }))
+    set((state) => ({
+      modelPickerConversationId: state.activeId || null,
+      modelPickerMenuNonce: state.modelPickerMenuNonce + 1
+    }))
   },
 
   openApprovalMenu() {
-    set((state) => ({ approvalMenuNonce: state.approvalMenuNonce + 1 }))
+    set((state) => ({
+      approvalConversationId: state.activeId || null,
+      approvalMenuNonce: state.approvalMenuNonce + 1
+    }))
   },
 
   applyTurnEvent(event) {
@@ -2983,6 +3155,14 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
       case 'file-draft':
         // Preview windows listen on the raw agent event; no session state.
+        break
+
+      case 'cli-session':
+        set((state) => ({
+          conversations: state.conversations.map((c) =>
+            c.id === id ? { ...c, acpSession: event.state } : c
+          )
+        }))
         break
 
       case 'usage':

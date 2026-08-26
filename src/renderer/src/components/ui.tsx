@@ -200,6 +200,7 @@ export function Button({
   disabled,
   title,
   className,
+  testId,
   onClick
 }: {
   label?: string
@@ -209,6 +210,7 @@ export function Button({
   disabled?: boolean
   title?: string
   className?: string
+  testId?: string
   onClick?: (event: React.MouseEvent) => void
 }): React.JSX.Element {
   const classes = ['btn', variant, size, !label && icon ? 'icon-only' : '', className]
@@ -222,6 +224,7 @@ export function Button({
       disabled={disabled}
       title={tip}
       aria-label={tip}
+      data-testid={testId}
       onClick={onClick}
     >
       {icon}
@@ -351,11 +354,13 @@ export function Chip({
 export function Toggle({
   checked,
   onChange,
-  title
+  title,
+  testId
 }: {
   checked: boolean
   onChange: (value: boolean) => void
   title?: string
+  testId?: string
 }): React.JSX.Element {
   return (
     <button
@@ -364,6 +369,7 @@ export function Toggle({
       aria-checked={checked}
       title={title}
       aria-label={title}
+      data-testid={testId}
       onClick={() => onChange(!checked)}
     />
   )
@@ -384,6 +390,7 @@ export function Segmented<T extends string>({
         <button
           key={option.value}
           type="button"
+          data-testid={`segment-${option.value}`}
           className={option.value === value ? 'active' : ''}
           title={option.title ?? option.label}
           aria-label={option.title ?? option.label}
@@ -473,6 +480,7 @@ export function EmptyState({
   logoLabel,
   logoKey,
   enterKey,
+  enterSlot,
   layout = 'centered',
   meta,
   foot,
@@ -501,6 +509,12 @@ export function EmptyState({
    */
   enterKey?: string
   /**
+   * Entrance bookkeeping slot. Each live empty transcript needs its own —
+   * a shared `session` slot lets sibling Swarm panes steal the run and
+   * replay the build-up on every focus.
+   */
+  enterSlot?: string
+  /**
    * `session` — hero (logo + name + optional foot) centered in the transcript.
    * `centered` — classic stacked empty state.
    */
@@ -514,7 +528,7 @@ export function EmptyState({
   // Panel empty states share one slot and one scene: they greet you once per
   // window, and tab / filter remounts are not visits.
   const session = layout === 'session'
-  const slot = session ? 'session' : 'panel'
+  const slot = session ? (enterSlot?.trim() || 'session') : 'panel'
   const motionKey = session ? `${enterKey ?? 'empty'}::${logoKey ?? ''}` : 'panel'
 
   // Pessimistic: a foot means copy we do not have yet (git status), so hold the
@@ -554,7 +568,15 @@ export function EmptyState({
       {logoLabel ? <EmptyAgentName key={motionKey} text={logoLabel} /> : null}
       {meta}
       {title ? <div className="empty-title">{title}</div> : null}
-      {description && <div className="empty-desc">{description}</div>}
+      {description ? (
+        session ? (
+          <div className="empty-desc empty-harness" aria-label={description}>
+            <StaggerLine baseDelay={120}>{description}</StaggerLine>
+          </div>
+        ) : (
+          <div className="empty-desc">{description}</div>
+        )
+      ) : null}
       {children}
       {foot ? <div className="empty-state-foot">{foot}</div> : null}
     </>
@@ -571,7 +593,7 @@ export function EmptyState({
 
   return (
     <EmptyEntranceContext.Provider value={entrance}>
-      <div className={rootClass}>
+      <div className={rootClass} data-testid="empty-state">
         {session ? <div className="empty-state-hero">{hero}</div> : hero}
       </div>
     </EmptyEntranceContext.Provider>
