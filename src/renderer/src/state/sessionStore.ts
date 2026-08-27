@@ -529,6 +529,14 @@ interface SessionState {
 
   /** Every node of each conversation's tree; the visible thread is derived. */
   messages: Record<string, ChatMessage[]>
+  /**
+   * True when `messages[id]` is a full transcript hydrated from main.
+   *
+   * Turn events (user/end) may seed `messages[id]` for a conversation the
+   * renderer hasn't hydrated yet (e.g. background swarm). Until this is true,
+   * `loadMessages` must not bail early on an existing (partial) message list.
+   */
+  messagesHydrated: Record<string, boolean>
   /** Which leaf each conversation currently follows. */
   activeLeaf: Record<string, string | null>
   /** Per-conversation leaf compactions (model history only; originals stay). */
@@ -964,6 +972,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   },
 
   messages: {},
+  messagesHydrated: {},
   activeLeaf: {},
   compactions: {},
   turns: {},
@@ -1050,6 +1059,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       systemAccentColor: data.systemAccentColor || '#007aff',
       apiKeyHint: data.apiKeyHint,
       conversations: data.conversations,
+      messagesHydrated: {},
       // Warm idle shell: no active conversation until sessionNavigate claims one.
       // Cold companion pins id here; SessionWindow.claimDetachedSession hydrates.
       activeId: light && !pinnedConversationId ? '' : activeId,
@@ -1211,6 +1221,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
           ? state.conversations
           : [meta, ...state.conversations],
         messages: { ...state.messages, [id]: messages },
+        messagesHydrated: { ...state.messagesHydrated, [id]: true },
         activeLeaf: { ...state.activeLeaf, [id]: activeLeafId },
         compactions: { ...state.compactions, [id]: compactions ?? [] },
         tokenHistories: { ...state.tokenHistories, [id]: tokenHistory ?? [] },
@@ -1335,7 +1346,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   },
 
   async loadMessages(id) {
-    const already = !!get().messages[id]
+    const already = get().messagesHydrated[id]
     if (already) {
       // Soft refresh metadata without blocking the switch paint.
       void window.vav.conversations.get(id).then((conversation) => {
@@ -1366,6 +1377,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     if (!conversation) return
     set((state) => ({
       messages: { ...state.messages, [id]: conversation.messages },
+      messagesHydrated: { ...state.messagesHydrated, [id]: true },
       activeLeaf: { ...state.activeLeaf, [id]: conversation.activeLeafId },
       compactions: {
         ...state.compactions,
@@ -1427,6 +1439,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
           ? state.conversations
           : [meta, ...state.conversations],
         messages: { ...state.messages, [meta.id]: [] },
+        messagesHydrated: { ...state.messagesHydrated, [meta.id]: true },
         activeLeaf: { ...state.activeLeaf, [meta.id]: null }
       }))
       return meta.id
@@ -1439,6 +1452,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         ? state.conversations
         : [meta, ...state.conversations],
       messages: { ...state.messages, [meta.id]: [] },
+      messagesHydrated: { ...state.messagesHydrated, [meta.id]: true },
       activeLeaf: { ...state.activeLeaf, [meta.id]: null }
     }))
 
@@ -1782,6 +1796,9 @@ export const useSessionStore = create<SessionState>((set, get) => ({
           messages: transcript
             ? { ...state.messages, [id]: transcript.messages }
             : state.messages,
+          messagesHydrated: transcript
+            ? { ...state.messagesHydrated, [id]: true }
+            : state.messagesHydrated,
           activeLeaf: transcript
             ? { ...state.activeLeaf, [id]: transcript.activeLeafId }
             : state.activeLeaf,
@@ -2471,11 +2488,12 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     if (get().conversations.some((c) => c.id === activeId && c.archived)) return
     const result = await window.vav.conversations.deleteMessage(activeId, messageId)
     if (!result) return
-    set((state) => ({
-      conversations: mergeConversationList(state.conversations, result.conversations),
-      messages: { ...state.messages, [activeId]: result.messages },
-      activeLeaf: { ...state.activeLeaf, [activeId]: result.activeLeafId }
-    }))
+      set((state) => ({
+        conversations: mergeConversationList(state.conversations, result.conversations),
+        messages: { ...state.messages, [activeId]: result.messages },
+        messagesHydrated: { ...state.messagesHydrated, [activeId]: true },
+        activeLeaf: { ...state.activeLeaf, [activeId]: result.activeLeafId }
+      }))
   },
 
   async fork(messageId) {
