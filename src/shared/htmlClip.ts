@@ -147,7 +147,7 @@ button {
   background: var(--bg-raised);
   box-shadow: inset 0 0 0 1px var(--border);
   color: var(--text);
-  cursor: pointer;
+  cursor: default;
 }
 button:hover { background: var(--bg-sunken); }
 button:active { transform: scale(0.97); }

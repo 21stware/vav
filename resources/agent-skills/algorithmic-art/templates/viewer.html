@@ -170,7 +170,7 @@
             height: 16px;
             background: var(--anthropic-orange);
             border-radius: 50%;
-            cursor: pointer;
+            cursor: default;
             transition: all 0.2s ease;
         }
 
@@ -185,7 +185,7 @@
             background: var(--anthropic-orange);
             border-radius: 50%;
             border: none;
-            cursor: pointer;
+            cursor: default;
             transition: all 0.2s ease;
         }
 
@@ -220,7 +220,7 @@
             height: 32px;
             border: none;
             border-radius: 6px;
-            cursor: pointer;
+            cursor: default;
             background: none;
             padding: 0;
         }
@@ -240,7 +240,7 @@
             border-radius: 6px;
             font-size: 14px;
             font-weight: 500;
-            cursor: pointer;
+            cursor: default;
             transition: all 0.2s ease;
             width: 100%;
         }
@@ -341,10 +341,10 @@
                 <h3>Seed</h3>
                 <input type="number" id="seed-input" class="seed-input" value="12345" onchange="updateSeed()">
                 <div class="seed-controls">
-                    <button class="button secondary" onclick="previousSeed()">← Prev</button>
-                    <button class="button secondary" onclick="nextSeed()">Next →</button>
+                    <button class="button secondary" onclick="previousSeed()" title="Previous Seed">← Prev</button>
+                    <button class="button secondary" onclick="nextSeed()" title="Next Seed">Next →</button>
                 </div>
-                <button class="button tertiary regen-button" onclick="randomSeedAndUpdate()">↻ Random</button>
+                <button class="button tertiary regen-button" onclick="randomSeedAndUpdate()" title="Randomize Seed">↻ Random</button>
             </div>
 
             <!-- Parameters Section (CUSTOMIZE THIS FOR YOUR ART) -->
@@ -424,7 +424,7 @@
             <div class="control-section">
                 <h3>Actions</h3>
                 <div class="button-row">
-                    <button class="button" onclick="resetParameters()">Reset</button>
+                    <button class="button" onclick="resetParameters()" title="Reset Parameters">Reset</button>
                 </div>
             </div>
         </div>

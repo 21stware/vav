@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import type { AccountGroupView, AccountView, AccountsPagePayload } from '@shared/ipc'
+import { isLlmVendorId } from '@shared/llmVendors'
 import { useSessionStore } from '../state/sessionStore'
 
 /** Live Settings → Providers account groups (VAV keys + CLI profiles). */
@@ -28,5 +29,7 @@ export function useAccountGroups(): AccountGroupView[] {
 }
 
 export function vavAccountsOf(groups: AccountGroupView[]): AccountView[] {
-  return groups.find((group) => group.agentId === 'vav')?.accounts ?? []
+  return groups
+    .filter((group) => group.agentId === 'vav' || isLlmVendorId(group.agentId))
+    .flatMap((group) => group.accounts)
 }

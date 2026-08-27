@@ -72,7 +72,7 @@ function keepDockVisible(): void {
   applyDockIcon()
 }
 
-const OVERLAY_READY_MS = 8000
+const OVERLAY_READY_MS = 15000
 
 function matchSource(
   display: Electron.Display,
@@ -447,7 +447,11 @@ export function createScreenshotController(host: ScreenshotHost): {
     finish(payload) {
       if (!pending) return
       if (!payload.ok) {
-        settle({ ok: false, cancelled: true })
+        settle({
+          ok: false,
+          error: (payload as any).error || 'failed',
+          cancelled: (payload as any).error ? false : true
+        })
         return
       }
       settle({ ok: true, path: payload.path })

@@ -34,14 +34,23 @@ export function paintDockBadge(
   const bounds = opaqueBounds(bgra, width, height)
   const box = bounds ?? { x0: 0, y0: 0, x1: width, y1: height }
   const span = Math.min(box.x1 - box.x0, box.y1 - box.y0)
-  const radius = Math.max(5, Math.round(span * 0.16))
+  const radius = Math.max(5, Math.round(span * 0.15))
   const extra = Math.max(0, label.length - 1)
-  const badgeW = Math.round(radius * 2 + extra * radius * 0.72)
+  const badgeW = Math.round(radius * 2 + extra * radius * 0.7)
   const badgeH = radius * 2
-  const cx = Math.min(width - radius - 1, box.x1 - Math.round(radius * 0.55))
-  const cy = Math.max(radius, box.y0 + Math.round(radius * 0.55))
 
-  fillStadium(bgra, width, height, cx, cy, badgeW, badgeH, BADGE_HALO, 1.18)
+  // Halo scale: macOS Dock badges have a very thin light border.
+  // We use a minimal scale to avoid the "thick white border" look.
+  const haloScale = 1.02
+  const hhw = (badgeW * haloScale) / 2
+  const hhh = (badgeH * haloScale) / 2
+
+  // Ensure center is far enough from edges to avoid clipping the halo.
+  // We move the badge further inwards (0.9 * radius) to stay within the squircle and Dock bounds.
+  const cx = Math.min(width - hhw - 4, box.x1 - Math.round(radius * 0.9))
+  const cy = Math.max(hhh + 4, box.y0 + Math.round(radius * 0.9))
+
+  fillStadium(bgra, width, height, cx, cy, badgeW, badgeH, BADGE_HALO, haloScale)
   fillStadium(bgra, width, height, cx, cy, badgeW, badgeH, BADGE_RED, 1)
   drawLabel(bgra, width, height, cx, cy, badgeW, badgeH, label)
 }
