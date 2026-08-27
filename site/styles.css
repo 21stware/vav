@@ -266,7 +266,7 @@ html:not(.js) .top {
   font: inherit;
   font-size: 12px;
   letter-spacing: 0.04em;
-  cursor: pointer;
+  cursor: default;
 }
 
 .theme-btn:hover,

@@ -1454,7 +1454,7 @@ kbd {
 }
 
 .sidebar-search {
-  padding: 4px 10px 10px;
+  padding: 4px 10px 4px;
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -1521,7 +1521,7 @@ kbd {
 .sidebar-list {
   flex: 1;
   overflow-y: auto;
-  padding: 2px 4px 10px;
+  padding: 0 4px 10px;
 }
 
 /* The header is the divider. Time buckets stay quiet captions; workspace
@@ -1531,7 +1531,7 @@ kbd {
   align-items: center;
   gap: 6px;
   width: 100%;
-  padding: 10px 8px 4px;
+  padding: 6px 8px 4px;
   border: 0;
   background: transparent;
   color: var(--text-tertiary);
@@ -2232,7 +2232,7 @@ kbd {
   border: 0;
   border-radius: 4px;
   background: transparent;
-  cursor: pointer;
+  cursor: default;
   color: var(--text-tertiary);
 }
 
@@ -2491,7 +2491,7 @@ kbd {
   background: transparent;
   color: var(--text-secondary);
   text-align: right;
-  cursor: pointer;
+  cursor: default;
   -webkit-app-region: no-drag;
 }
 
@@ -3320,7 +3320,7 @@ kbd {
 .canvas-zoom-readout {
   min-width: 48px;
   font-variant-numeric: tabular-nums;
-  cursor: pointer;
+  cursor: default;
 }
 
 /* ==========================================================================
@@ -3953,7 +3953,7 @@ a.md-file-link {
   text-decoration: underline;
   text-decoration-color: color-mix(in srgb, var(--accent) 45%, transparent);
   text-underline-offset: 2px;
-  cursor: pointer;
+  cursor: default;
   word-break: break-all;
 }
 
@@ -4040,7 +4040,7 @@ code.md-file-code button.md-file-reveal {
   background: transparent;
   color: inherit;
   font: inherit;
-  cursor: pointer;
+  cursor: default;
   min-width: 0;
 }
 
@@ -4346,7 +4346,7 @@ mark {
   box-shadow: inset 0 0 0 1px var(--border);
   color: var(--text);
   font-size: 11px;
-  cursor: pointer;
+  cursor: default;
 }
 
 .md-xstate-ev:hover {
@@ -4411,7 +4411,7 @@ mark {
   border: 0;
   border-radius: 0;
   background: transparent;
-  cursor: pointer;
+  cursor: default;
   -webkit-app-region: no-drag;
 }
 
@@ -5319,6 +5319,10 @@ mark {
   animation: shimmer 1.4s linear infinite;
 }
 
+.stream-status-by {
+  font-size: 0.9em;
+}
+
 :root[data-reduce-motion='true'] .stream-status-shimmer {
   animation: none;
   color: var(--text-secondary);
@@ -5936,13 +5940,13 @@ mark {
 
 /* Background wash + mark colour carry the change; no edge rail. */
 .diff-line.add {
-  background: color-mix(in srgb, var(--success) 12%, transparent);
+  background: color-mix(in srgb, var(--success) 8%, transparent);
 }
 .diff-line.add .diff-mark {
   color: var(--success);
 }
 .diff-line.remove {
-  background: color-mix(in srgb, var(--danger) 11%, transparent);
+  background: color-mix(in srgb, var(--danger) 8%, transparent);
 }
 .diff-line.remove .diff-mark {
   color: var(--danger);
@@ -6139,7 +6143,7 @@ mark {
 .story-tech summary {
   font-size: 11px;
   color: var(--text-tertiary);
-  cursor: pointer;
+  cursor: default;
   user-select: none;
   list-style: none;
   transition: color var(--dur-hover) ease;
@@ -8655,7 +8659,7 @@ mark {
   font: inherit;
   font-size: 12px;
   text-align: left;
-  cursor: pointer;
+  cursor: default;
 }
 
 .git-change-row:hover {
@@ -8813,11 +8817,11 @@ mark {
 }
 
 .git-diff .diff-line.add {
-  background: color-mix(in srgb, #3fb950 14%, transparent);
+  background: color-mix(in srgb, #3fb950 8%, transparent);
 }
 
 .git-diff .diff-line.del {
-  background: color-mix(in srgb, #f85149 14%, transparent);
+  background: color-mix(in srgb, #f85149 8%, transparent);
 }
 
 .git-diff .diff-line.hunk {
@@ -8839,7 +8843,7 @@ mark {
   color: var(--text-secondary);
   font: inherit;
   font-size: 11px;
-  cursor: pointer;
+  cursor: default;
 }
 
 .git-diff-error {
@@ -9002,7 +9006,7 @@ mark {
   font: inherit;
   font-size: 11px;
   line-height: 1;
-  cursor: pointer;
+  cursor: default;
 }
 
 .github-site-config:hover {
@@ -9037,7 +9041,7 @@ mark {
   font-weight: 550;
   letter-spacing: 0.01em;
   text-align: left;
-  cursor: pointer;
+  cursor: default;
 }
 
 .github-group-toggle:hover {
@@ -9081,7 +9085,7 @@ mark {
   border-radius: 6px;
   background: none;
   color: var(--text-tertiary);
-  cursor: pointer;
+  cursor: default;
 }
 
 .github-group-web:hover {
@@ -9153,7 +9157,7 @@ mark {
   color: var(--text);
   font: inherit;
   text-align: left;
-  cursor: pointer;
+  cursor: default;
 }
 
 .github-site-link:hover {
@@ -9200,7 +9204,7 @@ mark {
   font: inherit;
   font-size: 12px;
   text-align: left;
-  cursor: pointer;
+  cursor: default;
 }
 
 .github-release-asset:hover {
@@ -9247,7 +9251,7 @@ mark {
   font: inherit;
   font-size: 12px;
   text-align: left;
-  cursor: pointer;
+  cursor: default;
 }
 
 .github-action-job:hover {
@@ -9349,7 +9353,7 @@ mark {
   font: inherit;
   font-size: 12px;
   text-align: left;
-  cursor: pointer;
+  cursor: default;
 }
 
 .github-pr-row:hover {
@@ -9575,7 +9579,7 @@ mark {
   font: inherit;
   font-size: 12px;
   text-align: left;
-  cursor: pointer;
+  cursor: default;
   border-radius: 0;
 }
 
@@ -9936,7 +9940,7 @@ mark {
 
 .github-pr-body summary {
   display: inline;
-  cursor: pointer;
+  cursor: default;
   font-weight: 400;
   color: var(--text-secondary);
   list-style: none;
@@ -10109,7 +10113,7 @@ mark {
   font: inherit;
   font-size: 12px;
   text-align: left;
-  cursor: pointer;
+  cursor: default;
 }
 
 .github-check-row:disabled {
@@ -10275,7 +10279,7 @@ mark {
   font-weight: 600;
   letter-spacing: -0.01em;
   text-decoration: none;
-  cursor: pointer;
+  cursor: default;
   transition: color var(--dur-hover) ease;
 }
 
@@ -10467,7 +10471,7 @@ mark {
   border: 0;
   background: transparent;
   color: inherit;
-  cursor: pointer;
+  cursor: default;
   padding: 0 2px;
   font: inherit;
 }
@@ -10562,7 +10566,7 @@ mark {
   border-radius: 0;
   background: transparent;
   box-shadow: none;
-  cursor: pointer;
+  cursor: default;
   aspect-ratio: 1 / 1;
   flex: 0 0 26px;
   /* Size is constant; only the *position* rides --doc-zoom.
@@ -10596,12 +10600,15 @@ mark {
   width: 26px;
   height: 26px;
   line-height: 0;
+  overflow: hidden;
+  border-radius: 5.8px;
 }
 
 .selection-agent-fab .selection-agent-fab-icon.brand-app-icon {
   width: 26px !important;
   height: 26px !important;
   border-radius: 5.8px;
+  background: transparent !important;
   /* Icon asset already has its squircle — don't add a second plate/shadow. */
   box-shadow: none !important;
 }
@@ -13838,7 +13845,7 @@ mark {
   align-items: center;
   gap: 8px;
   padding: 8px 12px;
-  cursor: pointer;
+  cursor: default;
   min-width: 0;
   box-sizing: border-box;
 }
@@ -13898,7 +13905,7 @@ mark {
   color: var(--text-secondary);
   padding: 4px;
   border-radius: 6px;
-  cursor: pointer;
+  cursor: default;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -14027,7 +14034,7 @@ mark {
 }
 
 .zip-tree-row.selectable {
-  cursor: pointer;
+  cursor: default;
 }
 
 .zip-tree-row.selectable:hover {
@@ -14051,7 +14058,7 @@ mark {
   background: transparent;
   color: var(--text-secondary);
   padding: 0;
-  cursor: pointer;
+  cursor: default;
 }
 
 .zip-tree-icon {
@@ -14339,7 +14346,7 @@ mark {
   background: transparent;
   color: inherit;
   text-align: left;
-  cursor: pointer;
+  cursor: default;
 }
 
 .workspace-history-row:hover {
@@ -16945,7 +16952,7 @@ mark {
 }
 
 .cli-agent-picker-item.is-missing {
-  cursor: pointer;
+  cursor: default;
 }
 
 .cli-agent-picker-item.is-missing .cli-agent-picker-icon {
@@ -17184,7 +17191,7 @@ mark {
   background: transparent;
   color: var(--text);
   text-align: left;
-  cursor: pointer;
+  cursor: default;
   user-select: none;
   box-sizing: border-box;
 }
@@ -17220,7 +17227,7 @@ mark {
   text-decoration: underline;
   text-underline-offset: 2px;
   text-decoration-thickness: 1px;
-  cursor: pointer;
+  cursor: default;
 }
 
 .agents-list-name.is-link:hover {
@@ -17268,7 +17275,7 @@ mark {
   border-radius: 8px;
   background: transparent;
   color: var(--text-secondary);
-  cursor: pointer;
+  cursor: default;
 }
 
 .agents-editor-hero-link:hover {
@@ -17357,7 +17364,7 @@ mark {
   border-radius: 4px;
   background: transparent;
   color: var(--text-tertiary, var(--text-secondary));
-  cursor: pointer;
+  cursor: default;
 }
 
 .agents-install-log-dismiss:hover {
@@ -17478,6 +17485,7 @@ mark {
   font-weight: 600;
   letter-spacing: -0.01em;
   color: var(--text-secondary);
+  margin-bottom: 8px;
 }
 
 .agents-models-refresh {
@@ -17563,7 +17571,7 @@ mark {
   font-size: 12px;
   font-weight: 500;
   letter-spacing: -0.01em;
-  cursor: pointer;
+  cursor: default;
   transition:
     color var(--dur-hover) ease,
     transform var(--dur-press) var(--ease-out);
@@ -17590,7 +17598,7 @@ mark {
   border-radius: 6px;
   background: transparent;
   color: var(--text-secondary);
-  cursor: pointer;
+  cursor: default;
   transition:
     background var(--dur-hover) ease,
     color var(--dur-hover) ease,
@@ -17637,7 +17645,7 @@ mark {
   border-radius: 6px;
   background: transparent;
   color: var(--text-tertiary);
-  cursor: pointer;
+  cursor: default;
   transition:
     background var(--dur-hover) ease,
     color var(--dur-hover) ease,
@@ -17680,7 +17688,7 @@ mark {
   gap: 8px;
   flex: 1 1 auto;
   min-width: 0;
-  cursor: pointer;
+  cursor: default;
 }
 
 .agents-models-row:hover {
@@ -17807,7 +17815,7 @@ mark {
   font-size: 11px;
   font-weight: 500;
   letter-spacing: 0.01em;
-  cursor: pointer;
+  cursor: default;
   transition:
     background var(--dur-hover) ease,
     color var(--dur-hover) ease,
@@ -17950,7 +17958,7 @@ mark {
   border-right: 1px solid var(--border-subtle, color-mix(in srgb, var(--text) 10%, transparent));
   background: transparent;
   color: var(--text);
-  cursor: pointer;
+  cursor: default;
   transition:
     background var(--dur-hover) ease,
     transform var(--dur-press) var(--ease-out);
@@ -18051,7 +18059,7 @@ mark {
   font-size: 13px;
   letter-spacing: -0.01em;
   text-align: left;
-  cursor: pointer;
+  cursor: default;
 }
 
 .agents-add-menu-item:hover {
@@ -18332,7 +18340,7 @@ mark {
   text-align: left;
   border-radius: var(--radius-sm, 6px);
   padding: 5px 6px;
-  cursor: pointer;
+  cursor: default;
 }
 
 .acp-slash-item:hover,
@@ -18625,6 +18633,7 @@ html:has(.provider-account-popup) #root {
 }
 
 .agent-model-picker-host {
+  position: relative;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -18636,6 +18645,41 @@ html:has(.provider-account-popup) #root {
   color: inherit;
   cursor: default;
   border-radius: var(--radius-sm);
+}
+
+.agent-model-picker-progress {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.agent-model-picker-progress svg {
+  display: block;
+}
+
+.agent-model-picker-progress .ring-track {
+  stroke: var(--bg-hover);
+  stroke-width: 1.5;
+}
+
+.agent-model-picker-progress .ring-fill {
+  stroke: var(--accent);
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  transition:
+    stroke-dashoffset var(--dur-sheet) var(--ease-out),
+    stroke var(--dur-sheet) ease;
+}
+
+.agent-model-picker[data-level='warn'] .ring-fill {
+  stroke: var(--warning);
+}
+
+.agent-model-picker[data-level='full'] .ring-fill {
+  stroke: var(--danger);
 }
 
 .agent-model-picker-host .agent-brand-mark {
@@ -18836,7 +18880,7 @@ html:has(.provider-account-popup) #root {
   border-radius: 8px;
   overflow: hidden;
   background: var(--bg-hover);
-  cursor: pointer;
+  cursor: default;
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--text) 8%, transparent);
   transition:
     transform 160ms var(--ease-out, cubic-bezier(0.23, 1, 0.32, 1)),
@@ -19006,7 +19050,7 @@ html:has(.provider-account-popup) #root {
   border: 0;
   border-radius: 4px;
   background: transparent;
-  cursor: pointer;
+  cursor: default;
   color: var(--text-tertiary);
 }
 
@@ -19696,7 +19740,7 @@ html:has(.token-usage-popup) #root {
     radial-gradient(120% 80% at 8% -10%, var(--accent-veil), transparent 62%),
     var(--bg-content);
   box-shadow: inset 0 0 0 1px var(--border);
-  cursor: pointer;
+  cursor: default;
   transition:
     transform var(--dur-press) var(--ease-out),
     box-shadow var(--dur-hover) var(--ease-out);
@@ -19824,7 +19868,7 @@ html:has(.token-usage-popup) #root {
   border-radius: 50%;
   background: var(--tint-swatch, #888);
   box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.12);
-  cursor: pointer;
+  cursor: default;
   transition:
     transform var(--dur-press) var(--ease-out),
     box-shadow var(--dur-hover) var(--ease-out);
@@ -20848,13 +20892,13 @@ html:has(.token-usage-popup) #root {
 }
 
 .inline-review-diff .diff-line.add {
-  background: color-mix(in srgb, var(--success) 14%, transparent);
-  color: color-mix(in srgb, var(--success) 40%, var(--text));
+  background: color-mix(in srgb, var(--success) 8%, transparent);
+  color: color-mix(in srgb, var(--success) 70%, var(--text));
 }
 
 .inline-review-diff .diff-line.del {
-  background: color-mix(in srgb, var(--danger) 12%, transparent);
-  color: color-mix(in srgb, var(--danger) 45%, var(--text));
+  background: color-mix(in srgb, var(--danger) 8%, transparent);
+  color: color-mix(in srgb, var(--danger) 70%, var(--text));
 }
 
 .inline-review-diff .diff-line.hunk {
@@ -20996,7 +21040,7 @@ html:has(.token-usage-popup) #root {
   gap: 10px;
   padding: 8px 16px;
   border-bottom: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
-  cursor: pointer;
+  cursor: default;
   font-size: 12px;
 }
 
@@ -21105,12 +21149,12 @@ html:has(.token-usage-popup) #root {
 }
 
 .diff-line.add {
-  background: color-mix(in srgb, #34c759 14%, transparent);
+  background: color-mix(in srgb, #34c759 8%, transparent);
   color: #1f7a36;
 }
 
 .diff-line.del {
-  background: color-mix(in srgb, #ff3b30 14%, transparent);
+  background: color-mix(in srgb, #ff3b30 8%, transparent);
   color: #b42318;
 }
 
@@ -21124,7 +21168,7 @@ html:has(.token-usage-popup) #root {
   border: 0;
   background: transparent;
   color: var(--accent);
-  cursor: pointer;
+  cursor: default;
   font-size: 11px;
 }
 
@@ -21334,7 +21378,7 @@ html:has(.token-usage-popup) #root {
   color: inherit;
   font: inherit;
   text-align: left;
-  cursor: pointer;
+  cursor: default;
 }
 
 .accounts-row-mark {
@@ -21622,7 +21666,7 @@ html:has(.token-usage-popup) #root {
   padding: 0;
   background: none;
   color: var(--accent);
-  cursor: pointer;
+  cursor: default;
   font: inherit;
 }
 
@@ -21701,7 +21745,7 @@ html.is-screenshotting * {
   border: 0;
   background: color-mix(in srgb, var(--text) 6%, var(--bg-hover));
   color: var(--text-secondary);
-  cursor: pointer;
+  cursor: default;
 }
 
 .attachment-file-tile[data-kind='pdf'] {
