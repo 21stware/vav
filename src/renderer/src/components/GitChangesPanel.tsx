@@ -234,7 +234,12 @@ function DiffLines({ text, filePath }: { text: string; filePath: string }): Reac
         }}
       />
       {truncated && !expanded && (
-        <button type="button" className="diff-more" onClick={() => setExpanded(true)}>
+        <button
+          type="button"
+          className="diff-more"
+          title={t('git.moreLines')}
+          onClick={() => setExpanded(true)}
+        >
           … {lines.length - 800} {t('git.moreLines')}
         </button>
       )}

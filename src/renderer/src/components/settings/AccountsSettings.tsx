@@ -541,7 +541,12 @@ function CreateInspector({
       {canAddKey ? (
         <div className="form-hint">
           {t('accounts.oauthAlsoKey')}{' '}
-          <button type="button" className="accounts-inline-link" onClick={onAddKey}>
+          <button
+            type="button"
+            className="accounts-inline-link"
+            title={t('accounts.useKeyForm')}
+            onClick={onAddKey}
+          >
             {t('accounts.useKeyForm')}
           </button>
         </div>

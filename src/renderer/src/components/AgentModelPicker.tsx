@@ -31,6 +31,7 @@ import { useAccountGroups, vavAccountsOf } from '../lib/accountGroups'
 import { useSessionStore } from '../state/sessionStore'
 import { useT } from '../i18n/useT'
 import { menuAnchorIfVisible, showMenu, type MenuItem } from '../lib/nativeMenu'
+import { formatTokens } from '../lib/format'
 import { AgentBrandMark } from './AgentBrandMark'
 
 type HostOption = {
@@ -39,6 +40,13 @@ type HostOption = {
   markId: string
   vendorId?: LlmVendorId
   accountId?: string
+}
+
+export type TokenUsage = {
+  used: number
+  limit: number
+  percent: number
+  ratio: number
 }
 
 type RecentItem = {
@@ -141,9 +149,11 @@ function playSplitMotion(root: HTMLElement, host: HTMLElement, model: HTMLElemen
  * for this host.
  */
 export function AgentModelPicker({
-  conversationId
+  conversationId,
+  usage
 }: {
   conversationId: string
+  usage?: TokenUsage
 }): React.JSX.Element {
   const t = useT()
   const conversation = useSessionStore((s) =>
@@ -167,6 +177,13 @@ export function AgentModelPicker({
   const playedRef = useRef(locked)
   const motionRef = useRef<SplitMotion | null>(null)
   const [phase, setPhase] = useState<SplitPhase>(locked ? 'settled' : 'joined')
+
+  // Progress ring dimensions (20x20 squircle for n=3)
+  const ringSize = 20
+  const ringR = ringSize / 2
+  const ringK = ringR * 0.72
+  const ringPath = `M ${ringR},0 C ${ringR + ringK},0 ${ringSize},${ringR - ringK} ${ringSize},${ringR} C ${ringSize},${ringR + ringK} ${ringR + ringK},${ringSize} ${ringR},${ringSize} C ${ringR - ringK},${ringSize} 0,${ringR + ringK} 0,${ringR} C 0,${ringR - ringK} ${ringR - ringK},0 ${ringR},0 Z`
+  const ringLevel = usage && usage.ratio > 0.9 ? 'full' : usage && usage.ratio > 0.7 ? 'warn' : 'ok'
 
   useLayoutEffect(() => {
     if (conversationRef.current !== conversationId) {
@@ -491,45 +508,81 @@ export function AgentModelPicker({
     openMenu(locked ? triggerRef.current : rootRef.current)
   }, [modelPickerMenuNonce, modelPickerConversationId, conversationId, openMenu, conversation, locked])
 
-  return (
-    <div
-      ref={rootRef}
-      className="agent-model-picker"
-      role="group"
-      data-locked={locked ? 'true' : 'false'}
-      data-phase={phase}
-    >
-      <button
-        ref={hostRef}
-        type="button"
-        className="agent-model-picker-host"
-        title={
-          locked
-            ? t('composer.agentAccount', { name: activeHost.name })
-            : `${activeHost.name} · ${modelLabel}`
-        }
-        aria-label={locked ? t('composer.agentAccount', { name: activeHost.name }) : t('composer.agentModel')}
-        disabled={!conversation}
-        onClick={(event) => {
-          event.preventDefault()
-          event.stopPropagation()
-          if (!conversation) return
-          if (locked) {
-            const el = hostRef.current ?? event.currentTarget
-            const rect = el.getBoundingClientRect()
-            void window.vav.window.openProviderAccount(conversationId, {
-              x: rect.left,
-              y: rect.top,
-              width: rect.width,
-              height: rect.height
-            })
-            return
-          }
-          openMenu(rootRef.current)
-        }}
+    const hasUsage = Boolean(usage && usage.used > 0)
+
+    return (
+      <div
+        ref={rootRef}
+        className="agent-model-picker"
+        role="group"
+        data-locked={locked ? 'true' : 'false'}
+        data-phase={phase}
+        data-level={ringLevel}
       >
-        <AgentBrandMark agent={{ id: activeHost.markId, name: activeHost.name }} size={16} />
-      </button>
+        <button
+          ref={hostRef}
+          type="button"
+          className="agent-model-picker-host"
+          title={[
+            locked
+              ? t('composer.agentAccount', { name: activeHost.name })
+              : `${activeHost.name} · ${modelLabel}`,
+            hasUsage
+              ? t('token.contextDetail', {
+                  percent: usage!.percent,
+                  used: formatTokens(usage!.used),
+                  limit: formatTokens(usage!.limit)
+                })
+              : null
+          ]
+            .filter(Boolean)
+            .join('\n')}
+          aria-label={
+            locked
+              ? t('composer.agentAccount', { name: activeHost.name })
+              : t('composer.agentModel')
+          }
+          disabled={!conversation}
+          onClick={(event) => {
+            event.preventDefault()
+            event.stopPropagation()
+            if (!conversation) return
+            if (locked) {
+              const el = hostRef.current ?? event.currentTarget
+              const rect = el.getBoundingClientRect()
+              void window.vav.window.openTokenUsage(conversationId, {
+                x: rect.left,
+                y: rect.top,
+                width: rect.width,
+                height: rect.height
+              })
+              return
+            }
+            openMenu(rootRef.current)
+          }}
+        >
+          <AgentBrandMark agent={{ id: activeHost.markId, name: activeHost.name }} size={16} />
+          {hasUsage && (
+            <div className="agent-model-picker-progress">
+              <svg
+                width={ringSize}
+                height={ringSize}
+                viewBox={`0 0 ${ringSize} ${ringSize}`}
+                aria-hidden
+              >
+                <path d={ringPath} className="ring-track" fill="none" />
+                <path
+                  d={ringPath}
+                  className="ring-fill"
+                  fill="none"
+                  strokeDasharray="100"
+                  pathLength="100"
+                  strokeDashoffset={100 - usage!.percent}
+                />
+              </svg>
+            </div>
+          )}
+        </button>
       <button
         ref={triggerRef}
         type="button"

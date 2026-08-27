@@ -54,6 +54,7 @@ function agentTypeLabel(
 type Subtitle =
   | { kind: 'status'; text: string }
   | { kind: 'meta'; age: string; dir: string | null }
+  | null
 
 /**
  * Subtitle slot, resolved by the priority ladder in
@@ -80,6 +81,13 @@ function subtitleFor(
     const core = t('sidebar.backgroundRunning', { count: turn.toolCount })
     return { kind: 'status', text: agentLabel ? `${agentLabel} · ${core}` : core }
   }
+
+  // When there is no conversation history and no active progress, show nothing.
+  // updatedAt === createdAt is the proxy for "no messages yet".
+  if (conversation.updatedAt === conversation.createdAt && conversation.tokensUsed === 0) {
+    return null
+  }
+
   const dir =
     !hideWorkdir && !isTemporaryWorkspace(conversation.workingDirectory, tmp)
       ? workdirShortLabel(conversation.workingDirectory, tmp)
@@ -974,15 +982,17 @@ export function Sidebar({
                         isSwarmChild && agentLabel ? agentLabel : conversation.title
                       )}
                     </span>
-                    <span className="conv-subtitle">
-                      <span className="conv-subtitle-text">
-                        {subtitle.kind === 'status'
-                          ? subtitle.text
-                          : subtitle.dir
-                            ? `${subtitle.age} · ${subtitle.dir}`
-                            : subtitle.age}
+                    {subtitle && (
+                      <span className="conv-subtitle">
+                        <span className="conv-subtitle-text">
+                          {subtitle.kind === 'status'
+                            ? subtitle.text
+                            : subtitle.dir
+                              ? `${subtitle.age} · ${subtitle.dir}`
+                              : subtitle.age}
+                        </span>
                       </span>
-                    </span>
+                    )}
                   </span>
                 )}
 
@@ -1156,14 +1166,22 @@ export function Sidebar({
         )}
         {fileSessionsView && searching && filteredFileSessions.length === 0 && (
           <EmptyState title={t('sidebar.noMatchTitle')} description={t('sidebar.noMatchDesc')}>
-            <button className="btn secondary" onClick={() => setSidebarQuery('')}>
+            <button
+              className="btn secondary"
+              title={t('sidebar.clearFilter')}
+              onClick={() => setSidebarQuery('')}
+            >
               {t('sidebar.clearFilter')}
             </button>
           </EmptyState>
         )}
         {listMode === 'main' && searching && visible.length === 0 && (
           <EmptyState title={t('sidebar.noMatchTitle')} description={t('sidebar.noMatchDesc')}>
-            <button className="btn secondary" onClick={() => setSidebarQuery('')}>
+            <button
+              className="btn secondary"
+              title={t('sidebar.clearFilter')}
+              onClick={() => setSidebarQuery('')}
+            >
               {t('sidebar.clearFilter')}
             </button>
           </EmptyState>

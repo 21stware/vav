@@ -26,7 +26,6 @@ export function StreamStatus({
 }): React.JSX.Element {
   const t = useT()
   const detail = useOutputtingDetail(state === 'outputting' ? conversationId : undefined)
-  const label = detail ? `${t('stream.outputting')} · ${detail}` : t('stream.outputting')
 
   if (state === 'done') {
     return (
@@ -56,7 +55,15 @@ export function StreamStatus({
           draggable={false}
         />
       </span>
-      <span className="stream-status-shimmer">{label}</span>
+      <span className="stream-status-shimmer">
+        {t('stream.outputting')}
+        {detail && (
+          <>
+            {' · '}
+            <span className="stream-status-by">{t('stream.by', { name: detail })}</span>
+          </>
+        )}
+      </span>
     </div>
   )
 }

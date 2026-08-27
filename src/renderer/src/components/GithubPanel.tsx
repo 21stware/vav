@@ -1242,7 +1242,12 @@ function ListGroupHead({
 }): React.JSX.Element {
   return (
     <div className="github-group-head">
-      <button type="button" className="github-group-toggle" onClick={onToggle}>
+      <button
+        type="button"
+        className="github-group-toggle"
+        title={expanded ? t('common.collapse') : t('common.expand')}
+        onClick={onToggle}
+      >
         <ChevronRight size={12} className={expanded ? 'is-open' : undefined} aria-hidden />
         <span>{label}</span>
         {loading ? <LoaderCircle size={11} className="github-action-spin" aria-hidden /> : null}
@@ -1522,7 +1527,12 @@ function ReleasesList({
         <div className="github-group-empty">
           <span>{t('github.noReleases')}</span>
           {onOpenWeb ? (
-            <button type="button" className="github-site-link" onClick={onOpenWeb}>
+            <button
+              type="button"
+              className="github-site-link"
+              title={t('github.openReleasesOnGithub')}
+              onClick={onOpenWeb}
+            >
               {t('github.openReleasesOnGithub')}
             </button>
           ) : null}

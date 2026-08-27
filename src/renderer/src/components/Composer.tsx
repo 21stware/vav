@@ -9,12 +9,12 @@ import {
 import {
   ArrowUp,
   CornerUpLeft,
+  FilePlus2,
   FileText,
   MapPin,
   MessageSquare,
-  Paperclip,
   Quote,
-  Scan,
+  Scissors,
   Square,
   Trash2,
   X
@@ -201,6 +201,26 @@ export function Composer({
   const setPreviewRefs = useSessionStore((s) => s.setPreviewRefs)
   const send = useSessionStore((s) => s.send)
   const cancel = useSessionStore((s) => s.cancel)
+
+  const used = useSessionStore((s) => {
+    const live = s.liveUsage[conversationId]
+    if (live) return live.tokensUsed
+    return s.conversations.find((c) => c.id === conversationId)?.tokensUsed ?? 0
+  })
+  const limit = useSessionStore((s) => {
+    const live = s.liveUsage[conversationId]
+    if (typeof live?.tokenLimit === 'number') return live.tokenLimit
+    return s.conversations.find((c) => c.id === conversationId)?.tokenLimit ?? 0
+  })
+  const tokenUsage = useMemo(() => {
+    const ratio = Math.min(1, used / Math.max(1, limit))
+    return {
+      used,
+      limit,
+      percent: Math.round(ratio * 100),
+      ratio
+    }
+  }, [used, limit])
 
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   /** True while IME / dictation composition is active (Enter must not submit). */
@@ -555,7 +575,7 @@ export function Composer({
                 })()
               }}
             >
-              <Paperclip size={12} strokeWidth={2} />
+              <FilePlus2 size={12} strokeWidth={2} />
             </button>
             <button
               type="button"
@@ -576,7 +596,7 @@ export function Composer({
                 })()
               }}
             >
-              <Scan size={12} strokeWidth={2} />
+              <Scissors size={12} strokeWidth={2} style={{ transform: 'rotate(-90deg)' }} />
             </button>
             {conversationId ? <SessionRunPicker conversationId={conversationId} /> : null}
           </span>
@@ -584,8 +604,9 @@ export function Composer({
           <span className="spacer" />
 
           <span className="composer-meta">
-            {conversationId ? <AgentModelPicker conversationId={conversationId} /> : null}
-            {conversation && <ConversationContextRing conversationId={conversation.id} />}
+            {conversationId ? (
+              <AgentModelPicker conversationId={conversationId} usage={tokenUsage} />
+            ) : null}
           </span>
 
           {isRunning && (
@@ -1006,94 +1027,6 @@ function FileContextChip({
         <X size={12} />
       </button>
     </div>
-  )
-}
-
-/** Composer ring that reads mid-turn tokens without remapping `conversations`. */
-function ConversationContextRing({ conversationId }: { conversationId: string }): React.JSX.Element {
-  const used = useSessionStore((s) => {
-    const live = s.liveUsage[conversationId]
-    if (live) return live.tokensUsed
-    return s.conversations.find((c) => c.id === conversationId)?.tokensUsed ?? 0
-  })
-  const limit = useSessionStore((s) => {
-    const live = s.liveUsage[conversationId]
-    if (typeof live?.tokenLimit === 'number') return live.tokenLimit
-    return s.conversations.find((c) => c.id === conversationId)?.tokenLimit ?? 0
-  })
-  const tokenRatio = Math.min(1, used / Math.max(1, limit))
-  return (
-    <ContextRing
-      ratio={tokenRatio}
-      percent={Math.round(tokenRatio * 100)}
-      used={used}
-      limit={limit}
-      onClick={(anchor) => void window.vav.window.openTokenUsage(conversationId, anchor)}
-    />
-  )
-}
-
-/** Circular context-window meter — ring + %; click opens the native usage popup. */
-function ContextRing({
-  ratio,
-  percent,
-  used,
-  limit,
-  onClick
-}: {
-  ratio: number
-  percent: number
-  used: number
-  limit: number
-  onClick: (anchor: { x: number; y: number; width: number; height: number }) => void
-}): React.JSX.Element {
-  const t = useT()
-  const size = 14
-  const stroke = 2
-  const radius = (size - stroke) / 2
-  const circumference = 2 * Math.PI * radius
-  const offset = circumference * (1 - ratio)
-  const level = ratio > 0.9 ? 'full' : ratio > 0.7 ? 'warn' : 'ok'
-
-  return (
-    <button
-      type="button"
-      className="token-ring"
-      data-testid="token-ring"
-      data-level={level}
-      title={t('token.contextDetail', {
-        percent,
-        used: formatTokens(used),
-        limit: formatTokens(limit)
-      })}
-      aria-label={t('token.contextUsage', { percent })}
-      onClick={(event) => {
-        const rect = event.currentTarget.getBoundingClientRect()
-        onClick({
-          x: rect.left,
-          y: rect.top,
-          width: rect.width,
-          height: rect.height
-        })
-      }}
-    >
-      <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} aria-hidden>
-        <circle className="track" cx={size / 2} cy={size / 2} r={radius} fill="none" strokeWidth={stroke} />
-        <circle
-          className="fill"
-          cx={size / 2}
-          cy={size / 2}
-          r={radius}
-          fill="none"
-          strokeWidth={stroke}
-          strokeLinecap="round"
-          strokeDasharray={circumference}
-          strokeDashoffset={offset}
-          transform={`rotate(-90 ${size / 2} ${size / 2})`}
-        />
-      </svg>
-      <span className="token-pct">{percent}%</span>
-    </button>
   )
 }
 

@@ -52,7 +52,7 @@ export function PreviewPerfHud(): React.JSX.Element | null {
           <span className="preview-perf-dev-badge">dev</span>
           preview perf
         </span>
-        <button type="button" onClick={() => setOpen(false)} aria-label="Hide">
+        <button type="button" onClick={() => setOpen(false)} aria-label="Hide" title="Hide">
           ×
         </button>
       </div>

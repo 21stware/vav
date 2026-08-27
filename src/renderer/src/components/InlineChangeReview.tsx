@@ -47,7 +47,12 @@ function MiniDiff({ text }: { text: string }): React.JSX.Element {
         )
       })}
       {truncated && !expanded && (
-        <button type="button" className="diff-more" onClick={() => setExpanded(true)}>
+        <button
+          type="button"
+          className="diff-more"
+          title={t('git.moreLines')}
+          onClick={() => setExpanded(true)}
+        >
           … {lines.length - 80} more lines
         </button>
       )}
@@ -258,6 +263,7 @@ function FileRow({
         <button
           type="button"
           className="inline-review-file-row"
+          title={expanded ? t('common.collapse') : t('common.expand')}
           aria-expanded={expanded}
           onClick={onToggle}
         >

@@ -8,6 +8,7 @@
 import { useLayoutEffect, useRef, useState, type RefObject } from 'react'
 import { createPortal } from 'react-dom'
 import { BrandAppIcon } from './BrandAppIcon'
+import { SelectionAgentFab } from './SelectionAgentFab'
 import {
   DOC_ZOOM_EVENT,
   DOC_ZOOM_VAR,
@@ -151,6 +152,7 @@ export function SelectionChrome({
             frame={layer.frame}
             boxes={layer.boxes}
             fab={index === 0 ? fab ?? null : null}
+            selectedIds={selectedIds}
           />,
           layer.frame
         )
@@ -162,11 +164,13 @@ export function SelectionChrome({
 function HudLayer({
   frame,
   boxes,
-  fab
+  fab,
+  selectedIds
 }: {
   frame: HTMLElement
   boxes: NaturalBox[]
   fab: { title: string; onClick: () => void } | null
+  selectedIds: string[]
 }): React.JSX.Element {
   const union = fab ? unionNatural(boxes.filter((b) => b.kind === 'selected')) : null
   const fillUnion = Boolean(union && union.w === 0 && union.h === 0)
@@ -195,31 +199,12 @@ function HudLayer({
         />
       ))}
       {fab && union ? (
-        <button
-          type="button"
-          className={`selection-agent-fab${fillUnion ? ' is-fill' : ''}`}
+        <SelectionAgentFab
+          hostRef={{ current: frame }}
+          selectedIds={selectedIds}
           title={fab.title}
-          aria-label={fab.title}
-          style={
-            fillUnion
-              ? { pointerEvents: 'auto' }
-              : ({
-                  '--hud-x': union.x + union.w,
-                  '--hud-y': union.y,
-                  pointerEvents: 'auto'
-                } as React.CSSProperties)
-          }
-          onClick={(e) => {
-            e.preventDefault()
-            e.stopPropagation()
-            fab.onClick()
-          }}
-          onMouseDown={(e) => e.stopPropagation()}
-        >
-          <span className="selection-agent-fab-mark" aria-hidden>
-            <BrandAppIcon size={FAB_SIZE} appearance="any" className="selection-agent-fab-icon" />
-          </span>
-        </button>
+          onClick={fab.onClick}
+        />
       ) : null}
     </div>
   )

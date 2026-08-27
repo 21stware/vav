@@ -139,7 +139,10 @@ export default function ScreenshotWindow(): React.JSX.Element {
     void (async () => {
       try {
         const res = await fetch(`${localFileStreamUrl(init.imagePath)}&t=${init.nonce}`)
-        if (!res.ok) return
+        if (!res.ok) {
+          window.vav.screenshot.finish({ ok: false, error: 'failed' } as any)
+          return
+        }
         const blob = await res.blob()
         objectUrl = URL.createObjectURL(blob)
         if (cancelled) {
@@ -149,6 +152,7 @@ export default function ScreenshotWindow(): React.JSX.Element {
         setImageUrl(objectUrl)
       } catch (err) {
         console.error('[screenshot] image fetch failed', err)
+        window.vav.screenshot.finish({ ok: false, error: 'failed' } as any)
       }
     })()
     return () => {
@@ -250,7 +254,9 @@ export default function ScreenshotWindow(): React.JSX.Element {
   const announcePainted = useCallback(async (image: HTMLImageElement, nonce: number) => {
     try {
       await image.decode()
-    } catch {
+    } catch (err) {
+      console.error('[screenshot] image decode failed', err)
+      window.vav.screenshot.finish({ ok: false, error: 'failed' } as any)
       return
     }
     if (paintedNonce.current === nonce) return
@@ -335,7 +341,7 @@ export default function ScreenshotWindow(): React.JSX.Element {
     if (!box || !cropIsUsable(box) || busy) return
     const base64 = encodedPng()
     if (!base64) {
-      window.vav.screenshot.finish({ ok: false })
+      window.vav.screenshot.finish({ ok: false, error: 'failed' } as any)
       return
     }
     window.vav.screenshot.dismiss()
@@ -344,13 +350,13 @@ export default function ScreenshotWindow(): React.JSX.Element {
       .writeClip({ filename: 'screenshot.png', base64 })
       .then((written) => {
         if (!written.ok) {
-          window.vav.screenshot.finish({ ok: false })
+          window.vav.screenshot.finish({ ok: false, error: 'failed' } as any)
           return
         }
         window.vav.screenshot.finish({ ok: true, path: written.path })
       })
       .catch(() => {
-        window.vav.screenshot.finish({ ok: false })
+        window.vav.screenshot.finish({ ok: false, error: 'failed' } as any)
       })
   }, [busy, crop, encodedPng])
 

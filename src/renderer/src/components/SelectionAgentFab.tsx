@@ -5,6 +5,7 @@
  */
 
 import { useLayoutEffect, useRef, useState, type RefObject } from 'react'
+import { createPortal } from 'react-dom'
 import { BrandAppIcon } from './BrandAppIcon'
 import {
   collectSelectedElements,
@@ -50,16 +51,20 @@ function computePos(host: HTMLElement, sel: ClientRect | null): Pos {
   }
 
   // Top-right of the selection, outside the box so content stays clear.
-  let left = sel.right - hostRect.left + OUTSIDE_GAP
-  let top = sel.top - hostRect.top - SIZE - OUTSIDE_GAP
+  // Using viewport-relative coordinates because we portal to body.
+  let left = sel.right + OUTSIDE_GAP
+  let top = sel.top - SIZE - OUTSIDE_GAP
 
+  // Clamp to window edges with VIEW_PAD.
   const minL = VIEW_PAD
-  const maxL = Math.max(VIEW_PAD, hostRect.width - SIZE - VIEW_PAD)
-  const minT = reservedTop(host, hostRect.top)
-  const maxT = Math.max(VIEW_PAD, hostRect.height - SIZE - VIEW_PAD)
+  const maxL = window.innerWidth - SIZE - VIEW_PAD
+  const minT = VIEW_PAD
+  const maxT = window.innerHeight - SIZE - VIEW_PAD
 
-  if (left > maxL) left = sel.right - hostRect.left - SIZE
-  if (top < minT) top = sel.top - hostRect.top + OUTSIDE_GAP
+  // If outside right, move inside selection.
+  if (left > maxL) left = sel.right - SIZE
+  // If outside top, move below selection top.
+  if (top < minT) top = sel.top + OUTSIDE_GAP
 
   left = Math.min(maxL, Math.max(minL, left))
   top = Math.min(maxT, Math.max(minT, top))
@@ -130,14 +135,20 @@ export function SelectionAgentFab({
 
   if (!pos.visible) return null
 
-  return (
+  return createPortal(
     <button
       ref={btnRef}
       type="button"
       className="selection-agent-fab"
       title={title}
       aria-label={title}
-      style={{ transform: `translate(${pos.left}px, ${pos.top}px)` }}
+      style={{
+        position: 'fixed',
+        left: 0,
+        top: 0,
+        transform: `translate(${pos.left}px, ${pos.top}px)`,
+        zIndex: 9999
+      }}
       onClick={(e) => {
         e.preventDefault()
         e.stopPropagation()
@@ -150,6 +161,7 @@ export function SelectionAgentFab({
       <span className="selection-agent-fab-mark" aria-hidden>
         <BrandAppIcon size={SIZE} appearance="any" className="selection-agent-fab-icon" />
       </span>
-    </button>
+    </button>,
+    document.body
   )
 }

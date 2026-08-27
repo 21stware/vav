@@ -1,5 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef } from 'react'
-import { Bot, FilePen, Hammer, ListTodo, MessageCircle, ShieldCheck, Sparkles } from 'lucide-react'
+import {
+  Bot,
+  CircleChevronRight,
+  Hammer,
+  ListTodo,
+  MessageCircle,
+  ShieldAlert,
+  ShieldPlus
+} from 'lucide-react'
 import type { ApprovalMode, ThinkingLevel } from '@shared/types'
 import { acpCurrentModeId, acpSessionModes, type AcpSessionMode } from '@shared/acpSession'
 import type { MessageKey } from '@shared/i18n'
@@ -188,7 +196,7 @@ function ModeIcon({ mode }: { mode: AcpSessionMode }): React.JSX.Element {
 }
 
 function ApprovalIcon({ mode }: { mode: ApprovalMode }): React.JSX.Element {
-  if (mode === 'bypass') return <ShieldCheck size={12} strokeWidth={2} />
-  if (mode === 'edit') return <FilePen size={12} strokeWidth={2} />
-  return <Sparkles size={12} strokeWidth={2} />
+  if (mode === 'bypass') return <ShieldAlert size={12} strokeWidth={2} />
+  if (mode === 'edit') return <ShieldPlus size={12} strokeWidth={2} />
+  return <CircleChevronRight size={12} strokeWidth={2} />
 }
