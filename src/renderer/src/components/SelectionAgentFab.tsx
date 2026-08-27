@@ -41,8 +41,9 @@ function computePos(host: HTMLElement, sel: ClientRect | null): Pos {
     return { left: 0, top: 0, visible: false }
   }
   // Completely outside the stage → hide.
+  const rTop = reservedTop(host, hostRect.top)
   if (
-    sel.bottom < hostRect.top ||
+    sel.bottom < hostRect.top + rTop ||
     sel.top > hostRect.bottom ||
     sel.right < hostRect.left ||
     sel.left > hostRect.right
@@ -58,7 +59,7 @@ function computePos(host: HTMLElement, sel: ClientRect | null): Pos {
   // Clamp to window edges with VIEW_PAD.
   const minL = VIEW_PAD
   const maxL = window.innerWidth - SIZE - VIEW_PAD
-  const minT = VIEW_PAD
+  const minT = hostRect.top + rTop
   const maxT = window.innerHeight - SIZE - VIEW_PAD
 
   // If outside right, move inside selection.

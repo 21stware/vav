@@ -29,6 +29,7 @@ function diffStats(diffText: string): { plus: number; minus: number } {
 }
 
 function MiniDiff({ text }: { text: string }): React.JSX.Element {
+  const t = useT()
   const lines = text.split('\n')
   const truncated = lines.length > 80
   const [expanded, setExpanded] = useState(false)

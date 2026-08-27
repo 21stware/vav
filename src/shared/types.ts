@@ -941,6 +941,7 @@ export interface AppSettings {
   /**
    * Files tray → Supabase functions status. Off by default.
    */
+  supabaseTrayEnabled: boolean
   /**
    * Last-used detached window size { width, height }.
    * New detached windows restore these dimensions.

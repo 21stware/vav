@@ -1240,6 +1240,7 @@ function ListGroupHead({
   onOpenWeb?: () => void
   openWebLabel?: string
 }): React.JSX.Element {
+  const t = useT()
   return (
     <div className="github-group-head">
       <button

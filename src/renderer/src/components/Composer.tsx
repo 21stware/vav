@@ -29,7 +29,7 @@ import {
   type QueuedMessage
 } from '../state/sessionStore'
 import { useWorkspaceStore } from '../state/workspaceStore'
-import { formatBytes, formatTokens } from '../lib/format'
+import { formatBytes } from '../lib/format'
 import { basename } from '../lib/path'
 import { formatBadge } from '../lib/previewBlocks'
 import { keys, PLATFORM } from '../lib/platform'

@@ -7,7 +7,6 @@
 
 import { useLayoutEffect, useRef, useState, type RefObject } from 'react'
 import { createPortal } from 'react-dom'
-import { BrandAppIcon } from './BrandAppIcon'
 import { SelectionAgentFab } from './SelectionAgentFab'
 import {
   DOC_ZOOM_EVENT,
@@ -20,8 +19,6 @@ import {
   type ChromeLayer,
   type NaturalBox
 } from '../lib/selectionChrome'
-
-const FAB_SIZE = 26
 
 export function SelectionChrome({
   hostRef,
@@ -173,7 +170,6 @@ function HudLayer({
   selectedIds: string[]
 }): React.JSX.Element {
   const union = fab ? unionNatural(boxes.filter((b) => b.kind === 'selected')) : null
-  const fillUnion = Boolean(union && union.w === 0 && union.h === 0)
 
   return (
     <div
