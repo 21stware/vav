@@ -84,7 +84,7 @@ function matchVendor(endpoint: string | null | undefined): LlmVendor | null {
   if (host.includes('siliconflow')) return vendorById('siliconflow')
   if (
     host.includes('bigmodel') ||
-    host.includes('zhipuai') ||
+    host.includes('zhipu') ||
     host === 'api.z.ai' ||
     host.endsWith('.z.ai')
   ) {

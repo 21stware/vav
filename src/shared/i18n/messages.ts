@@ -329,6 +329,7 @@ export const zhCN = {
 
   // —— stream / message ——
   'stream.outputting': 'Outputting',
+  'stream.by': 'by {name}',
   'stream.done': 'Done',
   'message.copy': '复制',
   'message.copyAsMarkdown': '以 Markdown 复制消息',
@@ -1194,7 +1195,7 @@ export const zhCN = {
   'shortcut.switchApproval': '切换审批模式',
 
   // —— token usage ——
-  'token.contextWindow': '上下文窗口',
+  'token.contextWindow': '上下文窗口', // session context window usage / 会话上下文窗口使用情况
   'token.contextUsage': '上下文用量 {percent}%',
   'token.contextDetail': '上下文 {percent}% · {used} / {limit}',
   'token.cacheHit': 'Cache 命中',
@@ -2339,6 +2340,7 @@ export const en: Record<MessageKey, string> = {
   'queue.sendNowFailedBusy': 'The current reply did not stop in time; the message stays in the queue.',
 
   'stream.outputting': 'Outputting',
+  'stream.by': 'by {name}',
   'stream.done': 'Done',
   'message.copy': 'Copy',
   'message.copyAsMarkdown': 'Copy message as Markdown',

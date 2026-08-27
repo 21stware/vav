@@ -200,7 +200,7 @@ export const KEY_BINDING_DEFS: readonly KeyBindingDef[] = [
     group: 'session',
     labelKey: 'composer.screenshot',
     kind: 'accelerator',
-    defaultAccelerator: 'CmdOrCtrl+A'
+    defaultAccelerator: 'CmdOrCtrl+Control+A'
   },
   {
     id: 'closeContext',

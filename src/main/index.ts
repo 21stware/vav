@@ -2215,8 +2215,9 @@ function detachedBounds(cascade: number): {
   }
 
   // Narrowest useful companion column (matches main-window minWidth).
-  const width = Math.min(MAIN_WINDOW_MIN_WIDTH, area.width - 40)
-  const height = Math.min(760, area.height - 60)
+  const stored = settingsStore.get().detachedWindowSize
+  const width = Math.min(stored?.width ?? MAIN_WINDOW_MIN_WIDTH, area.width - 40)
+  const height = Math.min(stored?.height ?? 760, area.height - 60)
   const step = (cascade % 5) * 26
 
   return {
@@ -2631,6 +2632,17 @@ function wireDetachedSessionLifecycle(window: BrowserWindow): void {
   // Reclaim may re-wire a warm shell that already had listeners.
   window.removeAllListeners('close')
   window.removeAllListeners('closed')
+  window.removeAllListeners('resize')
+
+  let resizeTimer: NodeJS.Timeout | null = null
+  window.on('resize', () => {
+    if (resizeTimer) clearTimeout(resizeTimer)
+    resizeTimer = setTimeout(() => {
+      if (window.isDestroyed() || window.isFullScreen() || window.isMaximized()) return
+      const { width, height } = window.getBounds()
+      settingsStore.update({ detachedWindowSize: { width, height } })
+    }, 500)
+  })
 
   window.on('close', (event) => {
     if (quitting || window.isDestroyed()) return
@@ -2651,6 +2663,10 @@ function wireDetachedSessionLifecycle(window: BrowserWindow): void {
   })
 
   window.on('closed', () => {
+    if (resizeTimer) {
+      clearTimeout(resizeTimer)
+      resizeTimer = null
+    }
     const id = unbindDetachedWindow(window)
     if (id) {
       publishDetachedSessions()
@@ -4796,11 +4812,6 @@ async function showMainWindow(): Promise<void> {
 }
 
 /** Session window the user can already see — Settings / usage panels do not count. */
-function hasVisibleSessionWindow(): boolean {
-  return BrowserWindow.getAllWindows().some(
-    (w) => !w.isDestroyed() && !isAuxiliaryWindow(w) && w.isVisible() && !w.isMinimized()
-  )
-}
 
 /**
  * Dock click / bare second-instance: raise the window the user was last in.
@@ -4839,14 +4850,14 @@ function activateApp(): void {
   if (process.platform === 'darwin' && app.dock && !app.dock.isVisible()) {
     app.dock.show()
   }
-  // Hidden / minimized: Dock click opens the earliest unseen Done session.
-  if (!hasVisibleSessionWindow()) {
-    const firstDone = notifications.firstUnseenComplete()
-    if (firstDone) {
-      focusRunningSession({ conversationId: firstDone, surface: 'vav' })
-      return
-    }
+
+  // Dock click: if there is an unseen completion (badge), jump to it first.
+  const firstDone = notifications.firstUnseenComplete()
+  if (firstDone) {
+    focusRunningSession({ conversationId: firstDone, surface: 'vav' })
+    return
   }
+
   const target = pickActivateWindow()
   if (!target) {
     mainWindow = createWindow()
@@ -7617,10 +7628,14 @@ if (!singleInstance) {
     void ensureLoginPath()
     protocol.handle('vav-local', async (request) => {
       try {
-        const requested = decodeURIComponent(new URL(request.url).searchParams.get('path') ?? '')
-        if (!requested) {
+        const url = new URL(request.url)
+        const pathParam = url.searchParams.get('path')
+        if (!pathParam) {
           return new Response('Not found', { status: 404 })
         }
+        // searchParams.get already decodes percent escapes. decodeURIComponent is redundant
+        // and throws if the path contains a literal % (e.g. in a hash or filename).
+        const requested = pathParam
         // Document sandbox: preview must read the working copy when one exists.
         const mapped = workingCopyService.ioPath(requested)
         const filePath = existsSync(mapped) ? mapped : requested

@@ -3,7 +3,7 @@
  * Profiles, keys, and endpoints are app data — a new temp folder must not hide them.
  */
 
-import { vendorFromEndpoint } from './llmVendors.ts'
+import { LLM_VENDOR_CATALOGUE, vendorById, vendorFromEndpoint } from './llmVendors.ts'
 
 export const DEFAULT_WORKSPACE_KEY = '__default__'
 export const WORKSPACE_ACCOUNT_NAME = '__workspace__'
@@ -238,8 +238,14 @@ export function agentIdOf(account: {
   agentId?: string | null
   oauthHost?: string | null
   provider?: string | null
+  endpoint?: string | null
 }): string {
   const explicit = account.agentId?.trim()
+  if (explicit && explicit !== 'vav') return explicit
+
+  const vendor = vendorFromEndpoint(account.endpoint)
+  if (vendor) return vendor.id
+
   if (explicit) return explicit
   const host = account.oauthHost?.trim()
   if (host) return host
@@ -257,6 +263,8 @@ export function createKindForAgent(agentId: string): AccountCreateKind {
 }
 
 export function defaultKeyEndpoint(agentId: string, fallback = ''): string {
+  const vendor = vendorById(agentId)
+  if (vendor?.endpoint) return vendor.endpoint
   if (agentId === 'codex') return 'https://api.openai.com'
   if (agentId === 'grok') return 'https://api.x.ai'
   if (agentId === 'claude') return 'https://api.anthropic.com'
@@ -294,7 +302,7 @@ export function providerForAgent(agentId: string): AccountProvider {
   return 'custom'
 }
 
-export function catalogGroups<T extends { createdAt: number; agentId?: string | null; oauthHost?: string | null; provider?: string | null }>(
+export function catalogGroups<T extends { createdAt: number; agentId?: string | null; oauthHost?: string | null; provider?: string | null; endpoint?: string | null }>(
   cliAgents: Array<{ id: string; name: string }>,
   accounts: T[]
 ): {
@@ -316,6 +324,9 @@ export function catalogGroups<T extends { createdAt: number; agentId?: string | 
     list.sort((a, b) => a.createdAt - b.createdAt)
   }
   const order = [{ id: 'vav', name: 'VAV' }, ...cliAgents.filter((agent) => agent.id !== 'vav')]
+  for (const vendor of LLM_VENDOR_CATALOGUE) {
+    if (!order.some((agent) => agent.id === vendor.id)) order.push(vendor)
+  }
   for (const extra of OAUTH_SUPPORT_CATALOG) {
     if (!order.some((agent) => agent.id === extra.id)) order.push(extra)
   }

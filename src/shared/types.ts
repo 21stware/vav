@@ -234,7 +234,10 @@ export interface PreviewRef {
   comment?: string
 }
 
-/** One agent-loop usage sample for the context-window popover chart. */
+/**
+ * One agent-loop usage sample for the context-window popover chart.
+ * (session context window usage / 会话上下文窗口使用情况)
+ */
 export interface TokenSnapshot {
   turnIndex: number
   totalInputTokens: number
@@ -938,7 +941,11 @@ export interface AppSettings {
   /**
    * Files tray → Supabase functions status. Off by default.
    */
-  supabaseTrayEnabled: boolean
+  /**
+   * Last-used detached window size { width, height }.
+   * New detached windows restore these dimensions.
+   */
+  detachedWindowSize?: { width: number; height: number }
   theme: ThemeMode
   /**
    * Tools-tray bash background. `dark` stays dark regardless of theme;

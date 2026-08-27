@@ -295,6 +295,23 @@ export class SettingsStore {
       }
       s.defaultAgentModels = cleaned
     }
+    if (s.detachedWindowSize) {
+      if (
+        typeof s.detachedWindowSize.width !== 'number' ||
+        typeof s.detachedWindowSize.height !== 'number'
+      ) {
+        s.detachedWindowSize = undefined
+      } else {
+        s.detachedWindowSize.width = Math.min(
+          10_000,
+          Math.max(400, Math.round(s.detachedWindowSize.width))
+        )
+        s.detachedWindowSize.height = Math.min(
+          10_000,
+          Math.max(400, Math.round(s.detachedWindowSize.height))
+        )
+      }
+    }
     // null / "vav" = no explicit default. Otherwise a CLI agent id or LLM vendor id.
     if (s.defaultAgentId === undefined) s.defaultAgentId = null
     if (s.defaultAgentId === 'vav') s.defaultAgentId = null

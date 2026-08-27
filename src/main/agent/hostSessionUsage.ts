@@ -13,6 +13,7 @@ import {
 export type HostUsageImport = {
   history: TokenSnapshot[]
   tokensUsed: number
+  tokenLimit?: number
   reportedSessionCostUsd: number | null
 }
 
@@ -39,6 +40,28 @@ function grokHome(home: string): string {
   return env || join(home, '.grok')
 }
 
+function cursorHome(home: string): string {
+  const env = process.env.CURSOR_HOME?.trim()
+  return env || join(home, '.cursor')
+}
+
+function acpJsonlFile(
+  host: CliHostKind,
+  sessionId: string,
+  cwd: string,
+  home: string
+): string | null {
+  if (host === 'grok') {
+    return join(grokHome(home), 'sessions', encodeGrokSessionDir(cwd), sessionId, 'updates.jsonl')
+  }
+  if (host === 'cursor') {
+    // Cursor uses SQLite, but maybe some versions or future tools use JSONL.
+    // For now, we only know about Grok's updates.jsonl.
+    return join(cursorHome(home), 'acp-sessions', sessionId, 'updates.jsonl')
+  }
+  return null
+}
+
 function timestampMs(value: unknown): number {
   if (typeof value === 'number' && Number.isFinite(value)) {
     return value < 1e12 ? Math.round(value * 1000) : Math.round(value)
@@ -62,18 +85,29 @@ function snapshotFromSample(
   const output = sample.outputTokens ?? 0
   const cacheRead = sample.cacheRead ?? 0
   const cacheWrite = sample.cacheWrite ?? 0
-  if (input <= 0 && output <= 0 && cacheRead <= 0 && cacheWrite <= 0) return null
+
+  // If we only have contextUsed (common for some ACP agents like Grok),
+  // treat it as input tokens so the snapshot shows the fill.
+  let finalInput = input
+  if (finalInput === 0 && (sample.contextUsed ?? 0) > 0) {
+    finalInput = sample.contextUsed!
+  }
+
+  if (finalInput <= 0 && output <= 0 && cacheRead <= 0 && cacheWrite <= 0) return null
   return buildSnapshot({
     turnIndex,
-    usage: { input, output, cacheRead, cacheWrite },
+    usage: { input: finalInput, output, cacheRead, cacheWrite },
     modelId,
     timestamp,
     costUsd: sample.turnCostUsd
   })
 }
 
-/** Grok persists per-turn usage on `_x.ai/session/update` `turn_completed`. */
-export function readGrokSessionUsage(
+/**
+ * Backfill usage from an ACP agent's updates.jsonl (Grok/Cursor/...).
+ */
+export function readAcpJsonlUsage(
+  host: CliHostKind,
   sessionId: string,
   cwd: string,
   options?: { home?: string; modelId?: string }
@@ -82,18 +116,20 @@ export function readGrokSessionUsage(
   const dir = cwd.trim()
   if (!id || !dir) return null
   const home = options?.home ?? homedir()
-  const file = join(grokHome(home), 'sessions', encodeGrokSessionDir(dir), id, 'updates.jsonl')
-  if (!existsSync(file)) return null
+  const file = acpJsonlFile(host, id, dir, home)
+  if (!file || !existsSync(file)) return null
   let text = ''
   try {
     text = readFileSync(file, 'utf8')
   } catch {
     return null
   }
-  const modelId = options?.modelId?.trim() || 'grok'
+  const modelId = options?.modelId?.trim() || host
   const all: TokenSnapshot[] = []
   let sessionCost = 0
   let sawCost = false
+  let lastLimit: number | undefined = undefined
+
   for (const line of text.split('\n')) {
     const raw = line.trim()
     if (!raw) continue
@@ -106,11 +142,19 @@ export function readGrokSessionUsage(
     if (!row) continue
     const params = asRecord(row.params) ?? row
     const update = asRecord(params.update) ?? params
-    const kind = asString(update.sessionUpdate) || asString(update.session_update) || ''
-    if (kind.replace(/[_-]/g, '').toLowerCase() !== 'turncompleted') continue
+    const kind = (asString(update.sessionUpdate) || asString(update.session_update) || '')
+      .replace(/[_-]/g, '')
+      .toLowerCase()
+    // Support both turn_completed and usage_update
+    if (kind !== 'turncompleted' && kind !== 'usageupdate') continue
     if (!asRecord(update.usage) && update.inputTokens == null && update.used == null) continue
     const sample = readAcpUsageFromUpdate(update)
     if (!sample) continue
+
+    if (sample.contextSize) {
+      lastLimit = sample.contextSize
+    }
+
     const snap = snapshotFromSample(sample, all.length + 1, modelId, timestampMs(row.timestamp))
     if (!snap) continue
     all.push(snap)
@@ -124,6 +168,7 @@ export function readGrokSessionUsage(
   return {
     history: all.slice(-TOKEN_HISTORY_LIMIT),
     tokensUsed: latest.totalInputTokens,
+    tokenLimit: lastLimit,
     reportedSessionCostUsd: sawCost ? sessionCost : null
   }
 }
@@ -134,9 +179,8 @@ export function readHostSessionUsage(
   cwd: string | null | undefined,
   options?: { home?: string; modelId?: string }
 ): HostUsageImport | null {
-  if (host !== 'grok') return null
-  if (!sessionId || !cwd) return null
-  return readGrokSessionUsage(sessionId, cwd, options)
+  if (!host || !sessionId || !cwd) return null
+  return readAcpJsonlUsage(host, sessionId, cwd, options)
 }
 
 function bucketHasUsage(history: TokenSnapshot[] | undefined, tokensUsed: number | undefined): boolean {
@@ -144,12 +188,20 @@ function bucketHasUsage(history: TokenSnapshot[] | undefined, tokensUsed: number
 }
 
 function applyImport(
-  target: { tokenHistory: TokenSnapshot[]; tokensUsed: number; reportedSessionCostUsd?: number | null },
+  target: {
+    tokenHistory: TokenSnapshot[]
+    tokensUsed: number
+    tokenLimit: number
+    reportedSessionCostUsd?: number | null
+  },
   usage: HostUsageImport
 ): boolean {
   if (bucketHasUsage(target.tokenHistory, target.tokensUsed)) return false
   target.tokenHistory = usage.history
   target.tokensUsed = usage.tokensUsed
+  if (typeof usage.tokenLimit === 'number' && usage.tokenLimit > 0) {
+    target.tokenLimit = usage.tokenLimit
+  }
   if (usage.reportedSessionCostUsd != null) {
     target.reportedSessionCostUsd = usage.reportedSessionCostUsd
   }

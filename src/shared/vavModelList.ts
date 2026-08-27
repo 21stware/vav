@@ -11,7 +11,15 @@ const LABELS: Record<string, string> = {
   'deepseek-v4-pro': 'DeepSeek V4 Pro',
   'deepseek-v4-flash': 'DeepSeek V4 Flash',
   'deepseek-chat': 'DeepSeek Chat',
-  'deepseek-reasoner': 'DeepSeek Reasoner'
+  'deepseek-reasoner': 'DeepSeek Reasoner',
+  'glm-4': 'GLM-4',
+  'glm-4-plus': 'GLM-4 Plus',
+  'glm-4-air': 'GLM-4 Air',
+  'glm-4-flash': 'GLM-4 Flash',
+  'glm-4v': 'GLM-4V',
+  'moonshot-v1-8k': 'Kimi 8k',
+  'moonshot-v1-32k': 'Kimi 32k',
+  'moonshot-v1-128k': 'Kimi 128k'
 }
 
 export function isOfficialDeepSeekEndpoint(endpoint: string): boolean {
