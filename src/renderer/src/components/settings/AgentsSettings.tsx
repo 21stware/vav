@@ -439,6 +439,13 @@ export function AgentsSettings(): React.JSX.Element {
     !!selected &&
     (installById[selected.id] ?? getAgentInstallStatus(selected.id)) === 'missing'
 
+  const currentVav =
+    (selectedVendor?.accounts.find((row) => row.current) ??
+      selectedVendor?.accounts[0] ??
+      vavAccounts.find((row) => row.current) ??
+      vavAccounts[0]) ??
+    null
+
   const activeDefaultId =
     !settings.defaultAgentId || settings.defaultAgentId === 'vav'
       ? null
@@ -459,12 +466,6 @@ export function AgentsSettings(): React.JSX.Element {
     : (selectedAgentId
         ? groups.find((group) => group.agentId === selectedAgentId)?.accounts
         : null) ?? []
-  const currentVav =
-    (selectedVendor?.accounts.find((row) => row.current) ??
-      selectedVendor?.accounts[0] ??
-      vavAccounts.find((row) => row.current) ??
-      vavAccounts[0]) ??
-    null
   const selectedVendorName = selectedVendor?.vendor.name ?? t('agents.customModel')
   const vavEndpointKey = (currentVav?.endpoint ?? selectedVendor?.vendor.endpoint ?? settings.apiEndpoint).trim()
   const vavEndpointNorm = vavEndpointKey.replace(/\/+$/, '').toLowerCase()

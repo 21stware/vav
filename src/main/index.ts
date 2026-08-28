@@ -1399,9 +1399,6 @@ function windowThemeName(): 'dark' | 'light' {
   return nativeTheme.shouldUseDarkColors ? 'dark' : 'light'
 }
 
-/** Clear native fill so macOS vibrancy (NSVisualEffectView) can show through. */
-const VIBRANCY_CLEAR = '#00000000'
-
 /**
  * Paint html/body/#root before React/CSS arrive so dark-mode cold opens
  * (session / Settings / main) never flash system white.
@@ -5526,7 +5523,11 @@ function activeVavCredentials(): { apiKey: string | null; endpoint: string } {
   return { apiKey: resolved.apiKey, endpoint: resolved.endpoint }
 }
 
-function currentWorkspaceVavCredentials(): { apiKey: string | null; endpoint: string } {
+function currentWorkspaceVavCredentials(): {
+  apiKey: string | null
+  endpoint: string
+  accountId: string | null
+} {
   const untitled = t('accounts.workspaceDefault')
   const ctx = resolveWorkspaceContext(
     conversationStore.listMeta(),
@@ -5542,7 +5543,7 @@ function currentWorkspaceVavCredentials(): { apiKey: string | null; endpoint: st
     accountStore,
     secretStore
   )
-  return { apiKey: resolved.apiKey, endpoint: resolved.endpoint }
+  return { apiKey: resolved.apiKey, endpoint: resolved.endpoint, accountId: resolved.accountId }
 }
 
 function vavModelListOptions(force?: boolean): PreloadHostModelsOptions {
@@ -6492,7 +6493,6 @@ return c as text`
       const prevHost = prev?.cliHost ?? null
       const nextHost = isStructuredCliHost(host) ? host : null
       const hostChanged = prevHost !== nextHost
-      const accountChanged = accountId !== undefined && (prev?.accountId ?? null) !== accountId
 
       if (hostChanged && (prev?.messages.length ?? 0) > 0) {
         return {

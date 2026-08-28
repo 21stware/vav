@@ -1744,12 +1744,14 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     const { settings, agentModelCatalog } = get()
     const { cliHost, accountId, model: currentModel } = conv
 
-    const vendorId =
-      cliHost == null
-        ? vendorIdFromEndpoint(
-            settings.accounts?.find((a) => a.id === accountId)?.endpoint ?? settings.apiEndpoint
-          )
-        : null
+    let vendorId: string | null = null
+    if (cliHost == null) {
+      const catalogKey = Object.keys(agentModelCatalog).find((k) =>
+        accountId ? k.endsWith(`:${accountId}`) : k === 'vav'
+      )
+      const entry = catalogKey ? agentModelCatalog[catalogKey] : null
+      vendorId = vendorIdFromEndpoint(entry?.endpoint ?? settings.apiEndpoint)
+    }
     const key = agentModelHostKey(cliHost, vendorId, accountId)
     const entry = agentModelCatalog[key]
     const raw =
