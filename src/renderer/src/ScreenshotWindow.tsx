@@ -344,6 +344,25 @@ export default function ScreenshotWindow(): React.JSX.Element {
       window.vav.screenshot.finish({ ok: false, error: 'failed' } as any)
       return
     }
+    // Commit any text marks if we have a draft, but don't re-render if we are finishing
+    const pendingText = textDraft
+    if (pendingText) {
+      const value = pendingText.value.trim()
+      if (value) {
+        marksRef.current = [
+          ...marksRef.current,
+          {
+            id: nextId(),
+            kind: 'text',
+            x: pendingText.x,
+            y: pendingText.y,
+            text: value,
+            color,
+            fontSize: TEXT_SIZE
+          }
+        ]
+      }
+    }
     window.vav.screenshot.dismiss()
     setBusy(true)
     void window.vav.files
@@ -358,7 +377,7 @@ export default function ScreenshotWindow(): React.JSX.Element {
       .catch(() => {
         window.vav.screenshot.finish({ ok: false, error: 'failed' } as any)
       })
-  }, [busy, crop, encodedPng])
+  }, [busy, color, crop, encodedPng, textDraft])
 
   const copyImage = useCallback(async () => {
     if (!crop || busy) return
@@ -370,19 +389,20 @@ export default function ScreenshotWindow(): React.JSX.Element {
         const fromFile = await window.vav.files.copyImage(written.path)
         if (fromFile.ok) {
           setCopied(true)
-          window.setTimeout(() => setCopied(false), 1400)
+          window.vav.screenshot.finish({ ok: false })
           return
         }
       }
       const fromIpc = await window.vav.conversations.copyImageToClipboard(base64)
       if (fromIpc.ok) {
         setCopied(true)
-        window.setTimeout(() => setCopied(false), 1400)
+        window.vav.screenshot.finish({ ok: false })
         return
       }
       if (await copyPngViaClipboardItem(base64)) {
         setCopied(true)
-        window.setTimeout(() => setCopied(false), 1400)
+        window.vav.screenshot.finish({ ok: false })
+        return
       }
     } catch (err) {
       console.error('[screenshot] copy failed', err)
@@ -489,23 +509,35 @@ export default function ScreenshotWindow(): React.JSX.Element {
     if (event.target instanceof HTMLTextAreaElement || event.target instanceof HTMLInputElement) {
       return
     }
+
     const box = cropRef.current
-    if (event.detail >= 2 && box && cropIsUsable(box)) {
+    const isDoubleClick = event.detail >= 2
+
+    // 1) Prioritize double-click confirmation inside the usable crop area.
+    const local = pointInCrop(event.clientX, event.clientY)
+    if (isDoubleClick && box && cropIsUsable(box) && local) {
       event.preventDefault()
-      commitText()
+      if (textDraft) commitText()
       confirm()
       return
     }
+
     if (!box) {
-      beginCropCreate(event, false)
+      if (event.detail === 1) beginCropCreate(event, false)
       return
     }
+
     const hit = hitCrop(box, event.clientX, event.clientY, {
       interior: tool === 'move' ? 'move' : 'inside'
     })
+
     if (hit && hit !== 'inside' && hit !== 'move') {
-      commitText()
-      selectMark(null)
+      if (isDoubleClick) {
+        event.preventDefault()
+        return
+      }
+      if (textDraft) commitText()
+      if (selectedIdRef.current) selectMark(null)
       event.currentTarget.setPointerCapture(event.pointerId)
       const start = { kind: 'resize' as const, handle: hit, origin: box }
       gestureRef.current = start
@@ -513,14 +545,18 @@ export default function ScreenshotWindow(): React.JSX.Element {
       setRootCursor(cropCursor(hit))
       return
     }
-    const local = pointInCrop(event.clientX, event.clientY)
+
     if (local) {
+      if (isDoubleClick) {
+        event.preventDefault()
+        return
+      }
       const selected = selectedIdRef.current
         ? marksRef.current.find((mark) => mark.id === selectedIdRef.current)
         : null
       const selectedHit = selected ? hitMark(selected, local.x, local.y) : null
       if (selected && selectedHit && selectedHit !== 'move') {
-        commitText()
+        if (textDraft) commitText()
         event.currentTarget.setPointerCapture(event.pointerId)
         const start = {
           kind: 'mark-resize' as const,
@@ -536,8 +572,8 @@ export default function ScreenshotWindow(): React.JSX.Element {
       }
       const top = hitTopMark(marksRef.current, local.x, local.y)
       if (top) {
-        commitText()
-        selectMark(top.mark.id)
+        if (textDraft) commitText()
+        if (selectedIdRef.current !== top.mark.id) selectMark(top.mark.id)
         event.currentTarget.setPointerCapture(event.pointerId)
         const start = {
           kind: 'mark-move' as const,
@@ -554,8 +590,12 @@ export default function ScreenshotWindow(): React.JSX.Element {
       }
     }
     if (hit === 'move') {
-      commitText()
-      selectMark(null)
+      if (isDoubleClick) {
+        event.preventDefault()
+        return
+      }
+      if (textDraft) commitText()
+      if (selectedIdRef.current) selectMark(null)
       event.currentTarget.setPointerCapture(event.pointerId)
       const start = {
         kind: 'move' as const,
@@ -569,12 +609,20 @@ export default function ScreenshotWindow(): React.JSX.Element {
       return
     }
     if (!local) {
-      beginCropCreate(event, true)
+      if (isDoubleClick) {
+        event.preventDefault()
+        return
+      }
+      if (event.detail === 1) beginCropCreate(event, true)
       return
     }
     if (tool === 'move') {
-      commitText()
-      selectMark(null)
+      if (isDoubleClick) {
+        event.preventDefault()
+        return
+      }
+      if (textDraft) commitText()
+      if (selectedIdRef.current) selectMark(null)
       event.currentTarget.setPointerCapture(event.pointerId)
       const start = {
         kind: 'move' as const,
@@ -588,13 +636,21 @@ export default function ScreenshotWindow(): React.JSX.Element {
       return
     }
     if (tool === 'text') {
-      commitText()
-      selectMark(null)
+      if (isDoubleClick) {
+        event.preventDefault()
+        return
+      }
+      if (textDraft) commitText()
+      if (selectedIdRef.current) selectMark(null)
       setTextDraft({ x: local.x, y: local.y, value: '' })
       return
     }
-    commitText()
-    selectMark(null)
+    if (isDoubleClick) {
+      event.preventDefault()
+      return
+    }
+    if (textDraft) commitText()
+    if (selectedIdRef.current) selectMark(null)
     event.currentTarget.setPointerCapture(event.pointerId)
     const nextDraft: ScreenshotMark = {
       id: nextId(),
@@ -791,13 +847,14 @@ export default function ScreenshotWindow(): React.JSX.Element {
           style={{ left: crop.x, top: crop.y, width: crop.w, height: crop.h }}
         >
           <canvas ref={canvasRef} className="screenshot-canvas" />
-          {CROP_HANDLES.map((handle) => (
-            <span
-              key={handle}
-              className={`screenshot-handle screenshot-handle-${handle}`}
-              data-handle={handle}
-            />
-          ))}
+          {gesture?.kind !== 'create' &&
+            CROP_HANDLES.map((handle) => (
+              <span
+                key={handle}
+                className={`screenshot-handle screenshot-handle-${handle}`}
+                data-handle={handle}
+              />
+            ))}
           {textDraft ? (
             <textarea
               ref={textRef}

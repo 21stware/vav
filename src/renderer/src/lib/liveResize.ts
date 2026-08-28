@@ -14,7 +14,9 @@ export function installLiveResizeTracking(): () => void {
   installed = true
 
   const onResize = (): void => {
-    document.documentElement.dataset.resizing = 'true'
+    if (document.documentElement.dataset.resizing !== 'true') {
+      document.documentElement.dataset.resizing = 'true'
+    }
     if (idleTimer) clearTimeout(idleTimer)
     idleTimer = setTimeout(() => {
       idleTimer = null

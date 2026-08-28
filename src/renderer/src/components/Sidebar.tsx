@@ -1082,13 +1082,14 @@ export function Sidebar({
           )}
         </div>
         {listMode === 'main' && (
-          <label className="sidebar-grouping">
+          <label className="sidebar-grouping" title={t('sidebar.grouping')}>
             <span className="sidebar-grouping-label">{t('sidebar.grouping')}</span>
             <span className="sidebar-grouping-control">
               <select
                 className="text-field sidebar-grouping-select"
                 data-testid="sidebar-grouping"
                 value={groupingMode}
+                title={t('sidebar.grouping')}
                 onChange={(event) =>
                   void updateSettings({
                     sidebarGroupingMode: event.target.value as SidebarGroupingMode
@@ -1143,6 +1144,7 @@ export function Sidebar({
           <EmptyState title={t('sidebar.emptyTitle')} description={t('sidebar.emptyDesc')}>
             <button
               className="btn secondary"
+              title={t('common.newSession')}
               onClick={() => {
                 void createConversation()
                 onNavigate?.()

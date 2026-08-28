@@ -53,10 +53,11 @@ export function chatHostId(cliHost: CliHostKind | null | undefined): ChatHostId 
 export function modelsForChatHost(
   host: CliHostKind | null | undefined,
   _customModels: string[] = [],
-  vavDefaultModel?: string | null
+  vavDefaultModel?: string | null,
+  vendorId?: string | null
 ): ModelOption[] {
   const id = chatHostId(host)
-  if (id === 'vav') return vavFallbackModels(vavDefaultModel)
+  if (id === 'vav') return vavFallbackModels(vavDefaultModel, vendorId)
   if (id === 'claude') return [...CLAUDE_MODEL_ALIASES]
   return [CLI_DEFAULT_MODEL]
 }
@@ -86,12 +87,13 @@ export function resolveModelForChatHost(
     hostDefaultModel?: string | null
     /** Prefer this catalogue when live list already loaded. */
     catalogue?: ModelOption[] | null
+    vendorId?: string | null
   }
 ): string {
   const hasCatalogue = !!(options?.catalogue && options.catalogue.length > 0)
   const list = hasCatalogue
     ? options!.catalogue!
-    : modelsForChatHost(host, options?.customModels, options?.vavDefaultModel)
+    : modelsForChatHost(host, options?.customModels, options?.vavDefaultModel, options?.vendorId)
   const current = currentModel ?? ''
   // Empty string is a valid "CLI default" choice.
   if (list.some((m) => m.id === current)) return current
@@ -128,17 +130,28 @@ export function labelForChatModel(
 }
 
 /** Host key used in {@link AppSettings.disabledAgentModels}. */
-export function agentModelHostKey(host: CliHostKind | null | undefined): string {
-  return chatHostId(host)
+export function agentModelHostKey(
+  host: CliHostKind | null | undefined,
+  vendorId?: string | null,
+  accountId?: string | null
+): string {
+  if (host) return chatHostId(host)
+  if (vendorId && isLlmVendorId(vendorId)) {
+    if (accountId) return `vav:${vendorId}:${accountId}`
+    return `vav:${vendorId}`
+  }
+  return 'vav'
 }
 
 /** Drop models the user disabled in Settings. */
 export function filterEnabledModels(
   host: CliHostKind | null | undefined,
   models: ModelOption[],
-  disabledAgentModels: Record<string, string[]> | null | undefined
+  disabledAgentModels: Record<string, string[]> | null | undefined,
+  vendorId?: string | null,
+  accountId?: string | null
 ): ModelOption[] {
-  const disabled = new Set(disabledAgentModels?.[agentModelHostKey(host)] ?? [])
+  const disabled = new Set(disabledAgentModels?.[agentModelHostKey(host, vendorId, accountId)] ?? [])
   if (disabled.size === 0) return models
   const kept = models.filter((m) => !disabled.has(m.id))
   // Never leave a host with zero choices — keep Default / first.
@@ -148,9 +161,11 @@ export function filterEnabledModels(
 export function isAgentModelEnabled(
   host: CliHostKind | null | undefined,
   modelId: string,
-  disabledAgentModels: Record<string, string[]> | null | undefined
+  disabledAgentModels: Record<string, string[]> | null | undefined,
+  vendorId?: string | null,
+  accountId?: string | null
 ): boolean {
-  const disabled = disabledAgentModels?.[agentModelHostKey(host)] ?? []
+  const disabled = disabledAgentModels?.[agentModelHostKey(host, vendorId, accountId)] ?? []
   return !disabled.includes(modelId)
 }
 

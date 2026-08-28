@@ -7,7 +7,7 @@
  */
 import { displayNameForCliHost, isStructuredCliHost } from '@shared/cliHost'
 import { agentModelHostKey, labelForChatModel } from '@shared/agentModels'
-import { vendorDisplayName } from '@shared/llmVendors'
+import { vendorDisplayName, vendorIdFromEndpoint } from '@shared/llmVendors'
 import { enabledCliAgents } from '@shared/types'
 import doneMark from '../assets/loading/done.png'
 import doneMarkDark from '../assets/loading/dark-done.png'
@@ -82,17 +82,18 @@ function useOutputtingDetail(conversationId: string | undefined): string | null 
   const host = (turn?.startedCliHost as typeof conversation.cliHost | undefined) ?? conversation.cliHost ?? null
   const model = turn?.startedModel ?? conversation.model
   const accountId = turn?.startedAccountId ?? conversation.accountId
-  const catalogue = catalog[agentModelHostKey(host)]?.models ?? null
+  const rows = vavAccountsOf(accountGroups)
+  const current =
+    rows.find((row) => row.id === accountId) ?? rows.find((row) => row.current) ?? rows[0]
+  const endpoint = current?.endpoint ?? settings.apiEndpoint
+  const vendorId = host == null ? vendorIdFromEndpoint(endpoint) : null
+  const catalogue = catalog[agentModelHostKey(host, vendorId, accountId)]?.models ?? null
   const modelLabel = labelForChatModel(host, model, settings.customModels, catalogue)
   let agentName: string
   if (host && isStructuredCliHost(host)) {
     const named = enabledCliAgents(settings.cliAgents).find((agent) => agent.id === host)
     agentName = named?.name ?? displayNameForCliHost(host)
   } else {
-    const rows = vavAccountsOf(accountGroups)
-    const current =
-      rows.find((row) => row.id === accountId) ?? rows.find((row) => row.current) ?? rows[0]
-    const endpoint = current?.endpoint ?? settings.apiEndpoint
     agentName = vendorDisplayName(endpoint, t('agents.customModel'))
   }
   const parts = [agentName, modelLabel].filter((part) => part && part !== 'Default')

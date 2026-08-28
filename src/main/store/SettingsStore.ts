@@ -216,7 +216,7 @@ export class SettingsStore {
     s.cloudflareAccountId = s.cloudflareAccountId.trim()
     if (typeof s.supabaseProjectRef !== 'string') s.supabaseProjectRef = ''
     s.supabaseProjectRef = s.supabaseProjectRef.trim()
-    const providers = new Set(['auto', 'duckduckgo', 'searxng', 'brave'])
+    const providers = new Set(['auto', 'duckduckgo', 'searxng', 'brave', 'tinyfish'])
     if (!providers.has(s.webSearchProvider)) s.webSearchProvider = 'auto'
     s.fontSize = Math.min(24, Math.max(10, s.fontSize))
     if (s.bashBackground !== 'dark' && s.bashBackground !== 'theme') s.bashBackground = 'theme'
@@ -454,6 +454,7 @@ export class SettingsStore {
       const {
         apiKeyPresent: _omitApi,
         braveSearchKeyPresent: _omitBrave,
+        tinyfishSearchKeyPresent: _omitTiny,
         cloudflareApiTokenPresent: _omitCf,
         supabaseAccessTokenPresent: _omitSb,
         customSurfacePatternUrl: _omitPatternUrl,
@@ -461,6 +462,7 @@ export class SettingsStore {
       } = this.settings
       void _omitApi
       void _omitBrave
+      void _omitTiny
       void _omitCf
       void _omitSb
       void _omitPatternUrl

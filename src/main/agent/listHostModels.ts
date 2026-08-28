@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process'
 import type { CliHostKind, ModelOption } from '@shared/types'
 import { enabledCliAgents, isStructuredCliHost } from '@shared/types'
 import {
+  agentModelHostKey,
   deepseekOfficialModels,
   isOfficialDeepSeekEndpoint,
   orderVavModels,
@@ -9,6 +10,7 @@ import {
   prettyVavModelLabel,
   vavFallbackModels
 } from '@shared/agentModels'
+import { vendorIdFromEndpoint } from '@shared/llmVendors'
 import type { SettingsStore } from '../store/SettingsStore'
 import { ensureLoginPath } from '../terminal/loginPath'
 import { resolveHostBinary } from './drivers'
@@ -59,6 +61,8 @@ export interface PreloadHostModelsOptions {
   apiKey?: string | null
   /** Current VAV profile endpoint. Falls back to settings.apiEndpoint. */
   endpoint?: string | null
+  /** Additional VAV accounts to probe (accountId -> { apiKey, endpoint, accountId }). */
+  vavAccounts?: Record<string, { apiKey: string | null; endpoint: string; accountId: string }>
 }
 
 export interface ListHostModelsOptions {
@@ -70,7 +74,7 @@ export interface ListHostModelsOptions {
 }
 
 export interface ListHostModelsResult {
-  host: CliHostKind | 'vav'
+  host: string
   models: ModelOption[]
   source: 'live' | 'static' | 'fallback'
   error?: string
@@ -82,12 +86,12 @@ export interface ListHostModelsResult {
 export function getModelCatalogSnapshot(): Record<string, ListHostModelsResult> {
   const out: Record<string, ListHostModelsResult> = {}
   for (const [host, entry] of cache) {
-    out[host] = resultFromCache(host === 'vav' ? 'vav' : (host as CliHostKind), entry)
+    out[host] = resultFromCache(host, entry)
   }
   return out
 }
 
-function resultFromCache(host: CliHostKind | 'vav', entry: CacheEntry): ListHostModelsResult {
+function resultFromCache(host: string, entry: CacheEntry): ListHostModelsResult {
   return {
     host,
     models: entry.models,
@@ -114,9 +118,15 @@ function vavSeedModels(settings: SettingsStore): ModelOption[] {
 /** Instant catalogue so the picker never waits on CLI spawn. */
 export function seedModelCatalog(
   settings: SettingsStore,
-  options?: Pick<ListHostModelsOptions, 'endpoint'>
+  options?: Pick<PreloadHostModelsOptions, 'endpoint' | 'vavAccounts'>
 ): Record<string, ListHostModelsResult> {
   seedHost('vav', settings, options?.endpoint)
+  if (options?.vavAccounts) {
+    for (const creds of Object.values(options.vavAccounts)) {
+      const vendorId = vendorIdFromEndpoint(creds.endpoint)
+      seedHost(agentModelHostKey(null, vendorId, creds.accountId), settings, creds.endpoint)
+    }
+  }
   for (const agent of enabledCliAgents(settings.get().cliAgents)) {
     if (isStructuredCliHost(agent.id)) seedHost(agent.id, settings)
   }
@@ -128,21 +138,26 @@ function normalizeVavEndpoint(endpoint: string | null | undefined): string {
 }
 
 function seedHost(
-  host: CliHostKind | 'vav',
+  host: string,
   settings: SettingsStore,
   endpoint?: string | null
 ): ListHostModelsResult {
-  if (host === 'vav') {
+  if (host === 'vav' || host.startsWith('vav:')) {
     const endpointKey = normalizeVavEndpoint(endpoint)
-    const existing = cache.get('vav')
+    const existing = cache.get(host)
     const endpointMatches = !endpointKey || existing?.endpoint === endpointKey
     if (existing && endpointMatches) {
-      return resultFromCache('vav', existing)
+      return resultFromCache(host, existing)
     }
+
+    const parts = host.split(':')
+    const vendorId = parts[1] || vendorIdFromEndpoint(endpoint || settings.get().apiEndpoint)
+
     const models =
       endpointKey && isOfficialDeepSeekEndpoint(endpoint ?? '')
         ? applyLiveVavModels(settings, deepseekOfficialModels())
-        : []
+        : vavFallbackModels(settings.get().defaultModel, vendorId).map(decorateVavModel)
+
     const entry: CacheEntry = {
       at: Date.now(),
       models,
@@ -150,13 +165,13 @@ function seedHost(
       settled: false,
       ...(endpointKey ? { endpoint: endpointKey } : {})
     }
-    cache.set('vav', entry)
-    return resultFromCache('vav', entry)
+    cache.set(host, entry)
+    return resultFromCache(host, entry)
   }
   const existing = cache.get(host)
   if (existing) return resultFromCache(host, existing)
-  const models = staticFallback(host)
-  const needsProbe = LIVE_PROBE_HOSTS.has(host)
+  const models = staticFallback(host as CliHostKind)
+  const needsProbe = LIVE_PROBE_HOSTS.has(host as CliHostKind)
   const entry: CacheEntry = {
     at: Date.now(),
     models,
@@ -203,7 +218,21 @@ export async function preloadHostModels(
   options?.onProgress?.(getModelCatalogSnapshot())
 
   // VAV first — the picker's own host is the most-visited list.
-  await listHostModels('vav', settings, options)
+  const vavWork: Promise<unknown>[] = []
+  vavWork.push(listHostModels('vav', settings, options))
+  if (options?.vavAccounts) {
+    for (const creds of Object.values(options.vavAccounts)) {
+      const vendorId = vendorIdFromEndpoint(creds.endpoint)
+      vavWork.push(
+        listHostModels(agentModelHostKey(null, vendorId, creds.accountId), settings, {
+          ...options,
+          apiKey: creds.apiKey,
+          endpoint: creds.endpoint
+        })
+      )
+    }
+  }
+  await Promise.all(vavWork)
   options?.onProgress?.(getModelCatalogSnapshot())
 
   const enabled = enabledCliAgents(settings.get().cliAgents)
@@ -228,34 +257,35 @@ export async function listHostModels(
   settings: SettingsStore,
   options?: ListHostModelsOptions
 ): Promise<ListHostModelsResult> {
-  if (!host || host === 'vav') {
-    return listVavModels(settings, options)
+  const hostId = host || 'vav'
+  if (hostId === 'vav' || hostId.startsWith('vav:')) {
+    return listVavModels(hostId, settings, options)
   }
 
-  if (!isStructuredCliHost(host)) {
+  if (!isStructuredCliHost(hostId)) {
     return {
-      host: 'vav',
+      host: hostId,
       models: vavSeedModels(settings),
       source: 'fallback',
       error: 'unknown host'
     }
   }
 
-  const cacheKey = host
+  const cacheKey = hostId
   const hit = cache.get(cacheKey)
   const fresh = !!hit && Date.now() - hit.at < CACHE_TTL_MS
   if (!options?.force && hit && fresh && hit.settled) {
-    return resultFromCache(host, hit)
+    return resultFromCache(hostId, hit)
   }
 
-  if (!LIVE_PROBE_HOSTS.has(host)) {
-    return seedHost(host, settings)
+  if (!LIVE_PROBE_HOSTS.has(hostId as CliHostKind)) {
+    return seedHost(hostId, settings)
   }
 
   const running = inflight.get(cacheKey)
   if (running && !options?.force) return running
 
-  const work = probeAndCache(host, settings)
+  const work = probeAndCache(hostId as CliHostKind, settings)
   inflight.set(cacheKey, work)
   try {
     return await work
@@ -273,41 +303,43 @@ const VAV_PROBE_RETRY_MS = 60_000
  * Without a key the list stays empty (picker uses a one-row local fallback).
  */
 /** Bumped on every new VAV probe so a slower OpenRouter list cannot overwrite DeepSeek. */
-let vavProbeGeneration = 0
+const vavProbeGenerations = new Map<string, number>()
 
 async function listVavModels(
+  host: string,
   settings: SettingsStore,
   options?: ListHostModelsOptions
 ): Promise<ListHostModelsResult> {
   const endpoint = options?.endpoint?.trim() || settings.get().apiEndpoint?.trim() || ''
   const apiKey = options?.apiKey?.trim() || null
   const endpointKey = normalizeVavEndpoint(endpoint)
-  const seeded = seedHost('vav', settings, endpoint)
-  const entry = cache.get('vav')
+  const seeded = seedHost(host, settings, endpoint)
+  const entry = cache.get(host)
   if (!entry) return seeded
 
   const endpointChanged = Boolean(endpointKey && entry.endpoint !== endpointKey)
   const force = options?.force === true || endpointChanged
   if (!force) {
     if (entry.source === 'live' && Date.now() - entry.at < CACHE_TTL_MS) {
-      return resultFromCache('vav', entry)
+      return resultFromCache(host, entry)
     }
     if (entry.error && Date.now() - entry.at < VAV_PROBE_RETRY_MS) {
-      return resultFromCache('vav', entry)
+      return resultFromCache(host, entry)
     }
   }
   if (!endpoint || !apiKey) return seeded
 
-  const cacheKey = `vav:${endpointKey}`
+  const cacheKey = `probe:${host}:${endpointKey}`
   const running = inflight.get(cacheKey)
   if (running && !force) return running
 
-  const generation = ++vavProbeGeneration
+  const generation = (vavProbeGenerations.get(host) ?? 0) + 1
+  vavProbeGenerations.set(host, generation)
   const work = (async (): Promise<ListHostModelsResult> => {
     const probe = await fetchVavModels({ endpoint, apiKey })
-    if (generation !== vavProbeGeneration) {
-      const current = cache.get('vav')
-      return current ? resultFromCache('vav', current) : seeded
+    if (generation !== vavProbeGenerations.get(host)) {
+      const current = cache.get(host)
+      return current ? resultFromCache(host, current) : seeded
     }
     if (probe.models.length > 0) {
       const models = applyLiveVavModels(settings, probe.models)
@@ -315,7 +347,7 @@ async function listVavModels(
         settings.get().defaultModel,
         models.map((m) => m.id)
       )
-      if (nextDefault !== settings.get().defaultModel) {
+      if (nextDefault !== settings.get().defaultModel && host === 'vav') {
         settings.update({ defaultModel: nextDefault })
       }
       const next: CacheEntry = {
@@ -325,27 +357,29 @@ async function listVavModels(
         settled: true,
         endpoint: endpointKey
       }
-      cache.set('vav', next)
-      return resultFromCache('vav', next)
+      cache.set(host, next)
+      return resultFromCache(host, next)
     }
+    const parts = host.split(':')
+    const vendorId = parts[1] || vendorIdFromEndpoint(endpoint || settings.get().apiEndpoint)
     const official =
       !probe.error && isOfficialDeepSeekEndpoint(endpoint)
         ? applyLiveVavModels(settings, deepseekOfficialModels())
-        : []
+        : vavFallbackModels(settings.get().defaultModel, vendorId).map(decorateVavModel)
     const fallback: CacheEntry = {
       at: Date.now(),
       models: official,
       source: 'fallback',
       settled: true,
       endpoint: endpointKey,
-      ...(official.length > 0
+      ...(official.length > 0 && !official[0]?.id.includes('deepseek')
         ? {}
         : probe.error
           ? { error: probe.error }
           : { error: 'empty catalogue' })
     }
-    cache.set('vav', fallback)
-    return resultFromCache('vav', fallback)
+    cache.set(host, fallback)
+    return resultFromCache(host, fallback)
   })()
   inflight.set(cacheKey, work)
   try {

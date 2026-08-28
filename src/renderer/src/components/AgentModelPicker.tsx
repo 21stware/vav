@@ -260,15 +260,26 @@ export function AgentModelPicker({
   const modelOptions = useMemo((): HostOption[] => {
     const grouped = groupAccountsByVendor(vavAccountsOf(accountGroups))
     if (grouped.length > 0) {
-      return grouped.map((group) => {
-        const current = group.accounts.find((row) => row.current) ?? group.accounts[0]!
-        return {
+      return grouped.flatMap((group) => {
+        if (group.accounts.length === 1) {
+          const current = group.accounts[0]!
+          return [
+            {
+              id: null,
+              name: group.vendor.name,
+              markId: group.vendor.id,
+              vendorId: group.vendor.id,
+              accountId: current.id
+            }
+          ]
+        }
+        return group.accounts.map((account) => ({
           id: null,
-          name: group.vendor.name,
+          name: `${group.vendor.name} (${account.alias || account.identityName || account.name})`,
           markId: group.vendor.id,
           vendorId: group.vendor.id,
-          accountId: current.id
-        }
+          accountId: account.id
+        }))
       })
     }
     const vendorId = vendorIdFromEndpoint(settings.apiEndpoint)
@@ -289,27 +300,24 @@ export function AgentModelPicker({
 
   const hostByMark = useMemo(() => {
     const map = new Map<string, HostOption>()
-    for (const h of hostOptions) map.set(h.markId, h)
+    for (const h of hostOptions) {
+      // Use accountId as secondary key part if present to avoid collisions
+      const key = h.accountId ? `${h.markId}:${h.accountId}` : h.markId
+      map.set(key, h)
+    }
     return map
   }, [hostOptions])
 
-  const modelsFor = (host: CliHostKind | null) => {
-    const key = agentModelHostKey(host)
+  const modelsFor = (host: CliHostKind | null, vendorId?: string | null, accountId?: string | null) => {
+    const key = agentModelHostKey(host, vendorId, accountId)
     const entry = catalog[key]
     const raw =
       entry?.models && entry.models.length > 0
         ? entry.models
-        : modelsForChatHost(host, customModels, settings.defaultModel)
-    return filterEnabledModels(host, raw, disabledModels)
+        : modelsForChatHost(host, customModels, settings.defaultModel, vendorId)
+    return filterEnabledModels(host, raw, disabledModels, vendorId, accountId)
   }
 
-  const activeCatalogue = modelsFor(cliHost)
-  const activeModel = resolveModelForChatHost(cliHost, conversation?.model, {
-    customModels,
-    vavDefaultModel: settings.defaultModel,
-    hostDefaultModel: defaultModelForChatHost(cliHost, settings),
-    catalogue: activeCatalogue
-  })
   const currentVav = useMemo(() => {
     const rows = vavAccountsOf(accountGroups)
     return (
@@ -321,10 +329,19 @@ export function AgentModelPicker({
   }, [accountGroups, conversation?.accountId])
   const activeVendorId =
     cliHost == null ? vendorIdFromEndpoint(currentVav?.endpoint ?? settings.apiEndpoint) : null
+  const activeCatalogue = modelsFor(cliHost, activeVendorId, conversation?.accountId)
+  const activeModel = resolveModelForChatHost(cliHost, conversation?.model, {
+    customModels,
+    vavDefaultModel: settings.defaultModel,
+    hostDefaultModel: defaultModelForChatHost(cliHost, settings),
+    catalogue: activeCatalogue,
+    vendorId: activeVendorId
+  })
   const activeHost =
     (cliHost
       ? agentOptions.find((h) => h.id === cliHost)
-      : modelOptions.find((h) => h.vendorId === activeVendorId)) ??
+      : modelOptions.find((h) => h.accountId === (conversation?.accountId || currentVav?.id))) ??
+    modelOptions.find((h) => h.vendorId === activeVendorId) ??
     modelOptions[0] ??
     agentOptions[0] ?? {
       id: null,
@@ -345,10 +362,12 @@ export function AgentModelPicker({
     for (const entry of settings.recentAgentModels ?? []) {
       const hostId = entry.hostId === 'vav' ? (activeVendorId ?? 'custom') : entry.hostId
       if (!offered.has(hostId) && !offered.has(entry.hostId)) continue
-      const host = hostByMark.get(hostId) ?? hostByMark.get(entry.hostId)
+      // For VAV recent items, we might not have the accountId in the settings yet,
+      // so we try to find the host by vendorId first, then by the exact markId.
+      let host = modelOptions.find((h) => h.vendorId === hostId) ?? hostByMark.get(hostId) ?? hostByMark.get(entry.hostId)
       if (!host) continue
-      if (!isAgentModelEnabled(host.id, entry.model, disabledModels)) continue
-      const catalogue = modelsFor(host.id)
+      if (!isAgentModelEnabled(host.id, entry.model, disabledModels, host.vendorId, host.accountId)) continue
+      const catalogue = modelsFor(host.id, host.vendorId, host.accountId)
       out.push({
         hostId: entry.hostId,
         host,
@@ -357,7 +376,8 @@ export function AgentModelPicker({
         selected:
           host.id === cliHost &&
           entry.model === activeModel &&
-          (host.vendorId == null || host.vendorId === activeVendorId)
+          (host.vendorId == null || host.vendorId === activeVendorId) &&
+          (host.accountId == null || host.accountId === conversation?.accountId)
       })
       if (out.length >= RECENT_AGENT_MODELS_MAX) break
     }
@@ -393,7 +413,8 @@ export function AgentModelPicker({
     model: string,
     vendor?: { vendorId?: LlmVendorId; accountId?: string }
   ): Promise<void> => {
-    if (locked && host !== cliHost) return
+    const isVavSwitch = host === null && cliHost === null
+    if (locked && host !== cliHost && !isVavSwitch) return
     if (host == null && vendor?.accountId) {
       const currentId =
         currentVav?.id ?? vavAccountsOf(accountGroups).find((row) => row.current)?.id
@@ -401,8 +422,8 @@ export function AgentModelPicker({
         await window.vav.accounts.setCurrent(vendor.accountId)
       }
     }
-    if (!locked && cliHost !== host) {
-      await selectChatHost(conversationId, host)
+    if (cliHost !== host || vendor?.accountId !== conversation?.accountId) {
+      await selectChatHost(conversationId, host, vendor?.vendorId, vendor?.accountId)
     }
     await setModel(conversationId, model)
     rememberPick(host, model, vendor?.vendorId ?? (host == null ? activeVendorId : null))
@@ -422,8 +443,8 @@ export function AgentModelPicker({
     (anchor?: HTMLElement | null) => {
       const items: MenuItem[] = []
 
-      if (locked) {
-        const models = modelsFor(cliHost)
+      if (locked && cliHost !== null) {
+        const models = modelsFor(cliHost, activeVendorId)
         if (models.length === 0) {
           items.push({ label: t('composer.modelsLoading'), disabled: true })
         } else {
@@ -440,20 +461,26 @@ export function AgentModelPicker({
       }
 
       for (const item of recentItems.slice(0, RECENT_AGENT_MODELS_PINNED)) {
+        if (locked && item.host.id !== null) continue // Skip CLI agents in recents if locked
         items.push(recentRow(item))
       }
       if (recentItems.length > 0) {
-        items.push({
-          label: t('composer.recently'),
-          submenu: recentItems.map(recentRow)
-        })
+        const filteredRecents = locked
+          ? recentItems.filter((item) => item.host.id === null)
+          : recentItems
+        if (filteredRecents.length > 0) {
+          items.push({
+            label: t('composer.recently'),
+            submenu: filteredRecents.map(recentRow)
+          })
+        }
       }
 
       if (items.length > 0) items.push({ label: '', divider: true })
 
       const hostMenu = (hosts: HostOption[]): MenuItem[] =>
         hosts.map((host) => {
-          const models = modelsFor(host.id)
+          const models = modelsFor(host.id, host.vendorId, host.accountId)
           const modelItems: MenuItem[] =
             models.length === 0
               ? [{ label: t('composer.modelsLoading'), disabled: true }]
@@ -462,7 +489,8 @@ export function AgentModelPicker({
                   checked:
                     host.id === cliHost &&
                     model.id === activeModel &&
-                    (host.vendorId == null || host.vendorId === activeVendorId),
+                    (host.vendorId == null || host.vendorId === activeVendorId) &&
+                    (host.accountId == null || host.accountId === conversation?.accountId),
                   onSelect: () =>
                     void pickAgentModel(host.id, model.id, {
                       vendorId: host.vendorId,
@@ -472,12 +500,12 @@ export function AgentModelPicker({
           return { label: host.name, submenu: modelItems }
         })
 
-      if (agentOptions.length > 0) {
+      if (!locked && agentOptions.length > 0) {
         items.push({ label: t('composer.agents'), disabled: true })
         items.push(...hostMenu(agentOptions))
       }
       if (modelOptions.length > 0) {
-        if (agentOptions.length > 0) items.push({ label: '', divider: true })
+        if (!locked && agentOptions.length > 0) items.push({ label: '', divider: true })
         items.push({ label: t('composer.models'), disabled: true })
         items.push(...hostMenu(modelOptions))
       }

@@ -429,6 +429,15 @@ html[data-resizing='true'] .app-shell {
   background: var(--bg-window);
 }
 
+html[data-resizing='true'] *,
+html[data-resizing='true'] *::before,
+html[data-resizing='true'] *::after {
+  transition: none !important;
+  animation: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
 html[data-resizing='true'] .detail::before,
 html[data-resizing='true'] .detail::after,
 html[data-resizing='true'] .settings-main::before,
@@ -443,6 +452,10 @@ html[data-resizing='true'] .detail {
 html[data-resizing='true'] .plan-overlay {
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
+}
+
+html[data-resizing='true'] .body-split {
+  will-change: auto;
 }
 
 /* While resizing, main process pauses vibrancy; keep sidebar solid here too. */
@@ -2017,7 +2030,7 @@ kbd {
   content: '';
   inset: 0 0 auto;
   height: var(--surface-pattern-band);
-  background-color: var(--accent);
+  background-color: var(--surface-pattern-color, var(--accent));
   opacity: var(--surface-pattern-opacity, 0.16);
   -webkit-mask-image: var(--surface-pattern-url);
   mask-image: var(--surface-pattern-url);
@@ -2045,7 +2058,7 @@ kbd {
 /* Light paper swallows a tinted wash. Use darker ink + a bit more hold. */
 :root[data-theme='light'][data-surface-pattern]:not([data-surface-pattern='none']) .detail::before,
 :root[data-theme='light'][data-surface-pattern]:not([data-surface-pattern='none']) .settings-main::before {
-  background-color: color-mix(in srgb, var(--accent) 38%, var(--text));
+  background-color: var(--surface-pattern-color, color-mix(in srgb, var(--accent) 38%, var(--text)));
   opacity: calc(var(--surface-pattern-opacity, 0.16) * 1.65);
 }
 

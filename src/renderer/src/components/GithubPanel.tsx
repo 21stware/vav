@@ -984,10 +984,10 @@ export function GithubPanel({
           value={tab}
           onChange={setTab}
           options={[
-            { value: 'pulls', label: t('github.tabOpenPr') },
-            { value: 'actions', label: t('github.tabActions') },
-            { value: 'releases', label: t('github.tabReleases') },
-            { value: 'site', label: t('github.tabSite') }
+            { value: 'pulls', label: t('github.tabOpenPr'), title: t('github.tabOpenPr') },
+            { value: 'actions', label: t('github.tabActions'), title: t('github.tabActions') },
+            { value: 'releases', label: t('github.tabReleases'), title: t('github.tabReleases') },
+            { value: 'site', label: t('github.tabSite'), title: t('github.tabSite') }
           ]}
         />
       </div>

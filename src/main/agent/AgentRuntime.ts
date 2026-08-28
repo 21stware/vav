@@ -1113,6 +1113,7 @@ export class AgentRuntime {
       webFetch: this.deps.webFetch,
       skills: this.deps.skills,
       braveSearchKey: () => this.deps.secrets.get('braveSearch'),
+      tinyfishSearchKey: () => this.deps.secrets.get('tinyfish'),
       selectionAnchor: () => turn.selectionRefs,
       defaultDocPath: () => {
         if (!conversation.fileId || !this.deps.fileSessions) return null

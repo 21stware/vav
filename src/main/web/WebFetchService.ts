@@ -21,6 +21,8 @@ export interface WebFetchOptions {
   timeoutMs?: number
   signal?: AbortSignal
   userAgentVersion?: string
+  /** TinyFish Fetch API key (optional). */
+  tinyfishApiKey?: string
   /** When true, upgrade thin/SPA HTML via hidden Chromium. */
   allowRender?: boolean
 }
@@ -65,10 +67,24 @@ export class WebFetchService {
     const maxChars = clamp(opts.maxChars ?? DEFAULT_MAX_CHARS, 500, HARD_MAX_CHARS)
     const extract = opts.extract ?? 'auto'
     const allowRender = opts.allowRender === true
-    const cacheKey = `${url}|${extract}|${maxChars}|${opts.startLine ?? 1}|r:${allowRender ? 1 : 0}`
+    const tinyfishKey = opts.tinyfishApiKey?.trim() || ''
+    const cacheKey = `${url}|${extract}|${maxChars}|${opts.startLine ?? 1}|r:${allowRender ? 1 : 0}|t:${tinyfishKey ? 1 : 0}`
     const hit = this.cache.get(cacheKey)
     if (hit && Date.now() - hit.at < this.ttlMs) {
       return { ...hit.result }
+    }
+
+    if (tinyfishKey) {
+      try {
+        const result = await this.fetchTinyfish(url, tinyfishKey, opts)
+        if (result.ok) {
+          this.putCache(cacheKey, result)
+          return result
+        }
+        // Fallback to normal fetch if TinyFish fails
+      } catch (err) {
+        console.warn('[web-fetch] TinyFish failed, falling back', err)
+      }
     }
 
     try {
@@ -246,6 +262,75 @@ export class WebFetchService {
     const ordered = [...this.cache.entries()].sort((a, b) => a[1].at - b[1].at)
     const drop = ordered.length - this.maxEntries
     for (let i = 0; i < drop; i++) this.cache.delete(ordered[i]![0])
+  }
+
+  private async fetchTinyfish(
+    url: string,
+    apiKey: string,
+    opts: WebFetchOptions
+  ): Promise<WebFetchResult> {
+    const res = await httpRequest('https://api.fetch.tinyfish.ai', {
+      method: 'POST',
+      timeoutMs: opts.timeoutMs,
+      signal: opts.signal,
+      headers: {
+        'Content-Type': 'application/json',
+        'X-API-Key': apiKey,
+        'User-Agent': 'vav (local agent; +https://vavapp.com)'
+      },
+      body: JSON.stringify({ urls: [url] })
+    })
+
+    if (res.status < 200 || res.status >= 300) {
+      throw new Error(`TinyFish Fetch HTTP ${res.status}`)
+    }
+
+    let data: {
+      results?: Array<{
+        url: string
+        content?: string
+        title?: string
+        status?: number
+        error?: string
+      }>
+    }
+    try {
+      data = JSON.parse(res.body.toString('utf8')) as typeof data
+    } catch {
+      throw new Error('TinyFish Fetch returned non-JSON')
+    }
+
+    const first = data.results?.[0]
+    if (!first) throw new Error('TinyFish Fetch returned no results')
+    if (first.error) throw new Error(`TinyFish Fetch: ${first.error}`)
+
+    const maxChars = clamp(opts.maxChars ?? DEFAULT_MAX_CHARS, 500, HARD_MAX_CHARS)
+    let body = first.content || ''
+    body = normalizeNewlines(body)
+    const startLine = Math.max(1, Math.floor(opts.startLine ?? 1))
+    if (startLine > 1) {
+      const lines = body.split('\n')
+      body = lines.slice(startLine - 1).join('\n')
+    }
+
+    let truncated = false
+    if (body.length > maxChars) {
+      body = body.slice(0, maxChars)
+      truncated = true
+    }
+
+    return {
+      ok: true,
+      url,
+      finalUrl: first.url,
+      status: first.status ?? 200,
+      title: first.title,
+      extracted: 'markdown+tinyfish',
+      body,
+      chars: body.length,
+      truncated,
+      startLine: startLine > 1 ? startLine : undefined
+    }
   }
 }
 

@@ -44,6 +44,8 @@ export const zhCN = {
   'common.untitledSessionLegacy': '新对话',
   'common.outputting': 'Outputting',
   'common.search': '搜索',
+  'common.sort': '排序',
+  'common.filter': '筛选',
   'common.install': '安装',
   'common.installing': '安装中',
   'common.uninstall': '卸载',
@@ -1053,6 +1055,8 @@ export const zhCN = {
   'appearance.colorTint.rose': '玫红',
   'appearance.colorTint.amber': '橙',
   'appearance.colorTint.green': '绿',
+  'appearance.colorTint.ocean': '深海',
+  'appearance.colorTint.olive': '橄榄',
   'appearance.colorTint.custom': '自定义',
   'appearance.surfacePattern': '表面纹理',
   'appearance.surfacePatternHint':
@@ -1192,6 +1196,9 @@ export const zhCN = {
   'shortcut.switchCliMode': '切换到 CLI Agents',
   'shortcut.switchVavMode': '切换到 VAV',
   'shortcut.switchModel': '切换模型',
+  'shortcut.switchModelUp': '上一个模型',
+  'shortcut.switchModelDown': '下一个模型',
+  'shortcut.pickAttachments': '上传文件',
   'shortcut.switchApproval': '切换审批模式',
 
   // —— token usage ——
@@ -1283,11 +1290,11 @@ export const zhCN = {
   'screenshot.copied': '已复制',
 
   // —— approval mode (composer picker) ——
-  'approvalMode.auto': 'Auto',
+  'approvalMode.auto': 'Normal',
   'approvalMode.autoTitle': '自动决定：高风险再问，其余直接执行',
   'approvalMode.bypass': 'Bypass',
   'approvalMode.bypassTitle': '默认放行：所有工具立即执行',
-  'approvalMode.edit': 'Edit',
+  'approvalMode.edit': 'Read',
   'approvalMode.editTitle': '编辑询问：改文件等编辑操作先征求同意',
 
   // —— shortcuts extras ——
@@ -1342,11 +1349,16 @@ export const zhCN = {
   'workspace.webProviderDdg': 'DDG',
   'workspace.webProviderSearx': 'SearX',
   'workspace.webProviderBrave': 'Brave',
+  'workspace.webProviderTinyfish': 'TinyFish',
   'workspace.braveKey': 'Brave Search Key',
   'workspace.braveKeyPlaceholder': 'BSA… 订阅令牌',
   'workspace.braveKeyConfigured': '已配置 · 输入新密钥以替换',
   'workspace.braveKeyHint':
     '可选。来自 brave.com/search/api，加密存于 Keychain，不会写入 settings.json。',
+  'workspace.tinyfishKey': 'TinyFish API Key',
+  'workspace.tinyfishKeyPlaceholder': 'sk-tinyfish-…',
+  'workspace.tinyfishKeyConfigured': '已配置 · 输入新密钥以替换',
+  'workspace.tinyfishKeyHint': 'TinyFish 搜索与抓取 API 密钥。免费使用。',
   'workspace.searxng': 'SearXNG 地址（可选）',
   'workspace.searxngPlaceholder': 'http://127.0.0.1:8080',
   'workspace.searxngHint':
@@ -2063,6 +2075,8 @@ export const en: Record<MessageKey, string> = {
   'common.untitledSessionLegacy': 'New chat',
   'common.outputting': 'Outputting',
   'common.search': 'Search',
+  'common.sort': 'Sort',
+  'common.filter': 'Filter',
   'common.install': 'Install',
   'common.installing': 'Installing',
   'common.uninstall': 'Uninstall',
@@ -3084,6 +3098,8 @@ export const en: Record<MessageKey, string> = {
   'appearance.colorTint.rose': 'Rose',
   'appearance.colorTint.amber': 'Orange',
   'appearance.colorTint.green': 'Green',
+  'appearance.colorTint.ocean': 'Ocean',
+  'appearance.colorTint.olive': 'Olive',
   'appearance.colorTint.custom': 'Custom',
   'appearance.surfacePattern': 'Surface texture',
   'appearance.surfacePatternHint':
@@ -3220,6 +3236,9 @@ export const en: Record<MessageKey, string> = {
   'shortcut.switchCliMode': 'Switch to CLI Agents',
   'shortcut.switchVavMode': 'Switch to VAV',
   'shortcut.switchModel': 'Switch model',
+  'shortcut.switchModelUp': 'Previous model',
+  'shortcut.switchModelDown': 'Next model',
+  'shortcut.pickAttachments': 'Upload file',
   'shortcut.switchApproval': 'Switch permission mode',
 
   'token.contextWindow': 'Context window',
@@ -3303,11 +3322,11 @@ export const en: Record<MessageKey, string> = {
   'screenshot.save': 'Download image',
   'screenshot.copied': 'Copied',
 
-  'approvalMode.auto': 'Auto',
+  'approvalMode.auto': 'Normal',
   'approvalMode.autoTitle': 'Decide automatically: ask on high-risk tools, run the rest',
   'approvalMode.bypass': 'Bypass',
   'approvalMode.bypassTitle': 'Allow by default: run every tool immediately',
-  'approvalMode.edit': 'Edit',
+  'approvalMode.edit': 'Read',
   'approvalMode.editTitle': 'Ask on edits: confirm before file-changing tools',
 
   'shortcut.searchNav': 'Search / next / previous',
@@ -3360,11 +3379,16 @@ export const en: Record<MessageKey, string> = {
   'workspace.webProviderDdg': 'DDG',
   'workspace.webProviderSearx': 'SearX',
   'workspace.webProviderBrave': 'Brave',
+  'workspace.webProviderTinyfish': 'TinyFish',
   'workspace.braveKey': 'Brave Search key',
   'workspace.braveKeyPlaceholder': 'BSA… subscription token',
   'workspace.braveKeyConfigured': 'Configured · enter a new key to replace',
   'workspace.braveKeyHint':
     'Optional. From brave.com/search/api; encrypted in Keychain, never written to settings.json.',
+  'workspace.tinyfishKey': 'TinyFish API key',
+  'workspace.tinyfishKeyPlaceholder': 'sk-tinyfish-…',
+  'workspace.tinyfishKeyConfigured': 'Configured · enter a new key to replace',
+  'workspace.tinyfishKeyHint': 'TinyFish Search & Fetch API key. Free to use.',
   'workspace.searxng': 'SearXNG URL (optional)',
   'workspace.searxngPlaceholder': 'http://127.0.0.1:8080',
   'workspace.searxngHint':

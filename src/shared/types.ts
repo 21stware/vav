@@ -777,6 +777,8 @@ export type ColorTint =
   | 'rose'
   | 'amber'
   | 'green'
+  | 'ocean'
+  | 'olive'
   | 'custom'
 export const COLOR_TINTS: readonly ColorTint[] = [
   'system',
@@ -787,6 +789,8 @@ export const COLOR_TINTS: readonly ColorTint[] = [
   'rose',
   'amber',
   'green',
+  'ocean',
+  'olive',
   'custom'
 ] as const
 /** Preset swatches only — `custom` is the colour well. */
@@ -897,7 +901,7 @@ export interface AppSettings {
   /**
    * Search backend preference. `auto` = Brave (if key) → SearXNG (if URL) → DuckDuckGo.
    */
-  webSearchProvider: 'auto' | 'duckduckgo' | 'searxng' | 'brave'
+  webSearchProvider: 'auto' | 'duckduckgo' | 'searxng' | 'brave' | 'tinyfish'
   /**
    * Optional SearXNG (or compatible) base URL, e.g. http://127.0.0.1:8080.
    */
@@ -911,6 +915,10 @@ export interface AppSettings {
    * Renderer-only: whether a Brave Search API key is stored (never the key itself).
    */
   braveSearchKeyPresent?: boolean
+  /**
+   * Renderer-only: whether a TinyFish Search API key is stored (never the key itself).
+   */
+  tinyfishSearchKeyPresent?: boolean
   /**
    * Optional Cloudflare account id (not secret). Used with a stored API token
    * to resolve Workers / Pages deploy status for the workspace.

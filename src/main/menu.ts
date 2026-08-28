@@ -199,6 +199,24 @@ export function buildAppMenu(
       click: send('switch-model')
     },
     {
+      label: t('shortcut.switchModelUp'),
+      accelerator: b.switchModelUp,
+      click: send('switch-model-up'),
+      visible: false
+    },
+    {
+      label: t('shortcut.switchModelDown'),
+      accelerator: b.switchModelDown,
+      click: send('switch-model-down'),
+      visible: false
+    },
+    {
+      label: t('shortcut.pickAttachments'),
+      accelerator: b.pickAttachments,
+      click: send('pick-attachments'),
+      visible: false
+    },
+    {
       label: t('menu.switchApproval'),
       accelerator: b.switchApproval,
       click: send('switch-approval')

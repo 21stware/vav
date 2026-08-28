@@ -77,6 +77,8 @@ export interface ToolHost {
   skills?: SkillService
   /** Optional Brave Search API key (from SecretStore; never logged). */
   braveSearchKey?: () => string | null
+  /** Optional TinyFish API key (from SecretStore; never logged). */
+  tinyfishSearchKey?: () => string | null
   /** Selection from the user message that started this turn (for related search). */
   selectionAnchor?: () => PreviewRef[]
   /** File-session path when this conversation is bound to one document. */
@@ -711,6 +713,7 @@ export function createTools(host: ToolHost): AgentTool[] {
         timeoutMs: settings.webTimeoutMs,
         searxngBaseUrl: settings.webSearxngBaseUrl || undefined,
         braveApiKey: host.braveSearchKey?.() || undefined,
+        tinyfishApiKey: host.tinyfishSearchKey?.() || undefined,
         provider: settings.webSearchProvider,
         signal
       })
@@ -767,6 +770,7 @@ export function createTools(host: ToolHost): AgentTool[] {
         startLine: params.start_line != null ? Number(params.start_line) : undefined,
         timeoutMs: settings.webTimeoutMs,
         allowRender: settings.webFetchAllowRender,
+        tinyfishApiKey: host.tinyfishSearchKey?.() || undefined,
         signal
       })
       const text = host.webFetch.formatForModel(result)

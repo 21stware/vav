@@ -11,7 +11,14 @@ import type {
   TurnPhase
 } from '@shared/types'
 import { DEFAULT_CLI_AGENTS, DEFAULT_SETTINGS } from '@shared/types'
-import { agentModelHostKey, defaultModelForChatHost, resolveModelForChatHost } from '@shared/agentModels'
+import {
+  agentModelHostKey,
+  defaultModelForChatHost,
+  resolveModelForChatHost,
+  modelsForChatHost,
+  filterEnabledModels
+} from '@shared/agentModels'
+import { vendorIdFromEndpoint } from '@shared/llmVendors'
 import type { ModelOption } from '@shared/types'
 
 export type AgentModelCatalogEntry = {
@@ -740,18 +747,20 @@ interface SessionState {
   /** ⌘1 = Workspace; ⌘2+ = bash tabs in creation order (Agent first). */
   focusToolsSlot(slot: number): void
   setModel(id: string, model: string): Promise<void>
+  /** Cycle through enabled models for the current chat host. */
+  stepModel(id: string, delta: number): Promise<void>
   /**
    * Switch built-in vav ↔ CLI agent host for a conversation.
    * File-preview sessions are omitted from listMeta — must merge like setModel.
    */
   setAgentBinaryName(id: string, agentBinaryName: string | null): Promise<void>
   /** Structured CLI host (claude/codex/…) for Transcript — null = built-in VAV. */
-  setCliHost(id: string, host: string | null): Promise<void>
+  setCliHost(id: string, host: string | null, accountId?: string | null): Promise<void>
   /**
    * Switch chat host from UI: leave Terminal mode, park/restore per-host
    * transcript (via setCliHost).
    */
-  selectChatHost(id: string, host: string | null): Promise<void>
+  selectChatHost(id: string, host: string | null, vendorId?: string | null, accountId?: string | null): Promise<void>
   pickWorkingDirectory(id: string): Promise<void>
   useTempWorkingDirectory(id: string): Promise<void>
   setWorkingDirectory(id: string, path: string): Promise<void>
@@ -1728,6 +1737,48 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     }
   },
 
+  async stepModel(id, delta) {
+    const conv = get().conversations.find((c) => c.id === id)
+    if (!conv) return
+
+    const { settings, agentModelCatalog } = get()
+    const { cliHost, accountId, model: currentModel } = conv
+
+    const vendorId =
+      cliHost == null
+        ? vendorIdFromEndpoint(
+            settings.accounts?.find((a) => a.id === accountId)?.endpoint ?? settings.apiEndpoint
+          )
+        : null
+    const key = agentModelHostKey(cliHost, vendorId, accountId)
+    const entry = agentModelCatalog[key]
+    const raw =
+      entry?.models && entry.models.length > 0
+        ? entry.models
+        : modelsForChatHost(cliHost, settings.customModels, settings.defaultModel, vendorId)
+    const list = filterEnabledModels(cliHost, raw, settings.disabledAgentModels, vendorId, accountId)
+
+    if (list.length <= 1) return
+
+    const activeModel = resolveModelForChatHost(cliHost, currentModel, {
+      customModels: settings.customModels,
+      vavDefaultModel: settings.defaultModel,
+      hostDefaultModel: defaultModelForChatHost(cliHost, settings),
+      catalogue: list,
+      vendorId
+    })
+
+    const index = list.findIndex((m) => m.id === activeModel)
+    if (index === -1) {
+      await get().setModel(id, list[0].id)
+      return
+    }
+
+    const nextIndex = (index + delta + list.length) % list.length
+    const nextModel = list[nextIndex].id
+    await get().setModel(id, nextModel)
+  },
+
   async setAgentBinaryName(id, agentBinaryName) {
     // Optimistic first — file-preview sessions never appear in listMeta, so a
     // raw `set({ conversations: list })` would drop them and snap the switcher
@@ -1747,7 +1798,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     }
   },
 
-  async setCliHost(id, host) {
+  async setCliHost(id, host, accountId) {
     const nextHost = (host as ConversationMeta['cliHost']) ?? null
     const current = get().conversations.find((c) => c.id === id)
     const nodes = get().messages[id]
@@ -1760,13 +1811,14 @@ export const useSessionStore = create<SessionState>((set, get) => ({
           ? {
               ...c,
               cliHost: nextHost,
-              agentBinaryName: host
+              agentBinaryName: host,
+              accountId: accountId ?? c.accountId
             }
           : c
       )
     }))
     try {
-      const result = await window.vav.conversations.setCliHost(id, host)
+      const result = await window.vav.conversations.setCliHost(id, host, accountId)
       if (result.hostChanged) disposeProjection(id)
       const transcript = result.transcript
       set((state) => {
@@ -1831,18 +1883,18 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     trimAttachmentsForHost(id, latest?.cliHost ?? nextHost, get, set)
   },
 
-  async selectChatHost(id, host) {
+  async selectChatHost(id, host, vendorId, accountId) {
     // Surface park is one call (exitCliMode is idempotent + syncs layouts).
     useWorkspaceStore.getState().exitCliMode(id)
     if (get().search.open) get().closeSearch()
-    await get().setCliHost(id, host)
+    await get().setCliHost(id, host, accountId)
     // Agent owns the model catalogue — coerce to a valid id for the new host
     // when the parked bucket did not restore one (or restored a foreign id).
     const state = get()
     const conversation = state.conversations.find((c) => c.id === id)
     if (!conversation) return
     const catalogue =
-      state.agentModelCatalog[agentModelHostKey(host as ConversationMeta['cliHost'])]
+      state.agentModelCatalog[agentModelHostKey(host as ConversationMeta['cliHost'], vendorId, accountId)]
         ?.models ?? null
     const nextModel = resolveModelForChatHost(
       host as ConversationMeta['cliHost'],

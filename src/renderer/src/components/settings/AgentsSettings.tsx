@@ -32,6 +32,7 @@ import type { AccountView } from '@shared/ipc'
 import type { MessageKey } from '@shared/i18n'
 import { agentWebsiteUrl } from '@shared/agentBinary'
 import {
+  agentModelHostKey,
   isAgentModelEnabled,
   isOfficialDeepSeekEndpoint,
   modelsForChatHost,
@@ -445,13 +446,13 @@ export function AgentsSettings(): React.JSX.Element {
   const defaultHostMatchesSelection = selectedIsModel
     ? activeDefaultId === selectedVendor?.vendor.id
     : selected?.id === activeDefaultId
-  const modelHostKey = selectedIsModel
-    ? 'vav'
-    : selected && isStructuredCliHost(selected.id)
-      ? selected.id
-      : null
-  const modelHost = (modelHostKey === 'vav' ? null : modelHostKey) as CliHostKind | null
-  const vavCatalog = catalog.vav
+  const modelHostKey = agentModelHostKey(
+    (selectedIsModel ? null : selected?.id) as CliHostKind | null,
+    selectedIsModel ? selectedVendor?.vendor.id : null,
+    selectedIsModel ? currentVav?.id : null
+  )
+  const modelHost = (selectedIsModel ? null : selected?.id) as CliHostKind | null
+  const vavCatalog = catalog[modelHostKey]
   const selectedAgentId = selectedIsModel ? 'vav' : selected?.id ?? null
   const agentProfiles = selectedIsModel
     ? selectedVendor?.accounts ?? []
@@ -508,7 +509,7 @@ export function AgentsSettings(): React.JSX.Element {
     return modelList.filter((model) => {
       if (
         modelView === 'enabled' &&
-        !isAgentModelEnabled(modelHost, model.id, settings.disabledAgentModels)
+        !isAgentModelEnabled(modelHost, model.id, settings.disabledAgentModels, selectedVendor?.vendor.id, currentVav?.id)
       ) {
         return false
       }
@@ -534,7 +535,7 @@ export function AgentsSettings(): React.JSX.Element {
   const modelEnablement = useMemo(() => {
     let enabled = 0
     for (const model of modelList) {
-      if (isAgentModelEnabled(modelHost, model.id, settings.disabledAgentModels)) enabled++
+      if (isAgentModelEnabled(modelHost, model.id, settings.disabledAgentModels, selectedVendor?.vendor.id, currentVav?.id)) enabled++
     }
     return {
       enabled,
@@ -1302,7 +1303,8 @@ export function AgentsSettings(): React.JSX.Element {
                         const enabled = isAgentModelEnabled(
                           modelHost,
                           model.id,
-                          settings.disabledAgentModels
+                          settings.disabledAgentModels,
+                          selectedVendor?.vendor.id
                         )
                         const hostDefault = selectedIsModel
                           ? settings.defaultModel

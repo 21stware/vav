@@ -717,6 +717,9 @@ export interface VavApi {
     /** Brave Search API subscription token (encrypted, not the LLM key). */
     setBraveSearchKey(key: string): Promise<{ hint: string | null }>
     braveSearchKeyHint(): Promise<string | null>
+    /** TinyFish Search API key (encrypted). */
+    setTinyfishSearchKey(key: string): Promise<{ hint: string | null }>
+    tinyfishSearchKeyHint(): Promise<string | null>
     /** Cloudflare API token (encrypted). Empty string clears. */
     setCloudflareApiToken(token: string): Promise<{ hint: string | null }>
     cloudflareApiTokenHint(): Promise<string | null>
@@ -805,7 +808,8 @@ export interface VavApi {
     ): Promise<ConversationMeta[]>
     setCliHost(
       id: string,
-      host: string | null
+      host: string | null,
+      accountId?: string | null
     ): Promise<{
       conversations: ConversationMeta[]
       hostChanged: boolean
@@ -1564,6 +1568,12 @@ export type MenuCommand =
   | 'switch-vav-mode'
   /** ⌘⇧M — open the composer agent/model picker. */
   | 'switch-model'
+  /** ⌘⌃↑ — switch to previous model. */
+  | 'switch-model-up'
+  /** ⌘⌃↓ — switch to next model. */
+  | 'switch-model-down'
+  /** ⌘⌃+ — open the file picker. */
+  | 'pick-attachments'
   /** ⌘⇧P — open the composer permission (approval mode) menu. */
   | 'switch-approval'
   /** Capture a screen region, annotate, attach to the composer. */
@@ -1611,6 +1621,8 @@ export const IPC = {
   settingsKeyHint: 'vav:settings:key-hint',
   settingsSetBraveSearchKey: 'vav:settings:set-brave-search-key',
   settingsBraveSearchKeyHint: 'vav:settings:brave-search-key-hint',
+  settingsSetTinyfishSearchKey: 'vav:settings:set-tinyfish-search-key',
+  settingsTinyfishSearchKeyHint: 'vav:settings:tinyfish-search-key-hint',
   settingsSetCloudflareToken: 'vav:settings:set-cloudflare-token',
   settingsCloudflareTokenHint: 'vav:settings:cloudflare-token-hint',
   settingsSetSupabaseToken: 'vav:settings:set-supabase-token',

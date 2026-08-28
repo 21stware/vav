@@ -18,7 +18,12 @@ const SYSTEM_TINT_VARS = [
   '--tone-web',
   '--bg-selected',
   '--bg-window',
-  '--bg-sunken'
+  '--bg-sunken',
+  '--bg-content',
+  '--bg-raised',
+  '--border',
+  '--border-strong',
+  '--surface-pattern-color'
 ] as const
 
 type Rgb = { r: number; g: number; b: number }
@@ -43,6 +48,60 @@ function toHex({ r, g, b }: Rgb): string {
 
 function toRgba({ r, g, b }: Rgb, a: number): string {
   return `rgba(${clampByte(r)}, ${clampByte(g)}, ${clampByte(b)}, ${a})`
+}
+
+type Hsl = { h: number; s: number; l: number }
+
+function rgbToHsl({ r, g, b }: Rgb): Hsl {
+  r /= 255
+  g /= 255
+  b /= 255
+  const max = Math.max(r, g, b)
+  const min = Math.min(r, g, b)
+  let h = 0
+  let s = 0
+  const l = (max + min) / 2
+
+  if (max !== min) {
+    const d = max - min
+    s = l > 0.5 ? d / (2 - max - min) : d / (max + min)
+    switch (max) {
+      case r:
+        h = (g - b) / d + (g < b ? 6 : 0)
+        break
+      case g:
+        h = (b - r) / d + 2
+        break
+      case b:
+        h = (r - g) / d + 4
+        break
+    }
+    h /= 6
+  }
+  return { h: h * 360, s, l }
+}
+
+function hslToRgb({ h, s, l }: Hsl): Rgb {
+  h /= 360
+  let r, g, b
+  if (s === 0) {
+    r = g = b = l
+  } else {
+    const hue2rgb = (p: number, q: number, t: number) => {
+      if (t < 0) t += 1
+      if (t > 1) t -= 1
+      if (t < 1 / 6) return p + (q - p) * 6 * t
+      if (t < 1 / 2) return q
+      if (t < 2 / 3) return p + (q - p) * (2 / 3 - t) * 6
+      return p
+    }
+    const q = l < 0.5 ? l * (1 + s) : l + s - l * s
+    const p = 2 * l - q
+    r = hue2rgb(p, q, h + 1 / 3)
+    g = hue2rgb(p, q, h)
+    b = hue2rgb(p, q, h - 1 / 3)
+  }
+  return { r: r * 255, g: g * 255, b: b * 255 }
 }
 
 /** Relative luminance (sRGB), 0…1. */
@@ -91,6 +150,15 @@ function accentTintVars(
 ): Record<string, string> {
   const base = parseHex(hex) ?? { r: 0, g: 122, b: 255 }
   const L = luminance(base)
+  const hsl = rgbToHsl(base)
+
+  // Derive a harmonious background companion color (analogous shift).
+  // Shift hue by 20 degrees and desaturate for a professional backdrop.
+  const bgBase = hslToRgb({
+    h: (hsl.h + 20) % 360,
+    s: Math.max(0.05, hsl.s * 0.6),
+    l: hsl.l
+  })
 
   if (theme === 'dark') {
     // System only: lift very dark OS accents so they read on charcoal chrome.
@@ -104,10 +172,17 @@ function accentTintVars(
     const hover = lighten(accent, 0.12)
     const text = lighten(accent, 0.18)
     const selected = {
-      r: 0x12 + accent.r * 0.22,
-      g: 0x12 + accent.g * 0.22,
-      b: 0x13 + accent.b * 0.22
+      r: 18 + accent.r * 0.22,
+      g: 18 + accent.g * 0.22,
+      b: 19 + accent.b * 0.22
     }
+    // Subtle tint mix for base surfaces using the shifted bgBase (4% mix).
+    const mix = (baseVal: number, accVal: number) => Math.round(baseVal * 0.96 + accVal * 0.04)
+    const window = { r: mix(18, bgBase.r), g: mix(18, bgBase.g), b: mix(19, bgBase.b) }
+    const sunken = { r: mix(22, bgBase.r), g: mix(22, bgBase.g), b: mix(23, bgBase.b) }
+    const content = { r: mix(27, bgBase.r), g: mix(27, bgBase.g), b: mix(29, bgBase.b) }
+    const raised = { r: mix(36, bgBase.r), g: mix(36, bgBase.g), b: mix(39, bgBase.b) }
+
     const accentHex = toHex(accent)
     const textHex = toHex(text)
     return {
@@ -118,12 +193,15 @@ function accentTintVars(
       '--accent-text': textHex,
       '--accent-fg': accentFg(accent),
       '--tone-list': accentHex,
-      // Web tool labels / links track the accent (same as Agent role colour).
       '--tone-web': textHex,
       '--bg-selected': toHex(selected),
-      // Keep dark surfaces neutral.
-      '--bg-window': '#121213',
-      '--bg-sunken': '#161617'
+      '--bg-window': toHex(window),
+      '--bg-sunken': toHex(sunken),
+      '--bg-content': toHex(content),
+      '--bg-raised': toHex(raised),
+      '--border': toRgba(bgBase, 0.15),
+      '--border-strong': toRgba(bgBase, 0.25),
+      '--surface-pattern-color': accentHex
     }
   }
 
@@ -137,9 +215,18 @@ function accentTintVars(
     : base
   const hover = darken(accent, 0.1)
   const text = darken(accent, 0.08)
-  const wash = lighten(accent, 0.9)
-  const selected = lighten(accent, 0.82)
-  const sunken = lighten(accent, 0.93)
+
+  // Light background: use shifted hue but very high lightness (analogous wash).
+  const washBase = hslToRgb({
+    h: (hsl.h + 20) % 360,
+    s: Math.max(0.05, hsl.s * 0.3),
+    l: 0.96
+  })
+
+  const wash = lighten(washBase, 0.1)
+  const selected = darken(washBase, 0.08)
+  const sunken = darken(washBase, 0.02)
+  const content = lighten(washBase, 0.6)
   const accentHex = toHex(accent)
   const textHex = toHex(text)
   return {
@@ -153,7 +240,12 @@ function accentTintVars(
     '--tone-web': textHex,
     '--bg-selected': toHex(selected),
     '--bg-window': toHex(wash),
-    '--bg-sunken': toHex(sunken)
+    '--bg-sunken': toHex(sunken),
+    '--bg-content': toHex(content),
+    '--bg-raised': '#ffffff',
+    '--border': toRgba(bgBase, 0.12),
+    '--border-strong': toRgba(bgBase, 0.22),
+    '--surface-pattern-color': accentHex
   }
 }
 
@@ -251,9 +343,6 @@ export function useAppearance(): void {
     const root = document.documentElement
     const tint: ColorTint = COLOR_TINTS.includes(colorTint) ? colorTint : 'system'
     root.dataset.tint = tint
-    // Drop leftover tokens from the removed background-colour setting.
-    root.style.removeProperty('--bg-content')
-    root.style.removeProperty('--bg-raised')
     delete root.dataset.bg
     delete root.dataset.bgHex
 
@@ -302,7 +391,6 @@ export function useAppearance(): void {
       root.style.removeProperty('--surface-pattern-size')
       root.style.removeProperty('--surface-pattern-opacity')
     }
-    root.style.removeProperty('--surface-pattern-color')
   }, [surfacePattern, customSurfacePatternUrl, customSurfacePatternSize])
 
   useEffect(() => {

@@ -48,6 +48,8 @@ const api: VavApi = {
     apiKeyHint: () => ipcRenderer.invoke(IPC.settingsKeyHint),
     setBraveSearchKey: (key: string) => ipcRenderer.invoke(IPC.settingsSetBraveSearchKey, key),
     braveSearchKeyHint: () => ipcRenderer.invoke(IPC.settingsBraveSearchKeyHint),
+    setTinyfishSearchKey: (key: string) => ipcRenderer.invoke(IPC.settingsSetTinyfishSearchKey, key),
+    tinyfishSearchKeyHint: () => ipcRenderer.invoke(IPC.settingsTinyfishSearchKeyHint),
     setCloudflareApiToken: (token: string) =>
       ipcRenderer.invoke(IPC.settingsSetCloudflareToken, token),
     cloudflareApiTokenHint: () => ipcRenderer.invoke(IPC.settingsCloudflareTokenHint),
@@ -104,8 +106,8 @@ const api: VavApi = {
     setModel: (id: string, model: string) => ipcRenderer.invoke(IPC.convSetModel, id, model),
     setAgentBinaryName: (id: string, agentBinaryName: string | null) =>
       ipcRenderer.invoke(IPC.convSetAgentBinary, id, agentBinaryName),
-    setCliHost: (id: string, host: string | null) =>
-      ipcRenderer.invoke(IPC.convSetCliHost, id, host),
+    setCliHost: (id: string, host: string | null, accountId?: string | null) =>
+      ipcRenderer.invoke(IPC.convSetCliHost, id, host, accountId),
     setSwarmLayout: (
       id: string,
       layout: import('@shared/types').TerminalLayoutNode | null,

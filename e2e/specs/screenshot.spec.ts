@@ -204,19 +204,23 @@ test('screenshot double-click confirms the crop', async () => {
     await expect(overlay.locator('[data-testid="screenshot-crop"]')).toBeVisible()
 
     await overlay.locator('[data-testid="screenshot-overlay"]').evaluate((el) => {
-      el.dispatchEvent(
-        new PointerEvent('pointerdown', {
-          clientX: 260,
-          clientY: 220,
-          button: 0,
-          buttons: 1,
-          bubbles: true,
-          cancelable: true,
-          pointerId: 1,
-          pointerType: 'mouse',
-          detail: 2
-        })
-      )
+      const dispatch = (detail: number) => {
+        el.dispatchEvent(
+          new PointerEvent('pointerdown', {
+            clientX: 260,
+            clientY: 220,
+            button: 0,
+            buttons: 1,
+            bubbles: true,
+            cancelable: true,
+            pointerId: 1,
+            pointerType: 'mouse',
+            detail
+          })
+        )
+      }
+      dispatch(1)
+      dispatch(2)
     })
 
     await expect

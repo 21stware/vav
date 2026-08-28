@@ -1304,7 +1304,7 @@ export class CliAgentHost {
         requestId: block.id,
         toolCallId: block.id,
         kind: 'ask',
-        synthetic: true,
+        synthetic: false,
         resolve: () => undefined
       })
       this.deps.emit({
@@ -1326,7 +1326,7 @@ export class CliAgentHost {
         requestId: block.id,
         toolCallId: block.id,
         kind: 'plan_doc',
-        synthetic: true,
+        synthetic: false,
         resolve: () => undefined
       })
       this.deps.emit({

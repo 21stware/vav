@@ -19,7 +19,7 @@ import { isE2eRuntime } from '../e2eRuntime.ts'
  * a Keychain prompt. Never touch safeStorage until {@link unlock} runs from
  * the onboarding UI — status/needsUnlock must stay pure.
  */
-export type SecretName = 'api' | 'braveSearch' | 'cloudflare' | 'supabase'
+export type SecretName = 'api' | 'braveSearch' | 'tinyfish' | 'cloudflare' | 'supabase'
 
 const ACCOUNT_SECRET_PREFIX = 'secret-account-'
 const OAUTH_SNAPSHOT_PREFIX = 'secret-oauth-'
@@ -128,7 +128,7 @@ export class SecretStore {
         const probe = safeStorage.encryptString('vav-keychain-unlock')
         safeStorage.decryptString(probe)
         // Warm stored secrets so later get() hits memory without re-prompting.
-        for (const name of ['api', 'braveSearch', 'cloudflare', 'supabase'] as const) {
+        for (const name of ['api', 'braveSearch', 'tinyfish', 'cloudflare', 'supabase'] as const) {
           try {
             const file = this.pathFor(name)
             if (!existsSync(file)) continue

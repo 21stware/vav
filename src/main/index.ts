@@ -105,6 +105,12 @@ import {
   workspaceKeyOf
 } from '@shared/accounts'
 import { ANALYSIS_API_HOST } from '@shared/analysis'
+import {
+  agentModelHostKey,
+  defaultModelForChatHost,
+  labelForChatModel,
+  resolveModelForChatHost
+} from '@shared/agentModels'
 import { groupAccountsByVendor, isLlmVendorId, vendorById, vendorIdFromEndpoint } from '@shared/llmVendors'
 import { ConversationStore } from './store/ConversationStore'
 import { VavPackService } from './store/VavPackService'
@@ -167,7 +173,8 @@ import {
   getModelCatalogSnapshot,
   listHostModels,
   preloadHostModels,
-  seedModelCatalog
+  seedModelCatalog,
+  type PreloadHostModelsOptions
 } from './agent/listHostModels'
 import { SkillService } from './agent/SkillService'
 import {
@@ -196,11 +203,6 @@ import {
   resolveDefaultChatHost,
   type CliHostKind
 } from '@shared/cliHost'
-import {
-  defaultModelForChatHost,
-  labelForChatModel,
-  resolveModelForChatHost
-} from '@shared/agentModels'
 import {
   providerLabel as vavProviderLabel
 } from '@shared/tokenUsage'
@@ -1386,10 +1388,10 @@ function publishDetachedSessions(): void {
 // ---------------------------------------------------------------------------
 
 /** The window's own fill, shown for the frame or two before the renderer paints. */
-function windowBackground(): string {
+function windowBackground(alpha: string = ''): string {
   // Match mono light chrome (`--bg-window`); tinted washes are painted in CSS.
   // Uses nativeTheme after applyTheme(), so forced dark/light follow app settings.
-  return nativeTheme.shouldUseDarkColors ? '#121213' : '#ececee'
+  return (nativeTheme.shouldUseDarkColors ? '#121213' : '#ececee') + alpha
 }
 
 /** `dark` | `light` for renderer bootstrap (query + early HTML paint). */
@@ -1427,7 +1429,7 @@ function primeRendererShell(win: BrowserWindow, options?: { clear?: boolean }): 
 function applyWindowVibrancy(win: BrowserWindow): void {
   if (!IS_MAC || win.isDestroyed()) return
   try {
-    win.setBackgroundColor(VIBRANCY_CLEAR)
+    win.setBackgroundColor(windowBackground('01'))
     win.setVibrancy('under-window', { animationDuration: 0 })
   } catch {
     try {
@@ -1618,7 +1620,7 @@ function chrome(
         trafficLightPosition: trafficLightOrigin(barHeight),
         acceptFirstMouse: true,
         transparent: true,
-        backgroundColor: VIBRANCY_CLEAR,
+        backgroundColor: windowBackground('01'),
         ...(isVibrancyEnabled()
           ? {
               vibrancy: 'under-window' as const,
@@ -3457,10 +3459,13 @@ function preferredModelHosts(): CliHostKind[] {
 function contextWindowForModel(
   host: CliHostKind | null,
   modelId: string,
-  reported?: number
+  reported?: number,
+  vendorId?: string | null,
+  accountId?: string | null
 ): number {
-  const listed = getModelCatalogSnapshot()[host ?? 'vav']?.models?.find((m) => m.id === modelId)
-    ?.contextWindow
+  const listed = getModelCatalogSnapshot()[agentModelHostKey(host, vendorId, accountId)]?.models?.find(
+    (m) => m.id === modelId
+  )?.contextWindow
   if (listed && listed > 0) return listed
   if (host && reported && reported > 0) return reported
   return contextWindowFor(modelId)
@@ -3477,18 +3482,25 @@ function coerceConversationModel(conversationId: string): string | null {
   if (!conversation) return null
   const settings = settingsStore.get()
   const host = (conversation.cliHost ?? null) as CliHostKind | null
-  const key = host ?? 'vav'
+  const creds = resolveVavCredentials(
+    { conversation, settingsEndpoint: settings.apiEndpoint },
+    accountStore,
+    secretStore
+  )
+  const vendorId = host == null ? vendorIdFromEndpoint(creds.endpoint) : null
+  const key = agentModelHostKey(host, vendorId, creds.accountId)
   const catalogue = getModelCatalogSnapshot()[key]?.models
   const resolved = resolveModelForChatHost(host, conversation.model, {
     customModels: settings.customModels,
     vavDefaultModel: settings.defaultModel,
     hostDefaultModel: defaultModelForChatHost(host, settings),
-    catalogue
+    catalogue,
+    vendorId
   })
   if (resolved !== conversation.model) {
     conversationStore.updateMeta(conversationId, {
       model: resolved,
-      tokenLimit: contextWindowForModel(host, resolved)
+      tokenLimit: contextWindowForModel(host, resolved, undefined, vendorId, creds.accountId)
     })
     // Keep sidebar / composer meta in sync when healing a foreign model id.
     publishConversations()
@@ -3501,14 +3513,17 @@ function modelForNewConversation(
   preferredModel?: string | null
 ): string {
   const settings = settingsStore.get()
-  const key = host ?? 'vav'
+  const creds = currentWorkspaceVavCredentials()
+  const vendorId = host == null ? vendorIdFromEndpoint(creds.endpoint) : null
+  const key = agentModelHostKey(host, vendorId, creds.accountId)
   const catalogue = getModelCatalogSnapshot()[key]?.models
   const hostDefault = defaultModelForChatHost(host, settings)
   return resolveModelForChatHost(host, preferredModel ?? hostDefault, {
     customModels: settings.customModels,
     vavDefaultModel: settings.defaultModel,
     hostDefaultModel: hostDefault,
-    catalogue
+    catalogue,
+    vendorId
   })
 }
 
@@ -3539,7 +3554,14 @@ function buildTokenUsagePayload(conversationId: string): TokenUsageViewPayload |
         ? latestInput
         : conversation.tokensUsed
   const model = coerceConversationModel(conversationId) ?? conversation.model
-  const catalogue = getModelCatalogSnapshot()[cliHost ?? 'vav']?.models
+  const creds = resolveVavCredentials(
+    { conversation, settingsEndpoint: settings.apiEndpoint },
+    accountStore,
+    secretStore
+  )
+  const vendorId = cliHost == null ? vendorIdFromEndpoint(creds.endpoint) : null
+  const accountId = creds.accountId
+  const catalogue = getModelCatalogSnapshot()[agentModelHostKey(cliHost, vendorId, accountId)]?.models
   const modelLabel = labelForChatModel(
     cliHost,
     model,
@@ -3563,7 +3585,7 @@ function buildTokenUsagePayload(conversationId: string): TokenUsageViewPayload |
     providerLabel: provider,
     cliHost,
     tokensUsed: conversation.tokensUsed,
-    tokenLimit: contextWindowForModel(cliHost, model, conversation.tokenLimit),
+    tokenLimit: contextWindowForModel(cliHost, model, conversation.tokenLimit, vendorId, accountId),
     history,
     cacheCreatedAt: conversation.cacheCreatedAt ?? null,
     cacheExpiresAt: conversation.cacheExpiresAt ?? null,
@@ -5069,6 +5091,28 @@ function registerGlobalHotkey(accelerator: string): boolean {
   } catch (err) {
     console.warn('[hotkey] new-session register threw', err)
   }
+    // 3) Global screenshot (configurable, default ⌃⌘A or ⌃⌘S in Dev)
+  const screenshotAccel = currentKeyBindings().screenshot
+  try {
+    const ok = globalShortcut.register(screenshotAccel, () => {
+      console.log(`[hotkey] screenshot fired: ${screenshotAccel}`)
+      if (screenshotController) {
+        // Find the sender window. If we have a focused window, use it;
+        // otherwise we might not have a requester but start() handles null.
+        const win = BrowserWindow.getFocusedWindow() || mainWindow
+        if (win) {
+          void screenshotController.start({ sender: win.webContents } as any)
+        }
+      }
+    })
+    if (!ok) {
+      console.warn(`[hotkey] failed to register global screenshot: ${screenshotAccel}`)
+    } else {
+      console.log(`[hotkey] registered global screenshot: ${screenshotAccel}`)
+    }
+  } catch (err) {
+    console.warn('[hotkey] screenshot register threw', err)
+  }
   return toggleOk
 }
 
@@ -5501,13 +5545,30 @@ function currentWorkspaceVavCredentials(): { apiKey: string | null; endpoint: st
   return { apiKey: resolved.apiKey, endpoint: resolved.endpoint }
 }
 
-function vavModelListOptions(force?: boolean): {
-  force: boolean
-  apiKey: string | null
-  endpoint: string
-} {
+function vavModelListOptions(force?: boolean): PreloadHostModelsOptions {
   const creds = currentWorkspaceVavCredentials()
-  return { force: force === true, apiKey: creds.apiKey, endpoint: creds.endpoint }
+  const vavAccounts: Record<string, { apiKey: string | null; endpoint: string; accountId: string }> = {}
+  const allAccounts = accountStore.listAll()
+  for (const account of allAccounts) {
+    if (account.provider === 'vav' || agentIdOf(account) === 'vav') {
+      const vendorId = vendorIdFromEndpoint(account.endpoint || settingsStore.get().apiEndpoint)
+      if (vendorId && vendorId !== 'custom') {
+        const accountId = account.id
+        vavAccounts[accountId] = {
+          apiKey: accountSecret(account, secretStore),
+          endpoint: account.endpoint?.trim() || settingsStore.get().apiEndpoint,
+          accountId
+        }
+      }
+    }
+  }
+
+  return {
+    force: force === true,
+    apiKey: creds.apiKey,
+    endpoint: creds.endpoint,
+    vavAccounts
+  }
 }
 
 async function validateAccountKey(
@@ -5704,6 +5765,13 @@ function registerIpc(): void {
     return { hint: secretStore.maskedHint('braveSearch') }
   })
   ipcMain.handle(IPC.settingsBraveSearchKeyHint, () => secretStore.maskedHint('braveSearch'))
+
+  ipcMain.handle(IPC.settingsSetTinyfishSearchKey, (_event, key: string) => {
+    secretStore.set(key, 'tinyfish')
+    broadcast(IPC.settingsChanged, currentSettings())
+    return { hint: secretStore.maskedHint('tinyfish') }
+  })
+  ipcMain.handle(IPC.settingsTinyfishSearchKeyHint, () => secretStore.maskedHint('tinyfish'))
 
   ipcMain.handle(IPC.settingsSetCloudflareToken, (_event, token: string) => {
     secretStore.set(token, 'cloudflare')
@@ -6375,10 +6443,17 @@ return c as text`
   })
 
   ipcMain.handle(IPC.convSetModel, (_event, id: string, model: string) => {
-    const host = (conversationStore.get(id)?.cliHost ?? null) as CliHostKind | null
+    const conversation = conversationStore.get(id)
+    const host = (conversation?.cliHost ?? null) as CliHostKind | null
+    const creds = resolveVavCredentials(
+      { conversation, settingsEndpoint: settingsStore.get().apiEndpoint },
+      accountStore,
+      secretStore
+    )
+    const vendorId = host == null ? vendorIdFromEndpoint(creds.endpoint) : null
     conversationStore.updateMeta(id, {
       model,
-      tokenLimit: contextWindowForModel(host, model)
+      tokenLimit: contextWindowForModel(host, model, undefined, vendorId, creds.accountId)
     })
     if (cliHost.owns(id)) cliHost.applyModel(id, model)
     publishConversations()
@@ -6412,11 +6487,13 @@ return c as text`
 
   ipcMain.handle(
     IPC.convSetCliHost,
-    (_event, id: string, host: string | null) => {
+    (_event, id: string, host: string | null, accountId?: string | null) => {
       const prev = conversationStore.get(id)
       const prevHost = prev?.cliHost ?? null
       const nextHost = isStructuredCliHost(host) ? host : null
       const hostChanged = prevHost !== nextHost
+      const accountChanged = accountId !== undefined && (prev?.accountId ?? null) !== accountId
+
       if (hostChanged && (prev?.messages.length ?? 0) > 0) {
         return {
           conversations: conversationStore.listMeta(),
@@ -6424,6 +6501,7 @@ return c as text`
           transcript: null
         }
       }
+
       if (hostChanged) {
         // Park previous host's transcript, restore the next host's bucket.
         // Runtimes are per-host; tear down so the wrong process cannot resume.
@@ -6432,17 +6510,19 @@ return c as text`
         changeSetStore.clearConversation(id)
         conversationStore.switchHostTranscript(id, nextHost)
         conversationStore.updateMeta(id, {
-          accountId: accountIdForSession(prev?.workingDirectory ?? null, nextHost)
+          accountId: accountId ?? accountIdForSession(prev?.workingDirectory ?? null, nextHost)
         })
         swarmSession.syncHostCursor(id, nextHost)
         // Empty buckets keep the previous host's model string — coerce so the
         // picker / context-window panel do not show a foreign VAV preset.
         coerceConversationModel(id)
       } else {
-        conversationStore.updateMeta(id, {
+        const update: Partial<ConversationMeta> = {
           cliHost: nextHost,
           agentBinaryName: nextHost
-        })
+        }
+        if (accountId !== undefined) update.accountId = accountId
+        conversationStore.updateMeta(id, update)
       }
       if (nextHost) promoteEphemeralConversation(id)
       publishConversations()

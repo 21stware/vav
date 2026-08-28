@@ -9,10 +9,10 @@ import {
 import {
   ArrowUp,
   CornerUpLeft,
-  FilePlus2,
   FileText,
   MapPin,
   MessageSquare,
+  Plus,
   Quote,
   Scissors,
   Square,
@@ -37,6 +37,8 @@ import { resolveSendKeyMode, shouldSendOnKeyDown } from '../lib/composerSendKey'
 import { isPickGestureActive } from '../lib/clickPick'
 import { agentModelHostKey } from '@shared/agentModels'
 import { imageInputLimits, modelAcceptsImageInput } from '@shared/agentImageInput'
+import { vendorIdFromEndpoint } from '@shared/llmVendors'
+import { useAccountGroups, vavAccountsOf } from '../lib/accountGroups'
 import { useT } from '../i18n/useT'
 import { attachPickedFiles, attachScreenshot } from '../lib/composerAttach'
 import { collectClipboardImages, imageSizeByPath, writeClipboardImage } from '../lib/pasteImages'
@@ -226,11 +228,20 @@ export function Composer({
   /** True while IME / dictation composition is active (Enter must not submit). */
   const composingRef = useRef(false)
   const [focused, setFocused] = useState(false)
+  const accountGroups = useAccountGroups()
   const imageLimits = imageInputLimits(conversation?.cliHost ?? null)
   const catalogModel = useSessionStore((s) => {
     const host = conversation?.cliHost ?? null
     const id = conversation?.model ?? ''
-    return s.agentModelCatalog[agentModelHostKey(host)]?.models.find((m) => m.id === id)
+    const currentVav = vavAccountsOf(accountGroups).find(
+      (row) => row.id === conversation?.accountId
+    )
+    const vendorId =
+      host == null
+        ? vendorIdFromEndpoint(currentVav?.endpoint ?? s.settings.apiEndpoint)
+        : null
+    const accountId = conversation?.accountId ?? currentVav?.id ?? null
+    return s.agentModelCatalog[agentModelHostKey(host, vendorId, accountId)]?.models?.find((m) => m.id === id)
   })
   const imageInputSupported = modelAcceptsImageInput(
     conversation?.cliHost ?? null,
@@ -575,7 +586,7 @@ export function Composer({
                 })()
               }}
             >
-              <FilePlus2 size={12} strokeWidth={2} />
+              <Plus size={12} strokeWidth={2} />
             </button>
             <button
               type="button"
@@ -763,12 +774,12 @@ function MessageQueueBar({
                   <span className="message-queue-item-icon" aria-hidden>
                     <MessageSquare size={12} strokeWidth={2} />
                   </span>
-                  <button
-                    type="button"
-                    className="message-queue-item-text"
-                    title={t('queue.clickToEdit')}
-                    onClick={() => startEdit(item)}
-                  >
+          <button
+            type="button"
+            className="message-queue-item-text"
+            title={body}
+            onClick={() => startEdit(item)}
+          >
                     {body}
                   </button>
                   <button
@@ -1056,6 +1067,7 @@ function AcpSlashMenu({
           className={`acp-slash-item${index === selectedIndex ? ' is-active' : ''}`}
           data-testid={`acp-slash-${command.name}`}
           data-active={index === selectedIndex ? 'true' : undefined}
+          title={command.description}
           role="option"
           aria-selected={index === selectedIndex}
           onMouseEnter={() => onHover(index)}

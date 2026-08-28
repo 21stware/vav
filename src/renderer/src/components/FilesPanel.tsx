@@ -671,11 +671,13 @@ export function FilesPanel({ visible }: { visible: boolean }): React.JSX.Element
               {
                 value: 'files',
                 label: t('files.tabFiles'),
+                title: t('files.tabFiles'),
                 icon: <Folder size={14} />
               },
               {
                 value: 'git',
                 label: t('files.tabGit'),
+                title: t('files.tabGit'),
                 icon: <GitBranch size={14} />
               },
               ...(githubTrayOn && rootIsGit === true
@@ -683,6 +685,7 @@ export function FilesPanel({ visible }: { visible: boolean }): React.JSX.Element
                     {
                       value: 'github' as const,
                       label: t('files.tabGithub'),
+                      title: t('files.tabGithub'),
                       icon: <Github size={14} />
                     }
                   ]
@@ -692,6 +695,7 @@ export function FilesPanel({ visible }: { visible: boolean }): React.JSX.Element
                     {
                       value: 'supabase' as const,
                       label: t('files.tabSupabase'),
+                      title: t('files.tabSupabase'),
                       icon: <SupabaseMark size={14} />
                     }
                   ]
@@ -701,6 +705,7 @@ export function FilesPanel({ visible }: { visible: boolean }): React.JSX.Element
                     {
                       value: 'cloudflare' as const,
                       label: t('files.tabCloudflare'),
+                      title: t('files.tabCloudflare'),
                       icon: <Cloud size={14} />
                     }
                   ]
@@ -717,6 +722,7 @@ export function FilesPanel({ visible }: { visible: boolean }): React.JSX.Element
                 label={sortButtonLabel(normalizeFileSortKey(sort), t)}
                 icon={<ArrowUpDown size={14} />}
                 size="sm"
+                title={t('common.sort')}
                 onClick={(event) =>
                   void showMenu(sortItems, menuAnchor(event.currentTarget as HTMLElement))
                 }
@@ -1253,7 +1259,7 @@ function NewFileRow({
       onClick={(event) => event.stopPropagation()}
     >
       <span className="disclosure" aria-hidden />
-      <FileIcon size={16} strokeWidth={1.75} aria-hidden />
+      <Plus size={16} strokeWidth={1.75} aria-hidden />
       <input
         className="text-field rename-field"
         data-testid="files-create-name"

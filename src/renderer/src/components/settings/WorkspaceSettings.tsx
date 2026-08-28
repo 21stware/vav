@@ -8,7 +8,7 @@ import { PLATFORM } from '../../lib/platform'
 
 const SHELLS = shellsFor(PLATFORM)
 
-type WebSearchProvider = 'auto' | 'duckduckgo' | 'searxng' | 'brave'
+type WebSearchProvider = 'auto' | 'duckduckgo' | 'searxng' | 'brave' | 'tinyfish'
 
 export function WorkspaceSettings(): React.JSX.Element {
   const t = useT()
@@ -16,6 +16,8 @@ export function WorkspaceSettings(): React.JSX.Element {
   const updateSettings = useSessionStore((s) => s.updateSettings)
   const [braveDraft, setBraveDraft] = useState('')
   const [braveSaving, setBraveSaving] = useState(false)
+  const [tinyfishDraft, setTinyfishDraft] = useState('')
+  const [tinyfishSaving, setTinyfishSaving] = useState(false)
   const [cfDraft, setCfDraft] = useState('')
   const [cfSaving, setCfSaving] = useState(false)
   const [sbDraft, setSbDraft] = useState('')
@@ -26,7 +28,8 @@ export function WorkspaceSettings(): React.JSX.Element {
     { value: 'auto', label: t('workspace.webProviderAuto') },
     { value: 'duckduckgo', label: t('workspace.webProviderDdg') },
     { value: 'searxng', label: t('workspace.webProviderSearx') },
-    { value: 'brave', label: t('workspace.webProviderBrave') }
+    { value: 'brave', label: t('workspace.webProviderBrave') },
+    { value: 'tinyfish', label: t('workspace.webProviderTinyfish') }
   ]
 
   const saveBraveKey = async (): Promise<void> => {
@@ -36,6 +39,16 @@ export function WorkspaceSettings(): React.JSX.Element {
       setBraveDraft('')
     } finally {
       setBraveSaving(false)
+    }
+  }
+
+  const saveTinyfishKey = async (): Promise<void> => {
+    setTinyfishSaving(true)
+    try {
+      await window.vav.settings.setTinyfishSearchKey(tinyfishDraft.trim())
+      setTinyfishDraft('')
+    } finally {
+      setTinyfishSaving(false)
     }
   }
 
@@ -209,6 +222,40 @@ export function WorkspaceSettings(): React.JSX.Element {
         </div>
       </div>
       <div className="form-hint">{t('workspace.braveKeyHint')}</div>
+
+      <div className="form-row">
+        <label>{t('workspace.tinyfishKey')}</label>
+        <div className="control">
+          <input
+            className="text-field"
+            type="password"
+            placeholder={
+              settings.tinyfishSearchKeyPresent
+                ? t('workspace.tinyfishKeyConfigured')
+                : t('workspace.tinyfishKeyPlaceholder')
+            }
+            value={tinyfishDraft}
+            onChange={(event) => setTinyfishDraft(event.target.value)}
+          />
+          <Button
+            label={tinyfishSaving ? t('workspace.braveSaving') : t('workspace.braveSave')}
+            variant="secondary"
+            size="sm"
+            disabled={tinyfishSaving || !tinyfishDraft.trim()}
+            onClick={() => void saveTinyfishKey()}
+          />
+          {settings.tinyfishSearchKeyPresent && (
+            <Button
+              label={t('common.clear')}
+              size="sm"
+              onClick={() => {
+                void window.vav.settings.setTinyfishSearchKey('').then(() => setTinyfishDraft(''))
+              }}
+            />
+          )}
+        </div>
+      </div>
+      <div className="form-hint">{t('workspace.tinyfishKeyHint')}</div>
 
       <div className="form-row">
         <label>{t('workspace.githubTray')}</label>

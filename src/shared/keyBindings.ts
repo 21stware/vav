@@ -34,6 +34,9 @@ export type AcceleratorKeyBindingId =
   | 'switchCliMode'
   | 'switchVavMode'
   | 'switchModel'
+  | 'switchModelUp'
+  | 'switchModelDown'
+  | 'pickAttachments'
   | 'switchApproval'
   | 'screenshot'
   | 'closeContext'
@@ -74,6 +77,10 @@ export const KEY_BINDING_GROUP_LABEL: Record<KeyBindingGroupId, MessageKey> = {
   special: 'keybindings.group.special',
   files: 'keybindings.group.files'
 }
+
+const IS_DEV =
+  typeof process !== 'undefined' &&
+  (process.env.ELECTRON_IS_DEV === '1' || process.env.NODE_ENV === 'development')
 
 export const KEY_BINDING_DEFS: readonly KeyBindingDef[] = [
   {
@@ -189,6 +196,27 @@ export const KEY_BINDING_DEFS: readonly KeyBindingDef[] = [
     defaultAccelerator: 'CmdOrCtrl+Shift+M'
   },
   {
+    id: 'switchModelUp',
+    group: 'session',
+    labelKey: 'shortcut.switchModelUp',
+    kind: 'accelerator',
+    defaultAccelerator: 'CmdOrCtrl+Control+Up'
+  },
+  {
+    id: 'switchModelDown',
+    group: 'session',
+    labelKey: 'shortcut.switchModelDown',
+    kind: 'accelerator',
+    defaultAccelerator: 'CmdOrCtrl+Control+Down'
+  },
+  {
+    id: 'pickAttachments',
+    group: 'session',
+    labelKey: 'shortcut.pickAttachments',
+    kind: 'accelerator',
+    defaultAccelerator: 'CmdOrCtrl+Control+Plus'
+  },
+  {
     id: 'switchApproval',
     group: 'session',
     labelKey: 'shortcut.switchApproval',
@@ -200,7 +228,7 @@ export const KEY_BINDING_DEFS: readonly KeyBindingDef[] = [
     group: 'session',
     labelKey: 'composer.screenshot',
     kind: 'accelerator',
-    defaultAccelerator: 'CmdOrCtrl+Control+A'
+    defaultAccelerator: IS_DEV ? 'CmdOrCtrl+Control+S' : 'CmdOrCtrl+Control+A'
   },
   {
     id: 'closeContext',

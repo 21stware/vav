@@ -9,7 +9,7 @@ import {
 
 /**
  * Unseen complete: sidebar Done badge + conversation.resultUnseen.
- * Dock paint is unit-tested; AppKit badge text is always cleared.
+ * Dock badge text is driven by native app.dock.setBadge.
  */
 test('background stub complete marks the other session unseen', async () => {
   const harness = await launchVav({ stubTurn: true, extraSession: true })

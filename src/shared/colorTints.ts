@@ -36,7 +36,11 @@ export const TINT_ACCENT: Record<FixedColorTint, { light: string; dark: string }
   // Claude-like warm coral (not brown amber / not beige).
   amber: { light: '#d97757', dark: '#e8895c' },
   // Macaron sage / pistachio.
-  green: { light: '#5fae86', dark: '#7dc9a4' }
+  green: { light: '#5fae86', dark: '#7dc9a4' },
+  // Deep ocean / cyan UI.
+  ocean: { light: '#006680', dark: '#4dbcd8' },
+  // Earthy olive / lime.
+  olive: { light: '#82920f', dark: '#b5c44d' }
 }
 
 /** Swatch fill for a fixed tint in the current resolved theme. */

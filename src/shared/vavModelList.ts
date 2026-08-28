@@ -48,9 +48,34 @@ export function prettyVavModelLabel(id: string): string {
 
 /** One-row seed so the picker has an id before `/models` returns. */
 export function vavFallbackModels(
-  defaultModel?: string | null
+  defaultModel?: string | null,
+  vendorId?: string | null
 ): Array<{ id: string; label: string }> {
-  const id = defaultModel?.trim() || VAV_DEFAULT_MODEL_ID
+  if (defaultModel?.trim()) {
+    return [{ id: defaultModel, label: prettyVavModelLabel(defaultModel), ...inferModalitiesFromId(defaultModel) }]
+  }
+
+  const id = ((): string => {
+    switch (vendorId) {
+      case 'openai':
+        return 'gpt-4o'
+      case 'anthropic':
+        return 'claude-3-5-sonnet-20241022'
+      case 'google':
+        return 'gemini-1.5-pro'
+      case 'deepseek':
+        return VAV_DEFAULT_MODEL_ID
+      case 'xai':
+        return 'grok-beta'
+      case 'kimi':
+        return 'moonshot-v1-8k'
+      case 'bigmodel':
+        return 'glm-4'
+      default:
+        return VAV_DEFAULT_MODEL_ID
+    }
+  })()
+
   return [{ id, label: prettyVavModelLabel(id), ...inferModalitiesFromId(id) }]
 }
 

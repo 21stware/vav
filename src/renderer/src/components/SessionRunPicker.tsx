@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef } from 'react'
 import {
+  BookOpen,
   Bot,
-  CircleChevronRight,
   Hammer,
   ListTodo,
   MessageCircle,
-  ShieldAlert,
-  ShieldPlus
+  Rocket,
+  Shield
 } from 'lucide-react'
 import type { ApprovalMode, ThinkingLevel } from '@shared/types'
 import { acpCurrentModeId, acpSessionModes, type AcpSessionMode } from '@shared/acpSession'
@@ -75,7 +75,7 @@ export function SessionRunPicker({
 
   const thinkingItems = useMemo((): MenuItem[] => {
     if (!conversation || !showThinking) return []
-    return THINKING_LEVELS.map((value) => ({
+    return [...THINKING_LEVELS].reverse().map((value) => ({
       label: t(LEVEL_KEYS[value]),
       checked: value === thinking,
       onSelect: () => void setThinkingLevel(conversation.id, value)
@@ -131,7 +131,7 @@ export function SessionRunPicker({
       {showThinking ? (
         <button
           type="button"
-          className="model-picker session-run-btn"
+          className="model-picker session-run-btn is-icon"
           data-testid="session-run-thinking"
           aria-label={`${t('composer.thinkingLevel')} · ${thinkingLabel}`}
           aria-haspopup="menu"
@@ -142,7 +142,7 @@ export function SessionRunPicker({
             openMenu(thinkingItems, event.currentTarget)
           }}
         >
-          <span className="session-run-level">{thinkingLabel}</span>
+          <ThinkingIcon level={thinking} />
         </button>
       ) : null}
       {showMode && sessionMode ? (
@@ -196,7 +196,57 @@ function ModeIcon({ mode }: { mode: AcpSessionMode }): React.JSX.Element {
 }
 
 function ApprovalIcon({ mode }: { mode: ApprovalMode }): React.JSX.Element {
-  if (mode === 'bypass') return <ShieldAlert size={12} strokeWidth={2} />
-  if (mode === 'edit') return <ShieldPlus size={12} strokeWidth={2} />
-  return <CircleChevronRight size={12} strokeWidth={2} />
+  if (mode === 'bypass') return <Rocket size={12} strokeWidth={2} />
+  if (mode === 'edit') return <BookOpen size={12} strokeWidth={2} />
+  return <Shield size={12} strokeWidth={2} />
+}
+
+function ThinkingIcon({ level }: { level: ThinkingLevel }): React.JSX.Element {
+  const n =
+    level === 'low' ? 1 : level === 'medium' ? 2 : level === 'high' ? 3 : level === 'max' ? 4 : 0
+
+  return (
+    <svg
+      width="12"
+      height="12"
+      viewBox="0 0 12 12"
+      fill="none"
+      xmlns="http://www.w3.org/2000/svg"
+      aria-hidden
+    >
+      {[0, 1, 2, 3].map((i) => {
+        const isHighlight = i + 1 === n
+        const isBelow = i + 1 < n
+        const barHeight = 1.2
+        const gap = 1.2
+        const totalHeight = 4 * barHeight + 3 * gap
+        const offset = (12 - totalHeight) / 2
+        const y = 12 - offset - (i + 1) * barHeight - i * gap
+
+        let fill = 'currentColor'
+        let opacity = 0.15
+
+        if (isHighlight) {
+          fill = 'var(--accent)'
+          opacity = 1
+        } else if (isBelow) {
+          fill = 'currentColor'
+          opacity = 1
+        }
+
+        return (
+          <rect
+            key={i}
+            x="0"
+            y={y}
+            width="12"
+            height={barHeight}
+            rx={0.4}
+            fill={fill}
+            style={{ opacity }}
+          />
+        )
+      })}
+    </svg>
+  )
 }

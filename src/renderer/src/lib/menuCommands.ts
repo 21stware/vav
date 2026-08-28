@@ -9,7 +9,7 @@ import {
   installUiFocusTracking
 } from './uiFocus'
 import { requestCliSurface } from './cliSurfaceSwitch'
-import { attachScreenshot } from './composerAttach'
+import { attachPickedFiles, attachScreenshot } from './composerAttach'
 
 /** Ensure the session list is visible when switching archive / file-session modes. */
 function ensureSidebarVisible(): void {
@@ -86,6 +86,15 @@ export function handleMenuCommand(command: MenuCommand): void {
     }
     case 'switch-model':
       store.openModelPicker()
+      break
+    case 'switch-model-up':
+      if (store.activeId) void store.stepModel(store.activeId, -1)
+      break
+    case 'switch-model-down':
+      if (store.activeId) void store.stepModel(store.activeId, 1)
+      break
+    case 'pick-attachments':
+      void attachPickedFiles()
       break
     case 'switch-approval':
       store.openApprovalMenu()

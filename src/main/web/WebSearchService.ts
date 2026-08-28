@@ -18,7 +18,7 @@ export interface WebSearchHit {
   snippet: string
 }
 
-export type WebSearchProvider = 'auto' | 'duckduckgo' | 'searxng' | 'brave'
+export type WebSearchProvider = 'auto' | 'duckduckgo' | 'searxng' | 'brave' | 'tinyfish'
 
 export interface WebSearchOptions {
   query: string
@@ -30,6 +30,8 @@ export interface WebSearchOptions {
   searxngBaseUrl?: string
   /** Brave Search API subscription token (optional). */
   braveApiKey?: string
+  /** TinyFish Search API key (optional). */
+  tinyfishApiKey?: string
   provider?: WebSearchProvider
 }
 
@@ -57,14 +59,26 @@ export class WebSearchService {
     const warnings: string[] = []
     const provider = opts.provider ?? 'auto'
     const braveKey = opts.braveApiKey?.trim() || ''
+    const tinyfishKey = opts.tinyfishApiKey?.trim() || ''
     const searx = opts.searxngBaseUrl?.trim() || ''
 
+    const tryTinyfish =
+      (provider === 'auto' || provider === 'tinyfish') && tinyfishKey.length > 0
     const tryBrave =
       (provider === 'auto' || provider === 'brave') && braveKey.length > 0
     const trySearx =
       (provider === 'auto' || provider === 'searxng') && searx.length > 0
     const tryDdg = provider === 'auto' || provider === 'duckduckgo'
 
+    if (provider === 'tinyfish' && !tinyfishKey) {
+      return {
+        ok: false,
+        error: 'TinyFish Search selected but no API key is configured.',
+        query,
+        via: 'tinyfish',
+        hits: []
+      }
+    }
     if (provider === 'brave' && !braveKey) {
       return {
         ok: false,
@@ -81,6 +95,28 @@ export class WebSearchService {
         query,
         via: 'searxng',
         hits: []
+      }
+    }
+
+    if (tryTinyfish) {
+      try {
+        const hits = await searchTinyfish(tinyfishKey, query, num, opts)
+        if (hits.length > 0) {
+          return {
+            ok: true,
+            query,
+            via: 'tinyfish',
+            hits,
+            warnings: warnings.length ? warnings : undefined
+          }
+        }
+        warnings.push('TinyFish returned no results')
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err)
+        warnings.push(`TinyFish failed: ${msg}`)
+        if (provider === 'tinyfish') {
+          return { ok: false, error: msg, query, via: 'tinyfish', hits: [], warnings }
+        }
       }
     }
 
@@ -440,6 +476,58 @@ async function searchSearxng(
       title,
       url,
       snippet: collapseWs(r.content || '')
+        .trim()
+        .slice(0, 320)
+    })
+  }
+  return hits
+}
+
+async function searchTinyfish(
+  apiKey: string,
+  query: string,
+  num: number,
+  opts: WebSearchOptions
+): Promise<WebSearchHit[]> {
+  const url = new URL('https://api.search.tinyfish.ai')
+  url.searchParams.set('query', query)
+
+  const res = await httpRequest(url.href, {
+    timeoutMs: opts.timeoutMs,
+    signal: opts.signal,
+    headers: {
+      Accept: 'application/json',
+      'X-API-Key': apiKey,
+      'User-Agent': 'vav (local agent; +https://vavapp.com)'
+    }
+  })
+  if (res.status < 200 || res.status >= 300) {
+    throw new Error(`TinyFish HTTP ${res.status}: ${res.body.toString('utf8').slice(0, 200)}`)
+  }
+  let data: {
+    results?: Array<{ title?: string; url?: string; snippet?: string }>
+  }
+  try {
+    data = JSON.parse(res.body.toString('utf8')) as typeof data
+  } catch {
+    throw new Error('TinyFish returned non-JSON')
+  }
+
+  const hits: WebSearchHit[] = []
+  const seen = new Set<string>()
+  for (const r of data.results ?? []) {
+    if (hits.length >= num) break
+    const href = (r.url || '').trim()
+    const title = collapseWs(r.title || '').trim()
+    if (!href || !title || !/^https?:\/\//i.test(href)) continue
+    const key = normalizeUrlKey(href)
+    if (seen.has(key)) continue
+    seen.add(key)
+    hits.push({
+      rank: hits.length + 1,
+      title,
+      url: href,
+      snippet: collapseWs(r.snippet || '')
         .trim()
         .slice(0, 320)
     })
