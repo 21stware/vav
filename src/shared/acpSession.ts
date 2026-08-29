@@ -64,6 +64,8 @@ export interface AcpSessionState {
   commands?: AcpAvailableCommand[]
   configOptions?: AcpConfigOption[]
   sessionTitle?: string | null
+  /** Cursor thinking levels this model actually accepts. */
+  thinkingLevels?: Array<'off' | 'low' | 'medium' | 'high' | 'max'>
 }
 
 export type AcpContentBlock =
@@ -232,7 +234,8 @@ export function parseAcpSessionState(raw: unknown, previous?: AcpSessionState | 
     modes: modes.modes.length ? modes.modes : previous?.modes,
     commands: commands.length ? commands : previous?.commands,
     configOptions: configOptions.length ? configOptions : previous?.configOptions,
-    sessionTitle: title ?? previous?.sessionTitle ?? null
+    sessionTitle: title ?? previous?.sessionTitle ?? null,
+    thinkingLevels: previous?.thinkingLevels
   }
 }
 
@@ -245,7 +248,8 @@ export function mergeAcpSessionState(
     modes: patch.modes ?? previous?.modes,
     commands: patch.commands ?? previous?.commands,
     configOptions: patch.configOptions ?? previous?.configOptions,
-    sessionTitle: patch.sessionTitle !== undefined ? patch.sessionTitle : previous?.sessionTitle ?? null
+    sessionTitle: patch.sessionTitle !== undefined ? patch.sessionTitle : previous?.sessionTitle ?? null,
+    thinkingLevels: patch.thinkingLevels ?? previous?.thinkingLevels
   }
 }
 

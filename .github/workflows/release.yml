@@ -60,6 +60,11 @@ jobs:
 
       - run: npm ci
 
+      - uses: actions/setup-go@v5
+        with:
+          go-version: 'stable'
+          cache-dependency-path: sidecar/tailcatbridge/go.sum
+
       # OfficeCLI binaries are gitignored; fetch the pinned host build into
       # resources/bin so electron-builder extraResources can ship them.
       - name: Fetch OfficeCLI (macOS)
@@ -69,6 +74,14 @@ jobs:
       - name: Fetch OfficeCLI (Windows)
         if: runner.os == 'Windows'
         run: node scripts/fetch-officecli.mjs --target win32-x64 --clean
+
+      - name: Build tailcat sidecar (macOS)
+        if: runner.os == 'macOS'
+        run: node scripts/build-tailcat-sidecar.mjs --target darwin-arm64
+
+      - name: Build tailcat sidecar (Windows)
+        if: runner.os == 'Windows'
+        run: node scripts/build-tailcat-sidecar.mjs --target win32-x64
 
       - run: npm run build
 
@@ -168,6 +181,9 @@ jobs:
           Not code-signed. SmartScreen may warn on first run: **More info** → **Run anyway**.
 
           In-app updates use the NSIS installer + `latest.yml` feed.
+
+          ## Headless daemon
+          `npx @21stware/vavd` — pair from VAV → Settings → Allow other devices.
           EOF
 
       - name: Publish release
@@ -191,3 +207,37 @@ jobs:
               --notes-file notes.md \
               artifacts/*
           fi
+
+  publish-npm:
+    needs: publish
+    runs-on: ubuntu-latest
+    if: ${{ vars.NPM_PUBLISH != 'skip' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          registry-url: https://registry.npmjs.org
+
+      - run: npm ci
+
+      - name: Pack and publish @21stware/vavd
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${NODE_AUTH_TOKEN:-}" ]; then
+            echo "NPM_TOKEN is not set; skip npm publish" >&2
+            exit 0
+          fi
+          node scripts/pack-vavd.mjs
+          VERSION=$(node -p "require('./packages/vavd/package.json').version")
+          if npm view "@21stware/vavd@${VERSION}" version >/dev/null 2>&1; then
+            echo "@21stware/vavd@${VERSION} already on npm"
+            exit 0
+          fi
+          npm publish --access public --prefix packages/vavd

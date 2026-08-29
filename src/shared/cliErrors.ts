@@ -1,7 +1,7 @@
 import type { QuotaWindow, QuotaWindowKind } from './types'
 
 /** Why a structured CLI host (Grok / Claude / Codex / …) failed a turn. */
-export type CliErrorKind = 'quota' | 'session-stale' | 'auth' | 'cancelled' | 'generic'
+export type CliErrorKind = 'quota' | 'session-stale' | 'auth' | 'cancelled' | 'network' | 'generic'
 
 /**
  * JSON-RPC 2.0 + ACP error codes.
@@ -47,9 +47,40 @@ const CANCELLED_RE =
 
 const BARE_INTERNAL_RE = /^(?:internal error|json-?rpc\s+internal error)(?:\s*[.:—-]\s*)?$/i
 
+/**
+ * Transient transport failures (DNS, TCP, TLS, proxy) from the host CLI or
+ * its HTTP stack. These are retried on the SAME session — never treated as a
+ * turn-breaking error until {@link NETWORK_RETRY_LIMIT} attempts fail.
+ */
+const RETRIABLE_RE =
+  /RetriableError|Client network socket disconnected|ECONNRESET|ECONNREFUSED|ECONNABORTED|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|EPIPE|EHOSTUNREACH|ENETUNREACH|socket hang up|TLS connection (?:failed|error)|error sending request for url|fetch failed|network (?:error|failure)|connection (?:reset|refused|closed|interrupted|timed?[\s-]?out)|request (?:to .{1,200} )?failed, reason:/i
+
 export type ExtractedRpcError = {
   code: number | null
   text: string
+}
+
+/**
+ * cursor-agent in ACP mode leaks internal stream teardowns — e.g.
+ * "Error: RetriableError: WritableIterable is closed" — as a trailing
+ * agent_message_chunk while still reporting stopReason=end_turn (known
+ * upstream bug). The tail always starts on its own line at the very end of
+ * the reply.
+ */
+const STREAMED_RETRIABLE_TAIL_RE = /(?:^|\n)[^\S\n]*Error:[^\S\n]*RetriableError:[^\n]*\s*$/
+
+/**
+ * Split a leaked internal stream error off the end of a streamed reply.
+ * `text` is what the model actually said; `leaked` is the internal error,
+ * ready to feed the retry ladder when nothing else remains of the turn.
+ */
+export function splitStreamedRetriableError(text: string): { text: string; leaked: string | null } {
+  const match = STREAMED_RETRIABLE_TAIL_RE.exec(text)
+  if (!match) return { text, leaked: null }
+  return {
+    text: text.slice(0, match.index).replace(/\s+$/, ''),
+    leaked: match[0].trim()
+  }
 }
 
 export function rpcErrorCode(error: unknown): number | null {
@@ -230,6 +261,7 @@ export function classifyCliError(
   }
   if (code === RpcErrorCode.tooManyRequests || code === 429 || code === 402) return 'quota'
   if (QUOTA_RE.test(raw)) return 'quota'
+  if (RETRIABLE_RE.test(raw)) return 'network'
   if (SESSION_STALE_RE.test(raw)) return 'session-stale'
   if (AUTH_RE.test(raw)) return 'auth'
   if (
@@ -276,10 +308,29 @@ export function quotaKindMessageKey(kind: QuotaWindowKind):
   }
 }
 
+/** Same-session retry budget for transient network failures. */
+export const NETWORK_RETRY_LIMIT = 3
+
+/** Backoff before same-session network retry N (1-based): 1s, 2.5s, 5s. */
+export function networkRetryDelayMs(attempt: number): number {
+  const table = [1_000, 2_500, 5_000]
+  return table[Math.min(Math.max(1, attempt), table.length) - 1]!
+}
+
+/**
+ * Transient network failures re-prompt the SAME native session (resume
+ * cursor kept — the conversation context must survive the blip). Everything
+ * else falls through to {@link shouldRetryFreshSession}.
+ */
+export function shouldRetrySameSession(kind: CliErrorKind): boolean {
+  return kind === 'network'
+}
+
 /**
  * After a resume cursor failed, decide whether to drop it and start a new
  * native session (login switch, deleted thread, other-account session).
- * Never retry quota — a fresh session hits the same cap.
+ * Never retry quota — a fresh session hits the same cap. Never network —
+ * that path keeps the cursor and retries in place instead.
  */
 export function shouldRetryFreshSession(
   kind: CliErrorKind,
@@ -287,6 +338,7 @@ export function shouldRetryFreshSession(
   hadResumeCursor: boolean,
   code?: number | null
 ): boolean {
+  if (kind === 'network') return false
   if (!hadResumeCursor) return false
   if (kind === 'quota' || kind === 'auth' || kind === 'cancelled') return false
   if (

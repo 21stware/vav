@@ -3,7 +3,7 @@
  * Profiles, keys, and endpoints are app data — a new temp folder must not hide them.
  */
 
-import { LLM_VENDOR_CATALOGUE, vendorById, vendorFromEndpoint } from './llmVendors.ts'
+import { LLM_VENDOR_CATALOGUE, isLlmVendorId, vendorById, vendorFromEndpoint } from './llmVendors.ts'
 
 export const DEFAULT_WORKSPACE_KEY = '__default__'
 export const WORKSPACE_ACCOUNT_NAME = '__workspace__'
@@ -650,17 +650,37 @@ export function sessionUsageRowsOf(
   }))
 }
 
+/** VAV key profiles keep provider 'vav'; vendor-grouped ids (deepseek, openrouter, …) still count. */
+export function isVavProfile(account: {
+  provider?: string | null
+  agentId?: string | null
+  oauthHost?: string | null
+  endpoint?: string | null
+}): boolean {
+  if (account.provider === 'vav') return true
+  const id = agentIdOf(account)
+  return id === 'vav' || isLlmVendorId(id)
+}
+
 /** Same pick the Providers UI uses — not a leftover workspace-local current. */
 export function currentVisibleVav<T extends ProviderAccount>(
   accounts: T[],
   workspaceKey: string
 ): T | undefined {
-  const visible = visibleAccountsForWorkspace(accounts, workspaceKey)
-  const currentIds = visibleCurrentIds(visible, workspaceKey)
+  // Vendor grouping puts every VAV key in its own agent group, so a per-group
+  // "current" exists for each vendor. Pick across all of them as one list.
+  const visible = visibleAccountsForWorkspace(accounts, workspaceKey).filter(isVavProfile)
+  if (visible.length === 0) return undefined
+  const live = (account: T): boolean => account.kind !== 'oauth' || account.keyStatus === 'ok'
+  const localCurrent = visible.find(
+    (account) => account.workspaceKey === workspaceKey && account.current
+  )
   return (
-    visible.find((account) => agentIdOf(account) === 'vav' && currentIds.has(account.id)) ??
-    visible.find((account) => agentIdOf(account) === 'vav' && account.current) ??
-    visible.find((account) => agentIdOf(account) === 'vav')
+    (localCurrent && live(localCurrent) ? localCurrent : null) ??
+    visible.find((account) => account.current && live(account)) ??
+    localCurrent ??
+    visible.find(live) ??
+    visible[0]
   )
 }
 

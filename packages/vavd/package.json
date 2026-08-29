@@ -1,0 +1,41 @@
+{
+  "name": "@21stware/vavd",
+  "version": "1.18.0",
+  "description": "Headless VAV workspace-host daemon. Pair from desktop VAV → Settings → Allow other devices.",
+  "license": "PolyForm-Noncommercial-1.0.0",
+  "author": "Oboo Cheng",
+  "type": "commonjs",
+  "bin": {
+    "vavd": "vavd.js"
+  },
+  "files": [
+    "vavd.js",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "node-pty": "^1.1.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/21stware/vav.git",
+    "directory": "packages/vavd"
+  },
+  "homepage": "https://github.com/21stware/vav/tree/main/packages/vavd",
+  "bugs": {
+    "url": "https://github.com/21stware/vav/issues"
+  },
+  "keywords": [
+    "vav",
+    "vavd",
+    "daemon",
+    "workspace",
+    "agent"
+  ],
+  "publishConfig": {
+    "access": "public"
+  }
+}

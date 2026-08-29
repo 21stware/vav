@@ -1,6 +1,4 @@
 import { shell } from 'electron'
-import { watch, type FSWatcher } from 'node:fs'
-import { readdir, rename, stat, readFile, writeFile, mkdir, open } from 'node:fs/promises'
 import { join, dirname, basename, extname } from 'node:path'
 import { spawn } from 'node:child_process'
 import { userInfo } from 'node:os'
@@ -30,6 +28,8 @@ import type { DocumentRetrievalService } from '../retrieval/DocumentRetrievalSer
 import { isHeicPath, prepareHeicPreview } from './heicPreview'
 import { convertLegacyOffice, legacyOfficeKind } from './legacyOfficeConvert'
 import type { WorkingCopyService } from './WorkingCopyService'
+import { localHostFs, type HostFs, type HostWatcher } from '../host'
+import { conversationIdForWatchedPath } from './conversationPath'
 
 /**
  * Technical windows — memory budgets for a single IPC/payload, NOT product
@@ -62,7 +62,8 @@ const INDEX_AFTER_OPEN_MS = 1500
  * enumeration).
  */
 export class FileService {
-  private watchers = new Map<string, FSWatcher>()
+  private watchers = new Map<string, HostWatcher>()
+  private roots = new Map<string, string>()
   private pendingDirs = new Map<string, Set<string>>()
   private debounceTimers = new Map<string, NodeJS.Timeout>()
   /** Optional: warm document RAG index after office inspect. */
@@ -74,10 +75,27 @@ export class FileService {
    */
   workingCopies: WorkingCopyService | null = null
 
-  constructor(private onDirtyDirectories: (conversationId: string, dirs: string[]) => void) {}
+  constructor(
+    private onDirtyDirectories: (conversationId: string, dirs: string[]) => void,
+    private readonly fs: HostFs = localHostFs,
+    /** Per-conversation host. Missing / unknown machines use {@link fs}. */
+    private readonly resolveFs?: (conversationId: string) => HostFs
+  ) {}
+
+  private fsFor(conversationId?: string | null, path?: string): HostFs {
+    const id = conversationIdForWatchedPath(this.roots, path ?? '', conversationId)
+    if (!id || !this.resolveFs) return this.fs
+    try {
+      return this.resolveFs(id)
+    } catch {
+      return this.fs
+    }
+  }
 
   /** Filesystem path for read/write (may be a working copy). */
-  private forIo(path: string): string {
+  private forIo(path: string, conversationId?: string | null): string {
+    const hostFs = this.fsFor(conversationId, path)
+    if (hostFs !== this.fs) return path
     return this.workingCopies?.ioPath(path) ?? path
   }
 
@@ -87,9 +105,15 @@ export class FileService {
   }
 
   /** Loads exactly one level; callers expand lazily as the user opens folders. */
-  async listDirectory(path: string, sort: FileSortKey = 'name', ascending = true): Promise<DirectoryListing> {
+  async listDirectory(
+    path: string,
+    sort: FileSortKey = 'name',
+    ascending = true,
+    conversationId?: string
+  ): Promise<DirectoryListing> {
+    const hostFs = this.fsFor(conversationId, path)
     try {
-      const dirents = await readdir(path, { withFileTypes: true })
+      const dirents = await hostFs.readdir(path)
       const visible = dirents.filter((d) => !isIgnoredName(d.name))
       const truncated = Math.max(0, visible.length - DIRECTORY_ENTRY_CAP)
       const slice = visible.slice(0, DIRECTORY_ENTRY_CAP)
@@ -101,7 +125,7 @@ export class FileService {
           let modifiedAt = 0
           let createdAt = 0
           try {
-            const info = await stat(full)
+            const info = await hostFs.stat(full)
             size = info.size
             modifiedAt = info.mtimeMs
             createdAt = info.birthtimeMs || info.ctimeMs || info.mtimeMs
@@ -127,10 +151,14 @@ export class FileService {
     }
   }
 
-  async readTextFile(path: string): Promise<{ content: string; truncated: boolean; error?: string }> {
+  async readTextFile(
+    path: string,
+    conversationId?: string
+  ): Promise<{ content: string; truncated: boolean; error?: string }> {
     const win = await this.readTextWindow(path, {
       startByte: 0,
-      maxBytes: TEXT_WINDOW_BYTES_AGENT
+      maxBytes: TEXT_WINDOW_BYTES_AGENT,
+      conversationId
     })
     if (win.error) return { content: '', truncated: false, error: win.error }
     return { content: win.content, truncated: win.truncated }
@@ -143,14 +171,15 @@ export class FileService {
    */
   async readTextWindow(
     path: string,
-    opts?: { startByte?: number; maxBytes?: number; force?: boolean }
+    opts?: { startByte?: number; maxBytes?: number; force?: boolean; conversationId?: string }
   ): Promise<TextWindowResult> {
     const startByte = Math.max(0, Math.floor(opts?.startByte ?? 0))
     const maxBytes = Math.max(1024, Math.min(16 * 1024 * 1024, Math.floor(opts?.maxBytes ?? TEXT_WINDOW_BYTES)))
     const force = !!opts?.force
-    const io = this.forIo(path)
+    const hostFs = this.fsFor(opts?.conversationId, path)
+    const io = this.forIo(path, opts?.conversationId)
     try {
-      const info = await stat(io)
+      const info = await hostFs.stat(io)
       if (info.isDirectory()) {
         return {
           content: '',
@@ -172,7 +201,7 @@ export class FileService {
         }
       }
       const length = Math.min(maxBytes, totalBytes - startByte)
-      const fh = await open(io, 'r')
+      const fh = await hostFs.open(io, 'r')
       try {
         const buf = Buffer.alloc(length)
         const { bytesRead } = await fh.read(buf, 0, length, startByte)
@@ -218,7 +247,7 @@ export class FileService {
    */
   async readBinaryWindow(
     path: string,
-    opts?: { startByte?: number; maxBytes?: number }
+    opts?: { startByte?: number; maxBytes?: number; conversationId?: string }
   ): Promise<
     | {
         ok: true
@@ -235,9 +264,10 @@ export class FileService {
       1024,
       Math.min(4 * 1024 * 1024, Math.floor(opts?.maxBytes ?? TEXT_WINDOW_BYTES))
     )
-    const io = this.forIo(path)
+    const hostFs = this.fsFor(opts?.conversationId, path)
+    const io = this.forIo(path, opts?.conversationId)
     try {
-      const info = await stat(io)
+      const info = await hostFs.stat(io)
       if (info.isDirectory()) {
         return {
           ok: false,
@@ -259,7 +289,7 @@ export class FileService {
         }
       }
       const length = Math.min(maxBytes, totalBytes - startByte)
-      const fh = await open(io, 'r')
+      const fh = await hostFs.open(io, 'r')
       try {
         const buf = Buffer.alloc(length)
         const { bytesRead } = await fh.read(buf, 0, length, startByte)
@@ -287,7 +317,11 @@ export class FileService {
     }
   }
 
-  async writeTextFile(path: string, content: string): Promise<{ ok: boolean; error?: string }> {
+  async writeTextFile(
+    path: string,
+    content: string,
+    conversationId?: string
+  ): Promise<{ ok: boolean; error?: string }> {
     try {
       // Refuse to clobber OOXML/PDF with UTF-8 text — agents must use binary-aware
       // tools (or a shell) for those formats.
@@ -298,10 +332,11 @@ export class FileService {
           error: `Cannot write ${ext} as UTF-8 text (would corrupt the file). Use a format-aware tool or shell for binary office documents.`
         }
       }
-      const io = this.forIo(path)
-      await mkdir(dirname(io), { recursive: true })
-      await writeFile(io, content, 'utf8')
-      this.noteWrite(path)
+      const hostFs = this.fsFor(conversationId, path)
+      const io = this.forIo(path, conversationId)
+      await hostFs.mkdir(dirname(io), { recursive: true })
+      await hostFs.writeFile(io, content, 'utf8')
+      if (hostFs === this.fs) this.noteWrite(path)
       return { ok: true }
     } catch (err) {
       return { ok: false, error: (err as Error).message }
@@ -312,15 +347,20 @@ export class FileService {
    * Write raw bytes (base64). When a working copy is active for `path`, writes
    * the sandbox — never the real user file until {@link WorkingCopyService.promote}.
    */
-  async writeBinary(path: string, base64: string): Promise<{ ok: boolean; error?: string }> {
+  async writeBinary(
+    path: string,
+    base64: string,
+    conversationId?: string
+  ): Promise<{ ok: boolean; error?: string }> {
     try {
       if (isOfficeLockFile(path)) {
         return { ok: false, error: OFFICE_LOCK_FILE_MESSAGE }
       }
-      const io = this.forIo(path)
-      await mkdir(dirname(io), { recursive: true })
-      await writeFile(io, Buffer.from(base64, 'base64'))
-      this.noteWrite(path)
+      const hostFs = this.fsFor(conversationId, path)
+      const io = this.forIo(path, conversationId)
+      await hostFs.mkdir(dirname(io), { recursive: true })
+      await hostFs.writeFile(io, Buffer.from(base64, 'base64'))
+      if (hostFs === this.fs) this.noteWrite(path)
       return { ok: true }
     } catch (err) {
       return { ok: false, error: (err as Error).message }
@@ -333,7 +373,8 @@ export class FileService {
    * Soft memory budget may refuse base64 for huge files (use stream URL instead).
    */
   async readBinary(
-    path: string
+    path: string,
+    conversationId?: string
   ): Promise<
     { ok: true; base64: string; size: number; mime: string } | { ok: false; error: string }
   > {
@@ -341,8 +382,9 @@ export class FileService {
       if (isOfficeLockFile(path)) {
         return { ok: false, error: OFFICE_LOCK_FILE_MESSAGE }
       }
-      const io = this.forIo(path)
-      const info = await stat(io)
+      const hostFs = this.fsFor(conversationId, path)
+      const io = this.forIo(path, conversationId)
+      const info = await hostFs.stat(io)
       if (info.isDirectory()) return { ok: false, error: t('files.error.directory') }
       if (info.size <= 0) return { ok: false, error: 'File is empty.' }
       if (info.size > BINARY_BASE64_SOFT) {
@@ -352,7 +394,7 @@ export class FileService {
         }
       }
       const kind = previewKind(basename(path))
-      const buffer = await readFile(io)
+      const buffer = await hostFs.readFile(io)
       return {
         ok: true,
         base64: buffer.toString('base64'),
@@ -366,7 +408,8 @@ export class FileService {
 
   async rename(
     path: string,
-    newName: string
+    newName: string,
+    conversationId?: string
   ): Promise<{ ok: true; path: string } | { ok: false; error: string }> {
     const name = newName.trim()
     if (!name || name.includes('/') || name.includes('\\') || name === '.' || name === '..') {
@@ -374,7 +417,7 @@ export class FileService {
     }
     const target = join(dirname(path), name)
     try {
-      await rename(path, target)
+      await this.fsFor(conversationId, path).rename(path, target)
       return { ok: true, path: target }
     } catch (err) {
       return { ok: false, error: (err as Error).message }
@@ -406,12 +449,13 @@ export class FileService {
     }, INDEX_AFTER_OPEN_MS)
   }
 
-  async inspect(path: string): Promise<FileInspectResult> {
+  async inspect(path: string, conversationId?: string): Promise<FileInspectResult> {
     const name = basename(path)
     // Sandbox: I/O against working copy when active; result.path stays logical.
-    const io = this.forIo(path)
+    const hostFs = this.fsFor(conversationId, path)
+    const io = this.forIo(path, conversationId)
     try {
-      const info = await stat(io)
+      const info = await hostFs.stat(io)
       if (info.isDirectory()) {
         // Not a file preview — callers (Workspace) should not open FileViewer on dirs.
         // Never label folders as binary (that surfaces "Open with default app" for workdirs).
@@ -499,7 +543,7 @@ export class FileService {
       }
 
       let kind = previewKind(name)
-      if (kind === 'binary' && (await looksLikeTextFile(path, info.size))) {
+      if (kind === 'binary' && (await looksLikeTextFile(hostFs, path, info.size))) {
         kind = 'text'
       }
       const mime = mimeFor(name, kind)
@@ -574,7 +618,7 @@ export class FileService {
       if (kind === 'zip') {
         // Structure-only tree. Large archives skip full-buffer JSZip; on failure open empty canvas.
         try {
-          const zip = await inspectZipArchive(path, info.size)
+          const zip = await inspectZipArchive(hostFs, path, info.size)
           const treeText = zip.entries
             .map((e) => `${e.isDirectory ? 'D' : 'F'} ${e.path}`)
             .join('\n')
@@ -690,14 +734,15 @@ export class FileService {
    */
   async inspectStructured(
     path: string,
-    opts?: { maxBlocks?: number; maxRows?: number }
+    opts?: { maxBlocks?: number; maxRows?: number; conversationId?: string }
   ): Promise<
     | { ok: true; structured: import('@shared/structuredDoc').StructuredDocument; partial: boolean }
     | { ok: false; error: string }
   > {
-    const io = this.forIo(path)
+    const hostFs = this.fsFor(opts?.conversationId, path)
+    const io = this.forIo(path, opts?.conversationId)
     try {
-      const info = await stat(io)
+      const info = await hostFs.stat(io)
       if (!info.isFile()) return { ok: false, error: 'Not a file' }
       if (isOfficeLockFile(path)) return { ok: false, error: OFFICE_LOCK_FILE_MESSAGE }
       if (info.size <= 0) return { ok: false, error: 'File is empty.' }
@@ -792,8 +837,9 @@ export class FileService {
   watchRoot(conversationId: string, root: string | null): void {
     this.unwatch(conversationId)
     if (!root) return
+    this.roots.set(conversationId, root)
     try {
-      const watcher = watch(root, { recursive: true }, (_event, filename) => {
+      const watcher = this.fsFor(conversationId, root).watch(root, { recursive: true }, (_event, filename) => {
         if (!filename) return
         const name = basename(filename.toString())
         if (isIgnoredName(name)) return
@@ -834,6 +880,7 @@ export class FileService {
   unwatch(conversationId: string): void {
     this.watchers.get(conversationId)?.close()
     this.watchers.delete(conversationId)
+    this.roots.delete(conversationId)
     const timer = this.debounceTimers.get(conversationId)
     if (timer) clearTimeout(timer)
     this.debounceTimers.delete(conversationId)
@@ -1076,11 +1123,11 @@ function countNewlines(text: string): number {
 }
 
 /** Treat unknown extensions as text when the buffer looks like UTF-8 source. */
-async function looksLikeTextFile(path: string, size: number): Promise<boolean> {
+async function looksLikeTextFile(fs: HostFs, path: string, size: number): Promise<boolean> {
   if (size <= 0) return false
   try {
     const sampleSize = Math.min(size, 8192)
-    const fh = await open(path, 'r')
+    const fh = await fs.open(path, 'r')
     try {
       const buf = Buffer.alloc(sampleSize)
       const { bytesRead } = await fh.read(buf, 0, sampleSize, 0)
@@ -1309,10 +1356,10 @@ function defaultAppDisplayName(filePath: string): Promise<string | null> {
 }
 
 /** Probe ZIP local-file headers for encryption without loading the whole archive. */
-async function probeZipEncrypted(path: string, fileSize: number): Promise<boolean> {
+async function probeZipEncrypted(fs: HostFs, path: string, fileSize: number): Promise<boolean> {
   if (fileSize < 30) return false
   const sampleLen = Math.min(fileSize, 64 * 1024)
-  const fh = await open(path, 'r')
+  const fh = await fs.open(path, 'r')
   try {
     const buf = Buffer.alloc(sampleLen)
     const { bytesRead } = await fh.read(buf, 0, sampleLen, 0)
@@ -1335,6 +1382,7 @@ async function probeZipEncrypted(path: string, fileSize: number): Promise<boolea
 
 /** Structure-only ZIP index for the archive tree preview (no entry contents). */
 async function inspectZipArchive(
+  fs: HostFs,
   path: string,
   fileSize: number
 ): Promise<ZipArchiveInfo & { encrypted: boolean; truncated: boolean }> {
@@ -1342,7 +1390,7 @@ async function inspectZipArchive(
   if (fileSize > ZIP_FULL_LOAD_MAX) {
     let encrypted = false
     try {
-      encrypted = await probeZipEncrypted(path, fileSize)
+      encrypted = await probeZipEncrypted(fs, path, fileSize)
     } catch {
       // Probe is best-effort; still return a truncated empty summary.
     }
@@ -1357,7 +1405,7 @@ async function inspectZipArchive(
     }
   }
 
-  const buffer = await readFile(path)
+  const buffer = await fs.readFile(path)
   // Quick magic / encryption probe (general-purpose bit 0 of local file headers).
   let encrypted = false
   if (buffer.length >= 30) {

@@ -19,7 +19,7 @@ import {
 } from '../state/sessionStore'
 import { useWorkspaceStore } from '../state/workspaceStore'
 import { basename } from '../lib/path'
-import { isTemporaryWorkspace, truncatePathLabel, workdirLabel } from '../lib/format'
+import { isTemporaryWorkspace, truncatePathLabel, workspaceChromeLabel } from '../lib/format'
 import { useGitRepoSyncEpoch } from '../lib/gitRepoSync'
 import { FilesPanel } from './FilesPanel'
 import { TerminalPanel } from './TerminalPanel'
@@ -55,6 +55,7 @@ export function ToolsPanel({
   const panelHeight = useSessionStore((s) => s.panelHeight)
   const tmp = useSessionStore((s) => s.tmp)
   const home = useSessionStore((s) => s.home)
+  const hosts = useSessionStore((s) => s.hosts)
   const recentDirs = useSessionStore((s) => s.settings.recentWorkspaceDirectories)
   const workspaceMenuNonce = useSessionStore((s) => s.workspaceMenuNonce)
 
@@ -94,6 +95,9 @@ export function ToolsPanel({
   const pathChipRef = useRef<HTMLDivElement>(null)
   const bodyRef = useRef<HTMLDivElement>(null)
   const panelRef = useRef<HTMLDivElement>(null)
+  const headerBarRef = useRef<HTMLDivElement>(null)
+  const headerNewRef = useRef<HTMLDivElement>(null)
+  const headerTabsRef = useRef<HTMLDivElement>(null)
   /** Height before the last snap-to-70%. Restored on a second double-click. */
   const restoreHeightRef = useRef<{ id: string; height: number } | null>(null)
   const seenMenuNonce = useRef(0)
@@ -161,7 +165,15 @@ export function ToolsPanel({
     ? t('sidebar.dirNotExist')
     : useEnclosedLabel
       ? t('tools.enclosedDir')
-      : truncatePathLabel(workdirLabel(workdir, tmp, home))
+      : truncatePathLabel(
+          workspaceChromeLabel(
+            workdir,
+            tmp,
+            home,
+            conversation?.machineId,
+            hosts.find((h) => h.id === conversation?.machineId)?.name
+          )
+        )
   const pathTitle = rootMissing
     ? t('sidebar.dirNotExist')
     : useEnclosedLabel
@@ -314,8 +326,20 @@ export function ToolsPanel({
       label: t('tools.pickOtherDir'),
       onSelect: () => void pickWorkingDirectory(activeId)
     })
+    const remotes = hosts.filter((h) => h.kind === 'remote')
+    if (remotes.length > 0) {
+      items.push({ label: '', divider: true })
+      for (const host of remotes) {
+        items.push({
+          label: t('tools.pickDirOn', { name: host.name }),
+          disabled: !host.online,
+          onSelect: () =>
+            useSessionStore.getState().openRemoteFolderPicker(activeId, host.id)
+        })
+      }
+    }
     return items
-  }, [recentDirs, activeId, setWorkingDirectory, useTempWorkingDirectory, pickWorkingDirectory, t])
+  }, [recentDirs, activeId, setWorkingDirectory, useTempWorkingDirectory, pickWorkingDirectory, hosts, t])
 
   const openWorkspaceMenu = useCallback(
     (anchor?: HTMLElement | null) => {
@@ -469,6 +493,45 @@ export function ToolsPanel({
   const hasInstalls = installList.length > 0
   // Modes for layout polish (empty strip vs tab strip vs open tray).
   const headerMode = !hasTabs && !hasInstalls ? 'idle' : collapsed ? 'tabs-collapsed' : 'tabs-open'
+  /** Pin New to the far right only when path + New + chips exceed the header. */
+  const [pinNewEnd, setPinNewEnd] = useState(false)
+
+  useLayoutEffect(() => {
+    const header = headerBarRef.current
+    const neu = headerNewRef.current
+    const tabStrip = headerTabsRef.current
+    if (!header || !neu) return
+
+    const measure = (): void => {
+      if (!hasTabs || !tabStrip) {
+        setPinNewEnd(false)
+        return
+      }
+      const gap = parseFloat(getComputedStyle(header).gap) || 0
+      let used = 0
+      let visible = 0
+      for (const child of header.children) {
+        const el = child as HTMLElement
+        if (el === tabStrip) continue
+        if (getComputedStyle(el).display === 'none') continue
+        used += el.offsetWidth
+        visible += 1
+      }
+      const tabW = tabStrip.scrollWidth
+      const gaps = Math.max(0, visible) * gap
+      setPinNewEnd(used + tabW + gaps > header.clientWidth + 1)
+    }
+
+    measure()
+    const ro = new ResizeObserver(measure)
+    ro.observe(header)
+    ro.observe(neu)
+    if (tabStrip) ro.observe(tabStrip)
+    for (const child of header.children) {
+      ro.observe(child as HTMLElement)
+    }
+    return () => ro.disconnect()
+  }, [hasTabs, hasInstalls, tabs.length, label, headerMode])
 
   return (
     <div
@@ -479,7 +542,12 @@ export function ToolsPanel({
       data-tools-mode={headerMode}
       data-has-session={activeId ? 'true' : 'false'}
     >
-      <div className="tools-header" data-mode={headerMode}>
+      <div
+        ref={headerBarRef}
+        className="tools-header"
+        data-mode={headerMode}
+        data-new-edge={pinNewEnd ? 'end' : 'start'}
+      >
         <div className="tools-header-lead">
           {/* Path chip opens Files. File sessions use Enclosed dir (no switch).
               Missing root → red "dir not exist"; click / action still switches. */}
@@ -585,7 +653,19 @@ export function ToolsPanel({
           <span className="tools-header-divider" aria-hidden="true" />
         ) : null}
 
+        <div className="tools-header-new" ref={headerNewRef}>
+          <Button
+            label={t('tools.newBashShort')}
+            icon={<TerminalIcon size={12} />}
+            size="sm"
+            testId="new-bash"
+            title={`${t('tools.newBash')} ${keys('⌘T')}`}
+            onClick={createBash}
+          />
+        </div>
+
         <div
+          ref={headerTabsRef}
           className="tools-header-tabs"
           data-empty={hasTabs ? 'false' : 'true'}
           aria-hidden={!hasTabs}
@@ -645,14 +725,6 @@ export function ToolsPanel({
         </div>
 
         <div className="tools-header-trail">
-          <Button
-            label={t('tools.newBashShort')}
-            icon={<TerminalIcon size={12} />}
-            size="sm"
-            testId="new-bash"
-            title={`${t('tools.newBash')} ${keys('⌘T')}`}
-            onClick={createBash}
-          />
           <Button
             icon={collapsed ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
             size="sm"

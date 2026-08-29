@@ -71,8 +71,8 @@ test('⌘, opens Settings and ⌘⇧P opens the native approval menu', async () 
         const items = await peekNativeMenu(page)
         return items?.map((item) => item.label) ?? []
       })
-      .toEqual(expect.arrayContaining(['Auto', 'Bypass', 'Edit']))
-    await chooseNativeMenu(page, 'Edit')
+      .toEqual(expect.arrayContaining(['Normal', 'Bypass', 'Read']))
+    await chooseNativeMenu(page, 'Read')
     await expect(run).toHaveAttribute('data-approval', 'edit')
 
     await page.locator('[data-testid="session-run-thinking"]').click()

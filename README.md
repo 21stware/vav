@@ -29,6 +29,8 @@ New session: pick a workspace, pick an agent, ask one thing. Multi-split CLI TUI
 - API keys stored encrypted via `safeStorage` (Keychain) — never as plaintext
 - **Spending** — Settings panel for local usage plus provider subscriptions, and DeepSeek API balance when VAV talks to official DeepSeek
 - **Swarm** (optional) — multi-split raw CLI TUIs; off by default in Settings → Providers
+- **Remote** — Settings → Allow other devices; pair VAV Remote (iOS) or another computer. Conversations and keys stay on this machine
+- **Headless host** — `npx @21stware/vavd` runs the workspace-host daemon without the desktop UI
 
 ## Website
 
@@ -62,6 +64,14 @@ Grab a build from [Releases](https://github.com/21stware/vav/releases).
 - **Windows** — not code-signed; SmartScreen may warn on first open (More info → Run anyway). In-app updates use the NSIS installer feed.
 
 Then in Settings → “vav command”, install the `vav` CLI (defaults to `~/.local/bin`). Run `vav -h` for usage; `vav .` opens a new session in the current directory.
+
+On a machine that should host workspaces without opening the app:
+
+```bash
+npx @21stware/vavd
+```
+
+Paste the pairing line into VAV → Settings → Allow other devices.
 
 ## Develop
 

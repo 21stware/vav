@@ -6,8 +6,10 @@ import type {
   ApprovalMode,
   CliHostKind,
   ProviderResumeCursor,
-  QuotaWindow
+  QuotaWindow,
+  ThinkingLevel
 } from '../../../shared/types.ts'
+import type { HostProcess } from '../../host/HostProcess.ts'
 import type { AcpFileAccess } from './acpFs.ts'
 
 /** Normalized events from a CLI transport → CliAgentHost projects these to TurnEvent. */
@@ -45,6 +47,12 @@ export type DriverEvent =
       input: unknown
     }
   | { type: 'session-state'; state: AcpSessionState }
+  | {
+      type: 'model-applied'
+      modelId: string
+      thinkingLevel?: ThinkingLevel
+      fast?: boolean
+    }
   | { type: 'auth-required'; methods: AcpAuthMethod[] }
   | { type: 'fs-write'; path: string; original: string | null; content: string }
   | {
@@ -103,12 +111,23 @@ export interface DriverStartOptions {
   cwd: string
   approvalMode: ApprovalMode
   model?: string | null
+  thinkingLevel?: ThinkingLevel | null
+  fast?: boolean | null
   cursor?: ProviderResumeCursor | null
   env?: Record<string, string>
   /** Extra argv from AgentConfig.defaultArgs that are still relevant. */
   extraArgs?: string[]
   /** Workspace file I/O for ACP `fs/*` client methods. */
   files?: AcpFileAccess
+  /** Spawn surface — local today, a remote daemon later. */
+  hostProcess?: HostProcess
+  /**
+   * Called when resuming `cursor.sessionId` failed and the driver silently
+   * fell back to a brand-new session. Returns a transcript preamble that the
+   * driver prepends to the first prompt of the replacement session so the
+   * conversation survives the swap (null when there is nothing to carry).
+   */
+  resumeHandoff?: () => string | null
 }
 
 export interface DriverControl {
@@ -120,6 +139,8 @@ export interface DriverControl {
   respond(requestId: string, optionId: 'allow' | 'deny', message?: string): void
   applyOptions?(opts: {
     model?: string | null
+    thinkingLevel?: ThinkingLevel | null
+    fast?: boolean | null
     approvalMode?: ApprovalMode
     /** ACP session/set_mode id (agent / plan / ask). */
     mode?: string | null

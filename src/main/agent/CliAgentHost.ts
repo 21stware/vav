@@ -9,11 +9,13 @@ import type {
   ProviderResumeCursor,
   QuotaWindow,
   QuoteDraft,
+  ThinkingLevel,
   ToolCallBlock,
   TurnEvent,
   TurnPhase,
   TurnStatus
 } from '@shared/types'
+import { parseThinkingLevel } from '@shared/thinkingLevel'
 import {
   cursorAuthIdentity,
   isStructuredCliHost,
@@ -21,7 +23,7 @@ import {
   withCursorAuthIdentity
 } from '@shared/cliHost'
 import { ROOT_LEAF } from '@shared/thread'
-import { buildSnapshot, formatExpiry } from '@shared/tokenUsage'
+import { buildSnapshot, estimateContextTokens, formatExpiry } from '@shared/tokenUsage'
 import { attachQuotaNamespace, mergeNamespacedQuotaWindows } from '@shared/quotaWindows'
 import {
   classifyCliError,
@@ -29,10 +31,14 @@ import {
   formatErrorDetail,
   formatErrorDetailFromParts,
   isBareInternalError,
+  NETWORK_RETRY_LIMIT,
+  networkRetryDelayMs,
   pickExhaustedQuotaWindow,
   quotaKindMessageKey,
   RpcErrorCode,
   shouldRetryFreshSession,
+  shouldRetrySameSession,
+  splitStreamedRetriableError,
   type CliErrorKind
 } from '@shared/cliErrors'
 import { en, isApprovalApproveText, isApprovalDenyText, zhCN } from '@shared/i18n'
@@ -60,6 +66,7 @@ import {
 import { currentLocale, t } from '../i18n'
 import { shell } from 'electron'
 import type { FileService } from '../fs/FileService'
+import type { HostRegistry } from '../host'
 function isAcpHost(kind: CliHostKind | null | undefined): boolean {
   return !!kind && transportForCliHost(kind) === 'acp'
 }
@@ -77,9 +84,14 @@ import { shouldReplaceCliRuntime } from './cliWorkspaceRestart'
 import {
   applyCliHistoryHandoff,
   formatCliWorkspaceHandoff,
-  type CliHistoryHandoffMark
+  type CliHistoryHandoffMark,
+  type CliHistoryHandoffReason
 } from './cliHistoryHandoff'
-import { shouldContinueHeldCliTurn, shouldDeferCliTurnFinish } from './cliTurnHold'
+import {
+  shouldArmPlanDocFollowUp,
+  shouldContinueHeldCliTurn,
+  shouldDeferCliTurnFinish
+} from './cliTurnHold'
 import { createCliHistoryReplayGate, type CliHistoryReplayGate } from './cliHistoryReplay'
 import { inputJson, mapToolName, summarizeCliTool } from './drivers/toolMap'
 import { FileDraftCoalescer, writeToolDraft } from '@shared/writeToolDraft'
@@ -122,8 +134,23 @@ function describeCliHostError(
   }
   if (kind === 'session-stale') return { kind, message: t('error.sessionStale') }
   if (kind === 'auth') return { kind, message: t('error.agentAuthRequired') }
+  if (kind === 'network') return { kind, message: t('error.network') }
   if (isBareInternalError(text)) return { kind: 'generic', message: t('error.agentInternal') }
   return { kind, message: text }
+}
+
+/**
+ * Did this turn produce anything worth sealing? Reasoning alone does not
+ * count — when the answer text was eaten by a leaked stream error, the retry
+ * regenerates the thinking along with the reply.
+ */
+function turnHasAnswerContent(turn: HostTurn): boolean {
+  return turn.blocks.some(
+    (block) =>
+      block.kind === 'toolCall' ||
+      block.kind === 'plan' ||
+      (block.kind === 'text' && block.text.trim().length > 0)
+  )
 }
 
 interface PendingPermission {
@@ -156,6 +183,10 @@ interface HostTurn {
   attachments?: string[]
   sawTurnStarted: boolean
   retriedFreshSession: boolean
+  /** Same-session re-prompts already burned on transient network failures. */
+  networkRetries: number
+  /** A usage event carried real token counts during this turn. */
+  sawUsage: boolean
   settling: boolean
   pendingPermissions: Map<string, PendingPermission>
   reasoningStartedAt: Map<number, number>
@@ -173,6 +204,14 @@ interface HostTurn {
    * Accept must steer a follow-up on this same turn instead of sealing.
    */
   hostPromptClosed: boolean
+  /**
+   * Plan accepted while the host prompt was still open (Cursor createPlan
+   * contract: the agent then ends the turn without implementing). When the
+   * finish arrives with no new agent activity since, steer this text on the
+   * same turn instead of sealing it. Any activity from another tool / text
+   * disarms it — the agent continued by itself (Claude ExitPlanMode style).
+   */
+  planFollowUp: { toolCallId: string; text: string } | null
 }
 
 interface HostRuntime {
@@ -190,7 +229,11 @@ export interface CliAgentHostDeps {
   settings: SettingsStore
   changeSets?: ChangeSetStore
   files?: FileService
+  /** Lookup for the machine a conversation's agent process should spawn on. */
+  hosts?: HostRegistry
   emit: (event: TurnEvent) => void
+  /** Sidebar / composer meta after the host heals thinking or fast. */
+  publish?: () => void
   /** Sandbox copy → user-visible path (for streaming drafts). */
   logicalPath?: (path: string) => string
   quota?: {
@@ -375,6 +418,7 @@ export class CliAgentHost {
     const runtime = this.runtimes.get(conversationId)
     if (turn) {
       turn.cancelled = true
+      turn.planFollowUp = null
       for (const p of turn.pendingPermissions.values()) p.resolve('deny')
       turn.pendingPermissions.clear()
       runtime?.driver.cancel()
@@ -448,6 +492,17 @@ export class CliAgentHost {
       turn.errorDetail = undefined
       runtime?.driver.steer?.(text)
     }
+    if (
+      shouldArmPlanDocFollowUp({
+        kind: pending.kind,
+        allow,
+        hostPromptClosed: continueHeld || turn.hostPromptClosed,
+        remaining: turn.pendingPermissions.size,
+        alreadySteered: pending.synthetic === true
+      })
+    ) {
+      turn.planFollowUp = { toolCallId: pending.toolCallId, text }
+    }
     const idx = turn.toolIndex.get(pending.toolCallId)
     if (idx != null) {
       const block = turn.blocks[idx]
@@ -491,6 +546,20 @@ export class CliAgentHost {
 
   /** Apply a model change to a live driver; dispose when the transport needs restart. */
   applyModel(conversationId: string, model: string): void {
+    this.applyRunPrefs(conversationId, model)
+  }
+
+  applyThinkingLevel(conversationId: string): void {
+    const model = this.deps.conversations.get(conversationId)?.model
+    this.applyRunPrefs(conversationId, model ?? '')
+  }
+
+  applyFast(conversationId: string): void {
+    const model = this.deps.conversations.get(conversationId)?.model
+    this.applyRunPrefs(conversationId, model ?? '')
+  }
+
+  private applyRunPrefs(conversationId: string, model: string): void {
     if (this.turns.has(conversationId)) {
       this.pendingModel.set(conversationId, model)
       return
@@ -501,7 +570,12 @@ export class CliAgentHost {
   private flushModel(conversationId: string, model: string): void {
     const runtime = this.runtimes.get(conversationId)
     if (!runtime) return
-    const ok = runtime.driver.applyOptions?.({ model })
+    const conversation = this.deps.conversations.get(conversationId)
+    const ok = runtime.driver.applyOptions?.({
+      model,
+      thinkingLevel: conversation?.thinkingLevel ?? null,
+      fast: conversation?.fast === true
+    })
     if (ok === false) this.dispose(conversationId)
   }
 
@@ -603,13 +677,16 @@ export class CliAgentHost {
       attachments: extras?.attachments,
       sawTurnStarted: false,
       retriedFreshSession: false,
+      networkRetries: 0,
+      sawUsage: false,
       settling: false,
       pendingPermissions: new Map(),
       reasoningStartedAt: new Map(),
       permissionByRequest: new Map(),
       nestedDirty: new Set(),
       replay: createCliHistoryReplayGate(conversation.messages),
-      hostPromptClosed: false
+      hostPromptClosed: false,
+      planFollowUp: null
     }
     // For regenerate we mint a fresh assistant id
     if (!conversation.messages.some((m) => m.id === messageId && m.role === 'user')) {
@@ -634,20 +711,26 @@ export class CliAgentHost {
       runtime.driver.prompt(handed, extras)
     } catch (err) {
       const extracted = extractRpcError(err)
-      const described = await this.describeTurnError(
+      // settleFailedTurn owns the retry ladder (network re-prompt, fresh
+      // session) so spawn/connect failures recover the same way prompt
+      // failures do.
+      void this.settleFailedTurn(
         conversationId,
+        turn,
         extracted.text || (err instanceof Error ? err.message : String(err)),
-        extracted.code
+        extracted.code,
+        formatErrorDetail(err, extracted.text)
       )
-      turn.error = described.message
-      turn.errorKind = described.kind
-      turn.errorDetail = formatErrorDetail(err, extracted.text)
-      void this.finishTurn(conversationId, turn, false)
     }
   }
 
   private conversationCwd(conversationId: string): string {
     return this.deps.conversations.get(conversationId)?.workingDirectory || homedir()
+  }
+
+  private hostProcessFor(conversationId: string) {
+    const machineId = this.deps.conversations.get(conversationId)?.machineId
+    return this.deps.hosts?.hostFor(machineId).process
   }
 
   private async ensureRuntime(conversationId: string): Promise<HostRuntime> {
@@ -668,6 +751,10 @@ export class CliAgentHost {
             conversationId,
             (this.cwdEpoch.get(conversationId) ?? 0) + 1
           )
+        } else {
+          // Login switched — the old session is unreachable; carry the
+          // transcript into the replacement session.
+          this.markHistoryHandoff(conversationId, existing.cwd, 'session-lost')
         }
         this.clearResumeCursor(conversationId)
         this.disposeRuntime(conversationId, { replacing: true })
@@ -722,6 +809,7 @@ export class CliAgentHost {
     const cursorIdentity = cursorAuthIdentity(cursor)
     if (cursor && identity && cursorIdentity && cursorIdentity !== identity) {
       cursor = null
+      this.markHistoryHandoff(conversationId, cwd, 'session-lost')
       this.clearResumeCursor(conversationId)
     }
 
@@ -741,15 +829,20 @@ export class CliAgentHost {
         cwd,
         approvalMode: conversation.approvalMode,
         model: conversation.model || null,
+        thinkingLevel: conversation.thinkingLevel ?? null,
+        fast: conversation.fast === true,
         cursor,
         env: agent?.envVars,
         extraArgs: agent?.defaultArgs,
+        hostProcess: this.hostProcessFor(conversationId),
         files: this.deps.files
           ? {
-              readTextFile: (path) => this.deps.files!.readTextFile(path),
-              writeTextFile: (path, content) => this.deps.files!.writeTextFile(path, content)
+              readTextFile: (path) => this.deps.files!.readTextFile(path, conversationId),
+              writeTextFile: (path, content) =>
+                this.deps.files!.writeTextFile(path, content, conversationId)
             }
-          : undefined
+          : undefined,
+        resumeHandoff: () => this.buildSessionLossHandoff(conversationId)
       },
       (event) => this.onDriverEvent(conversationId, event)
     )
@@ -773,6 +866,12 @@ export class CliAgentHost {
 
     if (event.type === 'session-state') {
       this.persistAcpSession(conversationId, event.state)
+      this.clampThinkingToAllowed(conversationId, event.state.thinkingLevels)
+    }
+
+    if (event.type === 'model-applied') {
+      this.syncAppliedRunPrefs(conversationId, event)
+      return
     }
 
     const turn = this.turns.get(conversationId)
@@ -817,11 +916,13 @@ export class CliAgentHost {
         break
       case 'text-delta':
         if (turn.replay.text(event.text) === 'skip') break
+        turn.planFollowUp = null
         if (event.parentId) this.appendNestedDelta(conversationId, turn, event.parentId, 'text', event.text)
         else this.appendDelta(conversationId, turn, 'text', event.text)
         break
       case 'reasoning-delta':
         if (turn.replay.reasoning(event.text) === 'skip') break
+        turn.planFollowUp = null
         if (event.parentId) {
           this.appendNestedDelta(conversationId, turn, event.parentId, 'reasoning', event.text)
         } else {
@@ -830,14 +931,22 @@ export class CliAgentHost {
         break
       case 'tool':
         if (turn.replay.tool(event.id, event.parentId) === 'skip') break
+        // Updates for the accepted plan tool itself (Cursor streams
+        // "Creating plan file…" after Accept) do not mean the agent
+        // continued working — anything else does.
+        if (turn.planFollowUp && event.id !== turn.planFollowUp.toolCallId) {
+          turn.planFollowUp = null
+        }
         this.applyTool(conversationId, turn, event)
         break
       case 'permission':
         if (turn.replay.isHistoricalTool(event.requestId)) break
+        turn.planFollowUp = null
         this.applyPermission(conversationId, turn, event)
         break
       case 'elicitation':
         if (turn.replay.isHistoricalTool(event.toolCallId)) break
+        turn.planFollowUp = null
         this.applyElicitation(conversationId, turn, event)
         break
       case 'session-state':
@@ -942,6 +1051,40 @@ export class CliAgentHost {
           turn.errorDetail = undefined
           break
         }
+        // cursor-agent ACP leaks internal stream teardowns ("Error:
+        // RetriableError: WritableIterable is closed") as a trailing
+        // agent_message_chunk while still reporting stopReason=end_turn.
+        // Strip that tail so it never seals into the transcript. When the
+        // leaked error was the WHOLE reply the turn really failed — run the
+        // same-session network retry ladder instead of sealing nothing.
+        if (event.success && !turn.cancelled) {
+          this.flushBuffers(conversationId, turn)
+          const leaked = this.stripLeakedStreamError(turn)
+          if (leaked && !turnHasAnswerContent(turn)) {
+            this.resetTurnDraft(conversationId, turn)
+            void this.settleFailedTurn(conversationId, turn, leaked, null)
+            break
+          }
+        }
+        if (
+          event.success &&
+          !turn.cancelled &&
+          turn.planFollowUp &&
+          runtime?.driver.steer
+        ) {
+          // Cursor ended the planning turn right after Accept without doing
+          // any work — keep this same VAV turn alive and prompt it onward.
+          const followUp = turn.planFollowUp
+          turn.planFollowUp = null
+          turn.hostPromptClosed = false
+          turn.error = undefined
+          turn.errorKind = undefined
+          turn.errorCode = undefined
+          turn.errorDetail = undefined
+          runtime.driver.steer(followUp.text)
+          this.setPhase(conversationId, turn, 'working')
+          break
+        }
         if (event.success || turn.cancelled) {
           if (event.error && !turn.cancelled) turn.error = event.error
           void this.finishTurn(conversationId, turn, event.success)
@@ -1038,6 +1181,50 @@ export class CliAgentHost {
         if (parent) this.emitParentTool(conversationId, turn, parent)
       }
     }
+  }
+
+  /**
+   * cursor-agent ACP streams internal stream teardowns ("Error:
+   * RetriableError: WritableIterable is closed") as a trailing
+   * agent_message_chunk and still reports end_turn. The leak always lands at
+   * the end of the trailing text block — remove it and return the leaked
+   * error text so the caller can decide whether the turn survived.
+   */
+  private stripLeakedStreamError(turn: HostTurn): string | null {
+    const last = turn.blocks[turn.blocks.length - 1]
+    if (!last || last.kind !== 'text') return null
+    const split = splitStreamedRetriableError(last.text)
+    if (!split.leaked) return null
+    if (split.text) {
+      last.text = split.text
+    } else {
+      turn.blocks.pop()
+      if (turn.textIndex != null && turn.textIndex >= turn.blocks.length) {
+        turn.textIndex = null
+      }
+    }
+    return split.leaked
+  }
+
+  /**
+   * The whole streamed reply was a leaked internal error and the turn is
+   * being retried: drop the polluted blocks and restart the live projection
+   * so the retry streams onto a clean draft.
+   */
+  private resetTurnDraft(conversationId: string, turn: HostTurn): void {
+    if (turn.flushTimer) {
+      clearTimeout(turn.flushTimer)
+      turn.flushTimer = null
+    }
+    turn.blocks = []
+    turn.buffers.clear()
+    turn.textIndex = null
+    turn.reasoningIndex = null
+    turn.toolIndex.clear()
+    turn.toolCount = 0
+    turn.reasoningStartedAt.clear()
+    turn.nestedDirty.clear()
+    this.deps.emit({ type: 'start', conversationId })
   }
 
   private applyTool(
@@ -1571,6 +1758,12 @@ export class CliAgentHost {
       this.deps.conversations.setContextFill(conversationId, fill)
     }
 
+    // Real token data arrived — the end-of-turn estimate must stand down.
+    if (fill != null || (recordHistory && hasTurnTokens)) {
+      const turn = this.turns.get(conversationId)
+      if (turn) turn.sawUsage = true
+    }
+
     // Nothing meaningful changed (e.g. empty usage ping).
     if (
       fill == null &&
@@ -1654,6 +1847,7 @@ export class CliAgentHost {
       ?.messages.find((m) => m.id === message.id)
     if (existing) this.deps.conversations.replaceMessage(conversationId, message)
     else this.deps.conversations.appendMessage(conversationId, message)
+    this.applyEstimatedContextFill(conversationId, turn)
     this.deps.conversations.flush()
 
     const tokensUsed = this.deps.conversations.get(conversationId)?.tokensUsed ?? 0
@@ -1681,10 +1875,33 @@ export class CliAgentHost {
     }
   }
 
-  private markHistoryHandoff(conversationId: string, previousCwd: string | null): void {
+  /**
+   * Hosts like `cursor-agent acp` never report usage over the protocol and
+   * keep their session store encrypted on disk. When a turn ends without any
+   * token data — this turn saw none and the conversation never accumulated
+   * any — estimate the context fill from the transcript so the ring shows a
+   * truthful shape instead of nothing. Real usage (this host or another)
+   * always wins: any recorded history disables the estimate.
+   */
+  private applyEstimatedContextFill(conversationId: string, turn: HostTurn): void {
+    if (turn.sawUsage || turn.cancelled) return
+    const conversation = this.deps.conversations.get(conversationId)
+    if (!conversation) return
+    if ((conversation.tokenHistory?.length ?? 0) > 0) return
+    const estimate = estimateContextTokens(conversation.messages)
+    if (estimate <= 0 || estimate === conversation.tokensUsed) return
+    this.deps.conversations.setContextFill(conversationId, estimate)
+    this.emitUsageSnapshot(conversationId)
+  }
+
+  private markHistoryHandoff(
+    conversationId: string,
+    previousCwd: string | null,
+    reason: CliHistoryHandoffReason = 'cwd-changed'
+  ): void {
     const conversation = this.deps.conversations.get(conversationId)
     if ((conversation?.messages.length ?? 0) === 0) return
-    this.historyHandoff.set(conversationId, { previousCwd })
+    this.historyHandoff.set(conversationId, { previousCwd, reason })
   }
 
   private consumeHistoryHandoff(conversationId: string, leafId: string | null): string {
@@ -1701,9 +1918,33 @@ export class CliAgentHost {
       excludeMessageId: turn?.parentId ?? null,
       compactions: conversation.compactions,
       previousCwd: mark.previousCwd,
-      nextCwd: this.conversationCwd(conversationId)
+      nextCwd: this.conversationCwd(conversationId),
+      reason: mark.reason
     })
     return applyCliHistoryHandoff(prompt, handoff)
+  }
+
+  /**
+   * The driver resumed by sessionId but the host replaced it with a brand-new
+   * session (stale / lost native session). Build the transcript preamble the
+   * driver prepends to the replacement session's first prompt.
+   */
+  private buildSessionLossHandoff(conversationId: string): string | null {
+    const conversation = this.deps.conversations.get(conversationId)
+    if (!conversation || conversation.messages.length === 0) return null
+    const turn = this.turns.get(conversationId) ?? null
+    const activeLeaf = this.deps.conversations.activeLeaf(conversationId)
+    const leafId = turn ? turn.parentId : activeLeaf === ROOT_LEAF ? null : activeLeaf
+    const cwd = this.conversationCwd(conversationId)
+    return formatCliWorkspaceHandoff({
+      messages: conversation.messages,
+      leafId,
+      excludeMessageId: turn?.parentId ?? null,
+      compactions: conversation.compactions,
+      previousCwd: cwd,
+      nextCwd: cwd,
+      reason: 'session-lost'
+    })
   }
 
   private clearResumeCursor(conversationId: string): void {
@@ -1771,6 +2012,53 @@ export class CliAgentHost {
     turn.settling = true
     turn.errorDetail = detail?.trim() || formatErrorDetailFromParts(raw, code)
 
+    // Transient network failure: re-prompt the SAME session after a short
+    // backoff. The resume cursor is kept — the thread must not lose context —
+    // and the turn stays live so the UI never paints a break. Classified
+    // cheaply (no quota refresh) so the retry starts right away.
+    const quickKind = classifyCliError(raw, this.quotaWindowsFor(conversationId), code)
+    if (shouldRetrySameSession(quickKind) && turn.networkRetries < NETWORK_RETRY_LIMIT) {
+      turn.networkRetries += 1
+      turn.error = undefined
+      turn.errorKind = undefined
+      turn.errorCode = undefined
+      turn.errorDetail = undefined
+      this.setPhase(conversationId, turn, 'thinking')
+      // Keep `settling` held through the backoff so a racing error event
+      // cannot start a second retry for the same failure.
+      await new Promise((resolve) =>
+        setTimeout(resolve, networkRetryDelayMs(turn.networkRetries))
+      )
+      // Cancelled / superseded while backing off — nothing to resume.
+      if (!this.turns.has(conversationId) || this.turns.get(conversationId) !== turn) return
+      turn.settling = false
+      if (turn.cancelled) {
+        void this.finishTurn(conversationId, turn, false)
+        return
+      }
+      try {
+        // Reuse the live process when it survived; respawn + resume otherwise.
+        const next = await this.ensureRuntime(conversationId)
+        next.lastTouch = Date.now()
+        turn.replay.open()
+        // A respawn during the retry may have replaced the native session
+        // (auth switch) — carry the transcript if one was marked.
+        turn.prompt = this.consumeHistoryHandoff(conversationId, turn.parentId)
+        next.driver.prompt(turn.prompt, { attachments: turn.attachments })
+        return
+      } catch (err) {
+        const extracted = extractRpcError(err)
+        void this.settleFailedTurn(
+          conversationId,
+          turn,
+          extracted.text || (err instanceof Error ? err.message : String(err)),
+          extracted.code,
+          formatErrorDetail(err, extracted.text)
+        )
+        return
+      }
+    }
+
     const described = await this.describeTurnError(conversationId, raw, code)
     if (!this.turns.has(conversationId) || this.turns.get(conversationId) !== turn) return
     if (described.kind === 'cancelled') {
@@ -1782,7 +2070,8 @@ export class CliAgentHost {
       return
     }
     const runtime = this.runtimes.get(conversationId)
-    const hadCursor = !!runtime?.cursor || !!this.deps.conversations.get(conversationId)?.cliResumeCursor
+    const hadCursor =
+      !!runtime?.cursor || !!this.deps.conversations.get(conversationId)?.cliResumeCursor
 
     if (!turn.retriedFreshSession && shouldRetryFreshSession(described.kind, raw, hadCursor, code)) {
       turn.retriedFreshSession = true
@@ -1790,6 +2079,9 @@ export class CliAgentHost {
       turn.error = undefined
       turn.errorKind = undefined
       turn.errorDetail = undefined
+      // The fresh session knows nothing — prepend the VAV transcript so the
+      // conversation survives the swap instead of restarting from one prompt.
+      this.markHistoryHandoff(conversationId, this.conversationCwd(conversationId), 'session-lost')
       this.clearResumeCursor(conversationId)
       this.disposeRuntime(conversationId, { replacing: true })
       try {
@@ -1797,6 +2089,7 @@ export class CliAgentHost {
         next.lastTouch = Date.now()
         // New session has no previous-turn dump to strip.
         turn.replay.open()
+        turn.prompt = this.consumeHistoryHandoff(conversationId, turn.parentId)
         next.driver.prompt(turn.prompt, { attachments: turn.attachments })
         return
       } catch (err) {
@@ -1857,6 +2150,43 @@ export class CliAgentHost {
   private persistAcpSession(conversationId: string, state: AcpSessionState): void {
     this.deps.conversations.updateMeta(conversationId, { acpSession: state })
     this.deps.emit({ type: 'cli-session', conversationId, state })
+  }
+
+  private clampThinkingToAllowed(
+    conversationId: string,
+    allowed: ThinkingLevel[] | undefined
+  ): void {
+    if (!allowed?.length) return
+    const conversation = this.deps.conversations.get(conversationId)
+    if (!conversation) return
+    const current = parseThinkingLevel(conversation.thinkingLevel)
+    if (allowed.includes(current)) return
+    const next = allowed.includes('max') ? 'max' : allowed[allowed.length - 1]!
+    this.deps.conversations.setThinkingLevel(conversationId, next)
+    this.applyThinkingLevel(conversationId)
+    this.deps.publish?.()
+  }
+
+  /**
+   * Cursor ACP may reject an overlaid thinking / fast id and land on the
+   * family's advertised default. Heal the chips to what actually applied.
+   */
+  private syncAppliedRunPrefs(
+    conversationId: string,
+    event: Extract<DriverEvent, { type: 'model-applied' }>
+  ): void {
+    const conversation = this.deps.conversations.get(conversationId)
+    if (!conversation) return
+    let changed = false
+    if (event.thinkingLevel && event.thinkingLevel !== conversation.thinkingLevel) {
+      this.deps.conversations.setThinkingLevel(conversationId, event.thinkingLevel)
+      changed = true
+    }
+    if (typeof event.fast === 'boolean' && event.fast !== (conversation.fast === true)) {
+      this.deps.conversations.setFast(conversationId, event.fast)
+      changed = true
+    }
+    if (changed) this.deps.publish?.()
   }
 
   private composePrompt(

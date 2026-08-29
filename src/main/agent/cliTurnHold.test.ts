@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import { shouldContinueHeldCliTurn, shouldDeferCliTurnFinish } from './cliTurnHold.ts'
+import {
+  shouldArmPlanDocFollowUp,
+  shouldContinueHeldCliTurn,
+  shouldDeferCliTurnFinish
+} from './cliTurnHold.ts'
 
 describe('shouldDeferCliTurnFinish', () => {
   it('holds a successful finish while a plan / ask is pending', () => {
@@ -60,6 +64,86 @@ describe('shouldContinueHeldCliTurn', () => {
         remaining: 1,
         allow: true,
         alreadySteered: false
+      }),
+      false
+    )
+  })
+})
+
+describe('shouldArmPlanDocFollowUp', () => {
+  it('arms when a plan is accepted while the host prompt is still open (Cursor)', () => {
+    assert.equal(
+      shouldArmPlanDocFollowUp({
+        kind: 'plan_doc',
+        allow: true,
+        hostPromptClosed: false,
+        remaining: 0,
+        alreadySteered: false
+      }),
+      true
+    )
+  })
+
+  it('does not arm when the held path already steered', () => {
+    assert.equal(
+      shouldArmPlanDocFollowUp({
+        kind: 'plan_doc',
+        allow: true,
+        hostPromptClosed: true,
+        remaining: 0,
+        alreadySteered: false
+      }),
+      false
+    )
+  })
+
+  it('does not arm on reject', () => {
+    assert.equal(
+      shouldArmPlanDocFollowUp({
+        kind: 'plan_doc',
+        allow: false,
+        hostPromptClosed: false,
+        remaining: 0,
+        alreadySteered: false
+      }),
+      false
+    )
+  })
+
+  it('does not arm for non-plan cards', () => {
+    assert.equal(
+      shouldArmPlanDocFollowUp({
+        kind: 'ask',
+        allow: true,
+        hostPromptClosed: false,
+        remaining: 0,
+        alreadySteered: false
+      }),
+      false
+    )
+  })
+
+  it('waits while other cards are still pending', () => {
+    assert.equal(
+      shouldArmPlanDocFollowUp({
+        kind: 'plan_doc',
+        allow: true,
+        hostPromptClosed: false,
+        remaining: 1,
+        alreadySteered: false
+      }),
+      false
+    )
+  })
+
+  it('does not arm when the answer was already steered as a prompt', () => {
+    assert.equal(
+      shouldArmPlanDocFollowUp({
+        kind: 'plan_doc',
+        allow: true,
+        hostPromptClosed: false,
+        remaining: 0,
+        alreadySteered: true
       }),
       false
     )

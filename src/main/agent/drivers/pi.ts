@@ -24,7 +24,8 @@ export async function startPiDriver(
     options.binary,
     ['--mode', 'rpc', '--approve'],
     options.cwd,
-    { ...options.env, PI_SKIP_VERSION_CHECK: '1' }
+    { ...options.env, PI_SKIP_VERSION_CHECK: '1' },
+    options.hostProcess
   )
   return wirePi(proc, options, emit)
 }

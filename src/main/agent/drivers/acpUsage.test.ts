@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import {
+  contextSizeFromModelId,
   isSessionLevelAcpUpdate,
   readAcpUsageFromPromptResult,
   readAcpUsageFromUpdate
@@ -159,5 +160,31 @@ describe('isSessionLevelAcpUpdate', () => {
     assert.equal(isSessionLevelAcpUpdate('session_info_update', {}), true)
     assert.equal(isSessionLevelAcpUpdate('agent_message_chunk', { content: {} }), false)
     assert.equal(isSessionLevelAcpUpdate('tool_call', { toolCallId: '1' }), false)
+  })
+})
+
+describe('contextSizeFromModelId', () => {
+  it('parses the cursor-agent bracket syntax', () => {
+    assert.equal(
+      contextSizeFromModelId('claude-fable-5[thinking=true,context=300k,effort=high]'),
+      300_000
+    )
+    assert.equal(
+      contextSizeFromModelId('gpt-5.6-sol[context=272k,reasoning=medium,fast=false]'),
+      272_000
+    )
+    assert.equal(contextSizeFromModelId('big-model[context=1m]'), 1_000_000)
+    assert.equal(contextSizeFromModelId('raw[context=200000]'), 200_000)
+  })
+
+  it('ignores ids without a context marker or with noise values', () => {
+    assert.equal(contextSizeFromModelId('grok-4.6[effort=high,fast=true]'), undefined)
+    assert.equal(contextSizeFromModelId('default[]'), undefined)
+    assert.equal(contextSizeFromModelId('plain-model'), undefined)
+    assert.equal(contextSizeFromModelId('weird[context=0]'), undefined)
+    assert.equal(contextSizeFromModelId(''), undefined)
+    assert.equal(contextSizeFromModelId(null), undefined)
+    // `context` must be a bracket attribute, not part of the name.
+    assert.equal(contextSizeFromModelId('context=300k'), undefined)
   })
 })

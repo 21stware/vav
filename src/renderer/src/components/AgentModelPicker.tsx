@@ -20,6 +20,7 @@ import {
   pushRecentAgentModel,
   resolveModelForChatHost
 } from '@shared/agentModels'
+import { collapseCursorListModels } from '@shared/cursorModel'
 import {
   groupAccountsByVendor,
   vendorDisplayName,
@@ -31,6 +32,7 @@ import { useAccountGroups, vavAccountsOf } from '../lib/accountGroups'
 import { useSessionStore } from '../state/sessionStore'
 import { useT } from '../i18n/useT'
 import { menuAnchorIfVisible, showMenu, type MenuItem } from '../lib/nativeMenu'
+import { warmMenuIcons } from '../lib/menuIcons'
 import { formatTokens } from '../lib/format'
 import { AgentBrandMark } from './AgentBrandMark'
 
@@ -298,6 +300,11 @@ export function AgentModelPicker({
     [agentOptions, modelOptions]
   )
 
+  // Rasterize provider marks ahead of the first menu open.
+  useEffect(() => {
+    warmMenuIcons(hostOptions.map((host) => ({ kind: 'brand', markId: host.markId })))
+  }, [hostOptions])
+
   const hostByMark = useMemo(() => {
     const map = new Map<string, HostOption>()
     for (const h of hostOptions) {
@@ -315,7 +322,8 @@ export function AgentModelPicker({
       entry?.models && entry.models.length > 0
         ? entry.models
         : modelsForChatHost(host, customModels, settings.defaultModel, vendorId)
-    return filterEnabledModels(host, raw, disabledModels, vendorId, accountId)
+    const list = host === 'cursor' ? collapseCursorListModels(raw) : raw
+    return filterEnabledModels(host, list, disabledModels, vendorId, accountId)
   }
 
   const currentVav = useMemo(() => {
@@ -432,6 +440,7 @@ export function AgentModelPicker({
   const recentRow = (item: RecentItem): MenuItem => ({
     label: `${item.host.name} · ${item.modelLabel}`,
     checked: item.selected,
+    icon: { kind: 'brand', markId: item.host.markId },
     onSelect: () =>
       void pickAgentModel(item.host.id, item.model, {
         vendorId: item.host.vendorId,
@@ -497,7 +506,11 @@ export function AgentModelPicker({
                       accountId: host.accountId
                     })
                 }))
-          return { label: host.name, submenu: modelItems }
+          return {
+            label: host.name,
+            icon: { kind: 'brand', markId: host.markId },
+            submenu: modelItems
+          }
         })
 
       if (!locked && agentOptions.length > 0) {

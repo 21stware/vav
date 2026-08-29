@@ -24,6 +24,7 @@ import type {
   ValidateKeyResult
 } from './types'
 import type { HostAuthKind } from './cliAccountParse'
+import type { WorkspaceHostInfo } from './workspaceHost'
 import type { ChangeSet, UpdateState } from './changeSet'
 import type { GitResult, GitSnapshot } from './git'
 import type {
@@ -42,6 +43,14 @@ import type { AgentInstallRun } from './agentInstall'
 import type { OverlayNavigatePayload, OverlayPayload } from './overlayOpen'
 import type { AnalysisSnapshot } from './analysis'
 import type { ConversationActivityRow } from './traySessions'
+
+export type HostDiscoveryPeer = {
+  machineId: string
+  name: string
+  port: number
+  address: string
+  platform?: string
+}
 
 export type ScreenshotInitPayload = {
   imagePath: string
@@ -71,6 +80,8 @@ export interface Bootstrap {
   home: string
   tmp: string
   about: AboutInfo
+  /** Machines the UI can attach a workspace to. Local is always first. */
+  hosts: WorkspaceHostInfo[]
 }
 
 export interface PtyDataEvent {
@@ -178,6 +189,13 @@ export interface NativeMenuItem {
   role?: 'copy' | 'cut' | 'paste' | 'selectAll' | 'undo' | 'redo'
   /** Nested menu. Parent rows are not selectable. */
   submenu?: NativeMenuItem[]
+  /** PNG data URL shown left of the label (NativeImage cannot cross IPC). */
+  icon?: string
+  /**
+   * Treat `icon` as a template image: the system tints it from the alpha
+   * channel, so it follows menu appearance and highlight like a checkmark.
+   */
+  iconTemplate?: boolean
 }
 
 export type SettingsView =
@@ -187,6 +205,7 @@ export type SettingsView =
   | 'workspace'
   | 'appearance'
   | 'notifications'
+  | 'connect'
   | 'cli'
   | 'agents'
   | 'file-associations'
@@ -246,6 +265,8 @@ export interface CreateConversationOptions {
   model?: string
   /** Extra Swarm agent pane under this session. */
   swarmParentId?: string | null
+  /** Workspace host; omit = this machine (`local`). */
+  machineId?: string | null
 }
 
 /** One session in a file's FileSessionStore history list. */
@@ -829,7 +850,7 @@ export interface VavApi {
     }>
     /** Workspace preview focus — carried into agent context. */
     setFocusedFile(id: string, path: string | null): Promise<ConversationMeta[]>
-    setWorkingDirectory(id: string, path: string): Promise<ConversationMeta[]>
+    setWorkingDirectory(id: string, path: string, machineId?: string | null): Promise<ConversationMeta[]>
     pickWorkingDirectory(id: string): Promise<ConversationMeta[] | null>
     /** Mint a new Temporary Workspace folder and switch this session to it. */
     useTempWorkingDirectory(id: string): Promise<ConversationMeta[]>
@@ -879,6 +900,8 @@ export interface VavApi {
       id: string,
       level: 'off' | 'low' | 'medium' | 'high' | 'max'
     ): Promise<ConversationMeta[]>
+    /** Per-conversation Cursor ACP fast mode. */
+    setFast(id: string, fast: boolean): Promise<ConversationMeta[]>
     /** ACP session/set_mode. */
     setAcpMode(id: string, modeId: string): Promise<ConversationMeta[]>
     /** ACP session/set_config_option. */
@@ -961,7 +984,12 @@ export interface VavApi {
   }
 
   files: {
-    list(path: string, sort: FileSortKey, ascending: boolean): Promise<DirectoryListing>
+    list(
+      path: string,
+      sort: FileSortKey,
+      ascending: boolean,
+      conversationId?: string
+    ): Promise<DirectoryListing>
     read(path: string): Promise<{ content: string; truncated: boolean; error?: string }>
     /**
      * Byte-window read for large UTF-8 files. Prefer this over loading the
@@ -1317,6 +1345,9 @@ export interface VavApi {
     /** Settings live in their own window, not a sheet over the transcript. */
     openSettings(view?: SettingsView, agentId?: string): Promise<void>
     closeSettings(): Promise<void>
+    /** Small pairing popup (phone QR + vavd machines) from the sidebar. */
+    openConnect(): Promise<void>
+    closeConnect(): Promise<void>
     /** Last category ⌘, / Open Settings asked for — pull after the lazy chunk mounts. */
     desiredSettingsView(): Promise<SettingsViewPayload>
     /** Opens (or raises) the standalone window for one conversation. */
@@ -1472,6 +1503,37 @@ export interface VavApi {
      * corresponding Dock attention badge when the window is focused.
      */
     seen(conversationId: string): void
+  }
+
+  remoteControl: {
+    /** Tunnel state + QR pairing payload for the settings section. */
+    status(): Promise<import('./remoteControl').RemoteControlStatus>
+    /** Rotate the pairing secret; connected phones must re-scan. */
+    regenerateSecret(): Promise<void>
+    /** New tailcat identity (token) — invalidates every existing QR. */
+    resetIdentity(): Promise<void>
+    /** Status pushes while the settings window is open. */
+    onChanged(
+      handler: (status: import('./remoteControl').RemoteControlStatus) => void
+    ): () => void
+  }
+
+  hosts: {
+    list(): Promise<import('./workspaceHost').WorkspaceHostInfo[]>
+    /** This machine's `vav-daemon:` pairing line, when listening. */
+    pairing(): Promise<string | null>
+    pair(
+      payload: string
+    ): Promise<
+      | { ok: true; host: import('./workspaceHost').WorkspaceHostInfo }
+      | { ok: false; error: string }
+    >
+    forget(machineId: string): Promise<void>
+    discovered(): Promise<HostDiscoveryPeer[]>
+    listDir(machineId: string, path: string): Promise<DirectoryListing>
+    home(machineId: string): Promise<string>
+    onChanged(handler: (hosts: import('./workspaceHost').WorkspaceHostInfo[]) => void): () => void
+    onDiscovered(handler: (peers: HostDiscoveryPeer[]) => void): () => void
   }
 
   changeSets: {
@@ -1685,6 +1747,7 @@ export const IPC = {
   convSetArchived: 'vav:conv:set-archived',
   convSetApprovalMode: 'vav:conv:set-approval-mode',
   convSetThinkingLevel: 'vav:conv:set-thinking-level',
+  convSetFast: 'vav:conv:set-fast',
   convSetAcpMode: 'vav:conv:set-acp-mode',
   convSetAcpConfig: 'vav:conv:set-acp-config',
   convAccountQuota: 'vav:conv:account-quota',
@@ -1809,6 +1872,8 @@ export const IPC = {
   windowShellPath: 'vav:window:shell-path',
   windowOpenSettings: 'vav:window:open-settings',
   windowCloseSettings: 'vav:window:close-settings',
+  windowOpenConnect: 'vav:window:open-connect',
+  windowCloseConnect: 'vav:window:close-connect',
   settingsDesiredView: 'vav:settings:desired-view',
   windowPopupMenu: 'vav:window:popup-menu',
   windowClosePopupMenu: 'vav:window:close-popup-menu',
@@ -1837,6 +1902,19 @@ export const IPC = {
   windowFullscreen: 'vav:window:fullscreen',
   notificationsPermission: 'vav:notifications:permission',
   notificationsSeen: 'vav:notifications:seen',
+  remoteControlStatus: 'vav:remote-control:status',
+  remoteControlRegenerateSecret: 'vav:remote-control:regenerate-secret',
+  remoteControlResetIdentity: 'vav:remote-control:reset-identity',
+  remoteControlChanged: 'vav:remote-control:changed',
+  hostsList: 'vav:hosts:list',
+  hostsPairing: 'vav:hosts:pairing',
+  hostsPair: 'vav:hosts:pair',
+  hostsForget: 'vav:hosts:forget',
+  hostsDiscovered: 'vav:hosts:discovered',
+  hostsListDir: 'vav:hosts:list-dir',
+  hostsHome: 'vav:hosts:home',
+  hostsChanged: 'vav:hosts:changed',
+  hostsDiscoveredChanged: 'vav:hosts:discovered-changed',
   dialogAlert: 'vav:dialog:alert',
   dialogConfirm: 'vav:dialog:confirm',
   dialogMessageBox: 'vav:dialog:message-box',

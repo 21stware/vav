@@ -1,6 +1,6 @@
 /**
- * After a workspace switch, structured CLI hosts spawn a fresh session in the
- * new cwd (resume cursors are bound to the old tree). VAV still has the
+ * When a structured CLI host must spawn a fresh native session (workspace
+ * switch, login change, or a session lost to an error), VAV still has the
  * transcript — this turns that path into a preamble so the next prompt keeps
  * the conversation.
  */
@@ -11,8 +11,11 @@ import { pathToSummarySource } from './history.ts'
 
 const HANDOFF_MAX_CHARS = 48_000
 
+export type CliHistoryHandoffReason = 'cwd-changed' | 'session-lost'
+
 export type CliHistoryHandoffMark = {
   previousCwd: string | null
+  reason?: CliHistoryHandoffReason
 }
 
 export function formatCliWorkspaceHandoff(opts: {
@@ -24,6 +27,8 @@ export function formatCliWorkspaceHandoff(opts: {
   previousCwd?: string | null
   nextCwd: string
   maxChars?: number
+  /** Why the native session was replaced. Defaults to `cwd-changed`. */
+  reason?: CliHistoryHandoffReason
 }): string | null {
   const path = threadPath(opts.messages, opts.leafId)
   const prior = opts.excludeMessageId
@@ -48,6 +53,14 @@ export function formatCliWorkspaceHandoff(opts: {
   }
   if (!source.trim()) return null
 
+  if (opts.reason === 'session-lost') {
+    return [
+      formatCwdNotice(opts.previousCwd, opts.nextCwd),
+      'The previous host session was lost (it could not be resumed after an error or restart) and this is a fresh session. Here is the conversation so far:',
+      source,
+      "End of prior conversation. Continue from here as the same assistant. The user's next message follows."
+    ].join('\n\n')
+  }
   return [
     formatCwdNotice(opts.previousCwd, opts.nextCwd),
     'The previous host session ended when the working directory changed. Here is the conversation so far:',

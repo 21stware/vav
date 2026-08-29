@@ -1,3 +1,4 @@
+import { formatWorkspaceLabel } from '@shared/workspaceHost'
 import { basename } from './path'
 import { tt } from '../i18n/useT'
 import { getResolvedLocale } from '../i18n/useT'
@@ -27,6 +28,17 @@ export function isTemporaryWorkspace(path: string | null, tmp: string): boolean 
 export function workdirLabel(path: string | null, tmp: string, home: string): string {
   if (isTemporaryWorkspace(path, tmp) || !path) return tt('sidebar.defaultWorkspace')
   return path.startsWith(home) ? `~${path.slice(home.length)}` : path
+}
+
+/** Path chip / chrome: prefix a remote machine when the session is not local. */
+export function workspaceChromeLabel(
+  path: string | null,
+  tmp: string,
+  home: string,
+  machineId?: string | null,
+  hostName?: string | null
+): string {
+  return formatWorkspaceLabel(machineId, workdirLabel(path, tmp, home), hostName)
 }
 
 export function workdirShortLabel(path: string | null, tmp: string): string {

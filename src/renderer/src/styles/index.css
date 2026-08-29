@@ -504,11 +504,13 @@ html[data-resizing='true'] .banner.error {
 }
 
 .sidebar-column {
+  position: relative; /* anchor for .sidebar-col-resizer */
   display: flex;
   flex-direction: column;
   flex: 0 0 auto;
   width: var(--sidebar-width);
-  min-width: 0;
+  min-width: 190px;
+  max-width: 420px;
   min-height: 0;
   align-self: stretch;
   /* Win/Linux: solid. macOS: clear so BrowserWindow vibrancy shows through. */
@@ -520,6 +522,38 @@ html[data-resizing='true'] .banner.error {
   flex: 1 1 auto;
   min-height: 0;
   width: 100%;
+  max-width: none;
+}
+
+/* Drag handle on the docked column edge (min/max clamped in JS). */
+.sidebar-col-resizer {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: -2px;
+  width: 5px;
+  z-index: 40;
+  cursor: col-resize;
+  touch-action: none;
+  -webkit-app-region: no-drag;
+}
+
+.sidebar-col-resizer::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 1px;
+  transform: translateX(-50%);
+  background: transparent;
+  transition: background var(--dur-hover) ease, box-shadow var(--dur-hover) ease;
+}
+
+.sidebar-col-resizer:hover::after,
+.sidebar-col-resizer:active::after {
+  background: var(--accent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 35%, transparent);
 }
 
 /*
@@ -2082,6 +2116,33 @@ kbd {
   min-height: 0;
   display: flex;
   flex-direction: column;
+}
+
+/* Whole-surface file drop → attachments (SessionDetail / Swarm pane).
+   pointer-events: none keeps dragenter/leave depth counting stable. */
+.session-drop-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  pointer-events: none;
+  background: color-mix(in srgb, var(--bg-content) 45%, transparent);
+}
+
+.session-drop-hint {
+  display: flex;
+  align-items: center;
+  padding: 12px 20px;
+  border: 1.5px dashed var(--accent);
+  border-radius: var(--radius-lg);
+  background: var(--bg-raised);
+  color: var(--text);
+  font-size: 12.5px;
+  font-weight: 550;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.18);
 }
 
 .detail-stream > .transcript-stage,
@@ -6512,7 +6573,7 @@ mark {
   color: var(--warning);
 }
 
-.sidebar-archive-foot {
+.sidebar-foot {
   flex: 0 0 auto;
   display: flex;
   align-items: center;
@@ -6755,11 +6816,17 @@ mark {
   }
 }
 
-.sidebar-archive-btn {
+.sidebar-foot-connect {
   flex: 1 1 auto;
   min-width: 0;
   justify-content: flex-start;
   gap: 6px;
+}
+
+.sidebar-foot-connect span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .sidebar-foot-more {
@@ -7000,17 +7067,6 @@ mark {
   min-height: var(--toolbar-height);
   padding: 0 10px;
   box-sizing: border-box;
-}
-
-.sidebar-archive-count {
-  margin-left: auto;
-  min-width: 16px;
-  padding: 0 5px;
-  border-radius: 8px;
-  background: var(--bg-hover);
-  font-size: 10px;
-  color: var(--text-secondary);
-  text-align: center;
 }
 
 .sidebar-archive-head {
@@ -8141,9 +8197,9 @@ mark {
 /*
  * Tools header — single geometry for VAV (under composer) and CLI Agents
  * (dock-tools-only). Modes (data-mode / data-tools-mode):
- *   idle           — path + New/chevron only (no bash tabs)
- *   tabs-collapsed — path | tabs | New, body closed
- *   tabs-open      — path | tabs | New, body expanded
+ *   idle           — path + New left-aligned; chevron stays right
+ *   tabs-collapsed — path | New + tabs left; overflow pins New to the far right
+ *   tabs-open      — path | New + tabs left; overflow pins New to the far right
  *
  * Vertical air is only here (not on .dock / composer sibling overrides), so
  * switching VAV ↔ CLI does not jump the path chip.
@@ -8170,6 +8226,7 @@ mark {
 }
 
 .tools-header-lead {
+  order: 0;
   flex: 0 1 auto;
   min-width: 0;
   max-width: min(52%, 280px);
@@ -8205,7 +8262,9 @@ mark {
 }
 
 .tools-header-tabs {
-  flex: 1 1 auto;
+  /* Grow 0: sit after New. Shrink 1 if the row is still tight. */
+  order: 4;
+  flex: 0 1 auto;
   min-width: 0;
   display: flex;
   align-items: center;
@@ -8217,13 +8276,14 @@ mark {
   scrollbar-color: var(--border-strong) transparent;
 }
 
-/* No tabs: collapse the flex slot so New isn't marooned across empty air. */
-.tools-header-tabs[data-empty='true'] {
+.tools-header[data-new-edge='end'] .tools-header-tabs {
+  order: 3;
   flex: 1 1 auto;
-  min-width: 8px;
-  overflow: hidden;
-  scrollbar-gutter: auto;
-  pointer-events: none;
+}
+
+/* No tabs: drop the slot (and its gap) so New sits beside the path chip. */
+.tools-header-tabs[data-empty='true'] {
+  display: none;
 }
 
 .tools-header-tabs::-webkit-scrollbar {
@@ -8235,16 +8295,31 @@ mark {
   border-radius: 2px;
 }
 
+.tools-header > .tools-header-divider {
+  order: 2;
+}
+
+.tools-header-new {
+  order: 3;
+  flex: 0 0 auto;
+}
+
+.tools-header[data-new-edge='end'] .tools-header-new {
+  order: 4;
+}
+
 .tools-header-trail {
+  order: 5;
   flex: 0 0 auto;
   display: flex;
   align-items: center;
   gap: 2px;
+  /* Collapse stays on the far right; New packs left until tabs overflow. */
   margin-left: auto;
 }
 
 /* Soft pill for New so it matches path chip weight when the strip is idle. */
-.tools-header-trail .btn.sm:not(.icon-only) {
+.tools-header-new .btn.sm:not(.icon-only) {
   height: 24px;
   padding: 0 9px 0 7px;
   border-radius: 999px;
@@ -8254,7 +8329,7 @@ mark {
   color: var(--text-secondary);
 }
 
-.tools-header-trail .btn.sm:not(.icon-only):hover {
+.tools-header-new .btn.sm:not(.icon-only):hover {
   color: var(--text);
   background: var(--bg-hover);
 }
@@ -12707,6 +12782,7 @@ mark {
 
 /* Agent drawer in file preview (vav chat or CLI host). */
 .preview-edit-session {
+  position: relative; /* anchor for .session-drop-overlay */
   flex: 1;
   min-height: 0;
   min-width: 0;
@@ -17386,6 +17462,7 @@ mark {
 }
 
 .tools-header-installs {
+  order: 1;
   flex: 0 1 auto;
   min-width: 0;
   display: flex;
@@ -18783,6 +18860,15 @@ html:has(.provider-account-popup) #root {
 .session-run-controls {
   display: inline-flex;
   align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+  min-width: 0;
+}
+
+.session-run-config,
+.session-run-options {
+  display: inline-flex;
+  align-items: center;
   gap: 1px;
   flex: 0 0 auto;
 }
@@ -18793,10 +18879,25 @@ html:has(.provider-account-popup) #root {
   color: inherit;
 }
 
+.session-run-btn:not(.is-icon) {
+  padding: 0 7px;
+}
+
 .session-run-btn.is-icon {
   width: 22px;
   padding: 0;
   justify-content: center;
+}
+
+/* Icon chip + dropdown caret: let the caret widen the chip slightly. */
+.session-run-btn.is-icon.has-caret {
+  width: auto;
+  padding: 0 4px;
+  gap: 2px;
+}
+
+.session-run-caret {
+  opacity: 0.55;
 }
 
 .session-run-level {
@@ -18806,6 +18907,10 @@ html:has(.provider-account-popup) #root {
 
 .session-run-btn svg {
   flex: 0 0 auto;
+}
+
+.session-run-btn[data-testid="session-run-fast"][aria-pressed="true"] {
+  color: var(--accent);
 }
 
 .composer-box textarea::placeholder {
@@ -19556,6 +19661,51 @@ html:has(.token-usage-popup) #root {
   padding: 22px 22px 28px;
 }
 
+/* Connect popup (sidebar Connect button) — single settings-form column. */
+.connect-window {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: var(--bg-content);
+}
+
+.connect-head {
+  flex: 0 0 auto;
+  /* Clear the window controls: traffic lights lead on macOS, min/max/close
+     trail on Windows. */
+  padding: 0 var(--chrome-trail) 0 var(--chrome-lead);
+}
+
+.connect-body {
+  flex: 1;
+  min-height: 0;
+}
+
+/* Connect panels: 连接到 (this Mac → others) + 被连接 (others → this Mac). */
+.connect-panels {
+  gap: 16px;
+}
+
+.connect-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 14px;
+  border: 1px solid var(--border-subtle, color-mix(in srgb, var(--text) 10%, transparent));
+  border-radius: var(--radius-lg, 12px);
+}
+
+.connect-panel-title {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+/* Panel-level description sits under the title, not behind a form label. */
+.connect-panel-hint {
+  margin-left: 0;
+  margin-top: -8px;
+}
+
 /* Category switch fade. First paint must stay opaque — Settings is warmed
    hidden, and @starting-style opacity:0 never commits until a click. */
 .settings-body-panel {
@@ -19595,6 +19745,90 @@ html:has(.token-usage-popup) #root {
   font-size: 12px;
   font-weight: 600;
   color: var(--text-secondary);
+}
+
+/* Settings → 通知 → 远程控制: pairing QR on a white plate so scanners cope in dark mode. */
+.remote-qr {
+  display: flex;
+  justify-content: center;
+  padding: 12px;
+  border-radius: var(--radius);
+  background: #fff;
+  width: fit-content;
+  /* Right-aligned in the panel, not centred full-width. */
+  margin: 4px 0 0 auto;
+}
+
+.remote-qr img {
+  display: block;
+}
+
+.remote-devices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.remote-device {
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  background: var(--bg-sunken);
+  color: var(--text-secondary);
+}
+
+.machines-pairing {
+  word-break: break-all;
+  font-family: var(--font-code);
+  font-size: 11px;
+  max-height: 72px;
+  overflow: auto;
+}
+
+.machines-pair {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  min-width: 0;
+}
+
+.machines-pair .text-field {
+  flex: 1;
+  min-width: 0;
+}
+
+.remote-folder-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 180px;
+}
+
+.remote-folder-path .text-field {
+  width: 100%;
+}
+
+.remote-folder-list {
+  display: flex;
+  flex-direction: column;
+  max-height: 220px;
+  overflow: auto;
+  border-radius: var(--radius);
+  background: var(--bg-sunken);
+}
+
+.remote-folder-row {
+  text-align: left;
+  padding: 6px 10px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+}
+
+.remote-folder-row:hover {
+  background: var(--bg-hover);
 }
 
 .cli-intro {
@@ -21734,16 +21968,12 @@ html.is-screenshotting * {
   cursor: crosshair !important;
 }
 
-/* Attach, screenshot, thinking, mode, approval — one chip row. */
+/* Attach / screenshot stay left; session config + model sit after the spacer. */
 .composer-tools {
   display: inline-flex;
   align-items: center;
   gap: 1px;
   flex: 0 0 auto;
-}
-
-.composer-tools .session-run-controls {
-  display: contents;
 }
 
 .attachment-file-tile {

@@ -101,6 +101,12 @@ export class NotificationCenter {
   private viewByWindow = new Map<number, string>()
   /** Dedupe the chime when the same tool call is re-emitted. */
   private lastAlertAt = new Map<string, number>()
+  /**
+   * Fan-out for remote control: every alertUser call, regardless of OS
+   * banner settings — the phone decides its own presentation.
+   */
+  onAlert: ((kind: NotifyKind, conversationId: string, title: string, body: string) => void) | null =
+    null
 
   constructor(
     private getSettings: () => AppSettings,
@@ -206,6 +212,7 @@ export class NotificationCenter {
     body: string,
     attentionId?: string
   ): void {
+    this.onAlert?.(kind, conversationId, title, body)
     const settings = this.getSettings()
     const typeOn = notifyTypeEnabled(settings, kind)
     let chimed = false

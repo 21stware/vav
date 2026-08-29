@@ -53,7 +53,13 @@ export async function startAntigravityDriver(
     if (conversationId) args.push(`--conversation=${conversationId}`)
     if (options.model) args.push(`--model=${options.model}`)
 
-    const proc = spawnStdioProcess(options.binary, args, options.cwd, options.env)
+    const proc = spawnStdioProcess(
+      options.binary,
+      args,
+      options.cwd,
+      options.env,
+      options.hostProcess
+    )
     active = proc
     const stderrChunks: string[] = []
     proc.child.stderr.on('data', (buf: Buffer) => {

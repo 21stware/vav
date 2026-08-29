@@ -41,7 +41,7 @@ import { vendorIdFromEndpoint } from '@shared/llmVendors'
 import { useAccountGroups, vavAccountsOf } from '../lib/accountGroups'
 import { useT } from '../i18n/useT'
 import { attachPickedFiles, attachScreenshot } from '../lib/composerAttach'
-import { collectClipboardImages, imageSizeByPath, writeClipboardImage } from '../lib/pasteImages'
+import { collectClipboardImages, writeClipboardImage } from '../lib/pasteImages'
 import { prettyAccelerator, resolveKeyBindings } from '@shared/keyBindings'
 import { Button } from './ui'
 import { AgentModelPicker } from './AgentModelPicker'
@@ -429,13 +429,6 @@ export function Composer({
       className={`composer${hasCommentCards ? ' has-comment-cards' : ''}`}
       data-testid="composer"
       onMouseDown={retainComposerFocus}
-      onDragOver={(event) => event.preventDefault()}
-      onDrop={(event) => {
-        event.preventDefault()
-        if (!conversationId) return
-        const { paths, sizes } = imageSizeByPath([...event.dataTransfer.files])
-        if (paths.length) addAttachments(conversationId, paths, { sizes })
-      }}
     >
       {/* Context chips / comments live in ComposerContext (Agent log column). */}
       <div className="composer-box">
@@ -609,14 +602,15 @@ export function Composer({
             >
               <Scissors size={12} strokeWidth={2} style={{ transform: 'rotate(-90deg)' }} />
             </button>
-            {conversationId ? <SessionRunPicker conversationId={conversationId} /> : null}
           </span>
 
           <span className="spacer" />
 
           <span className="composer-meta">
             {conversationId ? (
-              <AgentModelPicker conversationId={conversationId} usage={tokenUsage} />
+              <SessionRunPicker conversationId={conversationId}>
+                <AgentModelPicker conversationId={conversationId} usage={tokenUsage} />
+              </SessionRunPicker>
             ) : null}
           </span>
 

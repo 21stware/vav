@@ -5,14 +5,14 @@
  * main process (owner of persistence + agent runtime) and the renderer.
  */
 
-import type { AcpSessionState } from './acpSession'
-import type { ChangeSet } from './changeSet'
-import type { CliPaneBinding } from './cliPaneBinding'
-import type { CliHostKind, ProviderResumeCursor } from './cliHost'
-import type { AcceleratorKeyBindingId } from './keyBindings'
+import type { AcpSessionState } from './acpSession.ts'
+import type { ChangeSet } from './changeSet.ts'
+import type { CliPaneBinding } from './cliPaneBinding.ts'
+import type { CliHostKind, ProviderResumeCursor } from './cliHost.ts'
+import type { AcceleratorKeyBindingId } from './keyBindings.ts'
 import { VAV_DEFAULT_MODEL_ID } from './vavModelList.ts'
 
-export type { CliHostKind, ProviderResumeCursor } from './cliHost'
+export type { CliHostKind, ProviderResumeCursor } from './cliHost.ts'
 export { VAV_DEFAULT_MODEL_ID } from './vavModelList.ts'
 export {
   STRUCTURED_CLI_HOSTS,
@@ -21,7 +21,7 @@ export {
   displayNameForCliHost,
   isStructuredCliHost,
   resolveDefaultChatHost
-} from './cliHost'
+} from './cliHost.ts'
 
 export type ToolName =
   | 'terminal'
@@ -294,6 +294,11 @@ export interface ConversationMeta {
   updatedAt: number
   /** Absolute path, or null for a Temporary Workspace. */
   workingDirectory: string | null
+  /**
+   * Machine the workdir / agent / shell run on. Missing or empty = this
+   * process (`local`). Remote hosts use a paired machine id.
+   */
+  machineId?: string | null
   model: string
   tokensUsed: number
   tokenLimit: number
@@ -318,10 +323,15 @@ export interface ConversationMeta {
   /** Tool approval policy for this conversation. */
   approvalMode: ApprovalMode
   /**
-   * VAV built-in agent thinking / reasoning effort.
-   * Ignored while a CLI host is active. Missing on old sessions → High.
+   * Thinking / reasoning effort for VAV and Cursor ACP.
+   * Missing on old sessions → High.
    */
   thinkingLevel?: ThinkingLevel
+  /**
+   * Cursor ACP `fast=true`. Other hosts ignore it.
+   * Missing on old sessions → false.
+   */
+  fast?: boolean
   /**
    * File-preview session key (inode:device or path-hash). When set, the
    * conversation is owned by FileSessionStore and hidden from the main sidebar.
@@ -1053,6 +1063,11 @@ export interface AppSettings {
    * working (Caffeine-style). Does not block lid-close or choosing Sleep.
    */
   keepAwakeWhileAgentRunning: boolean
+  /**
+   * Remote control over tailcat: run the tunnel sidecar so a paired phone
+   * gets foreground-realtime notifications and can send messages.
+   */
+  remoteControlEnabled: boolean
   /** Show the menu-bar tray icon. */
   trayEnabled: boolean
   /** macOS: hide Dock icon (accessory). Requires restart. */
@@ -1175,6 +1190,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   notifyOnToolApproval: true,
   notifyOnRequest: true,
   keepAwakeWhileAgentRunning: false,
+  remoteControlEnabled: false,
   /** macOS optional menu-bar item; Windows always shows a tray (see NotificationCenter). */
   /** Menu-bar status item — shows live CLI agent count when sessions are running. */
   trayEnabled: true,
@@ -1223,6 +1239,10 @@ export interface ModelOption {
   input?: ModelModality[]
   /** Produced output channels when known. Chat models default to text. */
   output?: ModelModality[]
+  /** Cursor `--list-models` effort variants collapsed onto this family. */
+  thinkingLevels?: ThinkingLevel[]
+  /** Advertised / unlabeled variant (Kimi K3 → max). */
+  defaultThinkingLevel?: ThinkingLevel
 }
 
 /**
@@ -1444,7 +1464,7 @@ export type TurnEvent =
       /** Fatal error text. Shown on the assistant message, not a second banner. */
       error?: string
       /** Classified CLI / provider failure — quota banner can open usage. */
-      errorKind?: 'quota' | 'session-stale' | 'auth' | 'cancelled' | 'generic'
+      errorKind?: 'quota' | 'session-stale' | 'auth' | 'network' | 'cancelled' | 'generic'
       /** Raw host / JSON-RPC payload, kept for diagnostics. Not shown in the UI. */
       errorDetail?: string
       cancelled?: boolean

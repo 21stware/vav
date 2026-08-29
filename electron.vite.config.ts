@@ -48,7 +48,10 @@ export default defineConfig({
     plugins: [externalizeDepsPlugin({ exclude: PI_PACKAGES })],
     build: {
       rollupOptions: {
-        input: { index: resolve('src/main/index.ts') },
+        input: {
+          index: resolve('src/main/index.ts'),
+          vavd: resolve('src/main/daemon/vavd.ts')
+        },
         external: OPTIONAL_WS_NATIVE
       }
     },

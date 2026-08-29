@@ -26,6 +26,7 @@ import {
   hitCrop,
   hitMark,
   hitTopMark,
+  isDoubleClickPointerDown,
   markCursor,
   moveCrop,
   moveMark,
@@ -35,6 +36,7 @@ import {
   type CropHandle,
   type CropRect,
   type MarkResizeHandle,
+  type PointerDownSample,
   type ScreenshotMark,
   type ScreenshotTool
 } from '@shared/screenshotDraw'
@@ -93,6 +95,8 @@ export default function ScreenshotWindow(): React.JSX.Element {
   const draftRef = useRef<ScreenshotMark | null>(null)
   const liveMarkRef = useRef<ScreenshotMark | null>(null)
   const selectedIdRef = useRef<string | null>(null)
+  /** Previous pointerdown — real dblclicks arrive with detail 0 (PE spec). */
+  const lastPointerDownRef = useRef<PointerDownSample | null>(null)
   const paintRaf = useRef(0)
   const paintedNonce = useRef<number | null>(null)
   const marksRef = useRef(marks)
@@ -122,6 +126,7 @@ export default function ScreenshotWindow(): React.JSX.Element {
       setCopied(false)
       setImageUrl(null)
       paintedNonce.current = null
+      lastPointerDownRef.current = null
     })
     window.vav.screenshot.ready()
     return off
@@ -511,19 +516,28 @@ export default function ScreenshotWindow(): React.JSX.Element {
     }
 
     const box = cropRef.current
-    const isDoubleClick = event.detail >= 2
+    // Pointer Events fix `pointerdown.detail` at 0, so a real double-click
+    // must be reconstructed from consecutive pointerdowns. Keep the detail
+    // check for synthetic events that do carry a click count.
+    const sample: PointerDownSample = { t: event.timeStamp, x: event.clientX, y: event.clientY }
+    const isDoubleClick =
+      event.detail >= 2 || isDoubleClickPointerDown(lastPointerDownRef.current, sample)
+    lastPointerDownRef.current = sample
 
     // 1) Prioritize double-click confirmation inside the usable crop area.
     const local = pointInCrop(event.clientX, event.clientY)
     if (isDoubleClick && box && cropIsUsable(box) && local) {
       event.preventDefault()
+      lastPointerDownRef.current = null
       if (textDraft) commitText()
       confirm()
       return
     }
 
     if (!box) {
-      if (event.detail === 1) beginCropCreate(event, false)
+      // Real pointerdowns carry detail 0 — gate on "not a double-click"
+      // rather than a click count that never arrives.
+      if (!isDoubleClick) beginCropCreate(event, false)
       return
     }
 
@@ -613,7 +627,7 @@ export default function ScreenshotWindow(): React.JSX.Element {
         event.preventDefault()
         return
       }
-      if (event.detail === 1) beginCropCreate(event, true)
+      if (!isDoubleClick) beginCropCreate(event, true)
       return
     }
     if (tool === 'move') {

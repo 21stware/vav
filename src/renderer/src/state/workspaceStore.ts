@@ -1228,7 +1228,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     }
 
     const live = get().workspaces[id] ?? slice
-    const listing = await window.vav.files.list(path, live.sort, live.ascending)
+    const listing = await window.vav.files.list(path, live.sort, live.ascending, id)
     // Normalize missing-path errors so the Files panel can show a calm empty state
     // instead of raw ENOENT stack noise (common for file-sessions whose dir is gone).
     const error = listing.error

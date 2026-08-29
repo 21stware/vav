@@ -226,7 +226,153 @@ describe('wireAcp protocol', () => {
     assert.equal(asRecord(closed.params)?.sessionId, 'sess-1')
     assert.ok(closed.id !== undefined)
   })
+
+  it('maps picker model ids onto ACP session/set_model before each prompt', async () => {
+    const events: DriverEvent[] = []
+    const { proc, outbound, toClient } = fakeStdio()
+    const dir = await mkdtemp(join(tmpdir(), 'vav-acp-model-'))
+
+    const driver = wireAcp(
+      'cursor',
+      proc,
+      {
+        binary: 'cursor-agent',
+        cwd: dir,
+        approvalMode: 'edit',
+        model: 'cursor-grok-4.6-high-fast'
+      },
+      (event) => events.push(event)
+    )
+
+    const init = await waitFor(outbound, (msg) => msg.method === 'initialize')
+    toClient({
+      jsonrpc: '2.0',
+      id: init.id,
+      result: {
+        protocolVersion: ACP_PROTOCOL_VERSION,
+        agentCapabilities: { loadSession: true },
+        authMethods: []
+      }
+    })
+
+    const created = await waitFor(outbound, (msg) => msg.method === 'session/new')
+    toClient({
+      jsonrpc: '2.0',
+      id: created.id,
+      result: {
+        sessionId: 'sess-model',
+        models: {
+          currentModelId: 'default[]',
+          availableModels: [
+            { modelId: 'default[]', name: 'Auto' },
+            { modelId: 'grok-4.6[effort=high,fast=true]', name: 'grok-4.6' },
+            {
+              modelId: 'claude-fable-5[thinking=true,context=300k,effort=high]',
+              name: 'claude-fable-5'
+            }
+          ]
+        }
+      }
+    })
+
+    const bootSet = await waitForNth(outbound, (msg) => msg.method === 'session/set_model', 1)
+    assert.equal(asRecord(bootSet.params)?.modelId, 'grok-4.6[effort=high,fast=true]')
+    toClient({ jsonrpc: '2.0', id: bootSet.id, result: {} })
+    await waitForEvent(events, (event) => event.type === 'connected')
+
+    driver.applyOptions?.({ model: 'claude-fable-5-thinking-high' })
+    const switched = await waitForNth(outbound, (msg) => msg.method === 'session/set_model', 2)
+    assert.equal(
+      asRecord(switched.params)?.modelId,
+      'claude-fable-5[thinking=true,context=300k,effort=high]'
+    )
+    toClient({ jsonrpc: '2.0', id: switched.id, result: {} })
+
+    driver.prompt('hello')
+    const pinned = await waitForNth(outbound, (msg) => msg.method === 'session/set_model', 3)
+    assert.equal(
+      asRecord(pinned.params)?.modelId,
+      'claude-fable-5[thinking=true,context=300k,effort=high]'
+    )
+    toClient({ jsonrpc: '2.0', id: pinned.id, result: {} })
+
+    const prompt = await waitFor(outbound, (msg) => msg.method === 'session/prompt')
+    assert.equal(asRecord(prompt.params)?.sessionId, 'sess-model')
+    toClient({ jsonrpc: '2.0', id: prompt.id, result: { stopReason: 'end_turn' } })
+    await waitForEvent(events, (event) => event.type === 'turn-finished' && event.success === true)
+
+    driver.dispose()
+  })
+
+  it('applies thinking level and fast from session prefs', async () => {
+    const events: DriverEvent[] = []
+    const { proc, outbound, toClient } = fakeStdio()
+    const dir = await mkdtemp(join(tmpdir(), 'vav-acp-prefs-'))
+
+    const driver = wireAcp(
+      'cursor',
+      proc,
+      {
+        binary: 'cursor-agent',
+        cwd: dir,
+        approvalMode: 'edit',
+        model: 'grok-4.6',
+        thinkingLevel: 'low',
+        fast: true
+      },
+      (event) => events.push(event)
+    )
+
+    const init = await waitFor(outbound, (msg) => msg.method === 'initialize')
+    toClient({
+      jsonrpc: '2.0',
+      id: init.id,
+      result: {
+        protocolVersion: ACP_PROTOCOL_VERSION,
+        agentCapabilities: { loadSession: true },
+        authMethods: []
+      }
+    })
+
+    const created = await waitFor(outbound, (msg) => msg.method === 'session/new')
+    toClient({
+      jsonrpc: '2.0',
+      id: created.id,
+      result: {
+        sessionId: 'sess-prefs',
+        models: {
+          currentModelId: 'default[]',
+          availableModels: [
+            { modelId: 'grok-4.6[effort=high,fast=true]', name: 'grok-4.6' }
+          ]
+        }
+      }
+    })
+
+    const set = await waitFor(outbound, (msg) => msg.method === 'session/set_model')
+    assert.equal(asRecord(set.params)?.modelId, 'grok-4.6[effort=low,fast=true]')
+    toClient({ jsonrpc: '2.0', id: set.id, result: {} })
+    await waitForEvent(events, (event) => event.type === 'connected')
+    driver.dispose()
+  })
 })
+
+async function waitForNth(
+  outbound: JsonRpc[],
+  pred: (msg: JsonRpc) => boolean,
+  n: number,
+  timeoutMs = 1_000
+): Promise<JsonRpc> {
+  const start = Date.now()
+  while (Date.now() - start < timeoutMs) {
+    const found = outbound.filter(pred)
+    if (found.length >= n) return found[n - 1]!
+    await new Promise((resolve) => setTimeout(resolve, 10))
+  }
+  throw new Error(
+    `timed out waiting for ${n} matching RPC among ${JSON.stringify(outbound.map((m) => m.method ?? m.id))}`
+  )
+}
 
 async function waitForEvent(
   events: DriverEvent[],

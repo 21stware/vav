@@ -22,3 +22,27 @@ export function shouldContinueHeldCliTurn(opts: {
 }): boolean {
   return opts.hostPromptClosed && opts.remaining === 0 && opts.allow && !opts.alreadySteered
 }
+
+/**
+ * Cursor orders it the other way round: `cursor/create_plan` blocks while
+ * `session/prompt` stays in flight, and right after Accept the agent ends
+ * the turn (stopReason end_turn) WITHOUT implementing — the client must
+ * send the follow-up prompt itself. Arm that follow-up when a plan card is
+ * accepted while the host prompt is still open; it fires on the coming
+ * turn-finished unless the agent visibly continued on its own.
+ */
+export function shouldArmPlanDocFollowUp(opts: {
+  kind: string
+  allow: boolean
+  hostPromptClosed: boolean
+  remaining: number
+  alreadySteered: boolean
+}): boolean {
+  return (
+    opts.kind === 'plan_doc' &&
+    opts.allow &&
+    !opts.hostPromptClosed &&
+    opts.remaining === 0 &&
+    !opts.alreadySteered
+  )
+}

@@ -1,10 +1,7 @@
-import {
-  spawn,
-  type ChildProcess,
-  type ChildProcessWithoutNullStreams
-} from 'node:child_process'
+import { spawn } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import type { ShellKind } from '@shared/types'
+import { localHostProcess, type HostChild, type HostProcess } from '../host/HostProcess.ts'
 import { agentShellEnv } from './agentShellEnv'
 
 const IS_WINDOWS = process.platform === 'win32'
@@ -116,7 +113,7 @@ export interface WaitResult {
  * display surface (see terminal-panel.rpml, "双轨终端").
  */
 export class StickyShell {
-  private child: ChildProcessWithoutNullStreams | null = null
+  private child: HostChild | null = null
   private buffer = ''
   private cwd: string
   private queue: Promise<unknown> = Promise.resolve()
@@ -124,19 +121,20 @@ export class StickyShell {
   private appendChunk: ((chunk: string) => void) | null = null
   /** Full session transcript for wait / read_bash_session. */
   private scrollback = ''
-  private backgroundChild: ChildProcess | null = null
+  private backgroundChild: HostChild | null = null
   /** Why the current command/wait is being torn down, if we initiated it. */
   private stopReason: 'timeout' | 'cancel' | null = null
   /** Active `waitFor` resolver — Stop must unblock it, not only kill the PTY. */
   private waitCancel: (() => void) | null = null
   /** Fallback one-shot child when the sticky session cannot start. */
-  private oneShotChild: ChildProcess | null = null
+  private oneShotChild: HostChild | null = null
 
   readonly sessionId = BASH_SESSION_ID
 
   constructor(
     private shell: ShellKind,
-    cwd: string
+    cwd: string,
+    private hostProcess: HostProcess = localHostProcess
   ) {
     this.cwd = cwd
   }
@@ -224,7 +222,7 @@ export class StickyShell {
     if (cwd === this.cwd) return
     this.cwd = cwd
     // Cheaper than re-spawning, and keeps exported vars from earlier tool calls.
-    if (this.child) this.child.stdin.write(this.changeDirectory(cwd))
+    if (this.child?.stdin) this.child.stdin.write(this.changeDirectory(cwd))
   }
 
   private changeDirectory(cwd: string): string {
@@ -316,7 +314,7 @@ export class StickyShell {
         }
       }
 
-      const child: ChildProcess = spawn(
+      const child = this.hostProcess.spawn(
         shellPath(this.shell),
         oneShotArgs(this.shell, command),
         {
@@ -441,7 +439,11 @@ export class StickyShell {
       }
     }
     const child = this.child
-    if (!child) return this.oneShot(command, timeoutSeconds, onOutput, signal)
+    const stdin = child?.stdin
+    const stdout = child?.stdout
+    if (!child || !stdin || !stdout) {
+      return this.oneShot(command, timeoutSeconds, onOutput, signal)
+    }
 
     const marker = `<<<VAV_END:${randomUUID()}`
     const endPattern = new RegExp(`${escapeRegex(marker)}:(-?\\d+)>>>`)
@@ -461,7 +463,7 @@ export class StickyShell {
         this.stopReason = null
         clearTimeout(timer)
         signal?.removeEventListener('abort', onAbort)
-        child.stdout.off('data', onData)
+        stdout.off('data', onData)
         child.off('exit', onExit)
         resolve(result)
       }
@@ -535,14 +537,14 @@ export class StickyShell {
         })
       }, timeoutSeconds * 1000)
 
-      child.stdout.on('data', onData)
+      stdout.on('data', onData)
       child.once('exit', onExit)
       signal?.addEventListener('abort', onAbort, { once: true })
       try {
-        const ok = child.stdin.write(this.frame(command, marker))
+        const ok = stdin.write(this.frame(command, marker))
         if (!ok) {
           // Backpressure: still wait for drain or exit/timeout.
-          child.stdin.once('drain', () => {})
+          stdin.once('drain', () => {})
         }
       } catch (err) {
         this.child = null
@@ -588,13 +590,17 @@ export class StickyShell {
   }
 
   private spawnShell(): void {
-    const child = spawn(shellPath(this.shell), stdinArgs(this.shell), {
+    const child = this.hostProcess.spawn(shellPath(this.shell), stdinArgs(this.shell), {
       cwd: this.cwd,
       env: agentShellEnv(),
       // Own process group, so a timeout can take the whole command tree down.
       detached: !IS_WINDOWS,
-      windowsHide: true
-    }) as ChildProcessWithoutNullStreams
+      windowsHide: true,
+      stdio: ['pipe', 'pipe', 'pipe']
+    })
+    if (!child.stdin || !child.stdout || !child.stderr) {
+      throw new Error('host process is missing piped stdio')
+    }
 
     child.on('error', () => {
       this.child = null
@@ -628,11 +634,12 @@ export class StickyShell {
       })
     }
     return new Promise((resolve) => {
-      const child = spawn(shellPath(this.shell), oneShotArgs(this.shell, command), {
+      const child = this.hostProcess.spawn(shellPath(this.shell), oneShotArgs(this.shell, command), {
         cwd: this.cwd,
         env: agentShellEnv({ TERM: 'dumb' }),
         detached: !IS_WINDOWS,
-        windowsHide: true
+        windowsHide: true,
+        stdio: ['pipe', 'pipe', 'pipe']
       })
       this.oneShotChild = child
       let output = ''

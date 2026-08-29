@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useMemo, useRef } from 'react'
+import { useCallback, useEffect, useMemo, useRef, type ReactNode } from 'react'
 import {
   BookOpen,
   Bot,
+  ChevronDown,
   Hammer,
   ListTodo,
   MessageCircle,
@@ -12,13 +13,22 @@ import type { ApprovalMode, ThinkingLevel } from '@shared/types'
 import { acpCurrentModeId, acpSessionModes, type AcpSessionMode } from '@shared/acpSession'
 import type { MessageKey } from '@shared/i18n'
 import {
+  clampThinkingLevel,
   parseThinkingLevel,
-  THINKING_LEVELS,
-  vavModelSupportsThinking
+  sessionShowsFast,
+  sessionShowsThinking,
+  thinkingLevelsForSession
 } from '@shared/thinkingLevel'
+import { cursorModelFamilyId } from '@shared/cursorModel'
+import { agentModelHostKey } from '@shared/agentModels'
 import { useSessionStore } from '../state/sessionStore'
 import { useT } from '../i18n/useT'
 import { menuAnchorIfVisible, showMenu, type MenuItem } from '../lib/nativeMenu'
+import {
+  menuIconKeyForMode,
+  warmMenuIcons,
+  type LucideMenuIconKey
+} from '../lib/menuIcons'
 
 const LEVEL_KEYS: Record<ThinkingLevel, MessageKey> = {
   off: 'composer.thinkingLevel.off',
@@ -32,26 +42,45 @@ const APPROVAL_OPTIONS: {
   value: ApprovalMode
   labelKey: MessageKey
   titleKey: MessageKey
+  iconKey: LucideMenuIconKey
 }[] = [
-  { value: 'auto', labelKey: 'approvalMode.auto', titleKey: 'approvalMode.autoTitle' },
-  { value: 'bypass', labelKey: 'approvalMode.bypass', titleKey: 'approvalMode.bypassTitle' },
-  { value: 'edit', labelKey: 'approvalMode.edit', titleKey: 'approvalMode.editTitle' }
+  {
+    value: 'auto',
+    labelKey: 'approvalMode.auto',
+    titleKey: 'approvalMode.autoTitle',
+    iconKey: 'approval-auto'
+  },
+  {
+    value: 'bypass',
+    labelKey: 'approvalMode.bypass',
+    titleKey: 'approvalMode.bypassTitle',
+    iconKey: 'approval-bypass'
+  },
+  {
+    value: 'edit',
+    labelKey: 'approvalMode.edit',
+    titleKey: 'approvalMode.editTitle',
+    iconKey: 'approval-edit'
+  }
 ]
 
 /**
- * Thinking · session mode · permission as three chips.
- * Thinking is a word; mode and permission are icons.
+ * [mode · permission]  model picker  [thinking · Fast]
+ * Thinking stays the bar icon; Fast is a word; mode and permission are icons.
  */
 export function SessionRunPicker({
-  conversationId
+  conversationId,
+  children
 }: {
   conversationId: string
+  children?: ReactNode
 }): React.JSX.Element | null {
   const t = useT()
   const conversation = useSessionStore((s) =>
     s.conversations.find((c) => c.id === conversationId)
   )
   const setThinkingLevel = useSessionStore((s) => s.setThinkingLevel)
+  const setFast = useSessionStore((s) => s.setFast)
   const setApprovalMode = useSessionStore((s) => s.setApprovalMode)
   const setAcpMode = useSessionStore((s) => s.setAcpMode)
   const setAcpConfigOption = useSessionStore((s) => s.setAcpConfigOption)
@@ -60,10 +89,27 @@ export function SessionRunPicker({
   const approvalRef = useRef<HTMLButtonElement>(null)
   const seenApprovalMenuNonce = useRef(0)
 
-  const showThinking =
-    !!conversation && !conversation.cliHost && vavModelSupportsThinking(conversation.model)
-  const thinking = parseThinkingLevel(conversation?.thinkingLevel)
+  const catalog = useSessionStore((s) => s.agentModelCatalog)
+  const showThinking = sessionShowsThinking(conversation?.cliHost, conversation?.model)
+  const showFast = sessionShowsFast(conversation?.cliHost)
+  const catalogueDefault = (() => {
+    if (conversation?.cliHost !== 'cursor' || !conversation.model) return null
+    const family = cursorModelFamilyId(conversation.model)
+    const models = catalog[agentModelHostKey('cursor')]?.models ?? []
+    return models.find((model) => model.id === family)?.defaultThinkingLevel ?? null
+  })()
+  const allowedThinking = thinkingLevelsForSession({
+    cliHost: conversation?.cliHost,
+    modelId: conversation?.model,
+    acpThinkingLevels: conversation?.acpSession?.thinkingLevels,
+    catalogueDefault
+  })
+  const thinking = clampThinkingLevel(
+    parseThinkingLevel(conversation?.thinkingLevel),
+    allowedThinking
+  )
   const thinkingLabel = t(LEVEL_KEYS[thinking])
+  const fast = conversation?.fast === true
 
   const sessionModes = acpSessionModes(conversation?.acpSession)
   const sessionModeId = acpCurrentModeId(conversation?.acpSession)
@@ -75,18 +121,19 @@ export function SessionRunPicker({
 
   const thinkingItems = useMemo((): MenuItem[] => {
     if (!conversation || !showThinking) return []
-    return [...THINKING_LEVELS].reverse().map((value) => ({
+    return [...allowedThinking].reverse().map((value) => ({
       label: t(LEVEL_KEYS[value]),
       checked: value === thinking,
       onSelect: () => void setThinkingLevel(conversation.id, value)
     }))
-  }, [conversation, setThinkingLevel, showThinking, t, thinking])
+  }, [allowedThinking, conversation, setThinkingLevel, showThinking, t, thinking])
 
   const modeItems = useMemo((): MenuItem[] => {
     if (!conversation || !showMode) return []
     return sessionModes.map((mode) => ({
       label: mode.name,
       checked: mode.id === sessionMode?.id,
+      icon: { kind: 'lucide', key: menuIconKeyForMode(mode.id) },
       onSelect: () => {
         const config = conversation.acpSession?.configOptions?.find(
           (option) => option.category === 'mode'
@@ -102,9 +149,24 @@ export function SessionRunPicker({
     return APPROVAL_OPTIONS.map((row) => ({
       label: t(row.labelKey),
       checked: row.value === approval,
+      icon: { kind: 'lucide', key: row.iconKey },
       onSelect: () => void setApprovalMode(conversation.id, row.value)
     }))
   }, [approval, conversation, setApprovalMode, t])
+
+  // Rasterize the small static icon set ahead of the first menu open.
+  useEffect(() => {
+    warmMenuIcons([
+      ...APPROVAL_OPTIONS.map((row) => ({
+        kind: 'lucide' as const,
+        key: row.iconKey
+      })),
+      ...sessionModes.map((mode) => ({
+        kind: 'lucide' as const,
+        key: menuIconKeyForMode(mode.id)
+      }))
+    ])
+  }, [sessionModes])
 
   const openMenu = useCallback((items: MenuItem[], anchor?: HTMLElement | null) => {
     if (items.length === 0) return
@@ -126,62 +188,90 @@ export function SessionRunPicker({
       data-testid="session-run-controls"
       data-approval={approval}
       data-thinking={showThinking ? thinking : undefined}
+      data-fast={showFast ? (fast ? 'true' : 'false') : undefined}
       data-session-mode={showMode ? sessionMode?.id : undefined}
     >
-      {showThinking ? (
+      <span className="session-run-config">
+        {showMode && sessionMode ? (
+          <button
+            type="button"
+            className="model-picker session-run-btn is-icon has-caret"
+            data-testid="session-run-mode"
+            aria-label={[t('composer.sessionMode'), sessionMode.name, sessionMode.description]
+              .filter(Boolean)
+              .join(' · ')}
+            aria-haspopup="menu"
+            title={[t('composer.sessionMode'), sessionMode.name, sessionMode.description]
+              .filter(Boolean)
+              .join(' · ')}
+            onClick={(event) => {
+              event.preventDefault()
+              event.stopPropagation()
+              openMenu(modeItems, event.currentTarget)
+            }}
+          >
+            <ModeIcon mode={sessionMode} />
+            <ChevronDown size={9} className="session-run-caret" aria-hidden />
+          </button>
+        ) : null}
         <button
+          ref={approvalRef}
           type="button"
-          className="model-picker session-run-btn is-icon"
-          data-testid="session-run-thinking"
-          aria-label={`${t('composer.thinkingLevel')} · ${thinkingLabel}`}
+          className="model-picker session-run-btn is-icon has-caret"
+          data-testid="session-run-approval"
+          aria-label={`${t(approvalMeta.labelKey)} · ${t(approvalMeta.titleKey)}`}
           aria-haspopup="menu"
-          title={`${t('composer.thinkingLevel')} · ${thinkingLabel}`}
+          title={`${t(approvalMeta.labelKey)} · ${t(approvalMeta.titleKey)}`}
           onClick={(event) => {
             event.preventDefault()
             event.stopPropagation()
-            openMenu(thinkingItems, event.currentTarget)
+            openMenu(approvalItems, event.currentTarget)
           }}
         >
-          <ThinkingIcon level={thinking} />
+          <ApprovalIcon mode={approval} />
+          <ChevronDown size={9} className="session-run-caret" aria-hidden />
         </button>
+      </span>
+      {children}
+      {showThinking || showFast ? (
+        <span className="session-run-options">
+          {showThinking ? (
+            <button
+              type="button"
+              className="model-picker session-run-btn is-icon"
+              data-testid="session-run-thinking"
+              aria-label={`${t('composer.thinkingLevel')} · ${thinkingLabel}`}
+              aria-haspopup="menu"
+              title={`${t('composer.thinkingLevel')} · ${thinkingLabel}`}
+              onClick={(event) => {
+                event.preventDefault()
+                event.stopPropagation()
+                openMenu(thinkingItems, event.currentTarget)
+              }}
+            >
+              <ThinkingIcon level={thinking} />
+            </button>
+          ) : null}
+          {showFast ? (
+            <button
+              type="button"
+              className="model-picker session-run-btn"
+              data-testid="session-run-fast"
+              aria-pressed={fast}
+              aria-label={`${t('composer.fast')} · ${fast ? t('composer.fast.on') : t('composer.fast.off')}`}
+              title={`${t('composer.fast')} · ${fast ? t('composer.fast.on') : t('composer.fast.off')}`}
+              onClick={(event) => {
+                event.preventDefault()
+                event.stopPropagation()
+                if (!conversation) return
+                void setFast(conversation.id, !fast)
+              }}
+            >
+              <span className="session-run-level">{t('composer.fast')}</span>
+            </button>
+          ) : null}
+        </span>
       ) : null}
-      {showMode && sessionMode ? (
-        <button
-          type="button"
-          className="model-picker session-run-btn is-icon"
-          data-testid="session-run-mode"
-          aria-label={[t('composer.sessionMode'), sessionMode.name, sessionMode.description]
-            .filter(Boolean)
-            .join(' · ')}
-          aria-haspopup="menu"
-          title={[t('composer.sessionMode'), sessionMode.name, sessionMode.description]
-            .filter(Boolean)
-            .join(' · ')}
-          onClick={(event) => {
-            event.preventDefault()
-            event.stopPropagation()
-            openMenu(modeItems, event.currentTarget)
-          }}
-        >
-          <ModeIcon mode={sessionMode} />
-        </button>
-      ) : null}
-      <button
-        ref={approvalRef}
-        type="button"
-        className="model-picker session-run-btn is-icon"
-        data-testid="session-run-approval"
-        aria-label={`${t(approvalMeta.labelKey)} · ${t(approvalMeta.titleKey)}`}
-        aria-haspopup="menu"
-        title={`${t(approvalMeta.labelKey)} · ${t(approvalMeta.titleKey)}`}
-        onClick={(event) => {
-          event.preventDefault()
-          event.stopPropagation()
-          openMenu(approvalItems, event.currentTarget)
-        }}
-      >
-        <ApprovalIcon mode={approval} />
-      </button>
     </div>
   )
 }
@@ -250,3 +340,4 @@ function ThinkingIcon({ level }: { level: ThinkingLevel }): React.JSX.Element {
     </svg>
   )
 }
+

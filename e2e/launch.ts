@@ -61,6 +61,20 @@ export type LaunchVavOptions = {
    * session/new / session/prompt). Implies seedConversation `acp-live`.
    */
   liveAcp?: boolean
+  /** Second sidebar session that is also a live Cursor ACP host. */
+  extraAcpSession?: boolean
+  /** Fixture emits usage_update / turn_completed usage (E2E_ACP_USAGE). */
+  acpUsage?: boolean
+  /** Fixture replays the cursor createPlan blocking contract (E2E_ACP_PLAN). */
+  acpPlan?: boolean
+  /** Override the ACP binary for liveAcp (manual real-agent verification). */
+  acpBinary?: string
+  /** Fixture fails the first n prompts with a network error (E2E_ACP_FAIL_PROMPTS). */
+  acpFailPrompts?: number
+  /** Fixture streams ONLY the leaked RetriableError for the first n prompts. */
+  acpLeakPrompts?: number
+  /** Fixture trails every reply with the leaked RetriableError chunk. */
+  acpLeakTail?: boolean
 }
 
 export type VavHarness = {
@@ -69,6 +83,7 @@ export type VavHarness = {
   userData: string
   workspace: string
   extraWorkspace?: string
+  acpModelLog?: string
   dispose: () => Promise<void>
 }
 
@@ -119,12 +134,13 @@ function seedUserData(
   if (options.swarmMode) settings.swarmModeEnabled = true
   if (options.liveAcp) {
     chmodSync(ACP_AGENT_SH, 0o755)
+    const binary = options.acpBinary ?? ACP_AGENT_SH
     settings.cliAgents = [
       {
         id: 'cursor',
         name: 'Cursor',
-        binaryPath: ACP_AGENT_SH,
-        binaryCandidates: [ACP_AGENT_SH],
+        binaryPath: binary,
+        binaryCandidates: [binary],
         defaultArgs: [],
         envVars: {},
         enabled: true,
@@ -140,7 +156,15 @@ function seedUserData(
   const primary = buildSeededConversation(kind, workspace)
   writeFileSync(join(conversationsDir, `${primary.id}.json`), JSON.stringify(primary))
   const ids = [primary.id]
-  if (options.extraSession) {
+  if (options.extraAcpSession) {
+    const extra = buildSeededConversation('acp-live', workspace, Date.now() - 5_000)
+    extra.id = E2E_SESSION_B_ID
+    extra.title = 'E2E ACP live B'
+    extra.model = 'claude-fable-5'
+    extra.fast = false
+    writeFileSync(join(conversationsDir, `${extra.id}.json`), JSON.stringify(extra))
+    ids.push(extra.id)
+  } else if (options.extraSession) {
     const extra = buildNamedSession(workspace, E2E_SESSION_B_ID, 'Second session', Date.now() - 5_000)
     writeFileSync(join(conversationsDir, `${extra.id}.json`), JSON.stringify(extra))
     ids.push(extra.id)
@@ -155,6 +179,7 @@ export async function launchVav(options: LaunchVavOptions = {}): Promise<VavHarn
   }
 
   const userData = mkdtempSync(join(tmpdir(), 'vav-e2e-'))
+  const acpModelLog = join(userData, 'acp-model.jsonl')
   const workspace = mkdtempSync(join(tmpdir(), 'vav-e2e-ws-'))
   writeFileSync(join(workspace, 'hello.md'), '# hello from e2e\n')
   writeFileSync(join(workspace, 'notes.md'), '# notes from e2e\n')
@@ -182,7 +207,18 @@ export async function launchVav(options: LaunchVavOptions = {}): Promise<VavHarn
         : {}),
       ...(options.stubStream ? { VAV_E2E_STUB_STREAM: '1' } : {}),
       ...(options.stubAsk ? { VAV_E2E_STUB_ASK: '1' } : {}),
-      ...(options.stubApprove ? { VAV_E2E_STUB_APPROVE: '1' } : {})
+      ...(options.stubApprove ? { VAV_E2E_STUB_APPROVE: '1' } : {}),
+      ...(options.acpUsage ? { E2E_ACP_USAGE: '1' } : {}),
+      ...(options.acpPlan ? { E2E_ACP_PLAN: '1' } : {}),
+      ...(options.liveAcp ? { E2E_ACP_MODEL_LOG: acpModelLog } : {}),
+      ...(options.acpFailPrompts
+        ? {
+            E2E_ACP_FAIL_PROMPTS: String(options.acpFailPrompts),
+            E2E_ACP_FAIL_STATE: join(userData, 'acp-fail-count')
+          }
+        : {}),
+      ...(options.acpLeakPrompts ? { E2E_ACP_LEAK_PROMPTS: String(options.acpLeakPrompts) } : {}),
+      ...(options.acpLeakTail ? { E2E_ACP_LEAK_TAIL: '1' } : {})
     }
   })
 
@@ -207,7 +243,7 @@ export async function launchVav(options: LaunchVavOptions = {}): Promise<VavHarn
     if (extraWorkspace) rmSync(extraWorkspace, { recursive: true, force: true })
   }
 
-  return { app, page, userData, workspace, extraWorkspace, dispose }
+  return { app, page, userData, workspace, extraWorkspace, acpModelLog, dispose }
 }
 
 export function sessionRow(page: Page, id: string) {

@@ -32,6 +32,19 @@ import {
   type CursorAskInput
 } from '../../../shared/planDoc.ts'
 import {
+  cursorFamilyAllowsThinkingOverlay,
+  cursorModelFamilyId,
+  prefsFromCursorModelId
+} from '../../../shared/cursorModel.ts'
+import { clampThinkingLevel } from '../../../shared/thinkingLevel.ts'
+import {
+  acpModelIdCandidates,
+  advertisedThinkingLevel,
+  parseAcpAvailableModels,
+  type AcpListedModel
+} from './acpModelId.ts'
+import {
+  contextSizeFromModelId,
   isSessionLevelAcpUpdate,
   normalizeUpdateKind,
   readAcpUsageFromPromptResult,
@@ -106,7 +119,13 @@ export async function startAcpDriver(
 ): Promise<DriverControl> {
   const { spawnStdioProcess } = await import('./process.ts')
   const args = [...acpArgs(kind, options.approvalMode), ...(options.extraArgs ?? [])]
-  const proc = spawnStdioProcess(options.binary, args, options.cwd, options.env)
+  const proc = spawnStdioProcess(
+    options.binary,
+    args,
+    options.cwd,
+    options.env,
+    options.hostProcess
+  )
   return wireAcp(kind, proc, options, emit)
 }
 
@@ -126,6 +145,11 @@ export function wireAcp(
   let promptInFlightId: number | null = null
   let ready = false
   let canLogout = false
+  /**
+   * A resume-by-id fell back to session/new — the next prompt must carry the
+   * transcript preamble (options.resumeHandoff) or the conversation is lost.
+   */
+  let resumeFellBack = false
   let promptCapabilities: AcpPromptCapabilities = {
     image: false,
     audio: false,
@@ -137,8 +161,14 @@ export function wireAcp(
   const pendingClient = new Map<string, PendingClient>()
   const stderrChunks: string[] = []
   const autoApprove = options.approvalMode === 'bypass' || options.approvalMode === 'auto'
-  const terminals = new AcpTerminalRegistry()
+  const terminals = new AcpTerminalRegistry(options.hostProcess)
   let lastTodos: PlanStep[] = []
+  let availableModels: AcpListedModel[] = []
+  let wantedModel = options.model?.trim() || null
+  let wantedThinking = options.thinkingLevel ?? null
+  let wantedFast: boolean | null = typeof options.fast === 'boolean' ? options.fast : null
+  let applyModelChain: Promise<void> = Promise.resolve()
+  const rejectedModels = new Set<string>()
 
   const send = (method: string, params: Record<string, unknown>, id?: number): void => {
     const payload: Record<string, unknown> = { jsonrpc: '2.0', method, params }
@@ -205,18 +235,23 @@ export function wireAcp(
   const openOrCreateSession = async (): Promise<void> => {
     if (sessionId) {
       try {
-        await request('session/load', {
-          sessionId,
-          cwd: options.cwd,
-          mcpServers: []
-        })
+        const loaded = asRecord(
+          await request('session/load', {
+            sessionId,
+            cwd: options.cwd,
+            mcpServers: []
+          })
+        )
+        ingestSessionSetup(loaded)
         return
       } catch {
         try {
-          await request('session/resume', { sessionId, cwd: options.cwd })
+          const resumed = asRecord(await request('session/resume', { sessionId, cwd: options.cwd }))
+          ingestSessionSetup(resumed)
           return
         } catch {
           sessionId = null
+          resumeFellBack = true
         }
       }
     }
@@ -247,6 +282,64 @@ export function wireAcp(
       commands,
       sessionTitle: asString(created.title)
     })
+    const modelsField = created.models
+    const listed = parseAcpAvailableModels(modelsField)
+    if (listed.length) availableModels = listed
+    publishAdvertisedThinkingLevels()
+    publishModelContextSize(
+      asString(dig(created, 'models.currentModelId')) ||
+        asString(dig(created, 'models.current_model_id'))
+    )
+  }
+
+  const publishAdvertisedThinkingLevels = (): void => {
+    if (!wantedModel) return
+    const family = cursorModelFamilyId(wantedModel)
+    if (!family || cursorFamilyAllowsThinkingOverlay(family)) return
+    const level = advertisedThinkingLevel(wantedModel, availableModels)
+    if (level) publishSessionState({ thinkingLevels: [level] })
+  }
+
+  const applyWantedModel = async (): Promise<void> => {
+    if (!sessionId || !wantedModel) return
+    const allowed = sessionState.thinkingLevels
+    const thinking =
+      wantedThinking && allowed?.length
+        ? clampThinkingLevel(wantedThinking, allowed)
+        : wantedThinking
+    const prefs = {
+      thinkingLevel: thinking,
+      fast: wantedFast
+    }
+    const candidates = acpModelIdCandidates(wantedModel, availableModels, prefs)
+    for (const modelId of candidates) {
+      if (rejectedModels.has(modelId)) continue
+      try {
+        await request('session/set_model', { sessionId, modelId })
+        publishModelContextSize(modelId)
+        const applied = prefsFromCursorModelId(modelId)
+        emit({ type: 'model-applied', modelId, ...applied })
+        return
+      } catch {
+        rejectedModels.add(modelId)
+      }
+    }
+  }
+
+  const queueApplyWantedModel = (): Promise<void> => {
+    applyModelChain = applyModelChain.then(applyWantedModel, applyWantedModel)
+    return applyModelChain
+  }
+
+  /**
+   * Cursor never sends usage over ACP; its model id embeds `context=300k`.
+   * Surface that as the conversation's token limit so the ring has a
+   * denominator even before any fill estimate lands.
+   */
+  const publishModelContextSize = (modelId: string | null | undefined): void => {
+    const size = contextSizeFromModelId(modelId)
+    if (!size) return
+    emit({ type: 'usage', contextSize: size, recordHistory: false })
   }
 
   const bootstrap = async (): Promise<void> => {
@@ -286,13 +379,7 @@ export function wireAcp(
         return
       }
 
-      if (options.model) {
-        try {
-          await request('session/set_model', { sessionId, modelId: options.model })
-        } catch {
-          /* optional */
-        }
-      }
+      await queueApplyWantedModel()
 
       ready = true
       emit({ type: 'connected', cursor: { provider: kind, sessionId } })
@@ -485,6 +572,16 @@ export function wireAcp(
       pendingPrompts.push({ text, extras })
       return
     }
+    let promptText = text
+    if (resumeFellBack) {
+      resumeFellBack = false
+      const handoff = options.resumeHandoff?.()?.trim()
+      if (handoff) promptText = `${handoff}\n\n${text}`
+    }
+    // Pin this conversation's model immediately before the prompt. Cursor
+    // persists session/set_model as an account default, so a sibling session
+    // can otherwise steal Auto / the last pick.
+    await queueApplyWantedModel()
     turnActive = true
     emit({ type: 'turn-started' })
     const id = nextId++
@@ -495,12 +592,12 @@ export function wireAcp(
     let prompt: AcpContentBlock[]
     try {
       prompt = await buildAcpPrompt({
-        text,
+        text: promptText,
         attachments: extras?.attachments,
         capabilities: promptCapabilities
       })
     } catch {
-      prompt = [{ type: 'text', text }]
+      prompt = [{ type: 'text', text: promptText }]
     }
     send('session/prompt', { sessionId, prompt }, id)
   }
@@ -600,8 +697,12 @@ export function wireAcp(
     },
     applyOptions(opts): boolean {
       if (opts.approvalMode) return false
-      if (opts.model && sessionId) {
-        void request('session/set_model', { sessionId, modelId: opts.model }).catch(() => undefined)
+      if (opts.model != null) wantedModel = opts.model.trim() || null
+      if (opts.thinkingLevel !== undefined) wantedThinking = opts.thinkingLevel
+      if (opts.fast !== undefined) wantedFast = opts.fast
+      if (opts.model != null) publishAdvertisedThinkingLevels()
+      if (opts.model != null || opts.thinkingLevel !== undefined || opts.fast !== undefined) {
+        void queueApplyWantedModel()
       }
       if (opts.mode && sessionId) {
         void request('session/set_mode', { sessionId, modeId: opts.mode })
@@ -609,14 +710,18 @@ export function wireAcp(
           .catch(() => undefined)
       }
       if (opts.configOption && sessionId) {
+        const configOption = opts.configOption
         void request('session/set_config_option', {
           sessionId,
-          configId: opts.configOption.id,
-          value: opts.configOption.value
+          configId: configOption.id,
+          value: configOption.value
         })
           .then((result) => {
             const options = parseAcpConfigOptions(asRecord(result)?.configOptions)
             if (options.length) publishSessionState({ configOptions: options })
+            if (configOption.id === 'model' && typeof configOption.value === 'string') {
+              publishModelContextSize(configOption.value)
+            }
           })
           .catch(() => undefined)
       }

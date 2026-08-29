@@ -1,4 +1,4 @@
-import type { DisplayCurrency, TokenSnapshot } from './types'
+import type { ChatMessage, DisplayCurrency, MessageBlock, TokenSnapshot } from './types'
 import { t, type AppLocale } from './i18n/index.ts'
 
 export {
@@ -53,6 +53,57 @@ export function ratesForModel(modelId: string): ModelRates {
   }
   // Sonnet 4 / default (main-chat.rpml §花费计算)
   return { input: 3, output: 15, cacheWrite: 3.75, cacheRead: 0.3 }
+}
+
+/** CJK ideographs / kana / hangul: ~1 token per character. */
+const CJK_RE = /[\u3000-\u30ff\u3400-\u9fff\uac00-\ud7af\uf900-\ufaff\uff00-\uffef]/g
+
+/**
+ * Rough token count for arbitrary text: CJK characters cost ~1 token each,
+ * everything else ~4 characters per token. Used only as a context-fill
+ * fallback for hosts that never report usage (e.g. `cursor-agent acp`).
+ */
+export function estimateTextTokens(text: string): number {
+  if (!text) return 0
+  const cjk = text.match(CJK_RE)?.length ?? 0
+  const other = text.length - cjk
+  return cjk + Math.ceil(other / 4)
+}
+
+function blockChars(block: MessageBlock, into: { text: string[] }): void {
+  if (block.kind === 'text' || block.kind === 'reasoning') {
+    into.text.push(block.text)
+    return
+  }
+  if (block.kind === 'toolCall') {
+    into.text.push(block.summary, block.input, block.output)
+    for (const child of block.children ?? []) blockChars(child, into)
+    return
+  }
+  if (block.kind === 'plan') {
+    into.text.push(block.title, ...block.steps.map((step) => step.title))
+  }
+}
+
+/** System prompt + tool schemas overhead assumed for the estimate. */
+const CONTEXT_ESTIMATE_BASE_TOKENS = 3_000
+
+/**
+ * Estimated context-window fill for a conversation whose provider reports no
+ * usage at all: transcript text (both roles, tools included) plus a fixed
+ * system-prompt allowance. Deliberately coarse — it exists so the context
+ * ring shows *something* truthful in shape, not to bill anyone.
+ */
+export function estimateContextTokens(messages: ChatMessage[]): number {
+  const into = { text: [] as string[] }
+  for (const message of messages) {
+    into.text.push(message.content)
+    for (const block of message.blocks ?? []) blockChars(block, into)
+  }
+  return (
+    CONTEXT_ESTIMATE_BASE_TOKENS +
+    into.text.reduce((sum, text) => sum + estimateTextTokens(text ?? ''), 0)
+  )
 }
 
 export function providerLabel(modelId: string, endpoint: string): string {

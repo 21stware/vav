@@ -85,7 +85,7 @@ function clickWorkdirChip() {
 function newBash() {
   return js(`(async () => {
     const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
-    const btn = document.querySelector('.tools-header-trail button')
+    const btn = document.querySelector('[data-testid="new-bash"]')
     if (btn) btn.click()
     await sleep(1400)
     return document.querySelector('.xterm, .terminal-host') ? 'terminal' : 'terminal-unknown'

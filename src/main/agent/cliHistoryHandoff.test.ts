@@ -74,6 +74,28 @@ describe('formatCliWorkspaceHandoff', () => {
     assert.match(text, /user's next message follows/i)
   })
 
+  it('uses session-lost wording when the native session could not be resumed', () => {
+    const messages = [
+      user('u1', 'remember the magic word'),
+      assistant('a1', 'Noted.', 'u1'),
+      user('u2', 'what was it?', 'a1')
+    ]
+    const text = formatCliWorkspaceHandoff({
+      messages,
+      leafId: 'u2',
+      excludeMessageId: 'u2',
+      previousCwd: '/proj',
+      nextCwd: '/proj',
+      reason: 'session-lost'
+    })
+    assert.ok(text)
+    assert.match(text, /could not be resumed/)
+    assert.match(text, /remember the magic word/)
+    assert.doesNotMatch(text, /working directory changed. Here is/)
+    assert.doesNotMatch(text, /what was it\?/)
+    assert.match(text, /user's next message follows/i)
+  })
+
   it('folds compacted turns into the summary prefix', () => {
     const messages = [
       user('u1', 'first'),

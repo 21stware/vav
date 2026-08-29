@@ -117,8 +117,8 @@ const api: VavApi = {
       ipcRenderer.invoke(IPC.convSetFocusedFile, id, path),
     accountQuota: (id: string, host?: import('@shared/types').CliHostKind | null) =>
       ipcRenderer.invoke(IPC.convAccountQuota, id, host),
-    setWorkingDirectory: (id: string, path: string) =>
-      ipcRenderer.invoke(IPC.convSetWorkdir, id, path),
+    setWorkingDirectory: (id: string, path: string, machineId?: string | null) =>
+      ipcRenderer.invoke(IPC.convSetWorkdir, id, path, machineId),
     pickWorkingDirectory: (id: string) => ipcRenderer.invoke(IPC.convPickWorkdir, id),
     useTempWorkingDirectory: (id: string) => ipcRenderer.invoke(IPC.convUseTempWorkdir, id),
     locateWorkspace: (id: string, destinationDir: string, name: string) =>
@@ -148,6 +148,7 @@ const api: VavApi = {
       ipcRenderer.invoke(IPC.convSetApprovalMode, id, mode),
     setThinkingLevel: (id: string, level) =>
       ipcRenderer.invoke(IPC.convSetThinkingLevel, id, level),
+    setFast: (id: string, fast: boolean) => ipcRenderer.invoke(IPC.convSetFast, id, fast),
     setAcpMode: (id: string, modeId: string) =>
       ipcRenderer.invoke(IPC.convSetAcpMode, id, modeId),
     setAcpConfigOption: (id: string, configId: string, value: string | boolean) =>
@@ -209,8 +210,8 @@ const api: VavApi = {
   },
 
   files: {
-    list: (path: string, sort: FileSortKey, ascending: boolean) =>
-      ipcRenderer.invoke(IPC.filesList, path, sort, ascending),
+    list: (path: string, sort: FileSortKey, ascending: boolean, conversationId?: string) =>
+      ipcRenderer.invoke(IPC.filesList, path, sort, ascending, conversationId),
     read: (path: string) => ipcRenderer.invoke(IPC.filesRead, path),
     readTextWindow: (
       path: string,
@@ -381,6 +382,8 @@ const api: VavApi = {
     openSettings: (view?: SettingsView, agentId?: string) =>
       ipcRenderer.invoke(IPC.windowOpenSettings, view, agentId),
     closeSettings: () => ipcRenderer.invoke(IPC.windowCloseSettings),
+    openConnect: () => ipcRenderer.invoke(IPC.windowOpenConnect),
+    closeConnect: () => ipcRenderer.invoke(IPC.windowCloseConnect),
     desiredSettingsView: () =>
       ipcRenderer.invoke(IPC.settingsDesiredView) as Promise<SettingsViewPayload>,
     popupMenu: (items: NativeMenuItem[], position?: { x: number; y: number }) =>
@@ -469,6 +472,26 @@ const api: VavApi = {
   notifications: {
     permission: () => ipcRenderer.invoke(IPC.notificationsPermission),
     seen: (conversationId) => ipcRenderer.send(IPC.notificationsSeen, conversationId)
+  },
+
+  remoteControl: {
+    status: () => ipcRenderer.invoke(IPC.remoteControlStatus),
+    regenerateSecret: () => ipcRenderer.invoke(IPC.remoteControlRegenerateSecret),
+    resetIdentity: () => ipcRenderer.invoke(IPC.remoteControlResetIdentity),
+    onChanged: (handler) => subscribe(IPC.remoteControlChanged, handler)
+  },
+
+  hosts: {
+    list: () => ipcRenderer.invoke(IPC.hostsList),
+    pairing: () => ipcRenderer.invoke(IPC.hostsPairing),
+    pair: (payload: string) => ipcRenderer.invoke(IPC.hostsPair, payload),
+    forget: (machineId: string) => ipcRenderer.invoke(IPC.hostsForget, machineId),
+    discovered: () => ipcRenderer.invoke(IPC.hostsDiscovered),
+    listDir: (machineId: string, path: string) =>
+      ipcRenderer.invoke(IPC.hostsListDir, machineId, path),
+    home: (machineId: string) => ipcRenderer.invoke(IPC.hostsHome, machineId),
+    onChanged: (handler) => subscribe(IPC.hostsChanged, handler),
+    onDiscovered: (handler) => subscribe(IPC.hostsDiscoveredChanged, handler)
   },
 
   changeSets: {

@@ -34,6 +34,45 @@ test('tools tray expands, New bash opens a user PTY, and collapse works', async 
   }
 })
 
+test('New bash sits left and pins right when the tab strip overflows', async () => {
+  const harness = await launchVav()
+  try {
+    const { app, page } = harness
+    const header = page.locator('.tools-header')
+    const neu = page.locator('[data-testid="new-bash"]')
+
+    await expect(header).toHaveAttribute('data-new-edge', 'start')
+    const idleGap = await neu.evaluate((el) => {
+      const path = document.querySelector('[data-testid="workdir-chip"]')
+      if (!path) return -1
+      return el.getBoundingClientRect().left - path.getBoundingClientRect().right
+    })
+    expect(idleGap).toBeGreaterThanOrEqual(0)
+    expect(idleGap).toBeLessThan(28)
+
+    await neu.click()
+    await neu.click()
+    await neu.click()
+    await expect(page.locator('[data-testid="tools-panel"] [data-testid="terminal-panel"]')).toBeVisible()
+
+    await app.evaluate(({ BrowserWindow }) => {
+      const win = BrowserWindow.getAllWindows()[0]
+      win?.setSize(400, 820)
+    })
+    await expect(header).toHaveAttribute('data-new-edge', 'end')
+
+    const endGap = await neu.evaluate((el) => {
+      const toggle = document.querySelector('[data-testid="tools-toggle"]')
+      if (!toggle) return -1
+      return toggle.getBoundingClientRect().left - el.getBoundingClientRect().right
+    })
+    expect(endGap).toBeGreaterThanOrEqual(0)
+    expect(endGap).toBeLessThan(28)
+  } finally {
+    await harness.dispose()
+  }
+})
+
 test('transcript search strip finds no matches then closes', async () => {
   const harness = await launchVav()
   try {
@@ -61,12 +100,21 @@ test('composer exposes attach and screenshot actions', async () => {
 })
 
 test('composer token ring opens the Context window popup', async () => {
-  const harness = await launchVav()
+  // The ring lives on the agent model picker; once the thread has messages
+  // the picker locks and clicking the host button opens the usage popup.
+  const harness = await launchVav({ liveAcp: true, acpUsage: true })
   try {
-    const ring = harness.page.locator('[data-testid="token-ring"]')
-    await expect(ring).toBeVisible()
-    const opened = harness.app.waitForEvent('window')
-    await ring.click()
+    const { app, page } = harness
+    await page.locator('[data-testid="composer-input"]').fill('ring probe')
+    await page.locator('[data-testid="composer-send"]').click()
+    await expect(page.locator('[data-testid="message-assistant"]')).toContainText(
+      'e2e acp reply',
+      { timeout: 20_000 }
+    )
+    await expect(page.locator('.agent-model-picker-progress')).toBeVisible()
+
+    const opened = app.waitForEvent('window')
+    await page.locator('.agent-model-picker-host').click()
     const usage = await opened
     await expect(usage.locator('[data-testid="token-usage-window"]')).toBeVisible()
     await expect(usage.getByText('Context window')).toBeVisible()

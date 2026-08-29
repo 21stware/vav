@@ -1,3 +1,4 @@
+import { collapseCursorListModels, cursorModelFamilyId } from './cursorModel.ts'
 import type { CliHostKind, ModelOption, RecentAgentModelEntry } from './types.ts'
 import { isStructuredCliHost, PRESET_MODELS } from './types.ts'
 import { displayNameForCliHost } from './cliHost.ts'
@@ -91,10 +92,14 @@ export function resolveModelForChatHost(
   }
 ): string {
   const hasCatalogue = !!(options?.catalogue && options.catalogue.length > 0)
-  const list = hasCatalogue
+  const rawList = hasCatalogue
     ? options!.catalogue!
     : modelsForChatHost(host, options?.customModels, options?.vavDefaultModel, options?.vendorId)
-  const current = currentModel ?? ''
+  const list = host === 'cursor' ? collapseCursorListModels(rawList) : rawList
+  const current =
+    host === 'cursor' && currentModel
+      ? cursorModelFamilyId(currentModel)
+      : (currentModel ?? '')
   // Empty string is a valid "CLI default" choice.
   if (list.some((m) => m.id === current)) return current
   // Keep a stored / requested id. The seed fallback for CLI hosts is a single
@@ -119,13 +124,15 @@ export function labelForChatModel(
   catalogue?: ModelOption[] | null
 ): string {
   if (!modelId) return CLI_DEFAULT_MODEL.label
-  const list =
+  const rawList =
     catalogue && catalogue.length > 0
       ? catalogue
       : modelsForChatHost(host, customModels)
-  const hit = list.find((m) => m.id === modelId)
+  const list = host === 'cursor' ? collapseCursorListModels(rawList) : rawList
+  const id = host === 'cursor' ? cursorModelFamilyId(modelId) : modelId
+  const hit = list.find((m) => m.id === id)
   const raw =
-    hit?.label ?? PRESET_MODELS.find((m) => m.id === modelId)?.label ?? prettyVavModelLabel(modelId)
+    hit?.label ?? PRESET_MODELS.find((m) => m.id === id)?.label ?? prettyVavModelLabel(id)
   return host ? shortenModelLabel(raw, displayNameForCliHost(host)) : raw
 }
 

@@ -16,6 +16,7 @@ test('settings is a separate window with category nav and no Done footer', async
       ['appearance', 'Appearance'],
       ['keybindings', 'Key Bindings'],
       ['notifications', 'Notifications'],
+      ['connect', 'Connect'],
       ['cli', 'Command Line'],
       ['file-associations', 'File Associations'],
       ['about', 'About']

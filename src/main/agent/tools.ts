@@ -48,6 +48,8 @@ export interface ToolHost {
   workdir: string
   settings: () => AppSettings
   files: FileService
+  /** Routes fs/shell I/O to the conversation's workspace host. */
+  conversationId: string
   shell: () => StickyShell
   /** Display-only: mirrors a terminal transcript into the Agent tab. */
   mirror: (text: string) => void
@@ -373,7 +375,11 @@ export function createTools(host: ToolHost): AgentTool[] {
         params.start_byte != null ? Math.max(0, Math.floor(Number(params.start_byte))) : 0
       const maxBytes =
         params.max_bytes != null ? Math.floor(Number(params.max_bytes)) : undefined
-      const result = await host.files.readTextWindow(path, { startByte, maxBytes })
+      const result = await host.files.readTextWindow(path, {
+        startByte,
+        maxBytes,
+        conversationId: host.conversationId
+      })
       if (result.error) {
         const hint = /\.(pdf|docx|xlsx|xls|pptx)$/i.test(String(params.path ?? ''))
           ? ' For office/PDF documents, use doc_search / doc_fetch.'
@@ -411,10 +417,10 @@ export function createTools(host: ToolHost): AgentTool[] {
     async execute(_id, params) {
       const path = inWorkdir(params.path)
       // What changed only exists before the write lands, so capture it first.
-      const previous = await host.files.readTextFile(path)
+      const previous = await host.files.readTextFile(path, host.conversationId)
       const before = previous.error || previous.truncated ? null : previous.content
 
-      const result = await host.files.writeTextFile(path, params.content)
+      const result = await host.files.writeTextFile(path, params.content, host.conversationId)
       if (!result.ok) return failure(result.error ?? '写入失败')
       // Only the parent directory is refreshed; never the whole tree.
       const logical = host.files.workingCopies?.logicalPath(path) ?? path
@@ -442,7 +448,12 @@ export function createTools(host: ToolHost): AgentTool[] {
       )
     }),
     async execute(_id, params) {
-      const listing = await host.files.listDirectory(inWorkdir(params.path ?? '.'))
+      const listing = await host.files.listDirectory(
+        inWorkdir(params.path ?? '.'),
+        'name',
+        true,
+        host.conversationId
+      )
       if (listing.error) return failure(listing.error)
       const lines = listing.entries.map((e) => `${e.isDirectory ? 'd' : '-'} ${e.name}`)
       if (listing.truncated) lines.push(`… ${listing.truncated} more`)

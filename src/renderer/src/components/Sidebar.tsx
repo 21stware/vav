@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
-  Archive,
   ArrowLeft,
+  Cable,
   ChevronDown,
   ChevronRight,
   MoreVertical,
@@ -24,6 +24,7 @@ import { isTemporaryWorkspace, middleTruncate, relativeTime, workdirShortLabel }
 import { flatten, groupConversations, type ConversationGroup } from '../lib/grouping'
 import { swarmChildrenOf } from '@shared/swarmLayout'
 import { showMenu, type MenuItem } from '../lib/nativeMenu'
+import { warmMenuIcons } from '../lib/menuIcons'
 import { fileManagerLabel } from '../lib/platform'
 import { basename } from '../lib/path'
 import { useT } from '../i18n/useT'
@@ -199,6 +200,16 @@ export function Sidebar({
   const archiveView = listMode === 'archive'
   const fileSessionsView = listMode === 'fileSessions'
 
+  // Rasterize the foot-menu glyphs ahead of the first open.
+  useEffect(() => {
+    warmMenuIcons([
+      { kind: 'lucide', key: 'file-sessions' },
+      { kind: 'lucide', key: 'archive' },
+      { kind: 'lucide', key: 'import' },
+      { kind: 'lucide', key: 'settings' }
+    ])
+  }, [])
+
   const refreshFileSessions = useCallback(async (): Promise<void> => {
     setFileSessionsLoading(true)
     try {
@@ -228,6 +239,19 @@ export function Sidebar({
     () => conversations.filter((c) => c.archived && !c.fileId).length,
     [conversations]
   )
+  const hosts = useSessionStore((s) => s.hosts)
+  const remoteControlStatus = useSessionStore((s) => s.remoteControlStatus)
+  // Devices this Mac is linked to right now: online vavd machines ("Connected
+  // to Mac mini") + phones on the tunnel ("Connect with iPhone 17 Pro").
+  const connectedDeviceLabels = useMemo(() => {
+    const labels = hosts
+      .filter((h) => h.kind === 'remote' && h.online)
+      .map((h) => t('sidebar.connectedTo', { name: h.name }))
+    for (const client of remoteControlStatus?.clients ?? []) {
+      if (client.device) labels.push(t('sidebar.connectWith', { name: client.device }))
+    }
+    return labels
+  }, [hosts, remoteControlStatus, t])
 
   // Collapse state is ephemeral: mode switch or search resets to all expanded.
   useEffect(() => {
@@ -548,6 +572,37 @@ export function Sidebar({
     setListMode
   ])
 
+  /**
+   * Archive without leaving the session list: when the active row goes away,
+   * move the selection to the visible row just above it (else the one below).
+   */
+  const archiveKeepingList = async (ids: string[]): Promise<void> => {
+    const current = useSessionStore.getState().activeId
+    let neighbor: string | null = null
+    if (current && ids.includes(current)) {
+      const leaving = new Set(ids)
+      const index = visible.findIndex((c) => c.id === current)
+      if (index >= 0) {
+        for (let i = index - 1; i >= 0; i -= 1) {
+          if (!leaving.has(visible[i]!.id)) {
+            neighbor = visible[i]!.id
+            break
+          }
+        }
+        if (!neighbor) {
+          for (let i = index + 1; i < visible.length; i += 1) {
+            if (!leaving.has(visible[i]!.id)) {
+              neighbor = visible[i]!.id
+              break
+            }
+          }
+        }
+      }
+    }
+    for (const id of ids) await setArchived(id, true)
+    if (neighbor) await selectConversation(neighbor)
+  }
+
   const menuItems = (ids: string[]): MenuItem[] => {
     const targets = ids
       .map((id) => conversations.find((c) => c.id === id))
@@ -589,11 +644,7 @@ export function Sidebar({
         },
         {
           label: t('sidebar.menu.archiveCount', { count: targets.length }),
-          onSelect: () => {
-            void (async () => {
-              for (const c of targets) await setArchived(c.id, true)
-            })()
-          }
+          onSelect: () => void archiveKeepingList(targets.map((c) => c.id))
         },
         {
           label: t('sidebar.menu.exportCount', { count: targets.length }),
@@ -636,7 +687,7 @@ export function Sidebar({
       },
       {
         label: t('sidebar.menu.archive'),
-        onSelect: () => void setArchived(id, true)
+        onSelect: () => void archiveKeepingList([id])
       },
       { label: t('sidebar.menu.rename'), onSelect: () => beginRename(id) },
       { label: t('sidebar.menu.duplicate'), onSelect: () => void duplicateConversation(id) },
@@ -1325,24 +1376,29 @@ export function Sidebar({
       <UpdateCorner variant="inline" />
 
       {listMode === 'main' && (
-        <div className="sidebar-archive-foot">
+        <div className="sidebar-foot">
           <button
             type="button"
-            className="btn ghost sm sidebar-archive-btn"
-            data-testid="sidebar-archive"
-            title={t('sidebar.archived')}
-            onClick={() => {
-              setSidebarQuery('')
-              setListMode('archive')
-            }}
+            className="btn ghost sm sidebar-foot-connect"
+            data-testid="sidebar-connect"
+            title={
+              connectedDeviceLabels.length > 0
+                ? connectedDeviceLabels.join(' · ')
+                : t('sidebar.connect')
+            }
+            onClick={() => void window.vav.window.openConnect()}
           >
-            <Archive size={13} />
-            <span>{t('sidebar.archived')}</span>
-            {archivedCount > 0 && <span className="sidebar-archive-count">{archivedCount}</span>}
+            <Cable size={13} />
+            <span>
+              {connectedDeviceLabels.length > 0
+                ? connectedDeviceLabels.join(' · ')
+                : t('sidebar.connect')}
+            </span>
           </button>
           <button
             type="button"
             className="btn icon-only sm sidebar-foot-more"
+            data-testid="sidebar-more"
             title={t('sidebar.moreActions')}
             aria-label={t('sidebar.moreActions')}
             onClick={(event) => {
@@ -1352,19 +1408,33 @@ export function Sidebar({
                 [
                   {
                     label: t('sidebar.showFileSessions'),
+                    icon: { kind: 'lucide', key: 'file-sessions' },
                     onSelect: () => {
                       setSidebarQuery('')
                       void selectWorkspaceGroup(null)
                       setListMode('fileSessions')
                     }
                   },
+                  {
+                    label:
+                      archivedCount > 0
+                        ? t('sidebar.archivedCount', { count: archivedCount })
+                        : t('sidebar.archived'),
+                    icon: { kind: 'lucide', key: 'archive' },
+                    onSelect: () => {
+                      setSidebarQuery('')
+                      setListMode('archive')
+                    }
+                  },
                   { label: '', divider: true },
                   {
                     label: t('sidebar.menu.import'),
+                    icon: { kind: 'lucide', key: 'import' },
                     onSelect: () => void importSessions()
                   },
                   {
                     label: t('common.settingsEllipsis'),
+                    icon: { kind: 'lucide', key: 'settings' },
                     onSelect: () => useSessionStore.getState().openSettings()
                   }
                 ],

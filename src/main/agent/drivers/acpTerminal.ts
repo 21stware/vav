@@ -1,7 +1,7 @@
-import { spawn, type ChildProcess } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { isAbsolute } from 'node:path'
 import { RpcErrorCode } from '../../../shared/cliErrors.ts'
+import { localHostProcess, type HostChild, type HostProcess } from '../../host/HostProcess.ts'
 import { AcpRpcError } from './acpFs.ts'
 
 const DEFAULT_OUTPUT_LIMIT = 1_048_576
@@ -19,7 +19,7 @@ export type AcpTerminalSnapshot = {
 
 type LiveTerminal = {
   id: string
-  child: ChildProcess
+  child: HostChild
   chunks: Buffer[]
   bytes: number
   truncated: boolean
@@ -61,6 +61,11 @@ function retainTail(buffer: Buffer, limit: number): { data: Buffer; truncated: b
 
 export class AcpTerminalRegistry {
   private terminals = new Map<string, LiveTerminal>()
+  private hostProcess: HostProcess
+
+  constructor(hostProcess: HostProcess = localHostProcess) {
+    this.hostProcess = hostProcess
+  }
 
   create(params: Record<string, unknown>, fallbackCwd: string): { terminalId: string } {
     const command = typeof params.command === 'string' ? params.command : ''
@@ -75,11 +80,14 @@ export class AcpTerminalRegistry {
         ? Math.floor(params.outputByteLimit)
         : DEFAULT_OUTPUT_LIMIT
     const id = `term_${randomUUID()}`
-    const child = spawn(command, args, {
+    const child = this.hostProcess.spawn(command, args, {
       cwd,
       env: decodeEnv(params.env),
       stdio: ['ignore', 'pipe', 'pipe']
     })
+    if (!child.stdout || !child.stderr) {
+      throw new AcpRpcError(RpcErrorCode.internalError, 'host process is missing piped stdio')
+    }
 
     const live: LiveTerminal = {
       id,

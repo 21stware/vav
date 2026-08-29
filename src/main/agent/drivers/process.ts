@@ -1,5 +1,5 @@
-import { type ChildProcessWithoutNullStreams, spawn } from 'node:child_process'
 import { homedir } from 'node:os'
+import { asHostStdioChild, localHostProcess, type HostProcess } from '../../host/HostProcess.ts'
 import { loginPath } from '../../terminal/loginPath'
 import { unwrapAgentLaunch } from '../../terminal/unwrapAgentLaunch'
 import type { StdioProcess } from './stdioJson'
@@ -11,7 +11,8 @@ export function spawnStdioProcess(
   binary: string,
   args: string[],
   cwd: string,
-  envExtra?: Record<string, string>
+  envExtra?: Record<string, string>,
+  hostProcess: HostProcess = localHostProcess
 ): StdioProcess {
   const env: NodeJS.ProcessEnv = {
     ...process.env,
@@ -26,12 +27,14 @@ export function spawnStdioProcess(
 
   const unwrapped = unwrapAgentLaunch(binary, args)
   Object.assign(env, unwrapped.env)
-  const child = spawn(unwrapped.file, unwrapped.args, {
-    cwd,
-    env,
-    argv0: unwrapped.argv0,
-    stdio: ['pipe', 'pipe', 'pipe']
-  }) as ChildProcessWithoutNullStreams
+  const child = asHostStdioChild(
+    hostProcess.spawn(unwrapped.file, unwrapped.args, {
+      cwd,
+      env,
+      argv0: unwrapped.argv0,
+      stdio: ['pipe', 'pipe', 'pipe']
+    })
+  )
 
   return {
     child,

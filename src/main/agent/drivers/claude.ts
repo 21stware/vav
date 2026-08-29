@@ -81,7 +81,13 @@ export async function startClaudeDriver(
     args.push('--session-id', sessionId)
   }
 
-  const proc = spawnStdioProcess(options.binary, args, options.cwd, options.env)
+  const proc = spawnStdioProcess(
+    options.binary,
+    args,
+    options.cwd,
+    options.env,
+    options.hostProcess
+  )
   return wireClaude(proc, sessionId, options.approvalMode === 'bypass' || options.approvalMode === 'auto', emit)
 }
 

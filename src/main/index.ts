@@ -7,6 +7,7 @@ import {
   globalShortcut,
   ipcMain,
   Menu,
+  nativeImage,
   nativeTheme,
   net,
   protocol,
@@ -21,6 +22,7 @@ import { execFile } from 'node:child_process'
 import {
   existsSync,
   mkdirSync,
+  readdirSync,
   readFileSync,
   realpathSync,
   renameSync,
@@ -28,7 +30,7 @@ import {
   statSync,
   writeFileSync
 } from 'node:fs'
-import { homedir, tmpdir } from 'node:os'
+import { homedir, hostname, tmpdir } from 'node:os'
 import { randomUUID } from 'node:crypto'
 import { APP_NAME, applyBranding, applyDockIcon, loadAppIcon, pinUserDataPath } from './brand'
 import { isE2eRuntime } from './e2eRuntime'
@@ -69,6 +71,36 @@ import { localFileStreamUrl } from '@shared/localFileUrl'
 import { compactionForLeaf } from '@shared/compaction'
 import { hasActiveAgentWork, shouldBlockIdleSleep } from '@shared/sleepBlocker'
 import { createSwarmFinishAlert } from './sound/swarmFinishAlert'
+import { RemoteControlService } from './remote/RemoteControlService'
+import { DaemonAttachService } from './daemon/DaemonAttachService'
+import { isLocalMachine, LOCAL_MACHINE_ID } from '@shared/workspaceHost'
+import type {
+  RemoteConfigure,
+  RemoteControlsEvent,
+  RemoteDirsEvent,
+  RemoteHostEvent,
+  RemoteSession,
+  RemoteThreadEvent
+} from '@shared/remoteControl'
+import { REMOTE_PHONE_CAPABILITIES } from '@shared/remoteControl'
+import {
+  projectRemoteMessages,
+  projectRemotePlan,
+  projectRemoteToolBlock,
+  remoteSessionPreview
+} from '@shared/remoteThread'
+import {
+  remoteBrowseRoots,
+  remoteIsTemporary,
+  remoteParentPath,
+  remotePathAllowed
+} from '@shared/remoteWorkspace'
+import {
+  agentLabel,
+  buildRemoteControls,
+  parseAgentId,
+  parseApprovalMode
+} from '@shared/remoteSessionControls'
 import { parseThinkingLevel } from '@shared/thinkingLevel'
 import { threadPath } from '@shared/thread'
 import { sanitizeSwarmLayout } from '@shared/swarmLayout'
@@ -98,6 +130,7 @@ import {
   normalizeAccountName,
   providerForAgent,
   agentIdOf,
+  isVavProfile,
   DEFAULT_WORKSPACE_KEY,
   resolveSessionAccountId,
   sessionShowsHostQuota,
@@ -108,15 +141,19 @@ import { ANALYSIS_API_HOST } from '@shared/analysis'
 import {
   agentModelHostKey,
   defaultModelForChatHost,
+  filterEnabledModels,
   labelForChatModel,
+  modelsForChatHost,
   resolveModelForChatHost
 } from '@shared/agentModels'
+import { collapseCursorListModels, normalizeCursorConversationModel } from '@shared/cursorModel'
 import { groupAccountsByVendor, isLlmVendorId, vendorById, vendorIdFromEndpoint } from '@shared/llmVendors'
 import { ConversationStore } from './store/ConversationStore'
 import { VavPackService } from './store/VavPackService'
 import { FileSessionStore } from './store/FileSessionStore'
 import { SwarmHistoryStore } from './store/SwarmHistoryStore'
 import { FileService } from './fs/FileService'
+import { HostRegistry } from './host'
 import { isClipPath, writeClip, writeClipBytes } from './fs/clipStore'
 import { writePngToClipboard } from './clipboardImage'
 import { createScreenshotController } from './screenshot/ScreenshotSession'
@@ -332,6 +369,7 @@ protocol.registerSchemesAsPrivileged([
 
 let mainWindow: BrowserWindow | null = null
 let settingsWindow: BrowserWindow | null = null
+let connectWindow: BrowserWindow | null = null
 let tokenUsageWindow: BrowserWindow | null = null
 let providerAccountWindow: BrowserWindow | null = null
 /** Last BrowserWindow that held focus — Dock activate raises this, not always main. */
@@ -418,9 +456,14 @@ const fileSessionStore = new FileSessionStore()
 
 const fileAssociationService = new FileAssociationService()
 const workingCopyService = new WorkingCopyService()
-const fileService = new FileService((conversationId, dirs) => {
-  sendToWorkspaceWindows(IPC.filesDirty, { conversationId, dirs }, conversationId)
-})
+const hostRegistry = new HostRegistry()
+const fileService = new FileService(
+  (conversationId, dirs) => {
+    sendToWorkspaceWindows(IPC.filesDirty, { conversationId, dirs }, conversationId)
+  },
+  hostRegistry.local().fs,
+  (conversationId) => hostRegistry.hostFor(conversationStore.get(conversationId)?.machineId).fs
+)
 fileService.workingCopies = workingCopyService
 workingCopyService.onCopyChanged = (realPath) => {
   sendToWorkspaceWindows(IPC.agentEvent, {
@@ -467,7 +510,8 @@ const ptyManager = new PtyManager(
       createdAt: target.createdAt,
       lastDataAt: target.lastDataAt
     })
-  }
+  },
+  (conversationId) => hostRegistry.hostFor(conversationStore.get(conversationId)?.machineId).pty
 )
 liveAgentPanes.list = () =>
   ptyManager
@@ -929,6 +973,15 @@ function refreshTraySessions(): void {
       doneCount
     )
     broadcast(IPC.activityChanged, collapseTrayActivity(panes))
+    remoteSessionStatus.clear()
+    for (const pane of panes) {
+      const status = pane.status === 'done' ? 'done' : 'running'
+      // A conversation with any running pane counts as running.
+      if (remoteSessionStatus.get(pane.conversationId) === 'running') continue
+      remoteSessionStatus.set(pane.conversationId, status)
+    }
+    remoteControl.schedulePushSessions()
+    flushRemoteSends()
   } finally {
     syncSleepBlocker()
   }
@@ -970,6 +1023,7 @@ function rebuildAppChrome(): void {
 }
 
 function handleAgentEvent(event: TurnEvent): void {
+  fanRemoteTurn(event)
   sendToWorkspaceWindows(IPC.agentEvent, event, event.conversationId)
   const conversation = conversationStore.get(event.conversationId)
   const title = conversation?.title ?? t('window.sessionFallback')
@@ -1077,6 +1131,44 @@ function handleAgentEvent(event: TurnEvent): void {
   }
 }
 
+function fanRemoteTurn(event: TurnEvent): void {
+  const locale = currentLocale()
+  switch (event.type) {
+    case 'start':
+      remoteControl.beginLive(event.conversationId)
+      return
+    case 'delta':
+      if (event.kind === 'text' || event.kind === 'reasoning') {
+        remoteControl.appendLive(event.conversationId, event.index, event.kind, event.text)
+      }
+      return
+    case 'tool':
+      remoteControl.setLiveBlock(
+        event.conversationId,
+        event.index,
+        projectRemoteToolBlock(event.block, locale)
+      )
+      return
+    case 'plan':
+      remoteControl.setLiveBlock(event.conversationId, event.index, projectRemotePlan(event.block))
+      return
+    case 'awaiting': {
+      const block = projectRemoteToolBlock(event.block, locale)
+      remoteControl.setLiveBlock(event.conversationId, event.index, block)
+      return
+    }
+    case 'end':
+      remoteControl.finishTurn(
+        event.conversationId,
+        event.cancelled ? 'cancelled' : event.error ? 'error' : 'done',
+        event.error
+      )
+      return
+    default:
+      return
+  }
+}
+
 const changeSetStore = new ChangeSetStore()
 changeSetStore.workingCopies = workingCopyService
 const updateService = new UpdateService()
@@ -1132,6 +1224,7 @@ const agent = new AgentRuntime({
       secretStore
     ),
   files: fileService,
+  hosts: hostRegistry,
   changeSets: changeSetStore,
   retrieval: documentRetrieval,
   duckdb,
@@ -1152,7 +1245,9 @@ const cliHost = new CliAgentHost({
   settings: settingsStore,
   changeSets: changeSetStore,
   files: fileService,
+  hosts: hostRegistry,
   emit: handleAgentEvent,
+  publish: () => publishConversations(),
   logicalPath: (path) => workingCopyService.logicalPath(path),
   quota: {
     get: (host) => quotaService.get(host),
@@ -1166,6 +1261,442 @@ setInterval(() => cliHost.reapIdle(), 5 * 60_000)
 function agentFor(conversationId: string): 'builtin' | 'cli' {
   return cliHost.owns(conversationId) ? 'cli' : 'builtin'
 }
+
+// --- remote control (tailcat tunnel — foreground-realtime phone companion) ---
+
+/** Tray-derived per-conversation activity, reused for the remote session list. */
+const remoteSessionStatus = new Map<string, 'running' | 'done'>()
+
+function listRemoteSessions(): RemoteSession[] {
+  return conversationStore
+    .all()
+    .filter((c) => !c.archived && !c.fileId && !c.swarmParentId)
+    .sort((a, b) => b.updatedAt - a.updatedAt)
+    .slice(0, 30)
+    .map((c) => ({
+      id: c.id,
+      title: (c.title && c.title.trim()) || t('window.sessionFallback'),
+      dirLabel: trayDirLabel(c.workingDirectory),
+      status: remoteSessionStatus.get(c.id) ?? (c.resultUnseen ? 'done' : 'idle'),
+      surface: agentFor(c.id) === 'cli' ? ('cli' as const) : ('vav' as const),
+      updatedAt: c.updatedAt,
+      preview: remoteSessionPreview(threadPath(c.messages, c.activeLeafId)),
+      workdir: c.workingDirectory ?? undefined,
+      temporary: remoteIsTemporary(c.workingDirectory, tmpdir())
+    }))
+}
+
+/** Phone `create` — same defaults as desktop New Session. */
+function createRemoteSession(): RemoteSession {
+  const workdir = resolveNewWorkdir()
+  const settings = settingsStore.get()
+  if (workdir) {
+    settingsStore.rememberWorkspaceDirectory(workdir, tmpdir())
+    broadcast(IPC.settingsChanged, currentSettings())
+  }
+  const defaultHost = resolveDefaultChatHost(settings.defaultAgentId)
+  const conversation = conversationStore.create(
+    workdir,
+    modelForNewConversation(defaultHost),
+    {
+      approvalMode: settings.defaultApprovalMode ?? 'auto',
+      thinkingLevel: parseThinkingLevel(settings.defaultThinkingLevel),
+      cliHost: defaultHost,
+      accountId: accountIdForSession(workdir, defaultHost),
+      machineId: LOCAL_MACHINE_ID
+    }
+  )
+  if (defaultHost) promoteEphemeralConversation(conversation.id)
+  lastSeenConversationId = conversation.id
+  publishConversations()
+  return (
+    listRemoteSessions().find((session) => session.id === conversation.id) ?? {
+      id: conversation.id,
+      title: (conversation.title && conversation.title.trim()) || t('window.sessionFallback'),
+      dirLabel: trayDirLabel(conversation.workingDirectory),
+      status: 'idle',
+      surface: defaultHost ? 'cli' : 'vav',
+      updatedAt: conversation.updatedAt
+    }
+  )
+}
+
+function listRemoteThread(conversationId: string): RemoteThreadEvent | null {
+  const conversation = conversationStore.get(conversationId)
+  if (!conversation || conversation.archived) return null
+  return {
+    type: 'thread',
+    conversationId,
+    messages: projectRemoteMessages(
+      threadPath(conversation.messages, conversation.activeLeafId),
+      currentLocale()
+    )
+  }
+}
+
+function listRemoteHost(): RemoteHostEvent {
+  const settings = settingsStore.get()
+  const defaultHost = resolveDefaultChatHost(settings.defaultAgentId)
+  const approval =
+    settings.defaultApprovalMode === 'bypass' || settings.defaultApprovalMode === 'edit'
+      ? settings.defaultApprovalMode
+      : 'auto'
+  const seen = new Set<string>()
+  const recentDirs: { path: string; label: string }[] = []
+  for (const path of [
+    ...(settings.pinnedWorkspaceDirectories ?? []),
+    ...(settings.recentWorkspaceDirectories ?? [])
+  ]) {
+    if (!path || seen.has(path) || !existsSync(path)) continue
+    seen.add(path)
+    recentDirs.push({ path, label: trayDirLabel(path) })
+    if (recentDirs.length >= 12) break
+  }
+  return {
+    type: 'host',
+    name: hostname(),
+    home: homedir(),
+    tmp: tmpdir(),
+    platform: process.platform,
+    capabilities: REMOTE_PHONE_CAPABILITIES,
+    defaults: {
+      agent: defaultHost ?? 'vav',
+      model: settings.defaultModel ?? '',
+      thinking: parseThinkingLevel(settings.defaultThinkingLevel),
+      approval
+    },
+    recentDirs
+  }
+}
+
+function remoteRootsFor(conversationId: string): string[] | null {
+  const conversation = conversationStore.get(conversationId)
+  if (!conversation || conversation.archived) return null
+  const settings = settingsStore.get()
+  return remoteBrowseRoots({
+    home: homedir(),
+    tmp: tmpdir(),
+    current: conversation.workingDirectory,
+    recent: [
+      ...(settings.pinnedWorkspaceDirectories ?? []),
+      ...(settings.recentWorkspaceDirectories ?? [])
+    ]
+  })
+}
+
+function browseRemoteDirs(conversationId: string, path?: string): RemoteDirsEvent | 'not-found' | 'forbidden' {
+  const roots = remoteRootsFor(conversationId)
+  if (!roots) return 'not-found'
+  if (!path) {
+    const seen = new Set<string>()
+    const entries: { name: string; path: string }[] = []
+    for (const root of roots) {
+      if (!existsSync(root) || seen.has(root)) continue
+      seen.add(root)
+      entries.push({ name: trayDirLabel(root), path: root })
+    }
+    return { type: 'dirs', conversationId, path: '', parent: null, entries }
+  }
+  if (!remotePathAllowed(path, roots)) return 'forbidden'
+  let entries: { name: string; path: string }[] = []
+  try {
+    const dirents = readdirSync(path, { withFileTypes: true })
+    for (const dirent of dirents) {
+      if (!dirent.isDirectory() && !dirent.isSymbolicLink()) continue
+      if (dirent.name.startsWith('.')) continue
+      const child = join(path, dirent.name)
+      entries.push({ name: dirent.name, path: child })
+      if (entries.length >= 200) break
+    }
+    entries.sort((a, b) => a.name.localeCompare(b.name))
+  } catch {
+    return 'forbidden'
+  }
+  return {
+    type: 'dirs',
+    conversationId,
+    path,
+    parent: remoteParentPath(path, roots),
+    entries
+  }
+}
+
+function setRemoteWorkspace(
+  conversationId: string,
+  path: string | null
+): 'ok' | 'not-found' | 'archived' | 'forbidden' {
+  const conversation = conversationStore.get(conversationId)
+  if (!conversation) return 'not-found'
+  if (conversation.archived) return 'archived'
+  if (!path) {
+    applyWorkingDirectory(conversationId, mintTempWorkdir())
+    return 'ok'
+  }
+  const roots = remoteRootsFor(conversationId)
+  if (!roots || !remotePathAllowed(path, roots) || !existsSync(path)) return 'forbidden'
+  applyWorkingDirectory(conversationId, path)
+  return 'ok'
+}
+
+function cancelRemote(conversationId: string): 'ok' | 'not-found' | 'archived' {
+  const conversation = conversationStore.get(conversationId)
+  if (!conversation) return 'not-found'
+  if (conversation.archived) return 'archived'
+  if (agentFor(conversationId) === 'cli') cliHost.cancel(conversationId)
+  else agent.cancel(conversationId)
+  return 'ok'
+}
+
+function replyRemote(conversationId: string, toolCallId: string, answer: string): boolean {
+  if (cliHost.answer(conversationId, toolCallId, answer)) return true
+  return agent.answer(conversationId, toolCallId, answer)
+}
+
+function renameRemote(conversationId: string, title: string): 'ok' | 'not-found' | 'archived' {
+  const conversation = conversationStore.get(conversationId)
+  if (!conversation) return 'not-found'
+  if (conversation.archived) return 'archived'
+  conversationStore.updateMeta(conversationId, { title: title.trim() || t('common.untitledSession') })
+  publishConversations()
+  return 'ok'
+}
+
+function archiveRemote(conversationId: string): 'ok' | 'not-found' {
+  const conversation = conversationStore.get(conversationId)
+  if (!conversation) return 'not-found'
+  void agent.cancel(conversationId)
+  cliHost.cancel(conversationId)
+  conversationStore.setArchived(conversationId, true)
+  publishConversations()
+  return 'ok'
+}
+
+function remoteCatalogModels(host: CliHostKind | null, accountId?: string | null): { id: string; label: string }[] {
+  const settings = settingsStore.get()
+  const vendorId = host == null ? vendorIdFromEndpoint(settings.apiEndpoint) : null
+  const key = agentModelHostKey(host, vendorId, accountId)
+  const snap = getModelCatalogSnapshot()
+  const raw =
+    snap[key]?.models?.length ? snap[key]!.models : modelsForChatHost(host, settings.customModels, settings.defaultModel)
+  const listed = host === 'cursor' ? collapseCursorListModels(raw) : raw
+  return filterEnabledModels(host, listed, settings.disabledAgentModels, vendorId, accountId).map((model) => ({
+    id: model.id,
+    label: labelForChatModel(host, model.id, settings.customModels, listed)
+  }))
+}
+
+function listRemoteControls(conversationId: string): RemoteControlsEvent | null {
+  const conversation = conversationStore.get(conversationId)
+  if (!conversation || conversation.archived) return null
+  const host = conversation.cliHost ?? null
+  const settings = settingsStore.get()
+  const agents = enabledCliAgents(settings.cliAgents)
+    .filter((agent) => isStructuredCliHost(agent.id))
+    .map((agent) => ({
+      id: agent.id,
+      label: agent.name?.trim() || agentLabel(agent.id)
+    }))
+  const models = remoteCatalogModels(host, conversation.accountId)
+  const catalogueDefault =
+    host === 'cursor'
+      ? (getModelCatalogSnapshot()[agentModelHostKey('cursor')]?.models ?? []).find(
+          (model) => model.id === conversation.model
+        )?.defaultThinkingLevel ?? null
+      : null
+  return buildRemoteControls({
+    conversationId,
+    cliHost: host,
+    model: conversation.model,
+    thinkingLevel: conversation.thinkingLevel,
+    approvalMode: conversation.approvalMode,
+    acpSession: conversation.acpSession,
+    hasMessages: conversation.messages.length > 0,
+    agents,
+    models,
+    catalogueDefaultThinking: catalogueDefault,
+    workingDirectory: conversation.workingDirectory,
+    dirLabel: trayDirLabel(conversation.workingDirectory),
+    temporary: remoteIsTemporary(conversation.workingDirectory, tmpdir()),
+    fast: conversation.fast === true
+  })
+}
+
+function configureRemote(message: RemoteConfigure): 'ok' | 'not-found' | 'archived' | 'locked' {
+  const conversation = conversationStore.get(message.conversationId)
+  if (!conversation) return 'not-found'
+  if (conversation.archived) return 'archived'
+  const id = message.conversationId
+
+  if (message.agent !== undefined) {
+    const parsed = parseAgentId(message.agent)
+    if (!parsed) return 'not-found'
+    const nextHost = parsed === 'vav' ? null : parsed
+    const prevHost = conversation.cliHost ?? null
+    if (prevHost !== nextHost) {
+      if (conversation.messages.length > 0) return 'locked'
+      agent.disposeConversation(id)
+      cliHost.dispose(id)
+      changeSetStore.clearConversation(id)
+      conversationStore.switchHostTranscript(id, nextHost)
+      conversationStore.updateMeta(id, {
+        accountId: accountIdForSession(conversation.workingDirectory ?? null, nextHost)
+      })
+      swarmSession.syncHostCursor(id, nextHost)
+      coerceConversationModel(id)
+      if (nextHost) promoteEphemeralConversation(id)
+    }
+  }
+
+  if (message.model !== undefined) {
+    const latest = conversationStore.get(id)
+    const host = (latest?.cliHost ?? null) as CliHostKind | null
+    const creds = resolveVavCredentials(
+      { conversation: latest, settingsEndpoint: settingsStore.get().apiEndpoint },
+      accountStore,
+      secretStore
+    )
+    const vendorId = host == null ? vendorIdFromEndpoint(creds.endpoint) : null
+    conversationStore.updateMeta(id, {
+      model: message.model,
+      tokenLimit: contextWindowForModel(host, message.model, undefined, vendorId, creds.accountId)
+    })
+    if (cliHost.owns(id)) cliHost.applyModel(id, message.model)
+  }
+
+  if (message.thinkingLevel !== undefined) {
+    conversationStore.setThinkingLevel(id, parseThinkingLevel(message.thinkingLevel))
+    if (cliHost.owns(id)) cliHost.applyThinkingLevel(id)
+  }
+
+  if (message.approvalMode !== undefined) {
+    const mode = parseApprovalMode(message.approvalMode)
+    if (mode) conversationStore.setApprovalMode(id, mode)
+  }
+
+  if (message.mode !== undefined && message.mode.trim()) {
+    const latest = conversationStore.get(id)
+    const config = latest?.acpSession?.configOptions?.find((option) => option.category === 'mode')
+    if (config) cliHost.applySessionConfig(id, config.id, message.mode.trim())
+    else cliHost.applySessionMode(id, message.mode.trim())
+  }
+
+  if (message.fast !== undefined) {
+    conversationStore.setFast(id, message.fast === true)
+    if (cliHost.owns(id)) cliHost.applyFast(id)
+  }
+
+  publishConversations()
+  pushTokenUsageIfOpen(id)
+  return 'ok'
+}
+
+function refreshRemoteControls(conversationId: string): void {
+  const conversation = conversationStore.get(conversationId)
+  if (!conversation || conversation.archived) return
+  void listHostModels(conversation.cliHost ?? null, settingsStore, vavModelListOptions()).then(() => {
+    const controls = listRemoteControls(conversationId)
+    if (controls) remoteControl.pushControls(controls)
+  })
+}
+
+const REMOTE_SEND_QUEUE_MAX = 20
+const pendingRemoteSends = new Map<string, { text: string; attachments: string[] }[]>()
+
+function remoteTurnBusy(conversationId: string): boolean {
+  return agentFor(conversationId) === 'cli'
+    ? cliHost.isRunning(conversationId)
+    : agent.isRunning(conversationId)
+}
+
+function startRemoteTurn(conversationId: string, text: string, attachments: string[]): void {
+  if (agentFor(conversationId) === 'cli') {
+    void cliHost.run(conversationId, text, attachments, null, null, null)
+  } else {
+    void agent.run(conversationId, text, attachments, null, null, null)
+  }
+}
+
+function flushRemoteSends(): void {
+  for (const [conversationId, queue] of pendingRemoteSends) {
+    if (!queue.length || remoteTurnBusy(conversationId)) continue
+    const next = queue.shift()
+    if (!queue.length) pendingRemoteSends.delete(conversationId)
+    if (next) startRemoteTurn(conversationId, next.text, next.attachments)
+  }
+}
+
+/** Same entry path as the renderer's agentSend — remote text is a plain turn. */
+function remoteSendMessage(
+  conversationId: string,
+  text: string,
+  attachments: string[] = []
+): 'ok' | 'not-found' | 'archived' {
+  const conversation = conversationStore.get(conversationId)
+  if (!conversation) return 'not-found'
+  if (conversation.archived) return 'archived'
+  if (remoteTurnBusy(conversationId)) {
+    const queue = pendingRemoteSends.get(conversationId) ?? []
+    if (queue.length >= REMOTE_SEND_QUEUE_MAX) return 'ok'
+    queue.push({ text, attachments })
+    pendingRemoteSends.set(conversationId, queue)
+    return 'ok'
+  }
+  startRemoteTurn(conversationId, text, attachments)
+  return 'ok'
+}
+
+const remoteControl = new RemoteControlService({
+  enabled: () => settingsStore.get().remoteControlEnabled === true,
+  appVersion: app.getVersion(),
+  listSessions: listRemoteSessions,
+  listThread: listRemoteThread,
+  listControls: (conversationId) => {
+    const controls = listRemoteControls(conversationId)
+    if (controls) refreshRemoteControls(conversationId)
+    return controls
+  },
+  listHost: listRemoteHost,
+  configure: configureRemote,
+  sendMessage: remoteSendMessage,
+  createSession: createRemoteSession,
+  cancel: cancelRemote,
+  reply: replyRemote,
+  rename: renameRemote,
+  archive: archiveRemote,
+  browse: browseRemoteDirs,
+  setWorkspace: setRemoteWorkspace,
+  onStatusChange: (status) => {
+    // Sidebar (main window) shows connected device names; settings + connect
+    // windows render the full pairing UI.
+    for (const win of [mainWindow, settingsWindow, connectWindow]) {
+      if (win && !win.isDestroyed()) safeSend(win.webContents, IPC.remoteControlChanged, status)
+    }
+  },
+  onDaemonSocket: (socket, leftover) => daemonAttach.adoptAuthedSocket(socket, leftover)
+})
+
+const daemonAttach = new DaemonAttachService({
+  userData: app.getPath('userData'),
+  registry: hostRegistry,
+  secret: () => remoteControl.pairingSecret(),
+  appVersion: app.getVersion(),
+  enabled: () => settingsStore.get().remoteControlEnabled === true,
+  tailcatToken: () => remoteControl.tunnelToken(),
+  onHostsChanged: (hosts) => broadcast(IPC.hostsChanged, hosts),
+  onDiscovered: (peers) => {
+    if (settingsWindow && !settingsWindow.isDestroyed()) {
+      safeSend(settingsWindow.webContents, IPC.hostsDiscoveredChanged, peers)
+    }
+    if (connectWindow && !connectWindow.isDestroyed()) {
+      safeSend(connectWindow.webContents, IPC.hostsDiscoveredChanged, peers)
+    }
+  }
+})
+
+hostRegistry.onChange((hosts) => broadcast(IPC.hostsChanged, hosts))
+
+notifications.onAlert = (kind, conversationId, title, body) =>
+  remoteControl.notifyRemote(kind, conversationId, title, body)
 
 /** IPC to a renderer that may already be tearing down (close / HMR / pkill). */
 function safeSend(contents: Electron.WebContents | null | undefined, channel: string, payload?: unknown): void {
@@ -1184,6 +1715,7 @@ function isAuxiliaryWindow(window: BrowserWindow): boolean {
   // Settings and the warm token-usage panel never host PTYs / file trees /
   // streaming transcripts — skip them on the hot path.
   if (settingsWindow && !settingsWindow.isDestroyed() && window === settingsWindow) return true
+  if (connectWindow && !connectWindow.isDestroyed() && window === connectWindow) return true
   if (tokenUsageWindow && !tokenUsageWindow.isDestroyed() && window === tokenUsageWindow) return true
   if (providerAccountWindow && !providerAccountWindow.isDestroyed() && window === providerAccountWindow) {
     return true
@@ -1250,6 +1782,11 @@ function sendMenuCommand(command: MenuCommand): void {
   if (target === settingsWindow) {
     // Settings runs a light renderer with no menu-command router; ⌘W still closes it.
     if (command === 'close-context') hideSettingsWindow()
+    return
+  }
+  if (target === connectWindow) {
+    // Same deal as Settings: light renderer, ⌘W hides the popup.
+    if (command === 'close-context') hideConnectWindow()
     return
   }
   if (command === 'close-context' && isAppClipBrowserWindow(target)) {
@@ -2188,6 +2725,64 @@ function hideSettingsWindow(): void {
 function warmSettingsWindow(): void {
   if (settingsWindow && !settingsWindow.isDestroyed()) return
   ensureSettingsWindow('appearance', false)
+}
+
+/**
+ * Small pairing popup from the sidebar Connect button: phone QR + vavd
+ * machines, nothing else. Same hide-on-close warmth as Settings.
+ */
+function openConnectWindow(): void {
+  if (connectWindow && !connectWindow.isDestroyed()) {
+    void revealBrowserWindow(connectWindow)
+    return
+  }
+
+  connectWindow = new BrowserWindow({
+    width: 460,
+    height: 640,
+    minWidth: 400,
+    minHeight: 480,
+    show: false,
+    paintWhenInitiallyHidden: true,
+    title: t('app.connectWindowTitle'),
+    icon: loadAppIcon(),
+    ...chrome(TOOLBAR_HEIGHT),
+    minimizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    webPreferences: rendererPrefs()
+  })
+  applyMenuBar(connectWindow)
+  applyTrafficLights(connectWindow)
+
+  connectWindow.on('close', (event) => {
+    if (quitting) return
+    event.preventDefault()
+    if (connectWindow && !connectWindow.isDestroyed()) connectWindow.hide()
+  })
+  connectWindow.on('closed', () => {
+    connectWindow = null
+  })
+
+  wireExternalLinks(connectWindow.webContents)
+
+  if (!app.isPackaged) {
+    connectWindow.webContents.on('console-message', (event) => {
+      console.log(`[connect:${event.level}] ${event.message}`)
+    })
+  }
+
+  connectWindow.once('ready-to-show', () => {
+    if (connectWindow && !connectWindow.isDestroyed()) {
+      void revealBrowserWindow(connectWindow)
+    }
+  })
+  loadRenderer(connectWindow, { view: 'connect' })
+}
+
+/** Hide (don't destroy) so the next open is instant. */
+function hideConnectWindow(): void {
+  if (connectWindow && !connectWindow.isDestroyed()) connectWindow.hide()
 }
 
 /**
@@ -3494,11 +4089,19 @@ function coerceConversationModel(conversationId: string): string | null {
     catalogue,
     vendorId
   })
+  const patch: { model?: string; tokenLimit?: number; fast?: boolean } = {}
+  if (host === 'cursor' && conversation.model) {
+    const normalized = normalizeCursorConversationModel(conversation.model)
+    if (normalized.migrated && normalized.fast === true && conversation.fast !== true) {
+      patch.fast = true
+    }
+  }
   if (resolved !== conversation.model) {
-    conversationStore.updateMeta(conversationId, {
-      model: resolved,
-      tokenLimit: contextWindowForModel(host, resolved, undefined, vendorId, creds.accountId)
-    })
+    patch.model = resolved
+    patch.tokenLimit = contextWindowForModel(host, resolved, undefined, vendorId, creds.accountId)
+  }
+  if (Object.keys(patch).length > 0) {
+    conversationStore.updateMeta(conversationId, patch)
     // Keep sidebar / composer meta in sync when healing a foreign model id.
     publishConversations()
   }
@@ -4592,6 +5195,19 @@ function popupNativeMenu(
       setImmediate(() => resolve(chosen))
     }
 
+    const iconFor = (item: NativeMenuItem): Electron.NativeImage | undefined => {
+      if (!item.icon) return undefined
+      // Renderer rasterizes 32px for the 16pt slot — declare the 2x scale or
+      // AppKit would size the image at 32pt and blow up the row.
+      const image = nativeImage.createEmpty()
+      image.addRepresentation({ scaleFactor: 2, dataURL: item.icon })
+      if (image.isEmpty()) return undefined
+      // Template: macOS tints from the alpha channel — follows menu appearance
+      // and highlight (white on accent) like a checkmark. No-op elsewhere.
+      if (item.iconTemplate) image.setTemplateImage(true)
+      return image
+    }
+
     // Use `radio` (not `checkbox`) for exclusive picks like model / approval mode.
     // Checkbox groups on AppKit often fail to fire click for non-checked rows.
     const toTemplate = (rows: NativeMenuItem[]): Electron.MenuItemConstructorOptions[] =>
@@ -4609,6 +5225,7 @@ function popupNativeMenu(
             type: 'submenu',
             label: item.label ?? '',
             enabled: item.enabled !== false,
+            icon: iconFor(item),
             submenu: toTemplate(item.submenu)
           }
         }
@@ -4618,6 +5235,7 @@ function popupNativeMenu(
           enabled: item.enabled !== false,
           type: hasCheck ? 'radio' : 'normal',
           checked: hasCheck ? !!item.checked : undefined,
+          icon: iconFor(item),
           click: () => {
             chosen = item.id ?? null
           }
@@ -5210,6 +5828,28 @@ function mintTempWorkdir(): string {
   return dir
 }
 
+function applyWorkingDirectory(
+  id: string,
+  path: string,
+  machineId?: string | null
+): ReturnType<typeof conversationStore.listMeta> {
+  const prev = conversationStore.get(id)?.workingDirectory ?? null
+  conversationStore.updateMeta(id, {
+    workingDirectory: path,
+    ...(machineId !== undefined && machineId !== null ? { machineId } : {})
+  })
+  agent.setWorkingDirectory(id, path)
+  if (prev !== path) {
+    cliHost.setWorkingDirectory(id, path, prev)
+    swarmSession.clearForConversation(id)
+  }
+  fileService.watchRoot(id, path)
+  settingsStore.rememberWorkspaceDirectory(path, tmpdir())
+  broadcast(IPC.settingsChanged, currentSettings())
+  publishConversations()
+  return conversationStore.listMeta()
+}
+
 /** Empty default workdir mints a Temporary Workspace folder (README §2.5). */
 function resolveNewWorkdir(): string {
   const configured = settingsStore.get().defaultWorkingDirectory.trim()
@@ -5678,6 +6318,7 @@ function registerIpc(): void {
       platform: PLATFORM,
       home: app.getPath('home'),
       tmp: tmpdir(),
+      hosts: hostRegistry.list(),
       about: {
         version: app.getVersion(),
         buildNumber: appBuildNumber(),
@@ -5717,6 +6358,10 @@ function registerIpc(): void {
     }
     if (patch.keepAwakeWhileAgentRunning !== undefined) {
       syncSleepBlocker()
+    }
+    if (patch.remoteControlEnabled !== undefined) {
+      remoteControl.applySettings()
+      daemonAttach.applySettings()
     }
     if (patch.windowVibrancyEnabled !== undefined) {
       syncVibrancyShellWindows()
@@ -5899,8 +6544,7 @@ return c as text`
     }
     return false
   }
-  const vavAccounts = () =>
-    accountStore.listAll().filter((account) => agentIdOf(account) === 'vav')
+  const vavAccounts = () => accountStore.listAll().filter(isVavProfile)
 
   const accountForBalanceHost = (hostKey: string) => {
     const rows = vavAccounts()
@@ -5935,9 +6579,10 @@ return c as text`
     return { supported: true, balance, keyPresent: true }
   }
   const analysisVendors = (): { id: string; name: string }[] =>
-    groupAccountsByVendor(
-      accountStore.listAll().filter((account) => agentIdOf(account) === 'vav')
-    ).map((row) => ({ id: row.vendor.id, name: row.vendor.name }))
+    groupAccountsByVendor(accountStore.listAll().filter(isVavProfile)).map((row) => ({
+      id: row.vendor.id,
+      name: row.vendor.name
+    }))
 
   const analysisUsageOptions = (): {
     remapHost: (hostKey: string, accountId?: string | null) => string
@@ -6317,7 +6962,12 @@ return c as text`
     IPC.convCreate,
     (
       _event,
-      options?: { workingDirectory?: string | null; model?: string; swarmParentId?: string | null }
+      options?: {
+        workingDirectory?: string | null
+        model?: string
+        swarmParentId?: string | null
+        machineId?: string | null
+      }
     ): ConversationMeta => {
       const workdir =
         options && 'workingDirectory' in options
@@ -6338,7 +6988,8 @@ return c as text`
           thinkingLevel: parseThinkingLevel(settings.defaultThinkingLevel),
           cliHost: defaultHost,
           accountId: accountIdForSession(workdir, defaultHost),
-          swarmParentId: options?.swarmParentId ?? null
+          swarmParentId: options?.swarmParentId ?? null,
+          machineId: options?.machineId ?? LOCAL_MACHINE_ID
         }
       )
       if (defaultHost) promoteEphemeralConversation(conversation.id)
@@ -6390,6 +7041,14 @@ return c as text`
 
   ipcMain.handle(IPC.convSetThinkingLevel, (_event, id: string, level: string) => {
     conversationStore.setThinkingLevel(id, parseThinkingLevel(level))
+    if (cliHost.owns(id)) cliHost.applyThinkingLevel(id)
+    publishConversations()
+    return conversationStore.listMeta()
+  })
+
+  ipcMain.handle(IPC.convSetFast, (_event, id: string, fast: boolean) => {
+    conversationStore.setFast(id, fast === true)
+    if (cliHost.owns(id)) cliHost.applyFast(id)
     publishConversations()
     return conversationStore.listMeta()
   })
@@ -6583,24 +7242,8 @@ return c as text`
     return loadHostAccountQuota(conversation, host)
   })
 
-  const applyWorkingDirectory = (id: string, path: string): ConversationMeta[] => {
-    const prev = conversationStore.get(id)?.workingDirectory ?? null
-    conversationStore.updateMeta(id, { workingDirectory: path })
-    agent.setWorkingDirectory(id, path)
-    // Live CLI drivers + resume cursors are bound to the old root.
-    if (prev !== path) {
-      cliHost.setWorkingDirectory(id, path, prev)
-      swarmSession.clearForConversation(id)
-    }
-    fileService.watchRoot(id, path)
-    settingsStore.rememberWorkspaceDirectory(path, tmpdir())
-    broadcast(IPC.settingsChanged, currentSettings())
-    publishConversations()
-    return conversationStore.listMeta()
-  }
-
-  ipcMain.handle(IPC.convSetWorkdir, (_event, id: string, path: string) =>
-    applyWorkingDirectory(id, path)
+  ipcMain.handle(IPC.convSetWorkdir, (_event, id: string, path: string, machineId?: string | null) =>
+    applyWorkingDirectory(id, path, machineId)
   )
 
   ipcMain.handle(IPC.convPickWorkdir, async (_event, id: string) => {
@@ -6829,8 +7472,8 @@ return c as text`
   // --- files ---
   ipcMain.handle(
     IPC.filesList,
-    (_event, path: string, sort: FileSortKey, ascending: boolean) =>
-      fileService.listDirectory(path, sort, ascending)
+    (_event, path: string, sort: FileSortKey, ascending: boolean, conversationId?: string) =>
+      fileService.listDirectory(path, sort, ascending, conversationId)
   )
   ipcMain.handle(IPC.filesRead, (_event, path: string) => fileService.readTextFile(path))
   ipcMain.handle(
@@ -7319,6 +7962,8 @@ return c as text`
   )
   ipcMain.handle(IPC.settingsDesiredView, () => settingsDesiredView)
   ipcMain.handle(IPC.windowCloseSettings, () => hideSettingsWindow())
+  ipcMain.handle(IPC.windowOpenConnect, () => openConnectWindow())
+  ipcMain.handle(IPC.windowCloseConnect, () => hideConnectWindow())
 
   ipcMain.handle(IPC.windowOpenSession, async (_event, id: string) => {
     // Must not return BrowserWindow — structured clone can't send it over IPC.
@@ -7402,6 +8047,39 @@ return c as text`
     app.exit(0)
   })
   ipcMain.handle(IPC.notificationsPermission, () => notifications.permissionStatus())
+  ipcMain.handle(IPC.remoteControlStatus, () => remoteControl.status())
+  ipcMain.handle(IPC.remoteControlRegenerateSecret, () => remoteControl.regenerateSecret())
+  ipcMain.handle(IPC.remoteControlResetIdentity, () => remoteControl.resetIdentity())
+  ipcMain.handle(IPC.hostsList, () => hostRegistry.list())
+  ipcMain.handle(IPC.hostsPairing, () => daemonAttach.pairing())
+  ipcMain.handle(IPC.hostsPair, (_event, payload: string) => daemonAttach.pair(String(payload || '')))
+  ipcMain.handle(IPC.hostsForget, (_event, machineId: string) => {
+    daemonAttach.forget(String(machineId || ''))
+  })
+  ipcMain.handle(IPC.hostsDiscovered, () => daemonAttach.listDiscovered())
+  ipcMain.handle(IPC.hostsHome, (_event, machineId: string) => {
+    if (isLocalMachine(machineId)) return homedir()
+    return daemonAttach.homeOf(machineId)
+  })
+  ipcMain.handle(IPC.hostsListDir, async (_event, machineId: string, path: string) => {
+    const host = hostRegistry.hostFor(machineId)
+    try {
+      const dirents = await host.fs.readdir(path)
+      const entries = dirents
+        .filter((d) => d.isDirectory())
+        .map((d) => ({
+          name: d.name,
+          path: join(path, d.name),
+          isDirectory: true,
+          size: 0,
+          modifiedAt: 0,
+          createdAt: 0
+        }))
+      return { path, entries, truncated: 0 }
+    } catch (err) {
+      return { path, entries: [], truncated: 0, error: (err as Error).message }
+    }
+  })
   ipcMain.on(IPC.notificationsSeen, (event, conversationId: unknown) => {
     const id = typeof conversationId === 'string' ? conversationId.trim() : ''
     if (!id) return
@@ -7691,6 +8369,7 @@ if (!singleInstance) {
   app.on('before-quit', () => {
     quitting = true
     sleepBlocker.release()
+    remoteControl.dispose()
     agent.disposeAll()
     cliHost.disposeAll()
     stopAllAgentInstalls()
@@ -7817,6 +8496,9 @@ if (!singleInstance) {
     registerGlobalHotkey(settings.globalHotkey)
     registerIpc()
     notifications.applySettings()
+    remoteControl.applySettings()
+    daemonAttach.applySettings()
+    daemonAttach.restore()
     rebuildAppChrome()
     if (!process.env.VAV_SNAPSHOT) {
       quotaService.start()

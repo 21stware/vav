@@ -70,7 +70,8 @@ export async function startCodexDriver(
     options.binary,
     ['app-server', '--stdio'],
     options.cwd,
-    options.env
+    options.env,
+    options.hostProcess
   )
   return wireCodex(proc, options, emit)
 }

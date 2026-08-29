@@ -3,6 +3,7 @@ import { X } from 'lucide-react'
 import { useSessionStore } from '../state/sessionStore'
 import { useWorkspaceStore } from '../state/workspaceStore'
 import { setUiFocusScope } from '../lib/uiFocus'
+import { useConversationFileDrop } from '../lib/useConversationFileDrop'
 import { Transcript } from './Transcript'
 import { Composer, ComposerContext } from './Composer'
 import { PlanOverlay } from './PlanOverlay'
@@ -33,6 +34,10 @@ export function SessionPane({
     (s) => !!s.conversations.find((c) => c.id === conversationId)?.archived
   )
   const isCli = swarmEnabled && cliMode
+  const { dropActive, dropHandlers } = useConversationFileDrop(
+    conversationId,
+    !isCli && !archived
+  )
 
   return (
     <div
@@ -46,6 +51,7 @@ export function SessionPane({
         onFocus()
         setUiFocusScope(isCli ? 'agent' : 'app')
       }}
+      {...dropHandlers}
     >
       {compact && onClose ? (
         <button
@@ -62,6 +68,12 @@ export function SessionPane({
           <X size={12} strokeWidth={2} />
         </button>
       ) : null}
+
+      {dropActive && (
+        <div className="session-drop-overlay" aria-hidden="true">
+          <div className="session-drop-hint">{t('composer.dropFiles')}</div>
+        </div>
+      )}
 
       {isCli ? (
         <TerminalPanel visible conversationId={conversationId} surface="agent" />

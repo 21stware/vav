@@ -91,8 +91,18 @@ test('screenshot overlay crop can move and resize, then attach without crashing'
         return app.evaluate(({ clipboard }) => !clipboard.readImage().isEmpty())
       }, { timeout: 8_000 })
       .toBe(true)
+    // Copy deliberately ends the session (clipboard exit) — no attachment.
+    await expect.poll(() => overlayOnScreen(app), { timeout: 8_000 }).toBe(false)
+    await expect(page.locator('.attachment-image-chip')).toHaveCount(0)
 
-    await overlay.locator('[aria-label="Add to chat"]').click()
+    // Attach flows through a fresh session's confirm button.
+    await page.locator('[data-testid="composer-screenshot"]').click()
+    const overlay2 = await overlayPage(app)
+    await pointer(overlay2, 'pointerdown', 180, 160)
+    await pointer(overlay2, 'pointermove', 420, 340)
+    await pointer(overlay2, 'pointerup', 420, 340)
+    await expect(overlay2.locator('[data-testid="screenshot-crop"]')).toBeVisible()
+    await overlay2.locator('[aria-label="Add to chat"]').click()
 
     await expect
       .poll(async () => page.locator('.attachment-image-chip').count(), { timeout: 12_000 })
@@ -138,7 +148,9 @@ test('screenshot Esc exits instead of clearing the crop', async () => {
     await pointer(overlay, 'pointerup', 400, 320)
     await expect(overlay.locator('[data-testid="screenshot-crop"]')).toBeVisible()
 
-    await page.keyboard.press('Escape')
+    // Esc lands on the overlay window (real input is forwarded there by the
+    // main process; CDP-synthesized keys never trigger before-input-event).
+    await overlay.keyboard.press('Escape')
     await expect.poll(() => overlayOnScreen(app), { timeout: 8_000 }).toBe(false)
     await expect(page.locator('[data-testid="composer-screenshot"]')).toBeVisible()
     await expect(page.locator('.attachment-image-chip')).toHaveCount(0)
@@ -177,13 +189,13 @@ test('screenshot marks can be selected and Esc only deselects first', async () =
       /.+/
     )
 
-    await page.keyboard.press('Escape')
+    await overlay.keyboard.press('Escape')
     await expect(overlay.locator('[data-testid="screenshot-overlay"]')).not.toHaveAttribute(
       'data-selected-mark'
     )
     await expect.poll(() => overlayOnScreen(app), { timeout: 4_000 }).toBe(true)
 
-    await page.keyboard.press('Escape')
+    await overlay.keyboard.press('Escape')
     await expect.poll(() => overlayOnScreen(app), { timeout: 8_000 }).toBe(false)
   } finally {
     await harness.dispose()
@@ -203,24 +215,30 @@ test('screenshot double-click confirms the crop', async () => {
     await pointer(overlay, 'pointerup', 420, 340)
     await expect(overlay.locator('[data-testid="screenshot-crop"]')).toBeVisible()
 
-    await overlay.locator('[data-testid="screenshot-overlay"]').evaluate((el) => {
-      const dispatch = (detail: number) => {
+    // Real Chromium pointerdowns carry detail 0 (Pointer Events spec) — the
+    // helper omits detail, so this exercises the manual double-click path:
+    // two quick press/release pairs at the same spot inside the crop. One
+    // evaluate keeps the gap well inside the 500ms double-click window.
+    await overlay.locator('[data-testid="screenshot-overlay"]').evaluate(async (el) => {
+      const fire = (type: string, buttons: number) => {
         el.dispatchEvent(
-          new PointerEvent('pointerdown', {
+          new PointerEvent(type, {
             clientX: 260,
             clientY: 220,
             button: 0,
-            buttons: 1,
+            buttons,
             bubbles: true,
             cancelable: true,
             pointerId: 1,
-            pointerType: 'mouse',
-            detail
+            pointerType: 'mouse'
           })
         )
       }
-      dispatch(1)
-      dispatch(2)
+      fire('pointerdown', 1)
+      fire('pointerup', 0)
+      await new Promise((resolve) => setTimeout(resolve, 60))
+      fire('pointerdown', 1)
+      fire('pointerup', 0)
     })
 
     await expect

@@ -128,6 +128,7 @@ export interface AgentRuntimeDeps {
   settings: SettingsStore
   secrets: SecretStore
   files: FileService
+  hosts?: import('../host').HostRegistry
   emit: (event: TurnEvent) => void
   changeSets?: import('./ChangeSetStore').ChangeSetStore
   retrieval?: DocumentRetrievalService
@@ -1084,6 +1085,7 @@ export class AgentRuntime {
     const workdir = this.workdirOf(conversation)
     let tools = createTools({
       workdir,
+      conversationId,
       settings: () => this.deps.settings.get(),
       files: this.deps.files,
       shell: () => this.shellFor(conversation),
@@ -1793,7 +1795,11 @@ export class AgentRuntime {
   private shellFor(conversation: Conversation): StickyShell {
     let shell = this.shells.get(conversation.id)
     if (!shell) {
-      shell = new StickyShell(this.deps.settings.get().shell, this.workdirOf(conversation))
+      shell = new StickyShell(
+        this.deps.settings.get().shell,
+        this.workdirOf(conversation),
+        this.deps.hosts?.hostFor(conversation.machineId).process
+      )
       this.shells.set(conversation.id, shell)
     }
     return shell

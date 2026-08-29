@@ -11,6 +11,8 @@ import type {
   TurnPhase
 } from '@shared/types'
 import { DEFAULT_CLI_AGENTS, DEFAULT_SETTINGS } from '@shared/types'
+import type { WorkspaceHostInfo } from '@shared/workspaceHost'
+import type { RemoteControlStatus } from '@shared/remoteControl'
 import {
   agentModelHostKey,
   defaultModelForChatHost,
@@ -244,6 +246,7 @@ export type SettingsCategory =
   | 'workspace'
   | 'appearance'
   | 'notifications'
+  | 'connect'
   | 'cli'
   | 'agents'
   | 'file-associations'
@@ -500,6 +503,9 @@ interface SessionState {
   home: string
   tmp: string
   about: AboutInfo | null
+  hosts: WorkspaceHostInfo[]
+  /** Phone-companion tunnel status; null until the first snapshot arrives. */
+  remoteControlStatus: RemoteControlStatus | null
 
   settings: AppSettings
   /** Resolved from settings.locale + OS; drives `useT()`. */
@@ -598,7 +604,7 @@ interface SessionState {
 
   search: SearchState
   errorBanner: string | null
-  errorBannerKind: 'quota' | 'session-stale' | 'auth' | 'cancelled' | 'generic' | null
+  errorBannerKind: 'quota' | 'session-stale' | 'auth' | 'network' | 'cancelled' | 'generic' | null
   errorBannerDetail: string | null
   dialog: DialogState | null
   toast: ToastState | null
@@ -723,6 +729,7 @@ interface SessionState {
     workingDirectory?: string | null
     model?: string
     swarmParentId?: string | null
+    machineId?: string | null
     /**
      * Where the new session should appear.
      * Default: select in this window, except companion shells open a new window.
@@ -763,7 +770,11 @@ interface SessionState {
   selectChatHost(id: string, host: string | null, vendorId?: string | null, accountId?: string | null): Promise<void>
   pickWorkingDirectory(id: string): Promise<void>
   useTempWorkingDirectory(id: string): Promise<void>
-  setWorkingDirectory(id: string, path: string): Promise<void>
+  setWorkingDirectory(id: string, path: string, machineId?: string | null): Promise<void>
+  /** Browse a remote host's folders (native dialog cannot see that disk). */
+  remoteFolderPick: { conversationId: string; machineId: string } | null
+  openRemoteFolderPicker(conversationId: string, machineId: string): void
+  closeRemoteFolderPicker(): void
   /** Move a Temporary workspace into a real directory (name + copy). */
   locateWorkspace(id: string): Promise<void>
   setSidebarQuery(query: string): void
@@ -776,6 +787,7 @@ interface SessionState {
   setArchived(id: string, archived: boolean): Promise<void>
   setApprovalMode(id: string, mode: import('@shared/types').ApprovalMode): Promise<void>
   setThinkingLevel(id: string, level: import('@shared/types').ThinkingLevel): Promise<void>
+  setFast(id: string, fast: boolean): Promise<void>
   setAcpMode(id: string, modeId: string): Promise<void>
   setAcpConfigOption(id: string, configId: string, value: string | boolean): Promise<void>
   /** Workspace preview focus — built-in VAV agent system / open-file context. */
@@ -936,6 +948,9 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   ready: false,
   home: '',
   tmp: '',
+  hosts: [],
+  remoteControlStatus: null,
+  remoteFolderPick: null,
   about: null,
 
   settings: DEFAULT_SETTINGS,
@@ -1076,6 +1091,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       pinnedConversationId: pinnedConversationId ?? null,
       home: data.home,
       tmp: data.tmp,
+      hosts: data.hosts,
       about: data.about,
       updateState: {
         ...updateState,
@@ -1438,7 +1454,11 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       const current = get().conversations.find((c) => c.id === get().activeId)
       const wd = current?.workingDirectory
       if (wd && !wd.startsWith('__') && !isTemporaryWorkspace(wd, get().tmp)) {
-        createOpts = { ...createOpts, workingDirectory: wd }
+        createOpts = {
+          ...createOpts,
+          workingDirectory: wd,
+          machineId: createOpts?.machineId ?? current.machineId
+        }
       }
     }
     const meta = await window.vav.conversations.create(createOpts)
@@ -1498,6 +1518,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       workingDirectory: current.workingDirectory ?? null,
       model: current.model,
       swarmParentId: rootId,
+      machineId: current.machineId,
       openIn: 'none'
     })
     if (!childId) return
@@ -1560,7 +1581,8 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     if (current) {
       await get().createConversation({
         workingDirectory: current.workingDirectory ?? null,
-        model: current.model
+        model: current.model,
+        machineId: current.machineId
       })
       return
     }
@@ -1949,15 +1971,23 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     await useWorkspaceStore.getState().setWorkingDirectory(id, next)
   },
 
-  async setWorkingDirectory(id, path) {
+  async setWorkingDirectory(id, path, machineId) {
     if (swarmBlocksWorkdirSwitch(id, get().settings.swarmModeEnabled === true)) return
     // User-driven switch (menu / recent) — always reveal real path thereafter.
     get().revealWorkdirPath(id)
-    const conversations = await window.vav.conversations.setWorkingDirectory(id, path)
+    const conversations = await window.vav.conversations.setWorkingDirectory(id, path, machineId)
     set((state) => ({
       conversations: mergeConversationList(state.conversations, conversations)
     }))
     await useWorkspaceStore.getState().setWorkingDirectory(id, path)
+  },
+
+  openRemoteFolderPicker(conversationId, machineId) {
+    set({ remoteFolderPick: { conversationId, machineId } })
+  },
+
+  closeRemoteFolderPicker() {
+    set({ remoteFolderPick: null })
   },
 
   async locateWorkspace(id) {
@@ -2016,9 +2046,10 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     const conversations = await window.vav.conversations.setArchived(id, archived)
     const { activeId, sidebarListMode } = get()
     const isActive = id === activeId
+    // Archiving keeps the current list — the sidebar moves the selection to
+    // the archived row's neighbor instead of jumping to the archive view.
     set((state) => ({
       conversations: mergeConversationList(state.conversations, conversations),
-      ...(isActive && archived ? { sidebarListMode: 'archive' as const } : {}),
       ...(isActive && !archived && sidebarListMode === 'archive'
         ? { sidebarListMode: 'main' as const }
         : {})
@@ -2095,6 +2126,20 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       }
     } catch (err) {
       console.error('[setThinkingLevel] failed', err)
+    }
+  },
+
+  async setFast(id, fast) {
+    set((state) => ({
+      conversations: state.conversations.map((c) => (c.id === id ? { ...c, fast } : c))
+    }))
+    try {
+      const list = await window.vav.conversations.setFast(id, fast)
+      set((state) => ({
+        conversations: mergeConversationList(state.conversations, list)
+      }))
+    } catch (err) {
+      console.error('[setFast] failed', err)
     }
   },
 
@@ -3595,6 +3640,23 @@ export function installTurnEventBridge(): () => void {
   const onEvent = window.vav?.agent?.onEvent
   if (!onEvent) return noopOff()
   return onEvent((event) => useSessionStore.getState().applyTurnEvent(event))
+}
+
+export function installHostsBridge(): () => void {
+  const onChanged = window.vav?.hosts?.onChanged
+  if (!onChanged) return noopOff()
+  return onChanged((hosts) => useSessionStore.setState({ hosts }))
+}
+
+/** Mirrors the phone-companion tunnel status (connected devices) into the store. */
+export function installRemoteControlBridge(): () => void {
+  const api = window.vav?.remoteControl
+  if (!api) return noopOff()
+  void api
+    .status()
+    .then((status) => useSessionStore.setState({ remoteControlStatus: status }))
+    .catch(() => {})
+  return api.onChanged((status) => useSessionStore.setState({ remoteControlStatus: status }))
 }
 
 /** Keeps every window's copy of the settings in step. Called once per window. */

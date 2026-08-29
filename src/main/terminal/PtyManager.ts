@@ -1,4 +1,4 @@
-import * as pty from 'node-pty'
+import { localHostPty, type HostPty, type HostPtyProcess } from '../host/HostPty.ts'
 import { execFile } from 'node:child_process'
 import { existsSync, mkdirSync, readFileSync, writeFileSync, unlinkSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
@@ -105,7 +105,7 @@ export interface PtySessionMeta {
 interface PtySession {
   id: string
   conversationId: string
-  proc: pty.IPty
+  proc: HostPtyProcess
   /** Temp context file for --append-system-prompt-file; deleted on exit. */
   contextFile?: string | null
   agentId: string | null
@@ -531,7 +531,8 @@ export class PtyManager {
       tabId: string,
       conversationId: string,
       status: PtyActivityStatus
-    ) => void
+    ) => void,
+    private resolvePty: (conversationId: string) => HostPty = () => localHostPty
   ) {}
 
   /**
@@ -878,7 +879,7 @@ export class PtyManager {
     }
 
     const grid = spawnGrid(cols, rows)
-    const proc = pty.spawn(file, args, {
+    const proc = this.resolvePty(conversationId).spawn(file, args, {
       name: 'xterm-256color',
       cols: grid.cols,
       rows: grid.rows,

@@ -4,10 +4,10 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, it } from 'node:test'
 import { encodeGrokSessionDir } from './hostSessionStore.ts'
-import { applyMissingHostUsage, readGrokSessionUsage } from './hostSessionUsage.ts'
+import { applyMissingHostUsage, readAcpJsonlUsage } from './hostSessionUsage.ts'
 import type { Conversation } from '../../shared/types.ts'
 
-describe('readGrokSessionUsage', () => {
+describe('readAcpJsonlUsage', () => {
   it('reads turn_completed rows from updates.jsonl', () => {
     const home = mkdtempSync(join(tmpdir(), 'vav-grok-usage-'))
     const cwd = '/Users/oboo/repo/hold/vav'
@@ -54,7 +54,7 @@ describe('readGrokSessionUsage', () => {
         })
       ].join('\n')
     )
-    const usage = readGrokSessionUsage(id, cwd, { home, modelId: 'grok-4.5' })
+    const usage = readAcpJsonlUsage('grok', id, cwd, { home, modelId: 'grok-4.5' })
     assert.ok(usage)
     assert.equal(usage.history.length, 2)
     assert.equal(usage.history[0]?.newInputTokens, 4809)

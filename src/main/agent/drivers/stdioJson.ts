@@ -1,8 +1,8 @@
 import { createInterface } from 'node:readline'
-import type { ChildProcessWithoutNullStreams } from 'node:child_process'
+import type { HostStdioChild } from '../../host/HostProcess.ts'
 
 export interface StdioProcess {
-  child: ChildProcessWithoutNullStreams
+  child: HostStdioChild
   writeLine(obj: unknown): void
   writeRaw(text: string): void
   closeStdin(): void

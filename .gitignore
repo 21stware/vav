@@ -27,4 +27,11 @@ resources/bin/officecli.exe
 resources/bin/officecli.*
 resources/bin/officecli.version
 resources/bin/vav_screencap.node
+resources/bin/tailcatbridge
+resources/bin/tailcatbridge.exe
+sidecar/tailcatbridge/tailcatbridge
+sidecar/tailcatbridge/tailcatbridge.exe
 !resources/bin/README.md
+
+# gomobile output (scripts/build-tailcat-ios.mjs)
+ios/VAVRemote/Frameworks/

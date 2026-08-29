@@ -19,6 +19,19 @@ describe('vavFallbackModels', () => {
   it('keeps a stored default id', () => {
     assert.equal(vavFallbackModels('deepseek-v4-pro')[0]?.id, 'deepseek-v4-pro')
   })
+
+  it('seeds a vendor-native id when no default is stored', () => {
+    assert.equal(vavFallbackModels(null, 'openai')[0]?.id, 'gpt-4o')
+    assert.equal(vavFallbackModels(null, 'anthropic')[0]?.id, 'claude-3-5-sonnet-20241022')
+    assert.equal(vavFallbackModels(null, 'kimi')[0]?.id, 'moonshot-v1-8k')
+    assert.equal(vavFallbackModels(null, 'bigmodel')[0]?.id, 'glm-4')
+    assert.equal(vavFallbackModels(null, 'deepseek')[0]?.id, VAV_DEFAULT_MODEL_ID)
+    assert.equal(vavFallbackModels(null, 'custom')[0]?.id, VAV_DEFAULT_MODEL_ID)
+  })
+
+  it('prefers the stored default over the vendor seed', () => {
+    assert.equal(vavFallbackModels('my-model', 'openai')[0]?.id, 'my-model')
+  })
 })
 
 describe('pickVavDefaultModel', () => {

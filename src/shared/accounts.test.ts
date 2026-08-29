@@ -38,6 +38,7 @@ import {
   visibleAccountsForWorkspace,
   visibleCurrentIds,
   currentVisibleVav,
+  isVavProfile,
   isOAuthSyncAgent,
   isEphemeralWorkspaceKey,
   appWorkspaceKey,
@@ -126,7 +127,22 @@ describe('accounts helpers', () => {
     )
     assert.deepEqual(
       grouped.map((g) => g.agentId),
-      ['vav', 'claude', 'grok', 'cursor']
+      [
+        'vav',
+        'claude',
+        'grok',
+        'deepseek',
+        'openrouter',
+        'openai',
+        'anthropic',
+        'xai',
+        'google',
+        'together',
+        'siliconflow',
+        'bigmodel',
+        'kimi',
+        'cursor'
+      ]
     )
     assert.equal(grouped[0]?.accounts.length, 2)
     assert.equal(grouped[2]?.accounts.length, 0)
@@ -545,5 +561,16 @@ describe('accounts helpers', () => {
     )
     assert.equal(switched?.id, 'ds')
     assert.equal(switched?.endpoint, 'https://api.deepseek.com/anthropic')
+  })
+
+  it('counts vendor-endpoint key profiles as VAV', () => {
+    assert.equal(
+      isVavProfile({ provider: 'vav', agentId: 'vav', endpoint: 'https://openrouter.ai/api/v1' }),
+      true
+    )
+    assert.equal(isVavProfile({ agentId: 'vav', endpoint: 'https://api.deepseek.com' }), true)
+    assert.equal(isVavProfile({ agentId: 'vav', endpoint: null }), true)
+    assert.equal(isVavProfile({ agentId: 'claude', provider: 'anthropic' }), false)
+    assert.equal(isVavProfile({ agentId: 'grok', oauthHost: 'grok' }), false)
   })
 })

@@ -11,6 +11,7 @@ import './styles/index.css'
 // the main App + FileViewer + office graph on open.
 const App = lazy(() => import('./App'))
 const SettingsWindow = lazy(() => import('./SettingsWindow'))
+const ConnectWindow = lazy(() => import('./ConnectWindow'))
 const SessionWindow = lazy(() => import('./SessionWindow'))
 const FilePreviewWindow = lazy(() => import('./FilePreviewWindow'))
 const AppClipWindow = lazy(() => import('./AppClipWindow'))
@@ -36,6 +37,7 @@ if (IS_MAC && !view) {
 
 function Root(): React.JSX.Element {
   if (view === 'settings') return <SettingsWindow />
+  if (view === 'connect') return <ConnectWindow />
   // Session companions: cold (conversationId in query) or warm pool (warm=1, no id).
   if (view === 'session') return <SessionWindow conversationId={conversationId || ''} />
   // Warm shells load with view=file-preview&warm=1 and no path yet.

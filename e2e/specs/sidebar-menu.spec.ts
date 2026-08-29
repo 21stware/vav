@@ -33,28 +33,33 @@ test('session menu lists pin, archive, rename, duplicate, and delete', async () 
   }
 })
 
-test('Archive moves the active session into the archive list and Unarchive restores it', async () => {
-  const harness = await launchVav()
+test('Archive stays in the session list and selects the adjacent row above', async () => {
+  const harness = await launchVav({ extraSession: true })
   try {
     const { page } = harness
-    await openSessionMenu(page, E2E_SESSION_ID)
+    // Make the second row active, then archive it: selection moves up.
+    await sessionRow(page, E2E_SESSION_B_ID).click()
+    await openSessionMenu(page, E2E_SESSION_B_ID)
     await chooseNativeMenu(page, 'Archive')
 
-    await expect(page.locator('[data-testid="sidebar-archive"]')).toHaveCount(0)
-    await expect(sessionRow(page, E2E_SESSION_ID)).toBeVisible()
+    // No jump to the archive view — the main list stays put.
+    await expect(page.locator('[data-testid="sidebar-connect"]')).toBeVisible()
+    await expect(sessionRow(page, E2E_SESSION_B_ID)).toHaveCount(0)
     await expect(sessionRow(page, E2E_SESSION_ID)).toHaveClass(/selected/)
 
-    await openSessionMenu(page, E2E_SESSION_ID)
+    // The archive view is reachable from the more menu; Unarchive restores.
+    await page.locator('[data-testid="sidebar-more"]').click()
+    await chooseNativeMenu(page, 'Archived · 1')
+    await expect(sessionRow(page, E2E_SESSION_B_ID)).toBeVisible()
+    await openSessionMenu(page, E2E_SESSION_B_ID)
     await expect
       .poll(async () => (await peekNativeMenu(page))?.map((item) => item.label) ?? [])
       .toEqual(expect.arrayContaining(['Unarchive', 'Delete']))
     await chooseNativeMenu(page, 'Unarchive')
+    await expect(sessionRow(page, E2E_SESSION_B_ID)).toHaveCount(0)
 
-    await expect(page.locator('[data-testid="sidebar-archive"]')).toBeVisible()
-    await expect(page.locator('[data-testid="sidebar-archive"] .sidebar-archive-count')).toHaveCount(
-      0
-    )
-    await expect(sessionRow(page, E2E_SESSION_ID)).toBeVisible()
+    await page.locator('[data-testid="sidebar-archive-back"]').click()
+    await expect(sessionRow(page, E2E_SESSION_B_ID)).toBeVisible()
     await expect(page.locator('[data-testid="composer-input"]')).toBeVisible()
   } finally {
     await harness.dispose()

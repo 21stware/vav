@@ -43,9 +43,10 @@ import {
   markAgentBinaryReady
 } from '../lib/agentBinaryCache'
 import { refreshAgentInstallStatus } from '../lib/agentInstallStatus'
+import { useConversationFileDrop } from '../lib/useConversationFileDrop'
 import { parkTerminal } from '../lib/terminalRegistry'
 import { useT } from '../i18n/useT'
-import { workdirLabel } from '../lib/format'
+import { workspaceChromeLabel } from '../lib/format'
 import { keys } from '../lib/platform'
 import { useSidebarFloatMode } from '../lib/sidebarLayout'
 import { isCompanionSessionShell } from '../lib/windowKind'
@@ -634,12 +635,24 @@ export function SessionDetail({
   const toolsVariant = previewEdit ? 'preview-edit' : 'main'
   const swarmVisible = !isVavMode && !detachedElsewhere && !showInstallGate
 
+  // Whole-surface file drop → attachments (chat surface only; Swarm panes
+  // bind their own so files land in the hovered pane's conversation).
+  const { dropActive, dropHandlers } = useConversationFileDrop(
+    activeId,
+    isVavMode && !archived && !swarmMulti && !detachedElsewhere
+  )
+
   /*
    * Thread and Swarm stay mounted. Surfaces park with visibility (not
    * display:none) so the transcript render tree survives the flip.
    */
   return (
-    <main className={shellClass} data-testid="session-detail">
+    <main className={shellClass} data-testid="session-detail" {...dropHandlers}>
+      {dropActive && (
+        <div className="session-drop-overlay" aria-hidden="true">
+          <div className="session-drop-hint">{t('composer.dropFiles')}</div>
+        </div>
+      )}
       {chrome}
       {errorBanner && (
         <ErrorBanner
@@ -835,8 +848,16 @@ export function AgentModeChrome({
   )
   const tmp = useSessionStore((s) => s.tmp)
   const home = useSessionStore((s) => s.home)
+  const hosts = useSessionStore((s) => s.hosts)
   const workdir = conversation?.workingDirectory ?? null
-  const workspacePath = workdirLabel(workdir, tmp, home)
+  const hostName = hosts.find((h) => h.id === conversation?.machineId)?.name
+  const workspacePath = workspaceChromeLabel(
+    workdir,
+    tmp,
+    home,
+    conversation?.machineId,
+    hostName
+  )
   const fs = fileSessionChrome
 
   const showFileSessionChrome = !!(fs && isChat && fs.sessions.length > 0)
@@ -888,10 +909,10 @@ export function AgentModeChrome({
                   title={t('preview.sessionHistory')}
                   onClick={fs!.onToggleHistory}
                 >
-                  <Clock size={12} />
+                  <Clock size={14} />
                 </button>
                 <Button
-                  icon={<Plus size={12} />}
+                  icon={<Plus size={14} />}
                   size="sm"
                   variant="ghost"
                   title={t('preview.newSession')}
@@ -902,7 +923,7 @@ export function AgentModeChrome({
 
             {showSearch && isChat ? (
               <Button
-                icon={<Search size={13} />}
+                icon={<Search size={14} />}
                 size="sm"
                 variant="ghost"
                 testId="session-search"
@@ -914,7 +935,7 @@ export function AgentModeChrome({
             {showSplit ? (
               <>
                 <Button
-                  icon={<SquareSplitVertical size={13} />}
+                  icon={<SquareSplitVertical size={14} />}
                   size="sm"
                   variant="ghost"
                   testId="swarm-split-right"
@@ -922,7 +943,7 @@ export function AgentModeChrome({
                   onClick={() => splitSwarm('row')}
                 />
                 <Button
-                  icon={<SquareSplitHorizontal size={13} />}
+                  icon={<SquareSplitHorizontal size={14} />}
                   size="sm"
                   variant="ghost"
                   testId="swarm-split-down"

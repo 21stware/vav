@@ -5,6 +5,9 @@ import {
   deepSeekEffort,
   isDeepSeekModel,
   parseThinkingLevel,
+  sessionShowsFast,
+  sessionShowsThinking,
+  thinkingLevelsForSession,
   thinkingSeconds,
   toPiReasoning,
   vavModelSupportsThinking
@@ -32,6 +35,46 @@ describe('toPiReasoning', () => {
     assert.equal(toPiReasoning('off'), undefined)
     assert.equal(toPiReasoning('low'), 'low')
     assert.equal(toPiReasoning('max'), 'max')
+  })
+})
+
+describe('sessionShowsThinking / sessionShowsFast', () => {
+  it('shows thinking on VAV and Cursor, fast only on Cursor', () => {
+    assert.equal(sessionShowsThinking(null, 'deepseek-v4-pro'), true)
+    assert.equal(sessionShowsThinking('cursor', 'grok-4.6'), true)
+    assert.equal(sessionShowsThinking('cursor', 'grok-4.6-low-fast'), true)
+    assert.equal(sessionShowsThinking('cursor', 'auto'), false)
+    assert.equal(sessionShowsThinking('claude', 'sonnet'), false)
+    assert.equal(sessionShowsFast('cursor'), true)
+    assert.equal(sessionShowsFast(null), false)
+  })
+})
+
+describe('thinkingLevelsForSession', () => {
+  it('locks Kimi to the advertised ACP level', () => {
+    assert.deepEqual(
+      thinkingLevelsForSession({
+        cliHost: 'cursor',
+        modelId: 'kimi-k3',
+        acpThinkingLevels: ['max']
+      }),
+      ['max']
+    )
+    assert.deepEqual(
+      thinkingLevelsForSession({
+        cliHost: 'cursor',
+        modelId: 'kimi-k3',
+        catalogueDefault: 'max'
+      }),
+      ['max']
+    )
+  })
+
+  it('keeps the full set for Grok overlays', () => {
+    assert.deepEqual(
+      thinkingLevelsForSession({ cliHost: 'cursor', modelId: 'grok-4.6' }),
+      ['off', 'low', 'medium', 'high', 'max']
+    )
   })
 })
 

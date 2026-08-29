@@ -1,5 +1,6 @@
 import type { NativeMenuItem } from '@shared/ipc'
 import { tt } from '../i18n/useT'
+import { resolveMenuIcon, type MenuIconRequest } from './menuIcons'
 
 export interface MenuItem {
   label: string
@@ -11,34 +12,44 @@ export interface MenuItem {
   /** Section title (macOS 14+ `header`). Not selectable. */
   header?: boolean
   submenu?: MenuItem[]
+  /** Row icon — rasterized and cached via lib/menuIcons before the popup opens. */
+  icon?: MenuIconRequest
   onSelect?: () => void
 }
 
-function toNativeItems(
+async function toNativeItems(
   items: MenuItem[],
   handlers: Map<string, () => void>,
   prefix = ''
-): NativeMenuItem[] {
-  return items.map((item, index) => {
-    const id = prefix ? `${prefix}.${index}` : String(index)
-    if (item.divider) return { separator: true }
-    if (item.header) return { header: true, label: item.label, enabled: false }
-    if (item.submenu && item.submenu.length > 0) {
+): Promise<NativeMenuItem[]> {
+  return Promise.all(
+    items.map(async (item, index): Promise<NativeMenuItem> => {
+      const id = prefix ? `${prefix}.${index}` : String(index)
+      if (item.divider) return { separator: true }
+      if (item.header) return { header: true, label: item.label, enabled: false }
+      const resolved = item.icon ? await resolveMenuIcon(item.icon) : null
+      const iconFields = resolved
+        ? { icon: resolved.dataUrl, iconTemplate: resolved.template }
+        : {}
+      if (item.submenu && item.submenu.length > 0) {
+        return {
+          id,
+          label: item.label,
+          enabled: !item.disabled,
+          ...iconFields,
+          submenu: await toNativeItems(item.submenu, handlers, id)
+        }
+      }
+      if (item.onSelect) handlers.set(id, item.onSelect)
       return {
         id,
         label: item.label,
         enabled: !item.disabled,
-        submenu: toNativeItems(item.submenu, handlers, id)
+        checked: item.checked,
+        ...iconFields
       }
-    }
-    if (item.onSelect) handlers.set(id, item.onSelect)
-    return {
-      id,
-      label: item.label,
-      enabled: !item.disabled,
-      checked: item.checked
-    }
-  })
+    })
+  )
 }
 
 /**
@@ -53,7 +64,7 @@ export async function showMenu(
   position?: { x: number; y: number }
 ): Promise<void> {
   const handlers = new Map<string, () => void>()
-  const payload = toNativeItems(items, handlers)
+  const payload = await toNativeItems(items, handlers)
   const chosen = await window.vav.window.popupMenu(payload, position)
   if (chosen === null) return
   handlers.get(chosen)?.()

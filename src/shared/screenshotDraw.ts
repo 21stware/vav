@@ -53,6 +53,30 @@ export function cropIsUsable(crop: CropRect, min = 8): boolean {
   return crop.w >= min && crop.h >= min
 }
 
+/** One pointerdown, for manual double-click detection. */
+export type PointerDownSample = { t: number; x: number; y: number }
+
+/** macOS default double-click interval is ~500ms; radius keeps drags out. */
+export const DOUBLE_CLICK_MS = 500
+export const DOUBLE_CLICK_RADIUS = 8
+
+/**
+ * The Pointer Events spec fixes `pointerdown.detail` at 0, so a real
+ * double-click never arrives with `detail >= 2` — it must be reconstructed
+ * from consecutive pointerdowns (same spot, within the OS interval).
+ */
+export function isDoubleClickPointerDown(
+  prev: PointerDownSample | null,
+  next: PointerDownSample
+): boolean {
+  if (!prev) return false
+  if (next.t - prev.t > DOUBLE_CLICK_MS) return false
+  return (
+    Math.abs(next.x - prev.x) <= DOUBLE_CLICK_RADIUS &&
+    Math.abs(next.y - prev.y) <= DOUBLE_CLICK_RADIUS
+  )
+}
+
 export const CROP_HANDLES = ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w'] as const
 export type CropHandle = (typeof CROP_HANDLES)[number]
 export type CropHit = CropHandle | 'move' | 'inside'

@@ -1,9 +1,11 @@
-import { useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { useSessionStore } from './state/sessionStore'
 import {
   installAgentModelCatalogBridge,
   installCompactionsBridge,
   installDetachedBridge,
+  installHostsBridge,
+  installRemoteControlBridge,
   installSettingsBridge,
   installTurnEventBridge,
   installUpdateBridge,
@@ -17,6 +19,7 @@ import { useTerminalAppearance } from './lib/useTerminalAppearance'
 import { WorkspaceView } from './components/WorkspaceView'
 import { FileSessionView } from './components/FileSessionView'
 import { AppToast } from './components/AppToast'
+import { RemoteFolderPicker } from './components/RemoteFolderPicker'
 import { UpdateCorner } from './components/UpdateCorner'
 import { ActivityDot } from './components/ActivityDot'
 import { ShellLeadingControls } from './components/ShellLeadingControls'
@@ -27,6 +30,12 @@ import { useMenuCommands } from './lib/menuCommands'
 import { installDefaultContextMenu } from './lib/nativeMenu'
 import { installInstallRunBridge } from './state/installRunStore'
 import { SIDEBAR_FLOAT_MAX, useSidebarFloatMode } from './lib/sidebarLayout'
+import {
+  SIDEBAR_WIDTH_DEFAULT,
+  clampSidebarWidth,
+  loadSidebarWidth,
+  persistSidebarWidth
+} from './lib/sidebarWidth'
 import { useT } from './i18n/useT'
 import { useAttentionSeen } from './lib/useAttentionSeen'
 import { installSwarmHistoryBridge } from './lib/swarmHistoryBridge'
@@ -106,6 +115,8 @@ export default function App(): React.JSX.Element {
     const offFs = installFsWatchBridge()
     const offPty = installPtyBridge()
     const offSettings = installSettingsBridge()
+    const offHosts = installHostsBridge()
+    const offRemoteControl = installRemoteControlBridge()
     const offCompactions = installCompactionsBridge()
     const offWindow = installWindowBridge()
     const offActivity = installActivityBridge()
@@ -146,6 +157,8 @@ export default function App(): React.JSX.Element {
       offFs()
       offPty()
       offSettings()
+      offHosts()
+      offRemoteControl()
       offCompactions()
       offWindow()
       offActivity()
@@ -217,6 +230,7 @@ export default function App(): React.JSX.Element {
       {!sidebarVisible ? <UpdateCorner /> : null}
       <ActivityDot conversationId={activeId} />
       <AppToast />
+      <RemoteFolderPicker />
     </div>
   )
 }
@@ -279,6 +293,54 @@ function SidebarSlot({
   const toggleSidebar = useSessionStore((s) => s.toggleSidebar)
   const [floatMounted, setFloatMounted] = useState(false)
   const [floatLeaving, setFloatLeaving] = useState(false)
+  const [sidebarWidth, setSidebarWidth] = useState(loadSidebarWidth)
+  const columnRef = useRef<HTMLDivElement>(null)
+
+  /** Drag the docked column edge; clamp to [MIN, MAX], persist on release. */
+  const startSidebarResize = (event: React.MouseEvent): void => {
+    if (event.button !== 0) return
+    event.preventDefault()
+    const startX = event.clientX
+    const startWidth = sidebarWidth
+    let latest = startWidth
+    let raf = 0
+    let pendingX = startX
+
+    document.documentElement.dataset.resizing = 'true'
+    document.body.style.cursor = 'col-resize'
+    document.body.style.userSelect = 'none'
+
+    const onMove = (e: MouseEvent): void => {
+      pendingX = e.clientX
+      if (raf) return
+      raf = requestAnimationFrame(() => {
+        raf = 0
+        latest = clampSidebarWidth(startWidth + (pendingX - startX))
+        if (columnRef.current) columnRef.current.style.width = `${latest}px`
+      })
+    }
+
+    const onUp = (): void => {
+      if (raf) cancelAnimationFrame(raf)
+      window.removeEventListener('mousemove', onMove)
+      window.removeEventListener('mouseup', onUp)
+      document.body.style.cursor = ''
+      document.body.style.userSelect = ''
+      delete document.documentElement.dataset.resizing
+      setSidebarWidth(latest)
+      persistSidebarWidth(latest)
+      window.dispatchEvent(new Event('vav:resize-end'))
+    }
+
+    window.addEventListener('mousemove', onMove)
+    window.addEventListener('mouseup', onUp)
+  }
+
+  const resetSidebarWidth = (): void => {
+    setSidebarWidth(SIDEBAR_WIDTH_DEFAULT)
+    persistSidebarWidth(SIDEBAR_WIDTH_DEFAULT)
+    window.dispatchEvent(new Event('vav:resize-end'))
+  }
 
   useEffect(() => {
     if (visible && floating) {
@@ -324,15 +386,23 @@ function SidebarSlot({
 
   if (!floating) {
     if (!visible) return null
-    if (chrome) {
-      return (
-        <div className="sidebar-column">
-          {chrome}
-          <Sidebar />
-        </div>
-      )
-    }
-    return <Sidebar />
+    // Always wrap in .sidebar-column (with or without flush chrome): one
+    // element owns the resizable width and hosts the edge handle.
+    return (
+      <div className="sidebar-column" ref={columnRef} style={{ width: sidebarWidth }}>
+        {chrome}
+        <Sidebar />
+        <div
+          className="sidebar-col-resizer"
+          role="separator"
+          aria-orientation="vertical"
+          aria-label={t('sidebar.resize')}
+          title={t('sidebar.resize')}
+          onMouseDown={startSidebarResize}
+          onDoubleClick={resetSidebarWidth}
+        />
+      </div>
+    )
   }
 
   if (!floatMounted) return null

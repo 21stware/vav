@@ -189,6 +189,8 @@ export function buildAcpLiveConversation(workspace: string, now = Date.now()) {
   conversation.title = 'E2E ACP live'
   conversation.cliHost = 'cursor'
   conversation.agentBinaryName = 'cursor'
+  conversation.model = 'grok-4.6'
+  conversation.fast = false
   conversation.acpSession = null
   return conversation
 }

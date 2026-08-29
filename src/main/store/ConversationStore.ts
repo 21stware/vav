@@ -28,7 +28,9 @@ import type {
   ThinkingLevel,
   TokenSnapshot
 } from '@shared/types'
+import { LOCAL_MACHINE_ID } from '@shared/workspaceHost'
 import { parseThinkingLevel } from '@shared/thinkingLevel'
+import { normalizeCursorConversationModel } from '@shared/cursorModel'
 import { hostTranscriptKey } from '@shared/types'
 import {
   expandRemovedSwarmIds,
@@ -119,6 +121,7 @@ export class ConversationStore {
     // label for one under the system temp dir, not the absence of a path.
     for (const conversation of this.conversations) {
       if (!conversation.workingDirectory) conversation.workingDirectory = defaults.mintWorkdir()
+      if (!conversation.machineId) conversation.machineId = LOCAL_MACHINE_ID
       if (typeof conversation.pinned !== 'boolean') conversation.pinned = false
       if (conversation.pinTime === undefined) conversation.pinTime = null
       if (conversation.duplicateSourceId === undefined) conversation.duplicateSourceId = null
@@ -127,6 +130,14 @@ export class ConversationStore {
       if (conversation.archivedAt === undefined) conversation.archivedAt = null
       if (!conversation.approvalMode) conversation.approvalMode = 'auto'
       conversation.thinkingLevel = parseThinkingLevel(conversation.thinkingLevel)
+      if (typeof conversation.fast !== 'boolean') conversation.fast = false
+      if (conversation.cliHost === 'cursor' && conversation.model) {
+        const normalized = normalizeCursorConversationModel(conversation.model)
+        if (normalized.migrated) {
+          conversation.model = normalized.model
+          if (normalized.fast === true) conversation.fast = true
+        }
+      }
       if (!Array.isArray(conversation.tokenHistory)) conversation.tokenHistory = []
       if (conversation.reportedSessionCostUsd === undefined) {
         conversation.reportedSessionCostUsd = null
@@ -223,11 +234,13 @@ export class ConversationStore {
       fileReadOnly?: boolean
       approvalMode?: import('@shared/types').ApprovalMode
       thinkingLevel?: ThinkingLevel
+      fast?: boolean
       /** Structured CLI host; null/omit = built-in VAV. */
       cliHost?: CliHostKind | null
       /** Settings → Accounts profile for new sessions. */
       accountId?: string | null
       swarmParentId?: string | null
+      machineId?: string | null
     }
   ): Conversation {
     const now = Date.now()
@@ -238,6 +251,7 @@ export class ConversationStore {
       createdAt: now,
       updatedAt: now,
       workingDirectory,
+      machineId: options?.machineId || LOCAL_MACHINE_ID,
       model,
       tokensUsed: 0,
       tokenLimit: contextWindowFor(model),
@@ -256,6 +270,7 @@ export class ConversationStore {
       archivedAt: null,
       approvalMode: options?.approvalMode ?? 'auto',
       thinkingLevel: parseThinkingLevel(options?.thinkingLevel),
+      fast: options?.fast === true,
       fileId: options?.fileId ?? null,
       fileReadOnly: options?.fileReadOnly ?? false,
       agentBinaryName: cliHost,
@@ -315,10 +330,12 @@ export class ConversationStore {
       // Caller may still patch workdir; leave null-ish only if absent.
       imported.workingDirectory = source.workingDirectory ?? null
     }
+    if (!imported.machineId) imported.machineId = source.machineId || LOCAL_MACHINE_ID
     if (!imported.model) imported.model = 'unknown'
     if (!imported.title) imported.title = defaultSessionTitle(currentLocale())
     if (!imported.approvalMode) imported.approvalMode = 'auto'
     imported.thinkingLevel = parseThinkingLevel(imported.thinkingLevel)
+    if (typeof imported.fast !== 'boolean') imported.fast = false
     if (typeof imported.tokensUsed !== 'number') imported.tokensUsed = 0
     if (typeof imported.tokenLimit !== 'number') {
       imported.tokenLimit = contextWindowFor(imported.model)
@@ -372,6 +389,7 @@ export class ConversationStore {
       createdAt: now,
       updatedAt: now,
       workingDirectory: source.workingDirectory,
+      machineId: source.machineId || LOCAL_MACHINE_ID,
       model: source.model,
       tokensUsed: 0,
       tokenLimit: source.tokenLimit,
@@ -383,6 +401,7 @@ export class ConversationStore {
       archivedAt: null,
       approvalMode: source.approvalMode ?? 'auto',
       thinkingLevel: parseThinkingLevel(source.thinkingLevel),
+      fast: source.fast === true,
       agentBinaryName: source.agentBinaryName ?? source.cliHost ?? null,
       cliHost: source.cliHost ?? null,
       accountId: source.accountId ?? null,
@@ -763,6 +782,14 @@ export class ConversationStore {
     return conversation
   }
 
+  setFast(id: string, fast: boolean): Conversation | undefined {
+    const conversation = this.get(id)
+    if (!conversation) return undefined
+    conversation.fast = fast === true
+    this.markDirty(id)
+    return conversation
+  }
+
   /**
    * Copies the visible thread up to and including `messageId` into a brand new
    * conversation. The copy is a fresh linear chain — branches the user did not
@@ -778,6 +805,7 @@ export class ConversationStore {
     const next = this.create(source.workingDirectory, source.model, {
       approvalMode: source.approvalMode ?? 'auto',
       thinkingLevel: parseThinkingLevel(source.thinkingLevel),
+      fast: source.fast === true,
       cliHost: source.cliHost ?? null,
       accountId: source.accountId ?? null
     })

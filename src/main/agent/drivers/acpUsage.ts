@@ -32,6 +32,26 @@ function num(value: unknown): number | undefined {
 /** xAI `costUsdTicks` — 1e10 ticks = $1. */
 export const GROK_COST_TICKS_PER_USD = 10_000_000_000
 
+/**
+ * Cursor's ACP model ids carry the context window inline:
+ * `claude-fable-5[thinking=true,context=300k,effort=high]`,
+ * `gpt-5.6-sol[context=272k,reasoning=medium]`. This is the only place the
+ * agent reports its window — no usage_update ever arrives — so parse it.
+ */
+export function contextSizeFromModelId(modelId: string | null | undefined): number | undefined {
+  const id = (modelId ?? '').trim()
+  if (!id) return undefined
+  const m = id.match(/[[,]\s*context\s*=\s*(\d+(?:\.\d+)?)\s*([km])?\b/i)
+  if (!m) return undefined
+  const n = Number(m[1])
+  if (!Number.isFinite(n) || n <= 0) return undefined
+  const unit = (m[2] || '').toLowerCase()
+  if (unit === 'k') return Math.round(n * 1_000)
+  if (unit === 'm') return Math.round(n * 1_000_000)
+  // Bare numbers are already tokens (guard against context=0 noise).
+  return n >= 1_024 ? Math.round(n) : undefined
+}
+
 export type AcpUsageSample = {
   contextUsed?: number
   contextSize?: number

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef } from 'react'
 import {
   Bell,
   Bot,
+  Cable,
   ChartNoAxesColumn,
   FileCheck2,
   Folder,
@@ -14,6 +15,7 @@ import { resolveSettingsView, type SettingsView } from '@shared/ipc'
 import type { MessageKey } from '@shared/i18n'
 import {
   installAgentModelCatalogBridge,
+  installHostsBridge,
   installSettingsBridge,
   installUpdateBridge,
   useSessionStore
@@ -27,6 +29,7 @@ import { AppToast } from './components/AppToast'
 import { WorkspaceSettings } from './components/settings/WorkspaceSettings'
 import { AppearanceSettings } from './components/settings/AppearanceSettings'
 import { NotificationsSettings } from './components/settings/NotificationsSettings'
+import { ConnectSettings } from './components/settings/ConnectSettings'
 import { CliSettings } from './components/settings/CliSettings'
 import { AgentsSettings } from './components/settings/AgentsSettings'
 import { FileAssociationsSettings } from './components/settings/FileAssociationsSettings'
@@ -52,6 +55,11 @@ const CATEGORY_KEYS: { id: SettingsView; labelKey: MessageKey; icon: React.JSX.E
     id: 'notifications',
     labelKey: 'settings.nav.notifications',
     icon: <Bell size={NAV_ICON} strokeWidth={1.75} />
+  },
+  {
+    id: 'connect',
+    labelKey: 'settings.nav.connect',
+    icon: <Cable size={NAV_ICON} strokeWidth={1.75} />
   },
   {
     id: 'workspace',
@@ -115,6 +123,7 @@ export default function SettingsWindow(): React.JSX.Element {
 
   useEffect(() => {
     const offSettings = installSettingsBridge()
+    const offHosts = installHostsBridge()
     const offUpdates = installUpdateBridge()
     const offModels = installAgentModelCatalogBridge()
     const offMenu = installDefaultContextMenu()
@@ -123,6 +132,7 @@ export default function SettingsWindow(): React.JSX.Element {
     void useSessionStore.getState().refreshAgentModelCatalog(false)
     return () => {
       offSettings()
+      offHosts()
       offUpdates()
       offModels()
       offMenu()
@@ -177,6 +187,7 @@ export default function SettingsWindow(): React.JSX.Element {
             {category === 'appearance' && <AppearanceSettings />}
             {category === 'keybindings' && <KeyBindingsSettings />}
             {category === 'notifications' && <NotificationsSettings />}
+            {category === 'connect' && <ConnectSettings />}
             {category === 'agents' && <AgentsSettings />}
             {category === 'cli' && <CliSettings />}
             {category === 'file-associations' && <FileAssociationsSettings />}

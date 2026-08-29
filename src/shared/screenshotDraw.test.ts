@@ -4,9 +4,12 @@ import {
   arrowHead,
   clampCrop,
   cropIsUsable,
+  DOUBLE_CLICK_MS,
+  DOUBLE_CLICK_RADIUS,
   hitCrop,
   hitMark,
   hitTopMark,
+  isDoubleClickPointerDown,
   moveCrop,
   moveMark,
   normalizeRect,
@@ -142,5 +145,38 @@ describe('screenshotDraw', () => {
     assert.ok(head.left.x < 100)
     assert.ok(head.right.x < 100)
     assert.ok(head.left.y * head.right.y < 0)
+  })
+
+  it('reconstructs double-clicks from consecutive pointerdowns (detail is always 0)', () => {
+    // No prior press — never a double-click.
+    assert.equal(isDoubleClickPointerDown(null, { t: 100, x: 10, y: 10 }), false)
+    // Same spot, quick second press.
+    assert.equal(
+      isDoubleClickPointerDown({ t: 100, x: 10, y: 10 }, { t: 300, x: 12, y: 9 }),
+      true
+    )
+    // Exactly at the interval bound still counts; one ms past does not.
+    assert.equal(
+      isDoubleClickPointerDown(
+        { t: 100, x: 10, y: 10 },
+        { t: 100 + DOUBLE_CLICK_MS, x: 10, y: 10 }
+      ),
+      true
+    )
+    assert.equal(
+      isDoubleClickPointerDown(
+        { t: 100, x: 10, y: 10 },
+        { t: 101 + DOUBLE_CLICK_MS, x: 10, y: 10 }
+      ),
+      false
+    )
+    // Second press outside the slop radius is a new click, not a double.
+    assert.equal(
+      isDoubleClickPointerDown(
+        { t: 100, x: 10, y: 10 },
+        { t: 200, x: 10 + DOUBLE_CLICK_RADIUS + 1, y: 10 }
+      ),
+      false
+    )
   })
 })
