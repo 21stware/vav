@@ -234,10 +234,9 @@ jobs:
             echo "NPM_TOKEN is not set; skip npm publish" >&2
             exit 0
           fi
-          node scripts/pack-vavd.mjs
           VERSION=$(node -p "require('./packages/vavd/package.json').version")
           if npm view "@21stware/vavd@${VERSION}" version >/dev/null 2>&1; then
             echo "@21stware/vavd@${VERSION} already on npm"
             exit 0
           fi
-          npm publish --access public --prefix packages/vavd
+          node scripts/publish-vavd.mjs
