@@ -1,68 +1,53 @@
-import { useEffect, useState } from 'react'
-import QRCode from 'qrcode'
+import { useEffect, useRef, useState } from 'react'
 import type { RemoteControlStatus } from '@shared/remoteControl'
 import type { HostDiscoveryPeer } from '@shared/ipc'
+import type { MessageKey, TParams } from '@shared/i18n'
 import { LOCAL_MACHINE_ID } from '@shared/workspaceHost'
 import { useSessionStore } from '../../state/sessionStore'
 import { useT } from '../../i18n/useT'
+import { qrDataUrlWithLogo } from '../../lib/qrWithLogo'
 import { Button, InlineAlert, Toggle } from '../ui'
 
+const QR_PX = 152
+const COPIED_MS = 1600
+
 /**
- * Settings → 连接 (Connect), split by direction:
- * - 连接到 (outgoing): this Mac pairs with another computer's vavd.
- * - 被连接 (incoming): phones / other computers reach this Mac — tunnel QR,
- *   this machine's pairing line, paired devices.
- * The same panel also fills the small Connect popup window from the sidebar.
+ * Settings → Connect and the sidebar Connect popup.
+ *
+ * Incoming (QR + pairing URI) stacked above outgoing (pair a machine).
+ * No card chrome — layout gap is the only separator.
  */
 export function ConnectSettings(): React.JSX.Element {
-  const t = useT()
   return (
-    <div className="settings-form connect-panels">
-      <section className="connect-panel" data-testid="settings-machines">
-        <div className="connect-panel-title">{t('connect.outgoing')}</div>
-        <MachinesSection />
-      </section>
-      <section className="connect-panel" data-testid="connect-panel-incoming">
-        <div className="connect-panel-title">{t('connect.incoming')}</div>
+    <div className="connect-layout">
+      <div className="connect-panels">
         <RemoteControlSection />
-      </section>
+        <MachinesSection />
+      </div>
     </div>
   )
 }
 
-/**
- * 被连接: tailcat tunnel pairing + this machine's daemon pairing line.
- * Same channel for the phone companion and a later desktop / vavd client.
- * Foreground-realtime scope — the QR carries token + pairing secret.
- */
 function RemoteControlSection(): React.JSX.Element {
   const t = useT()
+  const showDialog = useSessionStore((s) => s.showDialog)
   const settings = useSessionStore((s) => s.settings)
   const updateSettings = useSessionStore((s) => s.updateSettings)
   const enabled = settings.remoteControlEnabled === true
   const [status, setStatus] = useState<RemoteControlStatus | null>(null)
   const [qrDataUrl, setQrDataUrl] = useState<string | null>(null)
-  const [pairing, setPairing] = useState<string | null>(null)
 
   useEffect(() => {
     let alive = true
     void window.vav.remoteControl.status().then((s) => {
       if (alive) setStatus(s)
     })
-    void window.vav.hosts.pairing().then((value) => {
-      if (alive) setPairing(value)
-    })
-    const unsubscribe = window.vav.remoteControl.onChanged((s) => setStatus(s))
-    // The pairing line embeds the tunnel token — refresh once hosts report in.
-    const offHosts = window.vav.hosts.onChanged(() => {
-      void window.vav.hosts.pairing().then((value) => {
-        if (alive) setPairing(value)
-      })
+    const unsubscribe = window.vav.remoteControl.onChanged((s) => {
+      if (alive) setStatus(s)
     })
     return () => {
       alive = false
       unsubscribe()
-      offHosts()
     }
   }, [enabled])
 
@@ -73,7 +58,7 @@ function RemoteControlSection(): React.JSX.Element {
       return
     }
     let alive = true
-    void QRCode.toDataURL(pairingPayload, { margin: 1, width: 220, errorCorrectionLevel: 'M' }).then(
+    void qrDataUrlWithLogo(pairingPayload, QR_PX).then(
       (url) => {
         if (alive) setQrDataUrl(url)
       },
@@ -86,53 +71,69 @@ function RemoteControlSection(): React.JSX.Element {
     }
   }, [status?.pairing])
 
+  const devices = status?.devices ??
+    status?.clients.map((client) => ({
+      device: client.device,
+      connected: true,
+      lastSeen: client.since
+    })) ??
+    []
+  const ready = enabled && status?.state === 'ready'
+
+  const confirmReset = (kind: 'secret' | 'identity'): void => {
+    const title = kind === 'secret' ? t('remote.regenerateSecret') : t('remote.resetIdentity')
+    const body = kind === 'secret' ? t('remote.regenerateSecretHint') : t('remote.resetIdentityHint')
+    showDialog({
+      title,
+      body,
+      confirmLabel: t('dialog.resetConfirm'),
+      destructive: true,
+      onConfirm: () => {
+        if (kind === 'secret') void window.vav.remoteControl.regenerateSecret()
+        else void window.vav.remoteControl.resetIdentity()
+      }
+    })
+  }
+
   return (
-    <>
-      <div className="form-row">
-        <label>{t('remote.enabled')}</label>
-        <div className="control">
-          <Toggle
-            checked={enabled}
-            title={t('remote.enabled')}
-            testId="settings-remote-enabled"
-            onChange={(remoteControlEnabled) => void updateSettings({ remoteControlEnabled })}
-          />
-        </div>
+    <section className="connect-panel" data-testid="connect-panel-incoming">
+      <div className="connect-panel-head">
+        <div className="connect-panel-title">{t('connect.incoming')}</div>
+        <Toggle
+          checked={enabled}
+          title={t('remote.enabled')}
+          testId="settings-remote-enabled"
+          onChange={(remoteControlEnabled) => void updateSettings({ remoteControlEnabled })}
+        />
       </div>
-      <div className="form-hint">{t('remote.enabledHint')}</div>
+
+      <PairingLine />
+
+      {!enabled && <p className="connect-lede">{t('remote.enabledHint')}</p>}
 
       {enabled && status?.state === 'no-binary' && (
         <InlineAlert kind="warning" title={t('remote.stateError')} message={t('remote.stateNoBinary')} />
       )}
       {enabled && status?.state === 'error' && (
-        <InlineAlert
-          kind="warning"
-          title={t('remote.stateError')}
-          message={status.error ?? ''}
-        />
+        <InlineAlert kind="warning" title={t('remote.stateError')} message={status.error ?? ''} />
       )}
       {enabled && status?.state === 'starting' && (
-        <div className="form-hint">{t('remote.stateStarting')}</div>
+        <p className="connect-status">{t('remote.stateStarting')}</p>
       )}
 
-      {enabled && status?.state === 'ready' && (
-        <>
-          {qrDataUrl && (
+      {ready && (
+        <div className="connect-incoming-main">
+          {qrDataUrl ? (
             <div className="remote-qr">
-              <img src={qrDataUrl} alt={t('remote.pairHint')} width={220} height={220} />
+              <img src={qrDataUrl} alt={t('remote.pairHint')} width={QR_PX} height={QR_PX} />
             </div>
-          )}
-          <div className="form-hint">{t('remote.pairHint')}</div>
-
-          {(status.devices ?? status.clients).length > 0 && (
-            <div className="form-row">
-              <label>{t('remote.connectedDevices')}</label>
-              <div className="control remote-devices">
-                {(status.devices ?? status.clients.map((client) => ({
-                  device: client.device,
-                  connected: true,
-                  lastSeen: client.since
-                }))).map((row, index) => (
+          ) : null}
+          <div className="connect-incoming-meta">
+            <div className="connect-status">{t('remote.stateReady')}</div>
+            <p className="connect-lede">{t('remote.pairHint')}</p>
+            {devices.length > 0 && (
+              <div className="remote-devices">
+                {devices.map((row, index) => (
                   <span key={`${row.device}-${index}`} className="remote-device">
                     {row.device}
                     {'connected' in row
@@ -141,55 +142,28 @@ function RemoteControlSection(): React.JSX.Element {
                   </span>
                 ))}
               </div>
-            </div>
-          )}
-
-          <div className="form-row">
-            <label>{t('remote.regenerateSecret')}</label>
-            <div className="control">
+            )}
+            <div className="connect-incoming-actions">
               <Button
                 label={t('remote.regenerateSecret')}
                 size="sm"
-                onClick={() => void window.vav.remoteControl.regenerateSecret()}
+                title={t('remote.regenerateSecretHint')}
+                onClick={() => confirmReset('secret')}
               />
-            </div>
-          </div>
-          <div className="form-hint">{t('remote.regenerateSecretHint')}</div>
-
-          <div className="form-row">
-            <label>{t('remote.resetIdentity')}</label>
-            <div className="control">
               <Button
                 label={t('remote.resetIdentity')}
                 size="sm"
-                onClick={() => void window.vav.remoteControl.resetIdentity()}
+                title={t('remote.resetIdentityHint')}
+                onClick={() => confirmReset('identity')}
               />
             </div>
           </div>
-          <div className="form-hint">{t('remote.resetIdentityHint')}</div>
-        </>
+        </div>
       )}
-
-      {enabled && pairing && (
-        <>
-          <div className="form-row">
-            <label>{t('machines.pairingThis')}</label>
-            <div className="control">
-              <Button
-                label={t('machines.copyPairing')}
-                size="sm"
-                onClick={() => void window.vav.conversations.copyToClipboard(pairing)}
-              />
-            </div>
-          </div>
-          <div className="form-hint machines-pairing">{pairing}</div>
-        </>
-      )}
-    </>
+    </section>
   )
 }
 
-/** 连接到: pair another computer's daemon / desktop over LAN or a pairing line. */
 function MachinesSection(): React.JSX.Element {
   const t = useT()
   const hosts = useSessionStore((s) => s.hosts)
@@ -197,7 +171,11 @@ function MachinesSection(): React.JSX.Element {
   const [draft, setDraft] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  const [waitingPeer, setWaitingPeer] = useState<string | null>(null)
   const [discovered, setDiscovered] = useState<HostDiscoveryPeer[]>([])
+  const pairGen = useRef(0)
+  const waitingPeerRef = useRef<string | null>(null)
+  waitingPeerRef.current = waitingPeer
 
   useEffect(() => {
     let alive = true
@@ -215,103 +193,235 @@ function MachinesSection(): React.JSX.Element {
 
   const remotes = hosts.filter((h) => h.id !== LOCAL_MACHINE_ID)
   const known = new Set(remotes.map((h) => h.id))
-  const unseen = discovered.filter((p) => !known.has(p.machineId))
+  const unseen = uniqueDiscoveredPeers(
+    discovered.filter((p) => p.machineId !== LOCAL_MACHINE_ID && !known.has(p.machineId))
+  )
+
+  const cancelPair = (): void => {
+    pairGen.current += 1
+    setBusy(false)
+    setWaitingPeer(null)
+    void window.vav.hosts.cancelPair()
+  }
 
   const pair = async (payload: string): Promise<void> => {
+    if (busy && !waitingPeer) {
+      cancelPair()
+      return
+    }
+    if (busy) return
     const text = payload.trim()
-    if (!text) return
+    if (!text) {
+      setError(t('machines.pairNeedLine'))
+      return
+    }
+    const id = ++pairGen.current
     setBusy(true)
+    setWaitingPeer(null)
     setError(null)
     const result = await window.vav.hosts.pair(text)
+    if (id !== pairGen.current) return
     setBusy(false)
     if (!result.ok) {
-      setError(result.error)
+      if (/pairing cancelled/i.test(result.error)) return
+      setError(pairErrorMessage(result.error, t))
       return
     }
     setDraft('')
   }
 
-  return (
-    <>
-      <div className="form-hint connect-panel-hint">{t('machines.hint')}</div>
+  const pairLan = async (peer: HostDiscoveryPeer): Promise<void> => {
+    if (waitingPeer === peer.machineId) {
+      cancelPair()
+      return
+    }
+    const id = ++pairGen.current
+    setBusy(true)
+    setWaitingPeer(peer.machineId)
+    setError(null)
+    const result = await window.vav.hosts.pairLan(peer)
+    if (id !== pairGen.current) return
+    setBusy(false)
+    setWaitingPeer(null)
+    if (!result.ok) {
+      if (/pairing cancelled/i.test(result.error)) return
+      setError(pairErrorMessage(result.error, t))
+    }
+  }
 
-      <div className="form-row">
-        <label>{t('machines.pairLabel')}</label>
-        <div className="control machines-pair">
-          <input
-            className="text-field"
-            value={draft}
-            placeholder={t('machines.pairPlaceholder')}
-            spellCheck={false}
-            data-testid="settings-machines-pair-input"
-            onChange={(event) => setDraft(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === 'Enter') void pair(draft)
-            }}
-          />
-          <Button
-            label={t('machines.pairAction')}
-            size="sm"
-            disabled={busy || !draft.trim()}
-            testId="settings-machines-pair"
-            onClick={() => void pair(draft)}
-          />
-        </div>
+  return (
+    <section className="connect-panel" data-testid="settings-machines">
+      <div className="connect-panel-head">
+        <div className="connect-panel-title">{t('connect.outgoing')}</div>
+      </div>
+      <p className="connect-lede">{t('machines.hint')}</p>
+      <div className="machines-pair">
+        <input
+          className="text-field"
+          value={draft}
+          placeholder={t('machines.pairPlaceholder')}
+          spellCheck={false}
+          data-testid="settings-machines-pair-input"
+          onChange={(event) => {
+            setDraft(event.target.value)
+            if (error) setError(null)
+          }}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter') void pair(draft)
+          }}
+        />
+        <Button
+          label={busy && !waitingPeer ? t('common.cancel') : t('machines.pairAction')}
+          size="sm"
+          disabled={Boolean(waitingPeer)}
+          testId="settings-machines-pair"
+          onClick={() => void pair(draft)}
+        />
       </div>
       {error && <InlineAlert kind="warning" title={t('machines.pairFailed')} message={error} />}
 
       {remotes.length > 0 && (
-        <div className="machines-list">
+        <div className="connect-paired">
           {remotes.map((host) => (
-            <div key={host.id} className="form-row" data-testid={`settings-machine-${host.id}`}>
-              <label>
-                {host.name}
-                <span className="form-hint">
-                  {' '}
+            <div key={host.id} className="connect-peer" data-testid={`settings-machine-${host.id}`}>
+              <div className="connect-peer-text">
+                <div className="connect-peer-name">{host.name}</div>
+                <div className="connect-peer-sub">
                   {host.online ? t('machines.online') : t('machines.offline')}
-                </span>
-              </label>
-              <div className="control">
-                <Button
-                  label={t('machines.forget')}
-                  size="sm"
-                  testId={`settings-machine-forget-${host.id}`}
-                  onClick={() => void window.vav.hosts.forget(host.id)}
-                />
+                </div>
               </div>
+              <Button
+                label={t('machines.forget')}
+                size="sm"
+                testId={`settings-machine-forget-${host.id}`}
+                onClick={() => void window.vav.hosts.forget(host.id)}
+              />
             </div>
           ))}
         </div>
       )}
 
-      {unseen.length > 0 && (
-        <>
-          <div className="form-hint">{t('machines.discovered')}</div>
-          {unseen.map((peer) => (
-            <div key={`${peer.machineId}-${peer.address}`} className="form-row">
-              <label>
-                {peer.name}
-                <span className="form-hint">
-                  {' '}
-                  {peer.address}:{peer.port}
-                </span>
-              </label>
-              <div className="control">
+      <div className="connect-discovered">
+        <div className="connect-peers-caption">{t('machines.discovered')}</div>
+        <div className="connect-discovered-list">
+          {unseen.length === 0 ? (
+            <p className="connect-lede">{t('machines.discoveredEmpty')}</p>
+          ) : (
+            unseen.map((peer) => (
+              <div key={`${peer.machineId}-${peer.address}`} className="connect-peer">
+                <div className="connect-peer-text">
+                  <div className="connect-peer-name">{peer.name}</div>
+                  <div className="connect-peer-sub">
+                    {waitingPeer === peer.machineId
+                      ? t('machines.lanPairWaiting')
+                      : `${peer.address}:${peer.port}`}
+                  </div>
+                </div>
                 <Button
-                  label={t('machines.pairAction')}
-                  size="sm"
-                  disabled={busy || !draft.trim()}
-                  onClick={() =>
-                    void pair(
-                      `${peer.address}:${peer.port} ${draft.trim() || ''}`.trim()
-                    )
+                  label={
+                    waitingPeer === peer.machineId ? t('common.cancel') : t('machines.pairAction')
                   }
+                  size="sm"
+                  disabled={busy && waitingPeer !== peer.machineId}
+                  onClick={() => {
+                    if (waitingPeerRef.current === peer.machineId) cancelPair()
+                    else void pairLan(peer)
+                  }}
                 />
               </div>
-            </div>
-          ))}
-        </>
-      )}
-    </>
+            ))
+          )}
+        </div>
+      </div>
+    </section>
   )
+}
+
+function PairingLine(): React.JSX.Element | null {
+  const t = useT()
+  const enabled = useSessionStore((s) => s.settings.remoteControlEnabled === true)
+  const [pairing, setPairing] = useState<string | null>(null)
+  const [copied, setCopied] = useState(false)
+
+  useEffect(() => {
+    let alive = true
+    const refresh = (): void => {
+      void window.vav.hosts.pairing().then((value) => {
+        if (alive) setPairing(value)
+      })
+    }
+    refresh()
+    const offRemote = window.vav.remoteControl.onChanged(() => refresh())
+    const offHosts = window.vav.hosts.onChanged(() => refresh())
+    return () => {
+      alive = false
+      offRemote()
+      offHosts()
+    }
+  }, [enabled])
+
+  if (!pairing) return null
+
+  const copy = (): void => {
+    void window.vav.conversations.copyToClipboard(pairing).then(() => {
+      setCopied(true)
+      window.setTimeout(() => setCopied(false), COPIED_MS)
+    })
+  }
+
+  return (
+    <div className="connect-pairing" data-testid="connect-pairing-line">
+      <div className="connect-pairing-scroll">
+        <pre className="connect-pairing-line">{pairing}</pre>
+      </div>
+      <Button
+        label={copied ? t('common.copied') : t('machines.copyPairing')}
+        size="sm"
+        onClick={copy}
+      />
+    </div>
+  )
+}
+
+function uniqueDiscoveredPeers(peers: HostDiscoveryPeer[]): HostDiscoveryPeer[] {
+  const seen = new Set<string>()
+  const out: HostDiscoveryPeer[] = []
+  for (const peer of peers) {
+    if (seen.has(peer.machineId)) continue
+    seen.add(peer.machineId)
+    out.push(peer)
+  }
+  return out
+}
+
+function pairErrorMessage(
+  error: string,
+  t: (key: MessageKey, params?: TParams) => string
+): string {
+  const host =
+    error.match(/\bEHOSTUNREACH\s+(\S+)/)?.[1] ??
+    error.match(/\bENETUNREACH\s+(\S+)/)?.[1] ??
+    error.match(/\bEHOSTDOWN\s+(\S+)/)?.[1] ??
+    error.match(/\bETIMEDOUT\s+(\S+)/)?.[1] ??
+    error.match(/\bECONNREFUSED\s+(\S+)/)?.[1]
+  if (/\b(EHOSTUNREACH|ENETUNREACH|EHOSTDOWN)\b/.test(error)) {
+    return t('machines.pairUnreachable', { host: host ?? error })
+  }
+  if (/\bECONNREFUSED\b/.test(error)) {
+    return t('machines.pairRefused', { host: host ?? error })
+  }
+  if (/\bETIMEDOUT\b/.test(error) || /connect timeout/i.test(error)) {
+    return t('machines.pairTimeout', { host: host ?? error })
+  }
+  if (/pairing declined/i.test(error)) return t('machines.lanPairDeclined')
+  if (/pairing confirm timed out/i.test(error)) return t('machines.lanPairTimeout')
+  if (/pairing requires a pairing line/i.test(error)) return t('machines.lanPairHeadless')
+  if (/pairing busy/i.test(error)) return t('machines.lanPairBusy')
+  if (/pairing rejected/i.test(error)) return t('machines.pairAuth')
+  if (/no tunnel token/i.test(error)) return t('machines.pairNeedToken')
+  if (/unrecognized pairing payload/i.test(error)) return t('machines.pairNeedLine')
+  if (/tailcat|invalid tailcat|dial exited|context deadline/i.test(error)) {
+    return t('machines.pairTunnel')
+  }
+  return error
 }

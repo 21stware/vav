@@ -5,6 +5,7 @@ import { isHtmlClipLang, isXstateLang, renderHtmlClipFence, renderXstateFence } 
 import { dirname, joinPath } from './path'
 import { highlightFence } from './hljsLazy'
 import { mdBlockActionButtons } from './mdBlockActions'
+import { mdMarksPlugin } from './mdMarks'
 
 /**
  * Markdown for trusted local file preview.
@@ -30,6 +31,8 @@ const previewMd: MarkdownIt = new MarkdownIt({
     return highlightFence(code, language)
   }
 })
+
+previewMd.use(mdMarksPlugin)
 
 const previewDefaultFence =
   previewMd.renderer.rules.fence ??

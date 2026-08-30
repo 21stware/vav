@@ -267,6 +267,11 @@ export class CliAgentHost {
   private historyHandoff = new Map<string, CliHistoryHandoffMark>()
   /** Model picked while a turn is live — apply when that turn ends. */
   private pendingModel = new Map<string, string>()
+  /**
+   * Stop arrived before the turn was registered (phone tap during spawn).
+   * {@link startTurn} must not prompt after this.
+   */
+  private pendingCancels = new Set<string>()
 
   constructor(private deps: CliAgentHostDeps) {}
 
@@ -414,6 +419,7 @@ export class CliAgentHost {
   }
 
   cancel(conversationId: string): void {
+    this.pendingCancels.add(conversationId)
     const turn = this.turns.get(conversationId)
     const runtime = this.runtimes.get(conversationId)
     if (turn) {
@@ -700,9 +706,20 @@ export class CliAgentHost {
     this.turns.set(conversationId, turn)
     this.deps.emit({ type: 'start', conversationId })
     this.setPhase(conversationId, turn, 'thinking')
+    if (this.takePendingCancel(conversationId, turn)) {
+      void this.finishTurn(conversationId, turn, false)
+      return
+    }
 
     try {
       const runtime = await this.ensureRuntime(conversationId)
+      if (this.takePendingCancel(conversationId, turn) || this.turns.get(conversationId) !== turn) {
+        runtime.driver.cancel()
+        if (this.turns.get(conversationId) === turn) {
+          void this.finishTurn(conversationId, turn, false)
+        }
+        return
+      }
       runtime.lastTouch = Date.now()
       const handed = this.consumeHistoryHandoff(conversationId, turn.parentId)
       if (handed !== prompt) {
@@ -1779,12 +1796,19 @@ export class CliAgentHost {
     })
   }
 
+  private takePendingCancel(conversationId: string, turn: HostTurn): boolean {
+    if (!this.pendingCancels.delete(conversationId) && !turn.cancelled) return false
+    turn.cancelled = true
+    return true
+  }
+
   private async finishTurn(
     conversationId: string,
     turn: HostTurn,
     _success: boolean
   ): Promise<void> {
     if (!this.turns.has(conversationId)) return
+    this.pendingCancels.delete(conversationId)
     // Prevent double-finish from cancel grace + turn-finished race.
     this.turns.delete(conversationId)
     const pendingModel = this.pendingModel.get(conversationId)

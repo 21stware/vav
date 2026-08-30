@@ -49,31 +49,76 @@ struct ContentView: View {
     }
 }
 
-/// Small colored dot + label reflecting the tunnel state.
+/// Compact tunnel status for settings / notifications. Sessions use the nav title.
 struct ConnectionBadge: View {
     @EnvironmentObject private var client: RemoteClient
+    var compact = false
 
     var body: some View {
-        HStack(spacing: 6) {
-            Circle().fill(color).frame(width: 8, height: 8)
-            Text(label).font(.caption).foregroundStyle(.secondary)
+        if client.pairings.count > 1 {
+            Menu {
+                HostSwitcherButtons()
+            } label: {
+                badge
+            }
+            .menuIndicator(.hidden)
+        } else {
+            badge
         }
     }
 
-    private var color: Color {
-        switch client.state {
+    private var badge: some View {
+        HStack(spacing: 6) {
+            Circle().fill(HostLinkStyle.color(client.state)).frame(width: 8, height: 8)
+            if !compact {
+                Text(HostLinkStyle.statusLabel(client.state))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+        }
+        .accessibilityLabel(HostLinkStyle.statusLabel(client.state))
+    }
+}
+
+struct HostSwitcherButtons: View {
+    @EnvironmentObject private var client: RemoteClient
+
+    var body: some View {
+        ForEach(client.pairings) { pairing in
+            Button {
+                client.activate(pairing)
+            } label: {
+                if client.isActive(pairing) {
+                    Label(pairing.displayName, systemImage: "checkmark")
+                } else {
+                    Text(pairing.displayName)
+                }
+            }
+        }
+    }
+}
+
+enum HostLinkStyle {
+    static func color(_ state: RemoteClient.State) -> Color {
+        switch state {
         case .connected: return .green
         case .connecting: return .orange
         default: return .red
         }
     }
 
-    private var label: String {
-        switch client.state {
-        case .connected(let host): return host
+    static func statusLabel(_ state: RemoteClient.State) -> String {
+        switch state {
+        case .connected: return "已连接"
         case .connecting: return "连接中…"
         case .disconnected(let error): return error ?? "未连接"
         case .unpaired: return "未配对"
         }
+    }
+
+    static func displayName(_ client: RemoteClient) -> String {
+        if let name = client.host?.name, !name.isEmpty { return name }
+        return client.pairedHost
     }
 }

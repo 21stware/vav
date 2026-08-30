@@ -37,7 +37,7 @@ struct NotificationsView: View {
             }
             .navigationTitle("通知")
             .toolbar {
-                ToolbarItem(placement: .topBarTrailing) { ConnectionBadge() }
+                ToolbarItem(placement: .topBarTrailing) { ConnectionBadge(compact: true) }
             }
         }
     }

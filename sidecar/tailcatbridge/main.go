@@ -51,17 +51,25 @@ type keyFile struct {
 
 type readyEvent struct {
 	Event string `json:"event"`
-	Token string `json:"token"`
+	Token string `json:"token,omitempty"`
+	Port  int    `json:"port,omitempty"`
 }
 
 func main() {
 	keyPath := flag.String("key-file", "", "path to the persistent key file (created on first run)")
 	forward := flag.String("forward", "", "local TCP address to forward tunnel connections to (host:port)")
+	dial := flag.String("dial", "", "tailcat connection token; client mode for desktop pairing")
 	verbose := flag.Bool("verbose", false, "log tailcat internals to stderr")
 	flag.Parse()
 
+	if *dial != "" {
+		runDial(*dial, *verbose)
+		return
+	}
+
 	if *keyPath == "" || *forward == "" {
 		fmt.Fprintln(os.Stderr, "usage: tailcatbridge --key-file <path> --forward <host:port>")
+		fmt.Fprintln(os.Stderr, "       tailcatbridge --dial <token>")
 		os.Exit(2)
 	}
 	log.SetOutput(os.Stderr)
@@ -97,6 +105,7 @@ func main() {
 	if err := srv.Start(); err != nil {
 		log.Fatalf("tailcat start: %v", err)
 	}
+	waitDERP(srv, 15*time.Second)
 
 	if err := json.NewEncoder(os.Stdout).Encode(readyEvent{Event: "ready", Token: string(srv.ConnBlob())}); err != nil {
 		log.Fatalf("write ready: %v", err)
@@ -157,4 +166,15 @@ func loadOrCreateKey(path string) (*keyFile, error) {
 		return nil, err
 	}
 	return kf, nil
+}
+
+func waitDERP(srv *tailcat.Server, d time.Duration) {
+	deadline := time.Now().Add(d)
+	for time.Now().Before(deadline) {
+		st := srv.Status()
+		if st != nil && st.Self != nil && st.Self.Relay != "" {
+			return
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
 }

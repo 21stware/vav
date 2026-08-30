@@ -384,6 +384,7 @@ const api: VavApi = {
     closeSettings: () => ipcRenderer.invoke(IPC.windowCloseSettings),
     openConnect: () => ipcRenderer.invoke(IPC.windowOpenConnect),
     closeConnect: () => ipcRenderer.invoke(IPC.windowCloseConnect),
+    fitConnect: (height) => ipcRenderer.invoke(IPC.windowFitConnect, height),
     desiredSettingsView: () =>
       ipcRenderer.invoke(IPC.settingsDesiredView) as Promise<SettingsViewPayload>,
     popupMenu: (items: NativeMenuItem[], position?: { x: number; y: number }) =>
@@ -485,6 +486,11 @@ const api: VavApi = {
     list: () => ipcRenderer.invoke(IPC.hostsList),
     pairing: () => ipcRenderer.invoke(IPC.hostsPairing),
     pair: (payload: string) => ipcRenderer.invoke(IPC.hostsPair, payload),
+    pairLan: (peer) => ipcRenderer.invoke(IPC.hostsPairLan, peer),
+    cancelPair: () => {
+      ipcRenderer.send(IPC.hostsCancelPair)
+      return Promise.resolve()
+    },
     forget: (machineId: string) => ipcRenderer.invoke(IPC.hostsForget, machineId),
     discovered: () => ipcRenderer.invoke(IPC.hostsDiscovered),
     listDir: (machineId: string, path: string) =>

@@ -277,6 +277,21 @@ function userBashTabsOnly(tabs: TerminalTab[]): TerminalTab[] {
   return tabs.filter((t) => !t.agentId || t.agentId === 'vav' || t.isAgent)
 }
 
+function isVavMirrorTab(tab: TerminalTab): boolean {
+  return tab.isAgent || tab.agentId === 'vav' || tab.id === AGENT_TAB_ID
+}
+
+/** VAV mirror sits after user bash — never pinned to the front of the tray. */
+function bashThenAgentTabs(tabs: TerminalTab[]): TerminalTab[] {
+  const bash: TerminalTab[] = []
+  const agent: TerminalTab[] = []
+  for (const tab of tabs) {
+    if (isVavMirrorTab(tab)) agent.push(tab)
+    else bash.push(tab)
+  }
+  return [...bash, ...agent]
+}
+
 /** A host session is restorable only if it has panes that launched this agent. */
 function isLiveAgentSession(session: AgentHostSession | undefined, agentId: string): boolean {
   if (!session?.layout || session.tabs.length === 0) return false
@@ -730,9 +745,8 @@ function projectPtySessions(sessions: PtySessionMeta[]): {
       splitWeight: 1
     }
   })
-  // Keep agent mirror first when present (product convention).
-  tabs.sort((a, b) => Number(b.isAgent) - Number(a.isAgent))
-  const bashIds = tabs.map((t) => t.id)
+  const ordered = bashThenAgentTabs(tabs)
+  const bashIds = ordered.map((t) => t.id)
   const layout = layoutFromTabIds(bashIds)
   const activeTabId = bashIds[0] ?? ''
 
@@ -760,7 +774,7 @@ function projectPtySessions(sessions: PtySessionMeta[]): {
     }
   }
 
-  return { tabs, layout, activeTabId, agentHostSessions }
+  return { tabs: ordered, layout, activeTabId, agentHostSessions }
 }
 
 /**
@@ -1087,7 +1101,9 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       // Tombstones apply to the tools-tray list only. Agent hosts are excluded
       // deliberately: `isLiveAgentSession` would read a dead pane as restorable
       // and suppress the relaunch that switching back to that agent needs.
-      const tabs = retainInstallMeta(withTombstones(projected.tabs, s.tabs, status), s.tabs)
+      const tabs = bashThenAgentTabs(
+        retainInstallMeta(withTombstones(projected.tabs, s.tabs, status), s.tabs)
+      )
       // Prefer main-process layouts (detached ↔ main). Fall back to local, never
       // to a fresh layoutFromTabIds row tree when a persisted tree exists.
       const layout = reconcileLayout(
@@ -1340,16 +1356,16 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       // Built-in vav agent mirror tab — bot icon in ToolsPanel; human-interactive PTY.
       // Must also create a layout leaf: TerminalPanel only renders `layout`, not bare tabs.
       patch(set, id, (s) => ({
-        tabs: [
+        tabs: bashThenAgentTabs([
+          ...s.tabs,
           {
             id: AGENT_TAB_ID,
             title: 'VAV',
             isAgent: true,
             agentId: 'vav',
             splitWeight: 1
-          },
-          ...s.tabs
-        ],
+          }
+        ]),
         activeTabId: AGENT_TAB_ID,
         layout: s.layout ?? { type: 'leaf', tabId: AGENT_TAB_ID, weight: 1 }
       }))
@@ -1451,7 +1467,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     const bashTabs = userBashTabsOnly(slice?.tabs ?? [])
     const index = bashTabs.length + 1
     patch(set, id, (s) => ({
-      tabs: [
+      tabs: bashThenAgentTabs([
         ...userBashTabsOnly(s.tabs),
         {
           id: tabId,
@@ -1462,7 +1478,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
           installAgentId: extras?.installAgentId,
           splitWeight: 1
         }
-      ],
+      ]),
       activeTabId: tabId
     }))
     return tabId
@@ -1475,15 +1491,17 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     if (!slice || bashTabs.length === 0 || !slice.layout) {
       const tabId = await get().newUserTerminal(id, cols, rows, null, undefined, undefined, extras)
       patch(set, id, (s) => ({
-        tabs: userBashTabsOnly(s.tabs).map((t) =>
-          t.id === tabId
-            ? {
-                ...t,
-                title: extras?.title?.trim() || t.title,
-                purpose: extras?.purpose ?? t.purpose,
-                installAgentId: extras?.installAgentId ?? t.installAgentId
-              }
-            : t
+        tabs: bashThenAgentTabs(
+          userBashTabsOnly(s.tabs).map((t) =>
+            t.id === tabId
+              ? {
+                  ...t,
+                  title: extras?.title?.trim() || t.title,
+                  purpose: extras?.purpose ?? t.purpose,
+                  installAgentId: extras?.installAgentId ?? t.installAgentId
+                }
+              : t
+          )
         ),
         layout: { type: 'leaf', tabId, weight: 1 },
         activeTabId: tabId
@@ -1534,7 +1552,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         )
       }
       return {
-        tabs: baseTabs,
+        tabs: bashThenAgentTabs(baseTabs),
         layout: nextLayout,
         activeTabId: newTabId
       }
@@ -1655,7 +1673,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       cliMode: false,
       activeHostAgentId: null,
       // Drop agent-owned bash tabs from the tray; keep user shells.
-      tabs: userBashTabsOnly(s.tabs)
+      tabs: bashThenAgentTabs(userBashTabsOnly(s.tabs))
     }))
     get().syncPtyLayouts(id)
   },
@@ -2282,7 +2300,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       return { ptyStatus: { ...state.ptyStatus, [id]: omit(forConversation, tabId) } }
     })
     patch(set, id, (s) => {
-      const tabs = userBashTabsOnly(s.tabs).filter((t) => t.id !== tabId)
+      const tabs = bashThenAgentTabs(userBashTabsOnly(s.tabs).filter((t) => t.id !== tabId))
       const layout = s.layout ? removeLeaf(s.layout, tabId) : null
       const nextActive =
         s.activeTabId === tabId ? (tabs[0]?.id ?? '') : s.activeTabId

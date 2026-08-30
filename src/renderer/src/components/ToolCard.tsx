@@ -1,4 +1,4 @@
-import { memo, useMemo, useState } from 'react'
+import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import { Check, ChevronRight, CircleAlert, Loader2 } from 'lucide-react'
 import { normalizeAskQuestions, parseToolInput } from '@shared/askPlan'
 import { normalizePlanDocInput, planDocHasBody } from '@shared/planDoc'
@@ -12,7 +12,9 @@ import {
 } from '@shared/types'
 import { useSessionStore } from '../state/sessionStore'
 import { useT, tt } from '../i18n/useT'
+import { extractCiteKeys } from '@shared/mdMarks'
 import { isHollowToolCard } from '../lib/assistantProcess'
+import { REVEAL_CITE_EVENT } from '../lib/mdMarks'
 import { MarkdownView } from './MarkdownView'
 import { ReasoningBlock } from './ReasoningBlock'
 
@@ -79,8 +81,18 @@ export const ToolCard = memo(function ToolCard({
   startCollapsed?: boolean
 }): React.JSX.Element {
   const t = useT()
+  const rootRef = useRef<HTMLDivElement>(null)
   const fireAndForget = isFireAndForget(block)
   const [expanded, setExpanded] = useState(() => !startCollapsed && defaultExpanded(block))
+  const citeKeys = useMemo(() => extractCiteKeys(block.output || '').join(' '), [block.output])
+
+  useEffect(() => {
+    const el = rootRef.current
+    if (!el) return
+    const onReveal = (): void => setExpanded(true)
+    el.addEventListener(REVEAL_CITE_EVENT, onReveal)
+    return () => el.removeEventListener(REVEAL_CITE_EVENT, onReveal)
+  }, [])
   const isInteractive = block.tool === 'request' || block.tool === 'ask_user_question'
   const isApproval =
     block.status === 'pending' && !!block.choices?.length && !isInteractive
@@ -116,11 +128,13 @@ export const ToolCard = memo(function ToolCard({
 
   return (
     <div
+      ref={rootRef}
       className={`tool-call${showDetail ? ' expanded' : ''}`}
       data-testid="tool-card"
       data-tool={block.tool}
       data-status={block.status}
       data-expandable={canToggle}
+      data-cite-keys={citeKeys || undefined}
     >
       <button
         type="button"

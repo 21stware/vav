@@ -3,8 +3,6 @@ import { useSessionStore } from '../state/sessionStore'
 import { useWorkspaceStore } from '../state/workspaceStore'
 import { requestCliSurface } from '../lib/cliSurfaceSwitch'
 import { useT } from '../i18n/useT'
-import { isTemporaryWorkspace, workdirShortLabel } from '../lib/format'
-import { formatWorkspaceLabel } from '@shared/workspaceHost'
 import { StaggerLine, useEmptyEntranceCopy } from './ui'
 
 function TextBtn({
@@ -106,56 +104,26 @@ export function SessionWorkspaceChrome({
   const t = useT()
   const storeActiveId = useSessionStore((s) => s.activeId)
   const activeId = conversationId || storeActiveId
-  const conversation = useSessionStore((s) => s.conversations.find((c) => c.id === activeId))
-  const tmp = useSessionStore((s) => s.tmp)
-  const pickWorkingDirectory = useSessionStore((s) => s.pickWorkingDirectory)
-  const hosts = useSessionStore((s) => s.hosts)
   const swarmEnabled = useSessionStore((s) => s.settings.swarmModeEnabled === true)
   const cliMode = useWorkspaceStore((s) => !!s.workspaces[activeId]?.cliMode)
-
-  const cwd = conversation?.workingDirectory ?? null
-  const temporary = isTemporaryWorkspace(cwd, tmp)
   const copy = useEmptyEntranceCopy(true)
   const motionKey = copy.motionKey ?? activeId ?? 'ws'
 
   if (!activeId) return null
 
-  const projectName = temporary
-    ? t('sidebar.defaultWorkspace')
-    : workdirShortLabel(cwd ?? '', tmp)
-
-  const switchFolder = (): void => {
-    void pickWorkingDirectory(activeId)
-  }
+  const showCli = swarmEnabled && !cliMode
 
   return (
     <div className={`session-workspace-chrome${copy.entering ? ' is-entering' : ''}`}>
-      <p className="session-workspace-prose">
-        <StaggerLine baseDelay={120} key={`${motionKey}:ws`}>
-          {t('empty.workspaceLead')}{' '}
-          <TextBtn title={cwd ?? undefined} onClick={() => switchFolder()}>
-            {formatWorkspaceLabel(
-              conversation?.machineId,
-              projectName,
-              hosts.find((h) => h.id === conversation?.machineId)?.name
-            )}
-          </TextBtn>
-          {t('empty.workspaceMid')}{' '}
-          <TextBtn onClick={() => switchFolder()}>{t('empty.workspaceSwitch')}</TextBtn>
-          {t('empty.workspaceEnd')}
-        </StaggerLine>
-      </p>
-      {swarmEnabled && !cliMode ? (
+      {showCli ? (
         <p className="session-workspace-prose">
           <StaggerLine baseDelay={280} key={`${motionKey}:cli`}>
-            {t('empty.useCliLead')}{' '}
             <TextBtn
               title={t('empty.useCliHint')}
               onClick={() => requestCliSurface(activeId, true)}
             >
               {t('empty.useCliAction')}
             </TextBtn>
-            {t('empty.useCliEnd')}
           </StaggerLine>
         </p>
       ) : null}

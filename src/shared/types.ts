@@ -1034,6 +1034,13 @@ export interface AppSettings {
   keyBindings: Partial<Record<AcceleratorKeyBindingId, string>>
   /** Sidebar grouping segmented control; persisted. */
   sidebarGroupingMode: SidebarGroupingMode
+  /**
+   * Sidebar session filter. `none` / `active` / `favorite`, or `ws:<abs path>`
+   * for a recent workspace.
+   */
+  sidebarSessionFilter: string
+  /** Starred conversation ids, most recently starred first. */
+  favoriteConversationIds: string[]
   /** Files panel: indented tree vs Finder-style columns. */
   fileViewMode: FileViewMode
   /** Files panel sort field (Finder-style). */
@@ -1178,6 +1185,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   globalHotkey: 'Control+Command+Space',
   keyBindings: {},
   sidebarGroupingMode: 'workspace',
+  sidebarSessionFilter: 'none',
+  favoriteConversationIds: [],
   fileViewMode: 'tree',
   fileSortKey: 'name',
   fileSortAscending: true,

@@ -751,7 +751,7 @@ interface SessionState {
   /** Confirm, then prune a message and its descendants from the active thread. */
   requestDeleteMessage(messageId: string): void
   deleteMessage(messageId: string): Promise<void>
-  /** ⌘1 = Workspace; ⌘2+ = bash tabs in creation order (Agent first). */
+  /** ⌘1 = Workspace; ⌘2+ = bash tabs in creation order (agent last). */
   focusToolsSlot(slot: number): void
   setModel(id: string, model: string): Promise<void>
   /** Cycle through enabled models for the current chat host. */
@@ -779,6 +779,8 @@ interface SessionState {
   locateWorkspace(id: string): Promise<void>
   setSidebarQuery(query: string): void
   setPinned(id: string, pinned: boolean): Promise<void>
+  /** Star / unstar a session for the sidebar Favorite filter. */
+  setFavorite(id: string, favorite: boolean): Promise<void>
   /**
    * Pin a workspace to the sidebar's 置顶 section. Temporary Workspace shells
    * have no durable path, so they cannot be pinned.
@@ -2026,6 +2028,20 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     set((state) => ({
       conversations: mergeConversationList(state.conversations, conversations)
     }))
+  },
+
+  async setFavorite(id, favorite) {
+    const current = get().settings.favoriteConversationIds ?? []
+    const has = current.includes(id)
+    if (favorite && !has) {
+      await get().updateSettings({ favoriteConversationIds: [id, ...current] })
+      return
+    }
+    if (!favorite && has) {
+      await get().updateSettings({
+        favoriteConversationIds: current.filter((entry) => entry !== id)
+      })
+    }
   },
 
   async setWorkspacePinned(workdir, pinned) {

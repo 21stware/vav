@@ -5,6 +5,7 @@ import {
   decodeDiagramSource
 } from './diagramRender'
 import { filePathLinksPlugin } from './filePathLinks'
+import { mdMarksPlugin } from './mdMarks'
 import { highlightFence, onHljsReady } from './hljsLazy'
 import {
   isHtmlClipLang,
@@ -90,6 +91,8 @@ const md: MarkdownIt = new MarkdownIt({
   }
 })
 
+// TeX + [web:N]/[doc:id] first so path rewriting does not split a formula.
+md.use(mdMarksPlugin)
 // Path mentions → clickable file links (open preview).
 md.use(filePathLinksPlugin)
 

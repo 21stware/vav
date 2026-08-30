@@ -1,22 +1,3 @@
-import { createElement } from 'react'
-import { flushSync } from 'react-dom'
-import { createRoot, type Root } from 'react-dom/client'
-import {
-  Archive,
-  ArchiveRestore,
-  BookOpen,
-  Bot,
-  FileStack,
-  Hammer,
-  Import,
-  ListTodo,
-  MessageCircle,
-  MessagesSquare,
-  Rocket,
-  Settings,
-  Shield,
-  type LucideIcon
-} from 'lucide-react'
 import { AGENT_ICONS, MONO_MARKS } from './agentMarkAssets'
 
 /** Native menu rows get a 16pt slot; rasterize at 2x for retina. */
@@ -31,27 +12,141 @@ export interface ResolvedMenuIcon {
   template: boolean
 }
 
-const LUCIDE_MENU_ICONS = {
-  'mode-plan': ListTodo,
-  'mode-ask': MessageCircle,
-  'mode-build': Hammer,
-  'mode-agent': Bot,
-  'approval-auto': Shield,
-  'approval-bypass': Rocket,
-  'approval-edit': BookOpen,
-  settings: Settings,
-  sessions: MessagesSquare,
-  archive: Archive,
-  unarchive: ArchiveRestore,
-  'file-sessions': FileStack,
-  import: Import
+/**
+ * Lucide path data (viewBox 0 0 24 24). Serialized here instead of rendering
+ * through React — React 19's detached-root SVG often lacks a parseable
+ * `xmlns` when loaded as `image/svg+xml`, so native menu icons stayed blank.
+ */
+const LUCIDE_ICON_NODES = {
+  'mode-plan': [
+    ['path', { d: 'M13 5h8' }],
+    ['path', { d: 'M13 12h8' }],
+    ['path', { d: 'M13 19h8' }],
+    ['path', { d: 'm3 17 2 2 4-4' }],
+    ['rect', { x: '3', y: '4', width: '6', height: '6', rx: '1' }]
+  ],
+  'mode-ask': [
+    [
+      'path',
+      {
+        d: 'M2.992 16.342a2 2 0 0 1 .094 1.167l-1.065 3.29a1 1 0 0 0 1.236 1.168l3.413-.998a2 2 0 0 1 1.099.092 10 10 0 1 0-4.777-4.719'
+      }
+    ]
+  ],
+  'mode-build': [
+    ['path', { d: 'm15 12-9.373 9.373a1 1 0 0 1-3.001-3L12 9' }],
+    ['path', { d: 'm18 15 4-4' }],
+    [
+      'path',
+      {
+        d: 'm21.5 11.5-1.914-1.914A2 2 0 0 1 19 8.172v-.344a2 2 0 0 0-.586-1.414l-1.657-1.657A6 6 0 0 0 12.516 3H9l1.243 1.243A6 6 0 0 1 12 8.485V10l2 2h1.172a2 2 0 0 1 1.414.586L18.5 14.5'
+      }
+    ]
+  ],
+  'mode-agent': [
+    ['path', { d: 'M12 8V4H8' }],
+    ['rect', { width: '16', height: '12', x: '4', y: '8', rx: '2' }],
+    ['path', { d: 'M2 14h2' }],
+    ['path', { d: 'M20 14h2' }],
+    ['path', { d: 'M15 13v2' }],
+    ['path', { d: 'M9 13v2' }]
+  ],
+  'approval-auto': [
+    [
+      'path',
+      {
+        d: 'M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z'
+      }
+    ]
+  ],
+  'approval-bypass': [
+    [
+      'path',
+      {
+        d: 'M4.5 16.5c-1.5 1.26-2 5-2 5s3.74-.5 5-2c.71-.84.7-2.13-.09-2.91a2.18 2.18 0 0 0-2.91-.09z'
+      }
+    ],
+    [
+      'path',
+      {
+        d: 'm12 15-3-3a22 22 0 0 1 2-3.95A12.88 12.88 0 0 1 22 2c0 2.72-.78 7.5-6 11a22.35 22.35 0 0 1-4 2z'
+      }
+    ],
+    ['path', { d: 'M9 12H4s.55-3.03 2-4c1.62-1.08 5 0 5 0' }],
+    ['path', { d: 'M12 15v5s3.03-.55 4-2c1.08-1.62 0-5 0-5' }]
+  ],
+  'approval-edit': [
+    ['path', { d: 'M12 7v14' }],
+    [
+      'path',
+      {
+        d: 'M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z'
+      }
+    ]
+  ],
+  settings: [
+    [
+      'path',
+      {
+        d: 'M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915'
+      }
+    ],
+    ['circle', { cx: '12', cy: '12', r: '3' }]
+  ],
+  sessions: [
+    [
+      'path',
+      {
+        d: 'M16 10a2 2 0 0 1-2 2H6.828a2 2 0 0 0-1.414.586l-2.202 2.202A.71.71 0 0 1 2 14.286V4a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z'
+      }
+    ],
+    [
+      'path',
+      {
+        d: 'M20 9a2 2 0 0 1 2 2v10.286a.71.71 0 0 1-1.212.502l-2.202-2.202A2 2 0 0 0 17.172 19H10a2 2 0 0 1-2-2v-1'
+      }
+    ]
+  ],
+  archive: [
+    ['rect', { width: '20', height: '5', x: '2', y: '3', rx: '1' }],
+    ['path', { d: 'M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8' }],
+    ['path', { d: 'M10 12h4' }]
+  ],
+  unarchive: [
+    ['rect', { width: '20', height: '5', x: '2', y: '3', rx: '1' }],
+    ['path', { d: 'M4 8v11a2 2 0 0 0 2 2h2' }],
+    ['path', { d: 'M20 8v11a2 2 0 0 1-2 2h-2' }],
+    ['path', { d: 'm9 15 3-3 3 3' }],
+    ['path', { d: 'M12 12v9' }]
+  ],
+  'file-sessions': [
+    ['path', { d: 'M11 21a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-8a1 1 0 0 1 1-1' }],
+    ['path', { d: 'M16 16a1 1 0 0 1-1 1H9a1 1 0 0 1-1-1V8a1 1 0 0 1 1-1' }],
+    [
+      'path',
+      {
+        d: 'M21 6a2 2 0 0 0-.586-1.414l-2-2A2 2 0 0 0 17 2h-3a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1z'
+      }
+    ]
+  ],
+  import: [
+    ['path', { d: 'M12 3v12' }],
+    ['path', { d: 'm8 11 4 4 4-4' }],
+    [
+      'path',
+      {
+        d: 'M8 5H4a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-4'
+      }
+    ]
+  ]
 } as const
 
-export type LucideMenuIconKey = keyof typeof LUCIDE_MENU_ICONS
+export type LucideMenuIconKey = keyof typeof LUCIDE_ICON_NODES
 
 export type MenuIconRequest =
   | { kind: 'brand'; markId: string }
   | { kind: 'lucide'; key: LucideMenuIconKey }
+  | { kind: 'bitmap'; src: string; template?: boolean }
 
 const cache = new Map<string, Promise<ResolvedMenuIcon | null>>()
 
@@ -85,37 +180,26 @@ async function rasterizeUrl(src: string): Promise<string | null> {
   return img ? rasterize(img) : null
 }
 
-async function rasterizeSvgMarkup(markup: string): Promise<string | null> {
-  const blob = new Blob([markup], { type: 'image/svg+xml' })
-  const url = URL.createObjectURL(blob)
-  try {
-    return await rasterizeUrl(url)
-  } finally {
-    URL.revokeObjectURL(url)
-  }
+function escapeAttr(value: string): string {
+  return value.replace(/&/g, '&amp;').replace(/"/g, '&quot;')
 }
 
-/**
- * Render a Lucide component to SVG markup. React 19's browser build of
- * react-dom/server dropped renderToStaticMarkup, so use a detached root.
- */
-let iconRenderHost: HTMLDivElement | null = null
-let iconRenderRoot: Root | null = null
+/** Well-formed SVG Lucide can load as an image (xmlns + kebab-case attrs). */
+export function lucideSvgMarkup(key: LucideMenuIconKey): string {
+  const body = LUCIDE_ICON_NODES[key]
+    .map(([tag, attrs]) => {
+      const attr = Object.entries(attrs)
+        .map(([name, value]) => `${name}="${escapeAttr(value)}"`)
+        .join(' ')
+      return `<${tag} ${attr}/>`
+    })
+    .join('')
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${ICON_PX}" height="${ICON_PX}" viewBox="0 0 24 24" fill="none" stroke="#000" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${body}</svg>`
+}
 
-function lucideSvgMarkup(Icon: LucideIcon): string {
-  if (!iconRenderHost || !iconRenderRoot) {
-    iconRenderHost = document.createElement('div')
-    iconRenderHost.style.display = 'none'
-    document.body.appendChild(iconRenderHost)
-    iconRenderRoot = createRoot(iconRenderHost)
-  }
-  const root = iconRenderRoot
-  // stroke must be explicit — currentColor computes to black in an isolated
-  // SVG, and template images only read the alpha channel either way.
-  flushSync(() => {
-    root.render(createElement(Icon, { size: ICON_PX, color: '#000', strokeWidth: 2 }))
-  })
-  return iconRenderHost.innerHTML
+async function rasterizeSvgMarkup(markup: string): Promise<string | null> {
+  // data: URL — blob: + revoke can drop the decode before drawImage in Electron.
+  return rasterizeUrl(`data:image/svg+xml;charset=utf-8,${encodeURIComponent(markup)}`)
 }
 
 function brandMenuIcon(markId: string): Promise<ResolvedMenuIcon | null> {
@@ -143,8 +227,21 @@ function lucideMenuIcon(key: LucideMenuIconKey): Promise<ResolvedMenuIcon | null
   let cached = cache.get(cacheKey)
   if (!cached) {
     cached = (async (): Promise<ResolvedMenuIcon | null> => {
-      const dataUrl = await rasterizeSvgMarkup(lucideSvgMarkup(LUCIDE_MENU_ICONS[key]))
+      const dataUrl = await rasterizeSvgMarkup(lucideSvgMarkup(key))
       return dataUrl ? { dataUrl, template: true } : null
+    })()
+    cache.set(cacheKey, cached)
+  }
+  return cached
+}
+
+function bitmapMenuIcon(src: string, template: boolean): Promise<ResolvedMenuIcon | null> {
+  const cacheKey = `bitmap:${template ? 't' : 'c'}:${src}`
+  let cached = cache.get(cacheKey)
+  if (!cached) {
+    cached = (async (): Promise<ResolvedMenuIcon | null> => {
+      const dataUrl = await rasterizeUrl(src)
+      return dataUrl ? { dataUrl, template } : null
     })()
     cache.set(cacheKey, cached)
   }
@@ -153,7 +250,9 @@ function lucideMenuIcon(key: LucideMenuIconKey): Promise<ResolvedMenuIcon | null
 
 /** Resolve a menu icon; null when the asset is unknown or fails to rasterize. */
 export function resolveMenuIcon(request: MenuIconRequest): Promise<ResolvedMenuIcon | null> {
-  return request.kind === 'brand' ? brandMenuIcon(request.markId) : lucideMenuIcon(request.key)
+  if (request.kind === 'brand') return brandMenuIcon(request.markId)
+  if (request.kind === 'bitmap') return bitmapMenuIcon(request.src, request.template !== false)
+  return lucideMenuIcon(request.key)
 }
 
 /** Mirrors ModeIcon in SessionRunPicker. */

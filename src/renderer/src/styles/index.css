@@ -1565,6 +1565,60 @@ kbd {
   color: var(--text-tertiary);
 }
 
+.sidebar-list-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 12px;
+}
+
+.sidebar-filter {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  max-width: 100%;
+  height: 26px;
+  margin: 0;
+  padding: 0 2px 0 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-tertiary);
+  font: inherit;
+  font-size: 11px;
+  cursor: default;
+  transition: color 160ms ease;
+}
+
+.sidebar-filter:active {
+  transform: scale(0.97);
+}
+
+.sidebar-filter-label {
+  flex: 0 0 auto;
+}
+
+.sidebar-filter-value {
+  min-width: 0;
+  max-width: 9.5em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  color: var(--text-secondary);
+  transition: color 160ms ease;
+}
+
+.sidebar-filter.is-active .sidebar-filter-label,
+.sidebar-filter.is-active .sidebar-filter-value {
+  color: var(--accent-text, var(--accent));
+}
+
+.sidebar-filter-chevron {
+  flex: 0 0 auto;
+  color: var(--text-tertiary);
+}
+
 .sidebar-list {
   flex: 1;
   overflow-y: auto;
@@ -4087,6 +4141,74 @@ code.md-file-code a.md-file-link:hover {
 
 code.md-file-code button.md-file-reveal {
   vertical-align: middle;
+}
+
+.md-math {
+  color: inherit;
+}
+
+.md-math .katex {
+  font-size: 1.08em;
+  color: inherit;
+}
+
+.md-math-inline {
+  display: inline;
+}
+
+.md-math-display {
+  display: block;
+  overflow-x: auto;
+  margin: 0.7em 0;
+  padding: 0.12em 0;
+  text-align: center;
+}
+
+.md-cite {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.15em;
+  margin: 0 0.12em;
+  padding: 0 0.34em;
+  border: 0;
+  border-radius: 4px;
+  vertical-align: 0.12em;
+  font-size: 10.5px;
+  font-weight: 600;
+  line-height: 1.5;
+  letter-spacing: 0.01em;
+  background: color-mix(in srgb, var(--tone-web) 14%, var(--bg-sunken));
+  color: var(--tone-web);
+  cursor: default;
+}
+
+.md-cite:hover {
+  background: color-mix(in srgb, var(--tone-web) 22%, var(--bg-sunken));
+}
+
+.md-cite:active {
+  transform: scale(0.97);
+}
+
+.md-cite-doc {
+  background: color-mix(in srgb, var(--tone-read) 14%, var(--bg-sunken));
+  color: var(--tone-read);
+}
+
+.md-cite-doc:hover {
+  background: color-mix(in srgb, var(--tone-read) 22%, var(--bg-sunken));
+}
+
+.cite-flash {
+  border-radius: 6px;
+  animation: quote-flash 1.5s ease-out forwards;
+}
+
+.detail-doc .doc-hit-loc {
+  margin-left: 8px;
+  font-weight: 400;
+  color: var(--text-tertiary);
 }
 
 .message-user-context .context-refs,
@@ -7657,7 +7779,9 @@ mark {
   min-width: min(420px, 100%);
   max-width: min(420px, 100%);
   /* Two prose lines + chrome gap. Pin before git status lands so the
-     empty-in stack cannot hitch when “加载中” swaps for the real copy. */
+     empty-in stack cannot hitch when “加载中” swaps for the real copy.
+     Never `display: none` this box — that rebuilds the hero subtree and
+     cancels sibling empty-in (logo + stagger). */
   min-height: calc(11.5px * 1.5 * 2 + 4px);
   margin: 22px 0 0;
   padding: 0;
@@ -7809,6 +7933,32 @@ mark {
   line-height: 1.2;
   min-height: 1.2em;
   max-width: 100%;
+}
+
+/* Workspace title: same box as the agent name, dashed underline only.
+   Do not reclass / wrap this node — sibling empty-in lives on the mark. */
+.empty-state-session .empty-agent-name {
+  position: relative;
+  cursor: default;
+}
+
+.empty-state-session .empty-agent-name::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0.08em;
+  border-bottom: 1px dashed color-mix(in srgb, currentColor 42%, transparent);
+  pointer-events: none;
+  transition: border-color 160ms ease;
+}
+
+.empty-state-session .empty-agent-name:hover::after {
+  border-bottom-color: color-mix(in srgb, currentColor 70%, transparent);
+}
+
+.empty-state-session .empty-agent-name:active {
+  opacity: 0.85;
 }
 
 .empty-quota {
@@ -8262,8 +8412,8 @@ mark {
 }
 
 .tools-header-tabs {
-  /* Grow 0: sit after New. Shrink 1 if the row is still tight. */
-  order: 4;
+  /* Sit before New so a fresh bash lands immediately left of the button. */
+  order: 3;
   flex: 0 1 auto;
   min-width: 0;
   display: flex;
@@ -8277,7 +8427,6 @@ mark {
 }
 
 .tools-header[data-new-edge='end'] .tools-header-tabs {
-  order: 3;
   flex: 1 1 auto;
 }
 
@@ -8300,12 +8449,8 @@ mark {
 }
 
 .tools-header-new {
-  order: 3;
-  flex: 0 0 auto;
-}
-
-.tools-header[data-new-edge='end'] .tools-header-new {
   order: 4;
+  flex: 0 0 auto;
 }
 
 .tools-header-trail {
@@ -8314,7 +8459,7 @@ mark {
   display: flex;
   align-items: center;
   gap: 2px;
-  /* Collapse stays on the far right; New packs left until tabs overflow. */
+  /* Collapse stays on the far right; New sits after tabs and pins with the trail. */
   margin-left: auto;
 }
 
@@ -14750,6 +14895,7 @@ mark {
   opacity: 0;
 }
 
+.conv-star-hit,
 .conv-pin-hit {
   display: inline-flex;
   align-items: center;
@@ -14767,7 +14913,8 @@ mark {
 }
 
 .conv-group-header:hover .conv-group-pin-hit,
-.conv-row:hover .conv-pin-hit {
+.conv-row:hover .conv-pin-hit,
+.conv-row:hover .conv-star-hit {
   opacity: 0.55;
 }
 
@@ -14811,16 +14958,44 @@ mark {
   color: inherit;
 }
 
+.conv-star-hit,
 .conv-pin-hit {
   margin-right: -2px;
 }
 
+.conv-star-hit:not(.favorited),
 .conv-pin-hit:not(.pinned) {
   display: none;
 }
 
+.conv-row:hover .conv-star-hit,
 .conv-row:hover .conv-pin-hit {
   display: inline-flex;
+}
+
+.conv-star-hit.favorited {
+  opacity: 1;
+  color: var(--accent-text);
+}
+
+.conv-star-hit.favorited svg {
+  fill: currentColor;
+}
+
+.conv-star-hit:hover {
+  opacity: 1;
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.conv-star-hit.favorited:hover {
+  color: var(--accent-text);
+}
+
+.conv-row.selected .conv-star-hit:hover,
+.conv-row.multi .conv-star-hit:hover {
+  background: color-mix(in srgb, var(--accent-text) 12%, transparent);
+  color: inherit;
 }
 
 .file-viewer-header > .spacer {
@@ -19661,11 +19836,17 @@ html:has(.token-usage-popup) #root {
   padding: 22px 22px 28px;
 }
 
-/* Connect popup (sidebar Connect button) — single settings-form column. */
+html.connect-root,
+html.connect-root body,
+html.connect-root #root {
+  height: auto;
+  overflow: hidden;
+}
+
+/* Connect popup (sidebar Connect button) — hug the stacked pairing body. */
 .connect-window {
   display: flex;
   flex-direction: column;
-  height: 100%;
   background: var(--bg-content);
 }
 
@@ -19676,34 +19857,169 @@ html:has(.token-usage-popup) #root {
   padding: 0 var(--chrome-trail) 0 var(--chrome-lead);
 }
 
-.connect-body {
-  flex: 1;
+.connect-window .connect-body {
+  display: flex;
+  flex-direction: column;
+  flex: 0 0 auto;
+  overflow: visible;
+  padding: 16px 18px 18px;
+}
+
+.connect-layout {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.connect-window .connect-layout {
+  flex: 0 0 auto;
+}
+
+/* Incoming (QR) stacked above outgoing (pair a machine). */
+.connect-panels {
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
   min-height: 0;
 }
 
-/* Connect panels: 连接到 (this Mac → others) + 被连接 (others → this Mac). */
-.connect-panels {
-  gap: 16px;
+.connect-window .connect-panels {
+  flex: 0 0 auto;
+}
+
+.connect-window .connect-panel[data-testid='settings-machines'] {
+  flex: 0 0 auto;
 }
 
 .connect-panel {
   display: flex;
   flex-direction: column;
-  gap: 14px;
-  padding: 14px;
-  border: 1px solid var(--border-subtle, color-mix(in srgb, var(--text) 10%, transparent));
-  border-radius: var(--radius-lg, 12px);
+  gap: 10px;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.connect-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex: 0 0 auto;
 }
 
 .connect-panel-title {
+  flex: 1;
+  min-width: 0;
   font-size: 13px;
   font-weight: 600;
+  letter-spacing: -0.01em;
+  line-height: 1.35;
 }
 
-/* Panel-level description sits under the title, not behind a form label. */
-.connect-panel-hint {
-  margin-left: 0;
-  margin-top: -8px;
+.connect-lede,
+.connect-status {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-secondary);
+}
+
+.connect-status {
+  font-weight: 500;
+  color: var(--text);
+}
+
+.connect-incoming-main {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  align-items: flex-start;
+}
+
+.connect-incoming-meta {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.connect-incoming-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.connect-paired {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 0 0 auto;
+}
+
+.connect-discovered {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex: 1;
+  overflow: hidden;
+}
+
+.connect-discovered-list {
+  min-height: 132px;
+  max-height: 220px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 2px 0;
+}
+
+.connect-window .connect-discovered {
+  flex: 0 0 auto;
+  overflow: visible;
+}
+
+.connect-window .connect-discovered-list {
+  flex: 0 0 auto;
+  min-height: 0;
+  max-height: none;
+  overflow: visible;
+}
+
+.connect-peers-caption {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-tertiary);
+  padding: 4px 2px 6px;
+}
+
+.connect-peer {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 36px;
+  padding: 4px 2px;
+}
+
+.connect-peer-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.connect-peer-name {
+  font-size: 13px;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.connect-peer-sub {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* Category switch fade. First paint must stay opaque — Settings is warmed
@@ -19751,12 +20067,11 @@ html:has(.token-usage-popup) #root {
 .remote-qr {
   display: flex;
   justify-content: center;
-  padding: 12px;
+  padding: 8px;
   border-radius: var(--radius);
   background: #fff;
   width: fit-content;
-  /* Right-aligned in the panel, not centred full-width. */
-  margin: 4px 0 0 auto;
+  flex: 0 0 auto;
 }
 
 .remote-qr img {
@@ -19777,12 +20092,29 @@ html:has(.token-usage-popup) #root {
   color: var(--text-secondary);
 }
 
-.machines-pairing {
-  word-break: break-all;
+.connect-pairing {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.connect-pairing-scroll {
+  flex: 1;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+.connect-pairing-line {
+  margin: 0;
+  padding: 0;
   font-family: var(--font-code);
   font-size: 11px;
-  max-height: 72px;
-  overflow: auto;
+  line-height: 1.5;
+  white-space: nowrap;
+  user-select: text;
+  cursor: text;
 }
 
 .machines-pair {

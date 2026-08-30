@@ -1,3 +1,4 @@
+import PhotosUI
 import SwiftUI
 import UIKit
 
@@ -10,6 +11,8 @@ struct SessionDetailView: View {
     @State private var pickWorkspace = false
     @State private var renameTitle = ""
     @State private var showRename = false
+    @State private var photoItems: [PhotosPickerItem] = []
+    @State private var pendingImages: [PendingImage] = []
     @FocusState private var composerFocused: Bool
 
     private var messages: [RemoteThreadMessage] {
@@ -47,8 +50,9 @@ struct SessionDetailView: View {
     }
 
     private var canSend: Bool {
-        let hasPayload = !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        return hasPayload && isConnected && !(isRunning && queue.count >= 20)
+        let hasText = !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let hasImages = !pendingImages.isEmpty
+        return (hasText || hasImages) && isConnected && !(isRunning && queue.count >= 20)
     }
 
     var body: some View {
@@ -60,33 +64,39 @@ struct SessionDetailView: View {
         .background(Color(uiColor: .systemBackground))
         .navigationTitle(liveSession.title)
         .navigationBarTitleDisplayMode(.inline)
+        .toolbarRole(.editor)
+        .toolbar(.hidden, for: .tabBar)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
-                HStack(spacing: 10) {
+                if isAwaiting || isRunning {
                     Text(statusLabel)
-                        .font(.system(size: 12, weight: .medium))
+                        .font(.subheadline.weight(.medium))
                         .foregroundStyle(.secondary)
-                    Menu {
-                        Button("重命名") {
-                            renameTitle = liveSession.title
-                            showRename = true
-                        }
-                        Button("换文件夹") { pickWorkspace = true }
-                        Button("新建临时工作区") {
-                            client.setWorkspace(conversationId: session.id, temp: true)
-                        }
-                        if isRunning {
-                            Button("停止生成", role: .destructive) {
-                                client.cancel(conversationId: session.id)
-                            }
-                        }
-                        Button("归档", role: .destructive) {
-                            client.archive(conversationId: session.id)
-                        }
-                    } label: {
-                        Image(systemName: "ellipsis.circle")
-                    }
+                        .fixedSize()
                 }
+            }
+            ToolbarItem(placement: .topBarTrailing) {
+                Menu {
+                    Button("重命名") {
+                        renameTitle = liveSession.title
+                        showRename = true
+                    }
+                    Button("换文件夹") { pickWorkspace = true }
+                    Button("新建临时工作区") {
+                        client.setWorkspace(conversationId: session.id, temp: true)
+                    }
+                    if isRunning {
+                        Button("停止生成", role: .destructive) {
+                            client.cancel(conversationId: session.id)
+                        }
+                    }
+                    Button("归档", role: .destructive) {
+                        client.archive(conversationId: session.id)
+                    }
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                }
+                .accessibilityLabel("会话操作")
             }
         }
         .sheet(isPresented: $pickWorkspace) {
@@ -113,6 +123,9 @@ struct SessionDetailView: View {
         }
         .onChange(of: liveStatus) { _, next in
             if next != "running" { flushQueue() }
+        }
+        .onChange(of: photoItems) { _, items in
+            Task { await ingestPhotos(items) }
         }
         .alert("发送失败", isPresented: Binding(
             get: { client.sendErrorConversationId == session.id && client.sendError != nil },
@@ -291,15 +304,56 @@ struct SessionDetailView: View {
 
     // MARK: - Composer
 
+    /// Same card as desktop `.composer-box`: prompt on top, tools + send on the baseline.
     private var composer: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 8) {
+            if !pendingImages.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(pendingImages) { image in
+                            ZStack(alignment: .topTrailing) {
+                                Image(uiImage: image.preview)
+                                    .resizable()
+                                    .scaledToFill()
+                                    .frame(width: 56, height: 56)
+                                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                                Button {
+                                    pendingImages.removeAll { $0.id == image.id }
+                                } label: {
+                                    Image(systemName: "xmark")
+                                        .font(.system(size: 8, weight: .bold))
+                                        .foregroundStyle(.white)
+                                        .frame(width: 16, height: 16)
+                                        .background(.black.opacity(0.55), in: Circle())
+                                }
+                                .buttonStyle(.plain)
+                                .offset(x: 4, y: -4)
+                                .accessibilityLabel("移除照片")
+                            }
+                        }
+                    }
+                }
+            }
+
             TextField(placeholder, text: $draft, axis: .vertical)
                 .textFieldStyle(.plain)
-                .font(.system(size: 15))
-                .lineLimit(1...6)
+                .font(.system(size: 17))
+                .lineLimit(3...8)
                 .focused($composerFocused)
+                .frame(minHeight: 66, alignment: .topLeading)
 
-            HStack(spacing: 6) {
+            HStack(spacing: 4) {
+                PhotosPicker(selection: $photoItems, maxSelectionCount: 4, matching: .images) {
+                    Image(systemName: "plus")
+                        .font(.system(size: 15, weight: .medium))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 32, height: 32)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(PressButtonStyle())
+                .disabled(!isConnected || pendingImages.count >= 4)
+                .accessibilityLabel("添加照片")
+
                 if let run {
                     SessionRunBar(controls: run) { key, value in
                         if key == "fast" {
@@ -309,28 +363,34 @@ struct SessionDetailView: View {
                         }
                     }
                 }
-                Spacer(minLength: 4)
+
+                Spacer(minLength: 8)
+
                 if isRunning {
                     Button {
                         client.cancel(conversationId: session.id)
                     } label: {
                         Image(systemName: "stop.fill")
-                            .font(.system(size: 9, weight: .bold))
+                            .font(.system(size: 11, weight: .bold))
                             .foregroundStyle(.primary)
-                            .frame(width: 26, height: 26)
-                            .background(Color.primary.opacity(0.08), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                            .frame(width: 32, height: 32)
+                            .background(
+                                Color.primary.opacity(0.08),
+                                in: RoundedRectangle(cornerRadius: 9, style: .continuous)
+                            )
                     }
                     .buttonStyle(PressButtonStyle())
                     .accessibilityLabel("停止")
                 }
+
                 Button(action: submit) {
                     Image(systemName: "arrow.up")
-                        .font(.system(size: 13, weight: .bold))
-                        .foregroundStyle(canSend ? Color.white : Color.secondary.opacity(0.55))
-                        .frame(width: 26, height: 26)
+                        .font(.system(size: 15, weight: .bold))
+                        .foregroundStyle(canSend ? Color.white : Color.secondary.opacity(0.45))
+                        .frame(width: 32, height: 32)
                         .background(
                             canSend ? Color.accentColor : Color.primary.opacity(0.06),
-                            in: RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            in: RoundedRectangle(cornerRadius: 9, style: .continuous)
                         )
                 }
                 .buttonStyle(PressButtonStyle())
@@ -338,21 +398,21 @@ struct SessionDetailView: View {
                 .accessibilityLabel(isRunning ? "加入队列" : "发送")
             }
         }
-        .padding(.leading, 12)
-        .padding(.trailing, 8)
-        .padding(.top, 8)
-        .padding(.bottom, 7)
+        .padding(.leading, 14)
+        .padding(.trailing, 10)
+        .padding(.top, 12)
+        .padding(.bottom, 10)
         .background(
             Color.primary.opacity(composerFocused ? 0.055 : 0.04),
-            in: RoundedRectangle(cornerRadius: 16, style: .continuous)
+            in: RoundedRectangle(cornerRadius: 18, style: .continuous)
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
                 .strokeBorder(Color.primary.opacity(0.10), lineWidth: 1)
         )
-        .padding(.horizontal, 8)
-        .padding(.top, 6)
-        .padding(.bottom, 8)
+        .padding(.horizontal, 10)
+        .padding(.top, 8)
+        .padding(.bottom, 6)
     }
 
     private var placeholder: String {
@@ -377,19 +437,40 @@ struct SessionDetailView: View {
     private func submit() {
         guard canSend else { return }
         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        let images = pendingImages.map(\.payload)
         draft = ""
+        pendingImages = []
+        photoItems = []
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
         if isRunning {
-            queue.append(QueuedSend(text: text))
+            queue.append(QueuedSend(
+                text: text.isEmpty && !images.isEmpty ? "（附件）" : text,
+                images: images
+            ))
             return
         }
-        client.send(conversationId: session.id, text: text)
+        client.send(conversationId: session.id, text: text, images: images)
+    }
+
+    @MainActor
+    private func ingestPhotos(_ items: [PhotosPickerItem]) async {
+        guard !items.isEmpty else { return }
+        var next = pendingImages
+        for item in items {
+            if next.count >= 4 { break }
+            guard let data = try? await item.loadTransferable(type: Data.self),
+                  let encoded = PendingImage.encode(data)
+            else { continue }
+            next.append(encoded)
+        }
+        pendingImages = next
+        photoItems = []
     }
 
     private func flushQueue() {
         guard !isRunning, let next = queue.first else { return }
         queue.removeFirst()
-        client.send(conversationId: session.id, text: next.text)
+        client.send(conversationId: session.id, text: next.text, images: next.images)
     }
 }
 
@@ -431,7 +512,7 @@ private struct SessionRunBar: View {
                         pickerRows(controls.thinkingLevels, selected: thinking, key: "thinkingLevel")
                     } label: {
                         ThinkingLevelIcon(level: thinking)
-                            .frame(width: 22, height: 22)
+                            .frame(width: 28, height: 28)
                             .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
@@ -445,8 +526,8 @@ private struct SessionRunBar: View {
                         Text("Fast")
                             .font(.system(size: 11, weight: .medium))
                             .foregroundStyle(fast ? Color.accentColor : Color.secondary)
-                            .padding(.horizontal, 6)
-                            .frame(height: 22)
+                            .padding(.horizontal, 7)
+                            .frame(height: 28)
                     }
                     .buttonStyle(PressButtonStyle())
                     .accessibilityLabel(fast ? "Fast 开" : "Fast 关")
@@ -471,15 +552,15 @@ private struct SessionRunBar: View {
         } label: {
             HStack(spacing: 5) {
                 AgentMark(name: controls.label(in: controls.agents, id: controls.agent, fallback: "VAV"))
-                Text(modelTitle)
-                    .font(.system(size: 12, weight: .medium))
+                    Text(modelTitle)
+                    .font(.system(size: 13, weight: .medium))
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                 Image(systemName: "chevron.down")
                     .font(.system(size: 8, weight: .semibold))
                     .foregroundStyle(.tertiary)
             }
-            .frame(height: 22)
+            .frame(height: 28)
             .padding(.horizontal, 4)
             .contentShape(Rectangle())
         }
@@ -529,14 +610,14 @@ private struct SessionRunBar: View {
         } label: {
             HStack(spacing: 2) {
                 Image(systemName: systemImage)
-                    .font(.system(size: 12, weight: .medium))
+                    .font(.system(size: 15, weight: .medium))
                 if caret {
                     Image(systemName: "chevron.down")
                         .font(.system(size: 8, weight: .semibold))
                         .foregroundStyle(.tertiary)
                 }
             }
-            .frame(minWidth: 22, minHeight: 22)
+            .frame(minWidth: 28, minHeight: 28)
             .padding(.horizontal, caret ? 4 : 0)
             .contentShape(Rectangle())
         }
@@ -554,7 +635,7 @@ private struct SessionRunBar: View {
 
     private func approvalSymbol(_ id: String) -> String {
         switch id {
-        case "bypass": return "paperplane"
+        case "bypass": return "airplane"
         case "edit": return "book"
         default: return "shield"
         }
@@ -565,11 +646,18 @@ private struct AgentMark: View {
     let name: String
 
     var body: some View {
-        Text(String(name.prefix(1)).uppercased())
-            .font(.system(size: 9, weight: .semibold, design: .rounded))
-            .foregroundStyle(.secondary)
-            .frame(width: 16, height: 16)
-            .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 4, style: .continuous))
+        if name.caseInsensitiveCompare("VAV") == .orderedSame {
+            Image("BrandMark")
+                .resizable()
+                .scaledToFit()
+                .frame(width: 16, height: 16)
+        } else {
+            Text(String(name.prefix(1)).uppercased())
+                .font(.system(size: 9, weight: .semibold, design: .rounded))
+                .foregroundStyle(.secondary)
+                .frame(width: 16, height: 16)
+                .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 4, style: .continuous))
+        }
     }
 }
 
@@ -594,7 +682,7 @@ private struct ThinkingLevelIcon: View {
                     .frame(width: 12, height: 1.2)
             }
         }
-        .frame(width: 12, height: 12)
+        .frame(width: 14, height: 14)
     }
 
     private func barColor(_ index: Int) -> Color {
@@ -703,7 +791,46 @@ private struct ThreadTurn: View {
 private struct QueuedSend: Identifiable {
     let id = UUID()
     let text: String
+    var images: [[String: String]] = []
     var preview: String { text }
+}
+
+private struct PendingImage: Identifiable {
+    let id = UUID()
+    let preview: UIImage
+    let payload: [String: String]
+
+    /// JPEG under the remote line budget (`SEND_IMAGE_DATA_CAP` ≈ 180k base64).
+    static func encode(_ data: Data) -> PendingImage? {
+        guard let image = UIImage(data: data) else { return nil }
+        let scaled = image.preparedForRemote()
+        var quality: CGFloat = 0.72
+        var jpeg = scaled.jpegData(compressionQuality: quality)
+        while let bytes = jpeg, bytes.base64EncodedString().count > 180_000, quality > 0.28 {
+            quality -= 0.12
+            jpeg = scaled.jpegData(compressionQuality: quality)
+        }
+        guard let jpeg else { return nil }
+        let encoded = jpeg.base64EncodedString()
+        guard encoded.count <= 180_000, !encoded.isEmpty else { return nil }
+        return PendingImage(
+            preview: scaled,
+            payload: ["name": "photo.jpg", "mime": "image/jpeg", "data": encoded]
+        )
+    }
+}
+
+private extension UIImage {
+    func preparedForRemote(maxEdge: CGFloat = 1280) -> UIImage {
+        let longest = max(size.width, size.height)
+        guard longest > maxEdge, longest > 0 else { return self }
+        let scale = maxEdge / longest
+        let next = CGSize(width: size.width * scale, height: size.height * scale)
+        let renderer = UIGraphicsImageRenderer(size: next)
+        return renderer.image { _ in
+            draw(in: CGRect(origin: .zero, size: next))
+        }
+    }
 }
 
 private struct PressButtonStyle: ButtonStyle {

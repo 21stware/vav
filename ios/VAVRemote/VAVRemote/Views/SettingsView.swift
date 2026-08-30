@@ -2,12 +2,35 @@ import SwiftUI
 
 struct SettingsView: View {
     @EnvironmentObject private var client: RemoteClient
-    @State private var confirmUnpair = false
+    @State private var showAdd = false
+    @State private var pendingForget: Pairing?
 
     var body: some View {
         NavigationStack {
             List {
-                Section("连接") {
+                Section {
+                    ForEach(client.pairings) { pairing in
+                        Button {
+                            client.activate(pairing)
+                        } label: {
+                            HostRow(pairing: pairing, active: client.isActive(pairing))
+                        }
+                        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                            Button("解除", role: .destructive) { pendingForget = pairing }
+                        }
+                    }
+                    Button {
+                        showAdd = true
+                    } label: {
+                        Label("添加电脑", systemImage: "plus")
+                    }
+                } header: {
+                    Text("电脑")
+                } footer: {
+                    Text("这台手机可以保存多台电脑，点一下切换。同一张二维码也可以给多台手机用。离开家里 Wi‑Fi 时走公网中继，电脑要开着且不要休眠。")
+                }
+
+                Section("当前连接") {
                     LabeledContent("电脑", value: client.host?.name ?? client.pairedHost)
                     LabeledContent("状态") { ConnectionBadge() }
                     if let platform = client.host?.platform {
@@ -48,18 +71,33 @@ struct SettingsView: View {
                         Text("工作区、Agent、密钥都在 Host 上。手机是正规客户端，但 remote 不会把文件系统和终端放到手机沙盒里。")
                     }
                 }
-
-                Section {
-                    Button("解除配对", role: .destructive) { confirmUnpair = true }
-                } footer: {
-                    Text("解除后需在 Mac 上重新扫码。同一张二维码可以同时连多台手机。离开家里 Wi‑Fi 时走公网中继，电脑要开着且不要休眠。通知只在 App 打开时送达。")
-                }
             }
             .navigationTitle("设置")
-            .confirmationDialog("解除与 Mac 的配对？", isPresented: $confirmUnpair, titleVisibility: .visible) {
-                Button("解除配对", role: .destructive) { client.unpair() }
+            .sheet(isPresented: $showAdd) {
+                PairingView(mode: .add)
+                    .environmentObject(client)
+            }
+            .confirmationDialog(
+                forgetTitle,
+                isPresented: Binding(
+                    get: { pendingForget != nil },
+                    set: { if !$0 { pendingForget = nil } }
+                ),
+                titleVisibility: .visible
+            ) {
+                Button("解除配对", role: .destructive) {
+                    if let pendingForget { client.forget(pendingForget) }
+                    pendingForget = nil
+                }
             }
         }
+    }
+
+    private var forgetTitle: String {
+        if let name = pendingForget?.displayName {
+            return "解除与 \(name) 的配对？"
+        }
+        return "解除配对？"
     }
 
     private func cap(_ title: String, on: Bool) -> some View {
@@ -83,5 +121,29 @@ struct SettingsView: View {
         case "edit": return "Read"
         default: return "Normal"
         }
+    }
+}
+
+private struct HostRow: View {
+    let pairing: Pairing
+    let active: Bool
+
+    var body: some View {
+        HStack(spacing: 10) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(pairing.displayName)
+                    .foregroundStyle(.primary)
+                Text(active ? "当前" : "已保存")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+            if active {
+                Image(systemName: "checkmark")
+                    .font(.body.weight(.semibold))
+                    .foregroundStyle(.tint)
+            }
+        }
+        .contentShape(Rectangle())
     }
 }

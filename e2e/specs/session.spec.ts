@@ -12,6 +12,8 @@ test('sidebar lists the session, groups by workspace, and archives stay reachabl
     await expect(page.locator('[data-testid="session-detail"]')).toBeVisible()
     await expect(page.getByText('E2E session')).toBeVisible()
     await expect(page.locator('[data-testid="sidebar-grouping"]')).toHaveValue('workspace')
+    await expect(page.locator('[data-testid="sidebar-filter"]')).toBeVisible()
+    await expect(page.locator('[data-testid="sidebar-filter"]')).toContainText('None')
     await expect(page.locator('[data-testid="sidebar-connect"]')).toBeVisible()
     await page.locator('[data-testid="sidebar-grouping"]').selectOption('none')
     await expect(page.getByText('E2E session')).toBeVisible()
@@ -28,10 +30,10 @@ test('Connect button pops the connect window with phone and machine pairing', as
       await page.locator('[data-testid="sidebar-connect"]').click()
     })
     await expect(connect.locator('[data-testid="connect-window"]')).toBeVisible()
-    // Two panels: 连接到 (pair a remote machine) + 被连接 (phone / incoming).
+    // Incoming (phone / QR) stacked above outgoing (pair a remote machine).
     await expect(connect.locator('[data-testid="settings-machines"]')).toContainText('Connect to')
     await expect(connect.locator('[data-testid="connect-panel-incoming"]')).toContainText(
-      'Connected by'
+      'Allow to be remote connected'
     )
     await expect(connect.locator('[data-testid="settings-remote-enabled"]')).toBeVisible()
     await expect(connect.locator('[data-testid="settings-machines-pair-input"]')).toBeVisible()

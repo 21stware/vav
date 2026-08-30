@@ -75,6 +75,11 @@ export type LaunchVavOptions = {
   acpLeakPrompts?: number
   /** Fixture trails every reply with the leaked RetriableError chunk. */
   acpLeakTail?: boolean
+  /**
+   * Default true so existing specs stay deterministic. Set false to assert
+   * empty-state `empty-in` (logo + name stagger).
+   */
+  reduceMotion?: boolean
 }
 
 export type VavHarness = {
@@ -120,7 +125,7 @@ function seedUserData(
   const settings: Record<string, unknown> = {
     locale: 'en',
     theme: 'light',
-    reduceMotion: true,
+    reduceMotion: options.reduceMotion ?? true,
     windowVibrancyEnabled: false,
     autoCheckUpdates: false,
     globalHotkey: '',

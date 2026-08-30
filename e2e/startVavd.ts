@@ -2,6 +2,7 @@ import { spawn, type ChildProcess } from 'node:child_process'
 import { mkdirSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { parseDaemonPairing } from '../src/shared/daemonProtocol.ts'
 
 const root = join(__dirname, '..')
 
@@ -67,10 +68,8 @@ export async function startVavd(): Promise<VavdHandle> {
     })
   })
 
-  const payload = JSON.parse(pairing.slice('vav-daemon:'.length)) as {
-    machineId: string
-    name: string
-  }
+  const payload = parseDaemonPairing(pairing)
+  if (!payload) throw new Error(`unrecognized vavd pairing: ${pairing}`)
 
   return {
     pairing,

@@ -34,7 +34,7 @@ test('tools tray expands, New bash opens a user PTY, and collapse works', async 
   }
 })
 
-test('New bash sits left and pins right when the tab strip overflows', async () => {
+test('New bash sits after tabs and pins right when the tab strip overflows', async () => {
   const harness = await launchVav()
   try {
     const { app, page } = harness
@@ -55,6 +55,15 @@ test('New bash sits left and pins right when the tab strip overflows', async () 
     await neu.click()
     await expect(page.locator('[data-testid="tools-panel"] [data-testid="terminal-panel"]')).toBeVisible()
 
+    const afterTabsGap = await neu.evaluate((el) => {
+      const chips = document.querySelectorAll('.tools-header-tabs .chip')
+      const last = chips[chips.length - 1]
+      if (!last) return -1
+      return el.getBoundingClientRect().left - last.getBoundingClientRect().right
+    })
+    expect(afterTabsGap).toBeGreaterThanOrEqual(0)
+    expect(afterTabsGap).toBeLessThan(28)
+
     await app.evaluate(({ BrowserWindow }) => {
       const win = BrowserWindow.getAllWindows()[0]
       win?.setSize(400, 820)
@@ -62,12 +71,36 @@ test('New bash sits left and pins right when the tab strip overflows', async () 
     await expect(header).toHaveAttribute('data-new-edge', 'end')
 
     const endGap = await neu.evaluate((el) => {
-      const toggle = document.querySelector('[data-testid="tools-toggle"]')
-      if (!toggle) return -1
-      return toggle.getBoundingClientRect().left - el.getBoundingClientRect().right
+      const trail = document.querySelector('.tools-header-trail')
+      if (!trail) return -1
+      return trail.getBoundingClientRect().left - el.getBoundingClientRect().right
     })
     expect(endGap).toBeGreaterThanOrEqual(0)
     expect(endGap).toBeLessThan(28)
+  } finally {
+    await harness.dispose()
+  }
+})
+
+test('tools fullscreen expands the tray to 70% height', async () => {
+  const harness = await launchVav()
+  try {
+    const { page } = harness
+    const panel = page.locator('[data-testid="tools-panel"]')
+    await expect(panel).toHaveAttribute('data-tools-collapsed', 'true')
+
+    await page.locator('[data-testid="tools-fullscreen"]').click()
+    await expect(panel).toHaveAttribute('data-tools-collapsed', 'false')
+    await expect(panel).toHaveAttribute('data-tools-snapped', 'true')
+
+    const ratio = await page.evaluate(() => {
+      const well = document.querySelector('.tools-body-well')
+      const column = well?.closest('main')
+      if (!well || !column) return 0
+      return well.getBoundingClientRect().height / column.getBoundingClientRect().height
+    })
+    expect(ratio).toBeGreaterThan(0.64)
+    expect(ratio).toBeLessThan(0.76)
   } finally {
     await harness.dispose()
   }

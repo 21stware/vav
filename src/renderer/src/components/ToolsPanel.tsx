@@ -7,6 +7,8 @@ import {
   Download,
   Folder,
   GitBranch,
+  Maximize2,
+  Minimize2,
   Terminal as TerminalIcon,
   Unplug
 } from 'lucide-react'
@@ -18,13 +20,13 @@ import {
   PANEL_SNAP_RATIO
 } from '../state/sessionStore'
 import { useWorkspaceStore } from '../state/workspaceStore'
-import { basename } from '../lib/path'
 import { isTemporaryWorkspace, truncatePathLabel, workspaceChromeLabel } from '../lib/format'
 import { useGitRepoSyncEpoch } from '../lib/gitRepoSync'
 import { FilesPanel } from './FilesPanel'
 import { TerminalPanel } from './TerminalPanel'
 import { disposeTerminal } from '../lib/terminalRegistry'
 import { menuAnchor, showMenu, type MenuItem } from '../lib/nativeMenu'
+import { workspaceSwitchMenuItems } from '../lib/workspaceSwitchMenu'
 import { fileManagerLabel, keys } from '../lib/platform'
 import { allowWorkdirSwitch as workdirSwitchAllowed, isSwarmSurfaceActive } from '../lib/workdirSwitch'
 import { useT } from '../i18n/useT'
@@ -232,12 +234,20 @@ export function ToolsPanel({
     [panelHeight, snapHeight]
   )
 
-  const onResizerDoubleClick = useCallback(
-    (event: React.MouseEvent) => {
-      event.preventDefault()
+  const snapOrRestoreHeight = useCallback(
+    (expandIfCollapsed: boolean) => {
       const snap = snapHeight()
       const current = dragHeight ?? panelHeight
       const atSnap = current >= snap - 12
+      if (expandIfCollapsed && collapsed) {
+        useSessionStore.getState().toggleToolsPanel()
+        if (!atSnap) {
+          if (activeId) restoreHeightRef.current = { id: activeId, height: current }
+          setPanelHeight(snap)
+        }
+        window.dispatchEvent(new Event('vav:resize-end'))
+        return
+      }
       if (atSnap) {
         const saved =
           restoreHeightRef.current?.id === activeId
@@ -251,7 +261,15 @@ export function ToolsPanel({
       }
       window.dispatchEvent(new Event('vav:resize-end'))
     },
-    [activeId, dragHeight, panelHeight, setPanelHeight, snapHeight]
+    [activeId, collapsed, dragHeight, panelHeight, setPanelHeight, snapHeight]
+  )
+
+  const onResizerDoubleClick = useCallback(
+    (event: React.MouseEvent) => {
+      event.preventDefault()
+      snapOrRestoreHeight(false)
+    },
+    [snapOrRestoreHeight]
   )
 
   useEffect(() => {
@@ -303,42 +321,17 @@ export function ToolsPanel({
   }, [setPanelHeight, snapHeight])
 
   const workspaceSwitchItems = useCallback((): MenuItem[] => {
-    const items: MenuItem[] = []
-    if (recentDirs.length === 0) {
-      items.push({ label: t('tools.noRecentDirs'), disabled: true })
-    } else {
-      items.push({ label: t('tools.recentDirs'), disabled: true })
-      for (const path of recentDirs) {
-        const name = basename(path)
-        const duplicate = recentDirs.filter((entry) => basename(entry) === name).length > 1
-        items.push({
-          label: duplicate ? path : name,
-          onSelect: () => void setWorkingDirectory(activeId, path)
-        })
-      }
-    }
-    items.push({ label: '', divider: true })
-    items.push({
-      label: t('tools.newTempDir'),
-      onSelect: () => void useTempWorkingDirectory(activeId)
+    return workspaceSwitchMenuItems({
+      t,
+      recentDirs,
+      conversationId: activeId,
+      hosts,
+      setWorkingDirectory,
+      useTempWorkingDirectory,
+      pickWorkingDirectory,
+      openRemoteFolderPicker: (id, machineId) =>
+        useSessionStore.getState().openRemoteFolderPicker(id, machineId)
     })
-    items.push({
-      label: t('tools.pickOtherDir'),
-      onSelect: () => void pickWorkingDirectory(activeId)
-    })
-    const remotes = hosts.filter((h) => h.kind === 'remote')
-    if (remotes.length > 0) {
-      items.push({ label: '', divider: true })
-      for (const host of remotes) {
-        items.push({
-          label: t('tools.pickDirOn', { name: host.name }),
-          disabled: !host.online,
-          onSelect: () =>
-            useSessionStore.getState().openRemoteFolderPicker(activeId, host.id)
-        })
-      }
-    }
-    return items
   }, [recentDirs, activeId, setWorkingDirectory, useTempWorkingDirectory, pickWorkingDirectory, hosts, t])
 
   const openWorkspaceMenu = useCallback(
@@ -455,6 +448,7 @@ export function ToolsPanel({
 
   /** Well paint size — grid 0fr/1fr owns open/close; this stays at the open px. */
   const openHeight = dragHeight ?? panelHeight
+  const atSnapHeight = !collapsed && openHeight >= snapHeight() - 12
 
   const createBash = (): void => {
     void (async () => {
@@ -539,6 +533,7 @@ export function ToolsPanel({
       className="tools-panel"
       data-testid="tools-panel"
       data-tools-collapsed={collapsed ? 'true' : 'false'}
+      data-tools-snapped={atSnapHeight ? 'true' : 'false'}
       data-tools-mode={headerMode}
       data-has-session={activeId ? 'true' : 'false'}
     >
@@ -653,17 +648,6 @@ export function ToolsPanel({
           <span className="tools-header-divider" aria-hidden="true" />
         ) : null}
 
-        <div className="tools-header-new" ref={headerNewRef}>
-          <Button
-            label={t('tools.newBashShort')}
-            icon={<TerminalIcon size={12} />}
-            size="sm"
-            testId="new-bash"
-            title={`${t('tools.newBash')} ${keys('⌘T')}`}
-            onClick={createBash}
-          />
-        </div>
-
         <div
           ref={headerTabsRef}
           className="tools-header-tabs"
@@ -724,7 +708,25 @@ export function ToolsPanel({
           })}
         </div>
 
+        <div className="tools-header-new" ref={headerNewRef}>
+          <Button
+            label={t('tools.newBashShort')}
+            icon={<TerminalIcon size={12} />}
+            size="sm"
+            testId="new-bash"
+            title={`${t('tools.newBash')} ${keys('⌘T')}`}
+            onClick={createBash}
+          />
+        </div>
+
         <div className="tools-header-trail">
+          <Button
+            icon={atSnapHeight ? <Minimize2 size={13} /> : <Maximize2 size={13} />}
+            size="sm"
+            testId="tools-fullscreen"
+            title={atSnapHeight ? t('tools.fullscreenRestore') : t('tools.fullscreen')}
+            onClick={() => snapOrRestoreHeight(true)}
+          />
           <Button
             icon={collapsed ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
             size="sm"

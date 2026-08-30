@@ -45,6 +45,7 @@ import {
   IPC,
   type Bootstrap,
   type FileInspectResult,
+  type HostDiscoveryPeer,
   type MenuCommand,
   type NativeMenuItem,
   type SettingsView,
@@ -73,6 +74,7 @@ import { hasActiveAgentWork, shouldBlockIdleSleep } from '@shared/sleepBlocker'
 import { createSwarmFinishAlert } from './sound/swarmFinishAlert'
 import { RemoteControlService } from './remote/RemoteControlService'
 import { DaemonAttachService } from './daemon/DaemonAttachService'
+import { openTailcatDial } from './daemon/tailcatDial'
 import { isLocalMachine, LOCAL_MACHINE_ID } from '@shared/workspaceHost'
 import type {
   RemoteConfigure,
@@ -1442,8 +1444,12 @@ function cancelRemote(conversationId: string): 'ok' | 'not-found' | 'archived' {
   const conversation = conversationStore.get(conversationId)
   if (!conversation) return 'not-found'
   if (conversation.archived) return 'archived'
-  if (agentFor(conversationId) === 'cli') cliHost.cancel(conversationId)
-  else agent.cancel(conversationId)
+  // A follow-up queued on the phone must not start the moment this turn dies.
+  pendingRemoteSends.delete(conversationId)
+  // Hit both runtimes: agentFor can disagree with the live turn (host switch
+  // mid-turn, or cancel arriving before the chosen host has registered it).
+  agent.cancel(conversationId)
+  cliHost.cancel(conversationId)
   return 'ok'
 }
 
@@ -1682,6 +1688,7 @@ const daemonAttach = new DaemonAttachService({
   appVersion: app.getVersion(),
   enabled: () => settingsStore.get().remoteControlEnabled === true,
   tailcatToken: () => remoteControl.tunnelToken(),
+  dialTunnel: (token) => openTailcatDial(token),
   onHostsChanged: (hosts) => broadcast(IPC.hostsChanged, hosts),
   onDiscovered: (peers) => {
     if (settingsWindow && !settingsWindow.isDestroyed()) {
@@ -1690,6 +1697,30 @@ const daemonAttach = new DaemonAttachService({
     if (connectWindow && !connectWindow.isDestroyed()) {
       safeSend(connectWindow.webContents, IPC.hostsDiscoveredChanged, peers)
     }
+  },
+  confirmLanPair: async (from) => {
+    const parent =
+      (connectWindow && !connectWindow.isDestroyed() && connectWindow.isVisible()
+        ? connectWindow
+        : null) ??
+      (mainWindow && !mainWindow.isDestroyed() ? mainWindow : null)
+    if (parent) {
+      if (parent.isMinimized()) parent.restore()
+      parent.show()
+    }
+    const opts: Electron.MessageBoxOptions = {
+      type: 'question',
+      title: t('machines.lanPairTitle'),
+      message: t('machines.lanPairTitle'),
+      detail: t('machines.lanPairBody', { name: from.name }),
+      buttons: [t('common.allow'), t('common.deny')],
+      defaultId: 1,
+      cancelId: 1
+    }
+    const result = parent
+      ? await dialog.showMessageBox(parent, opts)
+      : await dialog.showMessageBox(opts)
+    return result.response === 0
   }
 })
 
@@ -2731,17 +2762,32 @@ function warmSettingsWindow(): void {
  * Small pairing popup from the sidebar Connect button: phone QR + vavd
  * machines, nothing else. Same hide-on-close warmth as Settings.
  */
+const CONNECT_WINDOW_WIDTH = 440
+const CONNECT_WINDOW_MIN_HEIGHT = 200
+
+function fitConnectWindow(height: number): void {
+  if (!connectWindow || connectWindow.isDestroyed()) return
+  const display = screen.getDisplayMatching(connectWindow.getBounds())
+  const maxH = Math.max(CONNECT_WINDOW_MIN_HEIGHT, display.workArea.height)
+  const next = Math.round(Math.min(maxH, Math.max(CONNECT_WINDOW_MIN_HEIGHT, height)))
+  const [currentW, currentH] = connectWindow.getContentSize()
+  if (currentW !== CONNECT_WINDOW_WIDTH || currentH !== next) {
+    connectWindow.setContentSize(CONNECT_WINDOW_WIDTH, next)
+  }
+}
+
 function openConnectWindow(): void {
   if (connectWindow && !connectWindow.isDestroyed()) {
+    connectWindow.setResizable(false)
     void revealBrowserWindow(connectWindow)
     return
   }
 
   connectWindow = new BrowserWindow({
-    width: 460,
-    height: 640,
-    minWidth: 400,
-    minHeight: 480,
+    width: CONNECT_WINDOW_WIDTH,
+    height: CONNECT_WINDOW_MIN_HEIGHT,
+    useContentSize: true,
+    resizable: false,
     show: false,
     paintWhenInitiallyHidden: true,
     title: t('app.connectWindowTitle'),
@@ -7964,6 +8010,10 @@ return c as text`
   ipcMain.handle(IPC.windowCloseSettings, () => hideSettingsWindow())
   ipcMain.handle(IPC.windowOpenConnect, () => openConnectWindow())
   ipcMain.handle(IPC.windowCloseConnect, () => hideConnectWindow())
+  ipcMain.handle(IPC.windowFitConnect, (_event, height: unknown) => {
+    if (typeof height !== 'number' || !Number.isFinite(height)) return
+    fitConnectWindow(height)
+  })
 
   ipcMain.handle(IPC.windowOpenSession, async (_event, id: string) => {
     // Must not return BrowserWindow — structured clone can't send it over IPC.
@@ -8053,6 +8103,20 @@ return c as text`
   ipcMain.handle(IPC.hostsList, () => hostRegistry.list())
   ipcMain.handle(IPC.hostsPairing, () => daemonAttach.pairing())
   ipcMain.handle(IPC.hostsPair, (_event, payload: string) => daemonAttach.pair(String(payload || '')))
+  ipcMain.handle(IPC.hostsPairLan, (_event, peer: HostDiscoveryPeer) =>
+    daemonAttach.pairLan({
+      address: String(peer?.address || ''),
+      port: Number(peer?.port) || 0,
+      name: typeof peer?.name === 'string' ? peer.name : undefined,
+      machineId: typeof peer?.machineId === 'string' ? peer.machineId : undefined
+    })
+  )
+  ipcMain.handle(IPC.hostsCancelPair, () => {
+    daemonAttach.cancelPair()
+  })
+  ipcMain.on(IPC.hostsCancelPair, () => {
+    daemonAttach.cancelPair()
+  })
   ipcMain.handle(IPC.hostsForget, (_event, machineId: string) => {
     daemonAttach.forget(String(machineId || ''))
   })

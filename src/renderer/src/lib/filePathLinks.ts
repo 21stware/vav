@@ -92,7 +92,7 @@ type MdToken = {
  * path links with a trailing Finder/Explorer button.
  */
 export function filePathLinksPlugin(md: MarkdownIt): void {
-  md.core.ruler.after('inline', 'file_path_links', (state) => {
+  md.core.ruler.after('md_marks', 'file_path_links', (state) => {
     const Token = state.Token
     for (const block of state.tokens) {
       if (block.type !== 'inline' || !block.children?.length) continue

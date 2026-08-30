@@ -32,6 +32,7 @@ import { Button, EmptyState } from './ui'
 import { AgentBrandMark } from './AgentBrandMark'
 import { SessionWorkspaceChrome } from './SessionWorkspaceChrome'
 import { EmptyQuotaUsage } from './EmptyQuotaUsage'
+import { useWorkspaceSwitchMenu } from '../lib/workspaceSwitchMenu'
 import { useT } from '../i18n/useT'
 
 /**
@@ -139,6 +140,8 @@ export function Transcript({
     (s) => !!s.conversations.find((c) => c.id === activeId)?.archived
   )
   const cliAgents = useSessionStore((s) => s.settings.cliAgents)
+
+  const workspaceSwitch = useWorkspaceSwitchMenu(activeId)
 
   const emptyLogoAgent = useMemo(() => {
     if (cliHost && isStructuredCliHost(cliHost)) {
@@ -683,7 +686,12 @@ export function Transcript({
               layout="session"
               logo={<AgentBrandMark agent={emptyLogoAgent} size={96} />}
               logoKey={emptyLogoAgent.id}
-              logoLabel={emptyLogoAgent.name}
+              logoAlt={emptyLogoAgent.name}
+              logoLabel={workspaceSwitch.projectName}
+              logoTitle={
+                workspaceSwitch.allowSwitch ? t('empty.switchWorkspace') : workspaceSwitch.cwd ?? undefined
+              }
+              logoLabelOnClick={workspaceSwitch.allowSwitch ? workspaceSwitch.openMenu : undefined}
               enterKey={emptyScene}
               enterSlot={emptySlot}
               meta={

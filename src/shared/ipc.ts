@@ -1348,6 +1348,8 @@ export interface VavApi {
     /** Small pairing popup (phone QR + vavd machines) from the sidebar. */
     openConnect(): Promise<void>
     closeConnect(): Promise<void>
+    /** Hug the Connect popup to the rendered body (no empty band, no inner scroll). */
+    fitConnect(height: number): Promise<void>
     /** Last category ⌘, / Open Settings asked for — pull after the lazy chunk mounts. */
     desiredSettingsView(): Promise<SettingsViewPayload>
     /** Opens (or raises) the standalone window for one conversation. */
@@ -1520,7 +1522,7 @@ export interface VavApi {
 
   hosts: {
     list(): Promise<import('./workspaceHost').WorkspaceHostInfo[]>
-    /** This machine's `vav-daemon:` pairing line, when listening. */
+    /** This machine's `vav-daemon://` pairing URI, when listening. */
     pairing(): Promise<string | null>
     pair(
       payload: string
@@ -1528,6 +1530,11 @@ export interface VavApi {
       | { ok: true; host: import('./workspaceHost').WorkspaceHostInfo }
       | { ok: false; error: string }
     >
+    pairLan(peer: HostDiscoveryPeer): Promise<
+      | { ok: true; host: import('./workspaceHost').WorkspaceHostInfo }
+      | { ok: false; error: string }
+    >
+    cancelPair(): Promise<void>
     forget(machineId: string): Promise<void>
     discovered(): Promise<HostDiscoveryPeer[]>
     listDir(machineId: string, path: string): Promise<DirectoryListing>
@@ -1659,7 +1666,7 @@ export type MenuCommand =
    * else close the window. Replaces bare role:close so the renderer can decide.
    */
   | 'close-context'
-  /** ⌘1…⌘9 — slot 1 = Workspace; 2+ = bash tabs in order (Agent first). */
+  /** ⌘1…⌘9 — slot 1 = Workspace; 2+ = bash tabs in order (agent last). */
   | 'focus-tools-1'
   | 'focus-tools-2'
   | 'focus-tools-3'
@@ -1874,6 +1881,7 @@ export const IPC = {
   windowCloseSettings: 'vav:window:close-settings',
   windowOpenConnect: 'vav:window:open-connect',
   windowCloseConnect: 'vav:window:close-connect',
+  windowFitConnect: 'vav:window:fit-connect',
   settingsDesiredView: 'vav:settings:desired-view',
   windowPopupMenu: 'vav:window:popup-menu',
   windowClosePopupMenu: 'vav:window:close-popup-menu',
@@ -1909,6 +1917,8 @@ export const IPC = {
   hostsList: 'vav:hosts:list',
   hostsPairing: 'vav:hosts:pairing',
   hostsPair: 'vav:hosts:pair',
+  hostsPairLan: 'vav:hosts:pair-lan',
+  hostsCancelPair: 'vav:hosts:cancel-pair',
   hostsForget: 'vav:hosts:forget',
   hostsDiscovered: 'vav:hosts:discovered',
   hostsListDir: 'vav:hosts:list-dir',

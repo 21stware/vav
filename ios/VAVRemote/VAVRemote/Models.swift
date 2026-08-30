@@ -340,11 +340,25 @@ struct RemoteDirs: Codable, Equatable {
 }
 
 /// Pairing payload scanned from the Mac's settings QR (`vav-remote:{…}`).
-struct Pairing: Codable, Equatable {
+/// `token` is the tailcat identity — unique per computer, used as the id.
+struct Pairing: Codable, Equatable, Identifiable, Hashable {
+    var id: String { token }
     let v: Int
     let token: String
     let secret: String
-    let host: String?
+    var host: String?
+
+    var displayName: String {
+        let name = (host ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        return name.isEmpty ? "电脑" : name
+    }
+
+    func renaming(_ name: String) -> Pairing {
+        var next = self
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        next.host = trimmed.isEmpty ? host : trimmed
+        return next
+    }
 
     static func parse(_ text: String) -> Pairing? {
         let prefix = "vav-remote:"
@@ -355,6 +369,47 @@ struct Pairing: Codable, Equatable {
               pairing.secret.count >= 16
         else { return nil }
         return pairing
+    }
+}
+
+/// Keychain envelope. Older installs stored a single `Pairing` at this key.
+struct PairingBook: Codable, Equatable {
+    var pairings: [Pairing]
+    var activeToken: String?
+
+    init(pairings: [Pairing] = [], activeToken: String? = nil) {
+        self.pairings = []
+        self.activeToken = nil
+        for pairing in pairings { upsert(pairing) }
+        if let activeToken, self.pairings.contains(where: { $0.token == activeToken }) {
+            self.activeToken = activeToken
+        } else {
+            self.activeToken = self.pairings.first?.token
+        }
+    }
+
+    var active: Pairing? {
+        pairings.first(where: { $0.token == activeToken }) ?? pairings.first
+    }
+
+    mutating func upsert(_ pairing: Pairing) {
+        if let index = pairings.firstIndex(where: { $0.token == pairing.token }) {
+            var merged = pairing
+            if (merged.host ?? "").isEmpty { merged.host = pairings[index].host }
+            pairings[index] = merged
+        } else {
+            pairings.append(pairing)
+        }
+    }
+
+    mutating func activate(_ token: String) {
+        guard pairings.contains(where: { $0.token == token }) else { return }
+        activeToken = token
+    }
+
+    mutating func remove(_ token: String) {
+        pairings.removeAll { $0.token == token }
+        if activeToken == token { activeToken = pairings.first?.token }
     }
 }
 

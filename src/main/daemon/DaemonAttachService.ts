@@ -11,15 +11,25 @@ import {
   DAEMON_DEFAULT_PORT,
   DAEMON_PROTO_VERSION,
   encodeDaemonPairing,
-  parseDaemonPairing,
+  parseMachinePairing,
   type DaemonPairing
 } from '../../shared/daemonProtocol.ts'
 import type { WorkspaceHostInfo } from '../../shared/workspaceHost.ts'
 import type { HostRegistry, WorkspaceHost } from '../host/WorkspaceHost.ts'
 import { DaemonServer } from './DaemonServer.ts'
-import { DaemonClient, createRemoteWorkspaceHost } from './DaemonClient.ts'
+import { DaemonClient, createRemoteWorkspaceHost, requestLanPairOffer, PAIRING_CANCELLED } from './DaemonClient.ts'
 import { loadOrCreateIdentity, type DaemonIdentity } from './identity.ts'
-import { lanAddresses, startAnnouncer, startBrowser, type DiscoveredPeer } from './lanAnnounce.ts'
+import {
+  advertisedPairingAddresses,
+  collectDialTargets,
+  lanAddresses,
+  mdnsName,
+  startAnnouncer,
+  startBrowser,
+  visibleLanPeers,
+  type DialTarget,
+  type DiscoveredPeer
+} from './lanAnnounce.ts'
 
 function offlineWorkspaceHost(id: string, name: string): WorkspaceHost {
   const fail = (): never => {
@@ -54,6 +64,12 @@ export type PairedHostRecord = {
   addresses?: string[]
 }
 
+type TunnelHandle = {
+  host: string
+  port: number
+  close: () => void
+}
+
 type AttachOpts = {
   userData: string
   registry: HostRegistry
@@ -62,8 +78,12 @@ type AttachOpts = {
   appVersion: string
   enabled: () => boolean
   tailcatToken: () => string | null
+  /** Open the remote daemon over tailcat (same pipe as the phone QR). */
+  dialTunnel?: (token: string) => Promise<TunnelHandle>
   onHostsChanged: (hosts: WorkspaceHostInfo[]) => void
   onDiscovered?: (peers: DiscoveredPeer[]) => void
+  /** Desktop: confirm a LAN Pair from another VAV. vavd omits this. */
+  confirmLanPair?: (from: { name: string; machineId: string }) => Promise<boolean>
 }
 
 export class DaemonAttachService {
@@ -72,10 +92,14 @@ export class DaemonAttachService {
   private stopBrowse: (() => void) | null = null
   private readonly clients = new Map<string, DaemonClient>()
   private readonly homes = new Map<string, string>()
+  /** Live `--dial` sidecars, keyed by tailcat token. */
+  private readonly tunnels = new Map<string, TunnelHandle>()
+  private readonly tunnelOfHost = new Map<string, string>()
   private discovered: DiscoveredPeer[] = []
   readonly identity: DaemonIdentity
   private listenPort = 0
   private readonly opts: AttachOpts
+  private pairAbort: AbortController | null = null
 
   constructor(opts: AttachOpts) {
     this.opts = opts
@@ -93,16 +117,16 @@ export class DaemonAttachService {
 
   pairing(): string | null {
     if (!this.opts.enabled() && !this.server) return null
-    const lans = lanAddresses()
+    const advertised = advertisedPairingAddresses({ identityName: this.identity.name })
     const payload: DaemonPairing = {
       v: DAEMON_PROTO_VERSION,
       secret: this.opts.secret(),
       machineId: this.identity.machineId,
       name: this.identity.name,
-      host: lans[0] || '127.0.0.1',
+      host: advertised.host,
       port: this.listenPort || DAEMON_DEFAULT_PORT,
       token: this.opts.tailcatToken() ?? undefined,
-      addresses: [...lans, '127.0.0.1']
+      addresses: advertised.addresses
     }
     return encodeDaemonPairing(payload)
   }
@@ -124,33 +148,80 @@ export class DaemonAttachService {
     this.server?.adopt(socket, leftover)
   }
 
-  async pair(text: string): Promise<{ ok: true; host: WorkspaceHostInfo } | { ok: false; error: string }> {
-    const parsed = parseDaemonPairing(text)
+  async pair(text: string, signal?: AbortSignal): Promise<{ ok: true; host: WorkspaceHostInfo } | { ok: false; error: string }> {
+    const parsed = parseMachinePairing(text)
     if (!parsed) return { ok: false, error: 'unrecognized pairing payload' }
-    const targets = this.targetsOf(parsed)
-    if (targets.length === 0) return { ok: false, error: 'pairing is missing a host address' }
+    const owned = signal ? null : this.replacePairAbort()
+    const sig = signal ?? owned!.signal
     try {
-      const { client, welcome } = await this.dial(targets, parsed.secret)
-      const record: PairedHostRecord = {
+      const { client, welcome, target } = await this.connectPairing(parsed, sig)
+      if (sig.aborted) {
+        client.close()
+        return { ok: false, error: PAIRING_CANCELLED }
+      }
+      const viaTunnel = Boolean(parsed.token && this.tunnelOfHost.get(welcome.host.id))
+      const persistHost = viaTunnel ? lanHostOf(parsed) : target.host
+      this.remember({
         machineId: welcome.host.id,
         name: welcome.host.name || parsed.name,
         secret: parsed.secret,
-        host: targets[0].host,
-        port: targets[0].port,
+        host: persistHost,
+        port: viaTunnel ? (parsed.port && persistHost ? parsed.port : 0) : target.port,
         token: parsed.token,
-        addresses: parsed.addresses
-      }
-      this.remember(record)
+        addresses: uniqueAddresses([
+          ...(parsed.addresses ?? []),
+          persistHost || undefined,
+          viaTunnel ? undefined : target.host
+        ]).filter((host) => !viaTunnel || !isLoopbackHost(host))
+      })
       this.mount(client, welcome)
       return { ok: true, host: this.opts.registry.get(welcome.host.id)?.info ?? welcome.host }
     } catch (err) {
+      if (isPairCancelled(err)) return { ok: false, error: PAIRING_CANCELLED }
+      const message = err instanceof Error ? err.message : String(err)
+      if (!parsed.token && /\b(EHOSTUNREACH|ENETUNREACH|EHOSTDOWN)\b/.test(message)) {
+        return { ok: false, error: `no tunnel token: ${message}` }
+      }
+      return { ok: false, error: message }
+    }
+  }
+
+  async pairLan(peer: {
+    address: string
+    port: number
+    name?: string
+    machineId?: string
+  }): Promise<{ ok: true; host: WorkspaceHostInfo } | { ok: false; error: string }> {
+    const abort = this.replacePairAbort()
+    try {
+      const pairing = await requestLanPairOffer({
+        host: peer.address,
+        port: peer.port,
+        name: this.identity.name,
+        machineId: this.identity.machineId,
+        signal: abort.signal
+      })
+      return await this.pair(pairing, abort.signal)
+    } catch (err) {
+      if (isPairCancelled(err)) return { ok: false, error: PAIRING_CANCELLED }
       return { ok: false, error: err instanceof Error ? err.message : String(err) }
     }
+  }
+
+  cancelPair(): void {
+    this.pairAbort?.abort()
+  }
+
+  private replacePairAbort(): AbortController {
+    this.pairAbort?.abort()
+    this.pairAbort = new AbortController()
+    return this.pairAbort
   }
 
   forget(machineId: string): void {
     this.clients.get(machineId)?.close()
     this.clients.delete(machineId)
+    this.releaseTunnel(machineId)
     this.opts.registry.remove(machineId)
     const next = this.loadStore().filter((row) => row.machineId !== machineId)
     this.saveStore(next)
@@ -163,18 +234,26 @@ export class DaemonAttachService {
     }
     if (!this.stopBrowse) {
       this.stopBrowse = startBrowser((peers) => {
-        this.discovered = peers.filter((p) => p.machineId !== this.identity.machineId)
+        this.discovered = visibleLanPeers(peers, {
+          machineId: this.identity.machineId,
+          localAddresses: lanAddresses(),
+          mdns: mdnsName(undefined, this.identity.name)
+        })
         this.opts.onDiscovered?.(this.discovered)
       })
     }
   }
 
   dispose(): void {
+    this.cancelPair()
     this.stopListen()
     this.stopBrowse?.()
     this.stopBrowse = null
     for (const client of this.clients.values()) client.close()
     this.clients.clear()
+    for (const tunnel of this.tunnels.values()) tunnel.close()
+    this.tunnels.clear()
+    this.tunnelOfHost.clear()
   }
 
   private ensureServer(): DaemonServer {
@@ -185,7 +264,11 @@ export class DaemonAttachService {
       secret: () => this.opts.secret(),
       appVersion: this.opts.appVersion,
       home: homedir(),
-      tmp: tmpdir()
+      tmp: tmpdir(),
+      pairing: () => this.pairing(),
+      onPairAsk: this.opts.confirmLanPair
+        ? (from) => this.opts.confirmLanPair!(from)
+        : undefined
     })
     return this.server
   }
@@ -221,44 +304,109 @@ export class DaemonAttachService {
     this.listenPort = 0
   }
 
-  private targetsOf(parsed: DaemonPairing): { host: string; port: number }[] {
-    const port = parsed.port || DAEMON_DEFAULT_PORT
-    const seen = new Set<string>()
-    const out: { host: string; port: number }[] = []
-    const add = (host?: string): void => {
-      const h = host?.trim()
-      if (!h) return
-      const key = `${h}:${port}`
-      if (seen.has(key)) return
-      seen.add(key)
-      out.push({ host: h, port })
+  private targetsOf(parsed: DaemonPairing): DialTarget[] {
+    return collectDialTargets({
+      host: parsed.host,
+      port: parsed.port,
+      addresses: parsed.addresses,
+      name: parsed.name,
+      machineId: parsed.machineId,
+      discovered: this.discovered,
+      localAddresses: lanAddresses()
+    })
+  }
+
+  private async connectPairing(
+    parsed: DaemonPairing,
+    signal?: AbortSignal
+  ): Promise<{
+    client: DaemonClient
+    welcome: import('../../shared/daemonProtocol.ts').DaemonWelcome
+    target: DialTarget
+  }> {
+    if (signal?.aborted) throw new Error(PAIRING_CANCELLED)
+    const failures: Error[] = []
+    if (parsed.token && this.opts.dialTunnel) {
+      try {
+        const tun = await this.ensureTunnel(parsed.token)
+        if (signal?.aborted) throw new Error(PAIRING_CANCELLED)
+        const result = await this.dial([tun], parsed.secret, 45_000, signal)
+        this.tunnelOfHost.set(result.welcome.host.id, parsed.token)
+        return result
+      } catch (err) {
+        if (isPairCancelled(err)) throw err instanceof Error ? err : new Error(PAIRING_CANCELLED)
+        failures.push(err instanceof Error ? err : new Error(String(err)))
+        this.dropTunnel(parsed.token)
+      }
     }
-    for (const address of parsed.addresses ?? []) add(address)
-    add(parsed.host)
-    return out
+    const targets = this.targetsOf(parsed)
+    if (targets.length === 0) throw preferPairError(failures)
+    try {
+      return await this.dial(targets, parsed.secret, undefined, signal)
+    } catch (err) {
+      if (isPairCancelled(err)) throw err instanceof Error ? err : new Error(PAIRING_CANCELLED)
+      failures.push(err instanceof Error ? err : new Error(String(err)))
+      throw preferPairError(failures)
+    }
+  }
+
+  private async ensureTunnel(token: string): Promise<DialTarget> {
+    const existing = this.tunnels.get(token)
+    if (existing) return { host: existing.host, port: existing.port }
+    const handle = await this.opts.dialTunnel!(token)
+    this.tunnels.set(token, handle)
+    return { host: handle.host, port: handle.port }
+  }
+
+  private dropTunnel(token: string): void {
+    const handle = this.tunnels.get(token)
+    if (!handle) return
+    handle.close()
+    this.tunnels.delete(token)
+    for (const [machineId, owned] of this.tunnelOfHost) {
+      if (owned === token) this.tunnelOfHost.delete(machineId)
+    }
+  }
+
+  private releaseTunnel(machineId: string): void {
+    const token = this.tunnelOfHost.get(machineId)
+    this.tunnelOfHost.delete(machineId)
+    if (!token) return
+    if ([...this.tunnelOfHost.values()].includes(token)) return
+    this.dropTunnel(token)
   }
 
   private async dial(
-    targets: { host: string; port: number }[],
-    secret: string
-  ): Promise<{ client: DaemonClient; welcome: import('../../shared/daemonProtocol.ts').DaemonWelcome }> {
-    let last: Error = new Error('no addresses')
+    targets: DialTarget[],
+    secret: string,
+    timeoutMs?: number,
+    signal?: AbortSignal
+  ): Promise<{
+    client: DaemonClient
+    welcome: import('../../shared/daemonProtocol.ts').DaemonWelcome
+    target: DialTarget
+  }> {
+    const failures: Error[] = []
     for (const target of targets) {
+      if (signal?.aborted) throw new Error(PAIRING_CANCELLED)
       const client = new DaemonClient()
       try {
         const welcome = await client.connect({
           host: target.host,
           port: target.port,
           secret,
-          device: this.identity.name
+          device: this.identity.name,
+          timeoutMs,
+          signal
         })
-        return { client, welcome }
+        return { client, welcome, target }
       } catch (err) {
         client.close()
-        last = err instanceof Error ? err : new Error(String(err))
+        if (isPairCancelled(err)) throw err instanceof Error ? err : new Error(PAIRING_CANCELLED)
+        failures.push(err instanceof Error ? err : new Error(String(err)))
       }
     }
-    throw last
+    throw preferPairError(failures)
   }
 
   private mount(
@@ -275,19 +423,25 @@ export class DaemonAttachService {
   }
 
   private async reconnect(row: PairedHostRecord): Promise<void> {
-    const targets = this.targetsOf({
-      v: DAEMON_PROTO_VERSION,
-      secret: row.secret,
-      machineId: row.machineId,
-      name: row.name,
-      host: row.host,
-      port: row.port,
-      token: row.token,
-      addresses: row.addresses
-    })
     try {
-      const { client, welcome } = await this.dial(targets, row.secret)
+      const { client, welcome, target } = await this.connectPairing({
+        v: DAEMON_PROTO_VERSION,
+        secret: row.secret,
+        machineId: row.machineId,
+        name: row.name,
+        host: row.host,
+        port: row.port,
+        token: row.token,
+        addresses: row.addresses
+      })
       this.mount(client, welcome)
+      if (target.host !== row.host || target.port !== row.port || row.token) {
+        this.remember({
+          ...row,
+          host: row.token ? row.host : target.host,
+          port: row.token ? row.port : target.port
+        })
+      }
     } catch {
       this.opts.registry.register(offlineWorkspaceHost(row.machineId, row.name))
       this.opts.onHostsChanged(this.opts.registry.list())
@@ -324,4 +478,57 @@ export class DaemonAttachService {
     mkdirSync(this.opts.userData, { recursive: true })
     writeFileSync(this.storeFile, JSON.stringify({ hosts }, null, 2))
   }
+}
+
+function isPairCancelled(err: unknown): boolean {
+  const message = err instanceof Error ? err.message : String(err)
+  return message === PAIRING_CANCELLED || /pairing cancelled/i.test(message)
+}
+
+function uniqueAddresses(values: Array<string | undefined>): string[] {
+  const seen = new Set<string>()
+  const out: string[] = []
+  for (const value of values) {
+    const host = value?.trim()
+    if (!host || seen.has(host)) continue
+    seen.add(host)
+    out.push(host)
+  }
+  return out
+}
+
+function isLoopbackHost(host?: string): boolean {
+  const value = host?.trim().toLowerCase() ?? ''
+  return value === '127.0.0.1' || value === '::1' || value === 'localhost'
+}
+
+/** LAN address from the pairing line — never the local `--dial` sidecar. */
+function lanHostOf(parsed: DaemonPairing): string {
+  if (parsed.host && !isLoopbackHost(parsed.host)) return parsed.host
+  for (const address of parsed.addresses ?? []) {
+    if (address && !isLoopbackHost(address)) return address
+  }
+  return ''
+}
+
+function isTunnelError(err: Error): boolean {
+  return /tailcat|invalid tailcat|dial exited|context deadline/i.test(err.message)
+}
+
+function pairErrorRank(err: Error): number {
+  const code = (err as NodeJS.ErrnoException).code ?? ''
+  const message = err.message
+  const blob = `${code} ${message}`
+  if (/pairing rejected|auth/i.test(message)) return 0
+  if (isTunnelError(err)) return 1
+  if (/\b(EHOSTUNREACH|ENETUNREACH|EHOSTDOWN)\b/.test(blob)) return 2
+  if (/\bETIMEDOUT\b/.test(blob) || /connect timeout/i.test(message)) return 3
+  if (/\bECONNREFUSED\b/.test(blob) && /127\.0\.0\.1|::1|localhost/.test(blob)) return 9
+  if (/\bECONNREFUSED\b/.test(blob)) return 4
+  return 5
+}
+
+function preferPairError(failures: Error[]): Error {
+  if (failures.length === 0) return new Error('no addresses')
+  return [...failures].sort((a, b) => pairErrorRank(a) - pairErrorRank(b))[0]
 }

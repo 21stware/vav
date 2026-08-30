@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { describe, it } from 'node:test'
 import { createLocalWorkspaceHost } from '../host/WorkspaceHost.ts'
 import { DaemonServer } from './DaemonServer.ts'
-import { DaemonClient, createRemoteWorkspaceHost } from './DaemonClient.ts'
+import { DaemonClient, createRemoteWorkspaceHost, requestLanPairOffer } from './DaemonClient.ts'
 
 const SECRET = '0123456789abcdef01234567'
 
@@ -208,6 +208,91 @@ describe('daemon loopback', () => {
       )
     } finally {
       client.close()
+      server.close()
+    }
+  })
+
+  it('offers a pairing line after LAN pair-ask is approved', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'vav-daemon-'))
+    const pairing = `vav-daemon:{"v":1,"secret":"${SECRET}","machineId":"loop-box","name":"loop"}`
+    const server = new DaemonServer({
+      host: createLocalWorkspaceHost({ name: 'loop' }),
+      identity: { machineId: 'loop-box', name: 'loop' },
+      secret: () => SECRET,
+      appVersion: 'test',
+      home: dir,
+      tmp: dir,
+      pairing: () => pairing,
+      onPairAsk: async () => true
+    })
+    try {
+      const port = await server.listen(0, '127.0.0.1')
+      const offered = await requestLanPairOffer({
+        host: '127.0.0.1',
+        port,
+        name: 'Studio',
+        machineId: 'studio-1'
+      })
+      assert.equal(offered, pairing)
+    } finally {
+      server.close()
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('declines a LAN pair-ask', async () => {
+    const server = new DaemonServer({
+      host: createLocalWorkspaceHost({ name: 'loop' }),
+      identity: { machineId: 'loop-box', name: 'loop' },
+      secret: () => SECRET,
+      appVersion: 'test',
+      home: tmpdir(),
+      tmp: tmpdir(),
+      pairing: () => 'vav-daemon:{}',
+      onPairAsk: async () => false
+    })
+    try {
+      const port = await server.listen(0, '127.0.0.1')
+      await assert.rejects(
+        () =>
+          requestLanPairOffer({
+            host: '127.0.0.1',
+            port,
+            name: 'Studio',
+            machineId: 'studio-1'
+          }),
+        /pairing declined/
+      )
+    } finally {
+      server.close()
+    }
+  })
+
+  it('cancels a LAN pair-ask when aborted', async () => {
+    const server = new DaemonServer({
+      host: createLocalWorkspaceHost({ name: 'loop' }),
+      identity: { machineId: 'loop-box', name: 'loop' },
+      secret: () => SECRET,
+      appVersion: 'test',
+      home: tmpdir(),
+      tmp: tmpdir(),
+      pairing: () => 'vav-daemon://x',
+      onPairAsk: () => new Promise(() => undefined)
+    })
+    try {
+      const port = await server.listen(0, '127.0.0.1')
+      const abort = new AbortController()
+      const pending = requestLanPairOffer({
+        host: '127.0.0.1',
+        port,
+        name: 'Studio',
+        machineId: 'studio-1',
+        signal: abort.signal
+      })
+      await new Promise((resolve) => setTimeout(resolve, 40))
+      abort.abort()
+      await assert.rejects(() => pending, /pairing cancelled/)
+    } finally {
       server.close()
     }
   })

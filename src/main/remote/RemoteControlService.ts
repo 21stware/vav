@@ -17,6 +17,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node
 import { createServer, type Server, type Socket } from 'node:net'
 import { hostname } from 'node:os'
 import { dirname, join } from 'node:path'
+import { resolveSidecarBinary } from './sidecarBinary.ts'
 import type { Readable, Writable } from 'node:stream'
 import {
   REMOTE_MAX_LINE_BYTES,
@@ -880,15 +881,4 @@ function writeRemoteInboxImages(images: RemoteSendImage[] | undefined): string[]
     paths.push(path)
   }
   return paths
-}
-
-/** Bundled sidecar: resources/bin in dev, Resources/bin when packaged. */
-function resolveSidecarBinary(): string | null {
-  const name = process.platform === 'win32' ? 'tailcatbridge.exe' : 'tailcatbridge'
-  const candidates = [
-    typeof process.resourcesPath === 'string' ? join(process.resourcesPath, 'bin', name) : '',
-    join(app.getAppPath(), 'resources', 'bin', name),
-    join(process.cwd(), 'resources', 'bin', name)
-  ].filter(Boolean)
-  return candidates.find((path) => existsSync(path)) ?? null
 }

@@ -1,4 +1,4 @@
-import { useCallback, useEffect } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef } from 'react'
 import {
   installHostsBridge,
   installSettingsBridge,
@@ -47,10 +47,34 @@ export default function ConnectWindow(): React.JSX.Element {
     return () => window.removeEventListener('keydown', onKey)
   }, [close])
 
+  const rootRef = useRef<HTMLDivElement>(null)
+  const lastFit = useRef(0)
+
+  useLayoutEffect(() => {
+    document.documentElement.classList.add('connect-root')
+    return () => document.documentElement.classList.remove('connect-root')
+  }, [])
+
+  useLayoutEffect(() => {
+    if (!ready) return
+    const el = rootRef.current
+    if (!el) return
+    const report = (): void => {
+      const height = Math.ceil(el.getBoundingClientRect().height)
+      if (height <= 0 || height === lastFit.current) return
+      lastFit.current = height
+      void window.vav.window.fitConnect(height)
+    }
+    report()
+    const ro = new ResizeObserver(report)
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [ready])
+
   if (!ready) return <div className="connect-window" />
 
   return (
-    <div className="connect-window" data-testid="connect-window">
+    <div ref={rootRef} className="connect-window" data-testid="connect-window">
       <header className="settings-head connect-head">{t('settings.nav.connect')}</header>
       <div className="settings-body connect-body">
         <ConnectSettings />

@@ -3,7 +3,8 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, it } from 'node:test'
-import { encodeDaemonPairing, DAEMON_PROTO_VERSION } from '../../shared/daemonProtocol.ts'
+import { encodeDaemonPairing, DAEMON_PROTO_VERSION, parseMachinePairing } from '../../shared/daemonProtocol.ts'
+import { encodePairing } from '../../shared/remoteControl.ts'
 import { HostRegistry, createLocalWorkspaceHost } from '../host/WorkspaceHost.ts'
 import { DaemonServer } from './DaemonServer.ts'
 import { DaemonAttachService } from './DaemonAttachService.ts'
@@ -23,7 +24,11 @@ async function listenLoopback(dir: string): Promise<{ server: DaemonServer; port
   return { server, port }
 }
 
-function attach(userData: string, enabled = false): {
+function attach(
+  userData: string,
+  enabled = false,
+  extra?: { dialTunnel?: (token: string) => Promise<{ host: string; port: number; close: () => void }> }
+): {
   service: DaemonAttachService
   registry: HostRegistry
 } {
@@ -38,6 +43,7 @@ function attach(userData: string, enabled = false): {
       appVersion: 'test',
       enabled: () => enabled,
       tailcatToken: () => null,
+      dialTunnel: extra?.dialTunnel,
       onHostsChanged: () => undefined
     })
   }
@@ -201,6 +207,148 @@ describe('DaemonAttachService', () => {
     }
   })
 
+  it('pairs over a tunnel token without contacting the LAN address', async () => {
+    const disk = await mkdtemp(join(tmpdir(), 'vav-box-'))
+    const userData = await mkdtemp(join(tmpdir(), 'vav-attach-'))
+    const { server, port } = await listenLoopback(disk)
+    let dialed = ''
+    const { service } = attach(userData, false, {
+      dialTunnel: async (token) => {
+        dialed = token
+        return { host: '127.0.0.1', port, close: () => undefined }
+      }
+    })
+    try {
+      const result = await service.pair(
+        encodeDaemonPairing({
+          v: DAEMON_PROTO_VERSION,
+          secret: SECRET,
+          machineId: 'ignored',
+          name: 'box',
+          host: '192.0.2.1',
+          port: 1,
+          token: 'tcTESTTOKEN'
+        })
+      )
+      assert.equal(result.ok, true)
+      assert.equal(dialed, 'tcTESTTOKEN')
+      if (result.ok) assert.equal(result.host.id, 'box-1')
+      const stored = JSON.parse(await readFile(join(userData, 'paired-hosts.json'), 'utf8')) as {
+        hosts: { host: string; port: number; token?: string }[]
+      }
+      assert.equal(stored.hosts[0]?.token, 'tcTESTTOKEN')
+      assert.equal(stored.hosts[0]?.host, '192.0.2.1')
+      assert.notEqual(stored.hosts[0]?.host, '127.0.0.1')
+    } finally {
+      service.dispose()
+      server.close()
+      await rm(disk, { recursive: true, force: true })
+      await rm(userData, { recursive: true, force: true })
+    }
+  })
+
+  it('pairs from a vav-remote QR payload through the tunnel', async () => {
+    const disk = await mkdtemp(join(tmpdir(), 'vav-box-'))
+    const userData = await mkdtemp(join(tmpdir(), 'vav-attach-'))
+    const { server, port } = await listenLoopback(disk)
+    const { service } = attach(userData, false, {
+      dialTunnel: async () => ({ host: '127.0.0.1', port, close: () => undefined })
+    })
+    try {
+      const parsed = parseMachinePairing(
+        encodePairing({
+          v: 1,
+          token: 'tcQRTOKEN',
+          secret: SECRET,
+          host: 'Mac-mini-2.local'
+        })
+      )
+      assert.ok(parsed?.token)
+      const result = await service.pair(
+        encodePairing({
+          v: 1,
+          token: 'tcQRTOKEN',
+          secret: SECRET,
+          host: 'Mac-mini-2.local'
+        })
+      )
+      assert.equal(result.ok, true)
+      if (result.ok) assert.equal(result.host.id, 'box-1')
+      const stored = JSON.parse(await readFile(join(userData, 'paired-hosts.json'), 'utf8')) as {
+        hosts: { host: string; token?: string }[]
+      }
+      assert.equal(stored.hosts[0]?.token, 'tcQRTOKEN')
+      assert.equal(stored.hosts[0]?.host, 'Mac-mini-2.local')
+    } finally {
+      service.dispose()
+      server.close()
+      await rm(disk, { recursive: true, force: true })
+      await rm(userData, { recursive: true, force: true })
+    }
+  })
+
+  it('falls back to LAN when the tunnel dial fails', async () => {
+    const disk = await mkdtemp(join(tmpdir(), 'vav-box-'))
+    const userData = await mkdtemp(join(tmpdir(), 'vav-attach-'))
+    const { server, port } = await listenLoopback(disk)
+    const { service } = attach(userData, false, {
+      dialTunnel: async () => {
+        throw new Error('tailcat dial exited (1): dial: context deadline exceeded')
+      }
+    })
+    try {
+      const result = await service.pair(
+        encodeDaemonPairing({
+          v: DAEMON_PROTO_VERSION,
+          secret: SECRET,
+          machineId: 'ignored',
+          name: 'box',
+          host: '127.0.0.1',
+          port,
+          token: 'tcFAILTOKEN'
+        })
+      )
+      assert.equal(result.ok, true)
+      if (result.ok) assert.equal(result.host.id, 'box-1')
+    } finally {
+      service.dispose()
+      server.close()
+      await rm(disk, { recursive: true, force: true })
+      await rm(userData, { recursive: true, force: true })
+    }
+  })
+
+  it('falls back to a later address when the first host cannot be reached', async () => {
+    const disk = await mkdtemp(join(tmpdir(), 'vav-box-'))
+    const userData = await mkdtemp(join(tmpdir(), 'vav-attach-'))
+    const { server, port } = await listenLoopback(disk)
+    const { service } = attach(userData)
+    try {
+      const result = await service.pair(
+        encodeDaemonPairing({
+          v: DAEMON_PROTO_VERSION,
+          secret: SECRET,
+          machineId: 'ignored',
+          name: 'box',
+          host: '127.0.0.2',
+          port,
+          addresses: ['127.0.0.2', '127.0.0.1']
+        })
+      )
+      assert.equal(result.ok, true)
+      const stored = JSON.parse(await readFile(join(userData, 'paired-hosts.json'), 'utf8')) as {
+        hosts: { host: string; port: number }[]
+      }
+      assert.equal(stored.hosts[0]?.host, '127.0.0.1')
+      assert.equal(stored.hosts[0]?.port, port)
+    } finally {
+      service.dispose()
+      server.close()
+      await rm(disk, { recursive: true, force: true })
+      await rm(userData, { recursive: true, force: true })
+    }
+  })
+
   it('listens so another attach client can pair over LAN pairing text', async () => {
     const userA = await mkdtemp(join(tmpdir(), 'vav-a-'))
     const userB = await mkdtemp(join(tmpdir(), 'vav-b-'))
@@ -231,6 +379,83 @@ describe('DaemonAttachService', () => {
         const home = b.homeOf(result.host.id)
         assert.ok(home.length > 0)
       }
+    } finally {
+      a.dispose()
+      b.dispose()
+      await rm(userA, { recursive: true, force: true })
+      await rm(userB, { recursive: true, force: true })
+    }
+  })
+
+  it('pairs over LAN after the other side confirms', async () => {
+    const userA = await mkdtemp(join(tmpdir(), 'vav-a-'))
+    const userB = await mkdtemp(join(tmpdir(), 'vav-b-'))
+    const a = new DaemonAttachService({
+      userData: userA,
+      registry: new HostRegistry(),
+      identityName: 'Alpha',
+      secret: () => SECRET,
+      appVersion: 'test',
+      enabled: () => true,
+      tailcatToken: () => null,
+      onHostsChanged: () => undefined,
+      confirmLanPair: async () => true
+    })
+    const { service: b } = attach(userB)
+    try {
+      a.applySettings()
+      const start = Date.now()
+      while (!a.listenPortOf() && Date.now() - start < 2000) {
+        await new Promise((resolve) => setTimeout(resolve, 40))
+      }
+      const result = await b.pairLan({
+        address: '127.0.0.1',
+        port: a.listenPortOf(),
+        name: 'client',
+        machineId: 'client-1'
+      })
+      assert.equal(result.ok, true)
+      if (result.ok) assert.equal(result.host.name, 'Alpha')
+    } finally {
+      a.dispose()
+      b.dispose()
+      await rm(userA, { recursive: true, force: true })
+      await rm(userB, { recursive: true, force: true })
+    }
+  })
+
+  it('cancels an in-flight LAN pair', async () => {
+    const userA = await mkdtemp(join(tmpdir(), 'vav-a-'))
+    const userB = await mkdtemp(join(tmpdir(), 'vav-b-'))
+    const a = new DaemonAttachService({
+      userData: userA,
+      registry: new HostRegistry(),
+      identityName: 'Alpha',
+      secret: () => SECRET,
+      appVersion: 'test',
+      enabled: () => true,
+      tailcatToken: () => null,
+      onHostsChanged: () => undefined,
+      confirmLanPair: () => new Promise(() => undefined)
+    })
+    const { service: b } = attach(userB)
+    try {
+      a.applySettings()
+      const start = Date.now()
+      while (!a.listenPortOf() && Date.now() - start < 2000) {
+        await new Promise((resolve) => setTimeout(resolve, 40))
+      }
+      const pending = b.pairLan({
+        address: '127.0.0.1',
+        port: a.listenPortOf(),
+        name: 'client',
+        machineId: 'client-1'
+      })
+      await new Promise((resolve) => setTimeout(resolve, 50))
+      b.cancelPair()
+      const result = await pending
+      assert.equal(result.ok, false)
+      if (!result.ok) assert.match(result.error, /cancelled/i)
     } finally {
       a.dispose()
       b.dispose()

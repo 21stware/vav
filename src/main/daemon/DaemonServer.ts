@@ -11,6 +11,8 @@ import {
   DAEMON_PROTO_VERSION,
   parseDaemonClientFrame,
   parseDaemonHello,
+  parseDaemonPairAsk,
+  type DaemonPairAsk,
   type DaemonReq,
   type FsDirentWire,
   type FsStatWire
@@ -27,6 +29,10 @@ type ServerOpts = {
   appVersion: string
   home: string
   tmp: string
+  /** This machine's `vav-daemon://` URI — sent after a LAN pair-ask is approved. */
+  pairing?: () => string | null
+  /** Desktop confirm for LAN Pair. Headless daemons omit this and refuse. */
+  onPairAsk?: (from: { name: string; machineId: string }) => Promise<boolean>
 }
 
 type LiveProcess = {
@@ -58,6 +64,7 @@ export class DaemonServer {
   private server: Server | null = null
   private readonly sockets = new Set<Socket>()
   private listenPort = 0
+  private pairAskBusy = false
 
   constructor(opts: ServerOpts) {
     this.opts = opts
@@ -165,6 +172,11 @@ export class DaemonServer {
         return
       }
       if (!ready) {
+        const ask = parseDaemonPairAsk(value)
+        if (ask) {
+          void this.handlePairAsk(socket, ask)
+          return
+        }
         const hello = parseDaemonHello(value)
         if (!hello || !secretsMatch(hello.auth, this.opts.secret())) {
           writeLine(socket, { type: 'error', code: 'auth', message: 'pairing rejected' })
@@ -180,13 +192,46 @@ export class DaemonServer {
         writeLine(socket, { type: 'error', code: 'bad-request', message: 'unrecognized frame' })
         return
       }
-      if (frame.type === 'hello') return
+      if (frame.type === 'hello' || frame.type === 'pair-ask') return
       if (frame.type === 'ping') {
         writeLine(socket, { type: 'pong' })
         return
       }
       void this.dispatch(frame, socket, { processes, ptys, handles, watches })
     }, { leftover })
+  }
+
+  private async handlePairAsk(socket: Socket, ask: DaemonPairAsk): Promise<void> {
+    if (!this.opts.onPairAsk || !this.opts.pairing) {
+      writeLine(socket, { type: 'error', code: 'auth', message: 'pairing requires a pairing line' })
+      socket.destroy()
+      return
+    }
+    if (this.pairAskBusy) {
+      writeLine(socket, { type: 'error', code: 'auth', message: 'pairing busy' })
+      socket.destroy()
+      return
+    }
+    this.pairAskBusy = true
+    try {
+      const allow = await this.opts.onPairAsk({ name: ask.name, machineId: ask.machineId })
+      if (socket.destroyed) return
+      if (!allow) {
+        writeLine(socket, { type: 'error', code: 'auth', message: 'pairing declined' })
+        socket.destroy()
+        return
+      }
+      const pairing = this.opts.pairing()
+      if (!pairing) {
+        writeLine(socket, { type: 'error', code: 'internal', message: 'not listening' })
+        socket.destroy()
+        return
+      }
+      writeLine(socket, { type: 'pair-offer', pairing })
+      socket.end()
+    } finally {
+      this.pairAskBusy = false
+    }
   }
 
   private async dispatch(

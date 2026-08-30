@@ -1,7 +1,8 @@
-import { useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { ChevronRight } from 'lucide-react'
 import { thinkingSeconds } from '@shared/thinkingLevel'
 import { useT } from '../i18n/useT'
+import { EXPAND_PROCESS_EVENT } from '../lib/mdMarks'
 
 /**
  * Collapsed-by-default shell for the non-final stretch of a finished turn.
@@ -20,7 +21,15 @@ export function ThinkingProcess({
   children: ReactNode
 }): React.JSX.Element {
   const t = useT()
+  const rootRef = useRef<HTMLDivElement>(null)
   const [open, setOpen] = useState(collapseOnMount)
+  useEffect(() => {
+    const el = rootRef.current
+    if (!el) return
+    const onExpand = (): void => setOpen(true)
+    el.addEventListener(EXPAND_PROCESS_EVENT, onExpand)
+    return () => el.removeEventListener(EXPAND_PROCESS_EVENT, onExpand)
+  }, [])
   useEffect(() => {
     if (!collapseOnMount) return
     let inner = 0
@@ -39,6 +48,7 @@ export function ThinkingProcess({
 
   return (
     <div
+      ref={rootRef}
       className={`tool-call thinking-process${open ? ' expanded' : ''}`}
       data-testid="thinking-process"
     >

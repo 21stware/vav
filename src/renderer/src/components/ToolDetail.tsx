@@ -1,6 +1,7 @@
 import { memo, useMemo } from 'react'
 import { Folder, FileText } from 'lucide-react'
 import type { ToolCallBlock } from '@shared/types'
+import { parseDocHits } from '@shared/mdMarks'
 import { tt, useT } from '../i18n/useT'
 import { parseToolInput } from '@shared/askPlan'
 import { normalizePlanDocInput } from '@shared/planDoc'
@@ -73,6 +74,9 @@ export const ToolDetail = memo(function ToolDetail({
   }
   if (block.tool === 'web_search') {
     return <WebSearchView block={block} />
+  }
+  if (block.tool === 'doc_search' || block.tool === 'doc_fetch') {
+    return <DocHitsView block={block} />
   }
   if (block.tool === 'web_fetch') {
     return <WebFetchView block={block} />
@@ -266,12 +270,47 @@ function WebSearchView({ block }: { block: ToolCallBlock }): React.JSX.Element {
       {header && <div className="web-header">{header}</div>}
       <ol className="web-hits">
         {hits.map((hit) => (
-          <li key={hit.rank} className="web-hit">
+          <li key={hit.rank} className="web-hit" data-cite-anchor={`web:${hit.rank}`}>
             <a className="web-title" href={hit.url} target="_blank" rel="noreferrer">
               {hit.title}
             </a>
             <div className="web-url">{hit.url}</div>
             {hit.snippet && <div className="web-snippet">{hit.snippet}</div>}
+          </li>
+        ))}
+      </ol>
+    </div>
+  )
+}
+
+/** Retrieved document chunks — each row is a `[doc:id]` jump target. */
+function DocHitsView({ block }: { block: ToolCallBlock }): React.JSX.Element {
+  const text = block.output || ''
+  const { header, hits } = useMemo(() => parseDocHits(text), [text])
+  const failed = block.status === 'error' || block.status === 'expired'
+
+  if (failed || !text || hits.length === 0) {
+    if (!failed && text) {
+      return (
+        <div className="detail-web detail-doc">
+          <pre className="web-body">{clampLines(text.split('\n')).join('\n')}</pre>
+        </div>
+      )
+    }
+    return <StoryView block={block} />
+  }
+
+  return (
+    <div className="detail-web detail-doc">
+      {header && <div className="web-header">{header}</div>}
+      <ol className="web-hits">
+        {hits.map((hit) => (
+          <li key={hit.id} className="web-hit" data-cite-anchor={`doc:${hit.id}`}>
+            <div className="web-title">
+              {hit.path || hit.id}
+              {hit.loc ? <span className="doc-hit-loc">{hit.loc}</span> : null}
+            </div>
+            {hit.body ? <div className="web-snippet">{hit.body}</div> : null}
           </li>
         ))}
       </ol>

@@ -38,7 +38,7 @@ function currentStamp() {
     ? execSync(`stat -f %m "${iconDark}"`).toString().trim()
     : '0'
   // Bump the trailing token when Info.plist shape changes (e.g. document types).
-  return `${version}:${iconMtime}:${iconDarkMtime}:${BUNDLE_ID}:dock-name-VAV-Dev`
+  return `${version}:${iconMtime}:${iconDarkMtime}:${BUNDLE_ID}:dock-name-VAV-Dev:local-net-1`
 }
 
 function isBranded() {
@@ -111,6 +111,22 @@ function patchInfoPlist(plistPath) {
   plistBuddy(plistPath, 'Add :CFBundleDocumentTypes:0:LSItemContentTypes:0 string public.item')
   plistBuddy(plistPath, 'Add :CFBundleDocumentTypes:0:LSItemContentTypes:1 string public.folder')
   plistBuddy(plistPath, 'Add :CFBundleDocumentTypes:0:LSItemContentTypes:2 string public.data')
+
+  const localNet =
+    'VAV pairs with other computers and phones on your local network to open folders and run agents.'
+  try {
+    plistBuddy(plistPath, 'Delete :NSLocalNetworkUsageDescription')
+  } catch {
+    // Absent — fine.
+  }
+  plistBuddy(plistPath, `Add :NSLocalNetworkUsageDescription string ${localNet}`)
+  try {
+    plistBuddy(plistPath, 'Delete :NSBonjourServices')
+  } catch {
+    // Absent — fine.
+  }
+  plistBuddy(plistPath, 'Add :NSBonjourServices array')
+  plistBuddy(plistPath, 'Add :NSBonjourServices:0 string _vav-daemon._tcp')
 }
 
 /** Editing a signed bundle invalidates its signature; re-sign ad-hoc so it launches. */

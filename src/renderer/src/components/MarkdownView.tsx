@@ -25,6 +25,7 @@ import {
   syncDiagramViewportZoom
 } from '../lib/diagramViewportZoom'
 import { resolveMentionedPath } from '../lib/filePathLinks'
+import { revealCitation } from '../lib/mdMarks'
 import { joinPath } from '../lib/path'
 import { openConversationFile, revealSessionFileInFinder } from '../lib/openSessionFile'
 import { onHljsReady } from '../lib/hljsLazy'
@@ -184,6 +185,16 @@ export const MarkdownView = memo(function MarkdownView({
   const onMarkdownClick = (event: React.MouseEvent<HTMLElement>): void => {
     const target = event.target as HTMLElement | null
     if (!target) return
+
+    const cite = target.closest<HTMLButtonElement>('button.md-cite')
+    if (cite) {
+      event.preventDefault()
+      event.stopPropagation()
+      const kind = cite.dataset.citeKind
+      const id = cite.dataset.citeId
+      if ((kind === 'web' || kind === 'doc') && id) revealCitation(cite, kind, id)
+      return
+    }
 
     // Finder/Explorer control after the path link.
     const revealBtn = target.closest<HTMLButtonElement>('button.md-file-reveal')

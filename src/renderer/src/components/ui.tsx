@@ -47,6 +47,7 @@ function prefersNoMotion(): boolean {
 }
 
 type EntranceRun = {
+  slot: string
   scene: string
   /** This scene gets a build-up at all (first visit, motion enabled). */
   play: boolean
@@ -59,6 +60,7 @@ type EntranceRun = {
 function startRun(slot: string, scene: string): EntranceRun {
   const play = !entranceStarted(slot, scene) && !prefersNoMotion()
   return {
+    slot,
     scene,
     play,
     // Nothing to wait for when there is no build-up — stay out of the hold.
@@ -83,7 +85,9 @@ function useEntranceRun(
 
   // Decided in render, not after paint: the first committed style must already
   // be `empty-in` + backwards, or the rest state shows for a frame.
-  if (run.scene !== scene) setRun(startRun(slot, scene))
+  // Slot is per conversation — `empty#1::vendor` repeats on every new session
+  // of the same host, and must not reuse the previous session's spent run.
+  if (run.scene !== scene || run.slot !== slot) setRun(startRun(slot, scene))
 
   useLayoutEffect(() => {
     markEntranceStarted(slot, scene)
@@ -466,9 +470,23 @@ export function StaggerLine({
   return <>{staggerNode(children, { i: 0 }, baseDelay)}</>
 }
 
-function EmptyAgentName({ text }: { text: string }): React.JSX.Element {
+function EmptyAgentName({
+  text,
+  title,
+  onClick
+}: {
+  text: string
+  title?: string
+  onClick?: (el: HTMLElement) => void
+}): React.JSX.Element {
   return (
-    <div className="empty-agent-name" aria-label={text}>
+    <div
+      className="empty-agent-name"
+      aria-label={text}
+      title={title}
+      data-testid={onClick ? 'empty-workspace-name' : undefined}
+      onClick={onClick ? (event) => onClick(event.currentTarget) : undefined}
+    >
       <StaggerLine baseDelay={48}>{text}</StaggerLine>
     </div>
   )
@@ -479,6 +497,9 @@ export function EmptyState({
   description,
   logo,
   logoLabel,
+  logoAlt,
+  logoTitle,
+  logoLabelOnClick,
   logoKey,
   enterKey,
   enterSlot,
@@ -497,6 +518,11 @@ export function EmptyState({
   logo?: boolean | ReactNode
   /** Agent / product name under the mark — staggered on change. */
   logoLabel?: string
+  /** Accessible name for the mark when {@link logoLabel} is a workspace title. */
+  logoAlt?: string
+  logoTitle?: string
+  /** Same box as the name — do not wrap or reclass it, or empty-in cancels. */
+  logoLabelOnClick?: (el: HTMLElement) => void
   /**
    * When this changes with {@link enterKey}, the empty hero plays once.
    * Identity is the host id, not the label — same name on a new session still
@@ -562,11 +588,18 @@ export function EmptyState({
   const hero = (
     <>
       {logoNode && (
-        <span className="empty-logo" role="img" aria-label={logoLabel ?? 'VAV'}>
+        <span className="empty-logo" role="img" aria-label={logoAlt ?? logoLabel ?? 'VAV'}>
           <span className="empty-logo-mark">{logoNode}</span>
         </span>
       )}
-      {logoLabel ? <EmptyAgentName key={motionKey} text={logoLabel} /> : null}
+      {logoLabel ? (
+        <EmptyAgentName
+          key={motionKey}
+          text={logoLabel}
+          title={logoTitle}
+          onClick={logoLabelOnClick}
+        />
+      ) : null}
       {meta}
       {title ? <div className="empty-title">{title}</div> : null}
       {description ? (

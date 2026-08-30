@@ -2,8 +2,8 @@
 /**
  * Headless workspace-host daemon.
  *
- * Listens for desktop VAV clients on the daemon protocol. Pairing payload is
- * printed on stdout — paste it in the other machine's Settings → Machines.
+ * Listens for desktop VAV clients on the daemon protocol. Pairing URI is
+ * printed on stdout — paste it in the other machine's Connect → Connect to.
  *
  *   npm run vavd
  *   node --experimental-strip-types src/main/daemon/vavd.ts --port 4750
@@ -19,7 +19,7 @@ import {
 } from '../../shared/daemonProtocol.ts'
 import { DaemonServer } from './DaemonServer.ts'
 import { defaultHostName, loadOrCreateIdentity, loadOrCreateSecret } from './identity.ts'
-import { lanAddresses, startAnnouncer } from './lanAnnounce.ts'
+import { advertisedPairingAddresses, startAnnouncer } from './lanAnnounce.ts'
 
 function argValue(flag: string, fallback?: string): string | undefined {
   const index = process.argv.indexOf(flag)
@@ -68,15 +68,15 @@ async function main(): Promise<void> {
   })
 
   const bound = await server.listen(port, bind)
-  const lans = lanAddresses()
+  const advertised = advertisedPairingAddresses({ identityName: identity.name })
   const pairing = encodeDaemonPairing({
     v: DAEMON_PROTO_VERSION,
     secret,
     machineId: identity.machineId,
     name: identity.name,
-    host: lans[0] || '127.0.0.1',
+    host: advertised.host,
     port: bound,
-    addresses: [...lans, '127.0.0.1']
+    addresses: advertised.addresses
   })
 
   if (!hasFlag('--no-announce')) {
@@ -92,7 +92,7 @@ async function main(): Promise<void> {
 
   process.stdout.write(`vavd listening on ${bind}:${bound}\n`)
   process.stdout.write(`${pairing}\n`)
-  process.stdout.write('Paste that line in VAV → Settings → Allow other devices → Pair.\n')
+  process.stdout.write('Paste that URI in VAV → Connect → Connect to → Pair.\n')
 
   const shutdown = (): void => {
     server.close()

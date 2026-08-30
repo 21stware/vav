@@ -40,6 +40,78 @@ type Pending = {
 type StreamHandler = (event: string, data: unknown) => void
 
 const REQ_TIMEOUT_MS = 30_000
+const CONNECT_TIMEOUT_MS = 4_000
+const PAIR_ASK_TIMEOUT_MS = 90_000
+
+export const PAIRING_CANCELLED = 'pairing cancelled'
+
+/**
+ * Ask a LAN peer to confirm pairing. On allow they send their `vav-daemon://` URI.
+ * Does not leave a live session — caller then `pair()`s with that line.
+ */
+export function requestLanPairOffer(opts: {
+  host: string
+  port: number
+  name: string
+  machineId: string
+  timeoutMs?: number
+  signal?: AbortSignal
+}): Promise<string> {
+  return new Promise((resolve, reject) => {
+    if (opts.signal?.aborted) {
+      reject(new Error(PAIRING_CANCELLED))
+      return
+    }
+    const socket = createConnection({ host: opts.host, port: opts.port })
+    let settled = false
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const fail = (err: Error): void => {
+      if (settled) return
+      settled = true
+      if (timer) clearTimeout(timer)
+      opts.signal?.removeEventListener('abort', onAbort)
+      reject(err)
+      socket.destroy()
+    }
+    const onAbort = (): void => fail(new Error(PAIRING_CANCELLED))
+    opts.signal?.addEventListener('abort', onAbort, { once: true })
+    timer = setTimeout(() => {
+      fail(new Error('pairing confirm timed out'))
+    }, opts.timeoutMs ?? PAIR_ASK_TIMEOUT_MS)
+    socket.on('error', (err) => fail(err))
+    socket.on('connect', () => {
+      writeLine(socket, {
+        type: 'pair-ask',
+        proto: DAEMON_PROTO_VERSION,
+        name: opts.name,
+        machineId: opts.machineId
+      })
+    })
+    socket.on('close', () => {
+      if (!settled) fail(new Error('daemon connection closed'))
+    })
+    attachLineReader(socket, (value) => {
+      if (value === null) {
+        fail(new Error('invalid json'))
+        return
+      }
+      const frame = parseDaemonServerFrame(value)
+      if (!frame) return
+      if (frame.type === 'error') {
+        fail(new Error(frame.message))
+        return
+      }
+      if (frame.type === 'pair-offer') {
+        if (settled) return
+        settled = true
+        if (timer) clearTimeout(timer)
+        opts.signal?.removeEventListener('abort', onAbort)
+        socket.destroy()
+        resolve(frame.pairing)
+      }
+    })
+  })
+}
 
 export class DaemonClient {
   private socket: Socket | null = null
@@ -49,16 +121,41 @@ export class DaemonClient {
   private closed = false
   welcome: DaemonWelcome | null = null
 
-  connect(opts: { host: string; port: number; secret: string; device?: string }): Promise<DaemonWelcome> {
+  connect(opts: {
+    host: string
+    port: number
+    secret: string
+    device?: string
+    timeoutMs?: number
+    signal?: AbortSignal
+  }): Promise<DaemonWelcome> {
     return new Promise((resolve, reject) => {
+      if (opts.signal?.aborted) {
+        reject(new Error(PAIRING_CANCELLED))
+        return
+      }
       const socket = createConnection({ host: opts.host, port: opts.port })
       this.socket = socket
       let settled = false
+      let timer: ReturnType<typeof setTimeout> | undefined
       const fail = (err: Error): void => {
         if (settled) return
         settled = true
+        if (timer) clearTimeout(timer)
+        opts.signal?.removeEventListener('abort', onAbort)
         reject(err)
       }
+      const onAbort = (): void => {
+        fail(new Error(PAIRING_CANCELLED))
+        socket.destroy()
+      }
+      opts.signal?.addEventListener('abort', onAbort, { once: true })
+      timer = setTimeout(() => {
+        const err = new Error(`connect ETIMEDOUT ${opts.host}:${opts.port}`)
+        ;(err as NodeJS.ErrnoException).code = 'ETIMEDOUT'
+        fail(err)
+        socket.destroy()
+      }, opts.timeoutMs ?? CONNECT_TIMEOUT_MS)
       socket.on('error', (err) => fail(err))
       socket.on('connect', () => {
         writeLine(socket, {
@@ -90,6 +187,8 @@ export class DaemonClient {
         }
         if (!settled && frame.type === 'welcome') {
           settled = true
+          if (timer) clearTimeout(timer)
+          opts.signal?.removeEventListener('abort', onAbort)
           this.welcome = frame
           resolve(frame)
           return

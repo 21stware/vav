@@ -415,7 +415,7 @@ export class NotificationCenter {
     }
     items.push(
       { type: 'separator' },
-      { label: t('common.open'), click: () => this.onShowMain() },
+      { label: t('tray.open'), click: () => this.onShowMain() },
       { label: t('common.settingsEllipsis'), click: () => this.onOpenSettings() },
       { label: t('common.quit'), click: () => app.quit() }
     )

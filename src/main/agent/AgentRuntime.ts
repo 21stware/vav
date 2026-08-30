@@ -165,6 +165,8 @@ export class AgentRuntime {
 
   private turns = new Map<string, TurnState>()
   private shells = new Map<string, StickyShell>()
+  /** Stop arrived before {@link startTurn} registered the turn (phone tap). */
+  private pendingCancels = new Set<string>()
   private fileDrafts = new FileDraftCoalescer()
   /** Playwright ask-card waiters — not a full TurnState. */
   private e2eAskWaiters = new Map<string, (text: string) => void>()
@@ -509,6 +511,7 @@ export class AgentRuntime {
 
   private async startTurn(conversationId: string, parentId: string | null): Promise<void> {
     if (this.turns.has(conversationId)) return
+    if (this.pendingCancels.delete(conversationId)) return
     const conversation = this.deps.conversations.get(conversationId)
     if (!conversation) return
 
@@ -545,6 +548,7 @@ export class AgentRuntime {
       model,
       conversation.compactions
     )
+    if (this.pendingCancels.delete(conversationId)) return
     const history = buildHistory(
       conversation.messages,
       parentId,
@@ -577,6 +581,11 @@ export class AgentRuntime {
       reasoningStartedAt: new Map()
     }
     this.turns.set(conversationId, turn)
+    if (this.pendingCancels.delete(conversationId)) {
+      turn.cancelled = true
+      this.finish(conversationId, turn)
+      return
+    }
     this.deps.changeSets?.beginTurn(conversationId, this.workdirOf(conversation))
     // Document sandbox: ensure a working copy for the focused / file-session path
     // so agent tools and officecli mutate the copy, not the user's original.
@@ -597,6 +606,7 @@ export class AgentRuntime {
         console.warn('[agent] working-copy ensure failed', logicalOpenPath, err)
       }
     }
+    if (turn.cancelled || this.turns.get(conversationId) !== turn) return
     // Strip prior turn changeSetId from stored messages so reloads don't show
     // dead "Could not load changes" cards under Done.
     this.stripPriorChangeSetIds(conversationId)
@@ -660,6 +670,7 @@ export class AgentRuntime {
   }
 
   cancel(conversationId: string): void {
+    this.pendingCancels.add(conversationId)
     const stopTurn = (id: string, turn: TurnState): void => {
       turn.cancelled = true
       // An interactive tool waiting on the user must be released, or the loop
@@ -669,6 +680,9 @@ export class AgentRuntime {
       // leaves `shell.run` blocked until exit/timeout, so Stop looked dead.
       this.shells.get(id)?.interrupt()
       turn.abort.abort()
+      setTimeout(() => {
+        if (this.turns.get(id) === turn) this.finish(id, turn)
+      }, 1_500)
     }
     const turn = this.turns.get(conversationId)
     if (turn) {
@@ -1467,10 +1481,13 @@ export class AgentRuntime {
   }
 
   private finish(conversationId: string, turn: TurnState): void {
+    if (this.turns.get(conversationId) !== turn) return
+    this.turns.delete(conversationId)
     void this.finishAsync(conversationId, turn)
   }
 
   private async finishAsync(conversationId: string, turn: TurnState): Promise<void> {
+    this.pendingCancels.delete(conversationId)
     this.flushBuffers(conversationId, turn)
     if (turn.flushTimer) clearTimeout(turn.flushTimer)
     this.sealReasoning(turn)
@@ -1514,7 +1531,6 @@ export class AgentRuntime {
       errorText: turn.error,
       errorDetail: turn.error
     })
-    this.turns.delete(conversationId)
 
     const conversation = this.deps.conversations.get(conversationId)
     const parent = conversation?.messages.find((m) => m.id === turn.parentId)

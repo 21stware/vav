@@ -8,6 +8,7 @@ import {
   Pin,
   Plus,
   Search,
+  Star,
   Terminal as TerminalIcon,
   X
 } from 'lucide-react'
@@ -22,8 +23,15 @@ import { useSessionStore, type TurnRuntime } from '../state/sessionStore'
 import { useWorkspaceStore } from '../state/workspaceStore'
 import { isTemporaryWorkspace, middleTruncate, relativeTime, workdirShortLabel } from '../lib/format'
 import { flatten, groupConversations, type ConversationGroup } from '../lib/grouping'
+import {
+  conversationMatchesFilter,
+  encodeSidebarSessionFilter,
+  isSidebarSessionFilterEnabled,
+  parseSidebarSessionFilter,
+  type SidebarSessionFilter
+} from '../lib/sidebarSessionFilter'
 import { swarmChildrenOf } from '@shared/swarmLayout'
-import { showMenu, type MenuItem } from '../lib/nativeMenu'
+import { menuAnchor, showMenu, type MenuItem } from '../lib/nativeMenu'
 import { warmMenuIcons } from '../lib/menuIcons'
 import { fileManagerLabel } from '../lib/platform'
 import { basename } from '../lib/path'
@@ -104,6 +112,22 @@ function groupingOptions(t: ReturnType<typeof useT>): { value: SidebarGroupingMo
   ]
 }
 
+function filterValueLabel(
+  filter: SidebarSessionFilter,
+  t: ReturnType<typeof useT>
+): string {
+  switch (filter.kind) {
+    case 'none':
+      return t('sidebar.filter.none')
+    case 'active':
+      return t('sidebar.filter.active')
+    case 'favorite':
+      return t('sidebar.filter.favorite')
+    case 'workspace':
+      return basename(filter.path)
+  }
+}
+
 export function Sidebar({
   floating = false,
   onNavigate
@@ -148,6 +172,10 @@ export function Sidebar({
   const tmp = useSessionStore((s) => s.tmp)
   const renamingId = useSessionStore((s) => s.renamingId)
   const groupingMode = useSessionStore((s) => s.settings.sidebarGroupingMode)
+  const sessionFilterRaw = useSessionStore((s) => s.settings.sidebarSessionFilter)
+  const sessionFilter = parseSidebarSessionFilter(sessionFilterRaw)
+  const favoriteIds = useSessionStore((s) => s.settings.favoriteConversationIds)
+  const recentDirs = useSessionStore((s) => s.settings.recentWorkspaceDirectories)
   // Select the raw list — never call enabledCliAgents inside the selector
   // (it returns a new array each time → getSnapshot infinite loop).
   const rawCliAgents = useSessionStore((s) => s.settings.cliAgents)
@@ -162,6 +190,7 @@ export function Sidebar({
   const beginRename = useSessionStore((s) => s.beginRename)
   const renameConversation = useSessionStore((s) => s.renameConversation)
   const setPinned = useSessionStore((s) => s.setPinned)
+  const setFavorite = useSessionStore((s) => s.setFavorite)
   const setWorkspacePinned = useSessionStore((s) => s.setWorkspacePinned)
   const pinnedWorkspaces = useSessionStore((s) => s.settings.pinnedWorkspaceDirectories)
   const setArchived = useSessionStore((s) => s.setArchived)
@@ -253,10 +282,26 @@ export function Sidebar({
     return labels
   }, [hosts, remoteControlStatus, t])
 
+  const favoriteSet = useMemo(() => new Set(favoriteIds ?? []), [favoriteIds])
+
+  const isSessionRunning = (id: string): boolean => {
+    const turn = turns[id]
+    return !!turn?.isRunning || activityById[id] === 'running' || shellBusy.has(id)
+  }
+  const isSessionUnread = (id: string): boolean => {
+    const conversation = conversations.find((c) => c.id === id)
+    const turn = turns[id]
+    const awaiting = !!turn?.awaitingToolCallId
+    const running = !!turn?.isRunning && !awaiting
+    return (
+      (!awaiting && !running && activityById[id] === 'done') || conversation?.resultUnseen === true
+    )
+  }
+
   // Collapse state is ephemeral: mode switch or search resets to all expanded.
   useEffect(() => {
     setCollapsedKeys(new Set())
-  }, [groupingMode, searching, listMode])
+  }, [groupingMode, sessionFilterRaw, searching, listMode])
 
   const groups = useMemo(() => {
     if (fileSessionsView) return []
@@ -275,6 +320,13 @@ export function Sidebar({
     const matched = conversations
       .filter((c) => !c.archived && !c.fileId)
       .filter((c) => !needle || c.title.toLowerCase().includes(needle))
+      .filter((c) =>
+        conversationMatchesFilter(c, sessionFilter, {
+          running: isSessionRunning(c.id),
+          unread: isSessionUnread(c.id),
+          favoriteIds: favoriteSet
+        })
+      )
     const keep = new Set(matched.map((c) => c.id))
     for (const row of matched) {
       if (row.swarmParentId) keep.add(row.swarmParentId)
@@ -286,10 +338,15 @@ export function Sidebar({
     query,
     searching,
     groupingMode,
+    sessionFilterRaw,
+    favoriteSet,
     tmp,
     pinnedWorkspaces,
     archiveView,
-    fileSessionsView
+    fileSessionsView,
+    turnBusyKey,
+    shellBusyKey,
+    activityById
   ])
 
   const pinnedGroups = useMemo(() => groups.filter((g) => g.pinned), [groups])
@@ -612,6 +669,7 @@ export function Sidebar({
     // Multi-select: every action applies to the whole selection.
     if (targets.length > 1) {
       const allPinned = targets.every((c) => c.pinned)
+      const allFavorite = targets.every((c) => favoriteSet.has(c.id))
       const allArchived = targets.every((c) => c.archived)
       if (archiveView || allArchived) {
         return [
@@ -639,6 +697,16 @@ export function Sidebar({
           onSelect: () => {
             void (async () => {
               for (const c of targets) await setPinned(c.id, !allPinned)
+            })()
+          }
+        },
+        {
+          label: allFavorite
+            ? t('sidebar.menu.unfavoriteCount', { count: targets.length })
+            : t('sidebar.menu.favoriteCount', { count: targets.length }),
+          onSelect: () => {
+            void (async () => {
+              for (const c of targets) await setFavorite(c.id, !allFavorite)
             })()
           }
         },
@@ -684,6 +752,10 @@ export function Sidebar({
       {
         label: conversation.pinned ? t('sidebar.menu.unpin') : t('sidebar.menu.pin'),
         onSelect: () => void setPinned(id, !conversation.pinned)
+      },
+      {
+        label: favoriteSet.has(id) ? t('sidebar.menu.unfavorite') : t('sidebar.menu.favorite'),
+        onSelect: () => void setFavorite(id, !favoriteSet.has(id))
       },
       {
         label: t('sidebar.menu.archive'),
@@ -1050,6 +1122,30 @@ export function Sidebar({
                 {!archiveView && renamingId !== conversation.id && (
                   <button
                     type="button"
+                    className={`conv-star-hit${favoriteSet.has(conversation.id) ? ' favorited' : ''}`}
+                    title={
+                      favoriteSet.has(conversation.id)
+                        ? t('sidebar.menu.unfavorite')
+                        : t('sidebar.menu.favorite')
+                    }
+                    aria-label={
+                      favoriteSet.has(conversation.id)
+                        ? t('sidebar.menu.unfavorite')
+                        : t('sidebar.menu.favorite')
+                    }
+                    aria-pressed={favoriteSet.has(conversation.id)}
+                    onClick={(event) => {
+                      event.stopPropagation()
+                      void setFavorite(conversation.id, !favoriteSet.has(conversation.id))
+                    }}
+                  >
+                    <Star size={10} strokeWidth={1.75} aria-hidden />
+                  </button>
+                )}
+
+                {!archiveView && renamingId !== conversation.id && (
+                  <button
+                    type="button"
                     className={`conv-pin-hit${conversation.pinned ? ' pinned' : ''}`}
                     title={conversation.pinned ? t('sidebar.menu.unpin') : t('sidebar.menu.pin')}
                     aria-label={
@@ -1133,29 +1229,85 @@ export function Sidebar({
           )}
         </div>
         {listMode === 'main' && (
-          <label className="sidebar-grouping" title={t('sidebar.grouping')}>
-            <span className="sidebar-grouping-label">{t('sidebar.grouping')}</span>
-            <span className="sidebar-grouping-control">
-              <select
-                className="text-field sidebar-grouping-select"
-                data-testid="sidebar-grouping"
-                value={groupingMode}
-                title={t('sidebar.grouping')}
-                onChange={(event) =>
+          <div className="sidebar-list-controls">
+            <label className="sidebar-grouping" title={t('sidebar.grouping')}>
+              <span className="sidebar-grouping-label">{t('sidebar.grouping')}</span>
+              <span className="sidebar-grouping-control">
+                <select
+                  className="text-field sidebar-grouping-select"
+                  data-testid="sidebar-grouping"
+                  value={groupingMode}
+                  title={t('sidebar.grouping')}
+                  onChange={(event) =>
+                    void updateSettings({
+                      sidebarGroupingMode: event.target.value as SidebarGroupingMode
+                    })
+                  }
+                >
+                  {groupingOptions(t).map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+                <ChevronDown className="sidebar-grouping-chevron" size={12} aria-hidden />
+              </span>
+            </label>
+            <button
+              type="button"
+              className={`sidebar-filter${isSidebarSessionFilterEnabled(sessionFilter) ? ' is-active' : ''}`}
+              data-testid="sidebar-filter"
+              title={t('sidebar.filter')}
+              onClick={(event) => {
+                const apply = (next: SidebarSessionFilter): void => {
                   void updateSettings({
-                    sidebarGroupingMode: event.target.value as SidebarGroupingMode
+                    sidebarSessionFilter: encodeSidebarSessionFilter(next)
                   })
                 }
-              >
-                {groupingOptions(t).map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-              <ChevronDown className="sidebar-grouping-chevron" size={12} aria-hidden />
-            </span>
-          </label>
+                const recent = (recentDirs ?? []).slice(0, 3)
+                const extra =
+                  sessionFilter.kind === 'workspace' && !recent.includes(sessionFilter.path)
+                    ? [sessionFilter.path]
+                    : []
+                const workspaces = [...recent, ...extra]
+                const items: MenuItem[] = [
+                  {
+                    label: t('sidebar.filter.none'),
+                    checked: sessionFilter.kind === 'none',
+                    onSelect: () => apply({ kind: 'none' })
+                  },
+                  {
+                    label: t('sidebar.filter.active'),
+                    checked: sessionFilter.kind === 'active',
+                    onSelect: () => apply({ kind: 'active' })
+                  },
+                  {
+                    label: t('sidebar.filter.favorite'),
+                    checked: sessionFilter.kind === 'favorite',
+                    onSelect: () => apply({ kind: 'favorite' })
+                  }
+                ]
+                if (workspaces.length > 0) {
+                  items.push({ label: '', divider: true })
+                  for (const path of workspaces) {
+                    items.push({
+                      label: basename(path),
+                      checked:
+                        sessionFilter.kind === 'workspace' && sessionFilter.path === path,
+                      onSelect: () => apply({ kind: 'workspace', path })
+                    })
+                  }
+                }
+                void showMenu(items, menuAnchor(event.currentTarget))
+              }}
+            >
+              <span className="sidebar-filter-label">{t('sidebar.filter')}</span>
+              <span className="sidebar-filter-value">
+                {filterValueLabel(sessionFilter, t)}
+              </span>
+              <ChevronDown className="sidebar-filter-chevron" size={12} aria-hidden />
+            </button>
+          </div>
         )}
         {listMode !== 'main' && (
           <div className="sidebar-archive-head">
@@ -1234,6 +1386,23 @@ export function Sidebar({
               className="btn secondary"
               title={t('sidebar.clearFilter')}
               onClick={() => setSidebarQuery('')}
+            >
+              {t('sidebar.clearFilter')}
+            </button>
+          </EmptyState>
+        )}
+        {listMode === 'main' &&
+          !searching &&
+          visible.length === 0 &&
+          isSidebarSessionFilterEnabled(sessionFilter) && (
+          <EmptyState title={t('sidebar.noMatchTitle')} description={t('sidebar.noMatchDesc')}>
+            <button
+              className="btn secondary"
+              title={t('sidebar.clearFilter')}
+              data-testid="sidebar-clear-filter"
+              onClick={() =>
+                void updateSettings({ sidebarSessionFilter: encodeSidebarSessionFilter({ kind: 'none' }) })
+              }
             >
               {t('sidebar.clearFilter')}
             </button>

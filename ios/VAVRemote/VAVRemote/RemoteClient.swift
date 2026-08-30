@@ -51,39 +51,132 @@ final class RemoteClient: NSObject, ObservableObject, UNUserNotificationCenterDe
     @Published var sendErrorConversationId: String?
     /// Create / pairing notices (not shown as 发送失败).
     @Published var notice: String?
+    @Published private(set) var pairings: [Pairing] = []
+    @Published private(set) var activeToken: String?
 
     private var pairing: Pairing?
     private var session: TcmobileSession?
+    private let writeQueue = DispatchQueue(label: "vav.remote.write")
     /// Bumped on every disconnect; stale dial results / read loops bail out.
     private var generation = 0
     private var createGeneration = 0
     private var pendingThreads = Set<String>()
 
     override init() {
-        pairing = PairingStore.load()
+        let book = PairingStore.loadBook()
+        pairings = book.pairings
+        pairing = book.active
+        activeToken = book.active?.token
         super.init()
         if pairing != nil { state = .disconnected(nil) }
         UNUserNotificationCenter.current().delegate = self
     }
 
-    var isPaired: Bool { pairing != nil }
-    var pairedHost: String { pairing?.host ?? "Mac" }
+    var isPaired: Bool { !pairings.isEmpty }
+    var pairedHost: String { pairing?.displayName ?? "电脑" }
 
     func isGenerating(_ conversationId: String) -> Bool {
         generatingIds.contains(conversationId)
     }
 
-    func adopt(pairing: Pairing) {
-        PairingStore.save(pairing)
+    func isActive(_ pairing: Pairing) -> Bool {
+        pairing.token == activeToken
+    }
+
+    /// Scan a QR: add a new computer, or refresh an existing one, then connect.
+    func adopt(pairing next: Pairing) {
+        upsert(next, activate: true)
+        switchToActive()
+    }
+
+    func activate(_ pairing: Pairing) {
+        guard pairings.contains(where: { $0.token == pairing.token }) else { return }
+        if activeToken == pairing.token {
+            connectIfNeeded()
+            return
+        }
         self.pairing = pairing
-        teardown()
-        connect()
+        activeToken = pairing.token
+        persistBook()
+        switchToActive()
+    }
+
+    func forget(_ pairing: Pairing) {
+        pairings.removeAll { $0.token == pairing.token }
+        if activeToken == pairing.token {
+            self.pairing = pairings.first
+            activeToken = self.pairing?.token
+            persistBook()
+            switchToActive()
+            return
+        }
+        persistBook()
     }
 
     func unpair() {
+        guard let pairing else {
+            forgetAll()
+            return
+        }
+        forget(pairing)
+    }
+
+    private func forgetAll() {
         PairingStore.clear()
+        pairings = []
         pairing = nil
+        activeToken = nil
+        resetHostState()
         teardown()
+        state = .unpaired
+    }
+
+    private func upsert(_ next: Pairing, activate: Bool) {
+        if let index = pairings.firstIndex(where: { $0.token == next.token }) {
+            var merged = next
+            if (merged.host ?? "").isEmpty { merged.host = pairings[index].host }
+            pairings[index] = merged
+        } else {
+            pairings.append(next)
+        }
+        if activate {
+            pairing = pairings.first(where: { $0.token == next.token }) ?? next
+            activeToken = pairing?.token
+        }
+        persistBook()
+    }
+
+    private func rememberActiveName(_ name: String) {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, let token = activeToken,
+              let index = pairings.firstIndex(where: { $0.token == token }),
+              pairings[index].host != trimmed
+        else { return }
+        pairings[index] = pairings[index].renaming(trimmed)
+        if pairing?.token == token { pairing = pairings[index] }
+        if case .connected = state { state = .connected(host: trimmed) }
+        persistBook()
+    }
+
+    private func persistBook() {
+        if pairings.isEmpty {
+            PairingStore.clear()
+            return
+        }
+        PairingStore.save(PairingBook(pairings: pairings, activeToken: activeToken))
+    }
+
+    private func switchToActive() {
+        resetHostState()
+        teardown()
+        if pairing != nil {
+            connect()
+        } else {
+            state = .unpaired
+        }
+    }
+
+    private func resetHostState() {
         sessions = []
         notifications = []
         threads = [:]
@@ -102,7 +195,6 @@ final class RemoteClient: NSObject, ObservableObject, UNUserNotificationCenterDe
         sendErrorConversationId = nil
         notice = nil
         pendingThreads.removeAll()
-        state = .unpaired
     }
 
     /// Call on launch and every scenePhase → .active transition.
@@ -350,7 +442,7 @@ final class RemoteClient: NSObject, ObservableObject, UNUserNotificationCenterDe
                     return
                 }
                 self.session = session
-                self.state = .connected(host: pairing.host ?? "Mac")
+                self.state = .connected(host: pairing.displayName)
                 self.startReadThread(session: session, generation: gen)
                 for id in self.threadLoad.keys {
                     self.requestThread(conversationId: id)
@@ -392,6 +484,7 @@ final class RemoteClient: NSObject, ObservableObject, UNUserNotificationCenterDe
             break
         case .host(let snapshot):
             host = snapshot
+            rememberActiveName(snapshot.name)
         case .sessions(let sessions):
             self.sessions = sessions
             finishTurnsIfIdle(in: sessions)
@@ -623,7 +716,7 @@ final class RemoteClient: NSObject, ObservableObject, UNUserNotificationCenterDe
 
     private func write(_ line: String) {
         guard let session else { return }
-        DispatchQueue.global(qos: .userInitiated).async {
+        writeQueue.async {
             try? session.writeLine(line)
         }
     }

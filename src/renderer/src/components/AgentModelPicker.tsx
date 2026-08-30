@@ -440,7 +440,6 @@ export function AgentModelPicker({
   const recentRow = (item: RecentItem): MenuItem => ({
     label: `${item.host.name} · ${item.modelLabel}`,
     checked: item.selected,
-    icon: { kind: 'brand', markId: item.host.markId },
     onSelect: () =>
       void pickAgentModel(item.host.id, item.model, {
         vendorId: item.host.vendorId,

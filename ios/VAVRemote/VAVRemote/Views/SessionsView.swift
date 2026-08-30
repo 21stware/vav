@@ -29,12 +29,20 @@ struct SessionsView: View {
                     )
                 }
             }
-            .navigationTitle("会话")
+            .navigationTitle(HostLinkStyle.displayName(client))
             .navigationDestination(for: RemoteSession.self) { session in
                 SessionDetailView(session: session)
             }
+            .toolbarTitleMenu {
+                HostSwitcherButtons()
+            }
             .toolbar {
-                ToolbarItem(placement: .topBarLeading) { ConnectionBadge() }
+                ToolbarItem(placement: .topBarLeading) {
+                    Circle()
+                        .fill(HostLinkStyle.color(client.state))
+                        .frame(width: 8, height: 8)
+                        .accessibilityLabel(HostLinkStyle.statusLabel(client.state))
+                }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
                         client.createSession()
@@ -56,6 +64,9 @@ struct SessionsView: View {
             }
             .onChange(of: client.sessions) { _, _ in
                 openIfNeeded(client.openConversationId)
+            }
+            .onChange(of: client.activeToken) { _, _ in
+                path = NavigationPath()
             }
             .alert("无法新建会话", isPresented: Binding(
                 get: { client.notice != nil },
@@ -98,41 +109,45 @@ struct SessionRow: View {
     }
 
     var body: some View {
-        HStack(spacing: 10) {
-            Circle().fill(statusColor).frame(width: 9, height: 9)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(session.title).lineLimit(1)
-                if generating {
-                    Text("Generating…")
-                        .font(.system(size: 13))
-                        .foregroundStyle(.blue)
-                        .lineLimit(1)
-                } else if let preview = session.preview, !preview.isEmpty {
-                    Text(preview)
-                        .font(.system(size: 13))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(2)
-                }
-                HStack(spacing: 6) {
-                    Text(session.surface == "cli" ? "CLI" : "VAV")
-                        .font(.caption2)
-                        .padding(.horizontal, 5)
-                        .padding(.vertical, 1)
-                        .background(.quaternary, in: Capsule())
-                    Text(session.dirLabel)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
+        VStack(alignment: .leading, spacing: 3) {
+            Text(session.title)
+                .font(.body.weight(.medium))
+                .lineLimit(1)
+            if let subtitle {
+                Text(subtitle)
+                    .font(.subheadline)
+                    .foregroundStyle(generating ? Color.accentColor : .secondary)
+                    .lineLimit(1)
             }
         }
+        .padding(.vertical, 2)
     }
 
-    private var statusColor: Color {
-        if generating { return .blue }
-        switch session.status {
-        case "done": return .green
-        default: return .gray.opacity(0.4)
-        }
+    /// Same subtitle ladder as the desktop sidebar: status while running, else `{相对时间} · {目录}`.
+    private var subtitle: String? {
+        if generating { return "流式中" }
+        let age = relativeTime(session.updatedAt)
+        let dir = session.temporary || session.dirLabel.isEmpty ? nil : session.dirLabel
+        if let age, let dir { return "\(age) · \(dir)" }
+        if let age { return age }
+        if let dir { return dir }
+        return nil
     }
+}
+
+private func relativeTime(_ timestamp: Double) -> String? {
+    guard timestamp > 0 else { return nil }
+    let millis = timestamp > 1_000_000_000_000 ? timestamp : timestamp * 1000
+    let delta = Date().timeIntervalSince1970 * 1000 - millis
+    let minute = 60_000.0
+    let hour = 60 * minute
+    let day = 24 * hour
+    if delta < minute { return "刚刚" }
+    if delta < hour { return "\(Int(delta / minute)) 分钟前" }
+    if delta < day { return "\(Int(delta / hour)) 小时前" }
+    if delta < 2 * day { return "昨天" }
+    if delta < 7 * day { return "\(Int(delta / day)) 天前" }
+    if delta < 14 * day { return "上周" }
+    let date = Date(timeIntervalSince1970: millis / 1000)
+    return date.formatted(date: .abbreviated, time: .omitted)
 }

@@ -359,6 +359,26 @@ export class SettingsStore {
       // Drop legacy `source` grouping (sidebar-conversation-list.rpml).
       s.sidebarGroupingMode = 'none'
     }
+    if (typeof s.sidebarSessionFilter !== 'string') s.sidebarSessionFilter = 'none'
+    else if (
+      s.sidebarSessionFilter !== 'none' &&
+      s.sidebarSessionFilter !== 'active' &&
+      s.sidebarSessionFilter !== 'favorite' &&
+      !(s.sidebarSessionFilter.startsWith('ws:') && s.sidebarSessionFilter.length > 3)
+    ) {
+      s.sidebarSessionFilter = 'none'
+    } else if (s.sidebarSessionFilter.startsWith('ws:')) {
+      const path = s.sidebarSessionFilter.slice(3)
+      if (!path || !existsSync(path)) s.sidebarSessionFilter = 'none'
+    }
+    if (!Array.isArray(s.favoriteConversationIds)) s.favoriteConversationIds = []
+    s.favoriteConversationIds = [
+      ...new Set(
+        s.favoriteConversationIds.filter(
+          (id): id is string => typeof id === 'string' && id.trim().length > 0
+        )
+      )
+    ]
     if (s.fileViewMode !== 'tree' && s.fileViewMode !== 'column') {
       s.fileViewMode = 'tree'
     }

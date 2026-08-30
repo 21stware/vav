@@ -14,6 +14,7 @@
  * This module is pure (no Node imports) so tests and a headless `vavd` share it.
  */
 
+import { parsePairing } from './remoteControl.ts'
 import type { WorkspaceHostInfo } from './workspaceHost.ts'
 
 export const DAEMON_PROTO_VERSION = 1
@@ -72,8 +73,27 @@ export type DaemonError = {
 export type DaemonPing = { type: 'ping' }
 export type DaemonPong = { type: 'pong' }
 
-export type DaemonClientMessage = DaemonHello | DaemonReq | DaemonPing
-export type DaemonServerMessage = DaemonWelcome | DaemonRes | DaemonStream | DaemonError | DaemonPong
+/** LAN pair: ask the other desktop to confirm, then they send a pairing offer. */
+export type DaemonPairAsk = {
+  type: 'pair-ask'
+  proto: number
+  name: string
+  machineId: string
+}
+
+export type DaemonPairOffer = {
+  type: 'pair-offer'
+  pairing: string
+}
+
+export type DaemonClientMessage = DaemonHello | DaemonReq | DaemonPing | DaemonPairAsk
+export type DaemonServerMessage =
+  | DaemonWelcome
+  | DaemonRes
+  | DaemonStream
+  | DaemonError
+  | DaemonPong
+  | DaemonPairOffer
 
 export type DaemonMessage = DaemonClientMessage | DaemonServerMessage
 
@@ -92,9 +112,22 @@ export function parseDaemonHello(value: unknown): DaemonHello | null {
   return { type: 'hello', proto: raw.proto, auth: raw.auth, role: 'daemon', device }
 }
 
+export function parseDaemonPairAsk(value: unknown): DaemonPairAsk | null {
+  if (typeof value !== 'object' || value === null) return null
+  const raw = value as Record<string, unknown>
+  if (raw.type !== 'pair-ask') return null
+  if (typeof raw.proto !== 'number') return null
+  const name = typeof raw.name === 'string' ? raw.name.trim() : ''
+  const machineId = typeof raw.machineId === 'string' ? raw.machineId.trim() : ''
+  if (!name || !machineId) return null
+  return { type: 'pair-ask', proto: raw.proto, name, machineId }
+}
+
 export function parseDaemonClientFrame(value: unknown): DaemonClientMessage | null {
   const hello = parseDaemonHello(value)
   if (hello) return hello
+  const ask = parseDaemonPairAsk(value)
+  if (ask) return ask
   if (typeof value !== 'object' || value === null) return null
   const raw = value as Record<string, unknown>
   switch (raw.type) {
@@ -162,6 +195,10 @@ export function parseDaemonServerFrame(value: unknown): DaemonServerMessage | nu
     }
     case 'pong':
       return { type: 'pong' }
+    case 'pair-offer': {
+      if (typeof raw.pairing !== 'string' || !raw.pairing.trim()) return null
+      return { type: 'pair-offer', pairing: raw.pairing }
+    }
     default:
       return null
   }
@@ -171,7 +208,8 @@ export function parseDaemonServerFrame(value: unknown): DaemonServerMessage | nu
 
 /**
  * Payload a desktop / vavd prints or encodes in Settings.
- * `vav-daemon:{…}` — distinct from the phone QR (`vav-remote:`).
+ * `vav-daemon://secret@host:port?name=&token=&addresses=` — distinct from the
+ * phone QR (`vav-remote:`).
  */
 export type DaemonPairing = {
   v: number
@@ -186,35 +224,67 @@ export type DaemonPairing = {
   addresses?: string[]
 }
 
+function formatPairingAuthority(host: string, port: number): string {
+  const bracketed = host.includes(':') && !host.startsWith('[') ? `[${host}]` : host
+  return `${bracketed}:${port}`
+}
+
+/** Keep `:`, `,`, `.` readable — matches the hand-copied URI form. */
+function encodePairingQueryValue(value: string): string {
+  return encodeURIComponent(value).replace(/%3A/gi, ':').replace(/%2C/gi, ',').replace(/%2E/gi, '.')
+}
+
 export function encodeDaemonPairing(pairing: DaemonPairing): string {
-  return `vav-daemon:${JSON.stringify(pairing)}`
+  const host = pairing.host?.trim() || '127.0.0.1'
+  const port = pairing.port && pairing.port > 0 ? pairing.port : DAEMON_DEFAULT_PORT
+  const query: string[] = [`name=${encodePairingQueryValue(pairing.name)}`]
+  if (pairing.token) query.push(`token=${encodePairingQueryValue(pairing.token)}`)
+  if (pairing.addresses?.length) {
+    query.push(`addresses=${encodePairingQueryValue(pairing.addresses.join(','))}`)
+  }
+  return `vav-daemon://${encodeURIComponent(pairing.secret)}@${formatPairingAuthority(host, port)}?${query.join('&')}`
+}
+
+function parseDaemonPairingUri(text: string): DaemonPairing | null {
+  let url: URL
+  try {
+    url = new URL(text)
+  } catch {
+    return null
+  }
+  if (url.protocol !== 'vav-daemon:') return null
+  const secret = decodeURIComponent(url.username)
+  if (secret.length < 16) return null
+  const host = url.hostname.replace(/^\[|\]$/g, '')
+  const port = url.port ? Number(url.port) : undefined
+  if (port !== undefined && !Number.isFinite(port)) return null
+  const name = url.searchParams.get('name')?.trim() || host
+  if (!name) return null
+  const tokenRaw = url.searchParams.get('token')
+  const token = tokenRaw && tokenRaw.startsWith('tc') ? tokenRaw : undefined
+  const addressesRaw = url.searchParams.get('addresses')
+  const addresses = addressesRaw
+    ? addressesRaw
+        .split(',')
+        .map((item) => item.trim())
+        .filter((item) => item.length > 0)
+    : undefined
+  return {
+    v: DAEMON_PROTO_VERSION,
+    secret,
+    machineId: host && port ? `${host}:${port}` : host || 'remote',
+    name,
+    host: host || undefined,
+    port,
+    token,
+    addresses: addresses?.length ? addresses : undefined
+  }
 }
 
 export function parseDaemonPairing(text: string): DaemonPairing | null {
   const trimmed = text.trim()
-  if (!trimmed.startsWith('vav-daemon:')) return parseHostPortSecret(trimmed)
-  try {
-    const raw = JSON.parse(trimmed.slice('vav-daemon:'.length)) as Record<string, unknown>
-    if (typeof raw.secret !== 'string' || raw.secret.length < 16) return null
-    if (typeof raw.machineId !== 'string' || raw.machineId.length === 0) return null
-    if (typeof raw.name !== 'string' || raw.name.length === 0) return null
-    if (typeof raw.v !== 'number') return null
-    const addresses = Array.isArray(raw.addresses)
-      ? raw.addresses.filter((item): item is string => typeof item === 'string' && item.length > 0)
-      : undefined
-    return {
-      v: raw.v,
-      secret: raw.secret,
-      machineId: raw.machineId,
-      name: raw.name,
-      host: typeof raw.host === 'string' ? raw.host : undefined,
-      port: typeof raw.port === 'number' ? raw.port : undefined,
-      token: typeof raw.token === 'string' ? raw.token : undefined,
-      addresses
-    }
-  } catch {
-    return null
-  }
+  if (trimmed.startsWith('vav-daemon://')) return parseDaemonPairingUri(trimmed)
+  return parseHostPortSecret(trimmed)
 }
 
 /** `host:port secret` or `host:port#secret` — LAN pair without the JSON wrapper. */
@@ -233,6 +303,27 @@ function parseHostPortSecret(text: string): DaemonPairing | null {
     host,
     port
   }
+}
+
+/**
+ * Desktop pair input: `vav-daemon://…`, `vav-remote:{…}` (same QR as the phone),
+ * or `host:port secret`.
+ */
+export function parseMachinePairing(text: string): DaemonPairing | null {
+  const trimmed = text.trim()
+  if (trimmed.startsWith('vav-remote:')) {
+    const remote = parsePairing(trimmed)
+    if (!remote) return null
+    return {
+      v: DAEMON_PROTO_VERSION,
+      secret: remote.secret,
+      machineId: remote.host || 'tunnel',
+      name: remote.host || 'Remote',
+      host: remote.host,
+      token: remote.token
+    }
+  }
+  return parseDaemonPairing(trimmed)
 }
 
 export type DaemonAnnounce = {
