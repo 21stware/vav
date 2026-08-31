@@ -1,8 +1,8 @@
 /**
  * When a structured CLI host must spawn a fresh native session (workspace
- * switch, login change, or a session lost to an error), VAV still has the
- * transcript — this turns that path into a preamble so the next prompt keeps
- * the conversation.
+ * switch, login change, a session lost to an error, or a retry/edit that
+ * must not keep the replaced turn), VAV still has the transcript — this
+ * turns that path into a preamble so the next prompt keeps the conversation.
  */
 import type { ChatMessage, LeafCompaction } from '@shared/types'
 import { compactionBoundaryIndex, compactionForLeaf } from '../../shared/compaction.ts'
@@ -11,7 +11,7 @@ import { pathToSummarySource } from './history.ts'
 
 const HANDOFF_MAX_CHARS = 48_000
 
-export type CliHistoryHandoffReason = 'cwd-changed' | 'session-lost'
+export type CliHistoryHandoffReason = 'cwd-changed' | 'session-lost' | 'retry'
 
 export type CliHistoryHandoffMark = {
   previousCwd: string | null
@@ -53,6 +53,13 @@ export function formatCliWorkspaceHandoff(opts: {
   }
   if (!source.trim()) return null
 
+  if (opts.reason === 'retry') {
+    return [
+      'This is a new attempt at the same point in the conversation. Here is the conversation so far — the previous attempt is not included:',
+      source,
+      "End of prior conversation. Answer the user's next message as a fresh attempt, not as a follow-up."
+    ].join('\n\n')
+  }
   if (opts.reason === 'session-lost') {
     return [
       formatCwdNotice(opts.previousCwd, opts.nextCwd),

@@ -1,3 +1,4 @@
+import { cursorModelFamilyId } from './cursorModel.ts'
 import type { QuotaWindow, QuotaWindowKind } from './types'
 
 /** Why a structured CLI host (Grok / Claude / Codex / …) failed a turn. */
@@ -233,11 +234,37 @@ export function exhaustedQuotaWindows(windows: QuotaWindow[] | null | undefined)
   return windows.filter((window) => window.usedPercent >= QUOTA_EXHAUSTED_PERCENT)
 }
 
-/** Prefer the soonest reset among exhausted windows. */
+/**
+ * Which Cursor usage pools a picker / ACP model can consume.
+ * `null` = unknown or Auto — keep every window (Auto can route either way).
+ */
+export function quotaKindsForModel(model?: string | null): QuotaWindowKind[] | null {
+  const trimmed = model?.trim()
+  if (!trimmed) return null
+  const family = cursorModelFamilyId(trimmed)
+  if (family === 'auto' || family === 'default') return null
+  if (/^grok/i.test(family) || /^composer/i.test(family)) return ['cursor_auto']
+  if (/^(claude|gpt-|gemini|kimi|glm)/i.test(family)) return ['cursor_api']
+  return null
+}
+
+/** Drop windows that cannot apply to this model (e.g. Prem when Grok is selected). */
+export function quotaWindowsForModel(
+  windows: QuotaWindow[] | null | undefined,
+  model?: string | null
+): QuotaWindow[] {
+  if (!windows?.length) return []
+  const kinds = quotaKindsForModel(model)
+  if (!kinds) return [...windows]
+  return windows.filter((window) => kinds.includes(window.kind))
+}
+
+/** Prefer the soonest reset among exhausted windows relevant to `model`. */
 export function pickExhaustedQuotaWindow(
-  windows: QuotaWindow[] | null | undefined
+  windows: QuotaWindow[] | null | undefined,
+  model?: string | null
 ): QuotaWindow | null {
-  const exhausted = exhaustedQuotaWindows(windows)
+  const exhausted = exhaustedQuotaWindows(quotaWindowsForModel(windows, model))
   if (!exhausted.length) return null
   return [...exhausted].sort((a, b) => {
     if (a.resetsAt != null && b.resetsAt != null) return a.resetsAt - b.resetsAt
@@ -250,7 +277,8 @@ export function pickExhaustedQuotaWindow(
 export function classifyCliError(
   text: string,
   windows?: QuotaWindow[] | null,
-  code?: number | null
+  code?: number | null,
+  model?: string | null
 ): CliErrorKind {
   const raw = text.trim()
   if (CANCELLED_RE.test(raw)) return 'cancelled'
@@ -266,7 +294,7 @@ export function classifyCliError(
   if (AUTH_RE.test(raw)) return 'auth'
   if (
     (code === RpcErrorCode.internalError || isBareInternalError(raw)) &&
-    pickExhaustedQuotaWindow(windows)
+    pickExhaustedQuotaWindow(windows, model)
   ) {
     return 'quota'
   }

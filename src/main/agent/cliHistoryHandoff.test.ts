@@ -74,6 +74,50 @@ describe('formatCliWorkspaceHandoff', () => {
     assert.match(text, /user's next message follows/i)
   })
 
+  it('retry of the first turn has no preamble — the previous answer is off the path', () => {
+    const messages = [
+      user('u1', 'hello'),
+      assistant('a1', 'hi there, I already answered this.', 'u1')
+    ]
+    assert.equal(
+      formatCliWorkspaceHandoff({
+        messages,
+        leafId: 'u1',
+        excludeMessageId: 'u1',
+        nextCwd: '/proj',
+        reason: 'retry'
+      }),
+      null
+    )
+  })
+
+  it('uses retry wording and omits the replaced turn', () => {
+    const messages = [
+      user('u1', 'what is in src?'),
+      assistant('a1', 'A TypeScript app.', 'u1'),
+      user('u2', 'rewrite the readme', 'a1'),
+      assistant('a2', 'I rewrote it in a casual tone.', 'u2')
+    ]
+    const text = formatCliWorkspaceHandoff({
+      messages,
+      leafId: 'u2',
+      excludeMessageId: 'u2',
+      previousCwd: '/proj',
+      nextCwd: '/proj',
+      reason: 'retry'
+    })
+    assert.ok(text)
+    assert.match(text, /new attempt at the same point/)
+    assert.match(text, /previous attempt is not included/)
+    assert.match(text, /what is in src\?/)
+    assert.match(text, /A TypeScript app/)
+    assert.doesNotMatch(text, /rewrite the readme/)
+    assert.doesNotMatch(text, /casual tone/)
+    assert.doesNotMatch(text, /could not be resumed/)
+    assert.doesNotMatch(text, /working directory changed/)
+    assert.match(text, /fresh attempt, not as a follow-up/)
+  })
+
   it('uses session-lost wording when the native session could not be resumed', () => {
     const messages = [
       user('u1', 'remember the magic word'),

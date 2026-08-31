@@ -69,6 +69,20 @@ export function parseAcpAvailableModels(models: unknown): AcpListedModel[] {
   return out
 }
 
+/**
+ * ACP id to pin before the session exists (no availableModels yet).
+ * Used for `cursor-agent --model` and `session/new.modelId` so Cursor
+ * does not initialize Auto / the last account default against the wrong pool.
+ */
+export function acpBootstrapModelId(
+  wanted: string | null | undefined,
+  prefs?: AcpModelPrefs
+): string | null {
+  const trimmed = wanted?.trim()
+  if (!trimmed) return null
+  return resolveAcpModelId(trimmed, [], prefs)
+}
+
 /** Prefer the overlaid ACP id, then the family's advertised default, then the raw pick. */
 export function acpModelIdCandidates(
   wanted: string,

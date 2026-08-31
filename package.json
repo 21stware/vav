@@ -1,7 +1,7 @@
 {
   "name": "vav",
   "productName": "VAV",
-  "version": "1.18.1",
+  "version": "1.18.2",
   "description": "Local-first agent workbench: open files, ask and edit beside them, and run VAV or Claude/Codex in the same thread — with a real terminal on the side.",
   "license": "PolyForm-Noncommercial-1.0.0",
   "author": "Oboo Cheng",

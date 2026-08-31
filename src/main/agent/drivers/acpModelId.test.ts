@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import {
+  acpBootstrapModelId,
   acpModelIdCandidates,
   advertisedThinkingLevel,
   collapseCursorListModels,
@@ -126,6 +127,21 @@ describe('collapseCursorListModels', () => {
     )
     assert.equal(collapsed[0]?.label, 'Cursor Grok 4.6')
     assert.equal(collapsed[1]?.label, 'Claude Fable 5')
+  })
+})
+
+describe('acpBootstrapModelId', () => {
+  it('constructs an ACP id before the session has advertised models', () => {
+    assert.equal(
+      acpBootstrapModelId('grok-4.6', { thinkingLevel: 'medium', fast: false }),
+      'grok-4.6[effort=medium,fast=false]'
+    )
+    assert.equal(
+      acpBootstrapModelId('cursor-grok-4.6-high-fast'),
+      'grok-4.6[effort=high,fast=true]'
+    )
+    assert.equal(acpBootstrapModelId(''), null)
+    assert.equal(acpBootstrapModelId(null), null)
   })
 })
 

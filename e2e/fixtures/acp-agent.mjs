@@ -206,7 +206,9 @@ function handle(msg) {
       typeof params.sessionId === 'string' && params.sessionId
         ? params.sessionId
         : `e2e-acp-${instanceId}-${nextSession++}`
-    sessions.set(sessionId, { modeId: 'agent', modelId: models.currentModelId })
+    const requested =
+      typeof params.modelId === 'string' && params.modelId ? params.modelId : models.currentModelId
+    sessions.set(sessionId, { modeId: 'agent', modelId: requested })
     result(id, {
       sessionId,
       title: 'E2E ACP',

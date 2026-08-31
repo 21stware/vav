@@ -7,7 +7,7 @@ import { PassThrough } from 'node:stream'
 import { describe, it } from 'node:test'
 import { ACP_CLIENT_CAPABILITIES, ACP_PROTOCOL_VERSION } from '../../../shared/acpSession.ts'
 import { RpcErrorCode } from '../../../shared/cliErrors.ts'
-import { wireAcp } from './acp.ts'
+import { acpInvokeArgs, wireAcp } from './acp.ts'
 import type { AcpFileAccess } from './acpFs.ts'
 import type { DriverEvent } from './types.ts'
 import type { StdioProcess } from './stdioJson.ts'
@@ -256,6 +256,7 @@ describe('wireAcp protocol', () => {
     })
 
     const created = await waitFor(outbound, (msg) => msg.method === 'session/new')
+    assert.equal(asRecord(created.params)?.modelId, 'grok-4.6[effort=high,fast=true]')
     toClient({
       jsonrpc: '2.0',
       id: created.id,
@@ -335,6 +336,7 @@ describe('wireAcp protocol', () => {
     })
 
     const created = await waitFor(outbound, (msg) => msg.method === 'session/new')
+    assert.equal(asRecord(created.params)?.modelId, 'grok-4.6[effort=low,fast=true]')
     toClient({
       jsonrpc: '2.0',
       id: created.id,
@@ -354,6 +356,84 @@ describe('wireAcp protocol', () => {
     toClient({ jsonrpc: '2.0', id: set.id, result: {} })
     await waitForEvent(events, (event) => event.type === 'connected')
     driver.dispose()
+  })
+
+  it('retries session/new without modelId when Cursor rejects the field', async () => {
+    const events: DriverEvent[] = []
+    const { proc, outbound, toClient } = fakeStdio()
+    const dir = await mkdtemp(join(tmpdir(), 'vav-acp-new-model-'))
+
+    const driver = wireAcp(
+      'cursor',
+      proc,
+      {
+        binary: 'cursor-agent',
+        cwd: dir,
+        approvalMode: 'edit',
+        model: 'grok-4.6',
+        thinkingLevel: 'medium',
+        fast: false
+      },
+      (event) => events.push(event)
+    )
+
+    const init = await waitFor(outbound, (msg) => msg.method === 'initialize')
+    toClient({
+      jsonrpc: '2.0',
+      id: init.id,
+      result: {
+        protocolVersion: ACP_PROTOCOL_VERSION,
+        agentCapabilities: { loadSession: true },
+        authMethods: []
+      }
+    })
+
+    const first = await waitFor(outbound, (msg) => msg.method === 'session/new')
+    assert.equal(asRecord(first.params)?.modelId, 'grok-4.6[effort=medium,fast=false]')
+    toClient({
+      jsonrpc: '2.0',
+      id: first.id,
+      error: { code: RpcErrorCode.invalidParams, message: 'Invalid params' }
+    })
+
+    const retry = await waitForNth(outbound, (msg) => msg.method === 'session/new', 2)
+    assert.equal(asRecord(retry.params)?.modelId, undefined)
+    toClient({
+      jsonrpc: '2.0',
+      id: retry.id,
+      result: {
+        sessionId: 'sess-retry',
+        models: {
+          currentModelId: 'default[]',
+          availableModels: [{ modelId: 'grok-4.6[effort=high,fast=true]', name: 'grok-4.6' }]
+        }
+      }
+    })
+
+    const set = await waitFor(outbound, (msg) => msg.method === 'session/set_model')
+    assert.equal(asRecord(set.params)?.modelId, 'grok-4.6[effort=medium,fast=false]')
+    toClient({ jsonrpc: '2.0', id: set.id, result: {} })
+    await waitForEvent(events, (event) => event.type === 'connected')
+    driver.dispose()
+  })
+})
+
+describe('acpInvokeArgs', () => {
+  it('pins Cursor --model before the acp subcommand', () => {
+    assert.deepEqual(
+      acpInvokeArgs('cursor', 'edit', {
+        model: 'grok-4.6',
+        thinkingLevel: 'medium',
+        fast: false
+      }),
+      ['--model', 'grok-4.6[effort=medium,fast=false]', 'acp']
+    )
+    assert.deepEqual(acpInvokeArgs('cursor', 'edit', {}), ['acp'])
+    assert.deepEqual(acpInvokeArgs('grok', 'edit', { model: 'grok-4.5' }), ['agent', 'stdio'])
+    assert.deepEqual(
+      acpInvokeArgs('cursor', 'edit', { model: 'grok-4.6', extraArgs: ['--model', 'auto'] }),
+      ['acp', '--model', 'auto']
+    )
   })
 })
 

@@ -1,5 +1,10 @@
 import type { ApprovalMode, CliHostKind, PlanStep } from '../../../shared/types.ts'
-import { extractRpcError, formatErrorDetail, RpcErrorCode } from '../../../shared/cliErrors.ts'
+import {
+  extractRpcError,
+  formatErrorDetail,
+  rpcErrorCode,
+  RpcErrorCode
+} from '../../../shared/cliErrors.ts'
 import {
   ACP_CLIENT_CAPABILITIES,
   ACP_PROTOCOL_VERSION,
@@ -38,6 +43,7 @@ import {
 } from '../../../shared/cursorModel.ts'
 import { clampThinkingLevel } from '../../../shared/thinkingLevel.ts'
 import {
+  acpBootstrapModelId,
   acpModelIdCandidates,
   advertisedThinkingLevel,
   parseAcpAvailableModels,
@@ -103,6 +109,24 @@ function acpArgs(kind: AcpHostKind, approvalMode: ApprovalMode): string[] {
   }
 }
 
+/** Cursor `--model` + ACP subcommand. Extra argv from AgentConfig stay last. */
+export function acpInvokeArgs(
+  kind: AcpHostKind,
+  approvalMode: ApprovalMode,
+  options?: Pick<DriverStartOptions, 'model' | 'thinkingLevel' | 'fast' | 'extraArgs'>
+): string[] {
+  const extra = options?.extraArgs ?? []
+  const boot =
+    kind === 'cursor'
+      ? acpBootstrapModelId(options?.model, {
+          thinkingLevel: options?.thinkingLevel ?? null,
+          fast: typeof options?.fast === 'boolean' ? options.fast : null
+        })
+      : null
+  const modelArg = boot && !extra.includes('--model') ? ['--model', boot] : []
+  return [...modelArg, ...acpArgs(kind, approvalMode), ...extra]
+}
+
 /**
  * Full ACP v1 client over stdio.
  *
@@ -118,7 +142,7 @@ export async function startAcpDriver(
   emit: DriverEventSink
 ): Promise<DriverControl> {
   const { spawnStdioProcess } = await import('./process.ts')
-  const args = [...acpArgs(kind, options.approvalMode), ...(options.extraArgs ?? [])]
+  const args = acpInvokeArgs(kind, options.approvalMode, options)
   const proc = spawnStdioProcess(
     options.binary,
     args,
@@ -255,17 +279,37 @@ export function wireAcp(
         }
       }
     }
-    const created = asRecord(
-      await request('session/new', {
-        cwd: options.cwd,
-        mcpServers: []
-      })
-    )
+    const created = asRecord(await createSession())
     sessionId =
       asString(created?.sessionId) ||
       asString(created?.session_id) ||
       asString(dig(created, 'session.id'))
     ingestSessionSetup(created)
+  }
+
+  const wantedPrefs = (): { thinkingLevel: typeof wantedThinking; fast: typeof wantedFast } => ({
+    thinkingLevel: wantedThinking,
+    fast: wantedFast
+  })
+
+  const bootModelId = (): string | null => acpBootstrapModelId(wantedModel, wantedPrefs())
+
+  const createSession = async (): Promise<unknown> => {
+    const params: Record<string, unknown> = {
+      cwd: options.cwd,
+      mcpServers: []
+    }
+    const modelId = bootModelId()
+    if (modelId) params.modelId = modelId
+    try {
+      return await request('session/new', params)
+    } catch (err) {
+      // Official ACP session/new has no modelId. Retry plain if Cursor rejects it.
+      if (modelId && rpcErrorCode(err) === RpcErrorCode.invalidParams) {
+        return await request('session/new', { cwd: options.cwd, mcpServers: [] })
+      }
+      throw err
+    }
   }
 
   const ingestSessionSetup = (created: Record<string, unknown> | null): void => {

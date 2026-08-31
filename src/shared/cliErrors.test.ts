@@ -9,6 +9,7 @@ import {
   NETWORK_RETRY_LIMIT,
   networkRetryDelayMs,
   pickExhaustedQuotaWindow,
+  quotaKindsForModel,
   RpcErrorCode,
   shouldRetryFreshSession,
   shouldRetrySameSession,
@@ -132,6 +133,47 @@ describe('classifyCliError', () => {
     assert.equal(classifyCliError('Internal error'), 'generic')
     assert.equal(classifyCliError('Internal error', exhausted), 'quota')
     assert.equal(classifyCliError('Internal error', exhausted, RpcErrorCode.internalError), 'quota')
+  })
+
+  it('does not blame an unrelated Cursor premium window when Grok is selected', () => {
+    const windows = [
+      window({ id: 'cursor_api', kind: 'cursor_api', usedPercent: 100, resetsAt: 1000 }),
+      window({ id: 'cursor_auto', kind: 'cursor_auto', usedPercent: 25, resetsAt: 1000 })
+    ]
+    assert.equal(
+      classifyCliError(
+        'Failed to initialize session services',
+        windows,
+        RpcErrorCode.internalError,
+        'grok-4.6'
+      ),
+      'generic'
+    )
+    assert.equal(
+      classifyCliError('Internal error', windows, RpcErrorCode.internalError, 'claude-opus-5'),
+      'quota'
+    )
+    const bothDead = [
+      window({ id: 'cursor_api', kind: 'cursor_api', usedPercent: 100, resetsAt: 2000 }),
+      window({ id: 'cursor_auto', kind: 'cursor_auto', usedPercent: 100, resetsAt: 1000 })
+    ]
+    assert.equal(
+      classifyCliError('Internal error', bothDead, RpcErrorCode.internalError, 'grok-4.6'),
+      'quota'
+    )
+    assert.equal(pickExhaustedQuotaWindow(bothDead, 'grok-4.6')?.kind, 'cursor_auto')
+    assert.equal(pickExhaustedQuotaWindow(windows, 'grok-4.6'), null)
+  })
+})
+
+describe('quotaKindsForModel', () => {
+  it('maps Cursor families onto the Auto vs premium pools', () => {
+    assert.deepEqual(quotaKindsForModel('grok-4.6'), ['cursor_auto'])
+    assert.deepEqual(quotaKindsForModel('grok-4.6[effort=medium,fast=false]'), ['cursor_auto'])
+    assert.deepEqual(quotaKindsForModel('composer-2.5'), ['cursor_auto'])
+    assert.deepEqual(quotaKindsForModel('claude-opus-5'), ['cursor_api'])
+    assert.deepEqual(quotaKindsForModel('auto'), null)
+    assert.equal(quotaKindsForModel(null), null)
   })
 })
 

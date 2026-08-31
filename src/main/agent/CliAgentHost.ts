@@ -107,14 +107,15 @@ const COALESCE_MS = 32
 function describeCliHostError(
   raw: string,
   windows: QuotaWindow[],
-  code?: number | null
+  code?: number | null,
+  model?: string | null
 ): { kind: CliErrorKind; message: string } {
   const text = raw.trim() || 'Internal error'
   const locale = currentLocale()
-  const kind = classifyCliError(text, windows, code)
+  const kind = classifyCliError(text, windows, code, model)
   if (kind === 'cancelled') return { kind, message: text }
   if (kind === 'quota') {
-    const window = pickExhaustedQuotaWindow(windows)
+    const window = pickExhaustedQuotaWindow(windows, model)
     if (window) {
       const name = t(quotaKindMessageKey(window.kind))
       const percent = window.usedPercent.toFixed(window.usedPercent >= 10 ? 0 : 1)
@@ -261,8 +262,9 @@ export class CliAgentHost {
    */
   private cwdEpoch = new Map<string, number>()
   /**
-   * Workspace switch dropped the host resume cursor. The next prompt gets the
-   * stored transcript prepended so the new session keeps the conversation.
+   * Native session was dropped (workspace switch, lost resume, or retry/edit).
+   * The next prompt gets the stored transcript prepended so the new session
+   * keeps the conversation — without the turn being replaced, for retry.
    */
   private historyHandoff = new Map<string, CliHistoryHandoffMark>()
   /** Model picked while a turn is live — apply when that turn ends. */
@@ -339,6 +341,13 @@ export class CliAgentHost {
     })
   }
 
+  /**
+   * Answers the same prompt again.
+   *
+   * History must stop before the reply being replaced — a second version,
+   * not a follow-up. The live CLI session still holds that turn, so it is
+   * dropped and the stored transcript is handed to a fresh session.
+   */
   async regenerate(conversationId: string, messageId: string): Promise<void> {
     if (this.turns.has(conversationId)) return
     const conversation = this.deps.conversations.get(conversationId)
@@ -370,6 +379,10 @@ export class CliAgentHost {
       conversation!.fileReadOnly === true,
       isAcpHost(conversation!.cliHost)
     )
+    // Same session still holds the turn we are replacing — prompting again
+    // would be a follow-up. Drop it and hand off history that stops before
+    // this prompt, so the new attempt does not see the previous answer.
+    this.dropNativeSessionForRetry(conversationId)
     await this.startTurn(conversationId, randomUUID(), parentId, prompt, {
       attachments: user.attachments
     })
@@ -413,6 +426,7 @@ export class CliAgentHost {
       conversation.fileReadOnly === true,
       isAcpHost(conversation.cliHost)
     )
+    this.dropNativeSessionForRetry(conversationId)
     await this.startTurn(conversationId, userMessage.id, userMessage.parentId, prompt, {
       attachments: userMessage.attachments
     })
@@ -693,6 +707,12 @@ export class CliAgentHost {
       replay: createCliHistoryReplayGate(conversation.messages),
       hostPromptClosed: false,
       planFollowUp: null
+    }
+    // Fresh native session: the previous assistant is not replayed, and a
+    // retry of the same prompt often starts with the same words — do not
+    // strip the new answer as if it were a resume dump.
+    if (this.historyHandoff.has(conversationId)) {
+      turn.replay.open()
     }
     // For regenerate we mint a fresh assistant id
     if (!conversation.messages.some((m) => m.id === messageId && m.role === 'user')) {
@@ -1009,8 +1029,7 @@ export class CliAgentHost {
       case 'error':
         if (
           turn.cancelled ||
-          classifyCliError(event.message, this.quotaWindowsFor(conversationId), event.errorCode) ===
-            'cancelled'
+          this.classifyTurnError(conversationId, event.message, event.errorCode) === 'cancelled'
         ) {
           turn.cancelled = true
           break
@@ -1046,9 +1065,9 @@ export class CliAgentHost {
           turn.errorCode = event.errorCode ?? turn.errorCode
           turn.errorDetail = event.errorDetail ?? turn.errorDetail
         }
-        const finishKind = classifyCliError(
+        const finishKind = this.classifyTurnError(
+          conversationId,
           event.error || turn.error || '',
-          this.quotaWindowsFor(conversationId),
           event.errorCode ?? turn.errorCode
         )
         // Payment / quota must win over stopReason=cancelled so we keep the
@@ -1918,6 +1937,17 @@ export class CliAgentHost {
     this.emitUsageSnapshot(conversationId)
   }
 
+  /**
+   * Retry / edit must not keep talking to the native session that already
+   * contains the turn being replaced. Drop the process and resume cursor;
+   * the next prompt gets a transcript preamble that stops before that turn.
+   */
+  private dropNativeSessionForRetry(conversationId: string): void {
+    this.markHistoryHandoff(conversationId, this.conversationCwd(conversationId), 'retry')
+    this.clearResumeCursor(conversationId)
+    this.disposeRuntime(conversationId, { replacing: true })
+  }
+
   private markHistoryHandoff(
     conversationId: string,
     previousCwd: string | null,
@@ -2003,6 +2033,23 @@ export class CliAgentHost {
     return mergeNamespacedQuotaWindows(host, identity, account, conversation?.quotaWindows ?? [])
   }
 
+  private conversationModel(conversationId: string): string | null {
+    return this.deps.conversations.get(conversationId)?.model ?? null
+  }
+
+  private classifyTurnError(
+    conversationId: string,
+    text: string,
+    code?: number | null
+  ): CliErrorKind {
+    return classifyCliError(
+      text,
+      this.quotaWindowsFor(conversationId),
+      code,
+      this.conversationModel(conversationId)
+    )
+  }
+
   private async describeTurnError(
     conversationId: string,
     raw: string,
@@ -2013,7 +2060,12 @@ export class CliAgentHost {
     if (host && this.deps.quota) {
       await this.deps.quota.forceRefresh(host)
     }
-    return describeCliHostError(raw, this.quotaWindowsFor(conversationId), code)
+    return describeCliHostError(
+      raw,
+      this.quotaWindowsFor(conversationId),
+      code,
+      conversation?.model
+    )
   }
 
   private async settleFailedTurn(
@@ -2040,7 +2092,7 @@ export class CliAgentHost {
     // backoff. The resume cursor is kept — the thread must not lose context —
     // and the turn stays live so the UI never paints a break. Classified
     // cheaply (no quota refresh) so the retry starts right away.
-    const quickKind = classifyCliError(raw, this.quotaWindowsFor(conversationId), code)
+    const quickKind = this.classifyTurnError(conversationId, raw, code)
     if (shouldRetrySameSession(quickKind) && turn.networkRetries < NETWORK_RETRY_LIMIT) {
       turn.networkRetries += 1
       turn.error = undefined
