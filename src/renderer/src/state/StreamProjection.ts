@@ -123,6 +123,15 @@ export class StreamProjection {
     this.ensureTicking()
   }
 
+  /** Overwrite a text slot (e.g. strip a leaked RetriableError tail). */
+  replaceText(index: number, text: string): void {
+    this.ensureLive()
+    const segmenter = new MarkdownSegmenter()
+    if (text) segmenter.push(text)
+    this.slots[index] = { kind: 'text', key: `t${index}`, segmenter }
+    this.publish()
+  }
+
   appendReasoning(index: number, text: string): void {
     this.ensureLive()
     const slot = this.slots[index]

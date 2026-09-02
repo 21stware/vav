@@ -13,6 +13,9 @@ import {
   RpcErrorCode,
   shouldRetryFreshSession,
   shouldRetrySameSession,
+  shouldContinuePartialNetworkTurn,
+  isBenignAcpStreamTeardown,
+  isTransportDisconnect,
   splitStreamedRetriableError
 } from './cliErrors.ts'
 import type { QuotaWindow } from './types.ts'
@@ -226,6 +229,44 @@ describe('same-session network retry policy', () => {
     // Out-of-range attempts clamp to the table bounds.
     assert.equal(networkRetryDelayMs(0), 1_000)
     assert.equal(networkRetryDelayMs(9), 5_000)
+  })
+})
+
+describe('partial-turn continue vs benign ACP teardown', () => {
+  it('treats WritableIterable closed (and nothing else) as a benign teardown', () => {
+    assert.equal(
+      isBenignAcpStreamTeardown('Error: RetriableError: WritableIterable is closed'),
+      true
+    )
+    assert.equal(
+      isTransportDisconnect('Error: RetriableError: WritableIterable is closed'),
+      false
+    )
+    assert.equal(
+      shouldContinuePartialNetworkTurn(
+        'Error: RetriableError: WritableIterable is closed',
+        false
+      ),
+      false
+    )
+  })
+
+  it('continues a partial turn on TLS / socket disconnect', () => {
+    const leaked =
+      'Error: RetriableError: [aborted] Client network socket disconnected before secure TLS connection was established'
+    assert.equal(isBenignAcpStreamTeardown(leaked), false)
+    assert.equal(isTransportDisconnect(leaked), true)
+    assert.equal(shouldContinuePartialNetworkTurn(leaked, false), true)
+  })
+
+  it('continues even a WritableIterable leak when a tool is still in flight', () => {
+    assert.equal(
+      shouldContinuePartialNetworkTurn(
+        'Error: RetriableError: WritableIterable is closed',
+        true
+      ),
+      true
+    )
   })
 })
 

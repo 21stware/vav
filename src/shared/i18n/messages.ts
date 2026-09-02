@@ -357,6 +357,7 @@ export const zhCN = {
 
   // —— stream / message ——
   'stream.outputting': 'Outputting',
+  'stream.retry': 'Retry',
   'stream.by': 'by {name}',
   'stream.done': 'Done',
   'message.copy': '复制',
@@ -2492,6 +2493,7 @@ export const en: Record<MessageKey, string> = {
   'queue.sendNowFailedBusy': 'The current reply did not stop in time; the message stays in the queue.',
 
   'stream.outputting': 'Outputting',
+  'stream.retry': 'Retry',
   'stream.by': 'by {name}',
   'stream.done': 'Done',
   'message.copy': 'Copy',

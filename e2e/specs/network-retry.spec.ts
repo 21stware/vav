@@ -98,6 +98,8 @@ test('streamed retriable error trailing a full reply is stripped from the transc
     expect(last?.content ?? '').toContain('e2e acp reply')
     expect(last?.content ?? '').not.toContain('RetriableError')
     expect(last?.errorText ?? null).toBeNull()
+    // Benign teardown after a complete reply must not kick a continue.
+    expect(last?.content ?? '').not.toContain('e2e continued')
   } finally {
     await harness.dispose()
   }
@@ -132,6 +134,55 @@ test('streamed retriable error as the whole reply retries in place and seals cle
     expect(assistants[0].errorText ?? null).toBeNull()
     expect(assistants[0].cancelled ?? false).toBe(false)
     // Same session survived — the retry did not mint a fresh one.
+    expect(conversation?.cliResumeCursor?.sessionId ?? null).not.toBeNull()
+  } finally {
+    await harness.dispose()
+  }
+})
+
+/**
+ * Mid-outputting network change: cursor-agent leaks a TLS disconnect as a
+ * trailing chunk after a PARTIAL reply and still reports end_turn. VAV must
+ * keep the draft, flip Outputting → Retry, continue on the same session,
+ * and seal one assistant message — the user must not type "continue".
+ */
+test('partial reply cut off by a transport leak continues on the same turn', async () => {
+  const harness = await launchVav({ liveAcp: true, acpLeakPartialTransport: true })
+  try {
+    const { page } = harness
+    await page.locator('[data-testid="composer-input"]').fill('upgrade compile env')
+    await page.locator('[data-testid="composer-send"]').click()
+
+    const streaming = page.locator('[data-testid="streaming-message"]')
+    await expect(streaming).toBeVisible({ timeout: 15_000 })
+    await expect(streaming).toContainText('partial e2e reply', { timeout: 15_000 })
+    await expect(
+      page.locator('[data-testid="stream-status"][data-state="retrying"]')
+    ).toBeVisible({ timeout: 8_000 })
+    await expect(streaming).not.toContainText('RetriableError')
+
+    const assistant = page.locator('[data-testid="message-assistant"]')
+    await expect(assistant).toContainText('partial e2e reply', { timeout: 25_000 })
+    await expect(assistant).toContainText('e2e continued', { timeout: 25_000 })
+    await expect(assistant).not.toContainText('RetriableError')
+
+    const conversation = await page.evaluate(
+      (id) => window.vav.conversations.get(id),
+      E2E_SESSION_ID
+    )
+    const users = (conversation?.messages ?? []).filter(
+      (m: { role: string }) => m.role === 'user'
+    )
+    const assistants = (conversation?.messages ?? []).filter(
+      (m: { role: string }) => m.role === 'assistant'
+    )
+    expect(users).toHaveLength(1)
+    expect(assistants).toHaveLength(1)
+    expect(assistants[0].content ?? '').toContain('partial e2e reply')
+    expect(assistants[0].content ?? '').toContain('e2e continued')
+    expect(assistants[0].content ?? '').not.toContain('RetriableError')
+    expect(assistants[0].errorText ?? null).toBeNull()
+    expect(assistants[0].cancelled ?? false).toBe(false)
     expect(conversation?.cliResumeCursor?.sessionId ?? null).not.toBeNull()
   } finally {
     await harness.dispose()

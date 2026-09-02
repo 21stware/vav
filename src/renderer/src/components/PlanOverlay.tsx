@@ -58,7 +58,7 @@ function viewFromBlock(block: ToolCallBlock, turnRunning: boolean): PlanView | n
 
 /** Loader spin only while the turn is actively streaming (working/outputting). */
 function isPlanStreaming(phase: TurnPhase | undefined, isRunning: boolean): boolean {
-  return isRunning && (phase === 'working' || phase === 'outputting')
+  return isRunning && (phase === 'working' || phase === 'outputting' || phase === 'retrying')
 }
 
 /**

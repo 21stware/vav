@@ -3329,7 +3329,8 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
       case 'delta':
         // The hot path: never touches React state.
-        if (event.kind === 'text') projection.appendText(event.index, event.text)
+        if (event.kind === 'text' && event.replace) projection.replaceText(event.index, event.text)
+        else if (event.kind === 'text') projection.appendText(event.index, event.text)
         else projection.appendReasoning(event.index, event.text)
         break
 

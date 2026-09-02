@@ -19,6 +19,9 @@
  *   is closed") as agent_message_chunk and still end with end_turn.
  * - E2E_ACP_LEAK_TAIL=1 — every prompt appends the leaked error as a
  *   trailing chunk after the real reply, then ends with end_turn.
+ * - E2E_ACP_LEAK_PARTIAL_TRANSPORT=1 — first prompt streams a partial
+ *   reply then a TLS-disconnect RetriableError (still end_turn). Later
+ *   prompts reply "e2e continued".
  */
 import { appendFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { createInterface } from 'node:readline'
@@ -32,9 +35,12 @@ const PLAN_MODE = process.env.E2E_ACP_PLAN === '1'
 const MODEL_LOG = process.env.E2E_ACP_MODEL_LOG || ''
 const LEAK_PROMPTS = Number(process.env.E2E_ACP_LEAK_PROMPTS ?? 0) || 0
 const LEAK_TAIL = process.env.E2E_ACP_LEAK_TAIL === '1'
+const LEAK_PARTIAL_TRANSPORT = process.env.E2E_ACP_LEAK_PARTIAL_TRANSPORT === '1'
 
 /** cursor-agent ACP bug: internal stream teardown leaks as assistant text. */
 const LEAKED_STREAM_ERROR = 'Error: RetriableError: WritableIterable is closed'
+const LEAKED_TRANSPORT_ERROR =
+  'Error: RetriableError: [aborted] Client network socket disconnected before secure TLS connection was established'
 let leakedPrompts = 0
 
 const PLAN_REQUEST_ID = 9001
@@ -284,6 +290,30 @@ function handle(msg) {
       sessionUpdate(sessionId, {
         sessionUpdate: 'agent_message_chunk',
         content: { type: 'text', text: LEAKED_STREAM_ERROR }
+      })
+      result(id, { stopReason: 'end_turn' })
+      return
+    }
+    if (LEAK_PARTIAL_TRANSPORT && promptTurns === 1) {
+      sessionUpdate(sessionId, {
+        sessionUpdate: 'agent_thought_chunk',
+        content: { type: 'text', text: 'e2e acp thought' }
+      })
+      sessionUpdate(sessionId, {
+        sessionUpdate: 'agent_message_chunk',
+        content: { type: 'text', text: 'partial e2e reply' }
+      })
+      sessionUpdate(sessionId, {
+        sessionUpdate: 'agent_message_chunk',
+        content: { type: 'text', text: `\n\n${LEAKED_TRANSPORT_ERROR}` }
+      })
+      result(id, { stopReason: 'end_turn' })
+      return
+    }
+    if (LEAK_PARTIAL_TRANSPORT && promptTurns > 1) {
+      sessionUpdate(sessionId, {
+        sessionUpdate: 'agent_message_chunk',
+        content: { type: 'text', text: 'e2e continued' }
       })
       result(id, { stopReason: 'end_turn' })
       return

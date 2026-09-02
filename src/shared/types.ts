@@ -1409,6 +1409,7 @@ export type TurnPhase =
   | 'idle'
   | 'thinking'
   | 'outputting'
+  | 'retrying'
   | 'working'
   | 'awaiting-user'
   | 'cancelled'
@@ -1438,6 +1439,8 @@ export type TurnEvent =
       index: number
       kind: 'reasoning' | 'text'
       text: string
+      /** Replace the block instead of appending (strip a leaked stream error). */
+      replace?: boolean
     }
   /** A tool card was created or transitioned; carries the whole block. */
   | { type: 'tool'; conversationId: string; index: number; block: ToolCallBlock }

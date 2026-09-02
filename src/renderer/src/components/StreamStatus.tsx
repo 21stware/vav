@@ -21,11 +21,12 @@ export function StreamStatus({
   state,
   conversationId
 }: {
-  state: 'outputting' | 'done'
+  state: 'outputting' | 'retrying' | 'done'
   conversationId?: string
 }): React.JSX.Element {
   const t = useT()
-  const detail = useOutputtingDetail(state === 'outputting' ? conversationId : undefined)
+  const live = state === 'outputting' || state === 'retrying'
+  const detail = useOutputtingDetail(live ? conversationId : undefined)
 
   if (state === 'done') {
     return (
@@ -40,7 +41,7 @@ export function StreamStatus({
   }
 
   return (
-    <div className="stream-status" data-testid="stream-status" data-state="outputting">
+    <div className="stream-status" data-testid="stream-status" data-state={state}>
       <span className="stream-status-mark" aria-hidden>
         <img
           className="stream-status-mark-sprite logo-light"
@@ -56,7 +57,7 @@ export function StreamStatus({
         />
       </span>
       <span className="stream-status-shimmer">
-        {t('stream.outputting')}
+        {state === 'retrying' ? t('stream.retry') : t('stream.outputting')}
         {detail && (
           <>
             {' · '}
