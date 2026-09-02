@@ -1,5 +1,14 @@
 import type { ChatMessage, MessageBlock, TurnStatus } from '../../shared/types.ts'
 
+/** pi stopReason on the final assistant message. */
+export function assistantStopKind(
+  stopReason: string | undefined
+): 'cancelled' | 'error' | null {
+  if (stopReason === 'aborted') return 'cancelled'
+  if (stopReason === 'error') return 'error'
+  return null
+}
+
 /** Drop empty text/reasoning slots that opened before any token landed. */
 export function persistableTurnBlocks(blocks: MessageBlock[]): MessageBlock[] {
   return blocks.filter(

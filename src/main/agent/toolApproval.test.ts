@@ -4,6 +4,7 @@ import {
   approvalPromptCopy,
   parseEditedApprovalText,
   readonlyApprovalBlock,
+  shouldAutoAcceptChangeSet,
   shouldPauseForApproval,
   shouldSkipToolGate,
   terminalCommandFromArgs
@@ -20,6 +21,15 @@ describe('shouldSkipToolGate / terminalCommandFromArgs', () => {
   it('reads a terminal command from args', () => {
     assert.equal(terminalCommandFromArgs('terminal', { command: 'ls' }), 'ls')
     assert.equal(terminalCommandFromArgs('fs_write', { command: 'ls' }), '')
+  })
+})
+
+describe('shouldAutoAcceptChangeSet', () => {
+  it('auto-accepts only bypass', () => {
+    assert.equal(shouldAutoAcceptChangeSet('bypass'), true)
+    assert.equal(shouldAutoAcceptChangeSet('auto'), false)
+    assert.equal(shouldAutoAcceptChangeSet('edit'), false)
+    assert.equal(shouldAutoAcceptChangeSet(undefined), false)
   })
 })
 

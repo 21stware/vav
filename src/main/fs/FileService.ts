@@ -59,7 +59,8 @@ import {
   inspectCaughtError,
   inspectErrorOnBase,
   inspectFileBase,
-  legacyBinaryInspect,
+  legacyDocInspect,
+  legacyPptInspect,
   officeFirstPaintInspect,
   remappedConvertedInspect,
   sqliteInspectResult,
@@ -494,46 +495,39 @@ export class FileService {
         // Conversion failed — fall through to binary meta with the error as warning.
         try {
           const binaryMeta = await buildBinaryMeta(path, info)
-          return legacyBinaryInspect({
+          return legacyDocInspect({
             path,
             name,
             size: info.size,
             mtimeMs: info.mtimeMs,
-            mime: 'application/msword',
-            binaryMeta,
-            warnings: [converted.error]
+            warning: converted.error,
+            binaryMeta
           })
         } catch {
-          return legacyBinaryInspect({
+          return legacyDocInspect({
             path,
             name,
             size: info.size,
             mtimeMs: info.mtimeMs,
-            mime: 'application/msword',
-            warnings: [converted.error]
+            warning: converted.error
           })
         }
       }
       if (legacy === 'ppt') {
         try {
           const binaryMeta = await buildBinaryMeta(path, info)
-          return legacyBinaryInspect({
+          return legacyPptInspect({
             path,
             name,
             size: info.size,
             mtimeMs: info.mtimeMs,
-            mime: 'application/vnd.ms-powerpoint',
-            binaryMeta,
-            warnings: [
-              'Legacy PowerPoint (.ppt): export to .pptx for in-app preview, or open with the system default app.'
-            ]
+            binaryMeta
           })
         } catch (err) {
-          return legacyBinaryInspect({
+          return legacyPptInspect({
             path,
             name,
             size: info.size,
-            mime: 'application/vnd.ms-powerpoint',
             error: (err as Error).message
           })
         }

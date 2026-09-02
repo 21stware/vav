@@ -4,10 +4,20 @@ import type { MessageBlock } from '../../shared/types.ts'
 import {
   appendTurnErrorBlock,
   assistantSnapshotFromTurn,
+  assistantStopKind,
   persistableTurnBlocks,
   runtimeTurnStatus,
   sealCancelledInteractiveTools
 } from './agentTurnFinish.ts'
+
+describe('assistantStopKind', () => {
+  it('maps aborted to cancelled and error to error', () => {
+    assert.equal(assistantStopKind('aborted'), 'cancelled')
+    assert.equal(assistantStopKind('error'), 'error')
+    assert.equal(assistantStopKind('end_turn'), null)
+    assert.equal(assistantStopKind(undefined), null)
+  })
+})
 
 describe('persistableTurnBlocks', () => {
   it('keeps tools/plans and drops empty text/reasoning', () => {

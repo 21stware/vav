@@ -72,6 +72,7 @@ import {
   type DriverControl,
   type DriverEvent
 } from './drivers'
+import { shouldAutoAcceptChangeSet } from './toolApproval'
 import { shouldReplaceCliRuntime } from './cliWorkspaceRestart'
 import { sealCliPlanBlocks, planSealMode } from './planSeal'
 import { composeCliPrompt } from './cliPrompt'
@@ -1755,7 +1756,7 @@ export class CliAgentHost {
     if (changeSet) {
       message.changeSetId = changeSet.id
       const mode = this.deps.conversations.get(conversationId)?.approvalMode
-      if (mode === 'bypass' && this.deps.changeSets) {
+      if (shouldAutoAcceptChangeSet(mode) && this.deps.changeSets) {
         const accepted = await this.deps.changeSets.acceptAll(changeSet.id)
         if (accepted) changeSet = accepted
       }
@@ -1782,7 +1783,7 @@ export class CliAgentHost {
       cancelled: turn.cancelled || undefined
     })
 
-    if (changeSet && this.deps.conversations.get(conversationId)?.approvalMode !== 'bypass') {
+    if (changeSet && !shouldAutoAcceptChangeSet(this.deps.conversations.get(conversationId)?.approvalMode)) {
       this.deps.emit({
         type: 'change-review',
         conversationId,

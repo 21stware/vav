@@ -40,13 +40,18 @@ export function readonlyApprovalBlock(
   return null
 }
 
+/** Bypass writes already on disk — auto-accept; no review gate. */
+export function shouldAutoAcceptChangeSet(mode: string | null | undefined): boolean {
+  return mode === 'bypass'
+}
+
 export function shouldPauseForApproval(opts: {
   mode: string
   name: ToolName
   command: string
   autoApproveReadonly: boolean
 }): boolean {
-  if (opts.mode === 'bypass') return false
+  if (shouldAutoAcceptChangeSet(opts.mode)) return false
   if (opts.mode === 'auto') {
     const highRisk =
       HIGH_RISK_TOOLS.has(opts.name) &&

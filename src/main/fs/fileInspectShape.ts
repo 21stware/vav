@@ -228,3 +228,47 @@ export function legacyBinaryInspect(opts: {
     error: opts.error
   }
 }
+
+export const LEGACY_DOC_MIME = 'application/msword'
+export const LEGACY_PPT_MIME = 'application/vnd.ms-powerpoint'
+export const LEGACY_PPT_WARNING =
+  'Legacy PowerPoint (.ppt): export to .pptx for in-app preview, or open with the system default app.'
+
+export function legacyDocInspect(opts: {
+  path: string
+  name: string
+  size: number
+  mtimeMs: number
+  warning: string
+  binaryMeta?: BinaryFileMeta
+}): FileInspectResult {
+  return legacyBinaryInspect({
+    path: opts.path,
+    name: opts.name,
+    size: opts.size,
+    mtimeMs: opts.mtimeMs,
+    mime: LEGACY_DOC_MIME,
+    binaryMeta: opts.binaryMeta,
+    warnings: [opts.warning]
+  })
+}
+
+export function legacyPptInspect(opts: {
+  path: string
+  name: string
+  size: number
+  mtimeMs?: number
+  binaryMeta?: BinaryFileMeta
+  error?: string
+}): FileInspectResult {
+  return legacyBinaryInspect({
+    path: opts.path,
+    name: opts.name,
+    size: opts.size,
+    mtimeMs: opts.mtimeMs,
+    mime: LEGACY_PPT_MIME,
+    binaryMeta: opts.binaryMeta,
+    warnings: opts.error ? undefined : [LEGACY_PPT_WARNING],
+    error: opts.error
+  })
+}

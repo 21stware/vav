@@ -8,7 +8,10 @@ import {
   inspectCaughtError,
   inspectErrorOnBase,
   inspectFileBase,
+  LEGACY_PPT_WARNING,
   legacyBinaryInspect,
+  legacyDocInspect,
+  legacyPptInspect,
   officeFirstPaintInspect,
   remappedConvertedInspect,
   sqliteInspectResult,
@@ -123,6 +126,24 @@ describe('fileInspectShape', () => {
     })
     assert.equal(legacy.kind, 'binary')
     assert.equal(legacy.mime, 'application/vnd.ms-powerpoint')
+
+    const doc = legacyDocInspect({
+      path: '/a.doc',
+      name: 'a.doc',
+      size: 8,
+      mtimeMs: 3,
+      warning: 'convert failed'
+    })
+    assert.equal(doc.mime, 'application/msword')
+    assert.deepEqual(doc.warnings, ['convert failed'])
+
+    const ppt = legacyPptInspect({ path: '/a.ppt', name: 'a.ppt', size: 4, mtimeMs: 3 })
+    assert.equal(ppt.mime, 'application/vnd.ms-powerpoint')
+    assert.deepEqual(ppt.warnings, [LEGACY_PPT_WARNING])
+    assert.equal(
+      legacyPptInspect({ path: '/a.ppt', name: 'a.ppt', size: 4, error: 'stat' }).error,
+      'stat'
+    )
   })
 
   it('streams Office first paint and skips index on lock/empty', () => {

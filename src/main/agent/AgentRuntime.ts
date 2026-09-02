@@ -30,6 +30,7 @@ import { sealRuntimePlanBlocks, planSealMode } from './planSeal'
 import {
   appendTurnErrorBlock,
   assistantSnapshotFromTurn,
+  assistantStopKind,
   runtimeTurnStatus,
   sealCancelledInteractiveTools
 } from './agentTurnFinish'
@@ -38,6 +39,7 @@ import {
   approvalPromptCopy,
   parseEditedApprovalText,
   readonlyApprovalBlock,
+  shouldAutoAcceptChangeSet,
   shouldPauseForApproval,
   shouldSkipToolGate,
   terminalCommandFromArgs
@@ -778,8 +780,9 @@ export class AgentRuntime {
         // pi does not forward the stream's `error` event; a failed request
         // arrives as a final assistant message carrying the stop reason.
         if (isAssistant(event.message)) {
-          if (event.message.stopReason === 'aborted') turn.cancelled = true
-          else if (event.message.stopReason === 'error') {
+          const stop = assistantStopKind(event.message.stopReason)
+          if (stop === 'cancelled') turn.cancelled = true
+          else if (stop === 'error') {
             turn.error = describeError(event.message.errorMessage ?? t('error.model'))
           }
         }
@@ -1403,7 +1406,7 @@ export class AgentRuntime {
     if (changeSet) {
       // Bypass: writes already on disk — auto-accept; no review gate.
       const mode = conversation?.approvalMode ?? 'auto'
-      if (mode === 'bypass' && this.deps.changeSets) {
+      if (shouldAutoAcceptChangeSet(mode) && this.deps.changeSets) {
         const accepted = await this.deps.changeSets.acceptAll(changeSet.id)
         if (accepted) changeSet = accepted
       }
