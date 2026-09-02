@@ -1,7 +1,28 @@
-import { Download, RefreshCw, RotateCw } from 'lucide-react'
+import { useEffect } from 'react'
+import { ChevronDown, Download, LoaderCircle, RefreshCw, RotateCw } from 'lucide-react'
+import type { MessageKey } from '@shared/i18n'
+import {
+  AUTO_UPDATE_POLICIES,
+  resolveAutoUpdatePolicy,
+  type AutoUpdatePolicy
+} from '@shared/updatePolicy'
 import { useSessionStore } from '../../state/sessionStore'
 import { useT } from '../../i18n/useT'
-import { Button, Toggle } from '../ui'
+import { Button } from '../ui'
+
+const POLICY_LABEL: Record<AutoUpdatePolicy, MessageKey> = {
+  off: 'about.autoUpdatePolicy.off',
+  notify: 'about.autoUpdatePolicy.notify',
+  download: 'about.autoUpdatePolicy.download',
+  auto: 'about.autoUpdatePolicy.auto'
+}
+
+const POLICY_HINT: Record<AutoUpdatePolicy, MessageKey> = {
+  off: 'about.autoUpdatePolicyHint.off',
+  notify: 'about.autoUpdatePolicyHint.notify',
+  download: 'about.autoUpdatePolicyHint.download',
+  auto: 'about.autoUpdatePolicyHint.auto'
+}
 import wordmark from '../../assets/wordmark.png'
 import wordmarkDark from '../../assets/wordmark-dark.png'
 
@@ -37,6 +58,30 @@ export function AboutSettings(): React.JSX.Element {
       phase === 'preparing' ||
       phase === 'ready')
   const releaseUrl = updateState.releaseUrl
+  const autoUpdatePolicy = resolveAutoUpdatePolicy(settings)
+
+  useEffect(() => {
+    let cancelled = false
+    void (async () => {
+      const current = await window.vav.updates.getState().catch(() => null)
+      if (cancelled) return
+      if (current) useSessionStore.setState({ updateState: current })
+      const nextPhase = current?.phase ?? useSessionStore.getState().updateState.phase
+      if (
+        nextPhase === 'checking' ||
+        nextPhase === 'downloading' ||
+        nextPhase === 'preparing' ||
+        nextPhase === 'ready'
+      ) {
+        return
+      }
+      if (resolveAutoUpdatePolicy(useSessionStore.getState().settings) === 'off') return
+      if (nextPhase === 'idle') await useSessionStore.getState().checkForUpdates()
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   return (
     <div className="about-stack">
@@ -70,21 +115,51 @@ export function AboutSettings(): React.JSX.Element {
       <div className="about-section">
         <div className="settings-section-title">{t('about.updatesSection')}</div>
         <div className="form-row">
-          <label>{t('about.autoCheckUpdates')}</label>
+          <label htmlFor="settings-auto-update-policy">{t('about.autoUpdatePolicy')}</label>
           <div className="control">
-            <Toggle
-              checked={settings.autoCheckUpdates}
-              title={t('about.autoCheckUpdates')}
-              onChange={(autoCheckUpdates) => void updateSettings({ autoCheckUpdates })}
-            />
+            <div className="font-select">
+              <select
+                id="settings-auto-update-policy"
+                className="text-field font-select-field"
+                data-testid="settings-auto-update-policy"
+                value={autoUpdatePolicy}
+                title={t('about.autoUpdatePolicy')}
+                onChange={(event) => {
+                  const next = event.target.value as AutoUpdatePolicy
+                  void updateSettings({ autoUpdatePolicy: next })
+                }}
+              >
+                {AUTO_UPDATE_POLICIES.map((policy) => (
+                  <option key={policy} value={policy}>
+                    {t(POLICY_LABEL[policy])}
+                  </option>
+                ))}
+              </select>
+              <ChevronDown className="font-select-chevron" size={14} strokeWidth={2} aria-hidden />
+            </div>
           </div>
         </div>
-        <div className="form-hint">{t('about.autoCheckUpdatesHint')}</div>
+        <div className="form-hint">{t(POLICY_HINT[autoUpdatePolicy])}</div>
 
         {showLatestRow ? (
           <div className="kv-row">
             <span className="kv-label">{t('about.latestVersion')}</span>
             <span className="kv-value">v{latestVersion}</span>
+          </div>
+        ) : null}
+        {checking ? (
+          <div
+            className="about-update-progress"
+            aria-live="polite"
+            data-testid="settings-about-update-checking"
+          >
+            <div className="about-update-progress-meta is-checking">
+              <LoaderCircle size={13} strokeWidth={2} className="update-corner-spin" aria-hidden />
+              <span>{t('about.checkingUpdates')}</span>
+            </div>
+            <div className="update-corner-track is-indeterminate" aria-hidden>
+              <div className="update-corner-fill" />
+            </div>
           </div>
         ) : null}
         {phase === 'available' ? (

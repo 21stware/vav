@@ -153,7 +153,7 @@ function seedUserData(
     theme: 'light',
     reduceMotion: options.reduceMotion ?? true,
     windowVibrancyEnabled: false,
-    autoCheckUpdates: false,
+    autoUpdatePolicy: 'off',
     globalHotkey: '',
     notificationsEnabled: false,
     notificationSound: false,

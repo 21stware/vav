@@ -20882,6 +20882,12 @@ html.connect-root #root {
   font-variant-numeric: tabular-nums;
 }
 
+.about-update-progress-meta.is-checking {
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
+}
+
 .about-update-error {
   color: var(--danger, var(--text));
 }

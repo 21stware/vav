@@ -139,6 +139,13 @@ test('Workspace, Notifications, About, Usage, Command Line, and File Association
     await expect(settings.locator('[data-testid="settings-about-license"]')).toHaveText(
       'PolyForm Noncommercial'
     )
+    const updatePolicy = settings.locator('[data-testid="settings-auto-update-policy"]')
+    await expect(updatePolicy).toHaveValue('off')
+    await expect(updatePolicy.locator('option')).toHaveCount(4)
+    await settings.getByRole('button', { name: 'Check for Updates' }).click()
+    await expect(settings.locator('[data-testid="settings-about-update-checking"]')).toBeVisible()
+    await updatePolicy.selectOption('notify')
+    await expect.poll(() => readUserSetting(harness.userData, 'autoUpdatePolicy')).toBe('notify')
 
     await settings.locator('[data-testid="settings-nav-analysis"]').click()
     await expect(settings.locator('[data-testid="settings-analysis"]')).toBeVisible()

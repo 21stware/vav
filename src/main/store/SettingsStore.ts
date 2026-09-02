@@ -34,6 +34,7 @@ import {
   workspaceRef
 } from '@shared/workspaceHost'
 import { clampKeepAwakeBatteryFloor } from '@shared/sleepBlocker'
+import { resolveAutoUpdatePolicy } from '@shared/updatePolicy'
 
 const PLATFORM = process.platform as Platform
 
@@ -69,8 +70,12 @@ export class SettingsStore {
   load(): AppSettings {
     try {
       if (existsSync(this.file)) {
-        const raw = JSON.parse(readFileSync(this.file, 'utf8'))
-        this.settings = { ...DEFAULTS, ...raw }
+        const raw = JSON.parse(readFileSync(this.file, 'utf8')) as Record<string, unknown>
+        const { autoCheckUpdates: _legacyCheck, autoUpdatePolicy: _rawPolicy, ...rest } = raw
+        this.settings = { ...DEFAULTS, ...rest }
+        // Resolve from the file, not the merged defaults — otherwise a leftover
+        // `autoCheckUpdates: false` is hidden by DEFAULTS.autoUpdatePolicy.
+        this.settings.autoUpdatePolicy = resolveAutoUpdatePolicy(raw)
       }
     } catch {
       this.settings = { ...DEFAULTS }
@@ -180,6 +185,7 @@ export class SettingsStore {
       this.settings.displayCurrency = DEFAULT_SETTINGS.displayCurrency
       dirty = true
     }
+    if (this.migrateAutoUpdatePolicy()) dirty = true
     if (dirty) this.persist()
   }
 
@@ -419,6 +425,21 @@ export class SettingsStore {
     if (!DISPLAY_CURRENCIES.includes(s.displayCurrency as DisplayCurrency)) {
       s.displayCurrency = DEFAULT_SETTINGS.displayCurrency
     }
+    this.migrateAutoUpdatePolicy()
+  }
+
+  /**
+   * `autoCheckUpdates` was a launch-only boolean. Lift it to
+   * {@link AppSettings.autoUpdatePolicy} and drop the leftover key.
+   */
+  private migrateAutoUpdatePolicy(): boolean {
+    const raw = this.settings as AppSettings & { autoCheckUpdates?: unknown }
+    const next = resolveAutoUpdatePolicy(raw)
+    const hadLegacy = Object.prototype.hasOwnProperty.call(raw, 'autoCheckUpdates')
+    delete raw.autoCheckUpdates
+    if (raw.autoUpdatePolicy === next && !hadLegacy) return false
+    raw.autoUpdatePolicy = next
+    return true
   }
 
   /**
