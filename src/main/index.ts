@@ -88,9 +88,7 @@ import type {
 } from '@shared/remoteControl'
 import { REMOTE_PHONE_CAPABILITIES } from '@shared/remoteControl'
 import {
-  projectRemoteMessages,
-  projectRemotePlan,
-  projectRemoteToolBlock
+  projectRemoteMessages
 } from '@shared/remoteThread'
 import {
   remoteBrowseRoots,
@@ -217,6 +215,7 @@ import { openSpawn, previewSpawn, revealSpawn } from './host/hostShell'
 import { clipRoot, writeClipBytes } from './fs/clipStore'
 import { writePngToClipboard } from './clipboardImage'
 import { mapRemoteSessions } from './remote/sessionList'
+import { fanRemoteTurn as dispatchRemoteTurn } from './remote/fanTurn'
 import { listRemoteChildEntries, listRemoteRootEntries } from './remote/dirBrowse'
 import { RemoteSendQueue } from './remote/sendQueue'
 import { createScreenshotController } from './screenshot/ScreenshotSession'
@@ -1233,41 +1232,7 @@ function handleAgentEvent(event: TurnEvent): void {
 }
 
 function fanRemoteTurn(event: TurnEvent): void {
-  const locale = currentLocale()
-  switch (event.type) {
-    case 'start':
-      remoteControl.beginLive(event.conversationId)
-      return
-    case 'delta':
-      if (event.kind === 'text' || event.kind === 'reasoning') {
-        remoteControl.appendLive(event.conversationId, event.index, event.kind, event.text)
-      }
-      return
-    case 'tool':
-      remoteControl.setLiveBlock(
-        event.conversationId,
-        event.index,
-        projectRemoteToolBlock(event.block, locale)
-      )
-      return
-    case 'plan':
-      remoteControl.setLiveBlock(event.conversationId, event.index, projectRemotePlan(event.block))
-      return
-    case 'awaiting': {
-      const block = projectRemoteToolBlock(event.block, locale)
-      remoteControl.setLiveBlock(event.conversationId, event.index, block)
-      return
-    }
-    case 'end':
-      remoteControl.finishTurn(
-        event.conversationId,
-        event.cancelled ? 'cancelled' : event.error ? 'error' : 'done',
-        event.error
-      )
-      return
-    default:
-      return
-  }
+  dispatchRemoteTurn(event, remoteControl, currentLocale())
 }
 
 const changeSetStore = new ChangeSetStore()
