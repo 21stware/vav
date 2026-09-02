@@ -14,3 +14,12 @@ export function trayDirLabel(
   const parts = workingDirectory.replace(/\\/g, '/').split('/').filter(Boolean)
   return parts.length ? parts[parts.length - 1]! : workingDirectory
 }
+
+export function trayAgentLabel(
+  agentId: string,
+  agents: { id: string; name?: string }[] | undefined
+): string {
+  const fromSettings = agents?.find((a) => a.id === agentId)
+  if (fromSettings?.name) return fromSettings.name
+  return agentId
+}

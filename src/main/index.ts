@@ -36,6 +36,9 @@ import { homedir, hostname, tmpdir, userInfo } from 'node:os'
 import { randomUUID } from 'node:crypto'
 import { APP_NAME, applyBranding, applyDockIcon, loadAppIcon, pinUserDataPath } from './brand'
 import { isE2eRuntime } from './e2eRuntime'
+import { installProcessErrorGuards } from './process/stdioGuard'
+import { isRendererUrl } from './window/rendererUrl'
+import { safeSend } from './window/safeSend'
 import {
   e2eChoosePopupMenu,
   e2eDismissPopupMenu,
@@ -174,7 +177,7 @@ import {
   windowBackgroundColor,
   windowThemeNameFromDark
 } from './window/shellPaint'
-import { trayDirLabel as formatTrayDirLabel } from './tray/trayLabels'
+import { trayDirLabel as formatTrayDirLabel, trayAgentLabel as formatTrayAgentLabel } from './tray/trayLabels'
 import { HostRegistry } from './host'
 import { openSpawn, previewSpawn, revealSpawn } from './host/hostShell'
 import { clipRoot, isClipPath, writeClip, writeClipBytes } from './fs/clipStore'
@@ -339,46 +342,7 @@ const PLATFORM = process.platform as Platform
 const IS_MAC = PLATFORM === 'darwin'
 const IS_WIN = PLATFORM === 'win32'
 
-/**
- * Dev runners / IDE task hosts often close the stdio pipe while Electron is
- * still alive. Unhandled `write EPIPE` from console.log/error then surfaces as
- * a fatal "Uncaught Exception" dialog. Swallow only EPIPE on the process
- * streams and on late IPC to a dead frame.
- */
-function ignoreEpipe(stream: NodeJS.WriteStream | null | undefined): void {
-  stream?.on?.('error', (err: NodeJS.ErrnoException) => {
-    if (err?.code === 'EPIPE' || err?.code === 'ERR_STREAM_DESTROYED') return
-    // Re-emit anything else so real stream failures still surface.
-    if (stream.listenerCount('error') <= 1) {
-      // no other handlers — avoid throwing from the error event itself
-    }
-  })
-}
-ignoreEpipe(process.stdout)
-ignoreEpipe(process.stderr)
-process.on('uncaughtException', (err: NodeJS.ErrnoException) => {
-  // Broken stdio / dead IPC frame — never fatal.
-  if (err?.code === 'EPIPE' || err?.code === 'ERR_STREAM_DESTROYED') return
-  const msg = String(err?.message ?? err ?? '')
-  if (/EPIPE|ERR_STREAM_DESTROYED/i.test(msg)) return
-  try {
-    console.error('[uncaughtException]', err)
-  } catch {
-    // stdout may already be dead
-  }
-})
-process.on('unhandledRejection', (reason) => {
-  const err = reason instanceof Error ? reason : new Error(String(reason))
-  const code = (err as NodeJS.ErrnoException).code
-  if (code === 'EPIPE' || code === 'ERR_STREAM_DESTROYED') return
-  const msg = String(err.message ?? err ?? '')
-  if (/EPIPE|ERR_STREAM_DESTROYED/i.test(msg)) return
-  try {
-    console.error('[unhandledRejection]', err)
-  } catch {
-    // stdout may already be dead
-  }
-})
+installProcessErrorGuards()
 
 // Pin userData + menu name before any store touches disk (and before ready so
 // the menu bar reads "VAV" instead of "Electron").
@@ -794,9 +758,7 @@ function trayDirLabel(workingDirectory: string | null | undefined): string {
 }
 
 function trayAgentLabel(agentId: string): string {
-  const fromSettings = settingsStore.get().cliAgents?.find((a) => a.id === agentId)
-  if (fromSettings?.name) return fromSettings.name
-  return agentId
+  return formatTrayAgentLabel(agentId, settingsStore.get().cliAgents)
 }
 
 function trayPaneFromConversation(
@@ -1925,19 +1887,6 @@ hostRegistry.onChange((hosts) => {
 notifications.onAlert = (kind, conversationId, title, body) =>
   remoteControl.notifyRemote(kind, conversationId, title, body)
 
-/** IPC to a renderer that may already be tearing down (close / HMR / pkill). */
-function safeSend(contents: Electron.WebContents | null | undefined, channel: string, payload?: unknown): void {
-  if (!contents || contents.isDestroyed()) return
-  try {
-    if (payload === undefined) contents.send(channel)
-    else contents.send(channel, payload)
-  } catch (err) {
-    const code = (err as NodeJS.ErrnoException)?.code
-    if (code === 'EPIPE' || code === 'ERR_STREAM_DESTROYED') return
-    // Frame can vanish between isDestroyed check and send under load.
-  }
-}
-
 function isAuxiliaryWindow(window: BrowserWindow): boolean {
   // Settings and the warm token-usage panel never host PTYs / file trees /
   // streaming transcripts — skip them on the hot path.
@@ -2422,15 +2371,6 @@ function wireExternalLinks(contents: Electron.WebContents): void {
       void shell.openExternal(url)
     }
   })
-}
-
-/** The app's own entry (dev server or packaged file://), not a chat hyperlink. */
-function isRendererUrl(url: string): boolean {
-  const devBase = process.env.ELECTRON_RENDERER_URL
-  if (devBase && (url === devBase || url.startsWith(devBase + '/') || url.startsWith(devBase + '?'))) {
-    return true
-  }
-  return url.startsWith('file:')
 }
 
 /** Shared renderer prefs — keep timers/rAF alive while the window is hidden. */
