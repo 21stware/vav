@@ -42,6 +42,8 @@ import {
   directoryInspectResult,
   heicInspectResult,
   inspectCaughtError,
+  legacyBinaryInspect,
+  remappedConvertedInspect,
   sqliteInspectResult,
   textWindowInspectResult
 } from './fileInspectShape'
@@ -557,70 +559,58 @@ export class FileService {
         const converted = await convertLegacyOffice(path)
         if (converted.ok) {
           const inner = await this.inspect(converted.path)
-          return {
-            ...inner,
-            // Keep the user-facing identity as the original path.
-            path,
-            name,
-            size: info.size,
-            mtimeMs: info.mtimeMs,
-            contentPath: converted.path,
-            streamUrl: localFileStreamUrl(converted.path),
-            warnings: [
-              ...(inner.warnings ?? []),
-              ...(converted.warning ? [converted.warning] : [])
-            ]
-          }
+          return remappedConvertedInspect(
+            inner,
+            { path, name, size: info.size, mtimeMs: info.mtimeMs },
+            converted.path,
+            converted.warning
+          )
         }
         // Conversion failed — fall through to binary meta with the error as warning.
         try {
           const binaryMeta = await buildBinaryMeta(path, info)
-          return {
+          return legacyBinaryInspect({
             path,
             name,
             size: info.size,
             mtimeMs: info.mtimeMs,
-            kind: 'binary',
             mime: 'application/msword',
             binaryMeta,
             warnings: [converted.error]
-          }
+          })
         } catch {
-          return {
+          return legacyBinaryInspect({
             path,
             name,
             size: info.size,
             mtimeMs: info.mtimeMs,
-            kind: 'binary',
             mime: 'application/msword',
             warnings: [converted.error]
-          }
+          })
         }
       }
       if (legacy === 'ppt') {
         try {
           const binaryMeta = await buildBinaryMeta(path, info)
-          return {
+          return legacyBinaryInspect({
             path,
             name,
             size: info.size,
             mtimeMs: info.mtimeMs,
-            kind: 'binary',
             mime: 'application/vnd.ms-powerpoint',
             binaryMeta,
             warnings: [
               'Legacy PowerPoint (.ppt): export to .pptx for in-app preview, or open with the system default app.'
             ]
-          }
+          })
         } catch (err) {
-          return {
+          return legacyBinaryInspect({
             path,
             name,
             size: info.size,
-            kind: 'binary',
             mime: 'application/vnd.ms-powerpoint',
             error: (err as Error).message
-          }
+          })
         }
       }
 

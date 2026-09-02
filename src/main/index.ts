@@ -215,7 +215,7 @@ import {
 import { appBuildNumber as formatAppBuildNumber } from './appBuild'
 import { FALLBACK_SYSTEM_ACCENT, normalizeAccentHex } from './window/accentColor'
 import { closeActiveNativePopup, popupNativeMenu } from './window/nativePopup'
-import { trayDirLabel as formatTrayDirLabel, trayAgentLabel as formatTrayAgentLabel } from './tray/trayLabels'
+import { trayDirLabel as formatTrayDirLabel, trayAgentLabel as formatTrayAgentLabel, pickAgentSessionTitle } from './tray/trayLabels'
 import { buildTrayPane } from './tray/trayPane'
 import {
   applyUnseenResultToMap,
@@ -808,14 +808,13 @@ function agentSessionTitle(session: PtySessionMeta): string {
     sessionId && session.agentId
       ? swarmHistoryStore.get(swarmSessionKey(session.agentId, sessionId))?.name?.trim()
       : null
-  const bindingTitle = binding?.title?.trim()
-  return (
-    named ||
-    bindingTitle ||
-    (conversation?.title && conversation.title.trim()) ||
-    session.title ||
-    session.conversationId
-  )
+  return pickAgentSessionTitle({
+    swarmName: named,
+    bindingTitle: binding?.title,
+    conversationTitle: conversation?.title,
+    sessionTitle: session.title,
+    conversationId: session.conversationId
+  })
 }
 
 function trayPaneFromAgentSession(session: PtySessionMeta): TrayPane | null {

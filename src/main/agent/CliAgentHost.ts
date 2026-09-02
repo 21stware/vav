@@ -42,22 +42,19 @@ import {
   type CliErrorKind
 } from '@shared/cliErrors'
 import { isApprovalApproveText, isApprovalDenyText } from '@shared/i18n'
-import { normalizeAskQuestions, parseToolInput } from '@shared/askPlan'
+import { parseToolInput } from '@shared/askPlan'
 import {
   isAskToolName,
   isChecklistToolName,
   isEnterPlanModeName,
   isPlanDocToolName,
   normalizePlanDocInput,
-  planDocSummary,
   planDocToChecklistInput,
   projectChecklistInput
 } from '@shared/planDoc'
 import { enabledCliAgents } from '@shared/types'
 import type { AcpSessionState } from '@shared/acpSession'
 import {
-  acpFormToQuestions,
-  parseAcpFormSchema,
   patchAcpConfigOption,
   patchAcpSessionMode
 } from '@shared/acpSession'
@@ -98,6 +95,7 @@ import {
 } from './cliTurnFinish'
 import { newCliToolCallBlock, applyToolEventStatus } from './cliToolBlock'
 import { parkInteractivePatch } from './cliPark'
+import { elicitationCardFields } from './cliElicitation'
 import {
   applyCliHistoryHandoff,
   formatCliWorkspaceHandoff,
@@ -1525,22 +1523,11 @@ export class CliAgentHost {
     event: Extract<DriverEvent, { type: 'elicitation' }>
   ): void {
     this.flushBuffers(conversationId, turn)
-    const tool: ToolCallBlock['tool'] =
-      event.kind === 'plan_doc' ? 'plan_doc' : event.kind === 'url' ? 'request' : 'ask_user_question'
-    const parsed = event.input && typeof event.input === 'object' ? (event.input as Record<string, unknown>) : {}
-    const formFields = event.kind === 'form' ? parseAcpFormSchema(parsed.requestedSchema ?? parsed.schema) : []
-    const questions =
-      event.kind === 'ask'
-        ? normalizeAskQuestions(parsed)
-        : event.kind === 'form'
-          ? acpFormToQuestions(formFields.length ? formFields : parseAcpFormSchema(parsed))
-          : undefined
-    const summary =
-      event.kind === 'plan_doc'
-        ? planDocSummary(normalizePlanDocInput(event.input))
-        : event.kind === 'url'
-          ? event.title || (typeof parsed.url === 'string' ? parsed.url : t('tool.ask'))
-          : event.title || questions?.[0]?.question || t('tool.ask')
+    const { tool, questions, summary, choices } = elicitationCardFields(event, {
+      ask: t('tool.ask'),
+      open: t('common.open'),
+      cancel: t('common.cancel')
+    })
     let index = turn.toolIndex.get(event.toolCallId)
     if (index == null) {
       for (const [id, pending] of turn.pendingPermissions) {
@@ -1564,7 +1551,7 @@ export class CliAgentHost {
         input: inputJson(event.input),
         questions,
         askTitle: event.title,
-        choices: event.kind === 'url' ? [t('common.open'), t('common.cancel')] : undefined
+        choices
       })
       turn.blocks.push(block)
       this.sealOpenReasoning(turn)

@@ -23,3 +23,20 @@ export function trayAgentLabel(
   if (fromSettings?.name) return fromSettings.name
   return agentId
 }
+
+/** First non-empty name for a CLI agent pane in the tray. */
+export function pickAgentSessionTitle(opts: {
+  swarmName?: string | null
+  bindingTitle?: string | null
+  conversationTitle?: string | null
+  sessionTitle?: string | null
+  conversationId: string
+}): string {
+  return (
+    opts.swarmName?.trim() ||
+    opts.bindingTitle?.trim() ||
+    opts.conversationTitle?.trim() ||
+    opts.sessionTitle ||
+    opts.conversationId
+  )
+}

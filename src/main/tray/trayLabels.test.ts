@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import { trayDirLabel, trayAgentLabel } from './trayLabels.ts'
+import { trayDirLabel, trayAgentLabel, pickAgentSessionTitle } from './trayLabels.ts'
 
 describe('trayDirLabel', () => {
   it('collapses the home directory and prefixes paths under it', () => {
@@ -21,5 +21,29 @@ describe('trayAgentLabel', () => {
     assert.equal(trayAgentLabel('claude', [{ id: 'claude', name: 'Claude' }]), 'Claude')
     assert.equal(trayAgentLabel('claude', [{ id: 'codex', name: 'Codex' }]), 'claude')
     assert.equal(trayAgentLabel('claude', undefined), 'claude')
+  })
+})
+
+describe('pickAgentSessionTitle', () => {
+  it('prefers swarm name, then binding, conversation, session, then id', () => {
+    assert.equal(
+      pickAgentSessionTitle({
+        swarmName: '  Leaf  ',
+        bindingTitle: 'bound',
+        conversationTitle: 'chat',
+        sessionTitle: 'tab',
+        conversationId: 'c1'
+      }),
+      'Leaf'
+    )
+    assert.equal(
+      pickAgentSessionTitle({
+        conversationTitle: '  chat  ',
+        sessionTitle: 'tab',
+        conversationId: 'c1'
+      }),
+      'chat'
+    )
+    assert.equal(pickAgentSessionTitle({ conversationId: 'c1' }), 'c1')
   })
 })

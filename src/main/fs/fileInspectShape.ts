@@ -1,4 +1,4 @@
-import type { FileInspectResult, ImageMetaField, SqliteDatabaseInfo } from '../../shared/ipc.ts'
+import type { BinaryFileMeta, FileInspectResult, ImageMetaField, SqliteDatabaseInfo } from '../../shared/ipc.ts'
 import { localFileStreamUrl } from '../../shared/localFileUrl.ts'
 import { countNewlines } from './filePreviewKind.ts'
 
@@ -102,5 +102,47 @@ export function binaryInspectFallback(
       inode: '—',
       defaultApp: null
     }
+  }
+}
+
+/** Keep the original path/name while previewing a converted sidecar. */
+export function remappedConvertedInspect(
+  inner: FileInspectResult,
+  original: { path: string; name: string; size: number; mtimeMs: number },
+  convertedPath: string,
+  warning?: string
+): FileInspectResult {
+  return {
+    ...inner,
+    path: original.path,
+    name: original.name,
+    size: original.size,
+    mtimeMs: original.mtimeMs,
+    contentPath: convertedPath,
+    streamUrl: localFileStreamUrl(convertedPath),
+    warnings: [...(inner.warnings ?? []), ...(warning ? [warning] : [])]
+  }
+}
+
+export function legacyBinaryInspect(opts: {
+  path: string
+  name: string
+  size: number
+  mtimeMs?: number
+  mime: string
+  binaryMeta?: BinaryFileMeta
+  warnings?: string[]
+  error?: string
+}): FileInspectResult {
+  return {
+    path: opts.path,
+    name: opts.name,
+    size: opts.size,
+    mtimeMs: opts.mtimeMs,
+    kind: 'binary',
+    mime: opts.mime,
+    binaryMeta: opts.binaryMeta,
+    warnings: opts.warnings,
+    error: opts.error
   }
 }

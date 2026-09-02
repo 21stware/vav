@@ -6,6 +6,8 @@ import {
   directoryInspectResult,
   heicInspectResult,
   inspectCaughtError,
+  legacyBinaryInspect,
+  remappedConvertedInspect,
   sqliteInspectResult,
   textWindowInspectResult
 } from './fileInspectShape.ts'
@@ -69,5 +71,35 @@ describe('fileInspectShape', () => {
     const fallback = binaryInspectFallback(base, 42)
     assert.equal(fallback.binaryMeta?.modifiedAt, 42)
     assert.equal(inspectCaughtError('/a', 'a', new Error('boom')).error, 'boom')
+  })
+
+  it('remaps converted sidecars and builds legacy binary inspects', () => {
+    const inner = {
+      path: '/tmp/converted.docx',
+      name: 'converted.docx',
+      size: 9,
+      kind: 'docx' as const,
+      mime: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      warnings: ['inner']
+    }
+    const remapped = remappedConvertedInspect(
+      inner,
+      { path: '/a.doc', name: 'a.doc', size: 12, mtimeMs: 3 },
+      '/tmp/converted.docx',
+      'converted'
+    )
+    assert.equal(remapped.path, '/a.doc')
+    assert.equal(remapped.contentPath, '/tmp/converted.docx')
+    assert.deepEqual(remapped.warnings, ['inner', 'converted'])
+
+    const legacy = legacyBinaryInspect({
+      path: '/a.ppt',
+      name: 'a.ppt',
+      size: 4,
+      mime: 'application/vnd.ms-powerpoint',
+      warnings: ['export to pptx']
+    })
+    assert.equal(legacy.kind, 'binary')
+    assert.equal(legacy.mime, 'application/vnd.ms-powerpoint')
   })
 })
