@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import { mergeConversationList, patchConversationById, type ConversationListItem } from './sessionListMerge.ts'
+import { mergeConversationList, nextConversationSelection, patchConversationById, type ConversationListItem } from './sessionListMerge.ts'
 
 function row(
   partial: Partial<ConversationListItem> & { id: string }
@@ -47,5 +47,60 @@ describe('patchConversationById', () => {
     const updated = patchConversationById(rows, 'a', (c) => ({ ...c, archived: true }))
     assert.equal(updated[0]?.archived, true)
     assert.equal(updated[1], rows[1])
+  })
+})
+
+describe('nextConversationSelection', () => {
+  it('toggles additive, never empties, and fills a shift-range', () => {
+    assert.deepEqual(
+      nextConversationSelection({
+        id: 'b',
+        selectedIds: ['a'],
+        activeId: 'a',
+        additive: true,
+        listedIds: ['a', 'b', 'c']
+      }),
+      ['a', 'b']
+    )
+    assert.deepEqual(
+      nextConversationSelection({
+        id: 'a',
+        selectedIds: ['a'],
+        activeId: 'a',
+        additive: true,
+        listedIds: ['a', 'b']
+      }),
+      ['a']
+    )
+    assert.deepEqual(
+      nextConversationSelection({
+        id: 'c',
+        selectedIds: ['a'],
+        activeId: 'a',
+        range: true,
+        listedIds: ['a', 'b', 'c']
+      }),
+      ['a', 'b', 'c']
+    )
+    assert.deepEqual(
+      nextConversationSelection({
+        id: 'c',
+        selectedIds: ['b'],
+        activeId: 'gone',
+        range: true,
+        listedIds: ['a', 'b', 'c']
+      }),
+      ['b', 'c']
+    )
+    assert.deepEqual(
+      nextConversationSelection({
+        id: 'c',
+        selectedIds: ['x'],
+        activeId: 'gone',
+        range: true,
+        listedIds: ['a', 'b', 'c']
+      }),
+      ['c']
+    )
   })
 })

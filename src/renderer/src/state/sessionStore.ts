@@ -13,7 +13,7 @@ import type {
 import { DEFAULT_CLI_AGENTS, DEFAULT_SETTINGS } from '@shared/types'
 import type { WorkspaceHostInfo } from '@shared/workspaceHost'
 import type { RemoteControlStatus } from '@shared/remoteControl'
-import { mergeConversationList, patchConversationById } from './sessionListMerge'
+import { mergeConversationList, nextConversationSelection, patchConversationById } from './sessionListMerge'
 import {
   activeToolsFields,
   DEFAULT_SESSION_TOOLS,
@@ -955,34 +955,19 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       void cacheCreatedAt
       target = meta
     }
-    let nextSelection = [id]
-    if (options?.additive) {
-      nextSelection = selectedIds.includes(id)
-        ? selectedIds.filter((existing) => existing !== id)
-        : [...selectedIds, id]
-      if (nextSelection.length === 0) nextSelection = [id]
-    } else if (options?.range && activeId) {
-      const ids =
-        options.rangeIds ??
-        conversations
-          .filter((c) =>
-            target?.archived ? c.archived && !c.fileId : !c.archived && !c.fileId
-          )
-          .map((c) => c.id)
-      // Anchor on the prior active row when it is in the list; otherwise the
-      // first already-selected id that appears in `ids` (File Sessions view).
-      let anchor = activeId
-      if (!ids.includes(anchor)) {
-        const fromSelection = selectedIds.find((sid) => ids.includes(sid))
-        if (fromSelection) anchor = fromSelection
-      }
-      const from = ids.indexOf(anchor)
-      const to = ids.indexOf(id)
-      if (from >= 0 && to >= 0) {
-        const [start, end] = from < to ? [from, to] : [to, from]
-        nextSelection = ids.slice(start, end + 1)
-      }
-    }
+    let nextSelection = nextConversationSelection({
+      id,
+      selectedIds,
+      activeId,
+      additive: options?.additive,
+      range: options?.range,
+      rangeIds: options?.rangeIds,
+      listedIds: conversations
+        .filter((c) =>
+          target?.archived ? c.archived && !c.fileId : !c.archived && !c.fileId
+        )
+        .map((c) => c.id)
+    })
 
     // Switching never cancels an in-flight turn; it only rebinds the detail column.
     // File-bound sessions use FileSessionView (file canvas + agent).

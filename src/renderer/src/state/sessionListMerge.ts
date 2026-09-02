@@ -92,3 +92,36 @@ export function mergeConversationList<T extends ConversationListItem>(
   })
   return [...sorted, ...fileSessions]
 }
+
+/** Additive toggle or shift-range selection; never allow an empty selection. */
+export function nextConversationSelection(opts: {
+  id: string
+  selectedIds: string[]
+  activeId: string | null | undefined
+  additive?: boolean
+  range?: boolean
+  rangeIds?: string[]
+  listedIds: string[]
+}): string[] {
+  if (opts.additive) {
+    const next = opts.selectedIds.includes(opts.id)
+      ? opts.selectedIds.filter((existing) => existing !== opts.id)
+      : [...opts.selectedIds, opts.id]
+    return next.length === 0 ? [opts.id] : next
+  }
+  if (opts.range && opts.activeId) {
+    const ids = opts.rangeIds ?? opts.listedIds
+    let anchor = opts.activeId
+    if (!ids.includes(anchor)) {
+      const fromSelection = opts.selectedIds.find((sid) => ids.includes(sid))
+      if (fromSelection) anchor = fromSelection
+    }
+    const from = ids.indexOf(anchor)
+    const to = ids.indexOf(opts.id)
+    if (from >= 0 && to >= 0) {
+      const [start, end] = from < to ? [from, to] : [to, from]
+      return ids.slice(start, end + 1)
+    }
+  }
+  return [opts.id]
+}

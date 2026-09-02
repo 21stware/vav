@@ -74,7 +74,7 @@ import {
   type DriverEvent
 } from './drivers'
 import { shouldAutoAcceptChangeSet } from './toolApproval'
-import { shouldReplaceCliRuntime } from './cliWorkspaceRestart'
+import { shouldReplaceCliRuntime, spawnResumeCursor } from './cliWorkspaceRestart'
 import { sealCliPlanBlocks, planSealMode } from './planSeal'
 import { composeCliPrompt } from './cliPrompt'
 import { cursorLockedFamilyThinkingPatch, nextAllowedThinkingLevel } from './thinkingClamp'
@@ -816,14 +816,17 @@ export class CliAgentHost {
 
     const cwd = this.conversationCwd(conversationId)
     const identity = await readHostAuthIdentity(kind)
-    let cursor = conversation.cliResumeCursor ?? null
-    if (cursor && cursor.provider !== kind) cursor = null
-    const cursorIdentity = cursorAuthIdentity(cursor)
-    if (cursor && identity && cursorIdentity && cursorIdentity !== identity) {
-      cursor = null
+    const resume = spawnResumeCursor(
+      conversation.cliResumeCursor ?? null,
+      kind,
+      identity,
+      cursorAuthIdentity
+    )
+    if (resume.dropIdentity) {
       this.markHistoryHandoff(conversationId, cwd, 'session-lost')
       this.clearResumeCursor(conversationId)
     }
+    const cursor = resume.cursor
 
     const runtime: HostRuntime = {
       kind,
