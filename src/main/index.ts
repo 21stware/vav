@@ -122,21 +122,11 @@ import {
   resolveWorkspaceContext,
   syncOAuthProfiles
 } from './accounts/service'
-import { activateAccount, captureAccountCredentials, captureLiveHost } from './accounts/activateAccount'
 import { accessTokenFromSnapshot } from './accounts/credentials/parseKeychainSnapshot'
 import {
-  createKindForAgent,
-  defaultKeyEndpoint,
   displayAccountLabel,
-  isHttpUrl,
-  isOAuthSyncAgent,
-  nameConflict,
-  nextDraftName,
-  normalizeAccountName,
-  providerForAgent,
   agentIdOf,
   isVavProfile,
-  DEFAULT_WORKSPACE_KEY,
   resolveSessionAccountId,
   sessionShowsHostQuota,
   sessionUsageRowsOf,
@@ -173,6 +163,12 @@ import { registerConversationMutateIpc } from './ipc/registerConversationMutateI
 import { registerScreenshotIpc } from './ipc/registerScreenshotIpc'
 import { registerSecretsIpc } from './ipc/registerSecretsIpc'
 import { registerFileSessionsIpc } from './ipc/registerFileSessionsIpc'
+import { registerAgentsIpc } from './ipc/registerAgentsIpc'
+import { registerSettingsIpc } from './ipc/registerSettingsIpc'
+import { registerAccountsIpc } from './ipc/registerAccountsIpc'
+import { registerPreviewShellIpc } from './ipc/registerPreviewShellIpc'
+import { registerRuntimeIpc } from './ipc/registerRuntimeIpc'
+import { registerPtyCreateIpc } from './ipc/registerPtyCreateIpc'
 import { hostDisplayName as hostDisplayNameOf } from './window/hostDisplay'
 import { findSwarmHistoryItem as findItemInSwarmHistory } from './window/swarmHistoryFind'
 import { machineIdFromRendererUrl } from './window/machineFromUrl'
@@ -274,7 +270,6 @@ import {
   cancelHostOAuthLogin,
   currentOAuthLogin,
   finishHostOAuth,
-  loginArgv,
   runHostLogout,
   runningOAuthAgents,
   startHostOAuthLogin
@@ -304,8 +299,7 @@ import {
   resolveExistingDirectory,
   classifyOpenPaths,
   setCliPreferredLocation,
-  uninstallCli,
-  type CliInstallLocation
+  uninstallCli
 } from './cli'
 import { ensureMacOpenDirectoryService } from './macOpenDirectoryService'
 import { NotificationCenter } from './notifications'
@@ -6495,235 +6489,138 @@ function registerIpc(): void {
   })
 
   // --- settings ---
-  ipcMain.handle(IPC.settingsGet, () => currentSettings())
-
-  ipcMain.handle(IPC.settingsUpdate, (_event, patch: Partial<AppSettings>) => {
-    const previous = settingsStore.get()
-    const next = settingsStore.update(patch)
-    if (patch.theme && patch.theme !== previous.theme) applyTheme(next.theme)
-    if (patch.shell && patch.shell !== previous.shell) agent.applyShellSetting()
-    if (patch.globalHotkey !== undefined && patch.globalHotkey !== previous.globalHotkey) {
-      registerGlobalHotkey(next.globalHotkey)
-    }
-    if (patch.locale !== undefined && patch.locale !== previous.locale) {
+  registerSettingsIpc(ipcMain, settingsStore, secretStore, {
+    currentSettings,
+    applyUpdateSideEffects: (previous, patch, next) => {
+      if (patch.theme && patch.theme !== previous.theme) applyTheme(next.theme)
+      if (patch.shell && patch.shell !== previous.shell) agent.applyShellSetting()
+      if (patch.globalHotkey !== undefined && patch.globalHotkey !== previous.globalHotkey) {
+        registerGlobalHotkey(next.globalHotkey)
+      }
+      if (patch.locale !== undefined && patch.locale !== previous.locale) {
+        setLocalePreference(next.locale)
+        rebuildAppChrome()
+      }
+      if (patch.keyBindings !== undefined) {
+        rebuildAppChrome()
+        registerGlobalHotkey(next.globalHotkey)
+      }
+      if (
+        patch.trayEnabled !== undefined ||
+        patch.hideDockIcon !== undefined ||
+        patch.notificationsEnabled !== undefined
+      ) {
+        notifications.applySettings()
+      }
+      if (
+        patch.keepAwakeWhileAgentRunning !== undefined ||
+        patch.keepAwakeBatteryFloorPercent !== undefined
+      ) {
+        syncSleepBlocker()
+      }
+      if (patch.remoteControlEnabled !== undefined) {
+        remoteControl.applySettings()
+        daemonAttach.applySettings()
+      }
+      if (patch.windowVibrancyEnabled !== undefined) {
+        syncVibrancyShellWindows()
+      }
+      if (
+        patch.displayCurrency !== undefined &&
+        patch.displayCurrency !== previous.displayCurrency &&
+        tokenUsageConversationId &&
+        tokenUsageConversationId !== '_'
+      ) {
+        sendTokenUsagePayload(tokenUsageConversationId)
+      }
+    },
+    applyResetSideEffects: (next) => {
       setLocalePreference(next.locale)
-      rebuildAppChrome()
-    }
-    if (patch.keyBindings !== undefined) {
-      rebuildAppChrome()
-      // Rebind global ⌘⇧↵ (or user override) alongside the toggle hotkey.
+      applyTheme(next.theme)
       registerGlobalHotkey(next.globalHotkey)
-    }
-    if (
-      patch.trayEnabled !== undefined ||
-      patch.hideDockIcon !== undefined ||
-      patch.notificationsEnabled !== undefined
-    ) {
-      notifications.applySettings()
-    }
-    if (
-      patch.keepAwakeWhileAgentRunning !== undefined ||
-      patch.keepAwakeBatteryFloorPercent !== undefined
-    ) {
-      syncSleepBlocker()
-    }
-    if (patch.remoteControlEnabled !== undefined) {
-      remoteControl.applySettings()
-      daemonAttach.applySettings()
-    }
-    if (patch.windowVibrancyEnabled !== undefined) {
+      rebuildAppChrome()
       syncVibrancyShellWindows()
-    }
-    if (
-      patch.displayCurrency !== undefined &&
-      patch.displayCurrency !== previous.displayCurrency &&
-      tokenUsageConversationId &&
-      tokenUsageConversationId !== '_'
-    ) {
-      sendTokenUsagePayload(tokenUsageConversationId)
-    }
-    const settings = currentSettings()
-    broadcast(IPC.settingsChanged, settings)
-    return settings
-  })
-
-  ipcMain.handle(IPC.settingsReset, () => {
-    secretStore.clear('api')
-    secretStore.clear('braveSearch')
-    secretStore.clear('cloudflare')
-    secretStore.clear('supabase')
-    const next = settingsStore.reset()
-    setLocalePreference(next.locale)
-    applyTheme(next.theme)
-    registerGlobalHotkey(next.globalHotkey)
-    rebuildAppChrome()
-    syncVibrancyShellWindows()
-    syncSleepBlocker()
-    const settings = currentSettings()
-    broadcast(IPC.settingsChanged, settings)
-    return settings
-  })
-
-  ipcMain.handle(IPC.settingsKeepAwakeStatus, () => currentKeepAwakeStatus())
-  ipcMain.handle(IPC.settingsKeepAwakeGrant, async () => {
-    if (!macLidSleep) return { ok: false as const, error: 'unsupported' }
-    const result = await macLidSleep.grant(userInfo().username)
-    macLidSleep.refresh()
-    await syncSleepBlockerAsync()
-    return result
-  })
-  ipcMain.handle(IPC.settingsKeepAwakeRevoke, async () => {
-    if (!macLidSleep) return { ok: false as const, error: 'unsupported' }
-    const result = await macLidSleep.revoke()
-    await syncSleepBlockerAsync()
-    return result
-  })
-
-  ipcMain.handle(IPC.settingsSetKey, (_event, key: string) => {
-    secretStore.set(key, 'api')
-    broadcast(IPC.settingsChanged, currentSettings())
-    return { hint: secretStore.maskedHint('api') }
-  })
-
-  ipcMain.handle(IPC.settingsRevealKey, async (event) => {
-    if (!(await confirmRevealSecret(event))) return null
-    return secretStore.get('api')
-  })
-  ipcMain.handle(IPC.settingsKeyHint, () => secretStore.maskedHint('api'))
-
-  ipcMain.handle(IPC.settingsSetBraveSearchKey, (_event, key: string) => {
-    secretStore.set(key, 'braveSearch')
-    broadcast(IPC.settingsChanged, currentSettings())
-    return { hint: secretStore.maskedHint('braveSearch') }
-  })
-  ipcMain.handle(IPC.settingsBraveSearchKeyHint, () => secretStore.maskedHint('braveSearch'))
-
-  ipcMain.handle(IPC.settingsSetTinyfishSearchKey, (_event, key: string) => {
-    secretStore.set(key, 'tinyfish')
-    broadcast(IPC.settingsChanged, currentSettings())
-    return { hint: secretStore.maskedHint('tinyfish') }
-  })
-  ipcMain.handle(IPC.settingsTinyfishSearchKeyHint, () => secretStore.maskedHint('tinyfish'))
-
-  ipcMain.handle(IPC.settingsSetCloudflareToken, (_event, token: string) => {
-    secretStore.set(token, 'cloudflare')
-    broadcast(IPC.settingsChanged, currentSettings())
-    return { hint: secretStore.maskedHint('cloudflare') }
-  })
-  ipcMain.handle(IPC.settingsCloudflareTokenHint, () => secretStore.maskedHint('cloudflare'))
-
-  ipcMain.handle(IPC.settingsSetSupabaseToken, (_event, token: string) => {
-    secretStore.set(token, 'supabase')
-    broadcast(IPC.settingsChanged, currentSettings())
-    return { hint: secretStore.maskedHint('supabase') }
-  })
-  ipcMain.handle(IPC.settingsSupabaseTokenHint, () => secretStore.maskedHint('supabase'))
-
-  ipcMain.handle(IPC.settingsValidateKey, async (_event, key: string) => {
-    const settings = settingsStore.get()
-    const effective = key?.trim() || secretStore.get('api')
-    if (!effective) return { ok: false, message: t('error.noApiKeyShort') }
-    return validateAccountKey(settings.apiEndpoint, effective)
-  })
-
-  // Candidates only; the renderer filters these down to fonts actually
-  // installed on this machine (settings-appearance.rpml).
-  ipcMain.handle(IPC.settingsFonts, () => codeFonts(PLATFORM))
-
-  ipcMain.handle(IPC.settingsSetHotkey, (_event, accelerator: string) => {
-    const ok = registerGlobalHotkey(accelerator)
-    // A rejected accelerator is not persisted, so the previous one survives.
-    if (ok) settingsStore.update({ globalHotkey: accelerator })
-    else registerGlobalHotkey(settingsStore.get().globalHotkey)
-    const settings = currentSettings()
-    if (ok) broadcast(IPC.settingsChanged, settings)
-    return { ok, settings }
-  })
-
-  ipcMain.handle(IPC.settingsPickDirectory, async () => {
-    const result = await dialog.showOpenDialog({ properties: ['openDirectory', 'createDirectory'] })
-    const path = result.canceled ? null : (result.filePaths[0] ?? null)
-    if (path) fileService.grantPath(path)
-    return path
-  })
-
-  ipcMain.handle(IPC.settingsPickSurfacePattern, async (event) => {
-    const parent = BrowserWindow.fromWebContents(event.sender) ?? settingsWindow
-    const opts: Electron.OpenDialogOptions = {
-      properties: ['openFile'],
-      filters: [{ name: 'PNG', extensions: ['png'] }]
-    }
-    const result = parent
-      ? await dialog.showOpenDialog(parent, opts)
-      : await dialog.showOpenDialog(opts)
-    const file = result.canceled ? null : (result.filePaths[0] ?? null)
-    if (!file) return null
-    try {
-      const dest = surfacePatternFilePath(app.getPath('userData'))
-      const imported = await importSurfacePattern(file, dest)
-      if (!imported.ok) return { ok: false as const, reason: imported.reason }
-      settingsStore.update({
-        surfacePattern: 'custom',
-        customSurfacePatternSize: imported.size,
-        customSurfacePatternUrl: ''
-      })
-      const settings = currentSettings()
-      broadcast(IPC.settingsChanged, settings)
-      return { ok: true as const, url: settings.customSurfacePatternUrl, size: imported.size }
-    } catch {
-      return { ok: false as const, reason: 'invalid' as const }
-    }
-  })
-
-  ipcMain.handle(IPC.settingsPickColor, (_event, defaultHex?: string) => {
-    // `choose color` returns 16-bit RGB {r,g,b} (0–65535).
-    // Must be async — the dialog is modal and blocks until the user closes it.
-    const rgb16 = parseHexToRgb16(defaultHex) ?? [0, 0, 0]
-    // AppleScript `&` with a numeric left operand builds a LIST (prints as
-    // "65535, ,, 0"), which fails the 3-part parse below — join via text item
-    // delimiters so OK returns plain "r,g,b". Cancel throws -128 → err → null.
-    const script = `set c to choose color default color {${rgb16[0]}, ${rgb16[1]}, ${rgb16[2]}}
+      syncSleepBlocker()
+    },
+    broadcastSettings: (settings) => broadcast(IPC.settingsChanged, settings),
+    keepAwakeStatus: () => currentKeepAwakeStatus(),
+    keepAwakeGrant: async () => {
+      if (!macLidSleep) return { ok: false as const, error: 'unsupported' }
+      const result = await macLidSleep.grant(userInfo().username)
+      macLidSleep.refresh()
+      await syncSleepBlockerAsync()
+      return result
+    },
+    keepAwakeRevoke: async () => {
+      if (!macLidSleep) return { ok: false as const, error: 'unsupported' }
+      const result = await macLidSleep.revoke()
+      await syncSleepBlockerAsync()
+      return result
+    },
+    confirmRevealSecret,
+    validateKey: (endpoint, key) => validateAccountKey(endpoint, key),
+    noApiKeyMessage: () => t('error.noApiKeyShort'),
+    fonts: () => codeFonts(PLATFORM),
+    registerHotkey: registerGlobalHotkey,
+    pickDirectory: async () => {
+      const result = await dialog.showOpenDialog({ properties: ['openDirectory', 'createDirectory'] })
+      return result.canceled ? null : (result.filePaths[0] ?? null)
+    },
+    grantPath: (path) => fileService.grantPath(path),
+    pickSurfacePattern: async (event) => {
+      const parent = BrowserWindow.fromWebContents(event.sender) ?? settingsWindow
+      const opts: Electron.OpenDialogOptions = {
+        properties: ['openFile'],
+        filters: [{ name: 'PNG', extensions: ['png'] }]
+      }
+      const result = parent
+        ? await dialog.showOpenDialog(parent, opts)
+        : await dialog.showOpenDialog(opts)
+      const file = result.canceled ? null : (result.filePaths[0] ?? null)
+      if (!file) return null
+      try {
+        const dest = surfacePatternFilePath(app.getPath('userData'))
+        const imported = await importSurfacePattern(file, dest)
+        if (!imported.ok) return { ok: false as const, reason: imported.reason }
+        settingsStore.update({
+          surfacePattern: 'custom',
+          customSurfacePatternSize: imported.size,
+          customSurfacePatternUrl: ''
+        })
+        const settings = currentSettings()
+        broadcast(IPC.settingsChanged, settings)
+        return { ok: true as const, url: settings.customSurfacePatternUrl, size: imported.size }
+      } catch {
+        return { ok: false as const, reason: 'invalid' as const }
+      }
+    },
+    chooseColor: (rgb16) =>
+      new Promise<string | null>((resolve) => {
+        const script = `set c to choose color default color {${rgb16[0]}, ${rgb16[1]}, ${rgb16[2]}}
 set AppleScript's text item delimiters to ","
 return c as text`
-    return new Promise<string | null>((resolve) => {
-      execFile('/usr/bin/osascript', ['-e', script], { timeout: 120_000, encoding: 'utf8' }, (err, stdout) => {
-        if (err) return resolve(null)
-        const out = stdout.trim()
-        if (!out || out === 'false') return resolve(null) // cancelled
-        const parts = out.split(',')
-        if (parts.length !== 3) return resolve(null)
-        const r = Math.round(Number(parts[0]) / 65535 * 255)
-        const g = Math.round(Number(parts[1]) / 65535 * 255)
-        const b = Math.round(Number(parts[2]) / 65535 * 255)
-        if ([r, g, b].some((v) => Number.isNaN(v))) return resolve(null)
-        resolve(`#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`)
-      })
-    })
+        execFile('/usr/bin/osascript', ['-e', script], { timeout: 120_000, encoding: 'utf8' }, (err, stdout) => {
+          if (err) return resolve(null)
+          resolve(stdout)
+        })
+      }),
+    cliStatus: () => getCliStatus(),
+    cliSetLocation: (location) => setCliPreferredLocation(location),
+    cliInstall: () => installCli(),
+    cliUninstall: () => uninstallCli(),
+    fileAssociations: () => fileAssociationService.listStatus(),
+    fileAssociationForPath: async (path) => {
+      const id = formatIdForPath(path)
+      if (!id) return null
+      return fileAssociationService.statusFor(
+        fileAssociationService.formats().find((f) => f.id === id)!
+      )
+    },
+    setFileAssociation: (formatId) => fileAssociationService.setDefault(formatId),
+    unsetFileAssociation: (formatId) => fileAssociationService.unsetDefault(formatId),
+    registerAllFileAssociations: () => fileAssociationService.registerAll()
   })
 
-  ipcMain.handle(IPC.settingsCliStatus, () => getCliStatus()) // async — login PATH probe
-  ipcMain.handle(IPC.settingsCliSetLocation, (_event, location: CliInstallLocation) =>
-    setCliPreferredLocation(location)
-  )
-  ipcMain.handle(IPC.settingsCliInstall, () => installCli())
-  ipcMain.handle(IPC.settingsCliUninstall, () => uninstallCli())
-  ipcMain.handle(IPC.settingsFileAssociations, () => fileAssociationService.listStatus())
-  ipcMain.handle(IPC.settingsFileAssociationForPath, async (_event, path: string) => {
-    const id = formatIdForPath(path)
-    if (!id) return null
-    return fileAssociationService.statusFor(
-      fileAssociationService.formats().find((f) => f.id === id)!
-    )
-  })
-  ipcMain.handle(IPC.settingsSetFileAssociation, (_event, formatId: string) =>
-    fileAssociationService.setDefault(formatId)
-  )
-  ipcMain.handle(IPC.settingsUnsetFileAssociation, (_event, formatId: string) =>
-    fileAssociationService.unsetDefault(formatId)
-  )
-  ipcMain.handle(IPC.settingsRegisterAllFileAssociations, () =>
-    fileAssociationService.registerAll()
-  )
   const analysisHasApiKey = (): boolean => {
     if (secretStore.has('api')) return true
     if (secretStore.status().hasKeyFile) {
@@ -6857,287 +6754,35 @@ return c as text`
     }
   })
 
-  ipcMain.handle(
-    IPC.accountsGetPage,
-    async (
-      _event,
-      workspaceKey?: string | null,
-      options?: { refresh?: boolean; force?: boolean }
-    ) => {
-      if (options?.refresh) return refreshAccountsPage(workspaceKey, options.force === true)
-      return accountsPage(workspaceKey)
+  registerAccountsIpc(ipcMain, accountStore, secretStore, {
+    page: accountsPage,
+    refreshPage: refreshAccountsPage,
+    settings: () => settingsStore.get(),
+    validateKey: (endpoint, key) => validateAccountKey(endpoint, key),
+    retargetEmpty: retargetEmptyConversations,
+    broadcastSettings: () => broadcast(IPC.settingsChanged, currentSettings()),
+    rememberLiveOAuth: (host, name) => {
+      lastLiveOAuth.set(host, name)
+    },
+    clearHostAuth: () => clearHostAuthIdentityCache(),
+    refreshQuotaHosts: (hosts, force) => {
+      void quotaService.refreshHosts(hosts, force)
+    },
+    hostMayHaveQuota: hostMayHaveAccountQuota,
+    clearApiBalance,
+    confirmRevealSecret,
+    resolveExecutable: (host) => {
+      const agent = settingsStore.get().cliAgents?.find((row) => row.id === host)
+      return resolveAgentExecutable(candidatesForHost(host as CliHostKind, agent))
+    },
+    readHostAccount: (host) => readHostAccountInfo(host as CliHostKind),
+    startOAuth: startHostOAuthLogin,
+    cancelOAuth: cancelHostOAuthLogin,
+    finishOAuth: finishHostOAuth,
+    runLogout: runHostLogout,
+    refreshQuotaPanel: (host) => {
+      void quotaService.refreshForPanel(host as CliHostKind)
     }
-  )
-  ipcMain.handle(
-    IPC.accountsCreateVav,
-    async (
-      _event,
-      input: {
-        name: string
-        endpoint: string
-        apiKey: string
-        agentId?: string
-        provider?: 'vav' | 'custom'
-      }
-    ) => {
-      const page = await accountsPage()
-      const name = normalizeAccountName(input.name ?? '')
-      const endpoint = (input.endpoint ?? '').trim()
-      const apiKey = (input.apiKey ?? '').trim()
-      const agentId = input.agentId?.trim() || 'vav'
-      const provider = input.provider === 'custom' ? 'custom' : providerForAgent(agentId)
-      if (!name) return Promise.reject(new Error(t('accounts.error.nameRequired')))
-      if (nameConflict(accountStore.listAll(), agentId, name)) {
-        return Promise.reject(new Error(t('accounts.error.nameTaken')))
-      }
-      if (!isHttpUrl(endpoint)) return Promise.reject(new Error(t('accounts.error.endpoint')))
-      if (!apiKey) return Promise.reject(new Error(t('error.noApiKeyShort')))
-      const check = await validateAccountKey(endpoint, apiKey)
-      if (!check.ok) return Promise.reject(new Error(check.message))
-      const created = accountStore.add({
-        workspaceKey: DEFAULT_WORKSPACE_KEY,
-        agentId,
-        provider,
-        kind: 'vav_key',
-        name,
-        endpoint,
-        usesLegacyApiKey: false,
-        lastUsedAt: null,
-        lastModel: null,
-        keyStatus: 'ok',
-        oauthHost: null
-      })
-      secretStore.setAccountKey(created.id, apiKey)
-      return accountsPage(page.workspaceKey)
-    }
-  )
-  ipcMain.handle(
-    IPC.accountsCreateDraft,
-    async (
-      _event,
-      input: { agentId: string; kind?: 'vav_key' | 'oauth'; endpoint?: string }
-    ) => {
-      const page = await accountsPage()
-      const agentId = input.agentId?.trim() || 'vav'
-      const kind = input.kind === 'oauth' ? 'oauth' : 'vav_key'
-      if (kind === 'oauth' && createKindForAgent(agentId) !== 'oauth') {
-        return Promise.reject(new Error(t('accounts.error.missing')))
-      }
-      const name = nextDraftName(
-        accountStore.listAll(),
-        agentId,
-        t('accounts.draftName')
-      )
-      const endpoint =
-        kind === 'vav_key'
-          ? input.endpoint !== undefined
-            ? input.endpoint.trim() || null
-            : defaultKeyEndpoint(agentId, settingsStore.get().apiEndpoint || '')
-          : null
-      const created = accountStore.add({
-        workspaceKey: DEFAULT_WORKSPACE_KEY,
-        agentId,
-        provider: providerForAgent(agentId),
-        kind,
-        name,
-        endpoint: endpoint || null,
-        usesLegacyApiKey: false,
-        lastUsedAt: null,
-        lastModel: null,
-        keyStatus: 'unknown',
-        oauthHost: kind === 'oauth' ? agentId : null
-      })
-      return { page: await accountsPage(page.workspaceKey), id: created.id }
-    }
-  )
-  ipcMain.handle(
-    IPC.accountsUpdateVav,
-    async (
-      _event,
-      id: string,
-      patch: { alias?: string | null; endpoint?: string; apiKey?: string }
-    ) => {
-      const account = accountStore.get(id)
-      if (!account) {
-        return Promise.reject(new Error(t('accounts.error.missing')))
-      }
-      if (patch.alias !== undefined) {
-        const alias = patch.alias == null ? '' : normalizeAccountName(patch.alias)
-        accountStore.update(id, { alias: alias || null })
-      }
-      if (account.kind !== 'vav_key' && (patch.endpoint != null || patch.apiKey != null)) {
-        return Promise.reject(new Error(t('accounts.error.missing')))
-      }
-      if (patch.endpoint != null) {
-        const endpoint = patch.endpoint.trim()
-        if (!isHttpUrl(endpoint)) return Promise.reject(new Error(t('accounts.error.endpoint')))
-        accountStore.update(id, { endpoint })
-      }
-      if (patch.apiKey != null) {
-        const key = patch.apiKey.trim()
-        if (!key) return Promise.reject(new Error(t('error.noApiKeyShort')))
-        secretStore.setAccountKey(id, key)
-        accountStore.update(id, { usesLegacyApiKey: false, keyStatus: 'unknown' })
-      }
-      broadcast(IPC.settingsChanged, currentSettings())
-      return accountsPage(account.workspaceKey)
-    }
-  )
-  ipcMain.handle(IPC.accountsSetCurrent, (_event, id: string) => {
-    const viewing = accountsPage().workspaceKey
-    const account = accountStore.setCurrent(id, viewing)
-    if (account) retargetEmptyConversations(account, viewing)
-    broadcast(IPC.settingsChanged, currentSettings())
-    return accountsPage(viewing)
-  })
-  ipcMain.handle(IPC.accountsActivate, async (_event, id: string) => {
-    const viewing = accountsPage().workspaceKey
-    const result = await activateAccount({
-      accountId: id,
-      accounts: accountStore,
-      secrets: secretStore
-    })
-    if (result.kind === 'switched' || result.kind === 'alreadyLive') {
-      const account = accountStore.setCurrent(id, viewing)
-      if (account) retargetEmptyConversations(account, viewing)
-      const live = accountStore.get(id)
-      const host = live?.oauthHost ?? (live ? agentIdOf(live) : null)
-      if (host && live) lastLiveOAuth.set(host, live.name)
-      clearHostAuthIdentityCache()
-      if (host && hostMayHaveAccountQuota(host)) {
-        void quotaService.refreshHosts([host], true)
-      }
-    }
-    broadcast(IPC.settingsChanged, currentSettings())
-    return { page: accountsPage(viewing), result }
-  })
-  ipcMain.handle(IPC.accountsRemove, (_event, id: string) => {
-    const result = accountStore.remove(id)
-    if (result) {
-      secretStore.clearAccountKey(id)
-      secretStore.clearOAuthSnapshot(id)
-      clearApiBalance(id)
-    }
-    broadcast(IPC.settingsChanged, currentSettings())
-    return accountsPage(result?.removed.workspaceKey)
-  })
-  ipcMain.handle(IPC.accountsVerify, async (_event, id: string, apiKey?: string) => {
-    const account = accountStore.get(id)
-    if (!account || account.kind !== 'vav_key') {
-      return { ok: false, message: t('accounts.error.missing') }
-    }
-    const key = apiKey?.trim() || accountSecret(account, secretStore)
-    const endpoint = account.endpoint?.trim() || settingsStore.get().apiEndpoint
-    if (!key) return { ok: false, message: t('error.noApiKeyShort') }
-    const result = await validateAccountKey(endpoint, key)
-    accountStore.setKeyStatus(id, result.ok ? 'ok' : result.authFailed ? 'invalid' : 'unknown')
-    return { ok: result.ok, message: result.message, authFailed: result.authFailed }
-  })
-  ipcMain.handle(IPC.accountsRevealKey, async (event, id: string) => {
-    if (!(await confirmRevealSecret(event))) return null
-    const account = accountStore.get(id)
-    if (!account || account.kind !== 'vav_key') return null
-    if (account.usesLegacyApiKey) return secretStore.get('api')
-    return secretStore.getAccountKey(id)
-  })
-  ipcMain.handle(IPC.accountsBeginOAuth, async (_event, agentId: string, accountId?: string) => {
-    const host = agentId.trim()
-    const name = DEFAULT_CLI_AGENTS.find((agent) => agent.id === host)?.name ?? host
-    if (!isStructuredCliHost(host) || createKindForAgent(host) !== 'oauth' || !loginArgv(host)) {
-      return Promise.reject(new Error(t('accounts.error.missing')))
-    }
-    const agent = settingsStore.get().cliAgents?.find((row) => row.id === host)
-    const resolved = resolveAgentExecutable(candidatesForHost(host, agent))
-    if (!resolved) {
-      return Promise.reject(new Error(t('accounts.error.cliMissing', { name })))
-    }
-    const targetId = typeof accountId === 'string' && accountId.trim() ? accountId.trim() : undefined
-    try {
-      const live = await readHostAccountInfo(host)
-      if (live.signedIn) {
-        const email = live.accountId?.trim()
-        if (email) {
-          accountStore.upsertOAuth({
-            workspaceKey: accountsPage().workspaceKey,
-            agentId: host,
-            provider: providerForAgent(host),
-            name: email,
-            oauthHost: host,
-            signedIn: true
-          })
-        }
-        await captureLiveHost(host, email ?? null, accountStore, secretStore)
-      }
-    } catch {
-      // Still start OAuth — an empty or unreadable slot just means nothing to keep.
-    }
-    startHostOAuthLogin({
-      agentId: host,
-      accountId: targetId,
-      resolved,
-      onFinished: (result) => {
-        void (async () => {
-          clearHostAuthIdentityCache()
-          if (result.cancelled) return
-          if (result.exitCode !== 0) {
-            finishHostOAuth(host, 'error', t('accounts.oauthFailedBody'))
-            return
-          }
-          await new Promise((resolve) => setTimeout(resolve, 400))
-          try {
-            const info = await readHostAccountInfo(host)
-            if (!info.signedIn && !info.accountId) {
-              finishHostOAuth(host, 'error', t('accounts.oauthFailedBody'))
-              return
-            }
-            const page = accountsPage()
-            const email = info.accountId?.trim() || name
-            const saved = accountStore.upsertOAuth({
-              id: targetId,
-              workspaceKey: page.workspaceKey,
-              agentId: host,
-              provider: providerForAgent(host),
-              name: email,
-              oauthHost: host,
-              signedIn: info.signedIn
-            })
-            if (info.signedIn) {
-              await captureAccountCredentials(saved.id, accountStore, secretStore)
-            }
-            lastLiveOAuth.set(host, info.signedIn ? email : null)
-            finishHostOAuth(host, 'ok')
-            void quotaService.refreshForPanel(host)
-          } catch {
-            finishHostOAuth(host, 'error', t('accounts.oauthFailedBody'))
-          }
-        })()
-      }
-    })
-    return accountsPage()
-  })
-  ipcMain.handle(IPC.accountsCancelOAuth, async (_event, agentId: string) => {
-    cancelHostOAuthLogin(String(agentId ?? '').trim())
-    return accountsPage()
-  })
-  ipcMain.handle(IPC.accountsSignOut, async (_event, agentId: string) => {
-    const host = agentId.trim()
-    if (!isStructuredCliHost(host) || !isOAuthSyncAgent(host)) {
-      return Promise.reject(new Error(t('accounts.error.missing')))
-    }
-    const agent = settingsStore.get().cliAgents?.find((row) => row.id === host)
-    const resolved = resolveAgentExecutable(candidatesForHost(host, agent))
-    if (resolved) {
-      try {
-        await runHostLogout(resolved, host)
-      } catch {
-        // Still drop the local signed-in mark.
-      }
-    }
-    await new Promise((resolve) => setTimeout(resolve, 200))
-    clearHostAuthIdentityCache()
-    accountStore.applyLiveOAuth(host, null, false)
-    lastLiveOAuth.set(host, null)
-    return accountsPage()
   })
 
   // --- conversations ---
@@ -7328,42 +6973,37 @@ return c as text`
       projectRef: settingsStore.get().supabaseProjectRef || null
     })
   })
-  ipcMain.handle(IPC.previewSetCloseGuard, (event, enabled: boolean) => {
-    const win = BrowserWindow.fromWebContents(event.sender)
-    if (!win || win.isDestroyed()) return
-    if (enabled) previewCloseGuards.add(win)
-    else previewCloseGuards.delete(win)
-  })
-  ipcMain.handle(IPC.previewForceClose, (event) => {
-    const win = BrowserWindow.fromWebContents(event.sender)
-    if (!win || win.isDestroyed()) return
-    previewCloseGuards.delete(win)
-    afterLeavingFullscreen(win, () => {
-      if (win.isDestroyed()) return
-      parkWarmPreviewShell(win)
-    })
-  })
-  ipcMain.on(IPC.previewShellReady, (event) => {
-    const win = BrowserWindow.fromWebContents(event.sender)
-    if (!win || win.isDestroyed()) return
-    if (isAppClipBrowserWindow(win)) {
-      overlayWarmReady.add(win)
-      return
+  registerPreviewShellIpc(ipcMain, {
+    windowFromEvent: (event) => BrowserWindow.fromWebContents(event.sender),
+    setCloseGuard: (win, enabled) => {
+      if (enabled) previewCloseGuards.add(win as BrowserWindow)
+      else previewCloseGuards.delete(win as BrowserWindow)
+    },
+    forceClose: (win) => {
+      const window = win as BrowserWindow
+      previewCloseGuards.delete(window)
+      afterLeavingFullscreen(window, () => {
+        if (window.isDestroyed()) return
+        parkWarmPreviewShell(window)
+      })
+    },
+    onPreviewReady: (win) => {
+      const window = win as BrowserWindow
+      if (isAppClipBrowserWindow(window)) {
+        overlayWarmReady.add(window)
+        return
+      }
+      warmPreviewReady.add(window)
+      previewOpenMark('warm-shell-ready')
+    },
+    onSessionReady: (win) => {
+      const window = win as BrowserWindow
+      warmSessionReady.add(window)
+      sessionOpenMark('warm-shell-ready')
+      const boundId = detachedWindowIds.get(window)
+      if (boundId) pushDetachedSessionClaim(window, boundId)
     }
-    warmPreviewReady.add(win)
-    previewOpenMark('warm-shell-ready')
   })
-  ipcMain.on(IPC.sessionShellReady, (event) => {
-    const win = BrowserWindow.fromWebContents(event.sender)
-    if (!win || win.isDestroyed()) return
-    warmSessionReady.add(win)
-    sessionOpenMark('warm-shell-ready')
-    // Refresh recovery: bound companion reloaded as warm=1 (or lost claim) —
-    // push the conversation back into the renderer.
-    const boundId = detachedWindowIds.get(win)
-    if (boundId) pushDetachedSessionClaim(win, boundId)
-  })
-
 
   registerFileSessionsIpc(ipcMain, fileSessionStore, {
     defaultModel: () => settingsStore.get().defaultModel,
@@ -7386,132 +7026,57 @@ return c as text`
 
 
   // --- agents (CLI binary probe) ---
-  ipcMain.handle(
-    IPC.agentsResolveBinary,
-    (_event, candidates: string[], force?: boolean) => {
-      const list = Array.isArray(candidates)
-        ? candidates.filter((c): c is string => typeof c === 'string' && c.trim().length > 0)
-        : []
-      // Cached by default so agent switches are instant; force only on explicit recheck.
-      return resolveAgentExecutable(list, { force: force === true })
-    }
-  )
-
-  ipcMain.handle(
-    IPC.agentsProbeBinaries,
-    async (_event, items: unknown, force?: boolean, machineId?: string) => {
-      const list = Array.isArray(items) ? items : []
-      const specs: Array<{ id: string; candidates: string[] }> = []
-      for (const row of list) {
-        if (!row || typeof row !== 'object') continue
-        const rec = row as { id?: unknown; candidates?: unknown }
-        const id = typeof rec.id === 'string' ? rec.id.trim() : ''
-        if (!id) continue
-        const candidates = Array.isArray(rec.candidates)
-          ? rec.candidates.filter((c): c is string => typeof c === 'string' && c.trim().length > 0)
-          : []
-        specs.push({ id, candidates })
+  registerAgentsIpc(ipcMain, {
+    resolveBinary: (candidates, force) => resolveAgentExecutable(candidates, { force }),
+    probeLocal: (specs, force) => probeAgentExecutables(specs, { force }),
+    probeRemote: async (machineId, specs, force) => {
+      if (force) await daemonAttach.probeProviders(machineId)
+      const found = daemonAttach.providersOf(machineId)
+      const byId = new Map(found.map((row) => [row.id, row.path]))
+      const out: Record<string, string | null> = {}
+      for (const spec of specs) {
+        out[spec.id] = byId.get(spec.id) ?? daemonAttach.whichCached(machineId, spec.candidates)
       }
-      if (machineId && !isLocalMachine(machineId)) {
-        if (force === true) await daemonAttach.probeProviders(machineId)
-        const found = daemonAttach.providersOf(machineId)
-        const byId = new Map(found.map((row) => [row.id, row.path]))
-        const out: Record<string, string | null> = {}
-        for (const spec of specs) {
-          out[spec.id] = byId.get(spec.id) ?? daemonAttach.whichCached(machineId, spec.candidates)
-        }
-        return out
-      }
-      return probeAgentExecutables(specs, { force: force === true })
-    }
-  )
-
-  ipcMain.handle(
-    IPC.agentsListModels,
-    (_event, host: string | null, force?: boolean) =>
-      listHostModels(host, settingsStore, vavModelListOptions(force))
-  )
-
-  ipcMain.handle(IPC.agentsGetModelCatalog, () => {
-    const snap = getModelCatalogSnapshot()
-    if (Object.keys(snap).length > 0) return snap
-    return seedModelCatalog(settingsStore, vavModelListOptions())
-  })
-
-  ipcMain.handle(IPC.agentsPreloadModels, async (_event, force?: boolean) => {
-    const catalog = await preloadHostModels(settingsStore, {
-      ...vavModelListOptions(force),
-      prefer: preferredModelHosts(),
-      onProgress: publishModelCatalog
-    })
-    publishModelCatalog(catalog)
-    return catalog
-  })
-
-  ipcMain.handle(
-    IPC.agentsInstallStart,
-    (_event, payload: { agentId?: string; name?: string; command?: string }) =>
-      startAgentInstall({
-        agentId: typeof payload?.agentId === 'string' ? payload.agentId : '',
-        name: typeof payload?.name === 'string' ? payload.name : '',
-        command: typeof payload?.command === 'string' ? payload.command : ''
+      return out
+    },
+    isLocalMachine,
+    listModels: (hostId, force) => listHostModels(hostId, settingsStore, vavModelListOptions(force)),
+    getCatalog: () => {
+      const snap = getModelCatalogSnapshot()
+      if (Object.keys(snap).length > 0) return snap
+      return seedModelCatalog(settingsStore, vavModelListOptions())
+    },
+    preloadModels: async (force) => {
+      const catalog = await preloadHostModels(settingsStore, {
+        ...vavModelListOptions(force),
+        prefer: preferredModelHosts(),
+        onProgress: publishModelCatalog
       })
-  )
-  ipcMain.handle(IPC.agentsInstallCancel, (_event, agentId: string) => {
-    cancelAgentInstall(String(agentId || ''))
+      publishModelCatalog(catalog)
+      return catalog
+    },
+    startInstall: (payload) => startAgentInstall(payload),
+    cancelInstall: cancelAgentInstall,
+    clearInstall: clearAgentInstall,
+    listInstallRuns: listAgentInstallRuns
   })
-  ipcMain.handle(IPC.agentsInstallClear, (_event, agentId: string) => {
-    clearAgentInstall(String(agentId || ''))
-  })
-  ipcMain.handle(IPC.agentsListInstallRuns, () => listAgentInstallRuns())
   onAgentInstallRunsChanged((runs) => broadcast(IPC.agentsInstallRunsChanged, runs))
 
+
   // --- pty ---
-  ipcMain.handle(
-    IPC.ptyCreate,
-    async (
-      _event,
-      conversationId: string,
-      cwd: string,
-      cols: number,
-      rows: number,
-      options?: import('@shared/ipc').PtyCreateOptions | string
-    ) => {
-      // Spawning a shell or CLI agent host is enough to keep a ⌘⇧↵ session.
-      promoteEphemeralConversation(conversationId)
-      const base: import('@shared/ipc').PtyCreateOptions =
-        typeof options === 'string' ? { preferredId: options } : { ...(options ?? {}) }
-      const agentId = typeof base.agentId === 'string' ? base.agentId : null
-      const tabId = base.preferredId || randomUUID()
-      let launch = { ...base, preferredId: tabId }
-      const attaching = ptyManager.willAttachCreate(conversationId, launch)
-      if (!attaching && agentId && isStructuredCliHost(agentId)) {
-        const planned = await swarmSession.prepareLaunch(
-          conversationId,
-          tabId,
-          agentId,
-          launch.args ?? [],
-          launch.resumeCursor
-            ? { cursor: launch.resumeCursor, title: launch.sessionTitle ?? null }
-            : undefined
-        )
-        launch = { ...launch, args: planned.args }
-      }
-      const id = ptyManager.create(
-        conversationId,
-        settingsStore.get().shell,
-        cwd,
-        cols,
-        rows,
-        launch
-      )
-      if (!attaching && agentId && isStructuredCliHost(agentId)) {
-        swarmSession.afterSpawn(conversationId, id, agentId)
-      }
-      return id
-    }
-  )
+  registerPtyCreateIpc(ipcMain, {
+    promoteEphemeral: promoteEphemeralConversation,
+    shell: () => settingsStore.get().shell,
+    willAttach: (conversationId, launch) => ptyManager.willAttachCreate(conversationId, launch),
+    prepareLaunch: (conversationId, tabId, agentId, args, resume) =>
+      swarmSession.prepareLaunch(conversationId, tabId, agentId, args, resume),
+    create: (conversationId, shell, cwd, cols, rows, launch) =>
+      ptyManager.create(conversationId, shell, cwd, cols, rows, launch),
+    afterSpawn: (conversationId, tabId, agentId) =>
+      swarmSession.afterSpawn(conversationId, tabId, agentId)
+  })
   registerPtyIoIpc(ipcMain, ptyManager, swarmSession)
+
 
   // --- window ---
   registerWindowIpc(ipcMain, {
@@ -7564,10 +7129,43 @@ return c as text`
       app.exit(0)
     }
   })
-  ipcMain.handle(IPC.notificationsPermission, () => notifications.permissionStatus())
-  ipcMain.handle(IPC.remoteControlStatus, () => remoteControl.status())
-  ipcMain.handle(IPC.remoteControlRegenerateSecret, () => remoteControl.regenerateSecret())
-  ipcMain.handle(IPC.remoteControlResetIdentity, () => remoteControl.resetIdentity())
+  registerRuntimeIpc(ipcMain, {
+    notificationsPermission: () => notifications.permissionStatus(),
+    remoteControlStatus: () => remoteControl.status(),
+    regenerateSecret: () => remoteControl.regenerateSecret(),
+    resetIdentity: () => remoteControl.resetIdentity(),
+    windowIdFromEvent: (event) => {
+      const window = BrowserWindow.fromWebContents(event.sender)
+      if (!window || window.isDestroyed()) return null
+      return window.id
+    },
+    onNotificationsSeen: (id, windowId) => {
+      notifications.noteConversationView(windowId, id)
+      lastSeenConversationId = id
+      markResultViewed(id)
+    },
+    popupMenu: (event, items, position) => {
+      if (isE2eRuntime()) return e2ePopupMenu(items)
+      const window = BrowserWindow.fromWebContents(event.sender)
+      return window ? popupNativeMenu(window, items, position) : null
+    },
+    closePopupMenu: () => {
+      if (isE2eRuntime()) {
+        e2eDismissPopupMenu()
+        return
+      }
+      closeActiveNativePopup()
+    },
+    e2ePeekMenu: () => e2ePeekPopupMenu(),
+    e2eChooseMenu: (idOrLabel) => e2eChoosePopupMenu(idOrLabel),
+    e2eDismissMenu: () => e2eDismissPopupMenu(),
+    updatesGet: () => updateService.getState(),
+    updatesCheck: () => updateService.check(),
+    updatesOpenDownload: () => updateService.openDownload(),
+    updatesInstall: () => {
+      updateService.install()
+    }
+  })
   registerHostsIpc(ipcMain, hostRegistry, daemonAttach, {
     show: showHostWindow,
     close: closeHostWindow,
@@ -7577,51 +7175,14 @@ return c as text`
     localHome: homedir,
     broadcastHosts: () => broadcast(IPC.hostsChanged, decorateHosts(hostRegistry.list()))
   })
-  ipcMain.on(IPC.notificationsSeen, (event, conversationId: unknown) => {
-    const id = typeof conversationId === 'string' ? conversationId.trim() : ''
-    if (!id) return
-    const window = BrowserWindow.fromWebContents(event.sender)
-    if (!window || window.isDestroyed()) return
-    notifications.noteConversationView(window.id, id)
-    lastSeenConversationId = id
-    markResultViewed(id)
-  })
-
   registerDialogIpc(ipcMain, () => ({
     ok: t('common.ok'),
     confirm: t('common.confirm'),
     cancel: t('common.cancel')
   }))
 
-  ipcMain.handle(
-    IPC.windowPopupMenu,
-    (event, items: NativeMenuItem[], position?: { x: number; y: number }) => {
-      if (isE2eRuntime()) return e2ePopupMenu(items)
-      const window = BrowserWindow.fromWebContents(event.sender)
-      return window ? popupNativeMenu(window, items, position) : null
-    }
-  )
-  ipcMain.handle(IPC.windowClosePopupMenu, () => {
-    if (isE2eRuntime()) {
-      e2eDismissPopupMenu()
-      return
-    }
-    closeActiveNativePopup()
-  })
-  ipcMain.handle(IPC.windowE2ePeekMenu, () => e2ePeekPopupMenu())
-  ipcMain.handle(IPC.windowE2eChooseMenu, (_event, idOrLabel: string) =>
-    typeof idOrLabel === 'string' ? e2eChoosePopupMenu(idOrLabel) : false
-  )
-  ipcMain.handle(IPC.windowE2eDismissMenu, () => e2eDismissPopupMenu())
-
   registerChangeSetIpc(ipcMain, changeSetStore)
 
-  ipcMain.handle(IPC.updatesGet, () => updateService.getState())
-  ipcMain.handle(IPC.updatesCheck, () => updateService.check())
-  ipcMain.handle(IPC.updatesOpenDownload, () => updateService.openDownload())
-  ipcMain.handle(IPC.updatesInstall, () => {
-    updateService.install()
-  })
   updateService.setWillInstallHandler(() => {
     // Hide-on-close + tray/Dock keep-alive otherwise swallow Squirrel.Mac /
     // NSIS quitAndInstall (windows preventDefault close; app never exits).
@@ -8075,15 +7636,3 @@ if (!singleInstance) {
   })
 }
 
-/** Convert `#rrggbb` → 16-bit RGB triplets for AppleScript `choose color`. */
-function parseHexToRgb16(hex?: string): [number, number, number] | null {
-  if (!hex) return null
-  const m = /^#?([0-9a-fA-F]{6})$/.exec(hex.trim())
-  if (!m) return null
-  const n = parseInt(m[1], 16)
-  return [
-    Math.round(((n >> 16) & 0xff) / 255 * 65535),
-    Math.round(((n >> 8) & 0xff) / 255 * 65535),
-    Math.round((n & 0xff) / 255 * 65535)
-  ]
-}

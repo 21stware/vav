@@ -48,6 +48,13 @@ import {
 } from './sessionTypes'
 import { omitLiveUsage } from './sessionUsage'
 import { dispatchQueuedPayload, MESSAGE_QUEUE_MAX } from './sessionQueue'
+import { applySessionTurnEvent } from './sessionTurnApply'
+import {
+  loadPreviewAgents,
+  loadWorkspaceAgents,
+  savePreviewAgents,
+  saveWorkspaceAgents
+} from './sessionAgentPaths'
 
 export {
   DEFAULT_SESSION_TOOLS,
@@ -85,7 +92,7 @@ import { conversationOnMachine, isLocalMachine, normalizeMachineId } from '@shar
 import { compactionForLeaf, upsertCompaction } from '@shared/compaction'
 import { subtreeIds } from '@shared/thread'
 import { getProjection, disposeProjection } from './StreamProjection'
-import { AGENT_TAB_ID, useWorkspaceStore } from './workspaceStore'
+import { useWorkspaceStore } from './workspaceStore'
 import { isSwarmSurfaceActive } from '../lib/workdirSwitch'
 import {
   isCurrentHydration,
@@ -93,11 +100,7 @@ import {
   nextHydrationGeneration,
   omitKeys
 } from '../lib/messageHydration'
-import {
-  clearPriorChangeReviews,
-  upsert,
-  visibleMessages
-} from './sessionThread'
+import { visibleMessages } from './sessionThread'
 import {
   collectSwarmLeaves,
   insertSwarmLeaf,
@@ -182,16 +185,6 @@ async function persistSwarmLayout(
 ): Promise<void> {
   const list = await window.vav.conversations.setSwarmLayout(rootId, layout, full)
   set({ conversations: mergeConversationList(getConversations(), list) })
-}
-
-const IDLE_TURN: TurnRuntime = {
-  isRunning: false,
-  phase: 'idle',
-  toolCount: 0,
-  awaitingToolCallId: null,
-  startedModel: undefined,
-  startedCliHost: undefined,
-  startedAccountId: undefined
 }
 
 /** Shared empty search hits — never allocate a fresh [] on every keystroke. */
@@ -3039,253 +3032,23 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   },
 
   applyTurnEvent(event) {
-    const id = event.conversationId
-    const projection = getProjection(id)
-
-    switch (event.type) {
-      case 'start': {
-        projection.start()
-        const started = get().conversations.find((c) => c.id === id)
-        patchTurn(set, id, {
-          isRunning: true,
-          phase: 'thinking',
-          toolCount: 0,
-          awaitingToolCallId: null,
-          startedModel: started?.model,
-          startedCliHost: started?.cliHost ?? null,
-          startedAccountId: started?.accountId ?? null
-        })
-        // New turn supersedes prior file-review cards (avoid stale "Could not load changes").
-        set((state) => ({
-          ...clearPriorChangeReviews(state, id),
-          errorBanner: null,
-          errorBannerKind: null,
-          errorBannerDetail: null
-        }))
-        break
-      }
-
-      case 'user':
-        // User message = next turn intent: drop previous review chrome immediately.
-        set((state) => {
-          const cleared = clearPriorChangeReviews(state, id)
-          const baseMessages = cleared.messages ?? state.messages
-          return {
-            ...cleared,
-            messages: {
-              ...baseMessages,
-              [id]: upsert(baseMessages[id], event.message)
-            },
-            activeLeaf: { ...state.activeLeaf, [id]: event.message.id }
-          }
-        })
-        break
-
-      case 'notice':
-        // UI / workspace notice — no turn, but advances the leaf for history.
-        set((state) => ({
-          messages: {
-            ...state.messages,
-            [id]: upsert(state.messages[id], event.message)
-          },
-          activeLeaf: { ...state.activeLeaf, [id]: event.message.id }
-        }))
-        break
-
-      case 'phase':
-        projection.ensureLive(event.phase)
-        projection.setPhase(event.phase)
-        patchTurn(set, id, { phase: event.phase })
-        break
-
-      case 'delta':
-        // The hot path: never touches React state.
-        if (event.kind === 'text' && event.replace) projection.replaceText(event.index, event.text)
-        else if (event.kind === 'text') projection.appendText(event.index, event.text)
-        else projection.appendReasoning(event.index, event.text)
-        break
-
-      case 'tool':
-        projection.upsertTool(event.index, event.block)
-        patchTurn(set, id, {
-          toolCount: countTools(get, id, event.block.id),
-          awaitingToolCallId:
-            event.block.status === 'pending' &&
-            (event.block.tool === 'request' || event.block.tool === 'ask_user_question')
-              ? event.block.id
-              : get().turns[id]?.awaitingToolCallId === event.block.id
-                ? null
-                : (get().turns[id]?.awaitingToolCallId ?? null)
-        })
-        break
-
-      case 'awaiting':
-        // Keep StreamProjection phase in sync — StreamingMessage reads phase from
-        // the projection, not the session store. Without this, a second approval
-        // still shows "Outputting" and the live/awaiting chrome desyncs.
-        projection.setPhase('awaiting-user')
-        projection.upsertTool(event.index, event.block)
-        patchTurn(set, id, { awaitingToolCallId: event.toolCallId, phase: 'awaiting-user' })
-        break
-
-      case 'mirror': {
-        const workspace = useWorkspaceStore.getState()
-        workspace.mirrorAgentTranscript(id, event.text)
-        // Spec 9ed447d6…: tools panel does NOT auto-expand when the agent runs a
-        // command. Output still lands in the PTY buffer; user opens tools manually.
-        // Select the agent tab once — not on every mirror chunk (chip-row thrash).
-        const slice = workspace.workspaces[id]
-        if (slice?.tabs.some((tab) => tab.isAgent) && slice.activeTabId !== AGENT_TAB_ID) {
-          workspace.selectTab(id, AGENT_TAB_ID)
-        }
-        break
-      }
-
-      case 'fs-changed':
-        useWorkspaceStore.getState().agentDidWriteFile(id, event.parentPath, event.filePath)
-        break
-
-      case 'file-draft':
-        // Preview windows listen on the raw agent event; no session state.
-        break
-
-      case 'cli-session':
-        set((state) => ({
-          conversations: state.conversations.map((c) =>
-            c.id === id ? { ...c, acpSession: event.state } : c
-          )
-        }))
-        break
-
-      case 'usage':
-        // Mid-turn usage must not remap `conversations` — that re-renders
-        // SessionDetail / Transcript / Sidebar. Ring reads `liveUsage`.
-        set((state) => {
-          const prev = state.liveUsage[id]
-          const tokenLimit =
-            typeof event.tokenLimit === 'number' ? event.tokenLimit : prev?.tokenLimit
-          const usageSame =
-            prev?.tokensUsed === event.tokensUsed && prev?.tokenLimit === tokenLimit
-          return {
-            tokenHistories: { ...state.tokenHistories, [id]: event.history },
-            cacheCreatedAt: { ...state.cacheCreatedAt, [id]: event.cacheCreatedAt },
-            cacheExpiresAt: { ...state.cacheExpiresAt, [id]: event.cacheExpiresAt },
-            liveUsage: usageSame
-              ? state.liveUsage
-              : {
-                  ...state.liveUsage,
-                  [id]: {
-                    tokensUsed: event.tokensUsed,
-                    ...(tokenLimit != null ? { tokenLimit } : {})
-                  }
-                }
-          }
-        })
-        break
-
-      case 'end': {
-        projection.end()
-        patchTurn(set, id, IDLE_TURN)
-        set((state) => {
-          const liveUsage = omitLiveUsage(state.liveUsage, id)
-          const conversations = state.conversations.map((c) =>
-            c.id === id ? { ...c, tokensUsed: event.tokensUsed } : c
-          )
-          // Store the sealed message when it has content, a review card, or a
-          // turn error. (Write-only turns can land with tools + changeSetId
-          // and must still upsert; error-only turns must stay on the leaf.)
-          if (
-            event.message.blocks.length === 0 &&
-            !event.message.changeSetId &&
-            !event.message.errorText &&
-            !event.message.cancelled
-          ) {
-            return { conversations, liveUsage }
-          }
-          return {
-            messages: { ...state.messages, [id]: upsert(state.messages[id], event.message) },
-            activeLeaf: { ...state.activeLeaf, [id]: event.message.id },
-            conversations,
-            liveUsage
-          }
-        })
-        // Main bumped updatedAt on append/replace — merge so order follows real activity.
+    applySessionTurnEvent(event, {
+      get,
+      set,
+      refreshConversations: () => {
         void window.vav.conversations.list().then((list) =>
           useSessionStore.setState((state) => ({
             conversations: mergeConversationList(state.conversations, list)
           }))
         )
-        // Transcript already paints `errorText` on the assistant message.
-        // Raising the top banner (and a JSON-RPC details sheet) just repeats it.
-        if (
-          event.error &&
-          !event.cancelled &&
-          event.errorKind !== 'cancelled' &&
-          !event.message.errorText
-        ) {
-          set({
-            errorBanner: event.error,
-            errorBannerKind: event.errorKind ?? 'generic',
-            errorBannerDetail: event.errorDetail || event.error
-          })
-        }
-        // Auto-run the next queued message after this turn finishes (FIFO).
+      },
+      drainQueue: (id) => {
         void get().drainMessageQueue(id)
-        break
+      },
+      openChangeReview: (changeSetId) => {
+        void get().openChangeReview(changeSetId)
       }
-
-      case 'change-review': {
-        // Inline review only — never full-screen (bypass already auto-accepted).
-        // Seed changeSetsById synchronously when the event carries the full set so
-        // InlineChangeReview never remounts into a perpetual "Loading changes…".
-        set((state) => {
-          const list = state.messages[id] ?? []
-          const msgId = event.messageId
-          let messages = state.messages
-          if (msgId && list.some((m) => m.id === msgId)) {
-            messages = {
-              ...state.messages,
-              [id]: list.map((m) =>
-                m.id === msgId ? { ...m, changeSetId: event.changeSetId } : m
-              )
-            }
-          } else if (msgId && !list.some((m) => m.id === msgId)) {
-            // end may still be in flight relative to another window; nothing to attach.
-          } else if (!msgId) {
-            // Fallback: attach to latest assistant message on the active leaf path.
-            const path = list.filter((m) => m.role === 'assistant')
-            const last = path[path.length - 1]
-            if (last) {
-              messages = {
-                ...state.messages,
-                [id]: list.map((m) =>
-                  m.id === last.id ? { ...m, changeSetId: event.changeSetId } : m
-                )
-              }
-            }
-          }
-          const pendingNext = { ...state.pendingReviewByConversation }
-          if (event.pendingCount > 0) {
-            pendingNext[id] = { changeSetId: event.changeSetId, count: event.pendingCount }
-          } else {
-            delete pendingNext[id]
-          }
-          const seeded = event.changeSet
-          const changeSetsById = seeded
-            ? { ...state.changeSetsById, [seeded.id]: seeded }
-            : state.changeSetsById
-          return {
-            messages,
-            pendingReviewByConversation: pendingNext,
-            changeSetsById,
-            ...(seeded ? { changeSet: seeded } : {})
-          }
-        })
-        // Fallback fetch only when the event did not embed the set.
-        if (!event.changeSet) void get().openChangeReview(event.changeSetId)
-        break
-      }
-    }
+    })
   }
 }))
 
@@ -3311,70 +3074,6 @@ function setLeaf(
   leafId: string | null
 ): void {
   set({ activeLeaf: { ...state.activeLeaf, [conversationId]: leafId } })
-}
-
-function patchTurn(
-  set: (fn: (state: SessionState) => Partial<SessionState>) => void,
-  id: string,
-  patch: Partial<TurnRuntime>
-): void {
-  set((state) => ({
-    turns: { ...state.turns, [id]: { ...(state.turns[id] ?? IDLE_TURN), ...patch } }
-  }))
-}
-
-const seenTools = new Map<string, Set<string>>()
-
-const WORKSPACE_AGENT_KEY = 'vav.workspaceAgentByPath'
-const PREVIEW_AGENT_KEY = 'vav.previewAgentByPath'
-
-function loadWorkspaceAgents(): Record<string, string> {
-  try {
-    const raw = localStorage.getItem(WORKSPACE_AGENT_KEY)
-    if (!raw) return {}
-    const parsed = JSON.parse(raw) as Record<string, string>
-    return parsed && typeof parsed === 'object' ? parsed : {}
-  } catch {
-    return {}
-  }
-}
-
-function saveWorkspaceAgents(map: Record<string, string>): void {
-  try {
-    localStorage.setItem(WORKSPACE_AGENT_KEY, JSON.stringify(map))
-  } catch {
-    // ignore
-  }
-}
-
-function loadPreviewAgents(): Record<string, string> {
-  try {
-    const raw = localStorage.getItem(PREVIEW_AGENT_KEY)
-    if (!raw) return {}
-    const parsed = JSON.parse(raw) as Record<string, string>
-    return parsed && typeof parsed === 'object' ? parsed : {}
-  } catch {
-    return {}
-  }
-}
-
-function savePreviewAgents(map: Record<string, string>): void {
-  try {
-    localStorage.setItem(PREVIEW_AGENT_KEY, JSON.stringify(map))
-  } catch {
-    // ignore
-  }
-}
-
-function countTools(get: () => SessionState, conversationId: string, toolId: string): number {
-  let set = seenTools.get(conversationId)
-  if (!set) {
-    set = new Set()
-    seenTools.set(conversationId, set)
-  }
-  if (!get().turns[conversationId]?.isRunning) set.clear()
-  set.add(toolId)
-  return set.size
 }
 
 let syncingMachine = false
