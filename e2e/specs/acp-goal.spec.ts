@@ -12,6 +12,11 @@ test('Grok goal banner shows the session objective and controls', async () => {
     await expect(page.locator('[data-testid="goal-pause"]')).toBeVisible()
     await expect(page.locator('[data-testid="goal-clear"]')).toBeVisible()
     await expect(page.locator('[data-testid="goal-resume"]')).toHaveCount(0)
+    const artifactDir = process.env.GOAL_ARTIFACT_DIR
+    if (artifactDir) {
+      await banner.screenshot({ path: `${artifactDir}/grok_goal_banner.png` })
+      await page.screenshot({ path: `${artifactDir}/grok_goal_session.png` })
+    }
   } finally {
     await harness.dispose()
   }
