@@ -86,3 +86,35 @@ export function conversationSubtitle(opts: {
       : null
   return { kind: 'meta', age: opts.relativeTime(conversation.updatedAt), dir }
 }
+
+const TITLE_LEAD = /^[#\s\u00a0\u3000]+/
+
+/** Strip markdown hashes / leading whitespace from auto-titles. */
+export function flattenSessionTitle(title: string, fallback = 'New session'): string {
+  return title.replace(TITLE_LEAD, '').trim() || title.trim() || fallback
+}
+
+export type SelectionRunClass = 'run-only' | 'run-start' | 'run-middle' | 'run-end'
+
+/** Adjacent multi-select row chrome (start / middle / end / only). */
+export function adjacentRunClass(prev: boolean, next: boolean): SelectionRunClass {
+  if (!prev && !next) return 'run-only'
+  if (!prev && next) return 'run-start'
+  if (prev && next) return 'run-middle'
+  return 'run-end'
+}
+
+/** Conversation list: no chrome for a single selected row. */
+export function conversationSelectionRunClass(
+  id: string,
+  selectedIds: string[],
+  orderedIds: string[]
+): string {
+  if (selectedIds.length <= 1 || !selectedIds.includes(id)) return ''
+  const selected = new Set(selectedIds)
+  const index = orderedIds.indexOf(id)
+  if (index < 0) return 'run-only'
+  const prev = index > 0 && selected.has(orderedIds[index - 1]!)
+  const next = index < orderedIds.length - 1 && selected.has(orderedIds[index + 1]!)
+  return adjacentRunClass(prev, next)
+}

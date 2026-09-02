@@ -7,7 +7,10 @@ import {
   conversationSubtitle,
   filterValueLabel,
   groupingOptions,
-  modelLabel
+  modelLabel,
+  flattenSessionTitle,
+  conversationSelectionRunClass,
+  adjacentRunClass
 } from './sidebarList.ts'
 
 function conv(partial: Partial<ConversationMeta> & Pick<ConversationMeta, 'id'>): ConversationMeta {
@@ -98,5 +101,23 @@ describe('sidebarList', () => {
       }),
       null
     )
+  })
+})
+
+describe('flattenSessionTitle / adjacentRunClass', () => {
+  it('strips markdown hashes and falls back', () => {
+    assert.equal(flattenSessionTitle('##  Hello'), 'Hello')
+    assert.equal(flattenSessionTitle('   '), 'New session')
+    assert.equal(flattenSessionTitle('##  ', ''), '##')
+  })
+
+  it('names multi-select run chrome from neighbors', () => {
+    assert.equal(adjacentRunClass(false, false), 'run-only')
+    assert.equal(adjacentRunClass(false, true), 'run-start')
+    assert.equal(adjacentRunClass(true, true), 'run-middle')
+    assert.equal(adjacentRunClass(true, false), 'run-end')
+    assert.equal(conversationSelectionRunClass('b', ['a'], ['a', 'b']), '')
+    assert.equal(conversationSelectionRunClass('b', ['a', 'b', 'c'], ['a', 'b', 'c']), 'run-middle')
+    assert.equal(conversationSelectionRunClass('a', ['a', 'c'], ['a', 'b', 'c']), 'run-only')
   })
 })

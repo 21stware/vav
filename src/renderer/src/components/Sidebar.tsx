@@ -37,7 +37,10 @@ import { basename } from '../lib/path'
 import {
   agentTypeLabel,
   conversationSubtitle,
+  conversationSelectionRunClass,
+  adjacentRunClass,
   filterValueLabel,
+  flattenSessionTitle,
   groupingOptions
 } from '../lib/sidebarList'
 import { ConvBracket, type SwarmBracketKind } from './sidebar/ConvBracket'
@@ -361,9 +364,7 @@ export function Sidebar({
       const messageTotal = targets.reduce((sum, row) => sum + (row.messageCount || 0), 0)
       const title =
         targets.length === 1
-          ? targets[0]!.title.replace(/^[#\s\u00a0\u3000]+/, '').trim() ||
-            targets[0]!.title.trim() ||
-            t('sidebar.fileSessionDelete')
+          ? flattenSessionTitle(targets[0]!.title, t('sidebar.fileSessionDelete'))
           : t('sidebar.fileSessionDeleteCount', { count: targets.length })
       const body =
         targets.length === 1
@@ -452,10 +453,7 @@ export function Sidebar({
             label: t('sidebar.menu.copyTitle'),
             onSelect: () => {
               const text = targets
-                .map(
-                  (row) =>
-                    row.title.replace(/^[#\s\u00a0\u3000]+/, '').trim() || row.title.trim()
-                )
+                .map((row) => flattenSessionTitle(row.title, ''))
                 .filter(Boolean)
                 .join('\n')
               void window.vav.conversations.copyToClipboard(text)
@@ -471,8 +469,7 @@ export function Sidebar({
       }
 
       const row = targets[0]!
-      const title =
-        row.title.replace(/^[#\s\u00a0\u3000]+/, '').trim() || row.title.trim() || 'New session'
+      const title = flattenSessionTitle(row.title)
       return [
         {
           label: t('sidebar.fileSessionOpenChat'),
@@ -801,18 +798,9 @@ export function Sidebar({
     }
   }
 
-  const selectionRunClass = (id: string): string => {
-    if (selectedIds.length <= 1 || !selectedIds.includes(id)) return ''
-    const selected = new Set(selectedIds)
-    const index = visible.findIndex((c) => c.id === id)
-    if (index < 0) return 'run-only'
-    const prev = index > 0 && selected.has(visible[index - 1]!.id)
-    const next = index < visible.length - 1 && selected.has(visible[index + 1]!.id)
-    if (!prev && !next) return 'run-only'
-    if (!prev && next) return 'run-start'
-    if (prev && next) return 'run-middle'
-    return 'run-end'
-  }
+  const visibleIds = visible.map((c) => c.id)
+  const selectionRunClass = (id: string): string =>
+    conversationSelectionRunClass(id, selectedIds, visibleIds)
 
   const toggleGroup = (key: string): void => {
     setCollapsedKeys((prev) => {
@@ -1405,15 +1393,7 @@ export function Sidebar({
               const nextMulti =
                 index < filteredFileSessions.length - 1 &&
                 selectedIds.includes(filteredFileSessions[index + 1]!.sessionId)
-              const runClass = isMultiSelected
-                ? prevMulti && nextMulti
-                  ? 'run-middle'
-                  : prevMulti
-                    ? 'run-end'
-                    : nextMulti
-                      ? 'run-start'
-                      : 'run-only'
-                : ''
+              const runClass = isMultiSelected ? adjacentRunClass(prevMulti, nextMulti) : ''
               const statusLabel =
                 row.pathStatus === 'dir_missing'
                   ? t('sidebar.dirNotExist')
@@ -1422,8 +1402,7 @@ export function Sidebar({
                     : null
               const pathLabel = basename(row.path) || row.path
               // Flatten auto-titles: strip markdown hashes / leading whitespace.
-              const title =
-                row.title.replace(/^[#\s\u00a0\u3000]+/, '').trim() || row.title.trim() || 'New session'
+              const title = flattenSessionTitle(row.title)
               return (
                 <button
                   type="button"

@@ -51,6 +51,10 @@ import { omitLiveUsage } from './sessionUsage'
 import { dispatchQueuedPayload, MESSAGE_QUEUE_MAX, buildQueuedMessage, isEmptyComposerSend, mergePreviewAndCommentRefs } from './sessionQueue'
 import { applySessionTurnEvent } from './sessionTurnApply'
 import {
+  searchStateForQuery,
+  stepSearchState
+} from './sessionSearch'
+import {
   acceptAllChangesFor as acceptAllChangesForReview,
   acceptChangeFilesFor as acceptChangeFilesForReview,
   activeChangeSetId,
@@ -160,9 +164,6 @@ const IDLE_UPDATE: UpdateState = {
   bytesPerSecond: null,
   message: null
 }
-
-/** Shared empty search hits — never allocate a fresh [] on every keystroke. */
-const EMPTY_SEARCH_MATCH_IDS: string[] = []
 
 /**
  * Conversations currently inside {@link SessionState.sendQueuedNow} (manual
@@ -2513,41 +2514,15 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
   setSearchQuery(query) {
     const state = get()
-    const trimmed = query.trim()
-    // Search follows what is on screen; hidden branches are not results.
-    let matchIds = EMPTY_SEARCH_MATCH_IDS
-    if (trimmed) {
-      const next = visibleMessages(state, state.activeId)
-        .filter((m) => m.content.toLowerCase().includes(trimmed.toLowerCase()))
-        .map((m) => m.id)
-      // Reuse previous array when hits are unchanged so selectors/effects stay quiet.
-      const prev = state.search.matchIds
-      matchIds =
-        prev.length === next.length && prev.every((id, i) => id === next[i]) ? prev : next
-    }
-    set((s) => ({
-      search: {
-        ...s.search,
-        query,
-        matchIds,
-        index: 0,
-        // Only bump tick when the hit list changes so Enter/navigation still
-        // re-scrolls; pure keystrokes with the same hits do not thrash layout.
-        tick: matchIds === s.search.matchIds ? s.search.tick : s.search.tick + 1
-      }
-    }))
+    set({
+      search: searchStateForQuery(state.search, visibleMessages(state, state.activeId), query)
+    })
   },
 
   stepSearch(direction) {
     set((state) => {
-      const count = state.search.matchIds.length
-      if (count === 0) return state
-      const index = (state.search.index + direction + count) % count
-      if (index === state.search.index) {
-        // Same hit (single match): still bump tick so scroll re-fires.
-        return { search: { ...state.search, tick: state.search.tick + 1 } }
-      }
-      return { search: { ...state.search, index, tick: state.search.tick + 1 } }
+      const next = stepSearchState(state.search, direction)
+      return next ? { search: next } : state
     })
   },
 

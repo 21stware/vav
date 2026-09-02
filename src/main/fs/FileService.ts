@@ -35,6 +35,7 @@ import { mimeHintToUti } from './fileUti'
 import { inspectZipArchive, zipInspectWarnings, zipTreeText } from './fileZipArchive'
 import { looksLikeTextFile } from './fileTextSample'
 import { defaultAppDisplayName, mdlsRaw } from './fileMacMeta'
+import { inodeLabel, ownerLabel, statTimeMs } from './fileBinaryMeta'
 
 /**
  * Technical windows — memory budgets for a single IPC/payload, NOT product
@@ -1001,27 +1002,16 @@ async function buildBinaryMeta(
 ): Promise<BinaryFileMeta> {
   const mode = typeof info.mode === 'number' ? info.mode : 0
   const uid = typeof info.uid === 'number' ? info.uid : -1
-  let owner = uid >= 0 ? String(uid) : '—'
+  let self: { uid: number; username: string } | null = null
   try {
-    const me = userInfo()
-    if (uid >= 0 && me.uid === uid) owner = me.username
+    self = userInfo()
   } catch {
     // keep numeric uid
   }
-  const createdMs =
-    typeof info.birthtimeMs === 'number' && Number.isFinite(info.birthtimeMs)
-      ? info.birthtimeMs
-      : info.birthtime instanceof Date
-        ? info.birthtime.getTime()
-        : null
-  const modifiedMs =
-    typeof info.mtimeMs === 'number' && Number.isFinite(info.mtimeMs)
-      ? info.mtimeMs
-      : info.mtime instanceof Date
-        ? info.mtime.getTime()
-        : null
-  const inode =
-    info.ino === undefined || info.ino === null ? '—' : String(info.ino)
+  const owner = ownerLabel(uid, self)
+  const createdMs = statTimeMs(info.birthtimeMs, info.birthtime)
+  const modifiedMs = statTimeMs(info.mtimeMs, info.mtime)
+  const inode = inodeLabel(info.ino)
 
   let uti = mimeHintToUti(extname(path).toLowerCase())
   let defaultApp: string | null = null
