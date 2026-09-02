@@ -1,5 +1,9 @@
 import type { MessageKey, TParams } from '../../../shared/i18n/index.ts'
-import type { GithubActionStatus, GithubErrorCode } from '../../../shared/github.ts'
+import type {
+  GithubActionStatus,
+  GithubErrorCode,
+  GithubReviewState
+} from '../../../shared/github.ts'
 
 export type GithubPanelTranslate = (key: MessageKey, params?: TParams) => string
 
@@ -39,4 +43,11 @@ export function pagesStatusLabel(status: string | null, t: GithubPanelTranslate)
   if (status === 'building') return t('github.siteStatusBuilding')
   if (status === 'errored') return t('github.siteStatusErrored')
   return status || t('github.siteNone')
+}
+
+export function reviewStateLabel(state: GithubReviewState, t: GithubPanelTranslate): string {
+  if (state === 'approved') return t('github.approved')
+  if (state === 'changes_requested') return t('github.changesRequested')
+  if (state === 'dismissed') return t('github.dismissed')
+  return t('github.commented')
 }

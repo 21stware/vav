@@ -54,8 +54,7 @@ import {
   planDocHasBody,
   planDocSummary,
   planDocToChecklistInput,
-  projectChecklistInput,
-  sealPlanSteps
+  projectChecklistInput
 } from '@shared/planDoc'
 import { enabledCliAgents } from '@shared/types'
 import type { AcpSessionState } from '@shared/acpSession'
@@ -92,6 +91,7 @@ import {
   type DriverEvent
 } from './drivers'
 import { shouldReplaceCliRuntime } from './cliWorkspaceRestart'
+import { sealCliPlanBlocks } from './planSeal'
 import {
   applyCliHistoryHandoff,
   formatCliWorkspaceHandoff,
@@ -1857,7 +1857,10 @@ export class CliAgentHost {
     this.sealOpenReasoning(turn)
 
     expireOpenTools(turn.blocks, turn.cancelled)
-    sealCliPlanBlocks(turn.blocks, turn.cancelled ? 'cancel' : turn.error ? 'error' : 'success')
+    sealCliPlanBlocks(turn.blocks, turn.cancelled ? 'cancel' : turn.error ? 'error' : 'success', {
+      cancelled: t('common.cancelled'),
+      failed: t('common.failed')
+    })
 
     const content = turn.blocks
       .filter((b): b is Extract<MessageBlock, { kind: 'text' }> => b.kind === 'text')
@@ -2332,27 +2335,6 @@ export class CliAgentHost {
     }
     parts.push(text)
     return parts.join('\n\n')
-  }
-}
-
-function sealCliPlanBlocks(
-  blocks: MessageBlock[],
-  mode: 'cancel' | 'error' | 'success'
-): void {
-  for (const block of blocks) {
-    if (block.kind !== 'toolCall' || block.tool !== 'plan') continue
-    const input = projectChecklistInput(parseToolInput(block.input))
-    if (input.steps.length === 0) continue
-    const steps = sealPlanSteps(input.steps, mode, {
-      cancelled: t('common.cancelled'),
-      failed: t('common.failed')
-    })
-    const done = steps.filter((step) => step.status === 'done').length
-    block.input = inputJson({ title: input.title, steps })
-    block.summary = `Plan · ${input.title} (${done}/${steps.length})`
-    if (block.status === 'pending' || block.status === 'executing') {
-      block.status = 'completed'
-    }
   }
 }
 

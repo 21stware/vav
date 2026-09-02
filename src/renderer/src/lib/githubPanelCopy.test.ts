@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import { actionStatusLabel, emptyForCode, pagesStatusLabel } from './githubPanelCopy.ts'
+import { actionStatusLabel, emptyForCode, pagesStatusLabel, reviewStateLabel } from './githubPanelCopy.ts'
 
 const t = (key: string): string => key
 
@@ -48,5 +48,9 @@ describe('githubPanelCopy', () => {
     assert.equal(pagesStatusLabel('errored', t), 'github.siteStatusErrored')
     assert.equal(pagesStatusLabel(null, t), 'github.siteNone')
     assert.equal(pagesStatusLabel('queued', t), 'queued')
+    assert.equal(reviewStateLabel('approved', t), 'github.approved')
+    assert.equal(reviewStateLabel('changes_requested', t), 'github.changesRequested')
+    assert.equal(reviewStateLabel('dismissed', t), 'github.dismissed')
+    assert.equal(reviewStateLabel('commented', t), 'github.commented')
   })
 })

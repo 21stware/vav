@@ -10,11 +10,7 @@ const lastInjectFingerprint = new Map<string, string>()
 const pendingInjectTimers = new Map<string, number>()
 import type { PtyActivityStatus, PtySessionMeta } from '@shared/ipc'
 import { retainInstallMeta } from '../lib/retainInstallMeta'
-import {
-  makePendingCliTab,
-  pendingTabFromId,
-  replaceLayoutTabId
-} from '../lib/cliPendingLayout'
+import { makePendingCliTab, pendingTabFromId } from '../lib/cliPendingLayout'
 import {
   collectLeaves,
   layoutDirectionKey,
@@ -30,6 +26,7 @@ import {
   reconcileAgentHosts,
   type AgentHostSession
 } from '../lib/workspaceCliSurface'
+import { cliLiveTab, replaceSurfaceTab } from '../lib/workspaceTabs'
 import {
   AGENT_TAB_ID,
   agentHostsEqual,
@@ -1964,36 +1961,6 @@ function dropLocalWorkspace(
     workspaces: omitRecord(state.workspaces, id),
     ptyStatus: omitRecord(state.ptyStatus, id)
   }))
-}
-
-function cliLiveTab(tabId: string, agentId: string, title: string): TerminalTab {
-  return {
-    id: tabId,
-    title,
-    isAgent: false,
-    agentId,
-    pendingCli: false,
-    splitWeight: 1
-  }
-}
-
-function replaceSurfaceTab(
-  surface: AgentHostSession,
-  fromId: string,
-  tab: TerminalTab
-): AgentHostSession {
-  const tabs = surface.tabs
-    .filter((t) => t.id !== tab.id)
-    .map((t) => (t.id === fromId ? tab : t))
-  if (!tabs.some((t) => t.id === tab.id)) tabs.push(tab)
-  const layout = surface.layout
-    ? (replaceLayoutTabId(surface.layout, fromId, tab.id) ?? {
-        type: 'leaf' as const,
-        tabId: tab.id,
-        weight: 1
-      })
-    : { type: 'leaf' as const, tabId: tab.id, weight: 1 }
-  return { tabs, layout, activeTabId: tab.id }
 }
 
 function patchCliSurfaceTab(

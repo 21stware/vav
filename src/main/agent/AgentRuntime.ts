@@ -17,27 +17,25 @@ import {
   type TurnPhase,
   type TurnStatus
 } from '@shared/types'
-import { ROOT_LEAF } from '@shared/thread'
+import { ROOT_LEAF, threadPath } from '@shared/thread'
 import { buildSnapshot } from '@shared/tokenUsage'
 import { buildModel, describeError, streamWith } from './provider'
 import { catalogRatesFor, contextWindowFor, maxTokensFor } from './modelMeta'
 import { loadInlineImages } from './attachmentImages'
 import { parseThinkingLevel, toPiReasoning } from '@shared/thinkingLevel'
-import { projectChecklistInput, sealPlanSteps } from '@shared/planDoc'
 import {
   COMPACT_MIN_FOLDED,
   defaultKeepAfterIndex
 } from '@shared/compaction'
-import { threadPath } from '@shared/thread'
 import type { LeafCompaction } from '@shared/types'
 import { applyEditedArgs, leanToolArgs } from './agentToolArgs'
 import { isAssistant, textOf } from './agentMessage'
+import { sealRuntimePlanBlocks } from './planSeal'
 import {
   blockFromContent,
   buildHistory,
   estimateCompactedContextTokens,
-  pathToSummarySource,
-  safeParseJson
+  pathToSummarySource
 } from './history'
 import {
   HIGH_RISK_TOOLS,
@@ -1501,7 +1499,10 @@ export class AgentRuntime {
       : turn.error
         ? 'error'
         : 'success'
-    sealPlanBlocks(turn.blocks, planMode)
+    sealRuntimePlanBlocks(turn.blocks, planMode, {
+      cancelled: t('common.cancelled'),
+      failed: t('common.failed')
+    })
 
     if (turn.cancelled) {
       turn.error = undefined
@@ -1826,33 +1827,3 @@ export class AgentRuntime {
 
 type StreamEvent = Extract<AgentEvent, { type: 'message_update' }>['assistantMessageEvent']
 
-/**
- * Reconcile plan checklist state when a turn ends.
- *
- * Models often complete the work then write a final answer without a last
- * `plan` tool call, leaving steps pending and the UI stuck on "paused".
- * - cancel: executing→error, pending→skipped
- * - error:  executing→error (pending left so the user sees what was not started)
- * - success: any still-open step is treated as finished work the agent forgot
- *   to tick off → done (abandoned work should have been marked skipped mid-turn)
- */
-function sealPlanBlocks(
-  blocks: MessageBlock[],
-  mode: 'cancel' | 'error' | 'success'
-): void {
-  for (const block of blocks) {
-    if (block.kind !== 'toolCall' || block.tool !== 'plan') continue
-    const input = projectChecklistInput(safeParseJson(block.input))
-    const steps = sealPlanSteps(input.steps, mode, {
-      cancelled: t('common.cancelled'),
-      failed: t('common.failed')
-    })
-    const title = input.title || 'Plan'
-    const done = steps.filter((step) => step.status === 'done').length
-    block.input = JSON.stringify({ ...input, title, steps }, null, 2)
-    block.summary = `Plan · ${title} (${done}/${steps.length})`
-    if (block.status === 'pending' || block.status === 'executing') {
-      block.status = 'completed'
-    }
-  }
-}
