@@ -216,6 +216,12 @@ import { FALLBACK_SYSTEM_ACCENT, normalizeAccentHex } from './window/accentColor
 import { closeActiveNativePopup, popupNativeMenu } from './window/nativePopup'
 import { trayDirLabel as formatTrayDirLabel, trayAgentLabel as formatTrayAgentLabel } from './tray/trayLabels'
 import { buildTrayPane } from './tray/trayPane'
+import {
+  applyUnseenResultToMap,
+  deleteUnseenForConversation,
+  persistTrayResultUnseen,
+  shouldHydratePersistedUnseen
+} from './tray/trayUnseen'
 import { HostRegistry } from './host'
 import { openSpawn, previewSpawn, revealSpawn } from './host/hostShell'
 import { clipRoot, writeClipBytes } from './fs/clipStore'
@@ -831,24 +837,24 @@ function trayPaneFromBashSession(session: PtySessionMeta): TrayPane | null {
 }
 
 function persistResultUnseen(conversationId: string, unseen: boolean): void {
-  const conversation = conversationStore.get(conversationId)
-  if (!conversation || conversation.resultUnseen === unseen) return
-  conversationStore.updateMeta(conversationId, { resultUnseen: unseen })
-  broadcast(IPC.convChanged, conversationStore.listMeta())
+  persistTrayResultUnseen({
+    conversationId,
+    unseen,
+    getConversation: (id) => conversationStore.get(id),
+    updateMeta: (id, patch) => conversationStore.updateMeta(id, patch),
+    broadcast: () => broadcast(IPC.convChanged, conversationStore.listMeta())
+  })
 }
 
 function applyUnseenResult(pane: TrayPane): void {
-  if (ephemeralConversations.has(pane.conversationId)) return
-  if (notifications.isConversationForeground(pane.conversationId)) {
-    for (const [key, existing] of unseenResults) {
-      if (existing.conversationId === pane.conversationId) unseenResults.delete(key)
-    }
-    persistResultUnseen(pane.conversationId, false)
-    return
-  }
-  unseenResults.set(trayPaneKey(pane), pane)
-  persistResultUnseen(pane.conversationId, true)
-  notifications.noteUnseenComplete(pane.conversationId)
+  const result = applyUnseenResultToMap({
+    pane,
+    unseen: unseenResults,
+    ephemeral: ephemeralConversations.has(pane.conversationId),
+    isForeground: notifications.isConversationForeground(pane.conversationId)
+  })
+  if (result.persist !== undefined) persistResultUnseen(pane.conversationId, result.persist)
+  if (result.notifyComplete) notifications.noteUnseenComplete(pane.conversationId)
 }
 
 function markResultUnseen(pane: TrayPane): void {
@@ -858,24 +864,18 @@ function markResultUnseen(pane: TrayPane): void {
 
 function markResultViewed(conversationId: string): void {
   if (!conversationId) return
-  let changed = false
-  for (const [key, pane] of unseenResults) {
-    if (pane.conversationId !== conversationId) continue
-    unseenResults.delete(key)
-    changed = true
-  }
+  const mapChanged = deleteUnseenForConversation(unseenResults, conversationId)
   const conversation = conversationStore.get(conversationId)
+  let persistChanged = false
   if (conversation?.resultUnseen) {
     persistResultUnseen(conversationId, false)
-    changed = true
+    persistChanged = true
   }
-  if (changed) refreshTraySessions()
+  if (mapChanged || persistChanged) refreshTraySessions()
 }
 
 function clearUnseenForConversation(conversationId: string): void {
-  for (const [key, pane] of unseenResults) {
-    if (pane.conversationId === conversationId) unseenResults.delete(key)
-  }
+  deleteUnseenForConversation(unseenResults, conversationId)
 }
 
 function clearTrayQuietTimer(tabId: string): void {
@@ -1004,10 +1004,16 @@ function refreshTraySessions(): void {
 
     // Restart / persist: a conversation flagged unseen with no in-memory pane.
     for (const conversation of conversationStore.all()) {
-      if (!conversation.resultUnseen || conversation.archived) continue
-      if (ephemeralConversations.has(conversation.id)) continue
-      const already = [...unseenResults.values()].some((p) => p.conversationId === conversation.id)
-      if (already) continue
+      if (
+        !shouldHydratePersistedUnseen({
+          resultUnseen: conversation.resultUnseen,
+          archived: conversation.archived,
+          ephemeral: ephemeralConversations.has(conversation.id),
+          alreadyListed: [...unseenResults.values()].some((p) => p.conversationId === conversation.id)
+        })
+      ) {
+        continue
+      }
       const pane = trayPaneFromConversation(conversation.id, 'chat')
       if (pane) {
         unseenResults.set(trayPaneKey(pane), { ...pane, status: 'done' })

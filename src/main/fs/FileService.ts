@@ -36,27 +36,20 @@ import { inspectZipArchive, zipInspectWarnings, zipTreeText } from './fileZipArc
 import { looksLikeTextFile } from './fileTextSample'
 import { defaultAppDisplayName, mdlsRaw } from './fileMacMeta'
 import { inodeLabel, ownerLabel, statTimeMs } from './fileBinaryMeta'
-
-/**
- * Technical windows — memory budgets for a single IPC/payload, NOT product
- * "file too large" limits. Larger files are opened via further windows or
- * `vav-local://` streaming.
- */
-/** First paint window for UTF-8 text (progressive fill continues via readTextWindow). */
-const TEXT_WINDOW_BYTES = 128 * 1024
-/** Larger window for agent fs_read / full-ish first load when explicitly requested. */
-const TEXT_WINDOW_BYTES_AGENT = 2 * 1024 * 1024
-/** First structured office chunk for block-pick while native canvas loads. */
-const STRUCTURED_FIRST_BLOCKS = 48
-const STRUCTURED_FIRST_ROWS = 120
-/** Soft ceiling for base64 IPC convenience (renderer should prefer vav-local stream). */
-const BINARY_BASE64_SOFT = 16 * 1024 * 1024
-/** Soft budget for full OOXML structured parse in main (best-effort index). */
-const STRUCTURED_PARSE_SOFT = 32 * 1024 * 1024
-
-const WATCH_DEBOUNCE_MS = 300
-/** Keep document indexing off the main thread while a preview is opening. */
-const INDEX_AFTER_OPEN_MS = 1500
+import {
+  BINARY_BASE64_SOFT,
+  BINARY_WINDOW_HARD_MAX,
+  INDEX_AFTER_OPEN_MS,
+  STRUCTURED_FIRST_BLOCKS,
+  STRUCTURED_FIRST_ROWS,
+  STRUCTURED_PARSE_SOFT,
+  TEXT_WINDOW_BYTES,
+  TEXT_WINDOW_BYTES_AGENT,
+  TEXT_WINDOW_HARD_MAX,
+  WATCH_DEBOUNCE_MS,
+  clampByteWindow,
+  officeUtf8WriteError
+} from './fileWindows'
 
 /**
  * Filesystem access for both the Files panel and the agent's fs_* tools.
@@ -214,8 +207,12 @@ export class FileService {
     path: string,
     opts?: { startByte?: number; maxBytes?: number; force?: boolean; conversationId?: string }
   ): Promise<TextWindowResult> {
-    const startByte = Math.max(0, Math.floor(opts?.startByte ?? 0))
-    const maxBytes = Math.max(1024, Math.min(16 * 1024 * 1024, Math.floor(opts?.maxBytes ?? TEXT_WINDOW_BYTES)))
+    const { startByte, maxBytes } = clampByteWindow(
+      opts?.startByte,
+      opts?.maxBytes,
+      TEXT_WINDOW_BYTES,
+      TEXT_WINDOW_HARD_MAX
+    )
     const force = !!opts?.force
     const denied = this.accessError(path)
     if (denied) {
@@ -311,10 +308,11 @@ export class FileService {
       }
     | { ok: false; error: string; startByte: number; endByte: number; totalBytes: number }
   > {
-    const startByte = Math.max(0, Math.floor(opts?.startByte ?? 0))
-    const maxBytes = Math.max(
-      1024,
-      Math.min(4 * 1024 * 1024, Math.floor(opts?.maxBytes ?? TEXT_WINDOW_BYTES))
+    const { startByte, maxBytes } = clampByteWindow(
+      opts?.startByte,
+      opts?.maxBytes,
+      TEXT_WINDOW_BYTES,
+      BINARY_WINDOW_HARD_MAX
     )
     const denied = this.accessError(path)
     if (denied) {
@@ -389,13 +387,8 @@ export class FileService {
     try {
       // Refuse to clobber OOXML/PDF with UTF-8 text — agents must use binary-aware
       // tools (or a shell) for those formats.
-      const ext = extname(path).toLowerCase()
-      if (['.docx', '.xlsx', '.pptx', '.pdf'].includes(ext)) {
-        return {
-          ok: false,
-          error: `Cannot write ${ext} as UTF-8 text (would corrupt the file). Use a format-aware tool or shell for binary office documents.`
-        }
-      }
+      const officeError = officeUtf8WriteError(path)
+      if (officeError) return { ok: false, error: officeError }
       const hostFs = this.fsFor(conversationId, path)
       const io = this.forIo(path, conversationId)
       await hostFs.mkdir(dirname(io), { recursive: true })

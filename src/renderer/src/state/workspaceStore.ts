@@ -27,6 +27,13 @@ import {
   type AgentHostSession
 } from '../lib/workspaceCliSurface'
 import { cliLiveTab, replaceSurfaceTab } from '../lib/workspaceTabs'
+import {
+  getAgentHost,
+  getCliSurface,
+  paintedPrimaryAgentPane,
+  patchedCliSurfaceTab,
+  unpaintedPrimaryAgentPane
+} from '../lib/workspacePanePaint'
 import { emptySlice, type WorkspaceSlice } from '../lib/workspaceSlice'
 import {
   AGENT_TAB_ID,
@@ -220,15 +227,6 @@ async function resolveTerminalCwd(conversationId: string, sliceRoot: string | nu
  */
 export function primaryAgentPaneId(conversationId: string, agentId: string): string {
   return `agent-host:${agentId}:${conversationId}`
-}
-
-function getCliSurface(slice: WorkspaceSlice | undefined): AgentHostSession | undefined {
-  return slice?.agentHostSessions[CLI_SURFACE_KEY]
-}
-
-/** Agent main-surface session from agentHostSessions (never user bash tabs). */
-function getAgentHost(slice: WorkspaceSlice, agentId: string): AgentHostSession | undefined {
-  return slice.agentHostSessions[agentId]
 }
 
 export type NewBashOptions = {
@@ -1904,18 +1902,7 @@ function patchCliSurfaceTab(
   fromId: string,
   tab: TerminalTab
 ): void {
-  patch(set, id, (s) => {
-    const surface = getCliSurface(s)
-    if (!surface) return {}
-    return {
-      cliMode: true,
-      activeHostAgentId: CLI_SURFACE_KEY,
-      agentHostSessions: {
-        ...s.agentHostSessions,
-        [CLI_SURFACE_KEY]: replaceSurfaceTab(surface, fromId, tab)
-      }
-    }
-  })
+  patch(set, id, (s) => patchedCliSurfaceTab(s, fromId, tab))
 }
 
 function paintPrimaryAgentPane(
@@ -1925,34 +1912,7 @@ function paintPrimaryAgentPane(
   preferredId: string,
   title: string
 ): void {
-  const tab = cliLiveTab(preferredId, agentId, title)
-  patch(set, id, (s) => {
-    const surface = getCliSurface(s)
-    const pending = surface?.tabs.find((t) => t.pendingCli)
-    const nextSurface =
-      pending && surface
-        ? replaceSurfaceTab(surface, pending.id, tab)
-        : surface && surface.tabs.length > 0
-          ? { ...surface, activeTabId: preferredId }
-          : {
-              tabs: [tab],
-              layout: { type: 'leaf' as const, tabId: preferredId, weight: 1 },
-              activeTabId: preferredId
-            }
-    return {
-      cliMode: true,
-      activeHostAgentId: CLI_SURFACE_KEY,
-      agentHostSessions: {
-        ...s.agentHostSessions,
-        [CLI_SURFACE_KEY]: nextSurface,
-        [agentId]: {
-          tabs: [tab],
-          layout: { type: 'leaf', tabId: preferredId, weight: 1 },
-          activeTabId: preferredId
-        }
-      }
-    }
-  })
+  patch(set, id, (s) => paintedPrimaryAgentPane(s, agentId, preferredId, title))
 }
 
 function unpaintPrimaryAgentPane(
@@ -1961,25 +1921,7 @@ function unpaintPrimaryAgentPane(
   agentId: string,
   preferredId: string
 ): void {
-  patch(set, id, (s) => {
-    const sessions = { ...s.agentHostSessions }
-    delete sessions[agentId]
-    const surface = sessions[CLI_SURFACE_KEY]
-    if (!surface) return { activeHostAgentId: null, agentHostSessions: sessions }
-    if (surface.tabs.length === 1 && surface.tabs[0]?.id === preferredId) {
-      delete sessions[CLI_SURFACE_KEY]
-      return { activeHostAgentId: null, agentHostSessions: sessions }
-    }
-    if (surface.tabs.some((t) => t.id === preferredId)) {
-      const pending = makePendingCliTab()
-      sessions[CLI_SURFACE_KEY] = replaceSurfaceTab(surface, preferredId, pending)
-      return { activeHostAgentId: CLI_SURFACE_KEY, agentHostSessions: sessions }
-    }
-    return {
-      activeHostAgentId: sessions[CLI_SURFACE_KEY] ? CLI_SURFACE_KEY : null,
-      agentHostSessions: sessions
-    }
-  })
+  patch(set, id, (s) => unpaintedPrimaryAgentPane(s, agentId, preferredId))
 }
 
 function patch(

@@ -52,11 +52,12 @@ import {
   HIGH_RISK_TOOLS,
   INTERACTIVE_TOOLS,
   READONLY_TOOLS,
-  buildSystemPrompt,
   createTools,
-  summarizeToolInput,
   type ToolDetails
 } from './tools'
+import { buildSystemPrompt } from './systemPrompt'
+import { summarizeToolInput } from './toolSummarize'
+import { stampReasoningDurations } from './reasoningStamp'
 import { FileDraftCoalescer, writeToolDraft } from '@shared/writeToolDraft'
 import type { ConversationStore } from '../store/ConversationStore'
 import { kindFromFilePath } from '../store/FileSessionStore'
@@ -976,14 +977,7 @@ export class AgentRuntime {
   }
 
   private sealReasoning(turn: TurnState, slot?: number): void {
-    const now = Date.now()
-    const targets = slot !== undefined ? [slot] : [...turn.reasoningStartedAt.keys()]
-    for (const index of targets) {
-      const block = turn.blocks[index]
-      if (!block || block.kind !== 'reasoning' || block.durationMs != null) continue
-      const started = turn.reasoningStartedAt.get(index) ?? now
-      block.durationMs = Math.max(0, now - started)
-    }
+    stampReasoningDurations(turn.blocks, turn.reasoningStartedAt, Date.now(), slot)
   }
 
   private appendDelta(

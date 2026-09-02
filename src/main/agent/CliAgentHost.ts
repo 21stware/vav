@@ -40,7 +40,6 @@ import {
   shouldContinuePartialNetworkTurn,
   shouldRetryFreshSession,
   shouldRetrySameSession,
-  splitStreamedRetriableError,
   type CliErrorKind
 } from '@shared/cliErrors'
 import { isApprovalApproveText, isApprovalDenyText } from '@shared/i18n'
@@ -89,6 +88,12 @@ import {
 } from './drivers'
 import { shouldReplaceCliRuntime } from './cliWorkspaceRestart'
 import { sealCliPlanBlocks } from './planSeal'
+import {
+  applyCliCancelQuota,
+  cliAssistantMessage,
+  stripLeakedStreamErrorFromTurn
+} from './cliTurnFinish'
+import { stampReasoningDurations } from './reasoningStamp'
 import {
   applyCliHistoryHandoff,
   formatCliWorkspaceHandoff,
@@ -1183,12 +1188,7 @@ export class CliAgentHost {
   }
 
   private sealOpenReasoning(turn: HostTurn): void {
-    const now = Date.now()
-    for (const [index, started] of turn.reasoningStartedAt) {
-      const block = turn.blocks[index]
-      if (!block || block.kind !== 'reasoning' || block.durationMs != null) continue
-      block.durationMs = Math.max(0, now - started)
-    }
+    stampReasoningDurations(turn.blocks, turn.reasoningStartedAt)
   }
 
   private flushBuffers(conversationId: string, turn: HostTurn): void {
@@ -1225,36 +1225,19 @@ export class CliAgentHost {
    * error text so the caller can decide whether the turn survived.
    */
   private stripLeakedStreamError(conversationId: string, turn: HostTurn): string | null {
-    const last = turn.blocks[turn.blocks.length - 1]
-    if (!last || last.kind !== 'text') return null
-    const split = splitStreamedRetriableError(last.text)
-    if (!split.leaked) return null
-    const index = turn.blocks.length - 1
-    if (split.text) {
-      last.text = split.text
-      this.deps.emit({
-        type: 'delta',
-        conversationId,
-        index,
-        kind: 'text',
-        text: split.text,
-        replace: true
-      })
-    } else {
-      turn.blocks.pop()
-      if (turn.textIndex != null && turn.textIndex >= turn.blocks.length) {
-        turn.textIndex = null
-      }
-      this.deps.emit({
-        type: 'delta',
-        conversationId,
-        index,
-        kind: 'text',
-        text: '',
-        replace: true
-      })
+    const stripped = stripLeakedStreamErrorFromTurn(turn)
+    if (!stripped.leaked || stripped.replaceIndex == null || stripped.replaceText == null) {
+      return stripped.leaked
     }
-    return split.leaked
+    this.deps.emit({
+      type: 'delta',
+      conversationId,
+      index: stripped.replaceIndex,
+      kind: 'text',
+      text: stripped.replaceText,
+      replace: true
+    })
+    return stripped.leaked
   }
 
   /**
@@ -1859,38 +1842,13 @@ export class CliAgentHost {
       failed: t('common.failed')
     })
 
-    const content = turn.blocks
-      .filter((b): b is Extract<MessageBlock, { kind: 'text' }> => b.kind === 'text')
-      .map((b) => b.text)
-      .join('\n\n')
-      .trim()
-
-    if (turn.cancelled) {
-      if (classifyCliError(turn.error || '', null, turn.errorCode) === 'quota') {
-        turn.cancelled = false
-      } else {
-        turn.error = undefined
-        turn.errorKind = undefined
-        turn.errorDetail = undefined
-      }
-    }
-
-    const message: ChatMessage = {
-      id: turn.messageId,
-      parentId: turn.parentId,
-      role: 'assistant',
-      content,
-      blocks: turn.blocks.map((b) => ({ ...b })),
-      createdAt: Date.now(),
-      cancelled: turn.cancelled || undefined,
-      errorText: turn.error,
-      errorDetail: turn.errorDetail
-    }
+    applyCliCancelQuota(turn)
+    const message = cliAssistantMessage(turn)
 
     let changeSet =
       (await this.deps.changeSets?.finalizeTurn(
         conversationId,
-        content.slice(0, 80) || 'CLI agent turn',
+        message.content.slice(0, 80) || 'CLI agent turn',
         this.deps.conversations.get(conversationId)?.cliHost || 'cli',
         { cancelled: turn.cancelled, error: !!turn.error }
       )) ?? null
