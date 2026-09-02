@@ -31,6 +31,7 @@ import { convertLegacyOffice, legacyOfficeKind } from './legacyOfficeConvert'
 import type { WorkingCopyService } from './WorkingCopyService'
 import { localHostFs, type HostFs, type HostWatcher } from '../host'
 import { conversationIdForWatchedPath } from './conversationPath'
+import { isPathAllowed } from './pathAllow'
 
 /**
  * Technical windows — memory budgets for a single IPC/payload, NOT product
@@ -80,6 +81,10 @@ export class FileService {
    * until promote.
    */
   workingCopies: WorkingCopyService | null = null
+  /** Extra dirs always readable (clips, office convert sidecars, working copies). */
+  private extraRoots = new Set<string>()
+  /** Files / folders opened through a main-process dialog or Dock drop. */
+  private grantedPaths = new Set<string>()
 
   constructor(
     private onDirtyDirectories: (conversationId: string, dirs: string[]) => void,
@@ -87,6 +92,32 @@ export class FileService {
     /** Per-conversation host. Missing / unknown machines use {@link fs}. */
     private readonly resolveFs?: (conversationId: string) => HostFs
   ) {}
+
+  grantRoot(root: string): void {
+    const trimmed = root.trim()
+    if (trimmed) this.extraRoots.add(trimmed)
+  }
+
+  grantPath(path: string): void {
+    const trimmed = path.trim()
+    if (trimmed) this.grantedPaths.add(trimmed)
+  }
+
+  /**
+   * When a workspace is watched, IPC may only touch that tree, app-managed
+   * temp dirs, and paths granted by a native open/save dialog.
+   * Before any workspace is watched, allow (open-file / tests).
+   */
+  isAllowedPath(path: string): boolean {
+    if (!path || path.includes('\0')) return false
+    const roots = [...this.roots.values(), ...this.extraRoots]
+    if (isPathAllowed(path, roots, this.grantedPaths)) return true
+    return this.roots.size === 0
+  }
+
+  private accessError(path: string): string | null {
+    return this.isAllowedPath(path) ? null : t('files.error.notAllowed')
+  }
 
   private fsFor(conversationId?: string | null, path?: string): HostFs {
     const id = conversationIdForWatchedPath(this.roots, path ?? '', conversationId)
@@ -122,6 +153,8 @@ export class FileService {
     ascending = true,
     conversationId?: string
   ): Promise<DirectoryListing> {
+    const denied = this.accessError(path)
+    if (denied) return { path, entries: [], truncated: 0, error: denied }
     const hostFs = this.fsFor(conversationId, path)
     try {
       const dirents = await hostFs.readdir(path)
@@ -187,6 +220,17 @@ export class FileService {
     const startByte = Math.max(0, Math.floor(opts?.startByte ?? 0))
     const maxBytes = Math.max(1024, Math.min(16 * 1024 * 1024, Math.floor(opts?.maxBytes ?? TEXT_WINDOW_BYTES)))
     const force = !!opts?.force
+    const denied = this.accessError(path)
+    if (denied) {
+      return {
+        content: '',
+        startByte,
+        endByte: startByte,
+        totalBytes: 0,
+        truncated: false,
+        error: denied
+      }
+    }
     const hostFs = this.fsFor(opts?.conversationId, path)
     const io = this.forIo(path, opts?.conversationId)
     try {
@@ -275,6 +319,16 @@ export class FileService {
       1024,
       Math.min(4 * 1024 * 1024, Math.floor(opts?.maxBytes ?? TEXT_WINDOW_BYTES))
     )
+    const denied = this.accessError(path)
+    if (denied) {
+      return {
+        ok: false,
+        error: denied,
+        startByte,
+        endByte: startByte,
+        totalBytes: 0
+      }
+    }
     const hostFs = this.fsFor(opts?.conversationId, path)
     const io = this.forIo(path, opts?.conversationId)
     try {
@@ -333,6 +387,8 @@ export class FileService {
     content: string,
     conversationId?: string
   ): Promise<{ ok: boolean; error?: string }> {
+    const denied = this.accessError(path)
+    if (denied) return { ok: false, error: denied }
     try {
       // Refuse to clobber OOXML/PDF with UTF-8 text — agents must use binary-aware
       // tools (or a shell) for those formats.
@@ -363,6 +419,8 @@ export class FileService {
     base64: string,
     conversationId?: string
   ): Promise<{ ok: boolean; error?: string }> {
+    const denied = this.accessError(path)
+    if (denied) return { ok: false, error: denied }
     try {
       if (isOfficeLockFile(path)) {
         return { ok: false, error: OFFICE_LOCK_FILE_MESSAGE }
@@ -389,6 +447,8 @@ export class FileService {
   ): Promise<
     { ok: true; base64: string; size: number; mime: string } | { ok: false; error: string }
   > {
+    const denied = this.accessError(path)
+    if (denied) return { ok: false, error: denied }
     try {
       if (isOfficeLockFile(path)) {
         return { ok: false, error: OFFICE_LOCK_FILE_MESSAGE }
@@ -427,6 +487,8 @@ export class FileService {
       return { ok: false, error: t('files.error.badName') }
     }
     const target = join(dirname(path), name)
+    const denied = this.accessError(path) || this.accessError(target)
+    if (denied) return { ok: false, error: denied }
     try {
       await this.fsFor(conversationId, path).rename(path, target)
       return { ok: true, path: target }
@@ -439,6 +501,10 @@ export class FileService {
     paths: string[],
     conversationId?: string
   ): Promise<{ ok: true } | { ok: false; error: string }> {
+    for (const path of paths) {
+      const denied = this.accessError(path)
+      if (denied) return { ok: false, error: denied }
+    }
     try {
       for (const path of paths) {
         const hostFs = this.fsFor(conversationId, path)
@@ -471,6 +537,10 @@ export class FileService {
 
   async inspect(path: string, conversationId?: string): Promise<FileInspectResult> {
     const name = basename(path)
+    const denied = this.accessError(path)
+    if (denied) {
+      return { path, name, size: 0, kind: 'binary', mime: '', error: denied }
+    }
     // Sandbox: I/O against working copy when active; result.path stays logical.
     const hostFs = this.fsFor(conversationId, path)
     const io = this.forIo(path, conversationId)
@@ -759,6 +829,8 @@ export class FileService {
     | { ok: true; structured: import('@shared/structuredDoc').StructuredDocument; partial: boolean }
     | { ok: false; error: string }
   > {
+    const denied = this.accessError(path)
+    if (denied) return { ok: false, error: denied }
     const hostFs = this.fsFor(opts?.conversationId, path)
     const io = this.forIo(path, opts?.conversationId)
     try {
@@ -791,6 +863,17 @@ export class FileService {
 
   /** Page through a SQLite table for the DB preview canvas. */
   dbQuery(path: string, table: string, offset?: number, limit?: number): SqliteQueryResult {
+    const denied = this.accessError(path)
+    if (denied) {
+      return {
+        columns: [],
+        rows: [],
+        total: 0,
+        offset: offset ?? 0,
+        limit: limit ?? 100,
+        error: denied
+      }
+    }
     if (!isSqlitePath(path)) {
       return {
         columns: [],
@@ -812,6 +895,7 @@ export class FileService {
    * the system associates with it — a heavier action, but the same intent.
    */
   preview(path: string): void {
+    if (this.accessError(path)) return
     if (process.platform === 'darwin') {
       spawn('qlmanage', ['-p', path], { stdio: 'ignore', detached: true }).unref()
       return
@@ -824,6 +908,8 @@ export class FileService {
    * Returns `{ ok }` so the UI can toast — silent failures looked like a dead button.
    */
   async openWithDefault(path: string): Promise<{ ok: true } | { ok: false; error: string }> {
+    const denied = this.accessError(path)
+    if (denied) return { ok: false, error: denied }
     try {
       if (process.platform === 'darwin') {
         // `open` routes through Launch Services (DMG → DiskImageMounter, etc.).

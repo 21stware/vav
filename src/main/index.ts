@@ -163,9 +163,10 @@ import { VavPackService } from './store/VavPackService'
 import { FileSessionStore } from './store/FileSessionStore'
 import { SwarmHistoryStore } from './store/SwarmHistoryStore'
 import { FileService } from './fs/FileService'
+import { isTrustedIpcSender } from './ipc/ipcTrust'
 import { HostRegistry } from './host'
 import { openSpawn, previewSpawn, revealSpawn } from './host/hostShell'
-import { isClipPath, writeClip, writeClipBytes } from './fs/clipStore'
+import { clipRoot, isClipPath, writeClip, writeClipBytes } from './fs/clipStore'
 import { writePngToClipboard } from './clipboardImage'
 import { createScreenshotController } from './screenshot/ScreenshotSession'
 import { isFileSessionEligible } from '@shared/clipPath'
@@ -491,6 +492,10 @@ const fileService = new FileService(
   (conversationId) => hostRegistry.hostFor(conversationStore.get(conversationId)?.machineId).fs
 )
 fileService.workingCopies = workingCopyService
+fileService.grantRoot(clipRoot())
+fileService.grantRoot(join(tmpdir(), 'vav-office-convert'))
+fileService.grantRoot(join(tmpdir(), 'vav-heic-preview'))
+fileService.grantRoot(workingCopyService.storageRoot)
 setGitHostFor((cwd, conversationId) => {
   const id = conversationId || conversationIdForGitCwd(cwd)
   const machineId = id ? conversationStore.get(id)?.machineId : undefined
@@ -4171,6 +4176,7 @@ function openFilePreviewWindow(
 ): void {
   const path = previewPathKey(filePath)
   if (!path) return
+  fileService.grantPath(path)
   // Overlay = ephemeral conversation preview. File Sessions pass surface:'file'.
   if (shouldOpenAsOverlay(path, options?.surface)) {
     openAppClipWindow(path)
@@ -5852,6 +5858,7 @@ function openFromDroppedPaths(paths: string[]): void {
     try {
       if (!existsSync(p)) continue
       const full = realpathSync(p)
+      fileService.grantPath(full)
       if (statSync(full).isDirectory()) dirs.push(full)
       else files.push(full)
     } catch {
@@ -6695,6 +6702,24 @@ function appBuildNumber(): string {
   return `${y}.${md}.${patch}`
 }
 
+async function confirmRevealSecret(event: IpcMainInvokeEvent): Promise<boolean> {
+  if (isE2eRuntime()) return true
+  const parent = BrowserWindow.fromWebContents(event.sender)
+  const opts: Electron.MessageBoxOptions = {
+    type: 'warning',
+    buttons: [t('common.cancel'), t('secrets.revealConfirm')],
+    defaultId: 0,
+    cancelId: 0,
+    message: t('secrets.revealTitle'),
+    detail: t('secrets.revealDetail')
+  }
+  const result =
+    parent && !parent.isDestroyed()
+      ? await dialog.showMessageBox(parent, opts)
+      : await dialog.showMessageBox(opts)
+  return result.response === 1
+}
+
 function registerIpc(): void {
   const originalHandle = ipcMain.handle.bind(ipcMain)
   ipcMain.handle = ((
@@ -6702,6 +6727,10 @@ function registerIpc(): void {
     listener: (event: Electron.IpcMainInvokeEvent, ...args: unknown[]) => unknown
   ) =>
     originalHandle(channel, async (event, ...args) => {
+      if (!isTrustedIpcSender(event, isRendererUrl)) {
+        console.error(`[ipc] blocked untrusted sender for ${channel}`)
+        throw new Error('Blocked IPC from untrusted frame')
+      }
       try {
         return await listener(event, ...args)
       } catch (err) {
@@ -6720,6 +6749,7 @@ function registerIpc(): void {
       ? await dialog.showOpenDialog(parent, opts)
       : await dialog.showOpenDialog(opts)
     if (result.canceled) return { ok: false as const, cancelled: true }
+    for (const p of result.filePaths) fileService.grantPath(p)
     return { ok: true as const, paths: result.filePaths }
   })
   ipcMain.handle(IPC.filesCaptureScreenshot, (event) => screenshotController!.start(event))
@@ -6864,7 +6894,10 @@ function registerIpc(): void {
     return { hint: secretStore.maskedHint('api') }
   })
 
-  ipcMain.handle(IPC.settingsRevealKey, () => secretStore.get('api'))
+  ipcMain.handle(IPC.settingsRevealKey, async (event) => {
+    if (!(await confirmRevealSecret(event))) return null
+    return secretStore.get('api')
+  })
   ipcMain.handle(IPC.settingsKeyHint, () => secretStore.maskedHint('api'))
 
   ipcMain.handle(IPC.settingsSetBraveSearchKey, (_event, key: string) => {
@@ -6918,7 +6951,9 @@ function registerIpc(): void {
 
   ipcMain.handle(IPC.settingsPickDirectory, async () => {
     const result = await dialog.showOpenDialog({ properties: ['openDirectory', 'createDirectory'] })
-    return result.canceled ? null : (result.filePaths[0] ?? null)
+    const path = result.canceled ? null : (result.filePaths[0] ?? null)
+    if (path) fileService.grantPath(path)
+    return path
   })
 
   ipcMain.handle(IPC.settingsPickSurfacePattern, async (event) => {
@@ -7307,7 +7342,8 @@ return c as text`
     accountStore.setKeyStatus(id, result.ok ? 'ok' : result.authFailed ? 'invalid' : 'unknown')
     return { ok: result.ok, message: result.message, authFailed: result.authFailed }
   })
-  ipcMain.handle(IPC.accountsRevealKey, (_event, id: string) => {
+  ipcMain.handle(IPC.accountsRevealKey, async (event, id: string) => {
+    if (!(await confirmRevealSecret(event))) return null
     const account = accountStore.get(id)
     if (!account || account.kind !== 'vav_key') return null
     if (account.usesLegacyApiKey) return secretStore.get('api')
@@ -7714,6 +7750,7 @@ return c as text`
     if (conversation && !isLocalMachine(conversation.machineId)) return null
     const result = await dialog.showOpenDialog({ properties: ['openDirectory', 'createDirectory'] })
     if (result.canceled || !result.filePaths[0]) return null
+    fileService.grantPath(result.filePaths[0])
     return applyWorkingDirectory(id, result.filePaths[0], conversation?.machineId)
   })
 
@@ -8171,6 +8208,7 @@ return c as text`
         ? await dialog.showSaveDialog(window, options)
         : await dialog.showSaveDialog(options)
       if (result.canceled || !result.filePath) return { ok: false, cancelled: true }
+      fileService.grantPath(result.filePath)
       const written = await fileService.writeTextFile(result.filePath, content)
       if (!written.ok) return { ok: false, error: written.error }
       return { ok: true, path: result.filePath }
@@ -8938,6 +8976,7 @@ if (!singleInstance) {
     fileService.disposeAll()
     quotaService.stop()
     conversationStore.flush()
+    settingsStore.flushPersist()
   })
 
   app.on('will-quit', () => globalShortcut.unregisterAll())
@@ -8972,6 +9011,9 @@ if (!singleInstance) {
         // Document sandbox: preview must read the working copy when one exists.
         const mapped = workingCopyService.ioPath(requested)
         const filePath = existsSync(mapped) ? mapped : requested
+        if (!fileService.isAllowedPath(requested) && !fileService.isAllowedPath(filePath)) {
+          return new Response('Forbidden', { status: 403 })
+        }
         if (!existsSync(filePath)) {
           return new Response('Not found', { status: 404 })
         }

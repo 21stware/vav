@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import {
   ArrowUpDown,
   ChevronDown,
@@ -1039,91 +1039,20 @@ function ColumnBrowser({
                 onCancel={onCreateCancel}
               />
             )}
-            {!error &&
-              entries.map((entry) => {
-                const selected = selectedPath === entry.path
-                const open = columnPath[index] === entry.path
-                return (
-                  <div
-                    key={entry.path}
-                    data-file-path={entry.path}
-                    role="treeitem"
-                    aria-selected={selected}
-                    className={`tree-row ${entry.isDirectory ? 'dir' : 'file'}${selected ? ' selected' : ''}${open && !selected ? ' open' : ''}`}
-                    title={entry.path}
-                    onClick={(event) => {
-                      event.stopPropagation()
-                      setUiFocusScope('files')
-                      // Re-click an open folder → collapse only its deeper columns
-                      // (Finder-style), keep this folder selected.
-                      if (entry.isDirectory && open) {
-                        selectPath(activeId, entry.path, 'dir')
-                        setColumnPath(columnPath.slice(0, index))
-                        return
-                      }
-                      // Re-click the selected file → fall back to this column's dir.
-                      if (!entry.isDirectory && selected) {
-                        selectPath(activeId, dir, 'dir')
-                        setColumnPath(columnPath.slice(0, index))
-                        return
-                      }
-                      selectPath(
-                        activeId,
-                        entry.path,
-                        entry.isDirectory ? 'dir' : 'file'
-                      )
-                      if (entry.isDirectory) {
-                        setColumnPath([...columnPath.slice(0, index), entry.path])
-                      } else {
-                        setColumnPath(columnPath.slice(0, index))
-                      }
-                    }}
-                    onDoubleClick={() => {
-                      if (!entry.isDirectory) openFileInSessionPreview(entry.path)
-                    }}
-                    onContextMenu={(event) => {
-                      event.preventDefault()
-                      event.stopPropagation()
-                      selectPath(
-                        activeId,
-                        entry.path,
-                        entry.isDirectory ? 'dir' : 'file'
-                      )
-                      void showEntryMenu(entry, {
-                        onOpen,
-                        onPreview: () => openFileInSessionPreview(entry.path),
-                        position: { x: event.clientX, y: event.clientY },
-                        onMutated,
-                        onRename: () => {
-                          const next = window.prompt(t('files.renamePrompt'), entry.name)
-                          if (!next || next === entry.name) return
-                          void window.vav.files
-                            .rename(entry.path, next.trim(), activeId)
-                            .then((result) => {
-                            if (result.ok) onMutated(entry.path)
-                          })
-                        },
-                        expandAll: entry.isDirectory
-                          ? () => void expandAll(activeId, entry.path)
-                          : undefined,
-                        collapseAll: entry.isDirectory
-                          ? () => collapseAll(activeId, entry.path)
-                          : undefined
-                      })
-                    }}
-                  >
-                    {entry.isDirectory ? (
-                      <Folder size={16} strokeWidth={1.75} aria-hidden />
-                    ) : (
-                      <FileIcon size={16} strokeWidth={1.75} aria-hidden />
-                    )}
-                    <span className="tree-name">{entry.name}</span>
-                    {entry.isDirectory && (
-                      <ChevronRight size={14} strokeWidth={1.75} className="column-chevron" aria-hidden />
-                    )}
-                  </div>
-                )
-              })}
+            {!error && (
+              <VirtualColumnRows
+                entries={entries}
+                dir={dir}
+                index={index}
+                selectedPath={selectedPath}
+                columnPath={columnPath}
+                activeId={activeId}
+                setColumnPath={setColumnPath}
+                selectPath={selectPath}
+                onOpen={onOpen}
+                onMutated={onMutated}
+              />
+            )}
             {!error && !loading && entries.length === 0 && dirs?.[dir] && (
               <div className="muted tiny" style={{ padding: 8 }}>
                 {tt('files.emptyFolder')}
@@ -1132,6 +1061,148 @@ function ColumnBrowser({
           </div>
         )
       })}
+    </div>
+  )
+}
+
+const COLUMN_ROW_PX = 28
+const COLUMN_OVERSCAN = 24
+const COLUMN_VIRTUALIZE_AFTER = 80
+
+function VirtualColumnRows({
+  entries,
+  dir,
+  index,
+  selectedPath,
+  columnPath,
+  activeId,
+  setColumnPath,
+  selectPath,
+  onOpen,
+  onMutated
+}: {
+  entries: FileEntry[]
+  dir: string
+  index: number
+  selectedPath: string | null
+  columnPath: string[]
+  activeId: string
+  setColumnPath: (next: string[]) => void
+  selectPath: (id: string, path: string | null, kind?: 'file' | 'dir' | 'clear') => void
+  onOpen: (path: string) => void
+  onMutated: (path: string) => void
+}): React.JSX.Element {
+  const t = useT()
+  const hostRef = useRef<HTMLDivElement>(null)
+  const [range, setRange] = useState({ start: 0, end: entries.length })
+  const virtualize = entries.length > COLUMN_VIRTUALIZE_AFTER
+
+  const recompute = useCallback(() => {
+    const host = hostRef.current?.closest('.file-column') as HTMLElement | null
+    if (!host || !virtualize) {
+      setRange({ start: 0, end: entries.length })
+      return
+    }
+    const start = Math.max(0, Math.floor(host.scrollTop / COLUMN_ROW_PX) - COLUMN_OVERSCAN)
+    const visible = Math.ceil(host.clientHeight / COLUMN_ROW_PX) + COLUMN_OVERSCAN * 2
+    const end = Math.min(entries.length, start + Math.max(visible, 1))
+    setRange((prev) => (prev.start === start && prev.end === end ? prev : { start, end }))
+  }, [entries.length, virtualize])
+
+  useLayoutEffect(() => {
+    recompute()
+    const host = hostRef.current?.closest('.file-column') as HTMLElement | null
+    if (!host || !virtualize) return
+    host.addEventListener('scroll', recompute, { passive: true })
+    const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(recompute) : null
+    ro?.observe(host)
+    return () => {
+      host.removeEventListener('scroll', recompute)
+      ro?.disconnect()
+    }
+  }, [recompute, virtualize])
+
+  const start = virtualize ? range.start : 0
+  const end = virtualize ? range.end : entries.length
+  const slice = entries.slice(start, end)
+
+  return (
+    <div ref={hostRef}>
+      {virtualize && start > 0 ? (
+        <div style={{ height: start * COLUMN_ROW_PX }} aria-hidden />
+      ) : null}
+      {slice.map((entry) => {
+        const selected = selectedPath === entry.path
+        const open = columnPath[index] === entry.path
+        return (
+          <div
+            key={entry.path}
+            data-file-path={entry.path}
+            role="treeitem"
+            aria-selected={selected}
+            className={`tree-row ${entry.isDirectory ? 'dir' : 'file'}${selected ? ' selected' : ''}${open && !selected ? ' open' : ''}`}
+            title={entry.path}
+            onClick={(event) => {
+              event.stopPropagation()
+              setUiFocusScope('files')
+              if (entry.isDirectory && open) {
+                selectPath(activeId, entry.path, 'dir')
+                setColumnPath(columnPath.slice(0, index))
+                return
+              }
+              if (!entry.isDirectory && selected) {
+                selectPath(activeId, dir, 'dir')
+                setColumnPath(columnPath.slice(0, index))
+                return
+              }
+              selectPath(activeId, entry.path, entry.isDirectory ? 'dir' : 'file')
+              if (entry.isDirectory) {
+                setColumnPath([...columnPath.slice(0, index), entry.path])
+              } else {
+                setColumnPath(columnPath.slice(0, index))
+              }
+            }}
+            onDoubleClick={() => {
+              if (!entry.isDirectory) openFileInSessionPreview(entry.path)
+            }}
+            onContextMenu={(event) => {
+              event.preventDefault()
+              event.stopPropagation()
+              selectPath(activeId, entry.path, entry.isDirectory ? 'dir' : 'file')
+              void showEntryMenu(entry, {
+                onOpen,
+                onPreview: () => openFileInSessionPreview(entry.path),
+                position: { x: event.clientX, y: event.clientY },
+                onMutated,
+                onRename: () => {
+                  const next = window.prompt(t('files.renamePrompt'), entry.name)
+                  if (!next || next === entry.name) return
+                  void window.vav.files.rename(entry.path, next.trim(), activeId).then((result) => {
+                    if (result.ok) onMutated(entry.path)
+                  })
+                },
+                expandAll: entry.isDirectory ? () => void expandAll(activeId, entry.path) : undefined,
+                collapseAll: entry.isDirectory
+                  ? () => collapseAll(activeId, entry.path)
+                  : undefined
+              })
+            }}
+          >
+            {entry.isDirectory ? (
+              <Folder size={16} strokeWidth={1.75} aria-hidden />
+            ) : (
+              <FileIcon size={16} strokeWidth={1.75} aria-hidden />
+            )}
+            <span className="tree-name">{entry.name}</span>
+            {entry.isDirectory && (
+              <ChevronRight size={14} strokeWidth={1.75} className="column-chevron" aria-hidden />
+            )}
+          </div>
+        )
+      })}
+      {virtualize && end < entries.length ? (
+        <div style={{ height: (entries.length - end) * COLUMN_ROW_PX }} aria-hidden />
+      ) : null}
     </div>
   )
 }

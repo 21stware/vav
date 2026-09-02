@@ -216,8 +216,10 @@ html[data-summoning] .tools-body {
 
 @media (prefers-reduced-motion: reduce) {
   * {
-    animation-duration: 200ms !important;
+    animation-duration: 0.01ms !important;
     animation-delay: 0ms !important;
+    transition-duration: 0.01ms !important;
+    transition-delay: 0ms !important;
     scroll-behavior: auto !important;
   }
   .empty-state > *,
@@ -7794,6 +7796,50 @@ mark {
   display: flex;
   flex-direction: column;
   align-items: center;
+}
+
+.first-run-checklist {
+  margin-top: 18px;
+  width: min(320px, 100%);
+  text-align: left;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.first-run-checklist-title {
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 8px;
+}
+
+.first-run-checklist ul {
+  list-style: none;
+  margin: 0 0 10px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.first-run-checklist li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.first-run-checklist li.is-done {
+  color: var(--text-tertiary);
+}
+
+.first-run-checklist .linkish {
+  background: none;
+  border: 0;
+  padding: 0;
+  color: var(--accent-text);
+  cursor: pointer;
+  font: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
 }
 
 /* Nothing to see until the run is armed: the window may still be off-screen, or

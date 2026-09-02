@@ -64,7 +64,8 @@ export function AppToast(): React.JSX.Element | null {
     <div
       className={`app-toast kind-${visible.kind}`}
       data-leaving={leaving || undefined}
-      role="status"
+      role={visible.kind === 'error' ? 'alert' : 'status'}
+      aria-live={visible.kind === 'error' ? 'assertive' : 'polite'}
     >
       <span className="app-toast-icon" aria-hidden>
         <Icon size={16} strokeWidth={2} />

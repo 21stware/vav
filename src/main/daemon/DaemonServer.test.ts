@@ -129,7 +129,7 @@ describe('daemon loopback', () => {
     const dir = await mkdtemp(join(tmpdir(), 'vav-daemon-'))
     const { server, client, remote } = await startPair(dir)
     try {
-      const proc = remote.pty.spawn('sh', ['-c', 'printf pty-ok'], {
+      const proc = remote.pty.spawn(process.execPath, ['-e', 'process.stdout.write("pty-ok")'], {
         cols: 80,
         rows: 24,
         cwd: dir

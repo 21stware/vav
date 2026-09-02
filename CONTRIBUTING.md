@@ -18,7 +18,8 @@ Do not add new tests only to a hardcoded list — the runner globs.
 - Keep changes reviewable. The main process (`src/main/index.ts`) and renderer stores are large; prefer extracting a helper + test over growing them.
 - Pair a behavior change with a unit test when the logic is pure (protocol, i18n matching, hydration, buffers).
 - `npm test` and `npm run typecheck` must stay green.
+- Add a line under **Unreleased** in [CHANGELOG.md](CHANGELOG.md) for user-facing changes.
 
 ## Release
 
-Tags `v*` drive `.github/workflows/release.yml` (signed macOS, unsigned Windows, optional npm publish of `vavd`). Bump `package.json` and `packages/vavd` together. There is no automated changelog yet — summarize user-facing changes in the GitHub Release notes.
+See [RELEASING.md](RELEASING.md). Tags `v*` drive `.github/workflows/release.yml` (signed macOS, unsigned Windows, optional npm publish of `vavd`). Bump `package.json` and `packages/vavd` together.

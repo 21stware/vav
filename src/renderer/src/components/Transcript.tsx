@@ -32,6 +32,7 @@ import { Button, EmptyState } from './ui'
 import { AgentBrandMark } from './AgentBrandMark'
 import { SessionWorkspaceChrome } from './SessionWorkspaceChrome'
 import { EmptyQuotaUsage } from './EmptyQuotaUsage'
+import { FirstRunChecklist } from './FirstRunChecklist'
 import { useWorkspaceSwitchMenu } from '../lib/workspaceSwitchMenu'
 import { useT } from '../i18n/useT'
 
@@ -674,7 +675,15 @@ export function Transcript({
           onPassScroll={onRailScroll}
         />
       )}
-      <div className="transcript" ref={scrollRef} onScroll={onScroll} onWheel={onWheel}>
+      <div
+        className="transcript"
+        ref={scrollRef}
+        onScroll={onScroll}
+        onWheel={onWheel}
+        role="log"
+        aria-live="polite"
+        aria-relevant="additions"
+      >
         <div
           ref={contentRef}
           className={`transcript-inner${branchSwapActive ? ' is-branch-swap' : ''}`}
@@ -721,6 +730,7 @@ export function Transcript({
                   onClick={() => openSettings('agents', 'vav')}
                 />
               ) : null}
+              {activeId ? <FirstRunChecklist conversationId={activeId} /> : null}
             </EmptyState>
           )}
 
