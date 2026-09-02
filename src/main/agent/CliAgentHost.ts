@@ -58,6 +58,7 @@ import type { HostRegistry } from '../host'
 import {
   extractUrlFromInput,
   findChecklistIndex,
+  cliTurnParentId,
   turnHasAnswerContent as turnBlocksHaveAnswer,
   turnHasIncompleteWork as turnBlocksHaveIncompleteWork
 } from './cliHostTurn'
@@ -690,14 +691,8 @@ export class CliAgentHost {
     if (this.historyHandoff.has(conversationId)) {
       turn.replay.open()
     }
-    // For regenerate we mint a fresh assistant id
-    if (!conversation.messages.some((m) => m.id === messageId && m.role === 'user')) {
-      turn.messageId = randomUUID()
-    } else {
-      // Normal send: assistant is a new node under the user message
-      turn.parentId = messageId
-      turn.messageId = randomUUID()
-    }
+    turn.parentId = cliTurnParentId(messageId, turn.parentId, conversation.messages)
+    turn.messageId = randomUUID()
 
     this.turns.set(conversationId, turn)
     this.deps.emit({ type: 'start', conversationId })

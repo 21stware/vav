@@ -862,6 +862,23 @@ export function primaryQuotaPercent(
   return window ? window.usedPercent : null
 }
 
+/** Map a session token snapshot onto the monthly account-usage delta. */
+export function usageDeltaFromSnapshot(snap: {
+  newInputTokens?: number
+  outputTokens?: number
+  cacheReadTokens?: number
+  cacheWriteTokens?: number
+  estimatedCost?: number
+}): Partial<AccountMonthUsage> {
+  return {
+    inputTokens: snap.newInputTokens ?? 0,
+    outputTokens: snap.outputTokens ?? 0,
+    cacheReadTokens: snap.cacheReadTokens ?? 0,
+    cacheWriteTokens: snap.cacheWriteTokens ?? 0,
+    estimatedCostUsd: snap.estimatedCost ?? 0
+  }
+}
+
 /** Rebuild monthly totals from retained session snapshots (one add per turn). */
 export function usageFromSnapshots(
   snapshots: Array<{
@@ -880,13 +897,7 @@ export function usageFromSnapshots(
     if (!id) continue
     const month = yearMonthOf(snap.timestamp)
     const bucket = usage[id] ?? (usage[id] = {})
-    bucket[month] = addUsage(bucket[month] ?? emptyMonthUsage(), {
-      inputTokens: snap.newInputTokens ?? 0,
-      outputTokens: snap.outputTokens ?? 0,
-      cacheReadTokens: snap.cacheReadTokens ?? 0,
-      cacheWriteTokens: snap.cacheWriteTokens ?? 0,
-      estimatedCostUsd: snap.estimatedCost ?? 0
-    })
+    bucket[month] = addUsage(bucket[month] ?? emptyMonthUsage(), usageDeltaFromSnapshot(snap))
   }
   return usage
 }

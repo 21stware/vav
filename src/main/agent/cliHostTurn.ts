@@ -25,6 +25,21 @@ export function turnHasIncompleteWork(blocks: TurnContentBlock[]): boolean {
   )
 }
 
+/**
+ * Normal send: assistant is a child of the user message.
+ * Regenerate / retry: keep the existing parent and mint a new assistant id.
+ */
+export function cliTurnParentId(
+  messageId: string,
+  currentParentId: string | null,
+  messages: Array<{ id: string; role: string }>
+): string | null {
+  if (messages.some((message) => message.id === messageId && message.role === 'user')) {
+    return messageId
+  }
+  return currentParentId
+}
+
 export function findChecklistIndex(blocks: MessageBlock[]): number | null {
   for (let i = 0; i < blocks.length; i++) {
     const block = blocks[i]

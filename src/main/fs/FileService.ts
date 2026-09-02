@@ -59,6 +59,7 @@ import {
   inspectCaughtError,
   inspectErrorOnBase,
   inspectFileBase,
+  inspectWithError,
   legacyDocInspect,
   legacyPptInspect,
   officeFirstPaintInspect,
@@ -549,7 +550,7 @@ export class FileService {
 
       if (kind === 'text' || kind === 'csv' || kind === 'html' || kind === 'html-clip') {
         const win = await this.readTextWindow(path, { startByte: 0, maxBytes: TEXT_WINDOW_BYTES })
-        if (win.error) return { ...base, error: win.error }
+        if (win.error) return inspectWithError(base, win.error)
         if (kind === 'csv') this.scheduleIndex(path)
         // truncated/textWindow are for silent progressive fill in the renderer —
         // never surface a product "file too large" or "load more" affordance.

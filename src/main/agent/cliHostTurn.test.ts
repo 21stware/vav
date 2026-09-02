@@ -5,6 +5,7 @@ import { en, zhCN } from '../../shared/i18n/index.ts'
 import {
   extractUrlFromInput,
   findChecklistIndex,
+  cliTurnParentId,
   isAskCancelText,
   isPlanDocRejectText,
   turnHasAnswerContent,
@@ -32,6 +33,12 @@ describe('cliHostTurn', () => {
     assert.equal(turnHasAnswerContent([{ kind: 'toolCall' }]), true)
     assert.equal(turnHasIncompleteWork([{ kind: 'toolCall', status: 'executing' }]), true)
     assert.equal(turnHasIncompleteWork([{ kind: 'toolCall', status: 'completed' }]), false)
+  })
+
+  it('reparents a user send and keeps the parent on regenerate', () => {
+    const messages = [{ id: 'u1', role: 'user' }, { id: 'a1', role: 'assistant' }]
+    assert.equal(cliTurnParentId('u1', 'leaf', messages), 'u1')
+    assert.equal(cliTurnParentId('a1', 'u1', messages), 'u1')
   })
 
   it('finds the plan checklist and a URL on a tool_call', () => {

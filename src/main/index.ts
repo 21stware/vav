@@ -126,6 +126,7 @@ import {
   resolveSessionAccountId,
   sessionShowsHostQuota,
   conversationQuotaAuthView,
+  usageDeltaFromSnapshot,
   workspaceKeyOf,
   workspaceLabelOf
 } from '@shared/accounts'
@@ -167,7 +168,7 @@ import { providerAccountViewOf } from './window/providerAccountView'
 import { findSwarmHistoryItem as findItemInSwarmHistory } from './window/swarmHistoryFind'
 import { machineIdFromRendererUrl } from './window/machineFromUrl'
 import { collectPreferredModelHosts, contextWindowForModelId, conversationModelHealPatch } from './agent/modelContext'
-import { activeTurnStatusFromPhase, awaitingNotifyKind } from './agent/agentEventNotify'
+import { activeTurnStatusFromPhase, awaitingNotifyKind, awaitingNotifyTitle, turnCompleteNotifyAction } from './agent/agentEventNotify'
 import { dialogConfirmOptions, revealSecretBoxOptions } from './ipc/dialogOptions'
 import { showParentedMessageBox, windowFromSender } from './ipc/nativeDialog'
 import { conversationIdForWorkdirs } from './fs/conversationPath'
@@ -1148,27 +1149,15 @@ function handleAgentEvent(event: TurnEvent): void {
     refreshTraySessions()
     const body = event.block.summary || event.block.tool
     const kind = awaitingNotifyKind(event.block.tool, !!event.block.choices?.length)
-    if (kind === 'ask') {
+    if (kind) {
       notifications.alertUser(
-        'ask',
+        kind,
         event.conversationId,
-        t('notify.awaitingAnswer', { title }),
-        body,
-        event.toolCallId
-      )
-    } else if (kind === 'request') {
-      notifications.alertUser(
-        'request',
-        event.conversationId,
-        t('notify.requestConfirm', { title }),
-        body,
-        event.toolCallId
-      )
-    } else if (kind === 'approval') {
-      notifications.alertUser(
-        'approval',
-        event.conversationId,
-        t('notify.awaitingApproval', { title }),
+        awaitingNotifyTitle(kind, {
+          ask: t('notify.awaitingAnswer', { title }),
+          request: t('notify.requestConfirm', { title }),
+          approval: t('notify.awaitingApproval', { title })
+        }),
         body,
         event.toolCallId
       )
@@ -1178,13 +1167,11 @@ function handleAgentEvent(event: TurnEvent): void {
   if (event.type === 'usage') {
     const latest = conversation?.tokenHistory?.at(-1)
     if (event.newSnapshot && latest?.accountId) {
-      accountStore.recordUsage(latest.accountId, {
-        inputTokens: latest.newInputTokens,
-        outputTokens: latest.outputTokens,
-        cacheReadTokens: latest.cacheReadTokens,
-        cacheWriteTokens: latest.cacheWriteTokens,
-        estimatedCostUsd: latest.estimatedCost
-      }, latest.timestamp)
+      accountStore.recordUsage(
+        latest.accountId,
+        usageDeltaFromSnapshot(latest),
+        latest.timestamp
+      )
       if (conversation?.model) {
         accountStore.update(latest.accountId, { lastModel: conversation.model })
       }
@@ -1199,7 +1186,7 @@ function handleAgentEvent(event: TurnEvent): void {
     if (pane) markResultUnseen(pane)
     else refreshTraySessions()
     pushTokenUsageIfOpen(event.conversationId)
-    if (!event.cancelled && !event.error) {
+    if (turnCompleteNotifyAction(event.cancelled, event.error) === 'complete') {
       const body = event.message.content || t('notify.turnComplete')
       notifications.alertUser('turn-complete', event.conversationId, title, body)
     } else {

@@ -35,12 +35,16 @@ export function inspectFileBase(opts: {
   }
 }
 
+export function inspectWithError(base: FileInspectResult, error: string): FileInspectResult {
+  return { ...base, error }
+}
+
 export function inspectErrorOnBase(
   base: FileInspectResult,
   err: unknown,
   fallback?: string
 ): FileInspectResult {
-  return { ...base, error: (err as Error).message || fallback || 'error' }
+  return inspectWithError(base, (err as Error).message || fallback || 'error')
 }
 
 export function inspectCaughtError(path: string, name: string, err: unknown): FileInspectResult {

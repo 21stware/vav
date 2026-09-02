@@ -25,3 +25,21 @@ export function awaitingNotifyKind(
   if (hasChoices) return 'approval'
   return null
 }
+
+/** OS alert title for a parked tool. Caller injects already-translated strings. */
+export function awaitingNotifyTitle(
+  kind: 'ask' | 'approval' | 'request',
+  titles: { ask: string; request: string; approval: string }
+): string {
+  if (kind === 'ask') return titles.ask
+  if (kind === 'request') return titles.request
+  return titles.approval
+}
+
+/** Successful turns ping Dock; cancelled/errored turns only drop the badge. */
+export function turnCompleteNotifyAction(
+  cancelled: boolean | undefined,
+  error?: string | null
+): 'complete' | 'acknowledge' {
+  return !cancelled && !error ? 'complete' : 'acknowledge'
+}

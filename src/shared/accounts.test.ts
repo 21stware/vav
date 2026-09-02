@@ -24,6 +24,7 @@ import {
   sessionUsageRowsOf,
   usageRowsOf,
   usageFromSnapshots,
+  usageDeltaFromSnapshot,
   usageTone,
   applyExclusiveOAuthSignIn,
   accountRowUsage,
@@ -427,6 +428,13 @@ describe('accounts helpers', () => {
       { accountId: 'b', timestamp: new Date(2026, 7, 11).getTime(), newInputTokens: 4 }
     ])
     assert.equal(usage.a?.['2026-08']?.inputTokens, 20)
+    assert.deepEqual(usageDeltaFromSnapshot({ newInputTokens: 3, estimatedCost: 0.2 }), {
+      inputTokens: 3,
+      outputTokens: 0,
+      cacheReadTokens: 0,
+      cacheWriteTokens: 0,
+      estimatedCostUsd: 0.2
+    })
     assert.equal(usage.a?.['2026-08']?.outputTokens, 10)
     assert.equal(usage.b?.['2026-08']?.inputTokens, 4)
   })

@@ -8,6 +8,7 @@ import {
   inspectCaughtError,
   inspectErrorOnBase,
   inspectFileBase,
+  inspectWithError,
   LEGACY_PPT_WARNING,
   legacyBinaryInspect,
   legacyDocInspect,
@@ -58,6 +59,7 @@ describe('fileInspectShape', () => {
     assert.equal(inspectErrorOnBase(base, new Error('disk'), 'fallback').error, 'disk')
     assert.equal(inspectErrorOnBase(base, new Error(''), 'fallback').error, 'fallback')
     assert.equal(inspectErrorOnBase(base, {}).error, 'error')
+    assert.equal(inspectWithError(base, 'denied').error, 'denied')
   })
 
   it('windows text, sqlite tables, HEIC sidecars, and binary fallbacks', () => {
