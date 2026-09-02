@@ -82,6 +82,7 @@ import { cursorLockedFamilyThinkingPatch, nextAllowedThinkingLevel } from './thi
 import { estimatedContextFill } from './contextFill'
 import { stampReasoningDurations } from './reasoningStamp'
 import { userTurnMessage } from './agentMessage'
+import { allocateCliDeltaSlot } from './cliDelta'
 import {
   applyCliCancelQuota,
   clearCliTurnDraft,
@@ -1167,26 +1168,7 @@ export class CliAgentHost {
     text: string
   ): void {
     if (!text) return
-    let index = kind === 'text' ? turn.textIndex : turn.reasoningIndex
-    if (index == null) {
-      if (kind === 'text') this.sealOpenReasoning(turn)
-      index = turn.blocks.length
-      turn.blocks.push(kind === 'text' ? { kind: 'text', text: '' } : { kind: 'reasoning', text: '' })
-      if (kind === 'text') turn.textIndex = index
-      else {
-        turn.reasoningIndex = index
-        turn.reasoningStartedAt.set(index, Date.now())
-      }
-    }
-    // Opening a text block after tools — start a new slot
-    if (kind === 'text' && turn.toolCount > 0) {
-      const last = turn.blocks[turn.blocks.length - 1]
-      if (last && last.kind !== 'text') {
-        index = turn.blocks.length
-        turn.blocks.push({ kind: 'text', text: '' })
-        turn.textIndex = index
-      }
-    }
+    const index = allocateCliDeltaSlot(turn, kind, () => this.sealOpenReasoning(turn))
     const buf = (turn.buffers.get(index) ?? '') + text
     turn.buffers.set(index, buf)
     this.setPhase(conversationId, turn, kind === 'reasoning' ? 'thinking' : 'outputting')

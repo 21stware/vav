@@ -18,3 +18,14 @@ export function isDisposableEphemeralSession(
     (!!stale.agentBinaryName && stale.agentBinaryName !== 'vav') || !!stale.cliHost
   return stale.messages.length === 0 && !agentActive && !hasPty
 }
+
+/** Companion windows that still exist — main UI must not dual-attach PTYs. */
+export function liveDetachedConversationIds(
+  entries: Iterable<[string, { isDestroyed: () => boolean } | null | undefined]>
+): string[] {
+  const ids: string[] = []
+  for (const [id, win] of entries) {
+    if (win && !win.isDestroyed()) ids.push(id)
+  }
+  return ids
+}

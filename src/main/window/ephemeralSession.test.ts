@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import { isDisposableEphemeralSession } from './ephemeralSession.ts'
+import { isDisposableEphemeralSession, liveDetachedConversationIds } from './ephemeralSession.ts'
 
 function stale(
   partial: {
@@ -28,5 +28,20 @@ describe('isDisposableEphemeralSession', () => {
     assert.equal(isDisposableEphemeralSession(stale({ cliHost: 'cursor' }), false), false)
     assert.equal(isDisposableEphemeralSession(stale({ agentBinaryName: 'claude' }), false), false)
     assert.equal(isDisposableEphemeralSession(stale({ agentBinaryName: 'vav' }), true), false)
+  })
+})
+
+describe('liveDetachedConversationIds', () => {
+  it('keeps live windows and skips destroyed or missing ones', () => {
+    const win = (destroyed: boolean) => ({ isDestroyed: () => destroyed })
+    assert.deepEqual(
+      liveDetachedConversationIds([
+        ['a', win(false)],
+        ['b', win(true)],
+        ['c', null],
+        ['d', win(false)]
+      ]),
+      ['a', 'd']
+    )
   })
 })

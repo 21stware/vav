@@ -216,7 +216,7 @@ import { overlayCascadeOrigin, overlayFit, placeDetachedBounds } from './window/
 import { isPreviewableColdOpenPath as previewableColdOpenPath } from './window/coldOpen'
 import { appZOrderWindowIds, windowIsInPlay as windowIsInPlayOf } from './window/windowZOrder'
 import { replaceLiveWarmPool, shouldDestroyParkedWarmShell, takeReadyWarmShell, waitForReadyWarmShell } from './window/warmShell'
-import { isDisposableEphemeralSession } from './window/ephemeralSession'
+import { isDisposableEphemeralSession, liveDetachedConversationIds } from './window/ephemeralSession'
 import {
   resolveContextTokens,
   tokenUsageAccountRowsOf,
@@ -2068,11 +2068,7 @@ function publishConversations(): void {
 
 /** Conversation ids with a live companion window — main UI must not dual-attach PTYs. */
 function listDetachedConversationIds(): string[] {
-  const ids: string[] = []
-  for (const [id, win] of detachedWindows) {
-    if (win && !win.isDestroyed()) ids.push(id)
-  }
-  return ids
+  return liveDetachedConversationIds(detachedWindows)
 }
 
 function publishDetachedSessions(): void {

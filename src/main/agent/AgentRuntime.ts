@@ -40,6 +40,7 @@ import {
   pickToolAnswerRoute,
   shouldPersistAssistantTurn,
   skipStableToolcallDelta,
+  streamSlotKey,
   runtimeTurnStatus
 } from './agentTurnFinish'
 import { fileReadOnlySwitchBlock, resolveGatedToolParams } from './fileEditLock'
@@ -899,7 +900,7 @@ export class AgentRuntime {
       }
 
       case 'thinking_end':
-        this.sealReasoning(turn, turn.slots.get(`${turn.llmTurn}:${event.contentIndex}`))
+        this.sealReasoning(turn, turn.slots.get(streamSlotKey(turn.llmTurn, event.contentIndex)))
         break
 
       case 'toolcall_start':
@@ -916,7 +917,7 @@ export class AgentRuntime {
 
         const args = (call.arguments ?? {}) as Record<string, unknown>
         const summary = summarizeToolInput(call.name as ToolName, args)
-        const existingSlot = turn.slots.get(`${turn.llmTurn}:${event.contentIndex}`)
+        const existingSlot = turn.slots.get(streamSlotKey(turn.llmTurn, event.contentIndex))
         const prev =
           existingSlot !== undefined && turn.blocks[existingSlot]?.kind === 'toolCall'
             ? (turn.blocks[existingSlot] as ToolCallBlock)
