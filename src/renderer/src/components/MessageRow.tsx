@@ -419,6 +419,7 @@ export const MessageRow = memo(function MessageRow({
                 title={t('message.retry')}
                 disabled={busy}
                 ack="spin"
+                testId="message-retry"
                 onClick={() => onRegenerate(message.id)}
               />
             )}

@@ -328,7 +328,10 @@ export function wireAcp(
     })
     const modelsField = created.models
     const listed = parseAcpAvailableModels(modelsField)
-    if (listed.length) availableModels = listed
+    if (listed.length) {
+      availableModels = listed
+      rejectedModels.clear()
+    }
     publishAdvertisedThinkingLevels()
     publishModelContextSize(
       asString(dig(created, 'models.currentModelId')) ||
@@ -345,7 +348,8 @@ export function wireAcp(
   }
 
   const applyWantedModel = async (): Promise<void> => {
-    if (!sessionId || !wantedModel) return
+    if (disposed || !sessionId || !wantedModel) return
+    rejectedModels.clear()
     const allowed = sessionState.thinkingLevels
     const thinking =
       wantedThinking && allowed?.length
@@ -360,11 +364,13 @@ export function wireAcp(
       if (rejectedModels.has(modelId)) continue
       try {
         await request('session/set_model', { sessionId, modelId })
+        if (disposed) return
         publishModelContextSize(modelId)
         const applied = prefsFromCursorModelId(modelId)
         emit({ type: 'model-applied', modelId, ...applied })
         return
       } catch {
+        if (disposed) return
         rejectedModels.add(modelId)
       }
     }
@@ -746,6 +752,9 @@ export function wireAcp(
       if (opts.fast !== undefined) wantedFast = opts.fast
       if (opts.model != null) publishAdvertisedThinkingLevels()
       if (opts.model != null || opts.thinkingLevel !== undefined || opts.fast !== undefined) {
+        // A previous overlay may have been rejected before availableModels
+        // arrived, or before the user flipped Fast. Retry the current chips.
+        rejectedModels.clear()
         void queueApplyWantedModel()
       }
       if (opts.mode && sessionId) {

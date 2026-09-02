@@ -17,6 +17,10 @@ import type {
 } from '@shared/types'
 import { parseThinkingLevel } from '@shared/thinkingLevel'
 import {
+  cursorFamilyAllowsThinkingOverlay,
+  cursorModelFamilyId
+} from '@shared/cursorModel'
+import {
   cursorAuthIdentity,
   isStructuredCliHost,
   transportForCliHost,
@@ -244,7 +248,7 @@ export interface CliAgentHostDeps {
   /** Lookup for the machine a conversation's agent process should spawn on. */
   hosts?: HostRegistry
   emit: (event: TurnEvent) => void
-  /** Sidebar / composer meta after the host heals thinking or fast. */
+  /** Sidebar / composer meta after the host heals locked thinking. */
   publish?: () => void
   /** Sandbox copy → user-visible path (for streaming drafts). */
   logicalPath?: (path: string) => string
@@ -752,6 +756,10 @@ export class CliAgentHost {
         return
       }
       runtime.lastTouch = Date.now()
+      const latest = this.deps.conversations.get(conversationId)
+      // Send and retry both pin the chips as they are now, not the model
+      // the native session was spawned with.
+      if (latest) this.flushModel(conversationId, latest.model ?? '')
       const handed = this.consumeHistoryHandoff(conversationId, turn.parentId)
       if (handed !== prompt) {
         turn.prompt = handed
@@ -2310,25 +2318,22 @@ export class CliAgentHost {
   }
 
   /**
-   * Cursor ACP may reject an overlaid thinking / fast id and land on the
-   * family's advertised default. Heal the chips to what actually applied.
+   * Locked Cursor families (Kimi / GPT) advertise a single thinking level.
+   * Overlay-capable families keep the session-run chips: Fast / thinking
+   * are the current request, not whatever the listed default baked in.
    */
   private syncAppliedRunPrefs(
     conversationId: string,
     event: Extract<DriverEvent, { type: 'model-applied' }>
   ): void {
     const conversation = this.deps.conversations.get(conversationId)
-    if (!conversation) return
-    let changed = false
+    if (!conversation || conversation.cliHost !== 'cursor') return
+    const family = cursorModelFamilyId(conversation.model ?? '')
+    if (!family || cursorFamilyAllowsThinkingOverlay(family)) return
     if (event.thinkingLevel && event.thinkingLevel !== conversation.thinkingLevel) {
       this.deps.conversations.setThinkingLevel(conversationId, event.thinkingLevel)
-      changed = true
+      this.deps.publish?.()
     }
-    if (typeof event.fast === 'boolean' && event.fast !== (conversation.fast === true)) {
-      this.deps.conversations.setFast(conversationId, event.fast)
-      changed = true
-    }
-    if (changed) this.deps.publish?.()
   }
 
   private composePrompt(

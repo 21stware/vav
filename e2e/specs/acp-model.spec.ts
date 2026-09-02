@@ -129,3 +129,82 @@ test('thinking level and fast overlay the pinned ACP model', async () => {
     await harness.dispose()
   }
 })
+
+test('send and retry use the current Fast chip, not the listed default', async () => {
+  const harness = await launchVav({ liveAcp: true })
+  try {
+    const { page, acpModelLog } = harness
+    await page.locator('[data-testid="composer-input"]').fill('hello')
+    await page.locator('[data-testid="composer-send"]').click()
+    await expect(page.locator('[data-testid="message-assistant"]')).toContainText('e2e acp reply', {
+      timeout: 20_000
+    })
+
+    const sessionId = await page.evaluate(async (id) => {
+      const conversation = await window.vav.conversations.get(id)
+      return conversation?.cliResumeCursor && 'sessionId' in conversation.cliResumeCursor
+        ? conversation.cliResumeCursor.sessionId
+        : null
+    }, E2E_SESSION_ID)
+    expect(sessionId).toBeTruthy()
+    await expect
+      .poll(() => lastOk(readModelLog(acpModelLog), sessionId!)?.modelId)
+      .toBe('grok-4.6[effort=high,fast=false]')
+
+    await page.evaluate(async (id) => {
+      await window.vav.conversations.setFast(id, true)
+    }, E2E_SESSION_ID)
+    await expect(page.locator('[data-testid="session-run-controls"]')).toHaveAttribute(
+      'data-fast',
+      'true'
+    )
+
+    await page.locator('[data-testid="composer-input"]').fill('hello fast')
+    await expect(page.locator('[data-testid="composer-send"]')).toBeEnabled()
+    await page.locator('[data-testid="composer-send"]').click()
+    await expect(page.locator('[data-testid="message-assistant"]').last()).toContainText(
+      'e2e acp reply',
+      { timeout: 20_000 }
+    )
+    await expect
+      .poll(() => lastOk(readModelLog(acpModelLog), sessionId!)?.modelId)
+      .toBe('grok-4.6[effort=high,fast=true]')
+    await expect(page.locator('[data-testid="session-run-controls"]')).toHaveAttribute(
+      'data-fast',
+      'true'
+    )
+
+    await page.evaluate(async (id) => {
+      await window.vav.conversations.setFast(id, false)
+    }, E2E_SESSION_ID)
+    await expect(page.locator('[data-testid="session-run-controls"]')).toHaveAttribute(
+      'data-fast',
+      'false'
+    )
+
+    const user = page.locator('[data-testid="message-user"]').last()
+    await user.locator('.message-group.user').hover()
+    await user.locator('[data-testid="message-retry"]').click()
+    await expect(page.locator('[data-testid="message-assistant"]').last()).toContainText(
+      'e2e acp reply',
+      { timeout: 20_000 }
+    )
+    await expect
+      .poll(async () => {
+        const nextSession = await page.evaluate(async (id) => {
+          const conversation = await window.vav.conversations.get(id)
+          return conversation?.cliResumeCursor && 'sessionId' in conversation.cliResumeCursor
+            ? conversation.cliResumeCursor.sessionId
+            : null
+        }, E2E_SESSION_ID)
+        return nextSession ? lastOk(readModelLog(acpModelLog), nextSession)?.modelId : null
+      })
+      .toBe('grok-4.6[effort=high,fast=false]')
+    await expect(page.locator('[data-testid="session-run-controls"]')).toHaveAttribute(
+      'data-fast',
+      'false'
+    )
+  } finally {
+    await harness.dispose()
+  }
+})

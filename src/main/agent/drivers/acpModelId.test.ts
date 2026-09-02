@@ -4,6 +4,7 @@ import {
   acpBootstrapModelId,
   acpModelIdCandidates,
   advertisedThinkingLevel,
+  candidateSatisfiesPrefs,
   collapseCursorListModels,
   parseAcpAvailableModels,
   resolveAcpModelId
@@ -153,6 +154,36 @@ describe('acpModelIdCandidates', () => {
       'grok-4.6[effort=low]',
       'cursor-grok-4.6-low'
     ])
+  })
+
+  it('drops advertised defaults that contradict thinking / fast chips', () => {
+    assert.deepEqual(
+      acpModelIdCandidates('grok-4.6', CURSOR_AVAILABLE, { thinkingLevel: 'high', fast: false }),
+      ['grok-4.6[effort=high,fast=false]']
+    )
+    assert.deepEqual(
+      acpModelIdCandidates('grok-4.6', CURSOR_AVAILABLE, { thinkingLevel: 'low', fast: true }),
+      ['grok-4.6[effort=low,fast=true]']
+    )
+    assert.ok(
+      !acpModelIdCandidates('grok-4.6', CURSOR_AVAILABLE, {
+        thinkingLevel: 'high',
+        fast: false
+      }).includes('grok-4.6[effort=high,fast=true]')
+    )
+  })
+})
+
+describe('candidateSatisfiesPrefs', () => {
+  it('rejects a listed grok default when Fast is off', () => {
+    assert.equal(
+      candidateSatisfiesPrefs('grok-4.6[effort=high,fast=true]', { fast: false }),
+      false
+    )
+    assert.equal(
+      candidateSatisfiesPrefs('grok-4.6[effort=high,fast=false]', { fast: false }),
+      true
+    )
   })
 })
 
