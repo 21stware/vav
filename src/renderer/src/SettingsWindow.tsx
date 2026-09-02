@@ -13,13 +13,13 @@ import {
 } from 'lucide-react'
 import { resolveSettingsView, type SettingsView } from '@shared/ipc'
 import type { MessageKey } from '@shared/i18n'
+import { useSessionStore } from './state/sessionStore'
 import {
   installAgentModelCatalogBridge,
   installHostsBridge,
   installSettingsBridge,
-  installUpdateBridge,
-  useSessionStore
-} from './state/sessionStore'
+  installUpdateBridge
+} from './state/sessionBridges'
 import { useT } from './i18n/useT'
 import { useAppearance } from './lib/appearance'
 import { installDefaultContextMenu } from './lib/nativeMenu'

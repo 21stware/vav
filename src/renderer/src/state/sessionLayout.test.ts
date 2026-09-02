@@ -4,6 +4,7 @@ import {
   DEFAULT_SESSION_TOOLS,
   parseGlobalLayout,
   parseSessionToolsMap,
+  patchActiveTools,
   toolsFor
 } from './sessionLayout.ts'
 
@@ -17,5 +18,17 @@ describe('sessionLayout parse', () => {
     assert.equal(map.c1?.panelHeight, 400)
     assert.equal(map.c1?.panelSegment, DEFAULT_SESSION_TOOLS.panelSegment)
     assert.equal(toolsFor({ toolsLayouts: {} }, 'missing').panelHeight, 240)
+  })
+
+  it('patches the active tools layout and ignores a missing conversation', () => {
+    const empty = patchActiveTools({ activeId: '', toolsLayouts: {} }, { toolsCollapsed: false })
+    assert.deepEqual(empty, {})
+    const patched = patchActiveTools(
+      { activeId: 'c1', toolsLayouts: {} },
+      { toolsCollapsed: false, panelHeight: 300 }
+    )
+    assert.equal(patched.toolsCollapsed, false)
+    assert.equal(patched.panelHeight, 300)
+    assert.equal(patched.toolsLayouts?.c1?.panelHeight, 300)
   })
 })

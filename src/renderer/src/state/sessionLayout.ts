@@ -83,3 +83,83 @@ export function activeToolsFields(layout: SessionToolsLayout): {
     panelHeight: layout.panelHeight
   }
 }
+
+/**
+ * Companion session windows must not share tools-tray layout with the main
+ * window via localStorage (same conversationId would collapse both). Use
+ * sessionStorage in detached views — per BrowserWindow, dies with the window.
+ */
+export function isDetachedSessionWindow(): boolean {
+  try {
+    return new URLSearchParams(window.location.search).get('view') === 'session'
+  } catch {
+    return false
+  }
+}
+
+export function toolsLayoutStorage(): Storage {
+  try {
+    return isDetachedSessionWindow() ? sessionStorage : localStorage
+  } catch {
+    return localStorage
+  }
+}
+
+export function loadGlobalLayout(): GlobalLayoutPrefs {
+  try {
+    return parseGlobalLayout(localStorage.getItem(GLOBAL_LAYOUT_KEY))
+  } catch {
+    return parseGlobalLayout(null)
+  }
+}
+
+export function saveGlobalLayout(prefs: GlobalLayoutPrefs): void {
+  try {
+    localStorage.setItem(GLOBAL_LAYOUT_KEY, JSON.stringify(prefs))
+  } catch {
+    // Private mode or a full quota: layout simply falls back to defaults.
+  }
+}
+
+export function loadSessionToolsMap(): Record<string, SessionToolsLayout> {
+  try {
+    return parseSessionToolsMap(toolsLayoutStorage().getItem(SESSION_TOOLS_KEY))
+  } catch {
+    return {}
+  }
+}
+
+export function saveSessionToolsMap(map: Record<string, SessionToolsLayout>): void {
+  try {
+    toolsLayoutStorage().setItem(SESSION_TOOLS_KEY, JSON.stringify(map))
+  } catch {
+    // ignore
+  }
+}
+
+export type ToolsLayoutState = {
+  activeId: string
+  toolsLayouts: Record<string, SessionToolsLayout>
+}
+
+/** Patch active conversation's tools layout + mirror fields for selectors. */
+export function patchActiveTools(
+  state: ToolsLayoutState,
+  patch: Partial<SessionToolsLayout>
+): Partial<{
+  toolsLayouts: Record<string, SessionToolsLayout>
+  toolsCollapsed: boolean
+  panelSegment: SessionToolsLayout['panelSegment']
+  lastActiveSegment: SessionToolsLayout['lastActiveSegment']
+  panelHeight: number
+}> {
+  const id = state.activeId
+  if (!id) return {}
+  const next = { ...toolsFor(state, id), ...patch }
+  const toolsLayouts = { ...state.toolsLayouts, [id]: next }
+  saveSessionToolsMap(toolsLayouts)
+  return {
+    toolsLayouts,
+    ...activeToolsFields(next)
+  }
+}
