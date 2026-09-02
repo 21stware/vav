@@ -778,11 +778,20 @@ interface SessionState {
   useTempWorkingDirectory(id: string): Promise<void>
   setWorkingDirectory(id: string, path: string, machineId?: string | null): Promise<void>
   /** Browse a remote host's folders (native dialog cannot see that disk). */
-  remoteFolderPick: { conversationId: string; machineId: string } | null
-  openRemoteFolderPicker(conversationId: string, machineId: string): void
+  remoteFolderPick: {
+    conversationId: string
+    machineId: string
+    purpose?: 'workdir' | 'locate'
+  } | null
+  openRemoteFolderPicker(
+    conversationId: string,
+    machineId: string,
+    purpose?: 'workdir' | 'locate'
+  ): void
   closeRemoteFolderPicker(): void
   /** Move a Temporary workspace into a real directory (name + copy). */
   locateWorkspace(id: string): Promise<void>
+  finishLocateWorkspace(id: string, destinationDir: string): Promise<void>
   setSidebarQuery(query: string): void
   setPinned(id: string, pinned: boolean): Promise<void>
   /** Star / unstar a session for the sidebar Favorite filter. */
@@ -2032,8 +2041,8 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     await useWorkspaceStore.getState().setWorkingDirectory(id, path)
   },
 
-  openRemoteFolderPicker(conversationId, machineId) {
-    set({ remoteFolderPick: { conversationId, machineId } })
+  openRemoteFolderPicker(conversationId, machineId, purpose = 'workdir') {
+    set({ remoteFolderPick: { conversationId, machineId, purpose } })
   },
 
   closeRemoteFolderPicker() {
@@ -2043,14 +2052,24 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   async locateWorkspace(id) {
     if (swarmBlocksWorkdirSwitch(id, get().settings.swarmModeEnabled === true)) return
     const conversation = get().conversations.find((c) => c.id === id)
+    const machineId = normalizeMachineId(conversation?.machineId ?? get().windowMachineId)
+    if (!isLocalMachine(machineId)) {
+      get().openRemoteFolderPicker(id, machineId, 'locate')
+      return
+    }
     const destination = await window.vav.settings.pickDirectory()
     if (!destination) return
+    await get().finishLocateWorkspace(id, destination)
+  },
+
+  async finishLocateWorkspace(id, destinationDir) {
+    const conversation = get().conversations.find((c) => c.id === id)
     const defaultName = (conversation?.title || 'workspace')
       .replace(/[\\/]/g, '-')
       .slice(0, 64)
     const name = window.prompt(tt('dialog.locateWorkspaceName'), defaultName)
     if (name == null) return
-    const result = await window.vav.conversations.locateWorkspace(id, destination, name.trim())
+    const result = await window.vav.conversations.locateWorkspace(id, destinationDir, name.trim())
     if (!result.ok) {
       get().showDialog({
         title: tt('error.locateFailed'),

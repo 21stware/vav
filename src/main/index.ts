@@ -6,6 +6,7 @@ import {
   dialog,
   globalShortcut,
   ipcMain,
+  type IpcMainInvokeEvent,
   Menu,
   nativeImage,
   nativeTheme,
@@ -81,16 +82,7 @@ import { createSwarmFinishAlert } from './sound/swarmFinishAlert'
 import { RemoteControlService } from './remote/RemoteControlService'
 import { DaemonAttachService } from './daemon/DaemonAttachService'
 import { openTailcatDial } from './daemon/tailcatDial'
-import {
-  conversationOnMachine,
-  isLocalMachine,
-  LOCAL_MACHINE_ID,
-  normalizeMachineId,
-  hostJoin,
-  parseWorkspaceRefList,
-  recentsForMachine,
-  type WorkspaceHostInfo
-} from '@shared/workspaceHost'
+import { hostJoin, isLocalMachine, LOCAL_MACHINE_ID, normalizeMachineId, conversationOnMachine, parseWorkspaceRefList, recentsForMachine, type WorkspaceHostInfo } from '@shared/workspaceHost'
 import type {
   RemoteConfigure,
   RemoteControlsEvent,
@@ -172,6 +164,7 @@ import { FileSessionStore } from './store/FileSessionStore'
 import { SwarmHistoryStore } from './store/SwarmHistoryStore'
 import { FileService } from './fs/FileService'
 import { HostRegistry } from './host'
+import { openSpawn, previewSpawn, revealSpawn } from './host/hostShell'
 import { isClipPath, writeClip, writeClipBytes } from './fs/clipStore'
 import { writePngToClipboard } from './clipboardImage'
 import { createScreenshotController } from './screenshot/ScreenshotSession'
@@ -6126,6 +6119,75 @@ function conversationIdForGitCwd(cwd: string): string | undefined {
   return best?.id
 }
 
+function machineIdForShell(event: IpcMainInvokeEvent, path: string): string {
+  const fromPath = conversationIdForGitCwd(path) || fileService.conversationIdForPath(path)
+  if (fromPath) {
+    const conversation = conversationStore.get(fromPath)
+    if (conversation) return normalizeMachineId(conversation.machineId)
+  }
+  return machineIdFromContents(event.sender)
+}
+
+function spawnOnHost(
+  machineId: string,
+  file: string,
+  args: string[]
+): void {
+  const host = hostRegistry.hostFor(machineId)
+  if (!host.info.online) return
+  try {
+    const child = host.process.spawn(file, args, {
+      stdio: ['ignore', 'ignore', 'ignore'],
+      detached: true,
+      windowsHide: true
+    })
+    child.unref()
+    child.on('error', (err) => console.error('[host-shell]', err))
+  } catch (err) {
+    console.error('[host-shell]', err)
+  }
+}
+
+async function revealOnMachine(machineId: string, path: string): Promise<void> {
+  if (!path) return
+  if (isLocalMachine(machineId)) {
+    shell.showItemInFolder(path)
+    return
+  }
+  const host = hostRegistry.hostFor(machineId)
+  if (!host.info.online) return
+  let isDirectory = false
+  try {
+    isDirectory = (await host.fs.stat(path)).isDirectory()
+  } catch {
+    // still try to reveal
+  }
+  const cmd = revealSpawn(host.info.platform, path, isDirectory)
+  spawnOnHost(machineId, cmd.file, cmd.args)
+}
+
+async function openOnMachine(machineId: string, path: string): Promise<{ ok: true } | { ok: false; error: string }> {
+  if (!path) return { ok: false, error: 'empty path' }
+  if (isLocalMachine(machineId)) return fileService.openWithDefault(path)
+  const host = hostRegistry.hostFor(machineId)
+  if (!host.info.online) return { ok: false, error: `${host.info.name} is offline` }
+  const cmd = openSpawn(host.info.platform, path)
+  spawnOnHost(machineId, cmd.file, cmd.args)
+  return { ok: true }
+}
+
+async function previewOnMachine(machineId: string, path: string): Promise<void> {
+  if (!path) return
+  if (isLocalMachine(machineId)) {
+    fileService.preview(path)
+    return
+  }
+  const host = hostRegistry.hostFor(machineId)
+  if (!host.info.online) return
+  const cmd = previewSpawn(host.info.platform, path)
+  spawnOnHost(machineId, cmd.file, cmd.args)
+}
+
 function rememberWorkdir(path: string, machineId?: string | null): void {
   const id = machineId === undefined ? undefined : normalizeMachineId(machineId)
   settingsStore.rememberWorkspaceDirectory(path, tmpRootFor(id), id)
@@ -7643,22 +7705,34 @@ return c as text`
         return { ok: false as const, error: t('error.locateNoTemp') }
       }
       const source = conversation.workingDirectory
+      const machineId = conversation.machineId
+      const host = hostRegistry.hostFor(machineId)
       const safeName = name.trim().replace(/[\\/]/g, '-') || 'workspace'
-      const target = join(destinationDir, safeName)
+      const target = joinHostPath(host.info.platform, destinationDir, safeName)
       try {
-        if (existsSync(target)) {
-          return { ok: false as const, error: t('error.locateExists', { target }) }
+        if (isLocalMachine(machineId)) {
+          if (existsSync(target)) {
+            return { ok: false as const, error: t('error.locateExists', { target }) }
+          }
+          mkdirSync(destinationDir, { recursive: true })
+          renameSync(source, target)
+          try {
+            rmdirSync(dirname(source))
+            rmdirSync(dirname(dirname(source)))
+          } catch {
+            // leave leftover empty dirs
+          }
+        } else {
+          if (!host.info.online) {
+            return { ok: false as const, error: `${host.info.name} is offline` }
+          }
+          if (await host.fs.exists(target)) {
+            return { ok: false as const, error: t('error.locateExists', { target }) }
+          }
+          await host.fs.mkdir(destinationDir, { recursive: true })
+          await host.fs.rename(source, target)
         }
-        mkdirSync(destinationDir, { recursive: true })
-        renameSync(source, target)
-        // Best-effort cleanup of empty parent temp folders.
-        try {
-          rmdirSync(dirname(source))
-          rmdirSync(dirname(dirname(source)))
-        } catch {
-          // leave leftover empty dirs
-        }
-        return { ok: true as const, conversations: applyWorkingDirectory(id, target) }
+        return { ok: true as const, conversations: applyWorkingDirectory(id, target, machineId) }
       } catch (err) {
         return {
           ok: false as const,
@@ -7700,8 +7774,8 @@ return c as text`
     return { removed, conversations: conversationStore.listMeta() }
   })
 
-  ipcMain.handle(IPC.convReveal, (_event, path: string) => {
-    shell.showItemInFolder(path)
+  ipcMain.handle(IPC.convReveal, async (event, path: string) => {
+    await revealOnMachine(machineIdForShell(event, String(path || '')), String(path || ''))
   })
 
   ipcMain.handle(IPC.convCopy, (_event, text: string) => {
@@ -7929,8 +8003,12 @@ return c as text`
   ipcMain.handle(IPC.filesWorkingCopyStatus, (_event, path: string) =>
     workingCopyService.status(String(path || ''))
   )
-  ipcMain.handle(IPC.filesQuickLook, (_event, path: string) => fileService.preview(path))
-  ipcMain.handle(IPC.filesOpenWithDefault, (_event, path: string) => fileService.openWithDefault(path))
+  ipcMain.handle(IPC.filesQuickLook, async (event, path: string) => {
+    await previewOnMachine(machineIdForShell(event, String(path || '')), String(path || ''))
+  })
+  ipcMain.handle(IPC.filesOpenWithDefault, async (event, path: string) =>
+    openOnMachine(machineIdForShell(event, String(path || '')), String(path || ''))
+  )
   ipcMain.handle(IPC.gitStatus, (_event, cwd: string, conversationId?: string) =>
     getGitSnapshot(cwd, conversationId)
   )

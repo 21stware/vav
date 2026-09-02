@@ -3,7 +3,8 @@
  *
  * FileService, ACP `fs/*`, and the built-in agent's fs_* tools all go through
  * this surface so a later remote implementation can sit behind the same
- * interface. Preview / Quick Look stay on the UI machine.
+ * interface. Reveal / Quick Look / Open With on a remote host spawn the
+ * equivalent on that machine (see `hostShell`).
  */
 
 import { watch, type FSWatcher } from 'node:fs'

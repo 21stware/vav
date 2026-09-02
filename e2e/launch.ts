@@ -104,6 +104,8 @@ export type LaunchVavOptions = {
   sessionInExtraWorkspace?: boolean
   /** Extra files written into `extraWorkspace` (requires `extraWorkspace: true`). */
   extraWorkspaceFiles?: Record<string, string>
+  /** Also put the default workspace on Settings recents (with extraWorkspace). */
+  recentAlsoWorkspace?: boolean
 }
 
 export type VavHarness = {
@@ -159,7 +161,11 @@ function seedUserData(
     defaultWorkingDirectory: workspace,
     sidebarGroupingMode: 'workspace'
   }
-  if (extraWorkspace) settings.recentWorkspaceDirectories = [extraWorkspace]
+  if (extraWorkspace) {
+    settings.recentWorkspaceDirectories = options.recentAlsoWorkspace
+      ? [extraWorkspace, workspace]
+      : [extraWorkspace]
+  }
   if (options.swarmMode) settings.swarmModeEnabled = true
   if (options.remoteControlEnabled) settings.remoteControlEnabled = true
   if (options.liveAcp) {
