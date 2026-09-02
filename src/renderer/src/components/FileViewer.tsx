@@ -519,9 +519,17 @@ export function FileViewer({
     setBinaryOpenAs(null)
   }, [filePath])
 
+  const openedPathRef = useRef(filePath)
   useEffect(() => {
     let cancelled = false
     textWindowFillRef.current = null
+    // Save As / convert-Edit update local filePath without remounting. Reset
+    // the office handoff so StructuredDocView can cover first paint again.
+    if (openedPathRef.current !== filePath) {
+      openedPathRef.current = filePath
+      setStructuredPreview(null)
+      setNativeOfficeReady(false)
+    }
     const provisional = provisionalInspect(filePath)
     if (provisional) {
       setInfo((prev) =>
