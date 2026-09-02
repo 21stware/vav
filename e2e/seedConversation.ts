@@ -3,7 +3,7 @@ import { join } from 'node:path'
 export const E2E_SESSION_ID = 'e2e-session'
 export const E2E_SESSION_B_ID = 'e2e-session-b'
 
-export type SeedConversationKind = 'empty' | 'agent' | 'acp' | 'acp-live' | 'rich'
+export type SeedConversationKind = 'empty' | 'agent' | 'acp' | 'acp-goal' | 'acp-live' | 'rich'
 
 const USER_1 = 'e2e-user-1'
 const ASST_1 = 'e2e-asst-1'
@@ -228,6 +228,33 @@ export function buildAcpConversation(workspace: string, now = Date.now()) {
   return conversation
 }
 
+/** Grok session-scoped goal chrome — no live CLI host process. */
+export function buildAcpGoalConversation(workspace: string, now = Date.now()) {
+  const conversation = buildAcpConversation(workspace, now)
+  conversation.title = 'E2E Grok goal'
+  conversation.cliHost = 'grok'
+  conversation.agentBinaryName = 'grok'
+  conversation.acpSession = {
+    ...(conversation.acpSession as object),
+    commands: [
+      { name: 'goal', description: 'Set a long-running goal', hint: '<objective> | pause | resume | clear' },
+      { name: 'compact', description: 'Compact this session' }
+    ],
+    goalCapability: {
+      version: 1,
+      controlMethod: 'slash',
+      actions: ['set', 'pause', 'resume', 'clear'],
+      methodActions: []
+    },
+    goal: {
+      objective: 'Migrate the auth module to the new API',
+      status: 'active',
+      lastReason: 'writing tests'
+    }
+  }
+  return conversation
+}
+
 /** Branch, quote, subtask, cancelled, approval, request — extra agent chrome. */
 export function buildRichConversation(workspace: string, now = Date.now()) {
   const hello = join(workspace, 'hello.md')
@@ -383,6 +410,7 @@ export function buildSeededConversation(
 ) {
   if (kind === 'agent') return buildAgentConversation(workspace, now)
   if (kind === 'acp') return buildAcpConversation(workspace, now)
+  if (kind === 'acp-goal') return buildAcpGoalConversation(workspace, now)
   if (kind === 'acp-live') return buildAcpLiveConversation(workspace, now)
   if (kind === 'rich') return buildRichConversation(workspace, now)
   return buildEmptyConversation(workspace, now)

@@ -547,6 +547,139 @@ describe('wireAcp protocol', () => {
   })
 })
 
+describe('ACP goal (Grok)', () => {
+  it('reads initialize _meta.goal, idle snapshots, and _session/goal', async () => {
+    const events: DriverEvent[] = []
+    const { proc, outbound, toClient } = fakeStdio()
+    const dir = await mkdtemp(join(tmpdir(), 'vav-acp-goal-'))
+    const driver = wireAcp(
+      'grok',
+      proc,
+      { binary: 'grok', cwd: dir, approvalMode: 'edit' },
+      (event) => events.push(event)
+    )
+
+    const init = await waitFor(outbound, (msg) => msg.method === 'initialize')
+    toClient({
+      jsonrpc: '2.0',
+      id: init.id,
+      result: {
+        protocolVersion: ACP_PROTOCOL_VERSION,
+        agentCapabilities: { loadSession: true },
+        authMethods: [],
+        _meta: {
+          goal: { version: 1, controlMethod: '_session/goal', actions: ['clear'] }
+        }
+      }
+    })
+
+    const created = await waitFor(outbound, (msg) => msg.method === 'session/new')
+    toClient({
+      jsonrpc: '2.0',
+      id: created.id,
+      result: {
+        sessionId: 'sess-goal',
+        availableCommands: [{ name: 'compact' }]
+      }
+    })
+    await waitForEvent(events, (event) => event.type === 'connected')
+    const seeded = events.find(
+      (event) =>
+        event.type === 'session-state' &&
+        event.state.commands?.some((command) => command.name === 'goal')
+    )
+    assert.ok(seeded && seeded.type === 'session-state')
+    assert.equal(seeded.state.goalCapability?.controlMethod, '_session/goal')
+    assert.deepEqual(seeded.state.goalCapability?.methodActions, ['clear'])
+    assert.ok(seeded.state.goalCapability?.actions.includes('pause'))
+
+    toClient({
+      jsonrpc: '2.0',
+      method: 'session/update',
+      params: {
+        sessionId: 'sess-goal',
+        update: {
+          sessionUpdate: 'session_info_update',
+          title: 'Auth',
+          _meta: { goal: { objective: 'Migrate auth', status: 'active' } }
+        }
+      }
+    })
+    const snap = await waitForEvent(
+      events,
+      (event) => event.type === 'session-state' && event.state.goal?.status === 'active'
+    )
+    assert.ok(snap.type === 'session-state')
+    assert.equal(snap.state.goal?.objective, 'Migrate auth')
+
+    driver.applyOptions?.({ goal: { action: 'clear' } })
+    const control = await waitFor(outbound, (msg) => msg.method === '_session/goal')
+    assert.deepEqual(asRecord(control.params), { sessionId: 'sess-goal', action: 'clear' })
+    toClient({ jsonrpc: '2.0', id: control.id, result: {} })
+    await waitForEvent(
+      events,
+      (event) => event.type === 'session-state' && event.state.goal === null
+    )
+    driver.dispose()
+  })
+
+  it('optimistically applies Grok /goal slash when the extension is absent', async () => {
+    const events: DriverEvent[] = []
+    const { proc, outbound, toClient } = fakeStdio()
+    const dir = await mkdtemp(join(tmpdir(), 'vav-acp-goal-slash-'))
+    const driver = wireAcp(
+      'grok',
+      proc,
+      { binary: 'grok', cwd: dir, approvalMode: 'edit' },
+      (event) => events.push(event)
+    )
+
+    const init = await waitFor(outbound, (msg) => msg.method === 'initialize')
+    toClient({
+      jsonrpc: '2.0',
+      id: init.id,
+      result: {
+        protocolVersion: ACP_PROTOCOL_VERSION,
+        agentCapabilities: { loadSession: true },
+        authMethods: []
+      }
+    })
+    const created = await waitFor(outbound, (msg) => msg.method === 'session/new')
+    toClient({
+      jsonrpc: '2.0',
+      id: created.id,
+      result: { sessionId: 'sess-slash', availableCommands: [] }
+    })
+    await waitForEvent(events, (event) => event.type === 'connected')
+
+    driver.prompt('/goal All tests pass')
+    const prompt = await waitFor(outbound, (msg) => msg.method === 'session/prompt')
+    const blocks = asRecord(prompt.params)?.prompt
+    const first = Array.isArray(blocks) ? asRecord(blocks[0]) : null
+    assert.equal(first?.text, '/goal All tests pass')
+    const set = await waitForEvent(
+      events,
+      (event) => event.type === 'session-state' && event.state.goal?.objective === 'All tests pass'
+    )
+    assert.ok(set.type === 'session-state')
+    assert.equal(set.state.goal?.status, 'active')
+    assert.equal(set.state.goalCapability?.controlMethod, 'slash')
+
+    toClient({ jsonrpc: '2.0', id: prompt.id, result: { stopReason: 'end_turn' } })
+    await waitForEvent(events, (event) => event.type === 'turn-finished')
+
+    driver.prompt('/goal pause')
+    await waitForNth(outbound, (msg) => msg.method === 'session/prompt', 2)
+    const paused = await waitForEvent(
+      events,
+      (event) => event.type === 'session-state' && event.state.goal?.status === 'paused'
+    )
+    assert.ok(paused.type === 'session-state')
+    assert.equal(paused.state.goal?.objective, 'All tests pass')
+    driver.dispose()
+  })
+})
+
 describe('acpInvokeArgs', () => {
   it('pins Cursor --model before the acp subcommand', () => {
     assert.deepEqual(
