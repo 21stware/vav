@@ -24,6 +24,13 @@ export function latestReviewByUser(reviews: GithubReview[]): GithubReview[] {
   return [...map.values()]
 }
 
+export function pagesStatusClass(status: string | null): string {
+  if (status === 'built') return 'is-merged'
+  if (status === 'building') return 'is-open'
+  if (status === 'errored') return 'is-closed'
+  return 'is-draft'
+}
+
 export function sameSiteHost(
   homepage: string | null,
   url: string | null,

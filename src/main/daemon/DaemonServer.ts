@@ -129,7 +129,8 @@ export class DaemonServer {
     this.sessions.clear()
     for (const socket of this.sockets) {
       try {
-        socket.destroy()
+        if (typeof socket.resetAndDestroy === 'function') socket.resetAndDestroy()
+        else socket.destroy()
         socket.unref()
       } catch {
         /* ignore */
@@ -647,6 +648,11 @@ export class DaemonServer {
         event: 'pty-exit',
         data: { exitCode: e.exitCode, signal: e.signal }
       })
+      try {
+        proc.kill()
+      } catch {
+        /* ConPTY/worker teardown is idempotent */
+      }
       ptys.delete(stream)
     })
     return { stream, pid: proc.pid }

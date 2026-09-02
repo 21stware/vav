@@ -5,6 +5,7 @@ import {
   githubActionStateClass,
   githubPullStateClass,
   latestReviewByUser,
+  pagesStatusClass,
   sameSiteHost
 } from './githubPanelState.ts'
 
@@ -27,6 +28,10 @@ describe('githubPanelState', () => {
     assert.equal(githubActionStateClass('in_progress'), 'is-open')
     assert.equal(githubActionStateClass('completed'), 'is-merged')
     assert.equal(githubActionStateClass('queued'), 'is-draft')
+    assert.equal(pagesStatusClass('built'), 'is-merged')
+    assert.equal(pagesStatusClass('building'), 'is-open')
+    assert.equal(pagesStatusClass('errored'), 'is-closed')
+    assert.equal(pagesStatusClass(null), 'is-draft')
   })
 
   it('keeps the latest review per author and skips empty comments', () => {

@@ -26,6 +26,7 @@ import {
   githubActionStateClass,
   githubPullStateClass,
   latestReviewByUser,
+  pagesStatusClass,
   sameSiteHost
 } from '../lib/githubPanelState'
 import type {
@@ -2006,13 +2007,6 @@ function pagesStatusLabel(status: string | null, t: ReturnType<typeof useT>): st
   if (status === 'building') return t('github.siteStatusBuilding')
   if (status === 'errored') return t('github.siteStatusErrored')
   return status || t('github.siteNone')
-}
-
-function pagesStatusClass(status: string | null): string {
-  if (status === 'built') return 'is-merged'
-  if (status === 'building') return 'is-open'
-  if (status === 'errored') return 'is-closed'
-  return 'is-draft'
 }
 
 function PullDetail({

@@ -9,6 +9,7 @@ import {
   isVavMirrorTab,
   normalizePtyListResult,
   omitRecord,
+  projectPtySessions,
   tabsEqual,
   userBashTabsOnly,
   withTombstones
@@ -52,5 +53,41 @@ describe('workspacePty', () => {
     )
     assert.equal(isLiveAgentSession({ tabs: [], layout: null, activeTabId: '' }, 'claude'), false)
     assert.deepEqual(omitRecord({ a: 1, b: 2 }, 'a'), { b: 2 })
+  })
+
+  it('projects bash, VAV mirror, and CLI agent hosts from PTY snapshots', () => {
+    const projected = projectPtySessions([
+      {
+        id: 'sh',
+        conversationId: 'c1',
+        agentId: null,
+        title: 'bash',
+        createdAt: 1,
+        status: 'idle'
+      },
+      {
+        id: AGENT_TAB_ID,
+        conversationId: 'c1',
+        agentId: 'vav',
+        title: 'mirror',
+        createdAt: 2,
+        status: 'idle'
+      },
+      {
+        id: 'claude-1',
+        conversationId: 'c1',
+        agentId: 'claude',
+        title: 'Claude',
+        createdAt: 3,
+        status: 'running'
+      }
+    ])
+    assert.deepEqual(
+      projected.tabs.map((t) => t.id),
+      ['sh', AGENT_TAB_ID]
+    )
+    assert.equal(projected.tabs[1]?.agentId, 'vav')
+    assert.equal(projected.agentHostSessions.claude?.tabs[0]?.id, 'claude-1')
+    assert.equal(projected.activeTabId, 'sh')
   })
 })

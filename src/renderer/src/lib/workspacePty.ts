@@ -1,6 +1,6 @@
-import type { ConversationPtyLayouts, TerminalTab } from '../../../shared/types.ts'
+import type { ConversationPtyLayouts, TerminalLayoutNode, TerminalTab } from '../../../shared/types.ts'
 import type { PtyActivityStatus, PtyListResult, PtySessionMeta } from '../../../shared/ipc.ts'
-import { layoutDirectionKey } from './workspaceLayout.ts'
+import { layoutDirectionKey, layoutFromTabIds } from './workspaceLayout.ts'
 import type { AgentHostSession } from './workspaceCliSurface.ts'
 
 export const AGENT_TAB_ID = 'agent'
@@ -108,4 +108,58 @@ export function omitRecord<T extends Record<string, unknown>>(record: T, key: st
   const next = { ...record }
   delete next[key]
   return next
+}
+
+/** Project main-process PTY snapshots into renderer tab/host maps. */
+export function projectPtySessions(sessions: PtySessionMeta[]): {
+  tabs: TerminalTab[]
+  layout: TerminalLayoutNode | null
+  activeTabId: string
+  agentHostSessions: Record<string, AgentHostSession>
+} {
+  const bashMetas = sessions.filter((s) => !s.agentId || s.agentId === 'vav')
+  const agentMetas = sessions.filter((s) => s.agentId && s.agentId !== 'vav')
+
+  const tabs: TerminalTab[] = bashMetas.map((s, index) => {
+    const isVavMirror = s.agentId === 'vav' || s.id === AGENT_TAB_ID
+    return {
+      id: s.id,
+      title: isVavMirror ? 'VAV' : s.title || `bash-${index + 1}`,
+      isAgent: isVavMirror,
+      agentId: isVavMirror ? 'vav' : null,
+      purpose: s.purpose,
+      installAgentId: s.installAgentId,
+      splitWeight: 1
+    }
+  })
+  const ordered = bashThenAgentTabs(tabs)
+  const bashIds = ordered.map((t) => t.id)
+  const layout = layoutFromTabIds(bashIds)
+  const activeTabId = bashIds[0] ?? ''
+
+  const byAgent = new Map<string, PtySessionMeta[]>()
+  for (const s of agentMetas) {
+    const key = s.agentId!
+    const list = byAgent.get(key) ?? []
+    list.push(s)
+    byAgent.set(key, list)
+  }
+  const agentHostSessions: Record<string, AgentHostSession> = {}
+  for (const [agentId, list] of byAgent) {
+    const hostTabs: TerminalTab[] = list.map((s, i) => ({
+      id: s.id,
+      title: s.title || (i === 0 ? agentId : `${agentId}-${i + 1}`),
+      isAgent: false,
+      agentId,
+      splitWeight: 1
+    }))
+    const hostLayout = layoutFromTabIds(hostTabs.map((t) => t.id))
+    agentHostSessions[agentId] = {
+      tabs: hostTabs,
+      layout: hostLayout,
+      activeTabId: hostTabs[0]?.id ?? ''
+    }
+  }
+
+  return { tabs: ordered, layout, activeTabId, agentHostSessions }
 }

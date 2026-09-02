@@ -18,6 +18,7 @@ User-facing changes by release. Unreleased work lives at the top until the next 
 - CLI stdio children escalate from SIGTERM to SIGKILL if they hang.
 - Stream and shell buffers are capped; daemon reconnect uses backoff.
 - Settings writes are debounced so bursty UI updates do not stall the main process.
+- Local PTYs dispose ConPTY worker threads and pipe sockets on exit so Windows does not hang after a session ends.
 
 ### Tests / CI
 
