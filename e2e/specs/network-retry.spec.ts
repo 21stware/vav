@@ -159,6 +159,7 @@ test('partial reply cut off by a transport leak continues on the same turn', asy
     await expect(
       page.locator('[data-testid="stream-status"][data-state="retrying"]')
     ).toBeVisible({ timeout: 8_000 })
+    await expect(streaming).not.toContainText('RetriableError')
 
     const assistant = page.locator('[data-testid="message-assistant"]')
     await expect(assistant).toContainText('partial e2e reply', { timeout: 25_000 })

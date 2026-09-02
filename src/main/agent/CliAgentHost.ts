@@ -1107,7 +1107,7 @@ export class CliAgentHost {
         // keep the draft and continue; do not seal as Done.
         if (event.success && !turn.cancelled) {
           this.flushBuffers(conversationId, turn)
-          const leaked = this.stripLeakedStreamError(turn)
+          const leaked = this.stripLeakedStreamError(conversationId, turn)
           if (leaked && !turnHasAnswerContent(turn)) {
             this.resetTurnDraft(conversationId, turn)
             void this.settleFailedTurn(conversationId, turn, leaked, null)
@@ -1259,18 +1259,35 @@ export class CliAgentHost {
    * the end of the trailing text block — remove it and return the leaked
    * error text so the caller can decide whether the turn survived.
    */
-  private stripLeakedStreamError(turn: HostTurn): string | null {
+  private stripLeakedStreamError(conversationId: string, turn: HostTurn): string | null {
     const last = turn.blocks[turn.blocks.length - 1]
     if (!last || last.kind !== 'text') return null
     const split = splitStreamedRetriableError(last.text)
     if (!split.leaked) return null
+    const index = turn.blocks.length - 1
     if (split.text) {
       last.text = split.text
+      this.deps.emit({
+        type: 'delta',
+        conversationId,
+        index,
+        kind: 'text',
+        text: split.text,
+        replace: true
+      })
     } else {
       turn.blocks.pop()
       if (turn.textIndex != null && turn.textIndex >= turn.blocks.length) {
         turn.textIndex = null
       }
+      this.deps.emit({
+        type: 'delta',
+        conversationId,
+        index,
+        kind: 'text',
+        text: '',
+        replace: true
+      })
     }
     return split.leaked
   }
