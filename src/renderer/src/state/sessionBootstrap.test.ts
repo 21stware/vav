@@ -5,7 +5,8 @@ import {
   inheritCreateWorkingDirectory,
   nextConversationForMachine,
   pickBootstrapActiveId,
-  seedCliAgentCatalogue
+  seedCliAgentCatalogue,
+  seedEmptyConversationPatch
 } from './sessionBootstrap.ts'
 
 describe('sessionBootstrap', () => {
@@ -95,5 +96,28 @@ describe('sessionBootstrap', () => {
       }),
       undefined
     )
+  })
+
+  it('prepends a new conversation without duplicating an existing id', () => {
+    const existing = { id: 'c1' }
+    const seeded = seedEmptyConversationPatch(
+      {
+        conversations: [existing],
+        messages: { c1: [{ id: 'm' }] },
+        messagesHydrated: { c1: true },
+        activeLeaf: { c1: 'm' }
+      },
+      { id: 'c2' }
+    )
+    assert.deepEqual(
+      seeded.conversations.map((c) => c.id),
+      ['c2', 'c1']
+    )
+    assert.deepEqual(seeded.messages.c2, [])
+    assert.equal(seeded.messagesHydrated.c2, true)
+    assert.equal(seeded.activeLeaf.c2, null)
+
+    const again = seedEmptyConversationPatch(seeded, { id: 'c2' })
+    assert.equal(again.conversations, seeded.conversations)
   })
 })

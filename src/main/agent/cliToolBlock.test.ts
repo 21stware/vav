@@ -3,6 +3,7 @@ import { describe, it } from 'node:test'
 import {
   applyToolEventStatus,
   applyToolRuntimePatch,
+  newCliPermissionBlock,
   newCliToolCallBlock,
   shouldKeepPendingInteractive
 } from './cliToolBlock.ts'
@@ -76,5 +77,18 @@ describe('cliToolBlock', () => {
     assert.equal(next.output, 'ok')
     assert.equal(next.choices, undefined)
     assert.equal(next.askTitle, undefined)
+  })
+
+  it('builds an Approve/Deny permission card', () => {
+    const block = newCliPermissionBlock({
+      requestId: 'r1',
+      toolName: 'Bash',
+      inputJson: '{"tool":"Bash"}'
+    })
+    assert.equal(block.id, 'perm-r1')
+    assert.equal(block.tool, 'request')
+    assert.equal(block.summary, 'Bash')
+    assert.deepEqual(block.choices, ['Approve', 'Deny'])
+    assert.equal(block.askTitle, 'Bash')
   })
 })

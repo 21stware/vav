@@ -30,7 +30,7 @@ import { isPathAllowed } from './pathAllow'
 import { previewKind, mimeFor } from './filePreviewKind'
 import { sortEntries } from './fileEntrySort'
 import { modeToPermissions } from './fileMode'
-import { joinOnHostPath } from './fileHostPath'
+import { isInvalidRenameName, joinOnHostPath } from './fileHostPath'
 import { mimeHintToUti } from './fileUti'
 import { inspectZipArchive, zipInspectFailure, zipInspectSuccess } from './fileZipArchive'
 import { looksLikeTextFile } from './fileTextSample'
@@ -43,6 +43,7 @@ import {
   heicInspectResult,
   inspectCaughtError,
   legacyBinaryInspect,
+  officeFirstPaintInspect,
   remappedConvertedInspect,
   sqliteInspectResult,
   textWindowInspectResult
@@ -484,7 +485,7 @@ export class FileService {
     conversationId?: string
   ): Promise<{ ok: true; path: string } | { ok: false; error: string }> {
     const name = newName.trim()
-    if (!name || name.includes('/') || name.includes('\\') || name === '.' || name === '..') {
+    if (isInvalidRenameName(name)) {
       return { ok: false, error: t('files.error.badName') }
     }
     const target = join(dirname(path), name)
@@ -670,25 +671,15 @@ export class FileService {
       }
 
       if (kind === 'pdf' || kind === 'docx' || kind === 'xlsx' || kind === 'pptx') {
-        if (isOfficeLockFile(path)) {
-          return { ...base, error: OFFICE_LOCK_FILE_MESSAGE }
-        }
-        if (info.size <= 0) return { ...base, error: 'File is empty.' }
-        // Always streamable; never refuse open on size.
-        // Stream the I/O path (working copy when sandboxed).
-        base.streamUrl = localFileStreamUrl(io)
-        // Fast path: kind + streamUrl only. Structured parse is
-        // `inspectStructured` (background) so first paint is not blocked.
-        this.scheduleIndex(io)
-        if (info.size > STRUCTURED_PARSE_SOFT) {
-          return {
-            ...base,
-            warnings: [
-              'Large Office document — preview opens via streaming; full text index runs in the background.'
-            ]
-          }
-        }
-        return base
+        const painted = officeFirstPaintInspect(base, {
+          locked: isOfficeLockFile(path),
+          empty: info.size <= 0,
+          streamUrl: localFileStreamUrl(io),
+          large: info.size > STRUCTURED_PARSE_SOFT,
+          lockMessage: OFFICE_LOCK_FILE_MESSAGE
+        })
+        if (!painted.error) this.scheduleIndex(io)
+        return painted
       }
 
       // Unsupported / binary: metadata panel (no content preview). Never use

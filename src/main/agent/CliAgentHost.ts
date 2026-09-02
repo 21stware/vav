@@ -93,7 +93,7 @@ import {
   cliAssistantMessage,
   stripLeakedStreamErrorFromTurn
 } from './cliTurnFinish'
-import { newCliToolCallBlock, applyToolEventStatus } from './cliToolBlock'
+import { applyToolEventStatus, newCliPermissionBlock, newCliToolCallBlock } from './cliToolBlock'
 import { parkInteractivePatch } from './cliPark'
 import { elicitationCardFields } from './cliElicitation'
 import {
@@ -1620,17 +1620,15 @@ export class CliAgentHost {
       })
       return
     }
-    const toolCallId = `perm-${event.requestId}`
+    const block = newCliPermissionBlock({
+      requestId: event.requestId,
+      summary: event.summary || event.toolName,
+      toolName: event.toolName,
+      inputJson: inputJson(event.input ?? { tool: event.toolName, detail: event.detail })
+    })
+    const toolCallId = block.id
     const index = turn.blocks.length
     turn.toolIndex.set(toolCallId, index)
-    const block = newCliToolCallBlock({
-      id: toolCallId,
-      tool: 'request',
-      summary: event.summary || event.toolName,
-      input: inputJson(event.input ?? { tool: event.toolName, detail: event.detail }),
-      choices: ['Approve', 'Deny'],
-      askTitle: event.toolName
-    })
     turn.blocks.push(block)
     turn.pendingPermissions.set(toolCallId, {
       requestId: event.requestId,

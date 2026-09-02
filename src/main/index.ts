@@ -230,7 +230,11 @@ import { writePngToClipboard } from './clipboardImage'
 import { mapRemoteSessions } from './remote/sessionList'
 import { fanRemoteTurn as dispatchRemoteTurn } from './remote/fanTurn'
 import { listRemoteChildEntries, listRemoteRootEntries } from './remote/dirBrowse'
-import { remoteHostRecentDirs, remoteLiveConversation } from './remote/sessionGate'
+import {
+  remoteDefaultApproval,
+  remoteHostRecentDirs,
+  remoteLiveConversation
+} from './remote/sessionGate'
 import { RemoteSendQueue } from './remote/sendQueue'
 import { createScreenshotController } from './screenshot/ScreenshotSession'
 import { OVERLAY_IMAGE_EXTS, shouldOpenAsOverlay } from '@shared/previewOverlay'
@@ -1377,10 +1381,7 @@ function listRemoteThread(conversationId: string): RemoteThreadEvent | null {
 function listRemoteHost(): RemoteHostEvent {
   const settings = settingsStore.get()
   const defaultHost = resolveDefaultChatHost(settings.defaultAgentId)
-  const approval =
-    settings.defaultApprovalMode === 'bypass' || settings.defaultApprovalMode === 'edit'
-      ? settings.defaultApprovalMode
-      : 'auto'
+  const approval = remoteDefaultApproval(settings.defaultApprovalMode)
   const localRecents = recentsForMachine(
     parseWorkspaceRefList(settings.recentWorkspaceDirectories),
     LOCAL_MACHINE_ID

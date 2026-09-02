@@ -121,6 +121,30 @@ export function recentsForMachine(
   return (list ?? []).filter((ref) => normalizeMachineId(ref.machineId) === id)
 }
 
+/**
+ * Drop a forgotten workspace from recent (by ref, or by path when the
+ * machine is unknown) and from the pinned path list. Returns null when
+ * nothing changed so the caller can skip a settings write.
+ */
+export function pruneForgottenWorkspaceDirs(
+  recent: readonly WorkspaceRef[],
+  pinned: readonly string[],
+  path: string,
+  machineId?: string | null
+): { recent: WorkspaceRef[]; pinned: string[] } | null {
+  const drop = workspaceRef(path, machineId)
+  const nextRecent = recent.filter((entry) =>
+    machineId == null || machineId === ''
+      ? entry.path !== path
+      : !sameWorkspaceRef(entry, drop)
+  )
+  const nextPinned = pinned.filter((entry) => entry !== path)
+  if (nextRecent.length === recent.length && nextPinned.length === pinned.length) {
+    return null
+  }
+  return { recent: nextRecent, pinned: nextPinned }
+}
+
 export function serializeWorkspaceRefList(list: readonly WorkspaceRef[]): string {
   return list.map(workspaceRefKey).join('\0')
 }

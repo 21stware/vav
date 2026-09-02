@@ -76,8 +76,7 @@ import {
   isLocalMachine,
   normalizeMachineId,
   parseWorkspaceRefList,
-  sameWorkspaceRef,
-  workspaceRef
+  pruneForgottenWorkspaceDirs
 } from '@shared/workspaceHost'
 import { focusedCliPaneId, measureCliPaneRects } from '../lib/cliPaneNavigate'
 import { cwdFromSliceOrMeta } from '../lib/terminalCwd'
@@ -95,18 +94,16 @@ async function forgetMissingWorkspaceDir(path: string, machineId?: string | null
   try {
     const { useSessionStore } = await import('./sessionStore')
     const settings = useSessionStore.getState().settings
-    const recent = parseWorkspaceRefList(settings.recentWorkspaceDirectories)
-    const pinned = settings.pinnedWorkspaceDirectories ?? []
-    const drop = workspaceRef(path, machineId)
-    const nextRecent = recent.filter((entry) =>
-      machineId == null || machineId === ''
-        ? entry.path !== path
-        : !sameWorkspaceRef(entry, drop)
+    const next = pruneForgottenWorkspaceDirs(
+      parseWorkspaceRefList(settings.recentWorkspaceDirectories),
+      settings.pinnedWorkspaceDirectories ?? [],
+      path,
+      machineId
     )
-    if (nextRecent.length === recent.length && !pinned.includes(path)) return
+    if (!next) return
     await window.vav.settings.update({
-      recentWorkspaceDirectories: nextRecent,
-      pinnedWorkspaceDirectories: pinned.filter((entry) => entry !== path)
+      recentWorkspaceDirectories: next.recent,
+      pinnedWorkspaceDirectories: next.pinned
     })
   } catch {
     // settings may be mid-bootstrap

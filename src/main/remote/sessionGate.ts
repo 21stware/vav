@@ -1,3 +1,10 @@
+/** Phone host sheet: only bypass/edit are explicit; everything else is auto. */
+export function remoteDefaultApproval(
+  mode: string | null | undefined
+): 'auto' | 'bypass' | 'edit' {
+  return mode === 'bypass' || mode === 'edit' ? mode : 'auto'
+}
+
 /** Phone companion: live sessions can be mutated; archived / missing cannot. */
 export function remoteLiveConversation(
   conversation: { archived?: boolean } | null | undefined

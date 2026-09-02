@@ -8,6 +8,7 @@ import {
   isLocalMachine,
   normalizeMachineId,
   parseWorkspaceRefList,
+  pruneForgottenWorkspaceDirs,
   recentsForMachine,
   workspaceRef
 } from './workspaceHost.ts'
@@ -75,6 +76,29 @@ describe('parseWorkspaceRefList', () => {
     ])
     assert.deepEqual(recentsForMachine(list, 'box').map((r) => r.path), ['/srv/app', '/srv/other'])
     assert.deepEqual(recentsForMachine(list, LOCAL_MACHINE_ID).map((r) => r.path), ['/tmp/local'])
+  })
+})
+
+describe('pruneForgottenWorkspaceDirs', () => {
+  it('drops by path when the machine is unknown, and skips a no-op', () => {
+    const recent = parseWorkspaceRefList([
+      '/tmp/a',
+      { machineId: 'box', path: '/tmp/a' },
+      { machineId: 'box', path: '/srv/app' }
+    ])
+    const next = pruneForgottenWorkspaceDirs(recent, ['/tmp/a', '/keep'], '/tmp/a', null)
+    assert.deepEqual(next?.recent.map((r) => r.path), ['/srv/app'])
+    assert.deepEqual(next?.pinned, ['/keep'])
+    assert.equal(pruneForgottenWorkspaceDirs(recent, ['/keep'], '/missing', 'box'), null)
+  })
+
+  it('drops only the matching host ref when machineId is set', () => {
+    const recent = parseWorkspaceRefList([
+      '/tmp/a',
+      { machineId: 'box', path: '/tmp/a' }
+    ])
+    const next = pruneForgottenWorkspaceDirs(recent, [], '/tmp/a', 'box')
+    assert.deepEqual(next?.recent, [{ machineId: LOCAL_MACHINE_ID, path: '/tmp/a' }])
   })
 })
 

@@ -49,6 +49,7 @@ import {
 } from './sessionTypes'
 import { omitLiveUsage } from './sessionUsage'
 import { dispatchQueuedPayload, MESSAGE_QUEUE_MAX, buildQueuedMessage, composerSendDisposition, composerClearedPatch, isEmptyComposerSend, mergePreviewAndCommentRefs } from './sessionQueue'
+import { applyCliHostSetResult } from './sessionCliHost'
 import { applySessionTurnEvent } from './sessionTurnApply'
 import {
   searchStateForQuery,
@@ -110,6 +111,8 @@ import { subtreeIds } from '@shared/thread'
 import { getProjection, disposeProjection } from './StreamProjection'
 import { useWorkspaceStore } from './workspaceStore'
 import {
+  conversationHydrationMetaPatch,
+  conversationTokenCachePatch,
   isCurrentHydration,
   mergeHydratedMessages,
   nextHydrationGeneration,
@@ -126,7 +129,7 @@ import {
   swarmRootId
 } from '@shared/swarmLayout'
 import { patchAcpConfigOption, patchAcpSessionMode } from '@shared/acpSession'
-import { inheritCreateWorkingDirectory, nextConversationForMachine, pickBootstrapActiveId, seedCliAgentCatalogue } from './sessionBootstrap'
+import { inheritCreateWorkingDirectory, nextConversationForMachine, pickBootstrapActiveId, seedCliAgentCatalogue, seedEmptyConversationPatch } from './sessionBootstrap'
 import { notifyImageAttachPlan, trimAttachmentPathsForHost } from './sessionAttach'
 import { persistSwarmLayout, setLeaf } from './sessionSwarm'
 import { swarmBlocksWorkdirSwitch as swarmSurfaceBlocksWorkdir } from '../lib/workdirSwitch'
@@ -1079,24 +1082,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       // Soft refresh metadata without blocking the switch paint.
       void window.vav.conversations.get(id).then((conversation) => {
         if (!conversation || get().activeId !== id) return
-        set((state) => ({
-          compactions: {
-            ...state.compactions,
-            [id]: conversation.compactions ?? []
-          },
-          tokenHistories: {
-            ...state.tokenHistories,
-            [id]: conversation.tokenHistory ?? []
-          },
-          cacheCreatedAt: {
-            ...state.cacheCreatedAt,
-            [id]: conversation.cacheCreatedAt ?? null
-          },
-          cacheExpiresAt: {
-            ...state.cacheExpiresAt,
-            [id]: conversation.cacheExpiresAt ?? null
-          }
-        }))
+        set((state) => conversationHydrationMetaPatch(state, id, conversation))
       })
       return
     }
@@ -1112,22 +1098,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       },
       messagesHydrated: { ...state.messagesHydrated, [id]: true },
       activeLeaf: { ...state.activeLeaf, [id]: conversation.activeLeafId },
-      compactions: {
-        ...state.compactions,
-        [id]: conversation.compactions ?? []
-      },
-      tokenHistories: {
-        ...state.tokenHistories,
-        [id]: conversation.tokenHistory ?? []
-      },
-      cacheCreatedAt: {
-        ...state.cacheCreatedAt,
-        [id]: conversation.cacheCreatedAt ?? null
-      },
-      cacheExpiresAt: {
-        ...state.cacheExpiresAt,
-        [id]: conversation.cacheExpiresAt ?? null
-      }
+      ...conversationHydrationMetaPatch(state, id, conversation)
     }))
   },
 
@@ -1137,18 +1108,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     const conversation = await window.vav.conversations.get(target)
     if (!conversation) return
     set((state) => ({
-      tokenHistories: {
-        ...state.tokenHistories,
-        [target]: conversation.tokenHistory ?? []
-      },
-      cacheCreatedAt: {
-        ...state.cacheCreatedAt,
-        [target]: conversation.cacheCreatedAt ?? null
-      },
-      cacheExpiresAt: {
-        ...state.cacheExpiresAt,
-        [target]: conversation.cacheExpiresAt ?? null
-      },
+      ...conversationTokenCachePatch(state, target, conversation),
       conversations: state.conversations.map((c) =>
         c.id === target ? { ...c, tokensUsed: conversation.tokensUsed } : c
       )
@@ -1174,27 +1134,13 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     }
     const meta = await window.vav.conversations.create(createOpts)
     if (options?.openIn === 'none') {
-      set((state) => ({
-        conversations: state.conversations.some((c) => c.id === meta.id)
-          ? state.conversations
-          : [meta, ...state.conversations],
-        messages: { ...state.messages, [meta.id]: [] },
-        messagesHydrated: { ...state.messagesHydrated, [meta.id]: true },
-        activeLeaf: { ...state.activeLeaf, [meta.id]: null }
-      }))
+      set((state) => seedEmptyConversationPatch(state, meta))
       return meta.id
     }
     // Main publishes the full list on create; `onChanged` may already have
     // applied it by the time we get here. Prepending unconditionally would
     // put the same id in the sidebar twice (⌘N made that obvious).
-    set((state) => ({
-      conversations: state.conversations.some((c) => c.id === meta.id)
-        ? state.conversations
-        : [meta, ...state.conversations],
-      messages: { ...state.messages, [meta.id]: [] },
-      messagesHydrated: { ...state.messagesHydrated, [meta.id]: true },
-      activeLeaf: { ...state.activeLeaf, [meta.id]: null }
-    }))
+    set((state) => seedEmptyConversationPatch(state, meta))
 
     // Companion windows are bound to one conversation (native map + local
     // SessionWindow id). Selecting here replaces the chrome but not the
@@ -1562,62 +1508,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     try {
       const result = await window.vav.conversations.setCliHost(id, host, accountId)
       if (result.hostChanged) disposeProjection(id)
-      const transcript = result.transcript
-      set((state) => {
-        const pendingReviewByConversation = { ...state.pendingReviewByConversation }
-        const turns = { ...state.turns }
-        if (result.hostChanged) {
-          delete pendingReviewByConversation[id]
-          delete turns[id]
-        }
-        let conversations = mergeConversationList(state.conversations, result.conversations)
-        if (transcript) {
-          conversations = conversations.map((c) =>
-            c.id === id
-              ? {
-                  ...c,
-                  tokensUsed: transcript.tokensUsed,
-                  cliResumeCursor: transcript.cliResumeCursor,
-                  cliHost: transcript.cliHost,
-                  model: transcript.model || c.model,
-                  quotaWindows: transcript.quotaWindows ?? []
-                }
-              : c
-          )
-        }
-        return {
-          conversations,
-          messages: transcript
-            ? { ...state.messages, [id]: transcript.messages }
-            : state.messages,
-          messagesHydrated: transcript
-            ? { ...state.messagesHydrated, [id]: true }
-            : state.messagesHydrated,
-          activeLeaf: transcript
-            ? { ...state.activeLeaf, [id]: transcript.activeLeafId }
-            : state.activeLeaf,
-          compactions: transcript
-            ? { ...state.compactions, [id]: transcript.compactions }
-            : state.compactions,
-          tokenHistories: transcript
-            ? { ...state.tokenHistories, [id]: transcript.tokenHistory }
-            : state.tokenHistories,
-          cacheCreatedAt: transcript
-            ? { ...state.cacheCreatedAt, [id]: transcript.cacheCreatedAt }
-            : state.cacheCreatedAt,
-          cacheExpiresAt: transcript
-            ? { ...state.cacheExpiresAt, [id]: transcript.cacheExpiresAt }
-            : state.cacheExpiresAt,
-          pendingReviewByConversation,
-          turns,
-          liveUsage: omitLiveUsage(state.liveUsage, id),
-          errorBanner: result.hostChanged && state.activeId === id ? null : state.errorBanner,
-          errorBannerKind:
-            result.hostChanged && state.activeId === id ? null : state.errorBannerKind,
-          errorBannerDetail:
-            result.hostChanged && state.activeId === id ? null : state.errorBannerDetail
-        }
-      })
+      set((state) => applyCliHostSetResult(state, id, result))
     } catch (err) {
       console.error('[setCliHost] failed', err)
     }

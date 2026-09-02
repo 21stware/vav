@@ -1,5 +1,16 @@
 import type { ChatMessage, PreviewRef, QuoteDraft } from '../../shared/types.ts'
 
+/** Clear changeSetId on older messages when a new turn begins. Returns whether any were dirty. */
+export function stripChangeSetIds(messages: Array<{ changeSetId?: string }>): boolean {
+  let dirty = false
+  for (const message of messages) {
+    if (!message.changeSetId) continue
+    delete message.changeSetId
+    dirty = true
+  }
+  return dirty
+}
+
 export function isAssistant<T>(message: T): message is T & { role: 'assistant' } {
   return (
     typeof message === 'object' &&

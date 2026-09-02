@@ -124,6 +124,27 @@ export function remappedConvertedInspect(
   }
 }
 
+export const OFFICE_LARGE_PREVIEW_WARNING =
+  'Large Office document — preview opens via streaming; full text index runs in the background.'
+
+/** First-paint Office/PDF inspect: stream URL only; structured parse is background. */
+export function officeFirstPaintInspect(
+  base: FileInspectResult,
+  opts: {
+    locked?: boolean
+    empty?: boolean
+    streamUrl: string
+    large?: boolean
+    lockMessage: string
+  }
+): FileInspectResult {
+  if (opts.locked) return { ...base, error: opts.lockMessage }
+  if (opts.empty) return { ...base, error: 'File is empty.' }
+  const next = { ...base, streamUrl: opts.streamUrl }
+  if (opts.large) return { ...next, warnings: [OFFICE_LARGE_PREVIEW_WARNING] }
+  return next
+}
+
 export function legacyBinaryInspect(opts: {
   path: string
   name: string

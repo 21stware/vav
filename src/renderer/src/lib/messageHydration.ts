@@ -44,3 +44,55 @@ export function omitKeys<T>(map: Record<string, T>, ids: Iterable<string>): Reco
   }
   return touched ? next : map
 }
+
+/** Token-usage overlay maps from a conversations.get / list snapshot. */
+export function conversationTokenCachePatch<H>(
+  state: {
+    tokenHistories: Record<string, H>
+    cacheCreatedAt: Record<string, number | null>
+    cacheExpiresAt: Record<string, number | null>
+  },
+  id: string,
+  conversation: {
+    tokenHistory?: H | null
+    cacheCreatedAt?: number | null
+    cacheExpiresAt?: number | null
+  }
+): {
+  tokenHistories: Record<string, H>
+  cacheCreatedAt: Record<string, number | null>
+  cacheExpiresAt: Record<string, number | null>
+} {
+  return {
+    tokenHistories: { ...state.tokenHistories, [id]: conversation.tokenHistory ?? ([] as H) },
+    cacheCreatedAt: { ...state.cacheCreatedAt, [id]: conversation.cacheCreatedAt ?? null },
+    cacheExpiresAt: { ...state.cacheExpiresAt, [id]: conversation.cacheExpiresAt ?? null }
+  }
+}
+
+/** Soft-refresh maps after loadMessages when the transcript is already hydrated. */
+export function conversationHydrationMetaPatch<C, H>(
+  state: {
+    compactions: Record<string, C>
+    tokenHistories: Record<string, H>
+    cacheCreatedAt: Record<string, number | null>
+    cacheExpiresAt: Record<string, number | null>
+  },
+  id: string,
+  conversation: {
+    compactions?: C | null
+    tokenHistory?: H | null
+    cacheCreatedAt?: number | null
+    cacheExpiresAt?: number | null
+  }
+): {
+  compactions: Record<string, C>
+  tokenHistories: Record<string, H>
+  cacheCreatedAt: Record<string, number | null>
+  cacheExpiresAt: Record<string, number | null>
+} {
+  return {
+    ...conversationTokenCachePatch(state, id, conversation),
+    compactions: { ...state.compactions, [id]: conversation.compactions ?? ([] as C) }
+  }
+}

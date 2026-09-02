@@ -28,6 +28,23 @@ export function newCliToolCallBlock(opts: {
   return block
 }
 
+/** Permission card: Approve/Deny on `request`, id `perm-${requestId}`. */
+export function newCliPermissionBlock(event: {
+  requestId: string
+  summary?: string
+  toolName: string
+  inputJson: string
+}): ToolCallBlock {
+  return newCliToolCallBlock({
+    id: `perm-${event.requestId}`,
+    tool: 'request',
+    summary: event.summary || event.toolName,
+    input: event.inputJson,
+    choices: ['Approve', 'Deny'],
+    askTitle: event.toolName
+  })
+}
+
 /** Ask/plan-doc stay pending while the host streams updates. */
 export function shouldKeepPendingInteractive(block: {
   status: string

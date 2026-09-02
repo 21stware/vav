@@ -124,3 +124,28 @@ export function inheritCreateWorkingDirectory(opts: {
   }
   return undefined
 }
+
+/** Sidebar seed for a newly created conversation that is not yet the active leaf. */
+export function seedEmptyConversationPatch<C extends { id: string }, M>(
+  state: {
+    conversations: C[]
+    messages: Record<string, M>
+    messagesHydrated: Record<string, boolean>
+    activeLeaf: Record<string, string | null>
+  },
+  meta: C
+): {
+  conversations: C[]
+  messages: Record<string, M>
+  messagesHydrated: Record<string, boolean>
+  activeLeaf: Record<string, string | null>
+} {
+  return {
+    conversations: state.conversations.some((c) => c.id === meta.id)
+      ? state.conversations
+      : [meta, ...state.conversations],
+    messages: { ...state.messages, [meta.id]: [] as M },
+    messagesHydrated: { ...state.messagesHydrated, [meta.id]: true },
+    activeLeaf: { ...state.activeLeaf, [meta.id]: null }
+  }
+}

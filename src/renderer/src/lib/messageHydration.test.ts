@@ -2,6 +2,8 @@ import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import type { ChatMessage } from '../../../shared/types.ts'
 import {
+  conversationHydrationMetaPatch,
+  conversationTokenCachePatch,
   isCurrentHydration,
   mergeHydratedMessages,
   nextHydrationGeneration,
@@ -67,5 +69,42 @@ describe('omitKeys', () => {
   it('returns the same object when nothing is removed', () => {
     const map = { keep: 1 }
     assert.equal(omitKeys(map, ['nope']), map)
+  })
+})
+
+describe('conversation cache maps', () => {
+  it('patches token overlay without touching other ids', () => {
+    const state = {
+      tokenHistories: { a: [{ tokens: 1 }], b: [{ tokens: 2 }] },
+      cacheCreatedAt: { a: 1, b: 2 },
+      cacheExpiresAt: { a: 3, b: 4 }
+    }
+    const next = conversationTokenCachePatch(state, 'a', {
+      tokenHistory: [{ tokens: 9 }],
+      cacheCreatedAt: 10,
+      cacheExpiresAt: null
+    })
+    assert.deepEqual(next.tokenHistories.a, [{ tokens: 9 }])
+    assert.deepEqual(next.tokenHistories.b, [{ tokens: 2 }])
+    assert.equal(next.cacheCreatedAt.a, 10)
+    assert.equal(next.cacheExpiresAt.a, null)
+  })
+
+  it('includes compaction snapshots for a hydrated load', () => {
+    const state = {
+      compactions: { a: [{ id: 'old' }] },
+      tokenHistories: { a: [] },
+      cacheCreatedAt: { a: null },
+      cacheExpiresAt: { a: null }
+    }
+    const next = conversationHydrationMetaPatch(state, 'a', {
+      compactions: [{ id: 'new' }],
+      tokenHistory: [{ n: 1 }],
+      cacheCreatedAt: 2,
+      cacheExpiresAt: 3
+    })
+    assert.deepEqual(next.compactions.a, [{ id: 'new' }])
+    assert.deepEqual(next.tokenHistories.a, [{ n: 1 }])
+    assert.equal(next.cacheCreatedAt.a, 2)
   })
 })

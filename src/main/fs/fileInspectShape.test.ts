@@ -7,6 +7,7 @@ import {
   heicInspectResult,
   inspectCaughtError,
   legacyBinaryInspect,
+  officeFirstPaintInspect,
   remappedConvertedInspect,
   sqliteInspectResult,
   textWindowInspectResult
@@ -101,5 +102,38 @@ describe('fileInspectShape', () => {
     })
     assert.equal(legacy.kind, 'binary')
     assert.equal(legacy.mime, 'application/vnd.ms-powerpoint')
+  })
+
+  it('streams Office first paint and skips index on lock/empty', () => {
+    const base = {
+      path: '/a.docx',
+      name: 'a.docx',
+      size: 4,
+      kind: 'docx' as const,
+      mime: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+    }
+    assert.equal(
+      officeFirstPaintInspect(base, {
+        locked: true,
+        streamUrl: 'vav-local://a',
+        lockMessage: 'lock'
+      }).error,
+      'lock'
+    )
+    assert.equal(
+      officeFirstPaintInspect(base, {
+        empty: true,
+        streamUrl: 'vav-local://a',
+        lockMessage: 'lock'
+      }).error,
+      'File is empty.'
+    )
+    const large = officeFirstPaintInspect(base, {
+      streamUrl: 'vav-local://io',
+      large: true,
+      lockMessage: 'lock'
+    })
+    assert.equal(large.streamUrl, 'vav-local://io')
+    assert.match(large.warnings?.[0] ?? '', /streaming/)
   })
 })

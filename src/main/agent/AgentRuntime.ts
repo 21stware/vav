@@ -25,7 +25,7 @@ import { loadInlineImages } from './attachmentImages'
 import { parseThinkingLevel, toPiReasoning } from '@shared/thinkingLevel'
 import type { LeafCompaction } from '@shared/types'
 import { applyEditedArgs, leanToolArgs } from './agentToolArgs'
-import { isAssistant, textOf, userTurnMessage } from './agentMessage'
+import { isAssistant, stripChangeSetIds, textOf, userTurnMessage } from './agentMessage'
 import { sealRuntimePlanBlocks } from './planSeal'
 import {
   appendTurnErrorBlock,
@@ -1671,13 +1671,7 @@ export class AgentRuntime {
   private stripPriorChangeSetIds(conversationId: string): void {
     const conversation = this.deps.conversations.get(conversationId)
     if (!conversation) return
-    let dirty = false
-    for (const message of conversation.messages) {
-      if (!message.changeSetId) continue
-      delete message.changeSetId
-      dirty = true
-    }
-    if (dirty) this.deps.conversations.flush()
+    if (stripChangeSetIds(conversation.messages)) this.deps.conversations.flush()
   }
 
   private workdirOf(conversation: Conversation): string {

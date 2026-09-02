@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import { isAssistant, textOf, userTurnMessage } from './agentMessage.ts'
+import { isAssistant, stripChangeSetIds, textOf, userTurnMessage } from './agentMessage.ts'
 
 describe('agentMessage', () => {
   it('detects assistant messages and joins text parts', () => {
@@ -26,5 +26,17 @@ describe('agentMessage', () => {
     assert.equal(msg.quoteMessageId, 'm')
     assert.deepEqual(msg.attachments, ['/a.png'])
     assert.equal('contextFile' in msg, false)
+  })
+
+  it('strips prior changeSetIds in place and reports dirty', () => {
+    const messages = [
+      { id: 'a', changeSetId: 'cs-1' },
+      { id: 'b' },
+      { id: 'c', changeSetId: 'cs-2' }
+    ]
+    assert.equal(stripChangeSetIds(messages), true)
+    assert.equal('changeSetId' in messages[0]!, false)
+    assert.equal('changeSetId' in messages[2]!, false)
+    assert.equal(stripChangeSetIds(messages), false)
   })
 })

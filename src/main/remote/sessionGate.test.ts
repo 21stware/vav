@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import { remoteHostRecentDirs, remoteLiveConversation } from './sessionGate.ts'
+import { remoteDefaultApproval, remoteHostRecentDirs, remoteLiveConversation } from './sessionGate.ts'
 
 describe('remoteLiveConversation', () => {
   it('gates missing and archived sessions', () => {
@@ -22,5 +22,15 @@ describe('remoteHostRecentDirs', () => {
       { path: '/shared', label: 'shared' },
       { path: '/recent', label: 'recent' }
     ])
+  })
+})
+
+describe('remoteDefaultApproval', () => {
+  it('keeps bypass/edit and maps everything else to auto', () => {
+    assert.equal(remoteDefaultApproval('bypass'), 'bypass')
+    assert.equal(remoteDefaultApproval('edit'), 'edit')
+    assert.equal(remoteDefaultApproval('auto'), 'auto')
+    assert.equal(remoteDefaultApproval(undefined), 'auto')
+    assert.equal(remoteDefaultApproval('nope'), 'auto')
   })
 })
