@@ -206,7 +206,11 @@ import {
 import { overlayCascadeOrigin, overlayFit, placeDetachedBounds } from './window/windowPlace'
 import { appZOrderWindowIds, windowIsInPlay as windowIsInPlayOf } from './window/windowZOrder'
 import { replaceLiveWarmPool, shouldDestroyParkedWarmShell, takeReadyWarmShell } from './window/warmShell'
-import { resolveContextTokens } from './window/tokenUsageView'
+import {
+  resolveContextTokens,
+  tokenUsagePopupPosition,
+  type TokenUsageAnchor
+} from './window/tokenUsageView'
 import { appBuildNumber as formatAppBuildNumber } from './appBuild'
 import { FALLBACK_SYSTEM_ACCENT, normalizeAccentHex } from './window/accentColor'
 import { closeActiveNativePopup, popupNativeMenu } from './window/nativePopup'
@@ -3956,8 +3960,6 @@ function openFilePreviewWindow(
   setTimeout(() => warmPreviewShellPool(), 1200)
 }
 
-type TokenUsageAnchor = { x: number; y: number; width: number; height: number }
-
 let tokenUsageCloseTimer: ReturnType<typeof setTimeout> | null = null
 
 function cancelTokenUsageDismiss(): void {
@@ -4212,23 +4214,14 @@ function placeTokenUsagePopup(
 ): void {
   const [width, height] = win.getSize()
   const content = parent.getContentBounds()
-  const gap = 8
-  let x: number
-  let y: number
-  if (anchor) {
-    x = Math.round(content.x + anchor.x + anchor.width - width)
-    y = Math.round(content.y + anchor.y - height - gap)
-    if (y < content.y) {
-      y = Math.round(content.y + anchor.y + anchor.height + gap)
-    }
-  } else {
-    x = Math.round(content.x + content.width - width - 24)
-    y = Math.round(content.y + content.height - height - 80)
-  }
-
   const area = screen.getDisplayMatching(content).workArea
-  x = Math.min(Math.max(area.x + 8, x), area.x + area.width - width - 8)
-  y = Math.min(Math.max(area.y + 8, y), area.y + area.height - height - 8)
+  const { x, y } = tokenUsagePopupPosition({
+    width,
+    height,
+    content,
+    workArea: area,
+    anchor
+  })
   win.setPosition(x, y)
 }
 
