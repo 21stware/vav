@@ -28,7 +28,7 @@ import { localHostFs, type HostFs, type HostWatcher } from '../host'
 import { conversationIdForWatchedPath } from './conversationPath'
 import { isPathAllowed } from './pathAllow'
 import { previewKind, mimeFor } from './filePreviewKind'
-import { sortEntries, capVisibleEntries } from './fileEntrySort'
+import { sortEntries, capVisibleEntries, directoryFileEntry, directoryListingError } from './fileEntrySort'
 import { modeToPermissions } from './fileMode'
 import { isInvalidRenameName, joinOnHostPath } from './fileHostPath'
 import {
@@ -80,7 +80,11 @@ import {
   TEXT_WINDOW_HARD_MAX,
   WATCH_DEBOUNCE_MS,
   clampByteWindow,
-  officeUtf8WriteError
+  caughtIoError,
+  officeUtf8WriteError,
+  readBinaryStatReject,
+  readBinarySuccess,
+  textFileFromWindow
 } from './fileWindows'
 
 /**
@@ -176,7 +180,7 @@ export class FileService {
     conversationId?: string
   ): Promise<DirectoryListing> {
     const denied = this.accessError(path)
-    if (denied) return { path, entries: [], truncated: 0, error: denied }
+    if (denied) return directoryListingError(path, denied)
     const hostFs = this.fsFor(conversationId, path)
     try {
       const dirents = await hostFs.readdir(path)
@@ -197,22 +201,20 @@ export class FileService {
           } catch {
             // Broken symlink or a race with an external delete; show it as empty.
           }
-          const isDirectory = dirent.isDirectory()
-          return {
+          return directoryFileEntry({
             path: full,
             name: dirent.name,
-            isDirectory,
+            isDirectory: dirent.isDirectory(),
             size,
             modifiedAt,
-            createdAt,
-            children: isDirectory ? null : undefined
-          }
+            createdAt
+          })
         })
       )
 
       return { path, entries: sortEntries(entries, sort, ascending), truncated }
     } catch (err) {
-      return { path, entries: [], truncated: 0, error: (err as Error).message }
+      return directoryListingError(path, (err as Error).message)
     }
   }
 
@@ -225,8 +227,7 @@ export class FileService {
       maxBytes: TEXT_WINDOW_BYTES_AGENT,
       conversationId
     })
-    if (win.error) return { content: '', truncated: false, error: win.error }
-    return { content: win.content, truncated: win.truncated }
+    return textFileFromWindow(win)
   }
 
   /**
@@ -339,7 +340,7 @@ export class FileService {
       if (hostFs === this.fs) this.noteWrite(path)
       return { ok: true }
     } catch (err) {
-      return { ok: false, error: (err as Error).message }
+      return caughtIoError(err)
     }
   }
 
@@ -365,7 +366,7 @@ export class FileService {
       if (hostFs === this.fs) this.noteWrite(path)
       return { ok: true }
     } catch (err) {
-      return { ok: false, error: (err as Error).message }
+      return caughtIoError(err)
     }
   }
 
@@ -389,24 +390,16 @@ export class FileService {
       const hostFs = this.fsFor(conversationId, path)
       const io = this.forIo(path, conversationId)
       const info = await hostFs.stat(io)
-      if (info.isDirectory()) return { ok: false, error: t('files.error.directory') }
-      if (info.size <= 0) return { ok: false, error: 'File is empty.' }
-      if (info.size > BINARY_BASE64_SOFT) {
-        return {
-          ok: false,
-          error: `File is ${Math.round(info.size / 1024 / 1024)} MB — use vav-local:// stream (or inspect.streamUrl) instead of base64 IPC. Base64 is a soft memory budget, not a product open limit.`
-        }
-      }
+      const rejected = readBinaryStatReject(
+        { isDirectory: info.isDirectory(), size: info.size },
+        { directoryError: t('files.error.directory'), softMax: BINARY_BASE64_SOFT }
+      )
+      if (rejected) return rejected
       const kind = previewKind(basename(path))
       const buffer = await hostFs.readFile(io)
-      return {
-        ok: true,
-        base64: buffer.toString('base64'),
-        size: buffer.length,
-        mime: mimeFor(basename(path), kind)
-      }
+      return readBinarySuccess(buffer, mimeFor(basename(path), kind))
     } catch (err) {
-      return { ok: false, error: (err as Error).message }
+      return caughtIoError(err)
     }
   }
 
@@ -426,7 +419,7 @@ export class FileService {
       await this.fsFor(conversationId, path).rename(path, target)
       return { ok: true, path: target }
     } catch (err) {
-      return { ok: false, error: (err as Error).message }
+      return caughtIoError(err)
     }
   }
 
@@ -450,7 +443,7 @@ export class FileService {
       }
       return { ok: true }
     } catch (err) {
-      return { ok: false, error: (err as Error).message }
+      return caughtIoError(err)
     }
   }
 
@@ -662,7 +655,7 @@ export class FileService {
       const partial = structuredInspectIsPartial(progressive, structured.warnings)
       return { ok: true, structured, partial }
     } catch (err) {
-      return { ok: false, error: (err as Error).message }
+      return caughtIoError(err)
     }
   }
 
@@ -722,7 +715,7 @@ export class FileService {
       if (err) return { ok: false, error: err }
       return { ok: true }
     } catch (err) {
-      return { ok: false, error: (err as Error).message || 'Could not open file' }
+      return caughtIoError(err, 'Could not open file')
     }
   }
 

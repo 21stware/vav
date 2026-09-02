@@ -15,10 +15,6 @@ import type {
   TurnStatus
 } from '@shared/types'
 import {
-  cursorFamilyAllowsThinkingOverlay,
-  cursorModelFamilyId
-} from '@shared/cursorModel'
-import {
   cursorAuthIdentity,
   isAcpCliHost as isAcpHost,
   isStructuredCliHost,
@@ -79,7 +75,7 @@ import {
 import { shouldReplaceCliRuntime } from './cliWorkspaceRestart'
 import { sealCliPlanBlocks, planSealMode } from './planSeal'
 import { composeCliPrompt } from './cliPrompt'
-import { nextAllowedThinkingLevel } from './thinkingClamp'
+import { cursorLockedFamilyThinkingPatch, nextAllowedThinkingLevel } from './thinkingClamp'
 import { estimatedContextFill } from './contextFill'
 import { stampReasoningDurations } from './reasoningStamp'
 import { userTurnMessage } from './agentMessage'
@@ -2149,13 +2145,11 @@ export class CliAgentHost {
     event: Extract<DriverEvent, { type: 'model-applied' }>
   ): void {
     const conversation = this.deps.conversations.get(conversationId)
-    if (!conversation || conversation.cliHost !== 'cursor') return
-    const family = cursorModelFamilyId(conversation.model ?? '')
-    if (!family || cursorFamilyAllowsThinkingOverlay(family)) return
-    if (event.thinkingLevel && event.thinkingLevel !== conversation.thinkingLevel) {
-      this.deps.conversations.setThinkingLevel(conversationId, event.thinkingLevel)
-      this.deps.publish?.()
-    }
+    if (!conversation) return
+    const patch = cursorLockedFamilyThinkingPatch(conversation, event)
+    if (!patch) return
+    this.deps.conversations.setThinkingLevel(conversationId, patch.thinkingLevel)
+    this.deps.publish?.()
   }
 }
 
