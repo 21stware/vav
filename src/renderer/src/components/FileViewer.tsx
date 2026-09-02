@@ -20,7 +20,8 @@ import {
   loadPanelWidth,
   persistPanelWidth,
   pathsEqual,
-  provisionalInspect
+  provisionalInspect,
+  bindFilePreviewWorkspace
 } from '../lib/fileViewerHelpers'
 import { AgentPanelToggleButton } from './fileViewer/AgentPanelToggleButton'
 import { FileViewerHeader } from './fileViewer/FileViewerHeader'
@@ -962,39 +963,22 @@ export function FileViewer({
     conversationId: string,
     path: string
   ): Promise<void> => {
-    const dir = dirname(path)
     const store = useSessionStore.getState()
     const meta = store.conversations.find((c) => c.id === conversationId)
-    // Session already rooted at a project that contains this file — only
-    // highlight the path (right preview drawer). Never shrink the Files tree.
-    const root = meta?.workingDirectory ?? null
-    const underSessionRoot =
-      !!root &&
-      !root.startsWith('__') &&
-      (path === root || path.startsWith(`${root}/`) || path.startsWith(`${root}\\`))
-
-    if (underSessionRoot) {
-      useWorkspaceStore.getState().selectPath(conversationId, path)
-      return
-    }
-
-    // Always bind workdir for Enclosed dir chip; missing dirs surface a calm
-    // empty state in FilesPanel (ENOENT → "dir not exist"), not a raw error.
-    if ((meta?.workingDirectory ?? null) !== dir) {
-      await store.setWorkingDirectory(conversationId, dir)
-    } else {
-      await useWorkspaceStore.getState().setWorkingDirectory(conversationId, dir)
-    }
-    useWorkspaceStore.getState().selectPath(conversationId, path)
-    // Prefer Files segment when the user later expands tools, but stay collapsed.
-    // Quiet merges from toolsLayouts — if storage still says expanded, it would
-    // open the tray. Re-read after awaits so we preserve a mid-session open tray,
-    // and re-assert collapse when the tray was already folded.
-    const wasCollapsed = useSessionStore.getState().toolsCollapsed
-    store.setPanelSegmentQuiet('files')
-    if (wasCollapsed) store.setToolsCollapsed(true)
-    // Path chip shows "Enclosed dir" until the user explicitly switches workdir.
-    store.markEnclosedDirChip(conversationId)
+    await bindFilePreviewWorkspace({
+      conversationId,
+      path,
+      dir: dirname(path),
+      workingDirectory: meta?.workingDirectory ?? null,
+      toolsCollapsed: () => useSessionStore.getState().toolsCollapsed,
+      selectPath: (id, nextPath) => useWorkspaceStore.getState().selectPath(id, nextPath),
+      setConversationWorkingDirectory: (id, dir) => store.setWorkingDirectory(id, dir),
+      setWorkspaceWorkingDirectory: (id, dir) =>
+        useWorkspaceStore.getState().setWorkingDirectory(id, dir),
+      setPanelSegmentQuiet: (segment) => store.setPanelSegmentQuiet(segment),
+      setToolsCollapsed: (collapsed) => store.setToolsCollapsed(collapsed),
+      markEnclosedDirChip: (id) => store.markEnclosedDirChip(id)
+    })
   }
 
   // Embedded (FileSessionView / Workspace Peek): bind parent + enclosed-dir tray.

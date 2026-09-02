@@ -162,3 +162,47 @@ export function persistPanelWidth(
     // ignore
   }
 }
+
+/** True when `path` is the session root or a descendant (never a parent). */
+export function pathIsUnderWorkspaceRoot(
+  path: string,
+  root: string | null | undefined
+): boolean {
+  if (!root || root.startsWith('__')) return false
+  return path === root || path.startsWith(`${root}/`) || path.startsWith(`${root}\\`)
+}
+
+/**
+ * Point the Files tray at the open file's enclosed directory unless the
+ * session is already rooted at a project that contains this file.
+ */
+export async function bindFilePreviewWorkspace(opts: {
+  conversationId: string
+  path: string
+  dir: string
+  workingDirectory: string | null | undefined
+  selectPath: (conversationId: string, path: string) => void
+  setConversationWorkingDirectory: (conversationId: string, dir: string) => Promise<void>
+  setWorkspaceWorkingDirectory: (conversationId: string, dir: string) => Promise<void>
+  setPanelSegmentQuiet: (segment: 'files' | 'terminal') => void
+  setToolsCollapsed: (collapsed: boolean) => void
+  markEnclosedDirChip: (conversationId: string) => void
+  /** Re-read after workdir awaits so a mid-session open tray stays open. */
+  toolsCollapsed: () => boolean
+}): Promise<'select-only' | 'bound'> {
+  if (pathIsUnderWorkspaceRoot(opts.path, opts.workingDirectory)) {
+    opts.selectPath(opts.conversationId, opts.path)
+    return 'select-only'
+  }
+  if ((opts.workingDirectory ?? null) !== opts.dir) {
+    await opts.setConversationWorkingDirectory(opts.conversationId, opts.dir)
+  } else {
+    await opts.setWorkspaceWorkingDirectory(opts.conversationId, opts.dir)
+  }
+  opts.selectPath(opts.conversationId, opts.path)
+  const wasCollapsed = opts.toolsCollapsed()
+  opts.setPanelSegmentQuiet('files')
+  if (wasCollapsed) opts.setToolsCollapsed(true)
+  opts.markEnclosedDirChip(opts.conversationId)
+  return 'bound'
+}

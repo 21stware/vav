@@ -10,9 +10,11 @@ import {
   formatCommentCardLabel,
   isSilentPreviewWindowWarning,
   loadPanelWidth,
+  pathIsUnderWorkspaceRoot,
   pathsEqual,
   persistPanelWidth,
-  provisionalInspect
+  provisionalInspect,
+  bindFilePreviewWorkspace
 } from './fileViewerHelpers.ts'
 import type { PreviewBlock } from './previewBlocks.ts'
 
@@ -89,5 +91,55 @@ describe('filesHostConversationId / panel width', () => {
       store[key] = value
     })
     assert.equal(store['vav.filePreviewAgentPanelWidth'], '320')
+  })
+})
+
+describe('bindFilePreviewWorkspace', () => {
+  it('only highlights a path already under the session root', async () => {
+    const selected: string[] = []
+    const bound = await bindFilePreviewWorkspace({
+      conversationId: 'c1',
+      path: '/repo/src/a.ts',
+      dir: '/repo/src',
+      workingDirectory: '/repo',
+      toolsCollapsed: () => true,
+      selectPath: (_id, path) => selected.push(path),
+      setConversationWorkingDirectory: async () => {
+        throw new Error('should not shrink')
+      },
+      setWorkspaceWorkingDirectory: async () => {
+        throw new Error('should not shrink')
+      },
+      setPanelSegmentQuiet: () => undefined,
+      setToolsCollapsed: () => undefined,
+      markEnclosedDirChip: () => undefined
+    })
+    assert.equal(bound, 'select-only')
+    assert.deepEqual(selected, ['/repo/src/a.ts'])
+    assert.equal(pathIsUnderWorkspaceRoot('/repo/src/a.ts', '/repo'), true)
+    assert.equal(pathIsUnderWorkspaceRoot('/repo/src/a.ts', '__tmp'), false)
+  })
+
+  it('binds the enclosed directory when the session has no project root', async () => {
+    const calls: string[] = []
+    const bound = await bindFilePreviewWorkspace({
+      conversationId: 'c1',
+      path: '/tmp/notes.md',
+      dir: '/tmp',
+      workingDirectory: null,
+      toolsCollapsed: () => true,
+      selectPath: () => calls.push('select'),
+      setConversationWorkingDirectory: async (_id, dir) => {
+        calls.push(`conv:${dir}`)
+      },
+      setWorkspaceWorkingDirectory: async () => {
+        throw new Error('session workdir should change')
+      },
+      setPanelSegmentQuiet: (seg) => calls.push(`seg:${seg}`),
+      setToolsCollapsed: (on) => calls.push(`collapse:${on}`),
+      markEnclosedDirChip: (id) => calls.push(`chip:${id}`)
+    })
+    assert.equal(bound, 'bound')
+    assert.deepEqual(calls, ['conv:/tmp', 'select', 'seg:files', 'collapse:true', 'chip:c1'])
   })
 })
