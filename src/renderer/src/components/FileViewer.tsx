@@ -31,7 +31,7 @@ import {
   csvRowBlock,
   parseCsvModel,
   parseNotebookBlocks,
-  blockAtLine,
+  pickBlockAtLine,
   findBlockById,
   parentBlockOf,
   isLineOrientedPath,
@@ -61,6 +61,8 @@ import {
   type BinaryOpenMode
 } from './BinaryOpenViews'
 import { localFileStreamUrl } from '@shared/localFileUrl'
+import { mimeForPreviewKind, previewKind } from '@shared/previewKind'
+import { blockToPreviewRef } from '@shared/previewContext'
 import type { StructuredDocument } from '@shared/structuredDoc'
 import { attachDomPick, updateDomPick } from './office/pickFromDom'
 import { useSheetVirtualWindow } from '../lib/useSheetVirtualWindow'
@@ -107,41 +109,22 @@ function markViewer(label: string): void {
 
 function provisionalInspect(path: string): FileInspectResult | null {
   const name = basename(path)
+  const kind = previewKind(name)
+  // Text/CSV/HTML need inspect bytes — don't flash an empty canvas.
+  if (kind === 'binary' || kind === 'directory' || kind === 'text' || kind === 'csv') {
+    return null
+  }
   const base = {
     path,
     name,
     size: 0,
+    kind,
+    mime: mimeForPreviewKind(name, kind),
     streamUrl: localFileStreamUrl(path)
   }
-  if (/\.pdf$/i.test(path)) {
-    return { ...base, kind: 'pdf', mime: 'application/pdf' }
-  }
-  if (/\.docx$/i.test(path)) {
+  if (kind === 'zip') {
     return {
       ...base,
-      kind: 'docx',
-      mime: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
-    }
-  }
-  if (/\.xlsx$/i.test(path)) {
-    return {
-      ...base,
-      kind: 'xlsx',
-      mime: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-    }
-  }
-  if (/\.pptx$/i.test(path)) {
-    return {
-      ...base,
-      kind: 'pptx',
-      mime: 'application/vnd.openxmlformats-officedocument.presentationml.presentation'
-    }
-  }
-  if (/\.zip$/i.test(path)) {
-    return {
-      ...base,
-      kind: 'zip',
-      mime: 'application/zip',
       zip: {
         entries: [],
         entryCount: 0,
@@ -151,7 +134,7 @@ function provisionalInspect(path: string): FileInspectResult | null {
       }
     }
   }
-  return null
+  return base
 }
 const HtmlNativeView = lazy(() =>
   import('./office/HtmlNativeView').then((m) => ({ default: m.HtmlNativeView }))
@@ -526,7 +509,7 @@ export function FileViewer({
     } finally {
       if (textWindowFillRef.current === state) state.busy = false
     }
-  }, [])
+  }, [agentConversationId, parentConversationId])
 
   useEffect(() => {
     setBinaryOpenAs(null)
@@ -581,8 +564,15 @@ export function FileViewer({
         // Progressive structured index for block-pick (does not block native canvas).
         void window.vav.files
           .inspectStructured?.(filePath, {
+            conversationId: filesHostConversationId(agentConversationId, parentConversationId),
             maxBlocks:
-              result.kind === 'docx' ? 48 : result.kind === 'pptx' ? 1 : undefined,
+              result.kind === 'docx'
+                ? 48
+                : result.kind === 'pptx'
+                  ? 1
+                  : result.kind === 'pdf'
+                    ? 2
+                    : undefined,
             maxRows: result.kind === 'xlsx' ? 120 : undefined
           })
           .then((chunk) => {
@@ -621,7 +611,15 @@ export function FileViewer({
     return () => {
       cancelled = true
     }
-  }, [filePath, reloadInfo, isBinaryOfficeKind, extendTextWindow, captureBaseline])
+  }, [
+    filePath,
+    reloadInfo,
+    isBinaryOfficeKind,
+    extendTextWindow,
+    captureBaseline,
+    agentConversationId,
+    parentConversationId
+  ])
 
   useEffect(() => {
     try {
@@ -783,6 +781,7 @@ export function FileViewer({
     isHtmlClipKind ||
     isZip ||
     info?.kind === 'image' ||
+    info?.kind === 'audio' ||
     info?.kind === 'video' ||
     info?.kind === 'binary'
       ? 'none'
@@ -866,8 +865,8 @@ export function FileViewer({
           `rows: ${tb.rowCount}`
         ].join('\n'),
         label: `table ${tb.name}`,
-        startLine: 1,
-        endLine: 1
+        startLine: 0,
+        endLine: 0
       }))
     }
     if (isZip && info?.zip?.entries?.length) {
@@ -876,8 +875,8 @@ export function FileViewer({
         kind: (e.isDirectory ? 'section' : 'code') as PreviewBlock['kind'],
         text: `${e.isDirectory ? 'DIR' : 'FILE'} ${e.path}`,
         label: `ZIP · ${e.path}`,
-        startLine: 1,
-        endLine: 1
+        startLine: 0,
+        endLine: 0
       }))
     }
     if (info?.text == null && workingContent == null) return []
@@ -897,8 +896,8 @@ export function FileViewer({
       id: 'media',
       kind: 'paragraph',
       text: `${info.kind}: ${filePath}`,
-      startLine: 1,
-      endLine: 1,
+      startLine: 0,
+      endLine: 0,
       label: info.name
     }
   }, [info, filePath, mediaSrc])
@@ -1069,8 +1068,8 @@ export function FileViewer({
       if (block) applySelection(block.id, event, block)
       return
     }
-    const hit = blockAtLine(rootBlocks, line)
-    if (hit) applySelection(hit.id, event)
+    const hit = pickBlockAtLine(rootBlocks, line, displayText)
+    if (hit) applySelection(hit.id, event, hit)
   }
 
   // Comment cards own selection in file preview — no separate preview-ref chips.
@@ -2097,13 +2096,28 @@ export function FileViewer({
       return parts.join(' · ')
     }
     if (info.size) parts.push(formatBytes(info.size))
-    if (info.lineCount != null) parts.push(t('files.lines', { n: info.lineCount }))
+    if (info.kind === 'csv' && csvModel) {
+      parts.push(
+        csvModel.rowCapped
+          ? t('preview.csvSheetCapped', {
+              shown: csvModel.rows.length,
+              total: csvModel.totalRows,
+              cols: csvModel.headers.length
+            })
+          : t('preview.csvSheet', {
+              rows: csvModel.totalRows,
+              cols: csvModel.headers.length
+            })
+      )
+    } else if (info.lineCount != null) {
+      parts.push(t('files.lines', { n: info.lineCount }))
+    }
     parts.push(badge)
     parts.push(filePath)
     // Never surface technical windowing as "truncated" in the status strip.
     if (hasUnsavedChanges) parts.push('•')
     return parts.join(' · ')
-  }, [info, badge, filePath, t, hasUnsavedChanges])
+  }, [info, badge, filePath, t, hasUnsavedChanges, csvModel])
 
   const openAgentFromToggle = (): void => {
     if (embedded && onToggleAgentPanel) {
@@ -2563,9 +2577,7 @@ export function FileViewer({
           {info && !info.error && isOfficeKind && (
             <>
               {/* Progressive structured canvas for docx/xlsx/pptx until native paints. */}
-              {structuredPreview &&
-                !nativeOfficeReady &&
-                info.kind !== 'pdf' && (
+              {structuredPreview && !nativeOfficeReady && (
                   <Suspense fallback={null}>
                     <StructuredDocView
                       doc={structuredPreview}
@@ -2577,14 +2589,12 @@ export function FileViewer({
                 )}
               <div
                 className={
-                  structuredPreview && !nativeOfficeReady && info.kind !== 'pdf'
+                  structuredPreview && !nativeOfficeReady
                     ? 'file-viewer-native-office is-pending'
                     : 'file-viewer-native-office'
                 }
                 aria-hidden={
-                  structuredPreview && !nativeOfficeReady && info.kind !== 'pdf'
-                    ? true
-                    : undefined
+                  structuredPreview && !nativeOfficeReady ? true : undefined
                 }
               >
                 {OfficeNativeView ? (
@@ -2937,27 +2947,7 @@ function applyFileDraftContent(
 
 /** One selected preview block → a composer comment-block reference. */
 function blockToRef(path: string, badge: string, block: PreviewBlock): PreviewRef {
-  return {
-    id: `${path}::${block.id}`,
-    filePath: path,
-    // Chip title: "list-item · line 45" (matches comment-card mock).
-    label: formatCommentCardLabel(block),
-    startLine: block.startLine,
-    endLine: block.endLine,
-    text: block.text,
-    badge
-  }
-}
-
-/** Human title for the comment card header (kind · line N). */
-function formatCommentCardLabel(block: PreviewBlock): string {
-  // Log / line-oriented picks: never say "paragraph".
-  if (block.kind === 'line' || block.id.startsWith('line-L')) {
-    return `line ${block.startLine}`
-  }
-  const kind = (block.kind || 'block').replace(/_/g, '-')
-  if (block.startLine === block.endLine) return `${kind} · line ${block.startLine}`
-  return `${kind} · lines ${block.startLine}–${block.endLine}`
+  return blockToPreviewRef(path, badge, block)
 }
 
 /**
@@ -3208,8 +3198,8 @@ function StreamingMarkdownDocument({
         kind: hit.tagName.startsWith('H') ? 'heading' : 'paragraph',
         text: textContent.slice(0, 8000),
         label: textContent.slice(0, 64) || id,
-        startLine: 1,
-        endLine: 1
+        startLine: 0,
+        endLine: 0
       }
       void window.vav.window
         .popupMenu(
@@ -3627,7 +3617,7 @@ function CodeBlockCanvas({
       setHoveredId(`line-L${lineNo}`)
       return
     }
-    const hit = blockAtLine(blocks, lineNo)
+    const hit = pickBlockAtLine(blocks, lineNo, text)
     setHoveredId(hit?.id ?? null)
   }
 
@@ -3658,7 +3648,7 @@ function CodeBlockCanvas({
           endLine: lineNo,
           label: `L${lineNo}`
         } satisfies PreviewBlock)
-      : blockAtLine(blocks, lineNo)
+      : pickBlockAtLine(blocks, lineNo, text)
     if (!hit) return
     const parent = lineOriented ? null : parentBlockOf(blocks, hit.id)
     void window.vav.window
@@ -3933,10 +3923,6 @@ function CsvView({
                         onMouseDown={
                           selecting
                             ? (e) => {
-                                if (!cell.trim()) {
-                                  if (rowHint) pick(rowId, e, rowHint)
-                                  return
-                                }
                                 pick(cellId, e, csvCellBlock(headers, row, rowIndex, cellIndex))
                               }
                             : undefined

@@ -47,6 +47,73 @@ test('previewing a second file replaces the drawer contents', async () => {
   }
 })
 
+test('CSV preview renders the sheet and shares Edit/Read chrome', async () => {
+  const harness = await launchVav()
+  try {
+    const { page } = harness
+    await openFilesTray(page)
+    await page.locator('[data-file-path$="data.csv"]').dblclick()
+    const preview = page.locator('[data-testid="file-preview"]')
+    await expect(page.locator('[data-testid="file-preview-name"]')).toHaveText('data.csv')
+    await expect(preview.locator('.csv-sheet')).toBeVisible()
+    await expect(preview.getByText('alice')).toBeVisible()
+    await expect(preview.locator('.preview-mode-select')).toHaveValue('editing')
+    await expect(preview.locator('.file-preview-statusbar')).toContainText(/row/i)
+  } finally {
+    await harness.dispose()
+  }
+})
+
+test('TypeScript preview renders source and stays pickable', async () => {
+  const harness = await launchVav()
+  try {
+    const { page } = harness
+    await openFilesTray(page)
+    await page.locator('[data-file-path$="code.ts"]').dblclick()
+    const preview = page.locator('[data-testid="file-preview"]')
+    await expect(page.locator('[data-testid="file-preview-name"]')).toHaveText('code.ts')
+    await expect(preview.getByText('export function add')).toBeVisible()
+    await expect(preview.locator('.preview-mode-select')).toHaveValue('editing')
+  } finally {
+    await harness.dispose()
+  }
+})
+
+test('SVG image preview paints the media canvas with shared chrome', async () => {
+  const harness = await launchVav()
+  try {
+    const { page } = harness
+    await openFilesTray(page)
+    await page.locator('[data-file-path$="mark.svg"]').dblclick()
+    const preview = page.locator('[data-testid="file-preview"]')
+    await expect(page.locator('[data-testid="file-preview-name"]')).toHaveText('mark.svg')
+    await expect(preview.locator('img, .file-viewer-image-scroll')).toHaveCount(1)
+    await expect(preview.locator('.preview-mode-select')).toBeVisible()
+  } finally {
+    await harness.dispose()
+  }
+})
+
+test('clicking a markdown heading picks it and Escape clears the selection', async () => {
+  const harness = await launchVav()
+  try {
+    const { page } = harness
+    await openFilesTray(page)
+    await page.locator('[data-file-path$="hello.md"]').dblclick()
+    const preview = page.locator('[data-testid="file-preview"]')
+    await expect(preview.getByText('hello from e2e')).toBeVisible()
+    const heading = preview.locator('.preview-select-region, [data-block-id]').first()
+    await heading.click()
+    await expect
+      .poll(async () => preview.locator('.preview-select-region.selected, .selected[data-block-id]').count())
+      .toBeGreaterThan(0)
+    await page.keyboard.press('Escape')
+    await expect(preview.locator('.preview-select-region.selected, .selected[data-block-id]')).toHaveCount(0)
+  } finally {
+    await harness.dispose()
+  }
+})
+
 test('Files Open menu item opens a companion preview window', async () => {
   const harness = await launchVav()
   try {

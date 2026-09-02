@@ -540,6 +540,8 @@ export const zhCN = {
   'files.error.readDir': '无法读取目录',
   'files.lines': '{n} 行',
   'files.items': '{n} 项',
+  'preview.csvSheet': '{rows} 行 × {cols} 列',
+  'preview.csvSheetCapped': '显示 {shown} / {total} 行 × {cols} 列',
 
   // —— approval / ask ——
   'approval.title': '{name} · 待批准',
@@ -2678,6 +2680,8 @@ export const en: Record<MessageKey, string> = {
   'files.error.readDir': 'Could not read directory',
   'files.lines': '{n} lines',
   'files.items': '{n} items',
+  'preview.csvSheet': '{rows} rows × {cols} cols',
+  'preview.csvSheetCapped': 'Showing {shown} / {total} rows × {cols} cols',
 
   'approval.title': '{name} · Awaiting approval',
   'approval.titleEdit': '{name} · Edit & approve',

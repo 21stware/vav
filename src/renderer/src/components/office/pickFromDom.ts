@@ -9,7 +9,7 @@
  */
 
 import type { PreviewBlock } from '@shared/previewBlock'
-import { scheduleClickPick } from '../../lib/clickPick'
+import { scheduleClickPick } from '../../lib/clickPick.ts'
 
 export type DomPickHandler = (block: PreviewBlock, event: MouseEvent) => void
 
@@ -194,8 +194,10 @@ export function attachDomPick(
             kind,
             text: blockText.slice(0, 8000),
             label,
-            startLine: 1,
-            endLine: 1,
+            // Native office DOM has no source line map — 0 means "unknown"
+            // so agent context never claims "lines 1–1".
+            startLine: 0,
+            endLine: 0,
             level: kind === 'heading' ? Number(tag.slice(1)) || 1 : undefined
           },
           event

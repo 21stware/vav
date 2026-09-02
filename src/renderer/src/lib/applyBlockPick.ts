@@ -1,31 +1,9 @@
 import type { PreviewBlock } from '@shared/previewBlock'
-import type { PreviewRef } from '@shared/types'
+import { blockToPreviewRef } from '@shared/previewContext'
 import { useSessionStore } from '../state/sessionStore'
 import { isPickGestureActive } from './clickPick'
 
-function pickLabel(block: PreviewBlock): string {
-  if (block.label) return block.label
-  if (block.kind === 'line' || block.id.startsWith('line-L')) return `line ${block.startLine}`
-  const kind = (block.kind || 'block').replace(/_/g, '-')
-  if (block.startLine === block.endLine) return `${kind} · line ${block.startLine}`
-  return `${kind} · lines ${block.startLine}–${block.endLine}`
-}
-
-export function blockToPreviewRef(
-  sourcePath: string,
-  badge: string,
-  block: PreviewBlock
-): PreviewRef {
-  return {
-    id: `${sourcePath}::${block.id}`,
-    filePath: sourcePath,
-    label: pickLabel(block),
-    startLine: block.startLine,
-    endLine: block.endLine,
-    text: block.text,
-    badge
-  }
-}
+export { blockToPreviewRef } from '@shared/previewContext'
 
 /** Attach a picked block to the session comment cards + CLI prompt. */
 export function applyBlockPick(opts: {

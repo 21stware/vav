@@ -243,8 +243,14 @@ export async function launchVav(options: LaunchVavOptions = {}): Promise<VavHarn
   const userData = mkdtempSync(join(tmpdir(), 'vav-e2e-'))
   const acpModelLog = join(userData, 'acp-model.jsonl')
   const workspace = mkdtempSync(join(tmpdir(), 'vav-e2e-ws-'))
-  writeFileSync(join(workspace, 'hello.md'), '# hello from e2e\n')
+  writeFileSync(join(workspace, 'hello.md'), '# hello from e2e\n\nPick this heading.\n')
   writeFileSync(join(workspace, 'notes.md'), '# notes from e2e\n')
+  writeFileSync(join(workspace, 'data.csv'), 'name,qty\nalice,2\n,blank\n')
+  writeFileSync(join(workspace, 'code.ts'), 'export function add(a: number, b: number) {\n  return a + b\n}\n')
+  writeFileSync(
+    join(workspace, 'mark.svg'),
+    '<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32"><rect width="32" height="32" fill="#6b5bc0"/></svg>\n'
+  )
   if (options.seedGit) seedGitRepo(workspace)
   const extraWorkspace = options.extraWorkspace
     ? mkdtempSync(join(extraWorkspaceRoot(), 'vav-e2e-other-'))
