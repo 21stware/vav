@@ -47,7 +47,7 @@ import {
   splitStreamedRetriableError,
   type CliErrorKind
 } from '@shared/cliErrors'
-import { en, isApprovalApproveText, isApprovalDenyText, zhCN } from '@shared/i18n'
+import { isApprovalApproveText, isApprovalDenyText } from '@shared/i18n'
 import { normalizeAskQuestions, parseToolInput } from '@shared/askPlan'
 import {
   isAskToolName,
@@ -73,6 +73,14 @@ import { currentLocale, t } from '../i18n'
 import { shell } from 'electron'
 import type { FileService } from '../fs/FileService'
 import type { HostRegistry } from '../host'
+import {
+  extractUrlFromInput,
+  findChecklistIndex,
+  isAskCancelText,
+  isPlanDocRejectText,
+  turnHasAnswerContent as turnBlocksHaveAnswer,
+  turnHasIncompleteWork as turnBlocksHaveIncompleteWork
+} from './cliHostTurn'
 function isAcpHost(kind: CliHostKind | null | undefined): boolean {
   return !!kind && transportForCliHost(kind) === 'acp'
 }
@@ -152,21 +160,12 @@ function describeCliHostError(
  * regenerates the thinking along with the reply.
  */
 function turnHasAnswerContent(turn: HostTurn): boolean {
-  return turn.blocks.some(
-    (block) =>
-      block.kind === 'toolCall' ||
-      block.kind === 'plan' ||
-      (block.kind === 'text' && block.text.trim().length > 0)
-  )
+  return turnBlocksHaveAnswer(turn.blocks)
 }
 
 /** A tool still in flight — the turn cannot be treated as a finished reply. */
 function turnHasIncompleteWork(turn: HostTurn): boolean {
-  return turn.blocks.some(
-    (block) =>
-      block.kind === 'toolCall' &&
-      (block.status === 'pending' || block.status === 'executing')
-  )
+  return turnBlocksHaveIncompleteWork(turn.blocks)
 }
 
 interface PendingPermission {
@@ -2373,14 +2372,6 @@ export class CliAgentHost {
   }
 }
 
-function findChecklistIndex(blocks: MessageBlock[]): number | null {
-  for (let i = 0; i < blocks.length; i++) {
-    const block = blocks[i]
-    if (block?.kind === 'toolCall' && block.tool === 'plan') return i
-  }
-  return null
-}
-
 function sealCliPlanBlocks(
   blocks: MessageBlock[],
   mode: 'cancel' | 'error' | 'success'
@@ -2400,33 +2391,6 @@ function sealCliPlanBlocks(
       block.status = 'completed'
     }
   }
-}
-
-function isPlanDocRejectText(text: string): boolean {
-  const line = text.split('\n')[0]?.trim() ?? ''
-  return (
-    isApprovalDenyText(text) ||
-    line === zhCN['planDoc.reject'] ||
-    line === en['planDoc.reject'] ||
-    line === zhCN['common.cancel'] ||
-    line === en['common.cancel']
-  )
-}
-
-function extractUrlFromInput(block: MessageBlock | undefined): string | null {
-  if (!block || block.kind !== 'toolCall') return null
-  const parsed = parseToolInput(block.input)
-  return typeof parsed.url === 'string' && parsed.url.trim() ? parsed.url.trim() : null
-}
-
-function isAskCancelText(text: string): boolean {
-  const line = text.split('\n')[0]?.trim() ?? ''
-  return (
-    isApprovalDenyText(text) ||
-    line === zhCN['common.cancel'] ||
-    line === en['common.cancel'] ||
-    line === '已取消'
-  )
 }
 
 /** Resolve AgentConfig for a host kind from settings. */

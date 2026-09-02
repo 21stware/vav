@@ -29,6 +29,7 @@ import { useWorkspaceStore } from '../state/workspaceStore'
 import { useT } from '../i18n/useT'
 import { tt } from '../i18n/useT'
 import { formatBytes, isTemporaryWorkspace } from '../lib/format'
+import { entryInDir, selectionParent } from '../lib/filesPanelNav'
 import { useGitRepoSyncEpoch } from '../lib/gitRepoSync'
 import { basename, dirname, joinPath } from '../lib/path'
 import { menuAnchor, showMenu, type MenuItem } from '../lib/nativeMenu'
@@ -63,34 +64,6 @@ function scrollFileRowIntoView(path: string): void {
       // CSS.escape may throw on odd paths — ignore
     }
   })
-}
-
-/**
- * Direct parent of a selected path (Finder-style: arrows move among siblings
- * in this directory only). Root selection → root itself.
- */
-function selectionParent(
-  selected: string | null,
-  root: string,
-  dirMap: Record<string, FileEntry[]> | undefined
-): string {
-  if (!selected || selected === root) return root
-  // Selected path is itself a column dir (columnPath entry) listed only as a
-  // child of its parent — still dirname.
-  const parent = dirname(selected)
-  if (!parent || parent === selected) return root
-  // Prefer a parent we already have loaded.
-  if (dirMap?.[parent]) return parent
-  return parent || root
-}
-
-function entryInDir(
-  dir: string,
-  path: string | null,
-  dirMap: Record<string, FileEntry[]> | undefined
-): FileEntry | null {
-  if (!path) return null
-  return (dirMap?.[dir] ?? []).find((e) => e.path === path) ?? null
 }
 
 function sortButtonLabel(key: FileSortKey, t: ReturnType<typeof useT>): string {
