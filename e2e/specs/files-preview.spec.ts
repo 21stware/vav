@@ -123,7 +123,7 @@ test('HTML preview renders the document canvas with Edit chrome', async () => {
     await page.locator('[data-file-path$="page.html"]').dblclick()
     const preview = page.locator('[data-testid="file-preview"]')
     await expect(page.locator('[data-testid="file-preview-name"]')).toHaveText('page.html')
-    await expect(preview.locator('.html-root, .html-native-frame')).toBeVisible()
+    await expect(preview.locator('.html-root')).toBeVisible()
     await expect(preview.frameLocator('.html-native-frame').getByText('HTML preview')).toBeVisible({
       timeout: 20_000
     })
@@ -188,6 +188,7 @@ test('PPTX preview paints the slide canvas in Edit', async () => {
     await page.locator('[data-file-path$="deck.pptx"]').dblclick()
     const preview = page.locator('[data-testid="file-preview"]')
     await expect(page.locator('[data-testid="file-preview-name"]')).toHaveText('deck.pptx')
+    await expect(preview.locator('.pptx-root, .structured-doc')).toBeVisible({ timeout: 20_000 })
     await expect(preview.getByText('Q3 Review')).toBeVisible({ timeout: 20_000 })
     await expect(preview.locator('.preview-mode-select')).toHaveValue('editing')
   } finally {
@@ -220,7 +221,7 @@ test('SQLite preview opens the sheet and stays pickable', async () => {
     const preview = page.locator('[data-testid="file-preview"]')
     await expect(page.locator('[data-testid="file-preview-name"]')).toHaveText('notes.db')
     await expect(preview.locator('.sqlite-root')).toBeVisible({ timeout: 20_000 })
-    await expect(preview.getByText('items')).toBeVisible()
+    await expect(preview.locator('.structured-doc-nav-label')).toHaveText('items')
     await expect(preview.getByText('Pens')).toBeVisible()
     await expect(preview.locator('.preview-mode-select')).toHaveValue('editing')
   } finally {
@@ -267,7 +268,7 @@ test('html-clip preview is forced Read and is not pickable', async () => {
     await page.locator('[data-file-path$="app.html"]').dblclick()
     const preview = page.locator('[data-testid="file-preview"]')
     await expect(page.locator('[data-testid="file-preview-name"]')).toHaveText('app.html')
-    await expect(preview.locator('.html-clip-frame, .html-clip-stage')).toBeVisible({ timeout: 20_000 })
+    await expect(preview.locator('.html-clip-stage')).toBeVisible({ timeout: 20_000 })
     await expect(preview.locator('.preview-mode-static')).toBeVisible()
     await expect(preview.locator('.preview-mode-select')).toHaveCount(0)
     await expect(preview.locator('.preview-select-region')).toHaveCount(0)

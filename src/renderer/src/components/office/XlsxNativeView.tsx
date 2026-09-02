@@ -167,7 +167,7 @@ export function XlsxNativeView({
         if (!cancelled && !seededFromMain.current) {
           setError((err as Error).message || t('preview.loadFailed'))
           setLoading(false)
-          onReady?.()
+          // Leave StructuredDocView up — a failed native paint is not "ready".
         }
       }
     }

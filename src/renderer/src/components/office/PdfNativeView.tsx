@@ -630,7 +630,7 @@ export function PdfNativeView({
         if (!cancelled) {
           console.error('[pdf]', err)
           setError((err as Error).message || t('preview.loadFailed'))
-          onReady?.()
+          // Leave StructuredDocView up — a failed native paint is not "ready".
         }
       }
     })()

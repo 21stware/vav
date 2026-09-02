@@ -270,7 +270,14 @@ async function seedPreviewKindFixtures(workspace: string): Promise<void> {
     )}`
   )
   await writeMinimalDocx(join(workspace, 'letter.docx'), 'Cover title')
-  await writeMinimalPptx(join(workspace, 'deck.pptx'), ['Q3 Review', 'Ship the canvas'])
+  {
+    const PptxGenJS = require('pptxgenjs') as typeof import('pptxgenjs')
+    const pres = new PptxGenJS()
+    const slide = pres.addSlide()
+    slide.addText('Q3 Review', { x: 0.5, y: 1.4, w: 9, h: 1, fontSize: 32 })
+    slide.addText('Ship the canvas', { x: 0.5, y: 2.5, w: 9, h: 0.6, fontSize: 18 })
+    await pres.writeFile({ fileName: join(workspace, 'deck.pptx') })
+  }
 }
 
 function writeSilentWav(path: string): void {
@@ -342,44 +349,6 @@ async function writeMinimalDocx(path: string, title: string): Promise<void> {
 <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
   <w:body><w:p><w:r><w:t>${title}</w:t></w:r></w:p></w:body>
 </w:document>`
-  )
-  writeFileSync(path, await zip.generateAsync({ type: 'nodebuffer' }))
-}
-
-async function writeMinimalPptx(path: string, paras: string[]): Promise<void> {
-  const JSZip = require('jszip') as typeof import('jszip')
-  const zip = new JSZip()
-  zip.file(
-    '[Content_Types].xml',
-    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
-  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
-  <Default Extension="xml" ContentType="application/xml"/>
-  <Override PartName="/ppt/presentation.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.presentation.main+xml"/>
-  <Override PartName="/ppt/slides/slide1.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slide+xml"/>
-</Types>`
-  )
-  zip.file(
-    '_rels/.rels',
-    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
-  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="ppt/presentation.xml"/>
-</Relationships>`
-  )
-  zip.file(
-    'ppt/presentation.xml',
-    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<p:presentation xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
-  <p:sldIdLst><p:sldId id="256" r:id="rId1"/></p:sldIdLst>
-</p:presentation>`
-  )
-  const body = paras.map((text) => `<a:p><a:r><a:t>${text}</a:t></a:r></a:p>`).join('')
-  zip.file(
-    'ppt/slides/slide1.xml',
-    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<p:sld xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main">
-  <p:cSld><p:spTree><p:sp><p:txBody>${body}</p:txBody></p:sp></p:spTree></p:cSld>
-</p:sld>`
   )
   writeFileSync(path, await zip.generateAsync({ type: 'nodebuffer' }))
 }
