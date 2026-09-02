@@ -93,6 +93,10 @@ export function isSessionLevelAcpUpdate(
     n === 'currentmodeupdate' ||
     n === 'configoptionupdate' ||
     n === 'sessioninfoupdate' ||
+    n === 'goal' ||
+    n === 'goalupdate' ||
+    update.goal !== undefined ||
+    asRecord(update._meta)?.goal !== undefined ||
     asRecord(update.usage) != null
   )
 }

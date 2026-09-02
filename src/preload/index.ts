@@ -156,6 +156,8 @@ const api: VavApi = {
       ipcRenderer.invoke(IPC.convSetAcpMode, id, modeId),
     setAcpConfigOption: (id: string, configId: string, value: string | boolean) =>
       ipcRenderer.invoke(IPC.convSetAcpConfig, id, configId, value),
+    setAcpGoal: (id: string, action, objective) =>
+      ipcRenderer.invoke(IPC.convSetAcpGoal, id, action, objective),
     continueInNewSession: (id: string, messageId: string) =>
       ipcRenderer.invoke(IPC.convContinueNew, id, messageId),
     duplicate: (id: string) => ipcRenderer.invoke(IPC.convDuplicate, id),
