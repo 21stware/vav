@@ -94,7 +94,31 @@ export function acpModelIdCandidates(
   const resolved = resolveAcpModelId(trimmed, available, prefs)
   const familyDefault = familyDefaultId(trimmed, available)
   const constructed = resolveAcpModelId(trimmed, [], prefs)
-  return unique([resolved, familyDefault, constructed, trimmed])
+  const candidates = unique([resolved, familyDefault, constructed, trimmed])
+  if (!prefsActive(prefs)) return candidates
+  return candidates.filter((modelId) => candidateSatisfiesPrefs(modelId, prefs))
+}
+
+/**
+ * Family advertised defaults bake thinking / fast into the id. A candidate that
+ * contradicts the session-run chips must not be applied — otherwise send and
+ * retry snap back to the listed configuration.
+ */
+export function candidateSatisfiesPrefs(modelId: string, prefs?: AcpModelPrefs): boolean {
+  if (!prefsActive(prefs)) return true
+  const applied = prefsFromCursorModelId(modelId)
+  const family = parseAcpModelId(modelId).family
+  if (prefs!.fast != null && (supportsFast(family) || applied.fast != null)) {
+    if (applied.fast !== prefs!.fast) return false
+  }
+  if (prefs!.thinkingLevel != null && cursorFamilyAllowsThinkingOverlay(family)) {
+    if (prefs!.thinkingLevel === 'off') {
+      if (applied.thinkingLevel != null && applied.thinkingLevel !== 'off') return false
+    } else if (applied.thinkingLevel !== prefs!.thinkingLevel) {
+      return false
+    }
+  }
+  return true
 }
 
 export function resolveAcpModelId(

@@ -416,6 +416,135 @@ describe('wireAcp protocol', () => {
     await waitForEvent(events, (event) => event.type === 'connected')
     driver.dispose()
   })
+
+  it('does not fall back to a listed Fast default after the overlay is rejected', async () => {
+    const events: DriverEvent[] = []
+    const { proc, outbound, toClient } = fakeStdio()
+    const dir = await mkdtemp(join(tmpdir(), 'vav-acp-fast-fallback-'))
+
+    const driver = wireAcp(
+      'cursor',
+      proc,
+      {
+        binary: 'cursor-agent',
+        cwd: dir,
+        approvalMode: 'edit',
+        model: 'grok-4.6',
+        thinkingLevel: 'high',
+        fast: false
+      },
+      (event) => events.push(event)
+    )
+
+    const init = await waitFor(outbound, (msg) => msg.method === 'initialize')
+    toClient({
+      jsonrpc: '2.0',
+      id: init.id,
+      result: {
+        protocolVersion: ACP_PROTOCOL_VERSION,
+        agentCapabilities: { loadSession: true },
+        authMethods: []
+      }
+    })
+
+    const created = await waitFor(outbound, (msg) => msg.method === 'session/new')
+    toClient({
+      jsonrpc: '2.0',
+      id: created.id,
+      result: {
+        sessionId: 'sess-fast',
+        models: {
+          currentModelId: 'default[]',
+          availableModels: [{ modelId: 'grok-4.6[effort=high,fast=true]', name: 'grok-4.6' }]
+        }
+      }
+    })
+
+    const overlay = await waitFor(outbound, (msg) => msg.method === 'session/set_model')
+    assert.equal(asRecord(overlay.params)?.modelId, 'grok-4.6[effort=high,fast=false]')
+    toClient({
+      jsonrpc: '2.0',
+      id: overlay.id,
+      error: { code: RpcErrorCode.invalidParams, message: 'Invalid params' }
+    })
+    await waitForEvent(events, (event) => event.type === 'connected')
+
+    const setModels = outbound.filter((msg) => msg.method === 'session/set_model')
+    assert.equal(setModels.length, 1)
+    assert.ok(
+      setModels.every((msg) => asRecord(msg.params)?.modelId !== 'grok-4.6[effort=high,fast=true]')
+    )
+
+    driver.applyOptions?.({ fast: true })
+    const enabled = await waitForNth(outbound, (msg) => msg.method === 'session/set_model', 2)
+    assert.equal(asRecord(enabled.params)?.modelId, 'grok-4.6[effort=high,fast=true]')
+    toClient({ jsonrpc: '2.0', id: enabled.id, result: {} })
+    driver.dispose()
+  })
+
+  it('re-pins the current Fast chip before a follow-up prompt', async () => {
+    const events: DriverEvent[] = []
+    const { proc, outbound, toClient } = fakeStdio()
+    const dir = await mkdtemp(join(tmpdir(), 'vav-acp-fast-prompt-'))
+
+    const driver = wireAcp(
+      'cursor',
+      proc,
+      {
+        binary: 'cursor-agent',
+        cwd: dir,
+        approvalMode: 'edit',
+        model: 'grok-4.6',
+        thinkingLevel: 'high',
+        fast: true
+      },
+      (event) => events.push(event)
+    )
+
+    const init = await waitFor(outbound, (msg) => msg.method === 'initialize')
+    toClient({
+      jsonrpc: '2.0',
+      id: init.id,
+      result: {
+        protocolVersion: ACP_PROTOCOL_VERSION,
+        agentCapabilities: { loadSession: true },
+        authMethods: []
+      }
+    })
+
+    const created = await waitFor(outbound, (msg) => msg.method === 'session/new')
+    toClient({
+      jsonrpc: '2.0',
+      id: created.id,
+      result: {
+        sessionId: 'sess-fast-prompt',
+        models: {
+          currentModelId: 'default[]',
+          availableModels: [{ modelId: 'grok-4.6[effort=high,fast=true]', name: 'grok-4.6' }]
+        }
+      }
+    })
+
+    const bootSet = await waitFor(outbound, (msg) => msg.method === 'session/set_model')
+    assert.equal(asRecord(bootSet.params)?.modelId, 'grok-4.6[effort=high,fast=true]')
+    toClient({ jsonrpc: '2.0', id: bootSet.id, result: {} })
+    await waitForEvent(events, (event) => event.type === 'connected')
+
+    driver.applyOptions?.({ fast: false })
+    const flipped = await waitForNth(outbound, (msg) => msg.method === 'session/set_model', 2)
+    assert.equal(asRecord(flipped.params)?.modelId, 'grok-4.6[effort=high,fast=false]')
+    toClient({ jsonrpc: '2.0', id: flipped.id, result: {} })
+
+    driver.prompt('hello again')
+    const pinned = await waitForNth(outbound, (msg) => msg.method === 'session/set_model', 3)
+    assert.equal(asRecord(pinned.params)?.modelId, 'grok-4.6[effort=high,fast=false]')
+    toClient({ jsonrpc: '2.0', id: pinned.id, result: {} })
+    const prompt = await waitFor(outbound, (msg) => msg.method === 'session/prompt')
+    assert.equal(asRecord(prompt.params)?.sessionId, 'sess-fast-prompt')
+    toClient({ jsonrpc: '2.0', id: prompt.id, result: { stopReason: 'end_turn' } })
+    await waitForEvent(events, (event) => event.type === 'turn-finished' && event.success === true)
+    driver.dispose()
+  })
 })
 
 describe('acpInvokeArgs', () => {
