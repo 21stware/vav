@@ -5,14 +5,17 @@ import {
   applyCliToolPatch,
   applyToolEventStatus,
   applyToolRuntimePatch,
+  applyToolStatePatch,
   cliToolCardSummary,
   cliToolHasInput,
   ensureToolCallBlock,
   newCliParentTaskBlock,
   newCliPermissionBlock,
   newCliToolCallBlock,
+  rememberSentToolCard,
   shouldAdoptMappedTool,
-  shouldKeepPendingInteractive
+  shouldKeepPendingInteractive,
+  toolCallBlockIndex
 } from './cliToolBlock.ts'
 
 describe('cliToolBlock', () => {
@@ -168,5 +171,25 @@ describe('cliToolBlock', () => {
       'fs_read:{"path":"a"}'
     )
     assert.equal(cliToolCardSummary({ name: 'fs_read' }, summarize), 'fs_read')
+  })
+
+  it('indexes tool cards, patches approval fields, and skips unchanged emits', () => {
+    const blocks = [
+      { kind: 'text', text: 'hi' },
+      newCliToolCallBlock({ id: 't1', tool: 'fs_read', summary: 'read', input: '{}' })
+    ]
+    assert.equal(toolCallBlockIndex(blocks, 't1'), 1)
+    assert.equal(toolCallBlockIndex(blocks, 'missing'), -1)
+
+    const state = { status: 'pending', output: '', choices: ['Approve', 'Deny'], askTitle: 'Run' }
+    applyToolStatePatch(state, { status: 'executing', choices: undefined, askTitle: undefined })
+    assert.equal(state.status, 'executing')
+    assert.equal('choices' in state, false)
+    assert.equal('askTitle' in state, false)
+
+    const sent = new Map<string, string>()
+    assert.equal(rememberSentToolCard(sent, 't1', '{"a":1}'), true)
+    assert.equal(rememberSentToolCard(sent, 't1', '{"a":1}'), false)
+    assert.equal(rememberSentToolCard(sent, 't1', '{"a":2}'), true)
   })
 })

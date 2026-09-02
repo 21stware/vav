@@ -36,3 +36,22 @@ export function parkInteractivePatch(
   }
   return null
 }
+
+export function parkedPermissionWaiter(
+  blockId: string,
+  kind: ParkInteractiveKind
+): {
+  requestId: string
+  toolCallId: string
+  kind: ParkInteractiveKind
+  synthetic: false
+  resolve: () => void
+} {
+  return {
+    requestId: blockId,
+    toolCallId: blockId,
+    kind,
+    synthetic: false,
+    resolve: () => undefined
+  }
+}

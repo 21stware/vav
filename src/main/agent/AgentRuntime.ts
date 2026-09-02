@@ -68,7 +68,7 @@ import {
 import { buildSystemPrompt } from './systemPrompt'
 import { summarizeToolInput } from './toolSummarize'
 import { stampReasoningDurations } from './reasoningStamp'
-import { applyToolRuntimePatch, ensureToolCallBlock } from './cliToolBlock'
+import { applyToolRuntimePatch, applyToolStatePatch, ensureToolCallBlock, rememberSentToolCard, toolCallBlockIndex } from './cliToolBlock'
 import { compactClearGate, planConversationCompact } from './compactPlan'
 import { mergeVavCredentials } from './agentConfig'
 import {
@@ -1009,20 +1009,17 @@ export class AgentRuntime {
     toolCallId: string,
     patch: Partial<ToolRuntimeState>
   ): void {
-    const state = turn.toolState.get(toolCallId) ?? { status: 'pending' as ToolCallStatus, output: '' }
-    Object.assign(state, patch)
-    // Explicit undefined clears approval fields so the card leaves Approve/Deny UI.
-    if ('choices' in patch && patch.choices === undefined) delete state.choices
-    if ('multiSelect' in patch && patch.multiSelect === undefined) delete state.multiSelect
-    if ('questions' in patch && patch.questions === undefined) delete state.questions
-    if ('askTitle' in patch && patch.askTitle === undefined) delete state.askTitle
+    const state = applyToolStatePatch(
+      turn.toolState.get(toolCallId) ?? { status: 'pending' as ToolCallStatus, output: '' },
+      patch
+    )
     turn.toolState.set(toolCallId, state)
 
-    let slot = turn.blocks.findIndex((b) => b.kind === 'toolCall' && b.id === toolCallId)
+    let slot = toolCallBlockIndex(turn.blocks, toolCallId)
     if (slot < 0) {
       // Mid-gate patches must still paint; synthesize a card rather than drop UI.
       this.ensureToolBlock(turn, toolCallId, '')
-      slot = turn.blocks.findIndex((b) => b.kind === 'toolCall' && b.id === toolCallId)
+      slot = toolCallBlockIndex(turn.blocks, toolCallId)
       if (slot < 0) return
     }
     const prev = turn.blocks[slot] as ToolCallBlock
@@ -1043,8 +1040,7 @@ export class AgentRuntime {
     block: ToolCallBlock
   ): void {
     const encoded = JSON.stringify(block)
-    if (turn.sentCards.get(block.id) === encoded) return
-    turn.sentCards.set(block.id, encoded)
+    if (!rememberSentToolCard(turn.sentCards, block.id, encoded)) return
     this.deps.emit({ type: 'tool', conversationId, index, block })
   }
 
@@ -1270,7 +1266,7 @@ export class AgentRuntime {
       askTitle: options.askTitle
     })
     // Refresh summary on the card (title + command body for approvals).
-    let slot = turn.blocks.findIndex((b) => b.kind === 'toolCall' && b.id === toolCallId)
+    let slot = toolCallBlockIndex(turn.blocks, toolCallId)
     if (slot >= 0 && summary) {
       const block = turn.blocks[slot] as ToolCallBlock
       if (summary !== block.summary) {
@@ -1279,7 +1275,7 @@ export class AgentRuntime {
       }
     }
     this.setPhase(conversationId, turn, 'awaiting-user')
-    slot = turn.blocks.findIndex((b) => b.kind === 'toolCall' && b.id === toolCallId)
+    slot = toolCallBlockIndex(turn.blocks, toolCallId)
     if (slot >= 0) {
       const block = turn.blocks[slot] as ToolCallBlock
       this.deps.emit({

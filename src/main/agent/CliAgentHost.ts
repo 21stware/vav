@@ -99,7 +99,7 @@ import {
   newCliPermissionBlock,
   newCliToolCallBlock
 } from './cliToolBlock'
-import { parkInteractivePatch } from './cliPark'
+import { parkInteractivePatch, parkedPermissionWaiter } from './cliPark'
 import { shouldFoldChecklistTool, skipEmptyChecklistUpdate, checklistPlanFields } from './cliChecklist'
 import { elicitationCardFields, findPendingElicitationIndex } from './cliElicitation'
 import { cliPermissionAllow, cliPermissionOutput, cliPermissionStatus, findPendingPermission } from './cliPermissionAnswer'
@@ -1469,13 +1469,7 @@ export class CliAgentHost {
     )
     if (!parked) return false
     turn.blocks[index] = parked.next
-    turn.pendingPermissions.set(block.id, {
-      requestId: block.id,
-      toolCallId: block.id,
-      kind: parked.kind,
-      synthetic: false,
-      resolve: () => undefined
-    })
+    turn.pendingPermissions.set(block.id, parkedPermissionWaiter(block.id, parked.kind))
     this.deps.emit({
       type: 'awaiting',
       conversationId,

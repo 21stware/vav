@@ -102,6 +102,46 @@ export function applyToolRuntimePatch(
   return block
 }
 
+export function toolCallBlockIndex(
+  blocks: Array<{ kind: string; id?: string }>,
+  toolCallId: string
+): number {
+  return blocks.findIndex((b) => b.kind === 'toolCall' && b.id === toolCallId)
+}
+
+/** Explicit `undefined` on approval fields leaves the Approve/Deny UI. */
+export function applyToolStatePatch<T extends { status: string; output?: string }>(
+  prev: T,
+  patch: Partial<T> & {
+    choices?: unknown
+    multiSelect?: unknown
+    questions?: unknown
+    askTitle?: unknown
+  }
+): T {
+  Object.assign(prev, patch)
+  if ('choices' in patch && patch.choices === undefined) delete (prev as { choices?: unknown }).choices
+  if ('multiSelect' in patch && patch.multiSelect === undefined) {
+    delete (prev as { multiSelect?: unknown }).multiSelect
+  }
+  if ('questions' in patch && patch.questions === undefined) {
+    delete (prev as { questions?: unknown }).questions
+  }
+  if ('askTitle' in patch && patch.askTitle === undefined) delete (prev as { askTitle?: unknown }).askTitle
+  return prev
+}
+
+/** Skip a card emit when the encoded payload did not change. */
+export function rememberSentToolCard(
+  sent: Map<string, string>,
+  blockId: string,
+  encoded: string
+): boolean {
+  if (sent.get(blockId) === encoded) return false
+  sent.set(blockId, encoded)
+  return true
+}
+
 export function cliToolHasInput(input: unknown): boolean {
   return !!input && typeof input === 'object' && Object.keys(input as object).length > 0
 }
@@ -172,7 +212,7 @@ export function ensureToolCallBlock(
   toolCallId: string,
   summary: string
 ): boolean {
-  if (blocks.some((b) => b.kind === 'toolCall' && b.id === toolCallId)) return false
+  if (toolCallBlockIndex(blocks, toolCallId) >= 0) return false
   blocks.push(
     newCliToolCallBlock({
       id: toolCallId,
