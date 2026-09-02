@@ -6,7 +6,8 @@ import {
   nextConversationForMachine,
   pickBootstrapActiveId,
   seedCliAgentCatalogue,
-  seedEmptyConversationPatch
+  seedEmptyConversationPatch,
+  shouldSpawnDetachedConversation
 } from './sessionBootstrap.ts'
 
 describe('sessionBootstrap', () => {
@@ -119,5 +120,12 @@ describe('sessionBootstrap', () => {
 
     const again = seedEmptyConversationPatch(seeded, { id: 'c2' })
     assert.equal(again.conversations, seeded.conversations)
+  })
+
+  it('spawns detached for explicit detached or a bound companion', () => {
+    assert.equal(shouldSpawnDetachedConversation('detached', false), true)
+    assert.equal(shouldSpawnDetachedConversation('here', true), false)
+    assert.equal(shouldSpawnDetachedConversation(undefined, true), true)
+    assert.equal(shouldSpawnDetachedConversation('none', false), false)
   })
 })

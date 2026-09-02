@@ -31,6 +31,21 @@ import { previewKind, mimeFor } from './filePreviewKind'
 import { sortEntries, capVisibleEntries } from './fileEntrySort'
 import { modeToPermissions } from './fileMode'
 import { isInvalidRenameName, joinOnHostPath } from './fileHostPath'
+import {
+  binaryWindowCaughtError,
+  binaryWindowSuccess,
+  binaryProbeTextWindow,
+  deniedBinaryWindow,
+  deniedTextWindow,
+  directoryBinaryWindow,
+  directoryTextWindow,
+  emptyPastEndBinaryWindow,
+  emptyPastEndTextWindow,
+  textWindowCaughtError,
+  textWindowLooksBinary,
+  textWindowSuccess,
+  type BinaryWindowResult
+} from './fileWindowShape'
 import { mimeHintToUti } from './fileUti'
 import { inspectZipArchive, zipInspectFailure, zipInspectSuccess } from './fileZipArchive'
 import { looksLikeTextFile } from './fileTextSample'
@@ -229,39 +244,17 @@ export class FileService {
     )
     const force = !!opts?.force
     const denied = this.accessError(path)
-    if (denied) {
-      return {
-        content: '',
-        startByte,
-        endByte: startByte,
-        totalBytes: 0,
-        truncated: false,
-        error: denied
-      }
-    }
+    if (denied) return deniedTextWindow(startByte, denied)
     const hostFs = this.fsFor(opts?.conversationId, path)
     const io = this.forIo(path, opts?.conversationId)
     try {
       const info = await hostFs.stat(io)
       if (info.isDirectory()) {
-        return {
-          content: '',
-          startByte: 0,
-          endByte: 0,
-          totalBytes: 0,
-          truncated: false,
-          error: t('files.error.directory')
-        }
+        return directoryTextWindow(t('files.error.directory'))
       }
       const totalBytes = info.size
       if (startByte >= totalBytes) {
-        return {
-          content: '',
-          startByte,
-          endByte: startByte,
-          totalBytes,
-          truncated: false
-        }
+        return emptyPastEndTextWindow(startByte, totalBytes)
       }
       const length = Math.min(maxBytes, totalBytes - startByte)
       const fh = await hostFs.open(io, 'r')
@@ -271,36 +264,15 @@ export class FileService {
         const slice = buf.subarray(0, bytesRead)
         // Null byte in the first window → treat as binary (unless mid-file
         // continuation, or the caller forced a text/hex override).
-        if (!force && startByte === 0 && slice.includes(0)) {
-          return {
-            content: '',
-            startByte,
-            endByte: startByte,
-            totalBytes,
-            truncated: false,
-            error: t('files.error.binary')
-          }
+        if (textWindowLooksBinary(force, startByte, slice.includes(0))) {
+          return binaryProbeTextWindow(startByte, totalBytes, t('files.error.binary'))
         }
-        const endByte = startByte + bytesRead
-        return {
-          content: slice.toString('utf8'),
-          startByte,
-          endByte,
-          totalBytes,
-          truncated: endByte < totalBytes
-        }
+        return textWindowSuccess(slice.toString('utf8'), startByte, bytesRead, totalBytes)
       } finally {
         await fh.close()
       }
     } catch (err) {
-      return {
-        content: '',
-        startByte,
-        endByte: startByte,
-        totalBytes: 0,
-        truncated: false,
-        error: (err as Error).message
-      }
+      return textWindowCaughtError(startByte, err)
     }
   }
 
@@ -311,17 +283,7 @@ export class FileService {
   async readBinaryWindow(
     path: string,
     opts?: { startByte?: number; maxBytes?: number; conversationId?: string }
-  ): Promise<
-    | {
-        ok: true
-        base64: string
-        startByte: number
-        endByte: number
-        totalBytes: number
-        truncated: boolean
-      }
-    | { ok: false; error: string; startByte: number; endByte: number; totalBytes: number }
-  > {
+  ): Promise<BinaryWindowResult> {
     const { startByte, maxBytes } = clampByteWindow(
       opts?.startByte,
       opts?.maxBytes,
@@ -329,38 +291,17 @@ export class FileService {
       BINARY_WINDOW_HARD_MAX
     )
     const denied = this.accessError(path)
-    if (denied) {
-      return {
-        ok: false,
-        error: denied,
-        startByte,
-        endByte: startByte,
-        totalBytes: 0
-      }
-    }
+    if (denied) return deniedBinaryWindow(startByte, denied)
     const hostFs = this.fsFor(opts?.conversationId, path)
     const io = this.forIo(path, opts?.conversationId)
     try {
       const info = await hostFs.stat(io)
       if (info.isDirectory()) {
-        return {
-          ok: false,
-          error: t('files.error.directory'),
-          startByte: 0,
-          endByte: 0,
-          totalBytes: 0
-        }
+        return directoryBinaryWindow(t('files.error.directory'))
       }
       const totalBytes = info.size
       if (startByte >= totalBytes) {
-        return {
-          ok: true,
-          base64: '',
-          startByte,
-          endByte: startByte,
-          totalBytes,
-          truncated: false
-        }
+        return emptyPastEndBinaryWindow(startByte, totalBytes)
       }
       const length = Math.min(maxBytes, totalBytes - startByte)
       const fh = await hostFs.open(io, 'r')
@@ -368,26 +309,12 @@ export class FileService {
         const buf = Buffer.alloc(length)
         const { bytesRead } = await fh.read(buf, 0, length, startByte)
         const slice = buf.subarray(0, bytesRead)
-        const endByte = startByte + bytesRead
-        return {
-          ok: true,
-          base64: slice.toString('base64'),
-          startByte,
-          endByte,
-          totalBytes,
-          truncated: endByte < totalBytes
-        }
+        return binaryWindowSuccess(slice.toString('base64'), startByte, bytesRead, totalBytes)
       } finally {
         await fh.close()
       }
     } catch (err) {
-      return {
-        ok: false,
-        error: (err as Error).message,
-        startByte,
-        endByte: startByte,
-        totalBytes: 0
-      }
+      return binaryWindowCaughtError(startByte, err)
     }
   }
 

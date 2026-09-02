@@ -149,3 +149,11 @@ export function seedEmptyConversationPatch<C extends { id: string }, M>(
     activeLeaf: { ...state.activeLeaf, [meta.id]: null }
   }
 }
+
+/** Companion windows stay bound to one session — spawn a new window instead of replacing. */
+export function shouldSpawnDetachedConversation(
+  openIn: string | undefined,
+  companionBound: boolean
+): boolean {
+  return openIn === 'detached' || (openIn !== 'here' && companionBound)
+}

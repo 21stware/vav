@@ -41,7 +41,6 @@ import {
   shouldRetrySameSession,
   type CliErrorKind
 } from '@shared/cliErrors'
-import { isApprovalApproveText, isApprovalDenyText } from '@shared/i18n'
 import { parseToolInput } from '@shared/askPlan'
 import {
   isAskToolName,
@@ -63,8 +62,6 @@ import type { HostRegistry } from '../host'
 import {
   extractUrlFromInput,
   findChecklistIndex,
-  isAskCancelText,
-  isPlanDocRejectText,
   turnHasAnswerContent as turnBlocksHaveAnswer,
   turnHasIncompleteWork as turnBlocksHaveIncompleteWork
 } from './cliHostTurn'
@@ -101,6 +98,13 @@ import {
 import { parkInteractivePatch } from './cliPark'
 import { shouldFoldChecklistTool, skipEmptyChecklistUpdate, checklistPlanFields } from './cliChecklist'
 import { elicitationCardFields, findPendingElicitationIndex } from './cliElicitation'
+import { cliPermissionAllow, cliPermissionOutput, cliPermissionStatus } from './cliPermissionAnswer'
+import {
+  isDuplicateTokenSnapshot,
+  usageContextFill,
+  usageEventIsNoop,
+  usageHasTurnTokens
+} from './cliUsage'
 import {
   applyCliHistoryHandoff,
   formatCliWorkspaceHandoff,
@@ -114,6 +118,7 @@ import {
 } from './cliTurnHold'
 import { createCliHistoryReplayGate, createCliHistoryReplayGateFromBlocks, type CliHistoryReplayGate } from './cliHistoryReplay'
 import { inputJson, mapToolName, summarizeCliTool } from './drivers/toolMap'
+import { parentPathOfWrite } from '../fs/fileHostPath'
 import { FileDraftCoalescer, writeToolDraft } from '@shared/writeToolDraft'
 import {
   expireOpenTools,
@@ -459,14 +464,7 @@ export class CliAgentHost {
       turn.pendingPermissions.get(toolCallId) ||
       [...turn.pendingPermissions.values()].find((p) => p.toolCallId === toolCallId)
     if (!pending) return false
-    const allow =
-      pending.kind === 'ask' || pending.kind === 'form'
-        ? !isAskCancelText(text)
-        : pending.kind === 'plan_doc'
-          ? !isPlanDocRejectText(text)
-          : pending.kind === 'url'
-            ? !isAskCancelText(text) && !isApprovalDenyText(text)
-            : isApprovalApproveText(text, false)
+    const allow = cliPermissionAllow(pending.kind, text)
     turn.pendingPermissions.delete(pending.toolCallId)
     const runtime = this.runtimes.get(conversationId)
     if (pending.kind === 'url' && allow) {
@@ -513,17 +511,13 @@ export class CliAgentHost {
       if (block?.kind === 'toolCall') {
         const next: ToolCallBlock = {
           ...block,
-          status: allow ? (pending.kind === 'permission' ? 'executing' : 'completed') : 'skipped',
-          output:
-            pending.kind === 'ask'
-              ? text
-              : pending.kind === 'plan_doc'
-                ? allow
-                  ? t('planDoc.accepted')
-                  : t('planDoc.rejected')
-                : allow
-                  ? 'Approved'
-                  : 'Denied',
+          status: cliPermissionStatus(pending.kind, allow),
+          output: cliPermissionOutput(pending.kind, allow, text, {
+            accepted: t('planDoc.accepted'),
+            rejected: t('planDoc.rejected'),
+            approved: 'Approved',
+            denied: 'Denied'
+          }),
           choices: undefined
         }
         turn.blocks[idx] = next
@@ -913,7 +907,7 @@ export class CliAgentHost {
         this.deps.emit({
           type: 'fs-changed',
           conversationId,
-          parentPath: event.path.replace(/[/\\][^/\\]+$/, '') || workdir,
+          parentPath: parentPathOfWrite(event.path, workdir),
           filePath: event.path
         })
         return
@@ -1003,7 +997,7 @@ export class CliAgentHost {
         this.deps.emit({
           type: 'fs-changed',
           conversationId,
-          parentPath: event.path.replace(/[/\\][^/\\]+$/, '') || workdir,
+          parentPath: parentPathOfWrite(event.path, workdir),
           filePath: event.path
         })
         break
@@ -1672,20 +1666,14 @@ export class CliAgentHost {
     const output = event.outputTokens ?? 0
     const cacheRead = event.cacheRead ?? 0
     const cacheWrite = event.cacheWrite ?? 0
-    const hasTurnTokens = input > 0 || output > 0 || cacheRead > 0 || cacheWrite > 0
+    const hasTurnTokens = usageHasTurnTokens(input, output, cacheRead, cacheWrite)
     const recordHistory = event.recordHistory ?? hasTurnTokens
 
     let snapshotTotal: number | null = null
     if (recordHistory && hasTurnTokens) {
       const live = this.deps.conversations.get(conversationId)!
       const last = live.tokenHistory?.at(-1)
-      const duplicate =
-        last != null &&
-        last.newInputTokens === input &&
-        last.outputTokens === output &&
-        last.cacheReadTokens === cacheRead &&
-        last.cacheWriteTokens === cacheWrite
-      if (!duplicate) {
+      if (!isDuplicateTokenSnapshot(last, input, output, cacheRead, cacheWrite)) {
         const snapshot = buildSnapshot({
           turnIndex: (live.tokenHistory?.length ?? 0) + 1,
           usage: { input, output, cacheRead, cacheWrite },
@@ -1696,14 +1684,11 @@ export class CliAgentHost {
         this.deps.conversations.recordTokenSnapshot(conversationId, snapshot)
         snapshotTotal = snapshot.totalInputTokens
       } else {
-        snapshotTotal = last.totalInputTokens
+        snapshotTotal = last!.totalInputTokens
       }
     }
 
-    const fill =
-      typeof event.contextUsed === 'number' && event.contextUsed >= 0
-        ? event.contextUsed
-        : snapshotTotal
+    const fill = usageContextFill(event.contextUsed, snapshotTotal)
     if (typeof fill === 'number' && fill >= 0) {
       this.deps.conversations.setContextFill(conversationId, fill)
     }
@@ -1716,11 +1701,13 @@ export class CliAgentHost {
 
     // Nothing meaningful changed (e.g. empty usage ping).
     if (
-      fill == null &&
-      !recordHistory &&
-      event.contextSize == null &&
-      event.sessionCostUsd == null &&
-      !quotaChanged
+      usageEventIsNoop({
+        fill,
+        recordHistory,
+        contextSize: event.contextSize,
+        sessionCostUsd: event.sessionCostUsd,
+        quotaChanged
+      })
     ) {
       return
     }

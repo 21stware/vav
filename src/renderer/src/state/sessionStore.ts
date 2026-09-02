@@ -121,7 +121,7 @@ import {
   swarmRootId
 } from '@shared/swarmLayout'
 import { patchAcpConfigOption, patchAcpSessionMode } from '@shared/acpSession'
-import { inheritCreateWorkingDirectory, nextConversationForMachine, pickBootstrapActiveId, seedCliAgentCatalogue, seedEmptyConversationPatch } from './sessionBootstrap'
+import { inheritCreateWorkingDirectory, nextConversationForMachine, pickBootstrapActiveId, seedCliAgentCatalogue, seedEmptyConversationPatch, shouldSpawnDetachedConversation } from './sessionBootstrap'
 import { notifyImageAttachPlan, trimAttachmentPathsForHost } from './sessionAttach'
 import { persistSwarmLayout, setLeaf } from './sessionSwarm'
 import { swarmBlocksWorkdirSwitch as swarmSurfaceBlocksWorkdir, locateWorkspaceDefaultName } from '../lib/workdirSwitch'
@@ -1139,11 +1139,10 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     // Companion windows are bound to one conversation (native map + local
     // SessionWindow id). Selecting here replaces the chrome but not the
     // binding — send works, the transcript never updates. Open a new window.
-    const spawnDetached =
-      options?.openIn === 'detached' ||
-      (options?.openIn !== 'here' &&
-        isCompanionSessionShell() &&
-        Boolean(get().pinnedConversationId))
+    const spawnDetached = shouldSpawnDetachedConversation(
+      options?.openIn,
+      isCompanionSessionShell() && Boolean(get().pinnedConversationId)
+    )
     if (spawnDetached) {
       await get().openDetached(meta.id)
       return
@@ -1993,10 +1992,12 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     const item = queue.find((q) => q.id === queueId)
     if (!item) return
     if (
-      !item.text.trim() &&
-      item.attachments.length === 0 &&
-      item.previewRefs.length === 0 &&
-      item.commentCards.length === 0
+      isEmptyComposerSend(
+        item.text,
+        item.attachments,
+        item.previewRefs,
+        item.commentCards
+      )
     ) {
       get().removeQueuedMessage(conversationId, queueId)
       return
