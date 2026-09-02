@@ -23,15 +23,20 @@ import { formatBytes, relativeTime } from '../lib/format'
 import {
   applyFileDraftContent,
   blockToRef,
+  clampPanelWidth,
   collectBlocks,
   countNewlinesLocal,
+  filesHostConversationId,
   isSilentPreviewWindowWarning,
+  loadPanelWidth,
+  persistPanelWidth,
   pathsEqual,
   provisionalInspect
 } from '../lib/fileViewerHelpers'
 import { CsvView } from './fileViewer/CsvView'
 import { DocumentView } from './fileViewer/DocumentView'
 import { ImageZoomStage, MediaSelectFrame } from './fileViewer/MediaStages'
+import { AgentPanelToggleButton } from './fileViewer/AgentPanelToggleButton'
 import {
   formatBadge,
   parseBlocksForPath,
@@ -124,32 +129,18 @@ const ZipArchiveView = lazy(() =>
   import('./ZipArchiveView').then((m) => ({ default: m.ZipArchiveView }))
 )
 import { SessionHistoryPopover } from './SessionHistoryPopover'
-import wordmark from '../assets/wordmark.png'
-import wordmarkDark from '../assets/wordmark-dark.png'
 
-const PANEL_WIDTH_KEY = 'vav.filePreviewAgentPanelWidth'
 const EMPTY_COMMENT_CARDS: { ref: PreviewRef; comment: string }[] = []
 
-function filesHostConversationId(
+function hostConvId(
   agentConversationId?: string | null,
   parentConversationId?: string | null
 ): string | undefined {
-  return (
-    agentConversationId ||
-    parentConversationId ||
-    useSessionStore.getState().activeId ||
-    undefined
+  return filesHostConversationId(
+    agentConversationId,
+    parentConversationId,
+    useSessionStore.getState().activeId
   )
-}
-
-function loadPanelWidth(): number {
-  try {
-    const n = Number(localStorage.getItem(PANEL_WIDTH_KEY))
-    if (n >= 280 && n <= 520) return n
-  } catch {
-    // ignore
-  }
-  return 360
 }
 
 type UnsavedIntent = 'close'
@@ -159,35 +150,6 @@ type UnsavedIntent = 'close'
  * Preview and Edit share the same rendered canvas. Edit adds DevTools-style
  * block selection for Agent context — never swaps into a source/code editor.
  */
-/** Shared Agent panel toggle — product mark (main embedded + standalone). */
-function AgentPanelToggleButton({
-  open,
-  title,
-  onClick,
-  className
-}: {
-  open: boolean
-  title: string
-  onClick: () => void
-  className?: string
-}): React.JSX.Element {
-  return (
-    <button
-      type="button"
-      className={`btn ghost sm icon-only preview-agent-logo-btn${open ? ' is-active-toggle' : ''}${className ? ` ${className}` : ''}`}
-      title={title}
-      aria-label={title}
-      aria-pressed={open}
-      onClick={onClick}
-    >
-      <span className="preview-agent-logo" aria-hidden>
-        <img className="logo-light" src={wordmark} alt="" />
-        <img className="logo-dark" src={wordmarkDark} alt="" />
-      </span>
-    </button>
-  )
-}
-
 export function FileViewer({
   path: initialPath,
   parentConversationId,
@@ -329,7 +291,7 @@ export function FileViewer({
   const reloadInfo = useCallback(async (path: string): Promise<FileInspectResult> => {
     const result = await window.vav.files.inspect(
       path,
-      filesHostConversationId(agentConversationId, parentConversationId)
+      hostConvId(agentConversationId, parentConversationId)
     )
     setInfo(result)
     knownIdentityRef.current = {
@@ -437,7 +399,7 @@ export function FileViewer({
       const win = await window.vav.files.readTextWindow(state.path, {
         startByte: state.endByte,
         maxBytes: 2 * 1024 * 1024,
-        conversationId: filesHostConversationId(agentConversationId, parentConversationId)
+        conversationId: hostConvId(agentConversationId, parentConversationId)
       })
       if (win.error || state.path !== filePathRef.current) return
       if (hasUnsavedRef.current) return
@@ -547,7 +509,7 @@ export function FileViewer({
             markViewer('structured:partial')
             if (chunk.partial) {
               void window.vav.files.inspectStructured?.(filePath, {
-                conversationId: filesHostConversationId(agentConversationId, parentConversationId)
+                conversationId: hostConvId(agentConversationId, parentConversationId)
               }).then((full) => {
                 if (cancelled || !full?.ok) return
                 setStructuredPreview(full.structured)
@@ -576,7 +538,7 @@ export function FileViewer({
 
   useEffect(() => {
     try {
-      localStorage.setItem(PANEL_WIDTH_KEY, String(panelWidth))
+      persistPanelWidth(panelWidth)
     } catch {
       // ignore
     }
@@ -651,7 +613,7 @@ export function FileViewer({
         const prev = knownIdentityRef.current
         const probe = await window.vav.files.inspect(
           filePathRef.current,
-          filesHostConversationId(agentConversationId, parentConversationId)
+          hostConvId(agentConversationId, parentConversationId)
         )
         if (prev == null) {
           // First sighting while inspect is still in flight — record identity
@@ -1491,7 +1453,7 @@ export function FileViewer({
     try {
       const bin = await window.vav.files.readBinary(
         profile.sourcePath,
-        filesHostConversationId(agentConversationId, parentConversationId)
+        hostConvId(agentConversationId, parentConversationId)
       )
       if (!bin.ok) {
         showToast({
@@ -1654,7 +1616,7 @@ export function FileViewer({
       const result = await window.vav.files.write(
         filePath,
         content,
-        filesHostConversationId(agentConversationId, parentConversationId)
+        hostConvId(agentConversationId, parentConversationId)
       )
       if (!result.ok) {
         showToast({
@@ -1698,7 +1660,7 @@ export function FileViewer({
       try {
         const bin = await window.vav.files.readBinary(
           filePath,
-          filesHostConversationId(agentConversationId, parentConversationId)
+          hostConvId(agentConversationId, parentConversationId)
         )
         if (!bin.ok) {
           showToast({
@@ -1773,7 +1735,7 @@ export function FileViewer({
         await window.vav.files.write(
           originalPath,
           baselineContent,
-          filesHostConversationId(agentConversationId, parentConversationId)
+          hostConvId(agentConversationId, parentConversationId)
         )
       }
       if (window.vav.files.workingCopyDiscard && result.path !== originalPath) {
@@ -2269,7 +2231,7 @@ export function FileViewer({
                 const startX = event.clientX
                 const startW = panelWidth
                 const onMove = (e: MouseEvent): void => {
-                  const next = Math.min(520, Math.max(280, startW + (startX - e.clientX)))
+                  const next = clampPanelWidth(startW + (startX - e.clientX))
                   panelWidthRef.current = next
                   setPanelWidth(next)
                 }
@@ -2277,7 +2239,7 @@ export function FileViewer({
                   window.removeEventListener('mousemove', onMove)
                   window.removeEventListener('mouseup', onUp)
                   try {
-                    localStorage.setItem(PANEL_WIDTH_KEY, String(panelWidthRef.current))
+                    persistPanelWidth(panelWidthRef.current)
                   } catch {
                     // ignore
                   }

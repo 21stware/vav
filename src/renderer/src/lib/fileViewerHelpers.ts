@@ -121,3 +121,44 @@ export function provisionalInspect(path: string): FileInspectResult | null {
   }
   return null
 }
+
+/** Prefer the file-session agent, then the parent session, then the sidebar. */
+export function filesHostConversationId(
+  agentConversationId?: string | null,
+  parentConversationId?: string | null,
+  fallbackActiveId?: string | null
+): string | undefined {
+  return agentConversationId || parentConversationId || fallbackActiveId || undefined
+}
+
+export const PANEL_WIDTH_KEY = 'vav.filePreviewAgentPanelWidth'
+export const PANEL_WIDTH_MIN = 280
+export const PANEL_WIDTH_MAX = 520
+export const PANEL_WIDTH_DEFAULT = 360
+
+export function clampPanelWidth(width: number): number {
+  return Math.min(PANEL_WIDTH_MAX, Math.max(PANEL_WIDTH_MIN, width))
+}
+
+export function loadPanelWidth(getItem?: (key: string) => string | null): number {
+  try {
+    const read = getItem ?? ((key) => localStorage.getItem(key))
+    const n = Number(read(PANEL_WIDTH_KEY))
+    if (n >= PANEL_WIDTH_MIN && n <= PANEL_WIDTH_MAX) return n
+  } catch {
+    // ignore
+  }
+  return PANEL_WIDTH_DEFAULT
+}
+
+export function persistPanelWidth(
+  width: number,
+  setItem?: (key: string, value: string) => void
+): void {
+  try {
+    const write = setItem ?? ((key, value) => localStorage.setItem(key, value))
+    write(PANEL_WIDTH_KEY, String(width))
+  } catch {
+    // ignore
+  }
+}

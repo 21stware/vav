@@ -3,11 +3,15 @@ import { describe, it } from 'node:test'
 import {
   applyFileDraftContent,
   blockToRef,
+  clampPanelWidth,
   collectBlocks,
   countNewlinesLocal,
+  filesHostConversationId,
   formatCommentCardLabel,
   isSilentPreviewWindowWarning,
+  loadPanelWidth,
   pathsEqual,
+  persistPanelWidth,
   provisionalInspect
 } from './fileViewerHelpers.ts'
 import type { PreviewBlock } from './previewBlocks.ts'
@@ -63,5 +67,27 @@ describe('isSilentPreviewWindowWarning / provisionalInspect', () => {
     assert.equal(isSilentPreviewWindowWarning('password protected'), false)
     assert.equal(provisionalInspect('/docs/a.pdf')?.kind, 'pdf')
     assert.equal(provisionalInspect('/docs/a.ts'), null)
+  })
+})
+
+describe('filesHostConversationId / panel width', () => {
+  it('prefers agent, then parent, then the sidebar fallback', () => {
+    assert.equal(filesHostConversationId('a', 'p', 'active'), 'a')
+    assert.equal(filesHostConversationId(null, 'p', 'active'), 'p')
+    assert.equal(filesHostConversationId(null, null, 'active'), 'active')
+    assert.equal(filesHostConversationId(null, null, null), undefined)
+  })
+
+  it('loads, clamps, and persists the agent panel width', () => {
+    const store: Record<string, string> = {}
+    assert.equal(loadPanelWidth(() => null), 360)
+    assert.equal(loadPanelWidth((key) => (key === 'vav.filePreviewAgentPanelWidth' ? '400' : null)), 400)
+    assert.equal(loadPanelWidth(() => '100'), 360)
+    assert.equal(clampPanelWidth(100), 280)
+    assert.equal(clampPanelWidth(900), 520)
+    persistPanelWidth(320, (key, value) => {
+      store[key] = value
+    })
+    assert.equal(store['vav.filePreviewAgentPanelWidth'], '320')
   })
 })
