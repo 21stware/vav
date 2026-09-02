@@ -143,7 +143,7 @@ export function incomingConnectLabels(
 
 /** Durable project path that can be pinned; temp / synthetic groups cannot. */
 export function pinnableWorkspaceDir(opts: {
-  groupKind: string
+  groupKind: string | undefined
   workspaceSelectable?: boolean
   groupWorkdir: string | null | undefined
   tmp: string

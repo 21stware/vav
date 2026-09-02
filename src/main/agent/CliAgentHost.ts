@@ -90,6 +90,7 @@ import { sealCliPlanBlocks } from './planSeal'
 import { composeCliPrompt } from './cliPrompt'
 import { nextAllowedThinkingLevel } from './thinkingClamp'
 import { estimatedContextFill } from './contextFill'
+import { stampReasoningDurations } from './reasoningStamp'
 import { userTurnMessage } from './agentMessage'
 import {
   applyCliCancelQuota,
