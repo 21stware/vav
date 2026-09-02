@@ -27,6 +27,25 @@ export function isEmptyComposerSend(
   return !text.trim() && attachments.length === 0 && refs.length === 0 && cards.length === 0
 }
 
+export type ComposerSendDisposition = 'empty' | 'awaiting' | 'need-key' | 'full' | 'enqueue' | 'send'
+
+/** First-send gate: empty / parked ask / missing VAV key / queue / go. */
+export function composerSendDisposition(input: {
+  empty: boolean
+  awaitingTool: boolean
+  needsApiKey: boolean
+  isRunning: boolean
+  queueLength: number
+  maxQueue?: number
+}): ComposerSendDisposition {
+  if (input.empty) return 'empty'
+  if (input.awaitingTool) return 'awaiting'
+  if (input.needsApiKey) return 'need-key'
+  if (!input.isRunning) return 'send'
+  if (input.queueLength >= (input.maxQueue ?? MESSAGE_QUEUE_MAX)) return 'full'
+  return 'enqueue'
+}
+
 /** Comment cards win on id collision so the model gets the note, not a duplicate chip. */
 export function mergePreviewAndCommentRefs(
   refs: PreviewRef[],

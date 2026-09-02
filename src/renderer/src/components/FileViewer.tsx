@@ -21,6 +21,7 @@ import {
   pathsEqual,
   provisionalInspect,
   bindFilePreviewWorkspace,
+  fileViewerAgentPanelOpen,
   mergeIncomingTextBody,
   mergeTextWindowInspect,
   nextCommentCardsOnBlockPick,
@@ -134,11 +135,12 @@ export function FileViewer({
    * Standalone: local drawer. FileSessionView: parent toggle.
    * Workspace peek: agent column is always a sibling (no toggle prop) → treat open.
    */
-  const agentPanelOpen = embedded
-    ? onToggleAgentPanel
-      ? !!agentPanelOpenProp
-      : true
-    : localAgentOpen
+  const agentPanelOpen = fileViewerAgentPanelOpen({
+    embedded,
+    hasToggle: !!onToggleAgentPanel,
+    propOpen: agentPanelOpenProp,
+    localOpen: localAgentOpen
+  })
   const [panelWidth, setPanelWidth] = useState(loadPanelWidth)
   const panelWidthRef = useRef(panelWidth)
   panelWidthRef.current = panelWidth

@@ -3,6 +3,7 @@ import { describe, it } from 'node:test'
 import { omitLiveUsage } from './sessionUsage.ts'
 import {
   buildQueuedMessage,
+  composerSendDisposition,
   isEmptyComposerSend,
   mergePreviewAndCommentRefs,
   MESSAGE_QUEUE_MAX
@@ -56,5 +57,24 @@ describe('composer send helpers', () => {
     assert.equal(item.text, 'hi')
     assert.deepEqual(item.attachments, ['/a.png'])
     assert.equal(item.createdAt, 1)
+  })
+
+  it('classifies empty / parked / key / queue / send', () => {
+    const base = {
+      empty: false,
+      awaitingTool: false,
+      needsApiKey: false,
+      isRunning: false,
+      queueLength: 0
+    }
+    assert.equal(composerSendDisposition({ ...base, empty: true }), 'empty')
+    assert.equal(composerSendDisposition({ ...base, awaitingTool: true }), 'awaiting')
+    assert.equal(composerSendDisposition({ ...base, needsApiKey: true }), 'need-key')
+    assert.equal(composerSendDisposition({ ...base, isRunning: true, queueLength: 0 }), 'enqueue')
+    assert.equal(
+      composerSendDisposition({ ...base, isRunning: true, queueLength: MESSAGE_QUEUE_MAX }),
+      'full'
+    )
+    assert.equal(composerSendDisposition(base), 'send')
   })
 })

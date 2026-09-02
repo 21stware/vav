@@ -19,7 +19,8 @@ import {
   persistPanelWidth,
   provisionalInspect,
   selectedBlockIdsForPath,
-  bindFilePreviewWorkspace
+  bindFilePreviewWorkspace,
+  fileViewerAgentPanelOpen
 } from './fileViewerHelpers.ts'
 import type { PreviewBlock } from './previewBlocks.ts'
 
@@ -229,6 +230,28 @@ describe('isOpenFilePath', () => {
         realPath: '/real.ts',
         copyPath: '/copy.ts'
       })),
+      true
+    )
+  })
+})
+
+describe('fileViewerAgentPanelOpen', () => {
+  it('keeps standalone local, and treats untoggled embedded as open', () => {
+    assert.equal(
+      fileViewerAgentPanelOpen({ embedded: false, hasToggle: false, localOpen: true }),
+      true
+    )
+    assert.equal(
+      fileViewerAgentPanelOpen({
+        embedded: true,
+        hasToggle: true,
+        propOpen: false,
+        localOpen: true
+      }),
+      false
+    )
+    assert.equal(
+      fileViewerAgentPanelOpen({ embedded: true, hasToggle: false, localOpen: false }),
       true
     )
   })

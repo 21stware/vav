@@ -286,3 +286,15 @@ export async function isOpenFilePath(
   if (!status) return false
   return pathsEqual(sourcePath, status.copyPath) || pathsEqual(sourcePath, status.realPath)
 }
+
+/** Standalone uses local state; workspace peek is always open unless a parent toggle exists. */
+export function fileViewerAgentPanelOpen(opts: {
+  embedded: boolean
+  hasToggle: boolean
+  propOpen?: boolean
+  localOpen: boolean
+}): boolean {
+  if (!opts.embedded) return opts.localOpen
+  if (opts.hasToggle) return !!opts.propOpen
+  return true
+}

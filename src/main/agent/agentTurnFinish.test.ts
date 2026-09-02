@@ -1,0 +1,70 @@
+import assert from 'node:assert/strict'
+import { describe, it } from 'node:test'
+import type { MessageBlock } from '../../shared/types.ts'
+import {
+  appendTurnErrorBlock,
+  assistantSnapshotFromTurn,
+  persistableTurnBlocks,
+  sealCancelledInteractiveTools
+} from './agentTurnFinish.ts'
+
+describe('persistableTurnBlocks', () => {
+  it('keeps tools/plans and drops empty text/reasoning', () => {
+    const blocks = persistableTurnBlocks([
+      { kind: 'text', text: '' },
+      { kind: 'text', text: 'hi' },
+      { kind: 'reasoning', text: '' },
+      { kind: 'toolCall', id: 't1', tool: 'fs_read', status: 'completed', summary: 'read' }
+    ] as MessageBlock[])
+    assert.equal(blocks.length, 2)
+    assert.equal(blocks[0]?.kind, 'text')
+    assert.equal(blocks[1]?.kind, 'toolCall')
+  })
+})
+
+describe('assistantSnapshotFromTurn', () => {
+  it('joins text blocks and stamps extras', () => {
+    const snap = assistantSnapshotFromTurn(
+      {
+        messageId: 'm1',
+        parentId: 'p1',
+        blocks: [
+          { kind: 'text', text: 'one' },
+          { kind: 'text', text: 'two' }
+        ]
+      },
+      { cancelled: true },
+      42
+    )
+    assert.equal(snap.id, 'm1')
+    assert.equal(snap.parentId, 'p1')
+    assert.equal(snap.role, 'assistant')
+    assert.equal(snap.content, 'one\ntwo')
+    assert.equal(snap.createdAt, 42)
+    assert.equal(snap.cancelled, true)
+  })
+})
+
+describe('sealCancelledInteractiveTools / appendTurnErrorBlock', () => {
+  it('skips pending ask/request and expires other in-flight tools', () => {
+    const blocks: MessageBlock[] = [
+      { kind: 'toolCall', id: 'a', tool: 'ask_user_question', status: 'pending', summary: 'q' },
+      { kind: 'toolCall', id: 'p', tool: 'plan', status: 'executing', summary: 'plan' },
+      { kind: 'toolCall', id: 'w', tool: 'fs_write', status: 'executing', summary: 'write' }
+    ]
+    sealCancelledInteractiveTools(blocks, 'Cancelled')
+    assert.equal((blocks[0] as { status: string }).status, 'skipped')
+    assert.equal((blocks[0] as { output?: string }).output, 'Cancelled')
+    assert.equal((blocks[1] as { status: string }).status, 'executing')
+    assert.equal((blocks[2] as { status: string }).status, 'expired')
+  })
+
+  it('quotes the error on its own line when blocks already exist', () => {
+    const blocks: MessageBlock[] = [{ kind: 'text', text: 'hi' }]
+    appendTurnErrorBlock(blocks, 'boom')
+    assert.equal((blocks[1] as { text: string }).text, '\n\n> boom')
+    const only: MessageBlock[] = []
+    appendTurnErrorBlock(only, 'boom')
+    assert.equal((only[0] as { text: string }).text, '> boom')
+  })
+})

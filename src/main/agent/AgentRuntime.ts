@@ -32,6 +32,17 @@ import { applyEditedArgs, leanToolArgs } from './agentToolArgs'
 import { isAssistant, textOf } from './agentMessage'
 import { sealRuntimePlanBlocks } from './planSeal'
 import {
+  appendTurnErrorBlock,
+  assistantSnapshotFromTurn,
+  sealCancelledInteractiveTools
+} from './agentTurnFinish'
+import {
+  FILE_READONLY_BLOCKED_TOOLS,
+  gateReadonlyExecute,
+  isFileEditLockedPath,
+  isReadonlyTerminalCommand
+} from './fileEditLock'
+import {
   blockFromContent,
   buildHistory,
   estimateCompactedContextTokens,
@@ -43,9 +54,6 @@ import {
   READONLY_TOOLS,
   buildSystemPrompt,
   createTools,
-  FILE_READONLY_BLOCKED_TOOLS,
-  isFileEditLockedPath,
-  isReadonlyTerminalCommand,
   summarizeToolInput,
   type ToolDetails
 } from './tools'
@@ -1147,42 +1155,8 @@ export class AgentRuntime {
       ...tool,
       execute: (toolCallId, params, signal, onUpdate) => {
         const live = this.deps.conversations.get(conversationId)
-        const readOnly = !!live?.fileReadOnly
-        // Defense in depth: refuse writes while the session is still Read.
-        if (readOnly && FILE_READONLY_BLOCKED_TOOLS.has(tool.name as ToolName)) {
-          return Promise.resolve({
-            content: [
-              {
-                type: 'text' as const,
-                text: 'Read-only session: call switch_mode with mode "edit" first (user may need to Approve), or ask them to switch the preview to Edit / convert / Save As.'
-              }
-            ],
-            details: {
-              display: '已拦截：当前为 Read 模式 — 先 switch_mode → Edit。',
-              failed: true
-            }
-          })
-        }
-        if (readOnly && tool.name === 'terminal') {
-          const command =
-            params && typeof params === 'object' && 'command' in params
-              ? String((params as { command: unknown }).command ?? '')
-              : ''
-          if (command && !isReadonlyTerminalCommand(command)) {
-            return Promise.resolve({
-              content: [
-                {
-                  type: 'text' as const,
-                  text: `Read-only session: refused non-read-only shell command. Call switch_mode (mode: "edit") first, or use ls/cat/grep/rg/head/tail.\nRefused: ${command}`
-                }
-              ],
-              details: {
-                display: `已拦截（Read 模式仅允许只读 shell）：\n$ ${command}`,
-                failed: true
-              }
-            })
-          }
-        }
+        const blocked = gateReadonlyExecute(!!live?.fileReadOnly, tool.name, params)
+        if (blocked) return Promise.resolve(blocked)
         const override = turn.argOverrides.get(toolCallId)
         return tool.execute(toolCallId, (override ?? params) as typeof params, signal, onUpdate)
       }
@@ -1457,27 +1431,7 @@ export class AgentRuntime {
   }
 
   private snapshot(turn: TurnState, extra: Partial<ChatMessage> = {}): ChatMessage {
-    // A slot is claimed when its content block opens, which can be a moment
-    // before any token lands in it; those empties are not worth persisting.
-    const blocks = turn.blocks.filter(
-      (b) =>
-        b.kind === 'toolCall' ||
-        b.kind === 'plan' ||
-        (b.kind === 'text' && b.text.length > 0) ||
-        (b.kind === 'reasoning' && b.text.length > 0)
-    )
-    return {
-      id: turn.messageId,
-      parentId: turn.parentId,
-      role: 'assistant',
-      content: blocks
-        .filter((b): b is Extract<MessageBlock, { kind: 'text' }> => b.kind === 'text')
-        .map((b) => b.text)
-        .join('\n'),
-      blocks: blocks.map((b) => ({ ...b })),
-      createdAt: Date.now(),
-      ...extra
-    }
+    return assistantSnapshotFromTurn(turn, extra)
   }
 
   private finish(conversationId: string, turn: TurnState): void {
@@ -1506,27 +1460,10 @@ export class AgentRuntime {
 
     if (turn.cancelled) {
       turn.error = undefined
-      for (const block of turn.blocks) {
-        if (block.kind !== 'toolCall') continue
-        if (block.tool === 'plan') continue // already sealed
-        if (
-          (block.tool === 'ask_user_question' || block.tool === 'request') &&
-          block.status === 'pending'
-        ) {
-          block.status = 'skipped'
-          block.output = t('common.cancelled')
-          continue
-        }
-        if (block.status === 'pending' || block.status === 'executing') {
-          block.status = 'expired'
-        }
-      }
+      sealCancelledInteractiveTools(turn.blocks, t('common.cancelled'))
     }
     if (turn.error) {
-      turn.blocks.push({
-        kind: 'text',
-        text: turn.blocks.length ? `\n\n> ${turn.error}` : `> ${turn.error}`
-      })
+      appendTurnErrorBlock(turn.blocks, turn.error)
     }
 
     const message = this.snapshot(turn, {

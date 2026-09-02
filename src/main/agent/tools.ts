@@ -111,34 +111,12 @@ export const HIGH_RISK_TOOLS: ReadonlySet<ToolName> = new Set([
   'terminal',
   'switch_mode'
 ])
-/**
- * Tools that stay offered in file-preview Read mode but hard-fail at execute
- * until the session is switched to Edit (via {@link switch_mode} or the UI).
- */
-export const FILE_READONLY_BLOCKED_TOOLS: ReadonlySet<ToolName> = new Set(['fs_write'])
 
-/** Formats that cannot switch to in-place Edit (need convert / Save As). */
-export function isFileEditLockedPath(filePath: string | null | undefined): boolean {
-  if (!filePath) return false
-  if (/\.(heic|heif|hif)$/i.test(filePath)) return true
-  if (/\.pdf$/i.test(filePath)) return true
-  if (/\.(doc|ppt|xls)$/i.test(filePath) && !/\.(docx|pptx|xlsx)$/i.test(filePath)) return true
-  if (/\.zip$/i.test(filePath)) return true
-  if (/\.drawio$/i.test(filePath)) return true
-  return false
-}
-/** Terminal commands treated as read-only under Auto approval / file Read mode. */
-const READONLY_TERMINAL =
-  /^(?:cat|ls|grep|rg|head|tail|wc|pwd|echo|which|type|file|stat|find|tree|du|df|uname|date|whoami|id|env|printenv|realpath|basename|dirname|md5|shasum|sha256sum|hexdump|xxd|jq|yq|sed\s+-n|awk)\b/
-
-export function isReadonlyTerminalCommand(command: string): boolean {
-  const cmd = command.trim()
-  // Reject obvious write redirects / mutators even if the head looks read-only.
-  if (/[>]{1,2}|tee\b|\brm\b|\bmv\b|\bcp\b|\bmkdir\b|\btouch\b|\bchmod\b|\bchown\b|\bsed\s+-i|\btruncate\b|\bdd\b/.test(cmd)) {
-    return false
-  }
-  return READONLY_TERMINAL.test(cmd)
-}
+export {
+  FILE_READONLY_BLOCKED_TOOLS,
+  isFileEditLockedPath,
+  isReadonlyTerminalCommand
+} from './fileEditLock'
 
 /** Keeps the parameter schema bound to `execute`, which `AgentTool[]` erases. */
 function defineTool<S extends TSchema>(tool: AgentTool<S, ToolDetails>): AgentTool<S, ToolDetails> {

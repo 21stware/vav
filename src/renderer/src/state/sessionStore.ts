@@ -48,7 +48,7 @@ import {
   type TurnRuntime,
 } from './sessionTypes'
 import { omitLiveUsage } from './sessionUsage'
-import { dispatchQueuedPayload, MESSAGE_QUEUE_MAX, buildQueuedMessage, isEmptyComposerSend, mergePreviewAndCommentRefs } from './sessionQueue'
+import { dispatchQueuedPayload, MESSAGE_QUEUE_MAX, buildQueuedMessage, composerSendDisposition, isEmptyComposerSend, mergePreviewAndCommentRefs } from './sessionQueue'
 import { applySessionTurnEvent } from './sessionTurnApply'
 import {
   searchStateForQuery,
@@ -2042,15 +2042,17 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     const turn = turns[activeId]
     const refs = previewRefs[activeId] ?? []
     const cards = commentCards[activeId] ?? []
-    if (isEmptyComposerSend(text, attachments, refs, cards)) return
-
-    // ask_user_question pause: composer is disabled — never enqueue here.
-    if (turn?.awaitingToolCallId) return
-
-    // Built-in VAV needs an API key; structured CLI hosts use their own auth.
     const activeHost =
       conversations.find((c) => c.id === activeId)?.cliHost ?? null
-    if (!activeHost && !settings.apiKeyPresent) {
+    const disposition = composerSendDisposition({
+      empty: isEmptyComposerSend(text, attachments, refs, cards),
+      awaitingTool: !!turn?.awaitingToolCallId,
+      needsApiKey: !activeHost && !settings.apiKeyPresent,
+      isRunning: !!turn?.isRunning,
+      queueLength: (messageQueues[activeId] ?? []).length
+    })
+    if (disposition === 'empty' || disposition === 'awaiting') return
+    if (disposition === 'need-key') {
       get().showDialog({
         title: tt('common.hint'),
         body: tt('dialog.configureApiKeyBody'),
@@ -2059,18 +2061,17 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       })
       return
     }
+    if (disposition === 'full') {
+      get().showToast({
+        kind: 'error',
+        title: tt('queue.fullTitle'),
+        description: tt('queue.fullBody', { n: MESSAGE_QUEUE_MAX })
+      })
+      return
+    }
 
     // Streaming: enqueue instead of interrupting (main-chat-streaming.rpml §5).
-    if (turn?.isRunning) {
-      const queue = messageQueues[activeId] ?? []
-      if (queue.length >= MESSAGE_QUEUE_MAX) {
-        get().showToast({
-          kind: 'error',
-          title: tt('queue.fullTitle'),
-          description: tt('queue.fullBody', { n: MESSAGE_QUEUE_MAX })
-        })
-        return
-      }
+    if (disposition === 'enqueue') {
       const quote = quotes[activeId] ?? null
       const contextFile =
         (contextFiles[activeId] ?? null) ||
