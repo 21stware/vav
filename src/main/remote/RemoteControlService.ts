@@ -17,6 +17,7 @@ import { dirname, join } from 'node:path'
 import { resolveSidecarBinary } from './sidecarBinary.ts'
 import type { Readable, Writable } from 'node:stream'
 import {
+  drainJsonLines,
   encodePairing,
   type RemoteConfigure,
   type RemoteControlState,

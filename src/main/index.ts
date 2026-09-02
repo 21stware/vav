@@ -1927,16 +1927,28 @@ const daemonAttach = new DaemonAttachService({
  * desktop. Headless vavd has no hub — returns false so the caller can run
  * a local agent against daemon fs/pty.
  */
+function remoteMachineId(conversation: Conversation | undefined | null): string | null {
+  if (!conversation) return null
+  const machineId = normalizeMachineId(conversation.machineId)
+  return isLocalMachine(machineId) ? null : machineId
+}
+
 async function forwardControl(
   conversation: Conversation | undefined | null,
   run: (dial: import('./remote/RemoteControlDial').RemoteControlDial, hostConversationId: string) => void
 ): Promise<boolean> {
-  if (!conversation || isLocalMachine(conversation.machineId)) return false
-  const ready = await daemonAttach.waitForControlPlane(conversation.machineId)
-  const dial = daemonAttach.controlOf(conversation.machineId)
+  const machineId = remoteMachineId(conversation)
+  if (!conversation || !machineId) return false
+  const ready = await daemonAttach.waitForControlPlane(machineId)
+  const dial = daemonAttach.controlOf(machineId)
   if (!ready || !dial?.ready) return false
   run(dial, hostSessionId(conversation.id, conversation.duplicateSourceId))
   return true
+}
+
+function controlPlaneOwns(conversation: Conversation | undefined | null): boolean {
+  const machineId = remoteMachineId(conversation)
+  return machineId !== null && daemonAttach.controlPlaneOf(machineId)
 }
 
 /** Pull the other computer's sessions and folder recents before its window boots. */
@@ -7526,7 +7538,7 @@ return c as text`
     const conversation = conversationStore.get(id)
     const next = title.trim() || t('common.untitledSession')
     if (await forwardControl(conversation, (dial, hostId) => dial.rename(hostId, next))) {
-      await pullRemoteWorkspace(conversation!.machineId)
+      await pullRemoteWorkspace(remoteMachineId(conversation)!)
       const detached = detachedWindows.get(id)
       if (detached && !detached.isDestroyed()) detached.setTitle(next)
       return conversationStore.listMeta()
@@ -7551,7 +7563,7 @@ return c as text`
   ipcMain.handle(IPC.convSetArchived, async (_event, id: string, archived: boolean) => {
     const conversation = conversationStore.get(id)
     if (archived && (await forwardControl(conversation, (dial, hostId) => dial.archive(hostId)))) {
-      await pullRemoteWorkspace(conversation!.machineId)
+      await pullRemoteWorkspace(remoteMachineId(conversation)!)
       clearUnseenForConversation(id)
       persistResultUnseen(id, false)
       return conversationStore.listMeta()
@@ -7574,7 +7586,7 @@ return c as text`
           dial.configure(hostId, { approvalMode: mode })
         )
       ) {
-        await pullRemoteWorkspace(conversation!.machineId)
+        await pullRemoteWorkspace(remoteMachineId(conversation)!)
         return conversationStore.listMeta()
       }
       conversationStore.setApprovalMode(id, mode)
@@ -7590,7 +7602,7 @@ return c as text`
         dial.configure(hostId, { thinkingLevel: level })
       )
     ) {
-      await pullRemoteWorkspace(conversation!.machineId)
+      await pullRemoteWorkspace(remoteMachineId(conversation)!)
       return conversationStore.listMeta()
     }
     conversationStore.setThinkingLevel(id, parseThinkingLevel(level))
@@ -7606,7 +7618,7 @@ return c as text`
         dial.configure(hostId, { fast: fast === true })
       )
     ) {
-      await pullRemoteWorkspace(conversation!.machineId)
+      await pullRemoteWorkspace(remoteMachineId(conversation)!)
       return conversationStore.listMeta()
     }
     conversationStore.setFast(id, fast === true)
@@ -7623,7 +7635,7 @@ return c as text`
           dial.configure(hostId, { mode: modeId.trim() })
         )
       ) {
-        await pullRemoteWorkspace(conversation!.machineId)
+        await pullRemoteWorkspace(remoteMachineId(conversation)!)
         return conversationStore.listMeta()
       }
       cliHost.applySessionMode(id, modeId.trim())
@@ -7678,7 +7690,7 @@ return c as text`
     if (
       await forwardControl(conversation, (dial, hostId) => dial.configure(hostId, { model }))
     ) {
-      await pullRemoteWorkspace(conversation!.machineId)
+      await pullRemoteWorkspace(remoteMachineId(conversation)!)
       pushTokenUsageIfOpen(id)
       return conversationStore.listMeta()
     }
@@ -7823,7 +7835,7 @@ return c as text`
   ipcMain.handle(IPC.convSetWorkdir, async (_event, id: string, path: string, machineId?: string | null) => {
     const conversation = conversationStore.get(id)
     if (await forwardControl(conversation, (dial, hostId) => dial.setWorkspace(hostId, path))) {
-      await pullRemoteWorkspace(conversation!.machineId)
+      await pullRemoteWorkspace(remoteMachineId(conversation)!)
       return conversationStore.listMeta()
     }
     return applyWorkingDirectory(id, path, machineId)
@@ -7840,7 +7852,7 @@ return c as text`
   ipcMain.handle(IPC.convUseTempWorkdir, async (_event, id: string) => {
     const conversation = conversationStore.get(id)
     if (await forwardControl(conversation, (dial, hostId) => dial.setWorkspace(hostId, null))) {
-      await pullRemoteWorkspace(conversation!.machineId)
+      await pullRemoteWorkspace(remoteMachineId(conversation)!)
       return conversationStore.listMeta()
     }
     const machineId = conversation?.machineId
@@ -8062,16 +8074,20 @@ return c as text`
   )
   ipcMain.handle(IPC.agentRegenerate, (_event, id: string, messageId: string) => {
     if (conversationStore.get(id)?.archived) return
+    // Phone protocol has no regenerate; do not start a local turn on a host session.
+    if (controlPlaneOwns(conversationStore.get(id))) return
     if (agentFor(id) === 'cli') void cliHost.regenerate(id, messageId)
     else void agent.regenerate(id, messageId)
   })
   ipcMain.handle(IPC.agentEditUser, (_event, id: string, messageId: string, text: string) => {
     if (conversationStore.get(id)?.archived) return
+    if (controlPlaneOwns(conversationStore.get(id))) return
     if (agentFor(id) === 'cli') void cliHost.editUserMessage(id, messageId, text)
     else void agent.editUserMessage(id, messageId, text)
   })
   ipcMain.handle(IPC.agentFork, (_event, id: string, messageId: string) => {
     if (conversationStore.get(id)?.archived) return null
+    if (controlPlaneOwns(conversationStore.get(id))) return null
     return agent.fork(id, messageId)
   })
   ipcMain.handle(
@@ -8082,6 +8098,9 @@ return c as text`
         return { ok: false as const, error: t('session.archivedReadonly') }
       }
       if (conversation?.cliHost) {
+        return { ok: false as const, error: t('compact.error.cliHost') }
+      }
+      if (controlPlaneOwns(conversation)) {
         return { ok: false as const, error: t('compact.error.cliHost') }
       }
       const result = await agent.compact(id, options)

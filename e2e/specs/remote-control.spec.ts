@@ -80,6 +80,9 @@ test('remote desktop send drives the controlled host transcript', async () => {
         }, HOST_SESSION_ID)
       )
       .toBe(true)
+
+    await host.page.screenshot({ path: 'test-results/e2e/remote-host-transcript.png' })
+    await remote.screenshot({ path: 'test-results/e2e/remote-controller-window.png' })
   } finally {
     await client.dispose()
     await host.dispose()

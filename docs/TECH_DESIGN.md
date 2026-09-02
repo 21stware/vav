@@ -263,6 +263,6 @@ LAN 监听端口和 tailcat 本地回环都接到同一个 Hub。Hub 是 Electro
 
 桌面 remote 窗口和 iOS `RemoteClient` 是同构的会话客户端：同一套帧、同一套 `applyRemoteServerMessage` 规则（Swift 镜像这份 TypeScript）。桌面多出来的只是 daemon 上的文件树和 PTY。
 
-控制端的 send / cancel / reply / create / configure（模型、审批、thinking、Fast、ACP mode）/ workspace / rename / archive 都走这套帧。Adopt 后本地 id 若发生碰撞，`hostSessionId` 用 `duplicateSourceId` 对回受控端。对 vavd 的 phone-role hello 被拒绝，控制端才退回本地 agent。
+控制端的 send / cancel / reply / create / configure（模型、审批、thinking、Fast、ACP mode）/ workspace / rename / archive 都走这套帧。Adopt 后本地 id 若发生碰撞，`hostSessionId` 用 `duplicateSourceId` 对回受控端。对 vavd 的 phone-role hello 被拒绝，控制端才退回本地 agent。Regenerate / edit / fork / compact 不在 phone 协议里，控制平面会话上直接拒绝，避免又在控制端起一轮。
 
 回合只在持有会话的那台机器上跑。`handleAgentEvent` 同时 `fanRemoteTurn`（控制平面）和 `sendToWorkspaceWindows`（本机 UI）。所以手机或另一台桌面发一句话，受控端 transcript 会自己动。
