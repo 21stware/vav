@@ -98,8 +98,7 @@ import { REMOTE_PHONE_CAPABILITIES } from '@shared/remoteControl'
 import {
   projectRemoteMessages,
   projectRemotePlan,
-  projectRemoteToolBlock,
-  remoteSessionPreview
+  projectRemoteToolBlock
 } from '@shared/remoteThread'
 import {
   remoteBrowseRoots,
@@ -199,6 +198,9 @@ import { HostRegistry } from './host'
 import { openSpawn, previewSpawn, revealSpawn } from './host/hostShell'
 import { clipRoot, isClipPath, writeClip, writeClipBytes } from './fs/clipStore'
 import { writePngToClipboard } from './clipboardImage'
+import { mapRemoteSessions } from './remote/sessionList'
+import { listRemoteChildEntries, listRemoteRootEntries } from './remote/dirBrowse'
+import { RemoteSendQueue } from './remote/sendQueue'
 import { createScreenshotController } from './screenshot/ScreenshotSession'
 import { isFileSessionEligible } from '@shared/clipPath'
 import { OVERLAY_IMAGE_EXTS, shouldOpenAsOverlay } from '@shared/previewOverlay'
@@ -1373,22 +1375,13 @@ function agentFor(conversationId: string): 'builtin' | 'cli' {
 const remoteSessionStatus = new Map<string, 'running' | 'done'>()
 
 function listRemoteSessions(): RemoteSession[] {
-  return conversationStore
-    .all()
-    .filter((c) => !c.archived && !c.fileId && !c.swarmParentId)
-    .sort((a, b) => b.updatedAt - a.updatedAt)
-    .slice(0, 30)
-    .map((c) => ({
-      id: c.id,
-      title: (c.title && c.title.trim()) || t('window.sessionFallback'),
-      dirLabel: trayDirLabel(c.workingDirectory),
-      status: remoteSessionStatus.get(c.id) ?? (c.resultUnseen ? 'done' : 'idle'),
-      surface: agentFor(c.id) === 'cli' ? ('cli' as const) : ('vav' as const),
-      updatedAt: c.updatedAt,
-      preview: remoteSessionPreview(threadPath(c.messages, c.activeLeafId)),
-      workdir: c.workingDirectory ?? undefined,
-      temporary: remoteIsTemporary(c.workingDirectory, tmpdir())
-    }))
+  return mapRemoteSessions(conversationStore.all(), {
+    fallbackTitle: t('window.sessionFallback'),
+    tmpdir: tmpdir(),
+    dirLabel: trayDirLabel,
+    statusOf: (id, resultUnseen) => remoteSessionStatus.get(id) ?? (resultUnseen ? 'done' : 'idle'),
+    surfaceOf: (id) => (agentFor(id) === 'cli' ? 'cli' : 'vav')
+  })
 }
 
 /** Phone `create` — same defaults as desktop New Session. */
@@ -1497,30 +1490,19 @@ function browseRemoteDirs(conversationId: string, path?: string): RemoteDirsEven
   const roots = remoteRootsFor(conversationId)
   if (!roots) return 'not-found'
   if (!path) {
-    const seen = new Set<string>()
-    const entries: { name: string; path: string }[] = []
-    for (const root of roots) {
-      if (!existsSync(root) || seen.has(root)) continue
-      seen.add(root)
-      entries.push({ name: trayDirLabel(root), path: root })
+    return {
+      type: 'dirs',
+      conversationId,
+      path: '',
+      parent: null,
+      entries: listRemoteRootEntries(roots, { exists: existsSync, label: trayDirLabel })
     }
-    return { type: 'dirs', conversationId, path: '', parent: null, entries }
   }
-  if (!remotePathAllowed(path, roots)) return 'forbidden'
-  let entries: { name: string; path: string }[] = []
-  try {
-    const dirents = readdirSync(path, { withFileTypes: true })
-    for (const dirent of dirents) {
-      if (!dirent.isDirectory() && !dirent.isSymbolicLink()) continue
-      if (dirent.name.startsWith('.')) continue
-      const child = join(path, dirent.name)
-      entries.push({ name: dirent.name, path: child })
-      if (entries.length >= 200) break
-    }
-    entries.sort((a, b) => a.name.localeCompare(b.name))
-  } catch {
-    return 'forbidden'
-  }
+  const entries = listRemoteChildEntries(path, roots, {
+    readdir: (dir) => readdirSync(dir, { withFileTypes: true }),
+    join
+  })
+  if (entries === 'forbidden') return 'forbidden'
   return {
     type: 'dirs',
     conversationId,
@@ -1552,7 +1534,7 @@ function cancelRemote(conversationId: string): 'ok' | 'not-found' | 'archived' {
   if (!conversation) return 'not-found'
   if (conversation.archived) return 'archived'
   // A follow-up queued on the phone must not start the moment this turn dies.
-  pendingRemoteSends.delete(conversationId)
+  pendingRemoteSends.clear(conversationId)
   // Hit both runtimes: agentFor can disagree with the live turn (host switch
   // mid-turn, or cancel arriving before the chosen host has registered it).
   agent.cancel(conversationId)
@@ -1712,8 +1694,7 @@ function refreshRemoteControls(conversationId: string): void {
   })
 }
 
-const REMOTE_SEND_QUEUE_MAX = 20
-const pendingRemoteSends = new Map<string, { text: string; attachments: string[] }[]>()
+const pendingRemoteSends = new RemoteSendQueue()
 
 function remoteTurnBusy(conversationId: string): boolean {
   return agentFor(conversationId) === 'cli'
@@ -1730,11 +1711,8 @@ function startRemoteTurn(conversationId: string, text: string, attachments: stri
 }
 
 function flushRemoteSends(): void {
-  for (const [conversationId, queue] of pendingRemoteSends) {
-    if (!queue.length || remoteTurnBusy(conversationId)) continue
-    const next = queue.shift()
-    if (!queue.length) pendingRemoteSends.delete(conversationId)
-    if (next) startRemoteTurn(conversationId, next.text, next.attachments)
+  for (const next of pendingRemoteSends.takeReady(remoteTurnBusy)) {
+    startRemoteTurn(next.conversationId, next.text, next.attachments)
   }
 }
 
@@ -1748,10 +1726,7 @@ function remoteSendMessage(
   if (!conversation) return 'not-found'
   if (conversation.archived) return 'archived'
   if (remoteTurnBusy(conversationId)) {
-    const queue = pendingRemoteSends.get(conversationId) ?? []
-    if (queue.length >= REMOTE_SEND_QUEUE_MAX) return 'ok'
-    queue.push({ text, attachments })
-    pendingRemoteSends.set(conversationId, queue)
+    pendingRemoteSends.enqueue(conversationId, text, attachments)
     return 'ok'
   }
   startRemoteTurn(conversationId, text, attachments)
