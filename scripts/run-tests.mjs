@@ -25,9 +25,13 @@ if (files.length === 0) {
   process.exit(1)
 }
 
-const child = spawn(process.execPath, ['--test', '--experimental-strip-types', ...files], {
-  stdio: 'inherit'
-})
+const child = spawn(
+  process.execPath,
+  ['--test', '--experimental-strip-types', '--test-timeout=120000', ...files],
+  {
+    stdio: 'inherit'
+  }
+)
 
 child.on('exit', (code, signal) => {
   if (signal) {

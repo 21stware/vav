@@ -23,6 +23,7 @@ User-facing changes by release. Unreleased work lives at the top until the next 
 
 - `npm test` globs `src/**/*.test.ts` (skips `*.live.test.ts` unless `TEST_LIVE=1`).
 - CI runs unit tests on macOS and Windows before the build.
+- Unit tests abort after 2 minutes; the CI job itself times out at 30 minutes.
 
 ### UI
 
