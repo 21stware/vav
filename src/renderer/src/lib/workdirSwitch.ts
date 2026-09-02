@@ -27,3 +27,8 @@ export function allowWorkdirSwitch(opts: {
   if (opts.swarmSurface) return false
   return opts.rootMissing || !opts.enclosedUnrevealed
 }
+
+/** Folder name when locating a Temporary Workspace (no path separators). */
+export function locateWorkspaceDefaultName(title: string | null | undefined): string {
+  return (title || 'workspace').replace(/[\\/]/g, '-').slice(0, 64)
+}

@@ -1,4 +1,4 @@
-import type { BinaryFileMeta, FileInspectResult, ImageMetaField, SqliteDatabaseInfo } from '../../shared/ipc.ts'
+import type { BinaryFileMeta, FileInspectResult, ImageMetaField, SqliteDatabaseInfo, SqliteQueryResult } from '../../shared/ipc.ts'
 import { localFileStreamUrl } from '../../shared/localFileUrl.ts'
 import { countNewlines } from './filePreviewKind.ts'
 
@@ -143,6 +143,45 @@ export function officeFirstPaintInspect(
   const next = { ...base, streamUrl: opts.streamUrl }
   if (opts.large) return { ...next, warnings: [OFFICE_LARGE_PREVIEW_WARNING] }
   return next
+}
+
+/** Early outs for background Office structured parse. */
+export function structuredInspectReject(info: {
+  isFile: boolean
+  locked: boolean
+  size: number
+  parseSoft: number
+  lockMessage: string
+}): { ok: false; error: string } | null {
+  if (!info.isFile) return { ok: false, error: 'Not a file' }
+  if (info.locked) return { ok: false, error: info.lockMessage }
+  if (info.size <= 0) return { ok: false, error: 'File is empty.' }
+  if (info.size > info.parseSoft) {
+    return { ok: false, error: 'Document too large for full structured index' }
+  }
+  return null
+}
+
+export function structuredInspectIsPartial(
+  progressive: boolean,
+  warnings: string[] | undefined
+): boolean {
+  return progressive || (warnings ?? []).some((w) => /partial|truncated|first/i.test(w))
+}
+
+export function sqliteQueryFailure(
+  offset: number | undefined,
+  limit: number | undefined,
+  error: string
+): SqliteQueryResult {
+  return {
+    columns: [],
+    rows: [],
+    total: 0,
+    offset: offset ?? 0,
+    limit: limit ?? 100,
+    error
+  }
 }
 
 export function legacyBinaryInspect(opts: {

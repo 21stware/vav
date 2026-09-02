@@ -35,6 +35,7 @@ import {
   resolveAccountsFocus,
   resolveSessionAccountId,
   sessionShowsHostQuota,
+  conversationQuotaAuthView,
   visibleAccountsForWorkspace,
   visibleCurrentIds,
   currentVisibleVav,
@@ -374,6 +375,26 @@ describe('accounts helpers', () => {
       }),
       true
     )
+    const shown = conversationQuotaAuthView({
+      liveSignedIn: true,
+      liveIdentity: 'oboochin@gmail.com',
+      livePlan: 'pro',
+      liveAuthKind: 'oauth',
+      profileKind: 'oauth',
+      profileName: 'oboochin@gmail.com'
+    })
+    assert.equal(shown.signedIn, true)
+    assert.equal(shown.plan, 'pro')
+    const hidden = conversationQuotaAuthView({
+      liveSignedIn: true,
+      liveIdentity: 'live@x.com',
+      liveAuthKind: 'oauth',
+      profileKind: 'oauth',
+      profileName: 'other@x.com'
+    })
+    assert.equal(hidden.signedIn, false)
+    assert.equal(hidden.accountId, 'other@x.com')
+    assert.equal(hidden.authKind, 'none')
   })
 
   it('picks the longest quota window for the row summary', () => {

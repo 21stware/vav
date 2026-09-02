@@ -30,6 +30,7 @@ import { sealRuntimePlanBlocks } from './planSeal'
 import {
   appendTurnErrorBlock,
   assistantSnapshotFromTurn,
+  runtimeTurnStatus,
   sealCancelledInteractiveTools
 } from './agentTurnFinish'
 import {
@@ -200,18 +201,7 @@ export class AgentRuntime {
   }
 
   status(conversationId: string): TurnStatus {
-    const turn = this.turns.get(conversationId)
-    return {
-      conversationId,
-      isRunning: !!turn,
-      phase: turn?.phase ?? 'idle',
-      toolCount: turn?.toolCount ?? 0,
-      awaitingToolCallId: turn ? (turn.pending.keys().next().value ?? null) : null,
-      messageId: turn?.messageId ?? null,
-      // Preserve slot indices — StreamProjection is sparse on contentIndex, and
-      // filtering empties here would mis-align later delta/tool patches.
-      blocks: turn ? turn.blocks.map((block) => ({ ...block })) : []
-    }
+    return runtimeTurnStatus(conversationId, this.turns.get(conversationId))
   }
 
   // -------------------------------------------------------------------------

@@ -10,6 +10,9 @@ import {
   officeFirstPaintInspect,
   remappedConvertedInspect,
   sqliteInspectResult,
+  sqliteQueryFailure,
+  structuredInspectIsPartial,
+  structuredInspectReject,
   textWindowInspectResult
 } from './fileInspectShape.ts'
 
@@ -135,5 +138,58 @@ describe('fileInspectShape', () => {
     })
     assert.equal(large.streamUrl, 'vav-local://io')
     assert.match(large.warnings?.[0] ?? '', /streaming/)
+  })
+
+  it('rejects structured inspect on lock/empty/large and flags partial warnings', () => {
+    const lock = structuredInspectReject({
+      isFile: true,
+      locked: true,
+      size: 10,
+      parseSoft: 100,
+      lockMessage: 'lock'
+    })
+    assert.equal(lock?.error, 'lock')
+    assert.equal(
+      structuredInspectReject({
+        isFile: false,
+        locked: false,
+        size: 10,
+        parseSoft: 100,
+        lockMessage: 'lock'
+      })?.error,
+      'Not a file'
+    )
+    assert.equal(
+      structuredInspectReject({
+        isFile: true,
+        locked: false,
+        size: 0,
+        parseSoft: 100,
+        lockMessage: 'lock'
+      })?.error,
+      'File is empty.'
+    )
+    assert.match(
+      structuredInspectReject({
+        isFile: true,
+        locked: false,
+        size: 200,
+        parseSoft: 100,
+        lockMessage: 'lock'
+      })?.error ?? '',
+      /too large/
+    )
+    assert.equal(structuredInspectReject({
+      isFile: true,
+      locked: false,
+      size: 10,
+      parseSoft: 100,
+      lockMessage: 'lock'
+    }), null)
+    assert.equal(structuredInspectIsPartial(true, []), true)
+    assert.equal(structuredInspectIsPartial(false, ['first 48 blocks']), true)
+    assert.equal(structuredInspectIsPartial(false, ['ok']), false)
+    assert.equal(sqliteQueryFailure(2, 5, 'denied').error, 'denied')
+    assert.equal(sqliteQueryFailure(undefined, undefined, 'x').limit, 100)
   })
 })

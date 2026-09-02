@@ -1,4 +1,4 @@
-import type { ChatMessage, MessageBlock } from '../../shared/types.ts'
+import type { ChatMessage, MessageBlock, TurnStatus } from '../../shared/types.ts'
 
 /** Drop empty text/reasoning slots that opened before any token landed. */
 export function persistableTurnBlocks(blocks: MessageBlock[]): MessageBlock[] {
@@ -55,4 +55,28 @@ export function appendTurnErrorBlock(blocks: MessageBlock[], error: string): voi
     kind: 'text',
     text: blocks.length ? `\n\n> ${error}` : `> ${error}`
   })
+}
+
+/** Idle / in-flight TurnStatus for a late-joining window (sparse blocks stay). */
+export function runtimeTurnStatus(
+  conversationId: string,
+  turn:
+    | {
+        phase: TurnStatus['phase']
+        toolCount: number
+        pending: { keys(): IterableIterator<string> }
+        messageId: string | null
+        blocks: MessageBlock[]
+      }
+    | undefined
+): TurnStatus {
+  return {
+    conversationId,
+    isRunning: !!turn,
+    phase: turn?.phase ?? 'idle',
+    toolCount: turn?.toolCount ?? 0,
+    awaitingToolCallId: turn ? (turn.pending.keys().next().value ?? null) : null,
+    messageId: turn?.messageId ?? null,
+    blocks: turn ? turn.blocks.map((block) => ({ ...block })) : []
+  }
 }

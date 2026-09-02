@@ -5,6 +5,7 @@ import {
   appendTurnErrorBlock,
   assistantSnapshotFromTurn,
   persistableTurnBlocks,
+  runtimeTurnStatus,
   sealCancelledInteractiveTools
 } from './agentTurnFinish.ts'
 
@@ -66,5 +67,33 @@ describe('sealCancelledInteractiveTools / appendTurnErrorBlock', () => {
     const only: MessageBlock[] = []
     appendTurnErrorBlock(only, 'boom')
     assert.equal((only[0] as { text: string }).text, '> boom')
+  })
+})
+
+describe('runtimeTurnStatus', () => {
+  it('is idle with empty blocks when no turn is running', () => {
+    const status = runtimeTurnStatus('c1', undefined)
+    assert.equal(status.isRunning, false)
+    assert.equal(status.phase, 'idle')
+    assert.equal(status.awaitingToolCallId, null)
+    assert.deepEqual(status.blocks, [])
+  })
+
+  it('snapshots in-flight blocks and the first pending tool', () => {
+    const pending = new Map<string, unknown>([
+      ['t1', {}],
+      ['t2', {}]
+    ])
+    const status = runtimeTurnStatus('c1', {
+      phase: 'working',
+      toolCount: 2,
+      pending,
+      messageId: 'm1',
+      blocks: [{ kind: 'text', text: 'hi' }]
+    })
+    assert.equal(status.isRunning, true)
+    assert.equal(status.awaitingToolCallId, 't1')
+    assert.equal(status.messageId, 'm1')
+    assert.equal(status.blocks[0]?.kind, 'text')
   })
 })

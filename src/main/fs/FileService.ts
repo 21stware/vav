@@ -46,6 +46,9 @@ import {
   officeFirstPaintInspect,
   remappedConvertedInspect,
   sqliteInspectResult,
+  sqliteQueryFailure,
+  structuredInspectIsPartial,
+  structuredInspectReject,
   textWindowInspectResult
 } from './fileInspectShape'
 import {
@@ -713,12 +716,14 @@ export class FileService {
     const io = this.forIo(path, opts?.conversationId)
     try {
       const info = await hostFs.stat(io)
-      if (!info.isFile()) return { ok: false, error: 'Not a file' }
-      if (isOfficeLockFile(path)) return { ok: false, error: OFFICE_LOCK_FILE_MESSAGE }
-      if (info.size <= 0) return { ok: false, error: 'File is empty.' }
-      if (info.size > STRUCTURED_PARSE_SOFT) {
-        return { ok: false, error: 'Document too large for full structured index' }
-      }
+      const rejected = structuredInspectReject({
+        isFile: info.isFile(),
+        locked: isOfficeLockFile(path),
+        size: info.size,
+        parseSoft: STRUCTURED_PARSE_SOFT,
+        lockMessage: OFFICE_LOCK_FILE_MESSAGE
+      })
+      if (rejected) return rejected
       const progressive = opts?.maxBlocks != null || opts?.maxRows != null
       const structured = await parseStructuredDocument(
         io,
@@ -730,9 +735,7 @@ export class FileService {
             }
           : undefined
       )
-      const partial =
-        progressive ||
-        (structured.warnings ?? []).some((w) => /partial|truncated|first/i.test(w))
+      const partial = structuredInspectIsPartial(progressive, structured.warnings)
       return { ok: true, structured, partial }
     } catch (err) {
       return { ok: false, error: (err as Error).message }
@@ -743,24 +746,10 @@ export class FileService {
   dbQuery(path: string, table: string, offset?: number, limit?: number): SqliteQueryResult {
     const denied = this.accessError(path)
     if (denied) {
-      return {
-        columns: [],
-        rows: [],
-        total: 0,
-        offset: offset ?? 0,
-        limit: limit ?? 100,
-        error: denied
-      }
+      return sqliteQueryFailure(offset, limit, denied)
     }
     if (!isSqlitePath(path)) {
-      return {
-        columns: [],
-        rows: [],
-        total: 0,
-        offset: offset ?? 0,
-        limit: limit ?? 100,
-        error: 'Not a SQLite database path'
-      }
+      return sqliteQueryFailure(offset, limit, 'Not a SQLite database path')
     }
     return querySqliteTable(path, table, offset, limit)
   }

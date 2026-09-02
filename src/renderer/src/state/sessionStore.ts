@@ -132,7 +132,8 @@ import { patchAcpConfigOption, patchAcpSessionMode } from '@shared/acpSession'
 import { inheritCreateWorkingDirectory, nextConversationForMachine, pickBootstrapActiveId, seedCliAgentCatalogue, seedEmptyConversationPatch } from './sessionBootstrap'
 import { notifyImageAttachPlan, trimAttachmentPathsForHost } from './sessionAttach'
 import { persistSwarmLayout, setLeaf } from './sessionSwarm'
-import { swarmBlocksWorkdirSwitch as swarmSurfaceBlocksWorkdir } from '../lib/workdirSwitch'
+import { swarmBlocksWorkdirSwitch as swarmSurfaceBlocksWorkdir, locateWorkspaceDefaultName } from '../lib/workdirSwitch'
+import { nextFavoriteIds, nextPinnedWorkspaceDirs } from './sessionPins'
 
 function swarmBlocksWorkdirSwitch(
   id: string | null | undefined,
@@ -1620,9 +1621,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
   async finishLocateWorkspace(id, destinationDir) {
     const conversation = get().conversations.find((c) => c.id === id)
-    const defaultName = (conversation?.title || 'workspace')
-      .replace(/[\\/]/g, '-')
-      .slice(0, 64)
+    const defaultName = locateWorkspaceDefaultName(conversation?.title)
     const name = window.prompt(tt('dialog.locateWorkspaceName'), defaultName)
     if (name == null) return
     const result = await window.vav.conversations.locateWorkspace(id, destinationDir, name.trim())
@@ -1654,31 +1653,19 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   },
 
   async setFavorite(id, favorite) {
-    const current = get().settings.favoriteConversationIds ?? []
-    const has = current.includes(id)
-    if (favorite && !has) {
-      await get().updateSettings({ favoriteConversationIds: [id, ...current] })
-      return
-    }
-    if (!favorite && has) {
-      await get().updateSettings({
-        favoriteConversationIds: current.filter((entry) => entry !== id)
-      })
-    }
+    const next = nextFavoriteIds(get().settings.favoriteConversationIds ?? [], id, favorite)
+    if (!next) return
+    await get().updateSettings({ favoriteConversationIds: next })
   },
 
   async setWorkspacePinned(workdir, pinned) {
-    const path = workdir.trim()
-    if (!path || path.startsWith('__')) return
-    const current = get().settings.pinnedWorkspaceDirectories
-    const rest = current.filter((entry) => entry !== path)
-    if (pinned && rest.length === current.length) {
-      await get().updateSettings({ pinnedWorkspaceDirectories: [path, ...rest] })
-      return
-    }
-    if (!pinned && rest.length !== current.length) {
-      await get().updateSettings({ pinnedWorkspaceDirectories: rest })
-    }
+    const next = nextPinnedWorkspaceDirs(
+      get().settings.pinnedWorkspaceDirectories ?? [],
+      workdir,
+      pinned
+    )
+    if (!next) return
+    await get().updateSettings({ pinnedWorkspaceDirectories: next })
   },
 
   async setArchived(id, archived) {

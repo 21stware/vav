@@ -473,6 +473,42 @@ export function sessionShowsHostQuota(input: {
   return Boolean((input.liveIdentity ?? '').trim())
 }
 
+/** Live CLI login wins; otherwise an OAuth profile name with authKind none. */
+export function conversationQuotaAuthView(input: {
+  liveSignedIn: boolean
+  liveIdentity?: string | null
+  livePlan?: string | null
+  liveAuthKind?: import('./cliAccountParse.ts').HostAuthKind
+  profileKind?: string | null
+  profileName?: string | null
+}): {
+  signedIn: boolean
+  accountId: string | null
+  plan: string | null
+  authKind: import('./cliAccountParse.ts').HostAuthKind
+} {
+  const show = sessionShowsHostQuota({
+    liveSignedIn: input.liveSignedIn,
+    liveIdentity: input.liveIdentity,
+    profileKind: input.profileKind,
+    profileName: input.profileName
+  })
+  if (show) {
+    return {
+      signedIn: input.liveSignedIn,
+      accountId: input.liveIdentity ?? null,
+      plan: input.livePlan ?? null,
+      authKind: input.liveAuthKind ?? (input.liveSignedIn ? 'oauth' : 'none')
+    }
+  }
+  return {
+    signedIn: false,
+    accountId: input.profileKind === 'oauth' ? input.profileName ?? null : null,
+    plan: null,
+    authKind: input.profileKind === 'oauth' ? 'none' : (input.liveAuthKind ?? 'none')
+  }
+}
+
 /** New CLI session follows a live OAuth login; a signed-out current never wins. */
 export function resolveSessionAccountId(
   accounts: Array<{

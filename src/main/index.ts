@@ -126,6 +126,7 @@ import {
   isVavProfile,
   resolveSessionAccountId,
   sessionShowsHostQuota,
+  conversationQuotaAuthView,
   workspaceKeyOf,
   workspaceLabelOf
 } from '@shared/accounts'
@@ -5801,26 +5802,14 @@ function conversationQuotaAuth(
   authKind: import('@shared/cliAccountParse').HostAuthKind
 } {
   const profile = conversation.accountId ? accountStore.get(conversation.accountId) : undefined
-  const show = sessionShowsHostQuota({
+  return conversationQuotaAuthView({
     liveSignedIn: live.signedIn,
     liveIdentity: live.accountId,
+    livePlan: live.plan,
+    liveAuthKind: live.authKind,
     profileKind: profile?.kind,
     profileName: profile?.name
   })
-  if (show) {
-    return {
-      signedIn: live.signedIn,
-      accountId: live.accountId ?? null,
-      plan: live.plan ?? null,
-      authKind: live.authKind ?? (live.signedIn ? 'oauth' : 'none')
-    }
-  }
-  return {
-    signedIn: false,
-    accountId: profile?.kind === 'oauth' ? profile.name : null,
-    plan: null,
-    authKind: profile?.kind === 'oauth' ? 'none' : (live.authKind ?? 'none')
-  }
 }
 
 function conversationHostQuota(conversation: {
