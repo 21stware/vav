@@ -33,11 +33,9 @@ import {
   runtimeTurnStatus,
   sealCancelledInteractiveTools
 } from './agentTurnFinish'
+import { fileReadOnlySwitchBlock, gateReadonlyExecute } from './fileEditLock'
 import {
-  gateReadonlyExecute,
-  isFileEditLockedPath
-} from './fileEditLock'
-import {
+  approvalPromptCopy,
   parseEditedApprovalText,
   readonlyApprovalBlock,
   shouldPauseForApproval,
@@ -1119,21 +1117,15 @@ export class AgentRuntime {
     readOnly: boolean
   ): string | null {
     const conversation = this.deps.conversations.get(conversationId)
-    if (!conversation) return 'Conversation not found.'
-    if (!readOnly) {
-      const path =
-        conversation.focusedFilePath ||
-        (conversation.fileId && this.deps.fileSessions
-          ? this.deps.fileSessions.pathForFileId(conversation.fileId)
-          : null)
-      if (isFileEditLockedPath(path)) {
-        return (
-          'This format cannot switch to Edit in-place (PDF / HEIC / legacy Office / ZIP). ' +
-          'Ask the user to convert or Save As from the preview chrome.'
-        )
-      }
-    }
-    if (!!conversation.fileReadOnly === readOnly) return null
+    const blocked = fileReadOnlySwitchBlock(
+      conversation,
+      readOnly,
+      this.deps.fileSessions
+        ? (fileId) => this.deps.fileSessions!.pathForFileId(fileId)
+        : null
+    )
+    if (blocked) return blocked
+    if (!conversation || !!conversation.fileReadOnly === readOnly) return null
     this.deps.conversations.updateMeta(conversationId, { fileReadOnly: readOnly })
     this.deps.onFileReadOnlyChange?.(conversationId, readOnly)
     return null
@@ -1186,27 +1178,34 @@ export class AgentRuntime {
             name,
             args && typeof args === 'object' ? (args as Record<string, unknown>) : {}
           ))
-    const approveLabel = mode === 'edit' ? t('approval.approveRun') : t('approval.approve')
-    const denyLabel = mode === 'edit' ? t('approval.skip') : t('approval.deny')
-    const title =
-      mode === 'edit'
-        ? t('approval.titleEdit', { name })
-        : t('approval.title', { name })
-    const editable = mode === 'edit' ? summary : ''
+    const copy = approvalPromptCopy({
+      mode,
+      summary,
+      auto: {
+        approve: t('approval.approve'),
+        deny: t('approval.deny'),
+        title: t('approval.title', { name })
+      },
+      edit: {
+        approve: t('approval.approveRun'),
+        deny: t('approval.skip'),
+        title: t('approval.titleEdit', { name })
+      }
+    })
 
-    const approval = await this.askUser(conversationId, turn, toolCall.id, `${title}\n${summary}`, {
-      choices: [approveLabel, denyLabel],
+    const approval = await this.askUser(conversationId, turn, toolCall.id, copy.prompt, {
+      choices: [copy.approveLabel, copy.denyLabel],
       // Stash the editable payload in askTitle so the card can prefill a textarea.
-      askTitle: mode === 'edit' ? editable : undefined
+      askTitle: mode === 'edit' ? copy.editable : undefined
     })
     if (approval.cancelled) return { block: true, reason: t('approval.userCancelled') }
-    if (approval.text === denyLabel || isApprovalDenyText(approval.text)) {
+    if (approval.text === copy.denyLabel || isApprovalDenyText(approval.text)) {
       return { block: true, reason: t('approval.userDenied') }
     }
 
     // Edit mode: approve-run + edited payload may rewrite terminal command / paths.
     if (mode === 'edit') {
-      const edited = parseEditedApprovalText(approval.text, approveLabel, (text) =>
+      const edited = parseEditedApprovalText(approval.text, copy.approveLabel, (text) =>
         isApprovalApproveText(text, true)
       )
       if (edited.trim()) {

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import {
+  fileReadOnlySwitchBlock,
   gateReadonlyExecute,
   isFileEditLockedPath,
   isReadonlyTerminalCommand
@@ -15,6 +16,26 @@ describe('isFileEditLockedPath', () => {
     assert.equal(isFileEditLockedPath('/a.zip'), true)
     assert.equal(isFileEditLockedPath('/a.ts'), false)
     assert.equal(isFileEditLockedPath(null), false)
+  })
+})
+
+describe('fileReadOnlySwitchBlock', () => {
+  it('rejects a missing conversation and Edit on locked formats', () => {
+    assert.equal(fileReadOnlySwitchBlock(null, true), 'Conversation not found.')
+    assert.match(
+      fileReadOnlySwitchBlock({ focusedFilePath: '/a.pdf' }, false) ?? '',
+      /PDF \/ HEIC/
+    )
+    assert.equal(
+      fileReadOnlySwitchBlock({ focusedFilePath: '/a.ts', fileId: 'f' }, false, () => '/a.pdf'),
+      null
+    )
+    assert.match(
+      fileReadOnlySwitchBlock({ fileId: 'f' }, false, () => '/a.heic') ?? '',
+      /convert or Save As/
+    )
+    assert.equal(fileReadOnlySwitchBlock({ focusedFilePath: '/a.ts' }, true), null)
+    assert.equal(fileReadOnlySwitchBlock({ focusedFilePath: '/a.ts' }, false), null)
   })
 })
 

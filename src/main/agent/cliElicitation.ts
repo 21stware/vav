@@ -37,3 +37,18 @@ export function elicitationCardFields(
     choices: event.kind === 'url' ? [labels.open, labels.cancel] : undefined
   }
 }
+
+/** Reuse a parked elicitation card when the host remaps the toolCallId. */
+export function findPendingElicitationIndex(
+  pendingPermissions: Iterable<[string, { kind: string }]>,
+  toolIndex: { get(id: string): number | undefined },
+  kind: string
+): { index: number; previousId: string } | null {
+  for (const [id, pending] of pendingPermissions) {
+    if (pending.kind !== kind) continue
+    const found = toolIndex.get(id)
+    if (found == null) continue
+    return { index: found, previousId: id }
+  }
+  return null
+}

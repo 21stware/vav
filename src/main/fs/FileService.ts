@@ -28,7 +28,7 @@ import { localHostFs, type HostFs, type HostWatcher } from '../host'
 import { conversationIdForWatchedPath } from './conversationPath'
 import { isPathAllowed } from './pathAllow'
 import { previewKind, mimeFor } from './filePreviewKind'
-import { sortEntries } from './fileEntrySort'
+import { sortEntries, capVisibleEntries } from './fileEntrySort'
 import { modeToPermissions } from './fileMode'
 import { isInvalidRenameName, joinOnHostPath } from './fileHostPath'
 import { mimeHintToUti } from './fileUti'
@@ -164,8 +164,7 @@ export class FileService {
     try {
       const dirents = await hostFs.readdir(path)
       const visible = dirents.filter((d) => !isIgnoredName(d.name))
-      const truncated = Math.max(0, visible.length - DIRECTORY_ENTRY_CAP)
-      const slice = visible.slice(0, DIRECTORY_ENTRY_CAP)
+      const { slice, truncated } = capVisibleEntries(visible, DIRECTORY_ENTRY_CAP)
 
       const entries = await Promise.all(
         slice.map(async (dirent): Promise<FileEntry> => {

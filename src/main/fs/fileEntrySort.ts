@@ -1,6 +1,14 @@
 import { extname } from 'node:path'
 import type { FileEntry, FileSortKey } from '../../shared/types.ts'
 
+/** Cap a directory listing after ignore-filters; `truncated` is the overflow count. */
+export function capVisibleEntries<T>(visible: T[], cap: number): { slice: T[]; truncated: number } {
+  return {
+    slice: visible.slice(0, cap),
+    truncated: Math.max(0, visible.length - cap)
+  }
+}
+
 export function sortEntries(entries: FileEntry[], key: FileSortKey, ascending: boolean): FileEntry[] {
   if (key === 'none') return entries
 

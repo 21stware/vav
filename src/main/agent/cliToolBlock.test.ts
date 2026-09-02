@@ -1,10 +1,14 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import {
+  appendNestedChildDelta,
+  applyCliToolPatch,
   applyToolEventStatus,
   applyToolRuntimePatch,
+  cliToolHasInput,
   newCliPermissionBlock,
   newCliToolCallBlock,
+  shouldAdoptMappedTool,
   shouldKeepPendingInteractive
 } from './cliToolBlock.ts'
 
@@ -90,5 +94,51 @@ describe('cliToolBlock', () => {
     assert.equal(block.summary, 'Bash')
     assert.deepEqual(block.choices, ['Approve', 'Deny'])
     assert.equal(block.askTitle, 'Bash')
+  })
+
+  it('detects non-empty tool input objects', () => {
+    assert.equal(cliToolHasInput({ path: '/a' }), true)
+    assert.equal(cliToolHasInput({}), false)
+    assert.equal(cliToolHasInput(null), false)
+    assert.equal(shouldAdoptMappedTool('terminal', 'fs_read'), true)
+    assert.equal(shouldAdoptMappedTool('external', 'fs_read'), false)
+    assert.equal(shouldAdoptMappedTool('external', 'external'), true)
+  })
+
+  it('patches live CLI tool cards from driver events', () => {
+    const block = newCliToolCallBlock({
+      id: 't',
+      tool: 'fs_read',
+      summary: 'read',
+      input: '{}'
+    })
+    const deps = {
+      inputJson: (input: unknown) => JSON.stringify(input ?? {}),
+      summarize: (_name: string, input: unknown) =>
+        String((input as { path?: string }).path ?? ''),
+      mapToolName: (name: string) =>
+        name === 'Bash' ? ('terminal' as const) : ('external' as const)
+    }
+    applyCliToolPatch(block, { status: 'started', name: 'Bash', input: { path: '/a.ts' } }, deps)
+    assert.equal(block.status, 'executing')
+    assert.equal(block.tool, 'terminal')
+    assert.equal(block.summary, '/a.ts')
+    applyCliToolPatch(block, { status: 'updated', name: 'Unknown', title: 'stay' }, deps)
+    assert.equal(block.summary, 'stay')
+    assert.equal(block.tool, 'terminal')
+    applyCliToolPatch(block, { status: 'completed', name: 'Bash', output: 'ok' }, deps)
+    assert.equal(block.status, 'completed')
+    assert.equal(block.output, 'ok')
+  })
+
+  it('appends nested text/reasoning children', () => {
+    const children: import('../../shared/types.ts').MessageBlock[] = []
+    assert.equal(appendNestedChildDelta(children, 'text', ''), false)
+    assert.equal(appendNestedChildDelta(children, 'text', 'Hello'), true)
+    assert.equal(appendNestedChildDelta(children, 'text', ' world'), true)
+    assert.equal(appendNestedChildDelta(children, 'reasoning', 'think'), true)
+    assert.equal(children.length, 2)
+    assert.equal(children[0]?.kind === 'text' ? children[0].text : '', 'Hello world')
+    assert.equal(children[1]?.kind === 'reasoning' ? children[1].text : '', 'think')
   })
 })

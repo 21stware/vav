@@ -68,3 +68,27 @@ export function parseEditedApprovalText(
   if (isApprove(text) || text === approveLabel) return ''
   return text
 }
+
+/** Edit vs Auto labels, title, and optional editable summary for the approval card. */
+export function approvalPromptCopy(opts: {
+  mode: string
+  summary: string
+  auto: { approve: string; deny: string; title: string }
+  edit: { approve: string; deny: string; title: string }
+}): {
+  approveLabel: string
+  denyLabel: string
+  title: string
+  editable: string
+  prompt: string
+} {
+  const edit = opts.mode === 'edit'
+  const labels = edit ? opts.edit : opts.auto
+  return {
+    approveLabel: labels.approve,
+    denyLabel: labels.deny,
+    title: labels.title,
+    editable: edit ? opts.summary : '',
+    prompt: `${labels.title}\n${opts.summary}`
+  }
+}

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import { elicitationCardFields } from './cliElicitation.ts'
+import { elicitationCardFields, findPendingElicitationIndex } from './cliElicitation.ts'
 
 const labels = { ask: 'Ask', open: 'Open', cancel: 'Cancel' }
 
@@ -33,5 +33,22 @@ describe('elicitationCardFields', () => {
   it('falls back to the ask label when title and body are missing', () => {
     const ask = elicitationCardFields({ kind: 'ask', input: {} }, labels)
     assert.equal(ask.summary, 'Ask')
+  })
+
+  it('reuses a parked elicitation card when the host remaps the id', () => {
+    const pending = new Map([
+      ['old', { kind: 'ask' }],
+      ['other', { kind: 'form' }]
+    ])
+    const toolIndex = new Map([
+      ['old', 3],
+      ['other', 4]
+    ])
+    assert.deepEqual(findPendingElicitationIndex(pending, toolIndex, 'ask'), {
+      index: 3,
+      previousId: 'old'
+    })
+    assert.equal(findPendingElicitationIndex(pending, toolIndex, 'url'), null)
+    assert.equal(findPendingElicitationIndex(pending, new Map(), 'ask'), null)
   })
 })

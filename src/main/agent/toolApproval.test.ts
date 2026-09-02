@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import {
+  approvalPromptCopy,
   parseEditedApprovalText,
   readonlyApprovalBlock,
   shouldPauseForApproval,
@@ -77,5 +78,24 @@ describe('parseEditedApprovalText', () => {
     assert.equal(parseEditedApprovalText('Approve\nls -la', 'Approve', isApprove), 'ls -la')
     assert.equal(parseEditedApprovalText('Approve', 'Approve', isApprove), '')
     assert.equal(parseEditedApprovalText('cat README', 'Approve', isApprove), 'cat README')
+  })
+})
+
+describe('approvalPromptCopy', () => {
+  const auto = { approve: 'Approve', deny: 'Deny', title: 'Run fs_write?' }
+  const edit = { approve: 'Approve and run', deny: 'Skip', title: 'Edit fs_write' }
+
+  it('uses Auto vs Edit labels and only Edit is editable', () => {
+    const autoCopy = approvalPromptCopy({ mode: 'auto', summary: 'write a.ts', auto, edit })
+    assert.equal(autoCopy.approveLabel, 'Approve')
+    assert.equal(autoCopy.denyLabel, 'Deny')
+    assert.equal(autoCopy.editable, '')
+    assert.equal(autoCopy.prompt, 'Run fs_write?\nwrite a.ts')
+
+    const editCopy = approvalPromptCopy({ mode: 'edit', summary: 'write a.ts', auto, edit })
+    assert.equal(editCopy.approveLabel, 'Approve and run')
+    assert.equal(editCopy.denyLabel, 'Skip')
+    assert.equal(editCopy.editable, 'write a.ts')
+    assert.equal(editCopy.prompt, 'Edit fs_write\nwrite a.ts')
   })
 })

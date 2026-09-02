@@ -101,3 +101,59 @@ export function applyToolRuntimePatch(
   }
   return block
 }
+
+export function cliToolHasInput(input: unknown): boolean {
+  return !!input && typeof input === 'object' && Object.keys(input as object).length > 0
+}
+
+/** Keep a mapped `external` name only when the card is already `external`. */
+export function shouldAdoptMappedTool(mapped: string, current: string): boolean {
+  return mapped !== 'external' || current === 'external'
+}
+
+/** Merge a CLI driver tool event onto the live transcript card. */
+export function applyCliToolPatch(
+  block: ToolCallBlock,
+  event: {
+    status: string
+    input?: unknown
+    title?: string
+    name: string
+    output?: string
+  },
+  deps: {
+    inputJson: (input: unknown) => string
+    summarize: (name: string, input: unknown) => string
+    mapToolName: (name: string) => ToolName
+  }
+): void {
+  if (event.status === 'started' || event.status === 'updated') {
+    applyToolEventStatus(block, event.status)
+    if (cliToolHasInput(event.input)) {
+      block.input = deps.inputJson(event.input)
+      block.summary = event.title || deps.summarize(event.name, event.input) || event.name
+      const mapped = deps.mapToolName(event.name)
+      if (shouldAdoptMappedTool(mapped, block.tool)) block.tool = mapped
+    } else if (event.title) {
+      block.summary = event.title
+    }
+  } else if (event.status === 'completed' || event.status === 'error') {
+    applyToolEventStatus(block, event.status, event.output ?? block.output)
+  }
+}
+
+/** Append/concat nested text or reasoning onto a parent task's children. */
+export function appendNestedChildDelta(
+  children: MessageBlock[],
+  kind: 'text' | 'reasoning',
+  text: string
+): boolean {
+  if (!text) return false
+  const last = children[children.length - 1]
+  if (last && last.kind === kind) {
+    last.text += text
+  } else {
+    children.push(kind === 'text' ? { kind: 'text', text } : { kind: 'reasoning', text })
+  }
+  return true
+}

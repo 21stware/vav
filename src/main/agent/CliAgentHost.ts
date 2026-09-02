@@ -91,10 +91,15 @@ import {
   cliAssistantMessage,
   stripLeakedStreamErrorFromTurn
 } from './cliTurnFinish'
-import { applyToolEventStatus, newCliPermissionBlock, newCliToolCallBlock } from './cliToolBlock'
+import {
+  appendNestedChildDelta,
+  applyCliToolPatch,
+  newCliPermissionBlock,
+  newCliToolCallBlock
+} from './cliToolBlock'
 import { parkInteractivePatch } from './cliPark'
 import { shouldFoldChecklistTool, skipEmptyChecklistUpdate, checklistPlanFields } from './cliChecklist'
-import { elicitationCardFields } from './cliElicitation'
+import { elicitationCardFields, findPendingElicitationIndex } from './cliElicitation'
 import {
   applyCliHistoryHandoff,
   formatCliWorkspaceHandoff,
@@ -1402,19 +1407,11 @@ export class CliAgentHost {
     block: ToolCallBlock,
     event: Extract<DriverEvent, { type: 'tool' }>
   ): void {
-    if (event.status === 'started' || event.status === 'updated') {
-      applyToolEventStatus(block, event.status)
-      if (event.input && Object.keys(event.input as object).length) {
-        block.input = inputJson(event.input)
-        block.summary = event.title || summarizeCliTool(event.name, event.input) || event.name
-        const mapped = mapToolName(event.name)
-        if (mapped !== 'external' || block.tool === 'external') block.tool = mapped
-      } else if (event.title) {
-        block.summary = event.title
-      }
-    } else if (event.status === 'completed' || event.status === 'error') {
-      applyToolEventStatus(block, event.status, event.output ?? block.output)
-    }
+    applyCliToolPatch(block, event, {
+      inputJson,
+      summarize: summarizeCliTool,
+      mapToolName
+    })
   }
 
   private ensureParentTask(turn: HostTurn, parentId: string): ToolCallBlock {
@@ -1446,12 +1443,7 @@ export class CliAgentHost {
     if (!text) return
     const parent = this.ensureParentTask(turn, parentId)
     parent.children ??= []
-    const last = parent.children[parent.children.length - 1]
-    if (last && last.kind === kind) {
-      last.text += text
-    } else {
-      parent.children.push(kind === 'text' ? { kind: 'text', text } : { kind: 'reasoning', text })
-    }
+    if (!appendNestedChildDelta(parent.children, kind, text)) return
     turn.nestedDirty.add(parent.id)
     this.setPhase(conversationId, turn, kind === 'reasoning' ? 'thinking' : 'working')
     if (!turn.flushTimer) {
@@ -1524,14 +1516,15 @@ export class CliAgentHost {
     })
     let index = turn.toolIndex.get(event.toolCallId)
     if (index == null) {
-      for (const [id, pending] of turn.pendingPermissions) {
-        if (pending.kind !== event.kind) continue
-        const found = turn.toolIndex.get(id)
-        if (found == null) continue
-        index = found
-        turn.toolIndex.set(event.toolCallId, found)
-        turn.pendingPermissions.delete(id)
-        break
+      const pending = findPendingElicitationIndex(
+        turn.pendingPermissions,
+        turn.toolIndex,
+        event.kind
+      )
+      if (pending) {
+        index = pending.index
+        turn.toolIndex.set(event.toolCallId, pending.index)
+        turn.pendingPermissions.delete(pending.previousId)
       }
     }
     let block: ToolCallBlock

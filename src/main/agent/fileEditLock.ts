@@ -17,6 +17,35 @@ export function isFileEditLockedPath(filePath: string | null | undefined): boole
   return false
 }
 
+export const FILE_EDIT_LOCKED_SWITCH_MESSAGE =
+  'This format cannot switch to Edit in-place (PDF / HEIC / legacy Office / ZIP). ' +
+  'Ask the user to convert or Save As from the preview chrome.'
+
+/**
+ * Error when flipping file-preview Read/Edit is illegal. `null` means the
+ * caller may no-op if `fileReadOnly` already matches, or persist the flip.
+ */
+export function fileReadOnlySwitchBlock(
+  conversation:
+    | {
+        focusedFilePath?: string | null
+        fileId?: string | null
+      }
+    | null
+    | undefined,
+  readOnly: boolean,
+  pathForFileId?: ((fileId: string) => string | null | undefined) | null
+): string | null {
+  if (!conversation) return 'Conversation not found.'
+  if (!readOnly) {
+    const path =
+      conversation.focusedFilePath ||
+      (conversation.fileId && pathForFileId ? (pathForFileId(conversation.fileId) ?? null) : null)
+    if (isFileEditLockedPath(path)) return FILE_EDIT_LOCKED_SWITCH_MESSAGE
+  }
+  return null
+}
+
 /** Terminal commands treated as read-only under Auto approval / file Read mode. */
 const READONLY_TERMINAL =
   /^(?:cat|ls|grep|rg|head|tail|wc|pwd|echo|which|type|file|stat|find|tree|du|df|uname|date|whoami|id|env|printenv|realpath|basename|dirname|md5|shasum|sha256sum|hexdump|xxd|jq|yq|sed\s+-n|awk)\b/

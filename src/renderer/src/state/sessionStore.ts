@@ -13,14 +13,6 @@ import type {
 import { DEFAULT_CLI_AGENTS, DEFAULT_SETTINGS } from '@shared/types'
 import type { WorkspaceHostInfo } from '@shared/workspaceHost'
 import type { RemoteControlStatus } from '@shared/remoteControl'
-import {
-  agentModelHostKey,
-  defaultModelForChatHost,
-  resolveModelForChatHost,
-  modelsForChatHost,
-  filterEnabledModels
-} from '@shared/agentModels'
-import { vendorIdFromEndpoint } from '@shared/llmVendors'
 import { mergeConversationList, patchConversationById } from './sessionListMerge'
 import {
   activeToolsFields,
@@ -134,7 +126,7 @@ import { notifyImageAttachPlan, trimAttachmentPathsForHost } from './sessionAtta
 import { persistSwarmLayout, setLeaf } from './sessionSwarm'
 import { swarmBlocksWorkdirSwitch as swarmSurfaceBlocksWorkdir, locateWorkspaceDefaultName } from '../lib/workdirSwitch'
 import { nextFavoriteIds, nextPinnedWorkspaceDirs, archivedListModePatch } from './sessionPins'
-import { nextSteppedModelId } from './sessionModels'
+import { chatHostPickerModels, coercedChatHostModel, nextSteppedModelId } from './sessionModels'
 
 function swarmBlocksWorkdirSwitch(
   id: string | null | undefined,
@@ -1430,30 +1422,23 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     if (!conv) return
 
     const { settings, agentModelCatalog } = get()
-    const { cliHost, accountId, model: currentModel } = conv
-
-    let vendorId: string | null = null
-    if (cliHost == null) {
-      const catalogKey = Object.keys(agentModelCatalog).find((k) =>
-        accountId ? k.endsWith(`:${accountId}`) : k === 'vav'
-      )
-      const entry = catalogKey ? agentModelCatalog[catalogKey] : null
-      vendorId = vendorIdFromEndpoint(entry?.endpoint ?? settings.apiEndpoint)
-    }
-    const key = agentModelHostKey(cliHost, vendorId, accountId)
-    const entry = agentModelCatalog[key]
-    const raw =
-      entry?.models && entry.models.length > 0
-        ? entry.models
-        : modelsForChatHost(cliHost, settings.customModels, settings.defaultModel, vendorId)
-    const list = filterEnabledModels(cliHost, raw, settings.disabledAgentModels, vendorId, accountId)
-
+    const { vendorId, list } = chatHostPickerModels({
+      cliHost: conv.cliHost,
+      accountId: conv.accountId,
+      catalog: agentModelCatalog,
+      customModels: settings.customModels,
+      defaultModel: settings.defaultModel,
+      disabledAgentModels: settings.disabledAgentModels,
+      apiEndpoint: settings.apiEndpoint
+    })
     if (list.length <= 1) return
 
-    const activeModel = resolveModelForChatHost(cliHost, currentModel, {
+    const activeModel = coercedChatHostModel({
+      host: conv.cliHost,
+      currentModel: conv.model,
       customModels: settings.customModels,
       vavDefaultModel: settings.defaultModel,
-      hostDefaultModel: defaultModelForChatHost(cliHost, settings),
+      defaultAgentModels: settings.defaultAgentModels,
       catalogue: list,
       vendorId
     })
@@ -1515,19 +1500,16 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     const state = get()
     const conversation = state.conversations.find((c) => c.id === id)
     if (!conversation) return
-    const catalogue =
-      state.agentModelCatalog[agentModelHostKey(host as ConversationMeta['cliHost'], vendorId, accountId)]
-        ?.models ?? null
-    const nextModel = resolveModelForChatHost(
-      host as ConversationMeta['cliHost'],
-      conversation.model,
-      {
-        customModels: state.settings.customModels,
-        vavDefaultModel: state.settings.defaultModel,
-        hostDefaultModel: defaultModelForChatHost(host as ConversationMeta['cliHost'], state.settings),
-        catalogue
-      }
-    )
+    const nextModel = coercedChatHostModel({
+      host: host as ConversationMeta['cliHost'],
+      currentModel: conversation.model,
+      customModels: state.settings.customModels,
+      vavDefaultModel: state.settings.defaultModel,
+      defaultAgentModels: state.settings.defaultAgentModels,
+      catalog: state.agentModelCatalog,
+      vendorId,
+      accountId
+    })
     if (nextModel !== conversation.model) {
       await get().setModel(id, nextModel)
     }
