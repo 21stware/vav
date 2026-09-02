@@ -32,10 +32,10 @@ import {
   parseCsvModel,
   blockAtLine,
   findBlockById,
-  isLineOrientedPath,
   lineBlockAt,
   type PreviewBlock
 } from '../lib/previewBlocks'
+import { fileViewerKindFlags, isBinaryOfficeKind } from '../lib/fileViewerKinds'
 import { basename, dirname, replaceExt } from '../lib/path'
 import { previewOpenElapsed } from '../lib/previewOpenClock'
 import { isPickGestureActive, type ClickPickPointer } from '../lib/clickPick'
@@ -43,7 +43,6 @@ import { suppressHyperlinkClick } from '../lib/suppressHyperlinks'
 import { useT } from '../i18n/useT'
 import { useSessionStore } from '../state/sessionStore'
 import { useWorkspaceStore } from '../state/workspaceStore'
-import { looksLikeFreeMind, looksLikeOpml } from '@shared/mindmap'
 import { type BinaryOpenMode } from './BinaryOpenViews'
 import type { StructuredDocument } from '@shared/structuredDoc'
 import { SelectionChrome } from './SelectionChrome'
@@ -240,10 +239,6 @@ export function FileViewer({
     return result
   }, [agentConversationId, embedded, parentConversationId])
 
-  const isBinaryOfficeKind = useCallback((kind: FileInspectResult['kind'] | undefined): boolean => {
-    return kind === 'docx' || kind === 'xlsx' || kind === 'pptx' || kind === 'pdf'
-  }, [])
-
   /**
    * Text-only soft baseline for dirty detect. Office Discard uses the working-copy
    * service (real is never mutated until Save), so no in-memory binary baseline.
@@ -260,7 +255,7 @@ export function FileViewer({
       }
       if (text != null) setBaselineContent(text)
     },
-    [isBinaryOfficeKind]
+    []
   )
 
   /** Agent/shell rewrote the open file on disk — refresh canvas + maybe mark dirty. */
@@ -319,7 +314,7 @@ export function FileViewer({
         }, 120)
       }
     },
-    [reloadInfo, isBinaryOfficeKind]
+    [reloadInfo]
   )
 
   /**
@@ -574,106 +569,42 @@ export function FileViewer({
 
   const displayText = workingContent ?? info?.text ?? ''
   const deferredDisplayText = useDeferredValue(displayText)
-  const isMarkdown =
-    /\.(md|markdown|mdx)$/i.test(filePath) || (info?.mime ?? '').includes('markdown')
-  const isNotebook = /\.ipynb$/i.test(filePath)
-  const isCsv = info?.kind === 'csv' || /\.(csv|tsv)$/i.test(filePath)
-  const isSqlite = info?.kind === 'sqlite'
-  /** FreeMind/Freeplane .mm or OPML mind map (not ObjC++ .mm). */
-  const isMindMap =
-    (info?.kind === 'text' || info?.kind == null) &&
-    (/\.opml$/i.test(filePath) ||
-      looksLikeOpml(displayText) ||
-      (/\.mm$/i.test(filePath) && looksLikeFreeMind(displayText)))
-  const isMermaidFile =
-    (info?.kind === 'text' || info?.kind == null) &&
-    /\.(mmd|mermaid)$/i.test(filePath)
-  const isDotFile =
-    (info?.kind === 'text' || info?.kind == null) && /\.(dot|gv)$/i.test(filePath)
-  const isDrawioFile =
-    (info?.kind === 'text' || info?.kind == null) &&
-    (/\.(drawio|dio)$/i.test(filePath) ||
-      (/mxfile/i.test(displayText.slice(0, 400)) && /mxGraphModel|mxCell/i.test(displayText)))
-  const isDiagramCanvas = isMindMap || isMermaidFile || isDotFile || isDrawioFile
-  /** .log and dense line-oriented files: pick individual lines, not paragraphs. */
-  const lineOriented =
-    !isMarkdown &&
-    !isNotebook &&
-    !isCsv &&
-    !isDiagramCanvas &&
-    (info?.kind === 'text' || info?.kind == null) &&
-    isLineOrientedPath(filePath, displayText)
+  const {
+    isMarkdown,
+    isNotebook,
+    isCsv,
+    isSqlite,
+    isMindMap,
+    isMermaidFile,
+    isDotFile,
+    isDrawioFile,
+    isDiagramCanvas,
+    lineOriented,
+    isOfficeKind,
+    isHtmlKind,
+    isHtmlClipKind,
+    isZip,
+    bodyPad,
+    textZoomable,
+    isHeic,
+    isLegacyOffice,
+    formatLockedReadOnly,
+    hardForcedReadOnly,
+    forcedReadOnly
+  } = fileViewerKindFlags({
+    filePath,
+    kind: info?.kind,
+    mime: info?.mime,
+    displayText,
+    error: info?.error,
+    hasInfo: !!info
+  })
   const badge = formatBadge(filePath, info?.kind ?? 'text')
   // Single parse shared by block pick + window sheet (avoids double work on open).
   const csvModel = useMemo(
     () => (isCsv ? parseCsvModel(displayText) : null),
     [isCsv, displayText]
   )
-
-  const isOfficeKind =
-    info?.kind === 'pdf' ||
-    info?.kind === 'docx' ||
-    info?.kind === 'xlsx' ||
-    info?.kind === 'pptx'
-  const isHtmlKind = info?.kind === 'html'
-  const isHtmlClipKind = info?.kind === 'html-clip'
-  const isZip = info?.kind === 'zip'
-  /**
-   * Reading gutters are per-renderer, not a frame-wide inset.
-   *
-   * Prose/code want paper margins. Canvas renderers (diagram, sheet, media,
-   * office paper, archive tree) own their full box and supply their own insets —
-   * a shared frame padding shrank them and pushed centred content off-axis.
-   */
-  const bodyPad: 'text' | 'none' =
-    isDiagramCanvas ||
-    isCsv ||
-    isSqlite ||
-    isOfficeKind ||
-    isHtmlKind ||
-    isHtmlClipKind ||
-    isZip ||
-    info?.kind === 'image' ||
-    info?.kind === 'video' ||
-    info?.kind === 'binary'
-      ? 'none'
-      : 'text'
-  /**
-   * Reflowing surfaces zoom by type size instead of geometry. Paged documents
-   * are excluded on purpose — they run their own stage zoom, and a wheel event
-   * would otherwise be claimed by both.
-   */
-  const textZoomable =
-    !!info &&
-    !info.error &&
-    (isCsv ||
-      isSqlite ||
-      info.kind === 'xlsx' ||
-      (info.kind === 'text' && !isDiagramCanvas))
-  const isBinaryUnsupported = info?.kind === 'binary'
-  const isDirectoryKind = info?.kind === 'directory'
-  const isHeic =
-    /\.(heic|heif|hif)$/i.test(filePath) || (info?.mime ?? '').toLowerCase().includes('heic')
-  /** Legacy Office extensions (not OOXML). */
-  const isLegacyOffice = /\.(doc|ppt|xls)$/i.test(filePath) && !/\.(docx|pptx|xlsx)$/i.test(filePath)
-  /**
-   * Format-locked → Edit requires convert + Save As (original untouched).
-   * Only formats we cannot write in-place: HEIC, PDF, legacy .doc/.ppt/.xls.
-   * Native OOXML (docx / xlsx / pptx) and ordinary text/code default to **Write**.
-   */
-  const formatLockedReadOnly =
-    isHeic ||
-    info?.kind === 'pdf' ||
-    /\.pdf$/i.test(filePath) ||
-    isLegacyOffice
-  /** ZIP / raw binary / directory / draw.io (read-only canvas): cannot enter edit. */
-  const hardForcedReadOnly =
-    isZip ||
-    (isBinaryUnsupported && !isLegacyOffice) ||
-    isDirectoryKind ||
-    isDrawioFile ||
-    isHtmlClipKind
-  const forcedReadOnly = hardForcedReadOnly || formatLockedReadOnly
   const effectiveReadOnly = readOnly || forcedReadOnly
 
   /**
