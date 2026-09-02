@@ -9,10 +9,6 @@ import {
   useState,
   type ReactNode
 } from 'react'
-import {
-  Clock,
-  Plus
-} from 'lucide-react'
 import type { FileAssociationStatus, FileInspectResult, FileSessionMeta } from '@shared/ipc'
 import { isClipPath } from '@shared/clipPath'
 import type { PreviewRef } from '@shared/types'
@@ -20,7 +16,6 @@ import { formatBytes, relativeTime } from '../lib/format'
 import {
   applyFileDraftContent,
   blockToRef,
-  clampPanelWidth,
   collectBlocks,
   countNewlinesLocal,
   filesHostConversationId,
@@ -35,6 +30,7 @@ import { DocumentView } from './fileViewer/DocumentView'
 import { ImageZoomStage, MediaSelectFrame } from './fileViewer/MediaStages'
 import { AgentPanelToggleButton } from './fileViewer/AgentPanelToggleButton'
 import { FileViewerHeader } from './fileViewer/FileViewerHeader'
+import { FileViewerAgentColumn } from './fileViewer/FileViewerAgentColumn'
 import {
   formatBadge,
   parseBlocksForPath,
@@ -54,8 +50,7 @@ import { suppressHyperlinkClick } from '../lib/suppressHyperlinks'
 import { useT } from '../i18n/useT'
 import { useSessionStore } from '../state/sessionStore'
 import { useWorkspaceStore } from '../state/workspaceStore'
-import type { FileSessionChromeProps } from './SessionDetail'
-import { Button, EmptyState, InlineAlert } from './ui'
+import { InlineAlert } from './ui'
 import { looksLikeFreeMind, looksLikeOpml } from '@shared/mindmap'
 import { BinaryFileView } from './BinaryFileView'
 import {
@@ -74,12 +69,6 @@ import {
   isMediaPreviewPath,
   shouldArmUnsavedFromExternalChange
 } from '../lib/previewDirty'
-
-// The agent side panel drags in the whole chat surface (composer, transcript,
-// xterm). A preview that is never asked for an agent must not parse it.
-const SessionDetail = lazy(() =>
-  import('./SessionDetail').then((m) => ({ default: m.SessionDetail }))
-)
 
 // Heavy format canvases — keep out of the chat / settings critical path.
 // Warm handle rather than `lazy`: the router is resident in a warm shell, and a
@@ -123,7 +112,6 @@ const DrawioView = lazy(() =>
 const ZipArchiveView = lazy(() =>
   import('./ZipArchiveView').then((m) => ({ default: m.ZipArchiveView }))
 )
-import { SessionHistoryPopover } from './SessionHistoryPopover'
 
 const EMPTY_COMMENT_CARDS: { ref: PreviewRef; comment: string }[] = []
 
@@ -2082,120 +2070,24 @@ export function FileViewer({
 
   const agentColumn =
     agentPanelOpen && !embedded ? (
-          <aside className="preview-agent-panel" style={{ width: panelWidth }}>
-            <div
-              className="preview-agent-resizer"
-              onMouseDown={(event) => {
-                event.preventDefault()
-                const startX = event.clientX
-                const startW = panelWidth
-                const onMove = (e: MouseEvent): void => {
-                  const next = clampPanelWidth(startW + (startX - e.clientX))
-                  panelWidthRef.current = next
-                  setPanelWidth(next)
-                }
-                const onUp = (): void => {
-                  window.removeEventListener('mousemove', onMove)
-                  window.removeEventListener('mouseup', onUp)
-                  try {
-                    persistPanelWidth(panelWidthRef.current)
-                  } catch {
-                    // ignore
-                  }
-                }
-                window.addEventListener('mousemove', onMove)
-                window.addEventListener('mouseup', onUp)
-              }}
-            />
-            {/* vav mode folds session title/history/new into AgentModeChrome.
-                CLI hosts keep a dedicated bar (no search row to share). */}
-            {(() => {
-              const agentMeta = conversations.find((c) => c.id === agentConversationId)
-              const agentIsVav =
-                !agentMeta?.agentBinaryName || agentMeta.agentBinaryName === 'vav'
-              const showSeparateSessionBar = !embedded && (!agentConversationId || !agentIsVav)
-              const fileChrome: FileSessionChromeProps | null =
-                agentConversationId && agentIsVav
-                  ? {
-                      title: sessionTitle,
-                      sessions: fileSessions,
-                      activeSessionId: agentConversationId,
-                      historyOpen,
-                      historyAnchorRef,
-                      onToggleHistory: () => setHistoryOpen((v) => !v),
-                      onCloseHistory: () => setHistoryOpen(false),
-                      onSwitchSession: (id) => void switchFileSession(id),
-                      onRenameSession: renameFileSession,
-                      onDeleteSessions: deleteFileSessions,
-                      onNewSession: () => void newFileSession()
-                    }
-                  : null
-              return (
-                <>
-                  {showSeparateSessionBar && (
-                    <div className="preview-file-session-bar">
-                      <span className="preview-file-session-title" title={sessionTitle}>
-                        {sessionTitle || t('common.session')}
-                      </span>
-                      <span className="spacer" />
-                      <div className="preview-file-session-actions">
-                        <button
-                          type="button"
-                          ref={historyAnchorRef}
-                          className={`btn ghost sm icon-only${historyOpen ? ' is-active-toggle' : ''}`}
-                          title={t('preview.sessionHistory')}
-                          onClick={() => setHistoryOpen((v) => !v)}
-                        >
-                          <Clock size={12} />
-                        </button>
-                        <Button
-                          icon={<Plus size={12} />}
-                          size="sm"
-                          variant="ghost"
-                          title={t('preview.newSession')}
-                          onClick={() => void newFileSession()}
-                        />
-                      </div>
-                      <SessionHistoryPopover
-                        open={historyOpen}
-                        onClose={() => setHistoryOpen(false)}
-                        sessions={fileSessions}
-                        activeSessionId={agentConversationId}
-                        onSwitch={(id) => {
-                          void switchFileSession(id)
-                          setHistoryOpen(false)
-                        }}
-                        onRename={renameFileSession}
-                        onDelete={deleteFileSessions}
-                        anchorRef={historyAnchorRef}
-                      />
-                    </div>
-                  )}
-                  {agentConversationId ? (
-                    <Suspense fallback={<div className="muted" data-pad="text" />}>
-                      <SessionDetail variant="preview-edit" fileSessionChrome={fileChrome} />
-                    </Suspense>
-                  ) : (
-                    <EmptyState
-                      title={t('preview.startChat')}
-                      description={t('preview.startChatDesc')}
-                    >
-                      <Button
-                        label={t('preview.startChat')}
-                        size="sm"
-                        variant="primary"
-                        onClick={() => {
-                          void ensureFileSession().then((id) => {
-                            if (id) useSessionStore.getState().focusComposer()
-                          })
-                        }}
-                      />
-                    </EmptyState>
-                  )}
-                </>
-              )
-            })()}
-          </aside>
+      <FileViewerAgentColumn
+        panelWidth={panelWidth}
+        panelWidthRef={panelWidthRef}
+        setPanelWidth={setPanelWidth}
+        conversations={conversations}
+        agentConversationId={agentConversationId}
+        embedded={embedded}
+        sessionTitle={sessionTitle}
+        fileSessions={fileSessions}
+        historyOpen={historyOpen}
+        setHistoryOpen={setHistoryOpen}
+        historyAnchorRef={historyAnchorRef}
+        switchFileSession={switchFileSession}
+        renameFileSession={renameFileSession}
+        deleteFileSessions={deleteFileSessions}
+        newFileSession={newFileSession}
+        ensureFileSession={ensureFileSession}
+      />
     ) : null
 
   const fileBody = (
