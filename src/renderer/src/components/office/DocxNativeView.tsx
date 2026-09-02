@@ -225,8 +225,8 @@ export function DocxNativeView({
         if (!cancelled) {
           setError((err as Error).message || t('preview.loadFailed'))
           setLoading(false)
-          onReady?.()
           setReady(false)
+          // Leave StructuredDocView up — a failed native paint is not "ready".
         }
       }
     })()

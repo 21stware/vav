@@ -269,7 +269,7 @@ function estimateSourceLine(source: string, el: HTMLElement): number {
   const tag = el.tagName.toLowerCase()
   const open = source.toLowerCase().indexOf(`<${tag}`)
   if (open >= 0) return source.slice(0, open).split(/\r?\n/).length
-  return 1
+  return 0
 }
 
 function blockFromElement(el: HTMLElement, source: string, id: string): PreviewBlock | null {
