@@ -32,3 +32,22 @@ export function placeDetachedBounds(
     y: area.y + Math.max(0, Math.round((area.height - height) / 2) - 20) + step
   }
 }
+
+export const OVERLAY_MAX_WIDTH = 1180
+export const OVERLAY_MAX_HEIGHT = 860
+export const OVERLAY_WARM_MAX_WIDTH = 960
+export const OVERLAY_WARM_MAX_HEIGHT = 720
+export const OVERLAY_MARGIN = 48
+
+/** Size an overlay against the display work area, clamped to the product max. */
+export function overlayFit(
+  area: { width: number; height: number },
+  maxWidth = OVERLAY_MAX_WIDTH,
+  maxHeight = OVERLAY_MAX_HEIGHT,
+  margin = OVERLAY_MARGIN
+): { width: number; height: number } {
+  return {
+    width: Math.min(maxWidth, Math.max(0, area.width - margin)),
+    height: Math.min(maxHeight, Math.max(0, area.height - margin))
+  }
+}

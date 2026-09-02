@@ -204,7 +204,7 @@ import {
   previewPathKey as previewPathKeyOf,
   previewQuery as buildPreviewQuery
 } from './window/previewPool'
-import { overlayCascadeOrigin, placeDetachedBounds } from './window/windowPlace'
+import { overlayCascadeOrigin, overlayFit, placeDetachedBounds } from './window/windowPlace'
 import { appBuildNumber as formatAppBuildNumber } from './appBuild'
 import { FALLBACK_SYSTEM_ACCENT, normalizeAccentHex } from './window/accentColor'
 import { closeActiveNativePopup, popupNativeMenu } from './window/nativePopup'
@@ -219,9 +219,8 @@ import { RemoteSendQueue } from './remote/sendQueue'
 import { createScreenshotController } from './screenshot/ScreenshotSession'
 import { OVERLAY_IMAGE_EXTS, shouldOpenAsOverlay } from '@shared/previewOverlay'
 import {
-  inferDiagramKind,
-  inferOverlayKind,
   overlayIdentity,
+  normalizeOverlayPayload as buildOverlayPayload,
   type OverlayNavigatePayload,
   type OverlayPayload
 } from '@shared/overlayOpen'
@@ -3697,11 +3696,10 @@ function overlayGeometry(): { width: number; height: number; x?: number; y?: num
   const area = (
     anchor && !anchor.isDestroyed() ? screen.getDisplayMatching(anchor.getBounds()) : screen.getPrimaryDisplay()
   ).workArea
-  const width = Math.min(1180, area.width - 48)
-  const height = Math.min(860, area.height - 48)
+  const size = overlayFit(area)
   const others = [...appClipWindows.values()].filter((w) => !w.isDestroyed())
   const last = others.length > 0 ? others[others.length - 1]!.getBounds() : null
-  return { width, height, ...overlayCascadeOrigin(area, last, { width, height }) }
+  return { ...size, ...overlayCascadeOrigin(area, last, size) }
 }
 
 function createOverlayBrowserWindow(opts: {
@@ -3793,8 +3791,7 @@ function warmOverlayShellPool(): void {
   overlayWarmPool.push(...live)
   while (overlayWarmPool.length < OVERLAY_WARM_POOL) {
     const area = screen.getPrimaryDisplay().workArea
-    const width = Math.min(960, area.width - 48)
-    const height = Math.min(720, area.height - 48)
+    const { width, height } = overlayFit(area, 960, 720)
     const window = createOverlayBrowserWindow({ show: false, width, height })
     overlayWarmPool.push(window)
     window.on('closed', () => {
@@ -3850,16 +3847,7 @@ function sendOverlayNavigate(window: BrowserWindow, payload: OverlayPayload): vo
 }
 
 function normalizeOverlayPayload(input: OverlayPayload | string): OverlayPayload {
-  const raw = typeof input === 'string' ? { path: input } : input
-  const path = raw.path ? previewPathKey(raw.path) : ''
-  const kind = raw.kind ?? (path ? inferOverlayKind(path) : undefined)
-  const diagramKind = raw.diagramKind ?? (path ? inferDiagramKind(path) : undefined)
-  return {
-    ...raw,
-    path: path || raw.path,
-    kind,
-    diagramKind
-  }
+  return buildOverlayPayload(input, previewPathKey)
 }
 
 /** Preview-style overlay: thin native frame, no file-viewer chrome. */

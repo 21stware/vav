@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import { overlayCascadeOrigin, placeDetachedBounds } from './windowPlace.ts'
+import { overlayCascadeOrigin, overlayFit, placeDetachedBounds } from './windowPlace.ts'
 
 describe('windowPlace', () => {
   it('cascades overlays and parks detached sessions on the right edge', () => {
@@ -19,5 +19,11 @@ describe('windowPlace', () => {
     const parked = placeDetachedBounds(area, { width: 480, height: 700 }, 0, 400)
     assert.equal(parked.width, 480)
     assert.equal(parked.x, 1440 - 480 - 28)
+    const fit = overlayFit(area)
+    assert.equal(fit.width, 1180)
+    assert.equal(fit.height, 852)
+    const warm = overlayFit(area, 960, 720)
+    assert.equal(warm.width, 960)
+    assert.equal(warm.height, 720)
   })
 })
