@@ -693,7 +693,7 @@ export function FileViewer({
         const prev = knownIdentityRef.current
         const probe = await window.vav.files.inspect(
           filePathRef.current,
-          filesHostConversationId(agentConversationId, parentConversationId)
+          hostConversationIdRef.current
         )
         if (prev == null) {
           // First sighting while inspect is still in flight — record identity
