@@ -100,7 +100,7 @@ import {
 import { parkInteractivePatch } from './cliPark'
 import { shouldFoldChecklistTool, skipEmptyChecklistUpdate, checklistPlanFields } from './cliChecklist'
 import { elicitationCardFields, findPendingElicitationIndex } from './cliElicitation'
-import { cliPermissionAllow, cliPermissionOutput, cliPermissionStatus } from './cliPermissionAnswer'
+import { cliPermissionAllow, cliPermissionOutput, cliPermissionStatus, findPendingPermission } from './cliPermissionAnswer'
 import {
   isDuplicateTokenSnapshot,
   usageContextFill,
@@ -464,9 +464,7 @@ export class CliAgentHost {
     toolCallId: string,
     text: string
   ): boolean {
-    const pending =
-      turn.pendingPermissions.get(toolCallId) ||
-      [...turn.pendingPermissions.values()].find((p) => p.toolCallId === toolCallId)
+    const pending = findPendingPermission(turn.pendingPermissions, toolCallId)
     if (!pending) return false
     const allow = cliPermissionAllow(pending.kind, text)
     turn.pendingPermissions.delete(pending.toolCallId)

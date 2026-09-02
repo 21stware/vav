@@ -29,7 +29,6 @@ import { conversationIdForWatchedPath } from './conversationPath'
 import { isPathAllowed } from './pathAllow'
 import { previewKind, mimeFor } from './filePreviewKind'
 import { sortEntries, capVisibleEntries, directoryFileEntry, directoryListingError } from './fileEntrySort'
-import { modeToPermissions } from './fileMode'
 import { isInvalidRenameName, joinOnHostPath } from './fileHostPath'
 import {
   binaryWindowCaughtError,
@@ -50,7 +49,7 @@ import { mimeHintToUti } from './fileUti'
 import { inspectZipArchive, zipInspectFailure, zipInspectSuccess } from './fileZipArchive'
 import { looksLikeTextFile } from './fileTextSample'
 import { defaultAppDisplayName, mdlsRaw } from './fileMacMeta'
-import { inodeLabel, ownerLabel, statTimeMs } from './fileBinaryMeta'
+import { assembleBinaryMeta, tryBinaryMeta } from './fileBinaryMeta'
 import {
   binaryInspectFallback,
   deniedInspectResult,
@@ -495,44 +494,33 @@ export class FileService {
           )
         }
         // Conversion failed — fall through to binary meta with the error as warning.
-        try {
-          const binaryMeta = await buildBinaryMeta(path, info)
-          return legacyDocInspect({
-            path,
-            name,
-            size: info.size,
-            mtimeMs: info.mtimeMs,
-            warning: converted.error,
-            binaryMeta
-          })
-        } catch {
-          return legacyDocInspect({
-            path,
-            name,
-            size: info.size,
-            mtimeMs: info.mtimeMs,
-            warning: converted.error
-          })
-        }
+        const assembled = await tryBinaryMeta(() => buildBinaryMeta(path, info))
+        return legacyDocInspect({
+          path,
+          name,
+          size: info.size,
+          mtimeMs: info.mtimeMs,
+          warning: converted.error,
+          binaryMeta: assembled.ok ? assembled.binaryMeta : undefined
+        })
       }
       if (legacy === 'ppt') {
-        try {
-          const binaryMeta = await buildBinaryMeta(path, info)
+        const assembled = await tryBinaryMeta(() => buildBinaryMeta(path, info))
+        if (assembled.ok) {
           return legacyPptInspect({
             path,
             name,
             size: info.size,
             mtimeMs: info.mtimeMs,
-            binaryMeta
-          })
-        } catch (err) {
-          return legacyPptInspect({
-            path,
-            name,
-            size: info.size,
-            error: (err as Error).message
+            binaryMeta: assembled.binaryMeta
           })
         }
+        return legacyPptInspect({
+          path,
+          name,
+          size: info.size,
+          error: assembled.error
+        })
       }
 
       let kind = previewKind(name)
@@ -600,13 +588,10 @@ export class FileService {
 
       // Unsupported / binary: metadata panel (no content preview). Never use
       // files.error.unsupported — that red alert is reserved for real I/O failures.
-      try {
-        const binaryMeta = await buildBinaryMeta(path, info)
-        return inspectWithBinaryMeta(base, binaryMeta)
-      } catch (metaErr) {
-        console.error('[files] binary meta failed', path, metaErr)
-        return binaryInspectFallback(base, info.mtimeMs)
-      }
+      const assembled = await tryBinaryMeta(() => buildBinaryMeta(path, info))
+      if (assembled.ok) return inspectWithBinaryMeta(base, assembled.binaryMeta)
+      console.error('[files] binary meta failed', path, assembled.error)
+      return binaryInspectFallback(base, info.mtimeMs)
     } catch (err) {
       return inspectCaughtError(path, name, err)
     }
@@ -791,18 +776,12 @@ async function buildBinaryMeta(
     mtime?: Date
   }
 ): Promise<BinaryFileMeta> {
-  const mode = typeof info.mode === 'number' ? info.mode : 0
-  const uid = typeof info.uid === 'number' ? info.uid : -1
   let self: { uid: number; username: string } | null = null
   try {
     self = userInfo()
   } catch {
     // keep numeric uid
   }
-  const owner = ownerLabel(uid, self)
-  const createdMs = statTimeMs(info.birthtimeMs, info.birthtime)
-  const modifiedMs = statTimeMs(info.mtimeMs, info.mtime)
-  const inode = inodeLabel(info.ino)
 
   let uti = mimeHintToUti(extname(path).toLowerCase())
   let defaultApp: string | null = null
@@ -821,14 +800,6 @@ async function buildBinaryMeta(
     }
   }
 
-  return {
-    uti,
-    permissions: mode ? modeToPermissions(mode) : '—',
-    owner,
-    createdAt: createdMs,
-    modifiedAt: modifiedMs,
-    inode,
-    defaultApp
-  }
+  return assembleBinaryMeta(info, { self, uti, defaultApp })
 }
 

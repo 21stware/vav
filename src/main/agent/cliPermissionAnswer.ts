@@ -26,3 +26,11 @@ export function cliPermissionOutput(
   if (kind === 'plan_doc') return allow ? labels.accepted : labels.rejected
   return allow ? labels.approved : labels.denied
 }
+
+/** Prefer the map key; otherwise match a waiter whose payload toolCallId differs. */
+export function findPendingPermission<T extends { toolCallId: string }>(
+  pending: Map<string, T>,
+  toolCallId: string
+): T | undefined {
+  return pending.get(toolCallId) || [...pending.values()].find((p) => p.toolCallId === toolCallId)
+}

@@ -3,7 +3,8 @@ import { describe, it } from 'node:test'
 import {
   cliPermissionAllow,
   cliPermissionOutput,
-  cliPermissionStatus
+  cliPermissionStatus,
+  findPendingPermission
 } from './cliPermissionAnswer.ts'
 
 const labels = {
@@ -35,5 +36,17 @@ describe('cliPermissionStatus / output', () => {
     assert.equal(cliPermissionOutput('plan_doc', false, 'x', labels), 'Rejected')
     assert.equal(cliPermissionOutput('permission', true, 'x', labels), 'Approved')
     assert.equal(cliPermissionOutput('url', false, 'x', labels), 'Denied')
+  })
+})
+
+describe('findPendingPermission', () => {
+  it('prefers the map key then a payload whose toolCallId matches', () => {
+    const pending = new Map([
+      ['k1', { toolCallId: 'other' }],
+      ['k2', { toolCallId: 'want' }]
+    ])
+    assert.equal(findPendingPermission(pending, 'k1')?.toolCallId, 'other')
+    assert.equal(findPendingPermission(pending, 'want')?.toolCallId, 'want')
+    assert.equal(findPendingPermission(pending, 'missing'), undefined)
   })
 })
