@@ -31,11 +31,13 @@ import {
   formatErrorDetail,
   formatErrorDetailFromParts,
   isBareInternalError,
+  NETWORK_CONTINUE_PROMPT,
   NETWORK_RETRY_LIMIT,
   networkRetryDelayMs,
   pickExhaustedQuotaWindow,
   quotaKindMessageKey,
   RpcErrorCode,
+  shouldContinuePartialNetworkTurn,
   shouldRetryFreshSession,
   shouldRetrySameSession,
   splitStreamedRetriableError,
@@ -92,7 +94,7 @@ import {
   shouldContinueHeldCliTurn,
   shouldDeferCliTurnFinish
 } from './cliTurnHold'
-import { createCliHistoryReplayGate, type CliHistoryReplayGate } from './cliHistoryReplay'
+import { createCliHistoryReplayGate, createCliHistoryReplayGateFromBlocks, type CliHistoryReplayGate } from './cliHistoryReplay'
 import { inputJson, mapToolName, summarizeCliTool } from './drivers/toolMap'
 import { FileDraftCoalescer, writeToolDraft } from '@shared/writeToolDraft'
 import {
@@ -151,6 +153,15 @@ function turnHasAnswerContent(turn: HostTurn): boolean {
       block.kind === 'toolCall' ||
       block.kind === 'plan' ||
       (block.kind === 'text' && block.text.trim().length > 0)
+  )
+}
+
+/** A tool still in flight — the turn cannot be treated as a finished reply. */
+function turnHasIncompleteWork(turn: HostTurn): boolean {
+  return turn.blocks.some(
+    (block) =>
+      block.kind === 'toolCall' &&
+      (block.status === 'pending' || block.status === 'executing')
   )
 }
 
@@ -1090,14 +1101,22 @@ export class CliAgentHost {
         // cursor-agent ACP leaks internal stream teardowns ("Error:
         // RetriableError: WritableIterable is closed") as a trailing
         // agent_message_chunk while still reporting stopReason=end_turn.
-        // Strip that tail so it never seals into the transcript. When the
-        // leaked error was the WHOLE reply the turn really failed — run the
-        // same-session network retry ladder instead of sealing nothing.
+        // Strip that tail so it never seals into the transcript.
+        // Empty reply → same-session retry of the original prompt.
+        // Transport disconnect (or an open tool) after partial output →
+        // keep the draft and continue; do not seal as Done.
         if (event.success && !turn.cancelled) {
           this.flushBuffers(conversationId, turn)
           const leaked = this.stripLeakedStreamError(turn)
           if (leaked && !turnHasAnswerContent(turn)) {
             this.resetTurnDraft(conversationId, turn)
+            void this.settleFailedTurn(conversationId, turn, leaked, null)
+            break
+          }
+          if (
+            leaked &&
+            shouldContinuePartialNetworkTurn(leaked, turnHasIncompleteWork(turn))
+          ) {
             void this.settleFailedTurn(conversationId, turn, leaked, null)
             break
           }
@@ -1137,12 +1156,26 @@ export class CliAgentHost {
       case 'process-exited':
         if (this.ignoreNextExit.delete(conversationId)) return
         if (this.turns.has(conversationId)) {
-          if (!turn.cancelled) {
-            turn.error = turn.error || `Agent process exited (${event.code ?? '?'})`
-            turn.errorDetail =
-              turn.errorDetail || formatErrorDetailFromParts(turn.error, event.code)
+          // A retry already in backoff owns this turn — drop the dead
+          // process so ensureRuntime can respawn, but do not seal.
+          if (turn.settling) {
+            this.runtimes.delete(conversationId)
+            return
           }
-          void this.finishTurn(conversationId, turn, false)
+          if (!turn.cancelled) {
+            const raw = turn.error || `Agent process exited (${event.code ?? '?'})`
+            turn.errorDetail =
+              turn.errorDetail || formatErrorDetailFromParts(raw, event.code)
+            void this.settleFailedTurn(
+              conversationId,
+              turn,
+              raw,
+              turn.errorCode,
+              turn.errorDetail
+            )
+          } else {
+            void this.finishTurn(conversationId, turn, false)
+          }
         }
         this.runtimes.delete(conversationId)
         break
@@ -2088,7 +2121,7 @@ export class CliAgentHost {
     turn.settling = true
     turn.errorDetail = detail?.trim() || formatErrorDetailFromParts(raw, code)
 
-    // Transient network failure: re-prompt the SAME session after a short
+    // Transient network failure: keep the SAME session after a short
     // backoff. The resume cursor is kept — the thread must not lose context —
     // and the turn stays live so the UI never paints a break. Classified
     // cheaply (no quota refresh) so the retry starts right away.
@@ -2099,7 +2132,16 @@ export class CliAgentHost {
       turn.errorKind = undefined
       turn.errorCode = undefined
       turn.errorDetail = undefined
-      this.setPhase(conversationId, turn, 'thinking')
+      const keepPartial = turnHasAnswerContent(turn)
+      if (keepPartial) {
+        this.flushBuffers(conversationId, turn)
+        this.sealOpenReasoning(turn)
+        turn.textIndex = null
+        turn.replay = createCliHistoryReplayGateFromBlocks(turn.blocks)
+        this.setPhase(conversationId, turn, 'retrying')
+      } else {
+        this.setPhase(conversationId, turn, 'thinking')
+      }
       // Keep `settling` held through the backoff so a racing error event
       // cannot start a second retry for the same failure.
       await new Promise((resolve) =>
@@ -2116,11 +2158,18 @@ export class CliAgentHost {
         // Reuse the live process when it survived; respawn + resume otherwise.
         const next = await this.ensureRuntime(conversationId)
         next.lastTouch = Date.now()
-        turn.replay.open()
-        // A respawn during the retry may have replaced the native session
-        // (auth switch) — carry the transcript if one was marked.
-        turn.prompt = this.consumeHistoryHandoff(conversationId, turn.parentId)
-        next.driver.prompt(turn.prompt, { attachments: turn.attachments })
+        if (keepPartial) {
+          // Partial output already landed — do not re-prompt the original
+          // user message (that would duplicate). Continue on this same VAV
+          // turn so the UI stays on the live draft.
+          next.driver.prompt(NETWORK_CONTINUE_PROMPT)
+        } else {
+          turn.replay.open()
+          // A respawn during the retry may have replaced the native session
+          // (auth switch) — carry the transcript if one was marked.
+          turn.prompt = this.consumeHistoryHandoff(conversationId, turn.parentId)
+          next.driver.prompt(turn.prompt, { attachments: turn.attachments })
+        }
         return
       } catch (err) {
         const extracted = extractRpcError(err)

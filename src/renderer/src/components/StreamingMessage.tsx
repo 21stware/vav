@@ -37,6 +37,7 @@ export function StreamingMessage({ conversationId }: { conversationId: string })
   const awaiting = snapshot.phase === 'awaiting-user'
   const live =
     snapshot.phase === 'outputting' ||
+    snapshot.phase === 'retrying' ||
     snapshot.phase === 'thinking' ||
     snapshot.phase === 'working'
 
@@ -110,7 +111,12 @@ export function StreamingMessage({ conversationId }: { conversationId: string })
         )}
 
         {awaiting && <div className="muted tiny">{t('transcript.awaitingContinue')}</div>}
-        {live && <StreamStatus state="outputting" conversationId={conversationId} />}
+        {live && (
+          <StreamStatus
+            state={snapshot.phase === 'retrying' ? 'retrying' : 'outputting'}
+            conversationId={conversationId}
+          />
+        )}
       </div>
     </div>
   )

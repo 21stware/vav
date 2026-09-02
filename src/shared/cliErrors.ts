@@ -73,7 +73,8 @@ const STREAMED_RETRIABLE_TAIL_RE = /(?:^|\n)[^\S\n]*Error:[^\S\n]*RetriableError
 /**
  * Split a leaked internal stream error off the end of a streamed reply.
  * `text` is what the model actually said; `leaked` is the internal error,
- * ready to feed the retry ladder when nothing else remains of the turn.
+ * ready to feed the retry ladder (empty reply) or a same-turn continue
+ * (partial reply cut off by a transport disconnect).
  */
 export function splitStreamedRetriableError(text: string): { text: string; leaked: string | null } {
   const match = STREAMED_RETRIABLE_TAIL_RE.exec(text)
@@ -339,10 +340,59 @@ export function quotaKindMessageKey(kind: QuotaWindowKind):
 /** Same-session retry budget for transient network failures. */
 export const NETWORK_RETRY_LIMIT = 3
 
+/**
+ * Hidden follow-up when a turn already streamed some answer and then died
+ * on a transport blip. Sent on the same native session so the host continues
+ * the partial reply — the user must not have to type "continue".
+ */
+export const NETWORK_CONTINUE_PROMPT =
+  'Your previous reply was cut off by a transient network error. Continue from where you left off. Do not repeat content you already produced.'
+
+/**
+ * cursor-agent ACP often leaks this AFTER a completed reply while still
+ * reporting end_turn. That is not a mid-stream death — strip and seal.
+ */
+const BENIGN_STREAM_TEARDOWN_RE = /WritableIterable is closed/i
+
+/**
+ * Real transport death (Wi-Fi switch, TLS abort, socket reset). Distinct
+ * from the benign WritableIterable teardown so a partial outputting turn
+ * can continue instead of sealing as Done.
+ */
+const TRANSPORT_DISCONNECT_RE =
+  /Client network socket disconnected|ECONNRESET|ECONNREFUSED|ECONNABORTED|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|EPIPE|EHOSTUNREACH|ENETUNREACH|socket hang up|TLS connection (?:failed|error)|socket disconnected|error sending request for url|fetch failed|network (?:error|failure)|connection (?:reset|refused|closed|interrupted|timed?[\s-]?out)|request (?:to .{1,200} )?failed, reason:/i
+
 /** Backoff before same-session network retry N (1-based): 1s, 2.5s, 5s. */
 export function networkRetryDelayMs(attempt: number): number {
   const table = [1_000, 2_500, 5_000]
   return table[Math.min(Math.max(1, attempt), table.length) - 1]!
+}
+
+/**
+ * True when the leak is the known ACP end-of-turn teardown, not a network
+ * environment change. Partial output + this leak still seals as success.
+ */
+export function isBenignAcpStreamTeardown(text: string): boolean {
+  return BENIGN_STREAM_TEARDOWN_RE.test(text) && !TRANSPORT_DISCONNECT_RE.test(text)
+}
+
+/** Wi-Fi / TLS / socket death — the turn was cut off, not finished. */
+export function isTransportDisconnect(text: string): boolean {
+  return TRANSPORT_DISCONNECT_RE.test(text)
+}
+
+/**
+ * A turn that already has answer content (or an open tool) should stay live
+ * and continue after a transport disconnect. Benign ACP teardowns after a
+ * complete-looking reply still seal — unless a tool is still in flight.
+ */
+export function shouldContinuePartialNetworkTurn(
+  raw: string,
+  hasIncompleteWork: boolean
+): boolean {
+  if (isTransportDisconnect(raw)) return true
+  if (hasIncompleteWork && /RetriableError/i.test(raw)) return true
+  return false
 }
 
 /**

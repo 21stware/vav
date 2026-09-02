@@ -76,6 +76,11 @@ export type LaunchVavOptions = {
   /** Fixture trails every reply with the leaked RetriableError chunk. */
   acpLeakTail?: boolean
   /**
+   * First prompt streams a partial reply then a TLS-disconnect leak (end_turn);
+   * the next prompt is the continue follow-up and replies "e2e continued".
+   */
+  acpLeakPartialTransport?: boolean
+  /**
    * Default true so existing specs stay deterministic. Set false to assert
    * empty-state `empty-in` (logo + name stagger).
    */
@@ -223,7 +228,8 @@ export async function launchVav(options: LaunchVavOptions = {}): Promise<VavHarn
           }
         : {}),
       ...(options.acpLeakPrompts ? { E2E_ACP_LEAK_PROMPTS: String(options.acpLeakPrompts) } : {}),
-      ...(options.acpLeakTail ? { E2E_ACP_LEAK_TAIL: '1' } : {})
+      ...(options.acpLeakTail ? { E2E_ACP_LEAK_TAIL: '1' } : {}),
+      ...(options.acpLeakPartialTransport ? { E2E_ACP_LEAK_PARTIAL_TRANSPORT: '1' } : {})
     }
   })
 

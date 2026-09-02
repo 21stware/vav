@@ -1407,6 +1407,7 @@ export type TurnPhase =
   | 'idle'
   | 'thinking'
   | 'outputting'
+  | 'retrying'
   | 'working'
   | 'awaiting-user'
   | 'cancelled'

@@ -71,6 +71,23 @@ export class CliHistoryReplayGate {
   }
 }
 
+/**
+ * Skip a dump of the in-flight turn when a network continue re-prompts
+ * the same session — the host may replay the partial answer before adding
+ * new tokens.
+ */
+export function createCliHistoryReplayGateFromBlocks(
+  blocks: MessageBlock[]
+): CliHistoryReplayGate {
+  const priorToolIds = new Set<string>()
+  collectToolIds(blocks, priorToolIds)
+  return new CliHistoryReplayGate(
+    priorToolIds,
+    concatKind(blocks, 'text'),
+    concatKind(blocks, 'reasoning')
+  )
+}
+
 export function createCliHistoryReplayGate(
   messages: ChatMessage[]
 ): CliHistoryReplayGate {

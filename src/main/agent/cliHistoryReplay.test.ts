@@ -3,7 +3,8 @@ import { describe, it } from 'node:test'
 import type { ChatMessage, MessageBlock, ToolCallBlock } from '@shared/types'
 import {
   CliHistoryReplayGate,
-  createCliHistoryReplayGate
+  createCliHistoryReplayGate,
+  createCliHistoryReplayGateFromBlocks
 } from './cliHistoryReplay.ts'
 
 function tool(id: string, children?: MessageBlock[]): ToolCallBlock {
@@ -142,5 +143,16 @@ describe('CliHistoryReplayGate', () => {
     gate.open()
     assert.equal(gate.text('old'), 'take')
     assert.equal(gate.tool('t1'), 'take')
+  })
+
+  it('builds a gate from the in-flight turn so a continue does not duplicate it', () => {
+    const gate = createCliHistoryReplayGateFromBlocks([
+      { kind: 'text', text: 'partial e2e reply' },
+      tool('call-open')
+    ])
+    assert.equal(gate.isLive, false)
+    assert.equal(gate.text('partial e2e reply'), 'skip')
+    assert.equal(gate.tool('call-open'), 'skip')
+    assert.equal(gate.text('e2e continued'), 'take')
   })
 })

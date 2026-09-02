@@ -1136,7 +1136,12 @@ function handleAgentEvent(event: TurnEvent): void {
       activeTurns.set(event.conversationId, 'paused')
       refreshTraySessions()
       pushTokenUsageIfOpen(event.conversationId)
-    } else if (event.phase === 'working' || event.phase === 'thinking' || event.phase === 'outputting') {
+    } else if (
+      event.phase === 'working' ||
+      event.phase === 'thinking' ||
+      event.phase === 'outputting' ||
+      event.phase === 'retrying'
+    ) {
       activeTurns.set(event.conversationId, 'running')
       refreshTraySessions()
       pushTokenUsageIfOpen(event.conversationId)
