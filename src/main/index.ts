@@ -50,7 +50,6 @@ import {
   IPC,
   type Bootstrap,
   type FileInspectResult,
-  type HostDiscoveryPeer,
   type MenuCommand,
   type NativeMenuItem,
   type SettingsView,
@@ -68,7 +67,6 @@ import {
   type ChatMessage,
   type Conversation,
   type ConversationMeta,
-  type FileSortKey,
   type ShellKind,
   type TurnEvent
 } from '@shared/types'
@@ -167,6 +165,15 @@ import { SwarmHistoryStore } from './store/SwarmHistoryStore'
 import { FileService } from './fs/FileService'
 import { installTrustedIpcGuard } from './ipc/ipcTrust'
 import { registerVcsIpc } from './ipc/registerVcsIpc'
+import { registerPtyIoIpc } from './ipc/registerPtyIoIpc'
+import { registerDialogIpc } from './ipc/registerDialogIpc'
+import { registerChangeSetIpc } from './ipc/registerChangeSetIpc'
+import { registerFilesIpc } from './ipc/registerFilesIpc'
+import { registerHostsIpc } from './ipc/registerHostsIpc'
+import { dialogConfirmOptions, revealSecretBoxOptions } from './ipc/dialogOptions'
+import { showParentedMessageBox, windowFromSender } from './ipc/nativeDialog'
+import { conversationIdForWorkdirs } from './fs/conversationPath'
+import { decorateHosts as decorateRemoteHosts } from './host/decorateHosts'
 import {
   applyWindowVibrancy as applyVibrancyPaint,
   chromeOptions,
@@ -194,10 +201,11 @@ import {
   nextUnfocusedPreviewPath
 } from './window/previewPool'
 import { appBuildNumber as formatAppBuildNumber } from './appBuild'
+import { FALLBACK_SYSTEM_ACCENT, normalizeAccentHex } from './window/accentColor'
 import { trayDirLabel as formatTrayDirLabel, trayAgentLabel as formatTrayAgentLabel } from './tray/trayLabels'
 import { HostRegistry } from './host'
 import { openSpawn, previewSpawn, revealSpawn } from './host/hostShell'
-import { clipRoot, isClipPath, writeClip, writeClipBytes } from './fs/clipStore'
+import { clipRoot, writeClipBytes } from './fs/clipStore'
 import { writePngToClipboard } from './clipboardImage'
 import { mapRemoteSessions } from './remote/sessionList'
 import { listRemoteChildEntries, listRemoteRootEntries } from './remote/dirBrowse'
@@ -1820,18 +1828,17 @@ const daemonAttach = new DaemonAttachService({
       if (parent.isMinimized()) parent.restore()
       parent.show()
     }
-    const opts: Electron.MessageBoxOptions = {
-      type: 'question',
-      title: t('machines.lanPairTitle'),
-      message: t('machines.lanPairTitle'),
-      detail: t('machines.lanPairBody', { name: from.name }),
-      buttons: [t('common.allow'), t('common.deny')],
-      defaultId: 1,
-      cancelId: 1
-    }
-    const result = parent
-      ? await dialog.showMessageBox(parent, opts)
-      : await dialog.showMessageBox(opts)
+    const opts = dialogConfirmOptions(
+      {
+        title: t('machines.lanPairTitle'),
+        message: t('machines.lanPairBody', { name: from.name }),
+        confirmLabel: t('common.allow'),
+        cancelLabel: t('common.deny'),
+        preferCancel: true
+      },
+      { confirm: t('common.allow'), cancel: t('common.deny') }
+    )
+    const result = await showParentedMessageBox(parent, opts)
     return result.response === 0
   }
 })
@@ -5155,34 +5162,34 @@ async function confirmDeleteSwarmHistoryItem(
   const item = findSwarmHistoryItem(itemId, conversationId)
   if (!item) return
   const parent = BrowserWindow.fromWebContents(sender) ?? mainWindow
-  const first = {
-    type: 'warning' as const,
-    title: t('agents.sessionHistoryDeleteTitle'),
-    message: t('agents.sessionHistoryDeleteTitle'),
-    detail: t('agents.sessionHistoryDeleteBody', { name: item.label }),
-    buttons: [t('common.delete'), t('common.cancel')],
-    defaultId: 1,
-    cancelId: 1
-  }
-  const firstResult =
-    parent && !parent.isDestroyed()
-      ? await dialog.showMessageBox(parent, first)
-      : await dialog.showMessageBox(first)
+  const first = dialogConfirmOptions(
+    {
+      title: t('agents.sessionHistoryDeleteTitle'),
+      message: t('agents.sessionHistoryDeleteBody', { name: item.label }),
+      confirmLabel: t('common.delete'),
+      destructive: true
+    },
+    { confirm: t('common.delete'), cancel: t('common.cancel') }
+  )
+  const firstResult = await showParentedMessageBox(
+    parent && !parent.isDestroyed() ? parent : null,
+    first
+  )
   if (firstResult.response !== 0) return
 
-  const second = {
-    type: 'warning' as const,
-    title: t('agents.sessionHistoryDeleteAgainTitle'),
-    message: t('agents.sessionHistoryDeleteAgainTitle'),
-    detail: t('agents.sessionHistoryDeleteAgainBody'),
-    buttons: [t('common.delete'), t('common.cancel')],
-    defaultId: 1,
-    cancelId: 1
-  }
-  const secondResult =
-    parent && !parent.isDestroyed()
-      ? await dialog.showMessageBox(parent, second)
-      : await dialog.showMessageBox(second)
+  const second = dialogConfirmOptions(
+    {
+      title: t('agents.sessionHistoryDeleteAgainTitle'),
+      message: t('agents.sessionHistoryDeleteAgainBody'),
+      confirmLabel: t('common.delete'),
+      destructive: true
+    },
+    { confirm: t('common.delete'), cancel: t('common.cancel') }
+  )
+  const secondResult = await showParentedMessageBox(
+    parent && !parent.isDestroyed() ? parent : null,
+    second
+  )
   if (secondResult.response !== 0) return
 
   deleteSwarmHistoryRecord(itemId, conversationId)
@@ -5810,23 +5817,8 @@ function applyTheme(theme: AppSettings['theme']): void {
   nativeTheme.themeSource = theme
 }
 
-/** Fallback when the OS cannot report an accent (Linux, old macOS, errors). */
-const FALLBACK_SYSTEM_ACCENT = '#007aff'
-
 /** Last hex we broadcast — avoid spam on focus re-samples. */
 let lastBroadcastAccent: string | null = null
-
-/**
- * Normalize any Electron accent string to `#rrggbb`.
- * `systemPreferences.getAccentColor` returns `rrggbbaa` (no hash).
- * `getColor` / event payloads may be `#rrggbbaa` or `#rrggbb`.
- */
-function normalizeAccentHex(raw: unknown): string | null {
-  if (typeof raw !== 'string') return null
-  const cleaned = raw.trim().replace(/^#/, '').toLowerCase()
-  if (!/^[0-9a-f]{6}([0-9a-f]{2})?$/.test(cleaned)) return null
-  return `#${cleaned.slice(0, 6)}`
-}
 
 /** Read the current OS accent colour (macOS 10.14+ / Windows). */
 function readSystemAccentColor(): string {
@@ -5897,19 +5889,8 @@ function tmpRootFor(machineId: string | null | undefined): string {
   return daemonAttach.tmpOf(normalizeMachineId(machineId))
 }
 
-function joinHostPath(platform: string | undefined, ...parts: string[]): string {
-  return hostJoin(platform, ...parts)
-}
-
 function decorateHosts(hosts: WorkspaceHostInfo[]): WorkspaceHostInfo[] {
-  return hosts.map((host) => {
-    if (isLocalMachine(host.id)) return host
-    const providers = daemonAttach.providersOf(host.id)
-    const home = daemonAttach.homeOf(host.id) || host.home
-    const tmp = daemonAttach.tmpOf(host.id) || host.tmp
-    const defaultPath = daemonAttach.defaultPathOf(host.id) ?? undefined
-    return { ...host, home, tmp, defaultPath, providers }
-  })
+  return decorateRemoteHosts(hosts, daemonAttach)
 }
 
 function machineIdFromContents(contents: Electron.WebContents): string {
@@ -5934,18 +5915,10 @@ function homeTmpFor(machineId: string): { home: string; tmp: string } {
 }
 
 function conversationIdForGitCwd(cwd: string): string | undefined {
-  const watched = fileService.conversationIdForPath(cwd)
-  if (watched) return watched
-  if (!cwd) return undefined
-  let best: { id: string; len: number } | undefined
-  for (const meta of conversationStore.listMeta()) {
-    const root = meta.workingDirectory
-    if (!root) continue
-    if (cwd === root || cwd.startsWith(`${root}/`) || cwd.startsWith(`${root}\\`)) {
-      if (!best || root.length > best.len) best = { id: meta.id, len: root.length }
-    }
-  }
-  return best?.id
+  return (
+    fileService.conversationIdForPath(cwd) ??
+    conversationIdForWorkdirs(cwd, conversationStore.listMeta())
+  )
 }
 
 function machineIdForShell(event: IpcMainInvokeEvent, path: string): string {
@@ -6043,7 +6016,7 @@ async function mintTempWorkdirOn(machineId: string | null | undefined): Promise<
   if (isLocalMachine(machineId)) return mintTempWorkdir()
   const host = hostRegistry.hostFor(machineId)
   const root = daemonAttach.tmpOf(host.id)
-  const dir = joinHostPath(host.info.platform, root, 'vav', randomUUID().slice(0, 8), 'Workspace')
+  const dir = hostJoin(host.info.platform, root, 'vav', randomUUID().slice(0, 8), 'Workspace')
   try {
     await host.fs.mkdir(dir, { recursive: true })
     return dir
@@ -6509,19 +6482,15 @@ function appBuildNumber(): string {
 
 async function confirmRevealSecret(event: IpcMainInvokeEvent): Promise<boolean> {
   if (isE2eRuntime()) return true
-  const parent = BrowserWindow.fromWebContents(event.sender)
-  const opts: Electron.MessageBoxOptions = {
-    type: 'warning',
-    buttons: [t('common.cancel'), t('secrets.revealConfirm')],
-    defaultId: 0,
-    cancelId: 0,
-    message: t('secrets.revealTitle'),
-    detail: t('secrets.revealDetail')
-  }
-  const result =
-    parent && !parent.isDestroyed()
-      ? await dialog.showMessageBox(parent, opts)
-      : await dialog.showMessageBox(opts)
+  const result = await showParentedMessageBox(
+    windowFromSender(event.sender),
+    revealSecretBoxOptions({
+      cancel: t('common.cancel'),
+      confirm: t('secrets.revealConfirm'),
+      title: t('secrets.revealTitle'),
+      detail: t('secrets.revealDetail')
+    })
+  )
   return result.response === 1
 }
 
@@ -7559,7 +7528,7 @@ return c as text`
       const machineId = conversation.machineId
       const host = hostRegistry.hostFor(machineId)
       const safeName = name.trim().replace(/[\\/]/g, '-') || 'workspace'
-      const target = joinHostPath(host.info.platform, destinationDir, safeName)
+      const target = hostJoin(host.info.platform, destinationDir, safeName)
       try {
         if (isLocalMachine(machineId)) {
           if (existsSync(target)) {
@@ -7774,92 +7743,11 @@ return c as text`
   })
 
   // --- files ---
-  ipcMain.handle(
-    IPC.filesList,
-    (_event, path: string, sort: FileSortKey, ascending: boolean, conversationId?: string) =>
-      fileService.listDirectory(path, sort, ascending, conversationId)
-  )
-  ipcMain.handle(IPC.filesRead, (_event, path: string, conversationId?: string) =>
-    fileService.readTextFile(path, conversationId)
-  )
-  ipcMain.handle(
-    IPC.filesReadTextWindow,
-    (
-      _event,
-      path: string,
-      opts?: { startByte?: number; maxBytes?: number; force?: boolean; conversationId?: string }
-    ) => fileService.readTextWindow(path, opts)
-  )
-  ipcMain.handle(IPC.filesReadBinary, (_event, path: string, conversationId?: string) =>
-    fileService.readBinary(path, conversationId)
-  )
-  ipcMain.handle(
-    IPC.filesReadBinaryWindow,
-    (
-      _event,
-      path: string,
-      opts?: { startByte?: number; maxBytes?: number; conversationId?: string }
-    ) => fileService.readBinaryWindow(path, opts)
-  )
-  ipcMain.handle(
-    IPC.filesWriteBinary,
-    (_event, path: string, base64: string, conversationId?: string) =>
-      fileService.writeBinary(path, base64, conversationId)
-  )
-  ipcMain.handle(
-    IPC.filesWriteClip,
-    (
-      _event,
-      input: { filename: string; base64?: string; text?: string }
-    ) => writeClip(input)
-  )
-  ipcMain.handle(IPC.filesCopyImage, (_event, path: string) => {
-    try {
-      if (typeof path !== 'string' || !isClipPath(path)) {
-        return { ok: false as const, error: 'not a clip' }
-      }
-      return writePngToClipboard(readFileSync(path))
-    } catch (err) {
-      return {
-        ok: false as const,
-        error: err instanceof Error ? err.message : String(err)
-      }
-    }
+  registerFilesIpc(ipcMain, fileService, workingCopyService, {
+    machineIdFor: machineIdForShell,
+    previewOn: previewOnMachine,
+    openOn: openOnMachine
   })
-  ipcMain.handle(IPC.filesWrite, (_event, path: string, content: string, conversationId?: string) =>
-    fileService.writeTextFile(path, content, conversationId)
-  )
-  ipcMain.handle(
-    IPC.filesWorkingCopyEnsure,
-    async (_event, path: string, opts?: { fileId?: string | null }) => {
-      try {
-        const st = await workingCopyService.ensure(String(path || ''), {
-          fileId: opts?.fileId
-        })
-        return { ok: true as const, ...st }
-      } catch (err) {
-        return { ok: false as const, error: (err as Error).message }
-      }
-    }
-  )
-  ipcMain.handle(IPC.filesWorkingCopyPromote, async (_event, path: string) =>
-    workingCopyService.promote(String(path || ''))
-  )
-  ipcMain.handle(IPC.filesWorkingCopyDiscard, async (_event, path: string) => {
-    const result = await workingCopyService.discard(String(path || ''), { reseed: true })
-    if (!result.ok) return result
-    const st = workingCopyService.status(String(path || ''))
-    return { ok: true as const, dirty: st?.dirty ?? false }
-  })
-  ipcMain.handle(IPC.filesWorkingCopyStatus, (_event, path: string) =>
-    workingCopyService.status(String(path || ''))
-  )
-  ipcMain.handle(IPC.filesQuickLook, async (event, path: string) => {
-    await previewOnMachine(machineIdForShell(event, String(path || '')), String(path || ''))
-  })
-  ipcMain.handle(IPC.filesOpenWithDefault, async (event, path: string) =>
-    openOnMachine(machineIdForShell(event, String(path || '')), String(path || ''))
-  )
   registerVcsIpc(ipcMain, {
     cloudflare: () => ({
       token: secretStore.get('cloudflare') ?? null,
@@ -7870,9 +7758,6 @@ return c as text`
       projectRef: settingsStore.get().supabaseProjectRef || null
     })
   })
-  ipcMain.handle(IPC.filesWatch, (_event, id: string, root: string | null) =>
-    fileService.watchRoot(id, root)
-  )
   ipcMain.handle(IPC.previewSetCloseGuard, (event, enabled: boolean) => {
     const win = BrowserWindow.fromWebContents(event.sender)
     if (!win || win.isDestroyed()) return
@@ -8187,43 +8072,7 @@ return c as text`
       return id
     }
   )
-  // Fire-and-forget: high-frequency input (keys, mouse wheel in TUI mouse mode)
-  // and resize storms must not pay an invoke round-trip per event.
-  ipcMain.on(IPC.ptyWrite, (_event, tabId: unknown, data: unknown) => {
-    if (typeof tabId !== 'string' || typeof data !== 'string') return
-    ptyManager.write(tabId, data)
-  })
-  ipcMain.on(
-    IPC.ptyResize,
-    (event, tabId: unknown, cols: unknown, rows: unknown, force?: unknown) => {
-      if (typeof tabId !== 'string' || typeof cols !== 'number' || typeof rows !== 'number') return
-      if (!Number.isFinite(cols) || !Number.isFinite(rows)) return
-      // Focused viewer drives size; force=true re-delivers SIGWINCH after alt rebuild.
-      ptyManager.resize(tabId, cols, rows, event.sender.id, force === true)
-    }
-  )
-  ipcMain.handle(IPC.ptyKill, (_event, tabId: string) => {
-    const conversationId = ptyManager.conversationIdFor(tabId)
-    if (conversationId) swarmSession.forgetPane(conversationId, tabId)
-    return ptyManager.kill(tabId)
-  })
-  ipcMain.handle(IPC.ptyIsBusy, (_event, tabId: string) => ptyManager.isBusy(tabId))
-  ipcMain.handle(IPC.ptyList, (_event, conversationId: string) =>
-    ptyManager.listForConversation(String(conversationId || ''))
-  )
-  ipcMain.handle(
-    IPC.ptySetLayouts,
-    (
-      _event,
-      conversationId: string,
-      layouts: import('@shared/types').ConversationPtyLayouts
-    ) => {
-      ptyManager.setLayouts(String(conversationId || ''), layouts ?? { bash: null, agents: {} })
-    }
-  )
-  ipcMain.handle(IPC.ptyReplay, (_event, tabId: string) =>
-    ptyManager.replay(String(tabId || ''))
-  )
+  registerPtyIoIpc(ipcMain, ptyManager, swarmSession)
 
   // --- window ---
   ipcMain.handle(IPC.windowSetTheme, (_event, theme: AppSettings['theme']) => applyTheme(theme))
@@ -8327,77 +8176,14 @@ return c as text`
   ipcMain.handle(IPC.remoteControlStatus, () => remoteControl.status())
   ipcMain.handle(IPC.remoteControlRegenerateSecret, () => remoteControl.regenerateSecret())
   ipcMain.handle(IPC.remoteControlResetIdentity, () => remoteControl.resetIdentity())
-  ipcMain.handle(IPC.hostsList, () => decorateHosts(hostRegistry.list()))
-  ipcMain.handle(IPC.hostsPairing, () => daemonAttach.pairing())
-  ipcMain.handle(IPC.hostsPair, async (_event, payload: string) => {
-    const result = await daemonAttach.pair(String(payload || ''))
-    if (result.ok) await showHostWindow(result.host.id)
-    return result
-  })
-  ipcMain.handle(IPC.hostsPairLan, async (_event, peer: HostDiscoveryPeer) => {
-    const result = await daemonAttach.pairLan({
-      address: String(peer?.address || ''),
-      port: Number(peer?.port) || 0,
-      name: typeof peer?.name === 'string' ? peer.name : undefined,
-      machineId: typeof peer?.machineId === 'string' ? peer.machineId : undefined
-    })
-    if (result.ok) await showHostWindow(result.host.id)
-    return result
-  })
-  ipcMain.handle(IPC.hostsCancelPair, () => {
-    daemonAttach.cancelPair()
-  })
-  ipcMain.on(IPC.hostsCancelPair, () => {
-    daemonAttach.cancelPair()
-  })
-  ipcMain.handle(IPC.hostsForget, (_event, machineId: string) => {
-    const id = String(machineId || '')
-    daemonAttach.forget(id)
-    closeHostWindow(id)
-    if (settingsStore.get().defaultMachineId === id) applyDefaultMachine(LOCAL_MACHINE_ID)
-  })
-  ipcMain.handle(IPC.hostsDiscovered, () => daemonAttach.listDiscovered())
-  ipcMain.handle(IPC.hostsHome, (_event, machineId: string) => {
-    if (isLocalMachine(machineId)) return homedir()
-    return daemonAttach.homeOf(machineId)
-  })
-  ipcMain.handle(IPC.hostsShow, (_event, machineId: string) => {
-    void showHostWindow(machineId)
-  })
-  ipcMain.handle(IPC.hostsOpenFolder, async (_event, machineId: string) => {
-    const id = normalizeMachineId(machineId)
-    await showHostWindow(id)
-    const win = hostWindowOf(id)
-    if (win && !win.isDestroyed()) safeSend(win.webContents, IPC.hostsPickFolder, id)
-  })
-  ipcMain.handle(IPC.hostsProbeProviders, async (_event, machineId: string) => {
-    const id = String(machineId || '')
-    if (!id || isLocalMachine(id)) return []
-    const found = await daemonAttach.probeProviders(id)
-    broadcast(IPC.hostsChanged, decorateHosts(hostRegistry.list()))
-    return found
-  })
-  ipcMain.handle(IPC.hostsListDir, async (_event, machineId: string, path: string) => {
-    const host = hostRegistry.get(normalizeMachineId(machineId)) ?? hostRegistry.hostFor(machineId)
-    if (!host.info.online) {
-      return { path, entries: [], truncated: 0, error: `${host.info.name} is offline` }
-    }
-    try {
-      const dirents = await host.fs.readdir(path)
-      const entries = dirents
-        .filter((d) => d.isDirectory())
-        .map((d) => ({
-          name: d.name,
-          path: joinHostPath(host.info.platform, path, d.name),
-          isDirectory: true,
-          size: 0,
-          modifiedAt: 0,
-          createdAt: 0
-        }))
-      return { path, entries, truncated: 0 }
-    } catch (err) {
-      return { path, entries: [], truncated: 0, error: (err as Error).message }
-    }
+  registerHostsIpc(ipcMain, hostRegistry, daemonAttach, {
+    show: showHostWindow,
+    close: closeHostWindow,
+    of: hostWindowOf,
+    applyDefaultMachine,
+    defaultMachineId: () => settingsStore.get().defaultMachineId,
+    localHome: homedir,
+    broadcastHosts: () => broadcast(IPC.hostsChanged, decorateHosts(hostRegistry.list()))
   })
   ipcMain.on(IPC.notificationsSeen, (event, conversationId: unknown) => {
     const id = typeof conversationId === 'string' ? conversationId.trim() : ''
@@ -8409,93 +8195,11 @@ return c as text`
     markResultViewed(id)
   })
 
-  ipcMain.handle(
-    IPC.dialogAlert,
-    async (
-      event,
-      options: { title: string; message: string; confirmLabel?: string }
-    ): Promise<void> => {
-      const window = BrowserWindow.fromWebContents(event.sender)
-      const opts: Electron.MessageBoxOptions = {
-        type: 'info',
-        title: options.title,
-        message: options.title,
-        detail: options.message,
-        buttons: [options.confirmLabel ?? t('common.ok')],
-        defaultId: 0
-      }
-      if (window && !window.isDestroyed()) await dialog.showMessageBox(window, opts)
-      else await dialog.showMessageBox(opts)
-    }
-  )
-
-  ipcMain.handle(
-    IPC.dialogConfirm,
-    async (
-      event,
-      options: {
-        title: string
-        message: string
-        confirmLabel?: string
-        cancelLabel?: string
-        destructive?: boolean
-      }
-    ): Promise<boolean> => {
-      const window = BrowserWindow.fromWebContents(event.sender)
-      const confirmLabel = options.confirmLabel ?? t('common.confirm')
-      const cancelLabel = options.cancelLabel ?? t('common.cancel')
-      // macOS draws buttons[0] on the right (primary). Prefer cancel as default
-      // for destructive actions so Enter does not wipe data by accident.
-      const opts: Electron.MessageBoxOptions = {
-        type: options.destructive ? 'warning' : 'question',
-        title: options.title,
-        message: options.title,
-        detail: options.message,
-        buttons: [confirmLabel, cancelLabel],
-        defaultId: options.destructive ? 1 : 0,
-        cancelId: 1
-      }
-      const result =
-        window && !window.isDestroyed()
-          ? await dialog.showMessageBox(window, opts)
-          : await dialog.showMessageBox(opts)
-      return result.response === 0
-    }
-  )
-
-  ipcMain.handle(
-    IPC.dialogMessageBox,
-    async (
-      event,
-      options: {
-        type?: 'none' | 'info' | 'error' | 'question' | 'warning'
-        title: string
-        message: string
-        detail?: string
-        buttons: string[]
-        defaultId?: number
-        cancelId?: number
-      }
-    ): Promise<number> => {
-      const window = BrowserWindow.fromWebContents(event.sender)
-      const buttons =
-        options.buttons?.length > 0 ? options.buttons : [t('common.ok')]
-      const opts: Electron.MessageBoxOptions = {
-        type: options.type ?? 'question',
-        title: options.title,
-        message: options.message || options.title,
-        detail: options.detail,
-        buttons,
-        defaultId: options.defaultId ?? 0,
-        cancelId: options.cancelId ?? buttons.length - 1
-      }
-      const result =
-        window && !window.isDestroyed()
-          ? await dialog.showMessageBox(window, opts)
-          : await dialog.showMessageBox(opts)
-      return result.response
-    }
-  )
+  registerDialogIpc(ipcMain, () => ({
+    ok: t('common.ok'),
+    confirm: t('common.confirm'),
+    cancel: t('common.cancel')
+  }))
 
   ipcMain.handle(
     IPC.windowPopupMenu,
@@ -8518,24 +8222,7 @@ return c as text`
   )
   ipcMain.handle(IPC.windowE2eDismissMenu, () => e2eDismissPopupMenu())
 
-  ipcMain.handle(IPC.changeSetGet, (_e, id: string) => changeSetStore.get(id))
-  ipcMain.handle(IPC.changeSetActive, (_e, conversationId: string) =>
-    changeSetStore.activeFor(conversationId)
-  )
-  ipcMain.handle(IPC.changeSetAccept, (_e, setId: string, filePaths: string[]) =>
-    changeSetStore.accept(setId, filePaths)
-  )
-  ipcMain.handle(IPC.changeSetReject, (_e, setId: string, filePaths: string[]) =>
-    changeSetStore.reject(setId, filePaths)
-  )
-  ipcMain.handle(IPC.changeSetAcceptAll, (_e, setId: string) => changeSetStore.acceptAll(setId))
-  ipcMain.handle(IPC.changeSetRejectAll, (_e, setId: string) => changeSetStore.rejectAll(setId))
-  ipcMain.handle(IPC.changeSetUndo, (_e, setId: string, filePath: string) =>
-    changeSetStore.undo(setId, filePath)
-  )
-  ipcMain.handle(IPC.changeSetApplyEdit, (_e, setId: string, filePath: string, content: string) =>
-    changeSetStore.applyEdit(setId, filePath, content)
-  )
+  registerChangeSetIpc(ipcMain, changeSetStore)
 
   ipcMain.handle(IPC.updatesGet, () => updateService.getState())
   ipcMain.handle(IPC.updatesCheck, () => updateService.check())

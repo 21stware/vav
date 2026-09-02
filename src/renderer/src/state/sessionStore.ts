@@ -22,6 +22,28 @@ import {
 } from '@shared/agentModels'
 import { vendorIdFromEndpoint } from '@shared/llmVendors'
 import type { ModelOption } from '@shared/types'
+import { mergeConversationList } from './sessionListMerge'
+import {
+  activeToolsFields,
+  DEFAULT_SESSION_TOOLS,
+  GLOBAL_LAYOUT_KEY,
+  PANEL_MAX_HEIGHT,
+  PANEL_MIN_HEIGHT,
+  parseGlobalLayout,
+  parseSessionToolsMap,
+  SESSION_TOOLS_KEY,
+  toolsFor,
+  type GlobalLayoutPrefs,
+  type SessionToolsLayout
+} from './sessionLayout'
+
+export {
+  DEFAULT_SESSION_TOOLS,
+  PANEL_MAX_HEIGHT,
+  PANEL_MIN_HEIGHT,
+  PANEL_SNAP_RATIO,
+  type SessionToolsLayout
+} from './sessionLayout'
 
 export type AgentModelCatalogEntry = {
   host: string
@@ -162,78 +184,6 @@ const IDLE_UPDATE: UpdateState = {
   message: null
 }
 
-/**
- * Merge a listMeta broadcast into the local sidebar without reordering on
- * view-only / metadata-only updates. Recency sort applies only when some
- * conversation's `updatedAt` (or pin/archive membership) actually changed.
- *
- * Selecting a session or focusing a file must not reshuffle the list —
- * only real conversation activity (messages) bumps `updatedAt` on main.
- */
-function mergeConversationList(
-  prev: ConversationMeta[],
-  next: ConversationMeta[]
-): ConversationMeta[] {
-  const prevIndex = new Map(prev.map((c, i) => [c.id, i]))
-  const prevById = new Map(prev.map((c) => [c.id, c]))
-  const nextById = new Map(next.map((c) => [c.id, c]))
-
-  let orderRelevantChange = false
-  for (const n of next) {
-    const p = prevById.get(n.id)
-    if (!p) {
-      orderRelevantChange = true
-      break
-    }
-    if (
-      p.updatedAt !== n.updatedAt ||
-      p.pinned !== n.pinned ||
-      p.pinTime !== n.pinTime ||
-      p.archived !== n.archived ||
-      p.archivedAt !== n.archivedAt
-    ) {
-      orderRelevantChange = true
-      break
-    }
-  }
-  if (!orderRelevantChange) {
-    for (const p of prev) {
-      if (!p.fileId && !nextById.has(p.id)) {
-        orderRelevantChange = true
-        break
-      }
-    }
-  }
-
-  if (!orderRelevantChange) {
-    // Keep previous order; patch fields from next; keep hydrated file sessions.
-    const result: ConversationMeta[] = []
-    const seen = new Set<string>()
-    for (const p of prev) {
-      const n = nextById.get(p.id)
-      if (n) {
-        result.push(n)
-        seen.add(n.id)
-      } else if (p.fileId) {
-        result.push(p)
-        seen.add(p.id)
-      }
-    }
-    for (const n of next) {
-      if (!seen.has(n.id)) result.push(n)
-    }
-    return result
-  }
-
-  const fileSessions = prev.filter((c) => !!c.fileId && !nextById.has(c.id))
-  const sorted = [...next].sort((a, b) => {
-    const d = b.updatedAt - a.updatedAt
-    if (d !== 0) return d
-    return (prevIndex.get(a.id) ?? 1e9) - (prevIndex.get(b.id) ?? 1e9)
-  })
-  return [...sorted, ...fileSessions]
-}
-
 async function persistSwarmLayout(
   set: (partial: { conversations: ConversationMeta[] }) => void,
   getConversations: () => ConversationMeta[],
@@ -359,41 +309,6 @@ export interface SearchState {
   tick: number
 }
 
-/** Window chrome only — not tied to a conversation. */
-interface GlobalLayoutPrefs {
-  sidebarVisible: boolean
-}
-
-/**
- * Tools tray layout is per conversation: collapsed/open, Files vs Terminal,
- * height. New sessions start collapsed with no shell (terminal-panel.rpml).
- */
-export interface SessionToolsLayout {
-  toolsCollapsed: boolean
-  panelSegment: 'files' | 'terminal'
-  /** Segment to restore when expanding via chevron (main-chat.rpml §5). */
-  lastActiveSegment: 'files' | 'terminal'
-  panelHeight: number
-}
-
-export const PANEL_MIN_HEIGHT = 160
-/**
- * Safety rail for persisted heights. Interactive drag / double-click max is
- * `PANEL_SNAP_RATIO` of the session column (see ToolsPanel).
- */
-export const PANEL_MAX_HEIGHT = 2400
-/** Double-click the tray resizer to jump here; again to restore. */
-export const PANEL_SNAP_RATIO = 0.7
-const GLOBAL_LAYOUT_KEY = 'vav.layout'
-const SESSION_TOOLS_KEY = 'vav.session-tools-layout'
-
-export const DEFAULT_SESSION_TOOLS: SessionToolsLayout = {
-  toolsCollapsed: true,
-  panelSegment: 'files',
-  lastActiveSegment: 'files',
-  panelHeight: 240
-}
-
 /**
  * Companion session windows must not share tools-tray layout with the main
  * window via localStorage (same conversationId would collapse both). Use
@@ -416,14 +331,10 @@ function toolsLayoutStorage(): Storage {
 }
 
 function loadGlobalLayout(): GlobalLayoutPrefs {
-  const fallback: GlobalLayoutPrefs = { sidebarVisible: true }
   try {
-    const raw = localStorage.getItem(GLOBAL_LAYOUT_KEY)
-    if (!raw) return fallback
-    const parsed = JSON.parse(raw) as Partial<GlobalLayoutPrefs>
-    return { sidebarVisible: parsed.sidebarVisible ?? true }
+    return parseGlobalLayout(localStorage.getItem(GLOBAL_LAYOUT_KEY))
   } catch {
-    return fallback
+    return parseGlobalLayout(null)
   }
 }
 
@@ -437,15 +348,7 @@ function saveGlobalLayout(prefs: GlobalLayoutPrefs): void {
 
 function loadSessionToolsMap(): Record<string, SessionToolsLayout> {
   try {
-    const raw = toolsLayoutStorage().getItem(SESSION_TOOLS_KEY)
-    if (!raw) return {}
-    const parsed = JSON.parse(raw) as Record<string, Partial<SessionToolsLayout>>
-    const out: Record<string, SessionToolsLayout> = {}
-    for (const [id, value] of Object.entries(parsed)) {
-      if (!value || typeof value !== 'object') continue
-      out[id] = { ...DEFAULT_SESSION_TOOLS, ...value }
-    }
-    return out
+    return parseSessionToolsMap(toolsLayoutStorage().getItem(SESSION_TOOLS_KEY))
   } catch {
     return {}
   }
@@ -457,10 +360,6 @@ function saveSessionToolsMap(map: Record<string, SessionToolsLayout>): void {
   } catch {
     // ignore
   }
-}
-
-function toolsFor(state: { toolsLayouts: Record<string, SessionToolsLayout> }, id: string): SessionToolsLayout {
-  return state.toolsLayouts[id] ?? DEFAULT_SESSION_TOOLS
 }
 
 /** Patch active conversation's tools layout + mirror fields for selectors. */
@@ -479,19 +378,6 @@ function patchActiveTools(
     panelSegment: next.panelSegment,
     lastActiveSegment: next.lastActiveSegment,
     panelHeight: next.panelHeight
-  }
-}
-
-/** Mirror a conversation's tools layout into the top-level active fields. */
-function activeToolsFields(layout: SessionToolsLayout): Pick<
-  SessionState,
-  'toolsCollapsed' | 'panelSegment' | 'lastActiveSegment' | 'panelHeight'
-> {
-  return {
-    toolsCollapsed: layout.toolsCollapsed,
-    panelSegment: layout.panelSegment,
-    lastActiveSegment: layout.lastActiveSegment,
-    panelHeight: layout.panelHeight
   }
 }
 
