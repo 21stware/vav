@@ -114,3 +114,18 @@ export function gateReadonlyExecute(
   }
   return null
 }
+
+/**
+ * Gate on the original args, then prefer an Edit-mode override for execute.
+ * The gate must not see the override — rewritten writes still need Read to flip first.
+ */
+export function resolveGatedToolParams<P>(
+  readOnly: boolean,
+  toolName: string,
+  params: P,
+  override: P | undefined
+): { blocked: ToolExecuteResult } | { params: P } {
+  const blocked = gateReadonlyExecute(readOnly, toolName, params)
+  if (blocked) return { blocked }
+  return { params: override ?? params }
+}

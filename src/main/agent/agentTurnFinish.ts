@@ -171,3 +171,46 @@ export function runtimeTurnStatus(
     blocks: turn ? turn.blocks.map((block) => ({ ...block })) : []
   }
 }
+
+/** Cancelled turns drop the error and expire in-flight tools; errors stay as a quote. */
+export function applyRuntimeFinishSeals(
+  turn: { cancelled?: boolean; error?: string; blocks: MessageBlock[] },
+  cancelledLabel: string
+): void {
+  if (turn.cancelled) {
+    turn.error = undefined
+    sealCancelledInteractiveTools(turn.blocks, cancelledLabel)
+  }
+  if (turn.error) appendTurnErrorBlock(turn.blocks, turn.error)
+}
+
+/** Empty cancelled turns with no change set never become a transcript leaf. */
+export function shouldPersistAssistantTurn(message: {
+  blocks: unknown[]
+  changeSetId?: string
+}): boolean {
+  return message.blocks.length > 0 || !!message.changeSetId
+}
+
+export type NoticeAppendPlan = 'drop' | 'queue' | 'write'
+
+/** Running turns queue Discard-style notices so they land after the assistant leaf. */
+export function noticeAppendPlan(opts: {
+  body: string
+  conversationExists: boolean
+  isRunning: boolean
+}): NoticeAppendPlan {
+  if (!opts.body || !opts.conversationExists) return 'drop'
+  if (opts.isRunning) return 'queue'
+  return 'write'
+}
+
+export function enqueuePendingNotice(
+  pending: Map<string, string[]>,
+  conversationId: string,
+  body: string
+): void {
+  const queue = pending.get(conversationId) ?? []
+  queue.push(body)
+  pending.set(conversationId, queue)
+}

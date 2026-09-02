@@ -4,14 +4,18 @@ import type { MessageBlock } from '../../shared/types.ts'
 import {
   allocateStreamSlot,
   appendTurnErrorBlock,
+  applyRuntimeFinishSeals,
   assistantSnapshotFromTurn,
   assistantStopKind,
   collectParkedWaiters,
+  enqueuePendingNotice,
   findTurnWithPendingTool,
+  noticeAppendPlan,
   persistableTurnBlocks,
   pickToolAnswerRoute,
   runtimeTurnStatus,
   sealCancelledInteractiveTools,
+  shouldPersistAssistantTurn,
   skipStableToolcallDelta,
   streamSlotKey
 } from './agentTurnFinish.ts'
@@ -260,5 +264,57 @@ describe('findTurnWithPendingTool / collectParkedWaiters', () => {
       collectParkedWaiters([a, b]).map((w) => w.id),
       ['a', 'b']
     )
+  })
+})
+
+describe('applyRuntimeFinishSeals / shouldPersistAssistantTurn / noticeAppendPlan', () => {
+  it('clears a cancelled error and quotes a real error', () => {
+    const cancelled = {
+      cancelled: true,
+      error: 'boom',
+      blocks: [
+        { kind: 'toolCall', id: 'a', tool: 'ask_user_question', status: 'pending', summary: 'q' }
+      ] as MessageBlock[]
+    }
+    applyRuntimeFinishSeals(cancelled, 'Cancelled')
+    assert.equal(cancelled.error, undefined)
+    assert.equal((cancelled.blocks[0] as { status: string }).status, 'skipped')
+
+    const failed = {
+      cancelled: false,
+      error: 'boom',
+      blocks: [{ kind: 'text', text: 'hi' }] as MessageBlock[]
+    }
+    applyRuntimeFinishSeals(failed, 'Cancelled')
+    assert.equal((failed.blocks[1] as { text: string }).text, '\n\n> boom')
+  })
+
+  it('persists a change set even when blocks are empty', () => {
+    assert.equal(shouldPersistAssistantTurn({ blocks: [] }), false)
+    assert.equal(shouldPersistAssistantTurn({ blocks: [{ kind: 'text' }] }), true)
+    assert.equal(shouldPersistAssistantTurn({ blocks: [], changeSetId: 'cs1' }), true)
+  })
+
+  it('queues notices while a turn is running', () => {
+    assert.equal(
+      noticeAppendPlan({ body: '', conversationExists: true, isRunning: false }),
+      'drop'
+    )
+    assert.equal(
+      noticeAppendPlan({ body: 'hi', conversationExists: false, isRunning: false }),
+      'drop'
+    )
+    assert.equal(
+      noticeAppendPlan({ body: 'hi', conversationExists: true, isRunning: true }),
+      'queue'
+    )
+    assert.equal(
+      noticeAppendPlan({ body: 'hi', conversationExists: true, isRunning: false }),
+      'write'
+    )
+    const pending = new Map<string, string[]>()
+    enqueuePendingNotice(pending, 'c1', 'one')
+    enqueuePendingNotice(pending, 'c1', 'two')
+    assert.deepEqual(pending.get('c1'), ['one', 'two'])
   })
 })

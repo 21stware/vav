@@ -215,7 +215,7 @@ import {
 import { overlayCascadeOrigin, overlayFit, placeDetachedBounds } from './window/windowPlace'
 import { isPreviewableColdOpenPath as previewableColdOpenPath } from './window/coldOpen'
 import { appZOrderWindowIds, windowIsInPlay as windowIsInPlayOf } from './window/windowZOrder'
-import { replaceLiveWarmPool, shouldDestroyParkedWarmShell, takeReadyWarmShell } from './window/warmShell'
+import { replaceLiveWarmPool, shouldDestroyParkedWarmShell, takeReadyWarmShell, waitForReadyWarmShell } from './window/warmShell'
 import { isDisposableEphemeralSession } from './window/ephemeralSession'
 import {
   resolveContextTokens,
@@ -3202,17 +3202,12 @@ async function acquireWarmSessionShell(budgetMs: number): Promise<BrowserWindow 
   if (!hasWarmSessionInFlight()) return null
 
   sessionOpenMark('open:warm-wait')
-  const deadline = Date.now() + budgetMs
-  while (Date.now() < deadline) {
-    const win = takeWarmSessionShell()
-    if (win) {
-      sessionOpenMark('open:warm-wait-hit')
-      return win
-    }
-    await new Promise<void>((r) => setTimeout(r, 20))
-  }
-  sessionOpenMark('open:warm-wait-miss')
-  return null
+  const win = await waitForReadyWarmShell(takeWarmSessionShell, {
+    deadline: Date.now() + budgetMs,
+    intervalMs: 20
+  })
+  sessionOpenMark(win ? 'open:warm-wait-hit' : 'open:warm-wait-miss')
+  return win
 }
 
 /** Preload hidden session shells so ⌘⇧↵ skips BrowserWindow+renderer boot. */

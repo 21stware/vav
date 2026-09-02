@@ -20,6 +20,7 @@ import {
   isStructuredCliHost,
   withCursorAuthIdentity
 } from '@shared/cliHost'
+import { pendingChangeSetFileCount } from '@shared/changeSet'
 import { ROOT_LEAF } from '@shared/thread'
 import { buildSnapshot, estimateContextTokens } from '@shared/tokenUsage'
 import { attachQuotaNamespace, mergeNamespacedQuotaWindows } from '@shared/quotaWindows'
@@ -1779,7 +1780,7 @@ export class CliAgentHost {
         type: 'change-review',
         conversationId,
         changeSetId: changeSet.id,
-        pendingCount: changeSet.files.filter((f) => f.status === 'pending').length,
+        pendingCount: pendingChangeSetFileCount(changeSet.files),
         messageId: message.id,
         changeSet
       })

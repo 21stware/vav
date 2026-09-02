@@ -17,6 +17,7 @@ import {
   type TurnPhase,
   type TurnStatus
 } from '@shared/types'
+import { pendingChangeSetFileCount } from '@shared/changeSet'
 import { ROOT_LEAF, forkActiveLeaf, regenerateActiveLeaf } from '@shared/thread'
 import { buildSnapshot } from '@shared/tokenUsage'
 import { buildModel, describeError, streamWith } from './provider'
@@ -29,17 +30,19 @@ import { isAssistant, stripChangeSetIds, textOf, userTurnMessage, systemNoticeMe
 import { sealRuntimePlanBlocks, planSealMode } from './planSeal'
 import {
   allocateStreamSlot,
-  appendTurnErrorBlock,
+  applyRuntimeFinishSeals,
   assistantSnapshotFromTurn,
   assistantStopKind,
   collectParkedWaiters,
+  enqueuePendingNotice,
   findTurnWithPendingTool,
+  noticeAppendPlan,
   pickToolAnswerRoute,
+  shouldPersistAssistantTurn,
   skipStableToolcallDelta,
-  runtimeTurnStatus,
-  sealCancelledInteractiveTools
+  runtimeTurnStatus
 } from './agentTurnFinish'
-import { fileReadOnlySwitchBlock, gateReadonlyExecute } from './fileEditLock'
+import { fileReadOnlySwitchBlock, resolveGatedToolParams } from './fileEditLock'
 import {
   approvalAnswerKind,
   approvalCardSummary,
@@ -254,12 +257,14 @@ export class AgentRuntime {
    */
   appendNotice(conversationId: string, text: string): void {
     const body = text.trim()
-    if (!body) return
-    if (!this.deps.conversations.get(conversationId)) return
-    if (this.turns.has(conversationId)) {
-      const queue = this.pendingNotices.get(conversationId) ?? []
-      queue.push(body)
-      this.pendingNotices.set(conversationId, queue)
+    const plan = noticeAppendPlan({
+      body,
+      conversationExists: !!this.deps.conversations.get(conversationId),
+      isRunning: this.turns.has(conversationId)
+    })
+    if (plan === 'drop') return
+    if (plan === 'queue') {
+      enqueuePendingNotice(this.pendingNotices, conversationId, body)
       return
     }
     this.writeNotice(conversationId, body)
@@ -1113,10 +1118,14 @@ export class AgentRuntime {
       ...tool,
       execute: (toolCallId, params, signal, onUpdate) => {
         const live = this.deps.conversations.get(conversationId)
-        const blocked = gateReadonlyExecute(!!live?.fileReadOnly, tool.name, params)
-        if (blocked) return Promise.resolve(blocked)
-        const override = turn.argOverrides.get(toolCallId)
-        return tool.execute(toolCallId, (override ?? params) as typeof params, signal, onUpdate)
+        const gated = resolveGatedToolParams(
+          !!live?.fileReadOnly,
+          tool.name,
+          params,
+          turn.argOverrides.get(toolCallId) as typeof params | undefined
+        )
+        if ('blocked' in gated) return Promise.resolve(gated.blocked)
+        return tool.execute(toolCallId, gated.params, signal, onUpdate)
       }
     }))
   }
@@ -1380,13 +1389,7 @@ export class AgentRuntime {
       failed: t('common.failed')
     })
 
-    if (turn.cancelled) {
-      turn.error = undefined
-      sealCancelledInteractiveTools(turn.blocks, t('common.cancelled'))
-    }
-    if (turn.error) {
-      appendTurnErrorBlock(turn.blocks, turn.error)
-    }
+    applyRuntimeFinishSeals(turn, t('common.cancelled'))
 
     const message = this.snapshot(turn, {
       cancelled: turn.cancelled,
@@ -1414,7 +1417,7 @@ export class AgentRuntime {
       message.changeSetId = changeSet.id
     }
 
-    if (message.blocks.length > 0 || message.changeSetId) {
+    if (shouldPersistAssistantTurn(message)) {
       this.deps.conversations.replaceMessage(conversationId, message)
     }
     this.deps.conversations.flush()
@@ -1436,7 +1439,7 @@ export class AgentRuntime {
         type: 'change-review',
         conversationId,
         changeSetId: changeSet.id,
-        pendingCount: changeSet.files.filter((f) => f.status === 'pending').length,
+        pendingCount: pendingChangeSetFileCount(changeSet.files),
         messageId: message.id,
         // Ship the full set so the renderer never depends on a later get() for
         // the first paint (and survives remounts while the set is still in memory).

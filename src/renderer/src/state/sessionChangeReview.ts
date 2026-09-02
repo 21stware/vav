@@ -1,4 +1,4 @@
-import type { ChangeSet } from '../../../shared/changeSet.ts'
+import { pendingChangeSetFileCount, type ChangeSet } from '../../../shared/changeSet.ts'
 
 export type ChangeReviewSlice = {
   changeSet: ChangeSet | null
@@ -16,7 +16,7 @@ type SetFn = (
 type GetFn = () => ChangeReviewSlice
 
 export function syncPendingBanner(set: SetFn, changeSet: ChangeSet): void {
-  const pending = changeSet.files.filter((f) => f.status === 'pending').length
+  const pending = pendingChangeSetFileCount(changeSet.files)
   set((state) => {
     const next = { ...state.pendingReviewByConversation }
     if (pending === 0) delete next[changeSet.conversationId]

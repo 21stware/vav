@@ -38,3 +38,26 @@ export function replaceLiveWarmPool<T extends WarmShellLike>(pool: T[]): void {
 export function shouldDestroyParkedWarmShell(poolLength: number, cap: number): boolean {
   return poolLength >= cap
 }
+
+/**
+ * Poll `take` until a ready shell appears or `deadline` passes.
+ * Inject `now` / `sleep` so unit tests never wait on real time.
+ */
+export async function waitForReadyWarmShell<T>(
+  take: () => T | null,
+  opts: {
+    deadline: number
+    intervalMs: number
+    now?: () => number
+    sleep?: (ms: number) => Promise<void>
+  }
+): Promise<T | null> {
+  const now = opts.now ?? Date.now
+  const sleep = opts.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)))
+  while (now() < opts.deadline) {
+    const win = take()
+    if (win) return win
+    await sleep(opts.intervalMs)
+  }
+  return null
+}

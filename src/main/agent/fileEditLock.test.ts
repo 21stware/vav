@@ -4,7 +4,8 @@ import {
   fileReadOnlySwitchBlock,
   gateReadonlyExecute,
   isFileEditLockedPath,
-  isReadonlyTerminalCommand
+  isReadonlyTerminalCommand,
+  resolveGatedToolParams
 } from './fileEditLock.ts'
 
 describe('isFileEditLockedPath', () => {
@@ -61,5 +62,16 @@ describe('gateReadonlyExecute', () => {
     assert.match(shell?.content[0]?.text ?? '', /Refused: rm file/)
     assert.equal(gateReadonlyExecute(true, 'terminal', { command: 'ls' }), null)
     assert.equal(gateReadonlyExecute(true, 'fs_read', { path: '/a' }), null)
+  })
+})
+
+describe('resolveGatedToolParams', () => {
+  it('gates on the original args then prefers an override', () => {
+    const blocked = resolveGatedToolParams(true, 'fs_write', { path: '/a' }, { path: '/b' })
+    assert.equal('blocked' in blocked, true)
+    const ok = resolveGatedToolParams(false, 'fs_write', { path: '/a' }, { path: '/b' })
+    assert.equal('params' in ok && ok.params.path, '/b')
+    const original = resolveGatedToolParams(false, 'fs_write', { path: '/a' }, undefined)
+    assert.equal('params' in original && original.params.path, '/a')
   })
 })

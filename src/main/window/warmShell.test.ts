@@ -3,7 +3,8 @@ import { describe, it } from 'node:test'
 import {
   replaceLiveWarmPool,
   shouldDestroyParkedWarmShell,
-  takeReadyWarmShell
+  takeReadyWarmShell,
+  waitForReadyWarmShell
 } from './warmShell.ts'
 
 function shell(id: string, opts: { destroyed?: boolean } = {}): {
@@ -66,5 +67,44 @@ describe('replaceLiveWarmPool / shouldDestroyParkedWarmShell', () => {
     )
     assert.equal(shouldDestroyParkedWarmShell(2, 2), true)
     assert.equal(shouldDestroyParkedWarmShell(1, 2), false)
+  })
+})
+
+describe('waitForReadyWarmShell', () => {
+  it('returns a shell as soon as take succeeds, without waiting out the deadline', async () => {
+    let now = 0
+    let sleeps = 0
+    const taken = await waitForReadyWarmShell(
+      () => shell('ready'),
+      {
+        deadline: 100,
+        intervalMs: 20,
+        now: () => now,
+        sleep: async () => {
+          sleeps += 1
+          now += 20
+        }
+      }
+    )
+    assert.equal(taken?.id, 'ready')
+    assert.equal(sleeps, 0)
+  })
+
+  it('polls until deadline then returns null', async () => {
+    let now = 0
+    let takes = 0
+    const taken = await waitForReadyWarmShell(() => {
+      takes += 1
+      return null
+    }, {
+      deadline: 40,
+      intervalMs: 20,
+      now: () => now,
+      sleep: async (ms) => {
+        now += ms
+      }
+    })
+    assert.equal(taken, null)
+    assert.ok(takes >= 2)
   })
 })
