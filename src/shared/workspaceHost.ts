@@ -62,3 +62,11 @@ export function workspaceRef(
 ): WorkspaceRef {
   return { machineId: normalizeMachineId(machineId), path }
 }
+
+/** True when a conversation’s workdir / agent run on this machine. */
+export function conversationOnMachine(
+  conversation: { machineId?: string | null },
+  machineId: string | null | undefined
+): boolean {
+  return normalizeMachineId(conversation.machineId) === normalizeMachineId(machineId)
+}

@@ -6951,6 +6951,11 @@ mark {
   white-space: nowrap;
 }
 
+.sidebar-foot-connect-chevron {
+  flex: 0 0 auto;
+  opacity: 0.45;
+}
+
 .sidebar-foot-more {
   flex: 0 0 auto;
   color: var(--text-secondary);

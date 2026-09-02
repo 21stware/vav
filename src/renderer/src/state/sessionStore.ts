@@ -60,7 +60,8 @@ import {
 } from '@shared/agentImageInput'
 import { tt } from '../i18n/useT'
 import { isTemporaryWorkspace } from '../lib/format'
-import { isCompanionSessionShell } from '../lib/windowKind'
+import { isCompanionSessionShell, isMainSessionShell, readWindowMachineId } from '../lib/windowKind'
+import { conversationOnMachine, normalizeMachineId } from '@shared/workspaceHost'
 import { compactionForLeaf, upsertCompaction } from '@shared/compaction'
 import { subtreeIds, threadPath } from '@shared/thread'
 import { getProjection, disposeProjection } from './StreamProjection'
@@ -504,6 +505,11 @@ interface SessionState {
   tmp: string
   about: AboutInfo | null
   hosts: WorkspaceHostInfo[]
+  /**
+   * Machine this main-shell window is bound to (`local` or a paired daemon).
+   * Comes from `?machine=` — not the default-raise setting.
+   */
+  windowMachineId: string
   /** Phone-companion tunnel status; null until the first snapshot arrives. */
   remoteControlStatus: RemoteControlStatus | null
 
@@ -863,6 +869,8 @@ interface SessionState {
   clearCompaction(): Promise<boolean>
 
   updateSettings(patch: Partial<AppSettings>): Promise<void>
+  /** Dock / tray / hotkey raise this daemon’s window. */
+  setDefaultMachine(machineId: string): Promise<void>
   refreshApiKeyHint(): Promise<void>
   resetSettings(): Promise<void>
   openSettings(category?: SettingsCategory, agentId?: string): void
@@ -951,6 +959,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   home: '',
   tmp: '',
   hosts: [],
+  windowMachineId: readWindowMachineId(),
   remoteControlStatus: null,
   remoteFolderPick: null,
   about: null,
@@ -1094,6 +1103,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       home: data.home,
       tmp: data.tmp,
       hosts: data.hosts,
+      windowMachineId: readWindowMachineId(),
       about: data.about,
       updateState: {
         ...updateState,
@@ -1107,6 +1117,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     if (activeId && !light) {
       await get().selectConversation(activeId)
     }
+    if (!light) await syncActiveConversationToMachine()
   },
 
   claimDetachedSession(meta, options) {
@@ -1451,15 +1462,24 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
   async createConversation(options) {
     // Prefer explicit opts; else inherit active session workdir (session is the unit).
-    let createOpts = options
-    if (createOpts?.workingDirectory === undefined) {
+    // Never inherit a path from another machine — that folder is not on this daemon.
+    const activeMachine = normalizeMachineId(
+      options?.machineId ?? get().windowMachineId
+    )
+    let createOpts = { ...options, machineId: activeMachine }
+    if (createOpts.workingDirectory === undefined) {
       const current = get().conversations.find((c) => c.id === get().activeId)
       const wd = current?.workingDirectory
-      if (wd && !wd.startsWith('__') && !isTemporaryWorkspace(wd, get().tmp)) {
+      if (
+        wd &&
+        !wd.startsWith('__') &&
+        !isTemporaryWorkspace(wd, get().tmp) &&
+        current &&
+        conversationOnMachine(current, activeMachine)
+      ) {
         createOpts = {
           ...createOpts,
-          workingDirectory: wd,
-          machineId: createOpts?.machineId ?? current.machineId
+          workingDirectory: wd
         }
       }
     }
@@ -2756,6 +2776,12 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     if (patch.shell) useWorkspaceStore.getState().notifyShellChanged()
   },
 
+  async setDefaultMachine(machineId) {
+    const id = normalizeMachineId(machineId)
+    if (normalizeMachineId(get().settings.defaultMachineId) === id) return
+    await get().updateSettings({ defaultMachineId: id })
+  },
+
   async refreshApiKeyHint() {
     const [hint, settings] = await Promise.all([
       window.vav.settings.apiKeyHint(),
@@ -3650,6 +3676,38 @@ function countTools(get: () => SessionState, conversationId: string, toolId: str
 }
 
 const noopOff = (): (() => void) => () => undefined
+
+let syncingMachine = false
+
+/**
+ * After the sidebar switches machines, show a session that actually lives
+ * there — pick the newest, or mint one so the detail pane matches the list.
+ */
+async function syncActiveConversationToMachine(): Promise<void> {
+  if (!isMainSessionShell() || syncingMachine) return
+  const state = useSessionStore.getState()
+  if (!state.ready) return
+  const machineId = normalizeMachineId(state.windowMachineId)
+  const current = state.conversations.find((c) => c.id === state.activeId)
+  if (
+    current &&
+    !current.archived &&
+    !current.fileId &&
+    conversationOnMachine(current, machineId)
+  ) {
+    return
+  }
+  const next = state.conversations
+    .filter((c) => !c.archived && !c.fileId && conversationOnMachine(c, machineId))
+    .sort((a, b) => b.updatedAt - a.updatedAt)[0]
+  syncingMachine = true
+  try {
+    if (next) await useSessionStore.getState().selectConversation(next.id)
+    else await useSessionStore.getState().createConversation({ machineId, openIn: 'here' })
+  } finally {
+    syncingMachine = false
+  }
+}
 
 /** Wires main-process turn events into the store. Called once at startup. */
 export function installTurnEventBridge(): () => void {

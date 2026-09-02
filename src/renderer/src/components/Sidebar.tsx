@@ -35,6 +35,12 @@ import { menuAnchor, showMenu, type MenuItem } from '../lib/nativeMenu'
 import { warmMenuIcons } from '../lib/menuIcons'
 import { fileManagerLabel } from '../lib/platform'
 import { basename } from '../lib/path'
+import {
+  conversationOnMachine,
+  isLocalMachine,
+  LOCAL_MACHINE_ID,
+  normalizeMachineId
+} from '@shared/workspaceHost'
 import { useT } from '../i18n/useT'
 import { EmptyState } from './ui'
 import { UpdateCorner } from './UpdateCorner'
@@ -264,23 +270,63 @@ export function Sidebar({
   }, [])
 
   const searching = query.trim().length > 0
-  const archivedCount = useMemo(
-    () => conversations.filter((c) => c.archived && !c.fileId).length,
-    [conversations]
-  )
   const hosts = useSessionStore((s) => s.hosts)
   const remoteControlStatus = useSessionStore((s) => s.remoteControlStatus)
-  // Devices this Mac is linked to right now: online vavd machines ("Connected
-  // to Mac mini") + phones on the tunnel ("Connect with iPhone 17 Pro").
-  const connectedDeviceLabels = useMemo(() => {
-    const labels = hosts
-      .filter((h) => h.kind === 'remote' && h.online)
-      .map((h) => t('sidebar.connectedTo', { name: h.name }))
+  const setDefaultMachine = useSessionStore((s) => s.setDefaultMachine)
+  const windowMachineId = normalizeMachineId(useSessionStore((s) => s.windowMachineId))
+  const defaultMachineId = normalizeMachineId(useSessionStore((s) => s.settings.defaultMachineId))
+  const activeHost = hosts.find((h) => h.id === windowMachineId)
+  const machineLabel = (machineId: string, fallback?: string): string => {
+    if (machineId === LOCAL_MACHINE_ID) return t('sidebar.thisMachine')
+    return hosts.find((h) => h.id === machineId)?.name?.trim() || fallback || machineId
+  }
+  // Incoming phones still annotate the local Connect control.
+  const incomingDeviceLabels = useMemo(() => {
+    const labels: string[] = []
     for (const client of remoteControlStatus?.clients ?? []) {
       if (client.device) labels.push(t('sidebar.connectWith', { name: client.device }))
     }
     return labels
-  }, [hosts, remoteControlStatus, t])
+  }, [remoteControlStatus, t])
+  const localWindow = isLocalMachine(windowMachineId)
+  const connectButtonLabel = localWindow
+    ? incomingDeviceLabels.length > 0
+      ? incomingDeviceLabels.join(' · ')
+      : t('sidebar.connect')
+    : machineLabel(windowMachineId, activeHost?.name)
+  const connectButtonTitle = localWindow
+    ? incomingDeviceLabels.length > 0
+      ? incomingDeviceLabels.join(' · ')
+      : t('sidebar.connect')
+    : machineLabel(windowMachineId, activeHost?.name)
+
+  const openRemoteHostMenu = (anchor: HTMLElement): void => {
+    const items: MenuItem[] = [
+      {
+        label: t('sidebar.setDefaultService'),
+        checked: defaultMachineId === windowMachineId,
+        onSelect: () => void setDefaultMachine(windowMachineId)
+      },
+      { label: '', divider: true },
+      {
+        label: t('sidebar.pairDevice'),
+        onSelect: () => void window.vav.window.openConnect()
+      },
+      {
+        label: t('machines.forget'),
+        onSelect: () => void window.vav.hosts.forget(windowMachineId)
+      }
+    ]
+    void showMenu(items, menuAnchor(anchor))
+  }
+
+  const archivedCount = useMemo(
+    () =>
+      conversations.filter(
+        (c) => c.archived && !c.fileId && conversationOnMachine(c, windowMachineId)
+      ).length,
+    [conversations, windowMachineId]
+  )
 
   const favoriteSet = useMemo(() => new Set(favoriteIds ?? []), [favoriteIds])
 
@@ -313,12 +359,14 @@ export function Sidebar({
     if (archiveView) {
       const rows = conversations
         .filter((c) => c.archived && !c.fileId)
+        .filter((c) => conversationOnMachine(c, windowMachineId))
         .filter((c) => !needle || c.title.toLowerCase().includes(needle))
         .sort((a, b) => (b.archivedAt ?? b.updatedAt) - (a.archivedAt ?? a.updatedAt))
       return [{ key: 'archive', label: '', conversations: rows }]
     }
     const matched = conversations
       .filter((c) => !c.archived && !c.fileId)
+      .filter((c) => conversationOnMachine(c, windowMachineId))
       .filter((c) => !needle || c.title.toLowerCase().includes(needle))
       .filter((c) =>
         conversationMatchesFilter(c, sessionFilter, {
@@ -346,7 +394,8 @@ export function Sidebar({
     fileSessionsView,
     turnBusyKey,
     shellBusyKey,
-    activityById
+    activityById,
+    windowMachineId
   ])
 
   const pinnedGroups = useMemo(() => groups.filter((g) => g.pinned), [groups])
@@ -1342,14 +1391,25 @@ export function Sidebar({
       <div className="sidebar-list" ref={listRef} tabIndex={-1}>
         {listMode === 'main' &&
           visible.length === 0 &&
-          conversations.filter((c) => !c.archived && !c.fileId).length === 0 &&
+          conversations.filter(
+            (c) => !c.archived && !c.fileId && conversationOnMachine(c, windowMachineId)
+          ).length === 0 &&
           groupingMode !== 'workspace' && (
-          <EmptyState title={t('sidebar.emptyTitle')} description={t('sidebar.emptyDesc')}>
+          <EmptyState
+            title={
+              localWindow ? t('sidebar.emptyTitle') : t('sidebar.emptyRemoteTitle')
+            }
+            description={
+              localWindow
+                ? t('sidebar.emptyDesc')
+                : t('sidebar.emptyRemoteDesc', { name: machineLabel(windowMachineId) })
+            }
+          >
             <button
               className="btn secondary"
               title={t('common.newSession')}
               onClick={() => {
-                void createConversation()
+                void createConversation({ machineId: windowMachineId })
                 onNavigate?.()
               }}
             >
@@ -1550,19 +1610,21 @@ export function Sidebar({
             type="button"
             className="btn ghost sm sidebar-foot-connect"
             data-testid="sidebar-connect"
-            title={
-              connectedDeviceLabels.length > 0
-                ? connectedDeviceLabels.join(' · ')
-                : t('sidebar.connect')
-            }
-            onClick={() => void window.vav.window.openConnect()}
+            data-machine-id={windowMachineId}
+            title={connectButtonTitle}
+            onClick={(event) => {
+              if (localWindow) {
+                void window.vav.window.openConnect()
+                return
+              }
+              openRemoteHostMenu(event.currentTarget)
+            }}
           >
             <Cable size={13} />
-            <span>
-              {connectedDeviceLabels.length > 0
-                ? connectedDeviceLabels.join(' · ')
-                : t('sidebar.connect')}
-            </span>
+            <span>{connectButtonLabel}</span>
+            {!localWindow && (
+              <ChevronDown className="sidebar-foot-connect-chevron" size={11} aria-hidden />
+            )}
           </button>
           <button
             type="button"

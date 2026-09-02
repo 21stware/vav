@@ -132,6 +132,8 @@ export const zhCN = {
   'tray.doneTag': '完成',
   'tray.sessions': '会话 ({count})',
   'tray.open': '打开 VAV',
+  'tray.defaultTag': '默认',
+  'tray.setDefault': '设为默认服务',
   'activity.running': '运行中',
   'activity.done': '完成',
   'notify.awaitingAnswer': '{title} · 等待回答',
@@ -164,6 +166,12 @@ export const zhCN = {
   'sidebar.connect': '连接',
   'sidebar.connectedTo': '已连接到 {name}',
   'sidebar.connectWith': '与 {name} 相连',
+  'sidebar.thisMachine': '这台电脑',
+  'sidebar.switchDevice': '切换设备',
+  'sidebar.setDefaultService': '设为默认服务',
+  'sidebar.pairDevice': '配对其他设备…',
+  'sidebar.emptyRemoteTitle': '这台设备上还没有会话',
+  'sidebar.emptyRemoteDesc': '新建一个会话，工作目录和 Agent 会在 {name} 上运行',
   'sidebar.moreActions': '更多',
   'sidebar.showFileSessions': 'Show file sessions',
   'sidebar.fileSessionsTitle': '文件会话 · {count}',
@@ -1443,7 +1451,30 @@ export const zhCN = {
   'notifications.sectionPower': '电源',
   'notifications.keepAwake': 'Agent 运行时保持唤醒',
   'notifications.keepAwakeHint':
-    '有 Agent 正在工作时阻止系统因空闲进入休眠（类似 Caffeine）。合盖或手动休眠仍会生效；屏幕可照常关闭。',
+    '有 Agent 正在工作时阻止系统因空闲进入休眠。屏幕可照常关闭。',
+  'notifications.keepAwakeHintMac':
+    '有 Agent 正在工作时保持唤醒，包括合盖（需一次性授权）。任务结束、退出应用、电量过低或低电量模式时恢复正常休眠。合盖长时间高负载会发热。',
+  'notifications.keepAwakeLid': '合盖保活',
+  'notifications.keepAwakeGrant': '授权合盖保活',
+  'notifications.keepAwakeGrantHint':
+    '一次性授权。macOS 会要 Touch ID 或密码。只允许开关两条 pmset 命令，无法扩大权限。退出、崩溃或重启后都会恢复正常合盖休眠。',
+  'notifications.keepAwakeGranted': '已授权',
+  'notifications.keepAwakeRevoke': '撤销',
+  'notifications.keepAwakeRevokeTitle': '撤销合盖保活授权？',
+  'notifications.keepAwakeRevokeBody':
+    '将删除本机的 sudoers 授权，并立即恢复正常合盖休眠。之后如需再用，需重新授权。',
+  'notifications.keepAwakeGrantFailed': '授权未完成：{error}',
+  'notifications.keepAwakeGrantCancelled': '已取消授权。空闲唤醒仍可用；合盖仍会休眠。',
+  'notifications.keepAwakeFloor': '电池下限',
+  'notifications.keepAwakeFloorHint': '放电且电量低于此值时恢复正常休眠，避免合盖把电池耗尽。',
+  'notifications.keepAwakeStatusWaiting': '有 Agent 工作时才会保持唤醒。',
+  'notifications.keepAwakeStatusIdle': '当前：已阻止空闲休眠。合盖仍会睡（尚未授权）。',
+  'notifications.keepAwakeStatusLid':
+    '当前：合盖与菜单栏「睡眠」都不会让这台 Mac 休眠。Agent 结束后恢复。',
+  'notifications.keepAwakeStatusSafetyBattery':
+    '电量 {percent}% 已低于下限 {floor}%，已恢复正常休眠。',
+  'notifications.keepAwakeStatusSafetyLpm': '低电量模式已开，已恢复正常休眠。',
+  'notifications.keepAwakeStatusNeedGrant': '合盖保活需要一次性授权，否则合上盖子仍会休眠。',
   'connect.outgoing': '连接到',
   'connect.incoming': '允许被远程连接',
   'remote.enabled': '允许其他设备连接到这台电脑',
@@ -2236,6 +2267,8 @@ export const en: Record<MessageKey, string> = {
   'tray.doneTag': 'Done',
   'tray.sessions': 'Sessions ({count})',
   'tray.open': 'Open VAV',
+  'tray.defaultTag': 'Default',
+  'tray.setDefault': 'Set as default service',
   'activity.running': 'Running',
   'activity.done': 'Done',
   'notify.awaitingAnswer': '{title} · Awaiting answer',
@@ -2267,6 +2300,12 @@ export const en: Record<MessageKey, string> = {
   'sidebar.connect': 'Connect',
   'sidebar.connectedTo': 'Connected to {name}',
   'sidebar.connectWith': 'Connect with {name}',
+  'sidebar.thisMachine': 'This computer',
+  'sidebar.switchDevice': 'Switch device',
+  'sidebar.setDefaultService': 'Set as default service',
+  'sidebar.pairDevice': 'Pair another device…',
+  'sidebar.emptyRemoteTitle': 'No sessions on this device',
+  'sidebar.emptyRemoteDesc': 'Start a session. The folder and agent will run on {name}.',
   'sidebar.moreActions': 'More',
   'sidebar.showFileSessions': 'Show file sessions',
   'sidebar.fileSessionsTitle': 'File sessions · {count}',
@@ -3552,7 +3591,34 @@ export const en: Record<MessageKey, string> = {
   'notifications.sectionPower': 'Power',
   'notifications.keepAwake': 'Keep awake while an agent is running',
   'notifications.keepAwakeHint':
-    'Prevents idle sleep while an agent is working (like Caffeine). Closing the lid or choosing Sleep still works; the display may still turn off.',
+    'Prevents idle sleep while an agent is working. The display may still turn off.',
+  'notifications.keepAwakeHintMac':
+    'Keeps the Mac awake while an agent is working, including with the lid closed (one-time authorization). Sleep returns when the agent finishes, you quit, the battery hits the floor, or Low Power Mode is on. Heavy load with the lid shut runs warm.',
+  'notifications.keepAwakeLid': 'Lid-close',
+  'notifications.keepAwakeGrant': 'Authorize lid-close',
+  'notifications.keepAwakeGrantHint':
+    'One-time grant. macOS will ask for Touch ID or your password. It allows only the two pmset disablesleep commands. Quit, crash, or reboot restore normal lid-close sleep.',
+  'notifications.keepAwakeGranted': 'Authorized',
+  'notifications.keepAwakeRevoke': 'Revoke',
+  'notifications.keepAwakeRevokeTitle': 'Revoke lid-close authorization?',
+  'notifications.keepAwakeRevokeBody':
+    'Removes the sudoers grant on this Mac and restores normal lid-close sleep immediately. You can authorize again later.',
+  'notifications.keepAwakeGrantFailed': 'Authorization did not finish: {error}',
+  'notifications.keepAwakeGrantCancelled':
+    'Authorization cancelled. Idle keep-awake still works; closing the lid will sleep.',
+  'notifications.keepAwakeFloor': 'Battery floor',
+  'notifications.keepAwakeFloorHint':
+    'On battery, sleep returns below this level so a closed lid cannot drain the Mac.',
+  'notifications.keepAwakeStatusWaiting': 'Keep-awake starts only while an agent is working.',
+  'notifications.keepAwakeStatusIdle':
+    'Now: blocking idle sleep. Closing the lid still sleeps (not authorized).',
+  'notifications.keepAwakeStatusLid':
+    'Now: closing the lid or choosing Sleep will not sleep this Mac. Restores when the agent finishes.',
+  'notifications.keepAwakeStatusSafetyBattery':
+    'Battery at {percent}% is at or below the {floor}% floor — normal sleep restored.',
+  'notifications.keepAwakeStatusSafetyLpm': 'Low Power Mode is on — normal sleep restored.',
+  'notifications.keepAwakeStatusNeedGrant':
+    'Lid-close keep-awake needs a one-time authorization; otherwise the lid still sleeps.',
   'connect.outgoing': 'Connect to',
   'connect.incoming': 'Allow to be remote connected',
   'remote.enabled': 'Allow other devices to connect to this computer',

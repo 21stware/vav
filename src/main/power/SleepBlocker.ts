@@ -5,7 +5,7 @@ import { powerSaveBlocker } from 'electron'
  *
  * `prevent-app-suspension` maps to macOS `PreventUserIdleSystemSleep` (and
  * `ES_SYSTEM_REQUIRED` on Windows): the machine will not idle-sleep, but the
- * display may still turn off. Lid-close and the Sleep menu item still work.
+ * display may still turn off. Lid-close needs {@link MacLidSleepGuard}.
  */
 export class SleepBlocker {
   private id: number | null = null

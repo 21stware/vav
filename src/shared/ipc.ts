@@ -38,6 +38,7 @@ import type {
 } from './github'
 import type { CloudflareResult, CloudflareStatus, CloudflareStatusQuery } from './cloudflare'
 import type { SupabaseResult, SupabaseStatus, SupabaseStatusQuery } from './supabase'
+import type { KeepAwakeGrantResult, KeepAwakeStatus } from './sleepBlocker'
 import type { Platform } from './platform'
 import type { AgentInstallRun } from './agentInstall'
 import type { OverlayNavigatePayload, OverlayPayload } from './overlayOpen'
@@ -774,6 +775,10 @@ export interface VavApi {
     }>
     /** Local API + Agent usage totals, plus account/quota for configured providers. */
     analysis(options?: { refresh?: boolean }): Promise<AnalysisSnapshot>
+    /** Idle + (macOS) lid-close keep-awake: grant, live flag, battery safety. */
+    keepAwakeStatus(): Promise<KeepAwakeStatus>
+    keepAwakeGrant(): Promise<KeepAwakeGrantResult>
+    keepAwakeRevoke(): Promise<KeepAwakeGrantResult>
   }
 
   accounts: {
@@ -1598,6 +1603,7 @@ export interface VavApi {
   onMenuCommand(handler: (command: MenuCommand) => void): () => void
   /** Any window changing settings must reach the others. */
   onSettingsChanged(handler: (settings: AppSettings) => void): () => void
+  onKeepAwakeStatus(handler: (status: KeepAwakeStatus) => void): () => void
   /** Category to show, pushed when ⌘, hits an already-open settings window. */
   onSettingsView(handler: (payload: SettingsViewPayload) => void): () => void
   /** Background spending snapshot after a cached / prefetch rebuild. */
@@ -1713,6 +1719,10 @@ export const IPC = {
   settingsRegisterAllFileAssociations: 'vav:settings:register-all-file-associations',
   settingsAnalysis: 'vav:settings:analysis',
   settingsAnalysisUpdated: 'vav:settings:analysis-updated',
+  settingsKeepAwakeStatus: 'vav:settings:keep-awake-status',
+  settingsKeepAwakeGrant: 'vav:settings:keep-awake-grant',
+  settingsKeepAwakeRevoke: 'vav:settings:keep-awake-revoke',
+  keepAwakeStatus: 'vav:keep-awake:status',
   accountsGetPage: 'vav:accounts:get-page',
   accountsUpdated: 'vav:accounts:updated',
   accountsCreateVav: 'vav:accounts:create-vav',

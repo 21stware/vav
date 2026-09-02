@@ -31,6 +31,7 @@ import {
 } from '@shared/attentionBadge'
 import { isDevRuntime } from './devRuntime'
 import { t } from './i18n'
+import { LOCAL_MACHINE_ID, normalizeMachineId } from '@shared/workspaceHost'
 
 /** One multi-res tray glyph for the process lifetime — avoid rebuild thrash. */
 let cachedTrayIcon: NativeImage | null = null
@@ -77,6 +78,19 @@ export type RunningSessionTarget = {
   dirKey?: string
   dirLabel?: string
   createdAt?: number
+  machineId?: string
+}
+
+export type TrayHostService = {
+  id: string
+  name: string
+}
+
+type HostServices = {
+  list: () => TrayHostService[]
+  defaultId: () => string
+  show: (machineId: string) => void
+  setDefault: (machineId: string) => void
 }
 
 const IS_MAC = process.platform === 'darwin'
@@ -107,6 +121,7 @@ export class NotificationCenter {
    */
   onAlert: ((kind: NotifyKind, conversationId: string, title: string, body: string) => void) | null =
     null
+  private hostServices: HostServices | null = null
 
   constructor(
     private getSettings: () => AppSettings,
@@ -115,6 +130,15 @@ export class NotificationCenter {
     private onShowMain: () => void,
     _getMainWindow: () => BrowserWindow | null
   ) {}
+
+  setHostServices(services: HostServices): void {
+    this.hostServices = services
+    this.refreshTrayMenu()
+  }
+
+  notifyHostsChanged(): void {
+    this.refreshTrayMenu()
+  }
 
   permissionStatus(): NotificationPermission {
     this.lastPermission = readNotificationPermission()
@@ -370,48 +394,46 @@ export class NotificationCenter {
   private refreshTrayMenu(): void {
     if (!this.tray) return
     const items: Electron.MenuItemConstructorOptions[] = []
-    if (this.runningSessions.length === 0) {
+    const hosts = this.hostServices?.list() ?? []
+    const remotes = hosts.filter((host) => host.id !== LOCAL_MACHINE_ID)
+    const defaultId = normalizeMachineId(this.hostServices?.defaultId())
+    if (remotes.length > 0) {
+      const ordered = [
+        hosts.find((host) => host.id === LOCAL_MACHINE_ID) ?? {
+          id: LOCAL_MACHINE_ID,
+          name: t('sidebar.thisMachine')
+        },
+        ...remotes
+      ]
+      for (const host of ordered) {
+        if (items.length > 0) items.push({ type: 'separator' })
+        const isDefault = host.id === defaultId
+        items.push({
+          label: isDefault ? `${host.name} · ${t('tray.defaultTag')}` : host.name,
+          click: () => this.hostServices?.show(host.id)
+        })
+        this.appendSessionItems(
+          items,
+          this.runningSessions.filter(
+            (row) => normalizeMachineId(row.machineId) === host.id
+          )
+        )
+      }
+      items.push({ type: 'separator' })
+      items.push({
+        type: 'submenu',
+        label: t('tray.setDefault'),
+        submenu: ordered.map((host) => ({
+          label: host.name,
+          type: 'checkbox' as const,
+          checked: host.id === defaultId,
+          click: () => this.hostServices?.setDefault(host.id)
+        }))
+      })
+    } else if (this.runningSessions.length === 0) {
       items.push({ label: APP_NAME, enabled: false })
     } else {
-      const groups = groupTrayPanes(
-        this.runningSessions.map((row) => ({
-          conversationId: row.conversationId,
-          tabId: row.tabId ?? '',
-          kind: row.kind === 'bash' ? 'bash' : row.kind === 'agent' ? 'agent' : 'chat',
-          sessionTitle: row.title,
-          paneTitle: row.title,
-          dirKey: row.dirKey || '~',
-          dirLabel: row.dirLabel || row.dirKey || '~',
-          createdAt: row.createdAt ?? 0,
-          agentId: row.agentId,
-          status: row.status ?? 'running'
-        }))
-      )
-      for (const group of groups) {
-        if (items.length > 0) items.push({ type: 'separator' })
-        items.push({ label: group.dirLabel, enabled: false })
-        for (const pane of group.panes) {
-          const row = this.runningSessions.find(
-            (s) =>
-              s.conversationId === pane.conversationId &&
-              (s.tabId ?? '') === pane.tabId &&
-              (s.kind ?? 'chat') === pane.kind
-          )
-          if (!row) continue
-          const status = pane.status ?? 'running'
-          const label =
-            row.kind === 'bash'
-              ? `Bash · ${row.title}`
-              : trayStatusRowLabel(row.title, status, {
-                  running: t('tray.runningTag'),
-                  done: t('tray.doneTag')
-                })
-          items.push({
-            label: trayIndentedLabel(label),
-            click: () => this.onOpenSession(row)
-          })
-        }
-      }
+      this.appendSessionItems(items, this.runningSessions)
     }
     items.push(
       { type: 'separator' },
@@ -420,6 +442,51 @@ export class NotificationCenter {
       { label: t('common.quit'), click: () => app.quit() }
     )
     this.tray.setContextMenu(Menu.buildFromTemplate(items))
+  }
+
+  private appendSessionItems(
+    items: Electron.MenuItemConstructorOptions[],
+    sessions: RunningSessionTarget[]
+  ): void {
+    if (sessions.length === 0) return
+    const groups = groupTrayPanes(
+      sessions.map((row) => ({
+        conversationId: row.conversationId,
+        tabId: row.tabId ?? '',
+        kind: row.kind === 'bash' ? 'bash' : row.kind === 'agent' ? 'agent' : 'chat',
+        sessionTitle: row.title,
+        paneTitle: row.title,
+        dirKey: row.dirKey || '~',
+        dirLabel: row.dirLabel || row.dirKey || '~',
+        createdAt: row.createdAt ?? 0,
+        agentId: row.agentId,
+        status: row.status ?? 'running'
+      }))
+    )
+    for (const group of groups) {
+      items.push({ label: trayIndentedLabel(group.dirLabel), enabled: false })
+      for (const pane of group.panes) {
+        const row = sessions.find(
+          (s) =>
+            s.conversationId === pane.conversationId &&
+            (s.tabId ?? '') === pane.tabId &&
+            (s.kind ?? 'chat') === pane.kind
+        )
+        if (!row) continue
+        const status = pane.status ?? 'running'
+        const label =
+          row.kind === 'bash'
+            ? `Bash · ${row.title}`
+            : trayStatusRowLabel(row.title, status, {
+                running: t('tray.runningTag'),
+                done: t('tray.doneTag')
+              })
+        items.push({
+          label: trayIndentedLabel(label),
+          click: () => this.onOpenSession(row)
+        })
+      }
+    }
   }
 
   /** Rebuild the tray list. Counts default from the session statuses. */

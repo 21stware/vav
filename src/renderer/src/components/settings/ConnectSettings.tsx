@@ -228,6 +228,7 @@ function MachinesSection(): React.JSX.Element {
       return
     }
     setDraft('')
+    void window.vav.window.closeConnect()
   }
 
   const pairLan = async (peer: HostDiscoveryPeer): Promise<void> => {
@@ -246,7 +247,9 @@ function MachinesSection(): React.JSX.Element {
     if (!result.ok) {
       if (/pairing cancelled/i.test(result.error)) return
       setError(pairErrorMessage(result.error, t))
+      return
     }
+    void window.vav.window.closeConnect()
   }
 
   return (
@@ -281,7 +284,7 @@ function MachinesSection(): React.JSX.Element {
       {error && <InlineAlert kind="warning" title={t('machines.pairFailed')} message={error} />}
 
       {remotes.length > 0 && (
-        <div className="connect-paired">
+        <div className="connect-paired machines-list">
           {remotes.map((host) => (
             <div key={host.id} className="connect-peer" data-testid={`settings-machine-${host.id}`}>
               <div className="connect-peer-text">

@@ -25,6 +25,8 @@ import { parseThinkingLevel } from '@shared/thinkingLevel'
 import { isCssTileSize } from '@shared/surfacePattern'
 import { surfacePatternFilePath, writeSurfacePatternPng } from '../importSurfacePattern'
 import { resolveFirstOnLoginPath } from '../terminal/loginPath'
+import { LOCAL_MACHINE_ID } from '@shared/workspaceHost'
+import { clampKeepAwakeBatteryFloor } from '@shared/sleepBlocker'
 
 const PLATFORM = process.platform as Platform
 
@@ -268,6 +270,7 @@ export class SettingsStore {
     if (typeof s.keepAwakeWhileAgentRunning !== 'boolean') {
       s.keepAwakeWhileAgentRunning = false
     }
+    s.keepAwakeBatteryFloorPercent = clampKeepAwakeBatteryFloor(s.keepAwakeBatteryFloorPercent)
     if (typeof s.skipCliAgentPickerWhenSingle !== 'boolean') {
       s.skipCliAgentPickerWhenSingle = false
     }
@@ -358,6 +361,15 @@ export class SettingsStore {
     ) {
       // Drop legacy `source` grouping (sidebar-conversation-list.rpml).
       s.sidebarGroupingMode = 'none'
+    }
+    const legacyActive = (s as { activeMachineId?: unknown }).activeMachineId
+    if (typeof s.defaultMachineId !== 'string' || !s.defaultMachineId.trim()) {
+      s.defaultMachineId =
+        typeof legacyActive === 'string' && legacyActive.trim()
+          ? legacyActive.trim()
+          : LOCAL_MACHINE_ID
+    } else {
+      s.defaultMachineId = s.defaultMachineId.trim()
     }
     if (typeof s.sidebarSessionFilter !== 'string') s.sidebarSessionFilter = 'none'
     else if (

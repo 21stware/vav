@@ -10,13 +10,14 @@ import {
   nativeImage,
   nativeTheme,
   net,
+  powerMonitor,
   protocol,
   screen,
   session,
   shell,
   systemPreferences
 } from 'electron'
-import { basename, dirname, extname, join } from 'node:path'
+import { basename, dirname, extname, join, posix, win32 } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { execFile } from 'node:child_process'
 import {
@@ -30,7 +31,7 @@ import {
   statSync,
   writeFileSync
 } from 'node:fs'
-import { homedir, hostname, tmpdir } from 'node:os'
+import { homedir, hostname, tmpdir, userInfo } from 'node:os'
 import { randomUUID } from 'node:crypto'
 import { APP_NAME, applyBranding, applyDockIcon, loadAppIcon, pinUserDataPath } from './brand'
 import { isE2eRuntime } from './e2eRuntime'
@@ -70,12 +71,22 @@ import {
 import { agentBinaryCandidates } from '@shared/agentBinary'
 import { localFileStreamUrl } from '@shared/localFileUrl'
 import { compactionForLeaf } from '@shared/compaction'
-import { hasActiveAgentWork, shouldBlockIdleSleep } from '@shared/sleepBlocker'
+import {
+  hasActiveAgentWork,
+  shouldBlockIdleSleep,
+  shouldBlockLidSleep,
+  type KeepAwakeStatus
+} from '@shared/sleepBlocker'
 import { createSwarmFinishAlert } from './sound/swarmFinishAlert'
 import { RemoteControlService } from './remote/RemoteControlService'
 import { DaemonAttachService } from './daemon/DaemonAttachService'
 import { openTailcatDial } from './daemon/tailcatDial'
-import { isLocalMachine, LOCAL_MACHINE_ID } from '@shared/workspaceHost'
+import {
+  isLocalMachine,
+  LOCAL_MACHINE_ID,
+  normalizeMachineId,
+  type WorkspaceHostInfo
+} from '@shared/workspaceHost'
 import type {
   RemoteConfigure,
   RemoteControlsEvent,
@@ -108,6 +119,7 @@ import { threadPath } from '@shared/thread'
 import { sanitizeSwarmLayout } from '@shared/swarmLayout'
 import { SettingsStore } from './store/SettingsStore'
 import { SleepBlocker } from './power/SleepBlocker'
+import { MacLidSleepGuard } from './power/MacLidSleep'
 import { SecretStore } from './store/SecretStore'
 import { AccountStore } from './store/AccountStore'
 import {
@@ -370,6 +382,8 @@ protocol.registerSchemesAsPrivileged([
 ])
 
 let mainWindow: BrowserWindow | null = null
+/** Extra main shells, one per paired daemon (`?machine=<id>`). */
+const hostWindows = new Map<string, BrowserWindow>()
 let settingsWindow: BrowserWindow | null = null
 let connectWindow: BrowserWindow | null = null
 let tokenUsageWindow: BrowserWindow | null = null
@@ -540,14 +554,74 @@ const agentTurnFinished = new Set<string>()
 /** Re-evaluate tray after stdout goes quiet while the host process stays up. */
 const trayQuietTimers = new Map<string, ReturnType<typeof setTimeout>>()
 const sleepBlocker = new SleepBlocker()
+const macLidSleep = process.platform === 'darwin' ? new MacLidSleepGuard() : null
 
-function syncSleepBlocker(): void {
-  const enabled = settingsStore.get().keepAwakeWhileAgentRunning === true
-  const hasWork = hasActiveAgentWork({
+function currentAgentWork(): boolean {
+  return hasActiveAgentWork({
     turns: activeTurns.values(),
     cliAgentStatuses: ptyManager.listCliAgentSessions().map((session) => session.status)
   })
-  sleepBlocker.setActive(shouldBlockIdleSleep(enabled, hasWork))
+}
+
+function syncSleepBlocker(): void {
+  void syncSleepBlockerAsync()
+}
+
+async function syncSleepBlockerAsync(): Promise<void> {
+  const settings = settingsStore.get()
+  const enabled = settings.keepAwakeWhileAgentRunning === true
+  const hasWork = currentAgentWork()
+  const safety = macLidSleep
+    ? await macLidSleep.safetyHold(settings.keepAwakeBatteryFloorPercent)
+    : null
+  const granted = macLidSleep ? await macLidSleep.granted() : false
+  sleepBlocker.setActive(shouldBlockIdleSleep(enabled, hasWork, safety))
+  macLidSleep?.setDesired(shouldBlockLidSleep(enabled, hasWork, granted, safety))
+  await publishKeepAwakeStatus()
+}
+
+async function currentKeepAwakeStatus(): Promise<KeepAwakeStatus> {
+  const settings = settingsStore.get()
+  const enabled = settings.keepAwakeWhileAgentRunning === true
+  const hasWork = currentAgentWork()
+  if (!macLidSleep) {
+    return {
+      lidSupported: false,
+      granted: false,
+      idleBlocked: shouldBlockIdleSleep(enabled, hasWork),
+      lidSleepBlocked: false,
+      onBattery: false,
+      batteryPercent: 100,
+      lowPowerMode: false,
+      safetyHold: null,
+      hasWork
+    }
+  }
+  const [safety, info] = await Promise.all([
+    macLidSleep.safetyHold(settings.keepAwakeBatteryFloorPercent),
+    macLidSleep.powerInfo()
+  ])
+  return {
+    lidSupported: true,
+    granted: info.granted,
+    idleBlocked: shouldBlockIdleSleep(enabled, hasWork, safety),
+    lidSleepBlocked: info.lidSleepBlocked,
+    onBattery: info.onBattery,
+    batteryPercent: info.batteryPercent,
+    lowPowerMode: info.lowPowerMode,
+    safetyHold: safety,
+    hasWork
+  }
+}
+
+let lastKeepAwakeStatusJson = ''
+
+async function publishKeepAwakeStatus(): Promise<void> {
+  const status = await currentKeepAwakeStatus()
+  const json = JSON.stringify(status)
+  if (json === lastKeepAwakeStatusJson) return
+  lastKeepAwakeStatusJson = json
+  broadcast(IPC.keepAwakeStatus, status)
 }
 
 /**
@@ -590,22 +664,20 @@ function focusRunningSession(target: {
     return
   }
 
-  const wasMissing = !mainWindow || mainWindow.isDestroyed()
-  showMainWindow()
-  const send = (): void => {
-    if (!mainWindow || mainWindow.isDestroyed()) return
-    safeSend(mainWindow.webContents, IPC.cliOpen, payload)
-  }
-  // Main may still be loading after create/show — wait so the renderer
-  // has onCliOpen wired before we ask it to select the session.
-  if (
-    wasMissing ||
-    (mainWindow && !mainWindow.isDestroyed() && mainWindow.webContents.isLoading())
-  ) {
-    mainWindow?.webContents.once('did-finish-load', () => setTimeout(send, 50))
-  } else {
-    setTimeout(send, 50)
-  }
+  const machineId = conversationStore.get(conversationId)?.machineId
+  const wasMissing = !hostWindowOf(machineId)
+  void showHostWindow(machineId).then(() => {
+    const win = hostWindowOf(machineId)
+    const send = (): void => {
+      if (!win || win.isDestroyed()) return
+      safeSend(win.webContents, IPC.cliOpen, payload)
+    }
+    if (wasMissing || (win && !win.isDestroyed() && win.webContents.isLoading())) {
+      win?.webContents.once('did-finish-load', () => setTimeout(send, 50))
+    } else {
+      setTimeout(send, 50)
+    }
+  })
 }
 
 /**
@@ -617,7 +689,8 @@ async function revealConversationInList(conversationId: string): Promise<void> {
   // Always raise the main shell first. A missing id / unknown conversation
   // must still summon the list — otherwise the companion close leaves no UI.
   if (conversationId) ephemeralConversations.delete(conversationId)
-  await showMainWindow()
+  const machineId = conversationStore.get(conversationId)?.machineId
+  await showHostWindow(machineId)
 
   if (conversationId && conversationStore.get(conversationId)) {
     const payload = {
@@ -625,15 +698,14 @@ async function revealConversationInList(conversationId: string): Promise<void> {
       toast: null as string | null,
       surface: 'vav' as const
     }
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      if (mainWindow.webContents.isLoading()) {
-        mainWindow.webContents.once('did-finish-load', () => {
-          if (mainWindow && !mainWindow.isDestroyed()) {
-            safeSend(mainWindow.webContents, IPC.cliOpen, payload)
-          }
+    const win = hostWindowOf(machineId)
+    if (win && !win.isDestroyed()) {
+      if (win.webContents.isLoading()) {
+        win.webContents.once('did-finish-load', () => {
+          if (!win.isDestroyed()) safeSend(win.webContents, IPC.cliOpen, payload)
         })
       } else {
-        safeSend(mainWindow.webContents, IPC.cliOpen, payload)
+        safeSend(win.webContents, IPC.cliOpen, payload)
       }
     }
   }
@@ -651,6 +723,18 @@ const notifications = new NotificationCenter(
   showMainWindow,
   () => mainWindow
 )
+notifications.setHostServices({
+  list: () =>
+    hostRegistry.list().map((host) => ({
+      id: host.id,
+      name: host.name
+    })),
+  defaultId: () => settingsStore.get().defaultMachineId || LOCAL_MACHINE_ID,
+  show: (id) => {
+    void showHostWindow(id)
+  },
+  setDefault: (id) => applyDefaultMachine(id)
+})
 swarmFinishAlert = createSwarmFinishAlert(
   (conversationId) => {
     const conversation = conversationStore.get(conversationId)
@@ -969,7 +1053,8 @@ function refreshTraySessions(): void {
         status: pane.status ?? 'running',
         dirKey: pane.dirKey,
         dirLabel: pane.dirLabel,
-        createdAt: pane.createdAt
+        createdAt: pane.createdAt,
+        machineId: conversationStore.get(pane.conversationId)?.machineId ?? LOCAL_MACHINE_ID
       })),
       runningCount,
       doneCount
@@ -1689,7 +1774,10 @@ const daemonAttach = new DaemonAttachService({
   enabled: () => settingsStore.get().remoteControlEnabled === true,
   tailcatToken: () => remoteControl.tunnelToken(),
   dialTunnel: (token) => openTailcatDial(token),
-  onHostsChanged: (hosts) => broadcast(IPC.hostsChanged, hosts),
+  onHostsChanged: (hosts) => {
+    broadcast(IPC.hostsChanged, hosts)
+    syncHostWindows(hosts)
+  },
   onDiscovered: (peers) => {
     if (settingsWindow && !settingsWindow.isDestroyed()) {
       safeSend(settingsWindow.webContents, IPC.hostsDiscoveredChanged, peers)
@@ -1724,7 +1812,10 @@ const daemonAttach = new DaemonAttachService({
   }
 })
 
-hostRegistry.onChange((hosts) => broadcast(IPC.hostsChanged, hosts))
+hostRegistry.onChange((hosts) => {
+  broadcast(IPC.hostsChanged, hosts)
+  syncHostWindows(hosts)
+})
 
 notifications.onAlert = (kind, conversationId, title, body) =>
   remoteControl.notifyRemote(kind, conversationId, title, body)
@@ -1775,7 +1866,7 @@ function sendToWorkspaceWindows(
     safeSend(window.webContents, channel, payload)
   }
 
-  deliver(mainWindow)
+  eachMainShell(deliver)
 
   if (conversationId) {
     deliver(detachedWindows.get(conversationId))
@@ -2555,7 +2646,53 @@ function wirePopupDismiss(window: BrowserWindow): void {
   window.on('closed', () => closeActiveNativePopup())
 }
 
-function createWindow(): BrowserWindow {
+function eachMainShell(fn: (window: BrowserWindow) => void): void {
+  if (mainWindow && !mainWindow.isDestroyed()) fn(mainWindow)
+  for (const window of hostWindows.values()) {
+    if (!window.isDestroyed()) fn(window)
+  }
+}
+
+function hostWindowOf(machineId: string | null | undefined): BrowserWindow | null {
+  const id = normalizeMachineId(machineId)
+  if (isLocalMachine(id)) {
+    return mainWindow && !mainWindow.isDestroyed() ? mainWindow : null
+  }
+  const window = hostWindows.get(id)
+  return window && !window.isDestroyed() ? window : null
+}
+
+function hostWindowTitle(machineId: string, name?: string): string {
+  if (isLocalMachine(machineId)) return APP_NAME
+  const label = name?.trim() || hostRegistry.get(machineId)?.info.name || machineId
+  return `${APP_NAME} — ${label}`
+}
+
+function syncHostWindows(hosts: WorkspaceHostInfo[]): void {
+  const known = new Set(hosts.map((host) => host.id))
+  for (const id of [...hostWindows.keys()]) {
+    if (!known.has(id)) closeHostWindow(id)
+  }
+  for (const host of hosts) {
+    const window = hostWindows.get(host.id)
+    if (window && !window.isDestroyed()) window.setTitle(hostWindowTitle(host.id, host.name))
+  }
+  notifications.notifyHostsChanged()
+}
+
+function closeHostWindow(machineId: string): void {
+  const window = hostWindows.get(machineId)
+  hostWindows.delete(machineId)
+  if (!window || window.isDestroyed()) return
+  try {
+    window.destroy()
+  } catch {
+    // ignore
+  }
+}
+
+function createWindow(opts?: { machineId?: string }): BrowserWindow {
+  const machineId = normalizeMachineId(opts?.machineId)
   const icon = loadAppIcon()
   const snapshotting = Boolean(process.env.VAV_SNAPSHOT)
   const e2e = isE2eRuntime()
@@ -2620,7 +2757,19 @@ function createWindow(): BrowserWindow {
   })
 
   installSnapshotHook(window)
-  loadRenderer(window)
+  loadRenderer(window, isLocalMachine(machineId) ? {} : { machine: machineId })
+  if (!isLocalMachine(machineId)) {
+    window.setTitle(hostWindowTitle(machineId))
+    const anchor = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null
+    if (anchor) {
+      const [x, y] = anchor.getPosition()
+      window.setPosition(x + 36, y + 36)
+    }
+    hostWindows.set(machineId, window)
+    window.on('closed', () => {
+      if (hostWindows.get(machineId) === window) hostWindows.delete(machineId)
+    })
+  }
 
   return window
 }
@@ -5472,60 +5621,37 @@ function installSnapshotHook(window: BrowserWindow): void {
   })
 }
 
-async function showMainWindow(): Promise<void> {
-  // Hidden-Dock sessions still need a visible window when the user (or a second
-  // launch) asks for the app — briefly surface the Dock so Mission Control /
-  // Cmd-Tab can find us too.
+async function showHostWindow(machineId?: string | null): Promise<void> {
+  const raw = normalizeMachineId(machineId)
+  const id =
+    !isLocalMachine(raw) && !hostRegistry.get(raw) ? LOCAL_MACHINE_ID : raw
   if (process.platform === 'darwin' && app.dock && !app.dock.isVisible()) {
     app.dock.show()
   }
-  if (!mainWindow || mainWindow.isDestroyed()) {
-    mainWindow = createWindow()
-    const win = mainWindow
-    if (!win || win.isDestroyed()) return
-    if (!win.webContents.isLoading()) return
+  let win = hostWindowOf(id)
+  if (!win) {
+    win = createWindow({ machineId: id })
+    if (isLocalMachine(id)) mainWindow = win
+  }
+  if (!win || win.isDestroyed()) return
+  if (win.webContents.isLoading()) {
     await new Promise<void>((resolve) => {
       const done = (): void => resolve()
       win.webContents.once('did-finish-load', done)
       setTimeout(done, 2000)
     })
-    return
   }
-  await revealBrowserWindow(mainWindow)
+  if (win.isDestroyed()) return
+  await revealBrowserWindow(win)
+  enforceAppZOrder(win)
 }
 
-/** Session window the user can already see — Settings / usage panels do not count. */
-
-/**
- * Dock click / bare second-instance: raise the window the user was last in.
- * Do not force the main shell forward when a companion is already open.
- */
-function pickActivateWindow(): BrowserWindow | null {
-  const windows = BrowserWindow.getAllWindows().filter((w) => !w.isDestroyed())
-  if (!windows.length) return null
-
-  const last =
-    lastFocusedWindow &&
-    !lastFocusedWindow.isDestroyed() &&
-    !screenshotController?.isOverlay(lastFocusedWindow)
-      ? lastFocusedWindow
-      : null
-  // Hidden warm Settings / token shells stay in getAllWindows — only raise them
-  // when they were last focused and are still visible (or minimized).
-  if (
-    last &&
-    (last.isVisible() || last.isMinimized() || !isAuxiliaryWindow(last))
-  ) {
-    return last
-  }
-
-  const visibleContent = windows.find(
-    (w) => (w.isVisible() || w.isMinimized()) && !isAuxiliaryWindow(w)
-  )
-  if (visibleContent) return visibleContent
-
-  if (mainWindow && !mainWindow.isDestroyed()) return mainWindow
-  return windows.find((w) => !isAuxiliaryWindow(w)) ?? null
+async function showMainWindow(): Promise<void> {
+  // Hidden-Dock sessions still need a visible window when the user (or a second
+  // launch) asks for the app — briefly surface the Dock so Mission Control /
+  // Cmd-Tab can find us too.
+  const preferred = settingsStore.get().defaultMachineId
+  await showHostWindow(preferred)
 }
 
 function activateApp(): void {
@@ -5541,31 +5667,20 @@ function activateApp(): void {
     return
   }
 
-  const target = pickActivateWindow()
-  if (!target) {
-    mainWindow = createWindow()
+  const last =
+    lastFocusedWindow &&
+    !lastFocusedWindow.isDestroyed() &&
+    !screenshotController?.isOverlay(lastFocusedWindow)
+      ? lastFocusedWindow
+      : null
+  const lastIsCompanion =
+    last &&
+    ([...detachedWindows.values()].includes(last) || [...previewWindows.values()].includes(last))
+  if (lastIsCompanion && last) {
+    void raiseDetachedWindow(last)
     return
   }
-  void (async () => {
-    if (target.isDestroyed()) return
-    // Main + Settings use the paint-safe reveal; companions use the Space hop.
-    if (
-      (mainWindow && !mainWindow.isDestroyed() && target.id === mainWindow.id) ||
-      (settingsWindow && !settingsWindow.isDestroyed() && target.id === settingsWindow.id)
-    ) {
-      await revealBrowserWindow(target)
-    } else {
-      await raiseDetachedWindow(target)
-    }
-    if (target.isDestroyed()) return
-    // focus() may raise `target` above Settings / other Quick Chats — re-pin.
-    try {
-      target.focus()
-    } catch {
-      // ignore
-    }
-    enforceAppZOrder(target)
-  })()
+  void showMainWindow()
 }
 
 /**
@@ -5863,6 +5978,10 @@ function watchSystemAccentColor(): void {
 // Working directories
 // ---------------------------------------------------------------------------
 
+function joinHostPath(platform: string | undefined, ...parts: string[]): string {
+  return (platform === 'win32' ? win32 : posix).join(...parts)
+}
+
 /** Always mint a Temporary Workspace folder (switcher “A new temp folder”). */
 function mintTempWorkdir(): string {
   const dir = join(tmpdir(), 'vav', randomUUID().slice(0, 8), 'Workspace')
@@ -5872,6 +5991,25 @@ function mintTempWorkdir(): string {
     return tmpdir()
   }
   return dir
+}
+
+/** Mint on the conversation’s machine — remote daemons cannot see this Mac’s tmp. */
+async function mintTempWorkdirOn(machineId: string | null | undefined): Promise<string> {
+  if (isLocalMachine(machineId)) return mintTempWorkdir()
+  const host = hostRegistry.hostFor(machineId)
+  const root = daemonAttach.tmpOf(host.id)
+  const dir = joinHostPath(host.info.platform, root, 'vav', randomUUID().slice(0, 8), 'Workspace')
+  try {
+    await host.fs.mkdir(dir, { recursive: true })
+    return dir
+  } catch {
+    return root
+  }
+}
+
+async function resolveNewWorkdirOn(machineId: string | null | undefined): Promise<string> {
+  if (isLocalMachine(machineId)) return resolveNewWorkdir()
+  return mintTempWorkdirOn(machineId)
 }
 
 function applyWorkingDirectory(
@@ -5901,6 +6039,15 @@ function resolveNewWorkdir(): string {
   const configured = settingsStore.get().defaultWorkingDirectory.trim()
   if (configured) return configured
   return mintTempWorkdir()
+}
+
+/** Which daemon window Dock / tray / hotkey raise. */
+function applyDefaultMachine(machineId: string): void {
+  const id = machineId.trim() || LOCAL_MACHINE_ID
+  if (settingsStore.get().defaultMachineId === id) return
+  settingsStore.update({ defaultMachineId: id })
+  broadcast(IPC.settingsChanged, currentSettings())
+  notifications.notifyHostsChanged()
 }
 
 function accountIdForSession(
@@ -6402,7 +6549,10 @@ function registerIpc(): void {
     ) {
       notifications.applySettings()
     }
-    if (patch.keepAwakeWhileAgentRunning !== undefined) {
+    if (
+      patch.keepAwakeWhileAgentRunning !== undefined ||
+      patch.keepAwakeBatteryFloorPercent !== undefined
+    ) {
       syncSleepBlocker()
     }
     if (patch.remoteControlEnabled !== undefined) {
@@ -6440,6 +6590,21 @@ function registerIpc(): void {
     const settings = currentSettings()
     broadcast(IPC.settingsChanged, settings)
     return settings
+  })
+
+  ipcMain.handle(IPC.settingsKeepAwakeStatus, () => currentKeepAwakeStatus())
+  ipcMain.handle(IPC.settingsKeepAwakeGrant, async () => {
+    if (!macLidSleep) return { ok: false as const, error: 'unsupported' }
+    const result = await macLidSleep.grant(userInfo().username)
+    macLidSleep.refresh()
+    await syncSleepBlockerAsync()
+    return result
+  })
+  ipcMain.handle(IPC.settingsKeepAwakeRevoke, async () => {
+    if (!macLidSleep) return { ok: false as const, error: 'unsupported' }
+    const result = await macLidSleep.revoke()
+    await syncSleepBlockerAsync()
+    return result
   })
 
   ipcMain.handle(IPC.settingsSetKey, (_event, key: string) => {
@@ -7006,7 +7171,7 @@ return c as text`
 
   ipcMain.handle(
     IPC.convCreate,
-    (
+    async (
       _event,
       options?: {
         workingDirectory?: string | null
@@ -7014,11 +7179,12 @@ return c as text`
         swarmParentId?: string | null
         machineId?: string | null
       }
-    ): ConversationMeta => {
+    ): Promise<ConversationMeta> => {
+      const machineId = options?.machineId ?? LOCAL_MACHINE_ID
       const workdir =
         options && 'workingDirectory' in options
           ? (options.workingDirectory ?? null)
-          : resolveNewWorkdir()
+          : await resolveNewWorkdirOn(machineId)
       const settings = settingsStore.get()
       const model = options?.model?.trim() || undefined
       if (workdir) {
@@ -7035,7 +7201,7 @@ return c as text`
           cliHost: defaultHost,
           accountId: accountIdForSession(workdir, defaultHost),
           swarmParentId: options?.swarmParentId ?? null,
-          machineId: options?.machineId ?? LOCAL_MACHINE_ID
+          machineId
         }
       )
       if (defaultHost) promoteEphemeralConversation(conversation.id)
@@ -7298,9 +7464,10 @@ return c as text`
     return applyWorkingDirectory(id, result.filePaths[0])
   })
 
-  ipcMain.handle(IPC.convUseTempWorkdir, (_event, id: string) =>
-    applyWorkingDirectory(id, mintTempWorkdir())
-  )
+  ipcMain.handle(IPC.convUseTempWorkdir, async (_event, id: string) => {
+    const machineId = conversationStore.get(id)?.machineId
+    return applyWorkingDirectory(id, await mintTempWorkdirOn(machineId))
+  })
 
   ipcMain.handle(
     IPC.convLocateWorkspace,
@@ -8102,15 +8269,21 @@ return c as text`
   ipcMain.handle(IPC.remoteControlResetIdentity, () => remoteControl.resetIdentity())
   ipcMain.handle(IPC.hostsList, () => hostRegistry.list())
   ipcMain.handle(IPC.hostsPairing, () => daemonAttach.pairing())
-  ipcMain.handle(IPC.hostsPair, (_event, payload: string) => daemonAttach.pair(String(payload || '')))
-  ipcMain.handle(IPC.hostsPairLan, (_event, peer: HostDiscoveryPeer) =>
-    daemonAttach.pairLan({
+  ipcMain.handle(IPC.hostsPair, async (_event, payload: string) => {
+    const result = await daemonAttach.pair(String(payload || ''))
+    if (result.ok) void showHostWindow(result.host.id)
+    return result
+  })
+  ipcMain.handle(IPC.hostsPairLan, async (_event, peer: HostDiscoveryPeer) => {
+    const result = await daemonAttach.pairLan({
       address: String(peer?.address || ''),
       port: Number(peer?.port) || 0,
       name: typeof peer?.name === 'string' ? peer.name : undefined,
       machineId: typeof peer?.machineId === 'string' ? peer.machineId : undefined
     })
-  )
+    if (result.ok) void showHostWindow(result.host.id)
+    return result
+  })
   ipcMain.handle(IPC.hostsCancelPair, () => {
     daemonAttach.cancelPair()
   })
@@ -8118,7 +8291,10 @@ return c as text`
     daemonAttach.cancelPair()
   })
   ipcMain.handle(IPC.hostsForget, (_event, machineId: string) => {
-    daemonAttach.forget(String(machineId || ''))
+    const id = String(machineId || '')
+    daemonAttach.forget(id)
+    closeHostWindow(id)
+    if (settingsStore.get().defaultMachineId === id) applyDefaultMachine(LOCAL_MACHINE_ID)
   })
   ipcMain.handle(IPC.hostsDiscovered, () => daemonAttach.listDiscovered())
   ipcMain.handle(IPC.hostsHome, (_event, machineId: string) => {
@@ -8433,6 +8609,7 @@ if (!singleInstance) {
   app.on('before-quit', () => {
     quitting = true
     sleepBlocker.release()
+    macLidSleep?.stop()
     remoteControl.dispose()
     agent.disposeAll()
     cliHost.disposeAll()
@@ -8449,6 +8626,19 @@ if (!singleInstance) {
     applyBranding()
     // Login PATH via zsh -ilc is ~1s; start it now so spawn never pays it sync.
     void ensureLoginPath()
+    if (macLidSleep) {
+      macLidSleep.onChange = () => {
+        void publishKeepAwakeStatus()
+      }
+      macLidSleep.start()
+      const onPowerChange = (): void => {
+        macLidSleep.refresh()
+        syncSleepBlocker()
+      }
+      powerMonitor.on('on-ac', onPowerChange)
+      powerMonitor.on('on-battery', onPowerChange)
+      powerMonitor.on('resume', onPowerChange)
+    }
     protocol.handle('vav-local', async (request) => {
       try {
         const url = new URL(request.url)

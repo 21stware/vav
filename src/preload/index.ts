@@ -77,7 +77,10 @@ const api: VavApi = {
     registerAllFileAssociations: () =>
       ipcRenderer.invoke(IPC.settingsRegisterAllFileAssociations),
     analysis: (options?: { refresh?: boolean }) =>
-      ipcRenderer.invoke(IPC.settingsAnalysis, options)
+      ipcRenderer.invoke(IPC.settingsAnalysis, options),
+    keepAwakeStatus: () => ipcRenderer.invoke(IPC.settingsKeepAwakeStatus),
+    keepAwakeGrant: () => ipcRenderer.invoke(IPC.settingsKeepAwakeGrant),
+    keepAwakeRevoke: () => ipcRenderer.invoke(IPC.settingsKeepAwakeRevoke)
   },
 
   accounts: {
@@ -528,6 +531,8 @@ const api: VavApi = {
 
   onMenuCommand: (handler) => subscribe<MenuCommand>(IPC.menuCommand, handler),
   onSettingsChanged: (handler) => subscribe<AppSettings>(IPC.settingsChanged, handler),
+  onKeepAwakeStatus: (handler) =>
+    subscribe<import('@shared/sleepBlocker').KeepAwakeStatus>(IPC.keepAwakeStatus, handler),
   onSettingsView: (handler) => subscribe<SettingsViewPayload>(IPC.settingsView, handler),
   onSettingsAnalysis: (handler) => subscribe<AnalysisSnapshot>(IPC.settingsAnalysisUpdated, handler),
   onAccountsUpdated: (handler) =>

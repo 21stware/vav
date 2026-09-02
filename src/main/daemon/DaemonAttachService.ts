@@ -92,6 +92,7 @@ export class DaemonAttachService {
   private stopBrowse: (() => void) | null = null
   private readonly clients = new Map<string, DaemonClient>()
   private readonly homes = new Map<string, string>()
+  private readonly tmps = new Map<string, string>()
   /** Live `--dial` sidecars, keyed by tailcat token. */
   private readonly tunnels = new Map<string, TunnelHandle>()
   private readonly tunnelOfHost = new Map<string, string>()
@@ -141,6 +142,10 @@ export class DaemonAttachService {
 
   homeOf(machineId: string): string {
     return this.homes.get(machineId) || homedir()
+  }
+
+  tmpOf(machineId: string): string {
+    return this.tmps.get(machineId) || tmpdir()
   }
 
   adoptAuthedSocket(socket: Socket, leftover = ''): void {
@@ -221,6 +226,8 @@ export class DaemonAttachService {
   forget(machineId: string): void {
     this.clients.get(machineId)?.close()
     this.clients.delete(machineId)
+    this.homes.delete(machineId)
+    this.tmps.delete(machineId)
     this.releaseTunnel(machineId)
     this.opts.registry.remove(machineId)
     const next = this.loadStore().filter((row) => row.machineId !== machineId)
@@ -417,6 +424,7 @@ export class DaemonAttachService {
     previous?.close()
     this.clients.set(welcome.host.id, client)
     this.homes.set(welcome.host.id, welcome.home)
+    this.tmps.set(welcome.host.id, welcome.tmp)
     const host = createRemoteWorkspaceHost(client, welcome)
     this.opts.registry.register(host)
     this.opts.onHostsChanged(this.opts.registry.list())

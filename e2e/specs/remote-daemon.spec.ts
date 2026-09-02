@@ -6,7 +6,8 @@ import {
   E2E_SESSION_ID,
   launchVav,
   openFilesTray,
-  openSettingsWindow
+  openSettingsWindow,
+  waitForNewWindow
 } from '../launch'
 import { startVavd } from '../startVavd'
 
@@ -20,9 +21,12 @@ test('pair vavd, open its folder, list a file that only exists there', async () 
   try {
     const { page } = harness
 
-    const paired = await page.evaluate((payload) => window.vav.hosts.pair(payload), daemon.pairing)
-    expect(paired.ok).toBe(true)
-    if (!paired.ok) return
+    let paired: { ok: true; host: { id: string } } | { ok: false; error: string } | null = null
+    const remote = await waitForNewWindow(harness, async () => {
+      paired = await page.evaluate((payload) => window.vav.hosts.pair(payload), daemon.pairing)
+    })
+    expect(paired?.ok).toBe(true)
+    if (!paired || !paired.ok) return
 
     await expect
       .poll(async () => {
@@ -31,9 +35,19 @@ test('pair vavd, open its folder, list a file that only exists there', async () 
       })
       .toMatchObject({ id: paired.host.id, online: true, name: 'E2E Daemon' })
 
-    // Sidebar Connect button surfaces the linked machine's name.
-    await expect(page.locator('[data-testid="sidebar-connect"]')).toContainText(
-      'Connected to E2E Daemon'
+    // Local window stays this computer. The daemon opens its own main shell.
+    await expect(page.locator('[data-testid="sidebar-connect"]')).toHaveAttribute(
+      'data-machine-id',
+      'local'
+    )
+    await expect(
+      page.locator(`[data-testid="session-row"][data-conversation-id="${E2E_SESSION_ID}"]`)
+    ).toBeVisible()
+
+    await expect(remote.locator('[data-testid="sidebar-connect"]')).toContainText('E2E Daemon')
+    await expect(remote.locator('[data-testid="sidebar-connect"]')).toHaveAttribute(
+      'data-machine-id',
+      paired.host.id
     )
 
     const stored = JSON.parse(
@@ -41,7 +55,7 @@ test('pair vavd, open its folder, list a file that only exists there', async () 
     ) as { hosts: { machineId: string }[] }
     expect(stored.hosts[0]?.machineId).toBe(paired.host.id)
 
-    const created = await page.evaluate(
+    const created = await remote.evaluate(
       async ({ path, machineId }) =>
         window.vav.conversations.create({ workingDirectory: path, machineId }),
       { path: daemon.workspace, machineId: paired.host.id }
@@ -49,26 +63,26 @@ test('pair vavd, open its folder, list a file that only exists there', async () 
     expect(created.machineId).toBe(paired.host.id)
     expect(created.workingDirectory).toBe(daemon.workspace)
 
-    const listing = await page.evaluate(
+    const listing = await remote.evaluate(
       async ({ path, id }) => window.vav.files.list(path, 'name', true, id),
       { path: daemon.workspace, id: created.id }
     )
     expect(listing.error).toBeUndefined()
     expect(listing.entries.map((e) => e.name)).toContain('remote-only.md')
 
-    const dirs = await page.evaluate(
+    const dirs = await remote.evaluate(
       async ({ machineId, path }) => window.vav.hosts.listDir(machineId, path),
       { machineId: paired.host.id, path: daemon.workspace }
     )
     expect(dirs.entries.map((e) => e.name)).toContain('remote-pkg')
     expect(dirs.entries.map((e) => e.name)).not.toContain('remote-only.md')
 
-    await page.locator(`[data-testid="session-row"][data-conversation-id="${created.id}"]`).click()
-    await openFilesTray(page)
-    await expect(page.locator('[data-file-path$="remote-only.md"]')).toBeVisible()
-    await expect(page.locator('[data-file-path$="hello.md"]')).toHaveCount(0)
+    await remote.locator(`[data-testid="session-row"][data-conversation-id="${created.id}"]`).click()
+    await openFilesTray(remote)
+    await expect(remote.locator('[data-file-path$="remote-only.md"]')).toBeVisible()
+    await expect(remote.locator('[data-file-path$="hello.md"]')).toHaveCount(0)
 
-    const text = await page.evaluate(
+    const text = await remote.evaluate(
       (path) => window.vav.files.read(path),
       join(daemon.workspace, 'remote-only.md')
     )
@@ -78,7 +92,10 @@ test('pair vavd, open its folder, list a file that only exists there', async () 
     await page.evaluate((id) => window.vav.hosts.forget(id), paired.host.id)
     const after = await page.evaluate(() => window.vav.hosts.list())
     expect(after.some((h) => h.id === paired.host.id)).toBe(false)
-    await expect(page.locator('[data-testid="sidebar-connect"]')).not.toContainText('E2E Daemon')
+    await expect(page.locator('[data-testid="sidebar-connect"]')).toHaveAttribute(
+      'data-machine-id',
+      'local'
+    )
   } finally {
     await harness.dispose()
     daemon.stop()
@@ -124,9 +141,12 @@ test('workdir menu opens the remote folder picker and binds the session', async 
   const harness = await launchVav()
   try {
     const { page } = harness
-    const paired = await page.evaluate((payload) => window.vav.hosts.pair(payload), daemon.pairing)
-    expect(paired.ok).toBe(true)
-    if (!paired.ok) return
+    let paired: { ok: true; host: { id: string } } | { ok: false; error: string } | null = null
+    const remote = await waitForNewWindow(harness, async () => {
+      paired = await page.evaluate((payload) => window.vav.hosts.pair(payload), daemon.pairing)
+    })
+    expect(paired?.ok).toBe(true)
+    if (!paired || !paired.ok) return
 
     await expect
       .poll(async () => {
@@ -135,22 +155,27 @@ test('workdir menu opens the remote folder picker and binds the session', async 
       })
       .toBe(true)
 
-    await page.locator('[data-testid="workdir-chip"] [data-testid="chip-action"]').click()
-    await chooseNativeMenu(page, 'Choose folder on E2E Daemon…')
+    await expect(remote.locator('[data-testid="sidebar-connect"]')).toContainText('E2E Daemon')
+    await remote.locator('[data-testid="workdir-chip"] [data-testid="chip-action"]').click()
+    await chooseNativeMenu(remote, 'Choose folder on E2E Daemon…')
 
-    const picker = page.locator('[data-testid="remote-folder-picker"]')
+    const picker = remote.locator('[data-testid="remote-folder-picker"]')
     await expect(picker).toBeVisible()
-    await page.locator('[data-testid="remote-folder-path"]').fill(daemon.workspace)
-    await expect(page.locator('[data-testid="remote-folder-entry-remote-pkg"]')).toBeVisible()
-    await page.locator('[data-testid="remote-folder-entry-remote-pkg"]').click()
-    await page.locator('[data-testid="remote-folder-select"]').click()
+    await remote.locator('[data-testid="remote-folder-path"]').fill(daemon.workspace)
+    await expect(remote.locator('[data-testid="remote-folder-entry-remote-pkg"]')).toBeVisible()
+    await remote.locator('[data-testid="remote-folder-entry-remote-pkg"]').click()
+    await remote.locator('[data-testid="remote-folder-select"]').click()
 
     const nested = join(daemon.workspace, 'remote-pkg')
+    const activeId = await remote
+      .locator('[data-testid="session-row"].selected')
+      .getAttribute('data-conversation-id')
+    expect(activeId).toBeTruthy()
     await expect
       .poll(async () => {
-        const conversation = await page.evaluate(
+        const conversation = await remote.evaluate(
           (id) => window.vav.conversations.get(id),
-          E2E_SESSION_ID
+          activeId
         )
         return {
           machineId: conversation?.machineId ?? null,
@@ -159,10 +184,10 @@ test('workdir menu opens the remote folder picker and binds the session', async 
       })
       .toEqual({ machineId: paired.host.id, path: nested })
 
-    await openFilesTray(page)
-    await expect(page.locator('[data-file-path$="inside.md"]')).toBeVisible()
-    await expect(page.locator('[data-file-path$="remote-only.md"]')).toHaveCount(0)
-    await expect(page.locator('[data-file-path$="hello.md"]')).toHaveCount(0)
+    await openFilesTray(remote)
+    await expect(remote.locator('[data-file-path$="inside.md"]')).toBeVisible()
+    await expect(remote.locator('[data-file-path$="remote-only.md"]')).toHaveCount(0)
+    await expect(remote.locator('[data-file-path$="hello.md"]')).toHaveCount(0)
   } finally {
     await harness.dispose()
     daemon.stop()

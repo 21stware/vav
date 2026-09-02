@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import {
   LOCAL_MACHINE_ID,
+  conversationOnMachine,
   formatWorkspaceLabel,
   isLocalMachine,
   normalizeMachineId,
@@ -52,5 +53,17 @@ describe('formatWorkspaceLabel', () => {
 describe('workspaceRef', () => {
   it('normalizes a missing machine onto local', () => {
     assert.deepEqual(workspaceRef('/tmp/x'), { machineId: LOCAL_MACHINE_ID, path: '/tmp/x' })
+  })
+})
+
+describe('conversationOnMachine', () => {
+  it('treats a missing machineId as local', () => {
+    assert.equal(conversationOnMachine({}, LOCAL_MACHINE_ID), true)
+    assert.equal(conversationOnMachine({ machineId: null }, 'box'), false)
+  })
+
+  it('matches a paired daemon', () => {
+    assert.equal(conversationOnMachine({ machineId: 'box' }, 'box'), true)
+    assert.equal(conversationOnMachine({ machineId: 'box' }, LOCAL_MACHINE_ID), false)
   })
 })

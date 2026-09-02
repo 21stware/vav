@@ -10,7 +10,9 @@ import type { ChangeSet } from './changeSet.ts'
 import type { CliPaneBinding } from './cliPaneBinding.ts'
 import type { CliHostKind, ProviderResumeCursor } from './cliHost.ts'
 import type { AcceleratorKeyBindingId } from './keyBindings.ts'
+import { KEEP_AWAKE_BATTERY_FLOOR_DEFAULT } from './sleepBlocker.ts'
 import { VAV_DEFAULT_MODEL_ID } from './vavModelList.ts'
+import { LOCAL_MACHINE_ID } from './workspaceHost.ts'
 
 export type { CliHostKind, ProviderResumeCursor } from './cliHost.ts'
 export { VAV_DEFAULT_MODEL_ID } from './vavModelList.ts'
@@ -1039,6 +1041,11 @@ export interface AppSettings {
    * for a recent workspace.
    */
   sidebarSessionFilter: string
+  /**
+   * Which daemon’s main window Dock / tray / hotkey raise.
+   * `local` is this computer; a paired machine id opens that host’s window.
+   */
+  defaultMachineId: string
   /** Starred conversation ids, most recently starred first. */
   favoriteConversationIds: string[]
   /** Files panel: indented tree vs Finder-style columns. */
@@ -1067,9 +1074,15 @@ export interface AppSettings {
   notifyOnRequest: boolean
   /**
    * When true, hold an OS idle-sleep assertion while any agent is actively
-   * working (Caffeine-style). Does not block lid-close or choosing Sleep.
+   * working. On macOS, also blocks lid-close / Sleep once the scoped
+   * `pmset disablesleep` grant is installed.
    */
   keepAwakeWhileAgentRunning: boolean
+  /**
+   * Discharge floor (5–50). On battery below this, keep-awake releases so
+   * the machine can sleep. Ignored on AC.
+   */
+  keepAwakeBatteryFloorPercent: number
   /**
    * Remote control over tailcat: run the tunnel sidecar so a paired phone
    * gets foreground-realtime notifications and can send messages.
@@ -1186,6 +1199,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   keyBindings: {},
   sidebarGroupingMode: 'workspace',
   sidebarSessionFilter: 'none',
+  defaultMachineId: LOCAL_MACHINE_ID,
   favoriteConversationIds: [],
   fileViewMode: 'tree',
   fileSortKey: 'name',
@@ -1199,6 +1213,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   notifyOnToolApproval: true,
   notifyOnRequest: true,
   keepAwakeWhileAgentRunning: false,
+  keepAwakeBatteryFloorPercent: KEEP_AWAKE_BATTERY_FLOOR_DEFAULT,
   remoteControlEnabled: false,
   /** macOS optional menu-bar item; Windows always shows a tray (see NotificationCenter). */
   /** Menu-bar status item — shows live CLI agent count when sessions are running. */
