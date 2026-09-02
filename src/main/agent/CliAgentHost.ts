@@ -83,6 +83,7 @@ import { stampReasoningDurations } from './reasoningStamp'
 import { userTurnMessage } from './agentMessage'
 import {
   applyCliCancelQuota,
+  clearCliTurnDraft,
   cliAssistantMessage,
   consumePendingCancel,
   sameSessionRetryPlan,
@@ -1252,18 +1253,7 @@ export class CliAgentHost {
    * so the retry streams onto a clean draft.
    */
   private resetTurnDraft(conversationId: string, turn: HostTurn): void {
-    if (turn.flushTimer) {
-      clearTimeout(turn.flushTimer)
-      turn.flushTimer = null
-    }
-    turn.blocks = []
-    turn.buffers.clear()
-    turn.textIndex = null
-    turn.reasoningIndex = null
-    turn.toolIndex.clear()
-    turn.toolCount = 0
-    turn.reasoningStartedAt.clear()
-    turn.nestedDirty.clear()
+    clearCliTurnDraft(turn)
     this.deps.emit({ type: 'start', conversationId })
   }
 

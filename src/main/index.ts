@@ -274,6 +274,7 @@ import { PtyManager, type PtySessionMeta } from './terminal/PtyManager'
 import { ensureLoginPath, probeAgentExecutables, resolveAgentExecutable } from './terminal/loginPath'
 import { warmAgentLaunchCache } from './terminal/agentLaunchWarm'
 import { menuCommandFromInput, matchesNewSessionWindow } from './menuShortcuts'
+import { isToggleDevtoolsChord, shouldSkipDuplicateMenuCommand } from './window/menuInput'
 import { resolveKeyBindings } from '@shared/keyBindings'
 import { isDevRuntime } from './devRuntime'
 import { installDevParentWatchdog } from './devParentWatchdog'
@@ -1937,11 +1938,7 @@ let lastMenuCommand: MenuCommand | null = null
 /** Accelerators act on the window the user is actually looking at. */
 function sendMenuCommand(command: MenuCommand): void {
   const now = Date.now()
-  // close-context needs a longer window: before-input + menu often arrive
-  // >80ms apart, and the second stroke used to close the window right after
-  // Swarm reseeding the agent picker.
-  const debounceMs = command === 'close-context' ? 400 : 80
-  if (command === lastMenuCommand && now - lastMenuCommandAt < debounceMs) return
+  if (shouldSkipDuplicateMenuCommand(command, lastMenuCommand, now, lastMenuCommandAt)) return
   lastMenuCommand = command
   lastMenuCommandAt = now
   const target = BrowserWindow.getFocusedWindow() ?? mainWindow
@@ -1972,15 +1969,10 @@ function wireMenuAccelerators(contents: Electron.WebContents): void {
   contents.on('before-input-event', (event, input) => {
     // Branded vav.app often reports isPackaged=true, so the View → DevTools menu
     // item may be missing — keep ⌥⌘I / Ctrl+Shift+I available in dev anyway.
-    if (isDevRuntime() && input.type === 'keyDown' && (input.key === 'I' || input.key === 'i')) {
-      const macDevtools = process.platform === 'darwin' && input.meta && input.alt && !input.control
-      const winDevtools =
-        process.platform !== 'darwin' && input.control && input.shift && !input.meta
-      if (macDevtools || winDevtools) {
-        event.preventDefault()
-        contents.toggleDevTools()
-        return
-      }
+    if (isDevRuntime() && isToggleDevtoolsChord(input, process.platform)) {
+      event.preventDefault()
+      contents.toggleDevTools()
+      return
     }
 
     const bindings = currentKeyBindings()

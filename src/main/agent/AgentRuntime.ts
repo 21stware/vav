@@ -41,9 +41,12 @@ import {
 } from './agentTurnFinish'
 import { fileReadOnlySwitchBlock, gateReadonlyExecute } from './fileEditLock'
 import {
+  approvalAnswerKind,
+  approvalCardSummary,
   approvalPromptCopy,
   parseEditedApprovalText,
   readonlyApprovalBlock,
+  readonlyGateApplies,
   shouldAutoAcceptChangeSet,
   shouldPauseForApproval,
   shouldSkipToolGate,
@@ -1160,7 +1163,7 @@ export class AgentRuntime {
 
     // File Preview Read: hard-block write tools / mutating shell before approval UI.
     // switch_mode itself is allowed through so the user can Approve → Edit.
-    if (conversation?.fileReadOnly && name !== 'switch_mode') {
+    if (readonlyGateApplies(conversation?.fileReadOnly, name)) {
       const blocked = readonlyApprovalBlock(name, command)
       if (blocked) return blocked
     }
@@ -1180,14 +1183,12 @@ export class AgentRuntime {
     const block = turn.blocks.find(
       (b): b is ToolCallBlock => b.kind === 'toolCall' && b.id === toolCall.id
     )
-    const summary =
-      block?.summary ||
-      (command
-        ? command
-        : summarizeToolInput(
-            name,
-            args && typeof args === 'object' ? (args as Record<string, unknown>) : {}
-          ))
+    const summary = approvalCardSummary(block?.summary, command, () =>
+      summarizeToolInput(
+        name,
+        args && typeof args === 'object' ? (args as Record<string, unknown>) : {}
+      )
+    )
     const copy = approvalPromptCopy({
       mode,
       summary,
@@ -1208,10 +1209,9 @@ export class AgentRuntime {
       // Stash the editable payload in askTitle so the card can prefill a textarea.
       askTitle: mode === 'edit' ? copy.editable : undefined
     })
-    if (approval.cancelled) return { block: true, reason: t('approval.userCancelled') }
-    if (approval.text === copy.denyLabel || isApprovalDenyText(approval.text)) {
-      return { block: true, reason: t('approval.userDenied') }
-    }
+    const kind = approvalAnswerKind(approval, copy.denyLabel, isApprovalDenyText)
+    if (kind === 'cancelled') return { block: true, reason: t('approval.userCancelled') }
+    if (kind === 'denied') return { block: true, reason: t('approval.userDenied') }
 
     // Edit mode: approve-run + edited payload may rewrite terminal command / paths.
     if (mode === 'edit') {

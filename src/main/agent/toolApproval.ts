@@ -97,3 +97,34 @@ export function approvalPromptCopy(opts: {
     prompt: `${labels.title}\n${opts.summary}`
   }
 }
+
+/** switch_mode must still reach the user so Read can become Edit. */
+export function readonlyGateApplies(
+  fileReadOnly: boolean | undefined,
+  name: string
+): boolean {
+  return !!fileReadOnly && name !== 'switch_mode'
+}
+
+/** Card title: existing summary, else the shell command, else a tool-input summary. */
+export function approvalCardSummary(
+  blockSummary: string | undefined,
+  command: string,
+  summarize: () => string
+): string {
+  if (blockSummary) return blockSummary
+  if (command) return command
+  return summarize()
+}
+
+export type ApprovalAnswerKind = 'cancelled' | 'denied' | 'approved'
+
+export function approvalAnswerKind(
+  answer: { cancelled: boolean; text: string },
+  denyLabel: string,
+  isDeny: (text: string) => boolean
+): ApprovalAnswerKind {
+  if (answer.cancelled) return 'cancelled'
+  if (answer.text === denyLabel || isDeny(answer.text)) return 'denied'
+  return 'approved'
+}

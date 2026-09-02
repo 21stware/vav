@@ -1,9 +1,12 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import {
+  approvalAnswerKind,
+  approvalCardSummary,
   approvalPromptCopy,
   parseEditedApprovalText,
   readonlyApprovalBlock,
+  readonlyGateApplies,
   shouldAutoAcceptChangeSet,
   shouldPauseForApproval,
   shouldSkipToolGate,
@@ -107,5 +110,38 @@ describe('approvalPromptCopy', () => {
     assert.equal(editCopy.denyLabel, 'Skip')
     assert.equal(editCopy.editable, 'write a.ts')
     assert.equal(editCopy.prompt, 'Edit fs_write\nwrite a.ts')
+  })
+})
+
+describe('readonlyGateApplies / approvalCardSummary / approvalAnswerKind', () => {
+  it('lets switch_mode through Read and otherwise applies the gate', () => {
+    assert.equal(readonlyGateApplies(true, 'fs_write'), true)
+    assert.equal(readonlyGateApplies(true, 'switch_mode'), false)
+    assert.equal(readonlyGateApplies(false, 'fs_write'), false)
+  })
+
+  it('prefers the card summary, then the shell command, then the fallback', () => {
+    assert.equal(approvalCardSummary('read a.ts', 'ls', () => 'fallback'), 'read a.ts')
+    assert.equal(approvalCardSummary(undefined, 'ls', () => 'fallback'), 'ls')
+    assert.equal(approvalCardSummary(undefined, '', () => 'fallback'), 'fallback')
+  })
+
+  it('classifies cancelled, denied, and approved answers', () => {
+    assert.equal(
+      approvalAnswerKind({ cancelled: true, text: 'Approve' }, 'Deny', (t) => t === 'Deny'),
+      'cancelled'
+    )
+    assert.equal(
+      approvalAnswerKind({ cancelled: false, text: 'Deny' }, 'Deny', (t) => t === 'Deny'),
+      'denied'
+    )
+    assert.equal(
+      approvalAnswerKind({ cancelled: false, text: 'Nope' }, 'Deny', (t) => t === 'Nope'),
+      'denied'
+    )
+    assert.equal(
+      approvalAnswerKind({ cancelled: false, text: 'Approve' }, 'Deny', (t) => t === 'Deny'),
+      'approved'
+    )
   })
 })

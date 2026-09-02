@@ -5,6 +5,7 @@ import {
   applyCliCancelQuota,
   cliAssistantContent,
   cliAssistantMessage,
+  clearCliTurnDraft,
   consumePendingCancel,
   sameSessionRetryPlan,
   shouldSettleAsCancelled,
@@ -150,5 +151,31 @@ describe('stripLeakedStreamErrorFromTurn', () => {
     assert.equal(out.replaceText, '')
     assert.equal(turn.blocks.length, 0)
     assert.equal(turn.textIndex, null)
+  })
+})
+
+describe('clearCliTurnDraft', () => {
+  it('drops blocks, buffers, and indexes and clears a pending flush', () => {
+    const turn = {
+      flushTimer: setTimeout(() => {}, 60_000),
+      blocks: [{ kind: 'text', text: 'leak' }] as MessageBlock[],
+      buffers: new Map([[0, 'x']]),
+      textIndex: 0,
+      reasoningIndex: 1,
+      toolIndex: new Map([['t1', 0]]),
+      toolCount: 2,
+      reasoningStartedAt: new Map([[0, 9]]),
+      nestedDirty: new Set(['t1'])
+    }
+    clearCliTurnDraft(turn)
+    assert.equal(turn.flushTimer, null)
+    assert.equal(turn.blocks.length, 0)
+    assert.equal(turn.buffers.size, 0)
+    assert.equal(turn.textIndex, null)
+    assert.equal(turn.reasoningIndex, null)
+    assert.equal(turn.toolIndex.size, 0)
+    assert.equal(turn.toolCount, 0)
+    assert.equal(turn.reasoningStartedAt.size, 0)
+    assert.equal(turn.nestedDirty.size, 0)
   })
 })

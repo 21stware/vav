@@ -134,3 +134,32 @@ export function stripLeakedStreamErrorFromTurn(turn: {
   }
   return { leaked: split.leaked, replaceIndex: index, replaceText: '' }
 }
+
+/**
+ * The whole streamed reply was a leaked internal error and the turn is
+ * being retried: drop the polluted blocks so the retry streams onto a clean draft.
+ */
+export function clearCliTurnDraft(turn: {
+  flushTimer: ReturnType<typeof setTimeout> | null
+  blocks: unknown[]
+  buffers: { clear(): void }
+  textIndex: number | null
+  reasoningIndex: number | null
+  toolIndex: { clear(): void }
+  toolCount: number
+  reasoningStartedAt: { clear(): void }
+  nestedDirty: { clear(): void }
+}): void {
+  if (turn.flushTimer) {
+    clearTimeout(turn.flushTimer)
+    turn.flushTimer = null
+  }
+  turn.blocks = []
+  turn.buffers.clear()
+  turn.textIndex = null
+  turn.reasoningIndex = null
+  turn.toolIndex.clear()
+  turn.toolCount = 0
+  turn.reasoningStartedAt.clear()
+  turn.nestedDirty.clear()
+}
