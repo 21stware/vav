@@ -139,13 +139,6 @@ test('Workspace, Notifications, About, Usage, Command Line, and File Association
     await expect(settings.locator('[data-testid="settings-about-license"]')).toHaveText(
       'PolyForm Noncommercial'
     )
-    const updatePolicy = settings.locator('[data-testid="settings-auto-update-policy"]')
-    await expect(updatePolicy).toHaveValue('off')
-    await expect(updatePolicy.locator('option')).toHaveCount(4)
-    await settings.getByRole('button', { name: 'Check for Updates' }).click()
-    await expect(settings.locator('[data-testid="settings-about-update-checking"]')).toBeVisible()
-    await updatePolicy.selectOption('notify')
-    await expect.poll(() => readUserSetting(harness.userData, 'autoUpdatePolicy')).toBe('notify')
 
     await settings.locator('[data-testid="settings-nav-analysis"]').click()
     await expect(settings.locator('[data-testid="settings-analysis"]')).toBeVisible()
@@ -157,6 +150,24 @@ test('Workspace, Notifications, About, Usage, Command Line, and File Association
 
     await settings.locator('[data-testid="settings-nav-file-associations"]').click()
     await expect(settings.locator('[data-testid="settings-assoc"]')).toBeVisible()
+  } finally {
+    await harness.dispose()
+  }
+})
+
+test('About update policy persists and Check for Updates shows a loading indicator', async () => {
+  const harness = await launchVav()
+  try {
+    const settings = await openSettingsWindow(harness, 'about')
+    const updatePolicy = settings.locator('[data-testid="settings-auto-update-policy"]')
+    await expect(updatePolicy).toHaveValue('off')
+    await expect(updatePolicy.locator('option')).toHaveCount(4)
+    await settings.getByRole('button', { name: 'Check for Updates' }).click()
+    await expect(settings.locator('[data-testid="settings-about-update-checking"]')).toBeVisible()
+    await updatePolicy.selectOption('download')
+    await expect.poll(() => readUserSetting(harness.userData, 'autoUpdatePolicy')).toBe(
+      'download'
+    )
   } finally {
     await harness.dispose()
   }
