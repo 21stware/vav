@@ -239,7 +239,6 @@ export interface CliAgentHostDeps {
   emit: (event: TurnEvent) => void
   /** Sidebar / composer meta after the host heals locked thinking. */
   publish?: () => void
-  publish?: () => void
   /** Sandbox copy → user-visible path (for streaming drafts). */
   logicalPath?: (path: string) => string
   quota?: {
