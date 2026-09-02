@@ -1,11 +1,14 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import {
+  cursorCatalogueDefaultThinking,
   remoteCatalogModelRows,
   remoteControlAgentRows,
   remoteDefaultApproval,
   remoteHostRecentDirs,
-  remoteLiveConversation
+  remoteHostSwitchAction,
+  remoteLiveConversation,
+  remoteSendDisposition
 } from './sessionGate.ts'
 
 describe('remoteLiveConversation', () => {
@@ -84,6 +87,42 @@ describe('remoteControlAgentRows', () => {
     )
     assert.equal(rows[0]?.label, 'Claude Code')
     assert.equal(rows[1]?.label, 'Pi')
+  })
+})
+
+describe('remoteSendDisposition', () => {
+  it('errors missing/archived, queues a busy live turn, else sends', () => {
+    assert.equal(remoteSendDisposition(undefined, false), 'not-found')
+    assert.equal(remoteSendDisposition({ archived: true }, false), 'archived')
+    assert.equal(remoteSendDisposition({ archived: false }, true), 'enqueue')
+    assert.equal(remoteSendDisposition({}, false), 'send')
+  })
+})
+
+describe('remoteHostSwitchAction', () => {
+  it('no-ops the same host, locks a thread with messages, else switches', () => {
+    assert.equal(remoteHostSwitchAction('claude', 'claude', true), 'same')
+    assert.equal(remoteHostSwitchAction(null, 'cursor', true), 'locked')
+    assert.equal(remoteHostSwitchAction('claude', 'cursor', false), 'switch')
+    assert.equal(remoteHostSwitchAction(null, 'claude', false), 'switch')
+  })
+})
+
+describe('cursorCatalogueDefaultThinking', () => {
+  it('reads the Cursor catalogue default only for a Cursor host + matching id', () => {
+    const snapshot = {
+      cursor: {
+        models: [
+          { id: 'composer', label: 'Composer', defaultThinkingLevel: 'medium' as const },
+          { id: 'grok', label: 'Grok' }
+        ]
+      }
+    }
+    assert.equal(cursorCatalogueDefaultThinking(snapshot, 'composer', 'cursor'), 'medium')
+    assert.equal(cursorCatalogueDefaultThinking(snapshot, 'grok', 'cursor'), null)
+    assert.equal(cursorCatalogueDefaultThinking(snapshot, 'composer', 'claude'), null)
+    assert.equal(cursorCatalogueDefaultThinking(snapshot, '', 'cursor'), null)
+    assert.equal(cursorCatalogueDefaultThinking({}, 'composer', 'cursor'), null)
   })
 })
 

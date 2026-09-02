@@ -21,6 +21,28 @@ export function directoryInspectResult(
   }
 }
 
+export function inspectFileBase(opts: {
+  path: string
+  name: string
+  size: number
+  mtimeMs: number
+  kind: FileInspectResult['kind']
+  mime: string
+}): FileInspectResult {
+  return {
+    ...opts,
+    streamUrl: localFileStreamUrl(opts.path)
+  }
+}
+
+export function inspectErrorOnBase(
+  base: FileInspectResult,
+  err: unknown,
+  fallback?: string
+): FileInspectResult {
+  return { ...base, error: (err as Error).message || fallback || 'error' }
+}
+
 export function inspectCaughtError(path: string, name: string, err: unknown): FileInspectResult {
   return {
     path,

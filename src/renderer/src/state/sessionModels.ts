@@ -95,3 +95,32 @@ export function nextSteppedModelId(
   if (index === -1) return list[0]?.id ?? null
   return list[(index + delta + list.length) % list.length]?.id ?? null
 }
+
+/** Persist the picker choice as the host's default when it actually changed. */
+export function defaultModelSettingsPatch(
+  host: CliHostKind | null | undefined,
+  model: string,
+  settings: {
+    defaultModel?: string | null
+    defaultAgentModels?: Record<string, string> | null
+  }
+): { defaultModel: string } | { defaultAgentModels: Record<string, string> } | null {
+  if (!host) {
+    if (model && model !== settings.defaultModel) return { defaultModel: model }
+    return null
+  }
+  if ((settings.defaultAgentModels?.[host] ?? '') !== model) {
+    return {
+      defaultAgentModels: { ...(settings.defaultAgentModels ?? {}), [host]: model }
+    }
+  }
+  return null
+}
+
+export function defaultThinkingSettingsPatch<T extends string>(
+  level: T | null | undefined,
+  currentDefault: string | null | undefined
+): { defaultThinkingLevel: T } | null {
+  if (level && level !== currentDefault) return { defaultThinkingLevel: level }
+  return null
+}

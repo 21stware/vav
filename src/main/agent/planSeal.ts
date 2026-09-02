@@ -13,8 +13,18 @@ import { projectChecklistInput, sealPlanSteps } from '../../shared/planDoc.ts'
  *   to tick off → done (abandoned work should have been marked skipped mid-turn)
  */
 
-type SealMode = 'cancel' | 'error' | 'success'
 type SealLabels = { cancelled: string; failed: string }
+
+export type PlanSealMode = 'cancel' | 'error' | 'success'
+
+export function planSealMode(
+  cancelled: boolean | null | undefined,
+  error?: string | null
+): PlanSealMode {
+  if (cancelled) return 'cancel'
+  if (error) return 'error'
+  return 'success'
+}
 
 function parseJsonObject(value: string): Record<string, unknown> {
   try {
@@ -50,7 +60,7 @@ function markPlanComplete(
 /** Builtin agent: pretty-print the whole checklist object, default title "Plan". */
 export function sealRuntimePlanBlocks(
   blocks: MessageBlock[],
-  mode: SealMode,
+  mode: PlanSealMode,
   labels: SealLabels
 ): void {
   for (const block of blocks) {
@@ -65,7 +75,7 @@ export function sealRuntimePlanBlocks(
 /** CLI host: skip empty checklists and write compact `{ title, steps }`. */
 export function sealCliPlanBlocks(
   blocks: MessageBlock[],
-  mode: SealMode,
+  mode: PlanSealMode,
   labels: SealLabels
 ): void {
   for (const block of blocks) {

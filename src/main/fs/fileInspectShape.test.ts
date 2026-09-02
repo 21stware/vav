@@ -6,6 +6,8 @@ import {
   directoryInspectResult,
   heicInspectResult,
   inspectCaughtError,
+  inspectErrorOnBase,
+  inspectFileBase,
   legacyBinaryInspect,
   officeFirstPaintInspect,
   remappedConvertedInspect,
@@ -37,6 +39,22 @@ describe('fileInspectShape', () => {
       kind: 'directory',
       mime: 'inode/directory'
     })
+  })
+
+  it('stamps a stream URL on the inspect base and overlays catch errors', () => {
+    const base = inspectFileBase({
+      path: '/notes.md',
+      name: 'notes.md',
+      size: 12,
+      mtimeMs: 9,
+      kind: 'text',
+      mime: 'text/plain'
+    })
+    assert.equal(base.streamUrl, 'vav-local://preview/?path=%2Fnotes.md')
+    assert.equal(base.kind, 'text')
+    assert.equal(inspectErrorOnBase(base, new Error('disk'), 'fallback').error, 'disk')
+    assert.equal(inspectErrorOnBase(base, new Error(''), 'fallback').error, 'fallback')
+    assert.equal(inspectErrorOnBase(base, {}).error, 'error')
   })
 
   it('windows text, sqlite tables, HEIC sidecars, and binary fallbacks', () => {

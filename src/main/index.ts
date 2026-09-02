@@ -230,11 +230,14 @@ import { mapRemoteSessions } from './remote/sessionList'
 import { fanRemoteTurn as dispatchRemoteTurn } from './remote/fanTurn'
 import { listRemoteChildEntries, listRemoteRootEntries } from './remote/dirBrowse'
 import {
+  cursorCatalogueDefaultThinking,
   remoteCatalogModelRows,
   remoteControlAgentRows,
   remoteDefaultApproval,
   remoteHostRecentDirs,
-  remoteLiveConversation
+  remoteHostSwitchAction,
+  remoteLiveConversation,
+  remoteSendDisposition
 } from './remote/sessionGate'
 import { RemoteSendQueue } from './remote/sendQueue'
 import { createScreenshotController } from './screenshot/ScreenshotSession'
@@ -1513,12 +1516,11 @@ function listRemoteControls(conversationId: string): RemoteControlsEvent | null 
   const settings = settingsStore.get()
   const agents = remoteControlAgentRows(settings.cliAgents)
   const models = remoteCatalogModels(host, conversation.accountId)
-  const catalogueDefault =
-    host === 'cursor'
-      ? (getModelCatalogSnapshot()[agentModelHostKey('cursor')]?.models ?? []).find(
-          (model) => model.id === conversation.model
-        )?.defaultThinkingLevel ?? null
-      : null
+  const catalogueDefault = cursorCatalogueDefaultThinking(
+    getModelCatalogSnapshot(),
+    conversation.model,
+    host
+  )
   return buildRemoteControls({
     conversationId,
     cliHost: host,
@@ -1548,8 +1550,13 @@ function configureRemote(message: RemoteConfigure): 'ok' | 'not-found' | 'archiv
     if (!parsed) return 'not-found'
     const nextHost = parsed === 'vav' ? null : parsed
     const prevHost = conversation.cliHost ?? null
-    if (prevHost !== nextHost) {
-      if (conversation.messages.length > 0) return 'locked'
+    const action = remoteHostSwitchAction(
+      prevHost,
+      nextHost,
+      conversation.messages.length > 0
+    )
+    if (action === 'locked') return 'locked'
+    if (action === 'switch') {
       agent.disposeConversation(id)
       cliHost.dispose(id)
       changeSetStore.clearConversation(id)
@@ -1644,9 +1651,12 @@ function remoteSendMessage(
   attachments: string[] = []
 ): 'ok' | 'not-found' | 'archived' {
   const conversation = conversationStore.get(conversationId)
-  if (!conversation) return 'not-found'
-  if (conversation.archived) return 'archived'
-  if (remoteTurnBusy(conversationId)) {
+  const disposition = remoteSendDisposition(
+    conversation,
+    conversation ? remoteTurnBusy(conversationId) : false
+  )
+  if (disposition === 'not-found' || disposition === 'archived') return disposition
+  if (disposition === 'enqueue') {
     pendingRemoteSends.enqueue(conversationId, text, attachments)
     return 'ok'
   }

@@ -2,7 +2,8 @@ import {
   enabledCliAgents,
   type AgentConfig,
   type CliHostKind,
-  type ModelOption
+  type ModelOption,
+  type ThinkingLevel
 } from '../../shared/types.ts'
 import { isStructuredCliHost } from '../../shared/cliHost.ts'
 import {
@@ -93,4 +94,38 @@ export function remoteCatalogModelRows(opts: {
     id: model.id,
     label: labelForChatModel(opts.host, model.id, opts.customModels, listed)
   }))
+}
+
+/** Phone send: missing/archived stay errors; a live busy turn queues. */
+export function remoteSendDisposition(
+  conversation: { archived?: boolean } | null | undefined,
+  busy: boolean
+): 'not-found' | 'archived' | 'enqueue' | 'send' {
+  const live = remoteLiveConversation(conversation)
+  if (live !== 'ok') return live
+  return busy ? 'enqueue' : 'send'
+}
+
+/** Host switch is locked once the thread has messages. */
+export function remoteHostSwitchAction(
+  prevHost: string | null,
+  nextHost: string | null,
+  hasMessages: boolean
+): 'same' | 'locked' | 'switch' {
+  if (prevHost === nextHost) return 'same'
+  if (hasMessages) return 'locked'
+  return 'switch'
+}
+
+/** Cursor catalogue advertised thinking default for the current model id. */
+export function cursorCatalogueDefaultThinking(
+  snapshot: Record<string, { models?: ModelOption[] } | undefined>,
+  model: string | null | undefined,
+  host: string | null | undefined
+): ThinkingLevel | null {
+  if (host !== 'cursor' || !model) return null
+  return (
+    (snapshot[agentModelHostKey('cursor')]?.models ?? []).find((entry) => entry.id === model)
+      ?.defaultThinkingLevel ?? null
+  )
 }

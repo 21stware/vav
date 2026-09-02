@@ -77,7 +77,7 @@ import {
   type DriverEvent
 } from './drivers'
 import { shouldReplaceCliRuntime } from './cliWorkspaceRestart'
-import { sealCliPlanBlocks } from './planSeal'
+import { sealCliPlanBlocks, planSealMode } from './planSeal'
 import { composeCliPrompt } from './cliPrompt'
 import { nextAllowedThinkingLevel } from './thinkingClamp'
 import { estimatedContextFill } from './contextFill'
@@ -86,6 +86,7 @@ import { userTurnMessage } from './agentMessage'
 import {
   applyCliCancelQuota,
   cliAssistantMessage,
+  shouldSettleAsCancelled,
   stripLeakedStreamErrorFromTurn
 } from './cliTurnFinish'
 import {
@@ -1740,7 +1741,7 @@ export class CliAgentHost {
     this.sealOpenReasoning(turn)
 
     expireOpenTools(turn.blocks, turn.cancelled)
-    sealCliPlanBlocks(turn.blocks, turn.cancelled ? 'cancel' : turn.error ? 'error' : 'success', {
+    sealCliPlanBlocks(turn.blocks, planSealMode(turn.cancelled, turn.error), {
       cancelled: t('common.cancelled'),
       failed: t('common.failed')
     })
@@ -1962,7 +1963,7 @@ export class CliAgentHost {
   ): Promise<void> {
     if (!this.turns.has(conversationId) || this.turns.get(conversationId) !== turn) return
     if (turn.settling) return
-    if (turn.cancelled || classifyCliError(raw, null, code) === 'cancelled') {
+    if (shouldSettleAsCancelled(turn.cancelled, raw, code)) {
       turn.cancelled = true
       turn.error = undefined
       turn.errorKind = undefined

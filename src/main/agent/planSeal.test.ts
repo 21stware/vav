@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import type { MessageBlock } from '../../shared/types.ts'
-import { sealCliPlanBlocks, sealRuntimePlanBlocks } from './planSeal.ts'
+import { planSealMode, sealCliPlanBlocks, sealRuntimePlanBlocks } from './planSeal.ts'
 
 const labels = { cancelled: 'Cancelled', failed: 'Failed' }
 
@@ -16,6 +16,16 @@ function plan(input: string): Extract<MessageBlock, { kind: 'toolCall' }> {
     status: 'executing'
   }
 }
+
+describe('planSealMode', () => {
+  it('prefers cancel, then error, then success', () => {
+    assert.equal(planSealMode(true, 'boom'), 'cancel')
+    assert.equal(planSealMode(false, 'boom'), 'error')
+    assert.equal(planSealMode(false, ''), 'success')
+    assert.equal(planSealMode(false, null), 'success')
+    assert.equal(planSealMode(false), 'success')
+  })
+})
 
 describe('planSeal', () => {
   it('marks leftover builtin steps done and pretty-prints the checklist', () => {

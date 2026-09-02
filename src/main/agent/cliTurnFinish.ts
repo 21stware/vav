@@ -1,6 +1,15 @@
 import { classifyCliError, splitStreamedRetriableError } from '../../shared/cliErrors.ts'
 import type { ChatMessage, MessageBlock } from '../../shared/types.ts'
 
+/** Cancelled turns skip the retry ladder and seal immediately. */
+export function shouldSettleAsCancelled(
+  cancelled: boolean,
+  raw: string,
+  code?: number | null
+): boolean {
+  return cancelled || classifyCliError(raw, null, code) === 'cancelled'
+}
+
 /** CLI transcripts join text blocks with a blank line and trim the result. */
 export function cliAssistantContent(blocks: MessageBlock[]): string {
   return blocks

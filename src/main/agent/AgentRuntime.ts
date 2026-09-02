@@ -26,7 +26,7 @@ import { parseThinkingLevel, toPiReasoning } from '@shared/thinkingLevel'
 import type { LeafCompaction } from '@shared/types'
 import { applyEditedArgs, leanToolArgs } from './agentToolArgs'
 import { isAssistant, stripChangeSetIds, textOf, userTurnMessage, systemNoticeMessage, fatalAssistantMessage } from './agentMessage'
-import { sealRuntimePlanBlocks } from './planSeal'
+import { sealRuntimePlanBlocks, planSealMode } from './planSeal'
 import {
   appendTurnErrorBlock,
   assistantSnapshotFromTurn,
@@ -1371,12 +1371,7 @@ export class AgentRuntime {
 
     // Seal plan checklist to match turn outcome. Models often finish the work
     // then reply without a last `plan` call — without this the UI stays "paused".
-    const planMode: 'cancel' | 'error' | 'success' = turn.cancelled
-      ? 'cancel'
-      : turn.error
-        ? 'error'
-        : 'success'
-    sealRuntimePlanBlocks(turn.blocks, planMode, {
+    sealRuntimePlanBlocks(turn.blocks, planSealMode(turn.cancelled, turn.error), {
       cancelled: t('common.cancelled'),
       failed: t('common.failed')
     })

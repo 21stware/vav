@@ -126,7 +126,7 @@ import { notifyImageAttachPlan, trimAttachmentPathsForHost } from './sessionAtta
 import { persistSwarmLayout, setLeaf } from './sessionSwarm'
 import { swarmBlocksWorkdirSwitch as swarmSurfaceBlocksWorkdir, locateWorkspaceDefaultName } from '../lib/workdirSwitch'
 import { nextFavoriteIds, nextPinnedWorkspaceDirs, archivedListModePatch } from './sessionPins'
-import { chatHostPickerModels, coercedChatHostModel, nextSteppedModelId } from './sessionModels'
+import { chatHostPickerModels, coercedChatHostModel, defaultModelSettingsPatch, defaultThinkingSettingsPatch, nextSteppedModelId } from './sessionModels'
 
 function swarmBlocksWorkdirSwitch(
   id: string | null | undefined,
@@ -1402,15 +1402,8 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       }))
       const host = get().conversations.find((c) => c.id === id)?.cliHost ?? null
       const settings = get().settings
-      if (!host) {
-        if (model && model !== settings.defaultModel) {
-          void get().updateSettings({ defaultModel: model })
-        }
-      } else if ((settings.defaultAgentModels?.[host] ?? '') !== model) {
-        void get().updateSettings({
-          defaultAgentModels: { ...settings.defaultAgentModels, [host]: model }
-        })
-      }
+      const defaults = defaultModelSettingsPatch(host, model, settings)
+      if (defaults) void get().updateSettings(defaults)
     } catch (err) {
       console.error('[setModel] failed', err)
     }
@@ -1709,9 +1702,8 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       set((state) => ({
         conversations: mergeConversationList(state.conversations, list)
       }))
-      if (level && level !== get().settings.defaultThinkingLevel) {
-        void get().updateSettings({ defaultThinkingLevel: level })
-      }
+      const thinking = defaultThinkingSettingsPatch(level, get().settings.defaultThinkingLevel)
+      if (thinking) void get().updateSettings(thinking)
     } catch (err) {
       console.error('[setThinkingLevel] failed', err)
     }

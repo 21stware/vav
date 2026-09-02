@@ -4,6 +4,8 @@ import {
   builtinCatalogVendorId,
   chatHostPickerModels,
   coercedChatHostModel,
+  defaultModelSettingsPatch,
+  defaultThinkingSettingsPatch,
   nextSteppedModelId
 } from './sessionModels.ts'
 
@@ -78,5 +80,41 @@ describe('chatHostPickerModels / coercedChatHostModel', () => {
       }),
       'opus'
     )
+  })
+})
+
+describe('defaultModelSettingsPatch / defaultThinkingSettingsPatch', () => {
+  it('writes the builtin default only when the picker actually changed', () => {
+    assert.deepEqual(
+      defaultModelSettingsPatch(null, 'sonnet', { defaultModel: 'opus' }),
+      { defaultModel: 'sonnet' }
+    )
+    assert.equal(defaultModelSettingsPatch(null, 'opus', { defaultModel: 'opus' }), null)
+    assert.equal(defaultModelSettingsPatch(null, '', { defaultModel: 'opus' }), null)
+  })
+
+  it('patches the CLI host map and keeps sibling defaults', () => {
+    assert.deepEqual(
+      defaultModelSettingsPatch('claude', 'sonnet', {
+        defaultAgentModels: { claude: 'opus', cursor: 'composer' }
+      }),
+      { defaultAgentModels: { claude: 'sonnet', cursor: 'composer' } }
+    )
+    assert.equal(
+      defaultModelSettingsPatch('claude', 'opus', { defaultAgentModels: { claude: 'opus' } }),
+      null
+    )
+    assert.deepEqual(defaultModelSettingsPatch('cursor', 'composer', {}), {
+      defaultAgentModels: { cursor: 'composer' }
+    })
+  })
+
+  it('writes thinking only when a new non-empty level is chosen', () => {
+    assert.deepEqual(defaultThinkingSettingsPatch('high', 'medium'), {
+      defaultThinkingLevel: 'high'
+    })
+    assert.equal(defaultThinkingSettingsPatch('high', 'high'), null)
+    assert.equal(defaultThinkingSettingsPatch('', 'high'), null)
+    assert.equal(defaultThinkingSettingsPatch(null, 'high'), null)
   })
 })

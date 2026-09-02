@@ -57,6 +57,8 @@ import {
   directoryInspectResult,
   heicInspectResult,
   inspectCaughtError,
+  inspectErrorOnBase,
+  inspectFileBase,
   legacyBinaryInspect,
   officeFirstPaintInspect,
   remappedConvertedInspect,
@@ -549,15 +551,14 @@ export class FileService {
         kind = 'text'
       }
       const mime = mimeFor(name, kind)
-      const base: FileInspectResult = {
+      const base = inspectFileBase({
         path,
         name,
         size: info.size,
         mtimeMs: info.mtimeMs,
         kind,
-        mime,
-        streamUrl: localFileStreamUrl(path)
-      }
+        mime
+      })
 
       if (kind === 'text' || kind === 'csv' || kind === 'html' || kind === 'html-clip') {
         const win = await this.readTextWindow(path, { startByte: 0, maxBytes: TEXT_WINDOW_BYTES })
@@ -574,17 +575,14 @@ export class FileService {
           const heic = await prepareHeicPreview(path)
           return heicInspectResult(base, heic)
         }
-        return {
-          ...base,
-          streamUrl: localFileStreamUrl(path)
-        }
+        return base
       }
 
       if (kind === 'sqlite') {
         try {
           return sqliteInspectResult(base, inspectSqlite(path))
         } catch (err) {
-          return { ...base, error: (err as Error).message || t('files.error.unsupported') }
+          return inspectErrorOnBase(base, err, t('files.error.unsupported'))
         }
       }
 

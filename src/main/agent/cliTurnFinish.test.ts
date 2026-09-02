@@ -5,8 +5,17 @@ import {
   applyCliCancelQuota,
   cliAssistantContent,
   cliAssistantMessage,
+  shouldSettleAsCancelled,
   stripLeakedStreamErrorFromTurn
 } from './cliTurnFinish.ts'
+
+describe('shouldSettleAsCancelled', () => {
+  it('settles when the turn was already cancelled or the error is a cancel', () => {
+    assert.equal(shouldSettleAsCancelled(true, 'boom'), true)
+    assert.equal(shouldSettleAsCancelled(false, 'Request cancelled'), true)
+    assert.equal(shouldSettleAsCancelled(false, 'network timeout'), false)
+  })
+})
 
 describe('cliAssistantContent', () => {
   it('joins text with blank lines and trims', () => {
