@@ -32,7 +32,7 @@ import { sortEntries } from './fileEntrySort'
 import { modeToPermissions } from './fileMode'
 import { joinOnHostPath } from './fileHostPath'
 import { mimeHintToUti } from './fileUti'
-import { inspectZipArchive, zipInspectWarnings, zipTreeText } from './fileZipArchive'
+import { inspectZipArchive, zipInspectFailure, zipInspectSuccess } from './fileZipArchive'
 import { looksLikeTextFile } from './fileTextSample'
 import { defaultAppDisplayName, mdlsRaw } from './fileMacMeta'
 import { inodeLabel, ownerLabel, statTimeMs } from './fileBinaryMeta'
@@ -693,50 +693,10 @@ export class FileService {
         // Structure-only tree. Large archives skip full-buffer JSZip; on failure open empty canvas.
         try {
           const zip = await inspectZipArchive(hostFs, path, info.size)
-          const treeText = zipTreeText(zip.entries)
-          const warnings = zipInspectWarnings({
-            encrypted: zip.encrypted,
-            truncated: zip.truncated,
-            fileSize: info.size
-          })
-          return {
-            ...base,
-            zip: {
-              entries: zip.entries,
-              entryCount: zip.entryCount,
-              compressedSize: zip.compressedSize,
-              uncompressedSize: zip.uncompressedSize,
-              ratio: zip.ratio
-            },
-            zipEncrypted: zip.encrypted,
-            truncated: zip.truncated || undefined,
-            text: treeText,
-            lineCount: zip.entries.length,
-            warnings: warnings.length ? warnings : undefined
-          }
+          return zipInspectSuccess(base, zip, info.size)
         } catch (err) {
           console.error('[files] zip inspect failed', path, err)
-          const msg = (err as Error).message || ''
-          const encrypted = /password|encrypt|encrypted/i.test(msg)
-          return {
-            ...base,
-            zip: {
-              entries: [],
-              entryCount: 0,
-              compressedSize: info.size,
-              uncompressedSize: 0,
-              ratio: 0
-            },
-            zipEncrypted: encrypted,
-            truncated: true,
-            text: '',
-            lineCount: 0,
-            warnings: [
-              encrypted
-                ? 'Password-protected ZIP — structure unavailable without a password (not prompted in-app).'
-                : `Could not index ZIP structure: ${msg || 'unknown error'}`
-            ]
-          }
+          return zipInspectFailure(base, info.size, err)
         }
       }
 

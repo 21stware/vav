@@ -80,6 +80,7 @@ import {
   workspaceRef
 } from '@shared/workspaceHost'
 import { focusedCliPaneId, measureCliPaneRects } from '../lib/cliPaneNavigate'
+import { cwdFromSliceOrMeta } from '../lib/terminalCwd'
 
 export type { TerminalLayoutNode, TerminalSplitAxis }
 export { CLI_SURFACE_KEY, makePendingCliTab, type AgentHostSession }
@@ -185,15 +186,17 @@ async function resolveTerminalCwd(conversationId: string, sliceRoot: string | nu
     const { useSessionStore } = await import('./sessionStore')
     const state = useSessionStore.getState()
     const meta = state.conversations.find((c) => c.id === conversationId)
-    const fromMeta = meta?.workingDirectory
-    if (fromMeta && fromMeta !== '~') return fromMeta
-    if (!meta || isLocalMachine(meta.machineId)) {
-      const fromSettings = state.settings.defaultWorkingDirectory?.trim()
-      if (fromSettings) return fromSettings
-    } else {
-      const host = state.hosts.find((h) => h.id === normalizeMachineId(meta.machineId))
-      if (host?.home) return host.home
-    }
+    const fromStore = cwdFromSliceOrMeta({
+      sliceRoot: null,
+      workingDirectory: meta?.workingDirectory,
+      machineId: meta?.machineId,
+      defaultWorkingDirectory: state.settings.defaultWorkingDirectory,
+      hostHome: meta
+        ? state.hosts.find((h) => h.id === normalizeMachineId(meta.machineId))?.home
+        : null,
+      isLocalMachine
+    })
+    if (fromStore) return fromStore
   } catch {
     // fall through to IPC
   }
@@ -203,12 +206,14 @@ async function resolveTerminalCwd(conversationId: string, sliceRoot: string | nu
       window.vav.conversations.list()
     ])
     const meta = metas.find((c) => c.id === conversationId)
-    const fromMeta = meta?.workingDirectory
-    if (fromMeta && fromMeta !== '~') return fromMeta
-    if (!meta || isLocalMachine(meta.machineId)) {
-      const fromSettings = settings.defaultWorkingDirectory?.trim()
-      if (fromSettings) return fromSettings
-    }
+    const fromIpc = cwdFromSliceOrMeta({
+      sliceRoot: null,
+      workingDirectory: meta?.workingDirectory,
+      machineId: meta?.machineId,
+      defaultWorkingDirectory: settings.defaultWorkingDirectory,
+      isLocalMachine
+    })
+    if (fromIpc) return fromIpc
   } catch {
     // bootstrap below
   }

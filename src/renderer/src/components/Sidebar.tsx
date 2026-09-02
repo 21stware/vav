@@ -43,7 +43,8 @@ import {
   flattenSessionTitle,
   groupingOptions,
   hostMachineLabel,
-  incomingConnectLabels
+  incomingConnectLabels,
+  pinnableWorkspaceDir
 } from '../lib/sidebarList'
 import { ConvBracket, type SwarmBracketKind } from './sidebar/ConvBracket'
 import { RenameField } from './sidebar/RenameField'
@@ -815,15 +816,15 @@ export function Sidebar({
     const collapsible = group.kind === 'workspace'
     const collapsed = collapsible && collapsedKeys.has(group.key)
     const groupWorkdir = group.workdir ?? group.conversations[0]?.workingDirectory ?? null
-    // Project path groups can pin / aggregate; they are not a selectable surface.
-    const workspacePinnable =
-      group.kind === 'workspace' &&
-      group.workspaceSelectable !== false &&
-      !!groupWorkdir &&
-      !groupWorkdir.startsWith('__') &&
-      !isTemporaryWorkspace(groupWorkdir, tmp)
     // A Temporary Workspace is minted per session and has no durable path to pin.
-    const pinnableWorkdir = workspacePinnable ? groupWorkdir : null
+    const pinnableWorkdir = pinnableWorkspaceDir({
+      groupKind: group.kind,
+      workspaceSelectable: group.workspaceSelectable,
+      groupWorkdir,
+      tmp,
+      isTemporaryWorkspace
+    })
+    const workspacePinnable = pinnableWorkdir != null
     const workspacePinned = !!pinnableWorkdir && pinnedWorkspaces.includes(pinnableWorkdir)
     return (
       <div

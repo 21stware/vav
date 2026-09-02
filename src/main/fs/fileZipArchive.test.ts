@@ -8,6 +8,8 @@ import {
   probeZipEncrypted,
   summarizeZipArchive,
   ZIP_FULL_LOAD_MAX,
+  zipInspectFailure,
+  zipInspectSuccess,
   zipInspectWarnings,
   zipTreeText
 } from './fileZipArchive.ts'
@@ -126,6 +128,38 @@ describe('zipTreeText / zipInspectWarnings', () => {
     assert.equal(warnings.length, 2)
     assert.match(warnings[0]!, /password-protected/)
     assert.match(warnings[1]!, /80 MB/)
+  })
+})
+
+describe('zipInspectSuccess / zipInspectFailure', () => {
+  const base = {
+    path: '/a.zip',
+    name: 'a.zip',
+    size: 100,
+    kind: 'zip' as const,
+    mime: 'application/zip'
+  }
+
+  it('fills tree text and zip meta from a successful index', () => {
+    const zip = summarizeZipArchive(
+      [{ path: 'a.txt', name: 'a.txt', isDirectory: false, compressedSize: 10, uncompressedSize: 20 }],
+      100,
+      false,
+      false
+    )
+    const result = zipInspectSuccess(base, zip, 100)
+    assert.equal(result.text, 'F a.txt')
+    assert.equal(result.zip?.entryCount, 1)
+    assert.equal(result.zipEncrypted, false)
+    assert.equal(result.warnings, undefined)
+  })
+
+  it('marks encrypted failures and keeps an empty tree', () => {
+    const result = zipInspectFailure(base, 4096, new Error('encrypted archive'))
+    assert.equal(result.zipEncrypted, true)
+    assert.equal(result.truncated, true)
+    assert.equal(result.zip?.entryCount, 0)
+    assert.match(result.warnings?.[0] ?? '', /Password-protected/)
   })
 })
 

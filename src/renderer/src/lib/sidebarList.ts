@@ -140,3 +140,24 @@ export function incomingConnectLabels(
   }
   return labels
 }
+
+/** Durable project path that can be pinned; temp / synthetic groups cannot. */
+export function pinnableWorkspaceDir(opts: {
+  groupKind: string
+  workspaceSelectable?: boolean
+  groupWorkdir: string | null | undefined
+  tmp: string
+  isTemporaryWorkspace: (path: string | null, tmp: string) => boolean
+}): string | null {
+  const dir = opts.groupWorkdir ?? null
+  if (
+    opts.groupKind !== 'workspace' ||
+    opts.workspaceSelectable === false ||
+    !dir ||
+    dir.startsWith('__') ||
+    opts.isTemporaryWorkspace(dir, opts.tmp)
+  ) {
+    return null
+  }
+  return dir
+}

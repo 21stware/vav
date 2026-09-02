@@ -58,6 +58,7 @@ import {
 import { buildSystemPrompt } from './systemPrompt'
 import { summarizeToolInput } from './toolSummarize'
 import { stampReasoningDurations } from './reasoningStamp'
+import { newCliToolCallBlock } from './cliToolBlock'
 import { FileDraftCoalescer, writeToolDraft } from '@shared/writeToolDraft'
 import type { ConversationStore } from '../store/ConversationStore'
 import { kindFromFilePath } from '../store/FileSessionStore'
@@ -1389,15 +1390,12 @@ export class AgentRuntime {
   private ensureToolBlock(turn: TurnState, toolCallId: string, summary: string): void {
     const existing = turn.blocks.findIndex((b) => b.kind === 'toolCall' && b.id === toolCallId)
     if (existing >= 0) return
-    const block: ToolCallBlock = {
-      kind: 'toolCall',
+    const block = newCliToolCallBlock({
       id: toolCallId,
       tool: 'terminal',
       summary: summary || toolCallId,
-      input: '{}',
-      output: '',
-      status: 'pending'
-    }
+      input: '{}'
+    })
     turn.blocks.push(block)
   }
 

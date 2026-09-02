@@ -96,7 +96,7 @@ import {
   cliAssistantMessage,
   stripLeakedStreamErrorFromTurn
 } from './cliTurnFinish'
-import { stampReasoningDurations } from './reasoningStamp'
+import { newCliToolCallBlock, applyToolEventStatus } from './cliToolBlock'
 import {
   applyCliHistoryHandoff,
   formatCliWorkspaceHandoff,
@@ -1279,15 +1279,12 @@ export class CliAgentHost {
     if (index == null) {
       index = turn.blocks.length
       turn.toolIndex.set(event.id, index)
-      const block: ToolCallBlock = {
-        kind: 'toolCall',
+      const block = newCliToolCallBlock({
         id: event.id,
         tool: mapToolName(event.name),
         summary: event.title || summarizeCliTool(event.name, event.input) || event.name,
-        input: inputJson(event.input),
-        output: '',
-        status: 'pending'
-      }
+        input: inputJson(event.input)
+      })
       turn.blocks.push(block)
       // New content after a tool should open fresh text/reasoning slots
       this.sealOpenReasoning(turn)
@@ -1345,15 +1342,12 @@ export class CliAgentHost {
       index = turn.blocks.length
       turn.toolIndex.set(event.id, index)
       const title = event.title || incoming.title || event.name
-      const block: ToolCallBlock = {
-        kind: 'toolCall',
+      const block = newCliToolCallBlock({
         id: event.id,
         tool: 'plan',
         summary: title,
-        input: inputJson(incoming),
-        output: '',
-        status: 'pending'
-      }
+        input: inputJson(incoming)
+      })
       turn.blocks.push(block)
       this.sealOpenReasoning(turn)
       turn.textIndex = null
@@ -1395,15 +1389,12 @@ export class CliAgentHost {
     parent.children ??= []
     let child = findToolBlock(parent.children, event.id)
     if (!child) {
-      child = {
-        kind: 'toolCall',
+      child = newCliToolCallBlock({
         id: event.id,
         tool: mapToolName(event.name),
         summary: event.title || summarizeCliTool(event.name, event.input) || event.name,
-        input: inputJson(event.input),
-        output: '',
-        status: 'pending'
-      }
+        input: inputJson(event.input)
+      })
       parent.children.push(child)
     }
     this.patchToolBlock(child, event)
@@ -1419,40 +1410,31 @@ export class CliAgentHost {
     event: Extract<DriverEvent, { type: 'tool' }>
   ): void {
     if (event.status === 'started' || event.status === 'updated') {
-      const parked = block.status === 'pending' && (block.tool === 'plan_doc' || block.tool === 'ask_user_question')
-      if (!parked) block.status = 'executing'
+      applyToolEventStatus(block, event.status)
       if (event.input && Object.keys(event.input as object).length) {
         block.input = inputJson(event.input)
         block.summary = event.title || summarizeCliTool(event.name, event.input) || event.name
-        // ACP tool_call_update is a patch and may omit name/kind — never regress
-        // a specific mapping back to 'external' on a sparse update.
         const mapped = mapToolName(event.name)
         if (mapped !== 'external' || block.tool === 'external') block.tool = mapped
       } else if (event.title) {
         block.summary = event.title
       }
-    } else if (event.status === 'completed') {
-      block.status = 'completed'
-      block.output = event.output ?? block.output
-    } else if (event.status === 'error') {
-      block.status = 'error'
-      block.output = event.output ?? block.output
+    } else if (event.status === 'completed' || event.status === 'error') {
+      applyToolEventStatus(block, event.status, event.output ?? block.output)
     }
   }
 
   private ensureParentTask(turn: HostTurn, parentId: string): ToolCallBlock {
     const existing = findToolBlock(turn.blocks, parentId)
     if (existing) return existing
-    const block: ToolCallBlock = {
-      kind: 'toolCall',
+    const block = newCliToolCallBlock({
       id: parentId,
       tool: 'task',
       summary: t('tool.task'),
       input: '{}',
-      output: '',
       status: 'executing',
       children: []
-    }
+    })
     turn.toolIndex.set(parentId, turn.blocks.length)
     turn.blocks.push(block)
     this.sealOpenReasoning(turn)
@@ -1604,18 +1586,15 @@ export class CliAgentHost {
     if (index == null) {
       index = turn.blocks.length
       turn.toolIndex.set(event.toolCallId, index)
-      block = {
-        kind: 'toolCall',
+      block = newCliToolCallBlock({
         id: event.toolCallId,
         tool,
         summary,
         input: inputJson(event.input),
-        output: '',
-        status: 'pending',
         questions,
         askTitle: event.title,
         choices: event.kind === 'url' ? [t('common.open'), t('common.cancel')] : undefined
-      }
+      })
       turn.blocks.push(block)
       this.sealOpenReasoning(turn)
       turn.textIndex = null
@@ -1686,17 +1665,14 @@ export class CliAgentHost {
     const toolCallId = `perm-${event.requestId}`
     const index = turn.blocks.length
     turn.toolIndex.set(toolCallId, index)
-    const block: ToolCallBlock = {
-      kind: 'toolCall',
+    const block = newCliToolCallBlock({
       id: toolCallId,
       tool: 'request',
       summary: event.summary || event.toolName,
       input: inputJson(event.input ?? { tool: event.toolName, detail: event.detail }),
-      output: '',
-      status: 'pending',
       choices: ['Approve', 'Deny'],
       askTitle: event.toolName
-    }
+    })
     turn.blocks.push(block)
     turn.pendingPermissions.set(toolCallId, {
       requestId: event.requestId,

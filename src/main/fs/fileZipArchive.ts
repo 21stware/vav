@@ -1,6 +1,6 @@
 import { basename } from 'node:path'
 import JSZip from 'jszip'
-import type { ZipArchiveInfo, ZipEntryInfo } from '../../shared/ipc.ts'
+import type { FileInspectResult, ZipArchiveInfo, ZipEntryInfo } from '../../shared/ipc.ts'
 import type { HostFs } from '../host/HostFs.ts'
 import { zipLocalHeadersEncrypted } from './fileZip.ts'
 
@@ -60,6 +60,62 @@ export function zipInspectWarnings(opts: {
     )
   }
   return warnings
+}
+
+export function zipInspectSuccess(
+  base: FileInspectResult,
+  zip: ZipArchiveInspect,
+  fileSize: number
+): FileInspectResult {
+  const treeText = zipTreeText(zip.entries)
+  const warnings = zipInspectWarnings({
+    encrypted: zip.encrypted,
+    truncated: zip.truncated,
+    fileSize
+  })
+  return {
+    ...base,
+    zip: {
+      entries: zip.entries,
+      entryCount: zip.entryCount,
+      compressedSize: zip.compressedSize,
+      uncompressedSize: zip.uncompressedSize,
+      ratio: zip.ratio
+    },
+    zipEncrypted: zip.encrypted,
+    truncated: zip.truncated || undefined,
+    text: treeText,
+    lineCount: zip.entries.length,
+    warnings: warnings.length ? warnings : undefined
+  }
+}
+
+export function zipInspectFailure(
+  base: FileInspectResult,
+  fileSize: number,
+  err: unknown
+): FileInspectResult {
+  const msg = (err as Error).message || ''
+  const encrypted = /password|encrypt|encrypted/i.test(msg)
+  return {
+    ...base,
+    zip: {
+      entries: [],
+      entryCount: 0,
+      compressedSize: fileSize,
+      uncompressedSize: 0,
+      ratio: 0
+    },
+    zipEncrypted: encrypted,
+    truncated: true,
+    text: '',
+    lineCount: 0,
+    warnings: [
+      encrypted
+        ? 'Password-protected ZIP — structure unavailable without a password (not prompted in-app).'
+        : `Could not index ZIP structure: ${msg || 'unknown error'}`
+    ]
+  }
 }
 
 /** Probe ZIP local-file headers for encryption without loading the whole archive. */

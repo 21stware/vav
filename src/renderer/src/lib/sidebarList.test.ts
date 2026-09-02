@@ -12,7 +12,8 @@ import {
   conversationSelectionRunClass,
   adjacentRunClass,
   hostMachineLabel,
-  incomingConnectLabels
+  incomingConnectLabels,
+  pinnableWorkspaceDir
 } from './sidebarList.ts'
 
 function conv(partial: Partial<ConversationMeta> & Pick<ConversationMeta, 'id'>): ConversationMeta {
@@ -138,6 +139,59 @@ describe('hostMachineLabel / incomingConnectLabels', () => {
     assert.deepEqual(
       incomingConnectLabels([{ device: 'Phone' }, { device: null }, {}], (name) => `via ${name}`),
       ['via Phone']
+    )
+  })
+})
+
+describe('pinnableWorkspaceDir', () => {
+  const temp = (path: string | null) => path === '/tmp/ws'
+
+  it('pins a durable workspace path and rejects temp or synthetic groups', () => {
+    assert.equal(
+      pinnableWorkspaceDir({
+        groupKind: 'workspace',
+        groupWorkdir: '/proj',
+        tmp: '/tmp',
+        isTemporaryWorkspace: temp
+      }),
+      '/proj'
+    )
+    assert.equal(
+      pinnableWorkspaceDir({
+        groupKind: 'workspace',
+        groupWorkdir: '/tmp/ws',
+        tmp: '/tmp',
+        isTemporaryWorkspace: temp
+      }),
+      null
+    )
+    assert.equal(
+      pinnableWorkspaceDir({
+        groupKind: 'workspace',
+        groupWorkdir: '__none__',
+        tmp: '/tmp',
+        isTemporaryWorkspace: temp
+      }),
+      null
+    )
+    assert.equal(
+      pinnableWorkspaceDir({
+        groupKind: 'provider',
+        groupWorkdir: '/proj',
+        tmp: '/tmp',
+        isTemporaryWorkspace: temp
+      }),
+      null
+    )
+    assert.equal(
+      pinnableWorkspaceDir({
+        groupKind: 'workspace',
+        workspaceSelectable: false,
+        groupWorkdir: '/proj',
+        tmp: '/tmp',
+        isTemporaryWorkspace: temp
+      }),
+      null
     )
   })
 })
