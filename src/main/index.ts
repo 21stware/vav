@@ -166,6 +166,7 @@ import { FileSessionStore } from './store/FileSessionStore'
 import { SwarmHistoryStore } from './store/SwarmHistoryStore'
 import { FileService } from './fs/FileService'
 import { installTrustedIpcGuard } from './ipc/ipcTrust'
+import { registerVcsIpc } from './ipc/registerVcsIpc'
 import {
   applyWindowVibrancy as applyVibrancyPaint,
   chromeOptions,
@@ -219,26 +220,7 @@ import { WebSearchService } from './web/WebSearchService'
 import { WebFetchService } from './web/WebFetchService'
 import { importSurfacePattern, surfacePatternFilePath } from './importSurfacePattern'
 import { ChangeSetStore } from './agent/ChangeSetStore'
-import {
-  checkoutGitBranch,
-  createGitBranch,
-  createGitWorktree,
-  getGitDiff,
-  getGitShowBase64,
-  getGitSnapshot,
-  initGitRepo,
-  setGitHostFor
-} from './git/GitService'
-import {
-  getGithubActionRun,
-  getGithubPull,
-  getGithubSite,
-  listGithubActions,
-  listGithubPulls,
-  listGithubReleases
-} from './github/GithubService'
-import { getCloudflareStatus } from './cloudflare/CloudflareService'
-import { getSupabaseStatus } from './supabase/SupabaseService'
+import { setGitHostFor } from './git/GitService'
 import { UpdateService } from './updates'
 import { PtyManager, type PtySessionMeta } from './terminal/PtyManager'
 import { ensureLoginPath, probeAgentExecutables, resolveAgentExecutable } from './terminal/loginPath'
@@ -7878,81 +7860,16 @@ return c as text`
   ipcMain.handle(IPC.filesOpenWithDefault, async (event, path: string) =>
     openOnMachine(machineIdForShell(event, String(path || '')), String(path || ''))
   )
-  ipcMain.handle(IPC.gitStatus, (_event, cwd: string, conversationId?: string) =>
-    getGitSnapshot(cwd, conversationId)
-  )
-  ipcMain.handle(
-    IPC.gitDiff,
-    (_event, cwd: string, path: string, opts?: { staged?: boolean; conversationId?: string }) =>
-      getGitDiff(cwd, path, opts)
-  )
-  ipcMain.handle(
-    IPC.gitShowBase64,
-    (_event, cwd: string, path: string, ref?: string, conversationId?: string) =>
-      getGitShowBase64(cwd, path, ref || 'HEAD', conversationId)
-  )
-  ipcMain.handle(IPC.gitInit, (_event, cwd: string, conversationId?: string) =>
-    initGitRepo(cwd, conversationId)
-  )
-  ipcMain.handle(
-    IPC.gitCreateBranch,
-    (_event, cwd: string, name: string, opts?: { checkout?: boolean; conversationId?: string }) =>
-      createGitBranch(cwd, name, opts)
-  )
-  ipcMain.handle(IPC.gitCheckoutBranch, (_event, cwd: string, name: string, conversationId?: string) =>
-    checkoutGitBranch(cwd, name, conversationId)
-  )
-  ipcMain.handle(
-    IPC.gitCreateWorktree,
-    (
-      _event,
-      cwd: string,
-      options: { path: string; newBranch?: string; branch?: string },
-      conversationId?: string
-    ) => createGitWorktree(cwd, options, conversationId)
-  )
-  ipcMain.handle(
-    IPC.githubListPulls,
-    (_event, cwd: string, state?: import('@shared/github').GithubPullStateFilter) =>
-      listGithubPulls(cwd, state)
-  )
-  ipcMain.handle(IPC.githubGetPull, (_event, cwd: string, number: number) =>
-    getGithubPull(cwd, number)
-  )
-  ipcMain.handle(
-    IPC.cloudflareStatus,
-    (_event, cwd: string, query?: import('@shared/cloudflare').CloudflareStatusQuery) =>
-      getCloudflareStatus(
-        String(cwd || ''),
-        {
-          token: secretStore.get('cloudflare'),
-          accountId: settingsStore.get().cloudflareAccountId || null
-        },
-        query && typeof query === 'object' ? { remote: query.remote !== false } : undefined
-      )
-  )
-  ipcMain.handle(
-    IPC.supabaseStatus,
-    (_event, cwd: string, query?: import('@shared/supabase').SupabaseStatusQuery) =>
-      getSupabaseStatus(
-        String(cwd || ''),
-        {
-          token: secretStore.get('supabase'),
-          projectRef: settingsStore.get().supabaseProjectRef || null
-        },
-        query && typeof query === 'object' ? { remote: query.remote !== false } : undefined
-      )
-  )
-  ipcMain.handle(
-    IPC.githubListActions,
-    (_event, cwd: string, scope?: import('@shared/github').GithubActionsScope) =>
-      listGithubActions(cwd, scope)
-  )
-  ipcMain.handle(IPC.githubGetActionRun, (_event, cwd: string, runId: number) =>
-    getGithubActionRun(cwd, runId)
-  )
-  ipcMain.handle(IPC.githubGetSite, (_event, cwd: string) => getGithubSite(cwd))
-  ipcMain.handle(IPC.githubListReleases, (_event, cwd: string) => listGithubReleases(cwd))
+  registerVcsIpc(ipcMain, {
+    cloudflare: () => ({
+      token: secretStore.get('cloudflare') ?? null,
+      accountId: settingsStore.get().cloudflareAccountId || null
+    }),
+    supabase: () => ({
+      token: secretStore.get('supabase') ?? null,
+      projectRef: settingsStore.get().supabaseProjectRef || null
+    })
+  })
   ipcMain.handle(IPC.filesWatch, (_event, id: string, root: string | null) =>
     fileService.watchRoot(id, root)
   )
