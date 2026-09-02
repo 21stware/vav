@@ -778,11 +778,20 @@ interface SessionState {
   useTempWorkingDirectory(id: string): Promise<void>
   setWorkingDirectory(id: string, path: string, machineId?: string | null): Promise<void>
   /** Browse a remote host's folders (native dialog cannot see that disk). */
-  remoteFolderPick: { conversationId: string; machineId: string } | null
-  openRemoteFolderPicker(conversationId: string, machineId: string): void
+  remoteFolderPick: {
+    conversationId: string
+    machineId: string
+    purpose?: 'workdir' | 'locate'
+  } | null
+  openRemoteFolderPicker(
+    conversationId: string,
+    machineId: string,
+    purpose?: 'workdir' | 'locate'
+  ): void
   closeRemoteFolderPicker(): void
   /** Move a Temporary workspace into a real directory (name + copy). */
   locateWorkspace(id: string): Promise<void>
+  finishLocateWorkspace(id: string, destinationDir: string): Promise<void>
   setSidebarQuery(query: string): void
   setPinned(id: string, pinned: boolean): Promise<void>
   /** Star / unstar a session for the sidebar Favorite filter. */
@@ -1061,6 +1070,24 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     const light = options?.light === true
     const data = await window.vav.bootstrap()
     const activeId = pinnedConversationId ?? data.activeConversationId
+    const windowMachineId = readWindowMachineId()
+    let nextActiveId = activeId
+    if (!light && !pinnedConversationId) {
+      const listed = data.conversations.find((c) => c.id === nextActiveId)
+      if (
+        !listed ||
+        listed.archived ||
+        listed.fileId ||
+        !conversationOnMachine(listed, windowMachineId)
+      ) {
+        nextActiveId =
+          data.conversations
+            .filter(
+              (c) => !c.archived && !c.fileId && conversationOnMachine(c, windowMachineId)
+            )
+            .sort((a, b) => b.updatedAt - a.updatedAt)[0]?.id ?? ''
+      }
+    }
     // File-preview / warm session shells skip update-state on the critical path.
     const updateState = light
       ? IDLE_UPDATE
@@ -1097,13 +1124,13 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       messagesHydrated: {},
       // Warm idle shell: no active conversation until sessionNavigate claims one.
       // Cold companion pins id here; SessionWindow.claimDetachedSession hydrates.
-      activeId: light && !pinnedConversationId ? '' : activeId,
-      selectedIds: light && !pinnedConversationId ? [] : activeId ? [activeId] : [],
+      activeId: light && !pinnedConversationId ? '' : nextActiveId,
+      selectedIds: light && !pinnedConversationId ? [] : nextActiveId ? [nextActiveId] : [],
       pinnedConversationId: pinnedConversationId ?? null,
       home: data.home,
       tmp: data.tmp,
       hosts: data.hosts,
-      windowMachineId: readWindowMachineId(),
+      windowMachineId,
       about: data.about,
       updateState: {
         ...updateState,
@@ -1114,10 +1141,13 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     void get().refreshAgentModelCatalog(false)
     // Full bootstrap (main shell): await select.
     // Light companions: SessionWindow owns claim + non-blocking hydrate.
-    if (activeId && !light) {
-      await get().selectConversation(activeId)
+    // Bind files to a session that lives on this window's machine — never a
+    // hidden local conversation that the sidebar already filtered out.
+    if (!light) {
+      await syncActiveConversationToMachine()
+      const id = get().activeId
+      if (id) await get().selectConversation(id)
     }
-    if (!light) await syncActiveConversationToMachine()
   },
 
   claimDetachedSession(meta, options) {
@@ -2011,8 +2041,8 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     await useWorkspaceStore.getState().setWorkingDirectory(id, path)
   },
 
-  openRemoteFolderPicker(conversationId, machineId) {
-    set({ remoteFolderPick: { conversationId, machineId } })
+  openRemoteFolderPicker(conversationId, machineId, purpose = 'workdir') {
+    set({ remoteFolderPick: { conversationId, machineId, purpose } })
   },
 
   closeRemoteFolderPicker() {
@@ -2022,14 +2052,24 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   async locateWorkspace(id) {
     if (swarmBlocksWorkdirSwitch(id, get().settings.swarmModeEnabled === true)) return
     const conversation = get().conversations.find((c) => c.id === id)
+    const machineId = normalizeMachineId(conversation?.machineId ?? get().windowMachineId)
+    if (!isLocalMachine(machineId)) {
+      get().openRemoteFolderPicker(id, machineId, 'locate')
+      return
+    }
     const destination = await window.vav.settings.pickDirectory()
     if (!destination) return
+    await get().finishLocateWorkspace(id, destination)
+  },
+
+  async finishLocateWorkspace(id, destinationDir) {
+    const conversation = get().conversations.find((c) => c.id === id)
     const defaultName = (conversation?.title || 'workspace')
       .replace(/[\\/]/g, '-')
       .slice(0, 64)
     const name = window.prompt(tt('dialog.locateWorkspaceName'), defaultName)
     if (name == null) return
-    const result = await window.vav.conversations.locateWorkspace(id, destination, name.trim())
+    const result = await window.vav.conversations.locateWorkspace(id, destinationDir, name.trim())
     if (!result.ok) {
       get().showDialog({
         title: tt('error.locateFailed'),

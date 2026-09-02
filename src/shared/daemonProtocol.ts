@@ -11,6 +11,10 @@
  * After welcome, the client issues `req` frames; the server answers `res`
  * and may push `stream` events for process / pty / watch.
  *
+ * Optional catalog RPCs (desktop hosts only; headless `vavd` returns empty):
+ * `sessions.list`, `sessions.get`, `workspace.recents` — so a paired client
+ * can import that machine's sidebar sessions and folder recents.
+ *
  * This module is pure (no Node imports) so tests and a headless `vavd` share it.
  */
 

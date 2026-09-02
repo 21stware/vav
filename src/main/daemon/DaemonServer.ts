@@ -34,6 +34,18 @@ type ServerOpts = {
   pairing?: () => string | null
   /** Desktop confirm for LAN Pair. Headless daemons omit this and refuse. */
   onPairAsk?: (from: { name: string; machineId: string }) => Promise<boolean>
+  /**
+   * Local sessions + folder recents on this computer. Headless `vavd` omits
+   * this; list/get then return empty rather than failing the pair.
+   */
+  catalog?: DaemonWorkspaceCatalog
+}
+
+/** Plain JSON catalog the desktop injects — DaemonServer stays Electron-free. */
+export type DaemonWorkspaceCatalog = {
+  listSessions: () => unknown[]
+  getSession: (id: string) => unknown | null
+  listRecents: () => string[]
 }
 
 type LiveProcess = {
@@ -335,6 +347,9 @@ export class DaemonServer {
         return { ok: true }
       case 'fs.exists':
         return { exists: await fs.exists(asString(p.path)) }
+      case 'fs.unlink':
+        await fs.unlink(asString(p.path))
+        return { ok: true }
       case 'fs.open': {
         const handle = await fs.open(asString(p.path), asString(p.flags, 'r'))
         const id = `h-${randomUUID()}`
@@ -439,6 +454,29 @@ export class DaemonServer {
           : []
         const path = await whichOnHost(this.opts.host, candidates)
         return { path }
+      }
+      case 'sessions.list': {
+        const listed = this.opts.catalog?.listSessions() ?? []
+        const sessions = Array.isArray(listed) ? listed.slice(0, 100) : []
+        return { sessions }
+      }
+      case 'sessions.get': {
+        const id = asString(p.id)
+        if (!id) return { conversation: null }
+        const conversation = this.opts.catalog?.getSession(id) ?? null
+        if (conversation == null) return { conversation: null }
+        const encoded = JSON.stringify(conversation)
+        if (Buffer.byteLength(encoded) > 6 * 1024 * 1024) {
+          throw new Error('session exceeds daemon read cap (6MB)')
+        }
+        return { conversation: JSON.parse(encoded) as unknown }
+      }
+      case 'workspace.recents': {
+        const listed = this.opts.catalog?.listRecents() ?? []
+        const paths = Array.isArray(listed)
+          ? listed.filter((path): path is string => typeof path === 'string' && path.trim().length > 0).slice(0, 30)
+          : []
+        return { paths }
       }
       default:
         throw new Error(`unknown method: ${method}`)

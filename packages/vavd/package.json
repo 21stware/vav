@@ -1,6 +1,6 @@
 {
   "name": "@21stware/vavd",
-  "version": "1.18.3",
+  "version": "1.18.5",
   "description": "Headless VAV workspace-host daemon. Pair from desktop VAV → Settings → Allow other devices.",
   "license": "PolyForm-Noncommercial-1.0.0",
   "author": "Oboo Cheng",

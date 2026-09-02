@@ -645,7 +645,7 @@ export function FilesPanel({ visible }: { visible: boolean }): React.JSX.Element
       return
     }
     const full = joinPath(creating.dir, trimmed)
-    const result = await window.vav.files.write(full, '')
+    const result = await window.vav.files.write(full, '', activeId)
     if (!result.ok) {
       showDialog({
         title: t('files.createFailed'),
@@ -1097,7 +1097,9 @@ function ColumnBrowser({
                         onRename: () => {
                           const next = window.prompt(t('files.renamePrompt'), entry.name)
                           if (!next || next === entry.name) return
-                          void window.vav.files.rename(entry.path, next.trim()).then((result) => {
+                          void window.vav.files
+                            .rename(entry.path, next.trim(), activeId)
+                            .then((result) => {
                             if (result.ok) onMutated(entry.path)
                           })
                         },
@@ -1399,7 +1401,11 @@ function TreeRow({
               if (event.key === 'Enter') {
                 event.preventDefault()
                 void (async () => {
-                  const result = await window.vav.files.rename(entry.path, draft.trim())
+                  const result = await window.vav.files.rename(
+                    entry.path,
+                    draft.trim(),
+                    activeId
+                  )
                   setRenaming(false)
                   if (result.ok) onMutated(entry.path)
                 })()
@@ -1500,7 +1506,9 @@ async function showEntryMenu(
         {
           label: tt('common.copy'),
           onSelect: () =>
-            void window.vav.files.read(entry.path).then((result) => {
+            void window.vav.files
+              .read(entry.path, useSessionStore.getState().activeId)
+              .then((result) => {
               if (result.content) void window.vav.conversations.copyToClipboard(result.content)
             })
         },
@@ -1524,7 +1532,10 @@ async function confirmTrash(
     paths.length === 1 ? basename(paths[0]) : tt('files.items', { n: paths.length })
   const ok = window.confirm(tt('files.deleteConfirm', { label }))
   if (!ok) return
-  const result = await window.vav.files.trash(paths)
+  const result = await window.vav.files.trash(
+    paths,
+    useSessionStore.getState().activeId
+  )
   if (result.ok) onMutated(paths[0])
 }
 

@@ -6,6 +6,7 @@ import {
   dialog,
   globalShortcut,
   ipcMain,
+  type IpcMainInvokeEvent,
   Menu,
   nativeImage,
   nativeTheme,
@@ -81,15 +82,7 @@ import { createSwarmFinishAlert } from './sound/swarmFinishAlert'
 import { RemoteControlService } from './remote/RemoteControlService'
 import { DaemonAttachService } from './daemon/DaemonAttachService'
 import { openTailcatDial } from './daemon/tailcatDial'
-import {
-  isLocalMachine,
-  LOCAL_MACHINE_ID,
-  normalizeMachineId,
-  hostJoin,
-  parseWorkspaceRefList,
-  recentsForMachine,
-  type WorkspaceHostInfo
-} from '@shared/workspaceHost'
+import { hostJoin, isLocalMachine, LOCAL_MACHINE_ID, normalizeMachineId, conversationOnMachine, parseWorkspaceRefList, recentsForMachine, type WorkspaceHostInfo } from '@shared/workspaceHost'
 import type {
   RemoteConfigure,
   RemoteControlsEvent,
@@ -171,6 +164,7 @@ import { FileSessionStore } from './store/FileSessionStore'
 import { SwarmHistoryStore } from './store/SwarmHistoryStore'
 import { FileService } from './fs/FileService'
 import { HostRegistry } from './host'
+import { openSpawn, previewSpawn, revealSpawn } from './host/hostShell'
 import { isClipPath, writeClip, writeClipBytes } from './fs/clipStore'
 import { writePngToClipboard } from './clipboardImage'
 import { createScreenshotController } from './screenshot/ScreenshotSession'
@@ -198,7 +192,8 @@ import {
   getGitDiff,
   getGitShowBase64,
   getGitSnapshot,
-  initGitRepo
+  initGitRepo,
+  setGitHostFor
 } from './git/GitService'
 import {
   getGithubActionRun,
@@ -484,6 +479,16 @@ const fileService = new FileService(
   (conversationId) => hostRegistry.hostFor(conversationStore.get(conversationId)?.machineId).fs
 )
 fileService.workingCopies = workingCopyService
+setGitHostFor((cwd, conversationId) => {
+  const id = conversationId || conversationIdForGitCwd(cwd)
+  const machineId = id ? conversationStore.get(id)?.machineId : undefined
+  const host = hostRegistry.hostFor(machineId)
+  return {
+    kind: host.info.kind,
+    process: host.process,
+    fs: host.fs
+  }
+})
 workingCopyService.onCopyChanged = (realPath) => {
   sendToWorkspaceWindows(IPC.agentEvent, {
     type: 'fs-changed',
@@ -1792,6 +1797,51 @@ const daemonAttach = new DaemonAttachService({
   enabled: () => settingsStore.get().remoteControlEnabled === true,
   tailcatToken: () => remoteControl.tunnelToken(),
   dialTunnel: (token) => openTailcatDial(token),
+  catalog: {
+    listSessions: () =>
+      conversationStore
+        .listMeta()
+        .filter((c) => !c.fileId && !c.archived && conversationOnMachine(c, LOCAL_MACHINE_ID))
+        .slice(0, 100),
+    getSession: (id) => {
+      const conversation = conversationStore.get(id)
+      if (
+        !conversation ||
+        conversation.fileId ||
+        conversation.archived ||
+        !conversationOnMachine(conversation, LOCAL_MACHINE_ID)
+      ) {
+        return null
+      }
+      return conversation
+    },
+    listRecents: () => {
+      const fromSettings = recentsForMachine(
+        settingsStore.get().recentWorkspaceDirectories,
+        LOCAL_MACHINE_ID
+      ).map((ref) => ref.path)
+      const fromSessions = conversationStore
+        .listMeta()
+        .filter(
+          (c) =>
+            !c.fileId &&
+            !c.archived &&
+            conversationOnMachine(c, LOCAL_MACHINE_ID) &&
+            Boolean(c.workingDirectory)
+        )
+        .map((c) => c.workingDirectory as string)
+      const seen = new Set<string>()
+      const out: string[] = []
+      for (const path of [...fromSettings, ...fromSessions]) {
+        const trimmed = path.trim()
+        if (!trimmed || seen.has(trimmed)) continue
+        seen.add(trimmed)
+        out.push(trimmed)
+      }
+      return out.slice(0, 20)
+    }
+  },
+  onHostAttached: (machineId) => pullRemoteWorkspace(machineId),
   onHostsChanged: (hosts) => {
     broadcast(IPC.hostsChanged, decorateHosts(hosts))
     syncHostWindows(hosts)
@@ -1829,6 +1879,23 @@ const daemonAttach = new DaemonAttachService({
     return result.response === 0
   }
 })
+
+/** Pull the other computer's sessions and folder recents before its window boots. */
+async function pullRemoteWorkspace(machineId: string): Promise<void> {
+  const id = String(machineId || '')
+  if (!id || isLocalMachine(id)) return
+  const catalog = await daemonAttach.pullHostCatalog(id)
+  let sessionsChanged = false
+  for (const raw of catalog.sessions) {
+    const adopted = conversationStore.adoptHostConversation(raw as Conversation, id)
+    if (adopted) sessionsChanged = true
+  }
+  for (const path of catalog.recents) {
+    settingsStore.rememberWorkspaceDirectory(path, '', id)
+  }
+  if (sessionsChanged) broadcast(IPC.convChanged, conversationStore.listMeta())
+  if (catalog.recents.length > 0) broadcast(IPC.settingsChanged, currentSettings())
+}
 
 hostRegistry.onChange((hosts) => {
   broadcast(IPC.hostsChanged, decorateHosts(hosts))
@@ -6037,6 +6104,90 @@ function homeTmpFor(machineId: string): { home: string; tmp: string } {
   }
 }
 
+function conversationIdForGitCwd(cwd: string): string | undefined {
+  const watched = fileService.conversationIdForPath(cwd)
+  if (watched) return watched
+  if (!cwd) return undefined
+  let best: { id: string; len: number } | undefined
+  for (const meta of conversationStore.listMeta()) {
+    const root = meta.workingDirectory
+    if (!root) continue
+    if (cwd === root || cwd.startsWith(`${root}/`) || cwd.startsWith(`${root}\\`)) {
+      if (!best || root.length > best.len) best = { id: meta.id, len: root.length }
+    }
+  }
+  return best?.id
+}
+
+function machineIdForShell(event: IpcMainInvokeEvent, path: string): string {
+  const fromPath = conversationIdForGitCwd(path) || fileService.conversationIdForPath(path)
+  if (fromPath) {
+    const conversation = conversationStore.get(fromPath)
+    if (conversation) return normalizeMachineId(conversation.machineId)
+  }
+  return machineIdFromContents(event.sender)
+}
+
+function spawnOnHost(
+  machineId: string,
+  file: string,
+  args: string[]
+): void {
+  const host = hostRegistry.hostFor(machineId)
+  if (!host.info.online) return
+  try {
+    const child = host.process.spawn(file, args, {
+      stdio: ['ignore', 'ignore', 'ignore'],
+      detached: true,
+      windowsHide: true
+    })
+    child.unref()
+    child.on('error', (err) => console.error('[host-shell]', err))
+  } catch (err) {
+    console.error('[host-shell]', err)
+  }
+}
+
+async function revealOnMachine(machineId: string, path: string): Promise<void> {
+  if (!path) return
+  if (isLocalMachine(machineId)) {
+    shell.showItemInFolder(path)
+    return
+  }
+  const host = hostRegistry.hostFor(machineId)
+  if (!host.info.online) return
+  let isDirectory = false
+  try {
+    isDirectory = (await host.fs.stat(path)).isDirectory()
+  } catch {
+    // still try to reveal
+  }
+  const cmd = revealSpawn(host.info.platform, path, isDirectory)
+  spawnOnHost(machineId, cmd.file, cmd.args)
+}
+
+async function openOnMachine(machineId: string, path: string): Promise<{ ok: true } | { ok: false; error: string }> {
+  if (!path) return { ok: false, error: 'empty path' }
+  if (isLocalMachine(machineId)) return fileService.openWithDefault(path)
+  const host = hostRegistry.hostFor(machineId)
+  if (!host.info.online) return { ok: false, error: `${host.info.name} is offline` }
+  const cmd = openSpawn(host.info.platform, path)
+  spawnOnHost(machineId, cmd.file, cmd.args)
+  return { ok: true }
+}
+
+async function previewOnMachine(machineId: string, path: string): Promise<void> {
+  if (!path) return
+  if (isLocalMachine(machineId)) {
+    fileService.preview(path)
+    return
+  }
+  const host = hostRegistry.hostFor(machineId)
+  if (!host.info.online) return
+  const cmd = previewSpawn(host.info.platform, path)
+  spawnOnHost(machineId, cmd.file, cmd.args)
+}
+
 function rememberWorkdir(path: string, machineId?: string | null): void {
   const id = machineId === undefined ? undefined : normalizeMachineId(machineId)
   settingsStore.rememberWorkspaceDirectory(path, tmpRootFor(id), id)
@@ -6569,10 +6720,13 @@ function registerIpc(): void {
     const settings = currentSettings()
     setLocalePreference(settings.locale)
     const conversations = conversationStore.listMeta()
-    const activeConversationId =
-      conversations.find((c) => !c.archived)?.id ?? conversations[0]?.id ?? ''
     const machineId = machineIdFromContents(event.sender)
+    const activeConversationId =
+      conversations.find(
+        (c) => !c.archived && conversationOnMachine(c, machineId)
+      )?.id ?? ''
     const { home, tmp } = homeTmpFor(machineId)
+    const local = isLocalMachine(machineId)
     return {
       settings,
       resolvedLocale: currentLocale(),
@@ -6581,8 +6735,8 @@ function registerIpc(): void {
       activeConversationId,
       apiKeyHint: secretStore.maskedHint(),
       platform: PLATFORM,
-      home: home || app.getPath('home'),
-      tmp: tmp || tmpdir(),
+      home: home || (local ? app.getPath('home') : ''),
+      tmp: tmp || (local ? tmpdir() : ''),
       hosts: decorateHosts(hostRegistry.list()),
       about: {
         version: app.getVersion(),
@@ -7551,22 +7705,34 @@ return c as text`
         return { ok: false as const, error: t('error.locateNoTemp') }
       }
       const source = conversation.workingDirectory
+      const machineId = conversation.machineId
+      const host = hostRegistry.hostFor(machineId)
       const safeName = name.trim().replace(/[\\/]/g, '-') || 'workspace'
-      const target = join(destinationDir, safeName)
+      const target = joinHostPath(host.info.platform, destinationDir, safeName)
       try {
-        if (existsSync(target)) {
-          return { ok: false as const, error: t('error.locateExists', { target }) }
+        if (isLocalMachine(machineId)) {
+          if (existsSync(target)) {
+            return { ok: false as const, error: t('error.locateExists', { target }) }
+          }
+          mkdirSync(destinationDir, { recursive: true })
+          renameSync(source, target)
+          try {
+            rmdirSync(dirname(source))
+            rmdirSync(dirname(dirname(source)))
+          } catch {
+            // leave leftover empty dirs
+          }
+        } else {
+          if (!host.info.online) {
+            return { ok: false as const, error: `${host.info.name} is offline` }
+          }
+          if (await host.fs.exists(target)) {
+            return { ok: false as const, error: t('error.locateExists', { target }) }
+          }
+          await host.fs.mkdir(destinationDir, { recursive: true })
+          await host.fs.rename(source, target)
         }
-        mkdirSync(destinationDir, { recursive: true })
-        renameSync(source, target)
-        // Best-effort cleanup of empty parent temp folders.
-        try {
-          rmdirSync(dirname(source))
-          rmdirSync(dirname(dirname(source)))
-        } catch {
-          // leave leftover empty dirs
-        }
-        return { ok: true as const, conversations: applyWorkingDirectory(id, target) }
+        return { ok: true as const, conversations: applyWorkingDirectory(id, target, machineId) }
       } catch (err) {
         return {
           ok: false as const,
@@ -7608,8 +7774,8 @@ return c as text`
     return { removed, conversations: conversationStore.listMeta() }
   })
 
-  ipcMain.handle(IPC.convReveal, (_event, path: string) => {
-    shell.showItemInFolder(path)
+  ipcMain.handle(IPC.convReveal, async (event, path: string) => {
+    await revealOnMachine(machineIdForShell(event, String(path || '')), String(path || ''))
   })
 
   ipcMain.handle(IPC.convCopy, (_event, text: string) => {
@@ -7770,17 +7936,24 @@ return c as text`
     (
       _event,
       path: string,
-      opts?: { startByte?: number; maxBytes?: number; force?: boolean }
+      opts?: { startByte?: number; maxBytes?: number; force?: boolean; conversationId?: string }
     ) => fileService.readTextWindow(path, opts)
   )
-  ipcMain.handle(IPC.filesReadBinary, (_event, path: string) => fileService.readBinary(path))
+  ipcMain.handle(IPC.filesReadBinary, (_event, path: string, conversationId?: string) =>
+    fileService.readBinary(path, conversationId)
+  )
   ipcMain.handle(
     IPC.filesReadBinaryWindow,
-    (_event, path: string, opts?: { startByte?: number; maxBytes?: number }) =>
-      fileService.readBinaryWindow(path, opts)
+    (
+      _event,
+      path: string,
+      opts?: { startByte?: number; maxBytes?: number; conversationId?: string }
+    ) => fileService.readBinaryWindow(path, opts)
   )
-  ipcMain.handle(IPC.filesWriteBinary, (_event, path: string, base64: string) =>
-    fileService.writeBinary(path, base64)
+  ipcMain.handle(
+    IPC.filesWriteBinary,
+    (_event, path: string, base64: string, conversationId?: string) =>
+      fileService.writeBinary(path, base64, conversationId)
   )
   ipcMain.handle(
     IPC.filesWriteClip,
@@ -7802,8 +7975,8 @@ return c as text`
       }
     }
   })
-  ipcMain.handle(IPC.filesWrite, (_event, path: string, content: string) =>
-    fileService.writeTextFile(path, content)
+  ipcMain.handle(IPC.filesWrite, (_event, path: string, content: string, conversationId?: string) =>
+    fileService.writeTextFile(path, content, conversationId)
   )
   ipcMain.handle(
     IPC.filesWorkingCopyEnsure,
@@ -7830,34 +8003,44 @@ return c as text`
   ipcMain.handle(IPC.filesWorkingCopyStatus, (_event, path: string) =>
     workingCopyService.status(String(path || ''))
   )
-  ipcMain.handle(IPC.filesQuickLook, (_event, path: string) => fileService.preview(path))
-  ipcMain.handle(IPC.filesOpenWithDefault, (_event, path: string) => fileService.openWithDefault(path))
-  ipcMain.handle(IPC.gitStatus, (_event, cwd: string) => getGitSnapshot(cwd))
+  ipcMain.handle(IPC.filesQuickLook, async (event, path: string) => {
+    await previewOnMachine(machineIdForShell(event, String(path || '')), String(path || ''))
+  })
+  ipcMain.handle(IPC.filesOpenWithDefault, async (event, path: string) =>
+    openOnMachine(machineIdForShell(event, String(path || '')), String(path || ''))
+  )
+  ipcMain.handle(IPC.gitStatus, (_event, cwd: string, conversationId?: string) =>
+    getGitSnapshot(cwd, conversationId)
+  )
   ipcMain.handle(
     IPC.gitDiff,
-    (_event, cwd: string, path: string, opts?: { staged?: boolean }) => getGitDiff(cwd, path, opts)
+    (_event, cwd: string, path: string, opts?: { staged?: boolean; conversationId?: string }) =>
+      getGitDiff(cwd, path, opts)
   )
   ipcMain.handle(
     IPC.gitShowBase64,
-    (_event, cwd: string, path: string, ref?: string) =>
-      getGitShowBase64(cwd, path, ref || 'HEAD')
+    (_event, cwd: string, path: string, ref?: string, conversationId?: string) =>
+      getGitShowBase64(cwd, path, ref || 'HEAD', conversationId)
   )
-  ipcMain.handle(IPC.gitInit, (_event, cwd: string) => initGitRepo(cwd))
+  ipcMain.handle(IPC.gitInit, (_event, cwd: string, conversationId?: string) =>
+    initGitRepo(cwd, conversationId)
+  )
   ipcMain.handle(
     IPC.gitCreateBranch,
-    (_event, cwd: string, name: string, opts?: { checkout?: boolean }) =>
+    (_event, cwd: string, name: string, opts?: { checkout?: boolean; conversationId?: string }) =>
       createGitBranch(cwd, name, opts)
   )
-  ipcMain.handle(IPC.gitCheckoutBranch, (_event, cwd: string, name: string) =>
-    checkoutGitBranch(cwd, name)
+  ipcMain.handle(IPC.gitCheckoutBranch, (_event, cwd: string, name: string, conversationId?: string) =>
+    checkoutGitBranch(cwd, name, conversationId)
   )
   ipcMain.handle(
     IPC.gitCreateWorktree,
     (
       _event,
       cwd: string,
-      options: { path: string; newBranch?: string; branch?: string }
-    ) => createGitWorktree(cwd, options)
+      options: { path: string; newBranch?: string; branch?: string },
+      conversationId?: string
+    ) => createGitWorktree(cwd, options, conversationId)
   )
   ipcMain.handle(
     IPC.githubListPulls,
@@ -7944,7 +8127,7 @@ return c as text`
     (
       _event,
       path: string,
-      opts?: { maxBlocks?: number; maxRows?: number }
+      opts?: { maxBlocks?: number; maxRows?: number; conversationId?: string }
     ) => fileService.inspectStructured(String(path || ''), opts)
   )
   ipcMain.handle(
@@ -7968,13 +8151,17 @@ return c as text`
       return { ok: true, path: result.filePath }
     }
   )
-  ipcMain.handle(IPC.filesRename, (_event, path: string, newName: string) =>
-    fileService.rename(path, newName)
+  ipcMain.handle(IPC.filesRename, (_event, path: string, newName: string, conversationId?: string) =>
+    fileService.rename(path, newName, conversationId)
   )
-  ipcMain.handle(IPC.filesTrash, (_event, paths: string[]) => fileService.trash(paths))
+  ipcMain.handle(IPC.filesTrash, (_event, paths: string[], conversationId?: string) =>
+    fileService.trash(paths, conversationId)
+  )
   ipcMain.handle(
     IPC.filesInspect,
-    (_event, path: string) => takePreloadedInspect(path) ?? fileService.inspect(path)
+    (_event, path: string, conversationId?: string) =>
+      (conversationId ? null : takePreloadedInspect(path)) ??
+      fileService.inspect(path, conversationId)
   )
   ipcMain.handle(
     IPC.filesDbQuery,
@@ -8357,7 +8544,7 @@ return c as text`
   ipcMain.handle(IPC.hostsPairing, () => daemonAttach.pairing())
   ipcMain.handle(IPC.hostsPair, async (_event, payload: string) => {
     const result = await daemonAttach.pair(String(payload || ''))
-    if (result.ok) void showHostWindow(result.host.id)
+    if (result.ok) await showHostWindow(result.host.id)
     return result
   })
   ipcMain.handle(IPC.hostsPairLan, async (_event, peer: HostDiscoveryPeer) => {
@@ -8367,7 +8554,7 @@ return c as text`
       name: typeof peer?.name === 'string' ? peer.name : undefined,
       machineId: typeof peer?.machineId === 'string' ? peer.machineId : undefined
     })
-    if (result.ok) void showHostWindow(result.host.id)
+    if (result.ok) await showHostWindow(result.host.id)
     return result
   })
   ipcMain.handle(IPC.hostsCancelPair, () => {

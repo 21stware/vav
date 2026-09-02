@@ -382,6 +382,9 @@ export function createRemoteHostFs(client: DaemonClient): HostFs {
     async exists(path) {
       const result = (await client.request('fs.exists', { path })) as { exists: boolean }
       return result.exists === true
+    },
+    async unlink(path) {
+      await client.request('fs.unlink', { path })
     }
   }
 }

@@ -4,12 +4,15 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, it } from 'node:test'
 import { createLocalWorkspaceHost } from '../host/WorkspaceHost.ts'
-import { DaemonServer } from './DaemonServer.ts'
+import { DaemonServer, type DaemonWorkspaceCatalog } from './DaemonServer.ts'
 import { DaemonClient, createRemoteWorkspaceHost, requestLanPairOffer } from './DaemonClient.ts'
 
 const SECRET = '0123456789abcdef01234567'
 
-async function startPair(dir: string): Promise<{
+async function startPair(
+  dir: string,
+  catalog?: DaemonWorkspaceCatalog
+): Promise<{
   server: DaemonServer
   client: DaemonClient
   remote: ReturnType<typeof createRemoteWorkspaceHost>
@@ -21,7 +24,8 @@ async function startPair(dir: string): Promise<{
     secret: () => SECRET,
     appVersion: 'test',
     home: dir,
-    tmp: dir
+    tmp: dir,
+    catalog
   })
   const client = new DaemonClient()
   const port = await server.listen(0, '127.0.0.1')
@@ -83,6 +87,8 @@ describe('daemon loopback', () => {
       await fh.close()
       assert.equal(bytesRead, 6)
       assert.equal(buf.toString('utf8'), 'handle')
+      await remote.fs.unlink(to)
+      assert.equal(await remote.fs.exists(to), false)
     } finally {
       client.close()
       server.close()
@@ -303,6 +309,58 @@ describe('daemon loopback', () => {
     try {
       assert.equal(await client.which([process.execPath]), process.execPath)
       assert.equal(await client.which(['vav-daemon-which-missing-xyz']), null)
+    } finally {
+      client.close()
+      server.close()
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('serves sessions and folder recents from the host catalog', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'vav-daemon-'))
+    const session = {
+      id: 'host-s1',
+      title: 'From host',
+      workingDirectory: join(dir, 'proj'),
+      machineId: 'local',
+      messages: [{ id: 'm1', role: 'user', content: 'hi', parentId: null }]
+    }
+    const { server, client } = await startPair(dir, {
+      listSessions: () => [{ id: session.id, title: session.title }],
+      getSession: (id) => (id === session.id ? session : null),
+      listRecents: () => [join(dir, 'proj'), join(dir, 'other')]
+    })
+    try {
+      const listed = (await client.request('sessions.list')) as {
+        sessions: Array<{ id: string; title: string }>
+      }
+      assert.equal(listed.sessions[0]?.id, 'host-s1')
+      const got = (await client.request('sessions.get', { id: 'host-s1' })) as {
+        conversation: { title: string; messages: unknown[] }
+      }
+      assert.equal(got.conversation.title, 'From host')
+      assert.equal(got.conversation.messages.length, 1)
+      const missing = (await client.request('sessions.get', { id: 'nope' })) as {
+        conversation: unknown
+      }
+      assert.equal(missing.conversation, null)
+      const recents = (await client.request('workspace.recents')) as { paths: string[] }
+      assert.deepEqual(recents.paths, [join(dir, 'proj'), join(dir, 'other')])
+    } finally {
+      client.close()
+      server.close()
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('returns empty catalog lists when the host has none', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'vav-daemon-'))
+    const { server, client } = await startPair(dir)
+    try {
+      const listed = (await client.request('sessions.list')) as { sessions: unknown[] }
+      assert.deepEqual(listed.sessions, [])
+      const recents = (await client.request('workspace.recents')) as { paths: unknown[] }
+      assert.deepEqual(recents.paths, [])
     } finally {
       client.close()
       server.close()

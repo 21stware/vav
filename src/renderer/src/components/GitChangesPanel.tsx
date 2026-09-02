@@ -268,7 +268,12 @@ function ImageDiffView({
       if (entry.status !== 'added' && entry.status !== 'untracked') {
         if (window.vav?.git?.showBase64) {
           try {
-            const res = await window.vav.git.showBase64(cwd, entry.path, 'HEAD')
+            const res = await window.vav.git.showBase64(
+              cwd,
+              entry.path,
+              'HEAD',
+              useSessionStore.getState().activeId
+            )
             if (cancelled) return
             if (res.ok && res.data.base64) {
               setBefore(`data:${mime};base64,${res.data.base64}`)
@@ -287,7 +292,10 @@ function ImageDiffView({
 
       if (entry.status !== 'deleted') {
         try {
-          const bin = await window.vav.files.readBinary(entry.absolutePath)
+          const bin = await window.vav.files.readBinary(
+            entry.absolutePath,
+            useSessionStore.getState().activeId
+          )
           if (cancelled) return
           if (bin.ok) {
             setAfter(`data:${bin.mime || mime};base64,${bin.base64}`)
@@ -422,7 +430,9 @@ export function GitDiffPreview({
     setDiffError(null)
     void (async () => {
       try {
-        const result = await window.vav.git.diff(cwd, entry.path)
+        const result = await window.vav.git.diff(cwd, entry.path, {
+          conversationId: useSessionStore.getState().activeId
+        })
         if (cancelled) return
         if (!result.ok) {
           setDiff(null)
@@ -541,7 +551,7 @@ export function GitChangesPanel({
     setLoading(true)
     setLoadError(null)
     try {
-      const next = await window.vav.git.status(root)
+      const next = await window.vav.git.status(root, activeId)
       setSnap(next)
       setSelected((prev) => {
         if (prev && next.changes.some((c) => c.path === prev)) return prev
@@ -553,7 +563,7 @@ export function GitChangesPanel({
     } finally {
       setLoading(false)
     }
-  }, [root, gitRepoEpoch])
+  }, [activeId, root, gitRepoEpoch])
 
   const refreshRef = useRef(refresh)
   refreshRef.current = refresh
@@ -612,7 +622,9 @@ export function GitChangesPanel({
     let cancelled = false
     void (async () => {
       try {
-        const result = await window.vav.git.diff(root, selected)
+        const result = await window.vav.git.diff(root, selected, {
+          conversationId: activeId
+        })
         if (cancelled) return
         if (!result.ok) {
           setDiff(null)
@@ -630,7 +642,7 @@ export function GitChangesPanel({
     return () => {
       cancelled = true
     }
-  }, [previewHost, active, visible, root, selected, snap?.isRepo, t])
+  }, [previewHost, active, visible, root, selected, snap?.isRepo, t, activeId])
 
   // Keep focusIndex aligned with selected file when selection changes.
   useEffect(() => {
@@ -656,7 +668,7 @@ export function GitChangesPanel({
     setIniting(true)
     setInitError(null)
     try {
-      const result = await window.vav.git.init(cwd)
+      const result = await window.vav.git.init(cwd, activeId)
       if (!result.ok) {
         setInitError(result.error)
         return
@@ -669,7 +681,7 @@ export function GitChangesPanel({
     } finally {
       setIniting(false)
     }
-  }, [cwd, refresh, t])
+  }, [cwd, activeId, refresh, t])
 
   const toggleDir = (path: string): void => {
     setExpanded((prev) => {
