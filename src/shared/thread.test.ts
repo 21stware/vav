@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import type { ChatMessage } from './types.ts'
-import { leafAfterPrune, pruneSubtree, subtreeIds } from './thread.ts'
+import { leafAfterPrune, pruneSubtree, subtreeIds, forkActiveLeaf, regenerateActiveLeaf, ROOT_LEAF } from './thread.ts'
 
 function msg(
   id: string,
@@ -57,5 +57,18 @@ describe('leafAfterPrune', () => {
 
   it('clears the leaf when the tree is empty', () => {
     assert.equal(leafAfterPrune([], new Set(['u1']), null, 'u1'), null)
+  })
+})
+
+describe('regenerateActiveLeaf / forkActiveLeaf', () => {
+  it('regenerates an assistant reply from its parent and a user message from itself', () => {
+    assert.equal(regenerateActiveLeaf({ role: 'assistant', id: 'a1', parentId: 'u1' }), 'u1')
+    assert.equal(regenerateActiveLeaf({ role: 'user', id: 'u1', parentId: null }), 'u1')
+  })
+
+  it('forks a user prompt from its parent so two prompts are never adjacent', () => {
+    assert.equal(forkActiveLeaf({ role: 'user', id: 'u1', parentId: 'a0' }), 'a0')
+    assert.equal(forkActiveLeaf({ role: 'user', id: 'u1', parentId: null }), ROOT_LEAF)
+    assert.equal(forkActiveLeaf({ role: 'assistant', id: 'a1', parentId: 'u1' }), 'a1')
   })
 })

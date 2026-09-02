@@ -20,7 +20,9 @@ import {
   provisionalInspect,
   selectedBlockIdsForPath,
   bindFilePreviewWorkspace,
-  fileViewerAgentPanelOpen
+  fileViewerAgentPanelOpen,
+  previewBlocksFromSqliteTables,
+  previewBlocksFromZipEntries
 } from './fileViewerHelpers.ts'
 import type { PreviewBlock } from './previewBlocks.ts'
 
@@ -254,5 +256,25 @@ describe('fileViewerAgentPanelOpen', () => {
       fileViewerAgentPanelOpen({ embedded: true, hasToggle: false, localOpen: false }),
       true
     )
+  })
+})
+
+describe('previewBlocksFromSqliteTables / previewBlocksFromZipEntries', () => {
+  it('builds table stubs and ZIP directory vs file blocks', () => {
+    const tables = previewBlocksFromSqliteTables([
+      { name: 'users', columns: ['id', 'name'], rowCount: 3 }
+    ])
+    assert.equal(tables[0]?.id, 'db-table-users')
+    assert.equal(tables[0]?.kind, 'table')
+    assert.match(tables[0]?.text ?? '', /TABLE users/)
+
+    const zip = previewBlocksFromZipEntries([
+      { path: 'src/', isDirectory: true },
+      { path: 'src/a.ts', isDirectory: false }
+    ])
+    assert.equal(zip[0]?.kind, 'section')
+    assert.equal(zip[0]?.text, 'DIR src/')
+    assert.equal(zip[1]?.kind, 'code')
+    assert.equal(zip[1]?.text, 'FILE src/a.ts')
   })
 })

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import { mergeConversationList, nextConversationSelection, patchConversationById, isArchivedConversation, regenerateActiveLeaf, canMutateActiveSession, type ConversationListItem } from './sessionListMerge.ts'
+import { mergeConversationList, nextConversationSelection, patchConversationById, isArchivedConversation, regenerateActiveLeaf, canMutateActiveSession, compactRefusalReason, type ConversationListItem } from './sessionListMerge.ts'
 
 function row(
   partial: Partial<ConversationListItem> & { id: string }
@@ -141,5 +141,17 @@ describe('canMutateActiveSession', () => {
   it('allows a running session when idle is not required', () => {
     const rows = [row({ id: 'a' })]
     assert.equal(canMutateActiveSession('a', rows, { isRunning: true, requireIdle: false }), true)
+  })
+})
+
+describe('compactRefusalReason', () => {
+  it('refuses busy before CLI-hosted, and skips busy when clearing compaction', () => {
+    assert.equal(compactRefusalReason({ isRunning: true, cliHost: 'cursor' }), 'busy')
+    assert.equal(compactRefusalReason({ cliHost: 'cursor' }), 'cli-host')
+    assert.equal(
+      compactRefusalReason({ isRunning: true, cliHost: 'cursor', requireIdle: false }),
+      'cli-host'
+    )
+    assert.equal(compactRefusalReason({}), null)
   })
 })

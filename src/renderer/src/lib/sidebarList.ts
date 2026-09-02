@@ -161,3 +161,24 @@ export function pinnableWorkspaceDir(opts: {
   }
   return dir
 }
+
+/** After archiving the active row, pick the visible neighbor above, else below. */
+export function nextVisibleSelectionAfterArchive(
+  visibleIds: string[],
+  activeId: string | null | undefined,
+  leavingIds: string[]
+): string | null {
+  if (!activeId || !leavingIds.includes(activeId)) return null
+  const leaving = new Set(leavingIds)
+  const index = visibleIds.indexOf(activeId)
+  if (index < 0) return null
+  for (let i = index - 1; i >= 0; i -= 1) {
+    const id = visibleIds[i]!
+    if (!leaving.has(id)) return id
+  }
+  for (let i = index + 1; i < visibleIds.length; i += 1) {
+    const id = visibleIds[i]!
+    if (!leaving.has(id)) return id
+  }
+  return null
+}

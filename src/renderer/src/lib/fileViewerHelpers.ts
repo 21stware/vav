@@ -298,3 +298,31 @@ export function fileViewerAgentPanelOpen(opts: {
   if (opts.hasToggle) return !!opts.propOpen
   return true
 }
+
+export function previewBlocksFromSqliteTables(
+  tables: Array<{ name: string; columns: string[]; rowCount: number }>
+): PreviewBlock[] {
+  return tables.map((tb) => ({
+    id: `db-table-${tb.name}`,
+    kind: 'table' as const,
+    text: [`TABLE ${tb.name}`, `columns: ${tb.columns.join(', ')}`, `rows: ${tb.rowCount}`].join(
+      '\n'
+    ),
+    label: `table ${tb.name}`,
+    startLine: 1,
+    endLine: 1
+  }))
+}
+
+export function previewBlocksFromZipEntries(
+  entries: Array<{ path: string; isDirectory: boolean }>
+): PreviewBlock[] {
+  return entries.map((e) => ({
+    id: `zip:${e.path}`,
+    kind: (e.isDirectory ? 'section' : 'code') as PreviewBlock['kind'],
+    text: `${e.isDirectory ? 'DIR' : 'FILE'} ${e.path}`,
+    label: `ZIP · ${e.path}`,
+    startLine: 1,
+    endLine: 1
+  }))
+}

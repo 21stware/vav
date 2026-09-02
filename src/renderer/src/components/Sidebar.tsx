@@ -46,7 +46,8 @@ import {
   groupingOptions,
   hostMachineLabel,
   incomingConnectLabels,
-  pinnableWorkspaceDir
+  pinnableWorkspaceDir,
+  nextVisibleSelectionAfterArchive
 } from '../lib/sidebarList'
 import { ConvBracket, type SwarmBracketKind } from './sidebar/ConvBracket'
 import { RenameField } from './sidebar/RenameField'
@@ -610,27 +611,11 @@ export function Sidebar({
    */
   const archiveKeepingList = async (ids: string[]): Promise<void> => {
     const current = useSessionStore.getState().activeId
-    let neighbor: string | null = null
-    if (current && ids.includes(current)) {
-      const leaving = new Set(ids)
-      const index = visible.findIndex((c) => c.id === current)
-      if (index >= 0) {
-        for (let i = index - 1; i >= 0; i -= 1) {
-          if (!leaving.has(visible[i]!.id)) {
-            neighbor = visible[i]!.id
-            break
-          }
-        }
-        if (!neighbor) {
-          for (let i = index + 1; i < visible.length; i += 1) {
-            if (!leaving.has(visible[i]!.id)) {
-              neighbor = visible[i]!.id
-              break
-            }
-          }
-        }
-      }
-    }
+    const neighbor = nextVisibleSelectionAfterArchive(
+      visible.map((c) => c.id),
+      current,
+      ids
+    )
     for (const id of ids) await setArchived(id, true)
     if (neighbor) await selectConversation(neighbor)
   }

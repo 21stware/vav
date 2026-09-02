@@ -26,7 +26,9 @@ import {
   mergeTextWindowInspect,
   nextCommentCardsOnBlockPick,
   selectedBlockIdsForPath,
-  isOpenFilePath as filePathIsOpen
+  isOpenFilePath as filePathIsOpen,
+  previewBlocksFromSqliteTables,
+  previewBlocksFromZipEntries
 } from '../lib/fileViewerHelpers'
 import { AgentPanelToggleButton } from './fileViewer/AgentPanelToggleButton'
 import { FileViewerHeader } from './fileViewer/FileViewerHeader'
@@ -621,28 +623,10 @@ export function FileViewer({
   const syncBlocks = useMemo((): PreviewBlock[] => {
     if (info?.structured?.blocks?.length) return info.structured.blocks
     if (isSqlite && info?.sqlite?.tables?.length) {
-      return info.sqlite.tables.map((tb) => ({
-        id: `db-table-${tb.name}`,
-        kind: 'table' as const,
-        text: [
-          `TABLE ${tb.name}`,
-          `columns: ${tb.columns.join(', ')}`,
-          `rows: ${tb.rowCount}`
-        ].join('\n'),
-        label: `table ${tb.name}`,
-        startLine: 1,
-        endLine: 1
-      }))
+      return previewBlocksFromSqliteTables(info.sqlite.tables)
     }
     if (isZip && info?.zip?.entries?.length) {
-      return info.zip.entries.map((e) => ({
-        id: `zip:${e.path}`,
-        kind: (e.isDirectory ? 'section' : 'code') as PreviewBlock['kind'],
-        text: `${e.isDirectory ? 'DIR' : 'FILE'} ${e.path}`,
-        label: `ZIP · ${e.path}`,
-        startLine: 1,
-        endLine: 1
-      }))
+      return previewBlocksFromZipEntries(info.zip.entries)
     }
     if (info?.text == null && workingContent == null) return []
     // CSV: only col + table stubs (no per-row tree). Sheet body uses the same model.

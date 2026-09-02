@@ -13,7 +13,8 @@ import {
   adjacentRunClass,
   hostMachineLabel,
   incomingConnectLabels,
-  pinnableWorkspaceDir
+  pinnableWorkspaceDir,
+  nextVisibleSelectionAfterArchive
 } from './sidebarList.ts'
 
 function conv(partial: Partial<ConversationMeta> & Pick<ConversationMeta, 'id'>): ConversationMeta {
@@ -193,5 +194,17 @@ describe('pinnableWorkspaceDir', () => {
       }),
       null
     )
+  })
+})
+
+describe('nextVisibleSelectionAfterArchive', () => {
+  it('prefers the visible row above the archived active session, else below', () => {
+    const ids = ['a', 'b', 'c', 'd']
+    assert.equal(nextVisibleSelectionAfterArchive(ids, 'c', ['c']), 'b')
+    assert.equal(nextVisibleSelectionAfterArchive(ids, 'a', ['a']), 'b')
+    assert.equal(nextVisibleSelectionAfterArchive(ids, 'b', ['a', 'b']), 'c')
+    assert.equal(nextVisibleSelectionAfterArchive(ids, 'a', ['a', 'b', 'c', 'd']), null)
+    assert.equal(nextVisibleSelectionAfterArchive(ids, 'c', ['x']), null)
+    assert.equal(nextVisibleSelectionAfterArchive(ids, null, ['c']), null)
   })
 })

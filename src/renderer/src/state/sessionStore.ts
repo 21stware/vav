@@ -13,7 +13,7 @@ import type {
 import { DEFAULT_CLI_AGENTS, DEFAULT_SETTINGS } from '@shared/types'
 import type { WorkspaceHostInfo } from '@shared/workspaceHost'
 import type { RemoteControlStatus } from '@shared/remoteControl'
-import { mergeConversationList, nextConversationSelection, isArchivedConversation, regenerateActiveLeaf, canMutateActiveSession, patchConversationById } from './sessionListMerge'
+import { mergeConversationList, nextConversationSelection, isArchivedConversation, regenerateActiveLeaf, canMutateActiveSession, compactRefusalReason, patchConversationById } from './sessionListMerge'
 import {
   activeToolsFields,
   DEFAULT_SESSION_TOOLS,
@@ -2190,7 +2190,11 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     if (!canMutateActiveSession(activeId, get().conversations, { requireIdle: false })) {
       return false
     }
-    if (get().conversations.find((c) => c.id === activeId)?.cliHost) {
+    const reason = compactRefusalReason({
+      cliHost: get().conversations.find((c) => c.id === activeId)?.cliHost,
+      isRunning: get().turns[activeId]?.isRunning
+    })
+    if (reason === 'cli-host') {
       set({
         errorBanner: tt('compact.error.cliHost'),
         errorBannerKind: 'generic',
@@ -2198,7 +2202,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       })
       return false
     }
-    if (get().turns[activeId]?.isRunning) {
+    if (reason === 'busy') {
       set({
         errorBanner: tt('compact.error.busy'),
         errorBannerKind: 'generic',
@@ -2236,7 +2240,12 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   async clearCompaction() {
     const { activeId } = get()
     if (!activeId) return false
-    if (get().conversations.find((c) => c.id === activeId)?.cliHost) {
+    if (
+      compactRefusalReason({
+        cliHost: get().conversations.find((c) => c.id === activeId)?.cliHost,
+        requireIdle: false
+      }) === 'cli-host'
+    ) {
       set({
         errorBanner: tt('compact.error.cliHost'),
         errorBannerKind: 'generic',

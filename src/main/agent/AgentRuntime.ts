@@ -17,7 +17,7 @@ import {
   type TurnPhase,
   type TurnStatus
 } from '@shared/types'
-import { ROOT_LEAF } from '@shared/thread'
+import { ROOT_LEAF, forkActiveLeaf, regenerateActiveLeaf } from '@shared/thread'
 import { buildSnapshot } from '@shared/tokenUsage'
 import { buildModel, describeError, streamWith } from './provider'
 import { catalogRatesFor, contextWindowFor, maxTokensFor } from './modelMeta'
@@ -290,7 +290,7 @@ export class AgentRuntime {
     const conversation = this.deps.conversations.get(conversationId)
     const target = conversation?.messages.find((m) => m.id === messageId)
     if (!target) return
-    const parentId = target.role === 'assistant' ? target.parentId : target.id
+    const parentId = regenerateActiveLeaf(target)
 
     this.deps.conversations.setActiveLeaf(conversationId, parentId)
     await this.startTurn(conversationId, parentId)
@@ -329,7 +329,7 @@ export class AgentRuntime {
     const target = conversation?.messages.find((m) => m.id === messageId)
     if (!target) return null
 
-    const leaf = target.role === 'user' ? (target.parentId ?? ROOT_LEAF) : target.id
+    const leaf = forkActiveLeaf(target)
     this.deps.conversations.setActiveLeaf(conversationId, leaf)
     return leaf
   }

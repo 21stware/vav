@@ -7,6 +7,10 @@
  * only real conversation activity (messages) bumps `updatedAt` on main.
  */
 
+import { regenerateActiveLeaf } from '../../../shared/thread.ts'
+
+export { regenerateActiveLeaf }
+
 export type ConversationListItem = {
   id: string
   updatedAt: number
@@ -134,15 +138,6 @@ export function isArchivedConversation(
   return !!id && conversations.some((conversation) => conversation.id === id && !!conversation.archived)
 }
 
-/** Drop the leaf to the prompt when regenerating an assistant reply. */
-export function regenerateActiveLeaf(target: {
-  role: string
-  id: string
-  parentId: string | null
-}): string | null {
-  return target.role === 'assistant' ? target.parentId : target.id
-}
-
 /** Archived or running sessions reject regenerate / edit / delete / fork. */
 export function canMutateActiveSession(
   activeId: string | null | undefined,
@@ -152,4 +147,15 @@ export function canMutateActiveSession(
   if (!activeId) return false
   if (opts?.requireIdle !== false && opts?.isRunning) return false
   return !isArchivedConversation(conversations, activeId)
+}
+
+/** CLI-hosted sessions never compact; busy turns refuse compact (not clear). */
+export function compactRefusalReason(opts: {
+  cliHost?: string | null
+  isRunning?: boolean
+  requireIdle?: boolean
+}): 'busy' | 'cli-host' | null {
+  if (opts.requireIdle !== false && opts.isRunning) return 'busy'
+  if (opts.cliHost) return 'cli-host'
+  return null
 }
