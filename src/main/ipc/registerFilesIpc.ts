@@ -1,7 +1,9 @@
 import { readFileSync } from 'node:fs'
 import type { IpcMain, IpcMainInvokeEvent } from 'electron'
 import { IPC } from '@shared/ipc'
+import type { FileInspectResult } from '@shared/ipc'
 import type { FileSortKey } from '@shared/types'
+import { isTsJsPath } from '@shared/previewBlock'
 import { isClipPath, writeClip } from '../fs/clipStore'
 import { writePngToClipboard } from '../clipboardImage'
 import type { FileService } from '../fs/FileService'
@@ -11,6 +13,11 @@ export type FilesIpcShell = {
   machineIdFor: (event: IpcMainInvokeEvent, path: string) => string
   previewOn: (machineId: string, path: string) => Promise<void>
   openOn: (machineId: string, path: string) => Promise<unknown>
+  takePreloadedInspect: (path: string) => Promise<FileInspectResult> | null
+  showSaveDialog: (
+    event: IpcMainInvokeEvent,
+    options: Electron.SaveDialogOptions
+  ) => Promise<Electron.SaveDialogReturnValue>
 }
 
 /** Workspace file list/read/write, clips, working copies, and open-with. */
@@ -106,4 +113,56 @@ export function registerFilesIpc(
   ipcMain.handle(IPC.filesWatch, (_event, id: string, root: string | null) =>
     files.watchRoot(id, root)
   )
+  ipcMain.handle(
+    IPC.filesInspectStructured,
+    (
+      _event,
+      path: string,
+      opts?: { maxBlocks?: number; maxRows?: number; conversationId?: string }
+    ) => files.inspectStructured(String(path || ''), opts)
+  )
+  ipcMain.handle(
+    IPC.filesSaveAs,
+    async (
+      event,
+      defaultName: string,
+      content: string
+    ): Promise<{ ok: true; path: string } | { ok: false; cancelled?: boolean; error?: string }> => {
+      const result = await shell.showSaveDialog(event, {
+        defaultPath: defaultName,
+        properties: ['createDirectory', 'showOverwriteConfirmation']
+      })
+      if (result.canceled || !result.filePath) return { ok: false, cancelled: true }
+      files.grantPath(result.filePath)
+      const written = await files.writeTextFile(result.filePath, content)
+      if (!written.ok) return { ok: false, error: written.error }
+      return { ok: true, path: result.filePath }
+    }
+  )
+  ipcMain.handle(IPC.filesRename, (_event, path: string, newName: string, conversationId?: string) =>
+    files.rename(path, newName, conversationId)
+  )
+  ipcMain.handle(IPC.filesTrash, (_event, paths: string[], conversationId?: string) =>
+    files.trash(paths, conversationId)
+  )
+  ipcMain.handle(
+    IPC.filesInspect,
+    (_event, path: string, conversationId?: string) =>
+      (conversationId ? null : shell.takePreloadedInspect(path)) ??
+      files.inspect(path, conversationId)
+  )
+  ipcMain.handle(
+    IPC.filesDbQuery,
+    (_event, path: string, table: string, offset?: number, limit?: number) =>
+      files.dbQuery(path, table, offset, limit)
+  )
+  ipcMain.handle(IPC.filesParseBlocks, async (_event, path: string, text: string) => {
+    if (!isTsJsPath(path)) return null
+    try {
+      const { parseTsCodeBlocks } = await import('../preview/parseTsCodeBlocks')
+      return parseTsCodeBlocks(path, text)
+    } catch {
+      return null
+    }
+  })
 }

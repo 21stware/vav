@@ -27,8 +27,6 @@ import {
   readdirSync,
   readFileSync,
   realpathSync,
-  renameSync,
-  rmdirSync,
   statSync,
   writeFileSync
 } from 'node:fs'
@@ -66,7 +64,6 @@ import {
   type AppSettings,
   type ChatMessage,
   type Conversation,
-  type ConversationMeta,
   type TurnEvent
 } from '@shared/types'
 import { agentBinaryCandidates } from '@shared/agentBinary'
@@ -143,7 +140,8 @@ import {
   resolveSessionAccountId,
   sessionShowsHostQuota,
   sessionUsageRowsOf,
-  workspaceKeyOf
+  workspaceKeyOf,
+  workspaceLabelOf
 } from '@shared/accounts'
 import { ANALYSIS_API_HOST } from '@shared/analysis'
 import {
@@ -171,6 +169,12 @@ import { registerHostsIpc } from './ipc/registerHostsIpc'
 import { registerWindowIpc } from './ipc/registerWindowIpc'
 import { registerAgentIpc } from './ipc/registerAgentIpc'
 import { registerConversationMetaIpc } from './ipc/registerConversationMetaIpc'
+import { registerConversationMutateIpc } from './ipc/registerConversationMutateIpc'
+import { registerScreenshotIpc } from './ipc/registerScreenshotIpc'
+import { registerSecretsIpc } from './ipc/registerSecretsIpc'
+import { registerFileSessionsIpc } from './ipc/registerFileSessionsIpc'
+import { hostDisplayName as hostDisplayNameOf } from './window/hostDisplay'
+import { findSwarmHistoryItem as findItemInSwarmHistory } from './window/swarmHistoryFind'
 import { machineIdFromRendererUrl } from './window/machineFromUrl'
 import { collectPreferredModelHosts, contextWindowForModelId } from './agent/modelContext'
 import { dialogConfirmOptions, revealSecretBoxOptions } from './ipc/dialogOptions'
@@ -218,7 +222,6 @@ import { mapRemoteSessions } from './remote/sessionList'
 import { listRemoteChildEntries, listRemoteRootEntries } from './remote/dirBrowse'
 import { RemoteSendQueue } from './remote/sendQueue'
 import { createScreenshotController } from './screenshot/ScreenshotSession'
-import { isFileSessionEligible } from '@shared/clipPath'
 import { OVERLAY_IMAGE_EXTS, shouldOpenAsOverlay } from '@shared/previewOverlay'
 import {
   inferDiagramKind,
@@ -292,7 +295,6 @@ import { shellPath } from './terminal/StickyShell'
 import { buildAppMenu } from './menu'
 import { currentLocale, setLocalePreference, t } from './i18n'
 import { codeFonts, type Platform } from '@shared/platform'
-import { isTsJsPath } from '@shared/previewBlock'
 import {
   getCliStatus,
   installCli,
@@ -4278,11 +4280,7 @@ function buildTokenUsagePayload(conversationId: string): TokenUsageViewPayload |
 function tokenUsageAccountRows(
   conversation: Conversation
 ): import('@shared/ipc').TokenUsageAccountRow[] {
-  const fallback = t('accounts.workspaceDefault')
-  const dirLabel =
-    workspaceKeyOf(conversation.workingDirectory) === '__default__'
-      ? fallback
-      : conversation.workingDirectory?.split(/[\\/]/).filter(Boolean).at(-1) || fallback
+  const dirLabel = workspaceLabelOf(conversation.workingDirectory, t('accounts.workspaceDefault'))
   const names = new Map<string, string>()
   for (const account of accountStore.listVisible(workspaceKeyOf(conversation.workingDirectory))) {
     names.set(account.id, displayAccountLabel(account, dirLabel))
@@ -4616,9 +4614,12 @@ function dismissProviderAccountSoon(): void {
 }
 
 function hostDisplayName(host: CliHostKind | null): string {
-  if (!host) return t('agents.plainShell')
-  const agent = enabledCliAgents(settingsStore.get().cliAgents).find((a) => a.id === host)
-  return agent?.name ?? displayNameForCliHost(host)
+  return hostDisplayNameOf(
+    host,
+    enabledCliAgents(settingsStore.get().cliAgents),
+    t('agents.plainShell'),
+    displayNameForCliHost
+  )
 }
 
 function buildProviderAccountPayload(
@@ -4989,13 +4990,7 @@ function findSwarmHistoryItem(
   itemId: string,
   conversationId = swarmHistoryConversationId
 ): SwarmHistoryViewPayload['groups'][number]['items'][number] | null {
-  const payload = currentSwarmHistoryPayload(conversationId)
-  if (!payload) return null
-  for (const group of payload.groups) {
-    const hit = group.items.find((item) => item.id === itemId)
-    if (hit) return hit
-  }
-  return null
+  return findItemInSwarmHistory(currentSwarmHistoryPayload(conversationId)?.groups, itemId)
 }
 
 function popupSwarmHistoryMenuAtAnchor(
@@ -6458,22 +6453,12 @@ function registerIpc(): void {
     for (const p of result.filePaths) fileService.grantPath(p)
     return { ok: true as const, paths: result.filePaths }
   })
-  ipcMain.handle(IPC.filesCaptureScreenshot, (event) => screenshotController!.start(event))
-  ipcMain.on(IPC.screenshotReady, (event) => screenshotController?.ready(event))
-  ipcMain.on(IPC.screenshotPainted, (event) => screenshotController?.painted(event))
-  ipcMain.on(IPC.screenshotDismiss, () => screenshotController?.dismiss())
-  ipcMain.on(IPC.screenshotFinish, (_event, payload) => screenshotController?.finish(payload))
-  ipcMain.on(IPC.screenshotSetKey, (event, on: boolean) => screenshotController?.setKey(event, on))
-  ipcMain.handle(IPC.secretsStatus, () => secretStore.status())
-  ipcMain.handle(IPC.secretsUnlock, () => {
-    const result = secretStore.unlock()
-    if (result.ok) {
-      invalidateAnalysisCache()
-      void serveAnalysisSnapshot({ refresh: false }).catch((err) => {
-        console.error('[analysis] post-unlock warm failed', err)
-      })
-    }
-    return result
+  registerScreenshotIpc(ipcMain, screenshotController!)
+  registerSecretsIpc(ipcMain, secretStore, () => {
+    invalidateAnalysisCache()
+    void serveAnalysisSnapshot({ refresh: false }).catch((err) => {
+      console.error('[analysis] post-unlock warm failed', err)
+    })
   })
 
   ipcMain.handle(IPC.bootstrap, (event): Bootstrap => {
@@ -7184,303 +7169,95 @@ return c as text`
     promoteEphemeral: promoteEphemeralConversation
   })
 
-  ipcMain.handle(
-    IPC.convCreate,
-    async (
-      _event,
-      options?: {
-        workingDirectory?: string | null
-        model?: string
-        swarmParentId?: string | null
-        machineId?: string | null
-      }
-    ): Promise<ConversationMeta> => {
-      const machineId = options?.machineId ?? LOCAL_MACHINE_ID
-      const workdir =
-        options && 'workingDirectory' in options
-          ? (options.workingDirectory ?? null)
-          : await resolveNewWorkdirOn(machineId)
-      const settings = settingsStore.get()
-      const model = options?.model?.trim() || undefined
-      if (workdir) {
-        rememberWorkdir(workdir, machineId)
-        broadcast(IPC.settingsChanged, currentSettings())
-      }
-      const defaultHost = resolveDefaultChatHost(settings.defaultAgentId)
-      const conversation = conversationStore.create(
-        workdir,
-        modelForNewConversation(defaultHost, model),
-        {
-          approvalMode: settings.defaultApprovalMode ?? 'auto',
-          thinkingLevel: parseThinkingLevel(settings.defaultThinkingLevel),
-          cliHost: defaultHost,
-          accountId: accountIdForSession(workdir, defaultHost),
-          swarmParentId: options?.swarmParentId ?? null,
-          machineId
-        }
-      )
-      if (defaultHost) promoteEphemeralConversation(conversation.id)
-      lastSeenConversationId = conversation.id
-      publishConversations()
-      return conversationToMeta(conversation)
-    }
-  )
 
-  ipcMain.handle(IPC.convSetModel, (_event, id: string, model: string) => {
-    const conversation = conversationStore.get(id)
-    const host = (conversation?.cliHost ?? null) as CliHostKind | null
-    const creds = resolveVavCredentials(
-      { conversation, settingsEndpoint: settingsStore.get().apiEndpoint },
-      accountStore,
-      secretStore
-    )
-    const vendorId = host == null ? vendorIdFromEndpoint(creds.endpoint) : null
-    conversationStore.updateMeta(id, {
-      model,
-      tokenLimit: contextWindowForModel(host, model, undefined, vendorId, creds.accountId)
-    })
-    if (cliHost.owns(id)) cliHost.applyModel(id, model)
-    publishConversations()
-    pushTokenUsageIfOpen(id)
-    return conversationStore.listMeta()
-  })
-
-  ipcMain.handle(
-    IPC.convSetCliHost,
-    (_event, id: string, host: string | null, accountId?: string | null) => {
-      const prev = conversationStore.get(id)
-      const prevHost = prev?.cliHost ?? null
-      const nextHost = isStructuredCliHost(host) ? host : null
-      const hostChanged = prevHost !== nextHost
-
-      if (hostChanged && (prev?.messages.length ?? 0) > 0) {
-        return {
-          conversations: conversationStore.listMeta(),
-          hostChanged: false,
-          transcript: null
-        }
-      }
-
-      if (hostChanged) {
-        // Park previous host's transcript, restore the next host's bucket.
-        // Runtimes are per-host; tear down so the wrong process cannot resume.
-        agent.disposeConversation(id)
-        cliHost.dispose(id)
-        changeSetStore.clearConversation(id)
-        conversationStore.switchHostTranscript(id, nextHost)
-        conversationStore.updateMeta(id, {
-          accountId: accountId ?? accountIdForSession(prev?.workingDirectory ?? null, nextHost)
-        })
-        swarmSession.syncHostCursor(id, nextHost)
-        // Empty buckets keep the previous host's model string — coerce so the
-        // picker / context-window panel do not show a foreign VAV preset.
-        coerceConversationModel(id)
-      } else {
-        const update: Partial<ConversationMeta> = {
-          cliHost: nextHost,
-          agentBinaryName: nextHost
-        }
-        if (accountId !== undefined) update.accountId = accountId
-        conversationStore.updateMeta(id, update)
-      }
-      if (nextHost) promoteEphemeralConversation(id)
-      publishConversations()
-      const conversation = conversationStore.get(id)
-      return {
-        conversations: conversationStore.listMeta(),
-        hostChanged,
-        transcript: conversation
-          ? {
-              messages: conversation.messages,
-              activeLeafId: conversation.activeLeafId,
-              compactions: conversation.compactions ?? [],
-              tokenHistory: conversation.tokenHistory ?? [],
-              tokensUsed: conversation.tokensUsed,
-              cacheCreatedAt: conversation.cacheCreatedAt,
-              cacheExpiresAt: conversation.cacheExpiresAt,
-              cliResumeCursor: conversation.cliResumeCursor ?? null,
-              cliHost: conversation.cliHost ?? null,
-              model: conversation.model,
-              quotaWindows: conversation.quotaWindows ?? []
-            }
-          : null
-      }
-    }
-  )
-
-  ipcMain.handle(
-    IPC.convSetFocusedFile,
-    (_event, id: string, path: string | null) => {
-      const existing = conversationStore.get(id)
-      // View-state only: must not reorder the sidebar. Do not publish a full
-      // list refresh — callers patch focusedFilePath locally.
-      if (existing && (existing.focusedFilePath ?? null) === path) {
-        return conversationStore.listMeta()
-      }
-      conversationStore.updateMeta(id, { focusedFilePath: path })
-      // No publishConversations() — selecting / previewing a file is not activity.
-      return conversationStore.listMeta()
-    }
-  )
-
-  ipcMain.handle(IPC.convAccountQuota, async (_event, id: string, hostOverride?: unknown) => {
-    const conversation = conversationStore.get(id)
-    if (!conversation) return null
-    const host =
-      hostOverride === null
-        ? null
-        : typeof hostOverride === 'string' && isStructuredCliHost(hostOverride)
-          ? hostOverride
-          : (conversation.cliHost ?? null)
-    const cached = peekHostAccountQuota(conversation, host)
-    if (cached) {
-      void loadHostAccountQuota(conversation, host).catch((err) => {
-        console.error('[account-quota] background refresh failed', err)
-      })
-      return cached
-    }
-    return loadHostAccountQuota(conversation, host)
-  })
-
-  ipcMain.handle(IPC.convSetWorkdir, (_event, id: string, path: string, machineId?: string | null) =>
-    applyWorkingDirectory(id, path, machineId)
-  )
-
-  ipcMain.handle(IPC.convPickWorkdir, async (_event, id: string) => {
-    const conversation = conversationStore.get(id)
-    if (conversation && !isLocalMachine(conversation.machineId)) return null
-    const result = await dialog.showOpenDialog({ properties: ['openDirectory', 'createDirectory'] })
-    if (result.canceled || !result.filePaths[0]) return null
-    fileService.grantPath(result.filePaths[0])
-    return applyWorkingDirectory(id, result.filePaths[0], conversation?.machineId)
-  })
-
-  ipcMain.handle(IPC.convUseTempWorkdir, async (_event, id: string) => {
-    const machineId = conversationStore.get(id)?.machineId
-    return applyWorkingDirectory(id, await mintTempWorkdirOn(machineId), machineId)
-  })
-
-  ipcMain.handle(
-    IPC.convLocateWorkspace,
-    async (_event, id: string, destinationDir: string, name: string) => {
-      const conversation = conversationStore.get(id)
-      if (!conversation?.workingDirectory) {
-        return { ok: false as const, error: t('error.locateNoTemp') }
-      }
-      const source = conversation.workingDirectory
-      const machineId = conversation.machineId
-      const host = hostRegistry.hostFor(machineId)
-      const safeName = name.trim().replace(/[\\/]/g, '-') || 'workspace'
-      const target = hostJoin(host.info.platform, destinationDir, safeName)
-      try {
-        if (isLocalMachine(machineId)) {
-          if (existsSync(target)) {
-            return { ok: false as const, error: t('error.locateExists', { target }) }
-          }
-          mkdirSync(destinationDir, { recursive: true })
-          renameSync(source, target)
-          try {
-            rmdirSync(dirname(source))
-            rmdirSync(dirname(dirname(source)))
-          } catch {
-            // leave leftover empty dirs
-          }
-        } else {
-          if (!host.info.online) {
-            return { ok: false as const, error: `${host.info.name} is offline` }
-          }
-          if (await host.fs.exists(target)) {
-            return { ok: false as const, error: t('error.locateExists', { target }) }
-          }
-          await host.fs.mkdir(destinationDir, { recursive: true })
-          await host.fs.rename(source, target)
-        }
-        return { ok: true as const, conversations: applyWorkingDirectory(id, target, machineId) }
-      } catch (err) {
-        return {
-          ok: false as const,
-          error: err instanceof Error ? err.message : t('error.locateFailed')
-        }
-      }
-    }
-  )
-
-  ipcMain.handle(IPC.convDeleteMessage, (_event, id: string, messageId: string) => {
-    const conversation = conversationStore.deleteMessage(id, messageId)
-    if (!conversation) return null
-    if (isStructuredCliHost(conversation.cliHost)) {
-      cliHost.invalidateResume(id)
-    }
-    conversationStore.flush()
-    publishConversations()
-    return {
-      conversations: conversationStore.listMeta(),
-      messages: conversation.messages,
-      activeLeafId: conversation.activeLeafId ?? null
-    }
-  })
-
-  ipcMain.handle(IPC.convRemove, (_event, ids: string[]) => {
-    const removed = conversationStore.remove(ids)
-    for (const id of removed) {
+  registerConversationMutateIpc(ipcMain, conversationStore, {
+    resolveNewWorkdirOn,
+    rememberWorkdir,
+    broadcastSettings: () => broadcast(IPC.settingsChanged, currentSettings()),
+    settings: () => settingsStore.get(),
+    modelForNewConversation,
+    accountIdForSession,
+    promoteEphemeral: promoteEphemeralConversation,
+    setLastSeen: (id) => {
+      lastSeenConversationId = id
+    },
+    publish: publishConversations,
+    resolveVavCredentials: (conversation) =>
+      resolveVavCredentials(
+        { conversation, settingsEndpoint: settingsStore.get().apiEndpoint },
+        accountStore,
+        secretStore
+      ),
+    contextWindowForModel,
+    cliOwns: (id) => cliHost.owns(id),
+    applyModel: (id, model) => cliHost.applyModel(id, model),
+    pushTokenUsageIfOpen,
+    disposeAgent: (id) => agent.disposeConversation(id),
+    disposeCli: (id) => cliHost.dispose(id),
+    clearChangeSets: (id) => changeSetStore.clearConversation(id),
+    syncHostCursor: (id, host) => swarmSession.syncHostCursor(id, host),
+    coerceModel: (id) => {
+      coerceConversationModel(id)
+    },
+    peekQuota: peekHostAccountQuota,
+    loadQuota: loadHostAccountQuota,
+    applyWorkingDirectory,
+    pickDirectory: async () => {
+      const result = await dialog.showOpenDialog({ properties: ['openDirectory', 'createDirectory'] })
+      if (result.canceled || !result.filePaths[0]) return null
+      return result.filePaths[0]
+    },
+    grantPath: (path) => fileService.grantPath(path),
+    mintTempWorkdirOn,
+    locateNoTemp: () => t('error.locateNoTemp'),
+    locateExists: (target) => t('error.locateExists', { target }),
+    locateFailed: () => t('error.locateFailed'),
+    hostFor: (machineId) => hostRegistry.hostFor(machineId),
+    invalidateCliResume: (id) => cliHost.invalidateResume(id),
+    onRemoved: (id) => {
       clearUnseenForConversation(id)
-      // Deleting a conversation is the one path that tears down its processes.
       agent.disposeConversation(id)
       cliHost.dispose(id)
       swarmSession.clearForConversation(id)
       ptyManager.killForConversation(id)
       fileService.unwatch(id)
       notifications.acknowledgeConversation(id)
-    }
-    if (removed.length) conversationStore.flush()
-    publishConversations()
-    return { removed, conversations: conversationStore.listMeta() }
-  })
-
-  ipcMain.handle(IPC.convReveal, async (event, path: string) => {
-    await revealOnMachine(machineIdForShell(event, String(path || '')), String(path || ''))
-  })
-
-  ipcMain.handle(IPC.convCopy, (_event, text: string) => {
-    clipboard.writeText(text)
-  })
-
-  ipcMain.handle(IPC.convClipboardRead, () => clipboard.readText())
-
-  ipcMain.handle(IPC.convClipboardReadImage, () => {
-    try {
-      const image = clipboard.readImage()
-      if (image.isEmpty()) return { ok: false as const, error: 'empty' }
-      const bytes = image.toPNG()
-      const written = writeClipBytes({ filename: 'paste.png', bytes })
-      if (!written.ok) return written
-      return { ok: true as const, path: written.path, bytes: bytes.length }
-    } catch (err) {
-      return {
-        ok: false as const,
-        error: err instanceof Error ? err.message : String(err)
+    },
+    revealPath: async (event, path) => {
+      await revealOnMachine(machineIdForShell(event, String(path || '')), String(path || ''))
+    },
+    writeText: (text) => clipboard.writeText(text),
+    readText: () => clipboard.readText(),
+    readClipboardImage: () => {
+      try {
+        const image = clipboard.readImage()
+        if (image.isEmpty()) return { ok: false as const, error: 'empty' }
+        const bytes = image.toPNG()
+        const written = writeClipBytes({ filename: 'paste.png', bytes })
+        if (!written.ok) return written
+        return { ok: true as const, path: written.path, bytes: bytes.length }
+      } catch (err) {
+        return {
+          ok: false as const,
+          error: err instanceof Error ? err.message : String(err)
+        }
+      }
+    },
+    copyImage: (base64Png) => {
+      try {
+        const raw = typeof base64Png === 'string' ? base64Png.trim() : ''
+        if (!raw) return { ok: false as const, error: 'empty image' }
+        const b64 = raw.includes(',') ? raw.slice(raw.indexOf(',') + 1) : raw
+        return writePngToClipboard(Buffer.from(b64, 'base64'))
+      } catch (err) {
+        return {
+          ok: false as const,
+          error: err instanceof Error ? err.message : String(err)
+        }
       }
     }
   })
 
-  ipcMain.handle(IPC.convCopyImage, (_event, base64Png: string) => {
-    try {
-      const raw = typeof base64Png === 'string' ? base64Png.trim() : ''
-      if (!raw) return { ok: false as const, error: 'empty image' }
-      // Accept accidental data-URL prefix from callers.
-      const b64 = raw.includes(',') ? raw.slice(raw.indexOf(',') + 1) : raw
-      return writePngToClipboard(Buffer.from(b64, 'base64'))
-    } catch (err) {
-      return {
-        ok: false as const,
-        error: err instanceof Error ? err.message : String(err)
-      }
-    }
-  })
-
-  ipcMain.handle(IPC.convSelectBranch, (_event, id: string, messageId: string) =>
-    conversationStore.selectBranch(id, messageId)
-  )
 
   // --- agent (built-in pi loop OR structured CLI host) ---
   registerAgentIpc(
@@ -7532,7 +7309,14 @@ return c as text`
   registerFilesIpc(ipcMain, fileService, workingCopyService, {
     machineIdFor: machineIdForShell,
     previewOn: previewOnMachine,
-    openOn: openOnMachine
+    openOn: openOnMachine,
+    takePreloadedInspect,
+    showSaveDialog: async (event, options) => {
+      const window = BrowserWindow.fromWebContents(event.sender)
+      return window
+        ? dialog.showSaveDialog(window, options)
+        : dialog.showSaveDialog(options)
+    }
   })
   registerVcsIpc(ipcMain, {
     cloudflare: () => ({
@@ -7579,158 +7363,27 @@ return c as text`
     const boundId = detachedWindowIds.get(win)
     if (boundId) pushDetachedSessionClaim(win, boundId)
   })
-  ipcMain.handle(
-    IPC.filesInspectStructured,
-    (
-      _event,
-      path: string,
-      opts?: { maxBlocks?: number; maxRows?: number; conversationId?: string }
-    ) => fileService.inspectStructured(String(path || ''), opts)
-  )
-  ipcMain.handle(
-    IPC.filesSaveAs,
-    async (
-      event,
-      defaultName: string,
-      content: string
-    ): Promise<{ ok: true; path: string } | { ok: false; cancelled?: boolean; error?: string }> => {
-      const window = BrowserWindow.fromWebContents(event.sender)
-      const options: Electron.SaveDialogOptions = {
-        defaultPath: defaultName,
-        properties: ['createDirectory', 'showOverwriteConfirmation']
-      }
-      const result = window
-        ? await dialog.showSaveDialog(window, options)
-        : await dialog.showSaveDialog(options)
-      if (result.canceled || !result.filePath) return { ok: false, cancelled: true }
-      fileService.grantPath(result.filePath)
-      const written = await fileService.writeTextFile(result.filePath, content)
-      if (!written.ok) return { ok: false, error: written.error }
-      return { ok: true, path: result.filePath }
-    }
-  )
-  ipcMain.handle(IPC.filesRename, (_event, path: string, newName: string, conversationId?: string) =>
-    fileService.rename(path, newName, conversationId)
-  )
-  ipcMain.handle(IPC.filesTrash, (_event, paths: string[], conversationId?: string) =>
-    fileService.trash(paths, conversationId)
-  )
-  ipcMain.handle(
-    IPC.filesInspect,
-    (_event, path: string, conversationId?: string) =>
-      (conversationId ? null : takePreloadedInspect(path)) ??
-      fileService.inspect(path, conversationId)
-  )
-  ipcMain.handle(
-    IPC.filesDbQuery,
-    (_event, path: string, table: string, offset?: number, limit?: number) =>
-      fileService.dbQuery(path, table, offset, limit)
-  )
-  ipcMain.handle(IPC.filesParseBlocks, async (_event, path: string, text: string) => {
-    if (!isTsJsPath(path)) return null
-    try {
-      // typescript compiler is heavy — load only when a TS/JS preview needs AST blocks.
-      const { parseTsCodeBlocks } = await import('./preview/parseTsCodeBlocks')
-      return parseTsCodeBlocks(path, text)
-    } catch {
-      return null
-    }
-  })
 
-  // --- FileSessionStore (File Preview multi-session, hidden from sidebar) ---
-  const toFileSessionsState = (
-    fileId: string,
-    activeSessionId: string,
-    sessions: { id: string; title: string; createdAt: number; updatedAt: number }[]
-  ) => ({ fileId, activeSessionId, sessions })
 
-  ipcMain.handle(IPC.fileSessionsOpen, async (_event, path: string) => {
-    if (!isFileSessionEligible(path)) return null
-    const settings = settingsStore.get()
-    const opened = await fileSessionStore.open(
-      path,
-      settings.defaultModel,
-      settings.defaultApprovalMode ?? 'auto',
-      parseThinkingLevel(settings.defaultThinkingLevel)
-    )
-    // Don't broadcast file sessions into the main sidebar list (already filtered).
-    return toFileSessionsState(opened.fileId, opened.activeSessionId, opened.sessions)
-  })
-
-  ipcMain.handle(IPC.fileSessionsCreate, async (_event, path: string) => {
-    if (!isFileSessionEligible(path)) return null
-    const settings = settingsStore.get()
-    const created = await fileSessionStore.createSession(
-      path,
-      settings.defaultModel,
-      settings.defaultApprovalMode ?? 'auto',
-      parseThinkingLevel(settings.defaultThinkingLevel)
-    )
-    return toFileSessionsState(created.fileId, created.activeSessionId, created.sessions)
-  })
-
-  ipcMain.handle(
-    IPC.fileSessionsSetActive,
-    (_event, fileId: string, sessionId: string) => {
-      const sessions = fileSessionStore.setActive(fileId, sessionId)
-      if (!sessions) return null
-      return toFileSessionsState(fileId, sessionId, sessions)
-    }
-  )
-
-  ipcMain.handle(IPC.fileSessionsList, (_event, fileId: string) => {
-    const listed = fileSessionStore.list(fileId)
-    if (!listed) return null
-    return toFileSessionsState(fileId, listed.activeSessionId, listed.sessions)
-  })
-  ipcMain.handle(IPC.fileSessionsListAll, () => fileSessionStore.listAll())
-  ipcMain.handle(IPC.fileSessionsResolve, (_event, fileId: string) =>
-    fileSessionStore.resolve(fileId)
-  )
-  ipcMain.handle(
-    IPC.fileSessionsForceDelete,
-    (_event, fileId: string, sessionIds: string[]) =>
-      fileSessionStore.forceDelete(fileId, sessionIds)
-  )
-
-  ipcMain.handle(IPC.fileSessionsSetReadOnly, (_event, sessionId: string, readOnly: boolean) => {
-    conversationStore.updateMeta(sessionId, { fileReadOnly: readOnly })
-    broadcast(IPC.fileSessionReadOnlyChanged, { sessionId, readOnly })
-  })
-
-  ipcMain.handle(
-    IPC.fileSessionsRename,
-    (_event, fileId: string, sessionId: string, title: string) => {
-      const sessions = fileSessionStore.rename(fileId, sessionId, title)
-      if (!sessions) return null
-      const listed = fileSessionStore.list(fileId)
-      if (!listed) return null
-      return toFileSessionsState(fileId, listed.activeSessionId, sessions)
-    }
-  )
-
-  ipcMain.handle(
-    IPC.fileSessionsDelete,
-    (_event, fileId: string, sessionIds: string[]) => {
-      const result = fileSessionStore.deleteSessions(fileId, sessionIds)
-      if (!result) return null
-      for (const id of result.removed) {
+  registerFileSessionsIpc(ipcMain, fileSessionStore, {
+    defaultModel: () => settingsStore.get().defaultModel,
+    defaultApprovalMode: () => settingsStore.get().defaultApprovalMode ?? 'auto',
+    defaultThinkingLevel: () => settingsStore.get().defaultThinkingLevel,
+    setReadOnly: (sessionId, readOnly) => {
+      conversationStore.updateMeta(sessionId, { fileReadOnly: readOnly })
+      broadcast(IPC.fileSessionReadOnlyChanged, { sessionId, readOnly })
+    },
+    onSessionsDeleted: (ids) => {
+      for (const id of ids) {
         agent.disposeConversation(id)
         cliHost.dispose(id)
         swarmSession.clearForConversation(id)
         ptyManager.killForConversation(id)
         fileService.unwatch(id)
       }
-      return {
-        ok: result.ok,
-        error: result.error,
-        removed: result.removed,
-        fileId,
-        activeSessionId: result.activeSessionId,
-        sessions: result.sessions
-      }
     }
-  )
+  })
+
 
   // --- agents (CLI binary probe) ---
   ipcMain.handle(
