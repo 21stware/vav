@@ -42,8 +42,15 @@ type StreamHandler = (event: string, data: unknown) => void
 const REQ_TIMEOUT_MS = 30_000
 const CONNECT_TIMEOUT_MS = 4_000
 const PAIR_ASK_TIMEOUT_MS = 90_000
+export const STREAM_BACKLOG_CAP = 256
 
 export const PAIRING_CANCELLED = 'pairing cancelled'
+
+export function enqueueStreamBacklog<T>(queued: T[], item: T, cap = STREAM_BACKLOG_CAP): T[] {
+  queued.push(item)
+  if (queued.length > cap) queued.splice(0, queued.length - cap)
+  return queued
+}
 
 /**
  * Ask a LAN peer to confirm pairing. On allow they send their `vav-daemon://` URI.
@@ -206,7 +213,7 @@ export class DaemonClient {
           if (handler) handler(frame.event, frame.data)
           else {
             const queued = this.streamBacklog.get(frame.stream) ?? []
-            queued.push({ event: frame.event, data: frame.data })
+            enqueueStreamBacklog(queued, { event: frame.event, data: frame.data })
             this.streamBacklog.set(frame.stream, queued)
           }
         }
@@ -255,6 +262,12 @@ export class DaemonClient {
     this.closed = true
     this.socket?.destroy()
     this.socket = null
+    for (const wait of this.pending.values()) {
+      wait.reject(new Error('daemon is not connected'))
+    }
+    this.pending.clear()
+    this.streams.clear()
+    this.streamBacklog.clear()
   }
 
   get connected(): boolean {

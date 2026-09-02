@@ -17,7 +17,7 @@ import {
   DAEMON_PROTO_VERSION,
   encodeDaemonPairing
 } from '../../shared/daemonProtocol.ts'
-import { DaemonServer } from './DaemonServer.ts'
+import { DaemonServer, DAEMON_LAN_BIND } from './DaemonServer.ts'
 import { defaultHostName, loadOrCreateIdentity, loadOrCreateSecret } from './identity.ts'
 import { advertisedPairingAddresses, startAnnouncer } from './lanAnnounce.ts'
 
@@ -38,7 +38,7 @@ async function main(): Promise<void> {
         'vavd — VAV workspace-host daemon',
         '',
         '  --port <n>       listen port (default 4750)',
-        '  --listen <addr>  bind address (default 0.0.0.0)',
+        '  --listen <addr>  bind address (default 0.0.0.0 — LAN; 127.0.0.1 for local-only)',
         '  --name <label>   machine name in pairing',
         '  --state <dir>    identity + secret dir (default ~/.vavd)',
         '  --no-announce    skip LAN multicast',
@@ -55,7 +55,7 @@ async function main(): Promise<void> {
   const portRaw = argValue('--port')
   const portParsed = portRaw === undefined ? DAEMON_DEFAULT_PORT : Number(portRaw)
   const port = Number.isFinite(portParsed) ? portParsed : DAEMON_DEFAULT_PORT
-  const bind = argValue('--listen', '0.0.0.0') ?? '0.0.0.0'
+  const bind = argValue('--listen', DAEMON_LAN_BIND) ?? DAEMON_LAN_BIND
 
   const host = createLocalWorkspaceHost({ name: identity.name })
   const server = new DaemonServer({

@@ -72,12 +72,25 @@ function asString(value: unknown, fallback = ''): string {
   return typeof value === 'string' ? value : fallback
 }
 
+/** Explicit LAN bind — used when the user opts into "allow other devices". */
+export const DAEMON_LAN_BIND = '0.0.0.0'
+/** Safe listen() default so a forgotten hostname is loopback-only. */
+export const DAEMON_LOCAL_BIND = '127.0.0.1'
+
+const AUTH_FAIL_LIMIT = 8
+const AUTH_FAIL_WINDOW_MS = 60_000
+const AUTH_LOCK_MS = 30_000
+
 export class DaemonServer {
   private readonly opts: ServerOpts
   private server: Server | null = null
   private readonly sockets = new Set<Socket>()
   private listenPort = 0
   private pairAskBusy = false
+  private readonly authFails = new Map<
+    string,
+    { count: number; windowStart: number; lockedUntil: number }
+  >()
 
   constructor(opts: ServerOpts) {
     this.opts = opts
@@ -87,7 +100,7 @@ export class DaemonServer {
     return this.listenPort
   }
 
-  listen(port: number, hostname = '0.0.0.0'): Promise<number> {
+  listen(port: number, hostname = DAEMON_LOCAL_BIND): Promise<number> {
     return new Promise((resolve, reject) => {
       const server = createServer((socket) => this.accept(socket))
       server.on('error', reject)
@@ -113,9 +126,32 @@ export class DaemonServer {
   close(): void {
     for (const socket of this.sockets) socket.destroy()
     this.sockets.clear()
+    this.authFails.clear()
     this.server?.close()
     this.server = null
     this.listenPort = 0
+  }
+
+  private authKey(socket: Socket): string {
+    return socket.remoteAddress || 'unknown'
+  }
+
+  private authLocked(socket: Socket): boolean {
+    const rec = this.authFails.get(this.authKey(socket))
+    return Boolean(rec && rec.lockedUntil > Date.now())
+  }
+
+  private noteAuthFail(socket: Socket): void {
+    const key = this.authKey(socket)
+    const now = Date.now()
+    const rec = this.authFails.get(key) ?? { count: 0, windowStart: now, lockedUntil: 0 }
+    if (now - rec.windowStart > AUTH_FAIL_WINDOW_MS) {
+      rec.count = 0
+      rec.windowStart = now
+    }
+    rec.count += 1
+    if (rec.count >= AUTH_FAIL_LIMIT) rec.lockedUntil = now + AUTH_LOCK_MS
+    this.authFails.set(key, rec)
   }
 
   private accept(socket: Socket): void {
@@ -185,6 +221,11 @@ export class DaemonServer {
         return
       }
       if (!ready) {
+        if (this.authLocked(socket)) {
+          writeLine(socket, { type: 'error', code: 'auth', message: 'pairing rejected' })
+          socket.destroy()
+          return
+        }
         const ask = parseDaemonPairAsk(value)
         if (ask) {
           void this.handlePairAsk(socket, ask)
@@ -192,10 +233,12 @@ export class DaemonServer {
         }
         const hello = parseDaemonHello(value)
         if (!hello || !secretsMatch(hello.auth, this.opts.secret())) {
+          this.noteAuthFail(socket)
           writeLine(socket, { type: 'error', code: 'auth', message: 'pairing rejected' })
           socket.destroy()
           return
         }
+        this.authFails.delete(this.authKey(socket))
         ready = true
         sendWelcome()
         return

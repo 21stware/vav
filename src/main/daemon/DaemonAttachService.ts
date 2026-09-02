@@ -3,7 +3,7 @@
  * paired remotes, reconnect, and register them on HostRegistry.
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { Socket } from 'node:net'
@@ -21,9 +21,9 @@ import {
 } from '../../shared/workspaceHost.ts'
 import type { HostRegistry } from '../host/WorkspaceHost.ts'
 import { createOfflineRemoteHost } from '../host/WorkspaceHost.ts'
-import { DaemonServer, type DaemonWorkspaceCatalog } from './DaemonServer.ts'
+import { DaemonServer, DAEMON_LAN_BIND, type DaemonWorkspaceCatalog } from './DaemonServer.ts'
 import { DaemonClient, createRemoteWorkspaceHost, requestLanPairOffer, PAIRING_CANCELLED } from './DaemonClient.ts'
-import { loadOrCreateIdentity, type DaemonIdentity } from './identity.ts'
+import { loadOrCreateIdentity, writePrivateJson, type DaemonIdentity } from './identity.ts'
 import {
   advertisedPairingAddresses,
   collectDialTargets,
@@ -70,6 +70,8 @@ type AttachOpts = {
   tailcatToken: () => string | null
   /** Open the remote daemon over tailcat (same pipe as the phone QR). */
   dialTunnel?: (token: string) => Promise<TunnelHandle>
+  /** Delay before reconnect attempt `n` (0-based). Default exponential up to 30s. */
+  reconnectDelayMs?: (attempt: number) => number
   onHostsChanged: (hosts: WorkspaceHostInfo[]) => void
   onDiscovered?: (peers: DiscoveredPeer[]) => void
   /** Desktop: confirm a LAN Pair from another VAV. vavd omits this. */
@@ -96,11 +98,14 @@ export class DaemonAttachService {
   /** Live `--dial` sidecars, keyed by tailcat token. */
   private readonly tunnels = new Map<string, TunnelHandle>()
   private readonly tunnelOfHost = new Map<string, string>()
+  private readonly reconnectTimers = new Map<string, ReturnType<typeof setTimeout>>()
+  private readonly reconnectCtl = new Map<string, AbortController>()
   private discovered: DiscoveredPeer[] = []
   readonly identity: DaemonIdentity
   private listenPort = 0
   private readonly opts: AttachOpts
   private pairAbort: AbortController | null = null
+  private disposed = false
 
   constructor(opts: AttachOpts) {
     this.opts = opts
@@ -327,6 +332,7 @@ export class DaemonAttachService {
   }
 
   forget(machineId: string): void {
+    this.abortReconnect(machineId)
     this.clients.get(machineId)?.close()
     this.clients.delete(machineId)
     this.homes.delete(machineId)
@@ -357,7 +363,11 @@ export class DaemonAttachService {
   }
 
   dispose(): void {
+    this.disposed = true
     this.cancelPair()
+    for (const id of [...this.reconnectCtl.keys(), ...this.reconnectTimers.keys()]) {
+      this.abortReconnect(id)
+    }
     this.stopListen()
     this.stopBrowse?.()
     this.stopBrowse = null
@@ -390,8 +400,8 @@ export class DaemonAttachService {
     if (this.server && this.listenPort) return
     const server = this.ensureServer()
     void server
-      .listen(DAEMON_DEFAULT_PORT)
-      .catch(() => server.listen(0))
+      .listen(DAEMON_DEFAULT_PORT, DAEMON_LAN_BIND)
+      .catch(() => server.listen(0, DAEMON_LAN_BIND))
       .then((port) => {
         this.listenPort = port
         this.stopAnnounce?.()
@@ -625,18 +635,55 @@ export class DaemonAttachService {
     }
   }
 
-  private async reconnect(row: PairedHostRecord): Promise<void> {
+  private abortReconnect(machineId: string): void {
+    const timer = this.reconnectTimers.get(machineId)
+    if (timer) {
+      clearTimeout(timer)
+      this.reconnectTimers.delete(machineId)
+    }
+    const ctl = this.reconnectCtl.get(machineId)
+    if (ctl) {
+      ctl.abort()
+      this.reconnectCtl.delete(machineId)
+    }
+  }
+
+  private scheduleReconnect(row: PairedHostRecord, attempt: number): void {
+    if (this.disposed) return
+    this.abortReconnect(row.machineId)
+    const delay =
+      this.opts.reconnectDelayMs?.(attempt) ?? Math.min(30_000, 1_000 * 2 ** Math.min(attempt, 8))
+    const timer = setTimeout(() => {
+      this.reconnectTimers.delete(row.machineId)
+      void this.reconnect(row, attempt)
+    }, delay)
+    timer.unref?.()
+    this.reconnectTimers.set(row.machineId, timer)
+  }
+
+  private async reconnect(row: PairedHostRecord, attempt = 0): Promise<void> {
+    if (this.disposed) return
+    this.abortReconnect(row.machineId)
+    const ctl = new AbortController()
+    this.reconnectCtl.set(row.machineId, ctl)
     try {
-      const { client, welcome, target } = await this.connectPairing({
-        v: DAEMON_PROTO_VERSION,
-        secret: row.secret,
-        machineId: row.machineId,
-        name: row.name,
-        host: row.host,
-        port: row.port,
-        token: row.token,
-        addresses: row.addresses
-      })
+      const { client, welcome, target } = await this.connectPairing(
+        {
+          v: DAEMON_PROTO_VERSION,
+          secret: row.secret,
+          machineId: row.machineId,
+          name: row.name,
+          host: row.host,
+          port: row.port,
+          token: row.token,
+          addresses: row.addresses
+        },
+        ctl.signal
+      )
+      if (this.disposed || ctl.signal.aborted) {
+        client.close()
+        return
+      }
       this.mount(client, welcome)
       await this.notifyHostAttached(welcome.host.id)
       this.remember({
@@ -647,7 +694,12 @@ export class DaemonAttachService {
         tmp: welcome.tmp,
         name: welcome.host.name || row.name
       })
-    } catch {
+    } catch (err) {
+      if (this.disposed || ctl.signal.aborted) return
+      console.error(
+        `[daemon] reconnect ${row.name || row.machineId} failed`,
+        err instanceof Error ? err.message : err
+      )
       if (row.home) this.homes.set(row.machineId, row.home)
       if (row.tmp) this.tmps.set(row.machineId, row.tmp)
       this.opts.registry.register(
@@ -657,6 +709,7 @@ export class DaemonAttachService {
         })
       )
       this.opts.onHostsChanged(this.opts.registry.list())
+      this.scheduleReconnect(row, attempt + 1)
     }
   }
 
@@ -688,7 +741,7 @@ export class DaemonAttachService {
 
   private saveStore(hosts: PairedHostRecord[]): void {
     mkdirSync(this.opts.userData, { recursive: true })
-    writeFileSync(this.storeFile, JSON.stringify({ hosts }, null, 2))
+    writePrivateJson(this.storeFile, { hosts })
   }
 }
 

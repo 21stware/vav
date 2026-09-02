@@ -60,6 +60,7 @@ import {
 import { acpReadTextFile, acpWriteTextFile, AcpRpcError } from './acpFs.ts'
 import { buildAcpPrompt } from './acpPrompt.ts'
 import { AcpTerminalRegistry } from './acpTerminal.ts'
+import { disposeStdioProcess } from './disposeStdio.ts'
 import {
   asArray,
   asRecord,
@@ -791,8 +792,7 @@ export function wireAcp(
         }
         send('session/close', { sessionId }, nextId++)
       }
-      proc.closeStdin()
-      setTimeout(() => proc.kill(), 2_000)
+      disposeStdioProcess(proc)
     }
   }
 }

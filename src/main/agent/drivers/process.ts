@@ -6,6 +6,7 @@ import type { StdioProcess } from './stdioJson'
 
 export type { StdioProcess } from './stdioJson'
 export { asArray, asRecord, asString, dig, num, onJsonLines } from './stdioJson'
+export { disposeStdioProcess } from './disposeStdio.ts'
 
 export function spawnStdioProcess(
   binary: string,
@@ -53,9 +54,9 @@ export function spawnStdioProcess(
         /* already closed */
       }
     },
-    kill(): void {
+    kill(signal?: NodeJS.Signals): void {
       try {
-        if (!child.killed) child.kill('SIGTERM')
+        if (!child.killed) child.kill(signal ?? 'SIGTERM')
       } catch {
         /* ignore */
       }

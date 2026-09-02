@@ -28,7 +28,10 @@ async function listenLoopback(dir: string): Promise<{ server: DaemonServer; port
 function attach(
   userData: string,
   enabled = false,
-  extra?: { dialTunnel?: (token: string) => Promise<{ host: string; port: number; close: () => void }> }
+  extra?: {
+    dialTunnel?: (token: string) => Promise<{ host: string; port: number; close: () => void }>
+    reconnectDelayMs?: (attempt: number) => number
+  }
 ): {
   service: DaemonAttachService
   registry: HostRegistry
@@ -45,6 +48,7 @@ function attach(
       enabled: () => enabled,
       tailcatToken: () => null,
       dialTunnel: extra?.dialTunnel,
+      reconnectDelayMs: extra?.reconnectDelayMs,
       onHostsChanged: () => undefined
     })
   }
@@ -208,6 +212,69 @@ describe('DaemonAttachService', () => {
     } finally {
       service.dispose()
       server.close()
+      await rm(disk, { recursive: true, force: true })
+      await rm(userData, { recursive: true, force: true })
+    }
+  })
+
+  it('retries a failed restore when the daemon comes back', async () => {
+    const disk = await mkdtemp(join(tmpdir(), 'vav-box-'))
+    const userData = await mkdtemp(join(tmpdir(), 'vav-attach-'))
+    const probe = createServer()
+    const port = await new Promise<number>((resolve, reject) => {
+      probe.once('error', reject)
+      probe.listen(0, '127.0.0.1', () => {
+        const address = probe.address()
+        resolve(typeof address === 'object' && address ? address.port : 0)
+      })
+    })
+    await new Promise<void>((resolve, reject) => probe.close((err) => (err ? reject(err) : resolve())))
+    await writeFile(
+      join(userData, 'paired-hosts.json'),
+      JSON.stringify({
+        hosts: [
+          {
+            machineId: 'box-1',
+            name: 'box',
+            secret: SECRET,
+            host: '127.0.0.1',
+            port
+          }
+        ]
+      })
+    )
+    const { service, registry } = attach(userData, false, { reconnectDelayMs: () => 40 })
+    let server: DaemonServer | undefined
+    try {
+      service.restore()
+      const start = Date.now()
+      while (!registry.get('box-1') && Date.now() - start < 2000) {
+        await new Promise((resolve) => setTimeout(resolve, 20))
+      }
+      assert.equal(registry.get('box-1')?.info.online, false)
+
+      const listening = new DaemonServer({
+        host: createLocalWorkspaceHost({ name: 'box' }),
+        identity: { machineId: 'box-1', name: 'box' },
+        secret: () => SECRET,
+        appVersion: 'test',
+        home: disk,
+        tmp: disk
+      })
+      server = listening
+      await listening.listen(port, '127.0.0.1')
+      let online = false
+      while (Date.now() - start < 4000) {
+        if (registry.get('box-1')?.info.online) {
+          online = true
+          break
+        }
+        await new Promise((resolve) => setTimeout(resolve, 20))
+      }
+      assert.equal(online, true)
+    } finally {
+      service.dispose()
+      server?.close()
       await rm(disk, { recursive: true, force: true })
       await rm(userData, { recursive: true, force: true })
     }

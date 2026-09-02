@@ -147,6 +147,9 @@ export function collectDialTargets(input: {
   add(input.host)
   const name = input.name?.trim()
   if (name?.endsWith('.local')) add(name)
+  // Same-machine pair (two VAV processes, tests) — LAN IPs are filtered as
+  // "self" above, so loopback is the only way to reach the other listener.
+  add('127.0.0.1')
 
   const local = input.localAddresses ?? []
   out.sort(

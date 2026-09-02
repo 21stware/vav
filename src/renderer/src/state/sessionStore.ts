@@ -68,6 +68,12 @@ import { getProjection, disposeProjection } from './StreamProjection'
 import { AGENT_TAB_ID, useWorkspaceStore } from './workspaceStore'
 import { isSwarmSurfaceActive } from '../lib/workdirSwitch'
 import {
+  isCurrentHydration,
+  mergeHydratedMessages,
+  nextHydrationGeneration,
+  omitKeys
+} from '../lib/messageHydration'
+import {
   collectSwarmLeaves,
   insertSwarmLeaf,
   rememberSwarmLayout,
@@ -957,6 +963,7 @@ const sessionToolsLayouts = loadSessionToolsMap()
 
 /** Cancels overlapping Workspace View enters (fast sidebar clicks / HMR remounts). */
 let workspaceSelectGen = 0
+const hydrationGen = new Map<string, number>()
 
 export const useSessionStore = create<SessionState>((set, get) => ({
   sidebarVisible: globalLayout.sidebarVisible,
@@ -1441,10 +1448,15 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       return
     }
 
+    const gen = nextHydrationGeneration(hydrationGen, id)
     const conversation = await window.vav.conversations.get(id)
     if (!conversation) return
+    if (!isCurrentHydration(hydrationGen, id, gen)) return
     set((state) => ({
-      messages: { ...state.messages, [id]: conversation.messages },
+      messages: {
+        ...state.messages,
+        [id]: mergeHydratedMessages(conversation.messages, state.messages[id])
+      },
       messagesHydrated: { ...state.messagesHydrated, [id]: true },
       activeLeaf: { ...state.activeLeaf, [id]: conversation.activeLeafId },
       compactions: {
@@ -1713,26 +1725,32 @@ export const useSessionStore = create<SessionState>((set, get) => ({
           useWorkspaceStore.getState().disposeConversation(id)
         }
         set((state) => {
-          const messages = { ...state.messages }
-          const activeLeaf = { ...state.activeLeaf }
-          const turns = { ...state.turns }
-          const toolsLayouts = { ...state.toolsLayouts }
-          const messageQueues = { ...state.messageQueues }
-          for (const id of removed) {
-            delete messages[id]
-            delete activeLeaf[id]
-            delete turns[id]
-            delete toolsLayouts[id]
-            delete messageQueues[id]
-          }
+          for (const id of removed) hydrationGen.delete(id)
+          const toolsLayouts = omitKeys(state.toolsLayouts, removed)
           saveSessionToolsMap(toolsLayouts)
           return {
             conversations: next,
-            messages,
-            activeLeaf,
-            turns,
+            messages: omitKeys(state.messages, removed),
+            messagesHydrated: omitKeys(state.messagesHydrated, removed),
+            activeLeaf: omitKeys(state.activeLeaf, removed),
+            turns: omitKeys(state.turns, removed),
             toolsLayouts,
-            messageQueues
+            messageQueues: omitKeys(state.messageQueues, removed),
+            drafts: omitKeys(state.drafts, removed),
+            attachments: omitKeys(state.attachments, removed),
+            quotes: omitKeys(state.quotes, removed),
+            previewRefs: omitKeys(state.previewRefs, removed),
+            pickMode: omitKeys(state.pickMode, removed),
+            commentCards: omitKeys(state.commentCards, removed),
+            contextFiles: omitKeys(state.contextFiles, removed),
+            workdirPathRevealed: omitKeys(state.workdirPathRevealed, removed),
+            tokenHistories: omitKeys(state.tokenHistories, removed),
+            cacheCreatedAt: omitKeys(state.cacheCreatedAt, removed),
+            cacheExpiresAt: omitKeys(state.cacheExpiresAt, removed),
+            liveUsage: omitKeys(state.liveUsage, removed),
+            activityById: omitKeys(state.activityById, removed),
+            compactions: omitKeys(state.compactions, removed),
+            pendingReviewByConversation: omitKeys(state.pendingReviewByConversation, removed)
           }
         })
         if (removed.includes(get().activeId)) {

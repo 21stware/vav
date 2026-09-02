@@ -355,6 +355,18 @@ process.on('uncaughtException', (err: NodeJS.ErrnoException) => {
     // stdout may already be dead
   }
 })
+process.on('unhandledRejection', (reason) => {
+  const err = reason instanceof Error ? reason : new Error(String(reason))
+  const code = (err as NodeJS.ErrnoException).code
+  if (code === 'EPIPE' || code === 'ERR_STREAM_DESTROYED') return
+  const msg = String(err.message ?? err ?? '')
+  if (/EPIPE|ERR_STREAM_DESTROYED/i.test(msg)) return
+  try {
+    console.error('[unhandledRejection]', err)
+  } catch {
+    // stdout may already be dead
+  }
+})
 
 // Pin userData + menu name before any store touches disk (and before ready so
 // the menu bar reads "VAV" instead of "Electron").
@@ -6684,6 +6696,19 @@ function appBuildNumber(): string {
 }
 
 function registerIpc(): void {
+  const originalHandle = ipcMain.handle.bind(ipcMain)
+  ipcMain.handle = ((
+    channel: string,
+    listener: (event: Electron.IpcMainInvokeEvent, ...args: unknown[]) => unknown
+  ) =>
+    originalHandle(channel, async (event, ...args) => {
+      try {
+        return await listener(event, ...args)
+      } catch (err) {
+        console.error(`[ipc] ${channel}`, err)
+        throw err
+      }
+    })) as typeof ipcMain.handle
   registerHapticsIpc()
   screenshotController ??= createScreenshotController({ loadScreenshotRenderer })
   ipcMain.handle(IPC.filesPickAttachments, async (event) => {
@@ -8770,6 +8795,8 @@ return c as text`
       // same teardown as before-quit, then exit so the process cannot linger
       // with a Tray/Dock-only lifetime after windows close.
       electronAutoUpdater.once('before-quit-for-update', () => {
+        daemonAttach.dispose()
+        remoteControl.dispose()
         agent.disposeAll()
         cliHost.disposeAll()
         ptyManager.killAll()
@@ -8902,6 +8929,7 @@ if (!singleInstance) {
     quitting = true
     sleepBlocker.release()
     macLidSleep?.stop()
+    daemonAttach.dispose()
     remoteControl.dispose()
     agent.disposeAll()
     cliHost.disposeAll()

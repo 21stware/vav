@@ -367,4 +367,31 @@ describe('daemon loopback', () => {
       await rm(dir, { recursive: true, force: true })
     }
   })
+
+  it('binds loopback when listen() is called without a hostname', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'vav-daemon-'))
+    const server = new DaemonServer({
+      host: createLocalWorkspaceHost({ name: 'loop' }),
+      identity: { machineId: 'loop-box', name: 'loop' },
+      secret: () => SECRET,
+      appVersion: 'test',
+      home: dir,
+      tmp: dir
+    })
+    const client = new DaemonClient()
+    try {
+      const port = await server.listen(0)
+      const welcome = await client.connect({
+        host: '127.0.0.1',
+        port,
+        secret: SECRET,
+        device: 'test'
+      })
+      assert.equal(welcome.host.id, 'loop-box')
+    } finally {
+      client.close()
+      server.close()
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
 })
