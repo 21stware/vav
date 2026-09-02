@@ -126,7 +126,6 @@ import {
   isVavProfile,
   resolveSessionAccountId,
   sessionShowsHostQuota,
-  sessionUsageRowsOf,
   workspaceKeyOf,
   workspaceLabelOf
 } from '@shared/accounts'
@@ -139,7 +138,7 @@ import {
   modelsForChatHost,
   resolveModelForChatHost
 } from '@shared/agentModels'
-import { collapseCursorListModels, normalizeCursorConversationModel } from '@shared/cursorModel'
+import { collapseCursorListModels } from '@shared/cursorModel'
 import { groupAccountsByVendor, isLlmVendorId, vendorById, vendorIdFromEndpoint } from '@shared/llmVendors'
 import { ConversationStore } from './store/ConversationStore'
 import { VavPackService } from './store/VavPackService'
@@ -169,7 +168,7 @@ import { registerPtyCreateIpc } from './ipc/registerPtyCreateIpc'
 import { hostDisplayName as hostDisplayNameOf } from './window/hostDisplay'
 import { findSwarmHistoryItem as findItemInSwarmHistory } from './window/swarmHistoryFind'
 import { machineIdFromRendererUrl } from './window/machineFromUrl'
-import { collectPreferredModelHosts, contextWindowForModelId } from './agent/modelContext'
+import { collectPreferredModelHosts, contextWindowForModelId, conversationModelHealPatch } from './agent/modelContext'
 import { dialogConfirmOptions, revealSecretBoxOptions } from './ipc/dialogOptions'
 import { showParentedMessageBox, windowFromSender } from './ipc/nativeDialog'
 import { conversationIdForWorkdirs } from './fs/conversationPath'
@@ -204,10 +203,12 @@ import {
   previewQuery as buildPreviewQuery
 } from './window/previewPool'
 import { overlayCascadeOrigin, overlayFit, placeDetachedBounds } from './window/windowPlace'
+import { isPreviewableColdOpenPath as previewableColdOpenPath } from './window/coldOpen'
 import { appZOrderWindowIds, windowIsInPlay as windowIsInPlayOf } from './window/windowZOrder'
 import { replaceLiveWarmPool, shouldDestroyParkedWarmShell, takeReadyWarmShell } from './window/warmShell'
 import {
   resolveContextTokens,
+  tokenUsageAccountRowsOf,
   tokenUsagePopupPosition,
   type TokenUsageAnchor
 } from './window/tokenUsageView'
@@ -4044,17 +4045,13 @@ function coerceConversationModel(conversationId: string): string | null {
     catalogue,
     vendorId
   })
-  const patch: { model?: string; tokenLimit?: number; fast?: boolean } = {}
-  if (host === 'cursor' && conversation.model) {
-    const normalized = normalizeCursorConversationModel(conversation.model)
-    if (normalized.migrated && normalized.fast === true && conversation.fast !== true) {
-      patch.fast = true
-    }
-  }
-  if (resolved !== conversation.model) {
-    patch.model = resolved
-    patch.tokenLimit = contextWindowForModel(host, resolved, undefined, vendorId, creds.accountId)
-  }
+  const patch = conversationModelHealPatch({
+    host,
+    currentModel: conversation.model,
+    currentFast: conversation.fast,
+    resolved,
+    tokenLimit: contextWindowForModel(host, resolved, undefined, vendorId, creds.accountId)
+  })
   if (Object.keys(patch).length > 0) {
     conversationStore.updateMeta(conversationId, patch)
     // Keep sidebar / composer meta in sync when healing a foreign model id.
@@ -4168,11 +4165,12 @@ function tokenUsageAccountRows(
   conversation: Conversation
 ): import('@shared/ipc').TokenUsageAccountRow[] {
   const dirLabel = workspaceLabelOf(conversation.workingDirectory, t('accounts.workspaceDefault'))
-  const names = new Map<string, string>()
-  for (const account of accountStore.listVisible(workspaceKeyOf(conversation.workingDirectory))) {
-    names.set(account.id, displayAccountLabel(account, dirLabel))
-  }
-  return sessionUsageRowsOf(conversation.tokenHistory ?? [], names, t('accounts.untitled'))
+  return tokenUsageAccountRowsOf(
+    conversation.tokenHistory ?? [],
+    accountStore.listVisible(workspaceKeyOf(conversation.workingDirectory)),
+    t('accounts.untitled'),
+    (account) => displayAccountLabel(account, dirLabel)
+  )
 }
 
 function currentTokenUsagePayload(): TokenUsageViewPayload | null {
@@ -5378,12 +5376,7 @@ function openFromDroppedPaths(paths: string[]): void {
 
 /** A launch argument that will become a preview window rather than a session. */
 function isPreviewableColdOpenPath(path: string): boolean {
-  if (!path) return false
-  try {
-    return existsSync(path) && !statSync(realpathSync(path)).isDirectory()
-  } catch {
-    return false
-  }
+  return previewableColdOpenPath(path, { existsSync, realpathSync, statSync })
 }
 
 /** Coalesce bursty macOS `open-file` events from a single Dock drop. */

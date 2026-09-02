@@ -1,4 +1,17 @@
-/** Lean token-usage panel math — never ships message bodies. */
+import { sessionUsageRowsOf } from '../../shared/accounts.ts'
+
+type UsageSnapshot = Parameters<typeof sessionUsageRowsOf>[0][number]
+
+export function tokenUsageAccountRowsOf<T extends { id: string }>(
+  history: UsageSnapshot[] | undefined,
+  accounts: T[],
+  untitled: string,
+  nameOf: (account: T) => string
+): ReturnType<typeof sessionUsageRowsOf> {
+  const names = new Map<string, string>()
+  for (const account of accounts) names.set(account.id, nameOf(account))
+  return sessionUsageRowsOf(history ?? [], names, untitled)
+}
 
 export function resolveContextTokens(
   estimated: number,

@@ -14,7 +14,6 @@ import type {
   TurnPhase,
   TurnStatus
 } from '@shared/types'
-import { parseThinkingLevel } from '@shared/thinkingLevel'
 import {
   cursorFamilyAllowsThinkingOverlay,
   cursorModelFamilyId
@@ -88,6 +87,10 @@ import {
 } from './drivers'
 import { shouldReplaceCliRuntime } from './cliWorkspaceRestart'
 import { sealCliPlanBlocks } from './planSeal'
+import { composeCliPrompt } from './cliPrompt'
+import { nextAllowedThinkingLevel } from './thinkingClamp'
+import { estimatedContextFill } from './contextFill'
+import { userTurnMessage } from './agentMessage'
 import {
   applyCliCancelQuota,
   cliAssistantMessage,
@@ -304,7 +307,7 @@ export class CliAgentHost {
       openFile
     )
 
-    const prompt = this.composePrompt(
+    const prompt = composeCliPrompt(
       userText,
       quote,
       contextBlocks,
@@ -341,7 +344,7 @@ export class CliAgentHost {
     if (!user?.content.trim()) return
     const openFile =
       user.contextFile?.trim() || conversation!.focusedFilePath || null
-    const prompt = this.composePrompt(
+    const prompt = composeCliPrompt(
       user.content,
       user.quoteSummary
         ? {
@@ -388,7 +391,7 @@ export class CliAgentHost {
       target.attachments,
       openFile
     )
-    const prompt = this.composePrompt(
+    const prompt = composeCliPrompt(
       text,
       userMessage.quoteSummary
         ? {
@@ -1903,12 +1906,16 @@ export class CliAgentHost {
    * always wins: any recorded history disables the estimate.
    */
   private applyEstimatedContextFill(conversationId: string, turn: HostTurn): void {
-    if (turn.sawUsage || turn.cancelled) return
     const conversation = this.deps.conversations.get(conversationId)
     if (!conversation) return
-    if ((conversation.tokenHistory?.length ?? 0) > 0) return
-    const estimate = estimateContextTokens(conversation.messages)
-    if (estimate <= 0 || estimate === conversation.tokensUsed) return
+    const estimate = estimatedContextFill({
+      sawUsage: turn.sawUsage,
+      cancelled: turn.cancelled,
+      historyLength: conversation.tokenHistory?.length ?? 0,
+      estimate: estimateContextTokens(conversation.messages),
+      tokensUsed: conversation.tokensUsed
+    })
+    if (estimate == null) return
     this.deps.conversations.setContextFill(conversationId, estimate)
     this.emitUsageSnapshot(conversationId)
   }
@@ -2197,20 +2204,15 @@ export class CliAgentHost {
     attachments?: string[],
     contextFile?: string | null
   ): ChatMessage {
-    const message: ChatMessage = {
+    const message = userTurnMessage({
       id: randomUUID(),
       parentId,
-      role: 'user',
-      content: text,
-      blocks: [{ kind: 'text', text }],
-      createdAt: Date.now(),
-      quoteMessageId: quote?.messageId,
-      quoteSummary: quote?.summary,
-      quoteRole: quote?.role,
-      contextBlocks: contextBlocks ?? undefined,
-      attachments: attachments?.length ? attachments : undefined,
-      contextFile: contextFile ?? undefined
-    }
+      text,
+      quote,
+      contextBlocks,
+      attachments,
+      contextFile
+    })
     this.deps.conversations.appendMessage(conversationId, message)
     this.deps.conversations.flush()
     this.deps.emit({ type: 'user', conversationId, message })
@@ -2229,9 +2231,8 @@ export class CliAgentHost {
     if (!allowed?.length) return
     const conversation = this.deps.conversations.get(conversationId)
     if (!conversation) return
-    const current = parseThinkingLevel(conversation.thinkingLevel)
-    if (allowed.includes(current)) return
-    const next = allowed.includes('max') ? 'max' : allowed[allowed.length - 1]!
+    const next = nextAllowedThinkingLevel(conversation.thinkingLevel, allowed)
+    if (!next) return
     this.deps.conversations.setThinkingLevel(conversationId, next)
     this.applyThinkingLevel(conversationId)
     this.deps.publish?.()
@@ -2254,42 +2255,6 @@ export class CliAgentHost {
       this.deps.conversations.setThinkingLevel(conversationId, event.thinkingLevel)
       this.deps.publish?.()
     }
-  }
-
-  private composePrompt(
-    text: string,
-    quote?: QuoteDraft | null,
-    contextBlocks?: PreviewRef[] | null,
-    attachments?: string[],
-    contextFile?: string | null,
-    fileReadOnly = false,
-    omitAttachmentPaths = false
-  ): string {
-    const parts: string[] = []
-    if (contextFile) {
-      parts.push(
-        fileReadOnly
-          ? `[Open file — read only]\n${contextFile}`
-          : `[Open file]\n${contextFile}`
-      )
-    }
-    if (contextBlocks?.length) {
-      for (const ref of contextBlocks) {
-        parts.push(
-          `[Selection ${ref.filePath}:${ref.startLine}-${ref.endLine}]\n${ref.text}${
-            ref.comment ? `\n(comment: ${ref.comment})` : ''
-          }`
-        )
-      }
-    }
-    if (attachments?.length && !omitAttachmentPaths) {
-      parts.push(`[Attachments]\n${attachments.map((a) => `- ${a}`).join('\n')}`)
-    }
-    if (quote?.summary) {
-      parts.push(`[Quoted ${quote.role} message]\n${quote.summary}`)
-    }
-    parts.push(text)
-    return parts.join('\n\n')
   }
 }
 

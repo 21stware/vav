@@ -1,5 +1,6 @@
 import type { CliHostKind } from '../../shared/types.ts'
 import { isStructuredCliHost } from '../../shared/cliHost.ts'
+import { normalizeCursorConversationModel } from '../../shared/cursorModel.ts'
 
 export type ModelCatalogEntry = { id: string; contextWindow?: number }
 
@@ -30,4 +31,26 @@ export function collectPreferredModelHosts(
     if (host && isStructuredCliHost(host)) hosts.push(host)
   }
   return hosts
+}
+
+/** Heal a stored model id (and Cursor fast chip) to what the picker would resolve. */
+export function conversationModelHealPatch(opts: {
+  host: CliHostKind | null
+  currentModel: string
+  currentFast?: boolean
+  resolved: string
+  tokenLimit: number
+}): { model?: string; tokenLimit?: number; fast?: boolean } {
+  const patch: { model?: string; tokenLimit?: number; fast?: boolean } = {}
+  if (opts.host === 'cursor' && opts.currentModel) {
+    const normalized = normalizeCursorConversationModel(opts.currentModel)
+    if (normalized.migrated && normalized.fast === true && opts.currentFast !== true) {
+      patch.fast = true
+    }
+  }
+  if (opts.resolved !== opts.currentModel) {
+    patch.model = opts.resolved
+    patch.tokenLimit = opts.tokenLimit
+  }
+  return patch
 }

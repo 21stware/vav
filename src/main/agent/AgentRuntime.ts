@@ -29,7 +29,7 @@ import {
 } from '@shared/compaction'
 import type { LeafCompaction } from '@shared/types'
 import { applyEditedArgs, leanToolArgs } from './agentToolArgs'
-import { isAssistant, textOf } from './agentMessage'
+import { isAssistant, textOf, userTurnMessage } from './agentMessage'
 import { sealRuntimePlanBlocks } from './planSeal'
 import {
   appendTurnErrorBlock,
@@ -494,24 +494,15 @@ export class AgentRuntime {
     attachments?: string[] | null,
     contextFile?: string | null
   ): string {
-    const message: ChatMessage = {
+    const message = userTurnMessage({
       id: randomUUID(),
       parentId,
-      role: 'user',
-      content: text,
-      blocks: [{ kind: 'text', text }],
-      createdAt: Date.now(),
-      ...(quote
-        ? {
-            quoteMessageId: quote.messageId,
-            quoteSummary: quote.summary,
-            quoteRole: quote.role
-          }
-        : {}),
-      ...(contextBlocks && contextBlocks.length ? { contextBlocks } : {}),
-      ...(attachments && attachments.length ? { attachments: [...attachments] } : {}),
-      ...(contextFile ? { contextFile } : {})
-    }
+      text,
+      quote,
+      contextBlocks,
+      attachments,
+      contextFile
+    })
     // Storing first is what lets auto-title fire before the turn starts.
     this.deps.conversations.appendMessage(conversationId, message)
     this.deps.emit({ type: 'user', conversationId, message })

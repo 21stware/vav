@@ -118,3 +118,25 @@ export function conversationSelectionRunClass(
   const next = index < orderedIds.length - 1 && selected.has(orderedIds[index + 1]!)
   return adjacentRunClass(prev, next)
 }
+
+export function hostMachineLabel(
+  machineId: string,
+  hosts: Array<{ id: string; name?: string | null }>,
+  localId: string,
+  thisMachine: string,
+  fallback?: string
+): string {
+  if (machineId === localId) return thisMachine
+  return hosts.find((h) => h.id === machineId)?.name?.trim() || fallback || machineId
+}
+
+export function incomingConnectLabels(
+  clients: Array<{ device?: string | null }> | undefined,
+  format: (name: string) => string
+): string[] {
+  const labels: string[] = []
+  for (const client of clients ?? []) {
+    if (client.device) labels.push(format(client.device))
+  }
+  return labels
+}

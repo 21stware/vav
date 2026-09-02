@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import { resolveContextTokens, tokenUsagePopupPosition } from './tokenUsageView.ts'
+import { resolveContextTokens, tokenUsageAccountRowsOf, tokenUsagePopupPosition } from './tokenUsageView.ts'
 
 describe('resolveContextTokens', () => {
   it('prefers compaction estimate, then last input, then tokensUsed', () => {
@@ -44,5 +44,20 @@ describe('tokenUsagePopupPosition', () => {
     })
     assert.equal(pos.y, 90)
     assert.equal(pos.x, 8)
+  })
+})
+
+describe('tokenUsageAccountRowsOf', () => {
+  it('names accounts from the visible list', () => {
+    const rows = tokenUsageAccountRowsOf(
+      [{ accountId: 'a1', newInputTokens: 10, outputTokens: 0 }],
+      [{ id: 'a1' }, { id: 'a2' }],
+      'Untitled',
+      (account) => (account.id === 'a1' ? 'Work' : account.id)
+    )
+    assert.equal(rows.length, 1)
+    assert.equal(rows[0]?.accountId, 'a1')
+    assert.equal(rows[0]?.name, 'Work')
+    assert.equal(rows[0]?.tokens, 10)
   })
 })

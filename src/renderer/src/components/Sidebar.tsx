@@ -41,7 +41,9 @@ import {
   adjacentRunClass,
   filterValueLabel,
   flattenSessionTitle,
-  groupingOptions
+  groupingOptions,
+  hostMachineLabel,
+  incomingConnectLabels
 } from '../lib/sidebarList'
 import { ConvBracket, type SwarmBracketKind } from './sidebar/ConvBracket'
 import { RenameField } from './sidebar/RenameField'
@@ -200,18 +202,16 @@ export function Sidebar({
   const windowMachineId = normalizeMachineId(useSessionStore((s) => s.windowMachineId))
   const defaultMachineId = normalizeMachineId(useSessionStore((s) => s.settings.defaultMachineId))
   const activeHost = hosts.find((h) => h.id === windowMachineId)
-  const machineLabel = (machineId: string, fallback?: string): string => {
-    if (machineId === LOCAL_MACHINE_ID) return t('sidebar.thisMachine')
-    return hosts.find((h) => h.id === machineId)?.name?.trim() || fallback || machineId
-  }
+  const machineLabel = (machineId: string, fallback?: string): string =>
+    hostMachineLabel(machineId, hosts, LOCAL_MACHINE_ID, t('sidebar.thisMachine'), fallback)
   // Incoming phones still annotate the local Connect control.
-  const incomingDeviceLabels = useMemo(() => {
-    const labels: string[] = []
-    for (const client of remoteControlStatus?.clients ?? []) {
-      if (client.device) labels.push(t('sidebar.connectWith', { name: client.device }))
-    }
-    return labels
-  }, [remoteControlStatus, t])
+  const incomingDeviceLabels = useMemo(
+    () =>
+      incomingConnectLabels(remoteControlStatus?.clients, (name) =>
+        t('sidebar.connectWith', { name })
+      ),
+    [remoteControlStatus, t]
+  )
   const localWindow = isLocalMachine(windowMachineId)
   const connectButtonLabel = localWindow
     ? incomingDeviceLabels.length > 0

@@ -10,7 +10,9 @@ import {
   modelLabel,
   flattenSessionTitle,
   conversationSelectionRunClass,
-  adjacentRunClass
+  adjacentRunClass,
+  hostMachineLabel,
+  incomingConnectLabels
 } from './sidebarList.ts'
 
 function conv(partial: Partial<ConversationMeta> & Pick<ConversationMeta, 'id'>): ConversationMeta {
@@ -119,5 +121,23 @@ describe('flattenSessionTitle / adjacentRunClass', () => {
     assert.equal(conversationSelectionRunClass('b', ['a'], ['a', 'b']), '')
     assert.equal(conversationSelectionRunClass('b', ['a', 'b', 'c'], ['a', 'b', 'c']), 'run-middle')
     assert.equal(conversationSelectionRunClass('a', ['a', 'c'], ['a', 'b', 'c']), 'run-only')
+  })
+})
+
+describe('hostMachineLabel / incomingConnectLabels', () => {
+  it('uses This Mac for the local machine and host names otherwise', () => {
+    assert.equal(hostMachineLabel('local', [], 'local', 'This Mac'), 'This Mac')
+    assert.equal(
+      hostMachineLabel('h1', [{ id: 'h1', name: ' Studio ' }], 'local', 'This Mac'),
+      'Studio'
+    )
+    assert.equal(hostMachineLabel('h2', [], 'local', 'This Mac', 'box'), 'box')
+  })
+
+  it('lists incoming device names', () => {
+    assert.deepEqual(
+      incomingConnectLabels([{ device: 'Phone' }, { device: null }, {}], (name) => `via ${name}`),
+      ['via Phone']
+    )
   })
 })

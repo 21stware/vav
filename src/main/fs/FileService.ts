@@ -36,6 +36,7 @@ import { inspectZipArchive, zipInspectWarnings, zipTreeText } from './fileZipArc
 import { looksLikeTextFile } from './fileTextSample'
 import { defaultAppDisplayName, mdlsRaw } from './fileMacMeta'
 import { inodeLabel, ownerLabel, statTimeMs } from './fileBinaryMeta'
+import { deniedInspectResult, directoryInspectResult } from './fileInspectShape'
 import {
   BINARY_BASE64_SOFT,
   BINARY_WINDOW_HARD_MAX,
@@ -529,7 +530,7 @@ export class FileService {
     const name = basename(path)
     const denied = this.accessError(path)
     if (denied) {
-      return { path, name, size: 0, kind: 'binary', mime: '', error: denied }
+      return deniedInspectResult(path, name, denied)
     }
     // Sandbox: I/O against working copy when active; result.path stays logical.
     const hostFs = this.fsFor(conversationId, path)
@@ -539,14 +540,7 @@ export class FileService {
       if (info.isDirectory()) {
         // Not a file preview — callers (Workspace) should not open FileViewer on dirs.
         // Never label folders as binary (that surfaces "Open with default app" for workdirs).
-        return {
-          path,
-          name,
-          size: 0,
-          mtimeMs: info.mtimeMs,
-          kind: 'directory',
-          mime: 'inode/directory'
-        }
+        return directoryInspectResult(path, name, info.mtimeMs)
       }
 
       // Legacy Office: convert on open (temp sidecar), then re-inspect modern path.
