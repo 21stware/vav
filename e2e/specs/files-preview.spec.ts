@@ -87,7 +87,8 @@ test('SVG image preview paints the media canvas with shared chrome', async () =>
     await page.locator('[data-file-path$="mark.svg"]').dblclick()
     const preview = page.locator('[data-testid="file-preview"]')
     await expect(page.locator('[data-testid="file-preview-name"]')).toHaveText('mark.svg')
-    await expect(preview.locator('img, .file-viewer-image-scroll')).toHaveCount(1)
+    await expect(preview.locator('.file-viewer-image-scroll')).toBeVisible()
+    await expect(preview.locator('.file-viewer-image-scroll img')).toBeVisible()
     await expect(preview.locator('.preview-mode-select')).toBeVisible()
   } finally {
     await harness.dispose()
@@ -109,6 +110,51 @@ test('clicking a markdown heading picks it and Escape clears the selection', asy
       .toBeGreaterThan(0)
     await page.keyboard.press('Escape')
     await expect(preview.locator('.preview-select-region.selected, .selected[data-block-id]')).toHaveCount(0)
+  } finally {
+    await harness.dispose()
+  }
+})
+
+test('HTML preview renders the document canvas with Edit chrome', async () => {
+  const harness = await launchVav()
+  try {
+    const { page } = harness
+    await openFilesTray(page)
+    await page.locator('[data-file-path$="page.html"]').dblclick()
+    const preview = page.locator('[data-testid="file-preview"]')
+    await expect(page.locator('[data-testid="file-preview-name"]')).toHaveText('page.html')
+    await expect(preview.getByText('HTML preview')).toBeVisible()
+    await expect(preview.locator('.preview-mode-select')).toHaveValue('editing')
+  } finally {
+    await harness.dispose()
+  }
+})
+
+test('ZIP preview lists archive entries as read-only', async () => {
+  const harness = await launchVav()
+  try {
+    const { page } = harness
+    await openFilesTray(page)
+    await page.locator('[data-file-path$="pack.zip"]').dblclick()
+    const preview = page.locator('[data-testid="file-preview"]')
+    await expect(page.locator('[data-testid="file-preview-name"]')).toHaveText('pack.zip')
+    await expect(preview.getByText('inside.txt')).toBeVisible()
+    await expect(preview.locator('.preview-mode-static, .preview-mode-select')).toContainText(/read/i)
+  } finally {
+    await harness.dispose()
+  }
+})
+
+test('XLSX preview opens the sheet canvas', async () => {
+  const harness = await launchVav()
+  try {
+    const { page } = harness
+    await openFilesTray(page)
+    await page.locator('[data-file-path$="budget.xlsx"]').dblclick()
+    const preview = page.locator('[data-testid="file-preview"]')
+    await expect(page.locator('[data-testid="file-preview-name"]')).toHaveText('budget.xlsx')
+    await expect(preview.getByText('Pens')).toBeVisible({ timeout: 20_000 })
+    await expect(preview.locator('.preview-mode-select')).toHaveValue('editing')
   } finally {
     await harness.dispose()
   }

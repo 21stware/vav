@@ -251,6 +251,26 @@ export async function launchVav(options: LaunchVavOptions = {}): Promise<VavHarn
     join(workspace, 'mark.svg'),
     '<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32"><rect width="32" height="32" fill="#6b5bc0"/></svg>\n'
   )
+  writeFileSync(
+    join(workspace, 'page.html'),
+    '<!doctype html><html><body><h1>HTML preview</h1><p>Hello canvas</p></body></html>\n'
+  )
+  execSync(
+    `python3 -c "import zipfile; z=zipfile.ZipFile(r'${join(workspace, 'pack.zip')}', 'w'); z.writestr('inside.txt', 'zip body'); z.close()"`
+  )
+  {
+    const XLSX = require('xlsx') as typeof import('xlsx')
+    const wb = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(
+      wb,
+      XLSX.utils.aoa_to_sheet([
+        ['Item', 'Qty'],
+        ['Pens', 12]
+      ]),
+      'Sheet1'
+    )
+    XLSX.writeFile(wb, join(workspace, 'budget.xlsx'))
+  }
   if (options.seedGit) seedGitRepo(workspace)
   const extraWorkspace = options.extraWorkspace
     ? mkdtempSync(join(extraWorkspaceRoot(), 'vav-e2e-other-'))
