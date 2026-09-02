@@ -7,6 +7,8 @@ import type {
   ConversationMeta,
   PreviewRef,
   QuoteDraft,
+  TerminalLayoutNode,
+  TerminalSplitAxis,
   TokenSnapshot
 } from '@shared/types'
 import { DEFAULT_CLI_AGENTS, DEFAULT_SETTINGS } from '@shared/types'
@@ -123,7 +125,8 @@ import {
   swarmRootId
 } from '@shared/swarmLayout'
 import { patchAcpConfigOption, patchAcpSessionMode } from '@shared/acpSession'
-import type { TerminalLayoutNode, TerminalSplitAxis } from '@shared/types'
+import { pickBootstrapActiveId, seedCliAgentCatalogue } from './sessionBootstrap'
+import { imageAttachToast } from './sessionAttach'
 
 function swarmBlocksWorkdirSwitch(id: string | null | undefined, swarmEnabled: boolean): boolean {
   if (!id) return false
@@ -137,24 +140,17 @@ function notifyImageAttachPlan(
   showToast: (toast: ToastState | null) => void,
   plan: ImageAttachPlan
 ): void {
-  if (
-    plan.rejectedUnsupported === 0 &&
-    plan.droppedForLimit === 0 &&
-    plan.rejectedOversize === 0 &&
-    plan.rejectedType === 0
-  ) {
+  const toast = imageAttachToast(plan)
+  if (!toast) return
+  if (toast.titleKey === 'composer.imageTooLarge') {
+    showToast({ kind: 'info', title: tt(toast.titleKey, { mb: toast.mb }) })
     return
   }
-  if (plan.rejectedOversize > 0) {
-    const mb = Math.max(1, Math.round(plan.maxBytes / (1024 * 1024)))
-    showToast({ kind: 'info', title: tt('composer.imageTooLarge', { mb }) })
+  if (toast.titleKey === 'composer.imagesTooMany') {
+    showToast({ kind: 'info', title: tt(toast.titleKey, { max: toast.max }) })
     return
   }
-  if (plan.droppedForLimit > 0) {
-    showToast({ kind: 'info', title: tt('composer.imagesTooMany', { max: plan.maxCount }) })
-    return
-  }
-  showToast({ kind: 'info', title: tt('composer.imageTypeUnsupported') })
+  showToast({ kind: 'info', title: tt(toast.titleKey) })
 }
 
 function trimAttachmentsForHost(
@@ -798,20 +794,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     const windowMachineId = readWindowMachineId()
     let nextActiveId = activeId
     if (!light && !pinnedConversationId) {
-      const listed = data.conversations.find((c) => c.id === nextActiveId)
-      if (
-        !listed ||
-        listed.archived ||
-        listed.fileId ||
-        !conversationOnMachine(listed, windowMachineId)
-      ) {
-        nextActiveId =
-          data.conversations
-            .filter(
-              (c) => !c.archived && !c.fileId && conversationOnMachine(c, windowMachineId)
-            )
-            .sort((a, b) => b.updatedAt - a.updatedAt)[0]?.id ?? ''
-      }
+      nextActiveId = pickBootstrapActiveId(data.conversations, nextActiveId, windowMachineId)
     }
     // File-preview / warm session shells skip update-state on the critical path.
     const updateState = light
@@ -820,23 +803,8 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
     // Legacy settings.json often had cliAgents: [] — never surface an empty catalogue.
     const settings = data.settings
-    if (!Array.isArray(settings.removedCliAgentIds)) settings.removedCliAgentIds = []
-    if (!Array.isArray(settings.cliAgents) || settings.cliAgents.length === 0) {
-      const removed = new Set(settings.removedCliAgentIds)
-      const seed = DEFAULT_CLI_AGENTS.filter((a) => !removed.has(a.id))
-      settings.cliAgents = (seed.length > 0 ? seed : DEFAULT_CLI_AGENTS).map((a) => ({
-        ...a,
-        envVars: { ...a.envVars },
-        defaultArgs: [...a.defaultArgs],
-        binaryCandidates: a.binaryCandidates ? [...a.binaryCandidates] : undefined
-      }))
+    if (seedCliAgentCatalogue(settings, DEFAULT_CLI_AGENTS).persistCliAgents) {
       void window.vav.settings.update({ cliAgents: settings.cliAgents }).catch(() => undefined)
-    }
-    if (!settings.disabledAgentModels || typeof settings.disabledAgentModels !== 'object') {
-      settings.disabledAgentModels = {}
-    }
-    if (!settings.defaultAgentModels || typeof settings.defaultAgentModels !== 'object') {
-      settings.defaultAgentModels = {}
     }
 
     set({

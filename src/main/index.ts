@@ -330,8 +330,8 @@ import {
 import { nativeSessionId } from '@shared/cliPaneBinding'
 import {
   buildSwarmHistoryMenuEntries,
-  isBlankSwarmSessionTitle,
   parseSwarmHistoryId,
+  shouldKeepClosedSwarmHistoryRecord,
   swarmSessionKey
 } from '@shared/cliSessionHistory'
 import {
@@ -4915,15 +4915,20 @@ let swarmHistoryConversationId: string | null = null
 
 function pruneBlankSwarmHistory(conversationId: string): void {
   for (const record of swarmHistoryStore.forConversation(conversationId)) {
-    if (record.name?.trim()) continue
     const sessionId = nativeSessionId(record.cursor)
-    if (
+    const hasConversation = !!(
       sessionId &&
       hostSessionHasConversation(record.agentId, sessionId, record.workingDirectory || '~')
+    )
+    if (
+      shouldKeepClosedSwarmHistoryRecord({
+        name: record.name,
+        title: record.title,
+        hasConversation
+      })
     ) {
       continue
     }
-    if (!isBlankSwarmSessionTitle(record.title)) continue
     swarmHistoryStore.remove(record.key)
   }
 }
