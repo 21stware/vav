@@ -23,6 +23,8 @@ import type { HostRegistry } from '../host/WorkspaceHost.ts'
 import { createOfflineRemoteHost } from '../host/WorkspaceHost.ts'
 import { DaemonServer, type DaemonWorkspaceCatalog } from './DaemonServer.ts'
 import { DaemonClient, createRemoteWorkspaceHost, requestLanPairOffer, PAIRING_CANCELLED } from './DaemonClient.ts'
+import { RemoteControlDial } from '../remote/RemoteControlDial.ts'
+import type { RemoteHello, RemoteServerMessage } from '../../shared/remoteControl.ts'
 import { loadOrCreateIdentity, type DaemonIdentity } from './identity.ts'
 import {
   advertisedPairingAddresses,
@@ -81,6 +83,10 @@ type AttachOpts = {
    * host catalog here before the remote window bootstraps.
    */
   onHostAttached?: (machineId: string) => void | Promise<void>
+  /** Phone-role hello on this machine's listen port → session hub. */
+  onControlHello?: (socket: Socket, leftover: string, hello: RemoteHello) => void
+  /** Frames from a control-plane dial we opened to a paired desktop. */
+  onControlEvent?: (machineId: string, message: RemoteServerMessage) => void
 }
 
 export class DaemonAttachService {
@@ -88,6 +94,9 @@ export class DaemonAttachService {
   private stopAnnounce: (() => void) | null = null
   private stopBrowse: (() => void) | null = null
   private readonly clients = new Map<string, DaemonClient>()
+  private readonly control = new Map<string, RemoteControlDial>()
+  /** Per-host probe: true after welcome, false after headless refuse / timeout. */
+  private readonly controlProbes = new Map<string, Promise<boolean>>()
   private readonly homes = new Map<string, string>()
   private readonly tmps = new Map<string, string>()
   private readonly providers = new Map<string, HostProviderInfo[]>()
@@ -281,7 +290,8 @@ export class DaemonAttachService {
         home: welcome.home,
         tmp: welcome.tmp
       })
-      this.mount(client, welcome)
+      this.mount(client, welcome, target, parsed.secret)
+      await this.pendingControl
       await this.notifyHostAttached(welcome.host.id)
       return { ok: true, host: this.opts.registry.get(welcome.host.id)?.info ?? welcome.host }
     } catch (err) {
@@ -326,7 +336,24 @@ export class DaemonAttachService {
     return this.pairAbort
   }
 
+  controlOf(machineId: string): RemoteControlDial | undefined {
+    const dial = this.control.get(machineId)
+    return dial?.ready ? dial : undefined
+  }
+
+  controlPlaneOf(machineId: string): boolean {
+    return this.control.get(machineId)?.ready === true
+  }
+
+  /** Wait until the phone-role probe for this host finishes (desktop or vavd). */
+  async waitForControlPlane(machineId: string): Promise<boolean> {
+    const probe = this.controlProbes.get(machineId)
+    if (probe) return probe
+    return this.control.get(machineId)?.ready === true
+  }
+
   forget(machineId: string): void {
+    this.dropControl(machineId)
     this.clients.get(machineId)?.close()
     this.clients.delete(machineId)
     this.homes.delete(machineId)
@@ -363,6 +390,8 @@ export class DaemonAttachService {
     this.stopBrowse = null
     for (const client of this.clients.values()) client.close()
     this.clients.clear()
+    for (const dial of this.control.values()) dial.close()
+    this.control.clear()
     for (const tunnel of this.tunnels.values()) tunnel.close()
     this.tunnels.clear()
     this.tunnelOfHost.clear()
@@ -381,7 +410,8 @@ export class DaemonAttachService {
       onPairAsk: this.opts.confirmLanPair
         ? (from) => this.opts.confirmLanPair!(from)
         : undefined,
-      catalog: this.opts.catalog
+      catalog: this.opts.catalog,
+      onControlHello: this.opts.onControlHello
     })
     return this.server
   }
@@ -601,10 +631,13 @@ export class DaemonAttachService {
 
   private mount(
     client: DaemonClient,
-    welcome: import('../../shared/daemonProtocol.ts').DaemonWelcome
+    welcome: import('../../shared/daemonProtocol.ts').DaemonWelcome,
+    target?: DialTarget,
+    hostSecret?: string
   ): void {
     const previous = this.clients.get(welcome.host.id)
     previous?.close()
+    this.dropControl(welcome.host.id)
     this.clients.set(welcome.host.id, client)
     this.homes.set(welcome.host.id, welcome.home)
     this.tmps.set(welcome.host.id, welcome.tmp)
@@ -614,6 +647,59 @@ export class DaemonAttachService {
     void this.probeProviders(welcome.host.id).then(() => {
       this.opts.onHostsChanged(this.opts.registry.list())
     })
+    this.pendingControl =
+      target && hostSecret
+        ? this.attachControlPlane(welcome.host.id, target, hostSecret).catch(() => undefined)
+        : Promise.resolve()
+  }
+
+  private pendingControl: Promise<void> = Promise.resolve()
+
+  async waitForControlPlane(): Promise<void> {
+    await this.pendingControl
+  }
+
+  private dropControl(machineId: string): void {
+    this.control.get(machineId)?.close()
+    this.control.delete(machineId)
+    this.controlProbes.delete(machineId)
+  }
+
+  /**
+   * Second connection, `hello.role=phone`, same secret as the daemon.
+   * Desktop hosts welcome; headless vavd refuses — client keeps local agent.
+   */
+  private async attachControlPlane(
+    machineId: string,
+    target: DialTarget,
+    secret: string
+  ): Promise<void> {
+    const probe = this.probeControlPlane(machineId, target, secret)
+    this.controlProbes.set(machineId, probe)
+    await probe
+  }
+
+  private async probeControlPlane(
+    machineId: string,
+    target: DialTarget,
+    secret: string
+  ): Promise<boolean> {
+    const dial = new RemoteControlDial()
+    try {
+      await dial.connect({
+        host: target.host,
+        port: target.port,
+        secret,
+        device: this.identity.name
+      })
+      this.control.set(machineId, dial)
+      dial.onFrame((_state, message) => this.opts.onControlEvent?.(machineId, message))
+      this.opts.onHostsChanged(this.opts.registry.list())
+      return true
+    } catch {
+      dial.close()
+      return false
+    }
   }
 
   private async notifyHostAttached(machineId: string): Promise<void> {
@@ -637,7 +723,8 @@ export class DaemonAttachService {
         token: row.token,
         addresses: row.addresses
       })
-      this.mount(client, welcome)
+      this.mount(client, welcome, target, row.secret)
+      await this.pendingControl
       await this.notifyHostAttached(welcome.host.id)
       this.remember({
         ...row,

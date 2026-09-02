@@ -83,6 +83,7 @@ import { RemoteControlService } from './remote/RemoteControlService'
 import { DaemonAttachService } from './daemon/DaemonAttachService'
 import { openTailcatDial } from './daemon/tailcatDial'
 import { hostJoin, isLocalMachine, LOCAL_MACHINE_ID, normalizeMachineId, conversationOnMachine, parseWorkspaceRefList, recentsForMachine, type WorkspaceHostInfo } from '@shared/workspaceHost'
+import { hostSessionId } from '@shared/remoteHostKind'
 import type {
   RemoteConfigure,
   RemoteControlsEvent,
@@ -1376,7 +1377,13 @@ const remoteSessionStatus = new Map<string, 'running' | 'done'>()
 function listRemoteSessions(): RemoteSession[] {
   return conversationStore
     .all()
-    .filter((c) => !c.archived && !c.fileId && !c.swarmParentId)
+    .filter(
+      (c) =>
+        !c.archived &&
+        !c.fileId &&
+        !c.swarmParentId &&
+        conversationOnMachine(c, LOCAL_MACHINE_ID)
+    )
     .sort((a, b) => b.updatedAt - a.updatedAt)
     .slice(0, 30)
     .map((c) => ({
@@ -1789,6 +1796,7 @@ const remoteControl = new RemoteControlService({
   onDaemonSocket: (socket, leftover) => daemonAttach.adoptAuthedSocket(socket, leftover)
 })
 
+
 const daemonAttach = new DaemonAttachService({
   userData: app.getPath('userData'),
   registry: hostRegistry,
@@ -1841,6 +1849,40 @@ const daemonAttach = new DaemonAttachService({
       return out.slice(0, 20)
     }
   },
+  onControlHello: (socket, leftover, hello) =>
+    remoteControl.adoptControlSocket(socket, leftover, hello),
+  onControlEvent: (machineId, message) => {
+    if (
+      message.type === 'thread' ||
+      (message.type === 'turn' &&
+        (message.phase === 'done' || message.phase === 'error' || message.phase === 'cancelled'))
+    ) {
+      void pullRemoteWorkspace(machineId)
+    }
+    if (message.type === 'turn' && message.phase === 'running') {
+      sendToWorkspaceWindows(
+        IPC.agentEvent,
+        { type: 'start', conversationId: message.conversationId },
+        message.conversationId
+      )
+      if (message.draft) {
+        sendToWorkspaceWindows(
+          IPC.agentEvent,
+          {
+            type: 'delta',
+            conversationId: message.conversationId,
+            index: 0,
+            kind: 'text',
+            text: message.draft
+          },
+          message.conversationId
+        )
+      }
+    }
+    if (message.type === 'created') {
+      void pullRemoteWorkspace(machineId)
+    }
+  },
   onHostAttached: (machineId) => pullRemoteWorkspace(machineId),
   onHostsChanged: (hosts) => {
     broadcast(IPC.hostsChanged, decorateHosts(hosts))
@@ -1879,6 +1921,23 @@ const daemonAttach = new DaemonAttachService({
     return result.response === 0
   }
 })
+
+/**
+ * Talk to the host session plane when this conversation lives on another
+ * desktop. Headless vavd has no hub — returns false so the caller can run
+ * a local agent against daemon fs/pty.
+ */
+async function forwardControl(
+  conversation: Conversation | undefined | null,
+  run: (dial: import('./remote/RemoteControlDial').RemoteControlDial, hostConversationId: string) => void
+): Promise<boolean> {
+  if (!conversation || isLocalMachine(conversation.machineId)) return false
+  const ready = await daemonAttach.waitForControlPlane(conversation.machineId)
+  const dial = daemonAttach.controlOf(conversation.machineId)
+  if (!ready || !dial?.ready) return false
+  run(dial, hostSessionId(conversation.id, conversation.duplicateSourceId))
+  return true
+}
 
 /** Pull the other computer's sessions and folder recents before its window boots. */
 async function pullRemoteWorkspace(machineId: string): Promise<void> {
@@ -6079,7 +6138,14 @@ function decorateHosts(hosts: WorkspaceHostInfo[]): WorkspaceHostInfo[] {
     const home = daemonAttach.homeOf(host.id) || host.home
     const tmp = daemonAttach.tmpOf(host.id) || host.tmp
     const defaultPath = daemonAttach.defaultPathOf(host.id) ?? undefined
-    return { ...host, home, tmp, defaultPath, providers }
+    return {
+      ...host,
+      home,
+      tmp,
+      defaultPath,
+      providers,
+      controlPlane: daemonAttach.controlPlaneOf(host.id)
+    }
   })
 }
 
@@ -7407,6 +7473,23 @@ return c as text`
       }
     ): Promise<ConversationMeta> => {
       const machineId = options?.machineId ?? LOCAL_MACHINE_ID
+      const control = !isLocalMachine(machineId) ? daemonAttach.controlOf(machineId) : undefined
+      if (control?.ready) {
+        const id = await control.createSession()
+        const path =
+          options && 'workingDirectory' in options ? (options.workingDirectory ?? null) : null
+        if (path) control.setWorkspace(id, path)
+        else if (options && !('workingDirectory' in options)) control.setWorkspace(id, null)
+        await pullRemoteWorkspace(machineId)
+        const adopted = conversationStore.get(id)
+        if (adopted) {
+          lastSeenConversationId = adopted.id
+          publishConversations()
+          const { messages: _messages, ...meta } = adopted
+          void _messages
+          return meta
+        }
+      }
       const workdir =
         options && 'workingDirectory' in options
           ? (options.workingDirectory ?? null)
@@ -7439,8 +7522,15 @@ return c as text`
     }
   )
 
-  ipcMain.handle(IPC.convRename, (_event, id: string, title: string) => {
+  ipcMain.handle(IPC.convRename, async (_event, id: string, title: string) => {
+    const conversation = conversationStore.get(id)
     const next = title.trim() || t('common.untitledSession')
+    if (await forwardControl(conversation, (dial, hostId) => dial.rename(hostId, next))) {
+      await pullRemoteWorkspace(conversation!.machineId)
+      const detached = detachedWindows.get(id)
+      if (detached && !detached.isDestroyed()) detached.setTitle(next)
+      return conversationStore.listMeta()
+    }
     conversationStore.updateMeta(id, { title: next })
     const detached = detachedWindows.get(id)
     if (detached && !detached.isDestroyed()) detached.setTitle(next)
@@ -7458,7 +7548,14 @@ return c as text`
     return conversationStore.listMeta()
   })
 
-  ipcMain.handle(IPC.convSetArchived, (_event, id: string, archived: boolean) => {
+  ipcMain.handle(IPC.convSetArchived, async (_event, id: string, archived: boolean) => {
+    const conversation = conversationStore.get(id)
+    if (archived && (await forwardControl(conversation, (dial, hostId) => dial.archive(hostId)))) {
+      await pullRemoteWorkspace(conversation!.machineId)
+      clearUnseenForConversation(id)
+      persistResultUnseen(id, false)
+      return conversationStore.listMeta()
+    }
     if (archived) {
       void agent.cancel(id)
       clearUnseenForConversation(id)
@@ -7469,30 +7566,66 @@ return c as text`
     return conversationStore.listMeta()
   })
 
-  ipcMain.handle(IPC.convSetApprovalMode, (_event, id: string, mode: string) => {
+  ipcMain.handle(IPC.convSetApprovalMode, async (_event, id: string, mode: string) => {
     if (mode === 'auto' || mode === 'bypass' || mode === 'edit') {
+      const conversation = conversationStore.get(id)
+      if (
+        await forwardControl(conversation, (dial, hostId) =>
+          dial.configure(hostId, { approvalMode: mode })
+        )
+      ) {
+        await pullRemoteWorkspace(conversation!.machineId)
+        return conversationStore.listMeta()
+      }
       conversationStore.setApprovalMode(id, mode)
       publishConversations()
     }
     return conversationStore.listMeta()
   })
 
-  ipcMain.handle(IPC.convSetThinkingLevel, (_event, id: string, level: string) => {
+  ipcMain.handle(IPC.convSetThinkingLevel, async (_event, id: string, level: string) => {
+    const conversation = conversationStore.get(id)
+    if (
+      await forwardControl(conversation, (dial, hostId) =>
+        dial.configure(hostId, { thinkingLevel: level })
+      )
+    ) {
+      await pullRemoteWorkspace(conversation!.machineId)
+      return conversationStore.listMeta()
+    }
     conversationStore.setThinkingLevel(id, parseThinkingLevel(level))
     if (cliHost.owns(id)) cliHost.applyThinkingLevel(id)
     publishConversations()
     return conversationStore.listMeta()
   })
 
-  ipcMain.handle(IPC.convSetFast, (_event, id: string, fast: boolean) => {
+  ipcMain.handle(IPC.convSetFast, async (_event, id: string, fast: boolean) => {
+    const conversation = conversationStore.get(id)
+    if (
+      await forwardControl(conversation, (dial, hostId) =>
+        dial.configure(hostId, { fast: fast === true })
+      )
+    ) {
+      await pullRemoteWorkspace(conversation!.machineId)
+      return conversationStore.listMeta()
+    }
     conversationStore.setFast(id, fast === true)
     if (cliHost.owns(id)) cliHost.applyFast(id)
     publishConversations()
     return conversationStore.listMeta()
   })
 
-  ipcMain.handle(IPC.convSetAcpMode, (_event, id: string, modeId: string) => {
+  ipcMain.handle(IPC.convSetAcpMode, async (_event, id: string, modeId: string) => {
     if (typeof modeId === 'string' && modeId.trim()) {
+      const conversation = conversationStore.get(id)
+      if (
+        await forwardControl(conversation, (dial, hostId) =>
+          dial.configure(hostId, { mode: modeId.trim() })
+        )
+      ) {
+        await pullRemoteWorkspace(conversation!.machineId)
+        return conversationStore.listMeta()
+      }
       cliHost.applySessionMode(id, modeId.trim())
       publishConversations()
     }
@@ -7540,8 +7673,15 @@ return c as text`
     return result
   })
 
-  ipcMain.handle(IPC.convSetModel, (_event, id: string, model: string) => {
+  ipcMain.handle(IPC.convSetModel, async (_event, id: string, model: string) => {
     const conversation = conversationStore.get(id)
+    if (
+      await forwardControl(conversation, (dial, hostId) => dial.configure(hostId, { model }))
+    ) {
+      await pullRemoteWorkspace(conversation!.machineId)
+      pushTokenUsageIfOpen(id)
+      return conversationStore.listMeta()
+    }
     const host = (conversation?.cliHost ?? null) as CliHostKind | null
     const creds = resolveVavCredentials(
       { conversation, settingsEndpoint: settingsStore.get().apiEndpoint },
@@ -7680,9 +7820,14 @@ return c as text`
     return loadHostAccountQuota(conversation, host)
   })
 
-  ipcMain.handle(IPC.convSetWorkdir, (_event, id: string, path: string, machineId?: string | null) =>
-    applyWorkingDirectory(id, path, machineId)
-  )
+  ipcMain.handle(IPC.convSetWorkdir, async (_event, id: string, path: string, machineId?: string | null) => {
+    const conversation = conversationStore.get(id)
+    if (await forwardControl(conversation, (dial, hostId) => dial.setWorkspace(hostId, path))) {
+      await pullRemoteWorkspace(conversation!.machineId)
+      return conversationStore.listMeta()
+    }
+    return applyWorkingDirectory(id, path, machineId)
+  })
 
   ipcMain.handle(IPC.convPickWorkdir, async (_event, id: string) => {
     const conversation = conversationStore.get(id)
@@ -7693,7 +7838,12 @@ return c as text`
   })
 
   ipcMain.handle(IPC.convUseTempWorkdir, async (_event, id: string) => {
-    const machineId = conversationStore.get(id)?.machineId
+    const conversation = conversationStore.get(id)
+    if (await forwardControl(conversation, (dial, hostId) => dial.setWorkspace(hostId, null))) {
+      await pullRemoteWorkspace(conversation!.machineId)
+      return conversationStore.listMeta()
+    }
+    const machineId = conversation?.machineId
     return applyWorkingDirectory(id, await mintTempWorkdirOn(machineId), machineId)
   })
 
@@ -7834,6 +7984,32 @@ return c as text`
       // Not awaited: the turn streams for as long as it needs, and the renderer
       // is driven entirely by turn events.
       if (conversationStore.get(id)?.archived) return
+      const remote = conversationStore.get(id)
+      if (remote && !isLocalMachine(remote.machineId)) {
+        void forwardControl(remote, (dial, hostId) => dial.send(hostId, text ?? '')).then((used) => {
+          if (used) return
+          if (agentFor(id) === 'cli') {
+            void cliHost.run(
+              id,
+              text,
+              attachments ?? [],
+              quote ?? null,
+              contextBlocks ?? null,
+              contextFile ?? null
+            )
+            return
+          }
+          void agent.run(
+            id,
+            text,
+            attachments ?? [],
+            quote ?? null,
+            contextBlocks ?? null,
+            contextFile ?? null
+          )
+        })
+        return
+      }
       if (agentFor(id) === 'cli') {
         void cliHost.run(
           id,
@@ -7859,10 +8035,25 @@ return c as text`
     agent.appendNotice(id, text)
   })
   ipcMain.handle(IPC.agentCancel, (_event, id: string) => {
+    const remote = conversationStore.get(id)
+    if (remote && !isLocalMachine(remote.machineId)) {
+      void forwardControl(remote, (dial, hostId) => dial.cancel(hostId)).then((used) => {
+        if (used) return
+        if (agentFor(id) === 'cli') cliHost.cancel(id)
+        else agent.cancel(id)
+      })
+      return
+    }
     if (agentFor(id) === 'cli') cliHost.cancel(id)
     else agent.cancel(id)
   })
-  ipcMain.handle(IPC.agentAnswer, (_event, id: string, toolCallId: string, answer: string) => {
+  ipcMain.handle(IPC.agentAnswer, async (_event, id: string, toolCallId: string, answer: string) => {
+    const remote = conversationStore.get(id)
+    if (remote && !isLocalMachine(remote.machineId)) {
+      if (await forwardControl(remote, (dial, hostId) => dial.reply(hostId, toolCallId, answer))) {
+        return true
+      }
+    }
     if (cliHost.answer(id, toolCallId, answer)) return true
     return agent.answer(id, toolCallId, answer)
   })

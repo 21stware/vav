@@ -2364,6 +2364,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       commentCards,
       contextFiles,
       conversations,
+      hosts,
       messageQueues
     } = get()
     let activeId = conversationId?.trim() || storeActiveId
@@ -2383,9 +2384,12 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     if (turn?.awaitingToolCallId) return
 
     // Built-in VAV needs an API key; structured CLI hosts use their own auth.
-    const activeHost =
-      conversations.find((c) => c.id === activeId)?.cliHost ?? null
-    if (!activeHost && !settings.apiKeyPresent) {
+    const activeConversation = conversations.find((c) => c.id === activeId)
+    const activeHost = activeConversation?.cliHost ?? null
+    const hostHoldsKeys = hosts.some(
+      (host) => host.id === activeConversation?.machineId && host.controlPlane === true
+    )
+    if (!activeHost && !settings.apiKeyPresent && !hostHoldsKeys) {
       get().showDialog({
         title: tt('common.hint'),
         body: tt('dialog.configureApiKeyBody'),
