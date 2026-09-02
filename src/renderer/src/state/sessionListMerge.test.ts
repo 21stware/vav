@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import { mergeConversationList, type ConversationListItem } from './sessionListMerge.ts'
+import { mergeConversationList, patchConversationById, type ConversationListItem } from './sessionListMerge.ts'
 
 function row(
   partial: Partial<ConversationListItem> & { id: string }
@@ -35,5 +35,17 @@ describe('mergeConversationList', () => {
       mergeConversationList(prev, next).map((c) => c.id),
       ['new', 'old', 'file']
     )
+  })
+})
+
+describe('patchConversationById', () => {
+  it('patches one row in place and supports an updater', () => {
+    const rows = [row({ id: 'a' }), row({ id: 'b', pinned: true })]
+    const patched = patchConversationById(rows, 'b', { pinned: false })
+    assert.equal(patched[0], rows[0])
+    assert.equal(patched[1]?.pinned, false)
+    const updated = patchConversationById(rows, 'a', (c) => ({ ...c, archived: true }))
+    assert.equal(updated[0]?.archived, true)
+    assert.equal(updated[1], rows[1])
   })
 })

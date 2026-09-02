@@ -17,6 +17,18 @@ export type ConversationListItem = {
   fileId?: string | null
 }
 
+/** Optimistic one-row patch; file-preview sessions stay in the local list. */
+export function patchConversationById<C extends { id: string }>(
+  conversations: C[],
+  id: string,
+  patch: Partial<C> | ((conversation: C) => C)
+): C[] {
+  return conversations.map((c) => {
+    if (c.id !== id) return c
+    return typeof patch === 'function' ? patch(c) : { ...c, ...patch }
+  })
+}
+
 export function mergeConversationList<T extends ConversationListItem>(
   prev: T[],
   next: T[]

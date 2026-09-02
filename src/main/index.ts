@@ -167,6 +167,7 @@ import { registerPreviewShellIpc } from './ipc/registerPreviewShellIpc'
 import { registerRuntimeIpc } from './ipc/registerRuntimeIpc'
 import { registerPtyCreateIpc } from './ipc/registerPtyCreateIpc'
 import { hostDisplayName as hostDisplayNameOf } from './window/hostDisplay'
+import { providerAccountViewOf } from './window/providerAccountView'
 import { findSwarmHistoryItem as findItemInSwarmHistory } from './window/swarmHistoryFind'
 import { machineIdFromRendererUrl } from './window/machineFromUrl'
 import { collectPreferredModelHosts, contextWindowForModelId, conversationModelHealPatch } from './agent/modelContext'
@@ -4514,21 +4515,19 @@ function buildProviderAccountPayload(
   const host = (conversation.cliHost ?? null) as CliHostKind | null
   const settings = settingsStore.get()
   const signedIn = extras?.signedIn ?? false
-  return {
+  return providerAccountViewOf({
     conversationId: conversation.id,
     host,
-    hostId: host ?? 'vav',
     hostName: hostDisplayName(host),
     signedIn,
     accountId: extras?.accountId ?? null,
     plan: extras?.plan ?? null,
-    authKind: extras?.authKind ?? (signedIn ? 'oauth' : 'none'),
+    authKind: extras?.authKind,
     windows: conversationHostQuota(conversation),
     loading: extras?.loading ?? false,
     theme: settings.theme,
-    locale: currentLocale(),
-    now: Date.now()
-  }
+    locale: currentLocale()
+  })
 }
 
 function currentProviderAccountPayload(): ProviderAccountViewPayload | null {

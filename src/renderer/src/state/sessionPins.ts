@@ -28,3 +28,16 @@ export function nextPinnedWorkspaceDirs(
   if (!pinned && rest.length !== current.length) return rest
   return null
 }
+
+/** Unarchiving the active row from the archive view returns to the main list. */
+export function archivedListModePatch(
+  activeId: string | null,
+  sidebarListMode: string,
+  id: string,
+  archived: boolean
+): { sidebarListMode: 'main' } | Record<string, never> {
+  if (id === activeId && !archived && sidebarListMode === 'archive') {
+    return { sidebarListMode: 'main' }
+  }
+  return {}
+}

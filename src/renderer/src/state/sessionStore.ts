@@ -21,7 +21,7 @@ import {
   filterEnabledModels
 } from '@shared/agentModels'
 import { vendorIdFromEndpoint } from '@shared/llmVendors'
-import { mergeConversationList } from './sessionListMerge'
+import { mergeConversationList, patchConversationById } from './sessionListMerge'
 import {
   activeToolsFields,
   DEFAULT_SESSION_TOOLS,
@@ -133,7 +133,8 @@ import { inheritCreateWorkingDirectory, nextConversationForMachine, pickBootstra
 import { notifyImageAttachPlan, trimAttachmentPathsForHost } from './sessionAttach'
 import { persistSwarmLayout, setLeaf } from './sessionSwarm'
 import { swarmBlocksWorkdirSwitch as swarmSurfaceBlocksWorkdir, locateWorkspaceDefaultName } from '../lib/workdirSwitch'
-import { nextFavoriteIds, nextPinnedWorkspaceDirs } from './sessionPins'
+import { nextFavoriteIds, nextPinnedWorkspaceDirs, archivedListModePatch } from './sessionPins'
+import { nextSteppedModelId } from './sessionModels'
 
 function swarmBlocksWorkdirSwitch(
   id: string | null | undefined,
@@ -1110,9 +1111,9 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     if (!conversation) return
     set((state) => ({
       ...conversationTokenCachePatch(state, target, conversation),
-      conversations: state.conversations.map((c) =>
-        c.id === target ? { ...c, tokensUsed: conversation.tokensUsed } : c
-      )
+      conversations: patchConversationById(state.conversations, target, {
+        tokensUsed: conversation.tokensUsed
+      })
     }))
   },
 
@@ -1401,7 +1402,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     // Optimistic update so the picker reflects the choice immediately (and so
     // file-preview sessions, which are omitted from listMeta, stay in the store).
     set((state) => ({
-      conversations: state.conversations.map((c) => (c.id === id ? { ...c, model } : c))
+      conversations: patchConversationById(state.conversations, id, { model })
     }))
     try {
       const list = await window.vav.conversations.setModel(id, model)
@@ -1457,14 +1458,8 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       vendorId
     })
 
-    const index = list.findIndex((m) => m.id === activeModel)
-    if (index === -1) {
-      await get().setModel(id, list[0].id)
-      return
-    }
-
-    const nextIndex = (index + delta + list.length) % list.length
-    const nextModel = list[nextIndex].id
+    const nextModel = nextSteppedModelId(list, activeModel, delta)
+    if (!nextModel) return
     await get().setModel(id, nextModel)
   },
 
@@ -1473,9 +1468,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     // raw `set({ conversations: list })` would drop them and snap the switcher
     // back to vav (single-file window agent switch looked broken).
     set((state) => ({
-      conversations: state.conversations.map((c) =>
-        c.id === id ? { ...c, agentBinaryName } : c
-      )
+      conversations: patchConversationById(state.conversations, id, { agentBinaryName })
     }))
     try {
       const list = await window.vav.conversations.setAgentBinaryName(id, agentBinaryName)
@@ -1495,16 +1488,11 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       return
     }
     set((state) => ({
-      conversations: state.conversations.map((c) =>
-        c.id === id
-          ? {
-              ...c,
-              cliHost: nextHost,
-              agentBinaryName: host,
-              accountId: accountId ?? c.accountId
-            }
-          : c
-      )
+      conversations: patchConversationById(state.conversations, id, {
+        cliHost: nextHost,
+        agentBinaryName: host,
+        accountId: accountId ?? current?.accountId
+      })
     }))
     try {
       const result = await window.vav.conversations.setCliHost(id, host, accountId)
@@ -1671,22 +1659,17 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   async setArchived(id, archived) {
     const conversations = await window.vav.conversations.setArchived(id, archived)
     const { activeId, sidebarListMode } = get()
-    const isActive = id === activeId
     // Archiving keeps the current list — the sidebar moves the selection to
     // the archived row's neighbor instead of jumping to the archive view.
     set((state) => ({
       conversations: mergeConversationList(state.conversations, conversations),
-      ...(isActive && !archived && sidebarListMode === 'archive'
-        ? { sidebarListMode: 'main' as const }
-        : {})
+      ...archivedListModePatch(activeId, sidebarListMode, id, archived)
     }))
   },
 
   async setApprovalMode(id, mode) {
     set((state) => ({
-      conversations: state.conversations.map((c) =>
-        c.id === id ? { ...c, approvalMode: mode } : c
-      )
+      conversations: patchConversationById(state.conversations, id, { approvalMode: mode })
     }))
     try {
       const list = await window.vav.conversations.setApprovalMode(id, mode)
@@ -1704,9 +1687,10 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
   async setAcpMode(id, modeId) {
     set((state) => ({
-      conversations: state.conversations.map((c) =>
-        c.id === id ? { ...c, acpSession: patchAcpSessionMode(c.acpSession, modeId) } : c
-      )
+      conversations: patchConversationById(state.conversations, id, (c) => ({
+        ...c,
+        acpSession: patchAcpSessionMode(c.acpSession, modeId)
+      }))
     }))
     try {
       const list = await window.vav.conversations.setAcpMode(id, modeId)
@@ -1720,8 +1704,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
   async setAcpConfigOption(id, configId, value) {
     set((state) => ({
-      conversations: state.conversations.map((c) => {
-        if (c.id !== id) return c
+      conversations: patchConversationById(state.conversations, id, (c) => {
         const next = patchAcpConfigOption(c.acpSession, configId, value)
         return next ? { ...c, acpSession: next } : c
       })
@@ -1738,9 +1721,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
   async setThinkingLevel(id, level) {
     set((state) => ({
-      conversations: state.conversations.map((c) =>
-        c.id === id ? { ...c, thinkingLevel: level } : c
-      )
+      conversations: patchConversationById(state.conversations, id, { thinkingLevel: level })
     }))
     try {
       const list = await window.vav.conversations.setThinkingLevel(id, level)
@@ -1757,7 +1738,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
   async setFast(id, fast) {
     set((state) => ({
-      conversations: state.conversations.map((c) => (c.id === id ? { ...c, fast } : c))
+      conversations: patchConversationById(state.conversations, id, { fast })
     }))
     try {
       const list = await window.vav.conversations.setFast(id, fast)
@@ -1775,9 +1756,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     if (current && (current.focusedFilePath ?? null) === path) return
     // Optimistic local patch (no list reshuffle).
     set((state) => ({
-      conversations: state.conversations.map((c) =>
-        c.id === id ? { ...c, focusedFilePath: path } : c
-      )
+      conversations: patchConversationById(state.conversations, id, { focusedFilePath: path })
     }))
     try {
       await window.vav.conversations.setFocusedFile(id, path)
@@ -2256,11 +2235,9 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         [activeId]: upsertCompaction(state.compactions[activeId], result.compaction)
       },
       liveUsage: omitLiveUsage(state.liveUsage, activeId),
-      conversations: state.conversations.map((c) =>
-        c.id === activeId
-          ? { ...c, tokensUsed: result.compaction.estimatedContextTokens }
-          : c
-      )
+      conversations: patchConversationById(state.conversations, activeId, {
+        tokensUsed: result.compaction.estimatedContextTokens
+      })
     }))
     return true
   },

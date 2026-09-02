@@ -45,8 +45,6 @@ import { isApprovalApproveText, isApprovalDenyText } from '@shared/i18n'
 import { parseToolInput } from '@shared/askPlan'
 import {
   isAskToolName,
-  isChecklistToolName,
-  isEnterPlanModeName,
   isPlanDocToolName,
   normalizePlanDocInput,
   planDocToChecklistInput,
@@ -95,6 +93,7 @@ import {
 } from './cliTurnFinish'
 import { applyToolEventStatus, newCliPermissionBlock, newCliToolCallBlock } from './cliToolBlock'
 import { parkInteractivePatch } from './cliPark'
+import { shouldFoldChecklistTool, skipEmptyChecklistUpdate, checklistPlanFields } from './cliChecklist'
 import { elicitationCardFields } from './cliElicitation'
 import {
   applyCliHistoryHandoff,
@@ -1321,9 +1320,7 @@ export class CliAgentHost {
     turn: HostTurn,
     event: Extract<DriverEvent, { type: 'tool' }>
   ): boolean {
-    if (isEnterPlanModeName(event.name)) return false
-    if (!isChecklistToolName(event.name) && mapToolName(event.name) !== 'plan') return false
-    if (mapToolName(event.name) !== 'plan') return false
+    if (!shouldFoldChecklistTool(event.name, mapToolName(event.name))) return false
 
     const incoming = projectChecklistInput(event.input)
     let index = turn.toolIndex.get(event.id)
@@ -1335,7 +1332,7 @@ export class CliAgentHost {
       }
     }
     if (index == null) {
-      if (incoming.steps.length === 0 && event.status !== 'started' && event.status !== 'updated') {
+      if (skipEmptyChecklistUpdate(incoming.steps.length, event.status)) {
         return false
       }
       index = turn.blocks.length
@@ -1357,13 +1354,10 @@ export class CliAgentHost {
     const previousInput = block.input
     this.patchToolBlock(block, event)
     block.tool = 'plan'
-    if (incoming.steps.length) {
-      const current = projectChecklistInput(parseToolInput(previousInput))
-      const title =
-        incoming.title && incoming.title !== 'Plan' ? incoming.title : current.title || incoming.title
-      block.input = inputJson({ title, steps: incoming.steps })
-      const done = incoming.steps.filter((step) => step.status === 'done').length
-      block.summary = `Plan · ${title} (${done}/${incoming.steps.length})`
+    const fields = checklistPlanFields(previousInput, incoming)
+    if (fields.input) {
+      block.input = inputJson(fields.input)
+      if (fields.summary) block.summary = fields.summary
     } else {
       block.input = previousInput
     }
