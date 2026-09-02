@@ -31,6 +31,7 @@ import {
   appendTurnErrorBlock,
   assistantSnapshotFromTurn,
   assistantStopKind,
+  skipStableToolcallDelta,
   runtimeTurnStatus,
   sealCancelledInteractiveTools
 } from './agentTurnFinish'
@@ -912,7 +913,7 @@ export class AgentRuntime {
         // Deltas that only grow `contents` must not rewrite the card — summary
         // is stable once path/command is known, and re-stringifying megabyte
         // bodies would flood IPC.
-        if (event.type === 'toolcall_delta' && prev && prev.summary === summary) break
+        if (skipStableToolcallDelta(event.type, prev, summary)) break
 
         const block = blockFromContent(
           call,

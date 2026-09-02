@@ -5,6 +5,7 @@ import {
   applyCliCancelQuota,
   cliAssistantContent,
   cliAssistantMessage,
+  sameSessionRetryPlan,
   shouldSettleAsCancelled,
   stripLeakedStreamErrorFromTurn
 } from './cliTurnFinish.ts'
@@ -14,6 +15,24 @@ describe('shouldSettleAsCancelled', () => {
     assert.equal(shouldSettleAsCancelled(true, 'boom'), true)
     assert.equal(shouldSettleAsCancelled(false, 'Request cancelled'), true)
     assert.equal(shouldSettleAsCancelled(false, 'network timeout'), false)
+  })
+})
+
+describe('sameSessionRetryPlan', () => {
+  it('continues without re-prompt when partial answer content already landed', () => {
+    assert.deepEqual(sameSessionRetryPlan(true), {
+      phase: 'retrying',
+      prepareReplayFromBlocks: true,
+      continueWithoutReprompt: true
+    })
+  })
+
+  it('re-opens replay and re-prompts when the turn has no answer yet', () => {
+    assert.deepEqual(sameSessionRetryPlan(false), {
+      phase: 'thinking',
+      prepareReplayFromBlocks: false,
+      continueWithoutReprompt: false
+    })
   })
 })
 

@@ -13,7 +13,7 @@ import type {
 import { DEFAULT_CLI_AGENTS, DEFAULT_SETTINGS } from '@shared/types'
 import type { WorkspaceHostInfo } from '@shared/workspaceHost'
 import type { RemoteControlStatus } from '@shared/remoteControl'
-import { mergeConversationList, nextConversationSelection, patchConversationById } from './sessionListMerge'
+import { mergeConversationList, nextConversationSelection, isArchivedConversation, regenerateActiveLeaf, canMutateActiveSession, patchConversationById } from './sessionListMerge'
 import {
   activeToolsFields,
   DEFAULT_SESSION_TOOLS,
@@ -40,7 +40,7 @@ import {
   type TurnRuntime,
 } from './sessionTypes'
 import { omitLiveUsage } from './sessionUsage'
-import { dispatchQueuedPayload, MESSAGE_QUEUE_MAX, buildQueuedMessage, composerSendDisposition, composerClearedPatch, isEmptyComposerSend, mergePreviewAndCommentRefs } from './sessionQueue'
+import { dispatchQueuedPayload, MESSAGE_QUEUE_MAX, buildQueuedMessage, composerSendDisposition, composerClearedPatch, isEmptyComposerSend, mergePreviewAndCommentRefs, shouldDrainMessageQueue } from './sessionQueue'
 import { applyCliHostSetResult } from './sessionCliHost'
 import { applySessionTurnEvent } from './sessionTurnApply'
 import {
@@ -1847,7 +1847,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       messageQueues
     } = get()
     let activeId = conversationId?.trim() || storeActiveId
-    if (activeId && conversations.some((c) => c.id === activeId && c.archived)) return
+    if (isArchivedConversation(conversations, activeId)) return
     // Empty chat shell: mint the session on first send (workspace materializes).
     if (!activeId || !conversations.some((c) => c.id === activeId)) {
       await get().createConversation({ openIn: 'here' })
@@ -2036,9 +2036,17 @@ export const useSessionStore = create<SessionState>((set, get) => ({
    * Does nothing while ask_user_question is pending or a manual send-now is in flight.
    */
   async drainMessageQueue(conversationId) {
-    if (queueSendInFlight.has(conversationId)) return
     const turn = get().turns[conversationId]
-    if (turn?.isRunning || turn?.awaitingToolCallId) return
+    if (
+      !shouldDrainMessageQueue({
+        sendNowInFlight: queueSendInFlight.has(conversationId),
+        isRunning: turn?.isRunning,
+        awaitingToolCallId: turn?.awaitingToolCallId,
+        queueLength: get().messageQueues[conversationId]?.length ?? 0
+      })
+    ) {
+      return
+    }
     const head = get().messageQueues[conversationId]?.[0]
     if (!head) return
     // Re-use sendQueuedNow so removal + payload path stay single-sourced.
@@ -2048,13 +2056,18 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   async regenerate(messageId) {
     const state = get()
     const { activeId } = state
-    if (!activeId || state.turns[activeId]?.isRunning) return
-    if (state.conversations.some((c) => c.id === activeId && c.archived)) return
+    if (
+      !canMutateActiveSession(activeId, state.conversations, {
+        isRunning: state.turns[activeId]?.isRunning
+      })
+    ) {
+      return
+    }
     // Drop back to the prompt right away, or the reply being replaced would sit
     // above the stream and look like one more record.
     const target = state.messages[activeId]?.find((m) => m.id === messageId)
     if (!target) return
-    setLeaf(set, state.activeLeaf, activeId, target.role === 'assistant' ? target.parentId : target.id)
+    setLeaf(set, state.activeLeaf, activeId, regenerateActiveLeaf(target))
     set({ errorBanner: null, errorBannerKind: null, errorBannerDetail: null })
     await window.vav.agent.regenerate(activeId, messageId)
   },
@@ -2062,8 +2075,14 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   async editUserMessage(messageId, text) {
     const state = get()
     const { activeId } = state
-    if (!activeId || state.turns[activeId]?.isRunning || !text.trim()) return
-    if (state.conversations.some((c) => c.id === activeId && c.archived)) return
+    if (
+      !canMutateActiveSession(activeId, state.conversations, {
+        isRunning: state.turns[activeId]?.isRunning
+      })
+    ) {
+      return
+    }
+    if (!text.trim()) return
     const target = state.messages[activeId]?.find((m) => m.id === messageId)
     if (!target) return
     setLeaf(set, state.activeLeaf, activeId, target.parentId)
@@ -2087,8 +2106,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
    */
   async selectPendingBranch(parentKey) {
     const { activeId, conversations } = get()
-    if (!activeId) return
-    if (conversations.some((c) => c.id === activeId && c.archived)) return
+    if (!canMutateActiveSession(activeId, conversations, { requireIdle: false })) return
     setLeaf(set, get().activeLeaf, activeId, parentKey)
     await window.vav.conversations.setLeaf(activeId, parentKey)
     get().focusComposer()
@@ -2096,9 +2114,13 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
   requestDeleteMessage(messageId) {
     const { activeId } = get()
-    if (!activeId) return
-    if (get().turns[activeId]?.isRunning) return
-    if (get().conversations.some((c) => c.id === activeId && c.archived)) return
+    if (
+      !canMutateActiveSession(activeId, get().conversations, {
+        isRunning: get().turns[activeId]?.isRunning
+      })
+    ) {
+      return
+    }
     const nodes = get().messages[activeId] ?? []
     if (!nodes.some((message) => message.id === messageId)) return
     const extra = Math.max(0, subtreeIds(nodes, messageId).size - 1)
@@ -2116,9 +2138,13 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
   async deleteMessage(messageId) {
     const { activeId } = get()
-    if (!activeId) return
-    if (get().turns[activeId]?.isRunning) return
-    if (get().conversations.some((c) => c.id === activeId && c.archived)) return
+    if (
+      !canMutateActiveSession(activeId, get().conversations, {
+        isRunning: get().turns[activeId]?.isRunning
+      })
+    ) {
+      return
+    }
     const result = await window.vav.conversations.deleteMessage(activeId, messageId)
     if (!result) return
       set((state) => ({
@@ -2132,8 +2158,13 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   async fork(messageId) {
     const state = get()
     const { activeId } = state
-    if (!activeId || state.turns[activeId]?.isRunning) return
-    if (state.conversations.some((c) => c.id === activeId && c.archived)) return
+    if (
+      !canMutateActiveSession(activeId, state.conversations, {
+        isRunning: state.turns[activeId]?.isRunning
+      })
+    ) {
+      return
+    }
     const leaf = await window.vav.agent.fork(activeId, messageId)
     if (leaf === null) return
     setLeaf(set, get().activeLeaf, activeId, leaf)
@@ -2142,8 +2173,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
   async continueInNewSession(messageId) {
     const { activeId, conversations } = get()
-    if (!activeId) return
-    if (conversations.some((c) => c.id === activeId && c.archived)) return
+    if (!canMutateActiveSession(activeId, conversations, { requireIdle: false })) return
     const meta = await window.vav.conversations.continueInNewSession(activeId, messageId)
     if (!meta) return
     set((state) => ({
@@ -2157,8 +2187,9 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
   async compactConversation(keepAfterMessageId) {
     const { activeId } = get()
-    if (!activeId) return false
-    if (get().conversations.some((c) => c.id === activeId && c.archived)) return false
+    if (!canMutateActiveSession(activeId, get().conversations, { requireIdle: false })) {
+      return false
+    }
     if (get().conversations.find((c) => c.id === activeId)?.cliHost) {
       set({
         errorBanner: tt('compact.error.cliHost'),

@@ -9,6 +9,15 @@ export function assistantStopKind(
   return null
 }
 
+/** Skip toolcall deltas that only grow contents after the card summary is known. */
+export function skipStableToolcallDelta(
+  eventType: string,
+  prev: { summary: string } | null,
+  summary: string
+): boolean {
+  return eventType === 'toolcall_delta' && !!prev && prev.summary === summary
+}
+
 /** Drop empty text/reasoning slots that opened before any token landed. */
 export function persistableTurnBlocks(blocks: MessageBlock[]): MessageBlock[] {
   return blocks.filter(

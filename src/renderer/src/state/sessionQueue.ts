@@ -46,6 +46,18 @@ export function composerSendDisposition(input: {
   return 'enqueue'
 }
 
+/** After a turn ends, drain FIFO only when idle and no send-now is in flight. */
+export function shouldDrainMessageQueue(opts: {
+  sendNowInFlight: boolean
+  isRunning?: boolean
+  awaitingToolCallId?: string | null
+  queueLength: number
+}): boolean {
+  if (opts.sendNowInFlight) return false
+  if (opts.isRunning || opts.awaitingToolCallId) return false
+  return opts.queueLength > 0
+}
+
 /** Comment cards win on id collision so the model gets the note, not a duplicate chip. */
 export function mergePreviewAndCommentRefs(
   refs: PreviewRef[],

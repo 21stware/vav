@@ -59,6 +59,7 @@ import {
   inspectCaughtError,
   inspectErrorOnBase,
   inspectFileBase,
+  inspectWithBinaryMeta,
   inspectWithError,
   legacyDocInspect,
   legacyPptInspect,
@@ -601,7 +602,7 @@ export class FileService {
       // files.error.unsupported — that red alert is reserved for real I/O failures.
       try {
         const binaryMeta = await buildBinaryMeta(path, info)
-        return { ...base, binaryMeta }
+        return inspectWithBinaryMeta(base, binaryMeta)
       } catch (metaErr) {
         console.error('[files] binary meta failed', path, metaErr)
         return binaryInspectFallback(base, info.mtimeMs)

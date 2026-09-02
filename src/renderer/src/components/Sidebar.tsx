@@ -25,6 +25,8 @@ import { flatten, groupConversations, type ConversationGroup } from '../lib/grou
 import {
   conversationMatchesFilter,
   encodeSidebarSessionFilter,
+  isSessionRunning as sessionTurnIsRunning,
+  isSessionUnread as sessionTurnIsUnread,
   isSidebarSessionFilterEnabled,
   parseSidebarSessionFilter,
   type SidebarSessionFilter
@@ -257,16 +259,21 @@ export function Sidebar({
 
   const isSessionRunning = (id: string): boolean => {
     const turn = turns[id]
-    return !!turn?.isRunning || activityById[id] === 'running' || shellBusy.has(id)
+    return sessionTurnIsRunning({
+      isRunning: turn?.isRunning,
+      activity: activityById[id],
+      shellBusy: shellBusy.has(id)
+    })
   }
   const isSessionUnread = (id: string): boolean => {
     const conversation = conversations.find((c) => c.id === id)
     const turn = turns[id]
-    const awaiting = !!turn?.awaitingToolCallId
-    const running = !!turn?.isRunning && !awaiting
-    return (
-      (!awaiting && !running && activityById[id] === 'done') || conversation?.resultUnseen === true
-    )
+    return sessionTurnIsUnread({
+      awaitingToolCallId: turn?.awaitingToolCallId,
+      isRunning: turn?.isRunning,
+      activity: activityById[id],
+      resultUnseen: conversation?.resultUnseen
+    })
   }
 
   // Collapse state is ephemeral: mode switch or search resets to all expanded.

@@ -84,12 +84,14 @@ import { userTurnMessage } from './agentMessage'
 import {
   applyCliCancelQuota,
   cliAssistantMessage,
+  sameSessionRetryPlan,
   shouldSettleAsCancelled,
   stripLeakedStreamErrorFromTurn
 } from './cliTurnFinish'
 import {
   appendNestedChildDelta,
   applyCliToolPatch,
+  cliToolCardSummary,
   newCliParentTaskBlock,
   newCliPermissionBlock,
   newCliToolCallBlock
@@ -113,7 +115,8 @@ import {
 import {
   shouldArmPlanDocFollowUp,
   shouldContinueHeldCliTurn,
-  shouldDeferCliTurnFinish
+  shouldDeferCliTurnFinish,
+  shouldSealHeldCliReject
 } from './cliTurnHold'
 import { createCliHistoryReplayGate, createCliHistoryReplayGateFromBlocks, type CliHistoryReplayGate } from './cliHistoryReplay'
 import { inputJson, mapToolName, summarizeCliTool } from './drivers/toolMap'
@@ -483,8 +486,11 @@ export class CliAgentHost {
       allow,
       alreadySteered: pending.synthetic === true
     })
-    const sealHeldReject =
-      !allow && turn.hostPromptClosed && turn.pendingPermissions.size === 0
+    const sealHeldReject = shouldSealHeldCliReject({
+      hostPromptClosed: turn.hostPromptClosed,
+      remaining: turn.pendingPermissions.size,
+      allow
+    })
     if (continueHeld || sealHeldReject) turn.hostPromptClosed = false
     if (continueHeld) {
       turn.error = undefined
@@ -1276,7 +1282,7 @@ export class CliAgentHost {
       const block = newCliToolCallBlock({
         id: event.id,
         tool: mapToolName(event.name),
-        summary: event.title || summarizeCliTool(event.name, event.input) || event.name,
+        summary: cliToolCardSummary(event, summarizeCliTool),
         input: inputJson(event.input)
       })
       turn.blocks.push(block)
@@ -1381,7 +1387,7 @@ export class CliAgentHost {
       child = newCliToolCallBlock({
         id: event.id,
         tool: mapToolName(event.name),
-        summary: event.title || summarizeCliTool(event.name, event.input) || event.name,
+        summary: cliToolCardSummary(event, summarizeCliTool),
         input: inputJson(event.input)
       })
       parent.children.push(child)
@@ -1981,15 +1987,14 @@ export class CliAgentHost {
       turn.errorCode = undefined
       turn.errorDetail = undefined
       const keepPartial = turnHasAnswerContent(turn)
-      if (keepPartial) {
+      const retry = sameSessionRetryPlan(keepPartial)
+      if (retry.prepareReplayFromBlocks) {
         this.flushBuffers(conversationId, turn)
         this.sealOpenReasoning(turn)
         turn.textIndex = null
         turn.replay = createCliHistoryReplayGateFromBlocks(turn.blocks)
-        this.setPhase(conversationId, turn, 'retrying')
-      } else {
-        this.setPhase(conversationId, turn, 'thinking')
       }
+      this.setPhase(conversationId, turn, retry.phase)
       // Keep `settling` held through the backoff so a racing error event
       // cannot start a second retry for the same failure.
       await new Promise((resolve) =>
@@ -2006,7 +2011,7 @@ export class CliAgentHost {
         // Reuse the live process when it survived; respawn + resume otherwise.
         const next = await this.ensureRuntime(conversationId)
         next.lastTouch = Date.now()
-        if (keepPartial) {
+        if (retry.continueWithoutReprompt) {
           // Partial output already landed — do not re-prompt the original
           // user message (that would duplicate). Continue on this same VAV
           // turn so the UI stays on the live draft.

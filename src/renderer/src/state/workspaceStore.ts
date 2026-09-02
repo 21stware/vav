@@ -23,6 +23,7 @@ import {
 } from '../lib/workspaceLayout'
 import {
   CLI_SURFACE_KEY,
+  pickCliScreenFocusTab,
   reconcileAgentHosts,
   type AgentHostSession
 } from '../lib/workspaceCliSurface'
@@ -1458,10 +1459,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       const s = get().workspaces[id]
       const surface = getCliSurface(s)
       if (!surface?.tabs.length) return false
-      const tab =
-        surface.tabs.find((t) => !t.pendingCli && t.agentId === agentId) ??
-        surface.tabs.find((t) => !t.pendingCli) ??
-        surface.tabs[0]
+      const tab = pickCliScreenFocusTab(surface.tabs, agentId)
       if (!tab) return false
       patch(set, id, (prev) => {
         const cur = getCliSurface(prev) ?? surface

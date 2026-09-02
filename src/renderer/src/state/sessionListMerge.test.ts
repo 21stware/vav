@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import { mergeConversationList, nextConversationSelection, patchConversationById, type ConversationListItem } from './sessionListMerge.ts'
+import { mergeConversationList, nextConversationSelection, patchConversationById, isArchivedConversation, regenerateActiveLeaf, canMutateActiveSession, type ConversationListItem } from './sessionListMerge.ts'
 
 function row(
   partial: Partial<ConversationListItem> & { id: string }
@@ -102,5 +102,44 @@ describe('nextConversationSelection', () => {
       }),
       ['c']
     )
+  })
+})
+
+describe('isArchivedConversation', () => {
+  it('is true only for a matching archived id', () => {
+    const rows = [row({ id: 'a', archived: true }), row({ id: 'b' })]
+    assert.equal(isArchivedConversation(rows, 'a'), true)
+    assert.equal(isArchivedConversation(rows, 'b'), false)
+    assert.equal(isArchivedConversation(rows, 'missing'), false)
+    assert.equal(isArchivedConversation(rows, null), false)
+    assert.equal(isArchivedConversation(rows, ''), false)
+  })
+})
+
+describe('regenerateActiveLeaf', () => {
+  it('drops an assistant reply to its parent and keeps a user message', () => {
+    assert.equal(
+      regenerateActiveLeaf({ role: 'assistant', id: 'a1', parentId: 'u1' }),
+      'u1'
+    )
+    assert.equal(
+      regenerateActiveLeaf({ role: 'user', id: 'u1', parentId: null }),
+      'u1'
+    )
+  })
+})
+
+describe('canMutateActiveSession', () => {
+  it('rejects missing, archived, and running sessions', () => {
+    const rows = [row({ id: 'a' }), row({ id: 'b', archived: true })]
+    assert.equal(canMutateActiveSession(null, rows), false)
+    assert.equal(canMutateActiveSession('b', rows), false)
+    assert.equal(canMutateActiveSession('a', rows, { isRunning: true }), false)
+    assert.equal(canMutateActiveSession('a', rows), true)
+  })
+
+  it('allows a running session when idle is not required', () => {
+    const rows = [row({ id: 'a' })]
+    assert.equal(canMutateActiveSession('a', rows, { isRunning: true, requireIdle: false }), true)
   })
 })

@@ -7,7 +7,8 @@ import {
   composerClearedPatch,
   isEmptyComposerSend,
   mergePreviewAndCommentRefs,
-  MESSAGE_QUEUE_MAX
+  MESSAGE_QUEUE_MAX,
+  shouldDrainMessageQueue
 } from './sessionQueue.ts'
 
 describe('omitLiveUsage', () => {
@@ -77,6 +78,33 @@ describe('composer send helpers', () => {
       'full'
     )
     assert.equal(composerSendDisposition(base), 'send')
+  })
+
+  it('drains FIFO only when idle, queued, and send-now is not in flight', () => {
+    assert.equal(
+      shouldDrainMessageQueue({ sendNowInFlight: true, queueLength: 1 }),
+      false
+    )
+    assert.equal(
+      shouldDrainMessageQueue({ sendNowInFlight: false, isRunning: true, queueLength: 1 }),
+      false
+    )
+    assert.equal(
+      shouldDrainMessageQueue({
+        sendNowInFlight: false,
+        awaitingToolCallId: 't1',
+        queueLength: 1
+      }),
+      false
+    )
+    assert.equal(
+      shouldDrainMessageQueue({ sendNowInFlight: false, queueLength: 0 }),
+      false
+    )
+    assert.equal(
+      shouldDrainMessageQueue({ sendNowInFlight: false, queueLength: 1 }),
+      true
+    )
   })
 
   it('clears composer fields for one conversation without dropping others', () => {

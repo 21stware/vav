@@ -6,6 +6,7 @@ import { collectLeaves } from './workspaceLayout.ts'
 import {
   CLI_SURFACE_KEY,
   mergeCliSurface,
+  pickCliScreenFocusTab,
   reconcileAgentHosts,
   type AgentHostSession
 } from './workspaceCliSurface.ts'
@@ -64,5 +65,17 @@ describe('workspaceCliSurface', () => {
     )
     assert.equal(Object.keys(out).includes(CLI_SURFACE_KEY), true)
     assert.equal(out[CLI_SURFACE_KEY]?.tabs[0]?.id, 'pty-1')
+  })
+
+  it('prefers a live pane of the focused agent, then any live pane', () => {
+    const tabs = [
+      tab({ id: 'pending', pendingCli: true, agentId: null }),
+      tab({ id: 'claude', agentId: 'claude' }),
+      tab({ id: 'cursor', agentId: 'cursor' })
+    ]
+    assert.equal(pickCliScreenFocusTab(tabs, 'cursor')?.id, 'cursor')
+    assert.equal(pickCliScreenFocusTab(tabs, 'missing')?.id, 'claude')
+    assert.equal(pickCliScreenFocusTab([tabs[0]!], 'cursor')?.id, 'pending')
+    assert.equal(pickCliScreenFocusTab([], 'cursor'), undefined)
   })
 })

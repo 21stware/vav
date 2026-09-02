@@ -126,6 +126,7 @@ import {
   resolveSessionAccountId,
   sessionShowsHostQuota,
   conversationQuotaAuthView,
+  oauthQuotaIdentityRows,
   usageDeltaFromSnapshot,
   workspaceKeyOf,
   workspaceLabelOf
@@ -206,6 +207,7 @@ import { overlayCascadeOrigin, overlayFit, placeDetachedBounds } from './window/
 import { isPreviewableColdOpenPath as previewableColdOpenPath } from './window/coldOpen'
 import { appZOrderWindowIds, windowIsInPlay as windowIsInPlayOf } from './window/windowZOrder'
 import { replaceLiveWarmPool, shouldDestroyParkedWarmShell, takeReadyWarmShell } from './window/warmShell'
+import { isDisposableEphemeralSession } from './window/ephemeralSession'
 import {
   resolveContextTokens,
   tokenUsageAccountRowsOf,
@@ -1228,18 +1230,12 @@ const quotaService = new QuotaService({
     return info.signedIn ? info.accountId : null
   },
   identitiesOf: async (host) => {
-    const rows: { identity: string; token?: string }[] = []
-    for (const account of accountStore.listAll()) {
-      if (account.kind !== 'oauth') continue
-      if ((account.oauthHost ?? agentIdOf(account)) !== host) continue
-      if (!account.hasCredentialSnapshot) continue
-      const identity = account.name?.trim()
-      if (!identity) continue
-      const token = accessTokenFromSnapshot(host, secretStore.getOAuthSnapshot(account.id))
-      if (!token) continue
-      rows.push({ identity, token })
-    }
-    return rows
+    return oauthQuotaIdentityRows(
+      accountStore.listAll(),
+      host,
+      agentIdOf,
+      (accountId) => accessTokenFromSnapshot(host, secretStore.getOAuthSnapshot(accountId))
+    )
   }
 })
 
@@ -3070,10 +3066,8 @@ function pushDetachedSessionClaim(window: BrowserWindow, conversationId: string)
 function disposeEphemeralIfEmpty(conversationId: string): boolean {
   if (!ephemeralConversations.delete(conversationId)) return false
   const stale = conversationStore.get(conversationId)
-  const agentActive =
-    (!!stale?.agentBinaryName && stale.agentBinaryName !== 'vav') || !!stale?.cliHost
   const hasPty = ptyManager.hasConversation(conversationId)
-  if (stale && stale.messages.length === 0 && !agentActive && !hasPty) {
+  if (isDisposableEphemeralSession(stale, hasPty)) {
     const removed = conversationStore.remove([conversationId])
     for (const id of removed) {
       agent.disposeConversation(id)

@@ -8,6 +8,7 @@ import {
   inspectCaughtError,
   inspectErrorOnBase,
   inspectFileBase,
+  inspectWithBinaryMeta,
   inspectWithError,
   LEGACY_PPT_WARNING,
   legacyBinaryInspect,
@@ -60,6 +61,18 @@ describe('fileInspectShape', () => {
     assert.equal(inspectErrorOnBase(base, new Error(''), 'fallback').error, 'fallback')
     assert.equal(inspectErrorOnBase(base, {}).error, 'error')
     assert.equal(inspectWithError(base, 'denied').error, 'denied')
+    assert.equal(
+      inspectWithBinaryMeta(base, {
+        uti: 'public.data',
+        permissions: 'rw',
+        owner: 'me',
+        createdAt: null,
+        modifiedAt: 9,
+        inode: '1',
+        defaultApp: null
+      }).binaryMeta?.modifiedAt,
+      9
+    )
   })
 
   it('windows text, sqlite tables, HEIC sidecars, and binary fallbacks', () => {

@@ -902,6 +902,35 @@ export function usageFromSnapshots(
   return usage
 }
 
+/** OAuth rows that can refresh host quota: matching host, stored snapshot, live token. */
+export function oauthQuotaIdentityRows<
+  T extends {
+    id: string
+    kind?: string
+    oauthHost?: string | null
+    hasCredentialSnapshot?: boolean
+    name?: string | null
+  }
+>(
+  accounts: T[],
+  host: string,
+  agentIdOf: (account: T) => string,
+  tokenOf: (accountId: string) => string | null | undefined
+): { identity: string; token: string }[] {
+  const rows: { identity: string; token: string }[] = []
+  for (const account of accounts) {
+    if (account.kind !== 'oauth') continue
+    if ((account.oauthHost ?? agentIdOf(account)) !== host) continue
+    if (!account.hasCredentialSnapshot) continue
+    const identity = account.name?.trim()
+    if (!identity) continue
+    const token = tokenOf(account.id)
+    if (!token) continue
+    rows.push({ identity, token })
+  }
+  return rows
+}
+
 export function resolveAccountsFocus(
   page: {
     accounts: Array<{ id: string }>

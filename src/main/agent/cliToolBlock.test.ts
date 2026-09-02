@@ -5,6 +5,7 @@ import {
   applyCliToolPatch,
   applyToolEventStatus,
   applyToolRuntimePatch,
+  cliToolCardSummary,
   cliToolHasInput,
   ensureToolCallBlock,
   newCliParentTaskBlock,
@@ -153,5 +154,19 @@ describe('cliToolBlock', () => {
     assert.equal(parent.tool, 'task')
     assert.equal(parent.status, 'executing')
     assert.deepEqual(parent.children, [])
+  })
+
+  it('prefers title, then summarized args, then the raw tool name', () => {
+    const summarize = (name: string, input: unknown) =>
+      input ? `${name}:${JSON.stringify(input)}` : ''
+    assert.equal(
+      cliToolCardSummary({ title: 'Read notes', name: 'fs_read', input: { path: 'a' } }, summarize),
+      'Read notes'
+    )
+    assert.equal(
+      cliToolCardSummary({ name: 'fs_read', input: { path: 'a' } }, summarize),
+      'fs_read:{"path":"a"}'
+    )
+    assert.equal(cliToolCardSummary({ name: 'fs_read' }, summarize), 'fs_read')
   })
 })

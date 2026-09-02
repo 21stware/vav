@@ -10,6 +10,31 @@ export function shouldSettleAsCancelled(
   return cancelled || classifyCliError(raw, null, code) === 'cancelled'
 }
 
+export type SameSessionRetryPlan = {
+  phase: 'retrying' | 'thinking'
+  prepareReplayFromBlocks: boolean
+  continueWithoutReprompt: boolean
+}
+
+/**
+ * Same-session network retry: keep partial answer content and continue
+ * without re-prompting; otherwise re-open replay and send the original prompt.
+ */
+export function sameSessionRetryPlan(keepPartial: boolean): SameSessionRetryPlan {
+  if (keepPartial) {
+    return {
+      phase: 'retrying',
+      prepareReplayFromBlocks: true,
+      continueWithoutReprompt: true
+    }
+  }
+  return {
+    phase: 'thinking',
+    prepareReplayFromBlocks: false,
+    continueWithoutReprompt: false
+  }
+}
+
 /** CLI transcripts join text blocks with a blank line and trim the result. */
 export function cliAssistantContent(blocks: MessageBlock[]): string {
   return blocks

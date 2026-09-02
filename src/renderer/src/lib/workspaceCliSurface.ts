@@ -24,6 +24,18 @@ export type AgentHostSession = {
  */
 export const CLI_SURFACE_KEY = '__cli__'
 
+/** Prefer a live pane of this agent, then any live pane, then the first tab. */
+export function pickCliScreenFocusTab<T extends { pendingCli?: boolean; agentId?: string | null }>(
+  tabs: T[],
+  agentId: string
+): T | undefined {
+  return (
+    tabs.find((t) => !t.pendingCli && t.agentId === agentId) ??
+    tabs.find((t) => !t.pendingCli) ??
+    tabs[0]
+  )
+}
+
 /**
  * Screen-level CLI surface: panes are not grouped by agent type.
  * Pending picker leaves stay until the user assigns a CLI.

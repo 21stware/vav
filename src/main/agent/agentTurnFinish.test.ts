@@ -7,8 +7,18 @@ import {
   assistantStopKind,
   persistableTurnBlocks,
   runtimeTurnStatus,
-  sealCancelledInteractiveTools
+  sealCancelledInteractiveTools,
+  skipStableToolcallDelta
 } from './agentTurnFinish.ts'
+
+describe('skipStableToolcallDelta', () => {
+  it('skips only toolcall deltas whose card summary did not change', () => {
+    assert.equal(skipStableToolcallDelta('toolcall_delta', { summary: 'read' }, 'read'), true)
+    assert.equal(skipStableToolcallDelta('toolcall_delta', { summary: 'read' }, 'write'), false)
+    assert.equal(skipStableToolcallDelta('toolcall_delta', null, 'read'), false)
+    assert.equal(skipStableToolcallDelta('toolcall', { summary: 'read' }, 'read'), false)
+  })
+})
 
 describe('assistantStopKind', () => {
   it('maps aborted to cancelled and error to error', () => {

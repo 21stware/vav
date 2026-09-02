@@ -39,6 +39,13 @@ export function inspectWithError(base: FileInspectResult, error: string): FileIn
   return { ...base, error }
 }
 
+export function inspectWithBinaryMeta(
+  base: FileInspectResult,
+  binaryMeta: BinaryFileMeta
+): FileInspectResult {
+  return { ...base, binaryMeta }
+}
+
 export function inspectErrorOnBase(
   base: FileInspectResult,
   err: unknown,

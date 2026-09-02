@@ -111,6 +111,14 @@ export function shouldAdoptMappedTool(mapped: string, current: string): boolean 
   return mapped !== 'external' || current === 'external'
 }
 
+/** Title, then summarized args, then the raw host tool name. */
+export function cliToolCardSummary(
+  event: { title?: string; name: string; input?: unknown },
+  summarize: (name: string, input: unknown) => string
+): string {
+  return event.title || summarize(event.name, event.input) || event.name
+}
+
 /** Merge a CLI driver tool event onto the live transcript card. */
 export function applyCliToolPatch(
   block: ToolCallBlock,

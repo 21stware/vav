@@ -125,3 +125,31 @@ export function nextConversationSelection(opts: {
   }
   return [opts.id]
 }
+
+/** Archived sessions reject send / regenerate / compact / delete. */
+export function isArchivedConversation(
+  conversations: Array<{ id: string; archived?: boolean }>,
+  id: string | null | undefined
+): boolean {
+  return !!id && conversations.some((conversation) => conversation.id === id && !!conversation.archived)
+}
+
+/** Drop the leaf to the prompt when regenerating an assistant reply. */
+export function regenerateActiveLeaf(target: {
+  role: string
+  id: string
+  parentId: string | null
+}): string | null {
+  return target.role === 'assistant' ? target.parentId : target.id
+}
+
+/** Archived or running sessions reject regenerate / edit / delete / fork. */
+export function canMutateActiveSession(
+  activeId: string | null | undefined,
+  conversations: Array<{ id: string; archived?: boolean }>,
+  opts?: { isRunning?: boolean; requireIdle?: boolean }
+): activeId is string {
+  if (!activeId) return false
+  if (opts?.requireIdle !== false && opts?.isRunning) return false
+  return !isArchivedConversation(conversations, activeId)
+}
