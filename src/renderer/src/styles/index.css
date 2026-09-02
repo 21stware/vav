@@ -18750,6 +18750,7 @@ mark {
   gap: 0;
   border-radius: var(--radius-sm);
   color: var(--text-secondary);
+  overflow: visible;
   transition:
     background var(--dur-hover) ease,
     color var(--dur-hover) ease,
@@ -18915,6 +18916,7 @@ html:has(.provider-account-popup) #root {
   color: inherit;
   cursor: default;
   border-radius: var(--radius-sm);
+  overflow: visible;
 }
 
 .agent-model-picker-progress {
@@ -18924,20 +18926,27 @@ html:has(.provider-account-popup) #root {
   align-items: center;
   justify-content: center;
   pointer-events: none;
+  overflow: visible;
 }
 
 .agent-model-picker-progress svg {
   display: block;
+  overflow: visible;
+}
+
+.agent-model-picker-progress .ring-track,
+.agent-model-picker-progress .ring-fill {
+  stroke-width: 1.5;
+  stroke-linejoin: round;
+  shape-rendering: geometricPrecision;
 }
 
 .agent-model-picker-progress .ring-track {
   stroke: var(--bg-hover);
-  stroke-width: 1.5;
 }
 
 .agent-model-picker-progress .ring-fill {
   stroke: var(--accent);
-  stroke-width: 1.5;
   stroke-linecap: round;
   transition:
     stroke-dashoffset var(--dur-sheet) var(--ease-out),

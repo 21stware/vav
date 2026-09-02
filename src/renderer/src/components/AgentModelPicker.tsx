@@ -35,6 +35,10 @@ import { menuAnchorIfVisible, showMenu, type MenuItem } from '../lib/nativeMenu'
 import { warmMenuIcons } from '../lib/menuIcons'
 import { formatTokens } from '../lib/format'
 import { AgentBrandMark } from './AgentBrandMark'
+import { CONTEXT_RING_SIZE, contextRingPath } from '../lib/contextRingPath'
+
+const CONTEXT_RING_TRACK = contextRingPath({ close: true })
+const CONTEXT_RING_FILL = contextRingPath({ close: false })
 
 type HostOption = {
   id: CliHostKind | null
@@ -180,11 +184,6 @@ export function AgentModelPicker({
   const motionRef = useRef<SplitMotion | null>(null)
   const [phase, setPhase] = useState<SplitPhase>(locked ? 'settled' : 'joined')
 
-  // Progress ring dimensions (20x20 squircle for n=3)
-  const ringSize = 20
-  const ringR = ringSize / 2
-  const ringK = ringR * 0.72
-  const ringPath = `M ${ringR},0 C ${ringR + ringK},0 ${ringSize},${ringR - ringK} ${ringSize},${ringR} C ${ringSize},${ringR + ringK} ${ringR + ringK},${ringSize} ${ringR},${ringSize} C ${ringR - ringK},${ringSize} 0,${ringR + ringK} 0,${ringR} C 0,${ringR - ringK} ${ringR - ringK},0 ${ringR},0 Z`
   const ringLevel = usage && usage.ratio > 0.9 ? 'full' : usage && usage.ratio > 0.7 ? 'warn' : 'ok'
 
   useLayoutEffect(() => {
@@ -605,14 +604,15 @@ export function AgentModelPicker({
           {hasUsage && (
             <div className="agent-model-picker-progress">
               <svg
-                width={ringSize}
-                height={ringSize}
-                viewBox={`0 0 ${ringSize} ${ringSize}`}
+                width={CONTEXT_RING_SIZE}
+                height={CONTEXT_RING_SIZE}
+                viewBox={`0 0 ${CONTEXT_RING_SIZE} ${CONTEXT_RING_SIZE}`}
+                overflow="visible"
                 aria-hidden
               >
-                <path d={ringPath} className="ring-track" fill="none" />
+                <path d={CONTEXT_RING_TRACK} className="ring-track" fill="none" />
                 <path
-                  d={ringPath}
+                  d={CONTEXT_RING_FILL}
                   className="ring-fill"
                   fill="none"
                   strokeDasharray="100"
