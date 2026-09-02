@@ -67,7 +67,6 @@ import {
   type ChatMessage,
   type Conversation,
   type ConversationMeta,
-  type ShellKind,
   type TurnEvent
 } from '@shared/types'
 import { agentBinaryCandidates } from '@shared/agentBinary'
@@ -170,10 +169,12 @@ import { registerDialogIpc } from './ipc/registerDialogIpc'
 import { registerChangeSetIpc } from './ipc/registerChangeSetIpc'
 import { registerFilesIpc } from './ipc/registerFilesIpc'
 import { registerHostsIpc } from './ipc/registerHostsIpc'
+import { registerWindowIpc } from './ipc/registerWindowIpc'
 import { dialogConfirmOptions, revealSecretBoxOptions } from './ipc/dialogOptions'
 import { showParentedMessageBox, windowFromSender } from './ipc/nativeDialog'
 import { conversationIdForWorkdirs } from './fs/conversationPath'
 import { decorateHosts as decorateRemoteHosts } from './host/decorateHosts'
+import { conversationToMeta } from './store/conversationMeta'
 import {
   applyWindowVibrancy as applyVibrancyPaint,
   chromeOptions,
@@ -198,8 +199,11 @@ import {
   PREVIEW_POOL_REFILL_MS,
   PREVIEW_WARM_POOL,
   clampPreviewWidth,
-  nextUnfocusedPreviewPath
+  nextUnfocusedPreviewPath,
+  previewPathKey as previewPathKeyOf,
+  previewQuery as buildPreviewQuery
 } from './window/previewPool'
+import { overlayCascadeOrigin, placeDetachedBounds } from './window/windowPlace'
 import { appBuildNumber as formatAppBuildNumber } from './appBuild'
 import { FALLBACK_SYSTEM_ACCENT, normalizeAccentHex } from './window/accentColor'
 import { trayDirLabel as formatTrayDirLabel, trayAgentLabel as formatTrayAgentLabel } from './tray/trayLabels'
@@ -2922,18 +2926,8 @@ function detachedBounds(cascade: number): {
     // keep primary
   }
 
-  // Narrowest useful companion column (matches main-window minWidth).
   const stored = settingsStore.get().detachedWindowSize
-  const width = Math.min(stored?.width ?? MAIN_WINDOW_MIN_WIDTH, area.width - 40)
-  const height = Math.min(stored?.height ?? 760, area.height - 60)
-  const step = (cascade % 5) * 26
-
-  return {
-    width,
-    height,
-    x: area.x + area.width - width - 28 - step,
-    y: area.y + Math.max(0, Math.round((area.height - height) / 2) - 20) + step
-  }
+  return placeDetachedBounds(area, stored, cascade, MAIN_WINDOW_MIN_WIDTH)
 }
 
 /**
@@ -3064,24 +3058,6 @@ function enforceAppZOrder(focused: BrowserWindow | null): void {
   }
 
   if (isWindowInPlay(settingsWindow)) moveWindowTop(settingsWindow!)
-}
-
-/** Strip message bodies for IPC seed (sidebar meta shape). */
-function conversationToMeta(conversation: Conversation): ConversationMeta {
-  const {
-    messages: _messages,
-    tokenHistory: _history,
-    cacheCreatedAt: _created,
-    cacheExpiresAt: _expires,
-    compactions: _compactions,
-    ...meta
-  } = conversation
-  void _messages
-  void _history
-  void _created
-  void _expires
-  void _compactions
-  return meta
 }
 
 function bindDetachedWindow(window: BrowserWindow, conversationId: string): void {
@@ -3524,14 +3500,7 @@ function previewQuery(
   path: string,
   options?: { origin?: 'dock' | 'session'; conversationId?: string; requestedAt?: number }
 ): Record<string, string> {
-  const query: Record<string, string> = {
-    view: 'file-preview',
-    path,
-    origin: options?.origin ?? 'session'
-  }
-  if (options?.conversationId) query.conversationId = options.conversationId
-  if (options?.requestedAt) query.requestedAt = String(options.requestedAt)
-  return query
+  return buildPreviewQuery(path, options)
 }
 
 /** Remove a preview window entry by window identity (path may have been remapped). */
@@ -3543,14 +3512,7 @@ function forgetPreviewWindow(window: BrowserWindow): void {
 
 /** Stable map key for preview windows (aliases / relative paths collapse). */
 function previewPathKey(filePath: string): string {
-  const raw = filePath.trim()
-  if (!raw) return ''
-  try {
-    if (existsSync(raw)) return realpathSync(raw)
-  } catch {
-    // fall through
-  }
-  return raw
+  return previewPathKeyOf(filePath, { exists: existsSync, realpath: realpathSync })
 }
 
 /**
@@ -3739,17 +3701,9 @@ function overlayGeometry(): { width: number; height: number; x?: number; y?: num
   ).workArea
   const width = Math.min(1180, area.width - 48)
   const height = Math.min(860, area.height - 48)
-  let x: number | undefined
-  let y: number | undefined
   const others = [...appClipWindows.values()].filter((w) => !w.isDestroyed())
-  if (others.length > 0) {
-    const b = others[others.length - 1]!.getBounds()
-    x = b.x + 28
-    y = b.y + 28
-    if (x + width > area.x + area.width) x = area.x + Math.max(0, area.width - width)
-    if (y + height > area.y + area.height) y = area.y + Math.max(0, area.height - height)
-  }
-  return { width, height, x, y }
+  const last = others.length > 0 ? others[others.length - 1]!.getBounds() : null
+  return { width, height, ...overlayCascadeOrigin(area, last, { width, height }) }
 }
 
 function createOverlayBrowserWindow(opts: {
@@ -7251,10 +7205,8 @@ return c as text`
       )
       if (defaultHost) promoteEphemeralConversation(conversation.id)
       lastSeenConversationId = conversation.id
-      const { messages: _messages, ...meta } = conversation
-      void _messages
       publishConversations()
-      return meta
+      return conversationToMeta(conversation)
     }
   )
 
@@ -7332,19 +7284,15 @@ return c as text`
   ipcMain.handle(IPC.convContinueNew, (_event, id: string, messageId: string) => {
     const conversation = conversationStore.branchToNewConversation(id, messageId)
     if (!conversation) return null
-    const { messages: _messages, ...meta } = conversation
-    void _messages
     publishConversations()
-    return meta
+    return conversationToMeta(conversation)
   })
 
   ipcMain.handle(IPC.convDuplicate, (_event, id: string) => {
     const conversation = conversationStore.duplicate(id)
     if (!conversation) return null
-    const { messages: _messages, ...meta } = conversation
-    void _messages
     publishConversations()
-    return meta
+    return conversationToMeta(conversation)
   })
 
   ipcMain.handle(IPC.convExportPack, async (event, ids: string[]) => {
@@ -8075,102 +8023,55 @@ return c as text`
   registerPtyIoIpc(ipcMain, ptyManager, swarmSession)
 
   // --- window ---
-  ipcMain.handle(IPC.windowSetTheme, (_event, theme: AppSettings['theme']) => applyTheme(theme))
-  ipcMain.handle(IPC.windowGetAccentColor, () => readSystemAccentColor())
-  ipcMain.handle(IPC.windowShellPath, (_event, kind: ShellKind) => shellPath(kind))
-
-  ipcMain.handle(IPC.windowOpenSettings, (_event, view?: SettingsView, agentId?: string) =>
-    openSettingsWindow(view ?? 'appearance', typeof agentId === 'string' ? agentId : undefined)
-  )
-  ipcMain.handle(IPC.settingsDesiredView, () => settingsDesiredView)
-  ipcMain.handle(IPC.windowCloseSettings, () => hideSettingsWindow())
-  ipcMain.handle(IPC.windowOpenConnect, () => openConnectWindow())
-  ipcMain.handle(IPC.windowCloseConnect, () => hideConnectWindow())
-  ipcMain.handle(IPC.windowFitConnect, (_event, height: unknown) => {
-    if (typeof height !== 'number' || !Number.isFinite(height)) return
-    fitConnectWindow(height)
-  })
-
-  ipcMain.handle(IPC.windowOpenSession, async (_event, id: string) => {
-    // Must not return BrowserWindow — structured clone can't send it over IPC.
-    await openDetachedWindow(String(id || ''))
-  })
-  ipcMain.handle(IPC.windowRevealInList, async (event, id: string) => {
-    await revealConversationInList(String(id || ''))
-    // Companion (detached session or file-preview): close the window that asked
-    // so focus lands cleanly on main (same as Reveal in List for SessionWindow).
-    const senderWin = BrowserWindow.fromWebContents(event.sender)
-    if (
-      senderWin &&
-      !senderWin.isDestroyed() &&
-      mainWindow &&
-      !mainWindow.isDestroyed() &&
-      senderWin.id !== mainWindow.id
-    ) {
-      senderWin.close()
+  registerWindowIpc(ipcMain, {
+    applyTheme,
+    accentColor: readSystemAccentColor,
+    shellPath,
+    openSettings: openSettingsWindow,
+    settingsDesiredView: () => settingsDesiredView,
+    hideSettings: hideSettingsWindow,
+    openConnect: openConnectWindow,
+    hideConnect: hideConnectWindow,
+    fitConnect: fitConnectWindow,
+    openSession: (id) => {
+      void openDetachedWindow(id)
+    },
+    revealInList: async (event, id) => {
+      await revealConversationInList(id)
+      const senderWin = BrowserWindow.fromWebContents(event.sender)
+      if (
+        senderWin &&
+        !senderWin.isDestroyed() &&
+        mainWindow &&
+        !mainWindow.isDestroyed() &&
+        senderWin.id !== mainWindow.id
+      ) {
+        senderWin.close()
+      }
+    },
+    closeDetached: (id) => {
+      if (!id) return
+      const win = detachedWindows.get(id)
+      if (win && !win.isDestroyed()) win.close()
+    },
+    newDetached: newDetachedSession,
+    listDetached: listDetachedConversationIds,
+    openFilePreview: openFilePreviewWindow,
+    openOverlay: openAppClipWindow,
+    openTokenUsage: openTokenUsageWindow,
+    tokenUsageView: () => {
+      const payload = currentTokenUsagePayload()
+      if (payload) requestAccountQuota(payload.conversationId)
+      return payload
+    },
+    openProviderAccount: openProviderAccountWindow,
+    providerAccountView: currentProviderAccountPayload,
+    fitProviderAccount: fitProviderAccountWindow,
+    openSwarmHistory: popupSwarmHistoryMenu,
+    relaunch: () => {
+      app.relaunch()
+      app.exit(0)
     }
-  })
-  ipcMain.handle(IPC.windowCloseDetached, (_event, id: string) => {
-    const conversationId = String(id || '')
-    if (!conversationId) return
-    const win = detachedWindows.get(conversationId)
-    if (win && !win.isDestroyed()) {
-      // closed handler publishes detached list + lets main remount the PTY host.
-      win.close()
-    }
-  })
-  ipcMain.handle(IPC.windowNewDetached, () => newDetachedSession())
-  ipcMain.handle(IPC.windowListDetached, () => listDetachedConversationIds())
-  ipcMain.handle(
-    IPC.windowOpenFilePreview,
-    (
-      _event,
-      path: string,
-      options?: { origin?: 'dock' | 'session'; conversationId?: string; surface?: 'file' | 'app' }
-    ) => openFilePreviewWindow(path, options)
-  )
-  ipcMain.handle(IPC.windowOpenOverlay, (_event, payload: OverlayPayload) => {
-    if (!payload || typeof payload !== 'object') return
-    openAppClipWindow(payload)
-  })
-  ipcMain.handle(
-    IPC.windowOpenTokenUsage,
-    (
-      event,
-      conversationId: string,
-      anchor?: { x: number; y: number; width: number; height: number }
-    ) => openTokenUsageWindow(event.sender, conversationId, anchor)
-  )
-  // Panel pulls on mount — avoids missing the push during React StrictMode remount.
-  ipcMain.handle(IPC.tokenUsageGetView, () => {
-    const payload = currentTokenUsagePayload()
-    if (payload) requestAccountQuota(payload.conversationId)
-    return payload
-  })
-  ipcMain.handle(
-    IPC.windowOpenProviderAccount,
-    (
-      event,
-      conversationId: string,
-      anchor?: { x: number; y: number; width: number; height: number }
-    ) => openProviderAccountWindow(event.sender, conversationId, anchor)
-  )
-  ipcMain.handle(IPC.providerAccountGetView, () => currentProviderAccountPayload())
-  ipcMain.handle(IPC.providerAccountFit, (_event, height: unknown) => {
-    if (typeof height !== 'number' || !Number.isFinite(height)) return
-    fitProviderAccountWindow(height)
-  })
-  ipcMain.handle(
-    IPC.windowOpenSwarmHistory,
-    (
-      event,
-      conversationId: string,
-      anchor?: { x: number; y: number; width: number; height: number }
-    ) => popupSwarmHistoryMenu(event.sender, conversationId, anchor)
-  )
-  ipcMain.handle(IPC.windowRelaunch, () => {
-    app.relaunch()
-    app.exit(0)
   })
   ipcMain.handle(IPC.notificationsPermission, () => notifications.permissionStatus())
   ipcMain.handle(IPC.remoteControlStatus, () => remoteControl.status())

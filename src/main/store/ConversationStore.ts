@@ -49,6 +49,7 @@ import { deepestLeaf, leafAfterPrune, newestLeafId, pruneSubtree, threadPath } f
 import { defaultSessionTitle, isDefaultSessionTitle, t } from '@shared/i18n'
 import type { CliPaneBinding } from '@shared/cliPaneBinding'
 import { currentLocale } from '../i18n'
+import { conversationToMeta } from './conversationMeta.ts'
 
 const AUTO_TITLE_LIMIT = 40
 const INDEX_VERSION = 2
@@ -195,29 +196,7 @@ export class ConversationStore {
   listMeta(): ConversationMeta[] {
     return this.conversations
       .filter((c) => !c.fileId)
-      .map(
-        ({
-          messages: _messages,
-          tokenHistory: _history,
-          cacheCreatedAt: _created,
-          cacheExpiresAt: _expires,
-          compactions: _compactions,
-          hostTranscripts: _hostTranscripts,
-          quotaWindows: _quota,
-          cliPaneBindings: _paneBindings,
-          ...meta
-        }) => {
-          void _messages
-          void _history
-          void _created
-          void _expires
-          void _compactions
-          void _hostTranscripts
-          void _quota
-          void _paneBindings
-          return meta
-        }
-      )
+      .map(conversationToMeta)
       .sort((a, b) => b.updatedAt - a.updatedAt)
   }
 

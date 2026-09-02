@@ -28,3 +28,33 @@ export function nextUnfocusedPreviewPath(
   }
   return null
 }
+
+/** Query string for a file-preview renderer. */
+export function previewQuery(
+  path: string,
+  options?: { origin?: 'dock' | 'session'; conversationId?: string; requestedAt?: number }
+): Record<string, string> {
+  const query: Record<string, string> = {
+    view: 'file-preview',
+    path,
+    origin: options?.origin ?? 'session'
+  }
+  if (options?.conversationId) query.conversationId = options.conversationId
+  if (options?.requestedAt) query.requestedAt = String(options.requestedAt)
+  return query
+}
+
+/** Stable map key for preview windows (aliases / relative paths collapse). */
+export function previewPathKey(
+  filePath: string,
+  fs: { exists: (path: string) => boolean; realpath: (path: string) => string }
+): string {
+  const raw = filePath.trim()
+  if (!raw) return ''
+  try {
+    if (fs.exists(raw)) return fs.realpath(raw)
+  } catch {
+    // fall through
+  }
+  return raw
+}
