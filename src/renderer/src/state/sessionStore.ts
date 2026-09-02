@@ -50,6 +50,18 @@ import { omitLiveUsage } from './sessionUsage'
 import { dispatchQueuedPayload, MESSAGE_QUEUE_MAX } from './sessionQueue'
 import { applySessionTurnEvent } from './sessionTurnApply'
 import {
+  acceptAllChangesFor as acceptAllChangesForReview,
+  acceptChangeFilesFor as acceptChangeFilesForReview,
+  activeChangeSetId,
+  applyChangeEdit as applyChangeEditReview,
+  closeChangeReview as closeChangeReviewState,
+  openChangeReview as openChangeReviewState,
+  refreshChangeSet as refreshChangeSetState,
+  rejectAllChangesFor as rejectAllChangesForReview,
+  rejectChangeFilesFor as rejectChangeFilesForReview,
+  undoChangeFileFor as undoChangeFileForReview
+} from './sessionChangeReview'
+import {
   loadPreviewAgents,
   loadWorkspaceAgents,
   savePreviewAgents,
@@ -2671,144 +2683,69 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   },
 
   async openChangeReview(changeSetId) {
-    if (!changeSetId) return
-    // Already cached — do not clear or thrash on remount / next turn.
-    const hit = get().changeSetsById[changeSetId]
-    if (hit) {
-      set({ changeSet: hit })
-      return
-    }
-    // Cache only — full-screen takeover removed; inline cards use changeSetsById.
-    const changeSet = await window.vav.changeSets.get(changeSetId)
-    if (!changeSet) return
-    set((state) => ({
-      changeSetsById: { ...state.changeSetsById, [changeSet.id]: changeSet },
-      changeSet
-    }))
+    await openChangeReviewState(get, set, changeSetId)
   },
 
   closeChangeReview() {
-    set({ changeReviewId: null })
+    closeChangeReviewState(set)
   },
 
   async refreshChangeSet() {
-    const id = get().changeReviewId ?? get().changeSet?.id
-    if (!id) return
-    const changeSet = await window.vav.changeSets.get(id)
-    if (!changeSet) {
-      set({ changeReviewId: null, changeSet: null })
-      return
-    }
-    set((state) => ({
-      changeSet,
-      changeSetsById: { ...state.changeSetsById, [changeSet.id]: changeSet }
-    }))
-    syncPendingBanner(set, changeSet)
+    await refreshChangeSetState(get, set)
   },
 
   async acceptChangeFiles(filePaths) {
-    const id = get().changeReviewId ?? get().changeSet?.id
+    const id = activeChangeSetId(get)
     if (!id) return
     await get().acceptChangeFilesFor(id, filePaths)
   },
 
   async rejectChangeFiles(filePaths) {
-    const id = get().changeReviewId ?? get().changeSet?.id
+    const id = activeChangeSetId(get)
     if (!id) return
     await get().rejectChangeFilesFor(id, filePaths)
   },
 
   async acceptAllChanges() {
-    const id = get().changeReviewId ?? get().changeSet?.id
+    const id = activeChangeSetId(get)
     if (!id) return
     await get().acceptAllChangesFor(id)
   },
 
   async rejectAllChanges() {
-    const id = get().changeReviewId ?? get().changeSet?.id
+    const id = activeChangeSetId(get)
     if (!id) return
     await get().rejectAllChangesFor(id)
   },
 
   async undoChangeFile(filePath) {
-    const id = get().changeReviewId ?? get().changeSet?.id
+    const id = activeChangeSetId(get)
     if (!id) return
     await get().undoChangeFileFor(id, filePath)
   },
 
   async applyChangeEdit(filePath, content) {
-    const id = get().changeReviewId ?? get().changeSet?.id
-    if (!id) return
-    const changeSet = await window.vav.changeSets.applyEdit(id, filePath, content)
-    if (changeSet) {
-      set((state) => ({
-        changeSet,
-        changeSetsById: { ...state.changeSetsById, [changeSet.id]: changeSet }
-      }))
-      syncPendingBanner(set, changeSet)
-    }
+    await applyChangeEditReview(get, set, filePath, content)
   },
 
   async acceptChangeFilesFor(changeSetId, filePaths) {
-    if (!changeSetId || filePaths.length === 0) return
-    const changeSet = await window.vav.changeSets.accept(changeSetId, filePaths)
-    if (changeSet) {
-      set((state) => ({
-        changeSet: state.changeSet?.id === changeSet.id ? changeSet : state.changeSet,
-        changeSetsById: { ...state.changeSetsById, [changeSet.id]: changeSet }
-      }))
-      syncPendingBanner(set, changeSet)
-    }
+    await acceptChangeFilesForReview(set, changeSetId, filePaths)
   },
 
   async rejectChangeFilesFor(changeSetId, filePaths) {
-    if (!changeSetId || filePaths.length === 0) return
-    const changeSet = await window.vav.changeSets.reject(changeSetId, filePaths)
-    if (changeSet) {
-      set((state) => ({
-        changeSet: state.changeSet?.id === changeSet.id ? changeSet : state.changeSet,
-        changeSetsById: { ...state.changeSetsById, [changeSet.id]: changeSet }
-      }))
-      syncPendingBanner(set, changeSet)
-    }
+    await rejectChangeFilesForReview(set, changeSetId, filePaths)
   },
 
   async acceptAllChangesFor(changeSetId) {
-    if (!changeSetId) return
-    const changeSet = await window.vav.changeSets.acceptAll(changeSetId)
-    if (changeSet) {
-      set((state) => ({
-        changeSet: state.changeSet?.id === changeSet.id ? changeSet : state.changeSet,
-        changeSetsById: { ...state.changeSetsById, [changeSet.id]: changeSet },
-        changeReviewId: null
-      }))
-      syncPendingBanner(set, changeSet)
-    }
+    await acceptAllChangesForReview(set, changeSetId)
   },
 
   async rejectAllChangesFor(changeSetId) {
-    if (!changeSetId) return
-    const changeSet = await window.vav.changeSets.rejectAll(changeSetId)
-    if (changeSet) {
-      set((state) => ({
-        changeSet: state.changeSet?.id === changeSet.id ? changeSet : state.changeSet,
-        changeSetsById: { ...state.changeSetsById, [changeSet.id]: changeSet },
-        changeReviewId: null
-      }))
-      syncPendingBanner(set, changeSet)
-    }
+    await rejectAllChangesForReview(set, changeSetId)
   },
 
   async undoChangeFileFor(changeSetId, filePath) {
-    if (!changeSetId) return
-    const changeSet = await window.vav.changeSets.undo(changeSetId, filePath)
-    if (changeSet) {
-      set((state) => ({
-        changeSet: state.changeSet?.id === changeSet.id ? changeSet : state.changeSet,
-        changeSetsById: { ...state.changeSetsById, [changeSet.id]: changeSet }
-      }))
-      syncPendingBanner(set, changeSet)
-    }
+    await undoChangeFileForReview(set, changeSetId, filePath)
   },
 
   async checkForUpdates() {
@@ -3051,19 +2988,6 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     })
   }
 }))
-
-function syncPendingBanner(
-  set: (partial: Partial<SessionState> | ((s: SessionState) => Partial<SessionState>)) => void,
-  changeSet: ChangeSet
-): void {
-  const pending = changeSet.files.filter((f) => f.status === 'pending').length
-  set((state) => {
-    const next = { ...state.pendingReviewByConversation }
-    if (pending === 0) delete next[changeSet.conversationId]
-    else next[changeSet.conversationId] = { changeSetId: changeSet.id, count: pending }
-    return { pendingReviewByConversation: next }
-  })
-}
 
 export { visibleMessages }
 
