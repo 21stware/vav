@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import { fileViewerKindFlags, isBinaryOfficeKind } from './fileViewerKinds.ts'
+import { convertEditProfileFor, fileViewerKindFlags, isBinaryOfficeKind } from './fileViewerKinds.ts'
 
 describe('fileViewerKindFlags', () => {
   it('treats markdown, notebooks, and csv by extension', () => {
@@ -100,5 +100,23 @@ describe('fileViewerKindFlags', () => {
     assert.equal(isBinaryOfficeKind('docx'), true)
     assert.equal(isBinaryOfficeKind('pdf'), true)
     assert.equal(isBinaryOfficeKind('text'), false)
+  })
+
+  it('builds convert+Save As profiles for HEIC and legacy Office', () => {
+    const heic = convertEditProfileFor('/photos/a.heic', {
+      isHeic: true,
+      isLegacyOffice: false,
+      contentPath: '/tmp/a.jpg'
+    })
+    assert.equal(heic?.formatKey, 'jpeg')
+    assert.equal(heic?.suggestedPath, '/photos/a.jpg')
+    assert.equal(heic?.sourcePath, '/tmp/a.jpg')
+    const doc = convertEditProfileFor('/docs/a.doc', {
+      isHeic: false,
+      isLegacyOffice: true
+    })
+    assert.equal(doc?.formatKey, 'docx')
+    assert.equal(doc?.suggestedPath, '/docs/a.docx')
+    assert.equal(convertEditProfileFor('/notes.txt', { isHeic: false, isLegacyOffice: false }), null)
   })
 })

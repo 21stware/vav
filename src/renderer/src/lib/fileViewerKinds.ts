@@ -1,5 +1,6 @@
 import { looksLikeFreeMind, looksLikeOpml } from '../../../shared/mindmap.ts'
 import { isLineOrientedPath } from './lineOrientedPath.ts'
+import { replaceExt } from './path.ts'
 
 export type FileViewerKindFlags = {
   isMarkdown: boolean
@@ -127,4 +128,48 @@ export function fileViewerKindFlags(opts: {
     hardForcedReadOnly,
     forcedReadOnly: hardForcedReadOnly || formatLockedReadOnly
   }
+}
+
+export type ConvertEditProfile = {
+  formatKey: 'jpeg' | 'docx' | 'xlsx' | 'pptx' | 'pdf'
+  suggestedPath: string
+  sourcePath: string
+}
+
+/** Convert + Save As profile when the open format cannot be written in place. */
+export function convertEditProfileFor(
+  filePath: string,
+  opts: {
+    kind?: string | null
+    contentPath?: string | null
+    isHeic: boolean
+    isLegacyOffice: boolean
+  }
+): ConvertEditProfile | null {
+  const source = opts.contentPath?.trim() || filePath
+  if (opts.isHeic) {
+    return { formatKey: 'jpeg', suggestedPath: replaceExt(filePath, '.jpg'), sourcePath: source }
+  }
+  if (opts.kind === 'docx' || (/\.docx$/i.test(filePath) && !opts.isLegacyOffice)) {
+    return { formatKey: 'docx', suggestedPath: replaceExt(filePath, '.docx'), sourcePath: source }
+  }
+  if (opts.kind === 'xlsx' || /\.xlsx$/i.test(filePath)) {
+    return { formatKey: 'xlsx', suggestedPath: replaceExt(filePath, '.xlsx'), sourcePath: source }
+  }
+  if (opts.kind === 'pptx' || /\.pptx$/i.test(filePath)) {
+    return { formatKey: 'pptx', suggestedPath: replaceExt(filePath, '.pptx'), sourcePath: source }
+  }
+  if (opts.kind === 'pdf' || /\.pdf$/i.test(filePath)) {
+    return { formatKey: 'pdf', suggestedPath: replaceExt(filePath, '.pdf'), sourcePath: filePath }
+  }
+  if (/\.doc$/i.test(filePath) && !/\.docx$/i.test(filePath)) {
+    return { formatKey: 'docx', suggestedPath: replaceExt(filePath, '.docx'), sourcePath: source }
+  }
+  if (/\.xls$/i.test(filePath) && !/\.xlsx$/i.test(filePath)) {
+    return { formatKey: 'xlsx', suggestedPath: replaceExt(filePath, '.xlsx'), sourcePath: source }
+  }
+  if (/\.ppt$/i.test(filePath) && !/\.pptx$/i.test(filePath)) {
+    return { formatKey: 'pptx', suggestedPath: replaceExt(filePath, '.pptx'), sourcePath: source }
+  }
+  return null
 }

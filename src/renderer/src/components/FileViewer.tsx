@@ -36,8 +36,8 @@ import {
   lineBlockAt,
   type PreviewBlock
 } from '../lib/previewBlocks'
-import { fileViewerKindFlags, isBinaryOfficeKind } from '../lib/fileViewerKinds'
-import { basename, dirname, replaceExt } from '../lib/path'
+import { convertEditProfileFor, fileViewerKindFlags, isBinaryOfficeKind } from '../lib/fileViewerKinds'
+import { basename, dirname } from '../lib/path'
 import { previewOpenElapsed } from '../lib/previewOpenClock'
 import { isPickGestureActive, type ClickPickPointer } from '../lib/clickPick'
 import { suppressHyperlinkClick } from '../lib/suppressHyperlinks'
@@ -1230,74 +1230,16 @@ export function FileViewer({
     })
   }
 
-  /**
-   * HEIC / Office: editing means convert + Save As (not in-place write).
-   * Returns profile for the dialog + binary source path.
-   */
-  const convertEditProfile = useMemo((): {
-    formatKey: 'jpeg' | 'docx' | 'xlsx' | 'pptx' | 'pdf'
-    suggestedPath: string
-    sourcePath: string
-  } | null => {
-    if (isHeic) {
-      return {
-        formatKey: 'jpeg',
-        suggestedPath: replaceExt(filePath, '.jpg'),
-        sourcePath: info?.contentPath?.trim() || filePath
-      }
-    }
-    if (info?.kind === 'docx' || (/\.docx$/i.test(filePath) && !isLegacyOffice)) {
-      return {
-        formatKey: 'docx',
-        suggestedPath: replaceExt(filePath, '.docx'),
-        sourcePath: info?.contentPath?.trim() || filePath
-      }
-    }
-    if (info?.kind === 'xlsx' || /\.xlsx$/i.test(filePath)) {
-      return {
-        formatKey: 'xlsx',
-        suggestedPath: replaceExt(filePath, '.xlsx'),
-        sourcePath: info?.contentPath?.trim() || filePath
-      }
-    }
-    if (info?.kind === 'pptx' || /\.pptx$/i.test(filePath)) {
-      return {
-        formatKey: 'pptx',
-        suggestedPath: replaceExt(filePath, '.pptx'),
-        sourcePath: info?.contentPath?.trim() || filePath
-      }
-    }
-    if (info?.kind === 'pdf' || /\.pdf$/i.test(filePath)) {
-      return {
-        formatKey: 'pdf',
-        suggestedPath: replaceExt(filePath, '.pdf'),
-        sourcePath: filePath
-      }
-    }
-    // Legacy .doc → converted sidecar is usually DOCX/HTML temp; prefer DOCX name.
-    if (/\.doc$/i.test(filePath) && !/\.docx$/i.test(filePath)) {
-      return {
-        formatKey: 'docx',
-        suggestedPath: replaceExt(filePath, '.docx'),
-        sourcePath: info?.contentPath?.trim() || filePath
-      }
-    }
-    if (/\.xls$/i.test(filePath) && !/\.xlsx$/i.test(filePath)) {
-      return {
-        formatKey: 'xlsx',
-        suggestedPath: replaceExt(filePath, '.xlsx'),
-        sourcePath: info?.contentPath?.trim() || filePath
-      }
-    }
-    if (/\.ppt$/i.test(filePath) && !/\.pptx$/i.test(filePath)) {
-      return {
-        formatKey: 'pptx',
-        suggestedPath: replaceExt(filePath, '.pptx'),
-        sourcePath: info?.contentPath?.trim() || filePath
-      }
-    }
-    return null
-  }, [filePath, info?.contentPath, info?.kind, isHeic, isLegacyOffice])
+  const convertEditProfile = useMemo(
+    () =>
+      convertEditProfileFor(filePath, {
+        kind: info?.kind,
+        contentPath: info?.contentPath,
+        isHeic,
+        isLegacyOffice
+      }),
+    [filePath, info?.contentPath, info?.kind, isHeic, isLegacyOffice]
+  )
 
   const convertAndSaveAs = async (): Promise<boolean> => {
     const profile = convertEditProfile
