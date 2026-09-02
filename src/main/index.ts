@@ -163,7 +163,7 @@ import { VavPackService } from './store/VavPackService'
 import { FileSessionStore } from './store/FileSessionStore'
 import { SwarmHistoryStore } from './store/SwarmHistoryStore'
 import { FileService } from './fs/FileService'
-import { isTrustedIpcSender } from './ipc/ipcTrust'
+import { installTrustedIpcGuard } from './ipc/ipcTrust'
 import {
   applyWindowVibrancy as applyVibrancyPaint,
   clearWindowVibrancy as clearVibrancyPaint,
@@ -6701,23 +6701,7 @@ async function confirmRevealSecret(event: IpcMainInvokeEvent): Promise<boolean> 
 }
 
 function registerIpc(): void {
-  const originalHandle = ipcMain.handle.bind(ipcMain)
-  ipcMain.handle = ((
-    channel: string,
-    listener: (event: Electron.IpcMainInvokeEvent, ...args: unknown[]) => unknown
-  ) =>
-    originalHandle(channel, async (event, ...args) => {
-      if (!isTrustedIpcSender(event, isRendererUrl)) {
-        console.error(`[ipc] blocked untrusted sender for ${channel}`)
-        throw new Error('Blocked IPC from untrusted frame')
-      }
-      try {
-        return await listener(event, ...args)
-      } catch (err) {
-        console.error(`[ipc] ${channel}`, err)
-        throw err
-      }
-    })) as typeof ipcMain.handle
+  installTrustedIpcGuard(ipcMain, isRendererUrl)
   registerHapticsIpc()
   screenshotController ??= createScreenshotController({ loadScreenshotRenderer })
   ipcMain.handle(IPC.filesPickAttachments, async (event) => {

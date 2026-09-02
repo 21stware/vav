@@ -33,3 +33,34 @@ export function isTrustedIpcSender(
   }
   return true
 }
+
+export type IpcHandleHost = {
+  handle: (
+    channel: string,
+    listener: (event: unknown, ...args: unknown[]) => unknown
+  ) => unknown
+}
+
+/** Wrap `ipcMain.handle` so guest frames cannot invoke privileged channels. */
+export function installTrustedIpcGuard(
+  ipcMain: IpcHandleHost,
+  isAppRendererUrl: (url: string) => boolean
+): void {
+  const originalHandle = ipcMain.handle.bind(ipcMain)
+  ipcMain.handle = ((
+    channel: string,
+    listener: (event: unknown, ...args: unknown[]) => unknown
+  ) =>
+    originalHandle(channel, async (event, ...args) => {
+      if (!isTrustedIpcSender(event as IpcSenderLike, isAppRendererUrl)) {
+        console.error(`[ipc] blocked untrusted sender for ${channel}`)
+        throw new Error('Blocked IPC from untrusted frame')
+      }
+      try {
+        return await listener(event, ...args)
+      } catch (err) {
+        console.error(`[ipc] ${channel}`, err)
+        throw err
+      }
+    })) as IpcHandleHost['handle']
+}

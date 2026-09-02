@@ -68,3 +68,39 @@ describe('isTrustedIpcSender', () => {
     assert.equal(isTrustedIpcSender(event, isApp), false)
   })
 })
+
+describe('installTrustedIpcGuard', () => {
+  it('runs the listener for a trusted sender and rejects a guest frame', async () => {
+    const { installTrustedIpcGuard } = await import('./ipcTrust.ts')
+    const listeners = new Map<
+      string,
+      (event: unknown, ...args: unknown[]) => unknown
+    >()
+    const ipc = {
+      handle(
+        channel: string,
+        listener: (event: unknown, ...args: unknown[]) => unknown
+      ) {
+        listeners.set(channel, listener)
+      }
+    }
+    installTrustedIpcGuard(ipc, isApp)
+    ipc.handle('ping', async () => 'pong')
+    const run = listeners.get('ping')
+    assert.ok(run)
+    const main = { id: 1, url: appUrl }
+    const trusted = {
+      sender: {
+        isDestroyed: () => false,
+        mainFrame: main,
+        getURL: () => appUrl
+      },
+      senderFrame: main
+    }
+    assert.equal(await run(trusted), 'pong')
+    await assert.rejects(
+      () => run(sender({ frameIsMain: false })),
+      /untrusted frame/
+    )
+  })
+})
