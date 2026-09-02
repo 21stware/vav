@@ -265,7 +265,9 @@ async function seedPreviewKindFixtures(workspace: string): Promise<void> {
   }
   const db = join(workspace, 'notes.db')
   execSync(
-    `python3 -c "import sqlite3; c=sqlite3.connect(${JSON.stringify(db)}); c.execute('create table items(name text, qty int)'); c.execute(\\"insert into items values ('Pens', 12)\\"); c.commit()"`
+    `python3 -c ${JSON.stringify(
+      `import sqlite3; c=sqlite3.connect(${JSON.stringify(db)}); c.execute('create table items(name text, qty int)'); c.execute("insert into items values ('Pens', 12)"); c.commit()`
+    )}`
   )
   await writeMinimalDocx(join(workspace, 'letter.docx'), 'Cover title')
   await writeMinimalPptx(join(workspace, 'deck.pptx'), ['Q3 Review', 'Ship the canvas'])
