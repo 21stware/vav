@@ -87,6 +87,37 @@ export function buildQueuedMessage(input: {
   }
 }
 
+/** Clear the composer and any send-time error banner for this conversation. */
+export function composerClearedPatch<
+  T extends {
+    drafts: Record<string, string>
+    attachments: Record<string, string[]>
+    quotes: Record<string, QuoteDraft | null>
+    previewRefs: Record<string, PreviewRef[]>
+    commentCards: Record<string, { ref: PreviewRef; comment: string }[]>
+  }
+>(state: T, activeId: string): {
+  drafts: T['drafts']
+  attachments: T['attachments']
+  quotes: T['quotes']
+  previewRefs: T['previewRefs']
+  commentCards: T['commentCards']
+  errorBanner: null
+  errorBannerKind: null
+  errorBannerDetail: null
+} {
+  return {
+    drafts: { ...state.drafts, [activeId]: '' },
+    attachments: { ...state.attachments, [activeId]: [] },
+    quotes: { ...state.quotes, [activeId]: null },
+    previewRefs: { ...state.previewRefs, [activeId]: [] },
+    commentCards: { ...state.commentCards, [activeId]: [] },
+    errorBanner: null,
+    errorBannerKind: null,
+    errorBannerDetail: null
+  }
+}
+
 /** Merge comment cards + preview refs, then fire agent.send. */
 export async function dispatchQueuedPayload(
   conversationId: string,

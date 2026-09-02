@@ -48,7 +48,7 @@ import {
   type TurnRuntime,
 } from './sessionTypes'
 import { omitLiveUsage } from './sessionUsage'
-import { dispatchQueuedPayload, MESSAGE_QUEUE_MAX, buildQueuedMessage, composerSendDisposition, isEmptyComposerSend, mergePreviewAndCommentRefs } from './sessionQueue'
+import { dispatchQueuedPayload, MESSAGE_QUEUE_MAX, buildQueuedMessage, composerSendDisposition, composerClearedPatch, isEmptyComposerSend, mergePreviewAndCommentRefs } from './sessionQueue'
 import { applySessionTurnEvent } from './sessionTurnApply'
 import {
   searchStateForQuery,
@@ -2090,14 +2090,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
           ...state.messageQueues,
           [activeId!]: [...(state.messageQueues[activeId!] ?? []), item]
         },
-        drafts: { ...state.drafts, [activeId!]: '' },
-        attachments: { ...state.attachments, [activeId!]: [] },
-        quotes: { ...state.quotes, [activeId!]: null },
-        previewRefs: { ...state.previewRefs, [activeId!]: [] },
-        commentCards: { ...state.commentCards, [activeId!]: [] },
-        errorBanner: null,
-        errorBannerKind: null,
-        errorBannerDetail: null
+        ...composerClearedPatch(state, activeId!)
       }))
       return
     }
@@ -2119,16 +2112,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
     // No optimistic echo: the stored message comes back as a `user` turn event
     // a moment later, already carrying the id and parent the tree needs.
-    set((state) => ({
-      drafts: { ...state.drafts, [activeId]: '' },
-      attachments: { ...state.attachments, [activeId]: [] },
-      quotes: { ...state.quotes, [activeId]: null },
-      previewRefs: { ...state.previewRefs, [activeId]: [] },
-      commentCards: { ...state.commentCards, [activeId]: [] },
-      errorBanner: null,
-      errorBannerKind: null,
-      errorBannerDetail: null
-    }))
+    set((state) => composerClearedPatch(state, activeId))
 
     await window.vav.agent.send(
       activeId,

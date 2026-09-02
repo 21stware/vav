@@ -49,7 +49,6 @@ import {
   isEnterPlanModeName,
   isPlanDocToolName,
   normalizePlanDocInput,
-  planDocHasBody,
   planDocSummary,
   planDocToChecklistInput,
   projectChecklistInput
@@ -98,6 +97,7 @@ import {
   stripLeakedStreamErrorFromTurn
 } from './cliTurnFinish'
 import { newCliToolCallBlock, applyToolEventStatus } from './cliToolBlock'
+import { parkInteractivePatch } from './cliPark'
 import {
   applyCliHistoryHandoff,
   formatCliWorkspaceHandoff,
@@ -1494,59 +1494,29 @@ export class CliAgentHost {
     block: ToolCallBlock,
     index: number
   ): boolean {
-    if (event.status === 'completed' || event.status === 'error') return false
-    if (turn.pendingPermissions.has(block.id)) return false
-    const parsed = parseToolInput(block.input)
-    if (block.tool === 'ask_user_question') {
-      const questions = normalizeAskQuestions(parsed)
-      if (questions.length === 0) return false
-      const next: ToolCallBlock = {
-        ...block,
-        status: 'pending',
-        questions,
-        askTitle: event.title || String(parsed.title ?? parsed.header ?? '') || block.askTitle
-      }
-      turn.blocks[index] = next
-      turn.pendingPermissions.set(block.id, {
-        requestId: block.id,
-        toolCallId: block.id,
-        kind: 'ask',
-        synthetic: false,
-        resolve: () => undefined
-      })
-      this.deps.emit({
-        type: 'awaiting',
-        conversationId,
-        toolCallId: block.id,
-        index,
-        block: next
-      })
-      this.setPhase(conversationId, turn, 'awaiting-user')
-      return true
-    }
-    if (block.tool === 'plan_doc') {
-      const doc = normalizePlanDocInput(parsed)
-      if (!isPlanDocToolName(event.name) && !planDocHasBody(doc)) return false
-      const next: ToolCallBlock = { ...block, status: 'pending' }
-      turn.blocks[index] = next
-      turn.pendingPermissions.set(block.id, {
-        requestId: block.id,
-        toolCallId: block.id,
-        kind: 'plan_doc',
-        synthetic: false,
-        resolve: () => undefined
-      })
-      this.deps.emit({
-        type: 'awaiting',
-        conversationId,
-        toolCallId: block.id,
-        index,
-        block: next
-      })
-      this.setPhase(conversationId, turn, 'awaiting-user')
-      return true
-    }
-    return false
+    const parked = parkInteractivePatch(
+      block,
+      event,
+      turn.pendingPermissions.has(block.id)
+    )
+    if (!parked) return false
+    turn.blocks[index] = parked.next
+    turn.pendingPermissions.set(block.id, {
+      requestId: block.id,
+      toolCallId: block.id,
+      kind: parked.kind,
+      synthetic: false,
+      resolve: () => undefined
+    })
+    this.deps.emit({
+      type: 'awaiting',
+      conversationId,
+      toolCallId: block.id,
+      index,
+      block: parked.next
+    })
+    this.setPhase(conversationId, turn, 'awaiting-user')
+    return true
   }
 
   private applyElicitation(

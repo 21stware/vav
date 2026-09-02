@@ -14,7 +14,6 @@
  * `afterToolCall`. Only genuinely unexpected faults throw.
  */
 import type { AgentTool } from '@earendil-works/pi-agent-core'
-import type { ToolName } from '@shared/types'
 import type { ToolHost } from './toolHost'
 import { createShellTools } from './toolsShell'
 import { createFsTools } from './toolsFs'
@@ -26,24 +25,7 @@ export { normalizeAskQuestions, normalizePlanSteps } from '@shared/askPlan'
 export { summarizeToolInput } from './toolSummarize'
 export { buildSystemPrompt } from './systemPrompt'
 export type { ToolDetails, ToolHost } from './toolHost'
-
-export const INTERACTIVE_TOOLS: ReadonlySet<ToolName> = new Set(['request', 'ask_user_question'])
-export const READONLY_TOOLS: ReadonlySet<ToolName> = new Set([
-  'fs_read',
-  'fs_list',
-  'doc_search',
-  'doc_fetch',
-  'web_search',
-  'web_fetch',
-  'sql_query',
-  'load_skill'
-])
-/** Auto-mode tools that pause for Approve / Deny. */
-export const HIGH_RISK_TOOLS: ReadonlySet<ToolName> = new Set([
-  'fs_write',
-  'terminal',
-  'switch_mode'
-])
+export { INTERACTIVE_TOOLS, READONLY_TOOLS, HIGH_RISK_TOOLS } from './toolSets'
 
 export {
   FILE_READONLY_BLOCKED_TOOLS,

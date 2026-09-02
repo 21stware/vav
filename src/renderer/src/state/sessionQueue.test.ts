@@ -4,6 +4,7 @@ import { omitLiveUsage } from './sessionUsage.ts'
 import {
   buildQueuedMessage,
   composerSendDisposition,
+  composerClearedPatch,
   isEmptyComposerSend,
   mergePreviewAndCommentRefs,
   MESSAGE_QUEUE_MAX
@@ -76,5 +77,25 @@ describe('composer send helpers', () => {
       'full'
     )
     assert.equal(composerSendDisposition(base), 'send')
+  })
+
+  it('clears composer fields for one conversation without dropping others', () => {
+    const patch = composerClearedPatch(
+      {
+        drafts: { a: 'hello', b: 'keep' },
+        attachments: { a: ['/x'] },
+        quotes: { a: { messageId: 'm', summary: 'q' } },
+        previewRefs: { a: [{ id: 'r', filePath: '/a.ts' }] },
+        commentCards: { a: [{ ref: { id: 'c', filePath: '/a.ts' }, comment: 'n' }] }
+      },
+      'a'
+    )
+    assert.equal(patch.drafts.a, '')
+    assert.equal(patch.drafts.b, 'keep')
+    assert.deepEqual(patch.attachments.a, [])
+    assert.equal(patch.quotes.a, null)
+    assert.deepEqual(patch.previewRefs.a, [])
+    assert.deepEqual(patch.commentCards.a, [])
+    assert.equal(patch.errorBanner, null)
   })
 })

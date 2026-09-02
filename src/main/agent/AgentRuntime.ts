@@ -33,11 +33,16 @@ import {
   sealCancelledInteractiveTools
 } from './agentTurnFinish'
 import {
-  FILE_READONLY_BLOCKED_TOOLS,
   gateReadonlyExecute,
-  isFileEditLockedPath,
-  isReadonlyTerminalCommand
+  isFileEditLockedPath
 } from './fileEditLock'
+import {
+  parseEditedApprovalText,
+  readonlyApprovalBlock,
+  shouldPauseForApproval,
+  shouldSkipToolGate,
+  terminalCommandFromArgs
+} from './toolApproval'
 import {
   blockFromContent,
   buildHistory,
@@ -45,9 +50,6 @@ import {
   pathToSummarySource
 } from './history'
 import {
-  HIGH_RISK_TOOLS,
-  INTERACTIVE_TOOLS,
-  READONLY_TOOLS,
   createTools,
   type ToolDetails
 } from './tools'
@@ -1158,44 +1160,28 @@ export class AgentRuntime {
     args: unknown
   ): Promise<{ block: boolean; reason?: string } | undefined> {
     const name = toolCall.name as ToolName
-    if (INTERACTIVE_TOOLS.has(name) || name === 'plan' || name === 'wait' || name === 'read_bash_session') {
-      return undefined
-    }
+    if (shouldSkipToolGate(name)) return undefined
 
     const conversation = this.deps.conversations.get(conversationId)
     const mode = conversation?.approvalMode ?? 'auto'
-
-    const command =
-      name === 'terminal' && args && typeof args === 'object' && 'command' in args
-        ? String((args as { command: unknown }).command ?? '')
-        : ''
+    const command = terminalCommandFromArgs(name, args)
 
     // File Preview Read: hard-block write tools / mutating shell before approval UI.
     // switch_mode itself is allowed through so the user can Approve → Edit.
     if (conversation?.fileReadOnly && name !== 'switch_mode') {
-      if (FILE_READONLY_BLOCKED_TOOLS.has(name)) {
-        return {
-          block: true,
-          reason:
-            'Read-only session: call switch_mode with mode "edit" first (or ask the user to switch / convert / Save As).'
-        }
-      }
-      if (name === 'terminal' && command && !isReadonlyTerminalCommand(command)) {
-        return {
-          block: true,
-          reason: `Read-only session: only read-only shell commands are allowed until Edit (refused: ${command.slice(0, 120)})`
-        }
-      }
+      const blocked = readonlyApprovalBlock(name, command)
+      if (blocked) return blocked
     }
 
-    if (mode === 'bypass') return undefined
-
-    if (mode === 'auto') {
-      const highRisk =
-        HIGH_RISK_TOOLS.has(name) && !(name === 'terminal' && isReadonlyTerminalCommand(command))
-      const readonlyNeedsApproval =
-        READONLY_TOOLS.has(name) && !this.deps.settings.get().autoApproveReadonly
-      if (!highRisk && !readonlyNeedsApproval) return undefined
+    if (
+      !shouldPauseForApproval({
+        mode,
+        name,
+        command,
+        autoApproveReadonly: this.deps.settings.get().autoApproveReadonly
+      })
+    ) {
+      return undefined
     }
     // Edit: every non-interactive tool pauses.
 
@@ -1230,11 +1216,9 @@ export class AgentRuntime {
 
     // Edit mode: approve-run + edited payload may rewrite terminal command / paths.
     if (mode === 'edit') {
-      const edited = approval.text.startsWith(`${approveLabel}\n`)
-        ? approval.text.slice(approveLabel.length + 1)
-        : isApprovalApproveText(approval.text, true) || approval.text === approveLabel
-          ? ''
-          : approval.text
+      const edited = parseEditedApprovalText(approval.text, approveLabel, (text) =>
+        isApprovalApproveText(text, true)
+      )
       if (edited.trim()) {
         const next = applyEditedArgs(name, args, edited.trim())
         if (next) {
