@@ -170,6 +170,9 @@ import { registerChangeSetIpc } from './ipc/registerChangeSetIpc'
 import { registerFilesIpc } from './ipc/registerFilesIpc'
 import { registerHostsIpc } from './ipc/registerHostsIpc'
 import { registerWindowIpc } from './ipc/registerWindowIpc'
+import { registerAgentIpc } from './ipc/registerAgentIpc'
+import { machineIdFromRendererUrl } from './window/machineFromUrl'
+import { collectPreferredModelHosts, contextWindowForModelId } from './agent/modelContext'
 import { dialogConfirmOptions, revealSecretBoxOptions } from './ipc/dialogOptions'
 import { showParentedMessageBox, windowFromSender } from './ipc/nativeDialog'
 import { conversationIdForWorkdirs } from './fs/conversationPath'
@@ -4105,15 +4108,10 @@ function publishModelCatalog(
 }
 
 function preferredModelHosts(): CliHostKind[] {
-  const hosts: CliHostKind[] = []
-  for (const entry of settingsStore.get().recentAgentModels ?? []) {
-    if (isStructuredCliHost(entry.hostId)) hosts.push(entry.hostId)
-  }
-  for (const conversation of conversationStore.all()) {
-    const host = conversation.cliHost
-    if (host && isStructuredCliHost(host)) hosts.push(host)
-  }
-  return hosts
+  return collectPreferredModelHosts(
+    settingsStore.get().recentAgentModels ?? [],
+    conversationStore.all()
+  )
 }
 
 /** Catalogue size when the host published one; else the model-id table. */
@@ -4127,9 +4125,7 @@ function contextWindowForModel(
   const listed = getModelCatalogSnapshot()[agentModelHostKey(host, vendorId, accountId)]?.models?.find(
     (m) => m.id === modelId
   )?.contextWindow
-  if (listed && listed > 0) return listed
-  if (host && reported && reported > 0) return reported
-  return contextWindowFor(modelId)
+  return contextWindowForModelId(host, modelId, listed, reported, contextWindowFor)
 }
 
 /**
@@ -5849,9 +5845,7 @@ function decorateHosts(hosts: WorkspaceHostInfo[]): WorkspaceHostInfo[] {
 
 function machineIdFromContents(contents: Electron.WebContents): string {
   try {
-    const url = contents.getURL()
-    if (!url) return LOCAL_MACHINE_ID
-    return normalizeMachineId(new URL(url).searchParams.get('machine'))
+    return machineIdFromRendererUrl(contents.getURL())
   } catch {
     return LOCAL_MACHINE_ID
   }
@@ -7588,107 +7582,50 @@ return c as text`
   )
 
   // --- agent (built-in pi loop OR structured CLI host) ---
-  ipcMain.handle(
-    IPC.agentSend,
-    (
-      _event,
-      id: string,
-      text: string,
-      attachments: string[],
-      quote?: import('@shared/types').QuoteDraft | null,
-      contextBlocks?: import('@shared/types').PreviewRef[] | null,
-      contextFile?: string | null
-    ) => {
-      // Not awaited: the turn streams for as long as it needs, and the renderer
-      // is driven entirely by turn events.
-      if (conversationStore.get(id)?.archived) return
-      if (agentFor(id) === 'cli') {
-        void cliHost.run(
-          id,
-          text,
-          attachments ?? [],
-          quote ?? null,
-          contextBlocks ?? null,
-          contextFile ?? null
-        )
-        return
-      }
-      void agent.run(
-        id,
-        text,
-        attachments ?? [],
-        quote ?? null,
-        contextBlocks ?? null,
-        contextFile ?? null
-      )
-    }
-  )
-  ipcMain.handle(IPC.agentAppendNotice, (_event, id: string, text: string) => {
-    agent.appendNotice(id, text)
-  })
-  ipcMain.handle(IPC.agentCancel, (_event, id: string) => {
-    if (agentFor(id) === 'cli') cliHost.cancel(id)
-    else agent.cancel(id)
-  })
-  ipcMain.handle(IPC.agentAnswer, (_event, id: string, toolCallId: string, answer: string) => {
-    if (cliHost.answer(id, toolCallId, answer)) return true
-    return agent.answer(id, toolCallId, answer)
-  })
-  ipcMain.handle(IPC.agentStatus, (_event, id: string) =>
-    agentFor(id) === 'cli' ? cliHost.status(id) : agent.status(id)
-  )
-  ipcMain.handle(IPC.agentRegenerate, (_event, id: string, messageId: string) => {
-    if (conversationStore.get(id)?.archived) return
-    if (agentFor(id) === 'cli') void cliHost.regenerate(id, messageId)
-    else void agent.regenerate(id, messageId)
-  })
-  ipcMain.handle(IPC.agentEditUser, (_event, id: string, messageId: string, text: string) => {
-    if (conversationStore.get(id)?.archived) return
-    if (agentFor(id) === 'cli') void cliHost.editUserMessage(id, messageId, text)
-    else void agent.editUserMessage(id, messageId, text)
-  })
-  ipcMain.handle(IPC.agentFork, (_event, id: string, messageId: string) => {
-    if (conversationStore.get(id)?.archived) return null
-    return agent.fork(id, messageId)
-  })
-  ipcMain.handle(
-    IPC.agentCompact,
-    async (_event, id: string, options?: { keepAfterMessageId?: string | null }) => {
-      const conversation = conversationStore.get(id)
-      if (conversation?.archived) {
-        return { ok: false as const, error: t('session.archivedReadonly') }
-      }
-      if (conversation?.cliHost) {
-        return { ok: false as const, error: t('compact.error.cliHost') }
-      }
-      const result = await agent.compact(id, options)
-      if (result.ok) {
-        const next = conversationStore.get(id)
-        broadcast(IPC.compactionsChanged, {
-          conversationId: id,
-          compactions: next?.compactions ?? []
-        })
-        pushTokenUsageIfOpen(id)
-      }
-      return result
-    }
-  )
-  ipcMain.handle(IPC.agentClearCompaction, (_event, id: string, leafId: string) => {
-    const conversation = conversationStore.get(id)
-    if (conversation?.cliHost) {
-      return { ok: false as const, error: t('compact.error.cliHost') }
-    }
-    const result = agent.clearCompaction(id, leafId)
-    if (result.ok) {
+  registerAgentIpc(
+    ipcMain,
+    conversationStore,
+    {
+      ownsCli: (id) => agentFor(id) === 'cli',
+      runCli: (id, text, attachments, quote, contextBlocks, contextFile) => {
+        void cliHost.run(id, text, attachments, quote, contextBlocks, contextFile)
+      },
+      runBuiltin: (id, text, attachments, quote, contextBlocks, contextFile) => {
+        void agent.run(id, text, attachments, quote, contextBlocks, contextFile)
+      },
+      appendNotice: (id, text) => agent.appendNotice(id, text),
+      cancelCli: (id) => cliHost.cancel(id),
+      cancelBuiltin: (id) => agent.cancel(id),
+      answerCli: (id, toolCallId, answer) => cliHost.answer(id, toolCallId, answer),
+      answerBuiltin: (id, toolCallId, answer) => agent.answer(id, toolCallId, answer),
+      statusCli: (id) => cliHost.status(id),
+      statusBuiltin: (id) => agent.status(id),
+      regenerateCli: (id, messageId) => {
+        void cliHost.regenerate(id, messageId)
+      },
+      regenerateBuiltin: (id, messageId) => {
+        void agent.regenerate(id, messageId)
+      },
+      editUserCli: (id, messageId, text) => {
+        void cliHost.editUserMessage(id, messageId, text)
+      },
+      editUserBuiltin: (id, messageId, text) => {
+        void agent.editUserMessage(id, messageId, text)
+      },
+      fork: (id, messageId) => agent.fork(id, messageId),
+      compact: (id, options) => agent.compact(id, options),
+      clearCompaction: (id, leafId) => agent.clearCompaction(id, leafId)
+    },
+    (id) => {
       const next = conversationStore.get(id)
       broadcast(IPC.compactionsChanged, {
         conversationId: id,
         compactions: next?.compactions ?? []
       })
       pushTokenUsageIfOpen(id)
-    }
-    return result
-  })
+    },
+    () => ({ archived: t('session.archivedReadonly'), cliHost: t('compact.error.cliHost') })
+  )
 
   // --- files ---
   registerFilesIpc(ipcMain, fileService, workingCopyService, {
