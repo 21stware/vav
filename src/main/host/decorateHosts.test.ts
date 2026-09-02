@@ -27,12 +27,14 @@ describe('decorateHosts', () => {
         id === 'studio' ? [{ id: 'claude', name: 'Claude', path: '/bin/claude' }] : [],
       homeOf: () => '/Users/studio',
       tmpOf: () => '/tmp/studio',
-      defaultPathOf: () => '/Users/studio/src'
+      defaultPathOf: () => '/Users/studio/src',
+      controlPlaneOf: () => true
     })
     assert.equal(decorated[0], local)
     assert.equal(decorated[1]?.home, '/Users/studio')
     assert.equal(decorated[1]?.tmp, '/tmp/studio')
     assert.equal(decorated[1]?.defaultPath, '/Users/studio/src')
+    assert.equal(decorated[1]?.controlPlane, true)
     assert.deepEqual(decorated[1]?.providers, [
       { id: 'claude', name: 'Claude', path: '/bin/claude' }
     ])

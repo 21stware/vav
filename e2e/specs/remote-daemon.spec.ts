@@ -35,7 +35,12 @@ test('pair vavd, open its folder, list a file that only exists there', async () 
         const hosts = await page.evaluate(() => window.vav.hosts.list())
         return hosts.find((h) => h.id === paired.host.id)
       })
-      .toMatchObject({ id: paired.host.id, online: true, name: 'E2E Daemon' })
+      .toMatchObject({
+        id: paired.host.id,
+        online: true,
+        name: 'E2E Daemon',
+        controlPlane: false
+      })
 
     // Local window stays this computer. The daemon opens its own main shell.
     await expect(page.locator('[data-testid="sidebar-connect"]')).toHaveAttribute(

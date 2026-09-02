@@ -37,6 +37,17 @@ export type AgentIpcRuntimes = {
     options?: { keepAfterMessageId?: string | null }
   ) => Promise<{ ok: boolean }>
   clearCompaction: (id: string, leafId: string) => { ok: boolean }
+  tryRemoteSend?: (
+    id: string,
+    text: string,
+    attachments: string[],
+    quote: QuoteDraft | null,
+    contextBlocks: PreviewRef[] | null,
+    contextFile: string | null
+  ) => boolean
+  tryRemoteCancel?: (id: string) => boolean
+  tryRemoteAnswer?: (id: string, toolCallId: string, answer: string) => Promise<boolean>
+  controlPlaneOwns?: (id: string) => boolean
 }
 
 export type AgentIpcStore = {
@@ -71,6 +82,7 @@ export function registerAgentIpc(
         contextBlocks ?? null,
         contextFile ?? null
       ] as const
+      if (runtimes.tryRemoteSend?.(...args)) return
       if (runtimes.ownsCli(id)) void runtimes.runCli(...args)
       else void runtimes.runBuiltin(...args)
     }
@@ -79,10 +91,12 @@ export function registerAgentIpc(
     runtimes.appendNotice(id, text)
   })
   ipcMain.handle(IPC.agentCancel, (_event, id: string) => {
+    if (runtimes.tryRemoteCancel?.(id)) return
     if (runtimes.ownsCli(id)) runtimes.cancelCli(id)
     else runtimes.cancelBuiltin(id)
   })
-  ipcMain.handle(IPC.agentAnswer, (_event, id: string, toolCallId: string, answer: string) => {
+  ipcMain.handle(IPC.agentAnswer, async (_event, id: string, toolCallId: string, answer: string) => {
+    if (await runtimes.tryRemoteAnswer?.(id, toolCallId, answer)) return true
     if (runtimes.answerCli(id, toolCallId, answer)) return true
     return runtimes.answerBuiltin(id, toolCallId, answer)
   })
@@ -91,16 +105,19 @@ export function registerAgentIpc(
   )
   ipcMain.handle(IPC.agentRegenerate, (_event, id: string, messageId: string) => {
     if (store.get(id)?.archived) return
+    if (runtimes.controlPlaneOwns?.(id)) return
     if (runtimes.ownsCli(id)) void runtimes.regenerateCli(id, messageId)
     else void runtimes.regenerateBuiltin(id, messageId)
   })
   ipcMain.handle(IPC.agentEditUser, (_event, id: string, messageId: string, text: string) => {
     if (store.get(id)?.archived) return
+    if (runtimes.controlPlaneOwns?.(id)) return
     if (runtimes.ownsCli(id)) void runtimes.editUserCli(id, messageId, text)
     else void runtimes.editUserBuiltin(id, messageId, text)
   })
   ipcMain.handle(IPC.agentFork, (_event, id: string, messageId: string) => {
     if (store.get(id)?.archived) return null
+    if (runtimes.controlPlaneOwns?.(id)) return null
     return runtimes.fork(id, messageId)
   })
   ipcMain.handle(
@@ -112,6 +129,9 @@ export function registerAgentIpc(
         return { ok: false as const, error: copy.archived }
       }
       if (conversation?.cliHost) {
+        return { ok: false as const, error: copy.cliHost }
+      }
+      if (runtimes.controlPlaneOwns?.(id)) {
         return { ok: false as const, error: copy.cliHost }
       }
       const result = await runtimes.compact(id, options)

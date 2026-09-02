@@ -33,6 +33,15 @@ export type ConversationMetaIpcHost = {
   exportPack: (ids: string[], sender: unknown) => unknown
   importPack: (sender: unknown) => Promise<{ ok: boolean } & Record<string, unknown>>
   promoteEphemeral: (id: string) => void
+  /** Host-driven rename; true means the local store was already pulled. */
+  forwardRename?: (id: string, title: string) => Promise<boolean>
+  /** Host-driven archive; true means the local store was already pulled. */
+  forwardArchive?: (id: string, archived: boolean) => Promise<boolean>
+  /** Host-driven configure; true means the local store was already pulled. */
+  forwardConfigure?: (
+    id: string,
+    patch: { approvalMode?: string; thinkingLevel?: string; fast?: boolean; mode?: string }
+  ) => Promise<boolean>
 }
 
 /** Sidebar list / pin / archive / model — create and host-switch stay in the entry. */
@@ -46,8 +55,9 @@ export function registerConversationMetaIpc(
     if (store.hydrateMissingHostUsage(id)) host.publish()
     return store.get(id) ?? null
   })
-  ipcMain.handle(IPC.convRename, (_event, id: string, title: string) => {
+  ipcMain.handle(IPC.convRename, async (_event, id: string, title: string) => {
     const next = title.trim() || host.untitledTitle()
+    if (await host.forwardRename?.(id, next)) return store.listMeta()
     store.updateMeta(id, { title: next })
     host.renameDetached(id, next)
     host.publish()
@@ -61,33 +71,38 @@ export function registerConversationMetaIpc(
     host.publish()
     return store.listMeta()
   })
-  ipcMain.handle(IPC.convSetArchived, (_event, id: string, archived: boolean) => {
+  ipcMain.handle(IPC.convSetArchived, async (_event, id: string, archived: boolean) => {
+    if (await host.forwardArchive?.(id, archived)) return store.listMeta()
     if (archived) host.onArchive(id)
     store.setArchived(id, archived)
     host.publish()
     return store.listMeta()
   })
-  ipcMain.handle(IPC.convSetApprovalMode, (_event, id: string, mode: string) => {
+  ipcMain.handle(IPC.convSetApprovalMode, async (_event, id: string, mode: string) => {
     if (mode === 'auto' || mode === 'bypass' || mode === 'edit') {
+      if (await host.forwardConfigure?.(id, { approvalMode: mode })) return store.listMeta()
       store.setApprovalMode(id, mode)
       host.publish()
     }
     return store.listMeta()
   })
-  ipcMain.handle(IPC.convSetThinkingLevel, (_event, id: string, level: string) => {
+  ipcMain.handle(IPC.convSetThinkingLevel, async (_event, id: string, level: string) => {
+    if (await host.forwardConfigure?.(id, { thinkingLevel: level })) return store.listMeta()
     store.setThinkingLevel(id, parseThinkingLevel(level))
     if (host.cliOwns(id)) host.applyThinkingLevel(id)
     host.publish()
     return store.listMeta()
   })
-  ipcMain.handle(IPC.convSetFast, (_event, id: string, fast: boolean) => {
+  ipcMain.handle(IPC.convSetFast, async (_event, id: string, fast: boolean) => {
+    if (await host.forwardConfigure?.(id, { fast: fast === true })) return store.listMeta()
     store.setFast(id, fast === true)
     if (host.cliOwns(id)) host.applyFast(id)
     host.publish()
     return store.listMeta()
   })
-  ipcMain.handle(IPC.convSetAcpMode, (_event, id: string, modeId: string) => {
+  ipcMain.handle(IPC.convSetAcpMode, async (_event, id: string, modeId: string) => {
     if (typeof modeId === 'string' && modeId.trim()) {
+      if (await host.forwardConfigure?.(id, { mode: modeId.trim() })) return store.listMeta()
       host.applySessionMode(id, modeId.trim())
       host.publish()
     }

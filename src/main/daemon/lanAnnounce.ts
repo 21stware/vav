@@ -120,13 +120,14 @@ export function collectDialTargets(input: {
   const port = input.port && input.port > 0 ? input.port : DAEMON_DEFAULT_PORT
   const seen = new Set<string>()
   const localOwn = new Set(input.localAddresses ?? [])
+  const selfMdns = mdnsName()
   const out: DialTarget[] = []
   const add = (host: string | undefined, p = port): void => {
     const h = host?.trim()
     if (!h) return
     // Pairing lines often list this machine's VPN / fake-IP (198.18.0.1).
     // Dialing that hits our own VAV and looks like "pairing rejected".
-    if (localOwn.has(h)) return
+    if (localOwn.has(h) || (selfMdns && h === selfMdns)) return
     const key = `${h}:${p}`
     if (seen.has(key)) return
     seen.add(key)
@@ -151,6 +152,7 @@ export function collectDialTargets(input: {
   // "self" above, so loopback is the only way to reach the other listener.
   add('127.0.0.1')
 
+  if (out.length === 0) add('127.0.0.1')
   const local = input.localAddresses ?? []
   out.sort(
     (a, b) =>

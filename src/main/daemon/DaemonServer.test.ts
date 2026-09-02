@@ -6,6 +6,10 @@ import { describe, it } from 'node:test'
 import { createLocalWorkspaceHost } from '../host/WorkspaceHost.ts'
 import { DaemonServer, type DaemonWorkspaceCatalog } from './DaemonServer.ts'
 import { DaemonClient, createRemoteWorkspaceHost, requestLanPairOffer } from './DaemonClient.ts'
+import { createConnection } from 'node:net'
+import { encodeLine, parseServerMessage } from '../../shared/remoteControl.ts'
+import { RemoteControlHub } from '../remote/RemoteControlHub.ts'
+import { REMOTE_PHONE_CAPABILITIES } from '../../shared/remoteControl.ts'
 
 const SECRET = '0123456789abcdef01234567'
 
@@ -395,6 +399,129 @@ describe('daemon loopback', () => {
         device: 'test'
       })
       assert.equal(welcome.host.id, 'loop-box')
+    } finally {
+      client.close()
+      server.close()
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('hands a phone-role hello to the control hub and keeps daemon RPC separate', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'vav-daemon-'))
+    const sent: string[] = []
+    const hub = new RemoteControlHub({
+      appVersion: 'test',
+      secret: () => SECRET,
+      listSessions: () => [
+        {
+          id: 'c1',
+          title: 'Host chat',
+          dirLabel: '',
+          status: 'idle',
+          surface: 'vav',
+          updatedAt: 1
+        }
+      ],
+      listThread: () => null,
+      listControls: () => null,
+      listHost: () => ({
+        type: 'host',
+        name: 'loop',
+        home: dir,
+        tmp: dir,
+        capabilities: REMOTE_PHONE_CAPABILITIES,
+        defaults: { agent: 'vav', model: '', thinking: null, approval: 'auto' },
+        recentDirs: []
+      }),
+      configure: () => 'ok',
+      sendMessage: (_id, text) => {
+        sent.push(text)
+        return 'ok'
+      },
+      createSession: () => {
+        throw new Error('unused')
+      },
+      cancel: () => 'ok',
+      reply: () => false,
+      rename: () => 'ok',
+      archive: () => 'ok',
+      browse: () => 'not-found',
+      setWorkspace: () => 'ok'
+    })
+    const host = createLocalWorkspaceHost({ name: 'loop' })
+    const server = new DaemonServer({
+      host,
+      identity: { machineId: 'loop-box', name: 'loop' },
+      secret: () => SECRET,
+      appVersion: 'test',
+      home: dir,
+      tmp: dir,
+      onControlHello: (socket, leftover, hello) => hub.adoptAuthed(socket, leftover, hello)
+    })
+    const port = await server.listen(0, '127.0.0.1')
+    try {
+      const daemon = new DaemonClient()
+      await daemon.connect({ host: '127.0.0.1', port, secret: SECRET, device: 'fs' })
+      const listed = (await daemon.request('sessions.list')) as { sessions: unknown[] }
+      assert.deepEqual(listed.sessions, [])
+
+      const phone = createConnection({ host: '127.0.0.1', port })
+      await new Promise<void>((resolve, reject) => {
+        phone.once('connect', resolve)
+        phone.once('error', reject)
+      })
+      phone.write(encodeLine({ type: 'hello', proto: 1, auth: SECRET, device: 'iPhone', role: 'phone' }))
+      const welcomed = await new Promise<boolean>((resolve, reject) => {
+        let buf = ''
+        phone.setEncoding('utf8')
+        phone.on('data', (chunk: string) => {
+          buf += chunk
+          for (const line of buf.split('\n').slice(0, -1)) {
+            const parsed = parseServerMessage(JSON.parse(line) as unknown)
+            if (parsed?.type === 'welcome') resolve(true)
+          }
+        })
+        phone.on('error', reject)
+        setTimeout(() => reject(new Error('no welcome')), 2000)
+      })
+      assert.equal(welcomed, true)
+      phone.write(encodeLine({ type: 'send', conversationId: 'c1', text: 'from phone' }))
+      await new Promise((resolve) => setTimeout(resolve, 80))
+      assert.deepEqual(sent, ['from phone'])
+      phone.destroy()
+      daemon.close()
+    } finally {
+      hub.dispose()
+      server.close()
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('refuses a phone hello when the host is headless', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'vav-daemon-'))
+    const { server, client } = await startPair(dir)
+    try {
+      const port = server.port()
+      const phone = createConnection({ host: '127.0.0.1', port })
+      await new Promise<void>((resolve, reject) => {
+        phone.once('connect', resolve)
+        phone.once('error', reject)
+      })
+      phone.write(encodeLine({ type: 'hello', proto: 1, auth: SECRET, device: 'iPhone', role: 'phone' }))
+      const code = await new Promise<string>((resolve, reject) => {
+        let buf = ''
+        phone.setEncoding('utf8')
+        phone.on('data', (chunk: string) => {
+          buf += chunk
+          if (!buf.includes('\n')) return
+          const parsed = parseServerMessage(JSON.parse(buf.trim()) as unknown)
+          if (parsed?.type === 'error') resolve(parsed.code)
+        })
+        phone.on('error', reject)
+        setTimeout(() => reject(new Error('no error')), 2000)
+      })
+      assert.equal(code, 'bad-request')
+      phone.destroy()
     } finally {
       client.close()
       server.close()

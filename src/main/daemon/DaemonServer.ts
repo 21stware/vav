@@ -17,6 +17,7 @@ import {
   type FsDirentWire,
   type FsStatWire
 } from '../../shared/daemonProtocol.ts'
+import { parseClientMessage, type RemoteHello } from '../../shared/remoteControl.ts'
 import type { WorkspaceHost } from '../host/WorkspaceHost.ts'
 import type { HostChild, HostPtyProcess, HostFileHandle } from '../host/index.ts'
 import { attachLineReader, secretsMatch, writeLine } from './jsonLines.ts'
@@ -39,6 +40,12 @@ type ServerOpts = {
    * this; list/get then return empty rather than failing the pair.
    */
   catalog?: DaemonWorkspaceCatalog
+  /**
+   * Phone-role hello on this listen port — hand the socket to the session
+   * plane. Headless `vavd` omits this so a phone / desktop control client
+   * is refused instead of being treated as a daemon.
+   */
+  onControlHello?: (socket: Socket, leftover: string, hello: RemoteHello) => void
 }
 
 /** Plain JSON catalog the desktop injects — DaemonServer stays Electron-free. */
@@ -235,6 +242,7 @@ export class DaemonServer {
 
     if (ready) sendWelcome()
 
+    const leftoverRef = { value: leftover }
     attachLineReader(socket, (value) => {
       if (value === null) {
         writeLine(socket, { type: 'error', code: 'bad-request', message: 'invalid json' })
@@ -253,15 +261,35 @@ export class DaemonServer {
           return
         }
         const hello = parseDaemonHello(value)
-        if (!hello || !secretsMatch(hello.auth, this.opts.secret())) {
-          this.noteAuthFail(socket)
-          writeLine(socket, { type: 'error', code: 'auth', message: 'pairing rejected' })
-          socket.destroy()
+        if (hello && secretsMatch(hello.auth, this.opts.secret())) {
+          this.authFails.delete(this.authKey(socket))
+          ready = true
+          sendWelcome()
           return
         }
-        this.authFails.delete(this.authKey(socket))
-        ready = true
-        sendWelcome()
+        const phone = parseClientMessage(value)
+        if (
+          phone?.type === 'hello' &&
+          phone.role !== 'daemon' &&
+          secretsMatch(phone.auth, this.opts.secret())
+        ) {
+          if (!this.opts.onControlHello) {
+            writeLine(socket, {
+              type: 'error',
+              code: 'bad-request',
+              message: 'control plane not available'
+            })
+            socket.destroy()
+            return
+          }
+          this.authFails.delete(this.authKey(socket))
+          socket.removeAllListeners('data')
+          this.opts.onControlHello(socket, leftoverRef.value, phone)
+          return
+        }
+        this.noteAuthFail(socket)
+        writeLine(socket, { type: 'error', code: 'auth', message: 'pairing rejected' })
+        socket.destroy()
         return
       }
       const frame = parseDaemonClientFrame(value)
@@ -275,7 +303,7 @@ export class DaemonServer {
         return
       }
       void this.dispatch(frame, socket, { processes, ptys, handles, watches })
-    }, { leftover })
+    }, { leftover, leftoverRef })
   }
 
   private async handlePairAsk(socket: Socket, ask: DaemonPairAsk): Promise<void> {

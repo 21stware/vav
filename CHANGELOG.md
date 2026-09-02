@@ -33,6 +33,10 @@ User-facing changes by release. Unreleased work lives at the top until the next 
 - Empty sessions show a first-run checklist (API key, folder, first message).
 - Finder-style file columns virtualize long directories.
 
+## 1.18.7
+
+Drive remote turns on the host so the controlled UI updates. See the GitHub Release notes for this tag.
+
 ## 1.18.6
 
 See the GitHub Release notes for this tag.

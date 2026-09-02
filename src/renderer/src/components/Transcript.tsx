@@ -133,10 +133,14 @@ export function Transcript({
   const cliHost = useSessionStore(
     (s) => s.conversations.find((c) => c.id === activeId)?.cliHost ?? null
   )
+  const hostHoldsKeys = useSessionStore((s) => {
+    const conversation = s.conversations.find((c) => c.id === activeId)
+    return s.hosts.some((host) => host.id === conversation?.machineId && host.controlPlane === true)
+  })
   const accountId = useSessionStore(
     (s) => s.conversations.find((c) => c.id === activeId)?.accountId ?? null
   )
-  const needsVavKey = !apiKeyPresent && !cliHost
+  const needsVavKey = !apiKeyPresent && !cliHost && !hostHoldsKeys
   const archived = useSessionStore(
     (s) => !!s.conversations.find((c) => c.id === activeId)?.archived
   )

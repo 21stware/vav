@@ -90,6 +90,20 @@ describe('collectDialTargets', () => {
     )
   })
 
+  it('falls back to loopback when every advertised IP is this machine', () => {
+    const targets = collectDialTargets({
+      host: '172.30.0.2',
+      port: 4750,
+      addresses: ['172.30.0.2'],
+      name: 'Alpha',
+      localAddresses: ['172.30.0.2']
+    })
+    assert.deepEqual(
+      targets.map((row) => row.host),
+      ['127.0.0.1']
+    )
+  })
+
   it('ranks a same-subnet IPv4 ahead of Bonjour', () => {
     const targets = collectDialTargets({
       host: '10.8.0.2',

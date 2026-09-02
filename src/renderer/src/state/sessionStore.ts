@@ -1844,6 +1844,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       commentCards,
       contextFiles,
       conversations,
+      hosts,
       messageQueues
     } = get()
     let activeId = conversationId?.trim() || storeActiveId
@@ -1857,12 +1858,15 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     const turn = turns[activeId]
     const refs = previewRefs[activeId] ?? []
     const cards = commentCards[activeId] ?? []
-    const activeHost =
-      conversations.find((c) => c.id === activeId)?.cliHost ?? null
+    const activeConversation = conversations.find((c) => c.id === activeId)
+    const activeHost = activeConversation?.cliHost ?? null
+    const hostHoldsKeys = hosts.some(
+      (host) => host.id === activeConversation?.machineId && host.controlPlane === true
+    )
     const disposition = composerSendDisposition({
       empty: isEmptyComposerSend(text, attachments, refs, cards),
       awaitingTool: !!turn?.awaitingToolCallId,
-      needsApiKey: !activeHost && !settings.apiKeyPresent,
+      needsApiKey: !activeHost && !settings.apiKeyPresent && !hostHoldsKeys,
       isRunning: !!turn?.isRunning,
       queueLength: (messageQueues[activeId] ?? []).length
     })

@@ -5,6 +5,7 @@ export type RemoteHostFacts = {
   homeOf: (id: string) => string
   tmpOf: (id: string) => string
   defaultPathOf: (id: string) => string | null | undefined
+  controlPlaneOf?: (id: string) => boolean
 }
 
 /** Overlay daemon-reported home/tmp/providers onto the registry snapshot. */
@@ -18,6 +19,13 @@ export function decorateHosts(
     const home = remote.homeOf(host.id) || host.home
     const tmp = remote.tmpOf(host.id) || host.tmp
     const defaultPath = remote.defaultPathOf(host.id) ?? undefined
-    return { ...host, home, tmp, defaultPath, providers }
+    return {
+      ...host,
+      home,
+      tmp,
+      defaultPath,
+      providers,
+      controlPlane: remote.controlPlaneOf?.(host.id)
+    }
   })
 }

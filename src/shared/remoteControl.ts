@@ -1,9 +1,15 @@
 /**
- * Remote-control wire protocol (VAV ⇄ iOS app over the tailcat tunnel).
+ * Remote-control wire protocol (VAV ⇄ phone / desktop control UI).
  *
- * Transport: the tailcatbridge sidecar forwards tunnel TCP connections to a
- * localhost socket owned by the main process. Framing is JSON lines (one
- * UTF-8 JSON object per `\n`-terminated line) in both directions.
+ * This is the *session* plane: list / create / send / thread / live turn /
+ * configure. Workspace fs / pty / spawn live on `daemonProtocol` — same
+ * pairing secret, different `hello.role`. Desktop remote windows and the
+ * iOS app are isomorphic clients of this module; they must not run a local
+ * agent against a copied transcript when the host exposes this plane.
+ *
+ * Transport: JSON lines (one UTF-8 object per `\n`). Tailcat forwards to a
+ * localhost socket; LAN desktop pairing multiplexes the daemon listen port
+ * by hello role (`phone` vs `daemon`).
  *
  * Handshake: the client's first line must be a `hello` carrying the pairing
  * secret. Anything else — or a bad secret — gets an `error` line and a close.
@@ -490,6 +496,211 @@ export function parseClientMessage(value: unknown): RemoteClientMessage | null {
     }
     case 'ping':
       return { type: 'ping' }
+    default:
+      return null
+  }
+}
+
+function parseRemoteSession(value: unknown): RemoteSession | null {
+  if (typeof value !== 'object' || value === null) return null
+  const raw = value as Record<string, unknown>
+  if (typeof raw.id !== 'string' || raw.id.length === 0) return null
+  if (typeof raw.title !== 'string') return null
+  const status =
+    raw.status === 'running' || raw.status === 'done' || raw.status === 'idle' ? raw.status : 'idle'
+  const surface = raw.surface === 'cli' ? 'cli' : 'vav'
+  return {
+    id: raw.id,
+    title: raw.title,
+    dirLabel: typeof raw.dirLabel === 'string' ? raw.dirLabel : '',
+    status,
+    surface,
+    updatedAt: typeof raw.updatedAt === 'number' ? raw.updatedAt : 0,
+    ...(typeof raw.preview === 'string' ? { preview: raw.preview } : {}),
+    ...(typeof raw.workdir === 'string' ? { workdir: raw.workdir } : {}),
+    ...(typeof raw.temporary === 'boolean' ? { temporary: raw.temporary } : {})
+  }
+}
+
+function parseRemoteBlock(value: unknown): RemoteThreadBlock | null {
+  if (typeof value !== 'object' || value === null) return null
+  const raw = value as Record<string, unknown>
+  switch (raw.kind) {
+    case 'text':
+    case 'reasoning':
+      return { kind: raw.kind, text: typeof raw.text === 'string' ? raw.text : '' }
+    case 'tool':
+      if (typeof raw.id !== 'string' || typeof raw.tool !== 'string') return null
+      return {
+        kind: 'tool',
+        id: raw.id,
+        tool: raw.tool,
+        ...(typeof raw.name === 'string' ? { name: raw.name } : {}),
+        summary: typeof raw.summary === 'string' ? raw.summary : '',
+        status: typeof raw.status === 'string' ? raw.status : ''
+      }
+    case 'plan':
+      return {
+        kind: 'plan',
+        title: typeof raw.title === 'string' ? raw.title : '',
+        steps: Array.isArray(raw.steps)
+          ? raw.steps
+              .filter((step): step is { text: unknown; done: unknown } => typeof step === 'object' && step !== null)
+              .map((step) => ({
+                text: typeof step.text === 'string' ? step.text : '',
+                done: step.done === true
+              }))
+          : []
+      }
+    case 'awaiting': {
+      if (typeof raw.id !== 'string' || typeof raw.tool !== 'string') return null
+      const choices = Array.isArray(raw.choices)
+        ? raw.choices
+            .filter((choice): choice is { id: unknown; label: unknown } => typeof choice === 'object' && choice !== null)
+            .map((choice) => ({
+              id: typeof choice.id === 'string' ? choice.id : '',
+              label: typeof choice.label === 'string' ? choice.label : ''
+            }))
+            .filter((choice) => choice.id && choice.label)
+        : []
+      return {
+        kind: 'awaiting',
+        id: raw.id,
+        tool: raw.tool,
+        ...(typeof raw.name === 'string' ? { name: raw.name } : {}),
+        title: typeof raw.title === 'string' ? raw.title : '',
+        prompt: typeof raw.prompt === 'string' ? raw.prompt : '',
+        choices,
+        ...(raw.multiSelect === true ? { multiSelect: true } : {})
+      }
+    }
+    default:
+      return null
+  }
+}
+
+function parseRemoteThreadMessage(value: unknown): RemoteThreadMessage | null {
+  if (typeof value !== 'object' || value === null) return null
+  const raw = value as Record<string, unknown>
+  if (typeof raw.id !== 'string' || raw.id.length === 0) return null
+  if (raw.role !== 'user' && raw.role !== 'assistant' && raw.role !== 'system') return null
+  const blocks = Array.isArray(raw.blocks)
+    ? raw.blocks.map(parseRemoteBlock).filter((block): block is RemoteThreadBlock => block !== null)
+    : undefined
+  return {
+    id: raw.id,
+    role: raw.role,
+    text: typeof raw.text === 'string' ? raw.text : '',
+    at: typeof raw.at === 'number' ? raw.at : 0,
+    ...(blocks?.length ? { blocks } : {}),
+    ...(raw.cancelled === true ? { cancelled: true } : {}),
+    ...(typeof raw.error === 'string' ? { error: raw.error } : {})
+  }
+}
+
+/**
+ * Server → client frames. Mirrors iOS `ServerFrame.parse` so desktop and
+ * phone share one acceptance contract.
+ */
+export function parseServerMessage(value: unknown): RemoteServerMessage | null {
+  if (typeof value !== 'object' || value === null) return null
+  const raw = value as Record<string, unknown>
+  switch (raw.type) {
+    case 'welcome':
+      if (typeof raw.proto !== 'number' || typeof raw.app !== 'string') return null
+      return {
+        type: 'welcome',
+        proto: raw.proto,
+        app: raw.app,
+        version: typeof raw.version === 'string' ? raw.version : ''
+      }
+    case 'sessions': {
+      if (!Array.isArray(raw.sessions)) return null
+      return {
+        type: 'sessions',
+        sessions: raw.sessions
+          .map(parseRemoteSession)
+          .filter((session): session is RemoteSession => session !== null)
+      }
+    }
+    case 'thread': {
+      if (typeof raw.conversationId !== 'string' || raw.conversationId.length === 0) return null
+      const messages = Array.isArray(raw.messages)
+        ? raw.messages
+            .map(parseRemoteThreadMessage)
+            .filter((message): message is RemoteThreadMessage => message !== null)
+        : []
+      return { type: 'thread', conversationId: raw.conversationId, messages }
+    }
+    case 'turn': {
+      if (typeof raw.conversationId !== 'string' || raw.conversationId.length === 0) return null
+      if (
+        raw.phase !== 'running' &&
+        raw.phase !== 'awaiting' &&
+        raw.phase !== 'done' &&
+        raw.phase !== 'error' &&
+        raw.phase !== 'cancelled'
+      ) {
+        return null
+      }
+      const blocks = Array.isArray(raw.blocks)
+        ? raw.blocks.map(parseRemoteBlock).filter((block): block is RemoteThreadBlock => block !== null)
+        : undefined
+      const awaiting = raw.awaiting ? parseRemoteBlock(raw.awaiting) : null
+      return {
+        type: 'turn',
+        conversationId: raw.conversationId,
+        phase: raw.phase,
+        ...(typeof raw.draft === 'string' ? { draft: raw.draft } : {}),
+        ...(typeof raw.thinking === 'string' ? { thinking: raw.thinking } : {}),
+        ...(blocks?.length ? { blocks } : {}),
+        ...(awaiting?.kind === 'awaiting' ? { awaiting } : {}),
+        ...(typeof raw.error === 'string' ? { error: raw.error } : {})
+      }
+    }
+    case 'controls': {
+      if (typeof raw.conversationId !== 'string' || raw.conversationId.length === 0) return null
+      return raw as RemoteControlsEvent
+    }
+    case 'host': {
+      if (typeof raw.name !== 'string') return null
+      return raw as RemoteHostEvent
+    }
+    case 'dirs': {
+      if (typeof raw.conversationId !== 'string' || typeof raw.path !== 'string') return null
+      return raw as RemoteDirsEvent
+    }
+    case 'notification': {
+      if (typeof raw.conversationId !== 'string' || typeof raw.kind !== 'string') return null
+      return raw as RemoteNotification
+    }
+    case 'sent':
+      if (typeof raw.conversationId !== 'string' || raw.conversationId.length === 0) return null
+      return { type: 'sent', conversationId: raw.conversationId }
+    case 'created': {
+      const session = parseRemoteSession(raw.session)
+      if (!session) return null
+      return { type: 'created', session }
+    }
+    case 'error': {
+      const code =
+        raw.code === 'auth' ||
+        raw.code === 'bad-request' ||
+        raw.code === 'not-found' ||
+        raw.code === 'archived' ||
+        raw.code === 'locked' ||
+        raw.code === 'forbidden'
+          ? raw.code
+          : 'bad-request'
+      return {
+        type: 'error',
+        code,
+        message: typeof raw.message === 'string' ? raw.message : '',
+        ...(typeof raw.conversationId === 'string' ? { conversationId: raw.conversationId } : {})
+      }
+    }
+    case 'pong':
+      return { type: 'pong' }
     default:
       return null
   }

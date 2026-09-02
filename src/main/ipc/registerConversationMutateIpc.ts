@@ -94,6 +94,14 @@ export type ConversationMutateIpcHost = {
   readText: () => string
   readClipboardImage: () => unknown
   copyImage: (base64Png: string) => unknown
+  createOnRemote?: (options?: {
+    workingDirectory?: string | null
+    model?: string
+    swarmParentId?: string | null
+    machineId?: string | null
+  }) => Promise<ConversationMeta | null>
+  forwardConfigure?: (id: string, patch: { model?: string }) => Promise<boolean>
+  forwardSetWorkspace?: (id: string, path: string | null) => Promise<boolean>
 }
 
 /** Create / host-switch / workdir / delete / clipboard — remaining conversation IPC. */
@@ -114,6 +122,8 @@ export function registerConversationMutateIpc(
       }
     ): Promise<ConversationMeta> => {
       const machineId = options?.machineId ?? LOCAL_MACHINE_ID
+      const remote = await host.createOnRemote?.(options)
+      if (remote) return remote
       const workdir =
         options && 'workingDirectory' in options
           ? (options.workingDirectory ?? null)
@@ -144,7 +154,8 @@ export function registerConversationMutateIpc(
     }
   )
 
-  ipcMain.handle(IPC.convSetModel, (_event, id: string, model: string) => {
+  ipcMain.handle(IPC.convSetModel, async (_event, id: string, model: string) => {
+    if (await host.forwardConfigure?.(id, { model })) return store.listMeta()
     const conversation = store.get(id)
     const cliHost = (conversation?.cliHost ?? null) as CliHostKind | null
     const creds = host.resolveVavCredentials(conversation)
@@ -252,9 +263,10 @@ export function registerConversationMutateIpc(
     return host.loadQuota(conversation, cliHost)
   })
 
-  ipcMain.handle(IPC.convSetWorkdir, (_event, id: string, path: string, machineId?: string | null) =>
-    host.applyWorkingDirectory(id, path, machineId)
-  )
+  ipcMain.handle(IPC.convSetWorkdir, async (_event, id: string, path: string, machineId?: string | null) => {
+    if (await host.forwardSetWorkspace?.(id, path)) return store.listMeta()
+    return host.applyWorkingDirectory(id, path, machineId)
+  })
 
   ipcMain.handle(IPC.convPickWorkdir, async (_event, id: string) => {
     const conversation = store.get(id)
@@ -266,6 +278,7 @@ export function registerConversationMutateIpc(
   })
 
   ipcMain.handle(IPC.convUseTempWorkdir, async (_event, id: string) => {
+    if (await host.forwardSetWorkspace?.(id, null)) return store.listMeta()
     const machineId = store.get(id)?.machineId
     return host.applyWorkingDirectory(id, await host.mintTempWorkdirOn(machineId), machineId)
   })
