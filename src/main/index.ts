@@ -111,7 +111,6 @@ import {
 } from '@shared/remoteSessionControls'
 import { parseThinkingLevel } from '@shared/thinkingLevel'
 import { threadPath } from '@shared/thread'
-import { sanitizeSwarmLayout } from '@shared/swarmLayout'
 import { SettingsStore } from './store/SettingsStore'
 import { SleepBlocker } from './power/SleepBlocker'
 import { MacLidSleepGuard } from './power/MacLidSleep'
@@ -171,6 +170,7 @@ import { registerFilesIpc } from './ipc/registerFilesIpc'
 import { registerHostsIpc } from './ipc/registerHostsIpc'
 import { registerWindowIpc } from './ipc/registerWindowIpc'
 import { registerAgentIpc } from './ipc/registerAgentIpc'
+import { registerConversationMetaIpc } from './ipc/registerConversationMetaIpc'
 import { machineIdFromRendererUrl } from './window/machineFromUrl'
 import { collectPreferredModelHosts, contextWindowForModelId } from './agent/modelContext'
 import { dialogConfirmOptions, revealSecretBoxOptions } from './ipc/dialogOptions'
@@ -7156,10 +7156,32 @@ return c as text`
   })
 
   // --- conversations ---
-  ipcMain.handle(IPC.convList, () => conversationStore.listMeta())
-  ipcMain.handle(IPC.convGet, (_event, id: string) => {
-    if (conversationStore.hydrateMissingHostUsage(id)) publishConversations()
-    return conversationStore.get(id) ?? null
+  registerConversationMetaIpc(ipcMain, conversationStore, {
+    untitledTitle: () => t('common.untitledSession'),
+    publish: publishConversations,
+    renameDetached: (id, title) => {
+      const detached = detachedWindows.get(id)
+      if (detached && !detached.isDestroyed()) detached.setTitle(title)
+    },
+    onArchive: (id) => {
+      void agent.cancel(id)
+      clearUnseenForConversation(id)
+      persistResultUnseen(id, false)
+    },
+    cliOwns: (id) => cliHost.owns(id),
+    applyThinkingLevel: (id) => cliHost.applyThinkingLevel(id),
+    applyFast: (id) => cliHost.applyFast(id),
+    applySessionMode: (id, modeId) => cliHost.applySessionMode(id, modeId),
+    applySessionConfig: (id, configId, value) => cliHost.applySessionConfig(id, configId, value),
+    exportPack: (ids, sender) => {
+      const win = BrowserWindow.fromWebContents(sender as Electron.WebContents)
+      return vavPackService.exportConversations(ids, win)
+    },
+    importPack: async (sender) => {
+      const win = BrowserWindow.fromWebContents(sender as Electron.WebContents)
+      return vavPackService.importPackage(win)
+    },
+    promoteEphemeral: promoteEphemeralConversation
   })
 
   ipcMain.handle(
@@ -7204,103 +7226,6 @@ return c as text`
     }
   )
 
-  ipcMain.handle(IPC.convRename, (_event, id: string, title: string) => {
-    const next = title.trim() || t('common.untitledSession')
-    conversationStore.updateMeta(id, { title: next })
-    const detached = detachedWindows.get(id)
-    if (detached && !detached.isDestroyed()) detached.setTitle(next)
-    publishConversations()
-    return conversationStore.listMeta()
-  })
-
-  ipcMain.handle(IPC.convSetLeaf, (_event, id: string, leafId: string) => {
-    conversationStore.setActiveLeaf(id, leafId)
-  })
-
-  ipcMain.handle(IPC.convSetPinned, (_event, id: string, pinned: boolean) => {
-    conversationStore.setPinned(id, pinned)
-    publishConversations()
-    return conversationStore.listMeta()
-  })
-
-  ipcMain.handle(IPC.convSetArchived, (_event, id: string, archived: boolean) => {
-    if (archived) {
-      void agent.cancel(id)
-      clearUnseenForConversation(id)
-      persistResultUnseen(id, false)
-    }
-    conversationStore.setArchived(id, archived)
-    publishConversations()
-    return conversationStore.listMeta()
-  })
-
-  ipcMain.handle(IPC.convSetApprovalMode, (_event, id: string, mode: string) => {
-    if (mode === 'auto' || mode === 'bypass' || mode === 'edit') {
-      conversationStore.setApprovalMode(id, mode)
-      publishConversations()
-    }
-    return conversationStore.listMeta()
-  })
-
-  ipcMain.handle(IPC.convSetThinkingLevel, (_event, id: string, level: string) => {
-    conversationStore.setThinkingLevel(id, parseThinkingLevel(level))
-    if (cliHost.owns(id)) cliHost.applyThinkingLevel(id)
-    publishConversations()
-    return conversationStore.listMeta()
-  })
-
-  ipcMain.handle(IPC.convSetFast, (_event, id: string, fast: boolean) => {
-    conversationStore.setFast(id, fast === true)
-    if (cliHost.owns(id)) cliHost.applyFast(id)
-    publishConversations()
-    return conversationStore.listMeta()
-  })
-
-  ipcMain.handle(IPC.convSetAcpMode, (_event, id: string, modeId: string) => {
-    if (typeof modeId === 'string' && modeId.trim()) {
-      cliHost.applySessionMode(id, modeId.trim())
-      publishConversations()
-    }
-    return conversationStore.listMeta()
-  })
-
-  ipcMain.handle(
-    IPC.convSetAcpConfig,
-    (_event, id: string, configId: string, value: string | boolean) => {
-      if (typeof configId === 'string' && configId.trim()) {
-        cliHost.applySessionConfig(id, configId.trim(), value)
-        publishConversations()
-      }
-      return conversationStore.listMeta()
-    }
-  )
-
-  ipcMain.handle(IPC.convContinueNew, (_event, id: string, messageId: string) => {
-    const conversation = conversationStore.branchToNewConversation(id, messageId)
-    if (!conversation) return null
-    publishConversations()
-    return conversationToMeta(conversation)
-  })
-
-  ipcMain.handle(IPC.convDuplicate, (_event, id: string) => {
-    const conversation = conversationStore.duplicate(id)
-    if (!conversation) return null
-    publishConversations()
-    return conversationToMeta(conversation)
-  })
-
-  ipcMain.handle(IPC.convExportPack, async (event, ids: string[]) => {
-    const win = BrowserWindow.fromWebContents(event.sender)
-    return vavPackService.exportConversations(Array.isArray(ids) ? ids : [], win)
-  })
-
-  ipcMain.handle(IPC.convImportPack, async (event) => {
-    const win = BrowserWindow.fromWebContents(event.sender)
-    const result = await vavPackService.importPackage(win)
-    if (result.ok) publishConversations()
-    return result
-  })
-
   ipcMain.handle(IPC.convSetModel, (_event, id: string, model: string) => {
     const conversation = conversationStore.get(id)
     const host = (conversation?.cliHost ?? null) as CliHostKind | null
@@ -7319,30 +7244,6 @@ return c as text`
     pushTokenUsageIfOpen(id)
     return conversationStore.listMeta()
   })
-
-  ipcMain.handle(
-    IPC.convSetAgentBinary,
-    (_event, id: string, agentBinaryName: string | null) => {
-      conversationStore.updateMeta(id, { agentBinaryName })
-      // Selecting a CLI agent (or returning to vav after one) is durable intent —
-      // never auto-delete this ⌘⇧↵ session when the companion window closes.
-      if (agentBinaryName) promoteEphemeralConversation(id)
-      publishConversations()
-      return conversationStore.listMeta()
-    }
-  )
-
-  ipcMain.handle(
-    IPC.convSetSwarmLayout,
-    (_event, id: string, layout: unknown, full?: unknown) => {
-      const patch: { swarmLayout: ReturnType<typeof sanitizeSwarmLayout>; swarmLayoutFull?: ReturnType<typeof sanitizeSwarmLayout> } =
-        { swarmLayout: sanitizeSwarmLayout(layout) }
-      if (full !== undefined) patch.swarmLayoutFull = sanitizeSwarmLayout(full)
-      conversationStore.updateMeta(id, patch)
-      publishConversations()
-      return conversationStore.listMeta()
-    }
-  )
 
   ipcMain.handle(
     IPC.convSetCliHost,
