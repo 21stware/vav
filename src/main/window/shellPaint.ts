@@ -34,6 +34,60 @@ export function overlayColors(
   }
 }
 
+export type WindowChromeOptions = {
+  titleBarStyle: 'hiddenInset' | 'hidden'
+  trafficLightPosition?: { x: number; y: number }
+  acceptFirstMouse: true
+  transparent?: true
+  backgroundColor: string
+  vibrancy?: 'under-window'
+  visualEffectState?: 'active'
+  titleBarOverlay?: { color: string; symbolColor: string; height: number }
+  autoHideMenuBar?: false
+}
+
+/** Frameless chrome: macOS hiddenInset + optional glass, Windows titleBarOverlay. */
+export function chromeOptions(input: {
+  isMac: boolean
+  barHeight: number
+  vibrancyShell?: boolean
+  vibrancyEnabled: boolean
+  background: string
+  backgroundVibrancy: string
+  overlay: { color: string; symbolColor: string; height: number }
+}): WindowChromeOptions {
+  if (input.isMac) {
+    if (input.vibrancyShell) {
+      return {
+        titleBarStyle: 'hiddenInset',
+        trafficLightPosition: trafficLightOrigin(input.barHeight),
+        acceptFirstMouse: true,
+        transparent: true,
+        backgroundColor: input.backgroundVibrancy,
+        ...(input.vibrancyEnabled
+          ? {
+              vibrancy: 'under-window' as const,
+              visualEffectState: 'active' as const
+            }
+          : {})
+      }
+    }
+    return {
+      titleBarStyle: 'hiddenInset',
+      trafficLightPosition: trafficLightOrigin(input.barHeight),
+      acceptFirstMouse: true,
+      backgroundColor: input.background
+    }
+  }
+  return {
+    titleBarStyle: 'hidden',
+    titleBarOverlay: input.overlay,
+    backgroundColor: input.background,
+    acceptFirstMouse: true,
+    autoHideMenuBar: false
+  }
+}
+
 export function primeRendererShell(
   win: BrowserWindow,
   options: { clear?: boolean; dark: boolean }

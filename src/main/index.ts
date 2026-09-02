@@ -169,6 +169,7 @@ import { FileService } from './fs/FileService'
 import { installTrustedIpcGuard } from './ipc/ipcTrust'
 import {
   applyWindowVibrancy as applyVibrancyPaint,
+  chromeOptions,
   clearWindowVibrancy as clearVibrancyPaint,
   overlayColors as overlayColorsForTheme,
   primeRendererShell as primeShellPaint,
@@ -177,6 +178,22 @@ import {
   windowBackgroundColor,
   windowThemeNameFromDark
 } from './window/shellPaint'
+import { wireExternalLinks as wireShellExternalLinks } from './window/externalLinks'
+import {
+  hostWindowTitle as formatHostWindowTitle,
+  mainWindowSize,
+  rendererPrefs as buildRendererPrefs
+} from './window/rendererPrefs'
+import {
+  PREVIEW_DEFAULT_WIDTH,
+  PREVIEW_IDLE_MS,
+  PREVIEW_MAX_OPEN,
+  PREVIEW_POOL_REFILL_MS,
+  PREVIEW_WARM_POOL,
+  clampPreviewWidth,
+  nextUnfocusedPreviewPath
+} from './window/previewPool'
+import { appBuildNumber as formatAppBuildNumber } from './appBuild'
 import { trayDirLabel as formatTrayDirLabel, trayAgentLabel as formatTrayAgentLabel } from './tray/trayLabels'
 import { HostRegistry } from './host'
 import { openSpawn, previewSpawn, revealSpawn } from './host/hostShell'
@@ -2281,43 +2298,15 @@ function chrome(
   barHeight: number,
   options?: { vibrancyShell?: boolean }
 ): Electron.BrowserWindowConstructorOptions {
-  if (IS_MAC) {
-    // Main + Settings stay transparent so Appearance can toggle vibrancy live.
-    // Companion / preview / token stay solid (avoids resize black-edge lag).
-    // acceptFirstMouse: an inactive window's first click also hits the control
-    // (native AppKit), instead of only focusing the window.
-    if (options?.vibrancyShell) {
-      return {
-        titleBarStyle: 'hiddenInset',
-        trafficLightPosition: trafficLightOrigin(barHeight),
-        acceptFirstMouse: true,
-        transparent: true,
-        backgroundColor: windowBackground('01'),
-        ...(isVibrancyEnabled()
-          ? {
-              vibrancy: 'under-window' as const,
-              visualEffectState: 'active' as const
-            }
-          : {})
-      }
-    }
-    return {
-      titleBarStyle: 'hiddenInset',
-      // Vertically centred on the title bar, so the traffic lights sit on the
-      // same line as the buttons at the other end of it.
-      trafficLightPosition: trafficLightOrigin(barHeight),
-      acceptFirstMouse: true,
-      backgroundColor: windowBackground()
-    }
-  }
-  return {
-    titleBarStyle: 'hidden',
-    titleBarOverlay: overlayColors(barHeight),
-    backgroundColor: windowBackground(),
-    acceptFirstMouse: true,
-    // Keep File/Edit/View… visible; default + titleBarOverlay often Alt-hides it.
-    autoHideMenuBar: false
-  }
+  return chromeOptions({
+    isMac: IS_MAC,
+    barHeight,
+    vibrancyShell: options?.vibrancyShell,
+    vibrancyEnabled: isVibrancyEnabled(),
+    background: windowBackground(),
+    backgroundVibrancy: windowBackground('01'),
+    overlay: overlayColors(barHeight)
+  }) as Electron.BrowserWindowConstructorOptions
 }
 
 /** The system chrome does not follow `nativeTheme` on its own once overridden. */
@@ -2356,49 +2345,15 @@ function repaintChrome(): void {
  *   `will-navigate` usually never fires for those surfaces.
  */
 function wireExternalLinks(contents: Electron.WebContents): void {
-  contents.setWindowOpenHandler(({ url }) => {
-    if (/^https?:\/\//i.test(url)) {
-      void shell.openExternal(url)
-    }
-    return { action: 'deny' }
-  })
-
-  contents.on('will-navigate', (event, url) => {
-    if (isRendererUrl(url)) return
-    event.preventDefault()
-    // Agent responses, logs, tool cards — open outside the app.
-    if (/^https?:\/\//i.test(url)) {
-      void shell.openExternal(url)
-    }
-  })
+  wireShellExternalLinks(contents, (url) => {
+    void shell.openExternal(url)
+  }, isRendererUrl)
 }
 
 /** Shared renderer prefs — keep timers/rAF alive while the window is hidden. */
 function rendererPrefs(extra: Electron.WebPreferences = {}): Electron.WebPreferences {
-  return {
-    preload: join(__dirname, '../preload/index.js'),
-    sandbox: false,
-    contextIsolation: true,
-    nodeIntegration: false,
-    // Hidden main window / tray / background turns must keep streaming.
-    backgroundThrottling: false,
-    ...extra
-  }
+  return buildRendererPrefs(join(__dirname, '../preload/index.js'), extra)
 }
-
-const PREVIEW_IDLE_MS = 5 * 60 * 1000
-const PREVIEW_MAX_OPEN = 6
-/** Default preview window width — see the note where it is clamped to the display. */
-const PREVIEW_DEFAULT_WIDTH = 880
-/**
- * Hidden warm shells kept ready so the next open skips BrowserWindow+load.
- * Two, not one: a fresh shell needs ~1s of renderer boot before
- * `previewShellReady`, and opening a second file inside that window used to
- * fall all the way back to a cold create.
- */
-const PREVIEW_WARM_POOL = 2
-/** Let the just-shown window paint before a replacement shell steals CPU. */
-const PREVIEW_POOL_REFILL_MS = 200
 
 /** Preview windows that must confirm before close (unsaved edit). */
 const previewCloseGuards = new WeakSet<BrowserWindow>()
@@ -2462,17 +2417,10 @@ function wirePreviewLifecycle(window: BrowserWindow, path: string): void {
 
   // Cap open previews: park the oldest unfocused ones first.
   while (previewWindows.size > PREVIEW_MAX_OPEN) {
-    let victimPath: string | null = null
-    let victim: BrowserWindow | null = null
-    for (const [otherPath, other] of previewWindows) {
-      if (otherPath === path || other.isDestroyed()) continue
-      if (!other.isFocused()) {
-        victimPath = otherPath
-        victim = other
-        break
-      }
-    }
-    if (!victimPath || !victim) break
+    const victimPath = nextUnfocusedPreviewPath(previewWindows, path)
+    if (!victimPath) break
+    const victim = previewWindows.get(victimPath)
+    if (!victim) break
     previewWindows.delete(victimPath)
     afterLeavingFullscreen(victim, () => {
       if (!victim.isDestroyed()) parkWarmPreviewShell(victim)
@@ -2670,9 +2618,8 @@ function hostWindowOf(machineId: string | null | undefined): BrowserWindow | nul
 }
 
 function hostWindowTitle(machineId: string, name?: string): string {
-  if (isLocalMachine(machineId)) return APP_NAME
   const label = name?.trim() || hostRegistry.get(machineId)?.info.name || machineId
-  return `${APP_NAME} — ${label}`
+  return formatHostWindowTitle(APP_NAME, isLocalMachine(machineId), label)
 }
 
 function syncHostWindows(hosts: WorkspaceHostInfo[]): void {
@@ -2703,9 +2650,10 @@ function createWindow(opts?: { machineId?: string }): BrowserWindow {
   const icon = loadAppIcon()
   const snapshotting = Boolean(process.env.VAV_SNAPSHOT)
   const e2e = isE2eRuntime()
+  const { width, height } = mainWindowSize({ snapshotting, e2e })
   const window = new BrowserWindow({
-    width: snapshotting ? 1440 : e2e ? 1100 : 720,
-    height: snapshotting ? 900 : 820,
+    width,
+    height,
     minWidth: MAIN_WINDOW_MIN_WIDTH,
     minHeight: 560,
     show: false,
@@ -3784,7 +3732,7 @@ function warmPreviewShellPool(): void {
   warmPreviewPool.push(...live)
   while (warmPreviewPool.length < PREVIEW_WARM_POOL) {
     const area = screen.getPrimaryDisplay().workArea
-    const width = Math.min(PREVIEW_DEFAULT_WIDTH, area.width - 40)
+    const width = clampPreviewWidth(PREVIEW_DEFAULT_WIDTH, area.width)
     const height = Math.min(700, area.height - 40)
     // Only the lead shell warms every format canvas; the pptx renderer alone is
     // ~2 MB of parsed JS and spares should not each hold a copy.
@@ -4114,7 +4062,7 @@ function openFilePreviewWindow(
   const snapshotting = Boolean(process.env.VAV_SNAPSHOT || process.env.VAV_SNAPSHOT_PLAN)
   // 880 ≈ a Letter/A4 page at 100% plus the document stage's gutters, so paged
   // formats open fitted *and* full size rather than fitted and shrunken.
-  const width = Math.min(snapshotting ? 1280 : PREVIEW_DEFAULT_WIDTH, area.width - 40)
+  const width = clampPreviewWidth(snapshotting ? 1280 : PREVIEW_DEFAULT_WIDTH, area.width)
   const height = Math.min(snapshotting ? 820 : 700, area.height - 40)
 
   let x: number | undefined
@@ -6599,12 +6547,7 @@ function currentSettings(): AppSettings {
 
 /** CFBundleVersion stand-in: YYYY.MMDD.patch from package version + calendar day. */
 function appBuildNumber(): string {
-  const version = app.getVersion()
-  const now = new Date()
-  const y = now.getFullYear()
-  const md = `${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}`
-  const patch = version.split('.').pop() ?? '0'
-  return `${y}.${md}.${patch}`
+  return formatAppBuildNumber(app.getVersion())
 }
 
 async function confirmRevealSecret(event: IpcMainInvokeEvent): Promise<boolean> {

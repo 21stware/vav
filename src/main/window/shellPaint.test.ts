@@ -3,6 +3,7 @@ import { describe, it } from 'node:test'
 import {
   WINDOW_BG_DARK,
   WINDOW_BG_LIGHT,
+  chromeOptions,
   overlayColors,
   trafficLightOrigin,
   windowBackgroundColor,
@@ -28,5 +29,34 @@ describe('trafficLightOrigin / overlayColors', () => {
       height: 42
     })
     assert.deepEqual(overlayColors(false, 40).color, WINDOW_BG_LIGHT)
+  })
+})
+
+describe('chromeOptions', () => {
+  it('uses hiddenInset + glass on macOS and overlay chrome elsewhere', () => {
+    const overlay = overlayColors(true, 42)
+    const macGlass = chromeOptions({
+      isMac: true,
+      barHeight: 42,
+      vibrancyShell: true,
+      vibrancyEnabled: true,
+      background: WINDOW_BG_DARK,
+      backgroundVibrancy: `${WINDOW_BG_DARK}01`,
+      overlay
+    })
+    assert.equal(macGlass.titleBarStyle, 'hiddenInset')
+    assert.equal(macGlass.vibrancy, 'under-window')
+    assert.equal(macGlass.transparent, true)
+    const win = chromeOptions({
+      isMac: false,
+      barHeight: 42,
+      vibrancyEnabled: false,
+      background: WINDOW_BG_LIGHT,
+      backgroundVibrancy: `${WINDOW_BG_LIGHT}01`,
+      overlay
+    })
+    assert.equal(win.titleBarStyle, 'hidden')
+    assert.equal(win.autoHideMenuBar, false)
+    assert.deepEqual(win.titleBarOverlay, overlay)
   })
 })
