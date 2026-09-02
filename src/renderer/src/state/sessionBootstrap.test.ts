@@ -3,6 +3,7 @@ import { describe, it } from 'node:test'
 import { DEFAULT_CLI_AGENTS, DEFAULT_SETTINGS } from '../../../shared/types.ts'
 import {
   inheritCreateWorkingDirectory,
+  nextConversationForMachine,
   pickBootstrapActiveId,
   seedCliAgentCatalogue
 } from './sessionBootstrap.ts'
@@ -20,6 +21,12 @@ describe('sessionBootstrap', () => {
     assert.equal(pickBootstrapActiveId(rows, 'missing', 'local'), 'new')
     assert.equal(pickBootstrapActiveId(rows, 'file', 'local'), 'new')
     assert.equal(pickBootstrapActiveId(rows, 'remote', 'local'), 'new')
+    assert.deepEqual(nextConversationForMachine(rows, 'old', 'local'), { action: 'keep' })
+    assert.deepEqual(nextConversationForMachine(rows, 'file', 'local'), {
+      action: 'select',
+      id: 'new'
+    })
+    assert.deepEqual(nextConversationForMachine(rows, 'missing', 'unknown'), { action: 'create' })
   })
 
   it('reseeds an empty CLI catalogue excluding removed ids', () => {

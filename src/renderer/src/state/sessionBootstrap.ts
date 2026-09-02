@@ -36,6 +36,38 @@ export function pickBootstrapActiveId(
   )
 }
 
+export type MachineConversationAction =
+  | { action: 'keep' }
+  | { action: 'select'; id: string }
+  | { action: 'create' }
+
+/** After the sidebar switches machines, keep / pick / mint a session on that host. */
+export function nextConversationForMachine(
+  conversations: BootstrapConversation[],
+  activeId: string,
+  windowMachineId: string
+): MachineConversationAction {
+  const current = conversations.find((conversation) => conversation.id === activeId)
+  if (
+    current &&
+    !current.archived &&
+    !current.fileId &&
+    conversationOnMachine(current, windowMachineId)
+  ) {
+    return { action: 'keep' }
+  }
+  const next = conversations
+    .filter(
+      (conversation) =>
+        !conversation.archived &&
+        !conversation.fileId &&
+        conversationOnMachine(conversation, windowMachineId)
+    )
+    .sort((a, b) => b.updatedAt - a.updatedAt)[0]
+  if (next) return { action: 'select', id: next.id }
+  return { action: 'create' }
+}
+
 /**
  * Legacy settings.json often had `cliAgents: []`. Fill the catalogue in place
  * and report whether the caller should persist `cliAgents`.

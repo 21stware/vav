@@ -8,6 +8,15 @@ export function isSwarmSurfaceActive(swarmEnabled: boolean, cliMode: boolean): b
   return swarmEnabled === true && cliMode === true
 }
 
+export function swarmBlocksWorkdirSwitch(
+  id: string | null | undefined,
+  swarmEnabled: boolean,
+  cliMode: boolean
+): boolean {
+  if (!id) return false
+  return isSwarmSurfaceActive(swarmEnabled, cliMode)
+}
+
 export function allowWorkdirSwitch(opts: {
   swarmSurface: boolean
   /** File session still showing "Enclosed dir" (path bound until user switches). */

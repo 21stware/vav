@@ -210,6 +210,7 @@ import { appBuildNumber as formatAppBuildNumber } from './appBuild'
 import { FALLBACK_SYSTEM_ACCENT, normalizeAccentHex } from './window/accentColor'
 import { closeActiveNativePopup, popupNativeMenu } from './window/nativePopup'
 import { trayDirLabel as formatTrayDirLabel, trayAgentLabel as formatTrayAgentLabel } from './tray/trayLabels'
+import { buildTrayPane } from './tray/trayPane'
 import { HostRegistry } from './host'
 import { openSpawn, previewSpawn, revealSpawn } from './host/hostShell'
 import { clipRoot, writeClipBytes } from './fs/clipStore'
@@ -784,36 +785,15 @@ function trayPaneFromConversation(
     sessionTitle?: string
   }
 ): TrayPane | null {
-  const conversation = conversationStore.get(conversationId)
-  if (!conversation || conversation.archived) return null
-  const dir = conversation.workingDirectory || '~'
-  const title =
-    extra?.sessionTitle ||
-    (conversation.title && conversation.title.trim()) ||
-    conversationId
-  const agentId = extra?.agentId || conversation.cliHost || undefined
-  const paneTitle =
-    extra?.paneTitle ||
-    (kind === 'agent'
-      ? agentId
-        ? trayAgentLabel(agentId)
-        : 'CLI'
-      : kind === 'bash'
-        ? 'bash'
-        : conversation.cliHost
-          ? displayNameForCliHost(conversation.cliHost)
-          : 'VAV')
-  return {
+  return buildTrayPane({
     conversationId,
-    tabId: extra?.tabId ?? '',
+    conversation: conversationStore.get(conversationId),
     kind,
-    sessionTitle: title,
-    paneTitle,
-    dirKey: dir,
-    dirLabel: trayDirLabel(dir),
-    createdAt: extra?.createdAt ?? conversation.updatedAt,
-    agentId
-  }
+    extra,
+    dirLabel: trayDirLabel,
+    agentLabel: trayAgentLabel,
+    hostDisplayName: (host) => displayNameForCliHost(host as CliHostKind)
+  })
 }
 
 function agentSessionTitle(session: PtySessionMeta): string {

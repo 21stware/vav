@@ -1,6 +1,5 @@
 import { shell } from 'electron'
 import { join, dirname, basename, extname } from 'node:path'
-import { hostJoin } from '../../shared/workspaceHost.ts'
 import { spawn } from 'node:child_process'
 import { userInfo } from 'node:os'
 import JSZip from 'jszip'
@@ -34,6 +33,8 @@ import { isPathAllowed } from './pathAllow'
 import { previewKind, countNewlines, mimeFor } from './filePreviewKind'
 import { sortEntries } from './fileEntrySort'
 import { modeToPermissions } from './fileMode'
+import { joinOnHostPath } from './fileHostPath'
+import { mimeHintToUti } from './fileUti'
 
 /**
  * Technical windows — memory budgets for a single IPC/payload, NOT product
@@ -57,11 +58,6 @@ const ZIP_FULL_LOAD_MAX = 64 * 1024 * 1024
 const WATCH_DEBOUNCE_MS = 300
 /** Keep document indexing off the main thread while a preview is opening. */
 const INDEX_AFTER_OPEN_MS = 1500
-
-function joinOnHostPath(parent: string, name: string): string {
-  const win = parent.includes('\\') && !parent.startsWith('/')
-  return hostJoin(win ? 'win32' : 'linux', parent, name)
-}
 
 /**
  * Filesystem access for both the Files panel and the agent's fs_* tools.
@@ -1088,23 +1084,6 @@ async function buildBinaryMeta(
     modifiedAt: modifiedMs,
     inode,
     defaultApp
-  }
-}
-
-function mimeHintToUti(ext: string): string {
-  switch (ext) {
-    case '.dmg':
-      return 'com.apple.disk-image-udif'
-    case '.pkg':
-      return 'com.apple.installer-package-archive'
-    case '.app':
-      return 'com.apple.application-bundle'
-    case '.zip':
-      return 'com.pkware.zip-archive'
-    case '.apk':
-      return 'com.android.package-archive'
-    default:
-      return 'public.data'
   }
 }
 

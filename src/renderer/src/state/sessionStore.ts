@@ -7,7 +7,6 @@ import type {
   ConversationMeta,
   PreviewRef,
   QuoteDraft,
-  TerminalLayoutNode,
   TerminalSplitAxis,
   TokenSnapshot
 } from '@shared/types'
@@ -96,18 +95,16 @@ import type { ChangeSet, UpdateState } from '@shared/changeSet'
 import { resolveLocale } from '@shared/i18n'
 import {
   imageInputLimits,
-  mergeImageAttachments,
-  type ImageAttachPlan
+  mergeImageAttachments
 } from '@shared/agentImageInput'
 import { tt } from '../i18n/useT'
 import { isTemporaryWorkspace } from '../lib/format'
 import { isCompanionSessionShell, isMainSessionShell, readWindowMachineId } from '../lib/windowKind'
-import { conversationOnMachine, isLocalMachine, normalizeMachineId } from '@shared/workspaceHost'
+import { isLocalMachine, normalizeMachineId } from '@shared/workspaceHost'
 import { compactionForLeaf, upsertCompaction } from '@shared/compaction'
 import { subtreeIds } from '@shared/thread'
 import { getProjection, disposeProjection } from './StreamProjection'
 import { useWorkspaceStore } from './workspaceStore'
-import { isSwarmSurfaceActive } from '../lib/workdirSwitch'
 import {
   isCurrentHydration,
   mergeHydratedMessages,
@@ -125,32 +122,20 @@ import {
   swarmRootId
 } from '@shared/swarmLayout'
 import { patchAcpConfigOption, patchAcpSessionMode } from '@shared/acpSession'
-import { inheritCreateWorkingDirectory, pickBootstrapActiveId, seedCliAgentCatalogue } from './sessionBootstrap'
-import { imageAttachToast } from './sessionAttach'
+import { inheritCreateWorkingDirectory, nextConversationForMachine, pickBootstrapActiveId, seedCliAgentCatalogue } from './sessionBootstrap'
+import { notifyImageAttachPlan, trimAttachmentPathsForHost } from './sessionAttach'
+import { persistSwarmLayout, setLeaf } from './sessionSwarm'
+import { swarmBlocksWorkdirSwitch as swarmSurfaceBlocksWorkdir } from '../lib/workdirSwitch'
 
-function swarmBlocksWorkdirSwitch(id: string | null | undefined, swarmEnabled: boolean): boolean {
-  if (!id) return false
-  return isSwarmSurfaceActive(
+function swarmBlocksWorkdirSwitch(
+  id: string | null | undefined,
+  swarmEnabled: boolean
+): boolean {
+  return swarmSurfaceBlocksWorkdir(
+    id,
     swarmEnabled,
-    !!useWorkspaceStore.getState().workspaces[id]?.cliMode
+    !!(id && useWorkspaceStore.getState().workspaces[id]?.cliMode)
   )
-}
-
-function notifyImageAttachPlan(
-  showToast: (toast: ToastState | null) => void,
-  plan: ImageAttachPlan
-): void {
-  const toast = imageAttachToast(plan)
-  if (!toast) return
-  if (toast.titleKey === 'composer.imageTooLarge') {
-    showToast({ kind: 'info', title: tt(toast.titleKey, { mb: toast.mb }) })
-    return
-  }
-  if (toast.titleKey === 'composer.imagesTooMany') {
-    showToast({ kind: 'info', title: tt(toast.titleKey, { max: toast.max }) })
-    return
-  }
-  showToast({ kind: 'info', title: tt(toast.titleKey) })
 }
 
 function trimAttachmentsForHost(
@@ -159,18 +144,10 @@ function trimAttachmentsForHost(
   get: () => SessionState,
   set: (partial: Partial<SessionState> | ((state: SessionState) => Partial<SessionState>)) => void
 ): void {
-  const existing = get().attachments[id] ?? []
-  if (existing.length === 0) return
-  const plan = mergeImageAttachments({
-    existing: [],
-    incoming: existing,
-    capability: imageInputLimits(host)
-  })
-  if (plan.paths.length === existing.length && plan.paths.every((p, i) => p === existing[i])) {
-    return
-  }
-  set((state) => ({ attachments: { ...state.attachments, [id]: plan.paths } }))
-  notifyImageAttachPlan(get().showToast, plan)
+  const trimmed = trimAttachmentPathsForHost(get().attachments[id] ?? [], host)
+  if (!trimmed) return
+  set((state) => ({ attachments: { ...state.attachments, [id]: trimmed.paths } }))
+  notifyImageAttachPlan(get().showToast, trimmed.plan, tt)
 }
 
 const IDLE_UPDATE: UpdateState = {
@@ -182,17 +159,6 @@ const IDLE_UPDATE: UpdateState = {
   progress: 0,
   bytesPerSecond: null,
   message: null
-}
-
-async function persistSwarmLayout(
-  set: (partial: { conversations: ConversationMeta[] }) => void,
-  getConversations: () => ConversationMeta[],
-  rootId: string,
-  layout: TerminalLayoutNode | null,
-  full?: TerminalLayoutNode | null
-): Promise<void> {
-  const list = await window.vav.conversations.setSwarmLayout(rootId, layout, full)
-  set({ conversations: mergeConversationList(getConversations(), list) })
 }
 
 /** Shared empty search hits — never allocate a fresh [] on every keystroke. */
@@ -1988,7 +1954,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       sizes: opts?.sizes
     })
     set((state) => ({ attachments: { ...state.attachments, [id]: plan.paths } }))
-    notifyImageAttachPlan(get().showToast, plan)
+    notifyImageAttachPlan(get().showToast, plan, tt)
   },
 
   setQuote(id, quote) {
@@ -2285,7 +2251,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     // above the stream and look like one more record.
     const target = state.messages[activeId]?.find((m) => m.id === messageId)
     if (!target) return
-    setLeaf(set, state, activeId, target.role === 'assistant' ? target.parentId : target.id)
+    setLeaf(set, state.activeLeaf, activeId, target.role === 'assistant' ? target.parentId : target.id)
     set({ errorBanner: null, errorBannerKind: null, errorBannerDetail: null })
     await window.vav.agent.regenerate(activeId, messageId)
   },
@@ -2297,7 +2263,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     if (state.conversations.some((c) => c.id === activeId && c.archived)) return
     const target = state.messages[activeId]?.find((m) => m.id === messageId)
     if (!target) return
-    setLeaf(set, state, activeId, target.parentId)
+    setLeaf(set, state.activeLeaf, activeId, target.parentId)
     set({ errorBanner: null, errorBannerKind: null, errorBannerDetail: null })
     await window.vav.agent.editUserMessage(activeId, messageId, text)
   },
@@ -2320,7 +2286,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     const { activeId, conversations } = get()
     if (!activeId) return
     if (conversations.some((c) => c.id === activeId && c.archived)) return
-    setLeaf(set, get(), activeId, parentKey)
+    setLeaf(set, get().activeLeaf, activeId, parentKey)
     await window.vav.conversations.setLeaf(activeId, parentKey)
     get().focusComposer()
   },
@@ -2367,7 +2333,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     if (state.conversations.some((c) => c.id === activeId && c.archived)) return
     const leaf = await window.vav.agent.fork(activeId, messageId)
     if (leaf === null) return
-    setLeaf(set, get(), activeId, leaf)
+    setLeaf(set, get().activeLeaf, activeId, leaf)
     get().focusComposer()
   },
 
@@ -2937,15 +2903,6 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
 export { visibleMessages }
 
-function setLeaf(
-  set: (partial: Partial<SessionState>) => void,
-  state: SessionState,
-  conversationId: string,
-  leafId: string | null
-): void {
-  set({ activeLeaf: { ...state.activeLeaf, [conversationId]: leafId } })
-}
-
 let syncingMachine = false
 
 /**
@@ -2957,21 +2914,11 @@ async function syncActiveConversationToMachine(): Promise<void> {
   const state = useSessionStore.getState()
   if (!state.ready) return
   const machineId = normalizeMachineId(state.windowMachineId)
-  const current = state.conversations.find((c) => c.id === state.activeId)
-  if (
-    current &&
-    !current.archived &&
-    !current.fileId &&
-    conversationOnMachine(current, machineId)
-  ) {
-    return
-  }
-  const next = state.conversations
-    .filter((c) => !c.archived && !c.fileId && conversationOnMachine(c, machineId))
-    .sort((a, b) => b.updatedAt - a.updatedAt)[0]
+  const decision = nextConversationForMachine(state.conversations, state.activeId, machineId)
+  if (decision.action === 'keep') return
   syncingMachine = true
   try {
-    if (next) await useSessionStore.getState().selectConversation(next.id)
+    if (decision.action === 'select') await useSessionStore.getState().selectConversation(decision.id)
     else await useSessionStore.getState().createConversation({ machineId, openIn: 'here' })
   } finally {
     syncingMachine = false

@@ -1,7 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { homedir } from 'node:os'
 import type {
-  AgentConfig,
   ChatMessage,
   CliHostKind,
   MessageBlock,
@@ -2357,10 +2356,4 @@ function sealCliPlanBlocks(
   }
 }
 
-/** Resolve AgentConfig for a host kind from settings. */
-export function agentConfigForHost(
-  kind: CliHostKind,
-  cliAgents: AgentConfig[] | null | undefined
-): AgentConfig | null {
-  return enabledCliAgents(cliAgents).find((a) => a.id === kind) ?? null
-}
+export { agentConfigForHost } from './agentConfig'

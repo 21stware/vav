@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import { imageAttachToast } from './sessionAttach.ts'
+import { imageAttachToast, imageAttachToastState, trimAttachmentPathsForHost } from './sessionAttach.ts'
 
 const clean = {
   paths: ['/a.png'],
@@ -31,5 +31,19 @@ describe('sessionAttach', () => {
       kind: 'info',
       titleKey: 'composer.imageTypeUnsupported'
     })
+    assert.deepEqual(
+      imageAttachToastState({ ...clean, droppedForLimit: 2 }, (key, params) =>
+        params ? `${key}:${params.max}` : key
+      ),
+      { kind: 'info', title: 'composer.imagesTooMany:8' }
+    )
+  })
+
+  it('trims existing attachments when the host cap is lower', () => {
+    const paths = Array.from({ length: 12 }, (_, i) => `/img-${i}.png`)
+    assert.equal(trimAttachmentPathsForHost(paths.slice(0, 2), 'vav'), null)
+    const trimmed = trimAttachmentPathsForHost(paths, 'vav')
+    assert.equal(trimmed?.paths.length, 8)
+    assert.equal(trimmed?.plan.droppedForLimit, 4)
   })
 })
