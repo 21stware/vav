@@ -164,6 +164,13 @@ import { FileSessionStore } from './store/FileSessionStore'
 import { SwarmHistoryStore } from './store/SwarmHistoryStore'
 import { FileService } from './fs/FileService'
 import { isTrustedIpcSender } from './ipc/ipcTrust'
+import {
+  applyWindowVibrancy as applyVibrancyPaint,
+  clearWindowVibrancy as clearVibrancyPaint,
+  primeRendererShell as primeShellPaint,
+  windowBackgroundColor,
+  windowThemeNameFromDark
+} from './window/shellPaint'
 import { HostRegistry } from './host'
 import { openSpawn, previewSpawn, revealSpawn } from './host/hostShell'
 import { clipRoot, isClipPath, writeClip, writeClipBytes } from './fs/clipStore'
@@ -2150,14 +2157,12 @@ function publishDetachedSessions(): void {
 
 /** The window's own fill, shown for the frame or two before the renderer paints. */
 function windowBackground(alpha: string = ''): string {
-  // Match mono light chrome (`--bg-window`); tinted washes are painted in CSS.
-  // Uses nativeTheme after applyTheme(), so forced dark/light follow app settings.
-  return (nativeTheme.shouldUseDarkColors ? '#121213' : '#ececee') + alpha
+  return windowBackgroundColor(nativeTheme.shouldUseDarkColors, alpha)
 }
 
 /** `dark` | `light` for renderer bootstrap (query + early HTML paint). */
 function windowThemeName(): 'dark' | 'light' {
-  return nativeTheme.shouldUseDarkColors ? 'dark' : 'light'
+  return windowThemeNameFromDark(nativeTheme.shouldUseDarkColors)
 }
 
 /**
@@ -2166,16 +2171,7 @@ function windowThemeName(): 'dark' | 'light' {
  * Main window with vibrancy must stay transparent or it masks the system glass.
  */
 function primeRendererShell(win: BrowserWindow, options?: { clear?: boolean }): void {
-  if (win.isDestroyed() || win.webContents.isDestroyed()) return
-  const bg = options?.clear ? 'transparent' : windowBackground()
-  const scheme = windowThemeName()
-  const css = `html,body,#root{background:${bg}!important;margin:0;height:100%;color-scheme:${scheme}}`
-  const inject = (): void => {
-    if (win.isDestroyed() || win.webContents.isDestroyed()) return
-    void win.webContents.insertCSS(css).catch(() => undefined)
-  }
-  inject()
-  win.webContents.once('dom-ready', inject)
+  primeShellPaint(win, { clear: options?.clear, dark: nativeTheme.shouldUseDarkColors })
 }
 
 /**
@@ -2185,27 +2181,11 @@ function primeRendererShell(win: BrowserWindow, options?: { clear?: boolean }): 
  * Used by the main shell and the Settings nav column.
  */
 function applyWindowVibrancy(win: BrowserWindow): void {
-  if (!IS_MAC || win.isDestroyed()) return
-  try {
-    win.setBackgroundColor(windowBackground('01'))
-    win.setVibrancy('under-window', { animationDuration: 0 })
-  } catch {
-    try {
-      win.setVibrancy('under-window')
-    } catch {
-      // Older Electron / non-mac
-    }
-  }
+  applyVibrancyPaint(win, nativeTheme.shouldUseDarkColors)
 }
 
 function clearWindowVibrancy(win: BrowserWindow): void {
-  if (!IS_MAC || win.isDestroyed()) return
-  try {
-    win.setVibrancy(null)
-    win.setBackgroundColor(windowBackground())
-  } catch {
-    // ignore
-  }
+  clearVibrancyPaint(win, nativeTheme.shouldUseDarkColors)
 }
 
 function isVibrancyEnabled(): boolean {

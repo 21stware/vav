@@ -63,7 +63,7 @@ import { isTemporaryWorkspace } from '../lib/format'
 import { isCompanionSessionShell, isMainSessionShell, readWindowMachineId } from '../lib/windowKind'
 import { conversationOnMachine, isLocalMachine, normalizeMachineId } from '@shared/workspaceHost'
 import { compactionForLeaf, upsertCompaction } from '@shared/compaction'
-import { subtreeIds, threadPath } from '@shared/thread'
+import { subtreeIds } from '@shared/thread'
 import { getProjection, disposeProjection } from './StreamProjection'
 import { AGENT_TAB_ID, useWorkspaceStore } from './workspaceStore'
 import { isSwarmSurfaceActive } from '../lib/workdirSwitch'
@@ -73,6 +73,11 @@ import {
   nextHydrationGeneration,
   omitKeys
 } from '../lib/messageHydration'
+import {
+  clearPriorChangeReviews,
+  upsert,
+  visibleMessages
+} from './sessionThread'
 import {
   collectSwarmLeaves,
   insertSwarmLeaf,
@@ -298,6 +303,8 @@ export interface QueuedMessage {
 
 /** Max pending items per conversation (spec §2.10). */
 export const MESSAGE_QUEUE_MAX = 20
+/** Shared empty search hits — never allocate a fresh [] on every keystroke. */
+const EMPTY_SEARCH_MATCH_IDS: string[] = []
 
 /**
  * Conversations currently inside {@link SessionState.sendQueuedNow} (manual
@@ -3589,28 +3596,7 @@ function syncPendingBanner(
   })
 }
 
-/**
- * The thread on screen: root → active leaf, with other branches left out.
- *
- * Memoised on (nodes, leaf) because this is read from selectors — returning a
- * fresh array each time would re-render forever.
- */
-export function visibleMessages(state: SessionState, conversationId: string): ChatMessage[] {
-  const nodes = state.messages[conversationId]
-  if (!nodes?.length) return NO_MESSAGES
-  const leafId = state.activeLeaf[conversationId] ?? null
-  if (pathCache && pathCache.nodes === nodes && pathCache.leafId === leafId) return pathCache.path
-  const path = threadPath(nodes, leafId)
-  pathCache = { nodes, leafId, path }
-  return path
-}
-
-let pathCache: { nodes: ChatMessage[]; leafId: string | null; path: ChatMessage[] } | null = null
-
-/** Stable identity for the empty case: a fresh [] would re-render forever. */
-const NO_MESSAGES: ChatMessage[] = []
-/** Shared empty search hits — never allocate a fresh [] on every keystroke. */
-const EMPTY_SEARCH_MATCH_IDS: string[] = []
+export { visibleMessages }
 
 function setLeaf(
   set: (partial: Partial<SessionState>) => void,
@@ -3619,62 +3605,6 @@ function setLeaf(
   leafId: string | null
 ): void {
   set({ activeLeaf: { ...state.activeLeaf, [conversationId]: leafId } })
-}
-
-function upsert(nodes: ChatMessage[] | undefined, message: ChatMessage): ChatMessage[] {
-  const existing = nodes ?? []
-  const index = existing.findIndex((m) => m.id === message.id)
-  if (index < 0) return [...existing, message]
-  // Preserve sticky fields if a later partial snapshot omits them (e.g. mid-turn
-  // persist without changeSetId must not wipe a finished review card).
-  return existing.map((m) => {
-    if (m.id !== message.id) return m
-    const merged: ChatMessage = { ...message }
-    if (!merged.changeSetId && m.changeSetId) merged.changeSetId = m.changeSetId
-    return merged
-  })
-}
-
-/**
- * Drop inline Change Review cards for a conversation when the next turn starts.
- * Prior changeSetIds often cannot be re-fetched (in-memory store) and surface
- * as "Could not load changes" under Done — clean them off the transcript.
- */
-function clearPriorChangeReviews(
-  state: SessionState,
-  conversationId: string
-): Partial<SessionState> {
-  const list = state.messages[conversationId]
-  const dropIds = new Set(
-    (list ?? []).map((m) => m.changeSetId).filter((x): x is string => !!x)
-  )
-  if (dropIds.size === 0 && !state.pendingReviewByConversation[conversationId]) {
-    return {}
-  }
-
-  const messages = list
-    ? {
-        ...state.messages,
-        [conversationId]: list.map((m) =>
-          m.changeSetId ? { ...m, changeSetId: undefined } : m
-        )
-      }
-    : state.messages
-
-  const changeSetsById = { ...state.changeSetsById }
-  for (const cid of dropIds) delete changeSetsById[cid]
-
-  const pendingReviewByConversation = { ...state.pendingReviewByConversation }
-  delete pendingReviewByConversation[conversationId]
-
-  return {
-    messages,
-    changeSetsById,
-    pendingReviewByConversation,
-    changeSet: state.changeSet && dropIds.has(state.changeSet.id) ? null : state.changeSet,
-    changeReviewId:
-      state.changeReviewId && dropIds.has(state.changeReviewId) ? null : state.changeReviewId
-  }
 }
 
 function patchTurn(
