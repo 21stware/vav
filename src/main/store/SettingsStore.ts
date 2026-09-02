@@ -25,7 +25,14 @@ import { parseThinkingLevel } from '@shared/thinkingLevel'
 import { isCssTileSize } from '@shared/surfacePattern'
 import { surfacePatternFilePath, writeSurfacePatternPng } from '../importSurfacePattern'
 import { resolveFirstOnLoginPath } from '../terminal/loginPath'
-import { LOCAL_MACHINE_ID } from '@shared/workspaceHost'
+import {
+  LOCAL_MACHINE_ID,
+  isLocalMachine,
+  parseWorkspaceRefList,
+  sameWorkspaceRef,
+  serializeWorkspaceRefList,
+  workspaceRef
+} from '@shared/workspaceHost'
 import { clampKeepAwakeBatteryFloor } from '@shared/sleepBlocker'
 
 const PLATFORM = process.platform as Platform
@@ -71,11 +78,13 @@ export class SettingsStore {
     this.migrateLegacy()
     this.coerceToPlatform()
     // Prune deleted workspace paths on boot (switcher list stays honest).
-    const beforeRecent = this.settings.recentWorkspaceDirectories.join('\0')
+    const beforeRecent = serializeWorkspaceRefList(
+      parseWorkspaceRefList(this.settings.recentWorkspaceDirectories)
+    )
     const beforePinned = this.settings.pinnedWorkspaceDirectories.join('\0')
     this.clampToAllowedRanges()
     if (
-      this.settings.recentWorkspaceDirectories.join('\0') !== beforeRecent ||
+      serializeWorkspaceRefList(this.settings.recentWorkspaceDirectories) !== beforeRecent ||
       this.settings.pinnedWorkspaceDirectories.join('\0') !== beforePinned
     ) {
       this.persist()
@@ -322,11 +331,10 @@ export class SettingsStore {
       const ids = new Set(s.cliAgents.map((a) => a.id))
       if (!ids.has(s.defaultAgentId)) s.defaultAgentId = null
     }
-    if (!Array.isArray(s.recentWorkspaceDirectories)) s.recentWorkspaceDirectories = []
-    // Drop paths that no longer exist so the switcher never lists dead dirs.
-    s.recentWorkspaceDirectories = s.recentWorkspaceDirectories
-      .filter((path): path is string => typeof path === 'string' && path.length > 0)
-      .filter((path) => existsSync(path))
+    // Drop local paths that no longer exist. Remote refs stay — this disk
+    // cannot see the daemon's folders.
+    s.recentWorkspaceDirectories = parseWorkspaceRefList(s.recentWorkspaceDirectories)
+      .filter((ref) => !isLocalMachine(ref.machineId) || existsSync(ref.path))
       .slice(0, 10)
     if (!Array.isArray(s.recentAgentModels)) s.recentAgentModels = []
     else {
@@ -416,17 +424,25 @@ export class SettingsStore {
   /**
    * Records a non-Temporary workdir at the front of the recent list.
    * Temporary paths are never remembered (workspace switcher popover).
+   * Remote folders skip local existsSync — that path lives on another machine.
    */
-  rememberWorkspaceDirectory(path: string, tmpRoot: string): AppSettings {
-    const normalized = path.trim()
-    if (!normalized) return this.settings
-    if (normalized.startsWith(tmpRoot) || normalized.startsWith('/private' + tmpRoot)) {
+  rememberWorkspaceDirectory(
+    path: string,
+    tmpRoot: string,
+    machineId?: string | null
+  ): AppSettings {
+    const ref = workspaceRef(path.trim(), machineId)
+    if (!ref.path) return this.settings
+    if (
+      tmpRoot &&
+      (ref.path.startsWith(tmpRoot) || ref.path.startsWith('/private' + tmpRoot))
+    ) {
       return this.settings
     }
-    if (!existsSync(normalized)) return this.settings
+    if (isLocalMachine(ref.machineId) && !existsSync(ref.path)) return this.settings
     const next = [
-      normalized,
-      ...this.settings.recentWorkspaceDirectories.filter((entry) => entry !== normalized)
+      ref,
+      ...this.settings.recentWorkspaceDirectories.filter((entry) => !sameWorkspaceRef(entry, ref))
     ].slice(0, 10)
     return this.update({ recentWorkspaceDirectories: next })
   }
@@ -435,10 +451,14 @@ export class SettingsStore {
    * Remove a path from recent (and pinned) after ENOENT / user discovery.
    * Safe no-op when the path is not listed.
    */
-  forgetWorkspaceDirectory(path: string): AppSettings {
+  forgetWorkspaceDirectory(path: string, machineId?: string | null): AppSettings {
     const normalized = path.trim()
     if (!normalized) return this.settings
-    const recent = this.settings.recentWorkspaceDirectories.filter((entry) => entry !== normalized)
+    const recent = this.settings.recentWorkspaceDirectories.filter((entry) => {
+      if (entry.path !== normalized) return true
+      if (machineId == null || machineId === '') return false
+      return !sameWorkspaceRef(entry, workspaceRef(normalized, machineId))
+    })
     const pinned = this.settings.pinnedWorkspaceDirectories.filter((entry) => entry !== normalized)
     if (
       recent.length === this.settings.recentWorkspaceDirectories.length &&

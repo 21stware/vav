@@ -293,12 +293,40 @@ function MachinesSection(): React.JSX.Element {
                   {host.online ? t('machines.online') : t('machines.offline')}
                 </div>
               </div>
-              <Button
-                label={t('machines.forget')}
-                size="sm"
-                testId={`settings-machine-forget-${host.id}`}
-                onClick={() => void window.vav.hosts.forget(host.id)}
-              />
+              <div className="connect-peer-actions">
+                <Button
+                  label={t('machines.openFolder')}
+                  size="sm"
+                  disabled={!host.online}
+                  testId={`settings-machine-open-${host.id}`}
+                  onClick={() => void window.vav.hosts.openFolder(host.id)}
+                />
+                <Button
+                  label={t('machines.forget')}
+                  size="sm"
+                  testId={`settings-machine-forget-${host.id}`}
+                  onClick={() => void window.vav.hosts.forget(host.id)}
+                />
+              </div>
+              <div
+                className="connect-peer-providers"
+                data-testid={`settings-machine-providers-${host.id}`}
+              >
+                <div className="connect-peers-caption">{t('machines.providers')}</div>
+                {!host.online ? (
+                  <p className="connect-lede">{t('machines.providersOffline')}</p>
+                ) : host.providers && host.providers.length > 0 ? (
+                  <div className="connect-provider-chips">
+                    {host.providers.map((provider) => (
+                      <span key={provider.id} className="connect-provider-chip">
+                        {provider.name}
+                      </span>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="connect-lede">{t('machines.providersEmpty')}</p>
+                )}
+              </div>
             </div>
           ))}
         </div>

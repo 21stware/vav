@@ -34,20 +34,24 @@ import type { AccountStore } from '../store/AccountStore'
 import type { SecretStore } from '../store/SecretStore'
 import { captureLiveHost } from './activateAccount.ts'
 import { readHostAccountInfo } from '../agent/hostAuth'
+import { isLocalMachine, parseWorkspaceRefList } from '@shared/workspaceHost'
 import { isStructuredCliHost, type CliHostKind } from '@shared/cliHost'
 import { hostMayHaveAccountQuota, selectQuotaWindows } from '@shared/quotaWindows'
 
 export function resolveWorkspaceContext(
   conversations: ConversationMeta[],
-  settings: { defaultWorkingDirectory?: string; recentWorkspaceDirectories?: string[] },
+  settings: { defaultWorkingDirectory?: string; recentWorkspaceDirectories?: unknown },
   untitled: string,
   preferredId?: string | null
 ): { key: string; label: string; dir: string | null } {
   const latest = pickWorkspaceConversation(conversations, preferredId)
+  const firstLocal = parseWorkspaceRefList(settings.recentWorkspaceDirectories).find((ref) =>
+    isLocalMachine(ref.machineId)
+  )?.path
   const dir =
     latest?.workingDirectory ||
     settings.defaultWorkingDirectory?.trim() ||
-    settings.recentWorkspaceDirectories?.[0] ||
+    firstLocal ||
     null
   const key = workspaceKeyOf(dir)
   return { key, label: workspaceLabelOf(dir, untitled), dir }

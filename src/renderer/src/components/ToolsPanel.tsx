@@ -325,6 +325,7 @@ export function ToolsPanel({
       t,
       recentDirs,
       conversationId: activeId,
+      machineId: conversation?.machineId ?? useSessionStore.getState().windowMachineId,
       hosts,
       setWorkingDirectory,
       useTempWorkingDirectory,
@@ -332,7 +333,16 @@ export function ToolsPanel({
       openRemoteFolderPicker: (id, machineId) =>
         useSessionStore.getState().openRemoteFolderPicker(id, machineId)
     })
-  }, [recentDirs, activeId, setWorkingDirectory, useTempWorkingDirectory, pickWorkingDirectory, hosts, t])
+  }, [
+    recentDirs,
+    activeId,
+    conversation?.machineId,
+    setWorkingDirectory,
+    useTempWorkingDirectory,
+    pickWorkingDirectory,
+    hosts,
+    t
+  ])
 
   const openWorkspaceMenu = useCallback(
     (anchor?: HTMLElement | null) => {

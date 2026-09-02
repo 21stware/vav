@@ -8,7 +8,7 @@
  * Not yet behind this interface (next slices): git, DuckDB / retrieval.
  */
 
-import { hostname, userInfo } from 'node:os'
+import { hostname, homedir, tmpdir, userInfo } from 'node:os'
 import {
   LOCAL_MACHINE_ID,
   normalizeMachineId,
@@ -60,7 +60,9 @@ export function createLocalWorkspaceHost(opts?: {
       name,
       kind: 'local',
       online: true,
-      platform: process.platform
+      platform: process.platform,
+      home: homedir(),
+      tmp: tmpdir()
     },
     fs: opts?.fs ?? localHostFs,
     process: opts?.process ?? localHostProcess,
@@ -87,11 +89,16 @@ export class HostRegistry {
   }
 
   /**
-   * Resolve a conversation's machine. Unknown / missing ids fall back to
-   * the local host so a stale remote session still opens instead of throwing.
+   * Resolve a conversation's machine. Unknown remote ids do not fall through to
+   * this computer's disks — a stale session shows offline instead of listing
+   * the wrong machine.
    */
   hostFor(machineId: string | null | undefined): WorkspaceHost {
-    return this.get(normalizeMachineId(machineId)) ?? this.local()
+    const id = normalizeMachineId(machineId)
+    const found = this.get(id)
+    if (found) return found
+    if (id === LOCAL_MACHINE_ID) return this.local()
+    return createOfflineRemoteHost(id, id)
   }
 
   require(machineId: string): WorkspaceHost {
@@ -131,4 +138,40 @@ export class HostRegistry {
 
 export function hostKindOf(host: WorkspaceHost): WorkspaceHostKind {
   return host.info.kind
+}
+
+/** Placeholder so a forgotten / reconnecting daemon never serves local files. */
+export function createOfflineRemoteHost(
+  id: string,
+  name: string,
+  extra?: { home?: string; tmp?: string; platform?: string }
+): WorkspaceHost {
+  const fail = (): never => {
+    throw new Error(`${name} is offline`)
+  }
+  return {
+    id,
+    info: {
+      id,
+      name,
+      kind: 'remote',
+      online: false,
+      platform: extra?.platform,
+      home: extra?.home,
+      tmp: extra?.tmp
+    },
+    fs: {
+      readdir: fail,
+      stat: fail,
+      readFile: fail,
+      writeFile: fail,
+      mkdir: fail,
+      rename: fail,
+      open: fail,
+      watch: fail,
+      exists: fail
+    },
+    process: { spawn: fail },
+    pty: { spawn: fail }
+  }
 }

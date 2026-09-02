@@ -260,6 +260,16 @@ export class DaemonClient {
   get connected(): boolean {
     return Boolean(this.socket && !this.closed && !this.socket.destroyed)
   }
+
+  async which(candidates: string[]): Promise<string | null> {
+    const names = candidates.map((c) => c.trim()).filter(Boolean)
+    if (names.length === 0) return null
+    const result = (await this.request('proc.which', { candidates: names })) as {
+      path?: string | null
+    }
+    const path = typeof result.path === 'string' ? result.path.trim() : ''
+    return path || null
+  }
 }
 
 function statFromWire(wire: FsStatWire): HostStat {
@@ -573,7 +583,9 @@ export function createRemoteWorkspaceHost(client: DaemonClient, welcome: DaemonW
     name: welcome.host.name,
     kind: 'remote',
     online: true,
-    platform: welcome.host.platform
+    platform: welcome.host.platform,
+    home: welcome.home,
+    tmp: welcome.tmp
   }
   return {
     id: info.id,

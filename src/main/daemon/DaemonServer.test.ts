@@ -296,4 +296,17 @@ describe('daemon loopback', () => {
       server.close()
     }
   })
+
+  it('resolves executables via proc.which', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'vav-daemon-'))
+    const { server, client } = await startPair(dir)
+    try {
+      assert.equal(await client.which([process.execPath]), process.execPath)
+      assert.equal(await client.which(['vav-daemon-which-missing-xyz']), null)
+    } finally {
+      client.close()
+      server.close()
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
 })

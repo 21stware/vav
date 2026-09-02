@@ -17,10 +17,11 @@ describe('HostRegistry', () => {
     assert.ok(registry.get(LOCAL_MACHINE_ID))
   })
 
-  it('resolves missing or unknown machines to the local host', () => {
+  it('resolves missing to local and unknown remotes to an offline stub', () => {
     const registry = new HostRegistry()
     assert.equal(registry.hostFor(null).id, LOCAL_MACHINE_ID)
-    assert.equal(registry.hostFor('gone').id, LOCAL_MACHINE_ID)
+    assert.equal(registry.hostFor('gone').info.kind, 'remote')
+    assert.equal(registry.hostFor('gone').info.online, false)
   })
 
   it('registers and removes a remote host', () => {

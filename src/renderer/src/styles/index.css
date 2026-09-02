@@ -20001,6 +20001,7 @@ html.connect-root #root {
 .connect-peer {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 10px;
   min-height: 36px;
   padding: 4px 2px;
@@ -20025,6 +20026,31 @@ html.connect-root #root {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.connect-peer-actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.connect-peer-providers {
+  flex: 1 0 100%;
+  padding: 0 0 6px;
+}
+
+.connect-provider-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.connect-provider-chip {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--bg-sunken);
+  color: var(--text-secondary);
 }
 
 /* Category switch fade. First paint must stay opaque — Settings is warmed
@@ -20139,6 +20165,12 @@ html.connect-root #root {
   flex-direction: column;
   gap: 8px;
   min-height: 180px;
+}
+
+.remote-folder-recents {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
 }
 
 .remote-folder-path .text-field {

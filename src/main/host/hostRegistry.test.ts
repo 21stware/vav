@@ -11,9 +11,11 @@ describe('HostRegistry', () => {
     assert.equal(registry.list().length, 1)
   })
 
-  it('hostFor falls back to local for an unknown machine', () => {
+  it('hostFor does not serve local disks for an unknown remote', () => {
     const registry = new HostRegistry()
-    assert.equal(registry.hostFor('missing-box').id, LOCAL_MACHINE_ID)
+    assert.equal(registry.hostFor('missing-box').id, 'missing-box')
+    assert.equal(registry.hostFor('missing-box').info.online, false)
+    assert.equal(registry.hostFor('missing-box').info.kind, 'remote')
     assert.equal(registry.hostFor(null).id, LOCAL_MACHINE_ID)
   })
 
@@ -28,7 +30,8 @@ describe('HostRegistry', () => {
     registry.register(host)
     assert.equal(registry.hostFor('build-server').id, 'build-server')
     assert.equal(registry.remove('build-server'), true)
-    assert.equal(registry.hostFor('build-server').id, LOCAL_MACHINE_ID)
+    assert.equal(registry.hostFor('build-server').info.kind, 'remote')
+    assert.equal(registry.hostFor('build-server').info.online, false)
   })
 
   it('refuses to remove the local host', () => {

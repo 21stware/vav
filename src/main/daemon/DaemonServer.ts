@@ -21,6 +21,7 @@ import type { WorkspaceHost } from '../host/WorkspaceHost.ts'
 import type { HostChild, HostPtyProcess, HostFileHandle } from '../host/index.ts'
 import { attachLineReader, secretsMatch, writeLine } from './jsonLines.ts'
 import type { DaemonIdentity } from './identity.ts'
+import { whichOnHost } from './procWhich.ts'
 
 type ServerOpts = {
   host: WorkspaceHost
@@ -431,6 +432,13 @@ export class DaemonServer {
       case 'pty.kill': {
         live.ptys.get(asString(p.stream))?.proc.kill(asString(p.signal) || undefined)
         return { ok: true }
+      }
+      case 'proc.which': {
+        const candidates = Array.isArray(p.candidates)
+          ? p.candidates.map((c) => String(c)).filter((c) => c.trim().length > 0)
+          : []
+        const path = await whichOnHost(this.opts.host, candidates)
+        return { path }
       }
       default:
         throw new Error(`unknown method: ${method}`)

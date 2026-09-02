@@ -532,7 +532,12 @@ export class PtyManager {
       conversationId: string,
       status: PtyActivityStatus
     ) => void,
-    private resolvePty: (conversationId: string) => HostPty = () => localHostPty
+    private resolvePty: (conversationId: string) => HostPty = () => localHostPty,
+    private isLocalHost: (conversationId: string) => boolean = () => true,
+    private resolveRemoteExecutable: (
+      conversationId: string,
+      candidates: string[]
+    ) => string | null = () => null
   ) {}
 
   /**
@@ -814,8 +819,12 @@ export class PtyManager {
           ? 'vav'
           : `bash-${bashIndex}`)
     // node-pty requires a real absolute directory — "~" or empty → process exits.
+    // Remote cwd lives on another machine; local existsSync would rewrite it to
+    // this computer's home and the daemon would spawn in the wrong place.
     let safeCwd = cwd && cwd !== '~' ? cwd : homedir()
-    if (!safeCwd || !existsSync(safeCwd)) safeCwd = homedir()
+    if (this.isLocalHost(conversationId) && (!safeCwd || !existsSync(safeCwd))) {
+      safeCwd = homedir()
+    }
 
     const pathEnv = loginPath()
     const baseEnv: Record<string, string> = {
@@ -841,7 +850,11 @@ export class PtyManager {
         opts.command.trim(),
         ...(opts.commandCandidates ?? []).map((c) => c.trim()).filter(Boolean)
       ]
-      const resolved = resolveAgentExecutable(candidates)
+      const resolved = this.isLocalHost(conversationId)
+        ? resolveAgentExecutable(candidates)
+        : this.resolveRemoteExecutable(conversationId, candidates) ||
+          candidates.find((c) => c.startsWith('/') || /^[A-Za-z]:[\\/]/.test(c)) ||
+          null
       if (resolved) {
         // Claude Code: skip "Yes, I trust this folder" for workspaces vav owns.
         // --dangerously-skip-permissions does not cover this dialog.

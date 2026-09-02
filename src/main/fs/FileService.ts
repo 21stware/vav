@@ -1,5 +1,6 @@
 import { shell } from 'electron'
 import { join, dirname, basename, extname } from 'node:path'
+import { hostJoin } from '../../shared/workspaceHost.ts'
 import { spawn } from 'node:child_process'
 import { userInfo } from 'node:os'
 import JSZip from 'jszip'
@@ -53,6 +54,11 @@ const ZIP_FULL_LOAD_MAX = 64 * 1024 * 1024
 const WATCH_DEBOUNCE_MS = 300
 /** Keep document indexing off the main thread while a preview is opening. */
 const INDEX_AFTER_OPEN_MS = 1500
+
+function joinOnHostPath(parent: string, name: string): string {
+  const win = parent.includes('\\') && !parent.startsWith('/')
+  return hostJoin(win ? 'win32' : 'linux', parent, name)
+}
 
 /**
  * Filesystem access for both the Files panel and the agent's fs_* tools.
@@ -120,7 +126,7 @@ export class FileService {
 
       const entries = await Promise.all(
         slice.map(async (dirent): Promise<FileEntry> => {
-          const full = join(path, dirent.name)
+          const full = joinOnHostPath(path, dirent.name)
           let size = 0
           let modifiedAt = 0
           let createdAt = 0

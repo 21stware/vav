@@ -39,7 +39,8 @@ import {
   conversationOnMachine,
   isLocalMachine,
   LOCAL_MACHINE_ID,
-  normalizeMachineId
+  normalizeMachineId,
+  recentsForMachine
 } from '@shared/workspaceHost'
 import { useT } from '../i18n/useT'
 import { EmptyState } from './ui'
@@ -1313,7 +1314,9 @@ export function Sidebar({
                     sidebarSessionFilter: encodeSidebarSessionFilter(next)
                   })
                 }
-                const recent = (recentDirs ?? []).slice(0, 3)
+                const recent = recentsForMachine(recentDirs, windowMachineId)
+                  .map((ref) => ref.path)
+                  .slice(0, 3)
                 const extra =
                   sessionFilter.kind === 'workspace' && !recent.includes(sessionFilter.path)
                     ? [sessionFilter.path]

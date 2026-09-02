@@ -17,7 +17,7 @@ import {
   shell,
   systemPreferences
 } from 'electron'
-import { basename, dirname, extname, join, posix, win32 } from 'node:path'
+import { basename, dirname, extname, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { execFile } from 'node:child_process'
 import {
@@ -85,6 +85,9 @@ import {
   isLocalMachine,
   LOCAL_MACHINE_ID,
   normalizeMachineId,
+  hostJoin,
+  parseWorkspaceRefList,
+  recentsForMachine,
   type WorkspaceHostInfo
 } from '@shared/workspaceHost'
 import type {
@@ -527,7 +530,13 @@ const ptyManager = new PtyManager(
       lastDataAt: target.lastDataAt
     })
   },
-  (conversationId) => hostRegistry.hostFor(conversationStore.get(conversationId)?.machineId).pty
+  (conversationId) => hostRegistry.hostFor(conversationStore.get(conversationId)?.machineId).pty,
+  (conversationId) => isLocalMachine(conversationStore.get(conversationId)?.machineId),
+  (conversationId, candidates) => {
+    const machineId = conversationStore.get(conversationId)?.machineId
+    if (isLocalMachine(machineId)) return null
+    return daemonAttach.whichCached(normalizeMachineId(machineId), candidates)
+  }
 )
 liveAgentPanes.list = () =>
   ptyManager
@@ -1378,7 +1387,7 @@ function createRemoteSession(): RemoteSession {
   const workdir = resolveNewWorkdir()
   const settings = settingsStore.get()
   if (workdir) {
-    settingsStore.rememberWorkspaceDirectory(workdir, tmpdir())
+    settingsStore.rememberWorkspaceDirectory(workdir, tmpRootFor(undefined))
     broadcast(IPC.settingsChanged, currentSettings())
   }
   const defaultHost = resolveDefaultChatHost(settings.defaultAgentId)
@@ -1430,10 +1439,11 @@ function listRemoteHost(): RemoteHostEvent {
       : 'auto'
   const seen = new Set<string>()
   const recentDirs: { path: string; label: string }[] = []
-  for (const path of [
-    ...(settings.pinnedWorkspaceDirectories ?? []),
-    ...(settings.recentWorkspaceDirectories ?? [])
-  ]) {
+  const localRecents = recentsForMachine(
+    parseWorkspaceRefList(settings.recentWorkspaceDirectories),
+    LOCAL_MACHINE_ID
+  ).map((ref) => ref.path)
+  for (const path of [...(settings.pinnedWorkspaceDirectories ?? []), ...localRecents]) {
     if (!path || seen.has(path) || !existsSync(path)) continue
     seen.add(path)
     recentDirs.push({ path, label: trayDirLabel(path) })
@@ -1466,7 +1476,10 @@ function remoteRootsFor(conversationId: string): string[] | null {
     current: conversation.workingDirectory,
     recent: [
       ...(settings.pinnedWorkspaceDirectories ?? []),
-      ...(settings.recentWorkspaceDirectories ?? [])
+      ...recentsForMachine(
+        parseWorkspaceRefList(settings.recentWorkspaceDirectories),
+        LOCAL_MACHINE_ID
+      ).map((ref) => ref.path)
     ]
   })
 }
@@ -1775,7 +1788,7 @@ const daemonAttach = new DaemonAttachService({
   tailcatToken: () => remoteControl.tunnelToken(),
   dialTunnel: (token) => openTailcatDial(token),
   onHostsChanged: (hosts) => {
-    broadcast(IPC.hostsChanged, hosts)
+    broadcast(IPC.hostsChanged, decorateHosts(hosts))
     syncHostWindows(hosts)
   },
   onDiscovered: (peers) => {
@@ -1813,7 +1826,7 @@ const daemonAttach = new DaemonAttachService({
 })
 
 hostRegistry.onChange((hosts) => {
-  broadcast(IPC.hostsChanged, hosts)
+  broadcast(IPC.hostsChanged, decorateHosts(hosts))
   syncHostWindows(hosts)
 })
 
@@ -5702,7 +5715,7 @@ function openWorkspaceSession(options: {
   }
   const resolved = workdir ?? resolveNewWorkdir()
   if (workdir) {
-    settingsStore.rememberWorkspaceDirectory(workdir, tmpdir())
+    settingsStore.rememberWorkspaceDirectory(workdir, tmpRootFor(undefined))
     broadcast(IPC.settingsChanged, currentSettings())
   }
   const sessionSettings = settingsStore.get()
@@ -5978,8 +5991,55 @@ function watchSystemAccentColor(): void {
 // Working directories
 // ---------------------------------------------------------------------------
 
+function tmpRootFor(machineId: string | null | undefined): string {
+  if (isLocalMachine(machineId)) return tmpdir()
+  return daemonAttach.tmpOf(normalizeMachineId(machineId))
+}
+
 function joinHostPath(platform: string | undefined, ...parts: string[]): string {
-  return (platform === 'win32' ? win32 : posix).join(...parts)
+  return hostJoin(platform, ...parts)
+}
+
+function decorateHosts(hosts: WorkspaceHostInfo[]): WorkspaceHostInfo[] {
+  return hosts.map((host) => {
+    if (isLocalMachine(host.id)) return host
+    const providers = daemonAttach.providersOf(host.id)
+    const home = daemonAttach.homeOf(host.id) || host.home
+    const tmp = daemonAttach.tmpOf(host.id) || host.tmp
+    const defaultPath = daemonAttach.defaultPathOf(host.id) ?? undefined
+    return { ...host, home, tmp, defaultPath, providers }
+  })
+}
+
+function machineIdFromContents(contents: Electron.WebContents): string {
+  try {
+    const url = contents.getURL()
+    if (!url) return LOCAL_MACHINE_ID
+    return normalizeMachineId(new URL(url).searchParams.get('machine'))
+  } catch {
+    return LOCAL_MACHINE_ID
+  }
+}
+
+function homeTmpFor(machineId: string): { home: string; tmp: string } {
+  if (isLocalMachine(machineId)) {
+    return { home: app.getPath('home'), tmp: tmpdir() }
+  }
+  const host = hostRegistry.get(machineId)
+  return {
+    home: host?.info.home || daemonAttach.homeOf(machineId),
+    tmp: host?.info.tmp || daemonAttach.tmpOf(machineId)
+  }
+}
+
+function rememberWorkdir(path: string, machineId?: string | null): void {
+  const id = machineId === undefined ? undefined : normalizeMachineId(machineId)
+  settingsStore.rememberWorkspaceDirectory(path, tmpRootFor(id), id)
+  if (id && !isLocalMachine(id) && path) {
+    const tmp = tmpRootFor(id)
+    const isTemp = Boolean(tmp) && (path.startsWith(tmp) || path.startsWith('/private' + tmp))
+    if (!isTemp) daemonAttach.rememberDefaultPath(id, path)
+  }
 }
 
 /** Always mint a Temporary Workspace folder (switcher “A new temp folder”). */
@@ -6003,13 +6063,18 @@ async function mintTempWorkdirOn(machineId: string | null | undefined): Promise<
     await host.fs.mkdir(dir, { recursive: true })
     return dir
   } catch {
-    return root
+    return root || daemonAttach.homeOf(host.id)
   }
 }
 
 async function resolveNewWorkdirOn(machineId: string | null | undefined): Promise<string> {
   if (isLocalMachine(machineId)) return resolveNewWorkdir()
-  return mintTempWorkdirOn(machineId)
+  const id = normalizeMachineId(machineId)
+  const last = daemonAttach.defaultPathOf(id)
+  if (last) return last
+  const home = daemonAttach.homeOf(id)
+  if (home) return home
+  return mintTempWorkdirOn(id)
 }
 
 function applyWorkingDirectory(
@@ -6028,7 +6093,7 @@ function applyWorkingDirectory(
     swarmSession.clearForConversation(id)
   }
   fileService.watchRoot(id, path)
-  settingsStore.rememberWorkspaceDirectory(path, tmpdir())
+  rememberWorkdir(path, machineId)
   broadcast(IPC.settingsChanged, currentSettings())
   publishConversations()
   return conversationStore.listMeta()
@@ -6494,13 +6559,15 @@ function registerIpc(): void {
     return result
   })
 
-  ipcMain.handle(IPC.bootstrap, (): Bootstrap => {
+  ipcMain.handle(IPC.bootstrap, (event): Bootstrap => {
     // Bootstrap must not force Keychain before onboarding unlock on macOS.
     const settings = currentSettings()
     setLocalePreference(settings.locale)
     const conversations = conversationStore.listMeta()
     const activeConversationId =
       conversations.find((c) => !c.archived)?.id ?? conversations[0]?.id ?? ''
+    const machineId = machineIdFromContents(event.sender)
+    const { home, tmp } = homeTmpFor(machineId)
     return {
       settings,
       resolvedLocale: currentLocale(),
@@ -6509,9 +6576,9 @@ function registerIpc(): void {
       activeConversationId,
       apiKeyHint: secretStore.maskedHint(),
       platform: PLATFORM,
-      home: app.getPath('home'),
-      tmp: tmpdir(),
-      hosts: hostRegistry.list(),
+      home: home || app.getPath('home'),
+      tmp: tmp || tmpdir(),
+      hosts: decorateHosts(hostRegistry.list()),
       about: {
         version: app.getVersion(),
         buildNumber: appBuildNumber(),
@@ -7188,7 +7255,7 @@ return c as text`
       const settings = settingsStore.get()
       const model = options?.model?.trim() || undefined
       if (workdir) {
-        settingsStore.rememberWorkspaceDirectory(workdir, tmpdir())
+        rememberWorkdir(workdir, machineId)
         broadcast(IPC.settingsChanged, currentSettings())
       }
       const defaultHost = resolveDefaultChatHost(settings.defaultAgentId)
@@ -7459,14 +7526,16 @@ return c as text`
   )
 
   ipcMain.handle(IPC.convPickWorkdir, async (_event, id: string) => {
+    const conversation = conversationStore.get(id)
+    if (conversation && !isLocalMachine(conversation.machineId)) return null
     const result = await dialog.showOpenDialog({ properties: ['openDirectory', 'createDirectory'] })
     if (result.canceled || !result.filePaths[0]) return null
-    return applyWorkingDirectory(id, result.filePaths[0])
+    return applyWorkingDirectory(id, result.filePaths[0], conversation?.machineId)
   })
 
   ipcMain.handle(IPC.convUseTempWorkdir, async (_event, id: string) => {
     const machineId = conversationStore.get(id)?.machineId
-    return applyWorkingDirectory(id, await mintTempWorkdirOn(machineId))
+    return applyWorkingDirectory(id, await mintTempWorkdirOn(machineId), machineId)
   })
 
   ipcMain.handle(
@@ -7688,7 +7757,9 @@ return c as text`
     (_event, path: string, sort: FileSortKey, ascending: boolean, conversationId?: string) =>
       fileService.listDirectory(path, sort, ascending, conversationId)
   )
-  ipcMain.handle(IPC.filesRead, (_event, path: string) => fileService.readTextFile(path))
+  ipcMain.handle(IPC.filesRead, (_event, path: string, conversationId?: string) =>
+    fileService.readTextFile(path, conversationId)
+  )
   ipcMain.handle(
     IPC.filesReadTextWindow,
     (
@@ -8025,7 +8096,7 @@ return c as text`
 
   ipcMain.handle(
     IPC.agentsProbeBinaries,
-    (_event, items: unknown, force?: boolean) => {
+    async (_event, items: unknown, force?: boolean, machineId?: string) => {
       const list = Array.isArray(items) ? items : []
       const specs: Array<{ id: string; candidates: string[] }> = []
       for (const row of list) {
@@ -8037,6 +8108,16 @@ return c as text`
           ? rec.candidates.filter((c): c is string => typeof c === 'string' && c.trim().length > 0)
           : []
         specs.push({ id, candidates })
+      }
+      if (machineId && !isLocalMachine(machineId)) {
+        if (force === true) await daemonAttach.probeProviders(machineId)
+        const found = daemonAttach.providersOf(machineId)
+        const byId = new Map(found.map((row) => [row.id, row.path]))
+        const out: Record<string, string | null> = {}
+        for (const spec of specs) {
+          out[spec.id] = byId.get(spec.id) ?? daemonAttach.whichCached(machineId, spec.candidates)
+        }
+        return out
       }
       return probeAgentExecutables(specs, { force: force === true })
     }
@@ -8267,7 +8348,7 @@ return c as text`
   ipcMain.handle(IPC.remoteControlStatus, () => remoteControl.status())
   ipcMain.handle(IPC.remoteControlRegenerateSecret, () => remoteControl.regenerateSecret())
   ipcMain.handle(IPC.remoteControlResetIdentity, () => remoteControl.resetIdentity())
-  ipcMain.handle(IPC.hostsList, () => hostRegistry.list())
+  ipcMain.handle(IPC.hostsList, () => decorateHosts(hostRegistry.list()))
   ipcMain.handle(IPC.hostsPairing, () => daemonAttach.pairing())
   ipcMain.handle(IPC.hostsPair, async (_event, payload: string) => {
     const result = await daemonAttach.pair(String(payload || ''))
@@ -8301,15 +8382,34 @@ return c as text`
     if (isLocalMachine(machineId)) return homedir()
     return daemonAttach.homeOf(machineId)
   })
+  ipcMain.handle(IPC.hostsShow, (_event, machineId: string) => {
+    void showHostWindow(machineId)
+  })
+  ipcMain.handle(IPC.hostsOpenFolder, async (_event, machineId: string) => {
+    const id = normalizeMachineId(machineId)
+    await showHostWindow(id)
+    const win = hostWindowOf(id)
+    if (win && !win.isDestroyed()) safeSend(win.webContents, IPC.hostsPickFolder, id)
+  })
+  ipcMain.handle(IPC.hostsProbeProviders, async (_event, machineId: string) => {
+    const id = String(machineId || '')
+    if (!id || isLocalMachine(id)) return []
+    const found = await daemonAttach.probeProviders(id)
+    broadcast(IPC.hostsChanged, decorateHosts(hostRegistry.list()))
+    return found
+  })
   ipcMain.handle(IPC.hostsListDir, async (_event, machineId: string, path: string) => {
-    const host = hostRegistry.hostFor(machineId)
+    const host = hostRegistry.get(normalizeMachineId(machineId)) ?? hostRegistry.hostFor(machineId)
+    if (!host.info.online) {
+      return { path, entries: [], truncated: 0, error: `${host.info.name} is offline` }
+    }
     try {
       const dirents = await host.fs.readdir(path)
       const entries = dirents
         .filter((d) => d.isDirectory())
         .map((d) => ({
           name: d.name,
-          path: join(path, d.name),
+          path: joinHostPath(host.info.platform, path, d.name),
           isDirectory: true,
           size: 0,
           modifiedAt: 0,
