@@ -17,6 +17,31 @@ export function clampPreviewWidth(preferred: number, displayWidth: number, margi
   return Math.min(preferred, displayWidth - margin)
 }
 
+export type PreviewCloseDisposition = 'destroy' | 'guard' | 'park'
+
+/**
+ * Preview close: quitting / deferred FS-close may destroy; unsaved edits
+ * stay guarded; otherwise recycle into the warm pool.
+ */
+export function previewCloseDisposition(opts: {
+  quitting: boolean
+  fullscreenCloseAllowed: boolean
+  hasUnsavedGuard: boolean
+}): PreviewCloseDisposition {
+  if (opts.quitting || opts.fullscreenCloseAllowed) return 'destroy'
+  if (opts.hasUnsavedGuard) return 'guard'
+  return 'park'
+}
+
+/** Unfocused, unguarded previews park after idle — not while the user is in them. */
+export function shouldParkIdlePreview(opts: {
+  destroyed: boolean
+  focused: boolean
+  guarded: boolean
+}): boolean {
+  return !opts.destroyed && !opts.focused && !opts.guarded
+}
+
 /** Oldest unfocused preview to park when the open cap is exceeded. */
 export function nextUnfocusedPreviewPath(
   entries: Iterable<[string, { isDestroyed: () => boolean; isFocused: () => boolean }]>,

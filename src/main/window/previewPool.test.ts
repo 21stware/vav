@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import { clampPreviewWidth, nextUnfocusedPreviewPath, PREVIEW_MAX_OPEN, previewPathKey, previewQuery } from './previewPool.ts'
+import { clampPreviewWidth, nextUnfocusedPreviewPath, PREVIEW_MAX_OPEN, previewCloseDisposition, previewPathKey, previewQuery, shouldParkIdlePreview } from './previewPool.ts'
 
 describe('previewPool', () => {
   it('clamps to the display and picks the first unfocused other path', () => {
@@ -32,5 +32,52 @@ describe('previewPool', () => {
       '/real/a.ts'
     )
     assert.equal(previewPathKey('  ', { exists: () => true, realpath: () => '/x' }), '')
+  })
+
+  it('parks unfocused unguarded previews and classifies close', () => {
+    assert.equal(
+      shouldParkIdlePreview({ destroyed: false, focused: false, guarded: false }),
+      true
+    )
+    assert.equal(
+      shouldParkIdlePreview({ destroyed: false, focused: true, guarded: false }),
+      false
+    )
+    assert.equal(
+      shouldParkIdlePreview({ destroyed: false, focused: false, guarded: true }),
+      false
+    )
+    assert.equal(
+      previewCloseDisposition({
+        quitting: true,
+        fullscreenCloseAllowed: false,
+        hasUnsavedGuard: true
+      }),
+      'destroy'
+    )
+    assert.equal(
+      previewCloseDisposition({
+        quitting: false,
+        fullscreenCloseAllowed: true,
+        hasUnsavedGuard: false
+      }),
+      'destroy'
+    )
+    assert.equal(
+      previewCloseDisposition({
+        quitting: false,
+        fullscreenCloseAllowed: false,
+        hasUnsavedGuard: true
+      }),
+      'guard'
+    )
+    assert.equal(
+      previewCloseDisposition({
+        quitting: false,
+        fullscreenCloseAllowed: false,
+        hasUnsavedGuard: false
+      }),
+      'park'
+    )
   })
 })

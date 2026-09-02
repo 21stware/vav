@@ -84,6 +84,7 @@ import { userTurnMessage } from './agentMessage'
 import {
   applyCliCancelQuota,
   cliAssistantMessage,
+  consumePendingCancel,
   sameSessionRetryPlan,
   shouldSettleAsCancelled,
   stripLeakedStreamErrorFromTurn
@@ -109,6 +110,7 @@ import {
 import {
   applyCliHistoryHandoff,
   formatCliWorkspaceHandoff,
+  shouldRecordHistoryHandoff,
   type CliHistoryHandoffMark,
   type CliHistoryHandoffReason
 } from './cliHistoryHandoff'
@@ -703,14 +705,17 @@ export class CliAgentHost {
     this.turns.set(conversationId, turn)
     this.deps.emit({ type: 'start', conversationId })
     this.setPhase(conversationId, turn, 'thinking')
-    if (this.takePendingCancel(conversationId, turn)) {
+    if (consumePendingCancel(this.pendingCancels, conversationId, turn)) {
       void this.finishTurn(conversationId, turn, false)
       return
     }
 
     try {
       const runtime = await this.ensureRuntime(conversationId)
-      if (this.takePendingCancel(conversationId, turn) || this.turns.get(conversationId) !== turn) {
+      if (
+        consumePendingCancel(this.pendingCancels, conversationId, turn) ||
+        this.turns.get(conversationId) !== turn
+      ) {
         runtime.driver.cancel()
         if (this.turns.get(conversationId) === turn) {
           void this.finishTurn(conversationId, turn, false)
@@ -1718,12 +1723,6 @@ export class CliAgentHost {
     })
   }
 
-  private takePendingCancel(conversationId: string, turn: HostTurn): boolean {
-    if (!this.pendingCancels.delete(conversationId) && !turn.cancelled) return false
-    turn.cancelled = true
-    return true
-  }
-
   private async finishTurn(
     conversationId: string,
     turn: HostTurn,
@@ -1839,7 +1838,7 @@ export class CliAgentHost {
     reason: CliHistoryHandoffReason = 'cwd-changed'
   ): void {
     const conversation = this.deps.conversations.get(conversationId)
-    if ((conversation?.messages.length ?? 0) === 0) return
+    if (!shouldRecordHistoryHandoff(conversation?.messages.length)) return
     this.historyHandoff.set(conversationId, { previousCwd, reason })
   }
 
@@ -1870,7 +1869,7 @@ export class CliAgentHost {
    */
   private buildSessionLossHandoff(conversationId: string): string | null {
     const conversation = this.deps.conversations.get(conversationId)
-    if (!conversation || conversation.messages.length === 0) return null
+    if (!conversation || !shouldRecordHistoryHandoff(conversation.messages.length)) return null
     const turn = this.turns.get(conversationId) ?? null
     const activeLeaf = this.deps.conversations.activeLeaf(conversationId)
     const leafId = turn ? turn.parentId : activeLeaf === ROOT_LEAF ? null : activeLeaf

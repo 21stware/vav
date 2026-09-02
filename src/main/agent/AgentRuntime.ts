@@ -28,9 +28,13 @@ import { applyEditedArgs, leanToolArgs } from './agentToolArgs'
 import { isAssistant, stripChangeSetIds, textOf, userTurnMessage, systemNoticeMessage, fatalAssistantMessage } from './agentMessage'
 import { sealRuntimePlanBlocks, planSealMode } from './planSeal'
 import {
+  allocateStreamSlot,
   appendTurnErrorBlock,
   assistantSnapshotFromTurn,
   assistantStopKind,
+  collectParkedWaiters,
+  findTurnWithPendingTool,
+  pickToolAnswerRoute,
   skipStableToolcallDelta,
   runtimeTurnStatus,
   sealCancelledInteractiveTools
@@ -688,34 +692,38 @@ export class AgentRuntime {
   /** Routes a card answer back into the paused turn. */
   answer(conversationId: string, toolCallId: string, text: string): boolean {
     const e2e = this.e2eAskWaiters.get(toolCallId)
-    if (e2e) {
-      this.e2eAskWaiters.delete(toolCallId)
-      e2e(text)
-      return true
-    }
-    const payload = { text, cancelled: false as const }
     const preferred = this.turns.get(conversationId)
-    if (preferred && this.resolvePending(preferred, toolCallId, payload)) return true
-
-    // File Preview / multi-window: active conversation may differ from the
-    // session that owns the pending tool card — resolve by toolCallId.
-    for (const turn of this.turns.values()) {
-      if (this.resolvePending(turn, toolCallId, payload)) return true
-    }
-
-    // Last resort: sole parked waiter (desynced ids after focus hop / HMR).
-    const sole: PendingUserTool[] = []
-    for (const turn of this.turns.values()) {
-      for (const waiter of turn.pending.values()) sole.push(waiter)
-    }
-    if (sole.length === 1) {
-      sole[0]!.resolve(payload)
+    const preferredHasTool = !!preferred?.pending.has(toolCallId)
+    const scanTurn =
+      e2e || preferredHasTool
+        ? undefined
+        : findTurnWithPendingTool(this.turns.values(), (turn) => turn.pending.has(toolCallId))
+    const waiters =
+      !e2e && !preferredHasTool && !scanTurn ? collectParkedWaiters(this.turns.values()) : []
+    const route = pickToolAnswerRoute({
+      hasE2eWaiter: !!e2e,
+      preferredHasTool,
+      scanHasTool: !!scanTurn,
+      soleWaiterCount: waiters.length
+    })
+    const payload = { text, cancelled: false as const }
+    if (route === 'e2e') {
+      this.e2eAskWaiters.delete(toolCallId)
+      e2e!(text)
       return true
     }
-    console.warn(
-      '[agent] answer ignored — no pending waiter',
-      { conversationId, toolCallId, pendingTurns: this.turns.size, sole: sole.length }
-    )
+    if (route === 'preferred') return this.resolvePending(preferred!, toolCallId, payload)
+    if (route === 'scan') return this.resolvePending(scanTurn!, toolCallId, payload)
+    if (route === 'sole') {
+      waiters[0]!.resolve(payload)
+      return true
+    }
+    console.warn('[agent] answer ignored — no pending waiter', {
+      conversationId,
+      toolCallId,
+      pendingTurns: this.turns.size,
+      sole: waiters.length
+    })
     return false
   }
 
@@ -941,15 +949,7 @@ export class AgentRuntime {
 
   /** Stable position for one `(llm turn, contentIndex)` pair. */
   private slotFor(turn: TurnState, contentIndex: number, seed: MessageBlock): number {
-    const key = `${turn.llmTurn}:${contentIndex}`
-    const existing = turn.slots.get(key)
-    if (existing !== undefined) return existing
-    if (seed.kind !== 'reasoning') this.sealReasoning(turn)
-    const slot = turn.blocks.length
-    turn.blocks.push(seed)
-    turn.slots.set(key, slot)
-    if (seed.kind === 'reasoning') turn.reasoningStartedAt.set(slot, Date.now())
-    return slot
+    return allocateStreamSlot(turn, contentIndex, seed, () => this.sealReasoning(turn))
   }
 
   private sealReasoning(turn: TurnState, slot?: number): void {

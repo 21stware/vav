@@ -18,6 +18,79 @@ export function skipStableToolcallDelta(
   return eventType === 'toolcall_delta' && !!prev && prev.summary === summary
 }
 
+/** Stable map key for one `(llm turn, contentIndex)` stream slot. */
+export function streamSlotKey(llmTurn: number, contentIndex: number): string {
+  return `${llmTurn}:${contentIndex}`
+}
+
+export type StreamSlotTurn = {
+  llmTurn: number
+  slots: Map<string, number>
+  blocks: MessageBlock[]
+  reasoningStartedAt: Map<number, number>
+}
+
+/**
+ * Allocate or reuse the block index for one stream slot. Seals open reasoning
+ * before a non-reasoning seed, and stamps reasoning start on a new think slot.
+ */
+export function allocateStreamSlot(
+  turn: StreamSlotTurn,
+  contentIndex: number,
+  seed: MessageBlock,
+  sealNonReasoning: () => void,
+  now = Date.now()
+): number {
+  const key = streamSlotKey(turn.llmTurn, contentIndex)
+  const existing = turn.slots.get(key)
+  if (existing !== undefined) return existing
+  if (seed.kind !== 'reasoning') sealNonReasoning()
+  const slot = turn.blocks.length
+  turn.blocks.push(seed)
+  turn.slots.set(key, slot)
+  if (seed.kind === 'reasoning') turn.reasoningStartedAt.set(slot, now)
+  return slot
+}
+
+export type ToolAnswerRoute = 'e2e' | 'preferred' | 'scan' | 'sole' | 'none'
+
+/**
+ * Route a card answer: e2e waiter → preferred turn → scan by toolCallId →
+ * sole parked waiter. Resolve/mutate stays in the runtime.
+ */
+export function pickToolAnswerRoute(opts: {
+  hasE2eWaiter: boolean
+  preferredHasTool: boolean
+  scanHasTool: boolean
+  soleWaiterCount: number
+}): ToolAnswerRoute {
+  if (opts.hasE2eWaiter) return 'e2e'
+  if (opts.preferredHasTool) return 'preferred'
+  if (opts.scanHasTool) return 'scan'
+  if (opts.soleWaiterCount === 1) return 'sole'
+  return 'none'
+}
+
+export function findTurnWithPendingTool<T>(
+  turns: Iterable<T>,
+  hasTool: (turn: T) => boolean
+): T | undefined {
+  for (const turn of turns) {
+    if (hasTool(turn)) return turn
+  }
+  return undefined
+}
+
+export function collectParkedWaiters<T>(
+  turns: Iterable<{ pending: Map<string, T> }>
+): T[] {
+  const out: T[] = []
+  for (const turn of turns) {
+    for (const waiter of turn.pending.values()) out.push(waiter)
+  }
+  return out
+}
+
 /** Drop empty text/reasoning slots that opened before any token landed. */
 export function persistableTurnBlocks(blocks: MessageBlock[]): MessageBlock[] {
   return blocks.filter(

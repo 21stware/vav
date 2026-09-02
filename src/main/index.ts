@@ -201,9 +201,17 @@ import {
   PREVIEW_WARM_POOL,
   clampPreviewWidth,
   nextUnfocusedPreviewPath,
+  previewCloseDisposition,
   previewPathKey as previewPathKeyOf,
-  previewQuery as buildPreviewQuery
+  previewQuery as buildPreviewQuery,
+  shouldParkIdlePreview
 } from './window/previewPool'
+import {
+  afterLeavingFullscreen,
+  closeLeavingFullscreenDisposition,
+  destroyLeavingFullscreen,
+  hideLeavingFullscreen
+} from './window/fullscreenLeave'
 import { overlayCascadeOrigin, overlayFit, placeDetachedBounds } from './window/windowPlace'
 import { isPreviewableColdOpenPath as previewableColdOpenPath } from './window/coldOpen'
 import { appZOrderWindowIds, windowIsInPlay as windowIsInPlayOf } from './window/windowZOrder'
@@ -2336,7 +2344,13 @@ function wirePreviewLifecycle(window: BrowserWindow, path: string): void {
   const armIdle = (): void => {
     if (idleTimer) clearTimeout(idleTimer)
     idleTimer = setTimeout(() => {
-      if (!window.isDestroyed() && !window.isFocused() && !previewCloseGuards.has(window)) {
+      if (
+        shouldParkIdlePreview({
+          destroyed: window.isDestroyed(),
+          focused: window.isFocused(),
+          guarded: previewCloseGuards.has(window)
+        })
+      ) {
         afterLeavingFullscreen(window, () => {
           if (!window.isDestroyed() && !window.isFocused()) {
             parkWarmPreviewShell(window)
@@ -2356,29 +2370,24 @@ function wirePreviewLifecycle(window: BrowserWindow, path: string): void {
   })
   // Unsaved guard → park into warm pool (hide) instead of destroy when clean.
   window.on('close', (event) => {
-    if (quitting) return
-    if (fullscreenCloseAllowed.has(window)) {
-      fullscreenCloseAllowed.delete(window)
+    const disposition = previewCloseDisposition({
+      quitting,
+      fullscreenCloseAllowed: fullscreenCloseAllowed.has(window),
+      hasUnsavedGuard: previewCloseGuards.has(window)
+    })
+    if (disposition === 'destroy') {
+      if (fullscreenCloseAllowed.has(window)) fullscreenCloseAllowed.delete(window)
       return
     }
-    if (previewCloseGuards.has(window)) {
-      event.preventDefault()
+    event.preventDefault()
+    if (disposition === 'guard') {
       safeSend(window.webContents, IPC.previewCloseAttempt)
       return
     }
-    if (window.isFullScreen()) {
-      event.preventDefault()
-      window.once('leave-full-screen', () => {
-        if (window.isDestroyed()) return
-        parkWarmPreviewShell(window)
-      })
-      window.setFullScreen(false)
-      return
-    }
-    // Recycle into the warm pool — next open skips cold start.
-    event.preventDefault()
     if (idleTimer) clearTimeout(idleTimer)
-    parkWarmPreviewShell(window)
+    afterLeavingFullscreen(window, () => {
+      if (!window.isDestroyed()) parkWarmPreviewShell(window)
+    })
   })
 
   // Cap open previews: park the oldest unfocused ones first.
@@ -2406,28 +2415,6 @@ function wireFullscreenState(window: BrowserWindow): void {
   window.on('enter-full-screen', publish)
   window.on('leave-full-screen', publish)
   window.webContents.on('did-finish-load', publish)
-}
-
-/**
- * macOS leaves a blank black Space if a window is hidden/destroyed while still
- * in native fullscreen. Always exit fullscreen first, then run the action.
- */
-function afterLeavingFullscreen(win: BrowserWindow, next: () => void): void {
-  if (win.isDestroyed()) return
-  if (!win.isFullScreen()) {
-    next()
-    return
-  }
-  win.once('leave-full-screen', () => {
-    if (!win.isDestroyed()) next()
-  })
-  win.setFullScreen(false)
-}
-
-function hideLeavingFullscreen(win: BrowserWindow): void {
-  afterLeavingFullscreen(win, () => {
-    if (!win.isDestroyed()) win.hide()
-  })
 }
 
 /**
@@ -2544,19 +2531,23 @@ const fullscreenCloseAllowed = new WeakSet<BrowserWindow>()
  */
 function wireCloseLeavingFullscreen(win: BrowserWindow): void {
   win.on('close', (event) => {
-    if (quitting || win.isDestroyed()) return
-    if (fullscreenCloseAllowed.has(win)) {
+    const disposition = closeLeavingFullscreenDisposition({
+      quitting,
+      destroyed: win.isDestroyed(),
+      alreadyAllowed: fullscreenCloseAllowed.has(win),
+      isFullScreen: win.isFullScreen()
+    })
+    if (disposition === 'allow-once') {
       fullscreenCloseAllowed.delete(win)
       return
     }
-    if (!win.isFullScreen()) return
+    if (disposition !== 'leave-then-reclose') return
     event.preventDefault()
-    win.once('leave-full-screen', () => {
+    afterLeavingFullscreen(win, () => {
       if (win.isDestroyed()) return
       fullscreenCloseAllowed.add(win)
       win.close()
     })
-    win.setFullScreen(false)
   })
 }
 
@@ -3260,12 +3251,7 @@ function parkWarmSessionShell(window: BrowserWindow): void {
   if (window.isDestroyed()) return
   if (warmSessionPool.includes(window)) return
   if (shouldDestroyParkedWarmShell(warmSessionPool.length, SESSION_WARM_POOL)) {
-    afterLeavingFullscreen(window, () => {
-      if (!window.isDestroyed()) {
-        fullscreenCloseAllowed.add(window)
-        window.destroy()
-      }
-    })
+    destroyLeavingFullscreen(window, () => fullscreenCloseAllowed.add(window))
     return
   }
   try {
@@ -3560,12 +3546,7 @@ function parkWarmPreviewShell(window: BrowserWindow): void {
   if (window.isDestroyed()) return
   if (warmPreviewPool.includes(window)) return
   if (shouldDestroyParkedWarmShell(warmPreviewPool.length, PREVIEW_WARM_POOL)) {
-    afterLeavingFullscreen(window, () => {
-      if (!window.isDestroyed()) {
-        fullscreenCloseAllowed.add(window)
-        window.destroy()
-      }
-    })
+    destroyLeavingFullscreen(window, () => fullscreenCloseAllowed.add(window))
     return
   }
   previewCloseGuards.delete(window)
@@ -3723,12 +3704,7 @@ function parkWarmOverlayShell(window: BrowserWindow): void {
   if (overlayWarmPool.includes(window)) return
   forgetOverlayWindow(window)
   if (shouldDestroyParkedWarmShell(overlayWarmPool.length, OVERLAY_WARM_POOL)) {
-    afterLeavingFullscreen(window, () => {
-      if (!window.isDestroyed()) {
-        fullscreenCloseAllowed.add(window)
-        window.destroy()
-      }
-    })
+    destroyLeavingFullscreen(window, () => fullscreenCloseAllowed.add(window))
     return
   }
   try {

@@ -2,13 +2,18 @@ import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import type { MessageBlock } from '../../shared/types.ts'
 import {
+  allocateStreamSlot,
   appendTurnErrorBlock,
   assistantSnapshotFromTurn,
   assistantStopKind,
+  collectParkedWaiters,
+  findTurnWithPendingTool,
   persistableTurnBlocks,
+  pickToolAnswerRoute,
   runtimeTurnStatus,
   sealCancelledInteractiveTools,
-  skipStableToolcallDelta
+  skipStableToolcallDelta,
+  streamSlotKey
 } from './agentTurnFinish.ts'
 
 describe('skipStableToolcallDelta', () => {
@@ -115,5 +120,145 @@ describe('runtimeTurnStatus', () => {
     assert.equal(status.awaitingToolCallId, 't1')
     assert.equal(status.messageId, 'm1')
     assert.equal(status.blocks[0]?.kind, 'text')
+  })
+})
+
+describe('streamSlotKey / allocateStreamSlot', () => {
+  it('keys by llm turn and content index', () => {
+    assert.equal(streamSlotKey(2, 4), '2:4')
+  })
+
+  it('reuses an existing slot without sealing or pushing', () => {
+    const turn = {
+      llmTurn: 1,
+      slots: new Map([['1:0', 0]]),
+      blocks: [{ kind: 'text', text: 'hi' }] as MessageBlock[],
+      reasoningStartedAt: new Map<number, number>()
+    }
+    let sealed = 0
+    const slot = allocateStreamSlot(turn, 0, { kind: 'text', text: 'more' }, () => {
+      sealed += 1
+    }, 9)
+    assert.equal(slot, 0)
+    assert.equal(sealed, 0)
+    assert.equal(turn.blocks.length, 1)
+  })
+
+  it('seals reasoning before a new non-reasoning slot', () => {
+    const turn = {
+      llmTurn: 0,
+      slots: new Map<string, number>(),
+      blocks: [] as MessageBlock[],
+      reasoningStartedAt: new Map<number, number>()
+    }
+    let sealed = 0
+    const slot = allocateStreamSlot(turn, 1, { kind: 'text', text: '' }, () => {
+      sealed += 1
+    }, 9)
+    assert.equal(slot, 0)
+    assert.equal(sealed, 1)
+    assert.equal(turn.slots.get('0:1'), 0)
+    assert.equal(turn.reasoningStartedAt.size, 0)
+  })
+
+  it('stamps reasoning start without sealing', () => {
+    const turn = {
+      llmTurn: 3,
+      slots: new Map<string, number>(),
+      blocks: [] as MessageBlock[],
+      reasoningStartedAt: new Map<number, number>()
+    }
+    let sealed = 0
+    const slot = allocateStreamSlot(
+      turn,
+      2,
+      { kind: 'reasoning', text: '' },
+      () => {
+        sealed += 1
+      },
+      42
+    )
+    assert.equal(slot, 0)
+    assert.equal(sealed, 0)
+    assert.equal(turn.reasoningStartedAt.get(0), 42)
+    assert.equal(turn.slots.get('3:2'), 0)
+  })
+})
+
+describe('pickToolAnswerRoute', () => {
+  it('prefers e2e, then the requested turn, then a scan hit, then a sole waiter', () => {
+    assert.equal(
+      pickToolAnswerRoute({
+        hasE2eWaiter: true,
+        preferredHasTool: true,
+        scanHasTool: true,
+        soleWaiterCount: 1
+      }),
+      'e2e'
+    )
+    assert.equal(
+      pickToolAnswerRoute({
+        hasE2eWaiter: false,
+        preferredHasTool: true,
+        scanHasTool: true,
+        soleWaiterCount: 1
+      }),
+      'preferred'
+    )
+    assert.equal(
+      pickToolAnswerRoute({
+        hasE2eWaiter: false,
+        preferredHasTool: false,
+        scanHasTool: true,
+        soleWaiterCount: 1
+      }),
+      'scan'
+    )
+    assert.equal(
+      pickToolAnswerRoute({
+        hasE2eWaiter: false,
+        preferredHasTool: false,
+        scanHasTool: false,
+        soleWaiterCount: 1
+      }),
+      'sole'
+    )
+    assert.equal(
+      pickToolAnswerRoute({
+        hasE2eWaiter: false,
+        preferredHasTool: false,
+        scanHasTool: false,
+        soleWaiterCount: 0
+      }),
+      'none'
+    )
+    assert.equal(
+      pickToolAnswerRoute({
+        hasE2eWaiter: false,
+        preferredHasTool: false,
+        scanHasTool: false,
+        soleWaiterCount: 2
+      }),
+      'none'
+    )
+  })
+})
+
+describe('findTurnWithPendingTool / collectParkedWaiters', () => {
+  it('returns the first matching turn and flattens parked waiters', () => {
+    const a = { pending: new Map([['t1', { id: 'a' }]]) }
+    const b = { pending: new Map([['t2', { id: 'b' }]]) }
+    assert.equal(
+      findTurnWithPendingTool([a, b], (turn) => turn.pending.has('t2')),
+      b
+    )
+    assert.equal(
+      findTurnWithPendingTool([a, b], (turn) => turn.pending.has('missing')),
+      undefined
+    )
+    assert.deepEqual(
+      collectParkedWaiters([a, b]).map((w) => w.id),
+      ['a', 'b']
+    )
   })
 })

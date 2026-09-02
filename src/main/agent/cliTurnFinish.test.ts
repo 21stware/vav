@@ -5,6 +5,7 @@ import {
   applyCliCancelQuota,
   cliAssistantContent,
   cliAssistantMessage,
+  consumePendingCancel,
   sameSessionRetryPlan,
   shouldSettleAsCancelled,
   stripLeakedStreamErrorFromTurn
@@ -15,6 +16,31 @@ describe('shouldSettleAsCancelled', () => {
     assert.equal(shouldSettleAsCancelled(true, 'boom'), true)
     assert.equal(shouldSettleAsCancelled(false, 'Request cancelled'), true)
     assert.equal(shouldSettleAsCancelled(false, 'network timeout'), false)
+  })
+})
+
+describe('consumePendingCancel', () => {
+  it('stamps cancelled when the id is queued', () => {
+    const pending = new Set(['c1'])
+    const turn = { cancelled: false }
+    assert.equal(consumePendingCancel(pending, 'c1', turn), true)
+    assert.equal(turn.cancelled, true)
+    assert.equal(pending.has('c1'), false)
+  })
+
+  it('stamps cancelled when the turn is already cancelled even without a queue entry', () => {
+    const pending = new Set<string>()
+    const turn = { cancelled: true }
+    assert.equal(consumePendingCancel(pending, 'c1', turn), true)
+    assert.equal(turn.cancelled, true)
+  })
+
+  it('is a no-op when neither a queue entry nor a stamp is present', () => {
+    const pending = new Set(['other'])
+    const turn = { cancelled: false }
+    assert.equal(consumePendingCancel(pending, 'c1', turn), false)
+    assert.equal(turn.cancelled, false)
+    assert.equal(pending.has('other'), true)
   })
 })
 

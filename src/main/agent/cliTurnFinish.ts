@@ -10,6 +10,20 @@ export function shouldSettleAsCancelled(
   return cancelled || classifyCliError(raw, null, code) === 'cancelled'
 }
 
+/**
+ * Consume a queued Stop (or an already-stamped turn) so startTurn can seal
+ * without talking to the driver.
+ */
+export function consumePendingCancel(
+  pendingCancels: Set<string>,
+  conversationId: string,
+  turn: { cancelled: boolean }
+): boolean {
+  if (!pendingCancels.delete(conversationId) && !turn.cancelled) return false
+  turn.cancelled = true
+  return true
+}
+
 export type SameSessionRetryPlan = {
   phase: 'retrying' | 'thinking'
   prepareReplayFromBlocks: boolean
