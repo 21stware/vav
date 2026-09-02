@@ -1804,6 +1804,51 @@ const daemonAttach = new DaemonAttachService({
   enabled: () => settingsStore.get().remoteControlEnabled === true,
   tailcatToken: () => remoteControl.tunnelToken(),
   dialTunnel: (token) => openTailcatDial(token),
+  catalog: {
+    listSessions: () =>
+      conversationStore
+        .listMeta()
+        .filter((c) => !c.fileId && !c.archived && conversationOnMachine(c, LOCAL_MACHINE_ID))
+        .slice(0, 100),
+    getSession: (id) => {
+      const conversation = conversationStore.get(id)
+      if (
+        !conversation ||
+        conversation.fileId ||
+        conversation.archived ||
+        !conversationOnMachine(conversation, LOCAL_MACHINE_ID)
+      ) {
+        return null
+      }
+      return conversation
+    },
+    listRecents: () => {
+      const fromSettings = recentsForMachine(
+        settingsStore.get().recentWorkspaceDirectories,
+        LOCAL_MACHINE_ID
+      ).map((ref) => ref.path)
+      const fromSessions = conversationStore
+        .listMeta()
+        .filter(
+          (c) =>
+            !c.fileId &&
+            !c.archived &&
+            conversationOnMachine(c, LOCAL_MACHINE_ID) &&
+            Boolean(c.workingDirectory)
+        )
+        .map((c) => c.workingDirectory as string)
+      const seen = new Set<string>()
+      const out: string[] = []
+      for (const path of [...fromSettings, ...fromSessions]) {
+        const trimmed = path.trim()
+        if (!trimmed || seen.has(trimmed)) continue
+        seen.add(trimmed)
+        out.push(trimmed)
+      }
+      return out.slice(0, 20)
+    }
+  },
+  onHostAttached: (machineId) => pullRemoteWorkspace(machineId),
   onHostsChanged: (hosts) => {
     broadcast(IPC.hostsChanged, decorateHosts(hosts))
     syncHostWindows(hosts)
@@ -1841,6 +1886,23 @@ const daemonAttach = new DaemonAttachService({
     return result.response === 0
   }
 })
+
+/** Pull the other computer's sessions and folder recents before its window boots. */
+async function pullRemoteWorkspace(machineId: string): Promise<void> {
+  const id = String(machineId || '')
+  if (!id || isLocalMachine(id)) return
+  const catalog = await daemonAttach.pullHostCatalog(id)
+  let sessionsChanged = false
+  for (const raw of catalog.sessions) {
+    const adopted = conversationStore.adoptHostConversation(raw as Conversation, id)
+    if (adopted) sessionsChanged = true
+  }
+  for (const path of catalog.recents) {
+    settingsStore.rememberWorkspaceDirectory(path, '', id)
+  }
+  if (sessionsChanged) broadcast(IPC.convChanged, conversationStore.listMeta())
+  if (catalog.recents.length > 0) broadcast(IPC.settingsChanged, currentSettings())
+}
 
 hostRegistry.onChange((hosts) => {
   broadcast(IPC.hostsChanged, decorateHosts(hosts))
@@ -8404,7 +8466,7 @@ return c as text`
   ipcMain.handle(IPC.hostsPairing, () => daemonAttach.pairing())
   ipcMain.handle(IPC.hostsPair, async (_event, payload: string) => {
     const result = await daemonAttach.pair(String(payload || ''))
-    if (result.ok) void showHostWindow(result.host.id)
+    if (result.ok) await showHostWindow(result.host.id)
     return result
   })
   ipcMain.handle(IPC.hostsPairLan, async (_event, peer: HostDiscoveryPeer) => {
@@ -8414,7 +8476,7 @@ return c as text`
       name: typeof peer?.name === 'string' ? peer.name : undefined,
       machineId: typeof peer?.machineId === 'string' ? peer.machineId : undefined
     })
-    if (result.ok) void showHostWindow(result.host.id)
+    if (result.ok) await showHostWindow(result.host.id)
     return result
   })
   ipcMain.handle(IPC.hostsCancelPair, () => {

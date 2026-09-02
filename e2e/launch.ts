@@ -11,8 +11,14 @@ import {
   readFileSync
 } from 'node:fs'
 import { execSync } from 'node:child_process'
+import { randomUUID } from 'node:crypto'
 import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
+import { createConnection } from 'node:net'
+import {
+  encodeDaemonPairing,
+  parseDaemonPairing
+} from '../src/shared/daemonProtocol.ts'
 import {
   buildNamedSession,
   buildSeededConversation,
@@ -85,6 +91,19 @@ export type LaunchVavOptions = {
    * empty-state `empty-in` (logo + name stagger).
    */
   reduceMotion?: boolean
+  /** Settings → Connect: listen so another VAV can pair with this instance. */
+  remoteControlEnabled?: boolean
+  /** Seed `userData/daemon/identity.json` name (pairing / remote-window label). */
+  hostName?: string
+  /** Override the seeded primary session id (default `e2e-session`). */
+  sessionId?: string
+  sessionTitle?: string
+  /** First user message on the seeded primary session. */
+  sessionMessage?: string
+  /** Bind the primary session to `extraWorkspace` instead of the default folder. */
+  sessionInExtraWorkspace?: boolean
+  /** Extra files written into `extraWorkspace` (requires `extraWorkspace: true`). */
+  extraWorkspaceFiles?: Record<string, string>
 }
 
 export type VavHarness = {
@@ -142,6 +161,7 @@ function seedUserData(
   }
   if (extraWorkspace) settings.recentWorkspaceDirectories = [extraWorkspace]
   if (options.swarmMode) settings.swarmModeEnabled = true
+  if (options.remoteControlEnabled) settings.remoteControlEnabled = true
   if (options.liveAcp) {
     chmodSync(ACP_AGENT_SH, 0o755)
     const binary = options.acpBinary ?? ACP_AGENT_SH
@@ -160,10 +180,36 @@ function seedUserData(
   }
   writeFileSync(join(userData, 'settings.json'), JSON.stringify(settings, null, 2))
   writeFileSync(join(userData, 'keychain-onboarding-done'), `${Date.now()}\n`)
+  if (options.hostName) {
+    mkdirSync(join(userData, 'daemon'), { recursive: true })
+    writeFileSync(
+      join(userData, 'daemon', 'identity.json'),
+      JSON.stringify({ machineId: randomUUID(), name: options.hostName }, null, 2)
+    )
+  }
 
   const conversationsDir = join(userData, 'conversations')
   mkdirSync(conversationsDir, { recursive: true })
-  const primary = buildSeededConversation(kind, workspace)
+  const primaryDir =
+    options.sessionInExtraWorkspace && extraWorkspace ? extraWorkspace : workspace
+  const primary = buildSeededConversation(kind, primaryDir)
+  if (options.sessionId) primary.id = options.sessionId
+  if (options.sessionTitle) primary.title = options.sessionTitle
+  if (options.sessionMessage) {
+    const now = Date.now()
+    primary.messages = [
+      {
+        id: 'e2e-host-user-1',
+        parentId: null,
+        role: 'user',
+        content: options.sessionMessage,
+        blocks: [{ kind: 'text', text: options.sessionMessage }],
+        createdAt: now
+      }
+    ]
+    primary.activeLeafId = 'e2e-host-user-1'
+    primary.updatedAt = now
+  }
   writeFileSync(join(conversationsDir, `${primary.id}.json`), JSON.stringify(primary))
   const ids = [primary.id]
   if (options.extraAcpSession) {
@@ -199,6 +245,9 @@ export async function launchVav(options: LaunchVavOptions = {}): Promise<VavHarn
     : undefined
   if (extraWorkspace) {
     writeFileSync(join(extraWorkspace, 'other.md'), '# other from e2e\n')
+    for (const [name, contents] of Object.entries(options.extraWorkspaceFiles ?? {})) {
+      writeFileSync(join(extraWorkspace, name), contents)
+    }
   }
   seedUserData(userData, workspace, options, extraWorkspace)
 
@@ -255,6 +304,38 @@ export async function launchVav(options: LaunchVavOptions = {}): Promise<VavHarn
   }
 
   return { app, page, userData, workspace, extraWorkspace, acpModelLog, dispose }
+}
+
+export async function waitForDaemonPairing(page: Page): Promise<string> {
+  let pairing = ''
+  await expect
+    .poll(async () => {
+      pairing = (await page.evaluate(() => window.vav.hosts.pairing())) ?? ''
+      if (!pairing) return false
+      const parsed = parseDaemonPairing(pairing)
+      const port = parsed?.port
+      if (!port) return false
+      return await new Promise<boolean>((resolve) => {
+        const socket = createConnection({ host: '127.0.0.1', port })
+        const done = (ok: boolean): void => {
+          socket.removeAllListeners()
+          socket.destroy()
+          resolve(ok)
+        }
+        socket.setTimeout(400)
+        socket.once('connect', () => done(true))
+        socket.once('error', () => done(false))
+        socket.once('timeout', () => done(false))
+      })
+    })
+    .toBe(true)
+  const parsed = parseDaemonPairing(pairing)
+  if (!parsed) throw new Error(`unrecognized pairing: ${pairing}`)
+  return encodeDaemonPairing({
+    ...parsed,
+    host: '127.0.0.1',
+    addresses: ['127.0.0.1']
+  })
 }
 
 export function sessionRow(page: Page, id: string) {

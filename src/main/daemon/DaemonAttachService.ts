@@ -21,7 +21,7 @@ import {
 } from '../../shared/workspaceHost.ts'
 import type { HostRegistry } from '../host/WorkspaceHost.ts'
 import { createOfflineRemoteHost } from '../host/WorkspaceHost.ts'
-import { DaemonServer } from './DaemonServer.ts'
+import { DaemonServer, type DaemonWorkspaceCatalog } from './DaemonServer.ts'
 import { DaemonClient, createRemoteWorkspaceHost, requestLanPairOffer, PAIRING_CANCELLED } from './DaemonClient.ts'
 import { loadOrCreateIdentity, type DaemonIdentity } from './identity.ts'
 import {
@@ -72,6 +72,13 @@ type AttachOpts = {
   onDiscovered?: (peers: DiscoveredPeer[]) => void
   /** Desktop: confirm a LAN Pair from another VAV. vavd omits this. */
   confirmLanPair?: (from: { name: string; machineId: string }) => Promise<boolean>
+  /** This computer's sessions + folder recents, served to a paired client. */
+  catalog?: DaemonWorkspaceCatalog
+  /**
+   * After a live daemon session is mounted (pair or reconnect). Pull the
+   * host catalog here before the remote window bootstraps.
+   */
+  onHostAttached?: (machineId: string) => void | Promise<void>
 }
 
 export class DaemonAttachService {
@@ -166,6 +173,49 @@ export class DaemonAttachService {
     return this.providers.get(machineId) ?? []
   }
 
+  /**
+   * Import the other computer's sidebar sessions and folder recents.
+   * Missing RPCs (headless / older vavd) resolve to empty lists.
+   */
+  async pullHostCatalog(machineId: string): Promise<{ sessions: unknown[]; recents: string[] }> {
+    const client = this.clients.get(machineId)
+    if (!client?.connected) return { sessions: [], recents: [] }
+    let metas: Array<{ id?: unknown }> = []
+    try {
+      const listed = (await client.request('sessions.list')) as { sessions?: unknown }
+      if (Array.isArray(listed?.sessions)) metas = listed.sessions as Array<{ id?: unknown }>
+    } catch {
+      return { sessions: [], recents: [] }
+    }
+    const sessions: unknown[] = []
+    for (const meta of metas.slice(0, 100)) {
+      const id = typeof meta?.id === 'string' ? meta.id.trim() : ''
+      if (!id) continue
+      try {
+        const got = (await client.request('sessions.get', { id }, 60_000)) as {
+          conversation?: unknown
+        }
+        if (got?.conversation && typeof got.conversation === 'object') {
+          sessions.push(got.conversation)
+        }
+      } catch {
+        // skip one oversized / broken session
+      }
+    }
+    let recents: string[] = []
+    try {
+      const listed = (await client.request('workspace.recents')) as { paths?: unknown }
+      if (Array.isArray(listed?.paths)) {
+        recents = listed.paths.filter(
+          (path): path is string => typeof path === 'string' && path.trim().length > 0
+        )
+      }
+    } catch {
+      // older host
+    }
+    return { sessions, recents }
+  }
+
   whichCached(machineId: string, candidates: string[]): string | null {
     const key = candidates.map((c) => c.trim()).filter(Boolean).join('\0')
     if (!key) return null
@@ -230,6 +280,7 @@ export class DaemonAttachService {
         tmp: welcome.tmp
       })
       this.mount(client, welcome)
+      await this.notifyHostAttached(welcome.host.id)
       return { ok: true, host: this.opts.registry.get(welcome.host.id)?.info ?? welcome.host }
     } catch (err) {
       if (isPairCancelled(err)) return { ok: false, error: PAIRING_CANCELLED }
@@ -327,7 +378,8 @@ export class DaemonAttachService {
       pairing: () => this.pairing(),
       onPairAsk: this.opts.confirmLanPair
         ? (from) => this.opts.confirmLanPair!(from)
-        : undefined
+        : undefined,
+      catalog: this.opts.catalog
     })
     return this.server
   }
@@ -485,6 +537,15 @@ export class DaemonAttachService {
     })
   }
 
+  private async notifyHostAttached(machineId: string): Promise<void> {
+    if (!this.opts.onHostAttached) return
+    try {
+      await this.opts.onHostAttached(machineId)
+    } catch (err) {
+      console.error('[daemon] host catalog pull failed', err)
+    }
+  }
+
   private async reconnect(row: PairedHostRecord): Promise<void> {
     try {
       const { client, welcome, target } = await this.connectPairing({
@@ -498,6 +559,7 @@ export class DaemonAttachService {
         addresses: row.addresses
       })
       this.mount(client, welcome)
+      await this.notifyHostAttached(welcome.host.id)
       this.remember({
         ...row,
         host: row.token ? row.host : target.host,

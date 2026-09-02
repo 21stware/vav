@@ -90,6 +90,51 @@ describe('DaemonAttachService', () => {
     }
   })
 
+  it('pulls the host catalog after pairing', async () => {
+    const disk = await mkdtemp(join(tmpdir(), 'vav-box-'))
+    const userData = await mkdtemp(join(tmpdir(), 'vav-attach-'))
+    const proj = join(disk, 'proj')
+    const server = new DaemonServer({
+      host: createLocalWorkspaceHost({ name: 'box' }),
+      identity: { machineId: 'box-1', name: 'box' },
+      secret: () => SECRET,
+      appVersion: 'test',
+      home: disk,
+      tmp: disk,
+      catalog: {
+        listSessions: () => [{ id: 's1', title: 'Host chat' }],
+        getSession: (id) =>
+          id === 's1'
+            ? { id: 's1', title: 'Host chat', workingDirectory: proj, messages: [] }
+            : null,
+        listRecents: () => [proj]
+      }
+    })
+    const port = await server.listen(0, '127.0.0.1')
+    const { service } = attach(userData)
+    try {
+      const result = await service.pair(
+        encodeDaemonPairing({
+          v: DAEMON_PROTO_VERSION,
+          secret: SECRET,
+          machineId: 'ignored',
+          name: 'box',
+          host: '127.0.0.1',
+          port
+        })
+      )
+      assert.equal(result.ok, true)
+      const catalog = await service.pullHostCatalog('box-1')
+      assert.equal((catalog.sessions[0] as { title: string }).title, 'Host chat')
+      assert.deepEqual(catalog.recents, [proj])
+    } finally {
+      service.dispose()
+      server.close()
+      await rm(disk, { recursive: true, force: true })
+      await rm(userData, { recursive: true, force: true })
+    }
+  })
+
   it('restores an unreachable host as offline and does not touch local disk', async () => {
     const userData = await mkdtemp(join(tmpdir(), 'vav-attach-'))
     const localProbe = join(userData, 'should-not-read.txt')

@@ -28,7 +28,7 @@ import type {
   ThinkingLevel,
   TokenSnapshot
 } from '@shared/types'
-import { LOCAL_MACHINE_ID } from '@shared/workspaceHost'
+import { conversationOnMachine, LOCAL_MACHINE_ID } from '@shared/workspaceHost'
 import { parseThinkingLevel } from '@shared/thinkingLevel'
 import { normalizeCursorConversationModel } from '@shared/cursorModel'
 import { hostTranscriptKey } from '@shared/types'
@@ -367,6 +367,92 @@ export class ConversationStore {
     this.conversations.unshift(imported)
     this.markDirty(imported.id)
     return imported
+  }
+
+  /**
+   * Copy a conversation that already lives on another VAV (same ids when
+   * free). Unlike {@link importConversation}, this is a sync of that machine's
+   * store — not a duplicate — so the remote sidebar can show the host's
+   * sessions instead of minting an empty chat on this computer.
+   */
+  adoptHostConversation(source: Conversation, hostMachineId: string): Conversation | null {
+    if (!source || typeof source.id !== 'string' || !source.id.trim()) return null
+    if (source.fileId) return null
+    const hostId = hostMachineId.trim() || LOCAL_MACHINE_ID
+    const now = Date.now()
+    const cloned = structuredClone(source)
+
+    const existingIndex = this.conversations.findIndex(
+      (c) =>
+        conversationOnMachine(c, hostId) &&
+        (c.id === source.id || c.duplicateSourceId === source.id)
+    )
+    const idTakenByOther =
+      existingIndex < 0 && this.conversations.some((c) => c.id === source.id)
+    const id =
+      existingIndex >= 0
+        ? this.conversations[existingIndex]!.id
+        : idTakenByOther
+          ? randomUUID()
+          : source.id
+
+    const adopted: Conversation = {
+      ...cloned,
+      id,
+      machineId: hostId,
+      createdAt: typeof cloned.createdAt === 'number' ? cloned.createdAt : now,
+      updatedAt: typeof cloned.updatedAt === 'number' ? cloned.updatedAt : now,
+      pinned: cloned.pinned === true,
+      pinTime: cloned.pinTime ?? null,
+      archived: cloned.archived === true,
+      archivedAt: cloned.archivedAt ?? null,
+      duplicateSourceId: idTakenByOther ? source.id : (cloned.duplicateSourceId ?? null),
+      duplicateSourceTitle: idTakenByOther
+        ? (cloned.title ?? null)
+        : (cloned.duplicateSourceTitle ?? null),
+      workingDirectory: cloned.workingDirectory ?? null,
+      model: cloned.model || 'unknown',
+      title: cloned.title || defaultSessionTitle(currentLocale()),
+      approvalMode: cloned.approvalMode || 'auto',
+      thinkingLevel: parseThinkingLevel(cloned.thinkingLevel),
+      fast: cloned.fast === true,
+      tokensUsed: typeof cloned.tokensUsed === 'number' ? cloned.tokensUsed : 0,
+      tokenLimit:
+        typeof cloned.tokenLimit === 'number'
+          ? cloned.tokenLimit
+          : contextWindowFor(cloned.model || 'unknown'),
+      reportedSessionCostUsd: cloned.reportedSessionCostUsd ?? null,
+      quotaWindows: Array.isArray(cloned.quotaWindows) ? cloned.quotaWindows : [],
+      tokenHistory: Array.isArray(cloned.tokenHistory) ? cloned.tokenHistory : [],
+      cacheCreatedAt: cloned.cacheCreatedAt ?? null,
+      cacheExpiresAt: cloned.cacheExpiresAt ?? null,
+      fileId: null,
+      fileReadOnly: false,
+      agentBinaryName: cloned.agentBinaryName ?? null,
+      cliHost: cloned.cliHost ?? null,
+      cliResumeCursor: cloned.cliResumeCursor ?? null,
+      acpSession: cloned.acpSession ?? null,
+      cliPaneBindings: {},
+      focusedFilePath: cloned.focusedFilePath ?? null,
+      resultUnseen: false,
+      accountId: cloned.accountId ?? null,
+      swarmParentId: cloned.swarmParentId ?? null,
+      swarmLayout: sanitizeSwarmLayout(cloned.swarmLayout),
+      swarmLayoutFull: sanitizeSwarmLayout(cloned.swarmLayoutFull),
+      hostTranscripts:
+        cloned.hostTranscripts && typeof cloned.hostTranscripts === 'object'
+          ? cloned.hostTranscripts
+          : {},
+      messages: Array.isArray(cloned.messages) ? cloned.messages : [],
+      activeLeafId: cloned.activeLeafId ?? null,
+      compactions: Array.isArray(cloned.compactions) ? cloned.compactions : []
+    }
+    this.adoptTreeShape(adopted)
+
+    if (existingIndex >= 0) this.conversations[existingIndex] = adopted
+    else this.conversations.unshift(adopted)
+    this.markDirty(adopted.id)
+    return adopted
   }
 
   /**
