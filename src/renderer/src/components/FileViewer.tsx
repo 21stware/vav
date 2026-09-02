@@ -314,6 +314,12 @@ export function FileViewer({
   filePathRef.current = filePath
   const hasUnsavedRef = useRef(hasUnsavedChanges)
   hasUnsavedRef.current = hasUnsavedChanges
+  /** Latest file-session id for sandbox I/O — must not retrigger the open effect. */
+  const hostConversationIdRef = useRef<string | undefined>(undefined)
+  hostConversationIdRef.current = filesHostConversationId(
+    agentConversationId,
+    parentConversationId
+  )
   const applyingOwnWrite = useRef(false)
   /** Silent progressive text fill — scroll-driven, no UI affordance. */
   const textWindowFillRef = useRef<{
@@ -359,10 +365,7 @@ export function FileViewer({
   }, [filePath, refreshAssoc])
 
   const reloadInfo = useCallback(async (path: string): Promise<FileInspectResult> => {
-    const result = await window.vav.files.inspect(
-      path,
-      filesHostConversationId(agentConversationId, parentConversationId)
-    )
+    const result = await window.vav.files.inspect(path, hostConversationIdRef.current)
     setInfo(result)
     knownIdentityRef.current = {
       size: result.size,
@@ -370,7 +373,7 @@ export function FileViewer({
     }
     if (result.name && !embedded) document.title = result.name
     return result
-  }, [agentConversationId, embedded, parentConversationId])
+  }, [embedded])
 
   const isBinaryOfficeKind = useCallback((kind: FileInspectResult['kind'] | undefined): boolean => {
     return kind === 'docx' || kind === 'xlsx' || kind === 'pptx' || kind === 'pdf'
@@ -469,7 +472,7 @@ export function FileViewer({
       const win = await window.vav.files.readTextWindow(state.path, {
         startByte: state.endByte,
         maxBytes: 2 * 1024 * 1024,
-        conversationId: filesHostConversationId(agentConversationId, parentConversationId)
+        conversationId: hostConversationIdRef.current
       })
       if (win.error || state.path !== filePathRef.current) return
       if (hasUnsavedRef.current) return
@@ -509,7 +512,7 @@ export function FileViewer({
     } finally {
       if (textWindowFillRef.current === state) state.busy = false
     }
-  }, [agentConversationId, parentConversationId])
+  }, [])
 
   useEffect(() => {
     setBinaryOpenAs(null)
@@ -564,7 +567,7 @@ export function FileViewer({
         // Progressive structured index for block-pick (does not block native canvas).
         void window.vav.files
           .inspectStructured?.(filePath, {
-            conversationId: filesHostConversationId(agentConversationId, parentConversationId),
+            conversationId: hostConversationIdRef.current,
             maxBlocks:
               result.kind === 'docx'
                 ? 48
@@ -586,7 +589,7 @@ export function FileViewer({
             markViewer('structured:partial')
             if (chunk.partial) {
               void window.vav.files.inspectStructured?.(filePath, {
-                conversationId: filesHostConversationId(agentConversationId, parentConversationId)
+                conversationId: hostConversationIdRef.current
               }).then((full) => {
                 if (cancelled || !full?.ok) return
                 setStructuredPreview(full.structured)
@@ -611,15 +614,7 @@ export function FileViewer({
     return () => {
       cancelled = true
     }
-  }, [
-    filePath,
-    reloadInfo,
-    isBinaryOfficeKind,
-    extendTextWindow,
-    captureBaseline,
-    agentConversationId,
-    parentConversationId
-  ])
+  }, [filePath, reloadInfo, isBinaryOfficeKind, extendTextWindow, captureBaseline])
 
   useEffect(() => {
     try {
