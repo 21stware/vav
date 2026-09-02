@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import { isAssistant, stripChangeSetIds, textOf, userTurnMessage } from './agentMessage.ts'
+import { isAssistant, stripChangeSetIds, textOf, userTurnMessage, systemNoticeMessage, fatalAssistantMessage } from './agentMessage.ts'
 
 describe('agentMessage', () => {
   it('detects assistant messages and joins text parts', () => {
@@ -26,6 +26,29 @@ describe('agentMessage', () => {
     assert.equal(msg.quoteMessageId, 'm')
     assert.deepEqual(msg.attachments, ['/a.png'])
     assert.equal('contextFile' in msg, false)
+  })
+
+  it('builds system notices and fatal assistant cards', () => {
+    const notice = systemNoticeMessage({
+      id: 'n1',
+      parentId: 'p',
+      body: 'Discarded',
+      createdAt: 9
+    })
+    assert.equal(notice.role, 'system')
+    assert.equal(notice.content, 'Discarded')
+    assert.deepEqual(notice.blocks, [{ kind: 'text', text: 'Discarded' }])
+
+    const fatal = fatalAssistantMessage({
+      id: 'f1',
+      parentId: null,
+      error: 'No API key',
+      createdAt: 11
+    })
+    assert.equal(fatal.role, 'assistant')
+    assert.equal(fatal.content, 'No API key')
+    assert.equal(fatal.errorText, 'No API key')
+    assert.deepEqual(fatal.blocks, [{ kind: 'text', text: '> No API key' }])
   })
 
   it('strips prior changeSetIds in place and reports dirty', () => {

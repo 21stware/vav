@@ -6,6 +6,8 @@ import {
   applyToolEventStatus,
   applyToolRuntimePatch,
   cliToolHasInput,
+  ensureToolCallBlock,
+  newCliParentTaskBlock,
   newCliPermissionBlock,
   newCliToolCallBlock,
   shouldAdoptMappedTool,
@@ -140,5 +142,16 @@ describe('cliToolBlock', () => {
     assert.equal(children.length, 2)
     assert.equal(children[0]?.kind === 'text' ? children[0].text : '', 'Hello world')
     assert.equal(children[1]?.kind === 'reasoning' ? children[1].text : '', 'think')
+  })
+
+  it('ensures a pending tool card and builds a parent task', () => {
+    const blocks: import('../../shared/types.ts').MessageBlock[] = []
+    assert.equal(ensureToolCallBlock(blocks, 't1', 'run'), true)
+    assert.equal(ensureToolCallBlock(blocks, 't1', 'again'), false)
+    assert.equal(blocks[0]?.kind === 'toolCall' ? blocks[0].id : '', 't1')
+    const parent = newCliParentTaskBlock('p1', 'Task')
+    assert.equal(parent.tool, 'task')
+    assert.equal(parent.status, 'executing')
+    assert.deepEqual(parent.children, [])
   })
 })

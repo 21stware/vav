@@ -157,3 +157,33 @@ export function appendNestedChildDelta(
   }
   return true
 }
+
+/** Guarantee a toolCall block so approval patches always reach the renderer. */
+export function ensureToolCallBlock(
+  blocks: MessageBlock[],
+  toolCallId: string,
+  summary: string
+): boolean {
+  if (blocks.some((b) => b.kind === 'toolCall' && b.id === toolCallId)) return false
+  blocks.push(
+    newCliToolCallBlock({
+      id: toolCallId,
+      tool: 'terminal',
+      summary: summary || toolCallId,
+      input: '{}'
+    })
+  )
+  return true
+}
+
+/** Parent task card that nested CLI children hang off. */
+export function newCliParentTaskBlock(parentId: string, summary: string): ToolCallBlock {
+  return newCliToolCallBlock({
+    id: parentId,
+    tool: 'task',
+    summary,
+    input: '{}',
+    status: 'executing',
+    children: []
+  })
+}

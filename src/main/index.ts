@@ -98,7 +98,6 @@ import {
   remotePathAllowed
 } from '@shared/remoteWorkspace'
 import {
-  agentLabel,
   buildRemoteControls,
   parseAgentId,
   parseApprovalMode
@@ -134,12 +133,9 @@ import { ANALYSIS_API_HOST } from '@shared/analysis'
 import {
   agentModelHostKey,
   defaultModelForChatHost,
-  filterEnabledModels,
   labelForChatModel,
-  modelsForChatHost,
   resolveModelForChatHost
 } from '@shared/agentModels'
-import { collapseCursorListModels } from '@shared/cursorModel'
 import { groupAccountsByVendor, isLlmVendorId, vendorById, vendorIdFromEndpoint } from '@shared/llmVendors'
 import { ConversationStore } from './store/ConversationStore'
 import { VavPackService } from './store/VavPackService'
@@ -171,6 +167,7 @@ import { providerAccountViewOf } from './window/providerAccountView'
 import { findSwarmHistoryItem as findItemInSwarmHistory } from './window/swarmHistoryFind'
 import { machineIdFromRendererUrl } from './window/machineFromUrl'
 import { collectPreferredModelHosts, contextWindowForModelId, conversationModelHealPatch } from './agent/modelContext'
+import { activeTurnStatusFromPhase, awaitingNotifyKind } from './agent/agentEventNotify'
 import { dialogConfirmOptions, revealSecretBoxOptions } from './ipc/dialogOptions'
 import { showParentedMessageBox, windowFromSender } from './ipc/nativeDialog'
 import { conversationIdForWorkdirs } from './fs/conversationPath'
@@ -233,6 +230,8 @@ import { mapRemoteSessions } from './remote/sessionList'
 import { fanRemoteTurn as dispatchRemoteTurn } from './remote/fanTurn'
 import { listRemoteChildEntries, listRemoteRootEntries } from './remote/dirBrowse'
 import {
+  remoteCatalogModelRows,
+  remoteControlAgentRows,
   remoteDefaultApproval,
   remoteHostRecentDirs,
   remoteLiveConversation
@@ -1129,30 +1128,24 @@ function handleAgentEvent(event: TurnEvent): void {
     return
   }
   if (event.type === 'phase') {
-    if (event.phase === 'awaiting-user') {
-      activeTurns.set(event.conversationId, 'paused')
+    const status = activeTurnStatusFromPhase(event.phase)
+    if (status) {
+      activeTurns.set(event.conversationId, status)
       refreshTraySessions()
       pushTokenUsageIfOpen(event.conversationId)
-    } else if (
-      event.phase === 'working' ||
-      event.phase === 'thinking' ||
-      event.phase === 'outputting' ||
-      event.phase === 'retrying'
-    ) {
-      activeTurns.set(event.conversationId, 'running')
-      refreshTraySessions()
-      pushTokenUsageIfOpen(event.conversationId)
-      // User answered / approved — drop that session's Dock attention items.
-      notifications.acknowledgeConversation(event.conversationId)
+      if (status === 'running') {
+        // User answered / approved — drop that session's Dock attention items.
+        notifications.acknowledgeConversation(event.conversationId)
+      }
     }
     return
   }
   if (event.type === 'awaiting') {
     activeTurns.set(event.conversationId, 'paused')
     refreshTraySessions()
-    const tool = event.block.tool
     const body = event.block.summary || event.block.tool
-    if (tool === 'ask_user_question') {
+    const kind = awaitingNotifyKind(event.block.tool, !!event.block.choices?.length)
+    if (kind === 'ask') {
       notifications.alertUser(
         'ask',
         event.conversationId,
@@ -1160,15 +1153,7 @@ function handleAgentEvent(event: TurnEvent): void {
         body,
         event.toolCallId
       )
-    } else if (tool === 'plan_doc') {
-      notifications.alertUser(
-        'approval',
-        event.conversationId,
-        t('notify.awaitingApproval', { title }),
-        body,
-        event.toolCallId
-      )
-    } else if (tool === 'request') {
+    } else if (kind === 'request') {
       notifications.alertUser(
         'request',
         event.conversationId,
@@ -1176,7 +1161,7 @@ function handleAgentEvent(event: TurnEvent): void {
         body,
         event.toolCallId
       )
-    } else if (event.block.choices?.length) {
+    } else if (kind === 'approval') {
       notifications.alertUser(
         'approval',
         event.conversationId,
@@ -1510,16 +1495,15 @@ function archiveRemote(conversationId: string): 'ok' | 'not-found' {
 
 function remoteCatalogModels(host: CliHostKind | null, accountId?: string | null): { id: string; label: string }[] {
   const settings = settingsStore.get()
-  const vendorId = host == null ? vendorIdFromEndpoint(settings.apiEndpoint) : null
-  const key = agentModelHostKey(host, vendorId, accountId)
-  const snap = getModelCatalogSnapshot()
-  const raw =
-    snap[key]?.models?.length ? snap[key]!.models : modelsForChatHost(host, settings.customModels, settings.defaultModel)
-  const listed = host === 'cursor' ? collapseCursorListModels(raw) : raw
-  return filterEnabledModels(host, listed, settings.disabledAgentModels, vendorId, accountId).map((model) => ({
-    id: model.id,
-    label: labelForChatModel(host, model.id, settings.customModels, listed)
-  }))
+  return remoteCatalogModelRows({
+    host,
+    accountId,
+    apiEndpoint: settings.apiEndpoint,
+    customModels: settings.customModels,
+    defaultModel: settings.defaultModel,
+    disabledAgentModels: settings.disabledAgentModels,
+    snapshot: getModelCatalogSnapshot()
+  })
 }
 
 function listRemoteControls(conversationId: string): RemoteControlsEvent | null {
@@ -1527,12 +1511,7 @@ function listRemoteControls(conversationId: string): RemoteControlsEvent | null 
   if (!conversation || conversation.archived) return null
   const host = conversation.cliHost ?? null
   const settings = settingsStore.get()
-  const agents = enabledCliAgents(settings.cliAgents)
-    .filter((agent) => isStructuredCliHost(agent.id))
-    .map((agent) => ({
-      id: agent.id,
-      label: agent.name?.trim() || agentLabel(agent.id)
-    }))
+  const agents = remoteControlAgentRows(settings.cliAgents)
   const models = remoteCatalogModels(host, conversation.accountId)
   const catalogueDefault =
     host === 'cursor'

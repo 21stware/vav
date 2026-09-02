@@ -60,3 +60,39 @@ export function userTurnMessage(opts: {
     ...(opts.contextFile ? { contextFile: opts.contextFile } : {})
   }
 }
+
+/** Sidebar notice the model should see on the next send. */
+export function systemNoticeMessage(opts: {
+  id: string
+  parentId: string | null
+  body: string
+  createdAt?: number
+}): ChatMessage {
+  return {
+    id: opts.id,
+    parentId: opts.parentId,
+    role: 'system',
+    content: opts.body,
+    blocks: [{ kind: 'text', text: opts.body }],
+    createdAt: opts.createdAt ?? Date.now()
+  }
+}
+
+/** Terminal failure for a turn that never started (missing key, empty history). */
+export function fatalAssistantMessage(opts: {
+  id: string
+  parentId: string | null
+  error: string
+  createdAt?: number
+}): ChatMessage {
+  return {
+    id: opts.id,
+    parentId: opts.parentId,
+    role: 'assistant',
+    content: opts.error,
+    blocks: [{ kind: 'text', text: `> ${opts.error}` }],
+    createdAt: opts.createdAt ?? Date.now(),
+    errorText: opts.error,
+    errorDetail: opts.error
+  }
+}

@@ -25,7 +25,7 @@ import { loadInlineImages } from './attachmentImages'
 import { parseThinkingLevel, toPiReasoning } from '@shared/thinkingLevel'
 import type { LeafCompaction } from '@shared/types'
 import { applyEditedArgs, leanToolArgs } from './agentToolArgs'
-import { isAssistant, stripChangeSetIds, textOf, userTurnMessage } from './agentMessage'
+import { isAssistant, stripChangeSetIds, textOf, userTurnMessage, systemNoticeMessage, fatalAssistantMessage } from './agentMessage'
 import { sealRuntimePlanBlocks } from './planSeal'
 import {
   appendTurnErrorBlock,
@@ -55,8 +55,15 @@ import {
 import { buildSystemPrompt } from './systemPrompt'
 import { summarizeToolInput } from './toolSummarize'
 import { stampReasoningDurations } from './reasoningStamp'
-import { newCliToolCallBlock, applyToolRuntimePatch } from './cliToolBlock'
+import { applyToolRuntimePatch, ensureToolCallBlock } from './cliToolBlock'
 import { compactClearGate, planConversationCompact } from './compactPlan'
+import { mergeVavCredentials } from './agentConfig'
+import {
+  completeE2eStubTurn as runE2eStubTurn,
+  startE2eStubAsk as runE2eStubAsk,
+  startE2eStubApprove as runE2eStubApprove,
+  startE2eStubStream as runE2eStubStream
+} from './agentE2eStub'
 import { FileDraftCoalescer, writeToolDraft } from '@shared/writeToolDraft'
 import type { ConversationStore } from '../store/ConversationStore'
 import { kindFromFilePath } from '../store/FileSessionStore'
@@ -182,16 +189,11 @@ export class AgentRuntime {
   constructor(private deps: AgentRuntimeDeps) {}
 
   private vavCreds(conversation: Conversation): { apiKey: string | null; settings: AppSettings } {
-    const settings = this.deps.settings.get()
-    const resolved = this.deps.resolveVavCredentials?.(conversation)
-    if (!resolved) return { apiKey: this.deps.secrets.get(), settings }
-    return {
-      apiKey: resolved.apiKey,
-      settings: {
-        ...settings,
-        apiEndpoint: resolved.endpoint.trim() || settings.apiEndpoint
-      }
-    }
+    return mergeVavCredentials(
+      this.deps.settings.get(),
+      this.deps.resolveVavCredentials?.(conversation),
+      this.deps.secrets.get()
+    )
   }
 
   isRunning(conversationId: string): boolean {
@@ -256,14 +258,11 @@ export class AgentRuntime {
   private writeNotice(conversationId: string, body: string): void {
     const leaf = this.deps.conversations.activeLeaf(conversationId)
     const parentId = leaf === ROOT_LEAF ? null : leaf
-    const message: ChatMessage = {
+    const message = systemNoticeMessage({
       id: randomUUID(),
       parentId,
-      role: 'system',
-      content: body,
-      blocks: [{ kind: 'text', text: body }],
-      createdAt: Date.now()
-    }
+      body
+    })
     this.deps.conversations.appendMessage(conversationId, message)
     this.deps.conversations.flush()
     this.deps.emit({ type: 'notice', conversationId, message })
@@ -491,19 +490,26 @@ export class AgentRuntime {
     if (!conversation) return
 
     if (isE2eRuntime() && process.env.VAV_E2E_STUB_TURN === '1') {
+      const sink = {
+        emit: this.deps.emit,
+        append: (message: ChatMessage) => {
+          this.deps.conversations.appendMessage(conversationId, message)
+          this.deps.conversations.flush()
+        }
+      }
       if (process.env.VAV_E2E_STUB_ASK === '1') {
-        this.startE2eStubAsk(conversationId, parentId)
+        runE2eStubAsk(sink, this.e2eAskWaiters, conversationId, parentId)
         return
       }
       if (process.env.VAV_E2E_STUB_APPROVE === '1') {
-        this.startE2eStubApprove(conversationId, parentId)
+        runE2eStubApprove(sink, this.e2eAskWaiters, conversationId, parentId)
         return
       }
       if (process.env.VAV_E2E_STUB_STREAM === '1') {
-        this.startE2eStubStream(conversationId, parentId)
+        runE2eStubStream(sink, conversationId, parentId)
         return
       }
-      this.completeE2eStubTurn(conversationId, parentId)
+      runE2eStubTurn(sink, conversationId, parentId)
       return
     }
 
@@ -1330,15 +1336,7 @@ export class AgentRuntime {
 
   /** Guarantee a toolCall block so approval patches always reach the renderer. */
   private ensureToolBlock(turn: TurnState, toolCallId: string, summary: string): void {
-    const existing = turn.blocks.findIndex((b) => b.kind === 'toolCall' && b.id === toolCallId)
-    if (existing >= 0) return
-    const block = newCliToolCallBlock({
-      id: toolCallId,
-      tool: 'terminal',
-      summary: summary || toolCallId,
-      input: '{}'
-    })
-    turn.blocks.push(block)
+    ensureToolCallBlock(turn.blocks, toolCallId, summary)
   }
 
   private setPhase(conversationId: string, turn: TurnState, phase: TurnPhase): void {
@@ -1448,199 +1446,13 @@ export class AgentRuntime {
     }
   }
 
-  /**
-   * Playwright-only: finish a turn without calling a provider.
-   * Gated on VAV_E2E=1 and VAV_E2E_STUB_TURN=1.
-   */
-  private completeE2eStubTurn(conversationId: string, parentId: string | null): void {
-    const text = 'e2e stub reply'
-    const message: ChatMessage = {
-      id: randomUUID(),
-      parentId,
-      role: 'assistant',
-      content: text,
-      blocks: [{ kind: 'text', text }],
-      createdAt: Date.now()
-    }
-    this.deps.emit({ type: 'start', conversationId })
-    this.deps.conversations.appendMessage(conversationId, message)
-    this.deps.conversations.flush()
-    this.deps.emit({
-      type: 'end',
-      conversationId,
-      message,
-      tokensUsed: 0
-    })
-  }
-
-  /** Live reasoning + tool + text so StreamingMessage / StreamStatus can be asserted. */
-  private startE2eStubStream(conversationId: string, parentId: string | null): void {
-    const read: ToolCallBlock = {
-      kind: 'toolCall',
-      id: 'e2e-stream-read',
-      tool: 'fs_read',
-      summary: 'hello.md',
-      input: JSON.stringify({ path: 'hello.md' }),
-      output: '',
-      status: 'executing'
-    }
-    const done: ToolCallBlock = { ...read, status: 'completed', output: '# hello from e2e\n' }
-    const text = 'e2e stub reply'
-    const message: ChatMessage = {
-      id: randomUUID(),
-      parentId,
-      role: 'assistant',
-      content: text,
-      createdAt: Date.now(),
-      blocks: [
-        { kind: 'reasoning', text: 'e2e live thought', durationMs: 80 },
-        done,
-        { kind: 'text', text }
-      ]
-    }
-
-    this.deps.emit({ type: 'start', conversationId })
-    this.deps.emit({ type: 'phase', conversationId, phase: 'thinking' })
-    this.deps.emit({
-      type: 'delta',
-      conversationId,
-      index: 0,
-      kind: 'reasoning',
-      text: 'e2e live thought'
-    })
-
-    setTimeout(() => {
-      this.deps.emit({ type: 'phase', conversationId, phase: 'working' })
-      this.deps.emit({ type: 'tool', conversationId, index: 1, block: read })
-    }, 160)
-
-    setTimeout(() => {
-      this.deps.emit({ type: 'tool', conversationId, index: 1, block: done })
-      this.deps.emit({ type: 'phase', conversationId, phase: 'outputting' })
-      this.deps.emit({
-        type: 'delta',
-        conversationId,
-        index: 2,
-        kind: 'text',
-        text
-      })
-    }, 420)
-
-    setTimeout(() => {
-      this.deps.conversations.appendMessage(conversationId, message)
-      this.deps.conversations.flush()
-      this.deps.emit({ type: 'end', conversationId, message, tokensUsed: 0 })
-    }, 780)
-  }
-
-  /** Park on ask_user_question until the renderer answers the card. */
-  private startE2eStubAsk(conversationId: string, parentId: string | null): void {
-    const askId = 'e2e-live-ask'
-    const block: ToolCallBlock = {
-      kind: 'toolCall',
-      id: askId,
-      tool: 'ask_user_question',
-      summary: 'Pick a next step',
-      input: JSON.stringify({
-        question: 'Pick a next step',
-        choices: ['Keep writing', 'Open review']
-      }),
-      output: '',
-      status: 'pending',
-      questions: [
-        { question: 'Pick a next step', choices: ['Keep writing', 'Open review'] }
-      ]
-    }
-
-    this.deps.emit({ type: 'start', conversationId })
-    this.deps.emit({ type: 'phase', conversationId, phase: 'awaiting-user' })
-    this.deps.emit({
-      type: 'awaiting',
-      conversationId,
-      toolCallId: askId,
-      index: 0,
-      block
-    })
-
-    this.e2eAskWaiters.set(askId, (text) => {
-      const sealed: ToolCallBlock = { ...block, status: 'completed', output: text }
-      const reply = `e2e stub reply · ${text}`
-      const message: ChatMessage = {
-        id: randomUUID(),
-        parentId,
-        role: 'assistant',
-        content: reply,
-        createdAt: Date.now(),
-        blocks: [sealed, { kind: 'text', text: reply }]
-      }
-      this.deps.emit({ type: 'tool', conversationId, index: 0, block: sealed })
-      this.deps.conversations.appendMessage(conversationId, message)
-      this.deps.conversations.flush()
-      this.deps.emit({ type: 'end', conversationId, message, tokensUsed: 0 })
-    })
-  }
-
-  /** Park on an Approve/Deny write gate until the renderer answers. */
-  private startE2eStubApprove(conversationId: string, parentId: string | null): void {
-    const approveId = 'e2e-live-approve'
-    const block: ToolCallBlock = {
-      kind: 'toolCall',
-      id: approveId,
-      tool: 'fs_write',
-      summary: 'Write hello.md',
-      input: JSON.stringify({ path: 'hello.md', contents: 'patched\n' }),
-      output: '',
-      status: 'pending',
-      choices: ['Approve', 'Deny']
-    }
-
-    this.deps.emit({ type: 'start', conversationId })
-    this.deps.emit({ type: 'phase', conversationId, phase: 'awaiting-user' })
-    this.deps.emit({
-      type: 'awaiting',
-      conversationId,
-      toolCallId: approveId,
-      index: 0,
-      block
-    })
-
-    this.e2eAskWaiters.set(approveId, (text) => {
-      const approved = /approve/i.test(text)
-      const sealed: ToolCallBlock = {
-        ...block,
-        status: approved ? 'completed' : 'skipped',
-        output: text,
-        choices: undefined
-      }
-      delete sealed.choices
-      const reply = approved ? 'e2e stub reply · approved' : 'e2e stub reply · denied'
-      const message: ChatMessage = {
-        id: randomUUID(),
-        parentId,
-        role: 'assistant',
-        content: reply,
-        createdAt: Date.now(),
-        blocks: [sealed, { kind: 'text', text: reply }]
-      }
-      this.deps.emit({ type: 'tool', conversationId, index: 0, block: sealed })
-      this.deps.conversations.appendMessage(conversationId, message)
-      this.deps.conversations.flush()
-      this.deps.emit({ type: 'end', conversationId, message, tokensUsed: 0 })
-    })
-  }
-
   /** Emits a terminal failure for a turn that never started (e.g. missing key). */
   private emitFatal(conversationId: string, parentId: string | null, error: string): void {
-    const message: ChatMessage = {
+    const message = fatalAssistantMessage({
       id: randomUUID(),
       parentId,
-      role: 'assistant',
-      content: error,
-      blocks: [{ kind: 'text', text: `> ${error}` }],
-      createdAt: Date.now(),
-      errorText: error,
-      errorDetail: error
-    }
+      error
+    })
     this.deps.conversations.appendMessage(conversationId, message)
     this.deps.conversations.flush()
     this.deps.emit({

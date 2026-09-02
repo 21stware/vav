@@ -1,3 +1,20 @@
+import {
+  enabledCliAgents,
+  type AgentConfig,
+  type CliHostKind,
+  type ModelOption
+} from '../../shared/types.ts'
+import { isStructuredCliHost } from '../../shared/cliHost.ts'
+import {
+  agentModelHostKey,
+  filterEnabledModels,
+  labelForChatModel,
+  modelsForChatHost
+} from '../../shared/agentModels.ts'
+import { collapseCursorListModels } from '../../shared/cursorModel.ts'
+import { vendorIdFromEndpoint } from '../../shared/llmVendors.ts'
+import { agentLabel } from '../../shared/remoteSessionControls.ts'
+
 /** Phone host sheet: only bypass/edit are explicit; everything else is auto. */
 export function remoteDefaultApproval(
   mode: string | null | undefined
@@ -34,4 +51,46 @@ export function remoteHostRecentDirs(
     if (recentDirs.length >= cap) break
   }
   return recentDirs
+}
+
+/** Structured CLI rows for the phone host-controls sheet. */
+export function remoteControlAgentRows(
+  cliAgents: AgentConfig[] | null | undefined
+): { id: string; label: string }[] {
+  return enabledCliAgents(cliAgents)
+    .filter((agent) => isStructuredCliHost(agent.id))
+    .map((agent) => ({
+      id: agent.id,
+      label: agent.name?.trim() || agentLabel(agent.id)
+    }))
+}
+
+/** Enabled catalogue rows for the phone model picker. */
+export function remoteCatalogModelRows(opts: {
+  host: CliHostKind | null
+  accountId?: string | null
+  apiEndpoint: string
+  customModels: string[]
+  defaultModel?: string | null
+  disabledAgentModels?: Record<string, string[]> | null
+  snapshot: Record<string, { models?: ModelOption[] } | undefined>
+}): { id: string; label: string }[] {
+  const vendorId = opts.host == null ? vendorIdFromEndpoint(opts.apiEndpoint) : null
+  const key = agentModelHostKey(opts.host, vendorId, opts.accountId)
+  const snap = opts.snapshot[key]
+  const raw =
+    snap?.models?.length
+      ? snap.models
+      : modelsForChatHost(opts.host, opts.customModels, opts.defaultModel)
+  const listed = opts.host === 'cursor' ? collapseCursorListModels(raw) : raw
+  return filterEnabledModels(
+    opts.host,
+    listed,
+    opts.disabledAgentModels,
+    vendorId,
+    opts.accountId
+  ).map((model) => ({
+    id: model.id,
+    label: labelForChatModel(opts.host, model.id, opts.customModels, listed)
+  }))
 }

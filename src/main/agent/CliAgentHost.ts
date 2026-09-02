@@ -94,6 +94,7 @@ import {
 import {
   appendNestedChildDelta,
   applyCliToolPatch,
+  newCliParentTaskBlock,
   newCliPermissionBlock,
   newCliToolCallBlock
 } from './cliToolBlock'
@@ -1417,14 +1418,7 @@ export class CliAgentHost {
   private ensureParentTask(turn: HostTurn, parentId: string): ToolCallBlock {
     const existing = findToolBlock(turn.blocks, parentId)
     if (existing) return existing
-    const block = newCliToolCallBlock({
-      id: parentId,
-      tool: 'task',
-      summary: t('tool.task'),
-      input: '{}',
-      status: 'executing',
-      children: []
-    })
+    const block = newCliParentTaskBlock(parentId, t('tool.task'))
     turn.toolIndex.set(parentId, turn.blocks.length)
     turn.blocks.push(block)
     this.sealOpenReasoning(turn)
