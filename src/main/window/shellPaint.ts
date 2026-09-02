@@ -15,6 +15,25 @@ export function windowThemeNameFromDark(dark: boolean): 'dark' | 'light' {
   return dark ? 'dark' : 'light'
 }
 
+/** Matches renderer `--toolbar-height` (sidebar / agent / file-preview chrome). */
+export const TOOLBAR_HEIGHT = 42
+
+export function trafficLightOrigin(barHeight = TOOLBAR_HEIGHT): { x: number; y: number } {
+  return { x: 12, y: Math.round((barHeight - 12) / 2) }
+}
+
+/** `barHeight` matches the renderer's own title bar, so the two rows line up. */
+export function overlayColors(
+  dark: boolean,
+  barHeight = TOOLBAR_HEIGHT
+): { color: string; symbolColor: string; height: number } {
+  return {
+    color: dark ? WINDOW_BG_DARK : WINDOW_BG_LIGHT,
+    symbolColor: dark ? '#efeff1' : '#141416',
+    height: barHeight
+  }
+}
+
 export function primeRendererShell(
   win: BrowserWindow,
   options: { clear?: boolean; dark: boolean }

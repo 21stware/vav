@@ -167,10 +167,14 @@ import { installTrustedIpcGuard } from './ipc/ipcTrust'
 import {
   applyWindowVibrancy as applyVibrancyPaint,
   clearWindowVibrancy as clearVibrancyPaint,
+  overlayColors as overlayColorsForTheme,
   primeRendererShell as primeShellPaint,
+  TOOLBAR_HEIGHT,
+  trafficLightOrigin,
   windowBackgroundColor,
   windowThemeNameFromDark
 } from './window/shellPaint'
+import { trayDirLabel as formatTrayDirLabel } from './tray/trayLabels'
 import { HostRegistry } from './host'
 import { openSpawn, previewSpawn, revealSpawn } from './host/hostShell'
 import { clipRoot, isClipPath, writeClip, writeClipBytes } from './fs/clipStore'
@@ -786,15 +790,7 @@ swarmFinishAlert = createSwarmFinishAlert(
 
 /** Compact path for tray labels: `/Users/me/repo/vav` → `~/repo/vav`. */
 function trayDirLabel(workingDirectory: string | null | undefined): string {
-  if (!workingDirectory || workingDirectory === '~') return '~'
-  const home = homedir()
-  if (workingDirectory === home) return '~'
-  if (workingDirectory.startsWith(home + '/') || workingDirectory.startsWith(home + '\\')) {
-    return `~${workingDirectory.slice(home.length).replace(/\\/g, '/')}`
-  }
-  // Fall back to last segment if path is long and outside home.
-  const parts = workingDirectory.replace(/\\/g, '/').split('/').filter(Boolean)
-  return parts.length ? parts[parts.length - 1]! : workingDirectory
+  return formatTrayDirLabel(workingDirectory, homedir())
 }
 
 function trayAgentLabel(agentId: string): string {
@@ -2303,14 +2299,8 @@ function syncVibrancyShellWindows(): void {
 }
 
 
-/** Matches renderer `--toolbar-height` (sidebar / agent / file-preview chrome). */
-const TOOLBAR_HEIGHT = 42
 /** Main window + detached session column — narrowest useful shell. */
 const MAIN_WINDOW_MIN_WIDTH = 400
-
-function trafficLightOrigin(barHeight = TOOLBAR_HEIGHT): { x: number; y: number } {
-  return { x: 12, y: Math.round((barHeight - 12) / 2) }
-}
 
 function applyTrafficLights(win: BrowserWindow, barHeight = TOOLBAR_HEIGHT): void {
   if (!IS_MAC || win.isDestroyed()) return
@@ -2327,12 +2317,7 @@ function overlayColors(barHeight = TOOLBAR_HEIGHT): {
   symbolColor: string
   height: number
 } {
-  const dark = nativeTheme.shouldUseDarkColors
-  return {
-    color: dark ? '#121213' : '#ececee',
-    symbolColor: dark ? '#efeff1' : '#141416',
-    height: barHeight
-  }
+  return overlayColorsForTheme(nativeTheme.shouldUseDarkColors, barHeight)
 }
 
 /**
