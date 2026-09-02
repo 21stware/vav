@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { resolve as resolvePath, sep } from 'node:path'
 import { describe, it } from 'node:test'
 import {
   buildSelectionAnchor,
@@ -11,7 +12,8 @@ import {
 describe('resolveInWorkdir / resolveDocPath', () => {
   it('keeps absolute paths and joins relatives', () => {
     assert.equal(resolveInWorkdir('/w', '/abs'), '/abs')
-    assert.equal(resolveInWorkdir('/w', 'src/a.ts').endsWith('src/a.ts'), true)
+    assert.equal(resolveInWorkdir('/w', 'src/a.ts'), resolvePath('/w', 'src/a.ts'))
+    assert.equal(resolveInWorkdir('/w', 'src/a.ts').endsWith(`src${sep}a.ts`), true)
   })
 
   it('prefers explicit path, then default, then selection', () => {

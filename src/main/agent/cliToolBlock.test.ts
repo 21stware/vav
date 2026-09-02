@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import {
   applyToolEventStatus,
+  applyToolRuntimePatch,
   newCliToolCallBlock,
   shouldKeepPendingInteractive
 } from './cliToolBlock.ts'
@@ -59,5 +60,21 @@ describe('cliToolBlock', () => {
     assert.equal(block.askTitle, 'Ask')
     assert.deepEqual(block.choices, ['a', 'b'])
     assert.equal(block.questions?.[0]?.question, 'q?')
+  })
+
+  it('clears approval fields when the runtime patch has no choices', () => {
+    const prev = newCliToolCallBlock({
+      id: 't',
+      tool: 'fs_write',
+      summary: 'write',
+      input: '{}',
+      choices: ['Approve', 'Deny'],
+      askTitle: 'fs_write'
+    })
+    const next = applyToolRuntimePatch(prev, { status: 'executing', output: 'ok' })
+    assert.equal(next.status, 'executing')
+    assert.equal(next.output, 'ok')
+    assert.equal(next.choices, undefined)
+    assert.equal(next.askTitle, undefined)
   })
 })

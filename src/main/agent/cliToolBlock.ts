@@ -53,3 +53,34 @@ export function applyToolEventStatus(
     if (output != null) block.output = output
   }
 }
+
+/** Merge live tool-runtime state onto the transcript card, clearing approval UI. */
+export function applyToolRuntimePatch(
+  prev: ToolCallBlock,
+  state: {
+    status: ToolCallBlock['status']
+    output?: string
+    choices?: string[]
+    multiSelect?: boolean
+    questions?: ToolCallBlock['questions']
+    askTitle?: string
+  }
+): ToolCallBlock {
+  const block: ToolCallBlock = {
+    ...prev,
+    status: state.status,
+    output: state.output ?? prev.output
+  }
+  if (!state.choices) {
+    delete block.choices
+    delete block.multiSelect
+    delete block.questions
+    delete block.askTitle
+  } else {
+    block.choices = state.choices
+    if (state.multiSelect != null) block.multiSelect = state.multiSelect
+    if (state.questions) block.questions = state.questions
+    if (state.askTitle) block.askTitle = state.askTitle
+  }
+  return block
+}

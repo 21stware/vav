@@ -17,16 +17,12 @@ import {
   type TurnPhase,
   type TurnStatus
 } from '@shared/types'
-import { ROOT_LEAF, threadPath } from '@shared/thread'
+import { ROOT_LEAF } from '@shared/thread'
 import { buildSnapshot } from '@shared/tokenUsage'
 import { buildModel, describeError, streamWith } from './provider'
 import { catalogRatesFor, contextWindowFor, maxTokensFor } from './modelMeta'
 import { loadInlineImages } from './attachmentImages'
 import { parseThinkingLevel, toPiReasoning } from '@shared/thinkingLevel'
-import {
-  COMPACT_MIN_FOLDED,
-  defaultKeepAfterIndex
-} from '@shared/compaction'
 import type { LeafCompaction } from '@shared/types'
 import { applyEditedArgs, leanToolArgs } from './agentToolArgs'
 import { isAssistant, textOf, userTurnMessage } from './agentMessage'
@@ -58,7 +54,8 @@ import {
 import { buildSystemPrompt } from './systemPrompt'
 import { summarizeToolInput } from './toolSummarize'
 import { stampReasoningDurations } from './reasoningStamp'
-import { newCliToolCallBlock } from './cliToolBlock'
+import { newCliToolCallBlock, applyToolRuntimePatch } from './cliToolBlock'
+import { compactClearGate, planConversationCompact } from './compactPlan'
 import { FileDraftCoalescer, writeToolDraft } from '@shared/writeToolDraft'
 import type { ConversationStore } from '../store/ConversationStore'
 import { kindFromFilePath } from '../store/FileSessionStore'
@@ -363,42 +360,30 @@ export class AgentRuntime {
       return { ok: false, error: t('compact.error.busy') }
     }
     const conversation = this.deps.conversations.get(conversationId)
-    if (!conversation) return { ok: false, error: t('compact.error.missing') }
-    if (conversation.cliHost) {
-      return { ok: false, error: t('compact.error.cliHost') }
-    }
-
-    const leafId = conversation.activeLeafId ?? threadPath(conversation.messages, null).at(-1)?.id
-    if (!leafId) return { ok: false, error: t('compact.error.empty') }
-
-    const path = threadPath(conversation.messages, leafId)
-    let keepIdx: number | null = null
-    if (options?.keepAfterMessageId) {
-      keepIdx = path.findIndex((m) => m.id === options.keepAfterMessageId)
-      if (keepIdx < COMPACT_MIN_FOLDED) {
-        return { ok: false, error: t('compact.error.notEnough') }
+    const plan = planConversationCompact({
+      isRunning: this.turns.has(conversationId),
+      conversation,
+      keepAfterMessageId: options?.keepAfterMessageId,
+      errors: {
+        busy: t('compact.error.busy'),
+        missing: t('compact.error.missing'),
+        cliHost: t('compact.error.cliHost'),
+        empty: t('compact.error.empty'),
+        notEnough: t('compact.error.notEnough')
       }
-    } else {
-      keepIdx = defaultKeepAfterIndex(path.length)
-      if (keepIdx == null) return { ok: false, error: t('compact.error.notEnough') }
-    }
+    })
+    if (!plan.ok) return plan
 
-    const keepAfterMessageId = path[keepIdx]!.id
-    const toFold = path.slice(0, keepIdx)
-    if (toFold.length < COMPACT_MIN_FOLDED) {
-      return { ok: false, error: t('compact.error.notEnough') }
-    }
-
-    const { apiKey, settings } = this.vavCreds(conversation)
+    const { apiKey, settings } = this.vavCreds(conversation!)
     if (!apiKey) return { ok: false, error: t('error.noApiKey') }
 
-    const modelId = conversation.model || settings.defaultModel
+    const modelId = conversation!.model || settings.defaultModel
     const model = buildModel(settings, modelId, contextWindowFor(modelId))
 
     let summary: string
     try {
       summary = await this.summarizeForCompact(
-        toFold,
+        plan.toFold,
         model,
         apiKey,
         maxTokensFor(modelId)
@@ -409,14 +394,13 @@ export class AgentRuntime {
     if (!summary.trim()) return { ok: false, error: t('compact.error.failed') }
 
     const summaryText = summary.trim()
-    const kept = path.slice(keepIdx)
-    const estimatedContextTokens = estimateCompactedContextTokens(summaryText, kept)
+    const estimatedContextTokens = estimateCompactedContextTokens(summaryText, plan.kept)
     const compaction: LeafCompaction = {
-      leafId,
-      keepAfterMessageId,
+      leafId: plan.leafId,
+      keepAfterMessageId: plan.keepAfterMessageId,
       summary: summaryText,
       createdAt: Date.now(),
-      compactedCount: toFold.length,
+      compactedCount: plan.toFold.length,
       estimatedContextTokens
     }
     this.deps.conversations.setCompaction(conversationId, compaction)
@@ -430,16 +414,16 @@ export class AgentRuntime {
     conversationId: string,
     leafId: string
   ): { ok: true } | { ok: false; error: string } {
-    if (this.turns.has(conversationId)) {
-      return { ok: false, error: t('compact.error.busy') }
-    }
-    const conversation = this.deps.conversations.get(conversationId)
-    if (!conversation) {
-      return { ok: false, error: t('compact.error.missing') }
-    }
-    if (conversation.cliHost) {
-      return { ok: false, error: t('compact.error.cliHost') }
-    }
+    const gate = compactClearGate({
+      isRunning: this.turns.has(conversationId),
+      conversation: this.deps.conversations.get(conversationId),
+      errors: {
+        busy: t('compact.error.busy'),
+        missing: t('compact.error.missing'),
+        cliHost: t('compact.error.cliHost')
+      }
+    })
+    if (!gate.ok) return gate
     this.deps.conversations.clearCompaction(conversationId, leafId)
     return { ok: true }
   }
@@ -1034,22 +1018,7 @@ export class AgentRuntime {
       if (slot < 0) return
     }
     const prev = turn.blocks[slot] as ToolCallBlock
-    const block: ToolCallBlock = {
-      ...prev,
-      status: state.status,
-      output: state.output ?? prev.output
-    }
-    if (!state.choices) {
-      delete block.choices
-      delete block.multiSelect
-      delete block.questions
-      delete block.askTitle
-    } else {
-      block.choices = state.choices
-      if (state.multiSelect != null) block.multiSelect = state.multiSelect
-      if (state.questions) block.questions = state.questions
-      if (state.askTitle) block.askTitle = state.askTitle
-    }
+    const block = applyToolRuntimePatch(prev, state)
     turn.blocks[slot] = block
     this.sendCard(conversationId, turn, slot, block)
   }

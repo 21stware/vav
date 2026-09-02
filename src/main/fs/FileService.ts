@@ -27,7 +27,7 @@ import type { WorkingCopyService } from './WorkingCopyService'
 import { localHostFs, type HostFs, type HostWatcher } from '../host'
 import { conversationIdForWatchedPath } from './conversationPath'
 import { isPathAllowed } from './pathAllow'
-import { previewKind, countNewlines, mimeFor } from './filePreviewKind'
+import { previewKind, mimeFor } from './filePreviewKind'
 import { sortEntries } from './fileEntrySort'
 import { modeToPermissions } from './fileMode'
 import { joinOnHostPath } from './fileHostPath'
@@ -36,7 +36,15 @@ import { inspectZipArchive, zipInspectFailure, zipInspectSuccess } from './fileZ
 import { looksLikeTextFile } from './fileTextSample'
 import { defaultAppDisplayName, mdlsRaw } from './fileMacMeta'
 import { inodeLabel, ownerLabel, statTimeMs } from './fileBinaryMeta'
-import { deniedInspectResult, directoryInspectResult } from './fileInspectShape'
+import {
+  binaryInspectFallback,
+  deniedInspectResult,
+  directoryInspectResult,
+  heicInspectResult,
+  inspectCaughtError,
+  sqliteInspectResult,
+  textWindowInspectResult
+} from './fileInspectShape'
 import {
   BINARY_BASE64_SOFT,
   BINARY_WINDOW_HARD_MAX,
@@ -637,34 +645,14 @@ export class FileService {
         if (kind === 'csv') this.scheduleIndex(path)
         // truncated/textWindow are for silent progressive fill in the renderer —
         // never surface a product "file too large" or "load more" affordance.
-        return {
-          ...base,
-          text: win.content,
-          truncated: win.truncated,
-          textWindow: {
-            startByte: win.startByte,
-            endByte: win.endByte,
-            totalBytes: win.totalBytes
-          },
-          lineCount: win.content ? countNewlines(win.content) : 0
-        }
+        return textWindowInspectResult(base, win)
       }
 
       if (kind === 'image' || kind === 'audio' || kind === 'video') {
         // Stream via vav-local — never base64 the whole media file.
         if (isHeicPath(path)) {
           const heic = await prepareHeicPreview(path)
-          return {
-            ...base,
-            kind: 'image',
-            mime: heic.converted ? 'image/jpeg' : 'image/heic',
-            contentPath: heic.converted ? heic.previewPath : undefined,
-            streamUrl: localFileStreamUrl(heic.previewPath),
-            imageMeta: heic.meta,
-            warnings: heic.converted
-              ? ['HEIC decoded to a temporary JPEG for preview (original unchanged).']
-              : undefined
-          }
+          return heicInspectResult(base, heic)
         }
         return {
           ...base,
@@ -674,16 +662,7 @@ export class FileService {
 
       if (kind === 'sqlite') {
         try {
-          const sqlite = inspectSqlite(path)
-          const summary = sqlite.tables
-            .map((tb) => `${tb.name} (${tb.rowCount} rows · ${tb.columns.length} cols)`)
-            .join('\n')
-          return {
-            ...base,
-            sqlite,
-            text: summary || '(no tables)',
-            lineCount: sqlite.tables.length
-          }
+          return sqliteInspectResult(base, inspectSqlite(path))
         } catch (err) {
           return { ...base, error: (err as Error).message || t('files.error.unsupported') }
         }
@@ -729,28 +708,10 @@ export class FileService {
         return { ...base, binaryMeta }
       } catch (metaErr) {
         console.error('[files] binary meta failed', path, metaErr)
-        return {
-          ...base,
-          binaryMeta: {
-            uti: 'public.data',
-            permissions: '—',
-            owner: '—',
-            createdAt: null,
-            modifiedAt: Number.isFinite(info.mtimeMs) ? info.mtimeMs : null,
-            inode: '—',
-            defaultApp: null
-          }
-        }
+        return binaryInspectFallback(base, info.mtimeMs)
       }
     } catch (err) {
-      return {
-        path,
-        name,
-        size: 0,
-        kind: 'binary',
-        mime: '',
-        error: (err as Error).message
-      }
+      return inspectCaughtError(path, name, err)
     }
   }
 

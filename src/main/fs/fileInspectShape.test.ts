@@ -1,6 +1,14 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import { deniedInspectResult, directoryInspectResult } from './fileInspectShape.ts'
+import {
+  binaryInspectFallback,
+  deniedInspectResult,
+  directoryInspectResult,
+  heicInspectResult,
+  inspectCaughtError,
+  sqliteInspectResult,
+  textWindowInspectResult
+} from './fileInspectShape.ts'
 
 describe('fileInspectShape', () => {
   it('returns a binary error stub for denied paths', () => {
@@ -23,5 +31,43 @@ describe('fileInspectShape', () => {
       kind: 'directory',
       mime: 'inode/directory'
     })
+  })
+
+  it('windows text, sqlite tables, HEIC sidecars, and binary fallbacks', () => {
+    const base = {
+      path: '/a',
+      name: 'a',
+      size: 12,
+      kind: 'text' as const,
+      mime: 'text/plain'
+    }
+    const text = textWindowInspectResult(base, {
+      content: 'one\ntwo',
+      truncated: true,
+      startByte: 0,
+      endByte: 7,
+      totalBytes: 20
+    })
+    assert.equal(text.lineCount, 2)
+    assert.equal(text.truncated, true)
+
+    const sqlite = sqliteInspectResult(
+      { ...base, kind: 'sqlite', mime: 'application/x-sqlite3' },
+      { tables: [{ name: 't', columns: ['id'], rowCount: 3 }] }
+    )
+    assert.match(sqlite.text ?? '', /t \(3 rows/)
+    assert.equal(sqlite.lineCount, 1)
+
+    const heic = heicInspectResult(
+      { ...base, kind: 'image', mime: 'image/heic' },
+      { converted: true, previewPath: '/tmp/a.jpg', meta: [{ key: 'Make', value: 'Apple' }] }
+    )
+    assert.equal(heic.mime, 'image/jpeg')
+    assert.equal(heic.contentPath, '/tmp/a.jpg')
+    assert.match(heic.warnings?.[0] ?? '', /HEIC/)
+
+    const fallback = binaryInspectFallback(base, 42)
+    assert.equal(fallback.binaryMeta?.modifiedAt, 42)
+    assert.equal(inspectCaughtError('/a', 'a', new Error('boom')).error, 'boom')
   })
 })
