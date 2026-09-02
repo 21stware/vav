@@ -30,14 +30,20 @@ declare global {
         ): Promise<unknown>
         setCurrent(id: string): Promise<unknown>
       }
+      hosts: {
+        pair(payload: string): Promise<{ ok: true; host: { id: string } } | { ok: false; error: string }>
+        list(): Promise<{ id: string; online?: boolean; name?: string; controlPlane?: boolean }[]>
+        pairing(): string | null
+      }
       conversations: {
         get(id: string): Promise<{
-          messages: unknown[]
+          messages: { role?: string; content?: string }[]
           title?: string
           archived?: boolean
           pinned?: boolean
           resultUnseen?: boolean
           workingDirectory?: string | null
+          machineId?: string | null
           acpSession?: {
             currentModeId?: string | null
             configOptions?: { id: string; currentValue: string | boolean; category?: string }[]

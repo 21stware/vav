@@ -5,7 +5,8 @@ import {
   encodeLine,
   encodePairing,
   parseClientMessage,
-  parsePairing
+  parsePairing,
+  parseServerMessage
 } from './remoteControl.ts'
 
 describe('drainJsonLines', () => {
@@ -196,5 +197,35 @@ describe('pairing payload', () => {
       null
     )
     assert.equal(parsePairing('vav-remote:{broken'), null)
+  })
+})
+
+describe('parseServerMessage', () => {
+  it('accepts welcome, sessions, thread, and turn frames the phone already paints', () => {
+    assert.deepEqual(parseServerMessage({ type: 'welcome', proto: 1, app: 'VAV', version: '1' }), {
+      type: 'welcome',
+      proto: 1,
+      app: 'VAV',
+      version: '1'
+    })
+    const sessions = parseServerMessage({
+      type: 'sessions',
+      sessions: [{ id: 'c1', title: 'Host', status: 'idle', surface: 'vav', updatedAt: 1 }]
+    })
+    assert.equal(sessions?.type, 'sessions')
+    if (sessions?.type === 'sessions') assert.equal(sessions.sessions[0]?.dirLabel, '')
+    const turn = parseServerMessage({
+      type: 'turn',
+      conversationId: 'c1',
+      phase: 'running',
+      draft: 'hi',
+      blocks: [{ kind: 'text', text: 'hi' }]
+    })
+    assert.equal(turn?.type, 'turn')
+    if (turn?.type === 'turn') assert.equal(turn.draft, 'hi')
+  })
+
+  it('rejects a turn without a conversation', () => {
+    assert.equal(parseServerMessage({ type: 'turn', phase: 'running' }), null)
   })
 })

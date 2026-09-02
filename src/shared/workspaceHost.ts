@@ -32,6 +32,11 @@ export type WorkspaceHostInfo = {
   defaultPath?: string
   /** CLI binaries discovered on this host (remote daemons). */
   providers?: HostProviderInfo[]
+  /**
+   * Host accepted a phone-role hello — session send/thread/live live there.
+   * Headless vavd stays false; the client must run the agent itself.
+   */
+  controlPlane?: boolean
 }
 
 /** A directory on a specific host. */

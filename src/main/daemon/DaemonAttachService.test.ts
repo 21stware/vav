@@ -9,6 +9,8 @@ import { encodePairing } from '../../shared/remoteControl.ts'
 import { HostRegistry, createLocalWorkspaceHost } from '../host/WorkspaceHost.ts'
 import { DaemonServer } from './DaemonServer.ts'
 import { DaemonAttachService } from './DaemonAttachService.ts'
+import { RemoteControlHub } from '../remote/RemoteControlHub.ts'
+import { REMOTE_PHONE_CAPABILITIES } from '../../shared/remoteControl.ts'
 
 const SECRET = '0123456789abcdef01234567'
 
@@ -72,6 +74,8 @@ describe('DaemonAttachService', () => {
       assert.equal(result.host.id, 'box-1')
       assert.equal(result.host.online, true)
       assert.equal(registry.get('box-1')?.info.online, true)
+      assert.equal(service.controlPlaneOf('box-1'), false)
+      assert.equal(await service.waitForControlPlane('box-1'), false)
       const stored = JSON.parse(await readFile(join(userData, 'paired-hosts.json'), 'utf8')) as {
         hosts: { machineId: string }[]
       }
@@ -510,6 +514,84 @@ describe('DaemonAttachService', () => {
       b.dispose()
       await rm(userA, { recursive: true, force: true })
       await rm(userB, { recursive: true, force: true })
+    }
+  })
+
+  it('opens a phone-role control plane when the host hub is listening', async () => {
+    const disk = await mkdtemp(join(tmpdir(), 'vav-box-'))
+    const userData = await mkdtemp(join(tmpdir(), 'vav-attach-'))
+    const received: string[] = []
+    const hub = new RemoteControlHub({
+      appVersion: 'test',
+      secret: () => SECRET,
+      listSessions: () => [],
+      listThread: () => null,
+      listControls: () => null,
+      listHost: () => ({
+        type: 'host',
+        name: 'box',
+        home: disk,
+        tmp: disk,
+        capabilities: REMOTE_PHONE_CAPABILITIES,
+        defaults: { agent: 'vav', model: '', thinking: null, approval: 'auto' },
+        recentDirs: []
+      }),
+      configure: (message) => {
+        received.push(`configure:${message.conversationId}:${message.approvalMode ?? ''}`)
+        return 'ok'
+      },
+      sendMessage: (id, text) => {
+        received.push(`send:${id}:${text}`)
+        return 'ok'
+      },
+      createSession: () => {
+        throw new Error('unused')
+      },
+      cancel: () => 'ok',
+      reply: () => false,
+      rename: () => 'ok',
+      archive: () => 'ok',
+      browse: () => 'not-found',
+      setWorkspace: () => 'ok'
+    })
+    const server = new DaemonServer({
+      host: createLocalWorkspaceHost({ name: 'box' }),
+      identity: { machineId: 'box-1', name: 'box' },
+      secret: () => SECRET,
+      appVersion: 'test',
+      home: disk,
+      tmp: disk,
+      onControlHello: (socket, leftover, hello) => hub.adoptAuthed(socket, leftover, hello)
+    })
+    const port = await server.listen(0, '127.0.0.1')
+    const { service } = attach(userData)
+    try {
+      const result = await service.pair(
+        encodeDaemonPairing({
+          v: DAEMON_PROTO_VERSION,
+          secret: SECRET,
+          machineId: 'ignored',
+          name: 'box',
+          host: '127.0.0.1',
+          port
+        })
+      )
+      assert.equal(result.ok, true)
+      assert.equal(service.controlPlaneOf('box-1'), true)
+      assert.equal(await service.waitForControlPlane('box-1'), true)
+      service.controlOf('box-1')?.send('c1', 'hi')
+      service.controlOf('box-1')?.configure('c1', { approvalMode: 'bypass' })
+      const start = Date.now()
+      while (received.length < 2 && Date.now() - start < 1000) {
+        await new Promise((resolve) => setTimeout(resolve, 20))
+      }
+      assert.deepEqual(received, ['send:c1:hi', 'configure:c1:bypass'])
+    } finally {
+      service.dispose()
+      hub.dispose()
+      server.close()
+      await rm(disk, { recursive: true, force: true })
+      await rm(userData, { recursive: true, force: true })
     }
   })
 
