@@ -655,10 +655,6 @@ export class DaemonAttachService {
 
   private pendingControl: Promise<void> = Promise.resolve()
 
-  async waitForControlPlane(): Promise<void> {
-    await this.pendingControl
-  }
-
   private dropControl(machineId: string): void {
     this.control.get(machineId)?.close()
     this.control.delete(machineId)
