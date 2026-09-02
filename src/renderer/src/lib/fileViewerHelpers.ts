@@ -271,3 +271,18 @@ export async function bindFilePreviewWorkspace(opts: {
   opts.markEnclosedDirChip(opts.conversationId)
   return 'bound'
 }
+
+/** Open preview path may be the real file while the agent writes the sandbox copy. */
+export async function isOpenFilePath(
+  openPath: string,
+  sourcePath: string,
+  workingCopyStatus?: (
+    path: string
+  ) => Promise<{ realPath: string; copyPath: string } | null | undefined>
+): Promise<boolean> {
+  if (pathsEqual(openPath, sourcePath)) return true
+  if (!workingCopyStatus) return false
+  const status = await workingCopyStatus(openPath)
+  if (!status) return false
+  return pathsEqual(sourcePath, status.copyPath) || pathsEqual(sourcePath, status.realPath)
+}

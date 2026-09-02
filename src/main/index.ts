@@ -218,6 +218,7 @@ import { writePngToClipboard } from './clipboardImage'
 import { mapRemoteSessions } from './remote/sessionList'
 import { fanRemoteTurn as dispatchRemoteTurn } from './remote/fanTurn'
 import { listRemoteChildEntries, listRemoteRootEntries } from './remote/dirBrowse'
+import { remoteHostRecentDirs, remoteLiveConversation } from './remote/sessionGate'
 import { RemoteSendQueue } from './remote/sendQueue'
 import { createScreenshotController } from './screenshot/ScreenshotSession'
 import { OVERLAY_IMAGE_EXTS, shouldOpenAsOverlay } from '@shared/previewOverlay'
@@ -1378,18 +1379,15 @@ function listRemoteHost(): RemoteHostEvent {
     settings.defaultApprovalMode === 'bypass' || settings.defaultApprovalMode === 'edit'
       ? settings.defaultApprovalMode
       : 'auto'
-  const seen = new Set<string>()
-  const recentDirs: { path: string; label: string }[] = []
   const localRecents = recentsForMachine(
     parseWorkspaceRefList(settings.recentWorkspaceDirectories),
     LOCAL_MACHINE_ID
   ).map((ref) => ref.path)
-  for (const path of [...(settings.pinnedWorkspaceDirectories ?? []), ...localRecents]) {
-    if (!path || seen.has(path) || !existsSync(path)) continue
-    seen.add(path)
-    recentDirs.push({ path, label: trayDirLabel(path) })
-    if (recentDirs.length >= 12) break
-  }
+  const recentDirs = remoteHostRecentDirs(
+    settings.pinnedWorkspaceDirectories ?? [],
+    localRecents,
+    { exists: existsSync, label: trayDirLabel, cap: 12 }
+  )
   return {
     type: 'host',
     name: hostname(),
@@ -1456,8 +1454,8 @@ function setRemoteWorkspace(
   path: string | null
 ): 'ok' | 'not-found' | 'archived' | 'forbidden' {
   const conversation = conversationStore.get(conversationId)
-  if (!conversation) return 'not-found'
-  if (conversation.archived) return 'archived'
+  const gate = remoteLiveConversation(conversation)
+  if (gate !== 'ok') return gate
   if (!path) {
     applyWorkingDirectory(conversationId, mintTempWorkdir())
     return 'ok'
@@ -1470,8 +1468,8 @@ function setRemoteWorkspace(
 
 function cancelRemote(conversationId: string): 'ok' | 'not-found' | 'archived' {
   const conversation = conversationStore.get(conversationId)
-  if (!conversation) return 'not-found'
-  if (conversation.archived) return 'archived'
+  const gate = remoteLiveConversation(conversation)
+  if (gate !== 'ok') return gate
   // A follow-up queued on the phone must not start the moment this turn dies.
   pendingRemoteSends.clear(conversationId)
   // Hit both runtimes: agentFor can disagree with the live turn (host switch
@@ -1488,8 +1486,8 @@ function replyRemote(conversationId: string, toolCallId: string, answer: string)
 
 function renameRemote(conversationId: string, title: string): 'ok' | 'not-found' | 'archived' {
   const conversation = conversationStore.get(conversationId)
-  if (!conversation) return 'not-found'
-  if (conversation.archived) return 'archived'
+  const gate = remoteLiveConversation(conversation)
+  if (gate !== 'ok') return gate
   conversationStore.updateMeta(conversationId, { title: title.trim() || t('common.untitledSession') })
   publishConversations()
   return 'ok'

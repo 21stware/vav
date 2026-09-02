@@ -24,7 +24,8 @@ import {
   mergeIncomingTextBody,
   mergeTextWindowInspect,
   nextCommentCardsOnBlockPick,
-  selectedBlockIdsForPath
+  selectedBlockIdsForPath,
+  isOpenFilePath as filePathIsOpen
 } from '../lib/fileViewerHelpers'
 import { AgentPanelToggleButton } from './fileViewer/AgentPanelToggleButton'
 import { FileViewerHeader } from './fileViewer/FileViewerHeader'
@@ -1968,9 +1969,6 @@ export function FileViewer({
 
 /** Open preview path may be the real file while the agent writes the sandbox copy. */
 async function isOpenFilePath(openPath: string, sourcePath: string): Promise<boolean> {
-  if (pathsEqual(openPath, sourcePath)) return true
-  const st = await window.vav.files.workingCopyStatus?.(openPath)
-  if (!st) return false
-  return pathsEqual(sourcePath, st.copyPath) || pathsEqual(sourcePath, st.realPath)
+  return filePathIsOpen(openPath, sourcePath, (path) => window.vav.files.workingCopyStatus?.(path))
 }
 

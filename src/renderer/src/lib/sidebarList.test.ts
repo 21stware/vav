@@ -4,6 +4,7 @@ import type { ConversationMeta } from '../../../shared/types.ts'
 import { t as translate } from '../../../shared/i18n/index.ts'
 import {
   agentTypeLabel,
+  conversationSubtitle,
   filterValueLabel,
   groupingOptions,
   modelLabel
@@ -50,5 +51,52 @@ describe('sidebarList', () => {
     assert.equal(filterValueLabel({ kind: 'none' }, t), t('sidebar.filter.none'))
     assert.equal(filterValueLabel({ kind: 'favorite' }, t), t('sidebar.filter.favorite'))
     assert.equal(filterValueLabel({ kind: 'workspace', path: '/Users/me/repo' }, t), 'repo')
+  })
+
+  it('picks running status copy then idle meta, and hides a brand-new session', () => {
+    const t = (key: Parameters<typeof translate>[1], params?: Parameters<typeof translate>[2]) =>
+      translate('en', key, params)
+    const format = {
+      relativeTime: (timestamp: number) => `t${timestamp}`,
+      isTemporaryWorkspace: (path: string | null, tmp: string) => !!path && path.startsWith(tmp),
+      workdirShortLabel: (path: string | null) => (path ? path.split('/').pop()! : 'default')
+    }
+    const live = conv({ id: 'c1', model: 'opus', updatedAt: 9, createdAt: 1, tokensUsed: 12, workingDirectory: '/proj/vav' })
+    assert.deepEqual(
+      conversationSubtitle({
+        conversation: live,
+        turn: { isRunning: true, toolCount: 3 },
+        isActive: true,
+        tmp: '/tmp',
+        t,
+        agentLabel: 'Claude',
+        ...format
+      }),
+      { kind: 'status', text: `Claude · ${t('sidebar.streaming', { model: modelLabel('opus') })}` }
+    )
+    assert.deepEqual(
+      conversationSubtitle({
+        conversation: live,
+        turn: undefined,
+        isActive: false,
+        tmp: '/tmp',
+        t,
+        agentLabel: null,
+        ...format
+      }),
+      { kind: 'meta', age: 't9', dir: 'vav' }
+    )
+    assert.equal(
+      conversationSubtitle({
+        conversation: conv({ id: 'new', updatedAt: 1, createdAt: 1, tokensUsed: 0 }),
+        turn: undefined,
+        isActive: false,
+        tmp: '/tmp',
+        t,
+        agentLabel: null,
+        ...format
+      }),
+      null
+    )
   })
 })

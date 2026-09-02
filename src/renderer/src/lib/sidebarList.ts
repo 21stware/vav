@@ -39,3 +39,50 @@ export function filterValueLabel(filter: SidebarSessionFilter, t: Translate): st
       return basename(filter.path)
   }
 }
+
+export type ConversationSubtitle =
+  | { kind: 'status'; text: string }
+  | { kind: 'meta'; age: string; dir: string | null }
+  | null
+
+export type SidebarTurnSnippet = {
+  awaitingToolCallId?: string | null
+  isRunning?: boolean
+  toolCount?: number
+}
+
+/** Subtitle slot from sidebar-conversation-list.rpml (running / idle / empty). */
+export function conversationSubtitle(opts: {
+  conversation: Pick<
+    ConversationMeta,
+    'model' | 'updatedAt' | 'createdAt' | 'tokensUsed' | 'workingDirectory'
+  >
+  turn: SidebarTurnSnippet | undefined
+  isActive: boolean
+  tmp: string
+  t: Translate
+  agentLabel: string | null
+  hideWorkdir?: boolean
+  relativeTime: (timestamp: number) => string
+  isTemporaryWorkspace: (path: string | null, tmp: string) => boolean
+  workdirShortLabel: (path: string | null, tmp: string) => string
+}): ConversationSubtitle {
+  const { conversation, turn, isActive, tmp, t, agentLabel } = opts
+  if (turn?.awaitingToolCallId) return { kind: 'status', text: t('sidebar.awaitingAnswer') }
+  if (turn?.isRunning && isActive) {
+    const core = t('sidebar.streaming', { model: modelLabel(conversation.model) })
+    return { kind: 'status', text: agentLabel ? `${agentLabel} · ${core}` : core }
+  }
+  if (turn?.isRunning) {
+    const core = t('sidebar.backgroundRunning', { count: turn.toolCount ?? 0 })
+    return { kind: 'status', text: agentLabel ? `${agentLabel} · ${core}` : core }
+  }
+  if (conversation.updatedAt === conversation.createdAt && conversation.tokensUsed === 0) {
+    return null
+  }
+  const dir =
+    !opts.hideWorkdir && !opts.isTemporaryWorkspace(conversation.workingDirectory ?? null, tmp)
+      ? opts.workdirShortLabel(conversation.workingDirectory ?? null, tmp)
+      : null
+  return { kind: 'meta', age: opts.relativeTime(conversation.updatedAt), dir }
+}

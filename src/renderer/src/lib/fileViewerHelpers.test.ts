@@ -8,6 +8,7 @@ import {
   countNewlinesLocal,
   filesHostConversationId,
   formatCommentCardLabel,
+  isOpenFilePath,
   isSilentPreviewWindowWarning,
   loadPanelWidth,
   mergeIncomingTextBody,
@@ -216,5 +217,19 @@ describe('bindFilePreviewWorkspace', () => {
     })
     assert.equal(bound, 'bound')
     assert.deepEqual(calls, ['conv:/tmp', 'select', 'seg:files', 'collapse:true', 'chip:c1'])
+  })
+})
+
+describe('isOpenFilePath', () => {
+  it('matches the real path or either side of a working copy', async () => {
+    assert.equal(await isOpenFilePath('/a.ts', '/a.ts'), true)
+    assert.equal(await isOpenFilePath('/a.ts', '/b.ts'), false)
+    assert.equal(
+      await isOpenFilePath('/real.ts', '/copy.ts', async () => ({
+        realPath: '/real.ts',
+        copyPath: '/copy.ts'
+      })),
+      true
+    )
   })
 })

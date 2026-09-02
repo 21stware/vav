@@ -18,7 +18,7 @@ import {
   type SidebarGroupingMode
 } from '@shared/types'
 import type { FileSessionListEntry } from '@shared/ipc'
-import { useSessionStore, type TurnRuntime } from '../state/sessionStore'
+import { useSessionStore } from '../state/sessionStore'
 import { useWorkspaceStore } from '../state/workspaceStore'
 import { isTemporaryWorkspace, middleTruncate, relativeTime, workdirShortLabel } from '../lib/format'
 import { flatten, groupConversations, type ConversationGroup } from '../lib/grouping'
@@ -36,10 +36,12 @@ import { fileManagerLabel } from '../lib/platform'
 import { basename } from '../lib/path'
 import {
   agentTypeLabel,
+  conversationSubtitle,
   filterValueLabel,
-  groupingOptions,
-  modelLabel
+  groupingOptions
 } from '../lib/sidebarList'
+import { ConvBracket, type SwarmBracketKind } from './sidebar/ConvBracket'
+import { RenameField } from './sidebar/RenameField'
 import {
   conversationOnMachine,
   isLocalMachine,
@@ -52,57 +54,6 @@ import { EmptyState } from './ui'
 import { UpdateCorner } from './UpdateCorner'
 
 export { modelLabel } from '../lib/sidebarList'
-
-type SwarmBracketKind = 'first' | 'mid' | 'last'
-
-/** Left bracket for a Swarm cluster — ┌─ / ├─ / └─, not a parent→child tree. */
-function ConvBracket({ kind }: { kind: SwarmBracketKind }): React.JSX.Element {
-  return <span className={`conv-bracket is-${kind}`} aria-hidden />
-}
-
-type Subtitle =
-  | { kind: 'status'; text: string }
-  | { kind: 'meta'; age: string; dir: string | null }
-  | null
-
-/**
- * Subtitle slot, resolved by the priority ladder in
- * sidebar-conversation-list.rpml (annotation 2 → 副标题).
- * Running: `{AgentType} · 流式中 · {Model}` / `{AgentType} · 后台运行 · N 工具`.
- * Idle: `{相对时间} · {目录}`.
- */
-function subtitleFor(
-  conversation: ConversationMeta,
-  turn: TurnRuntime | undefined,
-  isActive: boolean,
-  tmp: string,
-  t: ReturnType<typeof useT>,
-  agentLabel: string | null,
-  /** Workspace grouping already labels the bucket — hide the path under each row. */
-  hideWorkdir = false
-): Subtitle {
-  if (turn?.awaitingToolCallId) return { kind: 'status', text: t('sidebar.awaitingAnswer') }
-  if (turn?.isRunning && isActive) {
-    const core = t('sidebar.streaming', { model: modelLabel(conversation.model) })
-    return { kind: 'status', text: agentLabel ? `${agentLabel} · ${core}` : core }
-  }
-  if (turn?.isRunning) {
-    const core = t('sidebar.backgroundRunning', { count: turn.toolCount })
-    return { kind: 'status', text: agentLabel ? `${agentLabel} · ${core}` : core }
-  }
-
-  // When there is no conversation history and no active progress, show nothing.
-  // updatedAt === createdAt is the proxy for "no messages yet".
-  if (conversation.updatedAt === conversation.createdAt && conversation.tokensUsed === 0) {
-    return null
-  }
-
-  const dir =
-    !hideWorkdir && !isTemporaryWorkspace(conversation.workingDirectory, tmp)
-      ? workdirShortLabel(conversation.workingDirectory, tmp)
-      : null
-  return { kind: 'meta', age: relativeTime(conversation.updatedAt), dir }
-}
 
 export function Sidebar({
   floating = false,
@@ -1033,15 +984,18 @@ export function Sidebar({
             const running = !!turn?.isRunning && !awaiting
             const doneUnseen = !awaiting && !running && activityById[conversation.id] === 'done'
             const agentLabel = agentTypeLabel(conversation, cliAgents)
-            const subtitle = subtitleFor(
+            const subtitle = conversationSubtitle({
               conversation,
               turn,
               isActive,
               tmp,
               t,
               agentLabel,
-              group.kind === 'workspace'
-            )
+              hideWorkdir: group.kind === 'workspace',
+              relativeTime,
+              isTemporaryWorkspace,
+              workdirShortLabel
+            })
             const rowTitle =
               conversation.workingDirectory &&
               !isTemporaryWorkspace(conversation.workingDirectory, tmp) &&
@@ -1650,38 +1604,5 @@ export function Sidebar({
         </div>
       )}
     </aside>
-  )
-}
-
-function RenameField({
-  initial,
-  onCommit,
-  onCancel
-}: {
-  initial: string
-  onCommit: (title: string) => void
-  onCancel: () => void
-}): React.JSX.Element {
-  const [value, setValue] = useState(initial)
-  const ref = useRef<HTMLInputElement>(null)
-
-  useEffect(() => {
-    ref.current?.focus()
-    ref.current?.select()
-  }, [])
-
-  return (
-    <input
-      ref={ref}
-      className="text-field rename-field"
-      value={value}
-      onClick={(event) => event.stopPropagation()}
-      onChange={(event) => setValue(event.target.value)}
-      onBlur={() => onCommit(value)}
-      onKeyDown={(event) => {
-        if (event.key === 'Enter') onCommit(value)
-        else if (event.key === 'Escape') onCancel()
-      }}
-    />
   )
 }

@@ -35,6 +35,7 @@ import { sortEntries } from './fileEntrySort'
 import { modeToPermissions } from './fileMode'
 import { joinOnHostPath } from './fileHostPath'
 import { mimeHintToUti } from './fileUti'
+import { zipLocalHeadersEncrypted } from './fileZip'
 
 /**
  * Technical windows — memory budgets for a single IPC/payload, NOT product
@@ -1156,17 +1157,7 @@ async function probeZipEncrypted(fs: HostFs, path: string, fileSize: number): Pr
     const buf = Buffer.alloc(sampleLen)
     const { bytesRead } = await fh.read(buf, 0, sampleLen, 0)
     const buffer = buf.subarray(0, bytesRead)
-    let offset = 0
-    for (let i = 0; i < 8 && offset + 30 <= buffer.length; i++) {
-      if (buffer.readUInt32LE(offset) !== 0x04034b50) break
-      const flags = buffer.readUInt16LE(offset + 6)
-      if (flags & 0x1) return true
-      const nameLen = buffer.readUInt16LE(offset + 26)
-      const extraLen = buffer.readUInt16LE(offset + 28)
-      const compSize = buffer.readUInt32LE(offset + 18)
-      offset += 30 + nameLen + extraLen + compSize
-    }
-    return false
+    return zipLocalHeadersEncrypted(buffer)
   } finally {
     await fh.close()
   }
