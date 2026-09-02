@@ -57,11 +57,18 @@ test('Grok follow-up stays on the same native session', async () => {
       timeout: 20_000
     })
 
-    const firstCursor = await page.evaluate(
-      (id) => window.vav.conversations.get(id)?.cliResumeCursor ?? null,
-      E2E_SESSION_ID
-    )
-    expect(firstCursor && 'sessionId' in firstCursor ? firstCursor.sessionId : null).toBeTruthy()
+    let firstSessionId: string | null = null
+    await expect
+      .poll(async () => {
+        const conversation = await page.evaluate(
+          (id) => window.vav.conversations.get(id),
+          E2E_SESSION_ID
+        )
+        const cursor = conversation?.cliResumeCursor
+        firstSessionId = cursor && 'sessionId' in cursor ? String(cursor.sessionId) : null
+        return firstSessionId
+      })
+      .toBeTruthy()
 
     await page.locator('[data-testid="composer-input"]').fill('second turn')
     await page.locator('[data-testid="composer-send"]').click()
@@ -80,9 +87,9 @@ test('Grok follow-up stays on the same native session', async () => {
     )
     expect(users).toHaveLength(2)
     expect(assistants).toHaveLength(2)
-    expect(conversation?.cliResumeCursor?.sessionId ?? null).toBe(
-      firstCursor && 'sessionId' in firstCursor ? firstCursor.sessionId : null
-    )
+    expect(conversation?.cliResumeCursor && 'sessionId' in conversation.cliResumeCursor
+      ? conversation.cliResumeCursor.sessionId
+      : null).toBe(firstSessionId)
     expect(assistants.every((m: { errorText?: string | null }) => !m.errorText)).toBe(true)
   } finally {
     await harness.dispose()
