@@ -135,6 +135,7 @@ describe('daemon loopback', () => {
         cwd: dir
       })
       let data = ''
+      let timeout: ReturnType<typeof setTimeout> | undefined
       const finished = new Promise<number>((resolve) => {
         proc.onData((chunk) => {
           data += chunk
@@ -143,10 +144,16 @@ describe('daemon loopback', () => {
       })
       const code = await Promise.race([
         finished,
-        new Promise<number>((_, reject) =>
-          setTimeout(() => reject(new Error(`pty timeout, data=${JSON.stringify(data)}`)), 5000)
-        )
-      ])
+        new Promise<number>((_, reject) => {
+          timeout = setTimeout(
+            () => reject(new Error(`pty timeout, data=${JSON.stringify(data)}`)),
+            5000
+          )
+          timeout.unref?.()
+        })
+      ]).finally(() => {
+        if (timeout) clearTimeout(timeout)
+      })
       assert.equal(code, 0)
       assert.match(data, /pty-ok/)
     } finally {

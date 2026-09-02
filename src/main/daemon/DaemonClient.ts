@@ -164,6 +164,7 @@ export class DaemonClient {
         fail(err)
         socket.destroy()
       }, opts.timeoutMs ?? CONNECT_TIMEOUT_MS)
+      timer.unref?.()
       socket.on('error', (err) => fail(err))
       socket.on('connect', () => {
         writeLine(socket, {
@@ -230,6 +231,7 @@ export class DaemonClient {
         this.pending.delete(id)
         reject(new Error(`daemon ${method} timed out`))
       }, timeoutMs)
+      timer.unref?.()
       this.pending.set(id, {
         resolve: (value) => {
           clearTimeout(timer)
@@ -261,8 +263,16 @@ export class DaemonClient {
 
   close(): void {
     this.closed = true
-    this.socket?.destroy()
+    const socket = this.socket
     this.socket = null
+    if (socket) {
+      try {
+        socket.destroy()
+        socket.unref()
+      } catch {
+        /* ignore */
+      }
+    }
     for (const wait of this.pending.values()) {
       wait.reject(new Error('daemon is not connected'))
     }

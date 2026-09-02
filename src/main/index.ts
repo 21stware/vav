@@ -205,6 +205,9 @@ import {
   previewQuery as buildPreviewQuery
 } from './window/previewPool'
 import { overlayCascadeOrigin, overlayFit, placeDetachedBounds } from './window/windowPlace'
+import { appZOrderWindowIds, windowIsInPlay as windowIsInPlayOf } from './window/windowZOrder'
+import { replaceLiveWarmPool, shouldDestroyParkedWarmShell, takeReadyWarmShell } from './window/warmShell'
+import { resolveContextTokens } from './window/tokenUsageView'
 import { appBuildNumber as formatAppBuildNumber } from './appBuild'
 import { FALLBACK_SYSTEM_ACCENT, normalizeAccentHex } from './window/accentColor'
 import { closeActiveNativePopup, popupNativeMenu } from './window/nativePopup'
@@ -3016,7 +3019,12 @@ function scheduleVisibleWindowRepaint(except?: BrowserWindow | null): void {
 }
 
 function isWindowInPlay(win: BrowserWindow | null | undefined): boolean {
-  return !!(win && !win.isDestroyed() && (win.isVisible() || win.isMinimized()))
+  return windowIsInPlayOf({
+    missing: !win,
+    destroyed: !!win?.isDestroyed(),
+    visible: !!win?.isVisible(),
+    minimized: !!win?.isMinimized()
+  })
 }
 
 function moveWindowTop(win: BrowserWindow): void {
@@ -3043,18 +3051,16 @@ function moveWindowTop(win: BrowserWindow): void {
  * window — higher layers are re-pinned with `moveTop` only (no focus steal).
  */
 function enforceAppZOrder(focused: BrowserWindow | null): void {
-  if (isWindowInPlay(mainWindow)) moveWindowTop(mainWindow!)
-
-  const quickChats = [...detachedWindows.values()].filter((w) => isWindowInPlay(w))
-  for (const win of quickChats) {
-    if (focused && win.id === focused.id) continue
-    moveWindowTop(win)
+  const ids = appZOrderWindowIds({
+    mainId: isWindowInPlay(mainWindow) ? mainWindow!.id : null,
+    quickChatIds: [...detachedWindows.values()].filter((w) => isWindowInPlay(w)).map((w) => w.id),
+    settingsId: isWindowInPlay(settingsWindow) ? settingsWindow!.id : null,
+    focusedId: focused && !focused.isDestroyed() ? focused.id : null
+  })
+  for (const id of ids) {
+    const win = BrowserWindow.fromId(id)
+    if (win && !win.isDestroyed()) moveWindowTop(win)
   }
-  if (focused && quickChats.some((w) => w.id === focused.id)) {
-    moveWindowTop(focused)
-  }
-
-  if (isWindowInPlay(settingsWindow)) moveWindowTop(settingsWindow!)
 }
 
 function bindDetachedWindow(window: BrowserWindow, conversationId: string): void {
@@ -3192,19 +3198,7 @@ function createSessionBrowserWindow(opts: {
 }
 
 function takeWarmSessionShell(): BrowserWindow | null {
-  const notReady: BrowserWindow[] = []
-  while (warmSessionPool.length > 0) {
-    const win = warmSessionPool.pop()!
-    if (win.isDestroyed()) continue
-    if (!warmSessionReady.has(win)) {
-      notReady.push(win)
-      continue
-    }
-    warmSessionPool.push(...notReady)
-    return win
-  }
-  warmSessionPool.push(...notReady)
-  return null
+  return takeReadyWarmShell(warmSessionPool, (win) => warmSessionReady.has(win))
 }
 
 function hasWarmSessionInFlight(): boolean {
@@ -3244,9 +3238,7 @@ async function acquireWarmSessionShell(budgetMs: number): Promise<BrowserWindow 
 
 /** Preload hidden session shells so ⌘⇧↵ skips BrowserWindow+renderer boot. */
 function warmSessionShellPool(): void {
-  const live = warmSessionPool.filter((w) => !w.isDestroyed())
-  warmSessionPool.length = 0
-  warmSessionPool.push(...live)
+  replaceLiveWarmPool(warmSessionPool)
   while (warmSessionPool.length < SESSION_WARM_POOL) {
     const window = createSessionBrowserWindow({ show: false })
     warmSessionPool.push(window)
@@ -3271,7 +3263,7 @@ function warmSessionShellPool(): void {
 function parkWarmSessionShell(window: BrowserWindow): void {
   if (window.isDestroyed()) return
   if (warmSessionPool.includes(window)) return
-  if (warmSessionPool.length >= SESSION_WARM_POOL) {
+  if (shouldDestroyParkedWarmShell(warmSessionPool.length, SESSION_WARM_POOL)) {
     afterLeavingFullscreen(window, () => {
       if (!window.isDestroyed()) {
         fullscreenCloseAllowed.add(window)
@@ -3565,25 +3557,13 @@ function takePreloadedInspect(path: string): Promise<FileInspectResult> | null {
 }
 
 function takeWarmPreviewShell(): BrowserWindow | null {
-  const notReady: BrowserWindow[] = []
-  while (warmPreviewPool.length > 0) {
-    const win = warmPreviewPool.pop()!
-    if (win.isDestroyed()) continue
-    if (!warmPreviewReady.has(win)) {
-      notReady.push(win)
-      continue
-    }
-    warmPreviewPool.push(...notReady)
-    return win
-  }
-  warmPreviewPool.push(...notReady)
-  return null
+  return takeReadyWarmShell(warmPreviewPool, (win) => warmPreviewReady.has(win))
 }
 
 function parkWarmPreviewShell(window: BrowserWindow): void {
   if (window.isDestroyed()) return
   if (warmPreviewPool.includes(window)) return
-  if (warmPreviewPool.length >= PREVIEW_WARM_POOL) {
+  if (shouldDestroyParkedWarmShell(warmPreviewPool.length, PREVIEW_WARM_POOL)) {
     afterLeavingFullscreen(window, () => {
       if (!window.isDestroyed()) {
         fullscreenCloseAllowed.add(window)
@@ -3650,9 +3630,7 @@ function createPreviewBrowserWindow(opts: {
 
 /** Preload hidden preview shells after the main window is up. */
 function warmPreviewShellPool(): void {
-  const live = warmPreviewPool.filter((w) => !w.isDestroyed())
-  warmPreviewPool.length = 0
-  warmPreviewPool.push(...live)
+  replaceLiveWarmPool(warmPreviewPool)
   while (warmPreviewPool.length < PREVIEW_WARM_POOL) {
     const area = screen.getPrimaryDisplay().workArea
     const width = clampPreviewWidth(PREVIEW_DEFAULT_WIDTH, area.width)
@@ -3741,26 +3719,14 @@ function createOverlayBrowserWindow(opts: {
 }
 
 function takeWarmOverlayShell(): BrowserWindow | null {
-  const notReady: BrowserWindow[] = []
-  while (overlayWarmPool.length > 0) {
-    const win = overlayWarmPool.pop()!
-    if (win.isDestroyed()) continue
-    if (!overlayWarmReady.has(win)) {
-      notReady.push(win)
-      continue
-    }
-    overlayWarmPool.push(...notReady)
-    return win
-  }
-  overlayWarmPool.push(...notReady)
-  return null
+  return takeReadyWarmShell(overlayWarmPool, (win) => overlayWarmReady.has(win))
 }
 
 function parkWarmOverlayShell(window: BrowserWindow): void {
   if (window.isDestroyed()) return
   if (overlayWarmPool.includes(window)) return
   forgetOverlayWindow(window)
-  if (overlayWarmPool.length >= OVERLAY_WARM_POOL) {
+  if (shouldDestroyParkedWarmShell(overlayWarmPool.length, OVERLAY_WARM_POOL)) {
     afterLeavingFullscreen(window, () => {
       if (!window.isDestroyed()) {
         fullscreenCloseAllowed.add(window)
@@ -3786,9 +3752,7 @@ function parkWarmOverlayShell(window: BrowserWindow): void {
 }
 
 function warmOverlayShellPool(): void {
-  const live = overlayWarmPool.filter((w) => !w.isDestroyed())
-  overlayWarmPool.length = 0
-  overlayWarmPool.push(...live)
+  replaceLiveWarmPool(overlayWarmPool)
   while (overlayWarmPool.length < OVERLAY_WARM_POOL) {
     const area = screen.getPrimaryDisplay().workArea
     const { width, height } = overlayFit(area, 960, 720)
@@ -4195,12 +4159,11 @@ function buildTokenUsagePayload(conversationId: string): TokenUsageViewPayload |
     : compactionForLeaf(conversation.compactions, conversation.messages, leafId)
   const latestInput = conversation.tokenHistory?.at(-1)?.totalInputTokens ?? 0
   const estimated = activeCompaction?.estimatedContextTokens ?? 0
-  const contextTokens =
-    estimated > 0
-      ? estimated
-      : latestInput > 0
-        ? latestInput
-        : conversation.tokensUsed
+  const { contextTokens, contextTokensEstimated } = resolveContextTokens(
+    estimated,
+    latestInput,
+    conversation.tokensUsed
+  )
   const model = coerceConversationModel(conversationId) ?? conversation.model
   const creds = resolveVavCredentials(
     { conversation, settingsEndpoint: settings.apiEndpoint },
@@ -4247,7 +4210,7 @@ function buildTokenUsagePayload(conversationId: string): TokenUsageViewPayload |
     compactedCount: activeCompaction?.compactedCount ?? 0,
     pathMessageCount: pathLen,
     contextTokens,
-    contextTokensEstimated: estimated > 0,
+    contextTokensEstimated,
     reportedSessionCostUsd,
     hasProviderUsage,
     cacheExpiryEstimated: !!(conversation.cacheExpiresAt && conversation.cacheCreatedAt),

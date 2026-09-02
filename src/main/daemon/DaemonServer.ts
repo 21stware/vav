@@ -85,6 +85,7 @@ export class DaemonServer {
   private readonly opts: ServerOpts
   private server: Server | null = null
   private readonly sockets = new Set<Socket>()
+  private readonly sessions = new Set<() => void>()
   private listenPort = 0
   private pairAskBusy = false
   private readonly authFails = new Map<
@@ -124,7 +125,16 @@ export class DaemonServer {
   }
 
   close(): void {
-    for (const socket of this.sockets) socket.destroy()
+    for (const dispose of [...this.sessions]) dispose()
+    this.sessions.clear()
+    for (const socket of this.sockets) {
+      try {
+        socket.destroy()
+        socket.unref()
+      } catch {
+        /* ignore */
+      }
+    }
     this.sockets.clear()
     this.authFails.clear()
     const server = this.server
@@ -174,10 +184,12 @@ export class DaemonServer {
     let ready = authed
 
     const forget = (): void => {
+      if (!this.sessions.delete(forget)) return
       this.sockets.delete(socket)
       for (const live of processes.values()) {
         try {
           live.child.kill()
+          live.child.unref()
         } catch {
           /* ignore */
         }
@@ -198,6 +210,7 @@ export class DaemonServer {
       handles.clear()
       watches.clear()
     }
+    this.sessions.add(forget)
     socket.on('close', forget)
     socket.on('error', forget)
 

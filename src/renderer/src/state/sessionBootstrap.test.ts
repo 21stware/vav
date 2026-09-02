@@ -1,7 +1,11 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import { DEFAULT_CLI_AGENTS, DEFAULT_SETTINGS } from '../../../shared/types.ts'
-import { pickBootstrapActiveId, seedCliAgentCatalogue } from './sessionBootstrap.ts'
+import {
+  inheritCreateWorkingDirectory,
+  pickBootstrapActiveId,
+  seedCliAgentCatalogue
+} from './sessionBootstrap.ts'
 
 describe('sessionBootstrap', () => {
   it('keeps a live local session and otherwise picks the newest on this machine', () => {
@@ -48,5 +52,41 @@ describe('sessionBootstrap', () => {
     assert.equal(persistCliAgents, false)
     assert.deepEqual(settings.disabledAgentModels, {})
     assert.deepEqual(settings.defaultAgentModels, {})
+  })
+
+  it('inherits a live project folder and skips temp / remote / pending paths', () => {
+    const isTemporary = (path: string) => path.startsWith('/tmp')
+    assert.equal(
+      inheritCreateWorkingDirectory({
+        active: { workingDirectory: '/proj', machineId: 'local' },
+        activeMachine: 'local',
+        isTemporary
+      }),
+      '/proj'
+    )
+    assert.equal(
+      inheritCreateWorkingDirectory({
+        active: { workingDirectory: '/tmp/scratch', machineId: 'local' },
+        activeMachine: 'local',
+        isTemporary
+      }),
+      undefined
+    )
+    assert.equal(
+      inheritCreateWorkingDirectory({
+        active: { workingDirectory: '/proj', machineId: 'other' },
+        activeMachine: 'local',
+        isTemporary
+      }),
+      undefined
+    )
+    assert.equal(
+      inheritCreateWorkingDirectory({
+        active: { workingDirectory: '__pending', machineId: 'local' },
+        activeMachine: 'local',
+        isTemporary
+      }),
+      undefined
+    )
   })
 })

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import { convertEditProfileFor, fileViewerKindFlags, isBinaryOfficeKind } from './fileViewerKinds.ts'
+import { convertEditProfileFor, fileViewerKindFlags, isBinaryOfficeKind, isPreviewKindSelectable } from './fileViewerKinds.ts'
 
 describe('fileViewerKindFlags', () => {
   it('treats markdown, notebooks, and csv by extension', () => {
@@ -118,5 +118,13 @@ describe('fileViewerKindFlags', () => {
     assert.equal(doc?.formatKey, 'docx')
     assert.equal(doc?.suggestedPath, '/docs/a.docx')
     assert.equal(convertEditProfileFor('/notes.txt', { isHeic: false, isLegacyOffice: false }), null)
+  })
+
+  it('treats office, html, zip, and media canvases as selectable', () => {
+    assert.equal(isPreviewKindSelectable('text', false), true)
+    assert.equal(isPreviewKindSelectable('zip', false), true)
+    assert.equal(isPreviewKindSelectable('image', false), false)
+    assert.equal(isPreviewKindSelectable('image', true), true)
+    assert.equal(isPreviewKindSelectable('binary', false), false)
   })
 })

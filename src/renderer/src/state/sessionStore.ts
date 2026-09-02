@@ -49,7 +49,7 @@ import {
   type TurnRuntime,
 } from './sessionTypes'
 import { omitLiveUsage } from './sessionUsage'
-import { dispatchQueuedPayload, MESSAGE_QUEUE_MAX } from './sessionQueue'
+import { dispatchQueuedPayload, MESSAGE_QUEUE_MAX, buildQueuedMessage, isEmptyComposerSend, mergePreviewAndCommentRefs } from './sessionQueue'
 import { applySessionTurnEvent } from './sessionTurnApply'
 import {
   acceptAllChangesFor as acceptAllChangesForReview,
@@ -125,7 +125,7 @@ import {
   swarmRootId
 } from '@shared/swarmLayout'
 import { patchAcpConfigOption, patchAcpSessionMode } from '@shared/acpSession'
-import { pickBootstrapActiveId, seedCliAgentCatalogue } from './sessionBootstrap'
+import { inheritCreateWorkingDirectory, pickBootstrapActiveId, seedCliAgentCatalogue } from './sessionBootstrap'
 import { imageAttachToast } from './sessionAttach'
 
 function swarmBlocksWorkdirSwitch(id: string | null | undefined, swarmEnabled: boolean): boolean {
@@ -1196,19 +1196,13 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     )
     let createOpts = { ...options, machineId: activeMachine }
     if (createOpts.workingDirectory === undefined) {
-      const current = get().conversations.find((c) => c.id === get().activeId)
-      const wd = current?.workingDirectory
-      if (
-        wd &&
-        !wd.startsWith('__') &&
-        !isTemporaryWorkspace(wd, get().tmp) &&
-        current &&
-        conversationOnMachine(current, activeMachine)
-      ) {
-        createOpts = {
-          ...createOpts,
-          workingDirectory: wd
-        }
+      const inherited = inheritCreateWorkingDirectory({
+        active: get().conversations.find((c) => c.id === get().activeId),
+        activeMachine,
+        isTemporary: (path) => isTemporaryWorkspace(path, get().tmp)
+      })
+      if (inherited) {
+        createOpts = { ...createOpts, workingDirectory: inherited }
       }
     }
     const meta = await window.vav.conversations.create(createOpts)
@@ -2081,7 +2075,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     const turn = turns[activeId]
     const refs = previewRefs[activeId] ?? []
     const cards = commentCards[activeId] ?? []
-    if (!text.trim() && attachments.length === 0 && refs.length === 0 && cards.length === 0) return
+    if (isEmptyComposerSend(text, attachments, refs, cards)) return
 
     // ask_user_question pause: composer is disabled — never enqueue here.
     if (turn?.awaitingToolCallId) return
@@ -2115,19 +2109,14 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         (contextFiles[activeId] ?? null) ||
         conversations.find((c) => c.id === activeId)?.focusedFilePath ||
         null
-      const item: QueuedMessage = {
-        id: `q-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
-        text: text.trim(),
-        attachments: [...attachments],
-        previewRefs: refs.map((r) => ({ ...r })),
-        commentCards: cards.map((c) => ({
-          ref: { ...c.ref },
-          comment: c.comment
-        })),
-        quote: quote ? { ...quote } : null,
-        contextFile,
-        createdAt: Date.now()
-      }
+      const item: QueuedMessage = buildQueuedMessage({
+        text,
+        attachments,
+        previewRefs: refs,
+        commentCards: cards,
+        quote,
+        contextFile
+      })
       set((state) => ({
         messageQueues: {
           ...state.messageQueues,
@@ -2153,18 +2142,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
     const quote = quotes[activeId] ?? null
 
-    // Comment cards → structured PreviewRef.comment (bubble shows cards; model
-    // gets block + note via composeContextUserText). Do not bake into content.
-    const cardRefs = cards.map((c) => {
-      const note = c.comment.trim()
-      return note ? { ...c.ref, comment: note } : { ...c.ref }
-    })
-    // Dedupe by id: a ref both pinned as chip and as comment card keeps the
-    // commented version.
-    const byId = new Map<string, (typeof refs)[number]>()
-    for (const ref of refs) byId.set(ref.id, ref)
-    for (const ref of cardRefs) byId.set(ref.id, ref)
-    const allRefs = [...byId.values()]
+    const allRefs = mergePreviewAndCommentRefs(refs, cards)
 
     const contextFile =
       (contextFiles[activeId] ?? null) ||

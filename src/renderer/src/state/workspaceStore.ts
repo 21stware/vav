@@ -8,7 +8,7 @@ import {
 const lastInjectFingerprint = new Map<string, string>()
 /** Pending delayed inject timers keyed by conversation id. */
 const pendingInjectTimers = new Map<string, number>()
-import type { PtyActivityStatus, PtyListResult, PtySessionMeta } from '@shared/ipc'
+import type { PtyActivityStatus, PtySessionMeta } from '@shared/ipc'
 import { retainInstallMeta } from '../lib/retainInstallMeta'
 import {
   makePendingCliTab,
@@ -30,6 +30,18 @@ import {
   reconcileAgentHosts,
   type AgentHostSession
 } from '../lib/workspaceCliSurface'
+import {
+  AGENT_TAB_ID,
+  agentHostsEqual,
+  bashThenAgentTabs,
+  emptyPtyLayouts,
+  isLiveAgentSession,
+  normalizePtyListResult,
+  omitRecord,
+  tabsEqual,
+  userBashTabsOnly,
+  withTombstones
+} from '../lib/workspacePty'
 import { resolveSpawnGrid } from '../lib/spawnGrid'
 import { resolveHydratedCliMode } from '../lib/cliSurfaceAuthority'
 import { isCompanionSessionShell } from '../lib/windowKind'
@@ -59,6 +71,7 @@ import { focusedCliPaneId, measureCliPaneRects } from '../lib/cliPaneNavigate'
 
 export type { TerminalLayoutNode, TerminalSplitAxis }
 export { CLI_SURFACE_KEY, makePendingCliTab, type AgentHostSession }
+export { AGENT_TAB_ID }
 
 /**
  * After ENOENT on a workspace root, remove it from recent/pinned lists.
@@ -202,8 +215,6 @@ async function resolveTerminalCwd(conversationId: string, sliceRoot: string | nu
   }
 }
 
-export const AGENT_TAB_ID = 'agent'
-
 /**
  * Stable primary pane id for a conversation's CLI agent host.
  * Multi-window activate races resolve to one live process (Herdr ensure).
@@ -287,66 +298,6 @@ function getAgentHost(slice: WorkspaceSlice, agentId: string): AgentHostSession 
   return slice.agentHostSessions[agentId]
 }
 
-/** Drop any CLI-agent tabs that leaked into the user-bash list (legacy). */
-function userBashTabsOnly(tabs: TerminalTab[]): TerminalTab[] {
-  return tabs.filter((t) => !t.agentId || t.agentId === 'vav' || t.isAgent)
-}
-
-function isVavMirrorTab(tab: TerminalTab): boolean {
-  return tab.isAgent || tab.agentId === 'vav' || tab.id === AGENT_TAB_ID
-}
-
-/** VAV mirror sits after user bash — never pinned to the front of the tray. */
-function bashThenAgentTabs(tabs: TerminalTab[]): TerminalTab[] {
-  const bash: TerminalTab[] = []
-  const agent: TerminalTab[] = []
-  for (const tab of tabs) {
-    if (isVavMirrorTab(tab)) agent.push(tab)
-    else bash.push(tab)
-  }
-  return [...bash, ...agent]
-}
-
-/** A host session is restorable only if it has panes that launched this agent. */
-function isLiveAgentSession(session: AgentHostSession | undefined, agentId: string): boolean {
-  if (!session?.layout || session.tabs.length === 0) return false
-  return session.tabs.some((t) => t.agentId === agentId)
-}
-
-function emptyPtyLayouts(): ConversationPtyLayouts {
-  return { bash: null, agents: {}, cliMode: false }
-}
-
-function normalizePtyListResult(raw: PtyListResult | PtySessionMeta[]): PtyListResult {
-  if (Array.isArray(raw)) {
-    return { sessions: raw, layouts: emptyPtyLayouts() }
-  }
-  return {
-    sessions: raw?.sessions ?? [],
-    layouts: raw?.layouts ?? emptyPtyLayouts()
-  }
-}
-
-function tabsEqual(a: TerminalTab[], b: TerminalTab[]): boolean {
-  if (a.length !== b.length) return false
-  for (let i = 0; i < a.length; i++) {
-    const x = a[i]!
-    const y = b[i]!
-    if (
-      x.id !== y.id ||
-      x.agentId !== y.agentId ||
-      x.title !== y.title ||
-      !!x.isAgent !== !!y.isAgent ||
-      !!x.pendingCli !== !!y.pendingCli ||
-      x.purpose !== y.purpose ||
-      x.installAgentId !== y.installAgentId
-    ) {
-      return false
-    }
-  }
-  return true
-}
-
 export type NewBashOptions = {
   title?: string
   purpose?: 'install'
@@ -355,45 +306,6 @@ export type NewBashOptions = {
   sessionTitle?: string | null
   /** Already-resolved CLI config — skip a second settings lookup on spawn. */
   agent?: AgentConfig
-}
-
-function agentHostsEqual(
-  a: Record<string, AgentHostSession>,
-  b: Record<string, AgentHostSession>
-): boolean {
-  const ak = Object.keys(a).sort()
-  const bk = Object.keys(b).sort()
-  if (ak.length !== bk.length) return false
-  for (let i = 0; i < ak.length; i++) {
-    if (ak[i] !== bk[i]) return false
-    const ha = a[ak[i]!]!
-    const hb = b[bk[i]!]!
-    if (ha.activeTabId !== hb.activeTabId) return false
-    if (!tabsEqual(ha.tabs, hb.tabs)) return false
-    if (layoutDirectionKey(ha.layout) !== layoutDirectionKey(hb.layout)) return false
-  }
-  return true
-}
-
-/**
- * Re-insert panes whose process exited but which the user has not closed.
- *
- * Main only reports live PTYs, so a straight projection would yank the tab out
- * from under whatever the dead process last printed. A tombstone keeps its
- * original slot — and its xterm buffer — until the user dismisses it.
- */
-function withTombstones(
-  projected: TerminalTab[],
-  previous: TerminalTab[],
-  status: Record<string, PtyActivityStatus>
-): TerminalTab[] {
-  const live = new Set(projected.map((t) => t.id))
-  const merged = [...projected]
-  previous.forEach((tab, index) => {
-    if (live.has(tab.id) || status[tab.id] !== 'exited') return
-    merged.splice(Math.min(index, merged.length), 0, tab)
-  })
-  return merged
 }
 
 /** Project main-process PTY snapshots into renderer tab/host maps. */
@@ -972,7 +884,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         loadingDirs: nextLoading,
         // Empty list on missing root so we don't keep a stale tree.
         dirs: { ...s.dirs, [path]: nextEntries },
-        dirErrors: error ? { ...s.dirErrors, [path]: error } : omit(s.dirErrors, path),
+        dirErrors: error ? { ...s.dirErrors, [path]: error } : omitRecord(s.dirErrors, path),
         dirTruncated: { ...s.dirTruncated, [path]: listing.truncated }
       }
     })
@@ -1979,7 +1891,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     set((state) => {
       const forConversation = state.ptyStatus[id]
       if (!forConversation || !(tabId in forConversation)) return state
-      return { ptyStatus: { ...state.ptyStatus, [id]: omit(forConversation, tabId) } }
+      return { ptyStatus: { ...state.ptyStatus, [id]: omitRecord(forConversation, tabId) } }
     })
     patch(set, id, (s) => {
       const tabs = bashThenAgentTabs(userBashTabsOnly(s.tabs).filter((t) => t.id !== tabId))
@@ -2102,8 +2014,8 @@ function dropLocalWorkspace(
     pendingInjectTimers.delete(id)
   }
   set((state) => ({
-    workspaces: omit(state.workspaces, id),
-    ptyStatus: omit(state.ptyStatus, id)
+    workspaces: omitRecord(state.workspaces, id),
+    ptyStatus: omitRecord(state.ptyStatus, id)
   }))
 }
 
@@ -2242,12 +2154,6 @@ function patch(
     if (!changed) return state
     return { workspaces: { ...state.workspaces, [id]: { ...slice, ...next } } }
   })
-}
-
-function omit<T extends Record<string, unknown>>(record: T, key: string): T {
-  const next = { ...record }
-  delete next[key]
-  return next
 }
 
 /** Routes debounced FSEvents notifications into the right workspace. */

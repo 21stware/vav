@@ -173,3 +173,22 @@ export function convertEditProfileFor(
   }
   return null
 }
+
+/** Kinds that support Agent block pick (plus media when a canvas src exists). */
+export function isPreviewKindSelectable(
+  kind: string | null | undefined,
+  hasMediaSrc: boolean
+): boolean {
+  return (
+    kind === 'text' ||
+    kind === 'csv' ||
+    kind === 'sqlite' ||
+    kind === 'pdf' ||
+    kind === 'docx' ||
+    kind === 'xlsx' ||
+    kind === 'pptx' ||
+    kind === 'html' ||
+    kind === 'zip' ||
+    hasMediaSrc
+  )
+}

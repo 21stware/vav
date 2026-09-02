@@ -41,6 +41,71 @@ export function applyFileDraftContent(
   return prev
 }
 
+/**
+ * First inspect window is 128 KB. Keep a longer live draft that still starts
+ * with the incoming prefix instead of clobbering unsaved edits.
+ */
+export function mergeIncomingTextBody(
+  prevText: string | null | undefined,
+  incoming: string,
+  truncated: boolean
+): string {
+  if (
+    truncated &&
+    prevText != null &&
+    prevText.length > incoming.length &&
+    prevText.startsWith(incoming)
+  ) {
+    return prevText
+  }
+  return incoming
+}
+
+export function mergeTextWindowInspect(
+  prev: FileInspectResult | null,
+  path: string,
+  content: string,
+  win: { truncated: boolean; endByte: number; totalBytes: number }
+): FileInspectResult | null {
+  if (!prev || prev.path !== path) return prev
+  const nextText = (prev.text ?? '') + content
+  return {
+    ...prev,
+    text: nextText,
+    truncated: win.truncated,
+    textWindow: {
+      startByte: prev.textWindow?.startByte ?? 0,
+      endByte: win.endByte,
+      totalBytes: win.totalBytes
+    },
+    lineCount: countNewlinesLocal(nextText)
+  }
+}
+
+export function selectedBlockIdsForPath(
+  cards: { ref: { id: string } }[],
+  filePath: string
+): string[] {
+  const prefix = `${filePath}::`
+  return cards.filter((c) => c.ref.id.startsWith(prefix)).map((c) => c.ref.id.slice(prefix.length))
+}
+
+/** Re-click cancels; empty notes for other blocks are dropped when adding a pick. */
+export function nextCommentCardsOnBlockPick(
+  existing: { ref: PreviewRef; comment: string }[],
+  filePath: string,
+  blockId: string,
+  ref: PreviewRef
+): { cards: { ref: PreviewRef; comment: string }[]; selectedIds: string[]; cancelled: boolean } {
+  const refId = `${filePath}::${blockId}`
+  if (existing.some((c) => c.ref.id === refId)) {
+    const cards = existing.filter((c) => c.ref.id !== refId)
+    return { cards, selectedIds: selectedBlockIdsForPath(cards, filePath), cancelled: true }
+  }
+  const cards = [...existing.filter((c) => c.comment.trim()), { ref, comment: '' }]
+  return { cards, selectedIds: selectedBlockIdsForPath(cards, filePath), cancelled: false }
+}
+
 /** Human title for the comment card header (kind · line N). */
 export function formatCommentCardLabel(block: PreviewBlock): string {
   if (block.kind === 'line' || block.id.startsWith('line-L')) {

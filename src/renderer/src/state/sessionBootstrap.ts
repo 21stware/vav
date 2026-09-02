@@ -65,3 +65,30 @@ export function seedCliAgentCatalogue(
   }
   return { persistCliAgents }
 }
+
+type InheritCreateConversation = {
+  workingDirectory?: string | null
+  machineId?: string | null
+}
+
+/**
+ * First send / ⌘N inherit the active session folder when it is a real project
+ * on this machine — never a temp shell or another daemon's path.
+ */
+export function inheritCreateWorkingDirectory(opts: {
+  active?: InheritCreateConversation | null
+  activeMachine: string
+  isTemporary: (path: string) => boolean
+}): string | undefined {
+  const wd = opts.active?.workingDirectory
+  if (
+    wd &&
+    !wd.startsWith('__') &&
+    !opts.isTemporary(wd) &&
+    opts.active &&
+    conversationOnMachine(opts.active, opts.activeMachine)
+  ) {
+    return wd
+  }
+  return undefined
+}

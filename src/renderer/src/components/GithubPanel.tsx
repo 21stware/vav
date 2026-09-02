@@ -22,6 +22,12 @@ import {
   Tag,
   X
 } from 'lucide-react'
+import {
+  githubActionStateClass,
+  githubPullStateClass,
+  latestReviewByUser,
+  sameSiteHost
+} from '../lib/githubPanelState'
 import type {
   GithubActionJob,
   GithubActionRun,
@@ -298,13 +304,6 @@ function PullStateIcon({
   if (state === 'closed') return <GitPullRequestClosed size={size} />
   if (draft && state === 'open') return <GitPullRequestDraft size={size} />
   return <GitPullRequest size={size} />
-}
-
-function stateClass(state: GithubPullState, draft: boolean): string {
-  if (state === 'merged') return 'is-merged'
-  if (state === 'closed') return 'is-closed'
-  if (draft) return 'is-draft'
-  return 'is-open'
 }
 
 function emptyForCode(
@@ -1305,7 +1304,7 @@ function PullRow({
         onMenu(event.clientX, event.clientY)
       }}
     >
-      <span className={`github-pr-state ${stateClass(pull.state, pull.draft)}`} aria-hidden>
+      <span className={`github-pr-state ${githubPullStateClass(pull.state, pull.draft)}`} aria-hidden>
         <PullStateIcon state={pull.state} draft={pull.draft} />
       </span>
       <span className="github-pr-title" title={pull.title}>
@@ -1350,7 +1349,7 @@ function ActionRunRow({
         onMenu?.(run, event.clientX, event.clientY)
       }}
     >
-      <span className={`github-pr-state ${actionStateClass(run.status)}`} aria-hidden>
+      <span className={`github-pr-state ${githubActionStateClass(run.status)}`} aria-hidden>
         <ActionStatusIcon status={run.status} />
       </span>
       <span className="github-pr-title" title={run.title || run.name}>
@@ -1714,7 +1713,7 @@ function ActionDetail({
     <div className="github-detail-scroll">
       <div className="github-detail-hero">
         <div className="github-detail-title-row">
-          <span className={`github-pr-state ${actionStateClass(run.status)}`} aria-hidden>
+          <span className={`github-pr-state ${githubActionStateClass(run.status)}`} aria-hidden>
             <ActionStatusIcon status={run.status} size={13} />
           </span>
           <h2 className="github-detail-heading" title={run.title || run.name}>
@@ -1731,7 +1730,7 @@ function ActionDetail({
           ) : null}
         </div>
         <div className="github-detail-status-row">
-          <span className={`github-detail-state ${actionStateClass(run.status)}`}>
+          <span className={`github-detail-state ${githubActionStateClass(run.status)}`}>
             {actionStatusLabel(run.status, t)}
           </span>
           <p className="github-merge-prose">
@@ -1777,7 +1776,7 @@ function ActionJobRow({ job }: { job: GithubActionJob }): React.JSX.Element {
         if (job.htmlUrl) window.open(job.htmlUrl, '_blank', 'noopener,noreferrer')
       }}
     >
-      <span className={`github-pr-state ${actionStateClass(job.status)}`} aria-hidden>
+      <span className={`github-pr-state ${githubActionStateClass(job.status)}`} aria-hidden>
         <ActionStatusIcon status={job.status} />
       </span>
       <span className="github-action-job-name">{job.name}</span>
@@ -1799,12 +1798,6 @@ function ActionStatusIcon({
   }
   if (status === 'completed') return <Check size={size} />
   return <Play size={size} />
-}
-
-function actionStateClass(status: GithubActionStatus): string {
-  if (status === 'in_progress') return 'is-open'
-  if (status === 'completed') return 'is-merged'
-  return 'is-draft'
 }
 
 function actionStatusLabel(
@@ -1993,25 +1986,6 @@ function SiteConfig({
   )
 }
 
-function sameSiteHost(
-  homepage: string | null,
-  url: string | null,
-  cname: string | null
-): boolean {
-  const host = (value: string | null): string | null => {
-    if (!value) return null
-    try {
-      const raw = /^https?:\/\//i.test(value) ? value : `https://${value}`
-      return new URL(raw).hostname.replace(/^www\./, '').toLowerCase()
-    } catch {
-      return value.replace(/^www\./, '').toLowerCase()
-    }
-  }
-  const home = host(homepage)
-  if (!home) return false
-  return home === host(url) || home === host(cname)
-}
-
 function SiteField({
   label,
   children
@@ -2062,7 +2036,7 @@ function PullDetail({
       <div className="github-detail-hero">
         <div className="github-detail-title-row">
           <span
-            className={`github-pr-state ${stateClass(item.state, item.draft)}`}
+            className={`github-pr-state ${githubPullStateClass(item.state, item.draft)}`}
             aria-hidden
           >
             <PullStateIcon state={item.state} draft={item.draft} size={13} />
@@ -2082,7 +2056,7 @@ function PullDetail({
           ) : null}
         </div>
         <div className="github-detail-status-row">
-          <span className={`github-detail-state ${stateClass(item.state, item.draft)}`}>
+          <span className={`github-detail-state ${githubPullStateClass(item.state, item.draft)}`}>
             {item.state === 'merged'
               ? t('github.merged')
               : item.state === 'closed'
@@ -2247,16 +2221,6 @@ function ConversationTab({ detail }: { detail: GithubPullDetail }): React.JSX.El
       )}
     </div>
   )
-}
-
-function latestReviewByUser(reviews: GithubReview[]): GithubReview[] {
-  const map = new Map<string, GithubReview>()
-  for (const review of reviews) {
-    if (review.state === 'commented' && !review.body) continue
-    const key = review.author.login || String(review.id)
-    map.set(key, review)
-  }
-  return [...map.values()]
 }
 
 function ReviewStateIcon({ state }: { state: GithubReviewState }): React.JSX.Element {

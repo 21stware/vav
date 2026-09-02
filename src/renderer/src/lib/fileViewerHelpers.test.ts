@@ -10,10 +10,14 @@ import {
   formatCommentCardLabel,
   isSilentPreviewWindowWarning,
   loadPanelWidth,
+  mergeIncomingTextBody,
+  mergeTextWindowInspect,
+  nextCommentCardsOnBlockPick,
   pathIsUnderWorkspaceRoot,
   pathsEqual,
   persistPanelWidth,
   provisionalInspect,
+  selectedBlockIdsForPath,
   bindFilePreviewWorkspace
 } from './fileViewerHelpers.ts'
 import type { PreviewBlock } from './previewBlocks.ts'
@@ -30,6 +34,77 @@ describe('applyFileDraftContent', () => {
     assert.equal(applyFileDraftContent('old', { content: 'next' }), 'next')
     assert.equal(applyFileDraftContent('ab', { append: 'c', baseLen: 2 }), 'abc')
     assert.equal(applyFileDraftContent('ab', { append: 'c', baseLen: 1 }), 'ab')
+  })
+})
+
+describe('mergeIncomingTextBody / mergeTextWindowInspect', () => {
+  it('keeps a longer draft that still starts with the truncated prefix', () => {
+    assert.equal(mergeIncomingTextBody('abcdef', 'abc', true), 'abcdef')
+    assert.equal(mergeIncomingTextBody('abx', 'abc', true), 'abc')
+    assert.equal(mergeIncomingTextBody('abcdef', 'abc', false), 'abc')
+  })
+
+  it('appends a text window onto the matching inspect snapshot', () => {
+    const prev = {
+      path: '/a.ts',
+      name: 'a.ts',
+      kind: 'text' as const,
+      mime: 'text/plain',
+      size: 10,
+      text: 'ab',
+      truncated: true,
+      textWindow: { startByte: 0, endByte: 2, totalBytes: 4 }
+    }
+    const next = mergeTextWindowInspect(prev, '/a.ts', 'cd', {
+      truncated: false,
+      endByte: 4,
+      totalBytes: 4
+    })
+    assert.equal(next?.text, 'abcd')
+    assert.equal(next?.truncated, false)
+    assert.equal(next?.textWindow?.endByte, 4)
+    assert.equal(next?.lineCount, 1)
+    assert.equal(
+      mergeTextWindowInspect(prev, '/other.ts', 'cd', {
+        truncated: false,
+        endByte: 4,
+        totalBytes: 4
+      }),
+      prev
+    )
+  })
+})
+
+describe('comment-card pick', () => {
+  it('cancels a re-click and drops empty notes when adding a new pick', () => {
+    const a = {
+      id: '/f.ts::a',
+      filePath: '/f.ts',
+      label: 'a',
+      startLine: 1,
+      endLine: 1,
+      text: 'a'
+    }
+    const b = {
+      id: '/f.ts::b',
+      filePath: '/f.ts',
+      label: 'b',
+      startLine: 2,
+      endLine: 2,
+      text: 'b'
+    }
+    const existing = [
+      { ref: a, comment: '' },
+      { ref: { ...a, id: '/other.ts::x' }, comment: 'keep' }
+    ]
+    const cancelled = nextCommentCardsOnBlockPick(existing, '/f.ts', 'a', a)
+    assert.equal(cancelled.cancelled, true)
+    assert.deepEqual(cancelled.selectedIds, [])
+    const added = nextCommentCardsOnBlockPick(existing, '/f.ts', 'b', b)
+    assert.equal(added.cancelled, false)
+    assert.deepEqual(added.selectedIds, ['b'])
+    assert.equal(added.cards.length, 2)
+    assert.deepEqual(selectedBlockIdsForPath(added.cards, '/f.ts'), ['b'])
   })
 })
 

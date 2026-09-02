@@ -15,13 +15,16 @@ import {
   applyFileDraftContent,
   blockToRef,
   collectBlocks,
-  countNewlinesLocal,
   filesHostConversationId,
   loadPanelWidth,
   persistPanelWidth,
   pathsEqual,
   provisionalInspect,
-  bindFilePreviewWorkspace
+  bindFilePreviewWorkspace,
+  mergeIncomingTextBody,
+  mergeTextWindowInspect,
+  nextCommentCardsOnBlockPick,
+  selectedBlockIdsForPath
 } from '../lib/fileViewerHelpers'
 import { AgentPanelToggleButton } from './fileViewer/AgentPanelToggleButton'
 import { FileViewerHeader } from './fileViewer/FileViewerHeader'
@@ -36,7 +39,7 @@ import {
   lineBlockAt,
   type PreviewBlock
 } from '../lib/previewBlocks'
-import { convertEditProfileFor, fileViewerKindFlags, isBinaryOfficeKind } from '../lib/fileViewerKinds'
+import { convertEditProfileFor, fileViewerKindFlags, isBinaryOfficeKind, isPreviewKindSelectable } from '../lib/fileViewerKinds'
 import { basename, dirname } from '../lib/path'
 import { previewOpenElapsed } from '../lib/previewOpenClock'
 import { isPickGestureActive, type ClickPickPointer } from '../lib/clickPick'
@@ -280,18 +283,7 @@ export function FileViewer({
       ) {
         if (result.text != null) {
           const incoming = result.text
-          setWorkingContent((prevText) => {
-            // First inspect window is 128 KB; don't clobber a longer live draft.
-            if (
-              result.truncated &&
-              prevText != null &&
-              prevText.length > incoming.length &&
-              prevText.startsWith(incoming)
-            ) {
-              return prevText
-            }
-            return incoming
-          })
+          setWorkingContent((prevText) => mergeIncomingTextBody(prevText, incoming, !!result.truncated))
         }
       }
       const st = isMediaPreviewKind(result.kind)
@@ -340,21 +332,7 @@ export function FileViewer({
       if (win.content) {
         setWorkingContent((prev) => (prev ?? '') + win.content)
         setBaselineContent((prev) => (prev ?? '') + win.content)
-        setInfo((prev) => {
-          if (!prev || prev.path !== state.path) return prev
-          const nextText = (prev.text ?? '') + win.content
-          return {
-            ...prev,
-            text: nextText,
-            truncated: win.truncated,
-            textWindow: {
-              startByte: prev.textWindow?.startByte ?? 0,
-              endByte: win.endByte,
-              totalBytes: win.totalBytes
-            },
-            lineCount: countNewlinesLocal(nextText)
-          }
-        })
+        setInfo((prev) => mergeTextWindowInspect(prev, state.path, win.content, win))
       }
       state.endByte = win.endByte
       state.totalBytes = win.totalBytes
@@ -722,18 +700,7 @@ export function FileViewer({
     (s) => s.settings.previewSelectionAgentMark !== false
   )
   const kindSelectable =
-    !!info &&
-    !info.error &&
-    (info.kind === 'text' ||
-      info.kind === 'csv' ||
-      info.kind === 'sqlite' ||
-      info.kind === 'pdf' ||
-      info.kind === 'docx' ||
-      info.kind === 'xlsx' ||
-      info.kind === 'pptx' ||
-      info.kind === 'html' ||
-      info.kind === 'zip' ||
-      !!mediaSrc)
+    !!info && !info.error && isPreviewKindSelectable(info.kind, !!mediaSrc)
   const selectable =
     kindSelectable && (!effectiveReadOnly || allowReadModeSelection)
 
@@ -775,33 +742,13 @@ export function FileViewer({
         setAgentConversationId(conversationId)
       }
 
-      const refId = `${filePath}::${id}`
       const existing = useSessionStore.getState().commentCards[conversationId] ?? []
-      // Re-click same block → cancel (spec: 再次单击取消).
-      if (existing.some((c) => c.ref.id === refId)) {
-        const nextCards = existing.filter((c) => c.ref.id !== refId)
-        useSessionStore.getState().setCommentCards(conversationId, nextCards)
-        const prefix = `${filePath}::`
-        setSelectedIds(
-          nextCards
-            .filter((c) => c.ref.id.startsWith(prefix))
-            .map((c) => c.ref.id.slice(prefix.length))
-        )
-        return
-      }
-      // Drop empty-comment cards for other blocks; add the new pick.
-      const cleaned = existing.filter((c) => c.comment.trim())
-      const ref = blockToRef(filePath, badge, block)
-      const nextCards = [...cleaned, { ref, comment: '' }]
-      useSessionStore.getState().setCommentCards(conversationId, nextCards)
-      const prefix = `${filePath}::`
-      // Paint canvas selection first; focus/panel open reflows preview (PPTX
-      // windowed remount) and used to feel like click → blur → second click.
-      setSelectedIds(
-        nextCards
-          .filter((c) => c.ref.id.startsWith(prefix))
-          .map((c) => c.ref.id.slice(prefix.length))
-      )
+      const next = nextCommentCardsOnBlockPick(existing, filePath, id, blockToRef(filePath, badge, block))
+      useSessionStore.getState().setCommentCards(conversationId, next.cards)
+      setSelectedIds(next.selectedIds)
+      if (next.cancelled) return
+      const ref = next.cards.at(-1)?.ref
+      if (!ref) return
       // CLI agents: selection (+ optional vav draft) into the prompt — no submit.
       void import('../lib/cliFocusHandoff').then(({ handoffBlockToCli }) => {
         handoffBlockToCli(conversationId, ref)
@@ -814,7 +761,7 @@ export function FileViewer({
         onPickBlock?.()
         requestAnimationFrame(() => {
           if (isPickGestureActive()) return
-          useSessionStore.getState().focusCommentCard(refId)
+          useSessionStore.getState().focusCommentCard(ref.id)
         })
       })
     }
@@ -833,10 +780,7 @@ export function FileViewer({
   // Removing a comment card (✕) should drop the canvas selection too.
   useEffect(() => {
     if (!selectable && !agentCommentCards.length) return
-    const prefix = `${filePath}::`
-    const ids = agentCommentCards
-      .filter((c) => c.ref.id.startsWith(prefix))
-      .map((c) => c.ref.id.slice(prefix.length))
+    const ids = selectedBlockIdsForPath(agentCommentCards, filePath)
     setSelectedIds((prev) => {
       if (prev.length === ids.length && prev.every((id, i) => id === ids[i])) return prev
       return ids
