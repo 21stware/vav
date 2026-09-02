@@ -21,8 +21,8 @@ import {
 } from '@shared/cursorModel'
 import {
   cursorAuthIdentity,
+  isAcpCliHost as isAcpHost,
   isStructuredCliHost,
-  transportForCliHost,
   withCursorAuthIdentity
 } from '@shared/cliHost'
 import { ROOT_LEAF } from '@shared/thread'
@@ -77,9 +77,6 @@ import {
   turnHasIncompleteWork as turnBlocksHaveIncompleteWork
 } from './cliHostTurn'
 import { describeCliHostError } from './cliHostError'
-function isAcpHost(kind: CliHostKind | null | undefined): boolean {
-  return !!kind && transportForCliHost(kind) === 'acp'
-}
 import { readHostAuthIdentity } from './hostAuth'
 import type { ConversationStore } from '../store/ConversationStore'
 import type { SettingsStore } from '../store/SettingsStore'

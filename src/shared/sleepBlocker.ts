@@ -140,6 +140,48 @@ export type KeepAwakeStatus = {
   hasWork: boolean
 }
 
+export type KeepAwakeLidInfo = {
+  granted: boolean
+  /** Observed `pmset` / guard state — not recomputed from the other fields. */
+  lidSleepBlocked: boolean
+  onBattery: boolean
+  batteryPercent: number
+  lowPowerMode: boolean
+  safetyHold: KeepAwakeSafetyHold
+}
+
+/** IPC snapshot for the keep-awake indicator. Non-mac passes `lid: null`. */
+export function keepAwakeStatusPayload(input: {
+  enabled: boolean
+  hasWork: boolean
+  lid: KeepAwakeLidInfo | null
+}): KeepAwakeStatus {
+  if (!input.lid) {
+    return {
+      lidSupported: false,
+      granted: false,
+      idleBlocked: shouldBlockIdleSleep(input.enabled, input.hasWork),
+      lidSleepBlocked: false,
+      onBattery: false,
+      batteryPercent: 100,
+      lowPowerMode: false,
+      safetyHold: null,
+      hasWork: input.hasWork
+    }
+  }
+  return {
+    lidSupported: true,
+    granted: input.lid.granted,
+    idleBlocked: shouldBlockIdleSleep(input.enabled, input.hasWork, input.lid.safetyHold),
+    lidSleepBlocked: input.lid.lidSleepBlocked,
+    onBattery: input.lid.onBattery,
+    batteryPercent: input.lid.batteryPercent,
+    lowPowerMode: input.lid.lowPowerMode,
+    safetyHold: input.lid.safetyHold,
+    hasWork: input.hasWork
+  }
+}
+
 export type KeepAwakeGrantResult =
   | { ok: true }
   | { ok: false; cancelled: true }

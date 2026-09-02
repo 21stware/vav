@@ -2,14 +2,11 @@ import { shell } from 'electron'
 import { join, dirname, basename, extname } from 'node:path'
 import { spawn } from 'node:child_process'
 import { userInfo } from 'node:os'
-import JSZip from 'jszip'
 import type {
   BinaryFileMeta,
   FileInspectResult,
   SqliteQueryResult,
-  TextWindowResult,
-  ZipArchiveInfo,
-  ZipEntryInfo
+  TextWindowResult
 } from '@shared/ipc'
 import { localFileStreamUrl } from '@shared/localFileUrl'
 import { inspectSqlite, isSqlitePath, querySqliteTable } from './SqliteService'
@@ -35,7 +32,9 @@ import { sortEntries } from './fileEntrySort'
 import { modeToPermissions } from './fileMode'
 import { joinOnHostPath } from './fileHostPath'
 import { mimeHintToUti } from './fileUti'
-import { zipLocalHeadersEncrypted } from './fileZip'
+import { inspectZipArchive, zipInspectWarnings, zipTreeText } from './fileZipArchive'
+import { looksLikeTextFile } from './fileTextSample'
+import { defaultAppDisplayName, mdlsRaw } from './fileMacMeta'
 
 /**
  * Technical windows — memory budgets for a single IPC/payload, NOT product
@@ -53,8 +52,6 @@ const STRUCTURED_FIRST_ROWS = 120
 const BINARY_BASE64_SOFT = 16 * 1024 * 1024
 /** Soft budget for full OOXML structured parse in main (best-effort index). */
 const STRUCTURED_PARSE_SOFT = 32 * 1024 * 1024
-/** Above this, skip JSZip.loadAsync of the full buffer (structure index truncated). */
-const ZIP_FULL_LOAD_MAX = 64 * 1024 * 1024
 
 const WATCH_DEBOUNCE_MS = 300
 /** Keep document indexing off the main thread while a preview is opening. */
@@ -708,20 +705,12 @@ export class FileService {
         // Structure-only tree. Large archives skip full-buffer JSZip; on failure open empty canvas.
         try {
           const zip = await inspectZipArchive(hostFs, path, info.size)
-          const treeText = zip.entries
-            .map((e) => `${e.isDirectory ? 'D' : 'F'} ${e.path}`)
-            .join('\n')
-          const warnings: string[] = []
-          if (zip.encrypted) {
-            warnings.push(
-              'This archive appears password-protected. vav lists what it can without a password and does not extract encrypted entries.'
-            )
-          }
-          if (zip.truncated) {
-            warnings.push(
-              `Large ZIP (${Math.round(info.size / 1024 / 1024)} MB) — full structure index skipped to avoid loading the archive into memory.`
-            )
-          }
+          const treeText = zipTreeText(zip.entries)
+          const warnings = zipInspectWarnings({
+            encrypted: zip.encrypted,
+            truncated: zip.truncated,
+            fileSize: info.size
+          })
           return {
             ...base,
             zip: {
@@ -997,32 +986,6 @@ export class FileService {
   }
 }
 
-async function looksLikeTextFile(fs: HostFs, path: string, size: number): Promise<boolean> {
-  if (size <= 0) return false
-  try {
-    const sampleSize = Math.min(size, 8192)
-    const fh = await fs.open(path, 'r')
-    try {
-      const buf = Buffer.alloc(sampleSize)
-      const { bytesRead } = await fh.read(buf, 0, sampleSize, 0)
-      const slice = buf.subarray(0, bytesRead)
-      if (slice.includes(0)) return false
-      const text = slice.toString('utf8')
-      let bad = 0
-      for (let i = 0; i < text.length; i += 1) {
-        const code = text.charCodeAt(i)
-        if (code === 0xfffd) bad += 1
-        else if (code < 9 || (code > 13 && code < 32)) bad += 1
-      }
-      return bad / Math.max(text.length, 1) < 0.02
-    } finally {
-      await fh.close()
-    }
-  } catch {
-    return false
-  }
-}
-
 async function buildBinaryMeta(
   path: string,
   info: {
@@ -1085,175 +1048,6 @@ async function buildBinaryMeta(
     modifiedAt: modifiedMs,
     inode,
     defaultApp
-  }
-}
-
-function mdlsRaw(path: string, key: string): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const child = spawn('mdls', ['-raw', '-name', key, path], { stdio: ['ignore', 'pipe', 'ignore'] })
-    let out = ''
-    child.stdout?.on('data', (chunk: Buffer) => {
-      out += chunk.toString('utf8')
-    })
-    child.on('error', reject)
-    child.on('close', (code) => {
-      if (code === 0) resolve(out.trim())
-      else reject(new Error(`mdls exit ${code}`))
-    })
-  })
-}
-
-/**
- * macOS: display name of the default app that would open this path
- * (e.g. "DiskImageMounter"). Uses JXA + AppKit, capped at 1s.
- */
-function defaultAppDisplayName(filePath: string): Promise<string | null> {
-  return new Promise((resolve) => {
-    const escaped = filePath.replace(/\\/g, '\\\\').replace(/'/g, "\\'")
-    const script = `
-      ObjC.import('AppKit');
-      var url = $.NSURL.fileURLWithPath('${escaped}');
-      var appURL = $.NSWorkspace.sharedWorkspace.URLForApplicationToOpenURL(url);
-      if (!appURL) { ''; }
-      else {
-        var p = ObjC.unwrap(appURL.path);
-        var parts = p.split('/');
-        var name = parts[parts.length - 1] || '';
-        name.replace(/\\.app$/i, '');
-      }
-    `
-    const child = spawn('osascript', ['-l', 'JavaScript', '-e', script], {
-      stdio: ['ignore', 'pipe', 'ignore']
-    })
-    let out = ''
-    let settled = false
-    const finish = (value: string | null): void => {
-      if (settled) return
-      settled = true
-      resolve(value)
-    }
-    child.stdout?.on('data', (chunk: Buffer) => {
-      out += chunk.toString('utf8')
-    })
-    child.on('error', () => finish(null))
-    child.on('close', () => finish(out.trim() || null))
-    setTimeout(() => {
-      try {
-        child.kill()
-      } catch {
-        // ignore
-      }
-      finish(out.trim() || null)
-    }, 1000)
-  })
-}
-
-/** Probe ZIP local-file headers for encryption without loading the whole archive. */
-async function probeZipEncrypted(fs: HostFs, path: string, fileSize: number): Promise<boolean> {
-  if (fileSize < 30) return false
-  const sampleLen = Math.min(fileSize, 64 * 1024)
-  const fh = await fs.open(path, 'r')
-  try {
-    const buf = Buffer.alloc(sampleLen)
-    const { bytesRead } = await fh.read(buf, 0, sampleLen, 0)
-    const buffer = buf.subarray(0, bytesRead)
-    return zipLocalHeadersEncrypted(buffer)
-  } finally {
-    await fh.close()
-  }
-}
-
-/** Structure-only ZIP index for the archive tree preview (no entry contents). */
-async function inspectZipArchive(
-  fs: HostFs,
-  path: string,
-  fileSize: number
-): Promise<ZipArchiveInfo & { encrypted: boolean; truncated: boolean }> {
-  // Avoid reading multi‑hundred‑MB archives into memory just to list structure.
-  if (fileSize > ZIP_FULL_LOAD_MAX) {
-    let encrypted = false
-    try {
-      encrypted = await probeZipEncrypted(fs, path, fileSize)
-    } catch {
-      // Probe is best-effort; still return a truncated empty summary.
-    }
-    return {
-      entries: [],
-      entryCount: 0,
-      compressedSize: fileSize,
-      uncompressedSize: 0,
-      ratio: 0,
-      encrypted,
-      truncated: true
-    }
-  }
-
-  const buffer = await fs.readFile(path)
-  // Quick magic / encryption probe (general-purpose bit 0 of local file headers).
-  let encrypted = false
-  if (buffer.length >= 30) {
-    // Scan a few local headers; encrypted archives set bit 0 of the GP flag.
-    let offset = 0
-    for (let i = 0; i < 8 && offset + 30 <= buffer.length; i++) {
-      if (buffer.readUInt32LE(offset) !== 0x04034b50) break
-      const flags = buffer.readUInt16LE(offset + 6)
-      if (flags & 0x1) {
-        encrypted = true
-        break
-      }
-      const nameLen = buffer.readUInt16LE(offset + 26)
-      const extraLen = buffer.readUInt16LE(offset + 28)
-      const compSize = buffer.readUInt32LE(offset + 18)
-      offset += 30 + nameLen + extraLen + compSize
-    }
-  }
-
-  const zip = await JSZip.loadAsync(buffer, { createFolders: true })
-  const entries: ZipEntryInfo[] = []
-  let uncompressedSize = 0
-  let compressedSize = 0
-
-  zip.forEach((relativePath, file) => {
-    if (!relativePath) return
-    // Prefer trailing-slash dirs from the archive itself.
-    const isDirectory = file.dir || relativePath.endsWith('/')
-    const name = basename(relativePath.replace(/\/+$/, '')) || relativePath
-    // JSZip exposes sizes on the internal dir entry when present.
-    const data = (file as unknown as { _data?: { uncompressedSize?: number; compressedSize?: number } })
-      ._data
-    const uncomp = isDirectory ? 0 : Number(data?.uncompressedSize ?? 0)
-    const comp = isDirectory ? 0 : Number(data?.compressedSize ?? 0)
-    uncompressedSize += uncomp
-    compressedSize += comp
-    // JSZip options may flag encryption on the entry options object.
-    const opts = (file as unknown as { options?: { encrypted?: boolean } }).options
-    if (opts?.encrypted) encrypted = true
-    entries.push({
-      path: isDirectory && !relativePath.endsWith('/') ? `${relativePath}/` : relativePath,
-      name: isDirectory && !name.endsWith('/') ? `${name}/` : name,
-      isDirectory,
-      compressedSize: comp,
-      uncompressedSize: uncomp,
-      modifiedAt: file.date ? file.date.getTime() : undefined
-    })
-  })
-
-  // Sort paths so tree rendering is stable (dirs + files by path).
-  entries.sort((a, b) => a.path.localeCompare(b.path))
-  // Prefer archive file size when compressed totals are incomplete.
-  if (compressedSize <= 0) compressedSize = fileSize
-  const ratio =
-    uncompressedSize > 0
-      ? Math.max(0, Math.min(100, Math.round((1 - compressedSize / uncompressedSize) * 100)))
-      : 0
-  return {
-    entries,
-    entryCount: entries.filter((e) => !e.isDirectory).length || entries.length,
-    compressedSize,
-    uncompressedSize,
-    ratio,
-    encrypted,
-    truncated: false
   }
 }
 

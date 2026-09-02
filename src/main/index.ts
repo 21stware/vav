@@ -69,6 +69,7 @@ import { localFileStreamUrl } from '@shared/localFileUrl'
 import { compactionForLeaf } from '@shared/compaction'
 import {
   hasActiveAgentWork,
+  keepAwakeStatusPayload,
   shouldBlockIdleSleep,
   shouldBlockLidSleep,
   type KeepAwakeStatus
@@ -605,33 +606,24 @@ async function currentKeepAwakeStatus(): Promise<KeepAwakeStatus> {
   const enabled = settings.keepAwakeWhileAgentRunning === true
   const hasWork = currentAgentWork()
   if (!macLidSleep) {
-    return {
-      lidSupported: false,
-      granted: false,
-      idleBlocked: shouldBlockIdleSleep(enabled, hasWork),
-      lidSleepBlocked: false,
-      onBattery: false,
-      batteryPercent: 100,
-      lowPowerMode: false,
-      safetyHold: null,
-      hasWork
-    }
+    return keepAwakeStatusPayload({ enabled, hasWork, lid: null })
   }
   const [safety, info] = await Promise.all([
     macLidSleep.safetyHold(settings.keepAwakeBatteryFloorPercent),
     macLidSleep.powerInfo()
   ])
-  return {
-    lidSupported: true,
-    granted: info.granted,
-    idleBlocked: shouldBlockIdleSleep(enabled, hasWork, safety),
-    lidSleepBlocked: info.lidSleepBlocked,
-    onBattery: info.onBattery,
-    batteryPercent: info.batteryPercent,
-    lowPowerMode: info.lowPowerMode,
-    safetyHold: safety,
-    hasWork
-  }
+  return keepAwakeStatusPayload({
+    enabled,
+    hasWork,
+    lid: {
+      granted: info.granted,
+      lidSleepBlocked: info.lidSleepBlocked,
+      onBattery: info.onBattery,
+      batteryPercent: info.batteryPercent,
+      lowPowerMode: info.lowPowerMode,
+      safetyHold: safety
+    }
+  })
 }
 
 let lastKeepAwakeStatusJson = ''

@@ -27,6 +27,7 @@ import {
   type AgentHostSession
 } from '../lib/workspaceCliSurface'
 import { cliLiveTab, replaceSurfaceTab } from '../lib/workspaceTabs'
+import { emptySlice, type WorkspaceSlice } from '../lib/workspaceSlice'
 import {
   AGENT_TAB_ID,
   agentHostsEqual,
@@ -53,7 +54,6 @@ import {
   normalizeFileSortKey,
   type AgentConfig,
   type ConversationPtyLayouts,
-  type FileEntry,
   type FileSortKey,
   type ProviderResumeCursor,
   type TerminalLayoutNode,
@@ -65,16 +65,6 @@ import {
   shouldAutoAssignSingleCliAgent,
   type SkipCliPickerReason
 } from '@shared/skipCliPicker'
-import { focusedCliPaneId, measureCliPaneRects } from '../lib/cliPaneNavigate'
-
-export type { TerminalLayoutNode, TerminalSplitAxis }
-export { CLI_SURFACE_KEY, makePendingCliTab, type AgentHostSession }
-export { AGENT_TAB_ID }
-
-/**
- * After ENOENT on a workspace root, remove it from recent/pinned lists.
- * Uses settings.update so main broadcasts the pruned list to all windows.
- */
 import {
   isLocalMachine,
   normalizeMachineId,
@@ -82,7 +72,17 @@ import {
   sameWorkspaceRef,
   workspaceRef
 } from '@shared/workspaceHost'
+import { focusedCliPaneId, measureCliPaneRects } from '../lib/cliPaneNavigate'
 
+export type { TerminalLayoutNode, TerminalSplitAxis }
+export { CLI_SURFACE_KEY, makePendingCliTab, type AgentHostSession }
+export { AGENT_TAB_ID }
+export type { WorkspaceSlice }
+
+/**
+ * After ENOENT on a workspace root, remove it from recent/pinned lists.
+ * Uses settings.update so main broadcasts the pruned list to all windows.
+ */
 async function forgetMissingWorkspaceDir(path: string, machineId?: string | null): Promise<void> {
   try {
     const { useSessionStore } = await import('./sessionStore')
@@ -220,71 +220,6 @@ async function resolveTerminalCwd(conversationId: string, sliceRoot: string | nu
  */
 export function primaryAgentPaneId(conversationId: string, agentId: string): string {
   return `agent-host:${agentId}:${conversationId}`
-}
-
-export interface WorkspaceSlice {
-  root: string | null
-  /** Directory path → its entries. One key per loaded level, nothing nested. */
-  dirs: Record<string, FileEntry[]>
-  dirErrors: Record<string, string>
-  dirTruncated: Record<string, number>
-  loadingDirs: string[]
-  expanded: string[]
-  selectedPath: string | null
-  sort: FileSortKey
-  ascending: boolean
-  /** Files this conversation's agent has written, for the 本次改动 strip. */
-
-  /**
-   * User bash surface (Tools tray Terminal) — always plain shells, never a
-   * CLI agent binary. Independent of {@link agentHostSessions}.
-   */
-  tabs: TerminalTab[]
-  activeTabId: string
-  /** Binary tree of pane splits for user bash. Null until first bash exists. */
-  layout: TerminalLayoutNode | null
-  /**
-   * Main session is CLI Agent surface (not built-in VAV chat).
-   * Layout lives at {@link CLI_SURFACE_KEY} in agentHostSessions.
-   */
-  cliMode: boolean
-  /**
-   * Which CLI agent is shown in the main session surface (null = vav chat).
-   * Agent PTYs live only in {@link agentHostSessions}, not in `tabs`.
-   */
-  activeHostAgentId: string | null
-  /**
-   * Main-surface CLI agent layouts keyed by agent id. Switching agents parks
-   * here without touching user bash tabs. PTYs are not killed.
-   * Unified surface: {@link CLI_SURFACE_KEY}.
-   */
-  agentHostSessions: Record<string, AgentHostSession>
-  /** PTY body under the tab strip; default collapsed (terminal-panel.rpml). */
-  terminalOutputExpanded: boolean
-  terminalHasUnseenOutput: boolean
-}
-
-function emptySlice(root: string | null): WorkspaceSlice {
-  return {
-    root,
-    dirs: {},
-    dirErrors: {},
-    dirTruncated: {},
-    loadingDirs: [],
-    expanded: root ? [root] : [],
-    selectedPath: null,
-    sort: 'name',
-    ascending: true,
-
-    tabs: [],
-    activeTabId: '',
-    layout: null,
-    cliMode: false,
-    activeHostAgentId: null,
-    agentHostSessions: {},
-    terminalOutputExpanded: false,
-    terminalHasUnseenOutput: false
-  }
 }
 
 function getCliSurface(slice: WorkspaceSlice | undefined): AgentHostSession | undefined {
