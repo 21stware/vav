@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { dirname } from 'node:path'
 import type { AgentEvent, AgentTool } from '@earendil-works/pi-agent-core'
 import { runAgentLoopContinue } from '@earendil-works/pi-agent-core'
-import type { AssistantMessage, Message } from '@earendil-works/pi-ai'
+import type { Message } from '@earendil-works/pi-ai'
 import {
   type ChatMessage,
   type AppSettings,
@@ -31,6 +31,7 @@ import {
 import { threadPath } from '@shared/thread'
 import type { LeafCompaction } from '@shared/types'
 import { applyEditedArgs, leanToolArgs } from './agentToolArgs'
+import { isAssistant, textOf } from './agentMessage'
 import {
   blockFromContent,
   buildHistory,
@@ -1824,19 +1825,6 @@ export class AgentRuntime {
 }
 
 type StreamEvent = Extract<AgentEvent, { type: 'message_update' }>['assistantMessageEvent']
-
-function isAssistant(message: unknown): message is AssistantMessage {
-  return (message as AssistantMessage)?.role === 'assistant'
-}
-
-/** Fallback card text for results pi synthesised itself (blocked, not found). */
-function textOf(content: unknown): string | undefined {
-  if (!Array.isArray(content)) return undefined
-  return content
-    .filter((part): part is { type: 'text'; text: string } => part?.type === 'text')
-    .map((part) => part.text)
-    .join('\n')
-}
 
 /**
  * Reconcile plan checklist state when a turn ends.

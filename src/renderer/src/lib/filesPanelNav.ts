@@ -1,5 +1,6 @@
-import type { FileEntry } from '../../../shared/types.ts'
 import { dirname } from './path.ts'
+import { fileSortLabelKey } from '../../../shared/i18n/index.ts'
+import type { FileEntry, FileSortKey } from '../../../shared/types.ts'
 
 /**
  * Direct parent of a selected path (Finder-style: arrows move among siblings
@@ -24,4 +25,12 @@ export function entryInDir(
 ): FileEntry | null {
   if (!path) return null
   return (dirMap?.[dir] ?? []).find((e) => e.path === path) ?? null
+}
+
+export function sortButtonLabel(
+  key: FileSortKey,
+  t: (key: ReturnType<typeof fileSortLabelKey>) => string
+): string {
+  if (key === 'none') return '—'
+  return t(fileSortLabelKey(key))
 }

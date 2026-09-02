@@ -27,19 +27,16 @@ import {
   withCursorAuthIdentity
 } from '@shared/cliHost'
 import { ROOT_LEAF } from '@shared/thread'
-import { buildSnapshot, estimateContextTokens, formatExpiry } from '@shared/tokenUsage'
+import { buildSnapshot, estimateContextTokens } from '@shared/tokenUsage'
 import { attachQuotaNamespace, mergeNamespacedQuotaWindows } from '@shared/quotaWindows'
 import {
   classifyCliError,
   extractRpcError,
   formatErrorDetail,
   formatErrorDetailFromParts,
-  isBareInternalError,
   NETWORK_CONTINUE_PROMPT,
   NETWORK_RETRY_LIMIT,
   networkRetryDelayMs,
-  pickExhaustedQuotaWindow,
-  quotaKindMessageKey,
   RpcErrorCode,
   shouldContinuePartialNetworkTurn,
   shouldRetryFreshSession,
@@ -81,6 +78,7 @@ import {
   turnHasAnswerContent as turnBlocksHaveAnswer,
   turnHasIncompleteWork as turnBlocksHaveIncompleteWork
 } from './cliHostTurn'
+import { describeCliHostError } from './cliHostError'
 function isAcpHost(kind: CliHostKind | null | undefined): boolean {
   return !!kind && transportForCliHost(kind) === 'acp'
 }
@@ -117,42 +115,6 @@ import {
 } from '@shared/subtask'
 
 const COALESCE_MS = 32
-
-function describeCliHostError(
-  raw: string,
-  windows: QuotaWindow[],
-  code?: number | null,
-  model?: string | null
-): { kind: CliErrorKind; message: string } {
-  const text = raw.trim() || 'Internal error'
-  const locale = currentLocale()
-  const kind = classifyCliError(text, windows, code, model)
-  if (kind === 'cancelled') return { kind, message: text }
-  if (kind === 'quota') {
-    const window = pickExhaustedQuotaWindow(windows, model)
-    if (window) {
-      const name = t(quotaKindMessageKey(window.kind))
-      const percent = window.usedPercent.toFixed(window.usedPercent >= 10 ? 0 : 1)
-      if (window.resetsAt != null) {
-        return {
-          kind,
-          message: t('error.quotaExceededReset', {
-            window: name,
-            percent,
-            clock: formatExpiry(window.resetsAt, Date.now(), locale)
-          })
-        }
-      }
-      return { kind, message: t('error.quotaExceeded', { window: name, percent }) }
-    }
-    return { kind, message: t('error.quotaExceededGeneric') }
-  }
-  if (kind === 'session-stale') return { kind, message: t('error.sessionStale') }
-  if (kind === 'auth') return { kind, message: t('error.agentAuthRequired') }
-  if (kind === 'network') return { kind, message: t('error.network') }
-  if (isBareInternalError(text)) return { kind: 'generic', message: t('error.agentInternal') }
-  return { kind, message: text }
-}
 
 /**
  * Did this turn produce anything worth sealing? Reasoning alone does not
@@ -2121,7 +2083,9 @@ export class CliAgentHost {
       raw,
       this.quotaWindowsFor(conversationId),
       code,
-      conversation?.model
+      conversation?.model,
+      t,
+      currentLocale()
     )
   }
 

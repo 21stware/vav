@@ -13,7 +13,6 @@ import {
   X
 } from 'lucide-react'
 import {
-  PRESET_MODELS,
   enabledCliAgents,
   type ConversationMeta,
   type SidebarGroupingMode
@@ -36,6 +35,12 @@ import { warmMenuIcons } from '../lib/menuIcons'
 import { fileManagerLabel } from '../lib/platform'
 import { basename } from '../lib/path'
 import {
+  agentTypeLabel,
+  filterValueLabel,
+  groupingOptions,
+  modelLabel
+} from '../lib/sidebarList'
+import {
   conversationOnMachine,
   isLocalMachine,
   LOCAL_MACHINE_ID,
@@ -46,25 +51,13 @@ import { useT } from '../i18n/useT'
 import { EmptyState } from './ui'
 import { UpdateCorner } from './UpdateCorner'
 
-export function modelLabel(id: string): string {
-  return PRESET_MODELS.find((model) => model.id === id)?.label ?? id
-}
+export { modelLabel } from '../lib/sidebarList'
 
 type SwarmBracketKind = 'first' | 'mid' | 'last'
 
 /** Left bracket for a Swarm cluster — ┌─ / ├─ / └─, not a parent→child tree. */
 function ConvBracket({ kind }: { kind: SwarmBracketKind }): React.JSX.Element {
   return <span className={`conv-bracket is-${kind}`} aria-hidden />
-}
-
-/** Running CLI agent display name (sidebar-conversation-list.rpml · Agent 类型). */
-function agentTypeLabel(
-  conversation: ConversationMeta,
-  cliAgents: ReturnType<typeof enabledCliAgents>
-): string | null {
-  const id = conversation.cliHost || conversation.agentBinaryName
-  if (!id || id === 'vav') return null
-  return cliAgents.find((a) => a.id === id)?.name ?? id
 }
 
 type Subtitle =
@@ -109,30 +102,6 @@ function subtitleFor(
       ? workdirShortLabel(conversation.workingDirectory, tmp)
       : null
   return { kind: 'meta', age: relativeTime(conversation.updatedAt), dir }
-}
-
-function groupingOptions(t: ReturnType<typeof useT>): { value: SidebarGroupingMode; label: string }[] {
-  return [
-    { value: 'none', label: t('sidebar.group.none') },
-    { value: 'workspace', label: t('sidebar.group.workspace') },
-    { value: 'provider', label: t('sidebar.group.provider') }
-  ]
-}
-
-function filterValueLabel(
-  filter: SidebarSessionFilter,
-  t: ReturnType<typeof useT>
-): string {
-  switch (filter.kind) {
-    case 'none':
-      return t('sidebar.filter.none')
-    case 'active':
-      return t('sidebar.filter.active')
-    case 'favorite':
-      return t('sidebar.filter.favorite')
-    case 'workspace':
-      return basename(filter.path)
-  }
 }
 
 export function Sidebar({

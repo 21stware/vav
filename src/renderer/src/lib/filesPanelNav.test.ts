@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import type { FileEntry } from '../../../shared/types.ts'
-import { entryInDir, selectionParent } from './filesPanelNav.ts'
+import { entryInDir, selectionParent, sortButtonLabel } from './filesPanelNav.ts'
 
 function entry(path: string, name: string, isDirectory: boolean): FileEntry {
   return { path, name, isDirectory, size: 0, modifiedAt: 0, createdAt: 0 }
@@ -26,5 +26,11 @@ describe('filesPanelNav', () => {
     assert.equal(entryInDir('/repo', '/repo/src', dirMap)?.name, 'src')
     assert.equal(entryInDir('/repo', '/missing', dirMap), null)
     assert.equal(entryInDir('/repo', null, dirMap), null)
+  })
+
+  it('labels sort buttons', () => {
+    assert.equal(sortButtonLabel('none', (key) => key), '—')
+    assert.equal(sortButtonLabel('name', (key) => key), 'files.sort.name')
+    assert.equal(sortButtonLabel('size', (key) => key), 'files.sort.size')
   })
 })

@@ -29,7 +29,7 @@ import { useWorkspaceStore } from '../state/workspaceStore'
 import { useT } from '../i18n/useT'
 import { tt } from '../i18n/useT'
 import { formatBytes, isTemporaryWorkspace } from '../lib/format'
-import { entryInDir, selectionParent } from '../lib/filesPanelNav'
+import { entryInDir, selectionParent, sortButtonLabel } from '../lib/filesPanelNav'
 import { useGitRepoSyncEpoch } from '../lib/gitRepoSync'
 import { basename, dirname, joinPath } from '../lib/path'
 import { menuAnchor, showMenu, type MenuItem } from '../lib/nativeMenu'
@@ -64,11 +64,6 @@ function scrollFileRowIntoView(path: string): void {
       // CSS.escape may throw on odd paths — ignore
     }
   })
-}
-
-function sortButtonLabel(key: FileSortKey, t: ReturnType<typeof useT>): string {
-  if (key === 'none') return '—'
-  return t(fileSortLabelKey(key))
 }
 
 export function FilesPanel({ visible }: { visible: boolean }): React.JSX.Element {
