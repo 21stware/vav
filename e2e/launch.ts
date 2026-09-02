@@ -234,6 +234,154 @@ function seedUserData(
   writeFileSync(join(conversationsDir, 'index.json'), JSON.stringify({ version: 2, ids }))
 }
 
+/** Extra File Preview kinds used by files-preview.spec.ts (not the default chat fixtures). */
+async function seedPreviewKindFixtures(workspace: string): Promise<void> {
+  writeFileSync(
+    join(workspace, 'page.html'),
+    '<!doctype html><html><body><h1>HTML preview</h1><p>Hello canvas</p></body></html>\n'
+  )
+  writeFileSync(
+    join(workspace, 'app.html'),
+    '<!doctype html><html><body><h1>Clip surface</h1><p>Interactive clip</p></body></html>\n'
+  )
+  writeFileSync(join(workspace, 'blob.bin'), Buffer.from([0x00, 0x01, 0x7f, 0x80, 0xff, 0x00]))
+  writeSilentWav(join(workspace, 'tone.wav'))
+  writeMinimalPdf(join(workspace, 'brief.pdf'), 'Hello PDF')
+  execSync(
+    `python3 -c "import zipfile; z=zipfile.ZipFile(r'${join(workspace, 'pack.zip')}', 'w'); z.writestr('inside.txt', 'zip body'); z.close()"`
+  )
+  {
+    const XLSX = require('xlsx') as typeof import('xlsx')
+    const wb = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(
+      wb,
+      XLSX.utils.aoa_to_sheet([
+        ['Item', 'Qty'],
+        ['Pens', 12]
+      ]),
+      'Sheet1'
+    )
+    XLSX.writeFile(wb, join(workspace, 'budget.xlsx'))
+  }
+  const db = join(workspace, 'notes.db')
+  execSync(
+    `python3 -c "import sqlite3; c=sqlite3.connect(${JSON.stringify(db)}); c.execute('create table items(name text, qty int)'); c.execute(\\"insert into items values ('Pens', 12)\\"); c.commit()"`
+  )
+  await writeMinimalDocx(join(workspace, 'letter.docx'), 'Cover title')
+  await writeMinimalPptx(join(workspace, 'deck.pptx'), ['Q3 Review', 'Ship the canvas'])
+}
+
+function writeSilentWav(path: string): void {
+  const samples = 4000
+  const header = Buffer.alloc(44)
+  header.write('RIFF', 0)
+  header.writeUInt32LE(36 + samples * 2, 4)
+  header.write('WAVE', 8)
+  header.write('fmt ', 12)
+  header.writeUInt32LE(16, 16)
+  header.writeUInt16LE(1, 20)
+  header.writeUInt16LE(1, 22)
+  header.writeUInt32LE(8000, 24)
+  header.writeUInt32LE(16000, 28)
+  header.writeUInt16LE(2, 32)
+  header.writeUInt16LE(16, 34)
+  header.write('data', 36)
+  header.writeUInt32LE(samples * 2, 40)
+  writeFileSync(path, Buffer.concat([header, Buffer.alloc(samples * 2)]))
+}
+
+function writeMinimalPdf(path: string, text: string): void {
+  const stream = `BT /F1 24 Tf 72 720 Td (${text.replace(/[()\\]/g, '')}) Tj ET`
+  const objects = [
+    '1 0 obj<< /Type /Catalog /Pages 2 0 R >>endobj',
+    '2 0 obj<< /Type /Pages /Kids [3 0 R] /Count 1 >>endobj',
+    '3 0 obj<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>endobj',
+    `4 0 obj<< /Length ${stream.length} >>stream\n${stream}\nendstream\nendobj`,
+    '5 0 obj<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>endobj'
+  ]
+  let body = '%PDF-1.1\n'
+  const offsets = [0]
+  for (const obj of objects) {
+    offsets.push(body.length)
+    body += `${obj}\n`
+  }
+  const xrefAt = body.length
+  let xref = `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`
+  for (let i = 1; i <= objects.length; i++) {
+    xref += `${String(offsets[i]).padStart(10, '0')} 00000 n \n`
+  }
+  body += xref
+  body += `trailer<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefAt}\n%%EOF\n`
+  writeFileSync(path, body)
+}
+
+async function writeMinimalDocx(path: string, title: string): Promise<void> {
+  const JSZip = require('jszip') as typeof import('jszip')
+  const zip = new JSZip()
+  zip.file(
+    '[Content_Types].xml',
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+  <Default Extension="xml" ContentType="application/xml"/>
+  <Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
+</Types>`
+  )
+  zip.file(
+    '_rels/.rels',
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>
+</Relationships>`
+  )
+  zip.file(
+    'word/document.xml',
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:body><w:p><w:r><w:t>${title}</w:t></w:r></w:p></w:body>
+</w:document>`
+  )
+  writeFileSync(path, await zip.generateAsync({ type: 'nodebuffer' }))
+}
+
+async function writeMinimalPptx(path: string, paras: string[]): Promise<void> {
+  const JSZip = require('jszip') as typeof import('jszip')
+  const zip = new JSZip()
+  zip.file(
+    '[Content_Types].xml',
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+  <Default Extension="xml" ContentType="application/xml"/>
+  <Override PartName="/ppt/presentation.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.presentation.main+xml"/>
+  <Override PartName="/ppt/slides/slide1.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slide+xml"/>
+</Types>`
+  )
+  zip.file(
+    '_rels/.rels',
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="ppt/presentation.xml"/>
+</Relationships>`
+  )
+  zip.file(
+    'ppt/presentation.xml',
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<p:presentation xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+  <p:sldIdLst><p:sldId id="256" r:id="rId1"/></p:sldIdLst>
+</p:presentation>`
+  )
+  const body = paras.map((text) => `<a:p><a:r><a:t>${text}</a:t></a:r></a:p>`).join('')
+  zip.file(
+    'ppt/slides/slide1.xml',
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<p:sld xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main">
+  <p:cSld><p:spTree><p:sp><p:txBody>${body}</p:txBody></p:sp></p:spTree></p:cSld>
+</p:sld>`
+  )
+  writeFileSync(path, await zip.generateAsync({ type: 'nodebuffer' }))
+}
+
 export async function launchVav(options: LaunchVavOptions = {}): Promise<VavHarness> {
   const main = join(root, 'out/main/index.js')
   if (!existsSync(main)) {
@@ -251,26 +399,7 @@ export async function launchVav(options: LaunchVavOptions = {}): Promise<VavHarn
     join(workspace, 'mark.svg'),
     '<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32"><rect width="32" height="32" fill="#6b5bc0"/></svg>\n'
   )
-  writeFileSync(
-    join(workspace, 'page.html'),
-    '<!doctype html><html><body><h1>HTML preview</h1><p>Hello canvas</p></body></html>\n'
-  )
-  execSync(
-    `python3 -c "import zipfile; z=zipfile.ZipFile(r'${join(workspace, 'pack.zip')}', 'w'); z.writestr('inside.txt', 'zip body'); z.close()"`
-  )
-  {
-    const XLSX = require('xlsx') as typeof import('xlsx')
-    const wb = XLSX.utils.book_new()
-    XLSX.utils.book_append_sheet(
-      wb,
-      XLSX.utils.aoa_to_sheet([
-        ['Item', 'Qty'],
-        ['Pens', 12]
-      ]),
-      'Sheet1'
-    )
-    XLSX.writeFile(wb, join(workspace, 'budget.xlsx'))
-  }
+  await seedPreviewKindFixtures(workspace)
   if (options.seedGit) seedGitRepo(workspace)
   const extraWorkspace = options.extraWorkspace
     ? mkdtempSync(join(extraWorkspaceRoot(), 'vav-e2e-other-'))

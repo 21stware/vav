@@ -123,7 +123,10 @@ test('HTML preview renders the document canvas with Edit chrome', async () => {
     await page.locator('[data-file-path$="page.html"]').dblclick()
     const preview = page.locator('[data-testid="file-preview"]')
     await expect(page.locator('[data-testid="file-preview-name"]')).toHaveText('page.html')
-    await expect(preview.getByText('HTML preview')).toBeVisible()
+    await expect(preview.locator('.html-root, .html-native-frame')).toBeVisible()
+    await expect(preview.frameLocator('.html-native-frame').getByText('HTML preview')).toBeVisible({
+      timeout: 20_000
+    })
     await expect(preview.locator('.preview-mode-select')).toHaveValue('editing')
   } finally {
     await harness.dispose()
@@ -155,6 +158,146 @@ test('XLSX preview opens the sheet canvas', async () => {
     await expect(page.locator('[data-testid="file-preview-name"]')).toHaveText('budget.xlsx')
     await expect(preview.getByText('Pens')).toBeVisible({ timeout: 20_000 })
     await expect(preview.locator('.preview-mode-select')).toHaveValue('editing')
+    await expect(preview.locator('.file-viewer-warnings')).toHaveCount(0)
+  } finally {
+    await harness.dispose()
+  }
+})
+
+test('DOCX preview paints the letter canvas in Edit', async () => {
+  const harness = await launchVav()
+  try {
+    const { page } = harness
+    await openFilesTray(page)
+    await page.locator('[data-file-path$="letter.docx"]').dblclick()
+    const preview = page.locator('[data-testid="file-preview"]')
+    await expect(page.locator('[data-testid="file-preview-name"]')).toHaveText('letter.docx')
+    await expect(preview.getByText('Cover title')).toBeVisible({ timeout: 20_000 })
+    await expect(preview.locator('.preview-mode-select')).toHaveValue('editing')
+    await expect(preview.locator('.file-viewer-warnings, .structured-doc-warning')).toHaveCount(0)
+  } finally {
+    await harness.dispose()
+  }
+})
+
+test('PPTX preview paints the slide canvas in Edit', async () => {
+  const harness = await launchVav()
+  try {
+    const { page } = harness
+    await openFilesTray(page)
+    await page.locator('[data-file-path$="deck.pptx"]').dblclick()
+    const preview = page.locator('[data-testid="file-preview"]')
+    await expect(page.locator('[data-testid="file-preview-name"]')).toHaveText('deck.pptx')
+    await expect(preview.getByText('Q3 Review')).toBeVisible({ timeout: 20_000 })
+    await expect(preview.locator('.preview-mode-select')).toHaveValue('editing')
+  } finally {
+    await harness.dispose()
+  }
+})
+
+test('PDF preview is format-locked Read and paints text', async () => {
+  const harness = await launchVav()
+  try {
+    const { page } = harness
+    await openFilesTray(page)
+    await page.locator('[data-file-path$="brief.pdf"]').dblclick()
+    const preview = page.locator('[data-testid="file-preview"]')
+    await expect(page.locator('[data-testid="file-preview-name"]')).toHaveText('brief.pdf')
+    await expect(preview.getByText('Hello PDF')).toBeVisible({ timeout: 20_000 })
+    await expect(preview.locator('.preview-mode-select')).toHaveValue('readonly')
+    await expect(preview.locator('.file-viewer-warnings, .structured-doc-warning')).toHaveCount(0)
+  } finally {
+    await harness.dispose()
+  }
+})
+
+test('SQLite preview opens the sheet and stays pickable', async () => {
+  const harness = await launchVav()
+  try {
+    const { page } = harness
+    await openFilesTray(page)
+    await page.locator('[data-file-path$="notes.db"]').dblclick()
+    const preview = page.locator('[data-testid="file-preview"]')
+    await expect(page.locator('[data-testid="file-preview-name"]')).toHaveText('notes.db')
+    await expect(preview.locator('.sqlite-root')).toBeVisible({ timeout: 20_000 })
+    await expect(preview.getByText('items')).toBeVisible()
+    await expect(preview.getByText('Pens')).toBeVisible()
+    await expect(preview.locator('.preview-mode-select')).toHaveValue('editing')
+  } finally {
+    await harness.dispose()
+  }
+})
+
+test('binary preview stays Read and shows the hex/info canvas', async () => {
+  const harness = await launchVav()
+  try {
+    const { page } = harness
+    await openFilesTray(page)
+    await page.locator('[data-file-path$="blob.bin"]').dblclick()
+    const preview = page.locator('[data-testid="file-preview"]')
+    await expect(page.locator('[data-testid="file-preview-name"]')).toHaveText('blob.bin')
+    await expect(preview.locator('.binary-file-view')).toBeVisible()
+    await expect(preview.locator('.preview-mode-static')).toBeVisible()
+    await expect(preview.locator('.preview-mode-select')).toHaveCount(0)
+  } finally {
+    await harness.dispose()
+  }
+})
+
+test('audio preview paints the media canvas with shared chrome', async () => {
+  const harness = await launchVav()
+  try {
+    const { page } = harness
+    await openFilesTray(page)
+    await page.locator('[data-file-path$="tone.wav"]').dblclick()
+    const preview = page.locator('[data-testid="file-preview"]')
+    await expect(page.locator('[data-testid="file-preview-name"]')).toHaveText('tone.wav')
+    await expect(preview.locator('audio.file-viewer-audio')).toBeVisible()
+    await expect(preview.locator('.preview-mode-select')).toBeVisible()
+  } finally {
+    await harness.dispose()
+  }
+})
+
+test('html-clip preview is forced Read and is not pickable', async () => {
+  const harness = await launchVav()
+  try {
+    const { page } = harness
+    await openFilesTray(page)
+    await page.locator('[data-file-path$="app.html"]').dblclick()
+    const preview = page.locator('[data-testid="file-preview"]')
+    await expect(page.locator('[data-testid="file-preview-name"]')).toHaveText('app.html')
+    await expect(preview.locator('.html-clip-frame, .html-clip-stage')).toBeVisible({ timeout: 20_000 })
+    await expect(preview.locator('.preview-mode-static')).toBeVisible()
+    await expect(preview.locator('.preview-mode-select')).toHaveCount(0)
+    await expect(preview.locator('.preview-select-region')).toHaveCount(0)
+  } finally {
+    await harness.dispose()
+  }
+})
+
+test('picking a heading opens a comment card in the preview Agent panel', async () => {
+  const harness = await launchVav()
+  try {
+    const { page } = harness
+    await openFilesTray(page)
+    await page.locator('[data-file-path$="hello.md"]').dblclick()
+    const preview = page.locator('[data-testid="file-preview"]')
+    await expect(preview.getByText('hello from e2e')).toBeVisible()
+    await preview.locator('.preview-select-region, [data-block-id]').first().click()
+    await expect
+      .poll(async () => preview.locator('.preview-select-region.selected, .selected[data-block-id]').count())
+      .toBeGreaterThan(0)
+    const agentToggle = preview.locator('.preview-agent-logo-btn')
+    if (await agentToggle.count()) {
+      await agentToggle.click()
+    }
+    const start = preview.getByRole('button', { name: /start chat/i })
+    if (await start.isVisible().catch(() => false)) {
+      await start.click()
+    }
+    await expect(page.locator('.comment-card').first()).toBeVisible({ timeout: 20_000 })
+    await expect(page.locator('.comment-card-title').first()).toContainText(/hello|heading|line/i)
   } finally {
     await harness.dispose()
   }

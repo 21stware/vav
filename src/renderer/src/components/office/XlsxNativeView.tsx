@@ -241,8 +241,9 @@ export function XlsxNativeView({
           kind,
           text: text.slice(0, 8000),
           label: text.slice(0, 64) || id,
-          startLine: 1,
-          endLine: 1
+          // Native sheet DOM has no source line map — 0 means unknown.
+          startLine: 0,
+          endLine: 0
         },
         synthetic
       )

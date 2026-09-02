@@ -69,7 +69,10 @@ export function formatPreviewContext(refs: PreviewRef[] | null | undefined): str
     const badge = ref.badge ? ` ${ref.badge}` : ''
     const label = ref.label ? ` · ${ref.label}` : ''
     const range = formatPreviewLineRange(ref.startLine, ref.endLine)
-    const rangeSuffix = range ? ` · ${range}` : ''
+    // blockToPreviewRef already bakes the range into the chip label —
+    // do not emit "H1 hello · line 4 · line 4" to the model.
+    const rangeAlreadyInLabel = !!(range && ref.label && ref.label.includes(range))
+    const rangeSuffix = range && !rangeAlreadyInLabel ? ` · ${range}` : ''
     lines.push('')
     lines.push(`### ${ref.filePath}${badge}${label}${rangeSuffix}`)
     lines.push('```')

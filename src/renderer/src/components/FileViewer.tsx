@@ -62,6 +62,7 @@ import {
 } from './BinaryOpenViews'
 import { localFileStreamUrl } from '@shared/localFileUrl'
 import { mimeForPreviewKind, previewKind } from '@shared/previewKind'
+import { isSilentPreviewWindowWarning } from '@shared/previewWarnings'
 import { blockToPreviewRef } from '@shared/previewContext'
 import type { StructuredDocument } from '@shared/structuredDoc'
 import { attachDomPick, updateDomPick } from './office/pickFromDom'
@@ -3945,11 +3946,3 @@ function CsvView({
   )
 }
 
-/** Windowing / soft caps belong in render — never show as “truncated for preview”. */
-function isSilentPreviewWindowWarning(warning: string): boolean {
-  return (
-    /truncated to \d+\s*[x×]\s*\d+/i.test(warning) ||
-    (/truncat/i.test(warning) && /for preview/i.test(warning)) ||
-    /Sheet .+ truncated/i.test(warning)
-  )
-}

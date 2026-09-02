@@ -115,6 +115,19 @@ describe('blockToPreviewRef', () => {
 })
 
 describe('composeContextUserText', () => {
+  it('does not duplicate a range already baked into the chip label', () => {
+    const ref = blockToPreviewRef('/tmp/a.md', 'Markdown', {
+      id: 'h1-L4',
+      kind: 'heading',
+      text: '# Install',
+      label: 'H1 Install',
+      startLine: 4,
+      endLine: 4
+    })
+    const out = formatPreviewContext([ref])
+    assert.equal((out.match(/line 4/g) ?? []).length, 1)
+  })
+
   it('orders selection → attachments → user text', () => {
     const out = composeContextUserText(
       'rewrite this',

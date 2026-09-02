@@ -743,8 +743,8 @@ export function PdfNativeView({
                 kind: 'paragraph',
                 text: line.text.slice(0, 8000),
                 label: line.text.slice(0, 64) || line.id,
-                startLine: 1,
-                endLine: 1
+                startLine: 0,
+                endLine: 0
               },
               event
             )
@@ -765,8 +765,8 @@ export function PdfNativeView({
               kind: 'page',
               text: text.slice(0, 8000),
               label: `Page ${pageNum}`,
-              startLine: 1,
-              endLine: 1
+              startLine: 0,
+              endLine: 0
             },
             event
           )
