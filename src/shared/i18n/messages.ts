@@ -383,6 +383,8 @@ export const zhCN = {
   'message.delete': '删除',
   'message.deleteConfirm': '确定删除这条消息？此操作不可撤销。',
   'message.deleteConfirmFollow': '将删除此条及后续 {count} 条消息。此操作不可撤销。',
+  'message.roleYou': '你',
+  'message.roleAgent': 'Agent',
 
   // —— diagram / mind map previews ——
   'diagram.mindMap': '思维导图',
@@ -2520,6 +2522,8 @@ export const en: Record<MessageKey, string> = {
   'message.deleteConfirm': 'Delete this message? This cannot be undone.',
   'message.deleteConfirmFollow':
     'This deletes the message and {count} later message(s). This cannot be undone.',
+  'message.roleYou': 'You',
+  'message.roleAgent': 'Agent',
 
   'diagram.mindMap': 'Mind map',
   'diagram.mindAddChild': 'Add child',

@@ -8,13 +8,14 @@ import {
   MinusCircle,
   XCircle
 } from 'lucide-react'
+import { catalogTextIncludes } from '@shared/i18n'
 import { parseToolInput } from '@shared/askPlan'
 import { projectChecklistInput } from '@shared/planDoc'
 import type { PlanStep, PlanStepStatus, ToolCallBlock, TurnPhase } from '@shared/types'
 import { getProjection } from '../state/StreamProjection'
 import { useSessionStore, visibleMessages } from '../state/sessionStore'
 import { PlanCard } from './PlanCard'
-import { useT, tt } from '../i18n/useT'
+import { useT } from '../i18n/useT'
 
 /** Matches the 200ms slide-up + fade dismiss in main-chat-streaming.rpml. */
 const DISMISS_MS = 200
@@ -51,8 +52,7 @@ function viewFromBlock(block: ToolCallBlock, turnRunning: boolean): PlanView | n
   const allDone = done === steps.length
   const cancelled =
     !turnRunning &&
-    (!!errored?.subtitle?.includes('已取消') ||
-      !!errored?.subtitle?.includes(tt('common.cancelled')))
+    (!!errored?.subtitle && catalogTextIncludes('common.cancelled', errored.subtitle))
   return { block, title, steps, done, executing, errored, allDone, cancelled }
 }
 
