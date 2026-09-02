@@ -1,9 +1,13 @@
 import SwiftUI
+import UIKit
 
 struct SettingsView: View {
     @EnvironmentObject private var client: RemoteClient
     @State private var showAdd = false
     @State private var pendingForget: Pairing?
+    @State private var showExport = false
+    @State private var copied = false
+    @State private var exportURL: URL?
 
     var body: some View {
         NavigationStack {
@@ -33,6 +37,9 @@ struct SettingsView: View {
                 Section("当前连接") {
                     LabeledContent("电脑", value: client.host?.name ?? client.pairedHost)
                     LabeledContent("状态") { ConnectionBadge() }
+                    if let at = client.lastSyncAt {
+                        LabeledContent("最近同步", value: at.formatted(date: .omitted, time: .standard))
+                    }
                     if let platform = client.host?.platform {
                         LabeledContent("系统", value: platform)
                     }
@@ -71,11 +78,36 @@ struct SettingsView: View {
                         Text("工作区、Agent、密钥都在 Host 上。手机是正规客户端，但 remote 不会把文件系统和终端放到手机沙盒里。")
                     }
                 }
+
+                Section {
+                    Button("导出诊断日志") {
+                        DiagLog.line("export requested")
+                        exportURL = DiagLog.exportFile()
+                        showExport = true
+                    }
+                    Button(copied ? "已复制" : "复制日志") {
+                        UIPasteboard.general.string = DiagLog.snapshot()
+                        copied = true
+                    }
+                    Button("清空日志", role: .destructive) {
+                        DiagLog.clear()
+                        copied = false
+                    }
+                } header: {
+                    Text("诊断日志")
+                } footer: {
+                    Text("公网连不上时：打开 App 点「立即重连」，等它失败，再导出这份日志。令牌和密钥会被打码。诊断 build 4。")
+                }
             }
             .navigationTitle("设置")
             .sheet(isPresented: $showAdd) {
                 PairingView(mode: .add)
                     .environmentObject(client)
+            }
+            .sheet(isPresented: $showExport) {
+                if let exportURL {
+                    DiagExportView(url: exportURL)
+                }
             }
             .confirmationDialog(
                 forgetTitle,

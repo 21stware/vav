@@ -29,9 +29,17 @@ final class RemoteClient: NSObject, ObservableObject, UNUserNotificationCenterDe
         case offline
     }
 
+    enum SessionsLoad: Equatable {
+        case unknown
+        case loading
+        case ready
+    }
+
     @Published var selectedTab: RemoteTab = .sessions
     @Published private(set) var state: State = .unpaired
     @Published private(set) var sessions: [RemoteSession] = []
+    @Published private(set) var sessionsLoad: SessionsLoad = .unknown
+    @Published private(set) var lastSyncAt: Date?
     @Published private(set) var notifications: [RemoteNotificationItem] = []
     @Published private(set) var threads: [String: [RemoteThreadMessage]] = [:]
     @Published private(set) var threadLoad: [String: ThreadLoad] = [:]
@@ -61,6 +69,13 @@ final class RemoteClient: NSObject, ObservableObject, UNUserNotificationCenterDe
     private var generation = 0
     private var createGeneration = 0
     private var pendingThreads = Set<String>()
+    private var sessionsEpoch = 0
+    /// Conversation currently on screen. Reconnect / turn-complete only refresh this one.
+    private var viewingConversationId: String?
+
+    var isSyncing: Bool {
+        sessionsLoad == .loading || threadLoad.values.contains(.loading)
+    }
 
     override init() {
         let book = PairingStore.loadBook()
@@ -70,10 +85,22 @@ final class RemoteClient: NSObject, ObservableObject, UNUserNotificationCenterDe
         super.init()
         if pairing != nil { state = .disconnected(nil) }
         UNUserNotificationCenter.current().delegate = self
+        DiagLog.line(
+            "client init paired=\(pairings.count) active=\(pairing?.displayName ?? "none") token=\(DiagLog.tokenHint(pairing?.token ?? ""))"
+        )
     }
 
     var isPaired: Bool { !pairings.isEmpty }
     var pairedHost: String { pairing?.displayName ?? "电脑" }
+
+    private var stateLabel: String {
+        switch state {
+        case .connected(let host): return "connected(\(host))"
+        case .connecting: return "connecting"
+        case .disconnected(let error): return "disconnected(\(error ?? "nil"))"
+        case .unpaired: return "unpaired"
+        }
+    }
 
     func isGenerating(_ conversationId: String) -> Bool {
         generatingIds.contains(conversationId)
@@ -85,6 +112,7 @@ final class RemoteClient: NSObject, ObservableObject, UNUserNotificationCenterDe
 
     /// Scan a QR: add a new computer, or refresh an existing one, then connect.
     func adopt(pairing next: Pairing) {
+        DiagLog.line("adopt host=\(next.displayName) token=\(DiagLog.tokenHint(next.token))")
         upsert(next, activate: true)
         switchToActive()
     }
@@ -195,6 +223,8 @@ final class RemoteClient: NSObject, ObservableObject, UNUserNotificationCenterDe
         sendErrorConversationId = nil
         notice = nil
         pendingThreads.removeAll()
+        sessionsLoad = .unknown
+        lastSyncAt = nil
     }
 
     /// Call on launch and every scenePhase → .active transition.
@@ -202,12 +232,15 @@ final class RemoteClient: NSObject, ObservableObject, UNUserNotificationCenterDe
         guard pairing != nil else { return }
         switch state {
         case .connected, .connecting: return
-        default: connect()
+        default:
+            DiagLog.line("connectIfNeeded state=\(stateLabel)")
+            connect()
         }
     }
 
     /// Call on scenePhase → .background: the socket dies there anyway.
     func suspend() {
+        DiagLog.line("suspend")
         teardown()
         if pairing != nil { state = .disconnected(nil) }
     }
@@ -259,7 +292,19 @@ final class RemoteClient: NSObject, ObservableObject, UNUserNotificationCenterDe
 
     func refreshSessions() {
         guard let line = ClientFrame.sessions() else { return }
+        if case .connected = state { sessionsLoad = .loading }
+        DiagLog.line("request sessions")
         write(line)
+    }
+
+    func refreshSessionsAndWait() async {
+        let before = sessionsEpoch
+        refreshSessions()
+        let deadline = Date().addingTimeInterval(20)
+        while Date() < deadline && !Task.isCancelled {
+            if sessionsEpoch != before { return }
+            try? await Task.sleep(nanoseconds: 120_000_000)
+        }
     }
 
     func cancel(conversationId: String) {
@@ -323,6 +368,11 @@ final class RemoteClient: NSObject, ObservableObject, UNUserNotificationCenterDe
         write(line)
     }
 
+    func setViewingConversation(_ id: String?, ifCurrent: String? = nil) {
+        if let ifCurrent, viewingConversationId != ifCurrent { return }
+        viewingConversationId = id
+    }
+
     func requestThread(conversationId: String) {
         guard case .connected = state else {
             if threadLoad[conversationId] != .ready {
@@ -330,18 +380,21 @@ final class RemoteClient: NSObject, ObservableObject, UNUserNotificationCenterDe
             }
             return
         }
-        guard let line = ClientFrame.thread(conversationId: conversationId) else { return }
         if threadLoad[conversationId] != .ready {
             threadLoad[conversationId] = .loading
         }
+        if pendingThreads.contains(conversationId) { return }
+        guard let line = ClientFrame.thread(conversationId: conversationId) else { return }
         pendingThreads.insert(conversationId)
+        DiagLog.line("request thread \(conversationId.prefix(8))")
         write(line)
         let gen = generation
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { [weak self] in
+        DispatchQueue.main.asyncAfter(deadline: .now() + 20) { [weak self] in
             guard let self, self.generation == gen else { return }
             guard self.pendingThreads.contains(conversationId) else { return }
             self.pendingThreads.remove(conversationId)
             if self.threadLoad[conversationId] == .loading {
+                DiagLog.line("thread timeout \(conversationId.prefix(8))")
                 self.threadLoad[conversationId] = .unavailable
                 if self.threads[conversationId] == nil { self.threads[conversationId] = [] }
             }
@@ -411,23 +464,29 @@ final class RemoteClient: NSObject, ObservableObject, UNUserNotificationCenterDe
         generation += 1
         let gen = generation
         let device = UIDevice.current.name
+        DiagLog.line("connect host=\(pairing.displayName) token=\(DiagLog.tokenHint(pairing.token)) gen=\(gen)")
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             var dialError: NSError?
             let session = TcmobileDial(pairing.token, &dialError)
+            DiagLog.ingestGo()
             guard let session else {
+                let shown = Self.describeLinkError(dialError)
+                DiagLog.line("dial fail raw=\(dialError?.localizedDescription ?? "nil") shown=\(shown)")
                 DispatchQueue.main.async {
                     guard let self, self.generation == gen else { return }
-                    self.state = .disconnected(Self.describeLinkError(dialError))
+                    self.state = .disconnected(shown)
                     self.scheduleReconnect()
                 }
                 return
             }
+            DiagLog.line("dial ok, sending hello")
             do {
                 guard let hello = ClientFrame.hello(secret: pairing.secret, device: device) else {
                     throw NSError(domain: "vav.remote", code: 1)
                 }
                 try session.writeLine(hello)
             } catch {
+                DiagLog.line("hello write fail \(error.localizedDescription)")
                 session.close()
                 DispatchQueue.main.async {
                     guard let self, self.generation == gen else { return }
@@ -443,10 +502,13 @@ final class RemoteClient: NSObject, ObservableObject, UNUserNotificationCenterDe
                 }
                 self.session = session
                 self.state = .connected(host: pairing.displayName)
+                self.sessionsLoad = .loading
+                DiagLog.line("connected host=\(pairing.displayName), waiting for sessions")
                 self.startReadThread(session: session, generation: gen)
-                for id in self.threadLoad.keys {
-                    self.requestThread(conversationId: id)
-                    self.requestControls(conversationId: id)
+                // Hello already pushes the list. Only refresh the open transcript.
+                if let viewing = self.viewingConversationId {
+                    self.requestThread(conversationId: viewing)
+                    self.requestControls(conversationId: viewing)
                 }
             }
         }
@@ -458,6 +520,8 @@ final class RemoteClient: NSObject, ObservableObject, UNUserNotificationCenterDe
                 var error: NSError?
                 let line = session.readLine(&error)
                 if error != nil {
+                    DiagLog.ingestGo()
+                    DiagLog.line("read loop end \(error?.localizedDescription ?? "eof")")
                     DispatchQueue.main.async {
                         guard let self, self.generation == gen else { return }
                         self.session = nil
@@ -467,7 +531,10 @@ final class RemoteClient: NSObject, ObservableObject, UNUserNotificationCenterDe
                     }
                     return
                 }
-                guard let frame = ServerFrame.parse(line) else { continue }
+                guard let frame = ServerFrame.parse(line) else {
+                    DiagLog.line("skip frame bytes=\(line.utf8.count) head=\(line.prefix(40))")
+                    continue
+                }
                 DispatchQueue.main.async {
                     guard let self, self.generation == gen else { return }
                     self.handle(frame)
@@ -480,13 +547,18 @@ final class RemoteClient: NSObject, ObservableObject, UNUserNotificationCenterDe
 
     private func handle(_ frame: ServerFrame) {
         switch frame {
-        case .welcome:
-            break
+        case .welcome(let app, let version):
+            DiagLog.line("welcome \(app) \(version)")
         case .host(let snapshot):
             host = snapshot
             rememberActiveName(snapshot.name)
+            DiagLog.line("host \(snapshot.name)")
         case .sessions(let sessions):
             self.sessions = sessions
+            sessionsEpoch += 1
+            sessionsLoad = .ready
+            lastSyncAt = Date()
+            DiagLog.line("sessions n=\(sessions.count)")
             finishTurnsIfIdle(in: sessions)
         case .thread(let conversationId, let messages):
             pendingThreads.remove(conversationId)
@@ -495,6 +567,8 @@ final class RemoteClient: NSObject, ObservableObject, UNUserNotificationCenterDe
                 local: threads[conversationId] ?? []
             )
             threadLoad[conversationId] = .ready
+            lastSyncAt = Date()
+            DiagLog.line("thread \(conversationId.prefix(8)) n=\(messages.count)")
             if threadShowsCompletedTurn(threads[conversationId] ?? []) {
                 setGenerating(conversationId, false)
                 drafts[conversationId] = nil
@@ -545,6 +619,7 @@ final class RemoteClient: NSObject, ObservableObject, UNUserNotificationCenterDe
                 return
             }
             if code == "auth" {
+                DiagLog.line("auth rejected")
                 teardown()
                 state = .disconnected("配对被拒绝，请重新扫码")
                 return
@@ -601,21 +676,18 @@ final class RemoteClient: NSObject, ObservableObject, UNUserNotificationCenterDe
         }
     }
 
-    /// Turn finished: drop Generating, refresh the log, and reflect it in the list.
+    /// Turn finished: Mac already pushed `thread` + `sessions`. Don't refetch the pipe.
     private func applyTurnFinished(_ conversationId: String) {
         setGenerating(conversationId, false)
         if let index = sessions.firstIndex(where: { $0.id == conversationId }),
            sessions[index].status == "running" {
             sessions[index] = sessions[index].patching(status: "done")
         }
-        requestThread(conversationId: conversationId)
-        refreshSessions()
     }
 
     private func finishTurnsIfIdle(in sessions: [RemoteSession]) {
         for session in sessions where session.status != "running" && generatingIds.contains(session.id) {
             setGenerating(session.id, false)
-            requestThread(conversationId: session.id)
         }
     }
 

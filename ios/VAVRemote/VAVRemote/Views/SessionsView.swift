@@ -22,11 +22,19 @@ struct SessionsView: View {
             }
             .overlay {
                 if client.sessions.isEmpty {
-                    ContentUnavailableView(
-                        "暂无会话",
-                        systemImage: "bubble.left.and.bubble.right",
-                        description: Text(emptyHint)
-                    )
+                    if client.sessionsLoad == .loading || client.state == .connecting {
+                        ContentUnavailableView {
+                            ProgressView()
+                        } description: {
+                            Text(client.state == .connecting ? "正在连接电脑…" : "正在同步会话…")
+                        }
+                    } else {
+                        ContentUnavailableView(
+                            "暂无会话",
+                            systemImage: "bubble.left.and.bubble.right",
+                            description: Text(emptyHint)
+                        )
+                    }
                 }
             }
             .navigationTitle(HostLinkStyle.displayName(client))
@@ -38,10 +46,16 @@ struct SessionsView: View {
             }
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
-                    Circle()
-                        .fill(HostLinkStyle.color(client.state))
-                        .frame(width: 8, height: 8)
-                        .accessibilityLabel(HostLinkStyle.statusLabel(client.state))
+                    if client.isSyncing {
+                        ProgressView()
+                            .controlSize(.small)
+                            .accessibilityLabel(HostLinkStyle.statusLabel(client))
+                    } else {
+                        Circle()
+                            .fill(HostLinkStyle.color(client))
+                            .frame(width: 8, height: 8)
+                            .accessibilityLabel(HostLinkStyle.statusLabel(client))
+                    }
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
@@ -57,7 +71,7 @@ struct SessionsView: View {
                     .accessibilityLabel("新会话")
                 }
             }
-            .refreshable { client.refreshSessions() }
+            .refreshable { await client.refreshSessionsAndWait() }
             .onAppear { openIfNeeded(client.openConversationId) }
             .onChange(of: client.openConversationId) { _, id in
                 openIfNeeded(id)
@@ -86,6 +100,7 @@ struct SessionsView: View {
     }
 
     private var emptyHint: String {
+        if client.sessionsLoad == .loading { return "正在同步会话…" }
         if case .connected = client.state { return "点右上角 + 新建会话，或在 Mac 上开一个。" }
         if case .connecting = client.state { return "正在经公网中继连接电脑…" }
         if case .disconnected(let error) = client.state, let error, !error.isEmpty { return error }

@@ -7,7 +7,6 @@ import (
 	"log"
 	"net"
 	"os"
-	"strings"
 	"sync"
 	"time"
 
@@ -22,14 +21,53 @@ const dialTimeout = 45 * time.Second
 //
 // Startup stdout: {"event":"ready","port":N}
 // The process exits when stdin reaches EOF (parent died).
+//
+// A probe dial must succeed before ready, then that conn is closed. Each
+// Accept opens a fresh remote stream — holding the probe would leave a
+// dead pipe after idle (local listen stays up, hello never returns).
 func runDial(token string, verbose bool) {
 	logf := logger.Discard
 	if verbose {
 		logf = log.Printf
 	}
-	cl := tailcat.NewClient(tailcat.ConnBlob(strings.TrimSpace(token)))
-	cl.Logf = logf
-	defer cl.Close()
+	blob, err := enrichBlob(token)
+	if err != nil {
+		blob = tailcat.ConnBlob(token)
+	}
+
+	newClient := func() *tailcat.Client {
+		cl := tailcat.NewClient(blob)
+		cl.Logf = logf
+		return cl
+	}
+
+	var mu sync.Mutex
+	cl := newClient()
+	defer func() {
+		mu.Lock()
+		cl.Close()
+		mu.Unlock()
+	}()
+
+	dialRemote := func() (net.Conn, error) {
+		ctx, cancel := context.WithTimeout(context.Background(), dialTimeout)
+		defer cancel()
+		mu.Lock()
+		client := cl
+		mu.Unlock()
+		conn, err := client.DialTCPPort(ctx, bridgePort)
+		if err == nil {
+			return conn, nil
+		}
+		mu.Lock()
+		cl.Close()
+		cl = newClient()
+		client = cl
+		mu.Unlock()
+		ctx2, cancel2 := context.WithTimeout(context.Background(), dialTimeout)
+		defer cancel2()
+		return client.DialTCPPort(ctx2, bridgePort)
+	}
 
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -41,28 +79,15 @@ func runDial(token string, verbose bool) {
 		log.Fatalf("listen: not tcp")
 	}
 
-	var remote net.Conn
-	var last error
-	for attempt := 0; attempt < 3; attempt++ {
-		ctx, cancel := context.WithTimeout(context.Background(), dialTimeout)
-		remote, last = cl.DialTCPPort(ctx, bridgePort)
-		cancel()
-		if last == nil {
-			break
-		}
-		log.Printf("dial attempt %d: %v", attempt+1, last)
-		time.Sleep(time.Duration(attempt+1) * 400 * time.Millisecond)
+	probe, err := dialRemote()
+	if err != nil {
+		log.Fatalf("dial: %v", err)
 	}
-	if last != nil {
-		log.Fatalf("dial: %v", last)
-	}
+	_ = probe.Close()
 
 	if err := json.NewEncoder(os.Stdout).Encode(readyEvent{Event: "ready", Port: tcpAddr.Port}); err != nil {
 		log.Fatalf("write ready: %v", err)
 	}
-
-	var mu sync.Mutex
-	pending := remote
 
 	go func() {
 		for {
@@ -70,21 +95,15 @@ func runDial(token string, verbose bool) {
 			if err != nil {
 				return
 			}
-			mu.Lock()
-			conn := pending
-			pending = nil
-			mu.Unlock()
-			if conn == nil {
-				dctx, dcancel := context.WithTimeout(context.Background(), dialTimeout)
-				conn, err = cl.DialTCPPort(dctx, bridgePort)
-				dcancel()
+			go func(local net.Conn) {
+				remote, err := dialRemote()
 				if err != nil {
 					log.Printf("redial: %v", err)
 					local.Close()
-					continue
+					return
 				}
-			}
-			go tailcat.ProxyConns(local, conn)
+				tailcat.ProxyConns(local, remote)
+			}(local)
 		}
 	}()
 

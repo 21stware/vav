@@ -35,9 +35,11 @@ import {
   type DialTarget,
   type DiscoveredPeer
 } from './lanAnnounce.ts'
-
 import { agentBinaryCandidates } from '../../shared/agentBinary.ts'
 import { CLI_AGENT_CATALOGUE } from '../../shared/types.ts'
+
+/** Hello into a local `--dial` port. The listen staying up does not mean the pipe is live. */
+const TUNNEL_HELLO_MS = 5_000
 
 export type PairedHostRecord = {
   machineId: string
@@ -437,34 +439,111 @@ export class DaemonAttachService {
   }> {
     if (signal?.aborted) throw new Error(PAIRING_CANCELLED)
     const failures: Error[] = []
-    if (parsed.token && this.opts.dialTunnel) {
+    const lanTargets = this.targetsOf(parsed)
+    const canTunnel = Boolean(parsed.token && this.opts.dialTunnel)
+
+    const runLan = (sig: AbortSignal) => {
+      if (lanTargets.length === 0) return Promise.reject(new Error('no addresses'))
+      return this.dial(lanTargets, parsed.secret, undefined, sig)
+    }
+    const runTunnel = async (sig: AbortSignal) => {
+      const token = parsed.token!
       try {
-        const tun = await this.ensureTunnel(parsed.token)
-        if (signal?.aborted) throw new Error(PAIRING_CANCELLED)
-        const result = await this.dial([tun], parsed.secret, 45_000, signal)
-        this.tunnelOfHost.set(result.welcome.host.id, parsed.token)
+        const tun = await this.ensureTunnel(token, sig)
+        if (sig.aborted) throw new Error(PAIRING_CANCELLED)
+        const result = await this.dial([tun], parsed.secret, TUNNEL_HELLO_MS, sig)
+        this.tunnelOfHost.set(result.welcome.host.id, token)
         return result
       } catch (err) {
-        if (isPairCancelled(err)) throw err instanceof Error ? err : new Error(PAIRING_CANCELLED)
-        failures.push(err instanceof Error ? err : new Error(String(err)))
-        this.dropTunnel(parsed.token)
+        this.dropTunnel(token)
+        throw err
       }
     }
-    const targets = this.targetsOf(parsed)
-    if (targets.length === 0) throw preferPairError(failures)
+
     try {
-      return await this.dial(targets, parsed.secret, undefined, signal)
+      if (canTunnel && lanTargets.length > 0) {
+        return await this.raceTunnelAndLan(runTunnel, runLan, parsed.token!, signal)
+      }
+      if (canTunnel) {
+        return await runTunnel(signal ?? new AbortController().signal)
+      }
+      if (lanTargets.length === 0) throw preferPairError(failures)
+      return await runLan(signal ?? new AbortController().signal)
     } catch (err) {
       if (isPairCancelled(err)) throw err instanceof Error ? err : new Error(PAIRING_CANCELLED)
-      failures.push(err instanceof Error ? err : new Error(String(err)))
+      const message = err instanceof Error ? err : new Error(String(err))
+      failures.push(message)
       throw preferPairError(failures)
     }
   }
 
-  private async ensureTunnel(token: string): Promise<DialTarget> {
+  /**
+   * LAN and tailcat at once. A listening `--dial` port is not a live tunnel —
+   * hello into a dead proxy used to block LAN for 45s. First welcome wins.
+   */
+  private async raceTunnelAndLan(
+    runTunnel: (signal: AbortSignal) => ReturnType<DaemonAttachService['dial']>,
+    runLan: (signal: AbortSignal) => ReturnType<DaemonAttachService['dial']>,
+    token: string,
+    signal?: AbortSignal
+  ): Promise<Awaited<ReturnType<DaemonAttachService['dial']>>> {
+    const tunAbort = new AbortController()
+    const lanAbort = new AbortController()
+    const onParent = (): void => {
+      tunAbort.abort()
+      lanAbort.abort()
+    }
+    signal?.addEventListener('abort', onParent, { once: true })
+    type Outcome =
+      | { ok: true; via: 'tun' | 'lan'; r: Awaited<ReturnType<DaemonAttachService['dial']>> }
+      | { ok: false; via: 'tun' | 'lan'; e: unknown }
+    const wrap = (
+      via: 'tun' | 'lan',
+      run: (sig: AbortSignal) => ReturnType<DaemonAttachService['dial']>,
+      sig: AbortSignal
+    ): Promise<Outcome> =>
+      run(sig).then(
+        (r) => ({ ok: true, via, r }),
+        (e: unknown) => ({ ok: false, via, e })
+      )
+    try {
+      const tunP = wrap('tun', runTunnel, tunAbort.signal)
+      const lanP = wrap('lan', runLan, lanAbort.signal)
+      const first = await Promise.race([tunP, lanP])
+      if (first.ok) {
+        if (first.via === 'tun') lanAbort.abort()
+        else {
+          tunAbort.abort()
+          this.dropTunnel(token)
+        }
+        const loser = first.via === 'tun' ? lanP : tunP
+        void loser.then((outcome) => {
+          if (outcome.ok) outcome.r.client.close()
+        })
+        return first.r
+      }
+      const second = first.via === 'tun' ? await lanP : await tunP
+      if (second.ok) {
+        if (second.via !== 'tun') this.dropTunnel(token)
+        return second.r
+      }
+      const errors = [first.e, second.e].map((err) =>
+        err instanceof Error ? err : new Error(String(err))
+      )
+      throw preferPairError(errors)
+    } finally {
+      signal?.removeEventListener('abort', onParent)
+    }
+  }
+
+  private async ensureTunnel(token: string, signal?: AbortSignal): Promise<DialTarget> {
     const existing = this.tunnels.get(token)
     if (existing) return { host: existing.host, port: existing.port }
     const handle = await this.opts.dialTunnel!(token)
+    if (signal?.aborted) {
+      handle.close()
+      throw new Error(PAIRING_CANCELLED)
+    }
     this.tunnels.set(token, handle)
     return { host: handle.host, port: handle.port }
   }

@@ -75,6 +75,20 @@ describe('collectDialTargets', () => {
     assert.ok(targets.some((row) => row.host === 'Mac-mini-2.local'))
   })
 
+  it('skips this machine’s own addresses from the pairing line', () => {
+    const targets = collectDialTargets({
+      host: '198.18.0.1',
+      port: 4750,
+      addresses: ['192.168.1.13', '198.18.0.1', 'Mac-mini-2.local'],
+      name: 'Mac-mini-2.local',
+      localAddresses: ['192.168.1.8', '198.18.0.1']
+    })
+    assert.deepEqual(
+      targets.map((row) => row.host),
+      ['192.168.1.13', 'Mac-mini-2.local']
+    )
+  })
+
   it('ranks a same-subnet IPv4 ahead of Bonjour', () => {
     const targets = collectDialTargets({
       host: '10.8.0.2',

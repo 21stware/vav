@@ -554,8 +554,10 @@ export class RemoteControlService {
         app: 'VAV',
         version: this.deps.appVersion
       })
-      this.send(client, this.deps.listHost())
+      // Sessions first: the phone can paint the list before host metadata
+      // and alert replay occupy the single tunnel.
       this.send(client, { type: 'sessions', sessions: this.deps.listSessions() })
+      this.send(client, this.deps.listHost())
       this.replayAlerts(client)
       this.publishStatus()
       return true
@@ -766,23 +768,10 @@ export class RemoteControlService {
     }
   }
 
-  /** Handshake is list + notify: replay buffered alerts and current Done rows. */
+  /** Handshake: replay live alerts only. Done-row synthesis bloated the first paint. */
   private replayAlerts(client: RemoteClient): void {
-    const seen = new Set<string>()
     for (const note of this.recentAlerts) {
-      seen.add(note.conversationId)
       this.send(client, note)
-    }
-    for (const session of this.deps.listSessions()) {
-      if (session.status !== 'done' || seen.has(session.id)) continue
-      this.send(client, {
-        type: 'notification',
-        kind: 'turn-complete',
-        conversationId: session.id,
-        title: session.title,
-        body: session.dirLabel,
-        at: session.updatedAt
-      })
     }
   }
 

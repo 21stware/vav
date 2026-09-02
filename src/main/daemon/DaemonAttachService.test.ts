@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { createServer } from 'node:net'
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -326,6 +327,49 @@ describe('DaemonAttachService', () => {
       assert.equal(stored.hosts[0]?.host, 'Mac-mini-2.local')
     } finally {
       service.dispose()
+      server.close()
+      await rm(disk, { recursive: true, force: true })
+      await rm(userData, { recursive: true, force: true })
+    }
+  })
+
+  it('uses LAN immediately when the tunnel port accepts but never replies', async () => {
+    const disk = await mkdtemp(join(tmpdir(), 'vav-box-'))
+    const userData = await mkdtemp(join(tmpdir(), 'vav-attach-'))
+    const { server, port } = await listenLoopback(disk)
+    const hang = createServer((socket) => {
+      socket.resume()
+    })
+    const hangPort = await new Promise<number>((resolve, reject) => {
+      hang.once('error', reject)
+      hang.listen(0, '127.0.0.1', () => {
+        const address = hang.address()
+        if (!address || typeof address === 'string') reject(new Error('no port'))
+        else resolve(address.port)
+      })
+    })
+    const { service } = attach(userData, false, {
+      dialTunnel: async () => ({ host: '127.0.0.1', port: hangPort, close: () => undefined })
+    })
+    try {
+      const started = Date.now()
+      const result = await service.pair(
+        encodeDaemonPairing({
+          v: DAEMON_PROTO_VERSION,
+          secret: SECRET,
+          machineId: 'ignored',
+          name: 'box',
+          host: '127.0.0.1',
+          port,
+          token: 'tcDEADPIPE'
+        })
+      )
+      assert.equal(result.ok, true)
+      if (result.ok) assert.equal(result.host.id, 'box-1')
+      assert.ok(Date.now() - started < 2_000, 'LAN should win without waiting out the dead tunnel')
+    } finally {
+      service.dispose()
+      hang.close()
       server.close()
       await rm(disk, { recursive: true, force: true })
       await rm(userData, { recursive: true, force: true })

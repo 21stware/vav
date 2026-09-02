@@ -7,8 +7,10 @@
  *
  * Handshake: the client's first line must be a `hello` carrying the pairing
  * secret. Anything else — or a bad secret — gets an `error` line and a close.
- * After a valid hello the server replies `welcome` + a full `sessions`
- * snapshot, then pushes `notification` / `sessions` events as they happen.
+ * After a valid hello the server replies `welcome` + a `sessions` snapshot
+ * (list metadata only), then `host` and recent alerts. Thread bodies are
+ * fetched on demand when the phone opens a conversation. The tunnel is one
+ * TCP stream — keep the first paint small.
  * The phone is a first-class session client: create / thread / configure /
  * cancel / reply (ask & approval) / rename / archive, plus a restricted
  * workdir picker (`browse` + `workspace`). fs contents, pty, spawn, and
