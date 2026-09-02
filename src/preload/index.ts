@@ -215,7 +215,8 @@ const api: VavApi = {
   files: {
     list: (path: string, sort: FileSortKey, ascending: boolean, conversationId?: string) =>
       ipcRenderer.invoke(IPC.filesList, path, sort, ascending, conversationId),
-    read: (path: string) => ipcRenderer.invoke(IPC.filesRead, path),
+    read: (path: string, conversationId?: string) =>
+      ipcRenderer.invoke(IPC.filesRead, path, conversationId),
     readTextWindow: (
       path: string,
       opts?: { startByte?: number; maxBytes?: number; force?: boolean }
@@ -324,8 +325,8 @@ const api: VavApi = {
   agents: {
     resolveBinary: (candidates: string[], force?: boolean) =>
       ipcRenderer.invoke(IPC.agentsResolveBinary, candidates, force === true),
-    probeBinaries: (items, force?: boolean) =>
-      ipcRenderer.invoke(IPC.agentsProbeBinaries, items, force === true),
+    probeBinaries: (items, force?: boolean, machineId?: string) =>
+      ipcRenderer.invoke(IPC.agentsProbeBinaries, items, force === true, machineId),
     listModels: (host: string | null, force?: boolean) =>
       ipcRenderer.invoke(IPC.agentsListModels, host, force === true),
     getModelCatalog: () => ipcRenderer.invoke(IPC.agentsGetModelCatalog),
@@ -499,8 +500,12 @@ const api: VavApi = {
     listDir: (machineId: string, path: string) =>
       ipcRenderer.invoke(IPC.hostsListDir, machineId, path),
     home: (machineId: string) => ipcRenderer.invoke(IPC.hostsHome, machineId),
+    show: (machineId: string) => ipcRenderer.invoke(IPC.hostsShow, machineId),
+    openFolder: (machineId: string) => ipcRenderer.invoke(IPC.hostsOpenFolder, machineId),
+    probeProviders: (machineId: string) => ipcRenderer.invoke(IPC.hostsProbeProviders, machineId),
     onChanged: (handler) => subscribe(IPC.hostsChanged, handler),
-    onDiscovered: (handler) => subscribe(IPC.hostsDiscoveredChanged, handler)
+    onDiscovered: (handler) => subscribe(IPC.hostsDiscoveredChanged, handler),
+    onPickFolder: (handler) => subscribe(IPC.hostsPickFolder, handler)
   },
 
   changeSets: {

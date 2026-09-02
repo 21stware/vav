@@ -12,7 +12,7 @@ import type { CliHostKind, ProviderResumeCursor } from './cliHost.ts'
 import type { AcceleratorKeyBindingId } from './keyBindings.ts'
 import { KEEP_AWAKE_BATTERY_FLOOR_DEFAULT } from './sleepBlocker.ts'
 import { VAV_DEFAULT_MODEL_ID } from './vavModelList.ts'
-import { LOCAL_MACHINE_ID } from './workspaceHost.ts'
+import { LOCAL_MACHINE_ID, type WorkspaceRef } from './workspaceHost.ts'
 
 export type { CliHostKind, ProviderResumeCursor } from './cliHost.ts'
 export { VAV_DEFAULT_MODEL_ID } from './vavModelList.ts'
@@ -1056,8 +1056,10 @@ export interface AppSettings {
   /**
    * Recently used non-Temporary working directories, most recent first.
    * Cap 10; Temporary Workspace paths are never recorded.
+   * Legacy settings files may still store bare path strings — load migrates
+   * them to `{ machineId: 'local', path }`.
    */
-  recentWorkspaceDirectories: string[]
+  recentWorkspaceDirectories: WorkspaceRef[]
   /**
    * Workspaces pinned to the sidebar's 置顶 section, most recently pinned first.
    * A pinned workspace moves out of its normal bucket and takes its sessions

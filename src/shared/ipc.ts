@@ -995,7 +995,10 @@ export interface VavApi {
       ascending: boolean,
       conversationId?: string
     ): Promise<DirectoryListing>
-    read(path: string): Promise<{ content: string; truncated: boolean; error?: string }>
+    read(
+      path: string,
+      conversationId?: string
+    ): Promise<{ content: string; truncated: boolean; error?: string }>
     /**
      * Byte-window read for large UTF-8 files. Prefer this over loading the
      * whole file into the agent/renderer when size is unknown or large.
@@ -1223,7 +1226,8 @@ export interface VavApi {
     /** Batch PATH probe (one login-PATH refresh when `force`). */
     probeBinaries(
       items: Array<{ id: string; candidates: string[] }>,
-      force?: boolean
+      force?: boolean,
+      machineId?: string
     ): Promise<Record<string, string | null>>
     /**
      * Models for a chat host. VAV → live `/models` from the configured
@@ -1544,8 +1548,12 @@ export interface VavApi {
     discovered(): Promise<HostDiscoveryPeer[]>
     listDir(machineId: string, path: string): Promise<DirectoryListing>
     home(machineId: string): Promise<string>
+    show(machineId: string): Promise<void>
+    openFolder(machineId: string): Promise<void>
+    probeProviders(machineId: string): Promise<import('./workspaceHost').HostProviderInfo[]>
     onChanged(handler: (hosts: import('./workspaceHost').WorkspaceHostInfo[]) => void): () => void
     onDiscovered(handler: (peers: HostDiscoveryPeer[]) => void): () => void
+    onPickFolder(handler: (machineId: string) => void): () => void
   }
 
   changeSets: {
@@ -1933,6 +1941,10 @@ export const IPC = {
   hostsDiscovered: 'vav:hosts:discovered',
   hostsListDir: 'vav:hosts:list-dir',
   hostsHome: 'vav:hosts:home',
+  hostsShow: 'vav:hosts:show',
+  hostsOpenFolder: 'vav:hosts:open-folder',
+  hostsProbeProviders: 'vav:hosts:probe-providers',
+  hostsPickFolder: 'vav:hosts:pick-folder',
   hostsChanged: 'vav:hosts:changed',
   hostsDiscoveredChanged: 'vav:hosts:discovered-changed',
   dialogAlert: 'vav:dialog:alert',

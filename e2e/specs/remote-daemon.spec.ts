@@ -50,6 +50,51 @@ test('pair vavd, open its folder, list a file that only exists there', async () 
       paired.host.id
     )
 
+    await expect
+      .poll(async () => {
+        const snapshot = await remote.evaluate(async (machineId) => {
+          const hosts = await window.vav.hosts.list()
+          const host = hosts.find((h) => h.id === machineId)
+          const conversations = await window.vav.conversations.list()
+          const active = conversations.find(
+            (c) => c.machineId === machineId && !c.archived && !c.fileId
+          )
+          return {
+            home: host?.home ?? (await window.vav.hosts.home(machineId)),
+            machineId: active?.machineId ?? null,
+            workingDirectory: active?.workingDirectory ?? null
+          }
+        }, paired.host.id)
+        return snapshot
+      })
+      .toMatchObject({ machineId: paired.host.id })
+
+    const defaultSession = await remote.evaluate(async (machineId) => {
+      const hosts = await window.vav.hosts.list()
+      const host = hosts.find((h) => h.id === machineId)
+      const conversations = await window.vav.conversations.list()
+      const active = conversations.find((c) => c.machineId === machineId && !c.archived && !c.fileId)
+      return {
+        home: host?.home ?? (await window.vav.hosts.home(machineId)),
+        machineId: active?.machineId ?? null,
+        workingDirectory: active?.workingDirectory ?? null
+      }
+    }, paired.host.id)
+    expect(defaultSession.workingDirectory).toBe(defaultSession.home)
+    expect(defaultSession.workingDirectory).not.toBe(harness.workspace)
+
+    const recents = await remote.evaluate(
+      async () => (await window.vav.settings.get()).recentWorkspaceDirectories
+    )
+    const hostId = paired.host.id
+    const remoteRecents = (Array.isArray(recents) ? recents : []).filter((entry) => {
+      if (!entry || typeof entry !== 'object') return false
+      return 'machineId' in entry && entry.machineId === hostId
+    })
+    expect(
+      remoteRecents.every((entry) => typeof entry === 'object' && entry.path !== harness.workspace)
+    ).toBe(true)
+
     const stored = JSON.parse(
       readFileSync(join(harness.userData, 'paired-hosts.json'), 'utf8')
     ) as { hosts: { machineId: string }[] }
@@ -83,8 +128,8 @@ test('pair vavd, open its folder, list a file that only exists there', async () 
     await expect(remote.locator('[data-file-path$="hello.md"]')).toHaveCount(0)
 
     const text = await remote.evaluate(
-      (path) => window.vav.files.read(path),
-      join(daemon.workspace, 'remote-only.md')
+      ({ path, id }) => window.vav.files.read(path, id),
+      { path: join(daemon.workspace, 'remote-only.md'), id: created.id }
     )
     expect(text.error).toBeUndefined()
     expect(text.content).toContain('planted by vavd e2e')
@@ -123,6 +168,8 @@ test('Settings → Machines rejects garbage, then pairs and forgets a vavd', asy
     await expect(row).toBeVisible()
     await expect(row).toContainText('E2E Daemon')
     await expect(row).toContainText('Online')
+    await expect(row.locator('[data-testid^="settings-machine-providers-"]')).toBeVisible()
+    await expect(row).toContainText('CLI agents on this machine')
 
     const testId = await row.getAttribute('data-testid')
     const hostId = testId?.slice('settings-machine-'.length)
@@ -157,7 +204,7 @@ test('workdir menu opens the remote folder picker and binds the session', async 
 
     await expect(remote.locator('[data-testid="sidebar-connect"]')).toContainText('E2E Daemon')
     await remote.locator('[data-testid="workdir-chip"] [data-testid="chip-action"]').click()
-    await chooseNativeMenu(remote, 'Choose folder on E2E Daemon…')
+    await chooseNativeMenu(remote, 'Choose another folder…')
 
     const picker = remote.locator('[data-testid="remote-folder-picker"]')
     await expect(picker).toBeVisible()

@@ -1489,7 +1489,8 @@ export const zhCN = {
   'remote.regenerateSecretHint': '重置后所有已配对设备需重新扫码。',
   'remote.resetIdentity': '重置隧道身份',
   'remote.resetIdentityHint': '生成新的连接地址与密钥，旧二维码全部失效。',
-  'machines.hint': '局域网列表里点配对，由对方确认。也可以把对方的配对 URI 贴进来。',
+  'machines.hint':
+    '局域网列表里点配对，由对方确认。也可以把对方的配对 URI 贴进来。配对后会打开那台机器自己的窗口：文件夹、近期目录和 CLI 都是对方的。',
   'machines.pairingThis': '这台电脑的配对串',
   'machines.copyPairing': '复制',
   'machines.pairingUsage':
@@ -1510,6 +1511,10 @@ export const zhCN = {
   'machines.pairNeedToken':
     '这串配对没有隧道地址，本机也连不上对方的局域网。等对方隧道就绪后再复制配对串，或直接粘贴对方的 vav-remote 扫码串。',
   'machines.forget': '忘记',
+  'machines.openFolder': '打开文件夹',
+  'machines.providers': '这台机器上的 CLI',
+  'machines.providersEmpty': '还没在这台机器上发现 CLI。连上之后会探测对方的 PATH。',
+  'machines.providersOffline': '机器离线时无法探测 CLI。',
   'machines.online': '在线',
   'machines.offline': '离线',
   'machines.discovered': '局域网发现',
@@ -1525,6 +1530,7 @@ export const zhCN = {
   'hosts.pickTitle': '在 {name} 上选择文件夹',
   'hosts.pickSelect': '使用此文件夹',
   'hosts.pickParent': '上一级',
+  'hosts.pickRecents': '这台机器上最近用过的',
 
   // —— cli extras ——
   'cli.commandTitle': 'VAV 命令',
@@ -3634,7 +3640,7 @@ export const en: Record<MessageKey, string> = {
   'remote.resetIdentity': 'Reset tunnel identity',
   'remote.resetIdentityHint': 'Mints a new address and secret; all previous QR codes stop working.',
   'machines.hint':
-    'Pair a machine on the LAN — they confirm on their side. Or paste their pairing URI.',
+    'Pair a machine on the LAN — they confirm on their side. Or paste their pairing URI. Pairing opens that machine’s own window: folders, recents, and CLI agents are theirs, not this computer’s.',
   'machines.pairingThis': 'This computer’s pairing line',
   'machines.copyPairing': 'Copy',
   'machines.pairingUsage':
@@ -3657,6 +3663,10 @@ export const en: Record<MessageKey, string> = {
   'machines.pairNeedToken':
     'This pairing line has no tunnel address, and the LAN host is unreachable. Wait until the other computer’s tunnel is ready and copy again, or paste its vav-remote QR payload.',
   'machines.forget': 'Forget',
+  'machines.openFolder': 'Open folder',
+  'machines.providers': 'CLI agents on this machine',
+  'machines.providersEmpty': 'No CLI agents found on this machine yet. VAV probes PATH after pairing.',
+  'machines.providersOffline': 'Offline — connect to probe CLI agents.',
   'machines.online': 'Online',
   'machines.offline': 'Offline',
   'machines.discovered': 'Found on the LAN',
@@ -3672,6 +3682,7 @@ export const en: Record<MessageKey, string> = {
   'hosts.pickTitle': 'Choose folder on {name}',
   'hosts.pickSelect': 'Use this folder',
   'hosts.pickParent': 'Parent folder',
+  'hosts.pickRecents': 'Recent on this machine',
 
   'cli.commandTitle': 'VAV command',
   'cli.commandIntro':

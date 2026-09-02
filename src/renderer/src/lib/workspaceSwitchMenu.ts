@@ -1,4 +1,11 @@
-import { formatWorkspaceLabel, type WorkspaceHostInfo } from '@shared/workspaceHost'
+import {
+  formatWorkspaceLabel,
+  isLocalMachine,
+  normalizeMachineId,
+  recentsForMachine,
+  type WorkspaceHostInfo,
+  type WorkspaceRef
+} from '@shared/workspaceHost'
 import type { MessageKey, TParams } from '@shared/i18n'
 import { useCallback } from 'react'
 import { useSessionStore } from '../state/sessionStore'
@@ -14,10 +21,11 @@ type TFn = (key: MessageKey, params?: TParams) => string
 /** Same native menu as the tools-tray change-workspace control. */
 export function workspaceSwitchMenuItems(input: {
   t: TFn
-  recentDirs: string[]
+  recentDirs: WorkspaceRef[]
   conversationId: string
+  machineId: string
   hosts: WorkspaceHostInfo[]
-  setWorkingDirectory: (id: string, path: string) => void
+  setWorkingDirectory: (id: string, path: string, machineId?: string | null) => void
   useTempWorkingDirectory: (id: string) => void
   pickWorkingDirectory: (id: string) => void
   openRemoteFolderPicker: (id: string, machineId: string) => void
@@ -26,23 +34,28 @@ export function workspaceSwitchMenuItems(input: {
     t,
     recentDirs,
     conversationId,
+    machineId,
     hosts,
     setWorkingDirectory,
     useTempWorkingDirectory,
     pickWorkingDirectory,
     openRemoteFolderPicker
   } = input
+  const id = normalizeMachineId(machineId)
+  const recents = recentsForMachine(recentDirs, id)
+  const host = hosts.find((h) => h.id === id)
+  const remote = !isLocalMachine(id)
   const items: MenuItem[] = []
-  if (recentDirs.length === 0) {
+  if (recents.length === 0) {
     items.push({ label: t('tools.noRecentDirs'), disabled: true })
   } else {
     items.push({ label: t('tools.recentDirs'), disabled: true })
-    for (const path of recentDirs) {
-      const name = basename(path)
-      const duplicate = recentDirs.filter((entry) => basename(entry) === name).length > 1
+    for (const ref of recents) {
+      const name = basename(ref.path)
+      const duplicate = recents.filter((entry) => basename(entry.path) === name).length > 1
       items.push({
-        label: duplicate ? path : name,
-        onSelect: () => void setWorkingDirectory(conversationId, path)
+        label: duplicate ? ref.path : name,
+        onSelect: () => void setWorkingDirectory(conversationId, ref.path, ref.machineId)
       })
     }
   }
@@ -53,19 +66,12 @@ export function workspaceSwitchMenuItems(input: {
   })
   items.push({
     label: t('tools.pickOtherDir'),
-    onSelect: () => void pickWorkingDirectory(conversationId)
-  })
-  const remotes = hosts.filter((h) => h.kind === 'remote')
-  if (remotes.length > 0) {
-    items.push({ label: '', divider: true })
-    for (const host of remotes) {
-      items.push({
-        label: t('tools.pickDirOn', { name: host.name }),
-        disabled: !host.online,
-        onSelect: () => openRemoteFolderPicker(conversationId, host.id)
-      })
+    disabled: remote && host?.online === false,
+    onSelect: () => {
+      if (remote) openRemoteFolderPicker(conversationId, id)
+      else void pickWorkingDirectory(conversationId)
     }
-  }
+  })
   return items
 }
 
@@ -87,6 +93,7 @@ export function useWorkspaceSwitchMenu(conversationId?: string): {
   const tmp = useSessionStore((s) => s.tmp)
   const hosts = useSessionStore((s) => s.hosts)
   const recentDirs = useSessionStore((s) => s.settings.recentWorkspaceDirectories)
+  const windowMachineId = useSessionStore((s) => s.windowMachineId)
   const swarmEnabled = useSessionStore((s) => s.settings.swarmModeEnabled === true)
   const cliMode = useWorkspaceStore((s) =>
     conversationId ? !!s.workspaces[conversationId]?.cliMode : false
@@ -98,6 +105,7 @@ export function useWorkspaceSwitchMenu(conversationId?: string): {
 
   const cwd = conversation?.workingDirectory ?? null
   const temporary = isTemporaryWorkspace(cwd, tmp)
+  const machineId = normalizeMachineId(conversation?.machineId ?? windowMachineId)
   const projectName = formatWorkspaceLabel(
     conversation?.machineId,
     temporary ? t('sidebar.defaultWorkspace') : workdirShortLabel(cwd ?? '', tmp),
@@ -115,6 +123,7 @@ export function useWorkspaceSwitchMenu(conversationId?: string): {
       t,
       recentDirs,
       conversationId,
+      machineId,
       hosts,
       setWorkingDirectory,
       useTempWorkingDirectory,
@@ -124,6 +133,7 @@ export function useWorkspaceSwitchMenu(conversationId?: string): {
   }, [
     conversationId,
     hosts,
+    machineId,
     openRemoteFolderPicker,
     pickWorkingDirectory,
     recentDirs,

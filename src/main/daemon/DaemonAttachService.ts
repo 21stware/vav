@@ -14,8 +14,13 @@ import {
   parseMachinePairing,
   type DaemonPairing
 } from '../../shared/daemonProtocol.ts'
-import type { WorkspaceHostInfo } from '../../shared/workspaceHost.ts'
-import type { HostRegistry, WorkspaceHost } from '../host/WorkspaceHost.ts'
+import {
+  isLocalMachine,
+  type WorkspaceHostInfo,
+  type HostProviderInfo
+} from '../../shared/workspaceHost.ts'
+import type { HostRegistry } from '../host/WorkspaceHost.ts'
+import { createOfflineRemoteHost } from '../host/WorkspaceHost.ts'
 import { DaemonServer } from './DaemonServer.ts'
 import { DaemonClient, createRemoteWorkspaceHost, requestLanPairOffer, PAIRING_CANCELLED } from './DaemonClient.ts'
 import { loadOrCreateIdentity, type DaemonIdentity } from './identity.ts'
@@ -31,28 +36,8 @@ import {
   type DiscoveredPeer
 } from './lanAnnounce.ts'
 
-function offlineWorkspaceHost(id: string, name: string): WorkspaceHost {
-  const fail = (): never => {
-    throw new Error(`${name} is offline`)
-  }
-  return {
-    id,
-    info: { id, name, kind: 'remote', online: false },
-    fs: {
-      readdir: fail,
-      stat: fail,
-      readFile: fail,
-      writeFile: fail,
-      mkdir: fail,
-      rename: fail,
-      open: fail,
-      watch: fail,
-      exists: fail
-    },
-    process: { spawn: fail },
-    pty: { spawn: fail }
-  }
-}
+import { agentBinaryCandidates } from '../../shared/agentBinary.ts'
+import { CLI_AGENT_CATALOGUE } from '../../shared/types.ts'
 
 export type PairedHostRecord = {
   machineId: string
@@ -62,6 +47,9 @@ export type PairedHostRecord = {
   port: number
   token?: string
   addresses?: string[]
+  home?: string
+  tmp?: string
+  defaultPath?: string
 }
 
 type TunnelHandle = {
@@ -93,6 +81,9 @@ export class DaemonAttachService {
   private readonly clients = new Map<string, DaemonClient>()
   private readonly homes = new Map<string, string>()
   private readonly tmps = new Map<string, string>()
+  private readonly providers = new Map<string, HostProviderInfo[]>()
+  /** candidate-list cache for PTY spawn (sync). */
+  private readonly whichCache = new Map<string, Map<string, string | null>>()
   /** Live `--dial` sidecars, keyed by tailcat token. */
   private readonly tunnels = new Map<string, TunnelHandle>()
   private readonly tunnelOfHost = new Map<string, string>()
@@ -141,11 +132,68 @@ export class DaemonAttachService {
   }
 
   homeOf(machineId: string): string {
-    return this.homes.get(machineId) || homedir()
+    if (isLocalMachine(machineId)) return homedir()
+    return (
+      this.homes.get(machineId) ||
+      this.loadStore().find((row) => row.machineId === machineId)?.home ||
+      ''
+    )
   }
 
   tmpOf(machineId: string): string {
-    return this.tmps.get(machineId) || tmpdir()
+    if (isLocalMachine(machineId)) return tmpdir()
+    return (
+      this.tmps.get(machineId) ||
+      this.loadStore().find((row) => row.machineId === machineId)?.tmp ||
+      ''
+    )
+  }
+
+  defaultPathOf(machineId: string): string | null {
+    const path = this.loadStore().find((row) => row.machineId === machineId)?.defaultPath?.trim()
+    return path || null
+  }
+
+  rememberDefaultPath(machineId: string, path: string): void {
+    const normalized = path.trim()
+    if (!normalized) return
+    const row = this.loadStore().find((entry) => entry.machineId === machineId)
+    if (!row) return
+    this.remember({ ...row, defaultPath: normalized })
+  }
+
+  providersOf(machineId: string): HostProviderInfo[] {
+    return this.providers.get(machineId) ?? []
+  }
+
+  whichCached(machineId: string, candidates: string[]): string | null {
+    const key = candidates.map((c) => c.trim()).filter(Boolean).join('\0')
+    if (!key) return null
+    return this.whichCache.get(machineId)?.get(key) ?? null
+  }
+
+  async probeProviders(machineId: string): Promise<HostProviderInfo[]> {
+    const client = this.clients.get(machineId)
+    if (!client?.connected) return this.providers.get(machineId) ?? []
+    const found: HostProviderInfo[] = []
+    const cache = this.whichCache.get(machineId) ?? new Map<string, string | null>()
+    for (const agent of CLI_AGENT_CATALOGUE) {
+      const candidates = agentBinaryCandidates(agent, CLI_AGENT_CATALOGUE)
+      const key = candidates.join('\0')
+      let path: string | null = cache.get(key) ?? null
+      if (path === null && !cache.has(key)) {
+        try {
+          path = await client.which(candidates)
+        } catch {
+          path = null
+        }
+        cache.set(key, path)
+      }
+      if (path) found.push({ id: agent.id, name: agent.name, path })
+    }
+    this.whichCache.set(machineId, cache)
+    this.providers.set(machineId, found)
+    return found
   }
 
   adoptAuthedSocket(socket: Socket, leftover = ''): void {
@@ -177,7 +225,9 @@ export class DaemonAttachService {
           ...(parsed.addresses ?? []),
           persistHost || undefined,
           viaTunnel ? undefined : target.host
-        ]).filter((host) => !viaTunnel || !isLoopbackHost(host))
+        ]).filter((host) => !viaTunnel || !isLoopbackHost(host)),
+        home: welcome.home,
+        tmp: welcome.tmp
       })
       this.mount(client, welcome)
       return { ok: true, host: this.opts.registry.get(welcome.host.id)?.info ?? welcome.host }
@@ -228,6 +278,8 @@ export class DaemonAttachService {
     this.clients.delete(machineId)
     this.homes.delete(machineId)
     this.tmps.delete(machineId)
+    this.providers.delete(machineId)
+    this.whichCache.delete(machineId)
     this.releaseTunnel(machineId)
     this.opts.registry.remove(machineId)
     const next = this.loadStore().filter((row) => row.machineId !== machineId)
@@ -428,6 +480,9 @@ export class DaemonAttachService {
     const host = createRemoteWorkspaceHost(client, welcome)
     this.opts.registry.register(host)
     this.opts.onHostsChanged(this.opts.registry.list())
+    void this.probeProviders(welcome.host.id).then(() => {
+      this.opts.onHostsChanged(this.opts.registry.list())
+    })
   }
 
   private async reconnect(row: PairedHostRecord): Promise<void> {
@@ -443,15 +498,23 @@ export class DaemonAttachService {
         addresses: row.addresses
       })
       this.mount(client, welcome)
-      if (target.host !== row.host || target.port !== row.port || row.token) {
-        this.remember({
-          ...row,
-          host: row.token ? row.host : target.host,
-          port: row.token ? row.port : target.port
-        })
-      }
+      this.remember({
+        ...row,
+        host: row.token ? row.host : target.host,
+        port: row.token ? row.port : target.port,
+        home: welcome.home,
+        tmp: welcome.tmp,
+        name: welcome.host.name || row.name
+      })
     } catch {
-      this.opts.registry.register(offlineWorkspaceHost(row.machineId, row.name))
+      if (row.home) this.homes.set(row.machineId, row.home)
+      if (row.tmp) this.tmps.set(row.machineId, row.tmp)
+      this.opts.registry.register(
+        createOfflineRemoteHost(row.machineId, row.name, {
+          home: row.home,
+          tmp: row.tmp
+        })
+      )
       this.opts.onHostsChanged(this.opts.registry.list())
     }
   }

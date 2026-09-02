@@ -28,6 +28,7 @@ export {
 } from './HostPty.ts'
 export {
   createLocalWorkspaceHost,
+  createOfflineRemoteHost,
   HostRegistry,
   hostKindOf,
   type HostRegistryListener,

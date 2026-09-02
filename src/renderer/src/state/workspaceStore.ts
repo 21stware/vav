@@ -49,15 +49,27 @@ export type { TerminalLayoutNode, TerminalSplitAxis }
  * After ENOENT on a workspace root, remove it from recent/pinned lists.
  * Uses settings.update so main broadcasts the pruned list to all windows.
  */
-async function forgetMissingWorkspaceDir(path: string): Promise<void> {
+import {
+  parseWorkspaceRefList,
+  sameWorkspaceRef,
+  workspaceRef
+} from '@shared/workspaceHost'
+
+async function forgetMissingWorkspaceDir(path: string, machineId?: string | null): Promise<void> {
   try {
     const { useSessionStore } = await import('./sessionStore')
     const settings = useSessionStore.getState().settings
-    const recent = settings.recentWorkspaceDirectories ?? []
+    const recent = parseWorkspaceRefList(settings.recentWorkspaceDirectories)
     const pinned = settings.pinnedWorkspaceDirectories ?? []
-    if (!recent.includes(path) && !pinned.includes(path)) return
+    const drop = workspaceRef(path, machineId)
+    const nextRecent = recent.filter((entry) =>
+      machineId == null || machineId === ''
+        ? entry.path !== path
+        : !sameWorkspaceRef(entry, drop)
+    )
+    if (nextRecent.length === recent.length && !pinned.includes(path)) return
     await window.vav.settings.update({
-      recentWorkspaceDirectories: recent.filter((entry) => entry !== path),
+      recentWorkspaceDirectories: nextRecent,
       pinnedWorkspaceDirectories: pinned.filter((entry) => entry !== path)
     })
   } catch {
@@ -1256,7 +1268,16 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 
     // Root gone → drop from recent/pinned so the switcher never offers a dead path.
     if (error === 'ENOENT' && live.root && path === live.root) {
-      void forgetMissingWorkspaceDir(path)
+      void (async () => {
+        try {
+          const { useSessionStore } = await import('./sessionStore')
+          const machineId = useSessionStore.getState().conversations.find((c) => c.id === id)
+            ?.machineId
+          await forgetMissingWorkspaceDir(path, machineId)
+        } catch {
+          await forgetMissingWorkspaceDir(path)
+        }
+      })()
     }
 
     patch(set, id, (s) => {

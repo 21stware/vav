@@ -61,7 +61,7 @@ import {
 import { tt } from '../i18n/useT'
 import { isTemporaryWorkspace } from '../lib/format'
 import { isCompanionSessionShell, isMainSessionShell, readWindowMachineId } from '../lib/windowKind'
-import { conversationOnMachine, normalizeMachineId } from '@shared/workspaceHost'
+import { conversationOnMachine, isLocalMachine, normalizeMachineId } from '@shared/workspaceHost'
 import { compactionForLeaf, upsertCompaction } from '@shared/compaction'
 import { subtreeIds, threadPath } from '@shared/thread'
 import { getProjection, disposeProjection } from './StreamProjection'
@@ -1643,11 +1643,12 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     if (!path) return
     const activeId = get().activeId
     const msgs = activeId ? (get().messages[activeId] ?? []) : []
+    const machineId = get().windowMachineId
     set({ activeGroupId: null })
     if (activeId && msgs.length > 0) {
       await get().duplicateConversation(activeId)
     } else {
-      await get().createConversation({ workingDirectory: path, openIn: 'here' })
+      await get().createConversation({ workingDirectory: path, machineId, openIn: 'here' })
     }
     get().focusComposer()
   },
@@ -1971,6 +1972,12 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
   async pickWorkingDirectory(id) {
     if (swarmBlocksWorkdirSwitch(id, get().settings.swarmModeEnabled === true)) return
+    const conversation = get().conversations.find((c) => c.id === id)
+    const machineId = normalizeMachineId(conversation?.machineId ?? get().windowMachineId)
+    if (!isLocalMachine(machineId)) {
+      get().openRemoteFolderPicker(id, machineId)
+      return
+    }
     const conversations = await window.vav.conversations.pickWorkingDirectory(id)
     if (!conversations) return
     // Any explicit switch reveals the real path (even if same directory).
@@ -3719,7 +3726,47 @@ export function installTurnEventBridge(): () => void {
 export function installHostsBridge(): () => void {
   const onChanged = window.vav?.hosts?.onChanged
   if (!onChanged) return noopOff()
-  return onChanged((hosts) => useSessionStore.setState({ hosts }))
+  const offChanged = onChanged((hosts) => {
+    const prev = useSessionStore.getState().hosts
+    const machineId = useSessionStore.getState().windowMachineId
+    const host = hosts.find((h) => h.id === machineId)
+    const wasOnline = prev.find((h) => h.id === machineId)?.online === true
+    const nowOnline = host?.online === true
+    const next: Partial<ReturnType<typeof useSessionStore.getState>> = { hosts }
+    if (host?.home) next.home = host.home
+    if (host?.tmp) next.tmp = host.tmp
+    useSessionStore.setState(next)
+    if (nowOnline && !wasOnline) {
+      const activeId = useSessionStore.getState().activeId
+      const workspace = useWorkspaceStore.getState()
+      const convos = useSessionStore
+        .getState()
+        .conversations.filter((c) => conversationOnMachine(c, machineId) && c.workingDirectory)
+      for (const conversation of convos) {
+        const root = conversation.workingDirectory
+        if (!root) continue
+        if (workspace.workspaces[conversation.id]) {
+          void workspace.loadDirectory(conversation.id, root, { quiet: true })
+        } else if (conversation.id === activeId) {
+          void workspace.bindConversation(conversation.id, root)
+        }
+      }
+    }
+  })
+  const offPick = window.vav.hosts.onPickFolder
+    ? window.vav.hosts.onPickFolder((machineId) => {
+        const state = useSessionStore.getState()
+        if (normalizeMachineId(state.windowMachineId) !== normalizeMachineId(machineId)) return
+        const active = state.conversations.find((c) => c.id === state.activeId)
+        const conversationId =
+          active && conversationOnMachine(active, machineId) ? active.id : ''
+        state.openRemoteFolderPicker(conversationId, machineId)
+      })
+    : noopOff()
+  return () => {
+    offChanged()
+    offPick()
+  }
 }
 
 /** Mirrors the phone-companion tunnel status (connected devices) into the store. */

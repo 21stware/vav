@@ -4,8 +4,11 @@ import {
   LOCAL_MACHINE_ID,
   conversationOnMachine,
   formatWorkspaceLabel,
+  hostJoin,
   isLocalMachine,
   normalizeMachineId,
+  parseWorkspaceRefList,
+  recentsForMachine,
   workspaceRef
 } from './workspaceHost.ts'
 
@@ -53,6 +56,36 @@ describe('formatWorkspaceLabel', () => {
 describe('workspaceRef', () => {
   it('normalizes a missing machine onto local', () => {
     assert.deepEqual(workspaceRef('/tmp/x'), { machineId: LOCAL_MACHINE_ID, path: '/tmp/x' })
+  })
+})
+
+describe('parseWorkspaceRefList', () => {
+  it('lifts legacy path strings onto local', () => {
+    assert.deepEqual(parseWorkspaceRefList(['/tmp/a', { machineId: 'box', path: '/home/me' }]), [
+      { machineId: LOCAL_MACHINE_ID, path: '/tmp/a' },
+      { machineId: 'box', path: '/home/me' }
+    ])
+  })
+
+  it('filters recents to one machine', () => {
+    const list = parseWorkspaceRefList([
+      '/tmp/local',
+      { machineId: 'box', path: '/srv/app' },
+      { machineId: 'box', path: '/srv/other' }
+    ])
+    assert.deepEqual(recentsForMachine(list, 'box').map((r) => r.path), ['/srv/app', '/srv/other'])
+    assert.deepEqual(recentsForMachine(list, LOCAL_MACHINE_ID).map((r) => r.path), ['/tmp/local'])
+  })
+})
+
+describe('hostJoin', () => {
+  it('uses posix on darwin/linux', () => {
+    assert.equal(hostJoin('darwin', '/Users/me', 'repo'), '/Users/me/repo')
+    assert.equal(hostJoin('linux', '/home/me', 'src', 'vav'), '/home/me/src/vav')
+  })
+
+  it('uses backslash on win32', () => {
+    assert.equal(hostJoin('win32', 'C:\\Users\\me', 'repo'), 'C:\\Users\\me\\repo')
   })
 })
 

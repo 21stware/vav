@@ -6,6 +6,7 @@ import {
   newlyInstalledCatalogueAgents
 } from '@shared/agentBinary'
 import { CLI_AGENT_CATALOGUE, DEFAULT_CLI_AGENTS, type AgentConfig } from '@shared/types'
+import { isLocalMachine, normalizeMachineId } from '@shared/workspaceHost'
 import {
   getAgentBinaryCache,
   markAgentBinaryMissing,
@@ -79,12 +80,13 @@ let queuedDiscover = false
 async function runProbe(options: { force: boolean; discover: boolean }): Promise<void> {
   const { useSessionStore } = await import('../state/sessionStore')
   const settings = useSessionStore.getState().settings
+  const machineId = normalizeMachineId(useSessionStore.getState().windowMachineId)
   const configured = configuredAgentList(settings.cliAgents, DEFAULT_CLI_AGENTS)
   const specs = specsToProbe(configured)
   let result: Record<string, string | null> = {}
   const probe = window.vav.agents?.probeBinaries
   if (probe) {
-    result = await probe(specs, options.force)
+    result = await probe(specs, options.force, machineId)
   } else if (window.vav.agents?.resolveBinary) {
     for (const spec of specs) {
       result[spec.id] = await window.vav.agents.resolveBinary(spec.candidates, options.force)
@@ -103,7 +105,7 @@ async function runProbe(options: { force: boolean; discover: boolean }): Promise
   }
   emit()
 
-  if (!options.discover) return
+  if (!options.discover || !isLocalMachine(machineId)) return
   const added = newlyInstalledCatalogueAgents(
     configured.map((agent) => agent.id),
     result,
