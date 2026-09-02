@@ -8,7 +8,6 @@ import {
   ipcMain,
   type IpcMainInvokeEvent,
   Menu,
-  nativeImage,
   nativeTheme,
   net,
   powerMonitor,
@@ -49,7 +48,6 @@ import {
   type Bootstrap,
   type FileInspectResult,
   type MenuCommand,
-  type NativeMenuItem,
   type SettingsView,
   resolveSettingsView,
   type ProviderAccountViewPayload,
@@ -209,6 +207,7 @@ import {
 import { overlayCascadeOrigin, placeDetachedBounds } from './window/windowPlace'
 import { appBuildNumber as formatAppBuildNumber } from './appBuild'
 import { FALLBACK_SYSTEM_ACCENT, normalizeAccentHex } from './window/accentColor'
+import { closeActiveNativePopup, popupNativeMenu } from './window/nativePopup'
 import { trayDirLabel as formatTrayDirLabel, trayAgentLabel as formatTrayAgentLabel } from './tray/trayLabels'
 import { HostRegistry } from './host'
 import { openSpawn, previewSpawn, revealSpawn } from './host/hostShell'
@@ -5193,158 +5192,6 @@ function newDetachedSession(): void {
   )
   setImmediate(() => publishConversations())
   sessionOpenMark('hotkey:open-dispatched', conversation.id)
-}
-
-/**
- * At most one renderer-driven popup at a time.
- * Without this, ⌘⇧O / chip menus stack when the user switches sessions or
- * re-opens before the previous AppKit menu closes — leaving a sticky menu.
- */
-let activeNativePopup: {
-  menu: Electron.Menu
-  window: BrowserWindow
-  finish: () => void
-  seq: number
-} | null = null
-let nativePopupSeq = 0
-
-function closeActiveNativePopup(): void {
-  const active = activeNativePopup
-  if (!active) return
-  activeNativePopup = null
-  // Invalidate any deferred popup() that has not shown yet.
-  nativePopupSeq += 1
-  try {
-    if (!active.window.isDestroyed()) active.menu.closePopup(active.window)
-    else active.menu.closePopup()
-  } catch {
-    // Menu may already be gone
-  }
-  active.finish()
-}
-
-/**
- * Native popup menu driven by the renderer.
- *
- * Resolves to the chosen row's id — `click` fires before popup's `callback`,
- * so the id is already settled by the time the menu reports that it closed.
- */
-function popupNativeMenu(
-  window: BrowserWindow,
-  items: NativeMenuItem[],
-  position?: { x: number; y: number }
-): Promise<string | null> {
-  // Dismiss any previous popup first (session switch / double ⌘⇧O).
-  closeActiveNativePopup()
-  const seq = ++nativePopupSeq
-
-  return new Promise((resolve) => {
-    let chosen: string | null = null
-    let settled = false
-    const finish = (): void => {
-      if (settled) return
-      settled = true
-      if (activeNativePopup?.seq === seq) activeNativePopup = null
-      // setImmediate so click handlers that themselves open menus still run first.
-      setImmediate(() => resolve(chosen))
-    }
-
-    const iconFor = (item: NativeMenuItem): Electron.NativeImage | undefined => {
-      if (!item.icon) return undefined
-      // Renderer rasterizes 32px for the 16pt slot — declare the 2x scale or
-      // AppKit would size the image at 32pt and blow up the row.
-      const image = nativeImage.createEmpty()
-      image.addRepresentation({ scaleFactor: 2, dataURL: item.icon })
-      if (image.isEmpty()) return undefined
-      // Template: macOS tints from the alpha channel — follows menu appearance
-      // and highlight (white on accent) like a checkmark. No-op elsewhere.
-      if (item.iconTemplate) image.setTemplateImage(true)
-      return image
-    }
-
-    // Use `radio` (not `checkbox`) for exclusive picks like model / approval mode.
-    // Checkbox groups on AppKit often fail to fire click for non-checked rows.
-    const toTemplate = (rows: NativeMenuItem[]): Electron.MenuItemConstructorOptions[] =>
-      rows.map((item) => {
-        if (item.separator) return { type: 'separator' }
-        if (item.header) {
-          // macOS 14+ section header; older platforms fall back to a disabled title.
-          return process.platform === 'darwin'
-            ? { type: 'header', label: item.label ?? '' }
-            : { label: item.label ?? '', enabled: false }
-        }
-        if (item.role) return { role: item.role, label: item.label }
-        if (item.submenu && item.submenu.length > 0) {
-          return {
-            type: 'submenu',
-            label: item.label ?? '',
-            enabled: item.enabled !== false,
-            icon: iconFor(item),
-            submenu: toTemplate(item.submenu)
-          }
-        }
-        const hasCheck = item.checked !== undefined
-        return {
-          label: item.label ?? '',
-          enabled: item.enabled !== false,
-          type: hasCheck ? 'radio' : 'normal',
-          checked: hasCheck ? !!item.checked : undefined,
-          icon: iconFor(item),
-          click: () => {
-            chosen = item.id ?? null
-          }
-        }
-      })
-    const template: Electron.MenuItemConstructorOptions[] = toTemplate(items)
-
-    const opts: Electron.PopupOptions = {
-      window,
-      callback: finish
-    }
-    // Only pass coordinates when valid — undefined x/y crashes Menu.popup on some Electron builds.
-    // Renderer sends content-view (client) coords; with `window` set, Electron treats x/y as
-    // relative to that window's content area.
-    if (
-      position &&
-      Number.isFinite(position.x) &&
-      Number.isFinite(position.y)
-    ) {
-      opts.x = Math.round(position.x)
-      opts.y = Math.round(position.y)
-    }
-
-    // Dev: every native menu gets Inspect Element (custom menus otherwise block it).
-    // Use isDevRuntime — branded vav.app often reports isPackaged=true.
-    if (isDevRuntime()) {
-      const x = opts.x ?? 0
-      const y = opts.y ?? 0
-      if (template.length) template.push({ type: 'separator' })
-      template.push({
-        label: 'Inspect Element',
-        click: () => {
-          const wc = window.webContents
-          wc.inspectElement(x, y)
-          if (!wc.isDevToolsOpened()) wc.openDevTools({ mode: 'detach' })
-        }
-      })
-    }
-
-    // Defer past the originating mouseup. Opening a native menu synchronously inside a
-    // button click often dismisses it immediately (menu never appears).
-    setTimeout(() => {
-      if (window.isDestroyed() || seq !== nativePopupSeq) {
-        finish()
-        return
-      }
-      try {
-        const menu = Menu.buildFromTemplate(template)
-        activeNativePopup = { menu, window, finish, seq }
-        menu.popup(opts)
-      } catch {
-        finish()
-      }
-    }, 0)
-  })
 }
 
 type SnapshotPlanStep = {
