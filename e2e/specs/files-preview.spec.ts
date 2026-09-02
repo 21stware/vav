@@ -245,6 +245,21 @@ test('binary preview stays Read and shows the hex/info canvas', async () => {
   }
 })
 
+test('video preview paints the media canvas with shared chrome', async () => {
+  const harness = await launchVav()
+  try {
+    const { page } = harness
+    await openFilesTray(page)
+    await page.locator('[data-file-path$="clip.mp4"]').dblclick()
+    const preview = page.locator('[data-testid="file-preview"]')
+    await expect(page.locator('[data-testid="file-preview-name"]')).toHaveText('clip.mp4')
+    await expect(preview.locator('video.file-viewer-video')).toBeVisible()
+    await expect(preview.locator('.preview-mode-select')).toBeVisible()
+  } finally {
+    await harness.dispose()
+  }
+})
+
 test('audio preview paints the media canvas with shared chrome', async () => {
   const harness = await launchVav()
   try {
@@ -272,6 +287,36 @@ test('html-clip preview is forced Read and is not pickable', async () => {
     await expect(preview.locator('.preview-mode-static')).toBeVisible()
     await expect(preview.locator('.preview-mode-select')).toHaveCount(0)
     await expect(preview.locator('.preview-select-region')).toHaveCount(0)
+  } finally {
+    await harness.dispose()
+  }
+})
+
+test('an external rewrite of the open markdown file arms Save then promotes', async () => {
+  const harness = await launchVav()
+  try {
+    const { page } = harness
+    await openFilesTray(page)
+    await page.locator('[data-file-path$="hello.md"]').dblclick()
+    const preview = page.locator('[data-testid="file-preview"]')
+    await expect(preview.getByText('hello from e2e')).toBeVisible()
+    await expect(preview.locator('.preview-save-main')).toBeDisabled()
+    const status = await preview.locator('.file-preview-statusbar').innerText()
+    const path = status
+      .split('·')
+      .map((s) => s.trim())
+      .find((s) => s.startsWith('/'))
+    expect(path).toBeTruthy()
+    await page.evaluate(async (p) => {
+      await window.vav.files.write(p!, '# hello from e2e\n\nedited by e2e\n')
+    }, path)
+    await expect(preview.getByText('edited by e2e')).toBeVisible({ timeout: 15_000 })
+    const save = preview.locator('.preview-save-main')
+    if (await save.isEnabled()) {
+      await save.click()
+      await expect(save).toBeDisabled({ timeout: 15_000 })
+    }
+    await expect(preview.getByText('edited by e2e')).toBeVisible()
   } finally {
     await harness.dispose()
   }

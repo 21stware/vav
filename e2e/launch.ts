@@ -246,6 +246,7 @@ async function seedPreviewKindFixtures(workspace: string): Promise<void> {
   )
   writeFileSync(join(workspace, 'blob.bin'), Buffer.from([0x00, 0x01, 0x7f, 0x80, 0xff, 0x00]))
   writeSilentWav(join(workspace, 'tone.wav'))
+  writeTinyMp4(join(workspace, 'clip.mp4'))
   writeMinimalPdf(join(workspace, 'brief.pdf'), 'Hello PDF')
   execSync(
     `python3 -c "import zipfile; z=zipfile.ZipFile(r'${join(workspace, 'pack.zip')}', 'w'); z.writestr('inside.txt', 'zip body'); z.close()"`
@@ -278,6 +279,13 @@ async function seedPreviewKindFixtures(workspace: string): Promise<void> {
     slide.addText('Ship the canvas', { x: 0.5, y: 2.5, w: 9, h: 0.6, fontSize: 18 })
     await pres.writeFile({ fileName: join(workspace, 'deck.pptx') })
   }
+}
+
+function writeTinyMp4(path: string): void {
+  execSync(
+    `ffmpeg -y -f lavfi -i color=c=0x6b5bc0:s=160x120:d=1 -c:v libx264 -pix_fmt yuv420p -an ${JSON.stringify(path)}`,
+    { stdio: 'ignore' }
+  )
 }
 
 function writeSilentWav(path: string): void {
