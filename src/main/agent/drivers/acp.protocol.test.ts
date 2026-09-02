@@ -547,6 +547,354 @@ describe('wireAcp protocol', () => {
   })
 })
 
+describe('wireAcp grok protocol', () => {
+  async function handshakeGrok(
+    toClient: (value: unknown) => void,
+    outbound: JsonRpc[],
+    extras?: {
+      sessionId?: string
+      loadError?: boolean
+      resumeError?: boolean
+      auth?: boolean
+    }
+  ): Promise<void> {
+    const init = await waitFor(outbound, (msg) => msg.method === 'initialize')
+    toClient({
+      jsonrpc: '2.0',
+      id: init.id,
+      result: {
+        protocolVersion: ACP_PROTOCOL_VERSION,
+        agentCapabilities: {
+          loadSession: true,
+          promptCapabilities: { image: false, embeddedContext: true }
+        },
+        authMethods: extras?.auth
+          ? [
+              { id: 'cached_token', name: 'Cached token' },
+              { id: 'grok.com', name: 'Grok.com' }
+            ]
+          : [],
+        _meta: { availableCommands: [{ name: 'compact', description: 'Compact' }] }
+      }
+    })
+    if (extras?.auth) {
+      const auth = await waitFor(outbound, (msg) => msg.method === 'authenticate')
+      assert.equal(asRecord(auth.params)?.methodId, 'cached_token')
+      toClient({ jsonrpc: '2.0', id: auth.id, result: {} })
+    }
+    if (extras?.loadError) {
+      const loaded = await waitFor(outbound, (msg) => msg.method === 'session/load')
+      toClient({
+        jsonrpc: '2.0',
+        id: loaded.id,
+        error: { code: RpcErrorCode.resourceNotFound, message: 'Session not found' }
+      })
+      const resumed = await waitFor(outbound, (msg) => msg.method === 'session/resume')
+      if (extras.resumeError) {
+        toClient({
+          jsonrpc: '2.0',
+          id: resumed.id,
+          error: { code: RpcErrorCode.resourceNotFound, message: 'Session not found' }
+        })
+      } else {
+        toClient({
+          jsonrpc: '2.0',
+          id: resumed.id,
+          result: grokSessionResult(extras.sessionId ?? 'sess-resume')
+        })
+        return
+      }
+    }
+    const created = await waitFor(outbound, (msg) => msg.method === 'session/new')
+    const requested = asRecord(created.params)?.modelId
+    if (requested) assert.equal(String(requested).includes('['), false)
+    toClient({
+      jsonrpc: '2.0',
+      id: created.id,
+      result: grokSessionResult(extras?.sessionId ?? 'sess-grok')
+    })
+  }
+
+  function grokSessionResult(sessionId: string): Record<string, unknown> {
+    return {
+      sessionId,
+      models: {
+        currentModelId: 'grok-4.5',
+        availableModels: [
+          {
+            modelId: 'grok-4.5',
+            name: 'Grok 4.5',
+            _meta: { totalContextTokens: 500_000, supportsReasoningEffort: true }
+          }
+        ]
+      },
+      _meta: {
+        'x.ai/sessionConfig': {
+          options: [
+            { id: 'grok-4.5', category: 'model', label: 'Grok 4.5', selected: true },
+            { id: 'low', category: 'mode', label: 'Low Effort', selected: false },
+            { id: 'high', category: 'mode', label: 'High Effort', selected: true }
+          ]
+        }
+      }
+    }
+  }
+
+  it('authenticates, pins a plain model + effort, and does not invent plan modes', async () => {
+    const events: DriverEvent[] = []
+    const { proc, outbound, toClient } = fakeStdio()
+    const dir = await mkdtemp(join(tmpdir(), 'vav-acp-grok-'))
+    const driver = wireAcp(
+      'grok',
+      proc,
+      {
+        binary: 'grok',
+        cwd: dir,
+        approvalMode: 'bypass',
+        model: 'grok-4.5',
+        thinkingLevel: 'high',
+        extraArgs: ['--always-approve', '--permission-mode', 'bypassPermissions']
+      },
+      (event) => events.push(event)
+    )
+
+    await handshakeGrok(toClient, outbound, { auth: true })
+    const setModel = await waitFor(outbound, (msg) => msg.method === 'session/set_model')
+    assert.equal(asRecord(setModel.params)?.modelId, 'grok-4.5')
+    toClient({ jsonrpc: '2.0', id: setModel.id, result: {} })
+    const setMode = await waitFor(outbound, (msg) => msg.method === 'session/set_mode')
+    assert.equal(asRecord(setMode.params)?.modeId, 'high')
+    toClient({ jsonrpc: '2.0', id: setMode.id, result: {} })
+
+    await waitForEvent(events, (event) => event.type === 'connected')
+    const session = events.find((event) => event.type === 'session-state' && event.state.thinkingLevels)
+    assert.ok(session && session.type === 'session-state')
+    assert.deepEqual(session.state.thinkingLevels, ['low', 'high'])
+    assert.equal(session.state.modes?.length ?? 0, 0)
+    assert.equal(session.state.currentModeId ?? null, null)
+    const usage = events.find((event) => event.type === 'usage' && event.contextSize === 500_000)
+    assert.ok(usage)
+
+    driver.applyOptions?.({ mode: 'plan' })
+    await new Promise((resolve) => setTimeout(resolve, 40))
+    assert.equal(outbound.filter((msg) => msg.method === 'session/set_mode').length, 1)
+
+    driver.applyOptions?.({ thinkingLevel: 'low' })
+    const pinned = await waitForNth(outbound, (msg) => msg.method === 'session/set_model', 2)
+    toClient({ jsonrpc: '2.0', id: pinned.id, result: {} })
+    const effort = await waitForNth(outbound, (msg) => msg.method === 'session/set_mode', 2)
+    assert.equal(asRecord(effort.params)?.modeId, 'low')
+    toClient({ jsonrpc: '2.0', id: effort.id, result: {} })
+    driver.dispose()
+  })
+
+  it('continues on the same session and carries a resume handoff after load/resume fail', async () => {
+    const events: DriverEvent[] = []
+    const { proc, outbound, toClient } = fakeStdio()
+    const dir = await mkdtemp(join(tmpdir(), 'vav-acp-grok-resume-'))
+    const driver = wireAcp(
+      'grok',
+      proc,
+      {
+        binary: 'grok',
+        cwd: dir,
+        approvalMode: 'edit',
+        model: 'grok-4.5',
+        cursor: { provider: 'grok', sessionId: 'stale-sess' },
+        resumeHandoff: () => 'Prior transcript:\nuser: hi\nassistant: hello'
+      },
+      (event) => events.push(event)
+    )
+
+    await handshakeGrok(toClient, outbound, {
+      loadError: true,
+      resumeError: true,
+      sessionId: 'fresh-sess'
+    })
+    const setModel = await waitFor(outbound, (msg) => msg.method === 'session/set_model')
+    toClient({ jsonrpc: '2.0', id: setModel.id, result: {} })
+    await waitForEvent(events, (event) => event.type === 'connected')
+
+    driver.prompt('what next?')
+    const setAgain = await waitForNth(outbound, (msg) => msg.method === 'session/set_model', 2)
+    toClient({ jsonrpc: '2.0', id: setAgain.id, result: {} })
+    const first = await waitFor(outbound, (msg) => msg.method === 'session/prompt')
+    const blocks = asRecord(first.params)?.prompt
+    const text = Array.isArray(blocks) ? asRecord(blocks[0])?.text : ''
+    assert.match(String(text), /Prior transcript/)
+    assert.match(String(text), /what next/)
+    toClient({
+      jsonrpc: '2.0',
+      method: 'session/update',
+      params: {
+        sessionId: 'fresh-sess',
+        update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'one' } }
+      }
+    })
+    toClient({ jsonrpc: '2.0', id: first.id, result: { stopReason: 'end_turn' } })
+    await waitForEvent(events, (event) => event.type === 'turn-finished' && event.success === true)
+
+    driver.prompt('and then?')
+    const setThird = await waitForNth(outbound, (msg) => msg.method === 'session/set_model', 3)
+    toClient({ jsonrpc: '2.0', id: setThird.id, result: {} })
+    const second = await waitForNth(outbound, (msg) => msg.method === 'session/prompt', 2)
+    const secondBlocks = asRecord(second.params)?.prompt
+    const secondText = Array.isArray(secondBlocks) ? asRecord(secondBlocks[0])?.text : ''
+    assert.equal(secondText, 'and then?')
+    assert.equal(asRecord(second.params)?.sessionId, 'fresh-sess')
+    assert.equal(asRecord(first.params)?.sessionId, 'fresh-sess')
+    driver.dispose()
+  })
+
+  it('answers Grok exit_plan_mode and ask_user_question on the x.ai contract', async () => {
+    const events: DriverEvent[] = []
+    const { proc, outbound, toClient } = fakeStdio()
+    const dir = await mkdtemp(join(tmpdir(), 'vav-acp-grok-plan-'))
+    const driver = wireAcp(
+      'grok',
+      proc,
+      { binary: 'grok', cwd: dir, approvalMode: 'edit' },
+      (event) => events.push(event)
+    )
+    await handshakeGrok(toClient, outbound)
+    await waitForEvent(events, (event) => event.type === 'connected')
+
+    driver.prompt('plan this')
+    const prompt = await waitFor(outbound, (msg) => msg.method === 'session/prompt')
+    toClient({
+      jsonrpc: '2.0',
+      method: 'session/update',
+      params: {
+        sessionId: 'sess-grok',
+        update: { sessionUpdate: 'tool_call_delta_chunk', tool_call_id: 'call-1', name: 'todo_write' }
+      }
+    })
+    await waitForEvent(events, (event) => event.type === 'tool' && event.name === 'todo_write')
+
+    toClient({
+      jsonrpc: '2.0',
+      id: 9101,
+      method: '_x.ai/exit_plan_mode',
+      params: { planContent: '# Do it\n\nWrite hello.txt', name: 'Do it' }
+    })
+    const plan = await waitForEvent(
+      events,
+      (event) => event.type === 'elicitation' && event.kind === 'plan_doc'
+    )
+    driver.respond(plan.requestId, 'allow')
+    const planResult = await waitFor(outbound, (msg) => msg.id === 9101 && msg.result !== undefined)
+    assert.deepEqual(planResult.result, { outcome: 'accepted' })
+
+    toClient({
+      jsonrpc: '2.0',
+      id: 9102,
+      method: '_x.ai/ask_user_question',
+      params: {
+        questions: [
+          {
+            question: 'Which colour should the banner be?',
+            options: [{ label: 'Red' }, { label: 'Blue' }],
+            multiSelect: false
+          }
+        ]
+      }
+    })
+    const ask = await waitForEvent(events, (event) => event.type === 'elicitation' && event.kind === 'ask')
+    driver.respond(
+      ask.requestId,
+      'allow',
+      JSON.stringify({ answers: [{ questionIndex: 0, value: 'Red' }] })
+    )
+    const askResult = await waitFor(outbound, (msg) => msg.id === 9102 && msg.result !== undefined)
+    assert.deepEqual(askResult.result, {
+      outcome: 'accepted',
+      answers: { 'Which colour should the banner be?': 'Red' }
+    })
+
+    toClient({
+      jsonrpc: '2.0',
+      method: 'session/update',
+      params: {
+        sessionId: 'sess-grok',
+        update: { sessionUpdate: 'session_summary_generated', title: 'Write hello.txt' }
+      }
+    })
+    await waitForEvent(
+      events,
+      (event) => event.type === 'session-state' && event.state.sessionTitle === 'Write hello.txt'
+    )
+
+    toClient({ jsonrpc: '2.0', id: prompt.id, result: { stopReason: 'end_turn' } })
+    await waitForEvent(events, (event) => event.type === 'turn-finished' && event.success === true)
+    driver.dispose()
+  })
+
+  it('boots kiro, cline, and devin through the shared ACP client', async () => {
+    for (const host of ['kiro', 'cline', 'devin'] as const) {
+      const events: DriverEvent[] = []
+      const { proc, outbound, toClient } = fakeStdio()
+      const dir = await mkdtemp(join(tmpdir(), `vav-acp-${host}-`))
+      const driver = wireAcp(
+        host,
+        proc,
+        { binary: host, cwd: dir, approvalMode: 'edit' },
+        (event) => events.push(event)
+      )
+      const init = await waitFor(outbound, (msg) => msg.method === 'initialize')
+      toClient({
+        jsonrpc: '2.0',
+        id: init.id,
+        result: {
+          protocolVersion: ACP_PROTOCOL_VERSION,
+          agentCapabilities: { loadSession: true },
+          authMethods: []
+        }
+      })
+      const created = await waitFor(outbound, (msg) => msg.method === 'session/new')
+      toClient({
+        jsonrpc: '2.0',
+        id: created.id,
+        result: {
+          sessionId: `${host}-1`,
+          modes: {
+            currentModeId: 'agent',
+            availableModes: [
+              { id: 'agent', name: 'Agent' },
+              { id: 'plan', name: 'Plan' }
+            ]
+          }
+        }
+      })
+      await waitForEvent(events, (event) => event.type === 'connected')
+      const session = events.find((event) => event.type === 'session-state')
+      assert.ok(session && session.type === 'session-state')
+      assert.equal(session.state.currentModeId, 'agent')
+      driver.applyOptions?.({ mode: 'plan' })
+      const mode = await waitFor(outbound, (msg) => msg.method === 'session/set_mode')
+      assert.equal(asRecord(mode.params)?.modeId, 'plan')
+      toClient({ jsonrpc: '2.0', id: mode.id, result: {} })
+      driver.prompt('hello')
+      const prompt = await waitFor(outbound, (msg) => msg.method === 'session/prompt')
+      assert.equal(asRecord(prompt.params)?.sessionId, `${host}-1`)
+      toClient({
+        jsonrpc: '2.0',
+        method: 'session/update',
+        params: {
+          sessionId: `${host}-1`,
+          update: {
+            sessionUpdate: 'agent_message_chunk',
+            content: { type: 'text', text: `${host} hi` }
+          }
+        }
+      })
+      toClient({ jsonrpc: '2.0', id: prompt.id, result: { stopReason: 'end_turn' } })
+      await waitForEvent(events, (event) => event.type === 'text-delta' && event.text === `${host} hi`)
+      await waitForEvent(events, (event) => event.type === 'turn-finished' && event.success === true)
+      driver.dispose()
+    }
+  })
+})
+
 describe('acpInvokeArgs', () => {
   it('pins Cursor --model before the acp subcommand', () => {
     assert.deepEqual(
@@ -558,10 +906,47 @@ describe('acpInvokeArgs', () => {
       ['--model', 'grok-4.6[effort=medium,fast=false]', 'acp']
     )
     assert.deepEqual(acpInvokeArgs('cursor', 'edit', {}), ['acp'])
-    assert.deepEqual(acpInvokeArgs('grok', 'edit', { model: 'grok-4.5' }), ['agent', 'stdio'])
     assert.deepEqual(
       acpInvokeArgs('cursor', 'edit', { model: 'grok-4.6', extraArgs: ['--model', 'auto'] }),
       ['acp', '--model', 'auto']
+    )
+  })
+
+  it('places Grok flags around agent / stdio', () => {
+    assert.deepEqual(
+      acpInvokeArgs('grok', 'edit', {
+        model: 'grok-4.5',
+        thinkingLevel: 'high',
+        extraArgs: ['--always-approve', '--permission-mode', 'bypassPermissions']
+      }),
+      [
+        '--permission-mode',
+        'bypassPermissions',
+        'agent',
+        '-m',
+        'grok-4.5',
+        '--reasoning-effort',
+        'high',
+        '--always-approve',
+        'stdio'
+      ]
+    )
+    assert.deepEqual(acpInvokeArgs('grok', 'edit', { model: 'grok-4.5[effort=high]' }), [
+      'agent',
+      '-m',
+      'grok-4.5',
+      'stdio'
+    ])
+  })
+
+  it('keeps Kiro / Cline / Devin ACP flags on their CLI shape', () => {
+    assert.deepEqual(acpInvokeArgs('kiro', 'bypass', {}), ['acp', '--trust-all-tools'])
+    assert.deepEqual(acpInvokeArgs('kiro', 'edit', {}), ['acp'])
+    assert.deepEqual(acpInvokeArgs('cline', 'auto', {}), ['--acp', '--auto-approve', 'true'])
+    assert.deepEqual(acpInvokeArgs('cline', 'edit', {}), ['--acp'])
+    assert.deepEqual(
+      acpInvokeArgs('devin', 'bypass', { extraArgs: ['--permission-mode', 'bypass'] }),
+      ['acp', '--permission-mode', 'bypass']
     )
   })
 })

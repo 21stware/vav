@@ -3,7 +3,9 @@ import { describe, it } from 'node:test'
 import {
   DEFAULT_THINKING_LEVEL,
   deepSeekEffort,
+  grokEffortId,
   isDeepSeekModel,
+  isGrokEffortId,
   parseThinkingLevel,
   sessionShowsFast,
   sessionShowsThinking,
@@ -45,8 +47,23 @@ describe('sessionShowsThinking / sessionShowsFast', () => {
     assert.equal(sessionShowsThinking('cursor', 'grok-4.6-low-fast'), true)
     assert.equal(sessionShowsThinking('cursor', 'auto'), false)
     assert.equal(sessionShowsThinking('claude', 'sonnet'), false)
+    assert.equal(sessionShowsThinking('grok', 'grok-4.5'), true)
+    assert.equal(sessionShowsThinking('grok', null), true)
     assert.equal(sessionShowsFast('cursor'), true)
+    assert.equal(sessionShowsFast('grok'), false)
     assert.equal(sessionShowsFast(null), false)
+  })
+})
+
+describe('grokEffortId', () => {
+  it('maps VAV levels onto grok session/set_mode ids', () => {
+    assert.equal(grokEffortId('off'), 'low')
+    assert.equal(grokEffortId('low'), 'low')
+    assert.equal(grokEffortId('medium'), 'medium')
+    assert.equal(grokEffortId('high'), 'high')
+    assert.equal(grokEffortId('max'), 'high')
+    assert.equal(isGrokEffortId('plan'), false)
+    assert.equal(isGrokEffortId('high'), true)
   })
 })
 
@@ -75,6 +92,14 @@ describe('thinkingLevelsForSession', () => {
       thinkingLevelsForSession({ cliHost: 'cursor', modelId: 'grok-4.6' }),
       ['off', 'low', 'medium', 'high', 'max']
     )
+  })
+
+  it('uses grok effort ids, not off/max', () => {
+    assert.deepEqual(thinkingLevelsForSession({ cliHost: 'grok', modelId: 'grok-4.5' }), [
+      'low',
+      'medium',
+      'high'
+    ])
   })
 })
 

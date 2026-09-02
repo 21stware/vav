@@ -135,6 +135,39 @@ export function parseAcpPromptCapabilities(raw: unknown): AcpPromptCapabilities 
   }
 }
 
+/**
+ * Grok `session/new._meta["x.ai/sessionConfig"]`.
+ * `category: "mode"` is reasoning effort — never ACP plan/agent modes.
+ */
+export function parseGrokSessionConfig(raw: unknown): {
+  thinkingLevels: Array<'low' | 'medium' | 'high'>
+  currentThinking: 'low' | 'medium' | 'high' | null
+  currentModelId: string | null
+} {
+  const rec = asRecord(raw)
+  const list = asArray(rec?.options) ?? []
+  const thinkingLevels: Array<'low' | 'medium' | 'high'> = []
+  let currentThinking: 'low' | 'medium' | 'high' | null = null
+  let currentModelId: string | null = null
+  for (const item of list) {
+    const row = asRecord(item)
+    const id = asString(row?.id)
+    if (!id) continue
+    const category = asString(row?.category)
+    if (category === 'mode' && (id === 'low' || id === 'medium' || id === 'high')) {
+      if (!thinkingLevels.includes(id)) thinkingLevels.push(id)
+      if (row?.selected === true) currentThinking = id
+    }
+    if (category === 'model' && row?.selected === true) currentModelId = id
+  }
+  const order: Array<'low' | 'medium' | 'high'> = ['low', 'medium', 'high']
+  return {
+    thinkingLevels: order.filter((level) => thinkingLevels.includes(level)),
+    currentThinking,
+    currentModelId
+  }
+}
+
 export function parseAcpSessionModes(raw: unknown): {
   currentModeId: string | null
   modes: AcpSessionMode[]

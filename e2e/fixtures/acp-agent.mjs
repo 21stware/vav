@@ -22,6 +22,8 @@
  * - E2E_ACP_LEAK_PARTIAL_TRANSPORT=1 — first prompt streams a partial
  *   reply then a TLS-disconnect RetriableError (still end_turn). Later
  *   prompts reply "e2e continued".
+ * - E2E_ACP_FLAVOR=grok — Grok build wire: authenticate, sessionConfig in
+ *   `_meta`, plain model ids, `_x.ai/exit_plan_mode` for plan mode.
  */
 import { appendFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { createInterface } from 'node:readline'
@@ -36,6 +38,7 @@ const MODEL_LOG = process.env.E2E_ACP_MODEL_LOG || ''
 const LEAK_PROMPTS = Number(process.env.E2E_ACP_LEAK_PROMPTS ?? 0) || 0
 const LEAK_TAIL = process.env.E2E_ACP_LEAK_TAIL === '1'
 const LEAK_PARTIAL_TRANSPORT = process.env.E2E_ACP_LEAK_PARTIAL_TRANSPORT === '1'
+const FLAVOR = process.env.E2E_ACP_FLAVOR === 'grok' ? 'grok' : 'cursor'
 
 /** cursor-agent ACP bug: internal stream teardown leaks as assistant text. */
 const LEAKED_STREAM_ERROR = 'Error: RetriableError: WritableIterable is closed'
@@ -200,10 +203,25 @@ function handle(msg) {
       protocolVersion: PROTOCOL_VERSION,
       agentCapabilities: {
         loadSession: true,
-        promptCapabilities: { image: true, embeddedContext: true }
+        promptCapabilities: { image: FLAVOR !== 'grok', embeddedContext: true }
       },
-      authMethods: []
+      authMethods:
+        FLAVOR === 'grok'
+          ? [
+              { id: 'cached_token', name: 'Cached token' },
+              { id: 'xai.api_key', name: 'API key' }
+            ]
+          : [],
+      _meta:
+        FLAVOR === 'grok'
+          ? { availableCommands: availableCommands }
+          : undefined
     })
+    return
+  }
+
+  if (method === 'authenticate') {
+    result(id, {})
     return
   }
 
@@ -215,6 +233,34 @@ function handle(msg) {
     const requested =
       typeof params.modelId === 'string' && params.modelId ? params.modelId : models.currentModelId
     sessions.set(sessionId, { modeId: 'agent', modelId: requested })
+    if (FLAVOR === 'grok') {
+      result(id, {
+        sessionId,
+        title: 'E2E ACP',
+        models: {
+          currentModelId: typeof requested === 'string' && !requested.includes('[') ? requested : 'grok-4.5',
+          availableModels: [
+            {
+              modelId: 'grok-4.5',
+              name: 'Grok 4.5',
+              _meta: { totalContextTokens: 256_000 }
+            }
+          ]
+        },
+        availableCommands,
+        _meta: {
+          'x.ai/sessionConfig': {
+            options: [
+              { id: 'grok-4.5', category: 'model', label: 'Grok 4.5', selected: true },
+              { id: 'low', category: 'mode', label: 'Low Effort', selected: false },
+              { id: 'medium', category: 'mode', label: 'Medium Effort', selected: false },
+              { id: 'high', category: 'mode', label: 'High Effort', selected: true }
+            ]
+          }
+        }
+      })
+      return
+    }
     result(id, {
       sessionId,
       title: 'E2E ACP',
@@ -257,16 +303,23 @@ function handle(msg) {
       write({
         jsonrpc: '2.0',
         id: PLAN_REQUEST_ID,
-        method: 'cursor/create_plan',
-        params: {
-          toolCallId: PLAN_TOOL_CALL_ID,
-          name: 'E2E Plan',
-          overview: 'Create hello.txt containing hi.',
-          plan: '# E2E Plan\n\nCreate `hello.txt` containing `hi`.',
-          todos: [{ id: 'e2e-todo', content: 'Create hello.txt', status: 'pending' }],
-          isProject: false,
-          phases: []
-        }
+        method: FLAVOR === 'grok' ? '_x.ai/exit_plan_mode' : 'cursor/create_plan',
+        params:
+          FLAVOR === 'grok'
+            ? {
+                toolCallId: PLAN_TOOL_CALL_ID,
+                name: 'E2E Plan',
+                planContent: '# E2E Plan\n\nCreate `hello.txt` containing `hi`.'
+              }
+            : {
+                toolCallId: PLAN_TOOL_CALL_ID,
+                name: 'E2E Plan',
+                overview: 'Create hello.txt containing hi.',
+                plan: '# E2E Plan\n\nCreate `hello.txt` containing `hi`.',
+                todos: [{ id: 'e2e-todo', content: 'Create hello.txt', status: 'pending' }],
+                isProject: false,
+                phases: []
+              }
       })
       // Turn stays open until the client answers cursor/create_plan.
       return

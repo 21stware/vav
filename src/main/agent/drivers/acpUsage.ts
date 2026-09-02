@@ -10,6 +10,10 @@ function asString(value: unknown): string | null {
   return typeof value === 'string' ? value : null
 }
 
+function asArray(value: unknown): unknown[] | null {
+  return Array.isArray(value) ? value : null
+}
+
 function dig(obj: unknown, path: string): unknown {
   let cur: unknown = obj
   for (const key of path.split('.')) {
@@ -31,6 +35,40 @@ function num(value: unknown): number | undefined {
 
 /** xAI `costUsdTicks` — 1e10 ticks = $1. */
 export const GROK_COST_TICKS_PER_USD = 10_000_000_000
+
+/** Grok `availableModels[]._meta.totalContextTokens` (and close aliases). */
+export function contextSizeFromModelMeta(model: unknown): number | undefined {
+  const rec = asRecord(model)
+  if (!rec) return undefined
+  const meta = asRecord(rec._meta) ?? rec
+  const n = firstNum(
+    meta.totalContextTokens,
+    meta.total_context_tokens,
+    meta.contextWindow,
+    meta.context_window
+  )
+  return n != null && n >= 1_024 ? Math.round(n) : undefined
+}
+
+export function contextSizeFromListedModels(
+  models: unknown,
+  modelId: string | null | undefined
+): number | undefined {
+  const wanted = (modelId ?? '').trim()
+  const rows = Array.isArray(models)
+    ? models
+    : asArray(asRecord(models)?.availableModels) ?? asArray(asRecord(models)?.available_models)
+  if (!rows?.length) return undefined
+  const match = wanted
+    ? rows.find((row) => {
+        const rec = asRecord(row)
+        const id =
+          asString(rec?.modelId) || asString(rec?.model_id) || asString(rec?.id) || ''
+        return id === wanted || id.replace(/\[.*$/, '') === wanted.replace(/\[.*$/, '')
+      })
+    : rows[0]
+  return contextSizeFromModelMeta(match)
+}
 
 /**
  * Cursor's ACP model ids carry the context window inline:
@@ -93,6 +131,8 @@ export function isSessionLevelAcpUpdate(
     n === 'currentmodeupdate' ||
     n === 'configoptionupdate' ||
     n === 'sessioninfoupdate' ||
+    n === 'sessionsummarygenerated' ||
+    n === 'modelchanged' ||
     asRecord(update.usage) != null
   )
 }

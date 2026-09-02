@@ -67,6 +67,8 @@ export type LaunchVavOptions = {
    * session/new / session/prompt). Implies seedConversation `acp-live`.
    */
   liveAcp?: boolean
+  /** Live ACP fixture as Grok (`grok agent stdio`) instead of Cursor. */
+  liveAcpHost?: 'cursor' | 'grok'
   /** Second sidebar session that is also a live Cursor ACP host. */
   extraAcpSession?: boolean
   /** Fixture emits usage_update / turn_completed usage (E2E_ACP_USAGE). */
@@ -147,7 +149,11 @@ function seedUserData(
   options: LaunchVavOptions,
   extraWorkspace?: string
 ): void {
-  const kind = options.liveAcp ? 'acp-live' : (options.seedConversation ?? 'empty')
+  const kind = options.liveAcp
+    ? options.liveAcpHost === 'grok'
+      ? 'acp-live-grok'
+      : 'acp-live'
+    : (options.seedConversation ?? 'empty')
   const settings: Record<string, unknown> = {
     locale: 'en',
     theme: 'light',
@@ -171,13 +177,15 @@ function seedUserData(
   if (options.liveAcp) {
     chmodSync(ACP_AGENT_SH, 0o755)
     const binary = options.acpBinary ?? ACP_AGENT_SH
+    const host = options.liveAcpHost === 'grok' ? 'grok' : 'cursor'
     settings.cliAgents = [
       {
-        id: 'cursor',
-        name: 'Cursor',
+        id: host,
+        name: host === 'grok' ? 'Grok build' : 'Cursor',
         binaryPath: binary,
         binaryCandidates: [binary],
-        defaultArgs: [],
+        defaultArgs:
+          host === 'grok' ? ['--always-approve', '--permission-mode', 'bypassPermissions'] : [],
         envVars: {},
         enabled: true,
         builtin: true
@@ -276,6 +284,7 @@ export async function launchVav(options: LaunchVavOptions = {}): Promise<VavHarn
       ...(options.acpUsage ? { E2E_ACP_USAGE: '1' } : {}),
       ...(options.acpPlan ? { E2E_ACP_PLAN: '1' } : {}),
       ...(options.liveAcp ? { E2E_ACP_MODEL_LOG: acpModelLog } : {}),
+      ...(options.liveAcpHost === 'grok' ? { E2E_ACP_FLAVOR: 'grok' } : {}),
       ...(options.acpFailPrompts
         ? {
             E2E_ACP_FAIL_PROMPTS: String(options.acpFailPrompts),
