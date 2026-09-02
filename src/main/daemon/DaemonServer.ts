@@ -127,9 +127,16 @@ export class DaemonServer {
     for (const socket of this.sockets) socket.destroy()
     this.sockets.clear()
     this.authFails.clear()
-    this.server?.close()
+    const server = this.server
     this.server = null
     this.listenPort = 0
+    if (!server) return
+    // Windows keeps `server.close()` pending until every TCP connection
+    // actually drops. Force them so the test worker (and the app) can exit.
+    const closer = server as typeof server & { closeAllConnections?: () => void }
+    closer.closeAllConnections?.()
+    server.close()
+    server.unref()
   }
 
   private authKey(socket: Socket): string {
@@ -270,8 +277,25 @@ export class DaemonServer {
     }
     this.pairAskBusy = true
     try {
-      const allow = await this.opts.onPairAsk({ name: ask.name, machineId: ask.machineId })
-      if (socket.destroyed) return
+      const allow = await new Promise<boolean | 'closed'>((resolve) => {
+        if (socket.destroyed) {
+          resolve('closed')
+          return
+        }
+        const onClose = (): void => resolve('closed')
+        socket.once('close', onClose)
+        void this.opts.onPairAsk!({ name: ask.name, machineId: ask.machineId }).then(
+          (value) => {
+            socket.off('close', onClose)
+            resolve(value)
+          },
+          () => {
+            socket.off('close', onClose)
+            resolve(false)
+          }
+        )
+      })
+      if (allow === 'closed' || socket.destroyed) return
       if (!allow) {
         writeLine(socket, { type: 'error', code: 'auth', message: 'pairing declined' })
         socket.destroy()

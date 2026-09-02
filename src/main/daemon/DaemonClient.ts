@@ -85,6 +85,7 @@ export function requestLanPairOffer(opts: {
     timer = setTimeout(() => {
       fail(new Error('pairing confirm timed out'))
     }, opts.timeoutMs ?? PAIR_ASK_TIMEOUT_MS)
+    timer.unref?.()
     socket.on('error', (err) => fail(err))
     socket.on('connect', () => {
       writeLine(socket, {
