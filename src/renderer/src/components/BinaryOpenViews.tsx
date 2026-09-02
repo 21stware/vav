@@ -8,6 +8,11 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useT } from '../i18n/useT'
+import { useSessionStore } from '../state/sessionStore'
+
+function hostConversationId(): string | undefined {
+  return useSessionStore.getState().activeId || undefined
+}
 
 const TEXT_CHUNK = 256 * 1024
 /** Spec: first 64 KB hex window; further 64 KB windows load on scroll. */
@@ -76,7 +81,8 @@ export function ForcedBinaryTextView({ path }: { path: string }): React.JSX.Elem
       const win = await window.vav.files.readTextWindow(path, {
         startByte: state.endByte,
         maxBytes: TEXT_CHUNK,
-        force: true
+        force: true,
+        conversationId: hostConversationId()
       })
       if (win.error) {
         setError(win.error)
@@ -114,7 +120,8 @@ export function ForcedBinaryTextView({ path }: { path: string }): React.JSX.Elem
       const win = await window.vav.files.readTextWindow(path, {
         startByte: 0,
         maxBytes: TEXT_CHUNK,
-        force: true
+        force: true,
+        conversationId: hostConversationId()
       })
       if (cancelled) return
       if (win.error) {
@@ -196,7 +203,8 @@ export function HexDumpView({ path }: { path: string }): React.JSX.Element {
     try {
       const win = await window.vav.files.readBinaryWindow(path, {
         startByte: state.endByte,
-        maxBytes: HEX_CHUNK
+        maxBytes: HEX_CHUNK,
+        conversationId: hostConversationId()
       })
       if (!win.ok) {
         setError(win.error)
@@ -227,7 +235,8 @@ export function HexDumpView({ path }: { path: string }): React.JSX.Element {
       // Spec: first 64 KB only; further windows load on scroll.
       const win = await window.vav.files.readBinaryWindow(path, {
         startByte: 0,
-        maxBytes: HEX_CHUNK
+        maxBytes: HEX_CHUNK,
+        conversationId: hostConversationId()
       })
       if (cancelled) return
       if (!win.ok) {

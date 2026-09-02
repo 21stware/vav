@@ -83,6 +83,8 @@ describe('daemon loopback', () => {
       await fh.close()
       assert.equal(bytesRead, 6)
       assert.equal(buf.toString('utf8'), 'handle')
+      await remote.fs.unlink(to)
+      assert.equal(await remote.fs.exists(to), false)
     } finally {
       client.close()
       server.close()

@@ -1061,6 +1061,24 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     const light = options?.light === true
     const data = await window.vav.bootstrap()
     const activeId = pinnedConversationId ?? data.activeConversationId
+    const windowMachineId = readWindowMachineId()
+    let nextActiveId = activeId
+    if (!light && !pinnedConversationId) {
+      const listed = data.conversations.find((c) => c.id === nextActiveId)
+      if (
+        !listed ||
+        listed.archived ||
+        listed.fileId ||
+        !conversationOnMachine(listed, windowMachineId)
+      ) {
+        nextActiveId =
+          data.conversations
+            .filter(
+              (c) => !c.archived && !c.fileId && conversationOnMachine(c, windowMachineId)
+            )
+            .sort((a, b) => b.updatedAt - a.updatedAt)[0]?.id ?? ''
+      }
+    }
     // File-preview / warm session shells skip update-state on the critical path.
     const updateState = light
       ? IDLE_UPDATE
@@ -1097,13 +1115,13 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       messagesHydrated: {},
       // Warm idle shell: no active conversation until sessionNavigate claims one.
       // Cold companion pins id here; SessionWindow.claimDetachedSession hydrates.
-      activeId: light && !pinnedConversationId ? '' : activeId,
-      selectedIds: light && !pinnedConversationId ? [] : activeId ? [activeId] : [],
+      activeId: light && !pinnedConversationId ? '' : nextActiveId,
+      selectedIds: light && !pinnedConversationId ? [] : nextActiveId ? [nextActiveId] : [],
       pinnedConversationId: pinnedConversationId ?? null,
       home: data.home,
       tmp: data.tmp,
       hosts: data.hosts,
-      windowMachineId: readWindowMachineId(),
+      windowMachineId,
       about: data.about,
       updateState: {
         ...updateState,
@@ -1114,10 +1132,13 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     void get().refreshAgentModelCatalog(false)
     // Full bootstrap (main shell): await select.
     // Light companions: SessionWindow owns claim + non-blocking hydrate.
-    if (activeId && !light) {
-      await get().selectConversation(activeId)
+    // Bind files to a session that lives on this window's machine — never a
+    // hidden local conversation that the sidebar already filtered out.
+    if (!light) {
+      await syncActiveConversationToMachine()
+      const id = get().activeId
+      if (id) await get().selectConversation(id)
     }
-    if (!light) await syncActiveConversationToMachine()
   },
 
   claimDetachedSession(meta, options) {

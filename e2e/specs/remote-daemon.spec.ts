@@ -49,6 +49,21 @@ test('pair vavd, open its folder, list a file that only exists there', async () 
       'data-machine-id',
       paired.host.id
     )
+    await expect(
+      remote.locator(`[data-testid="session-row"][data-conversation-id="${E2E_SESSION_ID}"]`)
+    ).toHaveCount(0)
+    await expect(remote.locator('[data-testid="session-row"].selected')).toBeVisible()
+    await expect
+      .poll(async () => {
+        return remote.evaluate(() => {
+          const selected = document.querySelector('[data-testid="session-row"].selected')
+          return selected?.getAttribute('data-conversation-id') ?? ''
+        })
+      })
+      .not.toBe(E2E_SESSION_ID)
+
+    await openFilesTray(remote)
+    await expect(remote.locator('[data-file-path$="hello.md"]')).toHaveCount(0)
 
     await expect
       .poll(async () => {

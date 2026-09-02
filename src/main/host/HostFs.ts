@@ -7,7 +7,7 @@
  */
 
 import { watch, type FSWatcher } from 'node:fs'
-import { access, mkdir, open, readdir, readFile, rename, stat, writeFile } from 'node:fs/promises'
+import { access, mkdir, open, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
 
 export type HostStat = {
   size: number
@@ -57,6 +57,7 @@ export interface HostFs {
   open(path: string, flags: string): Promise<HostFileHandle>
   watch(path: string, opts: { recursive?: boolean }, listener: HostWatchListener): HostWatcher
   exists(path: string): Promise<boolean>
+  unlink(path: string): Promise<void>
 }
 
 export function createLocalHostFs(): HostFs {
@@ -120,6 +121,9 @@ export function createLocalHostFs(): HostFs {
       } catch {
         return false
       }
+    },
+    async unlink(path) {
+      await rm(path, { recursive: true, force: true })
     }
   }
 }

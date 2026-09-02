@@ -1005,7 +1005,7 @@ export interface VavApi {
      */
     readTextWindow(
       path: string,
-      opts?: { startByte?: number; maxBytes?: number; force?: boolean }
+      opts?: { startByte?: number; maxBytes?: number; force?: boolean; conversationId?: string }
     ): Promise<TextWindowResult>
     /**
      * Binary file bytes as base64 for mature client renderers
@@ -1013,14 +1013,15 @@ export interface VavApi {
      * for large files — base64 is a convenience, not a product size gate.
      */
     readBinary(
-      path: string
+      path: string,
+      conversationId?: string
     ): Promise<{ ok: true; base64: string; size: number; mime: string } | { ok: false; error: string }>
     /**
      * Byte-window raw read for hex dump. Ephemeral override view — not stored.
      */
     readBinaryWindow(
       path: string,
-      opts?: { startByte?: number; maxBytes?: number }
+      opts?: { startByte?: number; maxBytes?: number; conversationId?: string }
     ): Promise<
       | {
           ok: true
@@ -1035,7 +1036,8 @@ export interface VavApi {
     /** Write raw bytes (base64) — office discard / binary restore. */
     writeBinary(
       path: string,
-      base64: string
+      base64: string,
+      conversationId?: string
     ): Promise<{ ok: true } | { ok: false; error?: string }>
     /**
      * Document sandbox: clone real path → working copy (or return existing).
@@ -1070,7 +1072,8 @@ export interface VavApi {
     /** Overwrite an existing text file (file-preview Save). */
     write(
       path: string,
-      content: string
+      content: string,
+      conversationId?: string
     ): Promise<{ ok: true } | { ok: false; error?: string }>
     /**
      * Write bytes/text into the OS temp clip folder and return that path.
@@ -1101,18 +1104,22 @@ export interface VavApi {
     ): Promise<{ ok: true; path: string } | { ok: false; cancelled?: boolean; error?: string }>
     rename(
       path: string,
-      newName: string
+      newName: string,
+      conversationId?: string
     ): Promise<{ ok: true; path: string } | { ok: false; error: string }>
-    trash(paths: string[]): Promise<{ ok: true } | { ok: false; error: string }>
+    trash(
+      paths: string[],
+      conversationId?: string
+    ): Promise<{ ok: true } | { ok: false; error: string }>
     /** Metadata + optional data URL for in-app preview. */
-    inspect(path: string): Promise<FileInspectResult>
+    inspect(path: string, conversationId?: string): Promise<FileInspectResult>
     /**
      * Background structured office/PDF parse (block pick / search).
      * Never required for first paint — call after provisional canvas mounts.
      */
     inspectStructured(
       path: string,
-      opts?: { maxBlocks?: number; maxRows?: number }
+      opts?: { maxBlocks?: number; maxRows?: number; conversationId?: string }
     ): Promise<{
       ok: true
       structured: import('./structuredDoc').StructuredDocument
@@ -1140,28 +1147,34 @@ export interface VavApi {
 
   /** Workspace git status / worktree / branch / diff (CLI wrapper). */
   git: {
-    status(cwd: string): Promise<GitSnapshot>
+    status(cwd: string, conversationId?: string): Promise<GitSnapshot>
     diff(
       cwd: string,
       path: string,
-      opts?: { staged?: boolean }
+      opts?: { staged?: boolean; conversationId?: string }
     ): Promise<GitResult<string>>
     /** Blob at `ref:path` as base64 (image diffs). */
     showBase64(
       cwd: string,
       path: string,
-      ref?: string
+      ref?: string,
+      conversationId?: string
     ): Promise<GitResult<{ base64: string | null; missing: boolean }>>
-    init(cwd: string): Promise<GitResult<GitSnapshot>>
+    init(cwd: string, conversationId?: string): Promise<GitResult<GitSnapshot>>
     createBranch(
       cwd: string,
       name: string,
-      opts?: { checkout?: boolean }
+      opts?: { checkout?: boolean; conversationId?: string }
     ): Promise<GitResult<{ branch: string }>>
-    checkoutBranch(cwd: string, name: string): Promise<GitResult<{ branch: string }>>
+    checkoutBranch(
+      cwd: string,
+      name: string,
+      conversationId?: string
+    ): Promise<GitResult<{ branch: string }>>
     createWorktree(
       cwd: string,
-      options: { path: string; newBranch?: string; branch?: string }
+      options: { path: string; newBranch?: string; branch?: string },
+      conversationId?: string
     ): Promise<GitResult<{ path: string; branch: string | null }>>
   }
 

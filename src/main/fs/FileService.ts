@@ -98,6 +98,11 @@ export class FileService {
     }
   }
 
+  /** Conversation whose watched root contains `path` (git / preview fallback). */
+  conversationIdForPath(path: string): string | undefined {
+    return conversationIdForWatchedPath(this.roots, path)
+  }
+
   /** Filesystem path for read/write (may be a working copy). */
   private forIo(path: string, conversationId?: string | null): string {
     const hostFs = this.fsFor(conversationId, path)
@@ -430,10 +435,19 @@ export class FileService {
     }
   }
 
-  async trash(paths: string[]): Promise<{ ok: true } | { ok: false; error: string }> {
+  async trash(
+    paths: string[],
+    conversationId?: string
+  ): Promise<{ ok: true } | { ok: false; error: string }> {
     try {
       for (const path of paths) {
-        await shell.trashItem(path)
+        const hostFs = this.fsFor(conversationId, path)
+        if (hostFs !== this.fs) {
+          // Remote hosts have no OS Trash — unlink on that machine.
+          await hostFs.unlink(path)
+        } else {
+          await shell.trashItem(path)
+        }
       }
       return { ok: true }
     } catch (err) {

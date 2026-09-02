@@ -5,7 +5,8 @@
  * Desktop VAV's UI talks to the local host today. A later remote host is
  * another implementation of the same interface; HostRegistry is the lookup.
  *
- * Not yet behind this interface (next slices): git, DuckDB / retrieval.
+ * Git goes through GitService.setGitHostFor so status/diff/init spawn on the
+ * conversation's machine. DuckDB / retrieval still sit on this computer.
  */
 
 import { hostname, homedir, tmpdir, userInfo } from 'node:os'
@@ -169,7 +170,8 @@ export function createOfflineRemoteHost(
       rename: fail,
       open: fail,
       watch: fail,
-      exists: fail
+      exists: fail,
+      unlink: fail
     },
     process: { spawn: fail },
     pty: { spawn: fail }

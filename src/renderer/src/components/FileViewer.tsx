@@ -179,6 +179,18 @@ import wordmarkDark from '../assets/wordmark-dark.png'
 const PANEL_WIDTH_KEY = 'vav.filePreviewAgentPanelWidth'
 const EMPTY_COMMENT_CARDS: { ref: PreviewRef; comment: string }[] = []
 
+function filesHostConversationId(
+  agentConversationId?: string | null,
+  parentConversationId?: string | null
+): string | undefined {
+  return (
+    agentConversationId ||
+    parentConversationId ||
+    useSessionStore.getState().activeId ||
+    undefined
+  )
+}
+
 function loadPanelWidth(): number {
   try {
     const n = Number(localStorage.getItem(PANEL_WIDTH_KEY))
@@ -364,7 +376,10 @@ export function FileViewer({
   }, [filePath, refreshAssoc])
 
   const reloadInfo = useCallback(async (path: string): Promise<FileInspectResult> => {
-    const result = await window.vav.files.inspect(path)
+    const result = await window.vav.files.inspect(
+      path,
+      filesHostConversationId(agentConversationId, parentConversationId)
+    )
     setInfo(result)
     knownIdentityRef.current = {
       size: result.size,
@@ -372,7 +387,7 @@ export function FileViewer({
     }
     if (result.name && !embedded) document.title = result.name
     return result
-  }, [embedded])
+  }, [agentConversationId, embedded, parentConversationId])
 
   const isBinaryOfficeKind = useCallback((kind: FileInspectResult['kind'] | undefined): boolean => {
     return kind === 'docx' || kind === 'xlsx' || kind === 'pptx' || kind === 'pdf'
@@ -470,7 +485,8 @@ export function FileViewer({
     try {
       const win = await window.vav.files.readTextWindow(state.path, {
         startByte: state.endByte,
-        maxBytes: 2 * 1024 * 1024
+        maxBytes: 2 * 1024 * 1024,
+        conversationId: filesHostConversationId(agentConversationId, parentConversationId)
       })
       if (win.error || state.path !== filePathRef.current) return
       if (hasUnsavedRef.current) return
@@ -579,7 +595,9 @@ export function FileViewer({
             )
             markViewer('structured:partial')
             if (chunk.partial) {
-              void window.vav.files.inspectStructured?.(filePath).then((full) => {
+              void window.vav.files.inspectStructured?.(filePath, {
+                conversationId: filesHostConversationId(agentConversationId, parentConversationId)
+              }).then((full) => {
                 if (cancelled || !full?.ok) return
                 setStructuredPreview(full.structured)
                 setInfo((prev) =>
@@ -680,7 +698,10 @@ export function FileViewer({
       void (async () => {
         if (applyingOwnWrite.current) return
         const prev = knownIdentityRef.current
-        const probe = await window.vav.files.inspect(filePathRef.current)
+        const probe = await window.vav.files.inspect(
+          filePathRef.current,
+          filesHostConversationId(agentConversationId, parentConversationId)
+        )
         if (prev == null) {
           // First sighting while inspect is still in flight — record identity
           // only. Treating this as a rewrite marks a just-opened image dirty
@@ -1517,7 +1538,10 @@ export function FileViewer({
     if (!profile) return false
     applyingOwnWrite.current = true
     try {
-      const bin = await window.vav.files.readBinary(profile.sourcePath)
+      const bin = await window.vav.files.readBinary(
+        profile.sourcePath,
+        filesHostConversationId(agentConversationId, parentConversationId)
+      )
       if (!bin.ok) {
         showToast({
           kind: 'error',
@@ -1676,7 +1700,11 @@ export function FileViewer({
 
       // Text: flush editor buffer into the I/O path (sandbox if active), then promote.
       const content = workingContent ?? info?.text ?? ''
-      const result = await window.vav.files.write(filePath, content)
+      const result = await window.vav.files.write(
+        filePath,
+        content,
+        filesHostConversationId(agentConversationId, parentConversationId)
+      )
       if (!result.ok) {
         showToast({
           kind: 'error',
@@ -1717,7 +1745,10 @@ export function FileViewer({
       // untouched under the sandbox model (never held agent edits).
       applyingOwnWrite.current = true
       try {
-        const bin = await window.vav.files.readBinary(filePath)
+        const bin = await window.vav.files.readBinary(
+          filePath,
+          filesHostConversationId(agentConversationId, parentConversationId)
+        )
         if (!bin.ok) {
           showToast({
             kind: 'error',
@@ -1788,7 +1819,11 @@ export function FileViewer({
         baselineContent != null &&
         result.path !== originalPath
       ) {
-        await window.vav.files.write(originalPath, baselineContent)
+        await window.vav.files.write(
+          originalPath,
+          baselineContent,
+          filesHostConversationId(agentConversationId, parentConversationId)
+        )
       }
       if (window.vav.files.workingCopyDiscard && result.path !== originalPath) {
         await window.vav.files.workingCopyDiscard(originalPath)

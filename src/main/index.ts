@@ -82,6 +82,7 @@ import { RemoteControlService } from './remote/RemoteControlService'
 import { DaemonAttachService } from './daemon/DaemonAttachService'
 import { openTailcatDial } from './daemon/tailcatDial'
 import {
+  conversationOnMachine,
   isLocalMachine,
   LOCAL_MACHINE_ID,
   normalizeMachineId,
@@ -198,7 +199,8 @@ import {
   getGitDiff,
   getGitShowBase64,
   getGitSnapshot,
-  initGitRepo
+  initGitRepo,
+  setGitHostFor
 } from './git/GitService'
 import {
   getGithubActionRun,
@@ -484,6 +486,16 @@ const fileService = new FileService(
   (conversationId) => hostRegistry.hostFor(conversationStore.get(conversationId)?.machineId).fs
 )
 fileService.workingCopies = workingCopyService
+setGitHostFor((cwd, conversationId) => {
+  const id = conversationId || conversationIdForGitCwd(cwd)
+  const machineId = id ? conversationStore.get(id)?.machineId : undefined
+  const host = hostRegistry.hostFor(machineId)
+  return {
+    kind: host.info.kind,
+    process: host.process,
+    fs: host.fs
+  }
+})
 workingCopyService.onCopyChanged = (realPath) => {
   sendToWorkspaceWindows(IPC.agentEvent, {
     type: 'fs-changed',
@@ -6037,6 +6049,21 @@ function homeTmpFor(machineId: string): { home: string; tmp: string } {
   }
 }
 
+function conversationIdForGitCwd(cwd: string): string | undefined {
+  const watched = fileService.conversationIdForPath(cwd)
+  if (watched) return watched
+  if (!cwd) return undefined
+  let best: { id: string; len: number } | undefined
+  for (const meta of conversationStore.listMeta()) {
+    const root = meta.workingDirectory
+    if (!root) continue
+    if (cwd === root || cwd.startsWith(`${root}/`) || cwd.startsWith(`${root}\\`)) {
+      if (!best || root.length > best.len) best = { id: meta.id, len: root.length }
+    }
+  }
+  return best?.id
+}
+
 function rememberWorkdir(path: string, machineId?: string | null): void {
   const id = machineId === undefined ? undefined : normalizeMachineId(machineId)
   settingsStore.rememberWorkspaceDirectory(path, tmpRootFor(id), id)
@@ -6569,10 +6596,13 @@ function registerIpc(): void {
     const settings = currentSettings()
     setLocalePreference(settings.locale)
     const conversations = conversationStore.listMeta()
-    const activeConversationId =
-      conversations.find((c) => !c.archived)?.id ?? conversations[0]?.id ?? ''
     const machineId = machineIdFromContents(event.sender)
+    const activeConversationId =
+      conversations.find(
+        (c) => !c.archived && conversationOnMachine(c, machineId)
+      )?.id ?? ''
     const { home, tmp } = homeTmpFor(machineId)
+    const local = isLocalMachine(machineId)
     return {
       settings,
       resolvedLocale: currentLocale(),
@@ -6581,8 +6611,8 @@ function registerIpc(): void {
       activeConversationId,
       apiKeyHint: secretStore.maskedHint(),
       platform: PLATFORM,
-      home: home || app.getPath('home'),
-      tmp: tmp || tmpdir(),
+      home: home || (local ? app.getPath('home') : ''),
+      tmp: tmp || (local ? tmpdir() : ''),
       hosts: decorateHosts(hostRegistry.list()),
       about: {
         version: app.getVersion(),
@@ -7770,17 +7800,24 @@ return c as text`
     (
       _event,
       path: string,
-      opts?: { startByte?: number; maxBytes?: number; force?: boolean }
+      opts?: { startByte?: number; maxBytes?: number; force?: boolean; conversationId?: string }
     ) => fileService.readTextWindow(path, opts)
   )
-  ipcMain.handle(IPC.filesReadBinary, (_event, path: string) => fileService.readBinary(path))
+  ipcMain.handle(IPC.filesReadBinary, (_event, path: string, conversationId?: string) =>
+    fileService.readBinary(path, conversationId)
+  )
   ipcMain.handle(
     IPC.filesReadBinaryWindow,
-    (_event, path: string, opts?: { startByte?: number; maxBytes?: number }) =>
-      fileService.readBinaryWindow(path, opts)
+    (
+      _event,
+      path: string,
+      opts?: { startByte?: number; maxBytes?: number; conversationId?: string }
+    ) => fileService.readBinaryWindow(path, opts)
   )
-  ipcMain.handle(IPC.filesWriteBinary, (_event, path: string, base64: string) =>
-    fileService.writeBinary(path, base64)
+  ipcMain.handle(
+    IPC.filesWriteBinary,
+    (_event, path: string, base64: string, conversationId?: string) =>
+      fileService.writeBinary(path, base64, conversationId)
   )
   ipcMain.handle(
     IPC.filesWriteClip,
@@ -7802,8 +7839,8 @@ return c as text`
       }
     }
   })
-  ipcMain.handle(IPC.filesWrite, (_event, path: string, content: string) =>
-    fileService.writeTextFile(path, content)
+  ipcMain.handle(IPC.filesWrite, (_event, path: string, content: string, conversationId?: string) =>
+    fileService.writeTextFile(path, content, conversationId)
   )
   ipcMain.handle(
     IPC.filesWorkingCopyEnsure,
@@ -7832,32 +7869,38 @@ return c as text`
   )
   ipcMain.handle(IPC.filesQuickLook, (_event, path: string) => fileService.preview(path))
   ipcMain.handle(IPC.filesOpenWithDefault, (_event, path: string) => fileService.openWithDefault(path))
-  ipcMain.handle(IPC.gitStatus, (_event, cwd: string) => getGitSnapshot(cwd))
+  ipcMain.handle(IPC.gitStatus, (_event, cwd: string, conversationId?: string) =>
+    getGitSnapshot(cwd, conversationId)
+  )
   ipcMain.handle(
     IPC.gitDiff,
-    (_event, cwd: string, path: string, opts?: { staged?: boolean }) => getGitDiff(cwd, path, opts)
+    (_event, cwd: string, path: string, opts?: { staged?: boolean; conversationId?: string }) =>
+      getGitDiff(cwd, path, opts)
   )
   ipcMain.handle(
     IPC.gitShowBase64,
-    (_event, cwd: string, path: string, ref?: string) =>
-      getGitShowBase64(cwd, path, ref || 'HEAD')
+    (_event, cwd: string, path: string, ref?: string, conversationId?: string) =>
+      getGitShowBase64(cwd, path, ref || 'HEAD', conversationId)
   )
-  ipcMain.handle(IPC.gitInit, (_event, cwd: string) => initGitRepo(cwd))
+  ipcMain.handle(IPC.gitInit, (_event, cwd: string, conversationId?: string) =>
+    initGitRepo(cwd, conversationId)
+  )
   ipcMain.handle(
     IPC.gitCreateBranch,
-    (_event, cwd: string, name: string, opts?: { checkout?: boolean }) =>
+    (_event, cwd: string, name: string, opts?: { checkout?: boolean; conversationId?: string }) =>
       createGitBranch(cwd, name, opts)
   )
-  ipcMain.handle(IPC.gitCheckoutBranch, (_event, cwd: string, name: string) =>
-    checkoutGitBranch(cwd, name)
+  ipcMain.handle(IPC.gitCheckoutBranch, (_event, cwd: string, name: string, conversationId?: string) =>
+    checkoutGitBranch(cwd, name, conversationId)
   )
   ipcMain.handle(
     IPC.gitCreateWorktree,
     (
       _event,
       cwd: string,
-      options: { path: string; newBranch?: string; branch?: string }
-    ) => createGitWorktree(cwd, options)
+      options: { path: string; newBranch?: string; branch?: string },
+      conversationId?: string
+    ) => createGitWorktree(cwd, options, conversationId)
   )
   ipcMain.handle(
     IPC.githubListPulls,
@@ -7944,7 +7987,7 @@ return c as text`
     (
       _event,
       path: string,
-      opts?: { maxBlocks?: number; maxRows?: number }
+      opts?: { maxBlocks?: number; maxRows?: number; conversationId?: string }
     ) => fileService.inspectStructured(String(path || ''), opts)
   )
   ipcMain.handle(
@@ -7968,13 +8011,17 @@ return c as text`
       return { ok: true, path: result.filePath }
     }
   )
-  ipcMain.handle(IPC.filesRename, (_event, path: string, newName: string) =>
-    fileService.rename(path, newName)
+  ipcMain.handle(IPC.filesRename, (_event, path: string, newName: string, conversationId?: string) =>
+    fileService.rename(path, newName, conversationId)
   )
-  ipcMain.handle(IPC.filesTrash, (_event, paths: string[]) => fileService.trash(paths))
+  ipcMain.handle(IPC.filesTrash, (_event, paths: string[], conversationId?: string) =>
+    fileService.trash(paths, conversationId)
+  )
   ipcMain.handle(
     IPC.filesInspect,
-    (_event, path: string) => takePreloadedInspect(path) ?? fileService.inspect(path)
+    (_event, path: string, conversationId?: string) =>
+      (conversationId ? null : takePreloadedInspect(path)) ??
+      fileService.inspect(path, conversationId)
   )
   ipcMain.handle(
     IPC.filesDbQuery,

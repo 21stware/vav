@@ -50,6 +50,8 @@ export type { TerminalLayoutNode, TerminalSplitAxis }
  * Uses settings.update so main broadcasts the pruned list to all windows.
  */
 import {
+  isLocalMachine,
+  normalizeMachineId,
   parseWorkspaceRefList,
   sameWorkspaceRef,
   workspaceRef
@@ -152,8 +154,13 @@ async function resolveTerminalCwd(conversationId: string, sliceRoot: string | nu
     const meta = state.conversations.find((c) => c.id === conversationId)
     const fromMeta = meta?.workingDirectory
     if (fromMeta && fromMeta !== '~') return fromMeta
-    const fromSettings = state.settings.defaultWorkingDirectory?.trim()
-    if (fromSettings) return fromSettings
+    if (!meta || isLocalMachine(meta.machineId)) {
+      const fromSettings = state.settings.defaultWorkingDirectory?.trim()
+      if (fromSettings) return fromSettings
+    } else {
+      const host = state.hosts.find((h) => h.id === normalizeMachineId(meta.machineId))
+      if (host?.home) return host.home
+    }
   } catch {
     // fall through to IPC
   }
@@ -165,8 +172,10 @@ async function resolveTerminalCwd(conversationId: string, sliceRoot: string | nu
     const meta = metas.find((c) => c.id === conversationId)
     const fromMeta = meta?.workingDirectory
     if (fromMeta && fromMeta !== '~') return fromMeta
-    const fromSettings = settings.defaultWorkingDirectory?.trim()
-    if (fromSettings) return fromSettings
+    if (!meta || isLocalMachine(meta.machineId)) {
+      const fromSettings = settings.defaultWorkingDirectory?.trim()
+      if (fromSettings) return fromSettings
+    }
   } catch {
     // bootstrap below
   }

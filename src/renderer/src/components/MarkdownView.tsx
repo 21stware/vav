@@ -540,7 +540,10 @@ async function uniqueWorkspaceFile(dir: string, name: string): Promise<string> {
   const ext = dot > 0 ? safe.slice(dot) : ''
   for (let i = 0; i < 80; i++) {
     const candidate = joinPath(dir, i === 0 ? safe : `${stem}-${i}${ext}`)
-    const info = await window.vav.files.inspect(candidate)
+    const info = await window.vav.files.inspect(
+      candidate,
+      useSessionStore.getState().activeId
+    )
     if (inspectLooksMissing(info.error)) return candidate
     if (info.error) continue
   }
@@ -557,7 +560,11 @@ async function writeDownloadedBinary(name: string, base64: string): Promise<bool
     return false
   }
   const dest = await uniqueWorkspaceFile(dir, name)
-  const written = await window.vav.files.writeBinary(dest, base64)
+  const written = await window.vav.files.writeBinary(
+    dest,
+    base64,
+    useSessionStore.getState().activeId
+  )
   if (!written.ok) {
     useSessionStore.getState().showToast({
       kind: 'error',

@@ -335,6 +335,9 @@ export class DaemonServer {
         return { ok: true }
       case 'fs.exists':
         return { exists: await fs.exists(asString(p.path)) }
+      case 'fs.unlink':
+        await fs.unlink(asString(p.path))
+        return { ok: true }
       case 'fs.open': {
         const handle = await fs.open(asString(p.path), asString(p.flags, 'r'))
         const id = `h-${randomUUID()}`
