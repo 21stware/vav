@@ -30,6 +30,14 @@ export type ConversationMetaIpcHost = {
   applyFast: (id: string) => void
   applySessionMode: (id: string, modeId: string) => void
   applySessionConfig: (id: string, configId: string, value: string | boolean) => void
+  applySessionGoal: (
+    id: string,
+    action: 'set' | 'pause' | 'resume' | 'clear',
+    objective?: string
+  ) =>
+    | { ok: true; via: 'rpc' }
+    | { ok: true; via: 'slash'; text: string }
+    | { ok: false; error: string }
   exportPack: (ids: string[], sender: unknown) => unknown
   importPack: (sender: unknown) => Promise<{ ok: boolean } & Record<string, unknown>>
   promoteEphemeral: (id: string) => void
@@ -116,6 +124,23 @@ export function registerConversationMetaIpc(
         host.publish()
       }
       return store.listMeta()
+    }
+  )
+  ipcMain.handle(
+    IPC.convSetAcpGoal,
+    (
+      _event,
+      id: string,
+      action: 'set' | 'pause' | 'resume' | 'clear',
+      objective?: string
+    ) => {
+      const conversations = store.listMeta()
+      if (action !== 'set' && action !== 'pause' && action !== 'resume' && action !== 'clear') {
+        return { ok: false, error: 'Invalid goal action', conversations }
+      }
+      const result = host.applySessionGoal(id, action, objective)
+      host.publish()
+      return { ...result, conversations: store.listMeta() }
     }
   )
   ipcMain.handle(IPC.convContinueNew, (_event, id: string, messageId: string) => {

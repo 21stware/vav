@@ -47,8 +47,10 @@ import {
   projectChecklistInput
 } from '@shared/planDoc'
 import { enabledCliAgents } from '@shared/types'
-import type { AcpSessionState } from '@shared/acpSession'
+import type { AcpSessionState, GoalAction } from '@shared/acpSession'
 import {
+  goalSlashText,
+  goalUsesRpc,
   patchAcpConfigOption,
   patchAcpSessionMode
 } from '@shared/acpSession'
@@ -598,6 +600,31 @@ export class CliAgentHost {
     const current = this.deps.conversations.get(conversationId)?.acpSession
     const next = patchAcpConfigOption(current, id, value)
     if (next) this.persistAcpSession(conversationId, next)
+  }
+
+  applySessionGoal(
+    conversationId: string,
+    action: GoalAction,
+    objective?: string
+  ):
+    | { ok: true; via: 'rpc' }
+    | { ok: true; via: 'slash'; text: string }
+    | { ok: false; error: string } {
+    const conversation = this.deps.conversations.get(conversationId)
+    const cap = conversation?.acpSession?.goalCapability
+    if (!cap || !cap.actions.includes(action)) {
+      return { ok: false, error: 'Goal control is not available' }
+    }
+    if (action === 'set' && !objective?.trim()) {
+      return { ok: false, error: 'Goal objective is required' }
+    }
+    if (goalUsesRpc(cap, action)) {
+      const runtime = this.runtimes.get(conversationId)
+      if (!runtime) return { ok: false, error: 'Agent is not connected' }
+      runtime.driver.applyOptions?.({ goal: { action, objective } })
+      return { ok: true, via: 'rpc' }
+    }
+    return { ok: true, via: 'slash', text: goalSlashText(action, objective) }
   }
 
   /**

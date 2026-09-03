@@ -95,6 +95,7 @@ export function fileViewerKindFlags(opts: {
     isHtmlClipKind ||
     isZip ||
     kind === 'image' ||
+    kind === 'audio' ||
     kind === 'video' ||
     kind === 'binary'
       ? 'none'

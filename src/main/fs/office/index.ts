@@ -56,6 +56,9 @@ export async function parseStructuredDocument(
         maxSlides: opts?.maxBlocks
       })
     case 'pdf':
-      return (await import('./parsePdf')).parsePdf(path)
+      return (await import('./parsePdf')).parsePdf(path, {
+        // Reuse maxBlocks as first-N pages for progressive PDF.
+        maxPages: opts?.maxBlocks
+      })
   }
 }

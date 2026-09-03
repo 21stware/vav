@@ -1,60 +1,76 @@
 import {
+  Suspense,
+  lazy,
   useCallback,
   useDeferredValue,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
   type ReactNode
 } from 'react'
+import {
+  ChevronDown,
+  Clock,
+  Plus,
+  Save,
+  X
+} from 'lucide-react'
 import type { FileAssociationStatus, FileInspectResult, FileSessionMeta } from '@shared/ipc'
 import { isClipPath } from '@shared/clipPath'
-import type { PreviewRef } from '@shared/types'
+import type { PreviewRef, TurnEvent } from '@shared/types'
 import { formatBytes, relativeTime } from '../lib/format'
-import {
-  applyFileDraftContent,
-  blockToRef,
-  collectBlocks,
-  filesHostConversationId,
-  loadPanelWidth,
-  persistPanelWidth,
-  pathsEqual,
-  provisionalInspect,
-  bindFilePreviewWorkspace,
-  fileViewerAgentPanelOpen,
-  mergeIncomingTextBody,
-  mergeTextWindowInspect,
-  nextCommentCardsOnBlockPick,
-  selectedBlockIdsForPath,
-  isOpenFilePath as filePathIsOpen,
-  previewBlocksFromSqliteTables,
-  previewBlocksFromZipEntries
-} from '../lib/fileViewerHelpers'
-import { AgentPanelToggleButton } from './fileViewer/AgentPanelToggleButton'
-import { FileViewerHeader } from './fileViewer/FileViewerHeader'
-import { FileViewerAgentColumn } from './fileViewer/FileViewerAgentColumn'
-import { FileViewerCanvas } from './fileViewer/FileViewerCanvas'
+import { highlightCode, languageFromPath } from '../lib/highlightCode'
+import { MarkdownView } from './MarkdownView'
 import {
   formatBadge,
   parseBlocksForPath,
+  csvColId,
+  csvCellBlock,
+  csvRowBlock,
   parseCsvModel,
-  blockAtLine,
+  parseNotebookBlocks,
+  pickBlockAtLine,
   findBlockById,
+  parentBlockOf,
+  isLineOrientedPath,
   lineBlockAt,
   type PreviewBlock
 } from '../lib/previewBlocks'
-import { convertEditProfileFor, fileViewerKindFlags, isBinaryOfficeKind, isPreviewKindSelectable } from '../lib/fileViewerKinds'
-import { basename, dirname } from '../lib/path'
+import { basename, dirname, replaceExt } from '../lib/path'
 import { previewOpenElapsed } from '../lib/previewOpenClock'
-import { isPickGestureActive, type ClickPickPointer } from '../lib/clickPick'
+import { createWarmComponent } from '../lib/warmComponent'
+import type { OfficeNativeView as OfficeNativeViewType } from './office/OfficeNativeView'
+import { fileManagerLabel } from '../lib/platform'
+import { FileManagerIcon } from './FileManagerIcon'
+import { handleClickPickMouseDown, isPickGestureActive, type ClickPickPointer } from '../lib/clickPick'
 import { suppressHyperlinkClick } from '../lib/suppressHyperlinks'
 import { useT } from '../i18n/useT'
 import { useSessionStore } from '../state/sessionStore'
 import { useWorkspaceStore } from '../state/workspaceStore'
-import { type BinaryOpenMode } from './BinaryOpenViews'
+import type { FileSessionChromeProps } from './SessionDetail'
+import { menuAnchor, showMenu } from '../lib/nativeMenu'
+import { Button, EmptyState, InlineAlert } from './ui'
+import { looksLikeFreeMind, looksLikeOpml } from '@shared/mindmap'
+import { BinaryFileView } from './BinaryFileView'
+import {
+  BinaryOpenToolbar,
+  ForcedBinaryTextView,
+  HexDumpView,
+  type BinaryOpenMode
+} from './BinaryOpenViews'
+import { localFileStreamUrl } from '@shared/localFileUrl'
+import { mimeForPreviewKind, previewKind } from '@shared/previewKind'
+import { isSilentPreviewWindowWarning } from '@shared/previewWarnings'
+import { blockToPreviewRef } from '@shared/previewContext'
 import type { StructuredDocument } from '@shared/structuredDoc'
+import { attachDomPick, updateDomPick } from './office/pickFromDom'
+import { useSheetVirtualWindow } from '../lib/useSheetVirtualWindow'
 import { SelectionChrome } from './SelectionChrome'
-import { DocZoomControls } from './office/DocZoomControls'
+import { writeDocZoom } from '../lib/selectionChrome'
+import { DocZoomControls, DOC_ZOOM_STEP } from './office/DocZoomControls'
+import { useDocZoom } from './office/useDocZoom'
 import { useTextZoom } from '../lib/useTextZoom'
 import { TEXT_ZOOM_MAX, TEXT_ZOOM_MIN, TEXT_ZOOM_STEP } from '../lib/docZoom'
 import {
@@ -62,6 +78,22 @@ import {
   isMediaPreviewPath,
   shouldArmUnsavedFromExternalChange
 } from '../lib/previewDirty'
+
+// The agent side panel drags in the whole chat surface (composer, transcript,
+// xterm). A preview that is never asked for an agent must not parse it.
+const SessionDetail = lazy(() =>
+  import('./SessionDetail').then((m) => ({ default: m.SessionDetail }))
+)
+
+// Heavy format canvases — keep out of the chat / settings critical path.
+// Warm handle rather than `lazy`: the router is resident in a warm shell, and a
+// Suspense fallback would cost React's ~300 ms reveal throttle.
+const officeRouter = createWarmComponent<React.ComponentProps<typeof OfficeNativeViewType>>(
+  () => import('./office/OfficeNativeView').then((m) => m.OfficeNativeView)
+)
+const StructuredDocView = lazy(() =>
+  import('./StructuredDocView').then((m) => ({ default: m.StructuredDocView }))
+)
 
 function markViewer(label: string): void {
   try {
@@ -76,17 +108,81 @@ function markViewer(label: string): void {
   }
 }
 
+function provisionalInspect(path: string): FileInspectResult | null {
+  const name = basename(path)
+  const kind = previewKind(name)
+  // Text/CSV/HTML need inspect bytes — don't flash an empty canvas.
+  if (kind === 'binary' || kind === 'directory' || kind === 'text' || kind === 'csv') {
+    return null
+  }
+  const base = {
+    path,
+    name,
+    size: 0,
+    kind,
+    mime: mimeForPreviewKind(name, kind),
+    streamUrl: localFileStreamUrl(path)
+  }
+  if (kind === 'zip') {
+    return {
+      ...base,
+      zip: {
+        entries: [],
+        entryCount: 0,
+        compressedSize: 0,
+        uncompressedSize: 0,
+        ratio: 0
+      }
+    }
+  }
+  return base
+}
+const HtmlNativeView = lazy(() =>
+  import('./office/HtmlNativeView').then((m) => ({ default: m.HtmlNativeView }))
+)
+const HtmlClipFrame = lazy(() =>
+  import('./HtmlClipFrame').then((m) => ({ default: m.HtmlClipFrame }))
+)
+const SqliteView = lazy(() => import('./SqliteView').then((m) => ({ default: m.SqliteView })))
+const MindMapView = lazy(() =>
+  import('./diagram/MindMapView').then((m) => ({ default: m.MindMapView }))
+)
+const DiagramFileView = lazy(() =>
+  import('./diagram/DiagramFileView').then((m) => ({ default: m.DiagramFileView }))
+)
+const DrawioView = lazy(() =>
+  import('./diagram/DrawioView').then((m) => ({ default: m.DrawioView }))
+)
+const ZipArchiveView = lazy(() =>
+  import('./ZipArchiveView').then((m) => ({ default: m.ZipArchiveView }))
+)
+import { SessionHistoryPopover } from './SessionHistoryPopover'
+import wordmark from '../assets/wordmark.png'
+import wordmarkDark from '../assets/wordmark-dark.png'
+
+const PANEL_WIDTH_KEY = 'vav.filePreviewAgentPanelWidth'
 const EMPTY_COMMENT_CARDS: { ref: PreviewRef; comment: string }[] = []
 
-function hostConvId(
+function filesHostConversationId(
   agentConversationId?: string | null,
   parentConversationId?: string | null
 ): string | undefined {
-  return filesHostConversationId(
-    agentConversationId,
-    parentConversationId,
-    useSessionStore.getState().activeId
+  return (
+    agentConversationId ||
+    parentConversationId ||
+    useSessionStore.getState().activeId ||
+    undefined
   )
+}
+
+function loadPanelWidth(): number {
+  try {
+    const n = Number(localStorage.getItem(PANEL_WIDTH_KEY))
+    if (n >= 280 && n <= 520) return n
+  } catch {
+    // ignore
+  }
+  return 360
 }
 
 type UnsavedIntent = 'close'
@@ -96,6 +192,35 @@ type UnsavedIntent = 'close'
  * Preview and Edit share the same rendered canvas. Edit adds DevTools-style
  * block selection for Agent context — never swaps into a source/code editor.
  */
+/** Shared Agent panel toggle — product mark (main embedded + standalone). */
+function AgentPanelToggleButton({
+  open,
+  title,
+  onClick,
+  className
+}: {
+  open: boolean
+  title: string
+  onClick: () => void
+  className?: string
+}): React.JSX.Element {
+  return (
+    <button
+      type="button"
+      className={`btn ghost sm icon-only preview-agent-logo-btn${open ? ' is-active-toggle' : ''}${className ? ` ${className}` : ''}`}
+      title={title}
+      aria-label={title}
+      aria-pressed={open}
+      onClick={onClick}
+    >
+      <span className="preview-agent-logo" aria-hidden>
+        <img className="logo-light" src={wordmark} alt="" />
+        <img className="logo-dark" src={wordmarkDark} alt="" />
+      </span>
+    </button>
+  )
+}
+
 export function FileViewer({
   path: initialPath,
   parentConversationId,
@@ -137,12 +262,11 @@ export function FileViewer({
    * Standalone: local drawer. FileSessionView: parent toggle.
    * Workspace peek: agent column is always a sibling (no toggle prop) → treat open.
    */
-  const agentPanelOpen = fileViewerAgentPanelOpen({
-    embedded,
-    hasToggle: !!onToggleAgentPanel,
-    propOpen: agentPanelOpenProp,
-    localOpen: localAgentOpen
-  })
+  const agentPanelOpen = embedded
+    ? onToggleAgentPanel
+      ? !!agentPanelOpenProp
+      : true
+    : localAgentOpen
   const [panelWidth, setPanelWidth] = useState(loadPanelWidth)
   const panelWidthRef = useRef(panelWidth)
   panelWidthRef.current = panelWidth
@@ -177,6 +301,7 @@ export function FileViewer({
   const unsavedPromptOpen = useRef(false)
   /** Blocks picked from mature office/PDF renderers (DOM / sheet). */
   const officeBlocksRef = useRef<Map<string, PreviewBlock>>(new Map())
+  const OfficeNativeView = officeRouter.use()
   const selectConversation = useSessionStore((s) => s.selectConversation)
   const createConversation = useSessionStore((s) => s.createConversation)
   const agentCommentCards = useSessionStore((s) => {
@@ -190,6 +315,12 @@ export function FileViewer({
   filePathRef.current = filePath
   const hasUnsavedRef = useRef(hasUnsavedChanges)
   hasUnsavedRef.current = hasUnsavedChanges
+  /** Latest file-session id for sandbox I/O — must not retrigger the open effect. */
+  const hostConversationIdRef = useRef<string | undefined>(undefined)
+  hostConversationIdRef.current = filesHostConversationId(
+    agentConversationId,
+    parentConversationId
+  )
   const applyingOwnWrite = useRef(false)
   /** Silent progressive text fill — scroll-driven, no UI affordance. */
   const textWindowFillRef = useRef<{
@@ -235,10 +366,7 @@ export function FileViewer({
   }, [filePath, refreshAssoc])
 
   const reloadInfo = useCallback(async (path: string): Promise<FileInspectResult> => {
-    const result = await window.vav.files.inspect(
-      path,
-      hostConvId(agentConversationId, parentConversationId)
-    )
+    const result = await window.vav.files.inspect(path, hostConversationIdRef.current)
     setInfo(result)
     knownIdentityRef.current = {
       size: result.size,
@@ -246,7 +374,11 @@ export function FileViewer({
     }
     if (result.name && !embedded) document.title = result.name
     return result
-  }, [agentConversationId, embedded, parentConversationId])
+  }, [embedded])
+
+  const isBinaryOfficeKind = useCallback((kind: FileInspectResult['kind'] | undefined): boolean => {
+    return kind === 'docx' || kind === 'xlsx' || kind === 'pptx' || kind === 'pdf'
+  }, [])
 
   /**
    * Text-only soft baseline for dirty detect. Office Discard uses the working-copy
@@ -264,7 +396,7 @@ export function FileViewer({
       }
       if (text != null) setBaselineContent(text)
     },
-    []
+    [isBinaryOfficeKind]
   )
 
   /** Agent/shell rewrote the open file on disk — refresh canvas + maybe mark dirty. */
@@ -288,7 +420,18 @@ export function FileViewer({
       ) {
         if (result.text != null) {
           const incoming = result.text
-          setWorkingContent((prevText) => mergeIncomingTextBody(prevText, incoming, !!result.truncated))
+          setWorkingContent((prevText) => {
+            // First inspect window is 128 KB; don't clobber a longer live draft.
+            if (
+              result.truncated &&
+              prevText != null &&
+              prevText.length > incoming.length &&
+              prevText.startsWith(incoming)
+            ) {
+              return prevText
+            }
+            return incoming
+          })
         }
       }
       const st = isMediaPreviewKind(result.kind)
@@ -312,7 +455,7 @@ export function FileViewer({
         }, 120)
       }
     },
-    [reloadInfo]
+    [reloadInfo, isBinaryOfficeKind]
   )
 
   /**
@@ -330,14 +473,28 @@ export function FileViewer({
       const win = await window.vav.files.readTextWindow(state.path, {
         startByte: state.endByte,
         maxBytes: 2 * 1024 * 1024,
-        conversationId: hostConvId(agentConversationId, parentConversationId)
+        conversationId: hostConversationIdRef.current
       })
       if (win.error || state.path !== filePathRef.current) return
       if (hasUnsavedRef.current) return
       if (win.content) {
         setWorkingContent((prev) => (prev ?? '') + win.content)
         setBaselineContent((prev) => (prev ?? '') + win.content)
-        setInfo((prev) => mergeTextWindowInspect(prev, state.path, win.content, win))
+        setInfo((prev) => {
+          if (!prev || prev.path !== state.path) return prev
+          const nextText = (prev.text ?? '') + win.content
+          return {
+            ...prev,
+            text: nextText,
+            truncated: win.truncated,
+            textWindow: {
+              startByte: prev.textWindow?.startByte ?? 0,
+              endByte: win.endByte,
+              totalBytes: win.totalBytes
+            },
+            lineCount: countNewlinesLocal(nextText)
+          }
+        })
       }
       state.endByte = win.endByte
       state.totalBytes = win.totalBytes
@@ -362,9 +519,17 @@ export function FileViewer({
     setBinaryOpenAs(null)
   }, [filePath])
 
+  const openedPathRef = useRef(filePath)
   useEffect(() => {
     let cancelled = false
     textWindowFillRef.current = null
+    // Save As / convert-Edit update local filePath without remounting. Reset
+    // the office handoff so StructuredDocView can cover first paint again.
+    if (openedPathRef.current !== filePath) {
+      openedPathRef.current = filePath
+      setStructuredPreview(null)
+      setNativeOfficeReady(false)
+    }
     const provisional = provisionalInspect(filePath)
     if (provisional) {
       setInfo((prev) =>
@@ -411,8 +576,15 @@ export function FileViewer({
         // Progressive structured index for block-pick (does not block native canvas).
         void window.vav.files
           .inspectStructured?.(filePath, {
+            conversationId: hostConversationIdRef.current,
             maxBlocks:
-              result.kind === 'docx' ? 48 : result.kind === 'pptx' ? 1 : undefined,
+              result.kind === 'docx'
+                ? 48
+                : result.kind === 'pptx'
+                  ? 1
+                  : result.kind === 'pdf'
+                    ? 2
+                    : undefined,
             maxRows: result.kind === 'xlsx' ? 120 : undefined
           })
           .then((chunk) => {
@@ -426,7 +598,7 @@ export function FileViewer({
             markViewer('structured:partial')
             if (chunk.partial) {
               void window.vav.files.inspectStructured?.(filePath, {
-                conversationId: hostConvId(agentConversationId, parentConversationId)
+                conversationId: hostConversationIdRef.current
               }).then((full) => {
                 if (cancelled || !full?.ok) return
                 setStructuredPreview(full.structured)
@@ -455,7 +627,7 @@ export function FileViewer({
 
   useEffect(() => {
     try {
-      persistPanelWidth(panelWidth)
+      localStorage.setItem(PANEL_WIDTH_KEY, String(panelWidth))
     } catch {
       // ignore
     }
@@ -530,7 +702,7 @@ export function FileViewer({
         const prev = knownIdentityRef.current
         const probe = await window.vav.files.inspect(
           filePathRef.current,
-          hostConvId(agentConversationId, parentConversationId)
+          hostConversationIdRef.current
         )
         if (prev == null) {
           // First sighting while inspect is still in flight — record identity
@@ -553,42 +725,107 @@ export function FileViewer({
 
   const displayText = workingContent ?? info?.text ?? ''
   const deferredDisplayText = useDeferredValue(displayText)
-  const {
-    isMarkdown,
-    isNotebook,
-    isCsv,
-    isSqlite,
-    isMindMap,
-    isMermaidFile,
-    isDotFile,
-    isDrawioFile,
-    isDiagramCanvas,
-    lineOriented,
-    isOfficeKind,
-    isHtmlKind,
-    isHtmlClipKind,
-    isZip,
-    bodyPad,
-    textZoomable,
-    isHeic,
-    isLegacyOffice,
-    formatLockedReadOnly,
-    hardForcedReadOnly,
-    forcedReadOnly
-  } = fileViewerKindFlags({
-    filePath,
-    kind: info?.kind,
-    mime: info?.mime,
-    displayText,
-    error: info?.error,
-    hasInfo: !!info
-  })
+  const isMarkdown =
+    /\.(md|markdown|mdx)$/i.test(filePath) || (info?.mime ?? '').includes('markdown')
+  const isNotebook = /\.ipynb$/i.test(filePath)
+  const isCsv = info?.kind === 'csv' || /\.(csv|tsv)$/i.test(filePath)
+  const isSqlite = info?.kind === 'sqlite'
+  /** FreeMind/Freeplane .mm or OPML mind map (not ObjC++ .mm). */
+  const isMindMap =
+    (info?.kind === 'text' || info?.kind == null) &&
+    (/\.opml$/i.test(filePath) ||
+      looksLikeOpml(displayText) ||
+      (/\.mm$/i.test(filePath) && looksLikeFreeMind(displayText)))
+  const isMermaidFile =
+    (info?.kind === 'text' || info?.kind == null) &&
+    /\.(mmd|mermaid)$/i.test(filePath)
+  const isDotFile =
+    (info?.kind === 'text' || info?.kind == null) && /\.(dot|gv)$/i.test(filePath)
+  const isDrawioFile =
+    (info?.kind === 'text' || info?.kind == null) &&
+    (/\.(drawio|dio)$/i.test(filePath) ||
+      (/mxfile/i.test(displayText.slice(0, 400)) && /mxGraphModel|mxCell/i.test(displayText)))
+  const isDiagramCanvas = isMindMap || isMermaidFile || isDotFile || isDrawioFile
+  /** .log and dense line-oriented files: pick individual lines, not paragraphs. */
+  const lineOriented =
+    !isMarkdown &&
+    !isNotebook &&
+    !isCsv &&
+    !isDiagramCanvas &&
+    (info?.kind === 'text' || info?.kind == null) &&
+    isLineOrientedPath(filePath, displayText)
   const badge = formatBadge(filePath, info?.kind ?? 'text')
   // Single parse shared by block pick + window sheet (avoids double work on open).
   const csvModel = useMemo(
     () => (isCsv ? parseCsvModel(displayText) : null),
     [isCsv, displayText]
   )
+
+  const isOfficeKind =
+    info?.kind === 'pdf' ||
+    info?.kind === 'docx' ||
+    info?.kind === 'xlsx' ||
+    info?.kind === 'pptx'
+  const isHtmlKind = info?.kind === 'html'
+  const isHtmlClipKind = info?.kind === 'html-clip'
+  const isZip = info?.kind === 'zip'
+  /**
+   * Reading gutters are per-renderer, not a frame-wide inset.
+   *
+   * Prose/code want paper margins. Canvas renderers (diagram, sheet, media,
+   * office paper, archive tree) own their full box and supply their own insets —
+   * a shared frame padding shrank them and pushed centred content off-axis.
+   */
+  const bodyPad: 'text' | 'none' =
+    isDiagramCanvas ||
+    isCsv ||
+    isSqlite ||
+    isOfficeKind ||
+    isHtmlKind ||
+    isHtmlClipKind ||
+    isZip ||
+    info?.kind === 'image' ||
+    info?.kind === 'audio' ||
+    info?.kind === 'video' ||
+    info?.kind === 'binary'
+      ? 'none'
+      : 'text'
+  /**
+   * Reflowing surfaces zoom by type size instead of geometry. Paged documents
+   * are excluded on purpose — they run their own stage zoom, and a wheel event
+   * would otherwise be claimed by both.
+   */
+  const textZoomable =
+    !!info &&
+    !info.error &&
+    (isCsv ||
+      isSqlite ||
+      info.kind === 'xlsx' ||
+      (info.kind === 'text' && !isDiagramCanvas))
+  const isBinaryUnsupported = info?.kind === 'binary'
+  const isDirectoryKind = info?.kind === 'directory'
+  const isHeic =
+    /\.(heic|heif|hif)$/i.test(filePath) || (info?.mime ?? '').toLowerCase().includes('heic')
+  /** Legacy Office extensions (not OOXML). */
+  const isLegacyOffice = /\.(doc|ppt|xls)$/i.test(filePath) && !/\.(docx|pptx|xlsx)$/i.test(filePath)
+  /**
+   * Format-locked → Edit requires convert + Save As (original untouched).
+   * Only formats we cannot write in-place: HEIC, PDF, legacy .doc/.ppt/.xls.
+   * Native OOXML (docx / xlsx / pptx) and ordinary text/code default to **Write**.
+   */
+  const formatLockedReadOnly =
+    isHeic ||
+    info?.kind === 'pdf' ||
+    /\.pdf$/i.test(filePath) ||
+    isLegacyOffice
+  /** ZIP / raw binary / directory / draw.io (read-only canvas): cannot enter edit. */
+  const hardForcedReadOnly =
+    isZip ||
+    (isBinaryUnsupported && !isLegacyOffice) ||
+    isDirectoryKind ||
+    isDrawioFile ||
+    isHtmlClipKind
+  const forcedReadOnly = hardForcedReadOnly || formatLockedReadOnly
   const effectiveReadOnly = readOnly || forcedReadOnly
 
   /**
@@ -623,10 +860,28 @@ export function FileViewer({
   const syncBlocks = useMemo((): PreviewBlock[] => {
     if (info?.structured?.blocks?.length) return info.structured.blocks
     if (isSqlite && info?.sqlite?.tables?.length) {
-      return previewBlocksFromSqliteTables(info.sqlite.tables)
+      return info.sqlite.tables.map((tb) => ({
+        id: `db-table-${tb.name}`,
+        kind: 'table' as const,
+        text: [
+          `TABLE ${tb.name}`,
+          `columns: ${tb.columns.join(', ')}`,
+          `rows: ${tb.rowCount}`
+        ].join('\n'),
+        label: `table ${tb.name}`,
+        startLine: 0,
+        endLine: 0
+      }))
     }
     if (isZip && info?.zip?.entries?.length) {
-      return previewBlocksFromZipEntries(info.zip.entries)
+      return info.zip.entries.map((e) => ({
+        id: `zip:${e.path}`,
+        kind: (e.isDirectory ? 'section' : 'code') as PreviewBlock['kind'],
+        text: `${e.isDirectory ? 'DIR' : 'FILE'} ${e.path}`,
+        label: `ZIP · ${e.path}`,
+        startLine: 0,
+        endLine: 0
+      }))
     }
     if (info?.text == null && workingContent == null) return []
     // CSV: only col + table stubs (no per-row tree). Sheet body uses the same model.
@@ -645,8 +900,8 @@ export function FileViewer({
       id: 'media',
       kind: 'paragraph',
       text: `${info.kind}: ${filePath}`,
-      startLine: 1,
-      endLine: 1,
+      startLine: 0,
+      endLine: 0,
       label: info.name
     }
   }, [info, filePath, mediaSrc])
@@ -687,7 +942,18 @@ export function FileViewer({
     (s) => s.settings.previewSelectionAgentMark !== false
   )
   const kindSelectable =
-    !!info && !info.error && isPreviewKindSelectable(info.kind, !!mediaSrc)
+    !!info &&
+    !info.error &&
+    (info.kind === 'text' ||
+      info.kind === 'csv' ||
+      info.kind === 'sqlite' ||
+      info.kind === 'pdf' ||
+      info.kind === 'docx' ||
+      info.kind === 'xlsx' ||
+      info.kind === 'pptx' ||
+      info.kind === 'html' ||
+      info.kind === 'zip' ||
+      !!mediaSrc)
   const selectable =
     kindSelectable && (!effectiveReadOnly || allowReadModeSelection)
 
@@ -729,13 +995,33 @@ export function FileViewer({
         setAgentConversationId(conversationId)
       }
 
+      const refId = `${filePath}::${id}`
       const existing = useSessionStore.getState().commentCards[conversationId] ?? []
-      const next = nextCommentCardsOnBlockPick(existing, filePath, id, blockToRef(filePath, badge, block))
-      useSessionStore.getState().setCommentCards(conversationId, next.cards)
-      setSelectedIds(next.selectedIds)
-      if (next.cancelled) return
-      const ref = next.cards.at(-1)?.ref
-      if (!ref) return
+      // Re-click same block → cancel (spec: 再次单击取消).
+      if (existing.some((c) => c.ref.id === refId)) {
+        const nextCards = existing.filter((c) => c.ref.id !== refId)
+        useSessionStore.getState().setCommentCards(conversationId, nextCards)
+        const prefix = `${filePath}::`
+        setSelectedIds(
+          nextCards
+            .filter((c) => c.ref.id.startsWith(prefix))
+            .map((c) => c.ref.id.slice(prefix.length))
+        )
+        return
+      }
+      // Drop empty-comment cards for other blocks; add the new pick.
+      const cleaned = existing.filter((c) => c.comment.trim())
+      const ref = blockToRef(filePath, badge, block)
+      const nextCards = [...cleaned, { ref, comment: '' }]
+      useSessionStore.getState().setCommentCards(conversationId, nextCards)
+      const prefix = `${filePath}::`
+      // Paint canvas selection first; focus/panel open reflows preview (PPTX
+      // windowed remount) and used to feel like click → blur → second click.
+      setSelectedIds(
+        nextCards
+          .filter((c) => c.ref.id.startsWith(prefix))
+          .map((c) => c.ref.id.slice(prefix.length))
+      )
       // CLI agents: selection (+ optional vav draft) into the prompt — no submit.
       void import('../lib/cliFocusHandoff').then(({ handoffBlockToCli }) => {
         handoffBlockToCli(conversationId, ref)
@@ -748,7 +1034,7 @@ export function FileViewer({
         onPickBlock?.()
         requestAnimationFrame(() => {
           if (isPickGestureActive()) return
-          useSessionStore.getState().focusCommentCard(ref.id)
+          useSessionStore.getState().focusCommentCard(refId)
         })
       })
     }
@@ -767,7 +1053,10 @@ export function FileViewer({
   // Removing a comment card (✕) should drop the canvas selection too.
   useEffect(() => {
     if (!selectable && !agentCommentCards.length) return
-    const ids = selectedBlockIdsForPath(agentCommentCards, filePath)
+    const prefix = `${filePath}::`
+    const ids = agentCommentCards
+      .filter((c) => c.ref.id.startsWith(prefix))
+      .map((c) => c.ref.id.slice(prefix.length))
     setSelectedIds((prev) => {
       if (prev.length === ids.length && prev.every((id, i) => id === ids[i])) return prev
       return ids
@@ -783,8 +1072,8 @@ export function FileViewer({
       if (block) applySelection(block.id, event, block)
       return
     }
-    const hit = blockAtLine(rootBlocks, line)
-    if (hit) applySelection(hit.id, event)
+    const hit = pickBlockAtLine(rootBlocks, line, displayText)
+    if (hit) applySelection(hit.id, event, hit)
   }
 
   // Comment cards own selection in file preview — no separate preview-ref chips.
@@ -894,22 +1183,39 @@ export function FileViewer({
     conversationId: string,
     path: string
   ): Promise<void> => {
+    const dir = dirname(path)
     const store = useSessionStore.getState()
     const meta = store.conversations.find((c) => c.id === conversationId)
-    await bindFilePreviewWorkspace({
-      conversationId,
-      path,
-      dir: dirname(path),
-      workingDirectory: meta?.workingDirectory ?? null,
-      toolsCollapsed: () => useSessionStore.getState().toolsCollapsed,
-      selectPath: (id, nextPath) => useWorkspaceStore.getState().selectPath(id, nextPath),
-      setConversationWorkingDirectory: (id, dir) => store.setWorkingDirectory(id, dir),
-      setWorkspaceWorkingDirectory: (id, dir) =>
-        useWorkspaceStore.getState().setWorkingDirectory(id, dir),
-      setPanelSegmentQuiet: (segment) => store.setPanelSegmentQuiet(segment),
-      setToolsCollapsed: (collapsed) => store.setToolsCollapsed(collapsed),
-      markEnclosedDirChip: (id) => store.markEnclosedDirChip(id)
-    })
+    // Session already rooted at a project that contains this file — only
+    // highlight the path (right preview drawer). Never shrink the Files tree.
+    const root = meta?.workingDirectory ?? null
+    const underSessionRoot =
+      !!root &&
+      !root.startsWith('__') &&
+      (path === root || path.startsWith(`${root}/`) || path.startsWith(`${root}\\`))
+
+    if (underSessionRoot) {
+      useWorkspaceStore.getState().selectPath(conversationId, path)
+      return
+    }
+
+    // Always bind workdir for Enclosed dir chip; missing dirs surface a calm
+    // empty state in FilesPanel (ENOENT → "dir not exist"), not a raw error.
+    if ((meta?.workingDirectory ?? null) !== dir) {
+      await store.setWorkingDirectory(conversationId, dir)
+    } else {
+      await useWorkspaceStore.getState().setWorkingDirectory(conversationId, dir)
+    }
+    useWorkspaceStore.getState().selectPath(conversationId, path)
+    // Prefer Files segment when the user later expands tools, but stay collapsed.
+    // Quiet merges from toolsLayouts — if storage still says expanded, it would
+    // open the tray. Re-read after awaits so we preserve a mid-session open tray,
+    // and re-assert collapse when the tray was already folded.
+    const wasCollapsed = useSessionStore.getState().toolsCollapsed
+    store.setPanelSegmentQuiet('files')
+    if (wasCollapsed) store.setToolsCollapsed(true)
+    // Path chip shows "Enclosed dir" until the user explicitly switches workdir.
+    store.markEnclosedDirChip(conversationId)
   }
 
   // Embedded (FileSessionView / Workspace Peek): bind parent + enclosed-dir tray.
@@ -1161,16 +1467,74 @@ export function FileViewer({
     })
   }
 
-  const convertEditProfile = useMemo(
-    () =>
-      convertEditProfileFor(filePath, {
-        kind: info?.kind,
-        contentPath: info?.contentPath,
-        isHeic,
-        isLegacyOffice
-      }),
-    [filePath, info?.contentPath, info?.kind, isHeic, isLegacyOffice]
-  )
+  /**
+   * HEIC / Office: editing means convert + Save As (not in-place write).
+   * Returns profile for the dialog + binary source path.
+   */
+  const convertEditProfile = useMemo((): {
+    formatKey: 'jpeg' | 'docx' | 'xlsx' | 'pptx' | 'pdf'
+    suggestedPath: string
+    sourcePath: string
+  } | null => {
+    if (isHeic) {
+      return {
+        formatKey: 'jpeg',
+        suggestedPath: replaceExt(filePath, '.jpg'),
+        sourcePath: info?.contentPath?.trim() || filePath
+      }
+    }
+    if (info?.kind === 'docx' || (/\.docx$/i.test(filePath) && !isLegacyOffice)) {
+      return {
+        formatKey: 'docx',
+        suggestedPath: replaceExt(filePath, '.docx'),
+        sourcePath: info?.contentPath?.trim() || filePath
+      }
+    }
+    if (info?.kind === 'xlsx' || /\.xlsx$/i.test(filePath)) {
+      return {
+        formatKey: 'xlsx',
+        suggestedPath: replaceExt(filePath, '.xlsx'),
+        sourcePath: info?.contentPath?.trim() || filePath
+      }
+    }
+    if (info?.kind === 'pptx' || /\.pptx$/i.test(filePath)) {
+      return {
+        formatKey: 'pptx',
+        suggestedPath: replaceExt(filePath, '.pptx'),
+        sourcePath: info?.contentPath?.trim() || filePath
+      }
+    }
+    if (info?.kind === 'pdf' || /\.pdf$/i.test(filePath)) {
+      return {
+        formatKey: 'pdf',
+        suggestedPath: replaceExt(filePath, '.pdf'),
+        sourcePath: filePath
+      }
+    }
+    // Legacy .doc → converted sidecar is usually DOCX/HTML temp; prefer DOCX name.
+    if (/\.doc$/i.test(filePath) && !/\.docx$/i.test(filePath)) {
+      return {
+        formatKey: 'docx',
+        suggestedPath: replaceExt(filePath, '.docx'),
+        sourcePath: info?.contentPath?.trim() || filePath
+      }
+    }
+    if (/\.xls$/i.test(filePath) && !/\.xlsx$/i.test(filePath)) {
+      return {
+        formatKey: 'xlsx',
+        suggestedPath: replaceExt(filePath, '.xlsx'),
+        sourcePath: info?.contentPath?.trim() || filePath
+      }
+    }
+    if (/\.ppt$/i.test(filePath) && !/\.pptx$/i.test(filePath)) {
+      return {
+        formatKey: 'pptx',
+        suggestedPath: replaceExt(filePath, '.pptx'),
+        sourcePath: info?.contentPath?.trim() || filePath
+      }
+    }
+    return null
+  }, [filePath, info?.contentPath, info?.kind, isHeic, isLegacyOffice])
 
   const convertAndSaveAs = async (): Promise<boolean> => {
     const profile = convertEditProfile
@@ -1179,7 +1543,7 @@ export function FileViewer({
     try {
       const bin = await window.vav.files.readBinary(
         profile.sourcePath,
-        hostConvId(agentConversationId, parentConversationId)
+        filesHostConversationId(agentConversationId, parentConversationId)
       )
       if (!bin.ok) {
         showToast({
@@ -1342,7 +1706,7 @@ export function FileViewer({
       const result = await window.vav.files.write(
         filePath,
         content,
-        hostConvId(agentConversationId, parentConversationId)
+        filesHostConversationId(agentConversationId, parentConversationId)
       )
       if (!result.ok) {
         showToast({
@@ -1386,7 +1750,7 @@ export function FileViewer({
       try {
         const bin = await window.vav.files.readBinary(
           filePath,
-          hostConvId(agentConversationId, parentConversationId)
+          filesHostConversationId(agentConversationId, parentConversationId)
         )
         if (!bin.ok) {
           showToast({
@@ -1461,7 +1825,7 @@ export function FileViewer({
         await window.vav.files.write(
           originalPath,
           baselineContent,
-          hostConvId(agentConversationId, parentConversationId)
+          filesHostConversationId(agentConversationId, parentConversationId)
         )
       }
       if (window.vav.files.workingCopyDiscard && result.path !== originalPath) {
@@ -1736,13 +2100,28 @@ export function FileViewer({
       return parts.join(' · ')
     }
     if (info.size) parts.push(formatBytes(info.size))
-    if (info.lineCount != null) parts.push(t('files.lines', { n: info.lineCount }))
+    if (info.kind === 'csv' && csvModel) {
+      parts.push(
+        csvModel.rowCapped
+          ? t('preview.csvSheetCapped', {
+              shown: csvModel.rows.length,
+              total: csvModel.totalRows,
+              cols: csvModel.headers.length
+            })
+          : t('preview.csvSheet', {
+              rows: csvModel.totalRows,
+              cols: csvModel.headers.length
+            })
+      )
+    } else if (info.lineCount != null) {
+      parts.push(t('files.lines', { n: info.lineCount }))
+    }
     parts.push(badge)
     parts.push(filePath)
     // Never surface technical windowing as "truncated" in the status strip.
     if (hasUnsavedChanges) parts.push('•')
     return parts.join(' · ')
-  }, [info, badge, filePath, t, hasUnsavedChanges])
+  }, [info, badge, filePath, t, hasUnsavedChanges, csvModel])
 
   const openAgentFromToggle = (): void => {
     if (embedded && onToggleAgentPanel) {
@@ -1781,104 +2160,669 @@ export function FileViewer({
     showSelectionAgentMark && selectedIds.length > 0 && !agentPanelOpen
 
   const fileHeader = (
-    <FileViewerHeader
-      embedded={embedded}
-      shellLeading={shellLeading}
-      filePath={filePath}
-      info={info}
-      hardForcedReadOnly={hardForcedReadOnly}
-      formatLockedReadOnly={formatLockedReadOnly}
-      isZip={isZip}
-      effectiveReadOnly={effectiveReadOnly}
-      applyReadOnly={applyReadOnly}
-      assoc={assoc}
-      readOnly={readOnly}
-      onSetAsDefault={onSetAsDefault}
-      hasUnsavedChanges={hasUnsavedChanges}
-      save={save}
-      saveAs={saveAs}
-      confirmDiscardChanges={confirmDiscardChanges}
-      openInMainPanel={openInMainPanel}
-      revealFailed={(err) =>
-        showToast({
-          kind: 'error',
-          title: t('preview.revealFailed'),
-          description: err.message
-        })
-      }
-      agentToggle={(embedded && onToggleAgentPanel) || !embedded ? agentToggle : null}
-      onClose={onClose}
-    />
+      <header
+        className={`file-viewer-header${embedded ? '' : ' titlebar-drag'}${shellLeading ? ' has-shell-leading' : ''}`}
+      >
+        {/*
+          Standalone preview: header is a window drag region. Only interactive
+          controls opt out (titlebar-no-drag) — the file name stays draggable.
+          Workspace + collapsed sidebar: shellLeading parks toggle/new before
+          the file name so the agent column can stay flush to the window top.
+        */}
+        <div className="file-viewer-lead">
+          {shellLeading ? (
+            <div className={`file-viewer-shell-leading${embedded ? '' : ' titlebar-no-drag'}`}>
+              {shellLeading}
+            </div>
+          ) : null}
+          <span
+            className={`file-viewer-name${embedded ? '' : ' titlebar-no-drag'}`}
+            data-testid="file-preview-name"
+            title={isClipPath(filePath) ? (info?.name ?? basename(filePath)) : filePath}
+          >
+            {info?.name ?? basename(filePath)}
+          </span>
+          <label
+            className={`preview-mode${embedded ? '' : ' titlebar-no-drag'}${hardForcedReadOnly || formatLockedReadOnly ? ' is-forced' : ''}${hardForcedReadOnly ? ' is-static' : ''}`}
+            title={
+              isZip
+                ? t('preview.zipReadOnlyHint')
+                : hardForcedReadOnly
+                  ? t('preview.binaryReadOnlyHint')
+                  : formatLockedReadOnly
+                    ? t('preview.formatReadOnlyHint')
+                    : undefined
+            }
+          >
+            {/* Binary / ZIP / directory: only Read — no fake Edit option or chevron. */}
+            {hardForcedReadOnly ? (
+              <span className="preview-mode-static" aria-label={t('preview.modeLabel')}>
+                {t('preview.modeReadOnly')}
+              </span>
+            ) : (
+              <span className="preview-mode-control">
+                <select
+                  className="text-field preview-mode-select"
+                  value={effectiveReadOnly ? 'readonly' : 'editing'}
+                  aria-label={t('preview.modeLabel')}
+                  onChange={(e) => applyReadOnly(e.target.value === 'readonly')}
+                >
+                  <option value="editing">{t('preview.modeEditing')}</option>
+                  <option value="readonly">{t('preview.modeReadOnly')}</option>
+                </select>
+                <ChevronDown className="preview-mode-chevron" size={12} aria-hidden />
+              </span>
+            )}
+          </label>
+          {/* Read: offer only when not already default. Editing: under Save ▾. */}
+          {assoc && !assoc.isVav && readOnly && (
+            <button
+              type="button"
+              className={`preview-default-text-btn${embedded ? '' : ' titlebar-no-drag'}`}
+              title={t('assoc.alwaysOpenWith', {
+                ext: assoc.extensions[0]?.replace(/^\./, '') ?? assoc.label
+              })}
+              onClick={onSetAsDefault}
+            >
+              {t('assoc.alwaysOpenWith', {
+                ext: assoc.extensions[0]?.replace(/^\./, '') ?? assoc.label
+              })}
+            </button>
+          )}
+        </div>
+        <span className="spacer" />
+        <div className={`file-viewer-actions${embedded ? '' : ' titlebar-no-drag'}`}>
+          {/* Save / Save As only in Editing; hidden for ZIP/binary (forced read-only). */}
+          {!effectiveReadOnly && (
+            <div className={`preview-save-group${hasUnsavedChanges ? ' is-dirty' : ''}`}>
+              <Button
+                icon={<Save size={13} />}
+                label={t('preview.save')}
+                variant={hasUnsavedChanges ? 'primary' : 'secondary'}
+                size="sm"
+                className="preview-save-main"
+                disabled={!hasUnsavedChanges}
+                title={`${t('preview.save')} (⌘S)`}
+                onClick={() => void save()}
+              />
+              <Button
+                icon={<ChevronDown size={14} />}
+                variant={hasUnsavedChanges ? 'primary' : 'secondary'}
+                size="sm"
+                className="preview-save-more"
+                title={t('preview.moreActions')}
+                onClick={(event) => {
+                  event.preventDefault()
+                  event.stopPropagation()
+                  const anchor = menuAnchor(event.currentTarget as HTMLElement)
+                  const items: {
+                    label: string
+                    divider?: boolean
+                    disabled?: boolean
+                    onSelect?: () => void
+                  }[] = [
+                    {
+                      label: `${t('preview.saveAs')} (⌘⇧S)`,
+                      onSelect: () => void saveAs()
+                    }
+                  ]
+                  if (hasUnsavedChanges) {
+                    items.push({
+                      label: t('preview.discardChanges'),
+                      onSelect: () => void confirmDiscardChanges()
+                    })
+                  }
+                  if (!embedded) {
+                    items.push({ label: '', divider: true })
+                    items.push({
+                      label: t('workspace.openInMainPanel'),
+                      onSelect: () => openInMainPanel()
+                    })
+                  }
+                  if (assoc && !assoc.isVav) {
+                    const ext =
+                      assoc.extensions[0]?.replace(/^\./, '') ?? assoc.label
+                    items.push({ label: '', divider: true })
+                    items.push({
+                      label: t('assoc.alwaysOpenWith', { ext }),
+                      onSelect: () => onSetAsDefault()
+                    })
+                  }
+                  void showMenu(items, anchor)
+                }}
+              />
+            </div>
+          )}
+          <Button
+            icon={<FileManagerIcon size={14} />}
+            size="sm"
+            className={embedded ? undefined : 'titlebar-no-drag'}
+            title={t('tools.revealInFm', { fileManager: fileManagerLabel() })}
+            onClick={() => {
+              void (async () => {
+                try {
+                  await window.vav.conversations.revealInFinder(filePath)
+                } catch (err) {
+                  showToast({
+                    kind: 'error',
+                    title: t('preview.revealFailed'),
+                    description: (err as Error).message
+                  })
+                }
+              })()
+            }}
+          />
+          {(embedded && onToggleAgentPanel) || !embedded ? agentToggle : null}
+          {embedded && onClose ? (
+            <Button
+              icon={<X size={14} />}
+              size="sm"
+              testId="file-preview-close"
+              title={t('common.close')}
+              onClick={onClose}
+            />
+          ) : null}
+        </div>
+      </header>
   )
 
   const agentColumn =
     agentPanelOpen && !embedded ? (
-      <FileViewerAgentColumn
-        panelWidth={panelWidth}
-        panelWidthRef={panelWidthRef}
-        setPanelWidth={setPanelWidth}
-        conversations={conversations}
-        agentConversationId={agentConversationId}
-        embedded={embedded}
-        sessionTitle={sessionTitle}
-        fileSessions={fileSessions}
-        historyOpen={historyOpen}
-        setHistoryOpen={setHistoryOpen}
-        historyAnchorRef={historyAnchorRef}
-        switchFileSession={switchFileSession}
-        renameFileSession={renameFileSession}
-        deleteFileSessions={deleteFileSessions}
-        newFileSession={newFileSession}
-        ensureFileSession={ensureFileSession}
-      />
+          <aside className="preview-agent-panel" style={{ width: panelWidth }}>
+            <div
+              className="preview-agent-resizer"
+              onMouseDown={(event) => {
+                event.preventDefault()
+                const startX = event.clientX
+                const startW = panelWidth
+                const onMove = (e: MouseEvent): void => {
+                  const next = Math.min(520, Math.max(280, startW + (startX - e.clientX)))
+                  panelWidthRef.current = next
+                  setPanelWidth(next)
+                }
+                const onUp = (): void => {
+                  window.removeEventListener('mousemove', onMove)
+                  window.removeEventListener('mouseup', onUp)
+                  try {
+                    localStorage.setItem(PANEL_WIDTH_KEY, String(panelWidthRef.current))
+                  } catch {
+                    // ignore
+                  }
+                }
+                window.addEventListener('mousemove', onMove)
+                window.addEventListener('mouseup', onUp)
+              }}
+            />
+            {/* vav mode folds session title/history/new into AgentModeChrome.
+                CLI hosts keep a dedicated bar (no search row to share). */}
+            {(() => {
+              const agentMeta = conversations.find((c) => c.id === agentConversationId)
+              const agentIsVav =
+                !agentMeta?.agentBinaryName || agentMeta.agentBinaryName === 'vav'
+              const showSeparateSessionBar = !embedded && (!agentConversationId || !agentIsVav)
+              const fileChrome: FileSessionChromeProps | null =
+                agentConversationId && agentIsVav
+                  ? {
+                      title: sessionTitle,
+                      sessions: fileSessions,
+                      activeSessionId: agentConversationId,
+                      historyOpen,
+                      historyAnchorRef,
+                      onToggleHistory: () => setHistoryOpen((v) => !v),
+                      onCloseHistory: () => setHistoryOpen(false),
+                      onSwitchSession: (id) => void switchFileSession(id),
+                      onRenameSession: renameFileSession,
+                      onDeleteSessions: deleteFileSessions,
+                      onNewSession: () => void newFileSession()
+                    }
+                  : null
+              return (
+                <>
+                  {showSeparateSessionBar && (
+                    <div className="preview-file-session-bar">
+                      <span className="preview-file-session-title" title={sessionTitle}>
+                        {sessionTitle || t('common.session')}
+                      </span>
+                      <span className="spacer" />
+                      <div className="preview-file-session-actions">
+                        <button
+                          type="button"
+                          ref={historyAnchorRef}
+                          className={`btn ghost sm icon-only${historyOpen ? ' is-active-toggle' : ''}`}
+                          title={t('preview.sessionHistory')}
+                          onClick={() => setHistoryOpen((v) => !v)}
+                        >
+                          <Clock size={12} />
+                        </button>
+                        <Button
+                          icon={<Plus size={12} />}
+                          size="sm"
+                          variant="ghost"
+                          title={t('preview.newSession')}
+                          onClick={() => void newFileSession()}
+                        />
+                      </div>
+                      <SessionHistoryPopover
+                        open={historyOpen}
+                        onClose={() => setHistoryOpen(false)}
+                        sessions={fileSessions}
+                        activeSessionId={agentConversationId}
+                        onSwitch={(id) => {
+                          void switchFileSession(id)
+                          setHistoryOpen(false)
+                        }}
+                        onRename={renameFileSession}
+                        onDelete={deleteFileSessions}
+                        anchorRef={historyAnchorRef}
+                      />
+                    </div>
+                  )}
+                  {agentConversationId ? (
+                    <Suspense fallback={<div className="muted" data-pad="text" />}>
+                      <SessionDetail variant="preview-edit" fileSessionChrome={fileChrome} />
+                    </Suspense>
+                  ) : (
+                    <EmptyState
+                      title={t('preview.startChat')}
+                      description={t('preview.startChatDesc')}
+                    >
+                      <Button
+                        label={t('preview.startChat')}
+                        size="sm"
+                        variant="primary"
+                        onClick={() => {
+                          void ensureFileSession().then((id) => {
+                            if (id) useSessionStore.getState().focusComposer()
+                          })
+                        }}
+                      />
+                    </EmptyState>
+                  )}
+                </>
+              )
+            })()}
+          </aside>
     ) : null
 
   const fileBody = (
-    <FileViewerCanvas
-      info={info}
-      filePath={filePath}
-      csvModel={csvModel}
-      selectable={selectable}
-      selectedIds={selectedIds}
-      setSelectedIds={setSelectedIds}
-      applySelection={applySelection}
-      mediaSrc={mediaSrc}
-      binaryOpenAs={binaryOpenAs}
-      setBinaryOpenAs={setBinaryOpenAs}
-      structuredPreview={structuredPreview}
-      nativeOfficeReady={nativeOfficeReady}
-      setNativeOfficeReady={setNativeOfficeReady}
-      isOfficeKind={isOfficeKind}
-      previewRevision={previewRevision}
-      onOfficePick={onOfficePick}
-      isHtmlKind={isHtmlKind}
-      isHtmlClipKind={isHtmlClipKind}
-      displayText={displayText}
-      isMindMap={isMindMap}
-      effectiveReadOnly={effectiveReadOnly}
-      isMermaidFile={isMermaidFile}
-      isDotFile={isDotFile}
-      isDrawioFile={isDrawioFile}
-      isDiagramCanvas={isDiagramCanvas}
-      isMarkdown={isMarkdown}
-      isNotebook={isNotebook}
-      lineOriented={lineOriented}
-      rootBlocks={rootBlocks}
-      selectedBlocks={selectedBlocks}
-      selectByLine={selectByLine}
-      extendTextWindow={() => {
-        void extendTextWindow()
-      }}
-      setWorkingContent={setWorkingContent}
-      setHasUnsavedChanges={setHasUnsavedChanges}
-      baselineContent={baselineContent}
-      assoc={assoc}
-      agentConversationId={agentConversationId}
-      parentConversationId={parentConversationId}
-      badge={badge}
-    />
+          <Suspense fallback={<div className="muted">{t('common.loading')}</div>}>
+          <>
+          {!info && <div className="muted">{t('common.loading')}</div>}
+          {/* Real load failures only — zip/binary use dedicated canvases, never this alert. */}
+          {info?.error && info.kind !== 'zip' && info.kind !== 'binary' && (
+            <InlineAlert kind="error" title={t('preview.loadFailed')} message={info.error} />
+          )}
+          {info && !info.error && info.kind === 'csv' && csvModel && (
+            <CsvView
+              model={csvModel}
+              selecting={selectable}
+              selectedIds={selectedIds}
+              onSelect={(id, event, hint) => applySelection(id, event, hint)}
+            />
+          )}
+          {info && !info.error && info.kind === 'sqlite' && info.sqlite && (
+            <SqliteView
+              path={filePath}
+              info={info.sqlite}
+              selecting={selectable}
+              selectedIds={selectedIds}
+              onSelect={(id, event, hint) => applySelection(id, event, hint)}
+            />
+          )}
+          {info && mediaSrc && info.kind === 'image' && (
+            <div className="file-viewer-image-scroll">
+              {/* Meta outside pick frame so EXIF rows stay text-selectable while scrolling. */}
+              {info.imageMeta && info.imageMeta.length > 0 && (
+                <div
+                  className="file-viewer-image-meta-flat"
+                  role="list"
+                  aria-label={t('preview.imageMeta')}
+                  onMouseDown={(e) => {
+                    // Don't let the media pick frame steal drags that start on meta.
+                    e.stopPropagation()
+                  }}
+                >
+                  {info.imageMeta.map((row) => (
+                    <div
+                      key={row.key}
+                      className="file-viewer-image-meta-line"
+                      role="listitem"
+                      // Single line for OS copy: "Key\tValue"
+                      data-meta-line={`${row.key}\t${row.value}`}
+                    >
+                      <span className="file-viewer-image-meta-key" title={row.key}>
+                        {row.key}
+                      </span>
+                      <span className="file-viewer-image-meta-val" title={row.value}>
+                        {row.value}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <ImageZoomStage
+                key={mediaSrc}
+                src={mediaSrc}
+                alt={info.name}
+                selecting={selectable}
+                selected={selectedIds.includes('media')}
+                onSelect={(event) => applySelection('media', event)}
+              />
+            </div>
+          )}
+          {info && mediaSrc && info.kind === 'audio' && (
+            <MediaSelectFrame
+              selecting={selectable}
+              selected={selectedIds.includes('media')}
+              onSelect={(event) => applySelection('media', event)}
+            >
+              <div className="file-viewer-audio-card">
+                <div className="file-viewer-audio-name" title={info.name}>
+                  {info.name}
+                </div>
+                <audio
+                  className="file-viewer-media file-viewer-audio"
+                  controls
+                  preload="metadata"
+                  src={mediaSrc}
+                />
+              </div>
+            </MediaSelectFrame>
+          )}
+          {info && mediaSrc && info.kind === 'video' && (
+            <MediaSelectFrame
+              selecting={selectable}
+              selected={selectedIds.includes('media')}
+              onSelect={(event) => applySelection('media', event)}
+            >
+              <video
+                className="file-viewer-media file-viewer-video"
+                controls
+                preload="metadata"
+                src={mediaSrc}
+              />
+            </MediaSelectFrame>
+          )}
+          {/* Audio/video with no stream URL — still show a surface instead of a blank body. */}
+          {info &&
+            !info.error &&
+            (info.kind === 'audio' || info.kind === 'video') &&
+            !mediaSrc &&
+            (binaryOpenAs ? (
+              <>
+                <BinaryOpenToolbar mode={binaryOpenAs} onMode={setBinaryOpenAs} />
+                {binaryOpenAs === 'text' ? (
+                  <ForcedBinaryTextView path={filePath} />
+                ) : (
+                  <HexDumpView path={filePath} />
+                )}
+              </>
+            ) : (
+              <BinaryFileView
+                info={info}
+                meta={info.binaryMeta ?? null}
+                onOpenWithDefault={() => void window.vav.files.openWithDefault(filePath)}
+                onReveal={() => void window.vav.conversations.revealInFinder(filePath)}
+                onOpenAs={setBinaryOpenAs}
+              />
+            ))}
+          {info?.warnings &&
+            info.warnings.some((w) => !isSilentPreviewWindowWarning(w)) && (
+              <div className="file-viewer-warnings" role="status">
+                {info.warnings
+                  .filter((w) => !isSilentPreviewWindowWarning(w))
+                  .map((w) => (
+                    <div key={w} className="file-viewer-warning-line muted">
+                      {w}
+                    </div>
+                  ))}
+              </div>
+            )}
+          {info && !info.error && isOfficeKind && (
+            <>
+              {/* Progressive structured canvas for docx/xlsx/pptx until native paints. */}
+              {structuredPreview && !nativeOfficeReady && (
+                  <Suspense fallback={null}>
+                    <StructuredDocView
+                      doc={structuredPreview}
+                      selecting={selectable}
+                      selectedIds={selectedIds}
+                      onSelect={(id, event) => applySelection(id, event ?? null)}
+                    />
+                  </Suspense>
+                )}
+              <div
+                className={
+                  structuredPreview && !nativeOfficeReady
+                    ? 'file-viewer-native-office is-pending'
+                    : 'file-viewer-native-office'
+                }
+                aria-hidden={
+                  structuredPreview && !nativeOfficeReady ? true : undefined
+                }
+              >
+                {OfficeNativeView ? (
+                  <OfficeNativeView
+                    path={info.contentPath || filePath}
+                    kind={info.kind}
+                    revision={previewRevision}
+                    selecting={selectable}
+                    selectedIds={selectedIds}
+                    onPick={onOfficePick}
+                    onReady={() => {
+                      setNativeOfficeReady(true)
+                      markViewer('native-ready')
+                    }}
+                    progressiveStructured={structuredPreview}
+                  />
+                ) : null}
+              </div>
+            </>
+          )}
+          {info && !info.error && isHtmlKind && (
+            <HtmlNativeView
+              path={info.contentPath || filePath}
+              html={displayText}
+              revision={previewRevision}
+              selecting={selectable}
+              selectedIds={selectedIds}
+              onPick={onOfficePick}
+            />
+          )}
+          {info && !info.error && isHtmlClipKind && (
+            <Suspense fallback={null}>
+              <HtmlClipFrame source={displayText} title={info.name} />
+            </Suspense>
+          )}
+          {info && !info.error && info.kind === 'text' && isMindMap && (
+            <MindMapView
+              key={filePath}
+              path={filePath}
+              text={displayText}
+              selecting={selectable}
+              selectedIds={selectedIds}
+              readOnly={effectiveReadOnly}
+              onSelect={(block, event) => applySelection(block.id, event ?? null, block)}
+              onDocChange={(serialized) => {
+                setWorkingContent(serialized)
+                setHasUnsavedChanges(serialized !== (baselineContent ?? info?.text ?? ''))
+              }}
+            />
+          )}
+          {info && !info.error && info.kind === 'text' && isMermaidFile && (
+            <DiagramFileView
+              key={filePath}
+              kind="mermaid"
+              text={displayText}
+              selecting={selectable}
+              selectedIds={selectedIds}
+              readOnly={effectiveReadOnly}
+              onSelect={(block, event) => applySelection(block.id, event ?? null, block)}
+              onSourceChange={(source) => {
+                setWorkingContent(source)
+                setHasUnsavedChanges(source !== (baselineContent ?? info?.text ?? ''))
+              }}
+            />
+          )}
+          {info && !info.error && info.kind === 'text' && isDotFile && (
+            <DiagramFileView
+              key={filePath}
+              kind="graphviz"
+              text={displayText}
+              selecting={selectable}
+              selectedIds={selectedIds}
+              readOnly={effectiveReadOnly}
+              onSelect={(block, event) => applySelection(block.id, event ?? null, block)}
+              onSourceChange={(source) => {
+                setWorkingContent(source)
+                setHasUnsavedChanges(source !== (baselineContent ?? info?.text ?? ''))
+              }}
+            />
+          )}
+          {info && !info.error && info.kind === 'text' && isDrawioFile && (
+            <DrawioView
+              key={filePath}
+              text={displayText}
+              selecting={selectable}
+              selectedIds={selectedIds}
+              onSelect={(block, event) => applySelection(block.id, event ?? null, block)}
+            />
+          )}
+          {info && !info.error && info.kind === 'text' && !isDiagramCanvas && (
+            <DocumentView
+              path={filePath}
+              text={displayText}
+              markdown={isMarkdown}
+              notebook={isNotebook}
+              lineOriented={lineOriented}
+              selecting={selectable}
+              blocks={rootBlocks}
+              selectedIds={selectedIds}
+              selectedBlocks={selectedBlocks}
+              onSelectBlock={applySelection}
+              onSelectLine={selectByLine}
+              onNearEnd={() => {
+                void extendTextWindow()
+              }}
+              onAskAgent={(prompt, target) => {
+                setSelectedIds([target.id])
+                const id =
+                  agentConversationId ??
+                  parentConversationId ??
+                  useSessionStore.getState().activeId
+                if (!id) return
+                const store = useSessionStore.getState()
+                store.setDraft(id, prompt)
+                // Comment card (not legacy previewRefs Reference chips).
+                const ref = blockToRef(filePath, badge, target)
+                const existing = store.commentCards[id] ?? []
+                const without = existing.filter((c) => c.ref.id !== ref.id)
+                store.setCommentCards(id, [...without, { ref, comment: '' }])
+                store.clearPreviewRefs(id)
+                store.focusCommentCard(ref.id)
+                store.focusComposer()
+              }}
+            />
+          )}
+          {info && info.kind === 'zip' && (
+            <ZipArchiveView
+              name={info.name}
+              zip={
+                info.zip ?? {
+                  entries: [],
+                  entryCount: 0,
+                  compressedSize: info.size,
+                  uncompressedSize: 0,
+                  ratio: 0
+                }
+              }
+              truncated={!!info.truncated || !!info.zipEncrypted}
+              selecting={selectable && !info.error}
+              selectedIds={selectedIds}
+              onSelect={(block, event) => applySelection(block.id, event, block)}
+              passwordProtected={!!info.zipEncrypted}
+            />
+          )}
+          {info && info.kind === 'directory' && (
+            <div className="muted" style={{ padding: 24, textAlign: 'center' }}>
+              {t('files.error.directory')}
+            </div>
+          )}
+          {info &&
+            info.kind === 'binary' &&
+            (binaryOpenAs ? (
+              <>
+                <BinaryOpenToolbar mode={binaryOpenAs} onMode={setBinaryOpenAs} />
+                {binaryOpenAs === 'text' ? (
+                  <ForcedBinaryTextView path={filePath} />
+                ) : (
+                  <HexDumpView path={filePath} />
+                )}
+              </>
+            ) : (
+              <BinaryFileView
+                info={info}
+                meta={{
+                  ...(info.binaryMeta ?? {
+                    uti: 'public.data',
+                    permissions: '—',
+                    owner: '—',
+                    createdAt: null,
+                    modifiedAt: info.mtimeMs ?? null,
+                    inode: '—',
+                    defaultApp: null
+                  }),
+                  defaultApp:
+                    info.binaryMeta?.defaultApp ?? assoc?.defaultApp ?? null
+                }}
+                onOpenAs={setBinaryOpenAs}
+                onOpenWithDefault={async () => {
+                  try {
+                    if (typeof window.vav.files.openWithDefault !== 'function') {
+                      showToast({
+                        kind: 'error',
+                        title: t('preview.openFailed'),
+                        description: t('preview.openFailedNoApi')
+                      })
+                      return
+                    }
+                    const result = await window.vav.files.openWithDefault(filePath)
+                    if (!result?.ok) {
+                      showToast({
+                        kind: 'error',
+                        title: t('preview.openFailed'),
+                        description: result && 'error' in result ? result.error : undefined
+                      })
+                      return
+                    }
+                    showToast({
+                      kind: 'success',
+                      title: t('preview.openLaunched')
+                    })
+                  } catch (err) {
+                    showToast({
+                      kind: 'error',
+                      title: t('preview.openFailed'),
+                      description: (err as Error).message
+                    })
+                  }
+                }}
+                onReveal={async () => {
+                  try {
+                    await window.vav.conversations.revealInFinder(filePath)
+                  } catch (err) {
+                    showToast({
+                      kind: 'error',
+                      title: t('preview.revealFailed'),
+                      description: (err as Error).message
+                    })
+                  }
+                }}
+              />
+            ))}
+          </>
+          </Suspense>
   )
-
 
   const statusFooter = (
       <footer className="file-preview-statusbar">
@@ -1953,8 +2897,1060 @@ export function FileViewer({
   )
 }
 
+function countNewlinesLocal(text: string): number {
+  if (!text) return 0
+  let n = 1
+  for (let i = 0; i < text.length; i++) {
+    if (text.charCodeAt(i) === 10) n++
+  }
+  if (text.charCodeAt(text.length - 1) === 10) n--
+  return Math.max(n, 1)
+}
+
+function collectBlocks(blocks: PreviewBlock[]): PreviewBlock[] {
+  const out: PreviewBlock[] = []
+  const walk = (list: PreviewBlock[]): void => {
+    for (const b of list) {
+      out.push(b)
+      if (b.children) walk(b.children)
+    }
+  }
+  walk(blocks)
+  return out
+}
+
+/** Path compare for fs-changed / dirty events (macOS is usually case-insensitive). */
+function pathsEqual(a: string, b: string): boolean {
+  if (a === b) return true
+  const na = a.replace(/\/+$/, '')
+  const nb = b.replace(/\/+$/, '')
+  if (na === nb) return true
+  return na.toLowerCase() === nb.toLowerCase()
+}
+
 /** Open preview path may be the real file while the agent writes the sandbox copy. */
 async function isOpenFilePath(openPath: string, sourcePath: string): Promise<boolean> {
-  return filePathIsOpen(openPath, sourcePath, (path) => window.vav.files.workingCopyStatus?.(path))
+  if (pathsEqual(openPath, sourcePath)) return true
+  const st = await window.vav.files.workingCopyStatus?.(openPath)
+  if (!st) return false
+  return pathsEqual(sourcePath, st.copyPath) || pathsEqual(sourcePath, st.realPath)
+}
+
+function applyFileDraftContent(
+  prev: string | null,
+  event: Extract<TurnEvent, { type: 'file-draft' }>
+): string | null {
+  if (typeof event.content === 'string') return event.content
+  if (typeof event.append === 'string') {
+    const base = prev ?? ''
+    if (typeof event.baseLen === 'number' && base.length !== event.baseLen) return prev
+    return base + event.append
+  }
+  return prev
+}
+
+/** One selected preview block → a composer comment-block reference. */
+function blockToRef(path: string, badge: string, block: PreviewBlock): PreviewRef {
+  return blockToPreviewRef(path, badge, block)
+}
+
+/**
+ * Centers media in the preview stage.
+ *
+ * Pick outline is a wrapper around media — never cloneElement onto <audio>/
+ * <video>. Assigning pick classes (display:flex) onto native controls collapsed
+ * the player to an empty stage (MP3 looked blank).
+ */
+/**
+ * Image stage with the same zoom feel as the document viewers: opens contained
+ * (whole picture, never blown past 100%), pinches up to 4×, and pans by real
+ * scrolling so the photo can never be flung off into empty canvas. While it is
+ * still contained the stage keeps re-fitting, so opening the agent panel
+ * reflows the picture; once the reader has zoomed in, the panel just covers
+ * part of it instead of yanking the view.
+ */
+function readImageNatural(img: HTMLImageElement | null): { width: number; height: number } | null {
+  if (!img) return null
+  const width = img.naturalWidth
+  const height = img.naturalHeight
+  if (!(width > 0) || !(height > 0)) return null
+  return { width, height }
+}
+
+function ImageZoomStage({
+  src,
+  alt,
+  selecting,
+  selected,
+  onSelect
+}: {
+  src: string
+  alt: string
+  selecting: boolean
+  selected: boolean
+  onSelect: (event?: React.MouseEvent | ClickPickPointer | null) => void
+}): React.JSX.Element {
+  const stageRef = useRef<HTMLDivElement>(null)
+  const contentRef = useRef<HTMLDivElement>(null)
+  const imgRef = useRef<HTMLImageElement>(null)
+  const [natural, setNatural] = useState({ width: 0, height: 0 })
+  const naturalRef = useRef(natural)
+  naturalRef.current = natural
+
+  const apply = useCallback((scale: number): void => {
+    const content = contentRef.current
+    const img = imgRef.current
+    const { width, height } = naturalRef.current
+    if (!content || !img || !(width > 0)) return
+    // Wrapper is the scroll box. The bitmap stays at natural CSS px and is
+    // GPU-scaled — resizing <img> width/height every pinch tick re-decodes
+    // a multi-megapixel PNG and drops frames.
+    const w = Math.max(1, Math.floor(width * scale))
+    const h = Math.max(1, Math.floor(height * scale))
+    content.style.width = `${w}px`
+    content.style.height = `${h}px`
+    content.style.minWidth = `${w}px`
+    content.style.minHeight = `${h}px`
+    writeDocZoom(content, 1)
+    if (img.dataset.zoomSized !== '1') {
+      img.style.width = `${width}px`
+      img.style.height = `${height}px`
+      img.style.transformOrigin = '0 0'
+      img.dataset.zoomSized = '1'
+    }
+    img.style.transform = `scale(${scale})`
+  }, [])
+
+  const zoom = useDocZoom({
+    stageRef,
+    contentRef,
+    naturalWidth: natural.width,
+    naturalHeight: natural.height,
+    apply,
+    enabled: natural.width > 0
+  })
+
+  // Cached images often skip `onLoad`. Read natural size from the element
+  // itself so fit/readout are not left sitting at the 100% placeholder.
+  useEffect(() => {
+    const measured = readImageNatural(imgRef.current)
+    if (measured) setNatural(measured)
+  }, [src])
+
+  const zoomable = natural.width > 0
+  return (
+    <>
+      <div
+        className="preview-media-stage image-zoom-stage"
+        ref={stageRef}
+        data-zoomable={zoomable ? 'true' : 'false'}
+      >
+        <div
+          ref={contentRef}
+          className={`image-zoom-content${
+            selecting ? ` preview-select-region media-pick-frame${selected ? ' selected' : ''}` : ''
+          }`}
+          onMouseDown={(event) => {
+            if (!selecting) return
+            handleClickPickMouseDown(event, () => onSelect(null))
+          }}
+        >
+          <img
+            ref={imgRef}
+            className="file-viewer-media"
+            src={src}
+            alt={alt}
+            draggable={false}
+            onLoad={(event) => {
+              const measured = readImageNatural(event.currentTarget)
+              if (measured) setNatural(measured)
+            }}
+          />
+        </div>
+      </div>
+      {/* Outside the stage: chrome inside a scrollport scrolls away with it. */}
+      <DocZoomControls
+        scale={zoom.scale}
+        atFit={zoom.atFit}
+        onZoomIn={() => zoom.zoomBy(DOC_ZOOM_STEP)}
+        onZoomOut={() => zoom.zoomBy(1 / DOC_ZOOM_STEP)}
+        onFit={zoom.actualSize}
+        resetKey="preview.actualSize"
+        disabled={!zoomable}
+      />
+    </>
+  )
+}
+
+function MediaSelectFrame({
+  selecting,
+  selected,
+  onSelect,
+  children
+}: {
+  selecting: boolean
+  selected: boolean
+  onSelect: (event?: React.MouseEvent | ClickPickPointer | null) => void
+  children: React.ReactNode
+}): React.JSX.Element {
+  if (!selecting) {
+    return <div className="preview-media-stage">{children}</div>
+  }
+  return (
+    <div className="preview-media-stage">
+      <div
+        className={`preview-select-region media-pick-frame${selected ? ' selected' : ''}`}
+        onMouseDown={(event) => {
+          // Native seek/play/volume must work — don't steal those clicks.
+          const tag = (event.target as HTMLElement | null)?.tagName
+          if (tag === 'AUDIO' || tag === 'VIDEO') return
+          handleClickPickMouseDown(event, () => onSelect(null))
+        }}
+      >
+        {children}
+      </div>
+    </div>
+  )
+}
+
+// Descendants (not `>`): sealed chunks use `display: contents` hosts, so block
+// nodes are nested under `.markdown-chunk` in the DOM tree.
+const MD_PICK_SELECTOR = [
+  '.preview-markdown p',
+  '.preview-markdown h1',
+  '.preview-markdown h2',
+  '.preview-markdown h3',
+  '.preview-markdown h4',
+  '.preview-markdown h5',
+  '.preview-markdown h6',
+  '.preview-markdown li',
+  '.preview-markdown blockquote',
+  '.preview-markdown .md-preview-fence',
+  '.preview-markdown .md-block',
+  '.preview-markdown .table-scroll',
+  '.preview-markdown td',
+  '.preview-markdown th'
+].join(',')
+
+/**
+ * Streaming markdown canvas: sealed chunks stay mounted; only the open tail
+ * re-parses. Pick mode uses DOM hit-testing (same path as office).
+ */
+function StreamingMarkdownDocument({
+  path,
+  text,
+  selecting,
+  selectedIds,
+  onSelectBlock,
+  onAskAgent
+}: {
+  path: string
+  text: string
+  selecting: boolean
+  selectedIds: string[]
+  onSelectBlock: (id: string, event?: React.MouseEvent | ClickPickPointer | null, hint?: PreviewBlock) => void
+  onAskAgent: (prompt: string, target: PreviewBlock) => void
+}): React.JSX.Element {
+  const t = useT()
+  const rootRef = useRef<HTMLDivElement>(null)
+  const onSelectRef = useRef(onSelectBlock)
+  onSelectRef.current = onSelectBlock
+  const onAskRef = useRef(onAskAgent)
+  onAskRef.current = onAskAgent
+
+  useEffect(() => {
+    const root = rootRef.current
+    if (!root) return
+    const dispose = attachDomPick(root, {
+      selecting,
+      selectedIds,
+      idPrefix: 'md',
+      selector: MD_PICK_SELECTOR,
+      onPick: (block, event) => {
+        onSelectRef.current(block.id, event, block)
+      }
+    })
+    return dispose
+    // Attach once; selection chrome updates below.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [path])
+
+  useEffect(() => {
+    updateDomPick(rootRef.current, {
+      selecting,
+      selectedIds,
+      onPick: (block, event) => {
+        onSelectRef.current(block.id, event, block)
+      }
+    })
+  }, [selecting, selectedIds])
+
+  useEffect(() => {
+    const root = rootRef.current
+    if (!root || !selecting) return
+    const onContext = (event: MouseEvent): void => {
+      const raw = event.target as HTMLElement | null
+      if (!raw || !root.contains(raw)) return
+      const hit = raw.closest<HTMLElement>('[data-block-id]')
+      if (!hit?.dataset.blockId) return
+      event.preventDefault()
+      event.stopPropagation()
+      const id = hit.dataset.blockId
+      const textContent = (hit.innerText || hit.textContent || '').replace(/\s+/g, ' ').trim()
+      const block: PreviewBlock = {
+        id,
+        kind: hit.tagName.startsWith('H') ? 'heading' : 'paragraph',
+        text: textContent.slice(0, 8000),
+        label: textContent.slice(0, 64) || id,
+        startLine: 0,
+        endLine: 0
+      }
+      void window.vav.window
+        .popupMenu(
+          [
+            { id: 'copy', label: t('preview.copyBlock') },
+            { id: 'analyze', label: t('preview.analyzeBlock') },
+            { id: 'refactor', label: t('preview.refactorBlock') }
+          ],
+          { x: event.clientX, y: event.clientY }
+        )
+        .then((choice) => {
+          if (choice === 'copy') {
+            void window.vav.conversations.copyToClipboard(block.text)
+            return
+          }
+          if (choice === 'analyze') {
+            onSelectRef.current(block.id, null, block)
+            onAskRef.current(t('preview.analyzePrompt'), block)
+            return
+          }
+          if (choice === 'refactor') {
+            onSelectRef.current(block.id, null, block)
+            onAskRef.current(t('preview.refactorPrompt'), block)
+          }
+        })
+    }
+    root.addEventListener('contextmenu', onContext)
+    return () => root.removeEventListener('contextmenu', onContext)
+  }, [selecting, t])
+
+  return (
+    <div
+      ref={rootRef}
+      className={`preview-document${selecting ? ' selecting' : ''}`}
+    >
+      <MarkdownView source={text} filePath={path} progressive />
+    </div>
+  )
+}
+
+/**
+ * Same rendered document in preview and edit. Edit only enables inspect-style
+ * block selection — never a source/code editor or inline cell inputs.
+ */
+function DocumentView({
+  path,
+  text,
+  markdown,
+  notebook,
+  lineOriented = false,
+  selecting,
+  blocks,
+  selectedIds,
+  selectedBlocks,
+  onSelectBlock,
+  onSelectLine,
+  onNearEnd,
+  onAskAgent
+}: {
+  path: string
+  text: string
+  markdown: boolean
+  notebook: boolean
+  /** Per-line pick (logs) — no paragraph block tree required. */
+  lineOriented?: boolean
+  selecting: boolean
+  blocks: PreviewBlock[]
+  selectedIds: string[]
+  selectedBlocks: PreviewBlock[]
+  onSelectBlock: (id: string, event?: React.MouseEvent | ClickPickPointer | null) => void
+  onSelectLine: (line: number, event?: React.MouseEvent | ClickPickPointer | null) => void
+  /** Silent windowed fill when the user scrolls near loaded end. */
+  onNearEnd?: () => void
+  onAskAgent: (prompt: string, target: PreviewBlock) => void
+}): React.JSX.Element {
+  const t = useT()
+
+  if (markdown) {
+    if (!text.trim()) {
+      return (
+        <EmptyState title={t('preview.emptyFile')} description={t('preview.emptyFileDesc')} />
+      )
+    }
+    // Always stream (sealed chunks + live tail). Block-tree remounts used to
+    // flash the whole document on every agent rewrite / window fill.
+    return (
+      <StreamingMarkdownDocument
+        path={path}
+        text={text}
+        selecting={selecting}
+        selectedIds={selectedIds}
+        onSelectBlock={onSelectBlock}
+        onAskAgent={onAskAgent}
+      />
+    )
+  }
+
+  if (notebook) {
+    const cells = parseNotebookBlocks(text)
+    if (cells.length === 0) {
+      return (
+        <EmptyState title={t('preview.emptyFile')} description={t('preview.emptyFileDesc')} />
+      )
+    }
+    return (
+      <div className={`preview-document notebook${selecting ? ' selecting' : ''}`}>
+        {cells.map((cell) => {
+          const selected = selecting && selectedIds.includes(cell.id)
+          const body = !cell.language ? (
+            <MarkdownView source={cell.text} filePath={path} />
+          ) : (
+            <pre className="file-viewer-code">
+              <code
+                className="hljs"
+                dangerouslySetInnerHTML={{
+                  __html: highlightCode(cell.text, cell.language || 'python')
+                }}
+              />
+            </pre>
+          )
+          if (!selecting) {
+            return (
+              <div key={cell.id} className="preview-notebook-cell">
+                {body}
+              </div>
+            )
+          }
+          return (
+            <div
+              key={cell.id}
+              className={`preview-notebook-cell preview-select-region${selected ? ' selected' : ''}`}
+              onMouseDown={(event) =>
+                handleClickPickMouseDown(event, () => onSelectBlock(cell.id, null))
+              }
+              onContextMenu={(event) => {
+                event.preventDefault()
+                void window.vav.window
+                  .popupMenu(
+                    [
+                      { id: 'copy', label: t('preview.copyBlock') },
+                      { id: 'analyze', label: t('preview.analyzeBlock') },
+                      { id: 'refactor', label: t('preview.refactorBlock') }
+                    ],
+                    { x: event.clientX, y: event.clientY }
+                  )
+                  .then((id) => {
+                    if (id === 'copy') void window.vav.conversations.copyToClipboard(cell.text)
+                    if (id === 'analyze') onAskAgent(t('preview.analyzePrompt'), cell)
+                    if (id === 'refactor') onAskAgent(t('preview.refactorPrompt'), cell)
+                  })
+              }}
+            >
+              {body}
+            </div>
+          )
+        })}
+      </div>
+    )
+  }
+
+  return (
+    <CodeBlockCanvas
+      path={path}
+      text={text}
+      lineOriented={lineOriented}
+      selecting={selecting}
+      blocks={blocks}
+      selectedIds={selectedIds}
+      selectedBlocks={selectedBlocks}
+      onSelectBlock={onSelectBlock}
+      onSelectLine={onSelectLine}
+      onNearEnd={onNearEnd}
+      onAskAgent={onAskAgent}
+    />
+  )
+}
+
+/**
+ * Continuous highlighted source with whole-block outlines (not per-line paint).
+ *
+ * Viewport virtualization: only the visible window (+ overscan) is highlighted
+ * and mounted as DOM. Full-file highlight of large XML/JSON was freezing open.
+ * Selection overlays still use absolute line ranges against the virtual height.
+ */
+const CODE_OVERSCAN_LINES = 48
+/** Below this line count, render everything (small files stay simple). */
+const CODE_VIRTUALIZE_MIN_LINES = 200
+
+function CodeBlockCanvas({
+  path,
+  text,
+  lineOriented = false,
+  selecting,
+  blocks,
+  selectedIds,
+  selectedBlocks,
+  onSelectBlock,
+  onSelectLine,
+  onNearEnd,
+  onAskAgent
+}: {
+  path: string
+  text: string
+  lineOriented?: boolean
+  selecting: boolean
+  blocks: PreviewBlock[]
+  selectedIds: string[]
+  selectedBlocks: PreviewBlock[]
+  onSelectBlock: (id: string, event?: React.MouseEvent | ClickPickPointer | null) => void
+  onSelectLine: (line: number, event?: React.MouseEvent | ClickPickPointer | null) => void
+  onNearEnd?: () => void
+  onAskAgent: (prompt: string, target: PreviewBlock) => void
+}): React.JSX.Element {
+  const t = useT()
+  const language = languageFromPath(path)
+  const lines = useMemo(() => text.split(/\r?\n/), [text])
+  const virtualize = lines.length >= CODE_VIRTUALIZE_MIN_LINES
+  const [hoveredId, setHoveredId] = useState<string | null>(null)
+  const containerRef = useRef<HTMLPreElement>(null)
+  const canvasRef = useRef<HTMLDivElement>(null)
+  const [linePx, setLinePx] = useState(0)
+  const [viewport, setViewport] = useState({ scrollTop: 0, height: 600 })
+  const [contentMinWidth, setContentMinWidth] = useState(0)
+  /** Overlay width in px = max content width of lines in the block range. */
+  const [overlayWidths, setOverlayWidths] = useState<Record<string, number>>({})
+  const scrollRaf = useRef(0)
+  const onNearEndRef = useRef(onNearEnd)
+  onNearEndRef.current = onNearEnd
+
+  // Measure line-height from a real line box (must match CSS --code-line-height).
+  // Runs every render rather than on a dep list: type zoom changes the line box
+  // without touching the text, and virtual scroll math built on a stale pitch
+  // paints blank bands.
+  useLayoutEffect(() => {
+    const el = containerRef.current
+    if (!el) return
+    const probe = el.querySelector<HTMLElement>('.preview-code-line')
+    const measured = probe ? probe.getBoundingClientRect().height : 0
+    let next = measured
+    if (!(next > 0)) {
+      const cs = getComputedStyle(el)
+      const fontSize = parseFloat(cs.fontSize) || 12
+      const lh = parseFloat(cs.lineHeight)
+      next = Number.isFinite(lh) && lh > 0 ? lh : fontSize * 1.55
+    }
+    if (Math.abs(next - linePx) < 0.5) return
+    setLinePx(next)
+  })
+
+  useEffect(() => {
+    const el = containerRef.current
+    if (!el) return
+    const sync = (): void => {
+      if (scrollRaf.current) return
+      scrollRaf.current = requestAnimationFrame(() => {
+        scrollRaf.current = 0
+        // Read from the scrolling element only — body must not scroll instead.
+        const scrollTop = el.scrollTop
+        const height = el.clientHeight || 600
+        setViewport({ scrollTop, height })
+        // Seamless window fill: near the bottom of *loaded* content, pull more.
+        const room = el.scrollHeight - scrollTop - height
+        if (room < Math.max(320, height * 0.6)) {
+          onNearEndRef.current?.()
+        }
+      })
+    }
+    sync()
+    el.addEventListener('scroll', sync, { passive: true })
+    const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(sync) : null
+    ro?.observe(el)
+    return () => {
+      el.removeEventListener('scroll', sync)
+      ro?.disconnect()
+      if (scrollRaf.current) cancelAnimationFrame(scrollRaf.current)
+    }
+  }, [lines.length, virtualize])
+
+  const lh = linePx > 0 ? linePx : 19
+  const range = useMemo(() => {
+    if (!virtualize) return { start: 0, end: lines.length }
+    const start = Math.max(0, Math.floor(viewport.scrollTop / lh) - CODE_OVERSCAN_LINES)
+    const visible = Math.ceil(Math.max(viewport.height, 1) / lh) + CODE_OVERSCAN_LINES * 2
+    const end = Math.min(lines.length, start + Math.max(visible, 60))
+    return { start, end }
+  }, [virtualize, viewport.scrollTop, viewport.height, lh, lines.length])
+
+  // Highlight only the visible window — never the whole file.
+  const visibleHtml = useMemo(() => {
+    const out: string[] = []
+    for (let i = range.start; i < range.end; i++) {
+      out.push(highlightCode(lines[i] ?? '', language) || ' ')
+    }
+    return out
+  }, [lines, range.start, range.end, language])
+
+  const hoverBlock = useMemo((): PreviewBlock | null => {
+    if (!selecting || !hoveredId || selectedIds.includes(hoveredId)) return null
+    if (lineOriented && hoveredId.startsWith('line-L')) {
+      const line = Number(hoveredId.slice('line-L'.length))
+      if (!Number.isFinite(line) || line < 1 || line > lines.length) return null
+      return {
+        id: hoveredId,
+        kind: 'line',
+        text: lines[line - 1] ?? '',
+        startLine: line,
+        endLine: line,
+        label: `L${line}`
+      }
+    }
+    return findBlockById(blocks, hoveredId)
+  }, [selecting, hoveredId, selectedIds, lineOriented, lines, blocks])
+
+  /**
+   * Absolute overlays for structured/code blocks. Line-oriented logs paint
+   * selection on the row DOM itself (avoids ghost boxes in empty flex space).
+   */
+  const overlays = useMemo(() => {
+    if (!selecting || lineOriented) return []
+    const result: {
+      id: string
+      startLine: number
+      endLine: number
+      selected: boolean
+      hovered: boolean
+    }[] = []
+    for (const block of selectedBlocks) {
+      result.push({
+        id: block.id,
+        startLine: block.startLine,
+        endLine: block.endLine,
+        selected: true,
+        hovered: false
+      })
+    }
+    if (hoverBlock) {
+      result.push({
+        id: hoverBlock.id,
+        startLine: hoverBlock.startLine,
+        endLine: hoverBlock.endLine,
+        selected: false,
+        hovered: true
+      })
+    }
+    return result
+  }, [selecting, lineOriented, selectedBlocks, hoverBlock])
+
+  // Measure visible line widths for horizontal scroll + tight selection boxes.
+  useLayoutEffect(() => {
+    const canvas = canvasRef.current
+    if (!canvas) return
+    const lineEls = canvas.querySelectorAll<HTMLElement>('.preview-code-line')
+    let maxW = 0
+    lineEls.forEach((lineEl) => {
+      const content = (lineEl.firstElementChild as HTMLElement | null) ?? lineEl
+      maxW = Math.max(maxW, content.offsetWidth, content.scrollWidth)
+    })
+    if (maxW > 0) {
+      setContentMinWidth((prev) => (maxW > prev ? maxW : prev))
+    }
+
+    if (!selecting || overlays.length === 0) {
+      setOverlayWidths((prev) => (Object.keys(prev).length === 0 ? prev : {}))
+      return
+    }
+    const next: Record<string, number> = {}
+    for (const ov of overlays) {
+      // Only measure intersection with the mounted window.
+      const from = Math.max(ov.startLine - 1, range.start)
+      const to = Math.min(ov.endLine, range.end)
+      let max = 0
+      for (let i = from; i < to; i++) {
+        const lineEl = lineEls[i - range.start]
+        if (!lineEl) continue
+        const content = (lineEl.firstElementChild as HTMLElement | null) ?? lineEl
+        max = Math.max(max, content.offsetWidth, content.scrollWidth)
+      }
+      next[ov.id] = Math.max(max, overlayWidths[ov.id] ?? 0, 8)
+    }
+    setOverlayWidths((prev) => {
+      const keys = Object.keys(next)
+      if (
+        keys.length === Object.keys(prev).length &&
+        keys.every((k) => prev[k] === next[k])
+      ) {
+        return prev
+      }
+      return { ...prev, ...next }
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- overlayWidths read is a floor, not a dep
+  }, [selecting, overlays, visibleHtml, range.start, range.end])
+
+  /** Map pointer → line; null when outside real content (not empty flex padding). */
+  const lineAtPointer = (event: React.MouseEvent): number | null => {
+    const el = containerRef.current
+    if (!el || lines.length <= 0) return null
+    const rect = el.getBoundingClientRect()
+    const y = event.clientY - rect.top + el.scrollTop
+    const contentH = lines.length * lh
+    // Clicks in leftover flex/empty area below the last line must not pick.
+    if (y < 0 || y >= contentH) return null
+    const lineNo = Math.floor(y / lh) + 1
+    if (lineNo < 1 || lineNo > lines.length) return null
+    return lineNo
+  }
+
+  const handleMouseMove = (event: React.MouseEvent): void => {
+    if (!selecting) return
+    const lineNo = lineAtPointer(event)
+    if (lineNo == null) {
+      setHoveredId(null)
+      return
+    }
+    if (lineOriented) {
+      setHoveredId(`line-L${lineNo}`)
+      return
+    }
+    const hit = pickBlockAtLine(blocks, lineNo, text)
+    setHoveredId(hit?.id ?? null)
+  }
+
+  const handlePointerPick = (event: React.MouseEvent): void => {
+    if (!selecting) return
+    // Capture line under pointer at mousedown — drag may move the cursor.
+    const lineNo = lineAtPointer(event)
+    if (lineNo == null) return
+    // Skip pure-empty rows in log mode — they produced ghost 8px boxes.
+    if (lineOriented && !(lines[lineNo - 1] ?? '').trim()) return
+    handleClickPickMouseDown(event, () => onSelectLine(lineNo, null), {
+      stopPropagation: false
+    })
+  }
+
+  const handleContextMenu = (event: React.MouseEvent): void => {
+    if (!selecting) return
+    event.preventDefault()
+    const lineNo = lineAtPointer(event)
+    if (lineNo == null) return
+    if (lineOriented && !(lines[lineNo - 1] ?? '').trim()) return
+    const hit = lineOriented
+      ? ({
+          id: `line-L${lineNo}`,
+          kind: 'line' as const,
+          text: lines[lineNo - 1] ?? '',
+          startLine: lineNo,
+          endLine: lineNo,
+          label: `L${lineNo}`
+        } satisfies PreviewBlock)
+      : pickBlockAtLine(blocks, lineNo, text)
+    if (!hit) return
+    const parent = lineOriented ? null : parentBlockOf(blocks, hit.id)
+    void window.vav.window
+      .popupMenu(
+        [
+          { id: 'copy', label: t('preview.copyBlock') },
+          { id: 'analyze', label: t('preview.analyzeBlock') },
+          { id: 'refactor', label: t('preview.refactorBlock') },
+          ...(parent ? [{ id: 'parent', label: t('preview.selectParent') }] : [])
+        ],
+        { x: event.clientX, y: event.clientY }
+      )
+      .then((id) => {
+        if (id === 'copy') void window.vav.conversations.copyToClipboard(hit.text)
+        if (id === 'analyze') onAskAgent(t('preview.analyzePrompt'), hit)
+        if (id === 'refactor') onAskAgent(t('preview.refactorPrompt'), hit)
+        if (id === 'parent' && parent) onSelectBlock(parent.id, event)
+      })
+  }
+
+  const totalHeight = Math.max(lh, lines.length * lh)
+  const padTop = range.start * lh
+  const padBottom = Math.max(0, (lines.length - range.end) * lh)
+
+  return (
+    <pre
+      ref={containerRef}
+      className={`file-viewer-code continuous${selecting ? ' selecting' : ''}${
+        virtualize ? ' is-virtualized' : ''
+      }`}
+      onMouseMove={selecting ? handleMouseMove : undefined}
+      onMouseLeave={() => setHoveredId(null)}
+      onMouseDown={selecting ? handlePointerPick : undefined}
+      onContextMenu={selecting ? handleContextMenu : undefined}
+    >
+      <div
+        className="preview-code-canvas"
+        ref={canvasRef}
+        style={{
+          // Prefer padding spacers over a single absolute window + fixed height
+          // so scrollHeight always matches line count × line height.
+          minHeight: virtualize ? totalHeight : undefined,
+          height: virtualize ? totalHeight : undefined,
+          minWidth: contentMinWidth > 0 ? contentMinWidth : undefined,
+          position: 'relative'
+        }}
+      >
+        <div
+          className="preview-code-window"
+          style={
+            virtualize
+              ? {
+                  position: 'absolute',
+                  top: padTop,
+                  left: 0,
+                  minWidth: '100%',
+                  // Bottom spacer via canvas height; window only hosts visible lines.
+                  paddingBottom: 0
+                }
+              : { minWidth: '100%' }
+          }
+        >
+          {visibleHtml.map((html, i) => {
+            const lineNo = range.start + i + 1
+            const lineId = `line-L${lineNo}`
+            const rowSelected =
+              lineOriented && selecting && selectedIds.includes(lineId)
+            const rowHovered =
+              lineOriented && selecting && hoveredId === lineId && !rowSelected
+            return (
+              <div
+                className={[
+                  'preview-code-line',
+                  rowSelected ? 'is-selected' : '',
+                  rowHovered ? 'is-hovered' : ''
+                ]
+                  .filter(Boolean)
+                  .join(' ')}
+                key={lineNo}
+                data-line={lineNo}
+              >
+                <code className="hljs" dangerouslySetInnerHTML={{ __html: html }} />
+              </div>
+            )
+          })}
+        </div>
+        {/* Invisible bottom sentinel keeps total scroll extent stable if height math drifts. */}
+        {virtualize && padBottom > 0 ? (
+          <div aria-hidden style={{ position: 'absolute', top: totalHeight - 1, height: 1, width: 1 }} />
+        ) : null}
+        {/* Structured/code block overlays only — logs use row .is-selected. */}
+        {overlays.map((ov) => (
+          <div
+            key={`ov-${ov.id}`}
+            className={`preview-code-overlay${ov.selected ? ' selected' : ''}${ov.hovered ? ' hovered' : ''}`}
+            style={{
+              top: (ov.startLine - 1) * lh,
+              height: Math.max(lh, (ov.endLine - ov.startLine + 1) * lh),
+              width: overlayWidths[ov.id] != null ? `${overlayWidths[ov.id]}px` : undefined
+            }}
+          />
+        ))}
+      </div>
+    </pre>
+  )
+}
+
+/** Truncate cell text in the DOM (title still holds full value for hover). */
+const CSV_CELL_DISPLAY_CAP = 120
+
+/**
+ * Sheet-style CSV: sticky header/gutter, scroll-virtualized rows, cell/row/col pick
+ * using the same preview-select-region chrome as code/MD.
+ */
+function CsvView({
+  model,
+  selecting,
+  selectedIds,
+  onSelect
+}: {
+  model: ReturnType<typeof parseCsvModel>
+  selecting: boolean
+  selectedIds: string[]
+  onSelect: (
+    id: string,
+    event?: React.MouseEvent | ClickPickPointer | null,
+    hint?: PreviewBlock
+  ) => void
+}): React.JSX.Element {
+  const t = useT()
+  const wrapRef = useRef<HTMLDivElement>(null)
+  const selected = useMemo(() => new Set(selectedIds), [selectedIds])
+  const total = model.rows.length
+  const {
+    rowStart,
+    rowEnd,
+    topPad,
+    bottomPad,
+    revealRow,
+    onScroll: onWrapScroll,
+    resetScroll
+  } = useSheetVirtualWindow(wrapRef, total, `${model.headers.join('\0')}:${total}`)
+
+  useEffect(() => {
+    resetScroll()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [model])
+
+  // Keep the selected row visible when selection changes from outside.
+  useEffect(() => {
+    for (const id of selectedIds) {
+      const cell = /^cell-r(\d+)-c(\d+)$/.exec(id)
+      const row = /^row-(\d+)$/.exec(id)
+      const parsed = cell ? Number(cell[1]) - 1 : row ? Number(row[1]) - 1 : null
+      if (parsed == null) continue
+      if (parsed >= 0 && parsed < model.rows.length) {
+        if (parsed < rowStart || parsed >= rowEnd) revealRow(parsed)
+      }
+      break
+    }
+    // Only react to selection identity, not window offsets themselves.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedIds, model.rows.length])
+
+  if (model.headers.length === 0) return <div className="muted">{t('common.empty')}</div>
+
+  // Avoid Math.max(...spread) on huge row arrays (stack/alloc blow-up).
+  let maxRowCols = model.headers.length
+  const probe = Math.min(model.rows.length, 50)
+  for (let i = 0; i < probe; i++) {
+    const n = model.rows[i]?.length ?? 0
+    if (n > maxRowCols) maxRowCols = n
+  }
+  const totalCols = Math.max(maxRowCols, 1)
+  const visibleColIndexes = Array.from({ length: totalCols }, (_, i) => i)
+  const headers = Array.from({ length: totalCols }, (_, i) => model.headers[i] ?? `col${i + 1}`)
+  const slice = model.rows.slice(rowStart, rowEnd)
+  const paintedColSpan = totalCols + 1
+
+  const pick = (id: string, event: React.MouseEvent, hint?: PreviewBlock): void => {
+    // Click (not drag) → conversation pick; drag → native text select/copy.
+    handleClickPickMouseDown(event, () => onSelect(id, null, hint))
+  }
+
+  const displayCell = (cell: string): string =>
+    cell.length > CSV_CELL_DISPLAY_CAP ? `${cell.slice(0, CSV_CELL_DISPLAY_CAP)}…` : cell
+
+  return (
+    <div className={`csv-sheet-root${selecting ? ' selecting' : ''}`}>
+      <div className="csv-sheet-wrap file-viewer-table" ref={wrapRef} onScroll={onWrapScroll}>
+        <table
+          className="csv-sheet"
+          style={{ ['--gutter-digits' as string]: Math.max(2, String(total).length) }}
+        >
+          <thead>
+            <tr>
+              {/* Sticky row×col junction — keep a glyph so width never collapses to 72px. */}
+              <th className="csv-sheet-gutter csv-sheet-corner" aria-hidden="true">
+                #
+              </th>
+              {visibleColIndexes.map((index) => {
+                const name = headers[index] ?? `col${index + 1}`
+                const id = csvColId(name, index)
+                const on = selecting && selected.has(id)
+                return (
+                  <th
+                    key={id}
+                    className={`csv-sheet-colhead preview-select-region${on ? ' selected' : ''}`}
+                    data-block-id={id}
+                    title={name}
+                    onMouseDown={
+                      selecting
+                        ? (e) => {
+                            const hint: PreviewBlock = {
+                              id,
+                              kind: 'col',
+                              text: name,
+                              label: `col ${name}`,
+                              startLine: 1,
+                              endLine: total + 1
+                            }
+                            pick(id, e, hint)
+                          }
+                        : undefined
+                    }
+                  >
+                    <span className="csv-sheet-col-label">{name || `col ${index + 1}`}</span>
+                  </th>
+                )
+              })}
+            </tr>
+          </thead>
+          <tbody>
+            {topPad > 0 && (
+              <tr aria-hidden className="csv-sheet-spacer">
+                <td
+                  colSpan={paintedColSpan}
+                  style={{ height: topPad, padding: 0, border: 'none' }}
+                />
+              </tr>
+            )}
+            {slice.map((row, offset) => {
+              const rowIndex = rowStart + offset
+              const rowId = `row-${rowIndex + 1}`
+              const rowOn = selecting && selected.has(rowId)
+              // Build row hint only if selecting — avoid string work on every paint.
+              const rowHint = selecting ? csvRowBlock(headers, row, rowIndex) : undefined
+              return (
+                <tr key={rowId} className={rowOn ? 'row-selected' : undefined}>
+                  <th
+                    className={`csv-sheet-gutter preview-select-region${rowOn ? ' selected' : ''}`}
+                    data-block-id={rowId}
+                    title={selecting ? t('preview.selectRow') : undefined}
+                    onMouseDown={
+                      selecting && rowHint
+                        ? (e) => pick(rowId, e, rowHint)
+                        : undefined
+                    }
+                  >
+                    {rowIndex + 1}
+                  </th>
+                  {visibleColIndexes.map((cellIndex) => {
+                    const cell = row[cellIndex] ?? ''
+                    const cellId = `cell-r${rowIndex + 1}-c${cellIndex}`
+                    const on = selecting && selected.has(cellId)
+                    return (
+                      <td
+                        key={cellId}
+                        className={`preview-select-region${on ? ' selected' : ''}${cell ? '' : ' is-empty'}`}
+                        data-block-id={cellId}
+                        title={cell.length > CSV_CELL_DISPLAY_CAP ? cell : undefined}
+                        onMouseDown={
+                          selecting
+                            ? (e) => {
+                                pick(cellId, e, csvCellBlock(headers, row, rowIndex, cellIndex))
+                              }
+                            : undefined
+                        }
+                      >
+                        {displayCell(cell)}
+                      </td>
+                    )
+                  })}
+                </tr>
+              )
+            })}
+            {bottomPad > 0 && (
+              <tr aria-hidden className="csv-sheet-spacer">
+                <td
+                  colSpan={paintedColSpan}
+                  style={{ height: bottomPad, padding: 0, border: 'none' }}
+                />
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  )
 }
 

@@ -9,6 +9,7 @@ import type {
   TextWindowResult
 } from '@shared/ipc'
 import { localFileStreamUrl } from '@shared/localFileUrl'
+import { mimeForPreviewKind, previewKind } from '@shared/previewKind'
 import { inspectSqlite, isSqlitePath, querySqliteTable } from './SqliteService'
 import {
   DIRECTORY_ENTRY_CAP,
@@ -27,7 +28,6 @@ import type { WorkingCopyService } from './WorkingCopyService'
 import { localHostFs, type HostFs, type HostWatcher } from '../host'
 import { conversationIdForWatchedPath } from './conversationPath'
 import { isPathAllowed } from './pathAllow'
-import { previewKind, mimeFor } from './filePreviewKind'
 import { sortEntries, capVisibleEntries, directoryFileEntry, directoryListingError } from './fileEntrySort'
 import { isInvalidRenameName, joinOnHostPath } from './fileHostPath'
 import {
@@ -399,7 +399,7 @@ export class FileService {
       if (rejected) return rejected
       const kind = previewKind(basename(path))
       const buffer = await hostFs.readFile(io)
-      return readBinarySuccess(buffer, mimeFor(basename(path), kind))
+      return readBinarySuccess(buffer, mimeForPreviewKind(basename(path), kind))
     } catch (err) {
       return caughtIoError(err)
     }
@@ -527,7 +527,7 @@ export class FileService {
       if (kind === 'binary' && (await looksLikeTextFile(hostFs, path, info.size))) {
         kind = 'text'
       }
-      const mime = mimeFor(name, kind)
+      const mime = mimeForPreviewKind(name, kind)
       const base = inspectFileBase({
         path,
         name,

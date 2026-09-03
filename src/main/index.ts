@@ -6540,6 +6540,7 @@ return c as text`
       ) {
         return false
       }
+
       clearUnseenForConversation(id)
       persistResultUnseen(id, false)
       return true
@@ -6553,6 +6554,7 @@ return c as text`
     applyFast: (id) => cliHost.applyFast(id),
     applySessionMode: (id, modeId) => cliHost.applySessionMode(id, modeId),
     applySessionConfig: (id, configId, value) => cliHost.applySessionConfig(id, configId, value),
+    applySessionGoal: (id, action, objective) => cliHost.applySessionGoal(id, action, objective),
     exportPack: (ids, sender) => {
       const win = BrowserWindow.fromWebContents(sender as Electron.WebContents)
       return vavPackService.exportConversations(ids, win)
