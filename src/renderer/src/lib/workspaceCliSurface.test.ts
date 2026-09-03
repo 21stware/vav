@@ -13,10 +13,14 @@ import {
   planCloseAgentTabPatch,
   planEnterCliMode,
   planFocusCliScreenPatch,
+  planSelectAgentTabPatch,
   planSplitAgentHost,
   planSplitCliSurface,
   preferredCliAssignTabId,
   resolveCloseAgentTabMeta,
+  resolveInjectAgentId,
+  resolveInjectTabId,
+  resolveSelectAgentTabKey,
   seedAgentHostSession,
   solePendingCliTabId,
   reconcileAgentHosts,
@@ -369,5 +373,60 @@ describe('workspaceCliSurface', () => {
     assert.equal(host.tabs[0]?.isAgent, false)
     assert.equal(host.activeTabId, 'pty-1')
     assert.deepEqual(collectLeaves(host.layout), ['pty-1'])
+  })
+
+  it('selects the Screen key when mixed panes exist, else the painted host', () => {
+    assert.equal(
+      resolveSelectAgentTabKey({
+        agentHostSessions: { [CLI_SURFACE_KEY]: seedAgentHostSession('pty-1', 'claude', 'Claude') },
+        cliMode: false,
+        activeHostAgentId: 'codex'
+      }),
+      CLI_SURFACE_KEY
+    )
+    assert.equal(
+      resolveSelectAgentTabKey({
+        agentHostSessions: {},
+        cliMode: true,
+        activeHostAgentId: null
+      }),
+      CLI_SURFACE_KEY
+    )
+    assert.equal(
+      resolveSelectAgentTabKey({
+        agentHostSessions: {},
+        cliMode: false,
+        activeHostAgentId: 'claude'
+      }),
+      'claude'
+    )
+    const host = seedAgentHostSession('pty-1', 'claude', 'Claude')
+    const patched = planSelectAgentTabPatch(
+      { agentHostSessions: { claude: host }, cliMode: false },
+      'claude',
+      host,
+      'pty-2'
+    )
+    assert.equal(patched.cliMode, false)
+    assert.equal(patched.activeHostAgentId, 'claude')
+    assert.equal(patched.agentHostSessions.claude?.activeTabId, 'pty-2')
+    const screen = planSelectAgentTabPatch(
+      { agentHostSessions: { [CLI_SURFACE_KEY]: host }, cliMode: false },
+      CLI_SURFACE_KEY,
+      host,
+      'pty-1'
+    )
+    assert.equal(screen.cliMode, true)
+  })
+
+  it('resolves inject targets: preferred host, then painted host, then bash', () => {
+    assert.equal(resolveInjectAgentId('claude', true, 'codex'), 'claude')
+    assert.equal(resolveInjectAgentId('claude', false, 'codex'), 'codex')
+    assert.equal(resolveInjectAgentId('claude', false, null), 'claude')
+    const host = { activeTabId: 'h1', tabs: [{ id: 'h1' }, { id: 'h2' }] }
+    const bash = { activeTabId: 'b1', tabs: [{ id: 'b1' }] }
+    assert.equal(resolveInjectTabId('claude', host, bash), 'h1')
+    assert.equal(resolveInjectTabId(null, null, bash), 'b1')
+    assert.equal(resolveInjectTabId('claude', null, bash), undefined)
   })
 })

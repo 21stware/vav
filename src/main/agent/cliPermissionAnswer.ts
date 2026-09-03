@@ -34,3 +34,23 @@ export function findPendingPermission<T extends { toolCallId: string }>(
 ): T | undefined {
   return pending.get(toolCallId) || [...pending.values()].find((p) => p.toolCallId === toolCallId)
 }
+
+/** Stamp a permission card after the user answers; clear interactive choices. */
+export function patchedPermissionToolBlock<T extends object>(
+  block: T,
+  kind: string,
+  allow: boolean,
+  text: string,
+  labels: { accepted: string; rejected: string; approved: string; denied: string }
+): T & {
+  status: 'executing' | 'completed' | 'skipped'
+  output: string
+  choices: undefined
+} {
+  return {
+    ...block,
+    status: cliPermissionStatus(kind, allow),
+    output: cliPermissionOutput(kind, allow, text, labels),
+    choices: undefined
+  }
+}

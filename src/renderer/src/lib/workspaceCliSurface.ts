@@ -49,6 +49,67 @@ export function pickCliScreenFocusTab<T extends { pendingCli?: boolean; agentId?
   )
 }
 
+/** Unified Screen when it exists; otherwise the painted per-agent host. */
+export function resolveSelectAgentTabKey(s: {
+  agentHostSessions: Record<string, AgentHostSession>
+  cliMode: boolean
+  activeHostAgentId: string | null
+}): string | null {
+  return s.agentHostSessions[CLI_SURFACE_KEY] != null || s.cliMode
+    ? CLI_SURFACE_KEY
+    : s.activeHostAgentId
+}
+
+/** Focus a pane inside the selected host without re-keying mixed Screen tabs. */
+export function planSelectAgentTabPatch(
+  s: {
+    agentHostSessions: Record<string, AgentHostSession>
+    cliMode: boolean
+  },
+  key: string,
+  host: AgentHostSession,
+  tabId: string
+): {
+  cliMode: boolean
+  activeHostAgentId: string
+  agentHostSessions: Record<string, AgentHostSession>
+} {
+  return {
+    cliMode: key === CLI_SURFACE_KEY ? true : s.cliMode,
+    activeHostAgentId: key,
+    agentHostSessions: {
+      ...s.agentHostSessions,
+      [key]: { ...host, activeTabId: tabId }
+    }
+  }
+}
+
+/** Meta-driven agentId wins over whichever surface happens to be painted. */
+export function resolveInjectAgentId(
+  preferredAgentId: string | null,
+  preferredHostExists: boolean,
+  activeHostAgentId: string | null | undefined
+): string | null {
+  return (
+    (preferredAgentId && preferredHostExists ? preferredAgentId : null) ||
+    activeHostAgentId ||
+    preferredAgentId
+  )
+}
+
+/** Host pane first; bash tabs only when the inject is not pinned to an agent. */
+export function resolveInjectTabId(
+  preferredAgentId: string | null,
+  host: { activeTabId?: string; tabs: Array<{ id: string }> } | null | undefined,
+  bash: { activeTabId?: string; tabs: Array<{ id: string }> } | null | undefined
+): string | undefined {
+  return (
+    host?.activeTabId ||
+    host?.tabs[0]?.id ||
+    (!preferredAgentId ? bash?.activeTabId || bash?.tabs[0]?.id : undefined)
+  )
+}
+
 /** Pin Screen mode and activate a pane without re-keying mixed hosts. */
 export function planFocusCliScreenPatch(
   prev: { agentHostSessions: Record<string, AgentHostSession> },

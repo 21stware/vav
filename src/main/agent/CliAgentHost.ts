@@ -101,12 +101,13 @@ import {
 import { parkInteractivePatch, parkedPermissionWaiter } from './cliPark'
 import { shouldFoldChecklistTool, skipEmptyChecklistUpdate, checklistPlanFields } from './cliChecklist'
 import { elicitationCardFields, findPendingElicitationIndex } from './cliElicitation'
-import { cliPermissionAllow, cliPermissionOutput, cliPermissionStatus, findPendingPermission } from './cliPermissionAnswer'
+import { cliPermissionAllow, findPendingPermission, patchedPermissionToolBlock } from './cliPermissionAnswer'
 import {
   isDuplicateTokenSnapshot,
   usageContextFill,
   usageEventIsNoop,
-  usageHasTurnTokens
+  usageHasTurnTokens,
+  usageSnapshotPayload
 } from './cliUsage'
 import {
   applyCliHistoryHandoff,
@@ -515,17 +516,12 @@ export class CliAgentHost {
     if (idx != null) {
       const block = turn.blocks[idx]
       if (block?.kind === 'toolCall') {
-        const next: ToolCallBlock = {
-          ...block,
-          status: cliPermissionStatus(pending.kind, allow),
-          output: cliPermissionOutput(pending.kind, allow, text, {
-            accepted: t('planDoc.accepted'),
-            rejected: t('planDoc.rejected'),
-            approved: 'Approved',
-            denied: 'Denied'
-          }),
-          choices: undefined
-        }
+        const next: ToolCallBlock = patchedPermissionToolBlock(block, pending.kind, allow, text, {
+          accepted: t('planDoc.accepted'),
+          rejected: t('planDoc.rejected'),
+          approved: 'Approved',
+          denied: 'Denied'
+        })
         turn.blocks[idx] = next
         this.deps.emit({ type: 'tool', conversationId, index: idx, block: next })
         if (allow && pending.kind === 'plan_doc') {
@@ -1618,18 +1614,7 @@ export class CliAgentHost {
   private emitUsageSnapshot(conversationId: string, extras?: { newSnapshot?: boolean }): void {
     const updated = this.deps.conversations.get(conversationId)
     if (!updated) return
-    this.deps.emit({
-      type: 'usage',
-      conversationId,
-      tokensUsed: updated.tokensUsed,
-      tokenLimit: updated.tokenLimit,
-      history: updated.tokenHistory,
-      cacheCreatedAt: updated.cacheCreatedAt,
-      cacheExpiresAt: updated.cacheExpiresAt,
-      reportedSessionCostUsd: updated.reportedSessionCostUsd ?? null,
-      quotaWindows: updated.quotaWindows ?? [],
-      newSnapshot: extras?.newSnapshot === true
-    })
+    this.deps.emit(usageSnapshotPayload(conversationId, updated, extras))
   }
 
   private applyUsage(

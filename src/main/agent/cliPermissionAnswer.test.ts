@@ -4,7 +4,8 @@ import {
   cliPermissionAllow,
   cliPermissionOutput,
   cliPermissionStatus,
-  findPendingPermission
+  findPendingPermission,
+  patchedPermissionToolBlock
 } from './cliPermissionAnswer.ts'
 
 const labels = {
@@ -36,6 +37,25 @@ describe('cliPermissionStatus / output', () => {
     assert.equal(cliPermissionOutput('plan_doc', false, 'x', labels), 'Rejected')
     assert.equal(cliPermissionOutput('permission', true, 'x', labels), 'Approved')
     assert.equal(cliPermissionOutput('url', false, 'x', labels), 'Denied')
+  })
+
+  it('stamps status/output onto the card and clears choices', () => {
+    const block = {
+      kind: 'toolCall' as const,
+      id: 't1',
+      tool: 'permission',
+      summary: 'Allow?',
+      input: '{}',
+      output: '',
+      status: 'pending' as const,
+      choices: ['Approve', 'Deny']
+    }
+    const next = patchedPermissionToolBlock(block, 'permission', true, 'Approve', labels)
+    assert.equal(next.status, 'executing')
+    assert.equal(next.output, 'Approved')
+    assert.equal(next.choices, undefined)
+    assert.equal(next.id, 't1')
+    assert.equal(block.choices?.length, 2)
   })
 })
 

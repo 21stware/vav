@@ -23,6 +23,19 @@ export function isCliSurfaceLocked(
   return detachedIds.includes(conversationId)
 }
 
+/** Hydrate follows companion surface, or a detached id on the parked main window. */
+export function shouldFollowRemotePtySurface(opts: {
+  acceptRemoteSurface: boolean
+  isCompanion: boolean
+  conversationId: string
+  detachedIds: readonly string[]
+}): boolean {
+  return (
+    opts.acceptRemoteSurface ||
+    isCliSurfaceLocked(opts.conversationId, opts.detachedIds, opts.isCompanion)
+  )
+}
+
 /**
  * Warm-shell navigate: ignore a park/claim whose seq is older than one we
  * already applied (park `''` arriving after a newer claim).

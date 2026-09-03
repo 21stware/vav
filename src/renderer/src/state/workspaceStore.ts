@@ -10,6 +10,7 @@ const lastInjectFingerprint = new Map<string, string>()
 const pendingInjectTimers = new Map<string, number>()
 import type { PtyActivityStatus, PtySessionMeta } from '@shared/ipc'
 import { makePendingCliTab, pendingTabFromId } from '../lib/cliPendingLayout'
+import { shouldFollowRemotePtySurface } from '../lib/cliSurfaceAuthority'
 import { removeLeaf, shouldRestoreCliLayoutAfterSync } from '../lib/workspaceLayout'
 import {
   CLI_SURFACE_KEY,
@@ -19,10 +20,14 @@ import {
   planCloseAgentTabPatch,
   planFocusCliScreenPatch,
   planEnterCliMode,
+  planSelectAgentTabPatch,
   planSplitAgentHost,
   planSplitCliSurface,
   preferredCliAssignTabId,
   resolveCloseAgentTabMeta,
+  resolveInjectAgentId,
+  resolveInjectTabId,
+  resolveSelectAgentTabKey,
   seedAgentHostSession,
   solePendingCliTabId,
   type AgentHostSession
@@ -535,7 +540,12 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     if (!followRemote && !isCompanionSessionShell()) {
       try {
         const { useSessionStore } = await import('./sessionStore')
-        followRemote = useSessionStore.getState().detachedConversationIds.includes(id)
+        followRemote = shouldFollowRemotePtySurface({
+          acceptRemoteSurface: false,
+          isCompanion: false,
+          conversationId: id,
+          detachedIds: useSessionStore.getState().detachedConversationIds
+        })
       } catch {
         followRemote = false
       }
@@ -1296,15 +1306,13 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       pendingInjectTimers.delete(id)
       const ws = get().workspaces[id]
       // Meta-driven agentId wins over whichever surface happens to be painted.
-      const agentId =
-        (preferredAgentId && getAgentHost(ws, preferredAgentId)
-          ? preferredAgentId
-          : null) ||
-        ws?.activeHostAgentId ||
-        preferredAgentId
+      const agentId = resolveInjectAgentId(
+        preferredAgentId,
+        !!(preferredAgentId && getAgentHost(ws, preferredAgentId)),
+        ws?.activeHostAgentId
+      )
       const host = agentId ? getAgentHost(ws, agentId) : null
-      const tabId = host?.activeTabId || host?.tabs[0]?.id
-        || (!preferredAgentId ? (ws?.activeTabId || ws?.tabs[0]?.id) : undefined)
+      const tabId = resolveInjectTabId(preferredAgentId, host, ws)
       if (!tabId) return
       if (fingerprint) {
         if (lastInjectFingerprint.get(tabId) === fingerprint) return
@@ -1328,10 +1336,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   selectAgentTab(id, tabId) {
     patch(set, id, (s) => {
       // Prefer unified CLI Screen whenever it exists (mixed-type panes).
-      const key =
-        s.agentHostSessions[CLI_SURFACE_KEY] != null || s.cliMode
-          ? CLI_SURFACE_KEY
-          : s.activeHostAgentId
+      const key = resolveSelectAgentTabKey(s)
       if (!key) return {}
       const host = getAgentHost(s, key)
       if (!host) return {}
@@ -1342,14 +1347,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
           void useSessionStore.getState().setAgentBinaryName(id, tab.agentId!)
         })
       }
-      return {
-        cliMode: key === CLI_SURFACE_KEY ? true : s.cliMode,
-        activeHostAgentId: key,
-        agentHostSessions: {
-          ...s.agentHostSessions,
-          [key]: { ...host, activeTabId: tabId }
-        }
-      }
+      return planSelectAgentTabPatch(s, key, host, tabId)
     })
   },
 

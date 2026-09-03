@@ -54,3 +54,42 @@ export function usageEventIsNoop(opts: {
     !opts.quotaChanged
   )
 }
+
+/** Renderer usage event from a conversation row after tokens/quota change. */
+export function usageSnapshotPayload<H, Q, C>(
+  conversationId: string,
+  updated: {
+    tokensUsed: number
+    tokenLimit: number
+    tokenHistory: H
+    cacheCreatedAt: C
+    cacheExpiresAt: C
+    reportedSessionCostUsd?: number | null
+    quotaWindows?: Q[] | null
+  },
+  extras?: { newSnapshot?: boolean }
+): {
+  type: 'usage'
+  conversationId: string
+  tokensUsed: number
+  tokenLimit: number
+  history: H
+  cacheCreatedAt: C
+  cacheExpiresAt: C
+  reportedSessionCostUsd: number | null
+  quotaWindows: Q[]
+  newSnapshot: boolean
+} {
+  return {
+    type: 'usage',
+    conversationId,
+    tokensUsed: updated.tokensUsed,
+    tokenLimit: updated.tokenLimit,
+    history: updated.tokenHistory,
+    cacheCreatedAt: updated.cacheCreatedAt,
+    cacheExpiresAt: updated.cacheExpiresAt,
+    reportedSessionCostUsd: updated.reportedSessionCostUsd ?? null,
+    quotaWindows: updated.quotaWindows ?? [],
+    newSnapshot: extras?.newSnapshot === true
+  }
+}
