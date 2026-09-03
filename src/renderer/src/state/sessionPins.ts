@@ -3,6 +3,8 @@
  * stay put (already in the desired state, or a synthetic path).
  */
 
+import { mergeConversationList, type ConversationListItem } from './sessionListMerge.ts'
+
 /** Favorite conversation ids: prepend on pin, drop on unpin. */
 export function nextFavoriteIds(
   current: readonly string[],
@@ -40,4 +42,22 @@ export function archivedListModePatch(
     return { sidebarListMode: 'main' }
   }
   return {}
+}
+
+/** Archive/unarchive: merge listMeta and maybe leave the archive sidebar. */
+export function setArchivedConversationPatch<C extends ConversationListItem>(
+  state: { conversations: C[] },
+  conversations: C[],
+  activeId: string | null,
+  sidebarListMode: string,
+  id: string,
+  archived: boolean
+): {
+  conversations: C[]
+  sidebarListMode?: 'main'
+} {
+  return {
+    conversations: mergeConversationList(state.conversations, conversations),
+    ...archivedListModePatch(activeId, sidebarListMode, id, archived)
+  }
 }

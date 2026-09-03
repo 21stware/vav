@@ -226,6 +226,17 @@ export function nextConversationSelection(opts: {
   return [opts.id]
 }
 
+/** After rename IPC: merge listMeta and leave rename mode. */
+export function renameConversationPatch<C extends ConversationListItem>(
+  state: { conversations: C[] },
+  conversations: C[]
+): { conversations: C[]; renamingId: null } {
+  return {
+    conversations: mergeConversationList(state.conversations, conversations),
+    renamingId: null
+  }
+}
+
 /** Archived sessions reject send / regenerate / compact / delete. */
 export function isArchivedConversation(
   conversations: Array<{ id: string; archived?: boolean }>,

@@ -18,6 +18,7 @@ import {
   projectPtySessions,
   ptyCreateOptions,
   ptyTabStatusPatch,
+  omitPtyTabStatusPatch,
   isCliAgentHostId,
   tabsEqual,
   toolsTrayAfterScrubbingAgentTabs,
@@ -192,5 +193,7 @@ describe('workspacePty', () => {
     const status = { c1: { sh: 'running' as const } }
     assert.equal(ptyTabStatusPatch(status, 'c1', 'sh', 'running'), null)
     assert.deepEqual(ptyTabStatusPatch(status, 'c1', 'sh', 'exited')?.ptyStatus.c1.sh, 'exited')
+    assert.equal(omitPtyTabStatusPatch(status, 'c1', 'missing'), null)
+    assert.deepEqual(omitPtyTabStatusPatch(status, 'c1', 'sh')?.ptyStatus.c1, {})
   })
 })

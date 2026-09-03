@@ -15,7 +15,8 @@ import {
   rememberSentToolCard,
   shouldAdoptMappedTool,
   shouldKeepPendingInteractive,
-  toolCallBlockIndex
+  toolCallBlockIndex,
+  ensureCliParentTask
 } from './cliToolBlock.ts'
 
 describe('cliToolBlock', () => {
@@ -191,5 +192,30 @@ describe('cliToolBlock', () => {
     assert.equal(rememberSentToolCard(sent, 't1', '{"a":1}'), true)
     assert.equal(rememberSentToolCard(sent, 't1', '{"a":1}'), false)
     assert.equal(rememberSentToolCard(sent, 't1', '{"a":2}'), true)
+  })
+
+  it('inserts a parent task once and seals open reasoning', () => {
+    const turn = {
+      blocks: [] as ReturnType<typeof newCliToolCallBlock>[],
+      toolIndex: new Map<string, number>(),
+      textIndex: 3 as number | null,
+      reasoningIndex: 1 as number | null
+    }
+    let sealed = 0
+    const first = ensureCliParentTask(turn, 'task-1', 'Task', () => {
+      sealed += 1
+    })
+    assert.equal(first.tool, 'task')
+    assert.equal(first.status, 'executing')
+    assert.equal(turn.blocks.length, 1)
+    assert.equal(turn.toolIndex.get('task-1'), 0)
+    assert.equal(turn.textIndex, null)
+    assert.equal(turn.reasoningIndex, null)
+    assert.equal(sealed, 1)
+    const again = ensureCliParentTask(turn, 'task-1', 'Task', () => {
+      sealed += 1
+    })
+    assert.equal(again, first)
+    assert.equal(sealed, 1)
   })
 })

@@ -94,9 +94,9 @@ import {
   appendNestedChildDelta,
   applyCliToolPatch,
   cliToolCardSummary,
-  newCliParentTaskBlock,
   newCliPermissionBlock,
-  newCliToolCallBlock
+  newCliToolCallBlock,
+  ensureCliParentTask
 } from './cliToolBlock'
 import { parkInteractivePatch, parkedPermissionWaiter } from './cliPark'
 import { shouldFoldChecklistTool, skipEmptyChecklistUpdate, checklistPlanFields } from './cliChecklist'
@@ -1403,15 +1403,7 @@ export class CliAgentHost {
   }
 
   private ensureParentTask(turn: HostTurn, parentId: string): ToolCallBlock {
-    const existing = findToolBlock(turn.blocks, parentId)
-    if (existing) return existing
-    const block = newCliParentTaskBlock(parentId, t('tool.task'))
-    turn.toolIndex.set(parentId, turn.blocks.length)
-    turn.blocks.push(block)
-    this.sealOpenReasoning(turn)
-    turn.textIndex = null
-    turn.reasoningIndex = null
-    return block
+    return ensureCliParentTask(turn, parentId, t('tool.task'), (next) => this.sealOpenReasoning(next))
   }
 
   private appendNestedDelta(

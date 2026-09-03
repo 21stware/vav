@@ -13,7 +13,7 @@ import type {
 import { DEFAULT_CLI_AGENTS, DEFAULT_SETTINGS } from '@shared/types'
 import type { WorkspaceHostInfo } from '@shared/workspaceHost'
 import type { RemoteControlStatus } from '@shared/remoteControl'
-import { mergeConversationList, nextConversationSelection, isArchivedConversation, regenerateActiveLeaf, canMutateActiveSession, compactRefusalReason, genericErrorBanner, patchConversationById, shouldSkipSessionDeleteConfirm, fallbackConversationIdAfterDelete, sessionDeleteDialogCopy, prependConversationIfMissing, listedConversationIdsForSelect, fileSessionHydrateOnDemandPatch, deleteMessageHydratePatch } from './sessionListMerge'
+import { mergeConversationList, nextConversationSelection, isArchivedConversation, regenerateActiveLeaf, canMutateActiveSession, compactRefusalReason, genericErrorBanner, patchConversationById, shouldSkipSessionDeleteConfirm, fallbackConversationIdAfterDelete, sessionDeleteDialogCopy, prependConversationIfMissing, listedConversationIdsForSelect, fileSessionHydrateOnDemandPatch, deleteMessageHydratePatch, renameConversationPatch } from './sessionListMerge'
 import {
   activeToolsFields,
   collapsedFileSessionTools,
@@ -40,7 +40,7 @@ import {
   type ToastState,
   type TurnRuntime,
 } from './sessionTypes'
-import { conversationIdAwaitingTool, hostHoldsControlPlaneKeys, omitLiveUsage, turnRuntimeFromAgentStatus } from './sessionUsage'
+import { conversationIdAwaitingTool, hostHoldsControlPlaneKeys, turnRuntimeFromAgentStatus, compactionSucceededPatch } from './sessionUsage'
 import { dispatchQueuedPayload, MESSAGE_QUEUE_MAX, buildQueuedMessage, composerSendDisposition, composerClearedPatch, isEmptyComposerSend, mergePreviewAndCommentRefs, pollUntil, resolveComposerContextFile, shouldDrainMessageQueue } from './sessionQueue'
 import { applyCliHostSetResult } from './sessionCliHost'
 import { applySessionTurnEvent } from './sessionTurnApply'
@@ -105,7 +105,7 @@ import { tt } from '../i18n/useT'
 import { isTemporaryWorkspace } from '../lib/format'
 import { isCompanionSessionShell, isMainSessionShell, readWindowMachineId } from '../lib/windowKind'
 import { isLocalMachine, normalizeMachineId } from '@shared/workspaceHost'
-import { compactionForLeaf, upsertCompaction } from '@shared/compaction'
+import { compactionForLeaf } from '@shared/compaction'
 import { userBashTabsOnly } from '../lib/workspacePty'
 import { getProjection, disposeProjection } from './StreamProjection'
 import { useWorkspaceStore } from './workspaceStore'
@@ -136,7 +136,7 @@ import { inheritCreateWorkingDirectory, nextConversationForMachine, pickBootstra
 import { notifyImageAttachPlan, trimAttachmentPathsForHost } from './sessionAttach'
 import { persistSwarmLayout, setLeaf } from './sessionSwarm'
 import { swarmBlocksWorkdirSwitch as swarmSurfaceBlocksWorkdir, locateWorkspaceDefaultName } from '../lib/workdirSwitch'
-import { nextFavoriteIds, nextPinnedWorkspaceDirs, archivedListModePatch } from './sessionPins'
+import { nextFavoriteIds, nextPinnedWorkspaceDirs, setArchivedConversationPatch } from './sessionPins'
 import { chatHostPickerModels, coercedChatHostModel, defaultModelSettingsPatch, defaultThinkingSettingsPatch, nextSteppedModelId } from './sessionModels'
 
 function swarmBlocksWorkdirSwitch(
@@ -1222,10 +1222,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
   async renameConversation(id, title) {
     const conversations = await window.vav.conversations.rename(id, title)
-    set((state) => ({
-      conversations: mergeConversationList(state.conversations, conversations),
-      renamingId: null
-    }))
+    set((state) => renameConversationPatch(state, conversations))
   },
 
   beginRename(id) {
@@ -1548,10 +1545,16 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     const { activeId, sidebarListMode } = get()
     // Archiving keeps the current list — the sidebar moves the selection to
     // the archived row's neighbor instead of jumping to the archive view.
-    set((state) => ({
-      conversations: mergeConversationList(state.conversations, conversations),
-      ...archivedListModePatch(activeId, sidebarListMode, id, archived)
-    }))
+    set((state) =>
+      setArchivedConversationPatch(
+        state,
+        conversations,
+        activeId,
+        sidebarListMode,
+        id,
+        archived
+      )
+    )
   },
 
   async setApprovalMode(id, mode) {
@@ -2129,16 +2132,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     }
     // No toast — transcript shows a quiet "history compact" log via CompactionBanner.
     // Shrink context fill on the conversation meta so the composer ring updates.
-    set((state) => ({
-      compactions: {
-        ...state.compactions,
-        [activeId]: upsertCompaction(state.compactions[activeId], result.compaction)
-      },
-      liveUsage: omitLiveUsage(state.liveUsage, activeId),
-      conversations: patchConversationById(state.conversations, activeId, {
-        tokensUsed: result.compaction.estimatedContextTokens
-      })
-    }))
+    set((state) => compactionSucceededPatch(state, activeId, result.compaction))
     return true
   },
 

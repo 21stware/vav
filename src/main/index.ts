@@ -89,9 +89,6 @@ import type {
   RemoteThreadEvent
 } from '@shared/remoteControl'
 import {
-  projectRemoteMessages
-} from '@shared/remoteThread'
-import {
   remoteBrowseRoots,
   remoteIsTemporary,
   remoteParentPath,
@@ -237,7 +234,7 @@ import { HostRegistry } from './host'
 import { openSpawn, previewSpawn, revealSpawn } from './host/hostShell'
 import { clipRoot, writeClipBytes } from './fs/clipStore'
 import { writePngToClipboard } from './clipboardImage'
-import { mapRemoteSessions } from './remote/sessionList'
+import { mapRemoteSessions, fallbackRemoteSession, buildRemoteThreadEvent } from './remote/sessionList'
 import { fanRemoteTurn as dispatchRemoteTurn } from './remote/fanTurn'
 import { listRemoteChildEntries, listRemoteRootEntries } from './remote/dirBrowse'
 import {
@@ -1340,28 +1337,21 @@ function createRemoteSession(): RemoteSession {
   lastSeenConversationId = conversation.id
   publishConversations()
   return (
-    listRemoteSessions().find((session) => session.id === conversation.id) ?? {
-      id: conversation.id,
-      title: (conversation.title && conversation.title.trim()) || t('window.sessionFallback'),
+    listRemoteSessions().find((session) => session.id === conversation.id) ??
+    fallbackRemoteSession(conversation, {
+      fallbackTitle: t('window.sessionFallback'),
       dirLabel: trayDirLabel(conversation.workingDirectory),
-      status: 'idle',
-      surface: defaultHost ? 'cli' : 'vav',
-      updatedAt: conversation.updatedAt
-    }
+      surface: defaultHost ? 'cli' : 'vav'
+    })
   )
 }
 
 function listRemoteThread(conversationId: string): RemoteThreadEvent | null {
-  const conversation = conversationStore.get(conversationId)
-  if (!conversation || conversation.archived) return null
-  return {
-    type: 'thread',
+  return buildRemoteThreadEvent(
     conversationId,
-    messages: projectRemoteMessages(
-      threadPath(conversation.messages, conversation.activeLeafId),
-      currentLocale()
-    )
-  }
+    conversationStore.get(conversationId),
+    currentLocale()
+  )
 }
 
 function listRemoteHost(): RemoteHostEvent {

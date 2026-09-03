@@ -423,3 +423,14 @@ export function ptyTabStatusPatch(
     }
   }
 }
+
+/** Drop a closed tab's status so the next hydrate cannot resurrect a tombstone. */
+export function omitPtyTabStatusPatch(
+  ptyStatus: Record<string, Record<string, PtyActivityStatus>>,
+  conversationId: string,
+  tabId: string
+): { ptyStatus: Record<string, Record<string, PtyActivityStatus>> } | null {
+  const forConversation = ptyStatus[conversationId]
+  if (!forConversation || !(tabId in forConversation)) return null
+  return { ptyStatus: { ...ptyStatus, [conversationId]: omitRecord(forConversation, tabId) } }
+}

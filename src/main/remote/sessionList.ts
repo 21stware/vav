@@ -1,6 +1,6 @@
-import type { ChatMessage } from '../../shared/types.ts'
-import type { RemoteSession } from '../../shared/remoteControl.ts'
-import { remoteSessionPreview } from '../../shared/remoteThread.ts'
+import type { ChatMessage, AppLocale } from '../../shared/types.ts'
+import type { RemoteSession, RemoteThreadEvent } from '../../shared/remoteControl.ts'
+import { projectRemoteMessages, remoteSessionPreview } from '../../shared/remoteThread.ts'
 import { remoteIsTemporary } from '../../shared/remoteWorkspace.ts'
 import { threadPath } from '../../shared/thread.ts'
 
@@ -45,4 +45,51 @@ export function mapRemoteSessions(
       workdir: c.workingDirectory ?? undefined,
       temporary: remoteIsTemporary(c.workingDirectory, opts.tmpdir)
     }))
+}
+
+/** Phone `create` fallback when the list snapshot has not caught up yet. */
+export function fallbackRemoteSession(
+  conversation: {
+    id: string
+    title?: string | null
+    updatedAt: number
+  },
+  opts: {
+    fallbackTitle: string
+    dirLabel: string
+    surface: RemoteSession['surface']
+  }
+): RemoteSession {
+  return {
+    id: conversation.id,
+    title: (conversation.title && conversation.title.trim()) || opts.fallbackTitle,
+    dirLabel: opts.dirLabel,
+    status: 'idle',
+    surface: opts.surface,
+    updatedAt: conversation.updatedAt
+  }
+}
+
+/** Phone thread body; archived sessions are hidden. */
+export function buildRemoteThreadEvent(
+  conversationId: string,
+  conversation:
+    | {
+        archived?: boolean
+        messages: ChatMessage[]
+        activeLeafId: string | null
+      }
+    | null
+    | undefined,
+  locale: AppLocale
+): RemoteThreadEvent | null {
+  if (!conversation || conversation.archived) return null
+  return {
+    type: 'thread',
+    conversationId,
+    messages: projectRemoteMessages(
+      threadPath(conversation.messages, conversation.activeLeafId),
+      locale
+    )
+  }
 }

@@ -1,4 +1,5 @@
 import type { MessageBlock, ToolCallBlock, ToolCallStatus, ToolName } from '../../shared/types.ts'
+import { findToolBlock } from '../../shared/subtask.ts'
 
 export function newCliToolCallBlock(opts: {
   id: string
@@ -234,4 +235,29 @@ export function newCliParentTaskBlock(parentId: string, summary: string): ToolCa
     status: 'executing',
     children: []
   })
+}
+
+type CliParentTurn = {
+  blocks: MessageBlock[]
+  toolIndex: Map<string, number>
+  textIndex: number | null
+  reasoningIndex: number | null
+}
+
+/** Insert a parent task card if missing; seal open reasoning on first insert. */
+export function ensureCliParentTask<T extends CliParentTurn>(
+  turn: T,
+  parentId: string,
+  summary: string,
+  sealOpenReasoning: (turn: T) => void
+): ToolCallBlock {
+  const existing = findToolBlock(turn.blocks, parentId)
+  if (existing) return existing
+  const block = newCliParentTaskBlock(parentId, summary)
+  turn.toolIndex.set(parentId, turn.blocks.length)
+  turn.blocks.push(block)
+  sealOpenReasoning(turn)
+  turn.textIndex = null
+  turn.reasoningIndex = null
+  return block
 }

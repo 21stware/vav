@@ -63,6 +63,7 @@ import {
   projectPtySessions,
   ptyCreateOptions,
   ptyTabStatusPatch,
+  omitPtyTabStatusPatch,
   isCliAgentHostId,
   toolsTrayAfterScrubbingAgentTabs,
   userBashTabsOnly
@@ -1350,11 +1351,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     lastInjectFingerprint.delete(tabId)
     // Drop the status before the tab, or the next hydrate resurrects a
     // tombstone the user just dismissed.
-    set((state) => {
-      const forConversation = state.ptyStatus[id]
-      if (!forConversation || !(tabId in forConversation)) return state
-      return { ptyStatus: { ...state.ptyStatus, [id]: omitRecord(forConversation, tabId) } }
-    })
+    set((state) => omitPtyTabStatusPatch(state.ptyStatus, id, tabId) ?? state)
     patch(set, id, (s) => closeBashTabSlicePatch(s, tabId))
     get().syncPtyLayouts(id)
   },

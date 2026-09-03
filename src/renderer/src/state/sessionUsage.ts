@@ -1,3 +1,7 @@
+import { upsertCompaction } from '../../../shared/compaction.ts'
+import type { LeafCompaction } from '../../../shared/types.ts'
+import { patchConversationById } from './sessionListMerge.ts'
+
 /** Drop one conversation's live token overlay without cloning when it is absent. */
 export function omitLiveUsage<T>(
   liveUsage: Record<string, T>,
@@ -50,4 +54,31 @@ export function hostHoldsControlPlaneKeys(
   machineId: string | null | undefined
 ): boolean {
   return hosts.some((host) => host.id === machineId && host.controlPlane === true)
+}
+
+/** Compact success: stamp the leaf compaction and shrink the composer ring. */
+export function compactionSucceededPatch<C extends { id: string; tokensUsed?: number }, U>(
+  state: {
+    compactions: Record<string, LeafCompaction[]>
+    liveUsage: Record<string, U>
+    conversations: C[]
+  },
+  activeId: string,
+  compaction: LeafCompaction
+): {
+  compactions: Record<string, LeafCompaction[]>
+  liveUsage: Record<string, U>
+  conversations: C[]
+} {
+  return {
+    compactions: {
+      ...state.compactions,
+      [activeId]: upsertCompaction(state.compactions[activeId], compaction)
+    },
+    liveUsage: omitLiveUsage(state.liveUsage, activeId),
+    conversations: patchConversationById(state.conversations, activeId, (conversation) => ({
+      ...conversation,
+      tokensUsed: compaction.estimatedContextTokens
+    }))
+  }
 }
