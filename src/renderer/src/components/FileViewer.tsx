@@ -9,13 +9,6 @@ import {
   useState,
   type ReactNode
 } from 'react'
-import {
-  ChevronDown,
-  Clock,
-  Plus,
-  Save,
-  X
-} from 'lucide-react'
 import type { FileAssociationStatus, FileInspectResult, FileSessionMeta } from '@shared/ipc'
 import { isClipPath } from '@shared/clipPath'
 import type { PreviewRef } from '@shared/types'
@@ -33,7 +26,6 @@ import { basename, dirname } from '../lib/path'
 import {
   applyFileDraftContent,
   blockToRef,
-  clampPanelWidth,
   collectBlocks,
   filesHostConversationId,
   fileViewerAgentPanelOpen,
@@ -53,21 +45,18 @@ import { convertEditProfileFor, fileViewerKindFlags, isBinaryOfficeKind, isPrevi
 import { AgentPanelToggleButton } from './fileViewer/AgentPanelToggleButton'
 import { CsvView } from './fileViewer/CsvView'
 import { DocumentView } from './fileViewer/DocumentView'
+import { FileViewerAgentColumn } from './fileViewer/FileViewerAgentColumn'
+import { FileViewerHeader } from './fileViewer/FileViewerHeader'
 import { ImageZoomStage, MediaSelectFrame } from './fileViewer/MediaStages'
-import { SessionHistoryPopover } from './SessionHistoryPopover'
 import { previewOpenElapsed } from '../lib/previewOpenClock'
 import { createWarmComponent } from '../lib/warmComponent'
 import type { OfficeNativeView as OfficeNativeViewType } from './office/OfficeNativeView'
-import { fileManagerLabel } from '../lib/platform'
-import { FileManagerIcon } from './FileManagerIcon'
 import { isPickGestureActive, type ClickPickPointer } from '../lib/clickPick'
 import { suppressHyperlinkClick } from '../lib/suppressHyperlinks'
 import { useT } from '../i18n/useT'
 import { useSessionStore } from '../state/sessionStore'
 import { useWorkspaceStore } from '../state/workspaceStore'
-import type { FileSessionChromeProps } from './SessionDetail'
-import { menuAnchor, showMenu } from '../lib/nativeMenu'
-import { Button, EmptyState, InlineAlert } from './ui'
+import { InlineAlert } from './ui'
 import { BinaryFileView } from './BinaryFileView'
 import {
   BinaryOpenToolbar,
@@ -86,12 +75,6 @@ import {
   isMediaPreviewPath,
   shouldArmUnsavedFromExternalChange
 } from '../lib/previewDirty'
-
-// The agent side panel drags in the whole chat surface (composer, transcript,
-// xterm). A preview that is never asked for an agent must not parse it.
-const SessionDetail = lazy(() =>
-  import('./SessionDetail').then((m) => ({ default: m.SessionDetail }))
-)
 
 // Heavy format canvases — keep out of the chat / settings critical path.
 // Warm handle rather than `lazy`: the router is resident in a warm shell, and a
@@ -1889,284 +1872,56 @@ export function FileViewer({
     showSelectionAgentMark && selectedIds.length > 0 && !agentPanelOpen
 
   const fileHeader = (
-      <header
-        className={`file-viewer-header${embedded ? '' : ' titlebar-drag'}${shellLeading ? ' has-shell-leading' : ''}`}
-      >
-        {/*
-          Standalone preview: header is a window drag region. Only interactive
-          controls opt out (titlebar-no-drag) — the file name stays draggable.
-          Workspace + collapsed sidebar: shellLeading parks toggle/new before
-          the file name so the agent column can stay flush to the window top.
-        */}
-        <div className="file-viewer-lead">
-          {shellLeading ? (
-            <div className={`file-viewer-shell-leading${embedded ? '' : ' titlebar-no-drag'}`}>
-              {shellLeading}
-            </div>
-          ) : null}
-          <span
-            className={`file-viewer-name${embedded ? '' : ' titlebar-no-drag'}`}
-            data-testid="file-preview-name"
-            title={isClipPath(filePath) ? (info?.name ?? basename(filePath)) : filePath}
-          >
-            {info?.name ?? basename(filePath)}
-          </span>
-          <label
-            className={`preview-mode${embedded ? '' : ' titlebar-no-drag'}${hardForcedReadOnly || formatLockedReadOnly ? ' is-forced' : ''}${hardForcedReadOnly ? ' is-static' : ''}`}
-            title={
-              isZip
-                ? t('preview.zipReadOnlyHint')
-                : hardForcedReadOnly
-                  ? t('preview.binaryReadOnlyHint')
-                  : formatLockedReadOnly
-                    ? t('preview.formatReadOnlyHint')
-                    : undefined
-            }
-          >
-            {/* Binary / ZIP / directory: only Read — no fake Edit option or chevron. */}
-            {hardForcedReadOnly ? (
-              <span className="preview-mode-static" aria-label={t('preview.modeLabel')}>
-                {t('preview.modeReadOnly')}
-              </span>
-            ) : (
-              <span className="preview-mode-control">
-                <select
-                  className="text-field preview-mode-select"
-                  value={effectiveReadOnly ? 'readonly' : 'editing'}
-                  aria-label={t('preview.modeLabel')}
-                  onChange={(e) => applyReadOnly(e.target.value === 'readonly')}
-                >
-                  <option value="editing">{t('preview.modeEditing')}</option>
-                  <option value="readonly">{t('preview.modeReadOnly')}</option>
-                </select>
-                <ChevronDown className="preview-mode-chevron" size={12} aria-hidden />
-              </span>
-            )}
-          </label>
-          {/* Read: offer only when not already default. Editing: under Save ▾. */}
-          {assoc && !assoc.isVav && readOnly && (
-            <button
-              type="button"
-              className={`preview-default-text-btn${embedded ? '' : ' titlebar-no-drag'}`}
-              title={t('assoc.alwaysOpenWith', {
-                ext: assoc.extensions[0]?.replace(/^\./, '') ?? assoc.label
-              })}
-              onClick={onSetAsDefault}
-            >
-              {t('assoc.alwaysOpenWith', {
-                ext: assoc.extensions[0]?.replace(/^\./, '') ?? assoc.label
-              })}
-            </button>
-          )}
-        </div>
-        <span className="spacer" />
-        <div className={`file-viewer-actions${embedded ? '' : ' titlebar-no-drag'}`}>
-          {/* Save / Save As only in Editing; hidden for ZIP/binary (forced read-only). */}
-          {!effectiveReadOnly && (
-            <div className={`preview-save-group${hasUnsavedChanges ? ' is-dirty' : ''}`}>
-              <Button
-                icon={<Save size={13} />}
-                label={t('preview.save')}
-                variant={hasUnsavedChanges ? 'primary' : 'secondary'}
-                size="sm"
-                className="preview-save-main"
-                disabled={!hasUnsavedChanges}
-                title={`${t('preview.save')} (⌘S)`}
-                onClick={() => void save()}
-              />
-              <Button
-                icon={<ChevronDown size={14} />}
-                variant={hasUnsavedChanges ? 'primary' : 'secondary'}
-                size="sm"
-                className="preview-save-more"
-                title={t('preview.moreActions')}
-                onClick={(event) => {
-                  event.preventDefault()
-                  event.stopPropagation()
-                  const anchor = menuAnchor(event.currentTarget as HTMLElement)
-                  const items: {
-                    label: string
-                    divider?: boolean
-                    disabled?: boolean
-                    onSelect?: () => void
-                  }[] = [
-                    {
-                      label: `${t('preview.saveAs')} (⌘⇧S)`,
-                      onSelect: () => void saveAs()
-                    }
-                  ]
-                  if (hasUnsavedChanges) {
-                    items.push({
-                      label: t('preview.discardChanges'),
-                      onSelect: () => void confirmDiscardChanges()
-                    })
-                  }
-                  if (!embedded) {
-                    items.push({ label: '', divider: true })
-                    items.push({
-                      label: t('workspace.openInMainPanel'),
-                      onSelect: () => openInMainPanel()
-                    })
-                  }
-                  if (assoc && !assoc.isVav) {
-                    const ext =
-                      assoc.extensions[0]?.replace(/^\./, '') ?? assoc.label
-                    items.push({ label: '', divider: true })
-                    items.push({
-                      label: t('assoc.alwaysOpenWith', { ext }),
-                      onSelect: () => onSetAsDefault()
-                    })
-                  }
-                  void showMenu(items, anchor)
-                }}
-              />
-            </div>
-          )}
-          <Button
-            icon={<FileManagerIcon size={14} />}
-            size="sm"
-            className={embedded ? undefined : 'titlebar-no-drag'}
-            title={t('tools.revealInFm', { fileManager: fileManagerLabel() })}
-            onClick={() => {
-              void (async () => {
-                try {
-                  await window.vav.conversations.revealInFinder(filePath)
-                } catch (err) {
-                  showToast({
-                    kind: 'error',
-                    title: t('preview.revealFailed'),
-                    description: (err as Error).message
-                  })
-                }
-              })()
-            }}
-          />
-          {(embedded && onToggleAgentPanel) || !embedded ? agentToggle : null}
-          {embedded && onClose ? (
-            <Button
-              icon={<X size={14} />}
-              size="sm"
-              testId="file-preview-close"
-              title={t('common.close')}
-              onClick={onClose}
-            />
-          ) : null}
-        </div>
-      </header>
+    <FileViewerHeader
+      embedded={embedded}
+      shellLeading={shellLeading}
+      filePath={filePath}
+      info={info}
+      hardForcedReadOnly={hardForcedReadOnly}
+      formatLockedReadOnly={formatLockedReadOnly}
+      isZip={isZip}
+      effectiveReadOnly={effectiveReadOnly}
+      applyReadOnly={applyReadOnly}
+      assoc={assoc}
+      readOnly={readOnly}
+      onSetAsDefault={onSetAsDefault}
+      hasUnsavedChanges={hasUnsavedChanges}
+      save={save}
+      saveAs={saveAs}
+      confirmDiscardChanges={confirmDiscardChanges}
+      openInMainPanel={openInMainPanel}
+      revealFailed={(err) =>
+        showToast({
+          kind: 'error',
+          title: t('preview.revealFailed'),
+          description: err.message
+        })
+      }
+      agentToggle={(embedded && onToggleAgentPanel) || !embedded ? agentToggle : null}
+      onClose={onClose}
+    />
   )
 
   const agentColumn =
     agentPanelOpen && !embedded ? (
-          <aside className="preview-agent-panel" style={{ width: panelWidth }}>
-            <div
-              className="preview-agent-resizer"
-              onMouseDown={(event) => {
-                event.preventDefault()
-                const startX = event.clientX
-                const startW = panelWidth
-                const onMove = (e: MouseEvent): void => {
-                  const next = clampPanelWidth(startW + (startX - e.clientX))
-                  panelWidthRef.current = next
-                  setPanelWidth(next)
-                }
-                const onUp = (): void => {
-                  window.removeEventListener('mousemove', onMove)
-                  window.removeEventListener('mouseup', onUp)
-                  persistPanelWidth(panelWidthRef.current)
-                }
-                window.addEventListener('mousemove', onMove)
-                window.addEventListener('mouseup', onUp)
-              }}
-            />
-            {/* vav mode folds session title/history/new into AgentModeChrome.
-                CLI hosts keep a dedicated bar (no search row to share). */}
-            {(() => {
-              const agentMeta = conversations.find((c) => c.id === agentConversationId)
-              const agentIsVav =
-                !agentMeta?.agentBinaryName || agentMeta.agentBinaryName === 'vav'
-              const showSeparateSessionBar = !embedded && (!agentConversationId || !agentIsVav)
-              const fileChrome: FileSessionChromeProps | null =
-                agentConversationId && agentIsVav
-                  ? {
-                      title: sessionTitle,
-                      sessions: fileSessions,
-                      activeSessionId: agentConversationId,
-                      historyOpen,
-                      historyAnchorRef,
-                      onToggleHistory: () => setHistoryOpen((v) => !v),
-                      onCloseHistory: () => setHistoryOpen(false),
-                      onSwitchSession: (id) => void switchFileSession(id),
-                      onRenameSession: renameFileSession,
-                      onDeleteSessions: deleteFileSessions,
-                      onNewSession: () => void newFileSession()
-                    }
-                  : null
-              return (
-                <>
-                  {showSeparateSessionBar && (
-                    <div className="preview-file-session-bar">
-                      <span className="preview-file-session-title" title={sessionTitle}>
-                        {sessionTitle || t('common.session')}
-                      </span>
-                      <span className="spacer" />
-                      <div className="preview-file-session-actions">
-                        <button
-                          type="button"
-                          ref={historyAnchorRef}
-                          className={`btn ghost sm icon-only${historyOpen ? ' is-active-toggle' : ''}`}
-                          title={t('preview.sessionHistory')}
-                          onClick={() => setHistoryOpen((v) => !v)}
-                        >
-                          <Clock size={12} />
-                        </button>
-                        <Button
-                          icon={<Plus size={12} />}
-                          size="sm"
-                          variant="ghost"
-                          title={t('preview.newSession')}
-                          onClick={() => void newFileSession()}
-                        />
-                      </div>
-                      <SessionHistoryPopover
-                        open={historyOpen}
-                        onClose={() => setHistoryOpen(false)}
-                        sessions={fileSessions}
-                        activeSessionId={agentConversationId}
-                        onSwitch={(id) => {
-                          void switchFileSession(id)
-                          setHistoryOpen(false)
-                        }}
-                        onRename={renameFileSession}
-                        onDelete={deleteFileSessions}
-                        anchorRef={historyAnchorRef}
-                      />
-                    </div>
-                  )}
-                  {agentConversationId ? (
-                    <Suspense fallback={<div className="muted" data-pad="text" />}>
-                      <SessionDetail variant="preview-edit" fileSessionChrome={fileChrome} />
-                    </Suspense>
-                  ) : (
-                    <EmptyState
-                      title={t('preview.startChat')}
-                      description={t('preview.startChatDesc')}
-                    >
-                      <Button
-                        label={t('preview.startChat')}
-                        size="sm"
-                        variant="primary"
-                        onClick={() => {
-                          void ensureFileSession().then((id) => {
-                            if (id) useSessionStore.getState().focusComposer()
-                          })
-                        }}
-                      />
-                    </EmptyState>
-                  )}
-                </>
-              )
-            })()}
-          </aside>
+      <FileViewerAgentColumn
+        panelWidth={panelWidth}
+        panelWidthRef={panelWidthRef}
+        setPanelWidth={setPanelWidth}
+        conversations={conversations}
+        agentConversationId={agentConversationId}
+        embedded={embedded}
+        sessionTitle={sessionTitle}
+        fileSessions={fileSessions}
+        historyOpen={historyOpen}
+        setHistoryOpen={setHistoryOpen}
+        historyAnchorRef={historyAnchorRef}
+        switchFileSession={switchFileSession}
+        renameFileSession={renameFileSession}
+        deleteFileSessions={deleteFileSessions}
+        newFileSession={newFileSession}
+        ensureFileSession={ensureFileSession}
+      />
     ) : null
 
   const fileBody = (
