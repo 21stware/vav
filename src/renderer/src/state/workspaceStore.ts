@@ -24,6 +24,8 @@ import {
   CLI_SURFACE_KEY,
   pickCliScreenFocusTab,
   planEnterCliMode,
+  planSplitCliSurface,
+  preferredCliAssignTabId,
   reconcileAgentHosts,
   type AgentHostSession
 } from '../lib/workspaceCliSurface'
@@ -1079,17 +1081,13 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     if (!surface) return
     const pending = makePendingCliTab()
     const autoAssign = options?.autoAssign !== false
-    const focusId =
-      surface.activeTabId || surface.tabs[0]?.id || collectLeaves(surface.layout!)[0]
-    if (!focusId || !surface.layout) {
+    const plan = planSplitCliSurface(surface, axis, pending)
+    if (!plan) return
+    if (plan.kind === 'seed') {
       patch(set, id, (s) => ({
         agentHostSessions: {
           ...s.agentHostSessions,
-          [CLI_SURFACE_KEY]: {
-            tabs: [pending],
-            layout: { type: 'leaf', tabId: pending.id, weight: 1 },
-            activeTabId: pending.id
-          }
+          [CLI_SURFACE_KEY]: plan.surface
         },
         activeHostAgentId: CLI_SURFACE_KEY,
         cliMode: true
@@ -1097,8 +1095,6 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       if (autoAssign) maybeAutoAssignSingleAgent(id, pending.id, 'split')
       return
     }
-    // Equal split (1:1) for both ⌘D row and ⌘⇧D column.
-    const nextLayout = splitLeaf(surface.layout, focusId, axis, pending.id)
     patch(set, id, (s) => {
       const cur = getCliSurface(s) ?? surface
       return {
@@ -1108,7 +1104,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
           ...s.agentHostSessions,
           [CLI_SURFACE_KEY]: {
             tabs: [...cur.tabs.filter((t) => t.id !== pending.id), pending],
-            layout: nextLayout,
+            layout: plan.layout,
             activeTabId: pending.id
           }
         }
@@ -1143,14 +1139,13 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     // Prefer stable primary id when this is the first live pane of that agent.
     // Resume always mints a fresh PTY so `--resume` is not attached to a dead id.
     const surface = getCliSurface(get().workspaces[id])
-    const liveOfType =
-      surface?.tabs.filter((t) => !t.pendingCli && t.agentId === agentId).length ?? 0
-    const preferred =
-      !resume &&
-      liveOfType === 0 &&
-      (surface?.tabs.some((t) => t.id === tabId && t.pendingCli) ?? false)
-        ? primaryAgentPaneId(id, agentId)
-        : undefined
+    const preferred = preferredCliAssignTabId({
+      surface,
+      tabId,
+      agentId,
+      resume: Boolean(resume),
+      primaryId: primaryAgentPaneId(id, agentId)
+    })
     const liveTab: TerminalTab = {
       id: preferred ?? tabId,
       title: agent.name,

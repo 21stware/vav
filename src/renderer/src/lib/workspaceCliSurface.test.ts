@@ -8,6 +8,8 @@ import {
   mergeCliSurface,
   pickCliScreenFocusTab,
   planEnterCliMode,
+  planSplitCliSurface,
+  preferredCliAssignTabId,
   reconcileAgentHosts,
   type AgentHostSession
 } from './workspaceCliSurface.ts'
@@ -143,5 +145,62 @@ describe('workspaceCliSurface', () => {
       assert.equal(fresh.autoAssignPendingId, 'cli-pending:test')
       assert.equal(fresh.surface.activeTabId, 'cli-pending:test')
     }
+  })
+
+  it('plans a CLI split onto a new picker, or seeds a lone leaf', () => {
+    const pending = tab({ id: 'cli-pending:split', pendingCli: true, agentId: null })
+    assert.equal(planSplitCliSurface(undefined, 'row', pending), null)
+    const seeded = planSplitCliSurface(
+      { tabs: [], layout: null, activeTabId: '' },
+      'row',
+      pending
+    )
+    assert.equal(seeded?.kind, 'seed')
+    if (seeded?.kind === 'seed') {
+      assert.equal(seeded.surface.activeTabId, pending.id)
+    }
+    const live = tab({ id: 'pty-1', agentId: 'claude' })
+    const split = planSplitCliSurface(
+      { tabs: [live], layout: leaf('pty-1'), activeTabId: 'pty-1' },
+      'column',
+      pending
+    )
+    assert.equal(split?.kind, 'split')
+    if (split?.kind === 'split') {
+      assert.deepEqual(collectLeaves(split.layout), ['pty-1', pending.id])
+    }
+  })
+
+  it('keeps the stable primary id only for the first live pane of that agent', () => {
+    const pending = tab({ id: 'cli-pending:a', pendingCli: true, agentId: null })
+    const live = tab({ id: 'pty-1', agentId: 'claude' })
+    assert.equal(
+      preferredCliAssignTabId({
+        surface: { tabs: [pending] },
+        tabId: pending.id,
+        agentId: 'claude',
+        primaryId: 'primary-claude'
+      }),
+      'primary-claude'
+    )
+    assert.equal(
+      preferredCliAssignTabId({
+        surface: { tabs: [live, pending] },
+        tabId: pending.id,
+        agentId: 'claude',
+        primaryId: 'primary-claude'
+      }),
+      undefined
+    )
+    assert.equal(
+      preferredCliAssignTabId({
+        surface: { tabs: [pending] },
+        tabId: pending.id,
+        agentId: 'claude',
+        resume: true,
+        primaryId: 'primary-claude'
+      }),
+      undefined
+    )
   })
 })

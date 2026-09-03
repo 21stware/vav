@@ -1,4 +1,4 @@
-import type { TerminalLayoutNode, TerminalTab } from '../../../shared/types.ts'
+import type { TerminalLayoutNode, TerminalSplitAxis, TerminalTab } from '../../../shared/types.ts'
 import {
   adoptRemotePendingTabs,
   makePendingCliTab,
@@ -285,4 +285,59 @@ export function planEnterCliMode(
     },
     autoAssignPendingId: pending.id
   }
+}
+
+export type SplitCliSurfacePlan =
+  | {
+      kind: 'seed'
+      surface: AgentHostSession
+    }
+  | {
+      kind: 'split'
+      layout: TerminalLayoutNode
+    }
+
+/** Next CLI Screen after ⌘D / ⌘⇧D. Caller still owns auto-assign and SIGWINCH. */
+export function planSplitCliSurface(
+  surface: AgentHostSession | undefined,
+  axis: TerminalSplitAxis,
+  pending: TerminalTab
+): SplitCliSurfacePlan | null {
+  if (!surface) return null
+  const focusId =
+    surface.activeTabId || surface.tabs[0]?.id || collectLeaves(surface.layout!)[0]
+  if (!focusId || !surface.layout) {
+    return {
+      kind: 'seed',
+      surface: {
+        tabs: [pending],
+        layout: { type: 'leaf', tabId: pending.id, weight: 1 },
+        activeTabId: pending.id
+      }
+    }
+  }
+  return {
+    kind: 'split',
+    layout: splitLeaf(surface.layout, focusId, axis, pending.id)
+  }
+}
+
+/** First live pane of an agent keeps the stable primary id; resume always mints. */
+export function preferredCliAssignTabId(opts: {
+  surface?: { tabs: Array<{ id: string; pendingCli?: boolean; agentId?: string | null }> }
+  tabId: string
+  agentId: string
+  resume?: boolean
+  primaryId: string
+}): string | undefined {
+  const liveOfType =
+    opts.surface?.tabs.filter((t) => !t.pendingCli && t.agentId === opts.agentId).length ?? 0
+  if (
+    !opts.resume &&
+    liveOfType === 0 &&
+    (opts.surface?.tabs.some((t) => t.id === opts.tabId && t.pendingCli) ?? false)
+  ) {
+    return opts.primaryId
+  }
+  return undefined
 }
