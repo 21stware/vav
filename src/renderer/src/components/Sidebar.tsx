@@ -209,12 +209,19 @@ export function Sidebar({
   const machineLabel = (machineId: string, fallback?: string): string =>
     hostMachineLabel(machineId, hosts, LOCAL_MACHINE_ID, t('sidebar.thisMachine'), fallback)
   // Incoming phones still annotate the local Connect control.
+  const incomingControllers = useSessionStore((s) => s.incomingControllers)
   const incomingDeviceLabels = useMemo(
     () =>
-      incomingConnectLabels(remoteControlStatus?.clients, (name) =>
-        t('sidebar.connectWith', { name })
+      incomingConnectLabels(
+        [
+          ...(remoteControlStatus?.clients ?? []),
+          ...incomingControllers
+            .filter((row) => row.online)
+            .map((row) => ({ device: row.name }))
+        ],
+        (name) => t('sidebar.connectWith', { name })
       ),
-    [remoteControlStatus, t]
+    [remoteControlStatus, incomingControllers, t]
   )
   const localWindow = isLocalMachine(windowMachineId)
   const connectButtonLabel = localWindow

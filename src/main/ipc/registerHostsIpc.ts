@@ -50,11 +50,21 @@ export function registerHostsIpc(
   ipcMain.on(IPC.hostsCancelPair, () => {
     attach.cancelPair()
   })
-  ipcMain.handle(IPC.hostsForget, (_event, machineId: string) => {
+  ipcMain.handle(IPC.hostsForget, async (_event, machineId: string) => {
     const id = String(machineId || '')
-    attach.forget(id)
+    await attach.forget(id)
     windows.close(id)
     if (windows.defaultMachineId() === id) windows.applyDefaultMachine(LOCAL_MACHINE_ID)
+  })
+  ipcMain.handle(IPC.hostsIncoming, () => attach.incoming())
+  ipcMain.handle(IPC.hostsDisconnectIncoming, (_event, grantId: string) => {
+    attach.disconnectIncoming(String(grantId || ''))
+  })
+  ipcMain.handle(IPC.hostsUnpairIncoming, (_event, grantId: string) => {
+    attach.unpairIncoming(String(grantId || ''))
+  })
+  ipcMain.handle(IPC.hostsRotateOffer, () => {
+    attach.rotateOffer()
   })
   ipcMain.handle(IPC.hostsDiscovered, () => attach.listDiscovered())
   ipcMain.handle(IPC.hostsHome, (_event, machineId: string) => {

@@ -1709,14 +1709,16 @@ const remoteControl = new RemoteControlService({
       if (win && !win.isDestroyed()) safeSend(win.webContents, IPC.remoteControlChanged, status)
     }
   },
-  onDaemonSocket: (socket, leftover) => daemonAttach.adoptAuthedSocket(socket, leftover)
+  onDaemonSocket: (socket, leftover, hello) =>
+    daemonAttach.adoptAuthedSocket(socket, leftover, hello),
+  acceptAuth: (auth: string): boolean => daemonAttach.acceptsPairingAuth(auth)
 })
 
 
 const daemonAttach = new DaemonAttachService({
   userData: app.getPath('userData'),
   registry: hostRegistry,
-  secret: () => remoteControl.pairingSecret(),
+  secret: (): string => remoteControl.pairingSecret(),
   appVersion: app.getVersion(),
   enabled: () => settingsStore.get().remoteControlEnabled === true,
   tailcatToken: () => remoteControl.tunnelToken(),
@@ -1775,6 +1777,9 @@ const daemonAttach = new DaemonAttachService({
     broadcast(IPC.hostsChanged, decorateHosts(hosts))
     syncHostWindows(hosts)
   },
+  onIncomingChanged: (controllers) => {
+    broadcast(IPC.hostsIncomingChanged, controllers)
+  },
   onDiscovered: (peers) => {
     if (settingsWindow && !settingsWindow.isDestroyed()) {
       safeSend(settingsWindow.webContents, IPC.hostsDiscoveredChanged, peers)
@@ -1793,10 +1798,16 @@ const daemonAttach = new DaemonAttachService({
       if (parent.isMinimized()) parent.restore()
       parent.show()
     }
+    const activeIncoming = daemonAttach
+      .incoming()
+      .filter((row) => row.state !== 'pending' && row.state !== 'revoked')
     const opts = dialogConfirmOptions(
       {
         title: t('machines.lanPairTitle'),
-        message: t('machines.lanPairBody', { name: from.name }),
+        message: t(
+          activeIncoming.length > 0 ? 'machines.lanPairBodyBusy' : 'machines.lanPairBody',
+          { name: from.name, count: String(activeIncoming.length) }
+        ),
         confirmLabel: t('common.allow'),
         cancelLabel: t('common.deny'),
         preferCancel: true

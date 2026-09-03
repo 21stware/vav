@@ -67,7 +67,9 @@ type Deps = {
   setWorkspace: (conversationId: string, path: string | null) => RemoteWorkspaceResult
   onStatusChange: (status: RemoteControlStatus) => void
   /** Tailcat hello with `role: 'daemon'` — hand the socket to the host RPC. */
-  onDaemonSocket?: (socket: Socket, leftover: string) => void
+  onDaemonSocket?: (socket: Socket, leftover: string, hello?: RemoteHello) => void
+  /** Issued machine grants — tunnel hellos after the first pair. */
+  acceptAuth?: (auth: string) => boolean
 }
 
 const RESTART_DELAY_MS = 5_000
@@ -105,8 +107,9 @@ export class RemoteControlService {
       browse: (id, path) => deps.browse(id, path),
       setWorkspace: (id, path) => deps.setWorkspace(id, path),
       secret: () => this.loadOrCreateSecret(),
+      acceptAuth: (auth) => deps.acceptAuth?.(auth) === true,
       materializeImages: writeRemoteInboxImages,
-      onDaemonHello: (socket, leftover) => deps.onDaemonSocket?.(socket, leftover),
+      onDaemonHello: (socket, leftover, hello) => deps.onDaemonSocket?.(socket, leftover, hello),
       onClientsChanged: () => {
         for (const client of this.hub.authedClients()) this.rememberDevice(client.device)
         this.publishStatus()

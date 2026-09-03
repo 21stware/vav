@@ -53,6 +53,8 @@ export type HostDiscoveryPeer = {
   platform?: string
 }
 
+export type { IncomingController, IncomingControllerState } from './daemonProtocol'
+
 export type ScreenshotInitPayload = {
   imagePath: string
   locale: AppLocale
@@ -1568,6 +1570,10 @@ export interface VavApi {
     >
     cancelPair(): Promise<void>
     forget(machineId: string): Promise<void>
+    incoming(): Promise<import('./daemonProtocol').IncomingController[]>
+    disconnectIncoming(grantId: string): Promise<void>
+    unpairIncoming(grantId: string): Promise<void>
+    rotateOffer(): Promise<void>
     discovered(): Promise<HostDiscoveryPeer[]>
     listDir(machineId: string, path: string): Promise<DirectoryListing>
     home(machineId: string): Promise<string>
@@ -1576,6 +1582,9 @@ export interface VavApi {
     probeProviders(machineId: string): Promise<import('./workspaceHost').HostProviderInfo[]>
     onChanged(handler: (hosts: import('./workspaceHost').WorkspaceHostInfo[]) => void): () => void
     onDiscovered(handler: (peers: HostDiscoveryPeer[]) => void): () => void
+    onIncomingChanged(
+      handler: (controllers: import('./daemonProtocol').IncomingController[]) => void
+    ): () => void
     onPickFolder(handler: (machineId: string) => void): () => void
   }
 
@@ -1962,6 +1971,11 @@ export const IPC = {
   hostsPairLan: 'vav:hosts:pair-lan',
   hostsCancelPair: 'vav:hosts:cancel-pair',
   hostsForget: 'vav:hosts:forget',
+  hostsIncoming: 'vav:hosts:incoming',
+  hostsDisconnectIncoming: 'vav:hosts:disconnect-incoming',
+  hostsUnpairIncoming: 'vav:hosts:unpair-incoming',
+  hostsRotateOffer: 'vav:hosts:rotate-offer',
+  hostsIncomingChanged: 'vav:hosts:incoming-changed',
   hostsDiscovered: 'vav:hosts:discovered',
   hostsListDir: 'vav:hosts:list-dir',
   hostsHome: 'vav:hosts:home',

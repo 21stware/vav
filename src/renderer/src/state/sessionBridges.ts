@@ -45,6 +45,14 @@ export function installHostsBridge(): () => void {
       }
     }
   })
+  const offIncoming = window.vav.hosts.onIncomingChanged
+    ? window.vav.hosts.onIncomingChanged((incomingControllers) => {
+        useSessionStore.setState({ incomingControllers })
+      })
+    : noopOff()
+  void window.vav.hosts.incoming?.().then((incomingControllers) => {
+    useSessionStore.setState({ incomingControllers })
+  }).catch(() => {})
   const offPick = window.vav.hosts.onPickFolder
     ? window.vav.hosts.onPickFolder((machineId) => {
         const state = useSessionStore.getState()
@@ -57,6 +65,7 @@ export function installHostsBridge(): () => void {
     : noopOff()
   return () => {
     offChanged()
+    offIncoming()
     offPick()
   }
 }
