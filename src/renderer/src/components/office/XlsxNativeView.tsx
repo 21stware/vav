@@ -167,7 +167,7 @@ export function XlsxNativeView({
         if (!cancelled && !seededFromMain.current) {
           setError((err as Error).message || t('preview.loadFailed'))
           setLoading(false)
-          onReady?.()
+          // Leave StructuredDocView up — a failed native paint is not "ready".
         }
       }
     }
@@ -241,8 +241,9 @@ export function XlsxNativeView({
           kind,
           text: text.slice(0, 8000),
           label: text.slice(0, 64) || id,
-          startLine: 1,
-          endLine: 1
+          // Native sheet DOM has no source line map — 0 means unknown.
+          startLine: 0,
+          endLine: 0
         },
         synthetic
       )

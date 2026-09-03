@@ -7655,6 +7655,24 @@ return c as text`
     }
   )
 
+  ipcMain.handle(
+    IPC.convSetAcpGoal,
+    (
+      _event,
+      id: string,
+      action: 'set' | 'pause' | 'resume' | 'clear',
+      objective?: string
+    ) => {
+      const conversations = conversationStore.listMeta()
+      if (action !== 'set' && action !== 'pause' && action !== 'resume' && action !== 'clear') {
+        return { ok: false, error: 'Invalid goal action', conversations }
+      }
+      const result = cliHost.applySessionGoal(id, action, objective)
+      publishConversations()
+      return { ...result, conversations: conversationStore.listMeta() }
+    }
+  )
+
   ipcMain.handle(IPC.convContinueNew, (_event, id: string, messageId: string) => {
     const conversation = conversationStore.branchToNewConversation(id, messageId)
     if (!conversation) return null

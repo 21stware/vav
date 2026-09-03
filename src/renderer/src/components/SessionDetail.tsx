@@ -29,6 +29,7 @@ import { Composer, ComposerContext } from './Composer'
 import { Transcript } from './Transcript'
 import { SearchStrip } from './SearchStrip'
 import { PlanOverlay } from './PlanOverlay'
+import { GoalBanner } from './GoalBanner'
 import { ErrorBanner } from './ErrorBanner'
 import { AgentInstallPanel } from './AgentInstallPanel'
 import { teardownInlineTerminal } from './InlineTerminal'
@@ -716,6 +717,7 @@ export function SessionDetail({
         aria-hidden={!isVavMode}
       >
         {searchOpen && isVavMode && <SearchStrip />}
+        {!previewEdit && <GoalBanner />}
         {!previewEdit && <PlanOverlay />}
         <Transcript />
         {!archived && <ComposerContext conversationId={activeId} />}

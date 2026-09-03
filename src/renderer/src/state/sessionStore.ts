@@ -807,6 +807,11 @@ interface SessionState {
   setFast(id: string, fast: boolean): Promise<void>
   setAcpMode(id: string, modeId: string): Promise<void>
   setAcpConfigOption(id: string, configId: string, value: string | boolean): Promise<void>
+  applyAcpGoal(
+    id: string,
+    action: 'set' | 'pause' | 'resume' | 'clear',
+    objective?: string
+  ): Promise<void>
   /** Workspace preview focus — built-in VAV agent system / open-file context. */
   setFocusedFile(id: string, path: string | null): Promise<void>
   /**
@@ -2190,6 +2195,25 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       }))
     } catch (err) {
       console.error('[setAcpConfigOption] failed', err)
+    }
+  },
+
+  async applyAcpGoal(id, action, objective) {
+    try {
+      const result = await window.vav.conversations.setAcpGoal(id, action, objective)
+      set((state) => ({
+        conversations: mergeConversationList(state.conversations, result.conversations)
+      }))
+      if (!result.ok) {
+        get().showToast({ kind: 'error', title: result.error || tt('goal.controlFailed') })
+        return
+      }
+      if (result.via === 'slash') {
+        await get().send(result.text, [], id)
+      }
+    } catch (err) {
+      console.error('[applyAcpGoal] failed', err)
+      get().showToast({ kind: 'error', title: tt('goal.controlFailed') })
     }
   },
 
