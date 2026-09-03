@@ -774,10 +774,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     if (!light && !pinnedConversationId) {
       nextActiveId = pickBootstrapActiveId(data.conversations, nextActiveId, windowMachineId)
     }
-    // File-preview / warm session shells skip update-state on the critical path.
-    const updateState = light
-      ? IDLE_UPDATE
-      : await window.vav.updates.getState().catch(() => IDLE_UPDATE)
+    const updateState = await window.vav.updates.getState().catch(() => IDLE_UPDATE)
 
     // Legacy settings.json often had cliAgents: [] — never surface an empty catalogue.
     const settings = data.settings

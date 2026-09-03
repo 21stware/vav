@@ -5,6 +5,17 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { execFileSync } from 'node:child_process'
 import type { UpdateState } from '@shared/changeSet'
+import {
+  DEFAULT_AUTO_UPDATE_POLICY,
+  UPDATE_HEARTBEAT_MS,
+  UPDATE_LAUNCH_DELAY_MS,
+  isUpdateBusyPhase,
+  isUpdateSettledPhase,
+  nextUpdateFollowUp,
+  shouldRunAutomaticCheck,
+  type AutoUpdatePolicy,
+  type UpdateCheckReason
+} from '@shared/updatePolicy'
 
 const REPO = '21stware/vav'
 
@@ -42,6 +53,12 @@ export class UpdateService {
   /** Squirrel.Mac has finished staging (native update-downloaded). */
   private nativeUpdateReady = false
   private nativeReadyWaiters: Array<() => void> = []
+  private policy: AutoUpdatePolicy = DEFAULT_AUTO_UPDATE_POLICY
+  private lastCheckAt = 0
+  private checkInFlight: Promise<UpdateState> | null = null
+  private followUpInFlight: Promise<void> | null = null
+  private heartbeat: ReturnType<typeof setInterval> | null = null
+  private launchTimer: ReturnType<typeof setTimeout> | null = null
 
   constructor() {
     if (!app.isPackaged) return
@@ -99,7 +116,133 @@ export class UpdateService {
     return () => this.listeners.delete(listener)
   }
 
+  /**
+   * Start the background scheduler. Launch check is delayed so first paint
+   * is not competing with GitHub; later polls use the heartbeat + focus.
+   */
+  start(policy: AutoUpdatePolicy): void {
+    void this.applyPolicy(policy, 'start')
+  }
+
+  /** Settings change — take effect immediately (check / download / install). */
+  setPolicy(policy: AutoUpdatePolicy): void {
+    void this.applyPolicy(policy, 'change')
+  }
+
+  /** A VAV window became focused (not screenshot overlays). */
+  notifyWindowActive(): void {
+    void this.runAutomatic('focus')
+  }
+
+  private async applyPolicy(
+    policy: AutoUpdatePolicy,
+    source: 'start' | 'change'
+  ): Promise<void> {
+    this.policy = policy
+    this.syncHeartbeat()
+    if (source === 'start') {
+      this.clearLaunchTimer()
+      if (!shouldRunAutomaticCheck({
+        policy: this.policy,
+        reason: 'launch',
+        now: Date.now(),
+        lastCheckAt: this.lastCheckAt,
+        busy: this.isBusy()
+      })) {
+        return
+      }
+      this.launchTimer = setTimeout(() => {
+        this.launchTimer = null
+        void this.runAutomatic('launch')
+      }, UPDATE_LAUNCH_DELAY_MS)
+      this.launchTimer.unref?.()
+      return
+    }
+    this.clearLaunchTimer()
+    await this.applyFollowUp()
+    await this.runAutomatic('policy')
+  }
+
+  private syncHeartbeat(): void {
+    if (this.heartbeat) {
+      clearInterval(this.heartbeat)
+      this.heartbeat = null
+    }
+    if (this.policy === 'off') return
+    this.heartbeat = setInterval(() => {
+      void this.runAutomatic('heartbeat')
+    }, UPDATE_HEARTBEAT_MS)
+    this.heartbeat.unref?.()
+  }
+
+  private clearLaunchTimer(): void {
+    if (!this.launchTimer) return
+    clearTimeout(this.launchTimer)
+    this.launchTimer = null
+  }
+
+  private isBusy(): boolean {
+    return (
+      this.checkInFlight != null ||
+      this.downloading ||
+      isUpdateBusyPhase(this.state.phase) ||
+      isUpdateSettledPhase(this.state.phase)
+    )
+  }
+
+  private async runAutomatic(reason: UpdateCheckReason): Promise<void> {
+    if (
+      !shouldRunAutomaticCheck({
+        policy: this.policy,
+        reason,
+        now: Date.now(),
+        lastCheckAt: this.lastCheckAt,
+        busy: this.isBusy()
+      })
+    ) {
+      return
+    }
+    await this.check()
+  }
+
+  private async applyFollowUp(): Promise<void> {
+    if (this.followUpInFlight) return this.followUpInFlight
+    const action = nextUpdateFollowUp(this.policy, this.state.phase)
+    if (action === 'none') return
+    this.followUpInFlight = (async () => {
+      try {
+        // Unpackaged: no staged package — keep download / install manual
+        // (opening the GitHub asset is the About-page Download button).
+        if (!app.isPackaged) return
+        if (action === 'download') {
+          await this.openDownload()
+          if (nextUpdateFollowUp(this.policy, this.state.phase) === 'install') {
+            this.install()
+          }
+          return
+        }
+        this.install()
+      } finally {
+        this.followUpInFlight = null
+      }
+    })()
+    return this.followUpInFlight
+  }
+
   async check(): Promise<UpdateState> {
+    if (this.checkInFlight) return this.checkInFlight
+    if (this.downloading || isUpdateSettledPhase(this.state.phase)) {
+      return this.getState()
+    }
+    this.lastCheckAt = Date.now()
+    this.checkInFlight = this.performCheck().finally(() => {
+      this.checkInFlight = null
+      void this.applyFollowUp()
+    })
+    return this.checkInFlight
+  }
+
+  private async performCheck(): Promise<UpdateState> {
     this.patch({ phase: 'checking', message: null, progress: 0, bytesPerSecond: null })
     if (!app.isPackaged) {
       return this.checkViaGithub()

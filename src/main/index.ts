@@ -5529,6 +5529,7 @@ function watchSystemAccentColor(): void {
       !screenshotController?.isOverlay(window)
     ) {
       lastFocusedWindow = window
+      updateService.notifyWindowActive()
     }
     publishSystemAccentColor(false)
     notifications.acknowledgeFocusedWindow(window)
@@ -6228,6 +6229,12 @@ function registerIpc(): void {
       ) {
         sendTokenUsagePayload(tokenUsageConversationId)
       }
+      if (
+        patch.autoUpdatePolicy !== undefined &&
+        patch.autoUpdatePolicy !== previous.autoUpdatePolicy
+      ) {
+        updateService.setPolicy(next.autoUpdatePolicy)
+      }
     },
     applyResetSideEffects: (next) => {
       setLocalePreference(next.locale)
@@ -6236,6 +6243,7 @@ function registerIpc(): void {
       rebuildAppChrome()
       syncVibrancyShellWindows()
       syncSleepBlocker()
+      updateService.setPolicy(next.autoUpdatePolicy)
     },
     broadcastSettings: (settings) => broadcast(IPC.settingsChanged, settings),
     keepAwakeStatus: () => currentKeepAwakeStatus(),
@@ -7387,10 +7395,8 @@ if (!singleInstance) {
     // Dock tiles cache aggressively for the rebranded Electron.dev bundle —
     // re-assert the PNG after the first window exists so the tile updates.
     applyDockIcon()
-    // Silent check so the bottom-left update chip can appear when a newer release exists.
-    if (currentSettings().autoCheckUpdates) {
-      void updateService.check()
-    }
+    // Heartbeat + focus checks; launch poll is delayed so first paint stays free.
+    updateService.start(currentSettings().autoUpdatePolicy)
 
     // Finder → Services → “Open Directory in VAV” (folders only).
     // Defer so first paint is not blocked by osacompile.
