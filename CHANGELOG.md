@@ -4,6 +4,13 @@ User-facing changes by release. Unreleased work lives at the top until the next 
 
 ## Unreleased
 
+## 1.18.11
+
+TEMP DIR locate lands the `Workspace` folder in the chosen destination, and a paired host can disconnect or unpair one computer.
+
+- Locate moves every child of `$TMPDIR/vav/<hex>` into the destination so it contains `Workspace` (no session-title rename, no `window.prompt`).
+- Incoming pairing uses per-computer grants: Disconnect drops live sockets; Remove revokes the grant; Rotate pairing line invalidates the printed URI without kicking granted computers.
+
 ## 1.18.10
 
 Keep desktop remote user turns after switching sessions, and stop the master from staying on running after the host finishes.
