@@ -10,9 +10,12 @@ import {
   mergePtyStatusPreservingExited,
   normalizePtyListResult,
   omitRecord,
+  planAppendUserBashTab,
   planBashSplit,
   planFirstBashPane,
   projectPtySessions,
+  ptyCreateOptions,
+  isCliAgentHostId,
   tabsEqual,
   toolsTrayAfterScrubbingAgentTabs,
   userBashTabsOnly,
@@ -137,5 +140,31 @@ describe('workspacePty', () => {
       split.tabs.map((t) => t.id),
       ['sh', 'sh-2']
     )
+  })
+
+  it('builds agent vs bash pty.create options and appends a bash tab', () => {
+    assert.equal(isCliAgentHostId('claude'), true)
+    assert.equal(isCliAgentHostId('vav'), false)
+    assert.equal(isCliAgentHostId(null), false)
+    const agent = ptyCreateOptions({
+      preferredId: 'pref',
+      agent: { binaryPath: '/bin/claude', id: 'claude', name: 'Claude', defaultArgs: ['--foo'] },
+      launchContext: '  notes  ',
+      extras: { sessionTitle: 'Resume' }
+    })
+    assert.equal(agent.command, '/bin/claude')
+    assert.equal(agent.preferredId, 'pref')
+    assert.equal(agent.launchContext, 'notes')
+    assert.equal(agent.title, 'Resume')
+    const bash = ptyCreateOptions({ extras: { title: 'install', purpose: 'install' } })
+    assert.equal(bash.agentId, null)
+    assert.equal(bash.pinTitle, true)
+    const appended = planAppendUserBashTab([tab('sh')], 'sh-2', { title: 'job' }, 2)
+    assert.deepEqual(
+      appended.tabs.map((t) => t.id),
+      ['sh', 'sh-2']
+    )
+    assert.equal(appended.tabs[1]?.title, 'job')
+    assert.equal(appended.activeTabId, 'sh-2')
   })
 })

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import { mergeConversationList, nextConversationSelection, patchConversationById, isArchivedConversation, regenerateActiveLeaf, canMutateActiveSession, compactRefusalReason, genericErrorBanner, shouldSkipSessionDeleteConfirm, fallbackConversationIdAfterDelete, sessionDeleteDialogCopy, type ConversationListItem } from './sessionListMerge.ts'
+import { mergeConversationList, nextConversationSelection, patchConversationById, isArchivedConversation, regenerateActiveLeaf, canMutateActiveSession, compactRefusalReason, genericErrorBanner, shouldSkipSessionDeleteConfirm, fallbackConversationIdAfterDelete, sessionDeleteDialogCopy, prependConversationIfMissing, upsertConversationMeta, type ConversationListItem } from './sessionListMerge.ts'
 
 function row(
   partial: Partial<ConversationListItem> & { id: string }
@@ -201,5 +201,23 @@ describe('sessionDeleteDialogCopy', () => {
       title: 'dialog.deleteSessions:2',
       body: 'dialog.deleteConfirmMultiple:2'
     })
+  })
+})
+
+describe('prependConversationIfMissing / upsertConversationMeta', () => {
+  it('prepends a new id and merges an existing one', () => {
+    const a = row({ id: 'a', updatedAt: 1 })
+    const b = row({ id: 'b', updatedAt: 2 })
+    assert.deepEqual(
+      prependConversationIfMissing([a], b).map((c) => c.id),
+      ['b', 'a']
+    )
+    assert.equal(prependConversationIfMissing([a], a)[0], a)
+    const merged = upsertConversationMeta([a], { ...a, updatedAt: 9 })
+    assert.equal(merged[0]?.updatedAt, 9)
+    assert.deepEqual(
+      upsertConversationMeta([a], b).map((c) => c.id),
+      ['b', 'a']
+    )
   })
 })

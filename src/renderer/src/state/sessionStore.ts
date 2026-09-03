@@ -13,7 +13,7 @@ import type {
 import { DEFAULT_CLI_AGENTS, DEFAULT_SETTINGS } from '@shared/types'
 import type { WorkspaceHostInfo } from '@shared/workspaceHost'
 import type { RemoteControlStatus } from '@shared/remoteControl'
-import { mergeConversationList, nextConversationSelection, isArchivedConversation, regenerateActiveLeaf, canMutateActiveSession, compactRefusalReason, genericErrorBanner, patchConversationById, shouldSkipSessionDeleteConfirm, fallbackConversationIdAfterDelete, sessionDeleteDialogCopy } from './sessionListMerge'
+import { mergeConversationList, nextConversationSelection, isArchivedConversation, regenerateActiveLeaf, canMutateActiveSession, compactRefusalReason, genericErrorBanner, patchConversationById, shouldSkipSessionDeleteConfirm, fallbackConversationIdAfterDelete, sessionDeleteDialogCopy, prependConversationIfMissing, upsertConversationMeta } from './sessionListMerge'
 import {
   activeToolsFields,
   collapsedFileSessionTools,
@@ -842,9 +842,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       }
       return {
         ready: true,
-        conversations: state.conversations.some((c) => c.id === meta.id)
-          ? state.conversations.map((c) => (c.id === meta.id ? { ...c, ...meta } : c))
-          : [meta, ...state.conversations],
+        conversations: upsertConversationMeta(state.conversations, meta),
         messages,
         activeLeaf: {
           ...state.activeLeaf,
@@ -951,9 +949,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         ...meta
       } = full
       set((state) => ({
-        conversations: state.conversations.some((c) => c.id === id)
-          ? state.conversations
-          : [meta, ...state.conversations],
+        conversations: prependConversationIfMissing(state.conversations, meta),
         messages: { ...state.messages, [id]: messages },
         messagesHydrated: { ...state.messagesHydrated, [id]: true },
         activeLeaf: { ...state.activeLeaf, [id]: activeLeafId },
@@ -1222,9 +1218,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       return
     }
     set((state) => ({
-      conversations: state.conversations.some((c) => c.id === meta.id)
-        ? state.conversations
-        : [meta, ...state.conversations]
+      conversations: prependConversationIfMissing(state.conversations, meta)
     }))
     // Drop any stale cache so selectConversation reloads the deep-copied tree.
     set((state) => {
@@ -2159,9 +2153,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     const meta = await window.vav.conversations.continueInNewSession(activeId, messageId)
     if (!meta) return
     set((state) => ({
-      conversations: state.conversations.some((c) => c.id === meta.id)
-        ? state.conversations
-        : [meta, ...state.conversations]
+      conversations: prependConversationIfMissing(state.conversations, meta)
     }))
     await get().selectConversation(meta.id)
     get().focusComposer()

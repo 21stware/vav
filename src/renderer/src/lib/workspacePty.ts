@@ -1,5 +1,5 @@
 import type { ConversationPtyLayouts, TerminalLayoutNode, TerminalSplitAxis, TerminalTab } from '../../../shared/types.ts'
-import type { PtyActivityStatus, PtyListResult, PtySessionMeta } from '../../../shared/ipc.ts'
+import type { PtyActivityStatus, PtyCreateOptions, PtyListResult, PtySessionMeta } from '../../../shared/ipc.ts'
 import { collectLeaves, layoutDirectionKey, layoutFromTabIds, removeLeaf, splitLeaf } from './workspaceLayout.ts'
 import type { AgentHostSession } from './workspaceCliSurface.ts'
 
@@ -295,5 +295,78 @@ export function planBashSplit(
     tabs: bashThenAgentTabs(baseTabs),
     layout: nextLayout,
     activeTabId: opts.newTabId
+  }
+}
+
+/** Explicit CLI agent id (not VAV / bash) owns an agent-host PTY. */
+export function isCliAgentHostId(agentIdOverride: string | null | undefined): agentIdOverride is string {
+  return typeof agentIdOverride === 'string' && agentIdOverride.length > 0 && agentIdOverride !== 'vav'
+}
+
+/** Options for `pty.create` — agent binary vs plain bash. */
+export function ptyCreateOptions(opts: {
+  preferredId?: string
+  agent?: {
+    binaryPath?: string | null
+    defaultArgs?: string[]
+    binaryCandidates?: string[]
+    envVars?: Record<string, string>
+    id: string
+    name: string
+  } | null
+  launchContext?: string | null
+  contextLaunchStrategy?: PtyCreateOptions['contextLaunchStrategy']
+  extras?: BashPaneExtras & {
+    sessionTitle?: string | null
+    resumeCursor?: PtyCreateOptions['resumeCursor']
+  }
+}): PtyCreateOptions {
+  const preferred = opts.preferredId ? { preferredId: opts.preferredId } : {}
+  if (opts.agent?.binaryPath) {
+    return {
+      ...preferred,
+      command: opts.agent.binaryPath,
+      args: opts.agent.defaultArgs ?? [],
+      commandCandidates: opts.agent.binaryCandidates,
+      env: opts.agent.envVars,
+      launchContext: opts.launchContext?.trim() || null,
+      contextLaunchStrategy: opts.contextLaunchStrategy,
+      agentId: opts.agent.id,
+      title: opts.extras?.sessionTitle?.trim() || opts.agent.name,
+      resumeCursor: opts.extras?.resumeCursor ?? null,
+      sessionTitle: opts.extras?.sessionTitle ?? null
+    }
+  }
+  return {
+    ...preferred,
+    agentId: null,
+    title: opts.extras?.title?.trim() || 'bash',
+    pinTitle: opts.extras?.purpose === 'install',
+    purpose: opts.extras?.purpose,
+    installAgentId: opts.extras?.installAgentId
+  }
+}
+
+/** Append a user bash tab after spawn (agent hosts skip this). */
+export function planAppendUserBashTab(
+  tabs: TerminalTab[],
+  tabId: string,
+  extras: BashPaneExtras | undefined,
+  index: number
+): { tabs: TerminalTab[]; activeTabId: string } {
+  return {
+    tabs: bashThenAgentTabs([
+      ...userBashTabsOnly(tabs),
+      {
+        id: tabId,
+        title: extras?.title?.trim() || `bash-${index}`,
+        isAgent: false,
+        agentId: null,
+        purpose: extras?.purpose,
+        installAgentId: extras?.installAgentId,
+        splitWeight: 1
+      }
+    ]),
+    activeTabId: tabId
   }
 }

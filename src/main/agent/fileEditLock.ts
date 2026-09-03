@@ -129,3 +129,16 @@ export function resolveGatedToolParams<P>(
   if (blocked) return { blocked }
   return { params: override ?? params }
 }
+
+/** Gate then execute; blocked Read-mode calls resolve as a failed tool result. */
+export function executeGatedTool<P, R>(
+  readOnly: boolean,
+  toolName: string,
+  params: P,
+  override: P | undefined,
+  execute: (params: P) => R
+): R | Promise<ToolExecuteResult> {
+  const gated = resolveGatedToolParams(readOnly, toolName, params, override)
+  if ('blocked' in gated) return Promise.resolve(gated.blocked)
+  return execute(gated.params)
+}

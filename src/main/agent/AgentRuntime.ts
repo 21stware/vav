@@ -43,7 +43,7 @@ import {
   streamSlotKey,
   runtimeTurnStatus
 } from './agentTurnFinish'
-import { fileReadOnlySwitchBlock, resolveGatedToolParams } from './fileEditLock'
+import { executeGatedTool, fileReadOnlySwitchBlock } from './fileEditLock'
 import {
   approvalAnswerKind,
   approvalCardSummary,
@@ -1115,14 +1115,13 @@ export class AgentRuntime {
       ...tool,
       execute: (toolCallId, params, signal, onUpdate) => {
         const live = this.deps.conversations.get(conversationId)
-        const gated = resolveGatedToolParams(
+        return executeGatedTool(
           !!live?.fileReadOnly,
           tool.name,
           params,
-          turn.argOverrides.get(toolCallId) as typeof params | undefined
+          turn.argOverrides.get(toolCallId) as typeof params | undefined,
+          (gatedParams) => tool.execute(toolCallId, gatedParams, signal, onUpdate)
         )
-        if ('blocked' in gated) return Promise.resolve(gated.blocked)
-        return tool.execute(toolCallId, gated.params, signal, onUpdate)
       }
     }))
   }

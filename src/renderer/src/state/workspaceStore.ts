@@ -48,9 +48,12 @@ import {
   mergePtyStatusPreservingExited,
   normalizePtyListResult,
   omitRecord,
+  planAppendUserBashTab,
   planBashSplit,
   planFirstBashPane,
   projectPtySessions,
+  ptyCreateOptions,
+  isCliAgentHostId,
   toolsTrayAfterScrubbingAgentTabs,
   userBashTabsOnly
 } from '../lib/workspacePty'
@@ -768,8 +771,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 
     // Tools tray / plain bash: never inherit session agentBinaryName.
     // Only explicit agent id spawns a CLI agent binary.
-    const forAgentHost =
-      typeof agentIdOverride === 'string' && agentIdOverride.length > 0 && agentIdOverride !== 'vav'
+    const forAgentHost = isCliAgentHostId(agentIdOverride)
     const agent = forAgentHost
       ? (extras?.agent ?? (await resolveCliAgentConfig(agentIdOverride)))
       : null
@@ -784,32 +786,13 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       cwd,
       grid.cols,
       grid.rows,
-      agent?.binaryPath
-        ? {
-            // preferredId makes multi-window activate attach, not respawn.
-            ...(preferredId ? { preferredId } : {}),
-            command: agent.binaryPath,
-            args: agent.defaultArgs ?? [],
-            commandCandidates: agent.binaryCandidates,
-            env: agent.envVars,
-            // Ambient focus at spawn when the binary supports it (Claude:
-            // --append-system-prompt-file). prompt-paste agents get the same
-            // text after spawn via injectContextToActivePane.
-            launchContext: launchContext?.trim() || null,
-            contextLaunchStrategy: strategy,
-            agentId: agent.id,
-            title: extras?.sessionTitle?.trim() || agent.name,
-            resumeCursor: extras?.resumeCursor ?? null,
-            sessionTitle: extras?.sessionTitle ?? null
-          }
-        : {
-            ...(preferredId ? { preferredId } : {}),
-            agentId: null,
-            title: extras?.title?.trim() || 'bash',
-            pinTitle: extras?.purpose === 'install',
-            purpose: extras?.purpose,
-            installAgentId: extras?.installAgentId
-          }
+      ptyCreateOptions({
+        preferredId,
+        agent,
+        launchContext,
+        contextLaunchStrategy: strategy,
+        extras
+      })
     )
 
     // Main may have minted (or attached) a different id than we guessed.
@@ -822,21 +805,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 
     const bashTabs = userBashTabsOnly(slice?.tabs ?? [])
     const index = bashTabs.length + 1
-    patch(set, id, (s) => ({
-      tabs: bashThenAgentTabs([
-        ...userBashTabsOnly(s.tabs),
-        {
-          id: tabId,
-          title: extras?.title?.trim() || `bash-${index}`,
-          isAgent: false,
-          agentId: null,
-          purpose: extras?.purpose,
-          installAgentId: extras?.installAgentId,
-          splitWeight: 1
-        }
-      ]),
-      activeTabId: tabId
-    }))
+    patch(set, id, (s) => planAppendUserBashTab(s.tabs, tabId, extras, index))
     return tabId
   },
 

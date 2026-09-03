@@ -33,6 +33,24 @@ export function patchConversationById<C extends { id: string }>(
   })
 }
 
+/** Prepend a hydrated/duplicated session; keep the list if the id is already there. */
+export function prependConversationIfMissing<C extends { id: string }>(
+  conversations: C[],
+  meta: C
+): C[] {
+  return conversations.some((c) => c.id === meta.id) ? conversations : [meta, ...conversations]
+}
+
+/** Claim/open: merge meta when the id exists, else prepend. */
+export function upsertConversationMeta<C extends { id: string }>(
+  conversations: C[],
+  meta: C
+): C[] {
+  return conversations.some((c) => c.id === meta.id)
+    ? conversations.map((c) => (c.id === meta.id ? { ...c, ...meta } : c))
+    : [meta, ...conversations]
+}
+
 export function mergeConversationList<T extends ConversationListItem>(
   prev: T[],
   next: T[]

@@ -5,7 +5,8 @@ import {
   gateReadonlyExecute,
   isFileEditLockedPath,
   isReadonlyTerminalCommand,
-  resolveGatedToolParams
+  resolveGatedToolParams,
+  executeGatedTool
 } from './fileEditLock.ts'
 
 describe('isFileEditLockedPath', () => {
@@ -73,5 +74,16 @@ describe('resolveGatedToolParams', () => {
     assert.equal('params' in ok && ok.params.path, '/b')
     const original = resolveGatedToolParams(false, 'fs_write', { path: '/a' }, undefined)
     assert.equal('params' in original && original.params.path, '/a')
+  })
+})
+
+describe('executeGatedTool', () => {
+  it('resolves a blocked result and otherwise calls through', async () => {
+    const blocked = await executeGatedTool(true, 'fs_write', { path: '/a' }, undefined, () => {
+      throw new Error('should not run')
+    })
+    assert.equal(blocked.details.failed, true)
+    const ran = executeGatedTool(false, 'fs_write', { path: '/a' }, { path: '/b' }, (params) => params.path)
+    assert.equal(ran, '/b')
   })
 })
