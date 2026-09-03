@@ -3,6 +3,7 @@ import { describe, it } from 'node:test'
 import {
   LOCAL_MACHINE_ID,
   conversationOnMachine,
+  remoteConversationMachineId,
   formatWorkspaceLabel,
   hostJoin,
   isLocalMachine,
@@ -122,5 +123,17 @@ describe('conversationOnMachine', () => {
   it('matches a paired daemon', () => {
     assert.equal(conversationOnMachine({ machineId: 'box' }, 'box'), true)
     assert.equal(conversationOnMachine({ machineId: 'box' }, LOCAL_MACHINE_ID), false)
+  })
+})
+
+describe('remoteConversationMachineId', () => {
+  it('is null for missing, local, or empty machine ids', () => {
+    assert.equal(remoteConversationMachineId(null), null)
+    assert.equal(remoteConversationMachineId({}), null)
+    assert.equal(remoteConversationMachineId({ machineId: LOCAL_MACHINE_ID }), null)
+  })
+
+  it('returns the paired host id', () => {
+    assert.equal(remoteConversationMachineId({ machineId: 'box' }), 'box')
   })
 })

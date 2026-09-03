@@ -1,9 +1,9 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { highlightCode, languageFromPath } from '../../lib/highlightCode'
 import {
-  blockAtLine,
   findBlockById,
   parentBlockOf,
+  pickBlockAtLine,
   type PreviewBlock
 } from '../../lib/previewBlocks'
 import { handleClickPickMouseDown, type ClickPickPointer } from '../../lib/clickPick'
@@ -249,7 +249,7 @@ export function CodeBlockCanvas({
       setHoveredId(`line-L${lineNo}`)
       return
     }
-    const hit = blockAtLine(blocks, lineNo)
+    const hit = pickBlockAtLine(blocks, lineNo, text)
     setHoveredId(hit?.id ?? null)
   }
 
@@ -280,7 +280,7 @@ export function CodeBlockCanvas({
           endLine: lineNo,
           label: `L${lineNo}`
         } satisfies PreviewBlock)
-      : blockAtLine(blocks, lineNo)
+      : pickBlockAtLine(blocks, lineNo, text)
     if (!hit) return
     const parent = lineOriented ? null : parentBlockOf(blocks, hit.id)
     void window.vav.window

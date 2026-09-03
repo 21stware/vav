@@ -108,6 +108,14 @@ export function nextCommentCardsOnBlockPick(
   return { cards, selectedIds: selectedBlockIdsForPath(cards, filePath), cancelled: false }
 }
 
+/** Ask-agent / analyze: replace the card for this ref, keep other notes. */
+export function upsertCommentCard(
+  existing: { ref: PreviewRef; comment: string }[],
+  ref: PreviewRef
+): { ref: PreviewRef; comment: string }[] {
+  return [...existing.filter((c) => c.ref.id !== ref.id), { ref, comment: '' }]
+}
+
 /** Human title for the comment card header (kind · line N). */
 export function formatCommentCardLabel(block: PreviewBlock): string {
   return formatBlockPickLabel(block)

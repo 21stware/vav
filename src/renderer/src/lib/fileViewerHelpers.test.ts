@@ -19,6 +19,7 @@ import {
   persistPanelWidth,
   provisionalInspect,
   selectedBlockIdsForPath,
+  upsertCommentCard,
   bindFilePreviewWorkspace,
   fileViewerAgentPanelOpen,
   previewBlocksFromSqliteTables,
@@ -109,6 +110,34 @@ describe('comment-card pick', () => {
     assert.deepEqual(added.selectedIds, ['b'])
     assert.equal(added.cards.length, 2)
     assert.deepEqual(selectedBlockIdsForPath(added.cards, '/f.ts'), ['b'])
+  })
+})
+
+describe('upsertCommentCard', () => {
+  it('replaces the matching ref and appends otherwise', () => {
+    const a = {
+      id: '/f.ts::a',
+      filePath: '/f.ts',
+      label: 'a',
+      startLine: 1,
+      endLine: 1,
+      text: 'a'
+    }
+    const b = {
+      id: '/f.ts::b',
+      filePath: '/f.ts',
+      label: 'b',
+      startLine: 2,
+      endLine: 2,
+      text: 'b'
+    }
+    const existing = [{ ref: a, comment: 'keep-other' }]
+    const next = upsertCommentCard(existing, b)
+    assert.equal(next.length, 2)
+    assert.equal(next[1]!.ref.id, '/f.ts::b')
+    const replaced = upsertCommentCard(next, a)
+    assert.equal(replaced.length, 2)
+    assert.equal(replaced.find((c) => c.ref.id === '/f.ts::a')?.comment, '')
   })
 })
 

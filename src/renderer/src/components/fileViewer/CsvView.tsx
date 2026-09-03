@@ -177,10 +177,6 @@ export function CsvView({
                         onMouseDown={
                           selecting
                             ? (e) => {
-                                if (!cell.trim()) {
-                                  if (rowHint) pick(rowId, e, rowHint)
-                                  return
-                                }
                                 pick(cellId, e, csvCellBlock(headers, row, rowIndex, cellIndex))
                               }
                             : undefined

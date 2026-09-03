@@ -179,3 +179,15 @@ export function conversationOnMachine(
 ): boolean {
   return normalizeMachineId(conversation.machineId) === normalizeMachineId(machineId)
 }
+
+/**
+ * Paired-host id when this conversation lives on another desktop.
+ * `null` means run locally (this process / built-in daemon).
+ */
+export function remoteConversationMachineId(
+  conversation: { machineId?: string | null } | null | undefined
+): string | null {
+  if (!conversation) return null
+  const machineId = normalizeMachineId(conversation.machineId)
+  return isLocalMachine(machineId) ? null : machineId
+}

@@ -48,12 +48,8 @@ import {
 } from '@shared/planDoc'
 import { enabledCliAgents } from '@shared/types'
 import type { AcpSessionState, GoalAction } from '@shared/acpSession'
-import {
-  goalSlashText,
-  goalUsesRpc,
-  patchAcpConfigOption,
-  patchAcpSessionMode
-} from '@shared/acpSession'
+import { patchAcpConfigOption, patchAcpSessionMode } from '@shared/acpSession'
+import { planSessionGoal } from './sessionGoal'
 import { currentLocale, t } from '../i18n'
 import { shell } from 'electron'
 import type { FileService } from '../fs/FileService'
@@ -611,20 +607,16 @@ export class CliAgentHost {
     | { ok: true; via: 'slash'; text: string }
     | { ok: false; error: string } {
     const conversation = this.deps.conversations.get(conversationId)
-    const cap = conversation?.acpSession?.goalCapability
-    if (!cap || !cap.actions.includes(action)) {
-      return { ok: false, error: 'Goal control is not available' }
+    const plan = planSessionGoal({
+      capability: conversation?.acpSession?.goalCapability,
+      action,
+      objective,
+      connected: this.runtimes.has(conversationId)
+    })
+    if (plan.ok && plan.via === 'rpc') {
+      this.runtimes.get(conversationId)?.driver.applyOptions?.({ goal: { action, objective } })
     }
-    if (action === 'set' && !objective?.trim()) {
-      return { ok: false, error: 'Goal objective is required' }
-    }
-    if (goalUsesRpc(cap, action)) {
-      const runtime = this.runtimes.get(conversationId)
-      if (!runtime) return { ok: false, error: 'Agent is not connected' }
-      runtime.driver.applyOptions?.({ goal: { action, objective } })
-      return { ok: true, via: 'rpc' }
-    }
-    return { ok: true, via: 'slash', text: goalSlashText(action, objective) }
+    return plan
   }
 
   /**

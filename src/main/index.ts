@@ -78,7 +78,7 @@ import { createSwarmFinishAlert } from './sound/swarmFinishAlert'
 import { RemoteControlService } from './remote/RemoteControlService'
 import { DaemonAttachService } from './daemon/DaemonAttachService'
 import { openTailcatDial } from './daemon/tailcatDial'
-import { hostJoin, isLocalMachine, LOCAL_MACHINE_ID, normalizeMachineId, conversationOnMachine, parseWorkspaceRefList, recentsForMachine, type WorkspaceHostInfo } from '@shared/workspaceHost'
+import { hostJoin, isLocalMachine, LOCAL_MACHINE_ID, normalizeMachineId, conversationOnMachine, parseWorkspaceRefList, recentsForMachine, remoteConversationMachineId, type WorkspaceHostInfo } from '@shared/workspaceHost'
 import { hostSessionId } from '@shared/remoteHostKind'
 import type {
   RemoteConfigure,
@@ -1821,9 +1821,7 @@ const daemonAttach = new DaemonAttachService({
  * a local agent against daemon fs/pty.
  */
 function remoteMachineId(conversation: Conversation | undefined | null): string | null {
-  if (!conversation) return null
-  const machineId = normalizeMachineId(conversation.machineId)
-  return isLocalMachine(machineId) ? null : machineId
+  return remoteConversationMachineId(conversation)
 }
 
 async function forwardControl(
@@ -6160,18 +6158,6 @@ function registerIpc(): void {
   installTrustedIpcGuard(ipcMain, isRendererUrl)
   registerHapticsIpc()
   screenshotController ??= createScreenshotController({ loadScreenshotRenderer })
-  ipcMain.handle(IPC.filesPickAttachments, async (event) => {
-    const parent = BrowserWindow.fromWebContents(event.sender)
-    const opts: Electron.OpenDialogOptions = {
-      properties: ['openFile', 'multiSelections']
-    }
-    const result = parent
-      ? await dialog.showOpenDialog(parent, opts)
-      : await dialog.showOpenDialog(opts)
-    if (result.canceled) return { ok: false as const, cancelled: true }
-    for (const p of result.filePaths) fileService.grantPath(p)
-    return { ok: true as const, paths: result.filePaths }
-  })
   registerScreenshotIpc(ipcMain, screenshotController!)
   registerSecretsIpc(ipcMain, secretStore, () => {
     invalidateAnalysisCache()
@@ -6770,6 +6756,12 @@ return c as text`
       return window
         ? dialog.showSaveDialog(window, options)
         : dialog.showSaveDialog(options)
+    },
+    showOpenDialog: async (event, options) => {
+      const window = BrowserWindow.fromWebContents(event.sender)
+      return window
+        ? dialog.showOpenDialog(window, options)
+        : dialog.showOpenDialog(options)
     }
   })
   registerVcsIpc(ipcMain, {

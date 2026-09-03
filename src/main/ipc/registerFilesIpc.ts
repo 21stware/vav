@@ -18,6 +18,10 @@ export type FilesIpcShell = {
     event: IpcMainInvokeEvent,
     options: Electron.SaveDialogOptions
   ) => Promise<Electron.SaveDialogReturnValue>
+  showOpenDialog: (
+    event: IpcMainInvokeEvent,
+    options: Electron.OpenDialogOptions
+  ) => Promise<Electron.OpenDialogReturnValue>
 }
 
 /** Workspace file list/read/write, clips, working copies, and open-with. */
@@ -27,6 +31,14 @@ export function registerFilesIpc(
   workingCopies: WorkingCopyService,
   shell: FilesIpcShell
 ): void {
+  ipcMain.handle(IPC.filesPickAttachments, async (event) => {
+    const result = await shell.showOpenDialog(event, {
+      properties: ['openFile', 'multiSelections']
+    })
+    if (result.canceled) return { ok: false as const, cancelled: true }
+    for (const p of result.filePaths) files.grantPath(p)
+    return { ok: true as const, paths: result.filePaths }
+  })
   ipcMain.handle(
     IPC.filesList,
     (_event, path: string, sort: FileSortKey, ascending: boolean, conversationId?: string) =>

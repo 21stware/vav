@@ -65,6 +65,12 @@ import {
   savePreviewAgents,
   saveWorkspaceAgents
 } from './sessionAgentPaths'
+import {
+  clearCommentCardsMap,
+  removeCommentCardFromMap,
+  setCommentCardsMap,
+  updateCommentCardInMap
+} from './sessionCommentCards'
 
 export {
   DEFAULT_SESSION_TOOLS,
@@ -1822,33 +1828,25 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   },
 
   setCommentCards(id, cards) {
-    set((state) => ({ commentCards: { ...state.commentCards, [id]: cards } }))
+    set((state) => ({ commentCards: setCommentCardsMap(state.commentCards, id, cards) }))
   },
 
   updateCommentCard(id, refId, comment) {
     set((state) => ({
-      commentCards: {
-        ...state.commentCards,
-        [id]: (state.commentCards[id] ?? []).map((c) =>
-          c.ref.id === refId ? { ...c, comment } : c
-        )
-      }
+      commentCards: updateCommentCardInMap(state.commentCards, id, refId, comment)
     }))
   },
 
   removeCommentCard(id, refId) {
     set((state) => ({
-      commentCards: {
-        ...state.commentCards,
-        [id]: (state.commentCards[id] ?? []).filter((c) => c.ref.id !== refId)
-      }
+      commentCards: removeCommentCardFromMap(state.commentCards, id, refId)
     }))
   },
 
   clearCommentCards(id) {
     const target = id ?? get().activeId
     if (!target) return
-    set((state) => ({ commentCards: { ...state.commentCards, [target]: [] } }))
+    set((state) => ({ commentCards: clearCommentCardsMap(state.commentCards, target) }))
   },
 
   scrollToMessage(messageId) {

@@ -97,8 +97,8 @@ function StreamingMarkdownDocument({
         kind: hit.tagName.startsWith('H') ? 'heading' : 'paragraph',
         text: textContent.slice(0, 8000),
         label: textContent.slice(0, 64) || id,
-        startLine: 1,
-        endLine: 1
+        startLine: 0,
+        endLine: 0
       }
       void window.vav.window
         .popupMenu(
