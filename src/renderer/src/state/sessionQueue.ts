@@ -46,6 +46,29 @@ export function composerSendDisposition(input: {
   return 'enqueue'
 }
 
+/** Poll until `predicate` is true, or `timeoutMs` elapses. First check is immediate. */
+export async function pollUntil(
+  predicate: () => boolean,
+  opts?: {
+    timeoutMs?: number
+    intervalMs?: number
+    now?: () => number
+    delay?: (ms: number) => Promise<void>
+  }
+): Promise<boolean> {
+  const timeoutMs = opts?.timeoutMs ?? 20_000
+  const intervalMs = opts?.intervalMs ?? 40
+  const now = opts?.now ?? Date.now
+  const delay =
+    opts?.delay ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)))
+  const started = now()
+  for (;;) {
+    if (predicate()) return true
+    if (now() - started >= timeoutMs) return false
+    await delay(intervalMs)
+  }
+}
+
 /** After a turn ends, drain FIFO only when idle and no send-now is in flight. */
 export function shouldDrainMessageQueue(opts: {
   sendNowInFlight: boolean

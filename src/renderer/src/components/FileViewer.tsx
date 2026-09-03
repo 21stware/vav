@@ -10,7 +10,8 @@ import {
 import type { FileAssociationStatus, FileInspectResult, FileSessionMeta } from '@shared/ipc'
 import { isClipPath } from '@shared/clipPath'
 import type { PreviewRef } from '@shared/types'
-import { formatBytes, relativeTime } from '../lib/format'
+import { relativeTime } from '../lib/format'
+import { fileViewerShortcut, fileViewerStatusLeft } from '../lib/fileViewerChrome'
 import {
   formatBadge,
   parseBlocksForPath,
@@ -1689,36 +1690,42 @@ export function FileViewer({
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent): void => {
-      if ((event.metaKey || event.ctrlKey) && event.key === 'w') {
-        event.preventDefault()
+      const action = fileViewerShortcut({
+        metaOrCtrl: event.metaKey || event.ctrlKey,
+        key: event.key,
+        shift: event.shiftKey,
+        hasUnsavedChanges,
+        effectiveReadOnly,
+        hasSelectionOrCards: selectedIds.length > 0 || agentCommentCards.length > 0,
+        agentPanelOpen,
+        embedded
+      })
+      // Escape always swallows the key so the window does not also close.
+      if (!action && event.key !== 'Escape') return
+      event.preventDefault()
+      if (action === 'close') {
         requestClose()
         return
       }
-      // Save shortcuts apply in Editing mode (buttons hidden in Read / ZIP / binary).
-      // Embedded workspace keeps agent docked without local agentPanelOpen.
-      if (
-        !effectiveReadOnly &&
-        (event.metaKey || event.ctrlKey) &&
-        event.key.toLowerCase() === 's'
-      ) {
-        event.preventDefault()
-        if (event.shiftKey) void saveAs()
-        else if (hasUnsavedChanges) void save()
+      if (action === 'save-as') {
+        void saveAs()
         return
       }
-      if (event.key === 'Escape') {
-        event.preventDefault()
-        const conversationId = agentConversationId ?? parentConversationId ?? null
-        if (selectedIds.length > 0 || agentCommentCards.length > 0) {
-          setSelectedIds([])
-          if (conversationId) {
-            useSessionStore.getState().clearCommentCards(conversationId)
-          }
-          return
-        }
-        if (agentPanelOpen) void toggleAgentPanel()
-        else if (!embedded) window.close()
+      if (action === 'save') {
+        void save()
+        return
       }
+      if (action === 'save-consume') return
+      if (action === 'clear-selection') {
+        const conversationId = agentConversationId ?? parentConversationId ?? null
+        setSelectedIds([])
+        if (conversationId) {
+          useSessionStore.getState().clearCommentCards(conversationId)
+        }
+        return
+      }
+      if (action === 'toggle-agent') void toggleAgentPanel()
+      else if (action === 'close-window') window.close()
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
@@ -1733,62 +1740,28 @@ export function FileViewer({
     agentCommentCards.length
   ])
 
-  const statusLeft = useMemo(() => {
-    if (!info) return t('common.loading')
-    const parts: string[] = []
-    if (info.kind === 'zip' && info.zip) {
-      parts.push(
-        `${formatBytes(info.zip.compressedSize)} (${formatBytes(info.zip.uncompressedSize)} uncompressed)`
-      )
-      parts.push(t('preview.zipEntries', { n: info.zip.entryCount }))
-      parts.push(t('preview.zipRatio', { n: info.zip.ratio }))
-      parts.push(badge)
-      parts.push(filePath)
-      if (info.mtimeMs) {
-        parts.push(
-          t('preview.modifiedAt', {
-            when: new Date(info.mtimeMs).toLocaleDateString()
-          })
-        )
-      }
-      return parts.join(' · ')
-    }
-    if (info.kind === 'binary') {
-      if (info.size) parts.push(formatBytes(info.size))
-      parts.push(badge)
-      parts.push(filePath)
-      if (info.mtimeMs) {
-        parts.push(
-          t('preview.modifiedAt', {
-            when: new Date(info.mtimeMs).toLocaleDateString()
-          })
-        )
-      }
-      return parts.join(' · ')
-    }
-    if (info.size) parts.push(formatBytes(info.size))
-    if (info.kind === 'csv' && csvModel) {
-      parts.push(
-        csvModel.rowCapped
-          ? t('preview.csvSheetCapped', {
-              shown: csvModel.rows.length,
-              total: csvModel.totalRows,
-              cols: csvModel.headers.length
-            })
-          : t('preview.csvSheet', {
-              rows: csvModel.totalRows,
-              cols: csvModel.headers.length
-            })
-      )
-    } else if (info.lineCount != null) {
-      parts.push(t('files.lines', { n: info.lineCount }))
-    }
-    parts.push(badge)
-    parts.push(filePath)
-    // Never surface technical windowing as "truncated" in the status strip.
-    if (hasUnsavedChanges) parts.push('•')
-    return parts.join(' · ')
-  }, [info, badge, filePath, t, hasUnsavedChanges, csvModel])
+  const statusLeft = useMemo(
+    () =>
+      fileViewerStatusLeft({
+        info,
+        badge,
+        filePath,
+        hasUnsavedChanges,
+        csvModel,
+        copy: {
+          loading: t('common.loading'),
+          zipEntries: (n) => t('preview.zipEntries', { n }),
+          zipRatio: (n) => t('preview.zipRatio', { n }),
+          csvSheet: (rows, cols) => t('preview.csvSheet', { rows, cols }),
+          csvSheetCapped: (shown, total, cols) =>
+            t('preview.csvSheetCapped', { shown, total, cols }),
+          lines: (n) => t('files.lines', { n }),
+          modifiedAt: (when) => t('preview.modifiedAt', { when })
+        },
+        formatDate: (ms) => new Date(ms).toLocaleDateString()
+      }),
+    [info, badge, filePath, t, hasUnsavedChanges, csvModel]
+  )
 
   const openAgentFromToggle = (): void => {
     if (embedded && onToggleAgentPanel) {

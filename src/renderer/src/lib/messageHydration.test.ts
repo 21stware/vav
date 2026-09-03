@@ -7,7 +7,8 @@ import {
   isCurrentHydration,
   mergeHydratedMessages,
   nextHydrationGeneration,
-  omitKeys
+  omitKeys,
+  omitMappedKeys
 } from './messageHydration.ts'
 
 function msg(id: string, content: string, parentId: string | null = null): ChatMessage {
@@ -69,6 +70,20 @@ describe('omitKeys', () => {
   it('returns the same object when nothing is removed', () => {
     const map = { keep: 1 }
     assert.equal(omitKeys(map, ['nope']), map)
+  })
+})
+
+describe('omitMappedKeys', () => {
+  it('omits the same ids from several maps', () => {
+    const state = {
+      messages: { a: [1], b: [2] },
+      drafts: { a: 'keep', b: 'drop' },
+      title: 'session'
+    }
+    const next = omitMappedKeys(state, ['messages', 'drafts'] as const, ['b'])
+    assert.deepEqual(next.messages, { a: [1] })
+    assert.deepEqual(next.drafts, { a: 'keep' })
+    assert.equal('title' in next, false)
   })
 })
 

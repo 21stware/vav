@@ -159,3 +159,23 @@ export function compactRefusalReason(opts: {
   if (opts.cliHost) return 'cli-host'
   return null
 }
+
+/** A lone empty chat skips the confirm sheet; multi-select always confirms. */
+export function shouldSkipSessionDeleteConfirm(
+  targetCount: number,
+  emptyCount: number
+): boolean {
+  return targetCount === 1 && emptyCount === 1
+}
+
+export function genericErrorBanner(message: string): {
+  errorBanner: string
+  errorBannerKind: 'generic'
+  errorBannerDetail: string
+} {
+  return {
+    errorBanner: message,
+    errorBannerKind: 'generic',
+    errorBannerDetail: message
+  }
+}

@@ -45,6 +45,24 @@ export function omitKeys<T>(map: Record<string, T>, ids: Iterable<string>): Reco
   return touched ? next : map
 }
 
+/** Drop the same ids from several per-conversation maps in one pass. */
+export function omitMappedKeys<S extends object, K extends keyof S>(
+  state: S,
+  keys: readonly K[],
+  ids: Iterable<string>
+): Pick<S, K> {
+  const out = {} as Pick<S, K>
+  for (const key of keys) {
+    const value = state[key]
+    out[key] = (
+      value && typeof value === 'object' && !Array.isArray(value)
+        ? omitKeys(value as Record<string, unknown>, ids)
+        : value
+    ) as S[K]
+  }
+  return out
+}
+
 /** Token-usage overlay maps from a conversations.get / list snapshot. */
 export function conversationTokenCachePatch<H>(
   state: {

@@ -13,7 +13,7 @@ import type {
 import { DEFAULT_CLI_AGENTS, DEFAULT_SETTINGS } from '@shared/types'
 import type { WorkspaceHostInfo } from '@shared/workspaceHost'
 import type { RemoteControlStatus } from '@shared/remoteControl'
-import { mergeConversationList, nextConversationSelection, isArchivedConversation, regenerateActiveLeaf, canMutateActiveSession, compactRefusalReason, patchConversationById } from './sessionListMerge'
+import { mergeConversationList, nextConversationSelection, isArchivedConversation, regenerateActiveLeaf, canMutateActiveSession, compactRefusalReason, genericErrorBanner, patchConversationById, shouldSkipSessionDeleteConfirm } from './sessionListMerge'
 import {
   activeToolsFields,
   DEFAULT_SESSION_TOOLS,
@@ -40,7 +40,7 @@ import {
   type TurnRuntime,
 } from './sessionTypes'
 import { omitLiveUsage } from './sessionUsage'
-import { dispatchQueuedPayload, MESSAGE_QUEUE_MAX, buildQueuedMessage, composerSendDisposition, composerClearedPatch, isEmptyComposerSend, mergePreviewAndCommentRefs, shouldDrainMessageQueue } from './sessionQueue'
+import { dispatchQueuedPayload, MESSAGE_QUEUE_MAX, buildQueuedMessage, composerSendDisposition, composerClearedPatch, isEmptyComposerSend, mergePreviewAndCommentRefs, pollUntil, shouldDrainMessageQueue } from './sessionQueue'
 import { applyCliHostSetResult } from './sessionCliHost'
 import { applySessionTurnEvent } from './sessionTurnApply'
 import {
@@ -114,7 +114,8 @@ import {
   isCurrentHydration,
   mergeHydratedMessages,
   nextHydrationGeneration,
-  omitKeys
+  omitKeys,
+  omitMappedKeys
 } from '../lib/messageHydration'
 import { visibleMessages } from './sessionThread'
 import {
@@ -1312,27 +1313,33 @@ export const useSessionStore = create<SessionState>((set, get) => ({
           saveSessionToolsMap(toolsLayouts)
           return {
             conversations: next,
-            messages: omitKeys(state.messages, removed),
-            messagesHydrated: omitKeys(state.messagesHydrated, removed),
-            activeLeaf: omitKeys(state.activeLeaf, removed),
-            turns: omitKeys(state.turns, removed),
             toolsLayouts,
-            messageQueues: omitKeys(state.messageQueues, removed),
-            drafts: omitKeys(state.drafts, removed),
-            attachments: omitKeys(state.attachments, removed),
-            quotes: omitKeys(state.quotes, removed),
-            previewRefs: omitKeys(state.previewRefs, removed),
-            pickMode: omitKeys(state.pickMode, removed),
-            commentCards: omitKeys(state.commentCards, removed),
-            contextFiles: omitKeys(state.contextFiles, removed),
-            workdirPathRevealed: omitKeys(state.workdirPathRevealed, removed),
-            tokenHistories: omitKeys(state.tokenHistories, removed),
-            cacheCreatedAt: omitKeys(state.cacheCreatedAt, removed),
-            cacheExpiresAt: omitKeys(state.cacheExpiresAt, removed),
-            liveUsage: omitKeys(state.liveUsage, removed),
-            activityById: omitKeys(state.activityById, removed),
-            compactions: omitKeys(state.compactions, removed),
-            pendingReviewByConversation: omitKeys(state.pendingReviewByConversation, removed)
+            ...omitMappedKeys(
+              state,
+              [
+                'messages',
+                'messagesHydrated',
+                'activeLeaf',
+                'turns',
+                'messageQueues',
+                'drafts',
+                'attachments',
+                'quotes',
+                'previewRefs',
+                'pickMode',
+                'commentCards',
+                'contextFiles',
+                'workdirPathRevealed',
+                'tokenHistories',
+                'cacheCreatedAt',
+                'cacheExpiresAt',
+                'liveUsage',
+                'activityById',
+                'compactions',
+                'pendingReviewByConversation'
+              ] as const,
+              removed
+            )
           }
         })
         if (removed.includes(get().activeId)) {
@@ -1346,7 +1353,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
       // A lone empty chat can go without a sheet. Multi-select always confirms
       // — even if every target is empty — so Backspace on a range is reversible.
-      if (targets.length === 1 && empty.length === 1) {
+      if (shouldSkipSessionDeleteConfirm(targets.length, empty.length)) {
         await applyRemove(empty)
         return
       }
@@ -2014,20 +2021,9 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       const turn = get().turns[conversationId]
       if (turn?.isRunning) {
         await get().cancel(conversationId)
-        const idle = await new Promise<boolean>((resolve) => {
-          const started = Date.now()
-          const tick = (): void => {
-            if (!get().turns[conversationId]?.isRunning) {
-              resolve(true)
-              return
-            }
-            if (Date.now() - started >= 20_000) {
-              resolve(false)
-              return
-            }
-            window.setTimeout(tick, 40)
-          }
-          tick()
+        const idle = await pollUntil(() => !get().turns[conversationId]?.isRunning, {
+          timeoutMs: 20_000,
+          intervalMs: 40
         })
         if (!idle) {
           // Put the item back if we could not interrupt cleanly.
@@ -2221,19 +2217,11 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       isRunning: get().turns[activeId]?.isRunning
     })
     if (reason === 'cli-host') {
-      set({
-        errorBanner: tt('compact.error.cliHost'),
-        errorBannerKind: 'generic',
-        errorBannerDetail: tt('compact.error.cliHost')
-      })
+      set(genericErrorBanner(tt('compact.error.cliHost')))
       return false
     }
     if (reason === 'busy') {
-      set({
-        errorBanner: tt('compact.error.busy'),
-        errorBannerKind: 'generic',
-        errorBannerDetail: tt('compact.error.busy')
-      })
+      set(genericErrorBanner(tt('compact.error.busy')))
       return false
     }
     const result = await window.vav.agent.compact(
@@ -2241,11 +2229,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       keepAfterMessageId ? { keepAfterMessageId } : undefined
     )
     if (!result.ok) {
-      set({
-        errorBanner: result.error,
-        errorBannerKind: 'generic',
-        errorBannerDetail: result.error
-      })
+      set(genericErrorBanner(result.error))
       return false
     }
     // No toast — transcript shows a quiet "history compact" log via CompactionBanner.
@@ -2272,11 +2256,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         requireIdle: false
       }) === 'cli-host'
     ) {
-      set({
-        errorBanner: tt('compact.error.cliHost'),
-        errorBannerKind: 'generic',
-        errorBannerDetail: tt('compact.error.cliHost')
-      })
+      set(genericErrorBanner(tt('compact.error.cliHost')))
       return false
     }
     const leafId = get().activeLeaf[activeId]
@@ -2285,11 +2265,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     if (!active) return false
     const result = await window.vav.agent.clearCompaction(activeId, active.leafId)
     if (!result.ok) {
-      set({
-        errorBanner: result.error,
-        errorBannerKind: 'generic',
-        errorBannerDetail: result.error
-      })
+      set(genericErrorBanner(result.error))
       return false
     }
     set((state) => ({

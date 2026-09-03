@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import { mergeConversationList, nextConversationSelection, patchConversationById, isArchivedConversation, regenerateActiveLeaf, canMutateActiveSession, compactRefusalReason, type ConversationListItem } from './sessionListMerge.ts'
+import { mergeConversationList, nextConversationSelection, patchConversationById, isArchivedConversation, regenerateActiveLeaf, canMutateActiveSession, compactRefusalReason, genericErrorBanner, shouldSkipSessionDeleteConfirm, type ConversationListItem } from './sessionListMerge.ts'
 
 function row(
   partial: Partial<ConversationListItem> & { id: string }
@@ -153,5 +153,23 @@ describe('compactRefusalReason', () => {
       'cli-host'
     )
     assert.equal(compactRefusalReason({}), null)
+  })
+})
+
+describe('shouldSkipSessionDeleteConfirm', () => {
+  it('skips only a lone empty chat', () => {
+    assert.equal(shouldSkipSessionDeleteConfirm(1, 1), true)
+    assert.equal(shouldSkipSessionDeleteConfirm(2, 2), false)
+    assert.equal(shouldSkipSessionDeleteConfirm(1, 0), false)
+  })
+})
+
+describe('genericErrorBanner', () => {
+  it('mirrors the message into kind and detail', () => {
+    assert.deepEqual(genericErrorBanner('nope'), {
+      errorBanner: 'nope',
+      errorBannerKind: 'generic',
+      errorBannerDetail: 'nope'
+    })
   })
 })

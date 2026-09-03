@@ -8,6 +8,7 @@ import {
   isEmptyComposerSend,
   mergePreviewAndCommentRefs,
   MESSAGE_QUEUE_MAX,
+  pollUntil,
   shouldDrainMessageQueue
 } from './sessionQueue.ts'
 
@@ -16,6 +17,59 @@ describe('omitLiveUsage', () => {
     const live = { a: { tokensUsed: 1 }, b: { tokensUsed: 2 } }
     assert.equal(omitLiveUsage(live, 'missing'), live)
     assert.deepEqual(omitLiveUsage(live, 'a'), { b: { tokensUsed: 2 } })
+  })
+})
+
+describe('pollUntil', () => {
+  it('returns true on the first check when the predicate already holds', async () => {
+    let delayed = 0
+    const ok = await pollUntil(() => true, {
+      timeoutMs: 20_000,
+      intervalMs: 40,
+      now: () => 0,
+      delay: async () => {
+        delayed += 1
+      }
+    })
+    assert.equal(ok, true)
+    assert.equal(delayed, 0)
+  })
+
+  it('returns false after timeout without the predicate becoming true', async () => {
+    let now = 0
+    let delayed = 0
+    const ok = await pollUntil(() => false, {
+      timeoutMs: 20_000,
+      intervalMs: 40,
+      now: () => now,
+      delay: async (ms) => {
+        delayed += 1
+        now += ms
+      }
+    })
+    assert.equal(ok, false)
+    assert.equal(delayed, 500)
+  })
+
+  it('returns true once the predicate flips before timeout', async () => {
+    let now = 0
+    let checks = 0
+    const ok = await pollUntil(
+      () => {
+        checks += 1
+        return checks >= 3
+      },
+      {
+        timeoutMs: 20_000,
+        intervalMs: 40,
+        now: () => now,
+        delay: async (ms) => {
+          now += ms
+        }
+      }
+    )
+    assert.equal(ok, true)
+    assert.equal(checks, 3)
   })
 })
 
