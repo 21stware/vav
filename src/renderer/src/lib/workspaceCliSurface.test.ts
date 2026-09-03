@@ -7,6 +7,7 @@ import {
   CLI_SURFACE_KEY,
   mergeCliSurface,
   pickCliScreenFocusTab,
+  planEnterCliMode,
   reconcileAgentHosts,
   type AgentHostSession
 } from './workspaceCliSurface.ts'
@@ -77,5 +78,70 @@ describe('workspaceCliSurface', () => {
     assert.equal(pickCliScreenFocusTab(tabs, 'missing')?.id, 'claude')
     assert.equal(pickCliScreenFocusTab([tabs[0]!], 'cursor')?.id, 'pending')
     assert.equal(pickCliScreenFocusTab([], 'cursor'), undefined)
+  })
+
+  it('plans enter-cli: noop, restore, promote, fold, and fresh picker', () => {
+    const live = tab({ id: 'pty-1', agentId: 'claude' })
+    const surface: AgentHostSession = {
+      tabs: [live],
+      layout: leaf('pty-1'),
+      activeTabId: 'pty-1'
+    }
+    assert.equal(
+      planEnterCliMode({
+        cliMode: true,
+        agentHostSessions: { [CLI_SURFACE_KEY]: surface }
+      }).kind,
+      'noop'
+    )
+
+    const restored = planEnterCliMode({
+      cliMode: false,
+      agentHostSessions: { [CLI_SURFACE_KEY]: { ...surface, layout: null } }
+    })
+    assert.equal(restored.kind, 'patch')
+    if (restored.kind === 'patch') {
+      assert.deepEqual(collectLeaves(restored.surface.layout), ['pty-1'])
+      assert.equal(restored.autoAssignPendingId, undefined)
+    }
+
+    const promoted = planEnterCliMode({
+      cliMode: false,
+      agentHostSessions: {
+        claude: { tabs: [live], layout: leaf('pty-1'), activeTabId: 'pty-1' }
+      }
+    })
+    assert.equal(promoted.kind, 'patch')
+    if (promoted.kind === 'patch') {
+      assert.equal(promoted.surface.tabs[0]?.agentId, 'claude')
+      assert.equal(promoted.surface.tabs[0]?.pendingCli, false)
+    }
+
+    const cursor = tab({ id: 'pty-2', agentId: 'cursor' })
+    const folded = planEnterCliMode({
+      cliMode: false,
+      agentHostSessions: {
+        claude: { tabs: [live], layout: leaf('pty-1'), activeTabId: 'pty-1' },
+        cursor: { tabs: [cursor], layout: leaf('pty-2'), activeTabId: 'pty-2' }
+      }
+    })
+    assert.equal(folded.kind, 'patch')
+    if (folded.kind === 'patch') {
+      assert.deepEqual(
+        folded.surface.tabs.map((t) => t.id),
+        ['pty-1', 'pty-2']
+      )
+      assert.deepEqual(collectLeaves(folded.surface.layout), ['pty-1', 'pty-2'])
+    }
+
+    const fresh = planEnterCliMode(
+      { cliMode: false, agentHostSessions: {} },
+      { makePendingTab: () => tab({ id: 'cli-pending:test', pendingCli: true, agentId: null }) }
+    )
+    assert.equal(fresh.kind, 'patch')
+    if (fresh.kind === 'patch') {
+      assert.equal(fresh.autoAssignPendingId, 'cli-pending:test')
+      assert.equal(fresh.surface.activeTabId, 'cli-pending:test')
+    }
   })
 })

@@ -8,8 +8,10 @@ import {
   collectLeaves,
   layoutFromTabIds,
   pickCliLayoutBase,
-  reconcileLayout
+  reconcileLayout,
+  splitLeaf
 } from './workspaceLayout.ts'
+import { isLiveAgentSession } from './workspacePty.ts'
 
 /** One CLI agent's terminal host layout — survives agent switching. */
 export type AgentHostSession = {
@@ -199,4 +201,88 @@ export function reconcileAgentHosts(
     out[CLI_SURFACE_KEY] = mergedSurface
   }
   return out
+}
+
+export type EnterCliModePlan =
+  | { kind: 'noop' }
+  | {
+      kind: 'patch'
+      surface: AgentHostSession
+      autoAssignPendingId?: string
+    }
+
+/**
+ * Next CLI Screen for {@link WorkspaceSlice} when entering CLI mode.
+ * Store still owns empty-slice creation, persist, and single-agent auto-assign.
+ */
+export function planEnterCliMode(
+  slice: {
+    cliMode: boolean
+    agentHostSessions: Record<string, AgentHostSession>
+  },
+  opts?: { makePendingTab?: () => TerminalTab }
+): EnterCliModePlan {
+  const existing = slice.agentHostSessions[CLI_SURFACE_KEY]
+  if (slice.cliMode && existing && existing.tabs.length > 0) {
+    return { kind: 'noop' }
+  }
+  if (existing && existing.tabs.length > 0) {
+    const layout = existing.layout ?? layoutFromTabIds(existing.tabs.map((t) => t.id))
+    return {
+      kind: 'patch',
+      surface: {
+        ...existing,
+        layout,
+        activeTabId:
+          existing.activeTabId && existing.tabs.some((t) => t.id === existing.activeTabId)
+            ? existing.activeTabId
+            : (existing.tabs[0]?.id ?? '')
+      }
+    }
+  }
+  const liveAgents = Object.entries(slice.agentHostSessions).filter(
+    ([key, host]) => key !== CLI_SURFACE_KEY && isLiveAgentSession(host, key)
+  )
+  if (liveAgents.length === 1) {
+    const [agentId, host] = liveAgents[0]!
+    return {
+      kind: 'patch',
+      surface: {
+        tabs: host.tabs.map((t) => ({ ...t, pendingCli: false, agentId: t.agentId ?? agentId })),
+        layout: host.layout,
+        activeTabId: host.activeTabId
+      }
+    }
+  }
+  if (liveAgents.length > 1) {
+    const tabs: TerminalTab[] = []
+    for (const [agentId, host] of liveAgents) {
+      for (const t of host.tabs) {
+        tabs.push({ ...t, pendingCli: false, agentId: t.agentId ?? agentId })
+      }
+    }
+    let layout: TerminalLayoutNode | null = null
+    for (const t of tabs) {
+      if (!layout) layout = { type: 'leaf', tabId: t.id, weight: 1 }
+      else layout = splitLeaf(layout, collectLeaves(layout).slice(-1)[0]!, 'row', t.id)
+    }
+    return {
+      kind: 'patch',
+      surface: {
+        tabs,
+        layout,
+        activeTabId: tabs[0]?.id ?? ''
+      }
+    }
+  }
+  const pending = (opts?.makePendingTab ?? makePendingCliTab)()
+  return {
+    kind: 'patch',
+    surface: {
+      tabs: [pending],
+      layout: { type: 'leaf', tabId: pending.id, weight: 1 },
+      activeTabId: pending.id
+    },
+    autoAssignPendingId: pending.id
+  }
 }

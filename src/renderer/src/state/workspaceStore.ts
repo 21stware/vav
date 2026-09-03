@@ -14,7 +14,6 @@ import { makePendingCliTab, pendingTabFromId } from '../lib/cliPendingLayout'
 import {
   collectLeaves,
   layoutDirectionKey,
-  layoutFromTabIds,
   layoutHasColumn,
   reconcileLayout,
   removeLeaf,
@@ -24,6 +23,7 @@ import {
 import {
   CLI_SURFACE_KEY,
   pickCliScreenFocusTab,
+  planEnterCliMode,
   reconcileAgentHosts,
   type AgentHostSession
 } from '../lib/workspaceCliSurface'
@@ -1040,101 +1040,20 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     if (!get().workspaces[id]) {
       set((state) => ({ workspaces: { ...state.workspaces, [id]: emptySlice(null) } }))
     }
-    const slice = get().workspaces[id]!
-    const existing = getCliSurface(slice)
-    // Already on Screen with panes — skip (avoids double sync from UI + layout effect).
-    if (slice.cliMode && existing && existing.tabs.length > 0) {
-      return
-    }
-    // Screen already exists (live panes and/or pending pickers) — only flip mode.
-    // Never rebuild or drop panes when re-entering from VAV.
-    if (existing && existing.tabs.length > 0) {
-      const layout =
-        existing.layout ??
-        layoutFromTabIds(existing.tabs.map((t) => t.id))
-      patch(set, id, (s) => ({
-        cliMode: true,
-        activeHostAgentId: CLI_SURFACE_KEY,
-        agentHostSessions: {
-          ...s.agentHostSessions,
-          [CLI_SURFACE_KEY]: {
-            ...existing,
-            layout,
-            activeTabId:
-              existing.activeTabId && existing.tabs.some((t) => t.id === existing.activeTabId)
-                ? existing.activeTabId
-                : (existing.tabs[0]?.id ?? '')
-          }
-        }
-      }))
-      get().syncPtyLayouts(id)
-      return
-    }
-    // Prefer promoting a single live per-agent host into the surface if present.
-    const liveAgents = Object.entries(slice.agentHostSessions).filter(
-      ([key, host]) => key !== CLI_SURFACE_KEY && isLiveAgentSession(host, key)
-    )
-    if (liveAgents.length === 1) {
-      const [agentId, host] = liveAgents[0]!
-      patch(set, id, (s) => ({
-        cliMode: true,
-        activeHostAgentId: CLI_SURFACE_KEY,
-        agentHostSessions: {
-          ...s.agentHostSessions,
-          [CLI_SURFACE_KEY]: {
-            tabs: host.tabs.map((t) => ({ ...t, pendingCli: false, agentId: t.agentId ?? agentId })),
-            layout: host.layout,
-            activeTabId: host.activeTabId
-          }
-        }
-      }))
-      get().syncPtyLayouts(id)
-      return
-    }
-    if (liveAgents.length > 1) {
-      // Multiple types already running: fold all leaves into one flat row for now.
-      const tabs: TerminalTab[] = []
-      for (const [agentId, host] of liveAgents) {
-        for (const t of host.tabs) {
-          tabs.push({ ...t, pendingCli: false, agentId: t.agentId ?? agentId })
-        }
-      }
-      let layout: TerminalLayoutNode | null = null
-      for (const t of tabs) {
-        if (!layout) layout = { type: 'leaf', tabId: t.id, weight: 1 }
-        else layout = splitLeaf(layout, collectLeaves(layout).slice(-1)[0]!, 'row', t.id)
-      }
-      patch(set, id, (s) => ({
-        cliMode: true,
-        activeHostAgentId: CLI_SURFACE_KEY,
-        agentHostSessions: {
-          ...s.agentHostSessions,
-          [CLI_SURFACE_KEY]: {
-            tabs,
-            layout,
-            activeTabId: tabs[0]?.id ?? ''
-          }
-        }
-      }))
-      get().syncPtyLayouts(id)
-      return
-    }
-    // Fresh: one picker pane (may auto-assign when only one agent is enabled).
-    const pending = makePendingCliTab()
+    const plan = planEnterCliMode(get().workspaces[id]!)
+    if (plan.kind === 'noop') return
     patch(set, id, (s) => ({
       cliMode: true,
       activeHostAgentId: CLI_SURFACE_KEY,
       agentHostSessions: {
         ...s.agentHostSessions,
-        [CLI_SURFACE_KEY]: {
-          tabs: [pending],
-          layout: { type: 'leaf', tabId: pending.id, weight: 1 },
-          activeTabId: pending.id
-        }
+        [CLI_SURFACE_KEY]: plan.surface
       }
     }))
     get().syncPtyLayouts(id)
-    maybeAutoAssignSingleAgent(id, pending.id, 'enter')
+    if (plan.autoAssignPendingId) {
+      maybeAutoAssignSingleAgent(id, plan.autoAssignPendingId, 'enter')
+    }
   },
 
   exitCliMode(id) {
