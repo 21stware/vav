@@ -18,7 +18,9 @@ import {
   planRestoreCliSurfaceLayout,
   planAppendCliSplitStorePatch,
   planSelectAgentTabPatch,
+  planSeedAgentHostPatch,
   planSplitAgentHost,
+  planSplitAgentHostStorePatch,
   planSplitCliSurface,
   preferredCliAssignTabId,
   resolveCloseAgentTabMeta,
@@ -348,6 +350,34 @@ describe('workspaceCliSurface', () => {
     assert.deepEqual(collectLeaves(next.layout!), ['pty-1', 'pty-2'])
     assert.equal(next.activeTabId, 'pty-2')
     assert.equal(next.tabs[1]?.title, 'Claude-2')
+  })
+
+  it('seeds a per-agent host map without touching other hosts', () => {
+    const session = seedAgentHostSession('pty-1', 'claude', 'Claude')
+    const next = planSeedAgentHostPatch(
+      { agentHostSessions: { cursor: session } },
+      'claude',
+      session
+    )
+    assert.equal(next.agentHostSessions.claude, session)
+    assert.equal(next.agentHostSessions.cursor, session)
+  })
+
+  it('splits a per-agent host from the store map and numbers the new pane', () => {
+    const a = tab({ id: 'pty-1', agentId: 'claude' })
+    const host: AgentHostSession = { tabs: [a], layout: leaf(a.id), activeTabId: a.id }
+    const next = planSplitAgentHostStorePatch(
+      { agentHostSessions: { claude: host } },
+      'claude',
+      host,
+      { focusId: a.id, newTabId: 'pty-2', axis: 'row', agentName: 'Claude' }
+    )
+    assert.equal(next.agentHostSessions.claude?.activeTabId, 'pty-2')
+    assert.equal(next.agentHostSessions.claude?.tabs[1]?.title, 'Claude-2')
+    assert.deepEqual(collectLeaves(next.agentHostSessions.claude?.layout ?? null), [
+      'pty-1',
+      'pty-2'
+    ])
   })
 
   it('seeds a missing primary host and retargets a preferred Screen id', () => {

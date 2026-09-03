@@ -650,6 +650,48 @@ export function seedAgentHostSession(
   }
 }
 
+/** First live pane of a per-agent host after spawn. */
+export function planSeedAgentHostPatch(
+  s: { agentHostSessions: Record<string, AgentHostSession> },
+  agentId: string,
+  session: AgentHostSession
+): { agentHostSessions: Record<string, AgentHostSession> } {
+  return {
+    agentHostSessions: {
+      ...s.agentHostSessions,
+      [agentId]: session
+    }
+  }
+}
+
+/** Split an existing per-agent host, numbering the new pane from remaining tabs. */
+export function planSplitAgentHostStorePatch(
+  s: { agentHostSessions: Record<string, AgentHostSession> },
+  agentId: string,
+  host: AgentHostSession,
+  opts: {
+    focusId: string
+    newTabId: string
+    axis: TerminalSplitAxis
+    agentName: string
+  }
+): { agentHostSessions: Record<string, AgentHostSession> } {
+  const cur = s.agentHostSessions[agentId] ?? host
+  const baseTabs = cur.tabs.filter((t) => t.id !== opts.newTabId)
+  return {
+    agentHostSessions: {
+      ...s.agentHostSessions,
+      [agentId]: planSplitAgentHost(cur, {
+        focusId: opts.focusId,
+        newTabId: opts.newTabId,
+        axis: opts.axis,
+        title: `${opts.agentName}-${baseTabs.length + 1}`,
+        agentId
+      })
+    }
+  }
+}
+
 /** After spawn: seed a missing primary host and retarget the Screen preferred id. */
 export function planActivateAgentHostAfterSpawn(
   s: { agentHostSessions: Record<string, AgentHostSession> },

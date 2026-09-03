@@ -25,7 +25,8 @@ import {
   planFocusCliScreenPatch,
   planRestoreCliSurfaceLayout,
   planSelectAgentTabPatch,
-  planSplitAgentHost,
+  planSeedAgentHostPatch,
+  planSplitAgentHostStorePatch,
   planSplitCliSurface,
   preferredCliAssignTabId,
   resolveCloseAgentTabMeta,
@@ -1009,12 +1010,9 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
           primaryAgentPaneId(id, agentId),
           { agent }
         )
-        patch(set, id, (s) => ({
-          agentHostSessions: {
-            ...s.agentHostSessions,
-            [agentId]: seedAgentHostSession(tabId, agentId, agent.name)
-          }
-        }))
+        patch(set, id, (s) =>
+          planSeedAgentHostPatch(s, agentId, seedAgentHostSession(tabId, agentId, agent.name))
+        )
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err)
         if (msg.includes('AGENT_NOT_FOUND')) return
@@ -1033,22 +1031,14 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       if (msg.includes('AGENT_NOT_FOUND')) return
       throw err
     }
-    patch(set, id, (s) => {
-      const cur = getAgentHost(s, agentId) ?? host
-      const baseTabs = cur.tabs.filter((t) => t.id !== newTabId)
-      return {
-        agentHostSessions: {
-          ...s.agentHostSessions,
-          [agentId]: planSplitAgentHost(cur, {
-            focusId,
-            newTabId,
-            axis,
-            title: `${agent.name}-${baseTabs.length + 1}`,
-            agentId
-          })
-        }
-      }
-    })
+    patch(set, id, (s) =>
+      planSplitAgentHostStorePatch(s, agentId, host, {
+        focusId,
+        newTabId,
+        axis,
+        agentName: agent.name
+      })
+    )
     get().syncPtyLayouts(id)
   },
 

@@ -5,6 +5,7 @@ import { en, zhCN } from '../../shared/i18n/index.ts'
 import {
   extractUrlFromInput,
   findChecklistIndex,
+  cliHostTurnStatus,
   cliTurnParentId,
   isAskCancelText,
   isPlanDocRejectText,
@@ -60,5 +61,31 @@ describe('cliHostTurn', () => {
     assert.equal(isAskCancelText('keep going'), false)
     assert.equal(isPlanDocRejectText(en['planDoc.reject']), true)
     assert.equal(isPlanDocRejectText(zhCN['planDoc.reject']), true)
+  })
+
+  it('is idle with empty blocks when no CLI turn is running', () => {
+    const status = cliHostTurnStatus('c1', undefined)
+    assert.equal(status.isRunning, false)
+    assert.equal(status.phase, 'idle')
+    assert.equal(status.awaitingToolCallId, null)
+    assert.deepEqual(status.blocks, [])
+  })
+
+  it('snapshots in-flight blocks and the first pending permission', () => {
+    const pendingPermissions = new Map([
+      ['r1', { toolCallId: 't1' }],
+      ['r2', { toolCallId: 't2' }]
+    ])
+    const status = cliHostTurnStatus('c1', {
+      phase: 'awaiting-user',
+      toolCount: 2,
+      pendingPermissions,
+      messageId: 'm1',
+      blocks: [{ kind: 'text', text: 'hi' }]
+    })
+    assert.equal(status.isRunning, true)
+    assert.equal(status.awaitingToolCallId, 't1')
+    assert.equal(status.messageId, 'm1')
+    assert.equal(status.blocks[0]?.kind, 'text')
   })
 })

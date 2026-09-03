@@ -57,6 +57,7 @@ import type { HostRegistry } from '../host'
 import {
   extractUrlFromInput,
   findChecklistIndex,
+  cliHostTurnStatus,
   cliTurnParentId,
   turnHasAnswerContent as turnBlocksHaveAnswer,
   turnHasIncompleteWork as turnBlocksHaveIncompleteWork
@@ -282,19 +283,7 @@ export class CliAgentHost {
   }
 
   status(conversationId: string): TurnStatus {
-    const turn = this.turns.get(conversationId)
-    const awaiting = turn
-      ? ([...turn.pendingPermissions.values()][0]?.toolCallId ?? null)
-      : null
-    return {
-      conversationId,
-      isRunning: !!turn,
-      phase: turn?.phase ?? 'idle',
-      toolCount: turn?.toolCount ?? 0,
-      awaitingToolCallId: awaiting,
-      messageId: turn?.messageId ?? null,
-      blocks: turn ? turn.blocks.map((b) => ({ ...b })) : []
-    }
+    return cliHostTurnStatus(conversationId, this.turns.get(conversationId))
   }
 
   async run(

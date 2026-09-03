@@ -1,4 +1,4 @@
-import type { MessageBlock } from '../../shared/types.ts'
+import type { MessageBlock, TurnStatus } from '../../shared/types.ts'
 import { en, isApprovalDenyText, zhCN } from '../../shared/i18n/index.ts'
 import { parseToolInput } from '../../shared/askPlan.ts'
 
@@ -73,4 +73,31 @@ export function isAskCancelText(text: string): boolean {
     line === en['common.cancel'] ||
     line === '已取消'
   )
+}
+
+/** Idle / in-flight TurnStatus for a late-joining window (sparse blocks stay). */
+export function cliHostTurnStatus(
+  conversationId: string,
+  turn:
+    | {
+        phase: TurnStatus['phase']
+        toolCount: number
+        pendingPermissions: { values(): IterableIterator<{ toolCallId: string }> }
+        messageId: string | null
+        blocks: MessageBlock[]
+      }
+    | undefined
+): TurnStatus {
+  const awaiting = turn
+    ? ([...turn.pendingPermissions.values()][0]?.toolCallId ?? null)
+    : null
+  return {
+    conversationId,
+    isRunning: !!turn,
+    phase: turn?.phase ?? 'idle',
+    toolCount: turn?.toolCount ?? 0,
+    awaitingToolCallId: awaiting,
+    messageId: turn?.messageId ?? null,
+    blocks: turn ? turn.blocks.map((b) => ({ ...b })) : []
+  }
 }
