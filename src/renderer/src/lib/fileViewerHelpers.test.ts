@@ -23,7 +23,8 @@ import {
   bindFilePreviewWorkspace,
   fileViewerAgentPanelOpen,
   previewBlocksFromSqliteTables,
-  previewBlocksFromZipEntries
+  previewBlocksFromZipEntries,
+  selectedPreviewBlocks
 } from './fileViewerHelpers.ts'
 import type { PreviewBlock } from './previewBlocks.ts'
 
@@ -310,5 +311,31 @@ describe('previewBlocksFromSqliteTables / previewBlocksFromZipEntries', () => {
     assert.equal(zip[0]?.text, 'DIR src/')
     assert.equal(zip[1]?.kind, 'code')
     assert.equal(zip[1]?.text, 'FILE src/a.ts')
+  })
+})
+
+describe('selectedPreviewBlocks', () => {
+  it('returns media when selected, else tree blocks plus extras by id', () => {
+    const media = { id: 'media' }
+    const heading = { id: 'h' }
+    const nested = { id: 'h' }
+    const extra = { id: 'csv-1' }
+    assert.deepEqual(
+      selectedPreviewBlocks({
+        allBlocks: [heading],
+        selectedIds: ['media'],
+        mediaBlock: media
+      }),
+      [media]
+    )
+    assert.deepEqual(
+      selectedPreviewBlocks({
+        allBlocks: [heading, nested],
+        selectedIds: ['h', 'csv-1'],
+        mediaBlock: null,
+        extraById: new Map([['csv-1', extra]])
+      }),
+      [heading, extra]
+    )
   })
 })

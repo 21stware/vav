@@ -13,7 +13,7 @@ import type {
 import { DEFAULT_CLI_AGENTS, DEFAULT_SETTINGS } from '@shared/types'
 import type { WorkspaceHostInfo } from '@shared/workspaceHost'
 import type { RemoteControlStatus } from '@shared/remoteControl'
-import { mergeConversationList, nextConversationSelection, isArchivedConversation, regenerateActiveLeaf, canMutateActiveSession, compactRefusalReason, genericErrorBanner, patchConversationById, shouldSkipSessionDeleteConfirm } from './sessionListMerge'
+import { mergeConversationList, nextConversationSelection, isArchivedConversation, regenerateActiveLeaf, canMutateActiveSession, compactRefusalReason, genericErrorBanner, patchConversationById, shouldSkipSessionDeleteConfirm, fallbackConversationIdAfterDelete, sessionDeleteDialogCopy } from './sessionListMerge'
 import {
   activeToolsFields,
   collapsedFileSessionTools,
@@ -40,8 +40,8 @@ import {
   type ToastState,
   type TurnRuntime,
 } from './sessionTypes'
-import { omitLiveUsage } from './sessionUsage'
-import { dispatchQueuedPayload, MESSAGE_QUEUE_MAX, buildQueuedMessage, composerSendDisposition, composerClearedPatch, isEmptyComposerSend, mergePreviewAndCommentRefs, pollUntil, shouldDrainMessageQueue } from './sessionQueue'
+import { conversationIdAwaitingTool, hostHoldsControlPlaneKeys, omitLiveUsage, turnRuntimeFromAgentStatus } from './sessionUsage'
+import { dispatchQueuedPayload, MESSAGE_QUEUE_MAX, buildQueuedMessage, composerSendDisposition, composerClearedPatch, isEmptyComposerSend, mergePreviewAndCommentRefs, pollUntil, resolveComposerContextFile, shouldDrainMessageQueue } from './sessionQueue'
 import { applyCliHostSetResult } from './sessionCliHost'
 import { applySessionTurnEvent } from './sessionTurnApply'
 import {
@@ -106,7 +106,6 @@ import { isTemporaryWorkspace } from '../lib/format'
 import { isCompanionSessionShell, isMainSessionShell, readWindowMachineId } from '../lib/windowKind'
 import { isLocalMachine, normalizeMachineId } from '@shared/workspaceHost'
 import { compactionForLeaf, upsertCompaction } from '@shared/compaction'
-import { subtreeIds } from '@shared/thread'
 import { getProjection, disposeProjection } from './StreamProjection'
 import { useWorkspaceStore } from './workspaceStore'
 import {
@@ -116,9 +115,10 @@ import {
   mergeHydratedMessages,
   nextHydrationGeneration,
   omitKeys,
+  omitLiveStreamingMessage,
   omitMappedKeys
 } from '../lib/messageHydration'
-import { visibleMessages } from './sessionThread'
+import { deleteMessageFollowCount, visibleMessages } from './sessionThread'
 import {
   collectSwarmLeaves,
   insertSwarmLeaf,
@@ -866,12 +866,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         set((state) => ({
           turns: {
             ...state.turns,
-            [meta.id]: {
-              isRunning: status.isRunning,
-              phase: status.phase,
-              toolCount: status.toolCount,
-              awaitingToolCallId: status.awaitingToolCallId
-            }
+            [meta.id]: turnRuntimeFromAgentStatus(status)
           }
         }))
       })
@@ -1011,29 +1006,12 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     const applyStatus = (status: Awaited<ReturnType<typeof window.vav.agent.status>>): void => {
       if (get().activeId !== id) return
       set((state) => {
-        let messages = state.messages
-        // The in-flight assistant message is owned by StreamProjection; showing
-        // the disk partial beside it would duplicate every tool card.
-        if (
-          status.isRunning &&
-          status.messageId &&
-          messages[id]?.some((m) => m.id === status.messageId)
-        ) {
-          messages = {
-            ...messages,
-            [id]: messages[id]!.filter((m) => m.id !== status.messageId)
-          }
-        }
+        const messages = omitLiveStreamingMessage(state.messages, id, status)
         return {
           messages,
           turns: {
             ...state.turns,
-            [id]: {
-              isRunning: status.isRunning,
-              phase: status.phase,
-              toolCount: status.toolCount,
-              awaitingToolCallId: status.awaitingToolCallId
-            }
+            [id]: turnRuntimeFromAgentStatus(status)
           }
         }
       })
@@ -1339,7 +1317,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
           }
         })
         if (removed.includes(get().activeId)) {
-          const fallback = next.find((c) => !c.archived && !c.fileId)?.id ?? next[0]?.id
+          const fallback = fallbackConversationIdAfterDelete(next)
           if (fallback) await get().selectConversation(fallback)
           else {
             set({ activeId: '', selectedIds: [], activeGroupId: null })
@@ -1354,14 +1332,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         return
       }
 
-      const single = targets.length === 1
-      const title = single
-        ? tt('dialog.deleteSession')
-        : tt('dialog.deleteSessions', { count: targets.length })
-      const name = conversations.find((c) => c.id === targets[0])?.title ?? ''
-      const body = single
-        ? tt('dialog.deleteConfirmSingle', { name })
-        : tt('dialog.deleteConfirmMultiple', { count: targets.length })
+      const { title, body } = sessionDeleteDialogCopy(targets, conversations, tt)
 
       get().showDialog({
         title,
@@ -1885,9 +1856,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     const cards = commentCards[activeId] ?? []
     const activeConversation = conversations.find((c) => c.id === activeId)
     const activeHost = activeConversation?.cliHost ?? null
-    const hostHoldsKeys = hosts.some(
-      (host) => host.id === activeConversation?.machineId && host.controlPlane === true
-    )
+    const hostHoldsKeys = hostHoldsControlPlaneKeys(hosts, activeConversation?.machineId)
     const disposition = composerSendDisposition({
       empty: isEmptyComposerSend(text, attachments, refs, cards),
       awaitingTool: !!turn?.awaitingToolCallId,
@@ -1917,10 +1886,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     // Streaming: enqueue instead of interrupting (main-chat-streaming.rpml §5).
     if (disposition === 'enqueue') {
       const quote = quotes[activeId] ?? null
-      const contextFile =
-        (contextFiles[activeId] ?? null) ||
-        conversations.find((c) => c.id === activeId)?.focusedFilePath ||
-        null
+      const contextFile = resolveComposerContextFile(contextFiles, conversations, activeId)
       const item: QueuedMessage = buildQueuedMessage({
         text,
         attachments,
@@ -1949,10 +1915,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
     const allRefs = mergePreviewAndCommentRefs(refs, cards)
 
-    const contextFile =
-      (contextFiles[activeId] ?? null) ||
-      conversations.find((c) => c.id === activeId)?.focusedFilePath ||
-      null
+    const contextFile = resolveComposerContextFile(contextFiles, conversations, activeId)
 
     // No optimistic echo: the stored message comes back as a `user` turn event
     // a moment later, already carrying the id and parent the tree needs.
@@ -2141,7 +2104,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     }
     const nodes = get().messages[activeId] ?? []
     if (!nodes.some((message) => message.id === messageId)) return
-    const extra = Math.max(0, subtreeIds(nodes, messageId).size - 1)
+    const extra = deleteMessageFollowCount(nodes, messageId)
     get().showDialog({
       title: tt('message.delete'),
       body:
@@ -2283,12 +2246,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     // Prefer the conversation that is actually awaiting this card.
     let conversationId = activeId || ''
     if (toolCallId) {
-      for (const [id, turn] of Object.entries(get().turns)) {
-        if (turn.awaitingToolCallId === toolCallId || turn.phase === 'awaiting-user') {
-          conversationId = id
-          if (turn.awaitingToolCallId === toolCallId) break
-        }
-      }
+      conversationId = conversationIdAwaitingTool(get().turns, toolCallId, conversationId)
     }
     const ok = await window.vav.agent.answer(conversationId, toolCallId, answer)
     if (ok === false) {

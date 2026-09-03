@@ -18,6 +18,15 @@ export interface QueuedMessage {
 /** Max pending items per conversation (spec §2.10). */
 export const MESSAGE_QUEUE_MAX = 20
 
+/** Composer chip, else the session's focused file (CLI handoff uses the same). */
+export function resolveComposerContextFile(
+  contextFiles: Record<string, string | null | undefined>,
+  conversations: Array<{ id: string; focusedFilePath?: string | null }>,
+  id: string
+): string | null {
+  return (contextFiles[id] ?? null) || conversations.find((c) => c.id === id)?.focusedFilePath || null
+}
+
 export function isEmptyComposerSend(
   text: string,
   attachments: string[],

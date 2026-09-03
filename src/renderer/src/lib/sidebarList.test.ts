@@ -14,7 +14,8 @@ import {
   hostMachineLabel,
   incomingConnectLabels,
   pinnableWorkspaceDir,
-  nextVisibleSelectionAfterArchive
+  nextVisibleSelectionAfterArchive,
+  filterFileSessionRows
 } from './sidebarList.ts'
 
 function conv(partial: Partial<ConversationMeta> & Pick<ConversationMeta, 'id'>): ConversationMeta {
@@ -206,5 +207,23 @@ describe('nextVisibleSelectionAfterArchive', () => {
     assert.equal(nextVisibleSelectionAfterArchive(ids, 'a', ['a', 'b', 'c', 'd']), null)
     assert.equal(nextVisibleSelectionAfterArchive(ids, 'c', ['x']), null)
     assert.equal(nextVisibleSelectionAfterArchive(ids, null, ['c']), null)
+  })
+})
+
+describe('filterFileSessionRows', () => {
+  it('matches title, path, or basename and returns the same array when empty', () => {
+    const rows = [
+      { title: 'Notes', path: '/tmp/docs/notes.md' },
+      { title: 'Other', path: '/tmp/src/app.ts' }
+    ]
+    assert.equal(filterFileSessionRows(rows, '  '), rows)
+    assert.deepEqual(
+      filterFileSessionRows(rows, 'NOTES').map((r) => r.path),
+      ['/tmp/docs/notes.md']
+    )
+    assert.deepEqual(
+      filterFileSessionRows(rows, 'app.ts').map((r) => r.path),
+      ['/tmp/src/app.ts']
+    )
   })
 })

@@ -26,6 +26,15 @@ export type AgentHostSession = {
  */
 export const CLI_SURFACE_KEY = '__cli__'
 
+/** One pending picker leaf filling the Screen. Resume must not auto-assign. */
+export function pendingCliPickerSurface(pending: TerminalTab): AgentHostSession {
+  return {
+    tabs: [pending],
+    layout: { type: 'leaf', tabId: pending.id, weight: 1 },
+    activeTabId: pending.id
+  }
+}
+
 /** Prefer a live pane of this agent, then any live pane, then the first tab. */
 export function pickCliScreenFocusTab<T extends { pendingCli?: boolean; agentId?: string | null }>(
   tabs: T[],
@@ -278,11 +287,7 @@ export function planEnterCliMode(
   const pending = (opts?.makePendingTab ?? makePendingCliTab)()
   return {
     kind: 'patch',
-    surface: {
-      tabs: [pending],
-      layout: { type: 'leaf', tabId: pending.id, weight: 1 },
-      activeTabId: pending.id
-    },
+    surface: pendingCliPickerSurface(pending),
     autoAssignPendingId: pending.id
   }
 }
@@ -318,11 +323,7 @@ export function planSplitCliSurface(
   if (!focusId || !surface.layout) {
     return {
       kind: 'seed',
-      surface: {
-        tabs: [pending],
-        layout: { type: 'leaf', tabId: pending.id, weight: 1 },
-        activeTabId: pending.id
-      }
+      surface: pendingCliPickerSurface(pending)
     }
   }
   return {

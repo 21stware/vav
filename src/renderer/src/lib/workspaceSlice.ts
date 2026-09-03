@@ -43,6 +43,47 @@ export interface WorkspaceSlice {
   terminalHasUnseenOutput: boolean
 }
 
+/** Missing-path noise becomes ENOENT so the Files panel can stay calm. */
+export function normalizeDirListError(error: string | null | undefined): string | undefined {
+  if (!error) return undefined
+  return /enoent|no such file|not found/i.test(error) ? 'ENOENT' : error
+}
+
+export function dirEntriesEqual(
+  prev:
+    | Array<{
+        path: string
+        name: string
+        isDirectory: boolean
+        size: number
+        modifiedAt: number
+      }>
+    | undefined,
+  next: Array<{
+    path: string
+    name: string
+    isDirectory: boolean
+    size: number
+    modifiedAt: number
+  }>
+): boolean {
+  return (
+    Array.isArray(prev) &&
+    prev.length === next.length &&
+    prev.every((entry, i) => {
+      const item = next[i]
+      return (
+        !!item &&
+        entry.path === item.path &&
+        entry.name === item.name &&
+        entry.isDirectory === item.isDirectory &&
+        entry.size === item.size &&
+        entry.modifiedAt === item.modifiedAt
+      )
+    })
+  )
+}
+
 export function emptySlice(root: string | null): WorkspaceSlice {
   return {
     root,

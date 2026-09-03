@@ -39,7 +39,8 @@ import {
   provisionalInspect,
   pathsEqual,
   bindFilePreviewWorkspace,
-  selectedBlockIdsForPath
+  selectedBlockIdsForPath,
+  selectedPreviewBlocks
 } from '../lib/fileViewerHelpers'
 import { convertEditProfileFor, fileViewerKindFlags, isBinaryOfficeKind, isPreviewKindSelectable } from '../lib/fileViewerKinds'
 import { AgentPanelToggleButton } from './fileViewer/AgentPanelToggleButton'
@@ -659,28 +660,16 @@ export function FileViewer({
     }
   }, [info, filePath, mediaSrc])
 
-  const selectedBlocks = useMemo(() => {
-    if (mediaBlock && selectedIds.includes(mediaBlock.id)) return [mediaBlock]
-    // Deduplicate by id: heading trees keep the same inner blocks under both
-    // the heading and the heading-section node.
-    const wanted = new Set(selectedIds)
-    const seen = new Set<string>()
-    const out: PreviewBlock[] = []
-    for (const b of allBlocks) {
-      if (!wanted.has(b.id) || seen.has(b.id)) continue
-      seen.add(b.id)
-      out.push(b)
-    }
-    // CSV rows/cells are built on pick and live outside the static block tree.
-    for (const id of selectedIds) {
-      if (seen.has(id)) continue
-      const stored = officeBlocksRef.current.get(id)
-      if (!stored) continue
-      seen.add(id)
-      out.push(stored)
-    }
-    return out
-  }, [allBlocks, selectedIds, mediaBlock])
+  const selectedBlocks = useMemo(
+    () =>
+      selectedPreviewBlocks({
+        allBlocks,
+        selectedIds,
+        mediaBlock,
+        extraById: officeBlocksRef.current
+      }),
+    [allBlocks, selectedIds, mediaBlock]
+  )
 
   /**
    * Block pick for Agent context. By default works in Read and Edit; a setting

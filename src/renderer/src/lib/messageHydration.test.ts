@@ -8,6 +8,7 @@ import {
   mergeHydratedMessages,
   nextHydrationGeneration,
   omitKeys,
+  omitLiveStreamingMessage,
   omitMappedKeys
 } from './messageHydration.ts'
 
@@ -84,6 +85,26 @@ describe('omitMappedKeys', () => {
     assert.deepEqual(next.messages, { a: [1] })
     assert.deepEqual(next.drafts, { a: 'keep' })
     assert.equal('title' in next, false)
+  })
+})
+
+describe('omitLiveStreamingMessage', () => {
+  it('drops the live assistant id only while a turn is running', () => {
+    const messages = { c: [{ id: 'live' }, { id: 'keep' }] }
+    assert.equal(
+      omitLiveStreamingMessage(messages, 'c', { isRunning: false, messageId: 'live' }),
+      messages
+    )
+    assert.deepEqual(
+      omitLiveStreamingMessage(messages, 'c', { isRunning: true, messageId: 'live' }).c?.map(
+        (m) => m.id
+      ),
+      ['keep']
+    )
+    assert.equal(
+      omitLiveStreamingMessage(messages, 'c', { isRunning: true, messageId: 'missing' }),
+      messages
+    )
   })
 })
 

@@ -47,7 +47,8 @@ import {
   hostMachineLabel,
   incomingConnectLabels,
   pinnableWorkspaceDir,
-  nextVisibleSelectionAfterArchive
+  nextVisibleSelectionAfterArchive,
+  filterFileSessionRows
 } from '../lib/sidebarList'
 import { ConvBracket, type SwarmBracketKind } from './sidebar/ConvBracket'
 import { RenameField } from './sidebar/RenameField'
@@ -338,16 +339,10 @@ export function Sidebar({
     [pinnedGroups]
   )
 
-  const filteredFileSessions = useMemo(() => {
-    const needle = query.trim().toLowerCase()
-    if (!needle) return fileSessionRows
-    return fileSessionRows.filter(
-      (row) =>
-        row.title.toLowerCase().includes(needle) ||
-        row.path.toLowerCase().includes(needle) ||
-        basename(row.path).toLowerCase().includes(needle)
-    )
-  }, [fileSessionRows, query])
+  const filteredFileSessions = useMemo(
+    () => filterFileSessionRows(fileSessionRows, query, basename),
+    [fileSessionRows, query]
+  )
 
   const swarmEnabled = useSessionStore((s) => s.settings.swarmModeEnabled === true)
   const focusSwarmSession = useSessionStore((s) => s.focusSwarmSession)

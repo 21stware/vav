@@ -3,6 +3,7 @@ import { describe, it } from 'node:test'
 import type { ChatMessage } from '../../../shared/types.ts'
 import {
   clearPriorChangeReviews,
+  deleteMessageFollowCount,
   resetVisibleMessagesCache,
   upsert,
   visibleMessages
@@ -26,6 +27,19 @@ describe('upsert', () => {
     assert.equal(next.length, 2)
     const replaced = upsert(next, msg({ id: 'a' }))
     assert.equal(replaced.find((m) => m.id === 'a')?.changeSetId, 'cs-1')
+  })
+})
+
+describe('deleteMessageFollowCount', () => {
+  it('counts replies under the message, not the message itself', () => {
+    const root = msg({ id: 'root', role: 'user', parentId: null })
+    const child = msg({ id: 'child', parentId: 'root' })
+    const grand = msg({ id: 'grand', parentId: 'child' })
+    const nodes = [root, child, grand]
+    assert.equal(deleteMessageFollowCount(nodes, 'root'), 2)
+    assert.equal(deleteMessageFollowCount(nodes, 'child'), 1)
+    assert.equal(deleteMessageFollowCount(nodes, 'grand'), 0)
+    assert.equal(deleteMessageFollowCount(nodes, 'missing'), 0)
   })
 })
 

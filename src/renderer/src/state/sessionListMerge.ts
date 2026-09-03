@@ -168,6 +168,36 @@ export function shouldSkipSessionDeleteConfirm(
   return targetCount === 1 && emptyCount === 1
 }
 
+/** After deleting the active session, prefer a live chat over archive/file rows. */
+export function fallbackConversationIdAfterDelete(
+  conversations: Array<{ id: string; archived?: boolean; fileId?: string | null }>
+): string | undefined {
+  return conversations.find((c) => !c.archived && !c.fileId)?.id ?? conversations[0]?.id
+}
+
+/** Confirm-sheet copy for one vs many session deletes. */
+export function sessionDeleteDialogCopy(
+  targetIds: string[],
+  conversations: Array<{ id: string; title?: string }>,
+  t: (
+    key:
+      | 'dialog.deleteSession'
+      | 'dialog.deleteSessions'
+      | 'dialog.deleteConfirmSingle'
+      | 'dialog.deleteConfirmMultiple',
+    params?: { count?: number; name?: string }
+  ) => string
+): { title: string; body: string } {
+  const single = targetIds.length === 1
+  const name = conversations.find((c) => c.id === targetIds[0])?.title ?? ''
+  return {
+    title: single ? t('dialog.deleteSession') : t('dialog.deleteSessions', { count: targetIds.length }),
+    body: single
+      ? t('dialog.deleteConfirmSingle', { name })
+      : t('dialog.deleteConfirmMultiple', { count: targetIds.length })
+  }
+}
+
 export function genericErrorBanner(message: string): {
   errorBanner: string
   errorBannerKind: 'generic'

@@ -15,6 +15,7 @@ import {
 } from '@shared/agentContextInject'
 import type { PreviewRef } from '@shared/types'
 import { useSessionStore } from '../state/sessionStore'
+import { resolveComposerContextFile } from '../state/sessionQueue'
 import { useWorkspaceStore } from '../state/workspaceStore'
 
 export type CliHandoffReason = 'created' | 'restored' | 'focus-change' | 'block-pick'
@@ -24,10 +25,7 @@ function readFocus(conversationId: string): {
   cards: { ref: PreviewRef; comment: string }[]
 } {
   const store = useSessionStore.getState()
-  const path =
-    (store.contextFiles[conversationId] ?? null) ||
-    store.conversations.find((c) => c.id === conversationId)?.focusedFilePath ||
-    null
+  const path = resolveComposerContextFile(store.contextFiles, store.conversations, conversationId)
   const cards = store.commentCards[conversationId] ?? []
   return { path, cards }
 }

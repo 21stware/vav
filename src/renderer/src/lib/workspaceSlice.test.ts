@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import { emptySlice } from './workspaceSlice.ts'
+import { dirEntriesEqual, emptySlice, normalizeDirListError } from './workspaceSlice.ts'
 
 describe('emptySlice', () => {
   it('starts a rooted workspace expanded at the root', () => {
@@ -22,5 +22,22 @@ describe('emptySlice', () => {
     assert.equal(slice.root, null)
     assert.deepEqual(slice.expanded, [])
     assert.equal(slice.selectedPath, null)
+  })
+})
+
+describe('normalizeDirListError', () => {
+  it('collapses missing-path noise to ENOENT and leaves other errors', () => {
+    assert.equal(normalizeDirListError(undefined), undefined)
+    assert.equal(normalizeDirListError('ENOENT: no such file or directory'), 'ENOENT')
+    assert.equal(normalizeDirListError('EACCES: permission denied'), 'EACCES: permission denied')
+  })
+})
+
+describe('dirEntriesEqual', () => {
+  it('compares listing identity fields and rejects a missing previous list', () => {
+    const a = { path: '/a', name: 'a', isDirectory: false, size: 1, modifiedAt: 2 }
+    assert.equal(dirEntriesEqual([a], [a]), true)
+    assert.equal(dirEntriesEqual(undefined, [a]), false)
+    assert.equal(dirEntriesEqual([a], [{ ...a, size: 9 }]), false)
   })
 })

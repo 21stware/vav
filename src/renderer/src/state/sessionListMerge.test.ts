@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import { mergeConversationList, nextConversationSelection, patchConversationById, isArchivedConversation, regenerateActiveLeaf, canMutateActiveSession, compactRefusalReason, genericErrorBanner, shouldSkipSessionDeleteConfirm, type ConversationListItem } from './sessionListMerge.ts'
+import { mergeConversationList, nextConversationSelection, patchConversationById, isArchivedConversation, regenerateActiveLeaf, canMutateActiveSession, compactRefusalReason, genericErrorBanner, shouldSkipSessionDeleteConfirm, fallbackConversationIdAfterDelete, sessionDeleteDialogCopy, type ConversationListItem } from './sessionListMerge.ts'
 
 function row(
   partial: Partial<ConversationListItem> & { id: string }
@@ -170,6 +170,36 @@ describe('genericErrorBanner', () => {
       errorBanner: 'nope',
       errorBannerKind: 'generic',
       errorBannerDetail: 'nope'
+    })
+  })
+})
+
+describe('fallbackConversationIdAfterDelete', () => {
+  it('prefers a live chat over archived and file rows', () => {
+    assert.equal(
+      fallbackConversationIdAfterDelete([
+        { id: 'arch', archived: true },
+        { id: 'file', fileId: 'f1' },
+        { id: 'live' }
+      ]),
+      'live'
+    )
+    assert.equal(fallbackConversationIdAfterDelete([{ id: 'only', archived: true }]), 'only')
+    assert.equal(fallbackConversationIdAfterDelete([]), undefined)
+  })
+})
+
+describe('sessionDeleteDialogCopy', () => {
+  it('uses the session title for one target and a count for many', () => {
+    const t = (key: string, params?: { count?: number; name?: string }) =>
+      params ? `${key}:${params.name ?? params.count}` : key
+    assert.deepEqual(sessionDeleteDialogCopy(['a'], [{ id: 'a', title: 'Alpha' }], t), {
+      title: 'dialog.deleteSession',
+      body: 'dialog.deleteConfirmSingle:Alpha'
+    })
+    assert.deepEqual(sessionDeleteDialogCopy(['a', 'b'], [{ id: 'a', title: 'Alpha' }], t), {
+      title: 'dialog.deleteSessions:2',
+      body: 'dialog.deleteConfirmMultiple:2'
     })
   })
 })

@@ -45,6 +45,21 @@ export function omitKeys<T>(map: Record<string, T>, ids: Iterable<string>): Reco
   return touched ? next : map
 }
 
+/** Drop the in-flight assistant snapshot so StreamProjection is the only live view. */
+export function omitLiveStreamingMessage<M extends { id: string }>(
+  messages: Record<string, M[]>,
+  conversationId: string,
+  status: { isRunning?: boolean; messageId?: string | null }
+): Record<string, M[]> {
+  if (!status.isRunning || !status.messageId) return messages
+  const list = messages[conversationId]
+  if (!list?.some((m) => m.id === status.messageId)) return messages
+  return {
+    ...messages,
+    [conversationId]: list.filter((m) => m.id !== status.messageId)
+  }
+}
+
 /** Drop the same ids from several per-conversation maps in one pass. */
 export function omitMappedKeys<S extends object, K extends keyof S>(
   state: S,

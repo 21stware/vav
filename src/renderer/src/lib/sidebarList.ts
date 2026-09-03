@@ -182,3 +182,19 @@ export function nextVisibleSelectionAfterArchive(
   }
   return null
 }
+
+/** Title / path / basename match for the Files sessions list. */
+export function filterFileSessionRows<T extends { title: string; path: string }>(
+  rows: T[],
+  query: string,
+  fileBasename: (path: string) => string = basename
+): T[] {
+  const needle = query.trim().toLowerCase()
+  if (!needle) return rows
+  return rows.filter(
+    (row) =>
+      row.title.toLowerCase().includes(needle) ||
+      row.path.toLowerCase().includes(needle) ||
+      fileBasename(row.path).toLowerCase().includes(needle)
+  )
+}

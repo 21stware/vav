@@ -22,6 +22,7 @@ import {
 } from '../lib/workspaceLayout'
 import {
   CLI_SURFACE_KEY,
+  pendingCliPickerSurface,
   pickCliScreenFocusTab,
   planEnterCliMode,
   planSplitCliSurface,
@@ -38,17 +39,19 @@ import {
   patchedCliSurfaceTab,
   unpaintedPrimaryAgentPane
 } from '../lib/workspacePanePaint'
-import { emptySlice, type WorkspaceSlice } from '../lib/workspaceSlice'
+import { dirEntriesEqual, emptySlice, normalizeDirListError, type WorkspaceSlice } from '../lib/workspaceSlice'
 import {
   AGENT_TAB_ID,
   agentHostsEqual,
   bashThenAgentTabs,
   emptyPtyLayouts,
   isLiveAgentSession,
+  mergePtyStatusPreservingExited,
   normalizePtyListResult,
   omitRecord,
   projectPtySessions,
   tabsEqual,
+  toolsTrayAfterScrubbingAgentTabs,
   userBashTabsOnly,
   withTombstones
 } from '../lib/workspacePty'
@@ -520,15 +523,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     // no longer referenced anywhere (the pane was closed while we were away).
     set((state) => {
       const current = state.ptyStatus[id] ?? {}
-      const next: Record<string, PtyActivityStatus> = {}
-      for (const meta of sessions) next[meta.id] = meta.status
-      for (const [tabId, status] of Object.entries(current)) {
-        if (status === 'exited' && !(tabId in next)) next[tabId] = status
-      }
-      const keys = Object.keys(next)
-      const unchanged =
-        keys.length === Object.keys(current).length &&
-        keys.every((tabId) => current[tabId] === next[tabId])
+      const { next, unchanged } = mergePtyStatusPreservingExited(current, sessions)
       if (unchanged) return state
       return { ptyStatus: { ...state.ptyStatus, [id]: next } }
     })
@@ -715,11 +710,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     const listing = await window.vav.files.list(path, live.sort, live.ascending, id)
     // Normalize missing-path errors so the Files panel can show a calm empty state
     // instead of raw ENOENT stack noise (common for file-sessions whose dir is gone).
-    const error = listing.error
-      ? /enoent|no such file|not found/i.test(listing.error)
-        ? 'ENOENT'
-        : listing.error
-      : undefined
+    const error = normalizeDirListError(listing.error)
     const nextEntries = error ? [] : listing.entries
 
     // Root gone → drop from recent/pinned so the switcher never offers a dead path.
@@ -738,20 +729,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 
     patch(set, id, (s) => {
       const prev = s.dirs[path]
-      const sameEntries =
-        Array.isArray(prev) &&
-        prev.length === nextEntries.length &&
-        prev.every((entry, i) => {
-          const next = nextEntries[i]
-          return (
-            !!next &&
-            entry.path === next.path &&
-            entry.name === next.name &&
-            entry.isDirectory === next.isDirectory &&
-            entry.size === next.size &&
-            entry.modifiedAt === next.modifiedAt
-          )
-        })
+      const sameEntries = dirEntriesEqual(prev, nextEntries)
       const sameTrunc = (s.dirTruncated[path] ?? 0) === listing.truncated
       const prevErr = s.dirErrors[path]
       const sameErr = error ? prevErr === error : prevErr === undefined
@@ -1211,11 +1189,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         activeHostAgentId: CLI_SURFACE_KEY,
         agentHostSessions: {
           ...s.agentHostSessions,
-          [CLI_SURFACE_KEY]: {
-            tabs: [pending],
-            layout: { type: 'leaf', tabId: pending.id, weight: 1 },
-            activeTabId: pending.id
-          }
+          [CLI_SURFACE_KEY]: pendingCliPickerSurface(pending)
         }
       }))
       surface = getCliSurface(get().workspaces[id])
@@ -1419,18 +1393,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     }
 
     // Scrub any legacy CLI agent tabs that leaked into the tools-tray list.
-    patch(set, id, (s) => {
-      const bash = userBashTabsOnly(s.tabs)
-      const layoutStillValid =
-        s.layout && collectLeaves(s.layout).every((leaf) => bash.some((t) => t.id === leaf))
-      return {
-        tabs: bash,
-        layout: layoutStillValid ? s.layout : bash[0] ? { type: 'leaf', tabId: bash[0].id, weight: 1 } : null,
-        activeTabId: bash.some((t) => t.id === s.activeTabId)
-          ? s.activeTabId
-          : (bash[0]?.id ?? '')
-      }
-    })
+    patch(set, id, (s) => toolsTrayAfterScrubbingAgentTabs(s))
 
     slice = get().workspaces[id]!
     const existing = getAgentHost(slice, agentId)
@@ -1736,11 +1699,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
             activeHostAgentId: CLI_SURFACE_KEY,
             agentHostSessions: {
               ...s.agentHostSessions,
-              [CLI_SURFACE_KEY]: {
-                tabs: [pending],
-                layout: { type: 'leaf', tabId: pending.id, weight: 1 },
-                activeTabId: pending.id
-              }
+              [CLI_SURFACE_KEY]: pendingCliPickerSurface(pending)
             }
           }
         }

@@ -7,10 +7,12 @@ import {
   emptyPtyLayouts,
   isLiveAgentSession,
   isVavMirrorTab,
+  mergePtyStatusPreservingExited,
   normalizePtyListResult,
   omitRecord,
   projectPtySessions,
   tabsEqual,
+  toolsTrayAfterScrubbingAgentTabs,
   userBashTabsOnly,
   withTombstones
 } from './workspacePty.ts'
@@ -89,5 +91,33 @@ describe('workspacePty', () => {
     assert.equal(projected.tabs[1]?.agentId, 'vav')
     assert.equal(projected.agentHostSessions.claude?.tabs[0]?.id, 'claude-1')
     assert.equal(projected.activeTabId, 'sh')
+  })
+
+  it('keeps exited tombstones that are no longer in the live list', () => {
+    const { next, unchanged } = mergePtyStatusPreservingExited(
+      { live: 'running', dead: 'exited' },
+      [{ id: 'live', status: 'running' }]
+    )
+    assert.deepEqual(next, { live: 'running', dead: 'exited' })
+    assert.equal(unchanged, true)
+    const changed = mergePtyStatusPreservingExited({}, [{ id: 'n', status: 'running' }])
+    assert.equal(changed.unchanged, false)
+    assert.deepEqual(changed.next, { n: 'running' })
+  })
+
+  it('scrubs leaked CLI tabs from the tools tray and repairs the layout', () => {
+    const bash = tab('sh')
+    const leaked = tab('claude-1', { agentId: 'claude' })
+    const next = toolsTrayAfterScrubbingAgentTabs({
+      tabs: [bash, leaked],
+      layout: { type: 'leaf', tabId: leaked.id, weight: 1 },
+      activeTabId: leaked.id
+    })
+    assert.deepEqual(
+      next.tabs.map((t) => t.id),
+      ['sh']
+    )
+    assert.deepEqual(next.layout, { type: 'leaf', tabId: 'sh', weight: 1 })
+    assert.equal(next.activeTabId, 'sh')
   })
 })

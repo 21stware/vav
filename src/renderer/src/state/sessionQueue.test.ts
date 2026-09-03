@@ -1,6 +1,11 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import { omitLiveUsage } from './sessionUsage.ts'
+import {
+  conversationIdAwaitingTool,
+  hostHoldsControlPlaneKeys,
+  omitLiveUsage,
+  turnRuntimeFromAgentStatus
+} from './sessionUsage.ts'
 import {
   buildQueuedMessage,
   composerSendDisposition,
@@ -9,6 +14,7 @@ import {
   mergePreviewAndCommentRefs,
   MESSAGE_QUEUE_MAX,
   pollUntil,
+  resolveComposerContextFile,
   shouldDrainMessageQueue
 } from './sessionQueue.ts'
 
@@ -179,5 +185,61 @@ describe('composer send helpers', () => {
     assert.deepEqual(patch.previewRefs.a, [])
     assert.deepEqual(patch.commentCards.a, [])
     assert.equal(patch.errorBanner, null)
+  })
+})
+
+describe('resolveComposerContextFile', () => {
+  it('prefers the composer chip, then the session focused file', () => {
+    const conversations = [{ id: 'a', focusedFilePath: '/from-session.ts' }]
+    assert.equal(
+      resolveComposerContextFile({ a: '/chip.ts' }, conversations, 'a'),
+      '/chip.ts'
+    )
+    assert.equal(resolveComposerContextFile({}, conversations, 'a'), '/from-session.ts')
+    assert.equal(resolveComposerContextFile({ a: null }, [], 'a'), null)
+  })
+})
+
+describe('turnRuntimeFromAgentStatus', () => {
+  it('copies the in-flight fields used by the transcript', () => {
+    assert.deepEqual(
+      turnRuntimeFromAgentStatus({
+        isRunning: true,
+        phase: 'outputting',
+        toolCount: 2,
+        awaitingToolCallId: 't1',
+        extra: 'ignored'
+      }),
+      {
+        isRunning: true,
+        phase: 'outputting',
+        toolCount: 2,
+        awaitingToolCallId: 't1'
+      }
+    )
+  })
+})
+
+describe('conversationIdAwaitingTool', () => {
+  it('prefers an exact tool id over a generic awaiting-user turn', () => {
+    const turns = {
+      a: { awaitingToolCallId: 'other', phase: 'awaiting-user' },
+      b: { awaitingToolCallId: 'want', phase: 'awaiting-user' }
+    }
+    assert.equal(conversationIdAwaitingTool(turns, 'want', 'fallback'), 'b')
+    assert.equal(conversationIdAwaitingTool({ a: turns.a }, 'missing', 'fallback'), 'a')
+    assert.equal(conversationIdAwaitingTool({}, 'want', 'fallback'), 'fallback')
+  })
+})
+
+describe('hostHoldsControlPlaneKeys', () => {
+  it('requires a matching host with a control plane', () => {
+    const hosts = [
+      { id: 'm1', controlPlane: true },
+      { id: 'm2', controlPlane: false }
+    ]
+    assert.equal(hostHoldsControlPlaneKeys(hosts, 'm1'), true)
+    assert.equal(hostHoldsControlPlaneKeys(hosts, 'm2'), false)
+    assert.equal(hostHoldsControlPlaneKeys(hosts, null), false)
   })
 })

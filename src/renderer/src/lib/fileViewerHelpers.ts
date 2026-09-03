@@ -304,3 +304,32 @@ export function previewBlocksFromZipEntries(
     endLine: 0
   }))
 }
+
+/**
+ * Media selection is a single synthetic block; otherwise fold tree blocks plus
+ * CSV/office extras that live outside the static tree.
+ */
+export function selectedPreviewBlocks<T extends { id: string }>(opts: {
+  allBlocks: T[]
+  selectedIds: string[]
+  mediaBlock: T | null
+  extraById?: { get(id: string): T | undefined }
+}): T[] {
+  if (opts.mediaBlock && opts.selectedIds.includes(opts.mediaBlock.id)) return [opts.mediaBlock]
+  const wanted = new Set(opts.selectedIds)
+  const seen = new Set<string>()
+  const out: T[] = []
+  for (const b of opts.allBlocks) {
+    if (!wanted.has(b.id) || seen.has(b.id)) continue
+    seen.add(b.id)
+    out.push(b)
+  }
+  for (const id of opts.selectedIds) {
+    if (seen.has(id)) continue
+    const stored = opts.extraById?.get(id)
+    if (!stored) continue
+    seen.add(id)
+    out.push(stored)
+  }
+  return out
+}

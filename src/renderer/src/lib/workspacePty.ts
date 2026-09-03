@@ -1,6 +1,6 @@
 import type { ConversationPtyLayouts, TerminalLayoutNode, TerminalTab } from '../../../shared/types.ts'
 import type { PtyActivityStatus, PtyListResult, PtySessionMeta } from '../../../shared/ipc.ts'
-import { layoutDirectionKey, layoutFromTabIds } from './workspaceLayout.ts'
+import { collectLeaves, layoutDirectionKey, layoutFromTabIds } from './workspaceLayout.ts'
 import type { AgentHostSession } from './workspaceCliSurface.ts'
 
 export const AGENT_TAB_ID = 'agent'
@@ -102,6 +102,39 @@ export function withTombstones(
     merged.splice(Math.min(index, merged.length), 0, tab)
   })
   return merged
+}
+
+/** Live PTY statuses plus exited tombstones the user has not dismissed. */
+export function mergePtyStatusPreservingExited(
+  current: Record<string, PtyActivityStatus>,
+  sessions: Array<{ id: string; status: PtyActivityStatus }>
+): { next: Record<string, PtyActivityStatus>; unchanged: boolean } {
+  const next: Record<string, PtyActivityStatus> = {}
+  for (const meta of sessions) next[meta.id] = meta.status
+  for (const [tabId, status] of Object.entries(current)) {
+    if (status === 'exited' && !(tabId in next)) next[tabId] = status
+  }
+  const keys = Object.keys(next)
+  const unchanged =
+    keys.length === Object.keys(current).length &&
+    keys.every((tabId) => current[tabId] === next[tabId])
+  return { next, unchanged }
+}
+
+/** Drop leaked CLI-agent tabs from the tools-tray bash list after activate. */
+export function toolsTrayAfterScrubbingAgentTabs(s: {
+  tabs: TerminalTab[]
+  layout: TerminalLayoutNode | null
+  activeTabId: string
+}): { tabs: TerminalTab[]; layout: TerminalLayoutNode | null; activeTabId: string } {
+  const bash = userBashTabsOnly(s.tabs)
+  const layoutStillValid =
+    s.layout && collectLeaves(s.layout).every((leaf) => bash.some((t) => t.id === leaf))
+  return {
+    tabs: bash,
+    layout: layoutStillValid ? s.layout : bash[0] ? { type: 'leaf', tabId: bash[0].id, weight: 1 } : null,
+    activeTabId: bash.some((t) => t.id === s.activeTabId) ? s.activeTabId : (bash[0]?.id ?? '')
+  }
 }
 
 export function omitRecord<T extends Record<string, unknown>>(record: T, key: string): T {

@@ -6,6 +6,7 @@ import { collectLeaves } from './workspaceLayout.ts'
 import {
   CLI_SURFACE_KEY,
   mergeCliSurface,
+  pendingCliPickerSurface,
   pickCliScreenFocusTab,
   planEnterCliMode,
   planSplitCliSurface,
@@ -220,5 +221,14 @@ describe('workspaceCliSurface', () => {
       null
     )
     assert.equal(solePendingCliTabId({ tabs: [tab({ id: 'pty-1', agentId: 'claude' })] }), null)
+  })
+
+  it('seeds a Screen-filling pending picker without auto-assign', () => {
+    const pending = tab({ id: 'cli-pending:a', pendingCli: true, agentId: null })
+    assert.deepEqual(pendingCliPickerSurface(pending), {
+      tabs: [pending],
+      layout: leaf(pending.id),
+      activeTabId: pending.id
+    })
   })
 })

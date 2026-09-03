@@ -4,7 +4,7 @@
  */
 import type { ChatMessage } from '../../../shared/types.ts'
 import type { ChangeSet } from '../../../shared/changeSet.ts'
-import { threadPath } from '../../../shared/thread.ts'
+import { subtreeIds, threadPath } from '../../../shared/thread.ts'
 
 export type ThreadMessageState = {
   messages: Record<string, ChatMessage[]>
@@ -43,6 +43,11 @@ export function visibleMessages(state: ThreadMessageState, conversationId: strin
   const path = threadPath(nodes, leafId)
   pathCache = { nodes, leafId, path }
   return path
+}
+
+/** Replies that would be deleted with this message (not counting the message itself). */
+export function deleteMessageFollowCount(nodes: ChatMessage[], messageId: string): number {
+  return Math.max(0, subtreeIds(nodes, messageId).size - 1)
 }
 
 export function upsert(nodes: ChatMessage[] | undefined, message: ChatMessage): ChatMessage[] {

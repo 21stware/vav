@@ -20,6 +20,7 @@ import {
   shouldShowRewind
 } from '../lib/rewindTurns'
 import { useSessionStore, visibleMessages } from '../state/sessionStore'
+import { hostHoldsControlPlaneKeys } from '../state/sessionUsage'
 import { CompactionBanner } from './CompactionBanner'
 import { BranchPager, MessageRow } from './MessageRow'
 import { RewindRail } from './RewindRail'
@@ -135,7 +136,7 @@ export function Transcript({
   )
   const hostHoldsKeys = useSessionStore((s) => {
     const conversation = s.conversations.find((c) => c.id === activeId)
-    return s.hosts.some((host) => host.id === conversation?.machineId && host.controlPlane === true)
+    return hostHoldsControlPlaneKeys(s.hosts, conversation?.machineId)
   })
   const accountId = useSessionStore(
     (s) => s.conversations.find((c) => c.id === activeId)?.accountId ?? null
