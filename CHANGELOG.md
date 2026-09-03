@@ -4,6 +4,8 @@ User-facing changes by release. Unreleased work lives at the top until the next 
 
 ## Unreleased
 
+- Desktop remote: a user turn from the controller stays after switching sessions, and the master stops showing running once the host turn finishes.
+
 ## 1.18.9
 
 Let the phone pin and favorite sessions like the desktop sidebar.

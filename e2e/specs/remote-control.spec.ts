@@ -59,6 +59,10 @@ test('remote desktop send drives the controlled host transcript', async () => {
     await remote.locator('[data-testid="composer-input"]').fill('ping from controller')
     await remote.locator('[data-testid="composer-send"]').click()
 
+    await expect(remote.locator('[data-testid="message-user"]').last()).toContainText(
+      'ping from controller'
+    )
+
     await host.page
       .locator(`[data-testid="session-row"][data-conversation-id="${HOST_SESSION_ID}"]`)
       .click()
@@ -69,17 +73,41 @@ test('remote desktop send drives the controlled host transcript', async () => {
       'e2e stub reply'
     )
 
+    await expect(remote.locator('[data-testid="message-assistant"]').last()).toContainText(
+      'e2e stub reply'
+    )
+    await expect
+      .poll(async () =>
+        remote.evaluate(async (id) => {
+          const status = await window.vav.agent.status(id)
+          return status?.isRunning === false
+        }, HOST_SESSION_ID)
+      )
+      .toBe(true)
+
+    await remote.locator('[data-testid="new-session"]').click()
+    await expect(remote.locator('[data-testid="message-user"]')).toHaveCount(0)
+    await remote
+      .locator(`[data-testid="session-row"][data-conversation-id="${HOST_SESSION_ID}"]`)
+      .click()
+    await expect(remote.locator('[data-testid="message-user"]').last()).toContainText(
+      'ping from controller'
+    )
     await expect
       .poll(async () =>
         remote.evaluate(async (id) => {
           const conversation = await window.vav.conversations.get(id)
-          return conversation?.messages?.some(
-            (message: { role?: string; content?: string }) =>
-              message.role === 'user' && String(message.content ?? '').includes('ping from controller')
-          )
+          const status = await window.vav.agent.status(id)
+          return {
+            hasUser: conversation?.messages?.some(
+              (message: { role?: string; content?: string }) =>
+                message.role === 'user' && String(message.content ?? '').includes('ping from controller')
+            ),
+            running: status?.isRunning === true
+          }
         }, HOST_SESSION_ID)
       )
-      .toBe(true)
+      .toEqual({ hasUser: true, running: false })
 
     await host.page.screenshot({ path: 'test-results/e2e/remote-host-transcript.png' })
     await remote.screenshot({ path: 'test-results/e2e/remote-controller-window.png' })
