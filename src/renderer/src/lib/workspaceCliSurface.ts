@@ -12,7 +12,7 @@ import {
   removeLeaf,
   splitLeaf
 } from './workspaceLayout.ts'
-import { isLiveAgentSession } from './workspacePty.ts'
+import { bashThenAgentTabs, isLiveAgentSession, userBashTabsOnly } from './workspacePty.ts'
 import { cliLiveTab, replaceSurfaceTab } from './workspaceTabs.ts'
 
 /** One CLI agent's terminal host layout — survives agent switching. */
@@ -128,6 +128,79 @@ export function planFocusCliScreenPatch(
       ...prev.agentHostSessions,
       [CLI_SURFACE_KEY]: { ...cur, activeTabId: tabId }
     }
+  }
+}
+
+/** Persist the Screen layout that was just written to main. */
+export function planRestoreCliSurfaceLayout(
+  s: { agentHostSessions: Record<string, AgentHostSession> },
+  layout: TerminalLayoutNode | null
+): { agentHostSessions: Record<string, AgentHostSession> } | Record<string, never> {
+  const cur = s.agentHostSessions[CLI_SURFACE_KEY]
+  if (!cur) return {}
+  return {
+    agentHostSessions: {
+      ...s.agentHostSessions,
+      [CLI_SURFACE_KEY]: { ...cur, layout }
+    }
+  }
+}
+
+/** Enter Screen: pin the unified surface key onto the planned layout. */
+export function planEnterCliModeStorePatch(
+  s: { agentHostSessions: Record<string, AgentHostSession> },
+  surface: AgentHostSession
+): {
+  cliMode: true
+  activeHostAgentId: typeof CLI_SURFACE_KEY
+  agentHostSessions: Record<string, AgentHostSession>
+} {
+  return {
+    cliMode: true,
+    activeHostAgentId: CLI_SURFACE_KEY,
+    agentHostSessions: {
+      ...s.agentHostSessions,
+      [CLI_SURFACE_KEY]: surface
+    }
+  }
+}
+
+/** ⌘D split: keep existing panes and append the pending picker leaf. */
+export function planAppendCliSplitStorePatch(
+  s: { agentHostSessions: Record<string, AgentHostSession> },
+  surface: AgentHostSession,
+  pending: TerminalTab,
+  layout: TerminalLayoutNode
+): {
+  cliMode: true
+  activeHostAgentId: typeof CLI_SURFACE_KEY
+  agentHostSessions: Record<string, AgentHostSession>
+} {
+  const cur = s.agentHostSessions[CLI_SURFACE_KEY] ?? surface
+  return {
+    cliMode: true,
+    activeHostAgentId: CLI_SURFACE_KEY,
+    agentHostSessions: {
+      ...s.agentHostSessions,
+      [CLI_SURFACE_KEY]: {
+        tabs: [...cur.tabs.filter((t) => t.id !== pending.id), pending],
+        layout,
+        activeTabId: pending.id
+      }
+    }
+  }
+}
+
+/** Leave Screen: drop the surface flag and scrub agent-owned tray tabs. */
+export function planExitCliModeStorePatch(s: { tabs: TerminalTab[] }): {
+  cliMode: false
+  activeHostAgentId: null
+  tabs: TerminalTab[]
+} {
+  return {
+    cliMode: false,
+    activeHostAgentId: null,
+    tabs: bashThenAgentTabs(userBashTabsOnly(s.tabs))
   }
 }
 

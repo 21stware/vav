@@ -1,5 +1,6 @@
 import { upsertCompaction } from '../../../shared/compaction.ts'
 import type { LeafCompaction } from '../../../shared/types.ts'
+import { conversationTokenCachePatch } from '../lib/messageHydration.ts'
 import { patchConversationById } from './sessionListMerge.ts'
 
 /** Drop one conversation's live token overlay without cloning when it is absent. */
@@ -80,5 +81,49 @@ export function compactionSucceededPatch<C extends { id: string; tokensUsed?: nu
       ...conversation,
       tokensUsed: compaction.estimatedContextTokens
     }))
+  }
+}
+
+/** Refresh token overlay maps and the conversation's tokensUsed. */
+export function refreshTokenUsagePatch<C extends { id: string; tokensUsed?: number }, H>(
+  state: {
+    tokenHistories: Record<string, H>
+    cacheCreatedAt: Record<string, number | null>
+    cacheExpiresAt: Record<string, number | null>
+    conversations: C[]
+  },
+  id: string,
+  conversation: {
+    tokenHistory?: H | null
+    cacheCreatedAt?: number | null
+    cacheExpiresAt?: number | null
+    tokensUsed?: number
+  }
+): {
+  tokenHistories: Record<string, H>
+  cacheCreatedAt: Record<string, number | null>
+  cacheExpiresAt: Record<string, number | null>
+  conversations: C[]
+} {
+  return {
+    ...conversationTokenCachePatch(state, id, conversation),
+    conversations: patchConversationById(state.conversations, id, (row) => ({
+      ...row,
+      tokensUsed: conversation.tokensUsed
+    }))
+  }
+}
+
+/** Drop one leaf compaction after a successful clear. */
+export function clearCompactionPatch<C extends { leafId: string }>(
+  state: { compactions: Record<string, C[]> },
+  activeId: string,
+  leafId: string
+): { compactions: Record<string, C[]> } {
+  return {
+    compactions: {
+      ...state.compactions,
+      [activeId]: (state.compactions[activeId] ?? []).filter((c) => c.leafId !== leafId)
+    }
   }
 }

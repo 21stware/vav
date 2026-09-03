@@ -1,6 +1,13 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import { dirEntriesEqual, emptySlice, normalizeDirListError, planDirListingPatch } from './workspaceSlice.ts'
+import {
+  dirEntriesEqual,
+  emptySlice,
+  nextExpandedPaths,
+  normalizeDirListError,
+  planDirListingPatch,
+  planWorkingDirectorySlice
+} from './workspaceSlice.ts'
 
 describe('emptySlice', () => {
   it('starts a rooted workspace expanded at the root', () => {
@@ -62,5 +69,44 @@ describe('planDirListingPatch', () => {
     )
     assert.deepEqual(next.dirs?.['/'], [a])
     assert.deepEqual(next.loadingDirs, [])
+  })
+})
+
+describe('planWorkingDirectorySlice', () => {
+  it('wipes the file tree and keeps bash plus CLI host layouts', () => {
+    const prev = emptySlice('/old')
+    prev.sort = 'dateModified'
+    prev.ascending = false
+    prev.dirs = { '/old': [] }
+    prev.expanded = ['/old', '/old/src']
+    prev.selectedPath = '/old/a.ts'
+    prev.tabs = [{ id: 'bash-1', title: 'bash', isAgent: false, agentId: null, splitWeight: 1 }]
+    prev.activeTabId = 'bash-1'
+    prev.layout = { type: 'leaf', tabId: 'bash-1', weight: 1 }
+    prev.cliMode = true
+    prev.activeHostAgentId = '__cli__'
+    prev.agentHostSessions = {
+      __cli__: { tabs: [], layout: null, activeTabId: '' }
+    }
+    const next = planWorkingDirectorySlice(prev, '/new')
+    assert.equal(next.root, '/new')
+    assert.deepEqual(next.dirs, {})
+    assert.deepEqual(next.expanded, ['/new'])
+    assert.equal(next.selectedPath, null)
+    assert.equal(next.sort, 'dateModified')
+    assert.equal(next.ascending, false)
+    assert.equal(next.tabs, prev.tabs)
+    assert.equal(next.activeTabId, 'bash-1')
+    assert.equal(next.layout, prev.layout)
+    assert.equal(next.cliMode, true)
+    assert.equal(next.activeHostAgentId, '__cli__')
+    assert.equal(next.agentHostSessions, prev.agentHostSessions)
+  })
+})
+
+describe('nextExpandedPaths', () => {
+  it('toggles with the pre-click expanded flag, not a re-read of includes', () => {
+    assert.deepEqual(nextExpandedPaths(['/a', '/b'], '/b', true), ['/a'])
+    assert.deepEqual(nextExpandedPaths(['/a'], '/b', false), ['/a', '/b'])
   })
 })

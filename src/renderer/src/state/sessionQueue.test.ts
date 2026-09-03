@@ -10,6 +10,7 @@ import {
   buildQueuedMessage,
   composerSendDisposition,
   composerClearedPatch,
+  enqueueQueuedMessagePatch,
   isEmptyComposerSend,
   mergePreviewAndCommentRefs,
   MESSAGE_QUEUE_MAX,
@@ -185,6 +186,37 @@ describe('composer send helpers', () => {
     assert.deepEqual(patch.previewRefs.a, [])
     assert.deepEqual(patch.commentCards.a, [])
     assert.equal(patch.errorBanner, null)
+  })
+
+  it('parks a queued send and clears the composer for that session', () => {
+    const item = buildQueuedMessage({
+      text: 'later',
+      attachments: [],
+      previewRefs: [],
+      commentCards: [],
+      quote: null,
+      contextFile: null,
+      now: 2,
+      id: 'q-1'
+    })
+    const next = enqueueQueuedMessagePatch(
+      {
+        messageQueues: { a: [], b: [item] },
+        drafts: { a: 'later', b: 'keep' },
+        attachments: { a: ['/x'] },
+        quotes: { a: { messageId: 'm', summary: 'q' } },
+        previewRefs: { a: [{ id: 'r', filePath: '/a.ts' }] },
+        commentCards: { a: [{ ref: { id: 'c', filePath: '/a.ts' }, comment: 'n' }] }
+      },
+      'a',
+      item
+    )
+    assert.deepEqual(next.messageQueues.a, [item])
+    assert.equal(next.messageQueues.b[0], item)
+    assert.equal(next.drafts.a, '')
+    assert.equal(next.drafts.b, 'keep')
+    assert.deepEqual(next.attachments.a, [])
+    assert.equal(next.errorBanner, null)
   })
 })
 

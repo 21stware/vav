@@ -40,8 +40,8 @@ import {
   type ToastState,
   type TurnRuntime,
 } from './sessionTypes'
-import { conversationIdAwaitingTool, hostHoldsControlPlaneKeys, turnRuntimeFromAgentStatus, compactionSucceededPatch } from './sessionUsage'
-import { dispatchQueuedPayload, MESSAGE_QUEUE_MAX, buildQueuedMessage, composerSendDisposition, composerClearedPatch, isEmptyComposerSend, mergePreviewAndCommentRefs, pollUntil, resolveComposerContextFile, shouldDrainMessageQueue } from './sessionQueue'
+import { conversationIdAwaitingTool, hostHoldsControlPlaneKeys, turnRuntimeFromAgentStatus, compactionSucceededPatch, refreshTokenUsagePatch, clearCompactionPatch } from './sessionUsage'
+import { dispatchQueuedPayload, MESSAGE_QUEUE_MAX, buildQueuedMessage, composerSendDisposition, composerClearedPatch, enqueueQueuedMessagePatch, isEmptyComposerSend, mergePreviewAndCommentRefs, pollUntil, resolveComposerContextFile, shouldDrainMessageQueue } from './sessionQueue'
 import { applyCliHostSetResult } from './sessionCliHost'
 import { applySessionTurnEvent } from './sessionTurnApply'
 import {
@@ -111,7 +111,6 @@ import { getProjection, disposeProjection } from './StreamProjection'
 import { useWorkspaceStore } from './workspaceStore'
 import {
   conversationHydrationMetaPatch,
-  conversationTokenCachePatch,
   conversationFullHydratePatch,
   isCurrentHydration,
   nextHydrationGeneration,
@@ -1048,12 +1047,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     if (!target) return
     const conversation = await window.vav.conversations.get(target)
     if (!conversation) return
-    set((state) => ({
-      ...conversationTokenCachePatch(state, target, conversation),
-      conversations: patchConversationById(state.conversations, target, {
-        tokensUsed: conversation.tokensUsed
-      })
-    }))
+    set((state) => refreshTokenUsagePatch(state, target, conversation))
   },
 
   async createConversation(options) {
@@ -1841,13 +1835,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         quote,
         contextFile
       })
-      set((state) => ({
-        messageQueues: {
-          ...state.messageQueues,
-          [activeId!]: [...(state.messageQueues[activeId!] ?? []), item]
-        },
-        ...composerClearedPatch(state, activeId!)
-      }))
+      set((state) => enqueueQueuedMessagePatch(state, activeId!, item))
       return
     }
 
@@ -2157,12 +2145,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       set(genericErrorBanner(result.error))
       return false
     }
-    set((state) => ({
-      compactions: {
-        ...state.compactions,
-        [activeId]: (state.compactions[activeId] ?? []).filter((c) => c.leafId !== active.leafId)
-      }
-    }))
+    set((state) => clearCompactionPatch(state, activeId, active.leafId))
     return true
   },
 

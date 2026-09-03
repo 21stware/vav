@@ -18,8 +18,12 @@ import {
   pickCliScreenFocusTab,
   planActivateAgentHostAfterSpawn,
   planCloseAgentTabPatch,
-  planFocusCliScreenPatch,
+  planAppendCliSplitStorePatch,
   planEnterCliMode,
+  planEnterCliModeStorePatch,
+  planExitCliModeStorePatch,
+  planFocusCliScreenPatch,
+  planRestoreCliSurfaceLayout,
   planSelectAgentTabPatch,
   planSplitAgentHost,
   planSplitCliSurface,
@@ -41,14 +45,15 @@ import {
 } from '../lib/workspacePanePaint'
 import {
   emptySlice,
+  nextExpandedPaths,
   normalizeDirListError,
   planDirListingPatch,
+  planWorkingDirectorySlice,
   type WorkspaceSlice
 } from '../lib/workspaceSlice'
 import { planHydratedPtySlice } from '../lib/workspaceHydrate'
 import {
   AGENT_TAB_ID,
-  bashThenAgentTabs,
   buildConversationPtyLayouts,
   closeBashTabSlicePatch,
   emptyPtyLayouts,
@@ -570,16 +575,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       const sentCli = payload.agents[CLI_SURFACE_KEY] ?? null
       const now = getCliSurface(get().workspaces[id])
       if (!shouldRestoreCliLayoutAfterSync(sentCli, now)) return
-      patch(set, id, (s) => {
-        const cur = getCliSurface(s)
-        if (!cur) return {}
-        return {
-          agentHostSessions: {
-            ...s.agentHostSessions,
-            [CLI_SURFACE_KEY]: { ...cur, layout: sentCli }
-          }
-        }
-      })
+      patch(set, id, (s) => planRestoreCliSurfaceLayout(s, sentCli))
     } catch {
       // Best-effort — companion may still hydrate from live PTYs.
     }
@@ -601,18 +597,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       return {
         workspaces: {
           ...state.workspaces,
-          [id]: {
-            ...emptySlice(root),
-            sort: prev.sort,
-            ascending: prev.ascending,
-
-            tabs: prev.tabs,
-            activeTabId: prev.activeTabId,
-            layout: prev.layout,
-            cliMode: prev.cliMode,
-            activeHostAgentId: prev.activeHostAgentId,
-            agentHostSessions: prev.agentHostSessions
-          }
+          [id]: planWorkingDirectorySlice(prev, root)
         }
       }
     })
@@ -675,7 +660,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     if (!slice) return
     const isExpanded = slice.expanded.includes(path)
     patch(set, id, (s) => ({
-      expanded: isExpanded ? s.expanded.filter((p) => p !== path) : [...s.expanded, path]
+      expanded: nextExpandedPaths(s.expanded, path, isExpanded)
     }))
     if (!isExpanded && !slice.dirs[path]) await get().loadDirectory(id, path)
   },
@@ -827,14 +812,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     }
     const plan = planEnterCliMode(get().workspaces[id]!)
     if (plan.kind === 'noop') return
-    patch(set, id, (s) => ({
-      cliMode: true,
-      activeHostAgentId: CLI_SURFACE_KEY,
-      agentHostSessions: {
-        ...s.agentHostSessions,
-        [CLI_SURFACE_KEY]: plan.surface
-      }
-    }))
+    patch(set, id, (s) => planEnterCliModeStorePatch(s, plan.surface))
     get().syncPtyLayouts(id)
     if (plan.autoAssignPendingId) {
       maybeAutoAssignSingleAgent(id, plan.autoAssignPendingId, 'enter')
@@ -847,12 +825,8 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     if (!slice) return
     // Idempotent — openChatMode / menu / park callers may stack.
     if (!slice.cliMode && !slice.activeHostAgentId) return
-    patch(set, id, (s) => ({
-      cliMode: false,
-      activeHostAgentId: null,
-      // Drop agent-owned bash tabs from the tray; keep user shells.
-      tabs: bashThenAgentTabs(userBashTabsOnly(s.tabs))
-    }))
+    // Drop agent-owned bash tabs from the tray; keep user shells.
+    patch(set, id, (s) => planExitCliModeStorePatch(s))
     get().syncPtyLayouts(id)
   },
 
@@ -867,32 +841,11 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     const plan = planSplitCliSurface(surface, axis, pending)
     if (!plan) return
     if (plan.kind === 'seed') {
-      patch(set, id, (s) => ({
-        agentHostSessions: {
-          ...s.agentHostSessions,
-          [CLI_SURFACE_KEY]: plan.surface
-        },
-        activeHostAgentId: CLI_SURFACE_KEY,
-        cliMode: true
-      }))
+      patch(set, id, (s) => planEnterCliModeStorePatch(s, plan.surface))
       if (autoAssign) maybeAutoAssignSingleAgent(id, pending.id, 'split')
       return
     }
-    patch(set, id, (s) => {
-      const cur = getCliSurface(s) ?? surface
-      return {
-        cliMode: true,
-        activeHostAgentId: CLI_SURFACE_KEY,
-        agentHostSessions: {
-          ...s.agentHostSessions,
-          [CLI_SURFACE_KEY]: {
-            tabs: [...cur.tabs.filter((t) => t.id !== pending.id), pending],
-            layout: plan.layout,
-            activeTabId: pending.id
-          }
-        }
-      }
-    })
+    patch(set, id, (s) => planAppendCliSplitStorePatch(s, surface, pending, plan.layout))
     get().syncPtyLayouts(id)
     if (autoAssign) maybeAutoAssignSingleAgent(id, pending.id, 'split')
     // Original pane just remounted in a half-size track — settle fit + SIGWINCH
@@ -988,14 +941,9 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     } else {
       // One pending leaf, no auto-assign — we are about to resume into it.
       const pending = makePendingCliTab()
-      patch(set, id, (s) => ({
-        cliMode: true,
-        activeHostAgentId: CLI_SURFACE_KEY,
-        agentHostSessions: {
-          ...s.agentHostSessions,
-          [CLI_SURFACE_KEY]: pendingCliPickerSurface(pending)
-        }
-      }))
+      patch(set, id, (s) =>
+        planEnterCliModeStorePatch(s, pendingCliPickerSurface(pending))
+      )
       surface = getCliSurface(get().workspaces[id])
     }
 

@@ -146,3 +146,23 @@ export function emptySlice(root: string | null): WorkspaceSlice {
     terminalHasUnseenOutput: false
   }
 }
+
+/** New workdir: wipe the file tree, keep bash + CLI host layouts. */
+export function planWorkingDirectorySlice(prev: WorkspaceSlice, root: string | null): WorkspaceSlice {
+  return {
+    ...emptySlice(root),
+    sort: prev.sort,
+    ascending: prev.ascending,
+    tabs: prev.tabs,
+    activeTabId: prev.activeTabId,
+    layout: prev.layout,
+    cliMode: prev.cliMode,
+    activeHostAgentId: prev.activeHostAgentId,
+    agentHostSessions: prev.agentHostSessions
+  }
+}
+
+/** Expand or collapse one directory path using the pre-click expanded flag. */
+export function nextExpandedPaths(expanded: string[], path: string, isExpanded: boolean): string[] {
+  return isExpanded ? expanded.filter((p) => p !== path) : [...expanded, path]
+}

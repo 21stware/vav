@@ -12,7 +12,11 @@ import {
   planActivateAgentHostAfterSpawn,
   planCloseAgentTabPatch,
   planEnterCliMode,
+  planEnterCliModeStorePatch,
+  planExitCliModeStorePatch,
   planFocusCliScreenPatch,
+  planRestoreCliSurfaceLayout,
+  planAppendCliSplitStorePatch,
   planSelectAgentTabPatch,
   planSplitAgentHost,
   planSplitCliSurface,
@@ -428,5 +432,73 @@ describe('workspaceCliSurface', () => {
     assert.equal(resolveInjectTabId('claude', host, bash), 'h1')
     assert.equal(resolveInjectTabId(null, null, bash), 'b1')
     assert.equal(resolveInjectTabId('claude', null, bash), undefined)
+  })
+
+  it('restores Screen layout only when the unified surface exists', () => {
+    const live = tab({ id: 'pty-1', agentId: 'claude' })
+    const surface: AgentHostSession = { tabs: [live], layout: leaf('pty-1'), activeTabId: 'pty-1' }
+    const nextLayout: TerminalLayoutNode = {
+      type: 'branch',
+      direction: 'row',
+      weight: 1,
+      children: [leaf('pty-1'), leaf('pty-2')]
+    }
+    const restored = planRestoreCliSurfaceLayout(
+      { agentHostSessions: { [CLI_SURFACE_KEY]: surface, claude: surface } },
+      nextLayout
+    )
+    assert.equal(restored.agentHostSessions?.[CLI_SURFACE_KEY]?.layout, nextLayout)
+    assert.equal(restored.agentHostSessions?.claude, surface)
+    assert.deepEqual(planRestoreCliSurfaceLayout({ agentHostSessions: {} }, nextLayout), {})
+  })
+
+  it('enters Screen by pinning the unified key onto the planned surface', () => {
+    const surface = pendingCliPickerSurface(tab({ id: 'pending', pendingCli: true }))
+    const next = planEnterCliModeStorePatch({ agentHostSessions: { claude: surface } }, surface)
+    assert.equal(next.cliMode, true)
+    assert.equal(next.activeHostAgentId, CLI_SURFACE_KEY)
+    assert.equal(next.agentHostSessions[CLI_SURFACE_KEY], surface)
+    assert.equal(next.agentHostSessions.claude, surface)
+  })
+
+  it('exits Screen and drops agent-owned tray tabs', () => {
+    const next = planExitCliModeStorePatch({
+      tabs: [
+        tab({ id: 'bash-1', title: 'bash' }),
+        tab({ id: 'agent-bash', agentId: 'claude' })
+      ]
+    })
+    assert.equal(next.cliMode, false)
+    assert.equal(next.activeHostAgentId, null)
+    assert.deepEqual(
+      next.tabs.map((t) => t.id),
+      ['bash-1']
+    )
+  })
+
+  it('appends a pending picker pane onto the current Screen layout', () => {
+    const live = tab({ id: 'pty-1', agentId: 'claude' })
+    const pending = tab({ id: 'pending', pendingCli: true })
+    const surface: AgentHostSession = { tabs: [live], layout: leaf('pty-1'), activeTabId: 'pty-1' }
+    const layout: TerminalLayoutNode = {
+      type: 'branch',
+      direction: 'row',
+      weight: 1,
+      children: [leaf('pty-1'), leaf('pending')]
+    }
+    const next = planAppendCliSplitStorePatch(
+      { agentHostSessions: { [CLI_SURFACE_KEY]: surface } },
+      surface,
+      pending,
+      layout
+    )
+    assert.equal(next.cliMode, true)
+    assert.equal(next.activeHostAgentId, CLI_SURFACE_KEY)
+    assert.deepEqual(
+      next.agentHostSessions[CLI_SURFACE_KEY]?.tabs.map((t) => t.id),
+      ['pty-1', 'pending']
+    )
+    assert.equal(next.agentHostSessions[CLI_SURFACE_KEY]?.activeTabId, 'pending')
+    assert.equal(next.agentHostSessions[CLI_SURFACE_KEY]?.layout, layout)
   })
 })

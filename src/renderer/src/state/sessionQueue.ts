@@ -162,6 +162,32 @@ export function composerClearedPatch<
   }
 }
 
+/** Park a send behind a running turn and clear the composer. */
+export function enqueueQueuedMessagePatch<
+  T extends {
+    messageQueues: Record<string, QueuedMessage[]>
+    drafts: Record<string, string>
+    attachments: Record<string, string[]>
+    quotes: Record<string, QuoteDraft | null>
+    previewRefs: Record<string, PreviewRef[]>
+    commentCards: Record<string, { ref: PreviewRef; comment: string }[]>
+  }
+>(
+  state: T,
+  activeId: string,
+  item: QueuedMessage
+): {
+  messageQueues: Record<string, QueuedMessage[]>
+} & ReturnType<typeof composerClearedPatch<T>> {
+  return {
+    messageQueues: {
+      ...state.messageQueues,
+      [activeId]: [...(state.messageQueues[activeId] ?? []), item]
+    },
+    ...composerClearedPatch(state, activeId)
+  }
+}
+
 /** Merge comment cards + preview refs, then fire agent.send. */
 export async function dispatchQueuedPayload(
   conversationId: string,
