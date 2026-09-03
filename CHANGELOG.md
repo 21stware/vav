@@ -4,7 +4,12 @@ User-facing changes by release. Unreleased work lives at the top until the next 
 
 ## Unreleased
 
-- Desktop remote: a user turn from the controller stays after switching sessions, and the master stops showing running once the host turn finishes.
+## 1.18.10
+
+Keep desktop remote user turns after switching sessions, and stop the master from staying on running after the host finishes.
+
+- Controller thread/turn frames write the user message into the local store and workbench events, so it is still there after leave and return.
+- `turn:done` clears generating / session running instead of leaving the master stuck.
 
 ## 1.18.9
 
