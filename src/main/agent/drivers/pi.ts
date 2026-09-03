@@ -5,6 +5,7 @@ import {
   dig,
   num,
   onJsonLines,
+  disposeStdioProcess,
   spawnStdioProcess,
   type StdioProcess
 } from './process'
@@ -322,8 +323,7 @@ function wirePi(
         w.reject(new Error('disposed'))
       }
       pending.clear()
-      proc.closeStdin()
-      setTimeout(() => proc.kill(), 2_000)
+      disposeStdioProcess(proc)
     }
   }
 }

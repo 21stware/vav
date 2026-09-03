@@ -68,6 +68,26 @@ export function isApprovalApproveText(text: string, editMode: boolean): boolean 
   return line === zhCN['approval.approve'] || line === en['approval.approve']
 }
 
+/** True if `text` contains the catalog string in either locale. */
+export function catalogTextIncludes(key: MessageKey, text: string | null | undefined): boolean {
+  if (!text) return false
+  return text.includes(zhCN[key]) || text.includes(en[key])
+}
+
+export function catalogTextEquals(key: MessageKey, text: string | null | undefined): boolean {
+  if (!text) return false
+  return text === zhCN[key] || text === en[key]
+}
+
+/**
+ * True if `text` starts with the catalog template with `{placeholders}`
+ * stripped (e.g. `tool.backgroundPid` → "后台运行 · pid" / "Background · pid").
+ */
+export function catalogTextStartsWithTemplate(key: MessageKey, text: string): boolean {
+  const strip = (value: string): string => value.replace(/\s*\{[^}]*\}.*$/, '').trimEnd()
+  return text.startsWith(strip(zhCN[key])) || text.startsWith(strip(en[key]))
+}
+
 export function fileSortLabelKey(
   key: string
 ): MessageKey {

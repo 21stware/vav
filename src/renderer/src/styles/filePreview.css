@@ -1,0 +1,5191 @@
+/* File preview, CSV sheet, markdown paper, and file-tree rows. */
+
+/* Standalone file preview window (file-preview.rpml). */
+.file-viewer-window,
+.file-preview-shell {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 100vh;
+  background: var(--bg-content);
+  overflow: hidden;
+}
+
+.file-preview-shell {
+  min-height: 100vh;
+}
+
+/* Native office host fills the preview body once structured stand-in is gone. */
+.file-viewer-native-office {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/*
+ * Progressive office: keep native canvas laid out at a real viewport size while
+ * StructuredDocView is on screen. `display:none` / 0×0 staging collapses
+ * docx-preview fit metrics so the host cannot scroll after swap-in.
+ */
+.file-viewer-native-office.is-pending {
+  position: fixed;
+  left: -120vw;
+  top: 0;
+  width: 100vw;
+  height: 100vh;
+  opacity: 0;
+  pointer-events: none;
+  z-index: -1;
+  overflow: hidden;
+  /* Escape the flex column while staging off-screen. */
+  flex: none;
+}
+
+.preview-perf-hud {
+  position: fixed;
+  right: 10px;
+  bottom: 10px;
+  z-index: 9999;
+  min-width: 160px;
+  max-width: 240px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--bg-elevated, #1c1c1e) 92%, transparent);
+  color: var(--text-secondary, #aeaeb2);
+  font: 11px/1.35 ui-monospace, SFMono-Regular, Menlo, monospace;
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.28);
+  pointer-events: auto;
+  /* Dev-only cue — dashed edge so it never reads as product chrome. */
+  outline: 1px dashed color-mix(in srgb, #f5a524 55%, transparent);
+  outline-offset: -1px;
+}
+
+.preview-perf-hud-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 4px;
+  color: var(--text-primary, #f5f5f7);
+  font-weight: 600;
+}
+
+.preview-perf-hud-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.preview-perf-dev-badge {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 5px;
+  height: 14px;
+  border-radius: 3px;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #1a1200;
+  background: #f5a524;
+  line-height: 1;
+}
+
+.preview-perf-hud-head button,
+.preview-perf-hud-toggle {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: default;
+  padding: 0 2px;
+  font: inherit;
+}
+
+.preview-perf-hud-toggle {
+  position: fixed;
+  right: 10px;
+  bottom: 10px;
+  z-index: 9999;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--bg-elevated, #1c1c1e) 88%, transparent);
+  opacity: 0.85;
+  outline: 1px dashed color-mix(in srgb, #f5a524 55%, transparent);
+  outline-offset: -1px;
+}
+
+.preview-perf-hud ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.preview-perf-hud li {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.preview-perf-hud code {
+  font: inherit;
+  color: var(--text-primary, #f5f5f7);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/*
+ * Standalone: file | agent columns both flush to the window top
+ * (same geometry language as FileSessionView in the main shell).
+ */
+.file-preview-columns {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+  width: 100%;
+}
+
+.file-preview-file-col {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.file-preview-main {
+  position: relative;
+  z-index: 0;
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  isolation: isolate;
+}
+
+/*
+ * Selection Agent mark — icon only at the pick box's top-right (no outer
+ * plate / ring). JS translate + clamp keeps it in the stage while scrolling.
+ */
+.selection-agent-fab {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 5;
+  box-sizing: border-box;
+  width: 26px;
+  height: 26px;
+  margin: 0;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  cursor: default;
+  aspect-ratio: 1 / 1;
+  flex: 0 0 26px;
+  /* Size is constant; only the *position* rides --doc-zoom.
+     Sits just inside the box so overflow:hidden frames do not clip it. */
+  transform: translate(
+    calc(var(--hud-x, 0) * var(--doc-zoom, 1) * 1px - 34px),
+    calc(var(--hud-y, 0) * var(--doc-zoom, 1) * 1px + 8px)
+  );
+}
+
+.selection-agent-fab.is-fill {
+  top: 8px;
+  right: 8px;
+  left: auto;
+  transform: none;
+}
+
+.selection-agent-fab:hover {
+  background: transparent;
+  filter: brightness(1.06);
+}
+
+.selection-agent-fab:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 55%, transparent);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+.selection-agent-fab-mark {
+  display: block;
+  width: 26px;
+  height: 26px;
+  line-height: 0;
+  overflow: hidden;
+  border-radius: 5.8px;
+}
+
+.selection-agent-fab .selection-agent-fab-icon.brand-app-icon {
+  width: 26px !important;
+  height: 26px !important;
+  border-radius: 5.8px;
+  background: transparent !important;
+  /* Icon asset already has its squircle — don't add a second plate/shadow. */
+  box-shadow: none !important;
+}
+
+/*
+ * Selection HUD — camera overlay. Content (the subject) may CSS-scale or
+ * reflow; this sibling paints the ring / wash in screen pixels so a 2px
+ * stroke and the agent mark stay the same size at every zoom.
+ */
+.selection-hud {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  overflow: visible;
+  pointer-events: none;
+}
+
+/*
+ * --doc-zoom must not inherit into the scaled document. apply() writes it
+ * on .selection-hud only; this cuts any leftover on the frame.
+ */
+.docx-fit-frame > .docx-native-wrapper,
+.docx-fit-frame > .docx-wrapper,
+.pdf-page-frame > .pdf-page,
+[data-chrome-subject] {
+  --doc-zoom: initial;
+}
+
+.selection-hud-box {
+  position: absolute;
+  top: 0;
+  left: 0;
+  box-sizing: border-box;
+  border-radius: 2px;
+  pointer-events: none;
+  transition: none;
+  width: calc(var(--hud-w, 0) * var(--doc-zoom, 1) * 1px);
+  height: calc(var(--hud-h, 0) * var(--doc-zoom, 1) * 1px);
+  transform: translate(
+    calc(var(--hud-x, 0) * var(--doc-zoom, 1) * 1px),
+    calc(var(--hud-y, 0) * var(--doc-zoom, 1) * 1px)
+  );
+}
+
+.selection-hud-box.is-fill {
+  inset: 0;
+  width: auto;
+  height: auto;
+  transform: none;
+}
+
+.selection-hud-box.is-hovered {
+  outline: 1px dashed var(--accent);
+  outline-offset: -1px;
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+}
+
+.selection-hud-box.is-selected {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+/* Image wrappers clip overflow — keep the ring inside the bitmap. */
+.selection-hud-box.is-media,
+.selection-hud-box.is-fill {
+  background: transparent;
+  outline-offset: -2px;
+  box-shadow: none;
+}
+
+.selection-hud-box.is-media.is-selected,
+.selection-hud-box.is-fill.is-selected {
+  box-shadow: inset 0 0 0 2px var(--accent);
+}
+
+.selection-hud-box.is-media.is-hovered,
+.selection-hud-box.is-fill.is-hovered {
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+/* Agent column is a peer of the file column (full height), not under the file header. */
+.file-preview-shell:not(.embedded) .preview-agent-panel {
+  flex: 0 0 auto;
+  align-self: stretch;
+  height: auto;
+  max-height: none;
+  border-left: 1px solid var(--border);
+}
+
+/* Align agent chrome with the file titlebar row. */
+.file-preview-shell:not(.embedded) .preview-agent-panel .agent-mode-chrome,
+.file-preview-shell:not(.embedded) .preview-agent-panel .terminal-host-chrome,
+.file-preview-shell:not(.embedded) .preview-agent-panel .preview-file-session-bar {
+  height: auto;
+  min-height: var(--toolbar-height);
+  box-sizing: border-box;
+  -webkit-app-region: drag;
+}
+
+.file-preview-shell:not(.embedded) .preview-agent-panel .agent-mode-chrome button,
+.file-preview-shell:not(.embedded) .preview-agent-panel .agent-mode-chrome label,
+.file-preview-shell:not(.embedded) .preview-agent-panel .agent-mode-chrome select,
+.file-preview-shell:not(.embedded) .preview-agent-panel .agent-mode-chrome input,
+.file-preview-shell:not(.embedded) .preview-agent-panel .agent-mode-chrome .btn,
+.file-preview-shell:not(.embedded) .preview-agent-panel .preview-file-session-bar button,
+.file-preview-shell:not(.embedded) .preview-agent-panel .preview-file-session-bar .btn {
+  -webkit-app-region: no-drag;
+}
+
+.file-preview-shell .file-viewer-body {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  /* Scroll long markdown / tall images; also sideways when the reading
+     column is wider than the pane (stable measure, not responsive shrink). */
+  overflow: auto;
+  overflow-x: auto;
+  overscroll-behavior: contain;
+  /* Body is user-select:none app-wide — reading previews must opt back in. */
+  user-select: text;
+  -webkit-user-select: text;
+  cursor: text;
+  /* Default paper padding for text/md; office/html zero-pad via :has(). */
+}
+
+/* Block-pick chrome active — click picks for Agent; drag still selects text for copy. */
+.file-preview-shell .file-viewer-body.selecting.pick-mode {
+  user-select: text;
+  -webkit-user-select: text;
+  cursor: text;
+}
+
+.file-preview-shell .file-viewer-body > .file-viewer-code.continuous {
+  flex: 1 1 auto;
+  min-height: 0;
+  width: 100%;
+}
+
+/*
+ * Virtualized source: the <pre> is the only scroll container.
+ * If .file-viewer-body also scrolls, pre.scrollTop stays 0 and only the
+ * first window of lines is ever painted (content looks "cut off" with a
+ * short scrollbar over empty canvas).
+ */
+.file-viewer-body:has(> .file-viewer-code.continuous.is-virtualized) {
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.file-preview-zoom {
+  min-height: 100%;
+}
+
+.file-viewer-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  /* Same height as the main / file-agent chrome row. */
+  height: var(--toolbar-height);
+  min-height: var(--toolbar-height);
+  padding: 0 var(--chrome-trail) 0 var(--chrome-lead);
+  border-top: 0;
+  border-bottom: 0;
+  /* Same plate as the window / shell — no second “titlebar” tint. */
+  background: var(--bg-content);
+  flex: 0 0 auto;
+  box-sizing: border-box;
+}
+
+/*
+ * File chrome floats as glass over the stage — standalone preview and the
+ * embedded File session / workspace peek. The scrollport is full-bleed
+ * underneath; padding on the *scrolling* element keeps the first screen clear.
+ */
+.file-preview-shell {
+  --preview-chrome-h: var(--toolbar-height);
+  --preview-status-h: 28px;
+  position: relative;
+}
+
+.file-preview-shell.embedded {
+  --preview-chrome-h: var(--toolbar-height);
+}
+
+.file-preview-shell .file-viewer-header,
+.file-preview-shell .file-preview-statusbar {
+  position: absolute;
+  left: 0;
+  right: 0;
+  z-index: 20;
+  flex: none;
+  background: color-mix(in srgb, var(--bg-content) 52%, transparent);
+  backdrop-filter: blur(20px) saturate(1.35);
+  -webkit-backdrop-filter: blur(20px) saturate(1.35);
+}
+
+.file-preview-shell .file-viewer-header {
+  top: 0;
+}
+
+.file-preview-shell .file-preview-statusbar {
+  bottom: 0;
+}
+
+/* Body is the scrollport (markdown / code / html). */
+.file-preview-shell .file-viewer-body {
+  box-sizing: border-box;
+  padding-top: var(--preview-chrome-h);
+  padding-bottom: var(--preview-status-h);
+  scroll-padding-top: var(--preview-chrome-h);
+  scroll-padding-bottom: var(--preview-status-h);
+}
+
+.file-preview-shell .file-viewer-body[data-pad='text'] {
+  padding: calc(var(--preview-chrome-h) + 18px) 24px calc(var(--preview-status-h) + 28px);
+}
+
+/*
+ * Nested scrollports (image / office): the body must not inset them, or the
+ * picture can never travel under the glass. Put the chrome inset on the
+ * element that actually scrolls.
+ */
+.file-preview-shell .file-viewer-body:has(> .file-viewer-image-scroll),
+.file-preview-shell .file-viewer-body:has(.preview-media-stage),
+.file-preview-shell .file-viewer-body:has(.office-native-root),
+.file-preview-shell .html-clip-stage {
+  padding-top: var(--preview-chrome-h);
+  padding-bottom: var(--preview-status-h);
+}
+
+.file-preview-shell .file-viewer-body:has(.html-clip-stage),
+.file-preview-shell .file-viewer-body:has(> .file-viewer-code.continuous.is-virtualized) {
+  padding-top: 0;
+  padding-bottom: 0;
+}
+
+.file-preview-shell .image-zoom-stage,
+.file-preview-shell .preview-media-stage {
+  padding-top: calc(var(--preview-chrome-h) + 24px);
+  padding-bottom: calc(var(--preview-status-h) + 24px);
+  scroll-padding-top: var(--preview-chrome-h);
+  scroll-padding-bottom: var(--preview-status-h);
+}
+
+.file-preview-shell .pdf-pages-host,
+.file-preview-shell .docx-body-host {
+  padding-top: calc(var(--preview-chrome-h) + 20px);
+  padding-bottom: calc(var(--preview-status-h) + 48px);
+  scroll-padding-top: var(--preview-chrome-h);
+}
+
+.file-preview-shell .file-viewer-code.continuous.is-virtualized {
+  padding-top: var(--preview-chrome-h);
+  padding-bottom: var(--preview-status-h);
+  scroll-padding-top: var(--preview-chrome-h);
+}
+
+.file-preview-shell .doc-zoom-controls,
+.file-preview-shell .doc-page-pager {
+  bottom: calc(var(--preview-status-h) + 10px);
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .file-preview-shell .file-viewer-header,
+  .file-preview-shell .file-preview-statusbar {
+    background: var(--bg-content);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+}
+
+/* Embedded: same row height as agent chrome; glass comes from the overlay. */
+.file-preview-shell.embedded .file-viewer-header {
+  padding: 0 10px;
+  height: var(--toolbar-height);
+  min-height: var(--toolbar-height);
+  border-bottom: 0;
+}
+
+.file-preview-shell.embedded {
+  background: var(--bg-content);
+}
+
+.file-preview-shell.embedded .file-viewer-body,
+.file-preview-shell.embedded .file-viewer-main {
+  background: transparent;
+}
+
+.file-viewer-lead {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex: 0 1 auto;
+}
+
+.file-viewer-chrome {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+}
+
+.preview-badge {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  color: var(--accent-text);
+  flex: 0 0 auto;
+}
+
+.preview-badge.sm {
+  font-size: 10px;
+  padding: 1px 6px;
+}
+
+/* Inspect-style block selection (Chrome DevTools Elements): same document,
+   overlay outline on hover/selected — never a source-editor layout swap.
+   Shared tokens across MD / code / notebook / media / CSV / DOCX / PDF / PPTX / XLSX.
+   Hover + selected update instantly (no transition). Parent rings are suppressed
+   while a nested pick target is hovered (:has).
+   Visual chrome is the screen-space .selection-hud. Content keeps classes for
+   hit-testing; ::after below is the fallback when no HUD is mounted. */
+.file-viewer-body.selecting {
+  cursor: text;
+}
+
+.preview-document.selecting .preview-select-region,
+.preview-notebook-cell.preview-select-region,
+.preview-media-stage > .preview-select-region,
+.file-viewer-media.preview-select-region,
+.office-native-root.selecting .preview-select-region,
+.office-native-root.selecting .office-pick-target,
+.office-native-root.selecting .pdf-page.pdf-pick-page,
+.office-native-root.selecting .pdf-page .textLayer span {
+  border-radius: 2px;
+  transition: none;
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+/* Flow targets get relative for ::after chrome; PDF textLayer spans stay absolute. */
+.preview-document.selecting .preview-select-region,
+.preview-notebook-cell.preview-select-region,
+.office-native-root.selecting .preview-select-region,
+.office-native-root.selecting .office-pick-target,
+.office-native-root.selecting .pdf-page.pdf-pick-page {
+  position: relative;
+}
+
+/* Pick chrome box — never intercepts pointer (text drag/copy works through it). */
+.preview-document.selecting .preview-select-region::after,
+.preview-notebook-cell.preview-select-region::after,
+.preview-media-stage > .preview-select-region::after,
+.file-viewer-media.preview-select-region::after,
+.office-native-root.selecting .preview-select-region::after,
+.office-native-root.selecting .office-pick-target::after,
+.office-native-root.selecting .pdf-page.pdf-pick-page::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 2px;
+  outline: 1px solid transparent;
+  outline-offset: -1px;
+  pointer-events: none;
+  z-index: 1;
+  transition: none;
+}
+
+/*
+ * MD pick targets stay full reading width (prose must not shrink-wrap).
+ * Notebook cells can hug content; images always fill the measure.
+ */
+.preview-notebook-cell.preview-select-region {
+  width: fit-content;
+  height: fit-content;
+  max-width: 100%;
+}
+
+.preview-document.selecting .preview-select-region:has(img),
+.preview-document.selecting .preview-select-region:has(picture),
+.preview-notebook-cell.preview-select-region:has(img),
+.preview-notebook-cell.preview-select-region:has(picture) {
+  width: 100%;
+  max-width: 100%;
+  height: auto;
+}
+
+/* Hover only when not selected — solid selected outline must not flip to dashed.
+   Deepest target only: parents with a hovered descendant stay quiet. */
+.preview-document.selecting
+  .preview-select-region:hover:not(.selected):not(:has(.preview-select-region:hover))::after,
+.preview-notebook-cell.preview-select-region:hover:not(.selected)::after,
+.preview-media-stage > .preview-select-region:hover:not(.selected)::after,
+.file-viewer-media.preview-select-region:hover:not(.selected)::after,
+.office-native-root.selecting
+  .preview-select-region:hover:not(.selected):not(:has(.preview-select-region:hover)):not(
+    :has(.office-pick-target:hover)
+  )::after,
+.office-native-root.selecting
+  .office-pick-target:hover:not(.selected):not(:has(.office-pick-target:hover))::after,
+.office-native-root.selecting
+  .pdf-page.pdf-pick-page:hover:not(.selected):not(:has(.textLayer span:hover)):not(
+    :has(.textLayer span.hovered)
+  )::after {
+  outline: 1px dashed var(--accent);
+  outline-offset: -1px;
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+}
+
+/* PDF textLayer spans: keep direct outline (absolute positioning + ::after is noisy). */
+.office-native-root.selecting .pdf-page.pdf-pick-page.hovered:not(.selected),
+.office-native-root.selecting .pdf-page .textLayer span.hovered:not(.selected),
+.office-native-root.selecting .pdf-page .textLayer span:hover:not(.selected) {
+  outline: 1px dashed var(--accent);
+  outline-offset: -1px;
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+  pointer-events: auto;
+}
+
+.preview-document.selecting .preview-select-region.selected::after,
+.preview-notebook-cell.preview-select-region.selected::after,
+.preview-media-stage > .preview-select-region.selected::after,
+.file-viewer-media.preview-select-region.selected::after,
+.office-native-root.selecting .preview-select-region.selected::after,
+.office-native-root.selecting .office-pick-target.selected::after,
+.office-native-root.selecting .pdf-page.pdf-pick-page.selected::after {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.office-native-root.selecting .pdf-page .textLayer span.selected {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+/*
+ * HUD is the camera: hide content-layer strokes so a CSS-scaled page does not
+ * thicken the ring. Hit targets and .selected / .hovered markers stay.
+ */
+.has-selection-hud .preview-select-region::after,
+.has-selection-hud .office-pick-target::after,
+.has-selection-hud .pdf-page.pdf-pick-page::after,
+.has-selection-hud .structured-doc.selecting .preview-select-region::after,
+.has-selection-hud .file-viewer-body.selecting .csv-sheet .preview-select-region::after,
+.has-selection-hud
+  .file-viewer-body.selecting
+  .csv-sheet
+  .preview-select-region.selected::after,
+.has-selection-hud
+  .file-viewer-body.selecting
+  .csv-sheet
+  .preview-select-region:hover:not(.selected)::after {
+  content: none;
+  display: none;
+}
+
+.has-selection-hud .pdf-page .textLayer span.selected,
+.has-selection-hud .pdf-page .textLayer span.hovered,
+.has-selection-hud .pdf-page .textLayer span:hover,
+.has-selection-hud .pdf-page.pdf-pick-page.hovered,
+.has-selection-hud .preview-code-overlay.selected,
+.has-selection-hud .preview-code-overlay.hovered,
+.has-selection-hud .file-viewer-code.continuous .preview-code-line.is-selected,
+.has-selection-hud .file-viewer-code.continuous .preview-code-line.is-hovered:not(.is-selected) {
+  outline: none;
+  background: transparent;
+}
+
+.has-selection-hud .structured-docx-table tr.selected td,
+.has-selection-hud .structured-sheet tr.selected td,
+.has-selection-hud .structured-sheet tr.selected th {
+  background: transparent;
+}
+
+.has-selection-hud .zip-tree-row.selected {
+  background: transparent;
+  box-shadow: none;
+}
+
+.has-selection-hud .zip-tree-row.selectable:hover {
+  background: transparent;
+}
+
+.has-selection-hud .diagram-file-view.is-selecting .diagram-pick-target > .diagram-select-rect,
+.has-selection-hud
+  .diagram-file-view.is-selecting
+  .diagram-pick-target:hover:not(.selected)
+  > .diagram-select-rect,
+.has-selection-hud .diagram-file-view.is-selecting .diagram-pick-target.selected > .diagram-select-rect {
+  stroke: transparent !important;
+  fill: none !important;
+  stroke-width: 0 !important;
+}
+
+.has-selection-hud .mindmap-view.is-selecting .mindmap-node:hover:not(.selected) .mindmap-node-plate,
+.has-selection-hud .mindmap-view.is-selecting .mindmap-node.selected .mindmap-node-plate,
+.has-selection-hud .drawio-view.is-selecting .drawio-cell:hover:not(.selected) .drawio-cell-plate,
+.has-selection-hud .drawio-view.is-selecting .drawio-cell.selected .drawio-cell-plate {
+  stroke: var(--border-strong);
+  stroke-width: 1;
+  stroke-dasharray: none;
+  fill: var(--bg-raised);
+}
+
+.has-selection-hud .mindmap-view.is-selecting .mindmap-node.is-root.selected .mindmap-node-plate,
+.has-selection-hud
+  .mindmap-view.is-selecting
+  .mindmap-node.is-root:hover:not(.selected)
+  .mindmap-node-plate {
+  fill: var(--accent-soft);
+  stroke: color-mix(in srgb, var(--accent) 40%, var(--border-strong));
+}
+
+/* Image/video pick: outline only, no accent wash over the pixels. */
+.preview-media-stage > .preview-select-region.selected::after,
+.preview-media-stage > .preview-select-region:hover:not(.selected)::after,
+.file-viewer-media.preview-select-region.selected::after,
+.file-viewer-media.preview-select-region:hover:not(.selected)::after {
+  background: transparent;
+  outline-offset: 2px; /* sit just outside the painted media edge */
+}
+
+/*
+ * Media stage: images fill the remaining viewport and use contain — small
+ * images stay at natural size and sit centered; large ones scale down and
+ * reflow with the window. EXIF meta stays above and scrolls on its own.
+ */
+.file-viewer-body:has(> .preview-media-stage),
+.file-viewer-body:has(.preview-media-stage),
+.file-viewer-body:has(> .file-viewer-image-meta-flat),
+.file-viewer-body:has(> .file-viewer-image-scroll) {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  overscroll-behavior: contain;
+  min-height: 0;
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.file-viewer-image-scroll {
+  position: relative;
+  flex: 1 1 auto;
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  overflow: hidden;
+}
+
+.preview-media-stage {
+  flex: 1 1 auto;
+  width: 100%;
+  min-height: 0;
+  height: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  padding: 24px;
+  box-sizing: border-box;
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.preview-media-stage > .file-viewer-media,
+.preview-media-stage > img,
+.preview-media-stage > video,
+.preview-media-stage > audio,
+.preview-media-stage .file-viewer-media {
+  max-width: 100%;
+  max-height: 100%;
+  width: auto;
+  height: auto;
+  min-width: 0;
+  min-height: 0;
+  object-fit: contain;
+}
+
+.file-viewer-image-scroll .preview-media-stage > .media-pick-frame:not(.image-zoom-content),
+.file-viewer-image-scroll .preview-media-stage > .preview-select-region:not(.image-zoom-content) {
+  max-width: 100%;
+  max-height: 100%;
+  min-width: 0;
+  min-height: 0;
+}
+
+/*
+ * Zoomable image stage. The picture carries a real pixel box written by the
+ * zoom controller, so panning is the stage's own scrolling — bounded, with
+ * momentum, and impossible to fling the photo out of view. `safe center` keeps
+ * a fitted image centred but stops centring once it outgrows the stage, which
+ * is what otherwise puts the top-left corner out of scroll reach.
+ */
+.preview-media-stage.image-zoom-stage {
+  position: relative;
+  overflow: auto;
+  justify-content: safe center;
+  align-items: safe center;
+  scrollbar-gutter: stable;
+}
+
+.file-viewer-image-scroll .preview-media-stage.image-zoom-stage > .image-zoom-content {
+  flex: 0 0 auto;
+  flex-shrink: 0;
+  position: relative;
+  overflow: hidden;
+  box-sizing: border-box;
+  max-width: none;
+  max-height: none;
+  padding: 0;
+}
+
+/* Bitmap stays natural-sized; zoom is transform. Clipped by the wrapper so
+   the unscaled box cannot inflate the stage's scroll overflow. */
+.image-zoom-stage[data-zoomable='true'] .file-viewer-media {
+  position: absolute;
+  top: 0;
+  left: 0;
+  max-width: none;
+  max-height: none;
+  will-change: transform;
+}
+
+/* Prefer viewport fit for video; still scrollable if taller than the window. */
+.preview-media-stage video.file-viewer-video,
+.preview-media-stage > video.file-viewer-media {
+  max-height: min(80vh, 900px);
+}
+
+/*
+ * Native <audio controls> needs a real width. Never apply flex/pick layout to
+ * the media element itself — only to the outer frame.
+ */
+.preview-media-stage audio.file-viewer-audio,
+.preview-media-stage audio.file-viewer-media {
+  display: block;
+  width: min(100%, 480px);
+  min-width: min(100%, 280px);
+  height: 40px;
+  max-height: none;
+}
+
+.file-viewer-audio-card {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 12px;
+  width: min(100%, 480px);
+  min-width: min(100%, 280px);
+  padding: 16px 18px;
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--bg-raised) 90%, var(--bg-sunken));
+  box-shadow: inset 0 0 0 1px var(--border);
+  box-sizing: border-box;
+}
+
+.file-viewer-audio-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Outline on the media frame (wrapper), not on native <audio>/<video>.
+   Image zoom writes a real pixel box on .image-zoom-content — do not
+   force height:auto there or the absolutely-positioned bitmap collapses. */
+.preview-media-stage > .preview-select-region:not(.image-zoom-content),
+.preview-media-stage > .media-pick-frame:not(.image-zoom-content) {
+  width: auto !important;
+  height: auto !important;
+  max-width: 100%;
+  max-height: 100%;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  /* Room for the pick outline around the player card. */
+  padding: 4px;
+  box-sizing: border-box;
+}
+
+.preview-source-editor {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: stretch;
+  min-height: 100%;
+  font-family: var(--font-code);
+  font-size: var(--code-size);
+  line-height: 1.55;
+}
+
+.preview-source-gutter {
+  display: flex;
+  flex-direction: column;
+  padding: 12px 0 12px 10px;
+  user-select: none;
+  color: var(--text-tertiary);
+  border-right: 1px solid var(--border);
+  background: color-mix(in srgb, var(--bg-elevated) 65%, transparent);
+}
+
+.preview-source-gutter-line {
+  display: block;
+  width: 100%;
+  min-width: 2.5em;
+  padding: 0 10px 0 4px;
+  border: 0;
+  border-left: 3px solid transparent;
+  margin: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  line-height: 1.55;
+  text-align: right;
+  cursor: default;
+}
+
+.preview-source-editor.selecting .preview-source-gutter-line:hover {
+  border-left-color: color-mix(in srgb, var(--text-tertiary) 55%, transparent);
+  background: color-mix(in srgb, var(--text-tertiary) 6%, transparent);
+}
+
+.preview-source-gutter-line.selected {
+  border-left-color: #3b82f6;
+  background: color-mix(in srgb, #3b82f6 10%, transparent);
+  color: var(--text);
+}
+
+.preview-source-textarea {
+  resize: none;
+  border: 0;
+  outline: none;
+  padding: 12px 14px;
+  margin: 0;
+  min-height: 100%;
+  width: 100%;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  line-height: 1.55;
+  white-space: pre;
+  overflow: auto;
+  tab-size: 2;
+}
+
+.preview-notebook-editor,
+.preview-csv-input {
+  width: 100%;
+  box-sizing: border-box;
+  margin: 0;
+  padding: 6px 8px;
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-code);
+  font-size: var(--code-size);
+  line-height: 1.45;
+}
+
+.preview-notebook-editor {
+  min-height: 120px;
+  resize: vertical;
+}
+
+/* Scroll stays on <pre>; the inner canvas is as wide as the longest line so
+   absolute overlays can extend past the viewport under horizontal scroll. */
+.file-viewer-code.continuous {
+  display: block;
+  white-space: pre;
+  position: relative;
+  overflow: auto;
+  /* Fixed line box for virtual scroll math (must match JS linePx). */
+  --code-line-height: 1.55em;
+  line-height: var(--code-line-height);
+}
+
+.file-viewer-code.continuous.is-virtualized {
+  /* Flex child fills the body; this element alone owns vertical scroll. */
+  flex: 1 1 auto;
+  min-height: 0;
+  height: auto;
+  max-height: none;
+  overflow: auto;
+  /* paint-only: size containment breaks scrollHeight / dual-scroll layouts. */
+  contain: paint;
+}
+
+.preview-code-canvas {
+  position: relative;
+  display: block;
+  width: max-content;
+  min-width: 100%;
+}
+
+/* Shrink-wrap each line to its text so overlay width can track content,
+   not the file-wide max line. */
+.file-viewer-code.continuous .preview-code-line {
+  display: block;
+  width: max-content;
+  min-height: var(--code-line-height, 1.55em);
+  height: var(--code-line-height, 1.55em);
+  line-height: var(--code-line-height, 1.55em);
+  box-sizing: border-box;
+}
+
+.preview-code-window {
+  will-change: contents;
+}
+
+.file-viewer-code.continuous .preview-code-line > .hljs {
+  display: block;
+  width: max-content;
+}
+
+.file-viewer-code.continuous.selecting .preview-code-line {
+  cursor: default;
+}
+
+/*
+ * Log / line-oriented pick: paint on the row itself so the outline hugs the
+ * text metrics. Absolute overlays were drifting into empty flex space and
+ * collapsing to 8px-wide ghost brackets on empty rows.
+ */
+.file-viewer-code.continuous .preview-code-line.is-hovered:not(.is-selected) {
+  outline: 1px dashed var(--accent);
+  outline-offset: -1px;
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+  border-radius: 2px;
+}
+
+.file-viewer-code.continuous .preview-code-line.is-selected {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  border-radius: 2px;
+}
+
+/* Selection/hover overlays — width set inline from measured line content.
+   Same visual tokens as .preview-select-region (MD / notebook / media). */
+.preview-code-overlay {
+  position: absolute;
+  left: 0;
+  box-sizing: border-box;
+  border-radius: 2px;
+  outline: 1px solid transparent;
+  outline-offset: -1px;
+  pointer-events: none;
+  z-index: 1;
+  transition: none;
+}
+
+.preview-code-overlay.hovered:not(.selected) {
+  outline: 1px dashed var(--accent);
+  outline-offset: -1px;
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+}
+
+.preview-code-overlay.selected {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.preview-plain {
+  margin: 0;
+  font-family: var(--font-code);
+  font-size: var(--code-size);
+  white-space: pre-wrap;
+}
+
+/* Mature office / PDF viewers (docx-preview, pdf.js, SheetJS). */
+.file-viewer-body:has(.office-native-root):not(:has(.structured-doc)) {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  /* Host is not the scrollport — inner .docx-body-host / stages scroll. */
+  cursor: default;
+}
+
+/* Structured stand-in owns scroll while native is still off-screen pending. */
+.file-viewer-body:has(.structured-doc) {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.office-native-root {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  /* Document viewers share one stage colour (paper sits on sunken desk). */
+  background: var(--bg-sunken);
+  /* Read mode: allow selecting text on the page. */
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+/*
+ * Floating page chrome — bottom center of PDF / DOCX / PPTX stages.
+ * Compact pill (‹ 19 / 100 ›); does not steal scroll (pointer-events only on self).
+ */
+.doc-page-pager {
+  position: absolute;
+  left: 50%;
+  bottom: 12px;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px 4px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--border-strong) 70%, transparent);
+  background: color-mix(in srgb, var(--bg-content) 88%, transparent);
+  color: var(--text-secondary);
+  box-shadow:
+    0 1px 2px color-mix(in srgb, var(--text) 6%, transparent),
+    0 6px 18px color-mix(in srgb, var(--text) 8%, transparent);
+  font-size: 12px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  transform: translateX(-50%);
+  backdrop-filter: blur(14px) saturate(1.2);
+  -webkit-backdrop-filter: blur(14px) saturate(1.2);
+  pointer-events: auto;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.doc-page-pager-step {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: default;
+  transition:
+    background 140ms var(--ease-out, cubic-bezier(0.23, 1, 0.32, 1)),
+    color 140ms var(--ease-out, cubic-bezier(0.23, 1, 0.32, 1)),
+    transform 120ms var(--ease-out, cubic-bezier(0.23, 1, 0.32, 1));
+}
+
+.doc-page-pager-step:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--text) 9%, transparent);
+  color: var(--text);
+}
+
+.doc-page-pager-step:active:not(:disabled) {
+  transform: scale(0.94);
+  background: color-mix(in srgb, var(--text) 14%, transparent);
+  color: var(--text);
+}
+
+.doc-page-pager-step:disabled {
+  opacity: 0.32;
+  color: var(--text-tertiary);
+  cursor: default;
+}
+
+.doc-page-pager-count {
+  min-width: 4.6em;
+  padding: 0 6px;
+  text-align: center;
+  color: var(--text);
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .doc-page-pager-step {
+    transition: none;
+  }
+  .doc-page-pager-step:active:not(:disabled) {
+    transform: none;
+  }
+}
+
+:root[data-reduce-motion='true'] .doc-page-pager-step {
+  transition: none;
+}
+
+:root[data-reduce-motion='true'] .doc-page-pager-step:active:not(:disabled) {
+  transform: none;
+}
+
+/*
+ * Zoom chrome — bottom right of the same stages. Idles nearly invisible so a
+ * document at fit-to-width reads as plain paper, and lights up on hover or
+ * whenever the view is off fit.
+ */
+.doc-zoom-controls {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px 4px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--bg-content) 92%, transparent);
+  color: var(--text-secondary);
+  box-shadow: none;
+  font-size: 12px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  user-select: none;
+  -webkit-user-select: none;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 160ms var(--ease-out, cubic-bezier(0.23, 1, 0.32, 1));
+}
+
+.office-native-root:hover .doc-zoom-controls,
+.file-preview-main:hover > .doc-zoom-controls,
+.file-viewer-image-scroll:hover > .doc-zoom-controls,
+.doc-zoom-controls:focus-within,
+.doc-zoom-controls[data-off-fit='true'] {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.doc-zoom-step {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: default;
+  transition:
+    background 140ms var(--ease-out, cubic-bezier(0.23, 1, 0.32, 1)),
+    color 140ms var(--ease-out, cubic-bezier(0.23, 1, 0.32, 1)),
+    transform 120ms var(--ease-out, cubic-bezier(0.23, 1, 0.32, 1));
+}
+
+.doc-zoom-step:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--text) 9%, transparent);
+  color: var(--text);
+}
+
+.doc-zoom-step:active:not(:disabled) {
+  transform: scale(0.94);
+  background: color-mix(in srgb, var(--text) 14%, transparent);
+  color: var(--text);
+}
+
+.doc-zoom-step:disabled {
+  opacity: 0.32;
+  color: var(--text-tertiary);
+}
+
+.doc-zoom-readout {
+  min-width: 3.4em;
+  height: 26px;
+  margin: 0;
+  padding: 0 6px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+  cursor: default;
+  transition: background 140ms var(--ease-out, cubic-bezier(0.23, 1, 0.32, 1));
+}
+
+.doc-zoom-readout:hover {
+  background: color-mix(in srgb, var(--text) 9%, transparent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .doc-zoom-controls,
+  .doc-zoom-step,
+  .doc-zoom-readout {
+    transition: none;
+  }
+  .doc-zoom-step:active:not(:disabled) {
+    transform: none;
+  }
+}
+
+:root[data-reduce-motion='true'] .doc-zoom-controls,
+:root[data-reduce-motion='true'] .doc-zoom-step,
+:root[data-reduce-motion='true'] .doc-zoom-readout {
+  transition: none;
+}
+
+:root[data-reduce-motion='true'] .doc-zoom-step:active:not(:disabled) {
+  transform: none;
+}
+
+/* Block-pick: still allow drag-select text for copy (click = Agent pick). */
+.office-native-root.selecting {
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.office-native-status {
+  flex: 0 0 auto;
+  margin: 12px 14px;
+  padding: 10px 12px;
+  border-radius: var(--radius);
+  background: var(--bg-content);
+  border: 1px solid var(--border);
+}
+
+.office-native-status.error {
+  border-color: color-mix(in srgb, var(--danger) 40%, var(--border));
+  color: var(--danger);
+}
+
+/*
+ * Shared document stage (PDF / DOCX / PPTX): same sunken desk, same paper
+ * chrome, same gutter — so switching formats does not re-teach the eye.
+ */
+/*
+ * Scroll *is* the pan gesture, so the stage can never lose the page: content
+ * is fitted to width on open and only overflows once the user zooms in.
+ * `safe` centring keeps a short document optically centred while a tall or
+ * zoomed one still starts at its top-left corner.
+ */
+.office-doc-stage {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  padding: 20px 16px 48px;
+  display: flex;
+  flex-direction: column;
+  align-items: safe center;
+  justify-content: safe center;
+  gap: 20px;
+  background: var(--bg-sunken);
+  overscroll-behavior: contain;
+  pointer-events: auto;
+  /* Classic scrollbars would otherwise shrink the pane, shrink the fit, hide
+     the scrollbar, and start the whole cycle again. */
+  scrollbar-gutter: stable;
+}
+
+/* Paper surface: always print-white, independent of app theme. */
+.office-doc-page {
+  background: #ffffff;
+  color: #1a1a1a;
+  border: 1px solid var(--border-strong);
+  border-radius: 2px;
+  box-shadow: none;
+  flex-shrink: 0;
+}
+
+/* —— HTML (sandbox iframe render + element pick) ——
+   Isolation: author CSS lives only inside the iframe document. Host shell
+   styles (body font, user-select, accent-color, dark theme tokens) must not
+   restyle the page — only the iframe element chrome below. */
+.html-root {
+  background: var(--bg-sunken);
+  /* Contain host color-scheme so dark app theme does not force dark form
+     controls into light HTML that never opted in. */
+  color-scheme: light;
+}
+
+.html-native-frame {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  border: 0;
+  /* Neutral stage; document paints its own background. */
+  background: #ffffff;
+  color-scheme: light dark;
+  display: block;
+  /* Avoid host filter/text inheritance quirks on the frame itself. */
+  color: initial;
+  font: initial;
+}
+
+.html-root.selecting {
+  cursor: default;
+}
+
+.html-root.selecting .html-native-frame {
+  /* Pick chrome lives inside the iframe document. */
+  pointer-events: auto;
+}
+
+/* —— DOCX (docx-preview) —— */
+.docx-root {
+  background: var(--bg-sunken);
+}
+
+.docx-body-host {
+  /* Same stage metrics as .pdf-pages-host */
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  overflow-x: auto;
+  padding: 20px 16px 48px;
+  display: flex;
+  flex-direction: column;
+  align-items: safe center;
+  justify-content: safe center;
+  background: var(--bg-sunken);
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-gutter: stable;
+  /* Ensure wheel/trackpad reach this scrollport. */
+  pointer-events: auto;
+}
+
+/* docx-preview pages inherit body user-select:none unless we re-enable. */
+.docx-body-host .docx-native,
+.docx-body-host .docx,
+.docx-body-host p,
+.docx-body-host li,
+.docx-body-host td,
+.docx-body-host th,
+.docx-body-host span {
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.docx-root.selecting .docx-body-host .docx-native,
+.docx-root.selecting .docx-body-host .docx,
+.docx-root.selecting .docx-body-host p,
+.docx-root.selecting .docx-body-host li,
+.docx-root.selecting .docx-body-host td,
+.docx-root.selecting .docx-body-host th,
+.docx-root.selecting .docx-body-host span {
+  /* Click picks for Agent; drag still selects text for copy. */
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+/* Layout box sized to the *visual* (post-scale) document height. */
+.docx-fit-frame {
+  position: relative;
+  flex: 0 0 auto;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  overflow: hidden;
+  pointer-events: auto;
+  background: transparent;
+}
+
+/*
+ * docx-preview with className: 'docx-native' emits `.docx-native-wrapper`
+ * (default CSS: background gray + 30px padding). Override that stage so it
+ * matches PDF — sunken desk only, no gray strip behind the page.
+ */
+.docx-body-host .docx-native-wrapper,
+.docx-body-host .docx-wrapper {
+  background: transparent !important;
+  background-color: transparent !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  display: flex !important;
+  flex-direction: column;
+  align-items: center;
+  gap: 20px;
+  /* Scale set by fitDocxToHost; origin top-center keeps pages centered.
+     No will-change: the scale is static, and the compositor hint pinned the
+     raster to the pre-scale resolution — every glyph came out soft. */
+  transform-origin: top center;
+}
+
+.docx-body-host section.docx-native,
+.docx-body-host section.docx,
+.docx-body-host .docx {
+  /* Match .office-doc-page / PDF paper */
+  background: #ffffff !important;
+  background-color: #ffffff !important;
+  color: #1a1a1a !important;
+  box-shadow: none !important;
+  border: 1px solid var(--border-strong) !important;
+  border-radius: 2px;
+  margin: 0 auto !important;
+  max-width: none !important;
+  flex-shrink: 0;
+}
+
+/* Header/footer bands inside a page must not paint a full-width gray stage. */
+.docx-body-host section.docx-native > header,
+.docx-body-host section.docx-native > footer,
+.docx-body-host section.docx > header,
+.docx-body-host section.docx > footer {
+  background: transparent !important;
+}
+
+/* DOCX pick chrome uses shared .office-native-root.selecting tokens above. */
+.docx-root.selecting {
+  cursor: default;
+}
+
+/* —— PDF.js —— same stage + paper as DOCX —— */
+.pdf-root {
+  background: var(--bg-sunken);
+}
+
+.pdf-pages-host {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  padding: 20px 16px 48px;
+  display: flex;
+  flex-direction: column;
+  align-items: safe center;
+  justify-content: safe center;
+  background: var(--bg-sunken);
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
+/* One track holds every page frame so the stage has a single measurable box. */
+.pdf-pages-track {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 20px;
+}
+
+/*
+ * Layout box = visual size after CSS fit. The inner .pdf-page is position:absolute
+ * so transform:scale never affects document flow (in-flow scaled pages used to
+ * keep full paint height and stack/overlap the next page).
+ */
+.pdf-page-frame {
+  position: relative;
+  flex: 0 0 auto;
+  overflow: hidden;
+  background: #ffffff;
+  border: 1px solid var(--border-strong);
+  border-radius: 2px;
+  box-shadow: none;
+  margin: 0 auto;
+  line-height: 0;
+  /* Isolate paints so a scaled page cannot draw over the next frame. */
+  isolation: isolate;
+  contain: layout style;
+}
+
+.pdf-page {
+  /* Out of flow — only .pdf-page-frame contributes height to the column. */
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: auto;
+  max-width: none;
+  background: #ffffff;
+  margin: 0;
+  line-height: 0;
+  overflow: hidden;
+  transform-origin: top left;
+  will-change: transform;
+  /* pdf.js TextLayer scales glyph boxes with these (see pdf_viewer.css). */
+  --scale-factor: 1;
+  --user-unit: 1;
+  --total-scale-factor: calc(var(--scale-factor) * var(--user-unit));
+  --scale-round-x: 1px;
+  --scale-round-y: 1px;
+}
+
+/* Page-level pick chrome uses shared .pdf-pick-page tokens (see above). */
+
+.pdf-page-canvas {
+  display: block;
+  position: relative;
+  z-index: 1;
+  margin: 0;
+  padding: 0;
+  vertical-align: top;
+  max-width: none;
+  max-height: none;
+}
+
+/*
+ * TextLayer hit-boxes (aligned with pdfjs-dist web/pdf_viewer.css).
+ * Spans store unscaled --font-height; CSS multiplies by --total-scale-factor.
+ * Without this, pick highlights shrink toward the page origin.
+ */
+.pdf-page .textLayer {
+  color-scheme: only light;
+  position: absolute;
+  text-align: initial;
+  inset: 0;
+  z-index: 2;
+  overflow: clip;
+  opacity: 1;
+  line-height: 1;
+  letter-spacing: normal;
+  word-spacing: normal;
+  text-size-adjust: none;
+  forced-color-adjust: none;
+  transform-origin: 0 0;
+  caret-color: CanvasText;
+  pointer-events: auto;
+  --min-font-size: 1;
+  --text-scale-factor: calc(var(--total-scale-factor) * var(--min-font-size));
+  --min-font-size-inv: calc(1 / var(--min-font-size));
+}
+
+.pdf-page .textLayer > :not(.markedContent),
+.pdf-page .textLayer .markedContent span:not(.markedContent) {
+  z-index: 1;
+  --font-height: 0;
+  font-size: calc(var(--text-scale-factor) * var(--font-height));
+  --scale-x: 1;
+  --rotate: 0deg;
+  transform: rotate(var(--rotate)) scaleX(var(--scale-x)) scale(var(--min-font-size-inv));
+}
+
+.pdf-page .textLayer .markedContent {
+  display: contents;
+}
+
+.pdf-page .textLayer span,
+.pdf-page .textLayer br {
+  color: transparent;
+  position: absolute;
+  white-space: pre;
+  cursor: text;
+  transform-origin: 0% 0%;
+  user-select: text;
+}
+
+/* PDF text pick: allow drag-select/copy; click still schedules Agent pick. */
+.pdf-root.selecting .pdf-page .textLayer span {
+  cursor: text;
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.pdf-page .textLayer .endOfContent {
+  display: block;
+  position: absolute;
+  inset: 100% 0 0;
+  z-index: -1;
+  cursor: default;
+  user-select: none;
+}
+
+/* —— PPTX (@aiden0z/pptx-renderer HTML/SVG) —— stacked list like PDF —— */
+.pptx-root {
+  background: var(--bg-sunken);
+  color-scheme: light;
+}
+
+/* Scroll + gutters live here; must NOT be the fitMode measure node. */
+.pptx-pages-host.office-doc-stage {
+  width: 100%;
+  /* Vertical rhythm only — horizontal padding is on this stage; the inner
+     .pptx-render-host is the contain-fit measure target (no H padding). */
+  box-sizing: border-box;
+}
+
+/* Library mounts slides here; its offset box is the laid-out deck. */
+.pptx-render-host {
+  flex: 0 0 auto;
+  width: max-content;
+  min-width: 0;
+  max-width: none;
+  box-sizing: border-box;
+  /* Not the scrollport — parent stage scrolls. */
+  overflow: visible;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 20px;
+  /* No horizontal padding — measure target for CSS fit. */
+  padding: 0;
+  margin: 0;
+  /* Same as stage — never flash paper-white between slide paints. */
+  background: var(--bg-sunken);
+}
+
+/* Each slide frame from the renderer */
+.pptx-render-host [data-slide-index],
+.pptx-render-host .pptx-visual-slide {
+  flex: 0 0 auto;
+  position: relative;
+  margin: 0 auto;
+  border: 1px solid var(--border-strong);
+  border-radius: 2px;
+  overflow: hidden;
+  box-shadow: none;
+  color-scheme: only light;
+  /* Do not force max-width:100% after library sizes the frame — that clips
+     the right edge when borders/subpixels fight the scaled canvas. */
+  max-width: none;
+  box-sizing: border-box;
+}
+
+/*
+ * Body is user-select:none app-wide. PPTX must always opt back in — both for
+ * drag-copy and for Agent pick (click-vs-drag). Force on descendants so
+ * library inline styles / SVG text never stay unselectable.
+ */
+.pptx-root,
+.pptx-root .pptx-render-host,
+.pptx-root .pptx-render-host [data-slide-index],
+.pptx-root .pptx-render-host .pptx-visual-slide,
+.pptx-root .pptx-render-host span,
+.pptx-root .pptx-render-host p,
+.pptx-root .pptx-render-host div,
+.pptx-root .pptx-render-host text,
+.pptx-root .pptx-render-host tspan {
+  user-select: text !important;
+  -webkit-user-select: text !important;
+}
+
+.pptx-root.selecting .pptx-visual-slide {
+  cursor: default;
+}
+
+.pptx-root [data-chrome-frame] {
+  position: relative;
+}
+
+/* Shape pick targets (absolute frames inside a slide). */
+.pptx-root.selecting .pptx-shape-pick.office-pick-target {
+  cursor: default;
+  /* Ensure outline chrome has a stacking context above sibling SVG fills. */
+  z-index: 2;
+}
+
+/* PPTX / XLSX pick chrome uses shared .office-native-root.selecting tokens above. */
+.xlsx-root {
+  background: var(--bg-sunken);
+}
+
+.xlsx-root:not(.selecting) {
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.xlsx-root:not(.selecting) td,
+.xlsx-root:not(.selecting) th {
+  user-select: text;
+  -webkit-user-select: text;
+  cursor: text;
+}
+
+/* Legacy structured-doc styles (text index fallback) kept below. */
+.structured-doc {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-sunken);
+}
+
+.structured-doc-warning {
+  flex: 0 0 auto;
+  margin: 8px 12px 0;
+  padding: 6px 10px;
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--warning) 12%, transparent);
+  color: var(--warning);
+}
+
+.structured-doc-empty {
+  margin: auto;
+  padding: 24px;
+}
+
+/* Horizontal section switcher (pages / slides / sheets). */
+.structured-doc-nav {
+  flex: 0 0 auto;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-content);
+}
+
+.structured-doc-nav-scroll {
+  display: flex;
+  gap: 4px;
+  padding: 8px 10px;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+
+.structured-doc-nav-item {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  padding: 5px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 11px;
+  cursor: default;
+  max-width: 180px;
+}
+
+.structured-doc-nav-item:hover {
+  color: var(--text);
+  background: var(--bg-hover);
+}
+
+.structured-doc-nav-item.active {
+  color: var(--accent-text);
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+  background: var(--accent-soft);
+  font-weight: 600;
+}
+
+.structured-doc-nav-item.has-selection:not(.active) {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 50%, transparent);
+}
+
+.structured-doc-nav-index {
+  opacity: 0.65;
+  font-variant-numeric: tabular-nums;
+}
+
+.structured-doc-nav-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.structured-doc-canvas {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  overflow-x: auto;
+  padding: 16px 18px 32px;
+}
+
+.structured-section {
+  margin: 0 auto;
+  width: var(--doc-measure);
+  min-width: var(--doc-measure-min);
+  max-width: var(--doc-measure);
+  box-sizing: border-box;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-raised);
+  overflow: hidden;
+  box-shadow: var(--shadow-card);
+}
+
+.structured-section.is-paper {
+  width: var(--doc-measure-min);
+  min-width: var(--doc-measure-min);
+  max-width: var(--doc-measure);
+  min-height: 280px;
+}
+
+.structured-section.kind-sheet {
+  width: 100%;
+  min-width: 0;
+  max-width: none;
+}
+
+.structured-section-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--bg-sunken) 70%, transparent);
+  cursor: default;
+}
+
+.structured-section-title {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+}
+
+.structured-section-meta {
+  margin-left: auto;
+}
+
+.structured-section-body {
+  padding: 18px 22px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.structured-block {
+  margin: 0;
+  padding: 5px 8px;
+  border-radius: 4px;
+  font-size: 14px;
+  line-height: 1.65;
+  color: var(--text);
+  cursor: default;
+  width: fit-content;
+  max-width: 100%;
+}
+
+.structured-block.kind-heading {
+  font-weight: 650;
+  letter-spacing: -0.02em;
+  line-height: 1.3;
+}
+
+.structured-block.kind-heading.level-1 {
+  font-size: 22px;
+  margin-top: 6px;
+}
+.structured-block.kind-heading.level-2 {
+  font-size: 18px;
+}
+.structured-block.kind-heading.level-3 {
+  font-size: 15px;
+}
+
+.structured-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 4px;
+  border-radius: 4px;
+  font-size: 12px;
+}
+
+.structured-row-cell {
+  display: inline-block;
+  padding: 3px 8px;
+  border-radius: 3px;
+  background: var(--bg-sunken);
+  font-family: var(--font-code);
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.structured-table {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+  max-width: 100%;
+}
+
+.structured-table-label {
+  margin-bottom: 2px;
+}
+
+.structured-table-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+/* DOCX tables — real grid, not chips (thesis forms / 开题报告). */
+.structured-docx-table-wrap {
+  width: 100%;
+  max-width: 100%;
+  overflow: auto;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  margin: 4px 0 8px;
+}
+
+.structured-docx-table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.structured-docx-table td {
+  border: 1px solid var(--border);
+  padding: 10px 12px;
+  vertical-align: top;
+  word-break: break-word;
+  white-space: pre-wrap;
+  min-width: 4em;
+}
+
+.structured-docx-table tr.selected td {
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+
+/* Cover-page style paragraphs: full width so underlines read as form fields. */
+.structured-section.kind-body .structured-block.kind-paragraph {
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+.structured-sheet-panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.structured-sheet-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.structured-sheet-wrap {
+  overflow: auto;
+  max-height: min(68vh, 640px);
+  background: var(--bg-content);
+}
+
+/*
+ * XLSX fills its pane instead of a 68vh box: the frozen header then pins to the
+ * viewport the reader actually looks at, and the rows below the cap stop being
+ * dead space that the spacer-based virtual scroll can never reach.
+ */
+.xlsx-root > .structured-sheet-panel {
+  flex: 1;
+}
+
+.xlsx-root > .structured-sheet-panel > .structured-sheet-wrap {
+  flex: 1;
+  min-height: 0;
+  max-height: none;
+}
+
+/*
+ * Same sticky contract as .csv-sheet: collapse lets body paint through thead
+ * by ~1px (column letters with ghost digits from the row above).
+ */
+.structured-sheet {
+  border-collapse: separate;
+  border-spacing: 0;
+  width: max-content;
+  min-width: 100%;
+  font-size: calc(12px * var(--text-zoom, 1));
+  font-family: var(--font-code);
+  line-height: 1.4;
+}
+
+.structured-sheet th,
+.structured-sheet td {
+  border-right: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  /* em, not px: cell metrics have to track the type so zoom widens the column
+     instead of ellipsing more of every value. */
+  padding: 0.42em 0.75em;
+  text-align: left;
+  vertical-align: top;
+  min-width: 6em;
+  max-width: 18.3em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  background-clip: border-box;
+}
+
+.structured-sheet tr > *:first-child {
+  border-left: 1px solid var(--border);
+}
+
+.structured-sheet thead th {
+  border-top: 1px solid var(--border);
+}
+
+.structured-sheet-colhead {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background-color: var(--bg-sunken);
+  color: var(--text-tertiary);
+  font-weight: 600;
+  text-align: center;
+  box-shadow: 0 1px 0 var(--border);
+}
+
+/*
+ * Gutter must beat `th { min-width: 72px }`. Width tracks the sheet's largest
+ * row number (`--gutter-digits`, mono ch) so tall sheets keep the frozen column
+ * readable without spilling digits over column A.
+ */
+.structured-sheet th.structured-sheet-gutter,
+.structured-sheet td.structured-sheet-gutter {
+  --gutter-w: calc(var(--gutter-digits, 2) * 1ch + 14px);
+  position: sticky;
+  left: 0;
+  z-index: 3;
+  box-sizing: border-box;
+  background-color: var(--bg-sunken);
+  background-clip: padding-box;
+  color: var(--text-tertiary);
+  font-weight: 500;
+  text-align: right;
+  width: var(--gutter-w) !important;
+  min-width: var(--gutter-w) !important;
+  max-width: var(--gutter-w) !important;
+  padding-left: 6px;
+  padding-right: 6px;
+  overflow: hidden;
+  text-overflow: clip;
+  box-shadow: 1px 0 0 var(--border);
+}
+
+.structured-sheet thead th.structured-sheet-gutter {
+  top: 0;
+  z-index: 5;
+  box-shadow:
+    1px 0 0 var(--border),
+    0 1px 0 var(--border);
+}
+
+/*
+ * Uniform body row height keeps spacer virtualization (top/bottom pad) aligned
+ * with the scrollTop math. Cells are nowrap, so this stays a pure floor.
+ */
+.structured-sheet tbody tr:not([aria-hidden]) {
+  height: 28px;
+}
+
+.structured-sheet tbody td {
+  background-color: var(--bg-content);
+  z-index: 0;
+}
+
+.structured-sheet tbody th.structured-sheet-gutter {
+  background-color: var(--bg-sunken);
+  z-index: 1;
+}
+
+.structured-sheet tr.selected td,
+.structured-sheet tr.selected th {
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+
+.structured-sheet td.is-empty {
+  color: var(--text-tertiary);
+}
+
+/* Pick chrome — ::after so the box never steals text select/copy. */
+.structured-doc.selecting .preview-select-region {
+  position: relative;
+  border-radius: 2px;
+  transition: none;
+  cursor: text;
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.structured-doc.selecting .preview-select-region::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 2px;
+  outline: 1px solid transparent;
+  outline-offset: -1px;
+  pointer-events: none;
+  z-index: 1;
+}
+
+.structured-doc.selecting
+  .preview-select-region:hover:not(.selected):not(:has(.preview-select-region:hover))::after {
+  outline: 1px dashed var(--accent);
+  outline-offset: -1px;
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+}
+
+.structured-doc.selecting .preview-select-region.selected::after {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.file-preview-statusbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  height: 28px;
+  min-height: 28px;
+  max-height: 28px;
+  padding: 0 14px;
+  border-top: 0;
+  background: var(--bg-content);
+  font-size: 11px;
+  color: var(--text-tertiary);
+  flex: 0 0 auto;
+  overflow: hidden;
+  white-space: nowrap;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+.file-preview-status-left {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-preview-status-right {
+  flex: 0 1 auto;
+  max-width: 42%;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: right;
+  color: var(--text-secondary);
+}
+
+.preview-agent-panel {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-width: 280px;
+  max-width: 720px;
+  border-left: 1px solid var(--border);
+  background: var(--bg-content);
+  flex: 0 0 auto;
+  min-height: 0;
+  /* Keep overflow visible so the session-history popover under the bar
+     is not clipped. Scroll containment lives on the transcript children. */
+  overflow: visible;
+  /* No enter animation — panel open/close is high-frequency during work. */
+}
+
+.preview-agent-panel > .preview-edit-session,
+.preview-agent-panel > .empty-state {
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+  /* Stay under the session-history popover (sibling bar above). */
+  position: relative;
+  z-index: 0;
+}
+
+/* Agent drawer in file preview (vav chat or CLI host). */
+.preview-edit-session {
+  position: relative; /* anchor for .session-drop-overlay */
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--bg-content);
+}
+
+/* CLI drawer: same wash as the window (overrides content bg above). */
+.preview-edit-session.terminal-host-session {
+  background: var(--bg-terminal);
+}
+
+.preview-edit-session .agent-mode-chrome,
+.preview-edit-session .terminal-host-chrome {
+  flex: 0 0 auto;
+  border-bottom: 0;
+  background: transparent;
+}
+
+.preview-edit-session.terminal-host-session .terminal-host-main {
+  flex: 1;
+  min-height: 0;
+}
+
+.preview-edit-stream {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* Bottom dock (composer + tools) caps at half the agent drawer. Tools must
+   shrink inside that budget so empty-state centers in the *visible* body —
+   a fixed-height body taller than the dock was clipping its midpoint. */
+.preview-edit-dock {
+  flex: 0 1 auto;
+  display: flex;
+  flex-direction: column;
+  max-height: 50%;
+  min-height: 0;
+  overflow: hidden;
+  padding-bottom: 0;
+}
+
+.preview-edit-dock .tools-panel {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.preview-edit-dock .tools-body {
+  /* Allow flex-shrink below the preferred panelHeight (min-height:auto would block it). */
+  min-height: 0;
+}
+
+.preview-edit-dock .tools-body[data-collapsed='true'] {
+  flex: 0 0 auto;
+}
+
+.preview-edit-dock .composer {
+  flex: 0 0 auto;
+}
+
+@keyframes preview-agent-in {
+  from {
+    transform: translateX(12px);
+    opacity: 0.4;
+  }
+  to {
+    transform: none;
+    opacity: 1;
+  }
+}
+
+.preview-agent-resizer {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 4px;
+  cursor: col-resize;
+  z-index: 2;
+}
+
+.preview-temp-note {
+  font-size: 11px;
+  color: var(--accent-text);
+  background: var(--accent-soft);
+  border-radius: 6px;
+  padding: 4px 8px;
+}
+
+/* —— CSV sheet (aligned with structured-sheet + shared pick tokens) —— */
+.csv-sheet-root {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  background: var(--bg-content);
+}
+
+.csv-sheet-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-content);
+}
+
+.csv-sheet-wrap {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  background: var(--bg-content);
+}
+
+/*
+ * Sticky thead + left gutter require border-collapse: separate.
+ * With collapse, sticky cells fail: body rows paint through the header and the
+ * empty top-left corner, so you see data fragments (e.g. "lifestyle") where
+ * column titles should be.
+ */
+.csv-sheet {
+  border-collapse: separate;
+  border-spacing: 0;
+  width: max-content;
+  min-width: 100%;
+  font-size: calc(var(--code-size) * var(--text-zoom, 1));
+  font-family: var(--font-code);
+  line-height: 1.4;
+}
+
+.csv-sheet th,
+.csv-sheet td {
+  border-right: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  /* em, not px: cell metrics have to track the type so zoom widens the column
+     instead of ellipsing more of every value. */
+  padding: 0.42em 0.83em;
+  text-align: left;
+  vertical-align: top;
+  min-width: 6em;
+  max-width: 23.3em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  transition: none;
+  /* Opaque fill so sticky chrome never shows scrolling body underneath. */
+  background-clip: border-box;
+}
+
+.csv-sheet tr > *:first-child {
+  border-left: 1px solid var(--border);
+}
+
+.csv-sheet thead th {
+  border-top: 1px solid var(--border);
+}
+
+.csv-sheet-colhead {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background-color: var(--bg-sunken);
+  color: var(--text-secondary);
+  font-weight: 600;
+  text-align: left;
+  cursor: default;
+  box-shadow: 0 1px 0 var(--border);
+}
+
+.csv-sheet-col-label {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/*
+ * Row# gutter — must beat `th/td { min-width: 72px }`.
+ * Width comes from the file's largest row number (`--gutter-digits`, mono ch),
+ * so six-digit rows neither spill over the first data column nor re-flow the
+ * grid sideways as the painted window moves.
+ */
+.csv-sheet th.csv-sheet-gutter,
+.csv-sheet td.csv-sheet-gutter,
+.csv-sheet th.csv-sheet-corner,
+.csv-sheet .csv-sheet-corner {
+  --gutter-w: calc(var(--gutter-digits, 2) * 1ch + 14px);
+  box-sizing: border-box;
+  width: var(--gutter-w) !important;
+  min-width: var(--gutter-w) !important;
+  max-width: var(--gutter-w) !important;
+  padding-left: 6px;
+  padding-right: 6px;
+  overflow: hidden;
+  text-overflow: clip;
+}
+
+.csv-sheet th.csv-sheet-gutter,
+.csv-sheet td.csv-sheet-gutter {
+  position: sticky;
+  left: 0;
+  z-index: 3;
+  text-align: right;
+  color: var(--text-tertiary);
+  font-weight: 500;
+  background-color: var(--bg-sunken);
+  background-clip: padding-box;
+  cursor: default;
+  user-select: none;
+  box-shadow: 1px 0 0 var(--border);
+}
+
+/* Row# × col-title intersection — same column as body gutters, not a float. */
+.csv-sheet th.csv-sheet-corner,
+.csv-sheet .csv-sheet-corner {
+  position: sticky;
+  top: 0;
+  left: 0;
+  z-index: 5;
+  background-color: var(--bg-sunken);
+  background-clip: padding-box;
+  color: var(--text-tertiary);
+  font-weight: 600;
+  text-align: center;
+  box-shadow:
+    1px 0 0 var(--border),
+    0 1px 0 var(--border);
+  pointer-events: none;
+}
+
+.csv-sheet thead th.csv-sheet-gutter {
+  z-index: 4;
+  top: 0;
+}
+
+.csv-sheet tbody tr:not([aria-hidden]) {
+  height: 28px;
+}
+
+.csv-sheet tbody td {
+  background-color: var(--bg-content);
+  z-index: 0;
+}
+
+.csv-sheet tbody th.csv-sheet-gutter {
+  background-color: var(--bg-sunken);
+  background-clip: padding-box;
+  z-index: 3;
+}
+
+.csv-sheet td.is-empty {
+  color: var(--text-tertiary);
+}
+
+/* Soft row tint when row is selected (cells keep their own outline). */
+.csv-sheet tr.row-selected td:not(.selected) {
+  background: color-mix(in srgb, var(--accent) 5%, var(--bg-content));
+}
+
+/* Pick chrome — ::after + pointer-events:none so cell text stays copyable. */
+.file-viewer-body.selecting .csv-sheet .preview-select-region {
+  border-radius: 2px;
+  transition: none;
+  cursor: text;
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+/*
+ * Only flow cells take a relative box for the ::after chrome. Column titles and
+ * the row gutter are pick targets too, but they are already position:sticky
+ * (itself a containing block for ::after) — and this selector outranks
+ * `.csv-sheet-colhead`, so setting `relative` here thaws the frozen header.
+ */
+.file-viewer-body.selecting .csv-sheet td.preview-select-region {
+  position: relative;
+}
+
+.file-viewer-body.selecting .csv-sheet .preview-select-region::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 2px;
+  outline: 1px solid transparent;
+  outline-offset: -1px;
+  pointer-events: none;
+  z-index: 1;
+}
+
+.file-viewer-body.selecting
+  .csv-sheet
+  .preview-select-region:hover:not(.selected):not(:has(.preview-select-region:hover))::after {
+  outline: 1px dashed var(--accent);
+  outline-offset: -1px;
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+}
+
+.file-viewer-body.selecting .csv-sheet .preview-select-region.selected::after {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+/* File body with CSV should not double-scroll awkwardly. */
+.file-viewer-body:has(.csv-sheet-root) {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* —— SQLite browser —— */
+.file-viewer-body:has(.sqlite-root) {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.sqlite-root {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-content);
+}
+
+.sqlite-panel {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.sqlite-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.sqlite-table-chip {
+  border: 0;
+  background: var(--bg-sunken);
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 4px;
+  cursor: default;
+}
+
+.sqlite-sheet-wrap {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+.sqlite-root.selecting .structured-doc-nav-item {
+  cursor: default;
+}
+
+/*
+ * Block-based MD preview.
+ *
+ * Structure is a *tree* of `.preview-select-region` (heading owns nested body
+ * regions). Spacing rules MUST apply at every nesting level — the previous
+ * `.preview-document > …` direct-child selectors left nested paragraphs /
+ * headings with zero gap (every mini-`.markdown` also zeroed first/last
+ * margins). Type and rhythm are the document ones (see `.preview-markdown`),
+ * not the Agent log's UI-sized markdown.
+ */
+.preview-document {
+  --md-lh: var(--md-doc-lh);
+  --md-block: 0.9em;
+  --md-section: 1.7em;
+  /* Reading column, reflowing below the measure and scaling with type zoom. */
+  width: min(100%, calc(var(--md-measure) * var(--text-zoom, 1)));
+  min-width: 0;
+  max-width: 100%;
+  margin: 0 auto;
+  padding: 10px 0 48px;
+  box-sizing: border-box;
+  user-select: text;
+  -webkit-user-select: text;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  font-family: var(--font-reading);
+  font-size: calc(var(--md-doc-size) * var(--text-zoom, 1));
+  line-height: var(--md-lh);
+  letter-spacing: normal;
+  color: var(--text);
+  cursor: text;
+}
+
+/* Text is always selectable — pick mode uses click-vs-drag, not user-select:none. */
+.preview-document .preview-select-region {
+  user-select: text;
+  -webkit-user-select: text;
+  cursor: text;
+  min-width: 0;
+  /* Full reading width — never shrink-wrap prose (fit-content made pick
+     outlines hug each line like a broken card). */
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+/*
+ * Table cells are also pick targets, but width:100% on every td/th makes the
+ * auto table algorithm give each column the full measure — text piles up on
+ * the right with a huge empty middle. Let cells size from content again.
+ */
+.preview-document table .preview-select-region:is(td, th),
+.preview-markdown td.preview-select-region,
+.preview-markdown th.preview-select-region {
+  width: auto;
+  max-width: 22rem;
+}
+
+/* --- Section / body rhythm (any depth) --- */
+.preview-document .preview-select-region.kind-heading {
+  margin-top: var(--md-section);
+}
+
+.preview-document > .preview-select-region.kind-heading:first-child {
+  margin-top: 0;
+}
+
+/* Heading title fragment → nested body (title is a sibling .markdown, not a region). */
+.preview-document .preview-select-region.kind-heading > .markdown.preview-markdown {
+  margin: 0 0 0.4em;
+}
+
+.preview-document
+  .preview-select-region.kind-heading
+  > .markdown.preview-markdown
+  > :is(h1, h2, h3, h4, h5, h6) {
+  margin-top: 0 !important;
+  margin-bottom: 0 !important;
+}
+
+/* Adjacent body regions at the same nesting level. */
+.preview-document .preview-select-region.kind-paragraph + .preview-select-region.kind-paragraph,
+.preview-document .preview-select-region.kind-paragraph + .preview-select-region.kind-list,
+.preview-document .preview-select-region.kind-paragraph + .preview-select-region.kind-code,
+.preview-document .preview-select-region.kind-list + .preview-select-region.kind-paragraph,
+.preview-document .preview-select-region.kind-list + .preview-select-region.kind-list,
+.preview-document .preview-select-region.kind-list + .preview-select-region.kind-code,
+.preview-document .preview-select-region.kind-code + .preview-select-region.kind-paragraph,
+.preview-document .preview-select-region.kind-code + .preview-select-region.kind-list,
+.preview-document .preview-select-region.kind-code + .preview-select-region.kind-code,
+.preview-document .preview-select-region.kind-blockquote + .preview-select-region.kind-paragraph,
+.preview-document .preview-select-region.kind-paragraph + .preview-select-region.kind-blockquote {
+  margin-top: var(--md-block);
+}
+
+/* Body → nested heading (e.g. paragraph then ## under same parent). */
+.preview-document .preview-select-region.kind-paragraph + .preview-select-region.kind-heading,
+.preview-document .preview-select-region.kind-list + .preview-select-region.kind-heading,
+.preview-document .preview-select-region.kind-code + .preview-select-region.kind-heading,
+.preview-document .preview-select-region.kind-blockquote + .preview-select-region.kind-heading {
+  margin-top: var(--md-section);
+}
+
+/* Code blocks: tighter mono leading than body prose. */
+.preview-document .file-viewer-code {
+  margin: 0;
+  padding: 12px 14px;
+  border-radius: var(--radius);
+  background: var(--bg-sunken);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--border) 65%, transparent);
+  font-size: 0.86em;
+  line-height: 1.55;
+  letter-spacing: 0;
+  overflow-x: auto;
+}
+
+.preview-document .markdown.preview-markdown {
+  /* Outer .preview-document owns the reading measure. */
+  padding: 0;
+  width: 100%;
+  max-width: none;
+  margin-inline: 0;
+  font-size: inherit;
+  line-height: inherit;
+  letter-spacing: inherit;
+}
+
+/*
+ * Leaf fragments zero outer edges so region margins own the stack.
+ * Heading titles are handled above (keep 0 vertical on the hx itself).
+ */
+.preview-document
+  .preview-select-region:not(.kind-heading)
+  > .preview-markdown
+  > *:first-child {
+  margin-top: 0 !important;
+}
+.preview-document
+  .preview-select-region:not(.kind-heading)
+  > .preview-markdown
+  > *:last-child {
+  margin-bottom: 0 !important;
+}
+
+.preview-document.notebook {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.preview-notebook-cell {
+  margin: 0;
+}
+
+.titlebar-drag {
+  -webkit-app-region: drag;
+}
+
+.titlebar-no-drag {
+  -webkit-app-region: no-drag;
+}
+
+.file-viewer-titles {
+  flex: 1;
+  min-width: 0;
+}
+
+.file-viewer-name {
+  min-width: 0;
+  font-size: 14px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Standalone preview: filename is part of the window drag strip. */
+/* Keep the name no-drag so the native title tooltip can show the full path.
+   Empty header chrome / spacer remain the window drag region. */
+.file-preview-shell:not(.embedded) .file-viewer-name {
+  -webkit-app-region: no-drag;
+  user-select: none;
+  cursor: default;
+}
+
+.file-viewer-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+
+/* Save + … as a joined secondary control (not primary emphasis).
+   Save can be disabled while … stays fully interactive for Save As. */
+.preview-save-group {
+  display: inline-flex;
+  align-items: stretch;
+  flex: 0 0 auto;
+  border-radius: var(--radius-sm, 6px);
+  overflow: hidden;
+  box-shadow: inset 0 0 0 1px var(--border);
+}
+
+.preview-save-group .btn {
+  border-radius: 0;
+  box-shadow: none;
+  border: 0;
+}
+
+.preview-save-group .preview-save-main {
+  padding-inline: 10px;
+}
+
+.preview-save-group .preview-save-more {
+  width: 28px;
+  padding-inline: 0;
+  border-left: 1px solid var(--border);
+  /* Never inherit a "group looks disabled" wash from the Save half. */
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.preview-save-group .preview-save-main:disabled {
+  opacity: 0.45;
+}
+
+/* Dirty Save group uses primary; keep the join seam readable. */
+.preview-save-group.is-dirty {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 45%, var(--border));
+}
+
+.preview-save-group.is-dirty .preview-save-more {
+  border-left-color: color-mix(in srgb, var(--accent) 35%, var(--border));
+}
+
+.assoc-settings {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.assoc-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.assoc-toolbar p {
+  margin: 0;
+  flex: 1;
+  min-width: 0;
+}
+
+.assoc-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.assoc-row {
+  display: grid;
+  grid-template-columns: auto 1fr auto auto;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 4px;
+  border-bottom: 1px solid var(--border);
+}
+
+.assoc-row:last-child {
+  border-bottom: none;
+}
+
+.assoc-row-icon {
+  color: var(--text-tertiary);
+}
+
+.assoc-row-meta {
+  min-width: 0;
+}
+
+.assoc-row-label {
+  font-weight: 500;
+  font-size: 13px;
+}
+
+.assoc-tag {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--bg-sunken);
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.assoc-tag.is-vav {
+  background: color-mix(in srgb, var(--success) 22%, transparent);
+  color: var(--success);
+}
+
+.assoc-section-title {
+  font-weight: 600;
+  font-size: 13px;
+  margin-top: 8px;
+}
+
+.preview-star-btn.is-default {
+  color: #e3b341;
+}
+
+.preview-star-btn.is-default svg {
+  fill: currentColor;
+}
+
+/* Read mode: plain text — no filled chrome (file-preview.rpml). */
+.preview-default-text-btn {
+  flex: 0 0 auto;
+  margin: 0;
+  padding: 0 4px;
+  border: 0;
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.2;
+  cursor: default;
+  white-space: nowrap;
+}
+
+.preview-default-text-btn:hover {
+  color: var(--text);
+}
+
+.workspace-view {
+  display: flex;
+  flex-direction: row;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--bg-content);
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border);
+}
+
+/* Column drag: kill width transitions (they fight the pointer) and drop
+   heavy preview paints so the splitter stays 1:1 with the mouse. */
+.workspace-view.is-col-resizing .workspace-view-tree,
+.workspace-view.is-col-resizing .workspace-view-agent {
+  transition: none !important;
+}
+
+.workspace-view.is-col-resizing .workspace-view-preview {
+  /* Still reflows via flex; block input so drag doesn't steal focus into PDF. */
+  pointer-events: none;
+}
+
+.workspace-view.is-col-resizing .office-native-root {
+  /* Skip hover/select paint storms; quality fit resumes on mouseup. */
+  contain: layout style;
+}
+
+.workspace-view-tree {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  flex: 0 0 auto;
+  min-width: 0;
+  min-height: 0;
+  border-right: 1px solid var(--border);
+  background: var(--bg-sidebar, var(--bg-content));
+  overflow: hidden;
+  /* Only animate open/close collapse — live drag sets is-col-resizing. */
+  transition: width var(--dur-sheet) var(--ease-drawer);
+}
+
+.workspace-view-tree.is-collapsed {
+  border-right: 0;
+}
+
+.workspace-view-tree-head {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 8px 8px;
+  border-bottom: 1px solid var(--border);
+  flex: 0 0 auto;
+}
+
+.workspace-view-tree-head .text-field {
+  height: 26px;
+  padding: 0 8px;
+  font-size: 12px;
+}
+
+.workspace-view-title {
+  min-width: 0;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.3;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-view-tree-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 4px 0;
+}
+
+.workspace-view-tree-empty {
+  padding: 12px 10px;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.workspace-view-preview {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-width: 320px;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.workspace-view-preview .file-preview-shell,
+.workspace-view-preview .git-preview,
+.workspace-view-preview .github-preview {
+  flex: 1 1 auto;
+  min-height: 0;
+  height: auto;
+}
+
+/* Pin 4 — file-context composer above the title bar (workspace-view.rpml). */
+.workspace-preview-composer {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 14px 6px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-content);
+}
+
+.workspace-preview-composer-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+}
+
+.workspace-preview-composer-input {
+  flex: 1;
+  min-width: 0;
+  min-height: 32px;
+  max-height: 96px;
+  resize: none;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-raised, var(--bg-content));
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.4;
+  padding: 6px 10px;
+}
+
+.workspace-preview-composer-input:focus {
+  outline: none;
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
+}
+
+.workspace-preview-composer-input:disabled {
+  opacity: 0.65;
+}
+
+.workspace-preview-composer-hint {
+  font-size: 11px;
+  line-height: 1.3;
+}
+
+.workspace-view-agent {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  flex: 0 0 auto;
+  min-width: 0;
+  min-height: 0;
+  border-left: 1px solid var(--border);
+  overflow: hidden;
+  transition: width var(--dur-sheet) var(--ease-drawer);
+}
+
+.workspace-view-agent.is-collapsed {
+  border-left: 0;
+}
+
+/*
+ * Workspace view swaps the columns: the agent is the surface you land on and
+ * the file preview is a right drawer, shut until asked for. File-session view
+ * reuses these class names with the original arrangement, so every rule below
+ * is scoped to the modifier.
+ */
+.workspace-view.preview-right > .workspace-view-agent {
+  flex: 1 1 auto;
+  border-left: 0;
+  transition: none;
+}
+
+.workspace-view.preview-right > .workspace-view-preview {
+  flex: 0 0 auto;
+  min-width: 0;
+  border-left: 1px solid var(--border);
+  transition: width var(--dur-sheet) var(--ease-drawer);
+}
+
+.workspace-view.preview-right > .workspace-view-preview.is-collapsed {
+  border-left: 0;
+  /* Explicit width:0 can still lose to flex min-content without these. */
+  overflow: hidden;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.workspace-view.preview-right.is-col-resizing > .workspace-view-preview {
+  transition: none !important;
+}
+
+.workspace-view-preview-inner {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  flex: 0 0 auto;
+}
+
+.workspace-view-preview-inner.is-collapsed {
+  pointer-events: none;
+}
+
+/* Edit / Read — same pattern as sidebar “group by workspace” select. */
+.preview-mode {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  min-width: 0;
+}
+
+.preview-mode-control {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.preview-mode-select,
+.text-field.preview-mode-select,
+.text-field.preview-mode-select:focus {
+  flex: 0 0 auto;
+  width: auto;
+  min-width: 0;
+  max-width: 100%;
+  height: 26px;
+  appearance: none;
+  -webkit-appearance: none;
+  padding: 0 26px 0 8px;
+  font-size: 12px;
+  field-sizing: content;
+  text-align: left;
+  background: transparent;
+  background-image: none;
+  box-shadow: none;
+  border: 0;
+  color: var(--text-secondary);
+  cursor: default;
+}
+
+.text-field.preview-mode-select:focus {
+  background: transparent;
+  box-shadow: none;
+  color: var(--text);
+}
+
+.preview-mode-select:hover {
+  color: var(--text);
+}
+
+.preview-mode-chevron {
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  pointer-events: none;
+  color: var(--text-tertiary);
+}
+
+/* Single-mode files (binary / zip / dir): plain label, no select chrome. */
+.preview-mode-static {
+  display: inline-flex;
+  align-items: center;
+  height: 26px;
+  padding: 0 8px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  user-select: none;
+}
+
+.preview-mode.is-static {
+  pointer-events: none;
+}
+
+.file-viewer-actions .is-active-toggle {
+  color: var(--accent);
+}
+
+/* Agent panel toggle — product mark (main FileSession + standalone preview). */
+.preview-agent-logo-btn {
+  width: 28px;
+  height: 26px;
+  padding: 0;
+}
+
+.preview-agent-logo-btn.is-active-toggle {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.preview-agent-logo {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  line-height: 0;
+}
+
+.preview-agent-logo img {
+  display: block;
+  width: 16px;
+  height: 16px;
+  object-fit: contain;
+}
+
+.preview-agent-logo .logo-dark {
+  display: none;
+}
+
+.preview-agent-logo .logo-light {
+  display: block;
+}
+
+:root[data-theme='dark'] .preview-agent-logo .logo-light {
+  display: none;
+}
+
+:root[data-theme='dark'] .preview-agent-logo .logo-dark {
+  display: block;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) .preview-agent-logo .logo-light {
+    display: none;
+  }
+  :root:not([data-theme='light']) .preview-agent-logo .logo-dark {
+    display: block;
+  }
+}
+
+.preview-file-session-bar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+  flex: 0 0 auto;
+  min-width: 0;
+  position: relative;
+  /* History popover hangs below this bar and must paint above SessionDetail. */
+  z-index: 30;
+  isolation: isolate;
+}
+
+.preview-file-session-title {
+  min-width: 0;
+  flex: 1;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.preview-file-session-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: 0 0 auto;
+}
+
+/* Session history popover (file-preview.rpml History).
+   Sized to the agent panel (session bar), not a fixed 380px that clips. */
+.session-history-popover {
+  position: absolute;
+  top: calc(100% + 2px);
+  left: 8px;
+  right: 8px;
+  width: auto;
+  max-width: none;
+  max-height: min(420px, 60vh);
+  display: flex;
+  flex-direction: column;
+  /* Opaque elevated surface — avoid bleed-through from transcript below. */
+  background: var(--bg-raised, var(--bg-elevated, var(--bg-content)));
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 12px 40px color-mix(in srgb, #000 35%, transparent);
+  z-index: 50;
+  overflow: hidden;
+  box-sizing: border-box;
+  transform-origin: top center;
+  opacity: 1;
+  transform: translateY(0) scale(1);
+  transition:
+    opacity var(--dur-pop) var(--ease-out),
+    transform var(--dur-pop) var(--ease-out);
+}
+
+@starting-style {
+  .session-history-popover {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.97);
+  }
+}
+
+.session-history-popover[data-leaving] {
+  opacity: 0;
+  transform: translateY(-4px) scale(0.97);
+  pointer-events: none;
+}
+
+.session-history-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  flex: 0 0 auto;
+  min-width: 0;
+}
+
+.session-history-head > .muted {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-history-list {
+  list-style: none;
+  margin: 0;
+  padding: 4px 0;
+  overflow: auto;
+  flex: 1 1 auto;
+}
+
+.session-history-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  cursor: default;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+.session-history-row:hover {
+  background: color-mix(in srgb, var(--text) 6%, transparent);
+}
+
+.session-history-row.is-active {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.session-history-row.is-picked {
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+}
+
+.session-history-row.is-disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.session-history-icon {
+  flex: 0 0 auto;
+  color: var(--text-secondary);
+  opacity: 0.85;
+}
+
+.session-history-body {
+  min-width: 0;
+  flex: 1;
+}
+
+.session-history-title {
+  font-size: 13px;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-history-sub {
+  margin-top: 1px;
+}
+
+.session-history-rename {
+  width: 100%;
+  font-size: 13px;
+  padding: 2px 6px;
+  height: 24px;
+}
+
+.session-history-trash {
+  flex: 0 0 auto;
+  opacity: 0;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  padding: 4px;
+  border-radius: 6px;
+  cursor: default;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  /* Always reserve space so the row doesn't jump on hover. */
+  visibility: hidden;
+}
+
+.session-history-row:hover .session-history-trash:not(:disabled),
+.session-history-trash:focus-visible:not(:disabled) {
+  opacity: 1;
+  visibility: visible;
+}
+
+.session-history-trash:hover:not(:disabled) {
+  color: var(--danger, #e5484d);
+  background: color-mix(in srgb, var(--danger, #e5484d) 12%, transparent);
+}
+
+/* Active / last session: never show a half-visible disabled trash. */
+.session-history-trash:disabled {
+  opacity: 0;
+  visibility: hidden;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+.session-history-check {
+  width: 16px;
+  height: 16px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  color: var(--accent);
+}
+
+.session-history-check.on {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  border-color: var(--accent);
+}
+
+.session-history-check.disabled {
+  opacity: 0.35;
+}
+
+.session-history-bulk {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  border-top: 1px solid var(--border);
+  flex: 0 0 auto;
+}
+
+.session-history-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 28px 16px;
+  text-align: center;
+}
+
+.session-history-empty-title {
+  font-size: 13px;
+  font-weight: 560;
+}
+
+/* ZIP archive tree */
+.zip-archive-view {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+  width: 100%;
+  max-width: 720px;
+  margin: 0 auto;
+}
+
+.zip-archive-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--border);
+  flex: 0 0 auto;
+}
+
+.zip-archive-head-icon {
+  color: var(--teal, #0d9488);
+  flex: 0 0 auto;
+}
+
+.zip-archive-title {
+  font-weight: 600;
+  font-size: 13px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.zip-archive-tree {
+  overflow: auto;
+  flex: 1 1 auto;
+  padding: 6px 0 16px;
+}
+
+.zip-archive-empty {
+  padding: 28px 16px;
+  text-align: center;
+  font-size: 13px;
+}
+
+.zip-tree-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 26px;
+  padding-right: 12px;
+  font-size: 12.5px;
+  border-radius: 4px;
+  margin: 0 6px;
+}
+
+.zip-tree-row.selectable {
+  cursor: default;
+}
+
+.zip-tree-row.selectable:hover {
+  background: color-mix(in srgb, var(--text) 6%, transparent);
+}
+
+.zip-tree-row.selected {
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 45%, transparent);
+}
+
+.zip-tree-chevron,
+.zip-tree-chevron-spacer {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  padding: 0;
+  cursor: default;
+}
+
+.zip-tree-icon {
+  flex: 0 0 auto;
+  color: var(--text-secondary);
+  display: inline-flex;
+}
+
+.zip-tree-name {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.zip-tree-meta {
+  flex: 0 0 auto;
+  margin-left: 8px;
+}
+
+/* Binary / unsupported file panel */
+.binary-file-view {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  max-width: 480px;
+  margin: 40px auto;
+  padding: 24px 28px;
+  text-align: center;
+}
+
+.binary-file-icons {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-secondary);
+}
+
+.binary-file-icon-main {
+  opacity: 0.75;
+}
+
+.binary-file-title-block {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+
+.binary-file-name {
+  font-size: 16px;
+  font-weight: 600;
+  word-break: break-all;
+}
+
+.binary-file-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 560;
+  color: var(--text-secondary);
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+  border: 1px solid var(--border);
+}
+
+.binary-file-desc {
+  font-size: 13px;
+  margin: 0;
+}
+
+.binary-file-divider {
+  width: 100%;
+  height: 1px;
+  background: var(--border);
+}
+
+.binary-file-kv {
+  width: 100%;
+  margin: 0;
+  text-align: left;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.binary-file-kv-row {
+  display: grid;
+  grid-template-columns: 110px 1fr;
+  gap: 10px;
+  font-size: 12px;
+  align-items: baseline;
+}
+
+.binary-file-kv-row dt {
+  color: var(--text-secondary);
+  margin: 0;
+}
+
+.binary-file-kv-row dd {
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.binary-file-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+
+/* Ephemeral text/hex override for unsupported files (not persisted). */
+.file-viewer-body:has(> .binary-open-toolbar) {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.binary-open-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 0 auto;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--bg-raised) 70%, var(--bg-content));
+}
+
+.binary-open-tab {
+  border: 0;
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 550;
+  padding: 4px 10px;
+  border-radius: 6px;
+  cursor: default;
+}
+
+.binary-open-tab:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.binary-open-tab.active {
+  background: color-mix(in srgb, var(--accent) 12%, var(--bg-sunken));
+  color: var(--text);
+}
+
+.binary-open-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 12px 16px 24px;
+}
+
+.binary-open-body.hex {
+  font-variant-numeric: tabular-nums;
+}
+
+.binary-force-text,
+.binary-hex-dump {
+  margin: 0;
+  white-space: pre;
+  overflow: visible;
+}
+
+.binary-hex-dump {
+  font-family: var(--font-code);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.binary-hex-more {
+  padding: 8px 0 0;
+}
+
+.preview-mode.is-forced {
+  opacity: 0.72;
+}
+
+/* Drag handles on File / Agent borders (File View is the flex middle). */
+.workspace-col-resizer {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 5px;
+  z-index: 3;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.workspace-col-resizer-end {
+  right: -2px;
+}
+
+.workspace-col-resizer-start {
+  left: -2px;
+}
+
+.workspace-col-resizer::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 1px;
+  transform: translateX(-50%);
+  background: transparent;
+  transition: background var(--dur-hover) ease, box-shadow var(--dur-hover) ease;
+}
+
+.workspace-col-resizer:hover::after,
+.workspace-col-resizer:active::after {
+  background: var(--accent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 35%, transparent);
+}
+
+.workspace-history-anchor {
+  display: inline-flex;
+}
+
+.workspace-history-popover {
+  position: absolute;
+  top: calc(100% - 4px);
+  right: 8px;
+  z-index: 40;
+  width: 320px;
+  max-height: min(420px, 70vh);
+  display: flex;
+  flex-direction: column;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border);
+  background: var(--bg-raised, var(--bg-content));
+  box-shadow: var(--shadow-sheet);
+  overflow: hidden;
+}
+
+.workspace-history-head {
+  padding: 10px 12px 6px;
+}
+
+.workspace-history-title {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.workspace-history-filter {
+  margin: 0 10px 8px;
+  height: 28px;
+  padding: 0 8px;
+  font-size: 12px;
+}
+
+.workspace-history-list {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 0 6px 8px;
+}
+
+.workspace-history-empty {
+  padding: 16px 10px;
+  font-size: 12px;
+  line-height: 1.45;
+  text-align: center;
+}
+
+.workspace-history-row {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: var(--radius);
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: default;
+}
+
+.workspace-history-row:hover {
+  background: var(--bg-hover);
+}
+
+.workspace-history-row.is-active {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+
+.workspace-history-row-title {
+  font-size: 12.5px;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+
+.workspace-history-row-sub {
+  font-size: 11px;
+}
+
+/* Single-file mode: Agent floats over the preview (workspace-view.rpml). */
+.workspace-floating-agent {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  min-width: 240px;
+  max-width: min(520px, calc(100% - 24px));
+  max-height: calc(100% - 24px);
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border);
+  background: var(--bg-content);
+  box-shadow: var(--shadow-sheet);
+  overflow: hidden;
+}
+
+.workspace-floating-agent-head {
+  padding: 6px 8px;
+  gap: 4px;
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--bg-raised) 80%, var(--bg-content));
+}
+
+.workspace-floating-agent-title {
+  min-width: 0;
+  flex: 1;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-floating-agent-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.workspace-floating-agent-body > .session-detail,
+.workspace-floating-agent-body > .preview-edit-session {
+  flex: 1;
+  min-height: 0;
+}
+
+.workspace-floating-agent-resize-w {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 5px;
+  cursor: ew-resize;
+  z-index: 2;
+}
+
+.workspace-floating-agent-resize-h {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 5px;
+  cursor: ns-resize;
+  z-index: 2;
+}
+
+.workspace-floating-agent-min-row {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  z-index: 30;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.workspace-floating-agent-min {
+  position: relative;
+  right: auto;
+  bottom: auto;
+  z-index: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: min(360px, calc(100% - 24px));
+  margin: 0;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg-content);
+  box-shadow: var(--shadow-raised);
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 11px;
+  cursor: default;
+}
+
+.workspace-floating-agent-min:hover {
+  color: var(--text);
+  background: var(--bg-raised);
+}
+
+.workspace-floating-agent-min-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.preview-file-session-select {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.preview-file-session-select .preview-mode-control {
+  width: 100%;
+}
+
+.preview-file-session-select .preview-mode-select {
+  width: 100%;
+  max-width: 100%;
+  field-sizing: fixed;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.workspace-tree-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  max-width: 100%;
+  padding: 3px 8px;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: default;
+  box-sizing: border-box;
+  user-select: none;
+  -webkit-user-select: none;
+  /* Long names shrink the label only — never the chevron/icon gutters. */
+  min-width: 0;
+}
+
+.workspace-tree-row.selected {
+  background: var(--accent-soft);
+  color: var(--accent-text);
+}
+
+/* Fixed gutters so every sibling row starts name text at the same x. */
+.workspace-tree-chevron,
+.workspace-tree-icon {
+  flex: 0 0 12px;
+  width: 12px;
+  min-width: 12px;
+  max-width: 12px;
+  height: 12px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  color: var(--text-tertiary);
+}
+
+.workspace-tree-chevron > svg,
+.workspace-tree-icon > svg {
+  width: 12px;
+  height: 12px;
+  min-width: 12px;
+  min-height: 12px;
+  display: block;
+  flex: none;
+}
+
+.workspace-tree-row.selected .workspace-tree-chevron,
+.workspace-tree-row.selected .workspace-tree-icon {
+  color: var(--accent-text);
+}
+
+.workspace-tree-row .label {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.conv-group-header.selected {
+  background: var(--accent-soft);
+  color: var(--accent-text);
+}
+
+.conv-group-header .conv-group-title-hit {
+  display: flex;
+  align-items: center;
+  flex: 1;
+  min-width: 0;
+  height: 22px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  padding: 0;
+  cursor: default;
+}
+
+.conv-group-header .conv-group-title-hit:hover .conv-group-title {
+  color: var(--text-primary);
+}
+
+/* Shared 22×22 chrome so title / pin / count+chevron / add share one baseline. */
+.conv-group-header .conv-group-pin-hit,
+.conv-group-header .conv-group-collapse-hit,
+.conv-group-header .conv-group-add-hit {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  height: 22px;
+  flex: 0 0 auto;
+  margin: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  padding: 0;
+  cursor: default;
+  line-height: 1;
+}
+
+.conv-group-header .conv-group-add-hit {
+  width: 22px;
+  opacity: 0.55;
+}
+
+.conv-group-header .conv-group-add-hit:hover {
+  opacity: 1;
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.conv-group-header.selected .conv-group-add-hit:hover {
+  background: color-mix(in srgb, var(--accent-text) 12%, transparent);
+  color: var(--accent-text);
+}
+
+/* Count + chevron — one expand/collapse control. */
+.conv-group-header .conv-group-collapse-hit {
+  gap: 3px;
+  min-width: 22px;
+  padding: 0 5px;
+  opacity: 0.65;
+}
+
+.conv-group-header .conv-group-collapse-hit:hover {
+  opacity: 1;
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.conv-group-header.selected .conv-group-collapse-hit:hover {
+  background: color-mix(in srgb, var(--accent-text) 12%, transparent);
+  color: var(--accent-text);
+}
+
+.conv-group-header .conv-group-collapse-hit .conv-group-count {
+  opacity: 1;
+}
+
+/*
+ * Pin affordances. A conv row only reserves the slot once pinned — every row
+ * paying 20px for a button you see on hover would eat the title. Group headers
+ * keep it in flow like the sibling add button; their labels are short.
+ */
+.conv-group-header .conv-group-pin-hit {
+  width: 22px;
+  opacity: 0;
+}
+
+.conv-star-hit,
+.conv-pin-hit {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  flex: 0 0 auto;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: inherit;
+  opacity: 0;
+  padding: 0;
+  cursor: default;
+}
+
+.conv-group-header:hover .conv-group-pin-hit,
+.conv-row:hover .conv-pin-hit,
+.conv-row:hover .conv-star-hit {
+  opacity: 0.55;
+}
+
+/*
+ * Same glyph for workspace + session:
+ * unpinned = tilted outline, pinned = upright highlighted outline (never filled).
+ */
+.conv-group-pin-hit svg,
+.conv-pin-hit svg {
+  transform: rotate(45deg);
+  fill: none;
+}
+
+.conv-group-header .conv-group-pin-hit.pinned,
+.conv-pin-hit.pinned {
+  opacity: 1;
+  color: var(--accent-text);
+}
+
+.conv-group-header .conv-group-pin-hit.pinned svg,
+.conv-pin-hit.pinned svg {
+  transform: none;
+  fill: none;
+}
+
+.conv-group-header .conv-group-pin-hit:hover,
+.conv-pin-hit:hover {
+  opacity: 1;
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.conv-group-header .conv-group-pin-hit.pinned:hover,
+.conv-pin-hit.pinned:hover {
+  color: var(--accent-text);
+}
+
+.conv-row.selected .conv-pin-hit:hover,
+.conv-row.multi .conv-pin-hit:hover {
+  background: color-mix(in srgb, var(--accent-text) 12%, transparent);
+  color: inherit;
+}
+
+.conv-star-hit,
+.conv-pin-hit {
+  margin-right: -2px;
+}
+
+.conv-star-hit:not(.favorited),
+.conv-pin-hit:not(.pinned) {
+  display: none;
+}
+
+.conv-row:hover .conv-star-hit,
+.conv-row:hover .conv-pin-hit {
+  display: inline-flex;
+}
+
+.conv-star-hit.favorited {
+  opacity: 1;
+  color: var(--accent-text);
+}
+
+.conv-star-hit.favorited svg {
+  fill: currentColor;
+}
+
+.conv-star-hit:hover {
+  opacity: 1;
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.conv-star-hit.favorited:hover {
+  color: var(--accent-text);
+}
+
+.conv-row.selected .conv-star-hit:hover,
+.conv-row.multi .conv-star-hit:hover {
+  background: color-mix(in srgb, var(--accent-text) 12%, transparent);
+  color: inherit;
+}
+
+.file-viewer-header > .spacer {
+  flex: 1 1 auto;
+  min-width: 12px;
+  height: 100%;
+  -webkit-app-region: drag;
+}
+
+/*
+ * File-preview markdown — this is a *document*, not chat: it reads at
+ * --md-doc-size on a ~75-character measure, with a heading scale wide enough
+ * that structure is legible while scrolling. Space before a heading marks the
+ * section; space after glues the heading to its body. Adjacent margins are
+ * left to collapse, so each level owns its own top gap.
+ */
+.preview-markdown {
+  --md-lh: var(--md-doc-lh);
+  --md-block: 0.9em;
+  --md-section: 1.7em;
+  /* Type zoom scales the measure with the type, so the line keeps its ~75
+     characters instead of running longer as the text grows. */
+  font-size: calc(var(--md-doc-size) * var(--text-zoom, 1));
+  line-height: var(--md-lh);
+  letter-spacing: normal;
+  width: min(100%, calc(var(--md-measure) * var(--text-zoom, 1)));
+  min-width: 0;
+  max-width: 100%;
+  margin-inline: auto;
+  padding: 10px 0 48px;
+  box-sizing: border-box;
+  color: var(--text);
+  font-weight: 400;
+  font-family: var(--font-reading);
+  /* Let the system face pick its Text/Display cut per heading size. */
+  font-optical-sizing: auto;
+  font-kerning: normal;
+  font-variant-ligatures: common-ligatures contextual;
+  /* Break long words only when they cannot fit — never mid-word by default. */
+  overflow-wrap: break-word;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+.preview-markdown > *:first-child {
+  margin-top: 0 !important;
+}
+
+.preview-markdown > *:last-child {
+  margin-bottom: 0 !important;
+}
+
+/*
+ * Heading scale ≈ 1.22 steps. Tracking tightens as size grows (large type
+ * looks loose at the body's default fit); heading margins are expressed in the
+ * heading's own em, so each level's section gap scales with its size.
+ */
+.preview-markdown h1,
+.preview-markdown h2,
+.preview-markdown h3,
+.preview-markdown h4,
+.preview-markdown h5,
+.preview-markdown h6 {
+  margin: var(--md-section) 0 0.45em;
+  font-family: var(--font-reading);
+  font-weight: 650;
+  letter-spacing: -0.012em;
+  line-height: 1.3;
+  color: var(--text);
+  text-wrap: balance;
+  scroll-margin-top: 1rem;
+  border-bottom: none;
+  padding-bottom: 0;
+}
+
+.preview-markdown h1 {
+  font-size: 1.85em;
+  font-weight: 700;
+  letter-spacing: -0.022em;
+  line-height: 1.18;
+  margin-top: 0.1em;
+  margin-bottom: 0.5em;
+}
+
+.preview-markdown h2 {
+  font-size: 1.38em;
+  font-weight: 660;
+  letter-spacing: -0.018em;
+  line-height: 1.26;
+  margin-top: 1.45em;
+  margin-bottom: 0.4em;
+}
+
+.preview-markdown h3 {
+  font-size: 1.18em;
+  letter-spacing: -0.013em;
+  line-height: 1.34;
+  margin-top: 1.3em;
+  margin-bottom: 0.35em;
+}
+
+.preview-markdown h4 {
+  font-size: 1.05em;
+  font-weight: 660;
+  letter-spacing: -0.006em;
+  line-height: 1.4;
+  margin-top: 1.35em;
+  margin-bottom: 0.3em;
+}
+
+/*
+ * Past h4 the scale runs out of size, so the last two levels separate by
+ * weight and ink instead — still sentence case, never a small-caps label.
+ */
+.preview-markdown h5 {
+  font-size: 0.97em;
+  font-weight: 680;
+  color: var(--text-secondary);
+  margin-top: 1.4em;
+  margin-bottom: 0.3em;
+  letter-spacing: normal;
+  text-transform: none;
+}
+
+.preview-markdown h6 {
+  font-size: 0.94em;
+  font-weight: 680;
+  color: var(--text-tertiary);
+  margin-top: 1.45em;
+  margin-bottom: 0.3em;
+  letter-spacing: 0.01em;
+  text-transform: none;
+}
+
+.preview-markdown h1 + p,
+.preview-markdown h2 + p,
+.preview-markdown h3 + p,
+.preview-markdown h4 + p,
+.preview-markdown h5 + p,
+.preview-markdown h6 + p {
+  margin-top: 0;
+}
+
+/*
+ * Body → heading needs no rule of its own: the body block's bottom margin and
+ * the heading's own top margin collapse to the larger of the two, which keeps
+ * every level's graded gap intact. A flat `--md-section` here would erase it.
+ */
+
+.preview-markdown p {
+  margin: 0 0 var(--md-block);
+  line-height: var(--md-lh);
+  letter-spacing: normal;
+  /* Avoid a one-word last line; falls back to `wrap` where unsupported. */
+  text-wrap: pretty;
+}
+
+.preview-markdown p:last-child {
+  margin-bottom: 0;
+}
+
+/* --- Lists --- */
+.preview-markdown ul,
+.preview-markdown ol {
+  margin: 0 0 var(--md-block);
+  padding-left: 1.5em;
+}
+
+.preview-markdown li {
+  margin: 0.32em 0;
+  line-height: var(--md-lh);
+  letter-spacing: normal;
+  padding-left: 0.2em;
+  text-wrap: pretty;
+}
+
+.preview-markdown li::marker {
+  color: var(--text-tertiary);
+  font-weight: 400;
+}
+
+.preview-markdown li > p {
+  margin: 0 0 0.5em;
+}
+
+.preview-markdown li > p:last-child {
+  margin-bottom: 0;
+}
+
+.preview-markdown li > ul,
+.preview-markdown li > ol {
+  margin: 0.35em 0 0.5em;
+}
+
+/* Numbers align on their own column; the label sits a touch below body size. */
+.preview-markdown ol > li::marker {
+  font-variant-numeric: tabular-nums;
+  font-size: 0.92em;
+  color: var(--text-secondary);
+}
+
+/* --- Inline --- */
+/* Mono runs 0.86em so its x-height matches the surrounding prose. */
+.preview-markdown :not(pre) > code {
+  padding: 0.12em 0.36em;
+  border-radius: 5px;
+  font-family: var(--font-code);
+  font-size: 0.86em;
+  font-weight: 450;
+  letter-spacing: 0;
+  line-height: 1.4;
+  font-variant-ligatures: none;
+  background: color-mix(in srgb, var(--bg-sunken) 60%, var(--bg-hover));
+  color: color-mix(in srgb, var(--text) 88%, var(--accent-text));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--border) 55%, transparent);
+}
+
+/*
+ * Links carry colour and an underline — not extra weight as well. Bolding
+ * them too speckled the paragraph with dark spots at document size.
+ */
+.preview-markdown a {
+  color: color-mix(in srgb, var(--accent-text) 88%, #6eb6ff);
+  text-decoration: underline;
+  /* Carries the whole affordance now the weight is gone — keep it readable. */
+  text-decoration-color: color-mix(in srgb, var(--accent) 50%, transparent);
+  text-decoration-skip-ink: auto;
+  text-underline-offset: 0.16em;
+  text-decoration-thickness: from-font;
+  font-weight: inherit;
+  transition:
+    color var(--dur-hover) ease,
+    text-decoration-color var(--dur-hover) ease;
+}
+
+.preview-markdown a:hover {
+  color: color-mix(in srgb, var(--accent-text) 100%, #9ecfff);
+  text-decoration-color: color-mix(in srgb, var(--accent) 85%, transparent);
+}
+
+:root:not([data-theme='dark']) .preview-markdown a {
+  color: color-mix(in srgb, var(--accent) 75%, #1565c0);
+  text-decoration-color: color-mix(in srgb, var(--accent) 50%, transparent);
+}
+
+:root:not([data-theme='dark']) .preview-markdown a:hover {
+  color: color-mix(in srgb, var(--accent) 90%, #0d47a1);
+}
+
+.preview-markdown strong {
+  font-weight: 640;
+  color: var(--text);
+}
+
+.preview-markdown em {
+  font-style: italic;
+  color: inherit;
+}
+
+.preview-markdown del {
+  color: var(--text-secondary);
+  text-decoration-thickness: 1px;
+}
+
+/* --- Quote / rule --- */
+.preview-markdown blockquote {
+  margin: 0 0 var(--md-block);
+  padding: 0.1em 0 0.1em 1em;
+  border-left: 2px solid color-mix(in srgb, var(--accent) 30%, var(--border));
+  border-radius: 0;
+  background: transparent;
+  color: var(--text-secondary);
+}
+
+.preview-markdown blockquote p {
+  margin: 0 0 0.6em;
+  text-wrap: pretty;
+}
+
+.preview-markdown blockquote p:last-child {
+  margin-bottom: 0;
+}
+
+.preview-markdown blockquote blockquote {
+  margin: 0.65em 0 0.25em;
+  background: color-mix(in srgb, var(--accent) 4%, transparent);
+}
+
+/* A break between sections, so it gets section air on both sides. */
+.preview-markdown hr,
+.preview-markdown .md-preview-hr {
+  margin: 1.8em 0;
+  border: none;
+  height: 0;
+  max-width: 100%;
+  border-top: 1px solid color-mix(in srgb, var(--border) 88%, transparent);
+  background: none;
+}
+
+/* --- Fenced code --- */
+.preview-markdown .md-block,
+.preview-markdown .md-preview-fence {
+  margin: 0 0 var(--md-block);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-sunken);
+  box-shadow: 0 1px 2px color-mix(in srgb, #000 6%, transparent);
+  overflow: hidden;
+}
+
+.preview-markdown .md-block-bar {
+  padding: 3px 4px;
+  background: color-mix(in srgb, var(--bg-raised) 86%, transparent);
+  border-bottom: 0;
+}
+
+.preview-markdown .md-block-name {
+  font-family: var(--font-code);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  text-transform: none;
+  color: var(--text-tertiary);
+}
+
+.preview-markdown .md-preview-fence .md-block-name {
+  text-transform: lowercase;
+}
+
+.preview-markdown .md-block-btn {
+  font-size: 11px;
+  height: 22px;
+  border-radius: 6px;
+}
+
+.preview-markdown pre {
+  margin: 0 0 var(--md-block);
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--bg-sunken) 92%, var(--bg-raised));
+  font-family: var(--font-code);
+  line-height: 1.55;
+  letter-spacing: 0;
+  font-size: 0.84em;
+  font-variant-ligatures: none;
+  font-variant-numeric: tabular-nums;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--border) 75%, transparent);
+  overflow-x: auto;
+}
+
+/* AFTER bare pre — remove INNER card only; outer .md-block keeps radius/border. */
+.preview-markdown .md-block > pre,
+.preview-markdown .md-block pre,
+.preview-markdown .md-preview-fence > pre,
+.preview-markdown .md-preview-fence pre {
+  margin: 0 !important;
+  padding: 14px 16px;
+  border: 0 !important;
+  box-shadow: none !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+}
+
+.preview-markdown .md-block.md-diagram-wrap .md-diagram,
+.preview-markdown .md-block.md-mermaid-wrap .md-mermaid {
+  background: transparent !important;
+  box-shadow: none !important;
+  border-radius: 0 !important;
+}
+
+.preview-markdown pre code {
+  font-size: inherit;
+  letter-spacing: 0;
+}
+
+/* --- Tables --- */
+.preview-markdown .table-scroll,
+.preview-markdown .md-preview-table {
+  margin: 0 0 var(--md-block);
+  border-radius: 12px;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  background: color-mix(in srgb, var(--bg-content) 40%, var(--bg-sunken));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--border) 80%, transparent);
+}
+
+.preview-markdown table {
+  border-collapse: separate;
+  border-spacing: 0;
+  width: max-content;
+  min-width: 100%;
+  margin: 0;
+  font-size: 0.92em;
+  line-height: 1.55;
+  /* Figures line up down a column even across rows. */
+  font-variant-numeric: tabular-nums;
+}
+
+.preview-markdown th,
+.preview-markdown td {
+  padding: 10px 14px;
+  text-align: left;
+  vertical-align: top;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 75%, transparent);
+  max-width: 22rem;
+  overflow-wrap: break-word;
+}
+
+.preview-markdown th {
+  background: color-mix(in srgb, var(--accent) 8%, var(--bg-raised));
+  color: var(--text);
+  font-weight: 620;
+  font-size: 0.94em;
+  letter-spacing: normal;
+  white-space: nowrap;
+  border-bottom-color: color-mix(in srgb, var(--border) 90%, var(--accent));
+}
+
+.preview-markdown tbody tr:nth-child(even) td {
+  background: color-mix(in srgb, var(--bg-hover) 45%, transparent);
+}
+
+.preview-markdown tbody tr:hover td {
+  background: color-mix(in srgb, var(--accent) 6%, var(--bg-hover));
+}
+
+.preview-markdown tbody tr:last-child td {
+  border-bottom: none;
+}
+
+/* --- Media --- */
+.preview-markdown img,
+.preview-markdown picture {
+  max-width: 100%;
+  /* Never cap height — document scroll shows the full image. */
+  max-height: none;
+  height: auto;
+  width: auto;
+  border-radius: 10px;
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--border) 60%, transparent);
+}
+
+.preview-markdown p > img:only-child,
+.preview-markdown p > picture:only-child {
+  display: block;
+  margin: 0.55em auto;
+}
+
+/* Markdown images inside pick regions must not shrink-wrap / clip. */
+.preview-document .preview-select-region img,
+.preview-document .preview-select-region picture {
+  max-width: min(100%, 100vw);
+  max-height: none;
+  height: auto;
+}
+
+/* originai release badge (and similar linked SVG badges) */
+.preview-markdown a > img[alt='originai'],
+.preview-markdown a > img[src*='spec.getoriginai.com'] {
+  display: inline-block;
+  height: 28px;
+  width: auto;
+  max-width: none;
+  vertical-align: middle;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.preview-markdown picture {
+  display: inline-block;
+}
+
+/* Mermaid in document preview */
+.preview-markdown .md-mermaid-wrap {
+  margin: 0 0 var(--md-block);
+}
+
+.preview-markdown .md-mermaid-wrap .md-diagram-viewport {
+  padding: 12px 8px 28px;
+}
+
+.preview-markdown .md-mermaid {
+  padding: 0;
+  display: flex;
+  justify-content: center;
+  overflow: visible;
+}
+
+.preview-markdown .md-mermaid svg {
+  max-width: 100%;
+  height: auto;
+}
+
+/* Chat markdown: slightly calmer tables / code for parity */
+.markdown .table-scroll {
+  border-radius: var(--radius);
+}
+
+/*
+ * The preview frame is full-bleed. Reading gutters are the *renderer's* call —
+ * prose and code want paper margins, a diagram/sheet/image canvas must own its
+ * whole box (a shared frame inset shrank every canvas and threw off centring).
+ * FileViewer sets data-pad from the renderer it mounted.
+ */
+.file-viewer-body {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 0;
+}
+
+.file-viewer-body[data-pad='text'] {
+  padding: 18px 24px 28px;
+}
+
+/* Markdown paper: reading column is centered; body padding supplies gutters. */
+.file-viewer-body:has(> .markdown.preview-markdown),
+.file-viewer-body:has(.preview-markdown),
+.file-viewer-body:has(> .preview-document) {
+  background:
+    radial-gradient(120% 60% at 50% -10%, color-mix(in srgb, var(--accent) 4%, transparent), transparent 55%),
+    var(--bg-content);
+}
+
+.file-viewer-body:has(.file-viewer-pdf) {
+  overflow: hidden;
+}
+
+.file-viewer-pdf {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: var(--bg-sunken);
+}
+
+.file-viewer-code {
+  margin: 0;
+  font-family: var(--font-code);
+  font-size: calc(var(--code-size) * var(--text-zoom, 1));
+  line-height: 1.55;
+  white-space: pre;
+  overflow: auto;
+  user-select: text;
+}
+
+.file-viewer-code .hljs {
+  display: block;
+  padding: 0;
+  background: transparent;
+  color: inherit;
+}
+
+.file-viewer-media {
+  display: block;
+  max-width: 100%;
+  max-height: 100%;
+  width: auto;
+  height: auto;
+  object-fit: contain;
+  margin: 0;
+}
+
+/* Always-visible image metadata above the picture (no accordion). */
+.file-viewer-image-meta-flat {
+  flex: 0 0 auto;
+  align-self: center;
+  width: min(100%, 480px);
+  max-height: min(28vh, 220px);
+  overflow: auto;
+  margin: 16px 16px 0;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--bg-raised) 88%, var(--bg-sunken));
+  box-shadow: inset 0 0 0 1px var(--border);
+  font-family: var(--font-code);
+  font-size: 11.5px;
+  line-height: 1.55;
+  color: var(--text-secondary);
+  /* Above pick chrome; always allow drag-select of EXIF rows (HEIC etc.). */
+  user-select: text !important;
+  -webkit-user-select: text !important;
+  cursor: text;
+  position: relative;
+  z-index: 2;
+  pointer-events: auto;
+}
+
+.file-viewer-image-meta-line {
+  display: grid;
+  grid-template-columns: minmax(100px, 32%) 1fr;
+  gap: 10px 12px;
+  padding: 3px 4px;
+  border-radius: 3px;
+  /* Whole row selectable as one line of text. */
+  user-select: text !important;
+  -webkit-user-select: text !important;
+  cursor: text;
+}
+
+.file-viewer-image-meta-line:hover {
+  background: color-mix(in srgb, var(--bg-hover) 80%, transparent);
+}
+
+.file-viewer-image-meta-line + .file-viewer-image-meta-line {
+  border-top: 1px solid color-mix(in srgb, var(--border) 55%, transparent);
+}
+
+.file-viewer-image-meta-key {
+  color: var(--text-tertiary);
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  user-select: text;
+}
+
+.file-viewer-image-meta-val {
+  color: var(--text-secondary);
+  min-width: 0;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  user-select: text;
+}
+
+/* Legacy accordion class kept inert if any residual markup appears. */
+.file-viewer-image-meta {
+  display: none;
+}
+
+.file-viewer-warnings {
+  padding: 8px 14px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 11.5px;
+}
+
+.file-viewer-load-more {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px 16px;
+  flex: 0 0 auto;
+}
+
+.file-viewer-load-more-hint {
+  font-size: 11px;
+}
+
+.zip-archive-note {
+  margin: 0;
+  padding: 6px 14px 0;
+  line-height: 1.4;
+}
+
+/* (Media body overflow/flex unified above with image-meta — do not re-hide scroll.) */
+
+.file-viewer-table {
+  margin: 0;
+}
+
+/* File tree rows — fixed metrics so Retina zoom / long CJK names stay aligned.
+   No hover wash, no bg/color transitions, no OS text-select flash on dblclick. */
+.tree-row {
+  --tree-icon: 16px;
+  --tree-chevron: 14px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  min-height: 28px;
+  max-height: 28px;
+  max-width: 100%;
+  padding-right: 8px;
+  border-radius: 6px;
+  cursor: default;
+  white-space: nowrap;
+  font-size: 13px;
+  line-height: 1.2;
+  user-select: none;
+  -webkit-user-select: none;
+  /* Prevent flex children from stretching SVG/text to weird aspect ratios. */
+  box-sizing: border-box;
+  min-width: 0;
+  content-visibility: auto;
+  contain-intrinsic-size: auto 28px;
+}
+
+.tree-row.selected {
+  background: var(--accent-soft);
+  color: var(--accent-text);
+  /* Selection is colour only — keep the same weight as siblings. */
+  font-weight: inherit;
+}
+
+/* Column-view path into the next pane — quieter than an explicit selection. */
+.tree-row.open:not(.selected) {
+  background: var(--bg-hover);
+}
+
+/* Folders are the structure and files are the contents; colour says which is
+   which faster than the glyph shape does. */
+.tree-row > svg,
+.tree-row .disclosure > svg {
+  flex: 0 0 auto;
+  width: var(--tree-icon);
+  height: var(--tree-icon);
+  min-width: var(--tree-icon);
+  min-height: var(--tree-icon);
+  display: block;
+  /* Override lucide width/height attrs when CSS zoom changes. */
+  overflow: visible;
+  color: var(--text-tertiary);
+}
+
+.tree-row .disclosure > svg {
+  width: var(--tree-chevron);
+  height: var(--tree-chevron);
+  min-width: var(--tree-chevron);
+  min-height: var(--tree-chevron);
+}
+
+.tree-row.dir > svg {
+  color: var(--tone-list);
+}
+
+.tree-row.selected > svg,
+.tree-row.selected .disclosure > svg {
+  color: var(--accent-text);
+}
+
+.tree-row .disclosure {
+  width: 18px;
+  min-width: 18px;
+  max-width: 18px;
+  height: 18px;
+  flex: 0 0 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-tertiary);
+  /* Empty disclosure for files must still occupy the gutter. */
+  overflow: hidden;
+}
+
+.tree-row .tree-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  /* Avoid bold synthetic bold on CJK when selected. */
+  font-weight: 400;
+}
+
+.tree-row .tree-size {
+  flex: 0 0 auto;
+  margin-left: 8px;
+  font-size: 11px;
+  line-height: 1;
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
+.file-column .tree-row {
+  /* Column view has no disclosure gutter — keep left inset consistent. */
+  padding-left: 10px;
+}
+
+.file-column .column-chevron {
+  flex: 0 0 auto;
+  width: var(--tree-chevron);
+  height: var(--tree-chevron);
+  min-width: var(--tree-chevron);
+  min-height: var(--tree-chevron);
+  margin-left: auto;
+  color: var(--text-tertiary);
+  opacity: 0.7;
+}
+
+.skeleton-row {
+  height: 12px;
+  margin: 7px 10px;
+  border-radius: 4px;
+  background: linear-gradient(90deg, var(--bg-sunken), var(--bg-hover), var(--bg-sunken));
+  background-size: 200% 100%;
+  animation: shimmer 1.2s linear infinite;
+}
+
+@keyframes shimmer {
+  to {
+    background-position: -200% 0;
+  }
+}

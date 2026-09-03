@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import { conversationIdForWatchedPath } from './conversationPath.ts'
+import {
+  conversationIdForWatchedPath,
+  conversationIdForWorkdirs
+} from './conversationPath.ts'
 
 describe('conversationIdForWatchedPath', () => {
   it('prefers an explicit conversation id', () => {
@@ -21,5 +24,17 @@ describe('conversationIdForWatchedPath', () => {
     const roots = new Map([['a', '/tmp/a']])
     assert.equal(conversationIdForWatchedPath(roots, '/elsewhere'), undefined)
     assert.equal(conversationIdForWatchedPath(roots, ''), undefined)
+  })
+})
+
+describe('conversationIdForWorkdirs', () => {
+  it('picks the longest matching conversation workdir', () => {
+    const metas = [
+      { id: 'wide', workingDirectory: '/tmp/proj' },
+      { id: 'nested', workingDirectory: '/tmp/proj/pkg' },
+      { id: 'empty', workingDirectory: null }
+    ]
+    assert.equal(conversationIdForWorkdirs('/tmp/proj/pkg/src/a.ts', metas), 'nested')
+    assert.equal(conversationIdForWorkdirs('/elsewhere', metas), undefined)
   })
 })

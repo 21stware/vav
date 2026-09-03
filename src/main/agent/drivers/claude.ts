@@ -13,6 +13,7 @@ import {
   asString,
   dig,
   onJsonLines,
+  disposeStdioProcess,
   spawnStdioProcess,
   type StdioProcess
 } from './process'
@@ -223,9 +224,7 @@ function wireClaude(
     dispose(): void {
       if (disposed) return
       disposed = true
-      proc.closeStdin()
-      // Fallback if the CLI ignores stdin EOF.
-      setTimeout(() => proc.kill(), 2_000)
+      disposeStdioProcess(proc)
     }
   }
 }

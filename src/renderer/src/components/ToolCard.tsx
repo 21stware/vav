@@ -2,7 +2,7 @@ import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import { Check, ChevronRight, CircleAlert, Loader2 } from 'lucide-react'
 import { normalizeAskQuestions, parseToolInput } from '@shared/askPlan'
 import { normalizePlanDocInput, planDocHasBody } from '@shared/planDoc'
-import type { MessageKey } from '@shared/i18n'
+import { catalogTextEquals, catalogTextStartsWithTemplate, type MessageKey } from '@shared/i18n'
 import {
   TOOL_LABELS,
   type AskQuestion,
@@ -235,10 +235,7 @@ function TaskChildren({
 }
 
 function isBackgroundPidOutput(output: string): boolean {
-  return (
-    output.startsWith('后台运行 · pid') ||
-    (output.startsWith(tt('tool.background')) && output.includes('pid'))
-  )
+  return catalogTextStartsWithTemplate('tool.backgroundPid', output)
 }
 
 function isFireAndForget(block: ToolCallBlock): boolean {
@@ -552,8 +549,7 @@ function AskSealed({ block }: { block: ToolCallBlock }): React.JSX.Element {
   const answers = parseAnswers(block.output)
   const cancelled =
     block.status === 'skipped' ||
-    block.output === tt('tool.askCancelled') ||
-    block.output === '已取消'
+    catalogTextEquals('tool.askCancelled', block.output)
 
   return (
     <div

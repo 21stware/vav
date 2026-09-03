@@ -3,7 +3,8 @@ import { describe, it } from 'node:test'
 import {
   acceptSessionNavigateSeq,
   isCliSurfaceLocked,
-  resolveHydratedCliMode
+  resolveHydratedCliMode,
+  shouldFollowRemotePtySurface
 } from './cliSurfaceAuthority.ts'
 
 describe('resolveHydratedCliMode', () => {
@@ -47,6 +48,47 @@ describe('isCliSurfaceLocked', () => {
 
   it('leaves main unlocked when the session is here', () => {
     assert.equal(isCliSurfaceLocked('c1', ['c2'], false), false)
+  })
+})
+
+describe('shouldFollowRemotePtySurface', () => {
+  it('follows an explicit remote surface, then a detached parked session', () => {
+    assert.equal(
+      shouldFollowRemotePtySurface({
+        acceptRemoteSurface: true,
+        isCompanion: true,
+        conversationId: 'c1',
+        detachedIds: []
+      }),
+      true
+    )
+    assert.equal(
+      shouldFollowRemotePtySurface({
+        acceptRemoteSurface: false,
+        isCompanion: false,
+        conversationId: 'c1',
+        detachedIds: ['c1']
+      }),
+      true
+    )
+    assert.equal(
+      shouldFollowRemotePtySurface({
+        acceptRemoteSurface: false,
+        isCompanion: true,
+        conversationId: 'c1',
+        detachedIds: ['c1']
+      }),
+      false
+    )
+    assert.equal(
+      shouldFollowRemotePtySurface({
+        acceptRemoteSurface: false,
+        isCompanion: false,
+        conversationId: 'c1',
+        detachedIds: ['c2']
+      }),
+      false
+    )
   })
 })
 

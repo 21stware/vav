@@ -21,7 +21,7 @@ New session: pick a workspace, pick an agent, ask one thing. Multi-split CLI TUI
 
 - **File workbench** — tree / columns, format-aware preview (Office, PDF, Markdown, CSV, code, …), pick a block and ask beside the file
 - **Built-in VAV chat** — Anthropic-, OpenAI-, or Google-native API (model metadata and live model lists come from the provider); image attachments reach vision models inline; tools write to the session folder; accept / reject the diff
-- **CLI in the same thread** — Claude Code, Codex, Cursor, Grok, and others over their structured protocol (install from Settings if the binary is missing)
+- **CLI in the same thread** — Claude Code, Pi, Cursor, Devin, Antigravity, Codex, Grok, Kiro, OpenCode, and Cline over their structured protocol (install from Settings if the binary is missing)
 - **User PTY** (⌘T) — real bash / zsh / PowerShell; `top` and `vim` work
 - **Per-session working directory**, defaulting to a temporary workspace you can point at a real project; `vav .` / `vav /path` CLI open
 - **Git change inspector** — status + diff in the Files tray; commit stays in the terminal or the agent
@@ -71,11 +71,11 @@ On a machine that should host workspaces without opening the app:
 npx @21stware/vavd
 ```
 
-Paste the pairing line into VAV → Settings → Allow other devices.
+Listens on all interfaces by default (`--listen 127.0.0.1` for local-only). Paste the pairing line into VAV → Settings → Allow other devices. The pairing secret is equivalent to local access on that machine.
 
 ## Develop
 
-Requires Node 20+, macOS or Windows.
+Requires Node 22+, macOS or Windows.
 
 ```bash
 npm install

@@ -94,3 +94,20 @@ export function inferDiagramKind(path: string): OverlayDiagramKind | undefined {
   }
   return undefined
 }
+
+/** Fill missing kind/diagramKind and optionally collapse aliases in `path`. */
+export function normalizeOverlayPayload(
+  input: OverlayPayload | string,
+  normalizePath: (path: string) => string = (path) => path
+): OverlayPayload {
+  const raw = typeof input === 'string' ? { path: input } : input
+  const path = raw.path ? normalizePath(raw.path) : ''
+  const kind = raw.kind ?? (path ? inferOverlayKind(path) : undefined)
+  const diagramKind = raw.diagramKind ?? (path ? inferDiagramKind(path) : undefined)
+  return {
+    ...raw,
+    path: path || raw.path,
+    kind,
+    diagramKind
+  }
+}

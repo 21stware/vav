@@ -1,0 +1,89 @@
+import assert from 'node:assert/strict'
+import { describe, it } from 'node:test'
+import {
+  fileReadOnlySwitchBlock,
+  gateReadonlyExecute,
+  isFileEditLockedPath,
+  isReadonlyTerminalCommand,
+  resolveGatedToolParams,
+  executeGatedTool
+} from './fileEditLock.ts'
+
+describe('isFileEditLockedPath', () => {
+  it('locks PDF / HEIC / legacy Office / ZIP / drawio', () => {
+    assert.equal(isFileEditLockedPath('/a.pdf'), true)
+    assert.equal(isFileEditLockedPath('/a.heic'), true)
+    assert.equal(isFileEditLockedPath('/a.doc'), true)
+    assert.equal(isFileEditLockedPath('/a.docx'), false)
+    assert.equal(isFileEditLockedPath('/a.zip'), true)
+    assert.equal(isFileEditLockedPath('/a.ts'), false)
+    assert.equal(isFileEditLockedPath(null), false)
+  })
+})
+
+describe('fileReadOnlySwitchBlock', () => {
+  it('rejects a missing conversation and Edit on locked formats', () => {
+    assert.equal(fileReadOnlySwitchBlock(null, true), 'Conversation not found.')
+    assert.match(
+      fileReadOnlySwitchBlock({ focusedFilePath: '/a.pdf' }, false) ?? '',
+      /PDF \/ HEIC/
+    )
+    assert.equal(
+      fileReadOnlySwitchBlock({ focusedFilePath: '/a.ts', fileId: 'f' }, false, () => '/a.pdf'),
+      null
+    )
+    assert.match(
+      fileReadOnlySwitchBlock({ fileId: 'f' }, false, () => '/a.heic') ?? '',
+      /convert or Save As/
+    )
+    assert.equal(fileReadOnlySwitchBlock({ focusedFilePath: '/a.ts' }, true), null)
+    assert.equal(fileReadOnlySwitchBlock({ focusedFilePath: '/a.ts' }, false), null)
+  })
+})
+
+describe('isReadonlyTerminalCommand', () => {
+  it('allows common readers and rejects redirects / mutators', () => {
+    assert.equal(isReadonlyTerminalCommand('ls -la'), true)
+    assert.equal(isReadonlyTerminalCommand('cat README.md'), true)
+    assert.equal(isReadonlyTerminalCommand('echo hi > out.txt'), false)
+    assert.equal(isReadonlyTerminalCommand('rm -rf dist'), false)
+  })
+})
+
+describe('gateReadonlyExecute', () => {
+  it('is a no-op when the session can write', () => {
+    assert.equal(gateReadonlyExecute(false, 'fs_write', { path: '/a' }), null)
+  })
+
+  it('blocks fs_write and mutating shell in Read mode', () => {
+    const write = gateReadonlyExecute(true, 'fs_write', { path: '/a' })
+    assert.equal(write?.details.failed, true)
+    assert.match(write?.content[0]?.text ?? '', /switch_mode/)
+    const shell = gateReadonlyExecute(true, 'terminal', { command: 'rm file' })
+    assert.match(shell?.content[0]?.text ?? '', /Refused: rm file/)
+    assert.equal(gateReadonlyExecute(true, 'terminal', { command: 'ls' }), null)
+    assert.equal(gateReadonlyExecute(true, 'fs_read', { path: '/a' }), null)
+  })
+})
+
+describe('resolveGatedToolParams', () => {
+  it('gates on the original args then prefers an override', () => {
+    const blocked = resolveGatedToolParams(true, 'fs_write', { path: '/a' }, { path: '/b' })
+    assert.equal('blocked' in blocked, true)
+    const ok = resolveGatedToolParams(false, 'fs_write', { path: '/a' }, { path: '/b' })
+    assert.equal('params' in ok && ok.params.path, '/b')
+    const original = resolveGatedToolParams(false, 'fs_write', { path: '/a' }, undefined)
+    assert.equal('params' in original && original.params.path, '/a')
+  })
+})
+
+describe('executeGatedTool', () => {
+  it('resolves a blocked result and otherwise calls through', async () => {
+    const blocked = await executeGatedTool(true, 'fs_write', { path: '/a' }, undefined, () => {
+      throw new Error('should not run')
+    })
+    assert.equal(blocked.details.failed, true)
+    const ran = executeGatedTool(false, 'fs_write', { path: '/a' }, { path: '/b' }, (params) => params.path)
+    assert.equal(ran, '/b')
+  })
+})

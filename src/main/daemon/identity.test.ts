@@ -3,7 +3,7 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, it } from 'node:test'
-import { loadOrCreateIdentity, loadOrCreateSecret, persistSecret } from './identity.ts'
+import { loadOrCreateIdentity, loadOrCreateSecret, persistSecret, writePrivateJson } from './identity.ts'
 
 describe('daemon identity', () => {
   it('reuses a persisted machine id', async () => {
@@ -40,6 +40,24 @@ describe('daemon identity', () => {
       assert.equal(loadOrCreateSecret(dir), first)
       persistSecret(dir, '0123456789abcdef0123')
       assert.equal(loadOrCreateSecret(dir), '0123456789abcdef0123')
+      if (process.platform !== 'win32') {
+        const { stat } = await import('node:fs/promises')
+        const mode = (await stat(join(dir, 'secret.json'))).mode & 0o777
+        assert.equal(mode, 0o600)
+      }
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('writePrivateJson restricts mode on POSIX', async () => {
+    if (process.platform === 'win32') return
+    const dir = await mkdtemp(join(tmpdir(), 'vav-mode-'))
+    try {
+      const file = join(dir, 'secret.json')
+      writePrivateJson(file, { secret: 'x' })
+      const { stat } = await import('node:fs/promises')
+      assert.equal((await stat(file)).mode & 0o777, 0o600)
     } finally {
       await rm(dir, { recursive: true, force: true })
     }

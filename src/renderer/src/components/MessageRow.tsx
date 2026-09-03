@@ -365,7 +365,7 @@ export const MessageRow = memo(function MessageRow({
 
     return (
       <div className="message-turn user" data-testid="message-user" onContextMenu={onContextMenu}>
-        <div className="message-role">You</div>
+        <div className="message-role">{t('message.roleYou')}</div>
         <div className="message-group user">
           {message.quoteSummary && message.quoteMessageId && (
             <button
@@ -467,7 +467,7 @@ export const MessageRow = memo(function MessageRow({
 
   return (
     <div className="message-turn assistant" data-testid="message-assistant" onContextMenu={onContextMenu}>
-      <div className="message-role">Agent</div>
+      <div className="message-role">{t('message.roleAgent')}</div>
       <div className={classes} id={`msg-${message.id}`}>
         {(() => {
           const { process, conclusion } = splitAssistantProcess(message.blocks)

@@ -20,6 +20,24 @@ const MAX_DEPTH = 10_000
  */
 export const ROOT_LEAF = '@root'
 
+/** Drop the leaf to the prompt when regenerating an assistant reply. */
+export function regenerateActiveLeaf(target: {
+  role: string
+  id: string
+  parentId: string | null
+}): string | null {
+  return target.role === 'assistant' ? target.parentId : target.id
+}
+
+/** Fork a user prompt from its parent so two prompts are never adjacent. */
+export function forkActiveLeaf(target: {
+  role: string
+  id: string
+  parentId: string | null
+}): string {
+  return target.role === 'user' ? (target.parentId ?? ROOT_LEAF) : target.id
+}
+
 export function indexById(messages: ChatMessage[]): Map<string, ChatMessage> {
   return new Map(messages.map((message) => [message.id, message]))
 }
