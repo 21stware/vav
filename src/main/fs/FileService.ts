@@ -10,7 +10,7 @@ import type {
 } from '@shared/ipc'
 import { localFileStreamUrl } from '@shared/localFileUrl'
 import { mimeForPreviewKind, previewKind } from '@shared/previewKind'
-import { inspectSqlite, isSqlitePath, querySqliteTable } from './SqliteService'
+import { inspectSqlite, isSqlitePath, querySqliteTable, closeAllSqlite } from './SqliteService'
 import {
   DIRECTORY_ENTRY_CAP,
   isIgnoredName,
@@ -760,6 +760,7 @@ export class FileService {
 
   disposeAll(): void {
     for (const id of [...this.watchers.keys()]) this.unwatch(id)
+    closeAllSqlite()
   }
 }
 

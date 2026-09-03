@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, it } from 'node:test'
-import { inspectSqlite, isSqlitePath, querySqliteTable } from './SqliteService.ts'
+import { inspectSqlite, isSqlitePath, querySqliteTable, closeSqlite } from './SqliteService.ts'
 
 describe('SqliteService', () => {
   it('classifies sqlite paths', () => {
@@ -33,7 +33,8 @@ describe('SqliteService', () => {
       const rejected = querySqliteTable(path, 'items; drop table items', 0, 10)
       assert.match(rejected.error ?? '', /Invalid table name/)
     } finally {
-      rmSync(dir, { recursive: true, force: true })
+      closeSqlite(path)
+      rmSync(dir, { recursive: true, force: true, maxRetries: 8, retryDelay: 25 })
     }
   })
 })
