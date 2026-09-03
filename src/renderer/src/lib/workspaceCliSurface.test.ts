@@ -10,6 +10,7 @@ import {
   planEnterCliMode,
   planSplitCliSurface,
   preferredCliAssignTabId,
+  solePendingCliTabId,
   reconcileAgentHosts,
   type AgentHostSession
 } from './workspaceCliSurface.ts'
@@ -202,5 +203,22 @@ describe('workspaceCliSurface', () => {
       }),
       undefined
     )
+  })
+
+  it('resumes into a lone pending picker and ignores mixed surfaces', () => {
+    assert.equal(
+      solePendingCliTabId({ tabs: [tab({ id: 'cli-pending:a', pendingCli: true, agentId: null })] }),
+      'cli-pending:a'
+    )
+    assert.equal(
+      solePendingCliTabId({
+        tabs: [
+          tab({ id: 'cli-pending:a', pendingCli: true, agentId: null }),
+          tab({ id: 'pty-1', agentId: 'claude' })
+        ]
+      }),
+      null
+    )
+    assert.equal(solePendingCliTabId({ tabs: [tab({ id: 'pty-1', agentId: 'claude' })] }), null)
   })
 })

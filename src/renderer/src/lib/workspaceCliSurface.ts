@@ -287,6 +287,15 @@ export function planEnterCliMode(
   }
 }
 
+/** Resume into the lone picker leaf; otherwise the caller splits a new one. */
+export function solePendingCliTabId(
+  surface: { tabs: Array<{ id: string; pendingCli?: boolean }> } | undefined
+): string | null {
+  return surface && surface.tabs.length === 1 && surface.tabs[0]?.pendingCli === true
+    ? surface.tabs[0]!.id
+    : null
+}
+
 export type SplitCliSurfacePlan =
   | {
       kind: 'seed'

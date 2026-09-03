@@ -26,6 +26,7 @@ import {
   planEnterCliMode,
   planSplitCliSurface,
   preferredCliAssignTabId,
+  solePendingCliTabId,
   reconcileAgentHosts,
   type AgentHostSession
 } from '../lib/workspaceCliSurface'
@@ -1220,14 +1221,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       surface = getCliSurface(get().workspaces[id])
     }
 
-    const pendingOnly =
-      surface &&
-      surface.tabs.length === 1 &&
-      surface.tabs[0]?.pendingCli === true
-        ? surface.tabs[0].id
-        : null
-
-    let tabId = pendingOnly
+    let tabId = solePendingCliTabId(surface)
     if (!tabId) {
       const focused = focusedCliPaneId() || surface?.activeTabId
       const rects = measureCliPaneRects()
