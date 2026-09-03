@@ -133,6 +133,10 @@ export function isSessionLevelAcpUpdate(
     n === 'sessioninfoupdate' ||
     n === 'sessionsummarygenerated' ||
     n === 'modelchanged' ||
+    n === 'goal' ||
+    n === 'goalupdate' ||
+    update.goal !== undefined ||
+    asRecord(update._meta)?.goal !== undefined ||
     asRecord(update.usage) != null
   )
 }

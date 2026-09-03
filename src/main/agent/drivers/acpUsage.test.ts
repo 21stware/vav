@@ -161,6 +161,11 @@ describe('isSessionLevelAcpUpdate', () => {
     assert.equal(isSessionLevelAcpUpdate('session_info_update', {}), true)
     assert.equal(isSessionLevelAcpUpdate('session_summary_generated', {}), true)
     assert.equal(isSessionLevelAcpUpdate('model_changed', {}), true)
+    assert.equal(isSessionLevelAcpUpdate('goal', { objective: 'Ship' }), true)
+    assert.equal(
+      isSessionLevelAcpUpdate('agent_thought_chunk', { _meta: { goal: { objective: 'Ship' } } }),
+      true
+    )
     assert.equal(isSessionLevelAcpUpdate('agent_message_chunk', { content: {} }), false)
     assert.equal(isSessionLevelAcpUpdate('tool_call', { toolCallId: '1' }), false)
   })

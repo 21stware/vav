@@ -58,6 +58,40 @@ export interface AcpPromptCapabilities {
   embeddedContext: boolean
 }
 
+export type GoalAction = 'set' | 'pause' | 'resume' | 'clear'
+export type GoalStatus = 'active' | 'paused' | 'blocked' | 'limited' | 'complete'
+
+export const GOAL_ACTIONS: readonly GoalAction[] = ['set', 'pause', 'resume', 'clear']
+
+/** Grok Build `/goal` surface — also used when a host advertises the command. */
+export const GROK_GOAL_COMMAND: AcpAvailableCommand = {
+  name: 'goal',
+  description: 'Set a long-running goal; pause / resume / clear / status',
+  hint: '<objective> | pause | resume | clear | status'
+}
+
+export interface GoalCapability {
+  version: number
+  /** `_session/goal` for the ACP extension, or `slash` for `/goal` prompts. */
+  controlMethod: string
+  /** Actions the UI may offer. */
+  actions: GoalAction[]
+  /** Subset actually accepted by `controlMethod`. Others use `/goal` slash. */
+  methodActions?: GoalAction[]
+}
+
+export interface GoalSnapshot {
+  objective: string
+  status: GoalStatus
+  createdAt?: number
+  updatedAt?: number
+  iterations?: number
+  lastReason?: string
+  tokenBudget?: number | null
+  tokensUsed?: number
+  timeUsedSeconds?: number
+}
+
 export interface AcpSessionState {
   currentModeId?: string | null
   modes?: AcpSessionMode[]
@@ -66,6 +100,9 @@ export interface AcpSessionState {
   sessionTitle?: string | null
   /** Cursor thinking levels this model actually accepts. */
   thinkingLevels?: Array<'off' | 'low' | 'medium' | 'high' | 'max'>
+  goalCapability?: GoalCapability | null
+  /** Session-scoped goal. `null` clears; omit to leave unchanged on merge. */
+  goal?: GoalSnapshot | null
 }
 
 export type AcpContentBlock =
@@ -262,13 +299,18 @@ export function parseAcpSessionState(raw: unknown, previous?: AcpSessionState | 
     asString(asRecord(rec.sessionInfo)?.title) ||
     asString(asRecord(rec.session_info)?.title) ||
     null
+  const goal = parseAcpGoalSnapshot(
+    rec.goal ?? asRecord(rec._meta)?.goal ?? asRecord(asRecord(rec.sessionInfo)?._meta)?.goal
+  )
   return {
     currentModeId: modes.currentModeId ?? previous?.currentModeId ?? null,
     modes: modes.modes.length ? modes.modes : previous?.modes,
     commands: commands.length ? commands : previous?.commands,
     configOptions: configOptions.length ? configOptions : previous?.configOptions,
     sessionTitle: title ?? previous?.sessionTitle ?? null,
-    thinkingLevels: previous?.thinkingLevels
+    thinkingLevels: previous?.thinkingLevels,
+    goalCapability: previous?.goalCapability,
+    goal: goal !== undefined ? goal : previous?.goal ?? null
   }
 }
 
@@ -282,7 +324,10 @@ export function mergeAcpSessionState(
     commands: patch.commands ?? previous?.commands,
     configOptions: patch.configOptions ?? previous?.configOptions,
     sessionTitle: patch.sessionTitle !== undefined ? patch.sessionTitle : previous?.sessionTitle ?? null,
-    thinkingLevels: patch.thinkingLevels ?? previous?.thinkingLevels
+    thinkingLevels: patch.thinkingLevels ?? previous?.thinkingLevels,
+    goalCapability:
+      patch.goalCapability !== undefined ? patch.goalCapability : previous?.goalCapability ?? null,
+    goal: patch.goal !== undefined ? patch.goal : previous?.goal ?? null
   }
 }
 
@@ -459,4 +504,233 @@ export function fileUri(path: string): string {
 export function fileNameFromPath(path: string): string {
   const slash = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'))
   return slash >= 0 ? path.slice(slash + 1) : path
+}
+
+function isGoalAction(value: string): value is GoalAction {
+  return value === 'set' || value === 'pause' || value === 'resume' || value === 'clear'
+}
+
+function parseGoalStatus(raw: unknown): GoalStatus | null {
+  const key = String(raw ?? '')
+    .trim()
+    .toLowerCase()
+    .replace(/[\s-]+/g, '_')
+  if (key === 'active' || key === 'running' || key === 'in_progress') return 'active'
+  if (key === 'paused' || key === 'pause') return 'paused'
+  if (key === 'blocked') return 'blocked'
+  if (key === 'limited' || key === 'usagelimited' || key === 'budgetlimited') return 'limited'
+  if (key === 'complete' || key === 'completed' || key === 'done' || key === 'finished') {
+    return 'complete'
+  }
+  return null
+}
+
+function goalTimestamp(raw: unknown): number | undefined {
+  if (typeof raw !== 'number' || !Number.isFinite(raw)) return undefined
+  // Codex historically used seconds; ACP extension uses Unix ms.
+  return raw > 0 && raw < 1e12 ? Math.round(raw * 1000) : Math.round(raw)
+}
+
+function goalNumber(raw: unknown): number | undefined {
+  if (typeof raw === 'number' && Number.isFinite(raw)) return raw
+  if (typeof raw === 'string' && raw.trim()) {
+    const n = Number(raw)
+    if (Number.isFinite(n)) return n
+  }
+  return undefined
+}
+
+function uniqueGoalActions(actions: GoalAction[]): GoalAction[] {
+  const seen = new Set<GoalAction>()
+  const out: GoalAction[] = []
+  for (const action of actions) {
+    if (seen.has(action)) continue
+    seen.add(action)
+    out.push(action)
+  }
+  return out
+}
+
+export function commandsHaveGoal(commands: AcpAvailableCommand[] | undefined): boolean {
+  return (commands ?? []).some((command) => command.name.toLowerCase() === 'goal')
+}
+
+export function parseAcpGoalCapability(raw: unknown): GoalCapability | null {
+  const rec = asRecord(raw)
+  if (!rec) return null
+  if (asString(rec.objective) && !asArray(rec.actions) && !asString(rec.controlMethod)) {
+    return null
+  }
+  const actions: GoalAction[] = []
+  for (const item of asArray(rec.actions) ?? []) {
+    const name = typeof item === 'string' ? item.trim().toLowerCase() : ''
+    if (isGoalAction(name)) actions.push(name)
+  }
+  if (actions.length === 0) return null
+  return {
+    version: typeof rec.version === 'number' && Number.isFinite(rec.version) ? rec.version : 1,
+    controlMethod: asString(rec.controlMethod) || asString(rec.control_method) || '_session/goal',
+    actions,
+    methodActions: [...actions]
+  }
+}
+
+/**
+ * `undefined` = field absent (keep current). `null` = explicit clear.
+ */
+export function parseAcpGoalSnapshot(raw: unknown): GoalSnapshot | null | undefined {
+  if (raw === undefined) return undefined
+  if (raw === null) return null
+  const rec = asRecord(raw)
+  if (!rec) return undefined
+  if (asArray(rec.actions) || asString(rec.controlMethod) || asString(rec.control_method)) {
+    return undefined
+  }
+  const objective =
+    asString(rec.objective) || asString(rec.condition) || asString(rec.title) || ''
+  const status = parseGoalStatus(rec.status)
+  if (!objective && !status) return undefined
+  return {
+    objective: objective || 'Goal',
+    status: status ?? 'active',
+    createdAt: goalTimestamp(rec.createdAt ?? rec.created_at ?? rec.setAt ?? rec.set_at),
+    updatedAt: goalTimestamp(rec.updatedAt ?? rec.updated_at),
+    iterations: goalNumber(rec.iterations),
+    lastReason: asString(rec.lastReason) || asString(rec.last_reason) || undefined,
+    tokenBudget:
+      rec.tokenBudget === null || rec.token_budget === null
+        ? null
+        : goalNumber(rec.tokenBudget ?? rec.token_budget),
+    tokensUsed: goalNumber(rec.tokensUsed ?? rec.tokens_used),
+    timeUsedSeconds: goalNumber(rec.timeUsedSeconds ?? rec.time_used_seconds)
+  }
+}
+
+export function readGoalSnapshotFromUpdate(update: Record<string, unknown>): GoalSnapshot | null | undefined {
+  const meta = asRecord(update._meta)
+  return parseAcpGoalSnapshot(update.goal ?? meta?.goal)
+}
+
+export function seedGoalCommands(
+  kind: string,
+  commands: AcpAvailableCommand[]
+): AcpAvailableCommand[] {
+  if (kind !== 'grok' || commandsHaveGoal(commands)) return commands
+  return [GROK_GOAL_COMMAND, ...commands]
+}
+
+export function resolveGoalCapability(
+  kind: string,
+  advertised: GoalCapability | null,
+  commands: AcpAvailableCommand[]
+): GoalCapability | null {
+  const slash = kind === 'grok' || commandsHaveGoal(commands)
+  if (advertised) {
+    const methodActions = advertised.methodActions ?? advertised.actions
+    const actions = slash
+      ? uniqueGoalActions([...advertised.actions, ...GOAL_ACTIONS])
+      : advertised.actions
+    return {
+      version: advertised.version || 1,
+      controlMethod: advertised.controlMethod || '_session/goal',
+      actions,
+      methodActions
+    }
+  }
+  if (!slash) return null
+  return {
+    version: 1,
+    controlMethod: 'slash',
+    actions: [...GOAL_ACTIONS],
+    methodActions: []
+  }
+}
+
+export function goalUsesRpc(
+  capability: GoalCapability | null | undefined,
+  action: GoalAction
+): boolean {
+  if (!capability) return false
+  const method = capability.controlMethod.trim()
+  if (!method || method === 'slash') return false
+  const rpc = capability.methodActions ?? capability.actions
+  return rpc.includes(action)
+}
+
+export function goalSlashText(action: GoalAction, objective?: string): string {
+  if (action === 'set') return `/goal ${objective?.trim() ?? ''}`.trim()
+  return `/goal ${action}`
+}
+
+export function applyGoalSlash(
+  current: GoalSnapshot | null | undefined,
+  text: string
+): GoalSnapshot | null | undefined {
+  const parsed = parseSlashDraft(text.trim())
+  if (!parsed || parsed.name.toLowerCase() !== 'goal') return undefined
+  const rest = parsed.rest.trim()
+  const [cmd] = rest.split(/\s+/)
+  const key = (cmd ?? '').toLowerCase()
+  if (!key || key === 'status') return undefined
+  const now = Date.now()
+  if (key === 'clear' && rest.toLowerCase() === 'clear') return null
+  if (key === 'pause' && rest.toLowerCase() === 'pause') {
+    if (!current) return { objective: 'Goal', status: 'paused', updatedAt: now }
+    return { ...current, status: 'paused', updatedAt: now }
+  }
+  if (key === 'resume' && rest.toLowerCase() === 'resume') {
+    if (!current) return { objective: 'Goal', status: 'active', updatedAt: now }
+    return { ...current, status: 'active', updatedAt: now }
+  }
+  return {
+    objective: rest,
+    status: 'active',
+    createdAt: current?.createdAt ?? now,
+    updatedAt: now
+  }
+}
+
+export function optimisticGoal(
+  current: GoalSnapshot | null | undefined,
+  action: GoalAction,
+  objective?: string
+): GoalSnapshot | null | undefined {
+  const now = Date.now()
+  if (action === 'clear') return null
+  if (action === 'set') {
+    const text = objective?.trim()
+    if (!text) return undefined
+    return {
+      objective: text,
+      status: 'active',
+      createdAt: current?.createdAt ?? now,
+      updatedAt: now
+    }
+  }
+  if (action === 'pause') {
+    if (!current) return { objective: 'Goal', status: 'paused', updatedAt: now }
+    return { ...current, status: 'paused', updatedAt: now }
+  }
+  if (action === 'resume') {
+    if (!current) return { objective: 'Goal', status: 'active', updatedAt: now }
+    return { ...current, status: 'active', updatedAt: now }
+  }
+  return undefined
+}
+
+export function goalBannerActions(
+  goal: GoalSnapshot,
+  capability: GoalCapability | null | undefined
+): GoalAction[] {
+  const allowed = new Set(capability?.actions ?? ['clear'])
+  const out: GoalAction[] = []
+  if (goal.status === 'active' && allowed.has('pause')) out.push('pause')
+  if (
+    (goal.status === 'paused' || goal.status === 'blocked' || goal.status === 'limited') &&
+    allowed.has('resume')
+  ) {
+    out.push('resume')
+  }
+  if (allowed.has('clear')) out.push('clear')
+  return out
 }

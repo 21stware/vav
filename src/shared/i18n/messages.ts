@@ -540,6 +540,8 @@ export const zhCN = {
   'files.error.readDir': '无法读取目录',
   'files.lines': '{n} 行',
   'files.items': '{n} 项',
+  'preview.csvSheet': '{rows} 行 × {cols} 列',
+  'preview.csvSheetCapped': '显示 {shown} / {total} 行 × {cols} 列',
 
   // —— approval / ask ——
   'approval.title': '{name} · 待批准',
@@ -1248,6 +1250,16 @@ export const zhCN = {
   'planDoc.reject': '拒绝',
   'planDoc.accepted': '已接受',
   'planDoc.rejected': '已拒绝',
+  'goal.label': '目标',
+  'goal.status.active': '进行中',
+  'goal.status.paused': '已暂停',
+  'goal.status.blocked': '受阻',
+  'goal.status.limited': '额度受限',
+  'goal.status.complete': '已完成',
+  'goal.pause': '暂停',
+  'goal.resume': '继续',
+  'goal.clear': '清除',
+  'goal.controlFailed': '目标操作失败',
 
   // —— dialogs ——
   'dialog.deleteSessions': '删除 {count} 个会话',
@@ -2678,6 +2690,8 @@ export const en: Record<MessageKey, string> = {
   'files.error.readDir': 'Could not read directory',
   'files.lines': '{n} lines',
   'files.items': '{n} items',
+  'preview.csvSheet': '{rows} rows × {cols} cols',
+  'preview.csvSheetCapped': 'Showing {shown} / {total} rows × {cols} cols',
 
   'approval.title': '{name} · Awaiting approval',
   'approval.titleEdit': '{name} · Edit & approve',
@@ -3400,6 +3414,16 @@ export const en: Record<MessageKey, string> = {
   'planDoc.reject': 'Reject',
   'planDoc.accepted': 'Accepted',
   'planDoc.rejected': 'Rejected',
+  'goal.label': 'Goal',
+  'goal.status.active': 'Active',
+  'goal.status.paused': 'Paused',
+  'goal.status.blocked': 'Blocked',
+  'goal.status.limited': 'Limited',
+  'goal.status.complete': 'Complete',
+  'goal.pause': 'Pause',
+  'goal.resume': 'Resume',
+  'goal.clear': 'Clear',
+  'goal.controlFailed': 'Could not update the goal',
 
   'dialog.deleteSessions': 'Delete {count} sessions',
   'dialog.deleteSession': 'Delete session',

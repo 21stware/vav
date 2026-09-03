@@ -9,19 +9,27 @@ import {
   ACP_CLIENT_CAPABILITIES,
   ACP_PROTOCOL_VERSION,
   acpFormContentFromAnswers,
+  applyGoalSlash,
+  goalUsesRpc,
   mergeAcpSessionState,
+  optimisticGoal,
   parseAcpAuthMethods,
   parseAcpAvailableCommands,
   parseAcpConfigOptions,
   parseAcpFormSchema,
+  parseAcpGoalCapability,
   parseAcpPromptCapabilities,
   parseAcpSessionModes,
   parseGrokSessionConfig,
+  readGoalSnapshotFromUpdate,
+  resolveGoalCapability,
+  seedGoalCommands,
   type AcpAuthMethod,
   type AcpContentBlock,
   type AcpFormField,
   type AcpPromptCapabilities,
-  type AcpSessionState
+  type AcpSessionState,
+  type GoalCapability
 } from '../../../shared/acpSession.ts'
 import {
   acpPlanEntriesToSteps,
@@ -247,6 +255,7 @@ export function wireAcp(
     embeddedContext: false
   }
   let sessionState: AcpSessionState = {}
+  let advertisedGoal: GoalCapability | null = null
   const pendingPrompts: QueuedPrompt[] = []
   const pendingRpc = new Map<number, (result: unknown, error?: unknown) => void>()
   const pendingClient = new Map<string, PendingClient>()
@@ -334,12 +343,12 @@ export function wireAcp(
             mcpServers: []
           })
         )
-        ingestSessionSetup(loaded)
+        ingestSessionSetup(loaded, { resume: true })
         return
       } catch {
         try {
           const resumed = asRecord(await request('session/resume', { sessionId, cwd: options.cwd }))
-          ingestSessionSetup(resumed)
+          ingestSessionSetup(resumed, { resume: true })
           return
         } catch {
           sessionId = null
@@ -352,7 +361,7 @@ export function wireAcp(
       asString(created?.sessionId) ||
       asString(created?.session_id) ||
       asString(dig(created, 'session.id'))
-    ingestSessionSetup(created)
+    ingestSessionSetup(created, { resume: false })
   }
 
   const wantedPrefs = (): { thinkingLevel: typeof wantedThinking; fast: typeof wantedFast } => ({
@@ -386,12 +395,16 @@ export function wireAcp(
     }
   }
 
-  const ingestSessionSetup = (created: Record<string, unknown> | null): void => {
+  const ingestSessionSetup = (
+    created: Record<string, unknown> | null,
+    opts: { resume: boolean }
+  ): void => {
     if (!created) return
     const modes = parseAcpSessionModes(created.modes)
     const configOptions = parseAcpConfigOptions(created.configOptions ?? created.config_options)
-    const commands = parseAcpAvailableCommands(
-      created.availableCommands ?? created.available_commands
+    const commands = seedGoalCommands(
+      kind,
+      parseAcpAvailableCommands(created.availableCommands ?? created.available_commands)
     )
     const meta = asRecord(created._meta)
     const grokConfig = parseGrokSessionConfig(
@@ -399,13 +412,20 @@ export function wireAcp(
     )
     // Grok has no standard ACP modes. Do not project effort ids as plan/agent.
     const useStandardModes = kind !== 'grok' || modes.modes.length > 0
+    const snapshot = readGoalSnapshotFromUpdate(created)
     publishSessionState({
       currentModeId: useStandardModes ? modes.currentModeId : null,
       modes: useStandardModes ? modes.modes : [],
       configOptions: kind === 'grok' && !configOptions.length ? [] : configOptions,
       commands,
       sessionTitle: asString(created.title) || asString(meta?.sessionTitle),
-      thinkingLevels: grokConfig.thinkingLevels.length ? grokConfig.thinkingLevels : undefined
+      thinkingLevels: grokConfig.thinkingLevels.length ? grokConfig.thinkingLevels : undefined,
+      goalCapability: resolveGoalCapability(kind, advertisedGoal, commands),
+      ...(opts.resume
+        ? snapshot !== undefined
+          ? { goal: snapshot }
+          : {}
+        : { goal: snapshot ?? null })
     })
     const modelsField = created.models
     if (modelsField != null) lastModelsField = modelsField
@@ -527,9 +547,18 @@ export function wireAcp(
       )
       canLogout = asRecord(caps?.auth)?.logout != null || caps?.logout === true
       const authMethods = parseAcpAuthMethods(init?.authMethods ?? init?.auth_methods)
+      advertisedGoal = parseAcpGoalCapability(dig(init, '_meta.goal'))
       const initMeta = asRecord(init?._meta)
-      const initCommands = parseAcpAvailableCommands(initMeta?.availableCommands)
-      if (initCommands.length) publishSessionState({ commands: initCommands })
+      const initCommands = seedGoalCommands(
+        kind,
+        parseAcpAvailableCommands(initMeta?.availableCommands)
+      )
+      if (initCommands.length) {
+        publishSessionState({
+          commands: initCommands,
+          goalCapability: resolveGoalCapability(kind, advertisedGoal, initCommands)
+        })
+      }
 
       if (kind === 'grok') {
         const grokAuth = authMethods.find(
@@ -625,16 +654,24 @@ export function wireAcp(
       const update = asRecord(params.update) ?? params
       const updateKind = sessionUpdateKind(update, params)
       if (!turnActive && !isSessionLevelAcpUpdate(updateKind, update)) return
-      handleSessionUpdate(params, emit, (steps) => {
-        lastTodos = steps
-      }, (patch) => {
-        if (kind === 'grok' && patch.currentModeId && isGrokEffortId(patch.currentModeId)) {
-          const { currentModeId: _effort, ...rest } = patch
-          if (Object.keys(rest).length) publishSessionState(rest)
-          return
-        }
-        publishSessionState(patch)
-      })
+      const goal = readGoalSnapshotFromUpdate(update)
+      if (goal !== undefined) publishSessionState({ goal })
+      handleSessionUpdate(
+        params,
+        emit,
+        (steps) => {
+          lastTodos = steps
+        },
+        (patch) => {
+          if (kind === 'grok' && patch.currentModeId && isGrokEffortId(patch.currentModeId)) {
+            const { currentModeId: _effort, ...rest } = patch
+            if (Object.keys(rest).length) publishSessionState(rest)
+            return
+          }
+          publishSessionState(patch)
+        },
+        { kind, advertisedGoal }
+      )
       return
     }
 
@@ -806,6 +843,8 @@ export function wireAcp(
       prompt = [{ type: 'text', text: promptText }]
     }
     send('session/prompt', { sessionId, prompt }, id)
+    const slashGoal = applyGoalSlash(sessionState.goal, promptText)
+    if (slashGoal !== undefined) publishSessionState({ goal: slashGoal })
   }
 
   const cancelPending = (outcome: 'cancelled' | 'decline'): void => {
@@ -951,6 +990,30 @@ export function wireAcp(
           })
           .catch(() => undefined)
       }
+      if (opts.goal && sessionId) {
+        const goalReq = opts.goal
+        const cap = sessionState.goalCapability
+        if (cap && goalUsesRpc(cap, goalReq.action)) {
+          const params: Record<string, unknown> = { sessionId, action: goalReq.action }
+          if (goalReq.action === 'set' && goalReq.objective?.trim()) {
+            params.objective = goalReq.objective.trim()
+          }
+          void request(cap.controlMethod, params)
+            .then(() => {
+              const next = optimisticGoal(sessionState.goal, goalReq.action, goalReq.objective)
+              if (next !== undefined) publishSessionState({ goal: next })
+            })
+            .catch((err) => {
+              const extracted = extractRpcError(err)
+              emit({
+                type: 'error',
+                message: extracted.text || 'Goal control failed',
+                errorCode: extracted.code ?? undefined,
+                errorDetail: formatErrorDetail(err, extracted.text)
+              })
+            })
+        }
+      }
       return true
     },
     dispose(): void {
@@ -986,7 +1049,8 @@ function handleSessionUpdate(
   params: Record<string, unknown>,
   emit: DriverEventSink,
   onPlanSteps?: (steps: PlanStep[]) => void,
-  onSessionState?: (patch: Partial<AcpSessionState>) => void
+  onSessionState?: (patch: Partial<AcpSessionState>) => void,
+  goalHost?: { kind: AcpHostKind; advertisedGoal: GoalCapability | null }
 ): void {
   const update = asRecord(params.update) ?? params
   const kind = sessionUpdateKind(update, params)
@@ -1057,7 +1121,15 @@ function handleSessionUpdate(
   }
 
   if (norm === 'availablecommandsupdate') {
-    onSessionState?.({ commands: parseAcpAvailableCommands(update) })
+    const commands = seedGoalCommands(goalHost?.kind ?? '', parseAcpAvailableCommands(update))
+    onSessionState?.({
+      commands,
+      goalCapability: resolveGoalCapability(
+        goalHost?.kind ?? '',
+        goalHost?.advertisedGoal ?? null,
+        commands
+      )
+    })
     return
   }
   if (norm === 'currentmodeupdate') {
@@ -1071,12 +1143,14 @@ function handleSessionUpdate(
     return
   }
   if (norm === 'sessioninfoupdate' || norm === 'sessionsummarygenerated') {
+    const goal = readGoalSnapshotFromUpdate(update)
     onSessionState?.({
       sessionTitle:
         asString(update.title) ||
         asString(update.summary) ||
         asString(update.session_summary) ||
-        asString(dig(update, 'sessionInfo.title'))
+        asString(dig(update, 'sessionInfo.title')),
+      ...(goal !== undefined ? { goal } : {})
     })
     return
   }

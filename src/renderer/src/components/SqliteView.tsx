@@ -216,8 +216,8 @@ export function SqliteView({
       kind: 'table',
       text,
       label: `table ${active}`,
-      startLine: 1,
-      endLine: 1
+      startLine: 0,
+      endLine: 0
     })
   }
 
@@ -229,8 +229,8 @@ export function SqliteView({
       kind: 'col',
       text: col,
       label: `${active}.${col}`,
-      startLine: 1,
-      endLine: Math.max(1, total)
+      startLine: 0,
+      endLine: 0
     })
   }
 
@@ -242,8 +242,8 @@ export function SqliteView({
       kind: 'row',
       text: pairs.join(' | '),
       label: `${active} · row ${abs + 1}`,
-      startLine: abs + 1,
-      endLine: abs + 1
+      startLine: 0,
+      endLine: 0
     })
   }
 
@@ -265,8 +265,8 @@ export function SqliteView({
       kind: 'cell-table',
       text: cell,
       label: `${active}.${col} · row ${abs + 1}`,
-      startLine: abs + 1,
-      endLine: abs + 1
+      startLine: 0,
+      endLine: 0
     })
   }
 
