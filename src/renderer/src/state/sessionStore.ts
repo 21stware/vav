@@ -789,7 +789,7 @@ interface SessionState {
     purpose?: 'workdir' | 'locate'
   ): void
   closeRemoteFolderPicker(): void
-  /** Move a Temporary workspace into a real directory (name + copy). */
+  /** Move a Temporary workspace so the chosen folder contains `Workspace`. */
   locateWorkspace(id: string): Promise<void>
   finishLocateWorkspace(id: string, destinationDir: string): Promise<void>
   setSidebarQuery(query: string): void
@@ -2068,13 +2068,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   },
 
   async finishLocateWorkspace(id, destinationDir) {
-    const conversation = get().conversations.find((c) => c.id === id)
-    const defaultName = (conversation?.title || 'workspace')
-      .replace(/[\\/]/g, '-')
-      .slice(0, 64)
-    const name = window.prompt(tt('dialog.locateWorkspaceName'), defaultName)
-    if (name == null) return
-    const result = await window.vav.conversations.locateWorkspace(id, destinationDir, name.trim())
+    const result = await window.vav.conversations.locateWorkspace(id, destinationDir)
     if (!result.ok) {
       get().showDialog({
         title: tt('error.locateFailed'),

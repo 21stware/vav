@@ -27,8 +27,6 @@ import {
   readdirSync,
   readFileSync,
   realpathSync,
-  renameSync,
-  rmdirSync,
   statSync,
   writeFileSync
 } from 'node:fs'
@@ -164,6 +162,7 @@ import { VavPackService } from './store/VavPackService'
 import { FileSessionStore } from './store/FileSessionStore'
 import { SwarmHistoryStore } from './store/SwarmHistoryStore'
 import { FileService } from './fs/FileService'
+import { locateTempWorkspaceToDir } from './fs/locateTempWorkspace'
 import { HostRegistry } from './host'
 import { openSpawn, previewSpawn, revealSpawn } from './host/hostShell'
 import { isClipPath, writeClip, writeClipBytes } from './fs/clipStore'
@@ -7877,50 +7876,48 @@ return c as text`
     return applyWorkingDirectory(id, await mintTempWorkdirOn(machineId), machineId)
   })
 
-  ipcMain.handle(
-    IPC.convLocateWorkspace,
-    async (_event, id: string, destinationDir: string, name: string) => {
-      const conversation = conversationStore.get(id)
-      if (!conversation?.workingDirectory) {
+  ipcMain.handle(IPC.convLocateWorkspace, async (_event, id: string, destinationDir: string) => {
+    const conversation = conversationStore.get(id)
+    if (!conversation?.workingDirectory) {
+      return { ok: false as const, error: t('error.locateNoTemp') }
+    }
+    const machineId = conversation.machineId
+    const host = hostRegistry.hostFor(machineId)
+    const dest = String(destinationDir || '').trim()
+    if (!dest) {
+      return { ok: false as const, error: t('error.locateFailed') }
+    }
+    try {
+      if (!isLocalMachine(machineId) && !host.info.online) {
+        return { ok: false as const, error: `${host.info.name} is offline` }
+      }
+      const located = await locateTempWorkspaceToDir({
+        workdir: conversation.workingDirectory,
+        destinationDir: dest,
+        platform: host.info.platform,
+        fs: host.fs,
+        crossDeviceCopy: isLocalMachine(machineId)
+      })
+      if (!located.ok) {
+        if (located.error === 'exists') {
+          return {
+            ok: false as const,
+            error: t('error.locateExists', { target: located.target ?? dest })
+          }
+        }
         return { ok: false as const, error: t('error.locateNoTemp') }
       }
-      const source = conversation.workingDirectory
-      const machineId = conversation.machineId
-      const host = hostRegistry.hostFor(machineId)
-      const safeName = name.trim().replace(/[\\/]/g, '-') || 'workspace'
-      const target = joinHostPath(host.info.platform, destinationDir, safeName)
-      try {
-        if (isLocalMachine(machineId)) {
-          if (existsSync(target)) {
-            return { ok: false as const, error: t('error.locateExists', { target }) }
-          }
-          mkdirSync(destinationDir, { recursive: true })
-          renameSync(source, target)
-          try {
-            rmdirSync(dirname(source))
-            rmdirSync(dirname(dirname(source)))
-          } catch {
-            // leave leftover empty dirs
-          }
-        } else {
-          if (!host.info.online) {
-            return { ok: false as const, error: `${host.info.name} is offline` }
-          }
-          if (await host.fs.exists(target)) {
-            return { ok: false as const, error: t('error.locateExists', { target }) }
-          }
-          await host.fs.mkdir(destinationDir, { recursive: true })
-          await host.fs.rename(source, target)
-        }
-        return { ok: true as const, conversations: applyWorkingDirectory(id, target, machineId) }
-      } catch (err) {
-        return {
-          ok: false as const,
-          error: err instanceof Error ? err.message : t('error.locateFailed')
-        }
+      return {
+        ok: true as const,
+        conversations: applyWorkingDirectory(id, located.nextWorkdir, machineId)
+      }
+    } catch (err) {
+      return {
+        ok: false as const,
+        error: err instanceof Error ? err.message : t('error.locateFailed')
       }
     }
-  )
+  })
 
   ipcMain.handle(IPC.convDeleteMessage, (_event, id: string, messageId: string) => {
     const conversation = conversationStore.deleteMessage(id, messageId)

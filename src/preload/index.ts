@@ -124,8 +124,8 @@ const api: VavApi = {
       ipcRenderer.invoke(IPC.convSetWorkdir, id, path, machineId),
     pickWorkingDirectory: (id: string) => ipcRenderer.invoke(IPC.convPickWorkdir, id),
     useTempWorkingDirectory: (id: string) => ipcRenderer.invoke(IPC.convUseTempWorkdir, id),
-    locateWorkspace: (id: string, destinationDir: string, name: string) =>
-      ipcRenderer.invoke(IPC.convLocateWorkspace, id, destinationDir, name),
+    locateWorkspace: (id: string, destinationDir: string) =>
+      ipcRenderer.invoke(IPC.convLocateWorkspace, id, destinationDir),
     remove: (ids: string[]) => ipcRenderer.invoke(IPC.convRemove, ids),
     deleteMessage: (id: string, messageId: string) =>
       ipcRenderer.invoke(IPC.convDeleteMessage, id, messageId),
