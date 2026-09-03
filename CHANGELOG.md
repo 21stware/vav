@@ -4,6 +4,13 @@ User-facing changes by release. Unreleased work lives at the top until the next 
 
 ## Unreleased
 
+## 1.18.9
+
+Let the phone pin and favorite sessions like the desktop sidebar.
+
+- Remote session rows carry pin / favorite, sort pinned first, and accept those toggles on the remote-control wire.
+- Older phones ignore the new fields.
+
 ## 1.18.8
 
 File preview across every document kind, Grok ACP + session `/goal`, and audit hardening (stability, security, CI).
