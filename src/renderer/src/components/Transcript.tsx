@@ -20,6 +20,7 @@ import {
   shouldShowRewind
 } from '../lib/rewindTurns'
 import { useSessionStore, visibleMessages } from '../state/sessionStore'
+import { hostHoldsControlPlaneKeys } from '../state/sessionUsage'
 import { CompactionBanner } from './CompactionBanner'
 import { BranchPager, MessageRow } from './MessageRow'
 import { RewindRail } from './RewindRail'
@@ -32,6 +33,7 @@ import { Button, EmptyState } from './ui'
 import { AgentBrandMark } from './AgentBrandMark'
 import { SessionWorkspaceChrome } from './SessionWorkspaceChrome'
 import { EmptyQuotaUsage } from './EmptyQuotaUsage'
+import { FirstRunChecklist } from './FirstRunChecklist'
 import { useWorkspaceSwitchMenu } from '../lib/workspaceSwitchMenu'
 import { useT } from '../i18n/useT'
 
@@ -134,7 +136,7 @@ export function Transcript({
   )
   const hostHoldsKeys = useSessionStore((s) => {
     const conversation = s.conversations.find((c) => c.id === activeId)
-    return s.hosts.some((host) => host.id === conversation?.machineId && host.controlPlane === true)
+    return hostHoldsControlPlaneKeys(s.hosts, conversation?.machineId)
   })
   const accountId = useSessionStore(
     (s) => s.conversations.find((c) => c.id === activeId)?.accountId ?? null
@@ -678,7 +680,15 @@ export function Transcript({
           onPassScroll={onRailScroll}
         />
       )}
-      <div className="transcript" ref={scrollRef} onScroll={onScroll} onWheel={onWheel}>
+      <div
+        className="transcript"
+        ref={scrollRef}
+        onScroll={onScroll}
+        onWheel={onWheel}
+        role="log"
+        aria-live="polite"
+        aria-relevant="additions"
+      >
         <div
           ref={contentRef}
           className={`transcript-inner${branchSwapActive ? ' is-branch-swap' : ''}`}
@@ -725,6 +735,7 @@ export function Transcript({
                   onClick={() => openSettings('agents', 'vav')}
                 />
               ) : null}
+              {activeId ? <FirstRunChecklist conversationId={activeId} /> : null}
             </EmptyState>
           )}
 

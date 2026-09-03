@@ -1,11 +1,23 @@
 import { randomBytes, randomUUID } from 'node:crypto'
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { hostname, userInfo } from 'node:os'
 import { join } from 'node:path'
 
 export type DaemonIdentity = {
   machineId: string
   name: string
+}
+
+/** Pairing secrets and host records must not be world-readable. */
+export const SECRET_FILE_MODE = 0o600
+
+export function writePrivateJson(file: string, value: unknown): void {
+  writeFileSync(file, JSON.stringify(value, null, 2), { mode: SECRET_FILE_MODE })
+  try {
+    chmodSync(file, SECRET_FILE_MODE)
+  } catch {
+    /* windows / chmod-less fs */
+  }
 }
 
 export function defaultHostName(): string {
@@ -37,7 +49,7 @@ export function loadOrCreateIdentity(dir: string, name?: string): DaemonIdentity
         }
         if (name && name.trim() && resolved.name !== name.trim()) {
           resolved.name = name.trim()
-          writeFileSync(file, JSON.stringify(resolved, null, 2))
+          writePrivateJson(file, resolved)
         }
         return resolved
       }
@@ -49,7 +61,7 @@ export function loadOrCreateIdentity(dir: string, name?: string): DaemonIdentity
     machineId: randomUUID(),
     name: name?.trim() || defaultHostName()
   }
-  writeFileSync(file, JSON.stringify(identity, null, 2))
+  writePrivateJson(file, identity)
   return identity
 }
 
@@ -65,11 +77,11 @@ export function loadOrCreateSecret(dir: string): string {
     /* rotate */
   }
   const secret = randomBytes(24).toString('base64url')
-  writeFileSync(file, JSON.stringify({ secret }, null, 2))
+  writePrivateJson(file, { secret })
   return secret
 }
 
 export function persistSecret(dir: string, secret: string): void {
   mkdirSync(dir, { recursive: true })
-  writeFileSync(join(dir, 'secret.json'), JSON.stringify({ secret }, null, 2))
+  writePrivateJson(join(dir, 'secret.json'), { secret })
 }

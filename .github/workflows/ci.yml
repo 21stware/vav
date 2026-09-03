@@ -20,6 +20,7 @@ jobs:
         os: [macos-14, windows-latest]
 
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
 
     steps:
       - uses: actions/checkout@v4
@@ -36,6 +37,9 @@ jobs:
         run: python3 -m pip install --user --break-system-packages setuptools
 
       - run: npm ci
+
+      - name: Unit tests
+        run: npm test
 
       - name: Typecheck and build
         run: npm run build

@@ -58,3 +58,27 @@ export function conversationMatchesFilter(
       return sameWorkdir(conversation.workingDirectory, filter.path)
   }
 }
+
+/** Live turn, window activity, or a busy PTY counts as running. */
+export function isSessionRunning(opts: {
+  isRunning?: boolean
+  activity?: string
+  shellBusy?: boolean
+}): boolean {
+  return !!opts.isRunning || opts.activity === 'running' || !!opts.shellBusy
+}
+
+/**
+ * Unread is idle-after-done or a sticky resultUnseen badge. Awaiting a tool
+ * is not unread; awaiting also excludes "running" for the unread check.
+ */
+export function isSessionUnread(opts: {
+  awaitingToolCallId?: string | null
+  isRunning?: boolean
+  activity?: string
+  resultUnseen?: boolean
+}): boolean {
+  const awaiting = !!opts.awaitingToolCallId
+  const running = !!opts.isRunning && !awaiting
+  return (!awaiting && !running && opts.activity === 'done') || opts.resultUnseen === true
+}

@@ -4,6 +4,7 @@ import { writeFile, unlink, mkdir, readdir, readFile, stat } from 'node:fs/promi
 import {
   computeRisk,
   isLikelyBinaryPath,
+  pendingChangeSetFileCount,
   summarizeChangeSetStatus,
   type ChangeContentEncoding,
   type ChangeEntry,
@@ -199,7 +200,7 @@ export class ChangeSetStore {
   pendingCount(conversationId: string): number {
     const set = this.activeFor(conversationId)
     if (!set) return 0
-    return set.files.filter((f) => f.status === 'pending').length
+    return pendingChangeSetFileCount(set.files)
   }
 
   async accept(setId: string, filePaths: string[]): Promise<ChangeSet | null> {

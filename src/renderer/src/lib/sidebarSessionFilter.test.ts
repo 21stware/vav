@@ -3,6 +3,8 @@ import { describe, it } from 'node:test'
 import {
   conversationMatchesFilter,
   encodeSidebarSessionFilter,
+  isSessionRunning,
+  isSessionUnread,
   parseSidebarSessionFilter
 } from './sidebarSessionFilter.ts'
 import type { ConversationMeta } from '@shared/types'
@@ -86,5 +88,30 @@ describe('sidebarSessionFilter', () => {
       }),
       true
     )
+  })
+})
+
+describe('isSessionRunning', () => {
+  it('treats a live turn, running activity, or busy shell as running', () => {
+    assert.equal(isSessionRunning({ isRunning: true }), true)
+    assert.equal(isSessionRunning({ activity: 'running' }), true)
+    assert.equal(isSessionRunning({ shellBusy: true }), true)
+    assert.equal(isSessionRunning({ activity: 'done' }), false)
+  })
+})
+
+describe('isSessionUnread', () => {
+  it('marks idle-after-done, not an awaiting tool card', () => {
+    assert.equal(isSessionUnread({ activity: 'done' }), true)
+    assert.equal(
+      isSessionUnread({ awaitingToolCallId: 't1', isRunning: true, activity: 'done' }),
+      false
+    )
+    assert.equal(isSessionUnread({ isRunning: true, activity: 'done' }), false)
+  })
+
+  it('keeps a sticky resultUnseen badge even while running', () => {
+    assert.equal(isSessionUnread({ isRunning: true, resultUnseen: true }), true)
+    assert.equal(isSessionUnread({ activity: 'idle', resultUnseen: false }), false)
   })
 })

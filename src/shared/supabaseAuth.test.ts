@@ -1,27 +1,30 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
+import { join } from 'node:path'
 import { looksLikeSupabaseAccessToken, supabaseAccessTokenFileCandidates } from './supabaseAuth.ts'
 
 describe('supabaseAccessTokenFileCandidates', () => {
   it('prefers explicit file and SUPABASE_HOME, then XDG, then ~/.supabase', () => {
-    const files = supabaseAccessTokenFileCandidates('/Users/ada', {
-      SUPABASE_ACCESS_TOKEN_FILE: '/secret/token',
-      SUPABASE_HOME: '/opt/supabase',
-      XDG_CONFIG_HOME: '/Users/ada/.xdg'
+    const home = join('/Users', 'ada')
+    const files = supabaseAccessTokenFileCandidates(home, {
+      SUPABASE_ACCESS_TOKEN_FILE: join('/secret', 'token'),
+      SUPABASE_HOME: join('/opt', 'supabase'),
+      XDG_CONFIG_HOME: join(home, '.xdg')
     })
     assert.deepEqual(files, [
-      '/secret/token',
-      '/opt/supabase/access-token',
-      '/Users/ada/.xdg/supabase/access-token',
-      '/Users/ada/.supabase/access-token'
+      join('/secret', 'token'),
+      join('/opt', 'supabase', 'access-token'),
+      join(home, '.xdg', 'supabase', 'access-token'),
+      join(home, '.supabase', 'access-token')
     ])
   })
 
   it('defaults XDG to ~/.config', () => {
-    const files = supabaseAccessTokenFileCandidates('/Users/ada', {})
+    const home = join('/Users', 'ada')
+    const files = supabaseAccessTokenFileCandidates(home, {})
     assert.deepEqual(files, [
-      '/Users/ada/.config/supabase/access-token',
-      '/Users/ada/.supabase/access-token'
+      join(home, '.config', 'supabase', 'access-token'),
+      join(home, '.supabase', 'access-token')
     ])
   })
 })

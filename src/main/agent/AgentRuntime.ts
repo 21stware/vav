@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { dirname } from 'node:path'
 import type { AgentEvent, AgentTool } from '@earendil-works/pi-agent-core'
 import { runAgentLoopContinue } from '@earendil-works/pi-agent-core'
-import type { AssistantMessage, Message } from '@earendil-works/pi-ai'
+import type { Message } from '@earendil-works/pi-ai'
 import {
   type ChatMessage,
   type AppSettings,
@@ -17,38 +17,67 @@ import {
   type TurnPhase,
   type TurnStatus
 } from '@shared/types'
-import { ROOT_LEAF } from '@shared/thread'
+import { pendingChangeSetFileCount } from '@shared/changeSet'
+import { ROOT_LEAF, forkActiveLeaf, regenerateActiveLeaf } from '@shared/thread'
 import { buildSnapshot } from '@shared/tokenUsage'
 import { buildModel, describeError, streamWith } from './provider'
 import { catalogRatesFor, contextWindowFor, maxTokensFor } from './modelMeta'
 import { loadInlineImages } from './attachmentImages'
 import { parseThinkingLevel, toPiReasoning } from '@shared/thinkingLevel'
-import { projectChecklistInput, sealPlanSteps } from '@shared/planDoc'
-import {
-  COMPACT_MIN_FOLDED,
-  defaultKeepAfterIndex
-} from '@shared/compaction'
-import { threadPath } from '@shared/thread'
 import type { LeafCompaction } from '@shared/types'
+import { applyEditedArgs, leanToolArgs } from './agentToolArgs'
+import { isAssistant, stripChangeSetIds, textOf, userTurnMessage, systemNoticeMessage, fatalAssistantMessage } from './agentMessage'
+import { sealRuntimePlanBlocks, planSealMode } from './planSeal'
+import {
+  allocateStreamSlot,
+  applyRuntimeFinishSeals,
+  assistantSnapshotFromTurn,
+  assistantStopKind,
+  collectParkedWaiters,
+  enqueuePendingNotice,
+  findTurnWithPendingTool,
+  noticeAppendPlan,
+  pickToolAnswerRoute,
+  shouldPersistAssistantTurn,
+  skipStableToolcallDelta,
+  streamSlotKey,
+  runtimeTurnStatus
+} from './agentTurnFinish'
+import { executeGatedTool, fileReadOnlySwitchBlock } from './fileEditLock'
+import {
+  approvalAnswerKind,
+  approvalCardSummary,
+  approvalPromptCopy,
+  parseEditedApprovalText,
+  readonlyApprovalBlock,
+  readonlyGateApplies,
+  shouldAutoAcceptChangeSet,
+  shouldPauseForApproval,
+  shouldSkipToolGate,
+  terminalCommandFromArgs
+} from './toolApproval'
 import {
   blockFromContent,
   buildHistory,
   estimateCompactedContextTokens,
-  pathToSummarySource,
-  safeParseJson
+  pathToSummarySource
 } from './history'
 import {
-  HIGH_RISK_TOOLS,
-  INTERACTIVE_TOOLS,
-  READONLY_TOOLS,
-  buildSystemPrompt,
   createTools,
-  FILE_READONLY_BLOCKED_TOOLS,
-  isFileEditLockedPath,
-  isReadonlyTerminalCommand,
-  summarizeToolInput,
   type ToolDetails
 } from './tools'
+import { buildSystemPrompt } from './systemPrompt'
+import { summarizeToolInput } from './toolSummarize'
+import { stampReasoningDurations } from './reasoningStamp'
+import { applyToolRuntimePatch, applyToolStatePatch, ensureToolCallBlock, rememberSentToolCard, toolCallBlockIndex } from './cliToolBlock'
+import { compactClearGate, planConversationCompact } from './compactPlan'
+import { mergeVavCredentials } from './agentConfig'
+import {
+  completeE2eStubTurn as runE2eStubTurn,
+  startE2eStubAsk as runE2eStubAsk,
+  startE2eStubApprove as runE2eStubApprove,
+  startE2eStubStream as runE2eStubStream
+} from './agentE2eStub'
 import { FileDraftCoalescer, writeToolDraft } from '@shared/writeToolDraft'
 import type { ConversationStore } from '../store/ConversationStore'
 import { kindFromFilePath } from '../store/FileSessionStore'
@@ -174,16 +203,11 @@ export class AgentRuntime {
   constructor(private deps: AgentRuntimeDeps) {}
 
   private vavCreds(conversation: Conversation): { apiKey: string | null; settings: AppSettings } {
-    const settings = this.deps.settings.get()
-    const resolved = this.deps.resolveVavCredentials?.(conversation)
-    if (!resolved) return { apiKey: this.deps.secrets.get(), settings }
-    return {
-      apiKey: resolved.apiKey,
-      settings: {
-        ...settings,
-        apiEndpoint: resolved.endpoint.trim() || settings.apiEndpoint
-      }
-    }
+    return mergeVavCredentials(
+      this.deps.settings.get(),
+      this.deps.resolveVavCredentials?.(conversation),
+      this.deps.secrets.get()
+    )
   }
 
   isRunning(conversationId: string): boolean {
@@ -191,18 +215,7 @@ export class AgentRuntime {
   }
 
   status(conversationId: string): TurnStatus {
-    const turn = this.turns.get(conversationId)
-    return {
-      conversationId,
-      isRunning: !!turn,
-      phase: turn?.phase ?? 'idle',
-      toolCount: turn?.toolCount ?? 0,
-      awaitingToolCallId: turn ? (turn.pending.keys().next().value ?? null) : null,
-      messageId: turn?.messageId ?? null,
-      // Preserve slot indices — StreamProjection is sparse on contentIndex, and
-      // filtering empties here would mis-align later delta/tool patches.
-      blocks: turn ? turn.blocks.map((block) => ({ ...block })) : []
-    }
+    return runtimeTurnStatus(conversationId, this.turns.get(conversationId))
   }
 
   // -------------------------------------------------------------------------
@@ -245,12 +258,14 @@ export class AgentRuntime {
    */
   appendNotice(conversationId: string, text: string): void {
     const body = text.trim()
-    if (!body) return
-    if (!this.deps.conversations.get(conversationId)) return
-    if (this.turns.has(conversationId)) {
-      const queue = this.pendingNotices.get(conversationId) ?? []
-      queue.push(body)
-      this.pendingNotices.set(conversationId, queue)
+    const plan = noticeAppendPlan({
+      body,
+      conversationExists: !!this.deps.conversations.get(conversationId),
+      isRunning: this.turns.has(conversationId)
+    })
+    if (plan === 'drop') return
+    if (plan === 'queue') {
+      enqueuePendingNotice(this.pendingNotices, conversationId, body)
       return
     }
     this.writeNotice(conversationId, body)
@@ -259,14 +274,11 @@ export class AgentRuntime {
   private writeNotice(conversationId: string, body: string): void {
     const leaf = this.deps.conversations.activeLeaf(conversationId)
     const parentId = leaf === ROOT_LEAF ? null : leaf
-    const message: ChatMessage = {
+    const message = systemNoticeMessage({
       id: randomUUID(),
       parentId,
-      role: 'system',
-      content: body,
-      blocks: [{ kind: 'text', text: body }],
-      createdAt: Date.now()
-    }
+      body
+    })
     this.deps.conversations.appendMessage(conversationId, message)
     this.deps.conversations.flush()
     this.deps.emit({ type: 'notice', conversationId, message })
@@ -291,7 +303,7 @@ export class AgentRuntime {
     const conversation = this.deps.conversations.get(conversationId)
     const target = conversation?.messages.find((m) => m.id === messageId)
     if (!target) return
-    const parentId = target.role === 'assistant' ? target.parentId : target.id
+    const parentId = regenerateActiveLeaf(target)
 
     this.deps.conversations.setActiveLeaf(conversationId, parentId)
     await this.startTurn(conversationId, parentId)
@@ -330,7 +342,7 @@ export class AgentRuntime {
     const target = conversation?.messages.find((m) => m.id === messageId)
     if (!target) return null
 
-    const leaf = target.role === 'user' ? (target.parentId ?? ROOT_LEAF) : target.id
+    const leaf = forkActiveLeaf(target)
     this.deps.conversations.setActiveLeaf(conversationId, leaf)
     return leaf
   }
@@ -353,42 +365,30 @@ export class AgentRuntime {
       return { ok: false, error: t('compact.error.busy') }
     }
     const conversation = this.deps.conversations.get(conversationId)
-    if (!conversation) return { ok: false, error: t('compact.error.missing') }
-    if (conversation.cliHost) {
-      return { ok: false, error: t('compact.error.cliHost') }
-    }
-
-    const leafId = conversation.activeLeafId ?? threadPath(conversation.messages, null).at(-1)?.id
-    if (!leafId) return { ok: false, error: t('compact.error.empty') }
-
-    const path = threadPath(conversation.messages, leafId)
-    let keepIdx: number | null = null
-    if (options?.keepAfterMessageId) {
-      keepIdx = path.findIndex((m) => m.id === options.keepAfterMessageId)
-      if (keepIdx < COMPACT_MIN_FOLDED) {
-        return { ok: false, error: t('compact.error.notEnough') }
+    const plan = planConversationCompact({
+      isRunning: this.turns.has(conversationId),
+      conversation,
+      keepAfterMessageId: options?.keepAfterMessageId,
+      errors: {
+        busy: t('compact.error.busy'),
+        missing: t('compact.error.missing'),
+        cliHost: t('compact.error.cliHost'),
+        empty: t('compact.error.empty'),
+        notEnough: t('compact.error.notEnough')
       }
-    } else {
-      keepIdx = defaultKeepAfterIndex(path.length)
-      if (keepIdx == null) return { ok: false, error: t('compact.error.notEnough') }
-    }
+    })
+    if (!plan.ok) return plan
 
-    const keepAfterMessageId = path[keepIdx]!.id
-    const toFold = path.slice(0, keepIdx)
-    if (toFold.length < COMPACT_MIN_FOLDED) {
-      return { ok: false, error: t('compact.error.notEnough') }
-    }
-
-    const { apiKey, settings } = this.vavCreds(conversation)
+    const { apiKey, settings } = this.vavCreds(conversation!)
     if (!apiKey) return { ok: false, error: t('error.noApiKey') }
 
-    const modelId = conversation.model || settings.defaultModel
+    const modelId = conversation!.model || settings.defaultModel
     const model = buildModel(settings, modelId, contextWindowFor(modelId))
 
     let summary: string
     try {
       summary = await this.summarizeForCompact(
-        toFold,
+        plan.toFold,
         model,
         apiKey,
         maxTokensFor(modelId)
@@ -399,14 +399,13 @@ export class AgentRuntime {
     if (!summary.trim()) return { ok: false, error: t('compact.error.failed') }
 
     const summaryText = summary.trim()
-    const kept = path.slice(keepIdx)
-    const estimatedContextTokens = estimateCompactedContextTokens(summaryText, kept)
+    const estimatedContextTokens = estimateCompactedContextTokens(summaryText, plan.kept)
     const compaction: LeafCompaction = {
-      leafId,
-      keepAfterMessageId,
+      leafId: plan.leafId,
+      keepAfterMessageId: plan.keepAfterMessageId,
       summary: summaryText,
       createdAt: Date.now(),
-      compactedCount: toFold.length,
+      compactedCount: plan.toFold.length,
       estimatedContextTokens
     }
     this.deps.conversations.setCompaction(conversationId, compaction)
@@ -420,16 +419,16 @@ export class AgentRuntime {
     conversationId: string,
     leafId: string
   ): { ok: true } | { ok: false; error: string } {
-    if (this.turns.has(conversationId)) {
-      return { ok: false, error: t('compact.error.busy') }
-    }
-    const conversation = this.deps.conversations.get(conversationId)
-    if (!conversation) {
-      return { ok: false, error: t('compact.error.missing') }
-    }
-    if (conversation.cliHost) {
-      return { ok: false, error: t('compact.error.cliHost') }
-    }
+    const gate = compactClearGate({
+      isRunning: this.turns.has(conversationId),
+      conversation: this.deps.conversations.get(conversationId),
+      errors: {
+        busy: t('compact.error.busy'),
+        missing: t('compact.error.missing'),
+        cliHost: t('compact.error.cliHost')
+      }
+    })
+    if (!gate.ok) return gate
     this.deps.conversations.clearCompaction(conversationId, leafId)
     return { ok: true }
   }
@@ -485,24 +484,15 @@ export class AgentRuntime {
     attachments?: string[] | null,
     contextFile?: string | null
   ): string {
-    const message: ChatMessage = {
+    const message = userTurnMessage({
       id: randomUUID(),
       parentId,
-      role: 'user',
-      content: text,
-      blocks: [{ kind: 'text', text }],
-      createdAt: Date.now(),
-      ...(quote
-        ? {
-            quoteMessageId: quote.messageId,
-            quoteSummary: quote.summary,
-            quoteRole: quote.role
-          }
-        : {}),
-      ...(contextBlocks && contextBlocks.length ? { contextBlocks } : {}),
-      ...(attachments && attachments.length ? { attachments: [...attachments] } : {}),
-      ...(contextFile ? { contextFile } : {})
-    }
+      text,
+      quote,
+      contextBlocks,
+      attachments,
+      contextFile
+    })
     // Storing first is what lets auto-title fire before the turn starts.
     this.deps.conversations.appendMessage(conversationId, message)
     this.deps.emit({ type: 'user', conversationId, message })
@@ -516,19 +506,26 @@ export class AgentRuntime {
     if (!conversation) return
 
     if (isE2eRuntime() && process.env.VAV_E2E_STUB_TURN === '1') {
+      const sink = {
+        emit: this.deps.emit,
+        append: (message: ChatMessage) => {
+          this.deps.conversations.appendMessage(conversationId, message)
+          this.deps.conversations.flush()
+        }
+      }
       if (process.env.VAV_E2E_STUB_ASK === '1') {
-        this.startE2eStubAsk(conversationId, parentId)
+        runE2eStubAsk(sink, this.e2eAskWaiters, conversationId, parentId)
         return
       }
       if (process.env.VAV_E2E_STUB_APPROVE === '1') {
-        this.startE2eStubApprove(conversationId, parentId)
+        runE2eStubApprove(sink, this.e2eAskWaiters, conversationId, parentId)
         return
       }
       if (process.env.VAV_E2E_STUB_STREAM === '1') {
-        this.startE2eStubStream(conversationId, parentId)
+        runE2eStubStream(sink, conversationId, parentId)
         return
       }
-      this.completeE2eStubTurn(conversationId, parentId)
+      runE2eStubTurn(sink, conversationId, parentId)
       return
     }
 
@@ -704,34 +701,38 @@ export class AgentRuntime {
   /** Routes a card answer back into the paused turn. */
   answer(conversationId: string, toolCallId: string, text: string): boolean {
     const e2e = this.e2eAskWaiters.get(toolCallId)
-    if (e2e) {
-      this.e2eAskWaiters.delete(toolCallId)
-      e2e(text)
-      return true
-    }
-    const payload = { text, cancelled: false as const }
     const preferred = this.turns.get(conversationId)
-    if (preferred && this.resolvePending(preferred, toolCallId, payload)) return true
-
-    // File Preview / multi-window: active conversation may differ from the
-    // session that owns the pending tool card — resolve by toolCallId.
-    for (const turn of this.turns.values()) {
-      if (this.resolvePending(turn, toolCallId, payload)) return true
-    }
-
-    // Last resort: sole parked waiter (desynced ids after focus hop / HMR).
-    const sole: PendingUserTool[] = []
-    for (const turn of this.turns.values()) {
-      for (const waiter of turn.pending.values()) sole.push(waiter)
-    }
-    if (sole.length === 1) {
-      sole[0]!.resolve(payload)
+    const preferredHasTool = !!preferred?.pending.has(toolCallId)
+    const scanTurn =
+      e2e || preferredHasTool
+        ? undefined
+        : findTurnWithPendingTool(this.turns.values(), (turn) => turn.pending.has(toolCallId))
+    const waiters =
+      !e2e && !preferredHasTool && !scanTurn ? collectParkedWaiters(this.turns.values()) : []
+    const route = pickToolAnswerRoute({
+      hasE2eWaiter: !!e2e,
+      preferredHasTool,
+      scanHasTool: !!scanTurn,
+      soleWaiterCount: waiters.length
+    })
+    const payload = { text, cancelled: false as const }
+    if (route === 'e2e') {
+      this.e2eAskWaiters.delete(toolCallId)
+      e2e!(text)
       return true
     }
-    console.warn(
-      '[agent] answer ignored — no pending waiter',
-      { conversationId, toolCallId, pendingTurns: this.turns.size, sole: sole.length }
-    )
+    if (route === 'preferred') return this.resolvePending(preferred!, toolCallId, payload)
+    if (route === 'scan') return this.resolvePending(scanTurn!, toolCallId, payload)
+    if (route === 'sole') {
+      waiters[0]!.resolve(payload)
+      return true
+    }
+    console.warn('[agent] answer ignored — no pending waiter', {
+      conversationId,
+      toolCallId,
+      pendingTurns: this.turns.size,
+      sole: waiters.length
+    })
     return false
   }
 
@@ -797,8 +798,9 @@ export class AgentRuntime {
         // pi does not forward the stream's `error` event; a failed request
         // arrives as a final assistant message carrying the stop reason.
         if (isAssistant(event.message)) {
-          if (event.message.stopReason === 'aborted') turn.cancelled = true
-          else if (event.message.stopReason === 'error') {
+          const stop = assistantStopKind(event.message.stopReason)
+          if (stop === 'cancelled') turn.cancelled = true
+          else if (stop === 'error') {
             turn.error = describeError(event.message.errorMessage ?? t('error.model'))
           }
         }
@@ -898,7 +900,7 @@ export class AgentRuntime {
       }
 
       case 'thinking_end':
-        this.sealReasoning(turn, turn.slots.get(`${turn.llmTurn}:${event.contentIndex}`))
+        this.sealReasoning(turn, turn.slots.get(streamSlotKey(turn.llmTurn, event.contentIndex)))
         break
 
       case 'toolcall_start':
@@ -915,7 +917,7 @@ export class AgentRuntime {
 
         const args = (call.arguments ?? {}) as Record<string, unknown>
         const summary = summarizeToolInput(call.name as ToolName, args)
-        const existingSlot = turn.slots.get(`${turn.llmTurn}:${event.contentIndex}`)
+        const existingSlot = turn.slots.get(streamSlotKey(turn.llmTurn, event.contentIndex))
         const prev =
           existingSlot !== undefined && turn.blocks[existingSlot]?.kind === 'toolCall'
             ? (turn.blocks[existingSlot] as ToolCallBlock)
@@ -928,7 +930,7 @@ export class AgentRuntime {
         // Deltas that only grow `contents` must not rewrite the card — summary
         // is stable once path/command is known, and re-stringifying megabyte
         // bodies would flood IPC.
-        if (event.type === 'toolcall_delta' && prev && prev.summary === summary) break
+        if (skipStableToolcallDelta(event.type, prev, summary)) break
 
         const block = blockFromContent(
           call,
@@ -956,26 +958,11 @@ export class AgentRuntime {
 
   /** Stable position for one `(llm turn, contentIndex)` pair. */
   private slotFor(turn: TurnState, contentIndex: number, seed: MessageBlock): number {
-    const key = `${turn.llmTurn}:${contentIndex}`
-    const existing = turn.slots.get(key)
-    if (existing !== undefined) return existing
-    if (seed.kind !== 'reasoning') this.sealReasoning(turn)
-    const slot = turn.blocks.length
-    turn.blocks.push(seed)
-    turn.slots.set(key, slot)
-    if (seed.kind === 'reasoning') turn.reasoningStartedAt.set(slot, Date.now())
-    return slot
+    return allocateStreamSlot(turn, contentIndex, seed, () => this.sealReasoning(turn))
   }
 
   private sealReasoning(turn: TurnState, slot?: number): void {
-    const now = Date.now()
-    const targets = slot !== undefined ? [slot] : [...turn.reasoningStartedAt.keys()]
-    for (const index of targets) {
-      const block = turn.blocks[index]
-      if (!block || block.kind !== 'reasoning' || block.durationMs != null) continue
-      const started = turn.reasoningStartedAt.get(index) ?? now
-      block.durationMs = Math.max(0, now - started)
-    }
+    stampReasoningDurations(turn.blocks, turn.reasoningStartedAt, Date.now(), slot)
   }
 
   private appendDelta(
@@ -1023,39 +1010,21 @@ export class AgentRuntime {
     toolCallId: string,
     patch: Partial<ToolRuntimeState>
   ): void {
-    const state = turn.toolState.get(toolCallId) ?? { status: 'pending' as ToolCallStatus, output: '' }
-    Object.assign(state, patch)
-    // Explicit undefined clears approval fields so the card leaves Approve/Deny UI.
-    if ('choices' in patch && patch.choices === undefined) delete state.choices
-    if ('multiSelect' in patch && patch.multiSelect === undefined) delete state.multiSelect
-    if ('questions' in patch && patch.questions === undefined) delete state.questions
-    if ('askTitle' in patch && patch.askTitle === undefined) delete state.askTitle
+    const state = applyToolStatePatch(
+      turn.toolState.get(toolCallId) ?? { status: 'pending' as ToolCallStatus, output: '' },
+      patch
+    )
     turn.toolState.set(toolCallId, state)
 
-    let slot = turn.blocks.findIndex((b) => b.kind === 'toolCall' && b.id === toolCallId)
+    let slot = toolCallBlockIndex(turn.blocks, toolCallId)
     if (slot < 0) {
       // Mid-gate patches must still paint; synthesize a card rather than drop UI.
       this.ensureToolBlock(turn, toolCallId, '')
-      slot = turn.blocks.findIndex((b) => b.kind === 'toolCall' && b.id === toolCallId)
+      slot = toolCallBlockIndex(turn.blocks, toolCallId)
       if (slot < 0) return
     }
     const prev = turn.blocks[slot] as ToolCallBlock
-    const block: ToolCallBlock = {
-      ...prev,
-      status: state.status,
-      output: state.output ?? prev.output
-    }
-    if (!state.choices) {
-      delete block.choices
-      delete block.multiSelect
-      delete block.questions
-      delete block.askTitle
-    } else {
-      block.choices = state.choices
-      if (state.multiSelect != null) block.multiSelect = state.multiSelect
-      if (state.questions) block.questions = state.questions
-      if (state.askTitle) block.askTitle = state.askTitle
-    }
+    const block = applyToolRuntimePatch(prev, state)
     turn.blocks[slot] = block
     this.sendCard(conversationId, turn, slot, block)
   }
@@ -1072,8 +1041,7 @@ export class AgentRuntime {
     block: ToolCallBlock
   ): void {
     const encoded = JSON.stringify(block)
-    if (turn.sentCards.get(block.id) === encoded) return
-    turn.sentCards.set(block.id, encoded)
+    if (!rememberSentToolCard(turn.sentCards, block.id, encoded)) return
     this.deps.emit({ type: 'tool', conversationId, index, block })
   }
 
@@ -1147,44 +1115,13 @@ export class AgentRuntime {
       ...tool,
       execute: (toolCallId, params, signal, onUpdate) => {
         const live = this.deps.conversations.get(conversationId)
-        const readOnly = !!live?.fileReadOnly
-        // Defense in depth: refuse writes while the session is still Read.
-        if (readOnly && FILE_READONLY_BLOCKED_TOOLS.has(tool.name as ToolName)) {
-          return Promise.resolve({
-            content: [
-              {
-                type: 'text' as const,
-                text: 'Read-only session: call switch_mode with mode "edit" first (user may need to Approve), or ask them to switch the preview to Edit / convert / Save As.'
-              }
-            ],
-            details: {
-              display: '已拦截：当前为 Read 模式 — 先 switch_mode → Edit。',
-              failed: true
-            }
-          })
-        }
-        if (readOnly && tool.name === 'terminal') {
-          const command =
-            params && typeof params === 'object' && 'command' in params
-              ? String((params as { command: unknown }).command ?? '')
-              : ''
-          if (command && !isReadonlyTerminalCommand(command)) {
-            return Promise.resolve({
-              content: [
-                {
-                  type: 'text' as const,
-                  text: `Read-only session: refused non-read-only shell command. Call switch_mode (mode: "edit") first, or use ls/cat/grep/rg/head/tail.\nRefused: ${command}`
-                }
-              ],
-              details: {
-                display: `已拦截（Read 模式仅允许只读 shell）：\n$ ${command}`,
-                failed: true
-              }
-            })
-          }
-        }
-        const override = turn.argOverrides.get(toolCallId)
-        return tool.execute(toolCallId, (override ?? params) as typeof params, signal, onUpdate)
+        return executeGatedTool(
+          !!live?.fileReadOnly,
+          tool.name,
+          params,
+          turn.argOverrides.get(toolCallId) as typeof params | undefined,
+          (gatedParams) => tool.execute(toolCallId, gatedParams, signal, onUpdate)
+        )
       }
     }))
   }
@@ -1198,21 +1135,15 @@ export class AgentRuntime {
     readOnly: boolean
   ): string | null {
     const conversation = this.deps.conversations.get(conversationId)
-    if (!conversation) return 'Conversation not found.'
-    if (!readOnly) {
-      const path =
-        conversation.focusedFilePath ||
-        (conversation.fileId && this.deps.fileSessions
-          ? this.deps.fileSessions.pathForFileId(conversation.fileId)
-          : null)
-      if (isFileEditLockedPath(path)) {
-        return (
-          'This format cannot switch to Edit in-place (PDF / HEIC / legacy Office / ZIP). ' +
-          'Ask the user to convert or Save As from the preview chrome.'
-        )
-      }
-    }
-    if (!!conversation.fileReadOnly === readOnly) return null
+    const blocked = fileReadOnlySwitchBlock(
+      conversation,
+      readOnly,
+      this.deps.fileSessions
+        ? (fileId) => this.deps.fileSessions!.pathForFileId(fileId)
+        : null
+    )
+    if (blocked) return blocked
+    if (!conversation || !!conversation.fileReadOnly === readOnly) return null
     this.deps.conversations.updateMeta(conversationId, { fileReadOnly: readOnly })
     this.deps.onFileReadOnlyChange?.(conversationId, readOnly)
     return null
@@ -1229,83 +1160,69 @@ export class AgentRuntime {
     args: unknown
   ): Promise<{ block: boolean; reason?: string } | undefined> {
     const name = toolCall.name as ToolName
-    if (INTERACTIVE_TOOLS.has(name) || name === 'plan' || name === 'wait' || name === 'read_bash_session') {
-      return undefined
-    }
+    if (shouldSkipToolGate(name)) return undefined
 
     const conversation = this.deps.conversations.get(conversationId)
     const mode = conversation?.approvalMode ?? 'auto'
-
-    const command =
-      name === 'terminal' && args && typeof args === 'object' && 'command' in args
-        ? String((args as { command: unknown }).command ?? '')
-        : ''
+    const command = terminalCommandFromArgs(name, args)
 
     // File Preview Read: hard-block write tools / mutating shell before approval UI.
     // switch_mode itself is allowed through so the user can Approve → Edit.
-    if (conversation?.fileReadOnly && name !== 'switch_mode') {
-      if (FILE_READONLY_BLOCKED_TOOLS.has(name)) {
-        return {
-          block: true,
-          reason:
-            'Read-only session: call switch_mode with mode "edit" first (or ask the user to switch / convert / Save As).'
-        }
-      }
-      if (name === 'terminal' && command && !isReadonlyTerminalCommand(command)) {
-        return {
-          block: true,
-          reason: `Read-only session: only read-only shell commands are allowed until Edit (refused: ${command.slice(0, 120)})`
-        }
-      }
+    if (readonlyGateApplies(conversation?.fileReadOnly, name)) {
+      const blocked = readonlyApprovalBlock(name, command)
+      if (blocked) return blocked
     }
 
-    if (mode === 'bypass') return undefined
-
-    if (mode === 'auto') {
-      const highRisk =
-        HIGH_RISK_TOOLS.has(name) && !(name === 'terminal' && isReadonlyTerminalCommand(command))
-      const readonlyNeedsApproval =
-        READONLY_TOOLS.has(name) && !this.deps.settings.get().autoApproveReadonly
-      if (!highRisk && !readonlyNeedsApproval) return undefined
+    if (
+      !shouldPauseForApproval({
+        mode,
+        name,
+        command,
+        autoApproveReadonly: this.deps.settings.get().autoApproveReadonly
+      })
+    ) {
+      return undefined
     }
     // Edit: every non-interactive tool pauses.
 
     const block = turn.blocks.find(
       (b): b is ToolCallBlock => b.kind === 'toolCall' && b.id === toolCall.id
     )
-    const summary =
-      block?.summary ||
-      (command
-        ? command
-        : summarizeToolInput(
-            name,
-            args && typeof args === 'object' ? (args as Record<string, unknown>) : {}
-          ))
-    const approveLabel = mode === 'edit' ? t('approval.approveRun') : t('approval.approve')
-    const denyLabel = mode === 'edit' ? t('approval.skip') : t('approval.deny')
-    const title =
-      mode === 'edit'
-        ? t('approval.titleEdit', { name })
-        : t('approval.title', { name })
-    const editable = mode === 'edit' ? summary : ''
-
-    const approval = await this.askUser(conversationId, turn, toolCall.id, `${title}\n${summary}`, {
-      choices: [approveLabel, denyLabel],
-      // Stash the editable payload in askTitle so the card can prefill a textarea.
-      askTitle: mode === 'edit' ? editable : undefined
+    const summary = approvalCardSummary(block?.summary, command, () =>
+      summarizeToolInput(
+        name,
+        args && typeof args === 'object' ? (args as Record<string, unknown>) : {}
+      )
+    )
+    const copy = approvalPromptCopy({
+      mode,
+      summary,
+      auto: {
+        approve: t('approval.approve'),
+        deny: t('approval.deny'),
+        title: t('approval.title', { name })
+      },
+      edit: {
+        approve: t('approval.approveRun'),
+        deny: t('approval.skip'),
+        title: t('approval.titleEdit', { name })
+      }
     })
-    if (approval.cancelled) return { block: true, reason: t('approval.userCancelled') }
-    if (approval.text === denyLabel || isApprovalDenyText(approval.text)) {
-      return { block: true, reason: t('approval.userDenied') }
-    }
+
+    const approval = await this.askUser(conversationId, turn, toolCall.id, copy.prompt, {
+      choices: [copy.approveLabel, copy.denyLabel],
+      // Stash the editable payload in askTitle so the card can prefill a textarea.
+      askTitle: mode === 'edit' ? copy.editable : undefined
+    })
+    const kind = approvalAnswerKind(approval, copy.denyLabel, isApprovalDenyText)
+    if (kind === 'cancelled') return { block: true, reason: t('approval.userCancelled') }
+    if (kind === 'denied') return { block: true, reason: t('approval.userDenied') }
 
     // Edit mode: approve-run + edited payload may rewrite terminal command / paths.
     if (mode === 'edit') {
-      const edited = approval.text.startsWith(`${approveLabel}\n`)
-        ? approval.text.slice(approveLabel.length + 1)
-        : isApprovalApproveText(approval.text, true) || approval.text === approveLabel
-          ? ''
-          : approval.text
+      const edited = parseEditedApprovalText(approval.text, copy.approveLabel, (text) =>
+        isApprovalApproveText(text, true)
+      )
       if (edited.trim()) {
         const next = applyEditedArgs(name, args, edited.trim())
         if (next) {
@@ -1349,7 +1266,7 @@ export class AgentRuntime {
       askTitle: options.askTitle
     })
     // Refresh summary on the card (title + command body for approvals).
-    let slot = turn.blocks.findIndex((b) => b.kind === 'toolCall' && b.id === toolCallId)
+    let slot = toolCallBlockIndex(turn.blocks, toolCallId)
     if (slot >= 0 && summary) {
       const block = turn.blocks[slot] as ToolCallBlock
       if (summary !== block.summary) {
@@ -1358,7 +1275,7 @@ export class AgentRuntime {
       }
     }
     this.setPhase(conversationId, turn, 'awaiting-user')
-    slot = turn.blocks.findIndex((b) => b.kind === 'toolCall' && b.id === toolCallId)
+    slot = toolCallBlockIndex(turn.blocks, toolCallId)
     if (slot >= 0) {
       const block = turn.blocks[slot] as ToolCallBlock
       this.deps.emit({
@@ -1428,18 +1345,7 @@ export class AgentRuntime {
 
   /** Guarantee a toolCall block so approval patches always reach the renderer. */
   private ensureToolBlock(turn: TurnState, toolCallId: string, summary: string): void {
-    const existing = turn.blocks.findIndex((b) => b.kind === 'toolCall' && b.id === toolCallId)
-    if (existing >= 0) return
-    const block: ToolCallBlock = {
-      kind: 'toolCall',
-      id: toolCallId,
-      tool: 'terminal',
-      summary: summary || toolCallId,
-      input: '{}',
-      output: '',
-      status: 'pending'
-    }
-    turn.blocks.push(block)
+    ensureToolCallBlock(turn.blocks, toolCallId, summary)
   }
 
   private setPhase(conversationId: string, turn: TurnState, phase: TurnPhase): void {
@@ -1457,27 +1363,7 @@ export class AgentRuntime {
   }
 
   private snapshot(turn: TurnState, extra: Partial<ChatMessage> = {}): ChatMessage {
-    // A slot is claimed when its content block opens, which can be a moment
-    // before any token lands in it; those empties are not worth persisting.
-    const blocks = turn.blocks.filter(
-      (b) =>
-        b.kind === 'toolCall' ||
-        b.kind === 'plan' ||
-        (b.kind === 'text' && b.text.length > 0) ||
-        (b.kind === 'reasoning' && b.text.length > 0)
-    )
-    return {
-      id: turn.messageId,
-      parentId: turn.parentId,
-      role: 'assistant',
-      content: blocks
-        .filter((b): b is Extract<MessageBlock, { kind: 'text' }> => b.kind === 'text')
-        .map((b) => b.text)
-        .join('\n'),
-      blocks: blocks.map((b) => ({ ...b })),
-      createdAt: Date.now(),
-      ...extra
-    }
+    return assistantSnapshotFromTurn(turn, extra)
   }
 
   private finish(conversationId: string, turn: TurnState): void {
@@ -1494,37 +1380,12 @@ export class AgentRuntime {
 
     // Seal plan checklist to match turn outcome. Models often finish the work
     // then reply without a last `plan` call — without this the UI stays "paused".
-    const planMode: 'cancel' | 'error' | 'success' = turn.cancelled
-      ? 'cancel'
-      : turn.error
-        ? 'error'
-        : 'success'
-    sealPlanBlocks(turn.blocks, planMode)
+    sealRuntimePlanBlocks(turn.blocks, planSealMode(turn.cancelled, turn.error), {
+      cancelled: t('common.cancelled'),
+      failed: t('common.failed')
+    })
 
-    if (turn.cancelled) {
-      turn.error = undefined
-      for (const block of turn.blocks) {
-        if (block.kind !== 'toolCall') continue
-        if (block.tool === 'plan') continue // already sealed
-        if (
-          (block.tool === 'ask_user_question' || block.tool === 'request') &&
-          block.status === 'pending'
-        ) {
-          block.status = 'skipped'
-          block.output = t('common.cancelled')
-          continue
-        }
-        if (block.status === 'pending' || block.status === 'executing') {
-          block.status = 'expired'
-        }
-      }
-    }
-    if (turn.error) {
-      turn.blocks.push({
-        kind: 'text',
-        text: turn.blocks.length ? `\n\n> ${turn.error}` : `> ${turn.error}`
-      })
-    }
+    applyRuntimeFinishSeals(turn, t('common.cancelled'))
 
     const message = this.snapshot(turn, {
       cancelled: turn.cancelled,
@@ -1545,14 +1406,14 @@ export class AgentRuntime {
     if (changeSet) {
       // Bypass: writes already on disk — auto-accept; no review gate.
       const mode = conversation?.approvalMode ?? 'auto'
-      if (mode === 'bypass' && this.deps.changeSets) {
+      if (shouldAutoAcceptChangeSet(mode) && this.deps.changeSets) {
         const accepted = await this.deps.changeSets.acceptAll(changeSet.id)
         if (accepted) changeSet = accepted
       }
       message.changeSetId = changeSet.id
     }
 
-    if (message.blocks.length > 0 || message.changeSetId) {
+    if (shouldPersistAssistantTurn(message)) {
       this.deps.conversations.replaceMessage(conversationId, message)
     }
     this.deps.conversations.flush()
@@ -1574,7 +1435,7 @@ export class AgentRuntime {
         type: 'change-review',
         conversationId,
         changeSetId: changeSet.id,
-        pendingCount: changeSet.files.filter((f) => f.status === 'pending').length,
+        pendingCount: pendingChangeSetFileCount(changeSet.files),
         messageId: message.id,
         // Ship the full set so the renderer never depends on a later get() for
         // the first paint (and survives remounts while the set is still in memory).
@@ -1583,199 +1444,13 @@ export class AgentRuntime {
     }
   }
 
-  /**
-   * Playwright-only: finish a turn without calling a provider.
-   * Gated on VAV_E2E=1 and VAV_E2E_STUB_TURN=1.
-   */
-  private completeE2eStubTurn(conversationId: string, parentId: string | null): void {
-    const text = 'e2e stub reply'
-    const message: ChatMessage = {
-      id: randomUUID(),
-      parentId,
-      role: 'assistant',
-      content: text,
-      blocks: [{ kind: 'text', text }],
-      createdAt: Date.now()
-    }
-    this.deps.emit({ type: 'start', conversationId })
-    this.deps.conversations.appendMessage(conversationId, message)
-    this.deps.conversations.flush()
-    this.deps.emit({
-      type: 'end',
-      conversationId,
-      message,
-      tokensUsed: 0
-    })
-  }
-
-  /** Live reasoning + tool + text so StreamingMessage / StreamStatus can be asserted. */
-  private startE2eStubStream(conversationId: string, parentId: string | null): void {
-    const read: ToolCallBlock = {
-      kind: 'toolCall',
-      id: 'e2e-stream-read',
-      tool: 'fs_read',
-      summary: 'hello.md',
-      input: JSON.stringify({ path: 'hello.md' }),
-      output: '',
-      status: 'executing'
-    }
-    const done: ToolCallBlock = { ...read, status: 'completed', output: '# hello from e2e\n' }
-    const text = 'e2e stub reply'
-    const message: ChatMessage = {
-      id: randomUUID(),
-      parentId,
-      role: 'assistant',
-      content: text,
-      createdAt: Date.now(),
-      blocks: [
-        { kind: 'reasoning', text: 'e2e live thought', durationMs: 80 },
-        done,
-        { kind: 'text', text }
-      ]
-    }
-
-    this.deps.emit({ type: 'start', conversationId })
-    this.deps.emit({ type: 'phase', conversationId, phase: 'thinking' })
-    this.deps.emit({
-      type: 'delta',
-      conversationId,
-      index: 0,
-      kind: 'reasoning',
-      text: 'e2e live thought'
-    })
-
-    setTimeout(() => {
-      this.deps.emit({ type: 'phase', conversationId, phase: 'working' })
-      this.deps.emit({ type: 'tool', conversationId, index: 1, block: read })
-    }, 160)
-
-    setTimeout(() => {
-      this.deps.emit({ type: 'tool', conversationId, index: 1, block: done })
-      this.deps.emit({ type: 'phase', conversationId, phase: 'outputting' })
-      this.deps.emit({
-        type: 'delta',
-        conversationId,
-        index: 2,
-        kind: 'text',
-        text
-      })
-    }, 420)
-
-    setTimeout(() => {
-      this.deps.conversations.appendMessage(conversationId, message)
-      this.deps.conversations.flush()
-      this.deps.emit({ type: 'end', conversationId, message, tokensUsed: 0 })
-    }, 780)
-  }
-
-  /** Park on ask_user_question until the renderer answers the card. */
-  private startE2eStubAsk(conversationId: string, parentId: string | null): void {
-    const askId = 'e2e-live-ask'
-    const block: ToolCallBlock = {
-      kind: 'toolCall',
-      id: askId,
-      tool: 'ask_user_question',
-      summary: 'Pick a next step',
-      input: JSON.stringify({
-        question: 'Pick a next step',
-        choices: ['Keep writing', 'Open review']
-      }),
-      output: '',
-      status: 'pending',
-      questions: [
-        { question: 'Pick a next step', choices: ['Keep writing', 'Open review'] }
-      ]
-    }
-
-    this.deps.emit({ type: 'start', conversationId })
-    this.deps.emit({ type: 'phase', conversationId, phase: 'awaiting-user' })
-    this.deps.emit({
-      type: 'awaiting',
-      conversationId,
-      toolCallId: askId,
-      index: 0,
-      block
-    })
-
-    this.e2eAskWaiters.set(askId, (text) => {
-      const sealed: ToolCallBlock = { ...block, status: 'completed', output: text }
-      const reply = `e2e stub reply · ${text}`
-      const message: ChatMessage = {
-        id: randomUUID(),
-        parentId,
-        role: 'assistant',
-        content: reply,
-        createdAt: Date.now(),
-        blocks: [sealed, { kind: 'text', text: reply }]
-      }
-      this.deps.emit({ type: 'tool', conversationId, index: 0, block: sealed })
-      this.deps.conversations.appendMessage(conversationId, message)
-      this.deps.conversations.flush()
-      this.deps.emit({ type: 'end', conversationId, message, tokensUsed: 0 })
-    })
-  }
-
-  /** Park on an Approve/Deny write gate until the renderer answers. */
-  private startE2eStubApprove(conversationId: string, parentId: string | null): void {
-    const approveId = 'e2e-live-approve'
-    const block: ToolCallBlock = {
-      kind: 'toolCall',
-      id: approveId,
-      tool: 'fs_write',
-      summary: 'Write hello.md',
-      input: JSON.stringify({ path: 'hello.md', contents: 'patched\n' }),
-      output: '',
-      status: 'pending',
-      choices: ['Approve', 'Deny']
-    }
-
-    this.deps.emit({ type: 'start', conversationId })
-    this.deps.emit({ type: 'phase', conversationId, phase: 'awaiting-user' })
-    this.deps.emit({
-      type: 'awaiting',
-      conversationId,
-      toolCallId: approveId,
-      index: 0,
-      block
-    })
-
-    this.e2eAskWaiters.set(approveId, (text) => {
-      const approved = /approve/i.test(text)
-      const sealed: ToolCallBlock = {
-        ...block,
-        status: approved ? 'completed' : 'skipped',
-        output: text,
-        choices: undefined
-      }
-      delete sealed.choices
-      const reply = approved ? 'e2e stub reply · approved' : 'e2e stub reply · denied'
-      const message: ChatMessage = {
-        id: randomUUID(),
-        parentId,
-        role: 'assistant',
-        content: reply,
-        createdAt: Date.now(),
-        blocks: [sealed, { kind: 'text', text: reply }]
-      }
-      this.deps.emit({ type: 'tool', conversationId, index: 0, block: sealed })
-      this.deps.conversations.appendMessage(conversationId, message)
-      this.deps.conversations.flush()
-      this.deps.emit({ type: 'end', conversationId, message, tokensUsed: 0 })
-    })
-  }
-
   /** Emits a terminal failure for a turn that never started (e.g. missing key). */
   private emitFatal(conversationId: string, parentId: string | null, error: string): void {
-    const message: ChatMessage = {
+    const message = fatalAssistantMessage({
       id: randomUUID(),
       parentId,
-      role: 'assistant',
-      content: error,
-      blocks: [{ kind: 'text', text: `> ${error}` }],
-      createdAt: Date.now(),
-      errorText: error,
-      errorDetail: error
-    }
+      error
+    })
     this.deps.conversations.appendMessage(conversationId, message)
     this.deps.conversations.flush()
     this.deps.emit({
@@ -1795,13 +1470,7 @@ export class AgentRuntime {
   private stripPriorChangeSetIds(conversationId: string): void {
     const conversation = this.deps.conversations.get(conversationId)
     if (!conversation) return
-    let dirty = false
-    for (const message of conversation.messages) {
-      if (!message.changeSetId) continue
-      delete message.changeSetId
-      dirty = true
-    }
-    if (dirty) this.deps.conversations.flush()
+    if (stripChangeSetIds(conversation.messages)) this.deps.conversations.flush()
   }
 
   private workdirOf(conversation: Conversation): string {
@@ -1824,165 +1493,3 @@ export class AgentRuntime {
 
 type StreamEvent = Extract<AgentEvent, { type: 'message_update' }>['assistantMessageEvent']
 
-function isAssistant(message: unknown): message is AssistantMessage {
-  return (message as AssistantMessage)?.role === 'assistant'
-}
-
-/** Fallback card text for results pi synthesised itself (blocked, not found). */
-function textOf(content: unknown): string | undefined {
-  if (!Array.isArray(content)) return undefined
-  return content
-    .filter((part): part is { type: 'text'; text: string } => part?.type === 'text')
-    .map((part) => part.text)
-    .join('\n')
-}
-
-/**
- * Streaming tool args for the card: keep identity fields, drop bulky bodies.
- * Full arguments land on toolcall_end via {@link blockFromContent}.
- */
-function leanToolArgs(tool: ToolName, args: Record<string, unknown>): Record<string, unknown> {
-  switch (tool) {
-    case 'fs_write': {
-      const lean: Record<string, unknown> = {}
-      if (typeof args.path === 'string') lean.path = args.path
-      if (args.contents !== undefined) lean.contents = '…'
-      return lean
-    }
-    case 'fs_read':
-    case 'fs_list': {
-      const lean: Record<string, unknown> = {}
-      if (typeof args.path === 'string') lean.path = args.path
-      return lean
-    }
-    case 'doc_search': {
-      const lean: Record<string, unknown> = {}
-      if (typeof args.path === 'string') lean.path = args.path
-      if (typeof args.query === 'string') lean.query = args.query
-      if (args.related_to_selection !== undefined) {
-        lean.related_to_selection = args.related_to_selection
-      }
-      if (args.top_k !== undefined) lean.top_k = args.top_k
-      return lean
-    }
-    case 'doc_fetch': {
-      const lean: Record<string, unknown> = {}
-      if (typeof args.path === 'string') lean.path = args.path
-      if (args.ids !== undefined) lean.ids = args.ids
-      if (args.page !== undefined) lean.page = args.page
-      if (args.section_id !== undefined) lean.section_id = args.section_id
-      return lean
-    }
-    case 'web_search': {
-      const lean: Record<string, unknown> = {}
-      if (typeof args.query === 'string') lean.query = args.query
-      if (args.num_results !== undefined) lean.num_results = args.num_results
-      if (typeof args.site === 'string') lean.site = args.site
-      return lean
-    }
-    case 'web_fetch': {
-      const lean: Record<string, unknown> = {}
-      if (typeof args.url === 'string') lean.url = args.url
-      if (args.extract !== undefined) lean.extract = args.extract
-      if (args.max_chars !== undefined) lean.max_chars = args.max_chars
-      if (args.start_line !== undefined) lean.start_line = args.start_line
-      return lean
-    }
-    case 'terminal': {
-      const lean: Record<string, unknown> = {}
-      if (typeof args.command === 'string') lean.command = args.command
-      if (args.background !== undefined) lean.background = args.background
-      return lean
-    }
-    case 'request':
-      return typeof args.instruction === 'string' ? { instruction: args.instruction } : {}
-    case 'ask_user_question': {
-      // Keep choices / multiSelect so the renderer can rebuild single- and
-      // multi-select cards from persisted input (not free-text-only).
-      const lean: Record<string, unknown> = {}
-      if (args.question !== undefined) lean.question = args.question
-      if (args.choices !== undefined) lean.choices = args.choices
-      if (args.multiSelect !== undefined) lean.multiSelect = args.multiSelect
-      if (args.questions !== undefined) lean.questions = args.questions
-      if (args.title !== undefined) lean.title = args.title
-      return lean
-    }
-    case 'plan': {
-      const lean: Record<string, unknown> = {}
-      if (args.title !== undefined) lean.title = args.title
-      if (args.steps !== undefined) lean.steps = args.steps
-      return lean
-    }
-    case 'plan_doc': {
-      const lean: Record<string, unknown> = {}
-      if (args.name !== undefined) lean.name = args.name
-      if (args.overview !== undefined) lean.overview = args.overview
-      if (args.plan !== undefined) lean.plan = args.plan
-      if (args.todos !== undefined) lean.todos = args.todos
-      if (args.phases !== undefined) lean.phases = args.phases
-      return lean
-    }
-    default:
-      return args
-  }
-}
-
-/** Merge a user's edited approval payload back into tool args. */
-function applyEditedArgs(
-  name: ToolName,
-  original: unknown,
-  edited: string
-): Record<string, unknown> | null {
-  const base =
-    original && typeof original === 'object' ? { ...(original as Record<string, unknown>) } : {}
-  if (name === 'terminal') {
-    return { ...base, command: edited }
-  }
-  if (name === 'fs_read' || name === 'fs_write' || name === 'fs_list') {
-    return { ...base, path: edited }
-  }
-  if (name === 'web_fetch') {
-    return { ...base, url: edited }
-  }
-  if (name === 'web_search') {
-    return { ...base, query: edited }
-  }
-  try {
-    const parsed = JSON.parse(edited) as unknown
-    if (parsed && typeof parsed === 'object') return parsed as Record<string, unknown>
-  } catch {
-    // not JSON
-  }
-  return null
-}
-
-/**
- * Reconcile plan checklist state when a turn ends.
- *
- * Models often complete the work then write a final answer without a last
- * `plan` tool call, leaving steps pending and the UI stuck on "paused".
- * - cancel: executing→error, pending→skipped
- * - error:  executing→error (pending left so the user sees what was not started)
- * - success: any still-open step is treated as finished work the agent forgot
- *   to tick off → done (abandoned work should have been marked skipped mid-turn)
- */
-function sealPlanBlocks(
-  blocks: MessageBlock[],
-  mode: 'cancel' | 'error' | 'success'
-): void {
-  for (const block of blocks) {
-    if (block.kind !== 'toolCall' || block.tool !== 'plan') continue
-    const input = projectChecklistInput(safeParseJson(block.input))
-    const steps = sealPlanSteps(input.steps, mode, {
-      cancelled: t('common.cancelled'),
-      failed: t('common.failed')
-    })
-    const title = input.title || 'Plan'
-    const done = steps.filter((step) => step.status === 'done').length
-    block.input = JSON.stringify({ ...input, title, steps }, null, 2)
-    block.summary = `Plan · ${title} (${done}/${steps.length})`
-    if (block.status === 'pending' || block.status === 'executing') {
-      block.status = 'completed'
-    }
-  }
-}

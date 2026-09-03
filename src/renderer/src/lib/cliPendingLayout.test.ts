@@ -4,6 +4,7 @@ import type { TerminalLayoutNode, TerminalTab } from '@shared/types'
 import {
   adoptRemotePendingTabs,
   isPendingCliTabId,
+  makePendingCliTab,
   pendingTabsFromLayout,
   replaceLayoutTabId
 } from './cliPendingLayout.ts'
@@ -29,6 +30,7 @@ describe('cliPendingLayout', () => {
   it('recognizes pending picker ids', () => {
     assert.equal(isPendingCliTabId('cli-pending:abc'), true)
     assert.equal(isPendingCliTabId('agent-host:claude:c1'), false)
+    assert.equal(isPendingCliTabId(makePendingCliTab().id), true)
   })
 
   it('rebuilds picker tabs from a pending-only layout', () => {

@@ -8,6 +8,11 @@ import {
 import { basename } from './path'
 import { isTemporaryWorkspace } from './format'
 import { tt } from '../i18n/useT'
+import { conversationOnMachine } from '@shared/workspaceHost'
+import {
+  conversationMatchesFilter,
+  type SidebarSessionFilter
+} from './sidebarSessionFilter'
 
 /** Sidebar key for the default empty Temporary Workspace shell. */
 export const DEFAULT_WORKSPACE_KEY = '__temporary__'
@@ -258,4 +263,55 @@ export function flatten(
     if (collapsedKeys.has(group.key)) return []
     return group.conversations.flatMap((row) => [row, ...(extras?.(row) ?? [])])
   })
+}
+
+/** Archive bucket, or live rows grouped after machine/search/filter + swarm-parent keep. */
+export function listedSidebarGroups(
+  conversations: ConversationMeta[],
+  opts: {
+    fileSessionsView: boolean
+    archiveView: boolean
+    query: string
+    windowMachineId: string | null | undefined
+    sessionFilter: SidebarSessionFilter
+    running: (id: string) => boolean
+    unread: (id: string) => boolean
+    favoriteIds: ReadonlySet<string>
+    searching: boolean
+    groupingMode: SidebarGroupingMode
+    tmp: string
+    pinnedWorkspaces: readonly string[]
+  }
+): ConversationGroup[] {
+  if (opts.fileSessionsView) return []
+  const needle = opts.query.trim().toLowerCase()
+  // File-bound sessions live only under “File sessions” — never in workspace
+  // groups. listMeta already omits them; the store still hydrates them for
+  // FileSessionView, so we must filter here or a Downloads/file click looks
+  // like a normal project session that “wrongly” opens the file canvas.
+  if (opts.archiveView) {
+    const rows = conversations
+      .filter((c) => c.archived && !c.fileId)
+      .filter((c) => conversationOnMachine(c, opts.windowMachineId))
+      .filter((c) => !needle || c.title.toLowerCase().includes(needle))
+      .sort((a, b) => (b.archivedAt ?? b.updatedAt) - (a.archivedAt ?? a.updatedAt))
+    return [{ key: 'archive', label: '', conversations: rows }]
+  }
+  const matched = conversations
+    .filter((c) => !c.archived && !c.fileId)
+    .filter((c) => conversationOnMachine(c, opts.windowMachineId))
+    .filter((c) => !needle || c.title.toLowerCase().includes(needle))
+    .filter((c) =>
+      conversationMatchesFilter(c, opts.sessionFilter, {
+        running: opts.running(c.id),
+        unread: opts.unread(c.id),
+        favoriteIds: opts.favoriteIds
+      })
+    )
+  const keep = new Set(matched.map((c) => c.id))
+  for (const row of matched) {
+    if (row.swarmParentId) keep.add(row.swarmParentId)
+  }
+  const rows = conversations.filter((c) => keep.has(c.id) && !c.archived && !c.fileId)
+  return groupConversations(rows, opts.searching, opts.groupingMode, opts.tmp, opts.pinnedWorkspaces)
 }
