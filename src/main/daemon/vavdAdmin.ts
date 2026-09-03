@@ -177,12 +177,18 @@ function formatAdminResult(command: string, result: Record<string, unknown>): st
 
 export function formatClients(rows: IncomingController[]): string {
   if (rows.length === 0) return 'no paired computers\n'
-  return `${rows
+  const online = rows.filter((row) => row.state === 'online').length
+  const warning =
+    online > 1
+      ? `warning: ${online} computers are online and share this machine’s files.\n`
+      : ''
+  const lines = rows
     .map(
       (row) =>
-        `${row.id}  ${row.online ? 'online ' : 'offline'}  ${row.name}  lastSeen=${new Date(row.lastSeen).toISOString()}`
+        `${row.id}  ${row.state.padEnd(8)}  ${row.name}  lastSeen=${new Date(row.lastSeen).toISOString()}`
     )
-    .join('\n')}\n`
+    .join('\n')
+  return `${warning}${lines}\n`
 }
 
 export function handleStdinLine(

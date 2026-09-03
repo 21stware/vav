@@ -307,6 +307,7 @@ describe('daemon loopback', () => {
         signal: abort.signal
       })
       await new Promise((resolve) => setTimeout(resolve, 40))
+      assert.equal(server.incoming().some((row) => row.state === 'pending' && row.name === 'Studio'), true)
       abort.abort()
       await assert.rejects(() => pending, /pairing cancelled/)
     } finally {
@@ -542,7 +543,8 @@ describe('daemon loopback', () => {
       const grantSecret = client.welcome!.grant!.secret
 
       assert.equal(server.unpairGrant(grantId), true)
-      assert.equal(server.incoming().length, 0)
+      assert.equal(server.incoming().filter((row) => row.state !== 'revoked').length, 0)
+      assert.equal(server.incoming().some((row) => row.state === 'revoked'), true)
 
       const again = new DaemonClient()
       const port = server.port()
@@ -562,8 +564,117 @@ describe('daemon loopback', () => {
       })
       assert.ok(welcome.grant?.id)
       assert.notEqual(welcome.grant?.id, grantId)
-      assert.equal(server.incoming().length, 1)
+      const rows = server.incoming()
+      assert.equal(rows.filter((row) => row.state === 'online').length, 1)
+      assert.equal(rows.find((row) => row.state === 'online')?.id, welcome.grant?.id)
+      assert.equal(rows.some((row) => row.state === 'revoked' && row.id === grantId), true)
       fresh.close()
+    } finally {
+      client.close()
+      server.close()
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('unpairs one computer without rotating the other grant', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'vav-daemon-'))
+    const { server, client } = await startPair(dir)
+    const other = new DaemonClient()
+    try {
+      const keep = await other.connect({
+        host: '127.0.0.1',
+        port: server.port(),
+        secret: SECRET,
+        device: 'other',
+        clientId: 'other-box'
+      })
+      assert.ok(keep.grant?.id)
+      const dropId = client.welcome!.grant!.id
+      assert.notEqual(keep.grant.id, dropId)
+      assert.equal(server.incoming().filter((row) => row.state === 'online').length, 2)
+
+      assert.equal(server.unpairGrant(dropId), true)
+      assert.equal(other.connected, true)
+      assert.equal(server.incoming().some((row) => row.id === keep.grant?.id && row.state === 'online'), true)
+
+      const denied = new DaemonClient()
+      await assert.rejects(
+        () =>
+          denied.connect({
+            host: '127.0.0.1',
+            port: server.port(),
+            secret: client.welcome!.grant!.secret,
+            device: 'test'
+          }),
+        /pairing rejected|revoked|closed/
+      )
+      denied.close()
+
+      const again = new DaemonClient()
+      const welcome = await again.connect({
+        host: '127.0.0.1',
+        port: server.port(),
+        secret: keep.grant.secret,
+        device: 'other',
+        grantId: keep.grant.id
+      })
+      assert.equal(welcome.grant?.id, keep.grant.id)
+      again.close()
+    } finally {
+      other.close()
+      client.close()
+      server.close()
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('keeps issued grants after the printed offer rotates', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'vav-daemon-'))
+    let offer = SECRET
+    const host = createLocalWorkspaceHost({ name: 'loop' })
+    const server = new DaemonServer({
+      host,
+      identity: { machineId: 'loop-box', name: 'loop' },
+      secret: () => offer,
+      appVersion: 'test',
+      home: dir,
+      tmp: dir
+    })
+    const client = new DaemonClient()
+    try {
+      const port = await server.listen(0, '127.0.0.1')
+      const welcome = await client.connect({
+        host: '127.0.0.1',
+        port,
+        secret: SECRET,
+        device: 'test',
+        clientId: 'kept'
+      })
+      assert.ok(welcome.grant)
+      offer = 'rotated-offer-secret-24b'
+      const stale = new DaemonClient()
+      await assert.rejects(
+        () =>
+          stale.connect({
+            host: '127.0.0.1',
+            port,
+            secret: SECRET,
+            device: 'new',
+            clientId: 'fresh'
+          }),
+        /pairing rejected|revoked|closed/
+      )
+      stale.close()
+      const again = new DaemonClient()
+      const refreshed = await again.connect({
+        host: '127.0.0.1',
+        port,
+        secret: welcome.grant.secret,
+        device: 'test',
+        grantId: welcome.grant.id
+      })
+      assert.equal(refreshed.grant?.id, welcome.grant.id)
+      again.close()
     } finally {
       client.close()
       server.close()
@@ -583,6 +694,7 @@ describe('daemon loopback', () => {
         await new Promise((resolve) => setTimeout(resolve, 20))
       }
       assert.equal(client.connected, false)
+      assert.equal(server.incoming()[0]?.state, 'kicked')
       assert.equal(server.incoming()[0]?.online, false)
 
       const again = new DaemonClient()
@@ -610,10 +722,14 @@ describe('daemon loopback', () => {
       assert.ok(grantId)
       await client.request('pair.leave')
       const start = Date.now()
-      while (server.incoming().length > 0 && Date.now() - start < 1000) {
+      while (
+        server.incoming().some((row) => row.state !== 'revoked') &&
+        Date.now() - start < 1000
+      ) {
         await new Promise((resolve) => setTimeout(resolve, 20))
       }
-      assert.equal(server.incoming().length, 0)
+      assert.equal(server.incoming().some((row) => row.state === 'revoked'), true)
+      assert.equal(server.incoming().some((row) => row.state !== 'revoked'), false)
     } finally {
       client.close()
       server.close()

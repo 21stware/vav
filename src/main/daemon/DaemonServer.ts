@@ -120,6 +120,8 @@ export class DaemonServer {
   private readonly live = new Map<Socket, LiveMeta>()
   private listenPort = 0
   private pairAskBusy = false
+  private pendingAsk: IncomingController | null = null
+  private readonly revoked = new Map<string, IncomingController>()
   private readonly authFails = new Map<
     string,
     { count: number; windowStart: number; lockedUntil: number }
@@ -131,16 +133,38 @@ export class DaemonServer {
   }
 
   incoming(): IncomingController[] {
-    return incomingFromGrants(this.grants.list(), this.onlineGrantIds())
+    const extras: IncomingController[] = []
+    if (this.pendingAsk) extras.push(this.pendingAsk)
+    extras.push(...this.revoked.values())
+    return incomingFromGrants(this.grants.list(), this.onlineGrantIds(), extras)
   }
 
   disconnectGrant(grantId: string): boolean {
-    return this.dropGrantSockets(grantId, 'disconnected') > 0
+    const grant = this.grants.findById(grantId)
+    if (!grant) return false
+    this.grants.markKicked(grantId)
+    this.dropGrantSockets(grantId, 'disconnected')
+    this.notifyIncoming()
+    return true
   }
 
   unpairGrant(grantId: string): boolean {
-    const grant = this.grants.remove(grantId)
+    const grant = this.grants.remove(grantId) ?? this.pendingAsk
     this.dropGrantSockets(grantId, 'revoked')
+    if (this.pendingAsk?.id === grantId) this.pendingAsk = null
+    if (grant && 'secret' in grant) {
+      this.revoked.set(grantId, {
+        id: grant.id,
+        name: grant.name,
+        clientId: grant.clientId,
+        state: 'revoked',
+        online: false,
+        lastSeen: Date.now(),
+        issuedAt: grant.issuedAt
+      })
+    } else if (grant) {
+      this.revoked.set(grantId, { ...grant, state: 'revoked', online: false, lastSeen: Date.now() })
+    }
     if (grant) this.notifyIncoming()
     return Boolean(grant)
   }
@@ -220,6 +244,12 @@ export class DaemonServer {
     this.opts.onIncomingChanged?.()
   }
 
+  private clearRevoked(clientId: string): void {
+    for (const [id, row] of this.revoked) {
+      if (row.clientId === clientId) this.revoked.delete(id)
+    }
+  }
+
   private offerSecrets(): string[] {
     const extra = this.opts.extraSecrets?.() ?? []
     return [this.opts.secret(), ...extra].filter((secret) => secret.length >= 16)
@@ -275,6 +305,7 @@ export class DaemonServer {
     if (existing) {
       this.authFails.delete(this.authKey(socket))
       this.grants.touch(existing.id, hello.device)
+      this.clearRevoked(existing.clientId)
       meta.grantId = existing.id
       meta.clientId = existing.clientId
       meta.name = existing.name
@@ -289,6 +320,7 @@ export class DaemonServer {
       clientId: hello.clientId || hello.grantId || hello.device || randomUUID(),
       name: hello.device || 'unknown'
     })
+    this.clearRevoked(grant.clientId)
     meta.grantId = grant.id
     meta.clientId = grant.clientId
     meta.name = grant.name
@@ -463,6 +495,16 @@ export class DaemonServer {
       return
     }
     this.pairAskBusy = true
+    this.pendingAsk = {
+      id: `pending:${ask.machineId}`,
+      name: ask.name,
+      clientId: ask.machineId,
+      state: 'pending',
+      online: false,
+      lastSeen: Date.now(),
+      issuedAt: Date.now()
+    }
+    this.notifyIncoming()
     try {
       const allow = await new Promise<boolean | 'closed'>((resolve) => {
         if (socket.destroyed) {
@@ -499,7 +541,9 @@ export class DaemonServer {
       writeLine(socket, { type: 'pair-offer', pairing })
       socket.end()
     } finally {
+      this.pendingAsk = null
       this.pairAskBusy = false
+      this.notifyIncoming()
     }
   }
 

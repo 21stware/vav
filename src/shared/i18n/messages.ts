@@ -1551,6 +1551,13 @@ export const zhCN = {
   'machines.incomingEmpty': '还没有电脑配对到这台机器。',
   'machines.incomingHint':
     '每台电脑拿到的是自己的授权，可以单独断开或删除。多台同时连上时，会共用这台机器上的文件。',
+  'machines.incomingConflict':
+    '{count} 台电脑同时在线，它们会共用这台机器上的文件，可能互相覆盖。',
+  'machines.statePending': '等待确认',
+  'machines.stateOnline': '在线',
+  'machines.stateOffline': '离线',
+  'machines.stateKicked': '已断开',
+  'machines.stateRevoked': '已删除',
   'machines.disconnect': '断开',
   'machines.unpair': '删除',
   'machines.unpairHint': '撤销这台电脑的授权。对方无法重连，除非重新配对。',
@@ -3747,6 +3754,13 @@ export const en: Record<MessageKey, string> = {
   'machines.incomingEmpty': 'No computer is paired to this machine yet.',
   'machines.incomingHint':
     'Each computer gets its own grant. Disconnect or delete one without rotating everyone. Several can be online at once and share this machine’s files.',
+  'machines.incomingConflict':
+    '{count} computers are online and share this machine’s files — they can overwrite each other.',
+  'machines.statePending': 'Waiting',
+  'machines.stateOnline': 'Online',
+  'machines.stateOffline': 'Offline',
+  'machines.stateKicked': 'Disconnected',
+  'machines.stateRevoked': 'Removed',
   'machines.disconnect': 'Disconnect',
   'machines.unpair': 'Remove',
   'machines.unpairHint': 'Revokes this computer’s grant. It cannot reconnect unless it pairs again.',

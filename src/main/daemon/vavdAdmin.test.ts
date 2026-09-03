@@ -26,7 +26,15 @@ describe('vavd admin', () => {
 
   it('handles stdin commands', () => {
     const rows: IncomingController[] = [
-      { id: 'g1', name: 'Studio', clientId: 'c1', online: true, lastSeen: Date.now(), issuedAt: Date.now() }
+      {
+        id: 'g1',
+        name: 'Studio',
+        clientId: 'c1',
+        state: 'online',
+        online: true,
+        lastSeen: Date.now(),
+        issuedAt: Date.now()
+      }
     ]
     let unpaired = ''
     const text = handleStdinLine('unpair g1', {
@@ -41,5 +49,10 @@ describe('vavd admin', () => {
     assert.equal(unpaired, 'g1')
     assert.equal(text, 'ok\n')
     assert.match(formatClients(rows), /online/)
+    const two: IncomingController[] = [
+      { ...rows[0], id: 'a', state: 'online', online: true },
+      { ...rows[0], id: 'b', name: 'Other', state: 'online', online: true }
+    ]
+    assert.match(formatClients(two), /2 computers are online/)
   })
 })

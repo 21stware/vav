@@ -1798,12 +1798,15 @@ const daemonAttach = new DaemonAttachService({
       if (parent.isMinimized()) parent.restore()
       parent.show()
     }
+    const activeIncoming = daemonAttach
+      .incoming()
+      .filter((row) => row.state !== 'pending' && row.state !== 'revoked')
     const opts = dialogConfirmOptions(
       {
         title: t('machines.lanPairTitle'),
         message: t(
-          daemonAttach.incoming().length > 0 ? 'machines.lanPairBodyBusy' : 'machines.lanPairBody',
-          { name: from.name, count: String(daemonAttach.incoming().length) }
+          activeIncoming.length > 0 ? 'machines.lanPairBodyBusy' : 'machines.lanPairBody',
+          { name: from.name, count: String(activeIncoming.length) }
         ),
         confirmLabel: t('common.allow'),
         cancelLabel: t('common.deny'),

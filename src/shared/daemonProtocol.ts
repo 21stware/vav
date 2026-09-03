@@ -364,11 +364,15 @@ export function parseMachinePairing(text: string): DaemonPairing | null {
   return parseDaemonPairing(trimmed)
 }
 
+/** Live pairing relationship as the host shows it. */
+export type IncomingControllerState = 'pending' | 'online' | 'offline' | 'kicked' | 'revoked'
+
 /** A controller this host has issued a grant to (desktop Incoming / vavd clients). */
 export type IncomingController = {
   id: string
   name: string
   clientId: string
+  state: IncomingControllerState
   online: boolean
   lastSeen: number
   issuedAt: number

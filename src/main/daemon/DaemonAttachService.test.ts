@@ -729,10 +729,13 @@ describe('DaemonAttachService', () => {
       assert.equal(server.incoming().length, 1)
       await service.forget('box-1')
       const start = Date.now()
-      while (server.incoming().length > 0 && Date.now() - start < 1000) {
+      while (
+        server.incoming().some((row) => row.state !== 'revoked') &&
+        Date.now() - start < 1000
+      ) {
         await new Promise((resolve) => setTimeout(resolve, 20))
       }
-      assert.equal(server.incoming().length, 0)
+      assert.equal(server.incoming().some((row) => row.state === 'revoked'), true)
     } finally {
       service.dispose()
       server.close()

@@ -20,6 +20,8 @@ export type PairGrant = {
   name: string
   issuedAt: number
   lastSeen: number
+  /** Host disconnected this grant; cleared on the next successful hello. */
+  kicked?: boolean
 }
 
 export type GrantStore = {
@@ -29,6 +31,7 @@ export type GrantStore = {
   findByClientId(clientId: string): PairGrant | null
   issue(input: { clientId: string; name: string }): PairGrant
   touch(id: string, name?: string): void
+  markKicked(id: string): void
   remove(id: string): PairGrant | null
 }
 
@@ -51,7 +54,8 @@ function asGrant(value: unknown): PairGrant | null {
     clientId: raw.clientId.trim(),
     name,
     issuedAt,
-    lastSeen
+    lastSeen,
+    kicked: raw.kicked === true
   }
 }
 
@@ -100,7 +104,14 @@ export function createMemoryGrantStore(seed: PairGrant[] = []): GrantStore {
       const grant = rows.get(id)
       if (!grant) return
       grant.lastSeen = Date.now()
+      grant.kicked = false
       if (name?.trim()) grant.name = name.trim()
+    },
+    markKicked(id) {
+      const grant = rows.get(id)
+      if (!grant) return
+      grant.kicked = true
+      grant.lastSeen = Date.now()
     },
     remove(id) {
       const grant = rows.get(id) ?? null
@@ -131,6 +142,10 @@ export function createFileGrantStore(dir: string): GrantStore {
       memory.touch(id, name)
       persist()
     },
+    markKicked(id) {
+      memory.markKicked(id)
+      persist()
+    },
     remove(id) {
       const grant = memory.remove(id)
       if (grant) persist()
@@ -152,16 +167,25 @@ function loadGrantsFile(file: string): PairGrant[] {
 
 export function incomingFromGrants(
   grants: PairGrant[],
-  onlineIds: ReadonlySet<string>
+  onlineIds: ReadonlySet<string>,
+  extras: IncomingController[] = []
 ): IncomingController[] {
-  return grants.map((grant) => ({
-    id: grant.id,
-    name: grant.name,
-    clientId: grant.clientId,
-    online: onlineIds.has(grant.id),
-    lastSeen: grant.lastSeen,
-    issuedAt: grant.issuedAt
-  }))
+  const live = grants.map((grant) => {
+    const online = onlineIds.has(grant.id)
+    const state = online ? 'online' : grant.kicked ? 'kicked' : 'offline'
+    return {
+      id: grant.id,
+      name: grant.name,
+      clientId: grant.clientId,
+      state,
+      online,
+      lastSeen: grant.lastSeen,
+      issuedAt: grant.issuedAt
+    } satisfies IncomingController
+  })
+  const seen = new Set(live.map((row) => row.id))
+  const extra = extras.filter((row) => !seen.has(row.id))
+  return [...extra, ...live]
 }
 
 export function isPairRevokedMessage(message: string): boolean {

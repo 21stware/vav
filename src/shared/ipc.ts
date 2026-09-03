@@ -53,7 +53,7 @@ export type HostDiscoveryPeer = {
   platform?: string
 }
 
-export type { IncomingController } from './daemonProtocol'
+export type { IncomingController, IncomingControllerState } from './daemonProtocol'
 
 export type ScreenshotInitPayload = {
   imagePath: string

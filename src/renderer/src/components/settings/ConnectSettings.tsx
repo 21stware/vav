@@ -407,6 +407,22 @@ function IncomingControllers({ enabled }: { enabled: boolean }): React.JSX.Eleme
 
   if (rows.length === 0 && !enabled) return null
 
+  const onlineCount = rows.filter((row) => row.state === 'online').length
+  const stateLabel = (state: IncomingController['state']): string => {
+    switch (state) {
+      case 'pending':
+        return t('machines.statePending')
+      case 'online':
+        return t('machines.stateOnline')
+      case 'kicked':
+        return t('machines.stateKicked')
+      case 'revoked':
+        return t('machines.stateRevoked')
+      default:
+        return t('machines.stateOffline')
+    }
+  }
+
   const unpair = (row: IncomingController): void => {
     showDialog({
       title: t('machines.unpair'),
@@ -423,34 +439,46 @@ function IncomingControllers({ enabled }: { enabled: boolean }): React.JSX.Eleme
     <div className="machines-incoming" data-testid="settings-incoming-machines">
       <div className="connect-peers-caption">{t('machines.incoming')}</div>
       <p className="connect-lede">{t('machines.incomingHint')}</p>
+      {onlineCount > 1 ? (
+        <InlineAlert
+          kind="warning"
+          title={t('machines.incoming')}
+          message={t('machines.incomingConflict', { count: String(onlineCount) })}
+        />
+      ) : null}
       {rows.length === 0 ? (
         <p className="connect-lede">{t('machines.incomingEmpty')}</p>
       ) : (
         <div className="machines-list">
           {rows.map((row) => (
-            <div key={row.id} className="connect-peer" data-testid={`settings-incoming-${row.id}`}>
+            <div
+              key={row.id}
+              className="connect-peer"
+              data-testid={`settings-incoming-${row.id}`}
+              data-state={row.state}
+            >
               <div className="connect-peer-text">
                 <div className="connect-peer-name">{row.name}</div>
-                <div className="connect-peer-sub">
-                  {row.online ? t('machines.online') : t('machines.offline')}
-                </div>
+                <div className="connect-peer-sub">{stateLabel(row.state)}</div>
               </div>
-              <div className="connect-peer-actions">
-                {row.online ? (
+              {row.state === 'revoked' || row.state === 'pending' ? null : (
+                <div className="connect-peer-actions">
+                  {row.state === 'online' ? (
+                    <Button
+                      label={t('machines.disconnect')}
+                      size="sm"
+                      testId={`settings-incoming-disconnect-${row.id}`}
+                      onClick={() => void window.vav.hosts.disconnectIncoming(row.id)}
+                    />
+                  ) : null}
                   <Button
-                    label={t('machines.disconnect')}
+                    label={t('machines.unpair')}
                     size="sm"
-                    testId={`settings-incoming-disconnect-${row.id}`}
-                    onClick={() => void window.vav.hosts.disconnectIncoming(row.id)}
+                    testId={`settings-incoming-unpair-${row.id}`}
+                    onClick={() => unpair(row)}
                   />
-                ) : null}
-                <Button
-                  label={t('machines.unpair')}
-                  size="sm"
-                  testId={`settings-incoming-unpair-${row.id}`}
-                  onClick={() => unpair(row)}
-                />
-              </div>
+                </div>
+              )}
             </div>
           ))}
         </div>
@@ -475,10 +503,12 @@ function PairingLine(): React.JSX.Element | null {
     refresh()
     const offRemote = window.vav.remoteControl.onChanged(() => refresh())
     const offHosts = window.vav.hosts.onChanged(() => refresh())
+    const offIncoming = window.vav.hosts.onIncomingChanged(() => refresh())
     return () => {
       alive = false
       offRemote()
       offHosts()
+      offIncoming()
     }
   }, [enabled])
 

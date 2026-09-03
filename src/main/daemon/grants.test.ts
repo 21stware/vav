@@ -52,8 +52,21 @@ describe('grant store', () => {
     const live = store.issue({ clientId: 'a', name: 'One' })
     const idle = store.issue({ clientId: 'b', name: 'Two' })
     const incoming = incomingFromGrants(store.list(), new Set([live.id]))
-    assert.equal(incoming.find((row) => row.id === live.id)?.online, true)
-    assert.equal(incoming.find((row) => row.id === idle.id)?.online, false)
+    assert.equal(incoming.find((row) => row.id === live.id)?.state, 'online')
+    assert.equal(incoming.find((row) => row.id === idle.id)?.state, 'offline')
+    store.markKicked(idle.id)
+    const kicked = incomingFromGrants(store.list(), new Set())
+    assert.equal(kicked.find((row) => row.id === idle.id)?.state, 'kicked')
+    const revoked: import('../../shared/daemonProtocol.ts').IncomingController = {
+      id: 'gone',
+      name: 'Gone',
+      clientId: 'x',
+      state: 'revoked',
+      online: false,
+      lastSeen: Date.now(),
+      issuedAt: Date.now()
+    }
+    assert.equal(incomingFromGrants([], new Set(), [revoked])[0]?.state, 'revoked')
   })
 })
 
