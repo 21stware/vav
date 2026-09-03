@@ -29,6 +29,7 @@ import type {
   TokenSnapshot
 } from '@shared/types'
 import { conversationOnMachine, LOCAL_MACHINE_ID } from '@shared/workspaceHost'
+import { mergeAdoptedHostMessages } from '@shared/remoteControlApply'
 import { parseThinkingLevel } from '@shared/thinkingLevel'
 import { normalizeCursorConversationModel } from '@shared/cursorModel'
 import { hostTranscriptKey } from '@shared/types'
@@ -202,6 +203,17 @@ export class ConversationStore {
 
   get(id: string): Conversation | undefined {
     return this.conversations.find((c) => c.id === id)
+  }
+
+  /** Adopted remote: local id, or the host id when adopt remapped a collision. */
+  findOnHost(machineId: string, hostConversationId: string): Conversation | undefined {
+    const hostId = hostConversationId.trim()
+    if (!hostId) return undefined
+    return this.conversations.find(
+      (c) =>
+        conversationOnMachine(c, machineId) &&
+        (c.id === hostId || (c.duplicateSourceId ?? '').trim() === hostId)
+    )
   }
 
   create(
@@ -425,6 +437,14 @@ export class ConversationStore {
       messages: Array.isArray(cloned.messages) ? cloned.messages : [],
       activeLeafId: cloned.activeLeafId ?? null,
       compactions: Array.isArray(cloned.compactions) ? cloned.compactions : []
+    }
+    if (existingIndex >= 0) {
+      const existing = this.conversations[existingIndex]!
+      adopted.messages = mergeAdoptedHostMessages(adopted.messages, existing.messages)
+      if (existing.updatedAt > adopted.updatedAt) adopted.updatedAt = existing.updatedAt
+      const leafStillThere =
+        existing.activeLeafId && adopted.messages.some((message) => message.id === existing.activeLeafId)
+      if (leafStillThere) adopted.activeLeafId = existing.activeLeafId
     }
     this.adoptTreeShape(adopted)
 

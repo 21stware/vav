@@ -4,6 +4,7 @@ import type { ChatMessage } from '../../../shared/types.ts'
 import {
   conversationFullHydratePatch,
   conversationHydrationMetaPatch,
+  conversationHydrationRefreshPatch,
   conversationTokenCachePatch,
   isCurrentHydration,
   mergeHydratedMessages,
@@ -189,5 +190,31 @@ describe('conversation cache maps', () => {
     assert.equal(next.activeLeaf.a, 'leaf')
     assert.deepEqual(next.compactions.a, [{ id: 'new' }])
     assert.equal(next.cacheCreatedAt.a, 2)
+  })
+
+  it('merges new disk messages when returning to a hydrated remote session', () => {
+    const state = {
+      messages: { a: [msg('u0', 'older')] },
+      messagesHydrated: { a: true },
+      activeLeaf: { a: 'u0' },
+      compactions: { a: [] },
+      tokenHistories: { a: [] },
+      cacheCreatedAt: { a: null },
+      cacheExpiresAt: { a: null }
+    }
+    const next = conversationHydrationRefreshPatch(state, 'a', {
+      messages: [msg('u0', 'older'), msg('u1', 'from master', 'u0')],
+      activeLeafId: 'u1',
+      tokenHistory: [],
+      cacheCreatedAt: null,
+      cacheExpiresAt: null
+    })
+    assert.ok('messages' in next)
+    if (!('messages' in next)) return
+    assert.deepEqual(
+      next.messages.a.map((m) => m.id),
+      ['u0', 'u1']
+    )
+    assert.equal(next.activeLeaf.a, 'u1')
   })
 })

@@ -62,7 +62,8 @@ import {
   type AppSettings,
   type ChatMessage,
   type Conversation,
-  type TurnEvent
+  type TurnEvent,
+  type TurnStatus
 } from '@shared/types'
 import { agentBinaryCandidates } from '@shared/agentBinary'
 import { localFileStreamUrl } from '@shared/localFileUrl'
@@ -79,12 +80,13 @@ import { RemoteControlService } from './remote/RemoteControlService'
 import { DaemonAttachService } from './daemon/DaemonAttachService'
 import { openTailcatDial } from './daemon/tailcatDial'
 import { hostJoin, isLocalMachine, LOCAL_MACHINE_ID, normalizeMachineId, conversationOnMachine, parseWorkspaceRefList, recentsForMachine, remoteConversationMachineId, type WorkspaceHostInfo } from '@shared/workspaceHost'
-import { hostSessionId } from '@shared/remoteHostKind'
+import { hostSessionId, localSessionId } from '@shared/remoteHostKind'
 import type {
   RemoteConfigure,
   RemoteControlsEvent,
   RemoteDirsEvent,
   RemoteHostEvent,
+  RemoteServerMessage,
   RemoteSession,
   RemoteThreadEvent
 } from '@shared/remoteControl'
@@ -249,6 +251,11 @@ import {
   buildRemoteHostEvent
 } from './remote/sessionGate'
 import { RemoteSendQueue } from './remote/sendQueue'
+import {
+  remoteControlTurnStatus,
+  turnEventsFromRemoteThread,
+  turnEventsFromRemoteTurn
+} from '@shared/remoteControlApply'
 import { createScreenshotController } from './screenshot/ScreenshotSession'
 import { OVERLAY_IMAGE_EXTS, shouldOpenAsOverlay } from '@shared/previewOverlay'
 import {
@@ -1761,36 +1768,7 @@ const daemonAttach = new DaemonAttachService({
   onControlHello: (socket, leftover, hello) =>
     remoteControl.adoptControlSocket(socket, leftover, hello),
   onControlEvent: (machineId, message) => {
-    if (
-      message.type === 'thread' ||
-      (message.type === 'turn' &&
-        (message.phase === 'done' || message.phase === 'error' || message.phase === 'cancelled'))
-    ) {
-      void pullRemoteWorkspace(machineId)
-    }
-    if (message.type === 'turn' && message.phase === 'running') {
-      sendToWorkspaceWindows(
-        IPC.agentEvent,
-        { type: 'start', conversationId: message.conversationId },
-        message.conversationId
-      )
-      if (message.draft) {
-        sendToWorkspaceWindows(
-          IPC.agentEvent,
-          {
-            type: 'delta',
-            conversationId: message.conversationId,
-            index: 0,
-            kind: 'text',
-            text: message.draft
-          },
-          message.conversationId
-        )
-      }
-    }
-    if (message.type === 'created') {
-      void pullRemoteWorkspace(machineId)
-    }
+    applyDesktopControlEvent(machineId, message)
   },
   onHostAttached: (machineId) => pullRemoteWorkspace(machineId),
   onHostsChanged: (hosts) => {
@@ -1865,6 +1843,88 @@ async function pullIfForwarded(
   const machineId = remoteMachineId(conversation)
   if (machineId) await pullRemoteWorkspace(machineId)
   return true
+}
+
+/** Host conversation ids that already received a projected `start` on this client. */
+const remoteControlStarted = new Set<string>()
+
+function desktopControlLocalId(machineId: string, hostConversationId: string): string {
+  const onHost = conversationStore.findOnHost(machineId, hostConversationId)
+  if (onHost) return onHost.id
+  return localSessionId(conversationStore.all(), hostConversationId)
+}
+
+function emitDesktopControlEvents(events: TurnEvent[]): void {
+  for (const event of events) {
+    sendToWorkspaceWindows(IPC.agentEvent, event, event.conversationId)
+  }
+}
+
+/**
+ * Desktop remote window is an isomorphic control-plane client. Apply thread /
+ * turn frames immediately — a full catalog pull is too slow and can race a
+ * newer local apply with a stale `sessions.get`.
+ */
+function applyDesktopControlEvent(machineId: string, message: RemoteServerMessage): void {
+  if (message.type === 'created') {
+    void pullRemoteWorkspace(machineId)
+    return
+  }
+
+  if (message.type === 'thread') {
+    const local = conversationStore.findOnHost(machineId, message.conversationId)
+    if (!local) {
+      void pullRemoteWorkspace(machineId)
+      return
+    }
+    const projected = turnEventsFromRemoteThread(local.id, message.messages, local.messages)
+    const prevById = new Map(local.messages.map((row) => [row.id, row]))
+    for (const next of projected.messages) {
+      const prev = prevById.get(next.id)
+      if (
+        !prev ||
+        prev.content !== next.content ||
+        (prev.blocks?.length ?? 0) !== (next.blocks?.length ?? 0)
+      ) {
+        conversationStore.replaceMessage(local.id, next)
+      }
+    }
+    if (projected.leafId) conversationStore.setActiveLeaf(local.id, projected.leafId)
+    emitDesktopControlEvents(projected.events)
+    if (projected.events.some((event) => event.type === 'end')) {
+      remoteControlStarted.delete(local.id)
+    }
+    publishConversations()
+    return
+  }
+
+  if (message.type === 'turn') {
+    const localId = desktopControlLocalId(machineId, message.conversationId)
+    const started = remoteControlStarted.has(localId)
+    const projected = turnEventsFromRemoteTurn(localId, message, started)
+    if (projected.started) remoteControlStarted.add(localId)
+    else remoteControlStarted.delete(localId)
+    emitDesktopControlEvents(projected.events)
+    return
+  }
+}
+
+function controlPlaneTurnStatus(id: string): TurnStatus | null {
+  const conversation = conversationStore.get(id)
+  if (!conversation || !controlPlaneOwns(conversation)) return null
+  const machineId = remoteMachineId(conversation)
+  if (!machineId) return null
+  const dial = daemonAttach.controlOf(machineId)
+  if (!dial?.ready) return null
+  const hostId = hostSessionId(conversation.id, conversation.duplicateSourceId)
+  const snap = dial.snapshot()
+  dial.requestThread(hostId)
+  return remoteControlTurnStatus({
+    conversationId: id,
+    generating: snap.generatingIds.includes(hostId),
+    awaitingId: snap.awaiting[hostId]?.id ?? null,
+    liveBlocks: snap.liveBlocks[hostId]
+  })
 }
 
 /** Pull the other computer's sessions and folder recents before its window boots. */
@@ -6710,8 +6770,8 @@ return c as text`
       cancelBuiltin: (id) => agent.cancel(id),
       answerCli: (id, toolCallId, answer) => cliHost.answer(id, toolCallId, answer),
       answerBuiltin: (id, toolCallId, answer) => agent.answer(id, toolCallId, answer),
-      statusCli: (id) => cliHost.status(id),
-      statusBuiltin: (id) => agent.status(id),
+      statusCli: (id) => controlPlaneTurnStatus(id) ?? cliHost.status(id),
+      statusBuiltin: (id) => controlPlaneTurnStatus(id) ?? agent.status(id),
       regenerateCli: (id, messageId) => {
         void cliHost.regenerate(id, messageId)
       },
