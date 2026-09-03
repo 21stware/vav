@@ -18,9 +18,9 @@
  * fetched on demand when the phone opens a conversation. The tunnel is one
  * TCP stream — keep the first paint small.
  * The phone is a first-class session client: create / thread / configure /
- * cancel / reply (ask & approval) / rename / archive, plus a restricted
- * workdir picker (`browse` + `workspace`). fs contents, pty, spawn, and
- * secrets stay on the daemon protocol — the phone never gets those.
+ * cancel / reply (ask & approval) / rename / archive / pin / favorite, plus a
+ * restricted workdir picker (`browse` + `workspace`). fs contents, pty, spawn,
+ * and secrets stay on the daemon protocol — the phone never gets those.
  *
  * This module is pure (no Node imports) so it is unit-testable and shareable
  * with the renderer settings UI.
@@ -50,6 +50,12 @@ export type RemoteSession = {
   workdir?: string
   /** True when the workdir is a Temporary Workspace. */
   temporary?: boolean
+  /** Same pin as the desktop sidebar. Older phones ignore this. */
+  pinned?: boolean
+  /** When the pin was set (ms); orders the pinned section. */
+  pinTime?: number
+  /** Starred on the host (`favoriteConversationIds`). Older phones ignore this. */
+  favorite?: boolean
 }
 
 export type RemoteThreadBlock =
@@ -125,6 +131,8 @@ export type RemoteCancel = { type: 'cancel'; conversationId: string }
 export type RemoteReply = { type: 'reply'; conversationId: string; toolCallId: string; answer: string }
 export type RemoteRename = { type: 'rename'; conversationId: string; title: string }
 export type RemoteArchive = { type: 'archive'; conversationId: string }
+export type RemotePin = { type: 'pin'; conversationId: string; pinned: boolean }
+export type RemoteFavorite = { type: 'favorite'; conversationId: string; favorite: boolean }
 /** List directories the phone may pick (home / recents / current). */
 export type RemoteBrowse = { type: 'browse'; conversationId: string; path?: string }
 /**
@@ -190,6 +198,8 @@ export type RemoteClientMessage =
   | RemoteReply
   | RemoteRename
   | RemoteArchive
+  | RemotePin
+  | RemoteFavorite
   | RemoteBrowse
   | RemoteWorkspace
   | RemotePing
@@ -239,6 +249,8 @@ export type RemoteCapabilities = {
   reply: boolean
   rename: boolean
   archive: boolean
+  pin: boolean
+  favorite: boolean
   workdirPick: boolean
   /** Always false on this control plane. */
   attachments: boolean
@@ -253,6 +265,8 @@ export const REMOTE_PHONE_CAPABILITIES: RemoteCapabilities = {
   reply: true,
   rename: true,
   archive: true,
+  pin: true,
+  favorite: true,
   workdirPick: true,
   attachments: false,
   pty: false,
@@ -355,6 +369,18 @@ export function drainJsonLines(buffer: string): { values: (unknown | null)[]; re
 
 export function encodeLine(message: RemoteServerMessage | RemoteClientMessage): string {
   return `${JSON.stringify(message)}\n`
+}
+
+/** Desktop sidebar order: pinned (newest pin first), then updatedAt. */
+export function compareRemoteSessions(
+  a: Pick<RemoteSession, 'pinned' | 'pinTime' | 'updatedAt'>,
+  b: Pick<RemoteSession, 'pinned' | 'pinTime' | 'updatedAt'>
+): number {
+  const aPinned = a.pinned === true
+  const bPinned = b.pinned === true
+  if (aPinned !== bPinned) return aPinned ? -1 : 1
+  if (aPinned && bPinned) return (b.pinTime ?? 0) - (a.pinTime ?? 0)
+  return b.updatedAt - a.updatedAt
 }
 
 /** Cap a single inbound frame; anything larger is a hostile or broken peer. */
@@ -474,6 +500,16 @@ export function parseClientMessage(value: unknown): RemoteClientMessage | null {
     case 'archive': {
       if (typeof raw.conversationId !== 'string' || raw.conversationId.length === 0) return null
       return { type: 'archive', conversationId: raw.conversationId }
+    }
+    case 'pin': {
+      if (typeof raw.conversationId !== 'string' || raw.conversationId.length === 0) return null
+      if (typeof raw.pinned !== 'boolean') return null
+      return { type: 'pin', conversationId: raw.conversationId, pinned: raw.pinned }
+    }
+    case 'favorite': {
+      if (typeof raw.conversationId !== 'string' || raw.conversationId.length === 0) return null
+      if (typeof raw.favorite !== 'boolean') return null
+      return { type: 'favorite', conversationId: raw.conversationId, favorite: raw.favorite }
     }
     case 'browse': {
       if (typeof raw.conversationId !== 'string' || raw.conversationId.length === 0) return null

@@ -1,5 +1,5 @@
 import type { ChatMessage, AppLocale } from '../../shared/types.ts'
-import type { RemoteSession, RemoteThreadEvent } from '../../shared/remoteControl.ts'
+import { compareRemoteSessions, type RemoteSession, type RemoteThreadEvent } from '../../shared/remoteControl.ts'
 import { projectRemoteMessages, remoteSessionPreview } from '../../shared/remoteThread.ts'
 import { remoteIsTemporary } from '../../shared/remoteWorkspace.ts'
 import { threadPath } from '../../shared/thread.ts'
@@ -17,6 +17,8 @@ export type RemoteSessionSource = {
   updatedAt: number
   messages: ChatMessage[]
   activeLeafId?: string | null
+  pinned?: boolean
+  pinTime?: number | null
 }
 
 /** Phone session list: live conversations only, newest first, capped. */
@@ -28,12 +30,11 @@ export function mapRemoteSessions(
     dirLabel: (workingDirectory: string | null | undefined) => string
     statusOf: (id: string, resultUnseen: boolean) => RemoteSession['status']
     surfaceOf: (id: string) => RemoteSession['surface']
+    favoriteOf?: (id: string) => boolean
   }
 ): RemoteSession[] {
   return conversations
     .filter((c) => !c.archived && !c.fileId && !c.swarmParentId)
-    .sort((a, b) => b.updatedAt - a.updatedAt)
-    .slice(0, REMOTE_SESSION_LIST_CAP)
     .map((c) => ({
       id: c.id,
       title: (c.title && c.title.trim()) || opts.fallbackTitle,
@@ -43,8 +44,13 @@ export function mapRemoteSessions(
       updatedAt: c.updatedAt,
       preview: remoteSessionPreview(threadPath(c.messages, c.activeLeafId ?? null)),
       workdir: c.workingDirectory ?? undefined,
-      temporary: remoteIsTemporary(c.workingDirectory, opts.tmpdir)
+      temporary: remoteIsTemporary(c.workingDirectory, opts.tmpdir),
+      pinned: c.pinned === true,
+      pinTime: c.pinned && c.pinTime ? c.pinTime : undefined,
+      favorite: opts.favoriteOf?.(c.id) === true
     }))
+    .sort(compareRemoteSessions)
+    .slice(0, REMOTE_SESSION_LIST_CAP)
 }
 
 /** Phone `create` fallback when the list snapshot has not caught up yet. */

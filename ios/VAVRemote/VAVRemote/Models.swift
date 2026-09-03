@@ -19,9 +19,13 @@ struct RemoteSession: Decodable, Identifiable, Equatable, Hashable {
     let preview: String?
     let workdir: String?
     let temporary: Bool
+    let pinned: Bool
+    let pinTime: Double
+    let favorite: Bool
 
     enum CodingKeys: String, CodingKey {
         case id, title, dirLabel, status, surface, updatedAt, preview, workdir, temporary
+        case pinned, pinTime, favorite
     }
 
     init(
@@ -33,7 +37,10 @@ struct RemoteSession: Decodable, Identifiable, Equatable, Hashable {
         updatedAt: Double,
         preview: String?,
         workdir: String? = nil,
-        temporary: Bool = false
+        temporary: Bool = false,
+        pinned: Bool = false,
+        pinTime: Double = 0,
+        favorite: Bool = false
     ) {
         self.id = id
         self.title = title
@@ -44,6 +51,9 @@ struct RemoteSession: Decodable, Identifiable, Equatable, Hashable {
         self.preview = preview
         self.workdir = workdir
         self.temporary = temporary
+        self.pinned = pinned
+        self.pinTime = pinTime
+        self.favorite = favorite
     }
 
     init(from decoder: Decoder) throws {
@@ -57,6 +67,9 @@ struct RemoteSession: Decodable, Identifiable, Equatable, Hashable {
         preview = try c.decodeIfPresent(String.self, forKey: .preview)
         workdir = try c.decodeIfPresent(String.self, forKey: .workdir)
         temporary = try c.decodeIfPresent(Bool.self, forKey: .temporary) ?? false
+        pinned = try c.decodeIfPresent(Bool.self, forKey: .pinned) ?? false
+        pinTime = try c.decodeIfPresent(Double.self, forKey: .pinTime) ?? 0
+        favorite = try c.decodeIfPresent(Bool.self, forKey: .favorite) ?? false
     }
 
     func patching(
@@ -66,7 +79,10 @@ struct RemoteSession: Decodable, Identifiable, Equatable, Hashable {
         title: String? = nil,
         dirLabel: String? = nil,
         workdir: String? = nil,
-        temporary: Bool? = nil
+        temporary: Bool? = nil,
+        pinned: Bool? = nil,
+        pinTime: Double? = nil,
+        favorite: Bool? = nil
     ) -> RemoteSession {
         RemoteSession(
             id: id,
@@ -77,8 +93,19 @@ struct RemoteSession: Decodable, Identifiable, Equatable, Hashable {
             updatedAt: updatedAt ?? self.updatedAt,
             preview: preview ?? self.preview,
             workdir: workdir ?? self.workdir,
-            temporary: temporary ?? self.temporary
+            temporary: temporary ?? self.temporary,
+            pinned: pinned ?? self.pinned,
+            pinTime: pinTime ?? self.pinTime,
+            favorite: favorite ?? self.favorite
         )
+    }
+}
+
+func sortedRemoteSessions(_ sessions: [RemoteSession]) -> [RemoteSession] {
+    sessions.sorted { a, b in
+        if a.pinned != b.pinned { return a.pinned && !b.pinned }
+        if a.pinned && b.pinned { return a.pinTime > b.pinTime }
+        return a.updatedAt > b.updatedAt
     }
 }
 
@@ -274,12 +301,51 @@ struct RemoteHostSnapshot: Codable, Equatable {
         let reply: Bool
         let rename: Bool
         let archive: Bool
+        let pin: Bool
+        let favorite: Bool
         let workdirPick: Bool
         let attachments: Bool
         let pty: Bool
         let spawn: Bool
         let fsRead: Bool
         let keys: Bool
+
+        enum CodingKeys: String, CodingKey {
+            case cancel, reply, rename, archive, pin, favorite, workdirPick
+            case attachments, pty, spawn, fsRead, keys
+        }
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            cancel = try c.decodeIfPresent(Bool.self, forKey: .cancel) ?? false
+            reply = try c.decodeIfPresent(Bool.self, forKey: .reply) ?? false
+            rename = try c.decodeIfPresent(Bool.self, forKey: .rename) ?? false
+            archive = try c.decodeIfPresent(Bool.self, forKey: .archive) ?? false
+            pin = try c.decodeIfPresent(Bool.self, forKey: .pin) ?? false
+            favorite = try c.decodeIfPresent(Bool.self, forKey: .favorite) ?? false
+            workdirPick = try c.decodeIfPresent(Bool.self, forKey: .workdirPick) ?? false
+            attachments = try c.decodeIfPresent(Bool.self, forKey: .attachments) ?? false
+            pty = try c.decodeIfPresent(Bool.self, forKey: .pty) ?? false
+            spawn = try c.decodeIfPresent(Bool.self, forKey: .spawn) ?? false
+            fsRead = try c.decodeIfPresent(Bool.self, forKey: .fsRead) ?? false
+            keys = try c.decodeIfPresent(Bool.self, forKey: .keys) ?? false
+        }
+
+        func encode(to encoder: Encoder) throws {
+            var c = encoder.container(keyedBy: CodingKeys.self)
+            try c.encode(cancel, forKey: .cancel)
+            try c.encode(reply, forKey: .reply)
+            try c.encode(rename, forKey: .rename)
+            try c.encode(archive, forKey: .archive)
+            try c.encode(pin, forKey: .pin)
+            try c.encode(favorite, forKey: .favorite)
+            try c.encode(workdirPick, forKey: .workdirPick)
+            try c.encode(attachments, forKey: .attachments)
+            try c.encode(pty, forKey: .pty)
+            try c.encode(spawn, forKey: .spawn)
+            try c.encode(fsRead, forKey: .fsRead)
+            try c.encode(keys, forKey: .keys)
+        }
     }
     struct Defaults: Codable, Equatable {
         let agent: String
@@ -538,6 +604,12 @@ enum ClientFrame {
     }
     static func archive(conversationId: String) -> String? {
         encode(["type": "archive", "conversationId": conversationId])
+    }
+    static func pin(conversationId: String, pinned: Bool) -> String? {
+        encode(["type": "pin", "conversationId": conversationId, "pinned": pinned])
+    }
+    static func favorite(conversationId: String, favorite: Bool) -> String? {
+        encode(["type": "favorite", "conversationId": conversationId, "favorite": favorite])
     }
     static func browse(conversationId: String, path: String? = nil) -> String? {
         var object: [String: Any] = ["type": "browse", "conversationId": conversationId]

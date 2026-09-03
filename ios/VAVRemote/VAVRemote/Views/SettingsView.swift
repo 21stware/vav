@@ -62,6 +62,7 @@ struct SettingsView: View {
                         cap("新建 / 发送 / 停止", on: host.capabilities.cancel)
                         cap("回答提问与批准", on: host.capabilities.reply)
                         cap("重命名 / 归档", on: host.capabilities.rename)
+                        cap("收藏 / 置顶", on: host.capabilities.favorite || host.capabilities.pin)
                         cap("选择工作区", on: host.capabilities.workdirPick)
                     } header: {
                         Text("手机可以做的事")

@@ -44,6 +44,46 @@ describe('mapRemoteSessions', () => {
     assert.equal(listed[0]?.temporary, true)
   })
 
+  it('puts pinned rows first and stamps favorite from the host set', () => {
+    const listed = mapRemoteSessions(
+      [
+        { id: 'a', title: 'A', updatedAt: 30, messages: [msg('m1')], activeLeafId: 'm1' },
+        {
+          id: 'b',
+          title: 'B',
+          updatedAt: 1,
+          messages: [msg('m2')],
+          activeLeafId: 'm2',
+          pinned: true,
+          pinTime: 10
+        },
+        {
+          id: 'c',
+          title: 'C',
+          updatedAt: 2,
+          messages: [msg('m3')],
+          activeLeafId: 'm3',
+          pinned: true,
+          pinTime: 20
+        }
+      ],
+      {
+        fallbackTitle: 'Session',
+        tmpdir: '/tmp',
+        dirLabel: () => '~',
+        statusOf: () => 'idle',
+        surfaceOf: () => 'vav',
+        favoriteOf: (id) => id === 'a'
+      }
+    )
+    assert.deepEqual(
+      listed.map((row) => row.id),
+      ['c', 'b', 'a']
+    )
+    assert.equal(listed[0]?.pinned, true)
+    assert.equal(listed[2]?.favorite, true)
+  })
+
   it('builds a create-session fallback row and hides archived threads', () => {
     const row = fallbackRemoteSession(
       { id: 'c1', title: '  ', updatedAt: 9 },

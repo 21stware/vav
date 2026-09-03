@@ -445,6 +445,8 @@ describe('daemon loopback', () => {
       reply: () => false,
       rename: () => 'ok',
       archive: () => 'ok',
+      pin: () => 'ok',
+      favorite: () => 'ok',
       browse: () => 'not-found',
       setWorkspace: () => 'ok'
     })

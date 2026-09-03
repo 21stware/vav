@@ -61,6 +61,8 @@ type Deps = {
   reply: (conversationId: string, toolCallId: string, answer: string) => boolean
   rename: (conversationId: string, title: string) => RemoteSendResult
   archive: (conversationId: string) => RemoteSendResult
+  pin: (conversationId: string, pinned: boolean) => RemoteSendResult
+  favorite: (conversationId: string, favorite: boolean) => RemoteSendResult
   browse: (conversationId: string, path?: string) => RemoteDirsEvent | 'not-found' | 'forbidden'
   setWorkspace: (conversationId: string, path: string | null) => RemoteWorkspaceResult
   onStatusChange: (status: RemoteControlStatus) => void
@@ -98,6 +100,8 @@ export class RemoteControlService {
       reply: (id, toolCallId, answer) => deps.reply(id, toolCallId, answer),
       rename: (id, title) => deps.rename(id, title),
       archive: (id) => deps.archive(id),
+      pin: (id, pinned) => deps.pin(id, pinned),
+      favorite: (id, favorite) => deps.favorite(id, favorite),
       browse: (id, path) => deps.browse(id, path),
       setWorkspace: (id, path) => deps.setWorkspace(id, path),
       secret: () => this.loadOrCreateSecret(),

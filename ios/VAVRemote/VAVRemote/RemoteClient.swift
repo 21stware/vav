@@ -339,6 +339,26 @@ final class RemoteClient: NSObject, ObservableObject, UNUserNotificationCenterDe
         if openConversationId == conversationId { clearOpenRequest() }
     }
 
+    func setPinned(conversationId: String, pinned: Bool) {
+        guard let line = ClientFrame.pin(conversationId: conversationId, pinned: pinned) else { return }
+        write(line)
+        if let index = sessions.firstIndex(where: { $0.id == conversationId }) {
+            sessions[index] = sessions[index].patching(
+                pinned: pinned,
+                pinTime: pinned ? Date().timeIntervalSince1970 * 1000 : 0
+            )
+            sessions = sortedRemoteSessions(sessions)
+        }
+    }
+
+    func setFavorite(conversationId: String, favorite: Bool) {
+        guard let line = ClientFrame.favorite(conversationId: conversationId, favorite: favorite) else { return }
+        write(line)
+        if let index = sessions.firstIndex(where: { $0.id == conversationId }) {
+            sessions[index] = sessions[index].patching(favorite: favorite)
+        }
+    }
+
     func browse(conversationId: String, path: String? = nil) {
         guard let line = ClientFrame.browse(conversationId: conversationId, path: path) else { return }
         write(line)
@@ -554,7 +574,7 @@ final class RemoteClient: NSObject, ObservableObject, UNUserNotificationCenterDe
             rememberActiveName(snapshot.name)
             DiagLog.line("host \(snapshot.name)")
         case .sessions(let sessions):
-            self.sessions = sessions
+            self.sessions = sortedRemoteSessions(sessions)
             sessionsEpoch += 1
             sessionsLoad = .ready
             lastSyncAt = Date()
@@ -717,6 +737,7 @@ final class RemoteClient: NSObject, ObservableObject, UNUserNotificationCenterDe
         } else {
             sessions.insert(session, at: 0)
         }
+        sessions = sortedRemoteSessions(sessions)
     }
 
     /// Brief background window: surface the event on the lock screen too.

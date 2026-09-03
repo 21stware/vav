@@ -51,6 +51,8 @@ export type RemoteControlHubDeps = {
   reply: (conversationId: string, toolCallId: string, answer: string) => boolean
   rename: (conversationId: string, title: string) => RemoteSendResult
   archive: (conversationId: string) => RemoteSendResult
+  pin: (conversationId: string, pinned: boolean) => RemoteSendResult
+  favorite: (conversationId: string, favorite: boolean) => RemoteSendResult
   browse: (conversationId: string, path?: string) => RemoteDirsEvent | 'not-found' | 'forbidden'
   setWorkspace: (conversationId: string, path: string | null) => RemoteWorkspaceResult
   secret: () => string
@@ -422,6 +424,36 @@ export class RemoteControlHub {
             type: 'error',
             code: result,
             message: 'no such conversation',
+            conversationId: message.conversationId
+          })
+        }
+        return true
+      }
+      case 'pin': {
+        const result = this.deps.pin(message.conversationId, message.pinned)
+        if (result === 'ok') {
+          this.send(client, { type: 'sessions', sessions: this.deps.listSessions() })
+          this.schedulePushSessions()
+        } else {
+          this.send(client, {
+            type: 'error',
+            code: result,
+            message: result === 'archived' ? 'conversation is archived' : 'no such conversation',
+            conversationId: message.conversationId
+          })
+        }
+        return true
+      }
+      case 'favorite': {
+        const result = this.deps.favorite(message.conversationId, message.favorite)
+        if (result === 'ok') {
+          this.send(client, { type: 'sessions', sessions: this.deps.listSessions() })
+          this.schedulePushSessions()
+        } else {
+          this.send(client, {
+            type: 'error',
+            code: result,
+            message: result === 'archived' ? 'conversation is archived' : 'no such conversation',
             conversationId: message.conversationId
           })
         }

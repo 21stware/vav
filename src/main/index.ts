@@ -1301,6 +1301,7 @@ function agentFor(conversationId: string): 'builtin' | 'cli' {
 const remoteSessionStatus = new Map<string, 'running' | 'done'>()
 
 function listRemoteSessions(): RemoteSession[] {
+  const favorites = new Set(settingsStore.get().favoriteConversationIds ?? [])
   return mapRemoteSessions(
     conversationStore.all().filter((c) => conversationOnMachine(c, LOCAL_MACHINE_ID)),
     {
@@ -1308,7 +1309,8 @@ function listRemoteSessions(): RemoteSession[] {
       tmpdir: tmpdir(),
       dirLabel: trayDirLabel,
       statusOf: (id, resultUnseen) => remoteSessionStatus.get(id) ?? (resultUnseen ? 'done' : 'idle'),
-      surfaceOf: (id) => (agentFor(id) === 'cli' ? 'cli' : 'vav')
+      surfaceOf: (id) => (agentFor(id) === 'cli' ? 'cli' : 'vav'),
+      favoriteOf: (id) => favorites.has(id)
     }
   )
 }
@@ -1473,6 +1475,33 @@ function archiveRemote(conversationId: string): 'ok' | 'not-found' {
   cliHost.cancel(conversationId)
   conversationStore.setArchived(conversationId, true)
   publishConversations()
+  return 'ok'
+}
+
+function pinRemote(conversationId: string, pinned: boolean): 'ok' | 'not-found' | 'archived' {
+  const conversation = conversationStore.get(conversationId)
+  if (!conversation) return 'not-found'
+  if (conversation.archived) return 'archived'
+  conversationStore.setPinned(conversationId, pinned)
+  publishConversations()
+  return 'ok'
+}
+
+function favoriteRemote(conversationId: string, favorite: boolean): 'ok' | 'not-found' | 'archived' {
+  const conversation = conversationStore.get(conversationId)
+  if (!conversation) return 'not-found'
+  if (conversation.archived) return 'archived'
+  const current = settingsStore.get().favoriteConversationIds ?? []
+  const has = current.includes(conversationId)
+  if (favorite && !has) {
+    settingsStore.update({ favoriteConversationIds: [conversationId, ...current] })
+    broadcast(IPC.settingsChanged, currentSettings())
+  } else if (!favorite && has) {
+    settingsStore.update({
+      favoriteConversationIds: current.filter((id) => id !== conversationId)
+    })
+    broadcast(IPC.settingsChanged, currentSettings())
+  }
   return 'ok'
 }
 
@@ -1662,6 +1691,8 @@ const remoteControl = new RemoteControlService({
   reply: replyRemote,
   rename: renameRemote,
   archive: archiveRemote,
+  pin: pinRemote,
+  favorite: favoriteRemote,
   browse: browseRemoteDirs,
   setWorkspace: setRemoteWorkspace,
   onStatusChange: (status) => {
