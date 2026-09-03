@@ -163,10 +163,16 @@ function applyTurn(
     }
   }
   if (turn.phase === 'done' || turn.phase === 'error' || turn.phase === 'cancelled') {
+    const status = turn.phase === 'done' ? 'done' : 'idle'
+    const preview = state.sessions.find((session) => session.id === id)?.preview ?? ''
     return {
       ...state,
       generatingIds: state.generatingIds.filter((item) => item !== id),
+      drafts: omitKey(state.drafts, id),
+      thinkingDrafts: omitKey(state.thinkingDrafts, id),
+      liveBlocks: omitKey(state.liveBlocks, id),
       awaiting: omitKey(state.awaiting, id),
+      sessions: patchSession(state.sessions, id, { status, preview }),
       lastError:
         turn.phase === 'error' && turn.error
           ? { code: 'bad-request', message: turn.error, conversationId: id }

@@ -205,3 +205,18 @@ export function conversationFullHydratePatch<C, H>(
     ...conversationHydrationMetaPatch(state, id, conversation)
   }
 }
+
+/**
+ * Soft-refresh a warm session. Metadata always updates; messages merge when
+ * the store grew (desktop remote thread apply while this window was elsewhere).
+ */
+export function conversationHydrationRefreshPatch<C, H>(
+  state: Parameters<typeof conversationFullHydratePatch<C, H>>[0],
+  id: string,
+  conversation: Parameters<typeof conversationFullHydratePatch<C, H>>[2]
+): ReturnType<typeof conversationFullHydratePatch<C, H>> | ReturnType<typeof conversationHydrationMetaPatch<C, H>> {
+  const live = state.messages[id]
+  const diskHasNew = conversation.messages.some((message) => !live?.some((row) => row.id === message.id))
+  if (diskHasNew) return conversationFullHydratePatch(state, id, conversation)
+  return conversationHydrationMetaPatch(state, id, conversation)
+}

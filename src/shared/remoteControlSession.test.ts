@@ -97,4 +97,37 @@ describe('applyRemoteServerMessage', () => {
     assert.deepEqual(state.generatingIds, [])
     assert.equal(state.lastError?.code, 'not-found')
   })
+
+  it('clears session running when the host turn finishes — even before the next sessions snapshot', () => {
+    let state = emptyRemoteControlSession()
+    state = applyRemoteServerMessage(state, {
+      type: 'sessions',
+      sessions: [
+        {
+          id: 'c1',
+          title: 'Host chat',
+          dirLabel: '~/proj',
+          status: 'idle',
+          surface: 'vav',
+          updatedAt: 1
+        }
+      ]
+    })
+    state = applyRemoteServerMessage(state, {
+      type: 'turn',
+      conversationId: 'c1',
+      phase: 'running',
+      draft: 'hello'
+    })
+    assert.equal(state.sessions[0]?.status, 'running')
+    state = applyRemoteServerMessage(state, {
+      type: 'turn',
+      conversationId: 'c1',
+      phase: 'done'
+    })
+    assert.deepEqual(state.generatingIds, [])
+    assert.equal(state.sessions[0]?.status, 'done')
+    assert.equal(state.drafts.c1, undefined)
+    assert.equal(state.liveBlocks.c1, undefined)
+  })
 })

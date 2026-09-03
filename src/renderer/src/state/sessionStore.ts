@@ -110,7 +110,7 @@ import { userBashTabsOnly } from '../lib/workspacePty'
 import { getProjection, disposeProjection } from './StreamProjection'
 import { useWorkspaceStore } from './workspaceStore'
 import {
-  conversationHydrationMetaPatch,
+  conversationHydrationRefreshPatch,
   conversationFullHydratePatch,
   isCurrentHydration,
   nextHydrationGeneration,
@@ -1017,7 +1017,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       // Soft refresh metadata without blocking the switch paint.
       void window.vav.conversations.get(id).then((conversation) => {
         if (!conversation || get().activeId !== id) return
-        set((state) => conversationHydrationMetaPatch(state, id, conversation))
+        set((state) => conversationHydrationRefreshPatch(state, id, conversation))
       })
       return
     }

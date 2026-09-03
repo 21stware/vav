@@ -4,6 +4,7 @@ import {
   desktopClientAgainst,
   hostOwnsTurns,
   hostSessionId,
+  localSessionId,
   remoteEndpointConfig
 } from './remoteHostKind.ts'
 
@@ -67,5 +68,27 @@ describe('hostSessionId', () => {
 
   it('sends the host id when adopt remapped a collision', () => {
     assert.equal(hostSessionId('local-copy', 'e2e-host-session'), 'e2e-host-session')
+  })
+})
+
+describe('localSessionId', () => {
+  it('returns the adopt id when the host id collided', () => {
+    assert.equal(
+      localSessionId(
+        [
+          { id: 'local-copy', duplicateSourceId: 'e2e-host-session' },
+          { id: 'e2e-host-session', duplicateSourceId: null }
+        ],
+        'e2e-host-session'
+      ),
+      'local-copy'
+    )
+  })
+
+  it('keeps the host id when adopt did not remap', () => {
+    assert.equal(
+      localSessionId([{ id: 'e2e-host-session', duplicateSourceId: null }], 'e2e-host-session'),
+      'e2e-host-session'
+    )
   })
 })
