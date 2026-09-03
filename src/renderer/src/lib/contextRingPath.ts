@@ -1,18 +1,14 @@
 /**
- * Composer context-usage ring — a macOS continuous-corner cubic, not a
- * clipped rounded-rect border.
+ * Composer context-usage ring — a line around the 16px agent mark.
  *
- * Apple / Figma "corner smoothing" at 100%: two cubics per corner so the
- * line eases out of each side. Radius is a quarter of the box, which is
- * the largest value that still fits 100% smoothing — a full squircle,
- * no circular-arc remainder, no long flat that gets sheared off when the
- * stroke sits on the viewBox.
+ * The mark is a 16×16 plate with a 5px CSS radius. An outset of 2px
+ * (the 20px path inside a 22px viewBox) grows that radius to 7px.
+ * Each corner is one cubic with the circle κ (4/3 tan(π/8)) — the macOS
+ * quarter-circle approximation — so the line eases through the corner
+ * instead of a clipped rounded-rect segment.
  *
- * Geometry lives in a `size × size` box and is inset so a round-cap stroke
- * of `stroke` stays inside the viewBox. Path starts at 12 o'clock and walks
- * clockwise.
- *
- * https://www.figma.com/blog/desperately-seeking-squircles/
+ * Inset keeps the 1.5px round-cap stroke inside the viewBox. Path starts
+ * at 12 o'clock and walks clockwise.
  */
 
 export const CONTEXT_RING_SIZE = 22
@@ -20,39 +16,22 @@ export const CONTEXT_RING_SIZE = 22
 export const CONTEXT_RING_STROKE = 1.5
 /** Half stroke + a sliver so the round cap never kisses the viewBox. */
 export const CONTEXT_RING_INSET = CONTEXT_RING_STROKE / 2 + 0.25
+/** 16px mark + 5px radius, outset by the ring's extra 2px. */
+export const CONTEXT_RING_RADIUS = 7
 
-type Corner = {
-  a: number
-  b: number
-  c: number
-  d: number
-}
+/** 4/3 tan(π/8) — cubic approximation of a quarter circle. */
+const CIRCLE_KAPPA = 0.5519150244935106
 
 function fmt(n: number): string {
   const r = Math.round(n * 1000) / 1000
   return Object.is(r, -0) ? '0' : String(r)
 }
 
-function toRad(deg: number): number {
-  return (deg * Math.PI) / 180
-}
-
-/** Figma continuous-corner parameters at 100% smoothing. */
-function cornerParams(radius: number): Corner {
-  const p = 2 * radius
-  const p3ToP4 = radius * Math.tan(toRad(22.5))
-  const c = p3ToP4 * Math.cos(toRad(45))
-  const d = c * Math.tan(toRad(45))
-  const b = (p - c - d) / 3
-  const a = 2 * b
-  return { a, b, c, d }
-}
-
 export function contextRingPath(options?: {
   size?: number
   stroke?: number
-  /** Override inset. Defaults to a stroke-safe margin. */
   inset?: number
+  radius?: number
   close?: boolean
 }): string {
   const size = options?.size ?? CONTEXT_RING_SIZE
@@ -64,25 +43,22 @@ export function contextRingPath(options?: {
   const top = inset
   const right = size - inset
   const bottom = size - inset
-  const radius = Math.min(right - left, bottom - top) / 4
+  const maxR = Math.min(right - left, bottom - top) / 2
+  const radius = Math.min(options?.radius ?? CONTEXT_RING_RADIUS, maxR)
   const cx = (left + right) / 2
-  const cy = (top + bottom) / 2
-  const { a, b, c, d } = cornerParams(radius)
+  const k = radius * CIRCLE_KAPPA
 
   const parts = [
     `M ${fmt(cx)} ${fmt(top)}`,
-    // top → right
-    `C ${fmt(cx + a)} ${fmt(top)} ${fmt(cx + a + b)} ${fmt(top)} ${fmt(cx + a + b + c)} ${fmt(top + d)}`,
-    `C ${fmt(right)} ${fmt(top + d + c)} ${fmt(right)} ${fmt(top + d + b + c)} ${fmt(right)} ${fmt(cy)}`,
-    // right → bottom
-    `C ${fmt(right)} ${fmt(cy + a)} ${fmt(right)} ${fmt(cy + a + b)} ${fmt(right - d)} ${fmt(cy + a + b + c)}`,
-    `C ${fmt(right - d - c)} ${fmt(bottom)} ${fmt(right - d - b - c)} ${fmt(bottom)} ${fmt(cx)} ${fmt(bottom)}`,
-    // bottom → left
-    `C ${fmt(cx - a)} ${fmt(bottom)} ${fmt(cx - a - b)} ${fmt(bottom)} ${fmt(cx - a - b - c)} ${fmt(bottom - d)}`,
-    `C ${fmt(left)} ${fmt(bottom - d - c)} ${fmt(left)} ${fmt(bottom - d - b - c)} ${fmt(left)} ${fmt(cy)}`,
-    // left → top
-    `C ${fmt(left)} ${fmt(cy - a)} ${fmt(left)} ${fmt(cy - a - b)} ${fmt(left + d)} ${fmt(cy - a - b - c)}`,
-    `C ${fmt(left + d + c)} ${fmt(top)} ${fmt(left + d + b + c)} ${fmt(top)} ${fmt(cx)} ${fmt(top)}`
+    `L ${fmt(right - radius)} ${fmt(top)}`,
+    `C ${fmt(right - radius + k)} ${fmt(top)} ${fmt(right)} ${fmt(top + radius - k)} ${fmt(right)} ${fmt(top + radius)}`,
+    `L ${fmt(right)} ${fmt(bottom - radius)}`,
+    `C ${fmt(right)} ${fmt(bottom - radius + k)} ${fmt(right - radius + k)} ${fmt(bottom)} ${fmt(right - radius)} ${fmt(bottom)}`,
+    `L ${fmt(left + radius)} ${fmt(bottom)}`,
+    `C ${fmt(left + radius - k)} ${fmt(bottom)} ${fmt(left)} ${fmt(bottom - radius + k)} ${fmt(left)} ${fmt(bottom - radius)}`,
+    `L ${fmt(left)} ${fmt(top + radius)}`,
+    `C ${fmt(left)} ${fmt(top + radius - k)} ${fmt(left + radius - k)} ${fmt(top)} ${fmt(left + radius)} ${fmt(top)}`,
+    `L ${fmt(cx)} ${fmt(top)}`
   ]
 
   if (close) parts.push('Z')
