@@ -51,9 +51,13 @@ export type RemoteControlHubDeps = {
   reply: (conversationId: string, toolCallId: string, answer: string) => boolean
   rename: (conversationId: string, title: string) => RemoteSendResult
   archive: (conversationId: string) => RemoteSendResult
+  pin: (conversationId: string, pinned: boolean) => RemoteSendResult
+  favorite: (conversationId: string, favorite: boolean) => RemoteSendResult
   browse: (conversationId: string, path?: string) => RemoteDirsEvent | 'not-found' | 'forbidden'
   setWorkspace: (conversationId: string, path: string | null) => RemoteWorkspaceResult
   secret: () => string
+  /** Extra accepted hellos (issued machine grants). Phone secret stays `secret()`. */
+  acceptAuth?: (auth: string) => boolean
   materializeImages?: (images: RemoteSendImage[] | undefined) => string[]
   onDaemonHello?: (socket: Socket, leftover: string, hello: RemoteHello) => void
   onClientsChanged?: () => void
@@ -148,6 +152,11 @@ export class RemoteControlHub {
     socket.on('close', forget)
     socket.on('error', forget)
     this.deps.onClientsChanged?.()
+  }
+
+  private helloAuthOk(auth: string): boolean {
+    if (secretsMatch(auth, this.deps.secret())) return true
+    return this.deps.acceptAuth?.(auth) === true
   }
 
   authedClients(): { device: string; since: number }[] {
@@ -293,7 +302,7 @@ export class RemoteControlHub {
     }
 
     if (!client.authed) {
-      if (message.type !== 'hello' || !secretsMatch(message.auth, this.deps.secret())) {
+      if (message.type !== 'hello' || !this.helloAuthOk(message.auth)) {
         this.send(client, { type: 'error', code: 'auth', message: 'pairing rejected' })
         return false
       }
@@ -422,6 +431,36 @@ export class RemoteControlHub {
             type: 'error',
             code: result,
             message: 'no such conversation',
+            conversationId: message.conversationId
+          })
+        }
+        return true
+      }
+      case 'pin': {
+        const result = this.deps.pin(message.conversationId, message.pinned)
+        if (result === 'ok') {
+          this.send(client, { type: 'sessions', sessions: this.deps.listSessions() })
+          this.schedulePushSessions()
+        } else {
+          this.send(client, {
+            type: 'error',
+            code: result,
+            message: result === 'archived' ? 'conversation is archived' : 'no such conversation',
+            conversationId: message.conversationId
+          })
+        }
+        return true
+      }
+      case 'favorite': {
+        const result = this.deps.favorite(message.conversationId, message.favorite)
+        if (result === 'ok') {
+          this.send(client, { type: 'sessions', sessions: this.deps.listSessions() })
+          this.schedulePushSessions()
+        } else {
+          this.send(client, {
+            type: 'error',
+            code: result,
+            message: result === 'archived' ? 'conversation is archived' : 'no such conversation',
             conversationId: message.conversationId
           })
         }

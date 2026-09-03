@@ -99,3 +99,19 @@ export function hostSessionId(localId: string, duplicateSourceId?: string | null
   const source = duplicateSourceId?.trim()
   return source || localId
 }
+
+/**
+ * Reverse of {@link hostSessionId}: host conversation id → local adopt id.
+ * Falls back to the host id when this machine has not remapped it.
+ */
+export function localSessionId(
+  rows: Array<{ id: string; duplicateSourceId?: string | null }>,
+  hostConversationId: string
+): string {
+  const hostId = hostConversationId.trim()
+  if (!hostId) return hostConversationId
+  const match = rows.find(
+    (row) => row.id === hostId || (row.duplicateSourceId ?? '').trim() === hostId
+  )
+  return match?.id ?? hostId
+}

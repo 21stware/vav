@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import {
+  compareRemoteSessions,
   drainJsonLines,
   encodeLine,
   encodePairing,
@@ -134,6 +135,21 @@ describe('parseClientMessage', () => {
     assert.equal(parseClientMessage({ type: 'configure', conversationId: 'c1' }), null)
   })
 
+  it('accepts pin and favorite toggles', () => {
+    assert.deepEqual(parseClientMessage({ type: 'pin', conversationId: 'c1', pinned: true }), {
+      type: 'pin',
+      conversationId: 'c1',
+      pinned: true
+    })
+    assert.deepEqual(parseClientMessage({ type: 'favorite', conversationId: 'c1', favorite: false }), {
+      type: 'favorite',
+      conversationId: 'c1',
+      favorite: false
+    })
+    assert.equal(parseClientMessage({ type: 'pin', conversationId: 'c1' }), null)
+    assert.equal(parseClientMessage({ type: 'favorite', conversationId: 'c1' }), null)
+  })
+
   it('accepts cancel, reply, rename, archive, browse, workspace, and fast', () => {
     assert.deepEqual(parseClientMessage({ type: 'cancel', conversationId: 'c1' }), {
       type: 'cancel',
@@ -166,6 +182,22 @@ describe('parseClientMessage', () => {
     )
     assert.equal(parseClientMessage({ type: 'workspace', conversationId: 'c1' }), null)
     assert.equal(parseClientMessage({ type: 'reply', conversationId: 'c1', toolCallId: 't1', answer: '  ' }), null)
+  })
+})
+
+describe('compareRemoteSessions', () => {
+  it('puts pinned rows first, newest pin first, then recency', () => {
+    const rows = [
+      { pinned: false, pinTime: 0, updatedAt: 30 },
+      { pinned: true, pinTime: 10, updatedAt: 1 },
+      { pinned: true, pinTime: 20, updatedAt: 2 },
+      { pinned: false, pinTime: 0, updatedAt: 40 }
+    ]
+    const sorted = [...rows].sort(compareRemoteSessions)
+    assert.deepEqual(
+      sorted.map((row) => row.pinTime || row.updatedAt),
+      [20, 10, 40, 30]
+    )
   })
 })
 

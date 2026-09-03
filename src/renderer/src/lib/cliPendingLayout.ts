@@ -24,6 +24,15 @@ export function pendingTabFromId(id: string): TerminalTab {
   }
 }
 
+/** Mint a new picker pane id. */
+export function makePendingCliTab(): TerminalTab {
+  const id =
+    typeof crypto !== 'undefined' && crypto.randomUUID
+      ? `${CLI_PENDING_PREFIX}${crypto.randomUUID()}`
+      : `${CLI_PENDING_PREFIX}${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
+  return pendingTabFromId(id)
+}
+
 /** Rebuild picker tabs from a persisted layout (pending leaves have no PTY meta). */
 export function pendingTabsFromLayout(
   layout: TerminalLayoutNode | null | undefined

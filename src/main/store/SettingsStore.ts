@@ -34,6 +34,8 @@ import {
   workspaceRef
 } from '@shared/workspaceHost'
 import { clampKeepAwakeBatteryFloor } from '@shared/sleepBlocker'
+import { resolveAutoUpdatePolicy } from '@shared/updatePolicy'
+import { createDebouncedWriter } from './debounceWrite'
 
 const PLATFORM = process.platform as Platform
 
@@ -65,12 +67,17 @@ const DEFAULTS: AppSettings = { ...DEFAULT_SETTINGS, ...platformDefaults(PLATFOR
 export class SettingsStore {
   private readonly file = join(app.getPath('userData'), 'settings.json')
   private settings: AppSettings = { ...DEFAULTS }
+  private readonly persistWriter = createDebouncedWriter(() => this.writeSettingsFile(), 150)
 
   load(): AppSettings {
     try {
       if (existsSync(this.file)) {
-        const raw = JSON.parse(readFileSync(this.file, 'utf8'))
-        this.settings = { ...DEFAULTS, ...raw }
+        const raw = JSON.parse(readFileSync(this.file, 'utf8')) as Record<string, unknown>
+        const { autoCheckUpdates: _legacyCheck, autoUpdatePolicy: _rawPolicy, ...rest } = raw
+        this.settings = { ...DEFAULTS, ...rest }
+        // Resolve from the file, not the merged defaults — otherwise a leftover
+        // `autoCheckUpdates: false` is hidden by DEFAULTS.autoUpdatePolicy.
+        this.settings.autoUpdatePolicy = resolveAutoUpdatePolicy(raw)
       }
     } catch {
       this.settings = { ...DEFAULTS }
@@ -87,7 +94,7 @@ export class SettingsStore {
       serializeWorkspaceRefList(this.settings.recentWorkspaceDirectories) !== beforeRecent ||
       this.settings.pinnedWorkspaceDirectories.join('\0') !== beforePinned
     ) {
-      this.persist()
+      this.persist(true)
     }
     return this.settings
   }
@@ -105,7 +112,7 @@ export class SettingsStore {
     if (shell === this.settings.shell && portableHotkey === hotkey) return
     this.settings.shell = shell
     this.settings.globalHotkey = portableHotkey
-    this.persist()
+    this.persist(true)
   }
 
   /** One-time renames for preset ids that changed between releases. */
@@ -180,7 +187,8 @@ export class SettingsStore {
       this.settings.displayCurrency = DEFAULT_SETTINGS.displayCurrency
       dirty = true
     }
-    if (dirty) this.persist()
+    if (this.migrateAutoUpdatePolicy()) dirty = true
+    if (dirty) this.persist(true)
   }
 
   get(): AppSettings {
@@ -205,7 +213,7 @@ export class SettingsStore {
 
   reset(): AppSettings {
     this.settings = { ...DEFAULTS }
-    this.persist()
+    this.persist(true)
     return this.settings
   }
 
@@ -416,9 +424,25 @@ export class SettingsStore {
     ])
     if (!sortKeys.has(s.fileSortKey)) s.fileSortKey = 'name'
     if (typeof s.fileSortAscending !== 'boolean') s.fileSortAscending = true
+    if (typeof s.firstRunChecklistDismissed !== 'boolean') s.firstRunChecklistDismissed = false
     if (!DISPLAY_CURRENCIES.includes(s.displayCurrency as DisplayCurrency)) {
       s.displayCurrency = DEFAULT_SETTINGS.displayCurrency
     }
+    this.migrateAutoUpdatePolicy()
+  }
+
+  /**
+   * `autoCheckUpdates` was a launch-only boolean. Lift it to
+   * {@link AppSettings.autoUpdatePolicy} and drop the leftover key.
+   */
+  private migrateAutoUpdatePolicy(): boolean {
+    const raw = this.settings as AppSettings & { autoCheckUpdates?: unknown }
+    const next = resolveAutoUpdatePolicy(raw)
+    const hadLegacy = Object.prototype.hasOwnProperty.call(raw, 'autoCheckUpdates')
+    delete raw.autoCheckUpdates
+    if (raw.autoUpdatePolicy === next && !hadLegacy) return false
+    raw.autoUpdatePolicy = next
+    return true
   }
 
   /**
@@ -499,7 +523,16 @@ export class SettingsStore {
     return dirty
   }
 
-  private persist(): void {
+  flushPersist(): void {
+    this.persistWriter.flush()
+  }
+
+  private persist(immediate = false): void {
+    this.persistWriter.schedule()
+    if (immediate) this.persistWriter.flush()
+  }
+
+  private writeSettingsFile(): void {
     try {
       mkdirSync(dirname(this.file), { recursive: true })
       // Presence flags are derived from SecretStore, never persisted here.

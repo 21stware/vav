@@ -21,6 +21,7 @@ import {
 import { focusAgentPane } from '../lib/uiFocus'
 import { focusCliAgentPickerFirstOption } from './CliAgentPicker'
 import { useSessionStore } from '../state/sessionStore'
+import { resolveComposerContextFile } from '../state/sessionQueue'
 import { CLI_SURFACE_KEY, useWorkspaceStore } from '../state/workspaceStore'
 import { SessionHistoryPopover } from './SessionHistoryPopover'
 import { TerminalPanel } from './TerminalPanel'
@@ -185,10 +186,7 @@ export function SessionDetail({
    */
   const buildLaunchContext = useCallback((): string | null => {
     const store = useSessionStore.getState()
-    const focused =
-      (store.contextFiles[activeId] ?? null) ||
-      store.conversations.find((c) => c.id === activeId)?.focusedFilePath ||
-      null
+    const focused = resolveComposerContextFile(store.contextFiles, store.conversations, activeId)
     const cards = store.commentCards[activeId] ?? []
     return buildWorkspaceFocusContext({
       focusedPath: focused,

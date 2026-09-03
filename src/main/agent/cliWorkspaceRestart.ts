@@ -12,3 +12,22 @@ export function shouldReplaceCliRuntime(
 ): boolean {
   return runtimeCwd !== wantedCwd || starting
 }
+
+/**
+ * Drop a stored resume cursor when the host kind or auth identity no longer
+ * matches. Identity mismatch also tells the caller to hand the transcript
+ * across to a fresh native session.
+ */
+export function spawnResumeCursor<T extends { provider: string }>(
+  cursor: T | null | undefined,
+  kind: string,
+  liveIdentity: string | null | undefined,
+  identityOf: (cursor: T) => string | null
+): { cursor: T | null; dropIdentity: boolean } {
+  if (!cursor || cursor.provider !== kind) return { cursor: null, dropIdentity: false }
+  const stored = identityOf(cursor)
+  if (liveIdentity && stored && stored !== liveIdentity) {
+    return { cursor: null, dropIdentity: true }
+  }
+  return { cursor, dropIdentity: false }
+}

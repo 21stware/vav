@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
+import { join } from 'node:path'
 import {
   applyWranglerAuthRefresh,
   parseWranglerAuthToml,
@@ -43,15 +44,22 @@ describe('wranglerOauthExpired', () => {
 
 describe('wranglerAuthFileCandidates', () => {
   it('puts the macOS Preferences path first', () => {
-    const files = wranglerAuthFileCandidates('/Users/ada', {}, 'darwin')
-    assert.ok(files[0]?.includes('Library/Preferences/.wrangler/config/default.toml'))
-    assert.ok(files.some((f) => f.endsWith('.config/.wrangler/config/default.toml')))
-    assert.ok(files.some((f) => f.endsWith('.wrangler/config/default.toml')))
+    const home = join('/Users', 'ada')
+    const files = wranglerAuthFileCandidates(home, {}, 'darwin')
+    assert.ok(
+      files[0]?.includes(join('Library', 'Preferences', '.wrangler', 'config', 'default.toml'))
+    )
+    assert.ok(files.some((f) => f.endsWith(join('.config', '.wrangler', 'config', 'default.toml'))))
+    assert.ok(files.some((f) => f.endsWith(join('.wrangler', 'config', 'default.toml'))))
   })
 
   it('honours WRANGLER_HOME', () => {
-    const files = wranglerAuthFileCandidates('/Users/ada', { WRANGLER_HOME: '/opt/wrangler' }, 'darwin')
-    assert.equal(files[0], '/opt/wrangler/config/default.toml')
+    const files = wranglerAuthFileCandidates(
+      join('/Users', 'ada'),
+      { WRANGLER_HOME: join('/opt', 'wrangler') },
+      'darwin'
+    )
+    assert.equal(files[0], join('/opt', 'wrangler', 'config', 'default.toml'))
   })
 })
 

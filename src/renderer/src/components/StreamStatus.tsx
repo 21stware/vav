@@ -41,7 +41,7 @@ export function StreamStatus({
   }
 
   return (
-    <div className="stream-status" data-testid="stream-status" data-state={state}>
+      <div className="stream-status" data-testid="stream-status" data-state={state} role="status" aria-live="polite">
       <span className="stream-status-mark" aria-hidden>
         <img
           className="stream-status-mark-sprite logo-light"

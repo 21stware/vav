@@ -7,7 +7,7 @@ import {
   installUpdateBridge,
   installWindowBridge,
   installActivityBridge
-} from './state/sessionStore'
+} from './state/sessionBridges'
 import { installFsWatchBridge, installPtyBridge, useWorkspaceStore } from './state/workspaceStore'
 import { AgentModeChrome, SessionDetail } from './components/SessionDetail'
 import { ActivityDot } from './components/ActivityDot'

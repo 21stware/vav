@@ -88,3 +88,9 @@ export function summarizeChangeSetStatus(files: ChangeEntry[]): ChangeSetStatus 
   if (files.every((f) => f.status === 'pending')) return 'pending'
   return 'partial'
 }
+
+export function pendingChangeSetFileCount(
+  files: Array<{ status: string }>
+): number {
+  return files.filter((f) => f.status === 'pending').length
+}

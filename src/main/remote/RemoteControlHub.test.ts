@@ -89,6 +89,8 @@ async function listenHub(
     reply: () => true,
     rename: () => 'ok',
     archive: () => 'ok',
+    pin: () => 'ok',
+    favorite: () => 'ok',
     browse: () => 'not-found',
     setWorkspace: () => 'ok'
   })
@@ -234,6 +236,8 @@ describe('RemoteControlHub', () => {
       reply: () => false,
       rename: () => 'ok',
       archive: () => 'ok',
+      pin: () => 'ok',
+      favorite: () => 'ok',
       browse: () => 'not-found',
       setWorkspace: () => 'ok',
       onDaemonHello: (_socket, leftover) => {

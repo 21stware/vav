@@ -77,6 +77,26 @@ struct SessionDetailView: View {
             }
             ToolbarItem(placement: .topBarTrailing) {
                 Menu {
+                    if client.host?.capabilities.favorite == true {
+                        Button {
+                            client.setFavorite(conversationId: session.id, favorite: !liveSession.favorite)
+                        } label: {
+                            Label(
+                                liveSession.favorite ? "取消收藏" : "收藏",
+                                systemImage: liveSession.favorite ? "star.slash" : "star"
+                            )
+                        }
+                    }
+                    if client.host?.capabilities.pin == true {
+                        Button {
+                            client.setPinned(conversationId: session.id, pinned: !liveSession.pinned)
+                        } label: {
+                            Label(
+                                liveSession.pinned ? "取消置顶" : "置顶",
+                                systemImage: liveSession.pinned ? "pin.slash" : "pin"
+                            )
+                        }
+                    }
                     Button("重命名") {
                         renameTitle = liveSession.title
                         showRename = true

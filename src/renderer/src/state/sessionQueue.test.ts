@@ -1,0 +1,306 @@
+import assert from 'node:assert/strict'
+import { describe, it } from 'node:test'
+import {
+  conversationIdAwaitingTool,
+  hostHoldsControlPlaneKeys,
+  omitLiveUsage,
+  turnRuntimeFromAgentStatus
+} from './sessionUsage.ts'
+import {
+  buildQueuedMessage,
+  composerSendDisposition,
+  composerClearedPatch,
+  enqueueQueuedMessagePatch,
+  updateQueuedMessagePatch,
+  removeQueuedMessagePatch,
+  isEmptyComposerSend,
+  mergePreviewAndCommentRefs,
+  MESSAGE_QUEUE_MAX,
+  pollUntil,
+  resolveComposerContextFile,
+  shouldDrainMessageQueue
+} from './sessionQueue.ts'
+
+describe('omitLiveUsage', () => {
+  it('drops one conversation without allocating when the id is missing', () => {
+    const live = { a: { tokensUsed: 1 }, b: { tokensUsed: 2 } }
+    assert.equal(omitLiveUsage(live, 'missing'), live)
+    assert.deepEqual(omitLiveUsage(live, 'a'), { b: { tokensUsed: 2 } })
+  })
+})
+
+describe('pollUntil', () => {
+  it('returns true on the first check when the predicate already holds', async () => {
+    let delayed = 0
+    const ok = await pollUntil(() => true, {
+      timeoutMs: 20_000,
+      intervalMs: 40,
+      now: () => 0,
+      delay: async () => {
+        delayed += 1
+      }
+    })
+    assert.equal(ok, true)
+    assert.equal(delayed, 0)
+  })
+
+  it('returns false after timeout without the predicate becoming true', async () => {
+    let now = 0
+    let delayed = 0
+    const ok = await pollUntil(() => false, {
+      timeoutMs: 20_000,
+      intervalMs: 40,
+      now: () => now,
+      delay: async (ms) => {
+        delayed += 1
+        now += ms
+      }
+    })
+    assert.equal(ok, false)
+    assert.equal(delayed, 500)
+  })
+
+  it('returns true once the predicate flips before timeout', async () => {
+    let now = 0
+    let checks = 0
+    const ok = await pollUntil(
+      () => {
+        checks += 1
+        return checks >= 3
+      },
+      {
+        timeoutMs: 20_000,
+        intervalMs: 40,
+        now: () => now,
+        delay: async (ms) => {
+          now += ms
+        }
+      }
+    )
+    assert.equal(ok, true)
+    assert.equal(checks, 3)
+  })
+})
+
+describe('MESSAGE_QUEUE_MAX', () => {
+  it('caps pending composer sends at 20', () => {
+    assert.equal(MESSAGE_QUEUE_MAX, 20)
+  })
+})
+
+describe('composer send helpers', () => {
+  it('treats whitespace-only composer input as empty', () => {
+    assert.equal(isEmptyComposerSend('  ', [], [], []), true)
+    assert.equal(isEmptyComposerSend('', ['/a.png'], [], []), false)
+    assert.equal(isEmptyComposerSend('', [], [{ id: 'r' }], []), false)
+    assert.equal(isEmptyComposerSend('', [], [], [{ ref: { id: 'c' } }]), false)
+  })
+
+  it('lets commented refs replace chips with the same id', () => {
+    const chip = { id: 'a', filePath: '/a.ts', label: 'chip', startLine: 1, endLine: 1, text: 'x' }
+    const cardRef = { ...chip, label: 'card' }
+    const merged = mergePreviewAndCommentRefs([chip], [{ ref: cardRef, comment: ' note ' }])
+    assert.equal(merged.length, 1)
+    assert.equal(merged[0]?.comment, 'note')
+    assert.equal(merged[0]?.label, 'card')
+  })
+
+  it('snapshots queue items so later composer edits cannot mutate them', () => {
+    const attachments = ['/a.png']
+    const item = buildQueuedMessage({
+      text: '  hi  ',
+      attachments,
+      previewRefs: [],
+      commentCards: [],
+      quote: null,
+      contextFile: '/a.ts',
+      now: 1,
+      id: 'q-fixed'
+    })
+    attachments.push('/b.png')
+    assert.equal(item.id, 'q-fixed')
+    assert.equal(item.text, 'hi')
+    assert.deepEqual(item.attachments, ['/a.png'])
+    assert.equal(item.createdAt, 1)
+  })
+
+  it('classifies empty / parked / key / queue / send', () => {
+    const base = {
+      empty: false,
+      awaitingTool: false,
+      needsApiKey: false,
+      isRunning: false,
+      queueLength: 0
+    }
+    assert.equal(composerSendDisposition({ ...base, empty: true }), 'empty')
+    assert.equal(composerSendDisposition({ ...base, awaitingTool: true }), 'awaiting')
+    assert.equal(composerSendDisposition({ ...base, needsApiKey: true }), 'need-key')
+    assert.equal(composerSendDisposition({ ...base, isRunning: true, queueLength: 0 }), 'enqueue')
+    assert.equal(
+      composerSendDisposition({ ...base, isRunning: true, queueLength: MESSAGE_QUEUE_MAX }),
+      'full'
+    )
+    assert.equal(composerSendDisposition(base), 'send')
+  })
+
+  it('drains FIFO only when idle, queued, and send-now is not in flight', () => {
+    assert.equal(
+      shouldDrainMessageQueue({ sendNowInFlight: true, queueLength: 1 }),
+      false
+    )
+    assert.equal(
+      shouldDrainMessageQueue({ sendNowInFlight: false, isRunning: true, queueLength: 1 }),
+      false
+    )
+    assert.equal(
+      shouldDrainMessageQueue({
+        sendNowInFlight: false,
+        awaitingToolCallId: 't1',
+        queueLength: 1
+      }),
+      false
+    )
+    assert.equal(
+      shouldDrainMessageQueue({ sendNowInFlight: false, queueLength: 0 }),
+      false
+    )
+    assert.equal(
+      shouldDrainMessageQueue({ sendNowInFlight: false, queueLength: 1 }),
+      true
+    )
+  })
+
+  it('clears composer fields for one conversation without dropping others', () => {
+    const patch = composerClearedPatch(
+      {
+        drafts: { a: 'hello', b: 'keep' },
+        attachments: { a: ['/x'] },
+        quotes: { a: { messageId: 'm', summary: 'q' } },
+        previewRefs: { a: [{ id: 'r', filePath: '/a.ts' }] },
+        commentCards: { a: [{ ref: { id: 'c', filePath: '/a.ts' }, comment: 'n' }] }
+      },
+      'a'
+    )
+    assert.equal(patch.drafts.a, '')
+    assert.equal(patch.drafts.b, 'keep')
+    assert.deepEqual(patch.attachments.a, [])
+    assert.equal(patch.quotes.a, null)
+    assert.deepEqual(patch.previewRefs.a, [])
+    assert.deepEqual(patch.commentCards.a, [])
+    assert.equal(patch.errorBanner, null)
+  })
+
+  it('parks a queued send and clears the composer for that session', () => {
+    const item = buildQueuedMessage({
+      text: 'later',
+      attachments: [],
+      previewRefs: [],
+      commentCards: [],
+      quote: null,
+      contextFile: null,
+      now: 2,
+      id: 'q-1'
+    })
+    const next = enqueueQueuedMessagePatch(
+      {
+        messageQueues: { a: [], b: [item] },
+        drafts: { a: 'later', b: 'keep' },
+        attachments: { a: ['/x'] },
+        quotes: { a: { messageId: 'm', summary: 'q' } },
+        previewRefs: { a: [{ id: 'r', filePath: '/a.ts' }] },
+        commentCards: { a: [{ ref: { id: 'c', filePath: '/a.ts' }, comment: 'n' }] }
+      },
+      'a',
+      item
+    )
+    assert.deepEqual(next.messageQueues.a, [item])
+    assert.equal(next.messageQueues.b[0], item)
+    assert.equal(next.drafts.a, '')
+    assert.equal(next.drafts.b, 'keep')
+    assert.deepEqual(next.attachments.a, [])
+    assert.equal(next.errorBanner, null)
+  })
+
+  it('edits or drops one parked send and is a no-op when the queue is missing', () => {
+    const item = buildQueuedMessage({
+      text: 'later',
+      attachments: [],
+      previewRefs: [],
+      commentCards: [],
+      quote: null,
+      contextFile: null,
+      now: 2,
+      id: 'q-1'
+    })
+    const state = {
+      messageQueues: { a: [item], b: [item] },
+      drafts: {},
+      attachments: {},
+      quotes: {},
+      previewRefs: {},
+      commentCards: {}
+    }
+    const edited = updateQueuedMessagePatch(state, 'a', 'q-1', '  now  ')
+    assert.equal('messageQueues' in edited && edited.messageQueues.a[0]?.text, 'now')
+    assert.equal(updateQueuedMessagePatch(state, 'missing', 'q-1', 'x'), state)
+    const removed = removeQueuedMessagePatch(state, 'a', 'q-1')
+    assert.deepEqual('messageQueues' in removed ? removed.messageQueues.a : null, [])
+    assert.equal(removeQueuedMessagePatch(state, 'missing', 'q-1'), state)
+  })
+})
+
+describe('resolveComposerContextFile', () => {
+  it('prefers the composer chip, then the session focused file', () => {
+    const conversations = [{ id: 'a', focusedFilePath: '/from-session.ts' }]
+    assert.equal(
+      resolveComposerContextFile({ a: '/chip.ts' }, conversations, 'a'),
+      '/chip.ts'
+    )
+    assert.equal(resolveComposerContextFile({}, conversations, 'a'), '/from-session.ts')
+    assert.equal(resolveComposerContextFile({ a: null }, [], 'a'), null)
+  })
+})
+
+describe('turnRuntimeFromAgentStatus', () => {
+  it('copies the in-flight fields used by the transcript', () => {
+    assert.deepEqual(
+      turnRuntimeFromAgentStatus({
+        isRunning: true,
+        phase: 'outputting',
+        toolCount: 2,
+        awaitingToolCallId: 't1',
+        extra: 'ignored'
+      }),
+      {
+        isRunning: true,
+        phase: 'outputting',
+        toolCount: 2,
+        awaitingToolCallId: 't1'
+      }
+    )
+  })
+})
+
+describe('conversationIdAwaitingTool', () => {
+  it('prefers an exact tool id over a generic awaiting-user turn', () => {
+    const turns = {
+      a: { awaitingToolCallId: 'other', phase: 'awaiting-user' },
+      b: { awaitingToolCallId: 'want', phase: 'awaiting-user' }
+    }
+    assert.equal(conversationIdAwaitingTool(turns, 'want', 'fallback'), 'b')
+    assert.equal(conversationIdAwaitingTool({ a: turns.a }, 'missing', 'fallback'), 'a')
+    assert.equal(conversationIdAwaitingTool({}, 'want', 'fallback'), 'fallback')
+  })
+})
+
+describe('hostHoldsControlPlaneKeys', () => {
+  it('requires a matching host with a control plane', () => {
+    const hosts = [
+      { id: 'm1', controlPlane: true },
+      { id: 'm2', controlPlane: false }
+    ]
+    assert.equal(hostHoldsControlPlaneKeys(hosts, 'm1'), true)
+    assert.equal(hostHoldsControlPlaneKeys(hosts, 'm2'), false)
+    assert.equal(hostHoldsControlPlaneKeys(hosts, null), false)
+  })
+})

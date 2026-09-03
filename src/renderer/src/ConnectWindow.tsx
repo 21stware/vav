@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useLayoutEffect, useRef } from 'react'
+import { useSessionStore } from './state/sessionStore'
 import {
   installHostsBridge,
-  installSettingsBridge,
-  useSessionStore
-} from './state/sessionStore'
+  installSettingsBridge
+} from './state/sessionBridges'
 import { useT } from './i18n/useT'
 import { useAppearance } from './lib/appearance'
 import { installDefaultContextMenu } from './lib/nativeMenu'

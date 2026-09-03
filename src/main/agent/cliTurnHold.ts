@@ -46,3 +46,15 @@ export function shouldArmPlanDocFollowUp(opts: {
     !opts.alreadySteered
   )
 }
+
+/**
+ * Reject on the last held card after the host prompt closed — seal the VAV
+ * turn. Accept's dual: do not leave a zombie held turn after Deny.
+ */
+export function shouldSealHeldCliReject(opts: {
+  hostPromptClosed: boolean
+  remaining: number
+  allow: boolean
+}): boolean {
+  return !opts.allow && opts.hostPromptClosed && opts.remaining === 0
+}

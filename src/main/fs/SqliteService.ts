@@ -78,13 +78,27 @@ function evictDbCache(): void {
   const drop = ordered.length - DB_CACHE_MAX
   for (let i = 0; i < drop; i++) {
     const [key, entry] = ordered[i]!
-    try {
-      entry.db.close()
-    } catch {
-      // ignore
-    }
-    dbCache.delete(key)
+    closeCached(key, entry)
   }
+}
+
+function closeCached(path: string, entry: CachedDb): void {
+  try {
+    entry.db.close()
+  } catch {
+    // ignore
+  }
+  dbCache.delete(path)
+}
+
+/** Drop a cached read-only handle so the file can be deleted (Windows). */
+export function closeSqlite(path: string): void {
+  const entry = dbCache.get(path)
+  if (entry) closeCached(path, entry)
+}
+
+export function closeAllSqlite(): void {
+  for (const [path, entry] of [...dbCache.entries()]) closeCached(path, entry)
 }
 
 /** Cached read-only handle; invalidates on size/mtime change. */
@@ -101,12 +115,7 @@ function getDb(path: string): CachedDb {
     return existing
   }
   if (existing) {
-    try {
-      existing.db.close()
-    } catch {
-      // ignore
-    }
-    dbCache.delete(path)
+    closeCached(path, existing)
   }
   const db = openReadonly(path)
   const entry: CachedDb = {

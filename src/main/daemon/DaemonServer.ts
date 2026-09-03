@@ -22,6 +22,12 @@ import type { WorkspaceHost } from '../host/WorkspaceHost.ts'
 import type { HostChild, HostPtyProcess, HostFileHandle } from '../host/index.ts'
 import { attachLineReader, secretsMatch, writeLine } from './jsonLines.ts'
 import type { DaemonIdentity } from './identity.ts'
+import {
+  createMemoryGrantStore,
+  incomingFromGrants,
+  type GrantStore,
+  type IncomingController
+} from './grants.ts'
 import { whichOnHost } from './procWhich.ts'
 
 type ServerOpts = {
@@ -32,9 +38,18 @@ type ServerOpts = {
   home: string
   tmp: string
   /** This machine's `vav-daemon://` URI — sent after a LAN pair-ask is approved. */
-  pairing?: () => string | null
+  pairing?: (secret?: string) => string | null
   /** Desktop confirm for LAN Pair. Headless daemons omit this and refuse. */
   onPairAsk?: (from: { name: string; machineId: string }) => Promise<boolean>
+  /** Issued grants. Defaults to an in-memory store so every pair can be revoked. */
+  grants?: GrantStore
+  /**
+   * Extra offer secrets that can mint a grant (desktop phone QR after the
+   * machine offer was rotated). Phone-role hellos also accept these without
+   * minting — phones stay on the shared secret.
+   */
+  extraSecrets?: () => string[]
+  onIncomingChanged?: () => void
   /**
    * Local sessions + folder recents on this computer. Headless `vavd` omits
    * this; list/get then return empty rather than failing the pair.
@@ -79,22 +94,86 @@ function asString(value: unknown, fallback = ''): string {
   return typeof value === 'string' ? value : fallback
 }
 
+/** Explicit LAN bind — used when the user opts into "allow other devices". */
+export const DAEMON_LAN_BIND = '0.0.0.0'
+/** Safe listen() default so a forgotten hostname is loopback-only. */
+export const DAEMON_LOCAL_BIND = '127.0.0.1'
+
+const AUTH_FAIL_LIMIT = 8
+const AUTH_FAIL_WINDOW_MS = 60_000
+const AUTH_LOCK_MS = 30_000
+
+type LiveMeta = {
+  dispose: () => void
+  grantId: string | null
+  clientId: string | null
+  name: string
+  role: 'daemon' | 'control'
+}
+
 export class DaemonServer {
   private readonly opts: ServerOpts
+  private readonly grants: GrantStore
   private server: Server | null = null
   private readonly sockets = new Set<Socket>()
+  private readonly sessions = new Set<() => void>()
+  private readonly live = new Map<Socket, LiveMeta>()
   private listenPort = 0
   private pairAskBusy = false
+  private pendingAsk: IncomingController | null = null
+  private readonly revoked = new Map<string, IncomingController>()
+  private readonly authFails = new Map<
+    string,
+    { count: number; windowStart: number; lockedUntil: number }
+  >()
 
   constructor(opts: ServerOpts) {
     this.opts = opts
+    this.grants = opts.grants ?? createMemoryGrantStore()
+  }
+
+  incoming(): IncomingController[] {
+    const extras: IncomingController[] = []
+    if (this.pendingAsk) extras.push(this.pendingAsk)
+    extras.push(...this.revoked.values())
+    return incomingFromGrants(this.grants.list(), this.onlineGrantIds(), extras)
+  }
+
+  disconnectGrant(grantId: string): boolean {
+    const grant = this.grants.findById(grantId)
+    if (!grant) return false
+    this.grants.markKicked(grantId)
+    this.dropGrantSockets(grantId, 'disconnected')
+    this.notifyIncoming()
+    return true
+  }
+
+  unpairGrant(grantId: string): boolean {
+    const grant = this.grants.remove(grantId) ?? this.pendingAsk
+    this.dropGrantSockets(grantId, 'revoked')
+    if (this.pendingAsk?.id === grantId) this.pendingAsk = null
+    if (grant && 'secret' in grant) {
+      this.revoked.set(grantId, {
+        id: grant.id,
+        name: grant.name,
+        clientId: grant.clientId,
+        state: 'revoked',
+        online: false,
+        lastSeen: Date.now(),
+        issuedAt: grant.issuedAt
+      })
+    } else if (grant) {
+      this.revoked.set(grantId, { ...grant, state: 'revoked', online: false, lastSeen: Date.now() })
+    }
+    if (grant) this.notifyIncoming()
+    return Boolean(grant)
   }
 
   port(): number {
     return this.listenPort
   }
 
-  listen(port: number, hostname = '0.0.0.0'): Promise<number> {
+  listen(port: number, hostname = DAEMON_LOCAL_BIND): Promise<number> {
     return new Promise((resolve, reject) => {
       const server = createServer((socket) => this.accept(socket))
       server.on('error', reject)
@@ -113,23 +192,150 @@ export class DaemonServer {
   }
 
   /** Socket already authenticated (e.g. tailcat multiplex after hello). */
-  adopt(socket: Socket, leftover = ''): void {
-    this.attachSession(socket, leftover, true)
+  adopt(socket: Socket, leftover = '', hello?: { auth: string; device?: string }): void {
+    this.attachSession(socket, leftover, true, hello)
   }
 
   close(): void {
-    for (const socket of this.sockets) socket.destroy()
+    for (const dispose of [...this.sessions]) dispose()
+    this.sessions.clear()
+    for (const socket of this.sockets) {
+      try {
+        if (typeof socket.resetAndDestroy === 'function') socket.resetAndDestroy()
+        else socket.destroy()
+        socket.unref()
+      } catch {
+        /* ignore */
+      }
+    }
     this.sockets.clear()
-    this.server?.close()
+    this.live.clear()
+    this.authFails.clear()
+    const server = this.server
     this.server = null
     this.listenPort = 0
+    if (!server) return
+    // Windows keeps `server.close()` pending until every TCP connection
+    // actually drops. Force them so the test worker (and the app) can exit.
+    const closer = server as typeof server & { closeAllConnections?: () => void }
+    closer.closeAllConnections?.()
+    server.close()
+    server.unref()
+  }
+
+  private authKey(socket: Socket): string {
+    return socket.remoteAddress || 'unknown'
+  }
+
+  private authLocked(socket: Socket): boolean {
+    const rec = this.authFails.get(this.authKey(socket))
+    return Boolean(rec && rec.lockedUntil > Date.now())
+  }
+
+  private onlineGrantIds(): Set<string> {
+    const ids = new Set<string>()
+    for (const meta of this.live.values()) {
+      if (meta.grantId) ids.add(meta.grantId)
+    }
+    return ids
+  }
+
+  private notifyIncoming(): void {
+    this.opts.onIncomingChanged?.()
+  }
+
+  private clearRevoked(clientId: string): void {
+    for (const [id, row] of this.revoked) {
+      if (row.clientId === clientId) this.revoked.delete(id)
+    }
+  }
+
+  private offerSecrets(): string[] {
+    const extra = this.opts.extraSecrets?.() ?? []
+    return [this.opts.secret(), ...extra].filter((secret) => secret.length >= 16)
+  }
+
+  private matchesOffer(auth: string): boolean {
+    return this.offerSecrets().some((secret) => secretsMatch(auth, secret))
+  }
+
+  private dropGrantSockets(grantId: string, reason: 'revoked' | 'disconnected'): number {
+    let n = 0
+    for (const [socket, meta] of [...this.live]) {
+      if (meta.grantId !== grantId) continue
+      n += 1
+      writeLine(socket, {
+        type: 'error',
+        code: reason === 'revoked' ? 'revoked' : 'auth',
+        message: reason === 'revoked' ? 'pairing revoked' : 'disconnected'
+      })
+      try {
+        socket.destroy()
+      } catch {
+        /* ignore */
+      }
+    }
+    return n
+  }
+
+  private noteAuthFail(socket: Socket): void {
+    const key = this.authKey(socket)
+    const now = Date.now()
+    const rec = this.authFails.get(key) ?? { count: 0, windowStart: now, lockedUntil: 0 }
+    if (now - rec.windowStart > AUTH_FAIL_WINDOW_MS) {
+      rec.count = 0
+      rec.windowStart = now
+    }
+    rec.count += 1
+    if (rec.count >= AUTH_FAIL_LIMIT) rec.lockedUntil = now + AUTH_LOCK_MS
+    this.authFails.set(key, rec)
   }
 
   private accept(socket: Socket): void {
     this.attachSession(socket, '', false)
   }
 
-  private attachSession(socket: Socket, leftover: string, authed: boolean): void {
+  private authenticateDaemonHello(
+    socket: Socket,
+    hello: { auth: string; device?: string; clientId?: string; grantId?: string },
+    meta: LiveMeta,
+    sendWelcome: (grant?: { id: string; secret: string }) => void
+  ): boolean {
+    const existing = this.grants.findBySecret(hello.auth)
+    if (existing) {
+      this.authFails.delete(this.authKey(socket))
+      this.grants.touch(existing.id, hello.device)
+      this.clearRevoked(existing.clientId)
+      meta.grantId = existing.id
+      meta.clientId = existing.clientId
+      meta.name = existing.name
+      meta.role = 'daemon'
+      sendWelcome({ id: existing.id, secret: existing.secret })
+      this.notifyIncoming()
+      return true
+    }
+    if (!this.matchesOffer(hello.auth)) return false
+    this.authFails.delete(this.authKey(socket))
+    const grant = this.grants.issue({
+      clientId: hello.clientId || hello.grantId || hello.device || randomUUID(),
+      name: hello.device || 'unknown'
+    })
+    this.clearRevoked(grant.clientId)
+    meta.grantId = grant.id
+    meta.clientId = grant.clientId
+    meta.name = grant.name
+    meta.role = 'daemon'
+    sendWelcome({ id: grant.id, secret: grant.secret })
+    this.notifyIncoming()
+    return true
+  }
+
+  private attachSession(
+    socket: Socket,
+    leftover: string,
+    authed: boolean,
+    adoptedHello?: { auth: string; device?: string }
+  ): void {
     this.sockets.add(socket)
     const processes = new Map<string, LiveProcess>()
     const ptys = new Map<string, LivePty>()
@@ -137,11 +343,23 @@ export class DaemonServer {
     const watches = new Map<string, LiveWatch>()
     let ready = authed
 
+    const meta: LiveMeta = {
+      dispose: () => undefined,
+      grantId: null,
+      clientId: null,
+      name: '',
+      role: 'daemon'
+    }
+
     const forget = (): void => {
+      if (!this.sessions.delete(forget)) return
       this.sockets.delete(socket)
+      this.live.delete(socket)
+      this.notifyIncoming()
       for (const live of processes.values()) {
         try {
           live.child.kill()
+          live.child.unref()
         } catch {
           /* ignore */
         }
@@ -162,10 +380,13 @@ export class DaemonServer {
       handles.clear()
       watches.clear()
     }
+    meta.dispose = forget
+    this.sessions.add(forget)
     socket.on('close', forget)
     socket.on('error', forget)
+    this.live.set(socket, meta)
 
-    const sendWelcome = (): void => {
+    const sendWelcome = (grant?: { id: string; secret: string }): void => {
       writeLine(socket, {
         type: 'welcome',
         proto: DAEMON_PROTO_VERSION,
@@ -179,11 +400,15 @@ export class DaemonServer {
           platform: this.opts.host.info.platform
         },
         home: this.opts.home,
-        tmp: this.opts.tmp
+        tmp: this.opts.tmp,
+        grant
       })
     }
 
-    if (ready) sendWelcome()
+    if (ready) {
+      if (adoptedHello) this.authenticateDaemonHello(socket, adoptedHello, meta, sendWelcome)
+      else sendWelcome()
+    }
 
     const leftoverRef = { value: leftover }
     attachLineReader(socket, (value) => {
@@ -193,36 +418,53 @@ export class DaemonServer {
         return
       }
       if (!ready) {
+        if (this.authLocked(socket)) {
+          writeLine(socket, { type: 'error', code: 'auth', message: 'pairing rejected' })
+          socket.destroy()
+          return
+        }
         const ask = parseDaemonPairAsk(value)
         if (ask) {
           void this.handlePairAsk(socket, ask)
           return
         }
         const hello = parseDaemonHello(value)
-        if (hello && secretsMatch(hello.auth, this.opts.secret())) {
-          ready = true
-          sendWelcome()
-          return
-        }
-        const phone = parseClientMessage(value)
-        if (
-          phone?.type === 'hello' &&
-          phone.role !== 'daemon' &&
-          secretsMatch(phone.auth, this.opts.secret())
-        ) {
-          if (!this.opts.onControlHello) {
-            writeLine(socket, {
-              type: 'error',
-              code: 'bad-request',
-              message: 'control plane not available'
-            })
-            socket.destroy()
+        if (hello) {
+          const granted = this.authenticateDaemonHello(socket, hello, meta, sendWelcome)
+          if (granted) {
+            ready = true
             return
           }
-          socket.removeAllListeners('data')
-          this.opts.onControlHello(socket, leftoverRef.value, phone)
-          return
         }
+        const phone = parseClientMessage(value)
+        if (phone?.type === 'hello' && phone.role !== 'daemon') {
+          const grant = this.grants.findBySecret(phone.auth)
+          const offerOk = this.matchesOffer(phone.auth)
+          if (grant || offerOk) {
+            if (!this.opts.onControlHello) {
+              writeLine(socket, {
+                type: 'error',
+                code: 'bad-request',
+                message: 'control plane not available'
+              })
+              socket.destroy()
+              return
+            }
+            this.authFails.delete(this.authKey(socket))
+            if (grant) {
+              this.grants.touch(grant.id, phone.device)
+              meta.grantId = grant.id
+              meta.clientId = grant.clientId
+              meta.name = grant.name
+              meta.role = 'control'
+              this.notifyIncoming()
+            }
+            socket.removeAllListeners('data')
+            this.opts.onControlHello(socket, leftoverRef.value, phone)
+            return
+          }
+        }
+        this.noteAuthFail(socket)
         writeLine(socket, { type: 'error', code: 'auth', message: 'pairing rejected' })
         socket.destroy()
         return
@@ -237,7 +479,7 @@ export class DaemonServer {
         writeLine(socket, { type: 'pong' })
         return
       }
-      void this.dispatch(frame, socket, { processes, ptys, handles, watches })
+      void this.dispatch(frame, socket, { processes, ptys, handles, watches, grantId: () => meta.grantId })
     }, { leftover, leftoverRef })
   }
 
@@ -253,24 +495,55 @@ export class DaemonServer {
       return
     }
     this.pairAskBusy = true
+    this.pendingAsk = {
+      id: `pending:${ask.machineId}`,
+      name: ask.name,
+      clientId: ask.machineId,
+      state: 'pending',
+      online: false,
+      lastSeen: Date.now(),
+      issuedAt: Date.now()
+    }
+    this.notifyIncoming()
     try {
-      const allow = await this.opts.onPairAsk({ name: ask.name, machineId: ask.machineId })
-      if (socket.destroyed) return
+      const allow = await new Promise<boolean | 'closed'>((resolve) => {
+        if (socket.destroyed) {
+          resolve('closed')
+          return
+        }
+        const onClose = (): void => resolve('closed')
+        socket.once('close', onClose)
+        void this.opts.onPairAsk!({ name: ask.name, machineId: ask.machineId }).then(
+          (value) => {
+            socket.off('close', onClose)
+            resolve(value)
+          },
+          () => {
+            socket.off('close', onClose)
+            resolve(false)
+          }
+        )
+      })
+      if (allow === 'closed' || socket.destroyed) return
       if (!allow) {
         writeLine(socket, { type: 'error', code: 'auth', message: 'pairing declined' })
         socket.destroy()
         return
       }
-      const pairing = this.opts.pairing()
+      const grant = this.grants.issue({ clientId: ask.machineId, name: ask.name })
+      const pairing = this.opts.pairing?.(grant.secret)
       if (!pairing) {
         writeLine(socket, { type: 'error', code: 'internal', message: 'not listening' })
         socket.destroy()
         return
       }
+      this.notifyIncoming()
       writeLine(socket, { type: 'pair-offer', pairing })
       socket.end()
     } finally {
+      this.pendingAsk = null
       this.pairAskBusy = false
+      this.notifyIncoming()
     }
   }
 
@@ -282,11 +555,17 @@ export class DaemonServer {
       ptys: Map<string, LivePty>
       handles: Map<string, LiveHandle>
       watches: Map<string, LiveWatch>
+      grantId: () => string | null
     }
   ): Promise<void> {
     try {
       const result = await this.runMethod(req.method, req.params, socket, live)
       writeLine(socket, { type: 'res', id: req.id, ok: true, result })
+      if (req.method === 'pair.leave') {
+        const grantId = live.grantId()
+        if (grantId) this.unpairGrant(grantId)
+        else socket.destroy()
+      }
     } catch (err) {
       writeLine(socket, {
         type: 'res',
@@ -309,11 +588,14 @@ export class DaemonServer {
       ptys: Map<string, LivePty>
       handles: Map<string, LiveHandle>
       watches: Map<string, LiveWatch>
+      grantId: () => string | null
     }
   ): Promise<unknown> {
     const p = asRecord(params)
     const fs = this.opts.host.fs
     switch (method) {
+      case 'pair.leave':
+        return { ok: true }
       case 'host.info':
         return {
           id: this.opts.identity.machineId,
@@ -594,6 +876,11 @@ export class DaemonServer {
         event: 'pty-exit',
         data: { exitCode: e.exitCode, signal: e.signal }
       })
+      try {
+        proc.kill()
+      } catch {
+        /* ConPTY/worker teardown is idempotent */
+      }
       ptys.delete(stream)
     })
     return { stream, pid: proc.pid }

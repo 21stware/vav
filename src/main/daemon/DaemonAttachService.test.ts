@@ -30,7 +30,10 @@ async function listenLoopback(dir: string): Promise<{ server: DaemonServer; port
 function attach(
   userData: string,
   enabled = false,
-  extra?: { dialTunnel?: (token: string) => Promise<{ host: string; port: number; close: () => void }> }
+  extra?: {
+    dialTunnel?: (token: string) => Promise<{ host: string; port: number; close: () => void }>
+    reconnectDelayMs?: (attempt: number) => number
+  }
 ): {
   service: DaemonAttachService
   registry: HostRegistry
@@ -47,6 +50,7 @@ function attach(
       enabled: () => enabled,
       tailcatToken: () => null,
       dialTunnel: extra?.dialTunnel,
+      reconnectDelayMs: extra?.reconnectDelayMs,
       onHostsChanged: () => undefined
     })
   }
@@ -80,8 +84,13 @@ describe('DaemonAttachService', () => {
         hosts: { machineId: string }[]
       }
       assert.equal(stored.hosts[0]?.machineId, 'box-1')
+      const storedGrant = JSON.parse(await readFile(join(userData, 'paired-hosts.json'), 'utf8')) as {
+        hosts: { grantId?: string; secret: string }[]
+      }
+      assert.ok(storedGrant.hosts[0]?.grantId)
+      assert.notEqual(storedGrant.hosts[0]?.secret, SECRET)
 
-      service.forget('box-1')
+      await service.forget('box-1')
       assert.equal(registry.get('box-1'), undefined)
       const after = JSON.parse(await readFile(join(userData, 'paired-hosts.json'), 'utf8')) as {
         hosts: unknown[]
@@ -212,6 +221,69 @@ describe('DaemonAttachService', () => {
     } finally {
       service.dispose()
       server.close()
+      await rm(disk, { recursive: true, force: true })
+      await rm(userData, { recursive: true, force: true })
+    }
+  })
+
+  it('retries a failed restore when the daemon comes back', async () => {
+    const disk = await mkdtemp(join(tmpdir(), 'vav-box-'))
+    const userData = await mkdtemp(join(tmpdir(), 'vav-attach-'))
+    const probe = createServer()
+    const port = await new Promise<number>((resolve, reject) => {
+      probe.once('error', reject)
+      probe.listen(0, '127.0.0.1', () => {
+        const address = probe.address()
+        resolve(typeof address === 'object' && address ? address.port : 0)
+      })
+    })
+    await new Promise<void>((resolve, reject) => probe.close((err) => (err ? reject(err) : resolve())))
+    await writeFile(
+      join(userData, 'paired-hosts.json'),
+      JSON.stringify({
+        hosts: [
+          {
+            machineId: 'box-1',
+            name: 'box',
+            secret: SECRET,
+            host: '127.0.0.1',
+            port
+          }
+        ]
+      })
+    )
+    const { service, registry } = attach(userData, false, { reconnectDelayMs: () => 40 })
+    let server: DaemonServer | undefined
+    try {
+      service.restore()
+      const start = Date.now()
+      while (!registry.get('box-1') && Date.now() - start < 2000) {
+        await new Promise((resolve) => setTimeout(resolve, 20))
+      }
+      assert.equal(registry.get('box-1')?.info.online, false)
+
+      const listening = new DaemonServer({
+        host: createLocalWorkspaceHost({ name: 'box' }),
+        identity: { machineId: 'box-1', name: 'box' },
+        secret: () => SECRET,
+        appVersion: 'test',
+        home: disk,
+        tmp: disk
+      })
+      server = listening
+      await listening.listen(port, '127.0.0.1')
+      let online = false
+      while (Date.now() - start < 4000) {
+        if (registry.get('box-1')?.info.online) {
+          online = true
+          break
+        }
+        await new Promise((resolve) => setTimeout(resolve, 20))
+      }
+      assert.equal(online, true)
+    } finally {
+      service.dispose()
+      server?.close()
       await rm(disk, { recursive: true, force: true })
       await rm(userData, { recursive: true, force: true })
     }
@@ -551,6 +623,8 @@ describe('DaemonAttachService', () => {
       reply: () => false,
       rename: () => 'ok',
       archive: () => 'ok',
+      pin: () => 'ok',
+      favorite: () => 'ok',
       browse: () => 'not-found',
       setWorkspace: () => 'ok'
     })
@@ -632,6 +706,78 @@ describe('DaemonAttachService', () => {
       b.dispose()
       await rm(userA, { recursive: true, force: true })
       await rm(userB, { recursive: true, force: true })
+    }
+  })
+
+  it('forgets a host by asking the daemon to revoke the grant', async () => {
+    const disk = await mkdtemp(join(tmpdir(), 'vav-box-'))
+    const userData = await mkdtemp(join(tmpdir(), 'vav-attach-'))
+    const { server, port } = await listenLoopback(disk)
+    const { service } = attach(userData)
+    try {
+      const result = await service.pair(
+        encodeDaemonPairing({
+          v: DAEMON_PROTO_VERSION,
+          secret: SECRET,
+          machineId: 'ignored',
+          name: 'box',
+          host: '127.0.0.1',
+          port
+        })
+      )
+      assert.equal(result.ok, true)
+      assert.equal(server.incoming().length, 1)
+      await service.forget('box-1')
+      const start = Date.now()
+      while (
+        server.incoming().some((row) => row.state !== 'revoked') &&
+        Date.now() - start < 1000
+      ) {
+        await new Promise((resolve) => setTimeout(resolve, 20))
+      }
+      assert.equal(server.incoming().some((row) => row.state === 'revoked'), true)
+    } finally {
+      service.dispose()
+      server.close()
+      await rm(disk, { recursive: true, force: true })
+      await rm(userData, { recursive: true, force: true })
+    }
+  })
+
+  it('stops reconnecting after the host revokes the grant', async () => {
+    const disk = await mkdtemp(join(tmpdir(), 'vav-box-'))
+    const userData = await mkdtemp(join(tmpdir(), 'vav-attach-'))
+    const { server, port } = await listenLoopback(disk)
+    const { service, registry } = attach(userData, false, { reconnectDelayMs: () => 40 })
+    try {
+      const result = await service.pair(
+        encodeDaemonPairing({
+          v: DAEMON_PROTO_VERSION,
+          secret: SECRET,
+          machineId: 'ignored',
+          name: 'box',
+          host: '127.0.0.1',
+          port
+        })
+      )
+      assert.equal(result.ok, true)
+      const grantId = server.incoming()[0]?.id
+      assert.ok(grantId)
+      server.unpairGrant(grantId)
+      const start = Date.now()
+      while (registry.get('box-1') && Date.now() - start < 2000) {
+        await new Promise((resolve) => setTimeout(resolve, 20))
+      }
+      assert.equal(registry.get('box-1'), undefined)
+      const stored = JSON.parse(await readFile(join(userData, 'paired-hosts.json'), 'utf8')) as {
+        hosts: unknown[]
+      }
+      assert.equal(stored.hosts.length, 0)
+    } finally {
+      service.dispose()
+      server.close()
+      await rm(disk, { recursive: true, force: true })
+      await rm(userData, { recursive: true, force: true })
     }
   })
 })

@@ -11,6 +11,7 @@ import {
   parseBatteryStatus,
   parseLowPowerMode,
   parseSleepDisabled,
+  keepAwakeStatusPayload,
   shouldBlockIdleSleep,
   shouldBlockLidSleep,
   sudoersGrantLine
@@ -49,6 +50,66 @@ describe('shouldBlockIdleSleep', () => {
   it('drops the assertion on a safety hold', () => {
     assert.equal(shouldBlockIdleSleep(true, true, 'battery'), false)
     assert.equal(shouldBlockIdleSleep(true, true, 'low-power'), false)
+  })
+})
+
+describe('keepAwakeStatusPayload', () => {
+  it('zeros lid fields off macOS and still reports idle block', () => {
+    assert.deepEqual(keepAwakeStatusPayload({ enabled: true, hasWork: true, lid: null }), {
+      lidSupported: false,
+      granted: false,
+      idleBlocked: true,
+      lidSleepBlocked: false,
+      onBattery: false,
+      batteryPercent: 100,
+      lowPowerMode: false,
+      safetyHold: null,
+      hasWork: true
+    })
+    assert.equal(
+      keepAwakeStatusPayload({ enabled: true, hasWork: false, lid: null }).idleBlocked,
+      false
+    )
+  })
+
+  it('uses the observed lid-sleep flag instead of recomputing it', () => {
+    const status = keepAwakeStatusPayload({
+      enabled: true,
+      hasWork: true,
+      lid: {
+        granted: true,
+        lidSleepBlocked: false,
+        onBattery: true,
+        batteryPercent: 40,
+        lowPowerMode: false,
+        safetyHold: null
+      }
+    })
+    assert.equal(status.lidSupported, true)
+    assert.equal(status.granted, true)
+    assert.equal(status.idleBlocked, true)
+    assert.equal(status.lidSleepBlocked, false)
+    assert.equal(status.onBattery, true)
+    assert.equal(status.batteryPercent, 40)
+    assert.equal(status.hasWork, true)
+  })
+
+  it('drops the idle assertion on a safety hold without touching lidSleepBlocked', () => {
+    const status = keepAwakeStatusPayload({
+      enabled: true,
+      hasWork: true,
+      lid: {
+        granted: true,
+        lidSleepBlocked: true,
+        onBattery: true,
+        batteryPercent: 8,
+        lowPowerMode: false,
+        safetyHold: 'battery'
+      }
+    })
+    assert.equal(status.idleBlocked, false)
+    assert.equal(status.lidSleepBlocked, true)
+    assert.equal(status.safetyHold, 'battery')
   })
 })
 

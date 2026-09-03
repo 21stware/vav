@@ -3,7 +3,8 @@ import { describe, it } from 'node:test'
 import {
   shouldArmPlanDocFollowUp,
   shouldContinueHeldCliTurn,
-  shouldDeferCliTurnFinish
+  shouldDeferCliTurnFinish,
+  shouldSealHeldCliReject
 } from './cliTurnHold.ts'
 
 describe('shouldDeferCliTurnFinish', () => {
@@ -145,6 +146,36 @@ describe('shouldArmPlanDocFollowUp', () => {
         remaining: 0,
         alreadySteered: true
       }),
+      false
+    )
+  })
+})
+
+describe('shouldSealHeldCliReject', () => {
+  it('seals after Deny on the last held card once the host prompt closed', () => {
+    assert.equal(
+      shouldSealHeldCliReject({
+        hostPromptClosed: true,
+        remaining: 0,
+        allow: false
+      }),
+      true
+    )
+  })
+
+  it('does not steal Accept — continue owns that path', () => {
+    const closedLast = { hostPromptClosed: true, remaining: 0, allow: true, alreadySteered: false }
+    assert.equal(shouldSealHeldCliReject(closedLast), false)
+    assert.equal(shouldContinueHeldCliTurn(closedLast), true)
+  })
+
+  it('waits while the host prompt is still open or another card remains', () => {
+    assert.equal(
+      shouldSealHeldCliReject({ hostPromptClosed: false, remaining: 0, allow: false }),
+      false
+    )
+    assert.equal(
+      shouldSealHeldCliReject({ hostPromptClosed: true, remaining: 1, allow: false }),
       false
     )
   })
