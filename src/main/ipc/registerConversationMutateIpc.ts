@@ -1,13 +1,13 @@
-import { existsSync, mkdirSync, renameSync, rmdirSync } from 'node:fs'
-import { dirname } from 'node:path'
 import type { IpcMain, IpcMainInvokeEvent } from 'electron'
 import { IPC } from '@shared/ipc'
 import { parseThinkingLevel } from '@shared/thinkingLevel'
 import { isStructuredCliHost, resolveDefaultChatHost, type CliHostKind } from '@shared/cliHost'
 import { vendorIdFromEndpoint } from '@shared/llmVendors'
-import { LOCAL_MACHINE_ID, hostJoin, isLocalMachine } from '@shared/workspaceHost'
+import { LOCAL_MACHINE_ID, isLocalMachine } from '@shared/workspaceHost'
 import { conversationToMeta } from '../store/conversationMeta'
 import type { Conversation, ConversationMeta } from '@shared/types'
+import { locateTempWorkspaceToDir } from '../fs/locateTempWorkspace'
+import type { HostFs } from '../host/HostFs'
 
 export type ConversationMutateIpcStore = {
   get: (id: string) => Conversation | undefined
@@ -81,11 +81,7 @@ export type ConversationMutateIpcHost = {
   locateFailed: () => string
   hostFor: (machineId: string | null | undefined) => {
     info: { platform?: string; online: boolean; name: string }
-    fs: {
-      exists: (path: string) => Promise<boolean>
-      mkdir: (path: string, opts?: { recursive?: boolean }) => Promise<unknown>
-      rename: (from: string, to: string) => Promise<unknown>
-    }
+    fs: Pick<HostFs, 'readdir' | 'exists' | 'mkdir' | 'rename'>
   }
   invalidateCliResume: (id: string) => void
   onRemoved: (id: string) => void
@@ -283,50 +279,45 @@ export function registerConversationMutateIpc(
     return host.applyWorkingDirectory(id, await host.mintTempWorkdirOn(machineId), machineId)
   })
 
-  ipcMain.handle(
-    IPC.convLocateWorkspace,
-    async (_event, id: string, destinationDir: string, name: string) => {
-      const conversation = store.get(id)
-      if (!conversation?.workingDirectory) {
+  ipcMain.handle(IPC.convLocateWorkspace, async (_event, id: string, destinationDir: string) => {
+    const conversation = store.get(id)
+    if (!conversation?.workingDirectory) {
+      return { ok: false as const, error: host.locateNoTemp() }
+    }
+    const machineId = conversation.machineId
+    const remote = host.hostFor(machineId)
+    const dest = String(destinationDir || '').trim()
+    if (!dest) {
+      return { ok: false as const, error: host.locateFailed() }
+    }
+    try {
+      if (!isLocalMachine(machineId) && !remote.info.online) {
+        return { ok: false as const, error: `${remote.info.name} is offline` }
+      }
+      const located = await locateTempWorkspaceToDir({
+        workdir: conversation.workingDirectory,
+        destinationDir: dest,
+        platform: remote.info.platform,
+        fs: remote.fs,
+        crossDeviceCopy: isLocalMachine(machineId)
+      })
+      if (!located.ok) {
+        if (located.error === 'exists') {
+          return { ok: false as const, error: host.locateExists(located.target ?? dest) }
+        }
         return { ok: false as const, error: host.locateNoTemp() }
       }
-      const source = conversation.workingDirectory
-      const machineId = conversation.machineId
-      const remote = host.hostFor(machineId)
-      const safeName = name.trim().replace(/[\\/]/g, '-') || 'workspace'
-      const target = hostJoin(remote.info.platform, destinationDir, safeName)
-      try {
-        if (isLocalMachine(machineId)) {
-          if (existsSync(target)) {
-            return { ok: false as const, error: host.locateExists(target) }
-          }
-          mkdirSync(destinationDir, { recursive: true })
-          renameSync(source, target)
-          try {
-            rmdirSync(dirname(source))
-            rmdirSync(dirname(dirname(source)))
-          } catch {
-            // leave leftover empty dirs
-          }
-        } else {
-          if (!remote.info.online) {
-            return { ok: false as const, error: `${remote.info.name} is offline` }
-          }
-          if (await remote.fs.exists(target)) {
-            return { ok: false as const, error: host.locateExists(target) }
-          }
-          await remote.fs.mkdir(destinationDir, { recursive: true })
-          await remote.fs.rename(source, target)
-        }
-        return { ok: true as const, conversations: host.applyWorkingDirectory(id, target, machineId) }
-      } catch (err) {
-        return {
-          ok: false as const,
-          error: err instanceof Error ? err.message : host.locateFailed()
-        }
+      return {
+        ok: true as const,
+        conversations: host.applyWorkingDirectory(id, located.nextWorkdir, machineId)
+      }
+    } catch (err) {
+      return {
+        ok: false as const,
+        error: err instanceof Error ? err.message : host.locateFailed()
       }
     }
-  )
+  })
 
   ipcMain.handle(IPC.convDeleteMessage, (_event, id: string, messageId: string) => {
     const conversation = store.deleteMessage(id, messageId)

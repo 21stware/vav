@@ -134,7 +134,7 @@ import { patchAcpConfigOption, patchAcpSessionMode } from '@shared/acpSession'
 import { inheritCreateWorkingDirectory, nextConversationForMachine, pickBootstrapActiveId, seedCliAgentCatalogue, seedEmptyConversationPatch, shouldSpawnDetachedConversation, claimDetachedSessionPatch } from './sessionBootstrap'
 import { notifyImageAttachPlan, trimAttachmentPathsForHost } from './sessionAttach'
 import { persistSwarmLayout, setLeaf } from './sessionSwarm'
-import { swarmBlocksWorkdirSwitch as swarmSurfaceBlocksWorkdir, locateWorkspaceDefaultName } from '../lib/workdirSwitch'
+import { swarmBlocksWorkdirSwitch as swarmSurfaceBlocksWorkdir } from '../lib/workdirSwitch'
 import { nextFavoriteIds, nextPinnedWorkspaceDirs, setArchivedConversationPatch } from './sessionPins'
 import { chatHostPickerModels, coercedChatHostModel, defaultModelSettingsPatch, defaultThinkingSettingsPatch, nextSteppedModelId } from './sessionModels'
 
@@ -484,7 +484,7 @@ interface SessionState {
     purpose?: 'workdir' | 'locate'
   ): void
   closeRemoteFolderPicker(): void
-  /** Move a Temporary workspace into a real directory (name + copy). */
+  /** Move a Temporary workspace so the chosen folder contains `Workspace`. */
   locateWorkspace(id: string): Promise<void>
   finishLocateWorkspace(id: string, destinationDir: string): Promise<void>
   setSidebarQuery(query: string): void
@@ -1476,11 +1476,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   },
 
   async finishLocateWorkspace(id, destinationDir) {
-    const conversation = get().conversations.find((c) => c.id === id)
-    const defaultName = locateWorkspaceDefaultName(conversation?.title)
-    const name = window.prompt(tt('dialog.locateWorkspaceName'), defaultName)
-    if (name == null) return
-    const result = await window.vav.conversations.locateWorkspace(id, destinationDir, name.trim())
+    const result = await window.vav.conversations.locateWorkspace(id, destinationDir)
     if (!result.ok) {
       get().showDialog({
         title: tt('error.locateFailed'),

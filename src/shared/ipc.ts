@@ -861,11 +861,10 @@ export interface VavApi {
     pickWorkingDirectory(id: string): Promise<ConversationMeta[] | null>
     /** Mint a new Temporary Workspace folder and switch this session to it. */
     useTempWorkingDirectory(id: string): Promise<ConversationMeta[]>
-    /** Move a Temporary Workspace folder to a permanent path. */
+    /** Move a Temporary Workspace folder so destination contains `Workspace`. */
     locateWorkspace(
       id: string,
-      destinationDir: string,
-      name: string
+      destinationDir: string
     ): Promise<{ ok: true; conversations: ConversationMeta[] } | { ok: false; error: string }>
     remove(ids: string[]): Promise<{ removed: string[]; conversations: ConversationMeta[] }>
     /** Delete a message and its descendants. Remaining siblings stay. */
