@@ -8,9 +8,11 @@ import {
   isCurrentHydration,
   mergeHydratedMessages,
   nextHydrationGeneration,
+  omitConversationCachePatch,
   omitKeys,
   omitLiveStreamingMessage,
-  omitMappedKeys
+  omitMappedKeys,
+  SESSION_DELETE_MAPPED_KEYS
 } from './messageHydration.ts'
 
 function msg(id: string, content: string, parentId: string | null = null): ChatMessage {
@@ -72,6 +74,21 @@ describe('omitKeys', () => {
   it('returns the same object when nothing is removed', () => {
     const map = { keep: 1 }
     assert.equal(omitKeys(map, ['nope']), map)
+  })
+})
+
+describe('omitConversationCachePatch', () => {
+  it('drops messages and leaf for one id without touching others', () => {
+    const state = {
+      messages: { keep: [{ id: 'k' }], gone: [{ id: 'g' }] },
+      activeLeaf: { keep: 'k', gone: 'g' }
+    }
+    const next = omitConversationCachePatch(state, 'gone')
+    assert.deepEqual(next.messages, { keep: [{ id: 'k' }] })
+    assert.deepEqual(next.activeLeaf, { keep: 'k' })
+    assert.equal(state.messages.gone?.[0]?.id, 'g')
+    assert.ok(SESSION_DELETE_MAPPED_KEYS.includes('messages'))
+    assert.ok(SESSION_DELETE_MAPPED_KEYS.includes('pendingReviewByConversation'))
   })
 })
 

@@ -4,7 +4,9 @@ import type { TerminalTab } from '../../../shared/types.ts'
 import {
   AGENT_TAB_ID,
   bashThenAgentTabs,
+  closeBashTabSlicePatch,
   emptyPtyLayouts,
+  ensureVavAgentTabPatch,
   isLiveAgentSession,
   isVavMirrorTab,
   mergePtyStatusPreservingExited,
@@ -15,6 +17,7 @@ import {
   planFirstBashPane,
   projectPtySessions,
   ptyCreateOptions,
+  ptyTabStatusPatch,
   isCliAgentHostId,
   tabsEqual,
   toolsTrayAfterScrubbingAgentTabs,
@@ -166,5 +169,28 @@ describe('workspacePty', () => {
     )
     assert.equal(appended.tabs[1]?.title, 'job')
     assert.equal(appended.activeTabId, 'sh-2')
+  })
+
+  it('seeds a VAV mirror tab, closes a bash pane, and stamps pty status', () => {
+    const seeded = ensureVavAgentTabPatch({ tabs: [tab('sh')], layout: null })
+    assert.equal(seeded.activeTabId, AGENT_TAB_ID)
+    assert.equal(seeded.tabs.some((t) => t.isAgent && t.agentId === 'vav'), true)
+    assert.deepEqual(seeded.layout, { type: 'leaf', tabId: AGENT_TAB_ID, weight: 1 })
+    const closed = closeBashTabSlicePatch(
+      {
+        tabs: [tab('sh'), tab('sh-2')],
+        layout: { type: 'leaf', tabId: 'sh', weight: 1 },
+        activeTabId: 'sh'
+      },
+      'sh'
+    )
+    assert.deepEqual(
+      closed.tabs.map((t) => t.id),
+      ['sh-2']
+    )
+    assert.equal(closed.activeTabId, 'sh-2')
+    const status = { c1: { sh: 'running' as const } }
+    assert.equal(ptyTabStatusPatch(status, 'c1', 'sh', 'running'), null)
+    assert.deepEqual(ptyTabStatusPatch(status, 'c1', 'sh', 'exited')?.ptyStatus.c1.sh, 'exited')
   })
 })

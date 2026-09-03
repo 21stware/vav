@@ -1,5 +1,6 @@
 import { conversationOnMachine } from '../../../shared/workspaceHost.ts'
 import type { AgentConfig, AppSettings } from '../../../shared/types.ts'
+import { upsertConversationMeta } from './sessionListMerge.ts'
 
 type BootstrapConversation = {
   id: string
@@ -147,6 +148,59 @@ export function seedEmptyConversationPatch<C extends { id: string }, M>(
     messages: { ...state.messages, [meta.id]: [] as M },
     messagesHydrated: { ...state.messagesHydrated, [meta.id]: true },
     activeLeaf: { ...state.activeLeaf, [meta.id]: null }
+  }
+}
+
+/** Companion claim: pin the session, optionally seed an empty transcript. */
+export function claimDetachedSessionPatch<C extends { id: string }, M, T>(
+  state: {
+    conversations: C[]
+    messages: Record<string, M[]>
+    activeLeaf: Record<string, string | null>
+  },
+  meta: C,
+  opts: {
+    knownEmpty: boolean
+    prevMessages: M[] | undefined
+    toolsLayouts: Record<string, T>
+    activeTools: {
+      toolsCollapsed: boolean
+      panelSegment: 'files' | 'terminal'
+      lastActiveSegment: 'files' | 'terminal'
+      panelHeight: number
+    }
+  }
+): {
+  ready: true
+  conversations: C[]
+  messages: Record<string, M[]>
+  activeLeaf: Record<string, string | null>
+  activeId: string
+  selectedIds: string[]
+  pinnedConversationId: string
+  toolsLayouts: Record<string, T>
+  toolsCollapsed: boolean
+  panelSegment: 'files' | 'terminal'
+  lastActiveSegment: 'files' | 'terminal'
+  panelHeight: number
+} {
+  const messages = { ...state.messages }
+  if (opts.knownEmpty) {
+    messages[meta.id] = opts.prevMessages ?? []
+  }
+  return {
+    ready: true,
+    conversations: upsertConversationMeta(state.conversations, meta),
+    messages,
+    activeLeaf: {
+      ...state.activeLeaf,
+      [meta.id]: state.activeLeaf[meta.id] ?? null
+    },
+    activeId: meta.id,
+    selectedIds: [meta.id],
+    pinnedConversationId: meta.id,
+    toolsLayouts: opts.toolsLayouts,
+    ...opts.activeTools
   }
 }
 

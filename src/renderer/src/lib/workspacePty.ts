@@ -370,3 +370,56 @@ export function planAppendUserBashTab(
     activeTabId: tabId
   }
 }
+
+/** First-time VAV mirror tab in the tools tray; layout leaf so TerminalPanel paints. */
+export function ensureVavAgentTabPatch(s: {
+  tabs: TerminalTab[]
+  layout: TerminalLayoutNode | null
+}): { tabs: TerminalTab[]; activeTabId: string; layout: TerminalLayoutNode } {
+  return {
+    tabs: bashThenAgentTabs([
+      ...s.tabs,
+      {
+        id: AGENT_TAB_ID,
+        title: 'VAV',
+        isAgent: true,
+        agentId: 'vav',
+        splitWeight: 1
+      }
+    ]),
+    activeTabId: AGENT_TAB_ID,
+    layout: s.layout ?? { type: 'leaf', tabId: AGENT_TAB_ID, weight: 1 }
+  }
+}
+
+/** Close a user bash pane; keep remaining tabs and pick a new active leaf. */
+export function closeBashTabSlicePatch(
+  s: { tabs: TerminalTab[]; layout: TerminalLayoutNode | null; activeTabId: string },
+  tabId: string
+): { tabs: TerminalTab[]; layout: TerminalLayoutNode | null; activeTabId: string } {
+  const tabs = bashThenAgentTabs(userBashTabsOnly(s.tabs).filter((t) => t.id !== tabId))
+  const layout = s.layout ? removeLeaf(s.layout, tabId) : null
+  const nextActive = s.activeTabId === tabId ? (tabs[0]?.id ?? '') : s.activeTabId
+  return {
+    tabs,
+    layout,
+    activeTabId: nextActive
+  }
+}
+
+/** Stamp one PTY tab's activity; null when the status is already current. */
+export function ptyTabStatusPatch(
+  ptyStatus: Record<string, Record<string, PtyActivityStatus>>,
+  conversationId: string,
+  tabId: string,
+  status: PtyActivityStatus
+): { ptyStatus: Record<string, Record<string, PtyActivityStatus>> } | null {
+  const forConversation = ptyStatus[conversationId]
+  if (forConversation?.[tabId] === status) return null
+  return {
+    ptyStatus: {
+      ...ptyStatus,
+      [conversationId]: { ...forConversation, [tabId]: status }
+    }
+  }
+}

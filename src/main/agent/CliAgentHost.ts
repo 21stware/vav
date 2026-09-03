@@ -100,7 +100,7 @@ import {
 } from './cliToolBlock'
 import { parkInteractivePatch, parkedPermissionWaiter } from './cliPark'
 import { shouldFoldChecklistTool, skipEmptyChecklistUpdate, checklistPlanFields } from './cliChecklist'
-import { elicitationCardFields, findPendingElicitationIndex } from './cliElicitation'
+import { elicitationCardFields, findPendingElicitationIndex, patchedElicitationToolBlock } from './cliElicitation'
 import { cliPermissionAllow, findPendingPermission, patchedPermissionToolBlock } from './cliPermissionAnswer'
 import {
   isDuplicateTokenSnapshot,
@@ -1522,15 +1522,13 @@ export class CliAgentHost {
     } else {
       const current = turn.blocks[index]
       if (!current || current.kind !== 'toolCall') return
-      block = {
-        ...current,
+      block = patchedElicitationToolBlock(current, {
         tool,
-        summary: summary || current.summary,
+        summary,
         input: inputJson(event.input),
-        status: 'pending',
         questions,
-        askTitle: event.title ?? current.askTitle
-      }
+        askTitle: event.title
+      })
       turn.blocks[index] = block
     }
     turn.pendingPermissions.set(block.id, {

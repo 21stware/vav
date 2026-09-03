@@ -52,3 +52,25 @@ export function findPendingElicitationIndex(
   }
   return null
 }
+
+/** Update an existing elicitation card in place; keep the previous summary/title fallbacks. */
+export function patchedElicitationToolBlock(
+  current: ToolCallBlock,
+  fields: {
+    tool: ToolCallBlock['tool']
+    summary: string
+    input: string
+    questions?: AskQuestion[]
+    askTitle?: string
+  }
+): ToolCallBlock {
+  return {
+    ...current,
+    tool: fields.tool,
+    summary: fields.summary || current.summary,
+    input: fields.input,
+    status: 'pending',
+    questions: fields.questions,
+    askTitle: fields.askTitle ?? current.askTitle
+  }
+}

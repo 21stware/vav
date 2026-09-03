@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import { elicitationCardFields, findPendingElicitationIndex } from './cliElicitation.ts'
+import { elicitationCardFields, findPendingElicitationIndex, patchedElicitationToolBlock } from './cliElicitation.ts'
 
 const labels = { ask: 'Ask', open: 'Open', cancel: 'Cancel' }
 
@@ -50,5 +50,31 @@ describe('elicitationCardFields', () => {
     })
     assert.equal(findPendingElicitationIndex(pending, toolIndex, 'url'), null)
     assert.equal(findPendingElicitationIndex(pending, new Map(), 'ask'), null)
+  })
+
+  it('updates an existing elicitation card in place', () => {
+    const current = {
+      kind: 'toolCall' as const,
+      id: 't1',
+      tool: 'ask_user_question' as const,
+      summary: 'Old',
+      input: '{}',
+      output: '',
+      status: 'completed' as const,
+      askTitle: 'Keep'
+    }
+    const next = patchedElicitationToolBlock(current, {
+      tool: 'plan_doc',
+      summary: '',
+      input: '{"name":"Ship"}',
+      questions: [{ question: 'Go?' }],
+      askTitle: undefined
+    })
+    assert.equal(next.tool, 'plan_doc')
+    assert.equal(next.summary, 'Old')
+    assert.equal(next.input, '{"name":"Ship"}')
+    assert.equal(next.status, 'pending')
+    assert.equal(next.askTitle, 'Keep')
+    assert.deepEqual(next.questions, [{ question: 'Go?' }])
   })
 })

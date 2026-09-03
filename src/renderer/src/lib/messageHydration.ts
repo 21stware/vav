@@ -45,6 +45,42 @@ export function omitKeys<T>(map: Record<string, T>, ids: Iterable<string>): Reco
   return touched ? next : map
 }
 
+/** Drop a duplicated session's stale transcript so select reloads the copy. */
+export function omitConversationCachePatch<M, L>(
+  state: { messages: Record<string, M>; activeLeaf: Record<string, L> },
+  id: string
+): { messages: Record<string, M>; activeLeaf: Record<string, L> } {
+  const messages = { ...state.messages }
+  const activeLeaf = { ...state.activeLeaf }
+  delete messages[id]
+  delete activeLeaf[id]
+  return { messages, activeLeaf }
+}
+
+/** Per-id maps cleared when sessions are deleted. */
+export const SESSION_DELETE_MAPPED_KEYS = [
+  'messages',
+  'messagesHydrated',
+  'activeLeaf',
+  'turns',
+  'messageQueues',
+  'drafts',
+  'attachments',
+  'quotes',
+  'previewRefs',
+  'pickMode',
+  'commentCards',
+  'contextFiles',
+  'workdirPathRevealed',
+  'tokenHistories',
+  'cacheCreatedAt',
+  'cacheExpiresAt',
+  'liveUsage',
+  'activityById',
+  'compactions',
+  'pendingReviewByConversation'
+] as const
+
 /** Drop the in-flight assistant snapshot so StreamProjection is the only live view. */
 export function omitLiveStreamingMessage<M extends { id: string }>(
   messages: Record<string, M[]>,

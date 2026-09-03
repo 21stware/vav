@@ -13,7 +13,7 @@ import type {
 import { DEFAULT_CLI_AGENTS, DEFAULT_SETTINGS } from '@shared/types'
 import type { WorkspaceHostInfo } from '@shared/workspaceHost'
 import type { RemoteControlStatus } from '@shared/remoteControl'
-import { mergeConversationList, nextConversationSelection, isArchivedConversation, regenerateActiveLeaf, canMutateActiveSession, compactRefusalReason, genericErrorBanner, patchConversationById, shouldSkipSessionDeleteConfirm, fallbackConversationIdAfterDelete, sessionDeleteDialogCopy, prependConversationIfMissing, upsertConversationMeta, listedConversationIdsForSelect, fileSessionHydrateOnDemandPatch } from './sessionListMerge'
+import { mergeConversationList, nextConversationSelection, isArchivedConversation, regenerateActiveLeaf, canMutateActiveSession, compactRefusalReason, genericErrorBanner, patchConversationById, shouldSkipSessionDeleteConfirm, fallbackConversationIdAfterDelete, sessionDeleteDialogCopy, prependConversationIfMissing, listedConversationIdsForSelect, fileSessionHydrateOnDemandPatch, deleteMessageHydratePatch } from './sessionListMerge'
 import {
   activeToolsFields,
   collapsedFileSessionTools,
@@ -115,9 +115,11 @@ import {
   conversationFullHydratePatch,
   isCurrentHydration,
   nextHydrationGeneration,
+  omitConversationCachePatch,
   omitKeys,
   omitLiveStreamingMessage,
-  omitMappedKeys
+  omitMappedKeys,
+  SESSION_DELETE_MAPPED_KEYS
 } from '../lib/messageHydration'
 import { deleteMessageFollowCount, visibleMessages } from './sessionThread'
 import {
@@ -130,7 +132,7 @@ import {
   swarmRootId
 } from '@shared/swarmLayout'
 import { patchAcpConfigOption, patchAcpSessionMode } from '@shared/acpSession'
-import { inheritCreateWorkingDirectory, nextConversationForMachine, pickBootstrapActiveId, seedCliAgentCatalogue, seedEmptyConversationPatch, shouldSpawnDetachedConversation } from './sessionBootstrap'
+import { inheritCreateWorkingDirectory, nextConversationForMachine, pickBootstrapActiveId, seedCliAgentCatalogue, seedEmptyConversationPatch, shouldSpawnDetachedConversation, claimDetachedSessionPatch } from './sessionBootstrap'
 import { notifyImageAttachPlan, trimAttachmentPathsForHost } from './sessionAttach'
 import { persistSwarmLayout, setLeaf } from './sessionSwarm'
 import { swarmBlocksWorkdirSwitch as swarmSurfaceBlocksWorkdir, locateWorkspaceDefaultName } from '../lib/workdirSwitch'
@@ -836,24 +838,12 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         ? { ...state.toolsLayouts, [meta.id]: nextTools }
         : state.toolsLayouts
       if (options?.collapseTools) saveSessionToolsMap(toolsLayouts)
-      const messages = { ...state.messages }
-      if (knownEmpty) {
-        messages[meta.id] = prevMessages ?? []
-      }
-      return {
-        ready: true,
-        conversations: upsertConversationMeta(state.conversations, meta),
-        messages,
-        activeLeaf: {
-          ...state.activeLeaf,
-          [meta.id]: state.activeLeaf[meta.id] ?? null
-        },
-        activeId: meta.id,
-        selectedIds: [meta.id],
-        pinnedConversationId: meta.id,
+      return claimDetachedSessionPatch(state, meta, {
+        knownEmpty,
+        prevMessages,
         toolsLayouts,
-        ...activeToolsFields(nextTools)
-      }
+        activeTools: activeToolsFields(nextTools)
+      })
     })
     // Background only — must not gate composer focus.
     void useWorkspaceStore.getState().bindConversation(meta.id, meta.workingDirectory ?? null)
@@ -1210,13 +1200,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       conversations: prependConversationIfMissing(state.conversations, meta)
     }))
     // Drop any stale cache so selectConversation reloads the deep-copied tree.
-    set((state) => {
-      const messages = { ...state.messages }
-      const activeLeaf = { ...state.activeLeaf }
-      delete messages[meta.id]
-      delete activeLeaf[meta.id]
-      return { messages, activeLeaf }
-    })
+    set((state) => omitConversationCachePatch(state, meta.id))
     await get().selectConversation(meta.id)
     get().focusComposer()
   },
@@ -1272,32 +1256,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
           return {
             conversations: next,
             toolsLayouts,
-            ...omitMappedKeys(
-              state,
-              [
-                'messages',
-                'messagesHydrated',
-                'activeLeaf',
-                'turns',
-                'messageQueues',
-                'drafts',
-                'attachments',
-                'quotes',
-                'previewRefs',
-                'pickMode',
-                'commentCards',
-                'contextFiles',
-                'workdirPathRevealed',
-                'tokenHistories',
-                'cacheCreatedAt',
-                'cacheExpiresAt',
-                'liveUsage',
-                'activityById',
-                'compactions',
-                'pendingReviewByConversation'
-              ] as const,
-              removed
-            )
+            ...omitMappedKeys(state, SESSION_DELETE_MAPPED_KEYS, removed)
           }
         })
         if (removed.includes(get().activeId)) {
@@ -2112,12 +2071,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     }
     const result = await window.vav.conversations.deleteMessage(activeId, messageId)
     if (!result) return
-      set((state) => ({
-        conversations: mergeConversationList(state.conversations, result.conversations),
-        messages: { ...state.messages, [activeId]: result.messages },
-        messagesHydrated: { ...state.messagesHydrated, [activeId]: true },
-        activeLeaf: { ...state.activeLeaf, [activeId]: result.activeLeafId }
-      }))
+      set((state) => deleteMessageHydratePatch(state, activeId, result))
   },
 
   async fork(messageId) {

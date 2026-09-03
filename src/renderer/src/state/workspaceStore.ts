@@ -11,7 +11,7 @@ const pendingInjectTimers = new Map<string, number>()
 import type { PtyActivityStatus, PtySessionMeta } from '@shared/ipc'
 import { makePendingCliTab, pendingTabFromId } from '../lib/cliPendingLayout'
 import { shouldFollowRemotePtySurface } from '../lib/cliSurfaceAuthority'
-import { removeLeaf, shouldRestoreCliLayoutAfterSync } from '../lib/workspaceLayout'
+import { shouldRestoreCliLayoutAfterSync } from '../lib/workspaceLayout'
 import {
   CLI_SURFACE_KEY,
   pendingCliPickerSurface,
@@ -50,7 +50,9 @@ import {
   AGENT_TAB_ID,
   bashThenAgentTabs,
   buildConversationPtyLayouts,
+  closeBashTabSlicePatch,
   emptyPtyLayouts,
+  ensureVavAgentTabPatch,
   isLiveAgentSession,
   mergePtyStatusPreservingExited,
   normalizePtyListResult,
@@ -60,6 +62,7 @@ import {
   planFirstBashPane,
   projectPtySessions,
   ptyCreateOptions,
+  ptyTabStatusPatch,
   isCliAgentHostId,
   toolsTrayAfterScrubbingAgentTabs,
   userBashTabsOnly
@@ -480,16 +483,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   ptyStatus: {},
 
   setTabStatus(conversationId, tabId, status) {
-    set((state) => {
-      const forConversation = state.ptyStatus[conversationId]
-      if (forConversation?.[tabId] === status) return state
-      return {
-        ptyStatus: {
-          ...state.ptyStatus,
-          [conversationId]: { ...forConversation, [tabId]: status }
-        }
-      }
-    })
+    set((state) => ptyTabStatusPatch(state.ptyStatus, conversationId, tabId, status) ?? state)
     // An exited tab is only a tombstone if the projection knows to keep it.
     if (status === 'exited' && get().workspaces[conversationId]) {
       void get().hydratePtyState(conversationId)
@@ -726,20 +720,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     if (!had) {
       // Built-in vav agent mirror tab — bot icon in ToolsPanel; human-interactive PTY.
       // Must also create a layout leaf: TerminalPanel only renders `layout`, not bare tabs.
-      patch(set, id, (s) => ({
-        tabs: bashThenAgentTabs([
-          ...s.tabs,
-          {
-            id: AGENT_TAB_ID,
-            title: 'VAV',
-            isAgent: true,
-            agentId: 'vav',
-            splitWeight: 1
-          }
-        ]),
-        activeTabId: AGENT_TAB_ID,
-        layout: s.layout ?? { type: 'leaf', tabId: AGENT_TAB_ID, weight: 1 }
-      }))
+      patch(set, id, (s) => ensureVavAgentTabPatch(s))
       void get().ensureAgentPty(id)
       return
     }
@@ -1374,17 +1355,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       if (!forConversation || !(tabId in forConversation)) return state
       return { ptyStatus: { ...state.ptyStatus, [id]: omitRecord(forConversation, tabId) } }
     })
-    patch(set, id, (s) => {
-      const tabs = bashThenAgentTabs(userBashTabsOnly(s.tabs).filter((t) => t.id !== tabId))
-      const layout = s.layout ? removeLeaf(s.layout, tabId) : null
-      const nextActive =
-        s.activeTabId === tabId ? (tabs[0]?.id ?? '') : s.activeTabId
-      return {
-        tabs,
-        layout,
-        activeTabId: nextActive
-      }
-    })
+    patch(set, id, (s) => closeBashTabSlicePatch(s, tabId))
     get().syncPtyLayouts(id)
   },
 

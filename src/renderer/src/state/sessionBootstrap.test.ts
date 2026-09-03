@@ -7,7 +7,8 @@ import {
   pickBootstrapActiveId,
   seedCliAgentCatalogue,
   seedEmptyConversationPatch,
-  shouldSpawnDetachedConversation
+  shouldSpawnDetachedConversation,
+  claimDetachedSessionPatch
 } from './sessionBootstrap.ts'
 
 describe('sessionBootstrap', () => {
@@ -120,6 +121,53 @@ describe('sessionBootstrap', () => {
 
     const again = seedEmptyConversationPatch(seeded, { id: 'c2' })
     assert.equal(again.conversations, seeded.conversations)
+  })
+
+  it('pins a claimed session and optionally seeds an empty transcript', () => {
+    const existing = { id: 'c1' }
+    const meta = { id: 'c2' }
+    const tools = {
+      toolsCollapsed: true,
+      panelSegment: 'files' as const,
+      lastActiveSegment: 'files' as const,
+      panelHeight: 240
+    }
+    const claimed = claimDetachedSessionPatch(
+      {
+        conversations: [existing],
+        messages: { c1: [{ id: 'm' }] },
+        activeLeaf: { c1: 'm' }
+      },
+      meta,
+      {
+        knownEmpty: true,
+        prevMessages: undefined,
+        toolsLayouts: { c2: tools },
+        activeTools: tools
+      }
+    )
+    assert.equal(claimed.ready, true)
+    assert.equal(claimed.activeId, 'c2')
+    assert.deepEqual(claimed.selectedIds, ['c2'])
+    assert.equal(claimed.pinnedConversationId, 'c2')
+    assert.deepEqual(claimed.messages.c2, [])
+    assert.equal(claimed.activeLeaf.c2, null)
+    const live = claimDetachedSessionPatch(
+      {
+        conversations: [meta],
+        messages: { c2: [{ id: 'keep' }] },
+        activeLeaf: { c2: 'keep' }
+      },
+      meta,
+      {
+        knownEmpty: false,
+        prevMessages: [{ id: 'old' }],
+        toolsLayouts: {},
+        activeTools: tools
+      }
+    )
+    assert.deepEqual(live.messages.c2, [{ id: 'keep' }])
+    assert.equal(live.activeLeaf.c2, 'keep')
   })
 
   it('spawns detached for explicit detached or a bound companion', () => {

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import { mergeConversationList, nextConversationSelection, patchConversationById, isArchivedConversation, regenerateActiveLeaf, canMutateActiveSession, compactRefusalReason, genericErrorBanner, shouldSkipSessionDeleteConfirm, fallbackConversationIdAfterDelete, sessionDeleteDialogCopy, prependConversationIfMissing, upsertConversationMeta, listedConversationIdsForSelect, fileSessionHydrateOnDemandPatch, type ConversationListItem } from './sessionListMerge.ts'
+import { mergeConversationList, nextConversationSelection, patchConversationById, isArchivedConversation, regenerateActiveLeaf, canMutateActiveSession, compactRefusalReason, genericErrorBanner, shouldSkipSessionDeleteConfirm, fallbackConversationIdAfterDelete, sessionDeleteDialogCopy, prependConversationIfMissing, upsertConversationMeta, listedConversationIdsForSelect, fileSessionHydrateOnDemandPatch, deleteMessageHydratePatch, type ConversationListItem } from './sessionListMerge.ts'
 
 function row(
   partial: Partial<ConversationListItem> & { id: string }
@@ -277,5 +277,29 @@ describe('fileSessionHydrateOnDemandPatch', () => {
       }).conversations[0],
       existing
     )
+  })
+})
+
+describe('deleteMessageHydratePatch', () => {
+  it('stamps the surviving tree and marks the session hydrated', () => {
+    const live = row({ id: 'live', updatedAt: 2 })
+    const next = deleteMessageHydratePatch(
+      {
+        conversations: [row({ id: 'live', updatedAt: 1 })],
+        messages: { live: [{ id: 'old' }] },
+        messagesHydrated: { live: false },
+        activeLeaf: { live: 'old' }
+      },
+      'live',
+      {
+        conversations: [live],
+        messages: [{ id: 'kept' }],
+        activeLeafId: 'kept'
+      }
+    )
+    assert.equal(next.conversations[0]?.updatedAt, 2)
+    assert.deepEqual(next.messages.live, [{ id: 'kept' }])
+    assert.equal(next.messagesHydrated.live, true)
+    assert.equal(next.activeLeaf.live, 'kept')
   })
 })

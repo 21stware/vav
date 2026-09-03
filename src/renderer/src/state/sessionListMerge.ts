@@ -91,6 +91,34 @@ export function fileSessionHydrateOnDemandPatch<C extends { id: string }, M, Com
   }
 }
 
+/** After deleting a turn, stamp the surviving tree and mark it hydrated. */
+export function deleteMessageHydratePatch<C extends ConversationListItem, M>(
+  state: {
+    conversations: C[]
+    messages: Record<string, M>
+    messagesHydrated: Record<string, boolean>
+    activeLeaf: Record<string, string | null>
+  },
+  activeId: string,
+  result: {
+    conversations: C[]
+    messages: M
+    activeLeafId: string | null
+  }
+): {
+  conversations: C[]
+  messages: Record<string, M>
+  messagesHydrated: Record<string, boolean>
+  activeLeaf: Record<string, string | null>
+} {
+  return {
+    conversations: mergeConversationList(state.conversations, result.conversations),
+    messages: { ...state.messages, [activeId]: result.messages },
+    messagesHydrated: { ...state.messagesHydrated, [activeId]: true },
+    activeLeaf: { ...state.activeLeaf, [activeId]: result.activeLeafId }
+  }
+}
+
 /** Claim/open: merge meta when the id exists, else prepend. */
 export function upsertConversationMeta<C extends { id: string }>(
   conversations: C[],
