@@ -1,5 +1,6 @@
 import type { FileEntry, FileSortKey, TerminalLayoutNode, TerminalTab } from '../../../shared/types.ts'
 import type { AgentHostSession } from './workspaceCliSurface.ts'
+import { omitRecord } from './workspacePty.ts'
 
 export interface WorkspaceSlice {
   root: string | null
@@ -82,6 +83,45 @@ export function dirEntriesEqual(
       )
     })
   )
+}
+
+/** Apply a directory listing without flashing unchanged trees. */
+export function planDirListingPatch(
+  s: {
+    dirs: Record<string, FileEntry[]>
+    dirErrors: Record<string, string>
+    dirTruncated: Record<string, number>
+    loadingDirs: string[]
+  },
+  path: string,
+  nextEntries: FileEntry[],
+  listing: { truncated: number },
+  error: string | undefined
+): Partial<{
+  dirs: Record<string, FileEntry[]>
+  dirErrors: Record<string, string>
+  dirTruncated: Record<string, number>
+  loadingDirs: string[]
+}> {
+  const prev = s.dirs[path]
+  const sameEntries = dirEntriesEqual(prev, nextEntries)
+  const sameTrunc = (s.dirTruncated[path] ?? 0) === listing.truncated
+  const prevErr = s.dirErrors[path]
+  const sameErr = error ? prevErr === error : prevErr === undefined
+  const nextLoading = s.loadingDirs.filter((p) => p !== path)
+  const loadingChanged = nextLoading.length !== s.loadingDirs.length
+
+  if (sameEntries && sameTrunc && sameErr) {
+    if (!loadingChanged) return {}
+    return { loadingDirs: nextLoading }
+  }
+
+  return {
+    loadingDirs: nextLoading,
+    dirs: { ...s.dirs, [path]: nextEntries },
+    dirErrors: error ? { ...s.dirErrors, [path]: error } : omitRecord(s.dirErrors, path),
+    dirTruncated: { ...s.dirTruncated, [path]: listing.truncated }
+  }
 }
 
 export function emptySlice(root: string | null): WorkspaceSlice {

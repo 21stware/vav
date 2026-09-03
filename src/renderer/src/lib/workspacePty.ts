@@ -1,6 +1,6 @@
-import type { ConversationPtyLayouts, TerminalLayoutNode, TerminalTab } from '../../../shared/types.ts'
+import type { ConversationPtyLayouts, TerminalLayoutNode, TerminalSplitAxis, TerminalTab } from '../../../shared/types.ts'
 import type { PtyActivityStatus, PtyListResult, PtySessionMeta } from '../../../shared/ipc.ts'
-import { collectLeaves, layoutDirectionKey, layoutFromTabIds } from './workspaceLayout.ts'
+import { collectLeaves, layoutDirectionKey, layoutFromTabIds, removeLeaf, splitLeaf } from './workspaceLayout.ts'
 import type { AgentHostSession } from './workspaceCliSurface.ts'
 
 export const AGENT_TAB_ID = 'agent'
@@ -195,4 +195,105 @@ export function projectPtySessions(sessions: PtySessionMeta[]): {
   }
 
   return { tabs: ordered, layout, activeTabId, agentHostSessions }
+}
+
+/** Snapshot bash + agent layouts for main (`pty.setLayouts`). */
+export function buildConversationPtyLayouts(slice: {
+  layout: TerminalLayoutNode | null
+  cliMode: boolean
+  agentHostSessions: Record<string, { layout: TerminalLayoutNode | null }>
+}): ConversationPtyLayouts {
+  const agents: ConversationPtyLayouts['agents'] = {}
+  for (const [agentId, host] of Object.entries(slice.agentHostSessions)) {
+    agents[agentId] = host.layout
+  }
+  return {
+    bash: slice.layout,
+    agents,
+    cliMode: slice.cliMode === true
+  }
+}
+
+export type BashPaneExtras = {
+  title?: string
+  purpose?: TerminalTab['purpose']
+  installAgentId?: string
+}
+
+/** First tools-tray bash pane: single leaf, keep install labels. */
+export function planFirstBashPane(
+  tabs: TerminalTab[],
+  tabId: string,
+  extras?: BashPaneExtras
+): { tabs: TerminalTab[]; layout: TerminalLayoutNode; activeTabId: string } {
+  return {
+    tabs: bashThenAgentTabs(
+      userBashTabsOnly(tabs).map((t) =>
+        t.id === tabId
+          ? {
+              ...t,
+              title: extras?.title?.trim() || t.title,
+              purpose: extras?.purpose ?? t.purpose,
+              installAgentId: extras?.installAgentId ?? t.installAgentId
+            }
+          : t
+      )
+    ),
+    layout: { type: 'leaf', tabId, weight: 1 },
+    activeTabId: tabId
+  }
+}
+
+/** Split tools-tray bash after create; drop a hydrate-race duplicate id. */
+export function planBashSplit(
+  s: { tabs: TerminalTab[]; layout: TerminalLayoutNode | null },
+  opts: {
+    focusId: string
+    newTabId: string
+    axis: TerminalSplitAxis
+    extras?: BashPaneExtras
+  }
+): { tabs: TerminalTab[]; layout: TerminalLayoutNode; activeTabId: string } {
+  let baseTabs = userBashTabsOnly(s.tabs).filter((t) => t.id !== opts.newTabId)
+  let layout = s.layout ?? { type: 'leaf', tabId: opts.focusId, weight: 1 }
+  if (collectLeaves(layout).includes(opts.newTabId)) {
+    layout = removeLeaf(layout, opts.newTabId) ?? {
+      type: 'leaf',
+      tabId: opts.focusId,
+      weight: 1
+    }
+  }
+  const focusInLayout = collectLeaves(layout).includes(opts.focusId)
+  const splitAt = focusInLayout ? opts.focusId : (collectLeaves(layout)[0] ?? opts.focusId)
+  const nextLayout = splitLeaf(layout, splitAt, opts.axis, opts.newTabId)
+  if (!baseTabs.some((t) => t.id === opts.newTabId)) {
+    baseTabs = [
+      ...baseTabs,
+      {
+        id: opts.newTabId,
+        title: opts.extras?.title?.trim() || `bash-${baseTabs.length + 1}`,
+        isAgent: false,
+        agentId: null,
+        purpose: opts.extras?.purpose,
+        installAgentId: opts.extras?.installAgentId,
+        splitWeight: 1
+      }
+    ]
+  } else if (opts.extras?.purpose === 'install' || opts.extras?.title) {
+    baseTabs = baseTabs.map((t) =>
+      t.id === opts.newTabId
+        ? {
+            ...t,
+            title: opts.extras?.title?.trim() || t.title,
+            purpose: opts.extras?.purpose ?? t.purpose,
+            installAgentId: opts.extras?.installAgentId ?? t.installAgentId
+          }
+        : t
+    )
+  }
+  return {
+    tabs: bashThenAgentTabs(baseTabs),
+    layout: nextLayout,
+    activeTabId: opts.newTabId
+  }
 }

@@ -176,3 +176,17 @@ export function layoutDirectionKey(node: TerminalLayoutNode | null): string {
   if (node.type === 'leaf') return `L:${node.tabId}`
   return `B:${node.direction}(${layoutDirectionKey(node.children[0])}|${layoutDirectionKey(node.children[1])})`
 }
+
+/** Restore the persisted CLI tree if hydrate flattened row vs column mid-IPC. */
+export function shouldRestoreCliLayoutAfterSync(
+  sentCli: TerminalLayoutNode | null,
+  now: { layout: TerminalLayoutNode | null; tabs: Array<{ id: string }> } | undefined
+): boolean {
+  if (!sentCli || !now) return false
+  return (
+    layoutDirectionKey(now.layout) !== layoutDirectionKey(sentCli) &&
+    (layoutHasColumn(sentCli) ||
+      scoreLayoutLeaves(sentCli, now.tabs.map((t) => t.id)) >=
+        scoreLayoutLeaves(now.layout, now.tabs.map((t) => t.id)))
+  )
+}

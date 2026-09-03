@@ -11,6 +11,7 @@ import {
   reconcileLayout,
   removeLeaf,
   scoreLayoutLeaves,
+  shouldRestoreCliLayoutAfterSync,
   splitLeaf
 } from './workspaceLayout.ts'
 
@@ -64,5 +65,17 @@ describe('workspaceLayout', () => {
     assert.equal(picked, local)
     assert.equal(scoreLayoutLeaves(local, ['a', 'b']), 20)
     assert.equal(scoreLayoutLeaves(null, ['a']), -1)
+  })
+
+  it('restores a persisted column tree when hydrate flattened it to row', () => {
+    const column: TerminalLayoutNode = {
+      type: 'branch',
+      direction: 'column',
+      weight: 1,
+      children: [leaf('a'), leaf('b')]
+    }
+    const row = layoutFromTabIds(['a', 'b'])
+    assert.equal(shouldRestoreCliLayoutAfterSync(column, { layout: row, tabs: [{ id: 'a' }, { id: 'b' }] }), true)
+    assert.equal(shouldRestoreCliLayoutAfterSync(null, { layout: row, tabs: [{ id: 'a' }] }), false)
   })
 })

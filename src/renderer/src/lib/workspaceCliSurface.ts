@@ -13,6 +13,7 @@ import {
   splitLeaf
 } from './workspaceLayout.ts'
 import { isLiveAgentSession } from './workspacePty.ts'
+import { cliLiveTab, replaceSurfaceTab } from './workspaceTabs.ts'
 
 /** One CLI agent's terminal host layout — survives agent switching. */
 export type AgentHostSession = {
@@ -470,5 +471,55 @@ export function planSplitAgentHost(
     ],
     layout: splitLeaf(layout, splitAt, opts.axis, opts.newTabId),
     activeTabId: opts.newTabId
+  }
+}
+
+/** After spawn: seed a missing primary host and retarget the Screen preferred id. */
+export function planActivateAgentHostAfterSpawn(
+  s: { agentHostSessions: Record<string, AgentHostSession> },
+  opts: {
+    agentId: string
+    tabId: string
+    preferredId: string
+    title: string
+  }
+): {
+  cliMode: true
+  activeHostAgentId: typeof CLI_SURFACE_KEY
+  agentHostSessions: Record<string, AgentHostSession>
+} {
+  const sessions = { ...s.agentHostSessions }
+  const existingHost = sessions[opts.agentId]
+  if (!existingHost?.tabs.some((t) => t.id === opts.tabId)) {
+    sessions[opts.agentId] = {
+      tabs: [
+        {
+          id: opts.tabId,
+          title: opts.title,
+          isAgent: false,
+          agentId: opts.agentId,
+          splitWeight: 1
+        }
+      ],
+      layout: { type: 'leaf', tabId: opts.tabId, weight: 1 },
+      activeTabId: opts.tabId
+    }
+  }
+  const surface = sessions[CLI_SURFACE_KEY]
+  if (
+    surface &&
+    opts.tabId !== opts.preferredId &&
+    surface.tabs.some((t) => t.id === opts.preferredId)
+  ) {
+    sessions[CLI_SURFACE_KEY] = replaceSurfaceTab(
+      surface,
+      opts.preferredId,
+      cliLiveTab(opts.tabId, opts.agentId, opts.title)
+    )
+  }
+  return {
+    cliMode: true,
+    activeHostAgentId: CLI_SURFACE_KEY,
+    agentHostSessions: sessions
   }
 }

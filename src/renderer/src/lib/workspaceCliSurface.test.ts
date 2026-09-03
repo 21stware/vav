@@ -9,6 +9,7 @@ import {
   mergeCliSurface,
   pendingCliPickerSurface,
   pickCliScreenFocusTab,
+  planActivateAgentHostAfterSpawn,
   planCloseAgentTabPatch,
   planEnterCliMode,
   planSplitAgentHost,
@@ -314,5 +315,25 @@ describe('workspaceCliSurface', () => {
     assert.deepEqual(collectLeaves(next.layout!), ['pty-1', 'pty-2'])
     assert.equal(next.activeTabId, 'pty-2')
     assert.equal(next.tabs[1]?.title, 'Claude-2')
+  })
+
+  it('seeds a missing primary host and retargets a preferred Screen id', () => {
+    const preferred = tab({ id: 'pref', agentId: 'claude' })
+    const next = planActivateAgentHostAfterSpawn(
+      {
+        agentHostSessions: {
+          [CLI_SURFACE_KEY]: {
+            tabs: [preferred],
+            layout: leaf(preferred.id),
+            activeTabId: preferred.id
+          }
+        }
+      },
+      { agentId: 'claude', tabId: 'live', preferredId: preferred.id, title: 'Claude' }
+    )
+    assert.equal(next.cliMode, true)
+    assert.equal(next.activeHostAgentId, CLI_SURFACE_KEY)
+    assert.equal(next.agentHostSessions.claude?.tabs[0]?.id, 'live')
+    assert.equal(next.agentHostSessions[CLI_SURFACE_KEY]?.activeTabId, 'live')
   })
 })

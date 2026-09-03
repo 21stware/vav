@@ -10,6 +10,8 @@ import {
   mergePtyStatusPreservingExited,
   normalizePtyListResult,
   omitRecord,
+  planBashSplit,
+  planFirstBashPane,
   projectPtySessions,
   tabsEqual,
   toolsTrayAfterScrubbingAgentTabs,
@@ -119,5 +121,21 @@ describe('workspacePty', () => {
     )
     assert.deepEqual(next.layout, { type: 'leaf', tabId: 'sh', weight: 1 })
     assert.equal(next.activeTabId, 'sh')
+  })
+
+  it('seeds a first bash leaf and splits a second pane on the requested axis', () => {
+    const first = planFirstBashPane([tab('sh')], 'sh', { title: 'install', purpose: 'install' })
+    assert.deepEqual(first.layout, { type: 'leaf', tabId: 'sh', weight: 1 })
+    assert.equal(first.tabs[0]?.title, 'install')
+    const split = planBashSplit(
+      { tabs: [tab('sh')], layout: { type: 'leaf', tabId: 'sh', weight: 1 } },
+      { focusId: 'sh', newTabId: 'sh-2', axis: 'column' }
+    )
+    assert.equal(split.layout.type, 'branch')
+    if (split.layout.type === 'branch') assert.equal(split.layout.direction, 'column')
+    assert.deepEqual(
+      split.tabs.map((t) => t.id),
+      ['sh', 'sh-2']
+    )
   })
 })
