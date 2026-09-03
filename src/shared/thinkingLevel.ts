@@ -36,11 +36,27 @@ export function toPiReasoning(
  * Models we know cannot take a thinking / reasoning-effort parameter.
  * Unknown custom ids stay enabled — Off is always a valid request.
  */
-/** Thinking chip: VAV models, plus Cursor (family id, not effort/fast variants). */
+/**
+ * Grok ACP `session/set_mode` ids are reasoning effort (low/medium/high),
+ * not plan/agent. `max` collapses to high; `off` still sends low because
+ * grok has no "no thinking" mode on the wire.
+ */
+export function grokEffortId(level: ThinkingLevel): 'low' | 'medium' | 'high' {
+  if (level === 'off' || level === 'low') return 'low'
+  if (level === 'medium') return 'medium'
+  return 'high'
+}
+
+export function isGrokEffortId(id: string | null | undefined): boolean {
+  return id === 'low' || id === 'medium' || id === 'high'
+}
+
+/** Thinking chip: VAV models, Cursor overlays, and Grok build effort. */
 export function sessionShowsThinking(
   cliHost: string | null | undefined,
   modelId: string | null | undefined
 ): boolean {
+  if (cliHost === 'grok') return true
   if (cliHost && cliHost !== 'cursor') return false
   const raw = (modelId ?? '').trim()
   if (!raw) return false
@@ -64,6 +80,7 @@ export function thinkingLevelsForSession(opts: {
   if (opts.acpThinkingLevels && opts.acpThinkingLevels.length > 0) {
     return orderThinkingLevels(opts.acpThinkingLevels)
   }
+  if (opts.cliHost === 'grok') return ['low', 'medium', 'high']
   if (opts.cliHost && opts.cliHost !== 'cursor') return [...THINKING_LEVELS]
   const family = cursorModelFamilyId(opts.modelId ?? '')
   if (

@@ -18,6 +18,11 @@ export type CliHistoryHandoffMark = {
   reason?: CliHistoryHandoffReason
 }
 
+/** Empty transcripts have nothing to replay into a replacement session. */
+export function shouldRecordHistoryHandoff(messageCount: number | undefined): boolean {
+  return (messageCount ?? 0) > 0
+}
+
 export function formatCliWorkspaceHandoff(opts: {
   messages: ChatMessage[]
   leafId: string | null

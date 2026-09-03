@@ -1,0 +1,63 @@
+/**
+ * Sidebar pin / favorite list algebra. Returns null when settings should
+ * stay put (already in the desired state, or a synthetic path).
+ */
+
+import { mergeConversationList, type ConversationListItem } from './sessionListMerge.ts'
+
+/** Favorite conversation ids: prepend on pin, drop on unpin. */
+export function nextFavoriteIds(
+  current: readonly string[],
+  id: string,
+  favorite: boolean
+): string[] | null {
+  const has = current.includes(id)
+  if (favorite && !has) return [id, ...current]
+  if (!favorite && has) return current.filter((entry) => entry !== id)
+  return null
+}
+
+/** Pinned project folders: skip temp / synthetic `__` groups. */
+export function nextPinnedWorkspaceDirs(
+  current: readonly string[],
+  workdir: string,
+  pinned: boolean
+): string[] | null {
+  const path = workdir.trim()
+  if (!path || path.startsWith('__')) return null
+  const rest = current.filter((entry) => entry !== path)
+  if (pinned && rest.length === current.length) return [path, ...rest]
+  if (!pinned && rest.length !== current.length) return rest
+  return null
+}
+
+/** Unarchiving the active row from the archive view returns to the main list. */
+export function archivedListModePatch(
+  activeId: string | null,
+  sidebarListMode: string,
+  id: string,
+  archived: boolean
+): { sidebarListMode: 'main' } | Record<string, never> {
+  if (id === activeId && !archived && sidebarListMode === 'archive') {
+    return { sidebarListMode: 'main' }
+  }
+  return {}
+}
+
+/** Archive/unarchive: merge listMeta and maybe leave the archive sidebar. */
+export function setArchivedConversationPatch<C extends ConversationListItem>(
+  state: { conversations: C[] },
+  conversations: C[],
+  activeId: string | null,
+  sidebarListMode: string,
+  id: string,
+  archived: boolean
+): {
+  conversations: C[]
+  sidebarListMode?: 'main'
+} {
+  return {
+    conversations: mergeConversationList(state.conversations, conversations),
+    ...archivedListModePatch(activeId, sidebarListMode, id, archived)
+  }
+}

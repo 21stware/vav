@@ -8,6 +8,7 @@ import { clearUnwrapCaches, unwrapAgentLaunch } from './unwrapAgentLaunch.ts'
 const root = mkdtempSync(join(tmpdir(), 'vav-unwrap-'))
 const grokHome = join(root, 'grok-home')
 const cursorDir = join(root, 'cursor-agent')
+const nativeExe = process.platform === 'win32' ? '.exe' : ''
 
 function writeExec(path: string, body: string): void {
   writeFileSync(path, body)
@@ -27,7 +28,7 @@ after(() => {
 describe('unwrapAgentLaunch grok', () => {
   it('execs ~/.grok/bin/grok when the PATH hit is the npm trampoline', () => {
     mkdirSync(join(grokHome, 'bin'), { recursive: true })
-    const native = join(grokHome, 'bin', 'grok')
+    const native = join(grokHome, 'bin', `grok${nativeExe}`)
     const trampolineDir = join(root, 'fnm-bin')
     mkdirSync(trampolineDir, { recursive: true })
     const trampoline = join(trampolineDir, 'grok')
@@ -53,7 +54,7 @@ describe('unwrapAgentLaunch grok', () => {
 
   it('is a no-op when resolve already pointed at the native binary', () => {
     mkdirSync(join(grokHome, 'bin'), { recursive: true })
-    const native = join(grokHome, 'bin', 'grok')
+    const native = join(grokHome, 'bin', `grok${nativeExe}`)
     writeExec(native, '#!/bin/sh\nexit 0\n')
     const launch = unwrapAgentLaunch(native, ['--version'])
     assert.equal(launch.file, native)
@@ -66,7 +67,7 @@ describe('unwrapAgentLaunch cursor', () => {
   it('skips the bash wrapper and execs bundled node + index.js', () => {
     mkdirSync(cursorDir, { recursive: true })
     const wrapper = join(cursorDir, 'cursor-agent')
-    const node = join(cursorDir, 'node')
+    const node = join(cursorDir, `node${nativeExe}`)
     const index = join(cursorDir, 'index.js')
     writeExec(wrapper, '#!/usr/bin/env bash\nexec node index.js "$@"\n')
     writeExec(node, '#!/bin/sh\nexit 0\n')

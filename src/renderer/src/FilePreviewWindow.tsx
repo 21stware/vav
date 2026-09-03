@@ -2,12 +2,12 @@ import { useEffect, useLayoutEffect, useState } from 'react'
 import { basename } from './lib/path'
 import { useAppearance } from './lib/appearance'
 import { installDefaultContextMenu } from './lib/nativeMenu'
+import { useSessionStore } from './state/sessionStore'
 import {
   installSettingsBridge,
   installTurnEventBridge,
-  installUpdateBridge,
-  useSessionStore
-} from './state/sessionStore'
+  installUpdateBridge
+} from './state/sessionBridges'
 import { installFsWatchBridge, installPtyBridge } from './state/workspaceStore'
 import { installInstallRunBridge } from './state/installRunStore'
 import { tt } from './i18n/useT'

@@ -79,12 +79,26 @@ function asString(value: unknown, fallback = ''): string {
   return typeof value === 'string' ? value : fallback
 }
 
+/** Explicit LAN bind — used when the user opts into "allow other devices". */
+export const DAEMON_LAN_BIND = '0.0.0.0'
+/** Safe listen() default so a forgotten hostname is loopback-only. */
+export const DAEMON_LOCAL_BIND = '127.0.0.1'
+
+const AUTH_FAIL_LIMIT = 8
+const AUTH_FAIL_WINDOW_MS = 60_000
+const AUTH_LOCK_MS = 30_000
+
 export class DaemonServer {
   private readonly opts: ServerOpts
   private server: Server | null = null
   private readonly sockets = new Set<Socket>()
+  private readonly sessions = new Set<() => void>()
   private listenPort = 0
   private pairAskBusy = false
+  private readonly authFails = new Map<
+    string,
+    { count: number; windowStart: number; lockedUntil: number }
+  >()
 
   constructor(opts: ServerOpts) {
     this.opts = opts
@@ -94,7 +108,7 @@ export class DaemonServer {
     return this.listenPort
   }
 
-  listen(port: number, hostname = '0.0.0.0'): Promise<number> {
+  listen(port: number, hostname = DAEMON_LOCAL_BIND): Promise<number> {
     return new Promise((resolve, reject) => {
       const server = createServer((socket) => this.accept(socket))
       server.on('error', reject)
@@ -118,11 +132,51 @@ export class DaemonServer {
   }
 
   close(): void {
-    for (const socket of this.sockets) socket.destroy()
+    for (const dispose of [...this.sessions]) dispose()
+    this.sessions.clear()
+    for (const socket of this.sockets) {
+      try {
+        if (typeof socket.resetAndDestroy === 'function') socket.resetAndDestroy()
+        else socket.destroy()
+        socket.unref()
+      } catch {
+        /* ignore */
+      }
+    }
     this.sockets.clear()
-    this.server?.close()
+    this.authFails.clear()
+    const server = this.server
     this.server = null
     this.listenPort = 0
+    if (!server) return
+    // Windows keeps `server.close()` pending until every TCP connection
+    // actually drops. Force them so the test worker (and the app) can exit.
+    const closer = server as typeof server & { closeAllConnections?: () => void }
+    closer.closeAllConnections?.()
+    server.close()
+    server.unref()
+  }
+
+  private authKey(socket: Socket): string {
+    return socket.remoteAddress || 'unknown'
+  }
+
+  private authLocked(socket: Socket): boolean {
+    const rec = this.authFails.get(this.authKey(socket))
+    return Boolean(rec && rec.lockedUntil > Date.now())
+  }
+
+  private noteAuthFail(socket: Socket): void {
+    const key = this.authKey(socket)
+    const now = Date.now()
+    const rec = this.authFails.get(key) ?? { count: 0, windowStart: now, lockedUntil: 0 }
+    if (now - rec.windowStart > AUTH_FAIL_WINDOW_MS) {
+      rec.count = 0
+      rec.windowStart = now
+    }
+    rec.count += 1
+    if (rec.count >= AUTH_FAIL_LIMIT) rec.lockedUntil = now + AUTH_LOCK_MS
+    this.authFails.set(key, rec)
   }
 
   private accept(socket: Socket): void {
@@ -138,10 +192,12 @@ export class DaemonServer {
     let ready = authed
 
     const forget = (): void => {
+      if (!this.sessions.delete(forget)) return
       this.sockets.delete(socket)
       for (const live of processes.values()) {
         try {
           live.child.kill()
+          live.child.unref()
         } catch {
           /* ignore */
         }
@@ -162,6 +218,7 @@ export class DaemonServer {
       handles.clear()
       watches.clear()
     }
+    this.sessions.add(forget)
     socket.on('close', forget)
     socket.on('error', forget)
 
@@ -193,6 +250,11 @@ export class DaemonServer {
         return
       }
       if (!ready) {
+        if (this.authLocked(socket)) {
+          writeLine(socket, { type: 'error', code: 'auth', message: 'pairing rejected' })
+          socket.destroy()
+          return
+        }
         const ask = parseDaemonPairAsk(value)
         if (ask) {
           void this.handlePairAsk(socket, ask)
@@ -200,6 +262,7 @@ export class DaemonServer {
         }
         const hello = parseDaemonHello(value)
         if (hello && secretsMatch(hello.auth, this.opts.secret())) {
+          this.authFails.delete(this.authKey(socket))
           ready = true
           sendWelcome()
           return
@@ -219,10 +282,12 @@ export class DaemonServer {
             socket.destroy()
             return
           }
+          this.authFails.delete(this.authKey(socket))
           socket.removeAllListeners('data')
           this.opts.onControlHello(socket, leftoverRef.value, phone)
           return
         }
+        this.noteAuthFail(socket)
         writeLine(socket, { type: 'error', code: 'auth', message: 'pairing rejected' })
         socket.destroy()
         return
@@ -254,8 +319,25 @@ export class DaemonServer {
     }
     this.pairAskBusy = true
     try {
-      const allow = await this.opts.onPairAsk({ name: ask.name, machineId: ask.machineId })
-      if (socket.destroyed) return
+      const allow = await new Promise<boolean | 'closed'>((resolve) => {
+        if (socket.destroyed) {
+          resolve('closed')
+          return
+        }
+        const onClose = (): void => resolve('closed')
+        socket.once('close', onClose)
+        void this.opts.onPairAsk!({ name: ask.name, machineId: ask.machineId }).then(
+          (value) => {
+            socket.off('close', onClose)
+            resolve(value)
+          },
+          () => {
+            socket.off('close', onClose)
+            resolve(false)
+          }
+        )
+      })
+      if (allow === 'closed' || socket.destroyed) return
       if (!allow) {
         writeLine(socket, { type: 'error', code: 'auth', message: 'pairing declined' })
         socket.destroy()
@@ -594,6 +676,11 @@ export class DaemonServer {
         event: 'pty-exit',
         data: { exitCode: e.exitCode, signal: e.signal }
       })
+      try {
+        proc.kill()
+      } catch {
+        /* ConPTY/worker teardown is idempotent */
+      }
       ptys.delete(stream)
     })
     return { stream, pid: proc.pid }

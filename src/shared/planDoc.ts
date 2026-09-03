@@ -17,7 +17,9 @@ export function isPlanDocToolName(raw: string): boolean {
     n === 'createplan' ||
     n.endsWith('createplan') ||
     n === 'exitplanmode' ||
+    n.endsWith('exitplanmode') ||
     n === 'exitplan' ||
+    n.endsWith('exitplan') ||
     n === 'proposedplan' ||
     n === 'proposed_plan'
   )
@@ -209,7 +211,11 @@ export function normalizePlanDocInput(raw: unknown): PlanDocInput {
       ? src.plan
       : typeof rec.plan === 'string'
         ? rec.plan
-        : String(src.body ?? rec.body ?? src.text ?? rec.text ?? '').trim()
+        : typeof src.planContent === 'string'
+          ? src.planContent
+          : typeof rec.planContent === 'string'
+            ? rec.planContent
+            : String(src.body ?? rec.body ?? src.text ?? rec.text ?? '').trim()
   const phaseRows = Array.isArray(src.phases) ? src.phases : Array.isArray(rec.phases) ? rec.phases : []
   const phases = phaseRows
     .map((item) => {
@@ -385,6 +391,40 @@ export function planDocOutcomeFromAnswer(text: string, reject: boolean): PlanDoc
   if (reject) {
     const reason = text.trim()
     if (/^cancel/i.test(reason) || reason === '已取消') return { outcome: 'cancelled' }
+    return { outcome: 'rejected', reason: reason || undefined }
+  }
+  return { outcome: 'accepted' }
+}
+
+/**
+ * Grok `_x.ai/ask_user_question` deserialises on a top-level `outcome`
+ * (`accepted` | `skip_interview`). Answers are keyed by question text.
+ */
+export function grokAskOutcomeFromAnswer(
+  ask: CursorAskInput,
+  text: string
+): { outcome: 'accepted'; answers: Record<string, string | string[]> } | { outcome: 'skip_interview' } {
+  const cursor = cursorAskOutcomeFromAnswer(ask, text)
+  if (cursor.outcome !== 'answered') return { outcome: 'skip_interview' }
+  const answers: Record<string, string | string[]> = {}
+  for (const row of cursor.answers) {
+    const question = ask.questions.find((item) => item.id === row.questionId)
+    if (!question) continue
+    const labels = row.selectedOptionIds.map(
+      (id) => question.options.find((option) => option.id === id)?.label ?? id
+    )
+    answers[question.prompt] = question.allowMultiple ? labels : (labels[0] ?? '')
+  }
+  return { outcome: 'accepted', answers }
+}
+
+/** Grok `_x.ai/exit_plan_mode` — top-level outcome, not Cursor's nested wrapper. */
+export function grokPlanOutcomeFromAnswer(
+  text: string,
+  reject: boolean
+): { outcome: 'accepted' } | { outcome: 'rejected'; reason?: string } {
+  if (reject) {
+    const reason = text.trim()
     return { outcome: 'rejected', reason: reason || undefined }
   }
   return { outcome: 'accepted' }

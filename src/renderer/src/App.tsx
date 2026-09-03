@@ -11,7 +11,7 @@ import {
   installUpdateBridge,
   installWindowBridge,
   installActivityBridge
-} from './state/sessionStore'
+} from './state/sessionBridges'
 import { installFsWatchBridge, installPtyBridge } from './state/workspaceStore'
 import { Sidebar } from './components/Sidebar'
 import { SessionDetail } from './components/SessionDetail'

@@ -3,7 +3,8 @@ import { describe, it } from 'node:test'
 import type { ChatMessage } from '@shared/types'
 import {
   applyCliHistoryHandoff,
-  formatCliWorkspaceHandoff
+  formatCliWorkspaceHandoff,
+  shouldRecordHistoryHandoff
 } from './cliHistoryHandoff.ts'
 
 function user(id: string, text: string, parentId: string | null = null): ChatMessage {
@@ -181,5 +182,13 @@ describe('applyCliHistoryHandoff', () => {
 
   it('puts the live prompt after the handoff', () => {
     assert.equal(applyCliHistoryHandoff('hello', 'PRIOR'), 'PRIOR\n\nhello')
+  })
+})
+
+describe('shouldRecordHistoryHandoff', () => {
+  it('skips empty transcripts and records anything with messages', () => {
+    assert.equal(shouldRecordHistoryHandoff(undefined), false)
+    assert.equal(shouldRecordHistoryHandoff(0), false)
+    assert.equal(shouldRecordHistoryHandoff(1), true)
   })
 })

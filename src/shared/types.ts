@@ -1159,6 +1159,8 @@ export interface AppSettings {
    * When false, block selection is Edit-only (Read is view + copy).
    */
   previewReadModeSelection: boolean
+  /** Hide the empty-transcript first-run checklist. */
+  firstRunChecklistDismissed: boolean
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -1236,7 +1238,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   defaultAgentModels: {},
   recentAgentModels: [],
   previewSelectionAgentMark: true,
-  previewReadModeSelection: true
+  previewReadModeSelection: true,
+  firstRunChecklistDismissed: false
 }
 
 export const FILE_SORT_OPTIONS: { key: FileSortKey; label: string }[] = [

@@ -24,6 +24,8 @@ import {
   sessionUsageRowsOf,
   usageRowsOf,
   usageFromSnapshots,
+  usageDeltaFromSnapshot,
+  oauthQuotaIdentityRows,
   usageTone,
   applyExclusiveOAuthSignIn,
   accountRowUsage,
@@ -35,6 +37,7 @@ import {
   resolveAccountsFocus,
   resolveSessionAccountId,
   sessionShowsHostQuota,
+  conversationQuotaAuthView,
   visibleAccountsForWorkspace,
   visibleCurrentIds,
   currentVisibleVav,
@@ -374,6 +377,100 @@ describe('accounts helpers', () => {
       }),
       true
     )
+    const shown = conversationQuotaAuthView({
+      liveSignedIn: true,
+      liveIdentity: 'oboochin@gmail.com',
+      livePlan: 'pro',
+      liveAuthKind: 'oauth',
+      profileKind: 'oauth',
+      profileName: 'oboochin@gmail.com'
+    })
+    assert.equal(shown.signedIn, true)
+    assert.equal(shown.plan, 'pro')
+    const hidden = conversationQuotaAuthView({
+      liveSignedIn: true,
+      liveIdentity: 'live@x.com',
+      liveAuthKind: 'oauth',
+      profileKind: 'oauth',
+      profileName: 'other@x.com'
+    })
+    assert.equal(hidden.signedIn, false)
+    assert.equal(hidden.accountId, 'other@x.com')
+    assert.equal(hidden.authKind, 'none')
+  })
+
+  it('keeps OAuth quota rows that match host, snapshot, name, and live token', () => {
+    const accounts = [
+      {
+        id: 'a1',
+        kind: 'oauth',
+        oauthHost: 'cursor',
+        hasCredentialSnapshot: true,
+        name: '  me@x.com  '
+      },
+      {
+        id: 'a2',
+        kind: 'oauth',
+        oauthHost: 'cursor',
+        hasCredentialSnapshot: true,
+        name: 'dead@x.com'
+      },
+      {
+        id: 'a3',
+        kind: 'oauth',
+        oauthHost: 'grok',
+        hasCredentialSnapshot: true,
+        name: 'other@x.com'
+      },
+      {
+        id: 'a4',
+        kind: 'api',
+        oauthHost: 'cursor',
+        hasCredentialSnapshot: true,
+        name: 'key@x.com'
+      },
+      {
+        id: 'a5',
+        kind: 'oauth',
+        hasCredentialSnapshot: true,
+        name: 'via-agent@x.com'
+      },
+      {
+        id: 'a6',
+        kind: 'oauth',
+        oauthHost: 'cursor',
+        hasCredentialSnapshot: false,
+        name: 'nosnap@x.com'
+      },
+      {
+        id: 'a7',
+        kind: 'oauth',
+        oauthHost: 'cursor',
+        hasCredentialSnapshot: true,
+        name: '   '
+      }
+    ]
+    const tokens: Record<string, string | null> = {
+      a1: 'tok-1',
+      a2: null,
+      a3: 'tok-3',
+      a4: 'tok-4',
+      a5: 'tok-5',
+      a6: 'tok-6',
+      a7: 'tok-7'
+    }
+    assert.deepEqual(
+      oauthQuotaIdentityRows(
+        accounts,
+        'cursor',
+        (account) => (account.id === 'a5' ? 'cursor' : 'other'),
+        (id) => tokens[id] ?? null
+      ),
+      [
+        { identity: 'me@x.com', token: 'tok-1' },
+        { identity: 'via-agent@x.com', token: 'tok-5' }
+      ]
+    )
   })
 
   it('picks the longest quota window for the row summary', () => {
@@ -406,6 +503,13 @@ describe('accounts helpers', () => {
       { accountId: 'b', timestamp: new Date(2026, 7, 11).getTime(), newInputTokens: 4 }
     ])
     assert.equal(usage.a?.['2026-08']?.inputTokens, 20)
+    assert.deepEqual(usageDeltaFromSnapshot({ newInputTokens: 3, estimatedCost: 0.2 }), {
+      inputTokens: 3,
+      outputTokens: 0,
+      cacheReadTokens: 0,
+      cacheWriteTokens: 0,
+      estimatedCostUsd: 0.2
+    })
     assert.equal(usage.a?.['2026-08']?.outputTokens, 10)
     assert.equal(usage.b?.['2026-08']?.inputTokens, 4)
   })

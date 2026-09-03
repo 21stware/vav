@@ -133,12 +133,13 @@ describe('daemon loopback', () => {
     const dir = await mkdtemp(join(tmpdir(), 'vav-daemon-'))
     const { server, client, remote } = await startPair(dir)
     try {
-      const proc = remote.pty.spawn('sh', ['-c', 'printf pty-ok'], {
+      const proc = remote.pty.spawn(process.execPath, ['-e', 'process.stdout.write("pty-ok")'], {
         cols: 80,
         rows: 24,
         cwd: dir
       })
       let data = ''
+      let timeout: ReturnType<typeof setTimeout> | undefined
       const finished = new Promise<number>((resolve) => {
         proc.onData((chunk) => {
           data += chunk
@@ -147,10 +148,16 @@ describe('daemon loopback', () => {
       })
       const code = await Promise.race([
         finished,
-        new Promise<number>((_, reject) =>
-          setTimeout(() => reject(new Error(`pty timeout, data=${JSON.stringify(data)}`)), 5000)
-        )
-      ])
+        new Promise<number>((_, reject) => {
+          timeout = setTimeout(
+            () => reject(new Error(`pty timeout, data=${JSON.stringify(data)}`)),
+            5000
+          )
+          timeout.unref?.()
+        })
+      ]).finally(() => {
+        if (timeout) clearTimeout(timeout)
+      })
       assert.equal(code, 0)
       assert.match(data, /pty-ok/)
     } finally {
@@ -365,6 +372,33 @@ describe('daemon loopback', () => {
       assert.deepEqual(listed.sessions, [])
       const recents = (await client.request('workspace.recents')) as { paths: unknown[] }
       assert.deepEqual(recents.paths, [])
+    } finally {
+      client.close()
+      server.close()
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('binds loopback when listen() is called without a hostname', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'vav-daemon-'))
+    const server = new DaemonServer({
+      host: createLocalWorkspaceHost({ name: 'loop' }),
+      identity: { machineId: 'loop-box', name: 'loop' },
+      secret: () => SECRET,
+      appVersion: 'test',
+      home: dir,
+      tmp: dir
+    })
+    const client = new DaemonClient()
+    try {
+      const port = await server.listen(0)
+      const welcome = await client.connect({
+        host: '127.0.0.1',
+        port,
+        secret: SECRET,
+        device: 'test'
+      })
+      assert.equal(welcome.host.id, 'loop-box')
     } finally {
       client.close()
       server.close()

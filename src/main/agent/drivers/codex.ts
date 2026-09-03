@@ -13,6 +13,7 @@ import {
   dig,
   num,
   onJsonLines,
+  disposeStdioProcess,
   spawnStdioProcess,
   type StdioProcess
 } from './process'
@@ -398,8 +399,7 @@ function wireCodex(
     dispose(): void {
       if (disposed) return
       disposed = true
-      proc.closeStdin()
-      setTimeout(() => proc.kill(), 2_000)
+      disposeStdioProcess(proc)
     }
   }
 }

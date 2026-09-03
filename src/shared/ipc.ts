@@ -915,6 +915,16 @@ export interface VavApi {
       configId: string,
       value: string | boolean
     ): Promise<ConversationMeta[]>
+    /** ACP `_session/goal` or `/goal` slash. */
+    setAcpGoal(
+      id: string,
+      action: 'set' | 'pause' | 'resume' | 'clear',
+      objective?: string
+    ): Promise<
+      | { ok: true; via: 'rpc'; conversations: ConversationMeta[] }
+      | { ok: true; via: 'slash'; text: string; conversations: ConversationMeta[] }
+      | { ok: false; error: string; conversations: ConversationMeta[] }
+    >
     /** Deep-copies the thread up to `messageId` into a new conversation. */
     continueInNewSession(id: string, messageId: string): Promise<ConversationMeta | null>
     /** Deep-copies the whole conversation tree into a new session. */
@@ -1788,6 +1798,7 @@ export const IPC = {
   convSetFast: 'vav:conv:set-fast',
   convSetAcpMode: 'vav:conv:set-acp-mode',
   convSetAcpConfig: 'vav:conv:set-acp-config',
+  convSetAcpGoal: 'vav:conv:set-acp-goal',
   convAccountQuota: 'vav:conv:account-quota',
   convContinueNew: 'vav:conv:continue-new',
   convDuplicate: 'vav:conv:duplicate',

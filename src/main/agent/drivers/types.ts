@@ -1,6 +1,7 @@
 import type {
   AcpAuthMethod,
-  AcpSessionState
+  AcpSessionState,
+  GoalAction
 } from '../../../shared/acpSession.ts'
 import type {
   ApprovalMode,
@@ -145,6 +146,8 @@ export interface DriverControl {
     /** ACP session/set_mode id (agent / plan / ask). */
     mode?: string | null
     configOption?: { id: string; value: string | boolean }
+    /** ACP `_session/goal` (or slash fallback decided by the host). */
+    goal?: { action: GoalAction; objective?: string }
   }): boolean
   dispose(): void
 }

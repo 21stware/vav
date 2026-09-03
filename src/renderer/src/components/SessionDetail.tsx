@@ -21,6 +21,7 @@ import {
 import { focusAgentPane } from '../lib/uiFocus'
 import { focusCliAgentPickerFirstOption } from './CliAgentPicker'
 import { useSessionStore } from '../state/sessionStore'
+import { resolveComposerContextFile } from '../state/sessionQueue'
 import { CLI_SURFACE_KEY, useWorkspaceStore } from '../state/workspaceStore'
 import { SessionHistoryPopover } from './SessionHistoryPopover'
 import { TerminalPanel } from './TerminalPanel'
@@ -29,6 +30,7 @@ import { Composer, ComposerContext } from './Composer'
 import { Transcript } from './Transcript'
 import { SearchStrip } from './SearchStrip'
 import { PlanOverlay } from './PlanOverlay'
+import { GoalBanner } from './GoalBanner'
 import { ErrorBanner } from './ErrorBanner'
 import { AgentInstallPanel } from './AgentInstallPanel'
 import { teardownInlineTerminal } from './InlineTerminal'
@@ -184,10 +186,7 @@ export function SessionDetail({
    */
   const buildLaunchContext = useCallback((): string | null => {
     const store = useSessionStore.getState()
-    const focused =
-      (store.contextFiles[activeId] ?? null) ||
-      store.conversations.find((c) => c.id === activeId)?.focusedFilePath ||
-      null
+    const focused = resolveComposerContextFile(store.contextFiles, store.conversations, activeId)
     const cards = store.commentCards[activeId] ?? []
     return buildWorkspaceFocusContext({
       focusedPath: focused,
@@ -716,6 +715,7 @@ export function SessionDetail({
         aria-hidden={!isVavMode}
       >
         {searchOpen && isVavMode && <SearchStrip />}
+        {!previewEdit && <GoalBanner />}
         {!previewEdit && <PlanOverlay />}
         <Transcript />
         {!archived && <ComposerContext conversationId={activeId} />}

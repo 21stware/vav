@@ -278,7 +278,7 @@ export function PptxNativeView({
         setError(msg)
         setLoading(false)
         setReady(false)
-        onReady?.()
+        // Leave StructuredDocView up — a failed native paint is not "ready".
       }
     })()
 

@@ -73,6 +73,7 @@ describe('collectDialTargets', () => {
     })
     assert.equal(targets[0]?.host, '192.168.1.10')
     assert.ok(targets.some((row) => row.host === 'Mac-mini-2.local'))
+    assert.equal(targets.at(-1)?.host, '127.0.0.1')
   })
 
   it('skips this machine’s own addresses from the pairing line', () => {
@@ -85,7 +86,7 @@ describe('collectDialTargets', () => {
     })
     assert.deepEqual(
       targets.map((row) => row.host),
-      ['192.168.1.13', 'Mac-mini-2.local']
+      ['192.168.1.13', 'Mac-mini-2.local', '127.0.0.1']
     )
   })
 
@@ -112,7 +113,8 @@ describe('collectDialTargets', () => {
       localAddresses: ['10.8.0.9']
     })
     assert.equal(targets[0]?.host, '10.8.0.2')
-    assert.equal(targets.at(-1)?.host, 'box.local')
+    assert.equal(targets.at(-1)?.host, '127.0.0.1')
+    assert.ok(targets.some((row) => row.host === 'box.local'))
   })
 })
 

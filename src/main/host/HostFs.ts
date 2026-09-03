@@ -112,7 +112,18 @@ export function createLocalHostFs(): HostFs {
         on(event, cb) {
           if (event === 'error') watcher.on('error', cb)
         },
-        close: () => watcher.close()
+        close: () => {
+          try {
+            watcher.unref()
+          } catch {
+            /* ignore */
+          }
+          try {
+            watcher.close()
+          } catch {
+            /* already closed */
+          }
+        }
       }
     },
     async exists(path) {

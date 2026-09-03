@@ -1,10 +1,10 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { dirname } from 'node:path'
-import type { CliHostKind, ProviderResumeCursor } from '@shared/cliHost'
-import { isStructuredCliHost } from '@shared/cliHost'
-import { nativeSessionId } from '@shared/cliPaneBinding'
-import type { SwarmSessionRecord } from '@shared/cliSessionHistory'
-import { isBlankSwarmSessionTitle, swarmSessionKey } from '@shared/cliSessionHistory'
+import type { CliHostKind, ProviderResumeCursor } from '../../shared/cliHost.ts'
+import { isStructuredCliHost } from '../../shared/cliHost.ts'
+import { nativeSessionId } from '../../shared/cliPaneBinding.ts'
+import type { SwarmSessionRecord } from '../../shared/cliSessionHistory.ts'
+import { isBlankSwarmSessionTitle, swarmSessionKey } from '../../shared/cliSessionHistory.ts'
 
 const FILE_VERSION = 1
 const MAX_RECORDS = 500
