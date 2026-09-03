@@ -19,7 +19,7 @@ import {
 } from 'lucide-react'
 import type { FileAssociationStatus, FileInspectResult, FileSessionMeta } from '@shared/ipc'
 import { isClipPath } from '@shared/clipPath'
-import type { PreviewRef, TurnEvent } from '@shared/types'
+import type { PreviewRef } from '@shared/types'
 import { formatBytes, relativeTime } from '../lib/format'
 import { highlightCode, languageFromPath } from '../lib/highlightCode'
 import { MarkdownView } from './MarkdownView'
@@ -34,11 +34,30 @@ import {
   pickBlockAtLine,
   findBlockById,
   parentBlockOf,
-  isLineOrientedPath,
   lineBlockAt,
   type PreviewBlock
 } from '../lib/previewBlocks'
-import { basename, dirname, replaceExt } from '../lib/path'
+import { basename, dirname } from '../lib/path'
+import {
+  applyFileDraftContent,
+  blockToRef,
+  clampPanelWidth,
+  collectBlocks,
+  filesHostConversationId,
+  fileViewerAgentPanelOpen,
+  isOpenFilePath as filePathIsOpen,
+  loadPanelWidth,
+  mergeIncomingTextBody,
+  mergeTextWindowInspect,
+  persistPanelWidth,
+  previewBlocksFromSqliteTables,
+  previewBlocksFromZipEntries,
+  provisionalInspect,
+  pathsEqual
+} from '../lib/fileViewerHelpers'
+import { convertEditProfileFor, fileViewerKindFlags, isBinaryOfficeKind, isPreviewKindSelectable } from '../lib/fileViewerKinds'
+import { AgentPanelToggleButton } from './fileViewer/AgentPanelToggleButton'
+import { SessionHistoryPopover } from './SessionHistoryPopover'
 import { previewOpenElapsed } from '../lib/previewOpenClock'
 import { createWarmComponent } from '../lib/warmComponent'
 import type { OfficeNativeView as OfficeNativeViewType } from './office/OfficeNativeView'
@@ -52,7 +71,6 @@ import { useWorkspaceStore } from '../state/workspaceStore'
 import type { FileSessionChromeProps } from './SessionDetail'
 import { menuAnchor, showMenu } from '../lib/nativeMenu'
 import { Button, EmptyState, InlineAlert } from './ui'
-import { looksLikeFreeMind, looksLikeOpml } from '@shared/mindmap'
 import { BinaryFileView } from './BinaryFileView'
 import {
   BinaryOpenToolbar,
@@ -60,10 +78,7 @@ import {
   HexDumpView,
   type BinaryOpenMode
 } from './BinaryOpenViews'
-import { localFileStreamUrl } from '@shared/localFileUrl'
-import { mimeForPreviewKind, previewKind } from '@shared/previewKind'
 import { isSilentPreviewWindowWarning } from '@shared/previewWarnings'
-import { blockToPreviewRef } from '@shared/previewContext'
 import type { StructuredDocument } from '@shared/structuredDoc'
 import { attachDomPick, updateDomPick } from './office/pickFromDom'
 import { useSheetVirtualWindow } from '../lib/useSheetVirtualWindow'
@@ -94,49 +109,6 @@ const officeRouter = createWarmComponent<React.ComponentProps<typeof OfficeNativ
 const StructuredDocView = lazy(() =>
   import('./StructuredDocView').then((m) => ({ default: m.StructuredDocView }))
 )
-
-function markViewer(label: string): void {
-  try {
-    performance.mark(`viewer:${label}`)
-  } catch {
-    // ignore
-  }
-  if (import.meta.env.DEV) {
-    const elapsed = previewOpenElapsed()
-    const since = elapsed == null ? '' : ` (+${elapsed}ms since open)`
-    console.debug(`[preview-perf] viewer:${label}`, performance.now().toFixed(1), since)
-  }
-}
-
-function provisionalInspect(path: string): FileInspectResult | null {
-  const name = basename(path)
-  const kind = previewKind(name)
-  // Text/CSV/HTML need inspect bytes — don't flash an empty canvas.
-  if (kind === 'binary' || kind === 'directory' || kind === 'text' || kind === 'csv') {
-    return null
-  }
-  const base = {
-    path,
-    name,
-    size: 0,
-    kind,
-    mime: mimeForPreviewKind(name, kind),
-    streamUrl: localFileStreamUrl(path)
-  }
-  if (kind === 'zip') {
-    return {
-      ...base,
-      zip: {
-        entries: [],
-        entryCount: 0,
-        compressedSize: 0,
-        uncompressedSize: 0,
-        ratio: 0
-      }
-    }
-  }
-  return base
-}
 const HtmlNativeView = lazy(() =>
   import('./office/HtmlNativeView').then((m) => ({ default: m.HtmlNativeView }))
 )
@@ -156,34 +128,21 @@ const DrawioView = lazy(() =>
 const ZipArchiveView = lazy(() =>
   import('./ZipArchiveView').then((m) => ({ default: m.ZipArchiveView }))
 )
-import { SessionHistoryPopover } from './SessionHistoryPopover'
-import wordmark from '../assets/wordmark.png'
-import wordmarkDark from '../assets/wordmark-dark.png'
 
-const PANEL_WIDTH_KEY = 'vav.filePreviewAgentPanelWidth'
-const EMPTY_COMMENT_CARDS: { ref: PreviewRef; comment: string }[] = []
-
-function filesHostConversationId(
-  agentConversationId?: string | null,
-  parentConversationId?: string | null
-): string | undefined {
-  return (
-    agentConversationId ||
-    parentConversationId ||
-    useSessionStore.getState().activeId ||
-    undefined
-  )
-}
-
-function loadPanelWidth(): number {
+function markViewer(label: string): void {
   try {
-    const n = Number(localStorage.getItem(PANEL_WIDTH_KEY))
-    if (n >= 280 && n <= 520) return n
+    performance.mark(`viewer:${label}`)
   } catch {
     // ignore
   }
-  return 360
+  if (import.meta.env.DEV) {
+    const elapsed = previewOpenElapsed()
+    const since = elapsed == null ? '' : ` (+${elapsed}ms since open)`
+    console.debug(`[preview-perf] viewer:${label}`, performance.now().toFixed(1), since)
+  }
 }
+
+const EMPTY_COMMENT_CARDS: { ref: PreviewRef; comment: string }[] = []
 
 type UnsavedIntent = 'close'
 
@@ -192,35 +151,6 @@ type UnsavedIntent = 'close'
  * Preview and Edit share the same rendered canvas. Edit adds DevTools-style
  * block selection for Agent context — never swaps into a source/code editor.
  */
-/** Shared Agent panel toggle — product mark (main embedded + standalone). */
-function AgentPanelToggleButton({
-  open,
-  title,
-  onClick,
-  className
-}: {
-  open: boolean
-  title: string
-  onClick: () => void
-  className?: string
-}): React.JSX.Element {
-  return (
-    <button
-      type="button"
-      className={`btn ghost sm icon-only preview-agent-logo-btn${open ? ' is-active-toggle' : ''}${className ? ` ${className}` : ''}`}
-      title={title}
-      aria-label={title}
-      aria-pressed={open}
-      onClick={onClick}
-    >
-      <span className="preview-agent-logo" aria-hidden>
-        <img className="logo-light" src={wordmark} alt="" />
-        <img className="logo-dark" src={wordmarkDark} alt="" />
-      </span>
-    </button>
-  )
-}
-
 export function FileViewer({
   path: initialPath,
   parentConversationId,
@@ -262,11 +192,12 @@ export function FileViewer({
    * Standalone: local drawer. FileSessionView: parent toggle.
    * Workspace peek: agent column is always a sibling (no toggle prop) → treat open.
    */
-  const agentPanelOpen = embedded
-    ? onToggleAgentPanel
-      ? !!agentPanelOpenProp
-      : true
-    : localAgentOpen
+  const agentPanelOpen = fileViewerAgentPanelOpen({
+    embedded,
+    hasToggle: !!onToggleAgentPanel,
+    propOpen: agentPanelOpenProp,
+    localOpen: localAgentOpen
+  })
   const [panelWidth, setPanelWidth] = useState(loadPanelWidth)
   const panelWidthRef = useRef(panelWidth)
   panelWidthRef.current = panelWidth
@@ -319,7 +250,8 @@ export function FileViewer({
   const hostConversationIdRef = useRef<string | undefined>(undefined)
   hostConversationIdRef.current = filesHostConversationId(
     agentConversationId,
-    parentConversationId
+    parentConversationId,
+    useSessionStore.getState().activeId
   )
   const applyingOwnWrite = useRef(false)
   /** Silent progressive text fill — scroll-driven, no UI affordance. */
@@ -376,10 +308,6 @@ export function FileViewer({
     return result
   }, [embedded])
 
-  const isBinaryOfficeKind = useCallback((kind: FileInspectResult['kind'] | undefined): boolean => {
-    return kind === 'docx' || kind === 'xlsx' || kind === 'pptx' || kind === 'pdf'
-  }, [])
-
   /**
    * Text-only soft baseline for dirty detect. Office Discard uses the working-copy
    * service (real is never mutated until Save), so no in-memory binary baseline.
@@ -396,7 +324,7 @@ export function FileViewer({
       }
       if (text != null) setBaselineContent(text)
     },
-    [isBinaryOfficeKind]
+    []
   )
 
   /** Agent/shell rewrote the open file on disk — refresh canvas + maybe mark dirty. */
@@ -420,18 +348,9 @@ export function FileViewer({
       ) {
         if (result.text != null) {
           const incoming = result.text
-          setWorkingContent((prevText) => {
-            // First inspect window is 128 KB; don't clobber a longer live draft.
-            if (
-              result.truncated &&
-              prevText != null &&
-              prevText.length > incoming.length &&
-              prevText.startsWith(incoming)
-            ) {
-              return prevText
-            }
-            return incoming
-          })
+          setWorkingContent((prevText) =>
+            mergeIncomingTextBody(prevText, incoming, !!result.truncated)
+          )
         }
       }
       const st = isMediaPreviewKind(result.kind)
@@ -480,21 +399,7 @@ export function FileViewer({
       if (win.content) {
         setWorkingContent((prev) => (prev ?? '') + win.content)
         setBaselineContent((prev) => (prev ?? '') + win.content)
-        setInfo((prev) => {
-          if (!prev || prev.path !== state.path) return prev
-          const nextText = (prev.text ?? '') + win.content
-          return {
-            ...prev,
-            text: nextText,
-            truncated: win.truncated,
-            textWindow: {
-              startByte: prev.textWindow?.startByte ?? 0,
-              endByte: win.endByte,
-              totalBytes: win.totalBytes
-            },
-            lineCount: countNewlinesLocal(nextText)
-          }
-        })
+        setInfo((prev) => mergeTextWindowInspect(prev, state.path, win.content, win))
       }
       state.endByte = win.endByte
       state.totalBytes = win.totalBytes
@@ -626,11 +531,7 @@ export function FileViewer({
   }, [filePath, reloadInfo, isBinaryOfficeKind, extendTextWindow, captureBaseline])
 
   useEffect(() => {
-    try {
-      localStorage.setItem(PANEL_WIDTH_KEY, String(panelWidth))
-    } catch {
-      // ignore
-    }
+    persistPanelWidth(panelWidth)
   }, [panelWidth])
 
   useEffect(() => {
@@ -725,35 +626,36 @@ export function FileViewer({
 
   const displayText = workingContent ?? info?.text ?? ''
   const deferredDisplayText = useDeferredValue(displayText)
-  const isMarkdown =
-    /\.(md|markdown|mdx)$/i.test(filePath) || (info?.mime ?? '').includes('markdown')
-  const isNotebook = /\.ipynb$/i.test(filePath)
-  const isCsv = info?.kind === 'csv' || /\.(csv|tsv)$/i.test(filePath)
-  const isSqlite = info?.kind === 'sqlite'
-  /** FreeMind/Freeplane .mm or OPML mind map (not ObjC++ .mm). */
-  const isMindMap =
-    (info?.kind === 'text' || info?.kind == null) &&
-    (/\.opml$/i.test(filePath) ||
-      looksLikeOpml(displayText) ||
-      (/\.mm$/i.test(filePath) && looksLikeFreeMind(displayText)))
-  const isMermaidFile =
-    (info?.kind === 'text' || info?.kind == null) &&
-    /\.(mmd|mermaid)$/i.test(filePath)
-  const isDotFile =
-    (info?.kind === 'text' || info?.kind == null) && /\.(dot|gv)$/i.test(filePath)
-  const isDrawioFile =
-    (info?.kind === 'text' || info?.kind == null) &&
-    (/\.(drawio|dio)$/i.test(filePath) ||
-      (/mxfile/i.test(displayText.slice(0, 400)) && /mxGraphModel|mxCell/i.test(displayText)))
-  const isDiagramCanvas = isMindMap || isMermaidFile || isDotFile || isDrawioFile
-  /** .log and dense line-oriented files: pick individual lines, not paragraphs. */
-  const lineOriented =
-    !isMarkdown &&
-    !isNotebook &&
-    !isCsv &&
-    !isDiagramCanvas &&
-    (info?.kind === 'text' || info?.kind == null) &&
-    isLineOrientedPath(filePath, displayText)
+  const {
+    isMarkdown,
+    isNotebook,
+    isCsv,
+    isSqlite,
+    isMindMap,
+    isMermaidFile,
+    isDotFile,
+    isDrawioFile,
+    isDiagramCanvas,
+    lineOriented,
+    isOfficeKind,
+    isHtmlKind,
+    isHtmlClipKind,
+    isZip,
+    bodyPad,
+    textZoomable,
+    isHeic,
+    isLegacyOffice,
+    formatLockedReadOnly,
+    hardForcedReadOnly,
+    forcedReadOnly
+  } = fileViewerKindFlags({
+    filePath,
+    kind: info?.kind,
+    mime: info?.mime,
+    displayText,
+    error: info?.error,
+    hasInfo: !!info
+  })
   const badge = formatBadge(filePath, info?.kind ?? 'text')
   // Single parse shared by block pick + window sheet (avoids double work on open).
   const csvModel = useMemo(
@@ -761,71 +663,6 @@ export function FileViewer({
     [isCsv, displayText]
   )
 
-  const isOfficeKind =
-    info?.kind === 'pdf' ||
-    info?.kind === 'docx' ||
-    info?.kind === 'xlsx' ||
-    info?.kind === 'pptx'
-  const isHtmlKind = info?.kind === 'html'
-  const isHtmlClipKind = info?.kind === 'html-clip'
-  const isZip = info?.kind === 'zip'
-  /**
-   * Reading gutters are per-renderer, not a frame-wide inset.
-   *
-   * Prose/code want paper margins. Canvas renderers (diagram, sheet, media,
-   * office paper, archive tree) own their full box and supply their own insets —
-   * a shared frame padding shrank them and pushed centred content off-axis.
-   */
-  const bodyPad: 'text' | 'none' =
-    isDiagramCanvas ||
-    isCsv ||
-    isSqlite ||
-    isOfficeKind ||
-    isHtmlKind ||
-    isHtmlClipKind ||
-    isZip ||
-    info?.kind === 'image' ||
-    info?.kind === 'audio' ||
-    info?.kind === 'video' ||
-    info?.kind === 'binary'
-      ? 'none'
-      : 'text'
-  /**
-   * Reflowing surfaces zoom by type size instead of geometry. Paged documents
-   * are excluded on purpose — they run their own stage zoom, and a wheel event
-   * would otherwise be claimed by both.
-   */
-  const textZoomable =
-    !!info &&
-    !info.error &&
-    (isCsv ||
-      isSqlite ||
-      info.kind === 'xlsx' ||
-      (info.kind === 'text' && !isDiagramCanvas))
-  const isBinaryUnsupported = info?.kind === 'binary'
-  const isDirectoryKind = info?.kind === 'directory'
-  const isHeic =
-    /\.(heic|heif|hif)$/i.test(filePath) || (info?.mime ?? '').toLowerCase().includes('heic')
-  /** Legacy Office extensions (not OOXML). */
-  const isLegacyOffice = /\.(doc|ppt|xls)$/i.test(filePath) && !/\.(docx|pptx|xlsx)$/i.test(filePath)
-  /**
-   * Format-locked → Edit requires convert + Save As (original untouched).
-   * Only formats we cannot write in-place: HEIC, PDF, legacy .doc/.ppt/.xls.
-   * Native OOXML (docx / xlsx / pptx) and ordinary text/code default to **Write**.
-   */
-  const formatLockedReadOnly =
-    isHeic ||
-    info?.kind === 'pdf' ||
-    /\.pdf$/i.test(filePath) ||
-    isLegacyOffice
-  /** ZIP / raw binary / directory / draw.io (read-only canvas): cannot enter edit. */
-  const hardForcedReadOnly =
-    isZip ||
-    (isBinaryUnsupported && !isLegacyOffice) ||
-    isDirectoryKind ||
-    isDrawioFile ||
-    isHtmlClipKind
-  const forcedReadOnly = hardForcedReadOnly || formatLockedReadOnly
   const effectiveReadOnly = readOnly || forcedReadOnly
 
   /**
@@ -860,28 +697,10 @@ export function FileViewer({
   const syncBlocks = useMemo((): PreviewBlock[] => {
     if (info?.structured?.blocks?.length) return info.structured.blocks
     if (isSqlite && info?.sqlite?.tables?.length) {
-      return info.sqlite.tables.map((tb) => ({
-        id: `db-table-${tb.name}`,
-        kind: 'table' as const,
-        text: [
-          `TABLE ${tb.name}`,
-          `columns: ${tb.columns.join(', ')}`,
-          `rows: ${tb.rowCount}`
-        ].join('\n'),
-        label: `table ${tb.name}`,
-        startLine: 0,
-        endLine: 0
-      }))
+      return previewBlocksFromSqliteTables(info.sqlite.tables)
     }
     if (isZip && info?.zip?.entries?.length) {
-      return info.zip.entries.map((e) => ({
-        id: `zip:${e.path}`,
-        kind: (e.isDirectory ? 'section' : 'code') as PreviewBlock['kind'],
-        text: `${e.isDirectory ? 'DIR' : 'FILE'} ${e.path}`,
-        label: `ZIP · ${e.path}`,
-        startLine: 0,
-        endLine: 0
-      }))
+      return previewBlocksFromZipEntries(info.zip.entries)
     }
     if (info?.text == null && workingContent == null) return []
     // CSV: only col + table stubs (no per-row tree). Sheet body uses the same model.
@@ -942,18 +761,7 @@ export function FileViewer({
     (s) => s.settings.previewSelectionAgentMark !== false
   )
   const kindSelectable =
-    !!info &&
-    !info.error &&
-    (info.kind === 'text' ||
-      info.kind === 'csv' ||
-      info.kind === 'sqlite' ||
-      info.kind === 'pdf' ||
-      info.kind === 'docx' ||
-      info.kind === 'xlsx' ||
-      info.kind === 'pptx' ||
-      info.kind === 'html' ||
-      info.kind === 'zip' ||
-      !!mediaSrc)
+    !!info && !info.error && isPreviewKindSelectable(info.kind, !!mediaSrc)
   const selectable =
     kindSelectable && (!effectiveReadOnly || allowReadModeSelection)
 
@@ -1471,70 +1279,16 @@ export function FileViewer({
    * HEIC / Office: editing means convert + Save As (not in-place write).
    * Returns profile for the dialog + binary source path.
    */
-  const convertEditProfile = useMemo((): {
-    formatKey: 'jpeg' | 'docx' | 'xlsx' | 'pptx' | 'pdf'
-    suggestedPath: string
-    sourcePath: string
-  } | null => {
-    if (isHeic) {
-      return {
-        formatKey: 'jpeg',
-        suggestedPath: replaceExt(filePath, '.jpg'),
-        sourcePath: info?.contentPath?.trim() || filePath
-      }
-    }
-    if (info?.kind === 'docx' || (/\.docx$/i.test(filePath) && !isLegacyOffice)) {
-      return {
-        formatKey: 'docx',
-        suggestedPath: replaceExt(filePath, '.docx'),
-        sourcePath: info?.contentPath?.trim() || filePath
-      }
-    }
-    if (info?.kind === 'xlsx' || /\.xlsx$/i.test(filePath)) {
-      return {
-        formatKey: 'xlsx',
-        suggestedPath: replaceExt(filePath, '.xlsx'),
-        sourcePath: info?.contentPath?.trim() || filePath
-      }
-    }
-    if (info?.kind === 'pptx' || /\.pptx$/i.test(filePath)) {
-      return {
-        formatKey: 'pptx',
-        suggestedPath: replaceExt(filePath, '.pptx'),
-        sourcePath: info?.contentPath?.trim() || filePath
-      }
-    }
-    if (info?.kind === 'pdf' || /\.pdf$/i.test(filePath)) {
-      return {
-        formatKey: 'pdf',
-        suggestedPath: replaceExt(filePath, '.pdf'),
-        sourcePath: filePath
-      }
-    }
-    // Legacy .doc → converted sidecar is usually DOCX/HTML temp; prefer DOCX name.
-    if (/\.doc$/i.test(filePath) && !/\.docx$/i.test(filePath)) {
-      return {
-        formatKey: 'docx',
-        suggestedPath: replaceExt(filePath, '.docx'),
-        sourcePath: info?.contentPath?.trim() || filePath
-      }
-    }
-    if (/\.xls$/i.test(filePath) && !/\.xlsx$/i.test(filePath)) {
-      return {
-        formatKey: 'xlsx',
-        suggestedPath: replaceExt(filePath, '.xlsx'),
-        sourcePath: info?.contentPath?.trim() || filePath
-      }
-    }
-    if (/\.ppt$/i.test(filePath) && !/\.pptx$/i.test(filePath)) {
-      return {
-        formatKey: 'pptx',
-        suggestedPath: replaceExt(filePath, '.pptx'),
-        sourcePath: info?.contentPath?.trim() || filePath
-      }
-    }
-    return null
-  }, [filePath, info?.contentPath, info?.kind, isHeic, isLegacyOffice])
+  const convertEditProfile = useMemo(
+    () =>
+      convertEditProfileFor(filePath, {
+        kind: info?.kind,
+        contentPath: info?.contentPath,
+        isHeic,
+        isLegacyOffice
+      }),
+    [filePath, info?.contentPath, info?.kind, isHeic, isLegacyOffice]
+  )
 
   const convertAndSaveAs = async (): Promise<boolean> => {
     const profile = convertEditProfile
@@ -2336,18 +2090,14 @@ export function FileViewer({
                 const startX = event.clientX
                 const startW = panelWidth
                 const onMove = (e: MouseEvent): void => {
-                  const next = Math.min(520, Math.max(280, startW + (startX - e.clientX)))
+                  const next = clampPanelWidth(startW + (startX - e.clientX))
                   panelWidthRef.current = next
                   setPanelWidth(next)
                 }
                 const onUp = (): void => {
                   window.removeEventListener('mousemove', onMove)
                   window.removeEventListener('mouseup', onUp)
-                  try {
-                    localStorage.setItem(PANEL_WIDTH_KEY, String(panelWidthRef.current))
-                  } catch {
-                    // ignore
-                  }
+                  persistPanelWidth(panelWidthRef.current)
                 }
                 window.addEventListener('mousemove', onMove)
                 window.addEventListener('mouseup', onUp)
@@ -2897,61 +2647,9 @@ export function FileViewer({
   )
 }
 
-function countNewlinesLocal(text: string): number {
-  if (!text) return 0
-  let n = 1
-  for (let i = 0; i < text.length; i++) {
-    if (text.charCodeAt(i) === 10) n++
-  }
-  if (text.charCodeAt(text.length - 1) === 10) n--
-  return Math.max(n, 1)
-}
-
-function collectBlocks(blocks: PreviewBlock[]): PreviewBlock[] {
-  const out: PreviewBlock[] = []
-  const walk = (list: PreviewBlock[]): void => {
-    for (const b of list) {
-      out.push(b)
-      if (b.children) walk(b.children)
-    }
-  }
-  walk(blocks)
-  return out
-}
-
-/** Path compare for fs-changed / dirty events (macOS is usually case-insensitive). */
-function pathsEqual(a: string, b: string): boolean {
-  if (a === b) return true
-  const na = a.replace(/\/+$/, '')
-  const nb = b.replace(/\/+$/, '')
-  if (na === nb) return true
-  return na.toLowerCase() === nb.toLowerCase()
-}
-
 /** Open preview path may be the real file while the agent writes the sandbox copy. */
 async function isOpenFilePath(openPath: string, sourcePath: string): Promise<boolean> {
-  if (pathsEqual(openPath, sourcePath)) return true
-  const st = await window.vav.files.workingCopyStatus?.(openPath)
-  if (!st) return false
-  return pathsEqual(sourcePath, st.copyPath) || pathsEqual(sourcePath, st.realPath)
-}
-
-function applyFileDraftContent(
-  prev: string | null,
-  event: Extract<TurnEvent, { type: 'file-draft' }>
-): string | null {
-  if (typeof event.content === 'string') return event.content
-  if (typeof event.append === 'string') {
-    const base = prev ?? ''
-    if (typeof event.baseLen === 'number' && base.length !== event.baseLen) return prev
-    return base + event.append
-  }
-  return prev
-}
-
-/** One selected preview block → a composer comment-block reference. */
-function blockToRef(path: string, badge: string, block: PreviewBlock): PreviewRef {
-  return blockToPreviewRef(path, badge, block)
+  return filePathIsOpen(openPath, sourcePath, (path) => window.vav.files.workingCopyStatus?.(path))
 }
 
 /**

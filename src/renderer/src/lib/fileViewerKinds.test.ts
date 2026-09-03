@@ -94,6 +94,15 @@ describe('fileViewerKindFlags', () => {
     })
     assert.equal(prose.bodyPad, 'text')
     assert.equal(prose.textZoomable, true)
+    assert.equal(
+      fileViewerKindFlags({
+        filePath: '/a.mp3',
+        kind: 'audio',
+        displayText: '',
+        hasInfo: true
+      }).bodyPad,
+      'none'
+    )
   })
 
   it('identifies binary office kinds for the working-copy save path', () => {

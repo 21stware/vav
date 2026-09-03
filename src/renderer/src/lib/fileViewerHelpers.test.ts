@@ -148,6 +148,9 @@ describe('isSilentPreviewWindowWarning / provisionalInspect', () => {
     assert.equal(isSilentPreviewWindowWarning('password protected'), false)
     assert.equal(provisionalInspect('/docs/a.pdf')?.kind, 'pdf')
     assert.equal(provisionalInspect('/docs/a.ts'), null)
+    assert.equal(provisionalInspect('/docs/pack.zip')?.kind, 'zip')
+    assert.equal(provisionalInspect('/docs/pic.png')?.kind, 'image')
+    assert.equal(provisionalInspect('/docs/blob.bin'), null)
   })
 })
 
@@ -266,6 +269,7 @@ describe('previewBlocksFromSqliteTables / previewBlocksFromZipEntries', () => {
     ])
     assert.equal(tables[0]?.id, 'db-table-users')
     assert.equal(tables[0]?.kind, 'table')
+    assert.equal(tables[0]?.startLine, 0)
     assert.match(tables[0]?.text ?? '', /TABLE users/)
 
     const zip = previewBlocksFromZipEntries([
@@ -273,6 +277,7 @@ describe('previewBlocksFromSqliteTables / previewBlocksFromZipEntries', () => {
       { path: 'src/a.ts', isDirectory: false }
     ])
     assert.equal(zip[0]?.kind, 'section')
+    assert.equal(zip[0]?.startLine, 0)
     assert.equal(zip[0]?.text, 'DIR src/')
     assert.equal(zip[1]?.kind, 'code')
     assert.equal(zip[1]?.text, 'FILE src/a.ts')

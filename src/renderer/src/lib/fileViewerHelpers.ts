@@ -1,6 +1,8 @@
 import type { FileInspectResult } from '../../../shared/ipc.ts'
 import type { PreviewRef } from '../../../shared/types.ts'
 import { localFileStreamUrl } from '../../../shared/localFileUrl.ts'
+import { mimeForPreviewKind, previewKind } from '../../../shared/previewKind.ts'
+import { blockToPreviewRef, formatBlockPickLabel } from '../../../shared/previewContext.ts'
 import { basename, pathsEqual } from './path.ts'
 import type { PreviewBlock } from './previewBlocks.ts'
 
@@ -108,25 +110,12 @@ export function nextCommentCardsOnBlockPick(
 
 /** Human title for the comment card header (kind · line N). */
 export function formatCommentCardLabel(block: PreviewBlock): string {
-  if (block.kind === 'line' || block.id.startsWith('line-L')) {
-    return `line ${block.startLine}`
-  }
-  const kind = (block.kind || 'block').replace(/_/g, '-')
-  if (block.startLine === block.endLine) return `${kind} · line ${block.startLine}`
-  return `${kind} · lines ${block.startLine}–${block.endLine}`
+  return formatBlockPickLabel(block)
 }
 
 /** One selected preview block → a composer comment-block reference. */
 export function blockToRef(path: string, badge: string, block: PreviewBlock): PreviewRef {
-  return {
-    id: `${path}::${block.id}`,
-    filePath: path,
-    label: formatCommentCardLabel(block),
-    startLine: block.startLine,
-    endLine: block.endLine,
-    text: block.text,
-    badge
-  }
+  return blockToPreviewRef(path, badge, block)
 }
 
 /** Windowing / soft caps belong in render — never show as “truncated for preview”. */
@@ -140,41 +129,22 @@ export function isSilentPreviewWindowWarning(warning: string): boolean {
 
 export function provisionalInspect(path: string): FileInspectResult | null {
   const name = basename(path)
+  const kind = previewKind(name)
+  // Text/CSV/HTML need inspect bytes — don't flash an empty canvas.
+  if (kind === 'binary' || kind === 'directory' || kind === 'text' || kind === 'csv') {
+    return null
+  }
   const base = {
     path,
     name,
     size: 0,
+    kind,
+    mime: mimeForPreviewKind(name, kind),
     streamUrl: localFileStreamUrl(path)
   }
-  if (/\.pdf$/i.test(path)) {
-    return { ...base, kind: 'pdf', mime: 'application/pdf' }
-  }
-  if (/\.docx$/i.test(path)) {
+  if (kind === 'zip') {
     return {
       ...base,
-      kind: 'docx',
-      mime: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
-    }
-  }
-  if (/\.xlsx$/i.test(path)) {
-    return {
-      ...base,
-      kind: 'xlsx',
-      mime: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-    }
-  }
-  if (/\.pptx$/i.test(path)) {
-    return {
-      ...base,
-      kind: 'pptx',
-      mime: 'application/vnd.openxmlformats-officedocument.presentationml.presentation'
-    }
-  }
-  if (/\.zip$/i.test(path)) {
-    return {
-      ...base,
-      kind: 'zip',
-      mime: 'application/zip',
       zip: {
         entries: [],
         entryCount: 0,
@@ -184,7 +154,7 @@ export function provisionalInspect(path: string): FileInspectResult | null {
       }
     }
   }
-  return null
+  return base
 }
 
 /** Prefer the file-session agent, then the parent session, then the sidebar. */
@@ -309,8 +279,8 @@ export function previewBlocksFromSqliteTables(
       '\n'
     ),
     label: `table ${tb.name}`,
-    startLine: 1,
-    endLine: 1
+    startLine: 0,
+    endLine: 0
   }))
 }
 
@@ -322,7 +292,7 @@ export function previewBlocksFromZipEntries(
     kind: (e.isDirectory ? 'section' : 'code') as PreviewBlock['kind'],
     text: `${e.isDirectory ? 'DIR' : 'FILE'} ${e.path}`,
     label: `ZIP · ${e.path}`,
-    startLine: 1,
-    endLine: 1
+    startLine: 0,
+    endLine: 0
   }))
 }
