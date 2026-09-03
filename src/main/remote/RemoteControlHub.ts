@@ -56,6 +56,8 @@ export type RemoteControlHubDeps = {
   browse: (conversationId: string, path?: string) => RemoteDirsEvent | 'not-found' | 'forbidden'
   setWorkspace: (conversationId: string, path: string | null) => RemoteWorkspaceResult
   secret: () => string
+  /** Extra accepted hellos (issued machine grants). Phone secret stays `secret()`. */
+  acceptAuth?: (auth: string) => boolean
   materializeImages?: (images: RemoteSendImage[] | undefined) => string[]
   onDaemonHello?: (socket: Socket, leftover: string, hello: RemoteHello) => void
   onClientsChanged?: () => void
@@ -150,6 +152,11 @@ export class RemoteControlHub {
     socket.on('close', forget)
     socket.on('error', forget)
     this.deps.onClientsChanged?.()
+  }
+
+  private helloAuthOk(auth: string): boolean {
+    if (secretsMatch(auth, this.deps.secret())) return true
+    return this.deps.acceptAuth?.(auth) === true
   }
 
   authedClients(): { device: string; since: number }[] {
@@ -295,7 +302,7 @@ export class RemoteControlHub {
     }
 
     if (!client.authed) {
-      if (message.type !== 'hello' || !secretsMatch(message.auth, this.deps.secret())) {
+      if (message.type !== 'hello' || !this.helloAuthOk(message.auth)) {
         this.send(client, { type: 'error', code: 'auth', message: 'pairing rejected' })
         return false
       }

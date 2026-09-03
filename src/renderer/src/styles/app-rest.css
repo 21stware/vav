@@ -4332,6 +4332,13 @@ html.connect-root #root {
   color: var(--text-secondary);
 }
 
+.machines-incoming {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
 .connect-pairing {
   display: flex;
   align-items: center;

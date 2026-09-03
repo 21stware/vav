@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { RemoteControlStatus } from '@shared/remoteControl'
 import type { HostDiscoveryPeer } from '@shared/ipc'
+import type { IncomingController } from '@shared/daemonProtocol'
 import type { MessageKey, TParams } from '@shared/i18n'
 import { LOCAL_MACHINE_ID } from '@shared/workspaceHost'
 import { useSessionStore } from '../../state/sessionStore'
@@ -110,6 +111,7 @@ function RemoteControlSection(): React.JSX.Element {
       <PairingLine />
 
       {!enabled && <p className="connect-lede">{t('remote.enabledHint')}</p>}
+      <IncomingControllers enabled={enabled} />
 
       {enabled && status?.state === 'no-binary' && (
         <InlineAlert kind="warning" title={t('remote.stateError')} message={t('remote.stateNoBinary')} />
@@ -144,6 +146,22 @@ function RemoteControlSection(): React.JSX.Element {
               </div>
             )}
             <div className="connect-incoming-actions">
+              <Button
+                label={t('machines.rotateOffer')}
+                size="sm"
+                title={t('machines.rotateOfferHint')}
+                testId="settings-rotate-offer"
+                onClick={() => {
+                  showDialog({
+                    title: t('machines.rotateOffer'),
+                    body: t('machines.rotateOfferHint'),
+                    confirmLabel: t('dialog.resetConfirm'),
+                    onConfirm: () => {
+                      void window.vav.hosts.rotateOffer()
+                    }
+                  })
+                }}
+              />
               <Button
                 label={t('remote.regenerateSecret')}
                 size="sm"
@@ -368,6 +386,79 @@ function MachinesSection(): React.JSX.Element {
   )
 }
 
+function IncomingControllers({ enabled }: { enabled: boolean }): React.JSX.Element | null {
+  const t = useT()
+  const showDialog = useSessionStore((s) => s.showDialog)
+  const [rows, setRows] = useState<IncomingController[]>([])
+
+  useEffect(() => {
+    let alive = true
+    void window.vav.hosts.incoming().then((list) => {
+      if (alive) setRows(list)
+    })
+    const off = window.vav.hosts.onIncomingChanged((list) => {
+      if (alive) setRows(list)
+    })
+    return () => {
+      alive = false
+      off()
+    }
+  }, [enabled])
+
+  if (rows.length === 0 && !enabled) return null
+
+  const unpair = (row: IncomingController): void => {
+    showDialog({
+      title: t('machines.unpair'),
+      body: t('machines.unpairHint'),
+      confirmLabel: t('machines.unpair'),
+      destructive: true,
+      onConfirm: () => {
+        void window.vav.hosts.unpairIncoming(row.id)
+      }
+    })
+  }
+
+  return (
+    <div className="machines-incoming" data-testid="settings-incoming-machines">
+      <div className="connect-peers-caption">{t('machines.incoming')}</div>
+      <p className="connect-lede">{t('machines.incomingHint')}</p>
+      {rows.length === 0 ? (
+        <p className="connect-lede">{t('machines.incomingEmpty')}</p>
+      ) : (
+        <div className="machines-list">
+          {rows.map((row) => (
+            <div key={row.id} className="connect-peer" data-testid={`settings-incoming-${row.id}`}>
+              <div className="connect-peer-text">
+                <div className="connect-peer-name">{row.name}</div>
+                <div className="connect-peer-sub">
+                  {row.online ? t('machines.online') : t('machines.offline')}
+                </div>
+              </div>
+              <div className="connect-peer-actions">
+                {row.online ? (
+                  <Button
+                    label={t('machines.disconnect')}
+                    size="sm"
+                    testId={`settings-incoming-disconnect-${row.id}`}
+                    onClick={() => void window.vav.hosts.disconnectIncoming(row.id)}
+                  />
+                ) : null}
+                <Button
+                  label={t('machines.unpair')}
+                  size="sm"
+                  testId={`settings-incoming-unpair-${row.id}`}
+                  onClick={() => unpair(row)}
+                />
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 function PairingLine(): React.JSX.Element | null {
   const t = useT()
   const enabled = useSessionStore((s) => s.settings.remoteControlEnabled === true)
@@ -448,6 +539,7 @@ function pairErrorMessage(
   if (/pairing confirm timed out/i.test(error)) return t('machines.lanPairTimeout')
   if (/pairing requires a pairing line/i.test(error)) return t('machines.lanPairHeadless')
   if (/pairing busy/i.test(error)) return t('machines.lanPairBusy')
+  if (/pairing revoked/i.test(error)) return t('machines.pairRevoked')
   if (/pairing rejected/i.test(error)) return t('machines.pairAuth')
   if (/no tunnel token/i.test(error)) return t('machines.pairNeedToken')
   if (/unrecognized pairing payload/i.test(error)) return t('machines.pairNeedLine')

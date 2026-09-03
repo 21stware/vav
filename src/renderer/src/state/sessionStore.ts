@@ -12,6 +12,7 @@ import type {
 } from '@shared/types'
 import { DEFAULT_CLI_AGENTS, DEFAULT_SETTINGS } from '@shared/types'
 import type { WorkspaceHostInfo } from '@shared/workspaceHost'
+import type { IncomingController } from '@shared/daemonProtocol'
 import type { RemoteControlStatus } from '@shared/remoteControl'
 import { mergeConversationList, nextConversationSelection, isArchivedConversation, regenerateActiveLeaf, canMutateActiveSession, compactRefusalReason, genericErrorBanner, patchConversationById, shouldSkipSessionDeleteConfirm, fallbackConversationIdAfterDelete, sessionDeleteDialogCopy, prependConversationIfMissing, listedConversationIdsForSelect, fileSessionHydrateOnDemandPatch, deleteMessageHydratePatch, renameConversationPatch } from './sessionListMerge'
 import {
@@ -198,6 +199,7 @@ interface SessionState {
   tmp: string
   about: AboutInfo | null
   hosts: WorkspaceHostInfo[]
+  incomingControllers: IncomingController[]
   /**
    * Machine this main-shell window is bound to (`local` or a paired daemon).
    * Comes from `?machine=` — not the default-raise setting.
@@ -667,6 +669,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   home: '',
   tmp: '',
   hosts: [],
+  incomingControllers: [],
   windowMachineId: readWindowMachineId(),
   remoteControlStatus: null,
   remoteFolderPick: null,

@@ -3,6 +3,7 @@
  * paired remotes, reconnect, and register them on HostRegistry.
  */
 
+import { randomBytes } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -26,6 +27,14 @@ import { DaemonClient, createRemoteWorkspaceHost, requestLanPairOffer, PAIRING_C
 import { RemoteControlDial } from '../remote/RemoteControlDial.ts'
 import type { RemoteHello, RemoteServerMessage } from '../../shared/remoteControl.ts'
 import { loadOrCreateIdentity, writePrivateJson, type DaemonIdentity } from './identity.ts'
+import {
+  createFileGrantStore,
+  incomingFromGrants,
+  isPairAuthMessage,
+  type GrantStore,
+  type IncomingController
+} from './grants.ts'
+import { secretsMatch } from './jsonLines.ts'
 import {
   advertisedPairingAddresses,
   collectDialTargets,
@@ -54,6 +63,7 @@ export type PairedHostRecord = {
   home?: string
   tmp?: string
   defaultPath?: string
+  grantId?: string
 }
 
 type TunnelHandle = {
@@ -89,6 +99,7 @@ type AttachOpts = {
   onControlHello?: (socket: Socket, leftover: string, hello: RemoteHello) => void
   /** Frames from a control-plane dial we opened to a paired desktop. */
   onControlEvent?: (machineId: string, message: RemoteServerMessage) => void
+  onIncomingChanged?: (controllers: IncomingController[]) => void
 }
 
 export class DaemonAttachService {
@@ -111,6 +122,7 @@ export class DaemonAttachService {
   private readonly reconnectCtl = new Map<string, AbortController>()
   private discovered: DiscoveredPeer[] = []
   readonly identity: DaemonIdentity
+  private readonly grants: GrantStore
   private listenPort = 0
   private readonly opts: AttachOpts
   private pairAbort: AbortController | null = null
@@ -119,6 +131,7 @@ export class DaemonAttachService {
   constructor(opts: AttachOpts) {
     this.opts = opts
     this.identity = loadOrCreateIdentity(join(opts.userData, 'daemon'), opts.identityName)
+    this.grants = createFileGrantStore(join(opts.userData, 'daemon'))
   }
 
   private get storeFile(): string {
@@ -130,12 +143,12 @@ export class DaemonAttachService {
     else this.stopListen()
   }
 
-  pairing(): string | null {
+  pairing(secret?: string): string | null {
     if (!this.opts.enabled() && !this.server) return null
     const advertised = advertisedPairingAddresses({ identityName: this.identity.name })
     const payload: DaemonPairing = {
       v: DAEMON_PROTO_VERSION,
-      secret: this.opts.secret(),
+      secret: secret || this.offerSecret(),
       machineId: this.identity.machineId,
       name: this.identity.name,
       host: advertised.host,
@@ -144,6 +157,58 @@ export class DaemonAttachService {
       addresses: advertised.addresses
     }
     return encodeDaemonPairing(payload)
+  }
+
+  incoming(): IncomingController[] {
+    return this.server?.incoming() ?? incomingFromGrants(this.grants.list(), new Set())
+  }
+
+  disconnectIncoming(grantId: string): void {
+    this.server?.disconnectGrant(grantId)
+    this.emitIncoming()
+  }
+
+  unpairIncoming(grantId: string): void {
+    if (!this.server?.unpairGrant(grantId)) this.grants.remove(grantId)
+    this.emitIncoming()
+  }
+
+  rotateOffer(): string {
+    const secret = randomBytes(24).toString('base64url')
+    writePrivateJson(this.offerFile, { secret })
+    this.emitIncoming()
+    return secret
+  }
+
+  acceptsPairingAuth(auth: string): boolean {
+    if (this.grants.findBySecret(auth)) return true
+    return secretsMatch(auth, this.offerSecret()) || secretsMatch(auth, this.opts.secret())
+  }
+
+  private get offerFile(): string {
+    return join(this.opts.userData, 'daemon', 'offer.json')
+  }
+
+  private offerSecret(): string {
+    try {
+      if (existsSync(this.offerFile)) {
+        const raw = JSON.parse(readFileSync(this.offerFile, 'utf8')) as { secret?: unknown }
+        if (typeof raw.secret === 'string' && raw.secret.length >= 16) return raw.secret
+      }
+    } catch {
+      /* use shared secret */
+    }
+    return this.opts.secret()
+  }
+
+  private extraOfferSecrets(): string[] {
+    const phone = this.opts.secret()
+    const offer = this.offerSecret()
+    return phone && phone !== offer ? [phone] : []
+  }
+
+  private emitIncoming(): void {
+    this.opts.onIncomingChanged?.(this.incoming())
   }
 
   listenPortOf(): number {
@@ -262,9 +327,9 @@ export class DaemonAttachService {
     return found
   }
 
-  adoptAuthedSocket(socket: Socket, leftover = ''): void {
+  adoptAuthedSocket(socket: Socket, leftover = '', hello?: RemoteHello): void {
     this.ensureServer()
-    this.server?.adopt(socket, leftover)
+    this.server?.adopt(socket, leftover, hello)
   }
 
   async pair(text: string, signal?: AbortSignal): Promise<{ ok: true; host: WorkspaceHostInfo } | { ok: false; error: string }> {
@@ -283,7 +348,8 @@ export class DaemonAttachService {
       this.remember({
         machineId: welcome.host.id,
         name: welcome.host.name || parsed.name,
-        secret: parsed.secret,
+        secret: welcome.grant?.secret || parsed.secret,
+        grantId: welcome.grant?.id,
         host: persistHost,
         port: viaTunnel ? (parsed.port && persistHost ? parsed.port : 0) : target.port,
         token: parsed.token,
@@ -295,7 +361,7 @@ export class DaemonAttachService {
         home: welcome.home,
         tmp: welcome.tmp
       })
-      this.mount(client, welcome, target, parsed.secret)
+      this.mount(client, welcome, target, welcome.grant?.secret || parsed.secret)
       await this.pendingControl
       await this.notifyHostAttached(welcome.host.id)
       return { ok: true, host: this.opts.registry.get(welcome.host.id)?.info ?? welcome.host }
@@ -357,7 +423,30 @@ export class DaemonAttachService {
     return this.control.get(machineId)?.ready === true
   }
 
-  forget(machineId: string): void {
+  async forget(machineId: string): Promise<void> {
+    this.abortReconnect(machineId)
+    this.dropControl(machineId)
+    const client = this.clients.get(machineId)
+    this.clients.delete(machineId)
+    this.homes.delete(machineId)
+    this.tmps.delete(machineId)
+    this.providers.delete(machineId)
+    this.whichCache.delete(machineId)
+    this.opts.registry.remove(machineId)
+    this.saveStore(this.loadStore().filter((row) => row.machineId !== machineId))
+    this.opts.onHostsChanged(this.opts.registry.list())
+    if (client?.connected) {
+      try {
+        await client.request('pair.leave', undefined, 1500)
+      } catch {
+        /* host already gone */
+      }
+    }
+    client?.close()
+    this.releaseTunnel(machineId)
+  }
+
+  private detachLocal(machineId: string): void {
     this.abortReconnect(machineId)
     this.dropControl(machineId)
     this.clients.get(machineId)?.close()
@@ -412,16 +501,19 @@ export class DaemonAttachService {
     this.server = new DaemonServer({
       host: this.opts.registry.local(),
       identity: this.identity,
-      secret: () => this.opts.secret(),
+      secret: () => this.offerSecret(),
+      extraSecrets: () => this.extraOfferSecrets(),
+      grants: this.grants,
       appVersion: this.opts.appVersion,
       home: homedir(),
       tmp: tmpdir(),
-      pairing: () => this.pairing(),
+      pairing: (secret) => this.pairing(secret),
       onPairAsk: this.opts.confirmLanPair
         ? (from) => this.opts.confirmLanPair!(from)
         : undefined,
       catalog: this.opts.catalog,
-      onControlHello: this.opts.onControlHello
+      onControlHello: this.opts.onControlHello,
+      onIncomingChanged: () => this.emitIncoming()
     })
     return this.server
   }
@@ -626,6 +718,8 @@ export class DaemonAttachService {
           port: target.port,
           secret,
           device: this.identity.name,
+          clientId: this.identity.machineId,
+          grantId: this.loadStore().find((row) => row.secret === secret)?.grantId,
           timeoutMs,
           signal
         })
@@ -654,6 +748,20 @@ export class DaemonAttachService {
     const host = createRemoteWorkspaceHost(client, welcome)
     this.opts.registry.register(host)
     this.opts.onHostsChanged(this.opts.registry.list())
+    client.onClose((reason) => {
+      if (this.clients.get(welcome.host.id) !== client) return
+      if (isPairAuthMessage(reason)) {
+        this.detachLocal(welcome.host.id)
+        return
+      }
+      const row = this.loadStore().find((entry) => entry.machineId === welcome.host.id)
+      if (!row) return
+      this.opts.registry.register(
+        createOfflineRemoteHost(row.machineId, row.name, { home: row.home, tmp: row.tmp })
+      )
+      this.opts.onHostsChanged(this.opts.registry.list())
+      this.scheduleReconnect(row, 0)
+    })
     void this.probeProviders(welcome.host.id).then(() => {
       this.opts.onHostsChanged(this.opts.registry.list())
     })
@@ -766,11 +874,13 @@ export class DaemonAttachService {
         client.close()
         return
       }
-      this.mount(client, welcome, target, row.secret)
+      this.mount(client, welcome, target, welcome.grant?.secret || row.secret)
       await this.pendingControl
       await this.notifyHostAttached(welcome.host.id)
       this.remember({
         ...row,
+        secret: welcome.grant?.secret || row.secret,
+        grantId: welcome.grant?.id || row.grantId,
         host: row.token ? row.host : target.host,
         port: row.token ? row.port : target.port,
         home: welcome.home,
@@ -779,9 +889,14 @@ export class DaemonAttachService {
       })
     } catch (err) {
       if (this.disposed || ctl.signal.aborted) return
+      const message = err instanceof Error ? err.message : String(err)
+      if (isPairAuthMessage(message)) {
+        this.detachLocal(row.machineId)
+        return
+      }
       console.error(
         `[daemon] reconnect ${row.name || row.machineId} failed`,
-        err instanceof Error ? err.message : err
+        message
       )
       if (row.home) this.homes.set(row.machineId, row.home)
       if (row.tmp) this.tmps.set(row.machineId, row.tmp)

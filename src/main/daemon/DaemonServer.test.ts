@@ -530,4 +530,94 @@ describe('daemon loopback', () => {
       await rm(dir, { recursive: true, force: true })
     }
   })
+
+  it('mints a grant, lists the controller, and unpairs it', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'vav-daemon-'))
+    const { server, client } = await startPair(dir)
+    try {
+      assert.ok(client.welcome?.grant?.id)
+      assert.equal(server.incoming().length, 1)
+      assert.equal(server.incoming()[0]?.online, true)
+      const grantId = client.welcome!.grant!.id
+      const grantSecret = client.welcome!.grant!.secret
+
+      assert.equal(server.unpairGrant(grantId), true)
+      assert.equal(server.incoming().length, 0)
+
+      const again = new DaemonClient()
+      const port = server.port()
+      await assert.rejects(
+        () => again.connect({ host: '127.0.0.1', port, secret: grantSecret, device: 'test' }),
+        /pairing rejected|revoked|closed/
+      )
+      again.close()
+
+      const fresh = new DaemonClient()
+      const welcome = await fresh.connect({
+        host: '127.0.0.1',
+        port,
+        secret: SECRET,
+        device: 'test',
+        clientId: 'other'
+      })
+      assert.ok(welcome.grant?.id)
+      assert.notEqual(welcome.grant?.id, grantId)
+      assert.equal(server.incoming().length, 1)
+      fresh.close()
+    } finally {
+      client.close()
+      server.close()
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('disconnects a live grant without revoking it', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'vav-daemon-'))
+    const { server, client } = await startPair(dir)
+    try {
+      const grant = client.welcome?.grant
+      assert.ok(grant)
+      assert.equal(server.disconnectGrant(grant.id), true)
+      const start = Date.now()
+      while (client.connected && Date.now() - start < 1000) {
+        await new Promise((resolve) => setTimeout(resolve, 20))
+      }
+      assert.equal(client.connected, false)
+      assert.equal(server.incoming()[0]?.online, false)
+
+      const again = new DaemonClient()
+      const welcome = await again.connect({
+        host: '127.0.0.1',
+        port: server.port(),
+        secret: grant.secret,
+        device: 'test',
+        grantId: grant.id
+      })
+      assert.equal(welcome.grant?.id, grant.id)
+      again.close()
+    } finally {
+      client.close()
+      server.close()
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('revokes the grant when the client asks to leave', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'vav-daemon-'))
+    const { server, client } = await startPair(dir)
+    try {
+      const grantId = client.welcome?.grant?.id
+      assert.ok(grantId)
+      await client.request('pair.leave')
+      const start = Date.now()
+      while (server.incoming().length > 0 && Date.now() - start < 1000) {
+        await new Promise((resolve) => setTimeout(resolve, 20))
+      }
+      assert.equal(server.incoming().length, 0)
+    } finally {
+      client.close()
+      server.close()
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
 })

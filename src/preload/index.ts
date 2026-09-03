@@ -508,6 +508,10 @@ const api: VavApi = {
       return Promise.resolve()
     },
     forget: (machineId: string) => ipcRenderer.invoke(IPC.hostsForget, machineId),
+    incoming: () => ipcRenderer.invoke(IPC.hostsIncoming),
+    disconnectIncoming: (grantId: string) => ipcRenderer.invoke(IPC.hostsDisconnectIncoming, grantId),
+    unpairIncoming: (grantId: string) => ipcRenderer.invoke(IPC.hostsUnpairIncoming, grantId),
+    rotateOffer: () => ipcRenderer.invoke(IPC.hostsRotateOffer),
     discovered: () => ipcRenderer.invoke(IPC.hostsDiscovered),
     listDir: (machineId: string, path: string) =>
       ipcRenderer.invoke(IPC.hostsListDir, machineId, path),
@@ -517,6 +521,7 @@ const api: VavApi = {
     probeProviders: (machineId: string) => ipcRenderer.invoke(IPC.hostsProbeProviders, machineId),
     onChanged: (handler) => subscribe(IPC.hostsChanged, handler),
     onDiscovered: (handler) => subscribe(IPC.hostsDiscoveredChanged, handler),
+    onIncomingChanged: (handler) => subscribe(IPC.hostsIncomingChanged, handler),
     onPickFolder: (handler) => subscribe(IPC.hostsPickFolder, handler)
   },
 
