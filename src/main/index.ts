@@ -88,7 +88,6 @@ import type {
   RemoteSession,
   RemoteThreadEvent
 } from '@shared/remoteControl'
-import { REMOTE_PHONE_CAPABILITIES } from '@shared/remoteControl'
 import {
   projectRemoteMessages
 } from '@shared/remoteThread'
@@ -249,7 +248,8 @@ import {
   remoteHostRecentDirs,
   remoteHostSwitchAction,
   remoteLiveConversation,
-  remoteSendDisposition
+  remoteSendDisposition,
+  buildRemoteHostEvent
 } from './remote/sessionGate'
 import { RemoteSendQueue } from './remote/sendQueue'
 import { createScreenshotController } from './screenshot/ScreenshotSession'
@@ -1367,31 +1367,25 @@ function listRemoteThread(conversationId: string): RemoteThreadEvent | null {
 function listRemoteHost(): RemoteHostEvent {
   const settings = settingsStore.get()
   const defaultHost = resolveDefaultChatHost(settings.defaultAgentId)
-  const approval = remoteDefaultApproval(settings.defaultApprovalMode)
   const localRecents = recentsForMachine(
     parseWorkspaceRefList(settings.recentWorkspaceDirectories),
     LOCAL_MACHINE_ID
   ).map((ref) => ref.path)
-  const recentDirs = remoteHostRecentDirs(
-    settings.pinnedWorkspaceDirectories ?? [],
-    localRecents,
-    { exists: existsSync, label: trayDirLabel, cap: 12 }
-  )
-  return {
-    type: 'host',
+  return buildRemoteHostEvent({
     name: hostname(),
     home: homedir(),
     tmp: tmpdir(),
     platform: process.platform,
-    capabilities: REMOTE_PHONE_CAPABILITIES,
-    defaults: {
-      agent: defaultHost ?? 'vav',
-      model: settings.defaultModel ?? '',
-      thinking: parseThinkingLevel(settings.defaultThinkingLevel),
-      approval
-    },
-    recentDirs
-  }
+    defaultAgent: defaultHost ?? 'vav',
+    defaultModel: settings.defaultModel ?? '',
+    thinking: parseThinkingLevel(settings.defaultThinkingLevel),
+    approval: remoteDefaultApproval(settings.defaultApprovalMode),
+    recentDirs: remoteHostRecentDirs(
+      settings.pinnedWorkspaceDirectories ?? [],
+      localRecents,
+      { exists: existsSync, label: trayDirLabel, cap: 12 }
+    )
+  })
 }
 
 function remoteRootsFor(conversationId: string): string[] | null {

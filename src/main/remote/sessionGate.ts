@@ -15,6 +15,7 @@ import {
 import { collapseCursorListModels } from '../../shared/cursorModel.ts'
 import { vendorIdFromEndpoint } from '../../shared/llmVendors.ts'
 import { agentLabel } from '../../shared/remoteSessionControls.ts'
+import { REMOTE_PHONE_CAPABILITIES, type RemoteHostEvent } from '../../shared/remoteControl.ts'
 
 /** Phone host sheet: only bypass/edit are explicit; everything else is auto. */
 export function remoteDefaultApproval(
@@ -128,4 +129,33 @@ export function cursorCatalogueDefaultThinking(
     (snapshot[agentModelHostKey('cursor')]?.models ?? []).find((entry) => entry.id === model)
       ?.defaultThinkingLevel ?? null
   )
+}
+
+/** Phone host snapshot: identity, defaults, and recent folders. */
+export function buildRemoteHostEvent(input: {
+  name: string
+  home: string
+  tmp: string
+  platform: string
+  defaultAgent: string
+  defaultModel: string
+  thinking: string | null
+  approval: 'auto' | 'bypass' | 'edit'
+  recentDirs: { path: string; label: string }[]
+}): RemoteHostEvent {
+  return {
+    type: 'host',
+    name: input.name,
+    home: input.home,
+    tmp: input.tmp,
+    platform: input.platform,
+    capabilities: REMOTE_PHONE_CAPABILITIES,
+    defaults: {
+      agent: input.defaultAgent,
+      model: input.defaultModel,
+      thinking: input.thinking,
+      approval: input.approval
+    },
+    recentDirs: input.recentDirs
+  }
 }

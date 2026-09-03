@@ -1,6 +1,6 @@
 import { Suspense, lazy } from 'react'
 import type { FileAssociationStatus, FileInspectResult } from '@shared/ipc'
-import { blockToRef, isSilentPreviewWindowWarning } from '../../lib/fileViewerHelpers'
+import { blockToRef, isSilentPreviewWindowWarning, upsertCommentCard } from '../../lib/fileViewerHelpers'
 import { previewOpenElapsed } from '../../lib/previewOpenClock'
 import { createWarmComponent } from '../../lib/warmComponent'
 import type { OfficeNativeView as OfficeNativeViewType } from '../office/OfficeNativeView'
@@ -154,386 +154,381 @@ export function FileViewerCanvas(props: FileViewerCanvasProps): React.JSX.Elemen
   } = props
 
   return (
-              <Suspense fallback={<div className="muted">{t('common.loading')}</div>}>
-              <>
-              {!info && <div className="muted">{t('common.loading')}</div>}
-              {/* Real load failures only — zip/binary use dedicated canvases, never this alert. */}
-              {info?.error && info.kind !== 'zip' && info.kind !== 'binary' && (
-                <InlineAlert kind="error" title={t('preview.loadFailed')} message={info.error} />
-              )}
-              {info && !info.error && info.kind === 'csv' && csvModel && (
-                <CsvView
-                  model={csvModel}
-                  selecting={selectable}
-                  selectedIds={selectedIds}
-                  onSelect={(id, event, hint) => applySelection(id, event, hint)}
-                />
-              )}
-              {info && !info.error && info.kind === 'sqlite' && info.sqlite && (
-                <SqliteView
-                  path={filePath}
-                  info={info.sqlite}
-                  selecting={selectable}
-                  selectedIds={selectedIds}
-                  onSelect={(id, event, hint) => applySelection(id, event, hint)}
-                />
-              )}
-              {info && mediaSrc && info.kind === 'image' && (
-                <div className="file-viewer-image-scroll">
-                  {/* Meta outside pick frame so EXIF rows stay text-selectable while scrolling. */}
-                  {info.imageMeta && info.imageMeta.length > 0 && (
+          <Suspense fallback={<div className="muted">{t('common.loading')}</div>}>
+          <>
+          {!info && <div className="muted">{t('common.loading')}</div>}
+          {/* Real load failures only — zip/binary use dedicated canvases, never this alert. */}
+          {info?.error && info.kind !== 'zip' && info.kind !== 'binary' && (
+            <InlineAlert kind="error" title={t('preview.loadFailed')} message={info.error} />
+          )}
+          {info && !info.error && info.kind === 'csv' && csvModel && (
+            <CsvView
+              model={csvModel}
+              selecting={selectable}
+              selectedIds={selectedIds}
+              onSelect={(id, event, hint) => applySelection(id, event, hint)}
+            />
+          )}
+          {info && !info.error && info.kind === 'sqlite' && info.sqlite && (
+            <SqliteView
+              path={filePath}
+              info={info.sqlite}
+              selecting={selectable}
+              selectedIds={selectedIds}
+              onSelect={(id, event, hint) => applySelection(id, event, hint)}
+            />
+          )}
+          {info && mediaSrc && info.kind === 'image' && (
+            <div className="file-viewer-image-scroll">
+              {/* Meta outside pick frame so EXIF rows stay text-selectable while scrolling. */}
+              {info.imageMeta && info.imageMeta.length > 0 && (
+                <div
+                  className="file-viewer-image-meta-flat"
+                  role="list"
+                  aria-label={t('preview.imageMeta')}
+                  onMouseDown={(e) => {
+                    // Don't let the media pick frame steal drags that start on meta.
+                    e.stopPropagation()
+                  }}
+                >
+                  {info.imageMeta.map((row) => (
                     <div
-                      className="file-viewer-image-meta-flat"
-                      role="list"
-                      aria-label={t('preview.imageMeta')}
-                      onMouseDown={(e) => {
-                        // Don't let the media pick frame steal drags that start on meta.
-                        e.stopPropagation()
-                      }}
+                      key={row.key}
+                      className="file-viewer-image-meta-line"
+                      role="listitem"
+                      // Single line for OS copy: "Key\tValue"
+                      data-meta-line={`${row.key}\t${row.value}`}
                     >
-                      {info.imageMeta.map((row) => (
-                        <div
-                          key={row.key}
-                          className="file-viewer-image-meta-line"
-                          role="listitem"
-                          // Single line for OS copy: "Key\tValue"
-                          data-meta-line={`${row.key}\t${row.value}`}
-                        >
-                          <span className="file-viewer-image-meta-key" title={row.key}>
-                            {row.key}
-                          </span>
-                          <span className="file-viewer-image-meta-val" title={row.value}>
-                            {row.value}
-                          </span>
-                        </div>
-                      ))}
+                      <span className="file-viewer-image-meta-key" title={row.key}>
+                        {row.key}
+                      </span>
+                      <span className="file-viewer-image-meta-val" title={row.value}>
+                        {row.value}
+                      </span>
                     </div>
-                  )}
-                  <ImageZoomStage
-                    key={mediaSrc}
-                    src={mediaSrc}
-                    alt={info.name}
-                    selecting={selectable}
-                    selected={selectedIds.includes('media')}
-                    onSelect={(event) => applySelection('media', event)}
-                  />
+                  ))}
                 </div>
               )}
-              {info && mediaSrc && info.kind === 'audio' && (
-                <MediaSelectFrame
-                  selecting={selectable}
-                  selected={selectedIds.includes('media')}
-                  onSelect={(event) => applySelection('media', event)}
-                >
-                  <div className="file-viewer-audio-card">
-                    <div className="file-viewer-audio-name" title={info.name}>
-                      {info.name}
-                    </div>
-                    <audio
-                      className="file-viewer-media file-viewer-audio"
-                      controls
-                      preload="metadata"
-                      src={mediaSrc}
-                    />
-                  </div>
-                </MediaSelectFrame>
-              )}
-              {info && mediaSrc && info.kind === 'video' && (
-                <MediaSelectFrame
-                  selecting={selectable}
-                  selected={selectedIds.includes('media')}
-                  onSelect={(event) => applySelection('media', event)}
-                >
-                  <video
-                    className="file-viewer-media file-viewer-video"
-                    controls
-                    preload="metadata"
-                    src={mediaSrc}
-                  />
-                </MediaSelectFrame>
-              )}
-              {/* Audio/video with no stream URL — still show a surface instead of a blank body. */}
-              {info &&
-                !info.error &&
-                (info.kind === 'audio' || info.kind === 'video') &&
-                !mediaSrc &&
-                (binaryOpenAs ? (
-                  <>
-                    <BinaryOpenToolbar mode={binaryOpenAs} onMode={setBinaryOpenAs} />
-                    {binaryOpenAs === 'text' ? (
-                      <ForcedBinaryTextView path={filePath} />
-                    ) : (
-                      <HexDumpView path={filePath} />
-                    )}
-                  </>
+              <ImageZoomStage
+                key={mediaSrc}
+                src={mediaSrc}
+                alt={info.name}
+                selecting={selectable}
+                selected={selectedIds.includes('media')}
+                onSelect={(event) => applySelection('media', event)}
+              />
+            </div>
+          )}
+          {info && mediaSrc && info.kind === 'audio' && (
+            <MediaSelectFrame
+              selecting={selectable}
+              selected={selectedIds.includes('media')}
+              onSelect={(event) => applySelection('media', event)}
+            >
+              <div className="file-viewer-audio-card">
+                <div className="file-viewer-audio-name" title={info.name}>
+                  {info.name}
+                </div>
+                <audio
+                  className="file-viewer-media file-viewer-audio"
+                  controls
+                  preload="metadata"
+                  src={mediaSrc}
+                />
+              </div>
+            </MediaSelectFrame>
+          )}
+          {info && mediaSrc && info.kind === 'video' && (
+            <MediaSelectFrame
+              selecting={selectable}
+              selected={selectedIds.includes('media')}
+              onSelect={(event) => applySelection('media', event)}
+            >
+              <video
+                className="file-viewer-media file-viewer-video"
+                controls
+                preload="metadata"
+                src={mediaSrc}
+              />
+            </MediaSelectFrame>
+          )}
+          {/* Audio/video with no stream URL — still show a surface instead of a blank body. */}
+          {info &&
+            !info.error &&
+            (info.kind === 'audio' || info.kind === 'video') &&
+            !mediaSrc &&
+            (binaryOpenAs ? (
+              <>
+                <BinaryOpenToolbar mode={binaryOpenAs} onMode={setBinaryOpenAs} />
+                {binaryOpenAs === 'text' ? (
+                  <ForcedBinaryTextView path={filePath} />
                 ) : (
-                  <BinaryFileView
-                    info={info}
-                    meta={info.binaryMeta ?? null}
-                    onOpenWithDefault={() => void window.vav.files.openWithDefault(filePath)}
-                    onReveal={() => void window.vav.conversations.revealInFinder(filePath)}
-                    onOpenAs={setBinaryOpenAs}
-                  />
-                ))}
-              {info?.warnings &&
-                info.warnings.some((w) => !isSilentPreviewWindowWarning(w)) && (
-                  <div className="file-viewer-warnings" role="status">
-                    {info.warnings
-                      .filter((w) => !isSilentPreviewWindowWarning(w))
-                      .map((w) => (
-                        <div key={w} className="file-viewer-warning-line muted">
-                          {w}
-                        </div>
-                      ))}
-                  </div>
+                  <HexDumpView path={filePath} />
                 )}
-              {info && !info.error && isOfficeKind && (
-                <>
-                  {/* Progressive structured canvas for docx/xlsx/pptx until native paints. */}
-                  {structuredPreview &&
-                    !nativeOfficeReady &&
-                    info.kind !== 'pdf' && (
-                      <Suspense fallback={null}>
-                        <StructuredDocView
-                          doc={structuredPreview}
-                          selecting={selectable}
-                          selectedIds={selectedIds}
-                          onSelect={(id, event) => applySelection(id, event ?? null)}
-                        />
-                      </Suspense>
-                    )}
-                  <div
-                    className={
-                      structuredPreview && !nativeOfficeReady && info.kind !== 'pdf'
-                        ? 'file-viewer-native-office is-pending'
-                        : 'file-viewer-native-office'
-                    }
-                    aria-hidden={
-                      structuredPreview && !nativeOfficeReady && info.kind !== 'pdf'
-                        ? true
-                        : undefined
-                    }
-                  >
-                    {OfficeNativeView ? (
-                      <OfficeNativeView
-                        path={info.contentPath || filePath}
-                        kind={info.kind}
-                        revision={previewRevision}
-                        selecting={selectable}
-                        selectedIds={selectedIds}
-                        onPick={onOfficePick}
-                        onReady={() => {
-                          setNativeOfficeReady(true)
-                          markViewer('native-ready')
-                        }}
-                        progressiveStructured={structuredPreview}
-                      />
-                    ) : null}
-                  </div>
-                </>
-              )}
-              {info && !info.error && isHtmlKind && (
-                <HtmlNativeView
-                  path={info.contentPath || filePath}
-                  html={displayText}
-                  revision={previewRevision}
-                  selecting={selectable}
-                  selectedIds={selectedIds}
-                  onPick={onOfficePick}
-                />
-              )}
-              {info && !info.error && isHtmlClipKind && (
-                <Suspense fallback={null}>
-                  <HtmlClipFrame source={displayText} title={info.name} />
-                </Suspense>
-              )}
-              {info && !info.error && info.kind === 'text' && isMindMap && (
-                <MindMapView
-                  key={filePath}
-                  path={filePath}
-                  text={displayText}
-                  selecting={selectable}
-                  selectedIds={selectedIds}
-                  readOnly={effectiveReadOnly}
-                  onSelect={(block, event) => applySelection(block.id, event ?? null, block)}
-                  onDocChange={(serialized) => {
-                    setWorkingContent(serialized)
-                    setHasUnsavedChanges(serialized !== (baselineContent ?? info?.text ?? ''))
-                  }}
-                />
-              )}
-              {info && !info.error && info.kind === 'text' && isMermaidFile && (
-                <DiagramFileView
-                  key={filePath}
-                  kind="mermaid"
-                  text={displayText}
-                  selecting={selectable}
-                  selectedIds={selectedIds}
-                  readOnly={effectiveReadOnly}
-                  onSelect={(block, event) => applySelection(block.id, event ?? null, block)}
-                  onSourceChange={(source) => {
-                    setWorkingContent(source)
-                    setHasUnsavedChanges(source !== (baselineContent ?? info?.text ?? ''))
-                  }}
-                />
-              )}
-              {info && !info.error && info.kind === 'text' && isDotFile && (
-                <DiagramFileView
-                  key={filePath}
-                  kind="graphviz"
-                  text={displayText}
-                  selecting={selectable}
-                  selectedIds={selectedIds}
-                  readOnly={effectiveReadOnly}
-                  onSelect={(block, event) => applySelection(block.id, event ?? null, block)}
-                  onSourceChange={(source) => {
-                    setWorkingContent(source)
-                    setHasUnsavedChanges(source !== (baselineContent ?? info?.text ?? ''))
-                  }}
-                />
-              )}
-              {info && !info.error && info.kind === 'text' && isDrawioFile && (
-                <DrawioView
-                  key={filePath}
-                  text={displayText}
-                  selecting={selectable}
-                  selectedIds={selectedIds}
-                  onSelect={(block, event) => applySelection(block.id, event ?? null, block)}
-                />
-              )}
-              {info && !info.error && info.kind === 'text' && !isDiagramCanvas && (
-                <DocumentView
-                  path={filePath}
-                  text={displayText}
-                  markdown={isMarkdown}
-                  notebook={isNotebook}
-                  lineOriented={lineOriented}
-                  selecting={selectable}
-                  blocks={rootBlocks}
-                  selectedIds={selectedIds}
-                  selectedBlocks={selectedBlocks}
-                  onSelectBlock={applySelection}
-                  onSelectLine={selectByLine}
-                  onNearEnd={() => {
-                    void extendTextWindow()
-                  }}
-                  onAskAgent={(prompt, target) => {
-                    setSelectedIds([target.id])
-                    const id =
-                      agentConversationId ??
-                      parentConversationId ??
-                      useSessionStore.getState().activeId
-                    if (!id) return
-                    const store = useSessionStore.getState()
-                    store.setDraft(id, prompt)
-                    // Comment card (not legacy previewRefs Reference chips).
-                    const ref = blockToRef(filePath, badge, target)
-                    const existing = store.commentCards[id] ?? []
-                    const without = existing.filter((c) => c.ref.id !== ref.id)
-                    store.setCommentCards(id, [...without, { ref, comment: '' }])
-                    store.clearPreviewRefs(id)
-                    store.focusCommentCard(ref.id)
-                    store.focusComposer()
-                  }}
-                />
-              )}
-              {info && info.kind === 'zip' && (
-                <ZipArchiveView
-                  name={info.name}
-                  zip={
-                    info.zip ?? {
-                      entries: [],
-                      entryCount: 0,
-                      compressedSize: info.size,
-                      uncompressedSize: 0,
-                      ratio: 0
-                    }
-                  }
-                  truncated={!!info.truncated || !!info.zipEncrypted}
-                  selecting={selectable && !info.error}
-                  selectedIds={selectedIds}
-                  onSelect={(block, event) => applySelection(block.id, event, block)}
-                  passwordProtected={!!info.zipEncrypted}
-                />
-              )}
-              {info && info.kind === 'directory' && (
-                <div className="muted" style={{ padding: 24, textAlign: 'center' }}>
-                  {t('files.error.directory')}
-                </div>
-              )}
-              {info &&
-                info.kind === 'binary' &&
-                (binaryOpenAs ? (
-                  <>
-                    <BinaryOpenToolbar mode={binaryOpenAs} onMode={setBinaryOpenAs} />
-                    {binaryOpenAs === 'text' ? (
-                      <ForcedBinaryTextView path={filePath} />
-                    ) : (
-                      <HexDumpView path={filePath} />
-                    )}
-                  </>
-                ) : (
-                  <BinaryFileView
-                    info={info}
-                    meta={{
-                      ...(info.binaryMeta ?? {
-                        uti: 'public.data',
-                        permissions: '—',
-                        owner: '—',
-                        createdAt: null,
-                        modifiedAt: info.mtimeMs ?? null,
-                        inode: '—',
-                        defaultApp: null
-                      }),
-                      defaultApp:
-                        info.binaryMeta?.defaultApp ?? assoc?.defaultApp ?? null
-                    }}
-                    onOpenAs={setBinaryOpenAs}
-                    onOpenWithDefault={async () => {
-                      try {
-                        if (typeof window.vav.files.openWithDefault !== 'function') {
-                          showToast({
-                            kind: 'error',
-                            title: t('preview.openFailed'),
-                            description: t('preview.openFailedNoApi')
-                          })
-                          return
-                        }
-                        const result = await window.vav.files.openWithDefault(filePath)
-                        if (!result?.ok) {
-                          showToast({
-                            kind: 'error',
-                            title: t('preview.openFailed'),
-                            description: result && 'error' in result ? result.error : undefined
-                          })
-                          return
-                        }
-                        showToast({
-                          kind: 'success',
-                          title: t('preview.openLaunched')
-                        })
-                      } catch (err) {
-                        showToast({
-                          kind: 'error',
-                          title: t('preview.openFailed'),
-                          description: (err as Error).message
-                        })
-                      }
-                    }}
-                    onReveal={async () => {
-                      try {
-                        await window.vav.conversations.revealInFinder(filePath)
-                      } catch (err) {
-                        showToast({
-                          kind: 'error',
-                          title: t('preview.revealFailed'),
-                          description: (err as Error).message
-                        })
-                      }
-                    }}
-                  />
-                ))}
               </>
-              </Suspense>
+            ) : (
+              <BinaryFileView
+                info={info}
+                meta={info.binaryMeta ?? null}
+                onOpenWithDefault={() => void window.vav.files.openWithDefault(filePath)}
+                onReveal={() => void window.vav.conversations.revealInFinder(filePath)}
+                onOpenAs={setBinaryOpenAs}
+              />
+            ))}
+          {info?.warnings &&
+            info.warnings.some((w) => !isSilentPreviewWindowWarning(w)) && (
+              <div className="file-viewer-warnings" role="status">
+                {info.warnings
+                  .filter((w) => !isSilentPreviewWindowWarning(w))
+                  .map((w) => (
+                    <div key={w} className="file-viewer-warning-line muted">
+                      {w}
+                    </div>
+                  ))}
+              </div>
+            )}
+          {info && !info.error && isOfficeKind && (
+            <>
+              {/* Progressive structured canvas for docx/xlsx/pptx until native paints. */}
+              {structuredPreview && !nativeOfficeReady && (
+                  <Suspense fallback={null}>
+                    <StructuredDocView
+                      doc={structuredPreview}
+                      selecting={selectable}
+                      selectedIds={selectedIds}
+                      onSelect={(id, event) => applySelection(id, event ?? null)}
+                    />
+                  </Suspense>
+                )}
+              <div
+                className={
+                  structuredPreview && !nativeOfficeReady
+                    ? 'file-viewer-native-office is-pending'
+                    : 'file-viewer-native-office'
+                }
+                aria-hidden={
+                  structuredPreview && !nativeOfficeReady ? true : undefined
+                }
+              >
+                {OfficeNativeView ? (
+                  <OfficeNativeView
+                    path={info.contentPath || filePath}
+                    kind={info.kind}
+                    revision={previewRevision}
+                    selecting={selectable}
+                    selectedIds={selectedIds}
+                    onPick={onOfficePick}
+                    onReady={() => {
+                      setNativeOfficeReady(true)
+                      markViewer('native-ready')
+                    }}
+                    progressiveStructured={structuredPreview}
+                  />
+                ) : null}
+              </div>
+            </>
+          )}
+          {info && !info.error && isHtmlKind && (
+            <HtmlNativeView
+              path={info.contentPath || filePath}
+              html={displayText}
+              revision={previewRevision}
+              selecting={selectable}
+              selectedIds={selectedIds}
+              onPick={onOfficePick}
+            />
+          )}
+          {info && !info.error && isHtmlClipKind && (
+            <Suspense fallback={null}>
+              <HtmlClipFrame source={displayText} title={info.name} />
+            </Suspense>
+          )}
+          {info && !info.error && info.kind === 'text' && isMindMap && (
+            <MindMapView
+              key={filePath}
+              path={filePath}
+              text={displayText}
+              selecting={selectable}
+              selectedIds={selectedIds}
+              readOnly={effectiveReadOnly}
+              onSelect={(block, event) => applySelection(block.id, event ?? null, block)}
+              onDocChange={(serialized) => {
+                setWorkingContent(serialized)
+                setHasUnsavedChanges(serialized !== (baselineContent ?? info?.text ?? ''))
+              }}
+            />
+          )}
+          {info && !info.error && info.kind === 'text' && isMermaidFile && (
+            <DiagramFileView
+              key={filePath}
+              kind="mermaid"
+              text={displayText}
+              selecting={selectable}
+              selectedIds={selectedIds}
+              readOnly={effectiveReadOnly}
+              onSelect={(block, event) => applySelection(block.id, event ?? null, block)}
+              onSourceChange={(source) => {
+                setWorkingContent(source)
+                setHasUnsavedChanges(source !== (baselineContent ?? info?.text ?? ''))
+              }}
+            />
+          )}
+          {info && !info.error && info.kind === 'text' && isDotFile && (
+            <DiagramFileView
+              key={filePath}
+              kind="graphviz"
+              text={displayText}
+              selecting={selectable}
+              selectedIds={selectedIds}
+              readOnly={effectiveReadOnly}
+              onSelect={(block, event) => applySelection(block.id, event ?? null, block)}
+              onSourceChange={(source) => {
+                setWorkingContent(source)
+                setHasUnsavedChanges(source !== (baselineContent ?? info?.text ?? ''))
+              }}
+            />
+          )}
+          {info && !info.error && info.kind === 'text' && isDrawioFile && (
+            <DrawioView
+              key={filePath}
+              text={displayText}
+              selecting={selectable}
+              selectedIds={selectedIds}
+              onSelect={(block, event) => applySelection(block.id, event ?? null, block)}
+            />
+          )}
+          {info && !info.error && info.kind === 'text' && !isDiagramCanvas && (
+            <DocumentView
+              path={filePath}
+              text={displayText}
+              markdown={isMarkdown}
+              notebook={isNotebook}
+              lineOriented={lineOriented}
+              selecting={selectable}
+              blocks={rootBlocks}
+              selectedIds={selectedIds}
+              selectedBlocks={selectedBlocks}
+              onSelectBlock={applySelection}
+              onSelectLine={selectByLine}
+              onNearEnd={() => {
+                void extendTextWindow()
+              }}
+              onAskAgent={(prompt, target) => {
+                setSelectedIds([target.id])
+                const id =
+                  agentConversationId ??
+                  parentConversationId ??
+                  useSessionStore.getState().activeId
+                if (!id) return
+                const store = useSessionStore.getState()
+                store.setDraft(id, prompt)
+                // Comment card (not legacy previewRefs Reference chips).
+                const ref = blockToRef(filePath, badge, target)
+                const existing = store.commentCards[id] ?? []
+                store.setCommentCards(id, upsertCommentCard(existing, ref))
+                store.clearPreviewRefs(id)
+                store.focusCommentCard(ref.id)
+                store.focusComposer()
+              }}
+            />
+          )}
+          {info && info.kind === 'zip' && (
+            <ZipArchiveView
+              name={info.name}
+              zip={
+                info.zip ?? {
+                  entries: [],
+                  entryCount: 0,
+                  compressedSize: info.size,
+                  uncompressedSize: 0,
+                  ratio: 0
+                }
+              }
+              truncated={!!info.truncated || !!info.zipEncrypted}
+              selecting={selectable && !info.error}
+              selectedIds={selectedIds}
+              onSelect={(block, event) => applySelection(block.id, event, block)}
+              passwordProtected={!!info.zipEncrypted}
+            />
+          )}
+          {info && info.kind === 'directory' && (
+            <div className="muted" style={{ padding: 24, textAlign: 'center' }}>
+              {t('files.error.directory')}
+            </div>
+          )}
+          {info &&
+            info.kind === 'binary' &&
+            (binaryOpenAs ? (
+              <>
+                <BinaryOpenToolbar mode={binaryOpenAs} onMode={setBinaryOpenAs} />
+                {binaryOpenAs === 'text' ? (
+                  <ForcedBinaryTextView path={filePath} />
+                ) : (
+                  <HexDumpView path={filePath} />
+                )}
+              </>
+            ) : (
+              <BinaryFileView
+                info={info}
+                meta={{
+                  ...(info.binaryMeta ?? {
+                    uti: 'public.data',
+                    permissions: '—',
+                    owner: '—',
+                    createdAt: null,
+                    modifiedAt: info.mtimeMs ?? null,
+                    inode: '—',
+                    defaultApp: null
+                  }),
+                  defaultApp:
+                    info.binaryMeta?.defaultApp ?? assoc?.defaultApp ?? null
+                }}
+                onOpenAs={setBinaryOpenAs}
+                onOpenWithDefault={async () => {
+                  try {
+                    if (typeof window.vav.files.openWithDefault !== 'function') {
+                      showToast({
+                        kind: 'error',
+                        title: t('preview.openFailed'),
+                        description: t('preview.openFailedNoApi')
+                      })
+                      return
+                    }
+                    const result = await window.vav.files.openWithDefault(filePath)
+                    if (!result?.ok) {
+                      showToast({
+                        kind: 'error',
+                        title: t('preview.openFailed'),
+                        description: result && 'error' in result ? result.error : undefined
+                      })
+                      return
+                    }
+                    showToast({
+                      kind: 'success',
+                      title: t('preview.openLaunched')
+                    })
+                  } catch (err) {
+                    showToast({
+                      kind: 'error',
+                      title: t('preview.openFailed'),
+                      description: (err as Error).message
+                    })
+                  }
+                }}
+                onReveal={async () => {
+                  try {
+                    await window.vav.conversations.revealInFinder(filePath)
+                  } catch (err) {
+                    showToast({
+                      kind: 'error',
+                      title: t('preview.revealFailed'),
+                      description: (err as Error).message
+                    })
+                  }
+                }}
+              />
+            ))}
+          </>
+          </Suspense>
   )
 }

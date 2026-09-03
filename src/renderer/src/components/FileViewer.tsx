@@ -1,6 +1,4 @@
 import {
-  Suspense,
-  lazy,
   useCallback,
   useDeferredValue,
   useEffect,
@@ -38,33 +36,20 @@ import {
   previewBlocksFromSqliteTables,
   previewBlocksFromZipEntries,
   provisionalInspect,
-  pathsEqual,
-  upsertCommentCard
+  pathsEqual
 } from '../lib/fileViewerHelpers'
 import { convertEditProfileFor, fileViewerKindFlags, isBinaryOfficeKind, isPreviewKindSelectable } from '../lib/fileViewerKinds'
 import { AgentPanelToggleButton } from './fileViewer/AgentPanelToggleButton'
-import { CsvView } from './fileViewer/CsvView'
-import { DocumentView } from './fileViewer/DocumentView'
 import { FileViewerAgentColumn } from './fileViewer/FileViewerAgentColumn'
+import { FileViewerCanvas } from './fileViewer/FileViewerCanvas'
 import { FileViewerHeader } from './fileViewer/FileViewerHeader'
-import { ImageZoomStage, MediaSelectFrame } from './fileViewer/MediaStages'
 import { previewOpenElapsed } from '../lib/previewOpenClock'
-import { createWarmComponent } from '../lib/warmComponent'
-import type { OfficeNativeView as OfficeNativeViewType } from './office/OfficeNativeView'
 import { isPickGestureActive, type ClickPickPointer } from '../lib/clickPick'
 import { suppressHyperlinkClick } from '../lib/suppressHyperlinks'
 import { useT } from '../i18n/useT'
 import { useSessionStore } from '../state/sessionStore'
 import { useWorkspaceStore } from '../state/workspaceStore'
-import { InlineAlert } from './ui'
-import { BinaryFileView } from './BinaryFileView'
-import {
-  BinaryOpenToolbar,
-  ForcedBinaryTextView,
-  HexDumpView,
-  type BinaryOpenMode
-} from './BinaryOpenViews'
-import { isSilentPreviewWindowWarning } from '@shared/previewWarnings'
+import { type BinaryOpenMode } from './BinaryOpenViews'
 import type { StructuredDocument } from '@shared/structuredDoc'
 import { SelectionChrome } from './SelectionChrome'
 import { DocZoomControls } from './office/DocZoomControls'
@@ -75,35 +60,6 @@ import {
   isMediaPreviewPath,
   shouldArmUnsavedFromExternalChange
 } from '../lib/previewDirty'
-
-// Heavy format canvases — keep out of the chat / settings critical path.
-// Warm handle rather than `lazy`: the router is resident in a warm shell, and a
-// Suspense fallback would cost React's ~300 ms reveal throttle.
-const officeRouter = createWarmComponent<React.ComponentProps<typeof OfficeNativeViewType>>(
-  () => import('./office/OfficeNativeView').then((m) => m.OfficeNativeView)
-)
-const StructuredDocView = lazy(() =>
-  import('./StructuredDocView').then((m) => ({ default: m.StructuredDocView }))
-)
-const HtmlNativeView = lazy(() =>
-  import('./office/HtmlNativeView').then((m) => ({ default: m.HtmlNativeView }))
-)
-const HtmlClipFrame = lazy(() =>
-  import('./HtmlClipFrame').then((m) => ({ default: m.HtmlClipFrame }))
-)
-const SqliteView = lazy(() => import('./SqliteView').then((m) => ({ default: m.SqliteView })))
-const MindMapView = lazy(() =>
-  import('./diagram/MindMapView').then((m) => ({ default: m.MindMapView }))
-)
-const DiagramFileView = lazy(() =>
-  import('./diagram/DiagramFileView').then((m) => ({ default: m.DiagramFileView }))
-)
-const DrawioView = lazy(() =>
-  import('./diagram/DrawioView').then((m) => ({ default: m.DrawioView }))
-)
-const ZipArchiveView = lazy(() =>
-  import('./ZipArchiveView').then((m) => ({ default: m.ZipArchiveView }))
-)
 
 function markViewer(label: string): void {
   try {
@@ -208,7 +164,6 @@ export function FileViewer({
   const unsavedPromptOpen = useRef(false)
   /** Blocks picked from mature office/PDF renderers (DOM / sheet). */
   const officeBlocksRef = useRef<Map<string, PreviewBlock>>(new Map())
-  const OfficeNativeView = officeRouter.use()
   const selectConversation = useSessionStore((s) => s.selectConversation)
   const createConversation = useSessionStore((s) => s.createConversation)
   const agentCommentCards = useSessionStore((s) => {
@@ -1925,382 +1880,49 @@ export function FileViewer({
     ) : null
 
   const fileBody = (
-          <Suspense fallback={<div className="muted">{t('common.loading')}</div>}>
-          <>
-          {!info && <div className="muted">{t('common.loading')}</div>}
-          {/* Real load failures only — zip/binary use dedicated canvases, never this alert. */}
-          {info?.error && info.kind !== 'zip' && info.kind !== 'binary' && (
-            <InlineAlert kind="error" title={t('preview.loadFailed')} message={info.error} />
-          )}
-          {info && !info.error && info.kind === 'csv' && csvModel && (
-            <CsvView
-              model={csvModel}
-              selecting={selectable}
-              selectedIds={selectedIds}
-              onSelect={(id, event, hint) => applySelection(id, event, hint)}
-            />
-          )}
-          {info && !info.error && info.kind === 'sqlite' && info.sqlite && (
-            <SqliteView
-              path={filePath}
-              info={info.sqlite}
-              selecting={selectable}
-              selectedIds={selectedIds}
-              onSelect={(id, event, hint) => applySelection(id, event, hint)}
-            />
-          )}
-          {info && mediaSrc && info.kind === 'image' && (
-            <div className="file-viewer-image-scroll">
-              {/* Meta outside pick frame so EXIF rows stay text-selectable while scrolling. */}
-              {info.imageMeta && info.imageMeta.length > 0 && (
-                <div
-                  className="file-viewer-image-meta-flat"
-                  role="list"
-                  aria-label={t('preview.imageMeta')}
-                  onMouseDown={(e) => {
-                    // Don't let the media pick frame steal drags that start on meta.
-                    e.stopPropagation()
-                  }}
-                >
-                  {info.imageMeta.map((row) => (
-                    <div
-                      key={row.key}
-                      className="file-viewer-image-meta-line"
-                      role="listitem"
-                      // Single line for OS copy: "Key\tValue"
-                      data-meta-line={`${row.key}\t${row.value}`}
-                    >
-                      <span className="file-viewer-image-meta-key" title={row.key}>
-                        {row.key}
-                      </span>
-                      <span className="file-viewer-image-meta-val" title={row.value}>
-                        {row.value}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              )}
-              <ImageZoomStage
-                key={mediaSrc}
-                src={mediaSrc}
-                alt={info.name}
-                selecting={selectable}
-                selected={selectedIds.includes('media')}
-                onSelect={(event) => applySelection('media', event)}
-              />
-            </div>
-          )}
-          {info && mediaSrc && info.kind === 'audio' && (
-            <MediaSelectFrame
-              selecting={selectable}
-              selected={selectedIds.includes('media')}
-              onSelect={(event) => applySelection('media', event)}
-            >
-              <div className="file-viewer-audio-card">
-                <div className="file-viewer-audio-name" title={info.name}>
-                  {info.name}
-                </div>
-                <audio
-                  className="file-viewer-media file-viewer-audio"
-                  controls
-                  preload="metadata"
-                  src={mediaSrc}
-                />
-              </div>
-            </MediaSelectFrame>
-          )}
-          {info && mediaSrc && info.kind === 'video' && (
-            <MediaSelectFrame
-              selecting={selectable}
-              selected={selectedIds.includes('media')}
-              onSelect={(event) => applySelection('media', event)}
-            >
-              <video
-                className="file-viewer-media file-viewer-video"
-                controls
-                preload="metadata"
-                src={mediaSrc}
-              />
-            </MediaSelectFrame>
-          )}
-          {/* Audio/video with no stream URL — still show a surface instead of a blank body. */}
-          {info &&
-            !info.error &&
-            (info.kind === 'audio' || info.kind === 'video') &&
-            !mediaSrc &&
-            (binaryOpenAs ? (
-              <>
-                <BinaryOpenToolbar mode={binaryOpenAs} onMode={setBinaryOpenAs} />
-                {binaryOpenAs === 'text' ? (
-                  <ForcedBinaryTextView path={filePath} />
-                ) : (
-                  <HexDumpView path={filePath} />
-                )}
-              </>
-            ) : (
-              <BinaryFileView
-                info={info}
-                meta={info.binaryMeta ?? null}
-                onOpenWithDefault={() => void window.vav.files.openWithDefault(filePath)}
-                onReveal={() => void window.vav.conversations.revealInFinder(filePath)}
-                onOpenAs={setBinaryOpenAs}
-              />
-            ))}
-          {info?.warnings &&
-            info.warnings.some((w) => !isSilentPreviewWindowWarning(w)) && (
-              <div className="file-viewer-warnings" role="status">
-                {info.warnings
-                  .filter((w) => !isSilentPreviewWindowWarning(w))
-                  .map((w) => (
-                    <div key={w} className="file-viewer-warning-line muted">
-                      {w}
-                    </div>
-                  ))}
-              </div>
-            )}
-          {info && !info.error && isOfficeKind && (
-            <>
-              {/* Progressive structured canvas for docx/xlsx/pptx until native paints. */}
-              {structuredPreview && !nativeOfficeReady && (
-                  <Suspense fallback={null}>
-                    <StructuredDocView
-                      doc={structuredPreview}
-                      selecting={selectable}
-                      selectedIds={selectedIds}
-                      onSelect={(id, event) => applySelection(id, event ?? null)}
-                    />
-                  </Suspense>
-                )}
-              <div
-                className={
-                  structuredPreview && !nativeOfficeReady
-                    ? 'file-viewer-native-office is-pending'
-                    : 'file-viewer-native-office'
-                }
-                aria-hidden={
-                  structuredPreview && !nativeOfficeReady ? true : undefined
-                }
-              >
-                {OfficeNativeView ? (
-                  <OfficeNativeView
-                    path={info.contentPath || filePath}
-                    kind={info.kind}
-                    revision={previewRevision}
-                    selecting={selectable}
-                    selectedIds={selectedIds}
-                    onPick={onOfficePick}
-                    onReady={() => {
-                      setNativeOfficeReady(true)
-                      markViewer('native-ready')
-                    }}
-                    progressiveStructured={structuredPreview}
-                  />
-                ) : null}
-              </div>
-            </>
-          )}
-          {info && !info.error && isHtmlKind && (
-            <HtmlNativeView
-              path={info.contentPath || filePath}
-              html={displayText}
-              revision={previewRevision}
-              selecting={selectable}
-              selectedIds={selectedIds}
-              onPick={onOfficePick}
-            />
-          )}
-          {info && !info.error && isHtmlClipKind && (
-            <Suspense fallback={null}>
-              <HtmlClipFrame source={displayText} title={info.name} />
-            </Suspense>
-          )}
-          {info && !info.error && info.kind === 'text' && isMindMap && (
-            <MindMapView
-              key={filePath}
-              path={filePath}
-              text={displayText}
-              selecting={selectable}
-              selectedIds={selectedIds}
-              readOnly={effectiveReadOnly}
-              onSelect={(block, event) => applySelection(block.id, event ?? null, block)}
-              onDocChange={(serialized) => {
-                setWorkingContent(serialized)
-                setHasUnsavedChanges(serialized !== (baselineContent ?? info?.text ?? ''))
-              }}
-            />
-          )}
-          {info && !info.error && info.kind === 'text' && isMermaidFile && (
-            <DiagramFileView
-              key={filePath}
-              kind="mermaid"
-              text={displayText}
-              selecting={selectable}
-              selectedIds={selectedIds}
-              readOnly={effectiveReadOnly}
-              onSelect={(block, event) => applySelection(block.id, event ?? null, block)}
-              onSourceChange={(source) => {
-                setWorkingContent(source)
-                setHasUnsavedChanges(source !== (baselineContent ?? info?.text ?? ''))
-              }}
-            />
-          )}
-          {info && !info.error && info.kind === 'text' && isDotFile && (
-            <DiagramFileView
-              key={filePath}
-              kind="graphviz"
-              text={displayText}
-              selecting={selectable}
-              selectedIds={selectedIds}
-              readOnly={effectiveReadOnly}
-              onSelect={(block, event) => applySelection(block.id, event ?? null, block)}
-              onSourceChange={(source) => {
-                setWorkingContent(source)
-                setHasUnsavedChanges(source !== (baselineContent ?? info?.text ?? ''))
-              }}
-            />
-          )}
-          {info && !info.error && info.kind === 'text' && isDrawioFile && (
-            <DrawioView
-              key={filePath}
-              text={displayText}
-              selecting={selectable}
-              selectedIds={selectedIds}
-              onSelect={(block, event) => applySelection(block.id, event ?? null, block)}
-            />
-          )}
-          {info && !info.error && info.kind === 'text' && !isDiagramCanvas && (
-            <DocumentView
-              path={filePath}
-              text={displayText}
-              markdown={isMarkdown}
-              notebook={isNotebook}
-              lineOriented={lineOriented}
-              selecting={selectable}
-              blocks={rootBlocks}
-              selectedIds={selectedIds}
-              selectedBlocks={selectedBlocks}
-              onSelectBlock={applySelection}
-              onSelectLine={selectByLine}
-              onNearEnd={() => {
-                void extendTextWindow()
-              }}
-              onAskAgent={(prompt, target) => {
-                setSelectedIds([target.id])
-                const id =
-                  agentConversationId ??
-                  parentConversationId ??
-                  useSessionStore.getState().activeId
-                if (!id) return
-                const store = useSessionStore.getState()
-                store.setDraft(id, prompt)
-                // Comment card (not legacy previewRefs Reference chips).
-                const ref = blockToRef(filePath, badge, target)
-                const existing = store.commentCards[id] ?? []
-                store.setCommentCards(id, upsertCommentCard(existing, ref))
-                store.clearPreviewRefs(id)
-                store.focusCommentCard(ref.id)
-                store.focusComposer()
-              }}
-            />
-          )}
-          {info && info.kind === 'zip' && (
-            <ZipArchiveView
-              name={info.name}
-              zip={
-                info.zip ?? {
-                  entries: [],
-                  entryCount: 0,
-                  compressedSize: info.size,
-                  uncompressedSize: 0,
-                  ratio: 0
-                }
-              }
-              truncated={!!info.truncated || !!info.zipEncrypted}
-              selecting={selectable && !info.error}
-              selectedIds={selectedIds}
-              onSelect={(block, event) => applySelection(block.id, event, block)}
-              passwordProtected={!!info.zipEncrypted}
-            />
-          )}
-          {info && info.kind === 'directory' && (
-            <div className="muted" style={{ padding: 24, textAlign: 'center' }}>
-              {t('files.error.directory')}
-            </div>
-          )}
-          {info &&
-            info.kind === 'binary' &&
-            (binaryOpenAs ? (
-              <>
-                <BinaryOpenToolbar mode={binaryOpenAs} onMode={setBinaryOpenAs} />
-                {binaryOpenAs === 'text' ? (
-                  <ForcedBinaryTextView path={filePath} />
-                ) : (
-                  <HexDumpView path={filePath} />
-                )}
-              </>
-            ) : (
-              <BinaryFileView
-                info={info}
-                meta={{
-                  ...(info.binaryMeta ?? {
-                    uti: 'public.data',
-                    permissions: '—',
-                    owner: '—',
-                    createdAt: null,
-                    modifiedAt: info.mtimeMs ?? null,
-                    inode: '—',
-                    defaultApp: null
-                  }),
-                  defaultApp:
-                    info.binaryMeta?.defaultApp ?? assoc?.defaultApp ?? null
-                }}
-                onOpenAs={setBinaryOpenAs}
-                onOpenWithDefault={async () => {
-                  try {
-                    if (typeof window.vav.files.openWithDefault !== 'function') {
-                      showToast({
-                        kind: 'error',
-                        title: t('preview.openFailed'),
-                        description: t('preview.openFailedNoApi')
-                      })
-                      return
-                    }
-                    const result = await window.vav.files.openWithDefault(filePath)
-                    if (!result?.ok) {
-                      showToast({
-                        kind: 'error',
-                        title: t('preview.openFailed'),
-                        description: result && 'error' in result ? result.error : undefined
-                      })
-                      return
-                    }
-                    showToast({
-                      kind: 'success',
-                      title: t('preview.openLaunched')
-                    })
-                  } catch (err) {
-                    showToast({
-                      kind: 'error',
-                      title: t('preview.openFailed'),
-                      description: (err as Error).message
-                    })
-                  }
-                }}
-                onReveal={async () => {
-                  try {
-                    await window.vav.conversations.revealInFinder(filePath)
-                  } catch (err) {
-                    showToast({
-                      kind: 'error',
-                      title: t('preview.revealFailed'),
-                      description: (err as Error).message
-                    })
-                  }
-                }}
-              />
-            ))}
-          </>
-          </Suspense>
+    <FileViewerCanvas
+      info={info}
+      filePath={filePath}
+      csvModel={csvModel}
+      selectable={selectable}
+      selectedIds={selectedIds}
+      setSelectedIds={setSelectedIds}
+      applySelection={applySelection}
+      mediaSrc={mediaSrc}
+      binaryOpenAs={binaryOpenAs}
+      setBinaryOpenAs={setBinaryOpenAs}
+      structuredPreview={structuredPreview}
+      nativeOfficeReady={nativeOfficeReady}
+      setNativeOfficeReady={setNativeOfficeReady}
+      isOfficeKind={isOfficeKind}
+      previewRevision={previewRevision}
+      onOfficePick={onOfficePick}
+      isHtmlKind={isHtmlKind}
+      isHtmlClipKind={isHtmlClipKind}
+      displayText={displayText}
+      isMindMap={isMindMap}
+      effectiveReadOnly={effectiveReadOnly}
+      isMermaidFile={isMermaidFile}
+      isDotFile={isDotFile}
+      isDrawioFile={isDrawioFile}
+      isDiagramCanvas={isDiagramCanvas}
+      isMarkdown={isMarkdown}
+      isNotebook={isNotebook}
+      lineOriented={lineOriented}
+      rootBlocks={rootBlocks}
+      selectedBlocks={selectedBlocks}
+      selectByLine={selectByLine}
+      extendTextWindow={() => {
+        void extendTextWindow()
+      }}
+      setWorkingContent={setWorkingContent}
+      setHasUnsavedChanges={setHasUnsavedChanges}
+      baselineContent={baselineContent}
+      assoc={assoc}
+      agentConversationId={agentConversationId}
+      parentConversationId={parentConversationId}
+      badge={badge}
+    />
   )
 
   const statusFooter = (

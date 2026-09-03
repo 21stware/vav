@@ -8,7 +8,8 @@ import {
   remoteHostRecentDirs,
   remoteHostSwitchAction,
   remoteLiveConversation,
-  remoteSendDisposition
+  remoteSendDisposition,
+  buildRemoteHostEvent
 } from './sessionGate.ts'
 
 describe('remoteLiveConversation', () => {
@@ -144,5 +145,26 @@ describe('remoteCatalogModelRows', () => {
       }
     })
     assert.deepEqual(rows, [{ id: 'sonnet', label: 'Sonnet' }])
+  })
+})
+
+describe('buildRemoteHostEvent', () => {
+  it('packs identity, defaults, and recent dirs', () => {
+    const event = buildRemoteHostEvent({
+      name: 'Studio',
+      home: '/Users/ada',
+      tmp: '/tmp',
+      platform: 'darwin',
+      defaultAgent: 'vav',
+      defaultModel: 'kimi',
+      thinking: 'low',
+      approval: 'auto',
+      recentDirs: [{ path: '/repo', label: 'repo' }]
+    })
+    assert.equal(event.type, 'host')
+    assert.equal(event.name, 'Studio')
+    assert.equal(event.defaults.agent, 'vav')
+    assert.deepEqual(event.recentDirs, [{ path: '/repo', label: 'repo' }])
+    assert.ok(event.capabilities)
   })
 })
