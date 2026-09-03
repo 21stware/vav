@@ -37,7 +37,9 @@ import {
   previewBlocksFromSqliteTables,
   previewBlocksFromZipEntries,
   provisionalInspect,
-  pathsEqual
+  pathsEqual,
+  bindFilePreviewWorkspace,
+  selectedBlockIdsForPath
 } from '../lib/fileViewerHelpers'
 import { convertEditProfileFor, fileViewerKindFlags, isBinaryOfficeKind, isPreviewKindSelectable } from '../lib/fileViewerKinds'
 import { AgentPanelToggleButton } from './fileViewer/AgentPanelToggleButton'
@@ -775,10 +777,7 @@ export function FileViewer({
   // Removing a comment card (✕) should drop the canvas selection too.
   useEffect(() => {
     if (!selectable && !agentCommentCards.length) return
-    const prefix = `${filePath}::`
-    const ids = agentCommentCards
-      .filter((c) => c.ref.id.startsWith(prefix))
-      .map((c) => c.ref.id.slice(prefix.length))
+    const ids = selectedBlockIdsForPath(agentCommentCards, filePath)
     setSelectedIds((prev) => {
       if (prev.length === ids.length && prev.every((id, i) => id === ids[i])) return prev
       return ids
@@ -908,36 +907,20 @@ export function FileViewer({
     const dir = dirname(path)
     const store = useSessionStore.getState()
     const meta = store.conversations.find((c) => c.id === conversationId)
-    // Session already rooted at a project that contains this file — only
-    // highlight the path (right preview drawer). Never shrink the Files tree.
-    const root = meta?.workingDirectory ?? null
-    const underSessionRoot =
-      !!root &&
-      !root.startsWith('__') &&
-      (path === root || path.startsWith(`${root}/`) || path.startsWith(`${root}\\`))
-
-    if (underSessionRoot) {
-      useWorkspaceStore.getState().selectPath(conversationId, path)
-      return
-    }
-
-    // Always bind workdir for Enclosed dir chip; missing dirs surface a calm
-    // empty state in FilesPanel (ENOENT → "dir not exist"), not a raw error.
-    if ((meta?.workingDirectory ?? null) !== dir) {
-      await store.setWorkingDirectory(conversationId, dir)
-    } else {
-      await useWorkspaceStore.getState().setWorkingDirectory(conversationId, dir)
-    }
-    useWorkspaceStore.getState().selectPath(conversationId, path)
-    // Prefer Files segment when the user later expands tools, but stay collapsed.
-    // Quiet merges from toolsLayouts — if storage still says expanded, it would
-    // open the tray. Re-read after awaits so we preserve a mid-session open tray,
-    // and re-assert collapse when the tray was already folded.
-    const wasCollapsed = useSessionStore.getState().toolsCollapsed
-    store.setPanelSegmentQuiet('files')
-    if (wasCollapsed) store.setToolsCollapsed(true)
-    // Path chip shows "Enclosed dir" until the user explicitly switches workdir.
-    store.markEnclosedDirChip(conversationId)
+    await bindFilePreviewWorkspace({
+      conversationId,
+      path,
+      dir,
+      workingDirectory: meta?.workingDirectory ?? null,
+      selectPath: (id, nextPath) => useWorkspaceStore.getState().selectPath(id, nextPath),
+      setConversationWorkingDirectory: (id, nextDir) => store.setWorkingDirectory(id, nextDir),
+      setWorkspaceWorkingDirectory: (id, nextDir) =>
+        useWorkspaceStore.getState().setWorkingDirectory(id, nextDir),
+      setPanelSegmentQuiet: (segment) => store.setPanelSegmentQuiet(segment),
+      setToolsCollapsed: (collapsed) => store.setToolsCollapsed(collapsed),
+      markEnclosedDirChip: (id) => store.markEnclosedDirChip(id),
+      toolsCollapsed: () => useSessionStore.getState().toolsCollapsed
+    })
   }
 
   // Embedded (FileSessionView / Workspace Peek): bind parent + enclosed-dir tray.

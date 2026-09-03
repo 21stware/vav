@@ -70,6 +70,16 @@ export function toolsFor(
   return state.toolsLayouts[id] ?? DEFAULT_SESSION_TOOLS
 }
 
+/** File-bound sessions always enter with the Files tray collapsed. */
+export function collapsedFileSessionTools(layout: SessionToolsLayout): SessionToolsLayout {
+  return {
+    ...layout,
+    toolsCollapsed: true,
+    panelSegment: 'files',
+    lastActiveSegment: 'files'
+  }
+}
+
 export function activeToolsFields(layout: SessionToolsLayout): {
   toolsCollapsed: boolean
   panelSegment: SessionToolsLayout['panelSegment']

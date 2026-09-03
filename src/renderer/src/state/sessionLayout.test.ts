@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import {
   DEFAULT_SESSION_TOOLS,
+  collapsedFileSessionTools,
   parseGlobalLayout,
   parseSessionToolsMap,
   patchActiveTools,
@@ -18,6 +19,17 @@ describe('sessionLayout parse', () => {
     assert.equal(map.c1?.panelHeight, 400)
     assert.equal(map.c1?.panelSegment, DEFAULT_SESSION_TOOLS.panelSegment)
     assert.equal(toolsFor({ toolsLayouts: {} }, 'missing').panelHeight, 240)
+    const collapsed = collapsedFileSessionTools({
+      ...DEFAULT_SESSION_TOOLS,
+      toolsCollapsed: false,
+      panelSegment: 'terminal',
+      lastActiveSegment: 'terminal',
+      panelHeight: 400
+    })
+    assert.equal(collapsed.toolsCollapsed, true)
+    assert.equal(collapsed.panelSegment, 'files')
+    assert.equal(collapsed.lastActiveSegment, 'files')
+    assert.equal(collapsed.panelHeight, 400)
   })
 
   it('patches the active tools layout and ignores a missing conversation', () => {

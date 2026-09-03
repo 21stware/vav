@@ -16,6 +16,7 @@ import type { RemoteControlStatus } from '@shared/remoteControl'
 import { mergeConversationList, nextConversationSelection, isArchivedConversation, regenerateActiveLeaf, canMutateActiveSession, compactRefusalReason, genericErrorBanner, patchConversationById, shouldSkipSessionDeleteConfirm } from './sessionListMerge'
 import {
   activeToolsFields,
+  collapsedFileSessionTools,
   DEFAULT_SESSION_TOOLS,
   PANEL_MAX_HEIGHT,
   PANEL_MIN_HEIGHT,
@@ -991,12 +992,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     let sessionTools = toolsFor(get(), id)
     let toolsLayoutsPatch: Record<string, SessionToolsLayout> | undefined
     if (target?.fileId) {
-      sessionTools = {
-        ...sessionTools,
-        toolsCollapsed: true,
-        panelSegment: 'files',
-        lastActiveSegment: 'files'
-      }
+      sessionTools = collapsedFileSessionTools(sessionTools)
       toolsLayoutsPatch = { ...get().toolsLayouts, [id]: sessionTools }
       saveSessionToolsMap(toolsLayoutsPatch)
     }
