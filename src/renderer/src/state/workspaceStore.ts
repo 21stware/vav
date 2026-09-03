@@ -22,11 +22,15 @@ import {
 } from '../lib/workspaceLayout'
 import {
   CLI_SURFACE_KEY,
+  hydratedActiveHostAgentId,
   pendingCliPickerSurface,
   pickCliScreenFocusTab,
+  planCloseAgentTabPatch,
   planEnterCliMode,
+  planSplitAgentHost,
   planSplitCliSurface,
   preferredCliAssignTabId,
+  resolveCloseAgentTabMeta,
   solePendingCliTabId,
   reconcileAgentHosts,
   type AgentHostSession
@@ -551,15 +555,11 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         localCli: s.cliMode === true,
         followRemote
       })
-      let activeHostAgentId = s.activeHostAgentId
-      if (cliMode) {
-        activeHostAgentId = CLI_SURFACE_KEY
-      } else if (activeHostAgentId === CLI_SURFACE_KEY) {
-        activeHostAgentId = null
-      } else if (activeHostAgentId && !projected.agentHostSessions[activeHostAgentId]) {
-        // Legacy per-agent host gone — clear pointer only.
-        activeHostAgentId = null
-      }
+      const activeHostAgentId = hydratedActiveHostAgentId(
+        cliMode,
+        s.activeHostAgentId,
+        projected.agentHostSessions
+      )
 
       // Tombstones apply to the tools-tray list only. Agent hosts are excluded
       // deliberately: `isLiveAgentSession` would read a dead pane as restorable
@@ -1295,33 +1295,17 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     }
     patch(set, id, (s) => {
       const cur = getAgentHost(s, agentId) ?? host
-      // Drop a hydrate race that may have already inserted this pane as `row`.
-      let layout = cur.layout ?? { type: 'leaf', tabId: focusId, weight: 1 }
-      if (collectLeaves(layout).includes(newTabId)) {
-        layout = removeLeaf(layout, newTabId) ?? {
-          type: 'leaf',
-          tabId: focusId,
-          weight: 1
-        }
-      }
       const baseTabs = cur.tabs.filter((t) => t.id !== newTabId)
-      const focusInLayout = collectLeaves(layout).includes(focusId)
-      const splitAt = focusInLayout ? focusId : (collectLeaves(layout)[0] ?? focusId)
-      const nextLayout = splitLeaf(layout, splitAt, axis, newTabId)
-      const tabs = [
-        ...baseTabs,
-        {
-          id: newTabId,
-          title: `${agent.name}-${baseTabs.length + 1}`,
-          isAgent: false as const,
-          agentId,
-          splitWeight: 1
-        }
-      ]
       return {
         agentHostSessions: {
           ...s.agentHostSessions,
-          [agentId]: { tabs, layout: nextLayout, activeTabId: newTabId }
+          [agentId]: planSplitAgentHost(cur, {
+            focusId,
+            newTabId,
+            axis,
+            title: `${agent.name}-${baseTabs.length + 1}`,
+            agentId
+          })
         }
       }
     })
@@ -1657,15 +1641,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 
   closeAgentTab(id, tabId) {
     // Pending picker panes have no PTY.
-    const surface = getCliSurface(get().workspaces[id])
-    const tabMeta =
-      surface?.tabs.find((t) => t.id === tabId) ??
-      (() => {
-        const key = get().workspaces[id]?.activeHostAgentId
-        return key
-          ? getAgentHost(get().workspaces[id]!, key)?.tabs.find((t) => t.id === tabId)
-          : undefined
-      })()
+    const tabMeta = resolveCloseAgentTabMeta(get().workspaces[id], tabId)
     if (!tabMeta?.pendingCli) {
       void window.vav.pty.kill(tabId)
       // The pane is gone for good, so drop its xterm too. Agent panes share one
@@ -1675,48 +1651,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     terminalSinks.delete(sinkKey(id, tabId))
     pendingMirrors.delete(sinkKey(id, tabId))
     lastInjectFingerprint.delete(tabId)
-    patch(set, id, (s) => {
-      const key =
-        s.agentHostSessions[CLI_SURFACE_KEY] != null
-          ? CLI_SURFACE_KEY
-          : s.activeHostAgentId
-      if (!key) return {}
-      const host = getAgentHost(s, key)
-      if (!host) return {}
-      const tabs = host.tabs.filter((t) => t.id !== tabId)
-      const layout = host.layout ? removeLeaf(host.layout, tabId) : null
-      const nextActive =
-        host.activeTabId === tabId ? (tabs[0]?.id ?? '') : host.activeTabId
-      if (tabs.length === 0) {
-        // Last CLI Screen pane: stay in CLI mode and show the initial agent picker.
-        // (Do not bounce back to VAV chat.)
-        if (key === CLI_SURFACE_KEY || s.cliMode) {
-          const pending = makePendingCliTab()
-          // Last live pane: always keep the picker. Skip-picker only applies
-          // to enter / new split — auto-launch here would trap ⌘W in a spawn loop.
-          return {
-            cliMode: true,
-            activeHostAgentId: CLI_SURFACE_KEY,
-            agentHostSessions: {
-              ...s.agentHostSessions,
-              [CLI_SURFACE_KEY]: pendingCliPickerSurface(pending)
-            }
-          }
-        }
-        const sessions = { ...s.agentHostSessions }
-        delete sessions[key]
-        return {
-          activeHostAgentId: null,
-          agentHostSessions: sessions
-        }
-      }
-      return {
-        agentHostSessions: {
-          ...s.agentHostSessions,
-          [key]: { tabs, layout, activeTabId: nextActive }
-        }
-      }
-    })
+    patch(set, id, (s) => planCloseAgentTabPatch(s, tabId, makePendingCliTab))
     get().syncPtyLayouts(id)
   },
 

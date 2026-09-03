@@ -9,6 +9,7 @@ import {
   layoutFromTabIds,
   pickCliLayoutBase,
   reconcileLayout,
+  removeLeaf,
   splitLeaf
 } from './workspaceLayout.ts'
 import { isLiveAgentSession } from './workspacePty.ts'
@@ -350,4 +351,124 @@ export function preferredCliAssignTabId(opts: {
     return opts.primaryId
   }
   return undefined
+}
+
+/** Which host map to close from: unified Screen, else the active per-agent host. */
+export function resolveCloseAgentTabMeta(
+  slice:
+    | {
+        agentHostSessions: Record<string, AgentHostSession>
+        activeHostAgentId: string | null
+      }
+    | undefined,
+  tabId: string
+): { pendingCli?: boolean } | undefined {
+  const surface = slice?.agentHostSessions[CLI_SURFACE_KEY]
+  return (
+    surface?.tabs.find((t) => t.id === tabId) ??
+    (slice?.activeHostAgentId
+      ? slice.agentHostSessions[slice.activeHostAgentId]?.tabs.find((t) => t.id === tabId)
+      : undefined)
+  )
+}
+
+/**
+ * Next CLI host map after closing a pane. Last Screen pane reseeds a picker
+ * (no auto-assign). Last legacy per-agent pane drops that host.
+ */
+export function planCloseAgentTabPatch(
+  s: {
+    cliMode: boolean
+    activeHostAgentId: string | null
+    agentHostSessions: Record<string, AgentHostSession>
+  },
+  tabId: string,
+  makePendingTab: () => TerminalTab
+): Partial<{
+  cliMode: boolean
+  activeHostAgentId: string | null
+  agentHostSessions: Record<string, AgentHostSession>
+}> {
+  const key =
+    s.agentHostSessions[CLI_SURFACE_KEY] != null ? CLI_SURFACE_KEY : s.activeHostAgentId
+  if (!key) return {}
+  const host = s.agentHostSessions[key]
+  if (!host) return {}
+  const tabs = host.tabs.filter((t) => t.id !== tabId)
+  const layout = host.layout ? removeLeaf(host.layout, tabId) : null
+  const nextActive = host.activeTabId === tabId ? (tabs[0]?.id ?? '') : host.activeTabId
+  if (tabs.length === 0) {
+    if (key === CLI_SURFACE_KEY || s.cliMode) {
+      return {
+        cliMode: true,
+        activeHostAgentId: CLI_SURFACE_KEY,
+        agentHostSessions: {
+          ...s.agentHostSessions,
+          [CLI_SURFACE_KEY]: pendingCliPickerSurface(makePendingTab())
+        }
+      }
+    }
+    const sessions = { ...s.agentHostSessions }
+    delete sessions[key]
+    return {
+      activeHostAgentId: null,
+      agentHostSessions: sessions
+    }
+  }
+  return {
+    agentHostSessions: {
+      ...s.agentHostSessions,
+      [key]: { tabs, layout, activeTabId: nextActive }
+    }
+  }
+}
+
+/** Hydrate: Screen mode pins the unified key; missing legacy hosts clear. */
+export function hydratedActiveHostAgentId(
+  cliMode: boolean,
+  activeHostAgentId: string | null,
+  projectedHosts: Record<string, unknown>
+): string | null {
+  if (cliMode) return CLI_SURFACE_KEY
+  if (activeHostAgentId === CLI_SURFACE_KEY) return null
+  if (activeHostAgentId && !projectedHosts[activeHostAgentId]) return null
+  return activeHostAgentId
+}
+
+/** Split an existing per-agent host; drop a hydrate race that already inserted the pane. */
+export function planSplitAgentHost(
+  host: AgentHostSession,
+  opts: {
+    focusId: string
+    newTabId: string
+    axis: TerminalSplitAxis
+    title: string
+    agentId: string
+  }
+): AgentHostSession {
+  let layout = host.layout ?? { type: 'leaf', tabId: opts.focusId, weight: 1 }
+  if (collectLeaves(layout).includes(opts.newTabId)) {
+    layout = removeLeaf(layout, opts.newTabId) ?? {
+      type: 'leaf',
+      tabId: opts.focusId,
+      weight: 1
+    }
+  }
+  const baseTabs = host.tabs.filter((t) => t.id !== opts.newTabId)
+  const focusInLayout = collectLeaves(layout).includes(opts.focusId)
+  const splitAt = focusInLayout ? opts.focusId : (collectLeaves(layout)[0] ?? opts.focusId)
+  return {
+    tabs: [
+      ...baseTabs,
+      {
+        id: opts.newTabId,
+        title: opts.title,
+        isAgent: false,
+        agentId: opts.agentId,
+        splitWeight: 1
+      }
+    ],
+    layout: splitLeaf(layout, splitAt, opts.axis, opts.newTabId),
+    activeTabId: opts.newTabId
+  }
 }

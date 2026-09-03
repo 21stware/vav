@@ -106,6 +106,7 @@ import { isTemporaryWorkspace } from '../lib/format'
 import { isCompanionSessionShell, isMainSessionShell, readWindowMachineId } from '../lib/windowKind'
 import { isLocalMachine, normalizeMachineId } from '@shared/workspaceHost'
 import { compactionForLeaf, upsertCompaction } from '@shared/compaction'
+import { userBashTabsOnly } from '../lib/workspacePty'
 import { getProjection, disposeProjection } from './StreamProjection'
 import { useWorkspaceStore } from './workspaceStore'
 import {
@@ -2530,9 +2531,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     const { activeId, toolsCollapsed, panelSegment } = get()
     if (!activeId) return
     const ws = useWorkspaceStore.getState()
-    const tabs = (ws.workspaces[activeId]?.tabs ?? []).filter(
-      (t) => !t.agentId || t.agentId === 'vav' || t.isAgent
-    )
+    const tabs = userBashTabsOnly(ws.workspaces[activeId]?.tabs ?? [])
     const terminalOpen = !toolsCollapsed && panelSegment === 'terminal'
 
     // Toggle close when tray is already open on terminal with a bash session.

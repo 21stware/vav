@@ -5,12 +5,16 @@ import { CLI_PENDING_PREFIX } from './cliPendingLayout.ts'
 import { collectLeaves } from './workspaceLayout.ts'
 import {
   CLI_SURFACE_KEY,
+  hydratedActiveHostAgentId,
   mergeCliSurface,
   pendingCliPickerSurface,
   pickCliScreenFocusTab,
+  planCloseAgentTabPatch,
   planEnterCliMode,
+  planSplitAgentHost,
   planSplitCliSurface,
   preferredCliAssignTabId,
+  resolveCloseAgentTabMeta,
   solePendingCliTabId,
   reconcileAgentHosts,
   type AgentHostSession
@@ -230,5 +234,85 @@ describe('workspaceCliSurface', () => {
       layout: leaf(pending.id),
       activeTabId: pending.id
     })
+  })
+
+  it('finds a pane on the Screen or the active per-agent host', () => {
+    const pending = tab({ id: 'cli-pending:a', pendingCli: true, agentId: null })
+    const live = tab({ id: 'pty-1', agentId: 'claude' })
+    assert.equal(
+      resolveCloseAgentTabMeta(
+        {
+          activeHostAgentId: CLI_SURFACE_KEY,
+          agentHostSessions: {
+            [CLI_SURFACE_KEY]: { tabs: [pending], layout: leaf(pending.id), activeTabId: pending.id }
+          }
+        },
+        pending.id
+      )?.pendingCli,
+      true
+    )
+    assert.equal(
+      resolveCloseAgentTabMeta(
+        {
+          activeHostAgentId: 'claude',
+          agentHostSessions: {
+            claude: { tabs: [live], layout: leaf(live.id), activeTabId: live.id }
+          }
+        },
+        live.id
+      )?.pendingCli,
+      false
+    )
+  })
+
+  it('reseeds a picker on the last Screen pane and drops a legacy host', () => {
+    const live = tab({ id: 'pty-1', agentId: 'claude' })
+    const pending = tab({ id: 'cli-pending:next', pendingCli: true, agentId: null })
+    const reseed = planCloseAgentTabPatch(
+      {
+        cliMode: true,
+        activeHostAgentId: CLI_SURFACE_KEY,
+        agentHostSessions: {
+          [CLI_SURFACE_KEY]: { tabs: [live], layout: leaf(live.id), activeTabId: live.id }
+        }
+      },
+      live.id,
+      () => pending
+    )
+    assert.equal(reseed.cliMode, true)
+    assert.equal(reseed.activeHostAgentId, CLI_SURFACE_KEY)
+    assert.deepEqual(reseed.agentHostSessions?.[CLI_SURFACE_KEY], pendingCliPickerSurface(pending))
+
+    const drop = planCloseAgentTabPatch(
+      {
+        cliMode: false,
+        activeHostAgentId: 'claude',
+        agentHostSessions: {
+          claude: { tabs: [live], layout: leaf(live.id), activeTabId: live.id }
+        }
+      },
+      live.id,
+      () => pending
+    )
+    assert.equal(drop.activeHostAgentId, null)
+    assert.equal(drop.agentHostSessions?.claude, undefined)
+  })
+
+  it('pins Screen mode and clears a missing legacy host on hydrate', () => {
+    assert.equal(hydratedActiveHostAgentId(true, 'claude', {}), CLI_SURFACE_KEY)
+    assert.equal(hydratedActiveHostAgentId(false, CLI_SURFACE_KEY, {}), null)
+    assert.equal(hydratedActiveHostAgentId(false, 'gone', {}), null)
+    assert.equal(hydratedActiveHostAgentId(false, 'claude', { claude: true }), 'claude')
+  })
+
+  it('splits a per-agent host and drops a hydrate-race duplicate id', () => {
+    const a = tab({ id: 'pty-1', agentId: 'claude' })
+    const next = planSplitAgentHost(
+      { tabs: [a], layout: leaf(a.id), activeTabId: a.id },
+      { focusId: a.id, newTabId: 'pty-2', axis: 'row', title: 'Claude-2', agentId: 'claude' }
+    )
+    assert.deepEqual(collectLeaves(next.layout!), ['pty-1', 'pty-2'])
+    assert.equal(next.activeTabId, 'pty-2')
+    assert.equal(next.tabs[1]?.title, 'Claude-2')
   })
 })
