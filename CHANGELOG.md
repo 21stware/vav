@@ -4,6 +4,20 @@ User-facing changes by release. Unreleased work lives at the top until the next 
 
 ## Unreleased
 
+## 1.18.8
+
+File preview across every document kind, Grok ACP + session `/goal`, and audit hardening (stability, security, CI).
+
+### File preview
+
+- One preview kind across the workspace drawer, companion window, and File Session so every document type paints the same way.
+- Picking Office, PDF, SQLite, media, or ZIP files no longer invents a line range in the agent prompt.
+
+### Grok
+
+- Session-scoped `/goal` banner (set / pause / resume / clear) for Grok Build.
+- Grok ACP launch, model/effort, plan, and ask-user contracts match the real Grok CLI.
+
 ### Security
 
 - Daemon listen defaults to loopback (`127.0.0.1`); LAN bind is explicit.
