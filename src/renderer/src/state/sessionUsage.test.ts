@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import { clearCompactionPatch, compactionSucceededPatch, refreshTokenUsagePatch } from './sessionUsage.ts'
+import { clearCompactionPatch, compactionSucceededPatch, conversationStatusPatch, refreshTokenUsagePatch } from './sessionUsage.ts'
 import type { LeafCompaction } from '../../../shared/types.ts'
 
 describe('compactionSucceededPatch', () => {
@@ -76,5 +76,35 @@ describe('clearCompactionPatch', () => {
     )
     assert.deepEqual(next.compactions.c1, [{ leafId: 'keep' }])
     assert.deepEqual(next.compactions.c2, [{ leafId: 'other' }])
+  })
+})
+
+describe('conversationStatusPatch', () => {
+  it('drops the live assistant snapshot and stamps turn runtime', () => {
+    const next = conversationStatusPatch(
+      {
+        messages: {
+          c1: [{ id: 'live' }, { id: 'keep' }],
+          c2: [{ id: 'other' }]
+        },
+        turns: { c2: { isRunning: false, phase: 'idle', toolCount: 0, awaitingToolCallId: null } }
+      },
+      'c1',
+      {
+        isRunning: true,
+        phase: 'outputting',
+        toolCount: 1,
+        awaitingToolCallId: null,
+        messageId: 'live'
+      }
+    )
+    assert.deepEqual(
+      next.messages.c1?.map((m) => m.id),
+      ['keep']
+    )
+    assert.deepEqual(next.messages.c2, [{ id: 'other' }])
+    assert.equal(next.turns.c1?.isRunning, true)
+    assert.equal(next.turns.c1?.phase, 'outputting')
+    assert.equal(next.turns.c2?.isRunning, false)
   })
 })

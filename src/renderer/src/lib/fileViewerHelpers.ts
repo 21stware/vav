@@ -4,7 +4,7 @@ import { localFileStreamUrl } from '../../../shared/localFileUrl.ts'
 import { mimeForPreviewKind, previewKind } from '../../../shared/previewKind.ts'
 import { blockToPreviewRef, formatBlockPickLabel } from '../../../shared/previewContext.ts'
 import { basename, pathsEqual } from './path.ts'
-import type { PreviewBlock } from './previewBlocks.ts'
+import { parseBlocksForPath, type PreviewBlock } from './previewBlocks.ts'
 
 export { pathsEqual }
 
@@ -332,4 +332,44 @@ export function selectedPreviewBlocks<T extends { id: string }>(opts: {
     out.push(stored)
   }
   return out
+}
+
+/** Block tree for pick/search: structured inspect, sqlite/zip stubs, CSV cols, or text parse. */
+export function fileViewerSyncBlocks(opts: {
+  info: FileInspectResult | null
+  isSqlite: boolean
+  isZip: boolean
+  isCsv: boolean
+  workingContent: string | null
+  filePath: string
+  deferredDisplayText: string
+  csvModel: { blocks: PreviewBlock[] } | null
+}): PreviewBlock[] {
+  if (opts.info?.structured?.blocks?.length) return opts.info.structured.blocks
+  if (opts.isSqlite && opts.info?.sqlite?.tables?.length) {
+    return previewBlocksFromSqliteTables(opts.info.sqlite.tables)
+  }
+  if (opts.isZip && opts.info?.zip?.entries?.length) {
+    return previewBlocksFromZipEntries(opts.info.zip.entries)
+  }
+  if (opts.info?.text == null && opts.workingContent == null) return []
+  if (opts.isCsv) return opts.csvModel?.blocks.filter((b) => b.kind !== 'table') ?? []
+  return parseBlocksForPath(opts.filePath, opts.deferredDisplayText)
+}
+
+/** Synthetic media block used when the canvas is an image/audio/video preview. */
+export function fileViewerMediaBlock(
+  info: { kind: string; name: string } | null | undefined,
+  filePath: string,
+  mediaSrc: string | null
+): PreviewBlock | null {
+  if (!info || !mediaSrc) return null
+  return {
+    id: 'media',
+    kind: 'paragraph',
+    text: `${info.kind}: ${filePath}`,
+    startLine: 0,
+    endLine: 0,
+    label: info.name
+  }
 }

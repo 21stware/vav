@@ -21,9 +21,8 @@ import type { FileSessionListEntry } from '@shared/ipc'
 import { useSessionStore } from '../state/sessionStore'
 import { useWorkspaceStore } from '../state/workspaceStore'
 import { isTemporaryWorkspace, middleTruncate, relativeTime, workdirShortLabel } from '../lib/format'
-import { flatten, groupConversations, type ConversationGroup } from '../lib/grouping'
+import { flatten, listedSidebarGroups, type ConversationGroup } from '../lib/grouping'
 import {
-  conversationMatchesFilter,
   encodeSidebarSessionFilter,
   isSessionRunning as sessionTurnIsRunning,
   isSessionUnread as sessionTurnIsUnread,
@@ -283,39 +282,23 @@ export function Sidebar({
     setCollapsedKeys(new Set())
   }, [groupingMode, sessionFilterRaw, searching, listMode])
 
-  const groups = useMemo(() => {
-    if (fileSessionsView) return []
-    const needle = query.trim().toLowerCase()
-    // File-bound sessions live only under “File sessions” — never in workspace
-    // groups. listMeta already omits them; the store still hydrates them for
-    // FileSessionView, so we must filter here or a Downloads/file click looks
-    // like a normal project session that “wrongly” opens the file canvas.
-    if (archiveView) {
-      const rows = conversations
-        .filter((c) => c.archived && !c.fileId)
-        .filter((c) => conversationOnMachine(c, windowMachineId))
-        .filter((c) => !needle || c.title.toLowerCase().includes(needle))
-        .sort((a, b) => (b.archivedAt ?? b.updatedAt) - (a.archivedAt ?? a.updatedAt))
-      return [{ key: 'archive', label: '', conversations: rows }]
-    }
-    const matched = conversations
-      .filter((c) => !c.archived && !c.fileId)
-      .filter((c) => conversationOnMachine(c, windowMachineId))
-      .filter((c) => !needle || c.title.toLowerCase().includes(needle))
-      .filter((c) =>
-        conversationMatchesFilter(c, sessionFilter, {
-          running: isSessionRunning(c.id),
-          unread: isSessionUnread(c.id),
-          favoriteIds: favoriteSet
-        })
-      )
-    const keep = new Set(matched.map((c) => c.id))
-    for (const row of matched) {
-      if (row.swarmParentId) keep.add(row.swarmParentId)
-    }
-    const rows = conversations.filter((c) => keep.has(c.id) && !c.archived && !c.fileId)
-    return groupConversations(rows, searching, groupingMode, tmp, pinnedWorkspaces)
-  }, [
+  const groups = useMemo(
+    () =>
+      listedSidebarGroups(conversations, {
+        fileSessionsView,
+        archiveView,
+        query,
+        windowMachineId,
+        sessionFilter,
+        running: isSessionRunning,
+        unread: isSessionUnread,
+        favoriteIds: favoriteSet,
+        searching,
+        groupingMode,
+        tmp,
+        pinnedWorkspaces
+      }),
+    [
     conversations,
     query,
     searching,

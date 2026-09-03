@@ -1,6 +1,6 @@
 import { upsertCompaction } from '../../../shared/compaction.ts'
 import type { LeafCompaction } from '../../../shared/types.ts'
-import { conversationTokenCachePatch } from '../lib/messageHydration.ts'
+import { conversationTokenCachePatch, omitLiveStreamingMessage } from '../lib/messageHydration.ts'
 import { patchConversationById } from './sessionListMerge.ts'
 
 /** Drop one conversation's live token overlay without cloning when it is absent. */
@@ -124,6 +124,32 @@ export function clearCompactionPatch<C extends { leafId: string }>(
     compactions: {
       ...state.compactions,
       [activeId]: (state.compactions[activeId] ?? []).filter((c) => c.leafId !== leafId)
+    }
+  }
+}
+
+/** Select: drop the live assistant snapshot and stamp turn runtime from agent.status. */
+export function conversationStatusPatch<
+  M extends { id: string },
+  T extends {
+    isRunning: boolean
+    phase: unknown
+    toolCount: number
+    awaitingToolCallId: string | null
+  }
+>(
+  state: { messages: Record<string, M[]>; turns: Record<string, ReturnType<typeof turnRuntimeFromAgentStatus<T>>> },
+  id: string,
+  status: T & { messageId?: string | null }
+): {
+  messages: Record<string, M[]>
+  turns: Record<string, ReturnType<typeof turnRuntimeFromAgentStatus<T>>>
+} {
+  return {
+    messages: omitLiveStreamingMessage(state.messages, id, status),
+    turns: {
+      ...state.turns,
+      [id]: turnRuntimeFromAgentStatus(status)
     }
   }
 }

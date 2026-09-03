@@ -14,7 +14,6 @@ import { relativeTime } from '../lib/format'
 import { fileViewerShortcut, fileViewerStatusLeft } from '../lib/fileViewerChrome'
 import {
   formatBadge,
-  parseBlocksForPath,
   parseCsvModel,
   pickBlockAtLine,
   findBlockById,
@@ -34,13 +33,13 @@ import {
   mergeTextWindowInspect,
   nextCommentCardsOnBlockPick,
   persistPanelWidth,
-  previewBlocksFromSqliteTables,
-  previewBlocksFromZipEntries,
   provisionalInspect,
   pathsEqual,
   bindFilePreviewWorkspace,
   selectedBlockIdsForPath,
-  selectedPreviewBlocks
+  selectedPreviewBlocks,
+  fileViewerMediaBlock,
+  fileViewerSyncBlocks
 } from '../lib/fileViewerHelpers'
 import { convertEditProfileFor, fileViewerKindFlags, isBinaryOfficeKind, isPreviewKindSelectable } from '../lib/fileViewerKinds'
 import { AgentPanelToggleButton } from './fileViewer/AgentPanelToggleButton'
@@ -629,36 +628,30 @@ export function FileViewer({
     })
   }, [agentConversationId, forcedReadOnly])
 
-  const syncBlocks = useMemo((): PreviewBlock[] => {
-    if (info?.structured?.blocks?.length) return info.structured.blocks
-    if (isSqlite && info?.sqlite?.tables?.length) {
-      return previewBlocksFromSqliteTables(info.sqlite.tables)
-    }
-    if (isZip && info?.zip?.entries?.length) {
-      return previewBlocksFromZipEntries(info.zip.entries)
-    }
-    if (info?.text == null && workingContent == null) return []
-    // CSV: only col + table stubs (no per-row tree). Sheet body uses the same model.
-    if (isCsv) return csvModel?.blocks.filter((b) => b.kind !== 'table') ?? []
-    return parseBlocksForPath(filePath, deferredDisplayText)
-  }, [deferredDisplayText, info, filePath, isCsv, isSqlite, isZip, workingContent, csvModel])
+  const syncBlocks = useMemo(
+    (): PreviewBlock[] =>
+      fileViewerSyncBlocks({
+        info,
+        isSqlite,
+        isZip,
+        isCsv,
+        workingContent,
+        filePath,
+        deferredDisplayText,
+        csvModel
+      }),
+    [deferredDisplayText, info, filePath, isCsv, isSqlite, isZip, workingContent, csvModel]
+  )
 
   const rootBlocks = syncBlocks
 
   const allBlocks = useMemo(() => collectBlocks(rootBlocks), [rootBlocks])
 
   const mediaSrc = info?.streamUrl || info?.dataUrl || null
-  const mediaBlock = useMemo((): PreviewBlock | null => {
-    if (!info || !mediaSrc) return null
-    return {
-      id: 'media',
-      kind: 'paragraph',
-      text: `${info.kind}: ${filePath}`,
-      startLine: 0,
-      endLine: 0,
-      label: info.name
-    }
-  }, [info, filePath, mediaSrc])
+  const mediaBlock = useMemo(
+    (): PreviewBlock | null => fileViewerMediaBlock(info, filePath, mediaSrc),
+    [info, filePath, mediaSrc]
+  )
 
   const selectedBlocks = useMemo(
     () =>

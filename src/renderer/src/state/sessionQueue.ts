@@ -188,6 +188,37 @@ export function enqueueQueuedMessagePatch<
   }
 }
 
+/** Edit one parked send. Missing queues are a no-op so Zustand skips a render. */
+export function updateQueuedMessagePatch<T extends { messageQueues: Record<string, QueuedMessage[]> }>(
+  state: T,
+  conversationId: string,
+  queueId: string,
+  text: string
+): T | { messageQueues: Record<string, QueuedMessage[]> } {
+  const queue = state.messageQueues[conversationId]
+  if (!queue) return state
+  const next = queue.map((item) =>
+    item.id === queueId ? { ...item, text: text.trim() } : item
+  )
+  return { messageQueues: { ...state.messageQueues, [conversationId]: next } }
+}
+
+/** Drop one parked send. Missing queues are a no-op so Zustand skips a render. */
+export function removeQueuedMessagePatch<T extends { messageQueues: Record<string, QueuedMessage[]> }>(
+  state: T,
+  conversationId: string,
+  queueId: string
+): T | { messageQueues: Record<string, QueuedMessage[]> } {
+  const queue = state.messageQueues[conversationId]
+  if (!queue) return state
+  return {
+    messageQueues: {
+      ...state.messageQueues,
+      [conversationId]: queue.filter((item) => item.id !== queueId)
+    }
+  }
+}
+
 /** Merge comment cards + preview refs, then fire agent.send. */
 export async function dispatchQueuedPayload(
   conversationId: string,

@@ -40,8 +40,8 @@ import {
   type ToastState,
   type TurnRuntime,
 } from './sessionTypes'
-import { conversationIdAwaitingTool, hostHoldsControlPlaneKeys, turnRuntimeFromAgentStatus, compactionSucceededPatch, refreshTokenUsagePatch, clearCompactionPatch } from './sessionUsage'
-import { dispatchQueuedPayload, MESSAGE_QUEUE_MAX, buildQueuedMessage, composerSendDisposition, composerClearedPatch, enqueueQueuedMessagePatch, isEmptyComposerSend, mergePreviewAndCommentRefs, pollUntil, resolveComposerContextFile, shouldDrainMessageQueue } from './sessionQueue'
+import { conversationIdAwaitingTool, hostHoldsControlPlaneKeys, turnRuntimeFromAgentStatus, compactionSucceededPatch, refreshTokenUsagePatch, clearCompactionPatch, conversationStatusPatch } from './sessionUsage'
+import { dispatchQueuedPayload, MESSAGE_QUEUE_MAX, buildQueuedMessage, composerSendDisposition, composerClearedPatch, enqueueQueuedMessagePatch, updateQueuedMessagePatch, removeQueuedMessagePatch, isEmptyComposerSend, mergePreviewAndCommentRefs, pollUntil, resolveComposerContextFile, shouldDrainMessageQueue } from './sessionQueue'
 import { applyCliHostSetResult } from './sessionCliHost'
 import { applySessionTurnEvent } from './sessionTurnApply'
 import {
@@ -116,7 +116,6 @@ import {
   nextHydrationGeneration,
   omitConversationCachePatch,
   omitKeys,
-  omitLiveStreamingMessage,
   omitMappedKeys,
   SESSION_DELETE_MAPPED_KEYS
 } from '../lib/messageHydration'
@@ -988,16 +987,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     const cached = !!get().messages[id]
     const applyStatus = (status: Awaited<ReturnType<typeof window.vav.agent.status>>): void => {
       if (get().activeId !== id) return
-      set((state) => {
-        const messages = omitLiveStreamingMessage(state.messages, id, status)
-        return {
-          messages,
-          turns: {
-            ...state.turns,
-            [id]: turnRuntimeFromAgentStatus(status)
-          }
-        }
-      })
+      set((state) => conversationStatusPatch(state, id, status))
       if (status.isRunning) {
         const projection = getProjection(id)
         // Events may have already primed this window while status was in flight;
@@ -1866,27 +1856,11 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   },
 
   updateQueuedMessage(conversationId, queueId, text) {
-    set((state) => {
-      const queue = state.messageQueues[conversationId]
-      if (!queue) return state
-      const next = queue.map((item) =>
-        item.id === queueId ? { ...item, text: text.trim() } : item
-      )
-      return { messageQueues: { ...state.messageQueues, [conversationId]: next } }
-    })
+    set((state) => updateQueuedMessagePatch(state, conversationId, queueId, text))
   },
 
   removeQueuedMessage(conversationId, queueId) {
-    set((state) => {
-      const queue = state.messageQueues[conversationId]
-      if (!queue) return state
-      return {
-        messageQueues: {
-          ...state.messageQueues,
-          [conversationId]: queue.filter((item) => item.id !== queueId)
-        }
-      }
-    })
+    set((state) => removeQueuedMessagePatch(state, conversationId, queueId))
   },
 
   async sendQueuedNow(conversationId, queueId) {

@@ -11,6 +11,8 @@ import {
   composerSendDisposition,
   composerClearedPatch,
   enqueueQueuedMessagePatch,
+  updateQueuedMessagePatch,
+  removeQueuedMessagePatch,
   isEmptyComposerSend,
   mergePreviewAndCommentRefs,
   MESSAGE_QUEUE_MAX,
@@ -217,6 +219,33 @@ describe('composer send helpers', () => {
     assert.equal(next.drafts.b, 'keep')
     assert.deepEqual(next.attachments.a, [])
     assert.equal(next.errorBanner, null)
+  })
+
+  it('edits or drops one parked send and is a no-op when the queue is missing', () => {
+    const item = buildQueuedMessage({
+      text: 'later',
+      attachments: [],
+      previewRefs: [],
+      commentCards: [],
+      quote: null,
+      contextFile: null,
+      now: 2,
+      id: 'q-1'
+    })
+    const state = {
+      messageQueues: { a: [item], b: [item] },
+      drafts: {},
+      attachments: {},
+      quotes: {},
+      previewRefs: {},
+      commentCards: {}
+    }
+    const edited = updateQueuedMessagePatch(state, 'a', 'q-1', '  now  ')
+    assert.equal('messageQueues' in edited && edited.messageQueues.a[0]?.text, 'now')
+    assert.equal(updateQueuedMessagePatch(state, 'missing', 'q-1', 'x'), state)
+    const removed = removeQueuedMessagePatch(state, 'a', 'q-1')
+    assert.deepEqual('messageQueues' in removed ? removed.messageQueues.a : null, [])
+    assert.equal(removeQueuedMessagePatch(state, 'missing', 'q-1'), state)
   })
 })
 

@@ -24,7 +24,9 @@ import {
   fileViewerAgentPanelOpen,
   previewBlocksFromSqliteTables,
   previewBlocksFromZipEntries,
-  selectedPreviewBlocks
+  selectedPreviewBlocks,
+  fileViewerMediaBlock,
+  fileViewerSyncBlocks
 } from './fileViewerHelpers.ts'
 import type { PreviewBlock } from './previewBlocks.ts'
 
@@ -337,5 +339,104 @@ describe('selectedPreviewBlocks', () => {
       }),
       [heading, extra]
     )
+  })
+})
+
+describe('fileViewerSyncBlocks', () => {
+  it('prefers structured inspect, then sqlite/zip stubs, then CSV cols, then text parse', () => {
+    const structured = {
+      id: 's1',
+      kind: 'paragraph' as const,
+      text: 'doc',
+      startLine: 1,
+      endLine: 1
+    }
+    assert.deepEqual(
+      fileViewerSyncBlocks({
+        info: { structured: { blocks: [structured] } } as never,
+        isSqlite: false,
+        isZip: false,
+        isCsv: false,
+        workingContent: null,
+        filePath: '/a.md',
+        deferredDisplayText: '# hi',
+        csvModel: null
+      }),
+      [structured]
+    )
+    const sqlite = fileViewerSyncBlocks({
+      info: { sqlite: { tables: [{ name: 't', columns: ['id'], rowCount: 2 }] } } as never,
+      isSqlite: true,
+      isZip: false,
+      isCsv: false,
+      workingContent: null,
+      filePath: '/a.db',
+      deferredDisplayText: '',
+      csvModel: null
+    })
+    assert.equal(sqlite[0]?.id, 'db-table-t')
+    const zip = fileViewerSyncBlocks({
+      info: { zip: { entries: [{ path: 'a.txt', isDirectory: false }] } } as never,
+      isSqlite: false,
+      isZip: true,
+      isCsv: false,
+      workingContent: null,
+      filePath: '/a.zip',
+      deferredDisplayText: '',
+      csvModel: null
+    })
+    assert.equal(zip[0]?.id, 'zip:a.txt')
+    assert.deepEqual(
+      fileViewerSyncBlocks({
+        info: null,
+        isSqlite: false,
+        isZip: false,
+        isCsv: false,
+        workingContent: null,
+        filePath: '/a.md',
+        deferredDisplayText: '',
+        csvModel: null
+      }),
+      []
+    )
+    const csvCol = {
+      id: 'col-a',
+      kind: 'paragraph' as const,
+      text: 'a',
+      startLine: 0,
+      endLine: 0
+    }
+    const csvTable = {
+      id: 'table',
+      kind: 'table' as const,
+      text: 'grid',
+      startLine: 0,
+      endLine: 0
+    }
+    assert.deepEqual(
+      fileViewerSyncBlocks({
+        info: { text: 'a,b' } as never,
+        isSqlite: false,
+        isZip: false,
+        isCsv: true,
+        workingContent: null,
+        filePath: '/a.csv',
+        deferredDisplayText: 'a,b',
+        csvModel: { blocks: [csvCol, csvTable] }
+      }),
+      [csvCol]
+    )
+  })
+})
+
+describe('fileViewerMediaBlock', () => {
+  it('builds a synthetic media block only when inspect and src exist', () => {
+    assert.equal(fileViewerMediaBlock(null, '/a.png', 'blob:1'), null)
+    assert.equal(fileViewerMediaBlock({ kind: 'image', name: 'a.png' }, '/a.png', null), null)
+    const block = fileViewerMediaBlock({ kind: 'image', name: 'a.png' }, '/a.png', 'blob:1')
+    assert.equal(block?.id, 'media')
+    assert.equal(block?.kind, 'paragraph')
+    assert.equal(block?.text, 'image: /a.png')
+    assert.equal(block?.label, 'a.png')
   })
 })
