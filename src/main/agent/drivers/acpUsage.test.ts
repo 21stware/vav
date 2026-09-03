@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import {
+  contextSizeFromListedModels,
   contextSizeFromModelId,
   isSessionLevelAcpUpdate,
   readAcpUsageFromPromptResult,
@@ -158,6 +159,8 @@ describe('isSessionLevelAcpUpdate', () => {
     assert.equal(isSessionLevelAcpUpdate('current_mode_update', {}), true)
     assert.equal(isSessionLevelAcpUpdate('config_option_update', {}), true)
     assert.equal(isSessionLevelAcpUpdate('session_info_update', {}), true)
+    assert.equal(isSessionLevelAcpUpdate('session_summary_generated', {}), true)
+    assert.equal(isSessionLevelAcpUpdate('model_changed', {}), true)
     assert.equal(isSessionLevelAcpUpdate('goal', { objective: 'Ship' }), true)
     assert.equal(
       isSessionLevelAcpUpdate('agent_thought_chunk', { _meta: { goal: { objective: 'Ship' } } }),
@@ -191,5 +194,24 @@ describe('contextSizeFromModelId', () => {
     assert.equal(contextSizeFromModelId(null), undefined)
     // `context` must be a bracket attribute, not part of the name.
     assert.equal(contextSizeFromModelId('context=300k'), undefined)
+  })
+
+  it('reads Grok availableModels _meta.totalContextTokens', () => {
+    assert.equal(
+      contextSizeFromListedModels(
+        {
+          currentModelId: 'grok-4.5',
+          availableModels: [
+            {
+              modelId: 'grok-4.5',
+              name: 'Grok 4.5',
+              _meta: { totalContextTokens: 500_000 }
+            }
+          ]
+        },
+        'grok-4.5'
+      ),
+      500_000
+    )
   })
 })

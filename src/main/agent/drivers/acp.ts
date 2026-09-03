@@ -20,6 +20,7 @@ import {
   parseAcpGoalCapability,
   parseAcpPromptCapabilities,
   parseAcpSessionModes,
+  parseGrokSessionConfig,
   readGoalSnapshotFromUpdate,
   resolveGoalCapability,
   seedGoalCommands,
@@ -34,6 +35,8 @@ import {
   acpPlanEntriesToSteps,
   cursorAskOutcomeFromAnswer,
   cursorAskToToolInput,
+  grokAskOutcomeFromAnswer,
+  grokPlanOutcomeFromAnswer,
   isPlanDocToolName,
   mergeTodos,
   normalizeCursorAskInput,
@@ -44,6 +47,7 @@ import {
   todosToSteps,
   type CursorAskInput
 } from '../../../shared/planDoc.ts'
+import { grokEffortId, isGrokEffortId } from '../../../shared/thinkingLevel.ts'
 import {
   cursorFamilyAllowsThinkingOverlay,
   cursorModelFamilyId,
@@ -58,6 +62,7 @@ import {
   type AcpListedModel
 } from './acpModelId.ts'
 import {
+  contextSizeFromListedModels,
   contextSizeFromModelId,
   isSessionLevelAcpUpdate,
   normalizeUpdateKind,
@@ -117,12 +122,74 @@ function acpArgs(kind: AcpHostKind, approvalMode: ApprovalMode): string[] {
   }
 }
 
+/**
+ * Grok `agent stdio` is a nested subcommand. Flag placement is strict:
+ *   grok [--permission-mode …] agent [-m …] [--always-approve] stdio [--debug]
+ * Putting agent flags after `stdio` fails (`unexpected argument`).
+ */
+const GROK_AGENT_FLAGS = new Set([
+  '-m',
+  '--model',
+  '--reasoning-effort',
+  '--effort',
+  '--always-approve',
+  '--yolo',
+  '--no-leader'
+])
+const GROK_STDIO_FLAGS = new Set(['--debug', '--debug-file', '--leader-socket'])
+
+function hasArgvFlag(args: string[], ...flags: string[]): boolean {
+  return flags.some((flag) => args.includes(flag))
+}
+
+function splitGrokExtraArgs(extra: string[]): {
+  global: string[]
+  agent: string[]
+  stdio: string[]
+} {
+  const global: string[] = []
+  const agent: string[] = []
+  const stdio: string[] = []
+  for (let i = 0; i < extra.length; i++) {
+    const token = extra[i]!
+    const bucket = GROK_STDIO_FLAGS.has(token)
+      ? stdio
+      : GROK_AGENT_FLAGS.has(token)
+        ? agent
+        : global
+    bucket.push(token)
+    const next = extra[i + 1]
+    if (next != null && !next.startsWith('-')) {
+      bucket.push(next)
+      i += 1
+    }
+  }
+  return { global, agent, stdio }
+}
+
+function grokInvokeArgs(
+  options?: Pick<DriverStartOptions, 'model' | 'thinkingLevel' | 'extraArgs'>
+): string[] {
+  const split = splitGrokExtraArgs(options?.extraArgs ?? [])
+  const agentMid: string[] = []
+  const model = options?.model?.trim()
+  if (model && !hasArgvFlag(split.agent, '-m', '--model')) {
+    agentMid.push('-m', model.replace(/\[.*$/, ''))
+  }
+  const effort = options?.thinkingLevel ? grokEffortId(options.thinkingLevel) : null
+  if (effort && !hasArgvFlag(split.agent, '--reasoning-effort', '--effort')) {
+    agentMid.push('--reasoning-effort', effort)
+  }
+  return [...split.global, 'agent', ...agentMid, ...split.agent, 'stdio', ...split.stdio]
+}
+
 /** Cursor `--model` + ACP subcommand. Extra argv from AgentConfig stay last. */
 export function acpInvokeArgs(
   kind: AcpHostKind,
   approvalMode: ApprovalMode,
   options?: Pick<DriverStartOptions, 'model' | 'thinkingLevel' | 'fast' | 'extraArgs'>
 ): string[] {
+  if (kind === 'grok') return grokInvokeArgs(options)
   const extra = options?.extraArgs ?? []
   const boot =
     kind === 'cursor'
@@ -197,6 +264,7 @@ export function wireAcp(
   const terminals = new AcpTerminalRegistry(options.hostProcess)
   let lastTodos: PlanStep[] = []
   let availableModels: AcpListedModel[] = []
+  let lastModelsField: unknown = null
   let wantedModel = options.model?.trim() || null
   let wantedThinking = options.thinkingLevel ?? null
   let wantedFast: boolean | null = typeof options.fast === 'boolean' ? options.fast : null
@@ -301,7 +369,13 @@ export function wireAcp(
     fast: wantedFast
   })
 
-  const bootModelId = (): string | null => acpBootstrapModelId(wantedModel, wantedPrefs())
+  const bootModelId = (): string | null => {
+    if (kind === 'grok') {
+      const raw = wantedModel?.trim()
+      return raw ? raw.replace(/\[.*$/, '') : null
+    }
+    return acpBootstrapModelId(wantedModel, wantedPrefs())
+  }
 
   const createSession = async (): Promise<unknown> => {
     const params: Record<string, unknown> = {
@@ -313,7 +387,7 @@ export function wireAcp(
     try {
       return await request('session/new', params)
     } catch (err) {
-      // Official ACP session/new has no modelId. Retry plain if Cursor rejects it.
+      // Official ACP session/new has no modelId. Retry plain if the host rejects it.
       if (modelId && rpcErrorCode(err) === RpcErrorCode.invalidParams) {
         return await request('session/new', { cwd: options.cwd, mcpServers: [] })
       }
@@ -332,13 +406,20 @@ export function wireAcp(
       kind,
       parseAcpAvailableCommands(created.availableCommands ?? created.available_commands)
     )
+    const meta = asRecord(created._meta)
+    const grokConfig = parseGrokSessionConfig(
+      meta?.['x.ai/sessionConfig'] ?? meta?.['xai/sessionConfig']
+    )
+    // Grok has no standard ACP modes. Do not project effort ids as plan/agent.
+    const useStandardModes = kind !== 'grok' || modes.modes.length > 0
     const snapshot = readGoalSnapshotFromUpdate(created)
     publishSessionState({
-      currentModeId: modes.currentModeId,
-      modes: modes.modes,
-      configOptions,
+      currentModeId: useStandardModes ? modes.currentModeId : null,
+      modes: useStandardModes ? modes.modes : [],
+      configOptions: kind === 'grok' && !configOptions.length ? [] : configOptions,
       commands,
-      sessionTitle: asString(created.title),
+      sessionTitle: asString(created.title) || asString(meta?.sessionTitle),
+      thinkingLevels: grokConfig.thinkingLevels.length ? grokConfig.thinkingLevels : undefined,
       goalCapability: resolveGoalCapability(kind, advertisedGoal, commands),
       ...(opts.resume
         ? snapshot !== undefined
@@ -347,19 +428,22 @@ export function wireAcp(
         : { goal: snapshot ?? null })
     })
     const modelsField = created.models
+    if (modelsField != null) lastModelsField = modelsField
     const listed = parseAcpAvailableModels(modelsField)
     if (listed.length) {
       availableModels = listed
       rejectedModels.clear()
     }
     publishAdvertisedThinkingLevels()
-    publishModelContextSize(
+    const currentModel =
       asString(dig(created, 'models.currentModelId')) ||
-        asString(dig(created, 'models.current_model_id'))
-    )
+      asString(dig(created, 'models.current_model_id')) ||
+      grokConfig.currentModelId
+    publishModelContextSize(currentModel, modelsField)
   }
 
   const publishAdvertisedThinkingLevels = (): void => {
+    if (kind === 'grok') return
     if (!wantedModel) return
     const family = cursorModelFamilyId(wantedModel)
     if (!family || cursorFamilyAllowsThinkingOverlay(family)) return
@@ -368,7 +452,12 @@ export function wireAcp(
   }
 
   const applyWantedModel = async (): Promise<void> => {
-    if (disposed || !sessionId || !wantedModel) return
+    if (disposed || !sessionId) return
+    if (kind === 'grok') {
+      await applyGrokRunPrefs()
+      return
+    }
+    if (!wantedModel) return
     rejectedModels.clear()
     const allowed = sessionState.thinkingLevels
     const thinking =
@@ -396,6 +485,32 @@ export function wireAcp(
     }
   }
 
+  const applyGrokRunPrefs = async (): Promise<void> => {
+    const plain = wantedModel?.trim().replace(/\[.*$/, '') || null
+    if (plain && !rejectedModels.has(plain)) {
+      try {
+        await request('session/set_model', { sessionId, modelId: plain })
+        if (disposed) return
+        publishModelContextSize(plain)
+        emit({ type: 'model-applied', modelId: plain })
+      } catch {
+        if (disposed) return
+        rejectedModels.add(plain)
+      }
+    }
+    if (wantedThinking) {
+      const allowed = sessionState.thinkingLevels
+      const thinking =
+        allowed?.length ? clampThinkingLevel(wantedThinking, allowed) : wantedThinking
+      const modeId = grokEffortId(thinking)
+      try {
+        await request('session/set_mode', { sessionId, modeId })
+      } catch {
+        /* grok set_mode is best-effort — prompt still proceeds */
+      }
+    }
+  }
+
   const queueApplyWantedModel = (): Promise<void> => {
     applyModelChain = applyModelChain.then(applyWantedModel, applyWantedModel)
     return applyModelChain
@@ -406,8 +521,13 @@ export function wireAcp(
    * Surface that as the conversation's token limit so the ring has a
    * denominator even before any fill estimate lands.
    */
-  const publishModelContextSize = (modelId: string | null | undefined): void => {
-    const size = contextSizeFromModelId(modelId)
+  const publishModelContextSize = (
+    modelId: string | null | undefined,
+    modelsField?: unknown
+  ): void => {
+    const size =
+      contextSizeFromModelId(modelId) ??
+      contextSizeFromListedModels(modelsField ?? lastModelsField, modelId)
     if (!size) return
     emit({ type: 'usage', contextSize: size, recordHistory: false })
   }
@@ -428,6 +548,30 @@ export function wireAcp(
       canLogout = asRecord(caps?.auth)?.logout != null || caps?.logout === true
       const authMethods = parseAcpAuthMethods(init?.authMethods ?? init?.auth_methods)
       advertisedGoal = parseAcpGoalCapability(dig(init, '_meta.goal'))
+      const initMeta = asRecord(init?._meta)
+      const initCommands = seedGoalCommands(
+        kind,
+        parseAcpAvailableCommands(initMeta?.availableCommands)
+      )
+      if (initCommands.length) {
+        publishSessionState({
+          commands: initCommands,
+          goalCapability: resolveGoalCapability(kind, advertisedGoal, initCommands)
+        })
+      }
+
+      if (kind === 'grok') {
+        const grokAuth = authMethods.find(
+          (method) => method.id === 'cached_token' || method.id === 'xai.api_key'
+        )
+        if (grokAuth) {
+          try {
+            await request('authenticate', { methodId: grokAuth.id, _meta: { headless: true } })
+          } catch {
+            // session/new may still succeed when a token is already cached.
+          }
+        }
+      }
 
       try {
         await openOrCreateSession()
@@ -518,7 +662,14 @@ export function wireAcp(
         (steps) => {
           lastTodos = steps
         },
-        publishSessionState,
+        (patch) => {
+          if (kind === 'grok' && patch.currentModeId && isGrokEffortId(patch.currentModeId)) {
+            const { currentModeId: _effort, ...rest } = patch
+            if (Object.keys(rest).length) publishSessionState(rest)
+            return
+          }
+          publishSessionState(patch)
+        },
         { kind, advertisedGoal }
       )
       return
@@ -586,6 +737,19 @@ export function wireAcp(
     }
 
     if (method === 'elicitation/complete') {
+      return
+    }
+
+    if (kind === 'grok' && isGrokExtMethod(method)) {
+      handleGrokExt(method, msg.id, params, {
+        pendingClient,
+        lastTodos,
+        setLastTodos: (steps) => {
+          lastTodos = steps
+        },
+        respond,
+        emit
+      })
       return
     }
 
@@ -715,17 +879,29 @@ export function wireAcp(
     respond(requestId: string, optionId: 'allow' | 'deny', message?: string): void {
       const pending = pendingClient.get(requestId)
       if (pending?.kind === 'create_plan') {
-        respond(pending.id, { outcome: planDocOutcomeFromAnswer(message ?? '', optionId === 'deny') })
+        respond(
+          pending.id,
+          kind === 'grok'
+            ? grokPlanOutcomeFromAnswer(message ?? '', optionId === 'deny')
+            : { outcome: planDocOutcomeFromAnswer(message ?? '', optionId === 'deny') }
+        )
         pendingClient.delete(requestId)
         return
       }
       if (pending?.kind === 'ask_question') {
-        respond(pending.id, {
-          outcome:
-            optionId === 'deny'
-              ? { outcome: 'cancelled' as const }
-              : cursorAskOutcomeFromAnswer(pending.ask, message ?? '')
-        })
+        respond(
+          pending.id,
+          kind === 'grok'
+            ? optionId === 'deny'
+              ? { outcome: 'skip_interview' }
+              : grokAskOutcomeFromAnswer(pending.ask, message ?? '')
+            : {
+                outcome:
+                  optionId === 'deny'
+                    ? { outcome: 'cancelled' as const }
+                    : cursorAskOutcomeFromAnswer(pending.ask, message ?? '')
+              }
+        )
         pendingClient.delete(requestId)
         return
       }
@@ -789,9 +965,14 @@ export function wireAcp(
         void queueApplyWantedModel()
       }
       if (opts.mode && sessionId) {
-        void request('session/set_mode', { sessionId, modeId: opts.mode })
-          .then(() => publishSessionState({ currentModeId: opts.mode }))
-          .catch(() => undefined)
+        // Grok `session/set_mode` is reasoning effort. Ignore plan/agent/ask.
+        if (kind !== 'grok' || isGrokEffortId(opts.mode)) {
+          void request('session/set_mode', { sessionId, modeId: opts.mode })
+            .then(() => {
+              if (kind !== 'grok') publishSessionState({ currentModeId: opts.mode })
+            })
+            .catch(() => undefined)
+        }
       }
       if (opts.configOption && sessionId) {
         const configOption = opts.configOption
@@ -924,6 +1105,20 @@ function handleSessionUpdate(
     })
     return
   }
+  if (kind === 'tool_call_delta_chunk' || norm === 'toolcalldeltachunk') {
+    const id =
+      asString(update.toolCallId) || asString(update.tool_call_id) || `tool-${Date.now()}`
+    const name = asString(update.name) || asString(update.kind) || 'tool'
+    emit({
+      type: 'tool',
+      id,
+      name,
+      title: asString(update.title) || undefined,
+      input: update.rawInput ?? update.input ?? {},
+      status: 'started'
+    })
+    return
+  }
 
   if (norm === 'availablecommandsupdate') {
     const commands = seedGoalCommands(goalHost?.kind ?? '', parseAcpAvailableCommands(update))
@@ -947,12 +1142,27 @@ function handleSessionUpdate(
     onSessionState?.({ configOptions: parseAcpConfigOptions(update) })
     return
   }
-  if (norm === 'sessioninfoupdate') {
+  if (norm === 'sessioninfoupdate' || norm === 'sessionsummarygenerated') {
     const goal = readGoalSnapshotFromUpdate(update)
     onSessionState?.({
-      sessionTitle: asString(update.title) || asString(dig(update, 'sessionInfo.title')),
+      sessionTitle:
+        asString(update.title) ||
+        asString(update.summary) ||
+        asString(update.session_summary) ||
+        asString(dig(update, 'sessionInfo.title')),
       ...(goal !== undefined ? { goal } : {})
     })
+    return
+  }
+  if (norm === 'modelchanged') {
+    const modelId =
+      asString(update.modelId) ||
+      asString(update.currentModelId) ||
+      asString(update.current_model_id)
+    if (modelId) {
+      const size = contextSizeFromModelId(modelId)
+      if (size) emit({ type: 'usage', contextSize: size, recordHistory: false })
+    }
     return
   }
   if (kind === 'user_message_chunk' || norm === 'usermessagechunk') return
@@ -994,6 +1204,50 @@ function isCursorExtMethod(method: string): boolean {
     n === 'createplan' ||
     n === 'askquestion'
   )
+}
+
+function isGrokExtMethod(method: string): boolean {
+  const n = normalizeRpcMethod(method)
+  return n.startsWith('_x.ai/') || n.startsWith('x.ai/')
+}
+
+function handleGrokExt(
+  method: string,
+  requestId: unknown,
+  params: Record<string, unknown>,
+  ctx: {
+    pendingClient: Map<string, PendingClient>
+    lastTodos: PlanStep[]
+    setLastTodos: (steps: PlanStep[]) => void
+    respond: (id: unknown, result: unknown) => void
+    emit: DriverEventSink
+  }
+): void {
+  const n = normalizeRpcMethod(method)
+  if (n.endsWith('/exitplanmode') || n.endsWith('/exitplan') || n.endsWith('/createplan')) {
+    handleCreatePlan(requestId, params, ctx)
+    return
+  }
+  if (n.endsWith('/askuserquestion') || n.endsWith('/askquestion')) {
+    handleAskQuestion(requestId, params, ctx)
+    return
+  }
+  if (n.endsWith('/updatetodos') || n.endsWith('/todowrite')) {
+    const incoming = todosToSteps(params.todos ?? params.items)
+    const next = mergeTodos(ctx.lastTodos, incoming, params.merge !== true)
+    ctx.setLastTodos(next)
+    const open = next.some((step) => step.status === 'pending' || step.status === 'executing')
+    ctx.emit({
+      type: 'tool',
+      id: asString(params.toolCallId) || CURSOR_TODOS_ID,
+      name: 'update_todos',
+      input: { title: asString(params.title) || 'Plan', steps: next },
+      status: open ? 'updated' : 'completed'
+    })
+    if (requestId !== undefined) ctx.respond(requestId, {})
+    return
+  }
+  if (requestId !== undefined) ctx.respond(requestId, {})
 }
 
 function handlePermissionRequest(

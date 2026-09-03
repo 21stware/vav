@@ -3,7 +3,14 @@ import { join } from 'node:path'
 export const E2E_SESSION_ID = 'e2e-session'
 export const E2E_SESSION_B_ID = 'e2e-session-b'
 
-export type SeedConversationKind = 'empty' | 'agent' | 'acp' | 'acp-goal' | 'acp-live' | 'rich'
+export type SeedConversationKind =
+  | 'empty'
+  | 'agent'
+  | 'acp'
+  | 'acp-goal'
+  | 'acp-live'
+  | 'acp-live-grok'
+  | 'rich'
 
 const USER_1 = 'e2e-user-1'
 const ASST_1 = 'e2e-asst-1'
@@ -184,12 +191,16 @@ export function buildAgentConversation(workspace: string, now = Date.now()) {
  * Live ACP host (cursor transport). Session state arrives from session/new
  * after the first prompt — do not pre-seed acpSession.
  */
-export function buildAcpLiveConversation(workspace: string, now = Date.now()) {
+export function buildAcpLiveConversation(
+  workspace: string,
+  now = Date.now(),
+  host: 'cursor' | 'grok' = 'cursor'
+) {
   const conversation = baseConversation(now, workspace)
-  conversation.title = 'E2E ACP live'
-  conversation.cliHost = 'cursor'
-  conversation.agentBinaryName = 'cursor'
-  conversation.model = 'grok-4.6'
+  conversation.title = host === 'grok' ? 'E2E Grok ACP live' : 'E2E ACP live'
+  conversation.cliHost = host
+  conversation.agentBinaryName = host
+  conversation.model = host === 'grok' ? 'grok-4.5' : 'grok-4.6'
   conversation.fast = false
   conversation.acpSession = null
   return conversation
@@ -412,6 +423,7 @@ export function buildSeededConversation(
   if (kind === 'acp') return buildAcpConversation(workspace, now)
   if (kind === 'acp-goal') return buildAcpGoalConversation(workspace, now)
   if (kind === 'acp-live') return buildAcpLiveConversation(workspace, now)
+  if (kind === 'acp-live-grok') return buildAcpLiveConversation(workspace, now, 'grok')
   if (kind === 'rich') return buildRichConversation(workspace, now)
   return buildEmptyConversation(workspace, now)
 }

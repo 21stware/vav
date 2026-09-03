@@ -10,6 +10,7 @@ import {
   parseAcpConfigOptions,
   parseAcpFormSchema,
   parseAcpSessionModes,
+  parseGrokSessionConfig,
   parseSlashDraft,
   patchAcpConfigOption,
   patchAcpSessionMode,
@@ -23,6 +24,22 @@ import {
   resolveGoalCapability,
   seedGoalCommands
 } from './acpSession.ts'
+
+describe('parseGrokSessionConfig', () => {
+  it('reads effort as thinking, not plan/agent modes', () => {
+    const parsed = parseGrokSessionConfig({
+      options: [
+        { id: 'grok-4.5', category: 'model', label: 'Grok 4.5', selected: true },
+        { id: 'low', category: 'mode', label: 'Low Effort', selected: false },
+        { id: 'medium', category: 'mode', label: 'Medium Effort', selected: true },
+        { id: 'high', category: 'mode', label: 'High Effort', selected: false }
+      ]
+    })
+    assert.deepEqual(parsed.thinkingLevels, ['low', 'medium', 'high'])
+    assert.equal(parsed.currentThinking, 'medium')
+    assert.equal(parsed.currentModelId, 'grok-4.5')
+  })
+})
 
 describe('parseAcpSessionModes', () => {
   it('reads availableModes + currentModeId', () => {
