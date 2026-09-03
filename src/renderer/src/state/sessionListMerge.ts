@@ -41,6 +41,56 @@ export function prependConversationIfMissing<C extends { id: string }>(
   return conversations.some((c) => c.id === meta.id) ? conversations : [meta, ...conversations]
 }
 
+/** Sidebar ids for shift-range select: archive vs live, never file-preview rows. */
+export function listedConversationIdsForSelect(
+  conversations: Array<{ id: string; archived?: boolean; fileId?: string | null }>,
+  archived: boolean | undefined
+): string[] {
+  return conversations
+    .filter((c) => (archived ? c.archived && !c.fileId : !c.archived && !c.fileId))
+    .map((c) => c.id)
+}
+
+/** File-preview sessions are hidden from listMeta — hydrate maps on demand. */
+export function fileSessionHydrateOnDemandPatch<C extends { id: string }, M, Comp, Hist>(
+  state: {
+    conversations: C[]
+    messages: Record<string, M>
+    messagesHydrated: Record<string, boolean>
+    activeLeaf: Record<string, string | null>
+    compactions: Record<string, Comp>
+    tokenHistories: Record<string, Hist>
+    cacheExpiresAt: Record<string, number | null>
+  },
+  id: string,
+  payload: {
+    meta: C
+    messages: M
+    activeLeafId: string | null
+    compactions?: Comp | null
+    tokenHistory?: Hist | null
+    cacheExpiresAt?: number | null
+  }
+): {
+  conversations: C[]
+  messages: Record<string, M>
+  messagesHydrated: Record<string, boolean>
+  activeLeaf: Record<string, string | null>
+  compactions: Record<string, Comp>
+  tokenHistories: Record<string, Hist>
+  cacheExpiresAt: Record<string, number | null>
+} {
+  return {
+    conversations: prependConversationIfMissing(state.conversations, payload.meta),
+    messages: { ...state.messages, [id]: payload.messages },
+    messagesHydrated: { ...state.messagesHydrated, [id]: true },
+    activeLeaf: { ...state.activeLeaf, [id]: payload.activeLeafId },
+    compactions: { ...state.compactions, [id]: payload.compactions ?? ([] as Comp) },
+    tokenHistories: { ...state.tokenHistories, [id]: payload.tokenHistory ?? ([] as Hist) },
+    cacheExpiresAt: { ...state.cacheExpiresAt, [id]: payload.cacheExpiresAt ?? null }
+  }
+}
+
 /** Claim/open: merge meta when the id exists, else prepend. */
 export function upsertConversationMeta<C extends { id: string }>(
   conversations: C[],

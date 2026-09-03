@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import { mergeConversationList, nextConversationSelection, patchConversationById, isArchivedConversation, regenerateActiveLeaf, canMutateActiveSession, compactRefusalReason, genericErrorBanner, shouldSkipSessionDeleteConfirm, fallbackConversationIdAfterDelete, sessionDeleteDialogCopy, prependConversationIfMissing, upsertConversationMeta, type ConversationListItem } from './sessionListMerge.ts'
+import { mergeConversationList, nextConversationSelection, patchConversationById, isArchivedConversation, regenerateActiveLeaf, canMutateActiveSession, compactRefusalReason, genericErrorBanner, shouldSkipSessionDeleteConfirm, fallbackConversationIdAfterDelete, sessionDeleteDialogCopy, prependConversationIfMissing, upsertConversationMeta, listedConversationIdsForSelect, fileSessionHydrateOnDemandPatch, type ConversationListItem } from './sessionListMerge.ts'
 
 function row(
   partial: Partial<ConversationListItem> & { id: string }
@@ -218,6 +218,64 @@ describe('prependConversationIfMissing / upsertConversationMeta', () => {
     assert.deepEqual(
       upsertConversationMeta([a], b).map((c) => c.id),
       ['b', 'a']
+    )
+  })
+})
+
+describe('listedConversationIdsForSelect', () => {
+  it('returns live chat ids, or archive ids when the target is archived', () => {
+    const rows = [
+      row({ id: 'live' }),
+      row({ id: 'arch', archived: true }),
+      row({ id: 'file', fileId: 'f1' }),
+      row({ id: 'arch-file', archived: true, fileId: 'f2' })
+    ]
+    assert.deepEqual(listedConversationIdsForSelect(rows, false), ['live'])
+    assert.deepEqual(listedConversationIdsForSelect(rows, undefined), ['live'])
+    assert.deepEqual(listedConversationIdsForSelect(rows, true), ['arch'])
+  })
+})
+
+describe('fileSessionHydrateOnDemandPatch', () => {
+  it('prepends meta and fills maps without touching cacheCreatedAt', () => {
+    const existing = row({ id: 'live' })
+    const meta = row({ id: 'file', fileId: 'f1' })
+    const state = {
+      conversations: [existing],
+      messages: { live: [{ id: 'm1' }] },
+      messagesHydrated: { live: true },
+      activeLeaf: { live: 'leaf-1' },
+      compactions: { live: [{ id: 'c1' }] },
+      tokenHistories: { live: [{ n: 1 }] },
+      cacheExpiresAt: { live: 9 },
+      cacheCreatedAt: { live: 1 }
+    }
+    const next = fileSessionHydrateOnDemandPatch(state, 'file', {
+      meta,
+      messages: [{ id: 'm2' }],
+      activeLeafId: 'leaf-2',
+      compactions: [{ id: 'c2' }],
+      tokenHistory: [{ n: 2 }],
+      cacheExpiresAt: 11
+    })
+    assert.deepEqual(
+      next.conversations.map((c) => c.id),
+      ['file', 'live']
+    )
+    assert.deepEqual(next.messages.file, [{ id: 'm2' }])
+    assert.equal(next.messagesHydrated.file, true)
+    assert.equal(next.activeLeaf.file, 'leaf-2')
+    assert.deepEqual(next.compactions.file, [{ id: 'c2' }])
+    assert.deepEqual(next.tokenHistories.file, [{ n: 2 }])
+    assert.equal(next.cacheExpiresAt.file, 11)
+    assert.equal('cacheCreatedAt' in next, false)
+    assert.equal(
+      fileSessionHydrateOnDemandPatch(state, 'live', {
+        meta: existing,
+        messages: [{ id: 'keep' }],
+        activeLeafId: 'leaf-1'
+      }).conversations[0],
+      existing
     )
   })
 })

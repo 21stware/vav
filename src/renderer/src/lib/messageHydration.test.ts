@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import type { ChatMessage } from '../../../shared/types.ts'
 import {
+  conversationFullHydratePatch,
   conversationHydrationMetaPatch,
   conversationTokenCachePatch,
   isCurrentHydration,
@@ -141,6 +142,35 @@ describe('conversation cache maps', () => {
     })
     assert.deepEqual(next.compactions.a, [{ id: 'new' }])
     assert.deepEqual(next.tokenHistories.a, [{ n: 1 }])
+    assert.equal(next.cacheCreatedAt.a, 2)
+  })
+
+  it('merges live turns and stamps full hydration maps', () => {
+    const state = {
+      messages: { a: [msg('a', 'live-newer')] },
+      messagesHydrated: {},
+      activeLeaf: { a: 'old' },
+      compactions: { a: [{ id: 'old' }] },
+      tokenHistories: { a: [] },
+      cacheCreatedAt: { a: null },
+      cacheExpiresAt: { a: null }
+    }
+    const next = conversationFullHydratePatch(state, 'a', {
+      messages: [msg('a', 'disk'), msg('b', 'from-disk', 'a')],
+      activeLeafId: 'leaf',
+      compactions: [{ id: 'new' }],
+      tokenHistory: [{ n: 1 }],
+      cacheCreatedAt: 2,
+      cacheExpiresAt: 3
+    })
+    assert.deepEqual(
+      next.messages.a.map((m) => m.id),
+      ['a', 'b']
+    )
+    assert.equal(next.messages.a[0]?.content, 'live-newer')
+    assert.equal(next.messagesHydrated.a, true)
+    assert.equal(next.activeLeaf.a, 'leaf')
+    assert.deepEqual(next.compactions.a, [{ id: 'new' }])
     assert.equal(next.cacheCreatedAt.a, 2)
   })
 })

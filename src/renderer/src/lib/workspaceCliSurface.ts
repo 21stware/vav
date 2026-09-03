@@ -49,6 +49,27 @@ export function pickCliScreenFocusTab<T extends { pendingCli?: boolean; agentId?
   )
 }
 
+/** Pin Screen mode and activate a pane without re-keying mixed hosts. */
+export function planFocusCliScreenPatch(
+  prev: { agentHostSessions: Record<string, AgentHostSession> },
+  fallback: AgentHostSession,
+  tabId: string
+): {
+  cliMode: true
+  activeHostAgentId: typeof CLI_SURFACE_KEY
+  agentHostSessions: Record<string, AgentHostSession>
+} {
+  const cur = prev.agentHostSessions[CLI_SURFACE_KEY] ?? fallback
+  return {
+    cliMode: true,
+    activeHostAgentId: CLI_SURFACE_KEY,
+    agentHostSessions: {
+      ...prev.agentHostSessions,
+      [CLI_SURFACE_KEY]: { ...cur, activeTabId: tabId }
+    }
+  }
+}
+
 /**
  * Screen-level CLI surface: panes are not grouped by agent type.
  * Pending picker leaves stay until the user assigns a CLI.
@@ -474,6 +495,27 @@ export function planSplitAgentHost(
   }
 }
 
+/** First pane for a per-agent host — same shape activate uses as the primary id. */
+export function seedAgentHostSession(
+  tabId: string,
+  agentId: string,
+  title: string
+): AgentHostSession {
+  return {
+    tabs: [
+      {
+        id: tabId,
+        title,
+        isAgent: false,
+        agentId,
+        splitWeight: 1
+      }
+    ],
+    layout: { type: 'leaf', tabId, weight: 1 },
+    activeTabId: tabId
+  }
+}
+
 /** After spawn: seed a missing primary host and retarget the Screen preferred id. */
 export function planActivateAgentHostAfterSpawn(
   s: { agentHostSessions: Record<string, AgentHostSession> },
@@ -491,19 +533,7 @@ export function planActivateAgentHostAfterSpawn(
   const sessions = { ...s.agentHostSessions }
   const existingHost = sessions[opts.agentId]
   if (!existingHost?.tabs.some((t) => t.id === opts.tabId)) {
-    sessions[opts.agentId] = {
-      tabs: [
-        {
-          id: opts.tabId,
-          title: opts.title,
-          isAgent: false,
-          agentId: opts.agentId,
-          splitWeight: 1
-        }
-      ],
-      layout: { type: 'leaf', tabId: opts.tabId, weight: 1 },
-      activeTabId: opts.tabId
-    }
+    sessions[opts.agentId] = seedAgentHostSession(opts.tabId, opts.agentId, opts.title)
   }
   const surface = sessions[CLI_SURFACE_KEY]
   if (

@@ -12,10 +12,12 @@ import {
   planActivateAgentHostAfterSpawn,
   planCloseAgentTabPatch,
   planEnterCliMode,
+  planFocusCliScreenPatch,
   planSplitAgentHost,
   planSplitCliSurface,
   preferredCliAssignTabId,
   resolveCloseAgentTabMeta,
+  seedAgentHostSession,
   solePendingCliTabId,
   reconcileAgentHosts,
   type AgentHostSession
@@ -87,6 +89,29 @@ describe('workspaceCliSurface', () => {
     assert.equal(pickCliScreenFocusTab(tabs, 'missing')?.id, 'claude')
     assert.equal(pickCliScreenFocusTab([tabs[0]!], 'cursor')?.id, 'pending')
     assert.equal(pickCliScreenFocusTab([], 'cursor'), undefined)
+  })
+
+  it('pins Screen mode onto an existing mixed surface without re-keying hosts', () => {
+    const live = tab({ id: 'pty-1', agentId: 'claude' })
+    const fallback: AgentHostSession = {
+      tabs: [live],
+      layout: leaf('pty-1'),
+      activeTabId: 'pty-1'
+    }
+    const prev = {
+      agentHostSessions: {
+        [CLI_SURFACE_KEY]: { ...fallback, activeTabId: 'pty-1' },
+        claude: fallback
+      }
+    }
+    const next = planFocusCliScreenPatch(prev, fallback, 'pty-2')
+    assert.equal(next.cliMode, true)
+    assert.equal(next.activeHostAgentId, CLI_SURFACE_KEY)
+    assert.equal(next.agentHostSessions[CLI_SURFACE_KEY]?.activeTabId, 'pty-2')
+    assert.equal(next.agentHostSessions.claude, fallback)
+    const missingSurface = planFocusCliScreenPatch({ agentHostSessions: {} }, fallback, 'pty-1')
+    assert.equal(missingSurface.agentHostSessions[CLI_SURFACE_KEY]?.activeTabId, 'pty-1')
+    assert.equal(missingSurface.agentHostSessions[CLI_SURFACE_KEY]?.tabs[0]?.id, 'pty-1')
   })
 
   it('plans enter-cli: noop, restore, promote, fold, and fresh picker', () => {
@@ -335,5 +360,14 @@ describe('workspaceCliSurface', () => {
     assert.equal(next.activeHostAgentId, CLI_SURFACE_KEY)
     assert.equal(next.agentHostSessions.claude?.tabs[0]?.id, 'live')
     assert.equal(next.agentHostSessions[CLI_SURFACE_KEY]?.activeTabId, 'live')
+  })
+
+  it('seeds a first per-agent host pane with a leaf layout', () => {
+    const host = seedAgentHostSession('pty-1', 'claude', 'Claude')
+    assert.equal(host.tabs[0]?.id, 'pty-1')
+    assert.equal(host.tabs[0]?.agentId, 'claude')
+    assert.equal(host.tabs[0]?.isAgent, false)
+    assert.equal(host.activeTabId, 'pty-1')
+    assert.deepEqual(collectLeaves(host.layout), ['pty-1'])
   })
 })

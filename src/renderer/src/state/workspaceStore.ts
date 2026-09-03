@@ -17,11 +17,13 @@ import {
   pickCliScreenFocusTab,
   planActivateAgentHostAfterSpawn,
   planCloseAgentTabPatch,
+  planFocusCliScreenPatch,
   planEnterCliMode,
   planSplitAgentHost,
   planSplitCliSurface,
   preferredCliAssignTabId,
   resolveCloseAgentTabMeta,
+  seedAgentHostSession,
   solePendingCliTabId,
   type AgentHostSession
 } from '../lib/workspaceCliSurface'
@@ -1070,19 +1072,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         patch(set, id, (s) => ({
           agentHostSessions: {
             ...s.agentHostSessions,
-            [agentId]: {
-              tabs: [
-                {
-                  id: tabId,
-                  title: agent.name,
-                  isAgent: false,
-                  agentId,
-                  splitWeight: 1
-                }
-              ],
-              layout: { type: 'leaf', tabId, weight: 1 },
-              activeTabId: tabId
-            }
+            [agentId]: seedAgentHostSession(tabId, agentId, agent.name)
           }
         }))
       } catch (err) {
@@ -1137,17 +1127,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       if (!surface?.tabs.length) return false
       const tab = pickCliScreenFocusTab(surface.tabs, agentId)
       if (!tab) return false
-      patch(set, id, (prev) => {
-        const cur = getCliSurface(prev) ?? surface
-        return {
-          cliMode: true,
-          activeHostAgentId: CLI_SURFACE_KEY,
-          agentHostSessions: {
-            ...prev.agentHostSessions,
-            [CLI_SURFACE_KEY]: { ...cur, activeTabId: tab.id }
-          }
-        }
-      })
+      patch(set, id, (prev) => planFocusCliScreenPatch(prev, surface, tab.id))
       return true
     }
 
@@ -1204,11 +1184,9 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         terminalSinks.delete(sinkKey(id, tab.id))
         pendingMirrors.delete(sinkKey(id, tab.id))
       }
-      patch(set, id, (s) => {
-        const sessions = { ...s.agentHostSessions }
-        delete sessions[agentId]
-        return { agentHostSessions: sessions }
-      })
+      patch(set, id, (s) => ({
+        agentHostSessions: omitRecord(s.agentHostSessions, agentId)
+      }))
     }
 
     // Prefer renderer settings (already hydrated) — avoid IPC on every switch.
@@ -1284,22 +1262,9 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     // Never re-key the surface to a per-agent host (that wiped mixed panes).
     const surface = getCliSurface(slice)
     if (slice.cliMode || surface) {
-      const tab =
-        surface?.tabs.find((t) => !t.pendingCli && t.agentId === agentId) ??
-        surface?.tabs.find((t) => !t.pendingCli) ??
-        surface?.tabs[0]
-      if (tab) {
-        patch(set, id, (s) => {
-          const cur = getCliSurface(s) ?? surface!
-          return {
-            cliMode: true,
-            activeHostAgentId: CLI_SURFACE_KEY,
-            agentHostSessions: {
-              ...s.agentHostSessions,
-              [CLI_SURFACE_KEY]: { ...cur, activeTabId: tab.id }
-            }
-          }
-        })
+      const tab = pickCliScreenFocusTab(surface?.tabs ?? [], agentId)
+      if (tab && surface) {
+        patch(set, id, (s) => planFocusCliScreenPatch(s, surface, tab.id))
       }
       return
     }

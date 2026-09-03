@@ -13,7 +13,7 @@ import type {
 import { DEFAULT_CLI_AGENTS, DEFAULT_SETTINGS } from '@shared/types'
 import type { WorkspaceHostInfo } from '@shared/workspaceHost'
 import type { RemoteControlStatus } from '@shared/remoteControl'
-import { mergeConversationList, nextConversationSelection, isArchivedConversation, regenerateActiveLeaf, canMutateActiveSession, compactRefusalReason, genericErrorBanner, patchConversationById, shouldSkipSessionDeleteConfirm, fallbackConversationIdAfterDelete, sessionDeleteDialogCopy, prependConversationIfMissing, upsertConversationMeta } from './sessionListMerge'
+import { mergeConversationList, nextConversationSelection, isArchivedConversation, regenerateActiveLeaf, canMutateActiveSession, compactRefusalReason, genericErrorBanner, patchConversationById, shouldSkipSessionDeleteConfirm, fallbackConversationIdAfterDelete, sessionDeleteDialogCopy, prependConversationIfMissing, upsertConversationMeta, listedConversationIdsForSelect, fileSessionHydrateOnDemandPatch } from './sessionListMerge'
 import {
   activeToolsFields,
   collapsedFileSessionTools,
@@ -112,8 +112,8 @@ import { useWorkspaceStore } from './workspaceStore'
 import {
   conversationHydrationMetaPatch,
   conversationTokenCachePatch,
+  conversationFullHydratePatch,
   isCurrentHydration,
-  mergeHydratedMessages,
   nextHydrationGeneration,
   omitKeys,
   omitLiveStreamingMessage,
@@ -948,15 +948,16 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         compactions,
         ...meta
       } = full
-      set((state) => ({
-        conversations: prependConversationIfMissing(state.conversations, meta),
-        messages: { ...state.messages, [id]: messages },
-        messagesHydrated: { ...state.messagesHydrated, [id]: true },
-        activeLeaf: { ...state.activeLeaf, [id]: activeLeafId },
-        compactions: { ...state.compactions, [id]: compactions ?? [] },
-        tokenHistories: { ...state.tokenHistories, [id]: tokenHistory ?? [] },
-        cacheExpiresAt: { ...state.cacheExpiresAt, [id]: cacheExpiresAt ?? null }
-      }))
+      set((state) =>
+        fileSessionHydrateOnDemandPatch(state, id, {
+          meta,
+          messages,
+          activeLeafId,
+          compactions,
+          tokenHistory,
+          cacheExpiresAt
+        })
+      )
       void cacheCreatedAt
       target = meta
     }
@@ -967,11 +968,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       additive: options?.additive,
       range: options?.range,
       rangeIds: options?.rangeIds,
-      listedIds: conversations
-        .filter((c) =>
-          target?.archived ? c.archived && !c.fileId : !c.archived && !c.fileId
-        )
-        .map((c) => c.id)
+      listedIds: listedConversationIdsForSelect(conversations, target?.archived)
     })
 
     // Switching never cancels an in-flight turn; it only rebinds the detail column.
@@ -1053,15 +1050,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     const conversation = await window.vav.conversations.get(id)
     if (!conversation) return
     if (!isCurrentHydration(hydrationGen, id, gen)) return
-    set((state) => ({
-      messages: {
-        ...state.messages,
-        [id]: mergeHydratedMessages(conversation.messages, state.messages[id])
-      },
-      messagesHydrated: { ...state.messagesHydrated, [id]: true },
-      activeLeaf: { ...state.activeLeaf, [id]: conversation.activeLeafId },
-      ...conversationHydrationMetaPatch(state, id, conversation)
-    }))
+    set((state) => conversationFullHydratePatch(state, id, conversation))
   },
 
   async refreshTokenUsage(id) {

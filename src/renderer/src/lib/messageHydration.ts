@@ -129,3 +129,43 @@ export function conversationHydrationMetaPatch<C, H>(
     compactions: { ...state.compactions, [id]: conversation.compactions ?? ([] as C) }
   }
 }
+
+/** Full conversations.get apply: merge live turns, then stamp hydration maps. */
+export function conversationFullHydratePatch<C, H>(
+  state: {
+    messages: Record<string, ChatMessage[]>
+    messagesHydrated: Record<string, boolean>
+    activeLeaf: Record<string, string | null>
+    compactions: Record<string, C>
+    tokenHistories: Record<string, H>
+    cacheCreatedAt: Record<string, number | null>
+    cacheExpiresAt: Record<string, number | null>
+  },
+  id: string,
+  conversation: {
+    messages: ChatMessage[]
+    activeLeafId: string | null
+    compactions?: C | null
+    tokenHistory?: H | null
+    cacheCreatedAt?: number | null
+    cacheExpiresAt?: number | null
+  }
+): {
+  messages: Record<string, ChatMessage[]>
+  messagesHydrated: Record<string, boolean>
+  activeLeaf: Record<string, string | null>
+  compactions: Record<string, C>
+  tokenHistories: Record<string, H>
+  cacheCreatedAt: Record<string, number | null>
+  cacheExpiresAt: Record<string, number | null>
+} {
+  return {
+    messages: {
+      ...state.messages,
+      [id]: mergeHydratedMessages(conversation.messages, state.messages[id])
+    },
+    messagesHydrated: { ...state.messagesHydrated, [id]: true },
+    activeLeaf: { ...state.activeLeaf, [id]: conversation.activeLeafId },
+    ...conversationHydrationMetaPatch(state, id, conversation)
+  }
+}
