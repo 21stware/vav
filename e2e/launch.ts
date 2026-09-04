@@ -300,10 +300,16 @@ async function seedPreviewKindFixtures(workspace: string): Promise<void> {
 }
 
 function writeTinyMp4(path: string): void {
-  execSync(
-    `ffmpeg -y -f lavfi -i color=c=0x6b5bc0:s=160x120:d=1 -c:v libx264 -pix_fmt yuv420p -an ${JSON.stringify(path)}`,
-    { stdio: 'ignore' }
-  )
+  try {
+    execSync(
+      `ffmpeg -y -f lavfi -i color=c=0x6b5bc0:s=160x120:d=1 -c:v libx264 -pix_fmt yuv420p -an ${JSON.stringify(path)}`,
+      { stdio: 'ignore' }
+    )
+  } catch {
+    // GHA macOS (and any box without ffmpeg) still needs a file on disk.
+    // files-preview only asserts the name; vavd specs never open this clip.
+    writeFileSync(path, Buffer.from('ftypisom', 'ascii'))
+  }
 }
 
 function writeSilentWav(path: string): void {
