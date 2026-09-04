@@ -41,6 +41,21 @@ export function findVavdScript(from = process.cwd()): string | null {
   return candidates.find((path) => existsSync(path)) ?? null
 }
 
+/**
+ * `process.execPath` inside Electron is the app binary, not Node.
+ * Prefer a real Node so `--import` / strip-types run vavd, not another window.
+ */
+export function resolveNodeForVavd(
+  env: NodeJS.ProcessEnv = process.env,
+  versions: { electron?: string } = process.versions
+): { cmd: string; asNode: boolean } {
+  if (!versions.electron) return { cmd: process.execPath, asNode: false }
+  for (const candidate of [env.npm_node_execpath, env.NODE_BINARY]) {
+    if (candidate && existsSync(candidate)) return { cmd: candidate, asNode: false }
+  }
+  return { cmd: 'node', asNode: false }
+}
+
 function registerHook(root: string): string {
   return pathToFileURL(join(root, 'scripts/register-shared-alias.mjs')).href
 }
@@ -73,18 +88,21 @@ export async function spawnLocalVavd(
   if (options.noAnnounce !== false) args.push('--no-announce')
   if (options.noWeb !== false) args.push('--no-web')
 
-  const child: ChildProcess = spawn(process.execPath, args, {
+  const node = resolveNodeForVavd()
+  const childEnv: NodeJS.ProcessEnv = {
+    ...process.env,
+    ...(options.extraEnv ?? {}),
+    ...(options.stubTurn || options.stubStream || options.stubApprove
+      ? { VAV_E2E: '1', VAV_E2E_STUB_TURN: '1' }
+      : {}),
+    ...(options.stubStream ? { VAV_E2E_STUB_STREAM: '1' } : {}),
+    ...(options.stubApprove ? { VAV_E2E_STUB_APPROVE: '1' } : {}),
+    ...(node.asNode ? { ELECTRON_RUN_AS_NODE: '1' } : {})
+  }
+  const child: ChildProcess = spawn(node.cmd, args, {
     stdio: ['ignore', 'pipe', 'pipe'],
     cwd: root,
-    env: {
-      ...process.env,
-      ...(options.extraEnv ?? {}),
-      ...(options.stubTurn || options.stubStream || options.stubApprove
-        ? { VAV_E2E: '1', VAV_E2E_STUB_TURN: '1' }
-        : {}),
-      ...(options.stubStream ? { VAV_E2E_STUB_STREAM: '1' } : {}),
-      ...(options.stubApprove ? { VAV_E2E_STUB_APPROVE: '1' } : {})
-    }
+    env: childEnv
   })
 
   const pairing = await waitForPairing(child)

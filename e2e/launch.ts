@@ -439,7 +439,9 @@ export async function launchVav(options: LaunchVavOptions = {}): Promise<VavHarn
       ...(options.acpLeakTail ? { E2E_ACP_LEAK_TAIL: '1' } : {}),
       ...(options.acpLeakPartialTransport ? { E2E_ACP_LEAK_PARTIAL_TRANSPORT: '1' } : {}),
       ...(options.vavdUri ? { VAVD_URI: options.vavdUri } : {}),
-      ...(options.spawnVavd ? { VAVD_SPAWN: '1' } : {})
+      ...(options.spawnVavd
+        ? { VAVD_SPAWN: '1', NODE_BINARY: process.execPath }
+        : {})
     }
   })
 
