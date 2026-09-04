@@ -28,9 +28,10 @@
     "test:file-path-mentions": "node --test --experimental-strip-types src/shared/filePathMentions.test.ts",
     "site:images": "node scripts/optimize-site-images.mjs",
     "brand:icons": "python3 scripts/sync-brand-icons.py",
-    "dist": "node scripts/fetch-officecli.mjs --target darwin-arm64 --clean && node scripts/build-tailcat-sidecar.mjs --target darwin-arm64 && npm run build && electron-builder --mac",
-    "dist:win": "node scripts/fetch-officecli.mjs --target win32-x64 --clean && node scripts/build-tailcat-sidecar.mjs --target win32-x64 && npm run build && electron-builder --win",
-    "release": "node scripts/fetch-officecli.mjs --target darwin-arm64 --clean && node scripts/build-tailcat-sidecar.mjs --target darwin-arm64 && npm run build && electron-builder --publish always"
+    "dist": "node scripts/fetch-officecli.mjs --target darwin-arm64 --clean && node scripts/build-tailcat-sidecar.mjs --target darwin-arm64 && npm run pack:vavd && npm run build && electron-builder --mac",
+    "dist:win": "node scripts/fetch-officecli.mjs --target win32-x64 --clean && node scripts/build-tailcat-sidecar.mjs --target win32-x64 && npm run pack:vavd && npm run build && electron-builder --win",
+    "release": "node scripts/fetch-officecli.mjs --target darwin-arm64 --clean && node scripts/build-tailcat-sidecar.mjs --target darwin-arm64 && npm run pack:vavd && npm run build && electron-builder --publish always",
+    "pack:release-sidecars": "node scripts/pack-release-sidecars.mjs"
   },
   "dependencies": {
     "@aiden0z/pptx-renderer": "^1.2.4",
@@ -127,6 +128,14 @@
           "**/*",
           "!README.md"
         ]
+      },
+      {
+        "from": "packages/vavd/vavd.js",
+        "to": "vavd/vavd.js"
+      },
+      {
+        "from": "packages/vavd/vav.js",
+        "to": "vavd/vav.js"
       }
     ],
     "asarUnpack": [

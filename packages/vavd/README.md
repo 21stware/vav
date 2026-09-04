@@ -6,6 +6,7 @@ Headless [VAV](https://github.com/21stware/vav). Run it on a machine that should
 npx @21stware/vavd
 # or
 npm i -g @21stware/vavd && vavd
+# or the 21stware-vavd-*.tgz on each GitHub Release
 # then, from another terminal:
 vav send "hello"
 ```

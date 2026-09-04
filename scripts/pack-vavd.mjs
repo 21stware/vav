@@ -41,7 +41,7 @@ const shared = {
     '@duckdb/node-api',
     '@duckdb/node-bindings'
   ],
-  logLevel: 'info'
+  logLevel: process.env.VAV_PACK_QUIET === '1' ? 'warning' : 'info'
 }
 
 await build({

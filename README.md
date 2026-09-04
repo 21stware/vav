@@ -58,7 +58,7 @@ Custom domain: `vavapp.com` (see `site/CNAME`). Apex uses GitHub Pages `A`/`AAAA
 
 ## Install
 
-Grab a build from [Releases](https://github.com/21stware/vav/releases).
+Grab a build from [Releases](https://github.com/21stware/vav/releases). Each `v*` release includes the macOS DMG/ZIP, Windows installer, `@21stware/vavd` tarball, and the Chrome extension zip.
 
 - **macOS** — Developer ID signed and notarized (app + DMG, ticket stapled); open the DMG and drag to Applications. Later versions update in-app (About → Check for Updates).
 - **Windows** — not code-signed; SmartScreen may warn on first open (More info → Run anyway). In-app updates use the NSIS installer feed.

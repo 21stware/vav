@@ -4,6 +4,12 @@ User-facing changes by release. Unreleased work lives at the top until the next 
 
 ## Unreleased
 
+### Headless vavd
+
+- Desktop can launch as a vavd UI with `VAVD_URI` / `--vavd-uri`, or spawn the daemon with `VAVD_SPAWN=1` / `--with-vavd`.
+- GitHub Releases now attach the `@21stware/vavd` tarball and the Chrome extension zip, and fail if any required asset is missing.
+- Packaged apps ship `vavd.js` so `--with-vavd` works without the git checkout.
+
 ## 1.18.12
 
 Native menu icons, and bash tabs that stay independent when you split.

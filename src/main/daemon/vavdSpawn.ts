@@ -41,6 +41,53 @@ export function findVavdScript(from = process.cwd()): string | null {
   return candidates.find((path) => existsSync(path)) ?? null
 }
 
+export type VavdEntry = {
+  kind: 'source' | 'bundle'
+  path: string
+  root: string
+}
+
+/**
+ * Dev uses `vavd.ts`. Packaged apps use `Resources/vavd/vavd.js` from the
+ * GitHub / electron-builder extraResources copy of the npm bundle.
+ */
+export function findVavdEntry(
+  from = process.cwd(),
+  resourcesPath?: string
+): VavdEntry | null {
+  const source = findVavdScript(from)
+  if (source) {
+    return {
+      kind: 'source',
+      path: source,
+      root: dirname(dirname(dirname(dirname(source))))
+    }
+  }
+  const res =
+    resourcesPath ||
+    (typeof process.resourcesPath === 'string' ? process.resourcesPath : '')
+  const bundled = res ? join(res, 'vavd', 'vavd.js') : ''
+  if (bundled && existsSync(bundled)) {
+    return { kind: 'bundle', path: bundled, root: dirname(bundled) }
+  }
+  const packed = join(from, 'packages', 'vavd', 'vavd.js')
+  if (existsSync(packed)) {
+    return { kind: 'bundle', path: packed, root: from }
+  }
+  return null
+}
+
+export function vavdNodeArgs(entry: VavdEntry, flags: string[]): string[] {
+  if (entry.kind === 'bundle') return [entry.path, ...flags]
+  return [
+    '--import',
+    registerHook(entry.root),
+    '--experimental-strip-types',
+    entry.path,
+    ...flags
+  ]
+}
+
 /**
  * `process.execPath` inside Electron is the app binary, not Node.
  * Prefer a real Node so `--import` / strip-types run vavd, not another window.
@@ -64,18 +111,14 @@ export async function spawnLocalVavd(
   options: SpawnLocalVavdOptions = {}
 ): Promise<SpawnedVavd> {
   const cwd = options.cwd ?? process.cwd()
-  const script = findVavdScript(cwd)
-  if (!script) {
-    throw new Error(`vavd.ts not found from ${cwd} — run from the VAV repo or pass VAVD_URI`)
+  const entry = findVavdEntry(cwd)
+  if (!entry) {
+    throw new Error(`vavd not found from ${cwd} — run from the VAV repo, install the app bundle, or pass VAVD_URI`)
   }
-  const root = dirname(dirname(dirname(dirname(script))))
+  const root = entry.root
   const stateDir = options.stateDir ?? mkdtempSync(join(tmpdir(), 'vavd-spawn-'))
   const name = options.name ?? 'VAV Daemon'
-  const args = [
-    '--import',
-    registerHook(root),
-    '--experimental-strip-types',
-    script,
+  const flags = [
     '--port',
     String(options.port ?? 0),
     '--listen',
@@ -85,8 +128,9 @@ export async function spawnLocalVavd(
     '--name',
     name
   ]
-  if (options.noAnnounce !== false) args.push('--no-announce')
-  if (options.noWeb !== false) args.push('--no-web')
+  if (options.noAnnounce !== false) flags.push('--no-announce')
+  if (options.noWeb !== false) flags.push('--no-web')
+  const args = vavdNodeArgs(entry, flags)
 
   const node = resolveNodeForVavd()
   const childEnv: NodeJS.ProcessEnv = {
