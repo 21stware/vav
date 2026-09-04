@@ -1947,6 +1947,11 @@ async function pullRemoteWorkspace(machineId: string): Promise<void> {
   for (const raw of catalog.sessions) {
     const adopted = conversationStore.adoptHostConversation(raw as Conversation, id)
     if (adopted) sessionsChanged = true
+    const conversation =
+      conversationStore.get((raw as Conversation).id) ??
+      conversationStore.findOnHost(id, (raw as Conversation).id)
+    const path = conversation?.workingDirectory
+    if (conversation && path) fileService.watchRoot(conversation.id, path)
   }
   for (const path of catalog.recents) {
     settingsStore.rememberWorkspaceDirectory(path, '', id)
