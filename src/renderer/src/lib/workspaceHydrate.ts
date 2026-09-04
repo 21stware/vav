@@ -1,11 +1,11 @@
 import type { ConversationPtyLayouts, TerminalLayoutNode, TerminalTab } from '../../../shared/types.ts'
 import type { PtyActivityStatus } from '../../../shared/ipc.ts'
+import { ensureBashGroups, reconcileBashGroups } from './bashTabGroups.ts'
 import { resolveHydratedCliMode } from './cliSurfaceAuthority.ts'
 import { retainInstallMeta } from './retainInstallMeta.ts'
 import {
   collectLeaves,
-  layoutDirectionKey,
-  reconcileLayout
+  layoutDirectionKey
 } from './workspaceLayout.ts'
 import {
   hydratedActiveHostAgentId,
@@ -16,6 +16,7 @@ import {
   agentHostsEqual,
   bashThenAgentTabs,
   tabsEqual,
+  userBashTabsOnly,
   withTombstones
 } from './workspacePty.ts'
 
@@ -26,6 +27,7 @@ export function planHydratedPtySlice(
     activeHostAgentId: string | null
     tabs: TerminalTab[]
     layout: TerminalLayoutNode | null
+    bashGroups: ConversationPtyLayouts['bashGroups']
     agentHostSessions: Record<string, AgentHostSession>
     activeTabId: string
   },
@@ -41,6 +43,7 @@ export function planHydratedPtySlice(
 ): Partial<{
   tabs: TerminalTab[]
   layout: TerminalLayoutNode | null
+  bashGroups: ConversationPtyLayouts['bashGroups']
   activeTabId: string
   agentHostSessions: Record<string, AgentHostSession>
   activeHostAgentId: string | null
@@ -60,7 +63,21 @@ export function planHydratedPtySlice(
   const tabs = bashThenAgentTabs(
     retainInstallMeta(withTombstones(opts.projected.tabs, s.tabs, opts.status), s.tabs)
   )
-  const layout = reconcileLayout(opts.remoteLayouts.bash ?? s.layout, tabs.map((t) => t.id))
+  const liveBashIds = userBashTabsOnly(tabs).map((t) => t.id)
+  const reconciled = reconcileBashGroups(
+    opts.remoteLayouts.bashGroups ?? s.bashGroups,
+    liveBashIds,
+    opts.remoteLayouts.bash ?? s.layout,
+    s.activeTabId
+  )
+  const bashGroups = reconciled.groups
+  const groupLayout = reconciled.layout
+  const prevGroups = ensureBashGroups(
+    s.bashGroups,
+    userBashTabsOnly(s.tabs).map((t) => t.id),
+    s.layout,
+    s.activeTabId
+  )
   const agentHostSessions = reconcileAgentHosts(
     s.agentHostSessions,
     opts.projected.agentHostSessions,
@@ -72,8 +89,9 @@ export function planHydratedPtySlice(
     agentHostsEqual(s.agentHostSessions, agentHostSessions) &&
     s.activeHostAgentId === activeHostAgentId &&
     s.cliMode === cliMode &&
-    collectLeaves(s.layout).join(',') === collectLeaves(layout).join(',') &&
-    layoutDirectionKey(s.layout) === layoutDirectionKey(layout)
+    collectLeaves(s.layout).join(',') === collectLeaves(groupLayout).join(',') &&
+    layoutDirectionKey(s.layout) === layoutDirectionKey(groupLayout) &&
+    JSON.stringify(prevGroups) === JSON.stringify(bashGroups ?? { order: [], layouts: {}, activeGroupId: '' })
   ) {
     return {}
   }
@@ -84,7 +102,8 @@ export function planHydratedPtySlice(
 
   return {
     tabs,
-    layout,
+    layout: groupLayout,
+    bashGroups,
     activeTabId,
     agentHostSessions,
     activeHostAgentId,

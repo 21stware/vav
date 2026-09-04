@@ -1,4 +1,10 @@
-import type { FileEntry, FileSortKey, TerminalLayoutNode, TerminalTab } from '../../../shared/types.ts'
+import type {
+  BashTabGroups,
+  FileEntry,
+  FileSortKey,
+  TerminalLayoutNode,
+  TerminalTab
+} from '../../../shared/types.ts'
 import type { AgentHostSession } from './workspaceCliSurface.ts'
 import { omitRecord } from './workspacePty.ts'
 
@@ -21,8 +27,10 @@ export interface WorkspaceSlice {
    */
   tabs: TerminalTab[]
   activeTabId: string
-  /** Binary tree of pane splits for user bash. Null until first bash exists. */
+  /** Binary tree of pane splits for the active bash tab group. Null until first bash exists. */
   layout: TerminalLayoutNode | null
+  /** Parallel bash tab chips; each entry owns a split tree in `layouts`. */
+  bashGroups: BashTabGroups | null
   /**
    * Main session is CLI Agent surface (not built-in VAV chat).
    * Layout lives at {@link CLI_SURFACE_KEY} in agentHostSessions.
@@ -139,6 +147,7 @@ export function emptySlice(root: string | null): WorkspaceSlice {
     tabs: [],
     activeTabId: '',
     layout: null,
+    bashGroups: null,
     cliMode: false,
     activeHostAgentId: null,
     agentHostSessions: {},
@@ -156,6 +165,7 @@ export function planWorkingDirectorySlice(prev: WorkspaceSlice, root: string | n
     tabs: prev.tabs,
     activeTabId: prev.activeTabId,
     layout: prev.layout,
+    bashGroups: prev.bashGroups,
     cliMode: prev.cliMode,
     activeHostAgentId: prev.activeHostAgentId,
     agentHostSessions: prev.agentHostSessions

@@ -32,7 +32,7 @@ import {
 } from '../lib/sidebarSessionFilter'
 import { swarmChildrenOf } from '@shared/swarmLayout'
 import { menuAnchor, showMenu, type MenuItem } from '../lib/nativeMenu'
-import { warmMenuIcons } from '../lib/menuIcons'
+import { lucideMenuIcon, warmMenuIcons, warmSessionContextMenuIcons } from '../lib/menuIcons'
 import { fileManagerLabel } from '../lib/platform'
 import { basename } from '../lib/path'
 import {
@@ -168,11 +168,12 @@ export function Sidebar({
   // Rasterize the foot-menu glyphs ahead of the first open.
   useEffect(() => {
     warmMenuIcons([
-      { kind: 'lucide', key: 'file-sessions' },
-      { kind: 'lucide', key: 'archive' },
-      { kind: 'lucide', key: 'import' },
-      { kind: 'lucide', key: 'settings' }
+      lucideMenuIcon('file-sessions'),
+      lucideMenuIcon('archive'),
+      lucideMenuIcon('import'),
+      lucideMenuIcon('settings')
     ])
+    warmSessionContextMenuIcons()
   }, [])
 
   const refreshFileSessions = useCallback(async (): Promise<void> => {
@@ -432,19 +433,23 @@ export function Sidebar({
         return [
           {
             label: t('sidebar.fileSessionOpenFileCount', { count: openable.length || targets.length }),
+            icon: lucideMenuIcon('file-text'),
             disabled: openable.length === 0,
             onSelect: () => openPreviews(openable)
           },
           {
             label: t('sidebar.fileSessionOpenDetachedCount', { count: targets.length }),
+            icon: lucideMenuIcon('app-window'),
             disabled: openable.length === 0,
             onSelect: () => {
               openPreviews(openable)
               onNavigate?.()
             }
           },
+          { label: '', divider: true },
           {
             label: t('sidebar.menu.copyTitle'),
+            icon: lucideMenuIcon('clipboard-copy'),
             onSelect: () => {
               const text = targets
                 .map((row) => flattenSessionTitle(row.title, ''))
@@ -456,6 +461,7 @@ export function Sidebar({
           { label: '', divider: true },
           {
             label: t('sidebar.fileSessionDeleteCount', { count: targets.length }),
+            icon: lucideMenuIcon('trash-2'),
             destructive: true,
             onSelect: () => deleteSelectedFileSessions(targets.map((row) => row.sessionId))
           }
@@ -467,6 +473,7 @@ export function Sidebar({
       return [
         {
           label: t('sidebar.fileSessionOpenChat'),
+          icon: lucideMenuIcon('message-square'),
           onSelect: () => {
             void selectConversation(row.sessionId)
             onNavigate?.()
@@ -474,6 +481,7 @@ export function Sidebar({
         },
         {
           label: t('sidebar.fileSessionOpenFile'),
+          icon: lucideMenuIcon('file-text'),
           disabled: row.pathStatus !== 'ok',
           onSelect: () => {
             void selectConversation(row.sessionId)
@@ -486,6 +494,7 @@ export function Sidebar({
         },
         {
           label: t('sidebar.menu.openDetached'),
+          icon: lucideMenuIcon('app-window'),
           disabled: row.pathStatus !== 'ok',
           onSelect: () => {
             void selectConversation(row.sessionId)
@@ -497,13 +506,16 @@ export function Sidebar({
             onNavigate?.()
           }
         },
+        { label: '', divider: true },
         {
           label: t('sidebar.menu.copyTitle'),
+          icon: lucideMenuIcon('clipboard-copy'),
           onSelect: () => void window.vav.conversations.copyToClipboard(title)
         },
         { label: '', divider: true },
         {
           label: t('sidebar.fileSessionDelete'),
+          icon: lucideMenuIcon('trash-2'),
           destructive: true,
           onSelect: () => deleteSelectedFileSessions([row.sessionId])
         }
@@ -629,6 +641,7 @@ export function Sidebar({
           { label: '', divider: true },
           {
             label: t('sidebar.menu.deleteCount', { count: targets.length }),
+            icon: lucideMenuIcon('trash-2'),
             destructive: true,
             onSelect: () => requestDelete(targets.map((c) => c.id))
           }
@@ -639,6 +652,7 @@ export function Sidebar({
           label: allPinned
             ? t('sidebar.menu.unpinCount', { count: targets.length })
             : t('sidebar.menu.pinCount', { count: targets.length }),
+          icon: lucideMenuIcon('pin'),
           onSelect: () => {
             void (async () => {
               for (const c of targets) await setPinned(c.id, !allPinned)
@@ -649,6 +663,7 @@ export function Sidebar({
           label: allFavorite
             ? t('sidebar.menu.unfavoriteCount', { count: targets.length })
             : t('sidebar.menu.favoriteCount', { count: targets.length }),
+          icon: lucideMenuIcon('star'),
           onSelect: () => {
             void (async () => {
               for (const c of targets) await setFavorite(c.id, !allFavorite)
@@ -659,13 +674,16 @@ export function Sidebar({
           label: t('sidebar.menu.archiveCount', { count: targets.length }),
           onSelect: () => void archiveKeepingList(targets.map((c) => c.id))
         },
+        { label: '', divider: true },
         {
           label: t('sidebar.menu.exportCount', { count: targets.length }),
+          icon: lucideMenuIcon('upload'),
           onSelect: () => void exportSessions(targets.map((c) => c.id))
         },
         { label: '', divider: true },
         {
           label: t('sidebar.menu.deleteCount', { count: targets.length }),
+          icon: lucideMenuIcon('trash-2'),
           destructive: true,
           onSelect: () => requestDelete(targets.map((c) => c.id))
         }
@@ -682,42 +700,64 @@ export function Sidebar({
           onSelect: () => void setArchived(id, false)
         },
         { label: '', divider: true },
-        { label: t('sidebar.menu.delete'), destructive: true, onSelect: () => requestDelete([id]) }
+        {
+          label: t('sidebar.menu.delete'),
+          icon: lucideMenuIcon('trash-2'),
+          destructive: true,
+          onSelect: () => requestDelete([id])
+        }
       ]
     }
     return [
       {
         label: t('sidebar.menu.openDetached'),
+        icon: lucideMenuIcon('app-window'),
         onSelect: () => {
           void openDetached(id)
           // Close the floating overlay after launching the companion.
           onNavigate?.()
         }
       },
+      { label: '', divider: true },
       {
         label: conversation.pinned ? t('sidebar.menu.unpin') : t('sidebar.menu.pin'),
+        icon: lucideMenuIcon('pin'),
         onSelect: () => void setPinned(id, !conversation.pinned)
       },
       {
         label: favoriteSet.has(id) ? t('sidebar.menu.unfavorite') : t('sidebar.menu.favorite'),
+        icon: lucideMenuIcon('star'),
         onSelect: () => void setFavorite(id, !favoriteSet.has(id))
       },
       {
         label: t('sidebar.menu.archive'),
         onSelect: () => void archiveKeepingList([id])
       },
-      { label: t('sidebar.menu.rename'), onSelect: () => beginRename(id) },
-      { label: t('sidebar.menu.duplicate'), onSelect: () => void duplicateConversation(id) },
+      { label: '', divider: true },
+      {
+        label: t('sidebar.menu.rename'),
+        icon: lucideMenuIcon('pencil'),
+        onSelect: () => beginRename(id)
+      },
+      {
+        label: t('sidebar.menu.duplicate'),
+        icon: lucideMenuIcon('copy-plus'),
+        onSelect: () => void duplicateConversation(id)
+      },
+      { label: '', divider: true },
       {
         label: t('sidebar.menu.export'),
+        icon: lucideMenuIcon('upload'),
         onSelect: () => void exportSessions([id])
       },
       {
         label: t('sidebar.menu.copyTitle'),
+        icon: lucideMenuIcon('clipboard-copy'),
         onSelect: () => void window.vav.conversations.copyToClipboard(conversation.title ?? '')
       },
       {
         label: t('sidebar.menu.revealWorkdir', { fileManager: fileManagerLabel() }),
+        icon: lucideMenuIcon('folder-open'),
         disabled: !hasRealWorkdir,
         onSelect: () => {
           if (conversation.workingDirectory) {
@@ -726,7 +766,12 @@ export function Sidebar({
         }
       },
       { label: '', divider: true },
-      { label: t('sidebar.menu.delete'), destructive: true, onSelect: () => requestDelete([id]) }
+      {
+        label: t('sidebar.menu.delete'),
+        icon: lucideMenuIcon('trash-2'),
+        destructive: true,
+        onSelect: () => requestDelete([id])
+      }
     ]
   }
 
@@ -1522,7 +1567,7 @@ export function Sidebar({
                 [
                   {
                     label: t('sidebar.showFileSessions'),
-                    icon: { kind: 'lucide', key: 'file-sessions' },
+                    icon: lucideMenuIcon('file-sessions'),
                     onSelect: () => {
                       setSidebarQuery('')
                       void selectWorkspaceGroup(null)
@@ -1534,7 +1579,7 @@ export function Sidebar({
                       archivedCount > 0
                         ? t('sidebar.archivedCount', { count: archivedCount })
                         : t('sidebar.archived'),
-                    icon: { kind: 'lucide', key: 'archive' },
+                    icon: lucideMenuIcon('archive'),
                     onSelect: () => {
                       setSidebarQuery('')
                       setListMode('archive')
@@ -1543,12 +1588,12 @@ export function Sidebar({
                   { label: '', divider: true },
                   {
                     label: t('sidebar.menu.import'),
-                    icon: { kind: 'lucide', key: 'import' },
+                    icon: lucideMenuIcon('import'),
                     onSelect: () => void importSessions()
                   },
                   {
                     label: t('common.settingsEllipsis'),
-                    icon: { kind: 'lucide', key: 'settings' },
+                    icon: lucideMenuIcon('settings'),
                     onSelect: () => useSessionStore.getState().openSettings()
                   }
                 ],

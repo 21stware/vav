@@ -18,7 +18,7 @@ import {
   focusedCliPaneId,
   measureCliPaneRects
 } from '../lib/cliPaneNavigate'
-import { focusAgentPane } from '../lib/uiFocus'
+import { focusAgentPane, resolveUiFocusScope } from '../lib/uiFocus'
 import { focusCliAgentPickerFirstOption } from './CliAgentPicker'
 import { useSessionStore } from '../state/sessionStore'
 import { resolveComposerContextFile } from '../state/sessionQueue'
@@ -442,6 +442,10 @@ export function SessionDetail({
       }
 
       const key = event.key.toLowerCase()
+      if (key === 'd') {
+        const live = resolveUiFocusScope(document.activeElement)
+        if (live === 'bash') return
+      }
       if (key === 'd' && event.shiftKey) {
         event.preventDefault()
         if (threadSplit) void useSessionStore.getState().splitSwarmPane('column')

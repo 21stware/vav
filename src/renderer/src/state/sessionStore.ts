@@ -108,6 +108,7 @@ import { isCompanionSessionShell, isMainSessionShell, readWindowMachineId } from
 import { isLocalMachine, normalizeMachineId } from '@shared/workspaceHost'
 import { compactionForLeaf } from '@shared/compaction'
 import { userBashTabsOnly } from '../lib/workspacePty'
+import { bashGroupChips } from '../lib/bashTabGroups'
 import { getProjection, disposeProjection } from './StreamProjection'
 import { useWorkspaceStore } from './workspaceStore'
 import {
@@ -1276,10 +1277,14 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       return
     }
     if (!activeId) return
-    const tabs = useWorkspaceStore.getState().workspaces[activeId]?.tabs ?? []
-    const tab = tabs[slot - 2]
-    if (!tab) return
-    useWorkspaceStore.getState().selectTab(activeId, tab.id)
+    const ws = useWorkspaceStore.getState().workspaces[activeId]
+    const bashTabs = userBashTabsOnly(ws?.tabs ?? [])
+    const chips = bashGroupChips(bashTabs, ws?.bashGroups ?? null, ws?.layout ?? null)
+    const chip = chips[slot - 2]
+    if (!chip) return
+    useWorkspaceStore.getState().selectBashGroup(activeId, chip.groupId)
+    const tabId = chip.tabIds[0]
+    if (tabId) useWorkspaceStore.getState().selectTab(activeId, tabId)
     get().setPanelSegment('terminal')
   },
 
@@ -2463,7 +2468,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       ws.selectTab(id, payload.tabId)
     } else {
       const name = payload.name?.trim() || payload.agentId?.trim() || 'CLI'
-      const tabId = await ws.newBash(id, 80, 24, 'row', {
+      const tabId = await ws.newBash(id, 80, 24, {
         title: tt('agents.installingNamed', { name }),
         purpose: 'install',
         installAgentId: payload.agentId?.trim() || undefined

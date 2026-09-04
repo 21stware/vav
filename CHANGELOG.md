@@ -4,6 +4,26 @@ User-facing changes by release. Unreleased work lives at the top until the next 
 
 ## Unreleased
 
+## 1.18.12
+
+Native menu icons, and bash tabs that stay independent when you split.
+
+### Menus
+
+- File keeps icons on New Session, Import, Export, and New Terminal.
+- Session keeps icons on Send and Stop. Switch Model and Switch Permission Mode are submenus.
+- Session context menus use Lucide glyphs; Archive stays text-only. Rows without an icon keep the same label column.
+
+### Terminal
+
+- ⌘T opens another bash tab. ⌘D / ⌘⇧D split the focused pane inside the current tab.
+- Each tab keeps its own split tree, so switching chips no longer duplicates prompts.
+- ⌘1–⌘9 focus the matching bash tab chip.
+
+### Sidebar
+
+- Pin and favorite stay in-flow so hover no longer shifts the sibling control.
+
 ## 1.18.11
 
 TEMP DIR locate lands the `Workspace` folder in the chosen destination, and a paired host can disconnect or unpair one computer.

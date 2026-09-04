@@ -16,6 +16,7 @@ describe('planHydratedPtySlice', () => {
       activeHostAgentId: null as string | null,
       tabs: [sh],
       layout: { type: 'leaf' as const, tabId: 'sh', weight: 1 },
+      bashGroups: null,
       agentHostSessions: {},
       activeTabId: 'sh'
     }
@@ -46,5 +47,7 @@ describe('planHydratedPtySlice', () => {
       grown.tabs?.map((t) => t.id),
       ['sh', 'sh-2']
     )
+    assert.equal(grown.layout?.type, 'leaf')
+    assert.deepEqual(grown.bashGroups?.order, ['sh', 'sh-2'])
   })
 })

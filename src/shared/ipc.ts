@@ -1673,6 +1673,7 @@ export type MenuCommand =
   | 'toggle-tools-panel'
   | 'toggle-panel-segment'
   | 'new-terminal'
+  | 'split-bash'
   /** Ctrl+` — expand tools tray Terminal and focus bash. */
   | 'focus-bash'
   | 'switch-workdir'
@@ -1690,6 +1691,10 @@ export type MenuCommand =
   | 'pick-attachments'
   /** ⌘⇧P — open the composer permission (approval mode) menu. */
   | 'switch-approval'
+  /** Session menu: set the active conversation's approval mode. */
+  | 'set-approval-auto'
+  | 'set-approval-bypass'
+  | 'set-approval-edit'
   /** Capture a screen region, annotate, attach to the composer. */
   | 'screenshot'
   | 'send'

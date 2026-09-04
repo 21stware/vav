@@ -466,7 +466,7 @@ export function acquireTerminal(options: {
     if (!meta || ev.altKey) return true
     const key = ev.key.toLowerCase()
     // Cmd/Ctrl + Shift + letter product shortcuts
-    if (ev.shiftKey && (key === 'e' || key === 'h' || key === 't' || key === 'o' || key === 'g')) {
+    if (ev.shiftKey && (key === 'e' || key === 'h' || key === 't' || key === 'o' || key === 'g' || key === 'd')) {
       return false
     }
     // Cmd/Ctrl + letter / digit product shortcuts (incl. ⌘W context-close)
@@ -478,6 +478,7 @@ export function acquireTerminal(options: {
         key === 'f' ||
         key === 'g' ||
         key === 't' ||
+        key === 'd' ||
         key === 'w' ||
         key === ',' ||
         /^[1-9]$/.test(key) ||
@@ -534,6 +535,14 @@ export function acquireTerminal(options: {
     entry.parked = false
     entry.paintPaused = false
     applyCursorBlink(true)
+    // Bash already holds scrollback. pty.replay is a short tail — writing it
+    // again after tab switches stacks duplicate prompts. Agent TUIs still
+    // need a last-screen replay onto the alt buffer.
+    if (entry.surface === 'bash') {
+      blitTerminal(term)
+      flushLiveQueue()
+      return
+    }
     if (typeof window.vav.pty.replay !== 'function') {
       flushLiveQueue()
       return

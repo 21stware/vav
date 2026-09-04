@@ -24,7 +24,8 @@ import { isTemporaryWorkspace, truncatePathLabel, workspaceChromeLabel } from '.
 import { useGitRepoSyncEpoch } from '../lib/gitRepoSync'
 import { FilesPanel } from './FilesPanel'
 import { TerminalPanel } from './TerminalPanel'
-import { disposeTerminal } from '../lib/terminalRegistry'
+import { bashGroupChips } from '../lib/bashTabGroups'
+import { focusBashPane, getUiFocusScope, resolveUiFocusScope } from '../lib/uiFocus'
 import { menuAnchor, showMenu, type MenuItem } from '../lib/nativeMenu'
 import { workspaceSwitchMenuItems } from '../lib/workspaceSwitchMenu'
 import { fileManagerLabel, keys } from '../lib/platform'
@@ -74,9 +75,8 @@ export function ToolsPanel({
   // to the whole workspace slice re-rendered Workspace/VAV chips every tick.
   const workspaceRoot = useWorkspaceStore((s) => s.workspaces[activeId]?.root ?? null)
   const workspaceTabs = useWorkspaceStore((s) => s.workspaces[activeId]?.tabs)
-  const workspaceActiveTabId = useWorkspaceStore(
-    (s) => s.workspaces[activeId]?.activeTabId ?? ''
-  )
+  const workspaceBashGroups = useWorkspaceStore((s) => s.workspaces[activeId]?.bashGroups ?? null)
+  const workspaceLayout = useWorkspaceStore((s) => s.workspaces[activeId]?.layout ?? null)
   const swarmEnabled = useSessionStore((s) => s.settings.swarmModeEnabled === true)
   const cliMode = useWorkspaceStore((s) => !!s.workspaces[activeId]?.cliMode)
   const rootError = useWorkspaceStore((s) => {
@@ -84,8 +84,10 @@ export function ToolsPanel({
     return root ? s.workspaces[activeId]?.dirErrors[root] : undefined
   })
   const newBash = useWorkspaceStore((s) => s.newBash)
+  const splitBash = useWorkspaceStore((s) => s.splitBash)
+  const selectBashGroup = useWorkspaceStore((s) => s.selectBashGroup)
+  const closeBashGroup = useWorkspaceStore((s) => s.closeBashGroup)
   const selectTab = useWorkspaceStore((s) => s.selectTab)
-  const closeTab = useWorkspaceStore((s) => s.closeTab)
   const tabStatus = useWorkspaceStore((s) => s.ptyStatus[activeId])
 
   const [dragHeight, setDragHeight] = useState<number | null>(null)
@@ -194,7 +196,9 @@ export function ToolsPanel({
   const tabs = (workspaceTabs ?? []).filter(
     (t) => !t.agentId || t.agentId === 'vav' || t.isAgent
   )
-  const activeTabId = workspaceActiveTabId
+  const bashTabChips = bashGroupChips(tabs, workspaceBashGroups, workspaceLayout)
+  const activeBashGroupId =
+    workspaceBashGroups?.activeGroupId || bashTabChips[0]?.groupId || ''
   const filesOn = !collapsed && segment === 'files' && !rootMissing
   const previewEdit = variant === 'preview-edit'
   const agentRunning = useSessionStore((s) => !!s.turns[activeId]?.isRunning)
@@ -434,21 +438,25 @@ export function ToolsPanel({
     ]
   }
 
-  const closeShellTab = (tabId: string, title: string, _isAgent: boolean): void => {
+  const closeBashChip = (groupId: string, tabIds: string[], label: string): void => {
     const dispose = (): void => {
-      disposeTerminal(activeId, tabId)
-      closeTab(activeId, tabId)
+      closeBashGroup(activeId, groupId)
     }
     void (async () => {
-      // Idle tabs close silently; only a running command needs a confirm.
-      const busy = await window.vav.pty.isBusy(tabId)
+      let busy = false
+      for (const tabId of tabIds) {
+        if (await window.vav.pty.isBusy(tabId)) {
+          busy = true
+          break
+        }
+      }
       if (!busy) {
         dispose()
         return
       }
       showDialog({
         title: t('tools.closeRunning'),
-        body: t('tools.closeRunningBody', { title }),
+        body: t('tools.closeRunningBody', { title: label }),
         confirmLabel: t('tools.closeConfirm'),
         destructive: true,
         onConfirm: dispose
@@ -469,9 +477,33 @@ export function ToolsPanel({
       }
       if (!id) return
       setPanelSegment('terminal')
-      void newBash(id, 80, 24)
+      const tabId = await newBash(id, 80, 24)
+      if (tabId) focusBashPane(tabId)
     })()
   }
+
+  // ⌘D / ⌘⇧D — split only when the bash surface owns keyboard focus.
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent): void => {
+      if (!(event.metaKey || event.ctrlKey) || event.altKey) return
+      const key = event.key.toLowerCase()
+      if (key !== 'd') return
+      const live = resolveUiFocusScope(document.activeElement)
+      if (live !== 'bash' && getUiFocusScope() !== 'bash') return
+      if (useSessionStore.getState().panelSegment !== 'terminal') return
+      if (useSessionStore.getState().toolsCollapsed) return
+      const id = useSessionStore.getState().activeId
+      if (!id) return
+      event.preventDefault()
+      event.stopPropagation()
+      void (async () => {
+        const tabId = await splitBash(id, 80, 24, event.shiftKey ? 'column' : 'row')
+        if (tabId) focusBashPane(tabId)
+      })()
+    }
+    window.addEventListener('keydown', onKey, true)
+    return () => window.removeEventListener('keydown', onKey, true)
+  }, [splitBash])
 
   /**
    * Auto-fold only when the *last bash tab just closed* (had tabs → none).
@@ -483,17 +515,17 @@ export function ToolsPanel({
    */
   const hadBashTabs = useRef<boolean | null>(null)
   useEffect(() => {
-    const empty = tabs.length === 0
+    const empty = bashTabChips.length === 0
     const prev = hadBashTabs.current
     hadBashTabs.current = !empty
     if (empty && prev === true) {
       setToolsCollapsed(true)
     }
-  }, [tabs.length, setToolsCollapsed])
+  }, [bashTabChips.length, setToolsCollapsed])
 
   const installRuns = useInstallRunStore((s) => s.runs)
   const installList = Object.values(installRuns)
-  const hasTabs = tabs.length > 0
+  const hasTabs = bashTabChips.length > 0
   const hasInstalls = installList.length > 0
   // Modes for layout polish (empty strip vs tab strip vs open tray).
   const headerMode = !hasTabs && !hasInstalls ? 'idle' : collapsed ? 'tabs-collapsed' : 'tabs-open'
@@ -535,7 +567,7 @@ export function ToolsPanel({
       ro.observe(child as HTMLElement)
     }
     return () => ro.disconnect()
-  }, [hasTabs, hasInstalls, tabs.length, label, headerMode])
+  }, [hasTabs, hasInstalls, bashTabChips.length, label, headerMode])
 
   return (
     <div
@@ -664,17 +696,24 @@ export function ToolsPanel({
           data-empty={hasTabs ? 'false' : 'true'}
           aria-hidden={!hasTabs}
         >
-          {tabs.map((tab) => {
-            const on = !collapsed && segment === 'terminal' && tab.id === activeTabId
-            // Agent-controlled tabs: bot icon (green when agent is executing).
-            // Plain Shell tabs: terminal icon, no agent prefix.
-            const isAgentTab = tab.isAgent || !!tab.agentId
-            const status = tabStatus?.[tab.id] ?? 'idle'
+          {bashTabChips.map((chip) => {
+            const on =
+              !collapsed && segment === 'terminal' && chip.groupId === activeBashGroupId
+            const groupTabs = chip.tabIds
+              .map((id) => tabs.find((t) => t.id === id))
+              .filter((t): t is NonNullable<typeof t> => !!t)
+            const isAgentTab = groupTabs.some((t) => t.isAgent || !!t.agentId)
+            const status = groupTabs.reduce<'idle' | 'running' | 'exited'>((worst, tab) => {
+              const s = tabStatus?.[tab.id] ?? 'idle'
+              if (s === 'running' || worst === 'running') return 'running'
+              if (s === 'exited' || worst === 'exited') return 'exited'
+              return 'idle'
+            }, 'idle')
             const exited = status === 'exited'
-            // The VAV tab mirrors the built-in agent rather than owning a shell,
-            // so its liveness is the turn, not the PTY.
             const running =
-              tab.agentId === 'vav' || tab.isAgent ? agentRunning : status === 'running'
+              groupTabs.some((tab) => tab.agentId === 'vav' || tab.isAgent) && agentRunning
+                ? agentRunning
+                : status === 'running'
             const statusLabel = exited
               ? t('tools.status.exited')
               : running
@@ -682,8 +721,8 @@ export function ToolsPanel({
                 : t('tools.status.idle')
             return (
               <Chip
-                key={tab.id}
-                label={tab.title}
+                key={chip.groupId}
+                label={chip.label}
                 icon={
                   exited ? (
                     <Unplug size={12} className="terminal-tab-icon is-exited" />
@@ -702,16 +741,18 @@ export function ToolsPanel({
                 active={on}
                 emphasis={isAgentTab && !exited}
                 muted={exited}
-                title={`${tab.title} · ${statusLabel}`}
+                title={`${chip.label} · ${statusLabel}`}
                 onClick={() => {
                   if (on) {
                     setToolsCollapsed(true)
                     return
                   }
-                  selectTab(activeId, tab.id)
+                  selectBashGroup(activeId, chip.groupId)
+                  const focusId = chip.tabIds[chip.tabIds.length - 1]
+                  if (focusId) selectTab(activeId, focusId)
                   setPanelSegment('terminal')
                 }}
-                onClose={() => closeShellTab(tab.id, tab.title, tab.isAgent)}
+                onClose={() => closeBashChip(chip.groupId, chip.tabIds, chip.label)}
                 closeTitle={t('tools.closeTab')}
               />
             )

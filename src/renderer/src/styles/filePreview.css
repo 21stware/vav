@@ -4283,9 +4283,11 @@
 }
 
 /*
- * Pin affordances. A conv row only reserves the slot once pinned — every row
- * paying 20px for a button you see on hover would eat the title. Group headers
- * keep it in flow like the sibling add button; their labels are short.
+ * Star / pin hit targets on session rows. Both slots stay in the flex row
+ * at all times so toggling favorite or pin never shifts the other control
+ * when hover reveals the sibling (mis-clicks pin thinking it is star).
+ * Hidden slots use opacity + pointer-events, not display:none.
+ * Group headers keep the old hover-only pin (short labels, no star sibling).
  */
 .conv-group-header .conv-group-pin-hit {
   width: 22px;
@@ -4299,7 +4301,7 @@
   justify-content: center;
   width: 18px;
   height: 18px;
-  flex: 0 0 auto;
+  flex: 0 0 18px;
   border: 0;
   border-radius: 5px;
   background: transparent;
@@ -4307,12 +4309,14 @@
   opacity: 0;
   padding: 0;
   cursor: default;
+  pointer-events: none;
 }
 
 .conv-group-header:hover .conv-group-pin-hit,
 .conv-row:hover .conv-pin-hit,
 .conv-row:hover .conv-star-hit {
   opacity: 0.55;
+  pointer-events: auto;
 }
 
 /*
@@ -4328,6 +4332,7 @@
 .conv-group-header .conv-group-pin-hit.pinned,
 .conv-pin-hit.pinned {
   opacity: 1;
+  pointer-events: auto;
   color: var(--accent-text);
 }
 
@@ -4360,18 +4365,9 @@
   margin-right: -2px;
 }
 
-.conv-star-hit:not(.favorited),
-.conv-pin-hit:not(.pinned) {
-  display: none;
-}
-
-.conv-row:hover .conv-star-hit,
-.conv-row:hover .conv-pin-hit {
-  display: inline-flex;
-}
-
 .conv-star-hit.favorited {
   opacity: 1;
+  pointer-events: auto;
   color: var(--accent-text);
 }
 

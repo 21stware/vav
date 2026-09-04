@@ -200,6 +200,7 @@ export function projectPtySessions(sessions: PtySessionMeta[]): {
 /** Snapshot bash + agent layouts for main (`pty.setLayouts`). */
 export function buildConversationPtyLayouts(slice: {
   layout: TerminalLayoutNode | null
+  bashGroups: import('../../../shared/types.ts').BashTabGroups | null
   cliMode: boolean
   agentHostSessions: Record<string, { layout: TerminalLayoutNode | null }>
 }): ConversationPtyLayouts {
@@ -209,6 +210,7 @@ export function buildConversationPtyLayouts(slice: {
   }
   return {
     bash: slice.layout,
+    bashGroups: slice.bashGroups,
     agents,
     cliMode: slice.cliMode === true
   }

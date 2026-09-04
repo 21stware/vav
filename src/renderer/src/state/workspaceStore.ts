@@ -11,7 +11,7 @@ const pendingInjectTimers = new Map<string, number>()
 import type { PtyActivityStatus, PtySessionMeta } from '@shared/ipc'
 import { makePendingCliTab, pendingTabFromId } from '../lib/cliPendingLayout'
 import { shouldFollowRemotePtySurface } from '../lib/cliSurfaceAuthority'
-import { shouldRestoreCliLayoutAfterSync } from '../lib/workspaceLayout'
+import { collectLeaves, shouldRestoreCliLayoutAfterSync } from '../lib/workspaceLayout'
 import {
   CLI_SURFACE_KEY,
   pendingCliPickerSurface,
@@ -54,9 +54,16 @@ import {
 } from '../lib/workspaceSlice'
 import { planHydratedPtySlice } from '../lib/workspaceHydrate'
 import {
+  closeBashGroupPatch,
+  closeBashTabWithGroupsPatch,
+  planFirstBashTab,
+  planNewBashTab,
+  planSelectBashGroup,
+  planSplitBashPane
+} from '../lib/bashTabGroups'
+import {
   AGENT_TAB_ID,
   buildConversationPtyLayouts,
-  closeBashTabSlicePatch,
   emptyPtyLayouts,
   ensureVavAgentTabPatch,
   isLiveAgentSession,
@@ -64,8 +71,6 @@ import {
   normalizePtyListResult,
   omitRecord,
   planAppendUserBashTab,
-  planBashSplit,
-  planFirstBashPane,
   projectPtySessions,
   ptyCreateOptions,
   ptyTabStatusPatch,
@@ -362,21 +367,31 @@ interface WorkspaceState {
     extras?: NewBashOptions
   ): Promise<string>
   /**
-   * Split the *active* pane (or create first pane).
-   * - axis `row` = left/right (⌘D)
-   * - axis `column` = top/bottom (⌘⇧D)
-   * Directions compose independently via a binary layout tree.
-   */
-  /**
-   * User bash only (Tools tray). Always plain shell — never spawns a CLI agent.
+   * User bash only (Tools tray). ⌘T — new parallel tab chip (never splits).
+   * Always plain shell — never spawns a CLI agent.
    */
   newBash(
+    id: string,
+    cols?: number,
+    rows?: number,
+    extras?: NewBashOptions
+  ): Promise<string>
+  /**
+   * Split the focused bash pane inside the active tab group (⌘D when bash focused).
+   * - axis `row` = left/right
+   * - axis `column` = top/bottom (⌘⇧D)
+   */
+  splitBash(
     id: string,
     cols?: number,
     rows?: number,
     axis?: TerminalSplitAxis,
     extras?: NewBashOptions
   ): Promise<string>
+  /** Switch the visible bash tab chip (parallel tabs). */
+  selectBashGroup(id: string, groupId: string): void
+  /** Close every bash pane that belongs to one tab chip. */
+  closeBashGroup(id: string, groupId: string): void
   /**
    * Enter CLI Agent mode: show unified surface with a type-picker pane if empty.
    */
@@ -789,21 +804,67 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     return tabId
   },
 
-  async newBash(id, cols = 80, rows = 24, axis: TerminalSplitAxis = 'row', extras) {
+  async newBash(id, cols = 80, rows = 24, extras) {
     const slice = get().workspaces[id]
     const bashTabs = userBashTabsOnly(slice?.tabs ?? [])
-    // First pane: single leaf, no split.
     if (!slice || bashTabs.length === 0 || !slice.layout) {
       const tabId = await get().newUserTerminal(id, cols, rows, null, undefined, undefined, extras)
-      patch(set, id, (s) => planFirstBashPane(s.tabs, tabId, extras))
+      patch(set, id, (s) => planFirstBashTab(s.tabs, tabId, extras))
       get().syncPtyLayouts(id)
       return tabId
     }
+    const tabId = await get().newUserTerminal(id, cols, rows, null, undefined, undefined, extras)
+    patch(set, id, (s) => planNewBashTab(s, tabId, extras))
+    get().syncPtyLayouts(id)
+    return tabId
+  },
+
+  async splitBash(id, cols = 80, rows = 24, axis: TerminalSplitAxis = 'row', extras) {
+    const slice = get().workspaces[id]
+    const bashTabs = userBashTabsOnly(slice?.tabs ?? [])
+    if (!slice || bashTabs.length === 0 || !slice.layout) {
+      return get().newBash(id, cols, rows, extras)
+    }
     const focusId = slice.activeTabId || bashTabs[0]!.id
     const newTabId = await get().newUserTerminal(id, cols, rows, null, undefined, undefined, extras)
-    patch(set, id, (s) => planBashSplit(s, { focusId, newTabId, axis, extras }))
+    patch(set, id, (s) => planSplitBashPane(s, { focusId, newTabId, axis, extras }))
     get().syncPtyLayouts(id)
     return newTabId
+  },
+
+  selectBashGroup(id, groupId) {
+    patch(set, id, (s) => {
+      const plan = planSelectBashGroup(s, groupId)
+      return plan ?? {}
+    })
+    get().syncPtyLayouts(id)
+  },
+
+  closeBashGroup(id, groupId) {
+    const slice = get().workspaces[id]
+    if (!slice) return
+    const node = slice.bashGroups?.layouts[groupId]
+    const ids = node ? collectLeaves(node) : [groupId]
+    for (const tabId of ids) {
+      void window.vav.pty.kill(tabId)
+      disposeTerminal(id, tabId)
+      terminalSinks.delete(sinkKey(id, tabId))
+      pendingMirrors.delete(sinkKey(id, tabId))
+      lastInjectFingerprint.delete(tabId)
+    }
+    set((state) => {
+      let ptyStatus = state.ptyStatus
+      let changed = false
+      for (const tabId of ids) {
+        const next = omitPtyTabStatusPatch(ptyStatus, id, tabId)
+        if (!next) continue
+        ptyStatus = next.ptyStatus
+        changed = true
+      }
+      return changed ? { ptyStatus } : state
+    })
+    patch(set, id, (s) => closeBashGroupPatch(s, groupId))
+    get().syncPtyLayouts(id)
   },
 
   enterCliMode(id) {
@@ -1284,13 +1345,14 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 
   closeTab(id, tabId) {
     void window.vav.pty.kill(tabId)
+    disposeTerminal(id, tabId)
     terminalSinks.delete(sinkKey(id, tabId))
     pendingMirrors.delete(sinkKey(id, tabId))
     lastInjectFingerprint.delete(tabId)
     // Drop the status before the tab, or the next hydrate resurrects a
     // tombstone the user just dismissed.
     set((state) => omitPtyTabStatusPatch(state.ptyStatus, id, tabId) ?? state)
-    patch(set, id, (s) => closeBashTabSlicePatch(s, tabId))
+    patch(set, id, (s) => closeBashTabWithGroupsPatch(s, tabId))
     get().syncPtyLayouts(id)
   },
 

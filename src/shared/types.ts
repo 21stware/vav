@@ -1395,10 +1395,22 @@ export type TerminalLayoutNode =
       children: [TerminalLayoutNode, TerminalLayoutNode]
     }
 
+/**
+ * Tools-tray bash tab groups: parallel tab chips, each with its own split tree.
+ * `order` lists group root ids; `layouts` maps root → pane tree for that tab.
+ */
+export interface BashTabGroups {
+  order: string[]
+  layouts: Record<string, TerminalLayoutNode>
+  activeGroupId: string
+}
+
 /** Per-conversation terminal split trees shared across BrowserWindows. */
 export interface ConversationPtyLayouts {
-  /** Tools-tray plain bash. */
+  /** Tools-tray plain bash — layout for the active group. */
   bash: TerminalLayoutNode | null
+  /** Parallel bash tab chips + per-group split trees. */
+  bashGroups?: BashTabGroups | null
   /** CLI agent id → host layout (includes unified `__cli__` Screen). */
   agents: Record<string, TerminalLayoutNode | null>
   /**
