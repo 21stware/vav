@@ -78,6 +78,7 @@ import {
 import { createSwarmFinishAlert } from './sound/swarmFinishAlert'
 import { RemoteControlService } from './remote/RemoteControlService'
 import { DaemonAttachService } from './daemon/DaemonAttachService'
+import { resolveVavdPairing } from './daemon/vavdClientLaunch'
 import { openTailcatDial } from './daemon/tailcatDial'
 import { hostJoin, isLocalMachine, LOCAL_MACHINE_ID, normalizeMachineId, conversationOnMachine, parseWorkspaceRefList, recentsForMachine, remoteConversationMachineId, type WorkspaceHostInfo } from '@shared/workspaceHost'
 import { hostSessionId, localSessionId } from '@shared/remoteHostKind'
@@ -7426,6 +7427,16 @@ if (!singleInstance) {
     }
 
     mainWindow ??= createWindow()
+    const vavdPairing = resolveVavdPairing(process.env, process.argv)
+    if (vavdPairing) {
+      void daemonAttach.pair(vavdPairing).then((result) => {
+        if (!result.ok) {
+          console.warn('[vavd] auto-pair failed', result.error)
+          return
+        }
+        void showHostWindow(result.host.id)
+      })
+    }
     // Belt-and-suspenders: ready-to-show can race with Dock hide / focus steals
     // from the IDE. Force the main window up once the renderer finishes loading.
     mainWindow.webContents.once('did-finish-load', () => {

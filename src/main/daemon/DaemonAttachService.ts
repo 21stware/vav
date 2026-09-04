@@ -781,7 +781,7 @@ export class DaemonAttachService {
 
   /**
    * Second connection, `hello.role=phone`, same secret as the daemon.
-   * Desktop hosts welcome; headless vavd refuses — client keeps local agent.
+   * Headless vavd hosts the control plane; this dial drives turns there.
    */
   private async attachControlPlane(
     machineId: string,

@@ -12,11 +12,11 @@ vav send "hello"
 
 Prints a pairing URI. Use it from:
 
-- VAV desktop → Connect
+- VAV desktop → Connect, or launch the app with `VAVD_URI` / `--vavd-uri` so it opens as a vavd UI
 - VAV Remote (iOS)
 - the local web UI (`http://127.0.0.1:4752`)
 - the Chrome extension side panel
-- `npm run vav` in this repo (sessions / send / configure)
+- `npm run vav` in this repo (sessions / send / configure) — also reads `VAVD_URI`
 
 All of those are the same control-plane client (`hello.role=phone`). Turns run in this process.
 

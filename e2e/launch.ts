@@ -93,6 +93,11 @@ export type LaunchVavOptions = {
    * empty-state `empty-in` (logo + name stagger).
    */
   reduceMotion?: boolean
+  /**
+   * Pair the desktop app with a running vavd at launch (`VAVD_URI`).
+   * No Connect paste — the host window opens as a control-plane client.
+   */
+  vavdUri?: string
   /** Settings → Connect: listen so another VAV can pair with this instance. */
   remoteControlEnabled?: boolean
   /** Seed `userData/daemon/identity.json` name (pairing / remote-window label). */
@@ -427,7 +432,8 @@ export async function launchVav(options: LaunchVavOptions = {}): Promise<VavHarn
         : {}),
       ...(options.acpLeakPrompts ? { E2E_ACP_LEAK_PROMPTS: String(options.acpLeakPrompts) } : {}),
       ...(options.acpLeakTail ? { E2E_ACP_LEAK_TAIL: '1' } : {}),
-      ...(options.acpLeakPartialTransport ? { E2E_ACP_LEAK_PARTIAL_TRANSPORT: '1' } : {})
+      ...(options.acpLeakPartialTransport ? { E2E_ACP_LEAK_PARTIAL_TRANSPORT: '1' } : {}),
+      ...(options.vavdUri ? { VAVD_URI: options.vavdUri } : {})
     }
   })
 
@@ -549,6 +555,38 @@ export async function waitForNewWindow(
     })
     .toBe(true)
   if (!found) throw new Error('expected a new BrowserWindow')
+  return found
+}
+
+/** Host window opened after Connect / `VAVD_URI` auto-pair. */
+export async function waitForHostWindow(
+  harness: VavHarness,
+  name: string,
+  timeout = 30_000
+): Promise<Page> {
+  let found: Page | undefined
+  await expect
+    .poll(
+      async () => {
+        for (const win of harness.app.windows()) {
+          try {
+            const label = await win
+              .locator('[data-testid="sidebar-connect"]')
+              .textContent({ timeout: 400 })
+            if (label?.includes(name)) {
+              found = win
+              return true
+            }
+          } catch {
+            // window still loading
+          }
+        }
+        return false
+      },
+      { timeout }
+    )
+    .toBe(true)
+  if (!found) throw new Error(`expected a host window labeled ${name}`)
   return found
 }
 
