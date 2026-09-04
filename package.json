@@ -19,6 +19,7 @@
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
     "pretest:e2e": "electron-vite build",
     "test:e2e": "playwright test --config e2e/playwright.config.ts",
+    "test:e2e:vavd": "playwright test --config e2e/playwright.config.ts e2e/specs/remote-daemon.spec.ts e2e/specs/remote-control.spec.ts",
     "vavd": "node --import ./scripts/register-shared-alias.mjs --experimental-strip-types src/main/daemon/vavd.ts",
     "vav": "node --import ./scripts/register-shared-alias.mjs --experimental-strip-types src/main/cli/vavRemoteCli.ts",
     "pack:vavd": "node scripts/pack-vavd.mjs",

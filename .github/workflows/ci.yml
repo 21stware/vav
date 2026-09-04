@@ -46,3 +46,9 @@ jobs:
 
       - name: Pack vavd + Chrome extension sidecars
         run: npm run pack:release-sidecars -- --out release-sidecars
+
+      # Electron GUI: macOS runners have a session. Windows headed e2e is flaky
+      # on GHA, so the vavd client proof stays on macos-14.
+      - name: vavd client e2e
+        if: runner.os == 'macOS'
+        run: npm run test:e2e:vavd
