@@ -151,7 +151,20 @@ export const WEB_UI_HTML = `<!doctype html>
       send({ type:'send', conversationId: active, text })
       $('text').value = ''
     }
-    if (secretBox.value) connect()
+    async function autoConnect() {
+      try {
+        const res = await fetch('/discover')
+        if (res.ok) {
+          const info = await res.json()
+          if (info && info.secret) {
+            secretBox.value = info.secret
+            secretBox.hidden = true
+          }
+        }
+      } catch {}
+      if (secretBox.value) connect()
+    }
+    void autoConnect()
   </script>
 </body>
 </html>

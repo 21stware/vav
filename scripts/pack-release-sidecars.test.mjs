@@ -50,12 +50,21 @@ test('pack-release-sidecars writes the npm tarball and Chrome extension zip', as
 
     const JSZip = require('jszip')
     const zip = await JSZip.loadAsync(readFileSync(zipPath))
-    for (const name of ['manifest.json', 'background.js', 'sidepanel.html', 'sidepanel.js']) {
+    for (const name of [
+      'manifest.json',
+      'background.js',
+      'sidepanel.html',
+      'sidepanel.js',
+      'sidepanel.css',
+      'content.js',
+      'icons/icon128.png'
+    ]) {
       assert.ok(zip.file(name), `extension zip missing ${name}`)
     }
     const manifest = JSON.parse(await zip.file('manifest.json').async('string'))
     assert.equal(manifest.version, version)
     assert.equal(manifest.manifest_version, 3)
+    assert.equal(manifest.icons['128'], 'icons/icon128.png')
   } finally {
     rmSync(out, { recursive: true, force: true })
     rmSync(dir, { recursive: true, force: true })

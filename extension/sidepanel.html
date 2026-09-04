@@ -2,53 +2,108 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>VAV</title>
-  <style>
-    :root { color-scheme: light dark; --ink:#131b35; --paper:#fbfbfe; --accent:#6b5bc0; --muted:#6b6d7a; }
-    html,body { margin:0; height:100%; font:14px/1.45 ui-sans-serif,system-ui,sans-serif; background:var(--paper); color:var(--ink); }
-    body { display:flex; flex-direction:column; }
-    header { padding:12px 14px 8px; display:flex; flex-direction:column; gap:8px; }
-    h1 { font-size:15px; margin:0; }
-    input,button,textarea { font:inherit; }
-    input,textarea { width:100%; box-sizing:border-box; padding:8px 10px; border:0; background:color-mix(in srgb, var(--ink) 6%, transparent); border-radius:8px; }
-    button { background:var(--accent); color:#fff; border:0; border-radius:8px; padding:8px 12px; cursor:pointer; }
-    button.ghost { background:transparent; color:var(--accent); }
-    #sessions { list-style:none; margin:0; padding:0 8px; max-height:28vh; overflow:auto; }
-    #sessions li { padding:8px; border-radius:8px; cursor:pointer; }
-    #sessions li.active { background:color-mix(in srgb, var(--accent) 16%, transparent); }
-    #log { flex:1; overflow:auto; padding:12px 14px; white-space:pre-wrap; }
-    .composer { display:flex; gap:8px; padding:10px 12px; }
-    .composer textarea { flex:1; min-height:40px; }
-    .controls { display:flex; gap:8px; padding:0 12px 8px; }
-    #status { color:var(--muted); font-size:12px; }
-  </style>
+  <link rel="stylesheet" href="sidepanel.css" />
 </head>
 <body>
-  <header>
-    <h1>VAV</h1>
-    <div id="status">Disconnected</div>
-    <input id="host" value="ws://127.0.0.1:4752/vav" />
-    <input id="secret" placeholder="Pairing secret" autocomplete="off" />
-    <div style="display:flex;gap:8px">
-      <button id="connect">Connect</button>
-      <button id="create" class="ghost">New</button>
+  <header class="chrome">
+    <div class="host">
+      <span id="dot" class="dot" data-state="searching" aria-hidden="true"></span>
+      <div class="host-meta">
+        <strong id="hostName">VAV</strong>
+        <span id="status">Looking for this machine…</span>
+      </div>
+    </div>
+    <div class="chrome-actions">
+      <button type="button" id="sessionsBtn" class="icon-btn" title="Sessions" aria-label="Sessions">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+          <path d="M3 4.5h10M3 8h10M3 11.5h7" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+        </svg>
+      </button>
+      <button type="button" id="create" class="icon-btn" data-testid="new-session" title="New session" aria-label="New session">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+          <path d="M8 3v10M3 8h10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+        </svg>
+      </button>
     </div>
   </header>
-  <ul id="sessions"></ul>
-  <div id="log"></div>
-  <div class="controls">
-    <input id="model" placeholder="Model id" />
-    <select id="approval">
-      <option value="auto">Normal</option>
-      <option value="bypass">Bypass</option>
-      <option value="edit">Read</option>
-    </select>
-    <button type="button" id="apply" class="ghost">Apply</button>
+
+  <aside id="drawer" class="drawer" hidden>
+    <div class="drawer-head">
+      <span>Sessions</span>
+      <button type="button" id="closeDrawer" class="ghost">Done</button>
+    </div>
+    <ul id="sessions" data-testid="sessions"></ul>
+  </aside>
+
+  <section id="sessionBar" class="session-bar" hidden>
+    <div class="session-titles">
+      <h1 id="title">Session</h1>
+      <p id="dirLabel"></p>
+    </div>
+    <button type="button" id="moreBtn" class="icon-btn" title="Session" aria-label="Session actions">⋯</button>
+  </section>
+
+  <main>
+    <div id="transcript" class="transcript" data-testid="transcript"></div>
+  </main>
+
+  <section id="pageChip" class="page-chip" hidden>
+    <div class="page-chip-copy">
+      <strong id="pageTitle">This page</strong>
+      <span id="pageUrl"></span>
+    </div>
+    <label class="toggle">
+      <input type="checkbox" id="includePage" checked />
+      <span>Include</span>
+    </label>
+    <label class="toggle">
+      <input type="checkbox" id="includeShot" />
+      <span>Shot</span>
+    </label>
+  </section>
+
+  <footer>
+    <div id="runbar" class="runbar">
+      <input id="model" list="modelList" aria-label="Model" placeholder="Model" />
+      <datalist id="modelList"></datalist>
+      <select id="approval" aria-label="Approval">
+        <option value="auto">Normal</option>
+        <option value="bypass">Bypass</option>
+        <option value="edit">Read</option>
+      </select>
+      <button type="button" id="apply" class="ghost">Apply</button>
+      <button type="button" id="stopBtn" class="ghost danger" hidden>Stop</button>
+    </div>
+    <form id="sendForm" class="composer">
+      <textarea id="text" placeholder="Ask…" rows="2"></textarea>
+      <button type="submit" class="send">Send</button>
+    </form>
+  </footer>
+
+  <div id="pairSheet" class="sheet" hidden>
+    <div class="sheet-card">
+      <h2>Connect to vavd</h2>
+      <p>Couldn’t find a local daemon. Start <code>npx @21stware/vavd</code>, or paste a pairing line.</p>
+      <input id="secret" placeholder="vav-daemon://… or pairing secret" autocomplete="off" />
+      <div class="sheet-actions">
+        <button type="button" id="retry">Look again</button>
+        <button type="button" id="connect" class="ghost">Pair</button>
+      </div>
+    </div>
   </div>
-  <form class="composer" id="sendForm">
-    <textarea id="text" placeholder="Ask…" rows="2"></textarea>
-    <button type="submit">Send</button>
-  </form>
-  <script src="sidepanel.js"></script>
+
+  <div id="moreSheet" class="sheet" hidden>
+    <div class="sheet-card">
+      <button type="button" id="pinBtn">Pin</button>
+      <button type="button" id="favBtn">Favorite</button>
+      <button type="button" id="renameBtn">Rename</button>
+      <button type="button" id="archiveBtn" class="danger">Archive</button>
+      <button type="button" id="closeMore" class="ghost">Cancel</button>
+    </div>
+  </div>
+
+  <script type="module" src="sidepanel.js"></script>
 </body>
 </html>

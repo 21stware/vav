@@ -62,7 +62,9 @@ describe('vavd Chrome extension', () => {
       listen: '127.0.0.1',
       port: 0,
       hub: plane.hub,
-      secret: () => SECRET
+      secret: () => SECRET,
+      name: 'ext-host',
+      version: 'test'
     })
     let context: BrowserContext | undefined
     try {
@@ -99,17 +101,20 @@ describe('vavd Chrome extension', () => {
       }
       const panel = await context.newPage()
       await panel.goto(`chrome-extension://${extensionId}/sidepanel.html`)
-      await panel.locator('#host').fill(`ws://127.0.0.1:${web.port}/vav`)
-      await panel.locator('#secret').fill(SECRET)
-      await panel.locator('#connect').click()
-      await panel.getByText(/Connected/).waitFor({ timeout: 10_000 })
+      await panel.evaluate(async (port) => {
+        await chrome.storage.local.set({
+          vavDiscoverHint: { ports: [port], hosts: ['127.0.0.1'] }
+        })
+        await chrome.runtime.sendMessage({ type: 'rediscover' })
+      }, web.port)
+      await panel.getByText(/Connected/).waitFor({ timeout: 12_000 })
       await panel.locator('#create').click()
       await panel.locator('#sessions li').first().waitFor({ timeout: 8_000 })
       await panel.locator('#model').fill('extension-model')
       await panel.locator('#apply').click()
       await panel.locator('#text').fill('hello from the chrome extension')
       await panel.locator('#sendForm button[type="submit"]').click()
-      await panel.locator('#log').getByText('e2e stub reply').waitFor({ timeout: 8_000 })
+      await panel.locator('#transcript').getByText('e2e stub reply').waitFor({ timeout: 8_000 })
       if (existsSync('/opt/cursor/artifacts')) {
         await panel.screenshot({
           path: '/opt/cursor/artifacts/vavd_chrome_extension_stub_turn.png',

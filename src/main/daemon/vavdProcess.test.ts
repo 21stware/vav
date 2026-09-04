@@ -171,6 +171,11 @@ describe('vavd process', () => {
     const health = await fetch(`http://127.0.0.1:${daemon.webPort}/health`)
     assert.equal(health.ok, true)
     assert.equal(((await health.json()) as { app: string }).app, 'vavd')
+    const discover = await fetch(`http://127.0.0.1:${daemon.webPort}/discover`)
+    const info = (await discover.json()) as { app?: string; secret?: string; loopback?: boolean }
+    assert.equal(info.app, 'vavd')
+    assert.equal(info.loopback, true)
+    assert.equal(info.secret, daemon.secret)
     const page = await fetch(`http://127.0.0.1:${daemon.webPort}/`)
     assert.equal(page.ok, true)
     const html = await page.text()
