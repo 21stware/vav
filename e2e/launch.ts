@@ -246,7 +246,7 @@ function seedUserData(
 async function seedPreviewKindFixtures(workspace: string): Promise<void> {
   writeFileSync(
     join(workspace, 'page.html'),
-    '<!doctype html><html><body><h1>HTML preview</h1><p>Hello canvas</p></body></html>\n'
+    '<!doctype html><html><body><h1>HTML preview</h1><p>Hello canvas</p><p id="js-probe">no-js</p><script>document.getElementById("js-probe").textContent="js-on"</script></body></html>\n'
   )
   writeFileSync(
     join(workspace, 'app.html'),

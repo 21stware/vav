@@ -124,9 +124,13 @@ test('HTML preview renders the document canvas with Edit chrome', async () => {
     const preview = page.locator('[data-testid="file-preview"]')
     await expect(page.locator('[data-testid="file-preview-name"]')).toHaveText('page.html')
     await expect(preview.locator('.html-root')).toBeVisible()
-    await expect(preview.frameLocator('.html-native-frame').getByText('HTML preview')).toBeVisible({
-      timeout: 20_000
-    })
+    const frame = preview.frameLocator('.html-native-frame')
+    await expect(frame.getByText('HTML preview')).toBeVisible({ timeout: 20_000 })
+    await expect(frame.getByText('js-on')).toBeVisible()
+    await frame.getByText('Hello canvas').click()
+    await expect
+      .poll(async () => frame.locator('.office-pick-target.selected, [data-block-id].selected').count())
+      .toBeGreaterThan(0)
     await expect(preview.locator('.preview-mode-select')).toHaveValue('editing')
   } finally {
     await harness.dispose()

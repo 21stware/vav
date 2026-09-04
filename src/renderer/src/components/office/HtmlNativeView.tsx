@@ -1,14 +1,15 @@
 /**
- * HTML P0 preview: sandboxed render of the file source + DevTools-style element pick.
+ * HTML preview: live render of the file source + DevTools-style element pick.
  *
- * Product flow (not a visual editor): view → select block for comment → Agent edits
- * the HTML source on disk → user confirms Save. Scripts do not run.
+ * Product flow (not a visual editor): view → select block for comment → Agent
+ * edits the HTML source on disk → user confirms Save. Author scripts run so
+ * the page can paint; pick listeners re-bind after the document mutates.
  */
 
 import { useEffect, useRef, useState } from 'react'
 import type { PreviewBlock, PreviewBlockKind } from '@shared/previewBlock'
 import { scheduleClickPick } from '../../lib/clickPick'
-import { dirname, joinPath } from '../../lib/path'
+import { prepareHtmlSrcDoc } from '../../lib/htmlPreviewDoc'
 import { useT } from '../../i18n/useT'
 
 /** Leaf-ish targets — same spirit as office pickFromDom, plus common HTML chrome. */
@@ -49,135 +50,6 @@ const HTML_PICK_SELECTOR = [
   'div',
   'span'
 ].join(',')
-
-/**
- * Pick chrome only — must NOT restyle the author document.
- *
- * Earlier builds forced body font/color/padding/background which made the same
- * HTML look different in vav than in a browser. Keep overrides limited to
- * vav-injected classes.
- */
-const PICK_STYLE = `
-/* Soft viewport clamp only (common in constrained previews; does not set fonts). */
-img, video, svg, canvas {
-  max-width: 100%;
-  height: auto;
-}
-/* Hit targets only — pick chrome is the parent screen-space HUD. */
-.office-pick-target,
-.preview-select-region {
-  cursor: default;
-}
-`
-
-function isAbsoluteOrSpecialUrl(value: string): boolean {
-  return /^(?:[a-z][a-z0-9+.-]*:|\/\/|#|data:|blob:|mailto:|tel:|javascript:)/i.test(
-    value.trim()
-  )
-}
-
-function toVavLocalUrl(absPath: string): string {
-  return `vav-local://preview/?path=${encodeURIComponent(absPath)}`
-}
-
-function resolveAssetUrl(filePath: string, raw: string): string {
-  const value = raw.trim()
-  if (!value || isAbsoluteOrSpecialUrl(value)) return value
-  try {
-    // Drop query/hash for path resolution (P0); rare cache-busters are ignored.
-    const pathOnly = value.split(/[?#]/)[0] || value
-    const abs = joinPath(dirname(filePath), pathOnly)
-    return toVavLocalUrl(abs)
-  } catch {
-    return value
-  }
-}
-
-function rewriteCssUrls(css: string, filePath: string): string {
-  return css.replace(/url\(\s*(['"]?)([^'")]+)\1\s*\)/gi, (full, _q, url: string) => {
-    if (isAbsoluteOrSpecialUrl(url)) return full
-    const resolved = resolveAssetUrl(filePath, url)
-    return `url("${resolved}")`
-  })
-}
-
-/**
- * Prepare a same-origin srcdoc document: relative assets → vav-local, pick styles,
- * no scripts (sandbox also blocks them).
- */
-export function prepareHtmlSrcDoc(source: string, filePath: string): string {
-  const parser = new DOMParser()
-  const doc = parser.parseFromString(source || '<!DOCTYPE html><html><body></body></html>', 'text/html')
-
-  // Strip scripts for a quieter static preview (Agent still edits source).
-  doc.querySelectorAll('script').forEach((el) => el.remove())
-
-  // Relative CSS / media → local protocol so sibling assets load.
-  doc.querySelectorAll('[src], [href], [poster]').forEach((node) => {
-    const el = node as HTMLElement
-    for (const attr of ['src', 'href', 'poster'] as const) {
-      const raw = el.getAttribute(attr)
-      if (!raw) continue
-      // Keep in-page anchors and pure fragments.
-      if (raw.startsWith('#')) continue
-      // Don't rewrite stylesheet/script already absolute; do rewrite relative.
-      if (attr === 'href') {
-        const rel = (el.getAttribute('rel') || '').toLowerCase()
-        const isStylesheet = el.tagName === 'LINK' && rel.includes('stylesheet')
-        const isIcon = el.tagName === 'LINK' && (rel.includes('icon') || rel.includes('apple'))
-        if (!isStylesheet && !isIcon && el.tagName === 'A') {
-          // Leave normal links as-is (we'll block navigation in pick mode).
-          continue
-        }
-      }
-      el.setAttribute(attr, resolveAssetUrl(filePath, raw))
-    }
-  })
-
-  doc.querySelectorAll('style').forEach((style) => {
-    if (style.textContent) style.textContent = rewriteCssUrls(style.textContent, filePath)
-  })
-  doc.querySelectorAll('[style]').forEach((node) => {
-    const el = node as HTMLElement
-    const style = el.getAttribute('style')
-    if (style) el.setAttribute('style', rewriteCssUrls(style, filePath))
-  })
-
-  // Base is informational; assets already rewritten.
-  let base = doc.querySelector('base')
-  if (!base) {
-    base = doc.createElement('base')
-    doc.head.insertBefore(base, doc.head.firstChild)
-  }
-  base.setAttribute('href', toVavLocalUrl(filePath))
-
-  // Prefer the page's own color-scheme / meta; only seed a neutral default when
-  // the document never declares one — otherwise Electron's dark shell can make
-  // system UI (form controls, scrollbars, Canvas) diverge from Safari/Chrome.
-  const hasColorSchemeMeta = !!doc.querySelector(
-    'meta[name="color-scheme"], meta[name="theme-color"]'
-  )
-  const hasColorSchemeCss =
-    Array.from(doc.querySelectorAll('style')).some((s) =>
-      /color-scheme\s*:/i.test(s.textContent || '')
-    ) || /color-scheme\s*:/i.test(doc.documentElement.getAttribute('style') || '')
-  if (!hasColorSchemeMeta && !hasColorSchemeCss) {
-    const meta = doc.createElement('meta')
-    meta.setAttribute('name', 'color-scheme')
-    meta.setAttribute('content', 'light dark')
-    doc.head.insertBefore(meta, doc.head.firstChild)
-  }
-
-  // Drop any previous pick sheet (hot reloads / re-prepare).
-  doc.querySelectorAll('style[data-vav-html-pick]').forEach((el) => el.remove())
-
-  const pickStyle = doc.createElement('style')
-  pickStyle.setAttribute('data-vav-html-pick', '1')
-  pickStyle.textContent = PICK_STYLE
-  doc.head.appendChild(pickStyle)
-
-  return `<!DOCTYPE html>\n${doc.documentElement.outerHTML}`
-}
 
 function cssEscapeIdent(value: string): string {
   if (typeof CSS !== 'undefined' && typeof CSS.escape === 'function') {
@@ -310,13 +182,32 @@ function blockFromElement(el: HTMLElement, source: string, id: string): PreviewB
   }
 }
 
+function stableBlockId(el: HTMLElement, index: number): string {
+  const id = el.getAttribute('id')?.trim()
+  if (id) return `html-id-${id}`
+  return `html-${index}`
+}
+
 function ensureStableIds(root: ParentNode, selector: string): HTMLElement[] {
   const nodes = (Array.from(root.querySelectorAll(selector)) as HTMLElement[]).filter(isPickableElement)
   nodes.forEach((el, index) => {
-    if (!el.dataset.blockId) el.dataset.blockId = `html-${index}`
+    if (!el.dataset.blockId) el.dataset.blockId = stableBlockId(el, index)
     el.classList.add('office-pick-target', 'preview-select-region')
   })
   return nodes
+}
+
+function pickBestTarget(doc: Document, raw: HTMLElement): HTMLElement | null {
+  const matches = (Array.from(doc.querySelectorAll(HTML_PICK_SELECTOR)) as HTMLElement[]).filter(
+    (el) => el.dataset.blockId && isPickableElement(el)
+  )
+  let best: HTMLElement | null = null
+  for (const el of matches) {
+    if (el === raw || el.contains(raw)) {
+      if (!best || best.contains(el)) best = el
+    }
+  }
+  return best
 }
 
 function syncSelected(root: ParentNode, selectedIds: string[]): void {
@@ -386,35 +277,34 @@ export function HtmlNativeView({
         return
       }
 
-      ensureStableIds(doc, HTML_PICK_SELECTOR)
-      syncSelected(doc, selectedIdsRef.current)
+      const restamp = (): void => {
+        ensureStableIds(doc, HTML_PICK_SELECTOR)
+        syncSelected(doc, selectedIdsRef.current)
+      }
+      restamp()
 
       const onDown = (event: MouseEvent): void => {
         if (!selectingRef.current) return
         if (event.button !== 0) return
         const raw = event.target as HTMLElement | null
-        if (!raw || !body.contains(raw)) return
+        if (!raw || !doc.documentElement.contains(raw)) return
 
-        const matches = (
-          Array.from(doc.querySelectorAll(HTML_PICK_SELECTOR)) as HTMLElement[]
-        ).filter((el) => el.dataset.blockId && isPickableElement(el))
-        let best: HTMLElement | null = null
-        for (const el of matches) {
-          if (el === raw || el.contains(raw)) {
-            if (!best || best.contains(el)) best = el
-          }
-        }
+        // JS may have just painted this node — stamp ids before hit-testing.
+        restamp()
+        const best = pickBestTarget(doc, raw)
         if (!best?.dataset.blockId) return
 
-        // Keep text select/copy; only isolate nested picks.
+        // Capture-phase isolate: page handlers must not steal the pick.
+        // Do not preventDefault on mousedown — that kills text select/copy.
         event.stopPropagation()
+        event.stopImmediatePropagation()
 
         const id = best.dataset.blockId
         const win = doc.defaultView ?? window
         scheduleClickPick(
           { button: event.button, clientX: event.clientX, clientY: event.clientY },
           () => {
-            const block = blockFromElement(best!, sourceRef.current, id)
+            const block = blockFromElement(best, sourceRef.current, id)
             if (!block) return
             onPickRef.current(block, event)
           },
@@ -429,27 +319,45 @@ export function HtmlNativeView({
         if (!(target instanceof Element)) return
         const anchor = target.closest('a[href]')
         if (!anchor) {
-          // Pick mode: also swallow bare click navigations when selecting.
           if (!selectingRef.current) return
           const sel = doc.getSelection()
           if (sel && !sel.isCollapsed && (sel.toString() || '').trim()) return
           event.preventDefault()
+          event.stopImmediatePropagation()
           return
         }
-        // Stylesheet/link[rel] are not anchors.
         if (anchor.tagName !== 'A') return
         event.preventDefault()
         event.stopPropagation()
+        event.stopImmediatePropagation()
       }
+
+      const blockSubmit = (event: Event): void => {
+        event.preventDefault()
+        event.stopImmediatePropagation()
+      }
+
+      let raf = 0
+      const mo = new MutationObserver(() => {
+        if (raf) return
+        raf = (doc.defaultView ?? window).requestAnimationFrame(() => {
+          raf = 0
+          restamp()
+        })
+      })
+      mo.observe(doc.documentElement, { childList: true, subtree: true })
 
       doc.addEventListener('mousedown', onDown, true)
       doc.addEventListener('click', blockNav, true)
       doc.addEventListener('auxclick', blockNav, true)
-      // Keep ref for cleanup of this document only.
+      doc.addEventListener('submit', blockSubmit, true)
       ;(iframe as HTMLIFrameElement & { __htmlPickCleanup?: () => void }).__htmlPickCleanup = () => {
+        mo.disconnect()
+        if (raf) (doc.defaultView ?? window).cancelAnimationFrame(raf)
         doc.removeEventListener('mousedown', onDown, true)
         doc.removeEventListener('click', blockNav, true)
         doc.removeEventListener('auxclick', blockNav, true)
+        doc.removeEventListener('submit', blockSubmit, true)
       }
     }
 
@@ -485,8 +393,9 @@ export function HtmlNativeView({
         ref={iframeRef}
         className="html-native-frame"
         title={path}
-        // No allow-scripts: static view only. allow-same-origin so we can pick DOM.
-        sandbox="allow-same-origin"
+        // Scripts run so the page can paint. same-origin keeps DOM pick / HUD.
+        // Guest frames cannot call privileged IPC (ipcTrust).
+        sandbox="allow-scripts allow-forms allow-same-origin allow-modals"
         // Isolation hint for modern Chromium.
         referrerPolicy="no-referrer"
       />
