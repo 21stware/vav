@@ -18,6 +18,8 @@
 
 成本按「要动哪些子系统、侵入多深」计，不按日历估。下文四条路径里，**路径 A 是推荐起步**；路径 C 是「只要 `vavd`、不要桌面」时才该付的账。
 
+B 和 C 不是深浅：B 是扩展自己去调模型 API（会说话，不会干活）；C 是先把 `vavd` 升级成无头 VAV，扩展只当遥控器（会改文件、跑 shell）。C 贵在 `vavd`，不在扩展。见 §5。
+
 ---
 
 ## 1. 今天的能力其实在哪
@@ -272,6 +274,33 @@ Side panel ──WS 127.0.0.1──► 桌面 RemoteControlHub (phone)
 - **潜力：** 中高。差异化是「工作台长在浏览旁边」，不是「又能聊模型」。依赖桌面开着——和 iOS 依赖电脑开着是同一笔交易，用户已经接受过。
 - **风险：** LNA 配置；配对密钥出现在扩展存储里（只是 phone secret，不是 API key，但仍等于控制那台电脑的会话）。
 
+### 路径 B 和 C 不是程度差，是两种产品
+
+两者都可能在 side panel 里「选一个自定义模型、打字、看流式」，所以容易看成同一条路的深浅。其实请求打向完全不同的地方，能力也不是包含关系。
+
+```
+B:  扩展 ──HTTPS──► OpenAI / DeepSeek / 自建网关
+    模型会说话。不会改你磁盘上的文件，也不会开 shell。
+    vavd 不在图里。
+
+C:  扩展 ──WS 127.0.0.1──► vavd（必须先升级）──► 本机 fs / shell / 会话 / 密钥
+                     └──────────────► 同一套自定义模型 API
+    模型会干活。这才是 VAV 的 agent。
+```
+
+| | 路径 B | 路径 C |
+| --- | --- | --- |
+| 用户在 side panel 里做什么 | 和一个 LLM 聊天，可把当前页贴进去 | 对一台机器下指令，看着它改文件、跑命令 |
+| 自定义模型谁来调 | **扩展自己** `fetch` 供应商 | **vavd** 调供应商（扩展只发 `send` / `configure`） |
+| API key 在哪 | `chrome.storage` | `~/.vavd`（今天这里没有密钥这回事） |
+| `vavd` 要不要开 | 不要，连不上也没关系 | **必须开，而且必须变成另一样东西** |
+| 会话、回合、工具卡片 | 扩展自己编一套，和桌面会话无关 | 和桌面 / iOS 同一套 phone 协议 |
+| `terminal` / `fs_*` / 审批 / CLI agent | 没有 | 有（循环在 vavd 里跑） |
+| 扩展要写多少 | 设置页 + 流式聊天 | 和路径 A 几乎同一块 UI（phone 壳） |
+| 贵的那一块 | 没有。协议层可搬 | **不在扩展，在把 vavd 做成无头 VAV** |
+
+B 的成本低，是因为它**不做 agent**。C 的成本高，也不是因为扩展难写，而是因为今天的 `vavd` 故意不是 agent。
+
 ### 路径 B — 扩展里只做自定义模型 Chat（不连 vavd）
 
 - **用户得到什么：** Side panel 里用 DeepSeek / OpenRouter / 自建网关聊天，可带当前页。
@@ -281,24 +310,28 @@ Side panel ──WS 127.0.0.1──► 桌面 RemoteControlHub (phone)
 
 ### 路径 C — `npx vavd` + 扩展，不要桌面（「只要 daemon 就能用 agent」）
 
-这是题目里「和 local vavd 通信使用 agent」的字面满足，也是最贵的一条。
+这是题目里「和 local vavd 通信使用 agent」的字面满足。贵，是因为 **`vavd` 今天只是一台远程 syscall 机器**。
 
-必须同时做三件事：
+现在的 `@21stware/vavd` 依赖只有 `node-pty`，做三件事：配对、听 TCP 4750、执行 `fs.*` / `process.spawn` / `pty.*`。它拒绝 phone-role，不跑 `AgentRuntime`，`~/.vavd` 里没有 API key、没有会话、没有模型目录。桌面挂上它时，**循环仍在桌面**——`vavd` 只是被调用的那双手。
 
-1. **`vavd` 接 control plane。** 今天 phone hello 回 `control plane not available`。要把 `RemoteControlHub` 嵌进去，会话 / send / turn / configure 才有家。
-2. **`vavd` 跑 `AgentRuntime` 并持有密钥。** 改 `remoteHostKind`：`headless-daemon` 从 `{ localAgent: false, holdsSecrets: false }` 变成宿主。`~/.vavd` 要长出 SecretStore、accounts、conversations、模型探活缓存。CLI agent（`proc.which` + spawn）也只有在这一步之后才对扩展有意义。
-3. **浏览器桥。** 给 `vavd` 加 loopback WebSocket（推荐），不要 Native Messaging 当主通道。
+要让扩展不经桌面就「用上 agent」，这些双手得先长出脑子。必须同时做：
 
-这等于把 `vavd` 从「工作区宿主」提升成「无头 VAV 服务器」。收益是真实的：扩展、未来的 Web UI、甚至 iOS 都可以不经过桌面打到一台 headless 机器。代价也是真实的：
+1. **接 control plane。** 今天 phone hello 回 `control plane not available`。没有 `RemoteControlHub`，扩展连 `send` / `turn` / `configure` 都没处可去。
+2. **自己跑 `AgentRuntime` 并持有密钥。** 改 `remoteHostKind`：`headless-daemon` 从 `{ localAgent: false, holdsSecrets: false }` 变成宿主。`~/.vavd` 要长出 SecretStore、accounts、conversations、模型探活。工具、sticky shell、DuckDB、skills、CLI agent（`proc.which` + spawn）都要从 main 迁进来，或再实现一遍。这不是「给 daemon 加一个 LLM 调用」——桌面 main 里光 agent 相关就上万行，外加 pi-ai。
+3. **给浏览器一座桥。** loopback WebSocket。这一步本身不贵，和路径 A 给桌面加的是同一种适配器。
 
-- 产品定义变更，所有「回合在哪台机器」的测试和文档（`TECH_DESIGN.md` §15、`remoteHostKind`、e2e `remote-daemon.spec.ts`）要重写
-- `vavd` 包体积和依赖暴涨（pi-ai、密钥、会话树、工具、DuckDB……），和现在「Node 22 + node-pty」的安装故事冲突
-- 桌面 → `vavd` 今天是「控制端跑 agent」。升级后要决定：旧拓扑是否保留、两台桌面互控是否仍由受控端跑回合
+所以 C 的账单几乎全是第 2 项：把「工作区宿主」提升成「无头 VAV 服务器」。扩展壳反而便宜（和 A 同构的 phone UI）。额外还要付产品定义的账：
+
+- `TECH_DESIGN.md` §15、`remoteHostKind`、e2e `remote-daemon.spec.ts` 全部按「回合在 vavd 上跑」重写
+- npm 包从「Node 22 + node-pty」变成要带 pi-ai、密钥、会话树、工具——`npx @21stware/vavd` 的安装故事变了
+- 今天「桌面 → vavd = 控制端跑 agent」这条拓扑要决定：保留（两套所有权）还是废弃
+
+收益也是真的：扩展、未来的 Web UI、甚至 iOS 都可以不经过桌面打到一台 headless 机器。那是「VAV = 协议 + 多种壳」的战略，不是做扩展的附属品。
 
 **不要**用「Native Host 里再塞一个 AgentRuntime」来回避这次升级——那是路径 D，安装面更差。
 
 - **潜力：** 高（若战略是「VAV = 协议 + 多种壳」）。
-- **成本：** 高。接近再做一个 headless main，外加扩展壳。
+- **成本：** 高。接近再做一个 headless main；扩展本身不是贵的那头。
 - **建议：** 只有在路径 A 验证了「浏览器壳有人用」，并且明确要卖「无桌面远程」时再做。
 
 ### 路径 D — Native Messaging 迷你 main + 现状 `vavd`
