@@ -22,15 +22,18 @@ function argValue(flag, fallback) {
 
 const outDir = resolve(argValue('--out', join(root, 'release')))
 mkdirSync(outDir, { recursive: true })
+const pkgDir = resolve(argValue('--dir') || join(root, 'packages', 'vavd'))
 
-const pack = spawnSync(process.execPath, [join(root, 'scripts/pack-vavd.mjs')], {
-  cwd: root,
-  stdio: 'inherit',
-  env: { ...process.env, VAV_PACK_QUIET: '1' }
-})
+const pack = spawnSync(
+  process.execPath,
+  [join(root, 'scripts/pack-vavd.mjs'), '--dir', pkgDir],
+  {
+    cwd: root,
+    stdio: 'inherit',
+    env: { ...process.env, VAV_PACK_QUIET: '1' }
+  }
+)
 if (pack.status !== 0) process.exit(pack.status ?? 1)
-
-const pkgDir = join(root, 'packages', 'vavd')
 const packed = spawnSync('npm', ['pack', '--pack-destination', outDir], {
   cwd: pkgDir,
   stdio: 'inherit',

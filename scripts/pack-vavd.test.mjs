@@ -9,16 +9,22 @@ import { test } from 'node:test'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 
+/** Isolated --dir so a parallel sidecar pack cannot tear the 7MB bundle mid-load. */
 test('pack-vavd writes electron-free bins that print a pairing URI', async () => {
-  const packed = spawnSync(process.execPath, [join(root, 'scripts/pack-vavd.mjs')], {
-    cwd: root,
-    encoding: 'utf8',
-    env: { ...process.env, VAV_PACK_QUIET: '1' }
-  })
+  const dir = mkdtempSync(join(tmpdir(), 'vavd-packdir-'))
+  const packed = spawnSync(
+    process.execPath,
+    [join(root, 'scripts/pack-vavd.mjs'), '--dir', dir],
+    {
+      cwd: root,
+      encoding: 'utf8',
+      env: { ...process.env, VAV_PACK_QUIET: '1' }
+    }
+  )
   assert.equal(packed.status, 0, packed.stderr || packed.stdout)
 
-  const vavdJs = join(root, 'packages/vavd/vavd.js')
-  const vavJs = join(root, 'packages/vavd/vav.js')
+  const vavdJs = join(dir, 'vavd.js')
+  const vavJs = join(dir, 'vav.js')
   assert.ok(existsSync(vavdJs))
   assert.ok(existsSync(vavJs))
 
@@ -29,7 +35,7 @@ test('pack-vavd writes electron-free bins that print a pairing URI', async () =>
   assert.ok(!vavd.includes('from "electron"') && !vavd.includes("from 'electron'"))
   assert.ok(!cli.includes('from "electron"') && !cli.includes("from 'electron'"))
 
-  const pkg = JSON.parse(readFileSync(join(root, 'packages/vavd/package.json'), 'utf8'))
+  const pkg = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8'))
   const rootPkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'))
   assert.equal(pkg.version, rootPkg.version)
   assert.deepEqual(pkg.bin, { vavd: 'vavd.js', vav: 'vav.js' })
@@ -39,7 +45,11 @@ test('pack-vavd writes electron-free bins that print a pairing URI', async () =>
   const child = spawn(
     process.execPath,
     [vavdJs, '--port', '0', '--listen', '127.0.0.1', '--state', state, '--no-web', '--no-announce', '--name', 'Pack Test'],
-    { cwd: root, stdio: ['ignore', 'pipe', 'pipe'] }
+    {
+      cwd: root,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      env: { ...process.env, NODE_PATH: join(root, 'node_modules') }
+    }
   )
   try {
     const pairing = await new Promise((resolve, reject) => {
@@ -69,5 +79,6 @@ test('pack-vavd writes electron-free bins that print a pairing URI', async () =>
   } finally {
     child.kill('SIGTERM')
     rmSync(state, { recursive: true, force: true })
+    rmSync(dir, { recursive: true, force: true })
   }
 })

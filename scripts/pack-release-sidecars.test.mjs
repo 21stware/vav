@@ -14,10 +14,11 @@ const require = createRequire(import.meta.url)
 test('pack-release-sidecars accepts a relative --out (CI cwd)', async () => {
   const rel = `release-sidecars-rel-${process.pid}`
   const out = join(root, rel)
+  const dir = mkdtempSync(join(tmpdir(), 'vavd-sidecar-pkg-'))
   try {
     const packed = spawnSync(
       process.execPath,
-      [join(root, 'scripts/pack-release-sidecars.mjs'), '--out', rel],
+      [join(root, 'scripts/pack-release-sidecars.mjs'), '--out', rel, '--dir', dir],
       { cwd: root, encoding: 'utf8' }
     )
     assert.equal(packed.status, 0, packed.stderr || packed.stdout)
@@ -26,15 +27,17 @@ test('pack-release-sidecars accepts a relative --out (CI cwd)', async () => {
     assert.ok(existsSync(join(out, `vav-chrome-extension-${version}.zip`)))
   } finally {
     rmSync(out, { recursive: true, force: true })
+    rmSync(dir, { recursive: true, force: true })
   }
 })
 
 test('pack-release-sidecars writes the npm tarball and Chrome extension zip', async () => {
   const out = mkdtempSync(join(tmpdir(), 'vav-sidecars-'))
+  const dir = mkdtempSync(join(tmpdir(), 'vavd-sidecar-pkg-'))
   try {
     const packed = spawnSync(
       process.execPath,
-      [join(root, 'scripts/pack-release-sidecars.mjs'), '--out', out],
+      [join(root, 'scripts/pack-release-sidecars.mjs'), '--out', out, '--dir', dir],
       { cwd: root, encoding: 'utf8' }
     )
     assert.equal(packed.status, 0, packed.stderr || packed.stdout)
@@ -55,5 +58,6 @@ test('pack-release-sidecars writes the npm tarball and Chrome extension zip', as
     assert.equal(manifest.manifest_version, 3)
   } finally {
     rmSync(out, { recursive: true, force: true })
+    rmSync(dir, { recursive: true, force: true })
   }
 })
