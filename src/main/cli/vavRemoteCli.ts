@@ -8,112 +8,36 @@
  *
  * Same phone protocol as VAV Remote, the web UI, and the Chrome extension.
  */
-import { readFileSync } from 'node:fs'
-import { homedir } from 'node:os'
-import { join } from 'node:path'
-import { parseDaemonPairing } from '../../shared/daemonProtocol.ts'
 import { connectPhone } from './vavPhoneClient.ts'
-
-function argValue(flag: string): string | undefined {
-  const index = process.argv.indexOf(flag)
-  if (index === -1) return undefined
-  return process.argv[index + 1]
-}
-
-function positional(): string[] {
-  const takesValue = new Set([
-    '--uri',
-    '--host',
-    '--port',
-    '--secret',
-    '--state',
-    '--session',
-    '--model',
-    '--approval',
-    '--thinking',
-    '--device'
-  ])
-  const out: string[] = []
-  for (let i = 2; i < process.argv.length; i++) {
-    const arg = process.argv[i]
-    if (takesValue.has(arg)) {
-      i += 1
-      continue
-    }
-    if (arg.startsWith('-')) continue
-    out.push(arg)
-  }
-  return out
-}
-
-function printHelp(): void {
-  process.stdout.write(
-    [
-      'vav — control client for a running vavd',
-      '',
-      '  vav sessions',
-      '  vav create',
-      '  vav send <text> [--session <id>]',
-      '  vav thread [--session <id>]',
-      '  vav configure --session <id> [--model <id>] [--approval auto|bypass|edit] [--thinking off|low|medium|high]',
-      '',
-      '  --uri vav-daemon://…   pairing URI (or VAVD_URI)',
-      '  --host --port --secret override pieces',
-      '  --state <dir>          read secret.json (default ~/.vavd)',
-      ''
-    ].join('\n')
-  )
-}
-
-function secretFromState(dir: string): string | null {
-  try {
-    const raw = JSON.parse(readFileSync(join(dir, 'secret.json'), 'utf8')) as { secret?: unknown }
-    return typeof raw.secret === 'string' && raw.secret.length >= 16 ? raw.secret : null
-  } catch {
-    return null
-  }
-}
-
-function resolveTarget(): { host: string; port: number; secret: string } {
-  const uri = argValue('--uri') || process.env.VAVD_URI
-  if (uri) {
-    const parsed = parseDaemonPairing(uri)
-    if (!parsed?.secret) throw new Error('unrecognized pairing URI')
-    return {
-      host: argValue('--host') || parsed.host || '127.0.0.1',
-      port: Number(argValue('--port') || parsed.port || 4750),
-      secret: argValue('--secret') || parsed.secret
-    }
-  }
-  const state = argValue('--state') || join(homedir(), '.vavd')
-  const secret = argValue('--secret') || secretFromState(state)
-  if (!secret) {
-    throw new Error('no pairing secret: pass --uri / --secret or run vavd first (~/.vavd/secret.json)')
-  }
-  return {
-    host: argValue('--host') || '127.0.0.1',
-    port: Number(argValue('--port') || 4750),
-    secret
-  }
-}
+import {
+  formatVavConnectError,
+  formatVavHelp,
+  formatVavVersion,
+  parseVavCliArgs,
+  resolveVavTarget
+} from './vavCli.ts'
 
 async function main(): Promise<void> {
-  if (process.argv.includes('--help') || process.argv.includes('-h') || process.argv.length <= 2) {
-    printHelp()
+  const parsed = parseVavCliArgs(process.argv)
+  if (parsed.kind === 'help') {
+    process.stdout.write(formatVavHelp())
     return
   }
-  const args = positional()
-  const verb = args[0]
-  if (!verb || verb === 'help') {
-    printHelp()
+  if (parsed.kind === 'version') {
+    process.stdout.write(formatVavVersion())
     return
   }
-  const target = resolveTarget()
+  if (parsed.kind === 'error') {
+    throw new Error(parsed.message)
+  }
+
+  const target = resolveVavTarget(parsed.flags)
   const phone = await connectPhone({
     ...target,
-    device: argValue('--device') || 'vav-cli'
+    device: parsed.flags.get('--device') || 'vav-cli'
   })
   try {
+    const verb = parsed.verb
     if (verb === 'sessions') {
       phone.send({ type: 'sessions' })
       const listed = await phone.waitNew((msg) => msg.type === 'sessions')
@@ -129,9 +53,9 @@ async function main(): Promise<void> {
       return
     }
     if (verb === 'send') {
-      const text = args.slice(1).join(' ').trim()
+      const text = parsed.rest.join(' ').trim()
       if (!text) throw new Error('vav send <text>')
-      let session = argValue('--session')
+      let session = parsed.flags.get('--session')
       if (!session) {
         phone.send({ type: 'create' })
         const created = (await phone.waitNew((msg) => msg.type === 'created')).findLast(
@@ -146,12 +70,16 @@ async function main(): Promise<void> {
           msg.type === 'turn' &&
           (msg.phase === 'done' || msg.phase === 'error' || msg.phase === 'cancelled')
       )
-      const done = turns.findLast((msg) => msg.type === 'turn' && (msg.phase === 'done' || msg.phase === 'error'))
-      process.stdout.write(`${JSON.stringify({ session, turn: done }, null, 2)}\n`)
+      const done = turns.findLast(
+        (msg) =>
+          msg.type === 'turn' &&
+          (msg.phase === 'done' || msg.phase === 'error' || msg.phase === 'cancelled')
+      )
+      process.stdout.write(`${JSON.stringify({ session, turn: done ?? null }, null, 2)}\n`)
       return
     }
     if (verb === 'thread') {
-      const session = argValue('--session')
+      const session = parsed.flags.get('--session')
       if (!session) throw new Error('vav thread --session <id>')
       phone.send({ type: 'thread', conversationId: session })
       const frames = await phone.waitNew((msg) => msg.type === 'thread' && msg.conversationId === session)
@@ -160,11 +88,11 @@ async function main(): Promise<void> {
       return
     }
     if (verb === 'configure') {
-      const session = argValue('--session')
+      const session = parsed.flags.get('--session')
       if (!session) throw new Error('vav configure --session <id>')
-      const model = argValue('--model')
-      const approval = argValue('--approval')
-      const thinking = argValue('--thinking')
+      const model = parsed.flags.get('--model')
+      const approval = parsed.flags.get('--approval')
+      const thinking = parsed.flags.get('--thinking')
       if (!model && !approval && !thinking) throw new Error('pass --model, --approval, or --thinking')
       phone.send({
         type: 'configure',
@@ -178,13 +106,54 @@ async function main(): Promise<void> {
       process.stdout.write(`${JSON.stringify(controls, null, 2)}\n`)
       return
     }
-    throw new Error(`unknown command: ${verb}`)
+    if (verb === 'cancel') {
+      const session = parsed.flags.get('--session')
+      if (!session) throw new Error('vav cancel --session <id>')
+      phone.send({ type: 'cancel', conversationId: session })
+      const frames = await phone.waitNew(
+        (msg) =>
+          (msg.type === 'turn' && msg.conversationId === session && msg.phase === 'cancelled') ||
+          (msg.type === 'error' && msg.conversationId === session),
+        4000
+      ).catch(() => [])
+      const last = frames.findLast(
+        (msg) =>
+          (msg.type === 'turn' && msg.phase === 'cancelled') || msg.type === 'error'
+      )
+      process.stdout.write(`${JSON.stringify(last ?? { ok: true, session }, null, 2)}\n`)
+      return
+    }
+    if (verb === 'reply') {
+      const session = parsed.flags.get('--session')
+      const tool = parsed.flags.get('--tool')
+      const answer = parsed.flags.get('--answer') || parsed.rest.join(' ').trim()
+      if (!session || !tool || !answer) throw new Error('vav reply --session <id> --tool <id> --answer <text>')
+      phone.send({ type: 'reply', conversationId: session, toolCallId: tool, answer })
+      const frames = await phone.waitNew(
+        (msg) =>
+          msg.type === 'turn' &&
+          msg.conversationId === session &&
+          (msg.phase === 'done' || msg.phase === 'error' || msg.phase === 'cancelled')
+      )
+      const done = frames.findLast((msg) => msg.type === 'turn')
+      process.stdout.write(`${JSON.stringify(done ?? null, null, 2)}\n`)
+      return
+    }
   } finally {
     phone.close()
   }
 }
 
 void main().catch((err) => {
-  process.stderr.write(`${err instanceof Error ? err.message : err}\n`)
+  const parsed = parseVavCliArgs(process.argv)
+  const flags = parsed.kind === 'command' ? parsed.flags : new Map<string, string>()
+  let hint = err instanceof Error ? err.message : String(err)
+  try {
+    const target = resolveVavTarget(flags)
+    hint = formatVavConnectError(err, target)
+  } catch {
+    /* keep original */
+  }
+  process.stderr.write(`${hint}\n`)
   process.exit(1)
 })

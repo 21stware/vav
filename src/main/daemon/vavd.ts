@@ -11,18 +11,13 @@
  *   vavd --web-port 4752
  */
 
-import { createInterface } from 'node:readline'
+import { createInterface, type Interface } from 'node:readline'
 import { homedir, tmpdir } from 'node:os'
-import { join } from 'node:path'
 import { randomBytes } from 'node:crypto'
 import { createLocalWorkspaceHost } from '../host/WorkspaceHost.ts'
 import { createVavControlPlane } from '../host/VavControlPlane.ts'
-import {
-  DAEMON_DEFAULT_PORT,
-  DAEMON_PROTO_VERSION,
-  encodeDaemonPairing
-} from '../../shared/daemonProtocol.ts'
-import { DaemonServer, DAEMON_LAN_BIND } from './DaemonServer.ts'
+import { DAEMON_PROTO_VERSION, encodeDaemonPairing } from '../../shared/daemonProtocol.ts'
+import { DaemonServer } from './DaemonServer.ts'
 import { defaultHostName, loadOrCreateIdentity, loadOrCreateSecret, persistSecret } from './identity.ts'
 import { advertisedPairingAddresses, startAnnouncer } from './lanAnnounce.ts'
 import { createFileGrantStore } from './grants.ts'
@@ -34,119 +29,65 @@ import {
   stopVavdAdmin
 } from './vavdAdmin.ts'
 import { startVavWebBridge } from './VavWebBridge.ts'
-
-const VAVD_WEB_DEFAULT_PORT = 4752
-
-function argValue(flag: string, fallback?: string): string | undefined {
-  const index = process.argv.indexOf(flag)
-  if (index === -1) return fallback
-  return process.argv[index + 1] ?? fallback
-}
-
-function hasFlag(flag: string): boolean {
-  return process.argv.includes(flag)
-}
-
-function adminVerb(): {
-  command: 'clients' | 'disconnect' | 'unpair' | 'rotate-offer'
-  id?: string
-} | null {
-  const verbs = new Set(['clients', 'disconnect', 'unpair', 'rotate-offer'])
-  const takesValue = new Set([
-    '--state',
-    '--port',
-    '--listen',
-    '--name',
-    '--web-port',
-    '--web-listen',
-    '--api-key',
-    '--api-endpoint'
-  ])
-  for (let i = 2; i < process.argv.length; i++) {
-    const arg = process.argv[i]
-    if (takesValue.has(arg)) {
-      i += 1
-      continue
-    }
-    if (arg.startsWith('-')) continue
-    if (verbs.has(arg)) {
-      return {
-        command: arg as 'clients' | 'disconnect' | 'unpair' | 'rotate-offer',
-        id: process.argv[i + 1]?.startsWith('-') ? undefined : process.argv[i + 1]
-      }
-    }
-  }
-  return null
-}
-
-function printHelp(): void {
-  process.stdout.write(
-    [
-      'vavd — headless VAV',
-      '',
-      '  --port <n>          daemon / control listen port (default 4750)',
-      '  --listen <addr>     bind address (default 0.0.0.0 — LAN; 127.0.0.1 for local-only)',
-      '  --web-port <n>      HTTP + WebSocket UI (default 4752; 0 = ephemeral)',
-      '  --web-listen <addr> web bind (default 127.0.0.1)',
-      '  --name <label>      machine name in pairing',
-      '  --state <dir>       identity + secrets + sessions (default ~/.vavd)',
-      '  --api-key <key>     VAV provider key (or VAV_API_KEY)',
-      '  --api-endpoint <url> provider root (or VAV_API_ENDPOINT)',
-      '  --no-announce       skip LAN multicast',
-      '  --no-web            disable the web UI',
-      '',
-      '  clients          list authorized computers',
-      '  disconnect <id>  drop live sockets; grant remains',
-      '  unpair <id>      revoke a computer’s grant',
-      '  rotate-offer     invalidate the printed pairing URI; existing grants stay',
-      ''
-    ].join('\n')
-  )
-}
+import {
+  formatListenError,
+  formatVavdHelp,
+  parseVavdArgs,
+  resolveVavdVersion,
+  type VavdServeOptions
+} from './vavdArgs.ts'
 
 async function main(): Promise<void> {
-  if (hasFlag('--help') || hasFlag('-h')) {
-    printHelp()
+  const parsed = parseVavdArgs(process.argv)
+  if (parsed.kind === 'help') {
+    process.stdout.write(formatVavdHelp())
     return
   }
-
-  const stateDir = argValue('--state', join(homedir(), '.vavd')) ?? join(homedir(), '.vavd')
-  const verb = adminVerb()
-  if (verb) {
-    const text = await runVavdAdminCommand(stateDir, verb.command, verb.id)
+  if (parsed.kind === 'version') {
+    process.stdout.write(`vavd ${resolveVavdVersion()}\n`)
+    return
+  }
+  if (parsed.kind === 'error') {
+    process.stderr.write(`${parsed.message}\n`)
+    process.stderr.write('Try vavd --help.\n')
+    process.exitCode = 1
+    return
+  }
+  if (parsed.kind === 'admin') {
+    const text = await runVavdAdminCommand(parsed.stateDir, parsed.command, parsed.id)
     process.stdout.write(text)
     return
   }
 
-  const cliKey = argValue('--api-key')
-  if (cliKey) process.env.VAV_API_KEY = cliKey
-  const cliEndpoint = argValue('--api-endpoint')
-  if (cliEndpoint) process.env.VAV_API_ENDPOINT = cliEndpoint
+  await serve(parsed.options)
+}
 
-  const name = argValue('--name') || defaultHostName()
+async function serve(options: VavdServeOptions): Promise<void> {
+  if (options.apiKey) process.env.VAV_API_KEY = options.apiKey
+  if (options.apiEndpoint) process.env.VAV_API_ENDPOINT = options.apiEndpoint
+
+  const stateDir = options.stateDir
+  const version = resolveVavdVersion()
+  const name = options.name || defaultHostName()
   const identity = loadOrCreateIdentity(stateDir, name)
   let secret = loadOrCreateSecret(stateDir)
   const grants = createFileGrantStore(stateDir)
-  const portRaw = argValue('--port')
-  const portParsed = portRaw === undefined ? DAEMON_DEFAULT_PORT : Number(portRaw)
-  const port = Number.isFinite(portParsed) ? portParsed : DAEMON_DEFAULT_PORT
-  const bind = argValue('--listen', DAEMON_LAN_BIND) ?? DAEMON_LAN_BIND
 
   const host = createLocalWorkspaceHost({ name: identity.name })
   const plane = createVavControlPlane({
     stateDir,
     host,
     secret: () => secret,
-    appVersion: process.env.npm_package_version || '0.0.0',
+    appVersion: version,
     home: homedir(),
     tmp: tmpdir(),
     extraAuth: (auth) => grants.findBySecret(auth) != null
   })
   plane.load()
 
-  let bound = port
+  let bound = options.port
   const pairingOf = (auth = secret): string => {
-    const loopback = bind === '127.0.0.1' || bind === 'localhost' || bind === '::1'
+    const loopback = options.listen === '127.0.0.1' || options.listen === 'localhost' || options.listen === '::1'
     const advertised = advertisedPairingAddresses({ identityName: identity.name })
     return encodeDaemonPairing({
       v: DAEMON_PROTO_VERSION,
@@ -164,7 +105,7 @@ async function main(): Promise<void> {
     identity,
     secret: () => secret,
     grants,
-    appVersion: process.env.npm_package_version || '0.0.0',
+    appVersion: version,
     home: homedir(),
     tmp: tmpdir(),
     pairing: (grantSecret) => pairingOf(grantSecret || secret),
@@ -172,9 +113,13 @@ async function main(): Promise<void> {
     onControlHello: (socket, leftover, hello) => plane.hub.adoptAuthed(socket, leftover, hello)
   })
 
-  bound = await server.listen(port, bind)
+  try {
+    bound = await server.listen(options.port, options.listen)
+  } catch (err) {
+    throw new Error(formatListenError(err, 'vavd', options.listen, options.port))
+  }
 
-  if (!hasFlag('--no-announce')) {
+  if (options.announce) {
     startAnnouncer({
       v: DAEMON_PROTO_VERSION,
       kind: 'vav-daemon',
@@ -186,44 +131,54 @@ async function main(): Promise<void> {
   }
 
   let web: { close: () => void; port: number } | null = null
-  const webDisabled = hasFlag('--no-web')
-  const webPortRaw = argValue('--web-port')
-  const webPortParsed = webPortRaw === undefined ? VAVD_WEB_DEFAULT_PORT : Number(webPortRaw)
-  const webPort = Number.isFinite(webPortParsed) ? webPortParsed : VAVD_WEB_DEFAULT_PORT
-  const webListen = argValue('--web-listen', '127.0.0.1') ?? '127.0.0.1'
-  if (!webDisabled) {
-    web = await startVavWebBridge({
-      listen: webListen,
-      port: webPort,
-      hub: plane.hub,
-      secret: () => secret
-    })
+  if (options.web) {
+    try {
+      web = await startVavWebBridge({
+        listen: options.webListen,
+        port: options.webPort,
+        hub: plane.hub,
+        secret: () => secret
+      })
+    } catch (err) {
+      server.close()
+      plane.dispose()
+      throw new Error(formatListenError(err, 'web UI', options.webListen, options.webPort))
+    }
   }
 
-  const rotateOffer = (): string => {
+  const rotateOffer = (): { secret: string; pairing: string } => {
     secret = randomBytes(24).toString('base64url')
     persistSecret(stateDir, secret)
-    process.stdout.write(`${pairingOf(secret)}\n`)
-    return secret
+    return { secret, pairing: pairingOf(secret) }
   }
 
   const handlers = adminHandlersFor(server, rotateOffer)
   const admin = await startVavdAdmin(stateDir, handlers)
 
-  process.stdout.write(`vavd listening on ${bind}:${bound}\n`)
-  if (web) process.stdout.write(`vavd web on http://${webListen}:${web.port}\n`)
-  process.stdout.write(`${pairingOf(secret)}\n`)
-  process.stdout.write('Paste that URI in VAV → Connect, VAV Remote, the web UI, or the Chrome extension.\n')
-  process.stdout.write('Type clients / disconnect <id> / unpair <id> / rotate-offer.\n')
+  const pairing = pairingOf(secret)
+  if (options.quiet) {
+    process.stdout.write(`${pairing}\n`)
+  } else {
+    process.stdout.write(`vavd listening on ${options.listen}:${bound}\n`)
+    if (web) process.stdout.write(`vavd web on http://${options.webListen}:${web.port}\n`)
+    process.stdout.write(`${pairing}\n`)
+    process.stdout.write('Paste that URI in VAV → Connect, VAV Remote, the web UI, or the Chrome extension.\n')
+    process.stdout.write('Type clients / disconnect <id> / unpair <id> / rotate-offer.\n')
+  }
 
+  let rl: Interface | null = null
   if (process.stdin.isTTY) {
-    const rl = createInterface({ input: process.stdin, output: process.stdout })
+    rl = createInterface({ input: process.stdin, output: process.stdout })
     rl.on('line', (line) => {
       process.stdout.write(handleStdinLine(line, handlers))
     })
   }
 
+  let shuttingDown = false
   const shutdown = (): void => {
+    if (shuttingDown) return
+    shuttingDown = true
+    rl?.close()
     stopVavdAdmin(stateDir, admin)
     web?.close()
     plane.dispose()

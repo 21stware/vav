@@ -3,12 +3,14 @@ import { describe, it } from 'node:test'
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { spawn } from 'node:child_process'
 import {
   findVavdEntry,
   findVavdScript,
   resolveNodeForVavd,
   spawnLocalVavd,
-  vavdNodeArgs
+  vavdNodeArgs,
+  waitForPairing
 } from './vavdSpawn.ts'
 import { parseDaemonPairing } from '../../shared/daemonProtocol.ts'
 
@@ -58,5 +60,21 @@ describe('spawnLocalVavd', () => {
     } finally {
       spawned.stop()
     }
+  })
+
+  it('kills a silent child when pairing never appears', async () => {
+    const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {
+      stdio: ['ignore', 'pipe', 'pipe']
+    })
+    await assert.rejects(waitForPairing(child, 200), /did not print pairing/)
+    const exited = await new Promise<number | null>((resolve) => {
+      if (child.exitCode != null) {
+        resolve(child.exitCode)
+        return
+      }
+      child.on('exit', (code) => resolve(code))
+      setTimeout(() => resolve(child.exitCode), 1000)
+    })
+    assert.ok(child.killed || exited != null)
   })
 })

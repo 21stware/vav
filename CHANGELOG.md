@@ -4,6 +4,13 @@ User-facing changes by release. Unreleased work lives at the top until the next 
 
 ## Unreleased
 
+### Headless vavd
+
+- `vavd` rejects invalid `--port` / `--web-port` / unknown flags instead of ignoring them, and `--port 0` is documented as ephemeral. `--version`, `--quiet`, and `--flag=value` work.
+- `vavd rotate-offer` against a running daemon prints the new pairing URI. A stale `admin.json` falls back to disk instead of failing.
+- `vav` can `cancel` and `reply`, reports cancelled turns, and says when vavd is not listening instead of dumping `ECONNREFUSED`.
+- Web UI and Chrome side panel accept a pasted `vav-daemon://` URI, escape session titles, cancel a turn, reply to an ask, and send on Enter. Loopback web rejects DNS-rebinding `Host` headers.
+
 ### Reliability
 
 - CLI ACP turns no longer stay on Streaming after the child dies or the handshake hangs. Stop aborts an in-flight spawn, missing TEMP DIR folders are recreated, and Cursor TUI flags (`--force --trust`) are not passed to `cursor-agent acp`.

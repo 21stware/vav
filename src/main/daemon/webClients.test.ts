@@ -26,10 +26,13 @@ describe('web and Chrome clients', () => {
       assert.match(src, /type:\s*['"]create['"]/)
       assert.match(src, /type:\s*['"]send['"]/)
       assert.match(src, /type:\s*['"]configure['"]/)
+      assert.match(src, /type:\s*['"]cancel['"]/)
+      assert.match(src, /type:\s*['"]reply['"]/)
       assert.match(src, /approvalMode/)
       assert.match(src, /\bmodel\b/)
       assert.match(src, /ws\.send\(JSON\.stringify/)
       assert.match(src, /\/vav/)
+      assert.match(src, /pairingAuthFromInput|vav-daemon:\/\//)
     }
   })
 })

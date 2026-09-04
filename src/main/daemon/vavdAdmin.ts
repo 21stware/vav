@@ -14,11 +14,16 @@ import { writePrivateJson } from './identity.ts'
 import { attachLineReader, writeLine } from './jsonLines.ts'
 import type { DaemonServer } from './DaemonServer.ts'
 
+export type RotateOfferResult = {
+  secret: string
+  pairing?: string
+}
+
 export type VavdAdminHandlers = {
   incoming: () => IncomingController[]
   disconnect: (id: string) => boolean
   unpair: (id: string) => boolean
-  rotateOffer: () => string
+  rotateOffer: () => RotateOfferResult | string
 }
 
 const ADMIN_FILE = 'admin.json'
@@ -67,7 +72,16 @@ function attachAdminClient(socket: Socket, handlers: VavdAdminHandlers): void {
   })
 }
 
-function handleAdmin(raw: Record<string, unknown>, handlers: VavdAdminHandlers): Record<string, unknown> {
+function normalizeRotate(result: RotateOfferResult | string): RotateOfferResult {
+  if (typeof result === 'string') return { secret: result }
+  return result
+}
+
+/** JSON-line admin protocol. Exported so tests cover the wire shape. */
+export function handleAdmin(
+  raw: Record<string, unknown>,
+  handlers: VavdAdminHandlers
+): Record<string, unknown> {
   switch (raw.type) {
     case 'clients':
       return { type: 'ok', clients: handlers.incoming() }
@@ -81,11 +95,23 @@ function handleAdmin(raw: Record<string, unknown>, handlers: VavdAdminHandlers):
       if (!id) return { type: 'error', message: 'missing id' }
       return { type: 'ok', ok: handlers.unpair(id) }
     }
-    case 'rotate-offer':
-      return { type: 'ok', secret: handlers.rotateOffer() }
+    case 'rotate-offer': {
+      const rotated = normalizeRotate(handlers.rotateOffer())
+      return { type: 'ok', secret: rotated.secret, pairing: rotated.pairing }
+    }
     default:
       return { type: 'error', message: `unknown command: ${String(raw.type)}` }
   }
+}
+
+function isUnreachableAdmin(err: unknown): boolean {
+  const code =
+    err && typeof err === 'object' && 'code' in err ? String((err as { code?: unknown }).code) : ''
+  if (code === 'ECONNREFUSED' || code === 'ECONNRESET' || code === 'ETIMEDOUT' || code === 'ENOTFOUND') {
+    return true
+  }
+  const message = err instanceof Error ? err.message : String(err)
+  return /timed out|ECONNREFUSED|ECONNRESET/.test(message)
 }
 
 export async function runVavdAdminCommand(
@@ -95,8 +121,20 @@ export async function runVavdAdminCommand(
 ): Promise<string> {
   const live = readAdminPort(stateDir)
   if (live) {
-    const result = await askAdmin(live, command, id)
-    return formatAdminResult(command, result)
+    try {
+      const result = await askAdmin(live, command, id)
+      return formatAdminResult(command, result)
+    } catch (err) {
+      if (isUnreachableAdmin(err)) {
+        try {
+          rmSync(adminFile(stateDir), { force: true })
+        } catch {
+          /* ignore */
+        }
+        return runOfflineAdmin(stateDir, command, id)
+      }
+      throw err
+    }
   }
   return runOfflineAdmin(stateDir, command, id)
 }
@@ -162,16 +200,21 @@ function runOfflineAdmin(
     return `unpaired ${grant.name} (${grant.id})\n`
   }
   persistSecret(stateDir, randomBytes(24).toString('base64url'))
-  return `rotated offer. next pairing line will use the new secret.\n`
+  return 'rotated offer. next pairing line will use the new secret.\n'
 }
 
-function formatAdminResult(command: string, result: Record<string, unknown>): string {
+export function formatAdminResult(command: string, result: Record<string, unknown>): string {
   if (result.type === 'error') return `${String(result.message)}\n`
   if (command === 'clients') {
     const clients = Array.isArray(result.clients) ? (result.clients as IncomingController[]) : []
     return formatClients(clients)
   }
-  if (command === 'rotate-offer') return 'rotated offer. print a new pairing line from the running process.\n'
+  if (command === 'rotate-offer') {
+    if (typeof result.pairing === 'string' && result.pairing.trim()) {
+      return `${result.pairing.trim()}\n`
+    }
+    return 'rotated offer. next pairing line will use the new secret.\n'
+  }
   return result.ok === false ? 'not found\n' : 'ok\n'
 }
 
@@ -191,10 +234,7 @@ export function formatClients(rows: IncomingController[]): string {
   return `${warning}${lines}\n`
 }
 
-export function handleStdinLine(
-  line: string,
-  handlers: VavdAdminHandlers
-): string {
+export function handleStdinLine(line: string, handlers: VavdAdminHandlers): string {
   const parts = line.trim().split(/\s+/)
   const command = parts[0]
   if (!command || command === 'help') {
@@ -208,8 +248,8 @@ export function handleStdinLine(
     return ok ? 'ok\n' : 'not found\n'
   }
   if (command === 'rotate-offer' || command === 'rotate') {
-    handlers.rotateOffer()
-    return 'rotated offer\n'
+    const rotated = normalizeRotate(handlers.rotateOffer())
+    return rotated.pairing ? `${rotated.pairing}\n` : 'rotated offer\n'
   }
   return `unknown command: ${command}\n`
 }
@@ -220,7 +260,10 @@ function resolveGrantId(server: DaemonServer, idOrName: string): string | null {
   return server.incoming().find((row) => row.name === idOrName)?.id ?? null
 }
 
-export function adminHandlersFor(server: DaemonServer, rotateOffer: () => string): VavdAdminHandlers {
+export function adminHandlersFor(
+  server: DaemonServer,
+  rotateOffer: () => RotateOfferResult | string
+): VavdAdminHandlers {
   return {
     incoming: () => server.incoming(),
     disconnect: (id) => {

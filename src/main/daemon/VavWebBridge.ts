@@ -9,6 +9,7 @@ import type { Socket as NetSocket } from 'node:net'
 import type { Duplex } from 'node:stream'
 import type { RemoteControlHub } from '../remote/RemoteControlHub.ts'
 import { WEB_UI_HTML } from './webUi.ts'
+import { webHostAllowed } from './webUiHelpers.ts'
 
 const WS_GUID = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11'
 
@@ -153,7 +154,13 @@ export function startVavWebBridge(
   return new Promise((resolve, reject) => {
     const server = createServer((req, res) => handleHttp(req, res, opts))
     server.on('upgrade', (req, socket) => {
+      if (!webHostAllowed(req.headers.host, opts.listen)) {
+        socket.write('HTTP/1.1 421 Misdirected Request\\r\\nConnection: close\\r\\n\\r\\n')
+        socket.destroy()
+        return
+      }
       if ((req.url ?? '/').split('?')[0] !== '/vav') {
+        socket.write('HTTP/1.1 404 Not Found\\r\\nConnection: close\\r\\n\\r\\n')
         socket.destroy()
         return
       }
@@ -178,6 +185,11 @@ export function startVavWebBridge(
 }
 
 function handleHttp(req: IncomingMessage, res: ServerResponse, opts: VavWebBridgeOpts): void {
+  if (!webHostAllowed(req.headers.host, opts.listen)) {
+    res.writeHead(421, { 'content-type': 'text/plain; charset=utf-8' })
+    res.end('misdirected request')
+    return
+  }
   const path = (req.url ?? '/').split('?')[0]
   if (path === '/' || path === '/index.html') {
     res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
@@ -185,15 +197,22 @@ function handleHttp(req: IncomingMessage, res: ServerResponse, opts: VavWebBridg
     return
   }
   if (path === '/health') {
+    const address = req.socket.localPort
     res.writeHead(200, { 'content-type': 'application/json' })
-    res.end(JSON.stringify({ ok: true, app: 'vavd' }))
+    res.end(JSON.stringify({ ok: true, app: 'vavd', port: address ?? opts.port }))
     return
   }
   if (path === '/pairing.json') {
     res.writeHead(200, { 'content-type': 'application/json' })
-    res.end(JSON.stringify({ proto: 1, hasSecret: Boolean(opts.secret()) }))
+    res.end(
+      JSON.stringify({
+        proto: 1,
+        hasSecret: Boolean(opts.secret()),
+        hint: 'Paste the printed vav-daemon:// URI or the pairing secret'
+      })
+    )
     return
   }
-  res.writeHead(404)
+  res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' })
   res.end('not found')
 }

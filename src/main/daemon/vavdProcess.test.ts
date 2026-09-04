@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { execFile, spawn, type ChildProcess } from 'node:child_process'
+import { request as httpRequest } from 'node:http'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -93,6 +94,37 @@ async function spawnVavd(state: string): Promise<RunningVavd> {
   }
 }
 
+async function runVavd(args: string[], env: NodeJS.ProcessEnv = {}): Promise<{
+  stdout: string
+  stderr: string
+  code: number | null
+}> {
+  const child = spawn(process.execPath, [
+    '--import',
+    aliasHook,
+    '--experimental-strip-types',
+    join(root, 'src/main/daemon/vavd.ts'),
+    ...args
+  ], {
+    cwd: root,
+    env: { ...process.env, ...env }
+  })
+  let stdout = ''
+  let stderr = ''
+  child.stdout?.setEncoding('utf8')
+  child.stderr?.setEncoding('utf8')
+  child.stdout?.on('data', (chunk: string) => {
+    stdout += chunk
+  })
+  child.stderr?.on('data', (chunk: string) => {
+    stderr += chunk
+  })
+  const code = await new Promise<number | null>((resolve) => {
+    child.on('exit', (value) => resolve(value))
+  })
+  return { stdout, stderr, code }
+}
+
 describe('vavd process', () => {
   let dir = ''
   let daemon: RunningVavd | null = null
@@ -105,6 +137,19 @@ describe('vavd process', () => {
   after(async () => {
     daemon?.stop()
     if (dir) await rm(dir, { recursive: true, force: true })
+  })
+
+  it('prints help and version without starting a listen', async () => {
+    const help = await runVavd(['--help'])
+    assert.equal(help.code, 0)
+    assert.match(help.stdout, /--port/)
+    assert.match(help.stdout, /rotate-offer/)
+    const version = await runVavd(['--version'], { npm_package_version: '1.19.0' })
+    assert.equal(version.code, 0)
+    assert.match(version.stdout, /vavd 1\.19\.0/)
+    const bad = await runVavd(['--port', 'nope'])
+    assert.equal(bad.code, 1)
+    assert.match(bad.stderr, /--port/)
   })
 
   it('starts a local service a phone client can pair, send, and configure', async () => {
@@ -270,5 +315,63 @@ describe('vavd process', () => {
     } finally {
       ws.close()
     }
+  })
+
+  it('prints a new pairing URI from rotate-offer on the live admin port', async () => {
+    assert.ok(daemon)
+    const { stdout } = await execFileAsync(
+      process.execPath,
+      [
+        '--import',
+        aliasHook,
+        '--experimental-strip-types',
+        join(root, 'src/main/daemon/vavd.ts'),
+        '--state',
+        dir,
+        'rotate-offer'
+      ],
+      { cwd: root, timeout: 8_000 }
+    )
+    assert.match(stdout, /^vav-daemon:/)
+    const parsed = parseDaemonPairing(stdout.trim().split('\n')[0] ?? '')
+    assert.ok(parsed?.secret)
+    assert.notEqual(parsed.secret, daemon.secret)
+  })
+
+  it('rejects a DNS-rebinding Host header on the loopback web UI', async () => {
+    assert.ok(daemon?.webPort)
+    const status = await new Promise<number>((resolve, reject) => {
+      const req = httpRequest(
+        {
+          host: '127.0.0.1',
+          port: daemon.webPort ?? 0,
+          path: '/health',
+          headers: { Host: 'evil.example' }
+        },
+        (res) => {
+          res.resume()
+          resolve(res.statusCode ?? 0)
+        }
+      )
+      req.on('error', reject)
+      req.end()
+    })
+    assert.equal(status, 421)
+  })
+
+  it('prints vav CLI help without connecting', async () => {
+    const { stdout } = await execFileAsync(
+      process.execPath,
+      [
+        '--import',
+        aliasHook,
+        '--experimental-strip-types',
+        join(root, 'src/main/cli/vavRemoteCli.ts'),
+        '--help'
+      ],
+      { cwd: root, timeout: 8_000 }
+    )
+    assert.match(stdout, /vav send/)
+    assert.match(stdout, /vav cancel/)
   })
 })

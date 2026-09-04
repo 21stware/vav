@@ -28,7 +28,7 @@
     <h1>VAV</h1>
     <div id="status">Disconnected</div>
     <input id="host" value="ws://127.0.0.1:4752/vav" />
-    <input id="secret" placeholder="Pairing secret" autocomplete="off" />
+    <input id="secret" placeholder="Pairing secret or vav-daemon://…" autocomplete="off" />
     <div style="display:flex;gap:8px">
       <button id="connect">Connect</button>
       <button id="create" class="ghost">New</button>
@@ -45,8 +45,14 @@
     </select>
     <button type="button" id="apply" class="ghost">Apply</button>
   </div>
+  <div id="ask" hidden style="gap:8px;padding:0 12px 8px;align-items:center">
+    <div id="askPrompt" style="flex:1;color:var(--muted);font-size:12px"></div>
+    <input id="askAnswer" placeholder="Reply…" />
+    <button type="button" id="askSend">Reply</button>
+  </div>
   <form class="composer" id="sendForm">
-    <textarea id="text" placeholder="Ask…" rows="2"></textarea>
+    <textarea id="text" placeholder="Ask… (Enter to send)" rows="2"></textarea>
+    <button type="button" id="cancel" class="ghost" disabled>Cancel</button>
     <button type="submit">Send</button>
   </form>
   <script src="sidepanel.js"></script>
