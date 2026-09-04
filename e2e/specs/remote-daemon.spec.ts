@@ -1,6 +1,8 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { test, expect } from '@playwright/test'
+import { connectPhone } from '../../src/main/cli/vavPhoneClient.ts'
+import { parseDaemonPairing } from '../../src/shared/daemonProtocol.ts'
 import {
   chooseNativeMenu,
   E2E_SESSION_ID,
@@ -9,6 +11,7 @@ import {
   openFilesTray,
   openSettingsWindow,
   waitForDaemonPairing,
+  waitForHostWindow,
   waitForNewWindow
 } from '../launch'
 import { startVavd } from '../startVavd'
@@ -39,7 +42,7 @@ test('pair vavd, open its folder, list a file that only exists there', async () 
         id: paired.host.id,
         online: true,
         name: 'E2E Daemon',
-        controlPlane: false
+        controlPlane: true
       })
 
     // Local window stays this computer. The daemon opens its own main shell.
@@ -107,8 +110,10 @@ test('pair vavd, open its folder, list a file that only exists there', async () 
         workingDirectory: active?.workingDirectory ?? null
       }
     }, paired.host.id)
-    expect(defaultSession.workingDirectory).toBe(defaultSession.home)
+    // First session on a VAV host is a minted temp Workspace, not $HOME.
+    expect(defaultSession.workingDirectory).toMatch(/[/\\]vav[/\\][a-f0-9]+[/\\]Workspace$/)
     expect(defaultSession.workingDirectory).not.toBe(harness.workspace)
+    expect(defaultSession.home).toBeTruthy()
 
     const recents = await remote.evaluate(
       async () => (await window.vav.settings.get()).recentWorkspaceDirectories
@@ -262,6 +267,308 @@ test('workdir menu opens the remote folder picker and binds the session', async 
     await expect(remote.locator('[data-file-path$="inside.md"]')).toBeVisible()
     await expect(remote.locator('[data-file-path$="remote-only.md"]')).toHaveCount(0)
     await expect(remote.locator('[data-file-path$="hello.md"]')).toHaveCount(0)
+  } finally {
+    await harness.dispose()
+    daemon.stop()
+  }
+})
+
+/**
+ * Desktop Connect is a shell. Electron is launched without VAV_E2E_STUB_TURN
+ * so a local agent cannot mint "e2e stub reply" — the turn must run in vavd.
+ */
+test('desktop Connect send streams a vavd stub turn, not an Electron one', async () => {
+  test.setTimeout(90_000)
+  const daemon = await startVavd({ stubStream: true })
+  const harness = await launchVav()
+  try {
+    const { page } = harness
+    let paired: { ok: true; host: { id: string } } | { ok: false; error: string } | null = null
+    const remote = await waitForNewWindow(harness, async () => {
+      paired = await page.evaluate((payload) => window.vav.hosts.pair(payload), daemon.pairing)
+    })
+    expect(paired?.ok).toBe(true)
+    if (!paired || !paired.ok) return
+
+    await remote.locator('[data-testid="app-shell"]').waitFor({ state: 'visible', timeout: 25_000 })
+    await expect(remote.locator('[data-testid="sidebar-connect"]')).toContainText('E2E Daemon')
+    await expect
+      .poll(async () => {
+        const hosts = await remote.evaluate(() => window.vav.hosts.list())
+        return hosts.find((h) => h.id === paired.host.id)?.controlPlane === true
+      })
+      .toBe(true)
+
+    await expect(remote.locator('[data-testid="session-row"].selected')).toBeVisible()
+    await expect(remote.locator('[data-testid="empty-open-settings"]')).toHaveCount(0)
+    await expect(remote.locator('[data-testid="composer-input"]')).toBeVisible({ timeout: 20_000 })
+
+    const sessionId = await remote
+      .locator('[data-testid="session-row"].selected')
+      .getAttribute('data-conversation-id')
+    expect(sessionId).toBeTruthy()
+
+    await remote.evaluate(
+      (id) => window.vav.conversations.setApprovalMode(id, 'bypass'),
+      sessionId
+    )
+    await expect
+      .poll(async () => {
+        const conversation = await remote.evaluate((id) => window.vav.conversations.get(id), sessionId)
+        return conversation?.approvalMode ?? null
+      })
+      .toBe('bypass')
+
+    await remote.locator('[data-testid="composer-input"]').fill('ping from desktop connect')
+    await remote.locator('[data-testid="composer-send"]').click()
+
+    await expect(remote.locator('[data-testid="message-user"]').last()).toContainText(
+      'ping from desktop connect'
+    )
+    await expect(remote.locator('[data-testid="tool-card"][data-tool="fs_read"]')).toBeVisible({
+      timeout: 15_000
+    })
+    await expect(remote.locator('[data-testid="message-assistant"]').last()).toContainText(
+      'e2e stub reply'
+    )
+    await expect(page.locator('[data-testid="message-assistant"]')).toHaveCount(0)
+    await expect
+      .poll(async () =>
+        remote.evaluate(async (id) => {
+          const status = await window.vav.agent.status(id)
+          return status?.isRunning === false
+        }, sessionId)
+      )
+      .toBe(true)
+
+    await remote.screenshot({ path: 'test-results/e2e/vavd-desktop-connect-turn.png' })
+  } finally {
+    await harness.dispose()
+    daemon.stop()
+  }
+})
+
+/**
+ * Desktop app launched with VAVD_URI is a vavd UI — no Connect paste.
+ * Electron is launched without VAV_E2E_STUB_TURN so the reply must come
+ * from the daemon, not an in-process agent.
+ */
+test('desktop launches as a vavd client via VAVD_URI', async () => {
+  test.setTimeout(90_000)
+  const daemon = await startVavd({ stubStream: true })
+  const harness = await launchVav({ vavdUri: daemon.pairing })
+  try {
+    const { page } = harness
+    const remote = await waitForHostWindow(harness, 'E2E Daemon')
+    await remote.locator('[data-testid="app-shell"]').waitFor({ state: 'visible', timeout: 25_000 })
+    await expect(remote.locator('[data-testid="sidebar-connect"]')).toHaveAttribute(
+      'data-machine-id',
+      /^(?!local$).+/
+    )
+    await expect
+      .poll(async () => {
+        const hosts = await remote.evaluate(() => window.vav.hosts.list())
+        return hosts.find((h) => h.name === 'E2E Daemon')?.controlPlane === true
+      })
+      .toBe(true)
+
+    await expect(remote.locator('[data-testid="session-row"].selected')).toBeVisible()
+    await expect(remote.locator('[data-testid="empty-open-settings"]')).toHaveCount(0)
+    await expect(remote.locator('[data-testid="composer-input"]')).toBeVisible({ timeout: 20_000 })
+
+    const sessionId = await remote
+      .locator('[data-testid="session-row"].selected')
+      .getAttribute('data-conversation-id')
+    expect(sessionId).toBeTruthy()
+
+    await remote.evaluate(
+      (id) => window.vav.conversations.setApprovalMode(id, 'bypass'),
+      sessionId
+    )
+    await remote.evaluate(
+      (id) => window.vav.conversations.setModel(id, 'e2e-desktop-model'),
+      sessionId
+    )
+    await expect
+      .poll(async () => {
+        const conversation = await remote.evaluate((id) => window.vav.conversations.get(id), sessionId)
+        return {
+          approval: conversation?.approvalMode ?? null,
+          model: conversation?.model ?? null
+        }
+      })
+      .toEqual({ approval: 'bypass', model: 'e2e-desktop-model' })
+
+    await remote.locator('[data-testid="composer-input"]').fill('ping from auto-paired desktop')
+    await remote.locator('[data-testid="composer-send"]').click()
+
+    await expect(remote.locator('[data-testid="message-user"]').last()).toContainText(
+      'ping from auto-paired desktop'
+    )
+    await expect(remote.locator('[data-testid="tool-card"][data-tool="fs_read"]')).toBeVisible({
+      timeout: 15_000
+    })
+    await expect(remote.locator('[data-testid="message-assistant"]').last()).toContainText(
+      'e2e stub reply'
+    )
+    await expect(page.locator('[data-testid="message-assistant"]')).toHaveCount(0)
+
+    await remote.screenshot({ path: 'test-results/e2e/vavd-desktop-autopair-turn.png' })
+  } finally {
+    await harness.dispose()
+    daemon.stop()
+  }
+})
+
+/**
+ * Desktop `--with-vavd` / `VAVD_SPAWN` starts the daemon itself.
+ * Electron has no stub turn; the reply must come from the child vavd.
+ */
+test('desktop spawns vavd and sends through the child process', async () => {
+  test.setTimeout(90_000)
+  const harness = await launchVav({ spawnVavd: true })
+  try {
+    const { page } = harness
+    const remote = await waitForHostWindow(harness, 'E2E Daemon', 40_000)
+    await remote.locator('[data-testid="app-shell"]').waitFor({ state: 'visible', timeout: 25_000 })
+    await expect
+      .poll(async () => {
+        const hosts = await remote.evaluate(() => window.vav.hosts.list())
+        return hosts.find((h) => h.name === 'E2E Daemon')?.controlPlane === true
+      })
+      .toBe(true)
+
+    await expect(remote.locator('[data-testid="composer-input"]')).toBeVisible({ timeout: 20_000 })
+    const sessionId = await remote
+      .locator('[data-testid="session-row"].selected')
+      .getAttribute('data-conversation-id')
+    expect(sessionId).toBeTruthy()
+
+    await remote.evaluate(
+      (id) => window.vav.conversations.setApprovalMode(id, 'bypass'),
+      sessionId
+    )
+    await remote.locator('[data-testid="composer-input"]').fill('ping from spawned vavd')
+    await remote.locator('[data-testid="composer-send"]').click()
+
+    await expect(remote.locator('[data-testid="tool-card"][data-tool="fs_read"]')).toBeVisible({
+      timeout: 20_000
+    })
+    await expect(remote.locator('[data-testid="message-assistant"]').last()).toContainText(
+      'e2e stub reply'
+    )
+    await expect(page.locator('[data-testid="message-assistant"]')).toHaveCount(0)
+
+    await remote.screenshot({ path: 'test-results/e2e/vavd-desktop-spawn-turn.png' })
+  } finally {
+    await harness.dispose()
+  }
+})
+
+/**
+ * Connect's pairing line on a spawned-vavd desktop is the child daemon.
+ * A phone-protocol client that pastes that URI must turn on vavd, not Electron.
+ */
+test('spawned desktop advertises vavd pairing for an incoming phone client', async () => {
+  test.setTimeout(90_000)
+  const harness = await launchVav({ spawnVavd: true })
+  try {
+    const { page } = harness
+    const remote = await waitForHostWindow(harness, 'E2E Daemon', 40_000)
+    await remote.locator('[data-testid="app-shell"]').waitFor({ state: 'visible', timeout: 25_000 })
+
+    const pairing = await waitForDaemonPairing(page)
+    const parsed = parseDaemonPairing(pairing)
+    expect(parsed?.secret).toBeTruthy()
+    expect(parsed?.port).toBeGreaterThan(0)
+    expect(parsed?.name).toBe('E2E Daemon')
+
+    const phone = await connectPhone({
+      host: '127.0.0.1',
+      port: parsed!.port!,
+      secret: parsed!.secret,
+      device: 'E2E Incoming Phone',
+      omitRole: true
+    })
+    try {
+      phone.send({ type: 'create' })
+      const createdFrames = await phone.waitNew((msg) => msg.type === 'created')
+      const created = createdFrames.findLast((msg) => msg.type === 'created')
+      expect(created?.type).toBe('created')
+      if (!created || created.type !== 'created') return
+      const conversationId = created.session.id
+      phone.send({
+        type: 'configure',
+        conversationId,
+        model: 'e2e-incoming-model',
+        approvalMode: 'bypass'
+      })
+      const controls = await phone.waitNew((msg) => msg.type === 'controls')
+      const row = controls.findLast((msg) => msg.type === 'controls')
+      expect(row && row.type === 'controls' ? row.model : null).toBe('e2e-incoming-model')
+      phone.send({ type: 'send', conversationId, text: 'ping from advertised pairing' })
+      const turns = await phone.waitNew(
+        (msg) => msg.type === 'turn' && (msg.phase === 'done' || msg.phase === 'error')
+      )
+      expect(turns.some((msg) => msg.type === 'turn' && msg.phase === 'done')).toBe(true)
+    } finally {
+      phone.close()
+    }
+
+    await expect(page.locator('[data-testid="message-assistant"]')).toHaveCount(0)
+    await remote.screenshot({ path: 'test-results/e2e/vavd-advertised-pairing-phone.png' })
+  } finally {
+    await harness.dispose()
+  }
+})
+
+/**
+ * Approve a write on the remote window; the file must land on the vavd disk.
+ */
+test('desktop Connect approve writes a file on the vavd disk', async () => {
+  test.setTimeout(90_000)
+  const daemon = await startVavd({ stubApprove: true })
+  const harness = await launchVav()
+  try {
+    const { page } = harness
+    let paired: { ok: true; host: { id: string } } | { ok: false; error: string } | null = null
+    const remote = await waitForNewWindow(harness, async () => {
+      paired = await page.evaluate((payload) => window.vav.hosts.pair(payload), daemon.pairing)
+    })
+    expect(paired?.ok).toBe(true)
+    if (!paired || !paired.ok) return
+
+    await remote.locator('[data-testid="app-shell"]').waitFor({ state: 'visible', timeout: 25_000 })
+    await expect
+      .poll(async () => {
+        const hosts = await remote.evaluate(() => window.vav.hosts.list())
+        return hosts.find((h) => h.id === paired.host.id)?.controlPlane === true
+      })
+      .toBe(true)
+
+    const created = await remote.evaluate(
+      async ({ path, machineId }) =>
+        window.vav.conversations.create({ workingDirectory: path, machineId }),
+      { path: daemon.workspace, machineId: paired.host.id }
+    )
+    expect(created.machineId).toBe(paired.host.id)
+    await remote.locator(`[data-testid="session-row"][data-conversation-id="${created.id}"]`).click()
+    await expect(remote.locator('[data-testid="empty-open-settings"]')).toHaveCount(0)
+    await remote.locator('[data-testid="composer-input"]').fill('patch hello')
+    await remote.locator('[data-testid="composer-send"]').click()
+
+    const approve = remote.getByRole('button', { name: 'Approve' }).last()
+    await expect(approve).toBeVisible({ timeout: 15_000 })
+    await approve.click()
+
+    await expect(remote.locator('[data-testid="message-assistant"]').last()).toContainText(
+      'e2e stub reply · approved'
+    )
+    await expect
+      .poll(() => readFileSync(join(daemon.workspace, 'hello.md'), 'utf8'))
+      .toBe('patched\n')
+    expect(harness.workspace).not.toBe(daemon.workspace)
+    expect(readFileSync(join(harness.workspace, 'hello.md'), 'utf8')).toContain('hello from e2e')
   } finally {
     await harness.dispose()
     daemon.stop()

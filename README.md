@@ -30,7 +30,7 @@ New session: pick a workspace, pick an agent, ask one thing. Multi-split CLI TUI
 - **Spending** — Settings panel for local usage plus provider subscriptions, and DeepSeek API balance when VAV talks to official DeepSeek
 - **Swarm** (optional) — multi-split raw CLI TUIs; off by default in Settings → Providers
 - **Remote** — Settings → Allow other devices; pair VAV Remote (iOS) or another computer. Conversations and keys stay on this machine
-- **Headless host** — `npx @21stware/vavd` runs the workspace-host daemon without the desktop UI
+- **Headless VAV** — `npx @21stware/vavd` (or `npm i -g @21stware/vavd && vavd`) hosts sessions, keys, files, PTY, and agent turns. Desktop, iOS Remote, the local web UI, and the Chrome extension are shells over that daemon.
 
 ## Website
 
@@ -58,20 +58,23 @@ Custom domain: `vavapp.com` (see `site/CNAME`). Apex uses GitHub Pages `A`/`AAAA
 
 ## Install
 
-Grab a build from [Releases](https://github.com/21stware/vav/releases).
+Grab a build from [Releases](https://github.com/21stware/vav/releases). Each `v*` release includes the macOS DMG/ZIP, Windows installer, `@21stware/vavd` tarball, and the Chrome extension zip.
 
 - **macOS** — Developer ID signed and notarized (app + DMG, ticket stapled); open the DMG and drag to Applications. Later versions update in-app (About → Check for Updates).
 - **Windows** — not code-signed; SmartScreen may warn on first open (More info → Run anyway). In-app updates use the NSIS installer feed.
 
 Then in Settings → “vav command”, install the `vav` CLI (defaults to `~/.local/bin`). Run `vav -h` for usage; `vav .` opens a new session in the current directory.
 
-On a machine that should host workspaces without opening the app:
+On a machine that should host VAV without opening the desktop app:
 
 ```bash
 npx @21stware/vavd
+# or: npm i -g @21stware/vavd && vavd
 ```
 
-Listens on all interfaces by default (`--listen 127.0.0.1` for local-only). Paste the pairing line into VAV → Settings → Allow other devices. The pairing secret is equivalent to local access on that machine.
+Listens on all interfaces by default (`--listen 127.0.0.1` for local-only). Opens a web UI on `http://127.0.0.1:4752`. Paste the pairing line into VAV → Connect, VAV Remote, the web UI, or the Chrome extension — or launch the desktop app with `VAVD_URI` / `--vavd-uri` so it opens as a vavd UI without the Connect paste. `VAVD_SPAWN=1` / `--with-vavd` starts vavd as a child of the app and pairs automatically. Packaged builds do that by default (`VAVD_SPAWN=0` / `--no-vavd` keeps the in-process host). The pairing secret is equivalent to local access on that machine. Set `VAV_API_KEY` (and optional `VAV_API_ENDPOINT`) so the daemon can call your model.
+
+From this repo, `npm run vav -- sessions` / `npm run vav -- send "hello"` talks to that daemon over the same phone protocol.
 
 ## Develop
 

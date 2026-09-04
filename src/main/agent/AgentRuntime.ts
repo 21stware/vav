@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { dirname } from 'node:path'
+import { dirname, join } from 'node:path'
 import type { AgentEvent, AgentTool } from '@earendil-works/pi-agent-core'
 import { runAgentLoopContinue } from '@earendil-works/pi-agent-core'
 import type { Message } from '@earendil-works/pi-ai'
@@ -80,7 +80,7 @@ import {
 } from './agentE2eStub'
 import { FileDraftCoalescer, writeToolDraft } from '@shared/writeToolDraft'
 import type { ConversationStore } from '../store/ConversationStore'
-import { kindFromFilePath } from '../store/FileSessionStore'
+import { kindFromFilePath } from '../store/fileSessionKind'
 import type { SettingsStore } from '../store/SettingsStore'
 import type { SecretStore } from '../store/SecretStore'
 import type { FileService } from '../fs/FileService'
@@ -200,7 +200,11 @@ export class AgentRuntime {
   /** Playwright ask-card waiters — not a full TurnState. */
   private e2eAskWaiters = new Map<string, (text: string) => void>()
 
-  constructor(private deps: AgentRuntimeDeps) {}
+  private deps: AgentRuntimeDeps
+
+  constructor(deps: AgentRuntimeDeps) {
+    this.deps = deps
+  }
 
   private vavCreds(conversation: Conversation): { apiKey: string | null; settings: AppSettings } {
     return mergeVavCredentials(
@@ -518,7 +522,11 @@ export class AgentRuntime {
         return
       }
       if (process.env.VAV_E2E_STUB_APPROVE === '1') {
-        runE2eStubApprove(sink, this.e2eAskWaiters, conversationId, parentId)
+        runE2eStubApprove(sink, this.e2eAskWaiters, conversationId, parentId, async () => {
+          const dir = conversation.workingDirectory
+          if (!dir) return
+          await this.deps.files.writeTextFile(join(dir, 'hello.md'), 'patched\n', conversationId)
+        })
         return
       }
       if (process.env.VAV_E2E_STUB_STREAM === '1') {

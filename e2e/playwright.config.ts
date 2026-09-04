@@ -1,9 +1,10 @@
 import { defineConfig } from '@playwright/test'
 
 /**
- * Local-only Electron e2e. Does not install browsers and is not wired into CI.
+ * Electron e2e. Does not install browsers.
  *
  *   npm run test:e2e
+ *   npm run test:e2e:vavd   # remote-daemon + remote-control (also CI on macos)
  */
 export default defineConfig({
   testDir: './specs',

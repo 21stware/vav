@@ -1,0 +1,11 @@
+{
+  "manifest_version": 3,
+  "name": "VAV",
+  "version": "1.18.12",
+  "description": "Control surface for local vavd — the headless VAV daemon.",
+  "action": { "default_title": "VAV" },
+  "side_panel": { "default_path": "sidepanel.html" },
+  "background": { "service_worker": "background.js" },
+  "permissions": ["sidePanel", "storage"],
+  "host_permissions": ["http://127.0.0.1/*", "http://localhost/*"]
+}

@@ -1,15 +1,17 @@
 {
   "name": "@21stware/vavd",
   "version": "1.18.12",
-  "description": "Headless VAV workspace-host daemon. Pair from desktop VAV → Settings → Allow other devices.",
+  "description": "Headless VAV. Hosts sessions, keys, files, PTY, and agent turns. Pair from desktop, iOS Remote, the web UI, or the Chrome extension.",
   "license": "PolyForm-Noncommercial-1.0.0",
   "author": "Oboo Cheng",
   "type": "commonjs",
   "bin": {
-    "vavd": "vavd.js"
+    "vavd": "vavd.js",
+    "vav": "vav.js"
   },
   "files": [
     "vavd.js",
+    "vav.js",
     "README.md",
     "LICENSE"
   ],

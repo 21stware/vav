@@ -93,6 +93,16 @@ export type LaunchVavOptions = {
    * empty-state `empty-in` (logo + name stagger).
    */
   reduceMotion?: boolean
+  /**
+   * Pair the desktop app with a running vavd at launch (`VAVD_URI`).
+   * No Connect paste — the host window opens as a control-plane client.
+   */
+  vavdUri?: string
+  /**
+   * Spawn a local vavd from the repo and auto-pair (`VAVD_SPAWN`).
+   * Electron stays a shell — the child process hosts turns.
+   */
+  spawnVavd?: boolean
   /** Settings → Connect: listen so another VAV can pair with this instance. */
   remoteControlEnabled?: boolean
   /** Seed `userData/daemon/identity.json` name (pairing / remote-window label). */
@@ -290,10 +300,16 @@ async function seedPreviewKindFixtures(workspace: string): Promise<void> {
 }
 
 function writeTinyMp4(path: string): void {
-  execSync(
-    `ffmpeg -y -f lavfi -i color=c=0x6b5bc0:s=160x120:d=1 -c:v libx264 -pix_fmt yuv420p -an ${JSON.stringify(path)}`,
-    { stdio: 'ignore' }
-  )
+  try {
+    execSync(
+      `ffmpeg -y -f lavfi -i color=c=0x6b5bc0:s=160x120:d=1 -c:v libx264 -pix_fmt yuv420p -an ${JSON.stringify(path)}`,
+      { stdio: 'ignore' }
+    )
+  } catch {
+    // GHA macOS (and any box without ffmpeg) still needs a file on disk.
+    // files-preview only asserts the name; vavd specs never open this clip.
+    writeFileSync(path, Buffer.from('ftypisom', 'ascii'))
+  }
 }
 
 function writeSilentWav(path: string): void {
@@ -427,7 +443,13 @@ export async function launchVav(options: LaunchVavOptions = {}): Promise<VavHarn
         : {}),
       ...(options.acpLeakPrompts ? { E2E_ACP_LEAK_PROMPTS: String(options.acpLeakPrompts) } : {}),
       ...(options.acpLeakTail ? { E2E_ACP_LEAK_TAIL: '1' } : {}),
-      ...(options.acpLeakPartialTransport ? { E2E_ACP_LEAK_PARTIAL_TRANSPORT: '1' } : {})
+      ...(options.acpLeakPartialTransport ? { E2E_ACP_LEAK_PARTIAL_TRANSPORT: '1' } : {}),
+      ...(options.vavdUri ? { VAVD_URI: options.vavdUri } : {}),
+      ...(options.spawnVavd
+        ? { VAVD_SPAWN: '1', NODE_BINARY: process.execPath }
+        : options.vavdUri
+          ? {}
+          : { VAVD_SPAWN: '0' })
     }
   })
 
@@ -549,6 +571,38 @@ export async function waitForNewWindow(
     })
     .toBe(true)
   if (!found) throw new Error('expected a new BrowserWindow')
+  return found
+}
+
+/** Host window opened after Connect / `VAVD_URI` auto-pair. */
+export async function waitForHostWindow(
+  harness: VavHarness,
+  name: string,
+  timeout = 30_000
+): Promise<Page> {
+  let found: Page | undefined
+  await expect
+    .poll(
+      async () => {
+        for (const win of harness.app.windows()) {
+          try {
+            const label = await win
+              .locator('[data-testid="sidebar-connect"]')
+              .textContent({ timeout: 400 })
+            if (label?.includes(name)) {
+              found = win
+              return true
+            }
+          } catch {
+            // window still loading
+          }
+        }
+        return false
+      },
+      { timeout }
+    )
+    .toBe(true)
+  if (!found) throw new Error(`expected a host window labeled ${name}`)
   return found
 }
 

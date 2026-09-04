@@ -63,7 +63,7 @@ final class RemoteClient: NSObject, ObservableObject, UNUserNotificationCenterDe
     @Published private(set) var activeToken: String?
 
     private var pairing: Pairing?
-    private var session: TcmobileSession?
+    private var session: LineTransport?
     private let writeQueue = DispatchQueue(label: "vav.remote.write")
     /// Bumped on every disconnect; stale dial results / read loops bail out.
     private var generation = 0
@@ -486,12 +486,12 @@ final class RemoteClient: NSObject, ObservableObject, UNUserNotificationCenterDe
         let device = UIDevice.current.name
         DiagLog.line("connect host=\(pairing.displayName) token=\(DiagLog.tokenHint(pairing.token)) gen=\(gen)")
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            var dialError: NSError?
-            let session = TcmobileDial(pairing.token, &dialError)
-            DiagLog.ingestGo()
-            guard let session else {
-                let shown = Self.describeLinkError(dialError)
-                DiagLog.line("dial fail raw=\(dialError?.localizedDescription ?? "nil") shown=\(shown)")
+            let transport: LineTransport
+            do {
+                transport = try Self.dial(pairing)
+            } catch {
+                let shown = Self.describeLinkError(error as NSError)
+                DiagLog.line("dial fail raw=\(error.localizedDescription) shown=\(shown)")
                 DispatchQueue.main.async {
                     guard let self, self.generation == gen else { return }
                     self.state = .disconnected(shown)
@@ -504,10 +504,10 @@ final class RemoteClient: NSObject, ObservableObject, UNUserNotificationCenterDe
                 guard let hello = ClientFrame.hello(secret: pairing.secret, device: device) else {
                     throw NSError(domain: "vav.remote", code: 1)
                 }
-                try session.writeLine(hello)
+                try transport.writeLine(hello)
             } catch {
                 DiagLog.line("hello write fail \(error.localizedDescription)")
-                session.close()
+                transport.close()
                 DispatchQueue.main.async {
                     guard let self, self.generation == gen else { return }
                     self.state = .disconnected(error.localizedDescription)
@@ -517,14 +517,14 @@ final class RemoteClient: NSObject, ObservableObject, UNUserNotificationCenterDe
             }
             DispatchQueue.main.async {
                 guard let self, self.generation == gen else {
-                    DispatchQueue.global().async { session.close() }
+                    DispatchQueue.global().async { transport.close() }
                     return
                 }
-                self.session = session
+                self.session = transport
                 self.state = .connected(host: pairing.displayName)
                 self.sessionsLoad = .loading
                 DiagLog.line("connected host=\(pairing.displayName), waiting for sessions")
-                self.startReadThread(session: session, generation: gen)
+                self.startReadThread(session: transport, generation: gen)
                 // Hello already pushes the list. Only refresh the open transcript.
                 if let viewing = self.viewingConversationId {
                     self.requestThread(conversationId: viewing)
@@ -534,7 +534,25 @@ final class RemoteClient: NSObject, ObservableObject, UNUserNotificationCenterDe
         }
     }
 
-    private func startReadThread(session: TcmobileSession, generation gen: Int) {
+    private static func dial(_ pairing: Pairing) throws -> LineTransport {
+        if pairing.token.hasPrefix("tc") {
+            var dialError: NSError?
+            let session = TcmobileDial(pairing.token, &dialError)
+            DiagLog.ingestGo()
+            if let session { return .tunnel(session) }
+            throw dialError ?? NSError(domain: "vav.remote", code: 3, userInfo: [
+                NSLocalizedDescriptionKey: "无法连接到 Mac"
+            ])
+        }
+        guard let host = pairing.lanHost, let port = pairing.lanPort else {
+            throw NSError(domain: "vav.remote", code: 4, userInfo: [
+                NSLocalizedDescriptionKey: "配对串缺少主机地址"
+            ])
+        }
+        return .lan(try TcpLineSession.connect(host: host, port: port))
+    }
+
+    private func startReadThread(session: LineTransport, generation gen: Int) {
         let thread = Thread { [weak self] in
             while true {
                 var error: NSError?

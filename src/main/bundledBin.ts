@@ -3,8 +3,8 @@
  *
  * Dev:   <repo>/resources/bin
  * Packaged: process.resourcesPath/bin
+ * Headless `vavd`: cwd / resources only — no Electron import on the load path.
  */
-import { app } from 'electron'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 
@@ -16,7 +16,8 @@ function officecliName(): string {
 
 function appPathSafe(): string | null {
   try {
-    return app.getAppPath()
+    const electron = require('electron') as { app?: { getAppPath: () => string } }
+    return electron.app?.getAppPath() ?? null
   } catch {
     return null
   }

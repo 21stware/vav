@@ -405,14 +405,16 @@ struct RemoteDirs: Codable, Equatable {
     let entries: [RemoteDirEntry]
 }
 
-/// Pairing payload scanned from the Mac's settings QR (`vav-remote:{…}`).
-/// `token` is the tailcat identity — unique per computer, used as the id.
+/// Pairing payload: Settings QR (`vav-remote:{…}`) or a printed `vav-daemon://` URI.
+/// `token` is the tailcat identity when present; LAN-only pairings use `lan:host:port`.
 struct Pairing: Codable, Equatable, Identifiable, Hashable {
     var id: String { token }
     let v: Int
     let token: String
     let secret: String
     var host: String?
+    var lanHost: String?
+    var lanPort: Int?
 
     var displayName: String {
         let name = (host ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
@@ -427,6 +429,13 @@ struct Pairing: Codable, Equatable, Identifiable, Hashable {
     }
 
     static func parse(_ text: String) -> Pairing? {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.hasPrefix("vav-remote:") { return parseRemote(trimmed) }
+        if trimmed.hasPrefix("vav-daemon://") { return parseDaemon(trimmed) }
+        return nil
+    }
+
+    private static func parseRemote(_ text: String) -> Pairing? {
         let prefix = "vav-remote:"
         guard text.hasPrefix(prefix),
               let data = text.dropFirst(prefix.count).data(using: .utf8),
@@ -435,6 +444,29 @@ struct Pairing: Codable, Equatable, Identifiable, Hashable {
               pairing.secret.count >= 16
         else { return nil }
         return pairing
+    }
+
+    /// Same URI `vav`, Connect, and `npx vavd` print.
+    private static func parseDaemon(_ text: String) -> Pairing? {
+        guard let comps = URLComponents(string: text), comps.scheme == "vav-daemon" else { return nil }
+        let secret = (comps.user ?? "").removingPercentEncoding ?? comps.user ?? ""
+        guard secret.count >= 16 else { return nil }
+        let lanHost = comps.host?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !lanHost.isEmpty else { return nil }
+        let lanPort = comps.port ?? 4750
+        guard lanPort > 0 else { return nil }
+        let name = comps.queryItems?.first(where: { $0.name == "name" })?.value?
+            .removingPercentEncoding ?? lanHost
+        let tokenQuery = comps.queryItems?.first(where: { $0.name == "token" })?.value
+        let token = (tokenQuery?.hasPrefix("tc") == true) ? tokenQuery! : "lan:\(lanHost):\(lanPort)"
+        return Pairing(
+            v: 1,
+            token: token,
+            secret: secret,
+            host: name,
+            lanHost: lanHost,
+            lanPort: lanPort
+        )
     }
 }
 

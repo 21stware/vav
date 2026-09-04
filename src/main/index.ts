@@ -78,6 +78,9 @@ import {
 import { createSwarmFinishAlert } from './sound/swarmFinishAlert'
 import { RemoteControlService } from './remote/RemoteControlService'
 import { DaemonAttachService } from './daemon/DaemonAttachService'
+import { resolveVavdPairing, resolveVavdSpawn } from './daemon/vavdClientLaunch'
+import { spawnLocalVavd } from './daemon/vavdSpawn'
+import { loopbackVavdShell } from './daemon/vavdShellPairing'
 import { openTailcatDial } from './daemon/tailcatDial'
 import { hostJoin, isLocalMachine, LOCAL_MACHINE_ID, normalizeMachineId, conversationOnMachine, parseWorkspaceRefList, recentsForMachine, remoteConversationMachineId, type WorkspaceHostInfo } from '@shared/workspaceHost'
 import { hostSessionId, localSessionId } from '@shared/remoteHostKind'
@@ -419,6 +422,7 @@ protocol.registerSchemesAsPrivileged([
 ])
 
 let mainWindow: BrowserWindow | null = null
+let stopSpawnedVavd: (() => void) | undefined
 /** Extra main shells, one per paired daemon (`?machine=<id>`). */
 const hostWindows = new Map<string, BrowserWindow>()
 let settingsWindow: BrowserWindow | null = null
@@ -1821,8 +1825,8 @@ const daemonAttach = new DaemonAttachService({
 
 /**
  * Talk to the host session plane when this conversation lives on another
- * desktop. Headless vavd has no hub — returns false so the caller can run
- * a local agent against daemon fs/pty.
+ * machine. Desktop hosts and headless vavd both expose the hub; returns
+ * false only when that plane is not ready.
  */
 function remoteMachineId(conversation: Conversation | undefined | null): string | null {
   return remoteConversationMachineId(conversation)
@@ -1830,14 +1834,17 @@ function remoteMachineId(conversation: Conversation | undefined | null): string 
 
 async function forwardControl(
   conversation: Conversation | undefined | null,
-  run: (dial: import('./remote/RemoteControlDial').RemoteControlDial, hostConversationId: string) => void
+  run: (
+    dial: import('./remote/RemoteControlDial').RemoteControlDial,
+    hostConversationId: string
+  ) => void | Promise<void>
 ): Promise<boolean> {
   const machineId = remoteMachineId(conversation)
   if (!conversation || !machineId) return false
   const ready = await daemonAttach.waitForControlPlane(machineId)
   const dial = daemonAttach.controlOf(machineId)
   if (!ready || !dial?.ready) return false
-  run(dial, hostSessionId(conversation.id, conversation.duplicateSourceId))
+  await run(dial, hostSessionId(conversation.id, conversation.duplicateSourceId))
   return true
 }
 
@@ -1848,7 +1855,10 @@ function controlPlaneOwns(conversation: Conversation | undefined | null): boolea
 
 async function pullIfForwarded(
   conversation: Conversation | undefined | null,
-  run: (dial: import('./remote/RemoteControlDial').RemoteControlDial, hostConversationId: string) => void
+  run: (
+    dial: import('./remote/RemoteControlDial').RemoteControlDial,
+    hostConversationId: string
+  ) => void | Promise<void>
 ): Promise<boolean> {
   if (!(await forwardControl(conversation, run))) return false
   const machineId = remoteMachineId(conversation)
@@ -1938,15 +1948,34 @@ function controlPlaneTurnStatus(id: string): TurnStatus | null {
   })
 }
 
+/** One in-flight catalog pull per host so a stale `created` fetch cannot overwrite a later bind. */
+const remoteCatalogPulls = new Map<string, Promise<void>>()
+
 /** Pull the other computer's sessions and folder recents before its window boots. */
 async function pullRemoteWorkspace(machineId: string): Promise<void> {
   const id = String(machineId || '')
   if (!id || isLocalMachine(id)) return
+  const previous = remoteCatalogPulls.get(id) ?? Promise.resolve()
+  const next = previous.catch(() => undefined).then(() => pullRemoteWorkspaceNow(id))
+  remoteCatalogPulls.set(id, next)
+  try {
+    await next
+  } finally {
+    if (remoteCatalogPulls.get(id) === next) remoteCatalogPulls.delete(id)
+  }
+}
+
+async function pullRemoteWorkspaceNow(id: string): Promise<void> {
   const catalog = await daemonAttach.pullHostCatalog(id)
   let sessionsChanged = false
   for (const raw of catalog.sessions) {
     const adopted = conversationStore.adoptHostConversation(raw as Conversation, id)
     if (adopted) sessionsChanged = true
+    const conversation =
+      conversationStore.get((raw as Conversation).id) ??
+      conversationStore.findOnHost(id, (raw as Conversation).id)
+    const path = conversation?.workingDirectory
+    if (conversation && path) fileService.watchRoot(conversation.id, path)
   }
   for (const path of catalog.recents) {
     settingsStore.rememberWorkspaceDirectory(path, '', id)
@@ -6707,8 +6736,8 @@ return c as text`
       const id = await control.createSession()
       const path =
         options && 'workingDirectory' in options ? (options.workingDirectory ?? null) : null
-      if (path) control.setWorkspace(id, path)
-      else if (options && !('workingDirectory' in options)) control.setWorkspace(id, null)
+      if (path) await control.setWorkspace(id, path)
+      else if (options && !('workingDirectory' in options)) await control.setWorkspace(id, null)
       await pullRemoteWorkspace(machineId)
       const adopted = conversationStore.get(id)
       if (!adopted) return null
@@ -7093,6 +7122,7 @@ return c as text`
       // with a Tray/Dock-only lifetime after windows close.
       electronAutoUpdater.once('before-quit-for-update', () => {
         daemonAttach.dispose()
+        stopSpawnedVavd?.()
         remoteControl.dispose()
         agent.disposeAll()
         cliHost.disposeAll()
@@ -7227,6 +7257,7 @@ if (!singleInstance) {
     sleepBlocker.release()
     macLidSleep?.stop()
     daemonAttach.dispose()
+    stopSpawnedVavd?.()
     remoteControl.dispose()
     agent.disposeAll()
     cliHost.disposeAll()
@@ -7421,6 +7452,35 @@ if (!singleInstance) {
     }
 
     mainWindow ??= createWindow()
+    let vavdPairing = resolveVavdPairing(process.env, process.argv)
+    if (resolveVavdSpawn(process.env, process.argv, { packaged: app.isPackaged })) {
+      try {
+        const spawned = await spawnLocalVavd({
+          name: isE2eRuntime() ? 'E2E Daemon' : 'VAV Daemon',
+          stateDir: join(app.getPath('userData'), 'vavd'),
+          stubTurn: isE2eRuntime(),
+          stubStream: isE2eRuntime()
+        })
+        stopSpawnedVavd = spawned.stop
+        vavdPairing = spawned.pairing
+      } catch (err) {
+        console.warn('[vavd] spawn failed', err)
+      }
+    }
+    if (vavdPairing) {
+      const shell = loopbackVavdShell(vavdPairing)
+      if (shell) {
+        daemonAttach.setAdvertisedPairing(shell.pairing)
+        remoteControl.setTunnelForward({ port: shell.port, secret: shell.secret })
+      }
+      void daemonAttach.pair(vavdPairing).then((result) => {
+        if (!result.ok) {
+          console.warn('[vavd] auto-pair failed', result.error)
+          return
+        }
+        void showHostWindow(result.host.id)
+      })
+    }
     // Belt-and-suspenders: ready-to-show can race with Dock hide / focus steals
     // from the IDE. Force the main window up once the renderer finishes loading.
     mainWindow.webContents.once('did-finish-load', () => {

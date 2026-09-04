@@ -132,12 +132,13 @@ export class StickyShell {
 
   readonly sessionId = BASH_SESSION_ID
 
-  constructor(
-    private shell: ShellKind,
-    cwd: string,
-    private hostProcess: HostProcess = localHostProcess
-  ) {
+  private shell: ShellKind
+  private hostProcess: HostProcess
+
+  constructor(shell: ShellKind, cwd: string, hostProcess: HostProcess = localHostProcess) {
+    this.shell = shell
     this.cwd = cwd
+    this.hostProcess = hostProcess
   }
 
   private recordSession(chunk: string): void {

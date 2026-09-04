@@ -52,7 +52,12 @@ export async function locateTempWorkspaceToDir(input: {
     return { ok: false, error: 'not-temp' }
   }
 
-  const plan = planLocateTempDir(input.workdir, input.destinationDir, names, input.platform)
+  const plan = planLocateTempDir(
+    input.workdir,
+    input.destinationDir,
+    names,
+    input.platform ?? process.platform
+  )
   if (!plan.ok) return { ok: false, error: 'not-temp' }
   if (!plan.moves.some((move) => move.to === plan.nextWorkdir)) {
     return { ok: false, error: 'not-temp' }

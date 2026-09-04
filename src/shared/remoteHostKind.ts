@@ -52,11 +52,11 @@ const CONFIGS: Record<RemoteEndpointRole, RemoteEndpointConfig> = {
   },
   'headless-daemon': {
     role: 'headless-daemon',
-    controlPlane: false,
+    controlPlane: true,
     workspaceHost: true,
-    localAgent: false,
+    localAgent: true,
     driveLocalUi: false,
-    holdsSecrets: false
+    holdsSecrets: true
   }
 }
 
@@ -67,19 +67,18 @@ export function remoteEndpointConfig(role: RemoteEndpointRole): RemoteEndpointCo
 /**
  * How a desktop window should talk to a paired machine.
  *
- * Desktop hosts expose the control plane on the same listen port (phone
- * hello). Headless `vavd` does not — the client must run the agent itself
- * and only use the daemon for disk / PTY.
+ * Desktop hosts and headless `vavd` both expose the control plane on the
+ * listen port (phone hello). The client is a shell — turns stay on the host.
  */
 export function desktopClientAgainst(host: RemoteHostPlane): RemoteEndpointConfig {
   if (host === 'headless') {
     return {
       role: 'desktop-client',
-      controlPlane: false,
+      controlPlane: true,
       workspaceHost: true,
-      localAgent: true,
+      localAgent: false,
       driveLocalUi: true,
-      holdsSecrets: true
+      holdsSecrets: false
     }
   }
   return remoteEndpointConfig('desktop-client')

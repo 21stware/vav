@@ -27,10 +27,11 @@ describe('remoteEndpointConfig', () => {
     assert.equal(host.holdsSecrets, true)
   })
 
-  it('treats vavd as workspace-only — no control plane, no UI', () => {
+  it('treats vavd as the headless host — control plane, agent, and keys', () => {
     const daemon = remoteEndpointConfig('headless-daemon')
-    assert.equal(daemon.controlPlane, false)
-    assert.equal(daemon.localAgent, false)
+    assert.equal(daemon.controlPlane, true)
+    assert.equal(daemon.localAgent, true)
+    assert.equal(daemon.holdsSecrets, true)
     assert.equal(daemon.driveLocalUi, false)
     assert.equal(daemon.workspaceHost, true)
   })
@@ -46,12 +47,12 @@ describe('desktopClientAgainst', () => {
     assert.equal(hostOwnsTurns(true, false), true)
   })
 
-  it('falls back to a local agent only when the host is headless', () => {
+  it('uses the vavd control plane so the desktop is only a shell', () => {
     const client = desktopClientAgainst('headless')
-    assert.equal(client.controlPlane, false)
-    assert.equal(client.localAgent, true)
-    assert.equal(client.holdsSecrets, true)
-    assert.equal(hostOwnsTurns(false, false), false)
+    assert.equal(client.controlPlane, true)
+    assert.equal(client.localAgent, false)
+    assert.equal(client.holdsSecrets, false)
+    assert.equal(hostOwnsTurns(true, false), true)
   })
 
   it('always treats the local machine as owning its turns', () => {

@@ -780,4 +780,27 @@ describe('DaemonAttachService', () => {
       await rm(userData, { recursive: true, force: true })
     }
   })
+
+  it('advertises a loopback vavd pairing even when this listen is off', async () => {
+    const userData = await mkdtemp(join(tmpdir(), 'vav-advertise-'))
+    const { service } = attach(userData, false)
+    const vavdPairing = encodeDaemonPairing({
+      v: DAEMON_PROTO_VERSION,
+      secret: 'vavd-secret-0123456789ab',
+      machineId: 'vavd-1',
+      name: 'VAV Daemon',
+      host: '127.0.0.1',
+      port: 4759
+    })
+    try {
+      assert.equal(service.pairing(), null)
+      service.setAdvertisedPairing(vavdPairing)
+      assert.equal(service.pairing(), vavdPairing)
+      service.setAdvertisedPairing(null)
+      assert.equal(service.pairing(), null)
+    } finally {
+      service.dispose()
+      await rm(userData, { recursive: true, force: true })
+    }
+  })
 })

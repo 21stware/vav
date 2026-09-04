@@ -1,4 +1,3 @@
-import { app } from 'electron'
 import {
   readFileSync,
   writeFileSync,
@@ -51,6 +50,7 @@ import { defaultSessionTitle, isDefaultSessionTitle, t } from '@shared/i18n'
 import type { CliPaneBinding } from '@shared/cliPaneBinding'
 import { currentLocale } from '../i18n'
 import { conversationToMeta } from './conversationMeta.ts'
+import { electronUserData } from './electronUserData.ts'
 
 const AUTO_TITLE_LIMIT = 40
 const INDEX_VERSION = 2
@@ -75,10 +75,17 @@ type ConversationIndex = { version: number; ids: string[] }
  */
 export class ConversationStore {
   /** Directory holding `index.json` and per-conversation shards. */
-  private readonly dir = join(app.getPath('userData'), 'conversations')
-  private readonly indexPath = join(this.dir, 'index.json')
+  private readonly dir: string
+  private readonly indexPath: string
   /** Pre-shard monolithic file; migrated away on first load if present. */
-  private readonly legacyFile = join(app.getPath('userData'), 'conversations.json')
+  private readonly legacyFile: string
+
+  constructor(userDataDir?: string) {
+    const root = userDataDir ?? electronUserData()
+    this.dir = join(root, 'conversations')
+    this.indexPath = join(this.dir, 'index.json')
+    this.legacyFile = join(root, 'conversations.json')
+  }
   private conversations: Conversation[] = []
   private flushTimer: NodeJS.Timeout | null = null
   /** Conversation ids whose shard needs rewriting. */
