@@ -86,6 +86,10 @@ export class RemoteControlService {
   private generation = 0
   private knownDevices: { device: string; lastSeen: number }[] = []
   private devicesLoaded = false
+  /** Sidecar is up (or starting) — used when forwarding to vavd with no local hub listen. */
+  private started = false
+  /** Loopback vavd: phone QR secret + sidecar `--forward` target. */
+  private tunnelForward: { port: number; secret: string } | null = null
   readonly hub: RemoteControlHub
 
   constructor(private deps: Deps) {
@@ -133,10 +137,30 @@ export class RemoteControlService {
   /** Start or stop to match settings. Safe to call repeatedly. */
   applySettings(): void {
     if (this.deps.enabled()) {
-      if (!this.server && !this.restartTimer) this.start()
+      if (!this.started && !this.server && !this.restartTimer) this.start()
     } else {
       this.stop('disabled')
     }
+  }
+
+  /**
+   * Point the phone tailcat sidecar at a loopback vavd. QR secret becomes
+   * the daemon's; Electron's hub no longer owns those sockets.
+   */
+  setTunnelForward(target: { port: number; secret: string } | null): void {
+    const same =
+      this.tunnelForward?.port === target?.port && this.tunnelForward?.secret === target?.secret
+    this.tunnelForward = target
+    if (same) {
+      this.publishStatus()
+      return
+    }
+    if (this.deps.enabled() && (this.started || this.server || this.sidecar)) {
+      this.stop('disabled')
+      this.applySettings()
+      return
+    }
+    this.publishStatus()
   }
 
   status(): RemoteControlStatus {
@@ -145,7 +169,7 @@ export class RemoteControlService {
         ? encodePairing({
             v: 1,
             token: this.token,
-            secret: this.loadOrCreateSecret(),
+            secret: this.tunnelForward?.secret ?? this.loadOrCreateSecret(),
             host: hostname()
           })
         : null
@@ -255,8 +279,14 @@ export class RemoteControlService {
       this.setState('no-binary', 'tailcatbridge binary not found')
       return
     }
+    this.started = true
     this.setState('starting', null)
     const generation = ++this.generation
+
+    if (this.tunnelForward) {
+      this.spawnSidecar(binary, this.tunnelForward.port, generation)
+      return
+    }
 
     const server = createServer((socket) => this.hub.attach(socket))
     server.on('error', (err) => {
@@ -344,13 +374,14 @@ export class RemoteControlService {
       clearTimeout(this.restartTimer)
       this.restartTimer = null
     }
-    if (!this.server && !this.sidecar && this.state === state) return
+    if (!this.started && !this.server && !this.sidecar && this.state === state) return
     this.teardown()
     this.setState(state, null)
   }
 
   private teardown(): void {
     this.generation++
+    this.started = false
     this.hub.dropClients()
     // Closing stdin is the sidecar's shutdown signal; kill is the backstop.
     if (this.sidecar) {

@@ -1,6 +1,8 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { test, expect } from '@playwright/test'
+import { connectPhone } from '../../src/main/cli/vavPhoneClient.ts'
+import { parseDaemonPairing } from '../../src/shared/daemonProtocol.ts'
 import {
   chooseNativeMenu,
   E2E_SESSION_ID,
@@ -458,6 +460,63 @@ test('desktop spawns vavd and sends through the child process', async () => {
     await expect(page.locator('[data-testid="message-assistant"]')).toHaveCount(0)
 
     await remote.screenshot({ path: 'test-results/e2e/vavd-desktop-spawn-turn.png' })
+  } finally {
+    await harness.dispose()
+  }
+})
+
+/**
+ * Connect's pairing line on a spawned-vavd desktop is the child daemon.
+ * A phone-protocol client that pastes that URI must turn on vavd, not Electron.
+ */
+test('spawned desktop advertises vavd pairing for an incoming phone client', async () => {
+  test.setTimeout(90_000)
+  const harness = await launchVav({ spawnVavd: true })
+  try {
+    const { page } = harness
+    const remote = await waitForHostWindow(harness, 'E2E Daemon', 40_000)
+    await remote.locator('[data-testid="app-shell"]').waitFor({ state: 'visible', timeout: 25_000 })
+
+    const pairing = await waitForDaemonPairing(page)
+    const parsed = parseDaemonPairing(pairing)
+    expect(parsed?.secret).toBeTruthy()
+    expect(parsed?.port).toBeGreaterThan(0)
+    expect(parsed?.name).toBe('E2E Daemon')
+
+    const phone = await connectPhone({
+      host: '127.0.0.1',
+      port: parsed!.port!,
+      secret: parsed!.secret,
+      device: 'E2E Incoming Phone',
+      omitRole: true
+    })
+    try {
+      phone.send({ type: 'create' })
+      const createdFrames = await phone.waitNew((msg) => msg.type === 'created')
+      const created = createdFrames.findLast((msg) => msg.type === 'created')
+      expect(created?.type).toBe('created')
+      if (!created || created.type !== 'created') return
+      const conversationId = created.session.id
+      phone.send({
+        type: 'configure',
+        conversationId,
+        model: 'e2e-incoming-model',
+        approvalMode: 'bypass'
+      })
+      const controls = await phone.waitNew((msg) => msg.type === 'controls')
+      const row = controls.findLast((msg) => msg.type === 'controls')
+      expect(row && row.type === 'controls' ? row.model : null).toBe('e2e-incoming-model')
+      phone.send({ type: 'send', conversationId, text: 'ping from advertised pairing' })
+      const turns = await phone.waitNew(
+        (msg) => msg.type === 'turn' && (msg.phase === 'done' || msg.phase === 'error')
+      )
+      expect(turns.some((msg) => msg.type === 'turn' && msg.phase === 'done')).toBe(true)
+    } finally {
+      phone.close()
+    }
+
+    await expect(page.locator('[data-testid="message-assistant"]')).toHaveCount(0)
+    await remote.screenshot({ path: 'test-results/e2e/vavd-advertised-pairing-phone.png' })
   } finally {
     await harness.dispose()
   }

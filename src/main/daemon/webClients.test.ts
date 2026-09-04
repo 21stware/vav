@@ -5,6 +5,10 @@ import { describe, it } from 'node:test'
 import { WEB_UI_HTML } from './webUi.ts'
 
 const extDir = join(import.meta.dirname, '../../../extension')
+const iosFrames = readFileSync(
+  join(import.meta.dirname, '../../../ios/VAVRemote/VAVRemote/Models.swift'),
+  'utf8'
+)
 const extension = [
   readFileSync(join(extDir, 'sidepanel.js'), 'utf8'),
   readFileSync(join(extDir, 'sidepanel.html'), 'utf8')
@@ -27,5 +31,22 @@ describe('web and Chrome clients', () => {
       assert.match(src, /ws\.send\(JSON\.stringify/)
       assert.match(src, /\/vav/)
     }
+  })
+})
+
+/**
+ * iOS VAV Remote is the same client. It omits hello.role; vavd treats
+ * non-daemon hello as the control plane (DaemonServer).
+ */
+describe('iOS VAV Remote', () => {
+  it('speaks the same phone-protocol verbs as the web clients', () => {
+    assert.match(iosFrames, /"type": "hello"/)
+    assert.match(iosFrames, /"type": "send"/)
+    assert.match(iosFrames, /"type": "create"/)
+    assert.match(iosFrames, /"type": "configure"/)
+    assert.match(iosFrames, /"type": "sessions"/)
+    assert.match(iosFrames, /"type": "thread"/)
+    assert.match(iosFrames, /"type": "reply"/)
+    assert.doesNotMatch(iosFrames, /"role": "phone"/)
   })
 })

@@ -80,6 +80,7 @@ import { RemoteControlService } from './remote/RemoteControlService'
 import { DaemonAttachService } from './daemon/DaemonAttachService'
 import { resolveVavdPairing, resolveVavdSpawn } from './daemon/vavdClientLaunch'
 import { spawnLocalVavd } from './daemon/vavdSpawn'
+import { loopbackVavdShell } from './daemon/vavdShellPairing'
 import { openTailcatDial } from './daemon/tailcatDial'
 import { hostJoin, isLocalMachine, LOCAL_MACHINE_ID, normalizeMachineId, conversationOnMachine, parseWorkspaceRefList, recentsForMachine, remoteConversationMachineId, type WorkspaceHostInfo } from '@shared/workspaceHost'
 import { hostSessionId, localSessionId } from '@shared/remoteHostKind'
@@ -7447,6 +7448,11 @@ if (!singleInstance) {
       }
     }
     if (vavdPairing) {
+      const shell = loopbackVavdShell(vavdPairing)
+      if (shell) {
+        daemonAttach.setAdvertisedPairing(shell.pairing)
+        remoteControl.setTunnelForward({ port: shell.port, secret: shell.secret })
+      }
       void daemonAttach.pair(vavdPairing).then((result) => {
         if (!result.ok) {
           console.warn('[vavd] auto-pair failed', result.error)

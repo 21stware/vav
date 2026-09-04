@@ -127,6 +127,8 @@ export class DaemonAttachService {
   private readonly opts: AttachOpts
   private pairAbort: AbortController | null = null
   private disposed = false
+  /** Loopback vavd pairing shown as this computer when the app is a shell. */
+  private advertisedPairing: string | null = null
 
   constructor(opts: AttachOpts) {
     this.opts = opts
@@ -143,7 +145,16 @@ export class DaemonAttachService {
     else this.stopListen()
   }
 
+  /**
+   * When the desktop is a UI for a local vavd, Connect copies that daemon's
+   * URI so phones / another VAV / `vav` pair with the process that owns turns.
+   */
+  setAdvertisedPairing(pairing: string | null): void {
+    this.advertisedPairing = pairing
+  }
+
   pairing(secret?: string): string | null {
+    if (this.advertisedPairing) return this.advertisedPairing
     if (!this.opts.enabled() && !this.server) return null
     const advertised = advertisedPairingAddresses({ identityName: this.identity.name })
     const payload: DaemonPairing = {

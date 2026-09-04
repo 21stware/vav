@@ -178,6 +178,42 @@ describe('vavd process', () => {
     assert.match(html, /\/vav/)
   })
 
+  it('accepts an iOS-style hello with no role, then send and configure', async () => {
+    assert.ok(daemon)
+    const phone = await connectPhone({
+      host: '127.0.0.1',
+      port: daemon.port,
+      secret: daemon.secret,
+      device: 'iPhone',
+      omitRole: true
+    })
+    try {
+      phone.send({ type: 'create' })
+      const createdFrames = await phone.waitNew((msg) => msg.type === 'created')
+      const created = createdFrames.findLast((msg) => msg.type === 'created')
+      assert.ok(created && created.type === 'created')
+      const conversationId = created.session.id
+      phone.send({
+        type: 'configure',
+        conversationId,
+        model: 'ios-model',
+        approvalMode: 'bypass'
+      })
+      const controls = await phone.waitNew((msg) => msg.type === 'controls')
+      const row = controls.findLast((msg) => msg.type === 'controls')
+      assert.ok(row && row.type === 'controls')
+      assert.equal(row.model, 'ios-model')
+      assert.equal(row.approval, 'bypass')
+      phone.send({ type: 'send', conversationId, text: 'hello from iOS remote' })
+      const turns = await phone.waitNew(
+        (msg) => msg.type === 'turn' && (msg.phase === 'done' || msg.phase === 'error')
+      )
+      assert.ok(turns.some((msg) => msg.type === 'turn' && msg.phase === 'done'))
+    } finally {
+      phone.close()
+    }
+  })
+
   it('lets a Chrome-role web socket send and configure a model', async () => {
     assert.ok(daemon?.webPort)
     const ws = new WebSocket(`ws://127.0.0.1:${daemon.webPort}/vav`)

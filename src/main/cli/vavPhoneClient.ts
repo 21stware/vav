@@ -18,6 +18,8 @@ export async function connectPhone(opts: {
   port: number
   secret: string
   device?: string
+  /** iOS VAV Remote omits `role`; the host treats non-daemon hello as phone. */
+  omitRole?: boolean
 }): Promise<PhoneClient> {
   const socket = createConnection({ host: opts.host, port: opts.port })
   await new Promise<void>((resolve, reject) => {
@@ -30,7 +32,7 @@ export async function connectPhone(opts: {
     type: 'hello',
     proto: 1,
     auth: opts.secret,
-    role: 'phone',
+    ...(opts.omitRole ? {} : { role: 'phone' }),
     device: opts.device ?? 'vav-cli'
   })
   await welcomed
