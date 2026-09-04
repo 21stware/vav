@@ -7,6 +7,7 @@ import { useConversationFileDrop } from '../lib/useConversationFileDrop'
 import { Transcript } from './Transcript'
 import { Composer, ComposerContext } from './Composer'
 import { PlanOverlay } from './PlanOverlay'
+import { GoalBanner } from './GoalBanner'
 import { TerminalPanel } from './TerminalPanel'
 import { Button } from './ui'
 import { useT } from '../i18n/useT'
@@ -80,6 +81,7 @@ export function SessionPane({
       ) : (
         <>
           <div className="session-swarm-stream">
+            <GoalBanner conversationId={conversationId} />
             <PlanOverlay conversationId={conversationId} />
             <Transcript conversationId={conversationId} />
             {!archived && <ComposerContext conversationId={conversationId} />}

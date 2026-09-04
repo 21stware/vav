@@ -11,6 +11,7 @@ struct VAVRemoteApp: App {
             ContentView()
                 .environmentObject(client)
                 .onAppear {
+                    DiagLog.start()
                     UNUserNotificationCenter.current().requestAuthorization(
                         options: [.alert, .sound, .badge]
                     ) { _, _ in }
@@ -19,9 +20,16 @@ struct VAVRemoteApp: App {
         }
         .onChange(of: scenePhase) { _, phase in
             switch phase {
-            case .active: client.connectIfNeeded()
-            case .background: client.suspend()
-            default: break
+            case .active:
+                DiagLog.line("scene active")
+                client.connectIfNeeded()
+            case .background:
+                DiagLog.line("scene background — socket will drop")
+                client.suspend()
+            case .inactive:
+                DiagLog.line("scene inactive")
+            default:
+                break
             }
         }
     }
@@ -69,15 +77,19 @@ struct ConnectionBadge: View {
 
     private var badge: some View {
         HStack(spacing: 6) {
-            Circle().fill(HostLinkStyle.color(client.state)).frame(width: 8, height: 8)
+            if client.isSyncing {
+                ProgressView().controlSize(.mini)
+            } else {
+                Circle().fill(HostLinkStyle.color(client)).frame(width: 8, height: 8)
+            }
             if !compact {
-                Text(HostLinkStyle.statusLabel(client.state))
+                Text(HostLinkStyle.statusLabel(client))
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
             }
         }
-        .accessibilityLabel(HostLinkStyle.statusLabel(client.state))
+        .accessibilityLabel(HostLinkStyle.statusLabel(client))
     }
 }
 
@@ -100,17 +112,20 @@ struct HostSwitcherButtons: View {
 }
 
 enum HostLinkStyle {
-    static func color(_ state: RemoteClient.State) -> Color {
-        switch state {
-        case .connected: return .green
+    static func color(_ client: RemoteClient) -> Color {
+        switch client.state {
+        case .connected: return client.isSyncing ? .orange : .green
         case .connecting: return .orange
         default: return .red
         }
     }
 
-    static func statusLabel(_ state: RemoteClient.State) -> String {
-        switch state {
-        case .connected: return "已连接"
+    static func statusLabel(_ client: RemoteClient) -> String {
+        switch client.state {
+        case .connected:
+            if client.sessionsLoad == .loading { return "同步会话…" }
+            if client.threadLoad.values.contains(.loading) { return "同步对话…" }
+            return "已连接"
         case .connecting: return "连接中…"
         case .disconnected(let error): return error ?? "未连接"
         case .unpaired: return "未配对"

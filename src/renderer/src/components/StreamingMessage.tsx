@@ -91,7 +91,7 @@ export function StreamingMessage({ conversationId }: { conversationId: string })
 
   return (
     <div className="message-turn assistant" data-testid="streaming-message">
-      <div className="message-role">Agent</div>
+      <div className="message-role">{t('message.roleAgent')}</div>
       <div className="message assistant">
         {process.length > 0 ? (
           <>

@@ -1,4 +1,6 @@
 import type { PreviewRef } from './types'
+import { formatPreviewLineRange, hasKnownLineRange } from './previewContext.ts'
+import { previewKind } from './previewKind.ts'
 
 /**
  * How vav feeds workspace focus / block context into a CLI agent host.
@@ -37,47 +39,12 @@ export function launchCarriesContext(
  * Used to write better ambient instructions (esp. images).
  */
 export function sniffFileKind(filePath: string): string {
-  const base = filePath.split(/[/\\]/).pop() ?? filePath
-  const ext = base.includes('.') ? base.slice(base.lastIndexOf('.') + 1).toLowerCase() : ''
-  if (['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg', 'heic', 'tif', 'tiff', 'avif'].includes(ext)) {
-    return 'image'
-  }
-  if (['pdf'].includes(ext)) return 'pdf'
-  if (['zip', 'tar', 'gz', 'tgz', 'rar', '7z'].includes(ext)) return 'zip'
-  if (['mp4', 'mov', 'webm', 'mkv', 'avi'].includes(ext)) return 'video'
-  if (['mp3', 'wav', 'm4a', 'aac', 'flac', 'ogg'].includes(ext)) return 'audio'
-  if (
-    [
-      'doc',
-      'docx',
-      'xls',
-      'xlsx',
-      'ppt',
-      'pptx',
-      'pages',
-      'numbers',
-      'key'
-    ].includes(ext)
-  ) {
-    return 'office'
-  }
-  if (
-    [
-      'exe',
-      'dll',
-      'so',
-      'dylib',
-      'bin',
-      'o',
-      'a',
-      'wasm',
-      'class',
-      'pyc'
-    ].includes(ext)
-  ) {
-    return 'binary'
-  }
-  return 'text'
+  const kind = previewKind(filePath)
+  if (kind === 'docx' || kind === 'xlsx' || kind === 'pptx') return 'office'
+  // previewKind treats these as binary; agents should still open them as documents / archives.
+  if (/\.(doc|ppt|pages|numbers|key)$/i.test(filePath)) return 'office'
+  if (/\.(tar|tgz|gz|rar|7z)$/i.test(filePath)) return 'zip'
+  return kind
 }
 
 /**
@@ -107,6 +74,23 @@ export function formatFocusedFileContext(
       `This is a ${resolvedKind === 'pdf' ? 'PDF' : 'office'} document.`,
       'Read it from the path above with your document/file tools when you need its contents.'
     )
+  } else if (resolvedKind === 'html' || resolvedKind === 'html-clip') {
+    lines.push(
+      '',
+      resolvedKind === 'html-clip'
+        ? 'This is an interactive HTML clip. Treat it as a rendered surface; do not rewrite it as ordinary source unless the user asks.'
+        : 'This is an HTML document. Read it from the path above; picks refer to elements, not always to a source line.'
+    )
+  } else if (resolvedKind === 'sqlite') {
+    lines.push(
+      '',
+      'This is a SQLite database. Inspect tables at the path above; do not treat it as a text file.'
+    )
+  } else if (resolvedKind === 'csv') {
+    lines.push(
+      '',
+      'This is a CSV/TSV sheet. Prefer the path above (or a selected row/cell) over pasting the whole file.'
+    )
   } else if (resolvedKind === 'zip') {
     lines.push(
       '',
@@ -129,8 +113,9 @@ export function formatFocusedFileContext(
 }
 
 export function formatBlockContext(ref: PreviewRef, comment?: string): string {
+  const range = formatPreviewLineRange(ref.startLine, ref.endLine)
   const lines = [
-    `Selected from ${ref.filePath} · lines ${ref.startLine}–${ref.endLine}`,
+    range ? `Selected from ${ref.filePath} · ${range}` : `Selected from ${ref.filePath}`,
     ref.label ? `Label: ${ref.label}` : null,
     '```',
     ref.text,
@@ -168,11 +153,17 @@ export function formatFocusedFileContextBrief(
           ? 'document'
           : resolvedKind === 'zip'
             ? 'archive'
-            : resolvedKind === 'binary' ||
-                resolvedKind === 'video' ||
-                resolvedKind === 'audio'
-              ? resolvedKind
-              : 'file'
+            : resolvedKind === 'sqlite'
+              ? 'database'
+              : resolvedKind === 'html' || resolvedKind === 'html-clip'
+                ? 'html'
+                : resolvedKind === 'csv'
+                  ? 'sheet'
+                  : resolvedKind === 'binary' ||
+                      resolvedKind === 'video' ||
+                      resolvedKind === 'audio'
+                    ? resolvedKind
+                    : 'file'
   const hint =
     resolvedKind === 'image'
       ? 'Open this path with vision/read tools for the request below.'
@@ -182,13 +173,20 @@ export function formatFocusedFileContextBrief(
 
 /** Compact block note for TUI input (still includes source text). */
 export function formatBlockContextBrief(ref: PreviewRef, comment?: string): string {
-  const range =
-    ref.startLine === ref.endLine
+  const range = formatPreviewLineRange(ref.startLine, ref.endLine)
+  const rangeTag = hasKnownLineRange(ref.startLine, ref.endLine)
+    ? ref.startLine === ref.endLine
       ? `L${ref.startLine}`
       : `L${ref.startLine}–${ref.endLine}`
-  const title = ref.label?.trim() || range
+    : ''
+  const title = ref.label?.trim() || rangeTag || range || 'selection'
+  const rangeAlreadyInTitle = !!(range && ref.label?.includes(range))
+  const head =
+    rangeTag && ref.label?.trim() && !rangeAlreadyInTitle
+      ? `[VAV] Selection · ${title} · ${rangeTag}`
+      : `[VAV] Selection · ${title}`
   const lines = [
-    `[VAV] Selection · ${title} · ${range}`,
+    head,
     ref.filePath,
     '```',
     ref.text,

@@ -473,6 +473,42 @@ export function sessionShowsHostQuota(input: {
   return Boolean((input.liveIdentity ?? '').trim())
 }
 
+/** Live CLI login wins; otherwise an OAuth profile name with authKind none. */
+export function conversationQuotaAuthView(input: {
+  liveSignedIn: boolean
+  liveIdentity?: string | null
+  livePlan?: string | null
+  liveAuthKind?: import('./cliAccountParse.ts').HostAuthKind
+  profileKind?: string | null
+  profileName?: string | null
+}): {
+  signedIn: boolean
+  accountId: string | null
+  plan: string | null
+  authKind: import('./cliAccountParse.ts').HostAuthKind
+} {
+  const show = sessionShowsHostQuota({
+    liveSignedIn: input.liveSignedIn,
+    liveIdentity: input.liveIdentity,
+    profileKind: input.profileKind,
+    profileName: input.profileName
+  })
+  if (show) {
+    return {
+      signedIn: input.liveSignedIn,
+      accountId: input.liveIdentity ?? null,
+      plan: input.livePlan ?? null,
+      authKind: input.liveAuthKind ?? (input.liveSignedIn ? 'oauth' : 'none')
+    }
+  }
+  return {
+    signedIn: false,
+    accountId: input.profileKind === 'oauth' ? input.profileName ?? null : null,
+    plan: null,
+    authKind: input.profileKind === 'oauth' ? 'none' : (input.liveAuthKind ?? 'none')
+  }
+}
+
 /** New CLI session follows a live OAuth login; a signed-out current never wins. */
 export function resolveSessionAccountId(
   accounts: Array<{
@@ -826,6 +862,23 @@ export function primaryQuotaPercent(
   return window ? window.usedPercent : null
 }
 
+/** Map a session token snapshot onto the monthly account-usage delta. */
+export function usageDeltaFromSnapshot(snap: {
+  newInputTokens?: number
+  outputTokens?: number
+  cacheReadTokens?: number
+  cacheWriteTokens?: number
+  estimatedCost?: number
+}): Partial<AccountMonthUsage> {
+  return {
+    inputTokens: snap.newInputTokens ?? 0,
+    outputTokens: snap.outputTokens ?? 0,
+    cacheReadTokens: snap.cacheReadTokens ?? 0,
+    cacheWriteTokens: snap.cacheWriteTokens ?? 0,
+    estimatedCostUsd: snap.estimatedCost ?? 0
+  }
+}
+
 /** Rebuild monthly totals from retained session snapshots (one add per turn). */
 export function usageFromSnapshots(
   snapshots: Array<{
@@ -844,15 +897,38 @@ export function usageFromSnapshots(
     if (!id) continue
     const month = yearMonthOf(snap.timestamp)
     const bucket = usage[id] ?? (usage[id] = {})
-    bucket[month] = addUsage(bucket[month] ?? emptyMonthUsage(), {
-      inputTokens: snap.newInputTokens ?? 0,
-      outputTokens: snap.outputTokens ?? 0,
-      cacheReadTokens: snap.cacheReadTokens ?? 0,
-      cacheWriteTokens: snap.cacheWriteTokens ?? 0,
-      estimatedCostUsd: snap.estimatedCost ?? 0
-    })
+    bucket[month] = addUsage(bucket[month] ?? emptyMonthUsage(), usageDeltaFromSnapshot(snap))
   }
   return usage
+}
+
+/** OAuth rows that can refresh host quota: matching host, stored snapshot, live token. */
+export function oauthQuotaIdentityRows<
+  T extends {
+    id: string
+    kind?: string
+    oauthHost?: string | null
+    hasCredentialSnapshot?: boolean
+    name?: string | null
+  }
+>(
+  accounts: T[],
+  host: string,
+  agentIdOf: (account: T) => string,
+  tokenOf: (accountId: string) => string | null | undefined
+): { identity: string; token: string }[] {
+  const rows: { identity: string; token: string }[] = []
+  for (const account of accounts) {
+    if (account.kind !== 'oauth') continue
+    if ((account.oauthHost ?? agentIdOf(account)) !== host) continue
+    if (!account.hasCredentialSnapshot) continue
+    const identity = account.name?.trim()
+    if (!identity) continue
+    const token = tokenOf(account.id)
+    if (!token) continue
+    rows.push({ identity, token })
+  }
+  return rows
 }
 
 export function resolveAccountsFocus(

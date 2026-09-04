@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>VAV</title>
+  <style>
+    :root { color-scheme: light dark; --ink:#131b35; --paper:#fbfbfe; --accent:#6b5bc0; --muted:#6b6d7a; }
+    html,body { margin:0; height:100%; font:14px/1.45 ui-sans-serif,system-ui,sans-serif; background:var(--paper); color:var(--ink); }
+    body { display:flex; flex-direction:column; }
+    header { padding:12px 14px 8px; display:flex; flex-direction:column; gap:8px; }
+    h1 { font-size:15px; margin:0; }
+    input,button,textarea { font:inherit; }
+    input,textarea { width:100%; box-sizing:border-box; padding:8px 10px; border:0; background:color-mix(in srgb, var(--ink) 6%, transparent); border-radius:8px; }
+    button { background:var(--accent); color:#fff; border:0; border-radius:8px; padding:8px 12px; cursor:pointer; }
+    button.ghost { background:transparent; color:var(--accent); }
+    #sessions { list-style:none; margin:0; padding:0 8px; max-height:28vh; overflow:auto; }
+    #sessions li { padding:8px; border-radius:8px; cursor:pointer; }
+    #sessions li.active { background:color-mix(in srgb, var(--accent) 16%, transparent); }
+    #log { flex:1; overflow:auto; padding:12px 14px; white-space:pre-wrap; }
+    .composer { display:flex; gap:8px; padding:10px 12px; }
+    .composer textarea { flex:1; min-height:40px; }
+    .controls { display:flex; gap:8px; padding:0 12px 8px; }
+    #status { color:var(--muted); font-size:12px; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>VAV</h1>
+    <div id="status">Disconnected</div>
+    <input id="host" value="ws://127.0.0.1:4752/vav" />
+    <input id="secret" placeholder="Pairing secret" autocomplete="off" />
+    <div style="display:flex;gap:8px">
+      <button id="connect">Connect</button>
+      <button id="create" class="ghost">New</button>
+    </div>
+  </header>
+  <ul id="sessions"></ul>
+  <div id="log"></div>
+  <div class="controls">
+    <input id="model" placeholder="Model id" />
+    <select id="approval">
+      <option value="auto">Normal</option>
+      <option value="bypass">Bypass</option>
+      <option value="edit">Read</option>
+    </select>
+    <button type="button" id="apply" class="ghost">Apply</button>
+  </div>
+  <form class="composer" id="sendForm">
+    <textarea id="text" placeholder="Ask…" rows="2"></textarea>
+    <button type="submit">Send</button>
+  </form>
+  <script src="sidepanel.js"></script>
+</body>
+</html>

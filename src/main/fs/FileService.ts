@@ -1,20 +1,15 @@
-import { shell } from 'electron'
 import { join, dirname, basename, extname } from 'node:path'
-import { hostJoin } from '../../shared/workspaceHost.ts'
 import { spawn } from 'node:child_process'
 import { userInfo } from 'node:os'
-import JSZip from 'jszip'
 import type {
   BinaryFileMeta,
   FileInspectResult,
-  FilePreviewKind,
   SqliteQueryResult,
-  TextWindowResult,
-  ZipArchiveInfo,
-  ZipEntryInfo
+  TextWindowResult
 } from '@shared/ipc'
 import { localFileStreamUrl } from '@shared/localFileUrl'
-import { inspectSqlite, isSqlitePath, querySqliteTable } from './SqliteService'
+import { mimeForPreviewKind, previewKind } from '@shared/previewKind'
+import { inspectSqlite, isSqlitePath, querySqliteTable, closeAllSqlite } from './SqliteService'
 import {
   DIRECTORY_ENTRY_CAP,
   isIgnoredName,
@@ -31,33 +26,73 @@ import { convertLegacyOffice, legacyOfficeKind } from './legacyOfficeConvert'
 import type { WorkingCopyService } from './WorkingCopyService'
 import { localHostFs, type HostFs, type HostWatcher } from '../host'
 import { conversationIdForWatchedPath } from './conversationPath'
+import { isPathAllowed } from './pathAllow'
+import { sortEntries, capVisibleEntries, directoryFileEntry, directoryListingError } from './fileEntrySort'
+import { isInvalidRenameName, joinOnHostPath } from './fileHostPath'
+import {
+  binaryWindowCaughtError,
+  binaryWindowSuccess,
+  binaryProbeTextWindow,
+  deniedBinaryWindow,
+  deniedTextWindow,
+  directoryBinaryWindow,
+  directoryTextWindow,
+  emptyPastEndBinaryWindow,
+  emptyPastEndTextWindow,
+  textWindowCaughtError,
+  textWindowLooksBinary,
+  textWindowSuccess,
+  type BinaryWindowResult
+} from './fileWindowShape'
+import { mimeHintToUti } from './fileUti'
+import { inspectZipArchive, zipInspectFailure, zipInspectSuccess } from './fileZipArchive'
+import { looksLikeTextFile } from './fileTextSample'
+import { defaultAppDisplayName, mdlsRaw } from './fileMacMeta'
+import { assembleBinaryMeta, tryBinaryMeta } from './fileBinaryMeta'
+import {
+  binaryInspectFallback,
+  deniedInspectResult,
+  directoryInspectResult,
+  heicInspectResult,
+  inspectCaughtError,
+  inspectErrorOnBase,
+  inspectFileBase,
+  inspectWithBinaryMeta,
+  inspectWithError,
+  legacyDocInspect,
+  legacyPptInspect,
+  officeFirstPaintInspect,
+  remappedConvertedInspect,
+  sqliteInspectResult,
+  sqliteQueryFailure,
+  structuredInspectIsPartial,
+  structuredInspectReject,
+  textWindowInspectResult
+} from './fileInspectShape'
+import {
+  BINARY_BASE64_SOFT,
+  BINARY_WINDOW_HARD_MAX,
+  INDEX_AFTER_OPEN_MS,
+  STRUCTURED_FIRST_BLOCKS,
+  STRUCTURED_FIRST_ROWS,
+  STRUCTURED_PARSE_SOFT,
+  TEXT_WINDOW_BYTES,
+  TEXT_WINDOW_BYTES_AGENT,
+  TEXT_WINDOW_HARD_MAX,
+  WATCH_DEBOUNCE_MS,
+  clampByteWindow,
+  caughtIoError,
+  officeUtf8WriteError,
+  readBinaryStatReject,
+  readBinarySuccess,
+  textFileFromWindow
+} from './fileWindows'
 
-/**
- * Technical windows — memory budgets for a single IPC/payload, NOT product
- * "file too large" limits. Larger files are opened via further windows or
- * `vav-local://` streaming.
- */
-/** First paint window for UTF-8 text (progressive fill continues via readTextWindow). */
-const TEXT_WINDOW_BYTES = 128 * 1024
-/** Larger window for agent fs_read / full-ish first load when explicitly requested. */
-const TEXT_WINDOW_BYTES_AGENT = 2 * 1024 * 1024
-/** First structured office chunk for block-pick while native canvas loads. */
-const STRUCTURED_FIRST_BLOCKS = 48
-const STRUCTURED_FIRST_ROWS = 120
-/** Soft ceiling for base64 IPC convenience (renderer should prefer vav-local stream). */
-const BINARY_BASE64_SOFT = 16 * 1024 * 1024
-/** Soft budget for full OOXML structured parse in main (best-effort index). */
-const STRUCTURED_PARSE_SOFT = 32 * 1024 * 1024
-/** Above this, skip JSZip.loadAsync of the full buffer (structure index truncated). */
-const ZIP_FULL_LOAD_MAX = 64 * 1024 * 1024
-
-const WATCH_DEBOUNCE_MS = 300
-/** Keep document indexing off the main thread while a preview is opening. */
-const INDEX_AFTER_OPEN_MS = 1500
-
-function joinOnHostPath(parent: string, name: string): string {
-  const win = parent.includes('\\') && !parent.startsWith('/')
-  return hostJoin(win ? 'win32' : 'linux', parent, name)
+function electronShell(): { trashItem: (path: string) => Promise<void>; openPath: (path: string) => Promise<string> } {
+  const electron = require('electron') as {
+    shell: { trashItem: (path: string) => Promise<void>; openPath: (path: string) => Promise<string> }
+  }
+  return electron.shell
 }
 
 /**
@@ -80,13 +115,51 @@ export class FileService {
    * until promote.
    */
   workingCopies: WorkingCopyService | null = null
+  /** Extra dirs always readable (clips, office convert sidecars, working copies). */
+  private extraRoots = new Set<string>()
+  /** Files / folders opened through a main-process dialog or Dock drop. */
+  private grantedPaths = new Set<string>()
+
+  private onDirtyDirectories: (conversationId: string, dirs: string[]) => void
+  private readonly fs: HostFs
+  /** Per-conversation host. Missing / unknown machines use {@link fs}. */
+  private readonly resolveFs?: (conversationId: string) => HostFs
 
   constructor(
-    private onDirtyDirectories: (conversationId: string, dirs: string[]) => void,
-    private readonly fs: HostFs = localHostFs,
-    /** Per-conversation host. Missing / unknown machines use {@link fs}. */
-    private readonly resolveFs?: (conversationId: string) => HostFs
-  ) {}
+    onDirtyDirectories: (conversationId: string, dirs: string[]) => void,
+    fs: HostFs = localHostFs,
+    resolveFs?: (conversationId: string) => HostFs
+  ) {
+    this.onDirtyDirectories = onDirtyDirectories
+    this.fs = fs
+    this.resolveFs = resolveFs
+  }
+
+  grantRoot(root: string): void {
+    const trimmed = root.trim()
+    if (trimmed) this.extraRoots.add(trimmed)
+  }
+
+  grantPath(path: string): void {
+    const trimmed = path.trim()
+    if (trimmed) this.grantedPaths.add(trimmed)
+  }
+
+  /**
+   * When a workspace is watched, IPC may only touch that tree, app-managed
+   * temp dirs, and paths granted by a native open/save dialog.
+   * Before any workspace is watched, allow (open-file / tests).
+   */
+  isAllowedPath(path: string): boolean {
+    if (!path || path.includes('\0')) return false
+    const roots = [...this.roots.values(), ...this.extraRoots]
+    if (isPathAllowed(path, roots, this.grantedPaths)) return true
+    return this.roots.size === 0
+  }
+
+  private accessError(path: string): string | null {
+    return this.isAllowedPath(path) ? null : t('files.error.notAllowed')
+  }
 
   private fsFor(conversationId?: string | null, path?: string): HostFs {
     const id = conversationIdForWatchedPath(this.roots, path ?? '', conversationId)
@@ -96,6 +169,11 @@ export class FileService {
     } catch {
       return this.fs
     }
+  }
+
+  /** Conversation whose watched root contains `path` (git / preview fallback). */
+  conversationIdForPath(path: string): string | undefined {
+    return conversationIdForWatchedPath(this.roots, path)
   }
 
   /** Filesystem path for read/write (may be a working copy). */
@@ -117,12 +195,13 @@ export class FileService {
     ascending = true,
     conversationId?: string
   ): Promise<DirectoryListing> {
+    const denied = this.accessError(path)
+    if (denied) return directoryListingError(path, denied)
     const hostFs = this.fsFor(conversationId, path)
     try {
       const dirents = await hostFs.readdir(path)
       const visible = dirents.filter((d) => !isIgnoredName(d.name))
-      const truncated = Math.max(0, visible.length - DIRECTORY_ENTRY_CAP)
-      const slice = visible.slice(0, DIRECTORY_ENTRY_CAP)
+      const { slice, truncated } = capVisibleEntries(visible, DIRECTORY_ENTRY_CAP)
 
       const entries = await Promise.all(
         slice.map(async (dirent): Promise<FileEntry> => {
@@ -138,22 +217,20 @@ export class FileService {
           } catch {
             // Broken symlink or a race with an external delete; show it as empty.
           }
-          const isDirectory = dirent.isDirectory()
-          return {
+          return directoryFileEntry({
             path: full,
             name: dirent.name,
-            isDirectory,
+            isDirectory: dirent.isDirectory(),
             size,
             modifiedAt,
-            createdAt,
-            children: isDirectory ? null : undefined
-          }
+            createdAt
+          })
         })
       )
 
       return { path, entries: sortEntries(entries, sort, ascending), truncated }
     } catch (err) {
-      return { path, entries: [], truncated: 0, error: (err as Error).message }
+      return directoryListingError(path, (err as Error).message)
     }
   }
 
@@ -166,8 +243,7 @@ export class FileService {
       maxBytes: TEXT_WINDOW_BYTES_AGENT,
       conversationId
     })
-    if (win.error) return { content: '', truncated: false, error: win.error }
-    return { content: win.content, truncated: win.truncated }
+    return textFileFromWindow(win)
   }
 
   /**
@@ -179,32 +255,25 @@ export class FileService {
     path: string,
     opts?: { startByte?: number; maxBytes?: number; force?: boolean; conversationId?: string }
   ): Promise<TextWindowResult> {
-    const startByte = Math.max(0, Math.floor(opts?.startByte ?? 0))
-    const maxBytes = Math.max(1024, Math.min(16 * 1024 * 1024, Math.floor(opts?.maxBytes ?? TEXT_WINDOW_BYTES)))
+    const { startByte, maxBytes } = clampByteWindow(
+      opts?.startByte,
+      opts?.maxBytes,
+      TEXT_WINDOW_BYTES,
+      TEXT_WINDOW_HARD_MAX
+    )
     const force = !!opts?.force
+    const denied = this.accessError(path)
+    if (denied) return deniedTextWindow(startByte, denied)
     const hostFs = this.fsFor(opts?.conversationId, path)
     const io = this.forIo(path, opts?.conversationId)
     try {
       const info = await hostFs.stat(io)
       if (info.isDirectory()) {
-        return {
-          content: '',
-          startByte: 0,
-          endByte: 0,
-          totalBytes: 0,
-          truncated: false,
-          error: t('files.error.directory')
-        }
+        return directoryTextWindow(t('files.error.directory'))
       }
       const totalBytes = info.size
       if (startByte >= totalBytes) {
-        return {
-          content: '',
-          startByte,
-          endByte: startByte,
-          totalBytes,
-          truncated: false
-        }
+        return emptyPastEndTextWindow(startByte, totalBytes)
       }
       const length = Math.min(maxBytes, totalBytes - startByte)
       const fh = await hostFs.open(io, 'r')
@@ -214,36 +283,15 @@ export class FileService {
         const slice = buf.subarray(0, bytesRead)
         // Null byte in the first window → treat as binary (unless mid-file
         // continuation, or the caller forced a text/hex override).
-        if (!force && startByte === 0 && slice.includes(0)) {
-          return {
-            content: '',
-            startByte,
-            endByte: startByte,
-            totalBytes,
-            truncated: false,
-            error: t('files.error.binary')
-          }
+        if (textWindowLooksBinary(force, startByte, slice.includes(0))) {
+          return binaryProbeTextWindow(startByte, totalBytes, t('files.error.binary'))
         }
-        const endByte = startByte + bytesRead
-        return {
-          content: slice.toString('utf8'),
-          startByte,
-          endByte,
-          totalBytes,
-          truncated: endByte < totalBytes
-        }
+        return textWindowSuccess(slice.toString('utf8'), startByte, bytesRead, totalBytes)
       } finally {
         await fh.close()
       }
     } catch (err) {
-      return {
-        content: '',
-        startByte,
-        endByte: startByte,
-        totalBytes: 0,
-        truncated: false,
-        error: (err as Error).message
-      }
+      return textWindowCaughtError(startByte, err)
     }
   }
 
@@ -254,45 +302,25 @@ export class FileService {
   async readBinaryWindow(
     path: string,
     opts?: { startByte?: number; maxBytes?: number; conversationId?: string }
-  ): Promise<
-    | {
-        ok: true
-        base64: string
-        startByte: number
-        endByte: number
-        totalBytes: number
-        truncated: boolean
-      }
-    | { ok: false; error: string; startByte: number; endByte: number; totalBytes: number }
-  > {
-    const startByte = Math.max(0, Math.floor(opts?.startByte ?? 0))
-    const maxBytes = Math.max(
-      1024,
-      Math.min(4 * 1024 * 1024, Math.floor(opts?.maxBytes ?? TEXT_WINDOW_BYTES))
+  ): Promise<BinaryWindowResult> {
+    const { startByte, maxBytes } = clampByteWindow(
+      opts?.startByte,
+      opts?.maxBytes,
+      TEXT_WINDOW_BYTES,
+      BINARY_WINDOW_HARD_MAX
     )
+    const denied = this.accessError(path)
+    if (denied) return deniedBinaryWindow(startByte, denied)
     const hostFs = this.fsFor(opts?.conversationId, path)
     const io = this.forIo(path, opts?.conversationId)
     try {
       const info = await hostFs.stat(io)
       if (info.isDirectory()) {
-        return {
-          ok: false,
-          error: t('files.error.directory'),
-          startByte: 0,
-          endByte: 0,
-          totalBytes: 0
-        }
+        return directoryBinaryWindow(t('files.error.directory'))
       }
       const totalBytes = info.size
       if (startByte >= totalBytes) {
-        return {
-          ok: true,
-          base64: '',
-          startByte,
-          endByte: startByte,
-          totalBytes,
-          truncated: false
-        }
+        return emptyPastEndBinaryWindow(startByte, totalBytes)
       }
       const length = Math.min(maxBytes, totalBytes - startByte)
       const fh = await hostFs.open(io, 'r')
@@ -300,26 +328,12 @@ export class FileService {
         const buf = Buffer.alloc(length)
         const { bytesRead } = await fh.read(buf, 0, length, startByte)
         const slice = buf.subarray(0, bytesRead)
-        const endByte = startByte + bytesRead
-        return {
-          ok: true,
-          base64: slice.toString('base64'),
-          startByte,
-          endByte,
-          totalBytes,
-          truncated: endByte < totalBytes
-        }
+        return binaryWindowSuccess(slice.toString('base64'), startByte, bytesRead, totalBytes)
       } finally {
         await fh.close()
       }
     } catch (err) {
-      return {
-        ok: false,
-        error: (err as Error).message,
-        startByte,
-        endByte: startByte,
-        totalBytes: 0
-      }
+      return binaryWindowCaughtError(startByte, err)
     }
   }
 
@@ -328,16 +342,13 @@ export class FileService {
     content: string,
     conversationId?: string
   ): Promise<{ ok: boolean; error?: string }> {
+    const denied = this.accessError(path)
+    if (denied) return { ok: false, error: denied }
     try {
       // Refuse to clobber OOXML/PDF with UTF-8 text — agents must use binary-aware
       // tools (or a shell) for those formats.
-      const ext = extname(path).toLowerCase()
-      if (['.docx', '.xlsx', '.pptx', '.pdf'].includes(ext)) {
-        return {
-          ok: false,
-          error: `Cannot write ${ext} as UTF-8 text (would corrupt the file). Use a format-aware tool or shell for binary office documents.`
-        }
-      }
+      const officeError = officeUtf8WriteError(path)
+      if (officeError) return { ok: false, error: officeError }
       const hostFs = this.fsFor(conversationId, path)
       const io = this.forIo(path, conversationId)
       await hostFs.mkdir(dirname(io), { recursive: true })
@@ -345,7 +356,7 @@ export class FileService {
       if (hostFs === this.fs) this.noteWrite(path)
       return { ok: true }
     } catch (err) {
-      return { ok: false, error: (err as Error).message }
+      return caughtIoError(err)
     }
   }
 
@@ -358,6 +369,8 @@ export class FileService {
     base64: string,
     conversationId?: string
   ): Promise<{ ok: boolean; error?: string }> {
+    const denied = this.accessError(path)
+    if (denied) return { ok: false, error: denied }
     try {
       if (isOfficeLockFile(path)) {
         return { ok: false, error: OFFICE_LOCK_FILE_MESSAGE }
@@ -369,7 +382,7 @@ export class FileService {
       if (hostFs === this.fs) this.noteWrite(path)
       return { ok: true }
     } catch (err) {
-      return { ok: false, error: (err as Error).message }
+      return caughtIoError(err)
     }
   }
 
@@ -384,6 +397,8 @@ export class FileService {
   ): Promise<
     { ok: true; base64: string; size: number; mime: string } | { ok: false; error: string }
   > {
+    const denied = this.accessError(path)
+    if (denied) return { ok: false, error: denied }
     try {
       if (isOfficeLockFile(path)) {
         return { ok: false, error: OFFICE_LOCK_FILE_MESSAGE }
@@ -391,24 +406,16 @@ export class FileService {
       const hostFs = this.fsFor(conversationId, path)
       const io = this.forIo(path, conversationId)
       const info = await hostFs.stat(io)
-      if (info.isDirectory()) return { ok: false, error: t('files.error.directory') }
-      if (info.size <= 0) return { ok: false, error: 'File is empty.' }
-      if (info.size > BINARY_BASE64_SOFT) {
-        return {
-          ok: false,
-          error: `File is ${Math.round(info.size / 1024 / 1024)} MB — use vav-local:// stream (or inspect.streamUrl) instead of base64 IPC. Base64 is a soft memory budget, not a product open limit.`
-        }
-      }
+      const rejected = readBinaryStatReject(
+        { isDirectory: info.isDirectory(), size: info.size },
+        { directoryError: t('files.error.directory'), softMax: BINARY_BASE64_SOFT }
+      )
+      if (rejected) return rejected
       const kind = previewKind(basename(path))
       const buffer = await hostFs.readFile(io)
-      return {
-        ok: true,
-        base64: buffer.toString('base64'),
-        size: buffer.length,
-        mime: mimeFor(basename(path), kind)
-      }
+      return readBinarySuccess(buffer, mimeForPreviewKind(basename(path), kind))
     } catch (err) {
-      return { ok: false, error: (err as Error).message }
+      return caughtIoError(err)
     }
   }
 
@@ -418,26 +425,41 @@ export class FileService {
     conversationId?: string
   ): Promise<{ ok: true; path: string } | { ok: false; error: string }> {
     const name = newName.trim()
-    if (!name || name.includes('/') || name.includes('\\') || name === '.' || name === '..') {
+    if (isInvalidRenameName(name)) {
       return { ok: false, error: t('files.error.badName') }
     }
     const target = join(dirname(path), name)
+    const denied = this.accessError(path) || this.accessError(target)
+    if (denied) return { ok: false, error: denied }
     try {
       await this.fsFor(conversationId, path).rename(path, target)
       return { ok: true, path: target }
     } catch (err) {
-      return { ok: false, error: (err as Error).message }
+      return caughtIoError(err)
     }
   }
 
-  async trash(paths: string[]): Promise<{ ok: true } | { ok: false; error: string }> {
+  async trash(
+    paths: string[],
+    conversationId?: string
+  ): Promise<{ ok: true } | { ok: false; error: string }> {
+    for (const path of paths) {
+      const denied = this.accessError(path)
+      if (denied) return { ok: false, error: denied }
+    }
     try {
       for (const path of paths) {
-        await shell.trashItem(path)
+        const hostFs = this.fsFor(conversationId, path)
+        if (hostFs !== this.fs) {
+          // Remote hosts have no OS Trash — unlink on that machine.
+          await hostFs.unlink(path)
+        } else {
+          await electronShell().trashItem(path)
+        }
       }
       return { ok: true }
     } catch (err) {
-      return { ok: false, error: (err as Error).message }
+      return caughtIoError(err)
     }
   }
 
@@ -457,6 +479,10 @@ export class FileService {
 
   async inspect(path: string, conversationId?: string): Promise<FileInspectResult> {
     const name = basename(path)
+    const denied = this.accessError(path)
+    if (denied) {
+      return deniedInspectResult(path, name, denied)
+    }
     // Sandbox: I/O against working copy when active; result.path stays logical.
     const hostFs = this.fsFor(conversationId, path)
     const io = this.forIo(path, conversationId)
@@ -465,14 +491,7 @@ export class FileService {
       if (info.isDirectory()) {
         // Not a file preview — callers (Workspace) should not open FileViewer on dirs.
         // Never label folders as binary (that surfaces "Open with default app" for workdirs).
-        return {
-          path,
-          name,
-          size: 0,
-          mtimeMs: info.mtimeMs,
-          kind: 'directory',
-          mime: 'inode/directory'
-        }
+        return directoryInspectResult(path, name, info.mtimeMs)
       }
 
       // Legacy Office: convert on open (temp sidecar), then re-inspect modern path.
@@ -481,143 +500,80 @@ export class FileService {
         const converted = await convertLegacyOffice(path)
         if (converted.ok) {
           const inner = await this.inspect(converted.path)
-          return {
-            ...inner,
-            // Keep the user-facing identity as the original path.
-            path,
-            name,
-            size: info.size,
-            mtimeMs: info.mtimeMs,
-            contentPath: converted.path,
-            streamUrl: localFileStreamUrl(converted.path),
-            warnings: [
-              ...(inner.warnings ?? []),
-              ...(converted.warning ? [converted.warning] : [])
-            ]
-          }
+          return remappedConvertedInspect(
+            inner,
+            { path, name, size: info.size, mtimeMs: info.mtimeMs },
+            converted.path,
+            converted.warning
+          )
         }
         // Conversion failed — fall through to binary meta with the error as warning.
-        try {
-          const binaryMeta = await buildBinaryMeta(path, info)
-          return {
-            path,
-            name,
-            size: info.size,
-            mtimeMs: info.mtimeMs,
-            kind: 'binary',
-            mime: 'application/msword',
-            binaryMeta,
-            warnings: [converted.error]
-          }
-        } catch {
-          return {
-            path,
-            name,
-            size: info.size,
-            mtimeMs: info.mtimeMs,
-            kind: 'binary',
-            mime: 'application/msword',
-            warnings: [converted.error]
-          }
-        }
+        const assembled = await tryBinaryMeta(() => buildBinaryMeta(path, info))
+        return legacyDocInspect({
+          path,
+          name,
+          size: info.size,
+          mtimeMs: info.mtimeMs,
+          warning: converted.error,
+          binaryMeta: assembled.ok ? assembled.binaryMeta : undefined
+        })
       }
       if (legacy === 'ppt') {
-        try {
-          const binaryMeta = await buildBinaryMeta(path, info)
-          return {
+        const assembled = await tryBinaryMeta(() => buildBinaryMeta(path, info))
+        if (assembled.ok) {
+          return legacyPptInspect({
             path,
             name,
             size: info.size,
             mtimeMs: info.mtimeMs,
-            kind: 'binary',
-            mime: 'application/vnd.ms-powerpoint',
-            binaryMeta,
-            warnings: [
-              'Legacy PowerPoint (.ppt): export to .pptx for in-app preview, or open with the system default app.'
-            ]
-          }
-        } catch (err) {
-          return {
-            path,
-            name,
-            size: info.size,
-            kind: 'binary',
-            mime: 'application/vnd.ms-powerpoint',
-            error: (err as Error).message
-          }
+            binaryMeta: assembled.binaryMeta
+          })
         }
+        return legacyPptInspect({
+          path,
+          name,
+          size: info.size,
+          error: assembled.error
+        })
       }
 
       let kind = previewKind(name)
       if (kind === 'binary' && (await looksLikeTextFile(hostFs, path, info.size))) {
         kind = 'text'
       }
-      const mime = mimeFor(name, kind)
-      const base: FileInspectResult = {
+      const mime = mimeForPreviewKind(name, kind)
+      const base = inspectFileBase({
         path,
         name,
         size: info.size,
         mtimeMs: info.mtimeMs,
         kind,
-        mime,
-        streamUrl: localFileStreamUrl(path)
-      }
+        mime
+      })
 
       if (kind === 'text' || kind === 'csv' || kind === 'html' || kind === 'html-clip') {
         const win = await this.readTextWindow(path, { startByte: 0, maxBytes: TEXT_WINDOW_BYTES })
-        if (win.error) return { ...base, error: win.error }
+        if (win.error) return inspectWithError(base, win.error)
         if (kind === 'csv') this.scheduleIndex(path)
         // truncated/textWindow are for silent progressive fill in the renderer —
         // never surface a product "file too large" or "load more" affordance.
-        return {
-          ...base,
-          text: win.content,
-          truncated: win.truncated,
-          textWindow: {
-            startByte: win.startByte,
-            endByte: win.endByte,
-            totalBytes: win.totalBytes
-          },
-          lineCount: win.content ? countNewlines(win.content) : 0
-        }
+        return textWindowInspectResult(base, win)
       }
 
       if (kind === 'image' || kind === 'audio' || kind === 'video') {
         // Stream via vav-local — never base64 the whole media file.
         if (isHeicPath(path)) {
           const heic = await prepareHeicPreview(path)
-          return {
-            ...base,
-            kind: 'image',
-            mime: heic.converted ? 'image/jpeg' : 'image/heic',
-            contentPath: heic.converted ? heic.previewPath : undefined,
-            streamUrl: localFileStreamUrl(heic.previewPath),
-            imageMeta: heic.meta,
-            warnings: heic.converted
-              ? ['HEIC decoded to a temporary JPEG for preview (original unchanged).']
-              : undefined
-          }
+          return heicInspectResult(base, heic)
         }
-        return {
-          ...base,
-          streamUrl: localFileStreamUrl(path)
-        }
+        return base
       }
 
       if (kind === 'sqlite') {
         try {
-          const sqlite = inspectSqlite(path)
-          const summary = sqlite.tables
-            .map((tb) => `${tb.name} (${tb.rowCount} rows · ${tb.columns.length} cols)`)
-            .join('\n')
-          return {
-            ...base,
-            sqlite,
-            text: summary || '(no tables)',
-            lineCount: sqlite.tables.length
-          }
+          return sqliteInspectResult(base, inspectSqlite(path))
         } catch (err) {
-          return { ...base, error: (err as Error).message || t('files.error.unsupported') }
+          return inspectErrorOnBase(base, err, t('files.error.unsupported'))
         }
       }
 
@@ -625,112 +581,33 @@ export class FileService {
         // Structure-only tree. Large archives skip full-buffer JSZip; on failure open empty canvas.
         try {
           const zip = await inspectZipArchive(hostFs, path, info.size)
-          const treeText = zip.entries
-            .map((e) => `${e.isDirectory ? 'D' : 'F'} ${e.path}`)
-            .join('\n')
-          const warnings: string[] = []
-          if (zip.encrypted) {
-            warnings.push(
-              'This archive appears password-protected. vav lists what it can without a password and does not extract encrypted entries.'
-            )
-          }
-          if (zip.truncated) {
-            warnings.push(
-              `Large ZIP (${Math.round(info.size / 1024 / 1024)} MB) — full structure index skipped to avoid loading the archive into memory.`
-            )
-          }
-          return {
-            ...base,
-            zip: {
-              entries: zip.entries,
-              entryCount: zip.entryCount,
-              compressedSize: zip.compressedSize,
-              uncompressedSize: zip.uncompressedSize,
-              ratio: zip.ratio
-            },
-            zipEncrypted: zip.encrypted,
-            truncated: zip.truncated || undefined,
-            text: treeText,
-            lineCount: zip.entries.length,
-            warnings: warnings.length ? warnings : undefined
-          }
+          return zipInspectSuccess(base, zip, info.size)
         } catch (err) {
           console.error('[files] zip inspect failed', path, err)
-          const msg = (err as Error).message || ''
-          const encrypted = /password|encrypt|encrypted/i.test(msg)
-          return {
-            ...base,
-            zip: {
-              entries: [],
-              entryCount: 0,
-              compressedSize: info.size,
-              uncompressedSize: 0,
-              ratio: 0
-            },
-            zipEncrypted: encrypted,
-            truncated: true,
-            text: '',
-            lineCount: 0,
-            warnings: [
-              encrypted
-                ? 'Password-protected ZIP — structure unavailable without a password (not prompted in-app).'
-                : `Could not index ZIP structure: ${msg || 'unknown error'}`
-            ]
-          }
+          return zipInspectFailure(base, info.size, err)
         }
       }
 
       if (kind === 'pdf' || kind === 'docx' || kind === 'xlsx' || kind === 'pptx') {
-        if (isOfficeLockFile(path)) {
-          return { ...base, error: OFFICE_LOCK_FILE_MESSAGE }
-        }
-        if (info.size <= 0) return { ...base, error: 'File is empty.' }
-        // Always streamable; never refuse open on size.
-        // Stream the I/O path (working copy when sandboxed).
-        base.streamUrl = localFileStreamUrl(io)
-        // Fast path: kind + streamUrl only. Structured parse is
-        // `inspectStructured` (background) so first paint is not blocked.
-        this.scheduleIndex(io)
-        if (info.size > STRUCTURED_PARSE_SOFT) {
-          return {
-            ...base,
-            warnings: [
-              'Large Office document — preview opens via streaming; full text index runs in the background.'
-            ]
-          }
-        }
-        return base
+        const painted = officeFirstPaintInspect(base, {
+          locked: isOfficeLockFile(path),
+          empty: info.size <= 0,
+          streamUrl: localFileStreamUrl(io),
+          large: info.size > STRUCTURED_PARSE_SOFT,
+          lockMessage: OFFICE_LOCK_FILE_MESSAGE
+        })
+        if (!painted.error) this.scheduleIndex(io)
+        return painted
       }
 
       // Unsupported / binary: metadata panel (no content preview). Never use
       // files.error.unsupported — that red alert is reserved for real I/O failures.
-      try {
-        const binaryMeta = await buildBinaryMeta(path, info)
-        return { ...base, binaryMeta }
-      } catch (metaErr) {
-        console.error('[files] binary meta failed', path, metaErr)
-        return {
-          ...base,
-          binaryMeta: {
-            uti: 'public.data',
-            permissions: '—',
-            owner: '—',
-            createdAt: null,
-            modifiedAt: Number.isFinite(info.mtimeMs) ? info.mtimeMs : null,
-            inode: '—',
-            defaultApp: null
-          }
-        }
-      }
+      const assembled = await tryBinaryMeta(() => buildBinaryMeta(path, info))
+      if (assembled.ok) return inspectWithBinaryMeta(base, assembled.binaryMeta)
+      console.error('[files] binary meta failed', path, assembled.error)
+      return binaryInspectFallback(base, info.mtimeMs)
     } catch (err) {
-      return {
-        path,
-        name,
-        size: 0,
-        kind: 'binary',
-        mime: '',
-        error: (err as Error).message
-      }
+      return inspectCaughtError(path, name, err)
     }
   }
 
@@ -745,16 +622,20 @@ export class FileService {
     | { ok: true; structured: import('@shared/structuredDoc').StructuredDocument; partial: boolean }
     | { ok: false; error: string }
   > {
+    const denied = this.accessError(path)
+    if (denied) return { ok: false, error: denied }
     const hostFs = this.fsFor(opts?.conversationId, path)
     const io = this.forIo(path, opts?.conversationId)
     try {
       const info = await hostFs.stat(io)
-      if (!info.isFile()) return { ok: false, error: 'Not a file' }
-      if (isOfficeLockFile(path)) return { ok: false, error: OFFICE_LOCK_FILE_MESSAGE }
-      if (info.size <= 0) return { ok: false, error: 'File is empty.' }
-      if (info.size > STRUCTURED_PARSE_SOFT) {
-        return { ok: false, error: 'Document too large for full structured index' }
-      }
+      const rejected = structuredInspectReject({
+        isFile: info.isFile(),
+        locked: isOfficeLockFile(path),
+        size: info.size,
+        parseSoft: STRUCTURED_PARSE_SOFT,
+        lockMessage: OFFICE_LOCK_FILE_MESSAGE
+      })
+      if (rejected) return rejected
       const progressive = opts?.maxBlocks != null || opts?.maxRows != null
       const structured = await parseStructuredDocument(
         io,
@@ -766,26 +647,21 @@ export class FileService {
             }
           : undefined
       )
-      const partial =
-        progressive ||
-        (structured.warnings ?? []).some((w) => /partial|truncated|first/i.test(w))
+      const partial = structuredInspectIsPartial(progressive, structured.warnings)
       return { ok: true, structured, partial }
     } catch (err) {
-      return { ok: false, error: (err as Error).message }
+      return caughtIoError(err)
     }
   }
 
   /** Page through a SQLite table for the DB preview canvas. */
   dbQuery(path: string, table: string, offset?: number, limit?: number): SqliteQueryResult {
+    const denied = this.accessError(path)
+    if (denied) {
+      return sqliteQueryFailure(offset, limit, denied)
+    }
     if (!isSqlitePath(path)) {
-      return {
-        columns: [],
-        rows: [],
-        total: 0,
-        offset: offset ?? 0,
-        limit: limit ?? 100,
-        error: 'Not a SQLite database path'
-      }
+      return sqliteQueryFailure(offset, limit, 'Not a SQLite database path')
     }
     return querySqliteTable(path, table, offset, limit)
   }
@@ -798,11 +674,12 @@ export class FileService {
    * the system associates with it — a heavier action, but the same intent.
    */
   preview(path: string): void {
+    if (this.accessError(path)) return
     if (process.platform === 'darwin') {
       spawn('qlmanage', ['-p', path], { stdio: 'ignore', detached: true }).unref()
       return
     }
-    void shell.openPath(path)
+    void electronShell().openPath(path)
   }
 
   /**
@@ -810,6 +687,8 @@ export class FileService {
    * Returns `{ ok }` so the UI can toast — silent failures looked like a dead button.
    */
   async openWithDefault(path: string): Promise<{ ok: true } | { ok: false; error: string }> {
+    const denied = this.accessError(path)
+    if (denied) return { ok: false, error: denied }
     try {
       if (process.platform === 'darwin') {
         // `open` routes through Launch Services (DMG → DiskImageMounter, etc.).
@@ -827,11 +706,11 @@ export class FileService {
         })
         return { ok: true }
       }
-      const err = await shell.openPath(path)
+      const err = await electronShell().openPath(path)
       if (err) return { ok: false, error: err }
       return { ok: true }
     } catch (err) {
-      return { ok: false, error: (err as Error).message || 'Could not open file' }
+      return caughtIoError(err, 'Could not open file')
     }
   }
 
@@ -895,328 +774,8 @@ export class FileService {
 
   disposeAll(): void {
     for (const id of [...this.watchers.keys()]) this.unwatch(id)
+    closeAllSqlite()
   }
-}
-
-/** Known text / source extensions for in-app preview (plus extensionless names). */
-const TEXT_EXTENSIONS = new Set([
-  // JS / TS
-  '.js',
-  '.jsx',
-  '.mjs',
-  '.cjs',
-  '.ts',
-  '.tsx',
-  '.mts',
-  '.cts',
-  // Python / scripting
-  '.py',
-  '.pyi',
-  '.pyw',
-  '.rb',
-  '.php',
-  '.pl',
-  '.pm',
-  '.lua',
-  '.r',
-  '.jl',
-  // Systems
-  '.c',
-  '.h',
-  '.cc',
-  '.cpp',
-  '.cxx',
-  '.hpp',
-  '.hh',
-  '.m',
-  '.mm',
-  '.swift',
-  '.go',
-  '.rs',
-  '.zig',
-  '.nim',
-  '.cs',
-  '.fs',
-  '.fsx',
-  '.java',
-  '.kt',
-  '.kts',
-  '.scala',
-  '.groovy',
-  '.dart',
-  '.ex',
-  '.exs',
-  '.erl',
-  '.hrl',
-  '.hs',
-  '.lhs',
-  '.clj',
-  '.cljs',
-  '.edn',
-  // Web / markup
-  '.html',
-  '.htm',
-  '.xhtml',
-  '.css',
-  '.scss',
-  '.sass',
-  '.less',
-  '.vue',
-  '.svelte',
-  '.astro',
-  '.xml',
-  '.xsl',
-  '.xslt',
-  '.svg',
-  // Data / config
-  '.json',
-  '.jsonc',
-  '.json5',
-  '.yml',
-  '.yaml',
-  '.toml',
-  '.ini',
-  '.cfg',
-  '.conf',
-  '.config',
-  '.properties',
-  '.env',
-  '.envrc',
-  '.plist',
-  '.tf',
-  '.hcl',
-  '.tfvars',
-  '.proto',
-  '.graphql',
-  '.gql',
-  '.sql',
-  '.prisma',
-  // Docs
-  '.md',
-  '.markdown',
-  '.mdx',
-  '.rst',
-  '.adoc',
-  '.tex',
-  '.txt',
-  '.text',
-  '.log',
-  '.csv',
-  '.tsv',
-  '.ipynb',
-  '.rpml',
-  // Diagrams / mind maps (text-encoded; .mm may also be ObjC++ — sniff on open)
-  '.mmd',
-  '.mermaid',
-  '.dot',
-  '.gv',
-  '.opml',
-  '.drawio',
-  '.dio',
-  // Shell / build
-  '.sh',
-  '.bash',
-  '.zsh',
-  '.fish',
-  '.ps1',
-  '.psm1',
-  '.bat',
-  '.cmd',
-  '.cmake',
-  '.make',
-  '.mk',
-  '.gradle',
-  '.dockerignore',
-  '.gitignore',
-  '.gitattributes',
-  '.editorconfig',
-  '.npmrc',
-  '.nvmrc',
-  '.prettierrc',
-  '.eslintrc',
-  '.babelrc',
-  '.lock'
-])
-
-const TEXT_BASENAMES = new Set([
-  'dockerfile',
-  'makefile',
-  'gnumakefile',
-  'cmakelists.txt',
-  'readme',
-  'license',
-  'licence',
-  'changelog',
-  'authors',
-  'gemfile',
-  'rakefile',
-  'procfile',
-  'vagrantfile',
-  'brewfile',
-  'justfile'
-])
-
-function previewKind(name: string): FilePreviewKind {
-  const base = name.toLowerCase()
-  const ext = extname(name).toLowerCase()
-  if (ext === '.csv' || ext === '.tsv') return 'csv'
-  if (
-    [
-      '.png',
-      '.jpg',
-      '.jpeg',
-      '.gif',
-      '.webp',
-      '.bmp',
-      '.svg',
-      '.ico',
-      '.avif',
-      '.heic',
-      '.heif',
-      '.hif',
-      '.tif',
-      '.tiff'
-    ].includes(ext)
-  ) {
-    return 'image'
-  }
-  if (ext === '.pdf') return 'pdf'
-  if (ext === '.zip') return 'zip'
-  if (ext === '.docx') return 'docx'
-  if (ext === '.xlsx' || ext === '.xls') return 'xlsx'
-  if (ext === '.pptx') return 'pptx'
-  if (
-    ext === '.html-clip' ||
-    name.toLowerCase() === 'app.html' ||
-    name.toLowerCase() === 'xstate.html' ||
-    name.toLowerCase().endsWith('.app.html')
-  ) {
-    return 'html-clip'
-  }
-  if (ext === '.html' || ext === '.htm' || ext === '.xhtml') return 'html'
-  if (ext === '.db' || ext === '.sqlite' || ext === '.sqlite3' || ext === '.db3') return 'sqlite'
-  if (['.mp3', '.wav', '.m4a', '.aac', '.ogg', '.flac', '.opus'].includes(ext)) return 'audio'
-  if (['.mp4', '.mov', '.webm', '.mkv', '.m4v', '.avi'].includes(ext)) return 'video'
-  if (TEXT_EXTENSIONS.has(ext) || TEXT_BASENAMES.has(base) || !ext) {
-    return 'text'
-  }
-  // Dotfiles without a second extension (e.g. `.env.local` handled via .local? —
-  // `.env*` often ends with a non-empty ext; also accept `.*rc` / `.*ignore`).
-  if (
-    base.startsWith('.') &&
-    (base.endsWith('rc') ||
-      base.endsWith('ignore') ||
-      base.startsWith('.env') ||
-      base.includes('eslint') ||
-      base.includes('prettier') ||
-      base.includes('babel'))
-  ) {
-    return 'text'
-  }
-  return 'binary'
-}
-
-/** Count lines without allocating a split array (large CSV/text inspect path). */
-function countNewlines(text: string): number {
-  if (!text) return 0
-  let n = 1
-  for (let i = 0; i < text.length; i++) {
-    if (text.charCodeAt(i) === 10 /* \n */) n++
-  }
-  // Trailing newline does not add an extra blank line for display purposes.
-  if (text.charCodeAt(text.length - 1) === 10) n--
-  return Math.max(n, 1)
-}
-
-/** Treat unknown extensions as text when the buffer looks like UTF-8 source. */
-async function looksLikeTextFile(fs: HostFs, path: string, size: number): Promise<boolean> {
-  if (size <= 0) return false
-  try {
-    const sampleSize = Math.min(size, 8192)
-    const fh = await fs.open(path, 'r')
-    try {
-      const buf = Buffer.alloc(sampleSize)
-      const { bytesRead } = await fh.read(buf, 0, sampleSize, 0)
-      const slice = buf.subarray(0, bytesRead)
-      if (slice.includes(0)) return false
-      const text = slice.toString('utf8')
-      let bad = 0
-      for (let i = 0; i < text.length; i += 1) {
-        const code = text.charCodeAt(i)
-        if (code === 0xfffd) bad += 1
-        else if (code < 9 || (code > 13 && code < 32)) bad += 1
-      }
-      return bad / Math.max(text.length, 1) < 0.02
-    } finally {
-      await fh.close()
-    }
-  } catch {
-    return false
-  }
-}
-
-
-function mimeFor(name: string, kind: FilePreviewKind): string {
-  const ext = extname(name).toLowerCase()
-  switch (kind) {
-    case 'image':
-      if (ext === '.png') return 'image/png'
-      if (ext === '.gif') return 'image/gif'
-      if (ext === '.webp') return 'image/webp'
-      if (ext === '.svg') return 'image/svg+xml'
-      if (ext === '.heic' || ext === '.heif' || ext === '.hif') return 'image/heic'
-      if (ext === '.tif' || ext === '.tiff') return 'image/tiff'
-      if (ext === '.avif') return 'image/avif'
-      if (ext === '.bmp') return 'image/bmp'
-      if (ext === '.ico') return 'image/x-icon'
-      return 'image/jpeg'
-    case 'audio':
-      if (ext === '.wav') return 'audio/wav'
-      if (ext === '.m4a') return 'audio/mp4'
-      return 'audio/mpeg'
-    case 'video':
-      if (ext === '.webm') return 'video/webm'
-      if (ext === '.mov') return 'video/quicktime'
-      return 'video/mp4'
-    case 'pdf':
-      return 'application/pdf'
-    case 'docx':
-      return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
-    case 'xlsx':
-      return 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-    case 'pptx':
-      return 'application/vnd.openxmlformats-officedocument.presentationml.presentation'
-    case 'html':
-    case 'html-clip':
-      return ext === '.xhtml' ? 'application/xhtml+xml' : 'text/html'
-    case 'csv':
-      return 'text/csv'
-    case 'sqlite':
-      return 'application/vnd.sqlite3'
-    case 'zip':
-      return 'application/zip'
-    case 'directory':
-      return 'inode/directory'
-    case 'binary': {
-      if (ext === '.dmg') return 'application/x-apple-diskimage'
-      if (ext === '.apk') return 'application/vnd.android.package-archive'
-      if (ext === '.pkg') return 'application/x-newton-compatible-pkg'
-      return 'application/octet-stream'
-    }
-    default:
-      return 'text/plain'
-  }
-}
-
-function modeToPermissions(mode: number): string {
-  const perms = mode & 0o777
-  const rwx = (n: number): string =>
-    `${n & 4 ? 'r' : '-'}${n & 2 ? 'w' : '-'}${n & 1 ? 'x' : '-'}`
-  const owner = rwx((perms >> 6) & 7)
-  const group = rwx((perms >> 3) & 7)
-  const other = rwx(perms & 7)
-  const octal = perms.toString(8).padStart(3, '0')
-  return `-${owner}${group}${other} (${octal})`
 }
 
 async function buildBinaryMeta(
@@ -1232,29 +791,12 @@ async function buildBinaryMeta(
     mtime?: Date
   }
 ): Promise<BinaryFileMeta> {
-  const mode = typeof info.mode === 'number' ? info.mode : 0
-  const uid = typeof info.uid === 'number' ? info.uid : -1
-  let owner = uid >= 0 ? String(uid) : '—'
+  let self: { uid: number; username: string } | null = null
   try {
-    const me = userInfo()
-    if (uid >= 0 && me.uid === uid) owner = me.username
+    self = userInfo()
   } catch {
     // keep numeric uid
   }
-  const createdMs =
-    typeof info.birthtimeMs === 'number' && Number.isFinite(info.birthtimeMs)
-      ? info.birthtimeMs
-      : info.birthtime instanceof Date
-        ? info.birthtime.getTime()
-        : null
-  const modifiedMs =
-    typeof info.mtimeMs === 'number' && Number.isFinite(info.mtimeMs)
-      ? info.mtimeMs
-      : info.mtime instanceof Date
-        ? info.mtime.getTime()
-        : null
-  const inode =
-    info.ino === undefined || info.ino === null ? '—' : String(info.ino)
 
   let uti = mimeHintToUti(extname(path).toLowerCase())
   let defaultApp: string | null = null
@@ -1273,306 +815,6 @@ async function buildBinaryMeta(
     }
   }
 
-  return {
-    uti,
-    permissions: mode ? modeToPermissions(mode) : '—',
-    owner,
-    createdAt: createdMs,
-    modifiedAt: modifiedMs,
-    inode,
-    defaultApp
-  }
+  return assembleBinaryMeta(info, { self, uti, defaultApp })
 }
 
-function mimeHintToUti(ext: string): string {
-  switch (ext) {
-    case '.dmg':
-      return 'com.apple.disk-image-udif'
-    case '.pkg':
-      return 'com.apple.installer-package-archive'
-    case '.app':
-      return 'com.apple.application-bundle'
-    case '.zip':
-      return 'com.pkware.zip-archive'
-    case '.apk':
-      return 'com.android.package-archive'
-    default:
-      return 'public.data'
-  }
-}
-
-function mdlsRaw(path: string, key: string): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const child = spawn('mdls', ['-raw', '-name', key, path], { stdio: ['ignore', 'pipe', 'ignore'] })
-    let out = ''
-    child.stdout?.on('data', (chunk: Buffer) => {
-      out += chunk.toString('utf8')
-    })
-    child.on('error', reject)
-    child.on('close', (code) => {
-      if (code === 0) resolve(out.trim())
-      else reject(new Error(`mdls exit ${code}`))
-    })
-  })
-}
-
-/**
- * macOS: display name of the default app that would open this path
- * (e.g. "DiskImageMounter"). Uses JXA + AppKit, capped at 1s.
- */
-function defaultAppDisplayName(filePath: string): Promise<string | null> {
-  return new Promise((resolve) => {
-    const escaped = filePath.replace(/\\/g, '\\\\').replace(/'/g, "\\'")
-    const script = `
-      ObjC.import('AppKit');
-      var url = $.NSURL.fileURLWithPath('${escaped}');
-      var appURL = $.NSWorkspace.sharedWorkspace.URLForApplicationToOpenURL(url);
-      if (!appURL) { ''; }
-      else {
-        var p = ObjC.unwrap(appURL.path);
-        var parts = p.split('/');
-        var name = parts[parts.length - 1] || '';
-        name.replace(/\\.app$/i, '');
-      }
-    `
-    const child = spawn('osascript', ['-l', 'JavaScript', '-e', script], {
-      stdio: ['ignore', 'pipe', 'ignore']
-    })
-    let out = ''
-    let settled = false
-    const finish = (value: string | null): void => {
-      if (settled) return
-      settled = true
-      resolve(value)
-    }
-    child.stdout?.on('data', (chunk: Buffer) => {
-      out += chunk.toString('utf8')
-    })
-    child.on('error', () => finish(null))
-    child.on('close', () => finish(out.trim() || null))
-    setTimeout(() => {
-      try {
-        child.kill()
-      } catch {
-        // ignore
-      }
-      finish(out.trim() || null)
-    }, 1000)
-  })
-}
-
-/** Probe ZIP local-file headers for encryption without loading the whole archive. */
-async function probeZipEncrypted(fs: HostFs, path: string, fileSize: number): Promise<boolean> {
-  if (fileSize < 30) return false
-  const sampleLen = Math.min(fileSize, 64 * 1024)
-  const fh = await fs.open(path, 'r')
-  try {
-    const buf = Buffer.alloc(sampleLen)
-    const { bytesRead } = await fh.read(buf, 0, sampleLen, 0)
-    const buffer = buf.subarray(0, bytesRead)
-    let offset = 0
-    for (let i = 0; i < 8 && offset + 30 <= buffer.length; i++) {
-      if (buffer.readUInt32LE(offset) !== 0x04034b50) break
-      const flags = buffer.readUInt16LE(offset + 6)
-      if (flags & 0x1) return true
-      const nameLen = buffer.readUInt16LE(offset + 26)
-      const extraLen = buffer.readUInt16LE(offset + 28)
-      const compSize = buffer.readUInt32LE(offset + 18)
-      offset += 30 + nameLen + extraLen + compSize
-    }
-    return false
-  } finally {
-    await fh.close()
-  }
-}
-
-/** Structure-only ZIP index for the archive tree preview (no entry contents). */
-async function inspectZipArchive(
-  fs: HostFs,
-  path: string,
-  fileSize: number
-): Promise<ZipArchiveInfo & { encrypted: boolean; truncated: boolean }> {
-  // Avoid reading multi‑hundred‑MB archives into memory just to list structure.
-  if (fileSize > ZIP_FULL_LOAD_MAX) {
-    let encrypted = false
-    try {
-      encrypted = await probeZipEncrypted(fs, path, fileSize)
-    } catch {
-      // Probe is best-effort; still return a truncated empty summary.
-    }
-    return {
-      entries: [],
-      entryCount: 0,
-      compressedSize: fileSize,
-      uncompressedSize: 0,
-      ratio: 0,
-      encrypted,
-      truncated: true
-    }
-  }
-
-  const buffer = await fs.readFile(path)
-  // Quick magic / encryption probe (general-purpose bit 0 of local file headers).
-  let encrypted = false
-  if (buffer.length >= 30) {
-    // Scan a few local headers; encrypted archives set bit 0 of the GP flag.
-    let offset = 0
-    for (let i = 0; i < 8 && offset + 30 <= buffer.length; i++) {
-      if (buffer.readUInt32LE(offset) !== 0x04034b50) break
-      const flags = buffer.readUInt16LE(offset + 6)
-      if (flags & 0x1) {
-        encrypted = true
-        break
-      }
-      const nameLen = buffer.readUInt16LE(offset + 26)
-      const extraLen = buffer.readUInt16LE(offset + 28)
-      const compSize = buffer.readUInt32LE(offset + 18)
-      offset += 30 + nameLen + extraLen + compSize
-    }
-  }
-
-  const zip = await JSZip.loadAsync(buffer, { createFolders: true })
-  const entries: ZipEntryInfo[] = []
-  let uncompressedSize = 0
-  let compressedSize = 0
-
-  zip.forEach((relativePath, file) => {
-    if (!relativePath) return
-    // Prefer trailing-slash dirs from the archive itself.
-    const isDirectory = file.dir || relativePath.endsWith('/')
-    const name = basename(relativePath.replace(/\/+$/, '')) || relativePath
-    // JSZip exposes sizes on the internal dir entry when present.
-    const data = (file as unknown as { _data?: { uncompressedSize?: number; compressedSize?: number } })
-      ._data
-    const uncomp = isDirectory ? 0 : Number(data?.uncompressedSize ?? 0)
-    const comp = isDirectory ? 0 : Number(data?.compressedSize ?? 0)
-    uncompressedSize += uncomp
-    compressedSize += comp
-    // JSZip options may flag encryption on the entry options object.
-    const opts = (file as unknown as { options?: { encrypted?: boolean } }).options
-    if (opts?.encrypted) encrypted = true
-    entries.push({
-      path: isDirectory && !relativePath.endsWith('/') ? `${relativePath}/` : relativePath,
-      name: isDirectory && !name.endsWith('/') ? `${name}/` : name,
-      isDirectory,
-      compressedSize: comp,
-      uncompressedSize: uncomp,
-      modifiedAt: file.date ? file.date.getTime() : undefined
-    })
-  })
-
-  // Sort paths so tree rendering is stable (dirs + files by path).
-  entries.sort((a, b) => a.path.localeCompare(b.path))
-  // Prefer archive file size when compressed totals are incomplete.
-  if (compressedSize <= 0) compressedSize = fileSize
-  const ratio =
-    uncompressedSize > 0
-      ? Math.max(0, Math.min(100, Math.round((1 - compressedSize / uncompressedSize) * 100)))
-      : 0
-  return {
-    entries,
-    entryCount: entries.filter((e) => !e.isDirectory).length || entries.length,
-    compressedSize,
-    uncompressedSize,
-    ratio,
-    encrypted,
-    truncated: false
-  }
-}
-
-function sortEntries(entries: FileEntry[], key: FileSortKey, ascending: boolean): FileEntry[] {
-  if (key === 'none') return entries
-
-  const direction = ascending ? 1 : -1
-  const byName = (a: FileEntry, b: FileEntry): number =>
-    a.name.localeCompare(b.name, undefined, { sensitivity: 'base' })
-
-  return [...entries].sort((a, b) => {
-    // Folders lead for every sort except raw filesystem order (`none`).
-    if (a.isDirectory !== b.isDirectory) return a.isDirectory ? -1 : 1
-    let cmp = 0
-    switch (key) {
-      case 'date':
-      case 'dateModified':
-        cmp = a.modifiedAt - b.modifiedAt
-        break
-      case 'dateCreated':
-      case 'dateAdded':
-        cmp = (a.createdAt || a.modifiedAt) - (b.createdAt || b.modifiedAt)
-        break
-      case 'size':
-        cmp = a.size - b.size
-        break
-      case 'kind': {
-        cmp = kindLabel(a).localeCompare(kindLabel(b))
-        break
-      }
-      case 'application': {
-        cmp = applicationLabel(a).localeCompare(applicationLabel(b))
-        break
-      }
-      case 'tags':
-        // Tags need Spotlight xattrs; without them keep a stable name order.
-        cmp = 0
-        break
-      case 'name':
-      default:
-        cmp = byName(a, b)
-        break
-    }
-    if (cmp === 0) cmp = byName(a, b)
-    return cmp * direction
-  })
-}
-
-function kindLabel(entry: FileEntry): string {
-  if (entry.isDirectory) return 'Folder'
-  const ext = extname(entry.name).toLowerCase()
-  return ext ? ext.slice(1).toUpperCase() : 'Document'
-}
-
-/** Best-effort “opens with” grouping when Launch Services isn’t available. */
-function applicationLabel(entry: FileEntry): string {
-  if (entry.isDirectory) return 'Finder'
-  const ext = extname(entry.name).toLowerCase()
-  switch (ext) {
-    case '.swift':
-    case '.m':
-    case '.mm':
-    case '.h':
-    case '.xcodeproj':
-      return 'Xcode'
-    case '.ts':
-    case '.tsx':
-    case '.js':
-    case '.jsx':
-    case '.json':
-    case '.md':
-    case '.css':
-    case '.html':
-      return 'Editor'
-    case '.png':
-    case '.jpg':
-    case '.jpeg':
-    case '.gif':
-    case '.webp':
-    case '.svg':
-      return 'Preview'
-    case '.pdf':
-      return 'Preview'
-    case '.mp3':
-    case '.wav':
-    case '.m4a':
-    case '.mp4':
-    case '.mov':
-      return 'QuickTime Player'
-    case '.sh':
-    case '.zsh':
-    case '.bash':
-      return 'Terminal'
-    case '.app':
-      return entry.name
-    default:
-      return ext ? ext.slice(1).toUpperCase() : 'Other'
-  }
-}

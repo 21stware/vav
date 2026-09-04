@@ -17,6 +17,7 @@ export function RemoteFolderPicker(): React.JSX.Element | null {
   const close = useSessionStore((s) => s.closeRemoteFolderPicker)
   const setWorkingDirectory = useSessionStore((s) => s.setWorkingDirectory)
   const createConversation = useSessionStore((s) => s.createConversation)
+  const finishLocateWorkspace = useSessionStore((s) => s.finishLocateWorkspace)
   const [path, setPath] = useState('')
   const [entries, setEntries] = useState<{ name: string; path: string }[]>([])
   const [error, setError] = useState<string | null>(null)
@@ -71,6 +72,11 @@ export function RemoteFolderPicker(): React.JSX.Element | null {
   const parent = path.replace(/[/\\]+$/, '').replace(/[/\\][^/\\]+$/, '') || path
 
   const select = async (dismiss: () => void): Promise<void> => {
+    if (pick.purpose === 'locate' && pick.conversationId) {
+      await finishLocateWorkspace(pick.conversationId, path)
+      dismiss()
+      return
+    }
     if (!pick.conversationId) {
       await createConversation({
         workingDirectory: path,

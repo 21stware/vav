@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { createServer } from 'node:net'
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -8,6 +9,8 @@ import { encodePairing } from '../../shared/remoteControl.ts'
 import { HostRegistry, createLocalWorkspaceHost } from '../host/WorkspaceHost.ts'
 import { DaemonServer } from './DaemonServer.ts'
 import { DaemonAttachService } from './DaemonAttachService.ts'
+import { RemoteControlHub } from '../remote/RemoteControlHub.ts'
+import { REMOTE_PHONE_CAPABILITIES } from '../../shared/remoteControl.ts'
 
 const SECRET = '0123456789abcdef01234567'
 
@@ -27,7 +30,10 @@ async function listenLoopback(dir: string): Promise<{ server: DaemonServer; port
 function attach(
   userData: string,
   enabled = false,
-  extra?: { dialTunnel?: (token: string) => Promise<{ host: string; port: number; close: () => void }> }
+  extra?: {
+    dialTunnel?: (token: string) => Promise<{ host: string; port: number; close: () => void }>
+    reconnectDelayMs?: (attempt: number) => number
+  }
 ): {
   service: DaemonAttachService
   registry: HostRegistry
@@ -44,6 +50,7 @@ function attach(
       enabled: () => enabled,
       tailcatToken: () => null,
       dialTunnel: extra?.dialTunnel,
+      reconnectDelayMs: extra?.reconnectDelayMs,
       onHostsChanged: () => undefined
     })
   }
@@ -71,17 +78,69 @@ describe('DaemonAttachService', () => {
       assert.equal(result.host.id, 'box-1')
       assert.equal(result.host.online, true)
       assert.equal(registry.get('box-1')?.info.online, true)
+      assert.equal(service.controlPlaneOf('box-1'), false)
+      assert.equal(await service.waitForControlPlane('box-1'), false)
       const stored = JSON.parse(await readFile(join(userData, 'paired-hosts.json'), 'utf8')) as {
         hosts: { machineId: string }[]
       }
       assert.equal(stored.hosts[0]?.machineId, 'box-1')
+      const storedGrant = JSON.parse(await readFile(join(userData, 'paired-hosts.json'), 'utf8')) as {
+        hosts: { grantId?: string; secret: string }[]
+      }
+      assert.ok(storedGrant.hosts[0]?.grantId)
+      assert.notEqual(storedGrant.hosts[0]?.secret, SECRET)
 
-      service.forget('box-1')
+      await service.forget('box-1')
       assert.equal(registry.get('box-1'), undefined)
       const after = JSON.parse(await readFile(join(userData, 'paired-hosts.json'), 'utf8')) as {
         hosts: unknown[]
       }
       assert.equal(after.hosts.length, 0)
+    } finally {
+      service.dispose()
+      server.close()
+      await rm(disk, { recursive: true, force: true })
+      await rm(userData, { recursive: true, force: true })
+    }
+  })
+
+  it('pulls the host catalog after pairing', async () => {
+    const disk = await mkdtemp(join(tmpdir(), 'vav-box-'))
+    const userData = await mkdtemp(join(tmpdir(), 'vav-attach-'))
+    const proj = join(disk, 'proj')
+    const server = new DaemonServer({
+      host: createLocalWorkspaceHost({ name: 'box' }),
+      identity: { machineId: 'box-1', name: 'box' },
+      secret: () => SECRET,
+      appVersion: 'test',
+      home: disk,
+      tmp: disk,
+      catalog: {
+        listSessions: () => [{ id: 's1', title: 'Host chat' }],
+        getSession: (id) =>
+          id === 's1'
+            ? { id: 's1', title: 'Host chat', workingDirectory: proj, messages: [] }
+            : null,
+        listRecents: () => [proj]
+      }
+    })
+    const port = await server.listen(0, '127.0.0.1')
+    const { service } = attach(userData)
+    try {
+      const result = await service.pair(
+        encodeDaemonPairing({
+          v: DAEMON_PROTO_VERSION,
+          secret: SECRET,
+          machineId: 'ignored',
+          name: 'box',
+          host: '127.0.0.1',
+          port
+        })
+      )
+      assert.equal(result.ok, true)
+      const catalog = await service.pullHostCatalog('box-1')
+      assert.equal((catalog.sessions[0] as { title: string }).title, 'Host chat')
+      assert.deepEqual(catalog.recents, [proj])
     } finally {
       service.dispose()
       server.close()
@@ -162,6 +221,69 @@ describe('DaemonAttachService', () => {
     } finally {
       service.dispose()
       server.close()
+      await rm(disk, { recursive: true, force: true })
+      await rm(userData, { recursive: true, force: true })
+    }
+  })
+
+  it('retries a failed restore when the daemon comes back', async () => {
+    const disk = await mkdtemp(join(tmpdir(), 'vav-box-'))
+    const userData = await mkdtemp(join(tmpdir(), 'vav-attach-'))
+    const probe = createServer()
+    const port = await new Promise<number>((resolve, reject) => {
+      probe.once('error', reject)
+      probe.listen(0, '127.0.0.1', () => {
+        const address = probe.address()
+        resolve(typeof address === 'object' && address ? address.port : 0)
+      })
+    })
+    await new Promise<void>((resolve, reject) => probe.close((err) => (err ? reject(err) : resolve())))
+    await writeFile(
+      join(userData, 'paired-hosts.json'),
+      JSON.stringify({
+        hosts: [
+          {
+            machineId: 'box-1',
+            name: 'box',
+            secret: SECRET,
+            host: '127.0.0.1',
+            port
+          }
+        ]
+      })
+    )
+    const { service, registry } = attach(userData, false, { reconnectDelayMs: () => 40 })
+    let server: DaemonServer | undefined
+    try {
+      service.restore()
+      const start = Date.now()
+      while (!registry.get('box-1') && Date.now() - start < 2000) {
+        await new Promise((resolve) => setTimeout(resolve, 20))
+      }
+      assert.equal(registry.get('box-1')?.info.online, false)
+
+      const listening = new DaemonServer({
+        host: createLocalWorkspaceHost({ name: 'box' }),
+        identity: { machineId: 'box-1', name: 'box' },
+        secret: () => SECRET,
+        appVersion: 'test',
+        home: disk,
+        tmp: disk
+      })
+      server = listening
+      await listening.listen(port, '127.0.0.1')
+      let online = false
+      while (Date.now() - start < 4000) {
+        if (registry.get('box-1')?.info.online) {
+          online = true
+          break
+        }
+        await new Promise((resolve) => setTimeout(resolve, 20))
+      }
+      assert.equal(online, true)
+    } finally {
+      service.dispose()
+      server?.close()
       await rm(disk, { recursive: true, force: true })
       await rm(userData, { recursive: true, force: true })
     }
@@ -281,6 +403,49 @@ describe('DaemonAttachService', () => {
       assert.equal(stored.hosts[0]?.host, 'Mac-mini-2.local')
     } finally {
       service.dispose()
+      server.close()
+      await rm(disk, { recursive: true, force: true })
+      await rm(userData, { recursive: true, force: true })
+    }
+  })
+
+  it('uses LAN immediately when the tunnel port accepts but never replies', async () => {
+    const disk = await mkdtemp(join(tmpdir(), 'vav-box-'))
+    const userData = await mkdtemp(join(tmpdir(), 'vav-attach-'))
+    const { server, port } = await listenLoopback(disk)
+    const hang = createServer((socket) => {
+      socket.resume()
+    })
+    const hangPort = await new Promise<number>((resolve, reject) => {
+      hang.once('error', reject)
+      hang.listen(0, '127.0.0.1', () => {
+        const address = hang.address()
+        if (!address || typeof address === 'string') reject(new Error('no port'))
+        else resolve(address.port)
+      })
+    })
+    const { service } = attach(userData, false, {
+      dialTunnel: async () => ({ host: '127.0.0.1', port: hangPort, close: () => undefined })
+    })
+    try {
+      const started = Date.now()
+      const result = await service.pair(
+        encodeDaemonPairing({
+          v: DAEMON_PROTO_VERSION,
+          secret: SECRET,
+          machineId: 'ignored',
+          name: 'box',
+          host: '127.0.0.1',
+          port,
+          token: 'tcDEADPIPE'
+        })
+      )
+      assert.equal(result.ok, true)
+      if (result.ok) assert.equal(result.host.id, 'box-1')
+      assert.ok(Date.now() - started < 2_000, 'LAN should win without waiting out the dead tunnel')
+    } finally {
+      service.dispose()
+      hang.close()
       server.close()
       await rm(disk, { recursive: true, force: true })
       await rm(userData, { recursive: true, force: true })
@@ -424,6 +589,86 @@ describe('DaemonAttachService', () => {
     }
   })
 
+  it('opens a phone-role control plane when the host hub is listening', async () => {
+    const disk = await mkdtemp(join(tmpdir(), 'vav-box-'))
+    const userData = await mkdtemp(join(tmpdir(), 'vav-attach-'))
+    const received: string[] = []
+    const hub = new RemoteControlHub({
+      appVersion: 'test',
+      secret: () => SECRET,
+      listSessions: () => [],
+      listThread: () => null,
+      listControls: () => null,
+      listHost: () => ({
+        type: 'host',
+        name: 'box',
+        home: disk,
+        tmp: disk,
+        capabilities: REMOTE_PHONE_CAPABILITIES,
+        defaults: { agent: 'vav', model: '', thinking: null, approval: 'auto' },
+        recentDirs: []
+      }),
+      configure: (message) => {
+        received.push(`configure:${message.conversationId}:${message.approvalMode ?? ''}`)
+        return 'ok'
+      },
+      sendMessage: (id, text) => {
+        received.push(`send:${id}:${text}`)
+        return 'ok'
+      },
+      createSession: () => {
+        throw new Error('unused')
+      },
+      cancel: () => 'ok',
+      reply: () => false,
+      rename: () => 'ok',
+      archive: () => 'ok',
+      pin: () => 'ok',
+      favorite: () => 'ok',
+      browse: () => 'not-found',
+      setWorkspace: () => 'ok'
+    })
+    const server = new DaemonServer({
+      host: createLocalWorkspaceHost({ name: 'box' }),
+      identity: { machineId: 'box-1', name: 'box' },
+      secret: () => SECRET,
+      appVersion: 'test',
+      home: disk,
+      tmp: disk,
+      onControlHello: (socket, leftover, hello) => hub.adoptAuthed(socket, leftover, hello)
+    })
+    const port = await server.listen(0, '127.0.0.1')
+    const { service } = attach(userData)
+    try {
+      const result = await service.pair(
+        encodeDaemonPairing({
+          v: DAEMON_PROTO_VERSION,
+          secret: SECRET,
+          machineId: 'ignored',
+          name: 'box',
+          host: '127.0.0.1',
+          port
+        })
+      )
+      assert.equal(result.ok, true)
+      assert.equal(service.controlPlaneOf('box-1'), true)
+      assert.equal(await service.waitForControlPlane('box-1'), true)
+      service.controlOf('box-1')?.send('c1', 'hi')
+      service.controlOf('box-1')?.configure('c1', { approvalMode: 'bypass' })
+      const start = Date.now()
+      while (received.length < 2 && Date.now() - start < 1000) {
+        await new Promise((resolve) => setTimeout(resolve, 20))
+      }
+      assert.deepEqual(received, ['send:c1:hi', 'configure:c1:bypass'])
+    } finally {
+      service.dispose()
+      hub.dispose()
+      server.close()
+      await rm(disk, { recursive: true, force: true })
+      await rm(userData, { recursive: true, force: true })
+    }
+  })
+
   it('cancels an in-flight LAN pair', async () => {
     const userA = await mkdtemp(join(tmpdir(), 'vav-a-'))
     const userB = await mkdtemp(join(tmpdir(), 'vav-b-'))
@@ -461,6 +706,101 @@ describe('DaemonAttachService', () => {
       b.dispose()
       await rm(userA, { recursive: true, force: true })
       await rm(userB, { recursive: true, force: true })
+    }
+  })
+
+  it('forgets a host by asking the daemon to revoke the grant', async () => {
+    const disk = await mkdtemp(join(tmpdir(), 'vav-box-'))
+    const userData = await mkdtemp(join(tmpdir(), 'vav-attach-'))
+    const { server, port } = await listenLoopback(disk)
+    const { service } = attach(userData)
+    try {
+      const result = await service.pair(
+        encodeDaemonPairing({
+          v: DAEMON_PROTO_VERSION,
+          secret: SECRET,
+          machineId: 'ignored',
+          name: 'box',
+          host: '127.0.0.1',
+          port
+        })
+      )
+      assert.equal(result.ok, true)
+      assert.equal(server.incoming().length, 1)
+      await service.forget('box-1')
+      const start = Date.now()
+      while (
+        server.incoming().some((row) => row.state !== 'revoked') &&
+        Date.now() - start < 1000
+      ) {
+        await new Promise((resolve) => setTimeout(resolve, 20))
+      }
+      assert.equal(server.incoming().some((row) => row.state === 'revoked'), true)
+    } finally {
+      service.dispose()
+      server.close()
+      await rm(disk, { recursive: true, force: true })
+      await rm(userData, { recursive: true, force: true })
+    }
+  })
+
+  it('stops reconnecting after the host revokes the grant', async () => {
+    const disk = await mkdtemp(join(tmpdir(), 'vav-box-'))
+    const userData = await mkdtemp(join(tmpdir(), 'vav-attach-'))
+    const { server, port } = await listenLoopback(disk)
+    const { service, registry } = attach(userData, false, { reconnectDelayMs: () => 40 })
+    try {
+      const result = await service.pair(
+        encodeDaemonPairing({
+          v: DAEMON_PROTO_VERSION,
+          secret: SECRET,
+          machineId: 'ignored',
+          name: 'box',
+          host: '127.0.0.1',
+          port
+        })
+      )
+      assert.equal(result.ok, true)
+      const grantId = server.incoming()[0]?.id
+      assert.ok(grantId)
+      server.unpairGrant(grantId)
+      const start = Date.now()
+      while (registry.get('box-1') && Date.now() - start < 2000) {
+        await new Promise((resolve) => setTimeout(resolve, 20))
+      }
+      assert.equal(registry.get('box-1'), undefined)
+      const stored = JSON.parse(await readFile(join(userData, 'paired-hosts.json'), 'utf8')) as {
+        hosts: unknown[]
+      }
+      assert.equal(stored.hosts.length, 0)
+    } finally {
+      service.dispose()
+      server.close()
+      await rm(disk, { recursive: true, force: true })
+      await rm(userData, { recursive: true, force: true })
+    }
+  })
+
+  it('advertises a loopback vavd pairing even when this listen is off', async () => {
+    const userData = await mkdtemp(join(tmpdir(), 'vav-advertise-'))
+    const { service } = attach(userData, false)
+    const vavdPairing = encodeDaemonPairing({
+      v: DAEMON_PROTO_VERSION,
+      secret: 'vavd-secret-0123456789ab',
+      machineId: 'vavd-1',
+      name: 'VAV Daemon',
+      host: '127.0.0.1',
+      port: 4759
+    })
+    try {
+      assert.equal(service.pairing(), null)
+      service.setAdvertisedPairing(vavdPairing)
+      assert.equal(service.pairing(), vavdPairing)
+      service.setAdvertisedPairing(null)
+      assert.equal(service.pairing(), null)
+    } finally {
+      service.dispose()
+      await rm(userData, { recursive: true, force: true })
     }
   })
 })

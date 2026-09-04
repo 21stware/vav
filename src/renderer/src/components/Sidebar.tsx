@@ -13,28 +13,44 @@ import {
   X
 } from 'lucide-react'
 import {
-  PRESET_MODELS,
   enabledCliAgents,
   type ConversationMeta,
   type SidebarGroupingMode
 } from '@shared/types'
 import type { FileSessionListEntry } from '@shared/ipc'
-import { useSessionStore, type TurnRuntime } from '../state/sessionStore'
+import { useSessionStore } from '../state/sessionStore'
 import { useWorkspaceStore } from '../state/workspaceStore'
 import { isTemporaryWorkspace, middleTruncate, relativeTime, workdirShortLabel } from '../lib/format'
-import { flatten, groupConversations, type ConversationGroup } from '../lib/grouping'
+import { flatten, listedSidebarGroups, type ConversationGroup } from '../lib/grouping'
 import {
-  conversationMatchesFilter,
   encodeSidebarSessionFilter,
+  isSessionRunning as sessionTurnIsRunning,
+  isSessionUnread as sessionTurnIsUnread,
   isSidebarSessionFilterEnabled,
   parseSidebarSessionFilter,
   type SidebarSessionFilter
 } from '../lib/sidebarSessionFilter'
 import { swarmChildrenOf } from '@shared/swarmLayout'
 import { menuAnchor, showMenu, type MenuItem } from '../lib/nativeMenu'
-import { warmMenuIcons } from '../lib/menuIcons'
+import { lucideMenuIcon, warmMenuIcons, warmSessionContextMenuIcons } from '../lib/menuIcons'
 import { fileManagerLabel } from '../lib/platform'
 import { basename } from '../lib/path'
+import {
+  agentTypeLabel,
+  conversationSubtitle,
+  conversationSelectionRunClass,
+  adjacentRunClass,
+  filterValueLabel,
+  flattenSessionTitle,
+  groupingOptions,
+  hostMachineLabel,
+  incomingConnectLabels,
+  pinnableWorkspaceDir,
+  nextVisibleSelectionAfterArchive,
+  filterFileSessionRows
+} from '../lib/sidebarList'
+import { ConvBracket, type SwarmBracketKind } from './sidebar/ConvBracket'
+import { RenameField } from './sidebar/RenameField'
 import {
   conversationOnMachine,
   isLocalMachine,
@@ -46,94 +62,7 @@ import { useT } from '../i18n/useT'
 import { EmptyState } from './ui'
 import { UpdateCorner } from './UpdateCorner'
 
-export function modelLabel(id: string): string {
-  return PRESET_MODELS.find((model) => model.id === id)?.label ?? id
-}
-
-type SwarmBracketKind = 'first' | 'mid' | 'last'
-
-/** Left bracket for a Swarm cluster — ┌─ / ├─ / └─, not a parent→child tree. */
-function ConvBracket({ kind }: { kind: SwarmBracketKind }): React.JSX.Element {
-  return <span className={`conv-bracket is-${kind}`} aria-hidden />
-}
-
-/** Running CLI agent display name (sidebar-conversation-list.rpml · Agent 类型). */
-function agentTypeLabel(
-  conversation: ConversationMeta,
-  cliAgents: ReturnType<typeof enabledCliAgents>
-): string | null {
-  const id = conversation.cliHost || conversation.agentBinaryName
-  if (!id || id === 'vav') return null
-  return cliAgents.find((a) => a.id === id)?.name ?? id
-}
-
-type Subtitle =
-  | { kind: 'status'; text: string }
-  | { kind: 'meta'; age: string; dir: string | null }
-  | null
-
-/**
- * Subtitle slot, resolved by the priority ladder in
- * sidebar-conversation-list.rpml (annotation 2 → 副标题).
- * Running: `{AgentType} · 流式中 · {Model}` / `{AgentType} · 后台运行 · N 工具`.
- * Idle: `{相对时间} · {目录}`.
- */
-function subtitleFor(
-  conversation: ConversationMeta,
-  turn: TurnRuntime | undefined,
-  isActive: boolean,
-  tmp: string,
-  t: ReturnType<typeof useT>,
-  agentLabel: string | null,
-  /** Workspace grouping already labels the bucket — hide the path under each row. */
-  hideWorkdir = false
-): Subtitle {
-  if (turn?.awaitingToolCallId) return { kind: 'status', text: t('sidebar.awaitingAnswer') }
-  if (turn?.isRunning && isActive) {
-    const core = t('sidebar.streaming', { model: modelLabel(conversation.model) })
-    return { kind: 'status', text: agentLabel ? `${agentLabel} · ${core}` : core }
-  }
-  if (turn?.isRunning) {
-    const core = t('sidebar.backgroundRunning', { count: turn.toolCount })
-    return { kind: 'status', text: agentLabel ? `${agentLabel} · ${core}` : core }
-  }
-
-  // When there is no conversation history and no active progress, show nothing.
-  // updatedAt === createdAt is the proxy for "no messages yet".
-  if (conversation.updatedAt === conversation.createdAt && conversation.tokensUsed === 0) {
-    return null
-  }
-
-  const dir =
-    !hideWorkdir && !isTemporaryWorkspace(conversation.workingDirectory, tmp)
-      ? workdirShortLabel(conversation.workingDirectory, tmp)
-      : null
-  return { kind: 'meta', age: relativeTime(conversation.updatedAt), dir }
-}
-
-function groupingOptions(t: ReturnType<typeof useT>): { value: SidebarGroupingMode; label: string }[] {
-  return [
-    { value: 'none', label: t('sidebar.group.none') },
-    { value: 'workspace', label: t('sidebar.group.workspace') },
-    { value: 'provider', label: t('sidebar.group.provider') }
-  ]
-}
-
-function filterValueLabel(
-  filter: SidebarSessionFilter,
-  t: ReturnType<typeof useT>
-): string {
-  switch (filter.kind) {
-    case 'none':
-      return t('sidebar.filter.none')
-    case 'active':
-      return t('sidebar.filter.active')
-    case 'favorite':
-      return t('sidebar.filter.favorite')
-    case 'workspace':
-      return basename(filter.path)
-  }
-}
+export { modelLabel } from '../lib/sidebarList'
 
 export function Sidebar({
   floating = false,
@@ -239,11 +168,12 @@ export function Sidebar({
   // Rasterize the foot-menu glyphs ahead of the first open.
   useEffect(() => {
     warmMenuIcons([
-      { kind: 'lucide', key: 'file-sessions' },
-      { kind: 'lucide', key: 'archive' },
-      { kind: 'lucide', key: 'import' },
-      { kind: 'lucide', key: 'settings' }
+      lucideMenuIcon('file-sessions'),
+      lucideMenuIcon('archive'),
+      lucideMenuIcon('import'),
+      lucideMenuIcon('settings')
     ])
+    warmSessionContextMenuIcons()
   }, [])
 
   const refreshFileSessions = useCallback(async (): Promise<void> => {
@@ -277,18 +207,23 @@ export function Sidebar({
   const windowMachineId = normalizeMachineId(useSessionStore((s) => s.windowMachineId))
   const defaultMachineId = normalizeMachineId(useSessionStore((s) => s.settings.defaultMachineId))
   const activeHost = hosts.find((h) => h.id === windowMachineId)
-  const machineLabel = (machineId: string, fallback?: string): string => {
-    if (machineId === LOCAL_MACHINE_ID) return t('sidebar.thisMachine')
-    return hosts.find((h) => h.id === machineId)?.name?.trim() || fallback || machineId
-  }
+  const machineLabel = (machineId: string, fallback?: string): string =>
+    hostMachineLabel(machineId, hosts, LOCAL_MACHINE_ID, t('sidebar.thisMachine'), fallback)
   // Incoming phones still annotate the local Connect control.
-  const incomingDeviceLabels = useMemo(() => {
-    const labels: string[] = []
-    for (const client of remoteControlStatus?.clients ?? []) {
-      if (client.device) labels.push(t('sidebar.connectWith', { name: client.device }))
-    }
-    return labels
-  }, [remoteControlStatus, t])
+  const incomingControllers = useSessionStore((s) => s.incomingControllers)
+  const incomingDeviceLabels = useMemo(
+    () =>
+      incomingConnectLabels(
+        [
+          ...(remoteControlStatus?.clients ?? []),
+          ...incomingControllers
+            .filter((row) => row.online)
+            .map((row) => ({ device: row.name }))
+        ],
+        (name) => t('sidebar.connectWith', { name })
+      ),
+    [remoteControlStatus, incomingControllers, t]
+  )
   const localWindow = isLocalMachine(windowMachineId)
   const connectButtonLabel = localWindow
     ? incomingDeviceLabels.length > 0
@@ -333,16 +268,21 @@ export function Sidebar({
 
   const isSessionRunning = (id: string): boolean => {
     const turn = turns[id]
-    return !!turn?.isRunning || activityById[id] === 'running' || shellBusy.has(id)
+    return sessionTurnIsRunning({
+      isRunning: turn?.isRunning,
+      activity: activityById[id],
+      shellBusy: shellBusy.has(id)
+    })
   }
   const isSessionUnread = (id: string): boolean => {
     const conversation = conversations.find((c) => c.id === id)
     const turn = turns[id]
-    const awaiting = !!turn?.awaitingToolCallId
-    const running = !!turn?.isRunning && !awaiting
-    return (
-      (!awaiting && !running && activityById[id] === 'done') || conversation?.resultUnseen === true
-    )
+    return sessionTurnIsUnread({
+      awaitingToolCallId: turn?.awaitingToolCallId,
+      isRunning: turn?.isRunning,
+      activity: activityById[id],
+      resultUnseen: conversation?.resultUnseen
+    })
   }
 
   // Collapse state is ephemeral: mode switch or search resets to all expanded.
@@ -350,39 +290,23 @@ export function Sidebar({
     setCollapsedKeys(new Set())
   }, [groupingMode, sessionFilterRaw, searching, listMode])
 
-  const groups = useMemo(() => {
-    if (fileSessionsView) return []
-    const needle = query.trim().toLowerCase()
-    // File-bound sessions live only under “File sessions” — never in workspace
-    // groups. listMeta already omits them; the store still hydrates them for
-    // FileSessionView, so we must filter here or a Downloads/file click looks
-    // like a normal project session that “wrongly” opens the file canvas.
-    if (archiveView) {
-      const rows = conversations
-        .filter((c) => c.archived && !c.fileId)
-        .filter((c) => conversationOnMachine(c, windowMachineId))
-        .filter((c) => !needle || c.title.toLowerCase().includes(needle))
-        .sort((a, b) => (b.archivedAt ?? b.updatedAt) - (a.archivedAt ?? a.updatedAt))
-      return [{ key: 'archive', label: '', conversations: rows }]
-    }
-    const matched = conversations
-      .filter((c) => !c.archived && !c.fileId)
-      .filter((c) => conversationOnMachine(c, windowMachineId))
-      .filter((c) => !needle || c.title.toLowerCase().includes(needle))
-      .filter((c) =>
-        conversationMatchesFilter(c, sessionFilter, {
-          running: isSessionRunning(c.id),
-          unread: isSessionUnread(c.id),
-          favoriteIds: favoriteSet
-        })
-      )
-    const keep = new Set(matched.map((c) => c.id))
-    for (const row of matched) {
-      if (row.swarmParentId) keep.add(row.swarmParentId)
-    }
-    const rows = conversations.filter((c) => keep.has(c.id) && !c.archived && !c.fileId)
-    return groupConversations(rows, searching, groupingMode, tmp, pinnedWorkspaces)
-  }, [
+  const groups = useMemo(
+    () =>
+      listedSidebarGroups(conversations, {
+        fileSessionsView,
+        archiveView,
+        query,
+        windowMachineId,
+        sessionFilter,
+        running: isSessionRunning,
+        unread: isSessionUnread,
+        favoriteIds: favoriteSet,
+        searching,
+        groupingMode,
+        tmp,
+        pinnedWorkspaces
+      }),
+    [
     conversations,
     query,
     searching,
@@ -406,16 +330,10 @@ export function Sidebar({
     [pinnedGroups]
   )
 
-  const filteredFileSessions = useMemo(() => {
-    const needle = query.trim().toLowerCase()
-    if (!needle) return fileSessionRows
-    return fileSessionRows.filter(
-      (row) =>
-        row.title.toLowerCase().includes(needle) ||
-        row.path.toLowerCase().includes(needle) ||
-        basename(row.path).toLowerCase().includes(needle)
-    )
-  }, [fileSessionRows, query])
+  const filteredFileSessions = useMemo(
+    () => filterFileSessionRows(fileSessionRows, query, basename),
+    [fileSessionRows, query]
+  )
 
   const swarmEnabled = useSessionStore((s) => s.settings.swarmModeEnabled === true)
   const focusSwarmSession = useSessionStore((s) => s.focusSwarmSession)
@@ -441,9 +359,7 @@ export function Sidebar({
       const messageTotal = targets.reduce((sum, row) => sum + (row.messageCount || 0), 0)
       const title =
         targets.length === 1
-          ? targets[0]!.title.replace(/^[#\s\u00a0\u3000]+/, '').trim() ||
-            targets[0]!.title.trim() ||
-            t('sidebar.fileSessionDelete')
+          ? flattenSessionTitle(targets[0]!.title, t('sidebar.fileSessionDelete'))
           : t('sidebar.fileSessionDeleteCount', { count: targets.length })
       const body =
         targets.length === 1
@@ -517,25 +433,26 @@ export function Sidebar({
         return [
           {
             label: t('sidebar.fileSessionOpenFileCount', { count: openable.length || targets.length }),
+            icon: lucideMenuIcon('file-text'),
             disabled: openable.length === 0,
             onSelect: () => openPreviews(openable)
           },
           {
             label: t('sidebar.fileSessionOpenDetachedCount', { count: targets.length }),
+            icon: lucideMenuIcon('app-window'),
             disabled: openable.length === 0,
             onSelect: () => {
               openPreviews(openable)
               onNavigate?.()
             }
           },
+          { label: '', divider: true },
           {
             label: t('sidebar.menu.copyTitle'),
+            icon: lucideMenuIcon('clipboard-copy'),
             onSelect: () => {
               const text = targets
-                .map(
-                  (row) =>
-                    row.title.replace(/^[#\s\u00a0\u3000]+/, '').trim() || row.title.trim()
-                )
+                .map((row) => flattenSessionTitle(row.title, ''))
                 .filter(Boolean)
                 .join('\n')
               void window.vav.conversations.copyToClipboard(text)
@@ -544,6 +461,7 @@ export function Sidebar({
           { label: '', divider: true },
           {
             label: t('sidebar.fileSessionDeleteCount', { count: targets.length }),
+            icon: lucideMenuIcon('trash-2'),
             destructive: true,
             onSelect: () => deleteSelectedFileSessions(targets.map((row) => row.sessionId))
           }
@@ -551,11 +469,11 @@ export function Sidebar({
       }
 
       const row = targets[0]!
-      const title =
-        row.title.replace(/^[#\s\u00a0\u3000]+/, '').trim() || row.title.trim() || 'New session'
+      const title = flattenSessionTitle(row.title)
       return [
         {
           label: t('sidebar.fileSessionOpenChat'),
+          icon: lucideMenuIcon('message-square'),
           onSelect: () => {
             void selectConversation(row.sessionId)
             onNavigate?.()
@@ -563,6 +481,7 @@ export function Sidebar({
         },
         {
           label: t('sidebar.fileSessionOpenFile'),
+          icon: lucideMenuIcon('file-text'),
           disabled: row.pathStatus !== 'ok',
           onSelect: () => {
             void selectConversation(row.sessionId)
@@ -575,6 +494,7 @@ export function Sidebar({
         },
         {
           label: t('sidebar.menu.openDetached'),
+          icon: lucideMenuIcon('app-window'),
           disabled: row.pathStatus !== 'ok',
           onSelect: () => {
             void selectConversation(row.sessionId)
@@ -586,13 +506,16 @@ export function Sidebar({
             onNavigate?.()
           }
         },
+        { label: '', divider: true },
         {
           label: t('sidebar.menu.copyTitle'),
+          icon: lucideMenuIcon('clipboard-copy'),
           onSelect: () => void window.vav.conversations.copyToClipboard(title)
         },
         { label: '', divider: true },
         {
           label: t('sidebar.fileSessionDelete'),
+          icon: lucideMenuIcon('trash-2'),
           destructive: true,
           onSelect: () => deleteSelectedFileSessions([row.sessionId])
         }
@@ -685,27 +608,11 @@ export function Sidebar({
    */
   const archiveKeepingList = async (ids: string[]): Promise<void> => {
     const current = useSessionStore.getState().activeId
-    let neighbor: string | null = null
-    if (current && ids.includes(current)) {
-      const leaving = new Set(ids)
-      const index = visible.findIndex((c) => c.id === current)
-      if (index >= 0) {
-        for (let i = index - 1; i >= 0; i -= 1) {
-          if (!leaving.has(visible[i]!.id)) {
-            neighbor = visible[i]!.id
-            break
-          }
-        }
-        if (!neighbor) {
-          for (let i = index + 1; i < visible.length; i += 1) {
-            if (!leaving.has(visible[i]!.id)) {
-              neighbor = visible[i]!.id
-              break
-            }
-          }
-        }
-      }
-    }
+    const neighbor = nextVisibleSelectionAfterArchive(
+      visible.map((c) => c.id),
+      current,
+      ids
+    )
     for (const id of ids) await setArchived(id, true)
     if (neighbor) await selectConversation(neighbor)
   }
@@ -734,6 +641,7 @@ export function Sidebar({
           { label: '', divider: true },
           {
             label: t('sidebar.menu.deleteCount', { count: targets.length }),
+            icon: lucideMenuIcon('trash-2'),
             destructive: true,
             onSelect: () => requestDelete(targets.map((c) => c.id))
           }
@@ -744,6 +652,7 @@ export function Sidebar({
           label: allPinned
             ? t('sidebar.menu.unpinCount', { count: targets.length })
             : t('sidebar.menu.pinCount', { count: targets.length }),
+          icon: lucideMenuIcon('pin'),
           onSelect: () => {
             void (async () => {
               for (const c of targets) await setPinned(c.id, !allPinned)
@@ -754,6 +663,7 @@ export function Sidebar({
           label: allFavorite
             ? t('sidebar.menu.unfavoriteCount', { count: targets.length })
             : t('sidebar.menu.favoriteCount', { count: targets.length }),
+          icon: lucideMenuIcon('star'),
           onSelect: () => {
             void (async () => {
               for (const c of targets) await setFavorite(c.id, !allFavorite)
@@ -764,13 +674,16 @@ export function Sidebar({
           label: t('sidebar.menu.archiveCount', { count: targets.length }),
           onSelect: () => void archiveKeepingList(targets.map((c) => c.id))
         },
+        { label: '', divider: true },
         {
           label: t('sidebar.menu.exportCount', { count: targets.length }),
+          icon: lucideMenuIcon('upload'),
           onSelect: () => void exportSessions(targets.map((c) => c.id))
         },
         { label: '', divider: true },
         {
           label: t('sidebar.menu.deleteCount', { count: targets.length }),
+          icon: lucideMenuIcon('trash-2'),
           destructive: true,
           onSelect: () => requestDelete(targets.map((c) => c.id))
         }
@@ -787,42 +700,64 @@ export function Sidebar({
           onSelect: () => void setArchived(id, false)
         },
         { label: '', divider: true },
-        { label: t('sidebar.menu.delete'), destructive: true, onSelect: () => requestDelete([id]) }
+        {
+          label: t('sidebar.menu.delete'),
+          icon: lucideMenuIcon('trash-2'),
+          destructive: true,
+          onSelect: () => requestDelete([id])
+        }
       ]
     }
     return [
       {
         label: t('sidebar.menu.openDetached'),
+        icon: lucideMenuIcon('app-window'),
         onSelect: () => {
           void openDetached(id)
           // Close the floating overlay after launching the companion.
           onNavigate?.()
         }
       },
+      { label: '', divider: true },
       {
         label: conversation.pinned ? t('sidebar.menu.unpin') : t('sidebar.menu.pin'),
+        icon: lucideMenuIcon('pin'),
         onSelect: () => void setPinned(id, !conversation.pinned)
       },
       {
         label: favoriteSet.has(id) ? t('sidebar.menu.unfavorite') : t('sidebar.menu.favorite'),
+        icon: lucideMenuIcon('star'),
         onSelect: () => void setFavorite(id, !favoriteSet.has(id))
       },
       {
         label: t('sidebar.menu.archive'),
         onSelect: () => void archiveKeepingList([id])
       },
-      { label: t('sidebar.menu.rename'), onSelect: () => beginRename(id) },
-      { label: t('sidebar.menu.duplicate'), onSelect: () => void duplicateConversation(id) },
+      { label: '', divider: true },
+      {
+        label: t('sidebar.menu.rename'),
+        icon: lucideMenuIcon('pencil'),
+        onSelect: () => beginRename(id)
+      },
+      {
+        label: t('sidebar.menu.duplicate'),
+        icon: lucideMenuIcon('copy-plus'),
+        onSelect: () => void duplicateConversation(id)
+      },
+      { label: '', divider: true },
       {
         label: t('sidebar.menu.export'),
+        icon: lucideMenuIcon('upload'),
         onSelect: () => void exportSessions([id])
       },
       {
         label: t('sidebar.menu.copyTitle'),
+        icon: lucideMenuIcon('clipboard-copy'),
         onSelect: () => void window.vav.conversations.copyToClipboard(conversation.title ?? '')
       },
       {
         label: t('sidebar.menu.revealWorkdir', { fileManager: fileManagerLabel() }),
+        icon: lucideMenuIcon('folder-open'),
         disabled: !hasRealWorkdir,
         onSelect: () => {
           if (conversation.workingDirectory) {
@@ -831,7 +766,12 @@ export function Sidebar({
         }
       },
       { label: '', divider: true },
-      { label: t('sidebar.menu.delete'), destructive: true, onSelect: () => requestDelete([id]) }
+      {
+        label: t('sidebar.menu.delete'),
+        icon: lucideMenuIcon('trash-2'),
+        destructive: true,
+        onSelect: () => requestDelete([id])
+      }
     ]
   }
 
@@ -881,18 +821,9 @@ export function Sidebar({
     }
   }
 
-  const selectionRunClass = (id: string): string => {
-    if (selectedIds.length <= 1 || !selectedIds.includes(id)) return ''
-    const selected = new Set(selectedIds)
-    const index = visible.findIndex((c) => c.id === id)
-    if (index < 0) return 'run-only'
-    const prev = index > 0 && selected.has(visible[index - 1]!.id)
-    const next = index < visible.length - 1 && selected.has(visible[index + 1]!.id)
-    if (!prev && !next) return 'run-only'
-    if (!prev && next) return 'run-start'
-    if (prev && next) return 'run-middle'
-    return 'run-end'
-  }
+  const visibleIds = visible.map((c) => c.id)
+  const selectionRunClass = (id: string): string =>
+    conversationSelectionRunClass(id, selectedIds, visibleIds)
 
   const toggleGroup = (key: string): void => {
     setCollapsedKeys((prev) => {
@@ -907,15 +838,15 @@ export function Sidebar({
     const collapsible = group.kind === 'workspace'
     const collapsed = collapsible && collapsedKeys.has(group.key)
     const groupWorkdir = group.workdir ?? group.conversations[0]?.workingDirectory ?? null
-    // Project path groups can pin / aggregate; they are not a selectable surface.
-    const workspacePinnable =
-      group.kind === 'workspace' &&
-      group.workspaceSelectable !== false &&
-      !!groupWorkdir &&
-      !groupWorkdir.startsWith('__') &&
-      !isTemporaryWorkspace(groupWorkdir, tmp)
     // A Temporary Workspace is minted per session and has no durable path to pin.
-    const pinnableWorkdir = workspacePinnable ? groupWorkdir : null
+    const pinnableWorkdir = pinnableWorkspaceDir({
+      groupKind: group.kind,
+      workspaceSelectable: group.workspaceSelectable,
+      groupWorkdir,
+      tmp,
+      isTemporaryWorkspace
+    })
+    const workspacePinnable = pinnableWorkdir != null
     const workspacePinned = !!pinnableWorkdir && pinnedWorkspaces.includes(pinnableWorkdir)
     return (
       <div
@@ -1064,15 +995,18 @@ export function Sidebar({
             const running = !!turn?.isRunning && !awaiting
             const doneUnseen = !awaiting && !running && activityById[conversation.id] === 'done'
             const agentLabel = agentTypeLabel(conversation, cliAgents)
-            const subtitle = subtitleFor(
+            const subtitle = conversationSubtitle({
               conversation,
               turn,
               isActive,
               tmp,
               t,
               agentLabel,
-              group.kind === 'workspace'
-            )
+              hideWorkdir: group.kind === 'workspace',
+              relativeTime,
+              isTemporaryWorkspace,
+              workdirShortLabel
+            })
             const rowTitle =
               conversation.workingDirectory &&
               !isTemporaryWorkspace(conversation.workingDirectory, tmp) &&
@@ -1482,15 +1416,7 @@ export function Sidebar({
               const nextMulti =
                 index < filteredFileSessions.length - 1 &&
                 selectedIds.includes(filteredFileSessions[index + 1]!.sessionId)
-              const runClass = isMultiSelected
-                ? prevMulti && nextMulti
-                  ? 'run-middle'
-                  : prevMulti
-                    ? 'run-end'
-                    : nextMulti
-                      ? 'run-start'
-                      : 'run-only'
-                : ''
+              const runClass = isMultiSelected ? adjacentRunClass(prevMulti, nextMulti) : ''
               const statusLabel =
                 row.pathStatus === 'dir_missing'
                   ? t('sidebar.dirNotExist')
@@ -1499,8 +1425,7 @@ export function Sidebar({
                     : null
               const pathLabel = basename(row.path) || row.path
               // Flatten auto-titles: strip markdown hashes / leading whitespace.
-              const title =
-                row.title.replace(/^[#\s\u00a0\u3000]+/, '').trim() || row.title.trim() || 'New session'
+              const title = flattenSessionTitle(row.title)
               return (
                 <button
                   type="button"
@@ -1642,7 +1567,7 @@ export function Sidebar({
                 [
                   {
                     label: t('sidebar.showFileSessions'),
-                    icon: { kind: 'lucide', key: 'file-sessions' },
+                    icon: lucideMenuIcon('file-sessions'),
                     onSelect: () => {
                       setSidebarQuery('')
                       void selectWorkspaceGroup(null)
@@ -1654,7 +1579,7 @@ export function Sidebar({
                       archivedCount > 0
                         ? t('sidebar.archivedCount', { count: archivedCount })
                         : t('sidebar.archived'),
-                    icon: { kind: 'lucide', key: 'archive' },
+                    icon: lucideMenuIcon('archive'),
                     onSelect: () => {
                       setSidebarQuery('')
                       setListMode('archive')
@@ -1663,12 +1588,12 @@ export function Sidebar({
                   { label: '', divider: true },
                   {
                     label: t('sidebar.menu.import'),
-                    icon: { kind: 'lucide', key: 'import' },
+                    icon: lucideMenuIcon('import'),
                     onSelect: () => void importSessions()
                   },
                   {
                     label: t('common.settingsEllipsis'),
-                    icon: { kind: 'lucide', key: 'settings' },
+                    icon: lucideMenuIcon('settings'),
                     onSelect: () => useSessionStore.getState().openSettings()
                   }
                 ],
@@ -1681,38 +1606,5 @@ export function Sidebar({
         </div>
       )}
     </aside>
-  )
-}
-
-function RenameField({
-  initial,
-  onCommit,
-  onCancel
-}: {
-  initial: string
-  onCommit: (title: string) => void
-  onCancel: () => void
-}): React.JSX.Element {
-  const [value, setValue] = useState(initial)
-  const ref = useRef<HTMLInputElement>(null)
-
-  useEffect(() => {
-    ref.current?.focus()
-    ref.current?.select()
-  }, [])
-
-  return (
-    <input
-      ref={ref}
-      className="text-field rename-field"
-      value={value}
-      onClick={(event) => event.stopPropagation()}
-      onChange={(event) => setValue(event.target.value)}
-      onBlur={() => onCommit(value)}
-      onKeyDown={(event) => {
-        if (event.key === 'Enter') onCommit(value)
-        else if (event.key === 'Escape') onCancel()
-      }}
-    />
   )
 }

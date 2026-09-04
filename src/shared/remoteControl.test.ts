@@ -1,11 +1,13 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import {
+  compareRemoteSessions,
   drainJsonLines,
   encodeLine,
   encodePairing,
   parseClientMessage,
-  parsePairing
+  parsePairing,
+  parseServerMessage
 } from './remoteControl.ts'
 
 describe('drainJsonLines', () => {
@@ -133,6 +135,21 @@ describe('parseClientMessage', () => {
     assert.equal(parseClientMessage({ type: 'configure', conversationId: 'c1' }), null)
   })
 
+  it('accepts pin and favorite toggles', () => {
+    assert.deepEqual(parseClientMessage({ type: 'pin', conversationId: 'c1', pinned: true }), {
+      type: 'pin',
+      conversationId: 'c1',
+      pinned: true
+    })
+    assert.deepEqual(parseClientMessage({ type: 'favorite', conversationId: 'c1', favorite: false }), {
+      type: 'favorite',
+      conversationId: 'c1',
+      favorite: false
+    })
+    assert.equal(parseClientMessage({ type: 'pin', conversationId: 'c1' }), null)
+    assert.equal(parseClientMessage({ type: 'favorite', conversationId: 'c1' }), null)
+  })
+
   it('accepts cancel, reply, rename, archive, browse, workspace, and fast', () => {
     assert.deepEqual(parseClientMessage({ type: 'cancel', conversationId: 'c1' }), {
       type: 'cancel',
@@ -168,6 +185,22 @@ describe('parseClientMessage', () => {
   })
 })
 
+describe('compareRemoteSessions', () => {
+  it('puts pinned rows first, newest pin first, then recency', () => {
+    const rows = [
+      { pinned: false, pinTime: 0, updatedAt: 30 },
+      { pinned: true, pinTime: 10, updatedAt: 1 },
+      { pinned: true, pinTime: 20, updatedAt: 2 },
+      { pinned: false, pinTime: 0, updatedAt: 40 }
+    ]
+    const sorted = [...rows].sort(compareRemoteSessions)
+    assert.deepEqual(
+      sorted.map((row) => row.pinTime || row.updatedAt),
+      [20, 10, 40, 30]
+    )
+  })
+})
+
 describe('pairing payload', () => {
   it('round-trips through encode/parse', () => {
     const encoded = encodePairing({
@@ -196,5 +229,35 @@ describe('pairing payload', () => {
       null
     )
     assert.equal(parsePairing('vav-remote:{broken'), null)
+  })
+})
+
+describe('parseServerMessage', () => {
+  it('accepts welcome, sessions, thread, and turn frames the phone already paints', () => {
+    assert.deepEqual(parseServerMessage({ type: 'welcome', proto: 1, app: 'VAV', version: '1' }), {
+      type: 'welcome',
+      proto: 1,
+      app: 'VAV',
+      version: '1'
+    })
+    const sessions = parseServerMessage({
+      type: 'sessions',
+      sessions: [{ id: 'c1', title: 'Host', status: 'idle', surface: 'vav', updatedAt: 1 }]
+    })
+    assert.equal(sessions?.type, 'sessions')
+    if (sessions?.type === 'sessions') assert.equal(sessions.sessions[0]?.dirLabel, '')
+    const turn = parseServerMessage({
+      type: 'turn',
+      conversationId: 'c1',
+      phase: 'running',
+      draft: 'hi',
+      blocks: [{ kind: 'text', text: 'hi' }]
+    })
+    assert.equal(turn?.type, 'turn')
+    if (turn?.type === 'turn') assert.equal(turn.draft, 'hi')
+  })
+
+  it('rejects a turn without a conversation', () => {
+    assert.equal(parseServerMessage({ type: 'turn', phase: 'running' }), null)
   })
 })

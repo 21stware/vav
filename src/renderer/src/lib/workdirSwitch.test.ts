@@ -1,12 +1,20 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import { allowWorkdirSwitch, isSwarmSurfaceActive } from './workdirSwitch.ts'
+import { allowWorkdirSwitch, isSwarmSurfaceActive, locateWorkspaceDefaultName, swarmBlocksWorkdirSwitch } from './workdirSwitch.ts'
 
 describe('isSwarmSurfaceActive', () => {
   it('is only the Swarm surface, not Thread with the setting on', () => {
     assert.equal(isSwarmSurfaceActive(true, true), true)
     assert.equal(isSwarmSurfaceActive(true, false), false)
     assert.equal(isSwarmSurfaceActive(false, true), false)
+  })
+})
+
+describe('swarmBlocksWorkdirSwitch', () => {
+  it('blocks only a live Swarm surface', () => {
+    assert.equal(swarmBlocksWorkdirSwitch(null, true, true), false)
+    assert.equal(swarmBlocksWorkdirSwitch('c1', true, true), true)
+    assert.equal(swarmBlocksWorkdirSwitch('c1', true, false), false)
   })
 })
 
@@ -49,5 +57,13 @@ describe('allowWorkdirSwitch', () => {
       }),
       true
     )
+  })
+})
+
+describe('locateWorkspaceDefaultName', () => {
+  it('strips path separators and caps length', () => {
+    assert.equal(locateWorkspaceDefaultName(null), 'workspace')
+    assert.equal(locateWorkspaceDefaultName('a/b\\c'), 'a-b-c')
+    assert.equal(locateWorkspaceDefaultName('x'.repeat(80)).length, 64)
   })
 })

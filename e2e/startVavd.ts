@@ -1,8 +1,7 @@
-import { spawn, type ChildProcess } from 'node:child_process'
 import { mkdirSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { parseDaemonPairing } from '../src/shared/daemonProtocol.ts'
+import { spawnLocalVavd } from '../src/main/daemon/vavdSpawn.ts'
 
 const root = join(__dirname, '..')
 
@@ -14,71 +13,44 @@ export type VavdHandle = {
   stop: () => void
 }
 
+export type StartVavdOptions = {
+  /** Finish VAV turns in the daemon — no provider HTTP (VAV_E2E_STUB_TURN). */
+  stubTurn?: boolean
+  /** Stream reasoning + a tool card before the stub reply. */
+  stubStream?: boolean
+  /** Park the stub on Approve/Deny until the client answers. */
+  stubApprove?: boolean
+}
+
 /**
  * Spawn headless `vavd` with a planted workspace file. Used by the remote
  * daemon e2e so the desktop app pairs against a real process, not a mock.
  */
-export async function startVavd(): Promise<VavdHandle> {
-  const base = process.platform === 'darwin' ? '/tmp' : tmpdir()
-  const workspace = mkdtempSync(join(base, 'vav-e2e-remote-ws-'))
-  const state = mkdtempSync(join(tmpdir(), 'vav-e2e-vavd-'))
+export async function startVavd(options: StartVavdOptions = {}): Promise<VavdHandle> {
+  // Must live under os.tmpdir() — vavd only allows phone-protocol workdir
+  // binds inside home / tmp / current / recents. Hardcoding /tmp on macOS
+  // plants outside GHA's /var/folders tmp root, so setWorkspace is forbidden.
+  const workspace = mkdtempSync(join(tmpdir(), 'vav-e2e-remote-ws-'))
   mkdirSync(workspace, { recursive: true })
   writeFileSync(join(workspace, 'remote-only.md'), 'planted by vavd e2e\n')
   mkdirSync(join(workspace, 'remote-pkg'))
   writeFileSync(join(workspace, 'remote-pkg', 'inside.md'), 'nested remote file\n')
 
-  const child: ChildProcess = spawn(
-    process.execPath,
-    [
-      '--experimental-strip-types',
-      join(root, 'src/main/daemon/vavd.ts'),
-      '--port',
-      '0',
-      '--state',
-      state,
-      '--no-announce',
-      '--name',
-      'E2E Daemon'
-    ],
-    { stdio: ['ignore', 'pipe', 'pipe'], cwd: root }
-  )
-
-  let stdout = ''
-  const pairing = await new Promise<string>((resolve, reject) => {
-    const timer = setTimeout(() => {
-      reject(new Error(`vavd did not print pairing.\n${stdout}\n${stderrTail}`))
-    }, 12_000)
-    let stderrTail = ''
-    child.stderr?.setEncoding('utf8')
-    child.stderr?.on('data', (chunk: string) => {
-      stderrTail += chunk
-    })
-    child.stdout?.setEncoding('utf8')
-    child.stdout?.on('data', (chunk: string) => {
-      stdout += chunk
-      const line = stdout.split('\n').find((row) => row.startsWith('vav-daemon:'))
-      if (line) {
-        clearTimeout(timer)
-        resolve(line.trim())
-      }
-    })
-    child.on('exit', (code) => {
-      clearTimeout(timer)
-      reject(new Error(`vavd exited ${code}: ${stderrTail || stdout}`))
-    })
+  const spawned = await spawnLocalVavd({
+    cwd: root,
+    name: 'E2E Daemon',
+    stubTurn: options.stubTurn,
+    stubStream: options.stubStream,
+    stubApprove: options.stubApprove
   })
 
-  const payload = parseDaemonPairing(pairing)
-  if (!payload) throw new Error(`unrecognized vavd pairing: ${pairing}`)
-
   return {
-    pairing,
-    machineId: payload.machineId,
-    name: payload.name,
+    pairing: spawned.pairing,
+    machineId: spawned.machineId,
+    name: spawned.name,
     workspace,
     stop: () => {
-      child.kill('SIGTERM')
-      rmSync(state, { recursive: true, force: true })
+      spawned.stop()
       rmSync(workspace, { recursive: true, force: true })
     }
   }

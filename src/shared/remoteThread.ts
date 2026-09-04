@@ -116,9 +116,13 @@ export function projectRemoteMessages(
 }
 
 export function remoteSessionPreview(path: ChatMessage[]): string {
-  const last = projectRemoteMessages(path).at(-1)
-  if (!last) return ''
-  const flat = oneLine(last.text)
-  if (!flat) return ''
-  return flat.length > REMOTE_PREVIEW_CAP ? `${flat.slice(0, REMOTE_PREVIEW_CAP)}…` : flat
+  // List preview must not project the full thread — that work belongs on tap.
+  for (let i = path.length - 1; i >= 0; i -= 1) {
+    const message = path[i]
+    if (!message || message.role === 'system') continue
+    const flat = oneLine(message.content || '')
+    if (!flat) continue
+    return flat.length > REMOTE_PREVIEW_CAP ? `${flat.slice(0, REMOTE_PREVIEW_CAP)}…` : flat
+  }
+  return ''
 }

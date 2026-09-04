@@ -6,8 +6,8 @@ import {
   dialog,
   globalShortcut,
   ipcMain,
+  type IpcMainInvokeEvent,
   Menu,
-  nativeImage,
   nativeTheme,
   net,
   powerMonitor,
@@ -26,8 +26,6 @@ import {
   readdirSync,
   readFileSync,
   realpathSync,
-  renameSync,
-  rmdirSync,
   statSync,
   writeFileSync
 } from 'node:fs'
@@ -35,6 +33,9 @@ import { homedir, hostname, tmpdir, userInfo } from 'node:os'
 import { randomUUID } from 'node:crypto'
 import { APP_NAME, applyBranding, applyDockIcon, loadAppIcon, pinUserDataPath } from './brand'
 import { isE2eRuntime } from './e2eRuntime'
+import { installProcessErrorGuards } from './process/stdioGuard'
+import { isRendererUrl } from './window/rendererUrl'
+import { safeSend } from './window/safeSend'
 import {
   e2eChoosePopupMenu,
   e2eDismissPopupMenu,
@@ -46,9 +47,7 @@ import {
   IPC,
   type Bootstrap,
   type FileInspectResult,
-  type HostDiscoveryPeer,
   type MenuCommand,
-  type NativeMenuItem,
   type SettingsView,
   resolveSettingsView,
   type ProviderAccountViewPayload,
@@ -63,16 +62,15 @@ import {
   type AppSettings,
   type ChatMessage,
   type Conversation,
-  type ConversationMeta,
-  type FileSortKey,
-  type ShellKind,
-  type TurnEvent
+  type TurnEvent,
+  type TurnStatus
 } from '@shared/types'
 import { agentBinaryCandidates } from '@shared/agentBinary'
-import { localFileStreamUrl } from '@shared/localFileUrl'
+import { localFileStreamUrl, parseVavLocalFilePath } from '@shared/localFileUrl'
 import { compactionForLeaf } from '@shared/compaction'
 import {
   hasActiveAgentWork,
+  keepAwakeStatusPayload,
   shouldBlockIdleSleep,
   shouldBlockLidSleep,
   type KeepAwakeStatus
@@ -80,31 +78,21 @@ import {
 import { createSwarmFinishAlert } from './sound/swarmFinishAlert'
 import { RemoteControlService } from './remote/RemoteControlService'
 import { DaemonAttachService } from './daemon/DaemonAttachService'
+import { resolveVavdPairing, resolveVavdSpawn } from './daemon/vavdClientLaunch'
+import { spawnLocalVavd } from './daemon/vavdSpawn'
+import { loopbackVavdShell } from './daemon/vavdShellPairing'
 import { openTailcatDial } from './daemon/tailcatDial'
-import {
-  isLocalMachine,
-  LOCAL_MACHINE_ID,
-  normalizeMachineId,
-  hostJoin,
-  parseWorkspaceRefList,
-  recentsForMachine,
-  type WorkspaceHostInfo
-} from '@shared/workspaceHost'
+import { hostJoin, isLocalMachine, LOCAL_MACHINE_ID, normalizeMachineId, conversationOnMachine, parseWorkspaceRefList, recentsForMachine, remoteConversationMachineId, type WorkspaceHostInfo } from '@shared/workspaceHost'
+import { hostSessionId, localSessionId } from '@shared/remoteHostKind'
 import type {
   RemoteConfigure,
   RemoteControlsEvent,
   RemoteDirsEvent,
   RemoteHostEvent,
+  RemoteServerMessage,
   RemoteSession,
   RemoteThreadEvent
 } from '@shared/remoteControl'
-import { REMOTE_PHONE_CAPABILITIES } from '@shared/remoteControl'
-import {
-  projectRemoteMessages,
-  projectRemotePlan,
-  projectRemoteToolBlock,
-  remoteSessionPreview
-} from '@shared/remoteThread'
 import {
   remoteBrowseRoots,
   remoteIsTemporary,
@@ -112,14 +100,12 @@ import {
   remotePathAllowed
 } from '@shared/remoteWorkspace'
 import {
-  agentLabel,
   buildRemoteControls,
   parseAgentId,
   parseApprovalMode
 } from '@shared/remoteSessionControls'
 import { parseThinkingLevel } from '@shared/thinkingLevel'
 import { threadPath } from '@shared/thread'
-import { sanitizeSwarmLayout } from '@shared/swarmLayout'
 import { SettingsStore } from './store/SettingsStore'
 import { SleepBlocker } from './power/SleepBlocker'
 import { MacLidSleepGuard } from './power/MacLidSleep'
@@ -134,52 +120,150 @@ import {
   resolveWorkspaceContext,
   syncOAuthProfiles
 } from './accounts/service'
-import { activateAccount, captureAccountCredentials, captureLiveHost } from './accounts/activateAccount'
 import { accessTokenFromSnapshot } from './accounts/credentials/parseKeychainSnapshot'
 import {
-  createKindForAgent,
-  defaultKeyEndpoint,
   displayAccountLabel,
-  isHttpUrl,
-  isOAuthSyncAgent,
-  nameConflict,
-  nextDraftName,
-  normalizeAccountName,
-  providerForAgent,
   agentIdOf,
   isVavProfile,
-  DEFAULT_WORKSPACE_KEY,
   resolveSessionAccountId,
   sessionShowsHostQuota,
-  sessionUsageRowsOf,
-  workspaceKeyOf
+  conversationQuotaAuthView,
+  oauthQuotaIdentityRows,
+  usageDeltaFromSnapshot,
+  workspaceKeyOf,
+  workspaceLabelOf
 } from '@shared/accounts'
 import { ANALYSIS_API_HOST } from '@shared/analysis'
 import {
   agentModelHostKey,
   defaultModelForChatHost,
-  filterEnabledModels,
   labelForChatModel,
-  modelsForChatHost,
   resolveModelForChatHost
 } from '@shared/agentModels'
-import { collapseCursorListModels, normalizeCursorConversationModel } from '@shared/cursorModel'
 import { groupAccountsByVendor, isLlmVendorId, vendorById, vendorIdFromEndpoint } from '@shared/llmVendors'
 import { ConversationStore } from './store/ConversationStore'
 import { VavPackService } from './store/VavPackService'
 import { FileSessionStore } from './store/FileSessionStore'
 import { SwarmHistoryStore } from './store/SwarmHistoryStore'
 import { FileService } from './fs/FileService'
+import { installTrustedIpcGuard } from './ipc/ipcTrust'
+import { registerVcsIpc } from './ipc/registerVcsIpc'
+import { registerPtyIoIpc } from './ipc/registerPtyIoIpc'
+import { registerDialogIpc } from './ipc/registerDialogIpc'
+import { registerChangeSetIpc } from './ipc/registerChangeSetIpc'
+import { registerFilesIpc } from './ipc/registerFilesIpc'
+import { registerHostsIpc } from './ipc/registerHostsIpc'
+import { registerWindowIpc } from './ipc/registerWindowIpc'
+import { registerAgentIpc } from './ipc/registerAgentIpc'
+import { registerConversationMetaIpc } from './ipc/registerConversationMetaIpc'
+import { registerConversationMutateIpc } from './ipc/registerConversationMutateIpc'
+import { registerScreenshotIpc } from './ipc/registerScreenshotIpc'
+import { registerSecretsIpc } from './ipc/registerSecretsIpc'
+import { registerFileSessionsIpc } from './ipc/registerFileSessionsIpc'
+import { registerAgentsIpc } from './ipc/registerAgentsIpc'
+import { registerSettingsIpc } from './ipc/registerSettingsIpc'
+import { registerAccountsIpc } from './ipc/registerAccountsIpc'
+import { registerPreviewShellIpc } from './ipc/registerPreviewShellIpc'
+import { registerRuntimeIpc } from './ipc/registerRuntimeIpc'
+import { registerPtyCreateIpc } from './ipc/registerPtyCreateIpc'
+import { hostDisplayName as hostDisplayNameOf } from './window/hostDisplay'
+import { providerAccountViewOf } from './window/providerAccountView'
+import { findSwarmHistoryItem as findItemInSwarmHistory } from './window/swarmHistoryFind'
+import { machineIdFromRendererUrl } from './window/machineFromUrl'
+import { collectPreferredModelHosts, contextWindowForModelId, conversationModelHealPatch } from './agent/modelContext'
+import { activeTurnStatusFromPhase, awaitingNotifyKind, awaitingNotifyTitle, turnCompleteNotifyAction } from './agent/agentEventNotify'
+import { dialogConfirmOptions, revealSecretBoxOptions } from './ipc/dialogOptions'
+import { showParentedMessageBox, windowFromSender } from './ipc/nativeDialog'
+import { conversationIdForWorkdirs } from './fs/conversationPath'
+import { decorateHosts as decorateRemoteHosts } from './host/decorateHosts'
+import { conversationToMeta } from './store/conversationMeta'
+import {
+  applyWindowVibrancy as applyVibrancyPaint,
+  chromeOptions,
+  clearWindowVibrancy as clearVibrancyPaint,
+  overlayColors as overlayColorsForTheme,
+  primeRendererShell as primeShellPaint,
+  TOOLBAR_HEIGHT,
+  trafficLightOrigin,
+  windowBackgroundColor,
+  windowThemeNameFromDark
+} from './window/shellPaint'
+import { wireExternalLinks as wireShellExternalLinks } from './window/externalLinks'
+import {
+  hostWindowTitle as formatHostWindowTitle,
+  mainWindowSize,
+  rendererPrefs as buildRendererPrefs
+} from './window/rendererPrefs'
+import {
+  PREVIEW_DEFAULT_WIDTH,
+  PREVIEW_IDLE_MS,
+  PREVIEW_MAX_OPEN,
+  PREVIEW_POOL_REFILL_MS,
+  PREVIEW_WARM_POOL,
+  clampPreviewWidth,
+  nextUnfocusedPreviewPath,
+  previewCloseDisposition,
+  previewPathKey as previewPathKeyOf,
+  previewQuery as buildPreviewQuery,
+  shouldParkIdlePreview
+} from './window/previewPool'
+import {
+  afterLeavingFullscreen,
+  closeLeavingFullscreenDisposition,
+  destroyLeavingFullscreen,
+  hideLeavingFullscreen
+} from './window/fullscreenLeave'
+import { overlayCascadeOrigin, overlayFit, placeDetachedBounds } from './window/windowPlace'
+import { isPreviewableColdOpenPath as previewableColdOpenPath } from './window/coldOpen'
+import { appZOrderWindowIds, windowIsInPlay as windowIsInPlayOf } from './window/windowZOrder'
+import { replaceLiveWarmPool, shouldDestroyParkedWarmShell, takeReadyWarmShell, waitForReadyWarmShell } from './window/warmShell'
+import { isDisposableEphemeralSession, liveDetachedConversationIds } from './window/ephemeralSession'
+import {
+  resolveContextTokens,
+  tokenUsageAccountRowsOf,
+  tokenUsagePopupPosition,
+  type TokenUsageAnchor
+} from './window/tokenUsageView'
+import { appBuildNumber as formatAppBuildNumber } from './appBuild'
+import { FALLBACK_SYSTEM_ACCENT, normalizeAccentHex } from './window/accentColor'
+import { closeActiveNativePopup, popupNativeMenu } from './window/nativePopup'
+import { trayDirLabel as formatTrayDirLabel, trayAgentLabel as formatTrayAgentLabel, pickAgentSessionTitle } from './tray/trayLabels'
+import { buildTrayPane } from './tray/trayPane'
+import {
+  applyUnseenResultToMap,
+  deleteUnseenForConversation,
+  persistTrayResultUnseen,
+  shouldHydratePersistedUnseen
+} from './tray/trayUnseen'
 import { HostRegistry } from './host'
-import { isClipPath, writeClip, writeClipBytes } from './fs/clipStore'
+import { openSpawn, previewSpawn, revealSpawn } from './host/hostShell'
+import { clipRoot, writeClipBytes } from './fs/clipStore'
 import { writePngToClipboard } from './clipboardImage'
+import { mapRemoteSessions, fallbackRemoteSession, buildRemoteThreadEvent } from './remote/sessionList'
+import { fanRemoteTurn as dispatchRemoteTurn } from './remote/fanTurn'
+import { listRemoteChildEntries, listRemoteRootEntries } from './remote/dirBrowse'
+import {
+  cursorCatalogueDefaultThinking,
+  remoteCatalogModelRows,
+  remoteControlAgentRows,
+  remoteDefaultApproval,
+  remoteHostRecentDirs,
+  remoteHostSwitchAction,
+  remoteLiveConversation,
+  remoteSendDisposition,
+  buildRemoteHostEvent
+} from './remote/sessionGate'
+import { RemoteSendQueue } from './remote/sendQueue'
+import {
+  remoteControlTurnStatus,
+  turnEventsFromRemoteThread,
+  turnEventsFromRemoteTurn
+} from '@shared/remoteControlApply'
 import { createScreenshotController } from './screenshot/ScreenshotSession'
-import { isFileSessionEligible } from '@shared/clipPath'
 import { OVERLAY_IMAGE_EXTS, shouldOpenAsOverlay } from '@shared/previewOverlay'
 import {
-  inferDiagramKind,
-  inferOverlayKind,
   overlayIdentity,
+  normalizeOverlayPayload as buildOverlayPayload,
   type OverlayNavigatePayload,
   type OverlayPayload
 } from '@shared/overlayOpen'
@@ -191,30 +275,13 @@ import { WebSearchService } from './web/WebSearchService'
 import { WebFetchService } from './web/WebFetchService'
 import { importSurfacePattern, surfacePatternFilePath } from './importSurfacePattern'
 import { ChangeSetStore } from './agent/ChangeSetStore'
-import {
-  checkoutGitBranch,
-  createGitBranch,
-  createGitWorktree,
-  getGitDiff,
-  getGitShowBase64,
-  getGitSnapshot,
-  initGitRepo
-} from './git/GitService'
-import {
-  getGithubActionRun,
-  getGithubPull,
-  getGithubSite,
-  listGithubActions,
-  listGithubPulls,
-  listGithubReleases
-} from './github/GithubService'
-import { getCloudflareStatus } from './cloudflare/CloudflareService'
-import { getSupabaseStatus } from './supabase/SupabaseService'
+import { setGitHostFor } from './git/GitService'
 import { UpdateService } from './updates'
 import { PtyManager, type PtySessionMeta } from './terminal/PtyManager'
 import { ensureLoginPath, probeAgentExecutables, resolveAgentExecutable } from './terminal/loginPath'
 import { warmAgentLaunchCache } from './terminal/agentLaunchWarm'
 import { menuCommandFromInput, matchesNewSessionWindow } from './menuShortcuts'
+import { isToggleDevtoolsChord, shouldSkipDuplicateMenuCommand } from './window/menuInput'
 import { resolveKeyBindings } from '@shared/keyBindings'
 import { isDevRuntime } from './devRuntime'
 import { installDevParentWatchdog } from './devParentWatchdog'
@@ -245,7 +312,6 @@ import {
   cancelHostOAuthLogin,
   currentOAuthLogin,
   finishHostOAuth,
-  loginArgv,
   runHostLogout,
   runningOAuthAgents,
   startHostOAuthLogin
@@ -266,7 +332,6 @@ import { shellPath } from './terminal/StickyShell'
 import { buildAppMenu } from './menu'
 import { currentLocale, setLocalePreference, t } from './i18n'
 import { codeFonts, type Platform } from '@shared/platform'
-import { isTsJsPath } from '@shared/previewBlock'
 import {
   getCliStatus,
   installCli,
@@ -276,8 +341,7 @@ import {
   resolveExistingDirectory,
   classifyOpenPaths,
   setCliPreferredLocation,
-  uninstallCli,
-  type CliInstallLocation
+  uninstallCli
 } from './cli'
 import { ensureMacOpenDirectoryService } from './macOpenDirectoryService'
 import { NotificationCenter } from './notifications'
@@ -310,8 +374,8 @@ import {
 import { nativeSessionId } from '@shared/cliPaneBinding'
 import {
   buildSwarmHistoryMenuEntries,
-  isBlankSwarmSessionTitle,
   parseSwarmHistoryId,
+  shouldKeepClosedSwarmHistoryRecord,
   swarmSessionKey
 } from '@shared/cliSessionHistory'
 import {
@@ -332,34 +396,7 @@ const PLATFORM = process.platform as Platform
 const IS_MAC = PLATFORM === 'darwin'
 const IS_WIN = PLATFORM === 'win32'
 
-/**
- * Dev runners / IDE task hosts often close the stdio pipe while Electron is
- * still alive. Unhandled `write EPIPE` from console.log/error then surfaces as
- * a fatal "Uncaught Exception" dialog. Swallow only EPIPE on the process
- * streams and on late IPC to a dead frame.
- */
-function ignoreEpipe(stream: NodeJS.WriteStream | null | undefined): void {
-  stream?.on?.('error', (err: NodeJS.ErrnoException) => {
-    if (err?.code === 'EPIPE' || err?.code === 'ERR_STREAM_DESTROYED') return
-    // Re-emit anything else so real stream failures still surface.
-    if (stream.listenerCount('error') <= 1) {
-      // no other handlers — avoid throwing from the error event itself
-    }
-  })
-}
-ignoreEpipe(process.stdout)
-ignoreEpipe(process.stderr)
-process.on('uncaughtException', (err: NodeJS.ErrnoException) => {
-  // Broken stdio / dead IPC frame — never fatal.
-  if (err?.code === 'EPIPE' || err?.code === 'ERR_STREAM_DESTROYED') return
-  const msg = String(err?.message ?? err ?? '')
-  if (/EPIPE|ERR_STREAM_DESTROYED/i.test(msg)) return
-  try {
-    console.error('[uncaughtException]', err)
-  } catch {
-    // stdout may already be dead
-  }
-})
+installProcessErrorGuards()
 
 // Pin userData + menu name before any store touches disk (and before ready so
 // the menu bar reads "VAV" instead of "Electron").
@@ -385,6 +422,7 @@ protocol.registerSchemesAsPrivileged([
 ])
 
 let mainWindow: BrowserWindow | null = null
+let stopSpawnedVavd: (() => void) | undefined
 /** Extra main shells, one per paired daemon (`?machine=<id>`). */
 const hostWindows = new Map<string, BrowserWindow>()
 let settingsWindow: BrowserWindow | null = null
@@ -484,6 +522,20 @@ const fileService = new FileService(
   (conversationId) => hostRegistry.hostFor(conversationStore.get(conversationId)?.machineId).fs
 )
 fileService.workingCopies = workingCopyService
+fileService.grantRoot(clipRoot())
+fileService.grantRoot(join(tmpdir(), 'vav-office-convert'))
+fileService.grantRoot(join(tmpdir(), 'vav-heic-preview'))
+fileService.grantRoot(workingCopyService.storageRoot)
+setGitHostFor((cwd, conversationId) => {
+  const id = conversationId || conversationIdForGitCwd(cwd)
+  const machineId = id ? conversationStore.get(id)?.machineId : undefined
+  const host = hostRegistry.hostFor(machineId)
+  return {
+    kind: host.info.kind,
+    process: host.process,
+    fs: host.fs
+  }
+})
 workingCopyService.onCopyChanged = (realPath) => {
   sendToWorkspaceWindows(IPC.agentEvent, {
     type: 'fs-changed',
@@ -594,33 +646,24 @@ async function currentKeepAwakeStatus(): Promise<KeepAwakeStatus> {
   const enabled = settings.keepAwakeWhileAgentRunning === true
   const hasWork = currentAgentWork()
   if (!macLidSleep) {
-    return {
-      lidSupported: false,
-      granted: false,
-      idleBlocked: shouldBlockIdleSleep(enabled, hasWork),
-      lidSleepBlocked: false,
-      onBattery: false,
-      batteryPercent: 100,
-      lowPowerMode: false,
-      safetyHold: null,
-      hasWork
-    }
+    return keepAwakeStatusPayload({ enabled, hasWork, lid: null })
   }
   const [safety, info] = await Promise.all([
     macLidSleep.safetyHold(settings.keepAwakeBatteryFloorPercent),
     macLidSleep.powerInfo()
   ])
-  return {
-    lidSupported: true,
-    granted: info.granted,
-    idleBlocked: shouldBlockIdleSleep(enabled, hasWork, safety),
-    lidSleepBlocked: info.lidSleepBlocked,
-    onBattery: info.onBattery,
-    batteryPercent: info.batteryPercent,
-    lowPowerMode: info.lowPowerMode,
-    safetyHold: safety,
-    hasWork
-  }
+  return keepAwakeStatusPayload({
+    enabled,
+    hasWork,
+    lid: {
+      granted: info.granted,
+      lidSleepBlocked: info.lidSleepBlocked,
+      onBattery: info.onBattery,
+      batteryPercent: info.batteryPercent,
+      lowPowerMode: info.lowPowerMode,
+      safetyHold: safety
+    }
+  })
 }
 
 let lastKeepAwakeStatusJson = ''
@@ -757,21 +800,11 @@ swarmFinishAlert = createSwarmFinishAlert(
 
 /** Compact path for tray labels: `/Users/me/repo/vav` → `~/repo/vav`. */
 function trayDirLabel(workingDirectory: string | null | undefined): string {
-  if (!workingDirectory || workingDirectory === '~') return '~'
-  const home = homedir()
-  if (workingDirectory === home) return '~'
-  if (workingDirectory.startsWith(home + '/') || workingDirectory.startsWith(home + '\\')) {
-    return `~${workingDirectory.slice(home.length).replace(/\\/g, '/')}`
-  }
-  // Fall back to last segment if path is long and outside home.
-  const parts = workingDirectory.replace(/\\/g, '/').split('/').filter(Boolean)
-  return parts.length ? parts[parts.length - 1]! : workingDirectory
+  return formatTrayDirLabel(workingDirectory, homedir())
 }
 
 function trayAgentLabel(agentId: string): string {
-  const fromSettings = settingsStore.get().cliAgents?.find((a) => a.id === agentId)
-  if (fromSettings?.name) return fromSettings.name
-  return agentId
+  return formatTrayAgentLabel(agentId, settingsStore.get().cliAgents)
 }
 
 function trayPaneFromConversation(
@@ -785,36 +818,15 @@ function trayPaneFromConversation(
     sessionTitle?: string
   }
 ): TrayPane | null {
-  const conversation = conversationStore.get(conversationId)
-  if (!conversation || conversation.archived) return null
-  const dir = conversation.workingDirectory || '~'
-  const title =
-    extra?.sessionTitle ||
-    (conversation.title && conversation.title.trim()) ||
-    conversationId
-  const agentId = extra?.agentId || conversation.cliHost || undefined
-  const paneTitle =
-    extra?.paneTitle ||
-    (kind === 'agent'
-      ? agentId
-        ? trayAgentLabel(agentId)
-        : 'CLI'
-      : kind === 'bash'
-        ? 'bash'
-        : conversation.cliHost
-          ? displayNameForCliHost(conversation.cliHost)
-          : 'VAV')
-  return {
+  return buildTrayPane({
     conversationId,
-    tabId: extra?.tabId ?? '',
+    conversation: conversationStore.get(conversationId),
     kind,
-    sessionTitle: title,
-    paneTitle,
-    dirKey: dir,
-    dirLabel: trayDirLabel(dir),
-    createdAt: extra?.createdAt ?? conversation.updatedAt,
-    agentId
-  }
+    extra,
+    dirLabel: trayDirLabel,
+    agentLabel: trayAgentLabel,
+    hostDisplayName: (host) => displayNameForCliHost(host as CliHostKind)
+  })
 }
 
 function agentSessionTitle(session: PtySessionMeta): string {
@@ -825,14 +837,13 @@ function agentSessionTitle(session: PtySessionMeta): string {
     sessionId && session.agentId
       ? swarmHistoryStore.get(swarmSessionKey(session.agentId, sessionId))?.name?.trim()
       : null
-  const bindingTitle = binding?.title?.trim()
-  return (
-    named ||
-    bindingTitle ||
-    (conversation?.title && conversation.title.trim()) ||
-    session.title ||
-    session.conversationId
-  )
+  return pickAgentSessionTitle({
+    swarmName: named,
+    bindingTitle: binding?.title,
+    conversationTitle: conversation?.title,
+    sessionTitle: session.title,
+    conversationId: session.conversationId
+  })
 }
 
 function trayPaneFromAgentSession(session: PtySessionMeta): TrayPane | null {
@@ -855,24 +866,24 @@ function trayPaneFromBashSession(session: PtySessionMeta): TrayPane | null {
 }
 
 function persistResultUnseen(conversationId: string, unseen: boolean): void {
-  const conversation = conversationStore.get(conversationId)
-  if (!conversation || conversation.resultUnseen === unseen) return
-  conversationStore.updateMeta(conversationId, { resultUnseen: unseen })
-  broadcast(IPC.convChanged, conversationStore.listMeta())
+  persistTrayResultUnseen({
+    conversationId,
+    unseen,
+    getConversation: (id) => conversationStore.get(id),
+    updateMeta: (id, patch) => conversationStore.updateMeta(id, patch),
+    broadcast: () => broadcast(IPC.convChanged, conversationStore.listMeta())
+  })
 }
 
 function applyUnseenResult(pane: TrayPane): void {
-  if (ephemeralConversations.has(pane.conversationId)) return
-  if (notifications.isConversationForeground(pane.conversationId)) {
-    for (const [key, existing] of unseenResults) {
-      if (existing.conversationId === pane.conversationId) unseenResults.delete(key)
-    }
-    persistResultUnseen(pane.conversationId, false)
-    return
-  }
-  unseenResults.set(trayPaneKey(pane), pane)
-  persistResultUnseen(pane.conversationId, true)
-  notifications.noteUnseenComplete(pane.conversationId)
+  const result = applyUnseenResultToMap({
+    pane,
+    unseen: unseenResults,
+    ephemeral: ephemeralConversations.has(pane.conversationId),
+    isForeground: notifications.isConversationForeground(pane.conversationId)
+  })
+  if (result.persist !== undefined) persistResultUnseen(pane.conversationId, result.persist)
+  if (result.notifyComplete) notifications.noteUnseenComplete(pane.conversationId)
 }
 
 function markResultUnseen(pane: TrayPane): void {
@@ -882,24 +893,18 @@ function markResultUnseen(pane: TrayPane): void {
 
 function markResultViewed(conversationId: string): void {
   if (!conversationId) return
-  let changed = false
-  for (const [key, pane] of unseenResults) {
-    if (pane.conversationId !== conversationId) continue
-    unseenResults.delete(key)
-    changed = true
-  }
+  const mapChanged = deleteUnseenForConversation(unseenResults, conversationId)
   const conversation = conversationStore.get(conversationId)
+  let persistChanged = false
   if (conversation?.resultUnseen) {
     persistResultUnseen(conversationId, false)
-    changed = true
+    persistChanged = true
   }
-  if (changed) refreshTraySessions()
+  if (mapChanged || persistChanged) refreshTraySessions()
 }
 
 function clearUnseenForConversation(conversationId: string): void {
-  for (const [key, pane] of unseenResults) {
-    if (pane.conversationId === conversationId) unseenResults.delete(key)
-  }
+  deleteUnseenForConversation(unseenResults, conversationId)
 }
 
 function clearTrayQuietTimer(tabId: string): void {
@@ -1028,10 +1033,16 @@ function refreshTraySessions(): void {
 
     // Restart / persist: a conversation flagged unseen with no in-memory pane.
     for (const conversation of conversationStore.all()) {
-      if (!conversation.resultUnseen || conversation.archived) continue
-      if (ephemeralConversations.has(conversation.id)) continue
-      const already = [...unseenResults.values()].some((p) => p.conversationId === conversation.id)
-      if (already) continue
+      if (
+        !shouldHydratePersistedUnseen({
+          resultUnseen: conversation.resultUnseen,
+          archived: conversation.archived,
+          ephemeral: ephemeralConversations.has(conversation.id),
+          alreadyListed: [...unseenResults.values()].some((p) => p.conversationId === conversation.id)
+        })
+      ) {
+        continue
+      }
       const pane = trayPaneFromConversation(conversation.id, 'chat')
       if (pane) {
         unseenResults.set(trayPaneKey(pane), { ...pane, status: 'done' })
@@ -1141,58 +1152,32 @@ function handleAgentEvent(event: TurnEvent): void {
     return
   }
   if (event.type === 'phase') {
-    if (event.phase === 'awaiting-user') {
-      activeTurns.set(event.conversationId, 'paused')
+    const status = activeTurnStatusFromPhase(event.phase)
+    if (status) {
+      activeTurns.set(event.conversationId, status)
       refreshTraySessions()
       pushTokenUsageIfOpen(event.conversationId)
-    } else if (
-      event.phase === 'working' ||
-      event.phase === 'thinking' ||
-      event.phase === 'outputting' ||
-      event.phase === 'retrying'
-    ) {
-      activeTurns.set(event.conversationId, 'running')
-      refreshTraySessions()
-      pushTokenUsageIfOpen(event.conversationId)
-      // User answered / approved — drop that session's Dock attention items.
-      notifications.acknowledgeConversation(event.conversationId)
+      if (status === 'running') {
+        // User answered / approved — drop that session's Dock attention items.
+        notifications.acknowledgeConversation(event.conversationId)
+      }
     }
     return
   }
   if (event.type === 'awaiting') {
     activeTurns.set(event.conversationId, 'paused')
     refreshTraySessions()
-    const tool = event.block.tool
     const body = event.block.summary || event.block.tool
-    if (tool === 'ask_user_question') {
+    const kind = awaitingNotifyKind(event.block.tool, !!event.block.choices?.length)
+    if (kind) {
       notifications.alertUser(
-        'ask',
+        kind,
         event.conversationId,
-        t('notify.awaitingAnswer', { title }),
-        body,
-        event.toolCallId
-      )
-    } else if (tool === 'plan_doc') {
-      notifications.alertUser(
-        'approval',
-        event.conversationId,
-        t('notify.awaitingApproval', { title }),
-        body,
-        event.toolCallId
-      )
-    } else if (tool === 'request') {
-      notifications.alertUser(
-        'request',
-        event.conversationId,
-        t('notify.requestConfirm', { title }),
-        body,
-        event.toolCallId
-      )
-    } else if (event.block.choices?.length) {
-      notifications.alertUser(
-        'approval',
-        event.conversationId,
-        t('notify.awaitingApproval', { title }),
+        awaitingNotifyTitle(kind, {
+          ask: t('notify.awaitingAnswer', { title }),
+          request: t('notify.requestConfirm', { title }),
+          approval: t('notify.awaitingApproval', { title })
+        }),
         body,
         event.toolCallId
       )
@@ -1202,13 +1187,11 @@ function handleAgentEvent(event: TurnEvent): void {
   if (event.type === 'usage') {
     const latest = conversation?.tokenHistory?.at(-1)
     if (event.newSnapshot && latest?.accountId) {
-      accountStore.recordUsage(latest.accountId, {
-        inputTokens: latest.newInputTokens,
-        outputTokens: latest.outputTokens,
-        cacheReadTokens: latest.cacheReadTokens,
-        cacheWriteTokens: latest.cacheWriteTokens,
-        estimatedCostUsd: latest.estimatedCost
-      }, latest.timestamp)
+      accountStore.recordUsage(
+        latest.accountId,
+        usageDeltaFromSnapshot(latest),
+        latest.timestamp
+      )
       if (conversation?.model) {
         accountStore.update(latest.accountId, { lastModel: conversation.model })
       }
@@ -1223,7 +1206,7 @@ function handleAgentEvent(event: TurnEvent): void {
     if (pane) markResultUnseen(pane)
     else refreshTraySessions()
     pushTokenUsageIfOpen(event.conversationId)
-    if (!event.cancelled && !event.error) {
+    if (turnCompleteNotifyAction(event.cancelled, event.error) === 'complete') {
       const body = event.message.content || t('notify.turnComplete')
       notifications.alertUser('turn-complete', event.conversationId, title, body)
     } else {
@@ -1233,41 +1216,7 @@ function handleAgentEvent(event: TurnEvent): void {
 }
 
 function fanRemoteTurn(event: TurnEvent): void {
-  const locale = currentLocale()
-  switch (event.type) {
-    case 'start':
-      remoteControl.beginLive(event.conversationId)
-      return
-    case 'delta':
-      if (event.kind === 'text' || event.kind === 'reasoning') {
-        remoteControl.appendLive(event.conversationId, event.index, event.kind, event.text)
-      }
-      return
-    case 'tool':
-      remoteControl.setLiveBlock(
-        event.conversationId,
-        event.index,
-        projectRemoteToolBlock(event.block, locale)
-      )
-      return
-    case 'plan':
-      remoteControl.setLiveBlock(event.conversationId, event.index, projectRemotePlan(event.block))
-      return
-    case 'awaiting': {
-      const block = projectRemoteToolBlock(event.block, locale)
-      remoteControl.setLiveBlock(event.conversationId, event.index, block)
-      return
-    }
-    case 'end':
-      remoteControl.finishTurn(
-        event.conversationId,
-        event.cancelled ? 'cancelled' : event.error ? 'error' : 'done',
-        event.error
-      )
-      return
-    default:
-      return
-  }
+  dispatchRemoteTurn(event, remoteControl, currentLocale())
 }
 
 const changeSetStore = new ChangeSetStore()
@@ -1299,18 +1248,12 @@ const quotaService = new QuotaService({
     return info.signedIn ? info.accountId : null
   },
   identitiesOf: async (host) => {
-    const rows: { identity: string; token?: string }[] = []
-    for (const account of accountStore.listAll()) {
-      if (account.kind !== 'oauth') continue
-      if ((account.oauthHost ?? agentIdOf(account)) !== host) continue
-      if (!account.hasCredentialSnapshot) continue
-      const identity = account.name?.trim()
-      if (!identity) continue
-      const token = accessTokenFromSnapshot(host, secretStore.getOAuthSnapshot(account.id))
-      if (!token) continue
-      rows.push({ identity, token })
-    }
-    return rows
+    return oauthQuotaIdentityRows(
+      accountStore.listAll(),
+      host,
+      agentIdOf,
+      (accountId) => accessTokenFromSnapshot(host, secretStore.getOAuthSnapshot(accountId))
+    )
   }
 })
 
@@ -1369,22 +1312,18 @@ function agentFor(conversationId: string): 'builtin' | 'cli' {
 const remoteSessionStatus = new Map<string, 'running' | 'done'>()
 
 function listRemoteSessions(): RemoteSession[] {
-  return conversationStore
-    .all()
-    .filter((c) => !c.archived && !c.fileId && !c.swarmParentId)
-    .sort((a, b) => b.updatedAt - a.updatedAt)
-    .slice(0, 30)
-    .map((c) => ({
-      id: c.id,
-      title: (c.title && c.title.trim()) || t('window.sessionFallback'),
-      dirLabel: trayDirLabel(c.workingDirectory),
-      status: remoteSessionStatus.get(c.id) ?? (c.resultUnseen ? 'done' : 'idle'),
-      surface: agentFor(c.id) === 'cli' ? ('cli' as const) : ('vav' as const),
-      updatedAt: c.updatedAt,
-      preview: remoteSessionPreview(threadPath(c.messages, c.activeLeafId)),
-      workdir: c.workingDirectory ?? undefined,
-      temporary: remoteIsTemporary(c.workingDirectory, tmpdir())
-    }))
+  const favorites = new Set(settingsStore.get().favoriteConversationIds ?? [])
+  return mapRemoteSessions(
+    conversationStore.all().filter((c) => conversationOnMachine(c, LOCAL_MACHINE_ID)),
+    {
+      fallbackTitle: t('window.sessionFallback'),
+      tmpdir: tmpdir(),
+      dirLabel: trayDirLabel,
+      statusOf: (id, resultUnseen) => remoteSessionStatus.get(id) ?? (resultUnseen ? 'done' : 'idle'),
+      surfaceOf: (id) => (agentFor(id) === 'cli' ? 'cli' : 'vav'),
+      favoriteOf: (id) => favorites.has(id)
+    }
+  )
 }
 
 /** Phone `create` — same defaults as desktop New Session. */
@@ -1411,64 +1350,45 @@ function createRemoteSession(): RemoteSession {
   lastSeenConversationId = conversation.id
   publishConversations()
   return (
-    listRemoteSessions().find((session) => session.id === conversation.id) ?? {
-      id: conversation.id,
-      title: (conversation.title && conversation.title.trim()) || t('window.sessionFallback'),
+    listRemoteSessions().find((session) => session.id === conversation.id) ??
+    fallbackRemoteSession(conversation, {
+      fallbackTitle: t('window.sessionFallback'),
       dirLabel: trayDirLabel(conversation.workingDirectory),
-      status: 'idle',
-      surface: defaultHost ? 'cli' : 'vav',
-      updatedAt: conversation.updatedAt
-    }
+      surface: defaultHost ? 'cli' : 'vav'
+    })
   )
 }
 
 function listRemoteThread(conversationId: string): RemoteThreadEvent | null {
-  const conversation = conversationStore.get(conversationId)
-  if (!conversation || conversation.archived) return null
-  return {
-    type: 'thread',
+  return buildRemoteThreadEvent(
     conversationId,
-    messages: projectRemoteMessages(
-      threadPath(conversation.messages, conversation.activeLeafId),
-      currentLocale()
-    )
-  }
+    conversationStore.get(conversationId),
+    currentLocale()
+  )
 }
 
 function listRemoteHost(): RemoteHostEvent {
   const settings = settingsStore.get()
   const defaultHost = resolveDefaultChatHost(settings.defaultAgentId)
-  const approval =
-    settings.defaultApprovalMode === 'bypass' || settings.defaultApprovalMode === 'edit'
-      ? settings.defaultApprovalMode
-      : 'auto'
-  const seen = new Set<string>()
-  const recentDirs: { path: string; label: string }[] = []
   const localRecents = recentsForMachine(
     parseWorkspaceRefList(settings.recentWorkspaceDirectories),
     LOCAL_MACHINE_ID
   ).map((ref) => ref.path)
-  for (const path of [...(settings.pinnedWorkspaceDirectories ?? []), ...localRecents]) {
-    if (!path || seen.has(path) || !existsSync(path)) continue
-    seen.add(path)
-    recentDirs.push({ path, label: trayDirLabel(path) })
-    if (recentDirs.length >= 12) break
-  }
-  return {
-    type: 'host',
+  return buildRemoteHostEvent({
     name: hostname(),
     home: homedir(),
     tmp: tmpdir(),
     platform: process.platform,
-    capabilities: REMOTE_PHONE_CAPABILITIES,
-    defaults: {
-      agent: defaultHost ?? 'vav',
-      model: settings.defaultModel ?? '',
-      thinking: parseThinkingLevel(settings.defaultThinkingLevel),
-      approval
-    },
-    recentDirs
-  }
+    defaultAgent: defaultHost ?? 'vav',
+    defaultModel: settings.defaultModel ?? '',
+    thinking: parseThinkingLevel(settings.defaultThinkingLevel),
+    approval: remoteDefaultApproval(settings.defaultApprovalMode),
+    recentDirs: remoteHostRecentDirs(
+      settings.pinnedWorkspaceDirectories ?? [],
+      localRecents,
+      { exists: existsSync, label: trayDirLabel, cap: 12 }
+    )
+  })
 }
 
 function remoteRootsFor(conversationId: string): string[] | null {
@@ -1493,30 +1413,19 @@ function browseRemoteDirs(conversationId: string, path?: string): RemoteDirsEven
   const roots = remoteRootsFor(conversationId)
   if (!roots) return 'not-found'
   if (!path) {
-    const seen = new Set<string>()
-    const entries: { name: string; path: string }[] = []
-    for (const root of roots) {
-      if (!existsSync(root) || seen.has(root)) continue
-      seen.add(root)
-      entries.push({ name: trayDirLabel(root), path: root })
+    return {
+      type: 'dirs',
+      conversationId,
+      path: '',
+      parent: null,
+      entries: listRemoteRootEntries(roots, { exists: existsSync, label: trayDirLabel })
     }
-    return { type: 'dirs', conversationId, path: '', parent: null, entries }
   }
-  if (!remotePathAllowed(path, roots)) return 'forbidden'
-  let entries: { name: string; path: string }[] = []
-  try {
-    const dirents = readdirSync(path, { withFileTypes: true })
-    for (const dirent of dirents) {
-      if (!dirent.isDirectory() && !dirent.isSymbolicLink()) continue
-      if (dirent.name.startsWith('.')) continue
-      const child = join(path, dirent.name)
-      entries.push({ name: dirent.name, path: child })
-      if (entries.length >= 200) break
-    }
-    entries.sort((a, b) => a.name.localeCompare(b.name))
-  } catch {
-    return 'forbidden'
-  }
+  const entries = listRemoteChildEntries(path, roots, {
+    readdir: (dir) => readdirSync(dir, { withFileTypes: true }),
+    join
+  })
+  if (entries === 'forbidden') return 'forbidden'
   return {
     type: 'dirs',
     conversationId,
@@ -1531,8 +1440,8 @@ function setRemoteWorkspace(
   path: string | null
 ): 'ok' | 'not-found' | 'archived' | 'forbidden' {
   const conversation = conversationStore.get(conversationId)
-  if (!conversation) return 'not-found'
-  if (conversation.archived) return 'archived'
+  const gate = remoteLiveConversation(conversation)
+  if (gate !== 'ok') return gate
   if (!path) {
     applyWorkingDirectory(conversationId, mintTempWorkdir())
     return 'ok'
@@ -1545,10 +1454,10 @@ function setRemoteWorkspace(
 
 function cancelRemote(conversationId: string): 'ok' | 'not-found' | 'archived' {
   const conversation = conversationStore.get(conversationId)
-  if (!conversation) return 'not-found'
-  if (conversation.archived) return 'archived'
+  const gate = remoteLiveConversation(conversation)
+  if (gate !== 'ok') return gate
   // A follow-up queued on the phone must not start the moment this turn dies.
-  pendingRemoteSends.delete(conversationId)
+  pendingRemoteSends.clear(conversationId)
   // Hit both runtimes: agentFor can disagree with the live turn (host switch
   // mid-turn, or cancel arriving before the chosen host has registered it).
   agent.cancel(conversationId)
@@ -1563,8 +1472,8 @@ function replyRemote(conversationId: string, toolCallId: string, answer: string)
 
 function renameRemote(conversationId: string, title: string): 'ok' | 'not-found' | 'archived' {
   const conversation = conversationStore.get(conversationId)
-  if (!conversation) return 'not-found'
-  if (conversation.archived) return 'archived'
+  const gate = remoteLiveConversation(conversation)
+  if (gate !== 'ok') return gate
   conversationStore.updateMeta(conversationId, { title: title.trim() || t('common.untitledSession') })
   publishConversations()
   return 'ok'
@@ -1580,18 +1489,44 @@ function archiveRemote(conversationId: string): 'ok' | 'not-found' {
   return 'ok'
 }
 
+function pinRemote(conversationId: string, pinned: boolean): 'ok' | 'not-found' | 'archived' {
+  const conversation = conversationStore.get(conversationId)
+  if (!conversation) return 'not-found'
+  if (conversation.archived) return 'archived'
+  conversationStore.setPinned(conversationId, pinned)
+  publishConversations()
+  return 'ok'
+}
+
+function favoriteRemote(conversationId: string, favorite: boolean): 'ok' | 'not-found' | 'archived' {
+  const conversation = conversationStore.get(conversationId)
+  if (!conversation) return 'not-found'
+  if (conversation.archived) return 'archived'
+  const current = settingsStore.get().favoriteConversationIds ?? []
+  const has = current.includes(conversationId)
+  if (favorite && !has) {
+    settingsStore.update({ favoriteConversationIds: [conversationId, ...current] })
+    broadcast(IPC.settingsChanged, currentSettings())
+  } else if (!favorite && has) {
+    settingsStore.update({
+      favoriteConversationIds: current.filter((id) => id !== conversationId)
+    })
+    broadcast(IPC.settingsChanged, currentSettings())
+  }
+  return 'ok'
+}
+
 function remoteCatalogModels(host: CliHostKind | null, accountId?: string | null): { id: string; label: string }[] {
   const settings = settingsStore.get()
-  const vendorId = host == null ? vendorIdFromEndpoint(settings.apiEndpoint) : null
-  const key = agentModelHostKey(host, vendorId, accountId)
-  const snap = getModelCatalogSnapshot()
-  const raw =
-    snap[key]?.models?.length ? snap[key]!.models : modelsForChatHost(host, settings.customModels, settings.defaultModel)
-  const listed = host === 'cursor' ? collapseCursorListModels(raw) : raw
-  return filterEnabledModels(host, listed, settings.disabledAgentModels, vendorId, accountId).map((model) => ({
-    id: model.id,
-    label: labelForChatModel(host, model.id, settings.customModels, listed)
-  }))
+  return remoteCatalogModelRows({
+    host,
+    accountId,
+    apiEndpoint: settings.apiEndpoint,
+    customModels: settings.customModels,
+    defaultModel: settings.defaultModel,
+    disabledAgentModels: settings.disabledAgentModels,
+    snapshot: getModelCatalogSnapshot()
+  })
 }
 
 function listRemoteControls(conversationId: string): RemoteControlsEvent | null {
@@ -1599,19 +1534,13 @@ function listRemoteControls(conversationId: string): RemoteControlsEvent | null 
   if (!conversation || conversation.archived) return null
   const host = conversation.cliHost ?? null
   const settings = settingsStore.get()
-  const agents = enabledCliAgents(settings.cliAgents)
-    .filter((agent) => isStructuredCliHost(agent.id))
-    .map((agent) => ({
-      id: agent.id,
-      label: agent.name?.trim() || agentLabel(agent.id)
-    }))
+  const agents = remoteControlAgentRows(settings.cliAgents)
   const models = remoteCatalogModels(host, conversation.accountId)
-  const catalogueDefault =
-    host === 'cursor'
-      ? (getModelCatalogSnapshot()[agentModelHostKey('cursor')]?.models ?? []).find(
-          (model) => model.id === conversation.model
-        )?.defaultThinkingLevel ?? null
-      : null
+  const catalogueDefault = cursorCatalogueDefaultThinking(
+    getModelCatalogSnapshot(),
+    conversation.model,
+    host
+  )
   return buildRemoteControls({
     conversationId,
     cliHost: host,
@@ -1641,8 +1570,13 @@ function configureRemote(message: RemoteConfigure): 'ok' | 'not-found' | 'archiv
     if (!parsed) return 'not-found'
     const nextHost = parsed === 'vav' ? null : parsed
     const prevHost = conversation.cliHost ?? null
-    if (prevHost !== nextHost) {
-      if (conversation.messages.length > 0) return 'locked'
+    const action = remoteHostSwitchAction(
+      prevHost,
+      nextHost,
+      conversation.messages.length > 0
+    )
+    if (action === 'locked') return 'locked'
+    if (action === 'switch') {
       agent.disposeConversation(id)
       cliHost.dispose(id)
       changeSetStore.clearConversation(id)
@@ -1708,8 +1642,7 @@ function refreshRemoteControls(conversationId: string): void {
   })
 }
 
-const REMOTE_SEND_QUEUE_MAX = 20
-const pendingRemoteSends = new Map<string, { text: string; attachments: string[] }[]>()
+const pendingRemoteSends = new RemoteSendQueue()
 
 function remoteTurnBusy(conversationId: string): boolean {
   return agentFor(conversationId) === 'cli'
@@ -1726,11 +1659,8 @@ function startRemoteTurn(conversationId: string, text: string, attachments: stri
 }
 
 function flushRemoteSends(): void {
-  for (const [conversationId, queue] of pendingRemoteSends) {
-    if (!queue.length || remoteTurnBusy(conversationId)) continue
-    const next = queue.shift()
-    if (!queue.length) pendingRemoteSends.delete(conversationId)
-    if (next) startRemoteTurn(conversationId, next.text, next.attachments)
+  for (const next of pendingRemoteSends.takeReady(remoteTurnBusy)) {
+    startRemoteTurn(next.conversationId, next.text, next.attachments)
   }
 }
 
@@ -1741,13 +1671,13 @@ function remoteSendMessage(
   attachments: string[] = []
 ): 'ok' | 'not-found' | 'archived' {
   const conversation = conversationStore.get(conversationId)
-  if (!conversation) return 'not-found'
-  if (conversation.archived) return 'archived'
-  if (remoteTurnBusy(conversationId)) {
-    const queue = pendingRemoteSends.get(conversationId) ?? []
-    if (queue.length >= REMOTE_SEND_QUEUE_MAX) return 'ok'
-    queue.push({ text, attachments })
-    pendingRemoteSends.set(conversationId, queue)
+  const disposition = remoteSendDisposition(
+    conversation,
+    conversation ? remoteTurnBusy(conversationId) : false
+  )
+  if (disposition === 'not-found' || disposition === 'archived') return disposition
+  if (disposition === 'enqueue') {
+    pendingRemoteSends.enqueue(conversationId, text, attachments)
     return 'ok'
   }
   startRemoteTurn(conversationId, text, attachments)
@@ -1772,6 +1702,8 @@ const remoteControl = new RemoteControlService({
   reply: replyRemote,
   rename: renameRemote,
   archive: archiveRemote,
+  pin: pinRemote,
+  favorite: favoriteRemote,
   browse: browseRemoteDirs,
   setWorkspace: setRemoteWorkspace,
   onStatusChange: (status) => {
@@ -1781,20 +1713,76 @@ const remoteControl = new RemoteControlService({
       if (win && !win.isDestroyed()) safeSend(win.webContents, IPC.remoteControlChanged, status)
     }
   },
-  onDaemonSocket: (socket, leftover) => daemonAttach.adoptAuthedSocket(socket, leftover)
+  onDaemonSocket: (socket, leftover, hello) =>
+    daemonAttach.adoptAuthedSocket(socket, leftover, hello),
+  acceptAuth: (auth: string): boolean => daemonAttach.acceptsPairingAuth(auth)
 })
+
 
 const daemonAttach = new DaemonAttachService({
   userData: app.getPath('userData'),
   registry: hostRegistry,
-  secret: () => remoteControl.pairingSecret(),
+  secret: (): string => remoteControl.pairingSecret(),
   appVersion: app.getVersion(),
   enabled: () => settingsStore.get().remoteControlEnabled === true,
   tailcatToken: () => remoteControl.tunnelToken(),
   dialTunnel: (token) => openTailcatDial(token),
+  catalog: {
+    listSessions: () =>
+      conversationStore
+        .listMeta()
+        .filter((c) => !c.fileId && !c.archived && conversationOnMachine(c, LOCAL_MACHINE_ID))
+        .slice(0, 100),
+    getSession: (id) => {
+      const conversation = conversationStore.get(id)
+      if (
+        !conversation ||
+        conversation.fileId ||
+        conversation.archived ||
+        !conversationOnMachine(conversation, LOCAL_MACHINE_ID)
+      ) {
+        return null
+      }
+      return conversation
+    },
+    listRecents: () => {
+      const fromSettings = recentsForMachine(
+        settingsStore.get().recentWorkspaceDirectories,
+        LOCAL_MACHINE_ID
+      ).map((ref) => ref.path)
+      const fromSessions = conversationStore
+        .listMeta()
+        .filter(
+          (c) =>
+            !c.fileId &&
+            !c.archived &&
+            conversationOnMachine(c, LOCAL_MACHINE_ID) &&
+            Boolean(c.workingDirectory)
+        )
+        .map((c) => c.workingDirectory as string)
+      const seen = new Set<string>()
+      const out: string[] = []
+      for (const path of [...fromSettings, ...fromSessions]) {
+        const trimmed = path.trim()
+        if (!trimmed || seen.has(trimmed)) continue
+        seen.add(trimmed)
+        out.push(trimmed)
+      }
+      return out.slice(0, 20)
+    }
+  },
+  onControlHello: (socket, leftover, hello) =>
+    remoteControl.adoptControlSocket(socket, leftover, hello),
+  onControlEvent: (machineId, message) => {
+    applyDesktopControlEvent(machineId, message)
+  },
+  onHostAttached: (machineId) => pullRemoteWorkspace(machineId),
   onHostsChanged: (hosts) => {
     broadcast(IPC.hostsChanged, decorateHosts(hosts))
     syncHostWindows(hosts)
+  },
+  onIncomingChanged: (controllers) => {
+    broadcast(IPC.hostsIncomingChanged, controllers)
   },
   onDiscovered: (peers) => {
     if (settingsWindow && !settingsWindow.isDestroyed()) {
@@ -1814,21 +1802,187 @@ const daemonAttach = new DaemonAttachService({
       if (parent.isMinimized()) parent.restore()
       parent.show()
     }
-    const opts: Electron.MessageBoxOptions = {
-      type: 'question',
-      title: t('machines.lanPairTitle'),
-      message: t('machines.lanPairTitle'),
-      detail: t('machines.lanPairBody', { name: from.name }),
-      buttons: [t('common.allow'), t('common.deny')],
-      defaultId: 1,
-      cancelId: 1
-    }
-    const result = parent
-      ? await dialog.showMessageBox(parent, opts)
-      : await dialog.showMessageBox(opts)
+    const activeIncoming = daemonAttach
+      .incoming()
+      .filter((row) => row.state !== 'pending' && row.state !== 'revoked')
+    const opts = dialogConfirmOptions(
+      {
+        title: t('machines.lanPairTitle'),
+        message: t(
+          activeIncoming.length > 0 ? 'machines.lanPairBodyBusy' : 'machines.lanPairBody',
+          { name: from.name, count: String(activeIncoming.length) }
+        ),
+        confirmLabel: t('common.allow'),
+        cancelLabel: t('common.deny'),
+        preferCancel: true
+      },
+      { confirm: t('common.allow'), cancel: t('common.deny') }
+    )
+    const result = await showParentedMessageBox(parent, opts)
     return result.response === 0
   }
 })
+
+/**
+ * Talk to the host session plane when this conversation lives on another
+ * machine. Desktop hosts and headless vavd both expose the hub; returns
+ * false only when that plane is not ready.
+ */
+function remoteMachineId(conversation: Conversation | undefined | null): string | null {
+  return remoteConversationMachineId(conversation)
+}
+
+async function forwardControl(
+  conversation: Conversation | undefined | null,
+  run: (
+    dial: import('./remote/RemoteControlDial').RemoteControlDial,
+    hostConversationId: string
+  ) => void | Promise<void>
+): Promise<boolean> {
+  const machineId = remoteMachineId(conversation)
+  if (!conversation || !machineId) return false
+  const ready = await daemonAttach.waitForControlPlane(machineId)
+  const dial = daemonAttach.controlOf(machineId)
+  if (!ready || !dial?.ready) return false
+  await run(dial, hostSessionId(conversation.id, conversation.duplicateSourceId))
+  return true
+}
+
+function controlPlaneOwns(conversation: Conversation | undefined | null): boolean {
+  const machineId = remoteMachineId(conversation)
+  return machineId !== null && daemonAttach.controlPlaneOf(machineId)
+}
+
+async function pullIfForwarded(
+  conversation: Conversation | undefined | null,
+  run: (
+    dial: import('./remote/RemoteControlDial').RemoteControlDial,
+    hostConversationId: string
+  ) => void | Promise<void>
+): Promise<boolean> {
+  if (!(await forwardControl(conversation, run))) return false
+  const machineId = remoteMachineId(conversation)
+  if (machineId) await pullRemoteWorkspace(machineId)
+  return true
+}
+
+/** Host conversation ids that already received a projected `start` on this client. */
+const remoteControlStarted = new Set<string>()
+
+function desktopControlLocalId(machineId: string, hostConversationId: string): string {
+  const onHost = conversationStore.findOnHost(machineId, hostConversationId)
+  if (onHost) return onHost.id
+  return localSessionId(conversationStore.all(), hostConversationId)
+}
+
+function emitDesktopControlEvents(events: TurnEvent[]): void {
+  for (const event of events) {
+    sendToWorkspaceWindows(IPC.agentEvent, event, event.conversationId)
+  }
+}
+
+/**
+ * Desktop remote window is an isomorphic control-plane client. Apply thread /
+ * turn frames immediately — a full catalog pull is too slow and can race a
+ * newer local apply with a stale `sessions.get`.
+ */
+function applyDesktopControlEvent(machineId: string, message: RemoteServerMessage): void {
+  if (message.type === 'created') {
+    void pullRemoteWorkspace(machineId)
+    return
+  }
+
+  if (message.type === 'thread') {
+    const local = conversationStore.findOnHost(machineId, message.conversationId)
+    if (!local) {
+      void pullRemoteWorkspace(machineId)
+      return
+    }
+    const projected = turnEventsFromRemoteThread(local.id, message.messages, local.messages)
+    const prevById = new Map(local.messages.map((row) => [row.id, row]))
+    for (const next of projected.messages) {
+      const prev = prevById.get(next.id)
+      if (
+        !prev ||
+        prev.content !== next.content ||
+        (prev.blocks?.length ?? 0) !== (next.blocks?.length ?? 0)
+      ) {
+        conversationStore.replaceMessage(local.id, next)
+      }
+    }
+    if (projected.leafId) conversationStore.setActiveLeaf(local.id, projected.leafId)
+    emitDesktopControlEvents(projected.events)
+    if (projected.events.some((event) => event.type === 'end')) {
+      remoteControlStarted.delete(local.id)
+    }
+    publishConversations()
+    return
+  }
+
+  if (message.type === 'turn') {
+    const localId = desktopControlLocalId(machineId, message.conversationId)
+    const started = remoteControlStarted.has(localId)
+    const projected = turnEventsFromRemoteTurn(localId, message, started)
+    if (projected.started) remoteControlStarted.add(localId)
+    else remoteControlStarted.delete(localId)
+    emitDesktopControlEvents(projected.events)
+    return
+  }
+}
+
+function controlPlaneTurnStatus(id: string): TurnStatus | null {
+  const conversation = conversationStore.get(id)
+  if (!conversation || !controlPlaneOwns(conversation)) return null
+  const machineId = remoteMachineId(conversation)
+  if (!machineId) return null
+  const dial = daemonAttach.controlOf(machineId)
+  if (!dial?.ready) return null
+  const hostId = hostSessionId(conversation.id, conversation.duplicateSourceId)
+  const snap = dial.snapshot()
+  dial.requestThread(hostId)
+  return remoteControlTurnStatus({
+    conversationId: id,
+    generating: snap.generatingIds.includes(hostId),
+    awaitingId: snap.awaiting[hostId]?.id ?? null,
+    liveBlocks: snap.liveBlocks[hostId]
+  })
+}
+
+/** One in-flight catalog pull per host so a stale `created` fetch cannot overwrite a later bind. */
+const remoteCatalogPulls = new Map<string, Promise<void>>()
+
+/** Pull the other computer's sessions and folder recents before its window boots. */
+async function pullRemoteWorkspace(machineId: string): Promise<void> {
+  const id = String(machineId || '')
+  if (!id || isLocalMachine(id)) return
+  const previous = remoteCatalogPulls.get(id) ?? Promise.resolve()
+  const next = previous.catch(() => undefined).then(() => pullRemoteWorkspaceNow(id))
+  remoteCatalogPulls.set(id, next)
+  try {
+    await next
+  } finally {
+    if (remoteCatalogPulls.get(id) === next) remoteCatalogPulls.delete(id)
+  }
+}
+
+async function pullRemoteWorkspaceNow(id: string): Promise<void> {
+  const catalog = await daemonAttach.pullHostCatalog(id)
+  let sessionsChanged = false
+  for (const raw of catalog.sessions) {
+    const adopted = conversationStore.adoptHostConversation(raw as Conversation, id)
+    if (adopted) sessionsChanged = true
+    const conversation =
+      conversationStore.get((raw as Conversation).id) ??
+      conversationStore.findOnHost(id, (raw as Conversation).id)
+    const path = conversation?.workingDirectory
+    if (conversation && path) fileService.watchRoot(conversation.id, path)
+  }
+  for (const path of catalog.recents) {
+    settingsStore.rememberWorkspaceDirectory(path, '', id)
+  }
+  if (sessionsChanged) broadcast(IPC.convChanged, conversationStore.listMeta())
+  if (catalog.recents.length > 0) broadcast(IPC.settingsChanged, currentSettings())
+}
 
 hostRegistry.onChange((hosts) => {
   broadcast(IPC.hostsChanged, decorateHosts(hosts))
@@ -1837,19 +1991,6 @@ hostRegistry.onChange((hosts) => {
 
 notifications.onAlert = (kind, conversationId, title, body) =>
   remoteControl.notifyRemote(kind, conversationId, title, body)
-
-/** IPC to a renderer that may already be tearing down (close / HMR / pkill). */
-function safeSend(contents: Electron.WebContents | null | undefined, channel: string, payload?: unknown): void {
-  if (!contents || contents.isDestroyed()) return
-  try {
-    if (payload === undefined) contents.send(channel)
-    else contents.send(channel, payload)
-  } catch (err) {
-    const code = (err as NodeJS.ErrnoException)?.code
-    if (code === 'EPIPE' || code === 'ERR_STREAM_DESTROYED') return
-    // Frame can vanish between isDestroyed check and send under load.
-  }
-}
 
 function isAuxiliaryWindow(window: BrowserWindow): boolean {
   // Settings and the warm token-usage panel never host PTYs / file trees /
@@ -1910,11 +2051,7 @@ let lastMenuCommand: MenuCommand | null = null
 /** Accelerators act on the window the user is actually looking at. */
 function sendMenuCommand(command: MenuCommand): void {
   const now = Date.now()
-  // close-context needs a longer window: before-input + menu often arrive
-  // >80ms apart, and the second stroke used to close the window right after
-  // Swarm reseeding the agent picker.
-  const debounceMs = command === 'close-context' ? 400 : 80
-  if (command === lastMenuCommand && now - lastMenuCommandAt < debounceMs) return
+  if (shouldSkipDuplicateMenuCommand(command, lastMenuCommand, now, lastMenuCommandAt)) return
   lastMenuCommand = command
   lastMenuCommandAt = now
   const target = BrowserWindow.getFocusedWindow() ?? mainWindow
@@ -1945,15 +2082,10 @@ function wireMenuAccelerators(contents: Electron.WebContents): void {
   contents.on('before-input-event', (event, input) => {
     // Branded vav.app often reports isPackaged=true, so the View → DevTools menu
     // item may be missing — keep ⌥⌘I / Ctrl+Shift+I available in dev anyway.
-    if (isDevRuntime() && input.type === 'keyDown' && (input.key === 'I' || input.key === 'i')) {
-      const macDevtools = process.platform === 'darwin' && input.meta && input.alt && !input.control
-      const winDevtools =
-        process.platform !== 'darwin' && input.control && input.shift && !input.meta
-      if (macDevtools || winDevtools) {
-        event.preventDefault()
-        contents.toggleDevTools()
-        return
-      }
+    if (isDevRuntime() && isToggleDevtoolsChord(input, process.platform)) {
+      event.preventDefault()
+      contents.toggleDevTools()
+      return
     }
 
     const bindings = currentKeyBindings()
@@ -2049,11 +2181,7 @@ function publishConversations(): void {
 
 /** Conversation ids with a live companion window — main UI must not dual-attach PTYs. */
 function listDetachedConversationIds(): string[] {
-  const ids: string[] = []
-  for (const [id, win] of detachedWindows) {
-    if (win && !win.isDestroyed()) ids.push(id)
-  }
-  return ids
+  return liveDetachedConversationIds(detachedWindows)
 }
 
 function publishDetachedSessions(): void {
@@ -2066,14 +2194,12 @@ function publishDetachedSessions(): void {
 
 /** The window's own fill, shown for the frame or two before the renderer paints. */
 function windowBackground(alpha: string = ''): string {
-  // Match mono light chrome (`--bg-window`); tinted washes are painted in CSS.
-  // Uses nativeTheme after applyTheme(), so forced dark/light follow app settings.
-  return (nativeTheme.shouldUseDarkColors ? '#121213' : '#ececee') + alpha
+  return windowBackgroundColor(nativeTheme.shouldUseDarkColors, alpha)
 }
 
 /** `dark` | `light` for renderer bootstrap (query + early HTML paint). */
 function windowThemeName(): 'dark' | 'light' {
-  return nativeTheme.shouldUseDarkColors ? 'dark' : 'light'
+  return windowThemeNameFromDark(nativeTheme.shouldUseDarkColors)
 }
 
 /**
@@ -2082,16 +2208,7 @@ function windowThemeName(): 'dark' | 'light' {
  * Main window with vibrancy must stay transparent or it masks the system glass.
  */
 function primeRendererShell(win: BrowserWindow, options?: { clear?: boolean }): void {
-  if (win.isDestroyed() || win.webContents.isDestroyed()) return
-  const bg = options?.clear ? 'transparent' : windowBackground()
-  const scheme = windowThemeName()
-  const css = `html,body,#root{background:${bg}!important;margin:0;height:100%;color-scheme:${scheme}}`
-  const inject = (): void => {
-    if (win.isDestroyed() || win.webContents.isDestroyed()) return
-    void win.webContents.insertCSS(css).catch(() => undefined)
-  }
-  inject()
-  win.webContents.once('dom-ready', inject)
+  primeShellPaint(win, { clear: options?.clear, dark: nativeTheme.shouldUseDarkColors })
 }
 
 /**
@@ -2101,27 +2218,11 @@ function primeRendererShell(win: BrowserWindow, options?: { clear?: boolean }): 
  * Used by the main shell and the Settings nav column.
  */
 function applyWindowVibrancy(win: BrowserWindow): void {
-  if (!IS_MAC || win.isDestroyed()) return
-  try {
-    win.setBackgroundColor(windowBackground('01'))
-    win.setVibrancy('under-window', { animationDuration: 0 })
-  } catch {
-    try {
-      win.setVibrancy('under-window')
-    } catch {
-      // Older Electron / non-mac
-    }
-  }
+  applyVibrancyPaint(win, nativeTheme.shouldUseDarkColors)
 }
 
 function clearWindowVibrancy(win: BrowserWindow): void {
-  if (!IS_MAC || win.isDestroyed()) return
-  try {
-    win.setVibrancy(null)
-    win.setBackgroundColor(windowBackground())
-  } catch {
-    // ignore
-  }
+  clearVibrancyPaint(win, nativeTheme.shouldUseDarkColors)
 }
 
 function isVibrancyEnabled(): boolean {
@@ -2239,14 +2340,8 @@ function syncVibrancyShellWindows(): void {
 }
 
 
-/** Matches renderer `--toolbar-height` (sidebar / agent / file-preview chrome). */
-const TOOLBAR_HEIGHT = 42
 /** Main window + detached session column — narrowest useful shell. */
 const MAIN_WINDOW_MIN_WIDTH = 400
-
-function trafficLightOrigin(barHeight = TOOLBAR_HEIGHT): { x: number; y: number } {
-  return { x: 12, y: Math.round((barHeight - 12) / 2) }
-}
 
 function applyTrafficLights(win: BrowserWindow, barHeight = TOOLBAR_HEIGHT): void {
   if (!IS_MAC || win.isDestroyed()) return
@@ -2263,12 +2358,7 @@ function overlayColors(barHeight = TOOLBAR_HEIGHT): {
   symbolColor: string
   height: number
 } {
-  const dark = nativeTheme.shouldUseDarkColors
-  return {
-    color: dark ? '#121213' : '#ececee',
-    symbolColor: dark ? '#efeff1' : '#141416',
-    height: barHeight
-  }
+  return overlayColorsForTheme(nativeTheme.shouldUseDarkColors, barHeight)
 }
 
 /**
@@ -2283,43 +2373,15 @@ function chrome(
   barHeight: number,
   options?: { vibrancyShell?: boolean }
 ): Electron.BrowserWindowConstructorOptions {
-  if (IS_MAC) {
-    // Main + Settings stay transparent so Appearance can toggle vibrancy live.
-    // Companion / preview / token stay solid (avoids resize black-edge lag).
-    // acceptFirstMouse: an inactive window's first click also hits the control
-    // (native AppKit), instead of only focusing the window.
-    if (options?.vibrancyShell) {
-      return {
-        titleBarStyle: 'hiddenInset',
-        trafficLightPosition: trafficLightOrigin(barHeight),
-        acceptFirstMouse: true,
-        transparent: true,
-        backgroundColor: windowBackground('01'),
-        ...(isVibrancyEnabled()
-          ? {
-              vibrancy: 'under-window' as const,
-              visualEffectState: 'active' as const
-            }
-          : {})
-      }
-    }
-    return {
-      titleBarStyle: 'hiddenInset',
-      // Vertically centred on the title bar, so the traffic lights sit on the
-      // same line as the buttons at the other end of it.
-      trafficLightPosition: trafficLightOrigin(barHeight),
-      acceptFirstMouse: true,
-      backgroundColor: windowBackground()
-    }
-  }
-  return {
-    titleBarStyle: 'hidden',
-    titleBarOverlay: overlayColors(barHeight),
-    backgroundColor: windowBackground(),
-    acceptFirstMouse: true,
-    // Keep File/Edit/View… visible; default + titleBarOverlay often Alt-hides it.
-    autoHideMenuBar: false
-  }
+  return chromeOptions({
+    isMac: IS_MAC,
+    barHeight,
+    vibrancyShell: options?.vibrancyShell,
+    vibrancyEnabled: isVibrancyEnabled(),
+    background: windowBackground(),
+    backgroundVibrancy: windowBackground('01'),
+    overlay: overlayColors(barHeight)
+  }) as Electron.BrowserWindowConstructorOptions
 }
 
 /** The system chrome does not follow `nativeTheme` on its own once overridden. */
@@ -2358,58 +2420,15 @@ function repaintChrome(): void {
  *   `will-navigate` usually never fires for those surfaces.
  */
 function wireExternalLinks(contents: Electron.WebContents): void {
-  contents.setWindowOpenHandler(({ url }) => {
-    if (/^https?:\/\//i.test(url)) {
-      void shell.openExternal(url)
-    }
-    return { action: 'deny' }
-  })
-
-  contents.on('will-navigate', (event, url) => {
-    if (isRendererUrl(url)) return
-    event.preventDefault()
-    // Agent responses, logs, tool cards — open outside the app.
-    if (/^https?:\/\//i.test(url)) {
-      void shell.openExternal(url)
-    }
-  })
-}
-
-/** The app's own entry (dev server or packaged file://), not a chat hyperlink. */
-function isRendererUrl(url: string): boolean {
-  const devBase = process.env.ELECTRON_RENDERER_URL
-  if (devBase && (url === devBase || url.startsWith(devBase + '/') || url.startsWith(devBase + '?'))) {
-    return true
-  }
-  return url.startsWith('file:')
+  wireShellExternalLinks(contents, (url) => {
+    void shell.openExternal(url)
+  }, isRendererUrl)
 }
 
 /** Shared renderer prefs — keep timers/rAF alive while the window is hidden. */
 function rendererPrefs(extra: Electron.WebPreferences = {}): Electron.WebPreferences {
-  return {
-    preload: join(__dirname, '../preload/index.js'),
-    sandbox: false,
-    contextIsolation: true,
-    nodeIntegration: false,
-    // Hidden main window / tray / background turns must keep streaming.
-    backgroundThrottling: false,
-    ...extra
-  }
+  return buildRendererPrefs(join(__dirname, '../preload/index.js'), extra)
 }
-
-const PREVIEW_IDLE_MS = 5 * 60 * 1000
-const PREVIEW_MAX_OPEN = 6
-/** Default preview window width — see the note where it is clamped to the display. */
-const PREVIEW_DEFAULT_WIDTH = 880
-/**
- * Hidden warm shells kept ready so the next open skips BrowserWindow+load.
- * Two, not one: a fresh shell needs ~1s of renderer boot before
- * `previewShellReady`, and opening a second file inside that window used to
- * fall all the way back to a cold create.
- */
-const PREVIEW_WARM_POOL = 2
-/** Let the just-shown window paint before a replacement shell steals CPU. */
-const PREVIEW_POOL_REFILL_MS = 200
 
 /** Preview windows that must confirm before close (unsaved edit). */
 const previewCloseGuards = new WeakSet<BrowserWindow>()
@@ -2426,7 +2445,13 @@ function wirePreviewLifecycle(window: BrowserWindow, path: string): void {
   const armIdle = (): void => {
     if (idleTimer) clearTimeout(idleTimer)
     idleTimer = setTimeout(() => {
-      if (!window.isDestroyed() && !window.isFocused() && !previewCloseGuards.has(window)) {
+      if (
+        shouldParkIdlePreview({
+          destroyed: window.isDestroyed(),
+          focused: window.isFocused(),
+          guarded: previewCloseGuards.has(window)
+        })
+      ) {
         afterLeavingFullscreen(window, () => {
           if (!window.isDestroyed() && !window.isFocused()) {
             parkWarmPreviewShell(window)
@@ -2446,44 +2471,32 @@ function wirePreviewLifecycle(window: BrowserWindow, path: string): void {
   })
   // Unsaved guard → park into warm pool (hide) instead of destroy when clean.
   window.on('close', (event) => {
-    if (quitting) return
-    if (fullscreenCloseAllowed.has(window)) {
-      fullscreenCloseAllowed.delete(window)
+    const disposition = previewCloseDisposition({
+      quitting,
+      fullscreenCloseAllowed: fullscreenCloseAllowed.has(window),
+      hasUnsavedGuard: previewCloseGuards.has(window)
+    })
+    if (disposition === 'destroy') {
+      if (fullscreenCloseAllowed.has(window)) fullscreenCloseAllowed.delete(window)
       return
     }
-    if (previewCloseGuards.has(window)) {
-      event.preventDefault()
+    event.preventDefault()
+    if (disposition === 'guard') {
       safeSend(window.webContents, IPC.previewCloseAttempt)
       return
     }
-    if (window.isFullScreen()) {
-      event.preventDefault()
-      window.once('leave-full-screen', () => {
-        if (window.isDestroyed()) return
-        parkWarmPreviewShell(window)
-      })
-      window.setFullScreen(false)
-      return
-    }
-    // Recycle into the warm pool — next open skips cold start.
-    event.preventDefault()
     if (idleTimer) clearTimeout(idleTimer)
-    parkWarmPreviewShell(window)
+    afterLeavingFullscreen(window, () => {
+      if (!window.isDestroyed()) parkWarmPreviewShell(window)
+    })
   })
 
   // Cap open previews: park the oldest unfocused ones first.
   while (previewWindows.size > PREVIEW_MAX_OPEN) {
-    let victimPath: string | null = null
-    let victim: BrowserWindow | null = null
-    for (const [otherPath, other] of previewWindows) {
-      if (otherPath === path || other.isDestroyed()) continue
-      if (!other.isFocused()) {
-        victimPath = otherPath
-        victim = other
-        break
-      }
-    }
-    if (!victimPath || !victim) break
+    const victimPath = nextUnfocusedPreviewPath(previewWindows, path)
+    if (!victimPath) break
+    const victim = previewWindows.get(victimPath)
+    if (!victim) break
     previewWindows.delete(victimPath)
     afterLeavingFullscreen(victim, () => {
       if (!victim.isDestroyed()) parkWarmPreviewShell(victim)
@@ -2503,28 +2516,6 @@ function wireFullscreenState(window: BrowserWindow): void {
   window.on('enter-full-screen', publish)
   window.on('leave-full-screen', publish)
   window.webContents.on('did-finish-load', publish)
-}
-
-/**
- * macOS leaves a blank black Space if a window is hidden/destroyed while still
- * in native fullscreen. Always exit fullscreen first, then run the action.
- */
-function afterLeavingFullscreen(win: BrowserWindow, next: () => void): void {
-  if (win.isDestroyed()) return
-  if (!win.isFullScreen()) {
-    next()
-    return
-  }
-  win.once('leave-full-screen', () => {
-    if (!win.isDestroyed()) next()
-  })
-  win.setFullScreen(false)
-}
-
-function hideLeavingFullscreen(win: BrowserWindow): void {
-  afterLeavingFullscreen(win, () => {
-    if (!win.isDestroyed()) win.hide()
-  })
 }
 
 /**
@@ -2641,19 +2632,23 @@ const fullscreenCloseAllowed = new WeakSet<BrowserWindow>()
  */
 function wireCloseLeavingFullscreen(win: BrowserWindow): void {
   win.on('close', (event) => {
-    if (quitting || win.isDestroyed()) return
-    if (fullscreenCloseAllowed.has(win)) {
+    const disposition = closeLeavingFullscreenDisposition({
+      quitting,
+      destroyed: win.isDestroyed(),
+      alreadyAllowed: fullscreenCloseAllowed.has(win),
+      isFullScreen: win.isFullScreen()
+    })
+    if (disposition === 'allow-once') {
       fullscreenCloseAllowed.delete(win)
       return
     }
-    if (!win.isFullScreen()) return
+    if (disposition !== 'leave-then-reclose') return
     event.preventDefault()
-    win.once('leave-full-screen', () => {
+    afterLeavingFullscreen(win, () => {
       if (win.isDestroyed()) return
       fullscreenCloseAllowed.add(win)
       win.close()
     })
-    win.setFullScreen(false)
   })
 }
 
@@ -2681,9 +2676,8 @@ function hostWindowOf(machineId: string | null | undefined): BrowserWindow | nul
 }
 
 function hostWindowTitle(machineId: string, name?: string): string {
-  if (isLocalMachine(machineId)) return APP_NAME
   const label = name?.trim() || hostRegistry.get(machineId)?.info.name || machineId
-  return `${APP_NAME} — ${label}`
+  return formatHostWindowTitle(APP_NAME, isLocalMachine(machineId), label)
 }
 
 function syncHostWindows(hosts: WorkspaceHostInfo[]): void {
@@ -2714,9 +2708,10 @@ function createWindow(opts?: { machineId?: string }): BrowserWindow {
   const icon = loadAppIcon()
   const snapshotting = Boolean(process.env.VAV_SNAPSHOT)
   const e2e = isE2eRuntime()
+  const { width, height } = mainWindowSize({ snapshotting, e2e })
   const window = new BrowserWindow({
-    width: snapshotting ? 1440 : e2e ? 1100 : 720,
-    height: snapshotting ? 900 : 820,
+    width,
+    height,
     minWidth: MAIN_WINDOW_MIN_WIDTH,
     minHeight: 560,
     show: false,
@@ -3021,18 +3016,8 @@ function detachedBounds(cascade: number): {
     // keep primary
   }
 
-  // Narrowest useful companion column (matches main-window minWidth).
   const stored = settingsStore.get().detachedWindowSize
-  const width = Math.min(stored?.width ?? MAIN_WINDOW_MIN_WIDTH, area.width - 40)
-  const height = Math.min(stored?.height ?? 760, area.height - 60)
-  const step = (cascade % 5) * 26
-
-  return {
-    width,
-    height,
-    x: area.x + area.width - width - 28 - step,
-    y: area.y + Math.max(0, Math.round((area.height - height) / 2) - 20) + step
-  }
+  return placeDetachedBounds(area, stored, cascade, MAIN_WINDOW_MIN_WIDTH)
 }
 
 /**
@@ -3124,7 +3109,12 @@ function scheduleVisibleWindowRepaint(except?: BrowserWindow | null): void {
 }
 
 function isWindowInPlay(win: BrowserWindow | null | undefined): boolean {
-  return !!(win && !win.isDestroyed() && (win.isVisible() || win.isMinimized()))
+  return windowIsInPlayOf({
+    missing: !win,
+    destroyed: !!win?.isDestroyed(),
+    visible: !!win?.isVisible(),
+    minimized: !!win?.isMinimized()
+  })
 }
 
 function moveWindowTop(win: BrowserWindow): void {
@@ -3151,36 +3141,16 @@ function moveWindowTop(win: BrowserWindow): void {
  * window — higher layers are re-pinned with `moveTop` only (no focus steal).
  */
 function enforceAppZOrder(focused: BrowserWindow | null): void {
-  if (isWindowInPlay(mainWindow)) moveWindowTop(mainWindow!)
-
-  const quickChats = [...detachedWindows.values()].filter((w) => isWindowInPlay(w))
-  for (const win of quickChats) {
-    if (focused && win.id === focused.id) continue
-    moveWindowTop(win)
+  const ids = appZOrderWindowIds({
+    mainId: isWindowInPlay(mainWindow) ? mainWindow!.id : null,
+    quickChatIds: [...detachedWindows.values()].filter((w) => isWindowInPlay(w)).map((w) => w.id),
+    settingsId: isWindowInPlay(settingsWindow) ? settingsWindow!.id : null,
+    focusedId: focused && !focused.isDestroyed() ? focused.id : null
+  })
+  for (const id of ids) {
+    const win = BrowserWindow.fromId(id)
+    if (win && !win.isDestroyed()) moveWindowTop(win)
   }
-  if (focused && quickChats.some((w) => w.id === focused.id)) {
-    moveWindowTop(focused)
-  }
-
-  if (isWindowInPlay(settingsWindow)) moveWindowTop(settingsWindow!)
-}
-
-/** Strip message bodies for IPC seed (sidebar meta shape). */
-function conversationToMeta(conversation: Conversation): ConversationMeta {
-  const {
-    messages: _messages,
-    tokenHistory: _history,
-    cacheCreatedAt: _created,
-    cacheExpiresAt: _expires,
-    compactions: _compactions,
-    ...meta
-  } = conversation
-  void _messages
-  void _history
-  void _created
-  void _expires
-  void _compactions
-  return meta
 }
 
 function bindDetachedWindow(window: BrowserWindow, conversationId: string): void {
@@ -3266,10 +3236,8 @@ function pushDetachedSessionClaim(window: BrowserWindow, conversationId: string)
 function disposeEphemeralIfEmpty(conversationId: string): boolean {
   if (!ephemeralConversations.delete(conversationId)) return false
   const stale = conversationStore.get(conversationId)
-  const agentActive =
-    (!!stale?.agentBinaryName && stale.agentBinaryName !== 'vav') || !!stale?.cliHost
   const hasPty = ptyManager.hasConversation(conversationId)
-  if (stale && stale.messages.length === 0 && !agentActive && !hasPty) {
+  if (isDisposableEphemeralSession(stale, hasPty)) {
     const removed = conversationStore.remove([conversationId])
     for (const id of removed) {
       agent.disposeConversation(id)
@@ -3318,19 +3286,7 @@ function createSessionBrowserWindow(opts: {
 }
 
 function takeWarmSessionShell(): BrowserWindow | null {
-  const notReady: BrowserWindow[] = []
-  while (warmSessionPool.length > 0) {
-    const win = warmSessionPool.pop()!
-    if (win.isDestroyed()) continue
-    if (!warmSessionReady.has(win)) {
-      notReady.push(win)
-      continue
-    }
-    warmSessionPool.push(...notReady)
-    return win
-  }
-  warmSessionPool.push(...notReady)
-  return null
+  return takeReadyWarmShell(warmSessionPool, (win) => warmSessionReady.has(win))
 }
 
 function hasWarmSessionInFlight(): boolean {
@@ -3355,24 +3311,17 @@ async function acquireWarmSessionShell(budgetMs: number): Promise<BrowserWindow 
   if (!hasWarmSessionInFlight()) return null
 
   sessionOpenMark('open:warm-wait')
-  const deadline = Date.now() + budgetMs
-  while (Date.now() < deadline) {
-    const win = takeWarmSessionShell()
-    if (win) {
-      sessionOpenMark('open:warm-wait-hit')
-      return win
-    }
-    await new Promise<void>((r) => setTimeout(r, 20))
-  }
-  sessionOpenMark('open:warm-wait-miss')
-  return null
+  const win = await waitForReadyWarmShell(takeWarmSessionShell, {
+    deadline: Date.now() + budgetMs,
+    intervalMs: 20
+  })
+  sessionOpenMark(win ? 'open:warm-wait-hit' : 'open:warm-wait-miss')
+  return win
 }
 
 /** Preload hidden session shells so ⌘⇧↵ skips BrowserWindow+renderer boot. */
 function warmSessionShellPool(): void {
-  const live = warmSessionPool.filter((w) => !w.isDestroyed())
-  warmSessionPool.length = 0
-  warmSessionPool.push(...live)
+  replaceLiveWarmPool(warmSessionPool)
   while (warmSessionPool.length < SESSION_WARM_POOL) {
     const window = createSessionBrowserWindow({ show: false })
     warmSessionPool.push(window)
@@ -3397,13 +3346,8 @@ function warmSessionShellPool(): void {
 function parkWarmSessionShell(window: BrowserWindow): void {
   if (window.isDestroyed()) return
   if (warmSessionPool.includes(window)) return
-  if (warmSessionPool.length >= SESSION_WARM_POOL) {
-    afterLeavingFullscreen(window, () => {
-      if (!window.isDestroyed()) {
-        fullscreenCloseAllowed.add(window)
-        window.destroy()
-      }
-    })
+  if (shouldDestroyParkedWarmShell(warmSessionPool.length, SESSION_WARM_POOL)) {
+    destroyLeavingFullscreen(window, () => fullscreenCloseAllowed.add(window))
     return
   }
   try {
@@ -3623,14 +3567,7 @@ function previewQuery(
   path: string,
   options?: { origin?: 'dock' | 'session'; conversationId?: string; requestedAt?: number }
 ): Record<string, string> {
-  const query: Record<string, string> = {
-    view: 'file-preview',
-    path,
-    origin: options?.origin ?? 'session'
-  }
-  if (options?.conversationId) query.conversationId = options.conversationId
-  if (options?.requestedAt) query.requestedAt = String(options.requestedAt)
-  return query
+  return buildPreviewQuery(path, options)
 }
 
 /** Remove a preview window entry by window identity (path may have been remapped). */
@@ -3642,14 +3579,7 @@ function forgetPreviewWindow(window: BrowserWindow): void {
 
 /** Stable map key for preview windows (aliases / relative paths collapse). */
 function previewPathKey(filePath: string): string {
-  const raw = filePath.trim()
-  if (!raw) return ''
-  try {
-    if (existsSync(raw)) return realpathSync(raw)
-  } catch {
-    // fall through
-  }
-  return raw
+  return previewPathKeyOf(filePath, { exists: existsSync, realpath: realpathSync })
 }
 
 /**
@@ -3705,31 +3635,14 @@ function takePreloadedInspect(path: string): Promise<FileInspectResult> | null {
 }
 
 function takeWarmPreviewShell(): BrowserWindow | null {
-  const notReady: BrowserWindow[] = []
-  while (warmPreviewPool.length > 0) {
-    const win = warmPreviewPool.pop()!
-    if (win.isDestroyed()) continue
-    if (!warmPreviewReady.has(win)) {
-      notReady.push(win)
-      continue
-    }
-    warmPreviewPool.push(...notReady)
-    return win
-  }
-  warmPreviewPool.push(...notReady)
-  return null
+  return takeReadyWarmShell(warmPreviewPool, (win) => warmPreviewReady.has(win))
 }
 
 function parkWarmPreviewShell(window: BrowserWindow): void {
   if (window.isDestroyed()) return
   if (warmPreviewPool.includes(window)) return
-  if (warmPreviewPool.length >= PREVIEW_WARM_POOL) {
-    afterLeavingFullscreen(window, () => {
-      if (!window.isDestroyed()) {
-        fullscreenCloseAllowed.add(window)
-        window.destroy()
-      }
-    })
+  if (shouldDestroyParkedWarmShell(warmPreviewPool.length, PREVIEW_WARM_POOL)) {
+    destroyLeavingFullscreen(window, () => fullscreenCloseAllowed.add(window))
     return
   }
   previewCloseGuards.delete(window)
@@ -3790,12 +3703,10 @@ function createPreviewBrowserWindow(opts: {
 
 /** Preload hidden preview shells after the main window is up. */
 function warmPreviewShellPool(): void {
-  const live = warmPreviewPool.filter((w) => !w.isDestroyed())
-  warmPreviewPool.length = 0
-  warmPreviewPool.push(...live)
+  replaceLiveWarmPool(warmPreviewPool)
   while (warmPreviewPool.length < PREVIEW_WARM_POOL) {
     const area = screen.getPrimaryDisplay().workArea
-    const width = Math.min(PREVIEW_DEFAULT_WIDTH, area.width - 40)
+    const width = clampPreviewWidth(PREVIEW_DEFAULT_WIDTH, area.width)
     const height = Math.min(700, area.height - 40)
     // Only the lead shell warms every format canvas; the pptx renderer alone is
     // ~2 MB of parsed JS and spares should not each hold a copy.
@@ -3836,19 +3747,10 @@ function overlayGeometry(): { width: number; height: number; x?: number; y?: num
   const area = (
     anchor && !anchor.isDestroyed() ? screen.getDisplayMatching(anchor.getBounds()) : screen.getPrimaryDisplay()
   ).workArea
-  const width = Math.min(1180, area.width - 48)
-  const height = Math.min(860, area.height - 48)
-  let x: number | undefined
-  let y: number | undefined
+  const size = overlayFit(area)
   const others = [...appClipWindows.values()].filter((w) => !w.isDestroyed())
-  if (others.length > 0) {
-    const b = others[others.length - 1]!.getBounds()
-    x = b.x + 28
-    y = b.y + 28
-    if (x + width > area.x + area.width) x = area.x + Math.max(0, area.width - width)
-    if (y + height > area.y + area.height) y = area.y + Math.max(0, area.height - height)
-  }
-  return { width, height, x, y }
+  const last = others.length > 0 ? others[others.length - 1]!.getBounds() : null
+  return { ...size, ...overlayCascadeOrigin(area, last, size) }
 }
 
 function createOverlayBrowserWindow(opts: {
@@ -3890,32 +3792,15 @@ function createOverlayBrowserWindow(opts: {
 }
 
 function takeWarmOverlayShell(): BrowserWindow | null {
-  const notReady: BrowserWindow[] = []
-  while (overlayWarmPool.length > 0) {
-    const win = overlayWarmPool.pop()!
-    if (win.isDestroyed()) continue
-    if (!overlayWarmReady.has(win)) {
-      notReady.push(win)
-      continue
-    }
-    overlayWarmPool.push(...notReady)
-    return win
-  }
-  overlayWarmPool.push(...notReady)
-  return null
+  return takeReadyWarmShell(overlayWarmPool, (win) => overlayWarmReady.has(win))
 }
 
 function parkWarmOverlayShell(window: BrowserWindow): void {
   if (window.isDestroyed()) return
   if (overlayWarmPool.includes(window)) return
   forgetOverlayWindow(window)
-  if (overlayWarmPool.length >= OVERLAY_WARM_POOL) {
-    afterLeavingFullscreen(window, () => {
-      if (!window.isDestroyed()) {
-        fullscreenCloseAllowed.add(window)
-        window.destroy()
-      }
-    })
+  if (shouldDestroyParkedWarmShell(overlayWarmPool.length, OVERLAY_WARM_POOL)) {
+    destroyLeavingFullscreen(window, () => fullscreenCloseAllowed.add(window))
     return
   }
   try {
@@ -3935,13 +3820,10 @@ function parkWarmOverlayShell(window: BrowserWindow): void {
 }
 
 function warmOverlayShellPool(): void {
-  const live = overlayWarmPool.filter((w) => !w.isDestroyed())
-  overlayWarmPool.length = 0
-  overlayWarmPool.push(...live)
+  replaceLiveWarmPool(overlayWarmPool)
   while (overlayWarmPool.length < OVERLAY_WARM_POOL) {
     const area = screen.getPrimaryDisplay().workArea
-    const width = Math.min(960, area.width - 48)
-    const height = Math.min(720, area.height - 48)
+    const { width, height } = overlayFit(area, 960, 720)
     const window = createOverlayBrowserWindow({ show: false, width, height })
     overlayWarmPool.push(window)
     window.on('closed', () => {
@@ -3997,16 +3879,7 @@ function sendOverlayNavigate(window: BrowserWindow, payload: OverlayPayload): vo
 }
 
 function normalizeOverlayPayload(input: OverlayPayload | string): OverlayPayload {
-  const raw = typeof input === 'string' ? { path: input } : input
-  const path = raw.path ? previewPathKey(raw.path) : ''
-  const kind = raw.kind ?? (path ? inferOverlayKind(path) : undefined)
-  const diagramKind = raw.diagramKind ?? (path ? inferDiagramKind(path) : undefined)
-  return {
-    ...raw,
-    path: path || raw.path,
-    kind,
-    diagramKind
-  }
+  return buildOverlayPayload(input, previewPathKey)
 }
 
 /** Preview-style overlay: thin native frame, no file-viewer chrome. */
@@ -4092,6 +3965,7 @@ function openFilePreviewWindow(
 ): void {
   const path = previewPathKey(filePath)
   if (!path) return
+  fileService.grantPath(path)
   // Overlay = ephemeral conversation preview. File Sessions pass surface:'file'.
   if (shouldOpenAsOverlay(path, options?.surface)) {
     openAppClipWindow(path)
@@ -4124,7 +3998,7 @@ function openFilePreviewWindow(
   const snapshotting = Boolean(process.env.VAV_SNAPSHOT || process.env.VAV_SNAPSHOT_PLAN)
   // 880 ≈ a Letter/A4 page at 100% plus the document stage's gutters, so paged
   // formats open fitted *and* full size rather than fitted and shrunken.
-  const width = Math.min(snapshotting ? 1280 : PREVIEW_DEFAULT_WIDTH, area.width - 40)
+  const width = clampPreviewWidth(snapshotting ? 1280 : PREVIEW_DEFAULT_WIDTH, area.width)
   const height = Math.min(snapshotting ? 820 : 700, area.height - 40)
 
   let x: number | undefined
@@ -4215,8 +4089,6 @@ function openFilePreviewWindow(
   setTimeout(() => warmPreviewShellPool(), 1200)
 }
 
-type TokenUsageAnchor = { x: number; y: number; width: number; height: number }
-
 let tokenUsageCloseTimer: ReturnType<typeof setTimeout> | null = null
 
 function cancelTokenUsageDismiss(): void {
@@ -4249,15 +4121,10 @@ function publishModelCatalog(
 }
 
 function preferredModelHosts(): CliHostKind[] {
-  const hosts: CliHostKind[] = []
-  for (const entry of settingsStore.get().recentAgentModels ?? []) {
-    if (isStructuredCliHost(entry.hostId)) hosts.push(entry.hostId)
-  }
-  for (const conversation of conversationStore.all()) {
-    const host = conversation.cliHost
-    if (host && isStructuredCliHost(host)) hosts.push(host)
-  }
-  return hosts
+  return collectPreferredModelHosts(
+    settingsStore.get().recentAgentModels ?? [],
+    conversationStore.all()
+  )
 }
 
 /** Catalogue size when the host published one; else the model-id table. */
@@ -4271,9 +4138,7 @@ function contextWindowForModel(
   const listed = getModelCatalogSnapshot()[agentModelHostKey(host, vendorId, accountId)]?.models?.find(
     (m) => m.id === modelId
   )?.contextWindow
-  if (listed && listed > 0) return listed
-  if (host && reported && reported > 0) return reported
-  return contextWindowFor(modelId)
+  return contextWindowForModelId(host, modelId, listed, reported, contextWindowFor)
 }
 
 /**
@@ -4302,17 +4167,13 @@ function coerceConversationModel(conversationId: string): string | null {
     catalogue,
     vendorId
   })
-  const patch: { model?: string; tokenLimit?: number; fast?: boolean } = {}
-  if (host === 'cursor' && conversation.model) {
-    const normalized = normalizeCursorConversationModel(conversation.model)
-    if (normalized.migrated && normalized.fast === true && conversation.fast !== true) {
-      patch.fast = true
-    }
-  }
-  if (resolved !== conversation.model) {
-    patch.model = resolved
-    patch.tokenLimit = contextWindowForModel(host, resolved, undefined, vendorId, creds.accountId)
-  }
+  const patch = conversationModelHealPatch({
+    host,
+    currentModel: conversation.model,
+    currentFast: conversation.fast,
+    resolved,
+    tokenLimit: contextWindowForModel(host, resolved, undefined, vendorId, creds.accountId)
+  })
   if (Object.keys(patch).length > 0) {
     conversationStore.updateMeta(conversationId, patch)
     // Keep sidebar / composer meta in sync when healing a foreign model id.
@@ -4360,12 +4221,11 @@ function buildTokenUsagePayload(conversationId: string): TokenUsageViewPayload |
     : compactionForLeaf(conversation.compactions, conversation.messages, leafId)
   const latestInput = conversation.tokenHistory?.at(-1)?.totalInputTokens ?? 0
   const estimated = activeCompaction?.estimatedContextTokens ?? 0
-  const contextTokens =
-    estimated > 0
-      ? estimated
-      : latestInput > 0
-        ? latestInput
-        : conversation.tokensUsed
+  const { contextTokens, contextTokensEstimated } = resolveContextTokens(
+    estimated,
+    latestInput,
+    conversation.tokensUsed
+  )
   const model = coerceConversationModel(conversationId) ?? conversation.model
   const creds = resolveVavCredentials(
     { conversation, settingsEndpoint: settings.apiEndpoint },
@@ -4412,7 +4272,7 @@ function buildTokenUsagePayload(conversationId: string): TokenUsageViewPayload |
     compactedCount: activeCompaction?.compactedCount ?? 0,
     pathMessageCount: pathLen,
     contextTokens,
-    contextTokensEstimated: estimated > 0,
+    contextTokensEstimated,
     reportedSessionCostUsd,
     hasProviderUsage,
     cacheExpiryEstimated: !!(conversation.cacheExpiresAt && conversation.cacheCreatedAt),
@@ -4426,16 +4286,13 @@ function buildTokenUsagePayload(conversationId: string): TokenUsageViewPayload |
 function tokenUsageAccountRows(
   conversation: Conversation
 ): import('@shared/ipc').TokenUsageAccountRow[] {
-  const fallback = t('accounts.workspaceDefault')
-  const dirLabel =
-    workspaceKeyOf(conversation.workingDirectory) === '__default__'
-      ? fallback
-      : conversation.workingDirectory?.split(/[\\/]/).filter(Boolean).at(-1) || fallback
-  const names = new Map<string, string>()
-  for (const account of accountStore.listVisible(workspaceKeyOf(conversation.workingDirectory))) {
-    names.set(account.id, displayAccountLabel(account, dirLabel))
-  }
-  return sessionUsageRowsOf(conversation.tokenHistory ?? [], names, t('accounts.untitled'))
+  const dirLabel = workspaceLabelOf(conversation.workingDirectory, t('accounts.workspaceDefault'))
+  return tokenUsageAccountRowsOf(
+    conversation.tokenHistory ?? [],
+    accountStore.listVisible(workspaceKeyOf(conversation.workingDirectory)),
+    t('accounts.untitled'),
+    (account) => displayAccountLabel(account, dirLabel)
+  )
 }
 
 function currentTokenUsagePayload(): TokenUsageViewPayload | null {
@@ -4483,23 +4340,14 @@ function placeTokenUsagePopup(
 ): void {
   const [width, height] = win.getSize()
   const content = parent.getContentBounds()
-  const gap = 8
-  let x: number
-  let y: number
-  if (anchor) {
-    x = Math.round(content.x + anchor.x + anchor.width - width)
-    y = Math.round(content.y + anchor.y - height - gap)
-    if (y < content.y) {
-      y = Math.round(content.y + anchor.y + anchor.height + gap)
-    }
-  } else {
-    x = Math.round(content.x + content.width - width - 24)
-    y = Math.round(content.y + content.height - height - 80)
-  }
-
   const area = screen.getDisplayMatching(content).workArea
-  x = Math.min(Math.max(area.x + 8, x), area.x + area.width - width - 8)
-  y = Math.min(Math.max(area.y + 8, y), area.y + area.height - height - 8)
+  const { x, y } = tokenUsagePopupPosition({
+    width,
+    height,
+    content,
+    workArea: area,
+    anchor
+  })
   win.setPosition(x, y)
 }
 
@@ -4764,9 +4612,12 @@ function dismissProviderAccountSoon(): void {
 }
 
 function hostDisplayName(host: CliHostKind | null): string {
-  if (!host) return t('agents.plainShell')
-  const agent = enabledCliAgents(settingsStore.get().cliAgents).find((a) => a.id === host)
-  return agent?.name ?? displayNameForCliHost(host)
+  return hostDisplayNameOf(
+    host,
+    enabledCliAgents(settingsStore.get().cliAgents),
+    t('agents.plainShell'),
+    displayNameForCliHost
+  )
 }
 
 function buildProviderAccountPayload(
@@ -4784,21 +4635,19 @@ function buildProviderAccountPayload(
   const host = (conversation.cliHost ?? null) as CliHostKind | null
   const settings = settingsStore.get()
   const signedIn = extras?.signedIn ?? false
-  return {
+  return providerAccountViewOf({
     conversationId: conversation.id,
     host,
-    hostId: host ?? 'vav',
     hostName: hostDisplayName(host),
     signedIn,
     accountId: extras?.accountId ?? null,
     plan: extras?.plan ?? null,
-    authKind: extras?.authKind ?? (signedIn ? 'oauth' : 'none'),
+    authKind: extras?.authKind,
     windows: conversationHostQuota(conversation),
     loading: extras?.loading ?? false,
     theme: settings.theme,
-    locale: currentLocale(),
-    now: Date.now()
-  }
+    locale: currentLocale()
+  })
 }
 
 function currentProviderAccountPayload(): ProviderAccountViewPayload | null {
@@ -5081,15 +4930,20 @@ let swarmHistoryConversationId: string | null = null
 
 function pruneBlankSwarmHistory(conversationId: string): void {
   for (const record of swarmHistoryStore.forConversation(conversationId)) {
-    if (record.name?.trim()) continue
     const sessionId = nativeSessionId(record.cursor)
-    if (
+    const hasConversation = !!(
       sessionId &&
       hostSessionHasConversation(record.agentId, sessionId, record.workingDirectory || '~')
+    )
+    if (
+      shouldKeepClosedSwarmHistoryRecord({
+        name: record.name,
+        title: record.title,
+        hasConversation
+      })
     ) {
       continue
     }
-    if (!isBlankSwarmSessionTitle(record.title)) continue
     swarmHistoryStore.remove(record.key)
   }
 }
@@ -5137,13 +4991,7 @@ function findSwarmHistoryItem(
   itemId: string,
   conversationId = swarmHistoryConversationId
 ): SwarmHistoryViewPayload['groups'][number]['items'][number] | null {
-  const payload = currentSwarmHistoryPayload(conversationId)
-  if (!payload) return null
-  for (const group of payload.groups) {
-    const hit = group.items.find((item) => item.id === itemId)
-    if (hit) return hit
-  }
-  return null
+  return findItemInSwarmHistory(currentSwarmHistoryPayload(conversationId)?.groups, itemId)
 }
 
 function popupSwarmHistoryMenuAtAnchor(
@@ -5260,34 +5108,34 @@ async function confirmDeleteSwarmHistoryItem(
   const item = findSwarmHistoryItem(itemId, conversationId)
   if (!item) return
   const parent = BrowserWindow.fromWebContents(sender) ?? mainWindow
-  const first = {
-    type: 'warning' as const,
-    title: t('agents.sessionHistoryDeleteTitle'),
-    message: t('agents.sessionHistoryDeleteTitle'),
-    detail: t('agents.sessionHistoryDeleteBody', { name: item.label }),
-    buttons: [t('common.delete'), t('common.cancel')],
-    defaultId: 1,
-    cancelId: 1
-  }
-  const firstResult =
-    parent && !parent.isDestroyed()
-      ? await dialog.showMessageBox(parent, first)
-      : await dialog.showMessageBox(first)
+  const first = dialogConfirmOptions(
+    {
+      title: t('agents.sessionHistoryDeleteTitle'),
+      message: t('agents.sessionHistoryDeleteBody', { name: item.label }),
+      confirmLabel: t('common.delete'),
+      destructive: true
+    },
+    { confirm: t('common.delete'), cancel: t('common.cancel') }
+  )
+  const firstResult = await showParentedMessageBox(
+    parent && !parent.isDestroyed() ? parent : null,
+    first
+  )
   if (firstResult.response !== 0) return
 
-  const second = {
-    type: 'warning' as const,
-    title: t('agents.sessionHistoryDeleteAgainTitle'),
-    message: t('agents.sessionHistoryDeleteAgainTitle'),
-    detail: t('agents.sessionHistoryDeleteAgainBody'),
-    buttons: [t('common.delete'), t('common.cancel')],
-    defaultId: 1,
-    cancelId: 1
-  }
-  const secondResult =
-    parent && !parent.isDestroyed()
-      ? await dialog.showMessageBox(parent, second)
-      : await dialog.showMessageBox(second)
+  const second = dialogConfirmOptions(
+    {
+      title: t('agents.sessionHistoryDeleteAgainTitle'),
+      message: t('agents.sessionHistoryDeleteAgainBody'),
+      confirmLabel: t('common.delete'),
+      destructive: true
+    },
+    { confirm: t('common.delete'), cancel: t('common.cancel') }
+  )
+  const secondResult = await showParentedMessageBox(
+    parent && !parent.isDestroyed() ? parent : null,
+    second
+  )
   if (secondResult.response !== 0) return
 
   deleteSwarmHistoryRecord(itemId, conversationId)
@@ -5352,158 +5200,6 @@ function newDetachedSession(): void {
   )
   setImmediate(() => publishConversations())
   sessionOpenMark('hotkey:open-dispatched', conversation.id)
-}
-
-/**
- * At most one renderer-driven popup at a time.
- * Without this, ⌘⇧O / chip menus stack when the user switches sessions or
- * re-opens before the previous AppKit menu closes — leaving a sticky menu.
- */
-let activeNativePopup: {
-  menu: Electron.Menu
-  window: BrowserWindow
-  finish: () => void
-  seq: number
-} | null = null
-let nativePopupSeq = 0
-
-function closeActiveNativePopup(): void {
-  const active = activeNativePopup
-  if (!active) return
-  activeNativePopup = null
-  // Invalidate any deferred popup() that has not shown yet.
-  nativePopupSeq += 1
-  try {
-    if (!active.window.isDestroyed()) active.menu.closePopup(active.window)
-    else active.menu.closePopup()
-  } catch {
-    // Menu may already be gone
-  }
-  active.finish()
-}
-
-/**
- * Native popup menu driven by the renderer.
- *
- * Resolves to the chosen row's id — `click` fires before popup's `callback`,
- * so the id is already settled by the time the menu reports that it closed.
- */
-function popupNativeMenu(
-  window: BrowserWindow,
-  items: NativeMenuItem[],
-  position?: { x: number; y: number }
-): Promise<string | null> {
-  // Dismiss any previous popup first (session switch / double ⌘⇧O).
-  closeActiveNativePopup()
-  const seq = ++nativePopupSeq
-
-  return new Promise((resolve) => {
-    let chosen: string | null = null
-    let settled = false
-    const finish = (): void => {
-      if (settled) return
-      settled = true
-      if (activeNativePopup?.seq === seq) activeNativePopup = null
-      // setImmediate so click handlers that themselves open menus still run first.
-      setImmediate(() => resolve(chosen))
-    }
-
-    const iconFor = (item: NativeMenuItem): Electron.NativeImage | undefined => {
-      if (!item.icon) return undefined
-      // Renderer rasterizes 32px for the 16pt slot — declare the 2x scale or
-      // AppKit would size the image at 32pt and blow up the row.
-      const image = nativeImage.createEmpty()
-      image.addRepresentation({ scaleFactor: 2, dataURL: item.icon })
-      if (image.isEmpty()) return undefined
-      // Template: macOS tints from the alpha channel — follows menu appearance
-      // and highlight (white on accent) like a checkmark. No-op elsewhere.
-      if (item.iconTemplate) image.setTemplateImage(true)
-      return image
-    }
-
-    // Use `radio` (not `checkbox`) for exclusive picks like model / approval mode.
-    // Checkbox groups on AppKit often fail to fire click for non-checked rows.
-    const toTemplate = (rows: NativeMenuItem[]): Electron.MenuItemConstructorOptions[] =>
-      rows.map((item) => {
-        if (item.separator) return { type: 'separator' }
-        if (item.header) {
-          // macOS 14+ section header; older platforms fall back to a disabled title.
-          return process.platform === 'darwin'
-            ? { type: 'header', label: item.label ?? '' }
-            : { label: item.label ?? '', enabled: false }
-        }
-        if (item.role) return { role: item.role, label: item.label }
-        if (item.submenu && item.submenu.length > 0) {
-          return {
-            type: 'submenu',
-            label: item.label ?? '',
-            enabled: item.enabled !== false,
-            icon: iconFor(item),
-            submenu: toTemplate(item.submenu)
-          }
-        }
-        const hasCheck = item.checked !== undefined
-        return {
-          label: item.label ?? '',
-          enabled: item.enabled !== false,
-          type: hasCheck ? 'radio' : 'normal',
-          checked: hasCheck ? !!item.checked : undefined,
-          icon: iconFor(item),
-          click: () => {
-            chosen = item.id ?? null
-          }
-        }
-      })
-    const template: Electron.MenuItemConstructorOptions[] = toTemplate(items)
-
-    const opts: Electron.PopupOptions = {
-      window,
-      callback: finish
-    }
-    // Only pass coordinates when valid — undefined x/y crashes Menu.popup on some Electron builds.
-    // Renderer sends content-view (client) coords; with `window` set, Electron treats x/y as
-    // relative to that window's content area.
-    if (
-      position &&
-      Number.isFinite(position.x) &&
-      Number.isFinite(position.y)
-    ) {
-      opts.x = Math.round(position.x)
-      opts.y = Math.round(position.y)
-    }
-
-    // Dev: every native menu gets Inspect Element (custom menus otherwise block it).
-    // Use isDevRuntime — branded vav.app often reports isPackaged=true.
-    if (isDevRuntime()) {
-      const x = opts.x ?? 0
-      const y = opts.y ?? 0
-      if (template.length) template.push({ type: 'separator' })
-      template.push({
-        label: 'Inspect Element',
-        click: () => {
-          const wc = window.webContents
-          wc.inspectElement(x, y)
-          if (!wc.isDevToolsOpened()) wc.openDevTools({ mode: 'detach' })
-        }
-      })
-    }
-
-    // Defer past the originating mouseup. Opening a native menu synchronously inside a
-    // button click often dismisses it immediately (menu never appears).
-    setTimeout(() => {
-      if (window.isDestroyed() || seq !== nativePopupSeq) {
-        finish()
-        return
-      }
-      try {
-        const menu = Menu.buildFromTemplate(template)
-        activeNativePopup = { menu, window, finish, seq }
-        menu.popup(opts)
-      } catch {
-        finish()
-      }
-    }, 0)
-  })
 }
 
 type SnapshotPlanStep = {
@@ -5773,6 +5469,7 @@ function openFromDroppedPaths(paths: string[]): void {
     try {
       if (!existsSync(p)) continue
       const full = realpathSync(p)
+      fileService.grantPath(full)
       if (statSync(full).isDirectory()) dirs.push(full)
       else files.push(full)
     } catch {
@@ -5799,12 +5496,7 @@ function openFromDroppedPaths(paths: string[]): void {
 
 /** A launch argument that will become a preview window rather than a session. */
 function isPreviewableColdOpenPath(path: string): boolean {
-  if (!path) return false
-  try {
-    return existsSync(path) && !statSync(realpathSync(path)).isDirectory()
-  } catch {
-    return false
-  }
+  return previewableColdOpenPath(path, { existsSync, realpathSync, statSync })
 }
 
 /** Coalesce bursty macOS `open-file` events from a single Dock drop. */
@@ -5914,23 +5606,8 @@ function applyTheme(theme: AppSettings['theme']): void {
   nativeTheme.themeSource = theme
 }
 
-/** Fallback when the OS cannot report an accent (Linux, old macOS, errors). */
-const FALLBACK_SYSTEM_ACCENT = '#007aff'
-
 /** Last hex we broadcast — avoid spam on focus re-samples. */
 let lastBroadcastAccent: string | null = null
-
-/**
- * Normalize any Electron accent string to `#rrggbb`.
- * `systemPreferences.getAccentColor` returns `rrggbbaa` (no hash).
- * `getColor` / event payloads may be `#rrggbbaa` or `#rrggbb`.
- */
-function normalizeAccentHex(raw: unknown): string | null {
-  if (typeof raw !== 'string') return null
-  const cleaned = raw.trim().replace(/^#/, '').toLowerCase()
-  if (!/^[0-9a-f]{6}([0-9a-f]{2})?$/.test(cleaned)) return null
-  return `#${cleaned.slice(0, 6)}`
-}
 
 /** Read the current OS accent colour (macOS 10.14+ / Windows). */
 function readSystemAccentColor(): string {
@@ -5983,6 +5660,7 @@ function watchSystemAccentColor(): void {
       !screenshotController?.isOverlay(window)
     ) {
       lastFocusedWindow = window
+      updateService.notifyWindowActive()
     }
     publishSystemAccentColor(false)
     notifications.acknowledgeFocusedWindow(window)
@@ -6001,26 +5679,13 @@ function tmpRootFor(machineId: string | null | undefined): string {
   return daemonAttach.tmpOf(normalizeMachineId(machineId))
 }
 
-function joinHostPath(platform: string | undefined, ...parts: string[]): string {
-  return hostJoin(platform, ...parts)
-}
-
 function decorateHosts(hosts: WorkspaceHostInfo[]): WorkspaceHostInfo[] {
-  return hosts.map((host) => {
-    if (isLocalMachine(host.id)) return host
-    const providers = daemonAttach.providersOf(host.id)
-    const home = daemonAttach.homeOf(host.id) || host.home
-    const tmp = daemonAttach.tmpOf(host.id) || host.tmp
-    const defaultPath = daemonAttach.defaultPathOf(host.id) ?? undefined
-    return { ...host, home, tmp, defaultPath, providers }
-  })
+  return decorateRemoteHosts(hosts, daemonAttach)
 }
 
 function machineIdFromContents(contents: Electron.WebContents): string {
   try {
-    const url = contents.getURL()
-    if (!url) return LOCAL_MACHINE_ID
-    return normalizeMachineId(new URL(url).searchParams.get('machine'))
+    return machineIdFromRendererUrl(contents.getURL())
   } catch {
     return LOCAL_MACHINE_ID
   }
@@ -6035,6 +5700,82 @@ function homeTmpFor(machineId: string): { home: string; tmp: string } {
     home: host?.info.home || daemonAttach.homeOf(machineId),
     tmp: host?.info.tmp || daemonAttach.tmpOf(machineId)
   }
+}
+
+function conversationIdForGitCwd(cwd: string): string | undefined {
+  return (
+    fileService.conversationIdForPath(cwd) ??
+    conversationIdForWorkdirs(cwd, conversationStore.listMeta())
+  )
+}
+
+function machineIdForShell(event: IpcMainInvokeEvent, path: string): string {
+  const fromPath = conversationIdForGitCwd(path) || fileService.conversationIdForPath(path)
+  if (fromPath) {
+    const conversation = conversationStore.get(fromPath)
+    if (conversation) return normalizeMachineId(conversation.machineId)
+  }
+  return machineIdFromContents(event.sender)
+}
+
+function spawnOnHost(
+  machineId: string,
+  file: string,
+  args: string[]
+): void {
+  const host = hostRegistry.hostFor(machineId)
+  if (!host.info.online) return
+  try {
+    const child = host.process.spawn(file, args, {
+      stdio: ['ignore', 'ignore', 'ignore'],
+      detached: true,
+      windowsHide: true
+    })
+    child.unref()
+    child.on('error', (err) => console.error('[host-shell]', err))
+  } catch (err) {
+    console.error('[host-shell]', err)
+  }
+}
+
+async function revealOnMachine(machineId: string, path: string): Promise<void> {
+  if (!path) return
+  if (isLocalMachine(machineId)) {
+    shell.showItemInFolder(path)
+    return
+  }
+  const host = hostRegistry.hostFor(machineId)
+  if (!host.info.online) return
+  let isDirectory = false
+  try {
+    isDirectory = (await host.fs.stat(path)).isDirectory()
+  } catch {
+    // still try to reveal
+  }
+  const cmd = revealSpawn(host.info.platform, path, isDirectory)
+  spawnOnHost(machineId, cmd.file, cmd.args)
+}
+
+async function openOnMachine(machineId: string, path: string): Promise<{ ok: true } | { ok: false; error: string }> {
+  if (!path) return { ok: false, error: 'empty path' }
+  if (isLocalMachine(machineId)) return fileService.openWithDefault(path)
+  const host = hostRegistry.hostFor(machineId)
+  if (!host.info.online) return { ok: false, error: `${host.info.name} is offline` }
+  const cmd = openSpawn(host.info.platform, path)
+  spawnOnHost(machineId, cmd.file, cmd.args)
+  return { ok: true }
+}
+
+async function previewOnMachine(machineId: string, path: string): Promise<void> {
+  if (!path) return
+  if (isLocalMachine(machineId)) {
+    fileService.preview(path)
+    return
+  }
+  const host = hostRegistry.hostFor(machineId)
+  if (!host.info.online) return
+  const cmd = previewSpawn(host.info.platform, path)
+  spawnOnHost(machineId, cmd.file, cmd.args)
 }
 
 function rememberWorkdir(path: string, machineId?: string | null): void {
@@ -6063,7 +5804,7 @@ async function mintTempWorkdirOn(machineId: string | null | undefined): Promise<
   if (isLocalMachine(machineId)) return mintTempWorkdir()
   const host = hostRegistry.hostFor(machineId)
   const root = daemonAttach.tmpOf(host.id)
-  const dir = joinHostPath(host.info.platform, root, 'vav', randomUUID().slice(0, 8), 'Workspace')
+  const dir = hostJoin(host.info.platform, root, 'vav', randomUUID().slice(0, 8), 'Workspace')
   try {
     await host.fs.mkdir(dir, { recursive: true })
     return dir
@@ -6181,26 +5922,14 @@ function conversationQuotaAuth(
   authKind: import('@shared/cliAccountParse').HostAuthKind
 } {
   const profile = conversation.accountId ? accountStore.get(conversation.accountId) : undefined
-  const show = sessionShowsHostQuota({
+  return conversationQuotaAuthView({
     liveSignedIn: live.signedIn,
     liveIdentity: live.accountId,
+    livePlan: live.plan,
+    liveAuthKind: live.authKind,
     profileKind: profile?.kind,
     profileName: profile?.name
   })
-  if (show) {
-    return {
-      signedIn: live.signedIn,
-      accountId: live.accountId ?? null,
-      plan: live.plan ?? null,
-      authKind: live.authKind ?? (live.signedIn ? 'oauth' : 'none')
-    }
-  }
-  return {
-    signedIn: false,
-    accountId: profile?.kind === 'oauth' ? profile.name : null,
-    plan: null,
-    authKind: profile?.kind === 'oauth' ? 'none' : (live.authKind ?? 'none')
-  }
 }
 
 function conversationHostQuota(conversation: {
@@ -6524,44 +6253,33 @@ function currentSettings(): AppSettings {
 
 /** CFBundleVersion stand-in: YYYY.MMDD.patch from package version + calendar day. */
 function appBuildNumber(): string {
-  const version = app.getVersion()
-  const now = new Date()
-  const y = now.getFullYear()
-  const md = `${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}`
-  const patch = version.split('.').pop() ?? '0'
-  return `${y}.${md}.${patch}`
+  return formatAppBuildNumber(app.getVersion())
+}
+
+async function confirmRevealSecret(event: IpcMainInvokeEvent): Promise<boolean> {
+  if (isE2eRuntime()) return true
+  const result = await showParentedMessageBox(
+    windowFromSender(event.sender),
+    revealSecretBoxOptions({
+      cancel: t('common.cancel'),
+      confirm: t('secrets.revealConfirm'),
+      title: t('secrets.revealTitle'),
+      detail: t('secrets.revealDetail')
+    })
+  )
+  return result.response === 1
 }
 
 function registerIpc(): void {
+  installTrustedIpcGuard(ipcMain, isRendererUrl)
   registerHapticsIpc()
   screenshotController ??= createScreenshotController({ loadScreenshotRenderer })
-  ipcMain.handle(IPC.filesPickAttachments, async (event) => {
-    const parent = BrowserWindow.fromWebContents(event.sender)
-    const opts: Electron.OpenDialogOptions = {
-      properties: ['openFile', 'multiSelections']
-    }
-    const result = parent
-      ? await dialog.showOpenDialog(parent, opts)
-      : await dialog.showOpenDialog(opts)
-    if (result.canceled) return { ok: false as const, cancelled: true }
-    return { ok: true as const, paths: result.filePaths }
-  })
-  ipcMain.handle(IPC.filesCaptureScreenshot, (event) => screenshotController!.start(event))
-  ipcMain.on(IPC.screenshotReady, (event) => screenshotController?.ready(event))
-  ipcMain.on(IPC.screenshotPainted, (event) => screenshotController?.painted(event))
-  ipcMain.on(IPC.screenshotDismiss, () => screenshotController?.dismiss())
-  ipcMain.on(IPC.screenshotFinish, (_event, payload) => screenshotController?.finish(payload))
-  ipcMain.on(IPC.screenshotSetKey, (event, on: boolean) => screenshotController?.setKey(event, on))
-  ipcMain.handle(IPC.secretsStatus, () => secretStore.status())
-  ipcMain.handle(IPC.secretsUnlock, () => {
-    const result = secretStore.unlock()
-    if (result.ok) {
-      invalidateAnalysisCache()
-      void serveAnalysisSnapshot({ refresh: false }).catch((err) => {
-        console.error('[analysis] post-unlock warm failed', err)
-      })
-    }
-    return result
+  registerScreenshotIpc(ipcMain, screenshotController!)
+  registerSecretsIpc(ipcMain, secretStore, () => {
+    invalidateAnalysisCache()
+    void serveAnalysisSnapshot({ refresh: false }).catch((err) => {
+      console.error('[analysis] post-unlock warm failed', err)
+    })
   })
 
   ipcMain.handle(IPC.bootstrap, (event): Bootstrap => {
@@ -6569,10 +6287,13 @@ function registerIpc(): void {
     const settings = currentSettings()
     setLocalePreference(settings.locale)
     const conversations = conversationStore.listMeta()
-    const activeConversationId =
-      conversations.find((c) => !c.archived)?.id ?? conversations[0]?.id ?? ''
     const machineId = machineIdFromContents(event.sender)
+    const activeConversationId =
+      conversations.find(
+        (c) => !c.archived && conversationOnMachine(c, machineId)
+      )?.id ?? ''
     const { home, tmp } = homeTmpFor(machineId)
+    const local = isLocalMachine(machineId)
     return {
       settings,
       resolvedLocale: currentLocale(),
@@ -6581,8 +6302,8 @@ function registerIpc(): void {
       activeConversationId,
       apiKeyHint: secretStore.maskedHint(),
       platform: PLATFORM,
-      home: home || app.getPath('home'),
-      tmp: tmp || tmpdir(),
+      home: home || (local ? app.getPath('home') : ''),
+      tmp: tmp || (local ? tmpdir() : ''),
       hosts: decorateHosts(hostRegistry.list()),
       about: {
         version: app.getVersion(),
@@ -6595,230 +6316,145 @@ function registerIpc(): void {
   })
 
   // --- settings ---
-  ipcMain.handle(IPC.settingsGet, () => currentSettings())
-
-  ipcMain.handle(IPC.settingsUpdate, (_event, patch: Partial<AppSettings>) => {
-    const previous = settingsStore.get()
-    const next = settingsStore.update(patch)
-    if (patch.theme && patch.theme !== previous.theme) applyTheme(next.theme)
-    if (patch.shell && patch.shell !== previous.shell) agent.applyShellSetting()
-    if (patch.globalHotkey !== undefined && patch.globalHotkey !== previous.globalHotkey) {
-      registerGlobalHotkey(next.globalHotkey)
-    }
-    if (patch.locale !== undefined && patch.locale !== previous.locale) {
+  registerSettingsIpc(ipcMain, settingsStore, secretStore, {
+    currentSettings,
+    applyUpdateSideEffects: (previous, patch, next) => {
+      if (patch.theme && patch.theme !== previous.theme) applyTheme(next.theme)
+      if (patch.shell && patch.shell !== previous.shell) agent.applyShellSetting()
+      if (patch.globalHotkey !== undefined && patch.globalHotkey !== previous.globalHotkey) {
+        registerGlobalHotkey(next.globalHotkey)
+      }
+      if (patch.locale !== undefined && patch.locale !== previous.locale) {
+        setLocalePreference(next.locale)
+        rebuildAppChrome()
+      }
+      if (patch.keyBindings !== undefined) {
+        rebuildAppChrome()
+        registerGlobalHotkey(next.globalHotkey)
+      }
+      if (
+        patch.trayEnabled !== undefined ||
+        patch.hideDockIcon !== undefined ||
+        patch.notificationsEnabled !== undefined
+      ) {
+        notifications.applySettings()
+      }
+      if (
+        patch.keepAwakeWhileAgentRunning !== undefined ||
+        patch.keepAwakeBatteryFloorPercent !== undefined
+      ) {
+        syncSleepBlocker()
+      }
+      if (patch.remoteControlEnabled !== undefined) {
+        remoteControl.applySettings()
+        daemonAttach.applySettings()
+      }
+      if (patch.windowVibrancyEnabled !== undefined) {
+        syncVibrancyShellWindows()
+      }
+      if (
+        patch.displayCurrency !== undefined &&
+        patch.displayCurrency !== previous.displayCurrency &&
+        tokenUsageConversationId &&
+        tokenUsageConversationId !== '_'
+      ) {
+        sendTokenUsagePayload(tokenUsageConversationId)
+      }
+      if (
+        patch.autoUpdatePolicy !== undefined &&
+        patch.autoUpdatePolicy !== previous.autoUpdatePolicy
+      ) {
+        updateService.setPolicy(next.autoUpdatePolicy)
+      }
+    },
+    applyResetSideEffects: (next) => {
       setLocalePreference(next.locale)
-      rebuildAppChrome()
-    }
-    if (patch.keyBindings !== undefined) {
-      rebuildAppChrome()
-      // Rebind global ⌘⇧↵ (or user override) alongside the toggle hotkey.
+      applyTheme(next.theme)
       registerGlobalHotkey(next.globalHotkey)
-    }
-    if (
-      patch.trayEnabled !== undefined ||
-      patch.hideDockIcon !== undefined ||
-      patch.notificationsEnabled !== undefined
-    ) {
-      notifications.applySettings()
-    }
-    if (
-      patch.keepAwakeWhileAgentRunning !== undefined ||
-      patch.keepAwakeBatteryFloorPercent !== undefined
-    ) {
-      syncSleepBlocker()
-    }
-    if (patch.remoteControlEnabled !== undefined) {
-      remoteControl.applySettings()
-      daemonAttach.applySettings()
-    }
-    if (patch.windowVibrancyEnabled !== undefined) {
+      rebuildAppChrome()
       syncVibrancyShellWindows()
-    }
-    if (
-      patch.displayCurrency !== undefined &&
-      patch.displayCurrency !== previous.displayCurrency &&
-      tokenUsageConversationId &&
-      tokenUsageConversationId !== '_'
-    ) {
-      sendTokenUsagePayload(tokenUsageConversationId)
-    }
-    const settings = currentSettings()
-    broadcast(IPC.settingsChanged, settings)
-    return settings
-  })
-
-  ipcMain.handle(IPC.settingsReset, () => {
-    secretStore.clear('api')
-    secretStore.clear('braveSearch')
-    secretStore.clear('cloudflare')
-    secretStore.clear('supabase')
-    const next = settingsStore.reset()
-    setLocalePreference(next.locale)
-    applyTheme(next.theme)
-    registerGlobalHotkey(next.globalHotkey)
-    rebuildAppChrome()
-    syncVibrancyShellWindows()
-    syncSleepBlocker()
-    const settings = currentSettings()
-    broadcast(IPC.settingsChanged, settings)
-    return settings
-  })
-
-  ipcMain.handle(IPC.settingsKeepAwakeStatus, () => currentKeepAwakeStatus())
-  ipcMain.handle(IPC.settingsKeepAwakeGrant, async () => {
-    if (!macLidSleep) return { ok: false as const, error: 'unsupported' }
-    const result = await macLidSleep.grant(userInfo().username)
-    macLidSleep.refresh()
-    await syncSleepBlockerAsync()
-    return result
-  })
-  ipcMain.handle(IPC.settingsKeepAwakeRevoke, async () => {
-    if (!macLidSleep) return { ok: false as const, error: 'unsupported' }
-    const result = await macLidSleep.revoke()
-    await syncSleepBlockerAsync()
-    return result
-  })
-
-  ipcMain.handle(IPC.settingsSetKey, (_event, key: string) => {
-    secretStore.set(key, 'api')
-    broadcast(IPC.settingsChanged, currentSettings())
-    return { hint: secretStore.maskedHint('api') }
-  })
-
-  ipcMain.handle(IPC.settingsRevealKey, () => secretStore.get('api'))
-  ipcMain.handle(IPC.settingsKeyHint, () => secretStore.maskedHint('api'))
-
-  ipcMain.handle(IPC.settingsSetBraveSearchKey, (_event, key: string) => {
-    secretStore.set(key, 'braveSearch')
-    broadcast(IPC.settingsChanged, currentSettings())
-    return { hint: secretStore.maskedHint('braveSearch') }
-  })
-  ipcMain.handle(IPC.settingsBraveSearchKeyHint, () => secretStore.maskedHint('braveSearch'))
-
-  ipcMain.handle(IPC.settingsSetTinyfishSearchKey, (_event, key: string) => {
-    secretStore.set(key, 'tinyfish')
-    broadcast(IPC.settingsChanged, currentSettings())
-    return { hint: secretStore.maskedHint('tinyfish') }
-  })
-  ipcMain.handle(IPC.settingsTinyfishSearchKeyHint, () => secretStore.maskedHint('tinyfish'))
-
-  ipcMain.handle(IPC.settingsSetCloudflareToken, (_event, token: string) => {
-    secretStore.set(token, 'cloudflare')
-    broadcast(IPC.settingsChanged, currentSettings())
-    return { hint: secretStore.maskedHint('cloudflare') }
-  })
-  ipcMain.handle(IPC.settingsCloudflareTokenHint, () => secretStore.maskedHint('cloudflare'))
-
-  ipcMain.handle(IPC.settingsSetSupabaseToken, (_event, token: string) => {
-    secretStore.set(token, 'supabase')
-    broadcast(IPC.settingsChanged, currentSettings())
-    return { hint: secretStore.maskedHint('supabase') }
-  })
-  ipcMain.handle(IPC.settingsSupabaseTokenHint, () => secretStore.maskedHint('supabase'))
-
-  ipcMain.handle(IPC.settingsValidateKey, async (_event, key: string) => {
-    const settings = settingsStore.get()
-    const effective = key?.trim() || secretStore.get('api')
-    if (!effective) return { ok: false, message: t('error.noApiKeyShort') }
-    return validateAccountKey(settings.apiEndpoint, effective)
-  })
-
-  // Candidates only; the renderer filters these down to fonts actually
-  // installed on this machine (settings-appearance.rpml).
-  ipcMain.handle(IPC.settingsFonts, () => codeFonts(PLATFORM))
-
-  ipcMain.handle(IPC.settingsSetHotkey, (_event, accelerator: string) => {
-    const ok = registerGlobalHotkey(accelerator)
-    // A rejected accelerator is not persisted, so the previous one survives.
-    if (ok) settingsStore.update({ globalHotkey: accelerator })
-    else registerGlobalHotkey(settingsStore.get().globalHotkey)
-    const settings = currentSettings()
-    if (ok) broadcast(IPC.settingsChanged, settings)
-    return { ok, settings }
-  })
-
-  ipcMain.handle(IPC.settingsPickDirectory, async () => {
-    const result = await dialog.showOpenDialog({ properties: ['openDirectory', 'createDirectory'] })
-    return result.canceled ? null : (result.filePaths[0] ?? null)
-  })
-
-  ipcMain.handle(IPC.settingsPickSurfacePattern, async (event) => {
-    const parent = BrowserWindow.fromWebContents(event.sender) ?? settingsWindow
-    const opts: Electron.OpenDialogOptions = {
-      properties: ['openFile'],
-      filters: [{ name: 'PNG', extensions: ['png'] }]
-    }
-    const result = parent
-      ? await dialog.showOpenDialog(parent, opts)
-      : await dialog.showOpenDialog(opts)
-    const file = result.canceled ? null : (result.filePaths[0] ?? null)
-    if (!file) return null
-    try {
-      const dest = surfacePatternFilePath(app.getPath('userData'))
-      const imported = await importSurfacePattern(file, dest)
-      if (!imported.ok) return { ok: false as const, reason: imported.reason }
-      settingsStore.update({
-        surfacePattern: 'custom',
-        customSurfacePatternSize: imported.size,
-        customSurfacePatternUrl: ''
-      })
-      const settings = currentSettings()
-      broadcast(IPC.settingsChanged, settings)
-      return { ok: true as const, url: settings.customSurfacePatternUrl, size: imported.size }
-    } catch {
-      return { ok: false as const, reason: 'invalid' as const }
-    }
-  })
-
-  ipcMain.handle(IPC.settingsPickColor, (_event, defaultHex?: string) => {
-    // `choose color` returns 16-bit RGB {r,g,b} (0–65535).
-    // Must be async — the dialog is modal and blocks until the user closes it.
-    const rgb16 = parseHexToRgb16(defaultHex) ?? [0, 0, 0]
-    // AppleScript `&` with a numeric left operand builds a LIST (prints as
-    // "65535, ,, 0"), which fails the 3-part parse below — join via text item
-    // delimiters so OK returns plain "r,g,b". Cancel throws -128 → err → null.
-    const script = `set c to choose color default color {${rgb16[0]}, ${rgb16[1]}, ${rgb16[2]}}
+      syncSleepBlocker()
+      updateService.setPolicy(next.autoUpdatePolicy)
+    },
+    broadcastSettings: (settings) => broadcast(IPC.settingsChanged, settings),
+    keepAwakeStatus: () => currentKeepAwakeStatus(),
+    keepAwakeGrant: async () => {
+      if (!macLidSleep) return { ok: false as const, error: 'unsupported' }
+      const result = await macLidSleep.grant(userInfo().username)
+      macLidSleep.refresh()
+      await syncSleepBlockerAsync()
+      return result
+    },
+    keepAwakeRevoke: async () => {
+      if (!macLidSleep) return { ok: false as const, error: 'unsupported' }
+      const result = await macLidSleep.revoke()
+      await syncSleepBlockerAsync()
+      return result
+    },
+    confirmRevealSecret,
+    validateKey: (endpoint, key) => validateAccountKey(endpoint, key),
+    noApiKeyMessage: () => t('error.noApiKeyShort'),
+    fonts: () => codeFonts(PLATFORM),
+    registerHotkey: registerGlobalHotkey,
+    pickDirectory: async () => {
+      const result = await dialog.showOpenDialog({ properties: ['openDirectory', 'createDirectory'] })
+      return result.canceled ? null : (result.filePaths[0] ?? null)
+    },
+    grantPath: (path) => fileService.grantPath(path),
+    pickSurfacePattern: async (event) => {
+      const parent = BrowserWindow.fromWebContents(event.sender) ?? settingsWindow
+      const opts: Electron.OpenDialogOptions = {
+        properties: ['openFile'],
+        filters: [{ name: 'PNG', extensions: ['png'] }]
+      }
+      const result = parent
+        ? await dialog.showOpenDialog(parent, opts)
+        : await dialog.showOpenDialog(opts)
+      const file = result.canceled ? null : (result.filePaths[0] ?? null)
+      if (!file) return null
+      try {
+        const dest = surfacePatternFilePath(app.getPath('userData'))
+        const imported = await importSurfacePattern(file, dest)
+        if (!imported.ok) return { ok: false as const, reason: imported.reason }
+        settingsStore.update({
+          surfacePattern: 'custom',
+          customSurfacePatternSize: imported.size,
+          customSurfacePatternUrl: ''
+        })
+        const settings = currentSettings()
+        broadcast(IPC.settingsChanged, settings)
+        return { ok: true as const, url: settings.customSurfacePatternUrl, size: imported.size }
+      } catch {
+        return { ok: false as const, reason: 'invalid' as const }
+      }
+    },
+    chooseColor: (rgb16) =>
+      new Promise<string | null>((resolve) => {
+        const script = `set c to choose color default color {${rgb16[0]}, ${rgb16[1]}, ${rgb16[2]}}
 set AppleScript's text item delimiters to ","
 return c as text`
-    return new Promise<string | null>((resolve) => {
-      execFile('/usr/bin/osascript', ['-e', script], { timeout: 120_000, encoding: 'utf8' }, (err, stdout) => {
-        if (err) return resolve(null)
-        const out = stdout.trim()
-        if (!out || out === 'false') return resolve(null) // cancelled
-        const parts = out.split(',')
-        if (parts.length !== 3) return resolve(null)
-        const r = Math.round(Number(parts[0]) / 65535 * 255)
-        const g = Math.round(Number(parts[1]) / 65535 * 255)
-        const b = Math.round(Number(parts[2]) / 65535 * 255)
-        if ([r, g, b].some((v) => Number.isNaN(v))) return resolve(null)
-        resolve(`#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`)
-      })
-    })
+        execFile('/usr/bin/osascript', ['-e', script], { timeout: 120_000, encoding: 'utf8' }, (err, stdout) => {
+          if (err) return resolve(null)
+          resolve(stdout)
+        })
+      }),
+    cliStatus: () => getCliStatus(),
+    cliSetLocation: (location) => setCliPreferredLocation(location),
+    cliInstall: () => installCli(),
+    cliUninstall: () => uninstallCli(),
+    fileAssociations: () => fileAssociationService.listStatus(),
+    fileAssociationForPath: async (path) => {
+      const id = formatIdForPath(path)
+      if (!id) return null
+      return fileAssociationService.statusFor(
+        fileAssociationService.formats().find((f) => f.id === id)!
+      )
+    },
+    setFileAssociation: (formatId) => fileAssociationService.setDefault(formatId),
+    unsetFileAssociation: (formatId) => fileAssociationService.unsetDefault(formatId),
+    registerAllFileAssociations: () => fileAssociationService.registerAll()
   })
 
-  ipcMain.handle(IPC.settingsCliStatus, () => getCliStatus()) // async — login PATH probe
-  ipcMain.handle(IPC.settingsCliSetLocation, (_event, location: CliInstallLocation) =>
-    setCliPreferredLocation(location)
-  )
-  ipcMain.handle(IPC.settingsCliInstall, () => installCli())
-  ipcMain.handle(IPC.settingsCliUninstall, () => uninstallCli())
-  ipcMain.handle(IPC.settingsFileAssociations, () => fileAssociationService.listStatus())
-  ipcMain.handle(IPC.settingsFileAssociationForPath, async (_event, path: string) => {
-    const id = formatIdForPath(path)
-    if (!id) return null
-    return fileAssociationService.statusFor(
-      fileAssociationService.formats().find((f) => f.id === id)!
-    )
-  })
-  ipcMain.handle(IPC.settingsSetFileAssociation, (_event, formatId: string) =>
-    fileAssociationService.setDefault(formatId)
-  )
-  ipcMain.handle(IPC.settingsUnsetFileAssociation, (_event, formatId: string) =>
-    fileAssociationService.unsetDefault(formatId)
-  )
-  ipcMain.handle(IPC.settingsRegisterAllFileAssociations, () =>
-    fileAssociationService.registerAll()
-  )
   const analysisHasApiKey = (): boolean => {
     if (secretStore.has('api')) return true
     if (secretStore.status().hasKeyFile) {
@@ -6952,1623 +6588,525 @@ return c as text`
     }
   })
 
-  ipcMain.handle(
-    IPC.accountsGetPage,
-    async (
-      _event,
-      workspaceKey?: string | null,
-      options?: { refresh?: boolean; force?: boolean }
-    ) => {
-      if (options?.refresh) return refreshAccountsPage(workspaceKey, options.force === true)
-      return accountsPage(workspaceKey)
+  registerAccountsIpc(ipcMain, accountStore, secretStore, {
+    page: accountsPage,
+    refreshPage: refreshAccountsPage,
+    settings: () => settingsStore.get(),
+    validateKey: (endpoint, key) => validateAccountKey(endpoint, key),
+    retargetEmpty: retargetEmptyConversations,
+    broadcastSettings: () => broadcast(IPC.settingsChanged, currentSettings()),
+    rememberLiveOAuth: (host, name) => {
+      lastLiveOAuth.set(host, name)
+    },
+    clearHostAuth: () => clearHostAuthIdentityCache(),
+    refreshQuotaHosts: (hosts, force) => {
+      void quotaService.refreshHosts(hosts, force)
+    },
+    hostMayHaveQuota: hostMayHaveAccountQuota,
+    clearApiBalance,
+    confirmRevealSecret,
+    resolveExecutable: (host) => {
+      const agent = settingsStore.get().cliAgents?.find((row) => row.id === host)
+      return resolveAgentExecutable(candidatesForHost(host as CliHostKind, agent))
+    },
+    readHostAccount: (host) => readHostAccountInfo(host as CliHostKind),
+    startOAuth: startHostOAuthLogin,
+    cancelOAuth: cancelHostOAuthLogin,
+    finishOAuth: finishHostOAuth,
+    runLogout: runHostLogout,
+    refreshQuotaPanel: (host) => {
+      void quotaService.refreshForPanel(host as CliHostKind)
     }
-  )
-  ipcMain.handle(
-    IPC.accountsCreateVav,
-    async (
-      _event,
-      input: {
-        name: string
-        endpoint: string
-        apiKey: string
-        agentId?: string
-        provider?: 'vav' | 'custom'
-      }
-    ) => {
-      const page = await accountsPage()
-      const name = normalizeAccountName(input.name ?? '')
-      const endpoint = (input.endpoint ?? '').trim()
-      const apiKey = (input.apiKey ?? '').trim()
-      const agentId = input.agentId?.trim() || 'vav'
-      const provider = input.provider === 'custom' ? 'custom' : providerForAgent(agentId)
-      if (!name) return Promise.reject(new Error(t('accounts.error.nameRequired')))
-      if (nameConflict(accountStore.listAll(), agentId, name)) {
-        return Promise.reject(new Error(t('accounts.error.nameTaken')))
-      }
-      if (!isHttpUrl(endpoint)) return Promise.reject(new Error(t('accounts.error.endpoint')))
-      if (!apiKey) return Promise.reject(new Error(t('error.noApiKeyShort')))
-      const check = await validateAccountKey(endpoint, apiKey)
-      if (!check.ok) return Promise.reject(new Error(check.message))
-      const created = accountStore.add({
-        workspaceKey: DEFAULT_WORKSPACE_KEY,
-        agentId,
-        provider,
-        kind: 'vav_key',
-        name,
-        endpoint,
-        usesLegacyApiKey: false,
-        lastUsedAt: null,
-        lastModel: null,
-        keyStatus: 'ok',
-        oauthHost: null
-      })
-      secretStore.setAccountKey(created.id, apiKey)
-      return accountsPage(page.workspaceKey)
-    }
-  )
-  ipcMain.handle(
-    IPC.accountsCreateDraft,
-    async (
-      _event,
-      input: { agentId: string; kind?: 'vav_key' | 'oauth'; endpoint?: string }
-    ) => {
-      const page = await accountsPage()
-      const agentId = input.agentId?.trim() || 'vav'
-      const kind = input.kind === 'oauth' ? 'oauth' : 'vav_key'
-      if (kind === 'oauth' && createKindForAgent(agentId) !== 'oauth') {
-        return Promise.reject(new Error(t('accounts.error.missing')))
-      }
-      const name = nextDraftName(
-        accountStore.listAll(),
-        agentId,
-        t('accounts.draftName')
-      )
-      const endpoint =
-        kind === 'vav_key'
-          ? input.endpoint !== undefined
-            ? input.endpoint.trim() || null
-            : defaultKeyEndpoint(agentId, settingsStore.get().apiEndpoint || '')
-          : null
-      const created = accountStore.add({
-        workspaceKey: DEFAULT_WORKSPACE_KEY,
-        agentId,
-        provider: providerForAgent(agentId),
-        kind,
-        name,
-        endpoint: endpoint || null,
-        usesLegacyApiKey: false,
-        lastUsedAt: null,
-        lastModel: null,
-        keyStatus: 'unknown',
-        oauthHost: kind === 'oauth' ? agentId : null
-      })
-      return { page: await accountsPage(page.workspaceKey), id: created.id }
-    }
-  )
-  ipcMain.handle(
-    IPC.accountsUpdateVav,
-    async (
-      _event,
-      id: string,
-      patch: { alias?: string | null; endpoint?: string; apiKey?: string }
-    ) => {
-      const account = accountStore.get(id)
-      if (!account) {
-        return Promise.reject(new Error(t('accounts.error.missing')))
-      }
-      if (patch.alias !== undefined) {
-        const alias = patch.alias == null ? '' : normalizeAccountName(patch.alias)
-        accountStore.update(id, { alias: alias || null })
-      }
-      if (account.kind !== 'vav_key' && (patch.endpoint != null || patch.apiKey != null)) {
-        return Promise.reject(new Error(t('accounts.error.missing')))
-      }
-      if (patch.endpoint != null) {
-        const endpoint = patch.endpoint.trim()
-        if (!isHttpUrl(endpoint)) return Promise.reject(new Error(t('accounts.error.endpoint')))
-        accountStore.update(id, { endpoint })
-      }
-      if (patch.apiKey != null) {
-        const key = patch.apiKey.trim()
-        if (!key) return Promise.reject(new Error(t('error.noApiKeyShort')))
-        secretStore.setAccountKey(id, key)
-        accountStore.update(id, { usesLegacyApiKey: false, keyStatus: 'unknown' })
-      }
-      broadcast(IPC.settingsChanged, currentSettings())
-      return accountsPage(account.workspaceKey)
-    }
-  )
-  ipcMain.handle(IPC.accountsSetCurrent, (_event, id: string) => {
-    const viewing = accountsPage().workspaceKey
-    const account = accountStore.setCurrent(id, viewing)
-    if (account) retargetEmptyConversations(account, viewing)
-    broadcast(IPC.settingsChanged, currentSettings())
-    return accountsPage(viewing)
-  })
-  ipcMain.handle(IPC.accountsActivate, async (_event, id: string) => {
-    const viewing = accountsPage().workspaceKey
-    const result = await activateAccount({
-      accountId: id,
-      accounts: accountStore,
-      secrets: secretStore
-    })
-    if (result.kind === 'switched' || result.kind === 'alreadyLive') {
-      const account = accountStore.setCurrent(id, viewing)
-      if (account) retargetEmptyConversations(account, viewing)
-      const live = accountStore.get(id)
-      const host = live?.oauthHost ?? (live ? agentIdOf(live) : null)
-      if (host && live) lastLiveOAuth.set(host, live.name)
-      clearHostAuthIdentityCache()
-      if (host && hostMayHaveAccountQuota(host)) {
-        void quotaService.refreshHosts([host], true)
-      }
-    }
-    broadcast(IPC.settingsChanged, currentSettings())
-    return { page: accountsPage(viewing), result }
-  })
-  ipcMain.handle(IPC.accountsRemove, (_event, id: string) => {
-    const result = accountStore.remove(id)
-    if (result) {
-      secretStore.clearAccountKey(id)
-      secretStore.clearOAuthSnapshot(id)
-      clearApiBalance(id)
-    }
-    broadcast(IPC.settingsChanged, currentSettings())
-    return accountsPage(result?.removed.workspaceKey)
-  })
-  ipcMain.handle(IPC.accountsVerify, async (_event, id: string, apiKey?: string) => {
-    const account = accountStore.get(id)
-    if (!account || account.kind !== 'vav_key') {
-      return { ok: false, message: t('accounts.error.missing') }
-    }
-    const key = apiKey?.trim() || accountSecret(account, secretStore)
-    const endpoint = account.endpoint?.trim() || settingsStore.get().apiEndpoint
-    if (!key) return { ok: false, message: t('error.noApiKeyShort') }
-    const result = await validateAccountKey(endpoint, key)
-    accountStore.setKeyStatus(id, result.ok ? 'ok' : result.authFailed ? 'invalid' : 'unknown')
-    return { ok: result.ok, message: result.message, authFailed: result.authFailed }
-  })
-  ipcMain.handle(IPC.accountsRevealKey, (_event, id: string) => {
-    const account = accountStore.get(id)
-    if (!account || account.kind !== 'vav_key') return null
-    if (account.usesLegacyApiKey) return secretStore.get('api')
-    return secretStore.getAccountKey(id)
-  })
-  ipcMain.handle(IPC.accountsBeginOAuth, async (_event, agentId: string, accountId?: string) => {
-    const host = agentId.trim()
-    const name = DEFAULT_CLI_AGENTS.find((agent) => agent.id === host)?.name ?? host
-    if (!isStructuredCliHost(host) || createKindForAgent(host) !== 'oauth' || !loginArgv(host)) {
-      return Promise.reject(new Error(t('accounts.error.missing')))
-    }
-    const agent = settingsStore.get().cliAgents?.find((row) => row.id === host)
-    const resolved = resolveAgentExecutable(candidatesForHost(host, agent))
-    if (!resolved) {
-      return Promise.reject(new Error(t('accounts.error.cliMissing', { name })))
-    }
-    const targetId = typeof accountId === 'string' && accountId.trim() ? accountId.trim() : undefined
-    try {
-      const live = await readHostAccountInfo(host)
-      if (live.signedIn) {
-        const email = live.accountId?.trim()
-        if (email) {
-          accountStore.upsertOAuth({
-            workspaceKey: accountsPage().workspaceKey,
-            agentId: host,
-            provider: providerForAgent(host),
-            name: email,
-            oauthHost: host,
-            signedIn: true
-          })
-        }
-        await captureLiveHost(host, email ?? null, accountStore, secretStore)
-      }
-    } catch {
-      // Still start OAuth — an empty or unreadable slot just means nothing to keep.
-    }
-    startHostOAuthLogin({
-      agentId: host,
-      accountId: targetId,
-      resolved,
-      onFinished: (result) => {
-        void (async () => {
-          clearHostAuthIdentityCache()
-          if (result.cancelled) return
-          if (result.exitCode !== 0) {
-            finishHostOAuth(host, 'error', t('accounts.oauthFailedBody'))
-            return
-          }
-          await new Promise((resolve) => setTimeout(resolve, 400))
-          try {
-            const info = await readHostAccountInfo(host)
-            if (!info.signedIn && !info.accountId) {
-              finishHostOAuth(host, 'error', t('accounts.oauthFailedBody'))
-              return
-            }
-            const page = accountsPage()
-            const email = info.accountId?.trim() || name
-            const saved = accountStore.upsertOAuth({
-              id: targetId,
-              workspaceKey: page.workspaceKey,
-              agentId: host,
-              provider: providerForAgent(host),
-              name: email,
-              oauthHost: host,
-              signedIn: info.signedIn
-            })
-            if (info.signedIn) {
-              await captureAccountCredentials(saved.id, accountStore, secretStore)
-            }
-            lastLiveOAuth.set(host, info.signedIn ? email : null)
-            finishHostOAuth(host, 'ok')
-            void quotaService.refreshForPanel(host)
-          } catch {
-            finishHostOAuth(host, 'error', t('accounts.oauthFailedBody'))
-          }
-        })()
-      }
-    })
-    return accountsPage()
-  })
-  ipcMain.handle(IPC.accountsCancelOAuth, async (_event, agentId: string) => {
-    cancelHostOAuthLogin(String(agentId ?? '').trim())
-    return accountsPage()
-  })
-  ipcMain.handle(IPC.accountsSignOut, async (_event, agentId: string) => {
-    const host = agentId.trim()
-    if (!isStructuredCliHost(host) || !isOAuthSyncAgent(host)) {
-      return Promise.reject(new Error(t('accounts.error.missing')))
-    }
-    const agent = settingsStore.get().cliAgents?.find((row) => row.id === host)
-    const resolved = resolveAgentExecutable(candidatesForHost(host, agent))
-    if (resolved) {
-      try {
-        await runHostLogout(resolved, host)
-      } catch {
-        // Still drop the local signed-in mark.
-      }
-    }
-    await new Promise((resolve) => setTimeout(resolve, 200))
-    clearHostAuthIdentityCache()
-    accountStore.applyLiveOAuth(host, null, false)
-    lastLiveOAuth.set(host, null)
-    return accountsPage()
   })
 
   // --- conversations ---
-  ipcMain.handle(IPC.convList, () => conversationStore.listMeta())
-  ipcMain.handle(IPC.convGet, (_event, id: string) => {
-    if (conversationStore.hydrateMissingHostUsage(id)) publishConversations()
-    return conversationStore.get(id) ?? null
-  })
-
-  ipcMain.handle(
-    IPC.convCreate,
-    async (
-      _event,
-      options?: {
-        workingDirectory?: string | null
-        model?: string
-        swarmParentId?: string | null
-        machineId?: string | null
-      }
-    ): Promise<ConversationMeta> => {
-      const machineId = options?.machineId ?? LOCAL_MACHINE_ID
-      const workdir =
-        options && 'workingDirectory' in options
-          ? (options.workingDirectory ?? null)
-          : await resolveNewWorkdirOn(machineId)
-      const settings = settingsStore.get()
-      const model = options?.model?.trim() || undefined
-      if (workdir) {
-        rememberWorkdir(workdir, machineId)
-        broadcast(IPC.settingsChanged, currentSettings())
-      }
-      const defaultHost = resolveDefaultChatHost(settings.defaultAgentId)
-      const conversation = conversationStore.create(
-        workdir,
-        modelForNewConversation(defaultHost, model),
-        {
-          approvalMode: settings.defaultApprovalMode ?? 'auto',
-          thinkingLevel: parseThinkingLevel(settings.defaultThinkingLevel),
-          cliHost: defaultHost,
-          accountId: accountIdForSession(workdir, defaultHost),
-          swarmParentId: options?.swarmParentId ?? null,
-          machineId
-        }
-      )
-      if (defaultHost) promoteEphemeralConversation(conversation.id)
-      lastSeenConversationId = conversation.id
-      const { messages: _messages, ...meta } = conversation
-      void _messages
-      publishConversations()
-      return meta
-    }
-  )
-
-  ipcMain.handle(IPC.convRename, (_event, id: string, title: string) => {
-    const next = title.trim() || t('common.untitledSession')
-    conversationStore.updateMeta(id, { title: next })
-    const detached = detachedWindows.get(id)
-    if (detached && !detached.isDestroyed()) detached.setTitle(next)
-    publishConversations()
-    return conversationStore.listMeta()
-  })
-
-  ipcMain.handle(IPC.convSetLeaf, (_event, id: string, leafId: string) => {
-    conversationStore.setActiveLeaf(id, leafId)
-  })
-
-  ipcMain.handle(IPC.convSetPinned, (_event, id: string, pinned: boolean) => {
-    conversationStore.setPinned(id, pinned)
-    publishConversations()
-    return conversationStore.listMeta()
-  })
-
-  ipcMain.handle(IPC.convSetArchived, (_event, id: string, archived: boolean) => {
-    if (archived) {
+  registerConversationMetaIpc(ipcMain, conversationStore, {
+    untitledTitle: () => t('common.untitledSession'),
+    publish: publishConversations,
+    renameDetached: (id, title) => {
+      const detached = detachedWindows.get(id)
+      if (detached && !detached.isDestroyed()) detached.setTitle(title)
+    },
+    onArchive: (id) => {
       void agent.cancel(id)
       clearUnseenForConversation(id)
       persistResultUnseen(id, false)
-    }
-    conversationStore.setArchived(id, archived)
-    publishConversations()
-    return conversationStore.listMeta()
-  })
-
-  ipcMain.handle(IPC.convSetApprovalMode, (_event, id: string, mode: string) => {
-    if (mode === 'auto' || mode === 'bypass' || mode === 'edit') {
-      conversationStore.setApprovalMode(id, mode)
-      publishConversations()
-    }
-    return conversationStore.listMeta()
-  })
-
-  ipcMain.handle(IPC.convSetThinkingLevel, (_event, id: string, level: string) => {
-    conversationStore.setThinkingLevel(id, parseThinkingLevel(level))
-    if (cliHost.owns(id)) cliHost.applyThinkingLevel(id)
-    publishConversations()
-    return conversationStore.listMeta()
-  })
-
-  ipcMain.handle(IPC.convSetFast, (_event, id: string, fast: boolean) => {
-    conversationStore.setFast(id, fast === true)
-    if (cliHost.owns(id)) cliHost.applyFast(id)
-    publishConversations()
-    return conversationStore.listMeta()
-  })
-
-  ipcMain.handle(IPC.convSetAcpMode, (_event, id: string, modeId: string) => {
-    if (typeof modeId === 'string' && modeId.trim()) {
-      cliHost.applySessionMode(id, modeId.trim())
-      publishConversations()
-    }
-    return conversationStore.listMeta()
-  })
-
-  ipcMain.handle(
-    IPC.convSetAcpConfig,
-    (_event, id: string, configId: string, value: string | boolean) => {
-      if (typeof configId === 'string' && configId.trim()) {
-        cliHost.applySessionConfig(id, configId.trim(), value)
-        publishConversations()
-      }
-      return conversationStore.listMeta()
-    }
-  )
-
-  ipcMain.handle(IPC.convContinueNew, (_event, id: string, messageId: string) => {
-    const conversation = conversationStore.branchToNewConversation(id, messageId)
-    if (!conversation) return null
-    const { messages: _messages, ...meta } = conversation
-    void _messages
-    publishConversations()
-    return meta
-  })
-
-  ipcMain.handle(IPC.convDuplicate, (_event, id: string) => {
-    const conversation = conversationStore.duplicate(id)
-    if (!conversation) return null
-    const { messages: _messages, ...meta } = conversation
-    void _messages
-    publishConversations()
-    return meta
-  })
-
-  ipcMain.handle(IPC.convExportPack, async (event, ids: string[]) => {
-    const win = BrowserWindow.fromWebContents(event.sender)
-    return vavPackService.exportConversations(Array.isArray(ids) ? ids : [], win)
-  })
-
-  ipcMain.handle(IPC.convImportPack, async (event) => {
-    const win = BrowserWindow.fromWebContents(event.sender)
-    const result = await vavPackService.importPackage(win)
-    if (result.ok) publishConversations()
-    return result
-  })
-
-  ipcMain.handle(IPC.convSetModel, (_event, id: string, model: string) => {
-    const conversation = conversationStore.get(id)
-    const host = (conversation?.cliHost ?? null) as CliHostKind | null
-    const creds = resolveVavCredentials(
-      { conversation, settingsEndpoint: settingsStore.get().apiEndpoint },
-      accountStore,
-      secretStore
-    )
-    const vendorId = host == null ? vendorIdFromEndpoint(creds.endpoint) : null
-    conversationStore.updateMeta(id, {
-      model,
-      tokenLimit: contextWindowForModel(host, model, undefined, vendorId, creds.accountId)
-    })
-    if (cliHost.owns(id)) cliHost.applyModel(id, model)
-    publishConversations()
-    pushTokenUsageIfOpen(id)
-    return conversationStore.listMeta()
-  })
-
-  ipcMain.handle(
-    IPC.convSetAgentBinary,
-    (_event, id: string, agentBinaryName: string | null) => {
-      conversationStore.updateMeta(id, { agentBinaryName })
-      // Selecting a CLI agent (or returning to vav after one) is durable intent —
-      // never auto-delete this ⌘⇧↵ session when the companion window closes.
-      if (agentBinaryName) promoteEphemeralConversation(id)
-      publishConversations()
-      return conversationStore.listMeta()
-    }
-  )
-
-  ipcMain.handle(
-    IPC.convSetSwarmLayout,
-    (_event, id: string, layout: unknown, full?: unknown) => {
-      const patch: { swarmLayout: ReturnType<typeof sanitizeSwarmLayout>; swarmLayoutFull?: ReturnType<typeof sanitizeSwarmLayout> } =
-        { swarmLayout: sanitizeSwarmLayout(layout) }
-      if (full !== undefined) patch.swarmLayoutFull = sanitizeSwarmLayout(full)
-      conversationStore.updateMeta(id, patch)
-      publishConversations()
-      return conversationStore.listMeta()
-    }
-  )
-
-  ipcMain.handle(
-    IPC.convSetCliHost,
-    (_event, id: string, host: string | null, accountId?: string | null) => {
-      const prev = conversationStore.get(id)
-      const prevHost = prev?.cliHost ?? null
-      const nextHost = isStructuredCliHost(host) ? host : null
-      const hostChanged = prevHost !== nextHost
-
-      if (hostChanged && (prev?.messages.length ?? 0) > 0) {
-        return {
-          conversations: conversationStore.listMeta(),
-          hostChanged: false,
-          transcript: null
-        }
-      }
-
-      if (hostChanged) {
-        // Park previous host's transcript, restore the next host's bucket.
-        // Runtimes are per-host; tear down so the wrong process cannot resume.
-        agent.disposeConversation(id)
-        cliHost.dispose(id)
-        changeSetStore.clearConversation(id)
-        conversationStore.switchHostTranscript(id, nextHost)
-        conversationStore.updateMeta(id, {
-          accountId: accountId ?? accountIdForSession(prev?.workingDirectory ?? null, nextHost)
-        })
-        swarmSession.syncHostCursor(id, nextHost)
-        // Empty buckets keep the previous host's model string — coerce so the
-        // picker / context-window panel do not show a foreign VAV preset.
-        coerceConversationModel(id)
-      } else {
-        const update: Partial<ConversationMeta> = {
-          cliHost: nextHost,
-          agentBinaryName: nextHost
-        }
-        if (accountId !== undefined) update.accountId = accountId
-        conversationStore.updateMeta(id, update)
-      }
-      if (nextHost) promoteEphemeralConversation(id)
-      publishConversations()
+    },
+    forwardRename: async (id, title) => {
       const conversation = conversationStore.get(id)
-      return {
-        conversations: conversationStore.listMeta(),
-        hostChanged,
-        transcript: conversation
-          ? {
-              messages: conversation.messages,
-              activeLeafId: conversation.activeLeafId,
-              compactions: conversation.compactions ?? [],
-              tokenHistory: conversation.tokenHistory ?? [],
-              tokensUsed: conversation.tokensUsed,
-              cacheCreatedAt: conversation.cacheCreatedAt,
-              cacheExpiresAt: conversation.cacheExpiresAt,
-              cliResumeCursor: conversation.cliResumeCursor ?? null,
-              cliHost: conversation.cliHost ?? null,
-              model: conversation.model,
-              quotaWindows: conversation.quotaWindows ?? []
-            }
-          : null
+      if (!(await pullIfForwarded(conversation, (dial, hostId) => dial.rename(hostId, title)))) {
+        return false
       }
-    }
-  )
-
-  ipcMain.handle(
-    IPC.convSetFocusedFile,
-    (_event, id: string, path: string | null) => {
-      const existing = conversationStore.get(id)
-      // View-state only: must not reorder the sidebar. Do not publish a full
-      // list refresh — callers patch focusedFilePath locally.
-      if (existing && (existing.focusedFilePath ?? null) === path) {
-        return conversationStore.listMeta()
-      }
-      conversationStore.updateMeta(id, { focusedFilePath: path })
-      // No publishConversations() — selecting / previewing a file is not activity.
-      return conversationStore.listMeta()
-    }
-  )
-
-  ipcMain.handle(IPC.convAccountQuota, async (_event, id: string, hostOverride?: unknown) => {
-    const conversation = conversationStore.get(id)
-    if (!conversation) return null
-    const host =
-      hostOverride === null
-        ? null
-        : typeof hostOverride === 'string' && isStructuredCliHost(hostOverride)
-          ? hostOverride
-          : (conversation.cliHost ?? null)
-    const cached = peekHostAccountQuota(conversation, host)
-    if (cached) {
-      void loadHostAccountQuota(conversation, host).catch((err) => {
-        console.error('[account-quota] background refresh failed', err)
-      })
-      return cached
-    }
-    return loadHostAccountQuota(conversation, host)
-  })
-
-  ipcMain.handle(IPC.convSetWorkdir, (_event, id: string, path: string, machineId?: string | null) =>
-    applyWorkingDirectory(id, path, machineId)
-  )
-
-  ipcMain.handle(IPC.convPickWorkdir, async (_event, id: string) => {
-    const conversation = conversationStore.get(id)
-    if (conversation && !isLocalMachine(conversation.machineId)) return null
-    const result = await dialog.showOpenDialog({ properties: ['openDirectory', 'createDirectory'] })
-    if (result.canceled || !result.filePaths[0]) return null
-    return applyWorkingDirectory(id, result.filePaths[0], conversation?.machineId)
-  })
-
-  ipcMain.handle(IPC.convUseTempWorkdir, async (_event, id: string) => {
-    const machineId = conversationStore.get(id)?.machineId
-    return applyWorkingDirectory(id, await mintTempWorkdirOn(machineId), machineId)
-  })
-
-  ipcMain.handle(
-    IPC.convLocateWorkspace,
-    async (_event, id: string, destinationDir: string, name: string) => {
+      const detached = detachedWindows.get(id)
+      if (detached && !detached.isDestroyed()) detached.setTitle(title)
+      return true
+    },
+    forwardArchive: async (id, archived) => {
       const conversation = conversationStore.get(id)
-      if (!conversation?.workingDirectory) {
-        return { ok: false as const, error: t('error.locateNoTemp') }
+      if (
+        !archived ||
+        !(await pullIfForwarded(conversation, (dial, hostId) => dial.archive(hostId)))
+      ) {
+        return false
       }
-      const source = conversation.workingDirectory
-      const safeName = name.trim().replace(/[\\/]/g, '-') || 'workspace'
-      const target = join(destinationDir, safeName)
-      try {
-        if (existsSync(target)) {
-          return { ok: false as const, error: t('error.locateExists', { target }) }
-        }
-        mkdirSync(destinationDir, { recursive: true })
-        renameSync(source, target)
-        // Best-effort cleanup of empty parent temp folders.
-        try {
-          rmdirSync(dirname(source))
-          rmdirSync(dirname(dirname(source)))
-        } catch {
-          // leave leftover empty dirs
-        }
-        return { ok: true as const, conversations: applyWorkingDirectory(id, target) }
-      } catch (err) {
-        return {
-          ok: false as const,
-          error: err instanceof Error ? err.message : t('error.locateFailed')
-        }
-      }
-    }
-  )
 
-  ipcMain.handle(IPC.convDeleteMessage, (_event, id: string, messageId: string) => {
-    const conversation = conversationStore.deleteMessage(id, messageId)
-    if (!conversation) return null
-    if (isStructuredCliHost(conversation.cliHost)) {
-      cliHost.invalidateResume(id)
-    }
-    conversationStore.flush()
-    publishConversations()
-    return {
-      conversations: conversationStore.listMeta(),
-      messages: conversation.messages,
-      activeLeafId: conversation.activeLeafId ?? null
-    }
-  })
-
-  ipcMain.handle(IPC.convRemove, (_event, ids: string[]) => {
-    const removed = conversationStore.remove(ids)
-    for (const id of removed) {
       clearUnseenForConversation(id)
-      // Deleting a conversation is the one path that tears down its processes.
+      persistResultUnseen(id, false)
+      return true
+    },
+    forwardConfigure: async (id, patch) => {
+      const conversation = conversationStore.get(id)
+      return pullIfForwarded(conversation, (dial, hostId) => dial.configure(hostId, patch))
+    },
+    cliOwns: (id) => cliHost.owns(id),
+    applyThinkingLevel: (id) => cliHost.applyThinkingLevel(id),
+    applyFast: (id) => cliHost.applyFast(id),
+    applySessionMode: (id, modeId) => cliHost.applySessionMode(id, modeId),
+    applySessionConfig: (id, configId, value) => cliHost.applySessionConfig(id, configId, value),
+    applySessionGoal: (id, action, objective) => cliHost.applySessionGoal(id, action, objective),
+    exportPack: (ids, sender) => {
+      const win = BrowserWindow.fromWebContents(sender as Electron.WebContents)
+      return vavPackService.exportConversations(ids, win)
+    },
+    importPack: async (sender) => {
+      const win = BrowserWindow.fromWebContents(sender as Electron.WebContents)
+      return vavPackService.importPackage(win)
+    },
+    promoteEphemeral: promoteEphemeralConversation
+  })
+
+
+  registerConversationMutateIpc(ipcMain, conversationStore, {
+    resolveNewWorkdirOn,
+    rememberWorkdir,
+    broadcastSettings: () => broadcast(IPC.settingsChanged, currentSettings()),
+    settings: () => settingsStore.get(),
+    modelForNewConversation,
+    accountIdForSession,
+    promoteEphemeral: promoteEphemeralConversation,
+    setLastSeen: (id) => {
+      lastSeenConversationId = id
+    },
+    publish: publishConversations,
+    resolveVavCredentials: (conversation) =>
+      resolveVavCredentials(
+        { conversation, settingsEndpoint: settingsStore.get().apiEndpoint },
+        accountStore,
+        secretStore
+      ),
+    contextWindowForModel,
+    cliOwns: (id) => cliHost.owns(id),
+    applyModel: (id, model) => cliHost.applyModel(id, model),
+    pushTokenUsageIfOpen,
+    disposeAgent: (id) => agent.disposeConversation(id),
+    disposeCli: (id) => cliHost.dispose(id),
+    clearChangeSets: (id) => changeSetStore.clearConversation(id),
+    syncHostCursor: (id, host) => swarmSession.syncHostCursor(id, host),
+    coerceModel: (id) => {
+      coerceConversationModel(id)
+    },
+    peekQuota: peekHostAccountQuota,
+    loadQuota: loadHostAccountQuota,
+    applyWorkingDirectory,
+    pickDirectory: async () => {
+      const result = await dialog.showOpenDialog({ properties: ['openDirectory', 'createDirectory'] })
+      if (result.canceled || !result.filePaths[0]) return null
+      return result.filePaths[0]
+    },
+    grantPath: (path) => fileService.grantPath(path),
+    mintTempWorkdirOn,
+    locateNoTemp: () => t('error.locateNoTemp'),
+    locateExists: (target) => t('error.locateExists', { target }),
+    locateFailed: () => t('error.locateFailed'),
+    hostFor: (machineId) => hostRegistry.hostFor(machineId),
+    invalidateCliResume: (id) => cliHost.invalidateResume(id),
+    onRemoved: (id) => {
+      clearUnseenForConversation(id)
       agent.disposeConversation(id)
       cliHost.dispose(id)
       swarmSession.clearForConversation(id)
       ptyManager.killForConversation(id)
       fileService.unwatch(id)
       notifications.acknowledgeConversation(id)
-    }
-    if (removed.length) conversationStore.flush()
-    publishConversations()
-    return { removed, conversations: conversationStore.listMeta() }
-  })
-
-  ipcMain.handle(IPC.convReveal, (_event, path: string) => {
-    shell.showItemInFolder(path)
-  })
-
-  ipcMain.handle(IPC.convCopy, (_event, text: string) => {
-    clipboard.writeText(text)
-  })
-
-  ipcMain.handle(IPC.convClipboardRead, () => clipboard.readText())
-
-  ipcMain.handle(IPC.convClipboardReadImage, () => {
-    try {
-      const image = clipboard.readImage()
-      if (image.isEmpty()) return { ok: false as const, error: 'empty' }
-      const bytes = image.toPNG()
-      const written = writeClipBytes({ filename: 'paste.png', bytes })
-      if (!written.ok) return written
-      return { ok: true as const, path: written.path, bytes: bytes.length }
-    } catch (err) {
-      return {
-        ok: false as const,
-        error: err instanceof Error ? err.message : String(err)
+    },
+    createOnRemote: async (options) => {
+      const machineId = options?.machineId ?? LOCAL_MACHINE_ID
+      const control = !isLocalMachine(machineId) ? daemonAttach.controlOf(machineId) : undefined
+      if (!control?.ready) return null
+      const id = await control.createSession()
+      const path =
+        options && 'workingDirectory' in options ? (options.workingDirectory ?? null) : null
+      if (path) await control.setWorkspace(id, path)
+      else if (options && !('workingDirectory' in options)) await control.setWorkspace(id, null)
+      await pullRemoteWorkspace(machineId)
+      const adopted = conversationStore.get(id)
+      if (!adopted) return null
+      lastSeenConversationId = adopted.id
+      publishConversations()
+      return conversationToMeta(adopted)
+    },
+    forwardConfigure: async (id, patch) => {
+      const conversation = conversationStore.get(id)
+      if (!(await pullIfForwarded(conversation, (dial, hostId) => dial.configure(hostId, patch)))) {
+        return false
+      }
+      pushTokenUsageIfOpen(id)
+      return true
+    },
+    forwardSetWorkspace: async (id, path) => {
+      const conversation = conversationStore.get(id)
+      return pullIfForwarded(conversation, (dial, hostId) => dial.setWorkspace(hostId, path))
+    },
+    revealPath: async (event, path) => {
+      await revealOnMachine(machineIdForShell(event, String(path || '')), String(path || ''))
+    },
+    writeText: (text) => clipboard.writeText(text),
+    readText: () => clipboard.readText(),
+    readClipboardImage: () => {
+      try {
+        const image = clipboard.readImage()
+        if (image.isEmpty()) return { ok: false as const, error: 'empty' }
+        const bytes = image.toPNG()
+        const written = writeClipBytes({ filename: 'paste.png', bytes })
+        if (!written.ok) return written
+        return { ok: true as const, path: written.path, bytes: bytes.length }
+      } catch (err) {
+        return {
+          ok: false as const,
+          error: err instanceof Error ? err.message : String(err)
+        }
+      }
+    },
+    copyImage: (base64Png) => {
+      try {
+        const raw = typeof base64Png === 'string' ? base64Png.trim() : ''
+        if (!raw) return { ok: false as const, error: 'empty image' }
+        const b64 = raw.includes(',') ? raw.slice(raw.indexOf(',') + 1) : raw
+        return writePngToClipboard(Buffer.from(b64, 'base64'))
+      } catch (err) {
+        return {
+          ok: false as const,
+          error: err instanceof Error ? err.message : String(err)
+        }
       }
     }
   })
 
-  ipcMain.handle(IPC.convCopyImage, (_event, base64Png: string) => {
-    try {
-      const raw = typeof base64Png === 'string' ? base64Png.trim() : ''
-      if (!raw) return { ok: false as const, error: 'empty image' }
-      // Accept accidental data-URL prefix from callers.
-      const b64 = raw.includes(',') ? raw.slice(raw.indexOf(',') + 1) : raw
-      return writePngToClipboard(Buffer.from(b64, 'base64'))
-    } catch (err) {
-      return {
-        ok: false as const,
-        error: err instanceof Error ? err.message : String(err)
-      }
-    }
-  })
-
-  ipcMain.handle(IPC.convSelectBranch, (_event, id: string, messageId: string) =>
-    conversationStore.selectBranch(id, messageId)
-  )
 
   // --- agent (built-in pi loop OR structured CLI host) ---
-  ipcMain.handle(
-    IPC.agentSend,
-    (
-      _event,
-      id: string,
-      text: string,
-      attachments: string[],
-      quote?: import('@shared/types').QuoteDraft | null,
-      contextBlocks?: import('@shared/types').PreviewRef[] | null,
-      contextFile?: string | null
-    ) => {
-      // Not awaited: the turn streams for as long as it needs, and the renderer
-      // is driven entirely by turn events.
-      if (conversationStore.get(id)?.archived) return
-      if (agentFor(id) === 'cli') {
-        void cliHost.run(
-          id,
-          text,
-          attachments ?? [],
-          quote ?? null,
-          contextBlocks ?? null,
-          contextFile ?? null
-        )
-        return
-      }
-      void agent.run(
-        id,
-        text,
-        attachments ?? [],
-        quote ?? null,
-        contextBlocks ?? null,
-        contextFile ?? null
-      )
-    }
-  )
-  ipcMain.handle(IPC.agentAppendNotice, (_event, id: string, text: string) => {
-    agent.appendNotice(id, text)
-  })
-  ipcMain.handle(IPC.agentCancel, (_event, id: string) => {
-    if (agentFor(id) === 'cli') cliHost.cancel(id)
-    else agent.cancel(id)
-  })
-  ipcMain.handle(IPC.agentAnswer, (_event, id: string, toolCallId: string, answer: string) => {
-    if (cliHost.answer(id, toolCallId, answer)) return true
-    return agent.answer(id, toolCallId, answer)
-  })
-  ipcMain.handle(IPC.agentStatus, (_event, id: string) =>
-    agentFor(id) === 'cli' ? cliHost.status(id) : agent.status(id)
-  )
-  ipcMain.handle(IPC.agentRegenerate, (_event, id: string, messageId: string) => {
-    if (conversationStore.get(id)?.archived) return
-    if (agentFor(id) === 'cli') void cliHost.regenerate(id, messageId)
-    else void agent.regenerate(id, messageId)
-  })
-  ipcMain.handle(IPC.agentEditUser, (_event, id: string, messageId: string, text: string) => {
-    if (conversationStore.get(id)?.archived) return
-    if (agentFor(id) === 'cli') void cliHost.editUserMessage(id, messageId, text)
-    else void agent.editUserMessage(id, messageId, text)
-  })
-  ipcMain.handle(IPC.agentFork, (_event, id: string, messageId: string) => {
-    if (conversationStore.get(id)?.archived) return null
-    return agent.fork(id, messageId)
-  })
-  ipcMain.handle(
-    IPC.agentCompact,
-    async (_event, id: string, options?: { keepAfterMessageId?: string | null }) => {
-      const conversation = conversationStore.get(id)
-      if (conversation?.archived) {
-        return { ok: false as const, error: t('session.archivedReadonly') }
-      }
-      if (conversation?.cliHost) {
-        return { ok: false as const, error: t('compact.error.cliHost') }
-      }
-      const result = await agent.compact(id, options)
-      if (result.ok) {
-        const next = conversationStore.get(id)
-        broadcast(IPC.compactionsChanged, {
-          conversationId: id,
-          compactions: next?.compactions ?? []
+  registerAgentIpc(
+    ipcMain,
+    conversationStore,
+    {
+      ownsCli: (id) => agentFor(id) === 'cli',
+      runCli: (id, text, attachments, quote, contextBlocks, contextFile) => {
+        void cliHost.run(id, text, attachments, quote, contextBlocks, contextFile)
+      },
+      runBuiltin: (id, text, attachments, quote, contextBlocks, contextFile) => {
+        void agent.run(id, text, attachments, quote, contextBlocks, contextFile)
+      },
+      appendNotice: (id, text) => agent.appendNotice(id, text),
+      cancelCli: (id) => cliHost.cancel(id),
+      cancelBuiltin: (id) => agent.cancel(id),
+      answerCli: (id, toolCallId, answer) => cliHost.answer(id, toolCallId, answer),
+      answerBuiltin: (id, toolCallId, answer) => agent.answer(id, toolCallId, answer),
+      statusCli: (id) => controlPlaneTurnStatus(id) ?? cliHost.status(id),
+      statusBuiltin: (id) => controlPlaneTurnStatus(id) ?? agent.status(id),
+      regenerateCli: (id, messageId) => {
+        void cliHost.regenerate(id, messageId)
+      },
+      regenerateBuiltin: (id, messageId) => {
+        void agent.regenerate(id, messageId)
+      },
+      editUserCli: (id, messageId, text) => {
+        void cliHost.editUserMessage(id, messageId, text)
+      },
+      editUserBuiltin: (id, messageId, text) => {
+        void agent.editUserMessage(id, messageId, text)
+      },
+      fork: (id, messageId) => agent.fork(id, messageId),
+      compact: (id, options) => agent.compact(id, options),
+      clearCompaction: (id, leafId) => agent.clearCompaction(id, leafId),
+      tryRemoteSend: (id, text, attachments, quote, contextBlocks, contextFile) => {
+        const remote = conversationStore.get(id)
+        if (!remote || isLocalMachine(remote.machineId)) return false
+        void forwardControl(remote, (dial, hostId) => dial.send(hostId, text ?? '')).then((used) => {
+          if (used) return
+          if (agentFor(id) === 'cli') {
+            void cliHost.run(id, text, attachments, quote, contextBlocks, contextFile)
+            return
+          }
+          void agent.run(id, text, attachments, quote, contextBlocks, contextFile)
         })
-        pushTokenUsageIfOpen(id)
-      }
-      return result
-    }
-  )
-  ipcMain.handle(IPC.agentClearCompaction, (_event, id: string, leafId: string) => {
-    const conversation = conversationStore.get(id)
-    if (conversation?.cliHost) {
-      return { ok: false as const, error: t('compact.error.cliHost') }
-    }
-    const result = agent.clearCompaction(id, leafId)
-    if (result.ok) {
+        return true
+      },
+      tryRemoteCancel: (id) => {
+        const remote = conversationStore.get(id)
+        if (!remote || isLocalMachine(remote.machineId)) return false
+        void forwardControl(remote, (dial, hostId) => dial.cancel(hostId)).then((used) => {
+          if (used) return
+          if (agentFor(id) === 'cli') cliHost.cancel(id)
+          else agent.cancel(id)
+        })
+        return true
+      },
+      tryRemoteAnswer: async (id, toolCallId, answer) => {
+        const remote = conversationStore.get(id)
+        if (!remote || isLocalMachine(remote.machineId)) return false
+        return forwardControl(remote, (dial, hostId) => dial.reply(hostId, toolCallId, answer))
+      },
+      controlPlaneOwns: (id) => controlPlaneOwns(conversationStore.get(id))
+    },
+    (id) => {
       const next = conversationStore.get(id)
       broadcast(IPC.compactionsChanged, {
         conversationId: id,
         compactions: next?.compactions ?? []
       })
       pushTokenUsageIfOpen(id)
-    }
-    return result
-  })
+    },
+    () => ({ archived: t('session.archivedReadonly'), cliHost: t('compact.error.cliHost') })
+  )
 
   // --- files ---
-  ipcMain.handle(
-    IPC.filesList,
-    (_event, path: string, sort: FileSortKey, ascending: boolean, conversationId?: string) =>
-      fileService.listDirectory(path, sort, ascending, conversationId)
-  )
-  ipcMain.handle(IPC.filesRead, (_event, path: string, conversationId?: string) =>
-    fileService.readTextFile(path, conversationId)
-  )
-  ipcMain.handle(
-    IPC.filesReadTextWindow,
-    (
-      _event,
-      path: string,
-      opts?: { startByte?: number; maxBytes?: number; force?: boolean }
-    ) => fileService.readTextWindow(path, opts)
-  )
-  ipcMain.handle(IPC.filesReadBinary, (_event, path: string) => fileService.readBinary(path))
-  ipcMain.handle(
-    IPC.filesReadBinaryWindow,
-    (_event, path: string, opts?: { startByte?: number; maxBytes?: number }) =>
-      fileService.readBinaryWindow(path, opts)
-  )
-  ipcMain.handle(IPC.filesWriteBinary, (_event, path: string, base64: string) =>
-    fileService.writeBinary(path, base64)
-  )
-  ipcMain.handle(
-    IPC.filesWriteClip,
-    (
-      _event,
-      input: { filename: string; base64?: string; text?: string }
-    ) => writeClip(input)
-  )
-  ipcMain.handle(IPC.filesCopyImage, (_event, path: string) => {
-    try {
-      if (typeof path !== 'string' || !isClipPath(path)) {
-        return { ok: false as const, error: 'not a clip' }
-      }
-      return writePngToClipboard(readFileSync(path))
-    } catch (err) {
-      return {
-        ok: false as const,
-        error: err instanceof Error ? err.message : String(err)
-      }
+  registerFilesIpc(ipcMain, fileService, workingCopyService, {
+    machineIdFor: machineIdForShell,
+    previewOn: previewOnMachine,
+    openOn: openOnMachine,
+    takePreloadedInspect,
+    showSaveDialog: async (event, options) => {
+      const window = BrowserWindow.fromWebContents(event.sender)
+      return window
+        ? dialog.showSaveDialog(window, options)
+        : dialog.showSaveDialog(options)
+    },
+    showOpenDialog: async (event, options) => {
+      const window = BrowserWindow.fromWebContents(event.sender)
+      return window
+        ? dialog.showOpenDialog(window, options)
+        : dialog.showOpenDialog(options)
     }
   })
-  ipcMain.handle(IPC.filesWrite, (_event, path: string, content: string) =>
-    fileService.writeTextFile(path, content)
-  )
-  ipcMain.handle(
-    IPC.filesWorkingCopyEnsure,
-    async (_event, path: string, opts?: { fileId?: string | null }) => {
-      try {
-        const st = await workingCopyService.ensure(String(path || ''), {
-          fileId: opts?.fileId
-        })
-        return { ok: true as const, ...st }
-      } catch (err) {
-        return { ok: false as const, error: (err as Error).message }
-      }
-    }
-  )
-  ipcMain.handle(IPC.filesWorkingCopyPromote, async (_event, path: string) =>
-    workingCopyService.promote(String(path || ''))
-  )
-  ipcMain.handle(IPC.filesWorkingCopyDiscard, async (_event, path: string) => {
-    const result = await workingCopyService.discard(String(path || ''), { reseed: true })
-    if (!result.ok) return result
-    const st = workingCopyService.status(String(path || ''))
-    return { ok: true as const, dirty: st?.dirty ?? false }
-  })
-  ipcMain.handle(IPC.filesWorkingCopyStatus, (_event, path: string) =>
-    workingCopyService.status(String(path || ''))
-  )
-  ipcMain.handle(IPC.filesQuickLook, (_event, path: string) => fileService.preview(path))
-  ipcMain.handle(IPC.filesOpenWithDefault, (_event, path: string) => fileService.openWithDefault(path))
-  ipcMain.handle(IPC.gitStatus, (_event, cwd: string) => getGitSnapshot(cwd))
-  ipcMain.handle(
-    IPC.gitDiff,
-    (_event, cwd: string, path: string, opts?: { staged?: boolean }) => getGitDiff(cwd, path, opts)
-  )
-  ipcMain.handle(
-    IPC.gitShowBase64,
-    (_event, cwd: string, path: string, ref?: string) =>
-      getGitShowBase64(cwd, path, ref || 'HEAD')
-  )
-  ipcMain.handle(IPC.gitInit, (_event, cwd: string) => initGitRepo(cwd))
-  ipcMain.handle(
-    IPC.gitCreateBranch,
-    (_event, cwd: string, name: string, opts?: { checkout?: boolean }) =>
-      createGitBranch(cwd, name, opts)
-  )
-  ipcMain.handle(IPC.gitCheckoutBranch, (_event, cwd: string, name: string) =>
-    checkoutGitBranch(cwd, name)
-  )
-  ipcMain.handle(
-    IPC.gitCreateWorktree,
-    (
-      _event,
-      cwd: string,
-      options: { path: string; newBranch?: string; branch?: string }
-    ) => createGitWorktree(cwd, options)
-  )
-  ipcMain.handle(
-    IPC.githubListPulls,
-    (_event, cwd: string, state?: import('@shared/github').GithubPullStateFilter) =>
-      listGithubPulls(cwd, state)
-  )
-  ipcMain.handle(IPC.githubGetPull, (_event, cwd: string, number: number) =>
-    getGithubPull(cwd, number)
-  )
-  ipcMain.handle(
-    IPC.cloudflareStatus,
-    (_event, cwd: string, query?: import('@shared/cloudflare').CloudflareStatusQuery) =>
-      getCloudflareStatus(
-        String(cwd || ''),
-        {
-          token: secretStore.get('cloudflare'),
-          accountId: settingsStore.get().cloudflareAccountId || null
-        },
-        query && typeof query === 'object' ? { remote: query.remote !== false } : undefined
-      )
-  )
-  ipcMain.handle(
-    IPC.supabaseStatus,
-    (_event, cwd: string, query?: import('@shared/supabase').SupabaseStatusQuery) =>
-      getSupabaseStatus(
-        String(cwd || ''),
-        {
-          token: secretStore.get('supabase'),
-          projectRef: settingsStore.get().supabaseProjectRef || null
-        },
-        query && typeof query === 'object' ? { remote: query.remote !== false } : undefined
-      )
-  )
-  ipcMain.handle(
-    IPC.githubListActions,
-    (_event, cwd: string, scope?: import('@shared/github').GithubActionsScope) =>
-      listGithubActions(cwd, scope)
-  )
-  ipcMain.handle(IPC.githubGetActionRun, (_event, cwd: string, runId: number) =>
-    getGithubActionRun(cwd, runId)
-  )
-  ipcMain.handle(IPC.githubGetSite, (_event, cwd: string) => getGithubSite(cwd))
-  ipcMain.handle(IPC.githubListReleases, (_event, cwd: string) => listGithubReleases(cwd))
-  ipcMain.handle(IPC.filesWatch, (_event, id: string, root: string | null) =>
-    fileService.watchRoot(id, root)
-  )
-  ipcMain.handle(IPC.previewSetCloseGuard, (event, enabled: boolean) => {
-    const win = BrowserWindow.fromWebContents(event.sender)
-    if (!win || win.isDestroyed()) return
-    if (enabled) previewCloseGuards.add(win)
-    else previewCloseGuards.delete(win)
-  })
-  ipcMain.handle(IPC.previewForceClose, (event) => {
-    const win = BrowserWindow.fromWebContents(event.sender)
-    if (!win || win.isDestroyed()) return
-    previewCloseGuards.delete(win)
-    afterLeavingFullscreen(win, () => {
-      if (win.isDestroyed()) return
-      parkWarmPreviewShell(win)
+  registerVcsIpc(ipcMain, {
+    cloudflare: () => ({
+      token: secretStore.get('cloudflare') ?? null,
+      accountId: settingsStore.get().cloudflareAccountId || null
+    }),
+    supabase: () => ({
+      token: secretStore.get('supabase') ?? null,
+      projectRef: settingsStore.get().supabaseProjectRef || null
     })
   })
-  ipcMain.on(IPC.previewShellReady, (event) => {
-    const win = BrowserWindow.fromWebContents(event.sender)
-    if (!win || win.isDestroyed()) return
-    if (isAppClipBrowserWindow(win)) {
-      overlayWarmReady.add(win)
-      return
-    }
-    warmPreviewReady.add(win)
-    previewOpenMark('warm-shell-ready')
-  })
-  ipcMain.on(IPC.sessionShellReady, (event) => {
-    const win = BrowserWindow.fromWebContents(event.sender)
-    if (!win || win.isDestroyed()) return
-    warmSessionReady.add(win)
-    sessionOpenMark('warm-shell-ready')
-    // Refresh recovery: bound companion reloaded as warm=1 (or lost claim) —
-    // push the conversation back into the renderer.
-    const boundId = detachedWindowIds.get(win)
-    if (boundId) pushDetachedSessionClaim(win, boundId)
-  })
-  ipcMain.handle(
-    IPC.filesInspectStructured,
-    (
-      _event,
-      path: string,
-      opts?: { maxBlocks?: number; maxRows?: number }
-    ) => fileService.inspectStructured(String(path || ''), opts)
-  )
-  ipcMain.handle(
-    IPC.filesSaveAs,
-    async (
-      event,
-      defaultName: string,
-      content: string
-    ): Promise<{ ok: true; path: string } | { ok: false; cancelled?: boolean; error?: string }> => {
-      const window = BrowserWindow.fromWebContents(event.sender)
-      const options: Electron.SaveDialogOptions = {
-        defaultPath: defaultName,
-        properties: ['createDirectory', 'showOverwriteConfirmation']
+  registerPreviewShellIpc(ipcMain, {
+    windowFromEvent: (event) => BrowserWindow.fromWebContents(event.sender),
+    setCloseGuard: (win, enabled) => {
+      if (enabled) previewCloseGuards.add(win as BrowserWindow)
+      else previewCloseGuards.delete(win as BrowserWindow)
+    },
+    forceClose: (win) => {
+      const window = win as BrowserWindow
+      previewCloseGuards.delete(window)
+      afterLeavingFullscreen(window, () => {
+        if (window.isDestroyed()) return
+        parkWarmPreviewShell(window)
+      })
+    },
+    onPreviewReady: (win) => {
+      const window = win as BrowserWindow
+      if (isAppClipBrowserWindow(window)) {
+        overlayWarmReady.add(window)
+        return
       }
-      const result = window
-        ? await dialog.showSaveDialog(window, options)
-        : await dialog.showSaveDialog(options)
-      if (result.canceled || !result.filePath) return { ok: false, cancelled: true }
-      const written = await fileService.writeTextFile(result.filePath, content)
-      if (!written.ok) return { ok: false, error: written.error }
-      return { ok: true, path: result.filePath }
-    }
-  )
-  ipcMain.handle(IPC.filesRename, (_event, path: string, newName: string) =>
-    fileService.rename(path, newName)
-  )
-  ipcMain.handle(IPC.filesTrash, (_event, paths: string[]) => fileService.trash(paths))
-  ipcMain.handle(
-    IPC.filesInspect,
-    (_event, path: string) => takePreloadedInspect(path) ?? fileService.inspect(path)
-  )
-  ipcMain.handle(
-    IPC.filesDbQuery,
-    (_event, path: string, table: string, offset?: number, limit?: number) =>
-      fileService.dbQuery(path, table, offset, limit)
-  )
-  ipcMain.handle(IPC.filesParseBlocks, async (_event, path: string, text: string) => {
-    if (!isTsJsPath(path)) return null
-    try {
-      // typescript compiler is heavy — load only when a TS/JS preview needs AST blocks.
-      const { parseTsCodeBlocks } = await import('./preview/parseTsCodeBlocks')
-      return parseTsCodeBlocks(path, text)
-    } catch {
-      return null
+      warmPreviewReady.add(window)
+      previewOpenMark('warm-shell-ready')
+    },
+    onSessionReady: (win) => {
+      const window = win as BrowserWindow
+      warmSessionReady.add(window)
+      sessionOpenMark('warm-shell-ready')
+      const boundId = detachedWindowIds.get(window)
+      if (boundId) pushDetachedSessionClaim(window, boundId)
     }
   })
 
-  // --- FileSessionStore (File Preview multi-session, hidden from sidebar) ---
-  const toFileSessionsState = (
-    fileId: string,
-    activeSessionId: string,
-    sessions: { id: string; title: string; createdAt: number; updatedAt: number }[]
-  ) => ({ fileId, activeSessionId, sessions })
-
-  ipcMain.handle(IPC.fileSessionsOpen, async (_event, path: string) => {
-    if (!isFileSessionEligible(path)) return null
-    const settings = settingsStore.get()
-    const opened = await fileSessionStore.open(
-      path,
-      settings.defaultModel,
-      settings.defaultApprovalMode ?? 'auto',
-      parseThinkingLevel(settings.defaultThinkingLevel)
-    )
-    // Don't broadcast file sessions into the main sidebar list (already filtered).
-    return toFileSessionsState(opened.fileId, opened.activeSessionId, opened.sessions)
-  })
-
-  ipcMain.handle(IPC.fileSessionsCreate, async (_event, path: string) => {
-    if (!isFileSessionEligible(path)) return null
-    const settings = settingsStore.get()
-    const created = await fileSessionStore.createSession(
-      path,
-      settings.defaultModel,
-      settings.defaultApprovalMode ?? 'auto',
-      parseThinkingLevel(settings.defaultThinkingLevel)
-    )
-    return toFileSessionsState(created.fileId, created.activeSessionId, created.sessions)
-  })
-
-  ipcMain.handle(
-    IPC.fileSessionsSetActive,
-    (_event, fileId: string, sessionId: string) => {
-      const sessions = fileSessionStore.setActive(fileId, sessionId)
-      if (!sessions) return null
-      return toFileSessionsState(fileId, sessionId, sessions)
-    }
-  )
-
-  ipcMain.handle(IPC.fileSessionsList, (_event, fileId: string) => {
-    const listed = fileSessionStore.list(fileId)
-    if (!listed) return null
-    return toFileSessionsState(fileId, listed.activeSessionId, listed.sessions)
-  })
-  ipcMain.handle(IPC.fileSessionsListAll, () => fileSessionStore.listAll())
-  ipcMain.handle(IPC.fileSessionsResolve, (_event, fileId: string) =>
-    fileSessionStore.resolve(fileId)
-  )
-  ipcMain.handle(
-    IPC.fileSessionsForceDelete,
-    (_event, fileId: string, sessionIds: string[]) =>
-      fileSessionStore.forceDelete(fileId, sessionIds)
-  )
-
-  ipcMain.handle(IPC.fileSessionsSetReadOnly, (_event, sessionId: string, readOnly: boolean) => {
-    conversationStore.updateMeta(sessionId, { fileReadOnly: readOnly })
-    broadcast(IPC.fileSessionReadOnlyChanged, { sessionId, readOnly })
-  })
-
-  ipcMain.handle(
-    IPC.fileSessionsRename,
-    (_event, fileId: string, sessionId: string, title: string) => {
-      const sessions = fileSessionStore.rename(fileId, sessionId, title)
-      if (!sessions) return null
-      const listed = fileSessionStore.list(fileId)
-      if (!listed) return null
-      return toFileSessionsState(fileId, listed.activeSessionId, sessions)
-    }
-  )
-
-  ipcMain.handle(
-    IPC.fileSessionsDelete,
-    (_event, fileId: string, sessionIds: string[]) => {
-      const result = fileSessionStore.deleteSessions(fileId, sessionIds)
-      if (!result) return null
-      for (const id of result.removed) {
+  registerFileSessionsIpc(ipcMain, fileSessionStore, {
+    defaultModel: () => settingsStore.get().defaultModel,
+    defaultApprovalMode: () => settingsStore.get().defaultApprovalMode ?? 'auto',
+    defaultThinkingLevel: () => settingsStore.get().defaultThinkingLevel,
+    setReadOnly: (sessionId, readOnly) => {
+      conversationStore.updateMeta(sessionId, { fileReadOnly: readOnly })
+      broadcast(IPC.fileSessionReadOnlyChanged, { sessionId, readOnly })
+    },
+    onSessionsDeleted: (ids) => {
+      for (const id of ids) {
         agent.disposeConversation(id)
         cliHost.dispose(id)
         swarmSession.clearForConversation(id)
         ptyManager.killForConversation(id)
         fileService.unwatch(id)
       }
-      return {
-        ok: result.ok,
-        error: result.error,
-        removed: result.removed,
-        fileId,
-        activeSessionId: result.activeSessionId,
-        sessions: result.sessions
-      }
     }
-  )
+  })
+
 
   // --- agents (CLI binary probe) ---
-  ipcMain.handle(
-    IPC.agentsResolveBinary,
-    (_event, candidates: string[], force?: boolean) => {
-      const list = Array.isArray(candidates)
-        ? candidates.filter((c): c is string => typeof c === 'string' && c.trim().length > 0)
-        : []
-      // Cached by default so agent switches are instant; force only on explicit recheck.
-      return resolveAgentExecutable(list, { force: force === true })
-    }
-  )
-
-  ipcMain.handle(
-    IPC.agentsProbeBinaries,
-    async (_event, items: unknown, force?: boolean, machineId?: string) => {
-      const list = Array.isArray(items) ? items : []
-      const specs: Array<{ id: string; candidates: string[] }> = []
-      for (const row of list) {
-        if (!row || typeof row !== 'object') continue
-        const rec = row as { id?: unknown; candidates?: unknown }
-        const id = typeof rec.id === 'string' ? rec.id.trim() : ''
-        if (!id) continue
-        const candidates = Array.isArray(rec.candidates)
-          ? rec.candidates.filter((c): c is string => typeof c === 'string' && c.trim().length > 0)
-          : []
-        specs.push({ id, candidates })
+  registerAgentsIpc(ipcMain, {
+    resolveBinary: (candidates, force) => resolveAgentExecutable(candidates, { force }),
+    probeLocal: (specs, force) => probeAgentExecutables(specs, { force }),
+    probeRemote: async (machineId, specs, force) => {
+      if (force) await daemonAttach.probeProviders(machineId)
+      const found = daemonAttach.providersOf(machineId)
+      const byId = new Map(found.map((row) => [row.id, row.path]))
+      const out: Record<string, string | null> = {}
+      for (const spec of specs) {
+        out[spec.id] = byId.get(spec.id) ?? daemonAttach.whichCached(machineId, spec.candidates)
       }
-      if (machineId && !isLocalMachine(machineId)) {
-        if (force === true) await daemonAttach.probeProviders(machineId)
-        const found = daemonAttach.providersOf(machineId)
-        const byId = new Map(found.map((row) => [row.id, row.path]))
-        const out: Record<string, string | null> = {}
-        for (const spec of specs) {
-          out[spec.id] = byId.get(spec.id) ?? daemonAttach.whichCached(machineId, spec.candidates)
-        }
-        return out
-      }
-      return probeAgentExecutables(specs, { force: force === true })
-    }
-  )
-
-  ipcMain.handle(
-    IPC.agentsListModels,
-    (_event, host: string | null, force?: boolean) =>
-      listHostModels(host, settingsStore, vavModelListOptions(force))
-  )
-
-  ipcMain.handle(IPC.agentsGetModelCatalog, () => {
-    const snap = getModelCatalogSnapshot()
-    if (Object.keys(snap).length > 0) return snap
-    return seedModelCatalog(settingsStore, vavModelListOptions())
-  })
-
-  ipcMain.handle(IPC.agentsPreloadModels, async (_event, force?: boolean) => {
-    const catalog = await preloadHostModels(settingsStore, {
-      ...vavModelListOptions(force),
-      prefer: preferredModelHosts(),
-      onProgress: publishModelCatalog
-    })
-    publishModelCatalog(catalog)
-    return catalog
-  })
-
-  ipcMain.handle(
-    IPC.agentsInstallStart,
-    (_event, payload: { agentId?: string; name?: string; command?: string }) =>
-      startAgentInstall({
-        agentId: typeof payload?.agentId === 'string' ? payload.agentId : '',
-        name: typeof payload?.name === 'string' ? payload.name : '',
-        command: typeof payload?.command === 'string' ? payload.command : ''
+      return out
+    },
+    isLocalMachine,
+    listModels: (hostId, force) => listHostModels(hostId, settingsStore, vavModelListOptions(force)),
+    getCatalog: () => {
+      const snap = getModelCatalogSnapshot()
+      if (Object.keys(snap).length > 0) return snap
+      return seedModelCatalog(settingsStore, vavModelListOptions())
+    },
+    preloadModels: async (force) => {
+      const catalog = await preloadHostModels(settingsStore, {
+        ...vavModelListOptions(force),
+        prefer: preferredModelHosts(),
+        onProgress: publishModelCatalog
       })
-  )
-  ipcMain.handle(IPC.agentsInstallCancel, (_event, agentId: string) => {
-    cancelAgentInstall(String(agentId || ''))
+      publishModelCatalog(catalog)
+      return catalog
+    },
+    startInstall: (payload) => startAgentInstall(payload),
+    cancelInstall: cancelAgentInstall,
+    clearInstall: clearAgentInstall,
+    listInstallRuns: listAgentInstallRuns
   })
-  ipcMain.handle(IPC.agentsInstallClear, (_event, agentId: string) => {
-    clearAgentInstall(String(agentId || ''))
-  })
-  ipcMain.handle(IPC.agentsListInstallRuns, () => listAgentInstallRuns())
   onAgentInstallRunsChanged((runs) => broadcast(IPC.agentsInstallRunsChanged, runs))
 
+
   // --- pty ---
-  ipcMain.handle(
-    IPC.ptyCreate,
-    async (
-      _event,
-      conversationId: string,
-      cwd: string,
-      cols: number,
-      rows: number,
-      options?: import('@shared/ipc').PtyCreateOptions | string
-    ) => {
-      // Spawning a shell or CLI agent host is enough to keep a ⌘⇧↵ session.
-      promoteEphemeralConversation(conversationId)
-      const base: import('@shared/ipc').PtyCreateOptions =
-        typeof options === 'string' ? { preferredId: options } : { ...(options ?? {}) }
-      const agentId = typeof base.agentId === 'string' ? base.agentId : null
-      const tabId = base.preferredId || randomUUID()
-      let launch = { ...base, preferredId: tabId }
-      const attaching = ptyManager.willAttachCreate(conversationId, launch)
-      if (!attaching && agentId && isStructuredCliHost(agentId)) {
-        const planned = await swarmSession.prepareLaunch(
-          conversationId,
-          tabId,
-          agentId,
-          launch.args ?? [],
-          launch.resumeCursor
-            ? { cursor: launch.resumeCursor, title: launch.sessionTitle ?? null }
-            : undefined
-        )
-        launch = { ...launch, args: planned.args }
-      }
-      const id = ptyManager.create(
-        conversationId,
-        settingsStore.get().shell,
-        cwd,
-        cols,
-        rows,
-        launch
-      )
-      if (!attaching && agentId && isStructuredCliHost(agentId)) {
-        swarmSession.afterSpawn(conversationId, id, agentId)
-      }
-      return id
-    }
-  )
-  // Fire-and-forget: high-frequency input (keys, mouse wheel in TUI mouse mode)
-  // and resize storms must not pay an invoke round-trip per event.
-  ipcMain.on(IPC.ptyWrite, (_event, tabId: unknown, data: unknown) => {
-    if (typeof tabId !== 'string' || typeof data !== 'string') return
-    ptyManager.write(tabId, data)
+  registerPtyCreateIpc(ipcMain, {
+    promoteEphemeral: promoteEphemeralConversation,
+    shell: () => settingsStore.get().shell,
+    willAttach: (conversationId, launch) => ptyManager.willAttachCreate(conversationId, launch),
+    prepareLaunch: (conversationId, tabId, agentId, args, resume) =>
+      swarmSession.prepareLaunch(conversationId, tabId, agentId, args, resume),
+    create: (conversationId, shell, cwd, cols, rows, launch) =>
+      ptyManager.create(conversationId, shell, cwd, cols, rows, launch),
+    afterSpawn: (conversationId, tabId, agentId) =>
+      swarmSession.afterSpawn(conversationId, tabId, agentId)
   })
-  ipcMain.on(
-    IPC.ptyResize,
-    (event, tabId: unknown, cols: unknown, rows: unknown, force?: unknown) => {
-      if (typeof tabId !== 'string' || typeof cols !== 'number' || typeof rows !== 'number') return
-      if (!Number.isFinite(cols) || !Number.isFinite(rows)) return
-      // Focused viewer drives size; force=true re-delivers SIGWINCH after alt rebuild.
-      ptyManager.resize(tabId, cols, rows, event.sender.id, force === true)
-    }
-  )
-  ipcMain.handle(IPC.ptyKill, (_event, tabId: string) => {
-    const conversationId = ptyManager.conversationIdFor(tabId)
-    if (conversationId) swarmSession.forgetPane(conversationId, tabId)
-    return ptyManager.kill(tabId)
-  })
-  ipcMain.handle(IPC.ptyIsBusy, (_event, tabId: string) => ptyManager.isBusy(tabId))
-  ipcMain.handle(IPC.ptyList, (_event, conversationId: string) =>
-    ptyManager.listForConversation(String(conversationId || ''))
-  )
-  ipcMain.handle(
-    IPC.ptySetLayouts,
-    (
-      _event,
-      conversationId: string,
-      layouts: import('@shared/types').ConversationPtyLayouts
-    ) => {
-      ptyManager.setLayouts(String(conversationId || ''), layouts ?? { bash: null, agents: {} })
-    }
-  )
-  ipcMain.handle(IPC.ptyReplay, (_event, tabId: string) =>
-    ptyManager.replay(String(tabId || ''))
-  )
+  registerPtyIoIpc(ipcMain, ptyManager, swarmSession)
+
 
   // --- window ---
-  ipcMain.handle(IPC.windowSetTheme, (_event, theme: AppSettings['theme']) => applyTheme(theme))
-  ipcMain.handle(IPC.windowGetAccentColor, () => readSystemAccentColor())
-  ipcMain.handle(IPC.windowShellPath, (_event, kind: ShellKind) => shellPath(kind))
-
-  ipcMain.handle(IPC.windowOpenSettings, (_event, view?: SettingsView, agentId?: string) =>
-    openSettingsWindow(view ?? 'appearance', typeof agentId === 'string' ? agentId : undefined)
-  )
-  ipcMain.handle(IPC.settingsDesiredView, () => settingsDesiredView)
-  ipcMain.handle(IPC.windowCloseSettings, () => hideSettingsWindow())
-  ipcMain.handle(IPC.windowOpenConnect, () => openConnectWindow())
-  ipcMain.handle(IPC.windowCloseConnect, () => hideConnectWindow())
-  ipcMain.handle(IPC.windowFitConnect, (_event, height: unknown) => {
-    if (typeof height !== 'number' || !Number.isFinite(height)) return
-    fitConnectWindow(height)
-  })
-
-  ipcMain.handle(IPC.windowOpenSession, async (_event, id: string) => {
-    // Must not return BrowserWindow — structured clone can't send it over IPC.
-    await openDetachedWindow(String(id || ''))
-  })
-  ipcMain.handle(IPC.windowRevealInList, async (event, id: string) => {
-    await revealConversationInList(String(id || ''))
-    // Companion (detached session or file-preview): close the window that asked
-    // so focus lands cleanly on main (same as Reveal in List for SessionWindow).
-    const senderWin = BrowserWindow.fromWebContents(event.sender)
-    if (
-      senderWin &&
-      !senderWin.isDestroyed() &&
-      mainWindow &&
-      !mainWindow.isDestroyed() &&
-      senderWin.id !== mainWindow.id
-    ) {
-      senderWin.close()
+  registerWindowIpc(ipcMain, {
+    applyTheme,
+    accentColor: readSystemAccentColor,
+    shellPath,
+    openSettings: openSettingsWindow,
+    settingsDesiredView: () => settingsDesiredView,
+    hideSettings: hideSettingsWindow,
+    openConnect: openConnectWindow,
+    hideConnect: hideConnectWindow,
+    fitConnect: fitConnectWindow,
+    openSession: (id) => {
+      void openDetachedWindow(id)
+    },
+    revealInList: async (event, id) => {
+      await revealConversationInList(id)
+      const senderWin = BrowserWindow.fromWebContents(event.sender)
+      if (
+        senderWin &&
+        !senderWin.isDestroyed() &&
+        mainWindow &&
+        !mainWindow.isDestroyed() &&
+        senderWin.id !== mainWindow.id
+      ) {
+        senderWin.close()
+      }
+    },
+    closeDetached: (id) => {
+      if (!id) return
+      const win = detachedWindows.get(id)
+      if (win && !win.isDestroyed()) win.close()
+    },
+    newDetached: newDetachedSession,
+    listDetached: listDetachedConversationIds,
+    openFilePreview: openFilePreviewWindow,
+    openOverlay: openAppClipWindow,
+    openTokenUsage: openTokenUsageWindow,
+    tokenUsageView: () => {
+      const payload = currentTokenUsagePayload()
+      if (payload) requestAccountQuota(payload.conversationId)
+      return payload
+    },
+    openProviderAccount: openProviderAccountWindow,
+    providerAccountView: currentProviderAccountPayload,
+    fitProviderAccount: fitProviderAccountWindow,
+    openSwarmHistory: popupSwarmHistoryMenu,
+    relaunch: () => {
+      app.relaunch()
+      app.exit(0)
     }
   })
-  ipcMain.handle(IPC.windowCloseDetached, (_event, id: string) => {
-    const conversationId = String(id || '')
-    if (!conversationId) return
-    const win = detachedWindows.get(conversationId)
-    if (win && !win.isDestroyed()) {
-      // closed handler publishes detached list + lets main remount the PTY host.
-      win.close()
-    }
-  })
-  ipcMain.handle(IPC.windowNewDetached, () => newDetachedSession())
-  ipcMain.handle(IPC.windowListDetached, () => listDetachedConversationIds())
-  ipcMain.handle(
-    IPC.windowOpenFilePreview,
-    (
-      _event,
-      path: string,
-      options?: { origin?: 'dock' | 'session'; conversationId?: string; surface?: 'file' | 'app' }
-    ) => openFilePreviewWindow(path, options)
-  )
-  ipcMain.handle(IPC.windowOpenOverlay, (_event, payload: OverlayPayload) => {
-    if (!payload || typeof payload !== 'object') return
-    openAppClipWindow(payload)
-  })
-  ipcMain.handle(
-    IPC.windowOpenTokenUsage,
-    (
-      event,
-      conversationId: string,
-      anchor?: { x: number; y: number; width: number; height: number }
-    ) => openTokenUsageWindow(event.sender, conversationId, anchor)
-  )
-  // Panel pulls on mount — avoids missing the push during React StrictMode remount.
-  ipcMain.handle(IPC.tokenUsageGetView, () => {
-    const payload = currentTokenUsagePayload()
-    if (payload) requestAccountQuota(payload.conversationId)
-    return payload
-  })
-  ipcMain.handle(
-    IPC.windowOpenProviderAccount,
-    (
-      event,
-      conversationId: string,
-      anchor?: { x: number; y: number; width: number; height: number }
-    ) => openProviderAccountWindow(event.sender, conversationId, anchor)
-  )
-  ipcMain.handle(IPC.providerAccountGetView, () => currentProviderAccountPayload())
-  ipcMain.handle(IPC.providerAccountFit, (_event, height: unknown) => {
-    if (typeof height !== 'number' || !Number.isFinite(height)) return
-    fitProviderAccountWindow(height)
-  })
-  ipcMain.handle(
-    IPC.windowOpenSwarmHistory,
-    (
-      event,
-      conversationId: string,
-      anchor?: { x: number; y: number; width: number; height: number }
-    ) => popupSwarmHistoryMenu(event.sender, conversationId, anchor)
-  )
-  ipcMain.handle(IPC.windowRelaunch, () => {
-    app.relaunch()
-    app.exit(0)
-  })
-  ipcMain.handle(IPC.notificationsPermission, () => notifications.permissionStatus())
-  ipcMain.handle(IPC.remoteControlStatus, () => remoteControl.status())
-  ipcMain.handle(IPC.remoteControlRegenerateSecret, () => remoteControl.regenerateSecret())
-  ipcMain.handle(IPC.remoteControlResetIdentity, () => remoteControl.resetIdentity())
-  ipcMain.handle(IPC.hostsList, () => decorateHosts(hostRegistry.list()))
-  ipcMain.handle(IPC.hostsPairing, () => daemonAttach.pairing())
-  ipcMain.handle(IPC.hostsPair, async (_event, payload: string) => {
-    const result = await daemonAttach.pair(String(payload || ''))
-    if (result.ok) void showHostWindow(result.host.id)
-    return result
-  })
-  ipcMain.handle(IPC.hostsPairLan, async (_event, peer: HostDiscoveryPeer) => {
-    const result = await daemonAttach.pairLan({
-      address: String(peer?.address || ''),
-      port: Number(peer?.port) || 0,
-      name: typeof peer?.name === 'string' ? peer.name : undefined,
-      machineId: typeof peer?.machineId === 'string' ? peer.machineId : undefined
-    })
-    if (result.ok) void showHostWindow(result.host.id)
-    return result
-  })
-  ipcMain.handle(IPC.hostsCancelPair, () => {
-    daemonAttach.cancelPair()
-  })
-  ipcMain.on(IPC.hostsCancelPair, () => {
-    daemonAttach.cancelPair()
-  })
-  ipcMain.handle(IPC.hostsForget, (_event, machineId: string) => {
-    const id = String(machineId || '')
-    daemonAttach.forget(id)
-    closeHostWindow(id)
-    if (settingsStore.get().defaultMachineId === id) applyDefaultMachine(LOCAL_MACHINE_ID)
-  })
-  ipcMain.handle(IPC.hostsDiscovered, () => daemonAttach.listDiscovered())
-  ipcMain.handle(IPC.hostsHome, (_event, machineId: string) => {
-    if (isLocalMachine(machineId)) return homedir()
-    return daemonAttach.homeOf(machineId)
-  })
-  ipcMain.handle(IPC.hostsShow, (_event, machineId: string) => {
-    void showHostWindow(machineId)
-  })
-  ipcMain.handle(IPC.hostsOpenFolder, async (_event, machineId: string) => {
-    const id = normalizeMachineId(machineId)
-    await showHostWindow(id)
-    const win = hostWindowOf(id)
-    if (win && !win.isDestroyed()) safeSend(win.webContents, IPC.hostsPickFolder, id)
-  })
-  ipcMain.handle(IPC.hostsProbeProviders, async (_event, machineId: string) => {
-    const id = String(machineId || '')
-    if (!id || isLocalMachine(id)) return []
-    const found = await daemonAttach.probeProviders(id)
-    broadcast(IPC.hostsChanged, decorateHosts(hostRegistry.list()))
-    return found
-  })
-  ipcMain.handle(IPC.hostsListDir, async (_event, machineId: string, path: string) => {
-    const host = hostRegistry.get(normalizeMachineId(machineId)) ?? hostRegistry.hostFor(machineId)
-    if (!host.info.online) {
-      return { path, entries: [], truncated: 0, error: `${host.info.name} is offline` }
-    }
-    try {
-      const dirents = await host.fs.readdir(path)
-      const entries = dirents
-        .filter((d) => d.isDirectory())
-        .map((d) => ({
-          name: d.name,
-          path: joinHostPath(host.info.platform, path, d.name),
-          isDirectory: true,
-          size: 0,
-          modifiedAt: 0,
-          createdAt: 0
-        }))
-      return { path, entries, truncated: 0 }
-    } catch (err) {
-      return { path, entries: [], truncated: 0, error: (err as Error).message }
-    }
-  })
-  ipcMain.on(IPC.notificationsSeen, (event, conversationId: unknown) => {
-    const id = typeof conversationId === 'string' ? conversationId.trim() : ''
-    if (!id) return
-    const window = BrowserWindow.fromWebContents(event.sender)
-    if (!window || window.isDestroyed()) return
-    notifications.noteConversationView(window.id, id)
-    lastSeenConversationId = id
-    markResultViewed(id)
-  })
-
-  ipcMain.handle(
-    IPC.dialogAlert,
-    async (
-      event,
-      options: { title: string; message: string; confirmLabel?: string }
-    ): Promise<void> => {
+  registerRuntimeIpc(ipcMain, {
+    notificationsPermission: () => notifications.permissionStatus(),
+    remoteControlStatus: () => remoteControl.status(),
+    regenerateSecret: () => remoteControl.regenerateSecret(),
+    resetIdentity: () => remoteControl.resetIdentity(),
+    windowIdFromEvent: (event) => {
       const window = BrowserWindow.fromWebContents(event.sender)
-      const opts: Electron.MessageBoxOptions = {
-        type: 'info',
-        title: options.title,
-        message: options.title,
-        detail: options.message,
-        buttons: [options.confirmLabel ?? t('common.ok')],
-        defaultId: 0
-      }
-      if (window && !window.isDestroyed()) await dialog.showMessageBox(window, opts)
-      else await dialog.showMessageBox(opts)
-    }
-  )
-
-  ipcMain.handle(
-    IPC.dialogConfirm,
-    async (
-      event,
-      options: {
-        title: string
-        message: string
-        confirmLabel?: string
-        cancelLabel?: string
-        destructive?: boolean
-      }
-    ): Promise<boolean> => {
-      const window = BrowserWindow.fromWebContents(event.sender)
-      const confirmLabel = options.confirmLabel ?? t('common.confirm')
-      const cancelLabel = options.cancelLabel ?? t('common.cancel')
-      // macOS draws buttons[0] on the right (primary). Prefer cancel as default
-      // for destructive actions so Enter does not wipe data by accident.
-      const opts: Electron.MessageBoxOptions = {
-        type: options.destructive ? 'warning' : 'question',
-        title: options.title,
-        message: options.title,
-        detail: options.message,
-        buttons: [confirmLabel, cancelLabel],
-        defaultId: options.destructive ? 1 : 0,
-        cancelId: 1
-      }
-      const result =
-        window && !window.isDestroyed()
-          ? await dialog.showMessageBox(window, opts)
-          : await dialog.showMessageBox(opts)
-      return result.response === 0
-    }
-  )
-
-  ipcMain.handle(
-    IPC.dialogMessageBox,
-    async (
-      event,
-      options: {
-        type?: 'none' | 'info' | 'error' | 'question' | 'warning'
-        title: string
-        message: string
-        detail?: string
-        buttons: string[]
-        defaultId?: number
-        cancelId?: number
-      }
-    ): Promise<number> => {
-      const window = BrowserWindow.fromWebContents(event.sender)
-      const buttons =
-        options.buttons?.length > 0 ? options.buttons : [t('common.ok')]
-      const opts: Electron.MessageBoxOptions = {
-        type: options.type ?? 'question',
-        title: options.title,
-        message: options.message || options.title,
-        detail: options.detail,
-        buttons,
-        defaultId: options.defaultId ?? 0,
-        cancelId: options.cancelId ?? buttons.length - 1
-      }
-      const result =
-        window && !window.isDestroyed()
-          ? await dialog.showMessageBox(window, opts)
-          : await dialog.showMessageBox(opts)
-      return result.response
-    }
-  )
-
-  ipcMain.handle(
-    IPC.windowPopupMenu,
-    (event, items: NativeMenuItem[], position?: { x: number; y: number }) => {
+      if (!window || window.isDestroyed()) return null
+      return window.id
+    },
+    onNotificationsSeen: (id, windowId) => {
+      notifications.noteConversationView(windowId, id)
+      lastSeenConversationId = id
+      markResultViewed(id)
+    },
+    popupMenu: (event, items, position) => {
       if (isE2eRuntime()) return e2ePopupMenu(items)
       const window = BrowserWindow.fromWebContents(event.sender)
       return window ? popupNativeMenu(window, items, position) : null
+    },
+    closePopupMenu: () => {
+      if (isE2eRuntime()) {
+        e2eDismissPopupMenu()
+        return
+      }
+      closeActiveNativePopup()
+    },
+    e2ePeekMenu: () => e2ePeekPopupMenu(),
+    e2eChooseMenu: (idOrLabel) => e2eChoosePopupMenu(idOrLabel),
+    e2eDismissMenu: () => e2eDismissPopupMenu(),
+    updatesGet: () => updateService.getState(),
+    updatesCheck: () => updateService.check(),
+    updatesOpenDownload: () => updateService.openDownload(),
+    updatesInstall: () => {
+      updateService.install()
     }
-  )
-  ipcMain.handle(IPC.windowClosePopupMenu, () => {
-    if (isE2eRuntime()) {
-      e2eDismissPopupMenu()
-      return
-    }
-    closeActiveNativePopup()
   })
-  ipcMain.handle(IPC.windowE2ePeekMenu, () => e2ePeekPopupMenu())
-  ipcMain.handle(IPC.windowE2eChooseMenu, (_event, idOrLabel: string) =>
-    typeof idOrLabel === 'string' ? e2eChoosePopupMenu(idOrLabel) : false
-  )
-  ipcMain.handle(IPC.windowE2eDismissMenu, () => e2eDismissPopupMenu())
-
-  ipcMain.handle(IPC.changeSetGet, (_e, id: string) => changeSetStore.get(id))
-  ipcMain.handle(IPC.changeSetActive, (_e, conversationId: string) =>
-    changeSetStore.activeFor(conversationId)
-  )
-  ipcMain.handle(IPC.changeSetAccept, (_e, setId: string, filePaths: string[]) =>
-    changeSetStore.accept(setId, filePaths)
-  )
-  ipcMain.handle(IPC.changeSetReject, (_e, setId: string, filePaths: string[]) =>
-    changeSetStore.reject(setId, filePaths)
-  )
-  ipcMain.handle(IPC.changeSetAcceptAll, (_e, setId: string) => changeSetStore.acceptAll(setId))
-  ipcMain.handle(IPC.changeSetRejectAll, (_e, setId: string) => changeSetStore.rejectAll(setId))
-  ipcMain.handle(IPC.changeSetUndo, (_e, setId: string, filePath: string) =>
-    changeSetStore.undo(setId, filePath)
-  )
-  ipcMain.handle(IPC.changeSetApplyEdit, (_e, setId: string, filePath: string, content: string) =>
-    changeSetStore.applyEdit(setId, filePath, content)
-  )
-
-  ipcMain.handle(IPC.updatesGet, () => updateService.getState())
-  ipcMain.handle(IPC.updatesCheck, () => updateService.check())
-  ipcMain.handle(IPC.updatesOpenDownload, () => updateService.openDownload())
-  ipcMain.handle(IPC.updatesInstall, () => {
-    updateService.install()
+  registerHostsIpc(ipcMain, hostRegistry, daemonAttach, {
+    show: showHostWindow,
+    close: closeHostWindow,
+    of: hostWindowOf,
+    applyDefaultMachine,
+    defaultMachineId: () => settingsStore.get().defaultMachineId,
+    localHome: homedir,
+    broadcastHosts: () => broadcast(IPC.hostsChanged, decorateHosts(hostRegistry.list()))
   })
+  registerDialogIpc(ipcMain, () => ({
+    ok: t('common.ok'),
+    confirm: t('common.confirm'),
+    cancel: t('common.cancel')
+  }))
+
+  registerChangeSetIpc(ipcMain, changeSetStore)
+
   updateService.setWillInstallHandler(() => {
     // Hide-on-close + tray/Dock keep-alive otherwise swallow Squirrel.Mac /
     // NSIS quitAndInstall (windows preventDefault close; app never exits).
@@ -8583,6 +7121,9 @@ return c as text`
       // same teardown as before-quit, then exit so the process cannot linger
       // with a Tray/Dock-only lifetime after windows close.
       electronAutoUpdater.once('before-quit-for-update', () => {
+        daemonAttach.dispose()
+        stopSpawnedVavd?.()
+        remoteControl.dispose()
         agent.disposeAll()
         cliHost.disposeAll()
         ptyManager.killAll()
@@ -8715,6 +7256,8 @@ if (!singleInstance) {
     quitting = true
     sleepBlocker.release()
     macLidSleep?.stop()
+    daemonAttach.dispose()
+    stopSpawnedVavd?.()
     remoteControl.dispose()
     agent.disposeAll()
     cliHost.disposeAll()
@@ -8723,6 +7266,7 @@ if (!singleInstance) {
     fileService.disposeAll()
     quotaService.stop()
     conversationStore.flush()
+    settingsStore.flushPersist()
   })
 
   app.on('will-quit', () => globalShortcut.unregisterAll())
@@ -8746,17 +7290,18 @@ if (!singleInstance) {
     }
     protocol.handle('vav-local', async (request) => {
       try {
-        const url = new URL(request.url)
-        const pathParam = url.searchParams.get('path')
-        if (!pathParam) {
+        // Query form (`preview/?path=`) or path form (`local/abs/file`) so
+        // relative JS modules next to an HTML preview resolve as siblings.
+        const requested = parseVavLocalFilePath(request.url)
+        if (!requested) {
           return new Response('Not found', { status: 404 })
         }
-        // searchParams.get already decodes percent escapes. decodeURIComponent is redundant
-        // and throws if the path contains a literal % (e.g. in a hash or filename).
-        const requested = pathParam
         // Document sandbox: preview must read the working copy when one exists.
         const mapped = workingCopyService.ioPath(requested)
         const filePath = existsSync(mapped) ? mapped : requested
+        if (!fileService.isAllowedPath(requested) && !fileService.isAllowedPath(filePath)) {
+          return new Response('Forbidden', { status: 403 })
+        }
         if (!existsSync(filePath)) {
           return new Response('Not found', { status: 404 })
         }
@@ -8907,6 +7452,35 @@ if (!singleInstance) {
     }
 
     mainWindow ??= createWindow()
+    let vavdPairing = resolveVavdPairing(process.env, process.argv)
+    if (resolveVavdSpawn(process.env, process.argv, { packaged: app.isPackaged })) {
+      try {
+        const spawned = await spawnLocalVavd({
+          name: isE2eRuntime() ? 'E2E Daemon' : 'VAV Daemon',
+          stateDir: join(app.getPath('userData'), 'vavd'),
+          stubTurn: isE2eRuntime(),
+          stubStream: isE2eRuntime()
+        })
+        stopSpawnedVavd = spawned.stop
+        vavdPairing = spawned.pairing
+      } catch (err) {
+        console.warn('[vavd] spawn failed', err)
+      }
+    }
+    if (vavdPairing) {
+      const shell = loopbackVavdShell(vavdPairing)
+      if (shell) {
+        daemonAttach.setAdvertisedPairing(shell.pairing)
+        remoteControl.setTunnelForward({ port: shell.port, secret: shell.secret })
+      }
+      void daemonAttach.pair(vavdPairing).then((result) => {
+        if (!result.ok) {
+          console.warn('[vavd] auto-pair failed', result.error)
+          return
+        }
+        void showHostWindow(result.host.id)
+      })
+    }
     // Belt-and-suspenders: ready-to-show can race with Dock hide / focus steals
     // from the IDE. Force the main window up once the renderer finishes loading.
     mainWindow.webContents.once('did-finish-load', () => {
@@ -8981,10 +7555,8 @@ if (!singleInstance) {
     // Dock tiles cache aggressively for the rebranded Electron.dev bundle —
     // re-assert the PNG after the first window exists so the tile updates.
     applyDockIcon()
-    // Silent check so the bottom-left update chip can appear when a newer release exists.
-    if (currentSettings().autoCheckUpdates) {
-      void updateService.check()
-    }
+    // Heartbeat + focus checks; launch poll is delayed so first paint stays free.
+    updateService.start(currentSettings().autoUpdatePolicy)
 
     // Finder → Services → “Open Directory in VAV” (folders only).
     // Defer so first paint is not blocked by osacompile.
@@ -9015,15 +7587,3 @@ if (!singleInstance) {
   })
 }
 
-/** Convert `#rrggbb` → 16-bit RGB triplets for AppleScript `choose color`. */
-function parseHexToRgb16(hex?: string): [number, number, number] | null {
-  if (!hex) return null
-  const m = /^#?([0-9a-fA-F]{6})$/.exec(hex.trim())
-  if (!m) return null
-  const n = parseInt(m[1], 16)
-  return [
-    Math.round(((n >> 16) & 0xff) / 255 * 65535),
-    Math.round(((n >> 8) & 0xff) / 255 * 65535),
-    Math.round((n & 0xff) / 255 * 65535)
-  ]
-}

@@ -13,6 +13,7 @@ import type { StructuredDocument, StructuredSection } from '@shared/structuredDo
 import { handleClickPickMouseDown } from '../lib/clickPick'
 import { useSheetVirtualWindow } from '../lib/useSheetVirtualWindow'
 import { useT } from '../i18n/useT'
+import { isSilentPreviewWindowWarning } from '@shared/previewWarnings'
 
 export function StructuredDocView({
   doc,
@@ -488,11 +489,3 @@ function BlockNode({
   )
 }
 
-/** Soft index/window caps must not appear as “truncated for preview” banners. */
-function isSilentPreviewWindowWarning(warning: string): boolean {
-  return (
-    /truncated to \d+\s*[x×]\s*\d+/i.test(warning) ||
-    (/truncat/i.test(warning) && /for preview/i.test(warning)) ||
-    /Sheet .+ truncated/i.test(warning)
-  )
-}

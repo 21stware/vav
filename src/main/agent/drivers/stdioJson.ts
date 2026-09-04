@@ -6,7 +6,7 @@ export interface StdioProcess {
   writeLine(obj: unknown): void
   writeRaw(text: string): void
   closeStdin(): void
-  kill(): void
+  kill(signal?: NodeJS.Signals): void
 }
 
 /** Line-oriented JSON reader on a stream. */

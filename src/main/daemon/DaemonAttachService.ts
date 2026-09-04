@@ -3,7 +3,8 @@
  * paired remotes, reconnect, and register them on HostRegistry.
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { randomBytes } from 'node:crypto'
+import { existsSync, mkdirSync, readFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { Socket } from 'node:net'
@@ -21,9 +22,19 @@ import {
 } from '../../shared/workspaceHost.ts'
 import type { HostRegistry } from '../host/WorkspaceHost.ts'
 import { createOfflineRemoteHost } from '../host/WorkspaceHost.ts'
-import { DaemonServer } from './DaemonServer.ts'
+import { DaemonServer, DAEMON_LAN_BIND, type DaemonWorkspaceCatalog } from './DaemonServer.ts'
 import { DaemonClient, createRemoteWorkspaceHost, requestLanPairOffer, PAIRING_CANCELLED } from './DaemonClient.ts'
-import { loadOrCreateIdentity, type DaemonIdentity } from './identity.ts'
+import { RemoteControlDial } from '../remote/RemoteControlDial.ts'
+import type { RemoteHello, RemoteServerMessage } from '../../shared/remoteControl.ts'
+import { loadOrCreateIdentity, writePrivateJson, type DaemonIdentity } from './identity.ts'
+import {
+  createFileGrantStore,
+  incomingFromGrants,
+  isPairAuthMessage,
+  type GrantStore,
+  type IncomingController
+} from './grants.ts'
+import { secretsMatch } from './jsonLines.ts'
 import {
   advertisedPairingAddresses,
   collectDialTargets,
@@ -35,9 +46,11 @@ import {
   type DialTarget,
   type DiscoveredPeer
 } from './lanAnnounce.ts'
-
 import { agentBinaryCandidates } from '../../shared/agentBinary.ts'
 import { CLI_AGENT_CATALOGUE } from '../../shared/types.ts'
+
+/** Hello into a local `--dial` port. The listen staying up does not mean the pipe is live. */
+const TUNNEL_HELLO_MS = 5_000
 
 export type PairedHostRecord = {
   machineId: string
@@ -50,6 +63,7 @@ export type PairedHostRecord = {
   home?: string
   tmp?: string
   defaultPath?: string
+  grantId?: string
 }
 
 type TunnelHandle = {
@@ -68,10 +82,24 @@ type AttachOpts = {
   tailcatToken: () => string | null
   /** Open the remote daemon over tailcat (same pipe as the phone QR). */
   dialTunnel?: (token: string) => Promise<TunnelHandle>
+  /** Delay before reconnect attempt `n` (0-based). Default exponential up to 30s. */
+  reconnectDelayMs?: (attempt: number) => number
   onHostsChanged: (hosts: WorkspaceHostInfo[]) => void
   onDiscovered?: (peers: DiscoveredPeer[]) => void
   /** Desktop: confirm a LAN Pair from another VAV. vavd omits this. */
   confirmLanPair?: (from: { name: string; machineId: string }) => Promise<boolean>
+  /** This computer's sessions + folder recents, served to a paired client. */
+  catalog?: DaemonWorkspaceCatalog
+  /**
+   * After a live daemon session is mounted (pair or reconnect). Pull the
+   * host catalog here before the remote window bootstraps.
+   */
+  onHostAttached?: (machineId: string) => void | Promise<void>
+  /** Phone-role hello on this machine's listen port → session hub. */
+  onControlHello?: (socket: Socket, leftover: string, hello: RemoteHello) => void
+  /** Frames from a control-plane dial we opened to a paired desktop. */
+  onControlEvent?: (machineId: string, message: RemoteServerMessage) => void
+  onIncomingChanged?: (controllers: IncomingController[]) => void
 }
 
 export class DaemonAttachService {
@@ -79,6 +107,9 @@ export class DaemonAttachService {
   private stopAnnounce: (() => void) | null = null
   private stopBrowse: (() => void) | null = null
   private readonly clients = new Map<string, DaemonClient>()
+  private readonly control = new Map<string, RemoteControlDial>()
+  /** Per-host probe: true after welcome, false after headless refuse / timeout. */
+  private readonly controlProbes = new Map<string, Promise<boolean>>()
   private readonly homes = new Map<string, string>()
   private readonly tmps = new Map<string, string>()
   private readonly providers = new Map<string, HostProviderInfo[]>()
@@ -87,15 +118,22 @@ export class DaemonAttachService {
   /** Live `--dial` sidecars, keyed by tailcat token. */
   private readonly tunnels = new Map<string, TunnelHandle>()
   private readonly tunnelOfHost = new Map<string, string>()
+  private readonly reconnectTimers = new Map<string, ReturnType<typeof setTimeout>>()
+  private readonly reconnectCtl = new Map<string, AbortController>()
   private discovered: DiscoveredPeer[] = []
   readonly identity: DaemonIdentity
+  private readonly grants: GrantStore
   private listenPort = 0
   private readonly opts: AttachOpts
   private pairAbort: AbortController | null = null
+  private disposed = false
+  /** Loopback vavd pairing shown as this computer when the app is a shell. */
+  private advertisedPairing: string | null = null
 
   constructor(opts: AttachOpts) {
     this.opts = opts
     this.identity = loadOrCreateIdentity(join(opts.userData, 'daemon'), opts.identityName)
+    this.grants = createFileGrantStore(join(opts.userData, 'daemon'))
   }
 
   private get storeFile(): string {
@@ -107,12 +145,21 @@ export class DaemonAttachService {
     else this.stopListen()
   }
 
-  pairing(): string | null {
+  /**
+   * When the desktop is a UI for a local vavd, Connect copies that daemon's
+   * URI so phones / another VAV / `vav` pair with the process that owns turns.
+   */
+  setAdvertisedPairing(pairing: string | null): void {
+    this.advertisedPairing = pairing
+  }
+
+  pairing(secret?: string): string | null {
+    if (this.advertisedPairing) return this.advertisedPairing
     if (!this.opts.enabled() && !this.server) return null
     const advertised = advertisedPairingAddresses({ identityName: this.identity.name })
     const payload: DaemonPairing = {
       v: DAEMON_PROTO_VERSION,
-      secret: this.opts.secret(),
+      secret: secret || this.offerSecret(),
       machineId: this.identity.machineId,
       name: this.identity.name,
       host: advertised.host,
@@ -121,6 +168,58 @@ export class DaemonAttachService {
       addresses: advertised.addresses
     }
     return encodeDaemonPairing(payload)
+  }
+
+  incoming(): IncomingController[] {
+    return this.server?.incoming() ?? incomingFromGrants(this.grants.list(), new Set())
+  }
+
+  disconnectIncoming(grantId: string): void {
+    this.server?.disconnectGrant(grantId)
+    this.emitIncoming()
+  }
+
+  unpairIncoming(grantId: string): void {
+    if (!this.server?.unpairGrant(grantId)) this.grants.remove(grantId)
+    this.emitIncoming()
+  }
+
+  rotateOffer(): string {
+    const secret = randomBytes(24).toString('base64url')
+    writePrivateJson(this.offerFile, { secret })
+    this.emitIncoming()
+    return secret
+  }
+
+  acceptsPairingAuth(auth: string): boolean {
+    if (this.grants.findBySecret(auth)) return true
+    return secretsMatch(auth, this.offerSecret()) || secretsMatch(auth, this.opts.secret())
+  }
+
+  private get offerFile(): string {
+    return join(this.opts.userData, 'daemon', 'offer.json')
+  }
+
+  private offerSecret(): string {
+    try {
+      if (existsSync(this.offerFile)) {
+        const raw = JSON.parse(readFileSync(this.offerFile, 'utf8')) as { secret?: unknown }
+        if (typeof raw.secret === 'string' && raw.secret.length >= 16) return raw.secret
+      }
+    } catch {
+      /* use shared secret */
+    }
+    return this.opts.secret()
+  }
+
+  private extraOfferSecrets(): string[] {
+    const phone = this.opts.secret()
+    const offer = this.offerSecret()
+    return phone && phone !== offer ? [phone] : []
+  }
+
+  private emitIncoming(): void {
+    this.opts.onIncomingChanged?.(this.incoming())
   }
 
   listenPortOf(): number {
@@ -166,6 +265,49 @@ export class DaemonAttachService {
     return this.providers.get(machineId) ?? []
   }
 
+  /**
+   * Import the other computer's sidebar sessions and folder recents.
+   * Missing RPCs (headless / older vavd) resolve to empty lists.
+   */
+  async pullHostCatalog(machineId: string): Promise<{ sessions: unknown[]; recents: string[] }> {
+    const client = this.clients.get(machineId)
+    if (!client?.connected) return { sessions: [], recents: [] }
+    let metas: Array<{ id?: unknown }> = []
+    try {
+      const listed = (await client.request('sessions.list')) as { sessions?: unknown }
+      if (Array.isArray(listed?.sessions)) metas = listed.sessions as Array<{ id?: unknown }>
+    } catch {
+      return { sessions: [], recents: [] }
+    }
+    const sessions: unknown[] = []
+    for (const meta of metas.slice(0, 100)) {
+      const id = typeof meta?.id === 'string' ? meta.id.trim() : ''
+      if (!id) continue
+      try {
+        const got = (await client.request('sessions.get', { id }, 60_000)) as {
+          conversation?: unknown
+        }
+        if (got?.conversation && typeof got.conversation === 'object') {
+          sessions.push(got.conversation)
+        }
+      } catch {
+        // skip one oversized / broken session
+      }
+    }
+    let recents: string[] = []
+    try {
+      const listed = (await client.request('workspace.recents')) as { paths?: unknown }
+      if (Array.isArray(listed?.paths)) {
+        recents = listed.paths.filter(
+          (path): path is string => typeof path === 'string' && path.trim().length > 0
+        )
+      }
+    } catch {
+      // older host
+    }
+    return { sessions, recents }
+  }
+
   whichCached(machineId: string, candidates: string[]): string | null {
     const key = candidates.map((c) => c.trim()).filter(Boolean).join('\0')
     if (!key) return null
@@ -196,9 +338,9 @@ export class DaemonAttachService {
     return found
   }
 
-  adoptAuthedSocket(socket: Socket, leftover = ''): void {
+  adoptAuthedSocket(socket: Socket, leftover = '', hello?: RemoteHello): void {
     this.ensureServer()
-    this.server?.adopt(socket, leftover)
+    this.server?.adopt(socket, leftover, hello)
   }
 
   async pair(text: string, signal?: AbortSignal): Promise<{ ok: true; host: WorkspaceHostInfo } | { ok: false; error: string }> {
@@ -217,7 +359,8 @@ export class DaemonAttachService {
       this.remember({
         machineId: welcome.host.id,
         name: welcome.host.name || parsed.name,
-        secret: parsed.secret,
+        secret: welcome.grant?.secret || parsed.secret,
+        grantId: welcome.grant?.id,
         host: persistHost,
         port: viaTunnel ? (parsed.port && persistHost ? parsed.port : 0) : target.port,
         token: parsed.token,
@@ -229,7 +372,9 @@ export class DaemonAttachService {
         home: welcome.home,
         tmp: welcome.tmp
       })
-      this.mount(client, welcome)
+      this.mount(client, welcome, target, welcome.grant?.secret || parsed.secret)
+      await this.pendingControl
+      await this.notifyHostAttached(welcome.host.id)
       return { ok: true, host: this.opts.registry.get(welcome.host.id)?.info ?? welcome.host }
     } catch (err) {
       if (isPairCancelled(err)) return { ok: false, error: PAIRING_CANCELLED }
@@ -273,7 +418,48 @@ export class DaemonAttachService {
     return this.pairAbort
   }
 
-  forget(machineId: string): void {
+  controlOf(machineId: string): RemoteControlDial | undefined {
+    const dial = this.control.get(machineId)
+    return dial?.ready ? dial : undefined
+  }
+
+  controlPlaneOf(machineId: string): boolean {
+    return this.control.get(machineId)?.ready === true
+  }
+
+  /** Wait until the phone-role probe for this host finishes (desktop or vavd). */
+  async waitForControlPlane(machineId: string): Promise<boolean> {
+    const probe = this.controlProbes.get(machineId)
+    if (probe) return probe
+    return this.control.get(machineId)?.ready === true
+  }
+
+  async forget(machineId: string): Promise<void> {
+    this.abortReconnect(machineId)
+    this.dropControl(machineId)
+    const client = this.clients.get(machineId)
+    this.clients.delete(machineId)
+    this.homes.delete(machineId)
+    this.tmps.delete(machineId)
+    this.providers.delete(machineId)
+    this.whichCache.delete(machineId)
+    this.opts.registry.remove(machineId)
+    this.saveStore(this.loadStore().filter((row) => row.machineId !== machineId))
+    this.opts.onHostsChanged(this.opts.registry.list())
+    if (client?.connected) {
+      try {
+        await client.request('pair.leave', undefined, 1500)
+      } catch {
+        /* host already gone */
+      }
+    }
+    client?.close()
+    this.releaseTunnel(machineId)
+  }
+
+  private detachLocal(machineId: string): void {
+    this.abortReconnect(machineId)
+    this.dropControl(machineId)
     this.clients.get(machineId)?.close()
     this.clients.delete(machineId)
     this.homes.delete(machineId)
@@ -304,12 +490,18 @@ export class DaemonAttachService {
   }
 
   dispose(): void {
+    this.disposed = true
     this.cancelPair()
+    for (const id of [...this.reconnectCtl.keys(), ...this.reconnectTimers.keys()]) {
+      this.abortReconnect(id)
+    }
     this.stopListen()
     this.stopBrowse?.()
     this.stopBrowse = null
     for (const client of this.clients.values()) client.close()
     this.clients.clear()
+    for (const dial of this.control.values()) dial.close()
+    this.control.clear()
     for (const tunnel of this.tunnels.values()) tunnel.close()
     this.tunnels.clear()
     this.tunnelOfHost.clear()
@@ -320,14 +512,19 @@ export class DaemonAttachService {
     this.server = new DaemonServer({
       host: this.opts.registry.local(),
       identity: this.identity,
-      secret: () => this.opts.secret(),
+      secret: () => this.offerSecret(),
+      extraSecrets: () => this.extraOfferSecrets(),
+      grants: this.grants,
       appVersion: this.opts.appVersion,
       home: homedir(),
       tmp: tmpdir(),
-      pairing: () => this.pairing(),
+      pairing: (secret) => this.pairing(secret),
       onPairAsk: this.opts.confirmLanPair
         ? (from) => this.opts.confirmLanPair!(from)
-        : undefined
+        : undefined,
+      catalog: this.opts.catalog,
+      onControlHello: this.opts.onControlHello,
+      onIncomingChanged: () => this.emitIncoming()
     })
     return this.server
   }
@@ -336,8 +533,8 @@ export class DaemonAttachService {
     if (this.server && this.listenPort) return
     const server = this.ensureServer()
     void server
-      .listen(DAEMON_DEFAULT_PORT)
-      .catch(() => server.listen(0))
+      .listen(DAEMON_DEFAULT_PORT, DAEMON_LAN_BIND)
+      .catch(() => server.listen(0, DAEMON_LAN_BIND))
       .then((port) => {
         this.listenPort = port
         this.stopAnnounce?.()
@@ -385,34 +582,111 @@ export class DaemonAttachService {
   }> {
     if (signal?.aborted) throw new Error(PAIRING_CANCELLED)
     const failures: Error[] = []
-    if (parsed.token && this.opts.dialTunnel) {
+    const lanTargets = this.targetsOf(parsed)
+    const canTunnel = Boolean(parsed.token && this.opts.dialTunnel)
+
+    const runLan = (sig: AbortSignal) => {
+      if (lanTargets.length === 0) return Promise.reject(new Error('no addresses'))
+      return this.dial(lanTargets, parsed.secret, undefined, sig)
+    }
+    const runTunnel = async (sig: AbortSignal) => {
+      const token = parsed.token!
       try {
-        const tun = await this.ensureTunnel(parsed.token)
-        if (signal?.aborted) throw new Error(PAIRING_CANCELLED)
-        const result = await this.dial([tun], parsed.secret, 45_000, signal)
-        this.tunnelOfHost.set(result.welcome.host.id, parsed.token)
+        const tun = await this.ensureTunnel(token, sig)
+        if (sig.aborted) throw new Error(PAIRING_CANCELLED)
+        const result = await this.dial([tun], parsed.secret, TUNNEL_HELLO_MS, sig)
+        this.tunnelOfHost.set(result.welcome.host.id, token)
         return result
       } catch (err) {
-        if (isPairCancelled(err)) throw err instanceof Error ? err : new Error(PAIRING_CANCELLED)
-        failures.push(err instanceof Error ? err : new Error(String(err)))
-        this.dropTunnel(parsed.token)
+        this.dropTunnel(token)
+        throw err
       }
     }
-    const targets = this.targetsOf(parsed)
-    if (targets.length === 0) throw preferPairError(failures)
+
     try {
-      return await this.dial(targets, parsed.secret, undefined, signal)
+      if (canTunnel && lanTargets.length > 0) {
+        return await this.raceTunnelAndLan(runTunnel, runLan, parsed.token!, signal)
+      }
+      if (canTunnel) {
+        return await runTunnel(signal ?? new AbortController().signal)
+      }
+      if (lanTargets.length === 0) throw preferPairError(failures)
+      return await runLan(signal ?? new AbortController().signal)
     } catch (err) {
       if (isPairCancelled(err)) throw err instanceof Error ? err : new Error(PAIRING_CANCELLED)
-      failures.push(err instanceof Error ? err : new Error(String(err)))
+      const message = err instanceof Error ? err : new Error(String(err))
+      failures.push(message)
       throw preferPairError(failures)
     }
   }
 
-  private async ensureTunnel(token: string): Promise<DialTarget> {
+  /**
+   * LAN and tailcat at once. A listening `--dial` port is not a live tunnel —
+   * hello into a dead proxy used to block LAN for 45s. First welcome wins.
+   */
+  private async raceTunnelAndLan(
+    runTunnel: (signal: AbortSignal) => ReturnType<DaemonAttachService['dial']>,
+    runLan: (signal: AbortSignal) => ReturnType<DaemonAttachService['dial']>,
+    token: string,
+    signal?: AbortSignal
+  ): Promise<Awaited<ReturnType<DaemonAttachService['dial']>>> {
+    const tunAbort = new AbortController()
+    const lanAbort = new AbortController()
+    const onParent = (): void => {
+      tunAbort.abort()
+      lanAbort.abort()
+    }
+    signal?.addEventListener('abort', onParent, { once: true })
+    type Outcome =
+      | { ok: true; via: 'tun' | 'lan'; r: Awaited<ReturnType<DaemonAttachService['dial']>> }
+      | { ok: false; via: 'tun' | 'lan'; e: unknown }
+    const wrap = (
+      via: 'tun' | 'lan',
+      run: (sig: AbortSignal) => ReturnType<DaemonAttachService['dial']>,
+      sig: AbortSignal
+    ): Promise<Outcome> =>
+      run(sig).then(
+        (r) => ({ ok: true, via, r }),
+        (e: unknown) => ({ ok: false, via, e })
+      )
+    try {
+      const tunP = wrap('tun', runTunnel, tunAbort.signal)
+      const lanP = wrap('lan', runLan, lanAbort.signal)
+      const first = await Promise.race([tunP, lanP])
+      if (first.ok) {
+        if (first.via === 'tun') lanAbort.abort()
+        else {
+          tunAbort.abort()
+          this.dropTunnel(token)
+        }
+        const loser = first.via === 'tun' ? lanP : tunP
+        void loser.then((outcome) => {
+          if (outcome.ok) outcome.r.client.close()
+        })
+        return first.r
+      }
+      const second = first.via === 'tun' ? await lanP : await tunP
+      if (second.ok) {
+        if (second.via !== 'tun') this.dropTunnel(token)
+        return second.r
+      }
+      const errors = [first.e, second.e].map((err) =>
+        err instanceof Error ? err : new Error(String(err))
+      )
+      throw preferPairError(errors)
+    } finally {
+      signal?.removeEventListener('abort', onParent)
+    }
+  }
+
+  private async ensureTunnel(token: string, signal?: AbortSignal): Promise<DialTarget> {
     const existing = this.tunnels.get(token)
     if (existing) return { host: existing.host, port: existing.port }
     const handle = await this.opts.dialTunnel!(token)
+    if (signal?.aborted) {
+      handle.close()
+      throw new Error(PAIRING_CANCELLED)
+    }
     this.tunnels.set(token, handle)
     return { host: handle.host, port: handle.port }
   }
@@ -455,6 +729,8 @@ export class DaemonAttachService {
           port: target.port,
           secret,
           device: this.identity.name,
+          clientId: this.identity.machineId,
+          grantId: this.loadStore().find((row) => row.secret === secret)?.grantId,
           timeoutMs,
           signal
         })
@@ -470,43 +746,169 @@ export class DaemonAttachService {
 
   private mount(
     client: DaemonClient,
-    welcome: import('../../shared/daemonProtocol.ts').DaemonWelcome
+    welcome: import('../../shared/daemonProtocol.ts').DaemonWelcome,
+    target?: DialTarget,
+    hostSecret?: string
   ): void {
     const previous = this.clients.get(welcome.host.id)
     previous?.close()
+    this.dropControl(welcome.host.id)
     this.clients.set(welcome.host.id, client)
     this.homes.set(welcome.host.id, welcome.home)
     this.tmps.set(welcome.host.id, welcome.tmp)
     const host = createRemoteWorkspaceHost(client, welcome)
     this.opts.registry.register(host)
     this.opts.onHostsChanged(this.opts.registry.list())
+    client.onClose((reason) => {
+      if (this.clients.get(welcome.host.id) !== client) return
+      if (isPairAuthMessage(reason)) {
+        this.detachLocal(welcome.host.id)
+        return
+      }
+      const row = this.loadStore().find((entry) => entry.machineId === welcome.host.id)
+      if (!row) return
+      this.opts.registry.register(
+        createOfflineRemoteHost(row.machineId, row.name, { home: row.home, tmp: row.tmp })
+      )
+      this.opts.onHostsChanged(this.opts.registry.list())
+      this.scheduleReconnect(row, 0)
+    })
     void this.probeProviders(welcome.host.id).then(() => {
       this.opts.onHostsChanged(this.opts.registry.list())
     })
+    this.pendingControl =
+      target && hostSecret
+        ? this.attachControlPlane(welcome.host.id, target, hostSecret).catch(() => undefined)
+        : Promise.resolve()
   }
 
-  private async reconnect(row: PairedHostRecord): Promise<void> {
+  private pendingControl: Promise<void> = Promise.resolve()
+
+  private dropControl(machineId: string): void {
+    this.control.get(machineId)?.close()
+    this.control.delete(machineId)
+    this.controlProbes.delete(machineId)
+  }
+
+  /**
+   * Second connection, `hello.role=phone`, same secret as the daemon.
+   * Headless vavd hosts the control plane; this dial drives turns there.
+   */
+  private async attachControlPlane(
+    machineId: string,
+    target: DialTarget,
+    secret: string
+  ): Promise<void> {
+    const probe = this.probeControlPlane(machineId, target, secret)
+    this.controlProbes.set(machineId, probe)
+    await probe
+  }
+
+  private async probeControlPlane(
+    machineId: string,
+    target: DialTarget,
+    secret: string
+  ): Promise<boolean> {
+    const dial = new RemoteControlDial()
     try {
-      const { client, welcome, target } = await this.connectPairing({
-        v: DAEMON_PROTO_VERSION,
-        secret: row.secret,
-        machineId: row.machineId,
-        name: row.name,
-        host: row.host,
-        port: row.port,
-        token: row.token,
-        addresses: row.addresses
+      await dial.connect({
+        host: target.host,
+        port: target.port,
+        secret,
+        device: this.identity.name
       })
-      this.mount(client, welcome)
+      this.control.set(machineId, dial)
+      dial.onFrame((_state, message) => this.opts.onControlEvent?.(machineId, message))
+      this.opts.onHostsChanged(this.opts.registry.list())
+      return true
+    } catch {
+      dial.close()
+      return false
+    }
+  }
+
+  private async notifyHostAttached(machineId: string): Promise<void> {
+    if (!this.opts.onHostAttached) return
+    try {
+      await this.opts.onHostAttached(machineId)
+    } catch (err) {
+      console.error('[daemon] host catalog pull failed', err)
+    }
+  }
+
+  private abortReconnect(machineId: string): void {
+    const timer = this.reconnectTimers.get(machineId)
+    if (timer) {
+      clearTimeout(timer)
+      this.reconnectTimers.delete(machineId)
+    }
+    const ctl = this.reconnectCtl.get(machineId)
+    if (ctl) {
+      ctl.abort()
+      this.reconnectCtl.delete(machineId)
+    }
+  }
+
+  private scheduleReconnect(row: PairedHostRecord, attempt: number): void {
+    if (this.disposed) return
+    this.abortReconnect(row.machineId)
+    const delay =
+      this.opts.reconnectDelayMs?.(attempt) ?? Math.min(30_000, 1_000 * 2 ** Math.min(attempt, 8))
+    const timer = setTimeout(() => {
+      this.reconnectTimers.delete(row.machineId)
+      void this.reconnect(row, attempt)
+    }, delay)
+    timer.unref?.()
+    this.reconnectTimers.set(row.machineId, timer)
+  }
+
+  private async reconnect(row: PairedHostRecord, attempt = 0): Promise<void> {
+    if (this.disposed) return
+    this.abortReconnect(row.machineId)
+    const ctl = new AbortController()
+    this.reconnectCtl.set(row.machineId, ctl)
+    try {
+      const { client, welcome, target } = await this.connectPairing(
+        {
+          v: DAEMON_PROTO_VERSION,
+          secret: row.secret,
+          machineId: row.machineId,
+          name: row.name,
+          host: row.host,
+          port: row.port,
+          token: row.token,
+          addresses: row.addresses
+        },
+        ctl.signal
+      )
+      if (this.disposed || ctl.signal.aborted) {
+        client.close()
+        return
+      }
+      this.mount(client, welcome, target, welcome.grant?.secret || row.secret)
+      await this.pendingControl
+      await this.notifyHostAttached(welcome.host.id)
       this.remember({
         ...row,
+        secret: welcome.grant?.secret || row.secret,
+        grantId: welcome.grant?.id || row.grantId,
         host: row.token ? row.host : target.host,
         port: row.token ? row.port : target.port,
         home: welcome.home,
         tmp: welcome.tmp,
         name: welcome.host.name || row.name
       })
-    } catch {
+    } catch (err) {
+      if (this.disposed || ctl.signal.aborted) return
+      const message = err instanceof Error ? err.message : String(err)
+      if (isPairAuthMessage(message)) {
+        this.detachLocal(row.machineId)
+        return
+      }
+      console.error(
+        `[daemon] reconnect ${row.name || row.machineId} failed`,
+        message
+      )
       if (row.home) this.homes.set(row.machineId, row.home)
       if (row.tmp) this.tmps.set(row.machineId, row.tmp)
       this.opts.registry.register(
@@ -516,6 +918,7 @@ export class DaemonAttachService {
         })
       )
       this.opts.onHostsChanged(this.opts.registry.list())
+      this.scheduleReconnect(row, attempt + 1)
     }
   }
 
@@ -547,7 +950,7 @@ export class DaemonAttachService {
 
   private saveStore(hosts: PairedHostRecord[]): void {
     mkdirSync(this.opts.userData, { recursive: true })
-    writeFileSync(this.storeFile, JSON.stringify({ hosts }, null, 2))
+    writePrivateJson(this.storeFile, { hosts })
   }
 }
 

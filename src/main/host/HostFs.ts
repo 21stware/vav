@@ -3,11 +3,12 @@
  *
  * FileService, ACP `fs/*`, and the built-in agent's fs_* tools all go through
  * this surface so a later remote implementation can sit behind the same
- * interface. Preview / Quick Look stay on the UI machine.
+ * interface. Reveal / Quick Look / Open With on a remote host spawn the
+ * equivalent on that machine (see `hostShell`).
  */
 
 import { watch, type FSWatcher } from 'node:fs'
-import { access, mkdir, open, readdir, readFile, rename, stat, writeFile } from 'node:fs/promises'
+import { access, mkdir, open, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
 
 export type HostStat = {
   size: number
@@ -57,6 +58,7 @@ export interface HostFs {
   open(path: string, flags: string): Promise<HostFileHandle>
   watch(path: string, opts: { recursive?: boolean }, listener: HostWatchListener): HostWatcher
   exists(path: string): Promise<boolean>
+  unlink(path: string): Promise<void>
 }
 
 export function createLocalHostFs(): HostFs {
@@ -110,7 +112,18 @@ export function createLocalHostFs(): HostFs {
         on(event, cb) {
           if (event === 'error') watcher.on('error', cb)
         },
-        close: () => watcher.close()
+        close: () => {
+          try {
+            watcher.unref()
+          } catch {
+            /* ignore */
+          }
+          try {
+            watcher.close()
+          } catch {
+            /* already closed */
+          }
+        }
       }
     },
     async exists(path) {
@@ -120,6 +133,9 @@ export function createLocalHostFs(): HostFs {
       } catch {
         return false
       }
+    },
+    async unlink(path) {
+      await rm(path, { recursive: true, force: true })
     }
   }
 }

@@ -8,7 +8,7 @@ import JSZip from 'jszip'
 import { XMLParser } from 'fast-xml-parser'
 import type { PreviewBlock } from '@shared/previewBlock'
 import type { StructuredDocument, StructuredSection } from '@shared/structuredDoc'
-import { isOfficeLockFile, OFFICE_LOCK_FILE_MESSAGE } from '@shared/officeLock'
+import { isOfficeLockFile, OFFICE_LOCK_FILE_MESSAGE } from '../../../shared/officeLock.ts'
 
 export { isOfficeLockFile }
 

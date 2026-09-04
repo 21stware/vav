@@ -1021,6 +1021,7 @@ export class PtyManager {
     if (!conversationId) return
     const next: ConversationPtyLayouts = {
       bash: cloneLayout(layouts.bash),
+      bashGroups: cloneBashGroups(layouts.bashGroups),
       agents: Object.fromEntries(
         Object.entries(layouts.agents ?? {}).map(([id, node]) => [id, cloneLayout(node)])
       ),
@@ -1374,10 +1375,27 @@ function cloneLayout(node: TerminalLayoutNode | null | undefined): TerminalLayou
   }
 }
 
+function cloneBashGroups(
+  groups: ConversationPtyLayouts['bashGroups']
+): ConversationPtyLayouts['bashGroups'] {
+  if (!groups) return null
+  const layouts: Record<string, TerminalLayoutNode> = {}
+  for (const [id, node] of Object.entries(groups.layouts)) {
+    const cloned = cloneLayout(node)
+    if (cloned) layouts[id] = cloned
+  }
+  return {
+    order: [...groups.order],
+    layouts,
+    activeGroupId: groups.activeGroupId
+  }
+}
+
 function cloneLayouts(layouts: ConversationPtyLayouts | undefined): ConversationPtyLayouts {
   if (!layouts) return { bash: null, agents: {}, cliMode: false }
   return {
     bash: cloneLayout(layouts.bash),
+    bashGroups: cloneBashGroups(layouts.bashGroups),
     agents: Object.fromEntries(
       Object.entries(layouts.agents ?? {}).map(([id, node]) => [id, cloneLayout(node)])
     ),

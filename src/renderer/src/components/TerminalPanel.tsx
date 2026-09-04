@@ -303,6 +303,8 @@ function LayoutNodeView({
             })
           } else {
             selectTab(conversationId, node.tabId)
+            setUiFocusScope('bash')
+            requestAnimationFrame(() => focusXtermIn(e.currentTarget))
           }
         }}
       >
@@ -446,7 +448,20 @@ function LayoutNodeView({
               return {
                 workspaces: {
                   ...state.workspaces,
-                  [conversationId]: { ...cur, layout: next }
+                  [conversationId]: {
+                    ...cur,
+                    layout: next,
+                    bashGroups:
+                      cur.bashGroups && cur.bashGroups.activeGroupId
+                        ? {
+                            ...cur.bashGroups,
+                            layouts: {
+                              ...cur.bashGroups.layouts,
+                              [cur.bashGroups.activeGroupId]: next
+                            }
+                          }
+                        : cur.bashGroups
+                  }
                 }
               }
             })
@@ -487,7 +502,10 @@ function focusXtermIn(host: HTMLElement | null): void {
   } catch {
     ta.focus()
   }
-  setUiFocusScope('agent')
+  const bash =
+    !!host.closest('[data-bash-pane]') ||
+    host.closest('[data-terminal-surface="bash"]') !== null
+  setUiFocusScope(bash ? 'bash' : 'agent')
 }
 
 function TerminalHost({

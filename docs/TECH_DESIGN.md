@@ -237,3 +237,32 @@ VAV_SNAPSHOT=/tmp/x.png VAV_SNAPSHOT_JS="<expr>" npm start
 - pi-ai 支持十几个 provider，vav 走 `anthropic-messages`、`openai-completions`、`google-generative-ai`（generativelanguage 端点）三条，仍由 endpoint 形态推断；私有网关如果都不像，需要手动选择——目前没有这个开关。Responses / Bedrock / Vertex 这些都只差一个 `Model.api` 字段。模型元数据（上下文窗口、输出上限、$/MTok、推理开关、模态、thinking 档位映射）由 `src/main/agent/modelMeta.ts` 从 pi 的生成目录查表，查不到再落回 `@shared` 的正则启发式；vav 自己的模型列表也会在解锁后探活 provider 的 `/models` 路由（`vavModelProbe.ts`）。
 - pi-agent-core 的 compaction、skills、prompt templates 都没接。上下文满了就是满了，目前只有 token 计数条提示。
 - 没有 diff 视图。Agent 改文件后你看到的是「变更条」加文件内容，不是补丁。
+
+## 15. Remote：daemon 与 control UI
+
+Remote 不是「把会话拷到另一台电脑再跑一遍 agent」。那会让受控端 UI 变黑——回合发生在控制端进程里，受控桌面只是一份过期快照。
+
+两层协议共用配对密钥，用 `hello.role` 分流：
+
+```
+phone / desktop control UI ── hello.role=phone ──► RemoteControlHub  会话、回合、配置
+desktop / vavd             ── hello.role=daemon ─► DaemonServer      fs / spawn / pty
+```
+
+LAN 监听端口和 tailcat 本地回环都接到同一个 Hub。Hub 是 Electron-free 的；sidecar、配对文件、已知设备名单留在 `RemoteControlService`。
+
+各端配置（`remoteHostKind.ts`）：
+
+| 端 | control plane | workspace host | 本地 agent | 密钥 |
+| --- | --- | --- | --- | --- |
+| iOS | 是 | 否 | 否 | 在电脑上 |
+| 桌面控制端 → 另一台桌面 | 是 | 是 | 否 | 在受控端 |
+| 桌面控制端 → vavd | 是 | 是 | 否 | 在 vavd |
+| 桌面受控端 | 是 | 是 | 是 | 是 |
+| vavd | 是 | 是 | 是 | 是 |
+
+桌面 remote 窗口和 iOS `RemoteClient` 是同构的会话客户端：同一套帧、同一套 `applyRemoteServerMessage` 规则（Swift 镜像这份 TypeScript）。桌面多出来的只是 daemon 上的文件树和 PTY。
+
+控制端的 send / cancel / reply / create / configure（模型、审批、thinking、Fast、ACP mode）/ workspace / rename / archive 都走这套帧。Adopt 后本地 id 若发生碰撞，`hostSessionId` 用 `duplicateSourceId` 对回受控端。`vavd` 接 phone-role hello：回合在 daemon 里跑，桌面 / 手机 / 网页 / 扩展都是壳。Regenerate / edit / fork / compact 不在 phone 协议里，控制平面会话上直接拒绝，避免又在控制端起一轮。
+
+回合只在持有会话的那台机器上跑。`handleAgentEvent` 同时 `fanRemoteTurn`（控制平面）和 `sendToWorkspaceWindows`（本机 UI）。所以手机或另一台桌面发一句话，受控端 transcript 会自己动。

@@ -27,7 +27,12 @@ export function ErrorBanner({
   }
 
   return (
-    <div className="banner error" data-leaving={leaving || undefined}>
+    <div
+      className="banner error"
+      data-leaving={leaving || undefined}
+      role="alert"
+      aria-live="assertive"
+    >
       <span>{message}</span>
       <span className="spacer" />
       {actionLabel && onAction && <Button label={actionLabel} size="sm" onClick={onAction} />}

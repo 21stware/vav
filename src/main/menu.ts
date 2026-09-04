@@ -5,6 +5,7 @@ import type { Platform } from '@shared/platform'
 import { APP_NAME } from './brand'
 import { isDevRuntime } from './devRuntime'
 import { t } from './i18n'
+import { alignMenuIcons, menuIcon } from './menuIcons'
 
 const IS_MAC = process.platform === 'darwin'
 const PLATFORM = process.platform as Platform
@@ -67,9 +68,10 @@ export function buildAppMenu(
       ]
     : []
 
-  const fileSubmenu: MenuItemConstructorOptions[] = [
+  const fileSubmenu: MenuItemConstructorOptions[] = alignMenuIcons([
     {
       label: t('menu.newSession'),
+      icon: menuIcon('message-square-plus'),
       accelerator: b.newSession,
       click: send('new-conversation')
     },
@@ -81,15 +83,18 @@ export function buildAppMenu(
     { type: 'separator' },
     {
       label: t('menu.importPack'),
+      icon: menuIcon('import'),
       click: send('import-pack')
     },
     {
       label: t('menu.exportPack'),
+      icon: menuIcon('upload'),
       click: send('export-pack')
     },
     { type: 'separator' },
     {
       label: t('menu.newTerminal'),
+      icon: menuIcon('terminal'),
       accelerator: b.newTerminal,
       click: send('new-terminal')
     },
@@ -115,7 +120,7 @@ export function buildAppMenu(
             label: t('menu.quitApp', { app: APP_NAME })
           } as MenuItemConstructorOptions
         ])
-  ]
+  ])
 
   const viewSubmenu: MenuItemConstructorOptions[] = [
     {
@@ -177,7 +182,7 @@ export function buildAppMenu(
       : [])
   ]
 
-  const sessionSubmenu: MenuItemConstructorOptions[] = [
+  const sessionSubmenu: MenuItemConstructorOptions[] = alignMenuIcons([
     {
       label: t('menu.focusComposer'),
       accelerator: b.focusComposer,
@@ -185,30 +190,36 @@ export function buildAppMenu(
     },
     {
       label: t('menu.send'),
+      icon: menuIcon('send'),
       accelerator: b.sendMenu,
       click: send('send')
     },
     {
       label: t('menu.stopTurn'),
+      icon: menuIcon('square'),
       click: send('cancel-turn')
     },
     { type: 'separator' },
     {
       label: t('menu.switchModel'),
-      accelerator: b.switchModel,
-      click: send('switch-model')
-    },
-    {
-      label: t('shortcut.switchModelUp'),
-      accelerator: b.switchModelUp,
-      click: send('switch-model-up'),
-      visible: false
-    },
-    {
-      label: t('shortcut.switchModelDown'),
-      accelerator: b.switchModelDown,
-      click: send('switch-model-down'),
-      visible: false
+      submenu: [
+        {
+          label: t('shortcut.switchModelUp'),
+          accelerator: b.switchModelUp,
+          click: send('switch-model-up')
+        },
+        {
+          label: t('shortcut.switchModelDown'),
+          accelerator: b.switchModelDown,
+          click: send('switch-model-down')
+        },
+        { type: 'separator' },
+        {
+          label: t('composer.agentModel'),
+          accelerator: b.switchModel,
+          click: send('switch-model')
+        }
+      ]
     },
     {
       label: t('shortcut.pickAttachments'),
@@ -218,8 +229,26 @@ export function buildAppMenu(
     },
     {
       label: t('menu.switchApproval'),
+      submenu: [
+        {
+          label: t('approvalMode.auto'),
+          click: send('set-approval-auto')
+        },
+        {
+          label: t('approvalMode.bypass'),
+          click: send('set-approval-bypass')
+        },
+        {
+          label: t('approvalMode.edit'),
+          click: send('set-approval-edit')
+        }
+      ]
+    },
+    {
+      label: t('shortcut.switchApproval'),
       accelerator: b.switchApproval,
-      click: send('switch-approval')
+      click: send('switch-approval'),
+      visible: false
     },
     {
       label: t('composer.screenshot'),
@@ -239,7 +268,7 @@ export function buildAppMenu(
       label: t('menu.showFileSessions'),
       click: send('show-file-sessions')
     }
-  ]
+  ])
 
   const helpSubmenu: MenuItemConstructorOptions[] = [
     {

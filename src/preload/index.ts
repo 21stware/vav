@@ -124,8 +124,8 @@ const api: VavApi = {
       ipcRenderer.invoke(IPC.convSetWorkdir, id, path, machineId),
     pickWorkingDirectory: (id: string) => ipcRenderer.invoke(IPC.convPickWorkdir, id),
     useTempWorkingDirectory: (id: string) => ipcRenderer.invoke(IPC.convUseTempWorkdir, id),
-    locateWorkspace: (id: string, destinationDir: string, name: string) =>
-      ipcRenderer.invoke(IPC.convLocateWorkspace, id, destinationDir, name),
+    locateWorkspace: (id: string, destinationDir: string) =>
+      ipcRenderer.invoke(IPC.convLocateWorkspace, id, destinationDir),
     remove: (ids: string[]) => ipcRenderer.invoke(IPC.convRemove, ids),
     deleteMessage: (id: string, messageId: string) =>
       ipcRenderer.invoke(IPC.convDeleteMessage, id, messageId),
@@ -156,6 +156,8 @@ const api: VavApi = {
       ipcRenderer.invoke(IPC.convSetAcpMode, id, modeId),
     setAcpConfigOption: (id: string, configId: string, value: string | boolean) =>
       ipcRenderer.invoke(IPC.convSetAcpConfig, id, configId, value),
+    setAcpGoal: (id: string, action, objective) =>
+      ipcRenderer.invoke(IPC.convSetAcpGoal, id, action, objective),
     continueInNewSession: (id: string, messageId: string) =>
       ipcRenderer.invoke(IPC.convContinueNew, id, messageId),
     duplicate: (id: string) => ipcRenderer.invoke(IPC.convDuplicate, id),
@@ -219,14 +221,18 @@ const api: VavApi = {
       ipcRenderer.invoke(IPC.filesRead, path, conversationId),
     readTextWindow: (
       path: string,
-      opts?: { startByte?: number; maxBytes?: number; force?: boolean }
+      opts?: { startByte?: number; maxBytes?: number; force?: boolean; conversationId?: string }
     ) => ipcRenderer.invoke(IPC.filesReadTextWindow, path, opts),
-    readBinary: (path: string) => ipcRenderer.invoke(IPC.filesReadBinary, path),
-    readBinaryWindow: (path: string, opts?: { startByte?: number; maxBytes?: number }) =>
-      ipcRenderer.invoke(IPC.filesReadBinaryWindow, path, opts),
-    writeBinary: (path: string, base64: string) =>
-      ipcRenderer.invoke(IPC.filesWriteBinary, path, base64),
-    write: (path: string, content: string) => ipcRenderer.invoke(IPC.filesWrite, path, content),
+    readBinary: (path: string, conversationId?: string) =>
+      ipcRenderer.invoke(IPC.filesReadBinary, path, conversationId),
+    readBinaryWindow: (
+      path: string,
+      opts?: { startByte?: number; maxBytes?: number; conversationId?: string }
+    ) => ipcRenderer.invoke(IPC.filesReadBinaryWindow, path, opts),
+    writeBinary: (path: string, base64: string, conversationId?: string) =>
+      ipcRenderer.invoke(IPC.filesWriteBinary, path, base64, conversationId),
+    write: (path: string, content: string, conversationId?: string) =>
+      ipcRenderer.invoke(IPC.filesWrite, path, content, conversationId),
     workingCopyEnsure: (path: string, opts?: { fileId?: string | null }) =>
       ipcRenderer.invoke(IPC.filesWorkingCopyEnsure, path, opts),
     workingCopyPromote: (path: string) => ipcRenderer.invoke(IPC.filesWorkingCopyPromote, path),
@@ -247,12 +253,15 @@ const api: VavApi = {
     captureScreenshot: () => ipcRenderer.invoke(IPC.filesCaptureScreenshot),
     saveAs: (defaultName: string, content: string) =>
       ipcRenderer.invoke(IPC.filesSaveAs, defaultName, content),
-    rename: (path: string, newName: string) => ipcRenderer.invoke(IPC.filesRename, path, newName),
-    trash: (paths: string[]) => ipcRenderer.invoke(IPC.filesTrash, paths),
-    inspect: (path: string) => ipcRenderer.invoke(IPC.filesInspect, path),
+    rename: (path: string, newName: string, conversationId?: string) =>
+      ipcRenderer.invoke(IPC.filesRename, path, newName, conversationId),
+    trash: (paths: string[], conversationId?: string) =>
+      ipcRenderer.invoke(IPC.filesTrash, paths, conversationId),
+    inspect: (path: string, conversationId?: string) =>
+      ipcRenderer.invoke(IPC.filesInspect, path, conversationId),
     inspectStructured: (
       path: string,
-      opts?: { maxBlocks?: number; maxRows?: number }
+      opts?: { maxBlocks?: number; maxRows?: number; conversationId?: string }
     ) => ipcRenderer.invoke(IPC.filesInspectStructured, path, opts),
     dbQuery: (path: string, table: string, offset?: number, limit?: number) =>
       ipcRenderer.invoke(IPC.filesDbQuery, path, table, offset ?? 0, limit ?? 500),
@@ -261,20 +270,23 @@ const api: VavApi = {
   },
 
   git: {
-    status: (cwd: string) => ipcRenderer.invoke(IPC.gitStatus, cwd),
-    diff: (cwd: string, path: string, opts?: { staged?: boolean }) =>
+    status: (cwd: string, conversationId?: string) =>
+      ipcRenderer.invoke(IPC.gitStatus, cwd, conversationId),
+    diff: (cwd: string, path: string, opts?: { staged?: boolean; conversationId?: string }) =>
       ipcRenderer.invoke(IPC.gitDiff, cwd, path, opts),
-    showBase64: (cwd: string, path: string, ref?: string) =>
-      ipcRenderer.invoke(IPC.gitShowBase64, cwd, path, ref),
-    init: (cwd: string) => ipcRenderer.invoke(IPC.gitInit, cwd),
-    createBranch: (cwd: string, name: string, opts?: { checkout?: boolean }) =>
+    showBase64: (cwd: string, path: string, ref?: string, conversationId?: string) =>
+      ipcRenderer.invoke(IPC.gitShowBase64, cwd, path, ref, conversationId),
+    init: (cwd: string, conversationId?: string) =>
+      ipcRenderer.invoke(IPC.gitInit, cwd, conversationId),
+    createBranch: (cwd: string, name: string, opts?: { checkout?: boolean; conversationId?: string }) =>
       ipcRenderer.invoke(IPC.gitCreateBranch, cwd, name, opts),
-    checkoutBranch: (cwd: string, name: string) =>
-      ipcRenderer.invoke(IPC.gitCheckoutBranch, cwd, name),
+    checkoutBranch: (cwd: string, name: string, conversationId?: string) =>
+      ipcRenderer.invoke(IPC.gitCheckoutBranch, cwd, name, conversationId),
     createWorktree: (
       cwd: string,
-      options: { path: string; newBranch?: string; branch?: string }
-    ) => ipcRenderer.invoke(IPC.gitCreateWorktree, cwd, options)
+      options: { path: string; newBranch?: string; branch?: string },
+      conversationId?: string
+    ) => ipcRenderer.invoke(IPC.gitCreateWorktree, cwd, options, conversationId)
   },
 
   cloudflare: {
@@ -496,6 +508,10 @@ const api: VavApi = {
       return Promise.resolve()
     },
     forget: (machineId: string) => ipcRenderer.invoke(IPC.hostsForget, machineId),
+    incoming: () => ipcRenderer.invoke(IPC.hostsIncoming),
+    disconnectIncoming: (grantId: string) => ipcRenderer.invoke(IPC.hostsDisconnectIncoming, grantId),
+    unpairIncoming: (grantId: string) => ipcRenderer.invoke(IPC.hostsUnpairIncoming, grantId),
+    rotateOffer: () => ipcRenderer.invoke(IPC.hostsRotateOffer),
     discovered: () => ipcRenderer.invoke(IPC.hostsDiscovered),
     listDir: (machineId: string, path: string) =>
       ipcRenderer.invoke(IPC.hostsListDir, machineId, path),
@@ -505,6 +521,7 @@ const api: VavApi = {
     probeProviders: (machineId: string) => ipcRenderer.invoke(IPC.hostsProbeProviders, machineId),
     onChanged: (handler) => subscribe(IPC.hostsChanged, handler),
     onDiscovered: (handler) => subscribe(IPC.hostsDiscoveredChanged, handler),
+    onIncomingChanged: (handler) => subscribe(IPC.hostsIncomingChanged, handler),
     onPickFolder: (handler) => subscribe(IPC.hostsPickFolder, handler)
   },
 

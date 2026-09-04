@@ -155,3 +155,8 @@ export function transportForCliHost(kind: CliHostKind): CliHostTransport {
       return 'antigravity-print'
   }
 }
+
+/** ACP session protocol (Cursor / Grok / Devin / Kiro / Cline). */
+export function isAcpCliHost(kind: CliHostKind | null | undefined): boolean {
+  return kind != null && transportForCliHost(kind) === 'acp'
+}

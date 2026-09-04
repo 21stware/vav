@@ -83,6 +83,8 @@ jobs:
         if: runner.os == 'Windows'
         run: node scripts/build-tailcat-sidecar.mjs --target win32-x64
 
+      - run: npm run pack:vavd
+
       - run: npm run build
 
       # macOS: Developer ID sign + notarytool. Secrets are repo Actions secrets.
@@ -156,15 +158,46 @@ jobs:
           path: ${{ matrix.artifacts }}
           if-no-files-found: error
 
+  sidecars:
+    name: vavd + Chrome extension
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Pack vavd tarball and Chrome extension zip
+        run: node scripts/pack-release-sidecars.mjs --out release-sidecars
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sidecars
+          path: release-sidecars/*
+          if-no-files-found: error
+
   publish:
-    needs: build
+    needs: [build, sidecars]
     runs-on: ubuntu-latest
 
     steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
           merge-multiple: true
+
+      - name: Verify required release assets
+        run: node scripts/release-assets.mjs verify artifacts
 
       - name: Write release notes
         run: |
@@ -183,7 +216,10 @@ jobs:
           In-app updates use the NSIS installer + `latest.yml` feed.
 
           ## Headless daemon
-          `npx @21stware/vavd` — pair from VAV → Settings → Allow other devices.
+          `npx @21stware/vavd` or the `21stware-vavd-*.tgz` asset on this release. Pair from VAV → Connect, VAV Remote, the web UI, or the Chrome extension.
+
+          ## Chrome extension
+          Download `vav-chrome-extension-*.zip`, unzip, and load the folder as an unpacked extension (`chrome://extensions` → Developer mode).
           EOF
 
       - name: Publish release

@@ -5,6 +5,8 @@ import {
   acpPlanEntriesToSteps,
   cursorAskOutcomeFromAnswer,
   cursorAskToToolInput,
+  grokAskOutcomeFromAnswer,
+  grokPlanOutcomeFromAnswer,
   isAskToolName,
   isChecklistToolName,
   isEnterPlanModeName,
@@ -25,6 +27,7 @@ describe('isPlanDocToolName', () => {
     assert.equal(isPlanDocToolName('create_plan'), true)
     assert.equal(isPlanDocToolName('cursor/create_plan'), true)
     assert.equal(isPlanDocToolName('ExitPlanMode'), true)
+    assert.equal(isPlanDocToolName('_x.ai/exit_plan_mode'), true)
     assert.equal(isPlanDocToolName('proposed_plan'), true)
     assert.equal(isPlanDocToolName('plan'), false)
     assert.equal(isPlanDocToolName('todo_write'), false)
@@ -106,6 +109,42 @@ describe('normalizePlanDocInput', () => {
     const doc = normalizePlanDocInput({ _toolName: 'createPlan' })
     assert.equal(planDocHasBody(doc), false)
     assert.equal(doc.name, 'Plan')
+  })
+
+  it('reads Grok exit_plan_mode planContent', () => {
+    const doc = normalizePlanDocInput({
+      planContent: '# Ship\n\nWrite hello.txt',
+      name: 'Ship'
+    })
+    assert.match(doc.plan, /hello.txt/)
+    assert.equal(planDocHasBody(doc), true)
+  })
+})
+
+describe('grok ask / plan outcomes', () => {
+  it('keys answers by question text', () => {
+    const ask = normalizeCursorAskInput({
+      questions: [
+        {
+          question: 'Which colour should the banner be?',
+          options: [{ label: 'Red' }, { label: 'Blue' }]
+        }
+      ]
+    })
+    const outcome = grokAskOutcomeFromAnswer(
+      ask,
+      JSON.stringify({ answers: [{ questionIndex: 0, value: 'Red' }] })
+    )
+    assert.deepEqual(outcome, {
+      outcome: 'accepted',
+      answers: { 'Which colour should the banner be?': 'Red' }
+    })
+    assert.deepEqual(grokAskOutcomeFromAnswer(ask, 'cancel'), { outcome: 'skip_interview' })
+    assert.deepEqual(grokPlanOutcomeFromAnswer('', false), { outcome: 'accepted' })
+    assert.deepEqual(grokPlanOutcomeFromAnswer('too risky', true), {
+      outcome: 'rejected',
+      reason: 'too risky'
+    })
   })
 })
 

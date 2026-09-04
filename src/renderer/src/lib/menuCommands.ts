@@ -63,6 +63,13 @@ export function handleMenuCommand(command: MenuCommand): void {
       store.setPanelSegment('terminal')
       void useWorkspaceStore.getState().newBash(store.activeId, 80, 24)
       break
+    case 'split-bash': {
+      const id = store.activeId
+      if (!id) break
+      store.setPanelSegment('terminal')
+      void useWorkspaceStore.getState().splitBash(id, 80, 24, 'row')
+      break
+    }
     case 'focus-bash':
       store.focusBashTerminal()
       break
@@ -98,6 +105,15 @@ export function handleMenuCommand(command: MenuCommand): void {
       break
     case 'switch-approval':
       store.openApprovalMenu()
+      break
+    case 'set-approval-auto':
+      if (store.activeId) void store.setApprovalMode(store.activeId, 'auto')
+      break
+    case 'set-approval-bypass':
+      if (store.activeId) void store.setApprovalMode(store.activeId, 'bypass')
+      break
+    case 'set-approval-edit':
+      if (store.activeId) void store.setApprovalMode(store.activeId, 'edit')
       break
     case 'screenshot':
       void attachScreenshot()

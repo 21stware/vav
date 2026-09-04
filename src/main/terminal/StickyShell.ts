@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto'
 import type { ShellKind } from '@shared/types'
 import { localHostProcess, type HostChild, type HostProcess } from '../host/HostProcess.ts'
 import { agentShellEnv } from './agentShellEnv'
+import { appendCapped } from './bufferCap.ts'
 
 const IS_WINDOWS = process.platform === 'win32'
 
@@ -131,12 +132,13 @@ export class StickyShell {
 
   readonly sessionId = BASH_SESSION_ID
 
-  constructor(
-    private shell: ShellKind,
-    cwd: string,
-    private hostProcess: HostProcess = localHostProcess
-  ) {
+  private shell: ShellKind
+  private hostProcess: HostProcess
+
+  constructor(shell: ShellKind, cwd: string, hostProcess: HostProcess = localHostProcess) {
+    this.shell = shell
     this.cwd = cwd
+    this.hostProcess = hostProcess
   }
 
   private recordSession(chunk: string): void {
@@ -477,7 +479,10 @@ export class StickyShell {
       }
 
       const onData = (chunk: string | Buffer): void => {
-        this.buffer += typeof chunk === 'string' ? chunk : chunk.toString('utf8')
+        const text = typeof chunk === 'string' ? chunk : chunk.toString('utf8')
+        const capped = appendCapped(this.buffer, text)
+        this.buffer = capped.buffer
+        if (capped.dropped) emitted = Math.max(0, emitted - capped.dropped)
         const match = endPattern.exec(this.buffer)
         if (!match) {
           emitSafe()
@@ -610,7 +615,10 @@ export class StickyShell {
       // Only shell-level noise reaches here; command stderr is folded into stdout.
       const text = typeof chunk === 'string' ? chunk : chunk.toString('utf8')
       if (this.appendChunk) this.appendChunk(text)
-      else this.buffer += text
+      else {
+        const capped = appendCapped(this.buffer, text)
+        this.buffer = capped.buffer
+      }
     })
     child.stdout.setEncoding('utf8')
     this.child = child

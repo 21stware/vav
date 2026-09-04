@@ -1,18 +1,15 @@
 /**
- * Remote control over tailcat (settings-notifications.rpml 远程控制).
+ * Remote control transport (sidecar + pairing files).
  *
- * Owns the tailcatbridge sidecar (Tailscale data plane listener with a
- * persistent identity) and a localhost TCP server speaking the JSON-lines
- * protocol from `@shared/remoteControl`. The sidecar is a dumb encrypted
- * pipe; every protocol decision lives here where it is observable and
- * testable.
+ * Protocol decisions live in `RemoteControlHub` — Electron-free, shared by
+ * the tailcat localhost pipe and the LAN daemon listen port. This class
+ * only owns identity, the sidecar, and persistence.
  *
- * Scope (确认过的产品边界): foreground-realtime only — notification fan-out
- * and remote message sending while the phone app is open. No push relay.
+ * Scope: foreground-realtime session plane. Workspace RPC is the daemon.
  */
 import { app } from 'electron'
 import { spawn, type ChildProcessByStdio } from 'node:child_process'
-import { createHash, randomBytes, timingSafeEqual } from 'node:crypto'
+import { randomBytes } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { createServer, type Server, type Socket } from 'node:net'
 import { hostname } from 'node:os'
@@ -20,36 +17,30 @@ import { dirname, join } from 'node:path'
 import { resolveSidecarBinary } from './sidecarBinary.ts'
 import type { Readable, Writable } from 'node:stream'
 import {
-  REMOTE_MAX_LINE_BYTES,
-  REMOTE_PROTO_VERSION,
   drainJsonLines,
-  encodeLine,
   encodePairing,
-  parseClientMessage,
   type RemoteConfigure,
   type RemoteControlState,
   type RemoteControlStatus,
   type RemoteControlsEvent,
   type RemoteDirsEvent,
+  type RemoteHello,
   type RemoteHostEvent,
-  type RemoteNotification,
   type RemoteNotifyKind,
   type RemoteSendImage,
-  type RemoteServerMessage,
   type RemoteSession,
   type RemoteThreadBlock,
   type RemoteThreadEvent,
   type RemoteTurnEvent
 } from '@shared/remoteControl'
 import {
-  applyLiveDelta,
-  compactLiveBlocks,
-  draftFromLiveBlocks
-} from '@shared/remoteLiveLog'
+  RemoteControlHub,
+  type RemoteConfigureResult,
+  type RemoteSendResult,
+  type RemoteWorkspaceResult
+} from './RemoteControlHub.ts'
 
-export type RemoteSendResult = 'ok' | 'not-found' | 'archived'
-export type RemoteConfigureResult = 'ok' | 'not-found' | 'archived' | 'locked'
-export type RemoteWorkspaceResult = 'ok' | 'not-found' | 'archived' | 'forbidden'
+export type { RemoteConfigureResult, RemoteSendResult, RemoteWorkspaceResult }
 
 type Deps = {
   enabled: () => boolean
@@ -70,55 +61,65 @@ type Deps = {
   reply: (conversationId: string, toolCallId: string, answer: string) => boolean
   rename: (conversationId: string, title: string) => RemoteSendResult
   archive: (conversationId: string) => RemoteSendResult
+  pin: (conversationId: string, pinned: boolean) => RemoteSendResult
+  favorite: (conversationId: string, favorite: boolean) => RemoteSendResult
   browse: (conversationId: string, path?: string) => RemoteDirsEvent | 'not-found' | 'forbidden'
   setWorkspace: (conversationId: string, path: string | null) => RemoteWorkspaceResult
   onStatusChange: (status: RemoteControlStatus) => void
   /** Tailcat hello with `role: 'daemon'` — hand the socket to the host RPC. */
-  onDaemonSocket?: (socket: Socket, leftover: string) => void
-}
-
-type RemoteClient = {
-  socket: Socket
-  buffer: string
-  authed: boolean
-  device: string
-  since: number
+  onDaemonSocket?: (socket: Socket, leftover: string, hello?: RemoteHello) => void
+  /** Issued machine grants — tunnel hellos after the first pair. */
+  acceptAuth?: (auth: string) => boolean
 }
 
 const RESTART_DELAY_MS = 5_000
-const SESSIONS_DEBOUNCE_MS = 300
-const RECENT_ALERT_CAP = 50
-const DRAFT_FLUSH_MS = 180
-
-/** Compare secrets without length leaks: hash both, then constant-time equal. */
-function secretsMatch(a: string, b: string): boolean {
-  const ha = createHash('sha256').update(a, 'utf8').digest()
-  const hb = createHash('sha256').update(b, 'utf8').digest()
-  return timingSafeEqual(ha, hb)
-}
 
 export class RemoteControlService {
   private server: Server | null = null
   private sidecar: ChildProcessByStdio<Writable, Readable, Readable> | null = null
-  private clients = new Set<RemoteClient>()
   private token: string | null = null
   private state: RemoteControlState = 'disabled'
   private lastError: string | null = null
   private stderrTail: string[] = []
   private restartTimer: NodeJS.Timeout | null = null
-  private sessionsTimer: NodeJS.Timeout | null = null
   /** Generation counter so a stale sidecar exit never clobbers a restart. */
   private generation = 0
-  /** Live alerts kept so a phone that connects later still sees them. */
-  private recentAlerts: RemoteNotification[] = []
-  private drafts = new Map<string, { text: string; thinking: string }>()
-  private draftTimers = new Map<string, NodeJS.Timeout>()
-  private liveSlots = new Map<string, Map<number, RemoteThreadBlock>>()
-  private liveAwaiting = new Map<string, Extract<RemoteThreadBlock, { kind: 'awaiting' }>>()
   private knownDevices: { device: string; lastSeen: number }[] = []
   private devicesLoaded = false
+  /** Sidecar is up (or starting) — used when forwarding to vavd with no local hub listen. */
+  private started = false
+  /** Loopback vavd: phone QR secret + sidecar `--forward` target. */
+  private tunnelForward: { port: number; secret: string } | null = null
+  readonly hub: RemoteControlHub
 
-  constructor(private deps: Deps) {}
+  constructor(private deps: Deps) {
+    this.hub = new RemoteControlHub({
+      appVersion: deps.appVersion,
+      listSessions: () => deps.listSessions(),
+      listThread: (id) => deps.listThread(id),
+      listControls: (id) => deps.listControls(id),
+      listHost: () => deps.listHost(),
+      configure: (message) => deps.configure(message),
+      sendMessage: (id, text, attachments) => deps.sendMessage(id, text, attachments),
+      createSession: () => deps.createSession(),
+      cancel: (id) => deps.cancel(id),
+      reply: (id, toolCallId, answer) => deps.reply(id, toolCallId, answer),
+      rename: (id, title) => deps.rename(id, title),
+      archive: (id) => deps.archive(id),
+      pin: (id, pinned) => deps.pin(id, pinned),
+      favorite: (id, favorite) => deps.favorite(id, favorite),
+      browse: (id, path) => deps.browse(id, path),
+      setWorkspace: (id, path) => deps.setWorkspace(id, path),
+      secret: () => this.loadOrCreateSecret(),
+      acceptAuth: (auth) => deps.acceptAuth?.(auth) === true,
+      materializeImages: writeRemoteInboxImages,
+      onDaemonHello: (socket, leftover, hello) => deps.onDaemonSocket?.(socket, leftover, hello),
+      onClientsChanged: () => {
+        for (const client of this.hub.authedClients()) this.rememberDevice(client.device)
+        this.publishStatus()
+      }
+    })
+  }
 
   private get stateDir(): string {
     return join(app.getPath('userData'), 'remote-control')
@@ -136,10 +137,30 @@ export class RemoteControlService {
   /** Start or stop to match settings. Safe to call repeatedly. */
   applySettings(): void {
     if (this.deps.enabled()) {
-      if (!this.server && !this.restartTimer) this.start()
+      if (!this.started && !this.server && !this.restartTimer) this.start()
     } else {
       this.stop('disabled')
     }
+  }
+
+  /**
+   * Point the phone tailcat sidecar at a loopback vavd. QR secret becomes
+   * the daemon's; Electron's hub no longer owns those sockets.
+   */
+  setTunnelForward(target: { port: number; secret: string } | null): void {
+    const same =
+      this.tunnelForward?.port === target?.port && this.tunnelForward?.secret === target?.secret
+    this.tunnelForward = target
+    if (same) {
+      this.publishStatus()
+      return
+    }
+    if (this.deps.enabled() && (this.started || this.server || this.sidecar)) {
+      this.stop('disabled')
+      this.applySettings()
+      return
+    }
+    this.publishStatus()
   }
 
   status(): RemoteControlStatus {
@@ -148,19 +169,16 @@ export class RemoteControlService {
         ? encodePairing({
             v: 1,
             token: this.token,
-            secret: this.loadOrCreateSecret(),
+            secret: this.tunnelForward?.secret ?? this.loadOrCreateSecret(),
             host: hostname()
           })
         : null
-    const online = new Set(
-      [...this.clients].filter((c) => c.authed).map((c) => c.device)
-    )
+    const clients = this.hub.authedClients()
+    const online = new Set(clients.map((c) => c.device))
     return {
       state: this.state,
       pairing,
-      clients: [...this.clients]
-        .filter((c) => c.authed)
-        .map((c) => ({ device: c.device, since: c.since })),
+      clients,
       devices: this.loadKnownDevices().map((row) => ({
         device: row.device,
         lastSeen: row.lastSeen,
@@ -200,39 +218,26 @@ export class RemoteControlService {
     this.applySettings()
   }
 
+  /** LAN multiplex: daemon listen port already authenticated a phone hello. */
+  adoptControlSocket(socket: Socket, leftover: string, hello: RemoteHello): void {
+    this.hub.adoptAuthed(socket, leftover, hello)
+  }
+
   /** Fan a NotificationCenter alert out to connected phones. */
   notifyRemote(kind: RemoteNotifyKind, conversationId: string, title: string, body: string): void {
-    const note: RemoteNotification = {
-      type: 'notification',
-      kind,
-      conversationId,
-      title,
-      body,
-      at: Date.now()
-    }
-    this.rememberAlert(note)
-    this.broadcast(note)
-    const thread = this.deps.listThread(conversationId)
-    if (thread) this.broadcast(thread)
-    this.schedulePushSessions()
+    this.hub.notifyRemote(kind, conversationId, title, body)
   }
 
   pushControls(controls: RemoteControlsEvent): void {
-    this.broadcast(controls)
+    this.hub.pushControls(controls)
   }
 
   pushTurn(event: RemoteTurnEvent): void {
-    if (event.phase !== 'running') {
-      this.clearLive(event.conversationId)
-    }
-    this.broadcast(event)
+    this.hub.pushTurn(event)
   }
 
   beginLive(conversationId: string): void {
-    this.liveSlots.set(conversationId, new Map())
-    this.liveAwaiting.delete(conversationId)
-    this.clearDraft(conversationId)
-    this.broadcast({ type: 'turn', conversationId, phase: 'running', blocks: [] })
+    this.hub.beginLive(conversationId)
   }
 
   appendLive(
@@ -241,32 +246,11 @@ export class RemoteControlService {
     kind: 'text' | 'reasoning',
     chunk: string
   ): void {
-    if (!chunk) return
-    let slots = this.liveSlots.get(conversationId)
-    if (!slots) {
-      slots = new Map()
-      this.liveSlots.set(conversationId, slots)
-    }
-    applyLiveDelta(slots, index, kind, chunk)
-    const cur = this.drafts.get(conversationId) ?? { text: '', thinking: '' }
-    if (kind === 'reasoning') cur.thinking += chunk
-    else cur.text += chunk
-    this.drafts.set(conversationId, cur)
-    this.scheduleLiveFlush(conversationId)
+    this.hub.appendLive(conversationId, index, kind, chunk)
   }
 
   setLiveBlock(conversationId: string, index: number, block: RemoteThreadBlock): void {
-    let slots = this.liveSlots.get(conversationId)
-    if (!slots) {
-      slots = new Map()
-      this.liveSlots.set(conversationId, slots)
-    }
-    slots.set(index, block)
-    if (block.kind === 'awaiting') this.liveAwaiting.set(conversationId, block)
-    else if (block.kind === 'tool' && this.liveAwaiting.get(conversationId)?.id === block.id) {
-      this.liveAwaiting.delete(conversationId)
-    }
-    this.scheduleLiveFlush(conversationId)
+    this.hub.setLiveBlock(conversationId, index, block)
   }
 
   appendDraft(conversationId: string, chunk: string, channel: 'text' | 'reasoning' = 'text'): void {
@@ -274,69 +258,17 @@ export class RemoteControlService {
   }
 
   finishTurn(conversationId: string, phase: RemoteTurnEvent['phase'], error?: string): void {
-    this.clearLive(conversationId)
-    this.broadcast({
-      type: 'turn',
-      conversationId,
-      phase,
-      ...(error ? { error } : {})
-    })
-    const thread = this.deps.listThread(conversationId)
-    if (thread) this.broadcast(thread)
-    this.schedulePushSessions()
-  }
-
-  private scheduleLiveFlush(conversationId: string): void {
-    if (this.draftTimers.has(conversationId)) return
-    this.draftTimers.set(
-      conversationId,
-      setTimeout(() => {
-        this.draftTimers.delete(conversationId)
-        const slots = this.liveSlots.get(conversationId)
-        if (!slots) return
-        const blocks = compactLiveBlocks(slots)
-        const derived = draftFromLiveBlocks(blocks)
-        const awaiting = this.liveAwaiting.get(conversationId)
-        this.broadcast({
-          type: 'turn',
-          conversationId,
-          phase: awaiting ? 'awaiting' : 'running',
-          ...(blocks.length ? { blocks } : {}),
-          ...(derived.text ? { draft: derived.text } : {}),
-          ...(derived.thinking ? { thinking: derived.thinking } : {}),
-          ...(awaiting ? { awaiting } : {})
-        })
-      }, DRAFT_FLUSH_MS)
-    )
-  }
-
-  private clearDraft(conversationId: string): void {
-    this.drafts.delete(conversationId)
-    const timer = this.draftTimers.get(conversationId)
-    if (timer) {
-      clearTimeout(timer)
-      this.draftTimers.delete(conversationId)
-    }
-  }
-
-  private clearLive(conversationId: string): void {
-    this.clearDraft(conversationId)
-    this.liveSlots.delete(conversationId)
-    this.liveAwaiting.delete(conversationId)
+    this.hub.finishTurn(conversationId, phase, error)
   }
 
   /** Debounced session-list push; call whenever tray/session state changes. */
   schedulePushSessions(): void {
-    if (this.clients.size === 0) return
-    if (this.sessionsTimer) return
-    this.sessionsTimer = setTimeout(() => {
-      this.sessionsTimer = null
-      this.broadcast({ type: 'sessions', sessions: this.deps.listSessions() })
-    }, SESSIONS_DEBOUNCE_MS)
+    this.hub.schedulePushSessions()
   }
 
   dispose(): void {
     this.stop('disabled')
+    this.hub.dispose()
   }
 
   // --- lifecycle ---
@@ -347,10 +279,16 @@ export class RemoteControlService {
       this.setState('no-binary', 'tailcatbridge binary not found')
       return
     }
+    this.started = true
     this.setState('starting', null)
     const generation = ++this.generation
 
-    const server = createServer((socket) => this.handleConnection(socket))
+    if (this.tunnelForward) {
+      this.spawnSidecar(binary, this.tunnelForward.port, generation)
+      return
+    }
+
+    const server = createServer((socket) => this.hub.attach(socket))
     server.on('error', (err) => {
       if (generation !== this.generation) return
       this.failAndScheduleRestart(`local server: ${err.message}`)
@@ -436,18 +374,15 @@ export class RemoteControlService {
       clearTimeout(this.restartTimer)
       this.restartTimer = null
     }
-    if (!this.server && !this.sidecar && this.state === state) return
+    if (!this.started && !this.server && !this.sidecar && this.state === state) return
     this.teardown()
     this.setState(state, null)
   }
 
   private teardown(): void {
     this.generation++
-    this.dropClients()
-    if (this.sessionsTimer) {
-      clearTimeout(this.sessionsTimer)
-      this.sessionsTimer = null
-    }
+    this.started = false
+    this.hub.dropClients()
     // Closing stdin is the sidecar's shutdown signal; kill is the backstop.
     if (this.sidecar) {
       const child = this.sidecar
@@ -463,14 +398,10 @@ export class RemoteControlService {
     this.server?.close()
     this.server = null
     this.token = null
-    for (const timer of this.draftTimers.values()) clearTimeout(timer)
-    this.draftTimers.clear()
-    this.drafts.clear()
   }
 
   private dropClients(): void {
-    for (const client of this.clients) client.socket.destroy()
-    this.clients.clear()
+    this.hub.dropClients()
   }
 
   private setState(state: RemoteControlState, error: string | null): void {
@@ -481,309 +412,6 @@ export class RemoteControlService {
 
   private publishStatus(): void {
     this.deps.onStatusChange(this.status())
-  }
-
-  // --- protocol ---
-
-  private handleConnection(socket: Socket): void {
-    const client: RemoteClient = {
-      socket,
-      buffer: '',
-      authed: false,
-      device: 'unknown',
-      since: Date.now()
-    }
-    this.clients.add(client)
-    socket.setEncoding('utf8')
-    socket.on('data', (chunk: string) => {
-      client.buffer += chunk
-      if (client.buffer.length > REMOTE_MAX_LINE_BYTES) {
-        socket.destroy()
-        return
-      }
-      const { values, rest } = drainJsonLines(client.buffer)
-      client.buffer = rest
-      for (const value of values) {
-        if (!this.handleFrame(client, value)) {
-          socket.destroy()
-          return
-        }
-      }
-    })
-    const forget = (): void => {
-      const wasAuthed = client.authed
-      this.clients.delete(client)
-      if (wasAuthed) this.publishStatus()
-    }
-    socket.on('close', forget)
-    socket.on('error', forget)
-  }
-
-  /** @returns false to drop the connection. */
-  private handleFrame(client: RemoteClient, value: unknown): boolean {
-    const message = parseClientMessage(value)
-    if (!message) {
-      // After auth, ignore unknown frames — never drop the tunnel, and
-      // don't send `unrecognized frame` (the phone treated that as 发送失败).
-      if (client.authed) return true
-      this.send(client, { type: 'error', code: 'bad-request', message: 'unrecognized frame' })
-      return false
-    }
-
-    if (!client.authed) {
-      if (message.type !== 'hello' || !secretsMatch(message.auth, this.loadOrCreateSecret())) {
-        this.send(client, { type: 'error', code: 'auth', message: 'pairing rejected' })
-        return false
-      }
-      if (message.role === 'daemon') {
-        if (!this.deps.onDaemonSocket) {
-          this.send(client, { type: 'error', code: 'bad-request', message: 'daemon not available' })
-          return false
-        }
-        this.clients.delete(client)
-        client.socket.removeAllListeners('data')
-        this.deps.onDaemonSocket(client.socket, client.buffer)
-        return true
-      }
-      client.authed = true
-      client.device = (message.device ?? '').trim().slice(0, 64) || 'unknown'
-      this.rememberDevice(client.device)
-      this.send(client, {
-        type: 'welcome',
-        proto: REMOTE_PROTO_VERSION,
-        app: 'VAV',
-        version: this.deps.appVersion
-      })
-      this.send(client, this.deps.listHost())
-      this.send(client, { type: 'sessions', sessions: this.deps.listSessions() })
-      this.replayAlerts(client)
-      this.publishStatus()
-      return true
-    }
-
-    switch (message.type) {
-      case 'hello':
-        // Duplicate hello after auth — harmless, ignore.
-        return true
-      case 'ping':
-        this.send(client, { type: 'pong' })
-        return true
-      case 'sessions':
-        this.send(client, { type: 'sessions', sessions: this.deps.listSessions() })
-        return true
-      case 'create': {
-        try {
-          const session = this.deps.createSession()
-          this.send(client, { type: 'created', session })
-          this.send(client, { type: 'sessions', sessions: this.deps.listSessions() })
-          this.schedulePushSessions()
-        } catch (err) {
-          this.send(client, {
-            type: 'error',
-            code: 'bad-request',
-            message: err instanceof Error ? err.message : 'create failed'
-          })
-        }
-        return true
-      }
-      case 'thread': {
-        const thread = this.deps.listThread(message.conversationId)
-        // Always reply so an empty or missing session unblocks the phone
-        // instead of hanging on "loading". Missing → empty log, not an error.
-        this.send(
-          client,
-          thread ?? { type: 'thread', conversationId: message.conversationId, messages: [] }
-        )
-        const controls = this.deps.listControls(message.conversationId)
-        if (controls) this.send(client, controls)
-        return true
-      }
-      case 'controls': {
-        const controls = this.deps.listControls(message.conversationId)
-        if (controls) this.send(client, controls)
-        return true
-      }
-      case 'configure': {
-        const result = this.deps.configure(message)
-        if (result === 'ok') {
-          const controls = this.deps.listControls(message.conversationId)
-          if (controls) this.send(client, controls)
-        } else {
-          this.send(client, {
-            type: 'error',
-            code: result,
-            message:
-              result === 'archived'
-                ? 'conversation is archived'
-                : result === 'locked'
-                  ? 'agent is locked after the first turn'
-                  : 'no such conversation',
-            conversationId: message.conversationId
-          })
-        }
-        return true
-      }
-      case 'cancel': {
-        const result = this.deps.cancel(message.conversationId)
-        if (result !== 'ok') {
-          this.send(client, {
-            type: 'error',
-            code: result,
-            message: result === 'archived' ? 'conversation is archived' : 'no such conversation',
-            conversationId: message.conversationId
-          })
-        }
-        return true
-      }
-      case 'reply': {
-        const ok = this.deps.reply(message.conversationId, message.toolCallId, message.answer)
-        if (!ok) {
-          this.send(client, {
-            type: 'error',
-            code: 'not-found',
-            message: 'nothing is waiting for a reply',
-            conversationId: message.conversationId
-          })
-        }
-        return true
-      }
-      case 'rename': {
-        const result = this.deps.rename(message.conversationId, message.title)
-        if (result === 'ok') {
-          this.send(client, { type: 'sessions', sessions: this.deps.listSessions() })
-          this.schedulePushSessions()
-        } else {
-          this.send(client, {
-            type: 'error',
-            code: result,
-            message: result === 'archived' ? 'conversation is archived' : 'no such conversation',
-            conversationId: message.conversationId
-          })
-        }
-        return true
-      }
-      case 'archive': {
-        const result = this.deps.archive(message.conversationId)
-        if (result === 'ok') {
-          this.send(client, { type: 'sessions', sessions: this.deps.listSessions() })
-          this.schedulePushSessions()
-        } else {
-          this.send(client, {
-            type: 'error',
-            code: result,
-            message: 'no such conversation',
-            conversationId: message.conversationId
-          })
-        }
-        return true
-      }
-      case 'browse': {
-        const result = this.deps.browse(message.conversationId, message.path)
-        if (result === 'not-found' || result === 'forbidden') {
-          this.send(client, {
-            type: 'error',
-            code: result,
-            message: result === 'forbidden' ? 'folder is outside the allowed roots' : 'no such conversation',
-            conversationId: message.conversationId
-          })
-        } else {
-          this.send(client, result)
-        }
-        return true
-      }
-      case 'workspace': {
-        const result = this.deps.setWorkspace(
-          message.conversationId,
-          message.temp ? null : (message.path ?? null)
-        )
-        if (result === 'ok') {
-          const controls = this.deps.listControls(message.conversationId)
-          if (controls) this.send(client, controls)
-          this.send(client, { type: 'sessions', sessions: this.deps.listSessions() })
-          this.schedulePushSessions()
-        } else {
-          this.send(client, {
-            type: 'error',
-            code: result,
-            message:
-              result === 'forbidden'
-                ? 'folder is outside the allowed roots'
-                : result === 'archived'
-                  ? 'conversation is archived'
-                  : 'no such conversation',
-            conversationId: message.conversationId
-          })
-        }
-        return true
-      }
-      case 'send': {
-        const attachments = writeRemoteInboxImages(message.images)
-        const text = message.text
-        if (!attachments.length && !text.trim()) {
-          this.send(client, {
-            type: 'error',
-            code: 'bad-request',
-            message: 'empty send',
-            conversationId: message.conversationId
-          })
-          return true
-        }
-        const result = this.deps.sendMessage(message.conversationId, text, attachments)
-        if (result === 'ok') {
-          this.send(client, { type: 'sent', conversationId: message.conversationId })
-          const thread = this.deps.listThread(message.conversationId)
-          if (thread) this.send(client, thread)
-        } else {
-          this.send(client, {
-            type: 'error',
-            code: result,
-            message: result === 'archived' ? 'conversation is archived' : 'no such conversation',
-            conversationId: message.conversationId
-          })
-        }
-        return true
-      }
-    }
-    return true
-  }
-
-  private send(client: RemoteClient, message: RemoteServerMessage): void {
-    if (client.socket.destroyed) return
-    client.socket.write(encodeLine(message))
-  }
-
-  private broadcast(message: RemoteServerMessage): void {
-    const line = encodeLine(message)
-    for (const client of this.clients) {
-      if (client.authed && !client.socket.destroyed) client.socket.write(line)
-    }
-  }
-
-  private rememberAlert(note: RemoteNotification): void {
-    this.recentAlerts.push(note)
-    if (this.recentAlerts.length > RECENT_ALERT_CAP) {
-      this.recentAlerts.splice(0, this.recentAlerts.length - RECENT_ALERT_CAP)
-    }
-  }
-
-  /** Handshake is list + notify: replay buffered alerts and current Done rows. */
-  private replayAlerts(client: RemoteClient): void {
-    const seen = new Set<string>()
-    for (const note of this.recentAlerts) {
-      seen.add(note.conversationId)
-      this.send(client, note)
-    }
-    for (const session of this.deps.listSessions()) {
-      if (session.status !== 'done' || seen.has(session.id)) continue
-      this.send(client, {
-        type: 'notification',
-        kind: 'turn-complete',
-        conversationId: session.id,
-        title: session.title,
-        body: session.dirLabel,
-        at: session.updatedAt
-      })
-    }
   }
 
   // --- pairing secret ---

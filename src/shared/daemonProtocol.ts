@@ -5,11 +5,18 @@
  * (`drainJsonLines`), different message set — fs / spawn / pty live here,
  * not on remoteControl v1.
  *
- * Handshake: first line is `hello` with `role: 'daemon'` and the pairing
- * secret. The server replies `welcome` (host identity + home/tmp) or `error`.
+ * Handshake: first line is `hello` with `role: 'daemon'` and either the
+ * ephemeral offer secret or a previously issued grant secret. Offer hellos
+ * mint a per-controller grant returned on `welcome`; that grant can be
+ * revoked later without rotating every other pairing. The server replies
+ * `welcome` (host identity + home/tmp + optional grant) or `error`.
  *
  * After welcome, the client issues `req` frames; the server answers `res`
  * and may push `stream` events for process / pty / watch.
+ *
+ * Optional catalog RPCs (desktop hosts only; headless `vavd` returns empty):
+ * `sessions.list`, `sessions.get`, `workspace.recents` — so a paired client
+ * can import that machine's sidebar sessions and folder recents.
  *
  * This module is pure (no Node imports) so tests and a headless `vavd` share it.
  */
@@ -24,12 +31,21 @@ export const DAEMON_MULTICAST = '239.255.47.50'
 /** Cap a single inbound frame (base64 file bodies). */
 export const DAEMON_MAX_LINE_BYTES = 8 * 1024 * 1024
 
+export type DaemonGrantWire = {
+  id: string
+  secret: string
+}
+
 export type DaemonHello = {
   type: 'hello'
   proto: number
   auth: string
   role: 'daemon'
   device?: string
+  /** Client machine id — same id re-pairing replaces the previous grant. */
+  clientId?: string
+  /** Existing grant, when reconnecting. */
+  grantId?: string
 }
 
 export type DaemonWelcome = {
@@ -40,6 +56,8 @@ export type DaemonWelcome = {
   host: WorkspaceHostInfo
   home: string
   tmp: string
+  /** Present when this hello minted or refreshed a grant. */
+  grant?: DaemonGrantWire
 }
 
 export type DaemonReq = {
@@ -66,7 +84,7 @@ export type DaemonStream = {
 
 export type DaemonError = {
   type: 'error'
-  code: 'auth' | 'bad-request' | 'internal'
+  code: 'auth' | 'bad-request' | 'internal' | 'revoked'
   message: string
 }
 
@@ -109,7 +127,9 @@ export function parseDaemonHello(value: unknown): DaemonHello | null {
   if (typeof raw.proto !== 'number') return null
   if (raw.role !== 'daemon') return null
   const device = typeof raw.device === 'string' ? raw.device : undefined
-  return { type: 'hello', proto: raw.proto, auth: raw.auth, role: 'daemon', device }
+  const clientId = typeof raw.clientId === 'string' && raw.clientId.trim() ? raw.clientId.trim() : undefined
+  const grantId = typeof raw.grantId === 'string' && raw.grantId.trim() ? raw.grantId.trim() : undefined
+  return { type: 'hello', proto: raw.proto, auth: raw.auth, role: 'daemon', device, clientId, grantId }
 }
 
 export function parseDaemonPairAsk(value: unknown): DaemonPairAsk | null {
@@ -156,6 +176,16 @@ export function parseDaemonServerFrame(value: unknown): DaemonServerMessage | nu
       if (host.kind !== 'local' && host.kind !== 'remote') return null
       if (typeof host.online !== 'boolean') return null
       if (typeof raw.home !== 'string' || typeof raw.tmp !== 'string') return null
+      const grantRaw =
+        raw.grant && typeof raw.grant === 'object' ? (raw.grant as Record<string, unknown>) : null
+      const grant =
+        grantRaw &&
+        typeof grantRaw.id === 'string' &&
+        grantRaw.id.trim() &&
+        typeof grantRaw.secret === 'string' &&
+        grantRaw.secret.length >= 16
+          ? { id: grantRaw.id.trim(), secret: grantRaw.secret }
+          : undefined
       return {
         type: 'welcome',
         proto: raw.proto,
@@ -169,7 +199,8 @@ export function parseDaemonServerFrame(value: unknown): DaemonServerMessage | nu
           platform: typeof host.platform === 'string' ? host.platform : undefined
         },
         home: raw.home,
-        tmp: raw.tmp
+        tmp: raw.tmp,
+        grant
       }
     }
     case 'res': {
@@ -189,7 +220,14 @@ export function parseDaemonServerFrame(value: unknown): DaemonServerMessage | nu
       return { type: 'stream', stream: raw.stream, event: raw.event, data: raw.data }
     }
     case 'error': {
-      if (raw.code !== 'auth' && raw.code !== 'bad-request' && raw.code !== 'internal') return null
+      if (
+        raw.code !== 'auth' &&
+        raw.code !== 'bad-request' &&
+        raw.code !== 'internal' &&
+        raw.code !== 'revoked'
+      ) {
+        return null
+      }
       if (typeof raw.message !== 'string') return null
       return { type: 'error', code: raw.code, message: raw.message }
     }
@@ -324,6 +362,20 @@ export function parseMachinePairing(text: string): DaemonPairing | null {
     }
   }
   return parseDaemonPairing(trimmed)
+}
+
+/** Live pairing relationship as the host shows it. */
+export type IncomingControllerState = 'pending' | 'online' | 'offline' | 'kicked' | 'revoked'
+
+/** A controller this host has issued a grant to (desktop Incoming / vavd clients). */
+export type IncomingController = {
+  id: string
+  name: string
+  clientId: string
+  state: IncomingControllerState
+  online: boolean
+  lastSeen: number
+  issuedAt: number
 }
 
 export type DaemonAnnounce = {

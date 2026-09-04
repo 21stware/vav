@@ -20,7 +20,7 @@ import {
   GithubPullPreview,
   GithubReleasePreview,
   GithubSitePreview
-} from './GithubPanel'
+} from './githubPanel/GithubPreview'
 import { CloudflareDeployPreview } from './CloudflarePanel'
 import { SupabaseFunctionPreview } from './SupabasePanel'
 

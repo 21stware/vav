@@ -4,7 +4,8 @@ import {
   inferDiagramKind,
   inferOverlayKind,
   overlayContentKey,
-  overlayIdentity
+  overlayIdentity,
+  normalizeOverlayPayload
 } from './overlayOpen.ts'
 
 describe('overlayOpen', () => {
@@ -38,5 +39,18 @@ describe('overlayOpen', () => {
     assert.equal(inferOverlayKind('/x/notes.md'), undefined)
     assert.equal(inferDiagramKind('/x/graph.dot'), 'graphviz')
     assert.equal(inferDiagramKind('/x/chart.vg.json'), 'vegalite')
+  })
+
+  it('normalizes a path string into a typed overlay payload', () => {
+    const payload = normalizeOverlayPayload('/tmp/flow.mmd', (path) => path.replace(/\\/g, '/'))
+    assert.equal(payload.path, '/tmp/flow.mmd')
+    assert.equal(payload.kind, 'diagram')
+    assert.equal(payload.diagramKind, 'mermaid')
+    const aliased = normalizeOverlayPayload(
+      { path: '/tmp/a/../photo.png', kind: 'image' },
+      () => '/tmp/photo.png'
+    )
+    assert.equal(aliased.path, '/tmp/photo.png')
+    assert.equal(aliased.kind, 'image')
   })
 })

@@ -11,8 +11,12 @@ import type { CliPaneBinding } from './cliPaneBinding.ts'
 import type { CliHostKind, ProviderResumeCursor } from './cliHost.ts'
 import type { AcceleratorKeyBindingId } from './keyBindings.ts'
 import { KEEP_AWAKE_BATTERY_FLOOR_DEFAULT } from './sleepBlocker.ts'
+import { DEFAULT_AUTO_UPDATE_POLICY, type AutoUpdatePolicy } from './updatePolicy.ts'
 import { VAV_DEFAULT_MODEL_ID } from './vavModelList.ts'
 import { LOCAL_MACHINE_ID, type WorkspaceRef } from './workspaceHost.ts'
+
+export type { AutoUpdatePolicy } from './updatePolicy.ts'
+export { AUTO_UPDATE_POLICIES, DEFAULT_AUTO_UPDATE_POLICY } from './updatePolicy.ts'
 
 export type { CliHostKind, ProviderResumeCursor } from './cliHost.ts'
 export { VAV_DEFAULT_MODEL_ID } from './vavModelList.ts'
@@ -1095,10 +1099,10 @@ export interface AppSettings {
   /** macOS: hide Dock icon (accessory). Requires restart. */
   hideDockIcon: boolean
   /**
-   * When true, check GitHub Releases for a newer build shortly after launch.
+   * How VAV looks for (and applies) app updates.
    * Manual “Check for Updates” in About always works regardless.
    */
-  autoCheckUpdates: boolean
+  autoUpdatePolicy: AutoUpdatePolicy
   /**
    * Configured CLI agents for the terminal host (release 599702fe…).
    * Defaults cover Claude Code, Codex, Cursor, Pi, Grok, Devin.
@@ -1155,6 +1159,8 @@ export interface AppSettings {
    * When false, block selection is Edit-only (Read is view + copy).
    */
   previewReadModeSelection: boolean
+  /** Hide the empty-transcript first-run checklist. */
+  firstRunChecklistDismissed: boolean
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -1221,7 +1227,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   /** Menu-bar status item — shows live CLI agent count when sessions are running. */
   trayEnabled: true,
   hideDockIcon: false,
-  autoCheckUpdates: true,
+  autoUpdatePolicy: DEFAULT_AUTO_UPDATE_POLICY,
   cliAgents: DEFAULT_CLI_AGENTS.map((a) => ({ ...a, envVars: { ...a.envVars } })),
   removedCliAgentIds: [],
   providerListOrder: [],
@@ -1232,7 +1238,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   defaultAgentModels: {},
   recentAgentModels: [],
   previewSelectionAgentMark: true,
-  previewReadModeSelection: true
+  previewReadModeSelection: true,
+  firstRunChecklistDismissed: false
 }
 
 export const FILE_SORT_OPTIONS: { key: FileSortKey; label: string }[] = [
@@ -1388,10 +1395,22 @@ export type TerminalLayoutNode =
       children: [TerminalLayoutNode, TerminalLayoutNode]
     }
 
+/**
+ * Tools-tray bash tab groups: parallel tab chips, each with its own split tree.
+ * `order` lists group root ids; `layouts` maps root → pane tree for that tab.
+ */
+export interface BashTabGroups {
+  order: string[]
+  layouts: Record<string, TerminalLayoutNode>
+  activeGroupId: string
+}
+
 /** Per-conversation terminal split trees shared across BrowserWindows. */
 export interface ConversationPtyLayouts {
-  /** Tools-tray plain bash. */
+  /** Tools-tray plain bash — layout for the active group. */
   bash: TerminalLayoutNode | null
+  /** Parallel bash tab chips + per-group split trees. */
+  bashGroups?: BashTabGroups | null
   /** CLI agent id → host layout (includes unified `__cli__` Screen). */
   agents: Record<string, TerminalLayoutNode | null>
   /**

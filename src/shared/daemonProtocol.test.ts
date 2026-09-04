@@ -15,9 +15,18 @@ import { encodePairing } from './remoteControl.ts'
 
 describe('daemon hello', () => {
   it('accepts a daemon-role hello', () => {
-    const msg = parseDaemonHello({ type: 'hello', proto: 1, auth: 'secret-value-16+', role: 'daemon' })
+    const msg = parseDaemonHello({
+      type: 'hello',
+      proto: 1,
+      auth: 'secret-value-16+',
+      role: 'daemon',
+      clientId: 'laptop-1',
+      grantId: 'g-1'
+    })
     assert.ok(msg)
     assert.equal(msg.role, 'daemon')
+    assert.equal(msg.clientId, 'laptop-1')
+    assert.equal(msg.grantId, 'g-1')
   })
 
   it('rejects a phone-style hello without role', () => {
@@ -55,6 +64,35 @@ describe('daemon server frames', () => {
     assert.ok(frame)
     assert.equal(frame.type, 'welcome')
     if (frame.type === 'welcome') assert.equal(frame.host.id, 'box')
+  })
+
+  it('parses a welcome grant', () => {
+    const frame = parseDaemonServerFrame({
+      type: 'welcome',
+      proto: 1,
+      app: 'vavd',
+      version: '1.0.0',
+      host: { id: 'box', name: 'build', kind: 'remote', online: true },
+      home: '/home/u',
+      tmp: '/tmp',
+      grant: { id: 'g1', secret: '0123456789abcdef0123' }
+    })
+    assert.ok(frame)
+    assert.equal(frame.type, 'welcome')
+    if (frame.type === 'welcome') {
+      assert.equal(frame.grant?.id, 'g1')
+      assert.equal(frame.grant?.secret, '0123456789abcdef0123')
+    }
+  })
+
+  it('parses a revoked error', () => {
+    const frame = parseDaemonServerFrame({
+      type: 'error',
+      code: 'revoked',
+      message: 'pairing revoked'
+    })
+    assert.equal(frame?.type, 'error')
+    if (frame?.type === 'error') assert.equal(frame.code, 'revoked')
   })
 
   it('parses res and stream', () => {

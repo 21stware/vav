@@ -1,7 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { homedir } from 'node:os'
 import type {
-  AgentConfig,
   ChatMessage,
   CliHostKind,
   MessageBlock,
@@ -15,67 +14,55 @@ import type {
   TurnPhase,
   TurnStatus
 } from '@shared/types'
-import { parseThinkingLevel } from '@shared/thinkingLevel'
-import {
-  cursorFamilyAllowsThinkingOverlay,
-  cursorModelFamilyId
-} from '@shared/cursorModel'
 import {
   cursorAuthIdentity,
+  isAcpCliHost as isAcpHost,
   isStructuredCliHost,
-  transportForCliHost,
   withCursorAuthIdentity
 } from '@shared/cliHost'
+import { pendingChangeSetFileCount } from '@shared/changeSet'
 import { ROOT_LEAF } from '@shared/thread'
-import { buildSnapshot, estimateContextTokens, formatExpiry } from '@shared/tokenUsage'
+import { buildSnapshot, estimateContextTokens } from '@shared/tokenUsage'
 import { attachQuotaNamespace, mergeNamespacedQuotaWindows } from '@shared/quotaWindows'
 import {
   classifyCliError,
   extractRpcError,
   formatErrorDetail,
   formatErrorDetailFromParts,
-  isBareInternalError,
   NETWORK_CONTINUE_PROMPT,
   NETWORK_RETRY_LIMIT,
   networkRetryDelayMs,
-  pickExhaustedQuotaWindow,
-  quotaKindMessageKey,
   RpcErrorCode,
   shouldContinuePartialNetworkTurn,
   shouldRetryFreshSession,
   shouldRetrySameSession,
-  splitStreamedRetriableError,
   type CliErrorKind
 } from '@shared/cliErrors'
-import { en, isApprovalApproveText, isApprovalDenyText, zhCN } from '@shared/i18n'
-import { normalizeAskQuestions, parseToolInput } from '@shared/askPlan'
+import { parseToolInput } from '@shared/askPlan'
 import {
   isAskToolName,
-  isChecklistToolName,
-  isEnterPlanModeName,
   isPlanDocToolName,
   normalizePlanDocInput,
-  planDocHasBody,
-  planDocSummary,
   planDocToChecklistInput,
-  projectChecklistInput,
-  sealPlanSteps
+  projectChecklistInput
 } from '@shared/planDoc'
 import { enabledCliAgents } from '@shared/types'
-import type { AcpSessionState } from '@shared/acpSession'
-import {
-  acpFormToQuestions,
-  parseAcpFormSchema,
-  patchAcpConfigOption,
-  patchAcpSessionMode
-} from '@shared/acpSession'
+import type { AcpSessionState, GoalAction } from '@shared/acpSession'
+import { patchAcpConfigOption, patchAcpSessionMode } from '@shared/acpSession'
+import { planSessionGoal } from './sessionGoal'
 import { currentLocale, t } from '../i18n'
 import { shell } from 'electron'
 import type { FileService } from '../fs/FileService'
 import type { HostRegistry } from '../host'
-function isAcpHost(kind: CliHostKind | null | undefined): boolean {
-  return !!kind && transportForCliHost(kind) === 'acp'
-}
+import {
+  extractUrlFromInput,
+  findChecklistIndex,
+  cliHostTurnStatus,
+  cliTurnParentId,
+  turnHasAnswerContent as turnBlocksHaveAnswer,
+  turnHasIncompleteWork as turnBlocksHaveIncompleteWork
+} from './cliHostTurn'
+import { describeCliHostError } from './cliHostError'
 import { readHostAuthIdentity } from './hostAuth'
 import type { ConversationStore } from '../store/ConversationStore'
 import type { SettingsStore } from '../store/SettingsStore'
@@ -86,20 +73,59 @@ import {
   type DriverControl,
   type DriverEvent
 } from './drivers'
-import { shouldReplaceCliRuntime } from './cliWorkspaceRestart'
+import { shouldAutoAcceptChangeSet } from './toolApproval'
+import { shouldReplaceCliRuntime, spawnResumeCursor } from './cliWorkspaceRestart'
+import { sealCliPlanBlocks, planSealMode } from './planSeal'
+import { composeCliPrompt } from './cliPrompt'
+import { cursorLockedFamilyThinkingPatch, nextAllowedThinkingLevel } from './thinkingClamp'
+import { estimatedContextFill } from './contextFill'
+import { stampReasoningDurations } from './reasoningStamp'
+import { userTurnMessage } from './agentMessage'
+import { allocateCliDeltaSlot } from './cliDelta'
+import {
+  applyCliCancelQuota,
+  clearCliTurnDraft,
+  cliAssistantMessage,
+  consumePendingCancel,
+  sameSessionRetryPlan,
+  shouldSettleAsCancelled,
+  stripLeakedStreamErrorFromTurn
+} from './cliTurnFinish'
+import {
+  appendNestedChildDelta,
+  applyCliToolPatch,
+  cliToolCardSummary,
+  newCliPermissionBlock,
+  newCliToolCallBlock,
+  ensureCliParentTask
+} from './cliToolBlock'
+import { parkInteractivePatch, parkedPermissionWaiter } from './cliPark'
+import { shouldFoldChecklistTool, skipEmptyChecklistUpdate, checklistPlanFields } from './cliChecklist'
+import { elicitationCardFields, findPendingElicitationIndex, patchedElicitationToolBlock } from './cliElicitation'
+import { cliPermissionAllow, findPendingPermission, patchedPermissionToolBlock } from './cliPermissionAnswer'
+import {
+  isDuplicateTokenSnapshot,
+  usageContextFill,
+  usageEventIsNoop,
+  usageHasTurnTokens,
+  usageSnapshotPayload
+} from './cliUsage'
 import {
   applyCliHistoryHandoff,
   formatCliWorkspaceHandoff,
+  shouldRecordHistoryHandoff,
   type CliHistoryHandoffMark,
   type CliHistoryHandoffReason
 } from './cliHistoryHandoff'
 import {
   shouldArmPlanDocFollowUp,
   shouldContinueHeldCliTurn,
-  shouldDeferCliTurnFinish
+  shouldDeferCliTurnFinish,
+  shouldSealHeldCliReject
 } from './cliTurnHold'
 import { createCliHistoryReplayGate, createCliHistoryReplayGateFromBlocks, type CliHistoryReplayGate } from './cliHistoryReplay'
 import { inputJson, mapToolName, summarizeCliTool } from './drivers/toolMap'
+import { parentPathOfWrite } from '../fs/fileHostPath'
 import { FileDraftCoalescer, writeToolDraft } from '@shared/writeToolDraft'
 import {
   expireOpenTools,
@@ -110,63 +136,18 @@ import {
 
 const COALESCE_MS = 32
 
-function describeCliHostError(
-  raw: string,
-  windows: QuotaWindow[],
-  code?: number | null,
-  model?: string | null
-): { kind: CliErrorKind; message: string } {
-  const text = raw.trim() || 'Internal error'
-  const locale = currentLocale()
-  const kind = classifyCliError(text, windows, code, model)
-  if (kind === 'cancelled') return { kind, message: text }
-  if (kind === 'quota') {
-    const window = pickExhaustedQuotaWindow(windows, model)
-    if (window) {
-      const name = t(quotaKindMessageKey(window.kind))
-      const percent = window.usedPercent.toFixed(window.usedPercent >= 10 ? 0 : 1)
-      if (window.resetsAt != null) {
-        return {
-          kind,
-          message: t('error.quotaExceededReset', {
-            window: name,
-            percent,
-            clock: formatExpiry(window.resetsAt, Date.now(), locale)
-          })
-        }
-      }
-      return { kind, message: t('error.quotaExceeded', { window: name, percent }) }
-    }
-    return { kind, message: t('error.quotaExceededGeneric') }
-  }
-  if (kind === 'session-stale') return { kind, message: t('error.sessionStale') }
-  if (kind === 'auth') return { kind, message: t('error.agentAuthRequired') }
-  if (kind === 'network') return { kind, message: t('error.network') }
-  if (isBareInternalError(text)) return { kind: 'generic', message: t('error.agentInternal') }
-  return { kind, message: text }
-}
-
 /**
  * Did this turn produce anything worth sealing? Reasoning alone does not
  * count — when the answer text was eaten by a leaked stream error, the retry
  * regenerates the thinking along with the reply.
  */
 function turnHasAnswerContent(turn: HostTurn): boolean {
-  return turn.blocks.some(
-    (block) =>
-      block.kind === 'toolCall' ||
-      block.kind === 'plan' ||
-      (block.kind === 'text' && block.text.trim().length > 0)
-  )
+  return turnBlocksHaveAnswer(turn.blocks)
 }
 
 /** A tool still in flight — the turn cannot be treated as a finished reply. */
 function turnHasIncompleteWork(turn: HostTurn): boolean {
-  return turn.blocks.some(
-    (block) =>
-      block.kind === 'toolCall' &&
-      (block.status === 'pending' || block.status === 'executing')
-  )
+  return turnBlocksHaveIncompleteWork(turn.blocks)
 }
 
 interface PendingPermission {
@@ -302,19 +283,7 @@ export class CliAgentHost {
   }
 
   status(conversationId: string): TurnStatus {
-    const turn = this.turns.get(conversationId)
-    const awaiting = turn
-      ? ([...turn.pendingPermissions.values()][0]?.toolCallId ?? null)
-      : null
-    return {
-      conversationId,
-      isRunning: !!turn,
-      phase: turn?.phase ?? 'idle',
-      toolCount: turn?.toolCount ?? 0,
-      awaitingToolCallId: awaiting,
-      messageId: turn?.messageId ?? null,
-      blocks: turn ? turn.blocks.map((b) => ({ ...b })) : []
-    }
+    return cliHostTurnStatus(conversationId, this.turns.get(conversationId))
   }
 
   async run(
@@ -342,7 +311,7 @@ export class CliAgentHost {
       openFile
     )
 
-    const prompt = this.composePrompt(
+    const prompt = composeCliPrompt(
       userText,
       quote,
       contextBlocks,
@@ -379,7 +348,7 @@ export class CliAgentHost {
     if (!user?.content.trim()) return
     const openFile =
       user.contextFile?.trim() || conversation!.focusedFilePath || null
-    const prompt = this.composePrompt(
+    const prompt = composeCliPrompt(
       user.content,
       user.quoteSummary
         ? {
@@ -426,7 +395,7 @@ export class CliAgentHost {
       target.attachments,
       openFile
     )
-    const prompt = this.composePrompt(
+    const prompt = composeCliPrompt(
       text,
       userMessage.quoteSummary
         ? {
@@ -486,18 +455,9 @@ export class CliAgentHost {
     toolCallId: string,
     text: string
   ): boolean {
-    const pending =
-      turn.pendingPermissions.get(toolCallId) ||
-      [...turn.pendingPermissions.values()].find((p) => p.toolCallId === toolCallId)
+    const pending = findPendingPermission(turn.pendingPermissions, toolCallId)
     if (!pending) return false
-    const allow =
-      pending.kind === 'ask' || pending.kind === 'form'
-        ? !isAskCancelText(text)
-        : pending.kind === 'plan_doc'
-          ? !isPlanDocRejectText(text)
-          : pending.kind === 'url'
-            ? !isAskCancelText(text) && !isApprovalDenyText(text)
-            : isApprovalApproveText(text, false)
+    const allow = cliPermissionAllow(pending.kind, text)
     turn.pendingPermissions.delete(pending.toolCallId)
     const runtime = this.runtimes.get(conversationId)
     if (pending.kind === 'url' && allow) {
@@ -517,8 +477,11 @@ export class CliAgentHost {
       allow,
       alreadySteered: pending.synthetic === true
     })
-    const sealHeldReject =
-      !allow && turn.hostPromptClosed && turn.pendingPermissions.size === 0
+    const sealHeldReject = shouldSealHeldCliReject({
+      hostPromptClosed: turn.hostPromptClosed,
+      remaining: turn.pendingPermissions.size,
+      allow
+    })
     if (continueHeld || sealHeldReject) turn.hostPromptClosed = false
     if (continueHeld) {
       turn.error = undefined
@@ -542,21 +505,12 @@ export class CliAgentHost {
     if (idx != null) {
       const block = turn.blocks[idx]
       if (block?.kind === 'toolCall') {
-        const next: ToolCallBlock = {
-          ...block,
-          status: allow ? (pending.kind === 'permission' ? 'executing' : 'completed') : 'skipped',
-          output:
-            pending.kind === 'ask'
-              ? text
-              : pending.kind === 'plan_doc'
-                ? allow
-                  ? t('planDoc.accepted')
-                  : t('planDoc.rejected')
-                : allow
-                  ? 'Approved'
-                  : 'Denied',
-          choices: undefined
-        }
+        const next: ToolCallBlock = patchedPermissionToolBlock(block, pending.kind, allow, text, {
+          accepted: t('planDoc.accepted'),
+          rejected: t('planDoc.rejected'),
+          approved: 'Approved',
+          denied: 'Denied'
+        })
         turn.blocks[idx] = next
         this.deps.emit({ type: 'tool', conversationId, index: idx, block: next })
         if (allow && pending.kind === 'plan_doc') {
@@ -627,6 +581,27 @@ export class CliAgentHost {
     const current = this.deps.conversations.get(conversationId)?.acpSession
     const next = patchAcpConfigOption(current, id, value)
     if (next) this.persistAcpSession(conversationId, next)
+  }
+
+  applySessionGoal(
+    conversationId: string,
+    action: GoalAction,
+    objective?: string
+  ):
+    | { ok: true; via: 'rpc' }
+    | { ok: true; via: 'slash'; text: string }
+    | { ok: false; error: string } {
+    const conversation = this.deps.conversations.get(conversationId)
+    const plan = planSessionGoal({
+      capability: conversation?.acpSession?.goalCapability,
+      action,
+      objective,
+      connected: this.runtimes.has(conversationId)
+    })
+    if (plan.ok && plan.via === 'rpc') {
+      this.runtimes.get(conversationId)?.driver.applyOptions?.({ goal: { action, objective } })
+    }
+    return plan
   }
 
   /**
@@ -729,26 +704,23 @@ export class CliAgentHost {
     if (this.historyHandoff.has(conversationId)) {
       turn.replay.open()
     }
-    // For regenerate we mint a fresh assistant id
-    if (!conversation.messages.some((m) => m.id === messageId && m.role === 'user')) {
-      turn.messageId = randomUUID()
-    } else {
-      // Normal send: assistant is a new node under the user message
-      turn.parentId = messageId
-      turn.messageId = randomUUID()
-    }
+    turn.parentId = cliTurnParentId(messageId, turn.parentId, conversation.messages)
+    turn.messageId = randomUUID()
 
     this.turns.set(conversationId, turn)
     this.deps.emit({ type: 'start', conversationId })
     this.setPhase(conversationId, turn, 'thinking')
-    if (this.takePendingCancel(conversationId, turn)) {
+    if (consumePendingCancel(this.pendingCancels, conversationId, turn)) {
       void this.finishTurn(conversationId, turn, false)
       return
     }
 
     try {
       const runtime = await this.ensureRuntime(conversationId)
-      if (this.takePendingCancel(conversationId, turn) || this.turns.get(conversationId) !== turn) {
+      if (
+        consumePendingCancel(this.pendingCancels, conversationId, turn) ||
+        this.turns.get(conversationId) !== turn
+      ) {
         runtime.driver.cancel()
         if (this.turns.get(conversationId) === turn) {
           void this.finishTurn(conversationId, turn, false)
@@ -860,14 +832,17 @@ export class CliAgentHost {
 
     const cwd = this.conversationCwd(conversationId)
     const identity = await readHostAuthIdentity(kind)
-    let cursor = conversation.cliResumeCursor ?? null
-    if (cursor && cursor.provider !== kind) cursor = null
-    const cursorIdentity = cursorAuthIdentity(cursor)
-    if (cursor && identity && cursorIdentity && cursorIdentity !== identity) {
-      cursor = null
+    const resume = spawnResumeCursor(
+      conversation.cliResumeCursor ?? null,
+      kind,
+      identity,
+      cursorAuthIdentity
+    )
+    if (resume.dropIdentity) {
       this.markHistoryHandoff(conversationId, cwd, 'session-lost')
       this.clearResumeCursor(conversationId)
     }
+    const cursor = resume.cursor
 
     const runtime: HostRuntime = {
       kind,
@@ -944,7 +919,7 @@ export class CliAgentHost {
         this.deps.emit({
           type: 'fs-changed',
           conversationId,
-          parentPath: event.path.replace(/[/\\][^/\\]+$/, '') || workdir,
+          parentPath: parentPathOfWrite(event.path, workdir),
           filePath: event.path
         })
         return
@@ -1034,7 +1009,7 @@ export class CliAgentHost {
         this.deps.emit({
           type: 'fs-changed',
           conversationId,
-          parentPath: event.path.replace(/[/\\][^/\\]+$/, '') || workdir,
+          parentPath: parentPathOfWrite(event.path, workdir),
           filePath: event.path
         })
         break
@@ -1197,26 +1172,7 @@ export class CliAgentHost {
     text: string
   ): void {
     if (!text) return
-    let index = kind === 'text' ? turn.textIndex : turn.reasoningIndex
-    if (index == null) {
-      if (kind === 'text') this.sealOpenReasoning(turn)
-      index = turn.blocks.length
-      turn.blocks.push(kind === 'text' ? { kind: 'text', text: '' } : { kind: 'reasoning', text: '' })
-      if (kind === 'text') turn.textIndex = index
-      else {
-        turn.reasoningIndex = index
-        turn.reasoningStartedAt.set(index, Date.now())
-      }
-    }
-    // Opening a text block after tools — start a new slot
-    if (kind === 'text' && turn.toolCount > 0) {
-      const last = turn.blocks[turn.blocks.length - 1]
-      if (last && last.kind !== 'text') {
-        index = turn.blocks.length
-        turn.blocks.push({ kind: 'text', text: '' })
-        turn.textIndex = index
-      }
-    }
+    const index = allocateCliDeltaSlot(turn, kind, () => this.sealOpenReasoning(turn))
     const buf = (turn.buffers.get(index) ?? '') + text
     turn.buffers.set(index, buf)
     this.setPhase(conversationId, turn, kind === 'reasoning' ? 'thinking' : 'outputting')
@@ -1226,12 +1182,7 @@ export class CliAgentHost {
   }
 
   private sealOpenReasoning(turn: HostTurn): void {
-    const now = Date.now()
-    for (const [index, started] of turn.reasoningStartedAt) {
-      const block = turn.blocks[index]
-      if (!block || block.kind !== 'reasoning' || block.durationMs != null) continue
-      block.durationMs = Math.max(0, now - started)
-    }
+    stampReasoningDurations(turn.blocks, turn.reasoningStartedAt)
   }
 
   private flushBuffers(conversationId: string, turn: HostTurn): void {
@@ -1268,36 +1219,19 @@ export class CliAgentHost {
    * error text so the caller can decide whether the turn survived.
    */
   private stripLeakedStreamError(conversationId: string, turn: HostTurn): string | null {
-    const last = turn.blocks[turn.blocks.length - 1]
-    if (!last || last.kind !== 'text') return null
-    const split = splitStreamedRetriableError(last.text)
-    if (!split.leaked) return null
-    const index = turn.blocks.length - 1
-    if (split.text) {
-      last.text = split.text
-      this.deps.emit({
-        type: 'delta',
-        conversationId,
-        index,
-        kind: 'text',
-        text: split.text,
-        replace: true
-      })
-    } else {
-      turn.blocks.pop()
-      if (turn.textIndex != null && turn.textIndex >= turn.blocks.length) {
-        turn.textIndex = null
-      }
-      this.deps.emit({
-        type: 'delta',
-        conversationId,
-        index,
-        kind: 'text',
-        text: '',
-        replace: true
-      })
+    const stripped = stripLeakedStreamErrorFromTurn(turn)
+    if (!stripped.leaked || stripped.replaceIndex == null || stripped.replaceText == null) {
+      return stripped.leaked
     }
-    return split.leaked
+    this.deps.emit({
+      type: 'delta',
+      conversationId,
+      index: stripped.replaceIndex,
+      kind: 'text',
+      text: stripped.replaceText,
+      replace: true
+    })
+    return stripped.leaked
   }
 
   /**
@@ -1306,18 +1240,7 @@ export class CliAgentHost {
    * so the retry streams onto a clean draft.
    */
   private resetTurnDraft(conversationId: string, turn: HostTurn): void {
-    if (turn.flushTimer) {
-      clearTimeout(turn.flushTimer)
-      turn.flushTimer = null
-    }
-    turn.blocks = []
-    turn.buffers.clear()
-    turn.textIndex = null
-    turn.reasoningIndex = null
-    turn.toolIndex.clear()
-    turn.toolCount = 0
-    turn.reasoningStartedAt.clear()
-    turn.nestedDirty.clear()
+    clearCliTurnDraft(turn)
     this.deps.emit({ type: 'start', conversationId })
   }
 
@@ -1336,15 +1259,12 @@ export class CliAgentHost {
     if (index == null) {
       index = turn.blocks.length
       turn.toolIndex.set(event.id, index)
-      const block: ToolCallBlock = {
-        kind: 'toolCall',
+      const block = newCliToolCallBlock({
         id: event.id,
         tool: mapToolName(event.name),
-        summary: event.title || summarizeCliTool(event.name, event.input) || event.name,
-        input: inputJson(event.input),
-        output: '',
-        status: 'pending'
-      }
+        summary: cliToolCardSummary(event, summarizeCliTool),
+        input: inputJson(event.input)
+      })
       turn.blocks.push(block)
       // New content after a tool should open fresh text/reasoning slots
       this.sealOpenReasoning(turn)
@@ -1382,9 +1302,7 @@ export class CliAgentHost {
     turn: HostTurn,
     event: Extract<DriverEvent, { type: 'tool' }>
   ): boolean {
-    if (isEnterPlanModeName(event.name)) return false
-    if (!isChecklistToolName(event.name) && mapToolName(event.name) !== 'plan') return false
-    if (mapToolName(event.name) !== 'plan') return false
+    if (!shouldFoldChecklistTool(event.name, mapToolName(event.name))) return false
 
     const incoming = projectChecklistInput(event.input)
     let index = turn.toolIndex.get(event.id)
@@ -1396,21 +1314,18 @@ export class CliAgentHost {
       }
     }
     if (index == null) {
-      if (incoming.steps.length === 0 && event.status !== 'started' && event.status !== 'updated') {
+      if (skipEmptyChecklistUpdate(incoming.steps.length, event.status)) {
         return false
       }
       index = turn.blocks.length
       turn.toolIndex.set(event.id, index)
       const title = event.title || incoming.title || event.name
-      const block: ToolCallBlock = {
-        kind: 'toolCall',
+      const block = newCliToolCallBlock({
         id: event.id,
         tool: 'plan',
         summary: title,
-        input: inputJson(incoming),
-        output: '',
-        status: 'pending'
-      }
+        input: inputJson(incoming)
+      })
       turn.blocks.push(block)
       this.sealOpenReasoning(turn)
       turn.textIndex = null
@@ -1421,13 +1336,10 @@ export class CliAgentHost {
     const previousInput = block.input
     this.patchToolBlock(block, event)
     block.tool = 'plan'
-    if (incoming.steps.length) {
-      const current = projectChecklistInput(parseToolInput(previousInput))
-      const title =
-        incoming.title && incoming.title !== 'Plan' ? incoming.title : current.title || incoming.title
-      block.input = inputJson({ title, steps: incoming.steps })
-      const done = incoming.steps.filter((step) => step.status === 'done').length
-      block.summary = `Plan · ${title} (${done}/${incoming.steps.length})`
+    const fields = checklistPlanFields(previousInput, incoming)
+    if (fields.input) {
+      block.input = inputJson(fields.input)
+      if (fields.summary) block.summary = fields.summary
     } else {
       block.input = previousInput
     }
@@ -1452,15 +1364,12 @@ export class CliAgentHost {
     parent.children ??= []
     let child = findToolBlock(parent.children, event.id)
     if (!child) {
-      child = {
-        kind: 'toolCall',
+      child = newCliToolCallBlock({
         id: event.id,
         tool: mapToolName(event.name),
-        summary: event.title || summarizeCliTool(event.name, event.input) || event.name,
-        input: inputJson(event.input),
-        output: '',
-        status: 'pending'
-      }
+        summary: cliToolCardSummary(event, summarizeCliTool),
+        input: inputJson(event.input)
+      })
       parent.children.push(child)
     }
     this.patchToolBlock(child, event)
@@ -1475,47 +1384,15 @@ export class CliAgentHost {
     block: ToolCallBlock,
     event: Extract<DriverEvent, { type: 'tool' }>
   ): void {
-    if (event.status === 'started' || event.status === 'updated') {
-      const parked = block.status === 'pending' && (block.tool === 'plan_doc' || block.tool === 'ask_user_question')
-      if (!parked) block.status = 'executing'
-      if (event.input && Object.keys(event.input as object).length) {
-        block.input = inputJson(event.input)
-        block.summary = event.title || summarizeCliTool(event.name, event.input) || event.name
-        // ACP tool_call_update is a patch and may omit name/kind — never regress
-        // a specific mapping back to 'external' on a sparse update.
-        const mapped = mapToolName(event.name)
-        if (mapped !== 'external' || block.tool === 'external') block.tool = mapped
-      } else if (event.title) {
-        block.summary = event.title
-      }
-    } else if (event.status === 'completed') {
-      block.status = 'completed'
-      block.output = event.output ?? block.output
-    } else if (event.status === 'error') {
-      block.status = 'error'
-      block.output = event.output ?? block.output
-    }
+    applyCliToolPatch(block, event, {
+      inputJson,
+      summarize: summarizeCliTool,
+      mapToolName
+    })
   }
 
   private ensureParentTask(turn: HostTurn, parentId: string): ToolCallBlock {
-    const existing = findToolBlock(turn.blocks, parentId)
-    if (existing) return existing
-    const block: ToolCallBlock = {
-      kind: 'toolCall',
-      id: parentId,
-      tool: 'task',
-      summary: t('tool.task'),
-      input: '{}',
-      output: '',
-      status: 'executing',
-      children: []
-    }
-    turn.toolIndex.set(parentId, turn.blocks.length)
-    turn.blocks.push(block)
-    this.sealOpenReasoning(turn)
-    turn.textIndex = null
-    turn.reasoningIndex = null
-    return block
+    return ensureCliParentTask(turn, parentId, t('tool.task'), (next) => this.sealOpenReasoning(next))
   }
 
   private appendNestedDelta(
@@ -1528,12 +1405,7 @@ export class CliAgentHost {
     if (!text) return
     const parent = this.ensureParentTask(turn, parentId)
     parent.children ??= []
-    const last = parent.children[parent.children.length - 1]
-    if (last && last.kind === kind) {
-      last.text += text
-    } else {
-      parent.children.push(kind === 'text' ? { kind: 'text', text } : { kind: 'reasoning', text })
-    }
+    if (!appendNestedChildDelta(parent.children, kind, text)) return
     turn.nestedDirty.add(parent.id)
     this.setPhase(conversationId, turn, kind === 'reasoning' ? 'thinking' : 'working')
     if (!turn.flushTimer) {
@@ -1568,59 +1440,23 @@ export class CliAgentHost {
     block: ToolCallBlock,
     index: number
   ): boolean {
-    if (event.status === 'completed' || event.status === 'error') return false
-    if (turn.pendingPermissions.has(block.id)) return false
-    const parsed = parseToolInput(block.input)
-    if (block.tool === 'ask_user_question') {
-      const questions = normalizeAskQuestions(parsed)
-      if (questions.length === 0) return false
-      const next: ToolCallBlock = {
-        ...block,
-        status: 'pending',
-        questions,
-        askTitle: event.title || String(parsed.title ?? parsed.header ?? '') || block.askTitle
-      }
-      turn.blocks[index] = next
-      turn.pendingPermissions.set(block.id, {
-        requestId: block.id,
-        toolCallId: block.id,
-        kind: 'ask',
-        synthetic: false,
-        resolve: () => undefined
-      })
-      this.deps.emit({
-        type: 'awaiting',
-        conversationId,
-        toolCallId: block.id,
-        index,
-        block: next
-      })
-      this.setPhase(conversationId, turn, 'awaiting-user')
-      return true
-    }
-    if (block.tool === 'plan_doc') {
-      const doc = normalizePlanDocInput(parsed)
-      if (!isPlanDocToolName(event.name) && !planDocHasBody(doc)) return false
-      const next: ToolCallBlock = { ...block, status: 'pending' }
-      turn.blocks[index] = next
-      turn.pendingPermissions.set(block.id, {
-        requestId: block.id,
-        toolCallId: block.id,
-        kind: 'plan_doc',
-        synthetic: false,
-        resolve: () => undefined
-      })
-      this.deps.emit({
-        type: 'awaiting',
-        conversationId,
-        toolCallId: block.id,
-        index,
-        block: next
-      })
-      this.setPhase(conversationId, turn, 'awaiting-user')
-      return true
-    }
-    return false
+    const parked = parkInteractivePatch(
+      block,
+      event,
+      turn.pendingPermissions.has(block.id)
+    )
+    if (!parked) return false
+    turn.blocks[index] = parked.next
+    turn.pendingPermissions.set(block.id, parkedPermissionWaiter(block.id, parked.kind))
+    this.deps.emit({
+      type: 'awaiting',
+      conversationId,
+      toolCallId: block.id,
+      index,
+      block: parked.next
+    })
+    this.setPhase(conversationId, turn, 'awaiting-user')
+    return true
   }
 
   private applyElicitation(
@@ -1629,50 +1465,37 @@ export class CliAgentHost {
     event: Extract<DriverEvent, { type: 'elicitation' }>
   ): void {
     this.flushBuffers(conversationId, turn)
-    const tool: ToolCallBlock['tool'] =
-      event.kind === 'plan_doc' ? 'plan_doc' : event.kind === 'url' ? 'request' : 'ask_user_question'
-    const parsed = event.input && typeof event.input === 'object' ? (event.input as Record<string, unknown>) : {}
-    const formFields = event.kind === 'form' ? parseAcpFormSchema(parsed.requestedSchema ?? parsed.schema) : []
-    const questions =
-      event.kind === 'ask'
-        ? normalizeAskQuestions(parsed)
-        : event.kind === 'form'
-          ? acpFormToQuestions(formFields.length ? formFields : parseAcpFormSchema(parsed))
-          : undefined
-    const summary =
-      event.kind === 'plan_doc'
-        ? planDocSummary(normalizePlanDocInput(event.input))
-        : event.kind === 'url'
-          ? event.title || (typeof parsed.url === 'string' ? parsed.url : t('tool.ask'))
-          : event.title || questions?.[0]?.question || t('tool.ask')
+    const { tool, questions, summary, choices } = elicitationCardFields(event, {
+      ask: t('tool.ask'),
+      open: t('common.open'),
+      cancel: t('common.cancel')
+    })
     let index = turn.toolIndex.get(event.toolCallId)
     if (index == null) {
-      for (const [id, pending] of turn.pendingPermissions) {
-        if (pending.kind !== event.kind) continue
-        const found = turn.toolIndex.get(id)
-        if (found == null) continue
-        index = found
-        turn.toolIndex.set(event.toolCallId, found)
-        turn.pendingPermissions.delete(id)
-        break
+      const pending = findPendingElicitationIndex(
+        turn.pendingPermissions,
+        turn.toolIndex,
+        event.kind
+      )
+      if (pending) {
+        index = pending.index
+        turn.toolIndex.set(event.toolCallId, pending.index)
+        turn.pendingPermissions.delete(pending.previousId)
       }
     }
     let block: ToolCallBlock
     if (index == null) {
       index = turn.blocks.length
       turn.toolIndex.set(event.toolCallId, index)
-      block = {
-        kind: 'toolCall',
+      block = newCliToolCallBlock({
         id: event.toolCallId,
         tool,
         summary,
         input: inputJson(event.input),
-        output: '',
-        status: 'pending',
         questions,
         askTitle: event.title,
-        choices: event.kind === 'url' ? [t('common.open'), t('common.cancel')] : undefined
-      }
+        choices
+      })
       turn.blocks.push(block)
       this.sealOpenReasoning(turn)
       turn.textIndex = null
@@ -1680,15 +1503,13 @@ export class CliAgentHost {
     } else {
       const current = turn.blocks[index]
       if (!current || current.kind !== 'toolCall') return
-      block = {
-        ...current,
+      block = patchedElicitationToolBlock(current, {
         tool,
-        summary: summary || current.summary,
+        summary,
         input: inputJson(event.input),
-        status: 'pending',
         questions,
-        askTitle: event.title ?? current.askTitle
-      }
+        askTitle: event.title
+      })
       turn.blocks[index] = block
     }
     turn.pendingPermissions.set(block.id, {
@@ -1740,20 +1561,15 @@ export class CliAgentHost {
       })
       return
     }
-    const toolCallId = `perm-${event.requestId}`
+    const block = newCliPermissionBlock({
+      requestId: event.requestId,
+      summary: event.summary || event.toolName,
+      toolName: event.toolName,
+      inputJson: inputJson(event.input ?? { tool: event.toolName, detail: event.detail })
+    })
+    const toolCallId = block.id
     const index = turn.blocks.length
     turn.toolIndex.set(toolCallId, index)
-    const block: ToolCallBlock = {
-      kind: 'toolCall',
-      id: toolCallId,
-      tool: 'request',
-      summary: event.summary || event.toolName,
-      input: inputJson(event.input ?? { tool: event.toolName, detail: event.detail }),
-      output: '',
-      status: 'pending',
-      choices: ['Approve', 'Deny'],
-      askTitle: event.toolName
-    }
     turn.blocks.push(block)
     turn.pendingPermissions.set(toolCallId, {
       requestId: event.requestId,
@@ -1777,18 +1593,7 @@ export class CliAgentHost {
   private emitUsageSnapshot(conversationId: string, extras?: { newSnapshot?: boolean }): void {
     const updated = this.deps.conversations.get(conversationId)
     if (!updated) return
-    this.deps.emit({
-      type: 'usage',
-      conversationId,
-      tokensUsed: updated.tokensUsed,
-      tokenLimit: updated.tokenLimit,
-      history: updated.tokenHistory,
-      cacheCreatedAt: updated.cacheCreatedAt,
-      cacheExpiresAt: updated.cacheExpiresAt,
-      reportedSessionCostUsd: updated.reportedSessionCostUsd ?? null,
-      quotaWindows: updated.quotaWindows ?? [],
-      newSnapshot: extras?.newSnapshot === true
-    })
+    this.deps.emit(usageSnapshotPayload(conversationId, updated, extras))
   }
 
   private applyUsage(
@@ -1816,20 +1621,14 @@ export class CliAgentHost {
     const output = event.outputTokens ?? 0
     const cacheRead = event.cacheRead ?? 0
     const cacheWrite = event.cacheWrite ?? 0
-    const hasTurnTokens = input > 0 || output > 0 || cacheRead > 0 || cacheWrite > 0
+    const hasTurnTokens = usageHasTurnTokens(input, output, cacheRead, cacheWrite)
     const recordHistory = event.recordHistory ?? hasTurnTokens
 
     let snapshotTotal: number | null = null
     if (recordHistory && hasTurnTokens) {
       const live = this.deps.conversations.get(conversationId)!
       const last = live.tokenHistory?.at(-1)
-      const duplicate =
-        last != null &&
-        last.newInputTokens === input &&
-        last.outputTokens === output &&
-        last.cacheReadTokens === cacheRead &&
-        last.cacheWriteTokens === cacheWrite
-      if (!duplicate) {
+      if (!isDuplicateTokenSnapshot(last, input, output, cacheRead, cacheWrite)) {
         const snapshot = buildSnapshot({
           turnIndex: (live.tokenHistory?.length ?? 0) + 1,
           usage: { input, output, cacheRead, cacheWrite },
@@ -1840,14 +1639,11 @@ export class CliAgentHost {
         this.deps.conversations.recordTokenSnapshot(conversationId, snapshot)
         snapshotTotal = snapshot.totalInputTokens
       } else {
-        snapshotTotal = last.totalInputTokens
+        snapshotTotal = last!.totalInputTokens
       }
     }
 
-    const fill =
-      typeof event.contextUsed === 'number' && event.contextUsed >= 0
-        ? event.contextUsed
-        : snapshotTotal
+    const fill = usageContextFill(event.contextUsed, snapshotTotal)
     if (typeof fill === 'number' && fill >= 0) {
       this.deps.conversations.setContextFill(conversationId, fill)
     }
@@ -1860,23 +1656,19 @@ export class CliAgentHost {
 
     // Nothing meaningful changed (e.g. empty usage ping).
     if (
-      fill == null &&
-      !recordHistory &&
-      event.contextSize == null &&
-      event.sessionCostUsd == null &&
-      !quotaChanged
+      usageEventIsNoop({
+        fill,
+        recordHistory,
+        contextSize: event.contextSize,
+        sessionCostUsd: event.sessionCostUsd,
+        quotaChanged
+      })
     ) {
       return
     }
     this.emitUsageSnapshot(conversationId, {
       newSnapshot: Boolean(recordHistory && hasTurnTokens)
     })
-  }
-
-  private takePendingCancel(conversationId: string, turn: HostTurn): boolean {
-    if (!this.pendingCancels.delete(conversationId) && !turn.cancelled) return false
-    turn.cancelled = true
-    return true
   }
 
   private async finishTurn(
@@ -1897,47 +1689,25 @@ export class CliAgentHost {
     this.sealOpenReasoning(turn)
 
     expireOpenTools(turn.blocks, turn.cancelled)
-    sealCliPlanBlocks(turn.blocks, turn.cancelled ? 'cancel' : turn.error ? 'error' : 'success')
+    sealCliPlanBlocks(turn.blocks, planSealMode(turn.cancelled, turn.error), {
+      cancelled: t('common.cancelled'),
+      failed: t('common.failed')
+    })
 
-    const content = turn.blocks
-      .filter((b): b is Extract<MessageBlock, { kind: 'text' }> => b.kind === 'text')
-      .map((b) => b.text)
-      .join('\n\n')
-      .trim()
-
-    if (turn.cancelled) {
-      if (classifyCliError(turn.error || '', null, turn.errorCode) === 'quota') {
-        turn.cancelled = false
-      } else {
-        turn.error = undefined
-        turn.errorKind = undefined
-        turn.errorDetail = undefined
-      }
-    }
-
-    const message: ChatMessage = {
-      id: turn.messageId,
-      parentId: turn.parentId,
-      role: 'assistant',
-      content,
-      blocks: turn.blocks.map((b) => ({ ...b })),
-      createdAt: Date.now(),
-      cancelled: turn.cancelled || undefined,
-      errorText: turn.error,
-      errorDetail: turn.errorDetail
-    }
+    applyCliCancelQuota(turn)
+    const message = cliAssistantMessage(turn)
 
     let changeSet =
       (await this.deps.changeSets?.finalizeTurn(
         conversationId,
-        content.slice(0, 80) || 'CLI agent turn',
+        message.content.slice(0, 80) || 'CLI agent turn',
         this.deps.conversations.get(conversationId)?.cliHost || 'cli',
         { cancelled: turn.cancelled, error: !!turn.error }
       )) ?? null
     if (changeSet) {
       message.changeSetId = changeSet.id
       const mode = this.deps.conversations.get(conversationId)?.approvalMode
-      if (mode === 'bypass' && this.deps.changeSets) {
+      if (shouldAutoAcceptChangeSet(mode) && this.deps.changeSets) {
         const accepted = await this.deps.changeSets.acceptAll(changeSet.id)
         if (accepted) changeSet = accepted
       }
@@ -1964,12 +1734,12 @@ export class CliAgentHost {
       cancelled: turn.cancelled || undefined
     })
 
-    if (changeSet && this.deps.conversations.get(conversationId)?.approvalMode !== 'bypass') {
+    if (changeSet && !shouldAutoAcceptChangeSet(this.deps.conversations.get(conversationId)?.approvalMode)) {
       this.deps.emit({
         type: 'change-review',
         conversationId,
         changeSetId: changeSet.id,
-        pendingCount: changeSet.files.filter((f) => f.status === 'pending').length,
+        pendingCount: pendingChangeSetFileCount(changeSet.files),
         messageId: message.id,
         changeSet
       })
@@ -1985,12 +1755,16 @@ export class CliAgentHost {
    * always wins: any recorded history disables the estimate.
    */
   private applyEstimatedContextFill(conversationId: string, turn: HostTurn): void {
-    if (turn.sawUsage || turn.cancelled) return
     const conversation = this.deps.conversations.get(conversationId)
     if (!conversation) return
-    if ((conversation.tokenHistory?.length ?? 0) > 0) return
-    const estimate = estimateContextTokens(conversation.messages)
-    if (estimate <= 0 || estimate === conversation.tokensUsed) return
+    const estimate = estimatedContextFill({
+      sawUsage: turn.sawUsage,
+      cancelled: turn.cancelled,
+      historyLength: conversation.tokenHistory?.length ?? 0,
+      estimate: estimateContextTokens(conversation.messages),
+      tokensUsed: conversation.tokensUsed
+    })
+    if (estimate == null) return
     this.deps.conversations.setContextFill(conversationId, estimate)
     this.emitUsageSnapshot(conversationId)
   }
@@ -2012,7 +1786,7 @@ export class CliAgentHost {
     reason: CliHistoryHandoffReason = 'cwd-changed'
   ): void {
     const conversation = this.deps.conversations.get(conversationId)
-    if ((conversation?.messages.length ?? 0) === 0) return
+    if (!shouldRecordHistoryHandoff(conversation?.messages.length)) return
     this.historyHandoff.set(conversationId, { previousCwd, reason })
   }
 
@@ -2043,7 +1817,7 @@ export class CliAgentHost {
    */
   private buildSessionLossHandoff(conversationId: string): string | null {
     const conversation = this.deps.conversations.get(conversationId)
-    if (!conversation || conversation.messages.length === 0) return null
+    if (!conversation || !shouldRecordHistoryHandoff(conversation.messages.length)) return null
     const turn = this.turns.get(conversationId) ?? null
     const activeLeaf = this.deps.conversations.activeLeaf(conversationId)
     const leafId = turn ? turn.parentId : activeLeaf === ROOT_LEAF ? null : activeLeaf
@@ -2122,7 +1896,9 @@ export class CliAgentHost {
       raw,
       this.quotaWindowsFor(conversationId),
       code,
-      conversation?.model
+      conversation?.model,
+      t,
+      currentLocale()
     )
   }
 
@@ -2135,7 +1911,7 @@ export class CliAgentHost {
   ): Promise<void> {
     if (!this.turns.has(conversationId) || this.turns.get(conversationId) !== turn) return
     if (turn.settling) return
-    if (turn.cancelled || classifyCliError(raw, null, code) === 'cancelled') {
+    if (shouldSettleAsCancelled(turn.cancelled, raw, code)) {
       turn.cancelled = true
       turn.error = undefined
       turn.errorKind = undefined
@@ -2158,15 +1934,14 @@ export class CliAgentHost {
       turn.errorCode = undefined
       turn.errorDetail = undefined
       const keepPartial = turnHasAnswerContent(turn)
-      if (keepPartial) {
+      const retry = sameSessionRetryPlan(keepPartial)
+      if (retry.prepareReplayFromBlocks) {
         this.flushBuffers(conversationId, turn)
         this.sealOpenReasoning(turn)
         turn.textIndex = null
         turn.replay = createCliHistoryReplayGateFromBlocks(turn.blocks)
-        this.setPhase(conversationId, turn, 'retrying')
-      } else {
-        this.setPhase(conversationId, turn, 'thinking')
       }
+      this.setPhase(conversationId, turn, retry.phase)
       // Keep `settling` held through the backoff so a racing error event
       // cannot start a second retry for the same failure.
       await new Promise((resolve) =>
@@ -2183,7 +1958,7 @@ export class CliAgentHost {
         // Reuse the live process when it survived; respawn + resume otherwise.
         const next = await this.ensureRuntime(conversationId)
         next.lastTouch = Date.now()
-        if (keepPartial) {
+        if (retry.continueWithoutReprompt) {
           // Partial output already landed — do not re-prompt the original
           // user message (that would duplicate). Continue on this same VAV
           // turn so the UI stays on the live draft.
@@ -2277,20 +2052,15 @@ export class CliAgentHost {
     attachments?: string[],
     contextFile?: string | null
   ): ChatMessage {
-    const message: ChatMessage = {
+    const message = userTurnMessage({
       id: randomUUID(),
       parentId,
-      role: 'user',
-      content: text,
-      blocks: [{ kind: 'text', text }],
-      createdAt: Date.now(),
-      quoteMessageId: quote?.messageId,
-      quoteSummary: quote?.summary,
-      quoteRole: quote?.role,
-      contextBlocks: contextBlocks ?? undefined,
-      attachments: attachments?.length ? attachments : undefined,
-      contextFile: contextFile ?? undefined
-    }
+      text,
+      quote,
+      contextBlocks,
+      attachments,
+      contextFile
+    })
     this.deps.conversations.appendMessage(conversationId, message)
     this.deps.conversations.flush()
     this.deps.emit({ type: 'user', conversationId, message })
@@ -2309,9 +2079,8 @@ export class CliAgentHost {
     if (!allowed?.length) return
     const conversation = this.deps.conversations.get(conversationId)
     if (!conversation) return
-    const current = parseThinkingLevel(conversation.thinkingLevel)
-    if (allowed.includes(current)) return
-    const next = allowed.includes('max') ? 'max' : allowed[allowed.length - 1]!
+    const next = nextAllowedThinkingLevel(conversation.thinkingLevel, allowed)
+    if (!next) return
     this.deps.conversations.setThinkingLevel(conversationId, next)
     this.applyThinkingLevel(conversationId)
     this.deps.publish?.()
@@ -2327,112 +2096,12 @@ export class CliAgentHost {
     event: Extract<DriverEvent, { type: 'model-applied' }>
   ): void {
     const conversation = this.deps.conversations.get(conversationId)
-    if (!conversation || conversation.cliHost !== 'cursor') return
-    const family = cursorModelFamilyId(conversation.model ?? '')
-    if (!family || cursorFamilyAllowsThinkingOverlay(family)) return
-    if (event.thinkingLevel && event.thinkingLevel !== conversation.thinkingLevel) {
-      this.deps.conversations.setThinkingLevel(conversationId, event.thinkingLevel)
-      this.deps.publish?.()
-    }
-  }
-
-  private composePrompt(
-    text: string,
-    quote?: QuoteDraft | null,
-    contextBlocks?: PreviewRef[] | null,
-    attachments?: string[],
-    contextFile?: string | null,
-    fileReadOnly = false,
-    omitAttachmentPaths = false
-  ): string {
-    const parts: string[] = []
-    if (contextFile) {
-      parts.push(
-        fileReadOnly
-          ? `[Open file — read only]\n${contextFile}`
-          : `[Open file]\n${contextFile}`
-      )
-    }
-    if (contextBlocks?.length) {
-      for (const ref of contextBlocks) {
-        parts.push(
-          `[Selection ${ref.filePath}:${ref.startLine}-${ref.endLine}]\n${ref.text}${
-            ref.comment ? `\n(comment: ${ref.comment})` : ''
-          }`
-        )
-      }
-    }
-    if (attachments?.length && !omitAttachmentPaths) {
-      parts.push(`[Attachments]\n${attachments.map((a) => `- ${a}`).join('\n')}`)
-    }
-    if (quote?.summary) {
-      parts.push(`[Quoted ${quote.role} message]\n${quote.summary}`)
-    }
-    parts.push(text)
-    return parts.join('\n\n')
+    if (!conversation) return
+    const patch = cursorLockedFamilyThinkingPatch(conversation, event)
+    if (!patch) return
+    this.deps.conversations.setThinkingLevel(conversationId, patch.thinkingLevel)
+    this.deps.publish?.()
   }
 }
 
-function findChecklistIndex(blocks: MessageBlock[]): number | null {
-  for (let i = 0; i < blocks.length; i++) {
-    const block = blocks[i]
-    if (block?.kind === 'toolCall' && block.tool === 'plan') return i
-  }
-  return null
-}
-
-function sealCliPlanBlocks(
-  blocks: MessageBlock[],
-  mode: 'cancel' | 'error' | 'success'
-): void {
-  for (const block of blocks) {
-    if (block.kind !== 'toolCall' || block.tool !== 'plan') continue
-    const input = projectChecklistInput(parseToolInput(block.input))
-    if (input.steps.length === 0) continue
-    const steps = sealPlanSteps(input.steps, mode, {
-      cancelled: t('common.cancelled'),
-      failed: t('common.failed')
-    })
-    const done = steps.filter((step) => step.status === 'done').length
-    block.input = inputJson({ title: input.title, steps })
-    block.summary = `Plan · ${input.title} (${done}/${steps.length})`
-    if (block.status === 'pending' || block.status === 'executing') {
-      block.status = 'completed'
-    }
-  }
-}
-
-function isPlanDocRejectText(text: string): boolean {
-  const line = text.split('\n')[0]?.trim() ?? ''
-  return (
-    isApprovalDenyText(text) ||
-    line === zhCN['planDoc.reject'] ||
-    line === en['planDoc.reject'] ||
-    line === zhCN['common.cancel'] ||
-    line === en['common.cancel']
-  )
-}
-
-function extractUrlFromInput(block: MessageBlock | undefined): string | null {
-  if (!block || block.kind !== 'toolCall') return null
-  const parsed = parseToolInput(block.input)
-  return typeof parsed.url === 'string' && parsed.url.trim() ? parsed.url.trim() : null
-}
-
-function isAskCancelText(text: string): boolean {
-  const line = text.split('\n')[0]?.trim() ?? ''
-  return (
-    isApprovalDenyText(text) ||
-    line === zhCN['common.cancel'] ||
-    line === en['common.cancel'] ||
-    line === '已取消'
-  )
-}
-
-/** Resolve AgentConfig for a host kind from settings. */
-export function agentConfigForHost(
-  kind: CliHostKind,
-  cliAgents: AgentConfig[] | null | undefined
-): AgentConfig | null {
-  return enabledCliAgents(cliAgents).find((a) => a.id === kind) ?? null
-}
+export { agentConfigForHost } from './agentConfig'

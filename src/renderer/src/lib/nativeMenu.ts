@@ -22,12 +22,14 @@ async function toNativeItems(
   handlers: Map<string, () => void>,
   prefix = ''
 ): Promise<NativeMenuItem[]> {
+  const padEmptyIcons = items.some((item) => item.icon && !item.divider && !item.header)
   return Promise.all(
     items.map(async (item, index): Promise<NativeMenuItem> => {
       const id = prefix ? `${prefix}.${index}` : String(index)
       if (item.divider) return { separator: true }
       if (item.header) return { header: true, label: item.label, enabled: false }
-      const resolved = item.icon ? await resolveMenuIcon(item.icon) : null
+      const request = item.icon ?? (padEmptyIcons ? { kind: 'spacer' as const } : null)
+      const resolved = request ? await resolveMenuIcon(request) : null
       const iconFields = resolved
         ? { icon: resolved.dataUrl, iconTemplate: resolved.template }
         : {}

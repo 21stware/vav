@@ -8,10 +8,12 @@
  * TS/JS AST parsing runs in the main process (see files.parseBlocks); this
  * module keeps sync parsers + hit-test helpers for the renderer canvas.
  */
-export type { PreviewBlock, PreviewBlockKind } from '@shared/previewBlock'
-export { isTsJsPath } from '@shared/previewBlock'
-import type { PreviewBlock } from '@shared/previewBlock'
-import { parsePythonIndentBlocks } from './previewPythonBlocks'
+export type { PreviewBlock, PreviewBlockKind } from '../../../shared/previewBlock.ts'
+export { isTsJsPath } from '../../../shared/previewBlock.ts'
+import type { PreviewBlock } from '../../../shared/previewBlock.ts'
+import { parsePythonIndentBlocks } from './previewPythonBlocks.ts'
+import { isLineOrientedPath } from './lineOrientedPath.ts'
+export { isLineOrientedPath }
 
 function slug(value: string): string {
   return value
@@ -703,6 +705,10 @@ export interface CsvSelectionModel {
   rows: string[][]
   /** Lightweight: table + column stubs only. Rows/cells are built on pick. */
   blocks: PreviewBlock[]
+  /** Body rows in the source (may exceed `rows.length` when the parse cap hits). */
+  totalRows: number
+  /** True when `rows` is a prefix of the full sheet. */
+  rowCapped: boolean
 }
 
 /** Always include column index — two headers can slug to the same token. */
@@ -820,7 +826,9 @@ function splitCsvLines(text: string): string[] {
  */
 export function parseCsvModel(text: string): CsvSelectionModel {
   const lines = splitCsvLines(text)
-  if (lines.length === 0) return { headers: [], rows: [], blocks: [] }
+  if (lines.length === 0) {
+    return { headers: [], rows: [], blocks: [], totalRows: 0, rowCapped: false }
+  }
 
   const headerLine = lines[0] ?? ''
   const headers = parseCsvLine(headerLine)
@@ -864,7 +872,14 @@ export function parseCsvModel(text: string): CsvSelectionModel {
     },
     ...colBlocks
   ]
-  return { headers, rows: body, blocks }
+  const totalRows = Math.max(0, lines.length - 1)
+  return {
+    headers,
+    rows: body,
+    blocks,
+    totalRows,
+    rowCapped: totalRows > body.length
+  }
 }
 
 function parseCsvLine(line: string): string[] {
@@ -933,43 +948,7 @@ const INDENT_STRUCTURED_EXTS = new Set(['yml', 'yaml', 'xml'])
 
 /** Pick the right block parser for a path. */
 /** Soft cap for structure indexing — large XML/JSON still scroll via virtualization. */
-const STRUCTURE_LINE_CAP = 5000
-
-const LINE_ORIENTED_EXTS = new Set([
-  'log',
-  'out',
-  'err',
-  'trace',
-  'syslog',
-  'logcat',
-  'nfo'
-])
-
-/**
- * Line-oriented files (.log, dense logs): selection is per-line via the canvas
- * hit-test, not a prebuilt block tree (which would be O(n) memory and group
- * continuous logs into one giant paragraph).
- */
-export function isLineOrientedPath(path: string, sampleText?: string): boolean {
-  const base = path.split(/[/\\]/).pop() ?? path
-  const ext = base.includes('.') ? base.split('.').pop()!.toLowerCase() : ''
-  if (LINE_ORIENTED_EXTS.has(ext)) return true
-  if (sampleText == null || sampleText.length < 200) return false
-  // Dense logs: many short lines, almost no blank separators.
-  let lines = 0
-  let blank = 0
-  for (let i = 0; i < sampleText.length && lines < 400; i++) {
-    if (sampleText.charCodeAt(i) === 10) {
-      lines++
-      // crude blank-line count: previous char was also newline or start
-    }
-  }
-  // Count blanks in first ~400 lines cheaply
-  const head = sampleText.split(/\r?\n/, 400)
-  if (head.length < 80) return false
-  blank = head.filter((l) => !l.trim()).length
-  return blank / head.length < 0.06
-}
+export const STRUCTURE_LINE_CAP = 5000
 
 export function lineBlockAt(line: number, text: string): PreviewBlock | null {
   if (line < 1) return null
@@ -1118,6 +1097,18 @@ export function blockAtLine(roots: PreviewBlock[], line: number): PreviewBlock |
     return current
   }
   return null
+}
+
+/**
+ * Pick a block for a line. Falls back to a single-line block when the
+ * structure index was capped (or the file is line-oriented).
+ */
+export function pickBlockAtLine(
+  roots: PreviewBlock[],
+  line: number,
+  text: string
+): PreviewBlock | null {
+  return blockAtLine(roots, line) ?? lineBlockAt(line, text)
 }
 
 /** Find a block by id anywhere in the tree. */

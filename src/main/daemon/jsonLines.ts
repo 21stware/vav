@@ -23,10 +23,14 @@ export type LineSocketListener = (value: unknown | null) => void
 export function attachLineReader(
   socket: Socket,
   onFrame: LineSocketListener,
-  opts?: { leftover?: string; maxBytes?: number }
+  opts?: { leftover?: string; maxBytes?: number; leftoverRef?: { value: string } }
 ): void {
   const max = opts?.maxBytes ?? Math.max(DAEMON_MAX_LINE_BYTES, REMOTE_MAX_LINE_BYTES)
   let buffer = opts?.leftover ?? ''
+  const syncLeftover = (): void => {
+    if (opts?.leftoverRef) opts.leftoverRef.value = buffer
+  }
+  syncLeftover()
   socket.setEncoding('utf8')
   socket.on('data', (chunk: string) => {
     buffer += chunk
@@ -36,6 +40,17 @@ export function attachLineReader(
     }
     const { values, rest } = drainJsonLines(buffer)
     buffer = rest
-    for (const value of values) onFrame(value)
+    for (let i = 0; i < values.length; i++) {
+      const unread = values
+        .slice(i + 1)
+        .map((value) => `${JSON.stringify(value)}\n`)
+        .join('')
+      buffer = unread + rest
+      syncLeftover()
+      onFrame(values[i])
+      if (socket.listenerCount('data') === 0) return
+    }
+    buffer = rest
+    syncLeftover()
   })
 }

@@ -41,7 +41,7 @@ struct PairingView: View {
                     .padding(.horizontal)
 
                 HStack {
-                    TextField("或粘贴 vav-remote:… 配对串", text: $manualText)
+                    TextField("或粘贴 vav-remote: / vav-daemon:// 配对串", text: $manualText)
                         .textFieldStyle(.roundedBorder)
                         .autocorrectionDisabled()
                         .textInputAutocapitalization(.never)
@@ -74,7 +74,7 @@ struct PairingView: View {
     private var hint: String {
         switch mode {
         case .firstRun:
-            return "在电脑上打开 VAV → 设置 → 连接，扫描配对二维码。之后还可以再加其他电脑。"
+            return "在电脑上打开 VAV → 设置 → 连接，扫描二维码，或粘贴 vavd 打印的配对 URI。"
         case .add:
             return "扫描另一台电脑上的配对二维码。已保存的电脑不会被覆盖。"
         }

@@ -77,6 +77,26 @@ struct SessionDetailView: View {
             }
             ToolbarItem(placement: .topBarTrailing) {
                 Menu {
+                    if client.host?.capabilities.favorite == true {
+                        Button {
+                            client.setFavorite(conversationId: session.id, favorite: !liveSession.favorite)
+                        } label: {
+                            Label(
+                                liveSession.favorite ? "取消收藏" : "收藏",
+                                systemImage: liveSession.favorite ? "star.slash" : "star"
+                            )
+                        }
+                    }
+                    if client.host?.capabilities.pin == true {
+                        Button {
+                            client.setPinned(conversationId: session.id, pinned: !liveSession.pinned)
+                        } label: {
+                            Label(
+                                liveSession.pinned ? "取消置顶" : "置顶",
+                                systemImage: liveSession.pinned ? "pin.slash" : "pin"
+                            )
+                        }
+                    }
                     Button("重命名") {
                         renameTitle = liveSession.title
                         showRename = true
@@ -112,8 +132,12 @@ struct SessionDetailView: View {
             }
         }
         .onAppear {
+            client.setViewingConversation(session.id)
             client.requestThread(conversationId: session.id)
             client.requestControls(conversationId: session.id)
+        }
+        .onDisappear {
+            client.setViewingConversation(nil, ifCurrent: session.id)
         }
         .onChange(of: isConnected) { _, on in
             if on {
@@ -148,7 +172,16 @@ struct SessionDetailView: View {
                     } else if load == .loading && messages.isEmpty {
                         HStack(spacing: 8) {
                             ProgressView()
-                            Text("正在同步对话…")
+                            Text("正在同步对话…公网会慢一些，请稍等")
+                                .font(.footnote)
+                                .foregroundStyle(.secondary)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.top, 8)
+                    } else if load == .loading {
+                        HStack(spacing: 8) {
+                            ProgressView()
+                            Text("正在更新对话…")
                                 .font(.footnote)
                                 .foregroundStyle(.secondary)
                         }
@@ -245,7 +278,7 @@ struct SessionDetailView: View {
                 .foregroundStyle(.secondary)
             workspaceProse
             if load == .unavailable {
-                Text("这台电脑上的 VAV 还不能同步对话记录。仍可在下方发消息。")
+                Text("对话同步超时。下拉返回再进，或到设置里点立即重连。")
                     .font(.system(size: 13))
                     .foregroundStyle(.tertiary)
             }

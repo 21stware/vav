@@ -53,6 +53,8 @@ export type HostDiscoveryPeer = {
   platform?: string
 }
 
+export type { IncomingController, IncomingControllerState } from './daemonProtocol'
+
 export type ScreenshotInitPayload = {
   imagePath: string
   locale: AppLocale
@@ -859,11 +861,10 @@ export interface VavApi {
     pickWorkingDirectory(id: string): Promise<ConversationMeta[] | null>
     /** Mint a new Temporary Workspace folder and switch this session to it. */
     useTempWorkingDirectory(id: string): Promise<ConversationMeta[]>
-    /** Move a Temporary Workspace folder to a permanent path. */
+    /** Move a Temporary Workspace folder so destination contains `Workspace`. */
     locateWorkspace(
       id: string,
-      destinationDir: string,
-      name: string
+      destinationDir: string
     ): Promise<{ ok: true; conversations: ConversationMeta[] } | { ok: false; error: string }>
     remove(ids: string[]): Promise<{ removed: string[]; conversations: ConversationMeta[] }>
     /** Delete a message and its descendants. Remaining siblings stay. */
@@ -915,6 +916,16 @@ export interface VavApi {
       configId: string,
       value: string | boolean
     ): Promise<ConversationMeta[]>
+    /** ACP `_session/goal` or `/goal` slash. */
+    setAcpGoal(
+      id: string,
+      action: 'set' | 'pause' | 'resume' | 'clear',
+      objective?: string
+    ): Promise<
+      | { ok: true; via: 'rpc'; conversations: ConversationMeta[] }
+      | { ok: true; via: 'slash'; text: string; conversations: ConversationMeta[] }
+      | { ok: false; error: string; conversations: ConversationMeta[] }
+    >
     /** Deep-copies the thread up to `messageId` into a new conversation. */
     continueInNewSession(id: string, messageId: string): Promise<ConversationMeta | null>
     /** Deep-copies the whole conversation tree into a new session. */
@@ -1005,7 +1016,7 @@ export interface VavApi {
      */
     readTextWindow(
       path: string,
-      opts?: { startByte?: number; maxBytes?: number; force?: boolean }
+      opts?: { startByte?: number; maxBytes?: number; force?: boolean; conversationId?: string }
     ): Promise<TextWindowResult>
     /**
      * Binary file bytes as base64 for mature client renderers
@@ -1013,14 +1024,15 @@ export interface VavApi {
      * for large files — base64 is a convenience, not a product size gate.
      */
     readBinary(
-      path: string
+      path: string,
+      conversationId?: string
     ): Promise<{ ok: true; base64: string; size: number; mime: string } | { ok: false; error: string }>
     /**
      * Byte-window raw read for hex dump. Ephemeral override view — not stored.
      */
     readBinaryWindow(
       path: string,
-      opts?: { startByte?: number; maxBytes?: number }
+      opts?: { startByte?: number; maxBytes?: number; conversationId?: string }
     ): Promise<
       | {
           ok: true
@@ -1035,7 +1047,8 @@ export interface VavApi {
     /** Write raw bytes (base64) — office discard / binary restore. */
     writeBinary(
       path: string,
-      base64: string
+      base64: string,
+      conversationId?: string
     ): Promise<{ ok: true } | { ok: false; error?: string }>
     /**
      * Document sandbox: clone real path → working copy (or return existing).
@@ -1070,7 +1083,8 @@ export interface VavApi {
     /** Overwrite an existing text file (file-preview Save). */
     write(
       path: string,
-      content: string
+      content: string,
+      conversationId?: string
     ): Promise<{ ok: true } | { ok: false; error?: string }>
     /**
      * Write bytes/text into the OS temp clip folder and return that path.
@@ -1101,18 +1115,22 @@ export interface VavApi {
     ): Promise<{ ok: true; path: string } | { ok: false; cancelled?: boolean; error?: string }>
     rename(
       path: string,
-      newName: string
+      newName: string,
+      conversationId?: string
     ): Promise<{ ok: true; path: string } | { ok: false; error: string }>
-    trash(paths: string[]): Promise<{ ok: true } | { ok: false; error: string }>
+    trash(
+      paths: string[],
+      conversationId?: string
+    ): Promise<{ ok: true } | { ok: false; error: string }>
     /** Metadata + optional data URL for in-app preview. */
-    inspect(path: string): Promise<FileInspectResult>
+    inspect(path: string, conversationId?: string): Promise<FileInspectResult>
     /**
      * Background structured office/PDF parse (block pick / search).
      * Never required for first paint — call after provisional canvas mounts.
      */
     inspectStructured(
       path: string,
-      opts?: { maxBlocks?: number; maxRows?: number }
+      opts?: { maxBlocks?: number; maxRows?: number; conversationId?: string }
     ): Promise<{
       ok: true
       structured: import('./structuredDoc').StructuredDocument
@@ -1140,28 +1158,34 @@ export interface VavApi {
 
   /** Workspace git status / worktree / branch / diff (CLI wrapper). */
   git: {
-    status(cwd: string): Promise<GitSnapshot>
+    status(cwd: string, conversationId?: string): Promise<GitSnapshot>
     diff(
       cwd: string,
       path: string,
-      opts?: { staged?: boolean }
+      opts?: { staged?: boolean; conversationId?: string }
     ): Promise<GitResult<string>>
     /** Blob at `ref:path` as base64 (image diffs). */
     showBase64(
       cwd: string,
       path: string,
-      ref?: string
+      ref?: string,
+      conversationId?: string
     ): Promise<GitResult<{ base64: string | null; missing: boolean }>>
-    init(cwd: string): Promise<GitResult<GitSnapshot>>
+    init(cwd: string, conversationId?: string): Promise<GitResult<GitSnapshot>>
     createBranch(
       cwd: string,
       name: string,
-      opts?: { checkout?: boolean }
+      opts?: { checkout?: boolean; conversationId?: string }
     ): Promise<GitResult<{ branch: string }>>
-    checkoutBranch(cwd: string, name: string): Promise<GitResult<{ branch: string }>>
+    checkoutBranch(
+      cwd: string,
+      name: string,
+      conversationId?: string
+    ): Promise<GitResult<{ branch: string }>>
     createWorktree(
       cwd: string,
-      options: { path: string; newBranch?: string; branch?: string }
+      options: { path: string; newBranch?: string; branch?: string },
+      conversationId?: string
     ): Promise<GitResult<{ path: string; branch: string | null }>>
   }
 
@@ -1545,6 +1569,10 @@ export interface VavApi {
     >
     cancelPair(): Promise<void>
     forget(machineId: string): Promise<void>
+    incoming(): Promise<import('./daemonProtocol').IncomingController[]>
+    disconnectIncoming(grantId: string): Promise<void>
+    unpairIncoming(grantId: string): Promise<void>
+    rotateOffer(): Promise<void>
     discovered(): Promise<HostDiscoveryPeer[]>
     listDir(machineId: string, path: string): Promise<DirectoryListing>
     home(machineId: string): Promise<string>
@@ -1553,6 +1581,9 @@ export interface VavApi {
     probeProviders(machineId: string): Promise<import('./workspaceHost').HostProviderInfo[]>
     onChanged(handler: (hosts: import('./workspaceHost').WorkspaceHostInfo[]) => void): () => void
     onDiscovered(handler: (peers: HostDiscoveryPeer[]) => void): () => void
+    onIncomingChanged(
+      handler: (controllers: import('./daemonProtocol').IncomingController[]) => void
+    ): () => void
     onPickFolder(handler: (machineId: string) => void): () => void
   }
 
@@ -1642,6 +1673,7 @@ export type MenuCommand =
   | 'toggle-tools-panel'
   | 'toggle-panel-segment'
   | 'new-terminal'
+  | 'split-bash'
   /** Ctrl+` — expand tools tray Terminal and focus bash. */
   | 'focus-bash'
   | 'switch-workdir'
@@ -1659,6 +1691,10 @@ export type MenuCommand =
   | 'pick-attachments'
   /** ⌘⇧P — open the composer permission (approval mode) menu. */
   | 'switch-approval'
+  /** Session menu: set the active conversation's approval mode. */
+  | 'set-approval-auto'
+  | 'set-approval-bypass'
+  | 'set-approval-edit'
   /** Capture a screen region, annotate, attach to the composer. */
   | 'screenshot'
   | 'send'
@@ -1775,6 +1811,7 @@ export const IPC = {
   convSetFast: 'vav:conv:set-fast',
   convSetAcpMode: 'vav:conv:set-acp-mode',
   convSetAcpConfig: 'vav:conv:set-acp-config',
+  convSetAcpGoal: 'vav:conv:set-acp-goal',
   convAccountQuota: 'vav:conv:account-quota',
   convContinueNew: 'vav:conv:continue-new',
   convDuplicate: 'vav:conv:duplicate',
@@ -1938,6 +1975,11 @@ export const IPC = {
   hostsPairLan: 'vav:hosts:pair-lan',
   hostsCancelPair: 'vav:hosts:cancel-pair',
   hostsForget: 'vav:hosts:forget',
+  hostsIncoming: 'vav:hosts:incoming',
+  hostsDisconnectIncoming: 'vav:hosts:disconnect-incoming',
+  hostsUnpairIncoming: 'vav:hosts:unpair-incoming',
+  hostsRotateOffer: 'vav:hosts:rotate-offer',
+  hostsIncomingChanged: 'vav:hosts:incoming-changed',
   hostsDiscovered: 'vav:hosts:discovered',
   hostsListDir: 'vav:hosts:list-dir',
   hostsHome: 'vav:hosts:home',
