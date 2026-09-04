@@ -1,0 +1,4 @@
+{
+  "name": "VAV",
+  "install": "sudo apt-get update\nsudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends xvfb x11-utils libnss3 libatk1.0-0t64 libatk-bridge2.0-0t64 libcups2t64 libgtk-3-0t64 libgbm1 libasound2t64 libxshmfence1 libxdamage1 libxcomposite1 libxrandr2 libxkbcommon0 libpango-1.0-0 libcairo2 libdrm2 libxfixes3 libglib2.0-0t64 dbus-x11\nnpm ci\nnode node_modules/electron/install.js\nnode scripts/fetch-officecli.mjs"
+}
