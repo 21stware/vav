@@ -2,6 +2,7 @@ import { spawn, type ChildProcess } from 'node:child_process'
 import { mkdirSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { parseDaemonPairing } from '../src/shared/daemonProtocol.ts'
 
 const root = join(__dirname, '..')
@@ -40,7 +41,7 @@ export async function startVavd(options: StartVavdOptions = {}): Promise<VavdHan
     process.execPath,
     [
       '--import',
-      join(root, 'scripts/register-shared-alias.mjs'),
+      pathToFileURL(join(root, 'scripts/register-shared-alias.mjs')).href,
       '--experimental-strip-types',
       join(root, 'src/main/daemon/vavd.ts'),
       '--port',

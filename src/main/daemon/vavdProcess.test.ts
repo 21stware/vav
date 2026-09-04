@@ -3,6 +3,7 @@ import { execFile, spawn, type ChildProcess } from 'node:child_process'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { after, before, describe, it } from 'node:test'
 import { promisify } from 'node:util'
 import { parseDaemonPairing } from '../../shared/daemonProtocol.ts'
@@ -11,6 +12,8 @@ import { connectPhone } from '../cli/vavPhoneClient.ts'
 const execFileAsync = promisify(execFile)
 
 const root = join(import.meta.dirname, '../../..')
+/** `--import` needs a file:// URL on Windows (`D:` is not a valid scheme). */
+const aliasHook = pathToFileURL(join(root, 'scripts/register-shared-alias.mjs')).href
 
 type RunningVavd = {
   pairing: string
@@ -26,7 +29,7 @@ async function spawnVavd(state: string): Promise<RunningVavd> {
     process.execPath,
     [
       '--import',
-      join(root, 'scripts/register-shared-alias.mjs'),
+      aliasHook,
       '--experimental-strip-types',
       join(root, 'src/main/daemon/vavd.ts'),
       '--listen',
@@ -143,7 +146,7 @@ describe('vavd process', () => {
       process.execPath,
       [
         '--import',
-        join(root, 'scripts/register-shared-alias.mjs'),
+        aliasHook,
         '--experimental-strip-types',
         join(root, 'src/main/cli/vavRemoteCli.ts'),
         'send',
