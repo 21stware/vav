@@ -1,0 +1,31 @@
+import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
+import { describe, it } from 'node:test'
+import { WEB_UI_HTML } from './webUi.ts'
+
+const extDir = join(import.meta.dirname, '../../../extension')
+const extension = [
+  readFileSync(join(extDir, 'sidepanel.js'), 'utf8'),
+  readFileSync(join(extDir, 'sidepanel.html'), 'utf8')
+].join('\n')
+
+/**
+ * Chrome side panel and the bundled web page must stay the same phone-protocol
+ * client. They are shells — turns stay in vavd.
+ */
+describe('web and Chrome clients', () => {
+  it('speak the same phone-protocol verbs over WebSocket', () => {
+    for (const src of [extension, WEB_UI_HTML]) {
+      assert.match(src, /role:\s*['"]phone['"]/)
+      assert.match(src, /type:\s*['"]hello['"]/)
+      assert.match(src, /type:\s*['"]create['"]/)
+      assert.match(src, /type:\s*['"]send['"]/)
+      assert.match(src, /type:\s*['"]configure['"]/)
+      assert.match(src, /approvalMode/)
+      assert.match(src, /\bmodel\b/)
+      assert.match(src, /ws\.send\(JSON\.stringify/)
+      assert.match(src, /\/vav/)
+    }
+  })
+})

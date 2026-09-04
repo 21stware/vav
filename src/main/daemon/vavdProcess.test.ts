@@ -177,4 +177,62 @@ describe('vavd process', () => {
     assert.match(html, /VAV/)
     assert.match(html, /\/vav/)
   })
+
+  it('lets a Chrome-role web socket send and configure a model', async () => {
+    assert.ok(daemon?.webPort)
+    const ws = new WebSocket(`ws://127.0.0.1:${daemon.webPort}/vav`)
+    await new Promise<void>((resolve, reject) => {
+      ws.addEventListener('open', () => resolve())
+      ws.addEventListener('error', () => reject(new Error('ws error')))
+    })
+    try {
+      const next = (until: (raw: { type?: string; phase?: string; conversationId?: string }) => boolean) =>
+        new Promise<unknown[]>((resolve, reject) => {
+          const got: unknown[] = []
+          const timer = setTimeout(() => reject(new Error('ws timeout')), 8000)
+          const onMsg = (event: MessageEvent): void => {
+            for (const line of String(event.data).split('\n').filter(Boolean)) {
+              const raw = JSON.parse(line) as { type?: string; phase?: string; conversationId?: string }
+              got.push(raw)
+              if (until(raw)) {
+                clearTimeout(timer)
+                ws.removeEventListener('message', onMsg)
+                resolve(got)
+              }
+            }
+          }
+          ws.addEventListener('message', onMsg)
+        })
+      ws.send(JSON.stringify({ type: 'hello', proto: 1, auth: daemon.secret, role: 'phone', device: 'chrome' }))
+      await next((raw) => raw.type === 'welcome')
+      ws.send(JSON.stringify({ type: 'create' }))
+      const created = (await next((raw) => raw.type === 'created')) as Array<{
+        type?: string
+        session?: { id?: string }
+      }>
+      const conversationId = created.find((row) => row.type === 'created')?.session?.id
+      assert.ok(conversationId)
+      ws.send(
+        JSON.stringify({
+          type: 'configure',
+          conversationId,
+          model: 'process-chrome-model',
+          approvalMode: 'bypass'
+        })
+      )
+      const controls = (await next(
+        (raw) => raw.type === 'controls' && raw.conversationId === conversationId
+      )) as Array<{ type?: string; model?: string; approval?: string }>
+      const row = controls.find((item) => item.type === 'controls')
+      assert.equal(row?.model, 'process-chrome-model')
+      assert.equal(row?.approval, 'bypass')
+      ws.send(JSON.stringify({ type: 'send', conversationId, text: 'hello from chrome ws' }))
+      const turns = (await next(
+        (raw) => raw.type === 'turn' && raw.phase === 'done' && raw.conversationId === conversationId
+      )) as Array<{ type?: string; phase?: string }>
+      assert.ok(turns.some((item) => item.type === 'turn' && item.phase === 'done'))
+    } finally {
+      ws.close()
+    }
+  })
 })

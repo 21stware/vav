@@ -14,6 +14,33 @@ import { encodeLine, parseServerMessage, type RemoteServerMessage } from '../../
 
 const SECRET = '0123456789abcdef01234567'
 
+function readWsFrames(
+  ws: WebSocket,
+  until: (msg: RemoteServerMessage) => boolean,
+  timeoutMs = 4000
+): Promise<RemoteServerMessage[]> {
+  const got: RemoteServerMessage[] = []
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(
+      () => reject(new Error(`ws timeout; saw ${got.map((m) => m.type).join(',')}`)),
+      timeoutMs
+    )
+    const onMsg = (event: MessageEvent): void => {
+      for (const line of String(event.data).split('\n').filter(Boolean)) {
+        const parsed = parseServerMessage(JSON.parse(line) as unknown)
+        if (!parsed) continue
+        got.push(parsed)
+        if (until(parsed)) {
+          clearTimeout(timer)
+          ws.removeEventListener('message', onMsg)
+          resolve(got)
+        }
+      }
+    }
+    ws.addEventListener('message', onMsg)
+  })
+}
+
 async function readFrames(
   socket: { setEncoding: (enc: string) => void; on: (ev: string, fn: (chunk: string) => void) => void },
   until: (msg: RemoteServerMessage) => boolean,
@@ -401,6 +428,103 @@ describe('VavControlPlane', () => {
       await configured
       ws.close()
     } finally {
+      web.close()
+      plane.dispose()
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('lets the Chrome/web socket client stream, configure a model, and approve a write', async () => {
+    process.env.VAV_E2E_STUB_STREAM = '1'
+    const dir = await mkdtemp(join(tmpdir(), 'vav-chrome-ws-'))
+    const host = createLocalWorkspaceHost({ name: 'chrome' })
+    const plane = createVavControlPlane({
+      stateDir: dir,
+      host,
+      secret: () => SECRET,
+      appVersion: 'test'
+    })
+    plane.load()
+    const web = await startVavWebBridge({
+      listen: '127.0.0.1',
+      port: 0,
+      hub: plane.hub,
+      secret: () => SECRET
+    })
+    const ws = new WebSocket(`ws://127.0.0.1:${web.port}/vav`)
+    try {
+      await new Promise<void>((resolve, reject) => {
+        ws.addEventListener('open', () => resolve())
+        ws.addEventListener('error', () => reject(new Error('ws error')))
+      })
+      // Same hello the Chrome extension / bundled web page send.
+      ws.send(JSON.stringify({ type: 'hello', proto: 1, auth: SECRET, role: 'phone', device: 'chrome' }))
+      await readWsFrames(ws, (msg) => msg.type === 'welcome')
+      ws.send(JSON.stringify({ type: 'create' }))
+      const created = await readWsFrames(ws, (msg) => msg.type === 'created')
+      const createdMsg = created.find((m) => m.type === 'created')
+      assert.ok(createdMsg && createdMsg.type === 'created')
+      const conversationId = createdMsg.session.id
+
+      ws.send(
+        JSON.stringify({
+          type: 'configure',
+          conversationId,
+          model: 'chrome-model',
+          approvalMode: 'edit'
+        })
+      )
+      const controls = await readWsFrames(
+        ws,
+        (msg) => msg.type === 'controls' && msg.conversationId === conversationId
+      )
+      const row = controls.find((m) => m.type === 'controls')
+      assert.ok(row && row.type === 'controls')
+      assert.equal(row.model, 'chrome-model')
+      assert.equal(row.approval, 'edit')
+
+      ws.send(JSON.stringify({ type: 'send', conversationId, text: 'stream from chrome' }))
+      const streamed = await readWsFrames(ws, (msg) => msg.type === 'turn' && msg.phase === 'done', 4000)
+      assert.ok(
+        streamed.some(
+          (m) =>
+            m.type === 'turn' &&
+            (m.thinking || m.blocks?.some((b) => b.kind === 'reasoning'))
+        )
+      )
+      assert.ok(
+        streamed.some(
+          (m) => m.type === 'turn' && m.blocks?.some((b) => b.kind === 'tool' && b.tool === 'fs_read')
+        )
+      )
+
+      delete process.env.VAV_E2E_STUB_STREAM
+      process.env.VAV_E2E_STUB_APPROVE = '1'
+      ws.send(JSON.stringify({ type: 'create' }))
+      const second = await readWsFrames(ws, (msg) => msg.type === 'created')
+      const secondMsg = second.find((m) => m.type === 'created')
+      assert.ok(secondMsg && secondMsg.type === 'created')
+      const writeId = secondMsg.session.id
+      ws.send(JSON.stringify({ type: 'send', conversationId: writeId, text: 'write hello.md' }))
+      const awaiting = await readWsFrames(
+        ws,
+        (msg) => msg.type === 'turn' && msg.phase === 'awaiting' && msg.conversationId === writeId
+      )
+      const card = awaiting.find((m) => m.type === 'turn' && m.phase === 'awaiting')
+      assert.ok(card && card.type === 'turn')
+      const toolCallId = card.awaiting?.id
+      assert.ok(toolCallId)
+      ws.send(JSON.stringify({ type: 'reply', conversationId: writeId, toolCallId, answer: 'Approve' }))
+      await readWsFrames(ws, (msg) => msg.type === 'turn' && msg.phase === 'done' && msg.conversationId === writeId)
+      const conversation = plane.conversations.get(writeId)
+      assert.ok(conversation?.workingDirectory)
+      const written = await readFile(join(conversation.workingDirectory, 'hello.md'), 'utf8')
+      assert.equal(written, 'patched\n')
+      ws.close()
+    } finally {
+      delete process.env.VAV_E2E_STUB_STREAM
+      delete process.env.VAV_E2E_STUB_APPROVE
+      ws.close()
       web.close()
       plane.dispose()
       await rm(dir, { recursive: true, force: true })
