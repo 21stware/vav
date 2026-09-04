@@ -6,7 +6,7 @@ User-facing changes by release. Unreleased work lives at the top until the next 
 
 ### Headless vavd
 
-- Desktop can launch as a vavd UI with `VAVD_URI` / `--vavd-uri`, or spawn the daemon with `VAVD_SPAWN=1` / `--with-vavd`.
+- Desktop can launch as a vavd UI with `VAVD_URI` / `--vavd-uri`, or spawn the daemon with `VAVD_SPAWN=1` / `--with-vavd`. Packaged apps spawn the bundled daemon by default (`--no-vavd` / `VAVD_SPAWN=0` keeps the in-process host).
 - GitHub Releases now attach the `@21stware/vavd` tarball and the Chrome extension zip, and fail if any required asset is missing.
 - Packaged apps ship `vavd.js` so `--with-vavd` works without the git checkout.
 

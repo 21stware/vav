@@ -28,7 +28,14 @@ describe('resolveVavdSpawn', () => {
     assert.equal(resolveVavdSpawn({}, []), false)
   })
 
+  it('spawns by default in a packaged app, unless opted out', () => {
+    assert.equal(resolveVavdSpawn({}, [], { packaged: true }), true)
+    assert.equal(resolveVavdSpawn({ VAVD_SPAWN: '0' }, [], { packaged: true }), false)
+    assert.equal(resolveVavdSpawn({}, ['--no-vavd'], { packaged: true }), false)
+  })
+
   it('does not spawn when a pairing URI is already set', () => {
     assert.equal(resolveVavdSpawn({ VAVD_SPAWN: '1', VAVD_URI: 'vav-daemon://x' }, []), false)
+    assert.equal(resolveVavdSpawn({}, [], { packaged: true }), true)
   })
 })

@@ -44,7 +44,7 @@ describe('spawnLocalVavd', () => {
     )
     assert.equal(resolved.cmd, process.execPath)
     assert.equal(resolved.asNode, false)
-    assert.equal(resolveNodeForVavd({}, { electron: '37.0.0' }).cmd, 'node')
+    assert.equal(resolveNodeForVavd({}, { electron: '37.0.0' }).asNode, true)
     assert.equal(resolveNodeForVavd({}, {}).asNode, false)
   })
 

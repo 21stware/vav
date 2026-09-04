@@ -32,12 +32,21 @@ function hasFlag(argv: string[], flag: string): boolean {
 
 /**
  * Spawn a local vavd and auto-pair so the desktop window is a shell.
- * `--with-vavd` / `VAVD_SPAWN=1`. Ignored when a pairing URI is already set.
+ * `--with-vavd` / `VAVD_SPAWN=1`. Packaged apps spawn by default (the
+ * installer ships vavd.js). `VAVD_SPAWN=0` / `--no-vavd` keeps the in-process
+ * host. Ignored when a pairing URI is already set.
  */
 export function resolveVavdSpawn(
   env: NodeJS.ProcessEnv = process.env,
-  argv: string[] = process.argv
+  argv: string[] = process.argv,
+  opts: { packaged?: boolean } = {}
 ): boolean {
   if (resolveVavdPairing(env, argv)) return false
-  return hasFlag(argv, '--with-vavd') || env.VAVD_SPAWN === '1' || env.VAVD_SPAWN === 'true'
+  if (env.VAVD_SPAWN === '0' || env.VAVD_SPAWN === 'false' || hasFlag(argv, '--no-vavd')) {
+    return false
+  }
+  if (hasFlag(argv, '--with-vavd') || env.VAVD_SPAWN === '1' || env.VAVD_SPAWN === 'true') {
+    return true
+  }
+  return opts.packaged === true
 }

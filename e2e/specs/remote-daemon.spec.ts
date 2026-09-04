@@ -383,12 +383,19 @@ test('desktop launches as a vavd client via VAVD_URI', async () => {
       (id) => window.vav.conversations.setApprovalMode(id, 'bypass'),
       sessionId
     )
+    await remote.evaluate(
+      (id) => window.vav.conversations.setModel(id, 'e2e-desktop-model'),
+      sessionId
+    )
     await expect
       .poll(async () => {
         const conversation = await remote.evaluate((id) => window.vav.conversations.get(id), sessionId)
-        return conversation?.approvalMode ?? null
+        return {
+          approval: conversation?.approvalMode ?? null,
+          model: conversation?.model ?? null
+        }
       })
-      .toBe('bypass')
+      .toEqual({ approval: 'bypass', model: 'e2e-desktop-model' })
 
     await remote.locator('[data-testid="composer-input"]').fill('ping from auto-paired desktop')
     await remote.locator('[data-testid="composer-send"]').click()

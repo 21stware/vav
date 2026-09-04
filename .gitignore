@@ -4,6 +4,7 @@ blob-report/
 node_modules/
 out/
 release/
+release-sidecars/
 dist/
 build/.electron-brand-stamp
 *.tsbuildinfo

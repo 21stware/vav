@@ -100,7 +100,8 @@ export function resolveNodeForVavd(
   for (const candidate of [env.npm_node_execpath, env.NODE_BINARY]) {
     if (candidate && existsSync(candidate)) return { cmd: candidate, asNode: false }
   }
-  return { cmd: 'node', asNode: false }
+  // Packaged machines may have no `node` on PATH — run Electron as Node.
+  return { cmd: process.execPath, asNode: true }
 }
 
 function registerHook(root: string): string {
@@ -116,6 +117,7 @@ export async function spawnLocalVavd(
     throw new Error(`vavd not found from ${cwd} — run from the VAV repo, install the app bundle, or pass VAVD_URI`)
   }
   const root = entry.root
+  const ephemeralState = !options.stateDir
   const stateDir = options.stateDir ?? mkdtempSync(join(tmpdir(), 'vavd-spawn-'))
   const name = options.name ?? 'VAV Daemon'
   const flags = [
@@ -166,7 +168,7 @@ export async function spawnLocalVavd(
       if (stopped) return
       stopped = true
       child.kill('SIGTERM')
-      rmSync(stateDir, { recursive: true, force: true })
+      if (ephemeralState) rmSync(stateDir, { recursive: true, force: true })
     }
   }
 }

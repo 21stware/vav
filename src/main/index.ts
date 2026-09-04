@@ -7432,10 +7432,11 @@ if (!singleInstance) {
 
     mainWindow ??= createWindow()
     let vavdPairing = resolveVavdPairing(process.env, process.argv)
-    if (resolveVavdSpawn(process.env, process.argv)) {
+    if (resolveVavdSpawn(process.env, process.argv, { packaged: app.isPackaged })) {
       try {
         const spawned = await spawnLocalVavd({
           name: isE2eRuntime() ? 'E2E Daemon' : 'VAV Daemon',
+          stateDir: join(app.getPath('userData'), 'vavd'),
           stubTurn: isE2eRuntime(),
           stubStream: isE2eRuntime()
         })
