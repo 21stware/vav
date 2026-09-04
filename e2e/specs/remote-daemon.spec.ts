@@ -107,8 +107,10 @@ test('pair vavd, open its folder, list a file that only exists there', async () 
         workingDirectory: active?.workingDirectory ?? null
       }
     }, paired.host.id)
-    expect(defaultSession.workingDirectory).toBe(defaultSession.home)
+    // First session on a VAV host is a minted temp Workspace, not $HOME.
+    expect(defaultSession.workingDirectory).toMatch(/[/\\]vav[/\\][a-f0-9]+[/\\]Workspace$/)
     expect(defaultSession.workingDirectory).not.toBe(harness.workspace)
+    expect(defaultSession.home).toBeTruthy()
 
     const recents = await remote.evaluate(
       async () => (await window.vav.settings.get()).recentWorkspaceDirectories
