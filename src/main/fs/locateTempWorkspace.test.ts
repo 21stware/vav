@@ -26,6 +26,7 @@ describe('locateTempWorkspaceToDir', () => {
       const result = await locateTempWorkspaceToDir({
         workdir,
         destinationDir: dest,
+        platform: process.platform,
         fs: createLocalHostFs(),
         crossDeviceCopy: true
       })
@@ -53,6 +54,7 @@ describe('locateTempWorkspaceToDir', () => {
       const result = await locateTempWorkspaceToDir({
         workdir,
         destinationDir: dest,
+        platform: process.platform,
         fs: createLocalHostFs(),
         crossDeviceCopy: true
       })
@@ -76,6 +78,7 @@ describe('locateTempWorkspaceToDir', () => {
       const result = await locateTempWorkspaceToDir({
         workdir,
         destinationDir: dest,
+        platform: process.platform,
         fs: createLocalHostFs(),
         crossDeviceCopy: true
       })
