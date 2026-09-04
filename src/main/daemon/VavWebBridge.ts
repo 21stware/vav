@@ -6,6 +6,7 @@ import { createHash } from 'node:crypto'
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 import { EventEmitter } from 'node:events'
 import type { Socket as NetSocket } from 'node:net'
+import type { Duplex } from 'node:stream'
 import type { RemoteControlHub } from '../remote/RemoteControlHub.ts'
 import { WEB_UI_HTML } from './webUi.ts'
 
@@ -21,9 +22,9 @@ export type VavWebBridgeOpts = {
 class WsSocket extends EventEmitter {
   destroyed = false
   private chunks: Buffer[] = []
-  private readonly raw: import('node:net').Socket
+  private readonly raw: Duplex
 
-  constructor(raw: import('node:net').Socket) {
+  constructor(raw: Duplex) {
     super()
     this.raw = raw
     raw.on('error', (err) => this.emit('error', err))
@@ -63,10 +64,10 @@ class WsSocket extends EventEmitter {
     while (buf.length >= 2) {
       const decoded = decodeWsFrame(buf)
       if (!decoded) {
-        this.chunks.push(buf)
+        this.chunks.push(Buffer.from(buf))
         return
       }
-      buf = decoded.rest
+      buf = Buffer.from(decoded.rest)
       if (decoded.opcode === 8) {
         this.destroy()
         return
@@ -77,7 +78,7 @@ class WsSocket extends EventEmitter {
         this.emit('data', line)
       }
     }
-    if (buf.length) this.chunks.push(buf)
+    if (buf.length) this.chunks.push(Buffer.from(buf))
   }
 }
 
@@ -129,7 +130,7 @@ function decodeWsFrame(buf: Buffer): { opcode: number; payload: Buffer; rest: Bu
   return { opcode, payload, rest: buf.subarray(offset + maskLen + len) }
 }
 
-function acceptWs(req: IncomingMessage, socket: import('node:net').Socket): WsSocket | null {
+function acceptWs(req: IncomingMessage, socket: Duplex): WsSocket | null {
   const key = req.headers['sec-websocket-key']
   if (typeof key !== 'string' || !key) return null
   const accept = createHash('sha1').update(key + WS_GUID).digest('base64')
