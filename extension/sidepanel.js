@@ -61,6 +61,10 @@ function onMessage(msg) {
       })
       .join('')
   }
+  if (msg.type === 'controls' && msg.conversationId === active) {
+    if (msg.model) $('model').value = msg.model
+    if (msg.approval) $('approval').value = msg.approval
+  }
   if (msg.type === 'turn' && msg.conversationId === active) {
     if (msg.draft) {
       draft = msg.draft
@@ -68,6 +72,9 @@ function onMessage(msg) {
       const frozen = log.dataset.frozen || log.textContent
       log.dataset.frozen = frozen
       log.textContent = frozen + (draft ? `VAV:\n${draft}\n` : '')
+    }
+    if (msg.phase === 'awaiting' && msg.awaiting) {
+      $('log').textContent += `VAV asks: ${msg.awaiting.prompt || msg.awaiting.title || ''}\n`
     }
     if (msg.phase === 'done' || msg.phase === 'error' || msg.phase === 'cancelled') {
       draft = ''
@@ -106,6 +113,15 @@ function connect() {
 
 $('connect').onclick = connect
 $('create').onclick = () => send({ type: 'create' })
+$('apply').onclick = () => {
+  if (!active) return
+  send({
+    type: 'configure',
+    conversationId: active,
+    model: $('model').value.trim(),
+    approvalMode: $('approval').value
+  })
+}
 $('sessions').onclick = (event) => {
   const id = event.target.closest('li')?.dataset.id
   if (id) openSession(id)

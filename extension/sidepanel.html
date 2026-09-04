@@ -19,6 +19,7 @@
     #log { flex:1; overflow:auto; padding:12px 14px; white-space:pre-wrap; }
     .composer { display:flex; gap:8px; padding:10px 12px; }
     .composer textarea { flex:1; min-height:40px; }
+    .controls { display:flex; gap:8px; padding:0 12px 8px; }
     #status { color:var(--muted); font-size:12px; }
   </style>
 </head>
@@ -35,6 +36,15 @@
   </header>
   <ul id="sessions"></ul>
   <div id="log"></div>
+  <div class="controls">
+    <input id="model" placeholder="Model id" />
+    <select id="approval">
+      <option value="auto">Normal</option>
+      <option value="bypass">Bypass</option>
+      <option value="edit">Read</option>
+    </select>
+    <button type="button" id="apply" class="ghost">Apply</button>
+  </div>
   <form class="composer" id="sendForm">
     <textarea id="text" placeholder="Ask…" rows="2"></textarea>
     <button type="submit">Send</button>

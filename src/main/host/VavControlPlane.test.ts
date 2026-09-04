@@ -1,13 +1,15 @@
 import assert from 'node:assert/strict'
 import { createConnection } from 'node:net'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { after, before, describe, it } from 'node:test'
-import { createLocalWorkspaceHost } from './WorkspaceHost.ts'
+import { HostRegistry, createLocalWorkspaceHost } from './WorkspaceHost.ts'
 import { createVavControlPlane } from './VavControlPlane.ts'
 import { DaemonServer } from '../daemon/DaemonServer.ts'
+import { DaemonAttachService } from '../daemon/DaemonAttachService.ts'
 import { startVavWebBridge } from '../daemon/VavWebBridge.ts'
+import { DAEMON_PROTO_VERSION, encodeDaemonPairing } from '../../shared/daemonProtocol.ts'
 import { encodeLine, parseServerMessage, type RemoteServerMessage } from '../../shared/remoteControl.ts'
 
 const SECRET = '0123456789abcdef01234567'
@@ -166,12 +168,161 @@ describe('VavControlPlane', () => {
       phone.write(encodeLine({ type: 'reply', conversationId, toolCallId, answer: 'Approve' }))
       const done = await readFrames(phone, (msg) => msg.type === 'turn' && msg.phase === 'done')
       assert.ok(done.some((m) => m.type === 'turn' && m.phase === 'done'))
+      const conversation = plane.conversations.get(conversationId)
+      assert.ok(conversation?.workingDirectory)
+      const written = await readFile(join(conversation.workingDirectory, 'hello.md'), 'utf8')
+      assert.equal(written, 'patched\n')
     } finally {
       delete process.env.VAV_E2E_STUB_APPROVE
       phone.destroy()
       plane.dispose()
       server.close()
       await rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('streams reasoning and a tool card before the turn ends', async () => {
+    process.env.VAV_E2E_STUB_STREAM = '1'
+    const dir = await mkdtemp(join(tmpdir(), 'vav-stream-'))
+    const host = createLocalWorkspaceHost({ name: 'stream' })
+    const plane = createVavControlPlane({
+      stateDir: dir,
+      host,
+      secret: () => SECRET,
+      appVersion: 'test'
+    })
+    plane.load()
+    const server = new DaemonServer({
+      host,
+      identity: { machineId: 'stream-box', name: 'stream' },
+      secret: () => SECRET,
+      appVersion: 'test',
+      home: dir,
+      tmp: dir,
+      catalog: plane.catalog,
+      onControlHello: (socket, leftover, hello) => plane.hub.adoptAuthed(socket, leftover, hello)
+    })
+    const port = await server.listen(0, '127.0.0.1')
+    const phone = createConnection({ host: '127.0.0.1', port })
+    await new Promise<void>((resolve, reject) => {
+      phone.once('connect', resolve)
+      phone.once('error', reject)
+    })
+    try {
+      phone.write(encodeLine({ type: 'hello', proto: 1, auth: SECRET, role: 'phone', device: 'test-phone' }))
+      await readFrames(phone, (msg) => msg.type === 'welcome')
+      phone.write(encodeLine({ type: 'create' }))
+      const created = await readFrames(phone, (msg) => msg.type === 'created')
+      const createdMsg = created.find((m) => m.type === 'created')
+      assert.ok(createdMsg && createdMsg.type === 'created')
+      const conversationId = createdMsg.session.id
+      phone.write(encodeLine({ type: 'send', conversationId, text: 'stream please' }))
+      const frames = await readFrames(phone, (msg) => msg.type === 'turn' && msg.phase === 'done')
+      assert.ok(
+        frames.some(
+          (m) =>
+            m.type === 'turn' &&
+            (m.thinking || m.blocks?.some((b) => b.kind === 'reasoning'))
+        ),
+        'live thinking must reach the client'
+      )
+      assert.ok(
+        frames.some(
+          (m) => m.type === 'turn' && m.blocks?.some((b) => b.kind === 'tool' && b.tool === 'fs_read')
+        ),
+        'tool card must stream on the control plane'
+      )
+      assert.ok(frames.some((m) => m.type === 'turn' && m.phase === 'done'))
+    } finally {
+      delete process.env.VAV_E2E_STUB_STREAM
+      phone.destroy()
+      plane.dispose()
+      server.close()
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('lets the desktop attach client run a turn on the plane', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'vav-attach-plane-'))
+    const userData = await mkdtemp(join(tmpdir(), 'vav-attach-client-'))
+    const host = createLocalWorkspaceHost({ name: 'box' })
+    const plane = createVavControlPlane({
+      stateDir: dir,
+      host,
+      secret: () => SECRET,
+      appVersion: 'test'
+    })
+    plane.load()
+    const server = new DaemonServer({
+      host,
+      identity: { machineId: 'box-1', name: 'box' },
+      secret: () => SECRET,
+      appVersion: 'test',
+      home: dir,
+      tmp: dir,
+      catalog: plane.catalog,
+      onControlHello: (socket, leftover, hello) => plane.hub.adoptAuthed(socket, leftover, hello)
+    })
+    const port = await server.listen(0, '127.0.0.1')
+    const service = new DaemonAttachService({
+      userData,
+      registry: new HostRegistry(),
+      identityName: 'desktop-ui',
+      secret: () => SECRET,
+      appVersion: 'test',
+      enabled: () => false,
+      tailcatToken: () => null,
+      onHostsChanged: () => undefined
+    })
+    try {
+      const result = await service.pair(
+        encodeDaemonPairing({
+          v: DAEMON_PROTO_VERSION,
+          secret: SECRET,
+          machineId: 'ignored',
+          name: 'box',
+          host: '127.0.0.1',
+          port
+        })
+      )
+      assert.equal(result.ok, true)
+      assert.equal(service.controlPlaneOf('box-1'), true)
+      const dial = service.controlOf('box-1')
+      assert.ok(dial)
+      const conversationId = await dial.createSession()
+      const finished = new Promise<void>((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error('desktop attach saw no turn')), 4000)
+        dial.onFrame((_state, msg) => {
+          if (msg.type === 'turn' && msg.phase === 'done' && msg.conversationId === conversationId) {
+            clearTimeout(timer)
+            resolve()
+          }
+        })
+      })
+      dial.send(conversationId, 'hello from desktop connect')
+      await finished
+      const stored = plane.conversations.get(conversationId)
+      assert.ok(stored)
+      assert.ok(stored.messages.some((m) => m.role === 'user'))
+      assert.ok(stored.messages.some((m) => m.role === 'assistant'))
+      dial.configure(conversationId, { approvalMode: 'edit', model: 'desktop-model' })
+      await new Promise<void>((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error('no controls')), 4000)
+        dial.onFrame((_state, msg) => {
+          if (msg.type === 'controls' && msg.conversationId === conversationId) {
+            clearTimeout(timer)
+            assert.equal(msg.approval, 'edit')
+            assert.equal(msg.model, 'desktop-model')
+            resolve()
+          }
+        })
+      })
+    } finally {
+      service.dispose()
+      plane.dispose()
+      server.close()
+      await rm(dir, { recursive: true, force: true })
+      await rm(userData, { recursive: true, force: true })
     }
   })
 
@@ -219,6 +370,35 @@ describe('VavControlPlane', () => {
       ws.send(JSON.stringify({ type: 'hello', proto: 1, auth: SECRET, role: 'phone', device: 'web' }))
       await gotWelcome
       assert.ok(frames.some((m) => m.type === 'welcome'))
+      const created = new Promise<string>((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error('no created')), 4000)
+        ws.addEventListener('message', (event) => {
+          for (const line of String(event.data).split('\n').filter(Boolean)) {
+            const parsed = parseServerMessage(JSON.parse(line) as unknown)
+            if (parsed?.type === 'created') {
+              clearTimeout(timer)
+              resolve(parsed.session.id)
+            }
+          }
+        })
+      })
+      ws.send(JSON.stringify({ type: 'create' }))
+      const conversationId = await created
+      const configured = new Promise<void>((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error('no controls')), 4000)
+        ws.addEventListener('message', (event) => {
+          for (const line of String(event.data).split('\n').filter(Boolean)) {
+            const parsed = parseServerMessage(JSON.parse(line) as unknown)
+            if (parsed?.type === 'controls' && parsed.conversationId === conversationId) {
+              clearTimeout(timer)
+              assert.equal(parsed.approval, 'edit')
+              resolve()
+            }
+          }
+        })
+      })
+      ws.send(JSON.stringify({ type: 'configure', conversationId, approvalMode: 'edit' }))
+      await configured
       ws.close()
     } finally {
       web.close()

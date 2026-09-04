@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { dirname } from 'node:path'
+import { dirname, join } from 'node:path'
 import type { AgentEvent, AgentTool } from '@earendil-works/pi-agent-core'
 import { runAgentLoopContinue } from '@earendil-works/pi-agent-core'
 import type { Message } from '@earendil-works/pi-ai'
@@ -522,7 +522,11 @@ export class AgentRuntime {
         return
       }
       if (process.env.VAV_E2E_STUB_APPROVE === '1') {
-        runE2eStubApprove(sink, this.e2eAskWaiters, conversationId, parentId)
+        runE2eStubApprove(sink, this.e2eAskWaiters, conversationId, parentId, async () => {
+          const dir = conversation.workingDirectory
+          if (!dir) return
+          await this.deps.files.writeTextFile(join(dir, 'hello.md'), 'patched\n', conversationId)
+        })
         return
       }
       if (process.env.VAV_E2E_STUB_STREAM === '1') {

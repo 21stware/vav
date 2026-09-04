@@ -173,7 +173,8 @@ export function startE2eStubApprove(
   sink: E2eStubSink,
   waiters: Map<string, (text: string) => void>,
   conversationId: string,
-  parentId: string | null
+  parentId: string | null,
+  persist?: () => Promise<void>
 ): void {
   const block = e2eStubApproveBlock()
   sink.emit({ type: 'start', conversationId })
@@ -185,8 +186,7 @@ export function startE2eStubApprove(
     index: 0,
     block
   })
-  waiters.set(block.id, (text) => {
-    const approved = e2eApproveIsApproved(text)
+  const finish = (text: string, approved: boolean): void => {
     const sealed: ToolCallBlock = {
       ...block,
       status: approved ? 'completed' : 'skipped',
@@ -206,5 +206,13 @@ export function startE2eStubApprove(
     sink.emit({ type: 'tool', conversationId, index: 0, block: sealed })
     sink.append(message)
     sink.emit({ type: 'end', conversationId, message, tokensUsed: 0 })
+  }
+  waiters.set(block.id, (text) => {
+    const approved = e2eApproveIsApproved(text)
+    if (approved && persist) {
+      void persist().then(() => finish(text, true))
+      return
+    }
+    finish(text, approved)
   })
 }

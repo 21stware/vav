@@ -1821,8 +1821,8 @@ const daemonAttach = new DaemonAttachService({
 
 /**
  * Talk to the host session plane when this conversation lives on another
- * desktop. Headless vavd has no hub — returns false so the caller can run
- * a local agent against daemon fs/pty.
+ * machine. Desktop hosts and headless vavd both expose the hub; returns
+ * false only when that plane is not ready.
  */
 function remoteMachineId(conversation: Conversation | undefined | null): string | null {
   return remoteConversationMachineId(conversation)

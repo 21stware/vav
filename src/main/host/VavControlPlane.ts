@@ -63,6 +63,7 @@ export type VavControlPlane = {
   conversations: ConversationStore
   settings: SettingsStore
   secrets: NodeSecretStore
+  files: FileService
   catalog: DaemonWorkspaceCatalog
   load(): void
   dispose(): void
@@ -425,6 +426,7 @@ export function createVavControlPlane(opts: VavControlPlaneOpts): VavControlPlan
     conversations,
     settings,
     secrets,
+    files,
     catalog,
     load() {
       mkdirSync(opts.stateDir, { recursive: true })

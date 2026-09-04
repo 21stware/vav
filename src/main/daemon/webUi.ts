@@ -22,6 +22,8 @@ export const WEB_UI_HTML = `<!doctype html>
     #log { flex:1; overflow:auto; padding:20px 24px; white-space:pre-wrap; }
     .composer { display:flex; gap:8px; padding:12px 16px; }
     .composer textarea { flex:1; min-height:44px; resize:vertical; }
+    .controls { display:flex; gap:8px; padding:0 16px 8px; align-items:center; }
+    .controls select, .controls input { flex:1; }
     #status { color:var(--muted); font-size:12px; }
     @media (max-width:720px) { body { grid-template-columns:1fr; } aside { border-right:0; border-bottom:1px solid color-mix(in srgb, var(--ink) 12%, transparent); } }
   </style>
@@ -37,6 +39,15 @@ export const WEB_UI_HTML = `<!doctype html>
   </aside>
   <main>
     <div id="log"></div>
+    <div class="controls">
+      <input id="model" placeholder="Model id" />
+      <select id="approval">
+        <option value="auto">Normal</option>
+        <option value="bypass">Bypass</option>
+        <option value="edit">Read</option>
+      </select>
+      <button type="button" id="apply" class="ghost">Apply</button>
+    </div>
     <form class="composer" id="sendForm">
       <textarea id="text" placeholder="Ask…" rows="2"></textarea>
       <button type="submit">Send</button>
@@ -73,8 +84,15 @@ export const WEB_UI_HTML = `<!doctype html>
           return who+':\\n'+text+'\\n\\n'
         }).join('')
       }
+      if (msg.type === 'controls' && msg.conversationId === active) {
+        if (msg.model) $('model').value = msg.model
+        if (msg.approval) $('approval').value = msg.approval
+      }
       if (msg.type === 'turn' && msg.conversationId === active) {
         if (msg.draft) { draft = msg.draft; appendLive() }
+        if (msg.phase === 'awaiting' && msg.awaiting) {
+          appendLog('VAV asks: '+(msg.awaiting.prompt || msg.awaiting.title || '')+'\\n')
+        }
         if (msg.phase === 'done' || msg.phase === 'error' || msg.phase === 'cancelled') {
           draft = ''
           send({ type:'thread', conversationId: active })
@@ -117,6 +135,10 @@ export const WEB_UI_HTML = `<!doctype html>
     }
     $('connect').onclick = connect
     $('create').onclick = () => send({ type:'create' })
+    $('apply').onclick = () => {
+      if (!active) return
+      send({ type:'configure', conversationId: active, model: $('model').value.trim(), approvalMode: $('approval').value })
+    }
     $('sessions').onclick = (e) => {
       const id = e.target.closest('li')?.dataset.id
       if (id) open(id)
