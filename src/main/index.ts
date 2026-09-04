@@ -66,7 +66,7 @@ import {
   type TurnStatus
 } from '@shared/types'
 import { agentBinaryCandidates } from '@shared/agentBinary'
-import { localFileStreamUrl } from '@shared/localFileUrl'
+import { localFileStreamUrl, parseVavLocalFilePath } from '@shared/localFileUrl'
 import { compactionForLeaf } from '@shared/compaction'
 import {
   hasActiveAgentWork,
@@ -7259,14 +7259,12 @@ if (!singleInstance) {
     }
     protocol.handle('vav-local', async (request) => {
       try {
-        const url = new URL(request.url)
-        const pathParam = url.searchParams.get('path')
-        if (!pathParam) {
+        // Query form (`preview/?path=`) or path form (`local/abs/file`) so
+        // relative JS modules next to an HTML preview resolve as siblings.
+        const requested = parseVavLocalFilePath(request.url)
+        if (!requested) {
           return new Response('Not found', { status: 404 })
         }
-        // searchParams.get already decodes percent escapes. decodeURIComponent is redundant
-        // and throws if the path contains a literal % (e.g. in a hash or filename).
-        const requested = pathParam
         // Document sandbox: preview must read the working copy when one exists.
         const mapped = workingCopyService.ioPath(requested)
         const filePath = existsSync(mapped) ? mapped : requested
