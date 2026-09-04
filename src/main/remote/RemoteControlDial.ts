@@ -75,7 +75,8 @@ export class RemoteControlDial {
     this.write(remoteHello(opts.secret, opts.device, 'phone'))
     const welcomed = await this.waitFor(
       (state) => state.welcomed || state.lastError !== null,
-      opts.timeoutMs ?? WELCOME_TIMEOUT_MS
+      opts.timeoutMs ?? WELCOME_TIMEOUT_MS,
+      'welcome'
     )
     if (welcomed.lastError) {
       throw new Error(welcomed.lastError.message || welcomed.lastError.code)
@@ -121,7 +122,8 @@ export class RemoteControlDial {
     this.create()
     const next = await this.waitFor(
       (state) => state.sessions.some((session) => !before.has(session.id)),
-      timeoutMs
+      timeoutMs,
+      'create'
     )
     const created = next.sessions.find((session) => !before.has(session.id))
     if (!created) throw new Error('control plane create produced no session')
@@ -132,9 +134,29 @@ export class RemoteControlDial {
     this.write({ type: 'thread', conversationId })
   }
 
-  setWorkspace(conversationId: string, path: string | null): void {
+  async setWorkspace(
+    conversationId: string,
+    path: string | null,
+    timeoutMs = 5_000
+  ): Promise<void> {
+    const previous =
+      this.state.controls[conversationId]?.workingDirectory ??
+      this.state.sessions.find((session) => session.id === conversationId)?.workdir ??
+      null
+    const priorError = this.state.lastError
     if (path) this.write({ type: 'workspace', conversationId, path })
     else this.write({ type: 'workspace', conversationId, temp: true })
+    const next = await this.waitFor(
+      (state) => {
+        if (isFreshWorkspaceError(state, conversationId, priorError)) return true
+        return workspaceBound(state, conversationId, path, previous)
+      },
+      timeoutMs,
+      'workspace'
+    )
+    if (isFreshWorkspaceError(next, conversationId, priorError)) {
+      throw new Error(next.lastError?.message || next.lastError?.code || 'workspace bind failed')
+    }
   }
 
   close(): void {
@@ -168,13 +190,14 @@ export class RemoteControlDial {
 
   private waitFor(
     match: (state: RemoteControlSessionState) => boolean,
-    timeoutMs: number
+    timeoutMs: number,
+    label = 'welcome'
   ): Promise<RemoteControlSessionState> {
     if (match(this.state)) return Promise.resolve(this.state)
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         off()
-        reject(new Error('control plane welcome timed out'))
+        reject(new Error(`control plane ${label} timed out`))
       }, timeoutMs)
       const off = this.onFrame((state) => {
         if (!match(state)) return
@@ -184,4 +207,29 @@ export class RemoteControlDial {
       })
     })
   }
+}
+
+function isFreshWorkspaceError(
+  state: RemoteControlSessionState,
+  conversationId: string,
+  priorError: RemoteControlSessionState['lastError']
+): boolean {
+  const err = state.lastError
+  return Boolean(err && err !== priorError && err.conversationId === conversationId)
+}
+
+function workspaceBound(
+  state: RemoteControlSessionState,
+  conversationId: string,
+  path: string | null,
+  previous: string | null
+): boolean {
+  const session = state.sessions.find((row) => row.id === conversationId)
+  const controls = state.controls[conversationId]
+  if (path) {
+    return session?.workdir === path || controls?.workingDirectory === path
+  }
+  const next = controls?.workingDirectory ?? session?.workdir ?? null
+  const temporary = controls?.temporary === true || session?.temporary === true
+  return temporary && next !== previous
 }

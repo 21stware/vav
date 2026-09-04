@@ -21,6 +21,13 @@ describe('remote workspace confinement', () => {
     assert.equal(remotePathAllowed('/Users/other', roots), false)
   })
 
+  it('does not treat /tmp as inside a darwin os.tmpdir() root', () => {
+    assert.equal(
+      remotePathAllowed('/tmp/vav-e2e-remote-ws-abc', ['/var/folders/xx/T', '/Users/runner']),
+      false
+    )
+  })
+
   it('treats tmp-prefixed paths as temporary workspaces', () => {
     assert.equal(remoteIsTemporary('/tmp/vav/abcd/Workspace', '/tmp'), true)
     assert.equal(remoteIsTemporary('/Users/me/repo', '/tmp'), false)

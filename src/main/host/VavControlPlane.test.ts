@@ -353,6 +353,81 @@ describe('VavControlPlane', () => {
     }
   })
 
+  it('waits until the host binds the session workspace before setWorkspace returns', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'vav-bind-plane-'))
+    const userData = await mkdtemp(join(tmpdir(), 'vav-bind-client-'))
+    const planted = await mkdtemp(join(dir, 'ws-'))
+    const outside = await mkdtemp(join(tmpdir(), 'vav-outside-'))
+    const host = createLocalWorkspaceHost({ name: 'box' })
+    const plane = createVavControlPlane({
+      stateDir: dir,
+      host,
+      secret: () => SECRET,
+      appVersion: 'test',
+      home: dir,
+      tmp: dir
+    })
+    plane.load()
+    const server = new DaemonServer({
+      host,
+      identity: { machineId: 'box-1', name: 'box' },
+      secret: () => SECRET,
+      appVersion: 'test',
+      home: dir,
+      tmp: dir,
+      catalog: plane.catalog,
+      onControlHello: (socket, leftover, hello) => plane.hub.adoptAuthed(socket, leftover, hello)
+    })
+    const port = await server.listen(0, '127.0.0.1')
+    const service = new DaemonAttachService({
+      userData,
+      registry: new HostRegistry(),
+      identityName: 'desktop-ui',
+      secret: () => SECRET,
+      appVersion: 'test',
+      enabled: () => false,
+      tailcatToken: () => null,
+      onHostsChanged: () => undefined
+    })
+    try {
+      const result = await service.pair(
+        encodeDaemonPairing({
+          v: DAEMON_PROTO_VERSION,
+          secret: SECRET,
+          machineId: 'ignored',
+          name: 'box',
+          host: '127.0.0.1',
+          port
+        })
+      )
+      assert.equal(result.ok, true)
+      const dial = service.controlOf('box-1')
+      assert.ok(dial)
+      const conversationId = await dial.createSession()
+      const minted = plane.conversations.get(conversationId)?.workingDirectory
+      assert.ok(minted)
+      assert.notEqual(minted, planted)
+      await dial.setWorkspace(conversationId, planted)
+      assert.equal(plane.conversations.get(conversationId)?.workingDirectory, planted)
+      assert.equal(
+        dial.snapshot().sessions.find((session) => session.id === conversationId)?.workdir,
+        planted
+      )
+      assert.equal(dial.snapshot().controls[conversationId]?.workingDirectory, planted)
+      await assert.rejects(
+        () => dial.setWorkspace(conversationId, outside),
+        /outside the allowed roots/
+      )
+    } finally {
+      service.dispose()
+      plane.dispose()
+      server.close()
+      await rm(dir, { recursive: true, force: true })
+      await rm(userData, { recursive: true, force: true })
+      await rm(outside, { recursive: true, force: true })
+    }
+  })
+
   it('serves a web socket that speaks the same phone protocol', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'vav-web-'))
     const host = createLocalWorkspaceHost({ name: 'web' })

@@ -27,8 +27,10 @@ export type StartVavdOptions = {
  * daemon e2e so the desktop app pairs against a real process, not a mock.
  */
 export async function startVavd(options: StartVavdOptions = {}): Promise<VavdHandle> {
-  const base = process.platform === 'darwin' ? '/tmp' : tmpdir()
-  const workspace = mkdtempSync(join(base, 'vav-e2e-remote-ws-'))
+  // Must live under os.tmpdir() — vavd only allows phone-protocol workdir
+  // binds inside home / tmp / current / recents. Hardcoding /tmp on macOS
+  // plants outside GHA's /var/folders tmp root, so setWorkspace is forbidden.
+  const workspace = mkdtempSync(join(tmpdir(), 'vav-e2e-remote-ws-'))
   mkdirSync(workspace, { recursive: true })
   writeFileSync(join(workspace, 'remote-only.md'), 'planted by vavd e2e\n')
   mkdirSync(join(workspace, 'remote-pkg'))

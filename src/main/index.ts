@@ -1834,14 +1834,17 @@ function remoteMachineId(conversation: Conversation | undefined | null): string 
 
 async function forwardControl(
   conversation: Conversation | undefined | null,
-  run: (dial: import('./remote/RemoteControlDial').RemoteControlDial, hostConversationId: string) => void
+  run: (
+    dial: import('./remote/RemoteControlDial').RemoteControlDial,
+    hostConversationId: string
+  ) => void | Promise<void>
 ): Promise<boolean> {
   const machineId = remoteMachineId(conversation)
   if (!conversation || !machineId) return false
   const ready = await daemonAttach.waitForControlPlane(machineId)
   const dial = daemonAttach.controlOf(machineId)
   if (!ready || !dial?.ready) return false
-  run(dial, hostSessionId(conversation.id, conversation.duplicateSourceId))
+  await run(dial, hostSessionId(conversation.id, conversation.duplicateSourceId))
   return true
 }
 
@@ -1852,7 +1855,10 @@ function controlPlaneOwns(conversation: Conversation | undefined | null): boolea
 
 async function pullIfForwarded(
   conversation: Conversation | undefined | null,
-  run: (dial: import('./remote/RemoteControlDial').RemoteControlDial, hostConversationId: string) => void
+  run: (
+    dial: import('./remote/RemoteControlDial').RemoteControlDial,
+    hostConversationId: string
+  ) => void | Promise<void>
 ): Promise<boolean> {
   if (!(await forwardControl(conversation, run))) return false
   const machineId = remoteMachineId(conversation)
@@ -1942,10 +1948,24 @@ function controlPlaneTurnStatus(id: string): TurnStatus | null {
   })
 }
 
+/** One in-flight catalog pull per host so a stale `created` fetch cannot overwrite a later bind. */
+const remoteCatalogPulls = new Map<string, Promise<void>>()
+
 /** Pull the other computer's sessions and folder recents before its window boots. */
 async function pullRemoteWorkspace(machineId: string): Promise<void> {
   const id = String(machineId || '')
   if (!id || isLocalMachine(id)) return
+  const previous = remoteCatalogPulls.get(id) ?? Promise.resolve()
+  const next = previous.catch(() => undefined).then(() => pullRemoteWorkspaceNow(id))
+  remoteCatalogPulls.set(id, next)
+  try {
+    await next
+  } finally {
+    if (remoteCatalogPulls.get(id) === next) remoteCatalogPulls.delete(id)
+  }
+}
+
+async function pullRemoteWorkspaceNow(id: string): Promise<void> {
   const catalog = await daemonAttach.pullHostCatalog(id)
   let sessionsChanged = false
   for (const raw of catalog.sessions) {
@@ -6716,8 +6736,8 @@ return c as text`
       const id = await control.createSession()
       const path =
         options && 'workingDirectory' in options ? (options.workingDirectory ?? null) : null
-      if (path) control.setWorkspace(id, path)
-      else if (options && !('workingDirectory' in options)) control.setWorkspace(id, null)
+      if (path) await control.setWorkspace(id, path)
+      else if (options && !('workingDirectory' in options)) await control.setWorkspace(id, null)
       await pullRemoteWorkspace(machineId)
       const adopted = conversationStore.get(id)
       if (!adopted) return null
