@@ -5,7 +5,7 @@
  *   node scripts/pack-release-sidecars.mjs --out /tmp/sidecars
  */
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
-import { dirname, join } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { spawnSync } from 'node:child_process'
 import { createRequire } from 'node:module'
@@ -20,7 +20,7 @@ function argValue(flag, fallback) {
   return process.argv[index + 1] ?? fallback
 }
 
-const outDir = argValue('--out', join(root, 'release'))
+const outDir = resolve(argValue('--out', join(root, 'release')))
 mkdirSync(outDir, { recursive: true })
 
 const pack = spawnSync(process.execPath, [join(root, 'scripts/pack-vavd.mjs')], {
@@ -34,7 +34,8 @@ const pkgDir = join(root, 'packages', 'vavd')
 const packed = spawnSync('npm', ['pack', '--pack-destination', outDir], {
   cwd: pkgDir,
   stdio: 'inherit',
-  shell: false
+  // Windows resolves `npm.cmd` only through the shell.
+  shell: process.platform === 'win32'
 })
 if (packed.status !== 0) process.exit(packed.status ?? 1)
 
