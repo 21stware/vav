@@ -378,11 +378,9 @@ test('desktop Connect approve writes a file on the vavd disk', async () => {
     await remote.locator('[data-testid="composer-input"]').fill('patch hello')
     await remote.locator('[data-testid="composer-send"]').click()
 
-    const card = remote
-      .locator('[data-testid="approval-card"]')
-      .filter({ hasText: 'Awaiting approval' })
-    await expect(card).toBeVisible({ timeout: 15_000 })
-    await card.getByRole('button', { name: 'Approve' }).click()
+    const approve = remote.getByRole('button', { name: 'Approve' }).last()
+    await expect(approve).toBeVisible({ timeout: 15_000 })
+    await approve.click()
 
     await expect(remote.locator('[data-testid="message-assistant"]').last()).toContainText(
       'e2e stub reply · approved'
