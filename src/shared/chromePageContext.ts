@@ -36,9 +36,15 @@ export function formatPageContext(page: ChromePageContext): string {
   return lines.join('\n').trim()
 }
 
+export function isAttachablePage(page?: { url?: string } | null): boolean {
+  const url = page?.url || ''
+  if (!url) return false
+  return !/^(chrome|chrome-extension|about|devtools|edge|brave):/i.test(url)
+}
+
 export function composeSendText(userText: string, page?: ChromePageContext | null): string {
   const ask = userText.trim()
-  const context = page ? formatPageContext(page) : ''
+  const context = page && isAttachablePage(page) ? formatPageContext(page) : ''
   if (ask && context) return `${ask}\n\n${context}`
   return ask || context
 }

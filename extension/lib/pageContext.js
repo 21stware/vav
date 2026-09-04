@@ -21,9 +21,15 @@ export function formatPageContext(page) {
   return lines.join('\n').trim()
 }
 
+export function isAttachablePage(page) {
+  const url = page?.url || ''
+  if (!url) return false
+  return !/^(chrome|chrome-extension|about|devtools|edge|brave):/i.test(url)
+}
+
 export function composeSendText(userText, page) {
   const ask = (userText || '').trim()
-  const context = page ? formatPageContext(page) : ''
+  const context = page && isAttachablePage(page) ? formatPageContext(page) : ''
   if (ask && context) return `${ask}\n\n${context}`
   return ask || context
 }

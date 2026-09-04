@@ -158,10 +158,14 @@ button.danger { color: var(--danger); background: transparent; }
 .chrome-actions { display: flex; gap: 2px; }
 
 .session-bar {
-  display: flex;
+  display: none;
   align-items: center;
   gap: 8px;
   border-top: 1px solid var(--border);
+}
+
+.session-bar:not([hidden]) {
+  display: flex;
 }
 .session-titles { min-width: 0; flex: 1; }
 .session-bar h1 {
@@ -179,11 +183,16 @@ button.danger { color: var(--danger); background: transparent; }
   inset: 52px 8px auto 8px;
   max-height: 46vh;
   overflow: auto;
+  display: none;
   background: var(--bg-raised);
   border: 1px solid var(--border);
   border-radius: var(--radius);
   box-shadow: 0 16px 40px rgba(20, 20, 28, 0.16);
   z-index: 4;
+}
+
+.drawer:not([hidden]) {
+  display: block;
 }
 
 .drawer-head {
@@ -240,7 +249,16 @@ main { flex: 1; min-height: 0; display: flex; }
   background: var(--bg-sunken);
   border-radius: 12px;
   padding: 10px 12px;
-  white-space: pre-wrap;
+}
+
+.page-ref {
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: var(--bg-content);
+  display: inline-block;
 }
 .msg .md p { margin: 0 0 0.7em; }
 .msg .md p:last-child { margin-bottom: 0; }
@@ -312,10 +330,14 @@ main { flex: 1; min-height: 0; display: flex; }
 .await button { background: var(--accent); color: var(--accent-fg); }
 
 .page-chip {
-  display: flex;
+  display: none;
   align-items: center;
   gap: 10px;
   border-top: 1px solid var(--border);
+}
+
+.page-chip:not([hidden]) {
+  display: flex;
 }
 .page-chip-copy { min-width: 0; flex: 1; }
 .page-chip-copy strong {
@@ -376,10 +398,14 @@ footer { border-top: 1px solid var(--border); }
   position: fixed;
   inset: 0;
   background: rgba(20, 20, 28, 0.28);
-  display: grid;
+  display: none;
   place-items: end center;
   padding: 12px;
   z-index: 8;
+}
+
+.sheet:not([hidden]) {
+  display: grid;
 }
 
 .sheet-card {

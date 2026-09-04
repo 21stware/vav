@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import { composeSendText, formatPageContext } from './chromePageContext.ts'
+import { composeSendText, formatPageContext, isAttachablePage } from './chromePageContext.ts'
 
 describe('chromePageContext', () => {
   it('formats a tab snapshot the agent can read', () => {
@@ -27,6 +27,15 @@ describe('chromePageContext', () => {
     })
     assert.ok(text.startsWith('summarize this'))
     assert.match(text, /URL: https:\/\/example.com/)
+  })
+
+  it('ignores chrome-extension and about pages', () => {
+    assert.equal(isAttachablePage({ url: 'chrome-extension://abc/sidepanel.html' }), false)
+    assert.equal(isAttachablePage({ url: 'chrome://extensions' }), false)
+    assert.equal(isAttachablePage({ url: 'https://example.com' }), true)
+    const text = composeSendText('hello', { url: 'chrome-extension://abc/x', title: 'VAV' })
+    assert.equal(text, 'hello')
+    assert.equal(text.includes('[Current page]'), false)
   })
 
   it('sends page-only context when the composer is empty', () => {

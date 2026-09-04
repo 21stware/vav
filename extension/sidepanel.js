@@ -94,10 +94,24 @@ function renderBlock(block) {
   return ''
 }
 
+function splitPageContext(text) {
+  const idx = text.indexOf('\n\n[Current page]')
+  if (idx === -1) return { ask: text, page: '' }
+  return { ask: text.slice(0, idx).trim(), page: text.slice(idx).trim() }
+}
+
 function renderMessage(msg) {
   const who = msg.role === 'user' ? 'You' : msg.role === 'system' ? 'System' : 'VAV'
+  const raw = msg.text || (msg.blocks || []).filter((b) => b.kind === 'text').map((b) => b.text).join('\n')
+  if (msg.role === 'user' && raw.includes('[Current page]')) {
+    const { ask, page } = splitPageContext(raw)
+    const title = (page.match(/Title: ([^\n]+)/) || [])[1] || 'This page'
+    return `<article class="msg user"><div class="who">${who}</div><div class="body">${
+      ask ? `<div class="md">${renderMarkdown(ask)}</div>` : ''
+    }<div class="page-ref">${escapeHtml(title)}</div></div></article>`
+  }
   const blocks = (msg.blocks || []).map(renderBlock).join('')
-  const body = blocks || (msg.text ? `<div class="md">${renderMarkdown(msg.text)}</div>` : '')
+  const body = blocks || (raw ? `<div class="md">${renderMarkdown(raw)}</div>` : '')
   return `<article class="msg ${msg.role}"><div class="who">${who}</div><div class="body">${body}</div></article>`
 }
 
@@ -249,7 +263,10 @@ port.onMessage.addListener((msg) => {
   }
 })
 
-$('create').onclick = () => post({ type: 'create' })
+$('create').onclick = () => {
+  $('drawer').hidden = true
+  post({ type: 'create' })
+}
 $('sessionsBtn').onclick = () => {
   $('drawer').hidden = !$('drawer').hidden
 }

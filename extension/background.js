@@ -1,5 +1,5 @@
 import { findLocalVavd } from './lib/discover.js'
-import { composeSendText } from './lib/pageContext.js'
+import { composeSendText, isAttachablePage } from './lib/pageContext.js'
 
 const DEVICE = 'chrome'
 const ports = new Set()
@@ -254,8 +254,11 @@ async function pairManual(text) {
 }
 
 async function tabId() {
-  const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true })
-  return tab?.id
+  const [active] = await chrome.tabs.query({ active: true, lastFocusedWindow: true })
+  if (active && isAttachablePage({ url: active.url })) return active.id
+  const tabs = await chrome.tabs.query({ lastFocusedWindow: true })
+  const web = tabs.find((tab) => isAttachablePage({ url: tab.url }))
+  return web?.id || active?.id
 }
 
 async function ensureContent(id) {
@@ -313,13 +316,15 @@ async function captureShot(id) {
 }
 
 async function refreshPage() {
-  state.page = await extractPage()
+  const page = await extractPage()
+  if (isAttachablePage(page)) state.page = page
   broadcast({ type: 'state', state: snapshot() })
   return state.page
 }
 
 async function sendTurn({ text, usePage, useShot }) {
-  const page = usePage === false ? null : state.includePage ? state.page || (await extractPage()) : null
+  const rawPage = usePage === false ? null : state.includePage ? state.page || (await extractPage()) : null
+  const page = isAttachablePage(rawPage) ? rawPage : null
   const composed = composeSendText(text || '', usePage === false ? null : page)
   const images = []
   if (useShot || state.includeShot) {
@@ -459,6 +464,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg?.type === 'rediscover') {
     void connect()
     sendResponse({ ok: true })
+    return true
+  }
+  if (msg?.type === 'refresh-page') {
+    void refreshPage().then((page) => sendResponse({ ok: true, page }))
     return true
   }
 })
