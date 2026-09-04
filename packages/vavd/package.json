@@ -1,6 +1,6 @@
 {
   "name": "@21stware/vavd",
-  "version": "1.18.12",
+  "version": "1.19.0",
   "description": "Headless VAV. Hosts sessions, keys, files, PTY, and agent turns. Pair from desktop, iOS Remote, the web UI, or the Chrome extension.",
   "license": "PolyForm-Noncommercial-1.0.0",
   "author": "Oboo Cheng",

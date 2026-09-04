@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "VAV",
-  "version": "1.18.12",
+  "version": "1.19.0",
   "description": "Control surface for local vavd — the headless VAV daemon.",
   "action": { "default_title": "VAV" },
   "side_panel": { "default_path": "sidepanel.html" },
