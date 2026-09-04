@@ -14,11 +14,20 @@ export type VavdHandle = {
   stop: () => void
 }
 
+export type StartVavdOptions = {
+  /** Finish VAV turns in the daemon — no provider HTTP (VAV_E2E_STUB_TURN). */
+  stubTurn?: boolean
+  /** Stream reasoning + a tool card before the stub reply. */
+  stubStream?: boolean
+  /** Park the stub on Approve/Deny until the client answers. */
+  stubApprove?: boolean
+}
+
 /**
  * Spawn headless `vavd` with a planted workspace file. Used by the remote
  * daemon e2e so the desktop app pairs against a real process, not a mock.
  */
-export async function startVavd(): Promise<VavdHandle> {
+export async function startVavd(options: StartVavdOptions = {}): Promise<VavdHandle> {
   const base = process.platform === 'darwin' ? '/tmp' : tmpdir()
   const workspace = mkdtempSync(join(base, 'vav-e2e-remote-ws-'))
   const state = mkdtempSync(join(tmpdir(), 'vav-e2e-vavd-'))
@@ -43,7 +52,18 @@ export async function startVavd(): Promise<VavdHandle> {
       '--name',
       'E2E Daemon'
     ],
-    { stdio: ['ignore', 'pipe', 'pipe'], cwd: root }
+    {
+      stdio: ['ignore', 'pipe', 'pipe'],
+      cwd: root,
+      env: {
+        ...process.env,
+        ...(options.stubTurn || options.stubStream || options.stubApprove
+          ? { VAV_E2E: '1', VAV_E2E_STUB_TURN: '1' }
+          : {}),
+        ...(options.stubStream ? { VAV_E2E_STUB_STREAM: '1' } : {}),
+        ...(options.stubApprove ? { VAV_E2E_STUB_APPROVE: '1' } : {})
+      }
+    }
   )
 
   let stdout = ''
