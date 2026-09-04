@@ -4,11 +4,22 @@ User-facing changes by release. Unreleased work lives at the top until the next 
 
 ## Unreleased
 
+## 1.19.0
+
+Headless `vavd` is the host. Desktop, Connect, the Chrome extension, the web page, the `vav` CLI, and VAV Remote are shells over that daemon.
+
 ### Headless vavd
 
+- `npx @21stware/vavd` / `vavd` hosts sessions, keys, files, PTY, and agent turns. Pair from VAV → Connect, VAV Remote, the web UI (`http://127.0.0.1:4752`), or the Chrome extension.
 - Desktop can launch as a vavd UI with `VAVD_URI` / `--vavd-uri`, or spawn the daemon with `VAVD_SPAWN=1` / `--with-vavd`. Packaged apps spawn the bundled daemon by default (`--no-vavd` / `VAVD_SPAWN=0` keeps the in-process host).
-- GitHub Releases now attach the `@21stware/vavd` tarball and the Chrome extension zip, and fail if any required asset is missing.
 - Packaged apps ship `vavd.js` so `--with-vavd` works without the git checkout.
+- GitHub Releases attach the `@21stware/vavd` tarball and the Chrome extension zip, and fail if any required asset is missing.
+
+### Clients
+
+- Chrome extension (MV3 side panel) speaks the same phone protocol as the web page over `ws://127.0.0.1:4752/vav`.
+- VAV Remote 1.0.4 accepts a pasted `vav-daemon://` URI and dials LAN TCP (still pairs via tailcat QR as before).
+- `vav send` drives a turn on the daemon over the phone protocol.
 
 ## 1.18.12
 

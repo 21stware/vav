@@ -220,6 +220,9 @@ jobs:
 
           ## Chrome extension
           Download `vav-chrome-extension-*.zip`, unzip, and load the folder as an unpacked extension (`chrome://extensions` → Developer mode).
+
+          ## iOS (VAV Remote)
+          Not built by this workflow. Archive `ios/VAVRemote` from Xcode on a Mac (current marketing version is in the Xcode project) and upload to TestFlight / App Store Connect.
           EOF
 
       - name: Publish release
