@@ -32,14 +32,14 @@ function hasFlag(argv: string[], flag: string): boolean {
 
 /**
  * Spawn a local vavd and auto-pair so the desktop window is a shell.
- * `--with-vavd` / `VAVD_SPAWN=1`. Packaged apps spawn by default (the
- * installer ships vavd.js). `VAVD_SPAWN=0` / `--no-vavd` keeps the in-process
- * host. Ignored when a pairing URI is already set.
+ * Default on for packaged and `npm run dev`. `VAVD_SPAWN=0` / `--no-vavd`
+ * keeps the in-process host. Playwright sets that unless a spec asks for
+ * a child daemon. Ignored when a pairing URI is already set.
  */
 export function resolveVavdSpawn(
   env: NodeJS.ProcessEnv = process.env,
   argv: string[] = process.argv,
-  opts: { packaged?: boolean } = {}
+  _opts: { packaged?: boolean } = {}
 ): boolean {
   if (resolveVavdPairing(env, argv)) return false
   if (env.VAVD_SPAWN === '0' || env.VAVD_SPAWN === 'false' || hasFlag(argv, '--no-vavd')) {
@@ -48,5 +48,7 @@ export function resolveVavdSpawn(
   if (hasFlag(argv, '--with-vavd') || env.VAVD_SPAWN === '1' || env.VAVD_SPAWN === 'true') {
     return true
   }
-  return opts.packaged === true
+  // Snapshot / default e2e stay in-process unless the spec opted in above.
+  if (env.VAV_SNAPSHOT === '1' || env.VAV_E2E === '1') return false
+  return true
 }

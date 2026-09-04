@@ -25,13 +25,20 @@ describe('resolveVavdSpawn', () => {
   it('reads VAVD_SPAWN and --with-vavd', () => {
     assert.equal(resolveVavdSpawn({ VAVD_SPAWN: '1' }, []), true)
     assert.equal(resolveVavdSpawn({}, ['--with-vavd']), true)
-    assert.equal(resolveVavdSpawn({}, []), false)
+    assert.equal(resolveVavdSpawn({}, []), true)
   })
 
-  it('spawns by default in a packaged app, unless opted out', () => {
+  it('spawns by default unless opted out', () => {
     assert.equal(resolveVavdSpawn({}, [], { packaged: true }), true)
+    assert.equal(resolveVavdSpawn({}, [], { packaged: false }), true)
     assert.equal(resolveVavdSpawn({ VAVD_SPAWN: '0' }, [], { packaged: true }), false)
     assert.equal(resolveVavdSpawn({}, ['--no-vavd'], { packaged: true }), false)
+  })
+
+  it('keeps e2e and snapshot in-process unless they opt in', () => {
+    assert.equal(resolveVavdSpawn({ VAV_E2E: '1' }, []), false)
+    assert.equal(resolveVavdSpawn({ VAV_SNAPSHOT: '1' }, []), false)
+    assert.equal(resolveVavdSpawn({ VAV_E2E: '1', VAVD_SPAWN: '1' }, []), true)
   })
 
   it('does not spawn when a pairing URI is already set', () => {

@@ -441,7 +441,9 @@ export async function launchVav(options: LaunchVavOptions = {}): Promise<VavHarn
       ...(options.vavdUri ? { VAVD_URI: options.vavdUri } : {}),
       ...(options.spawnVavd
         ? { VAVD_SPAWN: '1', NODE_BINARY: process.execPath }
-        : {})
+        : options.vavdUri
+          ? {}
+          : { VAVD_SPAWN: '0' })
     }
   })
 
