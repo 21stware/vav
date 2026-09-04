@@ -129,6 +129,8 @@ export interface DriverStartOptions {
    * conversation survives the swap (null when there is nothing to carry).
    */
   resumeHandoff?: () => string | null
+  /** Deadline for ACP `initialize` + `session/new` (or load/resume). Default 30s. */
+  bootstrapTimeoutMs?: number
 }
 
 export interface DriverControl {

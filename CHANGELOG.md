@@ -4,6 +4,10 @@ User-facing changes by release. Unreleased work lives at the top until the next 
 
 ## Unreleased
 
+### Reliability
+
+- CLI ACP turns no longer stay on Streaming after the child dies or the handshake hangs. Stop aborts an in-flight spawn, missing TEMP DIR folders are recreated, and Cursor TUI flags (`--force --trust`) are not passed to `cursor-agent acp`.
+
 ## 1.19.0
 
 Headless `vavd` is the host. Desktop, Connect, the Chrome extension, the web page, the `vav` CLI, and VAV Remote are shells over that daemon.

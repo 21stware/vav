@@ -545,6 +545,65 @@ describe('wireAcp protocol', () => {
     await waitForEvent(events, (event) => event.type === 'turn-finished' && event.success === true)
     driver.dispose()
   })
+
+  it('fails the handshake if initialize never returns', async () => {
+    const events: DriverEvent[] = []
+    const { proc, outbound, toClient } = fakeStdio()
+    const driver = wireAcp(
+      'cursor',
+      proc,
+      {
+        binary: 'cursor-agent',
+        cwd: '/tmp',
+        approvalMode: 'edit',
+        bootstrapTimeoutMs: 40
+      },
+      (event) => events.push(event)
+    )
+    const init = await waitFor(outbound, (msg) => msg.method === 'initialize')
+    const err = await waitForEvent(events, (event) => event.type === 'error', 500)
+    assert.equal(err.type, 'error')
+    assert.match(err.message, /handshake timed out/i)
+    toClient({
+      jsonrpc: '2.0',
+      id: init.id,
+      result: { protocolVersion: ACP_PROTOCOL_VERSION, agentCapabilities: {} }
+    })
+    await new Promise((resolve) => setTimeout(resolve, 30))
+    assert.equal(
+      events.some((event) => event.type === 'connected'),
+      false
+    )
+    driver.dispose()
+  })
+
+  it('kills an in-flight handshake on cancel so Stop does not wait out the deadline', async () => {
+    const events: DriverEvent[] = []
+    const { proc, outbound } = fakeStdio()
+    const driver = wireAcp(
+      'cursor',
+      proc,
+      {
+        binary: 'cursor-agent',
+        cwd: '/tmp',
+        approvalMode: 'edit',
+        bootstrapTimeoutMs: 5_000
+      },
+      (event) => events.push(event)
+    )
+    await waitFor(outbound, (msg) => msg.method === 'initialize')
+    driver.cancel()
+    await new Promise((resolve) => setTimeout(resolve, 40))
+    assert.equal(
+      events.some((event) => event.type === 'error'),
+      false
+    )
+    assert.equal(
+      events.some((event) => event.type === 'connected'),
+      false
+    )
+    driver.dispose()
+  })
 })
 
 describe('wireAcp grok protocol', () => {
@@ -1043,6 +1102,21 @@ describe('acpInvokeArgs', () => {
       acpInvokeArgs('cursor', 'edit', { model: 'grok-4.6', extraArgs: ['--model', 'auto'] }),
       ['acp', '--model', 'auto']
     )
+  })
+
+  it('drops Cursor TUI flags that are not valid on `cursor-agent acp`', () => {
+    assert.deepEqual(acpInvokeArgs('cursor', 'bypass', { extraArgs: ['--force', '--trust'] }), [
+      'acp'
+    ])
+    const args = acpInvokeArgs('cursor', 'edit', {
+      model: 'grok-4.6',
+      extraArgs: ['--force', '--trust', '--yolo']
+    })
+    assert.equal(args.at(-1), 'acp')
+    assert.equal(args.includes('--force'), false)
+    assert.equal(args.includes('--trust'), false)
+    assert.equal(args.includes('--yolo'), false)
+    assert.ok(args.some((token) => token.includes('grok-4.6')))
   })
 
   it('places Grok flags around agent / stdio', () => {

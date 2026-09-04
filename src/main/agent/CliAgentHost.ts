@@ -75,6 +75,13 @@ import {
 } from './drivers'
 import { shouldAutoAcceptChangeSet } from './toolApproval'
 import { shouldReplaceCliRuntime, spawnResumeCursor } from './cliWorkspaceRestart'
+import {
+  bumpSpawnGeneration,
+  isCurrentSpawnGeneration,
+  processExitDisposition,
+  recreateEphemeralCliCwd,
+  shouldDisposeHungBootstrap
+} from './cliTurnLifecycle'
 import { sealCliPlanBlocks, planSealMode } from './planSeal'
 import { composeCliPrompt } from './cliPrompt'
 import { cursorLockedFamilyThinkingPatch, nextAllowedThinkingLevel } from './thinkingClamp'
@@ -250,8 +257,11 @@ export class CliAgentHost {
   private turns = new Map<string, HostTurn>()
   private starting = new Map<string, Promise<HostRuntime>>()
   private fileDrafts = new FileDraftCoalescer()
-  /** Ignore the next process-exited for this conversation (runtime replace). */
-  private ignoreNextExit = new Set<string>()
+  /**
+   * Bumped on cancel / cwd change / dispose so an in-flight spawn is discarded
+   * instead of attaching to a turn that already sealed.
+   */
+  private spawnGeneration = new Map<string, number>()
   /**
    * Bumped when the conversation root changes mid-spawn so {@link spawnUntilCurrent}
    * discards the process that still has the old cwd.
@@ -418,6 +428,7 @@ export class CliAgentHost {
 
   cancel(conversationId: string): void {
     this.pendingCancels.add(conversationId)
+    this.invalidateInFlightSpawn(conversationId)
     const turn = this.turns.get(conversationId)
     const runtime = this.runtimes.get(conversationId)
     if (turn) {
@@ -426,6 +437,9 @@ export class CliAgentHost {
       for (const p of turn.pendingPermissions.values()) p.resolve('deny')
       turn.pendingPermissions.clear()
       runtime?.driver.cancel()
+      if (shouldDisposeHungBootstrap({ hasTurn: true, sawTurnStarted: turn.sawTurnStarted })) {
+        this.disposeRuntime(conversationId)
+      }
       // If the driver has no interrupt, finish locally after a grace period.
       setTimeout(() => {
         if (this.turns.get(conversationId) === turn) {
@@ -529,6 +543,8 @@ export class CliAgentHost {
     this.disposeRuntime(conversationId)
     this.turns.delete(conversationId)
     this.cwdEpoch.delete(conversationId)
+    this.spawnGeneration.delete(conversationId)
+    this.starting.delete(conversationId)
     this.historyHandoff.delete(conversationId)
     this.pendingModel.delete(conversationId)
   }
@@ -637,6 +653,7 @@ export class CliAgentHost {
     this.markHistoryHandoff(conversationId, previousCwd ?? runtime?.cwd ?? null)
     this.cwdEpoch.set(conversationId, (this.cwdEpoch.get(conversationId) ?? 0) + 1)
     this.clearResumeCursor(conversationId)
+    this.invalidateInFlightSpawn(conversationId)
     if (this.turns.has(conversationId)) this.cancel(conversationId)
     this.disposeRuntime(conversationId, { replacing: true })
   }
@@ -790,6 +807,7 @@ export class CliAgentHost {
         return existing
       }
     }
+    const gen = this.spawnGeneration.get(conversationId) ?? 0
     const inflight = this.starting.get(conversationId)
     if (inflight) return inflight
 
@@ -797,20 +815,28 @@ export class CliAgentHost {
     this.starting.set(conversationId, promise)
     try {
       const runtime = await promise
+      if (!isCurrentSpawnGeneration(this.spawnGeneration, conversationId, gen)) {
+        runtime.driver.dispose()
+        throw new Error('Request cancelled')
+      }
       this.runtimes.set(conversationId, runtime)
       return runtime
     } finally {
-      this.starting.delete(conversationId)
+      if (this.starting.get(conversationId) === promise) this.starting.delete(conversationId)
     }
   }
 
   /** Spawn, retrying when {@link setWorkingDirectory} invalidates this attempt. */
   private async spawnUntilCurrent(conversationId: string): Promise<HostRuntime> {
+    const gen = this.spawnGeneration.get(conversationId) ?? 0
     for (;;) {
       const epoch = this.cwdEpoch.get(conversationId) ?? 0
       const runtime = await this.spawnRuntime(conversationId)
+      if (!isCurrentSpawnGeneration(this.spawnGeneration, conversationId, gen)) {
+        runtime.driver.dispose()
+        throw new Error('Request cancelled')
+      }
       if ((this.cwdEpoch.get(conversationId) ?? 0) === epoch) return runtime
-      this.ignoreNextExit.add(conversationId)
       runtime.driver.dispose()
     }
   }
@@ -830,7 +856,7 @@ export class CliAgentHost {
       )
     }
 
-    const cwd = this.conversationCwd(conversationId)
+    const cwd = recreateEphemeralCliCwd(this.conversationCwd(conversationId)).cwd
     const identity = await readHostAuthIdentity(kind)
     const resume = spawnResumeCursor(
       conversation.cliResumeCursor ?? null,
@@ -933,7 +959,6 @@ export class CliAgentHost {
         return
       }
       if (event.type === 'process-exited') {
-        if (this.ignoreNextExit.delete(conversationId)) return
         this.runtimes.get(conversationId)?.driver.dispose()
         this.runtimes.delete(conversationId)
       }
@@ -1136,32 +1161,36 @@ export class CliAgentHost {
           event.errorDetail ?? turn.errorDetail
         )
         break
-      case 'process-exited':
-        if (this.ignoreNextExit.delete(conversationId)) return
-        if (this.turns.has(conversationId)) {
-          // A retry already in backoff owns this turn — drop the dead
-          // process so ensureRuntime can respawn, but do not seal.
-          if (turn.settling) {
-            this.runtimes.delete(conversationId)
-            return
-          }
-          if (!turn.cancelled) {
-            const raw = turn.error || `Agent process exited (${event.code ?? '?'})`
-            turn.errorDetail =
-              turn.errorDetail || formatErrorDetailFromParts(raw, event.code)
-            void this.settleFailedTurn(
-              conversationId,
-              turn,
-              raw,
-              turn.errorCode,
-              turn.errorDetail
-            )
-          } else {
-            void this.finishTurn(conversationId, turn, false)
-          }
+      case 'process-exited': {
+        const disposition = processExitDisposition({
+          skipNextExit: false,
+          hasTurn: true,
+          settling: turn.settling,
+          cancelled: turn.cancelled
+        })
+        if (disposition === 'defer') {
+          // Same-session retry is backing off — drop the dead process so
+          // ensureRuntime can respawn, but do not seal the live turn.
+          this.runtimes.delete(conversationId)
+          break
+        }
+        if (disposition === 'cancel') {
+          void this.finishTurn(conversationId, turn, false)
+        } else if (disposition === 'fail') {
+          const raw = turn.error || `Agent process exited (${event.code ?? '?'})`
+          turn.errorDetail =
+            turn.errorDetail || formatErrorDetailFromParts(raw, event.code)
+          void this.settleFailedTurn(
+            conversationId,
+            turn,
+            raw,
+            turn.errorCode,
+            turn.errorDetail
+          )
         }
         this.runtimes.delete(conversationId)
         break
+      }
     }
   }
 
@@ -1678,6 +1707,7 @@ export class CliAgentHost {
   ): Promise<void> {
     if (!this.turns.has(conversationId)) return
     this.pendingCancels.delete(conversationId)
+    this.invalidateInFlightSpawn(conversationId)
     // Prevent double-finish from cancel grace + turn-finished race.
     this.turns.delete(conversationId)
     const pendingModel = this.pendingModel.get(conversationId)
@@ -1837,13 +1867,23 @@ export class CliAgentHost {
     this.deps.conversations.updateMeta(conversationId, { cliResumeCursor: null })
   }
 
+  /**
+   * Drop a spawn that has not attached yet. `starting` is cleared so the next
+   * {@link ensureRuntime} does not wait on the cancelled promise; the old
+   * promise still disposes its child when it resolves against a stale generation.
+   */
+  private invalidateInFlightSpawn(conversationId: string): void {
+    bumpSpawnGeneration(this.spawnGeneration, conversationId)
+    this.starting.delete(conversationId)
+  }
+
   private disposeRuntime(
     conversationId: string,
-    options?: { replacing?: boolean }
+    _options?: { replacing?: boolean }
   ): void {
     const runtime = this.runtimes.get(conversationId)
     if (!runtime) return
-    if (options?.replacing) this.ignoreNextExit.add(conversationId)
+    // dispose() suppresses process-exited — do not arm a skip for a later child.
     runtime.driver.dispose()
     this.runtimes.delete(conversationId)
   }

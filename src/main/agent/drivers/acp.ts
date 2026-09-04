@@ -74,6 +74,7 @@ import { acpReadTextFile, acpWriteTextFile, AcpRpcError } from './acpFs.ts'
 import { buildAcpPrompt } from './acpPrompt.ts'
 import { AcpTerminalRegistry } from './acpTerminal.ts'
 import { disposeStdioProcess } from './disposeStdio.ts'
+import { filterAcpExtraArgs } from '../cliTurnLifecycle.ts'
 import {
   asArray,
   asRecord,
@@ -91,6 +92,26 @@ import type {
 
 const ACP_PLAN_ID = 'acp-session-plan'
 const CURSOR_TODOS_ID = 'cursor-todos'
+
+/** `initialize` + `session/new` (or load/resume) must not hang a live turn forever. */
+export const ACP_BOOTSTRAP_TIMEOUT_MS = 30_000
+
+function raceWithTimeout<T>(work: Promise<T>, ms: number, label: string): Promise<T> {
+  if (ms <= 0) return work
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(label)), ms)
+    work.then(
+      (value) => {
+        clearTimeout(timer)
+        resolve(value)
+      },
+      (err) => {
+        clearTimeout(timer)
+        reject(err)
+      }
+    )
+  })
+}
 
 type PendingClient =
   | { kind: 'permission'; id: unknown; options: unknown[] }
@@ -191,7 +212,7 @@ export function acpInvokeArgs(
   options?: Pick<DriverStartOptions, 'model' | 'thinkingLevel' | 'fast' | 'extraArgs'>
 ): string[] {
   if (kind === 'grok') return grokInvokeArgs(options)
-  const extra = options?.extraArgs ?? []
+  const extra = filterAcpExtraArgs(kind, options?.extraArgs ?? [])
   const boot =
     kind === 'cursor'
       ? acpBootstrapModelId(options?.model, {
@@ -335,6 +356,7 @@ export function wireAcp(
   }
 
   const openOrCreateSession = async (): Promise<void> => {
+    if (disposed) return
     if (sessionId) {
       try {
         const loaded = asRecord(
@@ -533,62 +555,94 @@ export function wireAcp(
     emit({ type: 'usage', contextSize: size, recordHistory: false })
   }
 
-  const bootstrap = async (): Promise<void> => {
+  const rejectPendingRpc = (message: string): void => {
+    for (const waiter of pendingRpc.values()) waiter(undefined, { message })
+    pendingRpc.clear()
+  }
+
+  const failHandshake = (err: unknown): void => {
+    if (disposed) return
+    const extracted = extractRpcError(err)
+    emit({
+      type: 'error',
+      message: extracted.text || (err instanceof Error ? err.message : String(err)),
+      errorCode: extracted.code ?? undefined,
+      errorDetail: formatErrorDetail(err, extracted.text)
+    })
+    disposed = true
+    ready = false
+    rejectPendingRpc(extracted.text || 'ACP handshake failed')
+    cancelPending('cancelled')
+    terminals.disposeAll()
+    disposeStdioProcess(proc)
+  }
+
+  const handshake = async (): Promise<void> => {
+    const init = asRecord(
+      await request('initialize', {
+        protocolVersion: ACP_PROTOCOL_VERSION,
+        clientCapabilities: ACP_CLIENT_CAPABILITIES,
+        clientInfo: { name: 'vav', version: '1.0.0' }
+      })
+    )
+    if (disposed) return
+    const caps = asRecord(init?.agentCapabilities) ?? asRecord(init?.capabilities)
+    promptCapabilities = parseAcpPromptCapabilities(
+      caps?.promptCapabilities ?? caps?.prompt_capabilities
+    )
+    canLogout = asRecord(caps?.auth)?.logout != null || caps?.logout === true
+    const authMethods = parseAcpAuthMethods(init?.authMethods ?? init?.auth_methods)
+    advertisedGoal = parseAcpGoalCapability(dig(init, '_meta.goal'))
+    const initMeta = asRecord(init?._meta)
+    const initCommands = seedGoalCommands(
+      kind,
+      parseAcpAvailableCommands(initMeta?.availableCommands)
+    )
+    if (initCommands.length) {
+      publishSessionState({
+        commands: initCommands,
+        goalCapability: resolveGoalCapability(kind, advertisedGoal, initCommands)
+      })
+    }
+
+    if (kind === 'grok') {
+      const grokAuth = authMethods.find(
+        (method) => method.id === 'cached_token' || method.id === 'xai.api_key'
+      )
+      if (grokAuth) {
+        try {
+          await request('authenticate', { methodId: grokAuth.id, _meta: { headless: true } })
+        } catch {
+          // session/new may still succeed when a token is already cached.
+        }
+        if (disposed) return
+      }
+    }
+
     try {
-      const init = asRecord(
-        await request('initialize', {
-          protocolVersion: ACP_PROTOCOL_VERSION,
-          clientCapabilities: ACP_CLIENT_CAPABILITIES,
-          clientInfo: { name: 'vav', version: '1.0.0' }
-        })
-      )
-      const caps = asRecord(init?.agentCapabilities) ?? asRecord(init?.capabilities)
-      promptCapabilities = parseAcpPromptCapabilities(
-        caps?.promptCapabilities ?? caps?.prompt_capabilities
-      )
-      canLogout = asRecord(caps?.auth)?.logout != null || caps?.logout === true
-      const authMethods = parseAcpAuthMethods(init?.authMethods ?? init?.auth_methods)
-      advertisedGoal = parseAcpGoalCapability(dig(init, '_meta.goal'))
-      const initMeta = asRecord(init?._meta)
-      const initCommands = seedGoalCommands(
-        kind,
-        parseAcpAvailableCommands(initMeta?.availableCommands)
-      )
-      if (initCommands.length) {
-        publishSessionState({
-          commands: initCommands,
-          goalCapability: resolveGoalCapability(kind, advertisedGoal, initCommands)
-        })
-      }
-
-      if (kind === 'grok') {
-        const grokAuth = authMethods.find(
-          (method) => method.id === 'cached_token' || method.id === 'xai.api_key'
-        )
-        if (grokAuth) {
-          try {
-            await request('authenticate', { methodId: grokAuth.id, _meta: { headless: true } })
-          } catch {
-            // session/new may still succeed when a token is already cached.
-          }
-        }
-      }
-
-      try {
-        await openOrCreateSession()
-      } catch (err) {
-        const extracted = extractRpcError(err)
-        if (extracted.code === RpcErrorCode.authRequired && authMethods.length) {
-          if (await tryAuthenticate(authMethods)) {
-            sessionId = null
-            await openOrCreateSession()
-          } else {
-            return
-          }
+      await openOrCreateSession()
+    } catch (err) {
+      const extracted = extractRpcError(err)
+      if (extracted.code === RpcErrorCode.authRequired && authMethods.length) {
+        if (await tryAuthenticate(authMethods)) {
+          sessionId = null
+          await openOrCreateSession()
         } else {
-          throw err
+          return
         }
+      } else {
+        throw err
       }
+    }
+  }
+
+  const bootstrap = async (): Promise<void> => {
+    const timeoutMs = options.bootstrapTimeoutMs ?? ACP_BOOTSTRAP_TIMEOUT_MS
+    const running = handshake()
+    void running.catch(() => undefined)
+    try {
+      await raceWithTimeout(running, timeoutMs, `${kind} ACP handshake timed out`)
+      if (disposed) return
 
       if (!sessionId) {
         emit({ type: 'error', message: `${kind} ACP session/new returned no sessionId` })
@@ -596,18 +650,13 @@ export function wireAcp(
       }
 
       await queueApplyWantedModel()
+      if (disposed) return
 
       ready = true
       emit({ type: 'connected', cursor: { provider: kind, sessionId } })
       for (const queued of pendingPrompts.splice(0)) void doPrompt(queued.text, queued.extras)
     } catch (err) {
-      const extracted = extractRpcError(err)
-      emit({
-        type: 'error',
-        message: extracted.text || (err instanceof Error ? err.message : String(err)),
-        errorCode: extracted.code ?? undefined,
-        errorDetail: formatErrorDetail(err, extracted.text)
-      })
+      failHandshake(err)
     }
   }
 
@@ -876,6 +925,13 @@ export function wireAcp(
     cancel(): void {
       if (sessionId) send('session/cancel', { sessionId })
       cancelPending('cancelled')
+      if (ready || disposed) return
+      // Handshake has no session/cancel target — kill the child so Stop
+      // cannot leave a mute process under a live turn.
+      disposed = true
+      rejectPendingRpc('cancelled')
+      terminals.disposeAll()
+      disposeStdioProcess(proc)
     },
     respond(requestId: string, optionId: 'allow' | 'deny', message?: string): void {
       const pending = pendingClient.get(requestId)
@@ -1020,6 +1076,7 @@ export function wireAcp(
     dispose(): void {
       if (disposed) return
       disposed = true
+      rejectPendingRpc('disposed')
       cancelPending('cancelled')
       terminals.disposeAll()
       if (sessionId) {
