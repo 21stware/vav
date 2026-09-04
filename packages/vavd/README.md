@@ -12,7 +12,7 @@ vav send "hello"
 
 Prints a pairing URI. Use it from:
 
-- VAV desktop → Connect, or launch the app with `VAVD_URI` / `--vavd-uri` so it opens as a vavd UI
+- VAV desktop → Connect, or launch the app with `VAVD_URI` / `--vavd-uri` so it opens as a vavd UI. `VAVD_SPAWN=1` / `--with-vavd` starts this daemon as a child and pairs automatically.
 - VAV Remote (iOS)
 - the local web UI (`http://127.0.0.1:4752`)
 - the Chrome extension side panel

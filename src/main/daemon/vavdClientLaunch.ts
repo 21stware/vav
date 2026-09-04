@@ -25,3 +25,19 @@ export function resolveVavdPairing(
   const raw = (fromArg || fromEnv || '').trim()
   return raw || null
 }
+
+function hasFlag(argv: string[], flag: string): boolean {
+  return argv.includes(flag) || argv.some((arg) => arg === `${flag}=true` || arg === `${flag}=1`)
+}
+
+/**
+ * Spawn a local vavd and auto-pair so the desktop window is a shell.
+ * `--with-vavd` / `VAVD_SPAWN=1`. Ignored when a pairing URI is already set.
+ */
+export function resolveVavdSpawn(
+  env: NodeJS.ProcessEnv = process.env,
+  argv: string[] = process.argv
+): boolean {
+  if (resolveVavdPairing(env, argv)) return false
+  return hasFlag(argv, '--with-vavd') || env.VAVD_SPAWN === '1' || env.VAVD_SPAWN === 'true'
+}

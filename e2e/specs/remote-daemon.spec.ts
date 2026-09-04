@@ -412,6 +412,51 @@ test('desktop launches as a vavd client via VAVD_URI', async () => {
 })
 
 /**
+ * Desktop `--with-vavd` / `VAVD_SPAWN` starts the daemon itself.
+ * Electron has no stub turn; the reply must come from the child vavd.
+ */
+test('desktop spawns vavd and sends through the child process', async () => {
+  test.setTimeout(90_000)
+  const harness = await launchVav({ spawnVavd: true })
+  try {
+    const { page } = harness
+    const remote = await waitForHostWindow(harness, 'E2E Daemon', 40_000)
+    await remote.locator('[data-testid="app-shell"]').waitFor({ state: 'visible', timeout: 25_000 })
+    await expect
+      .poll(async () => {
+        const hosts = await remote.evaluate(() => window.vav.hosts.list())
+        return hosts.find((h) => h.name === 'E2E Daemon')?.controlPlane === true
+      })
+      .toBe(true)
+
+    await expect(remote.locator('[data-testid="composer-input"]')).toBeVisible({ timeout: 20_000 })
+    const sessionId = await remote
+      .locator('[data-testid="session-row"].selected')
+      .getAttribute('data-conversation-id')
+    expect(sessionId).toBeTruthy()
+
+    await remote.evaluate(
+      (id) => window.vav.conversations.setApprovalMode(id, 'bypass'),
+      sessionId
+    )
+    await remote.locator('[data-testid="composer-input"]').fill('ping from spawned vavd')
+    await remote.locator('[data-testid="composer-send"]').click()
+
+    await expect(remote.locator('[data-testid="tool-card"][data-tool="fs_read"]')).toBeVisible({
+      timeout: 20_000
+    })
+    await expect(remote.locator('[data-testid="message-assistant"]').last()).toContainText(
+      'e2e stub reply'
+    )
+    await expect(page.locator('[data-testid="message-assistant"]')).toHaveCount(0)
+
+    await remote.screenshot({ path: 'test-results/e2e/vavd-desktop-spawn-turn.png' })
+  } finally {
+    await harness.dispose()
+  }
+})
+
+/**
  * Approve a write on the remote window; the file must land on the vavd disk.
  */
 test('desktop Connect approve writes a file on the vavd disk', async () => {

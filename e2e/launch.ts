@@ -98,6 +98,11 @@ export type LaunchVavOptions = {
    * No Connect paste — the host window opens as a control-plane client.
    */
   vavdUri?: string
+  /**
+   * Spawn a local vavd from the repo and auto-pair (`VAVD_SPAWN`).
+   * Electron stays a shell — the child process hosts turns.
+   */
+  spawnVavd?: boolean
   /** Settings → Connect: listen so another VAV can pair with this instance. */
   remoteControlEnabled?: boolean
   /** Seed `userData/daemon/identity.json` name (pairing / remote-window label). */
@@ -433,7 +438,8 @@ export async function launchVav(options: LaunchVavOptions = {}): Promise<VavHarn
       ...(options.acpLeakPrompts ? { E2E_ACP_LEAK_PROMPTS: String(options.acpLeakPrompts) } : {}),
       ...(options.acpLeakTail ? { E2E_ACP_LEAK_TAIL: '1' } : {}),
       ...(options.acpLeakPartialTransport ? { E2E_ACP_LEAK_PARTIAL_TRANSPORT: '1' } : {}),
-      ...(options.vavdUri ? { VAVD_URI: options.vavdUri } : {})
+      ...(options.vavdUri ? { VAVD_URI: options.vavdUri } : {}),
+      ...(options.spawnVavd ? { VAVD_SPAWN: '1' } : {})
     }
   })
 
