@@ -6,6 +6,8 @@ Headless [VAV](https://github.com/21stware/vav). Run it on a machine that should
 npx @21stware/vavd
 # or
 npm i -g @21stware/vavd && vavd
+# then, from another terminal:
+vav send "hello"
 ```
 
 Prints a pairing URI. Use it from:

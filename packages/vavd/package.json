@@ -6,10 +6,12 @@
   "author": "Oboo Cheng",
   "type": "commonjs",
   "bin": {
-    "vavd": "vavd.js"
+    "vavd": "vavd.js",
+    "vav": "vav.js"
   },
   "files": [
     "vavd.js",
+    "vav.js",
     "README.md",
     "LICENSE"
   ],
