@@ -51,6 +51,13 @@ describe('VavWebBridge discover', () => {
       const health = await fetch(`http://127.0.0.1:${web.port}/health`)
       const body = (await health.json()) as { name: string }
       assert.equal(body.name, 'office-mac')
+
+      const mark = await fetch(`http://127.0.0.1:${web.port}/icon-mark.png`)
+      assert.equal(mark.ok, true)
+      assert.equal(mark.headers.get('content-type'), 'image/png')
+      const bytes = new Uint8Array(await mark.arrayBuffer())
+      assert.equal(bytes[0], 0x89)
+      assert.equal(bytes[1], 0x50)
     } finally {
       web.close()
       plane.dispose()

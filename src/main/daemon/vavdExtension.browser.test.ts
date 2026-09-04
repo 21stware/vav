@@ -115,7 +115,7 @@ describe('vavd Chrome extension', () => {
       await panel.locator('#sessions li').first().waitFor({ timeout: 8_000 })
       await panel.locator('#closeDrawer').click()
       await panel.locator('#model').fill('extension-model')
-      await panel.locator('#apply').click()
+      await panel.locator('#model').dispatchEvent('change')
       await panel.locator('#text').fill('hello from the chrome extension')
       await panel.locator('#sendForm button[type="submit"]').click()
       await panel.locator('#transcript').getByText('e2e stub reply').waitFor({ timeout: 8_000 })

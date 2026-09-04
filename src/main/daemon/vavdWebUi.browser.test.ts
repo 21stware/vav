@@ -80,7 +80,6 @@ describe('vavd web UI in Chrome', () => {
       await page.locator('#sessions li').first().waitFor({ timeout: 8_000 })
       await page.locator('#model').fill('webui-model')
       await page.locator('#approval').selectOption('bypass')
-      await page.locator('#apply').click()
       await page.waitForFunction(
         () => (document.getElementById('model') as HTMLInputElement | null)?.value === 'webui-model',
         undefined,

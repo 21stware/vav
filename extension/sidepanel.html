@@ -9,6 +9,7 @@
 <body>
   <header class="chrome">
     <div class="host">
+      <img class="brand-mark" src="icons/icon32.png" alt="" width="20" height="20" />
       <span id="dot" class="dot" data-state="searching" aria-hidden="true"></span>
       <div class="host-meta">
         <strong id="hostName">VAV</strong>
@@ -65,20 +66,27 @@
   </section>
 
   <footer>
-    <div id="runbar" class="runbar">
-      <input id="model" list="modelList" aria-label="Model" placeholder="Model" />
-      <datalist id="modelList"></datalist>
-      <select id="approval" aria-label="Approval">
-        <option value="auto">Normal</option>
-        <option value="bypass">Bypass</option>
-        <option value="edit">Read</option>
-      </select>
-      <button type="button" id="apply" class="ghost">Apply</button>
-      <button type="button" id="stopBtn" class="ghost danger" hidden>Stop</button>
-    </div>
     <form id="sendForm" class="composer">
-      <textarea id="text" placeholder="Ask…" rows="2"></textarea>
-      <button type="submit" class="send">Send</button>
+      <div class="composer-box">
+        <textarea id="text" placeholder="Message the agent…" rows="2"></textarea>
+        <div class="composer-bar">
+          <span class="spacer"></span>
+          <input id="model" class="model-picker" list="modelList" aria-label="Model" placeholder="Model" />
+          <datalist id="modelList"></datalist>
+          <select id="approval" class="model-picker" aria-label="Approval">
+            <option value="auto">Normal</option>
+            <option value="bypass">Bypass</option>
+            <option value="edit">Read</option>
+          </select>
+          <button type="button" id="apply" hidden>Apply</button>
+          <button type="button" id="stopBtn" class="ghost danger" hidden>Stop</button>
+          <button type="submit" class="send-button" aria-label="Send">
+            <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+              <path d="M8 12.5V3.5M8 3.5 3.5 8M8 3.5 12.5 8" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </button>
+        </div>
+      </div>
     </form>
   </footer>
 

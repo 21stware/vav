@@ -100,19 +100,24 @@ function splitPageContext(text) {
   return { ask: text.slice(0, idx).trim(), page: text.slice(idx).trim() }
 }
 
+function turnHtml(role, body) {
+  const who = role === 'user' ? 'You' : role === 'system' ? 'System' : 'Agent'
+  return `<article class="message-turn ${role}"><div class="message-role">${who}</div><div class="message ${role}">${body}</div></article>`
+}
+
 function renderMessage(msg) {
-  const who = msg.role === 'user' ? 'You' : msg.role === 'system' ? 'System' : 'VAV'
   const raw = msg.text || (msg.blocks || []).filter((b) => b.kind === 'text').map((b) => b.text).join('\n')
   if (msg.role === 'user' && raw.includes('[Current page]')) {
     const { ask, page } = splitPageContext(raw)
     const title = (page.match(/Title: ([^\n]+)/) || [])[1] || 'This page'
-    return `<article class="msg user"><div class="who">${who}</div><div class="body">${
-      ask ? `<div class="md">${renderMarkdown(ask)}</div>` : ''
-    }<div class="page-ref">${escapeHtml(title)}</div></div></article>`
+    return turnHtml(
+      'user',
+      `${ask ? `<div class="md">${renderMarkdown(ask)}</div>` : ''}<div class="page-ref">${escapeHtml(title)}</div>`
+    )
   }
   const blocks = (msg.blocks || []).map(renderBlock).join('')
   const body = blocks || (raw ? `<div class="md">${renderMarkdown(raw)}</div>` : '')
-  return `<article class="msg ${msg.role}"><div class="who">${who}</div><div class="body">${body}</div></article>`
+  return turnHtml(msg.role, body)
 }
 
 function renderLive(id) {
@@ -128,21 +133,21 @@ function renderLive(id) {
   else if (draft) html += `<div class="md">${renderMarkdown(draft)}</div>`
   if (awaiting) html += renderBlock(awaiting)
   if (!html) return ''
-  return `<article class="msg assistant live"><div class="who">VAV</div><div class="body">${html}</div></article>`
+  return turnHtml('assistant', html)
 }
 
 function renderTranscript() {
   const log = $('transcript')
   const id = state.active
   if (!id) {
-    log.innerHTML = `<div class="empty"><strong>Ask beside the page</strong>Open a session or just type. The current tab can ride along.</div>`
+    log.innerHTML = `<div class="empty"><img class="empty-logo" src="icons/icon48.png" alt="" /><div class="empty-title">Message the agent to start this session.</div></div>`
     return
   }
   const messages = state.threads[id] || []
   const live = isRunning() || state.awaiting[id] || state.drafts[id] || (state.liveBlocks[id] || []).length
   log.innerHTML =
     messages.map(renderMessage).join('') + (live ? renderLive(id) : '') ||
-    `<div class="empty"><strong>New session</strong>Ask about this page, or send a task to vavd.</div>`
+    `<div class="empty"><img class="empty-logo" src="icons/icon48.png" alt="" /><div class="empty-title">Message the agent to start this session.</div></div>`
   log.scrollTop = log.scrollHeight
 }
 
@@ -154,8 +159,10 @@ function renderSessions() {
     .map((s) => {
       const pin = s.pinned ? '<span class="pin">Pinned</span> ' : ''
       return `<li data-id="${escapeHtml(s.id)}" class="${s.id === state.active ? 'active' : ''}">
-        ${pin}${escapeHtml(s.title || 'Session')}
-        <div class="meta">${escapeHtml(s.dirLabel || s.preview || '')}</div>
+        <div class="conv-text">
+          <div class="conv-title">${pin}${escapeHtml(s.title || 'New session')}</div>
+          <div class="conv-subtitle">${escapeHtml(s.dirLabel || s.preview || 'Workspace')}</div>
+        </div>
       </li>`
     })
     .join('')
@@ -198,7 +205,7 @@ function renderControls() {
 function renderPage() {
   const chip = $('pageChip')
   const page = state.page
-  if (!page || !page.url || page.url.startsWith('chrome')) {
+  if (!page || !page.url || /^(chrome|edge|about|devtools):/i.test(page.url)) {
     chip.hidden = true
     return
   }

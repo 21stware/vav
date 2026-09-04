@@ -3,6 +3,8 @@
  * already speaks. Chrome extension and the bundled web page attach here.
  */
 import { createHash } from 'node:crypto'
+import { existsSync, readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 import { EventEmitter } from 'node:events'
 import type { Socket as NetSocket } from 'node:net'
@@ -17,6 +19,12 @@ import {
 import { WEB_UI_HTML } from './webUi.ts'
 
 const WS_GUID = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11'
+const BUILD_DIR = join(import.meta.dirname, '../../../build')
+const BRAND_ICONS: Record<string, string> = {
+  '/icon-mark.png': join(BUILD_DIR, 'icon-mark.png'),
+  '/icon-mark-dark.png': join(BUILD_DIR, 'icon-mark-dark.png'),
+  '/icon.png': join(BUILD_DIR, 'icon.png')
+}
 
 export type VavWebBridgeOpts = {
   listen: string
@@ -222,6 +230,15 @@ function handleHttp(req: IncomingMessage, res: ServerResponse, opts: VavWebBridg
       hasSecret: Boolean(opts.secret()),
       ...(loopback ? { secret: opts.secret() || undefined } : {})
     })
+    return
+  }
+  const icon = BRAND_ICONS[path]
+  if (icon && existsSync(icon)) {
+    res.writeHead(200, {
+      'content-type': 'image/png',
+      'cache-control': 'public, max-age=86400'
+    })
+    res.end(readFileSync(icon))
     return
   }
   res.writeHead(404)
