@@ -39,7 +39,7 @@ test('pair vavd, open its folder, list a file that only exists there', async () 
         id: paired.host.id,
         online: true,
         name: 'E2E Daemon',
-        controlPlane: false
+        controlPlane: true
       })
 
     // Local window stays this computer. The daemon opens its own main shell.

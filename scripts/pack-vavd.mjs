@@ -31,7 +31,7 @@ await build({
   platform: 'node',
   format: 'cjs',
   target: 'node22',
-  external: ['node-pty'],
+  external: ['node-pty', 'electron', 'bufferutil', 'utf-8-validate'],
   logLevel: 'info'
 })
 

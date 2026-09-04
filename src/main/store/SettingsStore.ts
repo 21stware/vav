@@ -1,4 +1,3 @@
-import { app } from 'electron'
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import {
@@ -36,6 +35,7 @@ import {
 import { clampKeepAwakeBatteryFloor } from '@shared/sleepBlocker'
 import { resolveAutoUpdatePolicy } from '@shared/updatePolicy'
 import { createDebouncedWriter } from './debounceWrite'
+import { electronUserData } from './electronUserData.ts'
 
 const PLATFORM = process.platform as Platform
 
@@ -65,9 +65,15 @@ const DEFAULTS: AppSettings = { ...DEFAULT_SETTINGS, ...platformDefaults(PLATFOR
  * latest endpoint/model without an explicit save step.
  */
 export class SettingsStore {
-  private readonly file = join(app.getPath('userData'), 'settings.json')
+  private readonly file: string
+  private readonly userDataDir: string
   private settings: AppSettings = { ...DEFAULTS }
   private readonly persistWriter = createDebouncedWriter(() => this.writeSettingsFile(), 150)
+
+  constructor(userDataDir?: string) {
+    this.userDataDir = userDataDir ?? electronUserData()
+    this.file = join(this.userDataDir, 'settings.json')
+  }
 
   load(): AppSettings {
     try {
@@ -250,7 +256,7 @@ export class SettingsStore {
     if (typeof s.customSurfacePatternSize !== 'string' || !isCssTileSize(s.customSurfacePatternSize)) {
       s.customSurfacePatternSize = ''
     }
-    const patternFile = surfacePatternFilePath(app.getPath('userData'))
+    const patternFile = surfacePatternFilePath(this.userDataDir)
     if (s.surfacePattern === 'custom' && !existsSync(patternFile)) {
       s.surfacePattern = DEFAULT_SETTINGS.surfacePattern
     }
@@ -502,7 +508,7 @@ export class SettingsStore {
    */
   private migrateCustomSurfacePatternFile(): boolean {
     const url = this.settings.customSurfacePatternUrl
-    const dest = surfacePatternFilePath(app.getPath('userData'))
+    const dest = surfacePatternFilePath(this.userDataDir)
     let dirty = false
     if (typeof url === 'string' && url.startsWith('data:image/png;base64,')) {
       try {

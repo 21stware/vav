@@ -30,6 +30,8 @@ export async function startVavd(): Promise<VavdHandle> {
   const child: ChildProcess = spawn(
     process.execPath,
     [
+      '--import',
+      join(root, 'scripts/register-shared-alias.mjs'),
       '--experimental-strip-types',
       join(root, 'src/main/daemon/vavd.ts'),
       '--port',
@@ -37,6 +39,7 @@ export async function startVavd(): Promise<VavdHandle> {
       '--state',
       state,
       '--no-announce',
+      '--no-web',
       '--name',
       'E2E Daemon'
     ],

@@ -51,14 +51,14 @@ type ServerOpts = {
   extraSecrets?: () => string[]
   onIncomingChanged?: () => void
   /**
-   * Local sessions + folder recents on this computer. Headless `vavd` omits
-   * this; list/get then return empty rather than failing the pair.
+   * Local sessions + folder recents on this computer. Optional for a
+   * workspace-only listen; `vavd` supplies the control-plane catalog.
    */
   catalog?: DaemonWorkspaceCatalog
   /**
    * Phone-role hello on this listen port — hand the socket to the session
-   * plane. Headless `vavd` omits this so a phone / desktop control client
-   * is refused instead of being treated as a daemon.
+   * plane. Omit only for a workspace-only listen (tests). `vavd` always
+   * supplies this so phone / web / extension / desktop-connect share one port.
    */
   onControlHello?: (socket: Socket, leftover: string, hello: RemoteHello) => void
 }

@@ -1,4 +1,3 @@
-import { app } from 'electron'
 import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
@@ -9,6 +8,10 @@ import { isFileSessionEligible } from '@shared/clipPath'
 import type { ConversationStore } from './ConversationStore'
 import { defaultSessionTitle } from '@shared/i18n'
 import { currentLocale } from '../i18n'
+import { electronUserData } from './electronUserData'
+import { kindFromFilePath } from './fileSessionKind'
+
+export { kindFromFilePath } from './fileSessionKind'
 
 export interface FileSessionMeta {
   id: string
@@ -41,32 +44,6 @@ function pathHash(path: string): string {
 }
 
 /**
- * Extension → system-prompt playbook kind. Exported for AgentRuntime / tests.
- * null = ordinary text/code (use the generic open-file playbook).
- */
-export function kindFromFilePath(path: string): string | null {
-  const base = path.split(/[/\\]/).pop() ?? ''
-  const dot = base.lastIndexOf('.')
-  if (dot <= 0) return 'text'
-  const ext = base.slice(dot).toLowerCase()
-  if (ext === '.zip') return 'zip'
-  if (ext === '.pdf') return 'pdf'
-  if (ext === '.csv' || ext === '.tsv') return 'csv'
-  if (/\.(docx|xlsx|xls|pptx|ppt)$/i.test(ext)) return 'office'
-  if (/\.(png|jpe?g|gif|webp|bmp|svg|heic|tif|tiff|avif)$/i.test(ext)) return 'image'
-  if (/\.(mp3|wav|m4a|aac|flac|ogg)$/i.test(ext)) return 'audio'
-  if (/\.(mp4|mov|webm|mkv|avi)$/i.test(ext)) return 'video'
-  if (/\.(db|sqlite|sqlite3|db3)$/i.test(ext)) return 'sqlite'
-  if (ext === '.parquet') return 'parquet'
-  const knownText =
-    /\.(md|markdown|mdx|txt|json|js|ts|tsx|jsx|py|rs|go|swift|ipynb|html|css|xml|yml|yaml|toml|sh|zsh)$/i.test(
-      ext
-    )
-  if (knownText) return null
-  return 'binary'
-}
-
-/**
  * Per-file multi-session store for File Preview (file-preview.rpml FileSessionStore).
  *
  * Conversation bodies live in {@link ConversationStore} with `fileId` set so the
@@ -77,8 +54,13 @@ export function kindFromFilePath(path: string): string | null {
  * to chat about — they never enter this index.
  */
 export class FileSessionStore {
-  private readonly dir = join(app.getPath('userData'), 'file-sessions')
-  private readonly indexPath = join(this.dir, 'index.json')
+  private readonly dir: string
+  private readonly indexPath: string
+
+  constructor(userDataDir?: string) {
+    this.dir = join(userDataDir ?? electronUserData(), 'file-sessions')
+    this.indexPath = join(this.dir, 'index.json')
+  }
   private index: IndexFile = { version: 1, byId: {}, byInode: {}, byPathHash: {} }
   private conversations: ConversationStore | null = null
   private accountIdFor: ((workdir: string | null) => string | null) | null = null

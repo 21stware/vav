@@ -27,7 +27,14 @@ if (files.length === 0) {
 
 const child = spawn(
   process.execPath,
-  ['--test', '--experimental-strip-types', '--test-timeout=120000', ...files],
+  [
+    '--import',
+    new URL('./register-shared-alias.mjs', import.meta.url).pathname,
+    '--test',
+    '--experimental-strip-types',
+    '--test-timeout=120000',
+    ...files
+  ],
   {
     stdio: 'inherit'
   }

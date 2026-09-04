@@ -5,7 +5,6 @@
  * The model discovers them via catalog metadata in the system prompt and loads
  * full bodies with the `load_skill` tool (progressive disclosure).
  */
-import { app } from 'electron'
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
 import { join, normalize, resolve, sep } from 'node:path'
 import { request as httpsRequest } from 'node:https'
@@ -58,14 +57,21 @@ export class SkillService {
   /** Absolute path to resources/agent-skills (dev + packaged). */
   root(): string | null {
     if (this.rootCache && existsSync(this.rootCache)) return this.rootCache
+    let appPath: string | null = null
+    try {
+      const electron = require('electron') as { app?: { getAppPath: () => string } }
+      appPath = electron.app?.getAppPath() ?? null
+    } catch {
+      appPath = null
+    }
     const candidates = [
-      join(process.resourcesPath, 'agent-skills'),
-      join(app.getAppPath(), 'resources', 'agent-skills'),
-      join(app.getAppPath(), '..', 'resources', 'agent-skills'),
+      typeof process.resourcesPath === 'string' ? join(process.resourcesPath, 'agent-skills') : '',
+      appPath ? join(appPath, 'resources', 'agent-skills') : '',
+      appPath ? join(appPath, '..', 'resources', 'agent-skills') : '',
       join(__dirname, '../../resources/agent-skills'),
       join(__dirname, '../../../resources/agent-skills'),
       join(process.cwd(), 'resources', 'agent-skills')
-    ]
+    ].filter(Boolean)
     const hit = candidates.find((p) => existsSync(join(p, 'catalog.json')))
     this.rootCache = hit ?? null
     return this.rootCache

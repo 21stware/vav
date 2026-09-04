@@ -80,7 +80,7 @@ import {
 } from './agentE2eStub'
 import { FileDraftCoalescer, writeToolDraft } from '@shared/writeToolDraft'
 import type { ConversationStore } from '../store/ConversationStore'
-import { kindFromFilePath } from '../store/FileSessionStore'
+import { kindFromFilePath } from '../store/fileSessionKind'
 import type { SettingsStore } from '../store/SettingsStore'
 import type { SecretStore } from '../store/SecretStore'
 import type { FileService } from '../fs/FileService'
@@ -200,7 +200,11 @@ export class AgentRuntime {
   /** Playwright ask-card waiters — not a full TurnState. */
   private e2eAskWaiters = new Map<string, (text: string) => void>()
 
-  constructor(private deps: AgentRuntimeDeps) {}
+  private deps: AgentRuntimeDeps
+
+  constructor(deps: AgentRuntimeDeps) {
+    this.deps = deps
+  }
 
   private vavCreds(conversation: Conversation): { apiKey: string | null; settings: AppSettings } {
     return mergeVavCredentials(

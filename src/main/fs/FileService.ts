@@ -1,4 +1,3 @@
-import { shell } from 'electron'
 import { join, dirname, basename, extname } from 'node:path'
 import { spawn } from 'node:child_process'
 import { userInfo } from 'node:os'
@@ -89,6 +88,13 @@ import {
   textFileFromWindow
 } from './fileWindows'
 
+function electronShell(): { trashItem: (path: string) => Promise<void>; openPath: (path: string) => Promise<string> } {
+  const electron = require('electron') as {
+    shell: { trashItem: (path: string) => Promise<void>; openPath: (path: string) => Promise<string> }
+  }
+  return electron.shell
+}
+
 /**
  * Filesystem access for both the Files panel and the agent's fs_* tools.
  *
@@ -114,12 +120,20 @@ export class FileService {
   /** Files / folders opened through a main-process dialog or Dock drop. */
   private grantedPaths = new Set<string>()
 
+  private onDirtyDirectories: (conversationId: string, dirs: string[]) => void
+  private readonly fs: HostFs
+  /** Per-conversation host. Missing / unknown machines use {@link fs}. */
+  private readonly resolveFs?: (conversationId: string) => HostFs
+
   constructor(
-    private onDirtyDirectories: (conversationId: string, dirs: string[]) => void,
-    private readonly fs: HostFs = localHostFs,
-    /** Per-conversation host. Missing / unknown machines use {@link fs}. */
-    private readonly resolveFs?: (conversationId: string) => HostFs
-  ) {}
+    onDirtyDirectories: (conversationId: string, dirs: string[]) => void,
+    fs: HostFs = localHostFs,
+    resolveFs?: (conversationId: string) => HostFs
+  ) {
+    this.onDirtyDirectories = onDirtyDirectories
+    this.fs = fs
+    this.resolveFs = resolveFs
+  }
 
   grantRoot(root: string): void {
     const trimmed = root.trim()
@@ -440,7 +454,7 @@ export class FileService {
           // Remote hosts have no OS Trash — unlink on that machine.
           await hostFs.unlink(path)
         } else {
-          await shell.trashItem(path)
+          await electronShell().trashItem(path)
         }
       }
       return { ok: true }
@@ -665,7 +679,7 @@ export class FileService {
       spawn('qlmanage', ['-p', path], { stdio: 'ignore', detached: true }).unref()
       return
     }
-    void shell.openPath(path)
+    void electronShell().openPath(path)
   }
 
   /**
@@ -692,7 +706,7 @@ export class FileService {
         })
         return { ok: true }
       }
-      const err = await shell.openPath(path)
+      const err = await electronShell().openPath(path)
       if (err) return { ok: false, error: err }
       return { ok: true }
     } catch (err) {
