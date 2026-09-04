@@ -19,11 +19,31 @@ import {
 import { WEB_UI_HTML } from './webUi.ts'
 
 const WS_GUID = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11'
-const BUILD_DIR = join(import.meta.dirname, '../../../build')
-const BRAND_ICONS: Record<string, string> = {
-  '/icon-mark.png': join(BUILD_DIR, 'icon-mark.png'),
-  '/icon-mark-dark.png': join(BUILD_DIR, 'icon-mark-dark.png'),
-  '/icon.png': join(BUILD_DIR, 'icon.png')
+const BRAND_ICON_FILES: Record<string, string> = {
+  '/icon-mark.png': 'icon-mark.png',
+  '/icon-mark-dark.png': 'icon-mark-dark.png',
+  '/icon.png': 'icon.png'
+}
+
+/**
+ * Packed `vavd.js` is CJS — `import.meta.dirname` is undefined there.
+ * Never resolve paths at module load from it, or the binary dies on boot.
+ */
+function brandIconPath(file: string): string | null {
+  const here =
+    typeof import.meta.dirname === 'string' && import.meta.dirname
+      ? import.meta.dirname
+      : typeof __dirname === 'string'
+        ? __dirname
+        : ''
+  const roots = [here, process.cwd()].filter(Boolean)
+  for (const root of roots) {
+    for (const rel of [`../../../build/${file}`, `../../build/${file}`, `build/${file}`]) {
+      const full = join(root, rel)
+      if (existsSync(full)) return full
+    }
+  }
+  return null
 }
 
 export type VavWebBridgeOpts = {
@@ -232,8 +252,9 @@ function handleHttp(req: IncomingMessage, res: ServerResponse, opts: VavWebBridg
     })
     return
   }
-  const icon = BRAND_ICONS[path]
-  if (icon && existsSync(icon)) {
+  const iconName = BRAND_ICON_FILES[path]
+  const icon = iconName ? brandIconPath(iconName) : null
+  if (icon) {
     res.writeHead(200, {
       'content-type': 'image/png',
       'cache-control': 'public, max-age=86400'
