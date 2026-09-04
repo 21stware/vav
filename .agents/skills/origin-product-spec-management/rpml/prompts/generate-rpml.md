@@ -22,8 +22,20 @@ If inputs are missing, infer common SaaS/product states and make every assumptio
 Order of work forever:
 
 ```text
-inputs → IA (purpose + priority + regions) → representative state → layout → content/states
+inputs → retrieve shots → IA (purpose + priority + regions) → representative state → layout → content/states
 ```
+
+### 2.0 Retrieve layout shots (mandatory before layout)
+
+Before choosing regions or writing RPML, call Origin MCP `search_shots` (or origin-api `search_shots`) with:
+
+1. `page_function` — the user job (required)
+2. `domain` — product category when known
+3. `device` — `mobile` or `desktop`
+
+Use the top hit's `summary`, `primary_action`, `ia_text`, and `rpml` as **constraints**: reproduce the job, P0 vs secondary, and structural recipe. Do not clone brand chrome. If nothing relevant hits, still write IA first, then layout from `../references/composition-guide.md` + skeletons — never from a widget gallery as a page standard.
+
+The widget composition shots later in this prompt are **primitive recipes** (how to nest list vs sidebar), not page standards. Page standards come from `search_shots`.
 
 ### 2.1 Product-level IA (multi-screen sets / README)
 
@@ -46,15 +58,18 @@ Lock these before any `<view>` body:
 4. **Grouping & scan order** — what is read first; what is one decision unit.
 5. **Disclosure** — always visible vs. progressive vs. modal; how selection/filter/role changes hierarchy.
 
+Do **not** emit IA as RPML tags. Encode it in `page description`, pin order, and region labels. Gallery examples keep a sibling **plain-text** record (`kind: ia-text`, `media: text/plain`) for retrieval — grouping / scan-order / disclosure only. Primitive recipes (`list` vs `panel+flex`, `ios-tabbar` on desktop) belong in `../references/composition-guide.md`.
+
 ### 2.3 Encode IA in the artifact
 
 | Decision | RPML encoding |
 | -------- | ------------- |
-| Purpose + hierarchy emphasis | `page description` states the job and what the snapshot privileges |
+| Purpose + hierarchy emphasis | `page description` restates the job and what the snapshot privileges |
+| Retrieval copy (Gallery / RAG only) | Sibling `ia-text` document (`text/plain`) — **not** inside the `.rpml` |
 | Region map | L1 pins/annotations named by role; pin order ≈ scan/importance order |
 | Priority | Dominant surface = P0; secondary columns/inspectors = P1; overflow/enums = P2 |
 | Shared chrome | Same `app-shell` / nav / tabbar pattern as siblings; correct `active` |
-| Cross-cutting IA / policy | `<annotation-global>` — not a fake numbered pin |
+| Cross-cutting policy (not IA) | `<annotation-global>` — not a fake numbered pin |
 
 **Hard fail:** equal-weight card grids with no primary; random side panels; new feature appended without re-ranking priority; overlays treated as permanent peer regions.
 
@@ -106,7 +121,7 @@ Only after Steps 2–3, output a valid RPML file following this structure:
 
 **Overlay pattern:** Do not place `modal`, `drawer`, `dropdown`, `popover`, `tooltip`, or `toast` in the main snapshot. Pin the trigger; render the overlay inside its annotation `<enum>`.
 
-**Pin parity (strict, 1:1):** Every `data-pin="N"` has exactly one matching numbered `<annotation id="N">`, and every numbered `<annotation id="N">` has exactly one matching `data-pin="N"` in the view. Pins are consecutive from 1. **Never write a numbered annotation with no pin** — that is the most common defect. A note that doesn't belong to one pinned region (a cross-cutting permission matrix, a glossary, a global empty/error policy, page-wide conventions) goes in `<annotation-global>`, which is pin-less by design — not in a numbered annotation.
+**Pin parity (strict, 1:1):** Every `data-pin="N"` has exactly one matching numbered `<annotation id="N">`, and every numbered `<annotation id="N">` has exactly one matching `data-pin="N"` in the view. Pins are consecutive from 1. **Never write a numbered annotation with no pin** — that is the most common defect. Page-level IA does **not** go in the `.rpml` (no `<ia>` tags). Other cross-cutting notes (permission matrix, glossary, global policy) go in `<annotation-global>`. Neither belongs inside the snapshot.
 
 **Cross-page links (required whenever navigation exists):** Whenever the UI or an annotation describes a transition to another screen (CTA, list row drill-down, tab, back stack, "see also", empty-state action, success next-step), you **must** wire a real jump — do not only describe it in prose.
 
@@ -120,11 +135,16 @@ Hard rules:
 - Prefer `link=` on the visible control in the main snapshot; use `<anchor>` in annotation enums/flow notes.
 - Multi-screen products must form a connected graph: every outbound path mentioned in README/routes should appear as `link`/`anchor` on at least one screen.
 
-**Diagrams:** Use `<diagram>` (inside an annotation, for flows/state machines/sequence/ER) with Mermaid text. Put the diagram header on its own line:
+**Diagrams:** Use `<diagram>` (inside an annotation, or in `mode="doc"` README flow) with Mermaid text. Put the diagram header on its own line.
+
+README / document-mode flowcharts are **horizontal** (`flowchart LR` / `graph LR`) so the process reads left-to-right. Diagrams render at mermaid's intrinsic 1:1 size and are **not** squeezed to the prose column — keep node labels short, and split flows longer than about 6 steps. State machines and trees may use `TD`. Sequence diagrams are already horizontal.
 
 ```html
 <diagram>
-  graph TD A[列表] --> B{有筛选?} B -->|是| C[过滤结果] B -->|否| D[全部数据]
+flowchart LR
+  A[列表] --> B{有筛选?}
+  B -->|是| C[过滤结果]
+  B -->|否| D[全部数据]
 </diagram>
 ```
 
@@ -155,9 +175,9 @@ Pure accretion that creates dual primaries, dump regions, or stacked equal cards
 
 For the full method — IA-first design, recursive decomposition (L1–L5), the coverage-matrix technique for combinatorial states, update restructure rules, and the annotation-body dimensions — see `../references/practise.md`. The complexity bar (annotation depth) is `../references/example-reference.rpml`. For **widget composition** — which primitives to reach for and how they nest — study the two galleries in the playground (`bun run dev` → `/preview/`): **Webapp → Primitives Gallery** (desktop/Web) and **Mobile → Mobile Widget Gallery** (`device="mobile"` iOS, one widget per card). The two shots below are distilled from them.
 
-## Widget composition shots (few-shot)
+## Widget composition (not page standards)
 
-Copy the idiomatic composition, not the literal content. Row stacks use `list`/`list-item` (or `ios-list`/`ios-list-item` on iOS); `flex-layout`/`layout` are geometry only.
+These two snippets are **primitive recipes** — which widgets nest how. They are not page IA and not the layout standard. Constrain each new screen from `search_shots` (Step 2.0) first; copy composition idioms from here only. Row stacks use `list`/`list-item` (or `ios-list`/`ios-list-item` on iOS); `flex-layout`/`layout` are geometry only.
 
 **Web (`device="desktop"`) — app shell + filter + data table:**
 

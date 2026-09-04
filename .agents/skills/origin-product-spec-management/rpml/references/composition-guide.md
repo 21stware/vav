@@ -19,6 +19,10 @@ ios-*                                  → iOS HIG chrome when device=mobile (pr
 overlay-stage + modal|drawer|sheet     → dimmed stage + dialog (always pair)
 ```
 
+Playground: full-screen Mobile / Webapp items keep IA off the RPML document. Open the bottom-right **IA** dock (Structure + `text/plain` record). Widget galleries skip it. Coverage lives at Mobile → **P0 coverage matrix** and Webapp → **Web IA coverage matrix** (the desktop development standard).
+
+**Split:** the IA text record is page IA (what to understand first, how groups scan, what is chrome vs primary). This file is **which RPML primitives implement that hierarchy**. A Don't like "fake rows with panel + flex" or "ios-tabbar on desktop" belongs here and on `skeleton.dont`, not in the IA text.
+
 | Layer | Responsibility | Do not |
 | --- | --- | --- |
 | Semantic containers | Express *what* (list of messages, settings group) | Encode ad-hoc spacing as the only structure |
@@ -94,6 +98,9 @@ Open the playground (`bun run dev` → preview). Prefer **whole screens** over g
 | Form — Edit Profile | Settings-style edit form |
 | Success — Order Placed | Post-action success / receipt |
 | Error / Offline | Load failure + retry |
+| Calendar · month grid | Month/week calendar as the primary surface (not a settings list of events) |
+| Canvas · spatial board | Infinite canvas + tools + inspector (structure DNA, not a brand clone) |
+| Desktop · issue master-detail | Desktop triage: list left, selected entity right |
 
 ### Mobile — group **App Flows**
 

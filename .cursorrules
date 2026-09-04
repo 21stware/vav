@@ -1,0 +1,77 @@
+# Origin
+
+This project uses [OriginAI](https://getoriginai.com) for product design specs.
+
+Prefer Origin MCP tools when connected; else `bunx originai` / `npx originai`.
+Never raw curl. Auth: `npx originai login` → `~/.origin/settings.json` (CI: `ORIGIN_TOKEN`).
+
+Project config: `.origin.json` (`project_id`: "2303bf76-9a83-45ca-ba34-2bf04b35de6b", `api_url`: "https://vehcxhxmmfasujqtwdat.supabase.co/functions/v1/origin-api")
+
+## Commands (run via shell — or use MCP tools with the same names)
+
+**Prefer MCP tools when connected. Otherwise use the `originai` CLI. NEVER
+construct raw HTTP requests (curl, fetch, wget) to the API URL.**
+
+Prefer `bunx originai` (fast) over `npx originai` (~1.2s/call).
+
+```bash
+bunx originai get-diff                                # unified diff (+/-) + to-side content
+bunx originai get-diff --content-mode none            # unified diff only (no full bodies)
+bunx originai sync                                    # advance release_hash after implementing
+bunx originai list-documents
+bunx originai list-documents --read-type workspace   # live tree (pre-release)
+bunx originai get-document --id <file-id>             # only for files NOT in the diff
+bunx originai grep --pattern "<regex>"
+bunx originai find --file-pattern "<regex>"
+bunx originai validate --content "<rpml>"   # local, no network
+bunx originai create-project --name "<name>"
+bunx originai write-document --name "<name>" --content "<rpml>"
+bunx originai delete-document --id <file-id>
+bunx originai list-proposals --status all
+bunx originai describe-proposal <id> --title "…" --note "…" --rationale "…"
+bunx originai submit-proposal <id>
+bunx originai get-proposal-diff <id> --bind
+```
+
+**Output: all data commands print pure JSON to stdout — pipe directly into
+`jq` or `json.load()` without preprocessing. Tips/status go to stderr.**
+
+All read commands use the latest published release by default; `--read-type workspace`
+reads the live tree (use when indexing a pre-release project). Token is resolved automatically.
+Specs are RPML (one `.rpml` = one screen); `validate --content` before `write-document`.
+Full RPML method + references: `npx originai link --skill`.
+
+## Release badge
+
+When the user wants a README badge (or after sync if `sync_readme_badge` is
+unset): **ask yes/no** → write `"sync_readme_badge": true|false` in
+`.origin.json` → on yes, insert the
+`<!-- originai-release-badge:start -->…end -->` block in `README.md` using
+`project_id` + `release_hash` from `.origin.json` (or `get-diff`'s `to_hash`).
+URLs: `https://spec.getoriginai.com/<project_id>/<hash>/badge-dark.svg`.
+Never do this silently. Full steps: see skill `Release badge` section after
+`npx originai link --skill`.
+
+## Workflow
+
+1. If `.origin.json` has `proposal_id`, `get-diff` / `get_proposal_diff` (release <> that change request). Otherwise `get-diff` (last release vs latest). Implement from `diff` first; do **not** loop `get-document`.
+2. `get-document` only for unchanged dependency files; prefer `grep`/`find`.
+3. Implement code
+4. `sync` → advance `release_hash` once implemented
+5. **Index codebase → Origin (no release yet)**: if unbound, `create-project`
+   then `npx originai link --project <id>`. Initialize **fully** in one pass.
+   Write `README.rpml` first (`mode="doc"` product design doc), then
+   **immediately** author one `.rpml` per page/route in its page/route
+   planning — do not stop after the README. Use `validate --content` +
+   `write-document --content` — no local `.rpml` files. Read back with
+   `list-documents --read-type workspace` and confirm every planned page has a
+   `.rpml`. Remind the user to publish a release in Origin so default reads
+   can see the content.
+6. **After the first release, writes stage a Change Request** (`suggested: true` is success, not an error). There is no `create_change_request` tool — the first `write-document` / MCP `write_document` creates the CR (`proposal_id` is the CR id):
+1. `list-proposals --status all` (MCP `list_proposals` with `status: "all"`) — read `dismiss_reason`; do not file the same dismissed CR.
+2. `validate --content` then `write-document` (MCP `write_document`). Pass `--proposal <id>` / `proposal_id` to continue; `--new-proposal` / `new_proposal: true` to start another.
+3. `describe-proposal <id>` (MCP `describe_proposal`) with Issue (`title`/`note`) and Decisions + Changelog (`rationale`). Do not leave this empty.
+4. `submit-proposal <id>` (MCP `submit_proposal`) when the batch is done. Never apply, dismiss, or record Ready / Not ready.
+5. Tell the user to **apply** the Change Request in Origin, then **publish**. Staging is not publishing — default reads stay on the old snapshot until they publish.
+6. After they publish: `get-diff` → implement → `sync`. Bind `.origin.json` `proposal_id` with `get-proposal-diff <id> --bind` **only** when this repo's next PR implements that request. Do not copy a staging id into `.origin.json` just because you wrote it.
+If this repo is not linked yet after `create-project`, run `npx originai link --project <id>` so later `get-diff` / `sync` work.

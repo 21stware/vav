@@ -1,11 +1,11 @@
 ---
 name: origin-product-spec-management
-description: Read, author, validate, and stay in sync with Origin product design specs written in RPML. Prefer Origin MCP tools when connected; otherwise use the originai CLI. Use when reading a project's design specs, implementing code from them, tracking release diffs, writing specs back from a codebase, or checking that code matches the defined product.
+description: Read, author, validate, and stay in sync with OriginAI product design specs written in RPML. Prefer OriginAI MCP tools when connected; otherwise use the originai CLI. Use when reading a project's design specs, implementing code from them, tracking release diffs, writing specs back from a codebase, or checking that code matches the defined product.
 ---
 
 # Origin Product Spec Management
 
-This skill connects [Origin](https://getoriginai.com) product design specs to your
+This skill connects [OriginAI](https://getoriginai.com) product design specs to your
 coding agent. Origin specs are **RPML** documents — each `.rpml` file is one
 screen/region describing every state, permission variant, and edge case in a
 single annotated layout.
@@ -29,7 +29,7 @@ npx originai login
 
 **Once per product repo (bind project + optional skill files):**
 ```bash
-npx originai link --project feea5b82-31bd-4418-a57f-23bc4042e8ff
+npx originai link --project 2303bf76-9a83-45ca-ba34-2bf04b35de6b
 # or: --skill / --claude-code / --codex / --cursor / --all
 ```
 
@@ -37,7 +37,7 @@ Project config is in `.origin.json` (committed, no secrets):
 ```json
 {
   "api_url": "https://vehcxhxmmfasujqtwdat.supabase.co/functions/v1/origin-api",
-  "project_id": "feea5b82-31bd-4418-a57f-23bc4042e8ff",
+  "project_id": "2303bf76-9a83-45ca-ba34-2bf04b35de6b",
   "release_hash": null,
   "sync_readme_badge": false
 }
@@ -60,6 +60,14 @@ Project config is in `.origin.json` (committed, no secrets):
 - `release_hash` — the last **published release** this repo synced to. This is
   the anchor for two-way sync. Origin shows every release's hash in its UI, so
   the hash in `.origin.json` tells you exactly which release the code reflects.
+- `proposal_id` — optional **implementation bind**. Set it only when this
+  repo's next GitHub PR is implementing that change request. The GitHub App then
+  reviews `code diff` against `release hash <> proposal`. `write-document`
+  never writes this field — staging a spec correction is not an implementation
+  bind. Set it with `get-proposal-diff <id> --bind`, or by editing
+  `.origin.json`. `sync` clears it only after a new release hash exists
+  (the request was applied or closed, then published). Clear it yourself
+  before a PR that only implements a published release.
 
 All read commands (`list-documents`, `get-document`, `grep`, `find`, `get-diff`)
 read the **latest published release snapshot** by default — never the live
@@ -68,41 +76,77 @@ edits. Pass `--read-type workspace` to read the live `rpml_files` tree instead
 (use this when indexing a pre-release project — see Workflow C), or
 `--release-tag <hash>` to pin a read to a specific published release.
 
-**Write commands (`write-document`, `delete-document`) only work when the project
-has no published release yet.** Once a release exists, the workspace becomes the
-user's authority — specs must be edited in the Origin workbench, not via the API.
-This prevents stale-snapshot overwrites: the agent reads a release snapshot, and
-if it could also write, it might clobber in-progress workbench edits based on
-outdated understanding.
+**Before staging anything, call `list-proposals --status all`** (or MCP
+`list_proposals` with `status: 'all'`). If a similar change was dismissed, read
+`dismiss_reason` and do not file the same Change Request again. If your previous
+batch was applied, the spec has moved — re-read before continuing. Agents are
+not notified when a token-authored change is decided; asking is the only channel.
+
+What you can observe: `list-proposals` adds `decided_items[]` (each with
+`decision` and `dismiss_reason`) to every change request that has a decision,
+`get-proposal <id>` shows the same per item plus write-wave `batches[]` and
+unified `diff`s (`--with-content` adds bodies), `list-proposal-comments <id>`
+returns the discussion, and `list-proposal-reviews <id>` returns Ready / Not
+ready conclusions (a stale row was recorded before the latest write).
+
+**Writes after a release become Change Requests.** There is no
+`create_change_request` tool — the first `write-document` / MCP `write_document`
+creates the CR (`suggested: true` + `proposal_id`). Reads still default to the
+latest published release. Report that to the user. Keep writing to the same CR
+by passing `proposal_id` on `write-document` (or MCP `proposal_id`). Use
+`--new-proposal` / `new_proposal: true` to open a second CR — never to
+split README vs screens of the same indexing pass. One indexing pass is one
+Change Request. Do **not** copy
+that id into `.origin.json` unless this repo is about to implement it in code.
+`commit-proposal` seals the current write-wave without marking the set ready;
+`describe-proposal` writes the Change Request **message** a human reads:
+**Issue** (`title` = one line, `note` = the problem), **Decisions** (what
+you chose and why) and **Changelog** (which documents changed and what each
+change does) in `rationale`. Do not leave this empty. `submit-proposal`
+seals the wave **and** marks the set ready (and can take the same fields).
+Use `comment-proposal` for follow-up discussion. You may stage, describe,
+commit, submit, and comment — **never apply, dismiss, or record a conclusion**.
+Direct writes only happen when the project has **no release yet**, or when
+`project_write_mode` is `direct` (rare).
 
 There are two directions, and knowing which one you are in matters:
 
-- **Origin → repo (pull & implement).** The project was designed in Origin.
-  Run `get-diff` (read-only — does **not** advance the hash). The response always
-  includes a unified `diff` with +/- markers for every change, and by default also
-  embeds to-side full `content`. **Read `diff` first** — that is the change set.
-  Use `content` when you need the whole file. Then `sync` to advance
-  `release_hash`. Do **not** script a `get-document` loop over the diff ids.
+- **Origin → repo (pull & implement).** If `.origin.json` has `proposal_id`,
+  run `get-diff` (it becomes `get_proposal_diff`: release <> that change
+  set) or MCP `get_proposal_diff`. Otherwise run `get-diff` between
+  published releases. The response always includes a unified `diff`. **Read
+  `diff` first.** Then `sync` to advance `release_hash` only after the
+  change is a published release (apply in Origin, publish, then sync). Do
+  **not** script a `get-document` loop over the diff ids.
   This is Workflow A/B below.
 
-- **Repo → Origin (index & write).** The Origin project has **no release yet**.
-  Read the codebase, author RPML content, `validate --content`, then
+- **Repo → Origin (index & write).** If the Origin project has **no release yet**,
+  read the codebase, author RPML content, `validate --content`, then
   `write-document --content` to push it **directly to Origin** — do **not** save
-  `.rpml` files locally. Needs a read-write token. Read back what you wrote with
-  `list-documents --read-type workspace` (the default release read returns 404
-  until a release is published). The user then publishes a release in Origin,
-  producing a new hash your next `get-diff` will sync to.
-  **After the first release is published, the agent can no longer write** —
-  further spec edits happen in the Origin workbench. This is Workflow C below.
+  `.rpml` files locally. Needs a read-write token. If this repo is unbound,
+  `create-project` then `npx originai link --project <id>`. Read back what you
+  wrote with `list-documents --read-type workspace` (the default release read
+  returns 404 until a release is published). The user then publishes a release
+  in Origin, producing a new hash your next `get-diff` will sync to.
+  **After the first release, `write-document` creates a Change Request** — a
+  human applies it in Origin. Always `list-proposals --status all` first.
+  Indexing a released project is **one** Change Request (README + every
+  screen). Do not submit after the README. `describe-proposal` then
+  `submit-proposal` when the whole pass is done.
+  This is Workflow C (pre-release) or Workflow D (after a release) below.
 
 Always keep `.origin.json` committed so every teammate shares the same sync
 pointer; never commit the token.
 
 ## Release badge (optional README) — how to add it
 
-Public release pages ship a Markdown badge image:
+Public release pages ship a badge image:
 `https://spec.getoriginai.com/<project_id>/<release_hash>/badge-dark.svg`
 (also `badge-light.svg`).
+
+**Use HTML for the link** (`<a target="_blank" rel="noopener noreferrer">`
+wrapping `<img>`), not `[![…](…)](…)` — CommonMark cannot open a new tab.
+GitHub and most Markdown hosts allow this subset.
 
 **Never add or edit the badge silently.** Follow this procedure when the user
 asks for a badge, or after a successful `sync` if `.origin.json` has no
@@ -116,7 +160,7 @@ asks for a badge, or after a successful `sync` if `.origin.json` has no
      is no published release yet, tell the user to publish in Origin first —
      do not invent a hash.
 2. **Ask the user** (quote this intent):  
-   “Add an originai release badge to `README.md` and keep it updated on
+   “Add an OriginAI release badge to `README.md` and keep it updated on
    `originai sync`? (yes / no)”
 3. **On decline**: set in `.origin.json`: `"sync_readme_badge": false`
    (keep other fields). Commit if appropriate. Stop.
@@ -125,11 +169,11 @@ asks for a badge, or after a successful `sync` if `.origin.json` has no
      `api_url` / `project_id` / `release_hash`).
    - Ensure root `README.md` exists (create a minimal one if missing).
    - Insert or replace this **exact** marker block (substitute real ids from
-     step 1; prefer `badge-dark`):
+     step 1; prefer `badge-dark`). The `<a target="_blank">` is required:
 
 ```md
 <!-- originai-release-badge:start -->
-[![originai](https://spec.getoriginai.com/PROJECT_ID/RELEASE_HASH/badge-dark.svg)](https://spec.getoriginai.com/PROJECT_ID/RELEASE_HASH)
+<a href="https://spec.getoriginai.com/PROJECT_ID/RELEASE_HASH" target="_blank" rel="noopener noreferrer"><img src="https://spec.getoriginai.com/PROJECT_ID/RELEASE_HASH/badge-dark.svg" alt="OriginAI" /></a>
 <!-- originai-release-badge:end -->
 ```
 
@@ -158,7 +202,7 @@ references **in `rpml/`** (do not re-derive them):
 
 - `rpml/references/spec-summary.md` — root structure, attributes, rules at a glance.
 - `rpml/references/element-index.md` — every element + its attributes.
-- `rpml/references/practise.md` — the authoring method (IA-first, update restructure, recursive decomposition, coverage matrix).
+- `rpml/references/practise.md` — the authoring method (IA-first, visual-weight mapping, update restructure, recursive decomposition, coverage matrix).
 - `rpml/references/example-reference.rpml` — a complete worked example (the quality bar).
 - `rpml/prompts/generate-rpml.md` — author a new `.rpml` from requirements/code (IA gate before layout).
 - `rpml/prompts/rpml-to-code.md` — extract a spec from `.rpml` and implement it.
@@ -186,14 +230,17 @@ Tool names match origin-api actions (snake_case). Pass `project_id` from
 | `get_document` | One file + content |
 | `get_diff` | Unified diff between hashes; default embeds to-side content. Prefer this over looping `get_document`. |
 | `grep_documents` / `find_documents` | Search content / names |
-| `write_document` / `delete_document` / `delete_documents` | Workspace writes (**403 after first release**) |
+| `write_document` / `delete_document` / `delete_documents` | Workspace writes. After a release these **create or extend a Change Request** (`suggested: true` + `proposal_id`). There is no `create_change_request` tool. Pass `proposal_id` or `new_proposal`. |
+| `list_proposals` / `get_proposal` / `get_proposal_diff` / `describe_proposal` / `submit_proposal` / `commit_proposal` | Change review loop; describe_proposal writes Issue / Decisions / Changelog; release <> proposal diff |
+| `comment_proposal` / `list_proposal_comments` / `list_proposal_reviews` | Discuss a change request; read Ready / Not ready (agents never conclude) |
 | `validate` | RPML check (`source` and/or `file_id`) |
+| `search_shots` / `get_shot` / `list_shot_facets` | Layout shots. MCP: `search_shots`. In-app agent uses `retrieve_shots` (same catalog, different name). Pick by platform / business / IA; widget galleries are composition only |
+| `sync_origin_json` | Compute the `.origin.json` pointer to write after implementing a published release |
+| `list_webhooks` / `create_webhook` / `delete_webhook` | Outbound events (`release.published`, `proposal.decided`, `proposal.commented`) |
 
-**MCP has no `sync` tool.** After implementing a release, advance the local
-pointer with CLI: `bunx originai sync` (updates `.origin.json` `release_hash`).
-Or pass explicit `hash` / `to_hash` on the next `get_diff`.
+After implementing a release, call MCP `sync_origin_json` and write `origin_json` into `.origin.json`, or run CLI `bunx originai sync`.
 
-### B. originai CLI (fallback)
+### B. OriginAI CLI (fallback)
 
 Prefer `bunx originai <command>` (~40ms) over `npx originai` (~1.2s).
 
@@ -203,16 +250,25 @@ Prefer `bunx originai <command>` (~40ms) over `npx originai` (~1.2s).
 | `create-project --name "<n>" [--description "<d>"]` | Create a new empty project (read-write) |
 | `list-documents` | File tree from latest release (or `--read-type workspace` for the live tree) |
 | `get-document --id <file-id>` | Get single document with content |
-| `get-diff` (`diff`) | Diff since last sync (read-only). **Always** returns unified `diff` (+/- markers). Default also embeds to-side `content`. Prefer `diff` for implementation; do **not** loop `get-document`. `--from-hash`/`--to-hash`; `--content-mode none\|to\|both` |
+| `get-diff` (`diff`) | Diff to implement. Bound `proposal_id` → release <> proposal; else last sync vs latest release. |
 | `sync` | Advance `release_hash` to the latest release (after implementing a diff) |
 | `grep --pattern "<regex>" -p <project-id>` | Search content across files in latest release |
 | `find --file-pattern "<regex>" -p <project-id>` | Find files by name in latest release |
 | `validate --content "<rpml>"` (`-c`) | Validate an inline RPML string **locally** (no network, no token) |
 | `validate --id <file-id>` (`-i`) | Validate a released document (remote — reads latest release) |
-| `write-document --name "<name>" --content "<rpml>"` | Create/update file (read-write token) |
+| `write-document --name "<name>" --content "<rpml>"` | Create/update file (`--proposal <id>` / `--new-proposal`) |
 | `write-document --id <id> --name "<name>" --content "<rpml>"` | Update existing file |
 | `delete-document --id <file-id>` | Delete file (read-write token) |
 | `delete-documents --ids <id1>,<id2>,...` | Batch delete files (read-write token) |
+| `list-proposals --status all` | Change requests (call before staging). Decided sets carry `decided_items[]` with `dismiss_reason` |
+| `get-proposal <id> [--with-content]` | Items, batches, diffs, purpose; `--with-content` adds bodies |
+| `get-proposal-diff <id> [--bind]` | Release <> proposal; `--bind` writes `.origin.json` `proposal_id` |
+| `describe-proposal <id> --title "…" [--note "…" --rationale "…" ]` | Change request message: Issue (`title`/`note`), Decisions + Changelog (`rationale`) |
+| `submit-proposal <id> --title "…"` | Mark ready. Same Issue / Decisions / Changelog fields if not described yet |
+| `commit-proposal <id> [--note "…" ]` | Seal the current write-wave without marking ready |
+| `comment-proposal <id> --body "…" [--item <itemId>]` | Discuss a change (never conclude) |
+| `list-proposal-comments <id>` | Read the discussion on a change request |
+| `list-proposal-reviews <id>` | Ready / Not ready conclusions |
 
 Short aliases: `ls`, `ls-docs`, `get`, `create`, `write`, `delete`/`rm`, `diff`.
 Flags: `-p` project, `-i` id, `-n` name, `-c` content. Project-scoped commands
@@ -226,8 +282,17 @@ All reads default to the **latest published release**. `--read-type workspace`
 
 ## Workflows
 
+Pick the entry that matches how you arrived. **Both directions are first-class.**
+
+- **Repo → Origin** (existing codebase; empty or unbound project): **C**. If
+  unbound, `create-project` then `npx originai link --project <id>`.
+- **Origin → repo** (implement a published release): **A** / **B**.
+- **After a release, update specs from code or an agent:** **D**.
+- GitHub `originai / spec-review` is a **check, not a merge gate** (findings
+  are informational / `neutral`).
+
 **A. Understand a project's specs → implement**
-1. `get-diff` (read-only). Response includes `summary` + `files[]`. Each change has a unified **`diff`** (+/- markers). Default also embeds to-side `content`. **Implement from `diff` first** — do **not** loop `list-documents` / `get-document` for every file.
+1. If `.origin.json` has `proposal_id`, `get-diff` / MCP `get_proposal_diff` (release <> that change request). Otherwise `get-diff` (last release vs latest). Response includes `summary` + `files[]` with unified **`diff`**. **Implement from `diff` first**.
 2. `get-document` only for an unchanged dependency; prefer `grep`/`find` to locate it. Follow `rpml/prompts/rpml-to-code.md`.
 3. `sync` to advance `release_hash` once the code reflects the latest release.
 4. **Release badge (optional):** if `.origin.json` has no `sync_readme_badge` yet, follow **Release badge** above — ask the user, then write the flag + README marker block (never silently).
@@ -243,11 +308,12 @@ All reads default to the **latest published release**. `--read-type workspace`
 Judge the project phase by running `list-projects` (check `latest_release`) and,
 if a release exists, `list-documents`:
 
-- **Empty project (no release, no documents)** — Initialize **fully** in one
-  pass. Write `README.rpml` **first** — it is the product-design document
-  (`mode="doc"`), not a prototype screen. Author it from your understanding of
-  the codebase, `validate --content`, then `write-document --name "README.rpml"
-  --content "<rpml>"` to push it to Origin.
+- **Empty project (no release, no documents)** — If this repo is not linked,
+  `create-project` then `npx originai link --project <id>` so `.origin.json`
+  exists. Initialize **fully** in one pass. Write `README.rpml` **first** — it
+  is the product-design document (`mode="doc"`), not a prototype screen. Author
+  it from your understanding of the codebase, `validate --content`, then
+  `write-document --name "README.rpml" --content "<rpml>"` to push it to Origin.
 
   Then **immediately continue**: for every page/route listed in the README's
   page/route planning, author one `.rpml` prototype screen spec, `validate
@@ -272,12 +338,12 @@ if a release exists, `list-documents`:
       <doc-list-item>Product flow</doc-list-item>
     </doc-list>
     <diagram> // core user flow
-  graph TD
-    A[User login] --> B[Enter home]
+flowchart LR
+  A[User login] --> B[Enter home]
     </diagram>
     <diagram> // core feature conversion
-  graph TD
-    A[User login] --> B[Enter home]
+flowchart LR
+  A[User login] --> B[Enter home]
     </diagram>
     <doc-list type="bullet">
       <doc-list-item>Feature breakdown by priority</doc-list-item>
@@ -296,29 +362,71 @@ if a release exists, `list-documents`:
   planned page exists in Origin. Don't wait to be asked — drive it to
   completion, then report and remind the user to publish a release.
 
-- **Prototype screens already exist** — Normal editing: create, update, or delete
-  specs as needed.
+- **Prototype screens already exist, no release yet** — Keep writing the
+  workspace directly: create, update, or delete specs as needed, then remind
+  the user to publish.
+
+- **A release already exists** — Do **not** write the workspace directly.
+  Follow **Workflow D**, still as **one** Change Request for the whole
+  index: README + every screen, then submit once. Do not submit after the
+  README and do not pass `new_proposal` to split them.
 
 For every spec you author:
+0. **Retrieve → constrain.** `list_shot_facets` returns a path array. Pick by platform / business / IA, then MCP `search_shots` (in-app agent: `retrieve_shots`) with those paths — listed paths always have data. Use the hit's IA (`summary`, `primary_action`, `ia_text`) and RPML recipe as the structural standard. Widget galleries are composition only.
 1. Read the relevant code; author RPML content following
-   `rpml/prompts/generate-rpml.md` and the references.
+   `rpml/prompts/generate-rpml.md` and the references (IA gate before layout).
 2. `validate --content "<rpml>"` — **local** check, no network needed. Fix
    every error before writing. Do **not** save `.rpml` files locally; keep the
    content inline and write directly.
 3. `write-document --name "<name>.rpml" --content "<rpml>"` (read-write token).
-   Use `create-project` first if no project exists yet.
-   **This only works before the first release is published.** If the project
-   already has a release, `write-document` will return 403 — specs must then be
-   edited in the Origin workbench.
+   Use `create-project` then `npx originai link --project <id>` if no project
+   is bound yet.
+   Before the first release this writes the workspace directly. After a release,
+   follow Workflow D: keep staging into the same CR; submit only when the
+   whole pass is complete — do not submit after the README.
 
-After writing, remind the user to **publish a release in Origin** — the default
-reads (`list-documents`, `get-diff`, etc.) cannot see workspace content until a
-release is published. To read back what you just wrote **before** publishing,
-use `list-documents --read-type workspace` / `get-document --read-type workspace
---id <id>`. **Once a release is published, the agent's write access is
-permanently closed**; further spec edits happen in the Origin workbench.
+**Before the first release**, remind the user to **publish** — default reads
+(`list-documents`, `get-diff`, etc.) cannot see workspace content until a
+release exists. To read back what you just wrote, use
+`list-documents --read-type workspace` / `get-document --read-type workspace
+--id <id>`.
 
-**D. Consistency review (scenario: code has behavior not defined in the specs)**
+**D. Iterate specs after a release (change request loop)**
+
+Once a release exists, writes from agents no longer mutate the workspace. There is
+no `create_change_request` tool. Use this loop every time you update specs
+(new screen, confirmed code/spec gap, copy fix). `suggested: true` is success.
+
+1. **Read decisions first.** `list-proposals --status all` (MCP `list_proposals`
+   with `status: "all"`). If a similar change was dismissed, read
+   `dismiss_reason` and do not file the same dismissed Change Request unless you
+   addressed the feedback.
+2. **Read the current spec from the release** (`get-document` / `grep` /
+   `find` — default release reads). Do not assume live workspace content.
+3. Author RPML, `validate --content`, then `write-document` (or MCP
+   `write_document`). Expect `suggested: true` and a `proposal_id`.
+4. Keep staging into the **same** request: pass `proposal_id` / `--proposal`
+   on later writes (including deletes). Use `--new-proposal` /
+   `new_proposal: true` only for a second, unrelated set — never to split
+   README vs screens of the same indexing pass. One indexing pass is one
+   Change Request: write README.rpml first, then every screen, all on this
+   id. Do not submit after the README.
+5. **Describe** with `describe-proposal` / `describe_proposal`: Issue
+   (`title`, `note`), Decisions + Changelog (`rationale`). Do not leave this
+   empty. Safe to call before more documents; it does not finish the CR.
+6. **Submit** with `submit-proposal` / `submit_proposal` when the whole
+   pass is done (README + every planned screen). Optionally
+   `comment-proposal` for follow-up. You may stage, describe, commit,
+   submit, and comment — **never apply, dismiss, or record a conclusion**.
+7. Tell the user: open **Change requests** in Origin, apply or dismiss, then
+   **publish a new release**. Staging is not publishing; default reads stay on
+   the old snapshot until they publish.
+8. After they publish: `get-diff` → implement code → `sync`. Bind
+   `.origin.json` `proposal_id` with `get-proposal-diff <id> --bind` **only**
+   when this repo's next PR implements that request. Do **not** copy a staging
+   id into `.origin.json` just because you wrote it.
+
+**E. Consistency review (scenario: code has behavior not defined in the specs)**
 This is guidance for *you, the agent* to perform — Origin does not auto-detect
 gaps. When you notice code implementing a feature/behavior:
 1. Search the released specs for it: `grep --pattern "<feature>"` and
@@ -328,8 +436,9 @@ gaps. When you notice code implementing a feature/behavior:
 3. Report a clear analysis to the user: what the code does, which screen/spec it
    would belong to, and why it appears undefined. Ask whether it should be
    specced, changed, or removed.
-4. Only after the user confirms the intended behavior, optionally author the
-   spec (`rpml/prompts/generate-rpml.md` → `validate` → `write-document`).
+4. Only after the user confirms the intended behavior, author the spec
+   (`rpml/prompts/generate-rpml.md` → `validate` → `write-document`). Before a
+   release this writes the workspace; after a release follow **Workflow D**.
 
 Always `validate --content` RPML before `write-document`. Validation runs
 **locally** (no network, no token). Never save `.rpml` files locally — author

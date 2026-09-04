@@ -63,6 +63,8 @@ IA is not a private thought — encode it so layout and annotations cannot drift
 
 | IA decision | Where it appears in the `.rpml` |
 | ----------- | ------------------------------- |
+| Page IA (retrieval, not RPML) | Sibling `ia-text` record (`text/plain`) — purpose, priority, regions, grouping. Gallery dock only. **Never** `<ia>` tags |
+| Grouping / disclosure rules | Same `ia-text` Do / Don't — scan order, sectioning, chrome vs primary. **Not** primitive recipes (`list` vs `flex`, `ios-tabbar`) |
 | Screen purpose + representative hierarchy | `<page description="…">` — name the job and the hierarchy emphasis, not only the data state |
 | Cross-page nav model | README route map + each screen's chrome (sidebar active item / tabbar active / breadcrumb) |
 | Region map | `data-pin` order follows **importance / reading order**, not arbitrary paint order; L1 annotation labels match region roles ("Primary list", "Context inspector") |
@@ -167,7 +169,7 @@ Some notes don't belong to any single pinned region: a role/permission matrix th
 
 - **`<anchor to="other.rpml" section="N" label="…">`** — explicit jump control in annotation bodies / flow notes; `section` deep-links a target annotation.
 - **`link="other.rpml"`** (+ optional `link-section`) on snapshot elements — marks the real UI control as a cross-page jump (chip + ⌘/Ctrl+click in workbench). **Required** when the annotation describes navigation: never prose-only "goes to X".
-- **`<diagram>`** — render a Mermaid flow / state / sequence / ER diagram inside an annotation to specify a state machine or flow precisely. Put the diagram header (`graph TD`, `stateDiagram-v2`, …) on its own line. For product-level IA, a site-map or nav diagram in README is preferred over inventing ad-hoc nav on every screen.
+- **`<diagram>`** — render a Mermaid flow / state / sequence / ER diagram inside an annotation (or in a `mode="doc"` README) to specify a state machine or flow precisely. Put the diagram header (`flowchart LR`, `stateDiagram-v2`, …) on its own line. README process flows default to **LR** and render at 1:1 (not scaled to the prose column). For product-level IA, a site-map or nav diagram in README is preferred over inventing ad-hoc nav on every screen.
 
 ## 5. Quality bar
 

@@ -6,7 +6,7 @@ All elements registered by the RPUI runtime. RPML authoring uses the bare langua
 
 | Element           | Category | Description                                                                                                                                                                                                |
 | ----------------- | -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| page              | Canvas   | Root document shell; `title`, `route`, `description`, optional `mode`. Default (snapshot): main view left, annotations right. `mode="doc"`: single-column document flow, no route badge, no view/pins/pane |
+| page              | Canvas   | Root document shell; `title`, `route`, `description`, optional `mode`. Default (snapshot): main view left, annotations right. `mode="doc"`: document flow; prose uses the reading measure, diagrams stay 1:1; no route badge, no view/pins/pane |
 | view              | Canvas   | Scaled snapshot frame; device preset sets fixed width; scale attribute zooms the canvas                                                                                                                    |
 | annotation        | Canvas   | Specification block; top-level (id=N) links to data-pin="N"; nested adds sub-region spec                                                                                                                   |
 | annotation-global | Canvas   | Page-level, pin-less note for cross-cutting concerns; renders at top of pane; no id/pin                                                                                                                    |
@@ -14,14 +14,14 @@ All elements registered by the RPUI runtime. RPML authoring uses the bare langua
 | enum-item         | Canvas   | One state card with label and optional description; auto-numbered with a black square badge                                                                                                                |
 | anchor            | Canvas   | Cross-page link (to, optional section) to another screen in the file set                                                                                                                                   |
 | *(attr)* `link`   | Canvas   | On any snapshot control: `link="other.rpml"` (+ optional `link-section`) paints a path chip; ⌘/Ctrl+click jumps in workbench/viewer                                                                      |
-| diagram           | Canvas   | Mermaid → SVG (flow/state/sequence/ER); token-themed; node-radius / edge-radius soften sharp geometry                                                                                                        |
+| diagram           | Canvas   | Mermaid → SVG at intrinsic 1:1 size (not scaled to the prose column); README flows default to `flowchart LR`; token-themed; node-radius / edge-radius soften sharp geometry                                  |
 
 ## Layout primitives
 
 | Element      | Category | Description                                                                                                   |
 | ------------ | -------- | ------------------------------------------------------------------------------------------------------------- |
 | viewport     | Layout   | Fixed-width snapshot viewport matching a device preset; auto height by default                                |
-| layout       | Layout   | CSS grid container with columns, rows, and gap attributes                                                     |
+| layout       | Layout   | CSS grid: `columns="2"` (equal tracks) or `columns="260px 1fr"` (track list); rows, gap                       |
 | panel        | Layout   | White panel/card shell with optional padding and elevation                                                    |
 | pane         | Layout   | Logical region with **no visual chrome** (no border/fill/radius); optional `padding`/`width`; pin-friendly flat grouping |
 | navigator    | Layout   | Top navigation bar container                                                                                  |

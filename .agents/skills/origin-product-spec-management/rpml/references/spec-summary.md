@@ -66,7 +66,7 @@ Document mode (`mode="doc"`) — linear prose, no canvas, no route:
 - `enum` — horizontal container for mutually exclusive states.
 - `enum-item` — one state card; `label` required, `description` optional.
 - `anchor` — cross-page link (`to`, optional `section`) to another screen in the file set.
-- `diagram` — Mermaid text → inline SVG; place inside an annotation.
+- `diagram` — Mermaid text → inline SVG at 1:1; README flows use `flowchart LR`. Place in an annotation or in `mode="doc"`.
 
 **Primitive layer** — static UI building blocks used inside `view` and inside annotation `enum-item` bodies. A broad library across layout, controls, navigation, data display, feedback, iOS, and agent families. The full registered set is enumerated in `element-index.md`.
 
