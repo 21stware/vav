@@ -48,5 +48,8 @@ describe('iOS VAV Remote', () => {
     assert.match(iosFrames, /"type": "thread"/)
     assert.match(iosFrames, /"type": "reply"/)
     assert.doesNotMatch(iosFrames, /"role": "phone"/)
+    assert.match(iosFrames, /vav-daemon:\/\//)
+    assert.match(iosFrames, /parseDaemon/)
+    assert.match(iosFrames, /lanHost/)
   })
 })
