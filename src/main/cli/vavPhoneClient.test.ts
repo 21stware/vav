@@ -7,7 +7,12 @@ import { attachPhone, connectPhone } from './vavPhoneClient.ts'
 async function listen(
   onSocket: (socket: Socket) => void
 ): Promise<{ port: number; close: () => Promise<void> }> {
-  const server: Server = createServer(onSocket)
+  const sockets = new Set<Socket>()
+  const server: Server = createServer((socket) => {
+    sockets.add(socket)
+    socket.on('close', () => sockets.delete(socket))
+    onSocket(socket)
+  })
   await new Promise<void>((resolve, reject) => {
     server.listen(0, '127.0.0.1', () => resolve())
     server.on('error', reject)
@@ -18,6 +23,7 @@ async function listen(
     port,
     close: () =>
       new Promise((resolve) => {
+        for (const socket of sockets) socket.destroy()
         server.close(() => resolve())
       })
   }
