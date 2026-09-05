@@ -1,4 +1,4 @@
-import type { Bootstrap, VavApi } from '@shared/ipc'
+import type { Bootstrap, NativeMenuItem, VavApi } from '@shared/ipc'
 import type {
   RemoteControlsEvent,
   RemoteHostEvent,
@@ -485,7 +485,8 @@ export function installPhoneVav(transport: PhoneTransport): PhoneVavHandle {
       closeDetachedSession: async () => undefined,
       newDetachedSession: async () => undefined,
       listDetachedSessions: async () => [],
-      popupMenu: (items, position) => showDomMenu(items, position),
+      popupMenu: (items: NativeMenuItem[], position?: { x: number; y: number }) =>
+        showDomMenu(items, position),
       closePopupMenu: async () => undefined,
       openTokenUsage: async () => undefined,
       openFilePreview: async () => undefined

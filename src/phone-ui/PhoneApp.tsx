@@ -114,7 +114,7 @@ function PhoneChrome({ transport }: { transport: PhoneTransport }): React.JSX.El
           await setApprovalMode(id, approval)
         }
       }
-      await send(text)
+      await send(text, [])
     })()
   }
 
