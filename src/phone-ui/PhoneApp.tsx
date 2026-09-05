@@ -156,13 +156,14 @@ function PhoneChrome({ transport }: { transport: PhoneTransport }): React.JSX.El
         <button type="submit">Send</button>
       </form>
 
-      {transport.variant === 'extension' && pairOpen ? (
+      {pairOpen ? (
         <div id="pairSheet" className="sheet">
           <div className="sheet-card">
             <h2>Connect to VAV</h2>
             <p>
-              Open the VAV desktop app on this machine. This panel finds it automatically. Or paste a
-              Connect line / local URL.
+              {transport.variant === 'extension'
+                ? 'Open the VAV desktop app on this machine. This panel finds it automatically. Or paste a Connect line / local URL.'
+                : 'This page talks to the vavd on this machine. Paste a Connect line if it did not pair automatically.'}
             </p>
             <input
               id="secret"

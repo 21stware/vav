@@ -8,6 +8,7 @@ import { chromium, type Browser } from '@playwright/test'
 import { createLocalWorkspaceHost } from '../host/WorkspaceHost.ts'
 import { createVavControlPlane } from '../host/VavControlPlane.ts'
 import { startVavWebBridge } from './VavWebBridge.ts'
+import { assertDesktopSessionLayout, readPhoneSessionLayout } from './phoneSessionLayout.ts'
 
 const SECRET = '0123456789abcdef01234567'
 
@@ -76,6 +77,7 @@ describe('vavd web UI in Chrome', () => {
       const page = await browser.newPage()
       await page.goto(`http://127.0.0.1:${web.port}/`)
       await page.getByText(/Connected/).waitFor({ timeout: 8_000 })
+      await page.locator('[data-testid="app-shell"]').waitFor({ state: 'visible', timeout: 8_000 })
       await page.locator('#create').click()
       await page.locator('#sessions [data-testid="session-row"]').first().waitFor({ timeout: 8_000 })
       await page.locator('#model').fill('webui-model')
@@ -88,6 +90,7 @@ describe('vavd web UI in Chrome', () => {
       await page.locator('#text').fill('hello from the web page')
       await page.locator('#sendForm button[type="submit"]').click()
       await page.locator('#transcript').getByText('e2e stub reply').waitFor({ timeout: 8_000 })
+      assertDesktopSessionLayout(await page.evaluate(readPhoneSessionLayout), 480)
       if (existsSync('/opt/cursor/artifacts')) {
         await page.screenshot({
           path: '/opt/cursor/artifacts/vavd_web_ui_stub_turn.png',

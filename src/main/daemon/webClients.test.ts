@@ -11,6 +11,8 @@ const iosFrames = readFileSync(join(root, 'ios/VAVRemote/VAVRemote/Models.swift'
 const desktopApp = readFileSync(join(root, 'src/renderer/src/App.tsx'), 'utf8')
 const desktopRun = readFileSync(join(root, 'src/renderer/src/components/SessionRunPicker.tsx'), 'utf8')
 const desktopComposer = readFileSync(join(root, 'src/renderer/src/components/Composer.tsx'), 'utf8')
+const phoneMain = readFileSync(join(phoneSrc, 'main.tsx'), 'utf8')
+const desktopCss = readFileSync(join(root, 'src/renderer/src/styles/index.css'), 'utf8')
 
 const extension = [
   readFileSync(join(extDir, 'background.js'), 'utf8'),
@@ -59,6 +61,13 @@ describe('web and Chrome clients', () => {
     assert.match(desktopComposer, /AgentModelPicker/)
     const dir = phoneUiDir()
     assert.ok(dir, 'built phone UI must exist (run npm run build:phone-ui)')
+    assert.match(phoneMain, /styles\/index\.css/)
+    assert.match(desktopCss, /filePreview\.css/)
+    const css = readFileSync(join(dir, 'phone.css'), 'utf8')
+    assert.match(css, /workspace-view/)
+    assert.match(css, /preview-right/)
+    assert.match(css, /workspace-view-agent/)
+    assert.match(css, /composer-box/)
   })
 })
 

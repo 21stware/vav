@@ -57,6 +57,9 @@ describe('VavWebBridge discover', () => {
       const css = await ui.text()
       assert.match(css, /composer-box|app-shell/)
       assert.match(css, /session-run-controls|agent-model-picker/)
+      assert.match(css, /workspace-view/)
+      assert.match(css, /preview-right/)
+      assert.match(css, /workspace-view-agent/)
 
       const mark = await fetch(`http://127.0.0.1:${web.port}/icon-mark.png`)
       assert.equal(mark.ok, true)

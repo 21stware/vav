@@ -11,6 +11,7 @@ import { createLocalWorkspaceHost } from '../host/WorkspaceHost.ts'
 import { createVavControlPlane } from '../host/VavControlPlane.ts'
 import { startVavWebBridge } from './VavWebBridge.ts'
 import { spawnLocalVavd } from './vavdSpawn.ts'
+import { assertDesktopSessionLayout, readPhoneSessionLayout } from './phoneSessionLayout.ts'
 
 const SECRET = '0123456789abcdef01234567'
 const EXT = join(import.meta.dirname, '../../../extension')
@@ -69,6 +70,7 @@ async function chatStubTurn(panel: Page, text: string): Promise<void> {
   await panel.locator('#text').fill(text)
   await panel.locator('#sendForm button[type="submit"]').click()
   await panel.locator('#transcript').getByText('e2e stub reply').waitFor({ timeout: 8_000 })
+  assertDesktopSessionLayout(await panel.evaluate(readPhoneSessionLayout), 280)
 }
 
 /** Desktop and the extension share 4752–4762. A leftover steals /discover. */
@@ -196,6 +198,7 @@ describe('vavd Chrome extension', () => {
       await panel.locator('#text').fill('hello from the chrome extension')
       await panel.locator('#sendForm button[type="submit"]').click()
       await panel.locator('#transcript').getByText('e2e stub reply').waitFor({ timeout: 8_000 })
+      assertDesktopSessionLayout(await panel.evaluate(readPhoneSessionLayout), 280)
       const first = [...plane.conversations.all()].find((row) =>
         row.messages.some((m) => m.role === 'user')
       )

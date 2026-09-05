@@ -1,3 +1,5 @@
+import '../renderer/src/styles/index.css'
+import './phone.css'
 import { createPhoneTransport, detectPhoneVariant } from './phoneTransport'
 import { installPhoneVav } from './phoneVav'
 
