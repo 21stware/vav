@@ -152,10 +152,25 @@ export function createWebTransport(): PhoneTransport {
   }
 }
 
-export function createExtensionTransport(): PhoneTransport {
+type ExtensionPortMessage = {
+  type?: string
+  payload?: PhoneLine
+  state?: Record<string, unknown>
+}
+
+type ExtensionPort = {
+  postMessage: (msg: Record<string, unknown>) => void
+  onMessage: { addListener: (fn: (msg: ExtensionPortMessage) => void) => void }
+  onDisconnect: { addListener: (fn: () => void) => void }
+}
+
+export function createExtensionTransport(
+  connectPort: () => ExtensionPort = () => chrome.runtime.connect({ name: 'sidepanel' })
+): PhoneTransport {
   const lineHandlers = new Set<(msg: PhoneLine) => void>()
   const statusHandlers = new Set<(status: PhoneLinkStatus) => void>()
   const pageHandlers = new Set<(page: PhonePageState) => void>()
+  const outbound: Array<Record<string, unknown>> = []
   let page = emptyPage()
   let status: PhoneLinkStatus = {
     status: 'searching',
@@ -163,7 +178,9 @@ export function createExtensionTransport(): PhoneTransport {
     hostName: 'VAV',
     version: ''
   }
-  const port = chrome.runtime.connect({ name: 'sidepanel' })
+  let port: ExtensionPort | null = null
+  let reconnectTimer = 0
+  let generation = 0
 
   const setStatus = (next: Partial<PhoneLinkStatus>): void => {
     status = { ...status, ...next }
@@ -175,7 +192,7 @@ export function createExtensionTransport(): PhoneTransport {
     for (const handler of pageHandlers) handler(page)
   }
 
-  port.onMessage.addListener((msg: { type?: string; payload?: PhoneLine; state?: Record<string, unknown> }) => {
+  const handleMessage = (msg: ExtensionPortMessage): void => {
     if (msg?.type === 'wire' && msg.payload) {
       const line = msg.payload
       if (line.type === 'welcome') {
@@ -216,11 +233,70 @@ export function createExtensionTransport(): PhoneTransport {
         includeShot: snap.includeShot === true
       })
     }
-  })
+  }
+
+  const flush = (next: ExtensionPort): void => {
+    while (outbound.length) {
+      const msg = outbound[0]
+      try {
+        next.postMessage(msg)
+        outbound.shift()
+      } catch {
+        break
+      }
+    }
+  }
+
+  const bindPort = (): void => {
+    if (port) return
+    let next: ExtensionPort
+    try {
+      next = connectPort()
+    } catch {
+      scheduleReconnect()
+      return
+    }
+    const born = ++generation
+    port = next
+    next.onMessage.addListener(handleMessage)
+    next.onDisconnect.addListener(() => {
+      if (generation !== born) return
+      port = null
+      if (status.status === 'connected') setStatus({ status: 'reconnecting', error: '' })
+      scheduleReconnect()
+    })
+    flush(next)
+  }
+
+  const scheduleReconnect = (): void => {
+    if (reconnectTimer) return
+    reconnectTimer = globalThis.setTimeout(() => {
+      reconnectTimer = 0
+      bindPort()
+    }, 250) as unknown as number
+  }
+
+  const post = (msg: Record<string, unknown>): void => {
+    if (!port) {
+      outbound.push(msg)
+      bindPort()
+      return
+    }
+    try {
+      port.postMessage(msg)
+    } catch {
+      outbound.push(msg)
+      port = null
+      if (status.status === 'connected') setStatus({ status: 'reconnecting', error: '' })
+      bindPort()
+    }
+  }
+
+  bindPort()
 
   return {
     variant: 'extension',
-    send: (payload) => port.postMessage({ type: 'wire', payload }),
+    send: (payload) => post({ type: 'wire', payload }),
     onLine: (handler) => {
       lineHandlers.add(handler)
       return () => lineHandlers.delete(handler)
@@ -231,17 +307,17 @@ export function createExtensionTransport(): PhoneTransport {
       return () => statusHandlers.delete(handler)
     },
     connect: (secret) => {
-      if (secret) port.postMessage({ type: 'pair', text: secret })
+      if (secret) post({ type: 'pair', text: secret })
     },
-    rediscover: () => port.postMessage({ type: 'rediscover' }),
+    rediscover: () => post({ type: 'rediscover' }),
     pageState: () => page,
     onPage: (handler) => {
       pageHandlers.add(handler)
       handler(page)
       return () => pageHandlers.delete(handler)
     },
-    setIncludePage: (on) => port.postMessage({ type: 'toggle-page', on }),
-    setIncludeShot: (on) => port.postMessage({ type: 'toggle-shot', on })
+    setIncludePage: (on) => post({ type: 'toggle-page', on }),
+    setIncludeShot: (on) => post({ type: 'toggle-shot', on })
   }
 }
 
