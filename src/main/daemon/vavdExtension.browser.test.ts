@@ -9,6 +9,7 @@ import { chromium, type BrowserContext } from '@playwright/test'
 import { createLocalWorkspaceHost } from '../host/WorkspaceHost.ts'
 import { createVavControlPlane } from '../host/VavControlPlane.ts'
 import { startVavWebBridge } from './VavWebBridge.ts'
+import { spawnLocalVavd } from './vavdSpawn.ts'
 
 const SECRET = '0123456789abcdef01234567'
 const EXT = join(import.meta.dirname, '../../../extension')
@@ -178,6 +179,77 @@ describe('vavd Chrome extension', () => {
       web.close()
       plane.dispose()
       await rm(dir, { recursive: true, force: true })
+      await rm(profile, { recursive: true, force: true })
+    }
+  })
+
+  it('pairs to a desktop-spawned vavd from a pasted local URL', async (t) => {
+    if (!exe) {
+      t.skip('Playwright Chromium is not installed')
+      return
+    }
+
+    const profile = await mkdtemp(join(tmpdir(), 'vav-ext-desk-'))
+    const spawned = await spawnLocalVavd({
+      name: 'VAV Daemon',
+      stubTurn: true,
+      noWeb: false,
+      webPort: 0
+    })
+    let context: BrowserContext | undefined
+    try {
+      assert.ok(spawned.webOrigin)
+      context = await chromium.launchPersistentContext(profile, {
+        executablePath: exe,
+        headless: true,
+        args: [
+          `--disable-extensions-except=${EXT}`,
+          `--load-extension=${EXT}`,
+          '--no-sandbox',
+          '--disable-dev-shm-usage',
+          '--disable-gpu'
+        ]
+      })
+      const page = context.pages()[0] ?? (await context.newPage())
+      const cdp = await context.newCDPSession(page)
+      const started = Date.now()
+      let extensionId = ''
+      while (Date.now() - started < 15_000) {
+        const { targetInfos } = (await cdp.send('Target.getTargets')) as {
+          targetInfos: Array<{ url?: string; type?: string }>
+        }
+        const target = targetInfos.find((row) =>
+          String(row.url ?? '').startsWith('chrome-extension://')
+        )
+        if (target?.url) {
+          extensionId = new URL(target.url).host
+          break
+        }
+        await new Promise((resolve) => setTimeout(resolve, 250))
+      }
+      if (!extensionId) {
+        throw new Error('Playwright Chromium did not register the unpacked MV3 extension')
+      }
+      const panel = await context.newPage()
+      await panel.goto(`chrome-extension://${extensionId}/sidepanel.html`)
+      await panel.evaluate(async (url) => {
+        await chrome.runtime.sendMessage({ type: 'pair', text: url })
+      }, spawned.webOrigin)
+      await panel.getByText(/Connected/).waitFor({ timeout: 12_000 })
+      await panel.locator('#create').click()
+      await panel.locator('#sessionBar').waitFor({ timeout: 8_000 })
+      await panel.locator('#text').fill('hello from desktop vavd')
+      await panel.locator('#sendForm button[type="submit"]').click()
+      await panel.locator('#transcript').getByText('e2e stub reply').waitFor({ timeout: 8_000 })
+      if (existsSync('/opt/cursor/artifacts')) {
+        await panel.screenshot({
+          path: '/opt/cursor/artifacts/vavd_chrome_extension_desktop_url.png',
+          fullPage: true
+        })
+      }
+    } finally {
+      await context?.close()
+      spawned.stop()
       await rm(profile, { recursive: true, force: true })
     }
   })
