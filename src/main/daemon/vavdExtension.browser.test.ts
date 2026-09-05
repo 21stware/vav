@@ -70,29 +70,42 @@ async function chatStubTurn(panel: Page, text: string): Promise<void> {
   await panel.locator('#transcript').getByText('e2e stub reply').waitFor({ timeout: 8_000 })
 }
 
-/** Desktop and the extension share 4752–4762. A leftover steal /discover. */
-function freeDesktopWebPorts(): void {
+/** Desktop and the extension share 4752–4762. A leftover steals /discover. */
+function pidsOnPort(port: number): number[] {
+  try {
+    if (process.platform === 'win32') {
+      const out = execFileSync(
+        'powershell.exe',
+        [
+          '-NoProfile',
+          '-Command',
+          `(Get-NetTCPConnection -LocalPort ${port} -State Listen -ErrorAction SilentlyContinue).OwningProcess`
+        ],
+        { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }
+      )
+      return [...new Set(out.split(/\s+/).map(Number).filter((pid) => pid > 0))]
+    }
+    const out = execFileSync('lsof', ['-ti', `TCP:${port}`], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore']
+    })
+    return [...new Set(out.split(/\s+/).map(Number).filter((pid) => pid > 0))]
+  } catch {
+    return []
+  }
+}
+
+async function freeDesktopWebPorts(): Promise<void> {
   for (let port = 4752; port <= 4762; port++) {
-    try {
-      if (process.platform === 'win32') {
-        execFileSync(
-          'powershell.exe',
-          [
-            '-NoProfile',
-            '-Command',
-            `Get-NetTCPConnection -LocalPort ${port} -ErrorAction SilentlyContinue | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue }`
-          ],
-          { stdio: 'ignore' }
-        )
-      } else {
-        execFileSync('sh', ['-c', `fuser -k ${port}/tcp >/dev/null 2>&1 || true`], {
-          stdio: 'ignore'
-        })
+    for (const pid of pidsOnPort(port)) {
+      try {
+        process.kill(pid, 'SIGTERM')
+      } catch {
+        /* already gone */
       }
-    } catch {
-      /* port was free or we lack permission */
     }
   }
+  await new Promise((resolve) => setTimeout(resolve, 250))
 }
 
 /**
@@ -263,7 +276,7 @@ describe('vavd Chrome extension', () => {
 
     const profile = await mkdtemp(join(tmpdir(), 'vav-ext-desk-'))
     const spawned = await spawnLocalVavd({
-      name: 'VAV Daemon',
+      name: 'Desktop URL Paste',
       stubTurn: true,
       noWeb: false,
       webPort: 0
@@ -308,6 +321,7 @@ describe('vavd Chrome extension', () => {
         await chrome.runtime.sendMessage({ type: 'pair', text: url })
       }, spawned.webOrigin)
       await panel.getByText(/Connected/).waitFor({ timeout: 12_000 })
+      await panel.locator('#hostName').getByText('Desktop URL Paste').waitFor({ timeout: 8_000 })
       await panel.locator('#create').click()
       await panel.locator('#sessionBar').waitFor({ timeout: 8_000 })
       await panel.locator('#text').fill('hello from desktop vavd')
@@ -333,9 +347,9 @@ describe('vavd Chrome extension', () => {
     }
 
     const profile = await mkdtemp(join(tmpdir(), 'vav-ext-autodisc-'))
-    freeDesktopWebPorts()
+    await freeDesktopWebPorts()
     const spawned = await spawnLocalVavd({
-      name: 'VAV Daemon',
+      name: 'Desktop Auto Discover',
       stubTurn: true,
       noWeb: false,
       webPort: 4752,
@@ -350,6 +364,7 @@ describe('vavd Chrome extension', () => {
         await chrome.runtime.sendMessage({ type: 'rediscover' })
       })
       await panel.getByText(/Connected/).waitFor({ timeout: 12_000 })
+      await panel.locator('#hostName').getByText('Desktop Auto Discover').waitFor({ timeout: 8_000 })
       await chatStubTurn(panel, 'hello from desktop auto-discover')
       if (existsSync('/opt/cursor/artifacts')) {
         await panel.screenshot({
@@ -371,24 +386,24 @@ describe('vavd Chrome extension', () => {
     }
 
     const profile = await mkdtemp(join(tmpdir(), 'vav-ext-daemon-uri-'))
-    freeDesktopWebPorts()
+    await freeDesktopWebPorts()
+    const spawned = await spawnLocalVavd({
+      name: 'Desktop Connect URI',
+      stubTurn: true,
+      noWeb: false,
+      webPort: 4752,
+      webListen: '127.0.0.1'
+    })
     let context: BrowserContext | undefined
-    let spawned: Awaited<ReturnType<typeof spawnLocalVavd>> | undefined
     try {
+      assert.match(spawned.pairing, /^vav-daemon:\/\//)
       context = await launchExtension(profile, exe)
       const panel = await openSidePanel(context)
-      await panel.locator('#pairSheet').waitFor({ state: 'visible', timeout: 12_000 })
-      spawned = await spawnLocalVavd({
-        name: 'VAV Daemon',
-        stubTurn: true,
-        noWeb: false,
-        webPort: 4752,
-        webListen: '127.0.0.1'
-      })
-      assert.match(spawned.pairing, /^vav-daemon:\/\//)
-      await panel.locator('#secret').fill(spawned.pairing)
-      await panel.locator('#connect').click()
+      await panel.evaluate(async (uri) => {
+        await chrome.runtime.sendMessage({ type: 'pair', text: uri })
+      }, spawned.pairing)
       await panel.getByText(/Connected/).waitFor({ timeout: 12_000 })
+      await panel.locator('#hostName').getByText('Desktop Connect URI').waitFor({ timeout: 8_000 })
       await chatStubTurn(panel, 'hello from vav-daemon URI')
       if (existsSync('/opt/cursor/artifacts')) {
         await panel.screenshot({
@@ -398,7 +413,7 @@ describe('vavd Chrome extension', () => {
       }
     } finally {
       await context?.close()
-      spawned?.stop()
+      spawned.stop()
       await rm(profile, { recursive: true, force: true })
     }
   })

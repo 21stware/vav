@@ -119,7 +119,11 @@ function attachSocket(found) {
 function onFrame(msg) {
   if (msg.type === 'welcome') {
     clearTimeout(helloTimer)
-    setStatus('connected', { version: msg.version || '', error: '' })
+    setStatus('connected', {
+      version: msg.version || '',
+      error: '',
+      ...(msg.host?.name ? { hostName: msg.host.name } : {})
+    })
     reconnectAt = 0
     return
   }
@@ -474,6 +478,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     state.includePage = true
     void chrome.sidePanel.open({ tabId: sender.tab?.id }).catch(() => {})
     void sendTurn({ text: 'Help me with this selection.', usePage: true })
+    sendResponse({ ok: true })
+    return true
+  }
+  if (msg?.type === 'pair') {
+    void pairManual(msg.text)
     sendResponse({ ok: true })
     return true
   }
