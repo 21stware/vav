@@ -2,18 +2,30 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, it } from 'node:test'
-import { WEB_UI_HTML } from './webUi.ts'
+import { WEB_UI_HTML, phoneUiDir } from './webUi.ts'
 
-const extDir = join(import.meta.dirname, '../../../extension')
-const iosFrames = readFileSync(
-  join(import.meta.dirname, '../../../ios/VAVRemote/VAVRemote/Models.swift'),
-  'utf8'
-)
+const root = join(import.meta.dirname, '../../..')
+const extDir = join(root, 'extension')
+const phoneSrc = join(root, 'src/phone-ui')
+const iosFrames = readFileSync(join(root, 'ios/VAVRemote/VAVRemote/Models.swift'), 'utf8')
+const desktopApp = readFileSync(join(root, 'src/renderer/src/App.tsx'), 'utf8')
+const desktopRun = readFileSync(join(root, 'src/renderer/src/components/SessionRunPicker.tsx'), 'utf8')
+const desktopComposer = readFileSync(join(root, 'src/renderer/src/components/Composer.tsx'), 'utf8')
+const phoneMain = readFileSync(join(phoneSrc, 'main.tsx'), 'utf8')
+const desktopCss = readFileSync(join(root, 'src/renderer/src/styles/index.css'), 'utf8')
+
 const extension = [
   readFileSync(join(extDir, 'background.js'), 'utf8'),
-  readFileSync(join(extDir, 'sidepanel.js'), 'utf8'),
   readFileSync(join(extDir, 'sidepanel.html'), 'utf8'),
-  readFileSync(join(extDir, 'lib/discover.js'), 'utf8')
+  readFileSync(join(phoneSrc, 'phoneTransport.ts'), 'utf8'),
+  readFileSync(join(phoneSrc, 'phoneVav.ts'), 'utf8'),
+  readFileSync(join(phoneSrc, 'PhoneApp.tsx'), 'utf8')
+].join('\n')
+const web = [
+  WEB_UI_HTML,
+  readFileSync(join(phoneSrc, 'phoneTransport.ts'), 'utf8'),
+  readFileSync(join(phoneSrc, 'phoneVav.ts'), 'utf8'),
+  readFileSync(join(phoneSrc, 'PhoneApp.tsx'), 'utf8')
 ].join('\n')
 
 /**
@@ -22,7 +34,7 @@ const extension = [
  */
 describe('web and Chrome clients', () => {
   it('speak the same phone-protocol verbs over WebSocket', () => {
-    for (const src of [extension, WEB_UI_HTML]) {
+    for (const src of [extension, web]) {
       assert.match(src, /role:\s*['"]phone['"]/)
       assert.match(src, /type:\s*['"]hello['"]/)
       assert.match(src, /type:\s*['"]create['"]/)
@@ -30,9 +42,32 @@ describe('web and Chrome clients', () => {
       assert.match(src, /type:\s*['"]configure['"]/)
       assert.match(src, /approvalMode/)
       assert.match(src, /\bmodel\b/)
-      assert.match(src, /ws\.send\(JSON\.stringify/)
-      assert.match(src, /\/vav/)
     }
+    assert.match(extension, /chrome\.runtime\.connect/)
+    assert.match(web, /WebSocket/)
+    assert.match(web, /\/vav/)
+  })
+
+  it('mount the desktop session shell (sidebar, agent log, run bar)', () => {
+    for (const src of [extension, web]) {
+      assert.match(src, /from ['"].*\/App['"]/)
+    }
+    assert.match(desktopApp, /app-shell/)
+    assert.match(desktopApp, /Sidebar/)
+    assert.match(desktopApp, /SessionDetail/)
+    assert.match(desktopRun, /\[mode · permission\]/)
+    assert.match(desktopRun, /\[thinking · Fast\]/)
+    assert.match(desktopComposer, /SessionRunPicker/)
+    assert.match(desktopComposer, /AgentModelPicker/)
+    const dir = phoneUiDir()
+    assert.ok(dir, 'built phone UI must exist (run npm run build:phone-ui)')
+    assert.match(phoneMain, /styles\/index\.css/)
+    assert.match(desktopCss, /filePreview\.css/)
+    const css = readFileSync(join(dir, 'phone.css'), 'utf8')
+    assert.match(css, /workspace-view/)
+    assert.match(css, /preview-right/)
+    assert.match(css, /workspace-view-agent/)
+    assert.match(css, /composer-box/)
   })
 })
 
@@ -53,5 +88,16 @@ describe('iOS VAV Remote', () => {
     assert.match(iosFrames, /vav-daemon:\/\//)
     assert.match(iosFrames, /parseDaemon/)
     assert.match(iosFrames, /lanHost/)
+  })
+
+  it('uses the same desktop run-bar order as the web clients', () => {
+    const iosUi = readFileSync(
+      join(root, 'ios/VAVRemote/VAVRemote/Views/SessionDetailView.swift'),
+      'utf8'
+    )
+    assert.match(iosUi, /mode · permission/)
+    assert.match(iosUi, /thinking · Fast/)
+    assert.match(desktopRun, /mode · permission/)
+    assert.match(desktopRun, /thinking · Fast/)
   })
 })

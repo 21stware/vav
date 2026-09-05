@@ -87,9 +87,12 @@ function estimateOffset(
 }
 
 export function Transcript({
-  conversationId
+  conversationId,
+  /** Phone / web / extension keep the e2e `#transcript` contract. */
+  logId
 }: {
   conversationId?: string
+  logId?: string
 } = {}): React.JSX.Element {
   const t = useT()
   const storeActiveId = useSessionStore((s) => s.activeId)
@@ -681,7 +684,9 @@ export function Transcript({
         />
       )}
       <div
+        id={logId}
         className="transcript"
+        data-testid={logId || 'transcript'}
         ref={scrollRef}
         onScroll={onScroll}
         onWheel={onWheel}

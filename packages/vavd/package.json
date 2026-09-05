@@ -12,6 +12,7 @@
   "files": [
     "vavd.js",
     "vav.js",
+    "phone-ui",
     "README.md",
     "LICENSE"
   ],
