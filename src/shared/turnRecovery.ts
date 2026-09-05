@@ -51,6 +51,39 @@ export type SameSessionRecoveryPlan = {
   recovery: TurnRecovery
 }
 
+/** Map a live host `transport` event onto the recovery chrome the UI shows. */
+export function recoveryFromTransportEvent(
+  event: { status: TurnRecoveryKind; attempt?: number; limit?: number },
+  networkRetries: number
+): TurnRecovery {
+  return {
+    kind: event.status,
+    attempt: event.attempt ?? networkRetries + 1,
+    limit: event.limit ?? NETWORK_RETRY_LIMIT
+  }
+}
+
+/**
+ * Mid-turn Codex / Claude retry strings: parse progress, then pick the same
+ * phase the settle ladder would use so chrome stays consistent.
+ */
+export function planHostRecoveryUi(opts: {
+  raw: string
+  keepPartial: boolean
+  processDied?: boolean
+  kind: CliErrorKind
+  networkRetries: number
+}): SameSessionRecoveryPlan {
+  const parsed = parseHostTransportStatus(opts.raw)
+  return planSameSessionRecovery({
+    keepPartial: opts.keepPartial,
+    processDied: opts.processDied,
+    kind: opts.kind,
+    attempt: parsed?.attempt ?? opts.networkRetries + 1,
+    limit: parsed?.limit ?? recoveryRetryLimit(opts.kind)
+  })
+}
+
 /**
  * Pick the UI phase for a same-session recovery:
  * - partial draft still on the wire → healing (continue, do not re-prompt)

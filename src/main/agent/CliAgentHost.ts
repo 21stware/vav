@@ -40,9 +40,10 @@ import {
 } from '@shared/cliErrors'
 import {
   isRecoveryPhase,
+  planHostRecoveryUi,
   planSameSessionRecovery,
-  parseHostTransportStatus,
   recoveryEqual,
+  recoveryFromTransportEvent,
   recoveryRetryDelayMs
 } from '@shared/turnRecovery'
 import { parseToolInput } from '@shared/askPlan'
@@ -1086,11 +1087,12 @@ export class CliAgentHost {
       }
       case 'transport':
         if (turn.cancelled || turn.settling) break
-        this.setPhase(conversationId, turn, event.status, {
-          kind: event.status,
-          attempt: event.attempt ?? turn.networkRetries + 1,
-          limit: event.limit ?? NETWORK_RETRY_LIMIT
-        })
+        this.setPhase(
+          conversationId,
+          turn,
+          event.status,
+          recoveryFromTransportEvent(event, turn.networkRetries)
+        )
         break
       case 'turn-finished':
         if (event.resumeAt && runtime?.cursor?.provider === 'claude') {
@@ -2131,13 +2133,12 @@ export class CliAgentHost {
     extra?: { kind?: CliErrorKind; processDied?: boolean }
   ): void {
     const kind = extra?.kind ?? this.classifyTurnError(conversationId, raw, turn.errorCode)
-    const parsed = parseHostTransportStatus(raw)
-    const plan = planSameSessionRecovery({
+    const plan = planHostRecoveryUi({
+      raw,
       keepPartial: turnHasAnswerContent(turn),
       processDied: extra?.processDied,
       kind,
-      attempt: parsed?.attempt ?? turn.networkRetries + 1,
-      limit: parsed?.limit ?? NETWORK_RETRY_LIMIT
+      networkRetries: turn.networkRetries
     })
     this.setPhase(conversationId, turn, plan.phase, plan.recovery)
   }

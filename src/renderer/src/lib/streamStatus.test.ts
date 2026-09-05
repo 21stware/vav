@@ -35,5 +35,10 @@ describe('streamStatusLabel', () => {
       streamStatusLabel('healing', labels, { kind: 'healing', attempt: 1, limit: 3 }),
       'Recovering'
     )
+    assert.equal(
+      streamStatusLabel('retrying', labels, { kind: 'retrying', attempt: 1, limit: 1 }),
+      'Retrying'
+    )
+    assert.equal(streamStatusLabel('retrying', labels), 'Retrying')
   })
 })

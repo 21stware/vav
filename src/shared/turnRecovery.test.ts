@@ -5,8 +5,10 @@ import {
   isLiveStreamPhase,
   isRecoveryPhase,
   parseHostTransportStatus,
+  planHostRecoveryUi,
   planSameSessionRecovery,
   recoveryEqual,
+  recoveryFromTransportEvent,
   recoveryRetryDelayMs,
   shouldRetryNativeTurn
 } from './turnRecovery.ts'
@@ -57,6 +59,13 @@ describe('recoveryRetryDelayMs', () => {
     assert.equal(recoveryRetryDelayMs('network', 2), 2_500)
     assert.equal(recoveryRetryDelayMs('network', 3), 5_000)
   })
+
+  it('clamps attempt 0 and overflow onto the last step', () => {
+    assert.equal(recoveryRetryDelayMs('technical', 0), 400)
+    assert.equal(recoveryRetryDelayMs('technical', 99), 2_500)
+    assert.equal(recoveryRetryDelayMs('network', 0), 1_000)
+    assert.equal(recoveryRetryDelayMs('network', 99), 5_000)
+  })
 })
 
 describe('parseHostTransportStatus', () => {
@@ -72,7 +81,58 @@ describe('parseHostTransportStatus', () => {
       limit: 5
     })
     assert.equal(parseHostTransportStatus('healing session').kind, 'healing')
+    assert.equal(parseHostTransportStatus('Recovering').kind, 'healing')
+    assert.equal(parseHostTransportStatus('retrying').kind, 'retrying')
     assert.equal(parseHostTransportStatus('quota exceeded'), null)
+    assert.equal(parseHostTransportStatus(''), null)
+    assert.equal(parseHostTransportStatus('   '), null)
+  })
+})
+
+describe('recoveryFromTransportEvent', () => {
+  it('fills attempt from the live retry counter when the host omitted it', () => {
+    assert.deepEqual(recoveryFromTransportEvent({ status: 'retrying' }, 0), {
+      kind: 'retrying',
+      attempt: 1,
+      limit: NETWORK_RETRY_LIMIT
+    })
+    assert.deepEqual(
+      recoveryFromTransportEvent({ status: 'reconnecting', attempt: 2, limit: 5 }, 0),
+      { kind: 'reconnecting', attempt: 2, limit: 5 }
+    )
+  })
+})
+
+describe('planHostRecoveryUi', () => {
+  it('uses host progress numbers on a technical retry with no draft', () => {
+    const plan = planHostRecoveryUi({
+      raw: 'retrying sampling request (2/5)',
+      keepPartial: false,
+      kind: 'technical',
+      networkRetries: 0
+    })
+    assert.equal(plan.phase, 'retrying')
+    assert.deepEqual(plan.recovery, { kind: 'retrying', attempt: 2, limit: 5 })
+  })
+
+  it('reconnects a dead socket and heals a partial draft', () => {
+    assert.equal(
+      planHostRecoveryUi({
+        raw: 'ECONNRESET',
+        keepPartial: false,
+        kind: 'network',
+        networkRetries: 0
+      }).phase,
+      'reconnecting'
+    )
+    const heal = planHostRecoveryUi({
+      raw: 'TLS connection failed',
+      keepPartial: true,
+      kind: 'network',
+      networkRetries: 0
+    })
+    assert.equal(heal.phase, 'healing')
+    assert.equal(heal.continueWithoutReprompt, true)
   })
 })
 
