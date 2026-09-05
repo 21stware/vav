@@ -8,25 +8,42 @@
 import { displayNameForCliHost, isStructuredCliHost } from '@shared/cliHost'
 import { agentModelHostKey, labelForChatModel } from '@shared/agentModels'
 import { vendorDisplayName, vendorIdFromEndpoint } from '@shared/llmVendors'
-import { enabledCliAgents } from '@shared/types'
+import { enabledCliAgents, type TurnRecovery } from '@shared/types'
 import doneMark from '../assets/loading/done.png'
 import doneMarkDark from '../assets/loading/dark-done.png'
 import loadingSprite from '../assets/loading/sprite.png'
 import loadingSpriteDark from '../assets/loading/dark-sprite.png'
+import { streamStatusLabel, type StreamStatusState } from '../lib/streamStatus'
 import { useAccountGroups, vavAccountsOf } from '../lib/accountGroups'
 import { useSessionStore } from '../state/sessionStore'
 import { useT } from '../i18n/useT'
 
+export type { StreamStatusState }
+
 export function StreamStatus({
   state,
-  conversationId
+  conversationId,
+  recovery
 }: {
-  state: 'outputting' | 'retrying' | 'done'
+  state: StreamStatusState
   conversationId?: string
+  recovery?: TurnRecovery | null
 }): React.JSX.Element {
   const t = useT()
-  const live = state === 'outputting' || state === 'retrying'
+  const live = state !== 'done'
   const detail = useOutputtingDetail(live ? conversationId : undefined)
+  const label = streamStatusLabel(
+    state,
+    {
+      outputting: t('stream.outputting'),
+      retry: t('stream.retry'),
+      reconnect: t('stream.reconnect'),
+      heal: t('stream.heal'),
+      progress: (text, attempt, limit) =>
+        t('stream.recoveryProgress', { label: text, attempt, limit })
+    },
+    recovery
+  )
 
   if (state === 'done') {
     return (
@@ -41,7 +58,15 @@ export function StreamStatus({
   }
 
   return (
-      <div className="stream-status" data-testid="stream-status" data-state={state} role="status" aria-live="polite">
+      <div
+        className="stream-status"
+        data-testid="stream-status"
+        data-state={state}
+        data-attempt={recovery?.attempt ?? undefined}
+        data-limit={recovery?.limit ?? undefined}
+        role="status"
+        aria-live="polite"
+      >
       <span className="stream-status-mark" aria-hidden>
         <img
           className="stream-status-mark-sprite logo-light"
@@ -57,7 +82,7 @@ export function StreamStatus({
         />
       </span>
       <span className="stream-status-shimmer">
-        {state === 'retrying' ? t('stream.retry') : t('stream.outputting')}
+        {label}
         {detail && (
           <>
             {' · '}

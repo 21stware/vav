@@ -6,6 +6,8 @@ import {
   type IndexedBlock
 } from '../lib/assistantProcess'
 import { getProjection, type StreamBlock } from '../state/StreamProjection'
+import { streamStatusState } from '../lib/streamStatus'
+import { isLiveStreamPhase } from '@shared/turnRecovery'
 import { useT } from '../i18n/useT'
 import { handleMarkdownOverlayDoubleClick, MarkdownView } from './MarkdownView'
 import { ReasoningBlock } from './ReasoningBlock'
@@ -35,11 +37,7 @@ export function StreamingMessage({ conversationId }: { conversationId: string })
 
   if (!snapshot.active) return null
   const awaiting = snapshot.phase === 'awaiting-user'
-  const live =
-    snapshot.phase === 'outputting' ||
-    snapshot.phase === 'retrying' ||
-    snapshot.phase === 'thinking' ||
-    snapshot.phase === 'working'
+  const live = isLiveStreamPhase(snapshot.phase)
 
   const { process, live: tail } = splitLiveAssistantProcess(snapshot.blocks.map(streamAsMessage))
 
@@ -113,8 +111,9 @@ export function StreamingMessage({ conversationId }: { conversationId: string })
         {awaiting && <div className="muted tiny">{t('transcript.awaitingContinue')}</div>}
         {live && (
           <StreamStatus
-            state={snapshot.phase === 'retrying' ? 'retrying' : 'outputting'}
+            state={streamStatusState(snapshot.phase)}
             conversationId={conversationId}
+            recovery={snapshot.recovery}
           />
         )}
       </div>

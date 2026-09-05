@@ -1,5 +1,6 @@
 import type { ApprovalMode, QuotaWindow } from '@shared/types'
 import { extractRpcError, extractRpcErrorText } from '@shared/cliErrors'
+import { parseHostTransportStatus } from '@shared/turnRecovery'
 import {
   classifyCodexRateLimitWindowKinds,
   codexWindowMinutesFromRecord,
@@ -325,9 +326,20 @@ function wireCodex(
     }
 
     if (method === 'error') {
+      const message = extractRpcErrorText(params) || JSON.stringify(params)
+      const parsed = parseHostTransportStatus(message)
+      if (parsed && turnActive) {
+        emit({
+          type: 'transport',
+          status: parsed.kind,
+          attempt: parsed.attempt,
+          limit: parsed.limit
+        })
+        return
+      }
       emit({
         type: 'error',
-        message: extractRpcErrorText(params) || JSON.stringify(params)
+        message
       })
     }
   })
