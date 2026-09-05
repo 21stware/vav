@@ -4,16 +4,21 @@ User-facing changes by release. Unreleased work lives at the top until the next 
 
 ## Unreleased
 
+## 1.19.1
+
+CLI ACP turns no longer stay on Streaming after the child dies or the handshake hangs. The Chrome extension can find a local `vavd` and run a full chat from the side panel.
+
+### Reliability
+
+- Stop aborts an in-flight spawn; missing TEMP DIR folders are recreated.
+- Cursor TUI flags (`--force --trust`) are not passed to `cursor-agent acp`.
+
 ### Chrome extension
 
 - Side panel finds a local `vavd` on loopback (`/discover` on :4752–4762) and pairs without pasting a URL or secret.
 - Conversation UI matches the phone client: sessions, agent-log blocks, model/approval, ask cards, and streaming.
 - Page context, selection, screenshot, context menus, and an in-page “Ask VAV” chip ride along with a turn.
 - Toolbar icons are the VAV mark at 16/32/48/128.
-
-### Reliability
-
-- CLI ACP turns no longer stay on Streaming after the child dies or the handshake hangs. Stop aborts an in-flight spawn, missing TEMP DIR folders are recreated, and Cursor TUI flags (`--force --trust`) are not passed to `cursor-agent acp`.
 
 ## 1.19.0
 
