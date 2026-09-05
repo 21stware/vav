@@ -87,7 +87,7 @@ describe('vavd web UI in Chrome', () => {
       )
       await page.locator('#text').fill('hello from the web page')
       await page.locator('#sendForm button[type="submit"]').click()
-      await page.locator('#log').getByText('e2e stub reply').waitFor({ timeout: 8_000 })
+      await page.locator('#transcript').getByText('e2e stub reply').waitFor({ timeout: 8_000 })
       if (existsSync('/opt/cursor/artifacts')) {
         await page.screenshot({
           path: '/opt/cursor/artifacts/vavd_web_ui_stub_turn.png',

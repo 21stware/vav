@@ -74,6 +74,11 @@ for (const file of [outfile, cliOutfile]) {
   chmodSync(file, 0o755)
 }
 
+const phoneUi = join(root, 'extension', 'lib', 'ui')
+if (existsSync(phoneUi)) {
+  cpSync(phoneUi, join(pkgDir, 'phone-ui'), { recursive: true })
+}
+
 cpSync(join(root, 'LICENSE'), join(pkgDir, 'LICENSE'))
 const readme = join(canonicalDir, 'README.md')
 if (existsSync(readme) && pkgDir !== canonicalDir) {
