@@ -47,6 +47,7 @@ export type SettingsCategory =
   | 'agents'
   | 'file-associations'
   | 'keybindings'
+  | 'logs'
   | 'about'
 
 export interface TurnRuntime {

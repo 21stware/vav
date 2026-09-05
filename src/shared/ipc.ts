@@ -44,6 +44,13 @@ import type { AgentInstallRun } from './agentInstall'
 import type { OverlayNavigatePayload, OverlayPayload } from './overlayOpen'
 import type { AnalysisSnapshot } from './analysis'
 import type { ConversationActivityRow } from './traySessions'
+import type {
+  AppLogClearScope,
+  AppLogInput,
+  AppLogQuery,
+  AppLogRecord,
+  AppLogStats
+} from './appLog'
 
 export type HostDiscoveryPeer = {
   machineId: string
@@ -213,6 +220,7 @@ export type SettingsView =
   | 'agents'
   | 'file-associations'
   | 'keybindings'
+  | 'logs'
   | 'about'
 
 /** `'api'` / `'accounts'` are legacy aliases for Providers. */
@@ -781,6 +789,18 @@ export interface VavApi {
     keepAwakeStatus(): Promise<KeepAwakeStatus>
     keepAwakeGrant(): Promise<KeepAwakeGrantResult>
     keepAwakeRevoke(): Promise<KeepAwakeGrantResult>
+  }
+
+  logs: {
+    query(query?: AppLogQuery): Promise<AppLogRecord[]>
+    stats(): Promise<AppLogStats>
+    clear(scope: AppLogClearScope): Promise<{ removed: number }>
+    export(query?: AppLogQuery): Promise<
+      { ok: true; path: string } | { ok: false; cancelled?: boolean; error?: string }
+    >
+    /** Renderer-only user actions (settings nav). Main already logs IPC-backed actions. */
+    record(input: AppLogInput): Promise<void>
+    onChanged(handler: (record: AppLogRecord) => void): () => void
   }
 
   accounts: {
@@ -1996,6 +2016,12 @@ export const IPC = {
   menuCommand: 'vav:menu:command',
   settingsChanged: 'vav:settings:changed',
   settingsView: 'vav:settings:view',
+  logsQuery: 'vav:logs:query',
+  logsStats: 'vav:logs:stats',
+  logsClear: 'vav:logs:clear',
+  logsExport: 'vav:logs:export',
+  logsRecord: 'vav:logs:record',
+  logsChanged: 'vav:logs:changed',
   cliOpen: 'vav:cli:open',
 
   changeSetGet: 'vav:changeset:get',

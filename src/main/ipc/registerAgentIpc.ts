@@ -1,6 +1,8 @@
 import type { IpcMain } from 'electron'
 import { IPC } from '@shared/ipc'
+import { LOG_EVENT } from '@shared/appLog'
 import type { PreviewRef, QuoteDraft } from '@shared/types'
+import { logUserAnswer, logUserCancel, logUserSend, appLog } from '../log/appLogger'
 
 export type AgentIpcRuntimes = {
   ownsCli: (id: string) => boolean
@@ -74,6 +76,12 @@ export function registerAgentIpc(
       contextFile?: string | null
     ) => {
       if (store.get(id)?.archived) return
+      logUserSend(id, {
+        chars: typeof text === 'string' ? text.length : 0,
+        attachments: attachments?.length ?? 0,
+        quoted: !!quote,
+        contextBlocks: contextBlocks?.length ?? 0
+      })
       const args = [
         id,
         text,
@@ -91,11 +99,13 @@ export function registerAgentIpc(
     runtimes.appendNotice(id, text)
   })
   ipcMain.handle(IPC.agentCancel, (_event, id: string) => {
+    logUserCancel(id)
     if (runtimes.tryRemoteCancel?.(id)) return
     if (runtimes.ownsCli(id)) runtimes.cancelCli(id)
     else runtimes.cancelBuiltin(id)
   })
   ipcMain.handle(IPC.agentAnswer, async (_event, id: string, toolCallId: string, answer: string) => {
+    logUserAnswer(id, toolCallId, typeof answer === 'string' ? answer.length : 0)
     if (await runtimes.tryRemoteAnswer?.(id, toolCallId, answer)) return true
     if (runtimes.answerCli(id, toolCallId, answer)) return true
     return runtimes.answerBuiltin(id, toolCallId, answer)
@@ -105,18 +115,27 @@ export function registerAgentIpc(
   )
   ipcMain.handle(IPC.agentRegenerate, (_event, id: string, messageId: string) => {
     if (store.get(id)?.archived) return
+    appLog().user(LOG_EVENT.userRegenerate, 'Regenerate', {
+      conversationId: id,
+      data: { messageId }
+    })
     if (runtimes.controlPlaneOwns?.(id)) return
     if (runtimes.ownsCli(id)) void runtimes.regenerateCli(id, messageId)
     else void runtimes.regenerateBuiltin(id, messageId)
   })
   ipcMain.handle(IPC.agentEditUser, (_event, id: string, messageId: string, text: string) => {
     if (store.get(id)?.archived) return
+    appLog().user(LOG_EVENT.userEdit, 'Edit prompt', {
+      conversationId: id,
+      data: { messageId, chars: typeof text === 'string' ? text.length : 0 }
+    })
     if (runtimes.controlPlaneOwns?.(id)) return
     if (runtimes.ownsCli(id)) void runtimes.editUserCli(id, messageId, text)
     else void runtimes.editUserBuiltin(id, messageId, text)
   })
   ipcMain.handle(IPC.agentFork, (_event, id: string, messageId: string) => {
     if (store.get(id)?.archived) return null
+    appLog().user(LOG_EVENT.userFork, 'Fork', { conversationId: id, data: { messageId } })
     if (runtimes.controlPlaneOwns?.(id)) return null
     return runtimes.fork(id, messageId)
   })

@@ -287,6 +287,14 @@ export function installPhoneVav(transport: PhoneTransport): PhoneVavHandle {
       keepAwakeGrant: async () => ({}),
       keepAwakeRevoke: async () => ({})
     },
+    logs: {
+      query: async () => [],
+      stats: async () => ({ ephemeral: 0, session: 0, durable: 0, total: 0 }),
+      clear: async () => ({ removed: 0 }),
+      export: async () => ({ ok: false as const, cancelled: true }),
+      record: async () => {},
+      onChanged: () => () => {}
+    },
     accounts: {
       getPage: async () => ({ accounts: [], currentId: null }),
       createVav: async () => ({ accounts: [], currentId: null }),
