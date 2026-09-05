@@ -9,6 +9,7 @@ import {
   Info,
   Keyboard,
   Palette,
+  ScrollText,
   Terminal
 } from 'lucide-react'
 import { resolveSettingsView, type SettingsView } from '@shared/ipc'
@@ -36,6 +37,7 @@ import { FileAssociationsSettings } from './components/settings/FileAssociations
 import { KeyBindingsSettings } from './components/settings/KeyBindingsSettings'
 import { AboutSettings } from './components/settings/AboutSettings'
 import { AnalysisSettings } from './components/settings/AnalysisSettings'
+import { LogsSettings, recordSettingsNav } from './components/settings/LogsSettings'
 
 const NAV_ICON = 14
 
@@ -77,6 +79,11 @@ const CATEGORY_KEYS: { id: SettingsView; labelKey: MessageKey; icon: React.JSX.E
     icon: <FileCheck2 size={NAV_ICON} strokeWidth={1.75} />
   },
   { id: 'cli', labelKey: 'settings.nav.cli', icon: <Terminal size={NAV_ICON} strokeWidth={1.75} /> },
+  {
+    id: 'logs',
+    labelKey: 'settings.nav.logs',
+    icon: <ScrollText size={NAV_ICON} strokeWidth={1.75} />
+  },
   { id: 'about', labelKey: 'settings.nav.about', icon: <Info size={NAV_ICON} strokeWidth={1.75} /> }
 ]
 
@@ -167,7 +174,10 @@ export default function SettingsWindow(): React.JSX.Element {
             key={item.id}
             data-testid={`settings-nav-${item.id}`}
             className={`conv-row${item.id === category ? ' selected' : ''}`}
-            onClick={() => useSessionStore.setState({ settingsCategory: item.id })}
+            onClick={() => {
+              useSessionStore.setState({ settingsCategory: item.id })
+              recordSettingsNav(item.id)
+            }}
           >
             <span className="conv-icon">{item.icon}</span>
             <span className="conv-title">{t(item.labelKey)}</span>
@@ -191,6 +201,7 @@ export default function SettingsWindow(): React.JSX.Element {
             {category === 'agents' && <AgentsSettings />}
             {category === 'cli' && <CliSettings />}
             {category === 'file-associations' && <FileAssociationsSettings />}
+            {category === 'logs' && <LogsSettings />}
             {category === 'about' && <AboutSettings />}
           </div>
         </div>

@@ -19,6 +19,7 @@ test('settings is a separate window with category nav and no Done footer', async
       ['connect', 'Connect'],
       ['cli', 'Command Line'],
       ['file-associations', 'File Associations'],
+      ['logs', 'Logs'],
       ['about', 'About']
     ] as const
     for (const [id] of categories) {
@@ -168,6 +169,20 @@ test('About update policy persists and Check for Updates shows a loading indicat
     await expect.poll(() => readUserSetting(harness.userData, 'autoUpdatePolicy')).toBe(
       'download'
     )
+  } finally {
+    await harness.dispose()
+  }
+})
+
+test('Logs shows retention policy and empty-or-boot records', async () => {
+  const harness = await launchVav()
+  try {
+    const settings = await openSettingsWindow(harness, 'logs')
+    await expect(settings.locator('.settings-head')).toHaveText('Logs')
+    await expect(settings.locator('[data-testid="settings-log-retention"]')).toHaveValue('7')
+    await expect(settings.locator('[data-testid="settings-log-list"]')).toBeVisible()
+    await settings.locator('[data-testid="settings-log-retention"]').selectOption('3')
+    await expect.poll(() => readUserSetting(harness.userData, 'logRetentionDays')).toBe(3)
   } finally {
     await harness.dispose()
   }

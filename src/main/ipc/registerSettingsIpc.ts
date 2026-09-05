@@ -3,6 +3,8 @@ import { IPC } from '@shared/ipc'
 import type { AppSettings } from '@shared/types'
 import type { CliInstallLocation } from '../cli'
 import { parseHexToRgb16, parseOsascriptColorText } from '../window/appleColor'
+import { LOG_EVENT } from '@shared/appLog'
+import { appLog } from '../log/appLogger'
 
 export type SettingsIpcStore = {
   get: () => AppSettings
@@ -63,6 +65,10 @@ export function registerSettingsIpc(
   ipcMain.handle(IPC.settingsUpdate, (_event, patch: Partial<AppSettings>) => {
     const previous = store.get()
     const next = store.update(patch)
+    const keys = Object.keys(patch ?? {}).filter((key) => key !== 'apiKeyPresent')
+    if (keys.length) {
+      appLog().user(LOG_EVENT.userSettingsUpdate, keys.join(', '), { data: { keys } })
+    }
     host.applyUpdateSideEffects(previous, patch, next)
     const settings = host.currentSettings()
     host.broadcastSettings(settings)

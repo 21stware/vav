@@ -4,6 +4,14 @@ User-facing changes by release. Unreleased work lives at the top until the next 
 
 ## Unreleased
 
+Settings → Logs records user actions and agent internals for debugging, with temporary / session / durable retention.
+
+### Logs
+
+- User send/stop/answer and agent turn/tool/error lines land in a diagnostic log (no message bodies, no secrets).
+- Temporary records stay in memory 15 minutes; session records last 24 hours or until the chat is deleted; durable records default to 7 days (1–30).
+- Settings → Logs to filter, search, export, clear temporary records, or clear everything.
+
 ## 1.19.1
 
 CLI ACP turns no longer stay on Streaming after the child dies or the handshake hangs. The Chrome extension can find a local `vavd` and run a full chat from the side panel.
