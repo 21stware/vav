@@ -11,6 +11,7 @@ export type PhoneSessionLayout = {
   previewWidth: number
   previewCollapsed: boolean
   selectFileVisible: boolean
+  pageChipOverlapsComposer: boolean
 }
 
 /** Runs in the page. Measures the desktop composer dock, not a crushed strip. */
@@ -24,7 +25,14 @@ export function readPhoneSessionLayout(): PhoneSessionLayout {
   const agentBox = agent?.getBoundingClientRect()
   const previewBox = preview?.getBoundingClientRect()
   const empty = document.querySelector('.workspace-preview-empty')
-  const emptyBox = empty?.getBoundingClientRect()
+  const chip = document.getElementById('pageChip')
+  const chipBox = chip && !chip.hidden ? chip.getBoundingClientRect() : null
+  const previewHidden =
+    !preview ||
+    preview.classList.contains('is-collapsed') ||
+    (previewBox?.width ?? 0) < 8 ||
+    (preview ? getComputedStyle(preview).visibility === 'hidden' : true)
+  const emptyStyle = empty ? getComputedStyle(empty) : null
   return {
     composerWidth: box?.width ?? 0,
     composerHeight: box?.height ?? 0,
@@ -33,8 +41,25 @@ export function readPhoneSessionLayout(): PhoneSessionLayout {
     viewportHeight: window.innerHeight,
     agentWidth: agentBox?.width ?? 0,
     previewWidth: previewBox?.width ?? 0,
-    previewCollapsed: !preview || preview.classList.contains('is-collapsed'),
-    selectFileVisible: Boolean(emptyBox && emptyBox.width > 40 && emptyBox.height > 40)
+    previewCollapsed: previewHidden,
+    selectFileVisible: Boolean(
+      !previewHidden &&
+        empty &&
+        emptyStyle &&
+        emptyStyle.visibility !== 'hidden' &&
+        emptyStyle.display !== 'none' &&
+        (previewBox?.width ?? 0) > 40
+    ),
+    pageChipOverlapsComposer: Boolean(
+      box &&
+        chipBox &&
+        chipBox.width > 8 &&
+        chipBox.height > 8 &&
+        chipBox.bottom > box.top + 4 &&
+        chipBox.top < box.bottom - 4 &&
+        chipBox.right > box.left + 4 &&
+        chipBox.left < box.right - 4
+    )
   }
 }
 
@@ -63,4 +88,9 @@ export function assertDesktopSessionLayout(
     `file preview drawer is open (${Math.round(layout.previewWidth)}px) and eats the session column`
   )
   assert.equal(layout.selectFileVisible, false, 'file-preview empty state is covering the session')
+  assert.equal(
+    layout.pageChipOverlapsComposer,
+    false,
+    'current-tab chip is covering the composer dock'
+  )
 }

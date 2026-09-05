@@ -175,8 +175,18 @@ export async function spawnLocalVavd(
     stop: () => {
       if (stopped) return
       stopped = true
-      child.kill('SIGTERM')
-      if (ephemeralState) rmSync(stateDir, { recursive: true, force: true })
+      try {
+        child.kill('SIGTERM')
+      } catch {
+        // Child stdio can already be gone (EIO on close).
+      }
+      if (ephemeralState) {
+        try {
+          rmSync(stateDir, { recursive: true, force: true })
+        } catch {
+          // ignore
+        }
+      }
     }
   }
 }

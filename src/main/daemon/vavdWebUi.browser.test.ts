@@ -78,6 +78,12 @@ describe('vavd web UI in Chrome', () => {
       await page.goto(`http://127.0.0.1:${web.port}/`)
       await page.getByText(/Connected/).waitFor({ timeout: 8_000 })
       await page.locator('[data-testid="app-shell"]').waitFor({ state: 'visible', timeout: 8_000 })
+      if (existsSync('/opt/cursor/artifacts')) {
+        await page.screenshot({
+          path: '/opt/cursor/artifacts/phone_web_desktop_shell.png',
+          fullPage: true
+        })
+      }
       await page.locator('#create').click()
       await page.locator('#sessions [data-testid="session-row"]').first().waitFor({ timeout: 8_000 })
       await page.locator('#model').fill('webui-model')
@@ -92,6 +98,10 @@ describe('vavd web UI in Chrome', () => {
       await page.locator('#transcript').getByText('e2e stub reply').waitFor({ timeout: 8_000 })
       assertDesktopSessionLayout(await page.evaluate(readPhoneSessionLayout), 480)
       if (existsSync('/opt/cursor/artifacts')) {
+        await page.screenshot({
+          path: '/opt/cursor/artifacts/phone_web_session_composer.png',
+          fullPage: true
+        })
         await page.screenshot({
           path: '/opt/cursor/artifacts/vavd_web_ui_stub_turn.png',
           fullPage: true

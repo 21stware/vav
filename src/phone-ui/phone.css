@@ -94,10 +94,7 @@ body,
 }
 
 .page-chip {
-  position: fixed;
-  left: 10px;
-  right: 10px;
-  bottom: 92px;
+  position: relative;
   z-index: 6;
   display: flex;
   align-items: center;
@@ -105,6 +102,22 @@ body,
   padding: 8px 10px;
   border-radius: 12px;
   background: var(--bg-sunken, rgba(127, 127, 127, 0.08));
+  width: min(100%, var(--reading-max, 740px));
+  max-width: var(--reading-max, 740px);
+  margin: 0 auto 8px;
+  box-sizing: border-box;
+  flex: 0 0 auto;
+}
+
+/* Before the desktop stream mounts, keep the chip off the composer dock. */
+#root > .page-chip {
+  position: fixed;
+  left: 10px;
+  right: 10px;
+  bottom: 168px;
+  width: auto;
+  max-width: none;
+  margin: 0;
 }
 
 .page-chip[hidden] {

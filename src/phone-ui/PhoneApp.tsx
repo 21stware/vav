@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { createPortal } from 'react-dom'
 import App from '../renderer/src/App'
 import { useSessionStore } from '../renderer/src/state/sessionStore'
 import { isAttachablePageUrl } from './pageContext'
@@ -32,6 +33,7 @@ function PhoneChrome({ transport }: { transport: PhoneTransport }): React.JSX.El
   const [page, setPage] = useState<PhonePageState>(transport.pageState())
   const [pairOpen, setPairOpen] = useState(false)
   const [secret, setSecret] = useState('')
+  const [pageHost, setPageHost] = useState<Element | null>(null)
 
   useEffect(() => transport.onStatus(setLink), [transport])
   useEffect(() => transport.onPage(setPage), [transport])
@@ -49,6 +51,50 @@ function PhoneChrome({ transport }: { transport: PhoneTransport }): React.JSX.El
   }, [link.status, transport.variant])
 
   const showPage = transport.variant === 'extension' && isAttachablePageUrl(page.url)
+
+  useEffect(() => {
+    if (!showPage) {
+      setPageHost(null)
+      return
+    }
+    const find = (): void => {
+      setPageHost(document.querySelector('.detail-stream') ?? document.querySelector('.preview-edit-stream'))
+    }
+    find()
+    const timer = window.setInterval(find, 250)
+    return () => window.clearInterval(timer)
+  }, [showPage, conversations])
+
+  const pageChip = (
+    <section id="pageChip" className="page-chip">
+      <div className="page-chip-copy">
+        <strong id="pageTitle">{page.title || 'This page'}</strong>
+        <span id="pageUrl">
+          {page.selection.trim()
+            ? `Selection · ${page.selection.trim().slice(0, 72)}`
+            : page.url}
+        </span>
+      </div>
+      <label className="toggle">
+        <input
+          type="checkbox"
+          id="includePage"
+          checked={page.includePage}
+          onChange={(event) => transport.setIncludePage(event.target.checked)}
+        />
+        <span>Include</span>
+      </label>
+      <label className="toggle">
+        <input
+          type="checkbox"
+          id="includeShot"
+          checked={page.includeShot}
+          onChange={(event) => transport.setIncludeShot(event.target.checked)}
+        />
+        <span>Shot</span>
+      </label>
+    </section>
+  )
 
   const onContractSubmit = (event: React.FormEvent): void => {
     event.preventDefault()
@@ -89,38 +135,13 @@ function PhoneChrome({ transport }: { transport: PhoneTransport }): React.JSX.El
         </span>
       </div>
 
-      {showPage ? (
-        <section id="pageChip" className="page-chip">
-          <div className="page-chip-copy">
-            <strong id="pageTitle">{page.title || 'This page'}</strong>
-            <span id="pageUrl">
-              {page.selection.trim()
-                ? `Selection · ${page.selection.trim().slice(0, 72)}`
-                : page.url}
-            </span>
-          </div>
-          <label className="toggle">
-            <input
-              type="checkbox"
-              id="includePage"
-              checked={page.includePage}
-              onChange={(event) => transport.setIncludePage(event.target.checked)}
-            />
-            <span>Include</span>
-          </label>
-          <label className="toggle">
-            <input
-              type="checkbox"
-              id="includeShot"
-              checked={page.includeShot}
-              onChange={(event) => transport.setIncludeShot(event.target.checked)}
-            />
-            <span>Shot</span>
-          </label>
-        </section>
-      ) : (
-        <section id="pageChip" className="page-chip" hidden />
-      )}
+      {showPage
+        ? pageHost
+          ? createPortal(pageChip, pageHost)
+          : pageChip
+        : (
+          <section id="pageChip" className="page-chip" hidden />
+        )}
 
       <form id="sendForm" className="phone-e2e-contract" onSubmit={onContractSubmit}>
         <ul id="e2eSessions" hidden>
