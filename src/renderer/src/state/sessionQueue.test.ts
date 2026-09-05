@@ -279,6 +279,25 @@ describe('turnRuntimeFromAgentStatus', () => {
       }
     )
   })
+
+  it('forwards live recovery chrome onto the renderer turn', () => {
+    assert.deepEqual(
+      turnRuntimeFromAgentStatus({
+        isRunning: true,
+        phase: 'reconnecting',
+        toolCount: 0,
+        awaitingToolCallId: null,
+        recovery: { kind: 'reconnecting', attempt: 1, limit: 3 }
+      }),
+      {
+        isRunning: true,
+        phase: 'reconnecting',
+        toolCount: 0,
+        awaitingToolCallId: null,
+        recovery: { kind: 'reconnecting', attempt: 1, limit: 3 }
+      }
+    )
+  })
 })
 
 describe('conversationIdAwaitingTool', () => {

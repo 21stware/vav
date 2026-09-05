@@ -18,6 +18,7 @@ import {
   type StdioProcess
 } from './process'
 import { isAskToolName, isPlanDocToolName } from '@shared/planDoc'
+import { parseHostTransportStatus } from '@shared/turnRecovery'
 import type { DriverControl, DriverEventSink, DriverStartOptions } from './types'
 
 function permissionMode(approval: ApprovalMode): string {
@@ -249,6 +250,28 @@ function handleClaudeMessage(value: unknown, ctx: ClaudeHandlerCtx): void {
   // live turn does not reprint the previous answer.
   if (msg.isReplay === true) return
   const type = asString(msg.type)
+
+  if (type === 'system') {
+    const blob = [
+      asString(msg.subtype),
+      asString(msg.status),
+      asString(msg.message),
+      asString(msg.reason),
+      asString(dig(msg, 'event.status'))
+    ]
+      .filter(Boolean)
+      .join(' ')
+    const parsed = parseHostTransportStatus(blob)
+    if (parsed && ctx.turnActive) {
+      ctx.emit({
+        type: 'transport',
+        status: parsed.kind,
+        attempt: parsed.attempt,
+        limit: parsed.limit
+      })
+    }
+    return
+  }
 
   if (type === 'control_request') {
     const request = asRecord(msg.request)

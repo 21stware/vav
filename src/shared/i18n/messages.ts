@@ -365,7 +365,10 @@ export const zhCN = {
 
   // —— stream / message ——
   'stream.outputting': 'Outputting',
-  'stream.retry': 'Retry',
+  'stream.retry': 'Retrying',
+  'stream.reconnect': 'Reconnecting',
+  'stream.heal': 'Recovering',
+  'stream.recoveryProgress': '{label} {attempt}/{limit}',
   'stream.by': 'by {name}',
   'stream.done': 'Done',
   'message.copy': '复制',
@@ -618,6 +621,7 @@ export const zhCN = {
   'error.quotaExceededGeneric': '当前账号的使用额度已用尽。请稍后再试、查看用量，或切换到其他账号。',
   'error.sessionStale': '登录账号已切换，之前的远程会话已失效。正在用新会话继续。',
   'error.network': '网络连接中断，自动重试后仍未恢复。请检查网络后再发送一次，对话上下文不会丢失。',
+  'error.technical': '遇到临时故障，自动重试后仍未恢复。请再发送一次，对话上下文不会丢失。',
   'error.agentAuthRequired': 'Agent 未登录或登录已失效。请先完成登录后再试。',
   'error.agentInternal': 'Agent 返回了内部错误。如果刚切换过登录，请再试一次；如果额度已满，请查看用量。',
 
@@ -2551,7 +2555,10 @@ export const en: Record<MessageKey, string> = {
   'queue.sendNowFailedBusy': 'The current reply did not stop in time; the message stays in the queue.',
 
   'stream.outputting': 'Outputting',
-  'stream.retry': 'Retry',
+  'stream.retry': 'Retrying',
+  'stream.reconnect': 'Reconnecting',
+  'stream.heal': 'Recovering',
+  'stream.recoveryProgress': '{label} {attempt}/{limit}',
   'stream.by': 'by {name}',
   'stream.done': 'Done',
   'message.copy': 'Copy',
@@ -2806,6 +2813,8 @@ export const en: Record<MessageKey, string> = {
     'The signed-in account changed, so the previous remote session is no longer valid. Continuing in a new session.',
   'error.network':
     'The network connection dropped and automatic retries did not recover. Check your connection and send again — the conversation context is preserved.',
+  'error.technical':
+    'A temporary failure persisted after automatic retries. Send again — the conversation context is preserved.',
   'error.agentAuthRequired': 'The agent is not signed in, or the login expired. Sign in and try again.',
   'error.agentInternal':
     'The agent returned an internal error. If you just switched accounts, try again; if quota is full, check usage.',

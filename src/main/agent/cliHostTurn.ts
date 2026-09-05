@@ -1,4 +1,4 @@
-import type { MessageBlock, TurnStatus } from '../../shared/types.ts'
+import type { MessageBlock, TurnRecovery, TurnStatus } from '../../shared/types.ts'
 import { en, isApprovalDenyText, zhCN } from '../../shared/i18n/index.ts'
 import { parseToolInput } from '../../shared/askPlan.ts'
 
@@ -85,6 +85,7 @@ export function cliHostTurnStatus(
         pendingPermissions: { values(): IterableIterator<{ toolCallId: string }> }
         messageId: string | null
         blocks: MessageBlock[]
+        recovery?: TurnRecovery | null
       }
     | undefined
 ): TurnStatus {
@@ -98,6 +99,7 @@ export function cliHostTurnStatus(
     toolCount: turn?.toolCount ?? 0,
     awaitingToolCallId: awaiting,
     messageId: turn?.messageId ?? null,
-    blocks: turn ? turn.blocks.map((b) => ({ ...b })) : []
+    blocks: turn ? turn.blocks.map((b) => ({ ...b })) : [],
+    recovery: turn?.recovery ?? null
   }
 }

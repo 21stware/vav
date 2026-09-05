@@ -11,6 +11,16 @@ describe('describeCliHostError', () => {
     assert.equal(describeCliHostError('Cancelled', [], null, null, t, 'en').kind, 'cancelled')
     assert.equal(describeCliHostError('authentication required', [], null, null, t, 'en').kind, 'auth')
     assert.equal(describeCliHostError('ECONNRESET', [], null, null, t, 'en').kind, 'network')
+    assert.equal(
+      describeCliHostError('Error: RetriableError: WritableIterable is closed', [], null, null, t, 'en')
+        .kind,
+      'technical'
+    )
+    assert.equal(
+      describeCliHostError('Error: RetriableError: WritableIterable is closed', [], null, null, t, 'en')
+        .message,
+      t('error.technical')
+    )
     const internal = describeCliHostError('Internal error', [], null, null, t, 'en')
     assert.equal(internal.kind, 'generic')
     assert.equal(internal.message, t('error.agentInternal'))

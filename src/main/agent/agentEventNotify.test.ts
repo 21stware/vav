@@ -9,6 +9,8 @@ describe('activeTurnStatusFromPhase', () => {
     assert.equal(activeTurnStatusFromPhase('thinking'), 'running')
     assert.equal(activeTurnStatusFromPhase('outputting'), 'running')
     assert.equal(activeTurnStatusFromPhase('retrying'), 'running')
+    assert.equal(activeTurnStatusFromPhase('reconnecting'), 'running')
+    assert.equal(activeTurnStatusFromPhase('healing'), 'running')
     assert.equal(activeTurnStatusFromPhase('idle'), null)
   })
 })

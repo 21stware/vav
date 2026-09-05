@@ -120,6 +120,14 @@ describe('classifyCliError', () => {
     assert.equal(classifyCliError('getaddrinfo ENOTFOUND api.example.com'), 'network')
     assert.equal(classifyCliError('socket hang up'), 'network')
     assert.equal(classifyCliError('fetch failed'), 'network')
+    assert.equal(classifyCliError('Agent process exited (1)'), 'network')
+    assert.equal(classifyCliError('codex exited with code 1'), 'network')
+    assert.equal(classifyCliError('claude exited with code 1'), 'network')
+    assert.equal(classifyCliError('The user exited plan mode'), 'generic')
+    assert.equal(
+      classifyCliError('Error: RetriableError: WritableIterable is closed'),
+      'technical'
+    )
     assert.equal(
       classifyCliError(
         'request error: error sending request for url (https://cli-chat-proxy.grok.com/v1/responses)'
@@ -208,15 +216,20 @@ describe('shouldRetryFreshSession', () => {
     assert.equal(shouldRetryFreshSession('auth', 'Authentication required', true, RpcErrorCode.authRequired), false)
     assert.equal(shouldRetryFreshSession('cancelled', 'Request cancelled', true), false)
     assert.equal(shouldRetryFreshSession('generic', 'Internal error', false, RpcErrorCode.internalError), false)
-    // Network blips retry the SAME session (cursor kept) — never a fresh one.
+    // Network / technical blips retry the SAME session (cursor kept) — never a fresh one.
     assert.equal(shouldRetryFreshSession('network', 'any network error', false), false)
     assert.equal(shouldRetryFreshSession('network', 'any network error', true), false)
+    assert.equal(
+      shouldRetryFreshSession('technical', 'RetriableError: WritableIterable is closed', true),
+      false
+    )
   })
 })
 
 describe('same-session network retry policy', () => {
   it('retries only network errors, with bounded backoff', () => {
     assert.equal(shouldRetrySameSession('network'), true)
+    assert.equal(shouldRetrySameSession('technical'), true)
     assert.equal(shouldRetrySameSession('quota'), false)
     assert.equal(shouldRetrySameSession('auth'), false)
     assert.equal(shouldRetrySameSession('session-stale'), false)

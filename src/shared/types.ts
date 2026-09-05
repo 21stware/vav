@@ -1424,11 +1424,32 @@ export interface ConversationPtyLayouts {
 // Turn events (main → renderer)
 // ---------------------------------------------------------------------------
 
+/** Why a turn failed after recovery was exhausted (or was never retriable). */
+export type TurnErrorKind =
+  | 'quota'
+  | 'session-stale'
+  | 'auth'
+  | 'network'
+  | 'technical'
+  | 'cancelled'
+  | 'generic'
+
+/** Live recovery the UI shows instead of Outputting while the turn stays open. */
+export type TurnRecoveryKind = 'retrying' | 'reconnecting' | 'healing'
+
+export type TurnRecovery = {
+  kind: TurnRecoveryKind
+  attempt: number
+  limit: number
+}
+
 export type TurnPhase =
   | 'idle'
   | 'thinking'
   | 'outputting'
   | 'retrying'
+  | 'reconnecting'
+  | 'healing'
   | 'working'
   | 'awaiting-user'
   | 'cancelled'
@@ -1443,7 +1464,7 @@ export type TurnEvent =
    * the transcript and included in the next model history path.
    */
   | { type: 'notice'; conversationId: string; message: ChatMessage }
-  | { type: 'phase'; conversationId: string; phase: TurnPhase }
+  | { type: 'phase'; conversationId: string; phase: TurnPhase; recovery?: TurnRecovery }
   /**
    * Coalesced token deltas. `kind` selects reasoning vs. markdown body.
    *
@@ -1512,7 +1533,7 @@ export type TurnEvent =
       /** Fatal error text. Shown on the assistant message, not a second banner. */
       error?: string
       /** Classified CLI / provider failure — quota banner can open usage. */
-      errorKind?: 'quota' | 'session-stale' | 'auth' | 'network' | 'cancelled' | 'generic'
+      errorKind?: TurnErrorKind
       /** Raw host / JSON-RPC payload, kept for diagnostics. Not shown in the UI. */
       errorDetail?: string
       cancelled?: boolean
@@ -1544,6 +1565,8 @@ export interface TurnStatus {
   messageId: string | null
   /** Snapshot of blocks so far; empty when idle. */
   blocks: MessageBlock[]
+  /** Present while the live turn is retrying / reconnecting / healing. */
+  recovery?: TurnRecovery | null
 }
 
 // ---------------------------------------------------------------------------
