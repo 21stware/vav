@@ -74,16 +74,19 @@ function PhoneChrome({ transport }: { transport: PhoneTransport }): React.JSX.El
 
   return (
     <>
-      <div id="status" className="phone-link-chip" data-state={link.status}>
-        {link.status === 'connected'
-          ? link.version
-            ? `Connected · ${link.version}`
-            : 'Connected'
-          : link.status === 'error'
-            ? link.error || 'Can’t reach vavd'
-            : link.status === 'reconnecting'
-              ? 'Reconnecting…'
-              : 'Looking for this machine…'}
+      <div className="phone-link-chip" data-state={link.status}>
+        <span id="hostName">{link.hostName || 'VAV'}</span>
+        <span id="status">
+          {link.status === 'connected'
+            ? link.version
+              ? `Connected · ${link.version}`
+              : 'Connected'
+            : link.status === 'error'
+              ? link.error || 'Can’t reach vavd'
+              : link.status === 'reconnecting'
+                ? 'Reconnecting…'
+                : 'Looking for this machine…'}
+        </span>
       </div>
 
       {showPage ? (
@@ -136,23 +139,22 @@ function PhoneChrome({ transport }: { transport: PhoneTransport }): React.JSX.El
         <button type="button" id="apply" hidden>
           Apply
         </button>
+        {transport.variant === 'web' ? (
+          <>
+            <input
+              id="secret"
+              value={secret}
+              onChange={(event) => setSecret(event.target.value)}
+              placeholder="vav-daemon://… or pairing secret"
+              autoComplete="off"
+            />
+            <button type="button" id="connect" className="ghost" onClick={() => transport.connect(secret)}>
+              Connect
+            </button>
+          </>
+        ) : null}
         <button type="submit">Send</button>
       </form>
-
-      {transport.variant === 'web' ? (
-        <div className="phone-web-pair">
-          <input
-            id="secret"
-            value={secret}
-            onChange={(event) => setSecret(event.target.value)}
-            placeholder="vav-daemon://… or pairing secret"
-            autoComplete="off"
-          />
-          <button type="button" id="connect" className="ghost" onClick={() => transport.connect(secret)}>
-            Connect
-          </button>
-        </div>
-      ) : null}
 
       {transport.variant === 'extension' && pairOpen ? (
         <div id="pairSheet" className="sheet">

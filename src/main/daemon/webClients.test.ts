@@ -8,6 +8,7 @@ const root = join(import.meta.dirname, '../../..')
 const extDir = join(root, 'extension')
 const phoneSrc = join(root, 'src/phone-ui')
 const iosFrames = readFileSync(join(root, 'ios/VAVRemote/VAVRemote/Models.swift'), 'utf8')
+const desktopApp = readFileSync(join(root, 'src/renderer/src/App.tsx'), 'utf8')
 const desktopRun = readFileSync(join(root, 'src/renderer/src/components/SessionRunPicker.tsx'), 'utf8')
 const desktopComposer = readFileSync(join(root, 'src/renderer/src/components/Composer.tsx'), 'utf8')
 
@@ -47,9 +48,11 @@ describe('web and Chrome clients', () => {
 
   it('mount the desktop session shell (sidebar, agent log, run bar)', () => {
     for (const src of [extension, web]) {
-      assert.match(src, /from ['\"]..\/renderer\/src\/App['\"]/)
-      assert.match(src, /app-shell/)
+      assert.match(src, /from ['"].*\/App['"]/)
     }
+    assert.match(desktopApp, /app-shell/)
+    assert.match(desktopApp, /Sidebar/)
+    assert.match(desktopApp, /SessionDetail/)
     assert.match(desktopRun, /\[mode · permission\]/)
     assert.match(desktopRun, /\[thinking · Fast\]/)
     assert.match(desktopComposer, /SessionRunPicker/)

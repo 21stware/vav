@@ -533,10 +533,50 @@ export function installPhoneVav(transport: PhoneTransport): PhoneVavHandle {
       onPickFolder: () => () => undefined,
       forget: async () => undefined
     },
-    onCliOpen: () => () => undefined
+    onCliOpen: () => () => undefined,
+    onFullscreen: () => () => undefined,
+    onMenuCommand: () => () => undefined,
+    onAccountsUpdated: () => () => undefined,
+    onSettingsChanged: () => () => undefined,
+    onSettingsAnalysis: () => () => undefined,
+    dialog: {
+      alert: async () => undefined,
+      confirm: async () => true,
+      messageBox: async () => 0
+    },
+    notifications: {
+      seen: async () => undefined,
+      permission: async () => 'granted'
+    },
+    changeSets: {
+      get: async () => null,
+      applyEdit: async () => null,
+      accept: async () => null,
+      reject: async () => null,
+      acceptAll: async () => null,
+      rejectAll: async () => null,
+      undo: async () => null
+    }
   } as unknown as VavApi
 
-  window.vav = api
+  const missingApi = (): object =>
+    new Proxy(
+      {},
+      {
+        get(_target, prop) {
+          if (typeof prop === 'string' && prop.startsWith('on')) return () => () => undefined
+          return async () => undefined
+        }
+      }
+    )
+
+  window.vav = new Proxy(api, {
+    get(target, prop, receiver) {
+      if (prop in target) return Reflect.get(target, prop, receiver)
+      if (typeof prop === 'string' && prop.startsWith('on')) return () => () => undefined
+      return missingApi()
+    }
+  }) as VavApi
   void sawSessions
   return { api, transport }
 }

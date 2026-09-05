@@ -94,11 +94,12 @@ describe('vavd web UI in Chrome', () => {
           fullPage: true
         })
       }
-      const stored = [...plane.conversations.all()].at(-1)
+      const stored = [...plane.conversations.all()].find((row) =>
+        row.messages.some((m) => m.role === 'user')
+      )
       assert.ok(stored)
       assert.equal(stored.model, 'webui-model')
       assert.equal(stored.approvalMode, 'bypass')
-      assert.ok(stored.messages.some((m) => m.role === 'user'))
       assert.ok(stored.messages.some((m) => m.role === 'assistant'))
     } finally {
       await browser?.close()

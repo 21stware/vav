@@ -51,7 +51,7 @@ await build({
   target: ['chrome114', 'safari16'],
   jsx: 'automatic',
   sourcemap: false,
-  minify: true,
+  minify: process.env.VAV_PHONE_UI_DEBUG === '1' ? false : true,
   logLevel: process.env.VAV_PACK_QUIET === '1' ? 'warning' : 'info',
   alias: {
     '@shared': join(root, 'src', 'shared'),

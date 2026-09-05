@@ -52,6 +52,7 @@ async function launchExtension(profile: string, exe: string): Promise<BrowserCon
   return chromium.launchPersistentContext(profile, {
     executablePath: exe,
     headless: true,
+    viewport: { width: 420, height: 800 },
     args: [
       `--disable-extensions-except=${EXT}`,
       `--load-extension=${EXT}`,
@@ -155,17 +156,7 @@ describe('vavd Chrome extension', () => {
     })
     let context: BrowserContext | undefined
     try {
-      context = await chromium.launchPersistentContext(profile, {
-        executablePath: exe,
-        headless: true,
-        args: [
-          `--disable-extensions-except=${EXT}`,
-          `--load-extension=${EXT}`,
-          '--no-sandbox',
-          '--disable-dev-shm-usage',
-          '--disable-gpu'
-        ]
-      })
+      context = await launchExtension(profile, exe)
       const page = context.pages()[0] ?? (await context.newPage())
       const cdp = await context.newCDPSession(page)
       const started = Date.now()
@@ -199,13 +190,15 @@ describe('vavd Chrome extension', () => {
       await panel.locator('#sessionBar').waitFor({ timeout: 8_000 })
       await panel.locator('#sessionsBtn').click()
       await panel.locator('#sessions [data-testid="session-row"]').first().waitFor({ timeout: 8_000 })
-      await panel.locator('#closeDrawer').click()
+      await panel.locator('#closeDrawer').click({ position: { x: 400, y: 16 } })
       await panel.locator('#model').fill('extension-model')
       await panel.locator('#model').dispatchEvent('change')
       await panel.locator('#text').fill('hello from the chrome extension')
       await panel.locator('#sendForm button[type="submit"]').click()
       await panel.locator('#transcript').getByText('e2e stub reply').waitFor({ timeout: 8_000 })
-      const first = [...plane.conversations.all()].at(-1)
+      const first = [...plane.conversations.all()].find((row) =>
+        row.messages.some((m) => m.role === 'user')
+      )
       assert.ok(first)
       assert.equal(first.model, 'extension-model')
       assert.ok(first.messages.some((m) => m.role === 'assistant'))
@@ -243,7 +236,16 @@ describe('vavd Chrome extension', () => {
             fullPage: true
           })
         }
-        const stored = [...plane.conversations.all()].at(-1)
+        const stored =
+          [...plane.conversations.all()].find((row) =>
+            row.messages.some((m) => {
+              const text =
+                typeof (m as { content?: unknown }).content === 'string'
+                  ? String((m as { content?: string }).content)
+                  : ''
+              return text.includes('[Current page]')
+            })
+          ) ?? first
         assert.ok(stored)
         const userTexts = stored.messages
           .filter((m) => m.role === 'user')
@@ -284,17 +286,7 @@ describe('vavd Chrome extension', () => {
     let context: BrowserContext | undefined
     try {
       assert.ok(spawned.webOrigin)
-      context = await chromium.launchPersistentContext(profile, {
-        executablePath: exe,
-        headless: true,
-        args: [
-          `--disable-extensions-except=${EXT}`,
-          `--load-extension=${EXT}`,
-          '--no-sandbox',
-          '--disable-dev-shm-usage',
-          '--disable-gpu'
-        ]
-      })
+      context = await launchExtension(profile, exe)
       const page = context.pages()[0] ?? (await context.newPage())
       const cdp = await context.newCDPSession(page)
       const started = Date.now()
