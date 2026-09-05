@@ -1,11 +1,12 @@
 import assert from 'node:assert/strict'
+import { execFileSync } from 'node:child_process'
 import { createServer } from 'node:http'
 import { existsSync } from 'node:fs'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { after, before, describe, it } from 'node:test'
-import { chromium, type BrowserContext } from '@playwright/test'
+import { chromium, type BrowserContext, type Page } from '@playwright/test'
 import { createLocalWorkspaceHost } from '../host/WorkspaceHost.ts'
 import { createVavControlPlane } from '../host/VavControlPlane.ts'
 import { startVavWebBridge } from './VavWebBridge.ts'
@@ -20,6 +21,77 @@ function playwrightChromium(): string | undefined {
     return existsSync(path) ? path : undefined
   } catch {
     return undefined
+  }
+}
+
+async function openSidePanel(context: BrowserContext): Promise<Page> {
+  const page = context.pages()[0] ?? (await context.newPage())
+  const cdp = await context.newCDPSession(page)
+  const started = Date.now()
+  let extensionId = ''
+  while (Date.now() - started < 15_000) {
+    const { targetInfos } = (await cdp.send('Target.getTargets')) as {
+      targetInfos: Array<{ url?: string; type?: string }>
+    }
+    const target = targetInfos.find((row) => String(row.url ?? '').startsWith('chrome-extension://'))
+    if (target?.url) {
+      extensionId = new URL(target.url).host
+      break
+    }
+    await new Promise((resolve) => setTimeout(resolve, 250))
+  }
+  if (!extensionId) {
+    throw new Error('Playwright Chromium did not register the unpacked MV3 extension')
+  }
+  const panel = await context.newPage()
+  await panel.goto(`chrome-extension://${extensionId}/sidepanel.html`)
+  return panel
+}
+
+async function launchExtension(profile: string, exe: string): Promise<BrowserContext> {
+  return chromium.launchPersistentContext(profile, {
+    executablePath: exe,
+    headless: true,
+    args: [
+      `--disable-extensions-except=${EXT}`,
+      `--load-extension=${EXT}`,
+      '--no-sandbox',
+      '--disable-dev-shm-usage',
+      '--disable-gpu'
+    ]
+  })
+}
+
+async function chatStubTurn(panel: Page, text: string): Promise<void> {
+  await panel.locator('#create').click()
+  await panel.locator('#sessionBar').waitFor({ timeout: 8_000 })
+  await panel.locator('#text').fill(text)
+  await panel.locator('#sendForm button[type="submit"]').click()
+  await panel.locator('#transcript').getByText('e2e stub reply').waitFor({ timeout: 8_000 })
+}
+
+/** Desktop and the extension share 4752–4762. A leftover steal /discover. */
+function freeDesktopWebPorts(): void {
+  for (let port = 4752; port <= 4762; port++) {
+    try {
+      if (process.platform === 'win32') {
+        execFileSync(
+          'powershell.exe',
+          [
+            '-NoProfile',
+            '-Command',
+            `Get-NetTCPConnection -LocalPort ${port} -ErrorAction SilentlyContinue | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue }`
+          ],
+          { stdio: 'ignore' }
+        )
+      } else {
+        execFileSync('sh', ['-c', `fuser -k ${port}/tcp >/dev/null 2>&1 || true`], {
+          stdio: 'ignore'
+        })
+      }
+    } catch {
+      /* port was free or we lack permission */
+    }
   }
 }
 
@@ -250,6 +322,83 @@ describe('vavd Chrome extension', () => {
     } finally {
       await context?.close()
       spawned.stop()
+      await rm(profile, { recursive: true, force: true })
+    }
+  })
+
+  it('auto-discovers a desktop-spawned vavd without a pasted URL', async (t) => {
+    if (!exe) {
+      t.skip('Playwright Chromium is not installed')
+      return
+    }
+
+    const profile = await mkdtemp(join(tmpdir(), 'vav-ext-autodisc-'))
+    freeDesktopWebPorts()
+    const spawned = await spawnLocalVavd({
+      name: 'VAV Daemon',
+      stubTurn: true,
+      noWeb: false,
+      webPort: 4752,
+      webListen: '127.0.0.1'
+    })
+    let context: BrowserContext | undefined
+    try {
+      assert.ok(spawned.webOrigin)
+      context = await launchExtension(profile, exe)
+      const panel = await openSidePanel(context)
+      await panel.evaluate(async () => {
+        await chrome.runtime.sendMessage({ type: 'rediscover' })
+      })
+      await panel.getByText(/Connected/).waitFor({ timeout: 12_000 })
+      await chatStubTurn(panel, 'hello from desktop auto-discover')
+      if (existsSync('/opt/cursor/artifacts')) {
+        await panel.screenshot({
+          path: '/opt/cursor/artifacts/vavd_chrome_extension_desktop_autodiscover.png',
+          fullPage: true
+        })
+      }
+    } finally {
+      await context?.close()
+      spawned.stop()
+      await rm(profile, { recursive: true, force: true })
+    }
+  })
+
+  it('pairs from a pasted desktop Connect vav-daemon URI', async (t) => {
+    if (!exe) {
+      t.skip('Playwright Chromium is not installed')
+      return
+    }
+
+    const profile = await mkdtemp(join(tmpdir(), 'vav-ext-daemon-uri-'))
+    freeDesktopWebPorts()
+    let context: BrowserContext | undefined
+    let spawned: Awaited<ReturnType<typeof spawnLocalVavd>> | undefined
+    try {
+      context = await launchExtension(profile, exe)
+      const panel = await openSidePanel(context)
+      await panel.locator('#pairSheet').waitFor({ state: 'visible', timeout: 12_000 })
+      spawned = await spawnLocalVavd({
+        name: 'VAV Daemon',
+        stubTurn: true,
+        noWeb: false,
+        webPort: 4752,
+        webListen: '127.0.0.1'
+      })
+      assert.match(spawned.pairing, /^vav-daemon:\/\//)
+      await panel.locator('#secret').fill(spawned.pairing)
+      await panel.locator('#connect').click()
+      await panel.getByText(/Connected/).waitFor({ timeout: 12_000 })
+      await chatStubTurn(panel, 'hello from vav-daemon URI')
+      if (existsSync('/opt/cursor/artifacts')) {
+        await panel.screenshot({
+          path: '/opt/cursor/artifacts/vavd_chrome_extension_daemon_uri.png',
+          fullPage: true
+        })
+      }
+    } finally {
+      await context?.close()
+      spawned?.stop()
       await rm(profile, { recursive: true, force: true })
     }
   })
