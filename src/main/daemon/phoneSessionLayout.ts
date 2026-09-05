@@ -14,8 +14,27 @@ export type PhoneSessionLayout = {
   pageChipOverlapsComposer: boolean
 }
 
+type Rect = { width: number; height: number; top: number; left: number; right: number; bottom: number }
+
+type ProbeEl = {
+  getBoundingClientRect(): Rect
+  classList: { contains(name: string): boolean }
+  hidden?: boolean
+}
+
+/** Main-process tsconfig has no DOM lib — resolve page globals when Playwright runs this in Chrome. */
+type PageGlobals = {
+  document: {
+    querySelector(sel: string): ProbeEl | null
+    getElementById(id: string): ProbeEl | null
+  }
+  window: { innerWidth: number; innerHeight: number }
+  getComputedStyle(el: ProbeEl): { visibility: string; display: string }
+}
+
 /** Runs in the page. Measures the desktop composer dock, not a crushed strip. */
 export function readPhoneSessionLayout(): PhoneSessionLayout {
+  const { document, window, getComputedStyle } = globalThis as unknown as PageGlobals
   const composer =
     document.querySelector('.composer-box') ?? document.querySelector('.composer')
   const agent =
