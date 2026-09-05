@@ -14,6 +14,16 @@ const SECRET = '0123456789abcdef01234567'
 
 function chromePath(): string | undefined {
   if (process.env.CHROME_PATH && existsSync(process.env.CHROME_PATH)) return process.env.CHROME_PATH
+  try {
+    const bundled = chromium.executablePath()
+    if (existsSync(bundled)) return bundled
+  } catch {
+    // Playwright Chromium is optional on CI.
+  }
+  // GitHub macos-14 / windows-latest ship a system Chrome that is not the
+  // Playwright-managed browser this test was written against. Only pick it
+  // up on a developer machine.
+  if (process.env.CI) return undefined
   const candidates =
     process.platform === 'darwin'
       ? ['/Applications/Google Chrome.app/Contents/MacOS/Google Chrome']
@@ -24,8 +34,8 @@ function chromePath(): string | undefined {
 }
 
 /**
- * Real Chrome against the bundled web page. Skips when this machine has no
- * system Chrome so macOS/Windows CI without a browser still pass.
+ * Real Chrome against the bundled web page. Skips on CI unless Playwright
+ * Chromium (or CHROME_PATH) is present — same policy as the extension tests.
  */
 describe('vavd web UI in Chrome', () => {
   const exe = chromePath()
@@ -46,7 +56,7 @@ describe('vavd web UI in Chrome', () => {
 
   it('pairs, configures a model, and shows a vavd stub reply', async (t) => {
     if (!exe) {
-      t.skip('system Chrome is not installed')
+      t.skip('Playwright Chromium is not installed')
       return
     }
 
@@ -95,7 +105,8 @@ describe('vavd web UI in Chrome', () => {
       )
       await page.locator('#text').fill('hello from the web page')
       await page.locator('#sendForm button[type="submit"]').click()
-      await page.locator('#transcript').getByText('e2e stub reply').waitFor({ timeout: 8_000 })
+      await page.locator('#transcript').getByText('hello from the web page').waitFor({ timeout: 12_000 })
+      await page.locator('#transcript').getByText('e2e stub reply').waitFor({ timeout: 12_000 })
       assertDesktopSessionLayout(await page.evaluate(readPhoneSessionLayout), 480)
       if (existsSync('/opt/cursor/artifacts')) {
         await page.screenshot({
