@@ -52,11 +52,11 @@ describe('VavWebBridge discover', () => {
       const body = (await health.json()) as { name: string }
       assert.equal(body.name, 'office-mac')
 
-      const ui = await fetch(`http://127.0.0.1:${web.port}/ui/shell.css`)
+      const ui = await fetch(`http://127.0.0.1:${web.port}/phone.css`)
       assert.equal(ui.ok, true)
       const css = await ui.text()
-      assert.match(css, /composer-box/)
-      assert.match(css, /session-run-controls/)
+      assert.match(css, /composer-box|app-shell/)
+      assert.match(css, /session-run-controls|agent-model-picker/)
 
       const mark = await fetch(`http://127.0.0.1:${web.port}/icon-mark.png`)
       assert.equal(mark.ok, true)

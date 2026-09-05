@@ -1325,7 +1325,7 @@ export function Sidebar({
         )}
       </div>
 
-      <div className="sidebar-list" ref={listRef} tabIndex={-1}>
+      <div className="sidebar-list" id="sessions" ref={listRef} tabIndex={-1}>
         {listMode === 'main' &&
           visible.length === 0 &&
           conversations.filter(

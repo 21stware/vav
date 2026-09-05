@@ -1,12 +1,13 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-phone="extension">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>VAV</title>
-  <link rel="stylesheet" href="lib/ui/tokens.css" />
-  <link rel="stylesheet" href="lib/ui/shell.css" />
+  <link rel="stylesheet" href="phone/phone.css" />
 </head>
-<body class="app-shell is-extension"></body>
-<script type="module" src="sidepanel.js"></script>
+<body class="app-shell is-extension">
+  <div id="root" data-testid="transcript"></div>
+  <script type="module" src="phone/phone.js"></script>
+</body>
 </html>

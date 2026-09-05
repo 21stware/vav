@@ -77,7 +77,7 @@ describe('vavd web UI in Chrome', () => {
       await page.goto(`http://127.0.0.1:${web.port}/`)
       await page.getByText(/Connected/).waitFor({ timeout: 8_000 })
       await page.locator('#create').click()
-      await page.locator('#sessions li').first().waitFor({ timeout: 8_000 })
+      await page.locator('#sessions [data-testid="session-row"]').first().waitFor({ timeout: 8_000 })
       await page.locator('#model').fill('webui-model')
       await page.locator('#approval').selectOption('bypass')
       await page.waitForFunction(

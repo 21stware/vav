@@ -244,6 +244,20 @@ function handleHttp(req: IncomingMessage, res: ServerResponse, opts: VavWebBridg
       }
     }
   }
+  if (path.length > 1 && !path.includes('..')) {
+    const name = path.slice(1)
+    if (!name.includes('/') && !name.includes('\\')) {
+      const body = readPhoneUiFile(name)
+      if (body != null) {
+        res.writeHead(200, {
+          'content-type': phoneUiMime(name),
+          'cache-control': 'no-store'
+        })
+        res.end(body)
+        return
+      }
+    }
+  }
   if (path === '/health') {
     json(res, 200, {
       ok: true,

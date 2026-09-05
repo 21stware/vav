@@ -56,6 +56,8 @@ test('pack-release-sidecars writes the npm tarball and Chrome extension zip', as
       'sidepanel.html',
       'sidepanel.js',
       'sidepanel.css',
+      'phone/phone.js',
+      'phone/phone.css',
       'lib/ui/tokens.css',
       'lib/ui/shell.css',
       'lib/ui/shell.js',

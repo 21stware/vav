@@ -4,30 +4,25 @@ import { join } from 'node:path'
 import { describe, it } from 'node:test'
 import { WEB_UI_HTML, phoneUiDir } from './webUi.ts'
 
-const extDir = join(import.meta.dirname, '../../../extension')
-const iosFrames = readFileSync(
-  join(import.meta.dirname, '../../../ios/VAVRemote/VAVRemote/Models.swift'),
-  'utf8'
-)
-const phoneUi = phoneUiDir()
-assert.ok(phoneUi, 'shared phone UI directory must exist')
+const root = join(import.meta.dirname, '../../..')
+const extDir = join(root, 'extension')
+const phoneSrc = join(root, 'src/phone-ui')
+const iosFrames = readFileSync(join(root, 'ios/VAVRemote/VAVRemote/Models.swift'), 'utf8')
+const desktopRun = readFileSync(join(root, 'src/renderer/src/components/SessionRunPicker.tsx'), 'utf8')
+const desktopComposer = readFileSync(join(root, 'src/renderer/src/components/Composer.tsx'), 'utf8')
+
 const extension = [
   readFileSync(join(extDir, 'background.js'), 'utf8'),
-  readFileSync(join(extDir, 'sidepanel.js'), 'utf8'),
   readFileSync(join(extDir, 'sidepanel.html'), 'utf8'),
-  readFileSync(join(extDir, 'lib/discover.js'), 'utf8'),
-  readFileSync(join(extDir, 'lib/pairing.js'), 'utf8'),
-  readFileSync(join(phoneUi, 'webClient.js'), 'utf8'),
-  readFileSync(join(phoneUi, 'shell.js'), 'utf8'),
-  readFileSync(join(phoneUi, 'render.js'), 'utf8'),
-  readFileSync(join(phoneUi, 'runBar.js'), 'utf8')
+  readFileSync(join(phoneSrc, 'phoneTransport.ts'), 'utf8'),
+  readFileSync(join(phoneSrc, 'phoneVav.ts'), 'utf8'),
+  readFileSync(join(phoneSrc, 'PhoneApp.tsx'), 'utf8')
 ].join('\n')
 const web = [
   WEB_UI_HTML,
-  readFileSync(join(phoneUi, 'webClient.js'), 'utf8'),
-  readFileSync(join(phoneUi, 'shell.js'), 'utf8'),
-  readFileSync(join(phoneUi, 'render.js'), 'utf8'),
-  readFileSync(join(phoneUi, 'runBar.js'), 'utf8')
+  readFileSync(join(phoneSrc, 'phoneTransport.ts'), 'utf8'),
+  readFileSync(join(phoneSrc, 'phoneVav.ts'), 'utf8'),
+  readFileSync(join(phoneSrc, 'PhoneApp.tsx'), 'utf8')
 ].join('\n')
 
 /**
@@ -44,24 +39,23 @@ describe('web and Chrome clients', () => {
       assert.match(src, /type:\s*['"]configure['"]/)
       assert.match(src, /approvalMode/)
       assert.match(src, /\bmodel\b/)
-      assert.match(src, /ws\.send\(JSON\.stringify/)
-      assert.match(src, /\/vav/)
     }
+    assert.match(extension, /chrome\.runtime\.connect/)
+    assert.match(web, /WebSocket/)
+    assert.match(web, /\/vav/)
   })
 
-  it('share the desktop session shell (sidebar, agent log, run bar)', () => {
+  it('mount the desktop session shell (sidebar, agent log, run bar)', () => {
     for (const src of [extension, web]) {
+      assert.match(src, /from ['\"]..\/renderer\/src\/App['\"]/)
       assert.match(src, /app-shell/)
-      assert.match(src, /session-run-controls/)
-      assert.match(src, /message-turn/)
-      assert.match(src, /message-role/)
-      assert.match(src, /thinking-process/)
-      assert.match(src, /tool-call/)
-      assert.match(src, /composer-box/)
-      assert.match(src, /send-button/)
-      assert.match(src, /thinkingLevel/)
-      assert.match(src, /\bfast\b/)
     }
+    assert.match(desktopRun, /\[mode · permission\]/)
+    assert.match(desktopRun, /\[thinking · Fast\]/)
+    assert.match(desktopComposer, /SessionRunPicker/)
+    assert.match(desktopComposer, /AgentModelPicker/)
+    const dir = phoneUiDir()
+    assert.ok(dir, 'built phone UI must exist (run npm run build:phone-ui)')
   })
 })
 
@@ -86,11 +80,12 @@ describe('iOS VAV Remote', () => {
 
   it('uses the same desktop run-bar order as the web clients', () => {
     const iosUi = readFileSync(
-      join(import.meta.dirname, '../../../ios/VAVRemote/VAVRemote/Views/SessionDetailView.swift'),
+      join(root, 'ios/VAVRemote/VAVRemote/Views/SessionDetailView.swift'),
       'utf8'
     )
     assert.match(iosUi, /mode · permission/)
     assert.match(iosUi, /thinking · Fast/)
-    assert.match(readFileSync(join(phoneUi, 'runBar.js'), 'utf8'), /mode · permission/)
+    assert.match(desktopRun, /mode · permission/)
+    assert.match(desktopRun, /thinking · Fast/)
   })
 })

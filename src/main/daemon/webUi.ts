@@ -1,7 +1,6 @@
 /**
  * Bundled control UI served by `vavd` at `/`.
- * Markup, tokens, transcript, and run bar live in `extension/lib/ui`
- * — the same modules the Chrome side panel imports.
+ * Built from `src/phone-ui` — the same React session shell as desktop.
  */
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
@@ -12,34 +11,40 @@ export function phoneUiDir(
 ): string | null {
   const roots = [from, cwd, join(cwd, 'packages', 'vavd')].filter(Boolean)
   const rels = [
-    '../../../extension/lib/ui',
-    '../../extension/lib/ui',
-    'extension/lib/ui',
+    '../../../out/phone-ui',
+    '../../out/phone-ui',
+    'out/phone-ui',
+    '../../../extension/phone',
+    '../../extension/phone',
+    'extension/phone',
     'phone-ui'
   ]
   for (const root of roots) {
     for (const rel of rels) {
       const dir = join(root, rel)
-      if (existsSync(join(dir, 'shell.js'))) return dir
+      if (existsSync(join(dir, 'phone.js')) || existsSync(join(dir, 'index.html'))) return dir
     }
   }
   return null
 }
 
 export function assembleWebUiHtml(dir = phoneUiDir()): string {
-  const ui = dir ? `/ui` : ''
+  if (dir && existsSync(join(dir, 'index.html'))) {
+    return readFileSync(join(dir, 'index.html'), 'utf8')
+  }
   return `<!doctype html>
-<html lang="en">
+<html lang="en" data-phone="web">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>VAV</title>
   <link rel="icon" type="image/png" href="/icon.png" />
-  <link rel="stylesheet" href="${ui}/tokens.css" />
-  <link rel="stylesheet" href="${ui}/shell.css" />
+  <link rel="stylesheet" href="/phone.css" />
 </head>
-<body class="app-shell is-web"></body>
-<script type="module" src="${ui}/webClient.js"></script>
+<body>
+  <div id="root"></div>
+  <script type="module" src="/phone.js"></script>
+</body>
 </html>
 `
 }
@@ -56,6 +61,7 @@ export function phoneUiMime(name: string): string {
   if (name.endsWith('.css')) return 'text/css; charset=utf-8'
   if (name.endsWith('.js')) return 'text/javascript; charset=utf-8'
   if (name.endsWith('.html')) return 'text/html; charset=utf-8'
+  if (name.endsWith('.png')) return 'image/png'
+  if (name.endsWith('.map')) return 'application/json; charset=utf-8'
   return 'application/octet-stream'
 }
-

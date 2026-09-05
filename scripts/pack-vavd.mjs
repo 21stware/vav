@@ -8,6 +8,7 @@
 import { chmodSync, cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
+import { spawnSync } from 'node:child_process'
 import { createRequire } from 'node:module'
 
 function argValue(flag) {
@@ -17,6 +18,13 @@ function argValue(flag) {
 }
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
+if (!existsSync(join(root, 'out', 'phone-ui', 'phone.js'))) {
+  const built = spawnSync(process.execPath, [join(root, 'scripts/build-phone-ui.mjs')], {
+    cwd: root,
+    stdio: process.env.VAV_PACK_QUIET === '1' ? 'ignore' : 'inherit'
+  })
+  if (built.status !== 0) process.exit(built.status ?? 1)
+}
 const canonicalDir = join(root, 'packages', 'vavd')
 const pkgDir = resolve(argValue('--dir') || canonicalDir)
 mkdirSync(pkgDir, { recursive: true })
@@ -74,8 +82,10 @@ for (const file of [outfile, cliOutfile]) {
   chmodSync(file, 0o755)
 }
 
-const phoneUi = join(root, 'extension', 'lib', 'ui')
-if (existsSync(phoneUi)) {
+const phoneUi = existsSync(join(root, 'out', 'phone-ui', 'phone.js'))
+  ? join(root, 'out', 'phone-ui')
+  : join(root, 'extension', 'phone')
+if (existsSync(join(phoneUi, 'phone.js')) || existsSync(join(phoneUi, 'index.html'))) {
   cpSync(phoneUi, join(pkgDir, 'phone-ui'), { recursive: true })
 }
 

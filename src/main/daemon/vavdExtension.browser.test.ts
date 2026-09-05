@@ -198,7 +198,7 @@ describe('vavd Chrome extension', () => {
       await panel.locator('#create').click()
       await panel.locator('#sessionBar').waitFor({ timeout: 8_000 })
       await panel.locator('#sessionsBtn').click()
-      await panel.locator('#sessions li').first().waitFor({ timeout: 8_000 })
+      await panel.locator('#sessions [data-testid="session-row"]').first().waitFor({ timeout: 8_000 })
       await panel.locator('#closeDrawer').click()
       await panel.locator('#model').fill('extension-model')
       await panel.locator('#model').dispatchEvent('change')
