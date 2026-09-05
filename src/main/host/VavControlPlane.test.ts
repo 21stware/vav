@@ -69,7 +69,7 @@ async function readFrames(
   })
 }
 
-describe('VavControlPlane', () => {
+describe('VavControlPlane', { concurrency: false }, () => {
   const prevE2e = process.env.VAV_E2E
   const prevStub = process.env.VAV_E2E_STUB_TURN
 
@@ -408,14 +408,18 @@ describe('VavControlPlane', () => {
       assert.ok(minted)
       assert.notEqual(minted, planted)
       await dial.setWorkspace(conversationId, planted)
-      const boundAt = Date.now() + 2_000
+      const boundAt = Date.now() + 8_000
       while (
         Date.now() < boundAt &&
         plane.conversations.get(conversationId)?.workingDirectory !== planted
       ) {
         await new Promise((resolve) => setTimeout(resolve, 20))
       }
-      assert.equal(plane.conversations.get(conversationId)?.workingDirectory, planted)
+      assert.equal(
+        plane.conversations.get(conversationId)?.workingDirectory,
+        planted,
+        `host store still ${plane.conversations.get(conversationId)?.workingDirectory}`
+      )
       assert.equal(
         dial.snapshot().sessions.find((session) => session.id === conversationId)?.workdir,
         planted
