@@ -180,7 +180,13 @@ describe('vavd process', () => {
     assert.equal(page.ok, true)
     const html = await page.text()
     assert.match(html, /VAV/)
-    assert.match(html, /\/vav/)
+    assert.match(html, /data-phone="web"/)
+    assert.match(html, /phone\.js/)
+    const script = await fetch(`http://127.0.0.1:${daemon.webPort}/phone.js`)
+    assert.equal(script.ok, true)
+    const js = await script.text()
+    assert.match(js, /\/vav/)
+    assert.match(js, /role:\s*['"]phone['"]/)
   })
 
   it('accepts an iOS-style hello with no role, then send and configure', async () => {
