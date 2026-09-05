@@ -40,6 +40,8 @@ describe('web and Chrome clients', () => {
       assert.match(src, /type:\s*['"]create['"]/)
       assert.match(src, /type:\s*['"]send['"]/)
       assert.match(src, /type:\s*['"]configure['"]/)
+      assert.match(src, /type:\s*['"]cancel['"]/)
+      assert.match(src, /type:\s*['"]reply['"]/)
       assert.match(src, /approvalMode/)
       assert.match(src, /\bmodel\b/)
     }

@@ -17,6 +17,7 @@ import {
   isLoopbackAddress
 } from '../../shared/vavDiscover.ts'
 import { WEB_UI_HTML, phoneUiMime, readPhoneUiFile } from './webUi.ts'
+import { webHostAllowed } from './webUiHelpers.ts'
 
 const WS_GUID = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11'
 const BRAND_ICON_FILES: Record<string, string> = {
@@ -189,7 +190,13 @@ export function startVavWebBridge(
   return new Promise((resolve, reject) => {
     const server = createServer((req, res) => handleHttp(req, res, opts))
     server.on('upgrade', (req, socket) => {
+      if (!webHostAllowed(req.headers.host, opts.listen)) {
+        socket.write('HTTP/1.1 421 Misdirected Request\r\nConnection: close\r\n\r\n')
+        socket.destroy()
+        return
+      }
       if ((req.url ?? '/').split('?')[0] !== VAV_WEB_SOCKET_PATH) {
+        socket.write('HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n')
         socket.destroy()
         return
       }
@@ -224,6 +231,11 @@ function json(res: ServerResponse, status: number, body: unknown): void {
 }
 
 function handleHttp(req: IncomingMessage, res: ServerResponse, opts: VavWebBridgeOpts): void {
+  if (!webHostAllowed(req.headers.host, opts.listen)) {
+    res.writeHead(421, { 'content-type': 'text/plain; charset=utf-8' })
+    res.end('misdirected request')
+    return
+  }
   const path = (req.url ?? '/').split('?')[0]
   if (path === '/' || path === '/index.html') {
     res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
@@ -263,7 +275,8 @@ function handleHttp(req: IncomingMessage, res: ServerResponse, opts: VavWebBridg
       ok: true,
       app: 'vavd',
       name: opts.name || 'vavd',
-      version: opts.version || '0.0.0'
+      version: opts.version || '0.0.0',
+      port: req.socket.localPort ?? opts.port
     })
     return
   }
@@ -290,6 +303,6 @@ function handleHttp(req: IncomingMessage, res: ServerResponse, opts: VavWebBridg
     res.end(readFileSync(icon))
     return
   }
-  res.writeHead(404)
+  res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' })
   res.end('not found')
 }
