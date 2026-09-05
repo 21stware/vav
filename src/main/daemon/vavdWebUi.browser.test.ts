@@ -115,7 +115,11 @@ describe('vavd web UI in Chrome', () => {
       assert.equal(stored.approvalMode, 'bypass')
       assert.ok(stored.messages.some((m) => m.role === 'assistant'))
     } finally {
-      await browser?.close()
+      try {
+        await browser?.close()
+      } catch {
+        // Chromium can throw EIO when its stdio is already gone.
+      }
       web.close()
       plane.dispose()
       await rm(dir, { recursive: true, force: true })

@@ -265,7 +265,11 @@ describe('vavd Chrome extension', () => {
         site.close()
       }
     } finally {
-      await context?.close()
+      try {
+        await context?.close()
+      } catch {
+        // Chromium can throw EIO when its stdio is already gone.
+      }
       web.close()
       plane.dispose()
       await rm(dir, { recursive: true, force: true })
@@ -329,7 +333,11 @@ describe('vavd Chrome extension', () => {
         })
       }
     } finally {
-      await context?.close()
+      try {
+        await context?.close()
+      } catch {
+        // Chromium can throw EIO when its stdio is already gone.
+      }
       spawned.stop()
       await rm(profile, { recursive: true, force: true })
     }
@@ -368,7 +376,11 @@ describe('vavd Chrome extension', () => {
         })
       }
     } finally {
-      await context?.close()
+      try {
+        await context?.close()
+      } catch {
+        // Chromium can throw EIO when its stdio is already gone.
+      }
       spawned.stop()
       await rm(profile, { recursive: true, force: true })
     }
@@ -407,7 +419,11 @@ describe('vavd Chrome extension', () => {
         })
       }
     } finally {
-      await context?.close()
+      try {
+        await context?.close()
+      } catch {
+        // Chromium can throw EIO when its stdio is already gone.
+      }
       spawned.stop()
       await rm(profile, { recursive: true, force: true })
     }
