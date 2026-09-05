@@ -80,6 +80,7 @@ import { RemoteControlService } from './remote/RemoteControlService'
 import { DaemonAttachService } from './daemon/DaemonAttachService'
 import { resolveVavdPairing, resolveVavdSpawn } from './daemon/vavdClientLaunch'
 import { spawnLocalVavd } from './daemon/vavdSpawn'
+import { startDesktopWebBridge } from './daemon/desktopWebBridge'
 import { loopbackVavdShell } from './daemon/vavdShellPairing'
 import { openTailcatDial } from './daemon/tailcatDial'
 import { hostJoin, isLocalMachine, LOCAL_MACHINE_ID, normalizeMachineId, conversationOnMachine, parseWorkspaceRefList, recentsForMachine, remoteConversationMachineId, type WorkspaceHostInfo } from '@shared/workspaceHost'
@@ -423,6 +424,7 @@ protocol.registerSchemesAsPrivileged([
 
 let mainWindow: BrowserWindow | null = null
 let stopSpawnedVavd: (() => void) | undefined
+let stopDesktopWeb: (() => void) | undefined
 /** Extra main shells, one per paired daemon (`?machine=<id>`). */
 const hostWindows = new Map<string, BrowserWindow>()
 let settingsWindow: BrowserWindow | null = null
@@ -7123,6 +7125,7 @@ return c as text`
       electronAutoUpdater.once('before-quit-for-update', () => {
         daemonAttach.dispose()
         stopSpawnedVavd?.()
+        stopDesktopWeb?.()
         remoteControl.dispose()
         agent.disposeAll()
         cliHost.disposeAll()
@@ -7258,6 +7261,7 @@ if (!singleInstance) {
     macLidSleep?.stop()
     daemonAttach.dispose()
     stopSpawnedVavd?.()
+    stopDesktopWeb?.()
     remoteControl.dispose()
     agent.disposeAll()
     cliHost.disposeAll()
@@ -7459,12 +7463,28 @@ if (!singleInstance) {
           name: isE2eRuntime() ? 'E2E Daemon' : 'VAV Daemon',
           stateDir: join(app.getPath('userData'), 'vavd'),
           stubTurn: isE2eRuntime(),
-          stubStream: isE2eRuntime()
+          stubStream: isE2eRuntime(),
+          noWeb: false,
+          webPort: 4752,
+          webListen: '127.0.0.1'
         })
         stopSpawnedVavd = spawned.stop
         vavdPairing = spawned.pairing
       } catch (err) {
         console.warn('[vavd] spawn failed', err)
+      }
+    }
+    if (!stopSpawnedVavd && !vavdPairing) {
+      try {
+        const web = await startDesktopWebBridge({
+          hub: remoteControl.hub,
+          secret: () => remoteControl.pairingSecret(),
+          name: app.getName() || 'VAV',
+          version: app.getVersion()
+        })
+        if (web) stopDesktopWeb = web.close
+      } catch (err) {
+        console.warn('[vav] web bridge failed', err)
       }
     }
     if (vavdPairing) {
