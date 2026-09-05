@@ -46,6 +46,9 @@ await build({
   outdir: outDir,
   entryNames: 'phone',
   chunkNames: 'chunk-[name]-[hash]',
+  // Relative URLs so Chrome's side panel (chrome-extension://<id>/phone/phone.js)
+  // loads brand marks from phone/, not the extension root.
+  publicPath: './',
   splitting: true,
   platform: 'browser',
   target: ['chrome114', 'safari16'],
@@ -129,4 +132,8 @@ writeFileSync(
 
 if (!existsSync(join(outDir, 'phone.js'))) {
   throw new Error('build-phone-ui: phone.js was not written')
+}
+const phoneJs = readFileSync(join(outDir, 'phone.js'), 'utf8')
+if (phoneJs.includes('"/deepseek-') || phoneJs.includes('"/sprite-')) {
+  throw new Error('build-phone-ui: brand assets must use relative URLs for the Chrome side panel')
 }

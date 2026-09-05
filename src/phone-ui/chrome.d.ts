@@ -2,6 +2,7 @@
 interface ChromeRuntimePort {
   postMessage: (msg: unknown) => void
   onMessage: { addListener: (fn: (msg: never) => void) => void }
+  onDisconnect: { addListener: (fn: () => void) => void }
 }
 
 interface ChromeRuntime {
