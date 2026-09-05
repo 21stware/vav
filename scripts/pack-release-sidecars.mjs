@@ -4,7 +4,7 @@
  *
  *   node scripts/pack-release-sidecars.mjs --out /tmp/sidecars
  */
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { spawnSync } from 'node:child_process'
@@ -46,9 +46,17 @@ const version = packageVersion(root)
 const JSZip = require('jszip')
 const zip = new JSZip()
 const extDir = join(root, 'extension')
-for (const name of ['manifest.json', 'background.js', 'sidepanel.html', 'sidepanel.js']) {
-  zip.file(name, readFileSync(join(extDir, name)))
+
+function addExtensionTree(abs, rel = '') {
+  for (const name of readdirSync(abs)) {
+    if (name.startsWith('.')) continue
+    const full = join(abs, name)
+    const dest = rel ? `${rel}/${name}` : name
+    if (statSync(full).isDirectory()) addExtensionTree(full, dest)
+    else zip.file(dest, readFileSync(full))
+  }
 }
+addExtensionTree(extDir)
 const zipName = `vav-chrome-extension-${version}.zip`
 writeFileSync(join(outDir, zipName), await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' }))
 console.log(`[pack-release-sidecars] ${outDir}/21stware-vavd-${version}.tgz`)

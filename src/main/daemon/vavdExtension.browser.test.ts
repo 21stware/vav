@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { createServer } from 'node:http'
 import { existsSync } from 'node:fs'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -62,7 +63,9 @@ describe('vavd Chrome extension', () => {
       listen: '127.0.0.1',
       port: 0,
       hub: plane.hub,
-      secret: () => SECRET
+      secret: () => SECRET,
+      name: 'ext-host',
+      version: 'test'
     })
     let context: BrowserContext | undefined
     try {
@@ -99,27 +102,77 @@ describe('vavd Chrome extension', () => {
       }
       const panel = await context.newPage()
       await panel.goto(`chrome-extension://${extensionId}/sidepanel.html`)
-      await panel.locator('#host').fill(`ws://127.0.0.1:${web.port}/vav`)
-      await panel.locator('#secret').fill(SECRET)
-      await panel.locator('#connect').click()
-      await panel.getByText(/Connected/).waitFor({ timeout: 10_000 })
+      await panel.evaluate(async (port) => {
+        await chrome.storage.local.set({
+          vavDiscoverHint: { ports: [port], hosts: ['127.0.0.1'] }
+        })
+        await chrome.runtime.sendMessage({ type: 'rediscover' })
+      }, web.port)
+      await panel.getByText(/Connected/).waitFor({ timeout: 12_000 })
       await panel.locator('#create').click()
+      await panel.locator('#sessionBar').waitFor({ timeout: 8_000 })
+      await panel.locator('#sessionsBtn').click()
       await panel.locator('#sessions li').first().waitFor({ timeout: 8_000 })
+      await panel.locator('#closeDrawer').click()
       await panel.locator('#model').fill('extension-model')
-      await panel.locator('#apply').click()
+      await panel.locator('#model').dispatchEvent('change')
       await panel.locator('#text').fill('hello from the chrome extension')
       await panel.locator('#sendForm button[type="submit"]').click()
-      await panel.locator('#log').getByText('e2e stub reply').waitFor({ timeout: 8_000 })
-      if (existsSync('/opt/cursor/artifacts')) {
-        await panel.screenshot({
-          path: '/opt/cursor/artifacts/vavd_chrome_extension_stub_turn.png',
-          fullPage: true
+      await panel.locator('#transcript').getByText('e2e stub reply').waitFor({ timeout: 8_000 })
+      const first = [...plane.conversations.all()].at(-1)
+      assert.ok(first)
+      assert.equal(first.model, 'extension-model')
+      assert.ok(first.messages.some((m) => m.role === 'assistant'))
+      const firstUser = first.messages.find((m) => m.role === 'user') as
+        | { content?: string }
+        | undefined
+      assert.ok(firstUser)
+      assert.equal(String(firstUser.content || '').includes('[Current page]'), false)
+
+      const site = createServer((_req, res) => {
+        res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
+        res.end(
+          '<!doctype html><html><head><title>Install guide</title></head><body><h1>Prereqs</h1><p>Need Node 22</p></body></html>'
+        )
+      })
+      await new Promise<void>((resolve) => site.listen(0, '127.0.0.1', resolve))
+      const sitePort = (site.address() as { port: number }).port
+      try {
+        const tab = await context.newPage()
+        await tab.goto(`http://127.0.0.1:${sitePort}/`)
+        await tab.bringToFront()
+        await panel.evaluate(async () => {
+          await chrome.runtime.sendMessage({ type: 'refresh-page' })
         })
+        await panel.bringToFront()
+        await panel.locator('#pageTitle').getByText('Install guide').waitFor({ timeout: 8_000 })
+        await panel.locator('#includePage').check()
+        await panel.locator('#text').fill('summarize this page')
+        await panel.locator('#sendForm button[type="submit"]').click()
+        await panel.locator('#transcript').getByText('summarize this page').waitFor({ timeout: 8_000 })
+        await panel.locator('#transcript').getByText('e2e stub reply').nth(1).waitFor({ timeout: 8_000 })
+        if (existsSync('/opt/cursor/artifacts')) {
+          await panel.screenshot({
+            path: '/opt/cursor/artifacts/vavd_chrome_extension_stub_turn.png',
+            fullPage: true
+          })
+        }
+        const stored = [...plane.conversations.all()].at(-1)
+        assert.ok(stored)
+        const userTexts = stored.messages
+          .filter((m) => m.role === 'user')
+          .map((m) => {
+            const row = m as { text?: string; content?: unknown; blocks?: Array<{ text?: string }> }
+            if (typeof row.content === 'string') return row.content
+            return row.text || row.blocks?.map((b) => b.text || '').join('') || ''
+          })
+        assert.ok(
+          userTexts.some((text) => text.includes('Install guide') && text.includes('[Current page]')),
+          `user texts: ${JSON.stringify(userTexts)}`
+        )
+      } finally {
+        site.close()
       }
-      const stored = [...plane.conversations.all()].at(-1)
-      assert.ok(stored)
-      assert.equal(stored.model, 'extension-model')
-      assert.ok(stored.messages.some((m) => m.role === 'assistant'))
     } finally {
       await context?.close()
       web.close()

@@ -3,8 +3,9 @@
  * Headless VAV daemon.
  *
  * Hosts the workspace plane (fs / spawn / pty) and the session plane
- * (send / thread / live turn). Pair from a desktop, phone, web page, or
- * Chrome extension with the printed URI.
+ * (send / thread / live turn). Pair from a desktop or phone with the
+ * printed URI. The local web UI and Chrome extension discover a loopback
+ * daemon automatically.
  *
  *   npm run vavd
  *   npx @21stware/vavd
@@ -34,8 +35,7 @@ import {
   stopVavdAdmin
 } from './vavdAdmin.ts'
 import { startVavWebBridge } from './VavWebBridge.ts'
-
-const VAVD_WEB_DEFAULT_PORT = 4752
+import { VAVD_WEB_DEFAULT_PORT } from '../../shared/vavDiscover.ts'
 
 function argValue(flag: string, fallback?: string): string | undefined {
   const index = process.argv.indexOf(flag)
@@ -196,7 +196,9 @@ async function main(): Promise<void> {
       listen: webListen,
       port: webPort,
       hub: plane.hub,
-      secret: () => secret
+      secret: () => secret,
+      name: identity.name,
+      version: process.env.npm_package_version || '0.0.0'
     })
   }
 
@@ -213,7 +215,9 @@ async function main(): Promise<void> {
   process.stdout.write(`vavd listening on ${bind}:${bound}\n`)
   if (web) process.stdout.write(`vavd web on http://${webListen}:${web.port}\n`)
   process.stdout.write(`${pairingOf(secret)}\n`)
-  process.stdout.write('Paste that URI in VAV → Connect, VAV Remote, the web UI, or the Chrome extension.\n')
+  process.stdout.write(
+    'Paste that URI in VAV → Connect or VAV Remote. The local web UI and Chrome extension find this machine automatically.\n'
+  )
   process.stdout.write('Type clients / disconnect <id> / unpair <id> / rotate-offer.\n')
 
   if (process.stdin.isTTY) {

@@ -10,8 +10,10 @@ const iosFrames = readFileSync(
   'utf8'
 )
 const extension = [
+  readFileSync(join(extDir, 'background.js'), 'utf8'),
   readFileSync(join(extDir, 'sidepanel.js'), 'utf8'),
-  readFileSync(join(extDir, 'sidepanel.html'), 'utf8')
+  readFileSync(join(extDir, 'sidepanel.html'), 'utf8'),
+  readFileSync(join(extDir, 'lib/discover.js'), 'utf8')
 ].join('\n')
 
 /**

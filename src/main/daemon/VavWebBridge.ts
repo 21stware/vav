@@ -3,20 +3,56 @@
  * already speaks. Chrome extension and the bundled web page attach here.
  */
 import { createHash } from 'node:crypto'
+import { existsSync, readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 import { EventEmitter } from 'node:events'
 import type { Socket as NetSocket } from 'node:net'
 import type { Duplex } from 'node:stream'
 import type { RemoteControlHub } from '../remote/RemoteControlHub.ts'
+import {
+  VAV_DISCOVER_PATH,
+  VAV_WEB_SOCKET_PATH,
+  buildDiscoverPayload,
+  isLoopbackAddress
+} from '../../shared/vavDiscover.ts'
 import { WEB_UI_HTML } from './webUi.ts'
 
 const WS_GUID = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11'
+const BRAND_ICON_FILES: Record<string, string> = {
+  '/icon-mark.png': 'icon-mark.png',
+  '/icon-mark-dark.png': 'icon-mark-dark.png',
+  '/icon.png': 'icon.png'
+}
+
+/**
+ * Packed `vavd.js` is CJS — `import.meta.dirname` is undefined there.
+ * Never resolve paths at module load from it, or the binary dies on boot.
+ */
+function brandIconPath(file: string): string | null {
+  const here =
+    typeof import.meta.dirname === 'string' && import.meta.dirname
+      ? import.meta.dirname
+      : typeof __dirname === 'string'
+        ? __dirname
+        : ''
+  const roots = [here, process.cwd()].filter(Boolean)
+  for (const root of roots) {
+    for (const rel of [`../../../build/${file}`, `../../build/${file}`, `build/${file}`]) {
+      const full = join(root, rel)
+      if (existsSync(full)) return full
+    }
+  }
+  return null
+}
 
 export type VavWebBridgeOpts = {
   listen: string
   port: number
   hub: RemoteControlHub
   secret: () => string
+  name?: string
+  version?: string
 }
 
 class WsSocket extends EventEmitter {
@@ -153,7 +189,7 @@ export function startVavWebBridge(
   return new Promise((resolve, reject) => {
     const server = createServer((req, res) => handleHttp(req, res, opts))
     server.on('upgrade', (req, socket) => {
-      if ((req.url ?? '/').split('?')[0] !== '/vav') {
+      if ((req.url ?? '/').split('?')[0] !== VAV_WEB_SOCKET_PATH) {
         socket.destroy()
         return
       }
@@ -177,6 +213,16 @@ export function startVavWebBridge(
   })
 }
 
+function requestIsLoopback(req: IncomingMessage, listen: string): boolean {
+  if (isLoopbackAddress(listen)) return true
+  return isLoopbackAddress(req.socket.remoteAddress)
+}
+
+function json(res: ServerResponse, status: number, body: unknown): void {
+  res.writeHead(status, { 'content-type': 'application/json; charset=utf-8' })
+  res.end(JSON.stringify(body))
+}
+
 function handleHttp(req: IncomingMessage, res: ServerResponse, opts: VavWebBridgeOpts): void {
   const path = (req.url ?? '/').split('?')[0]
   if (path === '/' || path === '/index.html') {
@@ -185,13 +231,35 @@ function handleHttp(req: IncomingMessage, res: ServerResponse, opts: VavWebBridg
     return
   }
   if (path === '/health') {
-    res.writeHead(200, { 'content-type': 'application/json' })
-    res.end(JSON.stringify({ ok: true, app: 'vavd' }))
+    json(res, 200, {
+      ok: true,
+      app: 'vavd',
+      name: opts.name || 'vavd',
+      version: opts.version || '0.0.0'
+    })
+    return
+  }
+  if (path === VAV_DISCOVER_PATH) {
+    json(res, 200, buildDiscoverPayload(opts, requestIsLoopback(req, opts.listen)))
     return
   }
   if (path === '/pairing.json') {
-    res.writeHead(200, { 'content-type': 'application/json' })
-    res.end(JSON.stringify({ proto: 1, hasSecret: Boolean(opts.secret()) }))
+    const loopback = requestIsLoopback(req, opts.listen)
+    json(res, 200, {
+      proto: 1,
+      hasSecret: Boolean(opts.secret()),
+      ...(loopback ? { secret: opts.secret() || undefined } : {})
+    })
+    return
+  }
+  const iconName = BRAND_ICON_FILES[path]
+  const icon = iconName ? brandIconPath(iconName) : null
+  if (icon) {
+    res.writeHead(200, {
+      'content-type': 'image/png',
+      'cache-control': 'public, max-age=86400'
+    })
+    res.end(readFileSync(icon))
     return
   }
   res.writeHead(404)

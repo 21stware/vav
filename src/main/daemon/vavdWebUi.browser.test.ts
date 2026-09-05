@@ -62,7 +62,9 @@ describe('vavd web UI in Chrome', () => {
       listen: '127.0.0.1',
       port: 0,
       hub: plane.hub,
-      secret: () => SECRET
+      secret: () => SECRET,
+      name: 'webui',
+      version: 'test'
     })
     let browser: Browser | undefined
     try {
@@ -73,14 +75,11 @@ describe('vavd web UI in Chrome', () => {
       })
       const page = await browser.newPage()
       await page.goto(`http://127.0.0.1:${web.port}/`)
-      await page.locator('#secret').fill(SECRET)
-      await page.locator('#connect').click()
       await page.getByText(/Connected/).waitFor({ timeout: 8_000 })
       await page.locator('#create').click()
       await page.locator('#sessions li').first().waitFor({ timeout: 8_000 })
       await page.locator('#model').fill('webui-model')
       await page.locator('#approval').selectOption('bypass')
-      await page.locator('#apply').click()
       await page.waitForFunction(
         () => (document.getElementById('model') as HTMLInputElement | null)?.value === 'webui-model',
         undefined,
