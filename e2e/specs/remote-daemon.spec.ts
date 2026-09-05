@@ -465,6 +465,89 @@ test('desktop spawns vavd and sends through the child process', async () => {
   }
 })
 
+async function findDesktopDiscover(): Promise<string | null> {
+  for (let port = 4752; port <= 4762; port++) {
+    try {
+      const res = await fetch(`http://127.0.0.1:${port}/discover`, {
+        signal: AbortSignal.timeout(400)
+      })
+      if (!res.ok) continue
+      const info = (await res.json()) as { app?: string; secret?: string }
+      if (info.app === 'vavd' && info.secret) return `http://127.0.0.1:${port}`
+    } catch {
+      /* next port */
+    }
+  }
+  return null
+}
+
+/**
+ * Packaged desktop used to spawn vavd with --no-web, so the Chrome extension
+ * never found this machine. The child must serve /discover on the web range.
+ */
+test('spawned desktop vavd is discoverable on the Chrome extension web bridge', async () => {
+  test.setTimeout(90_000)
+  const harness = await launchVav({ spawnVavd: true, stubTurn: true })
+  try {
+    await waitForHostWindow(harness, 'E2E Daemon', 40_000)
+    let origin = ''
+    await expect
+      .poll(async () => {
+        origin = (await findDesktopDiscover()) || ''
+        return Boolean(origin)
+      }, { timeout: 20_000 })
+      .toBe(true)
+
+    const info = (await (await fetch(`${origin}/discover`)).json()) as {
+      app?: string
+      secret?: string
+      name?: string
+      wsPath?: string
+    }
+    expect(info.app).toBe('vavd')
+    expect(info.secret).toBeTruthy()
+    expect(info.wsPath).toBe('/vav')
+
+    const wsUrl = origin.replace(/^http/, 'ws') + '/vav'
+    const welcome = await new Promise<string>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('phone hello timed out')), 8_000)
+      const ws = new WebSocket(wsUrl)
+      ws.addEventListener('open', () => {
+        ws.send(
+          JSON.stringify({
+            type: 'hello',
+            proto: 1,
+            auth: info.secret,
+            role: 'phone',
+            device: 'e2e'
+          })
+        )
+      })
+      ws.addEventListener('message', (event) => {
+        const line = String(event.data).split('\n').find(Boolean)
+        if (!line) return
+        try {
+          const msg = JSON.parse(line) as { type?: string }
+          if (msg.type === 'welcome') {
+            clearTimeout(timer)
+            ws.close()
+            resolve(line)
+          }
+        } catch {
+          /* ignore */
+        }
+      })
+      ws.addEventListener('error', () => {
+        clearTimeout(timer)
+        reject(new Error('web bridge socket error'))
+      })
+    })
+    expect(welcome).toContain('welcome')
+  } finally {
+    await harness.dispose()
+  }
+})
+
 /**
  * Connect's pairing line on a spawned-vavd desktop is the child daemon.
  * A phone-protocol client that pastes that URI must turn on vavd, not Electron.

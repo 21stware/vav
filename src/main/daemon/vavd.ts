@@ -35,7 +35,7 @@ import {
   stopVavdAdmin
 } from './vavdAdmin.ts'
 import { startVavWebBridge } from './VavWebBridge.ts'
-import { VAVD_WEB_DEFAULT_PORT } from '../../shared/vavDiscover.ts'
+import { VAVD_WEB_DEFAULT_PORT, webScanPorts } from '../../shared/vavDiscover.ts'
 
 function argValue(flag: string, fallback?: string): string | undefined {
   const index = process.argv.indexOf(flag)
@@ -192,14 +192,25 @@ async function main(): Promise<void> {
   const webPort = Number.isFinite(webPortParsed) ? webPortParsed : VAVD_WEB_DEFAULT_PORT
   const webListen = argValue('--web-listen', '127.0.0.1') ?? '127.0.0.1'
   if (!webDisabled) {
-    web = await startVavWebBridge({
-      listen: webListen,
-      port: webPort,
-      hub: plane.hub,
-      secret: () => secret,
-      name: identity.name,
-      version: process.env.npm_package_version || '0.0.0'
-    })
+    const ports = webPort === 0 ? [0] : webScanPorts([webPort])
+    let lastError: unknown
+    for (const port of ports) {
+      try {
+        web = await startVavWebBridge({
+          listen: webListen,
+          port,
+          hub: plane.hub,
+          secret: () => secret,
+          name: identity.name,
+          version: process.env.npm_package_version || '0.0.0'
+        })
+        lastError = undefined
+        break
+      } catch (err) {
+        lastError = err
+      }
+    }
+    if (!web && lastError) throw lastError
   }
 
   const rotateOffer = (): string => {

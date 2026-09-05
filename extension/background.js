@@ -1,4 +1,5 @@
-import { findLocalVavd } from './lib/discover.js'
+import { findLocalVavd, wsUrlFromOrigin } from './lib/discover.js'
+import { parsePairing } from './lib/pairing.js'
 import { composeSendText, isAttachablePage } from './lib/pageContext.js'
 
 const DEVICE = 'chrome'
@@ -61,6 +62,7 @@ function persistHint(found) {
   void chrome.storage.local.set({
     vavDiscoverHint: {
       origin: found.origin,
+      wsUrl: found.wsUrl,
       ports: [Number(url.port) || 4752],
       hosts: [url.hostname],
       secret: found.secret || undefined
@@ -117,7 +119,11 @@ function attachSocket(found) {
 function onFrame(msg) {
   if (msg.type === 'welcome') {
     clearTimeout(helloTimer)
-    setStatus('connected', { version: msg.version || '', error: '' })
+    setStatus('connected', {
+      version: msg.version || '',
+      error: '',
+      ...(msg.host?.name ? { hostName: msg.host.name } : {})
+    })
     reconnectAt = 0
     return
   }
@@ -206,39 +212,48 @@ function scheduleReconnect(ms) {
   }, wait)
 }
 
+function hintTarget(saved) {
+  if (saved.origin && saved.secret) {
+    return {
+      origin: saved.origin,
+      wsUrl: saved.wsUrl || wsUrlFromOrigin(saved.origin),
+      secret: saved.secret,
+      name: 'VAV'
+    }
+  }
+  if (saved.wsUrl && saved.secret) {
+    const origin = saved.origin || saved.wsUrl.replace(/^ws/, 'http').replace(/\/vav$/, '')
+    return { origin, wsUrl: saved.wsUrl, secret: saved.secret, name: 'VAV' }
+  }
+  const host = saved.hosts?.[0]
+  if (saved.secret && host) {
+    const origin = `http://${host.includes(':') ? `[${host}]` : host}:4752`
+    return { origin, wsUrl: wsUrlFromOrigin(origin), secret: saved.secret, name: 'VAV' }
+  }
+  return null
+}
+
 async function connect() {
   setStatus('searching', { error: '' })
   const saved = await hint()
   const found = await findLocalVavd(saved)
-  if (!found) {
-    setStatus('error', { error: 'No vavd on this machine. Start it, then retry.' })
-    scheduleReconnect(4_000)
+  if (found && (found.secret || saved.secret)) {
+    attachSocket({ ...found, secret: found.secret || saved.secret })
     return
   }
-  if (!found.secret && !saved.secret) {
-    setStatus('error', { error: 'Found vavd, but pairing needs a pasted URI.' })
+  if (found && !found.secret && !saved.secret) {
+    setStatus('error', { error: 'Found VAV, but pairing needs a pasted URI.' })
     state.origin = found.origin
     broadcast({ type: 'state', state: snapshot() })
     return
   }
-  attachSocket({ ...found, secret: found.secret || saved.secret })
-}
-
-function parsePairing(text) {
-  const trimmed = String(text || '').trim()
-  if (!trimmed) return null
-  if (trimmed.startsWith('vav-daemon://')) {
-    try {
-      const url = new URL(trimmed)
-      const secret = decodeURIComponent(url.username)
-      if (secret.length < 16) return null
-      return { secret, host: url.hostname.replace(/^\[|\]$/g, '') }
-    } catch {
-      return null
-    }
+  const direct = hintTarget(saved)
+  if (direct) {
+    attachSocket(direct)
+    return
   }
-  if (trimmed.length >= 16 && !/\s/.test(trimmed)) return { secret: trimmed }
-  return null
+  setStatus('error', { error: 'No VAV on this machine. Open the desktop app, then retry.' })
+  scheduleReconnect(4_000)
 }
 
 async function pairManual(text) {
@@ -248,7 +263,12 @@ async function pairManual(text) {
     return
   }
   await chrome.storage.local.set({
-    vavDiscoverHint: { secret: parsed.secret, hosts: parsed.host ? [parsed.host] : undefined }
+    vavDiscoverHint: {
+      secret: parsed.secret,
+      hosts: parsed.host ? [parsed.host] : undefined,
+      origin: parsed.origin,
+      wsUrl: parsed.wsUrl
+    }
   })
   await connect()
 }
@@ -458,6 +478,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     state.includePage = true
     void chrome.sidePanel.open({ tabId: sender.tab?.id }).catch(() => {})
     void sendTurn({ text: 'Help me with this selection.', usePage: true })
+    sendResponse({ ok: true })
+    return true
+  }
+  if (msg?.type === 'pair') {
+    void pairManual(msg.text)
     sendResponse({ ok: true })
     return true
   }

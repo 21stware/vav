@@ -15,6 +15,7 @@ export type SpawnedVavd = {
   machineId: string
   name: string
   stateDir: string
+  webOrigin?: string
   stop: () => void
 }
 
@@ -24,6 +25,8 @@ export type SpawnLocalVavdOptions = {
   listen?: string
   port?: number
   noWeb?: boolean
+  webPort?: number
+  webListen?: string
   noAnnounce?: boolean
   stubTurn?: boolean
   stubStream?: boolean
@@ -132,6 +135,10 @@ export async function spawnLocalVavd(
   ]
   if (options.noAnnounce !== false) flags.push('--no-announce')
   if (options.noWeb !== false) flags.push('--no-web')
+  else {
+    if (options.webPort != null) flags.push('--web-port', String(options.webPort))
+    if (options.webListen) flags.push('--web-listen', options.webListen)
+  }
   const args = vavdNodeArgs(entry, flags)
 
   const node = resolveNodeForVavd()
@@ -151,19 +158,20 @@ export async function spawnLocalVavd(
     env: childEnv
   })
 
-  const pairing = await waitForPairing(child)
-  const payload = parseDaemonPairing(pairing)
+  const started = await waitForPairing(child)
+  const payload = parseDaemonPairing(started.pairing)
   if (!payload) {
     child.kill('SIGTERM')
-    throw new Error(`unrecognized vavd pairing: ${pairing}`)
+    throw new Error(`unrecognized vavd pairing: ${started.pairing}`)
   }
 
   let stopped = false
   return {
-    pairing,
+    pairing: started.pairing,
     machineId: payload.machineId,
     name: payload.name,
     stateDir,
+    webOrigin: parseWebOrigin(started.stdout),
     stop: () => {
       if (stopped) return
       stopped = true
@@ -173,7 +181,16 @@ export async function spawnLocalVavd(
   }
 }
 
-function waitForPairing(child: ChildProcess, timeoutMs = 12_000): Promise<string> {
+function parseWebOrigin(stdout: string): string | undefined {
+  const line = stdout.split('\n').find((row) => row.startsWith('vavd web on '))
+  const match = line?.match(/https?:\/\/\S+/)
+  return match?.[0]
+}
+
+function waitForPairing(
+  child: ChildProcess,
+  timeoutMs = 12_000
+): Promise<{ pairing: string; stdout: string }> {
   return new Promise((resolve, reject) => {
     let stdout = ''
     let stderrTail = ''
@@ -190,7 +207,7 @@ function waitForPairing(child: ChildProcess, timeoutMs = 12_000): Promise<string
       const line = stdout.split('\n').find((row) => row.startsWith('vav-daemon:'))
       if (line) {
         clearTimeout(timer)
-        resolve(line.trim())
+        resolve({ pairing: line.trim(), stdout })
       }
     })
     child.on('exit', (code) => {
