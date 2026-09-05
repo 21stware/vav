@@ -72,7 +72,7 @@ npx @21stware/vavd
 # or: npm i -g @21stware/vavd && vavd
 ```
 
-Listens on all interfaces by default (`--listen 127.0.0.1` for local-only). Opens a web UI on `http://127.0.0.1:4752`. Paste the pairing line into VAV → Connect, VAV Remote, the web UI, or the Chrome extension (the web page and side panel accept the full `vav-daemon://` URI or the secret) — or launch the desktop app with `VAVD_URI` / `--vavd-uri` so it opens as a vavd UI without the Connect paste. `VAVD_SPAWN=1` / `--with-vavd` starts vavd as a child of the app and pairs automatically. Packaged builds do that by default (`VAVD_SPAWN=0` / `--no-vavd` keeps the in-process host). The pairing secret is equivalent to local access on that machine. Set `VAV_API_KEY` (and optional `VAV_API_ENDPOINT`) so the daemon can call your model.
+Listens on all interfaces by default (`--listen 127.0.0.1` for local-only). Opens a web UI on `http://127.0.0.1:4752`. Paste the pairing line into VAV → Connect or VAV Remote. The local web UI and Chrome extension discover a loopback daemon and pair automatically — or launch the desktop app with `VAVD_URI` / `--vavd-uri` so it opens as a vavd UI without the Connect paste. `VAVD_SPAWN=1` / `--with-vavd` starts vavd as a child of the app and pairs automatically. Packaged builds do that by default (`VAVD_SPAWN=0` / `--no-vavd` keeps the in-process host). The pairing secret is equivalent to local access on that machine. Set `VAV_API_KEY` (and optional `VAV_API_ENDPOINT`) so the daemon can call your model.
 
 From this repo, `npm run vav -- sessions` / `npm run vav -- send "hello"` talks to that daemon over the same phone protocol.
 

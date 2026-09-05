@@ -33,6 +33,8 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BUILD = os.path.join(ROOT, 'build')
 SITE = os.path.join(ROOT, 'site', 'assets')
 PUBLIC = os.path.join(ROOT, 'src', 'renderer', 'public')
+EXT_ICONS = os.path.join(ROOT, 'extension', 'icons')
+EXT_ICON_SIZES = (16, 32, 48, 128)
 
 ICON_PNG = os.path.join(BUILD, 'icon.png')
 ICON_DARK_PNG = os.path.join(BUILD, 'icon-dark.png')
@@ -92,6 +94,20 @@ def main() -> None:
     favicon = icon.resize((256, 256), Image.Resampling.LANCZOS)
     favicon.save(FAVICON, format='PNG', optimize=True)
     print('site/assets/favicon.png 256x256')
+
+    os.makedirs(EXT_ICONS, exist_ok=True)
+    box = content_bbox(icon)
+    cropped = icon.crop(box)
+    for size in EXT_ICON_SIZES:
+        inset = 1 if size <= 32 else max(1, size // 32)
+        canvas = Image.new('RGBA', (size, size), (0, 0, 0, 0))
+        fitted = cropped.copy()
+        fitted.thumbnail((size - 2 * inset, size - 2 * inset), Image.Resampling.LANCZOS)
+        x = (size - fitted.size[0]) // 2
+        y = (size - fitted.size[1]) // 2
+        canvas.alpha_composite(fitted, (x, y))
+        canvas.save(os.path.join(EXT_ICONS, f'icon{size}.png'), format='PNG')
+    print('extension/icons icon16/32/48/128')
 
     os.makedirs(PUBLIC, exist_ok=True)
     shutil.copy2(ICON_PNG, os.path.join(PUBLIC, 'icon.png'))

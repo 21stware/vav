@@ -3,8 +3,9 @@
  * Headless VAV daemon.
  *
  * Hosts the workspace plane (fs / spawn / pty) and the session plane
- * (send / thread / live turn). Pair from a desktop, phone, web page, or
- * Chrome extension with the printed URI.
+ * (send / thread / live turn). Pair from a desktop or phone with the
+ * printed URI. The local web UI and Chrome extension discover a loopback
+ * daemon automatically.
  *
  *   npm run vavd
  *   npx @21stware/vavd

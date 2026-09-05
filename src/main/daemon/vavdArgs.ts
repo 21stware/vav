@@ -6,9 +6,10 @@ import { existsSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { DAEMON_DEFAULT_PORT } from '../../shared/daemonProtocol.ts'
+import { VAVD_WEB_DEFAULT_PORT } from '../../shared/vavDiscover.ts'
 import { DAEMON_LAN_BIND } from './DaemonServer.ts'
 
-export const VAVD_WEB_DEFAULT_PORT = 4752
+export { VAVD_WEB_DEFAULT_PORT }
 
 export type VavdAdminVerb = 'clients' | 'disconnect' | 'unpair' | 'rotate-offer'
 

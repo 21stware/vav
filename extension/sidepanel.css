@@ -1,0 +1,3 @@
+/* Legacy entry. The shared desktop shell lives in lib/ui/. */
+@import url('lib/ui/tokens.css');
+@import url('lib/ui/shell.css');

@@ -18,11 +18,13 @@ export function ShellLeadingControls(): React.JSX.Element {
   return (
     <div className="shell-leading-controls">
       <Button
+        id="sessionsBtn"
         icon={<PanelLeft size={14} />}
         title={`${t('shortcut.toggleSidebar')} ${keys('⌘⇧H')}`}
         onClick={toggleSidebar}
       />
       <Button
+        id="create"
         icon={<Plus size={14} />}
         testId="new-session"
         title={t('app.newSessionTitle', { shortcut: keys('⌘N') })}

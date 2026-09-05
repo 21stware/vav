@@ -77,4 +77,24 @@ describe('spawnLocalVavd', () => {
     })
     assert.ok(child.killed || exited != null)
   })
+
+  it('exposes the web bridge the Chrome extension discovers', async () => {
+    const spawned = await spawnLocalVavd({
+      name: 'Desktop Web',
+      stubTurn: true,
+      noWeb: false,
+      webPort: 0
+    })
+    try {
+      assert.ok(spawned.webOrigin)
+      const res = await fetch(`${spawned.webOrigin}/discover`)
+      assert.equal(res.ok, true)
+      const info = (await res.json()) as { app?: string; secret?: string; wsPath?: string }
+      assert.equal(info.app, 'vavd')
+      assert.ok(info.secret)
+      assert.equal(info.wsPath, '/vav')
+    } finally {
+      spawned.stop()
+    }
+  })
 })

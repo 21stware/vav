@@ -14,6 +14,7 @@ import { advertisedPairingAddresses, startAnnouncer } from './lanAnnounce.ts'
 import { createFileGrantStore } from './grants.ts'
 import { adminHandlersFor, handleStdinLine, startVavdAdmin, stopVavdAdmin } from './vavdAdmin.ts'
 import { startVavWebBridge } from './VavWebBridge.ts'
+import { webScanPorts } from '../../shared/vavDiscover.ts'
 import { formatListenError, resolveVavdVersion, type VavdServeOptions } from './vavdArgs.ts'
 
 export async function serveVavd(options: VavdServeOptions): Promise<void> {
@@ -86,17 +87,28 @@ export async function serveVavd(options: VavdServeOptions): Promise<void> {
 
   let web: { close: () => void; port: number } | null = null
   if (options.web) {
-    try {
-      web = await startVavWebBridge({
-        listen: options.webListen,
-        port: options.webPort,
-        hub: plane.hub,
-        secret: () => secret
-      })
-    } catch (err) {
+    const ports = options.webPort === 0 ? [0] : webScanPorts([options.webPort])
+    let lastError: unknown
+    for (const port of ports) {
+      try {
+        web = await startVavWebBridge({
+          listen: options.webListen,
+          port,
+          hub: plane.hub,
+          secret: () => secret,
+          name: identity.name,
+          version
+        })
+        lastError = undefined
+        break
+      } catch (err) {
+        lastError = err
+      }
+    }
+    if (!web) {
       server.close()
       plane.dispose()
-      throw new Error(formatListenError(err, 'web UI', options.webListen, options.webPort))
+      throw new Error(formatListenError(lastError, 'web UI', options.webListen, options.webPort))
     }
   }
 
@@ -116,7 +128,9 @@ export async function serveVavd(options: VavdServeOptions): Promise<void> {
     process.stdout.write(`vavd listening on ${options.listen}:${bound}\n`)
     if (web) process.stdout.write(`vavd web on http://${options.webListen}:${web.port}\n`)
     process.stdout.write(`${pairing}\n`)
-    process.stdout.write('Paste that URI in VAV → Connect, VAV Remote, the web UI, or the Chrome extension.\n')
+    process.stdout.write(
+      'Paste that URI in VAV → Connect or VAV Remote. The local web UI and Chrome extension find this machine automatically.\n'
+    )
     process.stdout.write('Type clients / disconnect <id> / unpair <id> / rotate-offer.\n')
   }
 

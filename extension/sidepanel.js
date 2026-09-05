@@ -1,275 +1,200 @@
+import { mountPhoneShell } from './lib/ui/shell.js'
+import { emptyHtml, paintTranscript, renderLiveTurn, renderSessionRows } from './lib/ui/render.js'
+import { paintRunBar, readRunPatch } from './lib/ui/runBar.js'
+
+mountPhoneShell(document.body, { variant: 'extension', markSrc: 'icons/icon32.png' })
+
 const $ = (id) => document.getElementById(id)
-let ws
-let sessions = []
-let active = null
-let draft = ''
-let pendingText = ''
-let awaiting = null
-let running = false
+const port = chrome.runtime.connect({ name: 'sidepanel' })
 
-function pairingAuthFromInput(raw) {
-  const text = String(raw || '').trim()
-  if (!text) return ''
-  if (text.startsWith('vav-daemon://')) {
-    try {
-      const url = new URL(text)
-      if (url.username) return decodeURIComponent(url.username)
-    } catch {
-      /* fall through */
-    }
-  }
-  const hostPort = text.match(/^\S+:\d+\s*[#\s]+(\S+)$/)
-  if (hostPort?.[1]) return hostPort[1]
-  return text
+let state = {
+  status: 'searching',
+  error: '',
+  hostName: 'VAV',
+  sessions: [],
+  active: '',
+  threads: {},
+  controls: {},
+  drafts: {},
+  thinking: {},
+  liveBlocks: {},
+  awaiting: {},
+  page: null,
+  includePage: true,
+  includeShot: false
 }
 
-async function loadSaved() {
-  const saved = await chrome.storage.local.get(['vavdHost', 'vavdSecret'])
-  if (saved.vavdHost) $('host').value = saved.vavdHost
-  if (saved.vavdSecret) $('secret').value = saved.vavdSecret
+function session() {
+  return state.sessions.find((row) => row.id === state.active) || null
 }
 
-function setStatus(text) {
-  $('status').textContent = text
+function isRunning() {
+  return session()?.status === 'running'
 }
 
-function setConnected(on) {
-  $('connect').textContent = on ? 'Disconnect' : 'Connect'
-  if ($('cancel')) $('cancel').disabled = !on || !running
+function post(msg) {
+  port.postMessage(msg)
 }
 
-function setAsk(card) {
-  awaiting = card
-  const box = $('ask')
-  if (!box) return
-  if (!card) {
-    box.hidden = true
-    box.style.display = 'none'
-    $('askPrompt').textContent = ''
+function applyControls() {
+  if (!state.active) return
+  post({ type: 'configure', patch: readRunPatch(document) })
+}
+
+function renderPage() {
+  const chip = $('pageChip')
+  const page = state.page
+  if (!page || !page.url || /^(chrome|edge|about|devtools):/i.test(page.url)) {
+    chip.hidden = true
     return
   }
-  box.hidden = false
-  box.style.display = 'flex'
-  $('askPrompt').textContent = card.prompt || card.title || 'VAV is waiting for a reply'
-  $('askAnswer').value = ''
+  chip.hidden = false
+  $('pageTitle').textContent = page.title || 'This page'
+  $('pageUrl').textContent = page.selection?.trim()
+    ? `Selection · ${page.selection.trim().slice(0, 72)}`
+    : page.url
+  $('includePage').checked = state.includePage
+  $('includeShot').checked = state.includeShot
 }
 
-function renderSessions() {
-  const list = $('sessions')
-  list.replaceChildren()
-  for (const s of sessions) {
-    const li = document.createElement('li')
-    li.dataset.id = s.id
-    if (s.id === active) li.className = 'active'
-    li.append(s.title || 'Session')
-    if (s.dirLabel) {
-      const sub = document.createElement('span')
-      sub.style.cssText = 'color:var(--muted);font-size:12px'
-      sub.textContent = s.dirLabel
-      li.append(document.createElement('br'), sub)
-    }
-    list.append(li)
+function renderChrome() {
+  $('dot').dataset.state = state.status
+  $('hostName').textContent = state.hostName || 'VAV'
+  const labels = {
+    searching: 'Looking for this machine…',
+    reconnecting: 'Reconnecting…',
+    connected: state.version ? `Connected · ${state.version}` : 'Connected',
+    error: state.error || 'Can’t reach vavd'
   }
-}
-
-function send(obj) {
-  if (ws && ws.readyState === 1) {
-    ws.send(JSON.stringify(obj))
-    return true
+  $('status').textContent = labels[state.status] || state.status
+  const row = session()
+  $('title').textContent = row ? row.title || 'New session' : 'Session'
+  $('dirLabel').textContent = row ? row.dirLabel || '' : ''
+  $('stopBtn').hidden = !isRunning()
+  if ($('pairSheet')) {
+    $('pairSheet').hidden = !(state.status === 'error' && !state.sessions.length)
   }
-  setStatus('Not connected')
-  return false
+  $('pinBtn').textContent = row?.pinned ? 'Unpin' : 'Pin'
+  $('favBtn').textContent = row?.favorite ? 'Unfavorite' : 'Favorite'
 }
 
-function openSession(id) {
-  active = id
-  draft = ''
-  running = false
-  setAsk(null)
-  if ($('cancel')) $('cancel').disabled = true
-  delete $('log').dataset.frozen
-  renderSessions()
-  send({ type: 'thread', conversationId: id })
-}
-
-function actuallySend(text) {
-  running = true
-  if ($('cancel')) $('cancel').disabled = false
-  $('log').textContent += `You:\n${text}\n\n`
-  send({ type: 'send', conversationId: active, text })
-}
-
-function submitSend() {
-  const text = $('text').value.trim()
-  if (!text) return
-  if (!ws || ws.readyState !== 1) {
-    setStatus('Not connected')
+function render() {
+  renderChrome()
+  $('sessions').innerHTML = renderSessionRows(state.sessions, state.active)
+  const controls = state.controls[state.active]
+  if (controls) paintRunBar(document, controls)
+  renderPage()
+  const id = state.active
+  const log = $('transcript')
+  if (!id) {
+    log.innerHTML = emptyHtml('icons/icon48.png')
     return
   }
-  $('text').value = ''
-  if (!active) {
-    pendingText = text
-    send({ type: 'create' })
-    return
-  }
-  actuallySend(text)
-}
-
-function onMessage(msg) {
-  if (msg.type === 'welcome') {
-    setStatus(`Connected · ${msg.version}`)
-    setConnected(true)
-  }
-  if (msg.type === 'sessions') {
-    sessions = msg.sessions || []
-    if (!active && sessions[0]) openSession(sessions[0].id)
-    renderSessions()
-  }
-  if (msg.type === 'created' && msg.session) {
-    sessions = [msg.session, ...sessions.filter((s) => s.id !== msg.session.id)]
-    openSession(msg.session.id)
-    $('log').textContent = ''
-    if (pendingText) {
-      const text = pendingText
-      pendingText = ''
-      actuallySend(text)
-    }
-  }
-  if (msg.type === 'thread' && msg.conversationId === active) {
-    $('log').textContent = (msg.messages || [])
-      .map((m) => {
-        const who = m.role === 'user' ? 'You' : 'VAV'
-        const text =
-          (m.blocks || [])
-            .map((b) => (b.kind === 'text' ? b.text : b.kind === 'tool' ? `[${b.tool}] ` : ''))
-            .join('') ||
-          m.text ||
-          ''
-        return `${who}:\n${text}\n\n`
+  const live =
+    isRunning() || state.awaiting[id] || state.drafts[id] || (state.liveBlocks[id] || []).length
+  const liveHtml = live
+    ? renderLiveTurn({
+        thinking: state.thinking[id],
+        blocks: state.liveBlocks[id],
+        draft: state.drafts[id],
+        awaiting: state.awaiting[id],
+        outputting: Boolean(state.drafts[id]) && !state.thinking[id]
       })
-      .join('')
-  }
-  if (msg.type === 'controls' && msg.conversationId === active) {
-    if (msg.model) $('model').value = msg.model
-    if (msg.approval) $('approval').value = msg.approval
-  }
-  if (msg.type === 'turn' && msg.conversationId === active) {
-    if (msg.phase === 'start' || msg.draft) {
-      running = true
-      if ($('cancel')) $('cancel').disabled = false
-    }
-    if (msg.draft) {
-      draft = msg.draft
-      const log = $('log')
-      const frozen = log.dataset.frozen || log.textContent
-      log.dataset.frozen = frozen
-      log.textContent = frozen + (draft ? `VAV:\n${draft}\n` : '')
-    }
-    if (msg.phase === 'awaiting' && msg.awaiting) {
-      running = true
-      if ($('cancel')) $('cancel').disabled = false
-      $('log').textContent += `VAV asks: ${msg.awaiting.prompt || msg.awaiting.title || ''}\n`
-      setAsk(msg.awaiting)
-    }
-    if (msg.phase === 'done' || msg.phase === 'error' || msg.phase === 'cancelled') {
-      draft = ''
-      running = false
-      if ($('cancel')) $('cancel').disabled = true
-      setAsk(null)
-      send({ type: 'thread', conversationId: active })
-    }
-  }
-  if (msg.type === 'error') setStatus(msg.message || msg.code || 'error')
-}
-
-function disconnect() {
-  if (ws) {
-    ws.onclose = null
-    ws.close()
-    ws = null
-  }
-  running = false
-  setAsk(null)
-  setConnected(false)
-  setStatus('Disconnected')
-}
-
-function connect() {
-  if (ws && ws.readyState === 1) {
-    disconnect()
-    return
-  }
-  const host = $('host').value.trim()
-  const secret = pairingAuthFromInput($('secret').value)
-  if (!host || !secret) {
-    setStatus('Need local vavd URL and pairing secret or vav-daemon:// URI')
-    return
-  }
-  void chrome.storage.local.set({ vavdHost: host, vavdSecret: $('secret').value.trim() })
-  if (ws) ws.close()
-  ws = new WebSocket(host)
-  ws.onopen = () => {
-    setStatus('Authenticating…')
-    send({ type: 'hello', proto: 1, auth: secret, role: 'phone', device: 'chrome' })
-  }
-  ws.onclose = () => {
-    setConnected(false)
-    setStatus('Disconnected')
-  }
-  ws.onerror = () => setStatus('Socket error — is vavd running?')
-  ws.onmessage = (ev) => {
-    for (const line of String(ev.data).split('\n').filter(Boolean)) {
-      try {
-        onMessage(JSON.parse(line))
-      } catch {
-        /* ignore */
-      }
-    }
-  }
-}
-
-$('connect').onclick = connect
-$('create').onclick = () => send({ type: 'create' })
-$('apply').onclick = () => {
-  if (!active) {
-    setStatus('Open a session first')
-    return
-  }
-  send({
-    type: 'configure',
-    conversationId: active,
-    model: $('model').value.trim(),
-    approvalMode: $('approval').value
+    : ''
+  paintTranscript(log, {
+    messages: state.threads[id] || [],
+    liveHtml,
+    emptyMark: 'icons/icon48.png'
   })
 }
-if ($('cancel')) {
-  $('cancel').onclick = () => {
-    if (active) send({ type: 'cancel', conversationId: active })
+
+port.onMessage.addListener((msg) => {
+  if (msg.type === 'state') {
+    state = msg.state
+    render()
   }
+})
+
+function newSession() {
+  document.body.classList.remove('sidebar-open')
+  post({ type: 'create' })
 }
-if ($('askSend')) {
-  $('askSend').onclick = () => {
-    const answer = $('askAnswer').value.trim()
-    if (!active || !awaiting || !answer) return
-    send({ type: 'reply', conversationId: active, toolCallId: awaiting.id, answer })
-    setAsk(null)
-  }
+$('create').onclick = newSession
+$('sidebarCreate').onclick = newSession
+$('sessionsBtn').onclick = () => {
+  document.body.classList.toggle('sidebar-open')
+}
+$('sidebarBackdrop').onclick = () => {
+  document.body.classList.remove('sidebar-open')
+}
+$('closeDrawer').onclick = () => {
+  document.body.classList.remove('sidebar-open')
 }
 $('sessions').onclick = (event) => {
   const id = event.target.closest('li')?.dataset.id
-  if (id) openSession(id)
+  if (!id) return
+  post({ type: 'open', id })
+  document.body.classList.remove('sidebar-open')
+}
+$('apply').onclick = applyControls
+$('model').onchange = applyControls
+$('approval').onchange = applyControls
+$('mode').onchange = applyControls
+$('thinking').onchange = applyControls
+$('fastBtn').onclick = () => {
+  const btn = $('fastBtn')
+  btn.setAttribute('aria-pressed', btn.getAttribute('aria-pressed') === 'true' ? 'false' : 'true')
+  applyControls()
+}
+$('stopBtn').onclick = () => post({ type: 'cancel' })
+$('includePage').onchange = () => post({ type: 'toggle-page', on: $('includePage').checked })
+$('includeShot').onchange = () => post({ type: 'toggle-shot', on: $('includeShot').checked })
+if ($('retry')) $('retry').onclick = () => post({ type: 'rediscover' })
+if ($('connect')) $('connect').onclick = () => post({ type: 'pair', text: $('secret').value })
+$('moreBtn').onclick = () => {
+  $('moreSheet').hidden = false
+}
+$('closeMore').onclick = () => {
+  $('moreSheet').hidden = true
+}
+$('pinBtn').onclick = () => {
+  post({ type: 'pin', pinned: !session()?.pinned })
+  $('moreSheet').hidden = true
+}
+$('favBtn').onclick = () => {
+  post({ type: 'favorite', favorite: !session()?.favorite })
+  $('moreSheet').hidden = true
+}
+$('renameBtn').onclick = () => {
+  const title = prompt('Session title', session()?.title || '')
+  if (title) post({ type: 'rename', title })
+  $('moreSheet').hidden = true
+}
+$('archiveBtn').onclick = () => {
+  post({ type: 'archive' })
+  $('moreSheet').hidden = true
+}
+$('transcript').onclick = (event) => {
+  const btn = event.target.closest('[data-reply]')
+  if (!btn) return
+  post({ type: 'reply', toolCallId: btn.dataset.reply, answer: btn.dataset.answer })
 }
 $('sendForm').onsubmit = (event) => {
   event.preventDefault()
-  submitSend()
+  const text = $('text').value
+  if (!text.trim() && !state.includePage) return
+  post({ type: 'send', text })
+  $('text').value = ''
 }
 $('text').addEventListener('keydown', (event) => {
   if (event.key === 'Enter' && !event.shiftKey) {
     event.preventDefault()
-    submitSend()
+    $('sendForm').requestSubmit()
   }
 })
 
-void loadSaved().then(() => {
-  if ($('secret').value) connect()
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') post({ type: 'refresh-page' })
 })
+
+render()

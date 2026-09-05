@@ -721,7 +721,7 @@ export function SessionDetail({
         {searchOpen && isVavMode && <SearchStrip />}
         {!previewEdit && <GoalBanner />}
         {!previewEdit && <PlanOverlay />}
-        <Transcript />
+        <Transcript logId="transcript" />
         {!archived && <ComposerContext conversationId={activeId} />}
       </div>
 
@@ -879,7 +879,7 @@ export function AgentModeChrome({
     <div
       className={`terminal-host-chrome agent-mode-chrome${showFileSessionChrome ? ' has-file-session' : ''}${showShellLeading ? ' has-shell-leading' : ''}`}
     >
-      <div className="agent-mode-chrome-row">
+      <div className="agent-mode-chrome-row" id="sessionBar">
         {showShellLeading ? (
           <div className="agent-mode-shell-leading">
             <ShellLeadingControls />

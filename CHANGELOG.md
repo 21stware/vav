@@ -9,11 +9,23 @@ User-facing changes by release. Unreleased work lives at the top until the next 
 - `vavd` rejects invalid `--port` / `--web-port` / unknown flags instead of ignoring them, and `--port 0` is documented as ephemeral. `--version`, `--quiet`, and `--flag=value` work. `--help` / `--version` / admin verbs no longer load `node-pty`.
 - `vavd rotate-offer` against a running daemon prints the new pairing URI. A stale `admin.json` falls back to disk instead of failing.
 - `vav` can `cancel` and `reply`, reports cancelled turns, and says when vavd is not listening instead of dumping `ECONNREFUSED`.
-- Web UI and Chrome side panel accept a pasted `vav-daemon://` URI, escape session titles, cancel a turn, reply to an ask, and send on Enter. Loopback web rejects DNS-rebinding `Host` headers.
+- Loopback web rejects DNS-rebinding `Host` headers.
+
+## 1.19.1
+
+CLI ACP turns no longer stay on Streaming after the child dies or the handshake hangs. The Chrome extension can find a local `vavd` and run a full chat from the side panel.
 
 ### Reliability
 
-- CLI ACP turns no longer stay on Streaming after the child dies or the handshake hangs. Stop aborts an in-flight spawn, missing TEMP DIR folders are recreated, and Cursor TUI flags (`--force --trust`) are not passed to `cursor-agent acp`.
+- Stop aborts an in-flight spawn; missing TEMP DIR folders are recreated.
+- Cursor TUI flags (`--force --trust`) are not passed to `cursor-agent acp`.
+
+### Chrome extension
+
+- Side panel finds a local `vavd` on loopback (`/discover` on :4752–4762) and pairs without pasting a URL or secret.
+- Conversation UI matches the phone client: sessions, agent-log blocks, model/approval, ask cards, and streaming.
+- Page context, selection, screenshot, context menus, and an in-page “Ask VAV” chip ride along with a turn.
+- Toolbar icons are the VAV mark at 16/32/48/128.
 
 ## 1.19.0
 

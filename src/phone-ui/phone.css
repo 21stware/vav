@@ -1,0 +1,189 @@
+/* Phone clients mount the desktop App. These rules only cover pairing,
+   the current-tab chip, e2e contract fields, and DOM menus. */
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+.vav-dom-menu {
+  position: fixed;
+  z-index: 40;
+  min-width: 168px;
+  padding: 6px;
+  border-radius: 10px;
+  background: var(--bg-raised, #1c1c1e);
+  border: 1px solid var(--border, rgba(255, 255, 255, 0.08));
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.28);
+}
+
+.vav-dom-menu-item {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 8px;
+  border: 0;
+  background: transparent;
+  color: var(--text, inherit);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  border-radius: 6px;
+  padding: 6px 8px;
+}
+
+.vav-dom-menu-item:hover:not(:disabled) {
+  background: var(--bg-selected, rgba(0, 122, 255, 0.16));
+}
+
+.vav-dom-menu-item[data-checked='true']::before {
+  content: '✓';
+  width: 12px;
+  opacity: 0.85;
+}
+
+.vav-dom-menu-sep {
+  height: 1px;
+  margin: 4px 6px;
+  background: var(--border, rgba(255, 255, 255, 0.08));
+}
+
+.vav-dom-menu-header {
+  padding: 6px 8px 2px;
+  font-size: 11px;
+  opacity: 0.55;
+}
+
+[data-phone] .composer-tools {
+  display: none;
+}
+
+.phone-e2e-contract {
+  position: fixed;
+  left: 8px;
+  bottom: 8px;
+  z-index: 9;
+  display: flex;
+  gap: 4px;
+  opacity: 0.02;
+  width: auto;
+  height: 18px;
+  overflow: hidden;
+}
+
+.phone-e2e-contract input,
+.phone-e2e-contract select,
+.phone-e2e-contract button {
+  width: 70px;
+  height: 16px;
+  font-size: 11px;
+}
+
+.phone-link-chip {
+  position: fixed;
+  top: 8px;
+  right: 10px;
+  z-index: 8;
+  display: flex;
+  gap: 8px;
+  font-size: 11px;
+  opacity: 0.7;
+  pointer-events: none;
+}
+
+.page-chip {
+  position: relative;
+  z-index: 6;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 12px;
+  background: var(--bg-sunken, rgba(127, 127, 127, 0.08));
+  width: min(100%, var(--reading-max, 740px));
+  max-width: var(--reading-max, 740px);
+  margin: 0 auto 8px;
+  box-sizing: border-box;
+  flex: 0 0 auto;
+}
+
+/* Before the desktop stream mounts, keep the chip off the composer dock. */
+#root > .page-chip {
+  position: fixed;
+  left: 10px;
+  right: 10px;
+  bottom: 168px;
+  width: auto;
+  max-width: none;
+  margin: 0;
+}
+
+.page-chip[hidden] {
+  display: none;
+}
+
+.page-chip-copy {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.page-chip-copy strong {
+  font-size: 12px;
+}
+
+.page-chip-copy span {
+  font-size: 11px;
+  opacity: 0.6;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.toggle {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+}
+
+.sheet {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  display: grid;
+  place-items: center;
+  background: rgba(0, 0, 0, 0.35);
+}
+
+.sheet[hidden] {
+  display: none;
+}
+
+.sheet-card {
+  width: min(360px, calc(100% - 32px));
+  padding: 18px;
+  border-radius: 16px;
+  background: var(--bg-raised, #1c1c1e);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.sheet-card input {
+  border-radius: 8px;
+  border: 1px solid var(--border, rgba(127, 127, 127, 0.25));
+  background: var(--bg-sunken, transparent);
+  color: inherit;
+  padding: 6px 8px;
+}
+
+.sheet-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}

@@ -15,8 +15,8 @@ Prints a pairing URI. Use it from:
 
 - VAV desktop → Connect, or launch the app with `VAVD_URI` / `--vavd-uri` so it opens as a vavd UI. `VAVD_SPAWN=1` / `--with-vavd` starts this daemon as a child and pairs automatically.
 - VAV Remote (iOS)
-- the local web UI (`http://127.0.0.1:4752`) — paste the URI or the secret
-- the Chrome extension side panel
+- the local web UI (`http://127.0.0.1:4752`) — discovers and pairs on loopback
+- the Chrome extension side panel — same automatic discovery
 - `npm run vav` in this repo (sessions / send / configure / cancel) — also reads `VAVD_URI`
 
 All of those are the same control-plane client (`hello.role=phone`). Turns run in this process.

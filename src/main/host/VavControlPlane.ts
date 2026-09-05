@@ -7,7 +7,7 @@
  */
 
 import { randomUUID } from 'node:crypto'
-import { existsSync, mkdirSync, readdirSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, writeFileSync } from 'node:fs'
 import { homedir, hostname, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { resolveVavCredentials } from '../accounts/vavCredentials.ts'
@@ -45,7 +45,14 @@ import { listRemoteChildEntries, listRemoteRootEntries } from '../remote/dirBrow
 import type { DaemonWorkspaceCatalog } from '../daemon/DaemonServer.ts'
 import type { WorkspaceHost } from './WorkspaceHost.ts'
 import { HostRegistry } from './WorkspaceHost.ts'
-import type { RemoteConfigure, RemoteControlsEvent, RemoteDirsEvent, RemoteHostEvent, RemoteSession } from '@shared/remoteControl.ts'
+import type {
+  RemoteConfigure,
+  RemoteControlsEvent,
+  RemoteDirsEvent,
+  RemoteHostEvent,
+  RemoteSendImage,
+  RemoteSession
+} from '@shared/remoteControl.ts'
 
 export type VavControlPlaneOpts = {
   stateDir: string
@@ -261,6 +268,36 @@ export function createVavControlPlane(opts: VavControlPlaneOpts): VavControlPlan
     }
   }
 
+  function materializeImages(images: RemoteSendImage[] | undefined): string[] {
+    if (!images?.length) return []
+    const dir = join(tmp, 'vav-remote-inbox')
+    try {
+      mkdirSync(dir, { recursive: true })
+    } catch {
+      return []
+    }
+    const paths: string[] = []
+    for (const image of images) {
+      let buffer: Buffer
+      try {
+        buffer = Buffer.from(image.data, 'base64')
+      } catch {
+        continue
+      }
+      if (!buffer.length) continue
+      const ext = image.mime === 'image/png' ? 'png' : image.mime === 'image/webp' ? 'webp' : 'jpg'
+      const name = (image.name.replace(/[^\w.-]+/g, '_') || 'photo').slice(0, 40)
+      const path = join(dir, `${Date.now()}-${paths.length}-${name}.${ext}`)
+      try {
+        writeFileSync(path, buffer)
+        paths.push(path)
+      } catch {
+        // Skip a bad frame; the text still goes through.
+      }
+    }
+    return paths
+  }
+
   function sendMessage(conversationId: string, text: string, attachments: string[] = []) {
     const conversation = conversations.get(conversationId)
     const disposition = remoteSendDisposition(conversation, conversation ? busy(conversationId) : false)
@@ -398,6 +435,7 @@ export function createVavControlPlane(opts: VavControlPlaneOpts): VavControlPlan
     listHost,
     configure,
     sendMessage,
+    materializeImages,
     createSession,
     cancel,
     reply,

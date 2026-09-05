@@ -408,6 +408,13 @@ describe('VavControlPlane', () => {
       assert.ok(minted)
       assert.notEqual(minted, planted)
       await dial.setWorkspace(conversationId, planted)
+      const boundAt = Date.now() + 2_000
+      while (
+        Date.now() < boundAt &&
+        plane.conversations.get(conversationId)?.workingDirectory !== planted
+      ) {
+        await new Promise((resolve) => setTimeout(resolve, 20))
+      }
       assert.equal(plane.conversations.get(conversationId)?.workingDirectory, planted)
       assert.equal(
         dial.snapshot().sessions.find((session) => session.id === conversationId)?.workdir,
