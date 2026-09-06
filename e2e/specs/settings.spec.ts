@@ -17,6 +17,7 @@ test('settings is a separate window with category nav and no Done footer', async
       ['keybindings', 'Key Bindings'],
       ['notifications', 'Notifications'],
       ['connect', 'Remote Tunnel'],
+      ['connectors', 'Connectors'],
       ['cli', 'Command Line'],
       ['file-associations', 'File Associations'],
       ['logs', 'Logs'],
@@ -114,6 +115,8 @@ test('Workspace, Notifications, About, Usage, Command Line, and File Association
     await expect(settings.locator('[data-testid="settings-default-dir"]')).toHaveValue(
       harness.workspace
     )
+    await settings.locator('[data-testid="settings-nav-connectors"]').click()
+    await expect(settings.locator('[data-testid="settings-connectors"]')).toBeVisible()
     await expect(settings.locator('[data-testid="settings-github-tray"]')).toHaveAttribute(
       'aria-checked',
       'true'
@@ -126,8 +129,13 @@ test('Workspace, Notifications, About, Usage, Command Line, and File Association
       'aria-checked',
       'false'
     )
+    await expect(settings.locator('[data-testid="settings-vercel-tray"]')).toHaveAttribute(
+      'aria-checked',
+      'false'
+    )
     await settings.locator('[data-testid="settings-github-tray"]').click()
     await expect.poll(() => readUserSetting(harness.userData, 'githubTrayEnabled')).toBe(false)
+    await settings.locator('[data-testid="settings-nav-workspace"]').click()
 
     await settings.locator('[data-testid="settings-nav-notifications"]').click()
     const notify = settings.locator('[data-testid="settings-notifications-enabled"]')

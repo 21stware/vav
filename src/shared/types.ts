@@ -14,6 +14,7 @@ import { KEEP_AWAKE_BATTERY_FLOOR_DEFAULT } from './sleepBlocker.ts'
 import { DEFAULT_AUTO_UPDATE_POLICY, type AutoUpdatePolicy } from './updatePolicy.ts'
 import { VAV_DEFAULT_MODEL_ID } from './vavModelList.ts'
 import { LOCAL_MACHINE_ID, type WorkspaceRef } from './workspaceHost.ts'
+import type { SessionKind } from './sessionKind.ts'
 
 export type { AutoUpdatePolicy } from './updatePolicy.ts'
 export { AUTO_UPDATE_POLICIES, DEFAULT_AUTO_UPDATE_POLICY } from './updatePolicy.ts'
@@ -45,6 +46,7 @@ export type ToolName =
   | 'plan'
   | 'sql_query'
   | 'load_skill'
+  | 'connector'
   | 'switch_mode'
   /** Claude Task / OpenCode task+subtask — a nested agent run. */
   | 'task'
@@ -76,6 +78,7 @@ export const TOOL_LABELS: Record<ToolName, string> = {
   plan: '计划',
   sql_query: 'SQL 查询',
   load_skill: '加载技能',
+  connector: '连接器',
   switch_mode: '切换到编辑',
   task: '子任务',
   plan_doc: '计划文档',
@@ -343,6 +346,17 @@ export interface ConversationMeta {
    * conversation is owned by FileSessionStore and hidden from the main sidebar.
    */
   fileId?: string | null
+  /**
+   * Discriminator for sidebar lists. Missing / `workspace` = ordinary chat.
+   * `timer` rows never enter {@link ConversationStore.listMeta}.
+   */
+  sessionKind?: SessionKind
+  /** Timer job that minted this conversation. */
+  timerJobId?: string | null
+  /** Timer run id for this fire. */
+  timerRunId?: string | null
+  /** Wall time this timer run started. */
+  timerRunAt?: number | null
   /**
    * When true, the agent system prompt forbids file modifications (read-only
    * toggle on the File Preview chrome).
@@ -936,6 +950,19 @@ export interface AppSettings {
    */
   tinyfishSearchKeyPresent?: boolean
   /**
+   * Optional Vercel project id (not secret). Used when `.vercel/project.json`
+   * is missing.
+   */
+  vercelProjectId: string
+  /**
+   * Renderer-only: whether a Vercel token is stored (never the token).
+   */
+  vercelApiTokenPresent?: boolean
+  /**
+   * Files tray → Vercel deployments. Off by default.
+   */
+  vercelTrayEnabled: boolean
+  /**
    * Optional Cloudflare account id (not secret). Used with a stored API token
    * to resolve Workers / Pages deploy status for the workspace.
    */
@@ -1194,6 +1221,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   githubTrayEnabled: true,
   cloudflareTrayEnabled: false,
   supabaseTrayEnabled: false,
+  vercelTrayEnabled: false,
+  vercelProjectId: '',
   theme: 'system',
   bashBackground: 'theme',
   colorTint: 'system',

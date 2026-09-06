@@ -216,6 +216,7 @@ export type SettingsView =
   | 'appearance'
   | 'notifications'
   | 'connect'
+  | 'connectors'
   | 'cli'
   | 'agents'
   | 'file-associations'
@@ -758,6 +759,9 @@ export interface VavApi {
     /** Supabase access token (encrypted). Empty string clears. */
     setSupabaseAccessToken(token: string): Promise<{ hint: string | null }>
     supabaseAccessTokenHint(): Promise<string | null>
+    /** Vercel token (encrypted). Empty string clears. */
+    setVercelApiToken(token: string): Promise<{ hint: string | null }>
+    vercelApiTokenHint(): Promise<string | null>
     validateKey(key: string): Promise<ValidateKeyResult>
     availableFonts(): Promise<string[]>
     pickDirectory(): Promise<string | null>
@@ -1251,6 +1255,37 @@ export interface VavApi {
     getActionRun(cwd: string, runId: number): Promise<GithubResult<GithubActionRunDetail>>
     getSite(cwd: string): Promise<GithubResult<GithubSite>>
     listReleases(cwd: string): Promise<GithubResult<import('./github').GithubReleasesPage>>
+  }
+
+  /** First-class third-party service bindings (not skills / plugins). */
+  connectors: {
+    catalog(): Promise<import('./connector').ConnectorDescriptor[]>
+    probe(cwd: string): Promise<import('./connector').ConnectorProbe[]>
+    act(
+      request: import('./connector').ConnectorActionRequest
+    ): Promise<import('./connector').ConnectorActionResult>
+  }
+
+  vercel: {
+    status(
+      cwd: string,
+      query?: import('./vercel').VercelStatusQuery
+    ): Promise<import('./vercel').VercelResult<import('./vercel').VercelStatus>>
+  }
+
+  /** Scheduled jobs. Runs are timer sessions, not main-sidebar chats. */
+  timers: {
+    listJobs(): Promise<import('./timer').TimerJob[]>
+    createJob(input: import('./timer').TimerJobInput): Promise<import('./timer').TimerJob>
+    updateJob(
+      id: string,
+      patch: Partial<import('./timer').TimerJobInput> & { enabled?: boolean }
+    ): Promise<import('./timer').TimerJob | null>
+    removeJob(id: string): Promise<boolean>
+    runNow(id: string): Promise<{ conversationId: string; runId: string } | null>
+    listRuns(jobId?: string): Promise<import('./timer').TimerRun[]>
+    listSessions(): Promise<import('./types').ConversationMeta[]>
+    onChanged(handler: () => void): () => void
   }
 
   /** File Preview multi-session store (independent of sidebar conversations). */
@@ -1784,6 +1819,8 @@ export const IPC = {
   settingsCloudflareTokenHint: 'vav:settings:cloudflare-token-hint',
   settingsSetSupabaseToken: 'vav:settings:set-supabase-token',
   settingsSupabaseTokenHint: 'vav:settings:supabase-token-hint',
+  settingsSetVercelToken: 'vav:settings:set-vercel-token',
+  settingsVercelTokenHint: 'vav:settings:vercel-token-hint',
   settingsValidateKey: 'vav:settings:validate-key',
   settingsFonts: 'vav:settings:fonts',
   settingsPickDirectory: 'vav:settings:pick-directory',
@@ -1945,6 +1982,18 @@ export const IPC = {
   githubListReleases: 'vav:github:list-releases',
   githubGetActionRun: 'vav:github:get-action-run',
   githubGetSite: 'vav:github:get-site',
+  vercelStatus: 'vav:vercel:status',
+  connectorsCatalog: 'vav:connectors:catalog',
+  connectorsProbe: 'vav:connectors:probe',
+  connectorsAct: 'vav:connectors:act',
+  timersListJobs: 'vav:timers:list-jobs',
+  timersCreateJob: 'vav:timers:create-job',
+  timersUpdateJob: 'vav:timers:update-job',
+  timersRemoveJob: 'vav:timers:remove-job',
+  timersRunNow: 'vav:timers:run-now',
+  timersListRuns: 'vav:timers:list-runs',
+  timersListSessions: 'vav:timers:list-sessions',
+  timersChanged: 'vav:timers:changed',
 
   agentsResolveBinary: 'vav:agents:resolve-binary',
   agentsProbeBinaries: 'vav:agents:probe-binaries',

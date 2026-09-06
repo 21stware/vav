@@ -904,7 +904,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     // Prefer an existing conversation already rooted here (reuse quietly).
     // Never adopt a file-bound session as the workspace agent.
     const rooted = get().conversations.find(
-      (c) => !c.archived && !c.fileId && c.workingDirectory === workdir
+      (c) => !c.archived && !c.fileId && c.sessionKind !== 'timer' && c.workingDirectory === workdir
     )
     if (rooted) {
       const map = { ...get().workspaceAgentByPath, [workdir]: rooted.id }

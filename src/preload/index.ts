@@ -56,6 +56,8 @@ const api: VavApi = {
     setSupabaseAccessToken: (token: string) =>
       ipcRenderer.invoke(IPC.settingsSetSupabaseToken, token),
     supabaseAccessTokenHint: () => ipcRenderer.invoke(IPC.settingsSupabaseTokenHint),
+    setVercelApiToken: (token: string) => ipcRenderer.invoke(IPC.settingsSetVercelToken, token),
+    vercelApiTokenHint: () => ipcRenderer.invoke(IPC.settingsVercelTokenHint),
     validateKey: (key: string) => ipcRenderer.invoke(IPC.settingsValidateKey, key),
     availableFonts: () => ipcRenderer.invoke(IPC.settingsFonts),
     pickDirectory: () => ipcRenderer.invoke(IPC.settingsPickDirectory),
@@ -326,6 +328,28 @@ const api: VavApi = {
       ipcRenderer.invoke(IPC.githubGetActionRun, cwd, runId),
     getSite: (cwd: string) => ipcRenderer.invoke(IPC.githubGetSite, cwd),
     listReleases: (cwd: string) => ipcRenderer.invoke(IPC.githubListReleases, cwd)
+  },
+
+  connectors: {
+    catalog: () => ipcRenderer.invoke(IPC.connectorsCatalog),
+    probe: (cwd: string) => ipcRenderer.invoke(IPC.connectorsProbe, cwd),
+    act: (request) => ipcRenderer.invoke(IPC.connectorsAct, request)
+  },
+
+  vercel: {
+    status: (cwd: string, query?: import('@shared/vercel').VercelStatusQuery) =>
+      ipcRenderer.invoke(IPC.vercelStatus, cwd, query)
+  },
+
+  timers: {
+    listJobs: () => ipcRenderer.invoke(IPC.timersListJobs),
+    createJob: (input) => ipcRenderer.invoke(IPC.timersCreateJob, input),
+    updateJob: (id, patch) => ipcRenderer.invoke(IPC.timersUpdateJob, id, patch),
+    removeJob: (id) => ipcRenderer.invoke(IPC.timersRemoveJob, id),
+    runNow: (id) => ipcRenderer.invoke(IPC.timersRunNow, id),
+    listRuns: (jobId) => ipcRenderer.invoke(IPC.timersListRuns, jobId),
+    listSessions: () => ipcRenderer.invoke(IPC.timersListSessions),
+    onChanged: (handler) => subscribe(IPC.timersChanged, handler)
   },
 
   fileSessions: {

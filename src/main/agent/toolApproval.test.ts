@@ -10,7 +10,8 @@ import {
   shouldAutoAcceptChangeSet,
   shouldPauseForApproval,
   shouldSkipToolGate,
-  terminalCommandFromArgs
+  terminalCommandFromArgs,
+  connectorOpFromArgs
 } from './toolApproval.ts'
 
 describe('shouldSkipToolGate / terminalCommandFromArgs', () => {
@@ -24,6 +25,9 @@ describe('shouldSkipToolGate / terminalCommandFromArgs', () => {
   it('reads a terminal command from args', () => {
     assert.equal(terminalCommandFromArgs('terminal', { command: 'ls' }), 'ls')
     assert.equal(terminalCommandFromArgs('fs_write', { command: 'ls' }), '')
+    assert.equal(connectorOpFromArgs('connector', { op: 'act' }), 'act')
+    assert.equal(connectorOpFromArgs('connector', { op: 'LIST' }), 'list')
+    assert.equal(connectorOpFromArgs('fs_read', { op: 'act' }), '')
   })
 })
 
@@ -42,6 +46,8 @@ describe('readonlyApprovalBlock / shouldPauseForApproval', () => {
     assert.match(readonlyApprovalBlock('terminal', 'rm file')?.reason ?? '', /refused: rm file/)
     assert.equal(readonlyApprovalBlock('fs_read', ''), null)
     assert.equal(readonlyApprovalBlock('terminal', 'ls'), null)
+    assert.match(readonlyApprovalBlock('connector', 'act')?.reason ?? '', /connector deploy/)
+    assert.equal(readonlyApprovalBlock('connector', 'list'), null)
   })
 
   it('pauses auto high-risk and edit-mode tools, not bypass', () => {
@@ -80,6 +86,33 @@ describe('readonlyApprovalBlock / shouldPauseForApproval', () => {
         autoApproveReadonly: true
       }),
       true
+    )
+    assert.equal(
+      shouldPauseForApproval({
+        mode: 'auto',
+        name: 'connector',
+        command: 'list',
+        autoApproveReadonly: true
+      }),
+      false
+    )
+    assert.equal(
+      shouldPauseForApproval({
+        mode: 'auto',
+        name: 'connector',
+        command: 'act',
+        autoApproveReadonly: true
+      }),
+      true
+    )
+    assert.equal(
+      shouldPauseForApproval({
+        mode: 'bypass',
+        name: 'connector',
+        command: 'act',
+        autoApproveReadonly: true
+      }),
+      false
     )
   })
 })

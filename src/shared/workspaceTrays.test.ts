@@ -3,7 +3,8 @@ import { describe, it } from 'node:test'
 import {
   isCloudflareTrayEnabled,
   isGithubTrayEnabled,
-  isSupabaseTrayEnabled
+  isSupabaseTrayEnabled,
+  isVercelTrayEnabled
 } from './workspaceTrays.ts'
 
 describe('workspace status trays', () => {
@@ -18,6 +19,8 @@ describe('workspace status trays', () => {
     assert.equal(isSupabaseTrayEnabled({}), false)
     assert.equal(isCloudflareTrayEnabled({ cloudflareTrayEnabled: true }), true)
     assert.equal(isSupabaseTrayEnabled({ supabaseTrayEnabled: true }), true)
+    assert.equal(isVercelTrayEnabled({ vercelTrayEnabled: true }), true)
+    assert.equal(isVercelTrayEnabled({ vercelTrayEnabled: false }), false)
     assert.equal(isCloudflareTrayEnabled({ cloudflareTrayEnabled: false }), false)
   })
 })

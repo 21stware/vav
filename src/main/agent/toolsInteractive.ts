@@ -14,7 +14,12 @@ export function createInteractiveTools(host: ToolHost) {
         description: 'What you need the user to approve or provide.'
       })
     }),
-    execute: (id, params) => park(host.ask(id, params.instruction)),
+    execute: (id, params) => {
+      if (host.isTimerSession?.()) {
+        return Promise.resolve(failure('Timer runs are non-interactive — do not call request.'))
+      }
+      return park(host.ask(id, params.instruction))
+    },
     executionMode: 'sequential'
   })
 
@@ -57,6 +62,9 @@ export function createInteractiveTools(host: ToolHost) {
       )
     }),
     execute: async (id, params) => {
+      if (host.isTimerSession?.()) {
+        return failure('Timer runs are non-interactive — do not call ask_user_question.')
+      }
       const questions = normalizeAskQuestions(params as Record<string, unknown>)
       if (questions.length === 0) return failure('缺少 question / questions 参数')
       const summary =

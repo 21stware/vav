@@ -168,6 +168,11 @@ import { registerSecretsIpc } from './ipc/registerSecretsIpc'
 import { registerFileSessionsIpc } from './ipc/registerFileSessionsIpc'
 import { registerAgentsIpc } from './ipc/registerAgentsIpc'
 import { registerSettingsIpc } from './ipc/registerSettingsIpc'
+import { registerConnectorIpc } from './ipc/registerConnectorIpc'
+import { registerTimerIpc } from './ipc/registerTimerIpc'
+import { createConnectorRegistry } from './connectors/registry'
+import { TimerStore } from './store/TimerStore'
+import { TimerScheduler } from './timer/TimerScheduler'
 import { registerAccountsIpc } from './ipc/registerAccountsIpc'
 import { registerPreviewShellIpc } from './ipc/registerPreviewShellIpc'
 import { registerRuntimeIpc } from './ipc/registerRuntimeIpc'
@@ -502,6 +507,21 @@ const settingsStore = new SettingsStore()
 const secretStore = new SecretStore()
 const accountStore = new AccountStore(app.getPath('userData'))
 const conversationStore = new ConversationStore()
+const timerStore = new TimerStore(app.getPath('userData'))
+const connectorRegistry = createConnectorRegistry({
+  creds: () => ({
+    cloudflare: {
+      token: secretStore.get('cloudflare') ?? null,
+      accountId: settingsStore.get().cloudflareAccountId || null
+    },
+    supabase: {
+      token: secretStore.get('supabase') ?? null,
+      projectRef: settingsStore.get().supabaseProjectRef || null
+    },
+    vercel: { token: secretStore.get('vercel') ?? null }
+  })
+})
+let timerScheduler: TimerScheduler | null = null
 const logStore = new LogStore({
   dir: join(app.getPath('userData'), 'logs'),
   durableDays: () => settingsStore.get().logRetentionDays
@@ -1214,6 +1234,7 @@ function handleAgentEvent(event: TurnEvent): void {
     return
   }
   if (event.type === 'end') {
+    timerScheduler?.onTurnEnd(event.conversationId, Boolean(event.error) && !event.cancelled)
     activeTurns.delete(event.conversationId)
     const pane = trayPaneFromConversation(event.conversationId, 'chat')
     if (pane) markResultUnseen(pane)
@@ -1289,11 +1310,23 @@ const agent = new AgentRuntime({
   webFetch,
   skills: skillService,
   fileSessions: fileSessionStore,
+  connectors: connectorRegistry,
   emit: handleAgentEvent,
   onFileReadOnlyChange: (conversationId, readOnly) => {
     broadcast(IPC.fileSessionReadOnlyChanged, { sessionId: conversationId, readOnly })
     publishConversations()
   }
+})
+
+timerScheduler = new TimerScheduler({
+  store: timerStore,
+  conversations: conversationStore,
+  tmp: tmpdir(),
+  defaultModel: () => settingsStore.get().defaultModel || DEFAULT_SETTINGS.defaultModel,
+  runTurn: (id, text) => {
+    void agent.run(id, text, [], null, null, null)
+  },
+  isRunning: (id) => agent.isRunning(id)
 })
 
 /** Structured CLI hosts (Claude stream-json, Codex app-server, ACP, …). */
@@ -6259,6 +6292,7 @@ function currentSettings(): AppSettings {
     braveSearchKeyPresent: secretStore.has('braveSearch'),
     cloudflareApiTokenPresent: secretStore.has('cloudflare'),
     supabaseAccessTokenPresent: secretStore.has('supabase'),
+    vercelApiTokenPresent: secretStore.has('vercel'),
     customSurfacePatternUrl,
     surfacePattern: settings.surfacePattern === 'custom' && !hasFile ? 'none' : settings.surfacePattern
   }
@@ -6924,6 +6958,16 @@ return c as text`
       projectRef: settingsStore.get().supabaseProjectRef || null
     })
   })
+  registerConnectorIpc(ipcMain, connectorRegistry, () => ({
+    token: secretStore.get('vercel') ?? null
+  }))
+  registerTimerIpc(
+    ipcMain,
+    timerStore,
+    timerScheduler!,
+    conversationStore,
+    () => broadcast(IPC.timersChanged, null)
+  )
   registerPreviewShellIpc(ipcMain, {
     windowFromEvent: (event) => BrowserWindow.fromWebContents(event.sender),
     setCloseGuard: (win, enabled) => {
@@ -7288,6 +7332,7 @@ if (!singleInstance) {
     stopSpawnedVavd?.()
     stopDesktopWeb?.()
     remoteControl.dispose()
+    timerScheduler?.stop()
     agent.disposeAll()
     cliHost.disposeAll()
     stopAllAgentInstalls()
@@ -7411,6 +7456,8 @@ if (!singleInstance) {
     const settings = settingsStore.load()
     setLocalePreference(settings.locale ?? DEFAULT_SETTINGS.locale)
     conversationStore.load({ model: settings.defaultModel, mintWorkdir: resolveNewWorkdir })
+    timerStore.load()
+    timerScheduler?.start()
     logStore.load()
     appLog().system(LOG_EVENT.systemBoot, 'App ready', {
       data: { version: app.getVersion() }

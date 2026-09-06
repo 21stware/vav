@@ -8,6 +8,7 @@ import type { WebSearchService } from '../web/WebSearchService'
 import type { WebFetchService } from '../web/WebFetchService'
 import type { StickyShell } from '../terminal/StickyShell'
 import type { SkillService } from './SkillService'
+import type { ConnectorRegistry } from '../connectors/registry'
 
 export interface ToolDetails {
   /** Full human-facing text for the tool card. */
@@ -50,6 +51,8 @@ export interface ToolHost {
   defaultDocPath?: () => string | null
   isFileReadOnly?: () => boolean
   setFileReadOnly?: (readOnly: boolean) => string | null
+  connectors?: ConnectorRegistry
+  isTimerSession?: () => boolean
 }
 
 export type { ToolName }

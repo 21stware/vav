@@ -28,6 +28,7 @@ import type {
   TokenSnapshot
 } from '@shared/types'
 import { conversationOnMachine, LOCAL_MACHINE_ID } from '@shared/workspaceHost'
+import { isWorkspaceSession } from '@shared/sessionKind'
 import { mergeAdoptedHostMessages } from '@shared/remoteControlApply'
 import { parseThinkingLevel } from '@shared/thinkingLevel'
 import { normalizeCursorConversationModel } from '@shared/cursorModel'
@@ -155,6 +156,12 @@ export class ConversationStore {
       if (conversation.cacheCreatedAt === undefined) conversation.cacheCreatedAt = null
       if (conversation.cacheExpiresAt === undefined) conversation.cacheExpiresAt = null
       if (conversation.fileId === undefined) conversation.fileId = null
+      if (conversation.sessionKind === undefined) {
+        conversation.sessionKind = conversation.fileId ? 'file' : 'workspace'
+      }
+      if (conversation.timerJobId === undefined) conversation.timerJobId = null
+      if (conversation.timerRunId === undefined) conversation.timerRunId = null
+      if (conversation.timerRunAt === undefined) conversation.timerRunAt = null
       if (conversation.fileReadOnly === undefined) conversation.fileReadOnly = false
       if (conversation.agentBinaryName === undefined) conversation.agentBinaryName = null
       if (conversation.cliHost === undefined) conversation.cliHost = null
@@ -203,7 +210,14 @@ export class ConversationStore {
 
   listMeta(): ConversationMeta[] {
     return this.conversations
-      .filter((c) => !c.fileId)
+      .filter((c) => isWorkspaceSession(c))
+      .map(conversationToMeta)
+      .sort((a, b) => b.updatedAt - a.updatedAt)
+  }
+
+  listTimerMeta(): ConversationMeta[] {
+    return this.conversations
+      .filter((c) => c.sessionKind === 'timer')
       .map(conversationToMeta)
       .sort((a, b) => b.updatedAt - a.updatedAt)
   }
@@ -228,6 +242,10 @@ export class ConversationStore {
     model: string,
     options?: {
       fileId?: string | null
+      sessionKind?: import('@shared/sessionKind').SessionKind
+      timerJobId?: string | null
+      timerRunId?: string | null
+      timerRunAt?: number | null
       title?: string
       fileReadOnly?: boolean
       approvalMode?: import('@shared/types').ApprovalMode
@@ -270,6 +288,10 @@ export class ConversationStore {
       thinkingLevel: parseThinkingLevel(options?.thinkingLevel),
       fast: options?.fast === true,
       fileId: options?.fileId ?? null,
+      sessionKind: options?.sessionKind ?? (options?.fileId ? 'file' : 'workspace'),
+      timerJobId: options?.timerJobId ?? null,
+      timerRunId: options?.timerRunId ?? null,
+      timerRunAt: options?.timerRunAt ?? null,
       fileReadOnly: options?.fileReadOnly ?? false,
       agentBinaryName: cliHost,
       cliHost,
@@ -316,6 +338,10 @@ export class ConversationStore {
       cacheCreatedAt: null,
       cacheExpiresAt: null,
       fileId: null,
+      sessionKind: 'workspace',
+      timerJobId: null,
+      timerRunId: null,
+      timerRunAt: null,
       fileReadOnly: false,
       accountId: source.accountId ?? null,
       messages: (source.messages ?? []).map((message) => ({
@@ -425,6 +451,10 @@ export class ConversationStore {
       cacheCreatedAt: cloned.cacheCreatedAt ?? null,
       cacheExpiresAt: cloned.cacheExpiresAt ?? null,
       fileId: null,
+      sessionKind: cloned.sessionKind === 'timer' ? 'timer' : 'workspace',
+      timerJobId: cloned.timerJobId ?? null,
+      timerRunId: cloned.timerRunId ?? null,
+      timerRunAt: cloned.timerRunAt ?? null,
       fileReadOnly: false,
       agentBinaryName: cloned.agentBinaryName ?? null,
       cliHost: cloned.cliHost ?? null,

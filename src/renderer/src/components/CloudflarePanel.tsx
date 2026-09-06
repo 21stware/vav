@@ -411,7 +411,7 @@ export function CloudflarePanel({
           <ProjectSummary
             status={status}
             onPreview={() => previewDeploy(selected?.id ?? null)}
-            onOpenSettings={() => openSettings('workspace')}
+            onOpenSettings={() => openSettings('connectors')}
           />
           <div
             ref={listRef}
@@ -445,7 +445,7 @@ export function CloudflarePanel({
                 <button
                   type="button"
                   className="github-site-link"
-                  onClick={() => openSettings('workspace')}
+                  onClick={() => openSettings('connectors')}
                 >
                   {t('cloudflare.openSettings')}
                 </button>

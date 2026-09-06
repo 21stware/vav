@@ -267,6 +267,8 @@ export function installPhoneVav(transport: PhoneTransport): PhoneVavHandle {
       cloudflareApiTokenHint: async () => null,
       setSupabaseAccessToken: async () => ({ hint: null }),
       supabaseAccessTokenHint: async () => null,
+      setVercelApiToken: async () => ({ hint: null }),
+      vercelApiTokenHint: async () => null,
       validateKey: async () => ({ ok: true }),
       availableFonts: async () => [],
       pickDirectory: async () => null,
@@ -498,6 +500,26 @@ export function installPhoneVav(transport: PhoneTransport): PhoneVavHandle {
       closePopupMenu: async () => undefined,
       openTokenUsage: async () => undefined,
       openFilePreview: async () => undefined
+    },
+    connectors: {
+      catalog: async () => [],
+      probe: async () => [],
+      act: async () => ({ ok: false as const, error: 'unavailable' })
+    },
+    vercel: {
+      status: async () => ({ ok: false as const, error: 'unavailable', code: 'network' as const })
+    },
+    timers: {
+      listJobs: async () => [],
+      createJob: async () => {
+        throw new Error('unavailable')
+      },
+      updateJob: async () => null,
+      removeJob: async () => false,
+      runNow: async () => null,
+      listRuns: async () => [],
+      listSessions: async () => [],
+      onChanged: () => () => undefined
     },
     fileSessions: {
       open: async () => null,
