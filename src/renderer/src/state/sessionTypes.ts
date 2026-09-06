@@ -82,7 +82,7 @@ export interface SearchState {
   tick: number
 }
 
-/** Sidebar list: main sessions, archive, or file-bound sessions. */
-export type SidebarListMode = 'main' | 'archive' | 'fileSessions'
+/** Sidebar list: main sessions, archive, file sessions, or timer sessions. */
+export type SidebarListMode = 'main' | 'archive' | 'fileSessions' | 'timerSessions'
 
 export type { QueuedMessage } from './sessionQueue'

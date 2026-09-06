@@ -8,6 +8,7 @@
  */
 
 import { regenerateActiveLeaf } from '../../../shared/thread.ts'
+import { isMainSidebarSession } from '../../../shared/sessionKind.ts'
 
 export { regenerateActiveLeaf }
 
@@ -19,6 +20,7 @@ export type ConversationListItem = {
   archived: boolean
   archivedAt: number | null
   fileId?: string | null
+  timerJobId?: string | null
 }
 
 /** Optimistic one-row patch; file-preview sessions stay in the local list. */
@@ -41,13 +43,22 @@ export function prependConversationIfMissing<C extends { id: string }>(
   return conversations.some((c) => c.id === meta.id) ? conversations : [meta, ...conversations]
 }
 
-/** Sidebar ids for shift-range select: archive vs live, never file-preview rows. */
+/** Sidebar ids for shift-range select: archive vs live, never file/timer rows. */
 export function listedConversationIdsForSelect(
-  conversations: Array<{ id: string; archived?: boolean; fileId?: string | null }>,
+  conversations: Array<{
+    id: string
+    archived?: boolean
+    fileId?: string | null
+    timerJobId?: string | null
+  }>,
   archived: boolean | undefined
 ): string[] {
   return conversations
-    .filter((c) => (archived ? c.archived && !c.fileId : !c.archived && !c.fileId))
+    .filter((c) =>
+      archived
+        ? c.archived && isMainSidebarSession(c)
+        : !c.archived && isMainSidebarSession(c)
+    )
     .map((c) => c.id)
 }
 
@@ -157,7 +168,7 @@ export function mergeConversationList<T extends ConversationListItem>(
   }
   if (!orderRelevantChange) {
     for (const p of prev) {
-      if (!p.fileId && !nextById.has(p.id)) {
+      if (isMainSidebarSession(p) && !nextById.has(p.id)) {
         orderRelevantChange = true
         break
       }
@@ -173,7 +184,7 @@ export function mergeConversationList<T extends ConversationListItem>(
       if (n) {
         result.push(n)
         seen.add(n.id)
-      } else if (p.fileId) {
+      } else if (p.fileId || p.timerJobId) {
         result.push(p)
         seen.add(p.id)
       }
@@ -184,13 +195,13 @@ export function mergeConversationList<T extends ConversationListItem>(
     return result
   }
 
-  const fileSessions = prev.filter((c) => !!c.fileId && !nextById.has(c.id))
+  const specialSessions = prev.filter((c) => (!!c.fileId || !!c.timerJobId) && !nextById.has(c.id))
   const sorted = [...next].sort((a, b) => {
     const d = b.updatedAt - a.updatedAt
     if (d !== 0) return d
     return (prevIndex.get(a.id) ?? 1e9) - (prevIndex.get(b.id) ?? 1e9)
   })
-  return [...sorted, ...fileSessions]
+  return [...sorted, ...specialSessions]
 }
 
 /** Additive toggle or shift-range selection; never allow an empty selection. */
@@ -277,9 +288,16 @@ export function shouldSkipSessionDeleteConfirm(
 
 /** After deleting the active session, prefer a live chat over archive/file rows. */
 export function fallbackConversationIdAfterDelete(
-  conversations: Array<{ id: string; archived?: boolean; fileId?: string | null }>
+  conversations: Array<{
+    id: string
+    archived?: boolean
+    fileId?: string | null
+    timerJobId?: string | null
+  }>
 ): string | undefined {
-  return conversations.find((c) => !c.archived && !c.fileId)?.id ?? conversations[0]?.id
+  return (
+    conversations.find((c) => !c.archived && !c.fileId && !c.timerJobId)?.id ?? conversations[0]?.id
+  )
 }
 
 /** Confirm-sheet copy for one vs many session deletes. */

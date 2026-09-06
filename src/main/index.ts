@@ -150,6 +150,9 @@ import {
 import { groupAccountsByVendor, isLlmVendorId, vendorById, vendorIdFromEndpoint } from '@shared/llmVendors'
 import { VavPackService } from './store/VavPackService'
 import { FileSessionStore } from './store/FileSessionStore'
+import { TimerStore } from './store/TimerStore'
+import { TimerScheduler } from './timer/TimerScheduler'
+import { registerTimerIpc } from './ipc/registerTimerIpc'
 import { SwarmHistoryStore } from './store/SwarmHistoryStore'
 import { FileService } from './fs/FileService'
 import { installTrustedIpcGuard } from './ipc/ipcTrust'
@@ -522,6 +525,7 @@ const swarmSession = createSwarmSessionService({
 // resolveNewWorkdir is a function declaration below (hoisted) — mint Temporary Workspaces on import.
 const vavPackService = new VavPackService(conversationStore, () => resolveNewWorkdir())
 const fileSessionStore = new FileSessionStore()
+const timerStore = new TimerStore()
 
 const fileAssociationService = new FileAssociationService()
 const workingCopyService = new WorkingCopyService()
@@ -1296,6 +1300,19 @@ const agent = new AgentRuntime({
   }
 })
 
+const timerScheduler = new TimerScheduler({
+  timers: timerStore,
+  conversations: conversationStore,
+  settings: settingsStore,
+  agent,
+  workspaceRoot: app.getPath('userData'),
+  accountIdFor: (workdir) => accountIdForSession(workdir, null),
+  onSessionsChanged: () => {
+    broadcast(IPC.timerChanged)
+    publishConversations()
+  }
+})
+
 /** Structured CLI hosts (Claude stream-json, Codex app-server, ACP, …). */
 const cliHost = new CliAgentHost({
   conversations: conversationStore,
@@ -1751,6 +1768,7 @@ const daemonAttach = new DaemonAttachService({
       if (
         !conversation ||
         conversation.fileId ||
+        conversation.timerJobId ||
         conversation.archived ||
         !conversationOnMachine(conversation, LOCAL_MACHINE_ID)
       ) {
@@ -6956,6 +6974,7 @@ return c as text`
     }
   })
 
+  registerTimerIpc(ipcMain, timerStore, timerScheduler, (channel) => broadcast(channel))
   registerFileSessionsIpc(ipcMain, fileSessionStore, {
     defaultModel: () => settingsStore.get().defaultModel,
     defaultApprovalMode: () => settingsStore.get().defaultApprovalMode ?? 'auto',
@@ -7288,6 +7307,7 @@ if (!singleInstance) {
     stopSpawnedVavd?.()
     stopDesktopWeb?.()
     remoteControl.dispose()
+    timerScheduler.stop()
     agent.disposeAll()
     cliHost.disposeAll()
     stopAllAgentInstalls()
@@ -7429,6 +7449,8 @@ if (!singleInstance) {
     fileSessionStore.bind(conversationStore, {
       accountIdFor: (workdir) => accountIdForSession(workdir, null)
     })
+    timerStore.bind(conversationStore)
+    timerScheduler.start()
     applyTheme(settings.theme ?? DEFAULT_SETTINGS.theme)
     nativeTheme.on('updated', repaintChrome)
     watchSystemAccentColor()

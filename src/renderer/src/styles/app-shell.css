@@ -7111,6 +7111,40 @@ mark {
   color: color-mix(in srgb, var(--danger) 45%, var(--accent-text));
 }
 
+.timer-compose {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 8px 10px 12px;
+  padding: 10px;
+  border-radius: 10px;
+  background: var(--bg-raised);
+}
+
+.timer-compose .text-field {
+  width: 100%;
+  resize: vertical;
+}
+
+.timer-compose-interval {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.timer-compose-interval .text-field {
+  width: 72px;
+}
+
+.timer-compose-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
 .files-missing-root {
   flex: 1;
   min-height: 0;

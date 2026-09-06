@@ -512,6 +512,20 @@ export function installPhoneVav(transport: PhoneTransport): PhoneVavHandle {
       delete: async () => null,
       forceDelete: async () => ({ ok: true, removed: [] })
     },
+    timers: {
+      listJobs: async () => [],
+      upsertJob: async () => {
+        throw new Error('timers unavailable')
+      },
+      deleteJob: async () => false,
+      listSessions: async () => [],
+      deleteSessions: async () => [],
+      runNow: async () => null,
+      onChanged: () => () => undefined
+    },
+    connectors: {
+      detect: async () => []
+    },
     files: {
       list: async () => ({ entries: [], path: '' }),
       read: async () => ({ content: '', truncated: false }),

@@ -9,6 +9,7 @@ import { basename } from './path'
 import { isTemporaryWorkspace } from './format'
 import { tt } from '../i18n/useT'
 import { conversationOnMachine } from '@shared/workspaceHost'
+import { isMainSidebarSession } from '@shared/sessionKind'
 import {
   conversationMatchesFilter,
   type SidebarSessionFilter
@@ -270,6 +271,7 @@ export function listedSidebarGroups(
   conversations: ConversationMeta[],
   opts: {
     fileSessionsView: boolean
+    timerSessionsView?: boolean
     archiveView: boolean
     query: string
     windowMachineId: string | null | undefined
@@ -283,7 +285,7 @@ export function listedSidebarGroups(
     pinnedWorkspaces: readonly string[]
   }
 ): ConversationGroup[] {
-  if (opts.fileSessionsView) return []
+  if (opts.fileSessionsView || opts.timerSessionsView) return []
   const needle = opts.query.trim().toLowerCase()
   // File-bound sessions live only under “File sessions” — never in workspace
   // groups. listMeta already omits them; the store still hydrates them for
@@ -291,14 +293,14 @@ export function listedSidebarGroups(
   // like a normal project session that “wrongly” opens the file canvas.
   if (opts.archiveView) {
     const rows = conversations
-      .filter((c) => c.archived && !c.fileId)
+      .filter((c) => c.archived && isMainSidebarSession(c))
       .filter((c) => conversationOnMachine(c, opts.windowMachineId))
       .filter((c) => !needle || c.title.toLowerCase().includes(needle))
       .sort((a, b) => (b.archivedAt ?? b.updatedAt) - (a.archivedAt ?? a.updatedAt))
     return [{ key: 'archive', label: '', conversations: rows }]
   }
   const matched = conversations
-    .filter((c) => !c.archived && !c.fileId)
+    .filter((c) => !c.archived && isMainSidebarSession(c))
     .filter((c) => conversationOnMachine(c, opts.windowMachineId))
     .filter((c) => !needle || c.title.toLowerCase().includes(needle))
     .filter((c) =>
@@ -312,6 +314,6 @@ export function listedSidebarGroups(
   for (const row of matched) {
     if (row.swarmParentId) keep.add(row.swarmParentId)
   }
-  const rows = conversations.filter((c) => keep.has(c.id) && !c.archived && !c.fileId)
+  const rows = conversations.filter((c) => keep.has(c.id) && !c.archived && isMainSidebarSession(c))
   return groupConversations(rows, opts.searching, opts.groupingMode, opts.tmp, opts.pinnedWorkspaces)
 }

@@ -51,6 +51,7 @@ import type { CliPaneBinding } from '@shared/cliPaneBinding'
 import { currentLocale } from '../i18n'
 import { conversationToMeta } from './conversationMeta.ts'
 import { electronUserData } from './electronUserData.ts'
+import { isMainSidebarSession } from '../../shared/sessionKind.ts'
 
 const AUTO_TITLE_LIMIT = 40
 const INDEX_VERSION = 2
@@ -155,6 +156,8 @@ export class ConversationStore {
       if (conversation.cacheCreatedAt === undefined) conversation.cacheCreatedAt = null
       if (conversation.cacheExpiresAt === undefined) conversation.cacheExpiresAt = null
       if (conversation.fileId === undefined) conversation.fileId = null
+      if (conversation.timerJobId === undefined) conversation.timerJobId = null
+      if (conversation.timerRunAt === undefined) conversation.timerRunAt = null
       if (conversation.fileReadOnly === undefined) conversation.fileReadOnly = false
       if (conversation.agentBinaryName === undefined) conversation.agentBinaryName = null
       if (conversation.cliHost === undefined) conversation.cliHost = null
@@ -185,7 +188,7 @@ export class ConversationStore {
         }
       }
       // Legacy untitled titles from earlier builds; normalize to the current locale.
-      if (isDefaultSessionTitle(conversation.title) && !conversation.fileId) {
+      if (isDefaultSessionTitle(conversation.title) && isMainSidebarSession(conversation)) {
         conversation.title = defaultSessionTitle(currentLocale())
       }
       this.adoptTreeShape(conversation)
@@ -203,7 +206,7 @@ export class ConversationStore {
 
   listMeta(): ConversationMeta[] {
     return this.conversations
-      .filter((c) => !c.fileId)
+      .filter((c) => isMainSidebarSession(c))
       .map(conversationToMeta)
       .sort((a, b) => b.updatedAt - a.updatedAt)
   }
@@ -228,6 +231,8 @@ export class ConversationStore {
     model: string,
     options?: {
       fileId?: string | null
+      timerJobId?: string | null
+      timerRunAt?: number | null
       title?: string
       fileReadOnly?: boolean
       approvalMode?: import('@shared/types').ApprovalMode
@@ -270,6 +275,8 @@ export class ConversationStore {
       thinkingLevel: parseThinkingLevel(options?.thinkingLevel),
       fast: options?.fast === true,
       fileId: options?.fileId ?? null,
+      timerJobId: options?.timerJobId ?? null,
+      timerRunAt: options?.timerRunAt ?? null,
       fileReadOnly: options?.fileReadOnly ?? false,
       agentBinaryName: cliHost,
       cliHost,
@@ -316,6 +323,8 @@ export class ConversationStore {
       cacheCreatedAt: null,
       cacheExpiresAt: null,
       fileId: null,
+      timerJobId: null,
+      timerRunAt: null,
       fileReadOnly: false,
       accountId: source.accountId ?? null,
       messages: (source.messages ?? []).map((message) => ({
@@ -375,7 +384,7 @@ export class ConversationStore {
    */
   adoptHostConversation(source: Conversation, hostMachineId: string): Conversation | null {
     if (!source || typeof source.id !== 'string' || !source.id.trim()) return null
-    if (source.fileId) return null
+    if (source.fileId || source.timerJobId) return null
     const hostId = hostMachineId.trim() || LOCAL_MACHINE_ID
     const now = Date.now()
     const cloned = structuredClone(source)
@@ -425,6 +434,8 @@ export class ConversationStore {
       cacheCreatedAt: cloned.cacheCreatedAt ?? null,
       cacheExpiresAt: cloned.cacheExpiresAt ?? null,
       fileId: null,
+      timerJobId: null,
+      timerRunAt: null,
       fileReadOnly: false,
       agentBinaryName: cloned.agentBinaryName ?? null,
       cliHost: cloned.cliHost ?? null,
@@ -494,6 +505,9 @@ export class ConversationStore {
       approvalMode: source.approvalMode ?? 'auto',
       thinkingLevel: parseThinkingLevel(source.thinkingLevel),
       fast: source.fast === true,
+      fileId: null,
+      timerJobId: null,
+      timerRunAt: null,
       agentBinaryName: source.agentBinaryName ?? source.cliHost ?? null,
       cliHost: source.cliHost ?? null,
       accountId: source.accountId ?? null,

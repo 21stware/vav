@@ -18,6 +18,7 @@ import {
   type SidebarGroupingMode
 } from '@shared/types'
 import type { FileSessionListEntry } from '@shared/ipc'
+import type { TimerSessionListEntry } from '@shared/timer'
 import { useSessionStore } from '../state/sessionStore'
 import { useWorkspaceStore } from '../state/workspaceStore'
 import { isTemporaryWorkspace, middleTruncate, relativeTime, workdirShortLabel } from '../lib/format'
@@ -146,6 +147,12 @@ export function Sidebar({
   const [pinnedCollapsed, setPinnedCollapsed] = useState(false)
   const [fileSessionRows, setFileSessionRows] = useState<FileSessionListEntry[]>([])
   const [fileSessionsLoading, setFileSessionsLoading] = useState(false)
+  const [timerSessionRows, setTimerSessionRows] = useState<TimerSessionListEntry[]>([])
+  const [timerSessionsLoading, setTimerSessionsLoading] = useState(false)
+  const [timerCompose, setTimerCompose] = useState(false)
+  const [timerTitle, setTimerTitle] = useState('')
+  const [timerPrompt, setTimerPrompt] = useState('')
+  const [timerMinutes, setTimerMinutes] = useState('60')
 
   useEffect(() => {
     if (!activeId) return
@@ -164,11 +171,13 @@ export function Sidebar({
 
   const archiveView = listMode === 'archive'
   const fileSessionsView = listMode === 'fileSessions'
+  const timerSessionsView = listMode === 'timerSessions'
 
   // Rasterize the foot-menu glyphs ahead of the first open.
   useEffect(() => {
     warmMenuIcons([
       lucideMenuIcon('file-sessions'),
+      lucideMenuIcon('timer-sessions'),
       lucideMenuIcon('archive'),
       lucideMenuIcon('import'),
       lucideMenuIcon('settings')
@@ -192,6 +201,26 @@ export function Sidebar({
     if (!fileSessionsView) return
     void refreshFileSessions()
   }, [fileSessionsView, refreshFileSessions])
+
+  const refreshTimerSessions = useCallback(async (): Promise<void> => {
+    setTimerSessionsLoading(true)
+    try {
+      const rows = await window.vav.timers.listSessions()
+      setTimerSessionRows(rows)
+    } catch {
+      setTimerSessionRows([])
+    } finally {
+      setTimerSessionsLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!timerSessionsView) return
+    void refreshTimerSessions()
+    return window.vav.timers.onChanged(() => {
+      void refreshTimerSessions()
+    })
+  }, [timerSessionsView, refreshTimerSessions])
 
   useEffect(() => {
     return () => {
@@ -259,7 +288,7 @@ export function Sidebar({
   const archivedCount = useMemo(
     () =>
       conversations.filter(
-        (c) => c.archived && !c.fileId && conversationOnMachine(c, windowMachineId)
+        (c) => c.archived && !c.fileId && !c.timerJobId && conversationOnMachine(c, windowMachineId)
       ).length,
     [conversations, windowMachineId]
   )
@@ -294,6 +323,7 @@ export function Sidebar({
     () =>
       listedSidebarGroups(conversations, {
         fileSessionsView,
+        timerSessionsView,
         archiveView,
         query,
         windowMachineId,
@@ -317,6 +347,7 @@ export function Sidebar({
     pinnedWorkspaces,
     archiveView,
     fileSessionsView,
+    timerSessionsView,
     turnBusyKey,
     shellBusyKey,
     activityById,
@@ -334,6 +365,16 @@ export function Sidebar({
     () => filterFileSessionRows(fileSessionRows, query, basename),
     [fileSessionRows, query]
   )
+  const filteredTimerSessions = useMemo(() => {
+    const needle = query.trim().toLowerCase()
+    if (!needle) return timerSessionRows
+    return timerSessionRows.filter(
+      (row) =>
+        row.title.toLowerCase().includes(needle) ||
+        row.jobTitle.toLowerCase().includes(needle) ||
+        row.workdir.toLowerCase().includes(needle)
+    )
+  }, [timerSessionRows, query])
 
   const swarmEnabled = useSessionStore((s) => s.settings.swarmModeEnabled === true)
   const focusSwarmSession = useSessionStore((s) => s.focusSwarmSession)
@@ -1304,12 +1345,13 @@ export function Sidebar({
               title={t('sidebar.back')}
               onClick={() => {
                 setListMode('main')
+                setTimerCompose(false)
                 // Leave file-canvas: main list has no file sessions, so keep
                 // showing FileSessionView only while still on a file-bound id.
                 const store = useSessionStore.getState()
                 const active = store.conversations.find((c) => c.id === store.activeId)
-                if (active?.fileId || active?.archived) {
-                  const next = store.conversations.find((c) => !c.archived && !c.fileId)
+                if (active?.fileId || active?.timerJobId || active?.archived) {
+                  const next = store.conversations.find((c) => !c.archived && !c.fileId && !c.timerJobId)
                   if (next) void store.selectConversation(next.id)
                 }
               }}
@@ -1318,9 +1360,22 @@ export function Sidebar({
               <span className="sidebar-archive-title">
                 {archiveView
                   ? t('sidebar.archivedCount', { count: archivedCount })
-                  : t('sidebar.fileSessionsTitle', { count: fileSessionRows.length })}
+                  : timerSessionsView
+                    ? t('sidebar.timerSessionsTitle', { count: timerSessionRows.length })
+                    : t('sidebar.fileSessionsTitle', { count: fileSessionRows.length })}
               </span>
             </button>
+            {timerSessionsView ? (
+              <button
+                type="button"
+                className="btn icon-only sm"
+                data-testid="sidebar-new-timer"
+                title={t('sidebar.newTimer')}
+                onClick={() => setTimerCompose((open) => !open)}
+              >
+                <Plus size={14} />
+              </button>
+            ) : null}
           </div>
         )}
       </div>
@@ -1329,7 +1384,7 @@ export function Sidebar({
         {listMode === 'main' &&
           visible.length === 0 &&
           conversations.filter(
-            (c) => !c.archived && !c.fileId && conversationOnMachine(c, windowMachineId)
+            (c) => !c.archived && !c.fileId && !c.timerJobId && conversationOnMachine(c, windowMachineId)
           ).length === 0 &&
           groupingMode !== 'workspace' && (
           <EmptyState
@@ -1365,6 +1420,92 @@ export function Sidebar({
             title={t('sidebar.fileSessionsEmptyTitle')}
             description={t('sidebar.fileSessionsEmptyDesc')}
           />
+        )}
+        {timerSessionsView && !timerSessionsLoading && filteredTimerSessions.length === 0 && !searching && !timerCompose && (
+          <EmptyState
+            title={t('sidebar.timerSessionsEmptyTitle')}
+            description={t('sidebar.timerSessionsEmptyDesc')}
+          >
+            <button
+              className="btn secondary"
+              data-testid="sidebar-timer-empty-create"
+              title={t('sidebar.newTimer')}
+              onClick={() => setTimerCompose(true)}
+            >
+              {t('sidebar.newTimer')}
+            </button>
+          </EmptyState>
+        )}
+        {timerSessionsView && searching && filteredTimerSessions.length === 0 && (
+          <EmptyState title={t('sidebar.noMatchTitle')} description={t('sidebar.noMatchDesc')}>
+            <button
+              className="btn secondary"
+              title={t('sidebar.clearFilter')}
+              onClick={() => setSidebarQuery('')}
+            >
+              {t('sidebar.clearFilter')}
+            </button>
+          </EmptyState>
+        )}
+        {timerSessionsView && timerCompose && (
+          <form
+            className="timer-compose"
+            data-testid="sidebar-timer-compose"
+            onSubmit={(event) => {
+              event.preventDefault()
+              const minutes = Math.max(1, Number(timerMinutes) || 60)
+              void window.vav.timers
+                .upsertJob({
+                  title: timerTitle,
+                  prompt: timerPrompt,
+                  everyMinutes: minutes
+                })
+                .then((job) => window.vav.timers.runNow(job.id))
+                .then((result) => {
+                  setTimerCompose(false)
+                  setTimerTitle('')
+                  setTimerPrompt('')
+                  void refreshTimerSessions()
+                  if (result?.sessionId) void selectConversation(result.sessionId)
+                })
+            }}
+          >
+            <input
+              className="text-field"
+              data-testid="sidebar-timer-title"
+              placeholder={t('timer.titlePlaceholder')}
+              value={timerTitle}
+              onChange={(event) => setTimerTitle(event.target.value)}
+            />
+            <textarea
+              className="text-field"
+              data-testid="sidebar-timer-prompt"
+              placeholder={t('timer.promptPlaceholder')}
+              value={timerPrompt}
+              onChange={(event) => setTimerPrompt(event.target.value)}
+              rows={3}
+              required
+            />
+            <label className="timer-compose-interval">
+              <span>{t('timer.everyMinutes')}</span>
+              <input
+                className="text-field"
+                data-testid="sidebar-timer-minutes"
+                type="number"
+                min={1}
+                value={timerMinutes}
+                onChange={(event) => setTimerMinutes(event.target.value)}
+              />
+            </label>
+            <div className="timer-compose-actions">
+              <button type="button" className="btn secondary" onClick={() => setTimerCompose(false)}>
+                {t('common.cancel')}
+              </button>
+              <button type="submit" className="btn" data-testid="sidebar-timer-submit">
+                {t('timer.createAndRun')}
+              </button>
+            </div>
+          </form>
         )}
         {fileSessionsView && searching && filteredFileSessions.length === 0 && (
           <EmptyState title={t('sidebar.noMatchTitle')} description={t('sidebar.noMatchDesc')}>
@@ -1506,7 +1647,65 @@ export function Sidebar({
           </div>
         )}
 
-        {!fileSessionsView && pinnedGroups.length > 0 && (
+        {timerSessionsView && (
+          <div className="file-session-list" role="list">
+            {filteredTimerSessions.map((row) => {
+              const isActive = row.sessionId === activeId
+              const stamp = relativeTime(row.updatedAt)
+              return (
+                <button
+                  type="button"
+                  role="listitem"
+                  key={row.sessionId}
+                  className={`file-session-item${isActive ? ' is-active' : ''}`}
+                  data-conversation-id={row.sessionId}
+                  data-testid="sidebar-timer-row"
+                  title={`${row.title}\n${row.workdir}`}
+                  onClick={() => {
+                    void selectConversation(row.sessionId)
+                    onNavigate?.()
+                  }}
+                  onContextMenu={(event) => {
+                    event.preventDefault()
+                    event.stopPropagation()
+                    void showMenu([
+                      {
+                        label: t('timer.openOutput'),
+                        enabled: Boolean(row.outputPath),
+                        onSelect: () => {
+                          if (row.outputPath) {
+                            void window.vav.window.openFilePreview(row.outputPath, {
+                              origin: 'session',
+                              conversationId: row.sessionId,
+                              surface: 'file'
+                            })
+                          }
+                        }
+                      },
+                      {
+                        label: t('sidebar.fileSessionDelete'),
+                        onSelect: () => {
+                          void window.vav.timers.deleteSessions([row.sessionId]).then(() => {
+                            void requestDelete([row.sessionId])
+                            void refreshTimerSessions()
+                          })
+                        }
+                      }
+                    ])
+                  }}
+                >
+                  <span className="file-session-item-title">{middleTruncate(row.title)}</span>
+                  <span className="file-session-item-sub">
+                    {row.jobTitle} · {stamp}
+                    {row.status === 'running' ? ` · ${t('activity.running')}` : ''}
+                  </span>
+                </button>
+              )
+            })}
+          </div>
+        )}
+
+        {!fileSessionsView && !timerSessionsView && pinnedGroups.length > 0 && (
           <div className="conv-pinned-section">
             <button
               type="button"
@@ -1527,7 +1726,7 @@ export function Sidebar({
           </div>
         )}
 
-        {!fileSessionsView && mainGroups.map(renderGroup)}
+        {!fileSessionsView && !timerSessionsView && mainGroups.map(renderGroup)}
       </div>
 
       <UpdateCorner variant="inline" />
@@ -1572,6 +1771,15 @@ export function Sidebar({
                       setSidebarQuery('')
                       void selectWorkspaceGroup(null)
                       setListMode('fileSessions')
+                    }
+                  },
+                  {
+                    label: t('sidebar.showTimerSessions'),
+                    icon: lucideMenuIcon('timer-sessions'),
+                    onSelect: () => {
+                      setSidebarQuery('')
+                      void selectWorkspaceGroup(null)
+                      setListMode('timerSessions')
                     }
                   },
                   {

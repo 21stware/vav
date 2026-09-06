@@ -136,6 +136,8 @@ export default function App(): React.JSX.Element {
         const meta = next.conversations.find((c) => c.id === event.conversationId)
         if (meta?.fileId) {
           next.setSidebarListMode('fileSessions')
+        } else if (meta?.timerJobId) {
+          next.setSidebarListMode('timerSessions')
         } else if (meta?.archived) {
           next.setSidebarListMode('archive')
         } else {

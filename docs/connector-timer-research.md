@@ -143,9 +143,9 @@ GitHub 的「实施」更宽（merge、comment、dispatch workflow、Pages 构�
 
 ---
 
-## 3. Timer：vavd 里还没有调度器
+## 3. Timer：调度器已落地（session，不是 conversation）
 
-代码里搜不到产品级 cron / 定时会话。`timer` / `schedule` 都是重连、debounce、LAN announce 这类实现细节。Agent 的 `wait` 是等 shell 输出，不是到点开火。
+产品级 cron 已在 `TimerStore` + `TimerScheduler` 落地。侧栏 More 里「显示定时会话」与「显示文件会话」并列；主列表用 `isMainSidebarSession` 滤掉 `fileId` / `timerJobId`。
 
 vavd 已经具备「到点之后该跑的那一半」：
 
@@ -174,17 +174,9 @@ Remote 协议（`src/shared/remoteControl.ts`）只有 `create` / `send` / `work
 | `archived` | 归档 | 是（归档视图） | **否** |
 | `cliHost` | Claude / Codex / ACP | 是 | 是（`surface: 'cli'`） |
 
-`listMeta()`：
+`listMeta()` 与手机主列表用 `isMainSidebarSession`：`fileId` / `timerJobId` 都滤掉。
 
-```ts
-this.conversations.filter((c) => !c.fileId)
-```
-
-手机列表还去掉 `archived` 和 `swarmParentId`。
-
-**File session 就是「单独 session 类型」的现成模板**：同一份 `Conversation` + `AgentRuntime`，侧栏用 `fileId` 滤掉，另有 `FileSessionStore`（`userData/file-sessions/index.json`）做索引，UI 走「文件会话」而不是主列表。
-
-Timer 应该走同一条路，不要和普通任务排在一起。
+**File session 与 Timer session 并列**：同一套 transcript 存储，侧栏 More 里两个入口——「文件会话」和「定时会话」。不要把 timer 做成普通 conversation 的一个字段展示。
 
 ### 3.2 工作区今天怎么铸
 
@@ -238,9 +230,9 @@ timerRunAt?: number | null   // 这次开火的墙钟时间
 ~/.vavd/timers/runs.json      // runId → conversationId、workspace、status、outputPath
 ```
 
-侧栏加「定时任务」入口（对标「文件会话」），主会话列表不出现这些行。
+侧栏 More 里「显示定时会话」与「显示文件会话」并列。主列表不出现这些行。
 
-`create()` 今天只认 `fileId`。加 `timerJobId` 后，`listMeta`、`mapRemoteSessions`、复制会话（file session 已拒绝 duplicate）都要一起改。
+`TimerStore` + `TimerScheduler` 已落地：job 在 `{stateDir}/timers/index.json`，每次开火一条 timer session。
 
 ### 4.2 时间戳工作区
 
@@ -303,6 +295,7 @@ Remote 协议可后续加 `timer.list` / `timer.upsert` / `timer.runs`；第一�
 ## 7. 结论
 
 - **Connector** 在产品上已经有三家（GitHub、Cloudflare、Supabase），实现上却是 Files 里的只读状态盘：有检测、有鉴权、有预览，没有 deploy / invoke / merge，也没有 Vercel，也没有 agent 工具，vavd 也没挂上。要「实施服务」，需要在现有 status 服务上加 action 面，并接到 agent 和 daemon。
-- **Timer** 还没有。vavd 已经能建会话、铸工作区、跑回合、落盘 transcript。缺的是调度表、独立 session 类型（照 file session 的 `fileId` 过滤）、时间戳工作区，以及每次 run 的 output 文档约定。
+- **Timer session** 与 file session 并列：侧栏 More →「显示定时会话」。`timerJobId` 把这次 run 从主列表滤掉；`TimerStore` 管 job / run；每次开火铸 `{stateDir}/timers/{jobId}/{YYYYMMDD-HHmmss}/Workspace`，跑完写下 `OUTPUT.md`。vavd 与桌面 in-process host 都会跑 `TimerScheduler`。
+- **Connector 目录**已统一：`CONNECTORS` + `detectConnectors`（含 Vercel）。Files 托盘可打开 Vercel 检测页（只读）。deploy / invoke / merge 与 agent 工具仍未做。
 
-两者正交：connector 解决「能对第三方做什么」；timer 解决「何时在隔离会话里做、做完留下什么」。合在一起才是「每天定时构建并托管，然后留下 URL 文档」。
+两者正交：connector 解决「能对第三方做什么」；timer session 解决「何时在隔离会话里做、做完留下什么」。合在一起才是「每天定时构建并托管，然后留下 URL 文档」。

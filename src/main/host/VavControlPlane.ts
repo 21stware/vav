@@ -29,6 +29,8 @@ import {
 import { buildRemoteThreadEvent, fallbackRemoteSession, mapRemoteSessions } from '../remote/sessionList.ts'
 import { AccountStore } from '../store/AccountStore.ts'
 import { ConversationStore } from '../store/ConversationStore.ts'
+import { TimerStore } from '../store/TimerStore.ts'
+import { TimerScheduler } from '../timer/TimerScheduler.ts'
 import { NodeSecretStore } from '../store/NodeSecretStore.ts'
 import { SettingsStore } from '../store/SettingsStore.ts'
 import { LogStore } from '../store/LogStore.ts'
@@ -75,6 +77,7 @@ export type VavControlPlane = {
   settings: SettingsStore
   secrets: NodeSecretStore
   files: FileService
+  timers: TimerStore
   catalog: DaemonWorkspaceCatalog
   load(): void
   dispose(): void
@@ -100,6 +103,7 @@ export function createVavControlPlane(opts: VavControlPlaneOpts): VavControlPlan
   const secrets = new NodeSecretStore(opts.stateDir)
   const accounts = new AccountStore(opts.stateDir)
   const conversations = new ConversationStore(opts.stateDir)
+  const timers = new TimerStore(opts.stateDir)
   const logStore = new LogStore({
     dir: join(opts.stateDir, 'logs'),
     durableDays: () => settings.get().logRetentionDays
@@ -139,6 +143,15 @@ export function createVavControlPlane(opts: VavControlPlaneOpts): VavControlPlan
     hosts,
     changeSets,
     emit: handleAgentEvent
+  })
+
+  const scheduler = new TimerScheduler({
+    timers,
+    conversations,
+    settings,
+    agent,
+    workspaceRoot: opts.stateDir,
+    onSessionsChanged: () => hub.schedulePushSessions()
   })
 
   function listSessions(): RemoteSession[] {
@@ -485,6 +498,7 @@ export function createVavControlPlane(opts: VavControlPlaneOpts): VavControlPlan
     settings,
     secrets,
     files,
+    timers,
     catalog,
     load() {
       mkdirSync(opts.stateDir, { recursive: true })
@@ -495,6 +509,8 @@ export function createVavControlPlane(opts: VavControlPlaneOpts): VavControlPlan
         model: settings.get().defaultModel || VAV_DEFAULT_MODEL_ID,
         mintWorkdir: () => mintTempWorkdir(tmp)
       })
+      timers.bind(conversations)
+      scheduler.start()
       logStore.load()
       setAppLogger(logger)
       logger.system(LOG_EVENT.systemBoot, 'vavd ready', { data: { version: opts.appVersion } })
@@ -504,6 +520,7 @@ export function createVavControlPlane(opts: VavControlPlaneOpts): VavControlPlan
       if (envEndpoint) settings.update({ apiEndpoint: envEndpoint })
     },
     dispose() {
+      scheduler.stop()
       logger.system(LOG_EVENT.systemQuit, 'Quit')
       logStore.dispose()
       setAppLogger(null)

@@ -343,6 +343,20 @@ const api: VavApi = {
       ipcRenderer.invoke(IPC.fileSessionsForceDelete, fileId, sessionIds)
   },
 
+  timers: {
+    listJobs: () => ipcRenderer.invoke(IPC.timerListJobs),
+    upsertJob: (input) => ipcRenderer.invoke(IPC.timerUpsertJob, input),
+    deleteJob: (id: string) => ipcRenderer.invoke(IPC.timerDeleteJob, id),
+    listSessions: () => ipcRenderer.invoke(IPC.timerListSessions),
+    deleteSessions: (sessionIds: string[]) => ipcRenderer.invoke(IPC.timerDeleteSessions, sessionIds),
+    runNow: (jobId: string) => ipcRenderer.invoke(IPC.timerRunNow, jobId),
+    onChanged: (handler) => subscribe(IPC.timerChanged, handler)
+  },
+
+  connectors: {
+    detect: (cwd: string) => ipcRenderer.invoke(IPC.connectorsDetect, cwd)
+  },
+
   agents: {
     resolveBinary: (candidates: string[], force?: boolean) =>
       ipcRenderer.invoke(IPC.agentsResolveBinary, candidates, force === true),

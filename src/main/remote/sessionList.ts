@@ -11,6 +11,7 @@ export type RemoteSessionSource = {
   title?: string | null
   archived?: boolean
   fileId?: string | null
+  timerJobId?: string | null
   swarmParentId?: string | null
   workingDirectory?: string | null
   resultUnseen?: boolean
@@ -34,7 +35,7 @@ export function mapRemoteSessions(
   }
 ): RemoteSession[] {
   return conversations
-    .filter((c) => !c.archived && !c.fileId && !c.swarmParentId)
+    .filter((c) => !c.archived && !c.fileId && !c.timerJobId && !c.swarmParentId)
     .map((c) => ({
       id: c.id,
       title: (c.title && c.title.trim()) || opts.fallbackTitle,

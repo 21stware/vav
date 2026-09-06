@@ -113,6 +113,10 @@ export const LUCIDE_MENU_ICON_NODES = {
       }
     ]
   ],
+  'timer-sessions': [
+    ['circle', { cx: '12', cy: '12', r: '10' }],
+    ['polyline', { points: '12 6 12 12 16 14' }]
+  ],
   import: [
     ['path', { d: 'M12 3v12' }],
     ['path', { d: 'm8 11 4 4 4-4' }],

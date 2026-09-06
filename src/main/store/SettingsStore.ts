@@ -301,6 +301,7 @@ export class SettingsStore {
     if (typeof s.githubTrayEnabled !== 'boolean') s.githubTrayEnabled = true
     if (typeof s.cloudflareTrayEnabled !== 'boolean') s.cloudflareTrayEnabled = false
     if (typeof s.supabaseTrayEnabled !== 'boolean') s.supabaseTrayEnabled = false
+    if (typeof s.vercelTrayEnabled !== 'boolean') s.vercelTrayEnabled = false
     if (!s.disabledAgentModels || typeof s.disabledAgentModels !== 'object') {
       s.disabledAgentModels = {}
     } else {

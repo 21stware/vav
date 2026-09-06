@@ -37,7 +37,9 @@ import type {
   GithubSite
 } from './github'
 import type { CloudflareResult, CloudflareStatus, CloudflareStatusQuery } from './cloudflare'
+import type { ConnectorDetect } from './connector'
 import type { SupabaseResult, SupabaseStatus, SupabaseStatusQuery } from './supabase'
+import type { TimerJob, TimerSessionListEntry } from './timer'
 import type { KeepAwakeGrantResult, KeepAwakeStatus } from './sleepBlocker'
 import type { Platform } from './platform'
 import type { AgentInstallRun } from './agentInstall'
@@ -1264,6 +1266,29 @@ export interface VavApi {
     ): Promise<{ ok: boolean; error?: string; removed: string[] }>
   }
 
+  /** Scheduled timer jobs + the sessions they mint (listed next to file sessions). */
+  timers: {
+    listJobs(): Promise<TimerJob[]>
+    upsertJob(input: {
+      id?: string
+      title: string
+      prompt: string
+      everyMinutes?: number
+      at?: number
+      enabled?: boolean
+    }): Promise<TimerJob>
+    deleteJob(id: string): Promise<boolean>
+    listSessions(): Promise<TimerSessionListEntry[]>
+    deleteSessions(sessionIds: string[]): Promise<string[]>
+    runNow(jobId: string): Promise<{ sessionId: string } | null>
+    onChanged(handler: () => void): () => void
+  }
+
+  /** Workspace connector catalogue (GitHub / Cloudflare / Supabase / Vercel). */
+  connectors: {
+    detect(cwd: string): Promise<ConnectorDetect[]>
+  }
+
   /** Resolve a CLI agent binary on the login PATH (cached; pass force after install). */
   agents: {
     resolveBinary(candidates: string[], force?: boolean): Promise<string | null>
@@ -1907,6 +1932,15 @@ export const IPC = {
   fileSessionsDelete: 'vav:file-sessions:delete',
   fileSessionsForceDelete: 'vav:file-sessions:force-delete',
   filesOpenWithDefault: 'vav:files:open-with-default',
+
+  timerListJobs: 'vav:timers:list-jobs',
+  timerUpsertJob: 'vav:timers:upsert-job',
+  timerDeleteJob: 'vav:timers:delete-job',
+  timerListSessions: 'vav:timers:list-sessions',
+  timerDeleteSessions: 'vav:timers:delete-sessions',
+  timerRunNow: 'vav:timers:run-now',
+  timerChanged: 'vav:timers:changed',
+  connectorsDetect: 'vav:connectors:detect',
 
   gitStatus: 'vav:git:status',
   gitDiff: 'vav:git:diff',

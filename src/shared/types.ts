@@ -340,9 +340,16 @@ export interface ConversationMeta {
   fast?: boolean
   /**
    * File-preview session key (inode:device or path-hash). When set, the
-   * conversation is owned by FileSessionStore and hidden from the main sidebar.
+   * session is owned by FileSessionStore and hidden from the main sidebar.
    */
   fileId?: string | null
+  /**
+   * Timer job that minted this session. When set, the session is owned by
+   * TimerStore and listed next to file sessions — never in the main sidebar.
+   */
+  timerJobId?: string | null
+  /** Wall clock when this timer session was fired. */
+  timerRunAt?: number | null
   /**
    * When true, the agent system prompt forbids file modifications (read-only
    * toggle on the File Preview chrome).
@@ -967,6 +974,10 @@ export interface AppSettings {
    */
   supabaseTrayEnabled: boolean
   /**
+   * Files tray → Vercel project detect. Off by default.
+   */
+  vercelTrayEnabled: boolean
+  /**
    * Last-used detached window size { width, height }.
    * New detached windows restore these dimensions.
    */
@@ -1194,6 +1205,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   githubTrayEnabled: true,
   cloudflareTrayEnabled: false,
   supabaseTrayEnabled: false,
+  vercelTrayEnabled: false,
   theme: 'system',
   bashBackground: 'theme',
   colorTint: 'system',

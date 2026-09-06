@@ -17,15 +17,21 @@ describe('sessionBootstrap', () => {
       { id: 'old', updatedAt: 1, machineId: 'local' },
       { id: 'new', updatedAt: 9, machineId: 'local' },
       { id: 'file', updatedAt: 20, fileId: 'f1', machineId: 'local' },
+      { id: 'timer', updatedAt: 25, timerJobId: 'job-1', machineId: 'local' },
       { id: 'arch', updatedAt: 30, archived: true, machineId: 'local' },
       { id: 'remote', updatedAt: 40, machineId: 'other' }
     ]
     assert.equal(pickBootstrapActiveId(rows, 'old', 'local'), 'old')
     assert.equal(pickBootstrapActiveId(rows, 'missing', 'local'), 'new')
     assert.equal(pickBootstrapActiveId(rows, 'file', 'local'), 'new')
+    assert.equal(pickBootstrapActiveId(rows, 'timer', 'local'), 'new')
     assert.equal(pickBootstrapActiveId(rows, 'remote', 'local'), 'new')
     assert.deepEqual(nextConversationForMachine(rows, 'old', 'local'), { action: 'keep' })
     assert.deepEqual(nextConversationForMachine(rows, 'file', 'local'), {
+      action: 'select',
+      id: 'new'
+    })
+    assert.deepEqual(nextConversationForMachine(rows, 'timer', 'local'), {
       action: 'select',
       id: 'new'
     })

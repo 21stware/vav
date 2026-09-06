@@ -399,6 +399,19 @@ export function WorkspaceSettings(): React.JSX.Element {
       ) : null}
 
       <div className="form-row">
+        <label>{t('workspace.vercelTray')}</label>
+        <div className="control">
+          <Toggle
+            checked={settings.vercelTrayEnabled === true}
+            title={t('workspace.vercelTray')}
+            testId="settings-vercel-tray"
+            onChange={(vercelTrayEnabled) => void updateSettings({ vercelTrayEnabled })}
+          />
+        </div>
+      </div>
+      <div className="form-hint">{t('workspace.vercelTrayHint')}</div>
+
+      <div className="form-row">
         <label>{t('workspace.searxng')}</label>
         <div className="control">
           <input

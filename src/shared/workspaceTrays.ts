@@ -21,3 +21,9 @@ export function isSupabaseTrayEnabled(settings: {
 }): boolean {
   return settings.supabaseTrayEnabled === true
 }
+
+export function isVercelTrayEnabled(settings: {
+  vercelTrayEnabled?: boolean
+}): boolean {
+  return settings.vercelTrayEnabled === true
+}

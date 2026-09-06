@@ -36,6 +36,18 @@ describe('mergeConversationList', () => {
       ['new', 'old', 'file']
     )
   })
+
+  it('keeps hydrated timer sessions when listMeta omits them', () => {
+    const prev = [
+      row({ id: 'chat', updatedAt: 3 }),
+      row({ id: 'timer', updatedAt: 0, timerJobId: 'job-1' })
+    ]
+    const next = [row({ id: 'chat', updatedAt: 3 })]
+    assert.deepEqual(
+      mergeConversationList(prev, next).map((c) => c.id),
+      ['chat', 'timer']
+    )
+  })
 })
 
 describe('patchConversationById', () => {
@@ -228,6 +240,7 @@ describe('listedConversationIdsForSelect', () => {
       row({ id: 'live' }),
       row({ id: 'arch', archived: true }),
       row({ id: 'file', fileId: 'f1' }),
+      row({ id: 'timer', timerJobId: 'job-1' }),
       row({ id: 'arch-file', archived: true, fileId: 'f2' })
     ]
     assert.deepEqual(listedConversationIdsForSelect(rows, false), ['live'])

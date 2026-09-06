@@ -1,4 +1,5 @@
 import { conversationOnMachine } from '../../../shared/workspaceHost.ts'
+import { isMainSidebarSession } from '../../../shared/sessionKind.ts'
 import type { AgentConfig, AppSettings } from '../../../shared/types.ts'
 import { upsertConversationMeta } from './sessionListMerge.ts'
 
@@ -6,6 +7,7 @@ type BootstrapConversation = {
   id: string
   archived?: boolean
   fileId?: string | null
+  timerJobId?: string | null
   updatedAt: number
   machineId?: string | null
 }
@@ -20,7 +22,7 @@ export function pickBootstrapActiveId(
   if (
     listed &&
     !listed.archived &&
-    !listed.fileId &&
+    isMainSidebarSession(listed) &&
     conversationOnMachine(listed, windowMachineId)
   ) {
     return preferredId
@@ -30,7 +32,7 @@ export function pickBootstrapActiveId(
       .filter(
         (conversation) =>
           !conversation.archived &&
-          !conversation.fileId &&
+          isMainSidebarSession(conversation) &&
           conversationOnMachine(conversation, windowMachineId)
       )
       .sort((a, b) => b.updatedAt - a.updatedAt)[0]?.id ?? ''
@@ -52,7 +54,7 @@ export function nextConversationForMachine(
   if (
     current &&
     !current.archived &&
-    !current.fileId &&
+    isMainSidebarSession(current) &&
     conversationOnMachine(current, windowMachineId)
   ) {
     return { action: 'keep' }
@@ -61,7 +63,7 @@ export function nextConversationForMachine(
     .filter(
       (conversation) =>
         !conversation.archived &&
-        !conversation.fileId &&
+        isMainSidebarSession(conversation) &&
         conversationOnMachine(conversation, windowMachineId)
     )
     .sort((a, b) => b.updatedAt - a.updatedAt)[0]

@@ -904,7 +904,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     // Prefer an existing conversation already rooted here (reuse quietly).
     // Never adopt a file-bound session as the workspace agent.
     const rooted = get().conversations.find(
-      (c) => !c.archived && !c.fileId && c.workingDirectory === workdir
+      (c) => !c.archived && !c.fileId && !c.timerJobId && c.workingDirectory === workdir
     )
     if (rooted) {
       const map = { ...get().workspaceAgentByPath, [workdir]: rooted.id }
@@ -1093,7 +1093,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     const { activeId, conversations } = get()
     if (!activeId) return
     const current = conversations.find((c) => c.id === activeId)
-    if (!current || current.fileId) return
+    if (!current || current.fileId || current.timerJobId) return
     const rootId = swarmRootId(current.id, current.swarmParentId)
     const root = conversations.find((c) => c.id === rootId) ?? current
     const layout = root.swarmLayout ?? swarmLeaf(rootId)

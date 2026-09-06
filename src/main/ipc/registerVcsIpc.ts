@@ -19,6 +19,7 @@ import {
 } from '../github/GithubService'
 import { getCloudflareStatus } from '../cloudflare/CloudflareService'
 import { getSupabaseStatus } from '../supabase/SupabaseService'
+import { detectConnectors } from '../connector/detectConnectors'
 
 export type VcsIpcCreds = {
   cloudflare: () => { token: string | null; accountId: string | null }
@@ -96,4 +97,5 @@ export function registerVcsIpc(ipcMain: IpcMain, creds: VcsIpcCreds): void {
   )
   ipcMain.handle(IPC.githubGetSite, (_event, cwd: string) => getGithubSite(cwd))
   ipcMain.handle(IPC.githubListReleases, (_event, cwd: string) => listGithubReleases(cwd))
+  ipcMain.handle(IPC.connectorsDetect, (_event, cwd: string) => detectConnectors(String(cwd || '')))
 }
