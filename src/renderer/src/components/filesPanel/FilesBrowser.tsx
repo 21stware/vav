@@ -7,7 +7,11 @@ import { useT, tt } from '../../i18n/useT'
 import { basename } from '../../lib/path'
 import { formatBytes } from '../../lib/format'
 import { showMenu, type MenuItem } from '../../lib/nativeMenu'
-import { fileManagerLabel } from '../../lib/platform'
+import { fileManagerLabel, IS_MAC } from '../../lib/platform'
+import {
+  nativeFileDragProps,
+  nativeOsFileActionsAvailable
+} from '../../lib/nativeFileDrag'
 import { setUiFocusScope } from '../../lib/uiFocus'
 import { InlineAlert } from '../ui'
 import { prefetchForPath } from '../../lib/prefetchHeavy'
@@ -264,6 +268,7 @@ function VirtualColumnRows({
             onDoubleClick={() => {
               if (!entry.isDirectory) openFileInSessionPreview(entry.path)
             }}
+            {...nativeFileDragProps(entry.path)}
             onContextMenu={(event) => {
               event.preventDefault()
               event.stopPropagation()
@@ -505,6 +510,7 @@ function TreeRow({
         aria-expanded={entry.isDirectory ? !!expanded : undefined}
         style={{ paddingLeft: level * 14 + 10 }}
         title={entry.path}
+        {...(renaming ? { draggable: false as const } : nativeFileDragProps(entry.path))}
         onMouseEnter={() => {
           if (!entry.isDirectory) prefetchForPath(entry.path)
         }}
@@ -603,6 +609,41 @@ function TreeRow({
   )
 }
 
+function osFileMenuItems(path: string, opts: { copyContents?: boolean }): MenuItem[] {
+  const id = useSessionStore.getState().activeId
+  const items: MenuItem[] = []
+  if (nativeOsFileActionsAvailable() && typeof window.vav.files.copyAsFile === 'function') {
+    items.push({
+      label: tt('files.copyFile'),
+      onSelect: () => void window.vav.files.copyAsFile([path], id)
+    })
+  }
+  if (opts.copyContents) {
+    items.push({
+      label: tt('files.copyContents'),
+      onSelect: () =>
+        void window.vav.files.read(path, id).then((result) => {
+          if (result.content) void window.vav.conversations.copyToClipboard(result.content)
+        })
+    })
+  }
+  items.push({
+    label: tt('files.copyPath'),
+    onSelect: () => void window.vav.conversations.copyToClipboard(path)
+  })
+  items.push({
+    label: tt('files.reveal', { fileManager: fileManagerLabel() }),
+    onSelect: () => void window.vav.conversations.revealInFinder(path)
+  })
+  if (nativeOsFileActionsAvailable() && typeof window.vav.files.getInfo === 'function') {
+    items.push({
+      label: IS_MAC ? tt('files.getInfo') : tt('files.properties'),
+      onSelect: () => void window.vav.files.getInfo(path, id)
+    })
+  }
+  return items
+}
+
 async function showEntryMenu(
   entry: FileEntry,
   options: {
@@ -624,14 +665,7 @@ async function showEntryMenu(
           ? [{ label: tt('common.collapseAll'), onSelect: options.collapseAll }]
           : []),
         { label: '', divider: true },
-        {
-          label: tt('files.copyPath'),
-          onSelect: () => void window.vav.conversations.copyToClipboard(entry.path)
-        },
-        {
-          label: tt('files.reveal', { fileManager: fileManagerLabel() }),
-          onSelect: () => void window.vav.conversations.revealInFinder(entry.path)
-        },
+        ...osFileMenuItems(entry.path, {}),
         ...(options.onRename
           ? [{ label: tt('common.rename'), onSelect: options.onRename }]
           : []),
@@ -645,6 +679,10 @@ async function showEntryMenu(
           ? [{ label: tt('common.preview'), onSelect: () => options.onPreview?.(entry.path) }]
           : []),
         { label: tt('files.open'), onSelect: () => options.onOpen(entry.path) },
+        {
+          label: tt('preview.openWithDefault'),
+          onSelect: () => void window.vav.files.openWithDefault(entry.path)
+        },
         {
           label: tt('files.quickLook'),
           onSelect: () => void window.vav.files.quickLook(entry.path)
@@ -665,23 +703,7 @@ async function showEntryMenu(
           }
         },
         { label: '', divider: true },
-        {
-          label: tt('files.copyPath'),
-          onSelect: () => void window.vav.conversations.copyToClipboard(entry.path)
-        },
-        {
-          label: tt('files.reveal', { fileManager: fileManagerLabel() }),
-          onSelect: () => void window.vav.conversations.revealInFinder(entry.path)
-        },
-        {
-          label: tt('common.copy'),
-          onSelect: () =>
-            void window.vav.files
-              .read(entry.path, useSessionStore.getState().activeId)
-              .then((result) => {
-              if (result.content) void window.vav.conversations.copyToClipboard(result.content)
-            })
-        },
+        ...osFileMenuItems(entry.path, { copyContents: true }),
         ...(options.onRename
           ? [{ label: tt('common.rename'), onSelect: options.onRename }]
           : []),

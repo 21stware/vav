@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import type { IpcMain, IpcMainInvokeEvent } from 'electron'
 import { IPC } from '@shared/ipc'
 import type { FileInspectResult } from '@shared/ipc'
@@ -8,6 +8,8 @@ import { isClipPath, writeClip } from '../fs/clipStore'
 import { writePngToClipboard } from '../clipboardImage'
 import type { FileService } from '../fs/FileService'
 import type { WorkingCopyService } from '../fs/WorkingCopyService'
+import { iconForDrag, prefetchDragIcon } from '../fs/fileDragIcon'
+import { sanitizeDragPaths, startDragItem } from '../fs/fileNativeTransfer'
 
 export type FilesIpcShell = {
   machineIdFor: (event: IpcMainInvokeEvent, path: string) => string
@@ -121,6 +123,27 @@ export function registerFilesIpc(
   })
   ipcMain.handle(IPC.filesOpenWithDefault, async (event, path: string) =>
     shell.openOn(shell.machineIdFor(event, String(path || '')), String(path || ''))
+  )
+  ipcMain.on(IPC.filesStartDrag, (event, paths: unknown) => {
+    const allowed = sanitizeDragPaths(
+      paths,
+      (path) => files.isAllowedPath(path),
+      existsSync
+    )
+    const item = startDragItem(allowed, iconForDrag(allowed[0] ?? ''))
+    if (!item) return
+    event.sender.startDrag(item)
+  })
+  ipcMain.handle(IPC.filesPrefetchDragIcon, async (_event, path: string) => {
+    const next = String(path || '')
+    if (!files.isAllowedPath(next)) return
+    await prefetchDragIcon(next)
+  })
+  ipcMain.handle(IPC.filesCopyAsFile, (_event, paths: string[], conversationId?: string) =>
+    files.copyAsFile(Array.isArray(paths) ? paths : [], conversationId)
+  )
+  ipcMain.handle(IPC.filesGetInfo, (_event, path: string, conversationId?: string) =>
+    files.getInfo(String(path || ''), conversationId)
   )
   ipcMain.handle(IPC.filesWatch, (_event, id: string, root: string | null) =>
     files.watchRoot(id, root)

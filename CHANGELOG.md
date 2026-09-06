@@ -4,7 +4,14 @@ User-facing changes by release. Unreleased work lives at the top until the next 
 
 ## Unreleased
 
+Files in the workbench drag out as real OS files (browser, TextEdit, Finder). The row menu copies the file, opens Get Info / Properties, and opens with the default app.
+
 Settings → Logs records user actions and agent internals for debugging, with temporary / session / durable retention.
+
+### Files
+
+- Drag a Files row or the preview title out of VAV and other apps receive the real file (Electron `startDrag`), not an HTML ghost.
+- Right-click Copy puts the file on the clipboard the way Finder / Explorer do. Get Info (macOS) and Properties (Windows) open the system inspector. Open with default app is on the same menu.
 
 ### Logs
 
