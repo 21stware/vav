@@ -1,4 +1,4 @@
-import { useMemo, useState, useSyncExternalStore, type ReactNode } from 'react'
+import { useMemo, useState, type ReactNode } from 'react'
 import {
   File,
   FileArchive,
@@ -11,19 +11,16 @@ import {
   Music
 } from 'lucide-react'
 import {
-  collectConversationArtifacts,
   partitionConversationArtifacts,
-  writeToolPath,
   type ConversationArtifact,
   type ConversationArtifactTone
 } from '@shared/conversationArtifacts'
-import type { ChatMessage, MessageBlock } from '@shared/types'
+import type { ChatMessage } from '@shared/types'
 import { formatBadge } from '../lib/previewBlocks'
 import { showMenu } from '../lib/nativeMenu'
 import { fileManagerLabel } from '../lib/platform'
 import { openConversationFile, revealSessionFileInFinder } from '../lib/openSessionFile'
-import { getProjection } from '../state/StreamProjection'
-import { useSessionStore } from '../state/sessionStore'
+import { useConversationArtifacts } from '../lib/useConversationArtifacts'
 import { useT } from '../i18n/useT'
 
 const TONE_ICON: Record<ConversationArtifactTone, typeof FileText> = {
@@ -38,44 +35,19 @@ const TONE_ICON: Record<ConversationArtifactTone, typeof FileText> = {
   other: File
 }
 
-const EMPTY_LIVE: MessageBlock[] = []
-const liveCache = new Map<string, { sig: string; blocks: MessageBlock[] }>()
-
-/** Stable write-tool snapshot — new array only when paths / status change. */
-function liveWriteBlocks(conversationId: string): MessageBlock[] {
-  const snapshot = getProjection(conversationId).getSnapshot()
-  if (!snapshot.active) {
-    liveCache.delete(conversationId)
-    return EMPTY_LIVE
-  }
-  const blocks: MessageBlock[] = []
-  const parts: string[] = []
-  for (const block of snapshot.blocks) {
-    if (block.kind !== 'tool') continue
-    const path = writeToolPath(block.block.tool, block.block.input)
-    if (!path) continue
-    blocks.push(block.block)
-    parts.push(`${block.block.id}:${block.block.status}:${path}`)
-  }
-  const sig = parts.join('|')
-  const prev = liveCache.get(conversationId)
-  if (prev && prev.sig === sig) return prev.blocks
-  const next = { sig, blocks: blocks.length ? blocks : EMPTY_LIVE }
-  liveCache.set(conversationId, next)
-  return next.blocks
-}
-
 function ArtifactIcon({ tone }: { tone: ConversationArtifactTone }): ReactNode {
   const Icon = TONE_ICON[tone]
   return <Icon size={14} strokeWidth={1.75} aria-hidden />
 }
 
-function ArtifactRow({
+export function ArtifactRow({
   item,
-  onOpen
+  onOpen,
+  testId = 'transcript-artifact'
 }: {
   item: ConversationArtifact
   onOpen: (path: string) => void
+  testId?: string
 }): React.JSX.Element {
   const t = useT()
   const badge = formatBadge(item.path, item.previewKind)
@@ -84,7 +56,7 @@ function ArtifactRow({
       <button
         type="button"
         className="transcript-artifact"
-        data-testid="transcript-artifact"
+        data-testid={testId}
         data-draft={item.draft ? 'true' : undefined}
         data-tone={item.tone}
         title={item.relativePath}
@@ -124,6 +96,24 @@ function ArtifactRow({
   )
 }
 
+export function ArtifactList({
+  artifacts,
+  onOpen,
+  testId = 'transcript-artifact'
+}: {
+  artifacts: ConversationArtifact[]
+  onOpen: (path: string) => void
+  testId?: string
+}): React.JSX.Element {
+  return (
+    <ul className="transcript-artifacts-list">
+      {artifacts.map((item) => (
+        <ArtifactRow key={item.path} item={item} onOpen={onOpen} testId={testId} />
+      ))}
+    </ul>
+  )
+}
+
 export function TranscriptArtifacts({
   conversationId,
   messages
@@ -132,24 +122,8 @@ export function TranscriptArtifacts({
   messages: ChatMessage[]
 }): React.JSX.Element | null {
   const t = useT()
-  const workdir = useSessionStore(
-    (s) => s.conversations.find((c) => c.id === conversationId)?.workingDirectory ?? null
-  )
-  const changeSetsById = useSessionStore((s) => s.changeSetsById)
-  const projection = getProjection(conversationId)
-  const liveBlocks = useSyncExternalStore(projection.subscribe, () => liveWriteBlocks(conversationId))
+  const artifacts = useConversationArtifacts(conversationId, messages)
   const [expanded, setExpanded] = useState(false)
-
-  const artifacts = useMemo(
-    () =>
-      collectConversationArtifacts({
-        messages,
-        workdir,
-        changeSetsById,
-        liveBlocks
-      }),
-    [messages, workdir, changeSetsById, liveBlocks]
-  )
   const { pinned, extra } = useMemo(
     () => partitionConversationArtifacts(artifacts),
     [artifacts]
@@ -168,11 +142,7 @@ export function TranscriptArtifacts({
         <span className="transcript-artifacts-title">{t('artifacts.title')}</span>
         <span className="transcript-artifacts-count">{artifacts.length}</span>
       </header>
-      <ul className="transcript-artifacts-list">
-        {shown.map((item) => (
-          <ArtifactRow key={item.path} item={item} onOpen={openConversationFile} />
-        ))}
-      </ul>
+      <ArtifactList artifacts={shown} onOpen={openConversationFile} />
       {extra.length > 0 ? (
         <button
           type="button"

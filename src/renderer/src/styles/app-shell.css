@@ -8812,7 +8812,7 @@ mark {
   align-items: center;
   gap: 6px;
   box-sizing: border-box;
-  /* Fixed row metrics — Files ↔ Git ↔ GitHub ↔ Supabase ↔ Cloudflare must not reflow the chrome. */
+  /* Fixed row metrics — Files ↔ Artifacts ↔ Git ↔ … must not reflow the chrome. */
   height: 38px;
   padding: 0 12px;
   flex: 0 0 auto;
@@ -9014,6 +9014,26 @@ mark {
 .files-toolbar-spacer {
   flex: 1;
   min-width: 8px;
+}
+
+/* —— Artifacts tray (Files | Artifacts | Git | …) —— */
+.artifacts-panel {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.artifacts-panel > .empty-state {
+  border-top: 1px solid var(--border-subtle, color-mix(in srgb, var(--text) 10%, transparent));
+}
+
+.artifacts-panel .transcript-artifacts-list {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 6px 8px 10px;
 }
 
 /* —— Git tray (Files | Git | GitHub) —— */

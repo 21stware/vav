@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { launchVav } from '../launch'
+import { launchVav, openFilesTray } from '../launch'
 
 /**
  * Sealed agent output: thinking process, tool cards, plan overlay, plan doc,
@@ -39,6 +39,10 @@ test('seeded assistant turn paints tools, plan, error, and ask', async () => {
     const artifacts = page.locator('[data-testid="transcript-artifacts"]')
     await expect(artifacts).toBeVisible()
     await expect(artifacts.locator('[data-testid="transcript-artifact"]')).toContainText('note.md')
+
+    await openFilesTray(page)
+    await page.locator('[data-testid="segment-artifacts"]').click()
+    await expect(page.locator('[data-testid="artifacts-panel-row"]')).toContainText('note.md')
 
     await expect(page.locator('.message.system.is-error')).toHaveText('e2e turn failed')
 

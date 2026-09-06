@@ -9,6 +9,7 @@ Settings → Logs records user actions and agent internals for debugging, with t
 ### Artifacts
 
 - After the last message, the transcript lists unique files written on the visible branch (HTML, Office, media, notes, and other writes).
+- Workbench Files tray has an Artifacts tab immediately after Files (before Git) with the same catalog and an empty state when nothing has been written.
 - Click a row to open preview; right-click to reveal or copy the path. Source-only edits collapse behind “more files” when a deliverable is also present.
 - The list updates while a turn is still writing.
 

@@ -9,6 +9,7 @@ import {
   Info,
   List,
   FolderInput,
+  Package,
   Plus,
   RefreshCw
 } from 'lucide-react'
@@ -37,6 +38,7 @@ import { GithubPanel, type GithubPanelChrome } from './GithubPanel'
 import { SupabasePanel, type SupabasePanelChrome } from './SupabasePanel'
 import { SupabaseMark } from './SupabaseMark'
 import { CloudflarePanel, type CloudflarePanelChrome } from './CloudflarePanel'
+import { ArtifactsPanel } from './ArtifactsPanel'
 import { openFileInSessionPreview } from '../lib/openSessionFile'
 import { ColumnBrowser, TreeLevel } from './filesPanel/FilesBrowser'
 import {
@@ -45,7 +47,7 @@ import {
   isSupabaseTrayEnabled
 } from '@shared/workspaceTrays'
 
-type FilesTrayView = 'files' | 'git' | 'github' | 'supabase' | 'cloudflare'
+type FilesTrayView = 'files' | 'artifacts' | 'git' | 'github' | 'supabase' | 'cloudflare'
 
 /** Scroll the row for `path` into view inside the files browser. */
 function scrollFileRowIntoView(path: string): void {
@@ -638,6 +640,12 @@ export function FilesPanel({ visible }: { visible: boolean }): React.JSX.Element
                 icon: <Folder size={14} />
               },
               {
+                value: 'artifacts',
+                label: t('files.tabArtifacts'),
+                title: t('files.tabArtifacts'),
+                icon: <Package size={14} />
+              },
+              {
                 value: 'git',
                 label: t('files.tabGit'),
                 title: t('files.tabGit'),
@@ -854,6 +862,13 @@ export function FilesPanel({ visible }: { visible: boolean }): React.JSX.Element
           />
         )}
       </div>
+        </div>
+        <div
+          className="files-tray-pane"
+          data-hidden={trayView !== 'artifacts'}
+          data-testid="artifacts-tray"
+        >
+          <ArtifactsPanel visible={visible} active={trayView === 'artifacts'} />
         </div>
         <div className="files-tray-pane" data-hidden={trayView !== 'git'} data-testid="git-panel">
           <GitChangesPanel

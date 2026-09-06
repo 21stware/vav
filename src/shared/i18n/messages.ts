@@ -403,6 +403,8 @@ export const zhCN = {
   'artifacts.writing': '写入中',
   'artifacts.more': '另外 {n} 个文件',
   'artifacts.less': '收起文件',
+  'artifacts.emptyTitle': '还没有产物',
+  'artifacts.emptyDesc': '对话里写入的文件会出现在这里。',
 
   // —— diagram / mind map previews ——
   'diagram.mindMap': '思维导图',
@@ -1751,6 +1753,7 @@ export const zhCN = {
   'files.viewList': 'List',
   'files.viewColumn': 'Column',
   'files.tabFiles': '文件',
+  'files.tabArtifacts': '产物',
   'files.tabGit': 'Git',
   'files.tabGithub': 'GitHub',
   'files.tabCloudflare': 'Cloudflare',
@@ -2627,6 +2630,8 @@ export const en: Record<MessageKey, string> = {
   'artifacts.writing': 'Writing',
   'artifacts.more': '{n} more files',
   'artifacts.less': 'Show fewer',
+  'artifacts.emptyTitle': 'No artifacts yet',
+  'artifacts.emptyDesc': 'Files written in this conversation show up here.',
 
   'diagram.mindMap': 'Mind map',
   'diagram.mindAddChild': 'Add child',
@@ -3991,6 +3996,7 @@ export const en: Record<MessageKey, string> = {
   'files.viewList': 'List',
   'files.viewColumn': 'Column',
   'files.tabFiles': 'Files',
+  'files.tabArtifacts': 'Artifacts',
   'files.tabGit': 'Git',
   'files.tabGithub': 'GitHub',
   'files.tabCloudflare': 'Cloudflare',
