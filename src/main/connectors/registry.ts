@@ -10,6 +10,7 @@ import {
   type ConnectorActionRequest,
   type ConnectorActionResult,
   type ConnectorAuth,
+  type ConnectorAuthSource,
   type ConnectorId,
   type ConnectorProbe
 } from '@shared/connector'
@@ -21,6 +22,12 @@ import { deployConnector, type ConnectorCreds } from './deploy'
 import { loginPath } from '../terminal/loginPath'
 
 const execFileAsync = promisify(execFile)
+
+function connectorAuthSource(raw: string | null | undefined): ConnectorAuthSource {
+  if (raw === 'settings' || raw === 'env' || raw === 'cli') return raw
+  if (raw === 'wrangler' || raw === 'supabase') return 'cli'
+  return null
+}
 
 export type ConnectorRegistryDeps = {
   creds: () => ConnectorCreds
@@ -80,7 +87,7 @@ export function createConnectorRegistry(deps: ConnectorRegistryDeps) {
           label: data?.config?.name ?? null,
           configPath: data?.config?.relativePath ?? null
         },
-        auth: { present: Boolean(data?.tokenPresent), source: data?.tokenSource ?? null },
+        auth: { present: Boolean(data?.tokenPresent), source: connectorAuthSource(data?.tokenSource) },
         capabilities: [...desc.capabilities]
       }
     }
@@ -94,7 +101,7 @@ export function createConnectorRegistry(deps: ConnectorRegistryDeps) {
           label: data?.projectRef ?? data?.config?.projectId ?? null,
           configPath: data?.config?.relativePath ?? null
         },
-        auth: { present: Boolean(data?.tokenPresent), source: data?.tokenSource ?? null },
+        auth: { present: Boolean(data?.tokenPresent), source: connectorAuthSource(data?.tokenSource) },
         capabilities: [...desc.capabilities]
       }
     }
@@ -108,7 +115,7 @@ export function createConnectorRegistry(deps: ConnectorRegistryDeps) {
         label: data?.config?.projectName ?? null,
         configPath: data?.config?.relativePath ?? null
       },
-      auth: { present: Boolean(data?.tokenPresent), source: data?.tokenSource ?? null },
+      auth: { present: Boolean(data?.tokenPresent), source: connectorAuthSource(data?.tokenSource) },
       capabilities: [...desc.capabilities]
     }
   }

@@ -6966,7 +6966,7 @@ return c as text`
     timerStore,
     timerScheduler!,
     conversationStore,
-    () => broadcast(IPC.timersChanged)
+    () => broadcast(IPC.timersChanged, null)
   )
   registerPreviewShellIpc(ipcMain, {
     windowFromEvent: (event) => BrowserWindow.fromWebContents(event.sender),

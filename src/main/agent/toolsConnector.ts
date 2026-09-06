@@ -41,7 +41,7 @@ export function createConnectorTools(host: ToolHost) {
         return { content: [{ type: 'text', text: cap(text) }], details: { display: text, summary: 'connector probe' } }
       }
       if (op === 'act') {
-        if (host.isTimerSession?.() === false && host.settings().defaultApprovalMode === 'readonly') {
+        if (host.isTimerSession?.() !== true && host.isFileReadOnly?.()) {
           return failure('Connector deploy needs write approval')
         }
         const id = String(params.connector ?? '') as ConnectorId
