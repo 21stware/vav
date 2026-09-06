@@ -62,5 +62,6 @@ export function createTools(host: ToolHost): AgentTool[] {
   ]
   // File-preview Read: offer Switch to Edit so the agent can request write access.
   if (host.isFileReadOnly?.()) tools.push(switchMode)
+  if (host.extraTools?.length) tools.push(...host.extraTools)
   return tools
 }

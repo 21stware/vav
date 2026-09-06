@@ -67,7 +67,7 @@ export function shouldPauseForApproval(opts: {
   if (opts.mode === 'auto') {
     if (opts.name === 'connector') return opts.command === 'act'
     const highRisk =
-      HIGH_RISK_TOOLS.has(opts.name) &&
+      (HIGH_RISK_TOOLS.has(opts.name) || opts.name.startsWith('mcp_')) &&
       !(opts.name === 'terminal' && isReadonlyTerminalCommand(opts.command))
     const readonlyNeedsApproval = READONLY_TOOLS.has(opts.name) && !opts.autoApproveReadonly
     return highRisk || readonlyNeedsApproval

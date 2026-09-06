@@ -1241,6 +1241,27 @@ export interface VavApi {
     status(cwd: string, query?: SupabaseStatusQuery): Promise<SupabaseResult<SupabaseStatus>>
   }
 
+  /**
+   * Global agent plugins (skills / MCP / hooks).
+   * `host` is the session CLI host; ACP hosts return that product's on-disk plugins.
+   */
+  plugins: {
+    list(host?: string | null): Promise<import('./plugins').PluginSnapshot>
+    setEnabled(
+      host: string,
+      pluginId: string,
+      enabled: boolean
+    ): Promise<import('./plugins').PluginSnapshot | { ok: false; error: string }>
+    create(
+      kind: 'skill' | 'mcp' | 'hook' | 'plugin',
+      name: string
+    ): Promise<import('./plugins').PluginSnapshot | { ok: false; error: string }>
+    write(
+      path: string,
+      content: string
+    ): Promise<import('./plugins').PluginSnapshot | { ok: false; error: string }>
+  }
+
   /** GitHub pull requests, Actions, Releases, and Pages for the workspace remote. */
   github: {
     listPulls(
@@ -1982,6 +2003,10 @@ export const IPC = {
   githubListReleases: 'vav:github:list-releases',
   githubGetActionRun: 'vav:github:get-action-run',
   githubGetSite: 'vav:github:get-site',
+  pluginsList: 'vav:plugins:list',
+  pluginsSetEnabled: 'vav:plugins:set-enabled',
+  pluginsCreate: 'vav:plugins:create',
+  pluginsWrite: 'vav:plugins:write',
   vercelStatus: 'vav:vercel:status',
   connectorsCatalog: 'vav:connectors:catalog',
   connectorsProbe: 'vav:connectors:probe',

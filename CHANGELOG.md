@@ -4,7 +4,14 @@ User-facing changes by release. Unreleased work lives at the top until the next 
 
 ## Unreleased
 
-Connectors and Timers are separate product surfaces. Conversations list the files the agent produced under the thread. Files in the workbench drag out as real OS files. Settings → Logs records user actions and agent internals for debugging, with temporary / session / durable retention.
+Connectors and Timers are separate product surfaces. Conversations list the files the agent produced under the thread. Files in the workbench drag out as real OS files (browser, TextEdit, Finder). Settings → Logs records user actions and agent internals for debugging, with temporary / session / durable retention. The Files tray has a Plugins tab for global skills, MCP servers, and hooks.
+
+### Plugins
+
+- Files tray adds a Plugins tab (after Artifacts) for global agent capabilities: skills, MCP servers, and hooks.
+- VAV sessions read and write `~/.vav` (`VAV_HOME` override): `skills/`, `mcp.json`, `hooks.json`, and `plugins/<name>/` packages. Enable flags live in `plugins.json`. The next VAV turn loads those same files (`load_skill`, hook stdout, MCP tools named `mcp_<server>_<tool>`).
+- ACP / other CLI hosts show that product’s on-disk plugins (Cursor, Claude, Grok, Codex, …) and open the files the host itself consumes. Create / enable stays VAV-only.
+- The tab is available without a workspace. Opening a skill or config uses the real path, so preview edits change what the agent (or ACP host) reads.
 
 ### Connectors
 

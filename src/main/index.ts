@@ -154,6 +154,7 @@ import { SwarmHistoryStore } from './store/SwarmHistoryStore'
 import { FileService } from './fs/FileService'
 import { installTrustedIpcGuard } from './ipc/ipcTrust'
 import { registerVcsIpc } from './ipc/registerVcsIpc'
+import { registerPluginIpc } from './ipc/registerPluginIpc'
 import { registerPtyIoIpc } from './ipc/registerPtyIoIpc'
 import { registerDialogIpc } from './ipc/registerDialogIpc'
 import { registerChangeSetIpc } from './ipc/registerChangeSetIpc'
@@ -309,6 +310,8 @@ import {
   type PreloadHostModelsOptions
 } from './agent/listHostModels'
 import { SkillService } from './agent/SkillService'
+import { PluginService } from './plugins/PluginService'
+import { pluginAccessPaths } from './plugins/pluginPaths'
 import {
   cancelAgentInstall,
   clearAgentInstall,
@@ -1261,7 +1264,16 @@ fileService.retrieval = documentRetrieval
 const duckdb = new DuckDbService()
 const webSearch = new WebSearchService()
 const webFetch = new WebFetchService()
+const pluginService = new PluginService()
 const skillService = new SkillService()
+pluginService.setBundledSkills(skillService.catalog().skills, skillService.root())
+skillService.extraSkills = () => pluginService.enabledSkillEntries()
+pluginService.onChange(() => skillService.invalidate())
+{
+  const bundledRoot = skillService.root()
+  if (bundledRoot) fileService.grantRoot(bundledRoot)
+  for (const path of pluginAccessPaths('vav')) fileService.grantRoot(path)
+}
 const quotaService = new QuotaService({
   onUpdate: () => {
     const id = tokenUsageConversationId
@@ -1309,6 +1321,7 @@ const agent = new AgentRuntime({
   webSearch,
   webFetch,
   skills: skillService,
+  plugins: pluginService,
   fileSessions: fileSessionStore,
   connectors: connectorRegistry,
   emit: handleAgentEvent,
@@ -6948,6 +6961,7 @@ return c as text`
         : dialog.showOpenDialog(options)
     }
   })
+  registerPluginIpc(ipcMain, pluginService, fileService)
   registerVcsIpc(ipcMain, {
     cloudflare: () => ({
       token: secretStore.get('cloudflare') ?? null,
