@@ -5261,6 +5261,161 @@ mark {
   margin-top: 0;
 }
 
+/* Session artifact catalog — sits under the whole thread, not per turn. */
+.transcript-artifacts {
+  margin: 10px 0 8px;
+  max-width: min(100%, 520px);
+  border-radius: var(--radius);
+  background: var(--bg-sunken);
+  box-shadow: inset 0 0 0 1px var(--border);
+  overflow: hidden;
+  transition:
+    opacity var(--dur-pop) var(--ease-out),
+    transform var(--dur-pop) var(--ease-out);
+}
+
+@starting-style {
+  .transcript-artifacts {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+}
+
+:root[data-reduce-motion='true'] .transcript-artifacts {
+  transition: none;
+}
+
+.transcript-artifacts-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px 6px;
+  border-bottom: 1px solid var(--border);
+}
+
+.transcript-artifacts-title {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text);
+  line-height: 1.3;
+}
+
+.transcript-artifacts-count {
+  min-width: 16px;
+  padding: 0 5px;
+  height: 16px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  font-weight: 600;
+  line-height: 16px;
+  text-align: center;
+  color: var(--text-secondary);
+  background: var(--bg-hover);
+}
+
+.transcript-artifacts-list {
+  list-style: none;
+  margin: 0;
+  padding: 4px;
+}
+
+.transcript-artifact {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  margin: 0;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: default;
+  transition:
+    background var(--dur-hover) ease,
+    transform var(--dur-press) var(--ease-out);
+}
+
+.transcript-artifact:hover {
+  background: var(--bg-hover);
+}
+
+.transcript-artifact:active {
+  transform: scale(0.985);
+}
+
+.transcript-artifact[data-draft='true'] {
+  opacity: 0.72;
+}
+
+.transcript-artifact-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
+  color: var(--text-secondary);
+}
+
+.transcript-artifact[data-tone='html'] .transcript-artifact-icon,
+.transcript-artifact[data-tone='document'] .transcript-artifact-icon {
+  color: var(--tone-write);
+}
+
+.transcript-artifact-copy {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.transcript-artifact-name {
+  font-size: 12.5px;
+  font-weight: 550;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  line-height: 1.3;
+}
+
+.transcript-artifact-path {
+  font-size: 11px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  line-height: 1.3;
+}
+
+.transcript-artifact-meta {
+  flex: 0 0 auto;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--text-secondary);
+}
+
+.transcript-artifacts-more {
+  display: block;
+  width: 100%;
+  margin: 0;
+  padding: 6px 12px 8px;
+  border: 0;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 12px;
+  text-align: left;
+  cursor: default;
+}
+
+.transcript-artifacts-more:hover {
+  color: var(--text);
+}
+
 .message.user.editing {
   display: flex;
   width: calc(100% + 14px);

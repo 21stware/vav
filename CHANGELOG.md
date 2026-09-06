@@ -4,7 +4,13 @@ User-facing changes by release. Unreleased work lives at the top until the next 
 
 ## Unreleased
 
-Settings → Logs records user actions and agent internals for debugging, with temporary / session / durable retention.
+Settings → Logs records user actions and agent internals for debugging, with temporary / session / durable retention. Conversations list the files the agent produced under the thread.
+
+### Artifacts
+
+- After the last message, the transcript lists unique files written on the visible branch (HTML, Office, media, notes, and other writes).
+- Click a row to open preview; right-click to reveal or copy the path. Source-only edits collapse behind “more files” when a deliverable is also present.
+- The list updates while a turn is still writing.
 
 ### Logs
 

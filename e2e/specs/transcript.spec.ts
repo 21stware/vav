@@ -36,6 +36,10 @@ test('seeded assistant turn paints tools, plan, error, and ask', async () => {
       'wrote note.md'
     )
 
+    const artifacts = page.locator('[data-testid="transcript-artifacts"]')
+    await expect(artifacts).toBeVisible()
+    await expect(artifacts.locator('[data-testid="transcript-artifact"]')).toContainText('note.md')
+
     await expect(page.locator('.message.system.is-error')).toHaveText('e2e turn failed')
 
     const ask = page.locator('[data-testid="ask-card"]')

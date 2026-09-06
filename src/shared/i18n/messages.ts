@@ -397,6 +397,13 @@ export const zhCN = {
   'message.roleYou': '你',
   'message.roleAgent': 'Agent',
 
+  // —— conversation artifacts (session catalog under the transcript) ——
+  'artifacts.title': '产物',
+  'artifacts.open': '打开',
+  'artifacts.writing': '写入中',
+  'artifacts.more': '另外 {n} 个文件',
+  'artifacts.less': '收起文件',
+
   // —— diagram / mind map previews ——
   'diagram.mindMap': '思维导图',
   'diagram.mindAddChild': '添加子节点',
@@ -2614,6 +2621,12 @@ export const en: Record<MessageKey, string> = {
     'This deletes the message and {count} later message(s). This cannot be undone.',
   'message.roleYou': 'You',
   'message.roleAgent': 'Agent',
+
+  'artifacts.title': 'Artifacts',
+  'artifacts.open': 'Open',
+  'artifacts.writing': 'Writing',
+  'artifacts.more': '{n} more files',
+  'artifacts.less': 'Show fewer',
 
   'diagram.mindMap': 'Mind map',
   'diagram.mindAddChild': 'Add child',
