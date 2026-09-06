@@ -1161,6 +1161,12 @@ export interface AppSettings {
   previewReadModeSelection: boolean
   /** Hide the empty-transcript first-run checklist. */
   firstRunChecklistDismissed: boolean
+  /**
+   * How long durable diagnostic records stay on disk (1 / 3 / 7 / 14 / 30).
+   * Session records still expire at 24h or when the conversation is deleted.
+   * Temporary records never persist and last 15 minutes in memory.
+   */
+  logRetentionDays: 1 | 3 | 7 | 14 | 30
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -1239,7 +1245,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   recentAgentModels: [],
   previewSelectionAgentMark: true,
   previewReadModeSelection: true,
-  firstRunChecklistDismissed: false
+  firstRunChecklistDismissed: false,
+  logRetentionDays: 7
 }
 
 export const FILE_SORT_OPTIONS: { key: FileSortKey; label: string }[] = [

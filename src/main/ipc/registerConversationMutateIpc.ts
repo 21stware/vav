@@ -8,6 +8,8 @@ import { conversationToMeta } from '../store/conversationMeta'
 import type { Conversation, ConversationMeta } from '@shared/types'
 import { locateTempWorkspaceToDir } from '../fs/locateTempWorkspace'
 import type { HostFs } from '../host/HostFs'
+import { LOG_EVENT } from '@shared/appLog'
+import { appLog } from '../log/appLogger'
 
 export type ConversationMutateIpcStore = {
   get: (id: string) => Conversation | undefined
@@ -146,6 +148,10 @@ export function registerConversationMutateIpc(
       if (defaultHost) host.promoteEphemeral(conversation.id)
       host.setLastSeen(conversation.id)
       host.publish()
+      appLog().user(LOG_EVENT.userSessionCreate, 'New session', {
+        conversationId: conversation.id,
+        data: { host: defaultHost ?? 'vav', machineId }
+      })
       return conversationToMeta(conversation)
     }
   )
@@ -336,7 +342,10 @@ export function registerConversationMutateIpc(
 
   ipcMain.handle(IPC.convRemove, (_event, ids: string[]) => {
     const removed = store.remove(ids)
-    for (const id of removed) host.onRemoved(id)
+    for (const id of removed) {
+      appLog().user(LOG_EVENT.userSessionRemove, 'Remove session', { conversationId: id })
+      host.onRemoved(id)
+    }
     if (removed.length) store.flush()
     host.publish()
     return { removed, conversations: store.listMeta() }

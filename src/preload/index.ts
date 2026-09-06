@@ -83,6 +83,15 @@ const api: VavApi = {
     keepAwakeRevoke: () => ipcRenderer.invoke(IPC.settingsKeepAwakeRevoke)
   },
 
+  logs: {
+    query: (query) => ipcRenderer.invoke(IPC.logsQuery, query),
+    stats: () => ipcRenderer.invoke(IPC.logsStats),
+    clear: (scope) => ipcRenderer.invoke(IPC.logsClear, scope),
+    export: (query) => ipcRenderer.invoke(IPC.logsExport, query),
+    record: (input) => ipcRenderer.invoke(IPC.logsRecord, input),
+    onChanged: (handler) => subscribe(IPC.logsChanged, handler)
+  },
+
   accounts: {
     getPage: (workspaceKey?: string | null, options?: { refresh?: boolean; force?: boolean }) =>
       ipcRenderer.invoke(IPC.accountsGetPage, workspaceKey, options),

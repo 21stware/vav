@@ -31,6 +31,10 @@ import { AccountStore } from '../store/AccountStore.ts'
 import { ConversationStore } from '../store/ConversationStore.ts'
 import { NodeSecretStore } from '../store/NodeSecretStore.ts'
 import { SettingsStore } from '../store/SettingsStore.ts'
+import { LogStore } from '../store/LogStore.ts'
+import { createAppLogger, setAppLogger, logUserAnswer, logUserCancel } from '../log/appLogger.ts'
+import { logTurnEvent } from '../log/turnLog.ts'
+import { LOG_EVENT } from '@shared/appLog'
 import { trayDirLabel } from '../tray/trayLabels.ts'
 import { LOCAL_MACHINE_ID, conversationOnMachine, parseWorkspaceRefList, recentsForMachine } from '@shared/workspaceHost'
 import {
@@ -96,6 +100,11 @@ export function createVavControlPlane(opts: VavControlPlaneOpts): VavControlPlan
   const secrets = new NodeSecretStore(opts.stateDir)
   const accounts = new AccountStore(opts.stateDir)
   const conversations = new ConversationStore(opts.stateDir)
+  const logStore = new LogStore({
+    dir: join(opts.stateDir, 'logs'),
+    durableDays: () => settings.get().logRetentionDays
+  })
+  const logger = createAppLogger(logStore)
   const changeSets = new ChangeSetStore()
   const hosts = new HostRegistry(opts.host)
   const files = new FileService(() => {
@@ -109,6 +118,7 @@ export function createVavControlPlane(opts: VavControlPlaneOpts): VavControlPlan
   const handleAgentEvent = (event: TurnEvent): void => {
     if (event.type === 'start') remoteSessionStatus.set(event.conversationId, 'running')
     if (event.type === 'end') remoteSessionStatus.set(event.conversationId, 'done')
+    logTurnEvent(event, conversations.get(event.conversationId), logger)
     fanRemoteTurn(event, hub, currentLocale())
     if (event.type === 'end') flushSends()
   }
@@ -158,6 +168,10 @@ export function createVavControlPlane(opts: VavControlPlaneOpts): VavControlPlan
     })
     files.watchRoot(conversation.id, workdir)
     hub.schedulePushSessions()
+    logger.user(LOG_EVENT.userSessionCreate, 'New session', {
+      conversationId: conversation.id,
+      data: { host: 'vav' }
+    })
     return (
       listSessions().find((session) => session.id === conversation.id) ??
       fallbackRemoteSession(conversation, {
@@ -306,6 +320,10 @@ export function createVavControlPlane(opts: VavControlPlaneOpts): VavControlPlan
       pendingSends.enqueue(conversationId, text, attachments)
       return 'ok' as const
     }
+    logger.user(LOG_EVENT.userSend, 'Send', {
+      conversationId,
+      data: { chars: text.length, attachments: attachments.length }
+    })
     startTurn(conversationId, text, attachments)
     return 'ok' as const
   }
@@ -316,10 +334,12 @@ export function createVavControlPlane(opts: VavControlPlaneOpts): VavControlPlan
     if (gate !== 'ok') return gate
     pendingSends.clear(conversationId)
     agent.cancel(conversationId)
+    logUserCancel(conversationId)
     return 'ok' as const
   }
 
   function reply(conversationId: string, toolCallId: string, answer: string): boolean {
+    logUserAnswer(conversationId, toolCallId, answer.length)
     return agent.answer(conversationId, toolCallId, answer)
   }
 
@@ -475,12 +495,18 @@ export function createVavControlPlane(opts: VavControlPlaneOpts): VavControlPlan
         model: settings.get().defaultModel || VAV_DEFAULT_MODEL_ID,
         mintWorkdir: () => mintTempWorkdir(tmp)
       })
+      logStore.load()
+      setAppLogger(logger)
+      logger.system(LOG_EVENT.systemBoot, 'vavd ready', { data: { version: opts.appVersion } })
       const envKey = process.env.VAV_API_KEY?.trim()
       if (envKey) secrets.set(envKey, 'api')
       const envEndpoint = process.env.VAV_API_ENDPOINT?.trim()
       if (envEndpoint) settings.update({ apiEndpoint: envEndpoint })
     },
     dispose() {
+      logger.system(LOG_EVENT.systemQuit, 'Quit')
+      logStore.dispose()
+      setAppLogger(null)
       agent.disposeAll()
       files.disposeAll()
       hub.dispose()

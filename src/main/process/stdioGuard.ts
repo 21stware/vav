@@ -4,6 +4,9 @@
  * a fatal "Uncaught Exception" dialog.
  */
 
+import { LOG_EVENT } from '@shared/appLog'
+import { appLog } from '../log/appLogger'
+
 export function isIgnorableStreamError(err: unknown): boolean {
   const code = (err as NodeJS.ErrnoException | undefined)?.code
   if (code === 'EPIPE' || code === 'ERR_STREAM_DESTROYED') return true
@@ -28,6 +31,10 @@ export function installProcessErrorGuards(): void {
     if (isIgnorableStreamError(err)) return
     try {
       console.error('[uncaughtException]', err)
+      appLog().system(LOG_EVENT.systemUncaught, err.message || 'uncaughtException', {
+        level: 'error',
+        data: { name: err.name, code: err.code, stack: err.stack }
+      })
     } catch {
       // stdout may already be dead
     }
@@ -37,6 +44,10 @@ export function installProcessErrorGuards(): void {
     if (isIgnorableStreamError(err)) return
     try {
       console.error('[unhandledRejection]', err)
+      appLog().system(LOG_EVENT.systemUnhandled, err.message || 'unhandledRejection', {
+        level: 'error',
+        data: { name: err.name, stack: err.stack }
+      })
     } catch {
       // stdout may already be dead
     }

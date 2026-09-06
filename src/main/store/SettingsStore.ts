@@ -34,6 +34,7 @@ import {
 } from '@shared/workspaceHost'
 import { clampKeepAwakeBatteryFloor } from '@shared/sleepBlocker'
 import { resolveAutoUpdatePolicy } from '@shared/updatePolicy'
+import { clampLogRetentionDays } from '@shared/appLog'
 import { createDebouncedWriter } from './debounceWrite'
 import { electronUserData } from './electronUserData.ts'
 
@@ -431,6 +432,7 @@ export class SettingsStore {
     if (!sortKeys.has(s.fileSortKey)) s.fileSortKey = 'name'
     if (typeof s.fileSortAscending !== 'boolean') s.fileSortAscending = true
     if (typeof s.firstRunChecklistDismissed !== 'boolean') s.firstRunChecklistDismissed = false
+    s.logRetentionDays = clampLogRetentionDays(s.logRetentionDays)
     if (!DISPLAY_CURRENCIES.includes(s.displayCurrency as DisplayCurrency)) {
       s.displayCurrency = DEFAULT_SETTINGS.displayCurrency
     }
