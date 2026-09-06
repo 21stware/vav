@@ -172,11 +172,12 @@ export class McpToolBridge {
           session.write({ jsonrpc: '2.0', method: 'notifications/initialized' })
           const listed = asRecord(await request(session, 'tools/list', {}))
           session.tools = (asArray(listed?.tools) ?? [])
-            .map((item) => {
+            .map((item): McpToolInfo | null => {
               const row = asRecord(item)
               const name = asString(row?.name)
               if (!name) return null
-              return { name, description: asString(row?.description) ?? undefined }
+              const description = asString(row?.description)
+              return description ? { name, description } : { name }
             })
             .filter((row): row is McpToolInfo => row != null)
           resolve(session)
